@@ -384,7 +384,7 @@ impl<'a> ContextIdentifierVisitor<'a> {
     }
 
     #[allow(
-        clippy::large_stack_frames,
+        clippy::large_unopt_stack_frames,
         reason = "expr::Data variants are arena-backed StoreRef; live residency is bounded"
     )]
     fn walk_expr(&mut self, e: &Expr) {

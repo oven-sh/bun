@@ -23,57 +23,24 @@
 #include "root.h"
 
 #include "DOMException.h"
-#include "JSDOMWrapper.h"
+#include "JSDOMInterface.h"
 #include <JavaScriptCore/ErrorPrototype.h>
 
 namespace WebCore {
 
-class JSDOMException : public JSDOMWrapper<DOMException> {
+class JSDOMException : public JSDOMInterface<JSDOMException, DOMException> {
 public:
-    using Base = JSDOMWrapper<DOMException>;
-    static JSDOMException* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<DOMException>&& impl)
-    {
-        JSDOMException* ptr = new (NotNull, JSC::allocateCell<JSDOMException>(globalObject->vm())) JSDOMException(structure, *globalObject, WTF::move(impl));
-        ptr->finishCreation(globalObject->vm());
-        return ptr;
-    }
-
-    static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
-    static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
-    static DOMException* toWrapped(JSC::VM&, JSC::JSValue);
-    static void destroy(JSC::JSCell*);
+    using JSDOMInterface::JSDOMInterface;
 
     DECLARE_INFO;
+    static constexpr auto subspaceSlots = BUN_SUBSPACE_SLOTS(m_clientSubspaceForDOMException, m_subspaceForDOMException);
 
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
-    }
-
+    static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
-    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-        return subspaceForImpl(vm);
-    }
-    static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
-    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
-
-protected:
-    JSDOMException(JSC::Structure*, JSDOMGlobalObject&, Ref<DOMException>&&);
-
-    void finishCreation(JSC::VM&);
 };
-
-JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, DOMException&);
-inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, DOMException* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }
-JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<DOMException>&&);
-inline JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, RefPtr<DOMException>&& impl) { return impl ? toJSNewlyCreated(lexicalGlobalObject, globalObject, impl.releaseNonNull()) : JSC::jsNull(); }
 
 template<> struct JSDOMWrapperConverterTraits<DOMException> {
     using WrapperClass = JSDOMException;
-    using ToWrappedReturnType = DOMException*;
 };
 
 } // namespace WebCore

@@ -31,6 +31,8 @@ use super::entry_points::is_relative_path;
 use super::scan::{ContentsScan, ScanInput};
 use super::worker_entries::is_url_with_code;
 use crate::builtins::{BuiltinId, KeyOfModuleCache, ResolvedBuiltins, RuntimeModule, table};
+use crate::ir::InParallel;
+use crate::ir::parallel::map_each;
 use crate::load::is_in_node_modules;
 use crate::load::loader_aliases::{
     LoaderAlias, resolve_exported_loader_alias, resolve_loader_alias,
@@ -226,30 +228,63 @@ fn sort_named_modules(named: &mut Vec<NamedModule>, atoms: &Interner<'_>) {
     named.dedup();
 }
 
-pub(crate) fn find_library_modules_that_unknown_names_may_stand_for(
-    application: &Files<'_>,
-) -> Vec<RuntimeModule> {
-    let mut modules: Vec<RuntimeModule> = Vec::new();
-    let mut written: Vec<RuntimeModule> = Vec::new();
-    let mut loads_by_unknown_name = false;
-    let (mut loads_by_path_alone, mut is_answered_otherwise) = (false, false);
-    for &file in application.compiled_files() {
+#[derive(Default)]
+struct UnknownNames {
+    modules: Vec<RuntimeModule>,
+    written: Vec<RuntimeModule>,
+    loads_by_unknown_name: bool,
+    loads_by_path_alone: bool,
+    is_answered_otherwise: bool,
+}
+
+impl UnknownNames {
+    fn add_file(&mut self, application: &Files<'_>, file: FileId) {
         let source = parsed_source(application, file);
-        loads_by_unknown_name = loads_by_unknown_name
+        self.loads_by_unknown_name = self.loads_by_unknown_name
             || source.is_none_or(|source| {
                 source.contents.names.loads_by_unknown_name
                     || source.builtins.loads_unknown_modules()
             })
             || resolve_loads_through_imported_loaders(application, file);
         let Some(source) = source else {
-            continue;
+            return;
         };
-        loads_by_path_alone |= source.contents.names.loads_by_path_alone;
-        is_answered_otherwise |= answers_for_names_itself(&source.builtins);
-        modules.extend(&source.library_modules_named_in_text_left_to_run_time);
-        modules.extend(&source.contents.names.passed_for_parameters);
-        written.extend(&source.contents.names.written_as_values);
-        written.extend(&source.contents.names.written_as_keys);
+        let names = &source.contents.names;
+        self.loads_by_path_alone |= names.loads_by_path_alone;
+        self.is_answered_otherwise |= answers_for_names_itself(&source.builtins);
+        (self.modules).extend(&source.library_modules_named_in_text_left_to_run_time);
+        self.modules.extend(&names.passed_for_parameters);
+        self.written.extend(&names.written_as_values);
+        self.written.extend(&names.written_as_keys);
+    }
+}
+
+pub(crate) fn find_library_modules_that_unknown_names_may_stand_for(
+    application: &Files<'_>,
+    in_parallel: InParallel<'_>,
+) -> Vec<RuntimeModule> {
+    const FILES_IN_CHUNK: usize = 256;
+    let chunks: Vec<&[FileId]> = application
+        .compiled_files()
+        .chunks(FILES_IN_CHUNK)
+        .collect();
+    let names_of_chunks = map_each(chunks, in_parallel, &|chunk: &[FileId]| {
+        let mut names = UnknownNames::default();
+        for &file in chunk {
+            names.add_file(application, file);
+        }
+        names
+    });
+    let mut modules: Vec<RuntimeModule> = Vec::new();
+    let mut written: Vec<RuntimeModule> = Vec::new();
+    let mut loads_by_unknown_name = false;
+    let (mut loads_by_path_alone, mut is_answered_otherwise) = (false, false);
+    for mut names in names_of_chunks {
+        modules.append(&mut names.modules);
+        written.append(&mut names.written);
+        loads_by_unknown_name |= names.loads_by_unknown_name;
+        loads_by_path_alone |= names.loads_by_path_alone;
+        is_answered_otherwise |= names.is_answered_otherwise;
     }
     if loads_by_unknown_name || (loads_by_path_alone && is_answered_otherwise) {
         modules.append(&mut written);

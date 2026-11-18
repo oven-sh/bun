@@ -536,6 +536,11 @@ class Comparison {
     if (callee.kind === "Operand") {
       const callbacks = this.overload.callbacks.filter(callback => covers(callback.callee, operand));
       if (callbacks.some(callback => callback.resultUse === "Escapes")) return;
+      const isConversion =
+        event.key === undefined
+          ? event.trap === "apply" && this.run.log.holderOf(event.subject) !== undefined
+          : toPrimitiveKeys.includes(spellingOf(event.key));
+      if (isConversion && callbacks.some(callback => callback.resultUse === "Converted")) return;
       this.report("callbacks.resultUse", `the built-in works on the result of the callback: ${describeEvent(event)}`);
       return;
     }

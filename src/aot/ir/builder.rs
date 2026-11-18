@@ -204,6 +204,12 @@ impl ListInArena {
 
     #[inline]
     pub(super) fn push<T: Copy>(&mut self, arena: &mut Vec<T>, item: T) {
+        if self.capacity == 0 {
+            self.start = arena.len() as u32;
+            (self.length, self.capacity) = (1, 2);
+            arena.extend_from_slice(&[item; 2]);
+            return;
+        }
         if self.length == self.capacity {
             self.move_to_end(arena, item);
         }
@@ -211,6 +217,7 @@ impl ListInArena {
         self.length += 1;
     }
 
+    #[cold]
     fn move_to_end<T: Copy>(&mut self, arena: &mut Vec<T>, filler: T) {
         let start = arena.len();
         for index in 0..self.len() {
@@ -329,6 +336,7 @@ pub struct FunctionBuilder {
 }
 
 impl FunctionBuilder {
+    #[inline(always)]
     pub fn new(function: Function, scratch: BuilderScratch) -> FunctionBuilder {
         debug_assert!(function.body.code.is_empty());
         let mut builder = FunctionBuilder {

@@ -21,46 +21,33 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     /// This transforms code for interactive evaluation:
     /// - Wraps the last expression in { value: expr } for result capture
     /// - Wraps code with await in async IIFE with variable hoisting
+    ///
+    /// `directives` is the prologue of the line. The transform puts it back in front of the
+    /// statements. Returns `false` when it left `parts` as they were and did not place it.
     pub(crate) fn apply_repl_transforms<'bump>(
         &mut self,
         parts: &mut BumpVec<'bump, js_ast::Part>,
         bump: &'bump Bump,
-    ) -> Result<(), bun_alloc::AllocError> {
+        directives: &[Stmt],
+    ) -> Result<bool, bun_alloc::AllocError> {
         // Skip transform if there's a top-level return (indicates module pattern)
         if self.has_top_level_return {
-            return Ok(());
+            return Ok(false);
         }
 
         // Collect all statements
-        let mut total_stmts_count: usize = 0;
+        let mut total_stmts_count: usize = directives.len();
         for part in parts.iter() {
             total_stmts_count += part.stmts.len();
         }
 
-        // A prologue "use strict" was consumed into module-scope strict mode and dropped, but
-        // node's repl still evaluates the directive as a string expression. Reinject it at the
-        // front, like the CJS wrapper's preserve_strict_mode.
-        let reinject_strict = self.module_scope().strict_mode
-            == js_ast::StrictModeKind::ExplicitStrictMode
-            && !(!parts.is_empty()
-                && !parts[0].stmts.is_empty()
-                && matches!(parts[0].stmts[0].data, StmtData::SDirective(_)));
-        total_stmts_count += usize::from(reinject_strict);
-
         if total_stmts_count == 0 {
-            return Ok(());
+            return Ok(true);
         }
 
         // Collect all statements into a single array
         let mut all_stmts = BumpVec::with_capacity_in(total_stmts_count, bump);
-        if reinject_strict {
-            all_stmts.push(self.s(
-                S::Directive {
-                    value: b"use strict".into(),
-                },
-                self.module_scope_directive_loc,
-            ));
-        }
+        all_stmts.extend_from_slice(directives);
         for part in parts.iter() {
             for stmt in part.stmts.iter() {
                 all_stmts.push(*stmt);
@@ -80,7 +67,8 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         }
 
         // Apply transform with is_async based on presence of top-level await
-        self.repl_transform_with_hoisting(parts, all_stmts, bump, has_top_level_await)
+        self.repl_transform_with_hoisting(parts, all_stmts, bump, has_top_level_await)?;
+        Ok(true)
     }
 
     /// Transform code with hoisting and IIFE wrapper
@@ -211,7 +199,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     // Add the function declaration itself
                     inner_stmts.push(*stmt);
                 }
-                StmtData::SClass(mut class) => {
+                StmtData::SClass(class) => {
                     // For class declarations:
                     // Hoist as: var ClassName; (use var so it persists to vm context)
                     // Inner: ClassName = class ClassName {}
@@ -234,10 +222,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                         ));
 
                         // Convert class declaration to assignment: ClassName = class ClassName {}
-                        // G::Class is non-Copy (owns a Vec); the original
-                        // S::Class store entry is dead after this rewrite, so move it out.
-                        let class_value = core::mem::take(&mut class.class);
-                        let class_expr = self.new_expr(class_value, stmt.loc);
+                        let class_expr = self.new_expr(class.class, stmt.loc);
                         let class_id = self.new_expr(
                             E::Identifier {
                                 ref_: name_ref,
@@ -461,24 +446,6 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                         ));
                     }
                 }
-                StmtData::SDirective(directive) => {
-                    // In REPL mode, treat directives (string literals) as expressions.
-                    let value_str: &'static [u8] = directive.value.slice();
-                    let str_expr = self.new_expr(
-                        E::String {
-                            data: value_str.into(),
-                            ..Default::default()
-                        },
-                        stmt.loc,
-                    );
-                    inner_stmts.push(self.s(
-                        S::SExpr {
-                            value: str_expr,
-                            ..Default::default()
-                        },
-                        stmt.loc,
-                    ));
-                }
                 _ => {
                     inner_stmts.push(*stmt);
                 }
@@ -526,9 +493,9 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         ));
         let final_slice: &mut [Stmt] = final_stmts.into_bump_slice_mut();
 
-        // Update parts. Input consisting solely of a consumed "use strict"
-        // prologue arrives with no parts at all — create one so the
-        // reinjected directive's IIFE isn't dropped.
+        // Update parts. A line that is only a directive prologue arrives with
+        // no parts at all, because `_parse` took the prologue off its
+        // statements. Create one so that the IIFE is kept.
         if parts.is_empty() {
             parts.push(js_ast::Part {
                 stmts: bun_ast::StoreSlice::new_mut(final_slice),
@@ -681,6 +648,25 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                         );
                         break;
                     }
+                    // A directive is a string expression, and node's repl prints its value.
+                    StmtData::SDirective(directive) => {
+                        let value_str: &'static [u8] = directive.value.slice();
+                        let str_expr = self.new_expr(
+                            E::String {
+                                data: value_str.into(),
+                                ..Default::default()
+                            },
+                            last_stmt.loc,
+                        );
+                        let wrapped = self.repl_wrap_expr_in_value_object(str_expr, bump);
+                        inner_stmts[last_idx] = self.s(
+                            S::Return {
+                                value: Some(wrapped),
+                            },
+                            last_stmt.loc,
+                        );
+                        break;
+                    }
                     _ => break,
                 }
             }
@@ -718,7 +704,6 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     /// Create { __proto__: null, value: expr } wrapper object
     /// Uses null prototype to create a clean data object
     fn repl_wrap_expr_in_value_object<'bump>(&mut self, expr: Expr, bump: &'bump Bump) -> Expr {
-        // G::Property is non-Copy (owns Vec) → use bump Vec instead of alloc_slice_copy.
         let mut properties = BumpVec::<G::Property>::with_capacity_in(2, bump);
         // __proto__: null - creates null-prototype object
         properties.push(G::Property {

@@ -1,5 +1,3 @@
-// A callback that calls: where the copies of its loop for integers and for doubles are not both kept, the loop has one copy for both.
-// STATISTIC: Int32VersionsRejected >= 1
 class Field {
   private readonly exp = new Uint8Array(512);
   private readonly log = new Uint8Array(256);

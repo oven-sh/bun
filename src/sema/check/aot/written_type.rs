@@ -436,7 +436,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let answer = self.has_untrusted_declaration(ty, &mut FxHashSet::default());
         if !self.is_cut_short() {
             let row = self.kept.type_row(ty);
-            self.kept.type_at(row).reads_untrusted_declaration = Some(answer);
+            self.kept.type_to_change(row).reads_untrusted_declaration = Some(answer);
         }
         answer
     }

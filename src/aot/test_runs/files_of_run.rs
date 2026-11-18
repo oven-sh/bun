@@ -21,7 +21,6 @@ use bun_sema::session::{Arena, Session};
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use bun_sema_driver::host::{from_argument, from_native, to_native};
 use bun_sema_parser::{CompileParseOptions, parse_for_compile, parse_for_compile_in};
-use bun_sys::Fd;
 
 use super::texts::{inputs_of_file_that_nobody_describes, without_extension};
 use super::{RunInput, WhoseFile};
@@ -201,12 +200,10 @@ fn list(path: &[u8]) -> Folder {
         files: Vec::new(),
         folders: Vec::new(),
     };
-    let flags = bun_sys::O::RDONLY | bun_sys::O::DIRECTORY;
-    let Ok(folder) = bun_sys::openat(Fd::cwd(), &bun_core::ZBox::from_bytes(path), flags, 0) else {
+    let Ok(folder) = bun_sys::Dir::open(path) else {
         return found;
     };
-    let _close = bun_sys::CloseOnDrop::new(folder);
-    let mut entries = bun_sys::dir_iterator::iterate(folder);
+    let mut entries = bun_sys::dir_iterator::iterate(folder.fd());
     while let Ok(Some(entry)) = entries.next() {
         let name = entry.name.slice_u8();
         match entry.kind {
@@ -314,7 +311,7 @@ fn has_sites_that_need_folding(hir: &File<'_>, atoms: &Interner<'_>) -> bool {
     };
     hir.exprs.iter().any(|node| match node.kind {
         ExprKind::Ident(name) => names_loader(name),
-        ExprKind::String(text) => text.is_some() && is_test_module(atoms.bytes(text)),
+        ExprKind::String(text) => is_test_module(atoms.bytes(text)),
         ExprKind::Dot { name, .. } => names_loader(name),
         ExprKind::ImportCall { args } => !is_string(hir.ids(args).next()),
         ExprKind::Call(call) => {
@@ -519,7 +516,6 @@ fn read_what_file_writes_by(
     let sited: FxHashSet<Vec<u8>> = written.paths.iter().map(|it| it.0.clone()).collect();
     for node in hir.exprs.iter() {
         if let ExprKind::String(text) = node.kind
-            && text.is_some()
             && is_relative(atoms.bytes(text))
         {
             let path = from_argument(folder, atoms.bytes(text));

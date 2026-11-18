@@ -16,10 +16,12 @@ use crate::bake::dev_server::HmrTopicBits;
 pub(crate) use super::HmrSocket;
 use super::*;
 
+struct InvalidMessage;
+
 impl HmrSocket {
-    pub(crate) fn new(dev: &mut DevServer) -> Box<HmrSocket> {
+    fn new(dev: *mut DevServer) -> Box<HmrSocket> {
         Box::new(HmrSocket {
-            dev: bun_ptr::BackRef::new_mut(dev),
+            dev,
             subscriptions: HmrTopicBits::empty(),
             active_route: None,
             referenced_source_maps: HashMap::default(),
@@ -28,22 +30,7 @@ impl HmrSocket {
         })
     }
 
-    /// SAFETY: caller must guarantee no other live `&mut DevServer` aliases the
-    /// returned borrow for its lifetime (BackRef::get_mut exclusivity rule).
-    /// Liveness is structural: HmrSocket lifetime is strictly nested inside
-    /// DevServer (the socket is removed from `active_websocket_connections` and
-    /// destroyed before DevServer is torn down) — the BackRef invariant.
-    #[inline]
-    unsafe fn dev<'a>(&self) -> &'a mut DevServer {
-        // Detach the borrow from `&self` (explicit unbound `'a`) so callers may
-        // interleave `self.*` field access with `dev.*` — DevServer is a
-        // separate heap allocation.
-        // SAFETY: caller upholds exclusivity; BackRef invariant guarantees liveness.
-        unsafe { &mut *self.dev.as_ptr() }
-    }
-
-    pub(crate) fn on_open(&mut self, ws: AnyWebSocket) {
-        let dev = self.dev;
+    fn on_open(&mut self, dev: &DevServer, ws: AnyWebSocket) {
         let mut header = [0u8; 1 + DevServer::CONFIGURATION_HASH_KEY_LEN];
         header[0] = MessageId::Version.char();
         header[1..].copy_from_slice(&dev.configuration_hash_key);
@@ -60,9 +47,15 @@ impl HmrSocket {
         }
     }
 
-    pub(crate) fn on_message(&mut self, ws: AnyWebSocket, msg: &[u8], _opcode: Opcode) {
+    /// Closing the socket frees `self`, so the caller does it.
+    fn on_message(
+        &mut self,
+        dev: &mut DevServer,
+        ws: AnyWebSocket,
+        msg: &[u8],
+    ) -> Result<(), InvalidMessage> {
         if msg.is_empty() {
-            return ws.close();
+            return Err(InvalidMessage);
         }
 
         // `msg[0]` may be any byte. Transmuting an out-of-range u8 into a
@@ -71,16 +64,14 @@ impl HmrSocket {
         match msg[0] {
             x if x == IncomingMessageId::Init as u8 => {
                 if msg.len() != 9 {
-                    return ws.close();
+                    return Err(InvalidMessage);
                 }
                 let mut generation_bytes = [0u8; 4];
                 if strings::decode_hex_to_bytes(&mut generation_bytes, &msg[1..]).is_err() {
-                    return ws.close();
+                    return Err(InvalidMessage);
                 }
                 let generation = u32::from_ne_bytes(generation_bytes);
                 let source_map_id = source_map_store::Key::init((generation as u64) << 32);
-                // SAFETY: JS-thread only; sole `&mut DevServer` for this scope.
-                let dev = unsafe { self.dev() };
                 if dev
                     .source_maps
                     .remove_or_upgrade_weak_ref(source_map_id, RemoveOrUpgradeMode::Upgrade)
@@ -92,7 +83,7 @@ impl HmrSocket {
                 let mut new_bits = HmrTopicBits::empty();
                 let topics = &msg[1..];
                 if topics.len() > HmrTopic::MAX_COUNT {
-                    return;
+                    return Ok(());
                 }
                 for &ch in topics {
                     if let Some(topic) = HmrTopic::from_u8(ch) {
@@ -106,8 +97,6 @@ impl HmrSocket {
 
                         // on-subscribe hooks
                         if feature_flags::BAKE_DEBUGGING_FEATURES {
-                            // SAFETY: JS-thread only; sole `&mut DevServer` for this scope.
-                            let dev = unsafe { self.dev() };
                             match field {
                                 HmrTopic::IncrementalVisualizer => {
                                     dev.emit_incremental_visualizer_events += 1;
@@ -117,26 +106,19 @@ impl HmrSocket {
                                     dev.emit_memory_visualizer_message();
                                     if dev.emit_memory_visualizer_events == 1 {
                                         debug_assert!(
-                                            dev.memory_visualizer_timer.state
+                                            dev.memory_visualizer_timer.state.get()
                                                 != EventLoopTimerState::ACTIVE
                                         );
-                                        // Note (jsc/runtime crate cycle): `vm.timer` is `()` on the
-                                        // low-tier `VirtualMachine`; the real `timer::All`
-                                        // lives in `RuntimeState` (see jsc_hooks.rs).
-                                        let state = crate::jsc_hooks::runtime_state();
                                         let next = bun_core::Timespec::ms_from_now(
                                             bun_core::TimespecMockMode::ForceRealTime,
                                             1000,
                                         );
-                                        // SAFETY: `runtime_state()` is non-null after
-                                        // `bun_runtime::init()`; JS-thread only, sole
-                                        // `&mut` to `timer` in this scope.
-                                        unsafe {
-                                            (*state).timer.update(
-                                                &raw mut dev.memory_visualizer_timer,
-                                                &next,
-                                            );
-                                        }
+                                        crate::jsc_hooks::timer_all().update(
+                                            OwnedTimer::node(
+                                                &raw const dev.memory_visualizer_timer,
+                                            ),
+                                            &next,
+                                        );
                                     }
                                 }
                                 _ => {}
@@ -146,17 +128,15 @@ impl HmrSocket {
                         let _ = ws.unsubscribe(&field.uws_topic());
                     }
                 }
-                self.on_unsubscribe(!new_bits & self.subscriptions);
+                Self::on_unsubscribe(dev, !new_bits & self.subscriptions);
                 self.subscriptions = new_bits;
             }
             x if x == IncomingMessageId::SetUrl as u8 => {
                 let pattern = &msg[1..];
                 // `match_slow` requires an absolute path; these are peer bytes.
                 if pattern.first() != Some(&b'/') {
-                    return ws.close();
+                    return Err(InvalidMessage);
                 }
-                // SAFETY: JS-thread only; sole `&mut DevServer` for this scope.
-                let dev = unsafe { self.dev() };
                 let maybe_rbi = dev.route_to_bundle_index_slow(pattern);
                 if let Some(agent) = dev.inspector() {
                     if self.inspector_connection_id > -1 {
@@ -169,10 +149,12 @@ impl HmrSocket {
                         );
                     }
                 }
-                let Some(rbi) = maybe_rbi else { return };
+                let Some(rbi) = maybe_rbi else {
+                    return Ok(());
+                };
                 if let Some(old) = self.active_route {
                     if old == rbi {
-                        return;
+                        return Ok(());
                     }
                     dev.route_bundle_ptr(old).active_viewers -= 1;
                 }
@@ -185,8 +167,6 @@ impl HmrSocket {
                 let _ = ws.send(&response, Opcode::Binary, false, true);
             }
             x if x == IncomingMessageId::TestingBatchEvents as u8 => {
-                // SAFETY: JS-thread only; sole `&mut DevServer` for this scope.
-                let dev = unsafe { self.dev() };
                 match &dev.testing_batch_events {
                     super::TestingBatchEvents::Disabled => {
                         if dev.current_bundle.is_some() {
@@ -204,7 +184,7 @@ impl HmrSocket {
                     super::TestingBatchEvents::EnableAfterBundle
                     | super::TestingBatchEvents::ReleaseAfterBundle(_) => {
                         // A duplicate `H` is a protocol violation, not an invariant.
-                        ws.close();
+                        return Err(InvalidMessage);
                     }
                     super::TestingBatchEvents::Enabled(_event_const) => {
                         // Replace-and-extract to satisfy borrowck.
@@ -220,7 +200,7 @@ impl HmrSocket {
                         if dev.current_bundle.is_some() {
                             dev.testing_batch_events =
                                 super::TestingBatchEvents::ReleaseAfterBundle(batch);
-                            return;
+                            return Ok(());
                         }
 
                         dev.release_testing_batch(batch);
@@ -229,21 +209,18 @@ impl HmrSocket {
             }
             x if x == IncomingMessageId::ConsoleLog as u8 => {
                 if msg.len() < 2 {
-                    ws.close();
-                    return;
+                    return Err(InvalidMessage);
                 }
 
                 let kind = match msg[1] {
                     b'l' => ConsoleLogKind::Log,
                     b'e' => ConsoleLogKind::Err,
                     _ => {
-                        ws.close();
-                        return;
+                        return Err(InvalidMessage);
                     }
                 };
 
                 let data = &msg[2..];
-                let dev = self.dev;
 
                 if let Some(agent) = dev.inspector() {
                     let log_str = bun_core::StringView::from_bytes(data);
@@ -270,7 +247,7 @@ impl HmrSocket {
             x if x == IncomingMessageId::UnrefSourceMap as u8 => {
                 let payload = &msg[1..];
                 let Ok(bytes) = <[u8; 8]>::try_from(payload.get(0..8).unwrap_or(&[])) else {
-                    return ws.close();
+                    return Err(InvalidMessage);
                 };
                 let source_map_id = source_map_store::Key::init(u64::from_le_bytes(bytes));
                 let Some(kv) = self.referenced_source_maps.remove_entry(&source_map_id) else {
@@ -278,78 +255,50 @@ impl HmrSocket {
                         "unref_source_map: no entry found: {:x}\n",
                         source_map_id.get()
                     );
-                    return; // no entry may happen.
+                    return Ok(()); // no entry may happen.
                 };
-                // SAFETY: JS-thread only; sole `&mut DevServer` for this scope.
-                unsafe { self.dev() }.source_maps.unref(kv.0);
+                dev.source_maps.unref(kv.0);
             }
-            _ => ws.close(),
+            _ => return Err(InvalidMessage),
         }
+        Ok(())
     }
 
-    fn on_unsubscribe(&mut self, field: HmrTopicBits) {
+    fn on_unsubscribe(dev: &mut DevServer, field: HmrTopicBits) {
         if feature_flags::BAKE_DEBUGGING_FEATURES {
-            // SAFETY: JS-thread only; sole `&mut DevServer` for this scope.
-            let dev = unsafe { self.dev() };
             if field.contains(HmrTopic::IncrementalVisualizer.as_bit()) {
                 dev.emit_incremental_visualizer_events -= 1;
             }
             if field.contains(HmrTopic::MemoryVisualizer.as_bit()) {
                 dev.emit_memory_visualizer_events -= 1;
-                if dev.emit_memory_visualizer_events == 0
-                    && dev.memory_visualizer_timer.state == EventLoopTimerState::ACTIVE
-                {
-                    // Note (jsc/runtime crate cycle): `vm.timer` is `()` on the low-tier
-                    // `VirtualMachine`; the real `timer::All` lives in `RuntimeState`.
-                    let state = crate::jsc_hooks::runtime_state();
-                    // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
-                    // JS-thread only, sole `&mut` to `timer` in this scope.
-                    unsafe {
-                        (*state).timer.remove(&raw mut dev.memory_visualizer_timer);
-                    }
+                if dev.emit_memory_visualizer_events == 0 {
+                    dev.memory_visualizer_timer.disarm();
                 }
             }
         }
     }
 
-    /// # Safety
-    /// `s` must be a valid, uniquely-owned `HmrSocket` heap pointer (allocated
-    /// via `HmrSocket::new`'s caller). uws guarantees the socket context
-    /// pointer is valid for the duration of the close callback; this function
-    /// consumes ownership and frees it.
-    pub(crate) fn on_close(s: *mut HmrSocket, _ws: AnyWebSocket, _exit_code: i32, _message: &[u8]) {
-        // SAFETY: caller contract above.
-        let this = unsafe { &mut *s };
+    /// Drops this socket's visualizer subscriptions, `active_viewers` count and source map refs.
+    pub(super) fn release(&self, dev: &mut DevServer) {
+        Self::on_unsubscribe(dev, self.subscriptions);
 
-        let subs = this.subscriptions;
-        this.on_unsubscribe(subs);
-
-        // SAFETY: JS-thread only; the `on_unsubscribe` borrow above has been
-        // released, so this is the sole `&mut DevServer` for the remainder.
-        let dev = unsafe { this.dev() };
-        if this.inspector_connection_id > -1 {
+        if self.inspector_connection_id > -1 {
             // Notify inspector about client disconnection
             if let Some(agent) = dev.inspector() {
                 agent.notify_client_disconnected(
                     dev.inspector_server_id,
-                    this.inspector_connection_id,
+                    self.inspector_connection_id,
                 );
             }
         }
 
-        if let Some(old) = this.active_route {
+        if let Some(old) = self.active_route {
             dev.route_bundle_ptr(old).active_viewers -= 1;
         }
 
-        for key in this.referenced_source_maps.keys() {
+        for key in self.referenced_source_maps.keys() {
             dev.source_maps.unref(*key);
         }
-        // referenced_source_maps.deinit(allocator) → Drop on HashMap (below)
-        let removed = dev.active_websocket_connections.remove(&s);
-        debug_assert!(removed.is_some());
-        // SAFETY: `s` was heap-allocated in `new()`'s caller; this is the sole
-        // owner reclaiming it. Matches `s.dev.arena().destroy(s)`.
-        drop(unsafe { bun_core::heap::take(s) });
     }
 }
 
@@ -369,30 +318,35 @@ impl bun_uws_sys::web_socket::WebSocketHandler for HmrSocket {
     const HAS_ON_PING: bool = false;
     const HAS_ON_PONG: bool = false;
 
-    // Note (noalias re-entrancy): the trait now hands the handler a raw
-    // `*mut Self` (see `WebSocketHandler` doc). `HmrSocket::on_close` already
-    // takes `*mut Self`; `on_open`/`on_message` still take `&mut self` so
-    // re-derive a fresh `&mut *this` here (not carried in from a `noalias`
-    // dispatch-frame borrow).
     #[inline]
     unsafe fn on_open(this: *mut Self, ws: bun_uws_sys::AnyWebSocket) {
-        // SAFETY: `this` is the live user-data pointer (per trait contract).
-        HmrSocket::on_open(unsafe { &mut *this }, ws)
+        // SAFETY: `this` is the live user-data pointer (per trait contract). The dev server closes
+        // its sockets before it goes, and `on_websocket_upgrade` keeps it without borrowing it.
+        unsafe { (*this).on_open(&*(*this).dev, ws) }
     }
     #[inline]
     unsafe fn on_message(
         this: *mut Self,
         ws: bun_uws_sys::AnyWebSocket,
         message: &[u8],
-        opcode: bun_uws_sys::Opcode,
+        _opcode: bun_uws_sys::Opcode,
     ) {
-        // SAFETY: see `on_open`.
-        HmrSocket::on_message(unsafe { &mut *this }, ws, message, opcode)
+        // SAFETY: both are live, see `on_open`. The borrows end with the call, and ask for no more
+        // exclusivity than the HTTP handlers do (see `dev_route_tramp`).
+        if unsafe { (*this).on_message(&mut *(*this).dev, ws, message) }.is_err() {
+            ws.close();
+        }
     }
     #[inline]
-    unsafe fn on_close(this: *mut Self, ws: bun_uws_sys::AnyWebSocket, code: i32, message: &[u8]) {
-        // SAFETY: see `on_open`.
-        HmrSocket::on_close(this, ws, code, message)
+    unsafe fn on_close(this: *mut Self, _: bun_uws_sys::AnyWebSocket, _: i32, _: &[u8]) {
+        // SAFETY: `on_websocket_upgrade` gave up this `Box`, and uWS is done with it. `dev` is live
+        // or null. For its exclusivity, see `on_message`.
+        let (dev, socket) = unsafe { ((*this).dev.as_mut(), bun_core::heap::take(this)) };
+        if let Some(dev) = dev {
+            let removed = dev.active_websocket_connections.remove(&this);
+            debug_assert!(removed.is_some());
+            socket.release(dev);
+        }
     }
     unsafe fn on_drain(_this: *mut Self, _ws: bun_uws_sys::AnyWebSocket) {}
     unsafe fn on_ping(_this: *mut Self, _ws: bun_uws_sys::AnyWebSocket, _message: &[u8]) {}
@@ -428,10 +382,14 @@ impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for D
             origin_forbidden(unsafe { &mut *res }.as_any_response());
             return;
         }
-        // SAFETY: as above; the borrow is statement-scoped, ending before `upgrade`.
-        let dw = bun_core::heap::into_raw(HmrSocket::new(unsafe { &mut *this }));
+        let dw = bun_core::heap::into_raw(HmrSocket::new(this));
         // SAFETY: `this` is live (see above).
-        let _ = unsafe { (*this).active_websocket_connections.insert(dw, ()) };
+        let server = unsafe {
+            let _ = (*this).active_websocket_connections.insert(dw, ());
+            (*this).server.unwrap()
+        };
+        // `upgrade` ends the HTTP connection, and a stopped server frees `this` with its last one.
+        let _pending = PendingRequest::new(server);
         // SAFETY: `res` is live for this callback (see Note above); `on_open`
         // (run synchronously inside `upgrade`) re-derives DevServer, not `res`.
         let socket = unsafe {

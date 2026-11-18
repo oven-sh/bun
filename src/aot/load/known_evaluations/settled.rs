@@ -328,7 +328,13 @@ impl Settler<'_, '_> {
         self.found.iter().all(|(call, text)| {
             let mut known = hir.known_evaluations_of(*call).iter();
             let text = atoms.intern(text);
-            known.any(|it| !it.is_in_global_scope && hir.ids(it.arguments).next() == Some(text))
+            let is_function = |root: ExprId| matches!(hir[root].kind, ExprKind::Fn(_));
+            known.any(|it| {
+                !it.is_in_global_scope
+                    && !it.is_called()
+                    && is_function(hir.skip_type_assertions(it.function))
+                    && hir.ids(it.arguments).next() == Some(text)
+            })
         })
     }
 

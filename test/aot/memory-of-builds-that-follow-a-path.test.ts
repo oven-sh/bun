@@ -13,9 +13,10 @@ ${stores ? `let name = "one";\nif (process.env.PICK) name = "two";` : `const nam
 console.log(fs.existsSync(path.join(__dirname, name + ".txt")));
 `;
 const head = `const fs = require("fs"), path = require("path");\n`;
+const usage = Buffer.alloc(170_000 * 6, "usage ").toString();
 const numbers = (count: number) => Array.from({ length: count }, (_, index) => index);
 const shapes: Record<string, (count: number) => string> = {
-  "members that choose by the environment": count => `const USAGE = "${"usage ".repeat(170_000)}";
+  "members that choose by the environment": count => `const USAGE = "${usage}";
 const settings = {
 ${numbers(count)
   .map(index => `  opt${index}: process.env.OPT${index} || "d${index}",`)
@@ -23,7 +24,7 @@ ${numbers(count)
 };
 console.log(USAGE.length, Object.keys(settings).length);
 `,
-  "items that choose by the environment": count => `const USAGE = "${"usage ".repeat(170_000)}";
+  "items that choose by the environment": count => `const USAGE = "${usage}";
 const settings = [
 ${numbers(count)
   .map(index => `  process.env.OPT${index} ? "a${index}" : "d${index}",`)
@@ -31,7 +32,7 @@ ${numbers(count)
 ];
 console.log(USAGE.length, settings.length);
 `,
-  "variables that choose by the environment": count => `const USAGE = "${"usage ".repeat(170_000)}";
+  "variables that choose by the environment": count => `const USAGE = "${usage}";
 ${numbers(count)
   .map(index => `const opt${index} = process.env.OPT${index} ?? "d${index}";`)
   .join("\n")}

@@ -7,12 +7,14 @@
 # for (const word of words) print(word, shelf[word](whole, 1), shelf[word](mixed, 2), shelf[word](whole, 3));
 # -- end of source
 # f1 = sumEven. In `total += d[i].x` the read by name asks its site in line and is asked for a number, because the sum is its only user. Out of the arm of a ternary the field is handed on as
-# it is and reaches the sum over a join beside a written number: it is reckoned with as a number there too. f2 = sumOrNone: NOT behind the test of `??` or `||`: that is written where the
-# field is often missing or null: the read at its site would fail and the typed copy of the loop be left at the first such record.
+# it is and reaches the sum over a join beside a written number: it is reckoned with as a number there too. f2 = sumOrNone: behind the test of `??` or `||` the field is often missing or null,
+# so the site answers for records that lack it too, and the loop keeps its typed version at undefined and null: only another value leaves it.
 # RUN: walk f1 mechanisms=all
 # CHECK: = GetValueAtSiteOrAbsent {{*}} key="x"
 # RUN(NONE): walk f2 mechanisms=all
-# NONE-NOT: = GetValueAtSiteOrAbsent {{*}} key="x"
+# NONE: [[read]]: absent|anything @JSValue = GetValueAtSiteOrAbsent {{*}} key="x" {{*}}[mayLackProperty]
+# NONE: = TypeTest [[read]] testedType=number
+# NONE: = TypeTest [[read]] testedType=undefined|null
 # RUN(ANSWER): run-in-shell mechanisms=all
 # ANSWER: sumEven 2 2.2590 4
 # ANSWER-NEXT: sumOrNone 2.5 2.2591.5 4.5

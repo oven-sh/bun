@@ -1,4 +1,4 @@
-use bun_sema::hir::{FnBody, FnId};
+use bun_sema::hir::{ExprId, ExprKind, FnBody, FnId};
 
 use crate::builtins::SourceDialect;
 use crate::ir::FunctionId;
@@ -54,10 +54,24 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.emit_empty_return();
             }
             FnBody::Expr(expression) => {
-                let value = self.lower_tail_expression(expression);
+                let value = match self.is_body_of_evaluation(source, expression) {
+                    true => self.lower_expression(expression),
+                    false => self.lower_tail_expression(expression),
+                };
                 self.emit_return(value, Some(expression));
             }
             FnBody::None => {}
         }
+    }
+
+    /// The loader writes an arrow function around the text of a direct eval. Nothing in a text is in a tail position.
+    fn is_body_of_evaluation(&self, source: FnId, body: ExprId) -> bool {
+        let hir = self.file.hir;
+        let known = &hir.known_evaluations;
+        let after = known.partition_point(|it| it.first_expression.0 <= body.0);
+        after.checked_sub(1).is_some_and(|it| {
+            let root = hir.skip_type_assertions(known[it].function);
+            known[it].is_called() && matches!(hir[root].kind, ExprKind::Fn(it) if it == source)
+        })
     }
 }

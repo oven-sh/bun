@@ -3454,6 +3454,10 @@ impl<'p, 's> Checker<'p, 's> {
                         && (hir.find_ancestor(hir.node(node), is_const_assertion)).is_some();
                 let Some(sym) = self.resolve_type_reference_name(file, scope, name, ignore_errors)
                 else {
+                    // A type name in a comment of a package's JavaScript is no error if it does not resolve.
+                    if self.is_inferred_file(file) {
+                        return TypeId::ANY;
+                    }
                     let names: SmallVec<[Atom; 4]> = hir.texts(name).collect();
                     let args = self.types_from_nodes(file, args);
                     return self.unresolved_name_type(&names, &args);

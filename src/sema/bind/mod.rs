@@ -355,6 +355,21 @@ pub fn define_property_call(hir: &File, e: ExprId) -> Option<(ExprId, ExprId)> {
     .then_some((object, key))
 }
 
+/// The first `require(..)`, `module.exports = ..` or `exports.a = ..` of a file, which makes one that neither imports nor
+/// exports a CommonJS module.
+pub fn find_commonjs_indicator(hir: &File) -> Option<ExprId> {
+    (0..hir.exprs.len() as u32).map(ExprId).find(|&e| {
+        matches!(hir[e].kind, ExprKind::Call(_) | ExprKind::Assign { .. })
+            && (require_argument(hir, e).is_some()
+                || matches!(
+                    assignment_declaration_kind(hir, e),
+                    JsDeclarationKind::ModuleExports
+                        | JsDeclarationKind::ExportsProperty(_)
+                        | JsDeclarationKind::ObjectDefinePropertyExports
+                ))
+    })
+}
+
 /// `IsRequireCall`: returns the argument if `e` is `require(x)`.
 pub fn require_argument(hir: &File, e: ExprId) -> Option<ExprId> {
     let ExprKind::Call(c) = hir[e].kind else {
@@ -1914,6 +1929,19 @@ impl<S: Storage> BoundIn<S> {
     pub fn parent_of_stmt(&self, s: StmtId) -> Parent {
         let parent = self.stmt_parent.get(s.idx()).copied();
         parent.unwrap_or_default().get()
+    }
+
+    /// True if `s` is the initializer of a `for` statement, or the left side of a `for`-`in` or `for`-`of` statement.
+    pub fn is_head_of_for(&self, hir: &File, s: StmtId) -> bool {
+        let Parent::Stmt(above) = self.parent_of_stmt(s) else {
+            return false;
+        };
+        matches!(
+            hir[above].kind,
+            StmtKind::For { init: head, .. }
+                | StmtKind::ForIn { left: head, .. }
+                | StmtKind::ForOf { left: head, .. } if head == s
+        )
     }
 
     /// Returns the statement that holds `e` if only expressions and a declarator are between them.

@@ -9,7 +9,7 @@ use bun_collections::{ArrayHashMap, MultiArrayList};
 use bun_semver::String as SemverString;
 use bun_wyhash::Wyhash;
 
-use crate::lockfile::{Lockfile, package};
+use crate::lockfile::Lockfile;
 use crate::{Dependency, DependencyID, INVALID_DEPENDENCY_ID, PackageID, Resolution};
 
 pub use super::installer::Installer;
@@ -98,13 +98,6 @@ impl<T> NewId<T> {
 
 impl Drop for Store {
     fn drop(&mut self) {
-        use entry::EntryColumns as _;
-        for slot in self.entries.items_scripts() {
-            if let Some(list) = slot.take() {
-                // SAFETY: `Installer::drop` waited for every task on the pool, so nothing else references the list boxed in Installer's RunPreinstall step.
-                unsafe { bun_core::heap::destroy(list) };
-            }
-        }
         self.entries.drop_elements();
         self.nodes.drop_elements();
     }
@@ -295,17 +288,6 @@ pub mod entry {
         /// store is built (see `computeEntryHashes`). 0 means "do not use global store"
         /// (root, workspace, folder, symlink, patched).
         pub entry_hash: u64,
-
-        // `Cell` because `Installer::Task::run` writes this slot
-        // from a task thread through `&Store` (each Task is the sole writer for
-        // its own `entry_id`; see Installer.rs). Without interior
-        // mutability the only access path is `&Store → &[Option<_>]` and the
-        // per-entry write would mutate through shared-reference provenance.
-        // Raw `*mut` instead of `Box` so reads don't move out of the cell.
-        // `Cell` (not `UnsafeCell`): payload is `Copy`, so `.get()/.set()` are
-        // zero-unsafe; `Cell` and `UnsafeCell` have identical `Send`/`!Sync`
-        // auto-traits, so the per-entry single-writer discipline is unchanged.
-        pub scripts: core::cell::Cell<Option<*mut package::scripts::List>>,
     }
 
     bun_collections::multi_array_columns! {
@@ -318,7 +300,6 @@ pub mod entry {
             nested_folder: bool,
             peer_hash: PeerHash,
             entry_hash: u64,
-            scripts: core::cell::Cell<Option<*mut package::scripts::List>>,
         }
     }
 
@@ -440,17 +421,15 @@ pub mod entry {
     }
 
     pub struct StorePathFormatter<'a> {
-        pub(crate) entry_id: Id,
-        pub(crate) store: &'a Store,
+        pub(crate) pkg_id: PackageID,
+        pub(crate) peer_hash: PeerHash,
         pub lockfile: &'a Lockfile,
     }
 
     impl<'a> fmt::Display for StorePathFormatter<'a> {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            let peer_hash = self.store.entries.items_peer_hash()[self.entry_id.get() as usize];
-            let pkg_id = self.store.ids(self.entry_id).pkg_id;
-
-            let pkgs = self.lockfile.packages.slice();
+            let (pkg_id, peer_hash) = (self.pkg_id, self.peer_hash);
+            let pkgs = &self.lockfile.packages;
             write!(
                 f,
                 "{}",
@@ -471,12 +450,12 @@ pub mod entry {
 
     pub(crate) fn fmt_store_path<'a>(
         entry_id: Id,
-        store: &'a Store,
+        store: &Store,
         lockfile: &'a Lockfile,
     ) -> StorePathFormatter<'a> {
         StorePathFormatter {
-            entry_id,
-            store,
+            pkg_id: store.ids(entry_id).pkg_id,
+            peer_hash: store.entries.items_peer_hash()[entry_id.get() as usize],
             lockfile,
         }
     }
@@ -498,7 +477,7 @@ pub mod entry {
     /// store (different dependency closures get different directory names).
     pub(crate) fn fmt_global_store_path<'a>(
         entry_id: Id,
-        store: &'a Store,
+        store: &Store,
         lockfile: &'a Lockfile,
     ) -> GlobalStorePathFormatter<'a> {
         GlobalStorePathFormatter {

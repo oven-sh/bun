@@ -1,3 +1,4 @@
+mod appended_pieces;
 mod async_function;
 mod call;
 mod captures;
@@ -59,7 +60,7 @@ use crate::ir::generated::MethodKind;
 use crate::ir::{FunctionId, FunctionKey};
 
 pub use self::context::{FileInputs, LoweringInputs, LoweringOptions, SourceKind};
-pub use self::fragment::{Fragment, ModuleFragment};
+pub use self::fragment::{Fragment, ModuleFragment, NameOfHeir};
 pub use self::layouts::{NamesCreatedOnExports, ObjectTypeKey};
 pub use self::module::{
     LeftOutDeclarations, LibraryFunctions, collect_library_functions, lower_file_that_throws,
@@ -241,6 +242,10 @@ impl FileLowering<'_, '_, '_, '_> {
                 self.lower_private_name_test(function, member);
             }
             FunctionKey::ModuleRequest { call, .. } => self.lower_module_request(function, call),
+            FunctionKey::CopiedGetter { helper, getter, .. } => {
+                self.lower_copied_getter(function, helper, getter);
+            }
+            FunctionKey::PrototypeMaker(_) => self.lower_prototype_maker(function),
         }
     }
 }

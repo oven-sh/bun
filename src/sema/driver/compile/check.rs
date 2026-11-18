@@ -156,7 +156,7 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
     let pass_count = match passes.count {
         PassCount::Exactly(count) => count,
         PassCount::TwoAboveBytesOfText(fits) => {
-            let text = |&file: &FileId| files.module(file).hir.text.len() as u64;
+            let text = |&file: &FileId| files.hir(file).text.len() as u64;
             match to_check.iter().map(text).sum::<u64>() > fits {
                 true => passes_that_wait_for_no_file(files, &to_check, 2),
                 false => 1,
@@ -240,11 +240,7 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
 const THREADS_OF_A_PASS: usize = 16;
 
 fn passes_that_wait_for_no_file(files: &Files<'_>, to_check: &[FileId], most: usize) -> usize {
-    let sizes = || {
-        to_check
-            .iter()
-            .map(|&file| files.module(file).hir.text.len())
-    };
+    let sizes = || to_check.iter().map(|&file| files.hir(file).text.len());
     let largest = sizes().max().unwrap_or(0).max(1);
     (sizes().sum::<usize>() / (largest * THREADS_OF_A_PASS)).clamp(1, most.max(1))
 }
@@ -259,7 +255,7 @@ fn cut_into_passes(files: &Files<'_>, mut to_check: Vec<FileId>, count: usize) -
     let is_large_script =
         |file: &mut FileId| files.hir(*file).is_js && cost_of(*file) >= least_cost;
     let large_scripts: Vec<FileId> = to_check.extract_if(.., is_large_script).collect();
-    let text_size = |file: FileId| files.module(file).hir.text.len();
+    let text_size = |file: FileId| files.hir(file).text.len();
     let mut position_of = vec![u32::MAX; files.modules.len()];
     for (position, &file) in (0u32..).zip(&to_check) {
         position_of[file.idx()] = position;
@@ -379,8 +375,8 @@ fn files_to_check(
 
 fn is_checked_by_kind(files: &Files<'_>, file: FileId) -> bool {
     let (module, options) = (files.module(file), files.options);
-    match module.hir.kind {
-        FileKind::Json => module.hir.has_parse_diagnostics,
+    match module.facts.kind {
+        FileKind::Json => files.hir(file).has_parse_diagnostics,
         FileKind::Declaration => {
             !options.skip_lib_check && !(options.skip_default_lib_check && module.is_lib)
         }

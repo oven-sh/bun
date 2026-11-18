@@ -24,9 +24,9 @@ use crate::ir::{DeclaredType, Id, LayoutId, LayoutKey, PropertyKeyId, TypeId};
 
 pub(in crate::lower) use self::classes::{class_position, define_class_layout, private_key};
 pub use self::containers::NamesCreatedOnExports;
-pub(in crate::lower) use self::object_types::KnownOrders;
 pub use self::object_types::ObjectTypeKey;
-use self::object_types::{DescribedNames, ListedFields, SortedMember};
+use self::object_types::{DescribedNames, HolderInProgress, ListedFields, SortedMember};
+pub(in crate::lower) use self::object_types::{KnownOrders, can_be_field};
 pub(in crate::lower) use self::own_fields::OwnFields;
 
 #[derive(Default)]
@@ -36,10 +36,9 @@ pub(crate) struct LayoutState {
     listed_fields: Vec<Option<Rc<ListedFields>>>,
     source_types: Vec<SmallVec<[CheckerTypeId; 1]>>,
     types_of_layouts: FxHashSet<(LayoutId, CheckerTypeId)>,
-    holder_in_progress: Option<CheckerTypeId>,
+    holder_in_progress: Option<HolderInProgress>,
     holders: FxHashMap<CheckerTypeId, CheckerTypeId>,
     growing: FxHashSet<LayoutId>,
-    object_types: FxHashMap<CheckerTypeId, Option<LayoutId>>,
     sorted_members: FxHashMap<CheckerTypeId, Arc<[SortedMember]>>,
     described_names: DescribedNames,
     dictionaries: FxHashMap<CheckerTypeId, bool>,
@@ -184,7 +183,7 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     pub(crate) fn note_what_is_built(&mut self, ty: TypeId, limit: LimitId) {
-        let Some(layouts) = self.collect_reached_layouts(ty, limit) else {
+        let Some(layouts) = self.collect_reached_layouts(ty, limit, true) else {
             return;
         };
         for layout in layouts {
@@ -220,6 +219,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 | LayoutKey::Library(_)
                 | LayoutKey::UntypedLiteral { .. }
                 | LayoutKey::CreatedObject { .. }
+                | LayoutKey::PrototypeMaker(_)
                 | LayoutKey::Container(_)
                 | LayoutKey::Environment { .. }
                 | LayoutKey::ModuleInstance(_) => {}

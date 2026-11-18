@@ -64,6 +64,10 @@ describe.concurrent("the enumerable members of host prototypes", () => {
     ["typeof", `console.log(typeof value.__proto__);`],
     ["a name read from the prototype of a record", `console.log(typeof Object.getPrototypeOf({ a: 1 }).later);`],
     [
+      "two steps from what two tests left",
+      `if (typeof value === "object" && value !== null) console.log(String(Object.getPrototypeOf(Object.getPrototypeOf(value)) === null));`,
+    ],
+    [
       "a name read from the prototype of a text or a record",
       `console.log(typeof Object.getPrototypeOf(process.argv[3] ? "x" : {}).later);`,
     ],

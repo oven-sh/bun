@@ -1,5 +1,5 @@
 // One file written under a type that cannot read it and under "text": the first import throws, the second answers the string, and what it read answers the types behind it, as under `bun <file>`.
-// `bun build --compile` stops at such a program. The build with --aot gives the written types of one file the form of the first, as the bundler does: here that form only throws, and "text" threw with it.
+// `bun build --compile` stops at such a program. The build with --aot gave the written types of one file the form of the first: here that form only throws, and "text" threw with it.
 const say = (label, load) =>
   load().then(
     it => console.log(label, typeof it.default, JSON.stringify(it.default)),

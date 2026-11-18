@@ -34,7 +34,7 @@ impl DevServer {
             router_type_main: match router_type.server_file_string.get() {
                 Some(s) => s,
                 None => 'str: {
-                    let name = &self.server_graph.bundled_files.keys()[from_opaque_file_id::<
+                    let name = &self.graphs.server.bundled_files.keys()[from_opaque_file_id::<
                         { bake::Side::Server },
                     >(
                         router_type.server_file
@@ -44,7 +44,7 @@ impl DevServer {
                     let mut buf = paths::path_buffer_pool::get();
                     let s = bun_string_jsc::create_utf8_for_js(
                         global,
-                        relative_path(&self.root, &mut *buf, name),
+                        relative_path(&self.graphs.root, &mut *buf, name),
                     )?;
                     router_type.server_file_string = jsc::StrongOptional::create(s, global);
                     break 'str s;
@@ -54,7 +54,7 @@ impl DevServer {
             route_modules: match framework_bundle.cached_module_list.get() {
                 Some(a) => a,
                 None => 'arr: {
-                    let keys = self.server_graph.bundled_files.keys();
+                    let keys = self.graphs.server.bundled_files.keys();
                     let mut n: usize = 1;
                     let mut route = self.router.route_ptr(route_index);
                     loop {
@@ -69,7 +69,7 @@ impl DevServer {
                     {
                         let mut buf = paths::path_buffer_pool::get();
                         let route_name = relative_path(
-                            &self.root,
+                            &self.graphs.root,
                             &mut *buf,
                             &keys[from_opaque_file_id::<{ bake::Side::Server }>(
                                 route.file_page.unwrap(),
@@ -87,7 +87,7 @@ impl DevServer {
                         if let Some(layout) = route.file_layout {
                             let mut buf = paths::path_buffer_pool::get();
                             let layout_name = relative_path(
-                                &self.root,
+                                &self.graphs.root,
                                 &mut *buf,
                                 &keys[from_opaque_file_id::<{ bake::Side::Server }>(layout).get()
                                     as usize],
@@ -115,13 +115,10 @@ impl DevServer {
                     let generation: u32 = client_script_generation;
                     // Fixed 8-char native-endian byte hex per u32; `on_js_request`
                     // slices exactly 16 chars and decodes via `parse_hex_to_u64`.
-                    let mut hex = [0u8; 16];
-                    bun_core::fmt::bytes_to_hex_lower(&bundle_index.to_ne_bytes(), &mut hex[..8]);
-                    bun_core::fmt::bytes_to_hex_lower(&generation.to_ne_bytes(), &mut hex[8..]);
-                    // SAFETY: `bytes_to_hex_lower` writes ASCII [0-9a-f] only.
-                    let hex_str = unsafe { ::core::str::from_utf8_unchecked(&hex) };
                     let js = BunString::create_format(format_args!(
-                        "{CLIENT_PREFIX}/route-{hex_str}.js",
+                        "{CLIENT_PREFIX}/route-{}{}.js",
+                        bun_core::fmt::hex_lower(&bundle_index.to_ne_bytes()),
+                        bun_core::fmt::hex_lower(&generation.to_ne_bytes()),
                     ))
                     .into_js(global)?;
                     framework_bundle.cached_client_bundle_url =
@@ -163,10 +160,7 @@ impl DevServer {
             let url_bunstr = match &req {
                 // SAFETY: r is a uws Request ptr valid for the duration of the handler callback
                 SavedRequestUnion::Stack(r) => bun_core::StringView::borrow_utf8((**r).url()),
-                SavedRequestUnion::Saved(data) => {
-                    // SAFETY: data.request is a live *mut webcore::Request (held strong by ctx)
-                    bun_core::StringView::new(unsafe { (*data.request).url.get() })
-                }
+                SavedRequestUnion::Saved(data) => bun_core::StringView::new(data.request.url.get()),
             };
             let url = url_bunstr.to_utf8();
             // Extract pathname from URL (remove protocol, host, query, hash)
@@ -221,8 +215,7 @@ impl DevServer {
             None => {
                 let payload = Self::generate_html_payload(
                     &self.graph_safety_lock,
-                    &self.server_graph,
-                    &mut self.client_graph,
+                    &mut self.graphs,
                     route_bundle_index,
                     route_bundle,
                 )
@@ -264,8 +257,7 @@ impl DevServer {
     /// Takes the fields it needs, so that the caller can keep its borrow of `route_bundle`.
     fn generate_html_payload(
         graph_safety_lock: &ThreadLock,
-        server_graph: &IncrementalGraph<{ bake::Side::Server }>,
-        client_graph: &mut IncrementalGraph<{ bake::Side::Client }>,
+        graphs: &mut Graphs,
         route_bundle_index: route_bundle::Index,
         route_bundle: &RouteBundle,
     ) -> crate::Result<Vec<u8>> {
@@ -301,15 +293,12 @@ impl DevServer {
         let _lock = graph_safety_lock.guard();
 
         // Prepare bitsets for tracing
-        let mut gts = GraphTraceState::new(
-            server_graph.bundled_files.len(),
-            client_graph.bundled_files.len(),
-        )?;
+        let mut gts = graphs.init_graph_trace_state(0)?;
         // Run tracing
-        client_graph.reset();
-        client_graph.trace_imports(html.bundled_file, &mut gts, TraceImportGoal::FindCss)?;
+        graphs.client.reset();
+        graphs.trace_imports(html.bundled_file, &mut gts, TraceImportGoal::FindCss)?;
 
-        let css_ids: &[u64] = &client_graph.current_css_files;
+        let css_ids: &[u64] = &graphs.client.current_css_files;
 
         let payload_size = bundled_html.len()
             + ("<link rel=\"stylesheet\" href=\"".len()
@@ -380,27 +369,30 @@ impl DevServer {
         w.extend_from_slice(b": [ [");
         let mut any = false;
         for import in import_records[index.get() as usize].as_slice() {
-            if import.source_index.is_valid() {
-                if !loaders[import.source_index.get() as usize].is_javascript_like() {
+            let module_id = if import.source_index.is_valid() {
+                let import_index = import.source_index.get() as usize;
+                if !loaders[import_index].is_javascript_like() {
                     continue; // ignore non-JavaScript imports
                 }
+                // The record can still hold the specifier as written.
+                input_file_sources[import_index].path.pretty
             } else {
                 // Find the in-graph import.
-                let Some(file) = self.client_graph.bundled_files.get(import.path.text) else {
+                let Some(file) = self.graphs.client.bundled_files.get(import.path.text) else {
                     continue;
                 };
                 if !matches!(file.content, incremental_graph::Content::Js(_)) {
                     continue;
                 }
-            }
+                import.path.pretty
+            };
             if !any {
                 any = true;
                 w.extend_from_slice(b"\n");
             }
             w.extend_from_slice(b"    ");
             bun_js_printer::write_json_string::<_, { bun_js_printer::Encoding::Utf8 }>(
-                import.path.pretty,
-                w,
+                module_id, w,
             )?;
             w.extend_from_slice(b", 0,\n");
         }
@@ -508,13 +500,13 @@ impl DevServer {
         let _lock = self.graph_safety_lock.guard();
 
         // Prepare bitsets
-        let mut gts = self.init_graph_trace_state(0)?;
+        let mut gts = self.graphs.init_graph_trace_state(0)?;
 
         // Run tracing
-        self.client_graph.reset();
+        self.graphs.client.reset();
         // `current_chunk_parts`/`current_chunk_len` are scratch buffers shared with
         // the HMR pipeline. We must leave them cleared on every exit path.
-        let mut reset_on_exit = scopeguard::guard(self, |this| this.client_graph.reset());
+        let mut reset_on_exit = scopeguard::guard(self, |this| this.graphs.client.reset());
         let this = &mut **reset_on_exit;
         match root {
             route_bundle::TraceRoot::Framework(route_index) => this.trace_all_route_imports(
@@ -522,7 +514,7 @@ impl DevServer {
                 &mut gts,
                 TraceImportGoal::FindClientModules,
             )?,
-            route_bundle::TraceRoot::Html(bundled_file) => this.client_graph.trace_imports(
+            route_bundle::TraceRoot::Html(bundled_file) => this.graphs.trace_imports(
                 bundled_file,
                 &mut gts,
                 TraceImportGoal::FindClientModules,
@@ -532,15 +524,16 @@ impl DevServer {
         let mut react_fast_refresh_id: &[u8] = b"";
         if let Some(rfr) = &this.framework.react_fast_refresh {
             'brk: {
-                let Some(rfr_index) = this.client_graph.get_file_index(&rfr.import_source) else {
+                let Some(rfr_index) = this.graphs.client.get_file_index(&rfr.import_source) else {
                     break 'brk;
                 };
                 if !this
-                    .client_graph
+                    .graphs
+                    .client
                     .stale_files
                     .is_set(rfr_index.get() as usize)
                 {
-                    this.client_graph.trace_imports(
+                    this.graphs.trace_imports(
                         rfr_index,
                         &mut gts,
                         TraceImportGoal::FindClientModules,
@@ -575,7 +568,7 @@ impl DevServer {
             source_map_store::PutOrIncrementRefCount::Uninitialized(entry) => {
                 gts.clear_and_free();
                 // allocates internally with the global allocator in the port.
-                if let Err(err) = this.client_graph.take_source_map(entry) {
+                if let Err(err) = this.graphs.client.take_source_map(entry) {
                     this.source_maps.unref(script_id);
                     return Err(err);
                 }
@@ -584,15 +577,16 @@ impl DevServer {
         }
 
         let initial_entry: &[u8] = if let Some(idx) = client_file {
-            &this.client_graph.bundled_files.keys()[idx.get() as usize]
+            &this.graphs.client.bundled_files.keys()[idx.get() as usize]
         } else {
             b""
         };
         let client_bundle =
-            this.client_graph
+            this.graphs
+                .client
                 .take_js_bundle(&incremental_graph::TakeJSBundleOptionsClient {
                     kind: crate::bake::dev_server::ChunkKind::InitialResponse,
-                    root: &this.root,
+                    root: &this.graphs.root,
                     configuration_hash_key: &this.configuration_hash_key,
                     initial_response_entry_point: initial_entry,
                     react_refresh_entry_point: react_fast_refresh_id,
@@ -607,13 +601,13 @@ impl DevServer {
         let _lock = self.graph_safety_lock.guard();
 
         // Prepare bitsets
-        let mut gts = self.init_graph_trace_state(0)?;
+        let mut gts = self.graphs.init_graph_trace_state(0)?;
 
         // Run tracing
-        self.client_graph.reset();
+        self.graphs.client.reset();
         self.trace_all_route_imports(route_index, &mut gts, TraceImportGoal::FindCss)?;
 
-        let names: &[u64] = &self.client_graph.current_css_files;
+        let names: &[u64] = &self.graphs.client.current_css_files;
         let global = self.vm().global();
         let arr = jsc::JSArray::create_empty(global, names.len())?;
         for (i, item) in names.iter().enumerate() {

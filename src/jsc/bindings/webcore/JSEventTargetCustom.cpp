@@ -41,11 +41,6 @@
 namespace WebCore {
 using namespace JSC;
 
-JSValue toJSNewlyCreated(JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<EventTarget>&& value)
-{
-    return createWrapper<EventTarget>(globalObject, WTF::move(value));
-}
-
 EventTarget* JSEventTarget::toWrapped(VM& vm, JSValue value)
 {
     // if (value.inherits<JSWindowProxy>())

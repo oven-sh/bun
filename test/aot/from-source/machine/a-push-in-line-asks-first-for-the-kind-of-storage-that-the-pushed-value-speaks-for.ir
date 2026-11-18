@@ -8,7 +8,7 @@
 # f1 = bits, f2 = halves, f3 = cells, f4 = behindOne
 # Nothing is declared of the list. The push in line asked for the kinds of storage in one order whatever was pushed: lists of any values (9), of doubles (7), of int32s (5): a whole number ran seven instructions of questions
 # and the third hit. The order follows what is known of the list, and the pushed value only where nothing is: a whole number onto a list born empty, or out of sight: lists of int32s first. Onto a list born in sight of a
-# literal with elements, which is made for any values: that kind first, as before, and lists of int32s second. A double keeps the old order: a double that is whole goes into a list as an int32, so it speaks for no kind.
+# literal with elements, which is made for any values: that kind first, as before, and lists of int32s second, in line too, by the kind that is loaded once for both. A double keeps the old order: a double that is whole goes into a list as an int32, so it speaks for no kind.
 # RUN: emit f1:Body mechanisms=all
 # CHECK-LABEL: unit f1:Body
 # CHECK: = Load8Z({{*}}JSArray_indexingTypeAndMisc)
@@ -26,8 +26,8 @@
 # CELLS: Int32 @[[first]] = Const32(9)
 # RUN(BEHIND): emit f4:Body mechanisms=all
 # BEHIND-LABEL: unit f4:Body
-# BEHIND: = Load8Z({{*}}JSArray_indexingTypeAndMisc)
-# BEHIND: = Equal({{*}}, @[[first]])
-# BEHIND: = Equal({{*}}, @[[second]])
+# BEHIND: Int32 @[[kind]] = Load8Z({{*}}JSArray_indexingTypeAndMisc)
+# BEHIND: = Equal(@[[kind]], @[[first]])
+# BEHIND: = Equal(@[[kind]], @[[second]])
 # BEHIND: Int32 @[[first]] = Const32(9)
 # BEHIND: Int32 @[[second]] = Const32(5)

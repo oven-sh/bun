@@ -6,7 +6,7 @@ use crate::bind::{BindOptions, RuntimeBindOptions};
 use crate::file_analysis::{
     AnalyzedAgain, AnalyzedAgainFrom, FileAnalysis, FileInputs, analyze_file, analyze_file_again,
 };
-use crate::fold::{FoldInputs, StoredByMocks};
+use crate::fold::{Constant, FoldInputs, StoredByMocks};
 use crate::hir_from_data::HostValue;
 use crate::import_sites::{AutomaticJsx, JsxMode, find_exported_requires};
 use crate::module_format::{DeclaredModuleType, ModuleFormat, find_format_by_syntax};
@@ -80,8 +80,17 @@ pub(super) fn load_code_file<'s, 'r>(
     let path = key.path;
     let _step = file_steps::count(FileStep::LoadCode);
     let specifies_esm = Files::specifies_esm(resolver, options, path, false);
-    let settings = resolver.transpile_settings(path);
-    let mut tree = accept_tree(context, arena, key, settings, is_only_imported, text);
+    let is_javascript = is_javascript_file(context.host, path);
+    let settings = resolver.transpile_settings_as(path, || is_javascript);
+    let mut tree = accept_tree(
+        context,
+        arena,
+        key,
+        settings,
+        is_javascript,
+        is_only_imported,
+        text,
+    );
     debug_assert!(tree.hir.kind != FileKind::Declaration);
     write_what_other_files_say(&mut tree.hir, inputs, arena);
     tree.hir.runs_beside_loader = context.host.has_loader_at_run_time();
@@ -109,7 +118,8 @@ pub(super) fn load_code_file<'s, 'r>(
     }
     let (bound, analyzed) = analyze(context, arena, key, settings, stored_by_mocks, &mut tree);
     if !tree.request.options.keeps_comments {
-        let is_read_later = crate::import_sites::may_spell_word_that_mock_looks_for;
+        let words = crate::import_sites::MockWordsInText::of(&tree.hir.text);
+        let is_read_later = |comment: &[u8]| words.may_be_spelled_in(comment);
         crate::erasure::keep_only_comments_beside_types_and(&mut tree.hir, arena, is_read_later);
     }
     rename_private_names_with(&mut tree.hir, &bound, atoms, path, |reference, _| {
@@ -144,6 +154,12 @@ fn write_what_other_files_say<'s>(
         ArenaFew::from_iter_in(inputs.texts_of_other_files.iter().copied(), arena);
     hir.exports_that_others_touch =
         ArenaFew::from_iter_in(inputs.exports_that_others_touch.iter().copied(), arena);
+}
+
+fn learns_unknown_import_of_texts(hir: &hir::File<'_>, constants: &[ImportedConstant]) -> bool {
+    let lacking = &hir.unknown_imports_of_texts;
+    let mut known = (constants.iter()).filter(|it| !matches!(it.value, Constant::BigInt(_)));
+    known.any(|it| lacking.contains(&it.name))
 }
 
 fn fold_inputs_of<'c, 's: 'c>(
@@ -241,6 +257,9 @@ pub(super) fn analyze_code_file_again<'s, 'r>(
         mut code,
         payload,
     } = loaded;
+    if learns_unknown_import_of_texts(&parse.hir, inputs.imported_constants) {
+        return None;
+    }
     write_what_other_files_say(&mut parse.hir, inputs, arena);
     parse.hir.runs_beside_loader = context.host.has_loader_at_run_time();
     let previous = &code.analyzed;
@@ -287,9 +306,9 @@ fn parse_options_of(
     context: &CodeLoadContext<'_, '_, '_>,
     path: &[u8],
     settings: &TranspileSettings,
+    is_javascript: bool,
 ) -> ParseOptions {
     let project = context.projects.governing_code(context, path);
-    let is_javascript = is_javascript_file(context.host, path);
     let options = project.unwrap_or(context.options).for_parsing();
     ParseOptions {
         experimental_decorators: !is_javascript
@@ -309,6 +328,7 @@ fn accept_tree<'s, 'r>(
     arena: &'s Arena,
     key: LoadKey<'r>,
     settings: &'r TranspileSettings,
+    is_javascript: bool,
     is_only_imported: bool,
     text: Cow<'static, [u8]>,
 ) -> AcceptedTree<'s, 'r> {
@@ -319,8 +339,8 @@ fn accept_tree<'s, 'r>(
     let request = CodeParseRequest {
         path,
         loader: key.loader,
-        options: parse_options_of(context, path, settings),
-        reads_jsdoc: is_javascript_file(host, path),
+        options: parse_options_of(context, path, settings, is_javascript),
+        reads_jsdoc: is_javascript,
         settings,
         declared_module_type: declared_module_type_of(context, path, is_only_imported),
     };
@@ -458,7 +478,7 @@ fn analyze<'s, 'r>(
         is_package_type_module: resolver.is_package_type_module(path),
         package: resolver.enclosing_package(path),
         side_effects: resolver.declared_side_effects(path),
-        is_aot_source: !is_javascript_file(host, path) && resolver.is_in_aot_package(path),
+        is_aot_source: !tree.request.reads_jsdoc && resolver.is_in_aot_package(path),
         import_meta_main,
     };
     (bound, analyzed)

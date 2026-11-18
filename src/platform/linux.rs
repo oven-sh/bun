@@ -3,11 +3,6 @@
 //! If an API can be implemented on multiple platforms,
 //! it does not belong in this namespace.
 
-// LAYERING: `LinuxMemFdAllocator` lives in `bun_runtime::allocators` (it pulls in
-// `bun_core`/`bun_sys`/`bun_ptr`); `bun_platform` is below `bun_runtime` so cannot
-// re-export it. A re-export here would have no consumers — `Blob`/`Store` already
-// path through `crate::allocators::linux_mem_fd_allocator` directly.
-
 /// Raw 6-argument Linux syscall. Returns the kernel return value directly
 /// (on error, `-errno` in the range `-4095..=-1`). No libc trampoline, no
 /// thread-local `errno` read or write. The C caller in `epoll_kqueue.c`

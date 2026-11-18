@@ -48,7 +48,8 @@ impl DeferredBatchTask {
     /// Bundle thread. The caller has counted the hop as a pending item (`BundleV2::drain_deferred_tasks`).
     pub(crate) fn schedule(&mut self) {
         let task = ConcurrentTask::create(Task::init(std::ptr::from_mut::<Self>(self)));
-        self.get_bundle_v2().enqueue_on_js_loop_for_plugins(task);
+        // Refused: the VM was torn down mid-bundle, the hop never runs.
+        let _ = self.get_bundle_v2().js_loop_for_plugins().post(task);
     }
 
     /// Plugins' (JS) thread.
@@ -72,7 +73,7 @@ impl DeferredBatchTask {
         }
         let this: *mut Self = self;
         let bv2 = self.get_bundle_v2();
-        match bv2.any_loop_mut() {
+        match bv2.any_loop() {
             // bake: the plugins run on the loop that runs the bundle; already there.
             bun_event_loop::AnyEventLoop::Js { .. } => bv2.decrement_scan_counter(),
             bun_event_loop::AnyEventLoop::Mini(mini) => {

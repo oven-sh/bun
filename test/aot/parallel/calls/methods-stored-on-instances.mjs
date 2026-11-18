@@ -1,4 +1,3 @@
-// STATISTIC: ShadowedMethodsKeepingIterations >= 1
 // A method that the program stores on some instances: the loop asks in an arm of its own and goes on.
 const box = JSON.parse("{}");
 const [key] = JSON.parse('["hidden"]');

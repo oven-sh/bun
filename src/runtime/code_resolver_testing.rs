@@ -72,7 +72,7 @@ impl DiskWithBuiltinModules {
             }
         }
         // SAFETY: the thread of the VM waits in the native call that makes this host and drops it.
-        let file_finder = unsafe { FileFinder::new(&vm.transpiler, conditions) };
+        let file_finder = unsafe { FileFinder::new(vm.transpiler.get(), conditions) };
         DiskWithBuiltinModules {
             disk,
             modules,
@@ -319,10 +319,16 @@ fn vm_code_options(vm: &VirtualMachine, root: &[u8]) -> CodeOptions {
     let top_level_directory = from_native(vm.top_level_dir());
     let node_path = vm.env_loader().get(b"NODE_PATH").unwrap_or_default();
     let separator: &[u8] = if cfg!(windows) { b";" } else { b":" };
-    let tsconfig_override = vm.transpiler.resolver.opts.tsconfig_override.as_deref();
+    let tsconfig_override = vm
+        .transpiler
+        .get()
+        .resolver
+        .opts
+        .tsconfig_override
+        .as_deref();
     let mut code = CodeOptions::bun_run(root);
     code.remove_condition(AOT_CONDITION);
-    code.preserves_symlinks = vm.transpiler.resolver.opts.preserve_symlinks;
+    code.preserves_symlinks = vm.transpiler.get().resolver.opts.preserve_symlinks;
     code.node_paths = strings::tokenize(node_path, separator)
         .map(|entry| from_argument(&top_level_directory, entry))
         .collect();
@@ -602,7 +608,7 @@ pub(crate) fn describe_code_graph(
         code.add_custom_condition(condition);
     }
     let vm = cx.global().bun_vm();
-    code.preserves_symlinks = vm.transpiler.resolver.opts.preserve_symlinks;
+    code.preserves_symlinks = vm.transpiler.get().resolver.opts.preserve_symlinks;
     let host =
         DiskWithBuiltinModules::new(vm, threads, &working_directory, &code.custom_conditions);
 

@@ -247,6 +247,7 @@ describe.skipIf(!!unsupported)("compile/aot/two-builds-give-the-same-bytes", () 
         const executable = join(String(dir), isWindows ? "built.exe" : "built");
         const hashes: string[] = [];
         const printed: string[] = [];
+        const exitCodes: (number | null)[] = [];
         for (let build = 1; build <= 2; build++) {
           for (const folder of folders) {
             if (build === 2) change?.(join(String(dir), folder));
@@ -263,10 +264,13 @@ describe.skipIf(!!unsupported)("compile/aot/two-builds-give-the-same-bytes", () 
           ];
           built(await spawned([...command, "--outfile", executable], join(String(dir), working), bunEnv));
           hashes.push(Bun.hash(readFileSync(executable)).toString(16));
-          printed.push((await spawned([executable], String(dir), bunEnv)).stdout);
+          const ran = await spawned([executable], String(dir), bunEnv);
+          printed.push(ran.stdout);
+          exitCodes.push(ran.exitCode);
           rmSync(executable);
         }
         expect(printed[1]).toBe(printed[0]);
+        expect(exitCodes).toEqual([0, 0]);
         expect(hashes[1]).toBe(hashes[0]);
       });
     },

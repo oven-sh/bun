@@ -1,18 +1,21 @@
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
 use bun_sema::atom::{Atom, Interner, known};
+use bun_sema::fold::Constant;
 use bun_sema::hir::{
     BinOp, Call, CallId, Chain, ClassId, ExprId, ExprKind, File, Flags, FnBody, FnId, FnKind,
-    IdList, MemberKind, PatId, PatKind, PropKey, PropKind, StmtId, StmtKind, UnOp, VarKind,
+    IdList, ImportId, ImportedName, MemberKind, PatId, PatKind, PropKey, PropKind, StmtId,
+    StmtKind, UnOp, VarKind,
 };
 use bun_sema_driver::host::from_argument;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::strings;
 use super::values::{EnvironmentId, Global, Matcher, Object, ObjectId, Value};
-use super::{CodeBeside, EvaluatingCall};
+use super::{CodeBeside, EvaluatingCall, EvaluatingKind};
 
 const ALLOWANCE: u32 = 1 << 18;
 pub(super) const TEXT_PER_SOURCE: usize = 8;
@@ -65,6 +68,7 @@ pub(super) struct Evaluator<'a, 's> {
     appended: u32,
     evals: FxHashSet<CallId>,
     calls_of_function: FxHashSet<CallId>,
+    indirect_evals: FxHashSet<CallId>,
     texts: Vec<(CallId, Vec<Rc<[u8]>>)>,
     noted: FxHashSet<(CallId, Vec<Rc<[u8]>>)>,
     text_allowance: usize,
@@ -73,6 +77,10 @@ pub(super) struct Evaluator<'a, 's> {
     closures: FxHashMap<FnId, EnvironmentId>,
     ends: FxHashMap<FnId, u32>,
     prototypes: FxHashMap<FnId, FxHashMap<Rc<[u8]>, Value>>,
+    properties_of_globals: FxHashMap<(Global, Rc<[u8]>), Value>,
+    imports: FxHashMap<Atom, ImportedName>,
+    imported_constants: FxHashMap<ImportedName, Value>,
+    unknown_imports: RefCell<FxHashSet<ImportedName>>,
     evaluating: FxHashSet<FnId>,
     evaluating_methods: Vec<(FnId, FnId)>,
     receiver: Value,
@@ -96,10 +104,8 @@ impl<'a, 's> Evaluator<'a, 's> {
         text_allowance: usize,
     ) -> Self {
         let appended = hir.text.len() as u32 - hir.written_text_end();
-        let calls_of = |is_of_function: bool| {
-            let calls = calls
-                .iter()
-                .filter(|it| it.is_of_function == is_of_function);
+        let calls_of = |kind: EvaluatingKind| {
+            let calls = calls.iter().filter(|it| it.kind == kind);
             calls.map(|it| it.call).collect()
         };
         Evaluator {
@@ -109,8 +115,9 @@ impl<'a, 's> Evaluator<'a, 's> {
             first_call,
             files: FxHashMap::default(),
             appended,
-            evals: calls_of(false),
-            calls_of_function: calls_of(true),
+            evals: calls_of(EvaluatingKind::DirectEval),
+            calls_of_function: calls_of(EvaluatingKind::Function),
+            indirect_evals: calls_of(EvaluatingKind::IndirectEval),
             texts: Vec::new(),
             noted: FxHashSet::default(),
             text_allowance,
@@ -129,6 +136,10 @@ impl<'a, 's> Evaluator<'a, 's> {
             closures: FxHashMap::default(),
             ends: FxHashMap::default(),
             prototypes: FxHashMap::default(),
+            properties_of_globals: FxHashMap::default(),
+            imports: FxHashMap::default(),
+            imported_constants: FxHashMap::default(),
+            unknown_imports: RefCell::default(),
             evaluating: calls
                 .iter()
                 .flat_map(|it| it.functions.iter().copied())
@@ -170,8 +181,26 @@ impl<'a, 's> Evaluator<'a, 's> {
             self.declare(EnvironmentId(0), name, value);
         }
         let hir = self.hir;
-        for import in hir.imports.iter().filter(|it| !it.type_only) {
+        let imports = (0..).map(ImportId).zip(hir.imports.iter());
+        for (id, import) in imports.filter(|(_, it)| !it.type_only) {
             let Some(module) = Global::of_module(self.atoms.bytes(import.spec)) else {
+                let whole = [
+                    (import.default, known::default),
+                    (import.namespace, Atom::NONE),
+                ];
+                let named = import.named.iter().map(|spec| hir[spec]);
+                let named = named.map(|spec| (spec.local, spec.imported));
+                for (local, export) in whole.into_iter().chain(named) {
+                    if local.is_some() {
+                        self.declare(EnvironmentId(0), local, Value::Unknown);
+                        let name = ImportedName {
+                            import: id,
+                            export,
+                            member: Atom::NONE,
+                        };
+                        self.imports.insert(local, name);
+                    }
+                }
                 continue;
             };
             for whole in [import.default, import.namespace] {
@@ -188,13 +217,40 @@ impl<'a, 's> Evaluator<'a, 's> {
         }
     }
 
+    fn declare_imported_constants(&mut self) {
+        let hir = self.hir;
+        for constant in hir.imported_constants.iter() {
+            let value = match constant.value {
+                Constant::String(text) => self.string(self.atoms.bytes(text).to_vec()),
+                Constant::Number(number) => Value::Number(number),
+                Constant::Boolean(value) => Value::Boolean(value),
+                Constant::Null => Value::Null,
+                Constant::Undefined => Value::Undefined,
+                Constant::BigInt(_) => Value::Unknown,
+            };
+            self.imported_constants.insert(constant.name, value);
+        }
+        let known: Vec<(Atom, Value)> = (self.imports.iter())
+            .filter_map(|(&local, name)| Some((local, self.imported_constants.get(name)?.clone())))
+            .collect();
+        for (local, value) in known {
+            self.declare(EnvironmentId(0), local, value);
+        }
+    }
+
+    pub(super) fn into_unknown_imports(self) -> FxHashSet<ImportedName> {
+        self.unknown_imports.into_inner()
+    }
+
     pub(super) fn find_texts(
-        mut self,
+        &mut self,
         calls: &[EvaluatingCall],
     ) -> (Vec<(CallId, Vec<Rc<[u8]>>)>, usize) {
         self.declare_module_names();
+        self.declare_imported_constants();
         self.hoist(self.hir.body);
         self.statements(self.hir.body);
+        self.call_methods_of_globals();
         for call in calls {
             let mut around = EnvironmentId(0);
             for &function in &call.functions {
@@ -207,7 +263,55 @@ impl<'a, 's> Evaluator<'a, 's> {
             }
         }
         self.construct_with_constants();
-        (self.texts, self.text_allowance)
+        (std::mem::take(&mut self.texts), self.text_allowance)
+    }
+
+    fn call_methods_of_globals(&mut self) {
+        let hir = self.hir;
+        let mut added = self.properties_of_globals.values();
+        if !added.any(|it| matches!(it, Value::Function(it, _) if self.evaluating.contains(it))) {
+            return;
+        }
+        self.renew_allowance();
+        type Arguments = Vec<(bool, Option<Rc<[u8]>>)>;
+        let mut called: FxHashSet<(FnId, Arguments)> = FxHashSet::default();
+        for expression in hir.exprs.iter() {
+            let ExprKind::Call(call) = expression.kind else {
+                continue;
+            };
+            let site = hir[call];
+            let ExprKind::Dot { obj, name, .. } = hir[hir.skip_type_assertions(site.callee)].kind
+            else {
+                continue;
+            };
+            let holder = match hir[hir.skip_type_assertions(obj)].kind {
+                ExprKind::Ident(name) => self.read(name),
+                _ => Value::Unknown,
+            };
+            let method = match holder {
+                Value::Global(_) => self.property(&holder, self.atoms.bytes(name)),
+                _ => self.method_of_global(self.atoms.bytes(name)),
+            };
+            let Value::Function(function, around) = method else {
+                continue;
+            };
+            let args: Vec<Value> = hir.ids(site.args).map(|it| self.constant(it)).collect();
+            let key = args
+                .iter()
+                .map(|it| (it.as_string().is_some(), it.to_text()));
+            if args.iter().any(Value::is_known) && called.insert((function, key.collect())) {
+                self.call_function(function, around, &args, holder);
+            }
+        }
+    }
+
+    fn method_of_global(&self, name: &[u8]) -> Value {
+        let mut methods = (self.properties_of_globals.iter())
+            .filter(|((holder, key), _)| holder.is_prototype_of_class() && **key == *name);
+        match (methods.next(), methods.next()) {
+            (Some((_, method @ Value::Function(..))), None) => method.clone(),
+            _ => Value::Unknown,
+        }
     }
 
     fn construct_with_constants(&mut self) {
@@ -462,6 +566,11 @@ impl<'a, 's> Evaluator<'a, 's> {
 
     fn read(&self, name: Atom) -> Value {
         if let Some(environment) = self.environment_of(name) {
+            if environment == EnvironmentId(0)
+                && let Some(&import) = self.imports.get(&name)
+            {
+                self.note_import(import);
+            }
             let value = self.environments[environment.0].variables.get(&name);
             return value.cloned().unwrap_or(Value::Unknown);
         }
@@ -471,11 +580,36 @@ impl<'a, 's> Evaluator<'a, 's> {
             b"Infinity" => Value::Number(f64::INFINITY),
             b"Object" => Value::Global(Global::Object),
             b"Array" => Value::Global(Global::Array),
+            b"Date" => Value::Global(Global::Date),
+            b"Number" => Value::Global(Global::Number),
             b"String" => Value::Global(Global::String),
             b"RegExp" => Value::Global(Global::RegExp),
             b"URL" => Value::Global(Global::Url),
             _ => Value::Unknown,
         }
+    }
+
+    fn note_import(&self, name: ImportedName) {
+        let is_value = name.export.is_some() || name.member.is_some();
+        if is_value && !self.imported_constants.contains_key(&name) {
+            self.unknown_imports.borrow_mut().insert(name);
+        }
+    }
+
+    fn imported_member(&self, holder: ExprId, member: Atom) -> Option<Value> {
+        let hir = self.hir;
+        let ExprKind::Ident(local) = hir[hir.skip_type_assertions(holder)].kind else {
+            return None;
+        };
+        let holder = *self.imports.get(&local)?;
+        if self.environment_of(local) != Some(EnvironmentId(0))
+            || self.imported_constants.contains_key(&holder)
+        {
+            return None;
+        }
+        let name = ImportedName { member, ..holder };
+        self.note_import(name);
+        self.imported_constants.get(&name).cloned()
     }
 
     fn assign(&mut self, name: Atom, value: Value) {
@@ -1330,13 +1464,17 @@ impl<'a, 's> Evaluator<'a, 's> {
             }
             ExprKind::Dot { obj, name, .. } => {
                 let object = self.expression(obj);
-                self.property(&object, self.atoms.bytes(name))
+                let imported = self.imported_member(obj, name);
+                imported.unwrap_or_else(|| self.property(&object, self.atoms.bytes(name)))
             }
             ExprKind::Index { obj, index, .. } => {
                 let object = self.expression(obj);
                 let index = self.expression(index);
                 match self.text_of(&index) {
-                    Some(key) => self.property(&object, &key),
+                    Some(key) => {
+                        let imported = self.imported_member(obj, self.atoms.intern(&key));
+                        imported.unwrap_or_else(|| self.property(&object, &key))
+                    }
                     None => Value::Unknown,
                 }
             }
@@ -1453,8 +1591,9 @@ impl<'a, 's> Evaluator<'a, 's> {
                 _ => Value::Unknown,
             },
             Value::Global(global) => {
-                let value = global.property(key);
-                value.map_or(Value::Unknown, Value::Global)
+                let added = self.properties_of_globals.get(&(*global, key.into()));
+                let own = || global.property(key).map(Value::Global);
+                added.cloned().or_else(own).unwrap_or(Value::Unknown)
             }
             Value::Path(path) if key == b"pathname" => Value::Path(Rc::clone(path)),
             Value::Function(function, _) if key == b"prototype" => Value::Prototype(*function),
@@ -1644,6 +1783,14 @@ impl<'a, 's> Evaluator<'a, 's> {
         match op {
             BinOp::EqEqEq => identity(true),
             BinOp::NotEqEq => identity(false),
+            BinOp::EqEq | BinOp::NotEq
+                if left.is_known()
+                    && right.is_known()
+                    && (is_nullish(&left) || is_nullish(&right)) =>
+            {
+                let are_equal = is_nullish(&left) && is_nullish(&right);
+                Value::Boolean(are_equal == (op == BinOp::EqEq))
+            }
             BinOp::EqEq if std::mem::discriminant(&left) == std::mem::discriminant(&right) => {
                 identity(true)
             }
@@ -1693,6 +1840,10 @@ impl<'a, 's> Evaluator<'a, 's> {
                     }
                     Value::Prototype(constructor) => {
                         self.set_on_prototype(constructor, key, value);
+                    }
+                    Value::Global(global) if global.takes_properties() => {
+                        self.properties_of_globals
+                            .insert((global, key.into()), value);
                     }
                     Value::Function(constructor, _) if key == b"prototype" => {
                         if let Value::Object(id) = value {
@@ -1761,6 +1912,14 @@ impl<'a, 's> Evaluator<'a, 's> {
         }
         if self.calls_of_function.contains(&call) {
             return self.evaluate_function(call);
+        }
+        if self.indirect_evals.contains(&call) {
+            let args = self.arguments(self.written_site(call));
+            if let Some(Value::String(text)) = args.iter().flatten().next() {
+                let text = Rc::clone(text);
+                self.note_texts(call, vec![text]);
+            }
+            return Value::Unknown;
         }
         let callee = hir.skip_type_assertions(site.callee);
         let method = match hir[callee].kind {
@@ -1845,9 +2004,23 @@ impl<'a, 's> Evaluator<'a, 's> {
                 && (arguments.zip(texts)).all(|(atom, text)| *self.atoms.bytes(atom) == **text)
         })?;
         let root = hir.skip_type_assertions(evaluation.function);
+        if let ExprKind::Assign { .. } = hir[root].kind {
+            let current = std::mem::replace(&mut self.current, around);
+            let assigned = self.expression(root);
+            self.current = current;
+            return Some(assigned);
+        }
         let ExprKind::Fn(function) = hir[root].kind else {
             return None;
         };
+        if evaluation.is_called()
+            && let FnBody::Expr(body) = hir[function].body
+        {
+            let current = std::mem::replace(&mut self.current, around);
+            let returned = self.expression(body);
+            self.current = current;
+            return Some(returned);
+        }
         self.closures.insert(function, around);
         self.ends.insert(function, hir[root].end);
         Some(Value::Function(function, around))
@@ -1908,6 +2081,10 @@ impl<'a, 's> Evaluator<'a, 's> {
             Value::Global(_) => {
                 let method = self.property(receiver, name);
                 self.call_value(&method, args, receiver.clone())
+            }
+            Value::Unknown => {
+                let method = self.method_of_global(name);
+                self.call_value(&method, args, Value::Unknown)
             }
             _ => Value::Unknown,
         }
@@ -1986,6 +2163,22 @@ impl<'a, 's> Evaluator<'a, 's> {
             }
             Some(Value::Pattern(pattern)) if pattern.is_global || !replaces_all => {
                 (Rc::clone(&pattern.literal), pattern.is_global)
+            }
+            Some(Value::Matcher(matcher)) => {
+                let Matcher::Characters(pattern) = &**matcher else {
+                    return Value::Unknown;
+                };
+                let replacement = args.get(1).and_then(Value::as_string);
+                let replaced = match replacement {
+                    Some(replacement) if pattern.is_global || !replaces_all => {
+                        strings::replace_characters(text, pattern, replacement)
+                    }
+                    _ => None,
+                };
+                return match replaced {
+                    Some(replaced) => self.string(replaced),
+                    None => Value::Unknown,
+                };
             }
             _ => return Value::Unknown,
         };
@@ -2133,6 +2326,10 @@ impl<'a, 's> Evaluator<'a, 's> {
             _ => Value::Unknown,
         }
     }
+}
+
+fn is_nullish(value: &Value) -> bool {
+    matches!(value, Value::Undefined | Value::Null)
 }
 
 fn is_relative(specifier: &[u8]) -> bool {

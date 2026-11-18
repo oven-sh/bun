@@ -6,7 +6,7 @@ libraries/headers it provides.
 
 ## Adding a dependency
 
-1. Copy `libdeflate.ts` (the simplest direct dep) to `<name>.ts`
+1. Copy `brotli.ts` (the simplest direct dep) to `<name>.ts`
 2. Fill in `name`, `repo`, `commit`, `sources`, `includes`, `provides.includes`
 3. Add `import { <name> } from "./<name>.ts"` + entry in `allDeps` array in `index.ts`
 4. Add the name to `DepName` in `../source.ts`
@@ -96,8 +96,7 @@ export const mydep: Dependency = {
   // Omit if this dep shouldn't appear there.
   versionMacro: "MYDEP",
 
-  // Optional: .patch files applied after extraction, or overlay files
-  // copied into source root (e.g. inject a CMakeLists.txt).
+  // Optional: .patch files applied after extraction.
   patches: ["patches/mydep/fix-something.patch"],
 
   // Optional: deps whose SOURCE must be ready before this one builds
@@ -142,7 +141,7 @@ export const mydep: Dependency = {
 
 ## Worked examples
 
-- **libdeflate.ts** — simplest direct dep
+- **brotli.ts** — simplest direct dep
 - **mimalloc.ts** — direct build, single unity TU compiled as C++
 - **tinycc.ts** — direct build with a build-time codegen tool
 - **zlib.ts** — direct build with per-source SIMD `-m` flags + `.h.in` substitution

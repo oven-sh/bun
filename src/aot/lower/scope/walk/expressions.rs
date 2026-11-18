@@ -77,8 +77,7 @@ impl Walker<'_, '_> {
             }
             _ => return,
         }
-        let wrapped = self.input.modules.wrapped();
-        if wrapped.is_literal_of_bodies(self.input.file, expression) {
+        if expression == self.literal_of_bodies {
             return;
         }
         match self.hir[expression].kind {
@@ -472,6 +471,11 @@ impl Walker<'_, '_> {
                 && self.is_require_seen(expression)
             {
                 let slot = ScopeSlot::CommonJs(CommonJsVariable::Module);
+                self.record_slot_use(context.function, self.file_scope, slot);
+            }
+            let compares_callee = is_site_of_require && !loads_module;
+            if compares_callee && self.is_value_of_run(CommonJsVariable::Require, context) {
+                let slot = ScopeSlot::CommonJs(CommonJsVariable::Require);
                 self.record_slot_use(context.function, self.file_scope, slot);
             }
             if let Some((function, _)) = function_named_by_call(self.hir, self.bound, &call)

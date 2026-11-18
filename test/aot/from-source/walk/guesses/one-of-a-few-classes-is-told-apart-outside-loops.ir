@@ -15,31 +15,31 @@
 # RUN(ROW): walk f4 mechanisms=all
 # ROW-LABEL: code f4:Body
 # ROW: = TypeTest {{*}}testedType=f2
-# ROW: = NewObject layout=L0
 # ROW: = TypeTest {{*}}testedType=f3
-# ROW: = NewObject layout=L1
+# ROW: = NewObject {{*}}layout=L0
 # ROW: = Construct
+# ROW: = NewObject {{*}}layout=L1
 # RUN(NAME): walk f5 mechanisms=all
 # NAME-LABEL: code f5:Body
 # NAME: = TypeTest {{*}}testedType=f2
-# NAME: = NewObject layout=L0
 # NAME: = TypeTest {{*}}testedType=f3
-# NAME: = NewObject layout=L1
+# NAME: = NewObject {{*}}layout=L0
 # NAME: = Construct
+# NAME: = NewObject {{*}}layout=L1
 # Both arms are proven, so the second class is asked for nothing.
 # RUN(BOTH): walk f6 mechanisms=all
 # BOTH-LABEL: code f6:Body
 # BOTH: = TypeTest {{*}}testedType=f2
-# BOTH: = NewObject layout=L0
-# BOTH: = NewObject layout=L1
+# BOTH: = NewObject {{*}}layout=L0
+# BOTH: = NewObject {{*}}layout=L1
 # BOTH-NOT: = Construct
 # RUN(HELD): walk f7 mechanisms=all
 # HELD-LABEL: code f7:Body
 # HELD: = TypeTest {{*}}testedType=f2
-# HELD: = NewObject layout=L0
 # HELD: = TypeTest {{*}}testedType=f3
-# HELD: = NewObject layout=L1
+# HELD: = NewObject {{*}}layout=L0
 # HELD: = Construct
+# HELD: = NewObject {{*}}layout=L1
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: A0,B0y,B0y,A0
 # ANSWERS-NEXT: B1y,A1,A1,A1

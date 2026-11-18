@@ -7,7 +7,7 @@
 //!
 //! `#[unsafe(no_mangle)] extern "C"` thunks are emitted by
 //! `src/codegen/generate-host-exports.ts` from the `// HOST_EXPORT(Sym, c)`
-//! markers; the bodies take safe `&mut VirtualMachine` / `&BunString` borrows.
+//! markers; the bodies take safe `&VirtualMachine` / `&BunString` borrows.
 
 use core::ffi::c_void;
 
@@ -66,8 +66,11 @@ impl SourceProvider for BakeSourceProvider {
         // The VM the provider was created in, not the calling thread's: a stack trace may be remapped from the collector
         // thread, which has no VM of its own (its end phase runs with the JS thread parked, so nothing here races it).
         // SAFETY: the provider does not outlive its VM, and the VM's `global` is live as long as the VM is.
-        let global =
-            unsafe { &*(*BakeSourceProvider__getBunVM(self).cast::<VirtualMachine>()).global };
+        let global = unsafe {
+            &*(*BakeSourceProvider__getBunVM(self).cast::<VirtualMachine>())
+                .global
+                .get()
+        };
         if !BakeGlobalObject__isBakeGlobalObject(global) {
             return None;
         }
@@ -122,7 +125,7 @@ impl SourceProvider for DevServerSourceProvider {
 
 // HOST_EXPORT(Bun__addBakeSourceProviderSourceMap, c)
 pub(crate) fn add_bake_source_provider_source_map(
-    vm: &mut VirtualMachine,
+    vm: &VirtualMachine,
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
 ) {
@@ -139,7 +142,7 @@ pub(crate) fn add_bake_source_provider_source_map(
 
 // HOST_EXPORT(Bun__removeBakeSourceProviderSourceMap, c)
 pub(crate) fn remove_bake_source_provider_source_map(
-    vm: &mut VirtualMachine,
+    vm: &VirtualMachine,
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
 ) {
@@ -150,7 +153,7 @@ pub(crate) fn remove_bake_source_provider_source_map(
 
 // HOST_EXPORT(Bun__addDevServerSourceProvider, c)
 pub(crate) fn add_dev_server_source_provider(
-    vm: &mut VirtualMachine,
+    vm: &VirtualMachine,
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
 ) {
@@ -167,7 +170,7 @@ pub(crate) fn add_dev_server_source_provider(
 
 // HOST_EXPORT(Bun__removeDevServerSourceProvider, c)
 pub(crate) fn remove_dev_server_source_provider(
-    vm: &mut VirtualMachine,
+    vm: &VirtualMachine,
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
 ) {

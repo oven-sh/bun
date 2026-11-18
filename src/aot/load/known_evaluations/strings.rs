@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use bun_core::strings::{index_of, index_of_char_usize};
 
-use super::values::{Matcher, Pattern, Value};
+use super::values::{CharacterPattern, Matcher, Pattern, Value};
 
 pub(super) fn parse_pattern(source: &[u8], flags: &[u8]) -> Option<Pattern> {
     let is_global = match flags {
@@ -31,7 +31,78 @@ pub(super) fn parse_pattern(source: &[u8], flags: &[u8]) -> Option<Pattern> {
     })
 }
 
+fn parse_character_pattern(source: &[u8], flags: &[u8]) -> Option<CharacterPattern> {
+    let is_global = match flags {
+        b"" => false,
+        b"g" => true,
+        _ => return None,
+    };
+    let delimited = |open: &[u8], close: &[u8]| source.strip_prefix(open)?.strip_suffix(close);
+    let set = delimited(b"[", b"]").filter(|it| !it.starts_with(b"^"));
+    let group = delimited(b"(", b")").filter(|it| !it.starts_with(b"?"));
+    let mut rest = set.or(group).unwrap_or(source);
+    let mut characters = Vec::new();
+    loop {
+        let (character, length) = match *rest {
+            [b'\\', escaped, ..] if escaped.is_ascii_punctuation() => (escaped, 2),
+            [b'\\' | b'[' | b']' | b'(' | b')' | b'|' | b'-', ..] => return None,
+            [b'^' | b'$' | b'.' | b'*' | b'+' | b'?' | b'{' | b'}', ..] if set.is_none() => {
+                return None;
+            }
+            [character, ..] if character.is_ascii_graphic() || character == b' ' => (character, 1),
+            _ => return None,
+        };
+        characters.push(character);
+        rest = &rest[length..];
+        if rest.is_empty() {
+            break;
+        }
+        if set.is_none() {
+            rest = rest.strip_prefix(b"|")?;
+        }
+    }
+    Some(CharacterPattern {
+        characters: characters.into(),
+        is_captured: group.is_some(),
+        is_global,
+    })
+}
+
+pub(super) fn replace_characters(
+    text: &[u8],
+    pattern: &CharacterPattern,
+    replacement: &[u8],
+) -> Option<Vec<u8>> {
+    let mut replaced = Vec::with_capacity(text.len());
+    let mut is_done = false;
+    for byte in text {
+        if is_done || !pattern.characters.contains(byte) {
+            replaced.push(*byte);
+            continue;
+        }
+        let matched = std::slice::from_ref(byte);
+        let mut rest = replacement;
+        if pattern.is_captured {
+            while let Some(at) = index_of(rest, b"$1") {
+                let is_other = rest[..at].ends_with(b"$");
+                if is_other || rest.get(at + 2).is_some_and(u8::is_ascii_digit) {
+                    return None;
+                }
+                replaced.extend(expand_replacement(&rest[..at], matched)?);
+                replaced.push(*byte);
+                rest = &rest[at + 2..];
+            }
+        }
+        replaced.extend(expand_replacement(rest, matched)?);
+        is_done = !pattern.is_global;
+    }
+    Some(replaced)
+}
+
 pub(super) fn parse_matcher(source: &[u8], flags: &[u8]) -> Option<Matcher> {
+    if let Some(pattern) = parse_character_pattern(source, flags) {
+        return Some(Matcher::Characters(pattern));
+    }
     if !flags.is_empty() {
         return None;
     }
@@ -50,6 +121,8 @@ pub(super) fn is_match(text: &[u8], matcher: &Matcher) -> Option<bool> {
         Matcher::Start(literal) => Some(text.starts_with(literal)),
         Matcher::End(literal) => Some(text.ends_with(literal)),
         Matcher::Blanks => text.is_ascii().then(|| text.iter().any(|&it| is_blank(it))),
+        Matcher::Characters(pattern) if pattern.is_global => None,
+        Matcher::Characters(it) => Some(text.iter().any(|byte| it.characters.contains(byte))),
     }
 }
 

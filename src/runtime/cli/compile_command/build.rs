@@ -30,7 +30,7 @@ use bun_standalone_graph::{
     CompiledEntryPointInput, CompiledPackageNameInput, CompiledPathAliasInput,
     CompiledProgramInput, with_executable_image,
 };
-use bun_sys::{Fd, FdExt};
+use bun_sys::{Fd, File};
 use bun_trim::TrimPlan;
 
 use super::{
@@ -97,6 +97,7 @@ pub(crate) fn compile_to_executable(
     // With =strict a Worker runs nothing but compiled code.
     used.starts_workers_from_unseen_code = build.starts_workers_from_unseen_code
         && options.code_generation_from_strings != CodeGenerationFromStrings::Strict;
+    used.can_reach_test_runner |= options.runs_tests || options.loads_code_from_disk;
     let trimming = trimming::decide_trimming(request, &used)?;
     let untrimmed_outfile = bun_core::env_var::BUN_DEBUG_TEST_UNTRIMMED_OUTFILE
         .get_not_empty()
@@ -799,9 +800,8 @@ fn holds_path_below(paths: &std::collections::BTreeSet<Vec<u8>>, folder: &[u8]) 
 
 /// The files and the folders below `folder` on the disk of the build, by their paths from it. `None`: it cannot be listed, or holds what is neither.
 fn list_below(folder: &[u8]) -> Option<(Vec<Vec<u8>>, Vec<Vec<u8>>)> {
-    let directory = bun_sys::open_dir_for_iteration(Fd::cwd(), folder).ok()?;
-    let _close = scopeguard::guard(directory, |descriptor| descriptor.close());
-    let mut walker = bun_sys::walker_skippable::walk(directory, &[], &[]).ok()?;
+    let directory = File::from_fd(bun_sys::open_dir_for_iteration(Fd::cwd(), folder).ok()?);
+    let mut walker = bun_sys::walker_skippable::walk(directory.fd(), &[], &[]).ok()?;
     walker.resolve_unknown_entry_types = true;
     let (mut files, mut folders) = (Vec::new(), Vec::new());
     while let Some(entry) = walker.next().ok()? {
@@ -824,9 +824,8 @@ fn list_below(folder: &[u8]) -> Option<(Vec<Vec<u8>>, Vec<Vec<u8>>)> {
 
 /// The same for what lies in `folder` itself.
 fn list_in(folder: &[u8]) -> Option<(Vec<Vec<u8>>, Vec<Vec<u8>>)> {
-    let directory = bun_sys::open_dir_for_iteration(Fd::cwd(), folder).ok()?;
-    let _close = scopeguard::guard(directory, |descriptor| descriptor.close());
-    let mut entries = bun_sys::dir_iterator::iterate(directory);
+    let directory = File::from_fd(bun_sys::open_dir_for_iteration(Fd::cwd(), folder).ok()?);
+    let mut entries = bun_sys::dir_iterator::iterate(directory.fd());
     let (mut files, mut folders) = (Vec::new(), Vec::new());
     while let Some(entry) = entries.next().ok()? {
         let name = entry.name.slice_u8().to_vec();
@@ -1217,6 +1216,7 @@ fn push_asset_paths(
 ) {
     let path_below_root = bun_core::strings::remove_leading_dot_slash(path_below_root);
     let is_above_root = path_below_root.starts_with(b"../");
+    // `stat()` has a time for a file above the root only where the program does nothing but ask about the file.
     let has_time = !is_above_root || size_without_bytes.is_some();
     paths.push(PathForFileSystemAlone {
         path_below_root: path_below_root.to_vec(),
@@ -1243,6 +1243,7 @@ fn push_asset_paths(
     );
 }
 
+/// The time that the disk has for a folder also moves with files that are no part of the program.
 fn set_times_of_folders(paths: &mut [PathForFileSystemAlone]) {
     let mut newest: std::collections::BTreeMap<Vec<u8>, i64> = Default::default();
     for file in paths.iter().filter(|it| !it.is_folder) {

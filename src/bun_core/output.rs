@@ -7,7 +7,7 @@
 //!
 //! `pretty_fmt!` itself (the `<red>…<r>` → ANSI substitution) is necessarily a proc-macro.
 
-use core::cell::{Cell, RefCell};
+use core::cell::Cell;
 use core::ffi::c_int;
 use core::fmt;
 // `#[macro_export]` macros land at crate root; re-import so order-of-definition
@@ -29,8 +29,7 @@ use crate::io;
 // ──────────────────────────────────────────────────────────────────────────
 // Output sink (CYCLEBREAK §Debug-hook / §Dispatch cold path)
 //
-// `bun_sys::{File, QuietWrite, file::QuietWriter, make_path, create_file,
-// deprecated::BufferedReader}` are higher-tier I/O primitives that `bun_core`
+// `bun_sys::{File, make_path, create_file}` are higher-tier I/O primitives that `bun_core`
 // cannot name. The `bun_dispatch::link_interface!` `OutputSink[Sys]` (declared
 // at crate root) provides the seam; `bun_sys` supplies the `Sys` arm.
 // ──────────────────────────────────────────────────────────────────────────
@@ -42,59 +41,6 @@ pub(crate) fn output_sink() -> OutputSink {
     OutputSink::SYS
 }
 
-/// Opaque handle to a `bun_sys::file::QuietWriter`. bun_core treats it as a
-/// POD blob; bun_sys casts back to the concrete type. Contract: bun_sys only
-/// stashes the raw fd in slot 0 (see `qw_fd`/`qw_set_fd` in bun_sys), so the
-/// blob just needs pointer size/alignment — keep `[*mut (); 4]` in sync with
-/// that consumer if either side changes.
-#[derive(Clone, Copy)]
-#[repr(C)]
-pub struct QuietWriter {
-    _opaque: [*mut (); 4],
-}
-impl QuietWriter {
-    pub const ZEROED: Self = Self {
-        _opaque: [core::ptr::null_mut(); 4],
-    };
-
-    #[inline]
-    pub fn adapt_to_new_api(self, buf: &mut [u8]) -> QuietWriterAdapter {
-        output_sink().quiet_writer_adapt(self, buf.as_mut_ptr(), buf.len())
-    }
-    #[inline]
-    pub(crate) fn context_handle(&self) -> Fd {
-        output_sink().quiet_writer_fd(self)
-    }
-    /// One `write(2)` loop for all of `bytes`. Returns `false` when the fd
-    /// rejected them, so the caller can stop trying.
-    #[inline]
-    pub(crate) fn write_all(&mut self, bytes: &[u8]) -> bool {
-        output_sink().quiet_writer_write_all(self, bytes)
-    }
-}
-
-/// Opaque adapter wrapping a QuietWriter and exposing `crate::io::Writer`.
-/// Layout contract: bun_sys's concrete `SysQuietWriterAdapter` must fit in
-/// these 64 bytes with `io::Writer` as its first field; const-asserted on the
-/// bun_sys side next to that struct.
-#[repr(C, align(8))]
-pub struct QuietWriterAdapter {
-    _opaque: [u8; 64],
-}
-impl QuietWriterAdapter {
-    /// Zeroed placeholder; caller must overwrite via `adapt_to_new_api` before use.
-    #[inline]
-    pub const fn uninit() -> Self {
-        Self { _opaque: [0u8; 64] }
-    }
-    #[inline]
-    pub fn new_interface(&mut self) -> &mut io::Writer {
-        // SAFETY: erased <bun_sys::QuietWrite>::Adapter; bun_sys guarantees
-        // the io::Writer is the first field (repr(C)).
-        unsafe { &mut *std::ptr::from_mut::<Self>(self).cast::<io::Writer>() }
-    }
-}
-
 /// Opaque file handle. Replaces `bun_sys::File` in this crate.
 /// repr matches `bun_sys::File` (transparent over a single Fd).
 #[derive(Clone, Copy)]
@@ -102,7 +48,6 @@ impl QuietWriterAdapter {
 pub struct File(pub Fd);
 
 impl File {
-    pub(crate) const ZEROED: Self = Self(Fd::INVALID);
     #[inline]
     pub(crate) const fn fd(self) -> Fd {
         self.0
@@ -111,21 +56,15 @@ impl File {
     pub(crate) fn handle(self) -> Fd {
         self.0
     }
-    /// `bun_sys::File::stderr()` via the sink (T0-safe).
+    /// The process's stderr, via the sink (T0-safe).
     #[inline]
     pub fn stderr() -> Self {
         output_sink().stderr()
     }
-    #[inline]
-    pub fn quiet_writer(self) -> QuietWriter {
-        output_sink().quiet_writer_from_fd(self.0)
-    }
-    /// Write all bytes (best-effort; routes through QuietWriter so errors are
-    /// swallowed). Progress.rs uses this.
+    /// Write all bytes (best-effort: errors are swallowed). Progress.rs uses this.
     #[inline]
     pub(crate) fn write_all(self, bytes: &[u8]) -> crate::CrateResult<()> {
-        let mut qw = self.quiet_writer();
-        let _ = output_sink().quiet_writer_write_all(&mut qw, bytes);
+        let _ = output_sink().write_all_quiet(self.0, bytes);
         Ok(())
     }
     #[inline]
@@ -216,8 +155,9 @@ use crate::env as Environment;
 // ──────────────────────────────────────────────────────────────────────────
 
 // These are threadlocal so we don't have stdout/stderr writing on top of each other
+#[thread_local]
+static SOURCE: Source = Source::new();
 thread_local! {
-    static SOURCE: RefCell<Source> = const { RefCell::new(Source::ZEROED) };
     static SOURCE_SET: Cell<bool> = const { Cell::new(false) };
 }
 
@@ -258,95 +198,42 @@ pub type StreamType = File;
 pub type StreamType = io::FixedBufferStream; // wasm32 is not built yet; FixedBufferStream is unported.
 
 pub struct Source {
-    pub(crate) stdout_buffer: [u8; 4096],
-    pub(crate) stderr_buffer: [u8; 4096],
-    pub(crate) buffered_stream_backing: QuietWriterAdapter,
-    pub(crate) buffered_error_stream_backing: QuietWriterAdapter,
+    buffered_stream: io::WriterStorage<4096>,
+    buffered_error_stream: io::WriterStorage<4096>,
 
-    pub(crate) stream_backing: QuietWriterAdapter,
-    pub(crate) error_stream_backing: QuietWriterAdapter,
-
-    pub(crate) raw_stream: StreamType,
-    pub(crate) raw_error_stream: StreamType,
+    stream: io::WriterStorage<0>,
+    error_stream: io::WriterStorage<0>,
 }
 
 impl Source {
-    // Field-wise placeholder value for the pre-`init()` thread_local slot.
-    // Every field is overwritten by `init()` before use.
-    //
-    // The pre-init stream placeholder is cfg-split because the two
-    // `StreamType` aliases have different const surfaces: native
-    // `File::ZEROED` is `Fd::INVALID`, so a pre-init read fails loudly
-    // instead of aliasing fd 0; `FixedBufferStream` has no `ZEROED` const,
-    // so the wasm32 arm spells out the empty stream field-wise.
-    #[cfg(not(target_arch = "wasm32"))]
-    const ZEROED_STREAM: StreamType = StreamType::ZEROED;
-    #[cfg(target_arch = "wasm32")]
-    const ZEROED_STREAM: StreamType = StreamType {
-        buf: core::ptr::null_mut(),
-        len: 0,
-        pos: 0,
-    };
-
-    pub(crate) const ZEROED: Self = Self {
-        stdout_buffer: [0u8; 4096],
-        stderr_buffer: [0u8; 4096],
-        buffered_stream_backing: QuietWriterAdapter::uninit(),
-        buffered_error_stream_backing: QuietWriterAdapter::uninit(),
-        stream_backing: QuietWriterAdapter::uninit(),
-        error_stream_backing: QuietWriterAdapter::uninit(),
-        raw_stream: Self::ZEROED_STREAM,
-        raw_error_stream: Self::ZEROED_STREAM,
-    };
-
-    /// Accessors replacing the self-referential `*std.Io.Writer` fields.
-    #[inline]
-    pub(crate) fn buffered_stream(&mut self) -> &mut io::Writer {
-        self.buffered_stream_backing.new_interface()
-    }
-    #[inline]
-    pub(crate) fn buffered_error_stream(&mut self) -> &mut io::Writer {
-        self.buffered_error_stream_backing.new_interface()
-    }
-    #[inline]
-    pub(crate) fn stream(&mut self) -> &mut io::Writer {
-        self.stream_backing.new_interface()
-    }
-    #[inline]
-    pub(crate) fn error_stream(&mut self) -> &mut io::Writer {
-        self.error_stream_backing.new_interface()
+    /// The thread's slot before `init`: what is written is dropped instead of going to fd 0.
+    const fn new() -> Self {
+        Self {
+            buffered_stream: io::WriterStorage::new(Fd::INVALID),
+            buffered_error_stream: io::WriterStorage::new(Fd::INVALID),
+            stream: io::WriterStorage::new(Fd::INVALID),
+            error_stream: io::WriterStorage::new(Fd::INVALID),
+        }
     }
 
-    // The out-param shape is load-bearing: `out` is the pre-allocated
-    // thread_local slot, and the adapters built below capture raw pointers
-    // into `out.stdout_buffer`/`out.stderr_buffer`. Returning `Self` by value
-    // would move the struct after those pointers were captured and dangle them.
-    pub(crate) fn init(out: &mut Source, stream: StreamType, err_stream: StreamType) {
+    #[inline]
+    fn get() -> &'static Source {
+        // SAFETY: a `#[thread_local]` is never dropped and lasts as long as its thread, which the
+        // reference cannot leave: `Source` is not `Sync`.
+        unsafe { &*core::ptr::from_ref(&SOURCE) }
+    }
+
+    fn init(stream: StreamType, err_stream: StreamType) {
         if crate::env::IS_DEBUG && bun_alloc::USE_MIMALLOC && !SOURCE_SET.get() {
             bun_alloc::mimalloc::mi_option_set(bun_alloc::mimalloc::Option::show_errors, 1);
         }
         SOURCE_SET.set(true);
 
-        out.raw_stream = stream;
-        out.raw_error_stream = err_stream;
-        // stdout_buffer / stderr_buffer left uninitialized (overwritten by adapter writes)
-
-        // Construct the backings directly and expose accessors instead of
-        // storing interior pointers.
-        out.buffered_stream_backing = out
-            .raw_stream
-            .quiet_writer()
-            .adapt_to_new_api(&mut out.stdout_buffer);
-        out.buffered_error_stream_backing = out
-            .raw_error_stream
-            .quiet_writer()
-            .adapt_to_new_api(&mut out.stderr_buffer);
-
-        out.stream_backing = out.raw_stream.quiet_writer().adapt_to_new_api(&mut []);
-        out.error_stream_backing = out
-            .raw_error_stream
-            .quiet_writer()
-            .adapt_to_new_api(&mut []);
+        let source = Source::get();
+        source.buffered_stream.reset(stream.fd());
+        source.buffered_error_stream.reset(err_stream.fd());
+        source.stream.reset(stream.fd());
+        source.error_stream.reset(err_stream.fd());
     }
 
     pub fn configure_thread() {
@@ -354,13 +241,10 @@ impl Source {
             return;
         }
         debug_assert!(STDOUT_STREAM_SET.load(Ordering::Relaxed));
-        SOURCE.with_borrow_mut(|s| {
-            Source::init(
-                s,
-                File(Fd(STDOUT_STREAM.load(Ordering::Relaxed))),
-                File(Fd(STDERR_STREAM.load(Ordering::Relaxed))),
-            )
-        });
+        Source::init(
+            File(Fd(STDOUT_STREAM.load(Ordering::Relaxed))),
+            File(Fd(STDERR_STREAM.load(Ordering::Relaxed))),
+        );
         crate::StackCheck::configure_thread();
     }
 
@@ -385,13 +269,10 @@ impl Source {
             return;
         }
         debug_assert!(STDOUT_STREAM_SET.load(Ordering::Relaxed));
-        SOURCE.with_borrow_mut(|s| {
-            Source::init(
-                s,
-                File(Fd(STDOUT_STREAM.load(Ordering::Relaxed))),
-                File(Fd(STDERR_STREAM.load(Ordering::Relaxed))),
-            )
-        });
+        Source::init(
+            File(Fd(STDOUT_STREAM.load(Ordering::Relaxed))),
+            File(Fd(STDERR_STREAM.load(Ordering::Relaxed))),
+        );
         // Intentionally NOT calling `crate::StackCheck::configure_thread()`.
     }
 
@@ -430,7 +311,7 @@ impl Source {
     }
 
     pub(crate) fn set_init(stdout: StreamType, stderr: StreamType) {
-        SOURCE.with_borrow_mut(|s| Source::init(s, stdout, stderr));
+        Source::init(stdout, stderr);
 
         SOURCE_SET.set(true);
         if !STDOUT_STREAM_SET.load(Ordering::Relaxed) {
@@ -679,7 +560,7 @@ pub mod stdio {
         Source::set_init(stdout, stderr);
 
         // `ENABLE_LOGS` gates every reader, but initialize under
-        // `debug_assertions` too so `SCOPED_FILE_WRITER` is never observed
+        // `debug_assertions` too so `SCOPED_FD` is never observed
         // zeroed if a `#[cfg(debug_assertions)]` path reaches it in
         // release-asan/release-assertions. Cheap (one static write).
         if cfg!(debug_assertions) || Environment::ENABLE_LOGS {
@@ -980,49 +861,34 @@ pub fn panic(args: fmt::Arguments<'_>) -> ! {
 
 pub fn raw_error_writer() -> StreamType {
     debug_assert!(SOURCE_SET.get());
-    SOURCE.with_borrow(|s| s.raw_error_stream)
+    File(Source::get().error_stream.fd())
 }
 
 // Possible perf follow-up: migrate callers of these unbuffered accessors to
 // the buffered writer.
-//
-// TODO: these accessors hand out a `&'static mut` to a thread-local
-// `Source` field, and callers only use it briefly. Returning `&'static mut`
-// is *unsound* if two are alive at once — a known-unsound shim until callers
-// migrate to `with_error_writer(|w| ..)`.
-//
-// `source_writer_escape` centralises the escape: one `unsafe` for all five
-// public `*_writer*()` accessors (nonnull-asref reduction: 5 sites → 1).
-#[inline]
-fn source_writer_escape(project: fn(&mut Source) -> &mut io::Writer) -> &'static mut io::Writer {
+pub fn error_writer() -> &'static io::Writer {
     debug_assert!(SOURCE_SET.get());
-    let p: *mut io::Writer = SOURCE.with_borrow_mut(|s| std::ptr::from_mut(project(s)));
-    // SAFETY: pointer escapes the RefCell borrow; the thread-local `Source`
-    // backing field has a stable address once `Source::init` has run, and the
-    // returned `&'static mut` is used briefly with no two live at once (see
-    // TODO above — known-unsound shim until callers migrate).
-    unsafe { &mut *p }
+    &Source::get().error_stream
 }
 
-pub fn error_writer() -> &'static mut io::Writer {
-    source_writer_escape(Source::error_stream)
-}
-
-pub fn error_writer_buffered() -> &'static mut io::Writer {
-    source_writer_escape(Source::buffered_error_stream)
+pub fn error_writer_buffered() -> &'static io::Writer {
+    debug_assert!(SOURCE_SET.get());
+    &Source::get().buffered_error_stream
 }
 
 pub fn raw_writer() -> StreamType {
     debug_assert!(SOURCE_SET.get());
-    SOURCE.with_borrow(|s| s.raw_stream)
+    File(Source::get().stream.fd())
 }
 
-pub fn writer() -> &'static mut io::Writer {
-    source_writer_escape(Source::stream)
+pub fn writer() -> &'static io::Writer {
+    debug_assert!(SOURCE_SET.get());
+    &Source::get().stream
 }
 
-pub fn writer_buffered() -> &'static mut io::Writer {
-    source_writer_escape(Source::buffered_stream)
+pub fn writer_buffered() -> &'static io::Writer {
+    debug_assert!(SOURCE_SET.get());
+    &Source::get().buffered_stream
 }
 
 pub fn reset_terminal() {
@@ -1031,29 +897,22 @@ pub fn reset_terminal() {
     if !stderr && !stdout {
         return;
     }
-    SOURCE.with_borrow_mut(|s| {
-        if stderr {
-            let _ = s.error_stream().write_all(b"\x1B[2J\x1B[3J\x1B[H");
-        } else {
-            let _ = s.stream().write_all(b"\x1B[2J\x1B[3J\x1B[H");
-        }
-    });
+    let writer = if stderr { error_writer() } else { writer() };
+    let _ = writer.write_all(b"\x1B[2J\x1B[3J\x1B[H");
 }
 
 pub fn reset_terminal_all() {
     // Reached from `reload_process`, which any thread may call. A thread that
-    // never ran `Source::configure_thread` has zeroed writers, not stdio.
+    // never ran `Source::configure_thread` has no file descriptors to write to.
     if !SOURCE_SET.get() {
         return;
     }
-    SOURCE.with_borrow_mut(|s| {
-        if ENABLE_ANSI_COLORS_STDERR.load(Ordering::Relaxed) {
-            let _ = s.error_stream().write_all(b"\x1B[2J\x1B[3J\x1B[H");
-        }
-        if ENABLE_ANSI_COLORS_STDOUT.load(Ordering::Relaxed) {
-            let _ = s.stream().write_all(b"\x1B[2J\x1B[3J\x1B[H");
-        }
-    });
+    if ENABLE_ANSI_COLORS_STDERR.load(Ordering::Relaxed) {
+        let _ = error_writer().write_all(b"\x1B[2J\x1B[3J\x1B[H");
+    }
+    if ENABLE_ANSI_COLORS_STDOUT.load(Ordering::Relaxed) {
+        let _ = writer().write_all(b"\x1B[2J\x1B[3J\x1B[H");
+    }
 }
 
 /// Write buffered stdout & stderr to the terminal.
@@ -1062,26 +921,8 @@ pub fn reset_terminal_all() {
 #[inline(never)]
 pub fn flush() {
     if Environment::IS_NATIVE && SOURCE_SET.get() {
-        // Same re-entrancy hazard as with_dest_writer: drop the RefCell borrow
-        // before calling into the writer so a flush triggered from inside a
-        // print (or vice-versa) doesn't BorrowMutError.
-        let (bs, bes): (*mut io::Writer, *mut io::Writer) = SOURCE.with_borrow_mut(|s| {
-            (
-                std::ptr::from_mut::<io::Writer>(s.buffered_stream()),
-                std::ptr::from_mut::<io::Writer>(s.buffered_error_stream()),
-            )
-        });
-        // SAFETY: see with_dest_writer — pointers target thread-local backing
-        // fields with stable addresses once Source::init has run. We call the
-        // vtable fn pointer directly with the raw `*mut` (no `&mut Writer`
-        // formed) so a re-entrant print/flush from inside the drain cannot
-        // alias an outstanding exclusive borrow.
-        unsafe {
-            let _ = ((*bs).flush)(bs);
-            let _ = ((*bes).flush)(bes);
-        }
-        // let _ = s.stream().flush();
-        // let _ = s.error_stream().flush();
+        let _ = writer_buffered().flush();
+        let _ = error_writer_buffered().flush();
     }
 }
 
@@ -1219,93 +1060,29 @@ pub fn print_start_end_stdout(start: i128, end: i128) {
 // ──────────────────────────────────────────────────────────────────────────
 // Print routing
 //
-// `print` / `printError` / `pretty*` are called from thousands of sites with
-// distinct format strings. They used to be `noinline`, which forced
-// one ~400-byte function body per (fmt, args-type) pair — about 2,650 of them,
-// or ~1 MB of .text in release builds. The bodies were nearly identical: pick
-// buffered-vs-unbuffered writer, then `Writer.print(fmt, args)`.
-//
-// Now the public entry points are `inline` and bottom out in two non-generic
-// helpers (`destWriter`, `writeBytes`). The only per-call-site code is either
-// a `writeBytes` call (when `args` is empty — ~40% of sites) or one
-// `Writer.print` call. The buffering branch lives in `destWriter` so each
-// site formats once instead of twice.
+// `print_to` is inline and ends in `write_bytes` or `write_args`.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Pick the active writer for `dest`, honoring `enable_buffering`. Non-generic
-/// so the buffering branch isn't duplicated into every call site.
-///
-/// Hands `f` a **raw** `*mut io::Writer`, not a `&mut`. `f` may call into
-/// `write_fmt`, which evaluates user `Display` impls that can re-enter this
-/// module (e.g. `debug_warn` → `print_to`, or `flush()`). If we materialized a
-/// `&mut io::Writer` here, the re-entrant call would produce a second `&mut`
-/// aliasing the first while it is still live — UB. So this hands out a raw
-/// pointer with no exclusivity contract, and callers must route writes
-/// through the vtable fn pointers directly (see `write_fmt_raw`).
-#[inline(never)]
-fn with_dest_writer<R>(dest: Destination, f: impl FnOnce(*mut io::Writer) -> R) -> R {
-    debug_assert!(SOURCE_SET.get());
-    let buffering = ENABLE_BUFFERING.load(Ordering::Relaxed);
-    // Load the writer pointer and *drop the RefCell borrow* before invoking `f`;
-    // holding the `with_borrow_mut` guard across re-entry panics with BorrowMutError.
-    let w: *mut io::Writer = SOURCE.with_borrow_mut(|s| match dest {
-        Destination::Stdout => std::ptr::from_mut(if buffering {
-            s.buffered_stream()
-        } else {
-            s.stream()
-        }),
-        Destination::Stderr => std::ptr::from_mut(if buffering {
-            s.buffered_error_stream()
-        } else {
-            s.error_stream()
-        }),
-    });
-    // SAFETY: `w` points into a `QuietWriterAdapter` field of the thread-local
-    // `Source`, whose address is stable for the thread's lifetime once
-    // `Source::init` has run (asserted via SOURCE_SET above). These same raw
-    // pointers are handed out by `writer()`/`error_writer()`. This is the
-    // established pattern, not a lifetime extension of borrowed data.
-    // We pass the raw pointer through unchanged; `f` is responsible for not
-    // forming a `&mut` that outlives a single non-reentrant vtable call.
-    f(w)
-}
-
-/// Write `args` through a raw `*mut io::Writer` without ever forming a
-/// `&mut io::Writer`, so re-entrant writes from inside `Display` impls don't
-/// alias an outstanding exclusive borrow.
-///
-/// SAFETY: `w` must point to a live `io::Writer` for the duration of the call
-/// (guaranteed by `with_dest_writer`'s thread-local-stability invariant).
-unsafe fn write_fmt_raw(w: *mut io::Writer, args: fmt::Arguments<'_>) {
-    struct Raw(*mut io::Writer);
-    impl fmt::Write for Raw {
-        fn write_str(&mut self, s: &str) -> fmt::Result {
-            // SAFETY: `self.0` is the `w` passed to `write_fmt_raw`, valid per
-            // the caller's contract. We read the `write_all` vtable fn pointer
-            // via raw-pointer field projection (no intermediate `&`/`&mut`
-            // Writer) and call it with the raw `*mut` — any re-entrant write
-            // sees only another raw pointer, never an aliased `&mut`.
-            unsafe {
-                let f = (*self.0).write_all;
-                let _ = f(self.0, s.as_bytes());
-            }
-            Ok(())
-        }
+/// Pick the active writer for `dest`, honoring `enable_buffering`.
+fn dest_writer(dest: Destination) -> &'static io::Writer {
+    match (dest, ENABLE_BUFFERING.load(Ordering::Relaxed)) {
+        (Destination::Stdout, true) => writer_buffered(),
+        (Destination::Stdout, false) => writer(),
+        (Destination::Stderr, true) => error_writer_buffered(),
+        (Destination::Stderr, false) => error_writer(),
     }
-    let _ = fmt::Write::write_fmt(&mut Raw(w), args);
 }
 
 /// Single shared write path for pre-formatted bytes.
 #[inline(never)]
 fn write_bytes(dest: Destination, bytes: &[u8]) {
-    with_dest_writer(dest, |w| {
-        // SAFETY: `w` is valid per `with_dest_writer`; call the vtable fn
-        // directly with the raw pointer so no `&mut Writer` is formed.
-        unsafe {
-            let f = (*w).write_all;
-            let _ = f(w, bytes);
-        }
-    });
+    let _ = dest_writer(dest).write_all(bytes);
+}
+
+/// Single shared write path for what is still to be formatted.
+#[inline(never)]
+fn write_args(dest: Destination, args: fmt::Arguments<'_>) {
+    let _ = dest_writer(dest).print(args);
 }
 
 #[inline]
@@ -1323,12 +1100,7 @@ pub fn print_to(dest: Destination, args: fmt::Arguments<'_>) {
         return write_bytes(dest, s.as_bytes());
     }
     // There's not much we can do if this errors. Especially if it's something like BrokenPipe.
-    with_dest_writer(dest, |w| {
-        // SAFETY: `w` is valid per `with_dest_writer`; `write_fmt_raw` routes
-        // through the vtable without forming a `&mut Writer`, so `Display`
-        // impls that re-enter `print_to`/`flush` cannot alias.
-        unsafe { write_fmt_raw(w, args) };
-    });
+    write_args(dest, args);
 }
 
 /// Print to stdout, but only in debug builds.
@@ -1401,7 +1173,7 @@ impl ScopedLogger {
         let mut env_key = vec![0u8; key_len + 1]; // +1 NUL
         env_key[..prefix.len()].copy_from_slice(prefix);
         env_key[prefix.len()..key_len].copy_from_slice(tag);
-        let key = crate::ZStr::from_buf(&env_key, key_len);
+        let key = crate::ZStr::from_slice_with_nul(&env_key);
 
         if let Some(val) = crate::getenv_z_any_case(key) {
             self.really_disable.store(val == b"0", Ordering::Relaxed);
@@ -1476,9 +1248,9 @@ impl ScopedLogger {
         let mut line = scoped_debug_writer::LineBuffer::new();
         let _ = fmt::Write::write_fmt(&mut line, args);
 
-        let mut out = scoped_writer();
+        let fd = scoped_fd();
         let _lock = scoped_debug_writer::WRITE_LOCK.lock();
-        if !out.write_all(line.as_bytes()) {
+        if !output_sink().write_all_quiet(fd, line.as_bytes()) {
             // Write failure → disable scope.
             self.really_disable.store(true, Ordering::Relaxed);
         }
@@ -2033,12 +1805,9 @@ pub const fn _needs_nl(fmt: &str) -> &'static str {
 #[doc(hidden)]
 #[inline]
 pub fn _scoped_use_ansi() -> bool {
-    ENABLE_ANSI_COLORS_STDOUT.load(Ordering::Relaxed) && SOURCE_SET.get() && {
-        // SAFETY: `SCOPED_FILE_WRITER` is `QuietWriter::ZEROED` until startup
-        // init; `QuietWriter` is Copy POD so reading it is always sound.
-        let sw = unsafe { scoped_debug_writer::SCOPED_FILE_WRITER.read() };
-        sw.context_handle() == raw_writer().handle()
-    }
+    ENABLE_ANSI_COLORS_STDOUT.load(Ordering::Relaxed)
+        && SOURCE_SET.get()
+        && Fd(scoped_debug_writer::SCOPED_FD.load(Ordering::Relaxed)) == raw_writer().handle()
 }
 
 /// Internal: bind each `$arg` exactly once into a `match` tuple, then dispatch
@@ -2490,8 +2259,8 @@ impl ErrName for crate::CrateError {
 pub mod scoped_debug_writer {
     use super::*;
 
-    pub(crate) static SCOPED_FILE_WRITER: crate::RacyCell<QuietWriter> =
-        crate::RacyCell::new(QuietWriter::ZEROED);
+    /// Written once in `stdio::init`, before other threads start, so `Relaxed` suffices.
+    pub(crate) static SCOPED_FD: AtomicFd = AtomicFd::new(0);
 
     /// Every scope writes to the same fd. Held across the `write(2)` loop of
     /// one line so a short write cannot let another thread's line in.
@@ -2599,33 +2368,24 @@ fn init_scoped_debug_writer_at_startup() {
                     bstr::BStr::new(path),
                 )),
             };
-            // SAFETY: single-threaded startup.
-            unsafe {
-                scoped_debug_writer::SCOPED_FILE_WRITER
-                    .write(output_sink().quiet_writer_from_fd(fd));
-            }
+            scoped_debug_writer::SCOPED_FD.store(fd.0, Ordering::Relaxed);
             return;
         }
     }
 
-    // SAFETY: single-threaded startup.
-    unsafe {
-        scoped_debug_writer::SCOPED_FILE_WRITER
-            .write(output_sink().quiet_writer_from_fd(SOURCE.with_borrow(|s| s.raw_stream).0));
-    }
+    scoped_debug_writer::SCOPED_FD.store(Source::get().stream.fd().0, Ordering::Relaxed);
 }
 
-fn scoped_writer() -> QuietWriter {
+fn scoped_fd() -> Fd {
     // All callers are already gated on `Environment::ENABLE_LOGS`; this is a
     // Debug-build self-check (release-asan/release-assertions enable
     // `debug_assertions` with `ENABLE_LOGS == false`, so keying on
     // `debug_assertions` would turn it into a guaranteed abort there).
     #[cfg(bun_debug)]
     if !Environment::ENABLE_LOGS {
-        unreachable!("scopedWriter() should only be called in debug mode");
+        unreachable!("scoped_fd() should only be called in debug mode");
     }
-    // SAFETY: initialized in init_scoped_debug_writer_at_startup; QuietWriter is Copy POD.
-    unsafe { scoped_debug_writer::SCOPED_FILE_WRITER.read() }
+    Fd(scoped_debug_writer::SCOPED_FD.load(Ordering::Relaxed))
 }
 
 /// Print a red error message with "error: " as the prefix. For custom prefixes see `err()`
@@ -2786,8 +2546,7 @@ pub fn stdin_reader() -> StdinReader {
 ///
 /// Returns `*mut` (not `&'static mut`) to avoid handing out two live aliasing
 /// `&mut` to the same static (PORTING.md §Forbidden); callers materialise the
-/// `&mut` at the use site. Matches the other self-ref escapes in this module
-/// (`writer()`, `error_writer()`, …).
+/// `&mut` at the use site.
 ///
 /// SAFETY: the static is single-threaded by construction (only ever touched
 /// from the main JS/CLI thread while blocked on user input).
@@ -2821,21 +2580,18 @@ pub const SYNCHRONIZED_END: &str = "\x1b[?2026l";
 
 /// https://gist.github.com/christianparpart/d8a62cc1ab659194337d73e399004036
 pub fn synchronized() -> Synchronized {
-    Synchronized::begin()
+    #[cfg(unix)]
+    {
+        print(format_args!("{}", SYNCHRONIZED_START));
+    }
+    Synchronized(())
 }
 
-pub struct Synchronized;
+#[must_use]
+pub struct Synchronized(());
 
-impl Synchronized {
-    pub(crate) fn begin() -> Synchronized {
-        #[cfg(unix)]
-        {
-            print(format_args!("{}", SYNCHRONIZED_START));
-        }
-        Synchronized
-    }
-
-    pub fn end(self) {
+impl Drop for Synchronized {
+    fn drop(&mut self) {
         #[cfg(unix)]
         {
             print(format_args!("{}", SYNCHRONIZED_END));

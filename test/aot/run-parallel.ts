@@ -77,6 +77,7 @@
 //                                      Every other build is made and run: `ways` says "built and run, not compared" of it, not "pass"
 //   // Prints what goes by the copy that runs: <what>   the same, for what the language leaves open and a typed copy of its code answers otherwise than the closed one: the bytes of a NaN
 //   // STATISTIC: <name> (= | >= | <=) <n>   what the build must have counted
+//   // STATISTIC on x64: <name> (= | >= | <=) <n>   the same where process.arch is that word, and nothing anywhere else. The word is x64 or arm64
 //   // COUNT: <name> (= | >= | <=) <n>       what the executable of the first build must have counted when it ends: no clock, and the same on every machine.
 //                                      A name as BUN_JSC_aotCountsPath writes it (operation:operationAOTGetById, counter:CompiledStructuresCreated), or
 //                                      `operations`: all calls into the run time. The run has no collection. What the program starts counts too
@@ -821,14 +822,14 @@ function fail(
 
 /** Only a COUNT names what is counted with its kind in front. */
 function readBound(line: string): (Bound & { kind: string }) | undefined {
-  const [, kind, name, relation, bound, platform, arch, todo] =
-    /^\/\/ (STATISTIC|COUNT|COUNTER|COUNTER in every build): ([\w:]+) (=|>=|<=) (\d+)(?: Todo(?: on (\w+)(?: (\w+))?)?: (.+))?$/.exec(
+  const [, kind, processor = process.arch, name, relation, bound, platform, arch, todo] =
+    /^\/\/ (STATISTIC(?: on (x64|arm64))?|COUNT|COUNTER|COUNTER in every build): ([\w:]+) (=|>=|<=) (\d+)(?: Todo(?: on (\w+)(?: (\w+))?)?: (.+))?$/.exec(
       line,
     ) ?? [];
   if (kind === undefined || (kind !== "COUNT" && name.includes(":"))) return undefined;
   const isTodoHere =
     (platform === undefined || platform === process.platform) && (arch === undefined || arch === process.arch);
-  return { kind, name, relation, bound: Number(bound), todo: isTodoHere ? todo : undefined };
+  return { kind: processor === process.arch ? kind.replace(/ on .*/, "") : kind, name, relation, bound: Number(bound), todo: isTodoHere ? todo : undefined };
 }
 
 function read(file: string): Program {
@@ -854,7 +855,7 @@ function read(file: string): Program {
     : [];
   const texts = [text, ...others.map(other => readFileSync(other, "utf8"))];
   const boundLines = texts.flatMap(text =>
-    Array.from(text.matchAll(/^\/\/ (?:STATISTIC|COUNT|COUNTER|COUNTER in every build):.*$/gm), ([line]) => line),
+    Array.from(text.matchAll(/^\/\/ (?:STATISTIC(?: on \w+)?|COUNT|COUNTER|COUNTER in every build):.*$/gm), ([line]) => line),
   );
   const bounds = boundLines.map(readBound).filter(bound => bound !== undefined);
   const namesModules = someFileOf(path, text => namesMuchOfTheLibrary.test(text));
@@ -1215,7 +1216,7 @@ async function run(program: Program): Promise<void> {
     return fail(
       program,
       "read",
-      `not of the form \`// STATISTIC | COUNT | COUNTER | COUNTER in every build: <name> (= | >= | <=) <n>\`: ${program.boundsNotRead.join("; ")}`,
+      `not of the form \`// STATISTIC | STATISTIC on x64 | COUNT | COUNTER | COUNTER in every build: <name> (= | >= | <=) <n>\`: ${program.boundsNotRead.join("; ")}`,
     );
   if (program.growthNotRead) return fail(program, "read", program.growthNotRead);
   if (program.marksNotRead.length)

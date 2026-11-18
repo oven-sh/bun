@@ -4,7 +4,9 @@ use super::module_cache::{is_function_that_loader_calls, is_module_cache, is_tab
 use super::resolver::{ExprState, FunctionsReadingThis, ResolvedValue, Resolver, evaluates_text};
 use super::unnamed_uses::MOST_VARIABLES_FOLLOWED;
 use super::written_members::holder_of;
-use crate::builtins::runtime_uses::is_evaluator;
+use crate::builtins::runtime_uses::{
+    RoadsToNamespaces, holds_name_of_member_with_code, is_evaluator,
+};
 use crate::builtins::table::{
     self, BuiltinFlags, BuiltinId, BuiltinKind, BuiltinName, CallsForTexts, Intrinsic, Prototype,
     QuietCall, Scope, WrittenOperand,
@@ -41,7 +43,7 @@ pub(super) fn expose_in(called: &mut Vec<BuiltinId>, exposed: &mut Vec<BuiltinId
     }
 }
 
-fn keeps_what_is_laid_over_it(id: BuiltinId) -> bool {
+pub(super) fn keeps_what_is_laid_over_it(id: BuiltinId) -> bool {
     let entry = table::entry(table::canonical_id(id));
     entry.kind != BuiltinKind::Accessor && entry.scope == Scope::Realm
 }
@@ -75,8 +77,8 @@ fn finds_method_that_hands_out_global_object(holder: BuiltinId, name: Option<Bui
     loop {
         let mut members = table::members(object).iter();
         if members.any(|&member| {
-            is_method_that_hands_out_global_object(member)
-                && name.is_none_or(|name| table::entry(member).name == name)
+            name.is_none_or(|name| table::entry(member).name == name)
+                && is_method_that_hands_out_global_object(member)
         }) {
             return true;
         }
@@ -207,17 +209,29 @@ impl Resolver<'_, '_> {
     }
 
     pub(super) fn expose(&mut self, id: BuiltinId) {
+        if self.input.dialect == SourceDialect::Program {
+            self.output.roads_to_namespaces |= RoadsToNamespaces::HANDS_ON_BUILTIN;
+        }
+        self.note_escaped_object(id);
         expose_in(&mut self.output.called, &mut self.output.exposed, id);
     }
 
+    fn note_escaped_object(&mut self, id: BuiltinId) {
+        if holds_name_of_member_with_code(id) {
+            self.output.escaped_objects.push(table::canonical_id(id));
+        }
+    }
+
     pub(super) fn may_be_global_object(&self, this: ExprId) -> bool {
-        if self.input.hir.is_strict || self.input.dialect != SourceDialect::Program {
+        let hir = self.input.hir;
+        let is_strict = hir.is_strict && hir.known_evaluations.is_empty();
+        if is_strict || self.input.dialect != SourceDialect::Program {
             return false;
         }
         match self.find_whose_this(this) {
-            WhoseThis::OfFunction(function) => !self.input.hir[function].is_strict,
+            WhoseThis::OfFunction(function) => !hir[function].is_strict,
             WhoseThis::OfFileOrMember => false,
-            WhoseThis::Unknown => true,
+            WhoseThis::Unknown => !hir.is_strict,
         }
     }
 
@@ -298,7 +312,7 @@ impl Resolver<'_, '_> {
         }
     }
 
-    fn may_read_this(&self, operand: ExprId) -> bool {
+    pub(super) fn may_read_this(&self, operand: ExprId) -> bool {
         self.may_read_this_behind_constants(operand, 0)
     }
 
@@ -488,7 +502,7 @@ impl Resolver<'_, '_> {
         self.names_of(variable).chain([assignment]).collect()
     }
 
-    fn find_receiver_handed_to_operands(
+    pub(super) fn find_receiver_handed_to_operands(
         &self,
         function: ExprId,
         id: BuiltinId,
@@ -522,7 +536,11 @@ impl Resolver<'_, '_> {
         may_read_receiver.then_some(receiver)
     }
 
-    fn find_receiver_held_as_answer(&self, function: ExprId, id: BuiltinId) -> Option<BuiltinId> {
+    pub(super) fn find_receiver_held_as_answer(
+        &self,
+        function: ExprId,
+        id: BuiltinId,
+    ) -> Option<BuiltinId> {
         let hir = self.input.hir;
         let (receiver, _) = hir.member_key(function)?;
         let receiver = mentioned_id(self.state(hir.skip_type_assertions(receiver)))?;
@@ -553,6 +571,9 @@ impl Resolver<'_, '_> {
         if !self.may_be_global_object(this) {
             return None;
         }
+        if matches!(self.input.hir[this].kind, ExprKind::Super) {
+            return Some(BuiltinId::GlobalThis);
+        }
         match self.classify_use(this) {
             MentionUse::Inspected | MentionUse::Called(_) => None,
             MentionUse::Holder => self.find_global_read_off(this),
@@ -578,7 +599,9 @@ impl Resolver<'_, '_> {
 
     fn classify_mention(&mut self, expr: ExprId) {
         let state = match self.state(expr) {
-            ExprState::Unresolved if matches!(self.input.hir[expr].kind, ExprKind::This) => {
+            ExprState::Unresolved
+                if matches!(self.input.hir[expr].kind, ExprKind::This | ExprKind::Super) =>
+            {
                 if let Some(global) = self.find_global_out_of_sight_through(expr) {
                     self.mention(global);
                     self.expose(global);
@@ -612,14 +635,10 @@ impl Resolver<'_, '_> {
         } else if makes_value {
             self.output.mentioned.push(id);
         }
-        if self.input.dialect == SourceDialect::Program
-            && (self.takes_method_that_hands_out_global_object_off(expr, id)
-                || (hands_out_global_object(id)
-                    && !self.listens_for_event_that_program_alone_dispatches(expr, id)))
-        {
+        if let Some(global) = self.find_global_handed_out(expr, id) {
             self.output.method_that_hands_out_global_object_may_come_out = true;
-            self.mention(BuiltinId::GlobalThis);
-            self.expose(BuiltinId::GlobalThis);
+            self.mention(global);
+            self.expose(global);
         }
         if is_module_cache(id) {
             self.note_use_of_module_cache(expr);
@@ -648,7 +667,13 @@ impl Resolver<'_, '_> {
             self.expose(holder);
         }
         self.mention_members_read_under_written_keys(expr);
-        match self.classify_use(expr) {
+        let mention_use = self.classify_use(expr);
+        let changes_member = self.is_stored_to_member(expr)
+            && !table::has_flag(table::canonical_id(id), BuiltinFlags::IS_GLOBAL_OBJECT);
+        if matches!(mention_use, MentionUse::Exposed) || self.is_stored_to(expr) || changes_member {
+            self.note_escaped_object(id);
+        }
+        match mention_use {
             MentionUse::Called(call) if self.is_import_site(call) => {}
             MentionUse::Called(call) if self.asks_for_symbol_that_host_ignores(call, id) => {}
             MentionUse::Called(call) => {
@@ -671,7 +696,10 @@ impl Resolver<'_, '_> {
                 let holders = self.find_where_variable_holds_what_is_stored(expr);
                 self.note_names_that_tests_may_lay_above(id, &holders);
             }
-            MentionUse::Aliased => {}
+            MentionUse::Aliased => {
+                self.output.aliases_global_object |=
+                    table::has_flag(id, BuiltinFlags::IS_GLOBAL_OBJECT);
+            }
             MentionUse::ReadByComputedKey => {
                 self.note_names_that_tests_may_lay_above(id, &[expr]);
                 self.note_holder_of_loader_functions_out_of_sight(expr, id);
@@ -691,6 +719,15 @@ impl Resolver<'_, '_> {
                 }
             }
         }
+    }
+
+    fn is_stored_to_member(&self, object: ExprId) -> bool {
+        let object = self.outermost_assertion_of(object);
+        let Parent::Expr(member) = self.input.bound.parent_of_expr(object) else {
+            return false;
+        };
+        let holder = self.input.hir.member_key(member).map(|read| read.0);
+        holder == Some(object) && (self.is_stored_to(member) || self.is_deleted(member))
     }
 
     /// `Reflect.get(Bun, "ModuleGraph")`, `Object.getOwnPropertyDescriptor(Bun, "ModuleGraph")` and `Bun["Module" + "Graph"]` read
@@ -1193,6 +1230,14 @@ impl Resolver<'_, '_> {
                 finds_method_that_hands_out_global_object(id, None)
             }
         }
+    }
+
+    pub(super) fn find_global_handed_out(&self, expr: ExprId, id: BuiltinId) -> Option<BuiltinId> {
+        let hands_it_out = self.input.dialect == SourceDialect::Program
+            && (self.takes_method_that_hands_out_global_object_off(expr, id)
+                || (hands_out_global_object(id)
+                    && !self.listens_for_event_that_program_alone_dispatches(expr, id)));
+        hands_it_out.then_some(BuiltinId::GlobalThis)
     }
 
     fn listens_for_event_that_program_alone_dispatches(

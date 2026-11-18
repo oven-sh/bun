@@ -1,6 +1,4 @@
-//! `Value` union + JSC bridges for MySQL type encoding. Kept separate so the
-//! protocol layer keeps the pure `CharacterSet`/`FieldType` enums without
-//! `JSValue` references.
+//! `Value` union + JSC bridges for MySQL type encoding.
 
 use crate::jsc::{
     ErrorCode, JSGlobalObject, JSGlobalObjectSqlExt as _, JSType, JSValue, JsResult,
@@ -10,7 +8,7 @@ use bun_core::Utf8Bytes;
 
 use bun_sql::mysql::mysql_types::FieldType;
 use bun_sql::mysql::protocol::any_mysql_error;
-use bun_sql::mysql::protocol::new_writer::{NewWriter, WriterContext};
+use bun_sql::mysql::protocol::packet_writer::PacketWriter;
 use bun_sql::mysql::protocol::prepared_statement::ExecuteParam;
 
 pub(crate) enum Value<'a> {
@@ -47,9 +45,9 @@ impl ExecuteParam for Value<'_> {
         matches!(self, Value::Uint(_) | Value::Ulong(_))
     }
 
-    fn write<C: WriterContext>(&self, writer: NewWriter<C>) -> Result<(), any_mysql_error::Error> {
+    fn write(&self, writer: &mut PacketWriter<'_>) {
         match self {
-            Value::Null => Ok(()),
+            Value::Null => {}
             Value::Bool(value) => writer.write(&[u8::from(*value)]),
             Value::Int(value) => writer.write(&value.to_le_bytes()),
             Value::Uint(value) => writer.write(&value.to_le_bytes()),

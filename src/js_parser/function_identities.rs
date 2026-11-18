@@ -1225,7 +1225,7 @@ impl<'p, 'a> Walker<'p, 'a> {
     }
 
     #[allow(
-        clippy::large_stack_frames,
+        clippy::large_unopt_stack_frames,
         reason = "expr::Data variants are arena-backed StoreRef; live residency is bounded"
     )]
     fn expr_at_depth(&mut self, expr: &'p Expr) {

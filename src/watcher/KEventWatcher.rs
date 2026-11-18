@@ -1,12 +1,12 @@
 use bun_core::output as Output;
-use bun_sys::Fd;
+use bun_sys::CloseOnDrop;
 
-use crate::watcher_impl::{Op, WatchEvent, Watcher};
+use crate::watcher_impl::{Op, WatchEvent, Watcher, WatcherThread};
 
 pub(crate) type Platform = KEventWatcher;
 
 pub struct KEventWatcher {
-    pub(crate) fd: Fd,
+    pub(crate) fd: CloseOnDrop,
 }
 
 const CHANGELIST_COUNT: usize = 128;
@@ -17,14 +17,21 @@ impl KEventWatcher {
         if fd.native() == 0 {
             return Err(crate::Error::KQueueError);
         }
-        Ok(Self { fd })
+        Ok(Self {
+            fd: CloseOnDrop::new(fd),
+        })
     }
+}
 
-    pub(crate) fn stop(&mut self) {
-        if self.fd.is_valid() {
-            let _ = bun_sys::close(self.fd);
-            self.fd = Fd::INVALID;
-        }
+impl Watcher {
+    pub(crate) fn wake(&self) {
+        let mut add: libc::kevent = bun_core::ffi::zeroed();
+        add.filter = libc::EVFILT_USER;
+        let mut trigger = add;
+        add.flags = libc::EV_ADD;
+        trigger.fflags = libc::NOTE_TRIGGER;
+        // SAFETY: only `watch_loop_cycle` waits on this kqueue, and it reads `udata` as an index.
+        let _ = unsafe { bun_sys::kevent(self.platform.fd.fd(), &[add, trigger], &mut [], None) };
     }
 }
 
@@ -50,14 +57,13 @@ fn watch_event_from_kevent(kevent: &libc::kevent) -> WatchEvent {
     }
 }
 
-pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
+pub(crate) fn watch_loop_cycle(this: &Watcher, thread: &mut WatcherThread) -> bun_sys::Result<()> {
     let _flush = Output::flush_guard();
-    let fd = this.platform.fd;
+    let fd = this.platform.fd.fd();
 
     let mut changelist: [libc::kevent; CHANGELIST_COUNT] = bun_core::ffi::zeroed();
 
-    // SAFETY: an empty changelist registers nothing.
-    let mut count = unsafe { bun_sys::kevent(fd, &[], &mut changelist, None) }?;
+    let mut count = bun_sys::kevent_wait(fd, &mut changelist, None)?;
 
     // Give the events more time to coalesce
     if count < CHANGELIST_COUNT / 2 {
@@ -65,12 +71,11 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
             tv_sec: 0,
             tv_nsec: 100_000,
         }; // 0.0001 seconds
-        // SAFETY: as above.
-        count += unsafe { bun_sys::kevent(fd, &[], &mut changelist[count..], Some(&ts)) }?;
+        count += bun_sys::kevent_wait(fd, &mut changelist[count..], Some(&ts))?;
     }
 
     let changes = &changelist[..count];
-    let watchevents = &mut this.watch_events[..count];
+    let watchevents = &mut thread.watch_events[..count];
     let mut out_len: usize = 0;
     if let [first, rest @ ..] = changes {
         watchevents[0] = watch_event_from_kevent(first);
@@ -89,6 +94,6 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
         }
     }
 
-    this.dispatch_file_updates(out_len, out_len);
+    this.dispatch_file_updates(thread, out_len, &[]);
     Ok(())
 }

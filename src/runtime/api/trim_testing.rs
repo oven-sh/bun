@@ -38,6 +38,7 @@ pub(crate) fn trim_executable(
     } else {
         UsedFeatures {
             names_bun_build: used_features.contains(&Feature::Bundler),
+            can_reach_test_runner: used_features.contains(&Feature::Test),
             features: used_features.into_iter().map(named_use_of).collect(),
             causes: Vec::new(),
             locales: UsedLocales::Unknown(None),

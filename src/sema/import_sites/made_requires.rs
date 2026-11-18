@@ -257,6 +257,12 @@ impl<'a, 'h, 'b, 'd> Text<'a, 'h, 'b, 'd> {
     }
 
     fn is_create_require(self, e: ExprId, left: StepsLeft) -> bool {
+        let callee = self.hir.skip_type_assertions(e);
+        if let Some((_, key)) = self.hir.member_key(callee)
+            && !matches!(key, MemberKey::Name(known::createRequire))
+        {
+            return false;
+        }
         let Some((specifier, face, names)) = self.find_names_read_off_module(e, left) else {
             return false;
         };

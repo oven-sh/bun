@@ -49,8 +49,8 @@ test.skipIf(!hasHook)(
     // after a bounded number of attempts.
     using dir = makeDir("parallel-pre-ready-exit");
     const [, stderr, exitCode] = await runParallel(String(dir), "1");
-    // Assert only on coordinator-generated output: try_reap gates on ipc.done
-    // but not err.done, so the worker's own stderr line can race the reap and
+    // Assert only on coordinator-generated output: the reap waits for ipc.done
+    // but not for the end of stderr, so the worker's own stderr line can race the reap and
     // be dropped before it's captured. The coordinator prints "exited during
     // startup" synchronously inside reap_worker, once per pre-ready reap — a
     // reliable spawn counter.

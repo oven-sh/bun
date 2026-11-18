@@ -15,7 +15,9 @@ use bun_uws::{AnyRequest, AnyResponse};
 use crate::server::file_response_stream::{StartOptions as FileResponseStreamOptions, StreamOwner};
 use crate::server::file_route::{status_for_preconditions, write_any_status, write_content_range};
 use crate::server::jsc::{JSGlobalObject, JsResult};
-use crate::server::{AnyServer, FileResponseStream, HTTPStatusText, RangeRequest};
+use crate::server::{
+    AnyServer, FileResponseStream, HTTPStatusText, PendingRequest, RangeRequest, Served,
+};
 
 bun_output::declare_scope!(DirectoryRoute, hidden);
 
@@ -32,7 +34,7 @@ struct StatCacheEntry {
 pub(crate) struct DirectoryRoute {
     ref_count: Cell<u32>,
     server: Cell<Option<AnyServer>>,
-    root_fd: Cell<Fd>,
+    root: File,
     /// Mount prefix with trailing `/` (`"/static/"`, or `"/"` for `"/*"`).
     url_prefix: Box<[u8]>,
     stat_cache: Box<[Cell<StatCacheEntry>]>,
@@ -63,12 +65,13 @@ impl DirectoryRoute {
         debug_assert!(url_prefix.last() == Some(&b'/'));
         debug_assert!(!strings::contains(url_prefix, b"//"));
 
-        let root_fd = match bun_sys::open_a(
+        let root = match File::openat(
+            Fd::cwd(),
             root,
             bun_sys::O::DIRECTORY | bun_sys::O::CLOEXEC | bun_sys::O::RDONLY,
             0,
         ) {
-            Ok(fd) => fd,
+            Ok(dir) => dir,
             Err(err) => {
                 use bun_sys_jsc::ErrorJsc;
                 return Err(global.throw_value(err.to_js(global)?));
@@ -88,7 +91,7 @@ impl DirectoryRoute {
         Ok(RefPtr::new(DirectoryRoute {
             ref_count: Cell::new(1),
             server: Cell::new(None),
-            root_fd: Cell::new(root_fd),
+            root,
             url_prefix: url_prefix.to_vec().into_boxed_slice(),
             stat_cache: stat_cache.into_boxed_slice(),
             stat_cache_path_bytes: Cell::new(0),
@@ -110,14 +113,8 @@ impl DirectoryRoute {
 
     fn on(this: ThisPtr<DirectoryRoute>, mut req: AnyRequest, resp: AnyResponse, method: Method) {
         debug_assert!(this.server.get().is_some());
-        // Held until the response completes; a reload can drop the route
-        // table's ref while a `FileResponseStream` is still streaming.
-        let guard = ResponseGuard {
-            route: Some(RefPtr::from_this(this)),
-            resp,
-        };
+        let route = PendingRequest::new(RefPtr::from_this(this));
         if let Some(server) = this.server.get() {
-            server.on_pending_request();
             resp.timeout(server.config().idle_timeout);
         }
 
@@ -240,8 +237,7 @@ impl DirectoryRoute {
 
         let server = this.server.get().unwrap();
         FileResponseStream::start(FileResponseStreamOptions {
-            fd: file.into_raw(),
-            auto_close: true,
+            fd: file.into(),
             resp,
             vm: bun_ptr::BackRef::new(server.vm()),
             file_type: FileType::File,
@@ -249,7 +245,7 @@ impl DirectoryRoute {
             offset: body_offset,
             length: Some(body_len),
             idle_timeout: server.config().idle_timeout,
-            owner: StreamOwner::DirectoryRoute(guard.into_route()),
+            owner: StreamOwner::DirectoryRoute(route),
         });
     }
 
@@ -304,16 +300,13 @@ impl DirectoryRoute {
         #[cfg(not(windows))]
         let fd = {
             use bun_sys::beneath::{Symlinks, openat};
-            openat(self.root_fd.get(), zrel, flags, 0, Symlinks::FollowAsRoot).ok()?
+            openat(self.root.fd(), zrel, flags, 0, Symlinks::FollowAsRoot).ok()?
         };
         #[cfg(windows)]
-        let fd = bun_sys::openat(self.root_fd.get(), zrel, flags, 0).ok()?;
+        let fd = bun_sys::openat(self.root.fd(), zrel, flags, 0).ok()?;
         // Windows `openat` returns a HANDLE; `FileResponseStream` needs a
         // libuv fd. `make_lib_uv_owned` is a no-op on POSIX.
-        use bun_sys::FdExt;
-        fd.make_lib_uv_owned_for_syscall(bun_sys::Tag::open, bun_sys::ErrorCase::CloseOnFail)
-            .ok()
-            .map(File::from_fd)
+        File::from_fd(fd).make_lib_uv_owned().ok()
     }
 
     fn stat_cache_lookup(&self, rel: &[u8], stat: &bun_sys::Stat) -> (u64, [u8; 32], usize) {
@@ -350,44 +343,11 @@ impl DirectoryRoute {
         slot.set(entry);
         (ms, buf, len)
     }
-
-    /// The last thing a response does with the route; callers then release
-    /// the ref `on()` took for it.
-    pub(crate) fn on_response_complete(&self, resp: AnyResponse) {
-        resp.clear_aborted();
-        resp.clear_on_writable();
-        resp.clear_timeout();
-        if let Some(server) = self.server.get() {
-            server.on_static_request_complete();
-        }
-    }
 }
 
-impl Drop for DirectoryRoute {
-    fn drop(&mut self) {
-        drop(File::from_fd(self.root_fd.get()));
-    }
-}
-
-/// Completes the response and releases its route ref (closing the file, if
-/// any, as it drops) on every non-streaming return.
-struct ResponseGuard {
-    route: Option<RefPtr<DirectoryRoute>>,
-    resp: AnyResponse,
-}
-
-impl ResponseGuard {
-    /// Hand the ref to the `FileResponseStream` instead.
-    fn into_route(mut self) -> RefPtr<DirectoryRoute> {
-        self.route.take().expect("taken once")
-    }
-}
-
-impl Drop for ResponseGuard {
-    fn drop(&mut self) {
-        if let Some(route) = self.route.take() {
-            route.on_response_complete(self.resp);
-        }
+impl Served for RefPtr<DirectoryRoute> {
+    fn served_by(&self) -> Option<AnyServer> {
+        self.server.get()
     }
 }
 

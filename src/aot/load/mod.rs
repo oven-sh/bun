@@ -63,8 +63,9 @@ pub fn host_platform() -> Platforms {
     }
 }
 
+#[inline]
 pub(crate) fn is_host_path(path: &[u8]) -> bool {
-    path.starts_with(HOST_ROOT)
+    path.get(1) == Some(&HOST_ROOT[1]) && path.starts_with(HOST_ROOT)
 }
 
 pub(crate) fn is_in_node_modules(path: &[u8]) -> bool {

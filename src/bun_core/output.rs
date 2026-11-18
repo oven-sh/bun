@@ -191,11 +191,8 @@ fn stdio_tty_flag(idx: usize) -> bool {
 // Source
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `Source.StreamType` — `File` on native, a fixed-buffer stream on WASM.
-#[cfg(not(target_arch = "wasm32"))]
+/// `Source.StreamType`.
 pub type StreamType = File;
-#[cfg(target_arch = "wasm32")]
-pub type StreamType = io::FixedBufferStream; // wasm32 is not built yet; FixedBufferStream is unported.
 
 pub struct Source {
     buffered_stream: io::WriterStorage<4096>,
@@ -316,31 +313,28 @@ impl Source {
         SOURCE_SET.set(true);
         if !STDOUT_STREAM_SET.load(Ordering::Relaxed) {
             STDOUT_STREAM_SET.store(true, Ordering::Relaxed);
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                let is_stdout_tty = stdio_tty_flag(1);
-                if is_stdout_tty {
-                    let _ = STDOUT_DESCRIPTOR_TYPE.set(OutputStreamDescriptor::Terminal);
-                }
-
-                let is_stderr_tty = stdio_tty_flag(2);
-                if is_stderr_tty {
-                    let _ = STDERR_DESCRIPTOR_TYPE.set(OutputStreamDescriptor::Terminal);
-                }
-
-                // FORCE_COLOR and NO_COLOR override both streams; otherwise each stream uses its own isatty result.
-                let mut enable_color: Option<bool> = None;
-                if Self::is_force_color() {
-                    enable_color = Some(true);
-                } else if Self::is_no_color() {
-                    enable_color = Some(false);
-                }
-
-                ENABLE_ANSI_COLORS_STDOUT
-                    .store(enable_color.unwrap_or(is_stdout_tty), Ordering::Relaxed);
-                ENABLE_ANSI_COLORS_STDERR
-                    .store(enable_color.unwrap_or(is_stderr_tty), Ordering::Relaxed);
+            let is_stdout_tty = stdio_tty_flag(1);
+            if is_stdout_tty {
+                let _ = STDOUT_DESCRIPTOR_TYPE.set(OutputStreamDescriptor::Terminal);
             }
+
+            let is_stderr_tty = stdio_tty_flag(2);
+            if is_stderr_tty {
+                let _ = STDERR_DESCRIPTOR_TYPE.set(OutputStreamDescriptor::Terminal);
+            }
+
+            // FORCE_COLOR and NO_COLOR override both streams; otherwise each stream uses its own isatty result.
+            let mut enable_color: Option<bool> = None;
+            if Self::is_force_color() {
+                enable_color = Some(true);
+            } else if Self::is_no_color() {
+                enable_color = Some(false);
+            }
+
+            ENABLE_ANSI_COLORS_STDOUT
+                .store(enable_color.unwrap_or(is_stdout_tty), Ordering::Relaxed);
+            ENABLE_ANSI_COLORS_STDERR
+                .store(enable_color.unwrap_or(is_stderr_tty), Ordering::Relaxed);
 
             STDOUT_STREAM.store(stdout.0.0, Ordering::Relaxed);
             STDERR_STREAM.store(stderr.0.0, Ordering::Relaxed);
@@ -1083,12 +1077,6 @@ fn write_args(dest: Destination, args: fmt::Arguments<'_>) {
 
 #[inline]
 pub fn print_to(dest: Destination, args: fmt::Arguments<'_>) {
-    #[cfg(target_arch = "wasm32")]
-    {
-        // wasm32 is not built yet; output is dropped.
-        let _ = (dest, args);
-        return;
-    }
     // PERF: `fmt::Arguments::as_str()` returns Some only when there are no
     // interpolations, giving a single `write_bytes(dest, str)` fast path per
     // such call site.

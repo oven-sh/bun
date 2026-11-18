@@ -538,9 +538,7 @@ impl<T: Default> Default for RwLock<T> {
 }
 
 // ─── Path primitives (from bun_paths) ─────────────────────────────────────
-pub const MAX_PATH_BYTES: usize = if cfg!(target_arch = "wasm32") {
-    1024
-} else if cfg!(windows) {
+pub const MAX_PATH_BYTES: usize = if cfg!(windows) {
     // Windows PATH_MAX_WIDE (32767) * 3 + 1 (UTF-8 worst-case from UTF-16).
     32767 * 3 + 1
 } else if cfg!(any(target_os = "linux", target_os = "android")) {

@@ -1584,3 +1584,25 @@ fn a_period_is_no_longer_than_the_header_allows() {
         assert_eq!(status, expected);
     }
 }
+
+#[test]
+fn a_match_starts_no_earlier_than_the_output() {
+    let bytes = Random::new(23).bytes(WINDOW_SIZE);
+    let lens = [1, 9, 17_000, WINDOW_SIZE - 1];
+    for (len, trailing) in lens.into_iter().flat_map(|len| [(len, 0), (len, 40)]) {
+        for distance in [len, len + 1, WINDOW_SIZE] {
+            let mut stream = Writer::default();
+            stream.stored(false, &bytes[..len]).fixed(true);
+            stream.copy(9, distance).literals(&bytes[..trailing]);
+            let stream = stream.end_block().finish();
+            // Behind what another stream has written.
+            let mut room = vec![7; 99_999];
+            let mut out = BorrowedBuf::from(&mut room[..]);
+            out.unfilled().append(&bytes);
+            let status = raw_with(&[]).inflate(&mut &stream[..], out.unfilled());
+            assert_eq!(status.is_ok(), distance == len, "{len} {distance}");
+            let expected = [&bytes[..], &plain::inflate(&stream, &[]).bytes].concat();
+            assert!(out.filled() == expected, "{len} {distance}");
+        }
+    }
+}

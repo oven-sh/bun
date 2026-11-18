@@ -3967,8 +3967,9 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
                 .cmp(&keys[b as usize].inner_index())
         });
 
-        // Unbound property reads that must keep their namespace.
-        let mut namespace_items: HashMap<Ref, Ref> = HashMap::default();
+        // Items of `ns.name()` left unbound, each with its `ns`.
+        let mut method_call_items: HashMap<Ref, Ref> = HashMap::default();
+        let mut missing_jsx_imports = Vec::new();
         for &i in &order {
             let i = i as usize;
             let (import_ref, named_import) = (keys[i], &values[i]);
@@ -4008,7 +4009,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
                 MatchImportKind::Normal
                     if matcher.method_call_item_needs_this(import_ref, named_import, &result) =>
                 {
-                    namespace_items.insert(import_ref, named_import.namespace_ref);
+                    method_call_items.insert(import_ref, named_import.namespace_ref);
                 }
                 MatchImportKind::Normal | MatchImportKind::NormalAndNamespace => {
                     matcher.bind_matched_import(imports_to_bind, import_ref, &result, re_exports);
@@ -4083,16 +4084,10 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
                 if symbol.import_used_in_jsx_tag()
                     || symbol.must_start_with_capital_letter_for_jsx()
                 {
-                    jsx_imports.push((import_ref, import_ref));
-                    if symbol.import_item_status == ImportItemStatus::Missing
-                        && let Some(namespace) = &symbol.namespace_alias
-                    {
-                        // A missing namespace property still reads as `undefined`.
-                        // Keeping the access gives it a spelling valid inside a JSX tag.
-                        symbol.import_item_status = ImportItemStatus::Generated;
-                        if !is_call_item {
-                            namespace_items.insert(import_ref, namespace.namespace_ref);
-                        }
+                    if symbol.import_item_status == ImportItemStatus::Missing {
+                        missing_jsx_imports.push(import_ref);
+                    } else {
+                        jsx_imports.push((import_ref, import_ref));
                     }
                 }
             }
@@ -4104,7 +4099,8 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
             member_resolutions,
         );
 
-        if !namespace_items.is_empty() {
+        // A part that calls such an item reads its namespace.
+        if !method_call_items.is_empty() {
             let mut namespace_uses: Vec<(Ref, u32)> = Vec::new();
             for part in self.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice() {
                 namespace_uses.clear();
@@ -4117,7 +4113,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
                     if item_use.count_estimate() == 0 {
                         continue;
                     }
-                    if let Some(&namespace_ref) = namespace_items.get(item) {
+                    if let Some(&namespace_ref) = method_call_items.get(item) {
                         namespace_uses.push((namespace_ref, item_use.count_estimate()));
                     }
                 }
@@ -4138,6 +4134,75 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
             member_resolutions,
             jsx_imports,
         );
+        if !missing_jsx_imports.is_empty() {
+            self.bind_missing_jsx_imports(source_index, &missing_jsx_imports);
+        }
+    }
+
+    /// Bind missing exports used as tags to an undefined local with a JSX component name.
+    fn bind_missing_jsx_imports(&mut self, source_index: crate::IndexInt, imports: &[Ref]) {
+        let missing = self.graph.generate_new_symbol(
+            source_index,
+            bun_ast::symbol::Kind::Other,
+            b"JSXMissing",
+        );
+        self.graph
+            .symbols
+            .get_mut(missing)
+            .unwrap()
+            .set_must_start_with_capital_letter_for_jsx(true);
+
+        let arena = self.graph.arena();
+        let loc = Loc::EMPTY;
+        let decl = G::Decl {
+            binding: Binding::alloc(arena, bun_ast::B::Identifier { r#ref: missing }, loc),
+            value: None,
+        };
+        let stmt = Stmt::allocate(
+            arena,
+            S::Local {
+                kind: S::Kind::KVar,
+                decls: G::DeclList::init_one(decl),
+                ..Default::default()
+            },
+            loc,
+        );
+        self.graph
+            .add_part_to_file(
+                source_index,
+                Part {
+                    stmts: bun_ast::StoreSlice::new(arena.alloc_slice_copy(&[stmt])),
+                    declared_symbols: DeclaredSymbolList::from_slice(&[DeclaredSymbol {
+                        ref_: missing,
+                        is_top_level: true,
+                    }])
+                    .expect("OOM"),
+                    can_be_removed_if_unused: true,
+                    ..Default::default()
+                },
+            )
+            .expect("OOM");
+
+        let imports_to_bind =
+            &mut self.graph.meta.items_imports_to_bind_mut()[source_index as usize];
+        for &ref_ in imports {
+            let symbol = self.graph.symbols.get_mut(ref_).unwrap();
+            symbol.import_item_status = ImportItemStatus::Generated;
+            symbol.namespace_alias = None;
+            imports_to_bind
+                .put(
+                    ref_,
+                    crate::ImportData {
+                        data: ImportTracker {
+                            source_index: Index::init(source_index),
+                            import_ref: missing,
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    },
+                )
+                .expect("OOM");
+        }
     }
 
     /// `import X from './a'; X.foo` where `X` resolved to the namespace of an

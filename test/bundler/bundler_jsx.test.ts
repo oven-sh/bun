@@ -210,6 +210,7 @@ describe("bundler", () => {
               "/in.jsx": `
                 ${dynamic ? 'const ns = await import("./component");' : 'import * as ns from "./component";'}
                 console.log(<ns.Missing /> === undefined);
+                console.log(<ns.toString /> === undefined, ns.toString === undefined);
                 try {
                   console.log(<ns.Missing.Child />);
                 } catch (error) {
@@ -226,13 +227,20 @@ describe("bundler", () => {
             minifyWhitespace: minify,
             // esbuild 0.18 prints an undefined expression in the JSX tag.
             skipOnEsbuild: true,
-            bundleWarnings: dynamic ? undefined : { "/in.jsx": ['Import "Missing" will always be undefined'] },
+            bundleWarnings: dynamic
+              ? undefined
+              : {
+                  "/in.jsx": [
+                    'Import "Missing" will always be undefined',
+                    'Import "toString" will always be undefined',
+                  ],
+                },
             onAfterBundle(api) {
               const out = api.readFile("/out.js");
               const { code } = transformSync(out, { loader: "jsx", jsxFactory: "globalThis.__jsxPreserveFactory" });
               api.writeFile("/out.js", `globalThis.__jsxPreserveFactory = type => type;\n${code}`);
             },
-            run: { stdout: "true\ntrue" },
+            run: { stdout: "true\ntrue true\ntrue" },
           });
         }
       }

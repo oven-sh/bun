@@ -440,7 +440,7 @@ Configures how JSX is compiled.
 
 Set `runtime: "preserve"` to keep JSX syntax for another compiler without adding JSX runtime imports. Explicit preserve mode takes precedence over `tsconfig.json` JSX settings. Executable, bytecode, and standalone HTML builds require files without preserved JSX. If linking fixes a component binding to a name that JSX cannot represent, Bun reports a build error.
 
-Bun emits braced `key` shorthand such as `{item.key}` as a spread prop. When an explicit `key` follows that spread, an automatic JSX transform may use its `createElement` path to respect the order of the properties.
+In preserve mode, Bun emits braced `key` shorthand such as `{item.key}` as a spread prop. When an explicit `key` follows that spread, a downstream automatic JSX transform may use its `createElement` path to respect the order of the properties.
 
 **Classic runtime example** (uses `factory` and `fragment`):
 

@@ -581,6 +581,27 @@ describe("css", () => {
     run: { stdout: "a foo_e7Ht-A" },
   });
 
+  // The two imports of entry.js stay one range of statements: a.js and b.js start together, as with a JSON file.
+  // The class names that b.js reads print ahead of every file, not between the two imports.
+  for (const [kind, value] of Object.entries({ CSSModule: "./x.module.css", JSON: "./x.json" })) {
+    itBundled(`css-module/ValueOf${kind}DoesNotSplitTheFileThatLoadsItsReader`, {
+      files: {
+        "/entry.js": `
+          import "./a.js";
+          import "./b.js";
+          console.log("entry");
+          export const later = () => [import("./a.js"), import("./b.js")];
+        `,
+        "/a.js": `console.log("a"); await null; console.log("a done");`,
+        "/b.js": `import value from "${value}"; console.log("b", typeof value.foo);`,
+        "/x.module.css": `.foo { color: red }`,
+        "/x.json": `{ "foo": "json" }`,
+      },
+      outdir: "/out",
+      run: { stdout: "b string\na\na done\nentry" },
+    });
+  }
+
   // A file that is wrapped (here: loaded by require() or by an import() that is not split) can have a bare
   // import of a stylesheet. The stylesheet has no JavaScript, so it gets no wrapper and no call.
   const wrappedFiles = {

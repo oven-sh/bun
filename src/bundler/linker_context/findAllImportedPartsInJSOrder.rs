@@ -124,6 +124,7 @@ pub(crate) fn find_imported_parts_in_js_order(
         part_ranges: Vec::new(),
         parts_prefix: Vec::new(),
         namespace_objects: Vec::new(),
+        class_names: Vec::new(),
         chunk_index,
         // The one column written through a shared `&LinkerContext` (see `place`).
         entry_point_chunk_indices: this.graph.files.split_raw().entry_point_chunk_index,
@@ -149,22 +150,16 @@ pub(crate) fn find_imported_parts_in_js_order(
         part_ranges,
         parts_prefix,
         namespace_objects,
+        class_names,
         ..
     } = layout;
-    let mut parts_in_chunk_order: Vec<PartRange> =
-        Vec::with_capacity(parts_prefix.len() + namespace_objects.len() + part_ranges.len());
+    let mut parts_in_chunk_order: Vec<PartRange> = Vec::with_capacity(
+        parts_prefix.len() + namespace_objects.len() + class_names.len() + part_ranges.len(),
+    );
     parts_in_chunk_order.extend_from_slice(&parts_prefix);
     parts_in_chunk_order.extend_from_slice(&namespace_objects);
-    // The class names of a stylesheet exist before any file runs, like a namespace object. The dev server format takes one range per file.
-    let css_js_stubs = &this.parse_graph().css_js_stubs;
-    if css_js_stubs.len() > 0 && this.options.output_format != OutputFormat::InternalBakeDev {
-        let is_stub =
-            |range: &&PartRange| css_js_stubs.stylesheet_of(range.source_index.get()).is_some();
-        parts_in_chunk_order.extend(part_ranges.iter().filter(is_stub).copied());
-        parts_in_chunk_order.extend(part_ranges.iter().filter(|range| !is_stub(range)).copied());
-    } else {
-        parts_in_chunk_order.extend_from_slice(&part_ranges);
-    }
+    parts_in_chunk_order.extend_from_slice(&class_names);
+    parts_in_chunk_order.extend_from_slice(&part_ranges);
 
     let reached_chunks = if this.graph.code_splitting {
         reached_chunks_in_order(this, chunk, chunk_index, chunk_of_file, order, chunks_len)?
@@ -936,6 +931,13 @@ impl EntryWalk {
     }
 }
 
+#[derive(Clone, Copy)]
+enum Section {
+    Prefix,
+    ClassNames,
+    Files,
+}
+
 struct ChunkLayout<'a, 'ctx> {
     c: &'a LinkerContext<'a, 'ctx>,
     files: Vec<IndexInt>,
@@ -943,6 +945,8 @@ struct ChunkLayout<'a, 'ctx> {
     parts_prefix: Vec<PartRange>,
     /// A namespace object exists before any file runs: these print ahead of `part_ranges`.
     namespace_objects: Vec<PartRange>,
+    /// The class names of a stylesheet (its JS stub) run nothing and exist before any file runs, like a namespace object.
+    class_names: Vec<PartRange>,
     chunk_index: u32,
     /// Raw `entry_point_chunk_index` column, for the one write in `place`.
     entry_point_chunk_indices: *mut [u32],
@@ -951,7 +955,7 @@ struct ChunkLayout<'a, 'ctx> {
 impl ChunkLayout<'_, '_> {
     fn append_or_extend_range(
         &mut self,
-        in_prefix: bool,
+        section: Section,
         source_index: IndexInt,
         part_index: IndexInt,
     ) {
@@ -963,10 +967,10 @@ impl ChunkLayout<'_, '_> {
             }
         };
         let max = RANGE_SOURCE_BYTES_MAX;
-        let ranges = if in_prefix {
-            &mut self.parts_prefix
-        } else {
-            &mut self.part_ranges
+        let ranges = match section {
+            Section::Prefix => &mut self.parts_prefix,
+            Section::ClassNames => &mut self.class_names,
+            Section::Files => &mut self.part_ranges,
         };
         if let Some(last_range) = ranges.last_mut() {
             if last_range.source_index.get() == source_index
@@ -993,6 +997,14 @@ impl ChunkLayout<'_, '_> {
         // Wrapped files can't be split because they are all inside the wrapper
         let can_be_split =
             self.c.graph.meta.items_flags()[source_index as usize].wrap == Wrap::None;
+        // The dev server format takes one range per file.
+        let is_class_names = self.c.options.output_format != OutputFormat::InternalBakeDev
+            && self
+                .c
+                .parse_graph()
+                .css_js_stubs
+                .stylesheet_of(source_index)
+                .is_some();
         if can_be_split {
             let parts_live = &self.c.graph.parts_live[source_index as usize];
             let end = if leaves { parts.len() as u32 } else { run.end };
@@ -1017,7 +1029,13 @@ impl ChunkLayout<'_, '_> {
                         });
                     } else {
                         self.append_or_extend_range(
-                            is_runtime && !is_namespace_export,
+                            if is_runtime && !is_namespace_export {
+                                Section::Prefix
+                            } else if is_class_names {
+                                Section::ClassNames
+                            } else {
+                                Section::Files
+                            },
                             source_index,
                             part_index,
                         );

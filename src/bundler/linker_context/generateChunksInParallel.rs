@@ -306,10 +306,12 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                 continue;
             }
 
-            let claimed = path_names_map.get_or_put(&rel_path)?;
+            // `./a.js` and `a.js` are one file.
+            let claim: &[u8] = rel_path.strip_prefix(b"./".as_slice()).unwrap_or(&rel_path);
+            let claimed = path_names_map.get_or_put(claim)?;
             if claimed.found_existing {
                 let first = *claimed.value_ptr as usize;
-                let dup = duplicates_map.get_or_put(&rel_path)?;
+                let dup = duplicates_map.get_or_put(claim)?;
                 if !dup.found_existing {
                     *dup.value_ptr = DuplicateEntry::default();
                     dup.value_ptr

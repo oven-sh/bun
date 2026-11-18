@@ -888,21 +888,56 @@ describe("bundler", () => {
 
   // A chunk that two entry points share takes its name from the first entry point. With a chunk name that has no
   // [hash], the chunk of the class names has the path of that entry point, as the chunk of a shared JSON file has.
-  for (const [kind, shared] of Object.entries({ CSSModule: "./shared.module.css", JSON: "./shared.json" })) {
-    itBundled(`splitting/ChunkNameWithoutHashOfShared${kind}`, {
+  // The command line gives the entry point the path `./sub/a.js` and the chunk the path `sub/a.js`: one file.
+  for (const [kind, shared] of Object.entries({ CSSModule: "shared.module.css", JSON: "shared.json" })) {
+    for (const [where, chunkNaming, first] of [
+      ["", "[name].[ext]", "a.js"],
+      ["InDirectory", "[dir]/[name].[ext]", "sub/a.js"],
+    ] as const) {
+      itBundled(`splitting/ChunkNameWithoutHashOfShared${kind}${where}`, {
+        backend: "cli",
+        files: {
+          ["/" + first]: `import shared from '${where ? ".." : "."}/${shared}'; console.log('a', shared.foo);`,
+          "/b.js": `import shared from './${shared}'; console.log('b', shared.foo);`,
+          "/shared.module.css": `.foo { color: red; }`,
+          "/shared.json": `{ "foo": "json" }`,
+        },
+        entryPointsRaw: ["./" + first, "./b.js"],
+        splitting: true,
+        outdir: "/out",
+        chunkNaming,
+        bundleErrors: {
+          "<bun>": [`Multiple files share the same output path`],
+        },
+      });
+    }
+  }
+
+  // other.js is the first file that the bundler walks into, and a.js has the first import of the value. The value
+  // is ahead of other.js in the chunk that the two entry points share, for a stylesheet as for a JSON file.
+  for (const [kind, value, name] of [
+    ["CSSModule", "./x.module.css", "x_module_default"],
+    ["JSON", "./x.json", "x_default"],
+  ] as const) {
+    itBundled(`splitting/SharedChunkHasValueOf${kind}AheadOfItsReader`, {
       files: {
-        "/a.js": `import shared from '${shared}'; console.log('a', shared.foo);`,
-        "/b.js": `import shared from '${shared}'; console.log('b', shared.foo);`,
-        "/shared.module.css": `.foo { color: red; }`,
-        "/shared.json": `{ "foo": "json" }`,
+        "/a.js": `import { other } from "./other.js"; import value from "${value}"; console.log("a", value.foo, other);`,
+        "/b.js": `import { other } from "./other.js"; import value from "${value}"; console.log("b", value.foo, other);`,
+        "/other.js": `import value from "${value}"; export const other = value.foo + "!";`,
+        "/x.module.css": `.foo { color: red; }`,
+        "/x.json": `{ "foo": "json" }`,
       },
       entryPoints: ["/a.js", "/b.js"],
       splitting: true,
       outdir: "/out",
-      chunkNaming: "[name].[ext]",
-      bundleErrors: {
-        "<bun>": [`Multiple files share the same output path`],
+      onAfterBundle(api) {
+        const [chunk] = jsOutputsOf(api);
+        expect(api.readFile("/out/" + chunk)).toEndWith(`export { ${name}, other };\n`);
       },
+      run: [
+        { file: "/out/a.js", stdout: kind === "JSON" ? "a json json!" : "a foo_e7Ht-A foo_e7Ht-A!" },
+        { file: "/out/b.js", stdout: kind === "JSON" ? "b json json!" : "b foo_e7Ht-A foo_e7Ht-A!" },
+      ],
     });
   }
 

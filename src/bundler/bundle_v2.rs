@@ -2391,14 +2391,18 @@ pub mod bv2_impl {
                 return Ok(());
             }
             debug_assert_eq!(first as usize, self.graph.input_files.len());
-            // Each file comes after its dependencies: a stub is ahead of the files that import it.
+            // Each file comes after its dependencies: a stub is ahead of the files that import it. A file that the stylesheet itself imports is an error that the linker reports.
             if cfg!(debug_assertions) {
                 let mut position = vec![usize::MAX; first as usize + stubs.count()];
                 for (i, source_index) in reachable.iter().enumerate() {
                     position[source_index.get() as usize] = i;
                 }
                 for &(importer, _, stub) in &records {
-                    debug_assert!(position[stub as usize] < position[importer as usize]);
+                    let (stylesheet, _) = stubs.keys()[(stub - first) as usize];
+                    debug_assert!(
+                        position[stub as usize] < position[importer as usize]
+                            || position[importer as usize] < position[stylesheet as usize]
+                    );
                 }
             }
             for &(stylesheet, target) in stubs.keys() {
@@ -2474,10 +2478,6 @@ pub mod bv2_impl {
             });
             let side_effects = self.graph.input_files.items_side_effects()[stylesheet as usize];
             let module_type = self.graph.ast.items_module_type()[stylesheet as usize];
-            // `--minify` picks names by the text of the files of a chunk. The text of the stylesheet counts for this row.
-            let char_freq = self.graph.ast.items_char_freq()[stylesheet as usize]
-                .as_deref()
-                .copied();
 
             let options = &self.transpiler_for_target(target).options;
             let mut js_parser_options =
@@ -2499,7 +2499,6 @@ pub mod bv2_impl {
             )?;
             ast.target = target;
             ast.module_type = module_type;
-            ast.char_freq = char_freq.map(bun_alloc::ast_box);
 
             // The default loader, not `Loader::Css` as in esbuild: the linker takes a row with that loader for a stylesheet.
             let input_file = crate::Graph::InputFile {

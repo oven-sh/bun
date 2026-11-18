@@ -584,8 +584,8 @@ describe("css", () => {
   // A file that is wrapped (here: loaded by require() or by an import() that is not split) can have a bare
   // import of a stylesheet. The stylesheet has no JavaScript, so it gets no wrapper and no call.
   const wrappedFiles = {
-    "/page.js": `import "./page.css"; export const page = 1; console.log("page");`,
-    "/page.css": `@import "./reset.css"; .page { color: red; background: url("./image.png") }`,
+    "/page.js": `import "./styles.css"; export const page = 1; console.log("page");`,
+    "/styles.css": `@import "./reset.css"; .page { color: red; background: url("./image.png") }`,
     "/reset.css": `body { margin: 0 }`,
     "/image.png": "not a real png",
   };
@@ -649,21 +649,21 @@ describe("css", () => {
     files: {
       ...wrappedFiles,
       "/entry.js": `import legacy from "./legacy.cjs"; console.log(JSON.stringify(legacy));`,
-      "/legacy.cjs": `require("./page.css"); module.exports = { legacy: 1 };`,
+      "/legacy.cjs": `require("./styles.css"); module.exports = { legacy: 1 };`,
     },
     entryPoints: ["/entry.js"],
     outdir: "/out",
     onAfterBundle(api) {
       const js = api.readFile("/out/entry.js");
-      expect(js.slice(js.indexOf("// page.css"))).toMatchInlineSnapshot(`
-        "// page.css
-        var require_page = __commonJS(function(exports, module) {
+      expect(js.slice(js.indexOf("// styles.css"))).toMatchInlineSnapshot(`
+        "// styles.css
+        var require_styles = __commonJS(function(exports, module) {
           module.exports = {};
         });
 
         // legacy.cjs
         var require_legacy = __commonJS(function(exports, module) {
-          require_page();
+          require_styles();
           module.exports = { legacy: 1 };
         });
 
@@ -691,36 +691,47 @@ describe("css", () => {
     ],
   });
 
-  // The minifier picks short names by how often each character is in the files of a chunk. The text of the
-  // stylesheet counts for the module that holds its class names, so the names are the ones that a build
-  // picked before that module had a row of its own.
-  itBundled("css-module/MinifiedNamesCountTheTextOfTheStylesheet", {
+  // A stylesheet cannot import a script. The script is then a file that the stylesheet leads to, and a reader of it.
+  itBundled("css-module/StylesheetThatImportsItsReader", {
     files: {
       "/entry.js": `
         import styles from "./x.module.css";
-        export function read(value) { return styles[value]; }
+        import "./reader.js";
+        console.log(styles.foo);
       `,
-      "/x.module.css": `/* ${Buffer.alloc(4096, "q").toString()} */ .foo { color: red }`,
+      "/reader.js": `import styles from "./x.module.css"; console.log(styles.foo);`,
+      "/x.module.css": `.foo { background: url("./reader.js") }`,
     },
     outdir: "/out",
-    minifyIdentifiers: true,
-    onAfterBundle(api) {
-      api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
-        "// x.module.css
-        var q = {
-          foo: "foo_e7Ht-A"
-        };
-
-        // entry.js
-        function f(o) {
-          return q[o];
-        }
-        export {
-          f as read
-        };
-        "
-      `);
+    bundleErrors: {
+      "/x.module.css": [`Cannot import a ".jsx" file into a CSS file`],
     },
+  });
+
+  // The minifier picks short names by how often each character is in the files of a chunk. A stylesheet is not a
+  // file of a JS chunk: its text does not count, for a bare import and for an import of the class names.
+  test("css-module/MinifiedNamesDoNotCountTheTextOfAStylesheet", async () => {
+    using dir = tempDir("css-module-minified-names", {
+      "entry.js": `
+        import "./plain.css";
+        import styles from "./x.module.css";
+        export function read(value) { return styles[value]; }
+      `,
+    });
+    const build = async (comment: string) => {
+      await Promise.all([
+        Bun.write(join(String(dir), "plain.css"), `/* ${comment} */ .plain { color: green }`),
+        Bun.write(join(String(dir), "x.module.css"), `/* ${comment} */ .foo { color: red }`),
+      ]);
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), "entry.js")],
+        minify: { identifiers: true },
+      });
+      return await result.outputs.find(output => output.path.endsWith(".js"))!.text();
+    };
+    const names = await build("q");
+    expect(names).toContain("function ");
+    expect(await build(Buffer.alloc(4096, "q").toString())).toBe(names);
   });
 
   // The module that holds the class names is not a source file: the source map of a JS chunk has no entry for it.

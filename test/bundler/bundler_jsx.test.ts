@@ -1983,6 +1983,24 @@ describe("bundler", () => {
     },
   });
 
+  itBundled("jsx/SideEffectsKeepsTsconfigRuntime", {
+    files: {
+      "/in.tsx": "export const element = <div />;",
+      "/tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react-jsx" } }),
+    },
+    target: "bun",
+    backend: "cli",
+    env: { NODE_ENV: undefined, BUN_ENV: undefined },
+    external: ["react"],
+    jsx: { sideEffects: true },
+    skipOnEsbuild: true,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain('from "react/jsx-runtime"');
+      expect(out).not.toContain("@__PURE__");
+    },
+  });
+
   describe.each(["cli", "api"] as const)("key after spread (%s)", backend => {
     itBundled(`jsx/BareKeyKeepsShorthandProp-${backend}`, {
       files: {

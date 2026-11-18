@@ -509,9 +509,16 @@ impl<'a> Transpiler<'a> {
             let top_level_dir = Fs::FileSystem::get().top_level_dir();
             if let Ok(Some(root_dir)) = self.resolver.read_dir_info(top_level_dir) {
                 if let Some(tsconfig) = self.resolver.tsconfig_json(&root_dir) {
-                    // If we don't explicitly pass JSX, try to get it from the root tsconfig
-                    if self.options.transform_options.jsx.is_none() {
+                    let uses_default_jsx = self
+                        .options
+                        .transform_options
+                        .jsx
+                        .as_ref()
+                        .is_none_or(|jsx| jsx.runtime == api::JsxRuntime::_none);
+                    if uses_default_jsx {
+                        let side_effects = self.options.jsx.side_effects;
                         self.options.jsx = jsx_pragma_from_resolver(&tsconfig.jsx);
+                        self.options.jsx.side_effects |= side_effects;
                     }
                     self.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
                     self.options.experimental_decorators = tsconfig.experimental_decorators;

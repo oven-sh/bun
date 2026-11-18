@@ -2056,7 +2056,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
 
     if jsx_side_effects {
         let jsx = opts.jsx.get_or_insert_with(|| api::Jsx {
-            runtime: api::JsxRuntime::Automatic,
             development: true,
             ..Default::default()
         });

@@ -12,9 +12,7 @@ use crate::schema::api;
 use bun_core::strings;
 use std::borrow::Cow;
 
-/// 4-state including `_None` so `Pragma.runtime` preserves the zero value
-/// when an `api.Jsx` arrives with `runtime == _none`. `#[default]` is
-/// `Automatic`.
+/// JSX emission mode. `_None` represents an unset mode in resolver settings.
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Runtime {
@@ -298,7 +296,9 @@ impl Pragma {
             pragma.factory = factory;
         }
 
-        pragma.runtime = Runtime::from(jsx.runtime);
+        if jsx.runtime != api::JsxRuntime::_none {
+            pragma.runtime = Runtime::from(jsx.runtime);
+        }
         pragma.side_effects = jsx.side_effects;
 
         if !jsx.import_source.is_empty() {

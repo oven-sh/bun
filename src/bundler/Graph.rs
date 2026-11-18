@@ -161,6 +161,11 @@ impl CssJsStubs {
     pub(crate) fn len(&self) -> usize {
         self.stubs.count()
     }
+
+    /// The source indexes of the stubs.
+    pub(crate) fn rows(&self) -> core::ops::Range<IndexInt> {
+        self.first..self.first + self.stubs.count() as IndexInt
+    }
 }
 
 pub struct InputFile<'a> {

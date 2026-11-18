@@ -819,6 +819,8 @@ impl EntryWalk {
         let entry_bits = c.graph.files.items_entry_bits();
         let flags = c.graph.meta.items_flags();
         let css = &c.parse_graph().css_asts;
+        let css_js_stubs = &c.parse_graph().css_js_stubs;
+        let targets = c.graph.ast.items_target();
         let loads = |source_index: IndexInt, loader: u32| {
             files_live.is_set(source_index as usize)
                 && entry_bits[source_index as usize].is_set(loader as usize)
@@ -878,10 +880,15 @@ impl EntryWalk {
                 if other == Index::RUNTIME.value() {
                     return;
                 }
-                // A stylesheet is in no JS chunk.
-                if css[other as usize].is_some() {
-                    return;
-                }
+                // A stylesheet is in no JS chunk. Its JS stub is placed where the stylesheet is first imported, also by a bare `import`.
+                let other = if css[other as usize].is_some() {
+                    match css_js_stubs.stub_of(other, targets[source_index as usize]) {
+                        Some(stub) => stub,
+                        None => return,
+                    }
+                } else {
+                    other
+                };
                 if seen.is_set(other as usize) {
                     if !left.is_set(other as usize)
                         && let Some(slot) = slot_of(other)
@@ -948,7 +955,7 @@ struct ChunkLayout<'a, 'ctx> {
     namespace_objects: Vec<PartRange>,
     /// The class names of a stylesheet (its JS stub) run nothing and exist before any file runs, like a namespace object.
     class_names: Vec<PartRange>,
-    /// The class names printed where their stub is placed, before they had a section: the range of the file that imports them still ends there.
+    /// The next part of a file starts a range (see `place`).
     ends_range_of_files: bool,
     chunk_index: u32,
     /// Raw `entry_point_chunk_index` column, for the one write in `place`.
@@ -972,10 +979,7 @@ impl ChunkLayout<'_, '_> {
         let max = RANGE_SOURCE_BYTES_MAX;
         let ranges = match section {
             Section::Prefix => &mut self.parts_prefix,
-            Section::ClassNames => {
-                self.ends_range_of_files = true;
-                &mut self.class_names
-            }
+            Section::ClassNames => &mut self.class_names,
             Section::Files => &mut self.part_ranges,
         };
         let ends_range = matches!(section, Section::Files)
@@ -1008,13 +1012,10 @@ impl ChunkLayout<'_, '_> {
         let can_be_split =
             self.c.graph.meta.items_flags()[source_index as usize].wrap == Wrap::None;
         // The dev server format takes one range per file.
-        let is_class_names = self.c.options.output_format != OutputFormat::InternalBakeDev
-            && self
-                .c
-                .parse_graph()
-                .css_js_stubs
-                .stylesheet_of(source_index)
-                .is_some();
+        let stylesheet = (self.c.options.output_format != OutputFormat::InternalBakeDev)
+            .then(|| self.c.parse_graph().css_js_stubs.stylesheet_of(source_index))
+            .flatten();
+        let is_class_names = stylesheet.is_some();
         if can_be_split {
             let parts_live = &self.c.graph.parts_live[source_index as usize];
             let end = if leaves { parts.len() as u32 } else { run.end };
@@ -1049,6 +1050,13 @@ impl ChunkLayout<'_, '_> {
                             source_index,
                             part_index,
                         );
+                        // Before the class names had a section, they printed here unless their stylesheet had a wrapper: the range of the file that imports them ends here.
+                        if let Some(stylesheet) = stylesheet
+                            && !self.c.graph.meta.items_flags()[stylesheet as usize]
+                                .did_wrap_dependencies
+                        {
+                            self.ends_range_of_files = true;
+                        }
                     }
                 } else if parts_live.is_set(part_index as usize)
                     && self.c.is_import_of_stylesheet_that_had_a_wrapper(

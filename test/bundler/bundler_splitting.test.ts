@@ -596,14 +596,15 @@ describe("bundler", () => {
     splitting: true,
     outdir: "/out",
     onAfterBundle(api) {
-      const [dynamic, shared, entry, chunk] = jsOutputsOf(api);
-      expect([dynamic, shared, entry, chunk]).toEqual([
+      const outputs = jsOutputsOf(api);
+      expect(outputs).toEqual([
         "dynamic.js",
-        hashedChunk("static"),
         "static.js",
         hashedChunk("styles.module"),
+        hashedChunk("styles.module"),
       ]);
-      expect(api.readFile("/out/dynamic.js")).toContain(`import("./${chunk}")`);
+      const chunk = api.readFile("/out/dynamic.js").match(/import\("\.\/(styles\.module-[a-z0-9]{8}\.js)"\)/)![1];
+      const shared = outputs.find(file => file.startsWith("styles.module-") && file !== chunk)!;
       expect(api.readFile("/out/static.js")).toContain(`from "./${shared}";`);
       expect(api.readFile("/out/" + chunk).replace(shared, "shared.js")).toMatchInlineSnapshot(`
         "import {
@@ -844,7 +845,7 @@ describe("bundler", () => {
     splitting: true,
     outdir: "/out",
     onAfterBundle(api) {
-      expect(jsOutputsOf(api)).toEqual([hashedChunk("entry"), "entry.js", hashedChunk("page")]);
+      expect(jsOutputsOf(api)).toEqual(["entry.js", hashedChunk("page"), hashedChunk("styles.module")]);
     },
     run: { file: "/out/entry.js", env, stdout: "page foo_-MSaAA\nentry foo_-MSaAA true" },
   });
@@ -862,7 +863,12 @@ describe("bundler", () => {
     splitting: true,
     outdir: "/out",
     onAfterBundle(api) {
-      expect(jsOutputsOf(api)).toEqual([hashedChunk("about"), hashedChunk("entry"), "entry.js", hashedChunk("home")]);
+      expect(jsOutputsOf(api)).toEqual([
+        hashedChunk("about"),
+        "entry.js",
+        hashedChunk("home"),
+        hashedChunk("styles.module"),
+      ]);
     },
     run: { file: "/out/entry.js", env, stdout: "home foo_-MSaAA about foo_-MSaAA true" },
   });
@@ -890,11 +896,11 @@ describe("bundler", () => {
   // module of the class names the entry bit of b.js, as for a JSON file, so the module is in a chunk of its own.
   // A bare import does not, and neither does an import from a package that has no side effects. b.js prints no
   // class names in any of them.
-  for (const [name, other, shared, js] of [
-    ["UnusedDefaultImportNextToReaderOfCSSModule", `import styles from './shared.module.css';`, "./shared.module.css", 3],
-    ["UnusedDefaultImportNextToReaderOfJSON", `import styles from './shared.json';`, "./shared.json", 3],
-    ["BareImportNextToReaderOfCSSModule", `import './shared.module.css';`, "./shared.module.css", 2],
-    ["UnusedDefaultImportNextToReaderOfCSSModuleWithoutSideEffects", `import styles from 'lib/x.module.css';`, "lib/x.module.css", 2],
+  for (const [name, other, shared, chunk] of [
+    ["UnusedDefaultImportNextToReaderOfCSSModule", `import styles from './shared.module.css';`, "./shared.module.css", "shared.module"],
+    ["UnusedDefaultImportNextToReaderOfJSON", `import styles from './shared.json';`, "./shared.json", "a"],
+    ["BareImportNextToReaderOfCSSModule", `import './shared.module.css';`, "./shared.module.css", undefined],
+    ["UnusedDefaultImportNextToReaderOfCSSModuleWithoutSideEffects", `import styles from 'lib/x.module.css';`, "lib/x.module.css", undefined],
   ] as const) {
     itBundled(`splitting/${name}`, {
       files: {
@@ -909,7 +915,9 @@ describe("bundler", () => {
       splitting: true,
       outdir: "/out",
       onAfterBundle(api) {
-        expect(jsOutputsOf(api)).toEqual(js === 3 ? [hashedChunk("a"), "a.js", "b.js"] : ["a.js", "b.js"]);
+        expect(jsOutputsOf(api)).toEqual(
+          chunk === "a" ? [hashedChunk("a"), "a.js", "b.js"] : ["a.js", "b.js", ...(chunk ? [hashedChunk(chunk)] : [])],
+        );
         expect(api.readFile("/out/b.js")).toBe(`// b.js\nconsole.log("b");\n`);
       },
       run: [
@@ -919,74 +927,72 @@ describe("bundler", () => {
     });
   }
 
-  // A chunk that two entry points share takes its name from the first entry point. With a chunk name that has no
-  // [hash], the chunk of the class names has the path of that entry point, as the chunk of a shared JSON file has.
-  // The command line gives the entry point the path `./sub/a.js` and the chunk the path `sub/a.js`: one file.
-  for (const [kind, shared] of Object.entries({ CSSModule: "shared.module.css", JSON: "shared.json" })) {
-    for (const [where, chunkNaming, first] of [
-      ["", "[name].[ext]", "a.js"],
-      ["InDirectory", "[dir]/[name].[ext]", "sub/a.js"],
-    ] as const) {
-      itBundled(`splitting/ChunkNameWithoutHashOfShared${kind}${where}`, {
-        backend: "cli",
-        files: {
-          ["/" + first]: `import shared from '${where ? ".." : "."}/${shared}'; console.log('a', shared.foo);`,
-          "/b.js": `import shared from './${shared}'; console.log('b', shared.foo);`,
-          "/shared.module.css": `.foo { color: red; }`,
-          "/shared.json": `{ "foo": "json" }`,
-        },
-        entryPointsRaw: ["./" + first, "./b.js"],
-        splitting: true,
-        outdir: "/out",
-        chunkNaming,
-        bundleErrors: {
-          "<bun>": [`Multiple files share the same output path`],
-        },
-      });
-    }
-  }
-
-  // other.js is the first file that the bundler walks into, and a.js has the first import of the value. The value
-  // is ahead of other.js in the chunk that the two entry points share, for a stylesheet as for a JSON file.
-  for (const [kind, value, name] of [
-    ["CSSModule", "./x.module.css", "x_module_default"],
-    ["JSON", "./x.json", "x_default"],
+  // The chunk of the class names that two entry points share has the name of the stylesheet. A chunk name with no
+  // [hash] gives it a path of its own. The chunk of a shared JSON file has the name of the first entry point, and
+  // with such a chunk name its path is the path of that entry point.
+  for (const [where, chunkNaming, first] of [
+    ["", "[name].[ext]", "a.js"],
+    ["InDirectory", "[dir]/[name].[ext]", "sub/a.js"],
   ] as const) {
-    itBundled(`splitting/SharedChunkHasValueOf${kind}AheadOfItsReader`, {
+    itBundled(`splitting/ChunkNameWithoutHashOfSharedCSSModule${where}`, {
+      backend: "cli",
       files: {
-        "/a.js": `import { other } from "./other.js"; import value from "${value}"; console.log("a", value.foo, other);`,
-        "/b.js": `import { other } from "./other.js"; import value from "${value}"; console.log("b", value.foo, other);`,
-        "/other.js": `import value from "${value}"; export const other = value.foo + "!";`,
-        "/x.module.css": `.foo { color: red; }`,
-        "/x.json": `{ "foo": "json" }`,
+        ["/" + first]: `import shared from '${where ? ".." : "."}/shared.module.css'; console.log('a', shared.foo);`,
+        "/b.js": `import shared from './shared.module.css'; console.log('b', shared.foo);`,
+        "/shared.module.css": `.foo { color: red; }`,
       },
-      entryPoints: ["/a.js", "/b.js"],
+      entryPointsRaw: ["./" + first, "./b.js"],
       splitting: true,
       outdir: "/out",
+      chunkNaming,
       onAfterBundle(api) {
-        const [chunk] = jsOutputsOf(api);
-        expect(api.readFile("/out/" + chunk)).toEndWith(`export { ${name}, other };\n`);
+        const inDirectory = where ? readdirSync(api.outdir + "/sub").filter(file => file.endsWith(".js")) : [];
+        expect(jsOutputsOf(api).concat(inDirectory).sort()).toEqual(["a.js", "b.js", "shared.module.js"]);
       },
       run: [
-        { file: "/out/a.js", stdout: kind === "JSON" ? "a json json!" : "a foo_e7Ht-A foo_e7Ht-A!" },
-        { file: "/out/b.js", stdout: kind === "JSON" ? "b json json!" : "b foo_e7Ht-A foo_e7Ht-A!" },
+        { file: "/out/" + first, stdout: "a foo_4fd8ng" },
+        { file: "/out/b.js", stdout: "b foo_4fd8ng" },
       ],
     });
   }
-
-  // An HTML page and its own script are two entry points. The chunk of the page's script and the entry point have
-  // one path, `p/index.js` and `./p/index.js`, and equal bytes: the build writes it, as it did before.
-  itBundled("splitting/ChunkNameWithoutHashOfPageAndItsScript", {
+  itBundled("splitting/ChunkNameWithoutHashOfSharedJSON", {
     backend: "cli",
     files: {
-      "/p/index.html": `<script type="module" src="./index.js"></script>`,
-      "/p/index.js": `console.log("index ran");`,
-      "/q/other.js": `console.log("other ran");`,
+      "/a.js": `import shared from './shared.json'; console.log('a', shared.foo);`,
+      "/b.js": `import shared from './shared.json'; console.log('b', shared.foo);`,
+      "/shared.json": `{ "foo": "json" }`,
     },
-    entryPointsRaw: ["./p/index.html", "./p/index.js", "./q/other.js"],
+    entryPointsRaw: ["./a.js", "./b.js"],
+    splitting: true,
     outdir: "/out",
-    chunkNaming: "[dir]/[name].[ext]",
-    run: { file: "/out/p/index.js", stdout: "index ran" },
+    chunkNaming: "[name].[ext]",
+    bundleErrors: {
+      "<bun>": [`Multiple files share the same output path`],
+    },
+  });
+
+  // reader.js is in a wrapper, and a.js has a bare import of the stylesheet that reader.js reads. That import gives
+  // the class names no entry bit of a.js: they stay in the chunk of reader.js, and y.js runs before k.js in b.js.
+  itBundled("splitting/BareImportInAnotherEntryPointDoesNotShareTheClassNames", {
+    files: {
+      "/a.js": `import "./x.module.css"; import "./k.js"; console.log("a", require("./wa.js").wa);`,
+      "/b.js": `import { lazy } from "./y.js"; import "./k.js"; console.log("b", typeof lazy());`,
+      "/c.js": `import { lazy } from "./y.js"; import "./k.js"; console.log("c", typeof lazy());`,
+      "/d.js": `module.exports = "d";`,
+      "/k.js": `console.log("k");`,
+      "/y.js": `console.log("y"); export const lazy = () => require("./reader.js").cls;`,
+      "/reader.js": `import styles from "./x.module.css"; export const cls = styles.foo;`,
+      "/wa.js": `export const wa = "wa";`,
+      "/x.module.css": `.foo { color: red; }`,
+    },
+    entryPoints: ["/a.js", "/b.js", "/c.js", "/d.js"],
+    splitting: true,
+    outdir: "/out",
+    run: [
+      { file: "/out/a.js", stdout: "k\na wa" },
+      { file: "/out/b.js", stdout: "y\nk\nb string" },
+      { file: "/out/c.js", stdout: "y\nk\nc string" },
+    ],
   });
 
   // The size of a chunk for --min-chunk-size does not count the text of a stylesheet: the class names of a

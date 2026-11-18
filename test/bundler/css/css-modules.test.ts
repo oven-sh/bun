@@ -88,7 +88,7 @@ describe("css", () => {
         .sort();
       expect([barEntry, chunk, fooEntry]).toEqual([
         "bar-entry.js",
-        expect.stringMatching(/^foo-entry-[a-z0-9]{8}\.js$/),
+        expect.stringMatching(/^common\.module-[a-z0-9]{8}\.js$/),
         "foo-entry.js",
       ]);
       api.expectFile("/out/" + chunk).toMatchInlineSnapshot(`
@@ -477,6 +477,21 @@ describe("css", () => {
     onAfterBundle(api) {
       api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
         "var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
+        var __esm = (fn, res, err) => () => {
+          if (fn)
+            try {
+              res = fn(fn = 0);
+            } catch (e) {
+              err = [e];
+            }
+          if (err)
+            throw err[0];
+          return res;
+        };
+
+        // image.png
+        var image_default = "./image-mphfvab5.png";
+        var init_image = () => {};
 
         // styles.module.css
         var require_styles_module = __commonJS(function(exports, module) {
@@ -490,10 +505,8 @@ describe("css", () => {
           base: "base_1Cz41w"
         };
 
-        // image.png
-        var image_default = "./image-mphfvab5.png";
-
         // entry.js
+        init_image();
         var styles = require_styles_module();
         console.log(JSON.stringify(styles), JSON.stringify(base_module_default), typeof image_default);
         "
@@ -603,11 +616,13 @@ describe("css", () => {
   }
 
   // a.js and b.js await at their top level, and entry.js starts both before either of them finishes. The import
-  // of the stylesheet between them does not end that range of statements: page.js, which import() loads, imports
-  // the stylesheet too.
-  for (const [kind, statement] of Object.entries({
-    CSSModule: `import styles from "./x.module.css";`,
-    BareImport: `import "./plain.css";`,
+  // between them does not end that range of statements: page.js, which import() loads, imports the same
+  // stylesheet, or a stylesheet that imports it or that names the same image.
+  for (const [kind, [statement, inPage, value]] of Object.entries({
+    CSSModule: [`import styles from "./x.module.css";`, `import styles from "./x.module.css";`, `typeof styles`],
+    BareImport: [`import "./plain.css";`, `import "./plain.css";`, `"object"`],
+    BareImportOfImportedStylesheet: [`import "./plain.css";`, `import "./page.css";`, `"object"`],
+    ImageOfStylesheet: [`import image from "./image.png";`, `import "./image.css";`, `typeof image`],
   })) {
     itBundled(`css-module/${kind}BetweenTwoImportsThatAwait`, {
       files: {
@@ -615,24 +630,46 @@ describe("css", () => {
           import "./a.js";
           ${statement}
           import "./b.js";
-          console.log("entry");
+          console.log("entry", ${value});
           export const later = () => import("./page.js");
         `,
         "/page.js": `
           import "./a.js";
           import "./b.js";
-          ${statement}
+          ${inPage}
           console.log("page");
         `,
         "/a.js": `console.log("a1"); await 0; console.log("a2");`,
         "/b.js": `console.log("b1"); await 0; console.log("b2");`,
         "/x.module.css": `.foo { color: red }`,
         "/plain.css": `.plain { color: green }`,
+        "/page.css": `@import "./plain.css"; .page { color: blue }`,
+        "/image.css": `.image { background: url("./image.png") }`,
+        "/image.png": "not a real png",
       },
       outdir: "/out",
-      run: { stdout: "a1\nb1\na2\nb2\nentry" },
+      run: { stdout: "a1\nb1\na2\nb2\nentry " + (kind === "ImageOfStylesheet" ? "string" : "object") },
     });
   }
+
+  // The bare import is the first import of the stylesheet: the class names ended the range of entry.js there, not
+  // at the statement that exports them, and a.js and b.js still start together.
+  itBundled("css-module/BareImportAheadOfReExportBetweenTwoImportsThatAwait", {
+    files: {
+      "/entry.js": `
+        import "./x.module.css";
+        import "./a.js";
+        export { default as styles } from "./x.module.css";
+        import "./b.js";
+        export const later = () => [import("./a.js"), import("./b.js")];
+      `,
+      "/a.js": `await null; console.log("a", globalThis.fromB);`,
+      "/b.js": `globalThis.fromB = "set by b";`,
+      "/x.module.css": `.foo { color: red }`,
+    },
+    outdir: "/out",
+    run: { stdout: "a set by b" },
+  });
 
   // first.cjs runs before second.js. The class names that entry.js exports between the two imports print ahead
   // of every file, and the statements of entry.js keep the two ranges that they had.
@@ -710,6 +747,9 @@ describe("css", () => {
           console.log("page");
         });
 
+        // image.png
+        var init_image = () => {};
+
         // entry.js
         console.log(JSON.stringify((init_page(), __toCommonJS(exports_page))));
         "
@@ -737,6 +777,9 @@ describe("css", () => {
         var init_page = __esm(() => {
           console.log("page");
         });
+
+        // image.png
+        var init_image = () => {};
 
         // entry.js
         Promise.resolve().then(() => (init_page(), exports_page)).then((page) => console.log(JSON.stringify(page)));
@@ -767,6 +810,9 @@ describe("css", () => {
           require_styles();
           module.exports = { legacy: 1 };
         });
+
+        // image.png
+        var init_image = () => {};
 
         // entry.js
         var import_legacy = __toESM(require_legacy());
@@ -883,7 +929,7 @@ describe("css", () => {
         .filter(file => file.endsWith(".js.map"))
         .sort()
         .map(file => JSON.parse(api.readFile("/out/" + file)).sources);
-      expect(maps).toEqual([[], ["../a.js"], ["../b.js"]]);
+      expect(maps).toEqual([["../a.js"], ["../b.js"], []]);
     },
     run: [
       { file: "/out/a.js", stdout: "a foo_e7Ht-A" },

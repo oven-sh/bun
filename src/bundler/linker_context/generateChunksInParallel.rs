@@ -306,26 +306,10 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                 continue;
             }
 
-            let first = path_names_map
-                .get(rel_path.as_slice())
-                .map(|&first| first as usize)
-                .or_else(|| {
-                    // `./a.js` and `a.js` are one file: a shared chunk with the path of another chunk would be written over it.
-                    let other: std::borrow::Cow<[u8]> =
-                        match rel_path.strip_prefix(b"./".as_slice()) {
-                            Some(bare) => bare.into(),
-                            None => [b"./".as_slice(), rel_path.as_slice()].concat().into(),
-                        };
-                    path_names_map
-                        .get(&*other)
-                        .map(|&other| other as usize)
-                        .filter(|&other| {
-                            !chunks[other].entry_point.is_entry_point()
-                                || !chunks[index].entry_point.is_entry_point()
-                        })
-                });
-            if let Some(first) = first {
-                let dup = duplicates_map.get_or_put(&chunks[first].final_rel_path)?;
+            let claimed = path_names_map.get_or_put(&rel_path)?;
+            if claimed.found_existing {
+                let first = *claimed.value_ptr as usize;
+                let dup = duplicates_map.get_or_put(&rel_path)?;
                 if !dup.found_existing {
                     *dup.value_ptr = DuplicateEntry::default();
                     dup.value_ptr
@@ -337,7 +321,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                     .push(bun_ptr::BackRef::new(&chunks[index]));
                 continue;
             }
-            *path_names_map.get_or_put(&rel_path)?.value_ptr = index as u32;
+            *claimed.value_ptr = index as u32;
 
             chunks[index].final_rel_path = rel_path.into_boxed_slice();
         }

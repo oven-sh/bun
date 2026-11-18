@@ -303,7 +303,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
         true
     }
 
-    /// The bare `import` of a stylesheet that had a wrapper before it had a JS stub (a wrapped file imports it, or its stub has a wrapper): the part prints nothing and stays in the range of its file.
+    /// A part that `should_include_part` drops: the `import` of a stylesheet (or of its JS stub) that had a wrapper before it had a stub, because a wrapped file imports it or a `require()` names it. The part prints nothing and stays in the range of its file.
     pub(crate) fn is_import_of_stylesheet_that_had_a_wrapper(
         &self,
         source_index: crate::IndexInt,
@@ -321,18 +321,19 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
         if !record.source_index.is_valid() {
             return false;
         }
-        let stylesheet = record.source_index.get();
+        let other = record.source_index.get();
+        let css_js_stubs = &self.parse_graph().css_js_stubs;
+        let (stylesheet, stub) = if self.parse_graph().css_asts[other as usize].is_some() {
+            let target = self.graph.ast.items_target()[source_index as usize];
+            (other, css_js_stubs.stub_of(other, target))
+        } else if let Some(stylesheet) = css_js_stubs.stylesheet_of(other) {
+            (stylesheet, Some(other))
+        } else {
+            return false;
+        };
         let flags = self.graph.meta.items_flags();
-        self.parse_graph().css_asts[stylesheet as usize].is_some()
-            && (flags[stylesheet as usize].did_wrap_dependencies
-                || self
-                    .parse_graph()
-                    .css_js_stubs
-                    .stub_of(
-                        stylesheet,
-                        self.graph.ast.items_target()[source_index as usize],
-                    )
-                    .is_some_and(|stub| flags[stub as usize].wrap != WrapKind::None))
+        flags[stylesheet as usize].did_wrap_dependencies
+            || stub.is_some_and(|stub| flags[stub as usize].wrap != WrapKind::None)
     }
 
     pub(crate) fn load(
@@ -710,7 +711,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
             }
         }
 
-        // A stylesheet has no JS parts and no wrapper. What JavaScript reads of it is in its JS stub.
+        // A stylesheet has no JS parts and no wrapper. Its JS stub has no `__esm` wrapper: its class names exist before any file runs.
         if cfg!(debug_assertions) {
             let flags = self.graph.meta.items_flags();
             for (source_index, stylesheet) in self.parse_graph().css_asts.iter().enumerate() {
@@ -721,6 +722,9 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
                             .is_none()
                             && flags[source_index].wrap == WrapKind::None)
                 );
+            }
+            for stub in self.parse_graph().css_js_stubs.rows() {
+                debug_assert!(flags[stub as usize].wrap != WrapKind::Esm);
             }
         }
 

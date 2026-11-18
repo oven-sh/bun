@@ -644,8 +644,17 @@ pub(crate) fn compute_chunks<'a>(
             }
         }
 
+        // A chunk that holds only the class names of a stylesheet has the name of the stylesheet, as the chunk of an `import()` of it has.
         let pathname = bun_fs::PathName::init(
-            output_paths[chunk.entry_point.entry_point_id() as usize].slice(),
+            if !chunk.entry_point.is_entry_point()
+                && css_js_stubs
+                    .stylesheet_of(chunk.entry_point.source_index())
+                    .is_some()
+            {
+                sources[chunk.entry_point.source_index() as usize].path.text
+            } else {
+                output_paths[chunk.entry_point.entry_point_id() as usize].slice()
+            },
         );
         chunk.template.placeholder.name = pathname.base.to_vec().into_boxed_slice();
         chunk.template.placeholder.ext = chunk.content.ext().to_vec().into_boxed_slice();

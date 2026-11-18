@@ -378,7 +378,6 @@ pub(crate) fn scan_imports_and_exports(
                 output_format,
                 css_asts,
                 css_js_stubs,
-                targets: ast.target,
                 wrap_stack: Vec::new(),
                 export_star_stack: Vec::new(),
             };
@@ -427,34 +426,6 @@ pub(crate) fn scan_imports_and_exports(
                         if dependency_wrapper.exports_kind[si as usize] == ExportsKind::Cjs {
                             dependency_wrapper.wrap(si);
                         }
-                    }
-                }
-            }
-        }
-
-        // A bare `import` of a stylesheet calls the `init_` wrapper of its JS stub, as an `import` of the class names does.
-        if css_js_stubs.len() > 0 {
-            for source_index_ in &reachable {
-                let id = source_index_.get() as usize;
-                if !(id < ast.import_records.len())
-                    || css_asts[id].is_some()
-                    || loaders[id] == Loader::Html
-                {
-                    continue;
-                }
-                let target = ast.target[id];
-                for record in ast.import_records[id].as_mut_slice() {
-                    if record.kind != ImportKind::Stmt || !record.source_index.is_valid() {
-                        continue;
-                    }
-                    let stylesheet = record.source_index.get();
-                    if css_asts[stylesheet as usize].is_none() {
-                        continue;
-                    }
-                    if let Some(stub) = css_js_stubs.stub_of(stylesheet, target)
-                        && meta.flags[stub as usize].wrap == WrapKind::Esm
-                    {
-                        record.source_index = Index::init(stub);
                     }
                 }
             }
@@ -1393,7 +1364,6 @@ struct DependencyWrapper<'a, 'css> {
     output_format: options::Format,
     css_asts: &'a crate::Graph::CssAsts<'css>,
     css_js_stubs: &'a crate::Graph::CssJsStubs,
-    targets: &'a [options::Target],
     wrap_stack: Vec<IndexInt>,
     export_star_stack: Vec<ExportStarFrame>,
 }
@@ -1509,8 +1479,17 @@ impl DependencyWrapper<'_, '_> {
                 continue;
             }
 
+            // A stylesheet has no JS parts, and its JS stub runs nothing: neither gets a wrapper here. The flag of a stylesheet says that a wrapped file imports it or its stub.
+            if let Some(stylesheet) = self.css_js_stubs.stylesheet_of(source_index) {
+                if !self.flags[stylesheet as usize].did_wrap_dependencies {
+                    self.wrap_stack.push(stylesheet);
+                }
+                continue;
+            }
+
             // This module must be wrapped
-            if flag.wrap == WrapKind::None {
+            let flag = &mut self.flags[source_index as usize];
+            if self.css_asts[source_index as usize].is_none() && flag.wrap == WrapKind::None {
                 flag.wrap = match self.exports_kind[source_index as usize] {
                     ExportsKind::Cjs => WrapKind::Cjs,
                     _ => WrapKind::Esm,
@@ -1518,23 +1497,10 @@ impl DependencyWrapper<'_, '_> {
             }
 
             for record in self.import_records[source_index as usize].as_slice() {
-                if !record.source_index.is_valid() {
-                    continue;
-                }
-                let mut other = record.source_index.get();
-                // A stylesheet has no JS parts and no wrapper. Its JS stub has the wrapper, also for a bare `import`. The flag says that a wrapped file imports the stylesheet.
-                if self.css_asts[other as usize].is_some() {
-                    self.flags[other as usize].did_wrap_dependencies = true;
-                    match self
-                        .css_js_stubs
-                        .stub_of(other, self.targets[source_index as usize])
-                    {
-                        Some(stub) => other = stub,
-                        None => continue,
-                    }
-                }
-                if !self.flags[other as usize].did_wrap_dependencies {
-                    self.wrap_stack.push(other);
+                if record.source_index.is_valid()
+                    && !self.flags[record.source_index.get() as usize].did_wrap_dependencies
+                {
+                    self.wrap_stack.push(record.source_index.get());
                 }
             }
         }

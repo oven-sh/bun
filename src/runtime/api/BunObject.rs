@@ -1683,7 +1683,7 @@ pub(crate) mod JSZlib {
             .map_err(|_| bun_alloc::AllocError)?;
         }
 
-        let max_output = ArrayBuffer::MAX_SIZE as usize;
+        let max_output = ArrayBuffer::MAX_SIZE;
         match library {
             Library::Zlib => {
                 let window_bits = options

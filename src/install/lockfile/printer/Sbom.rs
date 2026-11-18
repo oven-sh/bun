@@ -101,7 +101,7 @@ struct Component {
     locator: Vec<u8>,
     integrity: Integrity,
     scope: Scope,
-    // Whether the package is only in the tarball of the packages that depend on it. The lockfile has the version that their ranges resolve to, and the tarball can have another one.
+    // Whether every path to the package goes into the tarball of another one. The lockfile has the version that the ranges resolve to, and the tarball can have another one.
     bundled: bool,
     // Indices into `Document::components`, sorted, each once.
     edges: Vec<u32>,
@@ -147,8 +147,8 @@ pub fn print(
             )?);
         }
     }
-    // Whether an edge that is not a bundled one leads to the component, so that the package is installed from a tarball of its own.
-    let mut installed = vec![false; components.len()];
+    // Whether the walk goes into the tarball of a package.
+    let mut any_bundled = false;
     crate::lockfile_real::reachable::followed_edges(
         lockfile,
         lockfile.buffers.resolutions.as_slice(),
@@ -160,11 +160,25 @@ pub fn print(
             components[index_of[parent as usize] as usize]
                 .edges
                 .push(edge);
-            installed[edge as usize] |= !behavior.is_bundled();
+            any_bundled |= behavior.is_bundled();
         },
     );
-    for (component, installed) in components.iter_mut().zip(&installed).skip(1) {
-        component.bundled = !installed;
+    // What a bundled package depends on is in the same tarball, and the lockfile marks only the bundled package.
+    if any_bundled {
+        let standalone = crate::lockfile_real::reachable::packages_from(
+            lockfile,
+            lockfile.buffers.resolutions.as_slice(),
+            &[root],
+            plan.follow_workspace_edges,
+            crate::lockfile_real::reachable::Options {
+                bundled: false,
+                ..plan.options
+            },
+        );
+        let mut listed = plan.listed.iterator::<true, true>();
+        while let Some(id) = listed.next() {
+            components[index_of[id] as usize].bundled = !standalone.is_set(id);
+        }
     }
     sort_components(&mut components);
     dedupe_identifiers(&mut components)?;

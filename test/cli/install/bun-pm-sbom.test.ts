@@ -1499,7 +1499,8 @@ test.concurrent("the optional packages of every platform are listed", async () =
   expect(spdx.exitCode).toBe(0);
 });
 
-// `inside` is in the tarball of `host`, and `shared` is a package of its own.
+// `inside` is in the tarball of `host`, with `deep`, which it depends on. `shared` is a package of its own, which
+// `inside` depends on too. bun.lock marks only `inside`.
 test.concurrent("a bundled dependency is listed with the version of bun.lock, and CycloneDX marks it", async () => {
   using dir = tempDir(
     "sbom-bundled",
@@ -1507,13 +1508,15 @@ test.concurrent("a bundled dependency is listed with the version of bun.lock, an
       { name: "root", version: "1.0.0", dependencies: { host: "1.0.0" } },
       {
         "host": npm("host", "1.0.0", { dependencies: { inside: "1.0.0", shared: "1.0.0" } }),
-        "host/inside": npm("inside", "1.0.0", { bundled: true }),
+        "host/inside": npm("inside", "1.0.0", { bundled: true, dependencies: { deep: "1.0.0", shared: "1.0.0" } }),
+        "host/deep": npm("deep", "1.0.0"),
         "shared": npm("shared", "1.0.0"),
       },
     ),
   );
   const [cyclonedx, spdx] = await bothFormats(String(dir));
-  const dependsOn = { root: ["host"], host: ["inside", "shared"] };
+  const dependsOn = { root: ["host"], host: ["inside", "shared"], inside: ["deep", "shared"] };
+  const bundled = [{ name: "cdx:npm:package:bundled", value: "true" }];
 
   const bom = readCycloneDx(cyclonedx);
   expect(bom.components.inside).toEqual({
@@ -1524,15 +1527,16 @@ test.concurrent("a bundled dependency is listed with the version of bun.lock, an
     scope: "required",
     purl: "pkg:npm/inside@1.0.0",
     hashes: [{ alg: "SHA-512", content: hexOf(sri("inside@1.0.0")) }],
-    properties: [{ name: "cdx:npm:package:bundled", value: "true" }],
+    properties: bundled,
   });
+  expect(bom.components.deep.properties).toEqual(bundled);
   // A package with a tarball of its own has no such property.
   expect(bom.components.host).not.toHaveProperty("properties");
   expect(bom.components.shared).not.toHaveProperty("properties");
   expect(bom.dependsOn).toEqual(dependsOn);
 
   const doc = readSpdx(spdx);
-  expect(Object.keys(doc.packages)).toEqual(["host", "inside", "shared"]);
+  expect(Object.keys(doc.packages)).toEqual(["deep", "host", "inside", "shared"]);
   expect(doc.relationships).toEqual(relationshipsOf("root", dependsOn));
 
   expect(cyclonedx.exitCode).toBe(0);

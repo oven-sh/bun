@@ -15,7 +15,9 @@ use bun_sema::session::Arena;
 use rustc_hash::FxHashSet;
 
 use crate::builtins::table;
-use crate::load::known_evaluations::{end_of_body, is_within, start_of_code};
+use crate::load::known_evaluations::{
+    end_of_body, is_callee_of_direct_eval, is_within, start_of_code,
+};
 use crate::load::react_compiler::module_items::finish_file;
 
 const NAME_OF_BINDINGS: &[u8] = b"%bindings";
@@ -62,7 +64,7 @@ pub(crate) fn is_left_to_engine(hir: &File<'_>) -> bool {
     };
     let (all, without_arrows) = (ranges_of_functions(true), ranges_of_functions(false));
     let sees_function = |kind: ExprKind| match kind {
-        ExprKind::Call(call) => matches!(hir[hir[call].callee].kind, ExprKind::Ident(known::eval)),
+        ExprKind::Call(call) => is_callee_of_direct_eval(hir[hir[call].callee].kind),
         kind => matches!(kind, ExprKind::NewTarget(_)),
     };
     let mut statements = hir.stmts.iter();

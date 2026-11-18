@@ -727,7 +727,7 @@ static void findReach(CALayer* layer, CALayer* root, double* edges)
 - (void)pace:(CADisplayLink*)link
 {
     CFTimeInterval interval = MAX(link.targetTimestamp - link.timestamp, 1 / link.preferredFrameRateRange.maximum);
-    commitsFrom = link.timestamp + interval / 2;
+    commitsFrom = link.timestamp + interval * 9 / 16;
     lastPace = CACurrentMediaTime();
     bd_trace("paced", lastPace - link.timestamp);
     _frequency = 1 / interval;

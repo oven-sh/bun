@@ -1,5 +1,6 @@
 // For `paint/layers`: surfaces, the layers that show them, and the GPU that draws on them.
 #import "bridge.h"
+#import <sys/event.h>
 #import <IOSurface/IOSurfaceObjC.h>
 #import <Metal/Metal.h>
 #import <QuartzCore/QuartzCore.h>
@@ -161,7 +162,17 @@ void bd_layer_remove(void* layer) { [(__bridge CALayer*)layer removeFromSuperlay
 
 CFTimeInterval commitsFrom;
 
-void bd_layers_wait(void) { [NSThread sleepForTimeInterval:commitsFrom - CACurrentMediaTime()]; }
+/// Other timers are put off by several frames in a process that the system takes for unimportant.
+void bd_layers_wait(void)
+{
+    static int timers;
+    CFTimeInterval left = commitsFrom - CACurrentMediaTime();
+    if (left <= 0)
+        return;
+    timers = timers ?: kqueue();
+    struct kevent64_s timer = { .filter = EVFILT_TIMER, .flags = EV_ADD | EV_ONESHOT, .fflags = NOTE_NSECONDS | NOTE_CRITICAL, .data = left * 1e9 + 1 };
+    kevent64(timers, &timer, 1, &timer, 1, 0, NULL);
+}
 
 void bd_layers_flush(void)
 {

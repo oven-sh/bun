@@ -1216,6 +1216,8 @@ app.whenReady().then(async () => {
           ["outside.js", "ui/index.html", `<script src="../../outside.js"></script>`],
           ["outside.js", "ui/index.html", `<script type="module" src="../../outside.js"></script>`],
           ["outside.js", "ui/index.html", `<script>new Worker("../../outside.js")</script>`],
+          ["outside.js", "ui/index.html", `<script style="color: red">new Worker("../../outside.js")</script>`],
+          ["outside.txt", "ui/index.html", `<img srcset="a.png 1x, ../../outside.txt 2x">`],
           ["outside.css", "ui/index.html", `<base href="../../"><link rel="stylesheet" href="outside.css">`],
           ["outside.txt", "ui/index.html", `<img src="/../outside.txt">`],
           ["outside.txt", "node_modules/a/a.css", `<link rel="stylesheet" href="../node_modules/a/a.css">`],

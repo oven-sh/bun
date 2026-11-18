@@ -75,6 +75,11 @@ fn find_names_of_eval(hir: &File<'_>) -> FxHashSet<Atom> {
     names
 }
 
+/// The language goes by how the callee is written, whatever it is bound to.
+pub(super) fn is_callee_of_direct_eval(callee: ExprKind) -> bool {
+    matches!(callee, ExprKind::Ident(known::eval))
+}
+
 fn is_eval_itself(hir: &File<'_>, expression: ExprId) -> bool {
     let expression = hir.skip_type_assertions(expression);
     matches!(hir[expression].kind, ExprKind::Ident(known::eval))

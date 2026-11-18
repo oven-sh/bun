@@ -4,6 +4,7 @@ use bun_sema::hir::{
 };
 use rustc_hash::FxHashSet;
 
+use super::is_callee_of_direct_eval;
 use crate::engine::describe_regexp_syntax_error;
 
 pub(super) struct Script {
@@ -92,8 +93,8 @@ impl Script {
         let expressions = &file.exprs[self.expressions_before..];
         expressions.iter().all(|it| match it.kind {
             ExprKind::Call(call) => {
-                let is_eval = matches!(file[file[call].callee].kind, ExprKind::Ident(known::eval));
-                !is_eval || self.is_in_function(it.pos)
+                !is_callee_of_direct_eval(file[file[call].callee].kind)
+                    || self.is_in_function(it.pos)
             }
             ExprKind::Regex { pattern, flags } => {
                 describe_regexp_syntax_error(atoms.bytes(pattern), atoms.bytes(flags)).is_none()

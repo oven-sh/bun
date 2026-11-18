@@ -2318,7 +2318,20 @@ impl<'a> Painter<'a> {
             self.depends_on_outside();
         }
         let sampled = sampled.and_then(|it| Some((it, self.source(it.timeline)?)));
-        let (items_before, mut whole) = (self.out.items.len(), None);
+        // Those at the end may be taken back.
+        let is_push = |it: &&Item| {
+            matches!(
+                it,
+                Item::PushClip(_)
+                    | Item::PushClipOutline(_)
+                    | Item::PushTransform(_)
+                    | Item::PushVector(_)
+            )
+        };
+        let (items_before, mut whole) = (
+            self.out.items.len() - self.out.items.iter().rev().take_while(is_push).count(),
+            None,
+        );
         self.see(id, was_hidden);
         if let Some((sampled, source)) = sampled.filter(|it| !it.0.transforms.is_empty()) {
             space.origin = space.origin.map(|it| self.snap(it));
@@ -2573,16 +2586,7 @@ impl<'a> Painter<'a> {
                 .iter_mut()
                 .for_each(|it| it.rect = it.rect.intersection(&visible));
         }
-        let paints = |it: &Item| {
-            !matches!(
-                it,
-                Item::Pop
-                    | Item::PushClip(_)
-                    | Item::PushClipOutline(_)
-                    | Item::PushTransform(_)
-                    | Item::PushVector(_)
-            )
-        };
+        let paints = |it: &Item| !matches!(it, Item::Pop) && !is_push(&it);
         if !style.is_visible() && document.animations.watched.contains(&id) {
             self.depends_on_contents();
         }

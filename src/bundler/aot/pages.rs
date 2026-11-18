@@ -7,12 +7,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use bun_aot::compile::EntryPointPaths;
 use bun_aot::options::ImportOfPage;
 use bun_ast::E::{JsonValue, ObjectJSON};
-use bun_ast::{ExprData, ImportKind, Loader, Loc, Log, Source};
+use bun_ast::{ExprData, ImportKind, Loader, Loc, Log, Source, Target};
 use bun_core::strings;
 use bun_js_parser::{ParserOptions, ScanPassResult};
 use bun_options_types::aot_options::AotOptions;
 use bun_parsers::json::ParsedJson;
 use bun_paths::resolve_path::relative_alloc;
+use bun_resolve_builtins::HardcodedModule::{Alias, Cfg};
 use bun_resolver::compiled_program::join_public_file_path;
 use bun_resolver::scripts_of_pages::{CLASSIC, LIST, PRELOAD, PRELOAD_PARAMETERS, name_of_inline};
 use bun_sema::hir::{CLASSIC_SCRIPT_END, CLASSIC_SCRIPT_START};
@@ -84,33 +85,29 @@ fn kind_of_script(element: &Element<'_, '_>) -> Option<Use> {
 
 impl Markup {
     fn element(&mut self, element: &Element<'_, '_>) {
-        let (name, start) = (element.tag_name(), element.source_location().bytes().end);
+        let (tag, start) = (element.tag_name(), element.source_location().bytes().end);
         let rel = element.get_attribute("rel").unwrap_or_default();
-        let kind = match name.as_str() {
+        let kind = match tag.as_str() {
             "script" => kind_of_script(element),
             "base" => Some(Use::Base),
             "a" | "area" => Some(Use::Link),
             "link" if rel.eq_ignore_ascii_case("modulepreload") => Some(Use::Module),
             _ => Some(Use::Data),
         };
-        let is_inline_script = name == "script" && !element.has_attribute("src");
-        self.is_in_inline = kind.is_some() && (is_inline_script || name == "style");
+        let is_inline_script = tag == "script" && !element.has_attribute("src");
+        self.is_in_inline = kind.is_some() && (is_inline_script || tag == "style");
         let Some(kind) = kind else { return };
+        let value_of = |attribute| element.get_attribute(attribute).map(String::into_bytes);
+        let urls = ["href", "src", "xlink:href", "poster", "data"].map(value_of);
+        (self.urls).extend(urls.into_iter().flatten().map(|it| (kind, it)));
+        for set in ["srcset", "imagesrcset"].into_iter().filter_map(value_of) {
+            let candidates = strings::split(&set, b",").map(<[u8]>::trim_ascii);
+            let urls = candidates.filter_map(|it| it.split(u8::is_ascii_whitespace).next());
+            self.urls.extend(urls.map(|it| (kind, it.to_vec())));
+        }
+        (self.inline).extend(value_of("style").map(|it| (Use::Data, start, it)));
         if self.is_in_inline {
             self.inline.push((kind, start, Vec::new()));
-        }
-        for attribute in element.attributes() {
-            let value = attribute.value().into_bytes();
-            match attribute.name().as_str() {
-                "src" | "href" | "xlink:href" | "poster" | "data" => self.urls.push((kind, value)),
-                "srcset" | "imagesrcset" => {
-                    let candidates = strings::split(&value, b",").map(<[u8]>::trim_ascii);
-                    let urls = candidates.filter_map(|it| it.split(u8::is_ascii_whitespace).next());
-                    self.urls.extend(urls.map(|it| (kind, it.to_vec())));
-                }
-                "style" => self.inline.push((Use::Data, start, value)),
-                _ => {}
-            }
         }
     }
 
@@ -186,13 +183,6 @@ fn strings_after<'a>(
     strings::split(code, start).skip(1).filter_map(split_string)
 }
 
-fn is_bare(specifier: &[u8]) -> bool {
-    !matches!(
-        specifier,
-        [b'/', ..] | [b'.', b'/', ..] | [b'.', b'.', b'/', ..]
-    )
-}
-
 fn has_scheme(url: &[u8]) -> bool {
     strings::contains_char(strings::split(url, b"/").next().unwrap_or_default(), b':')
 }
@@ -208,14 +198,14 @@ fn is_below(path: &[u8], directory: &[u8]) -> bool {
 fn find_package(path: &[u8]) -> Option<(&[u8], &[u8])> {
     const NODE_MODULES: &[u8] = bun_paths::NODE_MODULES_NEEDLE;
     let start = strings::last_index_of(path, NODE_MODULES)? + NODE_MODULES.len();
-    let end_of_name = |start: usize| {
+    let end_of_segment = |start: usize| {
         let length = path[start..]
             .iter()
             .position(|&it| bun_paths::is_sep_native(it));
         length.map_or(path.len(), |it| start + it)
     };
-    let end = match (path.get(start), end_of_name(start)) {
-        (Some(b'@'), scope) if scope < path.len() => end_of_name(scope + 1),
+    let end = match (path.get(start), end_of_segment(start)) {
+        (Some(b'@'), scope) if scope < path.len() => end_of_segment(scope + 1),
         (_, end) => end,
     };
     Some((
@@ -228,7 +218,7 @@ fn find_package(path: &[u8]) -> Option<(&[u8], &[u8])> {
 #[derive(Clone, Default, PartialEq, Eq)]
 struct Context {
     base: Vec<u8>,
-    /// Scope, specifier and address.
+    /// Scope, prefix and address.
     import_map: Vec<[Vec<u8>; 3]>,
 }
 
@@ -257,12 +247,12 @@ impl Context {
     /// In any scope.
     fn addresses_of(&self, specifier: &[u8]) -> BTreeSet<Vec<u8>> {
         let mut found: BTreeMap<&[u8], (usize, Vec<u8>)> = BTreeMap::new();
-        for [scope, key, address] in &self.import_map {
-            if let Some(rest) = specifier.strip_prefix(&key[..])
-                && (rest.is_empty() || key.ends_with(b"/"))
-                && found.get(&scope[..]).is_none_or(|it| it.0 < key.len())
+        for [scope, prefix, address] in &self.import_map {
+            if let Some(rest) = specifier.strip_prefix(&prefix[..])
+                && (rest.is_empty() || prefix.ends_with(b"/"))
+                && found.get(&scope[..]).is_none_or(|it| it.0 < prefix.len())
             {
-                found.insert(scope, (key.len(), [address, rest].concat()));
+                found.insert(scope, (prefix.len(), [address, rest].concat()));
             }
         }
         found.into_values().map(|it| it.1).collect()
@@ -436,13 +426,18 @@ impl Search<'_> {
         let mut files: Vec<_> = (addresses.iter())
             .map(|it| self.find(&page.base, it))
             .collect();
-        if files.is_empty() && !is_bare(specifier) {
+        if files.is_empty() && !bun_paths::is_package_path(specifier) {
             files.push(self.find(from, specifier));
-            if files == [None] && specifier.starts_with(b".") {
+            if files == [None] && !bun_paths::is_absolute(specifier) {
                 return None;
             }
         } else if files.is_empty() {
-            let is_built_in = specifier.starts_with(b"node:") || specifier.starts_with(b"bun:");
+            let aliases = Cfg {
+                rewrite_jest_for_tests: self.options.rewrite_jest_for_tests,
+                has_modules_of_electron: self.options.is_desktop_app,
+            };
+            let is_built_in = Alias::has(specifier, Target::Bun, aliases)
+                || Alias::bun_prefixed_builtin(specifier).is_some();
             return (has_scheme(specifier) && !is_built_in).then_some(None);
         }
         let mut is_linked = files.len() == 1;

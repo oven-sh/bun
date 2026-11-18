@@ -44,6 +44,7 @@ fn shut_down(is_exiting: bool) -> Result<()> {
     if is_exiting {
         IS_EXITING.set(true);
         host::thread::will_stop();
+        crate::remote::pages::close_all();
         crate::paint::vector::finish_starting();
     }
     if let Ok(platform) = host::platform() {

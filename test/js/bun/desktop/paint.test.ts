@@ -3184,6 +3184,14 @@ test.skipIf(!hasLibrary).concurrent("the rule of nested columns reaches the end 
   ).toEqual([null, "0000ff", "0000ff", "ffffff"]);
 });
 
+test
+  .skipIf(!hasLibrary)
+  .concurrent("hidden fixed boxes that leave a hidden scroller leave the page as it is", async () => {
+    const html = `<style>@keyframes k { to { color: red } }</style><p style="margin: 0; height: 20px; background: #00f"></p>
+    <div style="position: fixed; overflow: auto; visibility: hidden">a<div style="position: fixed; animation: k 99s">a<i style="position: fixed">a</i></div></div>`;
+    expect(await render(html, `return document.elementFromPoint(5, 5).localName`, [[5, 5]])).toEqual(["p", "0000ff"]);
+  });
+
 test.skipIf(!hasLibrary).concurrent("quotes follow the language", async () => {
   const script = `
     const [changed, expected] = document.querySelectorAll("q");

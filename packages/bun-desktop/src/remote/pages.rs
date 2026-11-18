@@ -6,6 +6,7 @@ use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, Once, mpsc};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use super::ring::{Consumer, Producer, Shared};
@@ -215,6 +216,40 @@ fn get(id: u32) -> Option<Arc<Page>> {
     PAGES.lock().get(&id).cloned()
 }
 
+static THREADS: Mutex<Vec<JoinHandle<()>>> = Mutex::new(Vec::new());
+
+fn spawn(
+    name: &str,
+    stack_size: usize,
+    run: impl FnOnce() + Send + 'static,
+) -> std::io::Result<()> {
+    let thread = std::thread::Builder::new()
+        .name(name.into())
+        .stack_size(stack_size)
+        .spawn(run)?;
+    let mut all = THREADS.lock();
+    all.extract_if(.., |it| it.is_finished())
+        .for_each(|it| drop(it.join()));
+    all.push(thread);
+    Ok(())
+}
+
+/// Before the process exits, so that nothing is left halfway.
+pub fn close_all() {
+    Vec::from_iter(PAGES.lock().values().cloned())
+        .iter()
+        .for_each(|it| it.close());
+    let deadline = Instant::now() + Duration::from_millis(500);
+    for thread in std::mem::take(&mut *THREADS.lock()) {
+        while !thread.is_finished() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_micros(50));
+        }
+        if thread.is_finished() {
+            drop(thread.join());
+        }
+    }
+}
+
 pub fn open(is_trusted: bool) -> Result<PageProcess> {
     static NEXT_ID: AtomicU32 = AtomicU32::new(1);
     let (shared, memory) = Shared::create().context("could not share memory")?;
@@ -293,10 +328,7 @@ pub fn open(is_trusted: bool) -> Result<PageProcess> {
         in_fonts: 0,
         in_images: 0,
     };
-    std::thread::Builder::new()
-        .name("page".into())
-        .stack_size(512 << 10)
-        .spawn(move || listener.run())?;
+    spawn("page", 512 << 10, move || listener.run())?;
     Ok(PageProcess {
         id,
         socket: OwnedFd::from(bell.1).into_raw_fd(),
@@ -406,12 +438,9 @@ impl Original {
             ) else {
                 return;
             };
-            drop(
-                std::thread::Builder::new()
-                    .name("pixels".into())
-                    .stack_size(256 << 10)
-                    .spawn(move || page.take_pixels(&socket)),
-            );
+            drop(spawn("pixels", 256 << 10, move || {
+                page.take_pixels(&socket)
+            }));
         });
         let mut fetcher = self.page.fetcher.lock();
         let request: Fetch = [fetcher.next, self.id, width, height, is_exact.into()];

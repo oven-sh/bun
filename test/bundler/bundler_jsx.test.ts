@@ -1167,6 +1167,15 @@ describe("bundler", () => {
         bundleErrors: { "/node_modules/dep/index.aot.tsx": ["--aot does not support preserved JSX"] },
       });
 
+      itBundled(`jsx/AotDependencyBundleUsesPackageJsx-${backend}`, {
+        files: aotDependencyFiles,
+        backend,
+        target: "bun",
+        conditions: ["aot"],
+        skipOnEsbuild: true,
+        run: { stdout: "div" },
+      });
+
       itBundled(`jsx/PreserveAotDependencyBundle-${backend}`, {
         files: aotDependencyFiles,
         backend,

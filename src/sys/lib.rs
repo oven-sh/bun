@@ -6950,7 +6950,7 @@ fn get_fd_path_freebsd_linuxulator<'a>(
     Ok(&mut out.0[..len])
 }
 
-/// The temporary directory that only this user can open, with a `/` at its end. `$TMPDIR` can name another.
+/// The temporary directory of this user, whatever `$TMPDIR` says. `None` unless only the user can open it.
 #[cfg(target_os = "macos")]
 pub fn darwin_user_temp_dir(out: &mut bun_paths::PathBuffer) -> Option<&[u8]> {
     // SAFETY: it writes `out.len()` bytes at most.
@@ -6961,7 +6961,11 @@ pub fn darwin_user_temp_dir(out: &mut bun_paths::PathBuffer) -> Option<&[u8]> {
             out.0.len(),
         )
     };
-    out.0.get(..len_with_nul)?.strip_suffix(b"\0")
+    let dir = out.0.get(..len_with_nul)?.strip_suffix(b"\0")?;
+    // libc falls back to `$TMPDIR` and to `/var/tmp`.
+    let st = stat(&bun_core::ZBox::from_bytes(dir)).ok()?;
+    let is_private = st.st_uid == c::geteuid() && st.st_mode & 0o077 == 0;
+    is_private.then(|| dir.strip_suffix(b"/").unwrap_or(dir))
 }
 
 /// fd → absolute path. Linux: readlink `/proc/self/fd/N`;

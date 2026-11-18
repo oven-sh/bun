@@ -1447,6 +1447,7 @@ describe.skipIf(!hasLaunchctl)("cron end-to-end (macOS)", () => {
     const log = `${logDir}bun.cron.test-mac-log`;
     const logged = () => (existsSync(`${log}.stdout.log`) ? readFileSync(`${log}.stdout.log`, "utf8") : "");
     try {
+      await Bun.$`rm -f ${log}.stdout.log`;
       await Bun.cron(`${dir}/job.ts`, "@yearly", "test-mac-log");
       await Bun.$`/bin/launchctl kickstart ${service}`;
       const deadline = Date.now() + 20_000;

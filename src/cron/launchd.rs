@@ -3,7 +3,6 @@ use core::fmt::Write as _;
 use crate::expression::values;
 use crate::{CronExpression, Registration, XmlText};
 
-/// `logs` ends with `/`.
 pub fn plist(job: &Registration<'_>, logs: &[u8]) -> String {
     let (title, schedule) = (&job.title, &job.schedule);
     let (exe, script) = (XmlText(job.exe), XmlText(job.script));
@@ -27,9 +26,9 @@ pub fn plist(job: &Registration<'_>, logs: &[u8]) -> String {
 <key>StartCalendarInterval</key>
 {interval}
 <key>StandardOutPath</key>
-<string>{logs}bun.cron.{title}.stdout.log</string>
+<string>{logs}/bun.cron.{title}.stdout.log</string>
 <key>StandardErrorPath</key>
-<string>{logs}bun.cron.{title}.stderr.log</string>
+<string>{logs}/bun.cron.{title}.stderr.log</string>
 </dict>
 </plist>
 "#

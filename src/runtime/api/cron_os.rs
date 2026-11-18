@@ -492,7 +492,7 @@ mod backend {
             .map_err(|_| "Failed to create ~/Library/LaunchAgents directory")?;
         let mut logs = bun_paths::path_buffer_pool::get();
         let logs = sys::darwin_user_temp_dir(&mut logs)
-            .ok_or("Failed to find the temporary directory of the user")?;
+            .ok_or("Failed to find a private temporary directory for the logs")?;
         let plist = write_file(
             plist_path(home, &job.title).as_bytes(),
             (sys::O::TRUNC, 0o644),

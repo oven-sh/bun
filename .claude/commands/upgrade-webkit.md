@@ -39,3 +39,4 @@ Things to check for a successful upgrade:
 - Did Source/JavaScriptCore/runtime/JSType.h change? The enum values must align with Bun's mirror in src/jsc/JSType.rs.
 - Were there any changes to the WebCore code generator? If there are C++ compilation errors, check for differences in the generated reference code in vendor/WebKit/Source/WebCore/bindings/scripts/test/JS/
 - If the merge touched the fork's .github/workflows, the release tarball names must still match prebuiltSuffix() in scripts/build/deps/webkit.ts
+- Did the fork's Dockerfile.android change NDK_VERSION? pins.androidNdk in scripts/build/ci-images/spec.ts (version and sha256) must name the same release, in the same bun PR.

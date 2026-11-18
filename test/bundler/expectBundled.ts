@@ -442,7 +442,7 @@ export interface BundlerTestRunOptions {
   runtime?: "bun" | "node";
 
   setCwd?: boolean;
-  /** Expect a certain non-zero exit code */
+  /** Expect the process to exit with this exact status. */
   exitCode?: number;
   /** Run a function with stdout and stderr. Use expect to assert exact outputs */
   validate?: (ctx: { stdout: string; stderr: string }) => void;
@@ -1946,12 +1946,8 @@ for (const [key, blob] of build.outputs) {
               }
             }
           }
-        } else if (!success) {
-          if (run.exitCode) {
-            expect([exitCode, signalCode]).toEqual([run.exitCode, undefined]);
-          } else {
-            throw new Error(prefix + "Runtime failed\n" + stdout!.toUnixString() + "\n" + stderr!.toUnixString());
-          }
+        } else if (!success && run.exitCode === undefined) {
+          throw new Error(prefix + "Runtime failed\n" + stdout!.toUnixString() + "\n" + stderr!.toUnixString());
         }
 
         if (run.validate) {
@@ -2000,6 +1996,10 @@ for (const [key, blob] of build.outputs) {
             console.log(`---`);
           }
           expect(result).toContain(expected);
+        }
+
+        if (run.exitCode !== undefined) {
+          expect(exitCode).toBe(run.exitCode);
         }
       }
     }

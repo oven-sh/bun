@@ -313,6 +313,7 @@ dependencies = [
  "bun_alloc",
  "bun_core",
  "bun_removable_features",
+ "bun_sema_standalone",
  "bun_simd",
  "bun_simd_kernels",
  "thiserror",

@@ -153,7 +153,7 @@ pub(super) struct Estimator {
 impl Estimator {
     /// For histograms of about `symbols` symbols altogether.
     pub(super) fn new(symbols: usize) -> Result<Self> {
-        let known = (symbols / 32).next_power_of_two().clamp(256, 4096);
+        let known = (symbols / 32).next_power_of_two().max(256);
         let mut logarithms = memory::empty(known + SPARE_LOGARITHMS)?;
         logarithms.push([1e6, 0.0]);
         logarithms.extend((1..known).map(|count| [fast_log2(count), count as f64]));

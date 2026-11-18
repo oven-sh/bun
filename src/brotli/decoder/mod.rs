@@ -253,13 +253,6 @@ impl Decoder {
         })
     }
 
-    pub(crate) fn with_large_window() -> Self {
-        Self {
-            large_window: true,
-            ..Self::default()
-        }
-    }
-
     pub fn has_more_output(&self) -> bool {
         !matches!(self.state, State::Failed(_)) && self.ring.has_unflushed()
     }

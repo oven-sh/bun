@@ -16,3 +16,7 @@ bun_core.workspace = true
 bun_removable_features.workspace = true
 bun_simd.workspace = true
 bun_simd_kernels.workspace = true
+
+[dev-dependencies]
+# The native symbols that Bun's C and C++ side provides.
+bun_sema_standalone = { path = "../sema/standalone" }

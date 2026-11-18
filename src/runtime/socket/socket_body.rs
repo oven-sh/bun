@@ -878,7 +878,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             this.buffered_data_for_node_net.get().len()
         );
         // is not writable if we have buffered data or if we are already detached
-        if !this.buffered_data_for_node_net.get().is_empty() || this.socket.get().is_detached() {
+        if this.buffered_data_for_node_net.get().len() > 0 || this.socket.get().is_detached() {
             return Ok(());
         }
 
@@ -1494,7 +1494,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if !SSL
             && !global.has_exception()
             && !this.socket.get().is_detached()
-            && !this.buffered_data_for_node_net.get().is_empty()
+            && this.buffered_data_for_node_net.get().len() > 0
         {
             // A write issued from inside the open/'connection' callback (a
             // server answering the moment a connection arrives) can be
@@ -1508,7 +1508,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // the do_socket_write backpressure arms the normal writable
             // subscription.
             let _ = this.internal_flush();
-            if this.buffered_data_for_node_net.get().is_empty() {
+            if this.buffered_data_for_node_net.get().len() == 0 {
                 let drain_callback = handlers.on_writable();
                 if !drain_callback.is_empty() {
                     if let Err(err) = drain_callback.call(&global, this_value, &[this_value]) {
@@ -2557,7 +2557,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         data_value: JSValue,
         encoding_value: JSValue,
     ) -> WriteResult {
-        if self.buffered_data_for_node_net.get().is_empty() {
+        if self.buffered_data_for_node_net.get().len() == 0 {
             return self.write_or_end::<IS_END>(
                 global,
                 data_value,
@@ -2716,7 +2716,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return WriteResult::Success { wrote: 0, total: 0 };
         }
 
-        debug_assert!(self.buffered_data_for_node_net.get().is_empty());
+        debug_assert!(self.buffered_data_for_node_net.get().len() == 0);
         let (offset_value, length_value, encoding_value) = if byte_length.is_string() {
             (byte_offset, JSValue::UNDEFINED, byte_length)
         } else if byte_offset.is_string() {
@@ -2897,7 +2897,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if SSL {
             // just mimic the side-effect dont actually write empty non-TLS data onto the socket, we just wanna to have same behavior of node.js
             if !self.flags.get().contains(Flags::HANDSHAKE_COMPLETE)
-                || !self.buffered_data_for_node_net.get().is_empty()
+                || self.buffered_data_for_node_net.get().len() > 0
             {
                 return false;
             }
@@ -2913,7 +2913,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         flags.contains(Flags::IS_ACTIVE)
             && flags.contains(Flags::END_AFTER_FLUSH)
             && !flags.contains(Flags::EMPTY_PACKET_PENDING)
-            && self.buffered_data_for_node_net.get().is_empty()
+            && self.buffered_data_for_node_net.get().len() == 0
     }
 
     /// Flushes the node:net buffered tail. Returns 0, or the positive errno of
@@ -2936,7 +2936,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // mitigated ASM-verified PROVEN_CACHED stale loads of
         // `bytes_written`/`flags`/`buffered_data_for_node_net` across the
         // re-entrant `do_socket_write`) is no longer needed.
-        if !self.buffered_data_for_node_net.get().is_empty() {
+        if self.buffered_data_for_node_net.get().len() > 0 {
             // Neither write call touches `buffered_data_for_node_net`, so a
             // `JsCell::get()` projection is valid for the duration of the call.
             // The drain-driven retry must detect a fatal send error the same way

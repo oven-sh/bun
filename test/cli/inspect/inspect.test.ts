@@ -2,6 +2,8 @@ import { Subprocess, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
 import { bunEnv, bunExe, isPosix, randomPort, tempDir } from "harness";
+import { once } from "node:events";
+import net from "node:net";
 import { join } from "node:path";
 import stripAnsi from "strip-ansi";
 import { WebSocket } from "ws";
@@ -454,6 +456,89 @@ describe("unix domain socket without websocket", () => {
       const path = randomSocketPath();
       await runTest(path, [], { ...bunEnv, BUN_INSPECT: "unix:" + path });
     });
+
+    // The client reads nothing until the script has logged all messages, so the
+    // inspector's socket holds all of them as unsent bytes. The kernel then takes
+    // them in many partial sends.
+    test("a client that reads late receives a backlog of large console messages in order", async () => {
+      const count = 32;
+      const size = 512 * 1024;
+      const path = randomSocketPath();
+      const { promise: connection, resolve: onConnection } = Promise.withResolvers<net.Socket>();
+      const server = net.createServer(onConnection);
+      server.listen(path);
+      await once(server, "listening");
+
+      const { promise: logged, resolve: onLogged } = Promise.withResolvers<void>();
+      await using inspectee = spawn({
+        cmd: [bunExe(), "--inspect-wait=unix:" + path, join(import.meta.dir, "inspectee-console-backlog.js")],
+        env: { ...bunEnv, BACKLOG_COUNT: String(count), BACKLOG_SIZE: String(size) },
+        stdout: "ignore",
+        stderr: "inherit",
+        stdin: "ignore",
+        ipc: message => {
+          if (message === "logged") onLogged();
+        },
+      });
+
+      let socket: net.Socket | undefined;
+      try {
+        socket = await connection;
+        const { promise: received, resolve: onReceived, reject } = Promise.withResolvers<void>();
+        socket.on("error", reject);
+        let next = 0;
+        let mismatches = 0;
+        // Frames are a 4-byte big-endian length, then that many bytes of JSON.
+        let chunks: Buffer[] = [];
+        let buffered = 0;
+        let wanted = 4;
+        let inHeader = true;
+        socket.on("data", (chunk: Buffer) => {
+          chunks.push(chunk);
+          buffered += chunk.length;
+          while (buffered >= wanted) {
+            const all = chunks.length === 1 ? chunks[0] : Buffer.concat(chunks);
+            const part = all.subarray(0, wanted);
+            chunks = all.length > wanted ? [all.subarray(wanted)] : [];
+            buffered = all.length - wanted;
+            if (inHeader) {
+              wanted = part.readUInt32BE(0);
+              inHeader = false;
+              continue;
+            }
+            wanted = 4;
+            inHeader = true;
+            const { method, params } = JSON.parse(part.toString());
+            if (method !== "Console.messageAdded") continue;
+            if (params.message.text !== `#${next} ${Buffer.alloc(size, 97 + (next % 26)).toString()}`) mismatches++;
+            if (++next === count) onReceived();
+          }
+        });
+        for (const method of ["Inspector.enable", "Console.enable", "Runtime.enable", "Inspector.initialized"]) {
+          const body = Buffer.from(JSON.stringify({ id: 1, method }));
+          const frame = Buffer.alloc(4 + body.length);
+          frame.writeUInt32BE(body.length, 0);
+          body.copy(frame, 4);
+          socket.write(frame);
+        }
+        socket.pause();
+        await logged;
+        const receivedWhilePaused = next;
+        socket.resume();
+        await received;
+        inspectee.send("done");
+
+        expect({ receivedWhilePaused, received: next, mismatches }).toEqual({
+          receivedWhilePaused: 0,
+          received: count,
+          mismatches: 0,
+        });
+        expect(await inspectee.exited).toBe(0);
+      } finally {
+        socket?.destroy();
+        server.close();
+      }
+    }, 30_000);
   }
 });
 

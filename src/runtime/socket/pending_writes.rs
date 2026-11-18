@@ -12,13 +12,6 @@ impl PendingWrites {
         self.0.size()
     }
 
-    /// `consume` and `clear_and_free` drop the sent prefix when the last
-    /// unsent byte leaves, so an empty queue is an empty list.
-    #[inline]
-    pub(crate) fn is_empty(&self) -> bool {
-        self.0.list.is_empty()
-    }
-
     #[inline]
     pub(crate) fn slice(&self) -> &[u8] {
         self.0.slice()

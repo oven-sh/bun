@@ -737,6 +737,42 @@ describe.skipIf(skip)("node:tls queue of unsent bytes under short sends", () => 
       intact: true,
     });
   });
+
+  // The queue drops its sent prefix when a chunk arrives behind a tail that is
+  // more than half sent. The chunk then fits in the allocation of the tail.
+  test("a write behind a tail that is mostly sent does not grow the allocation", async () => {
+    using p = await connectedTLSPair();
+    const handle = (p.client as any)._handle;
+    const first = patterned(1024 * 1024, 0x9e3779b9);
+    const second = patterned(65536, 0x85ebca6b);
+    const expected = Buffer.concat([first, second]);
+    const state = { received: 0, intact: true };
+    p.serverSock.on("data", chunk => {
+      state.intact &&= chunk.equals(expected.subarray(state.received, state.received + chunk.length));
+      state.received += chunk.length;
+    });
+    const idle = estimateShallowMemoryUsageOf(handle);
+
+    fault.set({ syscall: "send", action: "short", bytes: 16384, repeat: -1, fd: handle.fd });
+    (p.client as any)._write(first, "buffer", () => {});
+    const queued = estimateShallowMemoryUsageOf(handle) - idle;
+    while (state.received <= (first.length * 3) / 4) await once(p.serverSock, "data");
+    const allocatedBefore = estimateShallowMemoryUsageOf(handle) - idle;
+    const { promise: written, resolve, reject } = Promise.withResolvers<void>();
+    (p.client as any)._write(second, "buffer", (err?: Error | null) => (err ? reject(err) : resolve()));
+    const allocatedAfter = estimateShallowMemoryUsageOf(handle) - idle;
+    await written;
+    p.client.end();
+    await once(p.serverSock, "end");
+
+    expect({ allocatedBefore, allocatedAfter, bytesWritten: handle.bytesWritten, ...state }).toEqual({
+      allocatedBefore: queued,
+      allocatedAfter: queued,
+      bytesWritten: expected.length,
+      received: expected.length,
+      intact: true,
+    });
+  });
 });
 
 // "ssl_write" fails one SSL_write call the way a record-layer failure does (#38120).

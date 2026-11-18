@@ -631,32 +631,108 @@ describe.skipIf(skip)("node:net queue of unsent bytes under short sends", () => 
     });
   });
 
-  // Both writes drain in 4,096 sends. The second one holds 16 times the bytes
-  // in the queue at each send. A queue that moves its unsent bytes to the front
-  // after each send takes about 8 times the CPU time for the second write.
-  test("the CPU time of a drain follows the number of sends, not the bytes still queued", async () => {
-    async function drainCpuTime(sends: number, bytesPerSend: number) {
+  // The queue drops its sent prefix when a chunk arrives behind a tail that is
+  // more than half sent. The chunk then fits in the allocation of the tail.
+  test("a write behind a tail that is mostly sent does not grow the allocation", async () => {
+    using p = await connectedPair();
+    const handle = (p.client as any)._handle;
+    const first = patterned(256 * 1024);
+    const second = patterned(65536, 0x85ebca6b);
+    const expected = Buffer.concat([first, second]);
+    const state = receive(p.serverSock, expected);
+    const idle = estimateShallowMemoryUsageOf(handle);
+
+    fault.set({ syscall: "send", action: "short", bytes: 4096, repeat: -1, fd: handle.fd });
+    fault.set({ syscall: "writev", action: "short", bytes: 1024, repeat: -1, fd: handle.fd });
+    (p.client as any)._write(first, "buffer", () => {});
+    while (state.received <= (first.length * 3) / 4) await once(p.serverSock, "data");
+    const allocatedBefore = estimateShallowMemoryUsageOf(handle) - idle;
+    const { promise: written, resolve, reject } = Promise.withResolvers<void>();
+    (p.client as any)._write(second, "buffer", (err?: Error | null) => (err ? reject(err) : resolve()));
+    const allocatedAfter = estimateShallowMemoryUsageOf(handle) - idle;
+    const bytesWritten = await bytesWrittenUntil(written, handle);
+    p.client.end();
+    await once(p.serverSock, "end");
+
+    expect({ allocatedBefore, allocatedAfter, bytesWritten, ...state }).toEqual({
+      allocatedBefore: first.length - 4096,
+      allocatedAfter: first.length - 4096,
+      bytesWritten: [expected.length],
+      received: expected.length,
+      intact: true,
+    });
+  });
+
+  // 64 chunks of 64 KiB go behind a tail that never empties. About 4 chunks
+  // wait in the queue at a time, so the allocation does not follow the total.
+  test("writes behind a tail that never empties keep the allocation near the unsent bytes", async () => {
+    using p = await connectedPair();
+    const handle = (p.client as any)._handle;
+    const chunk = 65536;
+    const count = 64;
+    const expected = patterned(count * chunk);
+    const state = receive(p.serverSock, expected);
+    const idle = estimateShallowMemoryUsageOf(handle);
+
+    fault.set({ syscall: "send", action: "short", bytes: 8192, repeat: -1, fd: handle.fd });
+    fault.set({ syscall: "writev", action: "short", bytes: 1024, repeat: -1, fd: handle.fd });
+    let peak = 0;
+    let emptied = 0;
+    const { promise: written, resolve, reject } = Promise.withResolvers<void>();
+    for (let i = 0; i < count; i++) {
+      const last = i === count - 1;
+      (p.client as any)._write(expected.subarray(i * chunk, (i + 1) * chunk), "buffer", (err?: Error | null) =>
+        err ? reject(err) : last && resolve(),
+      );
+      peak = Math.max(peak, estimateShallowMemoryUsageOf(handle) - idle);
+      while ((i + 1) * chunk - state.received > 4 * chunk) await once(p.serverSock, "data");
+      if (!last && state.received === (i + 1) * chunk) emptied++;
+    }
+    await written;
+    p.client.end();
+    await once(p.serverSock, "end");
+
+    expect({ emptied, ...state }).toEqual({ emptied: 0, received: expected.length, intact: true });
+    expect(peak).toBeLessThan(16 * chunk);
+  });
+
+  // Each run sends 2,048 times, 1 KiB per send. The second queue holds 16 times
+  // the bytes of the first. A queue that moves its unsent bytes to the front
+  // after each send takes about 30 times the CPU time for the second run.
+  test("the CPU time of a send does not follow the bytes still queued", async () => {
+    const sends = 2048;
+    const bytesPerSend = 1024;
+
+    // The CPU time from the return of write() until the peer has what `sends` sends carry.
+    async function cpuTimeOfSends(queued: number) {
       using p = await connectedPair();
       const handle = (p.client as any)._handle;
-      const payload = Buffer.alloc(sends * bytesPerSend, 0x61);
+      const { promise: sent, resolve } = Promise.withResolvers<void>();
       let received = 0;
-      p.serverSock.on("data", chunk => (received += chunk.length));
+      p.serverSock.on("data", chunk => {
+        received += chunk.length;
+        if (received >= sends * bytesPerSend) resolve();
+      });
 
       fault.set({ syscall: "send", action: "short", bytes: bytesPerSend, repeat: -1, fd: handle.fd });
-      const { promise: written, resolve, reject } = Promise.withResolvers<void>();
+      p.client.write(Buffer.alloc(queued, 0x61));
       const before = process.cpuUsage();
-      p.client.write(payload, err => (err ? reject(err) : resolve()));
-      await written;
+      await sent;
       const { user, system } = process.cpuUsage(before);
       fault.clear();
-      p.client.end();
-      await once(p.serverSock, "end");
-      expect(received).toBe(payload.length);
       return user + system;
     }
 
-    const small = await drainCpuTime(4096, 1024);
-    const large = await drainCpuTime(4096, 16384);
-    expect(large / small).toBeLessThan(3);
-  }, 60_000);
+    const small = sends * bytesPerSend;
+    const large = 16 * small;
+    // The first run pays for what the later runs find warm.
+    await cpuTimeOfSends(small);
+    const smallTimes: number[] = [];
+    const largeTimes: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      smallTimes.push(await cpuTimeOfSends(small));
+      largeTimes.push(await cpuTimeOfSends(large));
+    }
+    expect(Math.min(...largeTimes) / Math.min(...smallTimes)).toBeLessThan(5);
+  }, 120_000);
 });

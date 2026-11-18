@@ -428,8 +428,14 @@ impl<const SSL: bool> HTTPContext<SSL> {
             NextStep::Finish => request.finish(),
             NextStep::Connect => request.connect(),
             NextStep::AttachH2 => {
+                let early_frames = request.state.early_h2_frames.take().unwrap_or_default();
                 let session = Self::get_tagged(slot.get()).session();
                 h2::ClientSession::attach_leader(session.expect("tagged by first_call"), request);
+                if !early_frames.is_empty()
+                    && let Some(session) = Self::get_tagged(slot.get()).session()
+                {
+                    h2::ClientSession::on_data(session, &early_frames);
+                }
             }
         }
     }
@@ -1095,6 +1101,8 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 let sock = found.socket;
                 client.flags.reused_socket_verification = found.verification;
                 client.allow_retry = true;
+                client.state.flags.has_negotiated_tunnel =
+                    client.browser.is_some_and(|it| it.tunnels());
                 if let Some(session) = found.h2_session.take() {
                     debug_assert!(SSL);
                     h2_session_mut(&session).socket = sock.assume_ssl();
@@ -1296,7 +1304,9 @@ impl<const SSL: bool> Handler<SSL> {
             client.flags.did_have_handshaking_error = handshake_error.error_no != 0;
             if handshake_success {
                 // only reject the connection if reject_unauthorized == true
-                if client.flags.reject_unauthorized && client.flags.did_have_handshaking_error {
+                if client.flags.did_have_handshaking_error
+                    && client.rejects_unauthorized(client.http_proxy.is_some())
+                {
                     return client.close_and_fail::<SSL>(
                         get_cert_error_from_no(handshake_error.error_no),
                         socket,

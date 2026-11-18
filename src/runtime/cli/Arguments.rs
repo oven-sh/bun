@@ -747,6 +747,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!("--aot-references <STR>"),
         parse_param!("--aot-cpu <STR>"),
         parse_param!("--aot-threads <STR>"),
+        parse_param!("--aot-assume <STR>..."),
         parse_param!("--aot-erase-types"),
         parse_param!("--aot-refuse-code-from-disk"),
         parse_param!("--aot-out <STR>"),
@@ -870,6 +871,21 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         ),
         parse_param!(
             "--env <inline|prefix*|disable>   Inline environment variables into the bundle as process.env.${name}. Defaults to 'disable'. To inline environment variables matching a prefix, use my prefix like 'FOO_PUBLIC_*'."
+        ),
+        parse_param!(
+            "--desktop                        Build a <b>bun:desktop<r> app: a .app for macOS, an AppDir for Linux, a directory for Windows. Requires --compile"
+        ),
+        parse_param!(
+            "--desktop-name <STR>             With --desktop: the name people see. Defaults to productName or name in package.json"
+        ),
+        parse_param!(
+            "--desktop-identifier <STR>       With --desktop: the bundle identifier, such as com.example.notes"
+        ),
+        parse_param!(
+            "--desktop-version <STR>          With --desktop: the version. Defaults to version in package.json"
+        ),
+        parse_param!(
+            "--desktop-icon <STR>             With --desktop: a square .png of 512 or 1024 pixels, or a .icns for macOS, a .svg for Linux"
         ),
         parse_param!(
             "--windows-hide-console           When using --compile targeting Windows, prevent a Command prompt from opening alongside the executable"
@@ -2884,6 +2900,36 @@ fn parse_build_command_options(
             Global::crash();
         }
         ctx.bundler_options.compile_executable_path = Some(path.into());
+    }
+
+    if args.flag(b"--desktop") {
+        if ctx.bundler_options.library {
+            Output::err_generic("cannot use --desktop with --library", ());
+            Global::exit(1);
+        }
+        if !ctx.bundler_options.compile {
+            Output::err_generic("--desktop requires --compile", ());
+            Global::exit(1);
+        }
+        ctx.bundler_options.desktop = Some(Box::new(bun_options_types::DesktopOptions {
+            name: args.option(b"--desktop-name").map(Into::into),
+            identifier: args.option(b"--desktop-identifier").map(Into::into),
+            version: args.option(b"--desktop-version").map(Into::into),
+            icon: args.option(b"--desktop-icon").map(Into::into),
+            json: Box::default(),
+        }));
+    } else {
+        for flag in [
+            "--desktop-name",
+            "--desktop-identifier",
+            "--desktop-version",
+            "--desktop-icon",
+        ] {
+            if args.option(flag.as_bytes()).is_some() {
+                Output::err_generic("{} requires --desktop", (flag,));
+                Global::exit(1);
+            }
+        }
     }
 
     if args.flag(b"--windows-hide-console") {

@@ -9,6 +9,7 @@ bun_core::define_scoped_log!(log, HTTPInternalState, hidden);
 
 /// Bounds the allocation that an untrusted gzip trailer can ask libdeflate's exact-size call for.
 const EXACT_SIZE_INFLATE_MAX: usize = 32 * 1024 * 1024;
+const LIMITED_DECODE_MAX: usize = 512 * 1024 * 1024;
 
 /// ISIZE, the last 4 bytes of a gzip stream: the decoded size of its last member, modulo 4 GB.
 fn gzip_trailer_size(buffer: &[u8]) -> Option<usize> {
@@ -69,6 +70,8 @@ pub struct InternalState<'a> {
     pub(crate) request_stage: HTTPStage,
     pub(crate) response_stage: HTTPStage,
     pub(crate) certificate_info: Option<CertificateInfo>,
+    /// The connection preface of an h2 server, which does not wait for `is_waiting_for_cert_check`.
+    pub(crate) early_h2_frames: Option<Vec<u8>>,
 }
 
 // Struct-of-bools so the
@@ -90,6 +93,9 @@ pub struct InternalStateFlags {
     /// check passed (and implicitly by `InternalState::init()` on every
     /// redirect hop, so each hop re-parks independently).
     pub(crate) is_waiting_for_cert_check: bool,
+    pub(crate) is_negotiating_tunnel: bool,
+    pub(crate) has_negotiated_tunnel: bool,
+    pub(crate) head_ends_with_connection: bool,
     pub(crate) receive_paused: bool,
     /// Set once `HTTPClient::compress_body_for_send` has run for this attempt.
     /// Guards header-retry re-entries from compressing again. Cleared by
@@ -98,6 +104,8 @@ pub struct InternalStateFlags {
     pub(crate) body_compressed: bool,
     /// Held input or buffered decoder output remains for `HTTPClient::drain_response_body`.
     pub(crate) decompress_output_pending: bool,
+    /// One decode pass that yields `LIMITED_DECODE_MAX` fails the request.
+    pub(crate) is_decode_limited: bool,
 }
 
 impl InternalStateFlags {
@@ -110,9 +118,13 @@ impl InternalStateFlags {
             is_libdeflate_fast_path_disabled: false,
             resend_request_body_on_redirect: false,
             is_waiting_for_cert_check: false,
+            is_negotiating_tunnel: false,
+            has_negotiated_tunnel: false,
+            head_ends_with_connection: false,
             receive_paused: false,
             body_compressed: false,
             decompress_output_pending: false,
+            is_decode_limited: false,
         }
     }
 }
@@ -143,6 +155,7 @@ impl Default for InternalState<'_> {
             request_stage: HTTPStage::Pending,
             response_stage: HTTPStage::Pending,
             certificate_info: None,
+            early_h2_frames: None,
         }
     }
 }
@@ -189,6 +202,16 @@ impl<'a> InternalState<'a> {
         } else {
             (&mut self.chunked_decoder, &mut self.decoded_body)
         }
+    }
+
+    /// If what is left decodes as what `decoded_body` has.
+    pub(crate) fn expected_length_of_decoded_body(&self) -> Option<usize> {
+        let (decoded, received) = (self.decoded_body.list.len(), self.total_body_received);
+        let left = self.content_length?.saturating_sub(received);
+        Some(match self.encoding.is_compressed() {
+            true => decoded.saturating_add(left.saturating_mul(decoded / received.max(1) + 1)),
+            false => decoded.saturating_add(left),
+        })
     }
 
     pub(crate) fn is_done(&self) -> bool {
@@ -379,13 +402,23 @@ impl<'a> InternalState<'a> {
             }
 
             let is_done = self.is_done();
+            let limit = if self.flags.is_decode_limited {
+                self.decoded_body.list.len() + LIMITED_DECODE_MAX
+            } else {
+                usize::MAX
+            };
             match self.decompressor.decompress_chunk(
                 self.encoding,
                 buffer,
                 &mut self.decoded_body,
-                max_output,
+                max_output.min(limit),
                 is_done,
             ) {
+                Ok(_) if self.decoded_body.list.len() >= limit => {
+                    self.compressed_body.reset();
+                    self.decoded_body.list = Vec::new();
+                    return Err(bun_alloc::AllocError.into());
+                }
                 Ok(n) => consumed = n,
                 Err(err) => {
                     if is_done || err != crate::Error::ShortRead {

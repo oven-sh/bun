@@ -17,7 +17,7 @@ import { openElf } from "./elf-file.ts";
 import { readElfGraph } from "./elf-graph.ts";
 import { nameSections, splitMergeableSections } from "./elf-object-editor.ts";
 import { isCode, isMovable } from "./elf-objects.ts";
-import type { SectionGraph } from "./graph.ts";
+import { madeByLinker, type SectionGraph } from "./graph.ts";
 import { namedBytesOfElf } from "./icu-data.ts";
 import { createSectionOrder, findCompiledObjects, groupOfNode, writeTableIntoSection } from "./linker-common.ts";
 import type { Linker, LinkerFormat, SectionOrder } from "./linker.ts";
@@ -49,7 +49,7 @@ function orderOf(graph: SectionGraph, partition: Partition): SectionOrder {
   const order = createSectionOrder(partition);
   for (let node = 0; node < graph.count; node++) {
     const group = groupOf(node);
-    if (group < 0 || graph.object[node] === "<internal>") continue;
+    if (group < 0 || graph.object[node] === madeByLinker) continue;
     const names = namesOf(node).filter(name => groupOfName.get(name) === group);
     order.groups[group]!.names.push(...names);
     order.nodes.push(node);

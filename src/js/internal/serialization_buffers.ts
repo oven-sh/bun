@@ -43,6 +43,8 @@ function tagBuffers(value: unknown): [unknown, unknown[]] | null {
     // Objects, arrays and errors: the serializer walks own enumerable
     // properties. Only data properties are descended so no getter runs here.
     const keys = ObjectKeys(current);
+    // An error's is not enumerable.
+    if (ObjectPrototypeHasOwnProperty.$call(current, "cause")) $arrayPush(keys, "cause");
     for (let i = 0; i < keys.length; i++) {
       const desc = ObjectGetOwnPropertyDescriptor(current, keys[i]);
       if (desc && ObjectPrototypeHasOwnProperty.$call(desc, "value")) $arrayPush(stack, desc.value);

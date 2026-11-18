@@ -44,6 +44,8 @@ using JSDOMGlobalObject = Zig::GlobalObject;
 // offset | 7 | 6 | 5 | 4 | 3   2   1   0  |
 // value  | 1 | 1 | 1 | 1 |    NodeType    |
 
+inline constexpr uint8_t JSInterfaceType = 0b11100000;
+inline constexpr uint8_t JSInterfaceWithInlineStorageType = 0b11100001;
 // Only for a JSDestructibleObject: Bun::Bindgen::InheritsTraits reads classInfo() from any cell of this type.
 inline constexpr uint8_t JSDOMWrapperType = 0b11101110;
 inline constexpr uint8_t JSEventType = 0b11101111;
@@ -52,7 +54,7 @@ inline constexpr uint8_t JSNodeTypeMask = 0b00001111;
 inline constexpr uint8_t JSElementType = 0b11110000 | NodeConstants::ELEMENT_NODE;
 inline constexpr uint8_t JSAsJSONType = JSElementType;
 
-static_assert(JSDOMWrapperType > JSC::LastJSCObjectType, "JSC::JSType offers the highest bit.");
+static_assert(JSInterfaceType > JSC::LastJSCObjectType, "JSC::JSType offers the highest bit.");
 static_assert(NodeConstants::LastNodeType <= JSNodeTypeMask, "NodeType should be represented in 4bit.");
 
 class JSDOMObject : public JSC::JSDestructibleObject {

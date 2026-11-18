@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { realpathSync } from "fs";
-import { bunEnv, bunRun, compileFixture, isGlibc, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, compileFixture, isGlibc, isRoot, isWindows, tempDir } from "harness";
 import { isIPv4, isIPv6 } from "node:net";
 import * as os from "node:os";
 import { join } from "node:path";
@@ -118,8 +118,10 @@ it("userInfo", () => {
   const info = os.userInfo();
 
   if (process.platform !== "win32") {
-    expect(info.username).toBe(process.env.USER);
-    expect(info.shell).toBe(process.env.SHELL || "unknown");
+    const cmd = process.platform === "darwin" ? ["id", "-P"] : ["getent", "passwd", String(process.geteuid())];
+    const passwd = Bun.spawnSync({ cmd }).stdout.toString().trim().split(":");
+    expect(info.username).toBe(passwd[0]);
+    expect(info.shell).toBe(passwd.at(-1));
     expect(info.uid >= 0).toBe(true);
     expect(info.gid >= 0).toBe(true);
   } else {
@@ -128,6 +130,25 @@ it("userInfo", () => {
     expect(info.uid).toBe(-1);
     expect(info.gid).toBe(-1);
   }
+});
+
+it.skipIf(process.platform === "win32")("userInfo reads the passwd entry, not the environment", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-p", "JSON.stringify(os.userInfo())"],
+    env: { ...bunEnv, USER: "somebody-else", HOME: "/somewhere-else", SHELL: "/something-else" },
+  });
+  expect(await proc.stdout.json()).toEqual(os.userInfo());
+  expect(await proc.exited).toBe(0);
+});
+
+it.skipIf(!isRoot)("userInfo has the ids of the user that it names", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-p", `process.seteuid("daemon"), JSON.stringify(os.userInfo())`],
+    env: bunEnv,
+  });
+  const id = flag => Number(Bun.spawnSync({ cmd: ["id", flag, "daemon"] }).stdout.toString());
+  expect(await proc.stdout.json()).toMatchObject({ username: "daemon", uid: id("-u"), gid: id("-g") });
+  expect(await proc.exited).toBe(0);
 });
 
 it("cpus", () => {

@@ -22,6 +22,16 @@ public:
     bool initialize(JSC::JSGlobalObject& globalObject, JSC::JSString* string)
     {
         ASSERT(m_isNull);
+        if (auto* impl = string->tryGetValueImpl(); impl && impl->is8Bit() && impl->length() < 32) [[likely]] {
+            uint8_t all = 0;
+            for (auto character : byteCast<uint8_t>(impl->span8()))
+                all |= character;
+            if (isASCII(all)) [[likely]] {
+                m_view = { string, *impl };
+                m_isNull = false;
+                return true;
+            }
+        }
         auto& vm = JSC::getVM(&globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
         m_view = string->view(&globalObject);

@@ -11,6 +11,7 @@ use core::ptr::NonNull;
 use bun_jsc::JsCell;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 
+use crate::desktop::web::blob as web_blob;
 use crate::webcore::jsc::{
     self as jsc, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
 };
@@ -521,6 +522,12 @@ impl BlobExt for Blob {
         cx: &mut JsScope<'_>,
         options: JsLocal<'_>,
     ) -> JsResult<JSValue> {
+        // `Bun.Image` reads and writes files.
+        if web_blob::Bun__isDesktopRealm(cx.global()) {
+            return Err(cx
+                .global()
+                .throw_type_error(format_args!("image() is not available to web pages")));
+        }
         Image::from_blob_js(cx.global(), this_value.to_js(), options.to_js())
     }
 
@@ -547,6 +554,10 @@ impl BlobExt for Blob {
         None
     }
     fn on_structured_clone_serialize<W: bun_io::Write>(&self, writer: &mut W) -> crate::Result<()> {
+        if self.snapshot().is_some() {
+            let copy = web_blob::in_memory(self).map_err(|_| crate::Error::InvalidValue)?;
+            return copy.on_structured_clone_serialize(writer);
+        }
         let is_memory_backed = if let Some(store) = self.store.get() {
             matches!(store.data, store::Data::Bytes(_))
         } else {
@@ -942,6 +953,9 @@ impl BlobExt for Blob {
         cx: &mut JsScope<'_>,
         chunk_size: JsLocal<'_>,
     ) -> JsResult<JSValue> {
+        if web_blob::Bun__isDesktopRealm(cx.global()) || self.snapshot().is_some() {
+            return web_blob::stream(cx, self);
+        }
         self.get_stream_with_cache(
             &cx.js_thread(),
             this_value.to_js(),
@@ -995,30 +1009,47 @@ impl BlobExt for Blob {
         Ok(stream)
     }
     fn text(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        if self.snapshot().is_some() {
+            return Ok(web_blob::read(cx, self, Blob::to_string));
+        }
         let _store = self.store.get().clone(); // hold a ref across the call
         let cx = cx.js_thread();
         JSPromise::wrap(cx.global(), |_| self.to_string(&cx, Lifetime::Clone))
     }
 
     fn json(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        if self.snapshot().is_some() {
+            return Ok(web_blob::read(cx, self, |blob, cx, _| blob.to_json(cx)));
+        }
         let _store = self.store.get().clone();
         let cx = cx.js_thread();
         JSPromise::wrap(cx.global(), |_| self.to_json(&cx))
     }
 
     fn array_buffer(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        if self.snapshot().is_some() {
+            return Ok(web_blob::read(cx, self, Blob::to_array_buffer));
+        }
         let _store = self.store.get().clone();
         let cx = cx.js_thread();
         JSPromise::wrap(cx.global(), |_| self.to_array_buffer(&cx, Lifetime::Clone))
     }
 
     fn bytes(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        if self.snapshot().is_some() {
+            return Ok(web_blob::read(cx, self, Blob::to_uint8_array));
+        }
         let _store = self.store.get().clone();
         let cx = cx.js_thread();
         JSPromise::wrap(cx.global(), |_| self.to_uint8_array(&cx, Lifetime::Clone))
     }
 
     fn form_data(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        if self.snapshot().is_some() {
+            return Ok(web_blob::read(cx, self, |blob, cx, _| {
+                blob.to_form_data(cx)
+            }));
+        }
         let _store = self.store.get().clone();
         let cx = cx.js_thread();
         JSPromise::wrap(cx.global(), |_| self.to_form_data(&cx))
@@ -1528,6 +1559,10 @@ impl BlobExt for Blob {
         content_type: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global_this = cx.global();
+        if web_blob::Bun__isDesktopRealm(global_this) || self.snapshot().is_some() {
+            let (start, end, mime) = (start.to_js(), end.to_js(), content_type.to_js());
+            return web_blob::slice(global_this, self, start, end, mime);
+        }
 
         if self.size.get() == 0 {
             return Ok(Blob::init_empty(global_this).into_js(global_this));
@@ -1656,7 +1691,7 @@ impl BlobExt for Blob {
     // TODO: Move this to a separate `File` object or BunFile
     fn get_last_modified(&self) -> f64 {
         if let Some(store) = self.store.get() {
-            if matches!(store.data, store::Data::File(_)) {
+            if matches!(store.data, store::Data::File(_)) && self.snapshot().is_none() {
                 // do not hold a pattern-bound `&File` across
                 // `resolve_file_stat` — it materializes `&mut File` on the same
                 // memory (Stacked Borrows UB; the optimizer may legally cache the
@@ -1895,6 +1930,9 @@ impl BlobExt for Blob {
         let global_this = cx.global();
         let parts = parts.to_js();
         let options = options.to_js();
+        if web_blob::Bun__isDesktopRealm(global_this) {
+            return web_blob::construct_blob(global_this, parts, options);
+        }
         let blob: Blob;
         if parts.is_undefined() && options.is_undefined() {
             blob = Blob::init_empty(global_this);
@@ -3026,8 +3064,8 @@ impl<'a> FormDataContext<'a> {
 pub(crate) extern "C" fn Blob__onStructuredCloneSerialize(
     this: &Blob,
     serializer: &mut bun_jsc::CloneSerializer,
-) {
-    let _ = this.on_structured_clone_serialize(serializer);
+) -> bool {
+    this.on_structured_clone_serialize(serializer).is_ok()
 }
 
 /// Returns an empty value without throwing when the bytes are not a valid record (the deserializer reports its usual error).
@@ -3039,6 +3077,7 @@ pub(crate) unsafe extern "C" fn Blob__onStructuredCloneDeserialize(
     global_this: &JSGlobalObject,
     ptr: &mut *const u8,
     end: *const u8,
+    may_name_file: bool,
 ) -> JSValue {
     let start = *ptr;
     let total_length: usize = (end as usize) - (start as usize);
@@ -3046,7 +3085,8 @@ pub(crate) unsafe extern "C" fn Blob__onStructuredCloneDeserialize(
     let mut buffer_stream =
         bun_io::FixedBufferStream::new(unsafe { bun_core::ffi::slice(start, total_length) });
 
-    let result = match on_structured_clone_deserialize(global_this, &mut buffer_stream) {
+    let result = on_structured_clone_deserialize(global_this, &mut buffer_stream, may_name_file);
+    let result = match result {
         Ok(v) => v,
         Err(e) if e.name() == "OutOfMemory" => return global_this.throw_out_of_memory_value(),
         Err(_) => return JSValue::ZERO,
@@ -3089,6 +3129,7 @@ fn read_slice<B: AsRef<[u8]>>(
 fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
     global_this: &JSGlobalObject,
     reader: &mut bun_io::FixedBufferStream<B>,
+    may_name_file: bool,
 ) -> crate::Result<JSValue> {
     let version = reader.read_int_le::<u8>()?;
     let offset = reader.read_int_le::<u64>()?;
@@ -3136,6 +3177,9 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
         }
         store::SerializeTag::File => 'file: {
             use crate::node::types::PathOrFileDescriptorSerializeTag;
+            if !may_name_file || web_blob::Bun__isDesktopRealm(global_this) {
+                return Err(crate::Error::InvalidValue);
+            }
             if version >= 4 {
                 file_size = Some(reader.read_int_le::<u64>()?);
             }
@@ -3184,7 +3228,8 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
         }
 
         blob.is_jsdom_file.set(reader.read_int_le::<u8>()? != 0);
-        blob.last_modified.set(read_float(reader)?);
+        blob.last_modified
+            .set(JSValue::purify_nan(read_float(reader)?));
 
         if version == 2 {
             break 'versions;
@@ -3253,6 +3298,15 @@ impl URLSearchParamsConverter {
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__dupeFromJS(value: JSValue) -> Option<RefPtr<Blob>> {
     Some(Blob__dupe(&*Blob::from_js(&value)?))
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Blob__dupeForRealm(value: JSValue, realm: &JSGlobalObject) -> Option<RefPtr<Blob>> {
+    let this = Blob::from_js(&value)
+        .filter(|it| it.snapshot().is_some() || (!it.needs_to_read_file() && !it.is_s3()))?;
+    let copy = this.dupe_with_content_type(true);
+    copy.global_this.set(realm);
+    Some(Blob::new(copy))
 }
 
 #[unsafe(no_mangle)]
@@ -4212,6 +4266,10 @@ fn validate_writable_blob(global_this: &JSGlobalObject, blob: &Blob) -> JsResult
             "Cannot write to a Blob backed by bytes, which are always read-only"
         )));
     }
+    if blob.snapshot().is_some() {
+        return Err(global_this
+            .throw_invalid_arguments(format_args!("Cannot write to a File, which is read-only")));
+    }
     Ok(())
 }
 
@@ -4505,6 +4563,9 @@ pub(crate) fn jsdom_file_construct(
     options: JSValue,
 ) -> JsResult<RefPtr<Blob>> {
     jsc::mark_binding();
+    if web_blob::Bun__isDesktopRealm(global_this) {
+        return web_blob::construct_file(global_this, bits, name, options);
+    }
 
     let name = BunString::from_js(name, global_this)?;
     let blob = Blob::get::<false, true>(global_this, bits)?;

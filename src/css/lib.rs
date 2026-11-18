@@ -286,15 +286,15 @@ pub struct Location {
 #[derive(Clone, Copy, Debug)]
 pub struct Num {
     pub(crate) has_sign: bool,
-    pub(crate) value: f32,
-    pub(crate) int_value: Option<i32>,
+    pub value: f32,
+    pub int_value: Option<i32>,
 }
 
 #[derive(Copy, Clone, Debug)]
 pub struct Dimension<'bump> {
-    pub(crate) num: Num,
+    pub num: Num,
     /// e.g. "px"
-    pub(crate) unit: &'bump [u8],
+    pub unit: &'bump [u8],
 }
 
 /// CSS lexer token. Data-only definition hoisted out of `css_parser.rs`; the

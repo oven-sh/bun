@@ -1,5 +1,5 @@
 use bun_sema::bind::{FnOwner, FunctionFlags, ScopeId, ScopeKind};
-use bun_sema::hir::{FnId, FnKind, find_transpiled_mark};
+use bun_sema::hir::{FnId, FnKind};
 use bun_sema::module_format::evaluates_own_this;
 
 use crate::ir::generated::{HomeObjectKind, ModuleKind, RuntimeErrorKind};
@@ -79,7 +79,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             LexicalOwner::File(_)
                 if self.file.compiled.analysis.has_esm_syntax
                     && !self.is_in_value_of_field()
-                    && find_transpiled_mark(&self.file.hir.text).is_none() =>
+                    && !self.file.hir.stands_as_written() =>
             {
                 self.builder.null()
             }

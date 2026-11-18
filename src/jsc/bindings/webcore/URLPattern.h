@@ -77,6 +77,11 @@ public:
 
     bool hasRegExpGroups() const;
 
+    std::array<const URLPatternUtilities::URLPatternComponent*, 8> components() const
+    {
+        return { &m_protocolComponent, &m_usernameComponent, &m_passwordComponent, &m_hostnameComponent, &m_portComponent, &m_pathnameComponent, &m_searchComponent, &m_hashComponent };
+    }
+
 private:
     URLPattern();
     ExceptionOr<void> compileAllComponents(ScriptExecutionContext&, URLPatternInit&&, const URLPatternOptions&);

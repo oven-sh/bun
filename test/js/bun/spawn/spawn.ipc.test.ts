@@ -597,3 +597,36 @@ it.skipIf(isWindows)("advanced serialization advertises wire format version 2", 
   expect(JSON.parse(stdout.trim())).toEqual([1, 2, 0, 0, 0]);
   expect(exitCode).toBe(0);
 });
+
+it("advanced serialization leaves out the cause of an error if it cannot be cloned", async () => {
+  const messages: any[] = [];
+  await using child = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const shared = { name: "shared" };
+       const late = { name: "late" };
+       process.send(new Error("response", { cause: new Response() }));
+       process.send({
+         shared,
+         error: new TypeError("method", { cause: { shared, late, name: "dropped", when: new Date(1), retry() {} } }),
+         after: [late, late, shared, "dropped", "dropped", new Error("kept", { cause: late })],
+       });
+       process.send(new Error("buffer", { cause: Buffer.from("a") }));
+       try { process.send(() => {}); } catch (error) { process.send(error.name); }
+       process.disconnect();`,
+    ],
+    env: bunEnv,
+    stdio: ["ignore", "inherit", "inherit"],
+    serialization: "advanced",
+    ipc: message => void messages.push(message),
+  });
+  expect(await child.exited).toBe(0);
+  const [response, { shared, error, after }, buffer, refused] = messages;
+  expect([response.message, "cause" in response]).toEqual(["response", false]);
+  expect([error.name, error.message, "cause" in error]).toEqual(["TypeError", "method", false]);
+  expect(after.slice(0, 5)).toEqual([{ name: "late" }, { name: "late" }, { name: "shared" }, "dropped", "dropped"]);
+  expect([after[1] === after[0], after[2] === shared, after[5].cause === after[0]]).toEqual([true, true, true]);
+  expect(Buffer.isBuffer(buffer.cause)).toBe(true);
+  expect(refused).toBe("DataCloneError");
+});

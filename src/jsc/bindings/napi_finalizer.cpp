@@ -10,7 +10,7 @@ void NapiFinalizer::call(WTF::RefPtr<NapiEnv> env, void* data, bool immediate)
     if (m_callback) {
         NAPI_LOG_CURRENT_FUNCTION;
         if (immediate) {
-            m_callback(env.get(), data, m_hint);
+            onAddonThread([&] { return (m_callback(env.get(), data, m_hint), true); });
         } else {
             Bun__napi_enqueue_finalizer(env.get(), m_callback, data, m_hint);
         }

@@ -195,6 +195,7 @@ enum class ReadRequestKind : uint8_t {
     ByteTee, // context = the JSStreamTeeState (byte tee's default-reader read request)
     AsyncIterator, // context = InternalFieldTuple{asyncIterator, the next() result promise}
     ReadStreamIntoSink, // Bun: readStreamIntoSink pump read (context = JSReadStreamIntoSinkOperation)
+    Internal, // context = a JSPromise that only native code sees; see ReadableStreamReader__read
     TextDecode, // Body.textStream()'s per-pull read: context = the output
                 // JSReadableStreamDefaultController (its algorithmContext is the
                 // source reader; decode state inline on m_algorithms.textDecodeState)

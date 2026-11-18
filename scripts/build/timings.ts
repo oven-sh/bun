@@ -842,6 +842,7 @@ const ruleLane: Record<RuleName, Lane> = {
   duplicate_symbols: "link and checks",
   link: "link and checks",
   link_trimmable: "link and checks",
+  order_hints: "link and checks",
   shim_verify: "link and checks",
   smoke_test: "link and checks",
   strip: "link and checks",

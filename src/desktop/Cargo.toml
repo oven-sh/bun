@@ -1,0 +1,36 @@
+[package]
+name = "bun_desktop"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_alloc.workspace = true
+bun_base64.workspace = true
+bun_boringssl_sys.workspace = true
+bun_collections.workspace = true
+bun_core.workspace = true
+bun_crash_handler.workspace = true
+bun_css.workspace = true
+bun_deflate.workspace = true
+bun_event_loop.workspace = true
+bun_http.workspace = true
+bun_jsc.workspace = true
+bun_opaque.workspace = true
+bun_paths.workspace = true
+bun_removable_features.workspace = true
+bun_sha_hmac.workspace = true
+bun_spawn.workspace = true
+bun_spawn_sys.workspace = true
+bun_sys.workspace = true
+bun_ui.workspace = true
+bun_url.workspace = true
+bun_web.workspace = true
+bun_which.workspace = true
+bun_wyhash.workspace = true
+libc.workspace = true

@@ -34,7 +34,8 @@ impl Resolver<'_, '_> {
 
     pub(super) fn find_native(&self, name: Atom, is_member: bool) -> Option<Intrinsic> {
         let global = table::global(self.input.names.get(name)?)?;
-        let &(_, is_also_member) = NATIVES.get()?.iter().find(|native| native.0 == global)?;
+        let is_also_member = !self.input.names.is_kept_aside(global)
+            && NATIVES.get()?.iter().find(|native| native.0 == global)?.1;
         let is_one_object = table::entry(global).mutability != Mutability::ChangesOnItsOwn;
         (is_one_object && (is_also_member || !is_member))
             .then(|| Intrinsic::Builtin(table::canonical_id(global)))

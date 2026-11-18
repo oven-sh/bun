@@ -576,6 +576,7 @@ interface Set<T> {
   $clear: Set<T>["clear"];
   $delete: Set<T>["delete"];
   $has: Set<T>["has"];
+  readonly $size: Set<T>["size"];
 }
 
 interface Map<K, V> {

@@ -551,3 +551,47 @@ describe("WriteStream.prototype.getColorDepth", () => {
     expect(WriteStream.prototype.getColorDepth.length).toBe(0);
   });
 });
+
+test.skipIf(isWindows).each(["O_NONBLOCK", "O_RDWR"])(
+  "ReadStream waits for input on a descriptor with %s",
+  async flag => {
+    let output = "";
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const fs = require("fs");
+        const name = ${flag === "O_NONBLOCK"} ? require("child_process").execSync("tty", { stdio: ["inherit", "pipe", "inherit"] }).toString().trim() : "/dev/tty";
+        const fd = fs.openSync(name, fs.constants.O_RDWR | fs.constants.${flag});
+        const stream = new (require("tty").ReadStream)(fd);
+        stream.on("error", error => { console.log("error:" + error.code); process.exit(1); });
+        stream.on("data", data => { console.log("got:" + String(data).trim() + ":" + stream.bytesRead); stream.destroy(); });
+        fs.stat(".", () => fs.stat(".", () => console.log("reading")));
+      `,
+      ],
+      env: bunEnv,
+      terminal: {
+        data(terminal, chunk) {
+          const wasReading = output.includes("reading");
+          output += Buffer.from(chunk).toString();
+          if (!wasReading && output.includes("reading")) terminal.write("hello\n");
+        },
+      },
+    });
+    const exitCode = await proc.exited;
+    expect(output).not.toContain("error:");
+    expect(output).toContain("got:hello:6");
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.skipIf(isWindows)("ReadStream that is unref()ed before it reads does not keep the process alive", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `new (require("tty").ReadStream)(0).unref().on("data", () => {});`],
+    env: bunEnv,
+    terminal: {},
+  });
+  expect(await proc.exited).toBe(0);
+  expect(proc.signalCode).toBeNull();
+});

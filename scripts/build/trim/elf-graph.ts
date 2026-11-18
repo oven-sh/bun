@@ -6,7 +6,7 @@ import { openElf } from "./elf-file.ts";
 import type { ElfObjectReferences } from "./elf-objects.ts";
 import { foldedSections, ignoredOutputs, isOrdinary, readElfObject } from "./elf-objects.ts";
 import type { GraphFailure, GraphReading, PlacedNodes, RecordSection, ResolvedReference } from "./graph.ts";
-import { createSectionGraph, nodeAt } from "./graph.ts";
+import { createSectionGraph, madeByLinker, nodeAt } from "./graph.ts";
 
 interface MapEntry {
   address: number;
@@ -85,6 +85,64 @@ function parseMap(mapPath: string): LinkMap {
   return { entries, emptySections };
 }
 
+const thunkSection = ".text.thunk";
+const branchThunkSymbol = /^__AArch64(ADRP|AbsLong|AbsXOLong)Thunk_/;
+const isBranchThunk = ({ object, section }: MapEntry) =>
+  object === madeByLinker && section.startsWith(thunkSection + "@");
+
+/** A branch of AArch64 reaches 128 MB. Beyond that it goes to a thunk, which the linker lays in one section with others. */
+function splitThunkSections(entries: MapEntry[], elf: ElfFile): MapEntry[] {
+  const sections = entries.filter(entry => entry.object === madeByLinker && entry.section === thunkSection);
+  const symbolTable = elf.sections.find(section => section.type === 2);
+  if (sections.length === 0 || symbolTable === undefined) return entries;
+  const symbols = readAt(elf.fd, symbolTable.offset, symbolTable.size);
+  const strings = readAt(elf.fd, elf.sections[symbolTable.link]!.offset, elf.sections[symbolTable.link]!.size);
+  const namesAt = new Map(sections.map(section => [section, new Map([[section.address, ""]])]));
+  for (let at = 0; at < symbols.length; at += 24) {
+    if ((symbols[at + 4]! & 15) !== 2) continue;
+    const address = Number(symbols.readBigUInt64LE(at + 8));
+    const section = sections.find(each => each.address <= address && address < each.address + each.size);
+    if (section !== undefined) namesAt.get(section)!.set(address, stringAt(strings, symbols.readUInt32LE(at)));
+  }
+  return entries.flatMap(entry => {
+    const thunks = [...(namesAt.get(entry) ?? [])].sort(([a], [b]) => a - b);
+    if (thunks.length === 0) return [entry];
+    return thunks.map(([address, name], index) => ({
+      ...entry,
+      address,
+      size: (thunks[index + 1]?.[0] ?? entry.address + entry.size) - address,
+      section: branchThunkSymbol.test(name) ? `${thunkSection}@${address.toString(16)}` : thunkSection,
+    }));
+  });
+}
+
+/** No relocation names a thunk: the code of the image says who branches to it. Answers those that code outside the map branches to. */
+function connectThunks(
+  entries: MapEntry[],
+  elf: ElfFile,
+  placedNodes: PlacedNodes,
+  successors: Set<number>[],
+): number[] {
+  const thunkAt = new Map<number, number>();
+  entries.forEach((entry, node) => isBranchThunk(entry) && thunkAt.set(entry.address, node));
+  const ofUnknownCallers: number[] = [];
+  if (thunkAt.size === 0) return ofUnknownCallers;
+  for (const section of elf.sections) {
+    if ((section.flags & 4) === 0) continue;
+    const code = readAt(elf.fd, section.offset, section.size);
+    for (let at = -section.address & 3; at + 4 <= code.length; at += 4) {
+      const word = code.readInt32LE(at);
+      if ((word & 0x7c000000) !== 0x14000000) continue;
+      const thunk = thunkAt.get(section.address + at + ((word << 6) >> 4));
+      if (thunk === undefined) continue;
+      const caller = nodeAt(placedNodes, section.address + at);
+      if (caller >= 0) successors[caller]!.add(thunk);
+      else ofUnknownCallers.push(thunk);
+    }
+  }
+  return ofUnknownCallers;
+}
+
 function indexSections(entries: MapEntry[]): {
   nodesBySection: Map<string, number[]>;
   liveSections: Map<string, Set<string>>;
@@ -127,7 +185,7 @@ function readObjects(liveSections: Map<string, Set<string>>): InputObjects {
   const defined = new Map<string, string[]>();
   const failures: GraphFailure[] = [];
   for (const [object, live] of liveSections) {
-    if (object === "<internal>") continue;
+    if (object === madeByLinker) continue;
     const read = readElfObject(object, live, archives);
     if (typeof read === "string") {
       objects.set(object, undefined);
@@ -253,8 +311,9 @@ function findRoots(
   symbolNodes: number[],
 ): { roots: Set<number>; exported: Set<number> } {
   const roots = new Set(symbolNodes);
-  entries.forEach(({ output, object }, node) => {
-    if (!isOrdinary(output) || objects.get(object) === undefined) roots.add(node);
+  entries.forEach((entry, node) => {
+    const isUnread = objects.get(entry.object) === undefined && !isBranchThunk(entry);
+    if (!isOrdinary(entry.output) || isUnread) roots.add(node);
   });
   const entry = nodeAt(placedNodes, Number(readAt(elf.fd, 0x18, 8).readBigUInt64LE(0)));
   if (entry >= 0) roots.add(entry);
@@ -278,12 +337,9 @@ function findRoots(
   return { roots, exported };
 }
 
-function createReading(
-  elf: ElfFile,
-  executable: string,
-  { entries, emptySections }: LinkMap,
-  folded: Map<string, string>,
-): GraphReading {
+function createReading(elf: ElfFile, executable: string, map: LinkMap, folded: Map<string, string>): GraphReading {
+  const { emptySections } = map;
+  const entries = splitThunkSections(map.entries, elf);
   const placedNodes = {
     address: entries.map(entry => entry.address),
     size: entries.map(entry => entry.size),
@@ -302,7 +358,8 @@ function createReading(
   const symbols = readLinkedSymbols(elf, placedNodes, emptySections, executable);
   const { nodesBySymbol, ifuncNodes } = symbols;
   const connections = connect(entries.length, objects, { nodesBySection, findNode, resolveGlobal }, symbols);
-  const symbolNodes = [...ifuncNodes, ...connections.unwindTableNodes];
+  const thunksThatStay = connectThunks(entries, elf, placedNodes, connections.successors);
+  const symbolNodes = [...ifuncNodes, ...connections.unwindTableNodes, ...thunksThatStay];
   const { roots, exported } = findRoots(entries, objects, elf, placedNodes, symbolNodes);
   const graph = createSectionGraph({
     format: "elf",

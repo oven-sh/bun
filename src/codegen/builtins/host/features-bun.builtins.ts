@@ -3,6 +3,7 @@ import { TLSOptions } from "../../../runtime/socket/SSLConfig.bind.ts";
 import { pathOfNativeBinding } from "../paths.ts";
 import {
   arrayBufferViewFeatures,
+  desktopFeatures,
   externalValueFeatures,
   s3RequestFeatures,
   tlsSocketFeatures,
@@ -210,6 +211,37 @@ export default b.declarations(
     ),
   ),
   extendAll(["Ffi"], "bun:ffi", "%FFI%", "%FFICallback%"),
+
+  extendAll(
+    desktopFeatures,
+
+    ...nativeBindings("Bindgen", "controls.bind.ts", "createPage"),
+    ...nativeBindings("Bindgen", "desktop_modules.bind.ts", "modules"),
+    ...nativeBindings("Bindgen", "desktop_script.bind.ts", "sendInputEventForTesting"),
+  ),
+  extendAll(
+    desktopFeatures,
+    ...nativeBindings(
+      "Bindgen",
+      "dom.bind.ts",
+      "askAsAssistiveTechnology",
+      "countEngines",
+      "decodesMessage",
+      "dumpDisplayList",
+      "panicInEngine",
+    ),
+  ),
+  extendAll(desktopFeatures, "%WindowOfProgram%"),
+  extendAll(desktopFeatures, "%NativeImage%"),
+  extendAll(desktopFeatures, "%IncomingBody%.prototype"),
+  extendAll(
+    desktopFeatures,
+    "bun:desktop",
+    "bun:desktop/electron",
+    "bun:desktop/dom",
+    "bun:desktop/jsx-runtime",
+    "bun:desktop/jsx-dev-runtime",
+  ),
 
   extendAll(["Plugin", ...runtimeTranspilerFeatures], "Bun.plugin"),
 

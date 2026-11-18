@@ -1,0 +1,55 @@
+# The program of names-that-only-pages-answer-speak-for-a-layout.ir, built with --desktop: `part` is asked of their elements too.
+# class Link { href = 1 }  class Knot { part = 1 }  function first(e) { return e.href; }  function second(e) { return e.part; }  sink(first, second, new Link(), new Knot(), globalThis);
+# OPTIONS: admit=OptionalBuiltins
+# RUN: walk f2 mechanisms=none+TypedOperations+Guesses
+# CHECK-LABEL: code f2:Body
+# CHECK-NOT: = GetSlot
+# CHECK: = PropGet {{*}}key="part"
+
+layout L0 kind=Instance name="Link" module=m0 constructor=f3 fields=[{key="href" declared={type=anything} flags=[IsRequired]}]
+layout L1 kind=Instance name="Knot" module=m0 constructor=f4 fields=[{key="part" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f3
+    v3 = NewClass v2 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = Construct v4
+    v6 = NewClosure function=f4
+    v7 = NewClass v6 layout=L1
+    v8 = FinishClass v7 layout=L1
+    v9 = Construct v8
+    v10 = NewClosure function=f1
+    v11 = NewClosure function=f2
+    v12 = Call v1, -, v10, v11, v5, v9, v0
+    Return v12
+}
+function f1 name="first" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="href"
+    Return v1
+}
+function f2 name="second" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="part"
+    Return v1
+}
+function f3 name="Link" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Integer integer=1
+    PropSet v2, v3 key="href"
+    Return v2
+}
+function f4 name="Knot" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L1 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    v3 = Integer integer=1
+    PropSet v2, v3 key="part"
+    Return v2
+}

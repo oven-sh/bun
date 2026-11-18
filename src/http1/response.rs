@@ -12,7 +12,7 @@ pub struct Response {
     /// From a [`ResponseParser`], `buf` is the head as it was received.
     pub headers: Headers,
     /// In `headers.buf`.
-    status_text: StringPointer,
+    pub(crate) status_text: StringPointer,
 }
 
 impl Response {
@@ -46,7 +46,7 @@ pub struct HeadOptions {
 #[derive(Default)]
 pub struct ResponseParser {
     /// What earlier reads brought of the current head.
-    received: Vec<u8>,
+    pub(crate) received: Vec<u8>,
     lines: Lines,
     open_run: Option<Run>,
     interim_len: usize,

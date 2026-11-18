@@ -76,6 +76,7 @@ use bun_sema_driver::{
 };
 use bun_sys::{Fd, File};
 use core::fmt;
+use core::sync::atomic::Ordering;
 use core::time::Duration;
 use std::num::NonZeroUsize;
 use std::time::Instant;
@@ -345,6 +346,12 @@ fn is_relative_path(path: &[u8]) -> bool {
     path.starts_with(b"./") || path.starts_with(b"../")
 }
 
+fn may_be_url_of_one_of(name: &[u8], classic_scripts: &[(Vec<u8>, Vec<u8>)]) -> bool {
+    let name = &name[..bun_core::strings::index_of_any(name, b"?#").unwrap_or(name.len())];
+    let name = bun_paths::basename(name);
+    (classic_scripts.iter()).any(|it| bun_paths::basename(&it.0) == name)
+}
+
 fn names_one_of<'f>(
     name: &[u8],
     mut files: impl Iterator<Item = &'f EntryPointPaths>,
@@ -518,8 +525,16 @@ impl<'a> Build<'a> {
     fn run_front_end(&mut self) -> Result<FrontEndOutput, Stage> {
         let mut steps_behind_link = None;
         let output = self.load_in_new_sessions(AssetReads::FinishedLater, &mut |build, loaded| {
+            let imports_desktop = build.options.aot.imports_desktop.as_deref();
+            let starts_again = || imports_desktop.is_some_and(|it| it.load(Ordering::Relaxed));
+            if starts_again() {
+                return Err(Stage::Load);
+            }
             build.keeps_library_code_without_names = loaded.keeps_library_code_without_names;
             let bound = build.bind_modules(&loaded)?;
+            if starts_again() {
+                return Err(Stage::BindModules);
+            }
             build.stop_if_errors(Stage::BindModules)?;
             let units = build.check_and_lower(&loaded, &bound);
             (loaded.finish_asset_reads)();
@@ -799,7 +814,9 @@ impl<'a> Build<'a> {
                 .iter()
                 .chain(&self.started_workers.names);
             let levels = self.started_workers.levels_above_root;
-            if names_one_of(name, compiled, &options.paths, levels) {
+            if names_one_of(name, compiled, &options.paths, levels)
+                || may_be_url_of_one_of(name, &options.load.classic_scripts)
+            {
                 continue;
             }
             self.started_workers.code = CodeOfWorkers::Unseen;

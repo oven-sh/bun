@@ -17,6 +17,11 @@ import {
 } from "harness";
 import { dirname, join } from "path";
 
+const desktopLibrary = [
+  process.env.BUN_DESKTOP_LIBRARY,
+  join(dirname(bunExe()), isMacOS ? "libbun_desktop.dylib" : "libbun_desktop.so"),
+].find(file => file && existsSync(file));
+
 // The napi-app addons don't link against bun, so existing binaries stay valid
 // across bun builds. `bun install` runs a full `node-gyp rebuild` (clean + build
 // of every target), so skip it when every target's .node output already exists
@@ -2319,6 +2324,61 @@ describe.skipIf(!canBuildNodeAddons())("napi_create_string_latin1", () => {
       stderr: expect.stringContaining("RSS growth:"),
       exitCode: 0,
     });
+  });
+});
+
+describe.skipIf(!canBuildNodeAddons() || isWindows || !desktopLibrary)("with the main thread lent to the UI", () => {
+  it("addons run on it, and JavaScript does not", async () => {
+    const fixture = /* js */ `
+      const addon = require(${JSON.stringify(join(__dirname, "napi-app/build/Debug/lent_main_thread.node"))});
+      const { dlopen } = require("bun:ffi");
+      const isMainThread =
+        process.platform === "darwin"
+          ? () => !!dlopen("libSystem.B.dylib", { pthread_main_np: { returns: "int" } }).symbols.pthread_main_np()
+          : () => require("fs").readlinkSync("/proc/thread-self").endsWith("/" + process.pid);
+      let thrown;
+      try {
+        addon.call(() => { throw new Error("through"); });
+      } catch (error) {
+        thrown = error.message;
+      }
+      addon.later(later => console.log(JSON.stringify({
+        addon: [addon.loaded, addon.where(), addon.getter, addon.call(() => addon.call(addon.where)), later],
+        javascript: [isMainThread(), addon.call(isMainThread)],
+        thrown,
+      })));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, BUN_DESKTOP_THREADS: "main", BUN_DESKTOP_HEADLESS: "1", BUN_DESKTOP_LIBRARY: desktopLibrary },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual({
+      addon: [true, true, true, true, true],
+      javascript: [false, false],
+      thrown: "through",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("so do their finalizers and cleanup hooks", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `globalThis.kept = require(${JSON.stringify(join(__dirname, "napi-app/build/Debug/lent_main_thread.node"))}).dispose();`,
+      ],
+      env: { ...bunEnv, BUN_DESKTOP_THREADS: "main", BUN_DESKTOP_HEADLESS: "1", BUN_DESKTOP_LIBRARY: desktopLibrary },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim().split("\n")).toEqual(
+      ["string", "aborted call", "async hook", "hook", "buffer", "wrap", "instance data"].map(it => it + ": main"),
+    );
+    expect(exitCode).toBe(0);
   });
 });
 

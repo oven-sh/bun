@@ -1,4 +1,5 @@
 #include "root.h"
+#include "InternalModuleRegistry.h"
 
 #include "JavaScriptCore/HeapProfiler.h"
 #include <JavaScriptCore/AOTMembersLeftOut.h>
@@ -27,6 +28,7 @@
 #include <JavaScriptCore/JSObjectInlines.h>
 #include "headers.h"
 #include "BunObject.h"
+#include "BunProcess.h"
 #include "BunCompiledModules.h"
 #include "webcore/streams/BunStreamConsumers.h"
 #include "WebCoreJSBuiltins.h"
@@ -387,7 +389,7 @@ static JSValue createBunShell(VM& vm, Zig::GlobalObject* globalObject)
     // An executable of a program that never names `Bun.$` has no code for the function. It reads `process.env` when it runs, so that read is made here.
     if (vm.hasCompiledCode() && scope.exception()) [[unlikely]] {
         if (JSValue standIn = JSC::AOT::takeOmittedFunctionPlaceholder(globalObject, { "BunShell"_s, 1 }, globalObject)) {
-            JSValue process = globalObject->get(globalObject, Identifier::fromString(vm, "process"_s));
+            JSValue process = defaultGlobalObject(globalObject)->processObject();
             RETURN_IF_EXCEPTION(scope, {});
             process.get(globalObject, Identifier::fromString(vm, "env"_s));
             RETURN_IF_EXCEPTION(scope, {});

@@ -26,6 +26,7 @@
 #include "config.h"
 #include "JSDOMWrapper.h"
 #include "JSAbortSignal.h"
+#include "ScriptExecutionContext.h"
 
 namespace WebCore {
 
@@ -39,7 +40,8 @@ bool JSAbortSignal::isReachableFromOpaqueRoots(JSC::AbstractSlotVisitor& visitor
     }
 
     if (!abortSignal.aborted()) {
-        if (abortSignal.hasActiveTimeoutTimer() && abortSignal.hasTimeoutObserver()) {
+        auto* context = static_cast<EventTarget&>(abortSignal).scriptExecutionContext();
+        if (abortSignal.hasActiveTimeoutTimer() && abortSignal.hasTimeoutObserver() && context && !context->activeDOMObjectsAreStopped()) {
             if (reason) [[unlikely]]
                 *reason = "Has Observed Timeout"_s;
             return true;

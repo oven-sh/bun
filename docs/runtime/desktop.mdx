@@ -1,0 +1,362 @@
+---
+title: Desktop apps
+description: Open windows that show a DOM document, with menus, dialogs, notifications and the rest of what a desktop app needs
+---
+
+`bun:desktop` opens native windows on macOS, Linux (X11 and Wayland) and Windows. A window shows a DOM document. Bun has its own implementation of the DOM, CSS, layout, text and painting. There is no browser process and no IPC: your components, `node:fs` and the layout of the window run on one thread.
+
+<Warning>
+  `bun:desktop` is experimental. It implements much of the web platform, not all of it. See [what is
+  missing](#what-is-missing).
+</Warning>
+
+```tsx app.tsx icon="/icons/typescript.svg"
+/** @jsxImportSource bun:desktop */
+import { Window, dialog, useState } from "bun:desktop";
+
+function App() {
+  const [text, setText] = useState("");
+
+  async function open() {
+    const { filePaths } = await dialog.showOpenDialog({ properties: ["openFile"] });
+    if (filePaths.length > 0) setText(await Bun.file(filePaths[0]).text());
+  }
+
+  return (
+    <main style={{ display: "grid", gap: 8, padding: 16 }}>
+      <button onClick={open}>Open…</button>
+      <textarea rows={20} value={text} onChange={event => setText(event.currentTarget.value)} />
+    </main>
+  );
+}
+
+new Window({ title: "Notes" }).render(<App />);
+```
+
+```bash terminal icon="terminal"
+bun app.tsx
+bun compile --desktop app.tsx
+```
+
+The second command makes a `.app` or an AppDir. An executable that is built without `--desktop` has no `bun:desktop`. With `--aot`, `bun run`, `bun test` and `bun check` need no flag: an import of the module is enough. In `node_modules`, only an `import` statement counts. See [Desktop apps](/compiler/executables#desktop-apps).
+
+For the types of `document` and of the elements, add `"DOM"` to `lib` in `tsconfig.json`.
+
+---
+
+## Filling a window
+
+### JSX
+
+`bun:desktop` has a small renderer with the API of React: function and class components, hooks, context, portals, `Suspense`, `lazy` and `memo`. It renders synchronously, and handlers get the events of the DOM. Set `"jsxImportSource": "bun:desktop"` in `tsconfig.json`, or use the comment above.
+
+`useWindow()` returns the `Window` that a component is in, and `useColorScheme()` returns `"light"` or `"dark"`.
+
+### React DOM and other libraries for browsers
+
+With `bun:desktop/dom` as a preload, the program starts in a window: `globalThis` is a `window`, and has the globals of Bun too. The first `Window` shows the global `document`.
+
+```sh
+bun --preload=bun:desktop/dom app.tsx
+```
+
+For an app that you build with `--desktop`, set `"desktop": { "dom": true }` in `package.json`, and import the module. Without either, the module only exports a `window` and a `document`.
+
+```tsx app.tsx icon="/icons/typescript.svg"
+import "bun:desktop/dom";
+import { Window } from "bun:desktop";
+import { createRoot } from "react-dom/client";
+
+new Window({ title: "Hello" });
+createRoot(document.body.appendChild(document.createElement("div"))).render(<h1>Hello</h1>);
+```
+
+Every other `Window` has a `document` of its own in the same realm. Nodes can move between them, and a portal can render into another window.
+
+### The DOM
+
+```ts
+const window = new Window();
+window.document.body.innerHTML = "<button>Quit</button>";
+window.document.querySelector("button").onclick = () => app.quit();
+```
+
+A script that takes long to answer a key or a click can show what it has so far with `window.window.paintNow(deliversResizes, isSettled)`, which browsers do not have. It returns whether it has painted.
+
+- It gets two tries in the 500 ms after an input, and none for a frame or for a page that you do not trust.
+- If a box has a new size, nothing is painted before its `ResizeObserver` knows. With `deliversResizes`, observers are called first.
+- `isSettled()` is called before the layout, and again after the observers. Nothing is painted if it returns `false`.
+
+### HTML files
+
+```ts
+await window.loadFile("./index.html");
+await window.loadHTML("<h1>Hello</h1>", "file:///base/for/relative/urls/");
+```
+
+Scripts in the document only run in the window whose `window` is `globalThis`.
+
+<Warning>
+  A script in a document can do all that your app can. Do not pass HTML that you do not trust to `loadHTML()`. Show it
+  in an [`<iframe>`](#security).
+</Warning>
+
+### Default styles
+
+A new window starts with `color-scheme: light dark`, the font of the system, no margin on `body`, and `user-select: none`. These are in a cascade layer, so any rule of yours wins. `loadFile()` and `loadHTML()` remove them, and leave the defaults of a browser.
+
+In a window without a title bar, `app-region: drag` makes an element move the window, and `app-region: no-drag` exempts what is inside of it. `-electron-corner-smoothing` smooths the curves of `border-radius` like in Electron.
+
+---
+
+## Windows
+
+```ts
+import { Window } from "bun:desktop";
+
+const window = new Window({
+  title: "Notes",
+  width: 900,
+  height: 600,
+  minWidth: 400,
+  show: false,
+  titleBarStyle: "hiddenInset",
+});
+
+window.once("ready-to-show", () => window.show());
+window.on("close", event => {
+  if (hasUnsavedChanges) event.preventDefault();
+});
+```
+
+The app quits when its last window is closed, unless `app` has a listener for `window-all-closed`.
+
+Following a link does not replace the document. The window emits `will-navigate`, and opens `http:`, `https:` and `mailto:` URLs in the default app unless the event is canceled. `history.pushState()`, fragments and the Navigation API work within the document, so routers do too.
+
+With `bun --hot`, pass a `key` to get the open window back when the module runs again.
+
+```tsx
+new Window({ key: "main" }).render(<App />);
+```
+
+### Wayland
+
+Bun uses Wayland if `WAYLAND_DISPLAY` is set and `libxkbcommon` is installed, and otherwise X11. `BUN_DESKTOP_BACKEND=x11` or `--ozone-platform=x11` chooses X11 in any case.
+
+On Wayland the compositor places windows. The position of a window is that of its display, `setPosition()`, `center()`, `setAlwaysOnTop()`, `setSkipTaskbar()` and `setVisibleOnAllWorkspaces()` do nothing, and `screen.getCursorScreenPoint()` is where the pointer was last seen in a window of the app. `focus()` only raises a window after the user has asked for it, with a click, a key, a shortcut, a notification or a second launch. `globalShortcut` needs the desktop portal for global shortcuts, which may ask the user.
+
+### Launch cover
+
+A packaged app can have its main window on the screen before its code runs. The window shows a picture from the last run until the app says that it has painted.
+
+```ts
+const window = new Window({ ...savedBounds, launchCover: true });
+await showHome(window);
+window.endLaunchCover();
+await window.saveLaunchCover();
+```
+
+Text that was typed meanwhile goes to the field that has the focus; `saveLaunchCover(undefined, { bounds })` with the bounds of that field has it drawn over the picture at once. `endLaunchCover({ keep: [rectangle] })` leaves parts of the picture until the next call. The picture is a file in `userData` that only the user can read (on Windows, whoever can read that directory): take it while the window shows what the next launch will show, and call `Window.clearLaunchCover()` when the user signs out. It is not shown to a second instance, after a crash during the launch, or if the executable, the arguments, the displays or the size have changed. `BUN_DESKTOP_LAUNCH_COVER=0` turns it off.
+
+## Menus
+
+```ts
+import { Menu } from "bun:desktop";
+
+Menu.setApplicationMenu(
+  Menu.buildFromTemplate([
+    ...(process.platform === "darwin" ? [{ role: "appMenu" } as const] : []),
+    { label: "File", submenu: [{ label: "Save", accelerator: "CmdOrCtrl+S", click: save }, { role: "close" }] },
+    { role: "editMenu" },
+  ]),
+);
+
+window.on("context-menu", (event, { isEditable }) => {
+  if (isEditable) Menu.buildFromTemplate([{ role: "cut" }, { role: "copy" }, { role: "paste" }]).popup({ window });
+});
+```
+
+The menu bar is native on macOS. On Linux and Windows, Bun draws it at the top of each window. Pop-up menus are native on macOS, and drawn by Bun on Linux and Windows.
+
+## The rest
+
+These follow the modules of Electron with the same names.
+
+| Export              | For                                                                           |
+| ------------------- | ----------------------------------------------------------------------------- |
+| `app`               | Life cycle, paths, a single instance, URL schemes, opening at login, the Dock |
+| `dialog`            | File pickers and message boxes                                                |
+| `clipboard`         | Text, images and file paths                                                   |
+| `shell`             | Opening URLs and files, the trash                                             |
+| `Notification`      | Notifications of the system                                                   |
+| `Tray`              | An icon in the menu bar or the notification area                              |
+| `globalShortcut`    | Shortcuts that work while the app is in the background                        |
+| `screen`            | Displays and the mouse pointer                                                |
+| `nativeTheme`       | Dark mode                                                                     |
+| `nativeImage`       | Reading, resizing and encoding images                                         |
+| `powerMonitor`      | Sleep, idle time, battery                                                     |
+| `powerSaveBlocker`  | Keeping the system awake                                                      |
+| `safeStorage`       | Encryption with a key in the keychain, or that DPAPI protects on Windows      |
+| `systemPreferences` | Reduced motion, accessibility permission                                      |
+| `net`               | `fetch` and `isOnline`                                                        |
+
+## Accessibility
+
+Screen readers get the roles, names, states, text and live regions of a page, frames included, through the accessibility API of macOS, AT-SPI on Linux and UI Automation on Windows. MSAA and IAccessible2 are not implemented, and the one for Windows has been tested with UI Automation clients, not yet with screen readers. None of it is computed until one asks. `prefers-reduced-motion`, `prefers-contrast` and `prefers-reduced-transparency` follow the system, and so does `forced-colors` on Windows.
+
+## Security
+
+There are two kinds of content.
+
+|             | Your app                        | Everything else                              |
+| ----------- | ------------------------------- | -------------------------------------------- |
+| What        | The documents of your windows   | `<iframe src>` and `<iframe srcdoc>`         |
+| Rendered by | Bun, in the process of your app | A browser, in sandboxed processes of its own |
+| Can reach   | All that your app can           | What a site can, and `parent.postMessage()`  |
+
+### Your app
+
+A window is not sandboxed. What protects it is that data does not become code:
+
+- Scripts, `on*` attributes and `javascript:` URLs only run if they were in the HTML that you passed to `loadFile()` or `loadHTML()`. Those that get into the document later, for example through `innerHTML`, do not.
+- `<script src>` only runs files of your app.
+- In an executable that was built with `--disallow-code-generation-from-strings=strict`, the engine refuses all JavaScript that is not in the executable. Ship one like this if you can. Compiling ahead of time does not imply it, and WebAssembly is not covered.
+
+Sanitize markup all the same. It can cover your UI with its own, make requests for images and style sheets, and take long to lay out. HTML, CSS, images, SVG and fonts are parsed in your process, by code in Rust and JavaScript with limits on size and depth. A bug there is a bug in your app, where a browser would lose a tab.
+
+### Frames
+
+```tsx
+<iframe src="https://example.com" sandbox="allow-scripts" />
+```
+
+The page gets neither Bun's DOM nor a realm in Bun's VM. Its pixels are composited like an image, so it can be clipped, rounded and covered. `sandbox`, `allow`, `csp`, `referrerpolicy`, `loading`, the `load` event, `postMessage()` and message ports work as in a browser, and `event.origin` comes from the browser. `contentDocument` is `null`, even for the same origin. An `<iframe>` without `src` is the exception: it is an empty document in your process, which your scripts can fill.
+
+In a `Window`, frames are denied all permissions and downloads, and forget their cookies when the app quits.
+
+The browser starts with the first frame that has something to show, and exits 30 seconds after the last one is gone. It is the first of:
+
+1. The one that you passed to `app.setWebEngine()`
+2. A distribution of Electron in the `electron` directory of the resources of your app
+3. An installed Chrome, Chromium, Brave or Edge
+
+Without one, frames stay empty. Bun never renders them itself, and never turns the sandbox of the browser off.
+
+```ts
+app.setWebEngine({ type: "chromium", path: "/usr/bin/chromium" });
+app.setWebEngine(null); // No frames
+```
+
+|                                                  | `"electron"`     | `"chromium"`                                     |
+| ------------------------------------------------ | ---------------- | ------------------------------------------------ |
+| Security updates                                 | You ship them    | The browser updates itself                       |
+| Custom schemes                                   | Yes              | `app://host` is `https://host.app.invalid` to it |
+| Storage that persists                            | Yes              | Only cookies                                     |
+| Permissions                                      | Session handlers | Denied                                           |
+| Preload scripts, extensions, context menus, find | Yes              | No                                               |
+
+### `bun:desktop/electron`
+
+A `webContents` shows the files of your app, and the origins that you passed to `app.trustOrigins()`, in your process. It shows all other URLs in the web engine, with the session, the preload script and the handlers that it has. There, `sandbox` and `contextIsolation` are always on, and `nodeIntegration` is always off.
+
+```ts
+app.trustOrigins(["https://example.com"], { except: ["https://example.com/login*"] });
+new WebContentsView({ webPreferences: { webEngine: true } }); // Whatever it shows
+session.defaultSession.setWebEngineHosts(["example.com"]); // HTTP requests use the network stack of the engine
+```
+
+| Option of `trustOrigins()` | Effect                                                                                                   |
+| -------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `except`                   | These URLs are shown in the web engine                                                                   |
+| `exceptWhenLoaded`         | The same, but a page in your process stays when it gets there with `history.pushState()`                 |
+| `inFrames`                 | Frames with these URLs are in your process, so `contentDocument` works. `true` means all, and popups too |
+
+A frame of the web engine in such a frame sees its parent as `window.top`.
+
+`protocol.serve()` answers requests for an origin with files of your app. Whatever can run code has to be answered: otherwise scripts are refused, and documents are shown in the web engine. Everything else goes to the network.
+
+```ts
+protocol.serve("https://example.com", (request, network) => {
+  if (request.destination === "document") return new Response(Bun.file("index.html"));
+});
+```
+
+| `app.commandLine` switch        | Effect                                                                        |
+| ------------------------------- | ----------------------------------------------------------------------------- |
+| `disable-http2`                 | Sessions only use HTTP/1.1                                                    |
+| `disable-gpu`                   | On Windows, windows are shown with GDI instead of DirectComposition           |
+| `disable-lcd-text`              | On Windows, text is not drawn with ClearType                                  |
+| `safe-storage-name=<name>`      | The name under which the system keeps the key of `safeStorage` and of cookies |
+| `safe-storage-copy-from=<name>` | If there is no key yet, it is copied from that of the app with this name      |
+
+The two `safe-storage` switches have no effect on Windows, where the key is in `sessionData`.
+
+Both sides have the same cookies. They do not share `localStorage`, IndexedDB or caches.
+
+A page in your process has a realm of its own without `Bun`, `process` and `require`, and its requests are subject to CORS and its Content Security Policy. Scripts and workers from an origin that you do not trust are refused whatever the policy says. The realm keeps honest code apart. It is not a sandbox: a script that runs there can get out, where Electron would keep it in a sandboxed process. Cross-site scripting on a trusted origin gives away all that your app can do, unless your executable refuses JavaScript that is not in it. If the main process needs `executeJavaScript()` or `eval()`, refuse it for pages only:
+
+```ts
+app.setCompiledScripts({ "app://bundle/": "/$bunfs/root/web/" }, { exclusive: true });
+```
+
+To keep modules that are rarely needed out of the executable, pass `source`. It is asked for each module that was not compiled, and what it returns is interpreted. Such a module can import the compiled files that are entry points of the build.
+
+```ts
+app.setCompiledScripts(roots, { exclusive: true, source: url => rarelyNeeded.get(url) });
+```
+
+Compiled scripts are part of your program. They do not find the globals of Bun, but they can import its modules, such as `node:fs`.
+
+Compiled scripts run in the pages and workers at the origins of these URLs, so name the origin of your pages even if their scripts come from another one. With `exclusive`, they run in all pages. There, built-in objects are [read-only](/compiler/compatibility), also for scripts that were not compiled, and so they are in a page that shares its global object with Node.js or a preload script (`contextIsolation: false`). All other pages load their scripts as usual and can change their built-in objects.
+
+## Troubleshooting
+
+| Variable                       | Effect                                                                                                                                                                                                                            |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `BUN_DESKTOP_LOG`              | `1` prints what the UI library does, and `frames` every frame as well.                                                                                                                                                            |
+| `BUN_DESKTOP_RENDERER`         | `software` or `gpu`. The default on macOS is `layers`, which paints small changes with the CPU and large ones with the GPU. A 2D canvas moves to the GPU while the CPU takes long to draw it, unless it has `willReadFrequently`. |
+| `BUN_DESKTOP_CLOCK`            | When the frames of a scroll are painted on macOS 26 and later. By default once the system has drawn the frame before, with `early` right after a refresh of the display, with `video` when Core Video calls.                      |
+| `BUN_DESKTOP_CONFINE_BACKDROP` | `0` leaves the blur of a sidebar on macOS as AppKit has set it up. Scrolling next to it may miss frames.                                                                                                                          |
+| `BUN_DESKTOP_SPELLING`         | `0` does not ask macOS to check the spelling of text that is being edited.                                                                                                                                                        |
+| `BUN_DESKTOP_THREADS`          | `1` draws on the thread that runs JavaScript. `2` draws on another thread, which on macOS is the default for packaged apps only.                                                                                                  |
+
+With two threads on macOS, AppKit has the main thread. The functions of Node-API addons still run there, while JavaScript waits. Functions that are called through `bun:ffi` do not, nor do addons that are written against V8's C++ API. A Node-API function cannot use that API: `v8::Isolate::GetCurrent()` is null in it.
+
+## Testing
+
+`BUN_DESKTOP_HEADLESS=1` runs without a display server. Layout, painting and input work as usual.
+
+```tsx app.test.tsx icon="/icons/typescript.svg"
+/** @jsxImportSource bun:desktop */
+import { Window, act } from "bun:desktop";
+import { expect, test } from "bun:test";
+
+test("counts", () => {
+  using window = new Window({ width: 200, height: 100 });
+  act(() => window.render(<Counter />));
+
+  const button = window.document.querySelector("button");
+  const { x, y } = button.getBoundingClientRect();
+  act(() => {
+    window.sendInputEvent({ type: "mouseDown", x: x + 2, y: y + 2 });
+    window.sendInputEvent({ type: "mouseUp", x: x + 2, y: y + 2 });
+  });
+
+  expect(button.textContent).toBe("1");
+});
+```
+
+`act()` returns once the events, renders and effects that follow from its callback are done. `window.capturePage().toPNG()` is a screenshot.
+
+## What is missing
+
+- `<video>`, `<audio>`, Web Audio, `MediaRecorder` and the microphone need the web engine. A file plays once all of it has been fetched. There is no camera, `MediaSource`, WebCodecs, WebGPU or WebRTC.
+- WebGL is only on Linux. It runs in your process, on the EGL driver of the GPU. Set `BUN_DESKTOP_WEBGL=1` to accept a software renderer such as llvmpipe, or `BUN_DESKTOP_WEBGL=0` to turn WebGL off. Without a driver with OpenGL ES 3, with `webPreferences.webgl: false` and after `app.disableHardwareAcceleration()`, `getContext()` returns `null`. It also does for three minutes after contexts were lost three times, for example to shaders that hang the GPU.
+- In an `<iframe>`, drags do not cross the border.
+- On macOS, the UI library uses private parts of Core Animation where the system has them (`CAIOSurfaceCreate` and properties of `CABackdropLayer`), which the Mac App Store does not allow.
+- Touch and pen events are only there on Windows. There are no image maps, and no pickers for the date and time types of `<input>`, which are text fields.
+- On Windows, input methods go through IMM32. There is no Text Services Framework, which dictation, handwriting and text suggestions need, and no smooth zoom and scrolling from precision touchpads.
+- `form[0]` and `style[0]` are there once `length` has been read. `document.name` does not find forms and images by name.
+- `document.execCommand()` has the commands for text, the clipboard, undo, and basic inline formatting.
+- `prompt()` and printing are not supported.
+- Service workers have no push messages, background sync or background fetch.

@@ -638,6 +638,10 @@ impl Request {
         self.signal.get().as_ref()
     }
 
+    pub(crate) fn set_abort_signal(&self, signal: AbortSignalRef) {
+        self.signal.set(Some(signal));
+    }
+
     pub(crate) fn get_signal(&self, cx: &mut JsScope<'_>) -> JSValue {
         let global_this = cx.global();
         // Already have a C++ instance

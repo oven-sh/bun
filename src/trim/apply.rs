@@ -414,11 +414,12 @@ fn write_removal_state(
     for feature in plan.removed().iter() {
         removal[usize::from(feature.index())] = plan.removal_of(feature) as u8;
     }
-    let is_test_runner_taken =
-        plan.removed().contains(Feature::Test) && !plan.decision.unretained.contains(Feature::Test);
+    let is_taken_from_program =
+        |feature| plan.removed().contains(feature) && !plan.decision.unretained.contains(feature);
     // A trimmed process looks up the native code of each built-in in the removed ranges.
     let is_trimmed = u32::from(
-        is_test_runner_taken
+        is_taken_from_program(Feature::Test)
+            || is_taken_from_program(Feature::Desktop)
             || !plan
                 .removed()
                 .is_subset_of(&Feature::all_that_leave_unasked()),

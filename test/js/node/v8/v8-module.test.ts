@@ -1,6 +1,8 @@
+import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
-import { GCProfiler, isStringOneByteRepresentation } from "node:v8";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { GCProfiler, getHeapStatistics, isStringOneByteRepresentation } from "node:v8";
+import { createContext } from "node:vm";
 
 describe("v8.isStringOneByteRepresentation", () => {
   test("rejects non-string arguments", () => {
@@ -210,5 +212,33 @@ describe("--expose-gc", () => {
     expect(stderr).toBe("");
     expect(stdout).toBe("function");
     expect(exitCode).toBe(0);
+  });
+});
+
+describe("v8.getHeapStatistics", () => {
+  test("number_of_native_contexts is what it was at the call", () => {
+    const before = getHeapStatistics();
+    const count = before.number_of_native_contexts;
+    const contexts = [createContext(), createContext()];
+    expect(Object.getOwnPropertyDescriptor(before, "number_of_native_contexts")).toEqual({
+      value: count,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+    expect(getHeapStatistics().number_of_native_contexts).toBe(count + contexts.length);
+    expect(getHeapStatistics().number_of_native_contexts).toBe(heapStats().globalObjectCount);
+  });
+
+  test("does not call a replaced process.memoryUsage", async () => {
+    using dir = tempDir("v8-heap-statistics", {
+      "main.js": `
+        process.memoryUsage = () => { throw new Error("called"); };
+        const v8 = require("node:v8");
+        console.log(v8.getHeapStatistics().used_heap_size > 0, v8.getHeapSpaceStatistics()[2].space_used_size > 0);`,
+    });
+    await using proc = Bun.spawn({ cmd: [bunExe(), "main.js"], cwd: String(dir), env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true true\n", stderr: "", exitCode: 0 });
   });
 });

@@ -12,6 +12,7 @@ use core::sync::atomic::{AtomicPtr, Ordering};
 
 use bun_core::{Timespec, TimespecMockMode};
 
+use crate::jsc::VmHandle;
 use crate::jsc::virtual_machine::VirtualMachine;
 use crate::webcore::script_execution_context::Identifier as ScriptExecutionContextIdentifier;
 
@@ -41,6 +42,7 @@ pub(crate) struct WTFTimer {
     // that owns this wrapper lives on the VM's run loop, so the VM outlives
     // the timer.
     vm: NonNull<VirtualMachine>,
+    handle: VmHandle,
     // FFI handle into WebKit's RunLoop::TimerBase; owned by C++.
     run_loop_timer: NonNull<RunLoopTimer>,
     pub(crate) event_loop_timer: EventLoopTimer,
@@ -112,12 +114,18 @@ impl WTFTimer {
         // There's only one of these per VM, and each VM has its own imminent_gc_timer.
         // Only set imminent if it's not already set to avoid overwriting another timer.
         if seconds.partial_cmp(&0.0) != Some(core::cmp::Ordering::Greater) {
+            // The marking threads, which all VMs share, ask for the JS thread when they are done, and stay with its heap until it comes.
+            let to_wake = (VirtualMachine::get_or_null().map(NonNull::from) != Some(t.vm))
+                .then(|| t.handle.clone());
             let _ = imminent.compare_exchange(
                 ptr::null_mut(),
                 self_opaque,
                 Ordering::SeqCst,
                 Ordering::SeqCst,
             );
+            if let Some(handle) = to_wake {
+                handle.wake();
+            }
             return;
         }
         // Clear imminent if this timer was the one that set it.
@@ -233,6 +241,7 @@ unsafe extern "C" fn WTFTimer__create(run_loop_timer: *mut RunLoopTimer) -> *mut
         let el = vm.event_loop();
         Box::new(WTFTimer {
             vm: NonNull::from(vm),
+            handle: vm.handle(),
             imminent: bun_ptr::BackRef::new(&el.imminent_gc_timer),
             event_loop_timer: EventLoopTimer {
                 next: Cell::new(ElTimespec {

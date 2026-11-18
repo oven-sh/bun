@@ -20,6 +20,10 @@ feature Test "bun:test and node:test"
 
 feature WebView "Bun.WebView"
 
+feature Desktop "bun:desktop"
+  minimum 8000000 elf
+  minimum 8000000 macho
+
 feature OpenInEditor "Bun.openInEditor"
 
 feature Unsafe "Bun.unsafe"

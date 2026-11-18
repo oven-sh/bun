@@ -97,7 +97,7 @@ Object.setPrototypeOf(PerformanceNodeTiming, PerformanceEntry);
 function createPerformanceNodeTiming() {
   const object = Object.create(PerformanceNodeTiming.prototype);
 
-  object.bootstrapComplete = object.environment = object.nodeStart = object.v8Start = performance.timeOrigin;
+  object.bootstrapComplete = object.environment = object.nodeStart = object.v8Start = 0;
   object.loopStart = object.idleTime = 1;
   object.loopExit = -1;
   return object;

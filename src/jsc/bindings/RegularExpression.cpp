@@ -19,14 +19,14 @@ struct RegularExpression {
         Syntax = 3,
     };
 
-    RegularExpression(WTF::StringView source, uint16_t flags)
+    RegularExpression(WTF::StringView source, uint16_t flags, size_t expansionLimit = JSC::Yarr::YarrPattern::noExpansionLimit)
     {
         // TODO: Remove this, we technically are accessing options before we finalize them.
         // This means you cannot use BUN_JSC_dumpCompiledRegExpPatterns on the flag passed to `bun test -t`
         // NOLINTBEGIN
         JSC::Options::AllowUnfinalizedAccessScope scope {};
         // NOLINTEND
-        JSC::Yarr::YarrPattern pattern(source, OptionSet<JSC::Yarr::Flags>::fromRaw(flags), error);
+        JSC::Yarr::YarrPattern pattern(source, OptionSet<JSC::Yarr::Flags>::fromRaw(flags), error, JSC::Yarr::ExecutionMode::IncludeSubpatterns, JSC::Yarr::PatternAnalysis::Skipped, expansionLimit);
         if (!JSC::Yarr::hasError(error))
             bytecode = JSC::Yarr::byteCompile(pattern, &allocator, error);
     }
@@ -90,9 +90,9 @@ extern "C" int Yarr__RegularExpression__matches(Bun::RegularExpression* re, cons
 // The two below are for src/yarr/lib.rs. `characters` is Latin-1 if `is8Bit`, otherwise UTF-16.
 
 // Null if Yarr refuses the pattern: then `refusal` is set, otherwise `offsetsSize`.
-extern "C" Bun::RegularExpression* Yarr__RegularExpression__compile(const void* characters, uint32_t length, bool is8Bit, uint16_t flags, uint32_t* offsetsSize, uint8_t* refusal)
+extern "C" Bun::RegularExpression* Yarr__RegularExpression__compile(const void* characters, uint32_t length, bool is8Bit, uint16_t flags, size_t expansionLimit, uint32_t* offsetsSize, uint8_t* refusal)
 {
-    auto re = std::make_unique<Bun::RegularExpression>(WTF::StringView(characters, length, is8Bit), flags);
+    auto re = std::make_unique<Bun::RegularExpression>(WTF::StringView(characters, length, is8Bit), flags, expansionLimit);
     if (!re->bytecode) {
         *refusal = static_cast<uint8_t>(re->refusal());
         return nullptr;
@@ -102,7 +102,9 @@ extern "C" Bun::RegularExpression* Yarr__RegularExpression__compile(const void* 
 }
 
 // `offsets` has room for the `offsetsSize` of `compile`. What a match leaves there: `Compiled::exec` in src/yarr/lib.rs.
-extern "C" bool Yarr__RegularExpression__exec(Bun::RegularExpression* re, const void* characters, uint32_t length, bool is8Bit, uint32_t start, uint32_t* offsets)
+extern "C" bool Yarr__RegularExpression__exec(Bun::RegularExpression* re, const void* characters, uint32_t length, bool is8Bit, uint32_t start, uint32_t* offsets, size_t* remainingSteps)
 {
+    if (remainingSteps)
+        return JSC::Yarr::interpretWithinBudget(re->bytecode.get(), WTF::StringView(characters, length, is8Bit), start, offsets, *remainingSteps) != JSC::Yarr::offsetNoMatch;
     return re->exec(WTF::StringView(characters, length, is8Bit), start, offsets) != JSC::Yarr::offsetNoMatch;
 }

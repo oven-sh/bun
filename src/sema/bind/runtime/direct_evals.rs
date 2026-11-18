@@ -224,17 +224,18 @@ impl ReferencePass<'_, '_> {
         for index in 0..self.direct_evals.len() {
             let eval = self.direct_evals[index];
             let (symbols, constructor_symbols) = symbol_lists[&eval.scope];
-            let is_in_global_code = self.is_in_global_code(eval.scope);
+            let (global_code, is_in_script) = self.find_global_code(eval.scope);
             let eval_scope = EvalScope {
                 scope: eval.scope,
                 symbols,
-                file_symbols: match is_in_global_code {
+                file_symbols: match global_code.is_some() {
                     true => IdList::EMPTY,
                     false => file_symbols,
                 },
                 constructor_symbols,
                 is_sloppy: eval.is_sloppy,
-                is_in_global_code,
+                global_code,
+                is_in_script,
             };
             self.references.eval_scopes.push((eval.call, eval_scope));
             self.note_eval_functions(eval.scope);
@@ -263,20 +264,16 @@ impl ReferencePass<'_, '_> {
         (symbols, seen)
     }
 
-    fn is_in_global_code(&self, start: ScopeId) -> bool {
+    fn find_global_code(&self, start: ScopeId) -> (ScopeId, bool) {
         let (hir, bound) = (self.lookup.hir, self.lookup.bound);
         let mut at = start;
         while at.is_some() {
-            if self
-                .lookup
-                .global_code_of(bound.scopes[at.idx()].kind)
-                .is_some()
-            {
-                return true;
+            if let Some(code) = self.lookup.global_code_of(bound.scopes[at.idx()].kind) {
+                return (at, code.is_script());
             }
             at = bound.runtime_parent_scope(hir, at);
         }
-        false
+        (at, false)
     }
 
     fn find_file_scope(&self, mut at: ScopeId) -> ScopeId {

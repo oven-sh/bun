@@ -21,6 +21,7 @@
 #include "config.h"
 #include "JSAbortSignal.h"
 
+#include "DesktopRealm.h"
 #include "EventNames.h"
 #include "IDLTypes.h"
 #include "JSAbortSignal.h"
@@ -74,6 +75,13 @@ static const HashTableValue JSAbortSignalConstructorTableValues[] = {
 
 template<> const ClassInfo JSAbortSignalDOMConstructor::s_info = { "AbortSignal"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSAbortSignalDOMConstructor) };
 
+template<> JSValue JSAbortSignalDOMConstructor::prototypeForStructure(JSC::VM& vm, const JSDOMGlobalObject& globalObject)
+{
+    if (auto* ofWeb = Bun::desktopRealmInterface(const_cast<JSDOMGlobalObject*>(&globalObject), "EventTarget"_s)) [[unlikely]]
+        return ofWeb;
+    return JSEventTarget::getConstructor(vm, &globalObject);
+}
+
 template<> void JSAbortSignalDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
     initializeBaseProperties(vm, 0, "AbortSignal"_s, JSAbortSignal::prototype(vm, globalObject));
@@ -103,7 +111,8 @@ const ClassInfo JSAbortSignal::s_info = { "AbortSignal"_s, &Base::s_info, nullpt
 
 JSObject* JSAbortSignal::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    return JSAbortSignalPrototype::create(vm, globalObject, JSEventTarget::prototype(vm, globalObject));
+    auto* ofWeb = Bun::desktopRealmInterface(&globalObject, "EventTarget"_s);
+    return JSAbortSignalPrototype::create(vm, globalObject, ofWeb ? asObject(ofWeb->getDirect(vm, vm.propertyNames->prototype)) : JSEventTarget::prototype(vm, globalObject));
 }
 
 JSValue JSAbortSignal::getConstructor(VM& vm, const JSGlobalObject* globalObject)

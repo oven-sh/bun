@@ -1,4 +1,5 @@
-use core::sync::atomic::Ordering;
+use core::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use bun_aot::engine::has_compiler;
 use bun_core::Global;
@@ -17,6 +18,7 @@ use super::{CompileCommand, CompileFailure, CompileOutcome, CompileProduct, Requ
 use crate::cli::build_command::{BuildCommand, has_only_html_entry_points};
 use crate::cli::command::{Context, ContextData};
 use crate::cli::compile_options;
+use crate::cli::desktop_bundle::DesktopBundle;
 
 impl CompileCommand {
     #[cold]
@@ -70,6 +72,7 @@ fn run(ctx: Context<'_>, origin: RequestOrigin) -> Result<(), crate::Error> {
         crate::cli::fuzzilli_compile_loop::compile_programs(ctx);
     }
 
+    let desktop = DesktopBundle::plan_or_exit(ctx);
     let configuration = configuration::configure(&mut *ctx)?;
     let location = configuration::output_location(
         &ctx.bundler_options.compile_target,
@@ -87,6 +90,7 @@ fn run(ctx: Context<'_>, origin: RequestOrigin) -> Result<(), crate::Error> {
             outfile: &location.outfile,
         },
         location.root_dir.fd,
+        desktop.as_ref(),
         origin,
     );
     let result = compile_to_executable(&mut request).and_then(move |outcome| {
@@ -97,7 +101,11 @@ fn run(ctx: Context<'_>, origin: RequestOrigin) -> Result<(), crate::Error> {
     // SAFETY: the log outlives the request, and the build, which writes to it, has ended.
     let log = unsafe { &mut *request.log };
     match result {
-        Ok(outcome) => print_outcome(log, outcome, &location.outfile, finished),
+        Ok(outcome) => {
+            let shown_path = desktop.as_ref().map(|bundle| &bundle.shown_path);
+            let shown_path = shown_path.unwrap_or(&location.outfile);
+            print_outcome(log, outcome, shown_path, finished)
+        }
         Err(failure) => exit_with_failure(log, request.origin, request.executable.target, &failure),
     }
 }
@@ -126,6 +134,28 @@ pub(crate) fn compile_from_context(
     {
         (preload.on_loaded)();
     }
+    let imports_desktop = Arc::new(AtomicBool::new(false));
+    if let Some(aot) = ctx.bundler_options.aot.as_mut() {
+        aot.imports_desktop = Some(Arc::clone(&imports_desktop));
+    }
+    let defines = ctx.args.define.clone();
+    let outcome = compile_once(ctx, product)?;
+    if !imports_desktop.swap(false, Ordering::Relaxed) {
+        return Ok(outcome);
+    }
+    // SAFETY: nothing else borrows the log between two builds.
+    unsafe { ctx.log_mut() }.reset();
+    ctx.args.define = defines;
+    if let Some(aot) = ctx.bundler_options.aot.as_mut() {
+        aot.has_realms_of_the_web = true;
+    }
+    compile_once(ctx, product)
+}
+
+fn compile_once(
+    ctx: Context<'_>,
+    product: CompileProduct<'_>,
+) -> Result<Result<CompileOutcome, CompileFailure>, crate::Error> {
     let configuration = configuration::configure(&mut *ctx)?;
     let event_loop = AnyEventLoop::init();
     let mut request = request_from_context(
@@ -134,6 +164,7 @@ pub(crate) fn compile_from_context(
         &event_loop,
         product,
         Fd::cwd(),
+        None,
         RequestOrigin::BuildFlag,
     );
     Ok(compile_to_executable(&mut request))

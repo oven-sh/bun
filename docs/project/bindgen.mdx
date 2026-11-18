@@ -655,8 +655,9 @@ is collected, make the class [`refCounted`](#refcounted).
 | `overridesToJS`  | with `refCounted`: `impl JsClass` is not generated; write it by hand with `js_Name::to_js`     |
 | `forBind`        | the receiver of every member is [a function bound to an instance](#forbind)                    |
 | `protoCaller`    | the method that [calls every native function of `proto`](#protocaller)                         |
+| `mutator`        | the method that runs every method with `mutates`, which it receives as a closure               |
 | `rustTraits`     | traits to bring into scope, for members that are trait methods                                 |
-| `prototypeBase`  | `"Error"`: the prototype inherits from `Error.prototype`, and its `name` is the class's        |
+| `prototypeBase`  | `"Error"` (its `name` is the class's), `"EventEmitter"`: what the prototype inherits from      |
 | `configurable`   | `true` makes the native properties configurable                                                |
 | `enumerable`     | `false` makes the native properties non-enumerable                                             |
 | `writable`       | `false` makes the native functions read-only. It is not the `writable` of a cached getter      |
@@ -980,6 +981,180 @@ own arguments out of that list, so they're all `b.any`, the last one possibly `.
 The type of `matcher` is up to `call_matcher`. Every function of `proto` returns what `matcher` returns. It gets the
 first argument of `matcher` as `this_value`, which can be any `Copy` type whose `payload_ref()` gives `&Self`.
 
+## Interfaces
+
+`b.interface` declares what [Web IDL](https://webidl.spec.whatwg.org/) calls an interface. It takes the keys of
+[`b.class`](#classes) but for `refCounted`, `finalize`, `final`, `overridesToJS`, `forBind`, `protoCaller` and `mutator`.
+
+```ts
+export default b.module({ rustPath: "crate::api", feature: "Desktop" });
+
+export const Shape = b.interface("Shape", {
+  rustPath: "crate::api::Shape",
+  size: 8,
+  proto: { area: { getter: b.f64 } },
+});
+
+export const Square = b.interface("Square", {
+  extends: Shape,
+  internalFields: { next: b.ref("Shape") },
+  construct: { args: { side: b.double }, passStructure: true, capability: "heap" },
+  proto: {
+    next: { getter: b.ref("Shape").nullable, field: "next" },
+    covers: { args: { other: Shape }, returns: b.bool },
+  },
+});
+```
+
+The first argument is the name it is exported as, which no other schema has. `name` is what JavaScript calls it, if that differs.
+`extends`, `includes` and `on` take what is imported. Every other use can be `b.ref("Name")`, which needs no import, so interfaces can refer to each other.
+
+What differs from a class:
+
+- Members are configurable and enumerable, and the prototype has `Symbol.toStringTag`.
+- A wrong receiver, too few arguments and a failed conversion throw a `TypeError` without a `code`. `new` without `construct` throws `Illegal constructor`.
+- `length` counts the arguments up to the first that is `.optional`, `.default()`, `b.any.omittable` or `b.rest`. A `.nullable` argument is required.
+- Overloads are resolved by Web IDL's algorithm, whatever order they are written in. Each has a `rustName`. `construct` can have them too.
+- An enumeration calls `ToString`, if its file has an interface or a `webidl` dictionary.
+- All instances are of one C++ class, and the interfaces are numbered in preorder, so the test for an instance is the type byte of the cell and one range compare.
+
+### The struct
+
+Every interface has a Rust type of its own, and a member is a method of it that takes `&self`.
+
+- Without `rustPath` the type is generated, as `crate::generated_bindgen::<file>::Name`: a transparent newtype of the type of its base, with `Deref` and `From`, or a unit struct if there is no base. Write `impl Name { .. }` anywhere in the crate.
+- With `rustPath` and `extends` it is `#[repr(C)] struct Name { base: Base, fields: js_Name::Fields, .. }`. `fields` is there if internal fields were declared below the nearest hand-written struct, which then says its `size`. The compiler checks both, and `Deref` is generated.
+
+A cell has at most 512 bytes. No destructor is called for a struct that does not need `Drop`.
+
+| Rust                                                         | What it is                                                           |
+| ------------------------------------------------------------ | -------------------------------------------------------------------- |
+| `&'a T`                                                      | an argument, a member of a dictionary, an alternative, a result      |
+| `js_T::create(heap, value)`                                  | a new instance, from the nearest hand-written struct                 |
+| `js_T::CLASS`                                                | a constant: `create`, `structure`, `constructor`, `prototype`, ..    |
+| `js_T::next(&x)`, `js_T::set_next(&x, value)`                | an internal field; it is an `Option<&T>` if the schema gave its type |
+| `x.to_js()`, `x.downcast::<U>()`, `T::from_js(heap, value)`  | `bun_jsc::bindgen::JsInterface`; an upcast is a deref                |
+| `x.set_of_realm(heap)`, `T::of_realm(heap)`                  | the one instance that a realm holds, like `performance`              |
+| `T::interface_object(heap)`, `heap.interface_object(&name)`  | the constructor                                                      |
+| `x.realm(heap)`                                              | the heap of the realm that `x` was made in                           |
+| `heap.dom_exception(DOMExceptionCode::.., format_args!(..))` | an error to return                                                   |
+
+`constructor` returns the nearest hand-written struct. With `passStructure: true` it gets a `ClassStructure<'a, Self>` and
+returns what `create` of that returns. With `passNewTarget: true` it gets `new.target` and returns any object.
+
+### From Web IDL to a schema
+
+| Web IDL                                                        | Schema                                                                                         |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `interface mixin M`, `A includes M`                            | `b.mixin("M", { on, proto })`; `includes: [M]`, or `b.include(A, M)` in another file           |
+| `partial interface A`                                          | `b.partial("More", { on: A, proto })`                                                          |
+| `namespace`                                                    | `namespace: true`, with `static`                                                               |
+| `callback interface`                                           | `b.object` and `object.call_operation(cx, name, ..)`; `callbackInterface: true` for constants  |
+| an operation of a global object                                | `b.operation(..signatures)`, which counts its arguments as a method does                       |
+| `const`                                                        | `constants`                                                                                    |
+| `[Exposed]`, `[SecureContext]`                                 | `exposed`, `secure`, on an interface, a mixin or a member                                      |
+| `[Global]`                                                     | `global: true`, with `bindgen::set_global_receiver`                                            |
+| `[LegacyNoInterfaceObject]`, `[LegacyWindowAlias]`             | `noInterfaceObject`, `aliases`                                                                 |
+| What a module exports, and no global object has                | `ofModule`                                                                                     |
+| `[LegacyFactoryFunction]`                                      | `legacyFactory`                                                                                |
+| `[SameObject]`                                                 | `cache: true`                                                                                  |
+| an attribute that is an internal field                         | `field`; with `computedIfEmpty: true` the getter in Rust answers while the field is empty      |
+| `[PutForwards]`, `[Replaceable]`                               | `putForwards`, `replaceable`                                                                   |
+| `[LegacyLenientThis]`, `[LegacyLenientSetter]`                 | `lenientThis`, `lenientSetter`                                                                 |
+| `[LegacyUnforgeable]`, `[Unscopable]`                          | `unforgeable`, `unscopable`                                                                    |
+| `[CEReactions]`                                                | `ceReactions: true`: `enter` and `leave` of the module's `ceReactions` go around the body      |
+| `[Default] object toJSON()`, `stringifier`                     | `defaultToJSON`, `stringifier` on a getter                                                     |
+| `[Serializable]`                                               | `serializable`                                                                                 |
+| a result that is a promise                                     | `rejects: true`, on a getter too                                                               |
+| an attribute whose type is an enumeration                      | `ignoreInvalid: true`                                                                          |
+| `getter`, `setter`, `deleter`                                  | `indexed`, `named`                                                                             |
+| `iterable<V>`                                                  | `iterable: "values"`                                                                           |
+| `iterable<K, V>`, `async_iterable`                             | an interface with `prototypeBase: "Iterator"` or `"AsyncIterator"`, and `sameFunction`         |
+| `interface X : WritableStream`                                 | `prototypeBase: "WritableStream"`: JavaScript sees a stream, of which the instance is the sink |
+| `interface X : AbortSignal`, `interface X : AbortController`   | `prototypeBase` too: JavaScript sees one of those, whose `$impl` is the instance               |
+| `maplike`, `setlike`                                           | `maplike`, `setlike`; the entries are `js_T::backing(heap, &x)`                                |
+| `ObservableArray<T>`                                           | `heap.create_observable_array(&x)`, with `impl ObservableArrayOwner`                           |
+| `DOMString`, `USVString`, `ByteString`                         | `b.DOMString` ..: `JsLocal<JSString>`; `.utf8`, `.impl`, `.atom`; `.nullToEmpty`               |
+| `byte` .. `unsigned long long`, `[Clamp]`, `[EnforceRange]`    | `b.i8` .. `b.u64` with `.wrap`, `.clamp`, `.enforceRange()`                                    |
+| `double`, `float`, `unrestricted double`, `unrestricted float` | `b.double`, `b.float`, `b.f64.loose`, `b.unrestrictedFloat`                                    |
+| `boolean`                                                      | `b.bool.loose`                                                                                 |
+| `dictionary`, a union                                          | `b.dictionary(members, { webidl: true, extends })`, `b.union(alternatives, { webidl: true })`  |
+| `sequence<T>`, `record<K, V>`, `T...`                          | `b.sequence(T)`, `b.recordOf(K, V)`, `b.rest(T)`: `JsList` and `JsRecord`, which the GC sees   |
+| `sequence<T>` of what holds no JS value                        | `b.sequenceVec(T)`: `Vec<T>`                                                                   |
+| `FrozenArray<T>`                                               | `b.frozenArray(T)`, a result                                                                   |
+| `Float32Array`, `ArrayBufferView` .., `[AllowShared]`          | `b.typedArray(name)`, `.allowShared`                                                           |
+| an interface that C++ implements                               | `b.instanceOf(name, cppClass, header)`                                                         |
+
+A body takes over or borrows, as its signature says, a `b.sequenceVec(T)` (`&[T]`), a union with `webidl` and a string with `.as(path)`.
+
+The bodies of a mixin or a partial interface are written once, on a generated newtype of what it is `on`.
+`abstract: true` is an interface that only has a struct and fields for its subclasses. To extend `DOMException`, extend one that has
+`prototypeBase: "DOMException"` and a tuple struct that starts with a `bindgen::DomException`.
+The comments of `InterfaceOptions` in `src/codegen/bindgen-lib-internal.ts` have the names of the Rust methods.
+
+`Object.create(list)[0] = value` makes an own property even if `list` has no indexed setter, which is not what Web IDL says.
+
+### Many members, one body
+
+A method is about 230 bytes of generated C++, a setter 115 and a getter 40, and each has about 450 more in the
+[table of built-ins](#what-the-compiler-reads).
+
+- `b.family` is one body for attributes that differ in a constant, like those that reflect a content attribute. `get` and `set` receive the key.
+
+  ```ts
+  export const Reflect = b.family("Reflect", { on: Element, key: "crate::api::Name", getter: b.DOMString, setter: true });
+  // in proto
+  title: Reflect.of("crate::api::Name::TITLE"),
+  ```
+
+  `get` and `set` can also take a copy of the key. Without `key`, the members are written `Family.of()` and receive their own name: they share
+  their C++ and have no row in the table. `js_M::NAMES` has the sorted names of those of a mixin.
+
+- `attributesByName` is for hundreds of them, like CSS properties. Rust lists the names, and nothing is generated for a name.
+- `b.module({ membersInTable: false })` keeps the members of a file out of the table.
+
+The struct of an interface that extends none, and has fields or is extended, needs a `Cell` or a `bindgen::Interior`: what is around it is written through `&self`. The build fails otherwise.
+
+`inlineCapacity: 2` on an interface that extends none keeps the first two own properties of an instance in its cell. Unforgeable members that fit there are
+part of the structure of the class, so an instance costs one store for each.
+
+### What the JIT compilers inline
+
+A getter that has a `field` or a `cache` becomes a load from the cell, with a call while the field is empty. An internal field whose type is `.nullable` holds `null`
+for nothing, and is empty only if Rust has made it so. `member: "a.b"` on a getter names a `Cell<bool>`, `Cell<u8>`, `Cell<u16>` or `Cell<i32>` in the struct, which is
+loaded too. There is no getter in Rust then.
+
+`onlyReads: true` on a getter, or on a method with up to two arguments that are strings, integers or booleans, lets the compilers call it without a frame, move it
+out of a loop, merge it with the same call and drop it if nothing uses the result. It is a promise about the Rust function and all that it calls, and breaking it is a
+memory bug:
+
+- It changes nothing that a script can observe, and answers the same until something else has run.
+- It runs no JavaScript, and makes no prototype, constructor or structure. It may allocate.
+- It throws only for lack of memory.
+- It uses the global object for its VM only.
+
+`withoutFrame: true` on a method that requires up to two arguments promises nothing. The compilers call it directly where a script of its realm passes just those.
+
+`shortcut: "name"` on a getter names a `Bun::Bindgen::DOMJIT::Shortcut`, written by hand, that emits code for the usual case. The getter is called for the others.
+
+`publishesItems: true` on an interface that extends none is for lists. An instance can hand the engine a copy of what its indexed getter answers
+(`bindgen::PublishesItems`), which compiled code reads until Rust advances a clock. `countsItems: true` says that a getter returns their number.
+
+### Global objects
+
+An interface that says `exposed` is a property of the global objects of those scopes, and so is one that `interfaces` lists in a table of
+`src/codegen/web-globals.ts`. It is made when a script first reads it.
+
+### Size
+
+`b.module({ isCold: true })` makes the glue of a file for size. Members that convert their arguments alike share one function, which is passed
+the Rust function and the names for error messages, and dictionaries and enumerations are converted from tables
+(`Bindgen/SharedBodies.h`). A call costs 10 to 150 more instructions. `isCold: false` on an interface or on a member makes an exception.
+
+`membersInTable: false`, on a module or on an interface, leaves the members out of the table of built-ins that is described below. Compiled code
+calls them as it calls any native function. The table only has the interface itself if a module exports it, if it is `global`, if the table has
+one that extends it, or if it hides a member that the table has.
+
 ## What the compiler reads
 
 `bun build --compile --aot` knows every native function from one table, which `src/codegen/builtins` generates.
@@ -1026,5 +1201,5 @@ A class without `types` denotes `$Bindgen.<Name>`, and `Bun.<Name>` if that is w
 
 ## Tests
 
-- `test/internal/bindgen.test.ts`: conversions with hostile inputs, through `src/jsc/bindgen_test.bind.ts`. A schema named `*_test.bind.ts` is only part of a build with assertions (a debug build, CI's ASAN lane), so nothing it binds ships; `$bindgen` of one is `undefined` elsewhere, and its Rust module is `#[cfg(debug_assertions)]`. What that schema does not use is covered by the suites of the APIs that do.
+- `test/internal/bindgen.test.ts`: conversions with hostile inputs, through `src/jsc/bindgen_test.bind.ts` and `src/jsc/bindgen_interface_test.bind.ts`. A schema named `*_test.bind.ts` is only part of a build with assertions (a debug build, CI's ASAN lane), so nothing it binds ships; `$bindgen` of one is `undefined` elsewhere, and its Rust module is `#[cfg(debug_assertions)]`. What that schema does not use is covered by the suites of the APIs that do.
 - `test/integration/bun-types/bun-types.test.ts`: `packages/bun-types` promises nothing that a schema breaks. Every call the published types allow has arguments the schema takes, every result they name is one it gives, and no object has a member that the schema's dictionary or class lacks, but for those the test lists. A new schema file is listed in `PUBLISHED_AS` there, with what the published types call its exports.

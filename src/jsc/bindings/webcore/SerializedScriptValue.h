@@ -55,8 +55,21 @@ BUN_DECLARE_FFI_DELETER(SerializedBlockList, BlockList__onStructuredCloneDestroy
 
 extern "C" uint64_t Histogram__retainForStructuredClone(JSC::EncodedJSValue histogram);
 extern "C" void Histogram__releaseStructuredClone(uint64_t id);
+extern "C" void Bun__Desktop__retainBlob(void* blob, uint8_t* id);
+extern "C" void Bun__Desktop__releaseBlob(const uint8_t* id);
 
 namespace WebCore {
+
+// The clone of a page's Blob shares its contents. The wire has the id.
+struct SerializedBlob {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(SerializedBlob);
+    WTF_MAKE_NONCOPYABLE(SerializedBlob);
+
+    explicit SerializedBlob(void* blob) { Bun__Desktop__retainBlob(blob, id.data()); }
+    ~SerializedBlob() { Bun__Desktop__releaseBlob(id.data()); }
+
+    std::array<uint8_t, 16> id;
+};
 
 // A clone of a `node:perf_hooks` histogram shares its counts. The wire has an id, and this keeps the counts alive.
 class SerializedHistogram {
@@ -119,7 +132,9 @@ enum class SerializationErrorMode { NonThrowing,
     Throwing };
 enum class SerializationContext { Default,
     WorkerPostMessage,
-    WindowPostMessage };
+    WindowPostMessage,
+    // No script gets to see the bytes.
+    BrowserStorage };
 enum class SerializationForStorage : bool { No,
     Yes };
 enum class SerializationForCrossProcessTransfer : bool { No,
@@ -144,7 +159,15 @@ public:
 
     WEBCORE_EXPORT static RefPtr<SerializedScriptValue> create(JSC::JSGlobalObject&, JSC::JSValue, SerializationForStorage = SerializationForStorage::No, SerializationErrorMode = SerializationErrorMode::Throwing, SerializationContext = SerializationContext::Default, SerializationForCrossProcessTransfer = SerializationForCrossProcessTransfer::No);
 
+    // What the embedder transfers is only referred to: `hostObjects` here stand for `hostObjects` there.
+    static ExceptionOr<Ref<SerializedScriptValue>> createWithHostObjects(JSC::JSGlobalObject&, JSC::JSValue, Vector<JSC::Strong<JSC::JSObject>>&& buffers, std::span<const JSC::EncodedJSValue> hostObjects);
+    JSC::JSValue deserializeWithHostObjects(JSC::JSGlobalObject&, std::span<const JSC::EncodedJSValue> hostObjects);
+
     static RefPtr<SerializedScriptValue> convert(JSC::JSGlobalObject& globalObject, JSC::JSValue value) { return create(globalObject, value, SerializationForStorage::Yes); }
+
+    // For this thread, so it shares the strings. Empty unless `value` only has primitives, dates, dense arrays and object literals
+    // without accessors. Runs no script and does not throw.
+    static JSC::JSValue tryCopyPlainData(JSC::JSGlobalObject&, JSC::JSValue);
 
     // Fast path for postMessage with pure strings
     static Ref<SerializedScriptValue> createStringFastPath(const String& string);
@@ -176,12 +199,19 @@ public:
     }
     const Vector<uint8_t>& wireBytes() const { return m_data; }
 
+    // For another process, from any thread. False if it shares something with this one.
+    enum class FlatPart : uint8_t { WireBytes,
+        Buffer,
+        Blob };
+    using AppendFlatPart = void (*)(void*, FlatPart, const uint8_t*, size_t, uint64_t maxByteLength);
+    bool flatten(void*, AppendFlatPart) const;
+
     size_t memoryCost() const { return m_memoryCost; }
 
     WEBCORE_EXPORT ~SerializedScriptValue();
 
 private:
-    static ExceptionOr<Ref<SerializedScriptValue>> create(JSC::JSGlobalObject&, JSC::JSValue, Vector<JSC::Strong<JSC::JSObject>>&& transfer, Vector<RefPtr<MessagePort>>&, SerializationForStorage, SerializationErrorMode, SerializationContext, SerializationForCrossProcessTransfer);
+    static ExceptionOr<Ref<SerializedScriptValue>> create(JSC::JSGlobalObject&, JSC::JSValue, Vector<JSC::Strong<JSC::JSObject>>&& transfer, Vector<RefPtr<MessagePort>>&, SerializationForStorage, SerializationErrorMode, SerializationContext, SerializationForCrossProcessTransfer, std::span<const JSC::EncodedJSValue> hostObjects = {});
     WEBCORE_EXPORT SerializedScriptValue(Vector<unsigned char>&&, std::unique_ptr<ArrayBufferContentsArray>&& = nullptr);
 
     SerializedScriptValue(Vector<unsigned char>&&, std::unique_ptr<ArrayBufferContentsArray>, std::unique_ptr<ArrayBufferContentsArray> sharedBuffers
@@ -207,6 +237,7 @@ private:
     std::unique_ptr<ArrayBufferContentsArray> m_sharedBufferContentsArray;
     Vector<std::unique_ptr<SerializedBlockList>> m_serializedBlockLists;
     Vector<SerializedHistogram> m_serializedHistograms;
+    Vector<std::unique_ptr<SerializedBlob>> m_serializedBlobs;
 #if ENABLE(WEBASSEMBLY)
     std::unique_ptr<WasmModuleArray> m_wasmModulesArray;
     std::unique_ptr<WasmMemoryHandleArray> m_wasmMemoryHandlesArray;

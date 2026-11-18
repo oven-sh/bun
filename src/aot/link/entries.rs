@@ -42,7 +42,8 @@ pub(super) fn build_entries(input: &RecordInput<'_, '_>, strings: &mut StringTab
         match entry_point.kind {
             EntryPointKind::Main
             | EntryPointKind::Additional
-            | EntryPointKind::LoadedByTestRunner => {}
+            | EntryPointKind::LoadedByTestRunner
+            | EntryPointKind::LoadedByPage => {}
             _ => continue,
         }
         let graph = &input.projects.application.graph;
@@ -59,7 +60,8 @@ pub(super) fn build_entries(input: &RecordInput<'_, '_>, strings: &mut StringTab
         let mut host_reads: Vec<HostRead> = host_reads
             .map(|read| build_host_read(read, strings))
             .collect();
-        if entry_point.kind == EntryPointKind::LoadedByTestRunner {
+        if let EntryPointKind::LoadedByTestRunner | EntryPointKind::LoadedByPage = entry_point.kind
+        {
             let exports = input.projects.application.graph.exports(entry_point.file);
             host_reads.extend(read_everything(input, exports, strings));
         }

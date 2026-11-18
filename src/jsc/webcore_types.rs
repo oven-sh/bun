@@ -445,6 +445,13 @@ impl Blob {
         matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::File(_)))
     }
 
+    pub fn snapshot(&self) -> Option<store::Snapshot> {
+        match &self.store.get().as_deref()?.data {
+            store::Data::File(file) => file.snapshot,
+            _ => None,
+        }
+    }
+
     /// A usable filename: a non-empty `name`, else [`store_path`]. (`file.name`
     /// itself may be `""`; that is not a filename.)
     ///
@@ -458,7 +465,7 @@ impl Blob {
     }
 
     /// `Bytes.stored_name`, the file path, or the S3 key, ignoring `name`.
-    /// `None` for fd-backed or unnamed stores.
+    /// `None` for fd-backed or unnamed stores, and for a snapshot.
     pub fn store_path(&self) -> Option<&[u8]> {
         match &self.store.get().as_deref()?.data {
             store::Data::Bytes(bytes) => {
@@ -466,7 +473,7 @@ impl Blob {
                 if n.is_empty() { None } else { Some(n) }
             }
             store::Data::File(file) => match &file.pathlike {
-                PathOrFileDescriptor::Path(path) => Some(path.slice()),
+                PathOrFileDescriptor::Path(path) => file.snapshot.is_none().then(|| path.slice()),
                 PathOrFileDescriptor::Fd(_) => None,
             },
             // Use `s3.path()` (URL-normalized), NOT `s3.pathlike.slice()`.
@@ -745,6 +752,15 @@ pub mod store {
         pub last_modified: crate::JSTimeType,
         /// `st_mode` as a body's `clone()` saw it, kept apart from what the `Bun.file()` sharing this store answers from.
         pub mode_seen_by_clone: Option<bun_sys::Mode>,
+        pub snapshot: Option<Snapshot>,
+    }
+
+    /// <https://w3c.github.io/FileAPI/#snapshot-state>: the file is read-only, and cannot be read once it has changed.
+    #[derive(Clone, Copy)]
+    pub struct Snapshot {
+        /// Nanoseconds since the epoch.
+        pub modified: i64,
+        pub was_chosen_by_user: bool,
     }
 
     impl Default for File {
@@ -758,6 +774,7 @@ pub mod store {
                 max_size: MAX_SIZE,
                 last_modified: crate::INIT_TIMESTAMP,
                 mode_seen_by_clone: None,
+                snapshot: None,
             }
         }
     }

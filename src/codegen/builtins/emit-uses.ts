@@ -33,7 +33,15 @@ function usesOf(lines: readonly ModelFeatureUse[]): BuiltinFeatureUse[] {
 const hasUnconditionalUse = (lines: readonly ModelFeatureUse[]) =>
   lines.some(line => line.overload === null && line.condition === null);
 
+/** `idOfRecordedBuiltin` in RemovedFeature.cpp computes this too. */
+function keyOf({ text }: ModelBuiltin): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 0x01000193);
+  return (hash | 0x80000000) >>> 0;
+}
+
 export function builtinUsesOf(model: TableModel, target: TargetPlatform): BuiltinUses {
+  const builtinsByKey = Map.groupBy(model.builtins, keyOf);
   const moduleOfRoot = findModulesByRoot(model.modules);
   const entries = model.builtins
     .filter(builtin => builtin.platforms.includes(target) && builtin.attachments.featureUses.length > 0)
@@ -42,6 +50,7 @@ export function builtinUsesOf(model: TableModel, target: TargetPlatform): Builti
       const { featureUses, nativeSymbols, creationSymbol } = builtin.attachments;
       return {
         id: builtin.id,
+        ...(builtinsByKey.get(keyOf(builtin))!.length === 1 ? { key: keyOf(builtin) } : {}),
         path: module === undefined ? builtin.text : module.specifier,
         kind: kindOf(builtin, module),
         uses: usesOf(featureUses),

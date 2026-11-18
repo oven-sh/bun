@@ -140,6 +140,7 @@ fn executable_destination(
 
     let windows = WindowsOptions {
         hide_console: compile_options.windows_hide_console,
+        imports_from_system32_only: compile_options.desktop.is_some(),
         icon: opt_box(&compile_options.windows_icon_path.list),
         title: opt_box(&compile_options.windows_title.list),
         publisher: opt_box(&compile_options.windows_publisher.list),
@@ -201,6 +202,7 @@ pub(super) fn compile(
             root_dir: destination.root_dir.fd,
             env,
             windows: &destination.windows,
+            desktop: compile_options.desktop.as_ref(),
             exec_argv: &compile_options.exec_argv.list,
             flags: destination.flags,
             runtime_options: RuntimeOptions {

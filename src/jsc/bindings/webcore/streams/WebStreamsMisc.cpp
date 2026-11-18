@@ -7,6 +7,7 @@
 #include "JSWritableStream.h"
 
 #include "BunClientData.h"
+#include "IsolatedWorld.h"
 #include "JSBuffer.h"
 #include "JSDOMConvertNumbers.h"
 #include "JSStreamsRuntime.h"
@@ -443,7 +444,7 @@ JSPromise* promiseResolvedWith(JSGlobalObject* globalObject, JSValue value)
 {
     auto& vm = getVM(globalObject);
     auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
-    promise->resolve(globalObject, vm, value);
+    IsolatedWorld::resolve(globalObject, promise, value);
     return promise;
 }
 
@@ -465,7 +466,7 @@ JSPromise* promiseRejectedWith(JSGlobalObject* globalObject, JSValue reason)
 // "resolve promise with v": the same thenable lookup as promiseResolvedWith.
 void resolvePromise(JSGlobalObject* globalObject, JSPromise* promise, JSValue value)
 {
-    promise->resolve(globalObject, getVM(globalObject), value);
+    IsolatedWorld::resolve(globalObject, promise, value);
 }
 
 void rejectPromise(JSGlobalObject* globalObject, JSPromise* promise, JSValue reason)

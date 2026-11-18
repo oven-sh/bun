@@ -3235,6 +3235,7 @@ declare module "bun" {
       | "webassembly"
       | "shell"
       | "webview"
+      | "desktop"
       | "fetch"
       | "serve"
       | "sockets"
@@ -4130,6 +4131,17 @@ declare module "bun" {
      * @default 1
      */
     jitPolicy?: number;
+    /**
+     * Put the executable of a `bun:desktop` app into a bundle: a `.app` for macOS,
+     * an AppDir for Linux, a directory for Windows. `outfile` names the bundle.
+     *
+     * What this leaves out comes from `"desktop"` in the `package.json` nearest to the entry point.
+     *
+     * Equivalent CLI flag: `--desktop`
+     *
+     * @default false
+     */
+    desktop?: boolean | DesktopBundleOptions;
     windows?: {
       hideConsole?: boolean;
       icon?: string;
@@ -4139,6 +4151,85 @@ declare module "bun" {
       description?: string;
       copyright?: string;
     };
+  }
+
+  /**
+   * `compile.desktop` of {@link Bun.build}, and `"desktop"` in `package.json`.
+   *
+   * Paths are relative to the working directory, and in `package.json` to its directory.
+   */
+  interface DesktopBundleOptions {
+    /**
+     * The name people see.
+     *
+     * @default `productName` or `name` in `package.json`
+     */
+    name?: string;
+    /**
+     * In reverse-DNS form, such as `"com.example.notes"`.
+     *
+     * @default `"sh.bun.app."` and the name in lowercase
+     */
+    identifier?: string;
+    /** @default `version` in `package.json` */
+    version?: string;
+    /**
+     * The `Comment` of the `.desktop` file on Linux.
+     *
+     * @default `description` in `package.json`
+     */
+    description?: string;
+    copyright?: string;
+    /**
+     * A square `.png`, ideally of 1024 pixels, which is scaled down for every platform.
+     * A `.icns` (macOS), `.svg` (Linux) or `.ico` (Windows) is used as it is.
+     */
+    icon?: string | string[];
+    category?:
+      | "business"
+      | "developer-tools"
+      | "education"
+      | "entertainment"
+      | "finance"
+      | "games"
+      | "graphics-design"
+      | "healthcare-fitness"
+      | "lifestyle"
+      | "medical"
+      | "music"
+      | "news"
+      | "photography"
+      | "productivity"
+      | "reference"
+      | "social-networking"
+      | "sports"
+      | "travel"
+      | "utilities"
+      | "video";
+    /** The schemes of the URLs that the app opens, such as `"notes"` for `notes://`. macOS and Linux. */
+    urlSchemes?: string | string[];
+    /** The kinds of files that the app opens. macOS and Linux. */
+    fileAssociations?: {
+      extensions: string | string[];
+      name?: string;
+      /** A registered type, such as `"text/markdown"`. Without it, the bundle for Linux defines one. */
+      mimeType?: string;
+      /** @default "Editor" */
+      role?: "Editor" | "Viewer";
+    }[];
+    /** Files and directories to copy into the resources directory of the bundle. */
+    resources?: (string | { from: string; to?: string })[];
+    /** Keys to add to or replace in `Info.plist`. `null` removes a key. */
+    infoPlist?: Record<string, unknown>;
+    /** The program starts in a window, like with `--preload=bun:desktop/dom`. */
+    dom?: boolean;
+    /**
+     * HTML files whose scripts are compiled, and scripts that pages load by computed URLs.
+     * Paths or glob patterns. Only with `aot`.
+     */
+    pages?: string | string[];
+    /** Preload scripts to compile. Paths or glob patterns. Only with `aot`. */
+    preloads?: string | string[];
   }
 
   /**

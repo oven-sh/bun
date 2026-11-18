@@ -173,11 +173,15 @@ describe("emitBindgen", () => {
     const headers = [
       "GeneratedBindings+Classes.h",
       "GeneratedBindings+Counts.h",
+      "GeneratedBindings+InterfaceInfos.h",
+      "GeneratedBindings+Interfaces.h",
       "GeneratedBindings+Tables.h",
       "GeneratedFmtJsc.h",
       "GeneratedNodeOs.h",
+      "WebGlobalObject.lut.h",
+      "WebGlobalObject.names.h",
     ].map(inDir);
-    const rust = ["generated_bindgen_bun_jsc.rs", "generated_bindgen_bun_runtime.rs"].map(inDir);
+    const rust = ["generated_bindgen_bun_jsc.rs", "generated_bindgen_bun_runtime.rs", "web_globals.rs"].map(inDir);
     const types = resolve(cfg.typesDir, "Bindgen.d.ts");
     expect(edgeOutputs(n, cpp[0])).toEqual([...cpp, ...headers, ...rust, types].map(p => n.rel(p)).sort());
     expect(normalized(o.cppSources)).toEqual(cpp);

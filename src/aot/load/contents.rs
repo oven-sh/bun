@@ -509,10 +509,13 @@ impl ReplacedPlaces {
     }
 }
 
+use crate::load::globals_of_the_web;
+
 fn list_replaced_builtins(
     given: &[u32],
     replaced: &[BuiltinId],
     opened: &[BuiltinId],
+    has_realms_of_the_web: bool,
 ) -> Arc<[u32]> {
     debug_assert!(given.is_sorted_by(|left, right| left < right));
     let mut places = ReplacedPlaces::new();
@@ -527,7 +530,17 @@ fn list_replaced_builtins(
     for &holder in opened {
         places.add_members_of(holder);
     }
+    if !has_realms_of_the_web {
+        places.add_members_transitively();
+        return places.finish(given);
+    }
+    for place in globals_of_the_web::depending_on_realm() {
+        places.add(BuiltinId::from_wire(place).expect("the table lists it"));
+    }
     places.add_members_transitively();
+    for &name_alone in globals_of_the_web::absent_or_different() {
+        places.is_listed[name_alone as usize] = true;
+    }
     places.finish(given)
 }
 
@@ -670,6 +683,7 @@ pub(crate) fn collect_program_contents(input: ContentsInput<'_, '_>) -> ProgramC
         &options.load.replaced_builtins,
         &all.replaced_members,
         &all.opened_holders,
+        options.aot.has_realms_of_the_web,
     );
     let mut run = match whose_files {
         Some(whose_files) => collect_run_contents(

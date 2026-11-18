@@ -97,6 +97,8 @@ pub mod task_tag {
         Open,
         PosixSignalTask,
         MemoryPressureTask,
+        DesktopEventsTask,
+        WebTask,
         ProcessWaiterThreadTask,
         Read,
         Readv,

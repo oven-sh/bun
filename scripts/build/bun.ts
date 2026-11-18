@@ -32,6 +32,8 @@ import {
   extraFlagsFor,
   linkDepends,
   linkerMapOutputs,
+  orderFilePath,
+  usesOrderFile,
   versionScriptPaths,
 } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
@@ -437,6 +439,8 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const depLink = lazyDepObjects(cfg, depObjects);
   const linkObjects = [...cxxObjects, ...cObjects, ...depLink.eager, ...rustObjects, ...windowsRes];
   const ldflags = [...flags.ldflags, ...systemLibs(cfg)];
+  const linkInputs = [...linkObjects, ...depLink.lazy, ...depLibs];
+  emitOrderHints(n, cfg, linkInputs);
   const exe = link(n, cfg, exeName, linkObjects, {
     libs: depLibs,
     lazyObjects: depLink.lazy,
@@ -454,11 +458,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   emitJscPrograms(n, cfg, depsByName, codegenReady, builtinTableObjects, aotNativeTestObjects);
 
   // ─── Step 7: post-link (strip, dsymutil, smoke test) ───
-  const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags, [
-    ...linkObjects,
-    ...depLink.lazy,
-    ...depLibs,
-  ]);
+  const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags, linkInputs);
 
   return { exe, strippedExe, dsym, deps, codegen, objects: allObjects };
 }
@@ -803,6 +803,30 @@ function emitDuplicateSymbolCheck(
     ...(strippedExe !== undefined ? { orderOnlyInputs: [strippedExe] } : {}),
   });
   return [stamp];
+}
+
+/** `--order-hints`: the order file is made from the hints and the names this link's inputs have. */
+function emitOrderHints(n: Ninja, cfg: Config, linkInputs: string[]): void {
+  if (cfg.orderHints.length === 0) return;
+  assert(
+    usesOrderFile(cfg) && !cfg.windows,
+    "--order-hints needs a Linux or macOS target that links with an order file",
+  );
+  assert(cfg.nm !== undefined && cfg.cxxfilt !== undefined, "--order-hints needs llvm-nm and llvm-cxxfilt");
+  const q = (p: string) => quote(p, cfg.host.os === "windows");
+  const scripts = ["resolve.ts", "generate.ts"].map(name => resolve(cfg.cwd, "scripts", "orderfile", name));
+  n.rule("order_hints", {
+    command: `${cfg.jsRuntime} ${q(scripts[0]!)} ${q(cfg.nm)} ${q(cfg.cxxfilt)} ${cfg.darwin ? "macho" : "elf"} $out.rsp $out ${cfg.orderHints.map(q).join(" ")}`,
+    description: "resolve the order hints",
+    rspfile: "$out.rsp",
+    rspfile_content: "$in_newline",
+  });
+  n.build({
+    outputs: [orderFilePath(cfg)],
+    rule: "order_hints",
+    inputs: linkInputs,
+    implicitInputs: [...scripts, ...cfg.orderHints],
+  });
 }
 
 /**

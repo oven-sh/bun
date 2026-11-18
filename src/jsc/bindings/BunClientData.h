@@ -64,6 +64,7 @@ class DOMWrapperWorld;
 // #include "WebCoreJSBuiltins.h"
 // #include "WorkerThreadType.h"
 #include <wtf/AbstractRefCountedAndCanMakeWeakPtr.h>
+#include <wtf/Box.h>
 #include <wtf/Function.h>
 #include <wtf/HashSet.h>
 #include <wtf/NeverDestroyed.h>
@@ -78,6 +79,7 @@ class DOMWrapperWorld;
 #include "BunCommonStrings.h"
 #include "Bindgen/SchemaStrings.h"
 #include "DOMURLBaseCache.h"
+#include "ClonedShapes.h"
 #include "NodeHTTPRequestHeaderValues.h"
 #include "NodeVMOptionNames.h"
 #include "NodeVMSourceOriginCache.h"
@@ -249,6 +251,9 @@ public:
     Bun::Bindgen::SchemaStrings schemaStrings;
 
     WebCore::DOMURLBaseCache& urlBaseCache() { return m_urlBaseCache; }
+    WebCore::ClonedShapes clonedShapes;
+    // How many tasks are on their way with messages that a context has sent to itself (MessagePortPipe.cpp). They may outlive the VM.
+    const Box<std::atomic<unsigned>> localPortDrains { Box<std::atomic<unsigned>>::create(0) };
     Bun::NodeHTTPRequestHeaderValues& nodeHTTPRequestHeaderValues() { return m_nodeHTTPRequestHeaderValues; }
     Bun::NodeVMOptionNames& nodeVMOptionNames() { return m_nodeVMOptionNames; }
     Bun::NodeVMSourceOriginCache& nodeVMSourceOriginCache() { return m_nodeVMSourceOriginCache; }

@@ -55,7 +55,7 @@ public:
 
     // Sender-thread operations.
     // `fromSide` is the sender's side; the message lands in the *other* side's inbox.
-    void send(uint8_t fromSide, MessageWithMessagePorts&&);
+    void send(uint8_t fromSide, ScriptExecutionContext& from, MessageWithMessagePorts&&);
 
     // Receiver-thread synchronous pop, for node:worker_threads receiveMessageOnPort.
     std::optional<MessageWithMessagePorts> takeOne(uint8_t side);
@@ -89,7 +89,7 @@ public:
 private:
     MessagePortPipe() = default;
 
-    void scheduleDrain(uint8_t side, ScriptExecutionContextIdentifier, BunLoopKind);
+    void scheduleDrain(uint8_t side, ScriptExecutionContextIdentifier, BunLoopKind, ScriptExecutionContext* senderIfLocal = nullptr);
     void notifyPeerClosed(uint8_t peerSide);
     void drainAndDispatch(uint8_t side, ScriptExecutionContextIdentifier expectedCtx);
 

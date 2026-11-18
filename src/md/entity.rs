@@ -2,7 +2,7 @@
 
 /// Look up an HTML entity by name (including `&` prefix and `;` suffix).
 /// Binary search over the sorted, concatenated names.
-pub(crate) fn lookup(name: &[u8]) -> Option<[u32; 2]> {
+pub fn lookup(name: &[u8]) -> Option<[u32; 2]> {
     // Every stored name omits the shared leading `&`.
     let name = name.strip_prefix(b"&")?;
     let mut low: usize = 0;

@@ -4633,6 +4633,45 @@
           "multiple": false
         },
         {
+          "name": "desktop",
+          "description": "Build a bun:desktop app: a .app for macOS, an AppDir for Linux, a directory for Windows. Requires --compile",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "desktop-name",
+          "description": "With --desktop: the name people see. Defaults to productName or name in package.json",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "desktop-identifier",
+          "description": "With --desktop: the bundle identifier, such as com.example.notes",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "desktop-version",
+          "description": "With --desktop: the version. Defaults to version in package.json",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "desktop-icon",
+          "description": "With --desktop: a square .png of 512 or 1024 pixels, or a .icns for macOS, a .svg for Linux",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
           "name": "windows-hide-console",
           "description": "When using --compile targeting Windows, prevent a Command prompt from opening alongside the executable",
           "hasValue": false,

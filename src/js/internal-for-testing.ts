@@ -249,6 +249,86 @@ export const declaredResults = {
 };
 
 // Only in a build with assertions: `isCompiled` in scripts/build/codegen.ts.
+export const bindgenInterfaces = $bindgen("bindgen_interface_test.bind.ts", "kindOf") && {
+  get WebTarget() {
+    return $bindgen("bindgen_interface_test.bind.ts", "WebTarget");
+  },
+  get WebNode() {
+    return $bindgen("bindgen_interface_test.bind.ts", "WebNode");
+  },
+  get WebElement() {
+    return $bindgen("bindgen_interface_test.bind.ts", "WebElement");
+  },
+  get WebPlain() {
+    return $bindgen("bindgen_interface_test.bind.ts", "WebPlain");
+  },
+  get WebFragment() {
+    return $bindgen("bindgen_interface_test.bind.ts", "WebFragment");
+  },
+  get WebLeaf() {
+    return $bindgen("bindgen_interface_test.bind.ts", "WebLeaf");
+  },
+  get WebSquare() {
+    return $bindgen("bindgen_interface_test.bind.ts", "WebSquare");
+  },
+  get WebEmitter() {
+    return $bindgen("bindgen_interface_test.bind.ts", "WebEmitter");
+  },
+  get WebGlobalBase() {
+    return $bindgen("bindgen_interface_test.bind.ts", "WebGlobalBase");
+  },
+  get WebGlobal() {
+    return $bindgen("bindgen_interface_test.bind.ts", "WebGlobal");
+  },
+  get WebList() {
+    return $bindgen("bindgen_interface_test.bind.ts", "WebList");
+  },
+  get WebNamedList() {
+    return $bindgen("bindgen_interface_test.bind.ts", "WebNamedList");
+  },
+  get WebMap() {
+    return $bindgen("bindgen_interface_test.bind.ts", "WebMap");
+  },
+  get WebAll() {
+    return $bindgen("bindgen_interface_test.bind.ts", "WebAll");
+  },
+  describeMixed: $bindgen("bindgen_interface_test.bind.ts", "describeMixed"),
+  reversed: $bindgen("bindgen_interface_test.bind.ts", "reversed"),
+  get WebRegistry() {
+    return $bindgen("bindgen_interface_test.bind.ts", "WebRegistry");
+  },
+  get WebSet() {
+    return $bindgen("bindgen_interface_test.bind.ts", "WebSet");
+  },
+  get WebPoint() {
+    return $bindgen("bindgen_interface_test.bind.ts", "WebPoint");
+  },
+  get WebPoint3() {
+    return $bindgen("bindgen_interface_test.bind.ts", "WebPoint3");
+  },
+  get WebByName() {
+    return $bindgen("bindgen_interface_test.bind.ts", "WebByName");
+  },
+  get WebSpace() {
+    return $bindgen("bindgen_interface_test.bind.ts", "WebSpace");
+  },
+  get WebPairs() {
+    return $bindgen("bindgen_interface_test.bind.ts", "WebPairs");
+  },
+  get WebPinned() {
+    return $bindgen("bindgen_interface_test.bind.ts", "WebPinned");
+  },
+  setGlobalReceiver: $bindgen("bindgen_interface_test.bind.ts", "setGlobalReceiver"),
+  onReaction: $bindgen("bindgen_interface_test.bind.ts", "onReaction"),
+  droppedNodes: $bindgen("bindgen_interface_test.bind.ts", "droppedNodes"),
+  kindOf: $bindgen("bindgen_interface_test.bind.ts", "kindOf"),
+  interfaceObject: $bindgen("bindgen_interface_test.bind.ts", "interfaceObject"),
+  crop: $bindgen("bindgen_interface_test.bind.ts", "crop"),
+  pointOfRealm: $bindgen("bindgen_interface_test.bind.ts", "pointOfRealm"),
+  WebError: $bindgen("bindgen_interface_test.bind.ts", "WebError"),
+  callFilter: $bindgen("bindgen_interface_test.bind.ts", "callFilter"),
+  withPrototype: $bindgen("bindgen_interface_test.bind.ts", "withPrototype"),
+};
 export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   add: $bindgen("bindgen_test.bind.ts", "add"),
   requiredAndOptionalArg: $bindgen("bindgen_test.bind.ts", "requiredAndOptionalArg"),
@@ -605,6 +685,39 @@ function nodeGetValidStdio(stdio, sync?: boolean) {
 }
 
 let cachedInternalChildProcess;
+
+export const desktopInternals = {
+  get askAsAssistiveTechnology() {
+    return $bindgen("dom.bind.ts", "askAsAssistiveTechnology");
+  },
+  get countEngines() {
+    return $bindgen("dom.bind.ts", "countEngines");
+  },
+  get decodesMessage() {
+    return $bindgen("dom.bind.ts", "decodesMessage");
+  },
+  get dumpDisplayList() {
+    return $bindgen("dom.bind.ts", "dumpDisplayList");
+  },
+  get panicInEngine() {
+    return $bindgen("dom.bind.ts", "panicInEngine");
+  },
+  get sendInputEvent() {
+    return $bindgen("desktop_script.bind.ts", "sendInputEventForTesting");
+  },
+  createPage(host: object) {
+    const controls = $bindgen("controls.bind.ts", "createPage")(host);
+    const page = {
+      window: controls.window,
+      get document() {
+        return controls.document;
+      },
+    };
+    for (const name in controls)
+      if ($isCallable(controls[name]) && name !== "window") page[name] = controls[name].bind(controls);
+    return page;
+  },
+};
 
 // Userland access to node-internal modules for vendored node tests that
 // declare `// Flags: --expose-internals` (served via the require interceptor

@@ -27,7 +27,7 @@ export function compareWithFirstFile() {
     try {
       const holder = entry.holder ? find(entryOf.get(entry.holder)) : undefined;
       if (entry.token === "GlobalThis") value = globalThis;
-      else if (/^(node|bun):[^.]*$/.test(entry.path)) value = require(entry.path);
+      else if (/^(node|bun):(?!desktop\/(dom|electron)$)[^.]*$/.test(entry.path)) value = require(entry.path);
       else if (isObject(holder)) {
         const key = entry.isSymbolName ? (Reflect.get(Symbol, entry.name) ?? Symbol.for(entry.name)) : entry.name;
         if (entry.isAddedAtFirstRead) Reflect.get(holder, key);

@@ -1014,6 +1014,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             one_shot: bun_jsc::is_one_shot_eval_invocation(),
             runs_compiled_code: crate::cli::run_compiled::runs_compiled_code(),
             locks_builtins: crate::cli::run_compiled::is_checked(),
+            is_desktop_program: bun_jsc::preloads_desktop(&ctx.preloads),
             ..Default::default()
         });
         bun_ast::initialize_store();
@@ -1030,6 +1031,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             graph: crate::cli::run_compiled::graph(),
             ..Default::default()
         };
+        if options.graph.is_none() {
+            bun_jsc::start_in_window_if_preloaded(&ctx.preloads);
+        }
         let vm = VirtualMachine::init(ctx.log, options)?;
         crate::cli::run_compiled::decode_requested_crash_report();
 
@@ -1163,6 +1167,42 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         .start()
     }
 
+    /// Without the program, if this executable has one.
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+    pub(crate) fn boot_pages(ctx: &mut ContextData) -> crate::Result<()> {
+        bun_jsc::initialize(bun_jsc::InitializeOptions {
+            is_desktop_program: true,
+            ..Default::default()
+        });
+        bun_ast::initialize_store();
+        let options = VmInitOptions {
+            transform_options: ctx.args.clone(),
+            global_cache: ctx.debug.global_cache,
+            is_main_thread: true,
+            ..Default::default()
+        };
+        let vm = VirtualMachine::init(ctx.log, options)?;
+        vm.set_main(Some(b"/"));
+        let defines_ok = vm.transpiler.with_mut(|b| {
+            Self::wire_transpiler_from_ctx(b, ctx);
+            b.options.env.behavior = api::DotEnvBehavior::LoadAllWithoutInlining;
+            b.configure_defines().is_ok()
+        });
+        if !defines_ok {
+            crate::run_main::fail_with_build_error(vm);
+        }
+        vm.load_extra_env();
+        Self::set_time_zone_from_env(vm);
+        bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
+        Run {
+            ctx,
+            vm,
+            entry_path: Some(b"/"),
+            unchecked: None,
+        }
+        .start()
+    }
+
     /// Allow setting a custom timezone. Without `$TZ`, JSC/ICU lazily
     /// auto-detects the host zone the first time a `Date` is constructed —
     /// matching upstream Bun. `.env` files are loaded by
@@ -1194,6 +1234,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // argv belongs to the compiled program, so a `-e` or `-p` in it is not ours.
         bun_jsc::initialize(bun_jsc::InitializeOptions {
             runs_compiled_code,
+            is_desktop_program: graph.flags.contains(GraphFlags::LOADS_GRAPHICS_DRIVERS),
             ..Default::default()
         });
         bun_analytics::features::standalone_executable.fetch_add(1, Ordering::Relaxed);
@@ -1201,6 +1242,23 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             bun_analytics::features::cross_compiled_bytecode.fetch_add(1, Ordering::Relaxed);
         }
         bun_ast::initialize_store();
+
+        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
+        let shows_pages = false;
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+        let shows_pages = bun_removable_features::call_removable_or!(
+            Desktop,
+            ReturnDefault,
+            { false },
+            crate::desktop::is_page_process,
+        );
+        if shows_pages {
+            ctx.debug.loaded_bunfig = true;
+            ctx.args.disable_default_env_files = true;
+            ctx.args.env_files.clear();
+            ctx.preloads.clear();
+            ctx.runtime_options.preconnect.clear();
+        }
 
         // Load bunfig.toml unless disabled by compile flags. Config loading
         // with execArgv is handled earlier in `Command::start` via `init()`.
@@ -1228,6 +1286,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ) as u8,
             ..Default::default()
         };
+        if graph.flags.contains(GraphFlags::STARTS_IN_WINDOW) && !shows_pages {
+            bun_jsc::start_in_window();
+        }
+        if graph.flags.contains(GraphFlags::LOADS_GRAPHICS_DRIVERS) {
+            bun_jsc::start_in_window_if_preloaded(&ctx.preloads);
+        }
         let vm = VirtualMachine::init_with_module_graph(ctx.log, options)?;
         crate::cli::run_compiled::decode_requested_crash_report();
         if graph.runtime_options.jit_policy > 1.0 {
@@ -1516,7 +1580,16 @@ impl Run<'_> {
                 !crate::cli::check_command::check_project_before(watching)
             }
         };
-        let loaded = (!has_type_errors).then(|| vm.load_entry_point(entry));
+        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
+        let shows_pages = false;
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+        let shows_pages = bun_removable_features::call_removable_or!(
+            Desktop,
+            ReturnDefault,
+            { false },
+            crate::desktop::enter_page_process,
+        );
+        let loaded = (!has_type_errors && !shows_pages).then(|| vm.load_entry_point(entry));
         match loaded {
             None => {}
             Some(Ok(promise)) => {

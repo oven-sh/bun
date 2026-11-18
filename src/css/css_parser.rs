@@ -3124,7 +3124,7 @@ impl<'a, 'bump> Parser<'a, 'bump> {
     }
 
     /// Return a slice of the CSS input, from the given position to the current one.
-    pub(crate) fn slice_from(&self, start_position: usize) -> &'bump [u8] {
+    pub fn slice_from(&self, start_position: usize) -> &'bump [u8] {
         self.input.tokenizer.slice_from(start_position)
     }
 
@@ -3229,7 +3229,7 @@ impl<'a, 'bump> Parser<'a, 'bump> {
     }
 
     #[inline]
-    pub(crate) fn parse_nested_block<T>(
+    pub fn parse_nested_block<T>(
         &mut self,
         parsefn: impl FnOnce(&mut Parser<'_, 'bump>) -> CssResult<'bump, T>,
     ) -> CssResult<'bump, T> {
@@ -3263,13 +3263,13 @@ impl<'a, 'bump> Parser<'a, 'bump> {
         self.input.may_revert_rule = true;
     }
 
-    pub(crate) fn is_exhausted(&mut self) -> bool {
+    pub fn is_exhausted(&mut self) -> bool {
         self.expect_exhausted().is_ok()
     }
 
     /// Parse the input until exhaustion and check that it contains no "error"
     /// token. See `Token::is_parse_error`.
-    pub(crate) fn expect_no_error_token(&mut self) -> CssResult<'bump, ()> {
+    pub fn expect_no_error_token(&mut self) -> CssResult<'bump, ()> {
         loop {
             let tok = match self.next_including_whitespace_and_comments() {
                 Err(_) => return Ok(()),
@@ -3302,7 +3302,7 @@ impl<'a, 'bump> Parser<'a, 'bump> {
         Err(start_location.new_unexpected_token_error(tok))
     }
 
-    pub(crate) fn expect_comma(&mut self) -> CssResult<'bump, ()> {
+    pub fn expect_comma(&mut self) -> CssResult<'bump, ()> {
         let start_location = self.current_source_location();
         let tok = self.next()?;
         if matches!(tok, Token::Comma) {
@@ -3314,7 +3314,7 @@ impl<'a, 'bump> Parser<'a, 'bump> {
 
     /// Parse a `<number-token>` that does not have a fractional part, and
     /// return the integer value.
-    pub(crate) fn expect_integer(&mut self) -> CssResult<'bump, i32> {
+    pub fn expect_integer(&mut self) -> CssResult<'bump, i32> {
         let start_location = self.current_source_location();
         let tok = self.next()?;
         if let Token::Number(n) = tok {
@@ -3327,7 +3327,7 @@ impl<'a, 'bump> Parser<'a, 'bump> {
     }
 
     /// Parse a `<number-token>` and return the float value.
-    pub(crate) fn expect_number(&mut self) -> CssResult<'bump, f32> {
+    pub fn expect_number(&mut self) -> CssResult<'bump, f32> {
         let start_location = self.current_source_location();
         let tok = self.next()?;
         if let Token::Number(n) = tok {
@@ -3337,7 +3337,7 @@ impl<'a, 'bump> Parser<'a, 'bump> {
         Err(start_location.new_unexpected_token_error(tok))
     }
 
-    pub(crate) fn expect_delim(&mut self, delim: u8) -> CssResult<'bump, ()> {
+    pub fn expect_delim(&mut self, delim: u8) -> CssResult<'bump, ()> {
         let start_location = self.current_source_location();
         let tok = self.next()?;
         if let Token::Delim(d) = tok {
@@ -3359,7 +3359,7 @@ impl<'a, 'bump> Parser<'a, 'bump> {
         Err(start_location.new_unexpected_token_error(tok))
     }
 
-    pub(crate) fn expect_colon(&mut self) -> CssResult<'bump, ()> {
+    pub fn expect_colon(&mut self) -> CssResult<'bump, ()> {
         let start_location = self.current_source_location();
         let tok = self.next()?;
         if matches!(tok, Token::Colon) {
@@ -3369,7 +3369,7 @@ impl<'a, 'bump> Parser<'a, 'bump> {
         Err(start_location.new_unexpected_token_error(tok))
     }
 
-    pub(crate) fn expect_string(&mut self) -> CssResult<'bump, &'bump [u8]> {
+    pub fn expect_string(&mut self) -> CssResult<'bump, &'bump [u8]> {
         let start_location = self.current_source_location();
         let tok = self.next()?;
         if let Token::QuotedString(s) = tok {
@@ -3379,7 +3379,7 @@ impl<'a, 'bump> Parser<'a, 'bump> {
         Err(start_location.new_unexpected_token_error(tok))
     }
 
-    pub(crate) fn expect_ident(&mut self) -> CssResult<'bump, &'bump [u8]> {
+    pub fn expect_ident(&mut self) -> CssResult<'bump, &'bump [u8]> {
         let start_location = self.current_source_location();
         let tok = self.next()?;
         if let Token::Ident(s) = tok {
@@ -3415,7 +3415,7 @@ impl<'a, 'bump> Parser<'a, 'bump> {
         Err(start_location.new_unexpected_token_error(tok))
     }
 
-    pub(crate) fn expect_function(&mut self) -> CssResult<'bump, &'bump [u8]> {
+    pub fn expect_function(&mut self) -> CssResult<'bump, &'bump [u8]> {
         let start_location = self.current_source_location();
         let tok = self.next()?;
         if let Token::Function(fn_name) = tok {
@@ -3425,7 +3425,7 @@ impl<'a, 'bump> Parser<'a, 'bump> {
         Err(start_location.new_unexpected_token_error(tok))
     }
 
-    pub(crate) fn expect_function_matching(&mut self, name: &[u8]) -> CssResult<'bump, ()> {
+    pub fn expect_function_matching(&mut self, name: &[u8]) -> CssResult<'bump, ()> {
         let start_location = self.current_source_location();
         let tok = self.next()?;
         if let Token::Function(fn_name) = tok {
@@ -3448,7 +3448,7 @@ impl<'a, 'bump> Parser<'a, 'bump> {
     }
 
     /// Parse a `<url-token>` and return the unescaped value.
-    pub(crate) fn expect_url(&mut self) -> CssResult<'bump, &'bump [u8]> {
+    pub fn expect_url(&mut self) -> CssResult<'bump, &'bump [u8]> {
         let start_location = self.current_source_location();
         let tok = self.next()?;
         match tok {
@@ -3483,7 +3483,7 @@ impl<'a, 'bump> Parser<'a, 'bump> {
         Err(start_location.new_unexpected_token_error(tok))
     }
 
-    pub(crate) fn position(&self) -> usize {
+    pub fn position(&self) -> usize {
         self.input.tokenizer.position
     }
 
@@ -3530,7 +3530,7 @@ impl<'a, 'bump> Parser<'a, 'bump> {
         )
     }
 
-    pub(crate) fn parse_until_before<T>(
+    pub fn parse_until_before<T>(
         &mut self,
         delimiters: Delimiters,
         parse_fn: impl FnOnce(&mut Parser<'_, 'bump>) -> CssResult<'bump, T>,
@@ -3589,20 +3589,20 @@ impl<'a, 'bump> Parser<'a, 'bump> {
         self.input.tokenizer.skip_cdc_and_cdo();
     }
 
-    pub(crate) fn skip_whitespace(&mut self) {
+    pub fn skip_whitespace(&mut self) {
         if let Some(block_type) = self.at_start_of.take() {
             consume_until_end_of_block(block_type, &mut self.input.tokenizer);
         }
         self.input.tokenizer.skip_whitespace();
     }
 
-    pub(crate) fn next(&mut self) -> CssResult<'bump, &Token<'bump>> {
+    pub fn next(&mut self) -> CssResult<'bump, &Token<'bump>> {
         self.skip_whitespace();
         self.next_including_whitespace_and_comments()
     }
 
     /// Same as `Parser::next`, but does not skip whitespace tokens.
-    pub(crate) fn next_including_whitespace(&mut self) -> CssResult<'bump, &Token<'bump>> {
+    pub fn next_including_whitespace(&mut self) -> CssResult<'bump, &Token<'bump>> {
         loop {
             let tok = self.next_including_whitespace_and_comments()?;
             if !matches!(tok, Token::Comment(_)) {
@@ -3620,7 +3620,7 @@ impl<'a, 'bump> Parser<'a, 'bump> {
         byte
     }
 
-    pub(crate) fn reset(&mut self, state_: &ParserState) {
+    pub fn reset(&mut self, state_: &ParserState) {
         self.input.tokenizer.reset(state_);
         self.at_start_of = state_.at_start_of;
         if let Some(import_records) = &mut self.import_records {
@@ -3629,7 +3629,7 @@ impl<'a, 'bump> Parser<'a, 'bump> {
         }
     }
 
-    pub(crate) fn state(&self) -> ParserState {
+    pub fn state(&self) -> ParserState {
         ParserState {
             position: self.input.tokenizer.get_position(),
             current_line_start_position: self.input.tokenizer.current_line_start_position,
@@ -3643,9 +3643,7 @@ impl<'a, 'bump> Parser<'a, 'bump> {
     }
 
     /// Same as `Parser::next`, but does not skip whitespace or comment tokens.
-    pub(crate) fn next_including_whitespace_and_comments(
-        &mut self,
-    ) -> CssResult<'bump, &Token<'bump>> {
+    pub fn next_including_whitespace_and_comments(&mut self) -> CssResult<'bump, &Token<'bump>> {
         if let Some(block_type) = self.at_start_of.take() {
             consume_until_end_of_block(block_type, &mut self.input.tokenizer);
         }
@@ -3688,7 +3686,7 @@ impl<'a, 'bump> Parser<'a, 'bump> {
     }
 
     /// Create a new unexpected token or EOF ParseError at the current location
-    pub(crate) fn new_error_for_next_token(&mut self) -> ParseError<'bump, ParserError<'bump>> {
+    pub fn new_error_for_next_token(&mut self) -> ParseError<'bump, ParserError<'bump>> {
         let token = match self.next() {
             Ok(t) => *t,
             Err(e) => return e,
@@ -3719,7 +3717,7 @@ bitflags::bitflags! {
 }
 
 impl Delimiters {
-    pub(crate) const NONE: Delimiters = Delimiters::empty();
+    pub const NONE: Delimiters = Delimiters::empty();
 
     const TABLE: [Delimiters; 256] = {
         let mut table = [Delimiters::empty(); 256];
@@ -3802,7 +3800,7 @@ impl<'bump> ParserInput<'bump> {
 /// within the input), obtained from the `Parser::position` method.
 #[derive(Copy, Clone)]
 pub struct ParserState {
-    pub(crate) position: usize,
+    pub position: usize,
     pub(crate) current_line_start_position: usize,
     pub(crate) current_line_number: u32,
     pub(crate) import_record_count: u32,
@@ -3856,7 +3854,7 @@ pub mod nth {
     pub(crate) type NthResult = (i32, i32);
 
     /// Parse the *An+B* notation, as found in the `:nth-child()` selector.
-    pub(crate) fn parse_nth<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, NthResult> {
+    pub fn parse_nth<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, NthResult> {
         let tok = input.next()?;
         match tok {
             Token::Number(n) => {
@@ -5100,7 +5098,7 @@ pub use crate::Token;
 
 impl Token<'_> {
     /// Return whether this token represents a parse error.
-    pub(crate) fn is_parse_error(&self) -> bool {
+    pub fn is_parse_error(&self) -> bool {
         matches!(
             self,
             Token::BadUrl(_)
@@ -5510,12 +5508,12 @@ pub mod color {
 
     /// Returns the named color with the given name.
     /// <https://drafts.csswg.org/css-color-4/#typedef-named-color>
-    pub(crate) fn parse_named_color(ident: &[u8]) -> Option<(u8, u8, u8)> {
+    pub fn parse_named_color(ident: &[u8]) -> Option<(u8, u8, u8)> {
         NAMED_COLORS.get_ascii_case_insensitive(ident).copied()
     }
 
     /// Parse a color hash, without the leading '#' character.
-    pub(crate) fn parse_hash_color(value: &[u8]) -> Option<RGBA> {
+    pub fn parse_hash_color(value: &[u8]) -> Option<RGBA> {
         parse_hash_color_impl(value).ok()
     }
 
@@ -5630,7 +5628,7 @@ pub mod serializer {
     }
 
     /// Write a double-quoted CSS string token, escaping content as necessary.
-    pub(crate) fn serialize_string<W: WriteAll + ?Sized>(
+    pub fn serialize_string<W: WriteAll + ?Sized>(
         value: &[u8],
         writer: &mut W,
     ) -> bun_io::Result<()> {
@@ -5688,7 +5686,7 @@ pub mod serializer {
     }
 
     /// Write a CSS identifier, escaping characters as necessary.
-    pub(crate) fn serialize_identifier<W: WriteAll + ?Sized>(
+    pub fn serialize_identifier<W: WriteAll + ?Sized>(
         value: &[u8],
         writer: &mut W,
     ) -> bun_io::Result<()> {

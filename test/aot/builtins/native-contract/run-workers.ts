@@ -14,6 +14,8 @@ export type Results = {
 };
 export type RunOptions = {
   executable: string;
+  // What aotBuiltinEntries() of the executable answers, as JSON. A debug build takes long to make it.
+  table: string;
   environment: Record<string, string | undefined>;
   folder: string;
   filter: string;
@@ -119,6 +121,7 @@ async function runWorker(options: RunOptions, index: number, results: Results): 
 
 export async function runWorkers(options: RunOptions): Promise<Results> {
   const results: Results = { reports: new Map(), ended: [], howEnded: [] };
+  writeFileSync(join(options.folder, "table.json"), options.table);
   await Promise.all(Array.from({ length: options.workerCount }, (_, index) => runWorker(options, index, results)));
   return results;
 }

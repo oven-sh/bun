@@ -4,6 +4,7 @@ import NodeErrors from "../jsc/bindings/ErrorCode.ts";
 import jsclasses from "./../jsc/bindings/js_classes";
 import { sliceSourceCode } from "./builtin-parser";
 import { registerNativeCall } from "./generate-js2native";
+import { keptAside } from "./web-globals.ts";
 
 // This is a list of extra syntax replacements to do. Kind of like macros
 // These are only run on code itself, not string contents or comments.
@@ -232,6 +233,10 @@ for (const name of nativeGlobals) {
 
 for (const name of nativeFunctions) {
   define[name] = "__intrinsic__natives." + name;
+}
+
+for (const name of keptAside.split(" ")) {
+  define[name] = "__intrinsic__globals." + name;
 }
 
 for (const key in define) {

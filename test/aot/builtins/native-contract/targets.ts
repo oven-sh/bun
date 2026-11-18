@@ -47,7 +47,7 @@ const neverCalledNatives: ReadonlyMap<RegExp, string> = new Map([
   [/doConnect|clusterRawBind|sendHelperPrimary|emitHandleIPCMessage/, "it opens a connection or writes to the channel of a parent process"],
   [/^%(Quic\w+|PostgresSQL\w+|MySQL\w+|PostgresBinding|MysqlBinding)%|node_quic_binding|postgres\.bind\.ts|mysql\.bind\.ts/, "it needs a server that the test does not have"],
   [
-    /isLiveCellAtRawAddress|createNoOpForTesting|parseRoutePattern|TestEnvironment\.?[Cc]pp|jsFunction_arrayBufferViewHasBuffer|setServerCustomOptions|^%AsyncFromSyncIterator%|^%LinkTimeConstant:|^%NodeCryptoBinding%\.Cipher$|^private global makeErrorWithCode ERR_INVALID_ARG_VALUE$/,
+    /isLiveCellAtRawAddress|createNoOpForTesting|Desktop(Lazy|Realm|Window)\.?[Cc]pp|parseRoutePattern|TestEnvironment\.?[Cc]pp|jsFunction_arrayBufferViewHasBuffer|setServerCustomOptions|^%AsyncFromSyncIterator%|^%LinkTimeConstant:|^%NodeCryptoBinding%\.Cipher$|^private global makeErrorWithCode ERR_INVALID_ARG_VALUE$/,
     "only the code of Bun and of the engine calls it, and it takes the kinds of its operands on trust",
   ],
   [
@@ -61,9 +61,9 @@ const neverCalledNatives: ReadonlyMap<RegExp, string> = new Map([
   ],
 ]);
 
-// Behind such a call others do something else: no connection is secured with ciphers that do not exist, no request has a head of one byte, and what `process` lacks is looked for on an operand of the test.
+// Behind such a call others do something else: no connection is secured with ciphers that do not exist, no request has a head of one byte, what `process` lacks is looked for on an operand of the test, and so are the hooks of pages.
 // It is among the last calls of its process.
-export const leavesProcessChanged = /setTLSDefaultCiphers|setMaxHTTPHeaderSize|MakeProcessInheritFrom/i;
+export const leavesProcessChanged = /setTLSDefaultCiphers|setMaxHTTPHeaderSize|MakeProcessInheritFrom|setRealmHooks/i;
 
 export function reasonTargetIsSkipped(path: string): string | undefined {
   for (const [pattern, reason] of neverCalledNatives) if (pattern.test(path)) return reason;
@@ -319,12 +319,13 @@ export function collectTargetsQuietForViews(realm: Realm, filter: RegExp, toldQu
   );
 }
 
-export function collectTargets(realm: Realm, filter: RegExp): (Target | Unreachable)[] {
+export function collectTargets(realm: Realm, filter: RegExp, sayEntry: (token: string) => void): (Target | Unreachable)[] {
   const targets: (Target | Unreachable)[] = [];
   const seen = new Set<object>();
   const { entries } = realm.table.dump;
   for (const entry of entries) {
     if (!filter.test(entry.path)) continue;
+    sayEntry(entry.token);
     for (const overload of entry.overloads) {
       // What a native binding answers takes no operand.
       const speaksForFunctionsOfBinding = entry.kind === "NativeBinding" && overload.mode !== "Get";

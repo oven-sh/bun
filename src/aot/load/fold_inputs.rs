@@ -11,9 +11,10 @@ use bun_sema::fold::{
 use bun_sema::hir_from_data::DataValue;
 use bun_sema::session::Arena;
 
-use crate::builtins::Platforms;
+use crate::builtins::{BuiltinId, Platforms, table};
 use crate::diagnostics::LoadMessages;
 use crate::load::data_modules::parse_json;
+use crate::load::globals_of_the_web::is_absent_or_different;
 use crate::load::locked_builtin_defines::{locked_builtin_defines, runtime_identity_defines};
 use crate::statistics::{Architecture, LimitId};
 
@@ -86,11 +87,25 @@ pub(crate) fn create_application_fold_inputs<'s>(
     atoms: &Interner<'s>,
     platform: Platforms,
     runs_in_place: bool,
+    has_realms_of_the_web: bool,
 ) -> FoldInputs<'s> {
-    let held_in_every_run = match runs_in_place {
+    let mut held_in_every_run = match runs_in_place {
         true => Vec::new(),
         false => collect_defines_held_in_every_run(platform, arena, atoms),
     };
+    if has_realms_of_the_web {
+        let find_global = |name: Atom| table::global(table::find_name(atoms.bytes(name))?);
+        held_in_every_run.retain(|define| {
+            let DefineRoot::Global(root) = define.path.root else {
+                return true;
+            };
+            let global = match (find_global(root), define.path.members) {
+                (Some(BuiltinId::GlobalThis), &[member, ..]) => find_global(member),
+                (global, _) => global,
+            };
+            !global.is_some_and(is_absent_or_different)
+        });
+    }
     let mut defines = defines_without_hot_reloading(arena, atoms);
     let mut replaced_by_bun_run: Vec<DefinePath<'s>> = defines.iter().map(|it| it.path).collect();
     defines.extend_from_slice(provided.defines);
@@ -320,6 +335,7 @@ mod tests {
                 sessions.application.arena(),
                 atoms,
                 Platforms::LINUX,
+                false,
                 false,
             ),
             runtime: create_runtime_fold_inputs(
@@ -858,6 +874,7 @@ mod tests {
             &atoms,
             Platforms::LINUX,
             true,
+            false,
         );
         let count_import_sites = |source| analyze(source, &fold, arena, &atoms).import_sites.len();
         for test in [
@@ -897,7 +914,8 @@ mod tests {
             }]),
             ..FoldOptions::default()
         };
-        let fold = create_application_fold_inputs(&provided, arena, &atoms, Platforms::LINUX, true);
+        let fold =
+            create_application_fold_inputs(&provided, arena, &atoms, Platforms::LINUX, true, false);
         let count_import_sites = |source| analyze(source, &fold, arena, &atoms).import_sites.len();
         assert_eq!(
             count_import_sites("if (process.isBun) import('./for-bun');"),
@@ -932,6 +950,7 @@ mod tests {
                 &atoms,
                 Platforms::LINUX,
                 runs_in_place,
+                false,
             );
             let count_import_sites =
                 |source| analyze(source, &fold, arena, &atoms).import_sites.len();
@@ -967,7 +986,8 @@ mod tests {
         };
         for (provided, sites_below_data) in [(FoldOptions::default(), 1), (defined_by_user, 0)] {
             let platform = Platforms::LINUX;
-            let fold = create_application_fold_inputs(&provided, arena, &atoms, platform, false);
+            let fold =
+                create_application_fold_inputs(&provided, arena, &atoms, platform, false, false);
             let count_import_sites =
                 |source| analyze(source, &fold, arena, &atoms).import_sites.len();
             for name in HOT_RELOADING_CALLS {

@@ -66,7 +66,7 @@ JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue NapiClass_ConstructorFunction(JSC::
     // napi_* calls root their results through the env's global. After NapiEnv::retargetGlobalObject that is not the callee's.
     Bun::NapiHandleScope handleScope(napi->env()->globalObject());
 
-    JSValue ret = toJS(napi->constructor()(napi->env(), frame.toNapi()));
+    JSValue ret = toJS(Bun::onAddonThread([&] { return napi->constructor()(napi->env(), frame.toNapi()); }));
     napi_set_last_error(napi->env(), napi_ok);
     napi->env()->throwPendingException();
     RETURN_IF_EXCEPTION(scope, {});

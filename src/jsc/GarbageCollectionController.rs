@@ -90,7 +90,15 @@ impl GarbageCollectionController {
         // CodeBlock-aging lease apart so each can expire what has not run since the previous); "0"/"" = off. Every JS
         // thread, for its own heap: a Worker that has finished a burst gives its garbage back too.
         // The second at 2 min: what a program does next compiles again what that collection aged out.
-        let spec = env_var::BUN_IDLE_GC_SECONDS::get().unwrap_or(b"10,110,480");
+        // A compiled program has no such code.
+        let is_compiled_desktop_program = vm.standalone_module_graph.is_some_and(|graph| {
+            graph.loads_graphics_drivers() && graph.compiled_program().is_some()
+        });
+        let spec = env_var::BUN_IDLE_GC_SECONDS::get().unwrap_or(if is_compiled_desktop_program {
+            b"4,6"
+        } else {
+            b"10,110,480"
+        });
         let mut at = [0u32; 3];
         let mut sum = 0u32;
         for (slot, part) in at.iter_mut().zip(bun_core::strings::split(spec, b",")) {
@@ -133,6 +141,11 @@ impl GarbageCollectionController {
             full = false;
         }
         (full, next.map(|due| due - quiet))
+    }
+
+    /// For `bun:desktop`, which paces collections by what is on screen. False if there are to be no idle collections.
+    pub(crate) fn hand_over(&self) -> bool {
+        !self.disabled.replace(true)
     }
 
     /// Arms the idle timer on first call; kept at the event-loop call sites so the first deadline is in the poll that follows.

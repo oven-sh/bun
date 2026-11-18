@@ -472,6 +472,9 @@ unsafe impl Sync for StandaloneModuleGraph {}
 /// slice; the `&mut`-returning inherent methods above stay for the runtime's
 /// blob/sourcemap caching path.
 impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
+    fn loads_graphics_drivers(&self) -> bool {
+        self.flags.contains(Flags::LOADS_GRAPHICS_DRIVERS)
+    }
     fn has_module_info(&self, name: &[u8]) -> bool {
         self.find_ref(name)
             .is_some_and(|file| !file.module_info.is_empty() || file.prelinked_index != u32::MAX)
@@ -576,6 +579,13 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
     }
     fn compiled_entry_point(&self, name: &[u8]) -> Option<&CompiledEntryPoint> {
         self.entry_point_by_name(name)
+    }
+    fn path_in_executable(&self, path: &[u8]) -> Option<Vec<u8>> {
+        self.key_of_path(path)
+    }
+    fn embedded_data(&self, name: &[u8]) -> Option<&[u8]> {
+        let file = self.lookup_file(name).filter(|file| self.has_data(file))?;
+        Some(file.utf8_contents())
     }
     fn file_at_source_path(&self, path: &[u8]) -> Option<&'static [u8]> {
         self.find_at_source_path(path).map(|file| file.name)
@@ -1187,7 +1197,10 @@ bitflags::bitflags! {
         const HAS_LINKED_BYTECODE_PAYLOAD   = 1 << 13;
         /// After the linked-payload record: the record of the program compiled ahead of time (`compiled_program.rs`).
         const HAS_COMPILED_PROGRAM          = 1 << 14;
-        // _padding: u17
+        /// Built with `--desktop`.
+        const LOADS_GRAPHICS_DRIVERS        = 1 << 15;
+        /// `desktop.dom`
+        const STARTS_IN_WINDOW              = 1 << 16;
     }
 }
 
@@ -2748,6 +2761,12 @@ pub(crate) fn inject<'a>(
                     return None;
                 }
             }
+            if inject_options.imports_from_system32_only {
+                if let Err(e) = pe_file.import_from_system32_only() {
+                    bun_core::pretty_errorln!("Error setting PE load flags: {}", e);
+                    return None;
+                }
+            }
             // Always strip authenticode when adding .bun section for --compile
             if let Err(e) = pe_file.add_bun_section(bytes, additions.has_code) {
                 bun_core::pretty_errorln!("Error adding Bun section to PE file: {}", e);
@@ -2969,8 +2988,9 @@ pub use bun_options_types::compile_target::CompileTarget;
 /// instead of routing through `extern "Rust"` shims; the only callers are the
 /// two `download*` fns below in this crate.
 pub(crate) fn download_to_path(
-    target: &CompileTarget,
-    env: &mut bun_dotenv::Loader,
+    url_str: &[u8],
+    file_name: &ZStr,
+    env: &bun_dotenv::Loader,
     dest_z: &ZStr,
 ) -> crate::Result<()> {
     bun_http::http_thread::init(&Default::default());
@@ -2982,16 +3002,7 @@ pub(crate) fn download_to_path(
         // TODO: This is way too much code necessary to send a single HTTP request...
         let mut compressed_archive_bytes =
             Box::new(bun_core::MutableString::init(24 * 1024 * 1024)?);
-        let mut url_buffer = [0u8; 2048];
-        let url_str = match target.to_npm_registry_url(&mut url_buffer) {
-            Ok(s) => s,
-            Err(err) => {
-                // Return error without printing - let caller decide how to handle
-                return Err(err.into());
-            }
-        };
-        let url_str_copy: Box<[u8]> = Box::from(url_str);
-        let url = bun_url::URL::parse(&url_str_copy);
+        let url = bun_url::URL::parse(url_str);
         {
             // The unconditional
             // `refresher.end()` below is sufficient: no fallible call sits between
@@ -3088,12 +3099,7 @@ pub(crate) fn download_to_path(
 
                 let mut did_retry = false;
                 loop {
-                    let src_name: &ZStr = if target.os == CompileTargetOs::Windows {
-                        bun_core::zstr!("bun.exe")
-                    } else {
-                        bun_core::zstr!("bun")
-                    };
-                    let mv = bun_sys::move_file_z(tmpdir.fd(), src_name, Fd::INVALID, dest_z);
+                    let mv = bun_sys::move_file_z(tmpdir.fd(), file_name, Fd::INVALID, dest_z);
                     if mv.is_err() {
                         if !did_retry {
                             did_retry = true;
@@ -3160,7 +3166,17 @@ pub fn target_executable(
             };
 
         if needs_download {
-            if let Err(e) = download_to_path(target, env, dest_z) {
+            let file_name: &ZStr = if target.os == CompileTargetOs::Windows {
+                bun_core::zstr!("bun.exe")
+            } else {
+                bun_core::zstr!("bun")
+            };
+            let mut url_buffer = [0u8; 2048];
+            let downloaded = target
+                .to_npm_registry_url(&mut url_buffer)
+                .map_err(crate::Error::from)
+                .and_then(|url| download_to_path(url, file_name, env, dest_z));
+            if let Err(e) = downloaded {
                 return Err(match e {
                     crate::Error::TargetNotFound => CompileError::fmt(format_args!(
                         "Target platform '{}' is not available for download. Check if this version of Bun supports this target.",
@@ -3462,6 +3478,23 @@ impl StandaloneModuleGraph {
     /// Loads the standalone module graph from the executable, allocates it on the heap,
     /// sets it globally, and returns the pointer.
     pub fn from_executable() -> crate::Result<Option<*mut StandaloneModuleGraph>> {
+        let Some((base, len)) = Self::payload_of_executable() else {
+            return Ok(None);
+        };
+        Self::from_payload(base, len, None)
+    }
+
+    pub fn is_in_executable() -> bool {
+        Self::payload_of_executable().is_some()
+    }
+
+    pub fn is_desktop_program() -> bool {
+        Self::payload_of_executable()
+            .and_then(|(base, len)| Self::read_offsets(base, len))
+            .is_some_and(|offsets| offsets.flags.contains(Flags::LOADS_GRAPHICS_DRIVERS))
+    }
+
+    fn payload_of_executable() -> Option<(*mut u8, usize)> {
         #[cfg(target_os = "macos")]
         let data = macho::get_data();
         #[cfg(windows)]
@@ -3476,10 +3509,7 @@ impl StandaloneModuleGraph {
             target_os = "freebsd"
         )))]
         let data: Option<(*mut u8, usize)> = None;
-        let Some((base, len)) = data else {
-            return Ok(None);
-        };
-        Self::from_payload(base, len, None)
+        data
     }
 
     /// For an executable that can run nothing but its embedded program, and found none.

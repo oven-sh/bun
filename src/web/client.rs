@@ -1,0 +1,3171 @@
+//! A document or a worker, as what it loads and stores is checked against. Scripts have no say in it.
+
+use core::cell::{Cell, Ref, RefCell};
+use core::mem::ManuallyDrop;
+use core::sync::atomic::AtomicU32;
+use core::task::Poll;
+use std::collections::VecDeque;
+use std::rc::{Rc, Weak};
+use std::sync::Arc;
+
+use bun_core::strings;
+use bun_jsc::{JSGlobalObject, JSValue};
+use bun_threading::Guarded;
+
+use crate::HashMap;
+use crate::compiled::{self, Form};
+use crate::csp::embedded::RequiredCsp;
+use crate::csp::{Delivery, Directive, Inline, Metadata, Verdict, Violation, strip_for_report};
+use crate::encoding::Encoding;
+use crate::exec::{self, LocalFuture, Receiver, Shared, Thread, Waiter};
+use crate::headers::{HeaderList, collect_quoted, is_forbidden_request_header, split};
+use crate::integrity::{Hash, parse_metadata};
+use crate::locks::LockManager;
+use crate::mime::Mime;
+use crate::net::body::{Body, Chunk, Data, FOR_DATA, FOR_SUBRESOURCES, SharedBytes, pipe};
+use crate::net::checks::{EmbedderPolicy, has_bad_port, is_insecure, upgrade_insecure};
+use crate::net::cookies::{self, Cookie};
+use crate::net::embedder::ClientId;
+use crate::net::fetch::{self, Controller, EndOfBody, Initiator, IsolationKind, Observer, Role};
+use crate::net::response::{Head, Response, ResponseType, is_ok_status};
+use crate::net::schemes::process_data_url;
+use crate::net::session::Session;
+use crate::net::web_socket::{Accepted, Connection, Handshake};
+use crate::net::{NetError, Result};
+use crate::origin::{Origin, Site, is_potentially_trustworthy};
+use crate::outside::{Claim, Outside};
+use crate::permissions_policy::{Declared, Feature, PermissionsPolicy};
+use crate::policy_container::PolicyContainer;
+use crate::referrer::ReferrerPolicy;
+use crate::remote::bodies::OnDemand;
+use crate::remote::grants::Access;
+use crate::reporting::{Member, Members, ReportType, to_json};
+use crate::request::{
+    CacheMode, Credentials, Destination, InitiatorType, Mode, Redirect, Request, RequestBody,
+};
+use crate::scheme::{Privileges, privileges_of};
+use crate::service::far::Told;
+use crate::service::{
+    self, Address, Call, Caller, ClientInfo, ClientKind, Control, Failure, Handler, Notice,
+    Outcome, Own, Presence, Reserved, ToRegistry, WindowState, WorkerInfo,
+};
+use crate::storage::areas::Items;
+use crate::storage::{AreaChange, Shelf};
+use crate::structured::{Bare, parse_item};
+use crate::time::monotonic_now;
+use crate::time::wall_now;
+use crate::timing::{NavigationType, ResourceTiming};
+use crate::url::Url;
+use crate::wire::Measured;
+use crate::{Bytes, mime, remote, trust};
+
+const MAX_UNREAD_TIMINGS: usize = 250;
+const MAX_SENT_REPORTS: usize = 1000;
+
+#[derive(Clone, Default)]
+pub struct ScriptLocation {
+    pub url: Bytes,
+    pub line: u32,
+    pub column: u32,
+}
+
+unsafe extern "C" {
+    safe fn Bun__DesktopRealm__locate(
+        global: &JSGlobalObject,
+        thrown: JSValue,
+        line_and_column: &mut [u32; 2],
+    ) -> bun_core::String;
+}
+
+impl ScriptLocation {
+    /// Of the script that is running.
+    pub fn now(global: &JSGlobalObject) -> ScriptLocation {
+        ScriptLocation::of_exception(global, JSValue::ZERO)
+    }
+
+    /// `thrown` is a `JSC::Exception`, or the value that was thrown last.
+    pub fn of_exception(global: &JSGlobalObject, thrown: JSValue) -> ScriptLocation {
+        let mut place = [0; 2];
+        let url = Bun__DesktopRealm__locate(global, thrown, &mut place);
+        ScriptLocation {
+            url: (*url.to_utf8()).into(),
+            line: place[0],
+            column: place[1],
+        }
+    }
+}
+
+/// What a client tells its realm.
+pub trait Scripts {
+    fn log_error(&self, message: &[u8]);
+    fn location(&self) -> ScriptLocation;
+    fn is_inspected(&self) -> bool;
+
+    /// If it is the document that a window or a frame shows.
+    fn window_state(&self) -> Option<WindowState> {
+        None
+    }
+
+    fn focus(&self) {}
+
+    /// The result is the client of the next document.
+    fn navigate(&self, _: Url) -> Option<Receiver<Option<ClientId>>> {
+        None
+    }
+}
+
+/// The same client in a page process, which is the one that scripts use.
+pub trait Twin {
+    fn update(&self, update: Update);
+}
+
+crate::wire! {
+    pub enum Update {
+        Committed(Box<Seed>),
+        Url(Url),
+        Agent(Agent),
+        NavigationTiming { record: Box<ResourceTiming>, kind: NavigationType },
+        Timing(Box<ResourceTiming>),
+        Report { kind: ReportType, body: Members },
+        Cookie(cookies::Change),
+        Service(Box<Told>),
+    }
+
+    /// What a page process makes the client of a document from.
+    pub struct Seed {
+        id: ClientId,
+        token: Bytes,
+        session: u32,
+        handles_data: bool,
+        role: Role,
+        parent: Option<(ClientId, Around)>,
+        agent: Agent,
+        document: Document,
+        navigation_timing: Option<(ResourceTiming, NavigationType)>,
+        navigation_start: f64,
+        previous: Option<ClientId>,
+        access: Access,
+        id_for_service_workers: u32,
+        control: Option<Control>,
+    }
+
+    /// What a frame needs to know of a parent in another process.
+    #[derive(Clone)]
+    struct Around {
+        ancestors: Vec<Origin>,
+        is_secure: bool,
+        prohibits_mixed_content: bool,
+        upgrades_insecure_requests: bool,
+        referrer_of_srcdoc: Option<Url>,
+    }
+}
+
+/// In a page process.
+#[derive(Clone, Copy)]
+struct Far {
+    outside: Outside,
+    handles_data: bool,
+}
+
+/// What comes with a document.
+pub struct Commit<'a> {
+    pub url: Url,
+    pub headers: &'a HeaderList,
+    pub status: u16,
+    pub referrer: Bytes,
+    pub origin_of: Option<&'a Client>,
+    pub policies_of: Option<&'a Client>,
+    pub has_policies_from_history: bool,
+    pub sandboxing: Sandboxing,
+    pub container: Option<Container<'a>>,
+    pub reserved: Option<Reserved>,
+}
+
+pub enum Sandboxing {
+    ByPolicy,
+    OpaqueOrigin,
+    Ignored,
+}
+
+/// The attributes of the element of a frame.
+pub struct Container<'a> {
+    pub allow: &'a [u8],
+    pub allows_fullscreen: bool,
+    pub has_started_navigation: bool,
+    pub csp: Option<&'a [u8]>,
+    /// `None` is the origin of the parent.
+    pub src: Option<Url>,
+}
+
+crate::wire! {
+    #[derive(Clone)]
+    struct Document {
+        url: Url,
+        creation_url: Url,
+        /// What stands for the creation URL if that does not say where the document is from.
+        inherited_url: Option<Url>,
+        origin: Origin,
+        /// Also if the origin is opaque, and derives from such a one.
+        is_from_https: bool,
+        status: u16,
+        referrer: Bytes,
+        policies: PolicyContainer,
+        permissions: PermissionsPolicy,
+        reported_permissions: PermissionsPolicy,
+        is_isolated: bool,
+        required_csp: Option<RequiredCsp>,
+        refuses_required_csp: bool,
+        runs_program: bool,
+    }
+}
+
+impl Document {
+    fn new(url: Url, origin: Origin) -> Document {
+        let permissions = PermissionsPolicy::new(origin.clone(), None, Declared::default());
+        Document {
+            policies: PolicyContainer::from_response(&url, &HeaderList::default(), false),
+            creation_url: url.clone(),
+            inherited_url: None,
+            url,
+            origin,
+            is_from_https: false,
+            status: 200,
+            referrer: Bytes::default(),
+            reported_permissions: permissions.clone(),
+            permissions,
+            is_isolated: false,
+            required_csp: None,
+            refuses_required_csp: false,
+            runs_program: false,
+        }
+    }
+}
+
+crate::wire! {
+    #[derive(Clone, Default)]
+    pub struct Agent {
+        user_agent: Bytes,
+        accept_language: Bytes,
+        app_path: Bytes,
+        has_webgl: bool,
+        /// In a sandbox, where it runs the scripts that it likes.
+        is_like_in_browser: bool,
+        /// It has the origin of trusted documents, and not their storage.
+        is_kept_apart: bool,
+        is_in_page_process: bool,
+    }
+}
+
+impl Agent {
+    pub(crate) fn initiator(&self, role: Role, origin: Option<Origin>) -> Initiator {
+        Initiator::new(role, origin, &self.user_agent, &self.accept_language)
+    }
+
+    /// It has none of the liberties of the client that has called for it.
+    pub(crate) fn of_service_worker(&self) -> Agent {
+        Agent {
+            user_agent: self.user_agent.clone(),
+            accept_language: self.accept_language.clone(),
+            app_path: self.app_path.clone(),
+            has_webgl: self.has_webgl,
+            is_like_in_browser: false,
+            is_kept_apart: false,
+            is_in_page_process: false,
+        }
+    }
+
+    pub(crate) fn app_path(&self) -> &[u8] {
+        &self.app_path
+    }
+}
+
+const MOST_NOTES_FOR_SERVICE_WORKERS: usize = 1 << 13;
+
+#[derive(Default)]
+struct Service {
+    /// If it is not that of the client.
+    id: Option<u32>,
+    /// Of a window.
+    presence: Option<Arc<Presence>>,
+    control: Option<Control>,
+    listener: Option<Rc<dyn Fn(Notice)>>,
+    unheard: Vec<Notice>,
+    asked_for_as_code: HashMap<Bytes, ()>,
+    own: Option<Own>,
+}
+
+enum Ancestry {
+    Top,
+    Frame(Rc<Client>),
+    FrameApart(Around),
+    Worker {
+        ancestors: Vec<Origin>,
+        is_secure: bool,
+        kind: ClientKind,
+    },
+}
+
+#[derive(Clone)]
+struct Creator {
+    thread: Thread,
+    id: ClientId,
+    destination: Destination,
+}
+
+/// What the thread of a worker makes its client from.
+pub struct WorkerSeed {
+    id: ClientId,
+    responsible: ClientId,
+    token: Bytes,
+    session: Arc<Session>,
+    role: Role,
+    agent: Agent,
+    document: Document,
+    ancestors: Vec<Origin>,
+    is_secure: bool,
+    kind: ClientKind,
+    creator: Option<Creator>,
+    control: Option<Control>,
+    presence: Option<Arc<Presence>>,
+    own: Option<Own>,
+    unread_timings: UnreadTimings,
+    is_far: bool,
+}
+
+impl WorkerSeed {
+    /// `headers` came with the script.
+    pub(crate) fn of_service(
+        session: &Arc<Session>,
+        agent: Agent,
+        headers: &HeaderList,
+        ancestors: Vec<Origin>,
+        own: Own,
+        runs_program: bool,
+    ) -> WorkerSeed {
+        let (id, url) = (own.client, own.worker.url.clone());
+        let policies = PolicyContainer::from_response(&url, headers, true);
+        WorkerSeed {
+            id,
+            responsible: id,
+            token: Client::new_token(),
+            session: Arc::clone(session),
+            role: Role::Page,
+            agent,
+            document: Document {
+                is_from_https: true,
+                runs_program,
+                policies,
+                ..Document::new(url.clone(), Origin::of(&url))
+            },
+            ancestors,
+            is_secure: true,
+            kind: ClientKind::ServiceWorker,
+            creator: None,
+            control: None,
+            presence: None,
+            own: Some(own),
+            unread_timings: UnreadTimings::default(),
+            is_far: false,
+        }
+    }
+
+    pub(crate) fn from_host(seed: Seed, ancestors: Vec<Origin>, own: Own) -> WorkerSeed {
+        WorkerSeed {
+            id: seed.id,
+            responsible: seed.id,
+            token: seed.token,
+            session: Session::stand_in_for(seed.session),
+            role: seed.role,
+            agent: seed.agent,
+            document: seed.document,
+            ancestors,
+            is_secure: true,
+            kind: ClientKind::ServiceWorker,
+            creator: None,
+            control: None,
+            presence: None,
+            own: Some(own),
+            unread_timings: UnreadTimings::default(),
+            is_far: true,
+        }
+    }
+
+    pub(crate) fn session(&self) -> &Arc<Session> {
+        &self.session
+    }
+
+    /// To be dropped when the worker has ended.
+    pub fn presence(&self) -> Option<Arc<Presence>> {
+        self.presence.clone()
+    }
+
+    pub fn user_agent(&self) -> &[u8] {
+        &self.agent.user_agent
+    }
+
+    pub fn accept_language(&self) -> &[u8] {
+        &self.agent.accept_language
+    }
+}
+
+pub(crate) fn bucket_of(origin: &Origin, ancestors: &[Origin]) -> Vec<u8> {
+    let Some(top) = ancestors.last() else {
+        return origin.as_bytes().to_vec();
+    };
+    let is_first_party =
+        |it: &Origin| it == top || top.to_url().is_some_and(|top| it.is_same_site_with(&top));
+    if is_first_party(origin) && ancestors.iter().all(is_first_party) {
+        return origin.as_bytes().to_vec();
+    }
+    [origin.as_bytes(), b"^", top.as_bytes()].concat()
+}
+
+/// A worker shares them with the client that fetches its first scripts.
+type UnreadTimings = Arc<Guarded<Vec<ResourceTiming>>>;
+
+crate::wire! {
+    #[derive(Clone)]
+    pub struct Loaded {
+        pub head: Head,
+        pub bytes: SharedBytes,
+    }
+}
+
+struct Deferred {
+    id: u32,
+    origin: Origin,
+    size: usize,
+}
+
+pub struct Client {
+    pub id: ClientId,
+    pub token: Bytes,
+    pub session: Arc<Session>,
+    role: Role,
+    ancestry: Ancestry,
+    agent: RefCell<Agent>,
+    document: RefCell<Document>,
+    scripts: RefCell<Option<Rc<dyn Scripts>>>,
+    fetches: RefCell<Vec<Controller>>,
+    preloaded: RefCell<HashMap<Bytes, Preloaded>>,
+    sent_reports: RefCell<HashMap<u64, ()>>,
+    unread_timings: UnreadTimings,
+    navigation_timing: RefCell<Option<(ResourceTiming, NavigationType)>>,
+    /// The time origin, in milliseconds since the epoch.
+    navigation_start: Cell<f64>,
+    /// When the `unload` event of this document has started and ended.
+    unload: Cell<[f64; 2]>,
+    unload_of_previous: Cell<[f64; 2]>,
+    timing_watcher: RefCell<Option<Rc<dyn Fn(ResourceTiming)>>>,
+    /// Of this document, and of the frames of the same origin in it.
+    deferred_quota: RefCell<Vec<Deferred>>,
+    deferred_requests: RefCell<Vec<(u32, Request)>>,
+    /// The length of the bodies of keepalive requests that are on their way.
+    kept_alive: Cell<u64>,
+    outliving: RefCell<(u32, Waiter)>,
+    /// Of a worker, until it runs: what loads the modules that it starts with.
+    creator: RefCell<Option<Creator>>,
+    /// The document that the app is told about for its requests.
+    responsible: Cell<ClientId>,
+    is_disposed: Cell<bool>,
+    far: Cell<Option<Far>>,
+    twin: RefCell<Option<Rc<dyn Twin>>>,
+    previous: Cell<Option<ClientId>>,
+    cookie_watcher: Cell<Option<fn(&Client, &cookies::Change)>>,
+    changes_for_answer: RefCell<Option<Vec<cookies::Change>>>,
+    service: RefCell<Service>,
+    /// Until when what the host has said, and how often that has passed.
+    cookies_last: Cell<(f64, u32)>,
+    watches_areas: Cell<bool>,
+}
+
+thread_local! {
+    static CLIENTS: RefCell<Box<HashMap<u32, Weak<Client>>>> = RefCell::default();
+    /// In a page process, for the documents that follow.
+    static UNLOADED: RefCell<VecDeque<(ClientId, [f64; 2])>> = RefCell::default();
+}
+
+fn next_id() -> u32 {
+    static NEXT: AtomicU32 = AtomicU32::new(1);
+    remote::own_number(&NEXT)
+}
+
+impl ClientId {
+    pub fn next() -> ClientId {
+        ClientId(next_id())
+    }
+}
+
+impl Drop for Client {
+    fn drop(&mut self) {
+        let _ = CLIENTS.try_with(|it| it.borrow_mut().remove(&self.id.0));
+        self.outside().into_iter().for_each(Outside::leave);
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ScriptType {
+    Classic,
+    JavaScriptModule,
+    JsonModule,
+    CssModule,
+    TextModule,
+}
+
+impl ScriptType {
+    /// From the import attribute `type`.
+    pub fn of_module(attribute: &[u8]) -> Option<ScriptType> {
+        Some(match attribute {
+            b"" => ScriptType::JavaScriptModule,
+            b"json" => ScriptType::JsonModule,
+            b"css" => ScriptType::CssModule,
+            b"text" => ScriptType::TextModule,
+            _ => return None,
+        })
+    }
+
+    pub fn destination(self) -> Destination {
+        match self {
+            ScriptType::Classic | ScriptType::JavaScriptModule => Destination::Script,
+            ScriptType::JsonModule => Destination::Json,
+            ScriptType::CssModule => Destination::Style,
+            ScriptType::TextModule => Destination::Text,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Purpose {
+    Use,
+    Preload,
+    Prefetch,
+}
+
+/// What an element or a style sheet has asked for.
+#[derive(Clone)]
+pub struct Resource {
+    pub url: Url,
+    pub status: u16,
+    pub mime: Option<Mime>,
+    pub bytes: SharedBytes,
+    /// Whether scripts may know what is in it.
+    pub is_readable: bool,
+    pub referrer_policy: ReferrerPolicy,
+}
+
+impl Resource {
+    pub fn essence(&self) -> &[u8] {
+        self.mime.as_ref().map_or(b"", Mime::essence)
+    }
+
+    /// `fallback` is for what does not say how it is encoded.
+    pub fn encoding(&self, fallback: Encoding) -> Encoding {
+        let declared = || Encoding::for_label(self.mime.as_ref()?.parameter(b"charset")?);
+        (Encoding::for_bom(&self.bytes).or_else(declared)).unwrap_or(fallback)
+    }
+}
+
+pub enum Script {
+    FromApp(Vec<u8>),
+    Loaded(Box<Loaded>),
+}
+
+impl Script {
+    pub fn into_source(self) -> SharedBytes {
+        match self {
+            Script::FromApp(source) => source.into(),
+            Script::Loaded(loaded) => loaded.bytes,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum Cors {
+    Anonymous,
+    UseCredentials,
+}
+
+impl Cors {
+    pub fn parse(attribute: &[u8]) -> Cors {
+        if attribute.eq_ignore_ascii_case(b"use-credentials") {
+            Cors::UseCredentials
+        } else {
+            Cors::Anonymous
+        }
+    }
+}
+
+/// https://html.spec.whatwg.org/multipage/urls-and-fetching.html#create-a-potential-cors-request
+pub fn potential_cors_request(url: Url, destination: Destination, cors: Option<Cors>) -> Request {
+    match cors {
+        None => Request::new(url, destination, Mode::NoCors, Credentials::Include),
+        Some(Cors::Anonymous) => {
+            Request::new(url, destination, Mode::Cors, Credentials::SameOrigin)
+        }
+        Some(Cors::UseCredentials) => {
+            Request::new(url, destination, Mode::Cors, Credentials::Include)
+        }
+    }
+}
+
+/// What `as` and `type` of a link ask for, if that can be preloaded.
+pub fn preload_destination(kind: &[u8], mime: &[u8]) -> Option<Destination> {
+    let mime = &*mime.to_ascii_lowercase();
+    let (destination, is_supported) = match kind {
+        b"fetch" => (Destination::Empty, true),
+        b"font" => (
+            Destination::Font,
+            matches!(
+                mime,
+                b"font/woff" | b"font/woff2" | b"font/otf" | b"font/ttf" | b"font/sfnt"
+            ),
+        ),
+        b"image" => {
+            let subtype = mime.strip_prefix(b"image/").unwrap_or_default();
+            (
+                Destination::Image,
+                matches!(
+                    subtype,
+                    b"apng" | b"bmp" | b"gif" | b"jpeg" | b"png" | b"svg+xml" | b"webp" | b"x-icon"
+                ),
+            )
+        }
+        b"script" => (Destination::Script, mime::is_javascript(mime)),
+        b"style" => (Destination::Style, mime == b"text/css"),
+        b"track" => (Destination::Track, mime == b"text/vtt"),
+        _ => return None,
+    };
+    (mime.is_empty() || is_supported).then_some(destination)
+}
+
+/// The same for requests that can share a response.
+pub fn preload_key(request: &Request) -> Bytes {
+    [
+        request.url.without_fragment(),
+        &[
+            b' ',
+            request.destination as u8,
+            request.mode as u8,
+            request.credentials as u8,
+        ],
+    ]
+    .concat()
+    .into()
+}
+
+pub enum DeferError {
+    InsecureUrl,
+    QuotaExceeded(usize),
+}
+
+pub enum SocketRefusal {
+    MixedContent,
+    Blocked,
+}
+
+struct Preloaded {
+    integrity: Vec<Hash>,
+    loading: Shared<Result<Loaded>>,
+}
+
+struct Fetching<'a> {
+    client: &'a Client,
+    timed: Option<(Bytes, InitiatorType)>,
+    blocks_rendering: bool,
+}
+
+impl Observer for Fetching<'_> {
+    fn will_check(&self, request: &Request, first: Option<&Url>) {
+        self.client.report_request(request, first);
+    }
+
+    fn allows(&self, request: &Request, first: Option<&Url>) -> bool {
+        (first.is_none() || request.destination != Destination::Report)
+            && self.client.allows_request(request, first)
+            && (!(request.may_become_code
+                || first.is_some_and(|it| self.client.may_serve_as_code(it)))
+                || self.client.agent.borrow().is_like_in_browser
+                || self.client.trusts(&request.url))
+            && (first.is_some() || self.client.integrity_policy_allows(request))
+            && (request.initiator_type == Some(InitiatorType::XmlHttpRequest)
+                || self.client.allows_credentials_in(&request.url))
+    }
+
+    fn blocked_as_mixed_content(&self, request: &Request, first: Option<&Url>) {
+        self.client
+            .report_mixed_content(first.unwrap_or(&request.url));
+    }
+
+    fn violated(&self, kind: IsolationKind, request: &Request, first: &Url, is_enforced: bool) {
+        self.client
+            .report_corp_violation(kind, b"corp", request.destination, first, is_enforced);
+    }
+
+    fn end_of_body(&self) -> Option<EndOfBody> {
+        let ((name, initiator_type), blocks_rendering) =
+            (self.timed.clone()?, self.blocks_rendering);
+        let (id, thread) = (self.client.id, Thread::current());
+        Some(Box::new(move |head, size| {
+            let Ok(size) = size else { return };
+            let record = ResourceTiming {
+                blocks_rendering,
+                ..ResourceTiming::of_response(&name, initiator_type, head, size)
+            };
+            thread.run(move || {
+                if let Some(client) = Client::find(id) {
+                    client.record_timing(record);
+                }
+            });
+        }))
+    }
+}
+
+/// The twin has reported what the request violates as it was made.
+struct FetchingForTwin<'a>(Fetching<'a>);
+
+impl Observer for FetchingForTwin<'_> {
+    fn will_check(&self, request: &Request, first: Option<&Url>) {
+        if first.is_some() {
+            self.0.will_check(request, first);
+        }
+    }
+
+    fn allows(&self, request: &Request, first: Option<&Url>) -> bool {
+        match first {
+            Some(_) => self.0.allows(request, first),
+            None => self.0.client.trusts_source_of(request),
+        }
+    }
+
+    fn blocked_as_mixed_content(&self, request: &Request, first: Option<&Url>) {
+        self.0.blocked_as_mixed_content(request, first);
+    }
+
+    fn violated(&self, kind: IsolationKind, request: &Request, first: &Url, is_enforced: bool) {
+        self.0.violated(kind, request, first, is_enforced);
+    }
+}
+
+impl Client {
+    fn make(
+        id: ClientId,
+        token: Bytes,
+        session: Arc<Session>,
+        role: Role,
+        ancestry: Ancestry,
+        agent: Agent,
+        document: Document,
+        unread_timings: UnreadTimings,
+    ) -> Rc<Client> {
+        let client = Rc::new(Client {
+            id,
+            token,
+            session,
+            role,
+            ancestry,
+            agent: agent.into(),
+            document: document.into(),
+            scripts: RefCell::default(),
+            fetches: RefCell::default(),
+            preloaded: RefCell::default(),
+            sent_reports: RefCell::default(),
+            unread_timings,
+            navigation_timing: RefCell::default(),
+            navigation_start: monotonic_now().into(),
+            unload: Cell::default(),
+            unload_of_previous: Cell::default(),
+            timing_watcher: RefCell::default(),
+            deferred_quota: RefCell::default(),
+            deferred_requests: RefCell::default(),
+            kept_alive: Cell::default(),
+            outliving: RefCell::default(),
+            creator: RefCell::default(),
+            responsible: Cell::new(id),
+            is_disposed: Cell::new(false),
+            far: Cell::default(),
+            twin: RefCell::default(),
+            previous: Cell::default(),
+            cookie_watcher: Cell::default(),
+            changes_for_answer: RefCell::default(),
+            service: RefCell::default(),
+            cookies_last: Cell::default(),
+            watches_areas: Cell::default(),
+        });
+        CLIENTS.with_borrow_mut(|it| it.insert(id.0, Rc::downgrade(&client)));
+        client
+    }
+
+    fn new_token() -> Bytes {
+        let mut random = [0u8; 16];
+        bun_boringssl_sys::rand_bytes(&mut random);
+        format!("{:032X}", u128::from_le_bytes(random))
+            .into_bytes()
+            .into()
+    }
+
+    /// It has an opaque origin until [`commit`](Self::commit).
+    pub fn new(
+        session: Arc<Session>,
+        parent: Option<Rc<Client>>,
+        has_web_security: bool,
+        url: Url,
+    ) -> Rc<Client> {
+        let role = if has_web_security {
+            Role::Page
+        } else {
+            Role::PageWithoutWebSecurity
+        };
+        Client::with_role(session, parent, role, url)
+    }
+
+    fn with_role(
+        session: Arc<Session>,
+        parent: Option<Rc<Client>>,
+        role: Role,
+        url: Url,
+    ) -> Rc<Client> {
+        Client::make(
+            ClientId(next_id()),
+            Client::new_token(),
+            session,
+            role,
+            parent.map_or(Ancestry::Top, Ancestry::Frame),
+            Agent::default(),
+            Document {
+                runs_program: matches!(role, Role::App { .. }),
+                ..Document::new(url, Origin::new_opaque())
+            },
+            UnreadTimings::default(),
+        )
+    }
+
+    fn for_program() -> Rc<Client> {
+        let url = Url::parse(b"about:blank").expect("a URL");
+        let role = Role::App {
+            bypasses_handlers: true,
+        };
+        Client::with_role(Session::without_embedder(), None, role, url)
+    }
+
+    /// For the documents whose scripts are the program.
+    pub fn of_program() -> Rc<Client> {
+        static OF_PROGRAM: bun_ui::Lasting<RefCell<Option<Rc<Client>>>> = bun_ui::Lasting::empty();
+        OF_PROGRAM.with(|it| Rc::clone(it.borrow_mut().get_or_insert_with(Client::for_program)))
+    }
+
+    /// For the documents that draw controls, which need nothing from outside.
+    pub fn of_controls() -> Rc<Client> {
+        thread_local! {
+            static OF_CONTROLS: ManuallyDrop<Rc<Client>> = {
+                let client = Client::for_program();
+                client.add_csp(b"default-src data: blob: 'unsafe-inline'", Delivery::Header);
+                ManuallyDrop::new(client)
+            };
+        }
+        OF_CONTROLS.with(|it| Rc::clone(it))
+    }
+
+    /// Of this thread.
+    pub fn find(id: ClientId) -> Option<Rc<Client>> {
+        CLIENTS.with_borrow(|it| it.get(&id.0)?.upgrade())
+    }
+
+    pub fn set_scripts(&self, scripts: Rc<dyn Scripts>) {
+        self.scripts.replace(Some(scripts));
+    }
+
+    pub fn has_webgl(&self) -> bool {
+        self.agent.borrow().has_webgl
+    }
+
+    pub fn set_agent(
+        &self,
+        user_agent: &[u8],
+        accept_language: &[u8],
+        app_path: &[u8],
+        has_webgl: bool,
+    ) {
+        let before = self.agent.borrow().clone();
+        self.agent.replace(Agent {
+            user_agent: user_agent.into(),
+            accept_language: accept_language.into(),
+            app_path: app_path.into(),
+            has_webgl,
+            ..before
+        });
+        self.update_twin(|| Update::Agent(self.agent.borrow().clone()));
+    }
+
+    pub fn user_agent(&self) -> Bytes {
+        self.agent.borrow().user_agent.clone()
+    }
+
+    pub fn treat_like_in_browser(&self) {
+        self.agent.borrow_mut().is_like_in_browser = true;
+    }
+
+    pub fn is_like_in_browser(&self) -> bool {
+        self.agent.borrow().is_like_in_browser
+    }
+
+    pub fn treat_as_stranger(&self, is_stranger: bool) {
+        let origin = self.origin();
+        let is_kept_apart = is_stranger
+            && (origin.as_bytes() == b"file://" || trust::is_trusted_origin(origin.as_bytes()));
+        self.agent.borrow_mut().is_kept_apart = is_kept_apart;
+    }
+
+    /// It has nothing to do with the service workers of the other side.
+    pub fn move_out(&self, is_moved: bool) {
+        let mut agent = self.agent.borrow_mut();
+        let before = core::mem::replace(&mut agent.is_in_page_process, is_moved);
+        if before != is_moved || agent.is_kept_apart {
+            drop(agent);
+            let mut service = self.service.borrow_mut();
+            (service.id, service.presence, service.control) = (None, None, None);
+        }
+    }
+
+    pub fn set_twin(&self, twin: Rc<dyn Twin>) {
+        self.twin.replace(Some(twin));
+    }
+
+    pub(crate) fn update_twin(&self, update: impl FnOnce() -> Update) -> bool {
+        let twin = self.twin.borrow().clone();
+        twin.map(|it| it.update(update())).is_some()
+    }
+
+    pub fn seed(&self) -> Box<Seed> {
+        Box::new(Seed {
+            id: self.id,
+            token: self.token.clone(),
+            session: self.session.id(),
+            handles_data: self.session.handles(b"data"),
+            role: self.role,
+            parent: self.parent().map(|it| {
+                let around = Around {
+                    ancestors: self.ancestors(),
+                    is_secure: it.is_secure(),
+                    prohibits_mixed_content: it.prohibits_mixed_content(),
+                    upgrades_insecure_requests: it.upgrades_insecure_requests(),
+                    referrer_of_srcdoc: self.referrer_source().filter(|_| self.is_srcdoc()),
+                };
+                (it.id, around)
+            }),
+            agent: self.agent.borrow().clone(),
+            document: self.document.borrow().clone(),
+            navigation_timing: self.navigation_timing.borrow().clone(),
+            navigation_start: self.navigation_start.get(),
+            previous: self.previous.get(),
+            access: Access((!self.origin().is_opaque()).then(|| Shelf {
+                session: self.session.id(),
+                bucket: self.bucket().into(),
+            })),
+            id_for_service_workers: self.id_for_service_workers(),
+            control: self.service.borrow().control.clone(),
+        })
+    }
+
+    /// The twin has committed.
+    pub fn renew_twin(&self) {
+        self.update_twin(|| Update::Committed(self.seed()));
+    }
+
+    pub fn from_seed(seed: Seed) -> Rc<Client> {
+        let client = Client::make(
+            seed.id,
+            seed.token.clone(),
+            Session::stand_in_for(seed.session),
+            seed.role,
+            seed.parent.clone().map_or(Ancestry::Top, |(id, around)| {
+                Client::find(id).map_or(Ancestry::FrameApart(around), Ancestry::Frame)
+            }),
+            seed.agent.clone(),
+            seed.document.clone(),
+            UnreadTimings::default(),
+        );
+        client.far.set(Some(Far {
+            outside: Outside::enter(seed.id),
+            handles_data: seed.handles_data,
+        }));
+        let of_previous = |all: &VecDeque<_>| {
+            all.iter()
+                .find(|it: &&(_, _)| Some(it.0) == seed.previous)
+                .map(|it| it.1)
+        };
+        (client.unload_of_previous).set(UNLOADED.with_borrow(of_previous).unwrap_or_default());
+        client.apply(Update::Committed(seed.into()));
+        client
+    }
+
+    pub fn apply(&self, update: Update) {
+        match update {
+            Update::Committed(seed) => {
+                self.document.replace(seed.document);
+                self.navigation_timing.replace(seed.navigation_timing);
+                self.navigation_start.set(seed.navigation_start);
+                let mut service = self.service.borrow_mut();
+                (service.id, service.control) = (Some(seed.id_for_service_workers), seed.control);
+            }
+            Update::Url(url) => self.set_url(url),
+            Update::Agent(agent) => drop(self.agent.replace(agent)),
+            Update::NavigationTiming { record, kind } => self.set_navigation_timing(*record, kind),
+            Update::Timing(record) => self.record_timing(*record),
+            Update::Report { kind, body } => {
+                crate::realm::tell_scripts(self.id, kind, body, JSValue::UNDEFINED);
+            }
+            Update::Cookie(change) => self.cookie_watcher.get().map_or((), |it| it(self, &change)),
+            Update::Service(told) => {
+                if let Some(host) = self.outside() {
+                    service::far::hear(self, host, *told);
+                }
+            }
+        }
+    }
+
+    fn outside(&self) -> Option<Outside> {
+        self.far.get().map(|it| it.outside)
+    }
+
+    pub fn commit(&self, commit: Commit<'_>) {
+        let Commit {
+            url,
+            headers,
+            status,
+            referrer,
+            ..
+        } = commit;
+        let origin = commit
+            .origin_of
+            .map_or_else(|| Origin::of(&url), Client::origin);
+        let inherited = commit.policies_of.map(|it| it.policies().inherited());
+        let is_from_https = origin.is_https()
+            || commit
+                .origin_of
+                .is_some_and(|it| it.document.borrow().is_from_https);
+        let inherited_url = (commit.policies_of)
+            .filter(|_| matches!(url.scheme(), b"about" | b"blob" | b"javascript"))
+            .map(Client::home_url);
+        let mut document = self.document.borrow_mut();
+        document.is_from_https = is_from_https;
+        (document.creation_url, document.inherited_url) = (url.clone(), inherited_url);
+        (
+            document.url,
+            document.origin,
+            document.status,
+            document.referrer,
+        ) = (url, origin, status, referrer);
+        drop(document);
+        let mut policies = inherited.unwrap_or_else(|| {
+            PolicyContainer::from_response(&self.url(), headers, self.is_secure())
+        });
+        let required_csp =
+            self.required_csp(commit.container.as_ref().and_then(|it| it.csp), &self.url());
+        let asked = required_csp
+            .as_ref()
+            .zip(self.parent())
+            .filter(|_| !commit.has_policies_from_history);
+        let refuses_required_csp = asked.is_some_and(|it| {
+            !it.0
+                .apply(&mut policies.csp, &self.url(), headers, &it.1.origin())
+        });
+        let origin = match commit.sandboxing {
+            Sandboxing::ByPolicy
+                if policies
+                    .csp
+                    .sandbox()
+                    .is_none_or(|it| it.iter().any(|it| it == b"allow-same-origin")) =>
+            {
+                self.origin()
+            }
+            Sandboxing::Ignored => self.origin(),
+            _ => Origin::new_opaque(),
+        };
+        let inherits_program = |it: &Client| it.runs_program() && it.origin() == origin;
+        let runs_program = compiled::is_for_documents_at(&self.url())
+            || commit.origin_of.is_some_and(inherits_program);
+        let around = self.parent().map(|parent| {
+            let (parent, mut declared) = (parent.document.borrow().clone(), Declared::default());
+            if let Some(Container {
+                allow,
+                allows_fullscreen,
+                has_started_navigation,
+                src,
+                ..
+            }) = commit.container
+            {
+                let src = if origin.is_opaque() {
+                    origin.clone()
+                } else {
+                    src.map_or_else(|| parent.origin.clone(), |it| Origin::of(&it))
+                };
+                declared.add_directives(allow, &parent.origin, Some(&src));
+                declared.add_directives(
+                    if allows_fullscreen {
+                        b"fullscreen *"
+                    } else {
+                        b""
+                    },
+                    &parent.origin,
+                    Some(&src),
+                );
+                if !has_started_navigation {
+                    declared.forget_opaque_src();
+                }
+            }
+            (parent, declared)
+        });
+        let mut enforced =
+            Declared::from_header(&headers.get_or_empty(b"permissions-policy"), &origin);
+        enforced.add_directives(&headers.get_or_empty(b"feature-policy"), &origin, None);
+        let reported = Declared::from_header(
+            &headers.get_or_empty(b"permissions-policy-report-only"),
+            &origin,
+        );
+        let mut document = self.document.borrow_mut();
+        document.permissions = PermissionsPolicy::new(
+            origin.clone(),
+            around.as_ref().map(|it| (&it.0.permissions, &it.1)),
+            enforced,
+        );
+        document.reported_permissions = PermissionsPolicy::new(origin.clone(), None, reported);
+        document.origin = origin;
+        document.runs_program |= runs_program;
+        let has_own_group = || {
+            matches!(
+                parse_item(&headers.get_or_empty(b"cross-origin-opener-policy")),
+                Some((Bare::Token(b"same-origin"), _))
+            )
+        };
+        document.is_isolated = policies.document_isolation_policy.isolates()
+            || (around.map_or_else(
+                || policies.embedder_policy.isolates() && has_own_group(),
+                |it| it.0.is_isolated,
+            ) && document.permissions.allows(Feature::CrossOriginIsolated));
+        (
+            document.policies,
+            document.required_csp,
+            document.refuses_required_csp,
+        ) = (policies, required_csp, refuses_required_csp);
+        drop(document);
+        let is_apart = |it: &Client| it.agent.borrow().is_in_page_process;
+        let side = (commit.reserved.as_ref().map(|it| it.is_apart))
+            .or_else(|| commit.policies_of.map(is_apart));
+        if let Some(it) = side {
+            self.move_out(it);
+        }
+        let (reserved, control) = match commit.reserved {
+            _ if self.origin().is_opaque() => (None, None),
+            Some(it) => (Some(it.presence), it.control),
+            None => (
+                None,
+                (commit.policies_of)
+                    .filter(|it| it.bucket() == self.bucket())
+                    .and_then(|it| it.service.borrow().control.clone()),
+            ),
+        };
+        let mut service = self.service.borrow_mut();
+        service.presence = reserved.or_else(|| service.presence.take());
+        service.id = service.presence.as_ref().map(|it| it.id);
+        service.control = control;
+        let is_known = service.presence.is_some() || service.control.is_some();
+        drop(service);
+        if is_known {
+            self.greet_registry();
+        }
+    }
+
+    /// For the client that gets the document after all.
+    pub fn give_up_place(&self) -> Option<Reserved> {
+        let service = self.service.take();
+        Some(Reserved {
+            presence: service.presence?,
+            control: service.control,
+            is_apart: self.agent.borrow().is_in_page_process,
+        })
+    }
+
+    fn greet_registry(&self) {
+        let caller = self.as_caller().into();
+        self.be_present();
+        let service = self.service.borrow();
+        let hello = ToRegistry::Hello {
+            caller,
+            uses: service.control.as_ref().map(|it| it.registration),
+            listens: service.listener.is_some(),
+        };
+        service::send(&self.session, hello);
+    }
+
+    fn be_present(&self) {
+        if !matches!(self.ancestry, Ancestry::Worker { .. }) {
+            (self.service.borrow_mut().presence)
+                .get_or_insert_with(|| Presence::new(&self.session, self.id.0));
+        }
+    }
+
+    pub(crate) fn id_for_service_workers(&self) -> u32 {
+        self.service.borrow().id.unwrap_or(self.id.0)
+    }
+
+    fn bucket_for_service_workers(&self) -> Bytes {
+        service::bucket_for(self.bucket(), self.agent.borrow().is_in_page_process)
+    }
+
+    fn as_caller(&self) -> Caller {
+        Caller {
+            weight: None,
+            address: Address {
+                thread: Thread::current(),
+                client: self.id,
+            },
+            info: ClientInfo {
+                id: self.id_for_service_workers(),
+                kind: match self.ancestry {
+                    Ancestry::Worker { kind, .. } => kind,
+                    _ => ClientKind::Window,
+                },
+                url: self.document.borrow().creation_url.clone(),
+                ancestors: self.ancestors(),
+                window: self.window_state(),
+            },
+            home_url: self.home_url(),
+            referrer: (self.referrer_source()).map(|it| (it, self.policies().referrer_policy)),
+            bucket: self.bucket_for_service_workers(),
+            agent: self.agent.borrow().clone(),
+            worker: self.service.borrow().own.as_ref().map(|it| it.worker.id),
+        }
+    }
+
+    pub(crate) fn windows_of(session: &Arc<Session>) -> Vec<Caller> {
+        let all =
+            CLIENTS.with_borrow(|it| it.values().filter_map(Weak::upgrade).collect::<Vec<_>>());
+        all.iter()
+            .filter(|it| Arc::ptr_eq(&it.session, session) && it.may_use_service_workers())
+            .map(|it| it.as_caller())
+            .filter(|it| it.info.window.is_some())
+            .collect()
+    }
+
+    pub(crate) fn window_state(&self) -> Option<WindowState> {
+        self.scripts()?.window_state()
+    }
+
+    pub(crate) fn focus(&self) {
+        self.scripts().into_iter().for_each(|it| it.focus());
+    }
+
+    pub(crate) fn navigate(&self, url: Url) -> Option<Receiver<Option<ClientId>>> {
+        let is_mixed = (self.parent()).is_some_and(|it| it.blocks_as_mixed_content(&url));
+        self.scripts().filter(|_| !is_mixed)?.navigate(url)
+    }
+
+    /// By a page, from this service worker.
+    pub fn was_asked_for_code(&self, url: &Url) {
+        let asked = &mut self.service.borrow_mut().asked_for_as_code;
+        if asked.len() == MOST_NOTES_FOR_SERVICE_WORKERS {
+            asked.clear();
+        }
+        asked.insert(url.without_fragment().into(), ());
+    }
+
+    /// A service worker can pass off what it has fetched as its own.
+    fn may_serve_as_code(&self, url: &Url) -> bool {
+        let service = self.service.borrow();
+        let is_installed = |it: &Own| it.imports.lock().is_complete;
+        service
+            .asked_for_as_code
+            .contains_key(url.without_fragment())
+            || (service.own.as_ref()).is_some_and(|it| !is_installed(it) && self.trusts(url))
+    }
+
+    pub fn may_use_service_workers(&self) -> bool {
+        self.is_secure()
+            && !self.origin().is_opaque()
+            && !matches!(self.role, Role::App { .. })
+            && !self.agent.borrow().is_kept_apart
+    }
+
+    pub(crate) fn notice(&self, notice: Notice) {
+        if self.is_disposed.get() {
+            return;
+        }
+        if let Notice::Controller(control) = &notice {
+            self.be_present();
+            self.service.borrow_mut().control.clone_from(control);
+        }
+        let mut service = self.service.borrow_mut();
+        if let (Notice::State(id, state), Some(control)) = (&notice, &mut service.control)
+            && control.worker.id == *id
+        {
+            control.worker.state = *state;
+        }
+        if let Some(listener) = service.listener.clone() {
+            drop(service);
+            listener(notice);
+        } else if let Notice::Controller(_) | Notice::State(..) = notice {
+            drop(service);
+            self.update_twin(|| Update::Service(Told::Notice(notice).into()));
+        } else if let Notice::Message(..) = notice
+            && service.unheard.len() < MOST_NOTES_FOR_SERVICE_WORKERS
+        {
+            service.unheard.push(notice);
+        }
+    }
+
+    /// `listener` runs no script.
+    pub fn listen_to_service_workers(&self, listener: Rc<dyn Fn(Notice)>) {
+        let unheard = core::mem::take(&mut self.service.borrow_mut().unheard);
+        unheard.into_iter().for_each(&*listener);
+        self.service.borrow_mut().listener = Some(listener);
+        if let Some(outside) = self.outside() {
+            outside.listen_to_service_workers();
+        } else if self.may_use_service_workers() {
+            self.greet_registry();
+        }
+    }
+
+    /// The outcome comes with `ticket`.
+    pub fn call_service_workers(&self, ticket: u32, call: Call) {
+        self.call_service_workers_with(ticket, call, None);
+    }
+
+    pub(crate) fn call_service_workers_with(
+        &self,
+        ticket: u32,
+        call: Call,
+        weight: Option<Arc<service::Weight>>,
+    ) {
+        let is_allowed = self.may_use_service_workers()
+            && match &call {
+                Call::Register { scope, script, .. } => {
+                    let (destination, mode) = (Destination::ServiceWorker, Mode::SameOrigin);
+                    let request =
+                        Request::new(script.clone(), destination, mode, Credentials::Omit);
+                    if self.twin.borrow().is_none() {
+                        self.report_request(&request, None);
+                    }
+                    [scope, script]
+                        .iter()
+                        .all(|it| service::is_allowed_at(it) && self.origin().is_origin_of(it))
+                        && self.allows_request(&request, None)
+                }
+                Call::GetRegistration(url) => self.origin().is_origin_of(url),
+                _ => true,
+            };
+        if let Some(outside) = self.outside().filter(|_| is_allowed) {
+            outside.call_service_workers(ticket, Measured(call, 0));
+        } else if is_allowed {
+            let caller = Caller {
+                weight,
+                ..self.as_caller()
+            };
+            service::send(&self.session, ToRegistry::Call(caller.into(), ticket, call));
+        } else {
+            let failure = Outcome::Failed(Failure::Security, "The URL is not allowed here.");
+            self.notice(Notice::Settled(ticket, failure));
+        }
+    }
+
+    pub fn controller(&self) -> Option<WorkerInfo> {
+        Some(self.service.borrow().control.as_ref()?.worker.clone())
+    }
+
+    pub fn as_service_worker(&self) -> Option<Own> {
+        self.service.borrow().own.clone()
+    }
+
+    /// `None` if there is nobody to ask.
+    pub fn claim_shared_worker(
+        &self,
+        worker: u32,
+        url: &Url,
+        name: &[u8],
+        options: [u8; 4],
+    ) -> Option<impl Future<Output = Option<Claim>> + use<>> {
+        Some((self.outside()?).claim_shared_worker(worker, url.clone(), name.into(), options))
+    }
+
+    pub(crate) fn is_service_worker(&self) -> bool {
+        self.service.borrow().own.is_some()
+    }
+
+    fn handler_for_new_client(&self, source: Option<&Client>) -> Handler {
+        match service::may_have_any(&self.session) {
+            true => Handler::Matching {
+                agent: self.agent.borrow().clone(),
+                client: source.map(Client::id_for_service_workers),
+                reserved: None,
+            },
+            false => Handler::Nobody,
+        }
+    }
+
+    fn required_csp(&self, attribute: Option<&[u8]>, url: &Url) -> Option<RequiredCsp> {
+        RequiredCsp::new(
+            attribute,
+            self.parent()?.document.borrow().required_csp.as_ref(),
+            url,
+        )
+    }
+
+    /// What this document inherits from when it is loaded again.
+    pub fn bequest(&self, creator: &Client) -> Rc<Client> {
+        let (agent, document) = (
+            self.agent.borrow().clone(),
+            Document {
+                origin: creator.origin(),
+                ..self.document.borrow().clone()
+            },
+        );
+        Client::make(
+            ClientId(next_id()),
+            Client::new_token(),
+            Arc::clone(&self.session),
+            self.role,
+            Ancestry::Top,
+            agent,
+            document,
+            UnreadTimings::default(),
+        )
+    }
+
+    /// `headers` came with the script at `url`.
+    pub fn seed_worker(
+        &self,
+        url: Url,
+        headers: &HeaderList,
+        is_shared: bool,
+        reserved: Option<Reserved>,
+    ) -> WorkerSeed {
+        let inherited = (self.service.borrow().control.clone()).filter(|_| url.scheme() == b"blob");
+        let reserved_id = reserved.as_ref().map(|it| it.presence.id);
+        let (mut presence, control) =
+            reserved.map_or((None, inherited), |it| (Some(it.presence), it.control));
+        let id = ClientId::next();
+        if presence.is_none() && self.may_use_service_workers() && url.scheme() != b"data" {
+            let uses = control.as_ref().map(|it| it.registration);
+            let expected = ToRegistry::Expect(id.0, self.bucket_for_service_workers(), uses);
+            service::send(&self.session, expected);
+            presence = Some(Presence::new(&self.session, id.0));
+        }
+        let mut document = self.document.borrow().clone();
+        document.is_from_https = self.prohibits_mixed_content();
+        if url.scheme() == b"data" {
+            (document.origin, document.is_isolated) = (Origin::new_opaque(), false);
+            document.runs_program = compiled::is_for_documents_at(&url);
+        }
+        let inherited = document.policies.inherited();
+        document.policies = if url.is_http() {
+            let document_isolation_policy = inherited.document_isolation_policy;
+            PolicyContainer {
+                document_isolation_policy,
+                ..PolicyContainer::from_response(&url, headers, self.is_secure())
+            }
+        } else {
+            inherited
+        };
+        if is_shared {
+            document.policies.document_isolation_policy = Default::default();
+        }
+        if let Some(outside) = self.outside() {
+            outside.start_worker(id, url.clone(), is_shared, reserved_id);
+        }
+        document.inherited_url = (url.scheme() == b"blob").then(|| self.home_url());
+        document.creation_url = url.clone();
+        (document.url, document.status, document.referrer) = (url, 200, Bytes::default());
+        WorkerSeed {
+            id,
+            is_far: self.outside().is_some(),
+            responsible: self.responsible.get(),
+            token: Client::new_token(),
+            session: Arc::clone(&self.session),
+            role: self.role,
+            agent: self.agent.borrow().clone(),
+            document,
+            ancestors: self.ancestors(),
+            is_secure: self.is_secure(),
+            kind: match is_shared {
+                true => ClientKind::SharedWorker,
+                false => ClientKind::Worker,
+            },
+            control,
+            presence,
+            own: None,
+            creator: Some(Creator {
+                thread: Thread::current(),
+                id: self.id,
+                destination: match is_shared {
+                    true => Destination::SharedWorker,
+                    false => Destination::Worker,
+                },
+            }),
+            unread_timings: UnreadTimings::default(),
+        }
+    }
+
+    pub fn for_worker(seed: WorkerSeed) -> Rc<Client> {
+        let WorkerSeed {
+            id,
+            responsible,
+            token,
+            session,
+            role,
+            agent,
+            document,
+            ancestors,
+            is_secure,
+            kind,
+            creator,
+            control,
+            presence,
+            own,
+            unread_timings,
+            is_far,
+        } = seed;
+        let client = Client::make(
+            id,
+            token,
+            session,
+            role,
+            Ancestry::Worker {
+                ancestors,
+                is_secure,
+                kind,
+            },
+            agent,
+            document,
+            unread_timings,
+        );
+        client.creator.replace(creator);
+        client.responsible.set(responsible);
+        client.far.set(is_far.then(|| Far {
+            outside: Outside::enter(id),
+            handles_data: false,
+        }));
+        client.service.replace(Service {
+            id: presence.as_ref().map(|it| it.id),
+            control,
+            own,
+            ..Service::default()
+        });
+        if presence.is_some() {
+            client.greet_registry();
+        }
+        client
+    }
+
+    pub fn parent(&self) -> Option<&Rc<Client>> {
+        if let Ancestry::Frame(parent) = &self.ancestry {
+            Some(parent)
+        } else {
+            None
+        }
+    }
+
+    fn around(&self) -> Option<&Around> {
+        match &self.ancestry {
+            Ancestry::FrameApart(around) => Some(around),
+            _ => None,
+        }
+    }
+
+    pub fn url(&self) -> Url {
+        self.document.borrow().url.clone()
+    }
+
+    pub fn set_url(&self, url: Url) {
+        self.update_twin(|| Update::Url(url.clone()));
+        self.document.borrow_mut().url = url;
+    }
+
+    fn home_url(&self) -> Url {
+        let document = self.document.borrow();
+        (document
+            .inherited_url
+            .as_ref()
+            .unwrap_or(&document.creation_url))
+        .clone()
+    }
+
+    pub fn cookie_url(&self) -> Url {
+        let created = self.document.borrow().creation_url.clone();
+        match created.scheme() {
+            b"blob" => created,
+            _ => self.home_url(),
+        }
+    }
+
+    pub fn referrer(&self) -> Bytes {
+        self.document.borrow().referrer.clone()
+    }
+
+    pub fn origin(&self) -> Origin {
+        self.document.borrow().origin.clone()
+    }
+
+    pub fn policies(&self) -> Ref<'_, PolicyContainer> {
+        Ref::map(self.document.borrow(), |it| &it.policies)
+    }
+
+    pub fn permissions_policy(&self) -> Ref<'_, PermissionsPolicy> {
+        Ref::map(self.document.borrow(), |it| &it.permissions)
+    }
+
+    pub fn add_csp(&self, value: &[u8], delivery: Delivery) {
+        self.document.borrow_mut().policies.csp.add(value, delivery);
+    }
+
+    pub fn set_referrer_policy(&self, policy: ReferrerPolicy) {
+        let policies = &mut self.document.borrow_mut().policies;
+        policies.referrer_policy = policy.or(policies.referrer_policy);
+    }
+
+    pub fn is_cross_origin_isolated(&self) -> bool {
+        self.document.borrow().is_isolated
+    }
+
+    /// Whether it gets compiled scripts. They need a realm whose built-in objects are read-only.
+    pub fn runs_program(&self) -> bool {
+        self.document.borrow().runs_program && !self.agent.borrow().is_like_in_browser
+    }
+
+    /// The origins of the documents that it is in, the outermost last.
+    pub fn ancestors(&self) -> Vec<Origin> {
+        match &self.ancestry {
+            Ancestry::Top => Vec::new(),
+            Ancestry::Frame(parent) => [vec![parent.origin()], parent.ancestors()].concat(),
+            Ancestry::Worker { ancestors, .. } | Ancestry::FrameApart(Around { ancestors, .. }) => {
+                ancestors.clone()
+            }
+        }
+    }
+
+    pub fn is_secure(&self) -> bool {
+        if let Ancestry::Worker { is_secure, .. } = self.ancestry {
+            return is_secure;
+        }
+        let document = self.document.borrow();
+        is_potentially_trustworthy(document.origin.to_url().as_ref().unwrap_or(&document.url))
+            && self.parent().is_none_or(|it| it.is_secure())
+            && self.around().is_none_or(|it| it.is_secure)
+    }
+
+    /// https://w3c.github.io/webappsec-mixed-content/#categorize-settings-object
+    fn prohibits_mixed_content(&self) -> bool {
+        self.document.borrow().is_from_https
+            || self.parent().is_some_and(|it| it.prohibits_mixed_content())
+            || self.around().is_some_and(|it| it.prohibits_mixed_content)
+    }
+
+    /// What is not upgraded by itself.
+    pub fn blocks_as_mixed_content(&self, url: &Url) -> bool {
+        self.prohibits_mixed_content() && is_insecure(url) && !self.upgrades_insecure_requests()
+    }
+
+    pub fn upgrades_insecure_requests(&self) -> bool {
+        self.policies()
+            .csp
+            .enforces(Directive::UpgradeInsecureRequests)
+            || self
+                .parent()
+                .is_some_and(|it| it.upgrades_insecure_requests())
+            || (self.around()).is_some_and(|it| it.upgrades_insecure_requests)
+    }
+
+    fn is_srcdoc(&self) -> bool {
+        self.document.borrow().url.href() == b"about:srcdoc"
+    }
+
+    /// What it is the referrer as.
+    pub fn referrer_source(&self) -> Option<Url> {
+        let document = self.document.borrow();
+        match (self.parent(), self.around()) {
+            (Some(parent), _) if self.is_srcdoc() => parent.referrer_source(),
+            (_, Some(around)) if self.is_srcdoc() => around.referrer_of_srcdoc.clone(),
+            _ => (!document.origin.is_opaque()).then(|| document.url.clone()),
+        }
+    }
+
+    /// What its storage is kept under.
+    pub fn bucket(&self) -> Vec<u8> {
+        let mut bucket = bucket_of(&self.origin(), &self.ancestors());
+        if self.agent.borrow().is_kept_apart {
+            bucket.extend_from_slice(b"^untrusted");
+        }
+        bucket
+    }
+
+    /// What it has in common with those that it may talk to.
+    pub fn partition_key(&self) -> Vec<u8> {
+        let origin = self.origin();
+        let key = if origin.is_opaque() {
+            origin.key()
+        } else {
+            self.bucket()
+        };
+        [&self.session.id().to_le_bytes(), &*key].concat()
+    }
+
+    pub fn locks(&self) -> LockManager {
+        let bucket = self.bucket();
+        (self.session.storage.far_shelf(&bucket))
+            .map_or_else(|| self.session.locks_of(&bucket), LockManager::Far)
+    }
+
+    fn scripts(&self) -> Option<Rc<dyn Scripts>> {
+        self.scripts.borrow().clone()
+    }
+
+    fn log_error(&self, message: core::fmt::Arguments<'_>) {
+        if let Some(scripts) = self.scripts() {
+            scripts.log_error(message.to_string().as_bytes());
+        }
+    }
+
+    fn send_report(&self, url: Url, is_legacy: bool, json: String) {
+        let Some(client) = Client::find(self.id) else {
+            return;
+        };
+        let mut request = Request::new(
+            url,
+            Destination::Report,
+            if is_legacy { Mode::NoCors } else { Mode::Cors },
+            Credentials::SameOrigin,
+        );
+        request.method = b"POST"[..].into();
+        request.redirect = if is_legacy {
+            Redirect::Follow
+        } else {
+            Redirect::Error
+        };
+        request.headers.append(
+            b"Content-Type",
+            if is_legacy {
+                b"application/csp-report"
+            } else {
+                b"application/reports+json"
+            },
+        );
+        request.body = Some(RequestBody::Data(Data::Bytes(json.into_bytes().into())));
+        request.keepalive = true;
+        client.fetch_and_forget(request);
+    }
+
+    /// To the observers in the realm, and to an endpoint that `Reporting-Endpoints` has named.
+    fn queue_report(
+        &self,
+        kind: ReportType,
+        body: Members,
+        endpoint: Option<&[u8]>,
+        element: JSValue,
+    ) {
+        if let Some(endpoint) = endpoint {
+            self.send_to_endpoint(kind, &body, endpoint);
+        }
+        match self.twin.borrow().clone() {
+            Some(twin) => twin.update(Update::Report { kind, body }),
+            None => crate::realm::tell_scripts(self.id, kind, body, element),
+        }
+    }
+
+    fn send_to_endpoint(&self, kind: ReportType, body: &Members, endpoint: &[u8]) {
+        let url = self.policies().endpoints.get(endpoint).cloned();
+        if let Some(url) = url {
+            let about = [
+                ("age", Member::Number(0)),
+                ("type", kind.as_bytes().into()),
+                ("url", (*strip_for_report(&self.url())).into()),
+                (
+                    "user_agent",
+                    Member::Text(self.agent.borrow().user_agent.clone()),
+                ),
+            ];
+            self.send_report(
+                url,
+                false,
+                format!("[{{\"body\":{},{}]", to_json(body), &to_json(&about)[1..]),
+            );
+        }
+    }
+
+    /// The URL of the script that is running, the line and the column.
+    fn location(&self, known: Option<ScriptLocation>) -> [Member; 3] {
+        let ScriptLocation { url, line, column } = known
+            .or_else(|| self.scripts().map(|it| it.location()))
+            .unwrap_or_default();
+        Url::parse(&url).map_or([Member::Null, Member::Null, Member::Null], |url| {
+            let stripped = strip_for_report(&url);
+            let without_query =
+                strings::split_once_char(&stripped, b'?').map_or(&*stripped, |it| it.0);
+            [
+                without_query.into(),
+                Member::Number(line),
+                Member::Number(column),
+            ]
+        })
+    }
+
+    /// https://w3c.github.io/webappsec-csp/#report-violation
+    fn report_violation(&self, violation: Violation, element: JSValue, at: Option<ScriptLocation>) {
+        let Violation {
+            blocked,
+            directive,
+            policy,
+            is_enforced,
+            sample,
+            report_urls,
+            report_group,
+        } = violation;
+        let (name, shown) = (
+            bstr::BStr::new(directive.as_bytes()),
+            bstr::BStr::new(&policy),
+        );
+        self.log_error(format_args!(
+            "Refused {}: it violates the directive {name} of \"{shown}\"",
+            bstr::BStr::new(&blocked)
+        ));
+        let [source, line, column] = self.location(at);
+        let (url, document) = (self.url(), self.document.borrow());
+        let members = [
+            (
+                "documentURL",
+                "document-uri",
+                (*strip_for_report(&url)).into(),
+            ),
+            (
+                "referrer",
+                "referrer",
+                Member::Text(document.referrer.clone()),
+            ),
+            ("blockedURL", "blocked-uri", Member::Text(blocked)),
+            (
+                "effectiveDirective",
+                "effective-directive",
+                directive.as_bytes().into(),
+            ),
+            ("originalPolicy", "original-policy", Member::Text(policy)),
+            ("sourceFile", "source-file", source),
+            ("sample", "script-sample", Member::Text(sample)),
+            (
+                "disposition",
+                "disposition",
+                disposition(is_enforced, b"report"),
+            ),
+            (
+                "statusCode",
+                "status-code",
+                Member::Number(if url.is_http() {
+                    document.status.into()
+                } else {
+                    0
+                }),
+            ),
+            ("lineNumber", "line-number", line),
+            ("columnNumber", "column-number", column),
+        ];
+        drop(document);
+        let mut is_new = false;
+        if !report_urls.is_empty() || report_group.is_some() {
+            let known = members
+                .iter()
+                .filter(|it| !matches!(it.2, Member::Null))
+                .map(|it| (it.1, it.2.clone()));
+            let legacy: Members = known
+                .chain([("violated-directive", directive.as_bytes().into())])
+                .collect();
+            let json = format!("{{\"csp-report\":{}}}", to_json(&legacy));
+            let mut sent = self.sent_reports.borrow_mut();
+            is_new = sent.len() < MAX_SENT_REPORTS
+                && sent.insert(bun_wyhash::hash(json.as_bytes()), ()).is_none();
+            drop(sent);
+            for target in report_urls
+                .iter()
+                .filter(|_| is_new)
+                .filter_map(|it| url.join(it))
+            {
+                self.send_report(target, true, json.clone());
+            }
+        }
+        let body = members.into_iter().map(|it| (it.0, it.2)).collect();
+        self.queue_report(
+            ReportType::CspViolation,
+            body,
+            report_group.as_deref().filter(|_| is_new),
+            element,
+        );
+    }
+
+    pub fn report_corp_violation(
+        &self,
+        kind: IsolationKind,
+        violated: &[u8],
+        destination: Destination,
+        blocked: &Url,
+        is_enforced: bool,
+    ) {
+        let (report_type, policy) = match kind {
+            IsolationKind::Embedder => (ReportType::Coep, self.policies().embedder_policy.clone()),
+            IsolationKind::Document => (
+                ReportType::Dip,
+                self.policies().document_isolation_policy.clone(),
+            ),
+        };
+        let body = vec![
+            ("type", violated.into()),
+            ("blockedURL", blocked.stripped().href().into()),
+            ("destination", destination.as_bytes().into()),
+            ("disposition", disposition(is_enforced, b"reporting")),
+        ];
+        let endpoint = if is_enforced {
+            policy.endpoint
+        } else {
+            policy.report_only_endpoint
+        };
+        self.queue_report(report_type, body, endpoint.as_deref(), JSValue::UNDEFINED);
+    }
+
+    /// Reports what it violates.
+    pub fn allows_eval(&self, code: &[u8]) -> bool {
+        let verdict = self.policies().csp.check_eval(code);
+        self.enforce(verdict, JSValue::UNDEFINED) && !crate::compiled::is_exclusive()
+    }
+
+    pub fn allows_string_for(&self, sink: &[u8], value: &[u8]) -> bool {
+        let verdict = self.policies().csp.check_sink(sink, value);
+        self.enforce(verdict, JSValue::UNDEFINED)
+    }
+
+    pub fn allows_type_policy(&self, name: &[u8], is_taken: bool) -> bool {
+        let verdict = self.policies().csp.check_type_policy(name, is_taken);
+        self.enforce(verdict, JSValue::UNDEFINED)
+    }
+
+    pub fn enforce(&self, verdict: Verdict, element: JSValue) -> bool {
+        self.enforce_at(verdict, element, None)
+    }
+
+    fn enforce_at(&self, verdict: Verdict, element: JSValue, at: Option<(u32, u32)>) -> bool {
+        let is_allowed = verdict.is_allowed();
+        for it in verdict.violations {
+            let at = at.map(|(line, column)| ScriptLocation {
+                url: self.url().href().into(),
+                line,
+                column,
+            });
+            self.report_violation(it, element, at);
+        }
+        is_allowed
+    }
+
+    /// `parsed_at`: the line and the column in the source of the document.
+    pub fn csp_allows_inline<T: AsRef<str>>(
+        &self,
+        kind: Inline,
+        source: impl FnOnce() -> T,
+        nonce: &[u8],
+        is_parser_inserted: bool,
+        element: JSValue,
+        parsed_at: Option<(u32, u32)>,
+    ) -> bool {
+        if self.policies().csp.is_empty() {
+            return true;
+        }
+        let source = source();
+        let verdict = (self.policies().csp).check_inline(
+            kind,
+            source.as_ref().as_bytes(),
+            nonce,
+            is_parser_inserted,
+        );
+        self.enforce_at(verdict, element, parsed_at)
+    }
+
+    /// Whether the policy that the document came with says which scripts run.
+    pub fn has_restricted_scripts(&self) -> bool {
+        !compiled::is_exclusive() && self.policies().csp.restricts_scripts()
+    }
+
+    /// Without a policy: what the document came with, and nothing that was put into it since.
+    pub fn trusts_inline_script(&self, came_with_document: impl FnOnce() -> bool) -> bool {
+        let is_up_to_page = !matches!(self.role, Role::App { .. })
+            && (self.has_restricted_scripts()
+                || (!compiled::is_exclusive() && trust::trusts_injected_scripts()));
+        let is_trusted = is_up_to_page || came_with_document();
+        if !is_trusted {
+            self.log_error(format_args!(
+                "Refused to run an inline script that is not in the source of the document"
+            ));
+        }
+        is_trusted
+    }
+
+    /// For when it is about to be used, which is reported if it must not be.
+    pub fn may_use(&self, feature: Feature) -> bool {
+        let document = self.document.borrow();
+        let is_allowed = document.permissions.allows(feature);
+        let violated = if is_allowed {
+            &document.reported_permissions
+        } else {
+            &document.permissions
+        };
+        if violated.allows(feature) {
+            return true;
+        }
+        let endpoint = violated.endpoint(feature).map(Bytes::from);
+        drop(document);
+        let [source, line, column] = self.location(None);
+        let message = [
+            b"Permissions policy violation: ",
+            feature.as_bytes(),
+            b" is not allowed in this document.",
+        ]
+        .concat();
+        let body = vec![
+            ("featureId", feature.as_bytes().into()),
+            ("sourceFile", source),
+            ("lineNumber", line),
+            ("columnNumber", column),
+            ("disposition", disposition(!is_allowed, b"report")),
+            ("message", (*message).into()),
+        ];
+        self.queue_report(
+            ReportType::PermissionsPolicyViolation,
+            body,
+            endpoint.as_deref(),
+            JSValue::UNDEFINED,
+        );
+        is_allowed
+    }
+
+    pub fn csp_allows_request(
+        &self,
+        url: &Url,
+        destination: Destination,
+        metadata: &Metadata,
+        first: Option<&Url>,
+    ) -> bool {
+        let verdict = self
+            .policies()
+            .csp
+            .check_request(url, destination, metadata, first);
+        self.enforce(verdict, JSValue::UNDEFINED)
+    }
+
+    /// Where the program has the script. `None` if it is to be fetched, or to be refused when it is.
+    pub fn compiled_path(
+        &self,
+        url: &Url,
+        form: Form,
+        destination: Destination,
+        metadata: &Metadata,
+    ) -> Option<Vec<u8>> {
+        let path = self.compiled_path_by_any_policy(url, form)?;
+        let verdict = (self.policies().csp).check_request(url, destination, metadata, None);
+        (verdict.is_allowed() && self.enforce(verdict, JSValue::UNDEFINED)).then_some(path)
+    }
+
+    pub fn compiled_path_by_any_policy(&self, url: &Url, form: Form) -> Option<Vec<u8>> {
+        let is_in_reach = url.scheme() != b"file" || self.origin() == Origin::of(url);
+        (self.runs_program() && is_in_reach).then(|| compiled::path_of(url.href(), form))?
+    }
+
+    /// Only those that it was loaded with.
+    pub fn allows_credentials_in(&self, url: &Url) -> bool {
+        let own = self.url();
+        !url.includes_credentials()
+            || ((own.username(), own.password()) == (url.username(), url.password())
+                && self.origin() == Origin::of(url))
+    }
+
+    fn check_request(&self, request: &Request, first: Option<&Url>) -> Verdict {
+        let csp = &self.policies().csp;
+        csp.check_request(&request.url, request.destination, &request.metadata, first)
+    }
+
+    /// Whether what another request has fetched may be used without a word.
+    pub fn may_reuse_for(&self, request: &Request) -> bool {
+        self.check_request(request, None).violations.is_empty()
+    }
+
+    pub fn report_mixed_content(&self, url: &Url) {
+        let verdict = self.policies().csp.check_mixed_content(url);
+        self.enforce(verdict, JSValue::UNDEFINED);
+    }
+
+    /// https://w3c.github.io/webappsec-csp/#report-for-request
+    pub fn report_request(&self, request: &Request, first: Option<&Url>) {
+        if self.policies().csp.has_report_only() {
+            let verdict = self.check_request(request, first).of_enforced(false);
+            self.enforce(verdict, JSValue::UNDEFINED);
+        }
+    }
+
+    /// https://w3c.github.io/webappsec-subresource-integrity/#should-request-be-blocked-by-integrity-policy-section
+    fn integrity_policy_allows(&self, request: &Request) -> bool {
+        let policies = self.policies();
+        let both = [
+            &policies.integrity_policy,
+            &policies.report_only_integrity_policy,
+        ];
+        if request.destination != Destination::Script
+            || !both.iter().any(|it| it.blocks_scripts)
+            || request.url.is_local()
+            || privileges_of(request.url.scheme()).contains(Privileges::BYPASS_CSP)
+            || (request.mode != Mode::NoCors
+                && !parse_metadata(&request.metadata.integrity).is_empty())
+        {
+            return true;
+        }
+        for (policy, is_report_only) in both.into_iter().zip([false, true]) {
+            if policy.blocks_scripts {
+                let body = vec![
+                    ("documentURL", (*strip_for_report(&self.url())).into()),
+                    ("blockedURL", (*strip_for_report(&request.url)).into()),
+                    ("destination", request.destination.as_bytes().into()),
+                    ("reportOnly", Member::Boolean(is_report_only)),
+                ];
+                let kind = ReportType::IntegrityViolation;
+                (policy.endpoints.iter()).for_each(|it| self.send_to_endpoint(kind, &body, it));
+                self.queue_report(kind, body, None, JSValue::UNDEFINED);
+            }
+        }
+        !policies.integrity_policy.blocks_scripts
+    }
+
+    /// Whatever the policy of the page allows, no script of another party runs in this process. After [`Client::report_request`].
+    pub fn allows_request(&self, request: &Request, first: Option<&Url>) -> bool {
+        let verdict = self.check_request(request, first).of_enforced(true);
+        self.enforce(verdict, JSValue::UNDEFINED) && self.trusts_source_of(request)
+    }
+
+    fn trusts_source_of(&self, request: &Request) -> bool {
+        let (url, destination) = (&request.url, request.destination);
+        match url.scheme() {
+            _ if !destination.is_script_like() || matches!(self.role, Role::App { .. }) => true,
+            _ if self.agent.borrow().is_like_in_browser => true,
+            // The web engine runs audio worklets.
+            _ if compiled::is_exclusive() && destination != Destination::AudioWorklet => {
+                compiled::path_of(url.href(), Form::Module).is_some()
+            }
+            b"blob" => true,
+            b"data" => self.policies().csp.restricts_scripts() || trust::trusts_injected_scripts(),
+            _ => self.trusts(url),
+        }
+    }
+
+    fn trusts(&self, url: &Url) -> bool {
+        trust::is_trusted(url, &self.agent.borrow().app_path)
+    }
+
+    /// Whether a frame or a worker of it may have the policy `theirs`.
+    fn embedder_policy_allows(
+        &self,
+        theirs: EmbedderPolicy,
+        violated: &[u8],
+        destination: Destination,
+        url: &Url,
+    ) -> bool {
+        let own = self.policies().embedder_policy.values;
+        let allows =
+            |own| own == EmbedderPolicy::UnsafeNone || theirs != EmbedderPolicy::UnsafeNone;
+        for (policy, is_enforced) in [(own.reported, false), (own.enforced, true)] {
+            if !allows(policy) {
+                self.report_corp_violation(
+                    IsolationKind::Embedder,
+                    violated,
+                    destination,
+                    url,
+                    is_enforced,
+                );
+            }
+        }
+        allows(own.enforced)
+    }
+
+    /// https://html.spec.whatwg.org/multipage/document-lifecycle.html#check-a-navigation-response's-adherence-to-x-frame-options
+    pub fn allows_embedder(&self, headers: &HeaderList) -> bool {
+        let ancestors = self.ancestors();
+        if ancestors.is_empty() || self.url().scheme() == b"chrome-error" {
+            return true;
+        }
+        let verdict = self.policies().csp.check_ancestors(&ancestors);
+        if !self.enforce(verdict, JSValue::UNDEFINED) || self.document.borrow().refuses_required_csp
+        {
+            return false;
+        }
+        let (url, own) = (self.url(), self.policies().embedder_policy.values.enforced);
+        if !url.is_local()
+            && self.parent().is_some_and(|it| {
+                !it.embedder_policy_allows(own, b"navigation", Destination::Iframe, &url)
+            })
+        {
+            return false;
+        }
+        let value = headers
+            .get_or_empty(b"x-frame-options")
+            .to_ascii_lowercase();
+        let mut options: Vec<_> = split(&value, b',').collect();
+        options.sort_unstable();
+        options.dedup();
+        match &*options {
+            _ if self.policies().csp.enforces(Directive::FrameAncestors) => true,
+            [b"deny"] => false,
+            [b"sameorigin"] => ancestors.iter().all(|it| *it == self.origin()),
+            [_] => true,
+            _ => !options
+                .iter()
+                .any(|it| matches!(*it, b"deny" | b"allowall" | b"sameorigin")),
+        }
+    }
+
+    pub fn initiator(&self) -> Initiator {
+        let is_inspected = self.scripts().is_some_and(|it| it.is_inspected());
+        let (agent, document) = (self.agent.borrow(), self.document.borrow());
+        Initiator {
+            role: self.role,
+            origin: Some(document.origin.clone()),
+            ancestors: self.ancestors(),
+            client: Some(self.responsible.get()),
+            user_agent: agent.user_agent.clone(),
+            accept_language: agent.accept_language.clone(),
+            upgrades_insecure_requests: self.upgrades_insecure_requests(),
+            prohibits_mixed_content: self.prohibits_mixed_content(),
+            blocks_all_mixed_content: document
+                .policies
+                .csp
+                .enforces(Directive::BlockAllMixedContent),
+            embedder_policy: document.policies.embedder_policy.values,
+            document_isolation_policy: document.policies.document_isolation_policy.values,
+            is_inspected,
+            service: match &self.service.borrow().control {
+                Some(control) => Handler::Registration {
+                    id: control.registration,
+                    client: self.id_for_service_workers(),
+                },
+                None => Handler::Nobody,
+            },
+            is_in_page_process: self.twin.borrow().is_some(),
+        }
+    }
+
+    /// Of the frame that this document is in, by `source`.
+    pub fn prepare_navigation(
+        &self,
+        request: &mut Request,
+        initiator: &mut Initiator,
+        source: Option<&Client>,
+        is_form: bool,
+        csp: Option<&[u8]>,
+    ) {
+        (request.mode, request.credentials) = (Mode::Navigate, Credentials::Include);
+        (initiator.client, initiator.ancestors) = (Some(self.id), self.ancestors());
+        initiator.is_inspected = self.scripts().is_some_and(|it| it.is_inspected());
+        initiator.prohibits_mixed_content =
+            self.parent().is_some_and(|it| it.prohibits_mixed_content());
+        initiator.blocks_all_mixed_content = true;
+        if !matches!(
+            request.destination,
+            Destination::Embed | Destination::Object
+        ) && self.parent().is_none_or(|it| it.is_secure())
+        {
+            initiator.service = self.handler_for_new_client(None);
+        }
+        initiator.embedder_policy = self
+            .parent()
+            .map(|it| it.policies().embedder_policy.values)
+            .unwrap_or_default();
+        if let Some(required) = self.required_csp(csp, &request.url) {
+            request
+                .cors_exempt_headers
+                .append(b"Sec-Required-CSP", required.as_bytes());
+        }
+        initiator.upgrades_insecure_requests = self
+            .parent()
+            .is_some_and(|it| it.upgrades_insecure_requests())
+            || source.is_some_and(|it| {
+                it.upgrades_insecure_requests()
+                    && (is_form || it.url().host() == request.url.host())
+            });
+        if let Some(source) = source {
+            request.referrer_policy = request
+                .referrer_policy
+                .or(source.policies().referrer_policy);
+        }
+    }
+
+    pub fn may_keep_alive(&self, length: u64) -> bool {
+        self.kept_alive.get() + length <= 64 << 10
+    }
+
+    /// Until the requests that are kept alive have been answered.
+    pub async fn finish_kept_alive(&self) {
+        core::future::poll_fn(|cx| match &mut *self.outliving.borrow_mut() {
+            (0, _) => Poll::Ready(()),
+            (_, waiter) => waiter.pending(cx),
+        })
+        .await
+    }
+
+    pub fn fetch<'a>(
+        &'a self,
+        request: Request,
+        controller: &'a Controller,
+    ) -> LocalFuture<'a, Result<Response>> {
+        Box::pin(self.run_fetch(request, controller))
+    }
+
+    fn prepare(&self, request: &mut Request, controller: &Controller) {
+        if !request.keepalive {
+            let mut fetches = self.fetches.borrow_mut();
+            if fetches.len() == fetches.capacity() {
+                fetches.retain(Controller::is_in_use);
+            }
+            fetches.push(controller.clone());
+            if self.is_disposed.get() {
+                controller.abort();
+            }
+        }
+        request.referrer_policy = request.referrer_policy.or(self.policies().referrer_policy);
+        request
+            .headers
+            .retain(|name, value| !is_forbidden_request_header(name, value));
+    }
+
+    pub(crate) async fn fetch_for_twin(
+        &self,
+        mut request: Request,
+        controller: &Controller,
+    ) -> Result<Response> {
+        struct Outliving<'a>(&'a Client, u32);
+        impl Drop for Outliving<'_> {
+            fn drop(&mut self) {
+                let mut outliving = self.0.outliving.borrow_mut();
+                outliving.0 -= self.1;
+                outliving.1.wake();
+            }
+        }
+        self.prepare(&mut request, controller);
+        let observer = FetchingForTwin(Fetching {
+            client: self,
+            timed: None,
+            blocks_rendering: false,
+        });
+        let outliving = Outliving(self, request.keepalive.into());
+        self.outliving.borrow_mut().0 += outliving.1;
+        let initiator = self.initiator_of(&mut request)?;
+        (fetch::fetch(&self.session, &initiator, request, &observer, controller).await)
+            .map_err(|it| it.error)
+    }
+
+    fn initiator_of(&self, request: &mut Request) -> Result<Initiator> {
+        let mut initiator = self.initiator();
+        match request.destination {
+            Destination::Worker | Destination::SharedWorker if request.mode == Mode::SameOrigin => {
+                initiator.service = match self.may_use_service_workers() {
+                    true => self.handler_for_new_client(Some(self)),
+                    false => Handler::Nobody,
+                };
+            }
+            Destination::Embed | Destination::Object | Destination::Report => {
+                initiator.service = Handler::Nobody;
+            }
+            _ => {}
+        }
+        if let Some(handler) = request.handler.take_if(|_| self.outside().is_none()) {
+            initiator.service = handler;
+        }
+        if let Some(starter) = &request.starter {
+            if !self.allows_request(request, None) {
+                return Err(NetError::BlockedByCsp);
+            }
+            initiator.embedder_policy = Default::default();
+            request.has_user_activation = starter.has_user_activation;
+            initiator.origin.clone_from(&starter.origin);
+        }
+        Ok(initiator)
+    }
+
+    async fn run_fetch(&self, mut request: Request, controller: &Controller) -> Result<Response> {
+        if !self.preloaded.borrow().is_empty()
+            && let Some(loaded) = self.take_preloaded(&request).await
+        {
+            return loaded.map(|it| Response {
+                head: it.head,
+                body: Some(Chunk::Shared(it.bytes).into()),
+            });
+        }
+        self.prepare(&mut request, controller);
+        let initiator = self.initiator_of(&mut request)?;
+        let (start, name) = (monotonic_now(), Bytes::from(request.url.href()));
+        let timed = request
+            .initiator_type
+            .filter(|_| request.url.is_http())
+            .map(|it| (name.clone(), it));
+        let observer = Fetching {
+            client: self,
+            timed,
+            blocks_rendering: request.blocks_rendering,
+        };
+        let kept_alive = match &request.body {
+            Some(RequestBody::Data(data)) if request.keepalive => data.len(),
+            _ => 0,
+        };
+        let outlives = u32::from(request.keepalive);
+        self.kept_alive.update(|it| it + kept_alive);
+        self.outliving.borrow_mut().0 += outlives;
+        let is_for_host = |it: &Far| match request.url.scheme() {
+            b"blob" => request.blob.is_none(),
+            b"data" => it.handles_data,
+            _ => true,
+        };
+        let (session, far) = (&self.session, self.far.get().filter(is_for_host));
+        let fetched = exec::never_at_once(async {
+            match far {
+                Some(Far { outside, .. }) => {
+                    fetch::fetch_by_host(
+                        outside, session, &initiator, request, &observer, controller,
+                    )
+                    .await
+                }
+                None => (fetch::fetch(session, &initiator, request, &observer, controller).await)
+                    .map_err(|it| it.error),
+            }
+        })
+        .await;
+        self.kept_alive.update(|it| it - kept_alive);
+        self.outliving.borrow_mut().0 -= outlives;
+        self.outliving.borrow_mut().1.wake();
+        let error = match fetched {
+            Ok(response) => return Ok(response),
+            Err(error) => error,
+        };
+        if error != NetError::Aborted {
+            self.log_error(format_args!(
+                "Failed to load {}: {}",
+                bstr::BStr::new(&name),
+                error.message()
+            ));
+            if let Some((name, initiator_type)) = &observer.timed {
+                let failed = ResourceTiming::of_failure(name, *initiator_type, start);
+                self.record_timing(ResourceTiming {
+                    blocks_rendering: observer.blocks_rendering,
+                    ..failed
+                });
+            }
+        }
+        Err(error)
+    }
+
+    pub fn fetch_whole<'a>(
+        &'a self,
+        request: Request,
+        controller: &'a Controller,
+    ) -> LocalFuture<'a, Result<Loaded>> {
+        Box::pin(self.run_fetch_whole(request, controller))
+    }
+
+    async fn run_fetch_whole(&self, request: Request, controller: &Controller) -> Result<Loaded> {
+        let budget = match (request.initiator_type, request.destination) {
+            (Some(InitiatorType::Fetch | InitiatorType::XmlHttpRequest), _)
+            | (_, Destination::Audio | Destination::Video) => &FOR_DATA,
+            _ => &FOR_SUBRESOURCES,
+        };
+        let Response { head, body } = self.fetch(request, controller).await?;
+        let bytes = body.unwrap_or_default().read_within(budget).await?;
+        Ok(Loaded {
+            head,
+            bytes: bytes.into_shared(),
+        })
+    }
+
+    /// `None` if it cannot be used.
+    pub fn load(
+        self: Rc<Self>,
+        request: Request,
+        purpose: Purpose,
+        is_quirky: bool,
+    ) -> LocalFuture<'static, Option<Resource>> {
+        Box::pin(self.run_load(request, purpose, is_quirky))
+    }
+
+    async fn run_load(
+        self: Rc<Self>,
+        mut request: Request,
+        purpose: Purpose,
+        is_quirky: bool,
+    ) -> Option<Resource> {
+        let destination = request.destination;
+        if destination == Destination::Script
+            && (self.compiled_path(&request.url, Form::Classic, destination, &request.metadata))
+                .is_some()
+        {
+            return Some(Resource {
+                url: request.url,
+                status: 200,
+                mime: None,
+                bytes: Vec::new().into(),
+                is_readable: true,
+                referrer_policy: ReferrerPolicy::Empty,
+            });
+        }
+        if purpose == Purpose::Prefetch {
+            request.metadata.is_prefetch = true;
+            (request.cors_exempt_headers).append(b"Sec-Purpose", b"prefetch");
+        }
+        let Loaded { head, bytes } = match purpose {
+            Purpose::Preload => self.preload(request).await,
+            _ => self.fetch_whole(request, &Controller::default()).await,
+        }
+        .ok()?;
+        let (mime, is_readable) = (head.headers.mime(), head.kind != ResponseType::Opaque);
+        let has_type = destination != Destination::Style
+            || purpose == Purpose::Preload
+            || mime.as_ref().is_none_or(|it| it.essence() == b"text/css")
+            || (is_quirky && is_readable && head.url.scheme() != b"data");
+        let has_status = matches!(destination, Destination::Image | Destination::Empty)
+            || is_ok_status(head.status);
+        let is_hidden = destination == Destination::Empty && !is_readable;
+        (has_type && has_status).then(|| Resource {
+            referrer_policy: head.referrer_policy(),
+            url: head.url,
+            status: if is_hidden { 0 } else { head.status },
+            mime,
+            bytes: if is_hidden { Vec::new().into() } else { bytes },
+            is_readable,
+        })
+    }
+
+    /// A style sheet that is all in its URL, unless anybody has a say in it.
+    pub fn sheet_in_url(&self, request: &Request) -> Option<Resource> {
+        (request.url.scheme() == b"data"
+            && request.metadata.integrity.is_empty()
+            && !(self.far.get())
+                .map_or_else(|| self.session.handles(b"data"), |it| it.handles_data)
+            && self.may_reuse_for(request))
+        .then_some(())?;
+        let (mime, bytes) = process_data_url(&request.url)?;
+        Some(Resource {
+            url: request.url.clone(),
+            status: 200,
+            mime: Some(Mime::parse(&mime).filter(|it| it.essence() == b"text/css")?),
+            bytes: bytes.into(),
+            is_readable: true,
+            referrer_policy: ReferrerPolicy::Empty,
+        })
+    }
+
+    /// Whether what has not been parsed may be fetched.
+    pub fn allows_speculation(&self) -> bool {
+        self.policies().csp.is_empty()
+    }
+
+    pub fn fetch_and_forget(self: Rc<Self>, request: Request) {
+        exec::spawn(async move {
+            if let Ok(Response {
+                body: Some(mut body),
+                ..
+            }) = self.fetch(request, &Controller::default()).await
+            {
+                while let Ok(Some(_)) = body.read().await {}
+            }
+        });
+    }
+
+    /// https://html.spec.whatwg.org/multipage/links.html#hyperlink-auditing
+    pub fn ping(self: Rc<Self>, url: Url, target: &[u8]) {
+        if !url.is_http() {
+            return;
+        }
+        let own = self.url();
+        let tells_source = self.origin().is_origin_of(&url) || own.scheme() != b"https";
+        let mut request = Request::new(url, Destination::Empty, Mode::NoCors, Credentials::Include);
+        request.method = b"POST"[..].into();
+        request.headers.append(b"Content-Type", b"text/ping");
+        if tells_source {
+            request.cors_exempt_headers.append(b"Ping-From", own.href());
+        }
+        request.cors_exempt_headers.append(b"Ping-To", target);
+        request.body = Some(RequestBody::Data(Data::Bytes(b"PING".to_vec().into())));
+        (request.initiator_type, request.keepalive) = (Some(InitiatorType::Ping), true);
+        self.fetch_and_forget(request);
+    }
+
+    pub fn preload(self: &Rc<Self>, request: Request) -> Shared<Result<Loaded>> {
+        let key = preload_key(&request);
+        let integrity = parse_metadata(&request.metadata.integrity);
+        if let Some(known) = self.preloaded.borrow().get(&key)
+            && known.integrity == integrity
+        {
+            return known.loading.clone();
+        }
+        let client = Rc::clone(self);
+        let loading =
+            Shared::spawn(async move { client.fetch_whole(request, &Controller::default()).await });
+        let preloaded = Preloaded {
+            integrity,
+            loading: loading.clone(),
+        };
+        self.preloaded.borrow_mut().insert(key, preloaded);
+        loading
+    }
+
+    /// https://html.spec.whatwg.org/multipage/links.html#consume-a-preloaded-resource
+    async fn take_preloaded(&self, request: &Request) -> Option<Result<Loaded>> {
+        let key = preload_key(request);
+        let integrity = parse_metadata(&request.metadata.integrity);
+        let matches = (self.preloaded.borrow().get(&key))
+            .is_some_and(|it| integrity.is_empty() || it.integrity == integrity);
+        (matches && *request.method == *b"GET" && self.may_reuse_for(request)).then_some(())?;
+        let preloaded = self.preloaded.borrow_mut().remove(&key)?;
+        Some(preloaded.loading.await)
+    }
+
+    /// The preloads that `Link` headers ask for.
+    pub fn follow_links(self: &Rc<Self>, mut header: &[u8]) {
+        while let Some((target, rest)) = strings::split_once_char(header, b'<')
+            .and_then(|it| strings::split_once_char(it.1, b'>'))
+        {
+            let parameters = split(rest, b',').next().unwrap_or_default();
+            header = &rest[parameters.len()..];
+            let get = |name: &[u8]| {
+                let mut all = split(parameters, b';')
+                    .map(|it| strings::split_once_char(it, b'=').unwrap_or((it, b"")));
+                let value = all
+                    .find(|it| it.0.trim_ascii().eq_ignore_ascii_case(name))?
+                    .1
+                    .trim_ascii();
+                Some(if value.starts_with(b"\"") {
+                    collect_quoted(value).0
+                } else {
+                    value.to_vec()
+                })
+            };
+            let text = |name| get(name).unwrap_or_default();
+            let cors = get(b"crossorigin").map(|it| Cors::parse(&it));
+            let (destination, cors) = match &*text(b"rel").to_ascii_lowercase() {
+                b"modulepreload" => (Some(Destination::Script), cors.or(Some(Cors::Anonymous))),
+                b"preload" => (preload_destination(&text(b"as"), &text(b"type")), cors),
+                _ => continue,
+            };
+            let (Some(destination), Some(url)) = (destination, self.url().join(target)) else {
+                continue;
+            };
+            let is_compiled = |form| self.compiled_path_by_any_policy(&url, form).is_some();
+            if destination == Destination::Script
+                && [Form::Module, Form::Classic].into_iter().any(is_compiled)
+            {
+                continue;
+            }
+            let mut request = potential_cors_request(url, destination, cors);
+            request.metadata = Metadata {
+                nonce: text(b"nonce").into(),
+                integrity: text(b"integrity").into(),
+                ..Metadata::default()
+            };
+            request.referrer = self.referrer_source();
+            request.referrer_policy =
+                ReferrerPolicy::parse(&text(b"referrerpolicy")).unwrap_or_default();
+            request.initiator_type = Some(InitiatorType::Link);
+            self.preload(request);
+        }
+    }
+
+    pub fn fetch_script(
+        &self,
+        request: Request,
+        kind: ScriptType,
+    ) -> LocalFuture<'_, Result<Script>> {
+        Box::pin(self.run_fetch_script(request, kind))
+    }
+
+    /// A service worker keeps to what it was installed with.
+    pub(crate) async fn load_script(&self, mut request: Request) -> Result<Loaded> {
+        let Some(own) = self.as_service_worker() else {
+            return self.fetch_whole(request, &Controller::default()).await;
+        };
+        if compiled::is_exclusive()
+            && request.destination.is_script_like()
+            && self.twin.borrow().is_none()
+        {
+            return Err(NetError::BlockedByClient);
+        }
+        if let Some(outside) = self.outside() {
+            let loaded = outside.import(request.into()).await;
+            return loaded.ok_or(NetError::Aborted)?.map(|it| *it);
+        }
+        let url = request.url.clone();
+        {
+            let mut imports = own.imports.lock();
+            if !imports.note_use(&url) {
+                return Err(NetError::InsufficientResources);
+            }
+            if let Some(known) = imports.loaded.iter().find(|it| it.0 == url) {
+                let is_allowed = self.allows_request(&request, None);
+                return is_allowed
+                    .then(|| known.1.clone())
+                    .ok_or(NetError::BlockedByCsp);
+            }
+            if imports.is_complete || imports.missing.contains(&url) {
+                return Err(NetError::Failed);
+            }
+            if imports.bypasses_cache {
+                request.cache = CacheMode::NoCache;
+            }
+        }
+        let loaded = self.fetch_whole(request, &Controller::default()).await?;
+        let mut imports = own.imports.lock();
+        if !imports.has_room_for(&loaded) {
+            return Err(NetError::InsufficientResources);
+        }
+        imports.loaded.push((url, loaded.clone()));
+        Ok(loaded)
+    }
+
+    async fn source_of(&self, url: &Url) -> Result<Option<Vec<u8>>> {
+        match self.outside() {
+            Some(it) => (it.source_of(url.clone()).await).unwrap_or(Err(NetError::Aborted)),
+            None => self.session.source_of(url).await,
+        }
+    }
+
+    async fn run_fetch_script(&self, request: Request, kind: ScriptType) -> Result<Script> {
+        if kind == ScriptType::JavaScriptModule
+            && compiled::has_sources()
+            && let Some(source) = self.source_of(&request.url).await?
+        {
+            return Ok(Script::FromApp(source));
+        }
+        let (is_for_worker, starts_worker) = (
+            request.destination != Destination::Script,
+            request.mode == Mode::SameOrigin && request.destination == Destination::Worker,
+        );
+        let loaded = self.load_script(request).await?;
+        if starts_worker && !loaded.head.url.is_local() {
+            let theirs = PolicyContainer::from_response(
+                &loaded.head.url,
+                &loaded.head.headers,
+                self.is_secure(),
+            )
+            .embedder_policy
+            .values
+            .enforced;
+            if !self.embedder_policy_allows(
+                theirs,
+                b"worker initialization",
+                Destination::Worker,
+                &loaded.head.url,
+            ) {
+                return Err(NetError::BlockedByResponse);
+            }
+        }
+        let mime = loaded.head.headers.mime();
+        let essence = mime.as_ref().map_or(&b""[..], |it| it.essence());
+        let has_type = match kind {
+            ScriptType::Classic => {
+                mime::is_javascript(essence) || (is_for_worker && !loaded.head.url.is_http())
+            }
+            ScriptType::JavaScriptModule => mime::is_javascript(essence),
+            ScriptType::JsonModule => mime::is_json(essence),
+            ScriptType::CssModule => essence == b"text/css",
+            ScriptType::TextModule => true,
+        };
+        if has_type && is_ok_status(loaded.head.status) {
+            Ok(Script::Loaded(loaded.into()))
+        } else {
+            Err(NetError::Failed)
+        }
+    }
+
+    /// https://html.spec.whatwg.org/#fetch-a-module-worker-script-tree
+    pub fn fetch_module(
+        &self,
+        request: Request,
+        kind: ScriptType,
+    ) -> LocalFuture<'_, Result<Script>> {
+        Box::pin(self.run_fetch_module(request, kind))
+    }
+
+    async fn run_fetch_module(&self, mut request: Request, kind: ScriptType) -> Result<Script> {
+        let creator = self.creator.borrow().clone();
+        let Some(creator) = creator else {
+            if kind == ScriptType::JavaScriptModule && self.service.borrow().own.is_some() {
+                request.destination = Destination::ServiceWorker;
+            }
+            return self.fetch_script(request, kind).await;
+        };
+        if kind == ScriptType::JavaScriptModule {
+            request.destination = creator.destination;
+        }
+        request.handler = Some(self.initiator().service);
+        let fetching = creator.thread.call(move || async move {
+            let client = Client::find(creator.id).ok_or(NetError::Aborted)?;
+            client.fetch_script(request, kind).await
+        });
+        fetching.await.unwrap_or(Err(NetError::Aborted))
+    }
+
+    pub fn worker_has_started(&self) {
+        self.creator.take();
+    }
+
+    fn deferred_fetch_control(&self) -> &Client {
+        match self.parent() {
+            Some(parent) if parent.origin() == self.origin() => parent.deferred_fetch_control(),
+            _ => self,
+        }
+    }
+
+    /// What is neither sent nor canceled is sent when the document goes away.
+    pub fn defer_fetch(
+        &self,
+        request: Request,
+        size: usize,
+    ) -> core::result::Result<u32, DeferError> {
+        if !request.url.is_http() || !is_potentially_trustworthy(&request.url) {
+            return Err(DeferError::InsecureUrl);
+        }
+        let (control, origin) = (self.deferred_fetch_control(), Origin::of(&request.url));
+        let allows = |feature| control.permissions_policy().allows(feature);
+        let quota: usize = match (
+            allows(Feature::DeferredFetch),
+            !control.ancestors().is_empty(),
+        ) {
+            (true, false) => 512 << 10,
+            (true, true) => 64 << 10,
+            (false, true) if allows(Feature::DeferredFetchMinimal) => 8 << 10,
+            (false, _) => 0,
+        };
+        let mut used = control.deferred_quota.borrow_mut();
+        let of_origin = used
+            .iter()
+            .filter(|it| it.origin == origin)
+            .map(|it| it.size)
+            .sum();
+        let left = quota
+            .saturating_sub(used.iter().map(|it| it.size).sum())
+            .min((64usize << 10).saturating_sub(of_origin));
+        if size > left {
+            return Err(DeferError::QuotaExceeded(left));
+        }
+        let id = next_id();
+        used.push(Deferred { id, origin, size });
+        self.deferred_requests.borrow_mut().push((id, request));
+        Ok(id)
+    }
+
+    pub fn cancel_deferred_fetch(&self, id: u32) -> Option<Request> {
+        self.deferred_fetch_control()
+            .deferred_quota
+            .borrow_mut()
+            .retain(|it| it.id != id);
+        self.deferred_requests
+            .borrow_mut()
+            .extract_if(.., |it| it.0 == id)
+            .next()
+            .map(|it| it.1)
+    }
+
+    pub fn send_deferred_fetch(self: &Rc<Self>, id: u32) -> bool {
+        self.cancel_deferred_fetch(id)
+            .map(|it| Rc::clone(self).fetch_and_forget(it))
+            .is_some()
+    }
+
+    pub fn record_timing(&self, record: ResourceTiming) {
+        if let Some(twin) = self.twin.borrow().clone() {
+            return twin.update(Update::Timing(record.into()));
+        }
+        let watcher = self.timing_watcher.borrow().clone();
+        match watcher {
+            Some(watcher) => watcher(record),
+            None => {
+                let mut unread = self.unread_timings.lock();
+                if unread.len() < MAX_UNREAD_TIMINGS {
+                    unread.push(record);
+                }
+            }
+        }
+    }
+
+    pub fn watch_timings(&self, watcher: Rc<dyn Fn(ResourceTiming)>) {
+        self.timing_watcher.replace(Some(watcher));
+        let unread = core::mem::take(&mut *self.unread_timings.lock());
+        unread.into_iter().for_each(|it| self.record_timing(it));
+    }
+
+    pub fn set_navigation_timing(&self, record: ResourceTiming, kind: NavigationType) {
+        self.update_twin(|| Update::NavigationTiming {
+            record: record.clone().into(),
+            kind,
+        });
+        self.navigation_timing.replace(Some((record, kind)));
+    }
+
+    pub fn navigation_timing(&self) -> (ResourceTiming, NavigationType) {
+        self.navigation_timing.borrow().clone().unwrap_or_else(|| {
+            let record = ResourceTiming::of_nothing(self.url().href(), self.navigation_start());
+            (record, NavigationType::Navigate)
+        })
+    }
+
+    pub fn navigation_start(&self) -> f64 {
+        self.navigation_start.get()
+    }
+
+    pub fn set_navigation_start(&self, time: f64) {
+        self.navigation_start.set(time);
+    }
+
+    pub fn has_unloaded(&self, start: f64) {
+        const REMEMBERED: usize = 64;
+        self.unload.set([start, monotonic_now()]);
+        if self.far.get().is_some() {
+            UNLOADED.with_borrow_mut(|it| {
+                it.truncate(REMEMBERED);
+                it.push_front((self.id, self.unload.get()));
+            });
+        }
+    }
+
+    /// `previous` has unloaded.
+    pub fn follow(&self, previous: &Client) {
+        self.unload_of_previous.set(previous.unload.get());
+        self.previous.set(Some(previous.id));
+    }
+
+    pub fn unload_of_previous(&self) -> [f64; 2] {
+        self.unload_of_previous.get()
+    }
+
+    fn cookie_context(&self, url: &Url, is_for_script: bool) -> cookies::Context {
+        let (origin, ancestors) = (self.origin(), self.ancestors());
+        cookies::Context {
+            is_same_site: origin.is_same_site_with(url)
+                && ancestors.iter().all(|it| it.is_same_site_with(url)),
+            is_top_level_navigation: false,
+            has_safe_method: true,
+            is_for_script,
+            top_level_site: Site::of_origin(ancestors.last().unwrap_or(&origin)),
+        }
+    }
+
+    /// Another one when [`cookie_string`](Self::cookie_string) may have changed.
+    pub fn cookie_version(&self) -> u32 {
+        match self.outside() {
+            Some(_) => {
+                let (until, expired) = self.cookies_last.get();
+                let expired = expired.wrapping_add((wall_now() >= until).into());
+                self.cookies_last.set((until, expired));
+                remote::times_outdated().wrapping_add(expired)
+            }
+            None => self.session.with_cookies(|it| it.version()),
+        }
+    }
+
+    pub(crate) fn announce_blob_url(&self, url: &[u8], is_revoked: bool) {
+        if let Some((outside, url)) = self.outside().and_then(|it| Some((it, Url::parse(url)?))) {
+            outside.announce_blob_url(url, is_revoked);
+        }
+    }
+
+    pub fn cookie_string(&self) -> Vec<u8> {
+        if let Some(outside) = self.outside() {
+            let (text, until) = outside.cookie_string().wait().unwrap_or_default();
+            self.cookies_last.update(|it| (until, it.1));
+            return text;
+        }
+        let url = self.cookie_url();
+        self.session
+            .with_cookies(|it| it.header(&url, &self.cookie_context(&url, true)))
+    }
+
+    /// `url` is for service workers.
+    pub fn cookies(&self, url: Option<Url>) -> Vec<Cookie> {
+        if let Some(outside) = self.outside() {
+            return outside.cookies(url).wait().unwrap_or_default();
+        }
+        let url = url.unwrap_or_else(|| self.cookie_url());
+        self.session.with_cookies(|it| {
+            it.matching(&url, &self.cookie_context(&url, true))
+                .into_iter()
+                .cloned()
+                .collect()
+        })
+    }
+
+    pub fn set_cookie(&self, text: &[u8]) -> bool {
+        if let Some(outside) = self.outside() {
+            let (is_set, changes) = (outside.set_cookie(text.to_vec()).wait()).unwrap_or_default();
+            for change in changes {
+                let (id, update) = (self.id, Update::Cookie(change));
+                Thread::current().post(move || Client::find(id).map_or((), |it| it.apply(update)));
+            }
+            return is_set;
+        }
+        let url = self.cookie_url();
+        !self.origin().is_opaque()
+            && (self.session).with_cookies_for(Some(self.id), |it| {
+                it.receive(text, &url, &self.cookie_context(&url, true))
+            })
+    }
+
+    pub(crate) fn set_cookie_for_twin(&self, text: &[u8]) -> (bool, Vec<cookies::Change>) {
+        self.changes_for_answer.replace(Some(Vec::new()));
+        let is_set = self.set_cookie(text);
+        (is_set, self.changes_for_answer.take().unwrap_or_default())
+    }
+
+    pub(crate) fn tell_twin_of_cookie(&self, change: &cookies::Change) {
+        match &mut *self.changes_for_answer.borrow_mut() {
+            Some(all) => all.push(change.clone()),
+            None => _ = self.update_twin(|| Update::Cookie(change.clone())),
+        }
+    }
+
+    /// `None` unless the host has it.
+    pub fn borrow_area(&self, is_local: bool) -> Option<Items> {
+        Some((self.outside()?.borrow_area(is_local).wait()).unwrap_or_default())
+    }
+
+    pub fn change_borrowed_area(&self, is_local: bool, change: AreaChange, number: u64) {
+        if let Some(outside) = self.outside() {
+            outside.change_area(is_local, change, number);
+        }
+    }
+
+    pub fn watch_areas(&self) {
+        (self.outside().filter(|_| !self.watches_areas.replace(true)))
+            .into_iter()
+            .for_each(Outside::watch_areas);
+    }
+
+    /// `watcher` runs on this thread.
+    pub fn watch_cookies(&self, watcher: fn(&Client, &cookies::Change)) {
+        if let Some(outside) = self.outside() {
+            self.cookie_watcher.set(Some(watcher));
+            return outside.watch_cookies();
+        }
+        let (id, thread, is_twin) = (self.id, Thread::current(), self.twin.borrow().is_some());
+        let tell = move |change: &cookies::Change, _| {
+            if change.is_news() {
+                let change = change.clone();
+                let steps = move || {
+                    let sees = |it: &Rc<Client>| {
+                        let url = it.cookie_url();
+                        !it.origin().is_opaque()
+                            && (change.cookie).is_visible_at(&url, &it.cookie_context(&url, true))
+                    };
+                    if let Some(client) = Client::find(id).filter(sees) {
+                        watcher(&client, &change);
+                    }
+                };
+                match is_twin {
+                    true => thread.run(steps),
+                    false => thread.post(steps),
+                }
+            }
+        };
+        self.session.watch_cookies(id.0, Some(Box::new(tell)));
+    }
+
+    /// `watcher` runs on the thread that makes the change.
+    pub(crate) fn watch_cookie_string(&self, watcher: impl Fn() + Send + Sync + 'static) {
+        let host = Bytes::from(self.url().hostname());
+        let tell = move |it: &cookies::Change, _| {
+            if !it.cookie.is_http_only && cookies::domain_matches(&host, &it.cookie.domain) {
+                watcher();
+            }
+        };
+        self.session.watch_cookies(!self.id.0, Some(Box::new(tell)));
+    }
+
+    /// Where a WebSocket connects to.
+    pub fn check_web_socket(&self, url: Url) -> core::result::Result<Url, SocketRefusal> {
+        let url = upgrade_insecure(&url)
+            .filter(|_| self.upgrades_insecure_requests())
+            .unwrap_or(url);
+        if self.prohibits_mixed_content() && is_insecure(&url) {
+            return Err(SocketRefusal::MixedContent);
+        }
+        let is_allowed = !has_bad_port(&url)
+            && self.csp_allows_request(&url, Destination::Empty, &Metadata::default(), None);
+        if is_allowed {
+            Ok(url)
+        } else {
+            Err(SocketRefusal::Blocked)
+        }
+    }
+
+    /// To a URL that `check_web_socket` has returned.
+    pub fn connect_web_socket<'a>(
+        &'a self,
+        url: &'a Url,
+        protocols: &'a [Bytes],
+    ) -> LocalFuture<'a, Result<Connection>> {
+        Box::pin(self.run_connect_web_socket(url, protocols))
+    }
+
+    async fn run_connect_web_socket(&self, url: &Url, protocols: &[Bytes]) -> Result<Connection> {
+        let (uplink, frames) = pipe(0);
+        let accepted = match self.outside() {
+            Some(it) => (it
+                .connect(url.clone(), protocols.to_vec(), OnDemand(frames))
+                .await)
+                .unwrap_or(Err(NetError::Aborted)),
+            None => self.shake_hands(url, protocols, frames).await,
+        };
+        accepted?.connect(uplink)
+    }
+
+    async fn shake_hands(&self, url: &Url, protocols: &[Bytes], frames: Body) -> Result<Accepted> {
+        let (handshake, request) = Handshake::start(url, protocols, frames);
+        let (initiator, controller) = (self.initiator(), Controller::default());
+        let response = fetch::fetch(&self.session, &initiator, request, &(), &controller).await;
+        handshake.finish(response.map_err(|it| it.error)?, protocols)
+    }
+
+    pub(crate) async fn connect_for_twin(
+        &self,
+        url: Url,
+        protocols: &[Bytes],
+        frames: Body,
+    ) -> Result<Accepted> {
+        let url = self
+            .check_web_socket(url)
+            .map_err(|_| NetError::AccessDenied)?;
+        self.shake_hands(&url, protocols, frames).await
+    }
+
+    /// https://html.spec.whatwg.org/multipage/document-lifecycle.html#abort-a-document
+    pub fn abort_fetches(&self) {
+        self.fetches.take().iter().for_each(Controller::abort);
+        drop(self.preloaded.take());
+    }
+
+    pub fn dispose(self: &Rc<Self>) {
+        self.is_disposed.set(true);
+        self.abort_fetches();
+        for (id, request) in self.deferred_requests.take() {
+            self.cancel_deferred_fetch(id);
+            Rc::clone(self).fetch_and_forget(request);
+        }
+        self.session.watch_cookies(self.id.0, None);
+        self.session.watch_cookies(!self.id.0, None);
+        self.unread_timings.lock().clear();
+        drop((
+            self.scripts.take(),
+            self.timing_watcher.take(),
+            self.twin.take(),
+            self.service.take(),
+        ));
+    }
+}
+
+fn disposition(is_enforced: bool, otherwise: &[u8]) -> Member {
+    if is_enforced {
+        b"enforce"[..].into()
+    } else {
+        otherwise.into()
+    }
+}

@@ -1,3 +1,4 @@
+#include "InternalModuleRegistry.h"
 #include "ModuleLoader.h"
 #include "napi.h"
 
@@ -820,7 +821,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
     auto env = globalObject->makeNapiEnv(nmodule);
     env->filename = WTF::move(filename_cstr);
 
-    auto encoded = reinterpret_cast<EncodedJSValue>(napi_register_module_v1(env.ptr(), reinterpret_cast<napi_value>(exportsValue)));
+    auto encoded = reinterpret_cast<EncodedJSValue>(Bun::onAddonThread([&] { return napi_register_module_v1(env.ptr(), reinterpret_cast<napi_value>(exportsValue)); }));
     env->throwPendingException();
     RETURN_IF_EXCEPTION(scope, {});
     JSC::JSValue resultValue = encoded == 0 ? exports : JSValue::decode(encoded);

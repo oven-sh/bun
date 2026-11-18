@@ -6,6 +6,13 @@ const served = 'const server = Bun.serve({ port: 0, fetch: () => new Response("[
 
 const internals = 'import { privateGlobalFunctions } from "bun:internal-for-testing";';
 
+const page = [
+  'import { desktopInternals } from "bun:internal-for-testing";',
+  "const page = desktopInternals.createPage({ native: null, surface: 0, fontScope: 1000 });",
+  'page.parseHTML("<!doctype html><p>text</p>");',
+].join("\n");
+const electron = 'import { ImageView, View } from "bun:desktop/electron";';
+
 // The form makes a File of the Blob at the first read.
 const form = 'const form = new FormData();\nform.append("text", "a");\nform.append("file", new Blob(["bytes"]));';
 const cookies = 'const cookies = new Bun.CookieMap("first=1");\ncookies.set("second", "2");\ncookies.delete("first");';
@@ -176,6 +183,11 @@ export const calls: Record<string, string[]> = {
     `${internals}\nprivateGlobalFunctions["makeErrorWithCode ERR_INVALID_STATE"]("a")`,
     `${internals}\nprivateGlobalFunctions["makeErrorWithCode ERR_MISSING_ARGS"]("a", "b", "c")`,
   ],
+  "%DesktopEvent%": [`${page}\nnew page.window.Event("a")`, `${page}\nnew page.window.Event("a", { bubbles: true })`],
+  "%DesktopEventTarget%": [`${page}\nnew page.window.EventTarget()`],
+  "%DesktopImageView%": [`${electron}\nnew ImageView()`],
+  "%DesktopView%": [`${electron}\nnew View()`],
+  "%Doc%.prototype.elementsFromPoint": [`${page}\npage.document.elementsFromPoint(9, 20)`],
   "node:module.builtinModules > Array": ['import { builtinModules } from "node:module";\nbuiltinModules'],
   "node:string_decoder.StringDecoder > NodeString_decoderStringDecoder": [
     'import { StringDecoder } from "node:string_decoder";\nStringDecoder("utf8")',

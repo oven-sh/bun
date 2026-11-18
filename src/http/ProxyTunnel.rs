@@ -107,6 +107,9 @@ fn on_tunnel_open(client: &mut HTTPClient<'_>, wrapper: &SSLWrapper) {
                 crate::configure_http_client_with_alpn(ssl, owned.as_ptr().cast(), AlpnOffer::H1);
             }
         }
+        if let Some(browser) = client.browser {
+            browser.configure_tls(ssl, false);
+        }
     }
 }
 
@@ -171,7 +174,7 @@ fn on_tunnel_handshake(
         // handshake completed but we may have ssl errors
         client.flags.did_have_handshaking_error = handshake_error.error_no != 0;
         // only reject the connection if reject_unauthorized == true
-        if client.flags.reject_unauthorized && client.flags.did_have_handshaking_error {
+        if client.flags.did_have_handshaking_error && client.rejects_unauthorized(false) {
             return Err(crate::get_cert_error_from_no(handshake_error.error_no));
         }
         Ok(first_report)
@@ -425,7 +428,7 @@ impl ProxyTunnel {
             }
         };
         // The inner connection's form of the `set_inline_reject` call in `HTTPClient::configure_tls`.
-        if this.flags.reject_unauthorized {
+        if this.rejects_unauthorized(false) {
             wrapper.set_inline_reject();
         }
         this.proxy_tunnel = Some(Box::new(ProxyTunnel {

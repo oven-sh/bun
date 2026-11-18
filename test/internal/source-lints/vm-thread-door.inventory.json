@@ -89,6 +89,9 @@
       "Digest"
     ]
   },
+  "src/runtime/desktop/main_thread.rs": {
+    "thread spawn": 1
+  },
   "src/runtime/dns_jsc/dns.rs": {
     "WorkPool::schedule*": 1,
     "unsafe impl Send": [
@@ -123,7 +126,8 @@
     "WorkPool::schedule*": 1,
     "unsafe impl Send": [
       "WorkRef"
-    ]
+    ],
+    "uv_queue_work": 1
   },
   "src/runtime/node/fs_events.rs": {
     "thread spawn": 1,

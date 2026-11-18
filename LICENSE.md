@@ -79,6 +79,22 @@ Bun statically links these libraries:
 
 The tests in `test/cli/lint/conformance` and `test/cli/format` include test cases from ESLint, typescript-eslint, the ESLint plugins above, oxc, tsgolint, Prettier and the two import sorting plugins. They are not part of the `bun` binary. Their licenses are next to them.
 
+## The UI library of `bun:desktop`
+
+It is not part of Bun's binary, but the code that follows Chromium and Electron is in both. Bun downloads it for `bun:desktop`, and `--desktop` copies it into the app. The texts of the licenses are in `packages/bun-desktop/licenses`. Portions of this software are copyright © The FreeType Project (https://freetype.org). All rights reserved.
+
+| Library | License |
+|---------|---------|
+| [`libc`](https://github.com/rust-lang/libc) | MIT or Apache 2.0 |
+| Code derived from [HarfBuzz](https://github.com/harfbuzz/harfbuzz) and [`harfrust`](https://github.com/harfbuzz/harfrust) | MIT |
+| Code derived from [FreeType](https://freetype.org) | FreeType License |
+| Code derived from [`skrifa`](https://github.com/googlefonts/fontations) | MIT |
+| Code derived from [Skia](https://skia.org) and [`tiny-skia`](https://github.com/linebender/tiny-skia) | BSD 3-Clause |
+| Code that follows [Chromium](https://chromium.googlesource.com/chromium/src/+/main/LICENSE) | BSD 3-Clause |
+| Code that follows [Electron](https://github.com/electron/electron/blob/main/LICENSE) | MIT |
+
+`bun:desktop` embeds the [Public Suffix List](https://publicsuffix.org/list/) (MPL 2.0). Parts of its layout, painting, line breaking and accessibility follow algorithms of [Chromium](https://chromium.googlesource.com/chromium/src/+/main/LICENSE) (BSD 3-Clause; parts of Blink are LGPL 2). The stroker in the UI library (`src/gfx/stroke.rs`) is derived from [Skia](https://skia.googlesource.com/skia) and [`tiny-skia`](https://github.com/linebender/tiny-skia) (BSD 3-Clause). Its gamma correction and synthetic bold of text (`src/text/raster.rs`), its subdivision of curves (`src/paint/edges.rs`) and the limits of its blurs (`src/paint/blur.rs`) follow Skia. On Windows, how glyphs are asked of DirectWrite (`src/text/direct_write.rs`) follows Skia. The tables of fallback and default fonts, the curve of a fling, input methods, the arrangement of displays, shortcuts, the roles and events of UI Automation, the format of `Local State`, the names of downloads and the quoting of URLs for other programs follow Chromium. Its text shaper (`src/text/shaper`) is derived from [HarfBuzz](https://github.com/harfbuzz/harfbuzz) (["Old MIT"](https://github.com/harfbuzz/harfbuzz/blob/main/COPYING)) and [`harfrust`](https://github.com/harfbuzz/harfrust) (MIT). Its hinters (`src/text/autohint`, `src/text/sfnt/cff/hints.rs`) are derived from [FreeType](https://freetype.org) ([FreeType License](https://gitlab.freedesktop.org/freetype/freetype/-/blob/master/docs/FTL.TXT); portions are copyright © The FreeType Project and Adobe Systems Incorporated, all rights reserved) and [`skrifa`](https://github.com/googlefonts/fontations) (MIT or Apache 2.0), and its font reader (`src/text/sfnt`) follows `skrifa` in how it rounds. `bun:desktop/electron` follows the API, behavior and messages of [Electron](https://github.com/electron/electron/blob/main/LICENSE) (MIT), and so do its check for arguments after a URL (`src/desktop/command_line.rs`) and the geometry of smooth corners (`-electron-corner-smoothing`).
+
 ## Polyfills
 
 For compatibility reasons, the following packages are embedded into Bun's binary and injected if imported.

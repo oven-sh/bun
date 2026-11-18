@@ -9,7 +9,7 @@ use core::cmp::Ordering;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Percentage {
-    pub(crate) v: CSSNumber,
+    pub v: CSSNumber,
 }
 
 impl Percentage {

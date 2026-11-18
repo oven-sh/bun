@@ -1,5 +1,7 @@
 #include "root.h"
 #include "Bindgen/JSWrapper.h"
+#include "InternalModuleRegistry.h"
+#include <JavaScriptCore/ErrorHandlingScope.h>
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSCInlines.h>
@@ -69,6 +71,46 @@ JSObject* createClassPrototype(VM& vm, JSGlobalObject* globalObject, JSObject* p
     JSObject* prototype = JSFinalObject::create(vm, structure);
     Bun::reifyStaticPropertyTable(vm, info, tableValues, *prototype);
     return prototype;
+}
+
+JSValue requireNodeModule(Zig::GlobalObject* globalObject, ASCIILiteral name)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue functions = BUN_REQUIRE_INTERNAL_MODULE(globalObject, InternalDesktopRequires, "native:Bindgen:desktop_modules.bind.ts:modules");
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue function = functions.get(globalObject, Identifier::fromString(vm, name));
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, call(globalObject, function, getCallData(function), jsUndefined(), ArgList()));
+}
+
+JSObject* nodeClassConstructor(JSGlobalObject* globalObject, ASCIILiteral name)
+{
+    VM& vm = getVM(globalObject);
+    ErrorHandlingScope reservedStack(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSValue constructor = requireNodeModule(defaultGlobalObject(globalObject), name);
+    scope.releaseAssertNoExceptionExceptTermination();
+    return constructor ? asObject(constructor) : globalObject->functionPrototype();
+}
+
+JSObject* nodeClassPrototype(JSGlobalObject* globalObject, ASCIILiteral name)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSValue prototype = nodeClassConstructor(globalObject, name)->get(globalObject, vm.propertyNames->prototype);
+    scope.releaseAssertNoExceptionExceptTermination();
+    return prototype && prototype.isObject() ? asObject(prototype) : globalObject->objectPrototype();
+}
+
+JSObject* eventEmitterConstructor(JSGlobalObject* globalObject)
+{
+    return nodeClassConstructor(globalObject, "events"_s);
+}
+
+JSObject* eventEmitterPrototype(JSGlobalObject* globalObject)
+{
+    return nodeClassPrototype(globalObject, "events"_s);
 }
 
 Structure* structureForClass(JSGlobalObject* globalObject, unsigned classIndex)

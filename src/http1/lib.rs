@@ -13,6 +13,7 @@
 mod byte_sets;
 mod chunked;
 mod error;
+mod lenient;
 pub mod message;
 mod response;
 

@@ -410,6 +410,10 @@
             ],
         },
         {
+            "target_name": "lent_main_thread",
+            "sources": ["lent_main_thread.c"],
+        },
+        {
             "target_name": "regular_node_exe_import_ctor_addon",
             "sources": ["no_delay_load_hook_addon.c"],
             "defines": ["REGISTER_VIA_CONSTRUCTOR"],

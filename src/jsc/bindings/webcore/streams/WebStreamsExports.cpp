@@ -6,8 +6,15 @@
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObject.h"
 #include "JSDOMWrapperCache.h"
+#include "JSReadRequest.h"
+#include "JSReadableByteStreamController.h"
 #include "JSReadableStream.h"
 #include "JSReadableStreamDefaultController.h"
+#include "JSReadableStreamDefaultReader.h"
+#include "JSStreamsRuntime.h"
+#include "JSTransformStream.h"
+#include "JSWritableStream.h"
+#include "JSWritableStreamDefaultController.h"
 #include "WebCoreJSBuiltins.h"
 #include "GeneratedReadableStream.h"
 #include "ZigGlobalObject.h"
@@ -186,6 +193,185 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void ReadableStream__error(JSC::EncodedJSV
         return;
 
     Bun::WebStreams::webStreamControllerError(globalObject, stream, JSValue::decode(reason));
+}
+
+// `source` is of a native class whose prototype has `pull` and `cancel`.
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue ReadableStream__createForBytes(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedSource, double highWaterMark)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue source = JSValue::decode(encodedSource);
+    JSObject* prototype = asObject(asObject(source)->getPrototypeDirect());
+    UnderlyingSourceDict methods;
+    methods.pull = prototype->getDirect(vm, WebCore::builtinNames(vm).pullPublicName());
+    methods.cancel = prototype->getDirect(vm, WebCore::builtinNames(vm).cancelPublicName());
+    auto* stream = JSReadableStream::create(vm, WebCore::getDOMStructure<JSReadableStream>(vm, *defaultGlobalObject(globalObject)));
+    initializeReadableStream(stream);
+    setUpReadableByteStreamControllerFromUnderlyingSource(globalObject, stream, source, methods, highWaterMark);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(stream);
+}
+
+static JSReadableByteStreamController* openByteController(JSC::EncodedJSValue value)
+{
+    auto* controller = uncheckedDowncast<JSReadableByteStreamController>(JSValue::decode(value));
+    return controller->m_closeRequested || controller->m_stream->m_state != ReadableStreamState::Readable ? nullptr : controller;
+}
+
+extern "C" [[ZIG_EXPORT(check_slow)]] void ReadableByteStreamController__enqueue(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value, JSC::EncodedJSValue chunk)
+{
+    if (auto* controller = openByteController(value))
+        readableByteStreamControllerEnqueue(globalObject, controller, uncheckedDowncast<JSC::JSArrayBufferView>(JSValue::decode(chunk)));
+}
+
+extern "C" [[ZIG_EXPORT(check_slow)]] void ReadableByteStreamController__close(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    auto* controller = openByteController(value);
+    if (!controller)
+        return;
+    readableByteStreamControllerClose(globalObject, controller);
+    RETURN_IF_EXCEPTION(scope, );
+    if (!controller->m_pendingPullIntos.isEmpty())
+        RELEASE_AND_RETURN(scope, readableByteStreamControllerRespond(globalObject, controller, 0));
+}
+
+extern "C" [[ZIG_EXPORT(check_slow)]] void ReadableByteStreamController__error(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value, JSC::EncodedJSValue reason)
+{
+    if (auto* controller = dynamicDowncast<JSReadableByteStreamController>(JSValue::decode(value)))
+        readableByteStreamControllerError(globalObject, controller, JSValue::decode(reason));
+}
+
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue ReadableStream__acquireReader(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    auto* stream = uncheckedDowncast<JSReadableStream>(JSValue::decode(value));
+    stream->materializeIfNeeded(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, JSValue::encode(acquireReadableStreamDefaultReader(globalObject, stream)));
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue ReadableStream__sourceOfBytes(JSC::EncodedJSValue value)
+{
+    auto* stream = uncheckedDowncast<JSReadableStream>(JSValue::decode(value));
+    if (stream->m_controllerKind != ControllerKind::Byte || stream->m_disturbed)
+        return JSValue::encode(jsUndefined());
+    JSValue source = uncheckedDowncast<JSReadableByteStreamController>(stream->m_controller.get())->m_algorithms.underlyingObject.get();
+    return JSValue::encode(source ? source : jsUndefined());
+}
+
+// A promise for the chunk itself, so that no `then` is looked up.
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue ReadableStreamReader__read(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue reader)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
+    auto* request = JSReadRequest::create(vm, JSStreamsRuntime::from(globalObject)->readRequestStructure(defaultGlobalObject(globalObject)), ReadRequestKind::Internal, promise);
+    readableStreamDefaultReaderRead(globalObject, uncheckedDowncast<JSReadableStreamDefaultReader>(JSValue::decode(reader)), request);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(promise);
+}
+
+extern "C" [[ZIG_EXPORT(check_slow)]] void ReadableStreamReader__cancel(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue reader, JSC::EncodedJSValue reason)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    auto* canceled = readableStreamReaderGenericCancel(globalObject, uncheckedDowncast<JSReadableStreamDefaultReader>(JSValue::decode(reader)), JSValue::decode(reason));
+    RETURN_IF_EXCEPTION(scope, );
+    canceled->markAsHandled();
+}
+
+// `end` is of a native class whose prototype has the methods of a source and of a sink.
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Stream__createForValues(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedEnd, bool isReadable)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue end = JSValue::decode(encodedEnd);
+    auto method = [&](ASCIILiteral name) { return asObject(asObject(end)->getPrototypeDirect())->getDirect(vm, Identifier::fromString(vm, name)); };
+    if (isReadable) {
+        auto* stream = JSReadableStream::create(vm, WebCore::getDOMStructure<JSReadableStream>(vm, *defaultGlobalObject(globalObject)));
+        initializeReadableStream(stream);
+        setUpReadableStreamDefaultControllerFromUnderlyingSource(globalObject, stream, end, { {}, method("pull"_s), method("cancel"_s), {}, {} }, 0, nullptr);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(stream);
+    }
+    auto* stream = JSWritableStream::create(vm, WebCore::getDOMStructure<JSWritableStream>(vm, *defaultGlobalObject(globalObject)));
+    initializeWritableStream(stream);
+    setUpWritableStreamDefaultControllerFromUnderlyingSink(globalObject, stream, end, { {}, method("write"_s), method("close"_s), method("abort"_s) }, 1, nullptr);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(stream);
+}
+
+static JSReadableStreamDefaultController* openControllerOf(JSC::EncodedJSValue value)
+{
+    auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(value));
+    auto* controller = stream ? dynamicDowncast<JSReadableStreamDefaultController>(stream->m_controller.get()) : nullptr;
+    return controller && readableStreamDefaultControllerCanCloseOrEnqueue(controller) ? controller : nullptr;
+}
+
+extern "C" [[ZIG_EXPORT(check_slow)]] void ReadableStream__enqueueValue(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue stream, JSC::EncodedJSValue chunk)
+{
+    if (auto* controller = openControllerOf(stream))
+        readableStreamDefaultControllerEnqueue(globalObject, controller, JSValue::decode(chunk));
+}
+
+extern "C" [[ZIG_EXPORT(check_slow)]] void ReadableStream__closeValues(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue stream)
+{
+    if (auto* controller = openControllerOf(stream))
+        readableStreamDefaultControllerClose(globalObject, controller);
+}
+
+extern "C" [[ZIG_EXPORT(check_slow)]] void Stream__errorValues(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue stream, JSC::EncodedJSValue reason)
+{
+    if (auto* writable = dynamicDowncast<JSWritableStream>(JSValue::decode(stream)))
+        writableStreamDefaultControllerErrorIfNeeded(globalObject, writable->m_controller.get(), JSValue::decode(reason));
+    else if (auto* controller = openControllerOf(stream))
+        readableStreamDefaultControllerError(globalObject, controller, JSValue::decode(reason));
+}
+
+extern "C" [[ZIG_EXPORT(check_slow)]] void ReadableStream__pipeTo(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue source, JSC::EncodedJSValue destination)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    auto* readable = uncheckedDowncast<JSReadableStream>(JSValue::decode(source));
+    readable->materializeIfNeeded(globalObject);
+    RETURN_IF_EXCEPTION(scope, );
+    auto* piped = readableStreamPipeTo(globalObject, readable, uncheckedDowncast<JSWritableStream>(JSValue::decode(destination)), false, false, false);
+    RETURN_IF_EXCEPTION(scope, );
+    piped->markAsHandled();
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] bool WritableStream__is(JSC::EncodedJSValue value)
+{
+    return !!dynamicDowncast<JSWritableStream>(JSValue::decode(value));
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] bool WritableStream__isLocked(JSC::EncodedJSValue value)
+{
+    auto* stream = dynamicDowncast<JSWritableStream>(JSValue::decode(value));
+    return stream && isWritableStreamLocked(stream);
+}
+
+extern "C" bool TransformStream__ends(JSC::EncodedJSValue value, JSC::EncodedJSValue* readable, JSC::EncodedJSValue* writable)
+{
+    JSValue stream = JSValue::decode(value);
+    if (!stream.isCell() || stream.asCell()->classInfo() != JSTransformStream::info())
+        return false;
+    *readable = JSValue::encode(uncheckedDowncast<JSTransformStream>(stream)->m_readable.get());
+    *writable = JSValue::encode(uncheckedDowncast<JSTransformStream>(stream)->m_writable.get());
+    return true;
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue TransformStream__createFromEnds(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue readable, JSC::EncodedJSValue writable)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto* stream = JSTransformStream::create(vm, WebCore::getDOMStructure<JSTransformStream>(vm, *defaultGlobalObject(globalObject)));
+    stream->m_readable.set(vm, stream, uncheckedDowncast<JSReadableStream>(JSValue::decode(readable)));
+    stream->m_writable.set(vm, stream, uncheckedDowncast<JSWritableStream>(JSValue::decode(writable)));
+    return JSValue::encode(stream);
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] bool ReadableStreamReader__isEnd(JSC::EncodedJSValue fulfilledWith)
+{
+    return !!dynamicDowncast<JSReadRequest>(JSValue::decode(fulfilledWith));
 }
 
 // Closed with nothing ever read or attached: the queue was empty at close, so no byte can come out.

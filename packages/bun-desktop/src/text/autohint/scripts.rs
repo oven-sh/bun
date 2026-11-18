@@ -1,0 +1,483 @@
+//! Which characters tell the heights of a script.
+//!
+//! Derived from the auto-hinter of FreeType and its port in skrifa. Copyright (c) The FreeType Project (www.freetype.org),
+//! (c) 2019 Fontations Developers. FreeType License and MIT, see `licenses/freetype.txt` and `licenses/fontations.txt`.
+
+use crate::text::sfnt::Tag;
+
+pub const TOP: u8 = 1;
+pub const SUB_TOP: u8 = 2;
+pub const NEUTRAL: u8 = 4;
+pub const X_HEIGHT: u8 = 8;
+pub const LONG: u8 = 16;
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum Group {
+    Latin,
+    /// Like `Latin`, from top to bottom.
+    Hanging,
+    Cjk,
+}
+
+pub struct Script {
+    pub tag: &'static Tag,
+    pub group: Group,
+    /// With stems of the usual width.
+    pub standard: &'static str,
+    pub zones: &'static [(&'static str, u8)],
+}
+
+const fn script(
+    tag: &'static Tag,
+    group: Group,
+    standard: &'static str,
+    zones: &'static [(&'static str, u8)],
+) -> Script {
+    Script {
+        tag,
+        group,
+        standard,
+        zones,
+    }
+}
+
+#[rustfmt::skip]
+pub const SCRIPTS: [Script; 61] = [
+    script(b"Adlm", Group::Latin, "𞤌 𞤮", &[
+        ("𞤌 𞤅 𞤈 𞤏 𞤔 𞤚", TOP),
+        ("𞤂 𞤖", 0),
+        ("𞤬 𞤮 𞤻 𞤼 𞤾", TOP | X_HEIGHT),
+        ("𞤤 𞤨 𞤩 𞤭 𞤴 𞤸 𞤺 𞥀", 0),
+    ]),
+    script(b"Arab", Group::Latin, "ل ح ـ", &[
+        ("ا إ ل ك ط ظ", TOP),
+        ("ت ث ط ظ ك", 0),
+        ("ـ", NEUTRAL),
+    ]),
+    script(b"Armn", Group::Latin, "ս Ս", &[
+        ("Ա Մ Ւ Ս Բ Գ Դ Օ", TOP),
+        ("Ւ Ո Դ Ճ Շ Ս Տ Օ", 0),
+        ("ե է ի մ վ ֆ ճ", TOP),
+        ("ա յ ւ ս գ շ ր օ", TOP | X_HEIGHT),
+        ("հ ո ճ ա ե ծ ս օ", 0),
+        ("բ ը ի լ ղ պ փ ց", 0),
+    ]),
+    script(b"Avst", Group::Latin, "𐬚", &[
+        ("𐬀 𐬁 𐬐 𐬛", TOP),
+        ("𐬀 𐬁", 0),
+    ]),
+    script(b"Bamu", Group::Latin, "ꛁ ꛯ", &[
+        ("ꚧ ꚨ ꛛ ꛉ ꛁ ꛈ ꛫ ꛯ", TOP),
+        ("ꚭ ꚳ ꚶ ꛬ ꚢ ꚽ ꛯ ꛲", 0),
+    ]),
+    script(b"Beng", Group::Hanging, "০ ৪", &[
+        ("ই ট ঠ ি ী ৈ ৗ", TOP),
+        ("ও এ ড ত ন ব ল ক", TOP),
+        ("অ ড ত ন ব ভ ল ক", TOP | NEUTRAL | X_HEIGHT),
+        ("অ ড ত ন ব ভ ল ক", 0),
+    ]),
+    script(b"Buhd", Group::Latin, "ᝋ ᝏ", &[
+        ("ᝐ ᝈ", TOP),
+        ("ᝅ ᝊ ᝎ", TOP),
+        ("ᝂ ᝃ ᝉ ᝌ", TOP | X_HEIGHT),
+        ("ᝀ ᝃ ᝆ ᝉ ᝋ ᝏ ᝑ", 0),
+    ]),
+    script(b"Cakm", Group::Latin, "𑄤 𑄉 𑄛", &[
+        ("𑄃 𑄅 𑄉 𑄙 𑄗", TOP),
+        ("𑄅 𑄛 𑄝 𑄗 𑄓", 0),
+        ("𑄖𑄳𑄢 𑄘𑄳𑄢 𑄙𑄳𑄢 𑄤𑄳𑄢 𑄥𑄳𑄢", 0),
+    ]),
+    script(b"Cans", Group::Latin, "ᑌ ᓚ", &[
+        ("ᗜ ᖴ ᐁ ᒣ ᑫ ᑎ ᔑ ᗰ", TOP),
+        ("ᗶ ᖵ ᒧ ᐃ ᑌ ᒍ ᔑ ᗢ", 0),
+        ("ᓓ ᓕ ᓀ ᓂ ᓄ ᕄ ᕆ ᘣ", TOP | X_HEIGHT),
+        ("ᕃ ᓂ ᓀ ᕂ ᓗ ᓚ ᕆ ᘣ", 0),
+        ("ᐪ ᙆ ᣘ ᐢ ᒾ ᣗ ᔆ", TOP),
+        ("ᙆ ᗮ ᒻ ᐞ ᔆ ᒡ ᒢ ᓑ", 0),
+    ]),
+    script(b"Cari", Group::Latin, "𐊫 𐋉", &[
+        ("𐊧 𐊫 𐊬 𐊭 𐊱 𐊺 𐊼 𐊿", TOP),
+        ("𐊣 𐊧 𐊷 𐋀 𐊫 𐊸 𐋉", 0),
+    ]),
+    script(b"Cher", Group::Latin, "Ꭴ Ꮕ ꮕ", &[
+        ("Ꮖ Ꮋ Ꭼ Ꮓ Ꭴ Ꮳ Ꭶ Ꮥ", TOP),
+        ("Ꮖ Ꮋ Ꭼ Ꮓ Ꭴ Ꮳ Ꭶ Ꮥ", 0),
+        ("ꮒ ꮤ ꮶ ꭴ ꭾ ꮗ ꮝ ꮿ", TOP),
+        ("ꮖ ꭼ ꮓ ꮠ ꮳ ꭶ ꮥ ꮻ", TOP | X_HEIGHT),
+        ("ꮖ ꭼ ꮓ ꮠ ꮳ ꭶ ꮥ ꮻ", 0),
+        ("ᏸ ꮐ ꭹ ꭻ", 0),
+    ]),
+    script(b"Copt", Group::Latin, "Ⲟ ⲟ", &[
+        ("Ⲍ Ⲏ Ⲡ Ⳟ Ⲟ Ⲑ Ⲥ Ⳋ", TOP),
+        ("Ⳑ Ⳙ Ⳟ Ⲏ Ⲟ Ⲑ Ⳝ Ⲱ", 0),
+        ("ⲍ ⲏ ⲡ ⳟ ⲟ ⲑ ⲥ ⳋ", TOP | X_HEIGHT),
+        ("ⳑ ⳙ ⳟ ⲏ ⲟ ⲑ ⳝ Ⳓ", 0),
+    ]),
+    script(b"Cprt", Group::Latin, "𐠅 𐠣", &[
+        ("𐠍 𐠙 𐠳 𐠱 𐠅 𐠓 𐠣 𐠦", TOP),
+        ("𐠃 𐠊 𐠛 𐠣 𐠳 𐠵 𐠐", 0),
+        ("𐠈 𐠏 𐠖", TOP),
+        ("𐠈 𐠏 𐠖", 0),
+    ]),
+    script(b"Cyrl", Group::Latin, "о О", &[
+        ("Б В Е П З О С Э", TOP),
+        ("Б В Е Ш З О С Э", 0),
+        ("х п н ш е з о с", TOP | X_HEIGHT),
+        ("х п н ш е з о с", 0),
+        ("р у ф", 0),
+    ]),
+    script(b"Deva", Group::Hanging, "ठ व ट", &[
+        ("ई ऐ ओ औ ि ी ो ौ", TOP),
+        ("क म अ आ थ ध भ श", TOP),
+        ("क न म उ छ ट ठ ड", TOP | NEUTRAL | X_HEIGHT),
+        ("क न म उ छ ट ठ ड", 0),
+        ("ु ृ", 0),
+    ]),
+    script(b"Dsrt", Group::Latin, "𐐄 𐐬", &[
+        ("𐐂 𐐄 𐐋 𐐗 𐐑", TOP),
+        ("𐐀 𐐂 𐐄 𐐗 𐐛", 0),
+        ("𐐪 𐐬 𐐳 𐐿 𐐹", TOP | X_HEIGHT),
+        ("𐐨 𐐪 𐐬 𐐿 𐑃", 0),
+    ]),
+    script(b"Ethi", Group::Latin, "ዐ", &[
+        ("ሀ ሃ ዘ ፐ ማ በ ዋ ዐ", TOP),
+        ("ለ ሐ በ ዘ ሀ ሪ ዐ ጨ", 0),
+    ]),
+    script(b"Geor", Group::Latin, "ი ე ა Ჿ", &[
+        ("გ დ ე ვ თ ი ო ღ", TOP | X_HEIGHT),
+        ("ა ზ მ ს შ ძ ხ პ", 0),
+        ("ს ხ ქ ზ მ შ ჩ წ", TOP),
+        ("ე ვ ჟ ტ უ ფ ქ ყ", 0),
+        ("Ნ Ჟ Ჳ Ჸ Გ Ე Ო Ჴ", TOP),
+        ("Ი Ჲ Ო Ჩ Მ Შ Ჯ Ჽ", 0),
+    ]),
+    script(b"Geok", Group::Latin, "Ⴖ Ⴑ ⴙ", &[
+        ("Ⴑ Ⴇ Ⴙ Ⴜ Ⴄ Ⴅ Ⴓ Ⴚ", TOP),
+        ("Ⴄ Ⴅ Ⴇ Ⴈ Ⴆ Ⴑ Ⴊ Ⴋ", 0),
+        ("ⴁ ⴗ ⴂ ⴄ ⴅ ⴇ ⴔ ⴖ", TOP | X_HEIGHT),
+        ("ⴈ ⴌ ⴖ ⴎ ⴃ ⴆ ⴋ ⴢ", 0),
+        ("ⴐ ⴑ ⴓ ⴕ ⴙ ⴛ ⴡ ⴣ", TOP),
+        ("ⴄ ⴅ ⴔ ⴕ ⴁ ⴂ ⴘ ⴝ", 0),
+    ]),
+    script(b"Glag", Group::Latin, "Ⱅ ⱅ", &[
+        ("Ⰵ Ⱄ Ⱚ Ⰴ Ⰲ Ⰺ Ⱛ Ⰻ", TOP),
+        ("Ⰵ Ⰴ Ⰲ Ⱚ Ⱎ Ⱑ Ⰺ Ⱄ", 0),
+        ("ⰵ ⱄ ⱚ ⰴ ⰲ ⰺ ⱛ ⰻ", TOP | X_HEIGHT),
+        ("ⰵ ⰴ ⰲ ⱚ ⱎ ⱑ ⰺ ⱄ", 0),
+    ]),
+    script(b"Goth", Group::Hanging, "𐌴 𐌾 𐍃", &[
+        ("𐌲 𐌶 𐍀 𐍄 𐌴 𐍃 𐍈 𐌾", TOP),
+        ("𐌶 𐌴 𐍃 𐍈", 0),
+    ]),
+    script(b"Grek", Group::Latin, "ο Ο", &[
+        ("Γ Β Ε Ζ Θ Ο Ω", TOP),
+        ("Β Δ Ζ Ξ Θ Ο", 0),
+        ("β θ δ ζ λ ξ", TOP),
+        ("α ε ι ο π σ τ ω", TOP | X_HEIGHT),
+        ("α ε ι ο π σ τ ω", 0),
+        ("β γ η μ ρ φ χ ψ", 0),
+    ]),
+    script(b"Gujr", Group::Latin, "ટ ૦", &[
+        ("ત ન ઋ ઌ છ ટ ર ૦", TOP | X_HEIGHT),
+        ("ખ ગ ઘ ઞ ઇ ઈ ઠ જ", 0),
+        ("ઈ ઊ િ ી લી શ્ચિ જિ સી", TOP),
+        ("ુ ૃ ૄ ખુ છૃ છૄ", 0),
+        ("૦ ૧ ૨ ૩ ૭", TOP),
+    ]),
+    script(b"Guru", Group::Hanging, "ਠ ਰ ੦", &[
+        ("ਇ ਈ ਉ ਏ ਓ ੳ ਿ ੀ", TOP),
+        ("ਕ ਗ ਙ ਚ ਜ ਤ ਧ ਸ", TOP),
+        ("ਕ ਗ ਙ ਚ ਜ ਤ ਧ ਸ", TOP | NEUTRAL | X_HEIGHT),
+        ("ਅ ਏ ਓ ਗ ਜ ਠ ਰ ਸ", 0),
+        ("੦ ੧ ੨ ੩ ੭", TOP),
+    ]),
+    script(b"Hebr", Group::Latin, "ם", &[
+        ("ב ד ה ח ך כ ם ס", TOP | LONG),
+        ("ב ט כ ם ס צ", 0),
+        ("ק ך ן ף ץ", 0),
+    ]),
+    script(b"Hmnp", Group::Latin, "𞄨", &[
+        ("𞄀 𞄁 𞄈 𞄑 𞄧 𞄬", TOP),
+        ("𞄁 𞄜 𞄠 𞄡 𞄤 𞅂", 0),
+    ]),
+    script(b"Kali", Group::Latin, "ꤍ ꤀", &[
+        ("꤅ ꤏ ꤁ ꤋ ꤀ ꤍ", TOP | X_HEIGHT),
+        ("꤈ ꤘ ꤀ ꤍ ꤢ", 0),
+        ("ꤖ ꤡ", TOP),
+        ("ꤑ ꤜ ꤞ", 0),
+        ("ꤑ꤬ ꤜ꤭ ꤔ꤬", 0),
+    ]),
+    script(b"Khmr", Group::Latin, "០", &[
+        ("ខ ទ ន ឧ ឩ ា", TOP | X_HEIGHT),
+        ("ក្ក ក្ខ ក្គ ក្ថ", SUB_TOP),
+        ("ខ ឃ ច ឋ ប ម យ ឲ", 0),
+        ("ត្រ រៀ ឲ្យ អឿ", 0),
+        ("ន្ត្រៃ ង្ខ្យ ក្បៀ ច្រៀ ន្តឿ ល្បឿ", 0),
+    ]),
+    script(b"Khms", Group::Latin, "᧡ ᧪", &[
+        ("᧠ ᧡", TOP | X_HEIGHT),
+        ("᧶ ᧹", 0),
+    ]),
+    script(b"Knda", Group::Latin, "೦ ಬ", &[
+        ("ಇ ಊ ಐ ಣ ಸಾ ನಾ ದಾ ರಾ", TOP),
+        ("ಅ ಉ ಎ ಲ ೦ ೨ ೬ ೭", 0),
+    ]),
+    script(b"Laoo", Group::Latin, "໐", &[
+        ("າ ດ ອ ມ ລ ວ ຣ ງ", TOP | X_HEIGHT),
+        ("າ ອ ບ ຍ ຣ ຮ ວ ຢ", 0),
+        ("ປ ຢ ຟ ຝ", TOP),
+        ("ໂ ໄ ໃ", TOP),
+        ("ງ ຊ ຖ ຽ ໆ ຯ", 0),
+    ]),
+    script(b"Latn", Group::Latin, "o O 0", &[
+        ("T H E Z O C Q S", TOP),
+        ("H E Z L O C U S", 0),
+        ("f i j k d b h", TOP),
+        ("u v x z o e s c", TOP | X_HEIGHT),
+        ("n r x z o e s c", 0),
+        ("p q g j y", 0),
+    ]),
+    script(b"Latb", Group::Latin, "ₒ ₀", &[
+        ("₀ ₃ ₅ ₇ ₈", TOP),
+        ("₀ ₁ ₂ ₃ ₈", 0),
+        ("ᵢ ⱼ ₕ ₖ ₗ", TOP),
+        ("ₐ ₑ ₒ ₓ ₙ ₛ ᵥ ᵤ ᵣ", TOP | X_HEIGHT),
+        ("ₐ ₑ ₒ ₓ ₙ ₛ ᵥ ᵤ ᵣ", 0),
+        ("ᵦ ᵧ ᵨ ᵩ ₚ", 0),
+    ]),
+    script(b"Latp", Group::Latin, "ᵒ ᴼ ⁰", &[
+        ("⁰ ³ ⁵ ⁷ ᵀ ᴴ ᴱ ᴼ", TOP),
+        ("⁰ ¹ ² ³ ᴱ ᴸ ᴼ ᵁ", 0),
+        ("ᵇ ᵈ ᵏ ʰ ʲ ᶠ ⁱ", TOP),
+        ("ᵉ ᵒ ʳ ˢ ˣ ᶜ ᶻ", TOP | X_HEIGHT),
+        ("ᵉ ᵒ ʳ ˢ ˣ ᶜ ᶻ", 0),
+        ("ᵖ ʸ ᵍ", 0),
+    ]),
+    script(b"Lisu", Group::Latin, "ꓳ", &[
+        ("ꓡ ꓧ ꓱ ꓶ ꓩ ꓚ ꓵ ꓳ", TOP),
+        ("ꓕ ꓜ ꓞ ꓡ ꓛ ꓢ ꓳ ꓴ", 0),
+    ]),
+    script(b"Mlym", Group::Latin, "ഠ റ", &[
+        ("ഒ ട ഠ റ ച പ ച്ച പ്പ", TOP),
+        ("ട ഠ ധ ശ ഘ ച ഥ ല", 0),
+    ]),
+    script(b"Medf", Group::Latin, "𖹡 𖹛 𖹯", &[
+        ("𖹀 𖹁 𖹂 𖹃 𖹏 𖹚 𖹟", TOP),
+        ("𖹀 𖹁 𖹂 𖹃 𖹏 𖹚 𖹒 𖹓", 0),
+        ("𖹤 𖹬 𖹧 𖹴 𖹶 𖹾", TOP),
+        ("𖹠 𖹡 𖹢 𖹹 𖹳 𖹮", TOP | X_HEIGHT),
+        ("𖹠 𖹡 𖹢 𖹳 𖹭 𖹽", 0),
+        ("𖹥 𖹨 𖹩", 0),
+        ("𖺀 𖺅 𖺈 𖺄 𖺍", TOP),
+    ]),
+    script(b"Mong", Group::Hanging, "ᡂ ᠪ", &[
+        ("ᠳ ᠴ ᠶ ᠽ ᡂ ᡊ \u{200d}ᡡ\u{200d} \u{200d}ᡳ\u{200d}", TOP),
+        ("ᡃ", 0),
+    ]),
+    script(b"Mymr", Group::Latin, "ဝ င ဂ", &[
+        ("ခ ဂ င ဒ ဝ ၥ ၊ ။", TOP | X_HEIGHT),
+        ("င ဎ ဒ ပ ဗ ဝ ၊ ။", 0),
+        ("ဩ ြ ၍ ၏ ၆ ါ ိ", TOP),
+        ("ဉ ည ဥ ဩ ဨ ၂ ၅ ၉", 0),
+    ]),
+    script(b"Nkoo", Group::Latin, "ߋ ߀", &[
+        ("ߐ ߉ ߒ ߟ ߖ ߜ ߠ ߥ", TOP),
+        ("߀ ߘ ߡ ߠ ߥ", 0),
+        ("ߏ ߛ ߋ", TOP | X_HEIGHT),
+        ("ߎ ߏ ߛ ߋ", 0),
+    ]),
+    script(b"None", Group::Latin, "", &[]),
+    script(b"Olck", Group::Latin, "ᱛ", &[
+        ("ᱛ ᱜ ᱝ ᱡ ᱢ ᱥ", TOP),
+        ("ᱛ ᱜ ᱝ ᱡ ᱢ ᱥ", 0),
+    ]),
+    script(b"Orkh", Group::Latin, "𐰗", &[
+        ("𐰗 𐰘 𐰧", TOP),
+        ("𐰉 𐰗 𐰦 𐰧", 0),
+    ]),
+    script(b"Osge", Group::Latin, "𐓂 𐓪", &[
+        ("𐒾 𐓍 𐓒 𐓓 𐒻 𐓂 𐒵 𐓆", TOP),
+        ("𐒰 𐓍 𐓂 𐒿 𐓎 𐒹", 0),
+        ("𐒼 𐒽 𐒾", 0),
+        ("𐓵 𐓶 𐓺 𐓻 𐓝 𐓣 𐓪 𐓮", TOP | X_HEIGHT),
+        ("𐓘 𐓚 𐓣 𐓵 𐓡 𐓧 𐓪 𐓶", 0),
+        ("𐓤 𐓦 𐓸 𐓹 𐓛", TOP),
+        ("𐓤 𐓥 𐓦", 0),
+    ]),
+    script(b"Osma", Group::Latin, "𐒆 𐒠", &[
+        ("𐒆 𐒉 𐒐 𐒒 𐒘 𐒛 𐒠 𐒣", TOP),
+        ("𐒀 𐒂 𐒆 𐒈 𐒊 𐒒 𐒠 𐒩", 0),
+    ]),
+    script(b"Rohg", Group::Latin, "𐴰", &[
+        ("𐴃 𐴀 𐴆 𐴖 𐴕", TOP),
+        ("𐴔 𐴖 𐴕 𐴑 𐴐", 0),
+        ("ـ", NEUTRAL),
+    ]),
+    script(b"Saur", Group::Latin, "ꢝ ꣐", &[
+        ("ꢜ ꢞ ꢳ ꢂ ꢖ ꢒ ꢝ ꢛ", TOP),
+        ("ꢂ ꢨ ꢺ ꢤ ꢎ", 0),
+    ]),
+    script(b"Shaw", Group::Latin, "𐑴", &[
+        ("𐑕 𐑙", TOP),
+        ("𐑔 𐑖 𐑗 𐑹 𐑻", 0),
+        ("𐑟 𐑣", 0),
+        ("𐑱 𐑲 𐑳 𐑴 𐑸 𐑺 𐑼", TOP | X_HEIGHT),
+        ("𐑴 𐑻 𐑹", 0),
+    ]),
+    script(b"Sinh", Group::Latin, "ට", &[
+        ("ඉ ක ඝ ඳ ප ය ල ෆ", TOP),
+        ("එ ඔ ඝ ජ ට ථ ධ ර", 0),
+        ("ද ඳ උ ල තූ තු බු දු", 0),
+    ]),
+    script(b"Sund", Group::Latin, "᮰", &[
+        ("ᮋ ᮞ ᮮ ᮽ ᮰ ᮈ", TOP),
+        ("ᮄ ᮔ ᮕ ᮗ ᮰ ᮆ ᮈ ᮉ", 0),
+        ("ᮼ ᳄", 0),
+    ]),
+    script(b"Taml", Group::Latin, "௦", &[
+        ("உ ஒ ஓ ற ஈ க ங ச", TOP),
+        ("க ச ல ஶ உ ங ட ப", 0),
+    ]),
+    script(b"Tavt", Group::Latin, "ꪒ ꪫ", &[
+        ("ꪆ ꪔ ꪒ ꪖ ꪫ", TOP),
+        ("ꪉ ꪫ ꪮ", 0),
+    ]),
+    script(b"Telu", Group::Latin, "౦ ౧", &[
+        ("ఇ ఌ ఙ ఞ ణ ఱ ౯", TOP),
+        ("అ క చ ర ఽ ౨ ౬", 0),
+    ]),
+    script(b"Tfng", Group::Latin, "ⵔ", &[
+        ("ⵔ ⵙ ⵛ ⵞ ⴵ ⴼ ⴹ ⵎ", TOP),
+        ("ⵔ ⵙ ⵛ ⵞ ⴵ ⴼ ⴹ ⵎ", 0),
+    ]),
+    script(b"Thai", Group::Latin, "า ๅ ๐", &[
+        ("บ เ แ อ ก า", TOP | X_HEIGHT),
+        ("บ ป ษ ฯ อ ย ฮ", 0),
+        ("ป ฝ ฟ", TOP),
+        ("โ ใ ไ", TOP),
+        ("ฎ ฏ ฤ ฦ", 0),
+        ("ญ ฐ", 0),
+        ("๐ ๑ ๓", 0),
+    ]),
+    script(b"Vaii", Group::Latin, "ꘓ ꖜ ꖴ", &[
+        ("ꗍ ꘖ ꘙ ꘜ ꖜ ꖝ ꔅ ꕢ", TOP),
+        ("ꗍ ꘖ ꘙ ꗞ ꔅ ꕢ ꖜ ꔆ", 0),
+    ]),
+    script(b"Limb", Group::Cjk, "o", &[]),
+    script(b"Orya", Group::Cjk, "o", &[]),
+    script(b"Sylo", Group::Cjk, "o", &[]),
+    script(b"Tibt", Group::Cjk, "o", &[]),
+    script(b"Hani", Group::Cjk, "田 囗", &[
+        ("他 们 你 來 們 到 和 地 对 對 就 席 我 时 時 會 来 為 能 舰 說 说 这 這 齊 | 军 同 已 愿 既 星 是 景 民 照 现 現 理 用 置 要 軍 那 配 里 開 雷 露 面 顾", TOP),
+        ("个 为 人 他 以 们 你 來 個 們 到 和 大 对 對 就 我 时 時 有 来 為 要 說 说 | 主 些 因 它 想 意 理 生 當 看 着 置 者 自 著 裡 过 还 进 進 過 道 還 里 面", 0),
+    ]),
+];
+
+/// What these make of Cyrillic, Greek and Latin has other heights.
+pub const FEATURES: [&Tag; 10] = [
+    b"c2cp", b"c2sc", b"ordn", b"pcap", b"ruby", b"sinf", b"smcp", b"subs", b"sups", b"titl",
+];
+
+/// Sorted. With an index into `SCRIPTS`, and whether these are marks.
+#[rustfmt::skip]
+pub const RANGES: &[(u32, u32, u8, bool)] = &[
+    (0x20, 0x5D, 31, false), (0x5E, 0x60, 31, true), (0x61, 0x7D, 31, false), (0x7E, 0x7E, 31, true), (0x7F, 0x7F, 31, false),
+    (0xA0, 0xA7, 31, false), (0xA8, 0xA9, 31, true), (0xAA, 0xAA, 33, false), (0xAB, 0xAD, 31, false), (0xAE, 0xB0, 31, true),
+    (0xB1, 0xB1, 31, false), (0xB2, 0xB3, 33, false), (0xB4, 0xB4, 31, true), (0xB5, 0xB7, 31, false), (0xB8, 0xB8, 31, true),
+    (0xB9, 0xBA, 33, false), (0xBB, 0xBB, 31, false), (0xBC, 0xBE, 31, true), (0xBF, 0x2AF, 31, false), (0x2B0, 0x2B8, 33, false),
+    (0x2B9, 0x2DF, 31, true), (0x2E0, 0x2E4, 33, false), (0x2E5, 0x36F, 31, true), (0x370, 0x379, 21, false), (0x37A, 0x37A, 21, true),
+    (0x37B, 0x383, 21, false), (0x384, 0x385, 21, true), (0x386, 0x3FF, 21, false), (0x400, 0x482, 13, false), (0x483, 0x489, 13, true),
+    (0x48A, 0x52F, 13, false), (0x530, 0x558, 2, false), (0x559, 0x55F, 2, true), (0x560, 0x58F, 2, false), (0x590, 0x590, 24, false),
+    (0x591, 0x5BF, 24, true), (0x5C0, 0x5C0, 24, false), (0x5C1, 0x5C2, 24, true), (0x5C3, 0x5C3, 24, false), (0x5C4, 0x5C5, 24, true),
+    (0x5C6, 0x5C6, 24, false), (0x5C7, 0x5C7, 24, true), (0x5C8, 0x5FF, 24, false), (0x600, 0x605, 1, true), (0x606, 0x60F, 1, false),
+    (0x610, 0x61A, 1, true), (0x61B, 0x64A, 1, false), (0x64B, 0x65F, 1, true), (0x660, 0x66F, 1, false), (0x670, 0x670, 1, true),
+    (0x671, 0x6D5, 1, false), (0x6D6, 0x6DC, 1, true), (0x6DD, 0x6DE, 1, false), (0x6DF, 0x6E4, 1, true), (0x6E5, 0x6E6, 1, false),
+    (0x6E7, 0x6E8, 1, true), (0x6E9, 0x6E9, 1, false), (0x6EA, 0x6ED, 1, true), (0x6EE, 0x6FF, 1, false), (0x750, 0x7FF, 1, false),
+    (0x8A0, 0x8D2, 1, false), (0x8D3, 0x8FF, 1, true), (0x900, 0x902, 14, true), (0x903, 0x939, 14, false), (0x93A, 0x93A, 14, true),
+    (0x93B, 0x93B, 14, false), (0x93D, 0x940, 14, false), (0x941, 0x948, 14, true), (0x949, 0x94C, 14, false), (0x94D, 0x94D, 14, true),
+    (0x94E, 0x950, 14, false), (0x953, 0x957, 14, true), (0x958, 0x961, 14, false), (0x962, 0x963, 14, true), (0x966, 0x97F, 14, false),
+    (0x980, 0x980, 5, false), (0x981, 0x981, 5, true), (0x982, 0x9BB, 5, false), (0x9BC, 0x9BC, 5, true), (0x9BD, 0x9C0, 5, false),
+    (0x9C1, 0x9C4, 5, true), (0x9C5, 0x9CC, 5, false), (0x9CD, 0x9CD, 5, true), (0x9CE, 0x9E1, 5, false), (0x9E2, 0x9E3, 5, true),
+    (0x9E4, 0x9FD, 5, false), (0x9FE, 0x9FE, 5, true), (0x9FF, 0x9FF, 5, false), (0xA00, 0xA00, 23, false), (0xA01, 0xA02, 23, true),
+    (0xA03, 0xA3B, 23, false), (0xA3C, 0xA3C, 23, true), (0xA3D, 0xA40, 23, false), (0xA41, 0xA51, 23, true), (0xA52, 0xA6F, 23, false),
+    (0xA70, 0xA71, 23, true), (0xA72, 0xA74, 23, false), (0xA75, 0xA75, 23, true), (0xA76, 0xA7F, 23, false), (0xA80, 0xA80, 22, false),
+    (0xA81, 0xA82, 22, true), (0xA83, 0xABB, 22, false), (0xABC, 0xABC, 22, true), (0xABD, 0xAC0, 22, false), (0xAC1, 0xAC8, 22, true),
+    (0xAC9, 0xACC, 22, false), (0xACD, 0xACD, 22, true), (0xACE, 0xAE1, 22, false), (0xAE2, 0xAE3, 22, true), (0xAE4, 0xAF9, 22, false),
+    (0xAFA, 0xAFF, 22, true), (0xB00, 0xB00, 57, false), (0xB01, 0xB02, 57, true), (0xB03, 0xB3B, 57, false), (0xB3C, 0xB3C, 57, true),
+    (0xB3D, 0xB3E, 57, false), (0xB3F, 0xB3F, 57, true), (0xB40, 0xB40, 57, false), (0xB41, 0xB44, 57, true), (0xB45, 0xB4C, 57, false),
+    (0xB4D, 0xB56, 57, true), (0xB57, 0xB61, 57, false), (0xB62, 0xB63, 57, true), (0xB64, 0xB7F, 57, false), (0xB80, 0xB81, 50, false),
+    (0xB82, 0xB82, 50, true), (0xB83, 0xBBF, 50, false), (0xBC0, 0xBC2, 50, true), (0xBC3, 0xBCC, 50, false), (0xBCD, 0xBCD, 50, true),
+    (0xBCE, 0xBFF, 50, false), (0xC00, 0xC00, 52, true), (0xC01, 0xC03, 52, false), (0xC04, 0xC04, 52, true), (0xC05, 0xC3D, 52, false),
+    (0xC3E, 0xC40, 52, true), (0xC41, 0xC45, 52, false), (0xC46, 0xC56, 52, true), (0xC57, 0xC61, 52, false), (0xC62, 0xC63, 52, true),
+    (0xC64, 0xC7F, 52, false), (0xC80, 0xC80, 29, false), (0xC81, 0xC81, 29, true), (0xC82, 0xCBB, 29, false), (0xCBC, 0xCBC, 29, true),
+    (0xCBD, 0xCBE, 29, false), (0xCBF, 0xCBF, 29, true), (0xCC0, 0xCC5, 29, false), (0xCC6, 0xCC6, 29, true), (0xCC7, 0xCCB, 29, false),
+    (0xCCC, 0xCCD, 29, true), (0xCCE, 0xCE1, 29, false), (0xCE2, 0xCE3, 29, true), (0xCE4, 0xCFF, 29, false), (0xD00, 0xD01, 35, true),
+    (0xD02, 0xD3A, 35, false), (0xD3B, 0xD3C, 35, true), (0xD3D, 0xD4C, 35, false), (0xD4D, 0xD4E, 35, true), (0xD4F, 0xD61, 35, false),
+    (0xD62, 0xD63, 35, true), (0xD64, 0xD7F, 35, false), (0xD80, 0xDC9, 48, false), (0xDCA, 0xDCA, 48, true), (0xDCB, 0xDD1, 48, false),
+    (0xDD2, 0xDD6, 48, true), (0xDD7, 0xDFF, 48, false), (0xE00, 0xE30, 54, false), (0xE31, 0xE31, 54, true), (0xE32, 0xE33, 54, false),
+    (0xE34, 0xE3A, 54, true), (0xE3B, 0xE46, 54, false), (0xE47, 0xE4E, 54, true), (0xE4F, 0xE7F, 54, false), (0xE80, 0xEB0, 30, false),
+    (0xEB1, 0xEB1, 30, true), (0xEB2, 0xEB3, 30, false), (0xEB4, 0xEBC, 30, true), (0xEBD, 0xEC7, 30, false), (0xEC8, 0xECD, 30, true),
+    (0xECE, 0xEFF, 30, false), (0xF00, 0xF17, 59, false), (0xF18, 0xF19, 59, true), (0xF1A, 0xF34, 59, false), (0xF35, 0xF35, 59, true),
+    (0xF36, 0xF36, 59, false), (0xF37, 0xF37, 59, true), (0xF38, 0xF38, 59, false), (0xF39, 0xF39, 59, true), (0xF3A, 0xF3D, 59, false),
+    (0xF3E, 0xF3F, 59, true), (0xF40, 0xF70, 59, false), (0xF71, 0xF7E, 59, true), (0xF7F, 0xF7F, 59, false), (0xF80, 0xF84, 59, true),
+    (0xF85, 0xF85, 59, false), (0xF86, 0xF87, 59, true), (0xF88, 0xF8C, 59, false), (0xF8D, 0xFBC, 59, true), (0xFBD, 0xFFF, 59, false),
+    (0x1000, 0x102C, 38, false), (0x102D, 0x1030, 38, true), (0x1031, 0x1031, 38, false), (0x1032, 0x1037, 38, true),
+    (0x1038, 0x1039, 38, false), (0x103A, 0x103A, 38, true), (0x103B, 0x103C, 38, false), (0x103D, 0x103E, 38, true),
+    (0x103F, 0x1057, 38, false), (0x1058, 0x1059, 38, true), (0x105A, 0x105D, 38, false), (0x105E, 0x1060, 38, true),
+    (0x1061, 0x1070, 38, false), (0x1071, 0x1074, 38, true), (0x1075, 0x1081, 38, false), (0x1082, 0x1082, 38, true),
+    (0x1083, 0x1084, 38, false), (0x1085, 0x1086, 38, true), (0x1087, 0x108C, 38, false), (0x108D, 0x108D, 38, true),
+    (0x108E, 0x109F, 38, false), (0x10A0, 0x10CD, 18, false), (0x10D0, 0x10FF, 17, false), (0x1100, 0x11FF, 60, false),
+    (0x1200, 0x135C, 16, false), (0x135D, 0x135F, 16, true), (0x1360, 0x139F, 16, false), (0x13A0, 0x13FF, 10, false),
+    (0x1400, 0x167F, 8, false), (0x1740, 0x1751, 6, false), (0x1752, 0x1753, 6, true), (0x1754, 0x175F, 6, false),
+    (0x1780, 0x17B6, 27, false), (0x17B7, 0x17BD, 27, true), (0x17BE, 0x17C5, 27, false), (0x17C6, 0x17C6, 27, true),
+    (0x17C7, 0x17C8, 27, false), (0x17C9, 0x17D3, 27, true), (0x17D4, 0x17DC, 27, false), (0x17DD, 0x17DD, 27, true),
+    (0x17DE, 0x17FF, 27, false), (0x1800, 0x1884, 37, false), (0x1885, 0x1886, 37, true), (0x1887, 0x18A8, 37, false),
+    (0x18A9, 0x18A9, 37, true), (0x18AA, 0x18AF, 37, false), (0x18B0, 0x18FF, 8, false), (0x1900, 0x191F, 56, false),
+    (0x1920, 0x1922, 56, true), (0x1923, 0x1926, 56, false), (0x1927, 0x1934, 56, true), (0x1935, 0x1936, 56, false),
+    (0x1937, 0x193B, 56, true), (0x193C, 0x194F, 56, false), (0x19E0, 0x19FF, 28, false), (0x1AB0, 0x1ABE, 31, true),
+    (0x1B80, 0x1B82, 49, true), (0x1B83, 0x1BA0, 49, false), (0x1BA1, 0x1BAD, 49, true), (0x1BAE, 0x1BBF, 49, false),
+    (0x1C50, 0x1C7F, 41, false), (0x1C80, 0x1C8F, 13, false), (0x1C90, 0x1CBF, 17, false), (0x1CC0, 0x1CCF, 49, false),
+    (0x1D00, 0x1D2B, 31, false), (0x1D2C, 0x1D61, 33, false), (0x1D62, 0x1D6A, 32, false), (0x1D6B, 0x1D77, 31, false),
+    (0x1D78, 0x1D78, 33, false), (0x1D79, 0x1D9A, 31, false), (0x1D9B, 0x1DBF, 33, false), (0x1DC0, 0x1DFF, 31, true),
+    (0x1E00, 0x1EFF, 31, false), (0x1F00, 0x1FBC, 21, false), (0x1FBD, 0x1FC1, 21, true), (0x1FC2, 0x1FCC, 21, false),
+    (0x1FCD, 0x1FCF, 21, true), (0x1FD0, 0x1FDC, 21, false), (0x1FDD, 0x1FDF, 21, true), (0x1FE0, 0x1FEC, 21, false),
+    (0x1FED, 0x1FEF, 21, true), (0x1FF0, 0x1FFC, 21, false), (0x1FFD, 0x1FFE, 21, true), (0x1FFF, 0x1FFF, 21, false),
+    (0x2000, 0x2016, 31, false), (0x2017, 0x2017, 31, true), (0x2018, 0x203D, 31, false), (0x203E, 0x203E, 31, true),
+    (0x203F, 0x206F, 31, false), (0x2070, 0x207F, 33, false), (0x2080, 0x209C, 32, false), (0x20A0, 0x20B8, 31, false),
+    (0x20B9, 0x20B9, 14, false), (0x20BA, 0x20CF, 31, false), (0x2150, 0x218F, 31, false), (0x2C00, 0x2C5F, 19, false),
+    (0x2C60, 0x2C7B, 31, false), (0x2C7C, 0x2C7C, 32, false), (0x2C7D, 0x2C7D, 33, false), (0x2C7E, 0x2C7F, 31, false),
+    (0x2C80, 0x2CEE, 11, false), (0x2CEF, 0x2CF1, 11, true), (0x2CF2, 0x2CFF, 11, false), (0x2D00, 0x2D2D, 18, false),
+    (0x2D30, 0x2D7F, 53, false), (0x2D80, 0x2DDF, 16, false), (0x2DE0, 0x2DFF, 13, true), (0x2E00, 0x2E7F, 31, false),
+    (0x2E80, 0x2FDF, 60, false), (0x2FF0, 0x3029, 60, false), (0x302A, 0x302F, 60, true), (0x3030, 0x318F, 60, false),
+    (0x3190, 0x319F, 60, true), (0x31A0, 0x31FF, 60, false), (0x3300, 0x9FFF, 60, false), (0xA4D0, 0xA4FF, 34, false),
+    (0xA500, 0xA63F, 55, false), (0xA640, 0xA66E, 13, false), (0xA66F, 0xA67F, 13, true), (0xA680, 0xA69D, 13, false),
+    (0xA69E, 0xA69F, 13, true), (0xA6A0, 0xA6EF, 4, false), (0xA6F0, 0xA6F1, 4, true), (0xA6F2, 0xA6FF, 4, false),
+    (0xA720, 0xA76F, 31, false), (0xA770, 0xA770, 33, false), (0xA771, 0xA787, 31, false), (0xA788, 0xA788, 31, true),
+    (0xA789, 0xA7F7, 31, false), (0xA7F8, 0xA7F9, 33, false), (0xA7FA, 0xA7FA, 31, true), (0xA7FB, 0xA7FF, 31, false),
+    (0xA800, 0xA801, 58, false), (0xA802, 0xA802, 58, true), (0xA803, 0xA805, 58, false), (0xA806, 0xA806, 58, true),
+    (0xA807, 0xA80A, 58, false), (0xA80B, 0xA80B, 58, true), (0xA80C, 0xA824, 58, false), (0xA825, 0xA826, 58, true),
+    (0xA827, 0xA82F, 58, false), (0xA880, 0xA881, 46, true), (0xA882, 0xA8B3, 46, false), (0xA8B4, 0xA8C5, 46, true),
+    (0xA8C6, 0xA8DF, 46, false), (0xA8E0, 0xA8F1, 14, true), (0xA8F2, 0xA8FE, 14, false), (0xA8FF, 0xA8FF, 14, true),
+    (0xA900, 0xA925, 26, false), (0xA926, 0xA92D, 26, true), (0xA92E, 0xA92F, 26, false), (0xA960, 0xA97F, 60, false),
+    (0xA9E0, 0xA9E4, 38, false), (0xA9E5, 0xA9E5, 38, true), (0xA9E6, 0xA9FF, 38, false), (0xAA60, 0xAA7B, 38, false),
+    (0xAA7C, 0xAA7C, 38, true), (0xAA7D, 0xAA7F, 38, false), (0xAA80, 0xAAAF, 51, false), (0xAAB0, 0xAAB0, 51, true),
+    (0xAAB1, 0xAAB1, 51, false), (0xAAB2, 0xAAB4, 51, true), (0xAAB5, 0xAAB6, 51, false), (0xAAB7, 0xAAB8, 51, true),
+    (0xAAB9, 0xAABD, 51, false), (0xAABE, 0xAABF, 51, true), (0xAAC0, 0xAAC0, 51, false), (0xAAC1, 0xAAC1, 51, true),
+    (0xAAC2, 0xAADF, 51, false), (0xAB00, 0xAB2F, 16, false), (0xAB30, 0xAB5B, 31, false), (0xAB5C, 0xAB5F, 33, false),
+    (0xAB60, 0xAB6F, 31, false), (0xAB70, 0xABBF, 10, false), (0xAC00, 0xD7FF, 60, false), (0xF900, 0xFAFF, 60, false),
+    (0xFB00, 0xFB06, 31, false), (0xFB13, 0xFB17, 2, false), (0xFB1D, 0xFB1D, 24, false), (0xFB1E, 0xFB1E, 24, true),
+    (0xFB1F, 0xFB4F, 24, false), (0xFB50, 0xFBB1, 1, false), (0xFBB2, 0xFBC1, 1, true), (0xFBC2, 0xFDFF, 1, false),
+    (0xFE10, 0xFE1F, 60, false), (0xFE30, 0xFE4F, 60, false), (0xFE70, 0xFE70, 1, true), (0xFE71, 0xFE71, 1, false),
+    (0xFE72, 0xFE72, 1, true), (0xFE73, 0xFE73, 1, false), (0xFE74, 0xFE74, 1, true), (0xFE75, 0xFE75, 1, false),
+    (0xFE76, 0xFE76, 1, true), (0xFE77, 0xFE77, 1, false), (0xFE78, 0xFE78, 1, true), (0xFE79, 0xFE79, 1, false),
+    (0xFE7A, 0xFE7A, 1, true), (0xFE7B, 0xFE7B, 1, false), (0xFE7C, 0xFE7C, 1, true), (0xFE7D, 0xFE7D, 1, false),
+    (0xFE7E, 0xFE7E, 1, true), (0xFE7F, 0xFEFF, 1, false), (0xFF00, 0xFFEF, 60, false), (0x102A0, 0x102DF, 9, false),
+    (0x10330, 0x1034F, 20, false), (0x10400, 0x1044F, 15, false), (0x10450, 0x1047F, 47, false), (0x10480, 0x104AF, 44, false),
+    (0x104B0, 0x104FF, 43, false), (0x10800, 0x1083F, 12, false), (0x10B00, 0x10B38, 3, false), (0x10B39, 0x10B3F, 3, true),
+    (0x10C00, 0x10C4F, 42, false), (0x10D00, 0x10D3F, 45, false), (0x11100, 0x11102, 7, true), (0x11103, 0x11126, 7, false),
+    (0x11127, 0x11134, 7, true), (0x11135, 0x11145, 7, false), (0x11146, 0x11146, 7, true), (0x11147, 0x1114F, 7, false),
+    (0x11660, 0x1167F, 37, false), (0x16E40, 0x16E9F, 36, false), (0x1B000, 0x1B12F, 60, false), (0x1D300, 0x1D35F, 60, false),
+    (0x1D400, 0x1D7FF, 31, false), (0x1E000, 0x1E02F, 19, true), (0x1E100, 0x1E14F, 25, false), (0x1E900, 0x1E94A, 0, true),
+    (0x1E94B, 0x1E95F, 0, false), (0x1EE00, 0x1EEFF, 1, false), (0x20000, 0x2A6DF, 60, false), (0x2A700, 0x2EBEF, 60, false),
+    (0x2F800, 0x2FA1F, 60, false),
+];

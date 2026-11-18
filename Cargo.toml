@@ -16,6 +16,8 @@ members = [
   "src/parsers",
   "src/io",
   "src/archive",
+  "src/markup",
+  "src/pac",
   "src/md",
   "src/paths",
   "src/resolver",
@@ -53,6 +55,7 @@ members = [
   "src/threading",
   "src/valkey",
   "src/watcher",
+  "src/web",
   "src/cares_sys",
   "src/clap",
   "src/clap_macros",
@@ -60,6 +63,9 @@ members = [
   "src/cron",
   "src/csrf",
   "src/css_jsc",
+  "src/dom",
+  "src/ui",
+  "src/desktop",
   "src/dns",
   "src/dotenv",
   "src/event_loop",
@@ -395,6 +401,8 @@ bun_install = { path = "src/install" }
 bun_parsers = { path = "src/parsers" }
 bun_io = { path = "src/io" }
 bun_archive = { path = "src/archive" }
+bun_pac = { path = "src/pac" }
+bun_markup = { path = "src/markup" }
 bun_md = { path = "src/md" }
 bun_paths = { path = "src/paths" }
 bun_resolver = { path = "src/resolver" }
@@ -432,6 +440,7 @@ bun_tar = { path = "src/tar" }
 bun_threading = { path = "src/threading" }
 bun_valkey = { path = "src/valkey" }
 bun_watcher = { path = "src/watcher" }
+bun_web = { path = "src/web" }
 bun_cares_sys = { path = "src/cares_sys" }
 bun_clap = { path = "src/clap" }
 bun_clap_macros = { path = "src/clap_macros" }
@@ -439,6 +448,9 @@ bun_crash_handler = { path = "src/crash_handler" }
 bun_cron = { path = "src/cron" }
 bun_csrf = { path = "src/csrf" }
 bun_css_jsc = { path = "src/css_jsc" }
+bun_dom = { path = "src/dom" }
+bun_ui = { path = "src/ui" }
+bun_desktop = { path = "src/desktop" }
 bun_dns = { path = "src/dns" }
 bun_dotenv = { path = "src/dotenv" }
 bun_event_loop = { path = "src/event_loop" }
@@ -549,6 +561,15 @@ opt-level = 3
 opt-level = 3
 
 [profile.release.package.bun_react_compiler]
+opt-level = "s"
+
+[profile.release.package.bun_web]
+opt-level = "z"
+
+[profile.release.package.bun_desktop]
+opt-level = "z"
+
+[profile.release.package.bun_pac]
 opt-level = "s"
 
 # The runners behind `--run-typescript-tests`, `--run-prettier-tests` and `--run-eslint-tests`. Only canary and debug

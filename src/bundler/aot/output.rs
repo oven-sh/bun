@@ -236,6 +236,7 @@ mod tests {
         EntryPointPaths {
             public_path: public_path.to_vec(),
             source_path: source_path.to_vec(),
+            is_loaded_by_page: false,
         }
     }
 

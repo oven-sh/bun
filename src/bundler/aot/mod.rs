@@ -12,6 +12,7 @@ mod native_plugins;
 mod options;
 mod output;
 mod page_bundles;
+mod pages;
 mod paths;
 mod services;
 #[cfg(feature = "test_support")]
@@ -36,6 +37,7 @@ pub use database_log::read_database_with_log;
 pub use metafile::{MetafileFiles, MetafileOutput, write_metafile, write_metafile_files};
 pub use options::expand_entry_points;
 use options::{OptionsInput, options_from_bundler};
+use pages::Pages;
 pub use paths::FileIdentity;
 pub use services::FileFinder;
 pub use services::FilesForFileSystem;
@@ -139,7 +141,19 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
     if let Some(outfile) = outfile {
         transpiler.resolver.pass_over_outfile(outfile);
     }
-    let is_root_written = !transpiler.options.root_dir.is_empty();
+    let not_started = || AotBuildFailure {
+        stage: None,
+        is_internal_error: false,
+        statistics: Statistics::default(),
+    };
+    let top_level_dir = crate::bun_fs::FileSystem::get().top_level_dir();
+    // SAFETY: the log outlives the build, and nothing below this call reaches the transpiler.
+    let log_of_pages = unsafe { &mut *log };
+    let options = (aot, &transpiler.options);
+    let pages = Pages::find(options, entry_points, top_level_dir, file_map, log_of_pages);
+    let pages = pages.ok_or_else(not_started)?;
+    let is_root_written = !transpiler.options.root_dir.is_empty()
+        || !(pages.is_empty() || aot.pages.app_directory.is_empty());
     let input = OptionsInput {
         bundle_options: &transpiler.options,
         entry_points,
@@ -150,16 +164,13 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
         module_prefix,
         typescript_libs,
         file_map,
-        working_directory: crate::bun_fs::FileSystem::get().top_level_dir(),
+        pages: &pages,
+        working_directory: top_level_dir,
         node_path: transpiler.env().get(b"NODE_PATH"),
     };
     // SAFETY: the log outlives the build, and nothing below this call reaches the transpiler.
     let Some(options) = options_from_bundler(&input, unsafe { &mut *log }) else {
-        return Err(AotBuildFailure {
-            stage: None,
-            is_internal_error: false,
-            statistics: Statistics::default(),
-        });
+        return Err(not_started());
     };
     transpiler.options.root_dir = Box::from(&options.paths.root_directory[..]);
     transpiler
@@ -209,7 +220,8 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
             root_directory: Box::from(&options.paths.root_directory[..]),
         },
     )
-    .with_assets(assets_by_absolute_paths, assets_root);
+    .with_assets(assets_by_absolute_paths, assets_root)
+    .with_pages(&pages);
     let mut said_by_compiler = Log::init();
     let result = bun_aot::compile(&options, &services, &mut said_by_compiler);
     // SAFETY: the log outlives the build, and the reference ends with the statement.
@@ -223,7 +235,7 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
     let refused_data = services.take_refused_data();
     let files_for_file_system = services.take_files_for_file_system();
     let found_beside_engine = services.take_names_of_packages();
-    let embedded = services.shut_down();
+    let mut embedded = services.shut_down();
     let (package_names, path_aliases) = match &result {
         // A program that runs in place asks the disk, and one entry point is loaded by nobody.
         Ok(compilation) if !aot.runs_in_place && compilation.summary.entry_points.len() > 1 => {
@@ -299,6 +311,8 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
                 sources.any(|source| source.source_path == replaced)
                     || embedded.iter().any(|file| &*file.src_path == replaced)
             });
+            let entry_points = &compilation.summary.entry_points;
+            embedded.extend(pages.list(entry_points, &options.paths.root_directory, &names));
             let mut build = output::finish_build(compilation, &names, embedded);
             build.is_source_replaced = is_source_replaced;
             build.package_names = package_names;

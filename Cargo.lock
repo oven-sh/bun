@@ -597,6 +597,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_desktop"
+version = "0.0.0"
+dependencies = [
+ "bun_alloc",
+ "bun_base64",
+ "bun_boringssl_sys",
+ "bun_collections",
+ "bun_core",
+ "bun_crash_handler",
+ "bun_css",
+ "bun_deflate",
+ "bun_event_loop",
+ "bun_http",
+ "bun_jsc",
+ "bun_opaque",
+ "bun_paths",
+ "bun_removable_features",
+ "bun_sha_hmac",
+ "bun_spawn",
+ "bun_spawn_sys",
+ "bun_sys",
+ "bun_ui",
+ "bun_url",
+ "bun_web",
+ "bun_which",
+ "bun_wyhash",
+ "libc",
+]
+
+[[package]]
 name = "bun_dispatch"
 version = "0.0.0"
 dependencies = [
@@ -616,6 +646,32 @@ dependencies = [
  "bun_wyhash",
  "libc",
  "strum",
+]
+
+[[package]]
+name = "bun_dom"
+version = "0.0.0"
+dependencies = [
+ "bitflags",
+ "bstr",
+ "bun_alloc",
+ "bun_ast",
+ "bun_base64",
+ "bun_collections",
+ "bun_core",
+ "bun_css",
+ "bun_jsc",
+ "bun_markup",
+ "bun_md",
+ "bun_parsers",
+ "bun_sys",
+ "bun_ui",
+ "bun_url",
+ "bun_web",
+ "bun_wyhash",
+ "bun_yarr",
+ "paste",
+ "smallvec",
 ]
 
 [[package]]
@@ -681,7 +737,11 @@ version = "0.0.0"
 dependencies = [
  "bun_aot",
  "bun_aot_absent",
+ "bun_desktop",
+ "bun_dom",
  "bun_runtime",
+ "bun_ui",
+ "bun_web",
 ]
 
 [[package]]
@@ -1335,6 +1395,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_markup"
+version = "0.0.0"
+dependencies = [
+ "bitflags",
+ "bun_collections",
+ "bun_core",
+ "bun_md",
+ "bun_sema_standalone",
+]
+
+[[package]]
 name = "bun_md"
 version = "0.0.0"
 dependencies = [
@@ -1402,6 +1473,15 @@ dependencies = [
 [[package]]
 name = "bun_output_tags"
 version = "0.0.0"
+
+[[package]]
+name = "bun_pac"
+version = "0.0.0"
+dependencies = [
+ "bun_collections",
+ "bun_core",
+ "bun_yarr",
+]
 
 [[package]]
 name = "bun_parsers"
@@ -1702,6 +1782,7 @@ dependencies = [
  "bun_uws_sys",
  "bun_valkey",
  "bun_watcher",
+ "bun_web",
  "bun_webp",
  "bun_which",
  "bun_wyhash",
@@ -2142,6 +2223,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_ui"
+version = "0.0.0"
+dependencies = [
+ "bun_base64",
+ "bun_core",
+ "bun_event_loop",
+ "bun_io",
+ "bun_jsc",
+ "bun_ptr",
+ "bun_sys",
+ "bun_threading",
+]
+
+[[package]]
 name = "bun_url"
 version = "0.0.0"
 dependencies = [
@@ -2215,6 +2310,44 @@ dependencies = [
  "scopeguard",
  "strum",
  "thiserror",
+]
+
+[[package]]
+name = "bun_web"
+version = "0.0.0"
+dependencies = [
+ "bitflags",
+ "bstr",
+ "bun_base64",
+ "bun_boringssl_sys",
+ "bun_collections",
+ "bun_core",
+ "bun_errno",
+ "bun_event_loop",
+ "bun_highway",
+ "bun_http",
+ "bun_http1",
+ "bun_http_jsc",
+ "bun_http_types",
+ "bun_io",
+ "bun_jsc",
+ "bun_opaque",
+ "bun_pac",
+ "bun_paths",
+ "bun_ptr",
+ "bun_resolver",
+ "bun_sha_hmac",
+ "bun_simdutf_sys",
+ "bun_spawn_sys",
+ "bun_sys",
+ "bun_threading",
+ "bun_ui",
+ "bun_url",
+ "bun_which",
+ "bun_wyhash",
+ "bun_yarr",
+ "encoding_rs",
+ "smallvec",
 ]
 
 [[package]]

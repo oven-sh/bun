@@ -10,6 +10,10 @@
 namespace WebCore {
 using namespace JSC;
 
+// `interfaceSubspaceIndex` in Bindgen/JSInterface.h.
+inline constexpr unsigned numberOfInterfaceCellSizes = 32;
+inline constexpr unsigned numberOfInterfaceSubspaces = 3 * numberOfInterfaceCellSizes;
+
 class DOMIsoSubspaces {
     WTF_MAKE_NONCOPYABLE(DOMIsoSubspaces);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(DOMIsoSubspaces);
@@ -71,6 +75,7 @@ public:
     IsoSubspace* m_subspaceForWasmStreamingCompiler { nullptr };
     IsoSubspace* m_subspaceForJSWebView { nullptr };
     IsoSubspace* m_subspaceForBindgenClass[Bun::Bindgen::Counts::numberOfClasses] {};
+    IsoSubspace* m_subspaceForInterface[numberOfInterfaceSubspaces] {};
     /*-- BUN --*/
 
     IsoSubspace* m_subspaceForFetchHeaders { nullptr };
@@ -147,6 +152,7 @@ public:
     IsoSubspace* m_subspaceForWorkerGlobalScope { nullptr };
 
     IsoSubspace* m_subspaceForBakeGlobalScope { nullptr };
+    IsoSubspace* m_subspaceForWebGlobalObject { nullptr };
 
     IsoSubspace* m_subspaceForAbortController { nullptr };
     IsoSubspace* m_subspaceForAbortSignal { nullptr };

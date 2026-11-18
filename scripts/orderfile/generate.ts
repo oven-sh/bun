@@ -608,6 +608,14 @@ export function demangleRust(input: string[], tools: string[] = DEMANGLERS): str
   return input;
 }
 
+/** A demangled C++ name without what the targets spell differently: the type behind `int64_t`, and the standard library's own namespace. */
+const withoutTargetSpelling = (name: string) =>
+  name
+    .replace(/\blong long\b/g, "long")
+    .replace(/\b(\d+u?l)l\b/g, "$1")
+    .replace(/\bstd::__\w+::/g, "std::")
+    .replace(/\[abi:\w+\]/g, "");
+
 export interface ResolvedHints {
   /** Names of the current build, in hint order. */
   names: string[];
@@ -624,12 +632,13 @@ export interface ResolvedHints {
  * since they are clones of one function and which one runs is not knowable
  * from here. Names that match nothing are dropped, as the linker drops them.
  * The demangler only runs if a Rust name is left unmatched, and only over the
- * Rust names.
+ * Rust names. Hints `fromAnotherTarget` have C++ names treated the same way.
  */
 export function resolveHints(
   hints: string[],
   current: Iterable<string>,
   demangle: (names: string[]) => string[] = demangleRust,
+  fromAnotherTarget = false,
 ): ResolvedHints {
   const have = new Set(current);
   const index = (names: string[], keys: string[]) => {
@@ -644,19 +653,19 @@ export function resolveHints(
 
   const currentNames = [...have];
   const byName = index(currentNames, currentNames.map(withoutCloneSuffix));
-  /** A Rust (v0) mangled name as the demanglers take it: without its clone suffix or Mach-O's underscore. */
-  const rustName = (name: string) => /^_?(_R.*)$/.exec(withoutCloneSuffix(name))?.[1];
+  /** A mangled name as the demanglers take it: without its clone suffix or Mach-O's underscore. */
+  const mangling = fromAnotherTarget ? /^_?(_[RZ].*)$/ : /^_?(_R.*)$/;
+  const mangled = (name: string) => mangling.exec(withoutCloneSuffix(name))?.[1];
 
-  const unmatchedRust = hints.filter(
-    hint => !have.has(hint) && rustName(hint) && !byName.has(withoutCloneSuffix(hint)),
-  );
+  const unmatched = hints.filter(hint => !have.has(hint) && mangled(hint) && !byName.has(withoutCloneSuffix(hint)));
   let byDemangled = new Map<string, string[]>();
   const demangledHints = new Map<string, string>();
-  if (unmatchedRust.length) {
-    const currentRust = currentNames.filter(rustName);
-    const demangled = demangle([...currentRust, ...unmatchedRust].map(name => rustName(name)!));
-    byDemangled = index(currentRust, demangled.slice(0, currentRust.length));
-    for (const [i, hint] of unmatchedRust.entries()) demangledHints.set(hint, demangled[currentRust.length + i]!);
+  if (unmatched.length) {
+    const candidates = currentNames.filter(mangled);
+    let demangled = demangle([...candidates, ...unmatched].map(name => mangled(name)!));
+    if (fromAnotherTarget) demangled = demangled.map(withoutTargetSpelling);
+    byDemangled = index(candidates, demangled.slice(0, candidates.length));
+    for (const [i, hint] of unmatched.entries()) demangledHints.set(hint, demangled[candidates.length + i]!);
   }
 
   const resolved: ResolvedHints = { names: [], listed: hints.length, exact: 0, normalized: 0 };

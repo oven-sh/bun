@@ -41,6 +41,8 @@ export interface OrderGroup {
   names: string[];
   // Mach-O: order lines that must follow the lines of retained atoms.
   afterRetained: string[];
+  // COFF: names that follow the names of all groups.
+  afterGroups: string[];
 }
 
 export interface SectionOrder {

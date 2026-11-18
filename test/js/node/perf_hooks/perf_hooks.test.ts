@@ -6,6 +6,8 @@ import perf, { PerformanceObserver, type PerformanceNodeEntry } from "perf_hooks
 
 test("stubs", () => {
   expect(perf.performance.nodeTiming).toBeObject();
+  expect(perf.performance.nodeTiming.startTime).toBe(0);
+  expect(perf.performance.nodeTiming.nodeStart).toBeLessThanOrEqual(perf.performance.now());
 
   expect(perf.performance.now()).toBeNumber();
   expect(perf.performance.timeOrigin).toBeNumber();

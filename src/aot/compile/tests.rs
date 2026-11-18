@@ -144,6 +144,7 @@ fn links_small_program() {
     let expected = EntryPointPaths {
         public_path: b"/$bunfs/root/a.ts".to_vec(),
         source_path: b"/project/a.ts".to_vec(),
+        is_loaded_by_page: false,
     };
     assert_eq!(summary.entry_points, [expected]);
     assert!(summary.statistics.get(Stage::Load.time()) > 0);
@@ -1285,7 +1286,8 @@ fn every_module_of_bun_keeps_its_types() {
         .public_specifiers()
         .map(|specifier| format!("import \"{}\";\n", BStr::new(specifier)))
         .collect();
-    let project = TestProject::new(&[("a.js", imports.as_str())], &default_settings());
+    let mut project = TestProject::new(&[("a.js", imports.as_str())], &default_settings());
+    project.aot.has_realms_of_the_web = true;
     run_build(&project, BUNDLED_LIBS, &WithoutServices, |build| {
         with_bound_build(build, |_, loaded, _| {
             let runtime = &loaded.projects.runtime;
@@ -1346,7 +1348,8 @@ fn types_of_bun_modules_lead_in_no_circle() {
         .map(|index| format!("module{index}"))
         .collect();
     source += &format!("globalThis.everyModule = [{}];\n", names.join(", "));
-    let project = TestProject::new(&[("a.js", source.as_str())], &default_settings());
+    let mut project = TestProject::new(&[("a.js", source.as_str())], &default_settings());
+    project.aot.has_realms_of_the_web = true;
     run_build(&project, BUNDLED_LIBS, &WithoutServices, |build| {
         with_bound_build(build, |build, loaded, bound| {
             let unit_count = build.check_and_lower(loaded, bound).len();
@@ -1410,6 +1413,7 @@ fn worker_file_named_by_url_is_an_entry_point_after_one_load() {
     let expected = ["main.js", "worker.js"].map(|name| EntryPointPaths {
         public_path: format!("/$bunfs/root/{name}").into_bytes(),
         source_path: format!("/project/{name}").into_bytes(),
+        is_loaded_by_page: false,
     });
     let found_by_load = with_loaded_build(&files, &default_settings(), |build, loaded| {
         assert!(build.retired_sessions.is_empty());

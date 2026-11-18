@@ -239,7 +239,7 @@ pub use CustomIdent as CustomIdentFns;
 /// reserved separately by css-values-4. `none` is *not* in this set —
 /// `<keyframes-name>` / `<single-animation-name>` callers check it themselves.
 #[inline]
-pub(crate) fn is_reserved_custom_ident(s: &[u8]) -> bool {
+pub fn is_reserved_custom_ident(s: &[u8]) -> bool {
     strings::eql_any_case_insensitive_ascii(
         s,
         &[

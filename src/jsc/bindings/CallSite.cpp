@@ -6,6 +6,8 @@
 #include "config.h"
 #include "CallSite.h"
 
+#include "DesktopRealm.h"
+
 #include "JavaScriptCore/CallData.h"
 #include "helpers.h"
 #include "wtf/text/OrdinalNumber.h"
@@ -34,6 +36,11 @@ static bool isUserFunction(JSC::JSCell* callee)
 
     // A generator or async body function takes JSC-internal arguments: a call from JS corrupts memory.
     return !JSC::isGeneratorOrAsyncFunctionBodyParseMode(function->jsExecutable()->parseMode());
+}
+
+static bool isOfAnotherRealm(JSC::JSGlobalObject* ofCallee, JSC::JSGlobalObject* ofCallSite)
+{
+    return ofCallee != ofCallSite && (Bun::isDesktopRealm(ofCallee) || Bun::isDesktopRealm(ofCallSite));
 }
 
 void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encounteredStrictFrame)
@@ -72,7 +79,7 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
         m_flags |= static_cast<unsigned int>(Flags::IsStrict);
     }
     // Hiding a callee must not set IsStrict: that cascades to the callers, and JSC shows host frames that V8 omits.
-    if (isStrictFrame || !isUserFunction(callee)) {
+    if (isStrictFrame || !isUserFunction(callee) || isOfAnotherRealm(calleeFunction(callee)->realm(), realm())) {
         m_function.set(vm, this, JSC::jsUndefined());
     } else {
         m_function.set(vm, this, callee);

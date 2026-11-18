@@ -328,6 +328,21 @@ void us_internal_poll_set_type(struct us_poll_t *p, int poll_type) {
 
 LIBUS_SOCKET_DESCRIPTOR us_poll_fd(struct us_poll_t *p) { return p->fd; }
 
+static struct us_loop_t *foreign_loop;
+static us_foreign_wait_t foreign_wait;
+
+void us_loop_set_foreign_wait(struct us_loop_t *loop, us_foreign_wait_t wait) {
+  foreign_wait = wait;
+  __atomic_store_n(&foreign_loop, wait ? loop : NULL, __ATOMIC_RELAXED);
+}
+
+static int is_foreign(struct us_loop_t *loop) {
+  return loop == __atomic_load_n(&foreign_loop, __ATOMIC_RELAXED);
+}
+
+/* This loop keeps its heap access while it waits. */
+void us_loop_foreign_wait_reenter(struct us_loop_t *loop) {}
+
 void us_loop_pump(struct us_loop_t *loop) {
   /* POSIX parity: us_loop_run_bun_tick polls epoll/kqueue and dispatches
    * regardless of ref state (it only early-outs on num_polls == 0). libuv's
@@ -337,6 +352,8 @@ void us_loop_pump(struct us_loop_t *loop) {
    * bun:test) supply their own keep-going predicate, so force exactly one
    * non-blocking iteration; UV_RUN_NOWAIT keeps the poll timeout at 0. */
   loop->data.tick_depth++;
+  if (is_foreign(loop))
+    foreign_wait((intptr_t) loop->uv_loop->iocp, 0);
   loop->uv_loop->active_handles++;
   uv_run(loop->uv_loop, UV_RUN_NOWAIT);
   loop->uv_loop->active_handles--;
@@ -474,7 +491,15 @@ void us_loop_run(struct us_loop_t *loop) {
    * that waits for a promise re-enters here while the outer dispatch is still
    * using its socket. us_loop_run_bun_tick does the same on POSIX. */
   loop->data.tick_depth++;
-  uv_run(loop->uv_loop, UV_RUN_ONCE);
+  if (is_foreign(loop)) {
+    /* What prepare_cb flushes has to go out before the wait. */
+    us_internal_loop_pre(loop);
+    const int timeout_ms = uv_backend_timeout(loop->uv_loop);
+    foreign_wait((intptr_t) loop->uv_loop->iocp, timeout_ms < 0 ? -1 : timeout_ms * 1000000LL);
+    uv_run(loop->uv_loop, UV_RUN_NOWAIT);
+  } else {
+    uv_run(loop->uv_loop, UV_RUN_ONCE);
+  }
   loop->data.tick_depth--;
 }
 

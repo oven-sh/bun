@@ -81,6 +81,7 @@ mod hardcoded_module {
             target,
             bun_resolve_builtins::Cfg {
                 rewrite_jest_for_tests: opts.rewrite_jest_for_tests,
+                ..Default::default()
             },
         )
         .map(|a| Alias {

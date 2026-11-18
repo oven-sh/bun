@@ -1,6 +1,8 @@
 #include "root.h"
 
 #include "BunClientData.h"
+#include "DesktopRealm.h"
+#include "WebGlobalObject.h"
 #include "WorkerMessagingProxy.h"
 #include "WebCoreJSBuiltins.h"
 
@@ -228,6 +230,8 @@ JSC::Structure* createClassStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObj
 
 void reifyStaticPropertyTable(JSC::VM& vm, const JSC::ClassInfo* classInfo, std::span<const JSC::HashTableValue> values, JSC::JSObject& object)
 {
+    if (isDesktopRealm(object.realm()) && desktopRealmReifyMembersOfWeb(classInfo, values, object)) [[unlikely]]
+        return;
     JSC::reifyStaticProperties(vm, classInfo, values, object);
 }
 

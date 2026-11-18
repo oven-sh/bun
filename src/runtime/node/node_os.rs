@@ -550,82 +550,95 @@ mod _impl {
                 }
             }
 
-            // From libuv:
-            // > Calling sysconf(_SC_GETPW_R_SIZE_MAX) would get the suggested size, but it
-            // > is frequently 1024 or 4096, so we can just use that directly. The pwent
-            // > will not usually be large.
-            // Instead of always using an allocation, first try a stack allocation
-            // of 4096, then fallback to heap.
-            let mut stack_string_bytes = [0u8; 4096];
-            let mut heap_bytes: Vec<u8>;
-            let mut string_bytes: &mut [u8] = &mut stack_string_bytes[..];
-            let mut using_heap = false;
-
-            let mut pw: libc::passwd = bun_core::ffi::zeroed();
-            let mut result: *mut libc::passwd = core::ptr::null_mut();
-
-            let ret: c_int = loop {
-                // SAFETY: valid buffers and out-pointer
-                let ret = unsafe {
-                    libc::getpwuid_r(
-                        libc::geteuid(),
-                        &raw mut pw,
-                        string_bytes.as_mut_ptr().cast::<c_char>(),
-                        string_bytes.len(),
-                        &raw mut result,
-                    )
-                };
-
-                if ret == bun_sys::E::EINTR as c_int {
-                    continue;
-                }
-
-                // If the system call wants more memory, double it.
-                if ret == bun_sys::E::ERANGE as c_int {
-                    let len = string_bytes.len();
-                    heap_bytes = vec![0u8; len * 2];
-                    string_bytes = &mut heap_bytes[..];
-                    using_heap = true;
-                    continue;
-                }
-
-                break ret;
-            };
-            let _ = using_heap;
-
-            if ret != 0 {
-                return Err(global.throw_value(
-                    bun_sys::Error::from_code(
-                        // `ret` is a libc errno; a code outside the table is `EUNKNOWN`.
-                        bun_sys::E::from_raw(ret as u16),
-                        bun_sys::Tag::uv_os_homedir,
-                    )
-                    .to_js(global),
-                ));
-            }
-
-            if result.is_null() {
+            let errno = match passwd_entry() {
+                Ok(Some(entry)) => return Ok(entry.homedir),
                 // bionic has no passwd entries for app uids; with HOME also unset
                 // (zygote/run-as), return a usable default rather than throwing.
                 #[cfg(target_os = "android")]
-                {
-                    return Ok(BunString::static_("/data/local/tmp"));
-                }
+                Ok(None) => return Ok(BunString::static_("/data/local/tmp")),
                 // in uv__getpwuid_r, null result throws UV_ENOENT.
                 #[cfg(not(target_os = "android"))]
-                return Err(global.throw_value(
-                    bun_sys::Error::from_code(bun_sys::E::ENOENT, bun_sys::Tag::uv_os_homedir)
-                        .to_js(global),
-                ));
+                Ok(None) => bun_sys::E::ENOENT,
+                Err(errno) => errno,
+            };
+            return Err(global.throw_value(
+                bun_sys::Error::from_code(errno, bun_sys::Tag::uv_os_homedir).to_js(global),
+            ));
+        }
+    }
+
+    #[cfg(not(windows))]
+    struct PasswdEntry {
+        username: BunString,
+        homedir: BunString,
+        shell: BunString,
+        uid: libc::uid_t,
+        gid: libc::gid_t,
+    }
+
+    #[cfg(not(windows))]
+    fn passwd_entry() -> Result<Option<PasswdEntry>, bun_sys::E> {
+        // From libuv:
+        // > Calling sysconf(_SC_GETPW_R_SIZE_MAX) would get the suggested size, but it
+        // > is frequently 1024 or 4096, so we can just use that directly. The pwent
+        // > will not usually be large.
+        // Instead of always using an allocation, first try a stack allocation
+        // of 4096, then fallback to heap.
+        let mut stack_string_bytes = [0u8; 4096];
+        let mut heap_bytes: Vec<u8>;
+        let mut string_bytes: &mut [u8] = &mut stack_string_bytes[..];
+
+        let mut pw: libc::passwd = bun_core::ffi::zeroed();
+        let mut result: *mut libc::passwd = core::ptr::null_mut();
+
+        let ret: c_int = loop {
+            // SAFETY: valid buffers and out-pointer
+            let ret = unsafe {
+                libc::getpwuid_r(
+                    libc::geteuid(),
+                    &raw mut pw,
+                    string_bytes.as_mut_ptr().cast::<c_char>(),
+                    string_bytes.len(),
+                    &raw mut result,
+                )
+            };
+
+            if ret == bun_sys::E::EINTR as c_int {
+                continue;
             }
 
-            return Ok(if !pw.pw_dir.is_null() {
-                // SAFETY: pw_dir is a NUL-terminated C string from getpwuid_r
-                BunString::clone_utf8(unsafe { bun_core::ffi::cstr(pw.pw_dir) }.to_bytes())
-            } else {
-                BunString::EMPTY
-            });
+            // If the system call wants more memory, double it.
+            if ret == bun_sys::E::ERANGE as c_int {
+                let len = string_bytes.len();
+                heap_bytes = vec![0u8; len * 2];
+                string_bytes = &mut heap_bytes[..];
+                continue;
+            }
+
+            break ret;
+        };
+
+        if ret != 0 {
+            // `ret` is a libc errno; a code outside the table is `EUNKNOWN`.
+            return Err(bun_sys::E::from_raw(ret as u16));
         }
+        if result.is_null() {
+            return Ok(None);
+        }
+        let string = |field: *const c_char| {
+            if field.is_null() {
+                return BunString::EMPTY;
+            }
+            // SAFETY: a NUL-terminated C string from getpwuid_r
+            BunString::clone_utf8(unsafe { bun_core::ffi::cstr(field) }.to_bytes())
+        };
+        Ok(Some(PasswdEntry {
+            username: string(pw.pw_name),
+            homedir: string(pw.pw_dir),
+            shell: string(pw.pw_shell),
+            uid: pw.pw_uid,
+            gid: pw.pw_gid,
+        }))
     }
 
     pub(crate) fn hostname(cx: &mut JsScope<'_>) -> JsResult<JSValue> {
@@ -1196,6 +1209,22 @@ mod _impl {
         options: &crate::generated_bindgen::node_os::UserInfoOptions<'_>,
     ) -> JsResult<JSValue> {
         let _ = options; // TODO:
+
+        #[cfg(not(windows))]
+        if let Ok(Some(entry)) = passwd_entry() {
+            let global_this = cx.global();
+            let result = JSValue::create_empty_object(global_this, 5);
+            result.put(global_this, b"homedir", entry.homedir.into_js(global_this)?);
+            result.put(
+                global_this,
+                b"username",
+                entry.username.into_js(global_this)?,
+            );
+            result.put(global_this, b"shell", entry.shell.into_js(global_this)?);
+            result.put(global_this, b"uid", JSValue::js_number(entry.uid.into()));
+            result.put(global_this, b"gid", JSValue::js_number(entry.gid.into()));
+            return Ok(result);
+        }
 
         let home = homedir(cx)?;
         let global_this = cx.global();

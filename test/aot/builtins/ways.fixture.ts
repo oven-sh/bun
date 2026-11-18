@@ -83,6 +83,8 @@ function find(entry: DumpedEntry | undefined): unknown {
 function findAnew(entry: DumpedEntry): unknown {
   if (entry.token === "GlobalThis") return globalThis;
   if (hiddenRoots.has(entry.path)) return hiddenRoots.get(entry.path);
+  // One makes the global object a window, and the other adds to `process`.
+  if (/^bun:desktop\/(dom|electron)$/.test(entry.path)) return undefined;
   if (/^(node|bun):[^.]*$/.test(entry.path)) return attempt(() => requireHere(entry.path));
   const holder = entry.holder ? find(entryOf.get(entry.holder)) : undefined;
   if (isObject(holder)) {

@@ -1,0 +1,31 @@
+form {
+  margin-block-end: 1em;
+}
+table {
+  font-size: medium;
+  font-weight: normal;
+  font-style: normal;
+  font-variant: normal;
+  line-height: normal;
+  white-space: normal;
+  text-align: start;
+}
+input:not([type="image" i]),
+textarea {
+  box-sizing: border-box;
+}
+li {
+  list-style-position: inside;
+}
+li :is(dir, menu, ol, ul) {
+  list-style-position: outside;
+}
+:is(dir, menu, ol, ul) :is(dir, menu, ol, ul, li) {
+  list-style-position: unset;
+}
+img[align="left" i] {
+  margin-right: 3px;
+}
+img[align="right" i] {
+  margin-left: 3px;
+}

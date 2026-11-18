@@ -142,6 +142,8 @@
               "/runtime/shell",
               "/runtime/child-process",
               "/runtime/webview",
+              "/runtime/desktop",
+              "/runtime/desktop-electron",
               "/runtime/cron"
             ]
           },

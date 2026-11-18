@@ -6,6 +6,7 @@ import { readArchive } from "../../../scripts/build/trim/archive.ts";
 import type { Feature, FeatureModel, IcuDataLine } from "../../../scripts/build/trim/features.ts";
 import {
   createSectionGraph,
+  madeByLinker,
   type ObjectFormat,
   type SectionGraph,
   type SectionGraphParts,
@@ -42,7 +43,7 @@ import { A, feature, modelOf, partitioned, tableOutput } from "./toy-graph.ts";
 type Section = [
   size: number,
   features: number[] | "retained" | "flagged",
-  options?: { output?: string; gap?: number; alignment?: number },
+  options?: { output?: string; object?: string; gap?: number; alignment?: number },
 ];
 type Layout = { graph: SectionGraph; partition: Partition };
 
@@ -73,7 +74,7 @@ function partsOf(sections: Section[], start: number, format: ObjectFormat): Sect
     parts.size.push(size);
     parts.alignment.push(options.alignment ?? 16);
     parts.output.push(options.output ?? ".text");
-    parts.object.push("toy.o");
+    parts.object.push(options.object ?? "toy.o");
     parts.section.push(`section${node}`);
     parts.successors.push(new Set());
     parts.names.push([`symbol${node}`]);
@@ -247,6 +248,24 @@ describe("ranges that can be cut", () => {
     expect(ranges[0]).toMatchObject({ canBeCut: true, canBeFilled: true, isCode: true });
     expect(ranges[1]).toMatchObject({ canBeCut: true, canBeFilled: false, isCode: false });
     expect(ranges[2]).toMatchObject({ canBeCut: true, canBeFilled: false, isCode: false });
+  });
+
+  test("what the linker made can only be filled", () => {
+    const layout = createLayout([
+      [0x8000, [Tools]],
+      [4, [Jit], { object: madeByLinker, alignment: 4 }],
+      [4, [Tools], { object: madeByLinker, alignment: 4 }],
+      [0x8000, [Tools], { gap: 8 }],
+    ]);
+    const { ranges } = removableRanges(layout.graph, layout.partition, policy);
+    expect(summarize(layout, ranges)).toEqual([
+      [0, 0x8000, [Tools]],
+      [0x8000, 0x8004, [Jit]],
+      [0x8004, 0x8008, [Tools]],
+      [0x8010, 0x10010, [Tools]],
+    ]);
+    expect(ranges.map(range => range.canBeCut)).toEqual([true, false, false, true]);
+    expect(checkRanges(layout.graph, layout.partition, ranges)).toEqual([]);
   });
 
   test("the largest runs win when there are too many", () => {

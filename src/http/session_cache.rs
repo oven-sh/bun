@@ -27,6 +27,7 @@ struct CacheEntry {
     proxy_auth_hash: u64,
     /// AF_UNIX socket path; empty for TCP.
     unix_path: Box<[u8]>,
+    partition: u64,
     session: OwnedSslSession,
 }
 
@@ -50,6 +51,7 @@ impl SessionCache {
         port: u16,
         proxy_auth_hash: u64,
         unix_path: &[u8],
+        partition: u64,
     ) -> Option<OwnedSslSession> {
         if hostname.len() > MAX_KEEPALIVE_HOSTNAME {
             return None;
@@ -60,6 +62,7 @@ impl SessionCache {
                 && e.proxy_auth_hash == proxy_auth_hash
                 && strings::eql_long(&e.hostname, hostname)
                 && *e.unix_path == *unix_path
+                && e.partition == partition
         })?;
         Some(entries.remove(idx).session)
     }
@@ -70,6 +73,7 @@ impl SessionCache {
         port: u16,
         proxy_auth_hash: u64,
         unix_path: &[u8],
+        partition: u64,
         session: OwnedSslSession,
     ) {
         if hostname.len() > MAX_KEEPALIVE_HOSTNAME {
@@ -81,6 +85,7 @@ impl SessionCache {
                 && e.proxy_auth_hash == proxy_auth_hash
                 && strings::eql_long(&e.hostname, hostname)
                 && *e.unix_path == *unix_path
+                && e.partition == partition
         }) {
             let _ = entries.remove(idx);
         } else if entries.len() >= SESSION_CACHE_CAPACITY {
@@ -91,6 +96,7 @@ impl SessionCache {
             port,
             proxy_auth_hash,
             unix_path: Box::<[u8]>::from(unix_path),
+            partition,
             session,
         });
     }
@@ -103,6 +109,7 @@ pub(crate) struct SessionSink {
     port: u16,
     proxy_auth_hash: u64,
     unix_path: Box<[u8]>,
+    partition: u64,
     /// Set once `checkServerIdentity` passes. TLS 1.2 delivers the session
     /// inside `SSL_do_handshake`, before `on_handshake` can verify the peer.
     armed: bool,
@@ -132,6 +139,7 @@ pub fn on_new_session(socket: &mut bun_uws::us_socket_t, session: *mut SSL_SESSI
             sink.port,
             sink.proxy_auth_hash,
             &sink.unix_path,
+            sink.partition,
             session,
         );
     } else {
@@ -178,12 +186,13 @@ pub(crate) unsafe fn install(
     port: u16,
     proxy_auth_hash: u64,
     unix_path: &[u8],
+    partition: u64,
 ) {
     debug_assert!(!ssl.is_null());
     debug_assert!(!ctx.is_null());
     // SAFETY: caller contract.
     let cache = unsafe { &(*ctx).session_cache };
-    if let Some(session) = cache.take(hostname, port, proxy_auth_hash, unix_path) {
+    if let Some(session) = cache.take(hostname, port, proxy_auth_hash, unix_path, partition) {
         // SAFETY: `ssl` is live and pre-handshake; it takes its own reference.
         unsafe { SSL_set_session(ssl, session.as_ptr()) };
     }
@@ -193,6 +202,7 @@ pub(crate) unsafe fn install(
         port,
         proxy_auth_hash,
         unix_path: Box::<[u8]>::from(unix_path),
+        partition,
         armed: false,
         pending: None,
     });
@@ -230,6 +240,7 @@ pub(crate) unsafe fn arm(socket: *mut bun_uws::us_socket_t) {
             sink.port,
             sink.proxy_auth_hash,
             &sink.unix_path,
+            sink.partition,
             session,
         );
     }

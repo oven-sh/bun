@@ -530,6 +530,42 @@ describe("order file hints", () => {
     expect(resolveHints(hintNames({ names: hints, format: "elf" }, "macho"), macho).names).toEqual(macho);
   });
 
+  it.skipIf(!cxxfilt)("matches a C++ name across targets", () => {
+    // f(int64_t), g(std::vector<int>&), h<8>() with a uint64_t argument
+    const hints = ["__Z1fl", "__Z1gRSt6vectorIiSaIiEE", "__Z1hILm8EEvv", "__Z1fi"];
+    const current = ["__Z1fx", "__Z1gRNSt3__16vectorIiNS_9allocatorIiEEEE", "__Z1hILy8EEvv", "__Z1fd"];
+    expect(resolveHints(hints, current).names).toEqual([]);
+    expect(resolveHints(hints, current, demangleRust, true).names).toEqual(current.slice(0, 3));
+  });
+
+  const [clang, nm] = [Bun.which("clang"), Bun.which("llvm-nm")];
+  it.skipIf(!cxxfilt || !clang || !nm).each([
+    ["elf", "x86_64-linux-gnu", "_Z1fl\n_RNvCs7kMPyjk15S4_3foo3bar\nlocal\n"],
+    ["macho", "arm64-apple-macos", "__Z1fx\n__RNvCs7kMPyjk15S4_3foo3bar\n_local\n"],
+  ])("writes the order file of a link from its inputs (%s)", async (format, target, expected) => {
+    using dir = tempDir("orderfile-resolve", {
+      "a.cpp": `inline int f(__INT64_TYPE__ x) { return x; } int unlisted() { return f(1); }`,
+      "b.c": `int data = 1;
+        static void local(void) {}
+        void rust(void) __asm__("${format === "macho" ? "_" : ""}_RNvCs7kMPyjk15S4_3foo3bar");
+        void rust(void) { local(); }`,
+      "inputs": "a.o\nb.o",
+      "app.hints": "# format: elf\n_Z1fl\n_RNvCsaZ2QR4xGWmr_3foo3bar.llvm.42\ngone\ndata\nlocal\n",
+    });
+    const cwd = String(dir);
+    expect(Bun.spawnSync([clang!, `--target=${target}`, "-c", "a.cpp", "b.c"], { cwd }).exitCode).toBe(0);
+    const script = join(import.meta.dir, "../../../../scripts/orderfile/resolve.ts");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), script, nm!, cxxfilt!, format, "inputs", "linker.order", "app.hints"],
+      env: bunEnv,
+      cwd,
+      stderr: "inherit",
+    });
+    expect(await proc.stdout.text()).toContain("3 of 5 hints resolved");
+    expect(readFileSync(join(cwd, "linker.order"), "utf8")).toBe(expected);
+    expect(await proc.exited).toBe(0);
+  });
+
   describe("finding a demangler", () => {
     const names = ["_RNvCs7kMPyjk15S4_3foo3bar"];
     const warnings = () => {

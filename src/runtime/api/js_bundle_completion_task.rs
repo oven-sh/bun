@@ -510,6 +510,10 @@ impl JSBundleCompletionTask {
         if !compile_options.autoload_package_json {
             flags |= StandaloneFlags::DISABLE_AUTOLOAD_PACKAGE_JSON;
         }
+        if let Some(desktop) = &compile_options.desktop {
+            flags |= StandaloneFlags::LOADS_GRAPHICS_DRIVERS;
+            flags.set(StandaloneFlags::STARTS_IN_WINDOW, desktop.starts_in_window);
+        }
 
         let trim_plan = match compile_ahead_of_time::plan_bundle_trimming(
             compile_options,
@@ -527,6 +531,12 @@ impl JSBundleCompletionTask {
             ..Default::default()
         };
 
+        if let Some(bundle) = &compile_options.desktop
+            && let Err(error) = bundle.write(&compile_options.compile_target, env)
+        {
+            return CompileResult::Err(error);
+        }
+
         let result = match to_executable(
             &compile_options.compile_target,
             output_files,
@@ -537,6 +547,7 @@ impl JSBundleCompletionTask {
             config.format,
             &WindowsOptions {
                 hide_console: compile_options.windows_hide_console,
+                imports_from_system32_only: compile_options.desktop.is_some(),
                 icon: opt_box(&compile_options.windows_icon_path.list),
                 title: opt_box(&compile_options.windows_title.list),
                 publisher: opt_box(&compile_options.windows_publisher.list),
@@ -660,6 +671,13 @@ impl JSBundleCompletionTask {
             // Trailing (dropped) entries are freed by `truncate` below.
         }
         output_files.truncate(kept);
+
+        if matches!(result, CompileResult::Success)
+            && let Some(bundle) = &compile_options.desktop
+            && let Some(warning) = bundle.sign(&compile_options.compile_target)
+        {
+            log.add_warning(None, bun_ast::Loc::EMPTY, warning.as_bytes());
+        }
 
         result
     }
@@ -1056,10 +1074,15 @@ impl JSBundleCompletionTask {
         // Owned so the static bound holds without tying `&mut self` to `'a`.
         transpiler.options.banner = std::borrow::Cow::Owned(config.banner.list.clone());
         transpiler.options.footer = std::borrow::Cow::Owned(config.footer.list.clone());
+        let is_desktop = config
+            .compile
+            .as_ref()
+            .is_some_and(|it| it.desktop.is_some());
+        transpiler.options.is_desktop_app = is_desktop;
         transpiler.options.react_fast_refresh = config.react_fast_refresh;
         transpiler.options.react_compiler = if config.react_compiler.is_enabled() {
             config.react_compiler_output_mode.unwrap_or_else(|| {
-                if config.target.is_server_side() {
+                if config.target.is_server_side() && !is_desktop {
                     bun_ast::runtime::ReactCompilerMode::Ssr
                 } else {
                     bun_ast::runtime::ReactCompilerMode::Client

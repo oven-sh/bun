@@ -1,7 +1,8 @@
-import { bindgen as bindings } from "bun:internal-for-testing";
+import { bindgenInterfaces, bindgen as bindings } from "bun:internal-for-testing";
 import { estimateShallowMemoryUsageOf, heapStats } from "bun:jsc";
 import { describe as describeAlways, expect, it as itAlways } from "bun:test";
 import { bunEnv, bunExe, runWithError, tempDir } from "harness";
+import { EventEmitter } from "node:events";
 import { BlockList, SocketAddress } from "node:net";
 import { join } from "node:path";
 import { inspect } from "node:util";
@@ -3192,4 +3193,642 @@ itAlways("the name of a symbol-keyed method is [Symbol.x]", async () => {
       configurable: true,
     });
   }
+});
+
+describeAlways.skipIf(!bindgenInterfaces)("b.interface", () => {
+  const web: any = bindgenInterfaces ?? {};
+  const it = itAlways;
+  const { WebTarget, WebNode, WebElement, WebPlain, WebFragment, WebLeaf, WebSquare, WebEmitter } = web;
+  const descriptor = Object.getOwnPropertyDescriptor;
+  const illegalInvocation = new TypeError("Illegal invocation");
+
+  it("has the shape that WebIDL gives an interface", () => {
+    expect(WebElement.name).toBe("RenamedElement");
+    expect([WebTarget, WebNode, WebElement, WebLeaf].map(it => it.length)).toEqual([0, 0, 0, 0]);
+    expect(Object.getPrototypeOf(WebElement)).toBe(WebNode);
+    expect(Object.getPrototypeOf(WebElement.prototype)).toBe(WebNode.prototype);
+    expect(Object.getPrototypeOf(WebTarget)).toBe(Function.prototype);
+    expect(Object.prototype.toString.call(new WebElement())).toBe("[object RenamedElement]");
+    expect(descriptor(WebNode.prototype, Symbol.toStringTag)).toEqual({
+      value: "WebNode",
+      writable: false,
+      enumerable: false,
+      configurable: true,
+    });
+    expect(descriptor(WebNode.prototype, "adopt")).toMatchObject({
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+    const label = descriptor(WebNode.prototype, "label")!;
+    expect(label).toMatchObject({ enumerable: true, configurable: true });
+    expect([label.get!.name, label.get!.length, label.set!.name, label.set!.length]).toEqual([
+      "get label",
+      0,
+      "set label",
+      1,
+    ]);
+    expect(descriptor(WebTarget.prototype, "id")!.set).toBeUndefined();
+    for (const holder of [WebNode, WebNode.prototype])
+      expect(descriptor(holder, "SECOND")).toEqual({
+        value: 2,
+        writable: false,
+        enumerable: true,
+        configurable: false,
+      });
+    expect({ ...WebNode.prototype[Symbol.unscopables] }).toEqual({ describe: true });
+    expect(Object.getPrototypeOf(WebNode.prototype[Symbol.unscopables])).toBe(null);
+    expect(() => new WebNode()).toThrow(new TypeError("Illegal constructor"));
+    expect(() => WebElement()).toThrow(TypeError);
+    expect(Object.hasOwn(new WebElement().style.__proto__, "constructor")).toBe(false);
+  });
+
+  it("checks the receiver", () => {
+    const [target, element, fragment] = [new WebTarget(), new WebElement(), new WebFragment()];
+    for (const wrong of [
+      undefined,
+      null,
+      1,
+      "a",
+      {},
+      target,
+      WebNode.prototype,
+      new WebSquare(),
+      new Proxy(element, {}),
+    ]) {
+      expect(() => WebNode.prototype.isSame.call(wrong, null)).toThrow(illegalInvocation);
+      expect(() => descriptor(WebNode.prototype, "label")!.get!.call(wrong)).toThrow(TypeError);
+      expect(() => descriptor(WebNode.prototype, "label")!.set!.call(wrong, "")).toThrow(TypeError);
+    }
+    expect(() => WebElement.prototype.repeat.call(fragment, 1)).toThrow(illegalInvocation);
+    expect(() => descriptor(WebElement.prototype, "y")!.get!.call(fragment)).toThrow(TypeError);
+    expect(WebElement.prototype.repeat).not.toBe(WebFragment.prototype.repeat);
+    expect(descriptor(WebElement.prototype, "lenient")!.get!.call({})).toBeUndefined();
+    expect([target, fragment, element, new WebPlain(), new WebLeaf()].map(web.kindOf)).toEqual([
+      "target",
+      "node",
+      "element",
+      "element",
+      "leaf",
+    ]);
+    expect(() => web.kindOf(new WebSquare())).toThrow(TypeError);
+  });
+
+  it("counts and converts arguments", async () => {
+    const element = new WebElement({ label: "ab" });
+    expect(WebNode.prototype.isSame.length).toBe(1);
+    expect(() => element.isSame()).toThrow(new TypeError("1 argument required, but only 0 present."));
+    expect([element.isSame(null), element.isSame(undefined), element.isSame(element)]).toEqual([false, false, true]);
+    expect(() => element.isSame({})).toThrow(TypeError);
+    expect([element.describe(), element.describe("a", element), element.describe(element, 1, null, element)]).toEqual([
+      "",
+      "a<ab>",
+      "<ab>1null<ab>",
+    ]);
+    expect(
+      element.describe(...Array.from({ length: 100 }, (_, i) => ({ toString: () => (Bun.gc(true), `${i % 10}`) }))),
+    ).toBe(Buffer.alloc(100, "0123456789").toString());
+    expect(() => element.describe("a", Symbol())).toThrow(TypeError);
+    expect([element.repeat(-1), element.repeat(1.5), element.repeat(2.5), element.repeat(1e9).length]).toEqual([
+      "",
+      "abab",
+      "abab",
+      510,
+    ]);
+    element.label = null;
+    expect(element.label).toBe("");
+    element.label = undefined;
+    expect(element.label).toBe("undefined");
+    expect(() => (element.label = Symbol())).toThrow(TypeError);
+    expect(() => (element.depth = -1)).toThrow(TypeError);
+    element.depth = "3";
+    expect(element.depth).toBe(3);
+    element.mode = "closed";
+    element.mode = "neither";
+    expect(element.mode).toBe("closed");
+    const rope = "some" + String(Math.random()) + "name";
+    expect([element.atom(rope), element.atom(12), element.atom("")]).toEqual([true, true, true]);
+    expect(element.strings("a\ud800b")).toBe("a�b");
+    expect(element.strings("a", "\xff")).toBe("\xff");
+    expect(() => element.strings("a", "Ā")).toThrow(TypeError);
+    expect(element.strings("a", "b", rope + rope)).toBe(rope + rope);
+    expect([element.pick(), element.pick(1, 2), element.pick(element, 2), element.pick("1", 2, 3)]).toEqual([
+      "none",
+      "numbers",
+      "node",
+      "numbers",
+    ]);
+    expect(["a", 1, true, undefined, null, {}, () => {}, [], new Set()].map(value => element.choose(value))).toEqual([
+      ...["name", "name", "name"],
+      ...["init", "init", "init", "init"],
+      ...["list", "list"],
+    ]);
+    expect(element.choose()).toBe("init");
+    expect(() => element.pick(1)).toThrow(TypeError);
+    expect(() => element.pick(NaN, 1)).toThrow(TypeError);
+    expect(await element.later(2)).toBe(2);
+    await expect(element.later(Infinity)).rejects.toThrow(TypeError);
+    await expect(element.later()).rejects.toThrow(TypeError);
+    await expect(WebNode.prototype.later.call({}, 1)).rejects.toThrow(illegalInvocation);
+  });
+
+  it("reads a dictionary as WebIDL does", () => {
+    const read: PropertyKey[] = [];
+    const init = new Proxy({}, { get: (_, key) => void read.push(key) });
+    expect(new WebLeaf(init)).toMatchObject({ count: 1, label: "none" });
+    expect(read).toEqual(["label", "owner", "count"]);
+    expect(new WebElement(null).label).toBe("none");
+    expect(() => new WebElement(1)).toThrow(TypeError);
+    const owner = new WebElement();
+    expect(new WebElement({ owner }).parent).toBe(owner);
+    expect(new WebElement({ owner: null }).parent).toBe(null);
+    expect(new WebLeaf(5, "five")).toMatchObject({ count: 5, label: "five" });
+    (Object.prototype as any).label = "inherited";
+    try {
+      expect(new WebElement({}).label).toBe("inherited");
+    } finally {
+      delete (Object.prototype as any).label;
+    }
+  });
+
+  it("sequences, records and unions", () => {
+    const element = new WebElement();
+    const values = ["a", 1.5, true, null, undefined, {}, { label: "abc" }, [element, null], new Set([element])];
+    expect([...values, new Float32Array([1, 2]), element, () => {}, new String("")].map(web.describeMixed)).toEqual([
+      "text",
+      "number 1.5",
+      "text",
+      "init 4",
+      "init 4",
+      "init 4",
+      "init 3",
+      "list 1/2",
+      "list 1/1",
+      "floats 3",
+      "node",
+      "callback",
+      "list 0/0",
+    ]);
+    for (const wrong of [NaN, [1], Symbol(), { [Symbol.iterator]: 1 }])
+      expect(() => web.describeMixed(wrong)).toThrow(TypeError);
+    function* collecting() {
+      for (let i = 0; i < 20; i++) {
+        yield [i, new WebElement({ label: `${i}` })];
+        Bun.gc(true);
+      }
+    }
+    const result = web.reversed(collecting(), ["open", ["closed"]]);
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(result.map((it: any) => it.label ?? it)).toEqual([
+      ...Array.from({ length: 40 }, (_, i) => `${19 - (i >> 1)}`),
+      true,
+      false,
+    ]);
+    expect(() => web.reversed("ab")).toThrow(TypeError);
+    expect(() => web.reversed([], ["neither"])).toThrow(TypeError);
+    expect([...new web.WebList(new Set(["1", 2]))]).toEqual([1, 2]);
+    const borrower = new web.WebList([1]);
+    borrower.append([2]);
+    borrower.append([], new Set([3, 4]));
+    expect([...borrower]).toEqual([1, 2, 3, 4]);
+    const hidden = Object.defineProperty({ a: "1" }, "b", { value: 2 });
+    expect({ ...new web.WebMap(hidden) }).toEqual({ a: 1 });
+    expect(() => new web.WebMap({ [Symbol()]: 1 })).toThrow(TypeError);
+    expect(() => new web.WebMap(null)).toThrow(TypeError);
+  });
+
+  it("a sequence stays where it is when all arrays are converted", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--expose-internals",
+        "-e",
+        `const { reversed } = require("bun:internal-for-testing").bindgenInterfaces;
+        function* modes() {
+          Object.defineProperty(Array.prototype, 0, { get() {}, set() {} });
+        }
+        console.log(reversed([["a", "b"], ["c"]], modes()).join());`,
+      ],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("c,a,b\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("indexed properties", () => {
+    const list = new web.WebList([5, 6]);
+    expect([list[0], list["1"], list[2], 1 in list, 2 in list]).toEqual([5, 6, undefined, true, false]);
+    expect(descriptor(list, 0)).toEqual({ value: 5, writable: false, enumerable: true, configurable: true });
+    list.own = 1;
+    expect(Reflect.ownKeys(list)).toEqual(["0", "1", "own"]);
+    expect([Reflect.set(list, 0, 1), Reflect.set(list, 2, 1), Reflect.defineProperty(list, 2, { value: 1 })]).toEqual([
+      false,
+      false,
+      false,
+    ]);
+    expect(() => (list[0] = 1)).toThrow(TypeError);
+    expect([Reflect.deleteProperty(list, 0), Reflect.deleteProperty(list, 2), Reflect.preventExtensions(list)]).toEqual(
+      [false, true, false],
+    );
+    list[2 ** 32 - 1] = "not an index";
+    expect(list[2 ** 32 - 1]).toBe("not an index");
+    for (const name of ["entries", "forEach", "keys", "values"] as const)
+      expect(descriptor(web.WebList.prototype, name)).toMatchObject({ value: Array.prototype[name], enumerable: true });
+    expect(descriptor(web.WebList.prototype, Symbol.iterator)).toMatchObject({
+      value: Array.prototype.values,
+      enumerable: false,
+    });
+    const heir = Object.create(list);
+    expect([heir[1], Reflect.set(heir, 2, 0), heir[2], list.length]).toEqual([6, true, 0, 2]);
+    let sum = 0;
+    for (let i = 0; i < 20000; i++) sum += list[i & 1] + list.length;
+    expect(sum).toBe(150000);
+  });
+
+  it("named properties", () => {
+    const list = new web.WebNamedList();
+    const read = () => list.n3;
+    for (let i = 0; i < 20000; i++) read();
+    list[0] = "3";
+    list[7] = 4;
+    expect([read(), list.n4, list.n5, list.length, [...list]]).toEqual([3, 4, undefined, 2, [3, 4]]);
+    expect(descriptor(list, "n3")).toEqual({ value: 3, writable: false, enumerable: false, configurable: true });
+    expect([Object.keys(list), Reflect.ownKeys(list)]).toEqual([
+      ["0", "1"],
+      ["0", "1", "n3", "n4"],
+    ]);
+    expect([
+      Reflect.set(list, "n3", 0),
+      Reflect.defineProperty(list, "n3", { value: 0 }),
+      Reflect.deleteProperty(list, "n3"),
+      Reflect.defineProperty(list, 0, { get() {} }),
+    ]).toEqual([false, false, false, false]);
+    list.n5 = "own";
+    list.push(5);
+    expect(list.n5).toBe("own");
+    delete list.n5;
+    expect(list.n5).toBe(5);
+
+    const map = new web.WebMap({ a: 1 });
+    map.toString = "2";
+    map[0] = 3;
+    Object.defineProperty(map, "b", { value: 4 });
+    expect(Object.entries(map)).toEqual([
+      ["a", 1],
+      ["toString", 2],
+      ["0", 3],
+      ["b", 4],
+    ]);
+    expect(descriptor(map, "a")).toEqual({ value: 1, writable: true, enumerable: true, configurable: true });
+    expect(Reflect.defineProperty(map, "c", { get() {} })).toBe(false);
+    delete map.toString;
+    expect(map.toString).toBe(Object.prototype.toString);
+    const symbol = Symbol();
+    map[symbol] = "own";
+    expect(map[symbol]).toBe("own");
+  });
+
+  it("maplike and setlike", () => {
+    const [registry, element] = [new web.WebRegistry(), new WebElement()];
+    expect(registry.set(1, element)).toBe(registry);
+    expect(() => registry.set("a", {})).toThrow(TypeError);
+    expect([registry.size, registry.has("1"), registry.get(1) === element, registry.get("a")]).toEqual([
+      1,
+      true,
+      true,
+      undefined,
+    ]);
+    expect([[...registry.keys()], [...registry][0][1] === element]).toEqual([["1"], true]);
+    expect(registry[Symbol.iterator]).toBe(registry.entries);
+    expect(Object.getPrototypeOf(registry.values())).toBe(Object.getPrototypeOf(new Map().values()));
+    const seen: unknown[] = [];
+    registry.forEach(function (this: unknown, ...args: unknown[]) {
+      seen.push(this, args[0] === element, args[1], args[2] === registry);
+    }, "this");
+    expect(seen).toEqual(["this", true, "1", true]);
+    expect([registry.delete(1), registry.delete(1), registry.clear(), registry.size]).toEqual([
+      true,
+      false,
+      undefined,
+      0,
+    ]);
+    expect(() => web.WebRegistry.prototype.has.call(new Map(), 1)).toThrow(illegalInvocation);
+
+    const set = new web.WebSet();
+    expect([...set.add("2")]).toEqual([1, 2]);
+    expect([set.keys.name, [...set.keys()], set[Symbol.iterator] === set.values, set.sum(), set.size]).toEqual([
+      "keys",
+      [1, 2],
+      true,
+      3,
+      2,
+    ]);
+  });
+
+  it("toJSON, namespaces, iterators and attributes by name", () => {
+    expect(JSON.stringify([new web.WebPoint(2), new web.WebPoint3()])).toBe(`[{"x":2},{"z":3,"hidden":4}]`);
+    expect([typeof web.WebSpace, `${web.WebSpace}`, web.WebSpace.twice("2")]).toEqual([
+      "object",
+      "[object WebSpace]",
+      4,
+    ]);
+    expect(Object.getPrototypeOf(web.WebSpace)).toBe(Object.prototype);
+    const iterator = new web.WebPairs().entries();
+    expect([`${iterator}`, iterator instanceof Iterator, [...new web.WebPairs()]]).toEqual([
+      "[object WebPairs Iterator]",
+      true,
+      [0, 1],
+    ]);
+    const style = new web.WebByName();
+    style["font-size"] = "10";
+    expect([style.fontSize, style["font-size"]]).toEqual([18, 19]);
+    const { get, set, ...rest } = descriptor(web.WebByName.prototype, "font-size")!;
+    expect([get!.name, set!.name, get!.call(style), rest]).toEqual([
+      "get font-size",
+      "set font-size",
+      19,
+      { enumerable: true, configurable: true },
+    ]);
+    expect(() => get!.call({})).toThrow(TypeError);
+  });
+
+  it("observable arrays", () => {
+    const element = new WebElement();
+    const [a, b, c] = ["a", "b", "c"].map(label => new WebElement({ label }));
+    const array = element.adopted;
+    expect([Array.isArray(array), array === element.adopted, array.length]).toEqual([true, true, 0]);
+    array.push(a, b);
+    element.adopted = new Set([c, ...array]);
+    expect([element.adoptedLabels(), element.depth, array === element.adopted]).toEqual([["c", "a", "b"], 205, true]);
+    expect([array.pop() === b, array.shift() === c, Reflect.ownKeys(array)]).toEqual([true, true, ["0", "length"]]);
+    expect(() => array.push({})).toThrow(TypeError);
+    expect(() => (array.length = -1)).toThrow(RangeError);
+    expect([
+      Reflect.set(array, 2, a),
+      Reflect.set(array, "length", 2),
+      Reflect.deleteProperty(array, 1),
+      Reflect.defineProperty(array, 0, { get() {} }),
+      Reflect.preventExtensions(array),
+    ]).toEqual([false, false, false, false, false]);
+    expect([[a].concat(array).length, array.map((it: any) => it.label), array.includes(a)]).toEqual([2, ["a"], true]);
+    array.length = 0;
+    expect(element.adoptedLabels()).toEqual([]);
+    expect([element.floats(), element.floats(a), web.WebSpace.isWindow]).toEqual([
+      new Float32Array([1.5, 1]),
+      new Float32Array([1.5, 0]),
+      true,
+    ]);
+  });
+
+  it("masquerades as undefined", () => {
+    const all = new web.WebAll();
+    expect([typeof all, all == null, !all, all === undefined, all()]).toEqual(["undefined", true, true, false, 9]);
+  });
+
+  it("throws a DOMException", () => {
+    const element = new WebElement();
+    const thrown = (run: () => void): any => runWithError(run);
+    expect(thrown(() => element.adopt(element))).toBeInstanceOf(DOMException);
+    expect(thrown(() => element.adopt(element))).toMatchObject({ name: "HierarchyRequestError", code: 3 });
+    expect(thrown(() => element.fail(257))).toBeInstanceOf(DOMException);
+    expect(thrown(() => element.fail(257))).toMatchObject({ name: "SyntaxError", message: "code 1" });
+  });
+
+  it("extends DOMException", () => {
+    const errors = Array.from({ length: 1000 }, (_, i) => new web.WebError("m" + i, { i }));
+    Bun.gc(true);
+    const error = errors[999];
+    expect([error.name, error.message, error.code, error.extra, `${error}`]).toEqual([
+      "QuotaExceededError",
+      "m999",
+      22,
+      { i: 999 },
+      "QuotaExceededError: m999",
+    ]);
+    expect(Object.getPrototypeOf(web.WebError)).toBe(DOMException);
+    expect(Object.getPrototypeOf(web.WebError.prototype)).toBe(DOMException.prototype);
+    expect(Object.getOwnPropertyDescriptor(DOMException.prototype, "message")!.get!.call(error)).toBe("m999");
+    expect(() =>
+      Object.getOwnPropertyDescriptor(web.WebError.prototype, "extra")!.get!.call(new DOMException()),
+    ).toThrow(TypeError);
+  });
+
+  it("mixins, families and abstract interfaces", () => {
+    const [element, fragment] = [new WebElement(), new WebFragment()];
+    expect(element.childLabel).toBe(null);
+    expect(element.adopt(fragment)).toBe(fragment);
+    expect([element.childLabel, fragment.parent === element]).toEqual(["fragment", true]);
+    element.x = 1;
+    element.y = 2 ** 32 + 2;
+    fragment.y = 3;
+    expect([element.x, element.y, fragment.y, "x" in fragment]).toEqual([1, 2, 3, false]);
+    expect([element.more(), Object.hasOwn(WebElement.prototype, "more")]).toEqual([9, true]);
+    for (let i = 0; i < 200; i++) {
+      element.left = i;
+      element.top = -i;
+      expect([element.left, element.x, element.top, element.lenientTop]).toEqual([i, i, 0 - i, 0 - i]);
+    }
+    const [left, top, lenientTop] = ["left", "top", "lenientTop"].map(name =>
+      Object.getOwnPropertyDescriptor(WebElement.prototype, name)!,
+    );
+    expect([left.get!.name, top.set!.name, left.get!.call(element), top.get!.call(element)]).toEqual([
+      "get left",
+      "set top",
+      199,
+      -199,
+    ]);
+    expect(() => top.get!.call(fragment)).toThrow(TypeError);
+    expect(() => top.set!.call(fragment, 1)).toThrow(TypeError);
+    expect([lenientTop.get!.call(fragment), lenientTop.set!.call(fragment, 1)]).toEqual([undefined, undefined]);
+    expect(new WebSquare().sides).toBe(4);
+    expect(Object.getPrototypeOf(WebSquare.prototype)).toBe(Object.prototype);
+  });
+
+  it("extended attributes of attributes", () => {
+    const element = new WebElement();
+    expect(element.style).toBe(element.style);
+    element.style = "12";
+    expect([element.style.text, `${element.style}`]).toEqual([12, "12"]);
+    element.shadowed = "own";
+    expect(descriptor(element, "shadowed")).toEqual({
+      value: "own",
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+    element.lenient = 1;
+    expect(element.lenient).toBe(8);
+    const leaf = new WebLeaf();
+    expect(descriptor(leaf, "trusted")).toMatchObject({ set: undefined, enumerable: true, configurable: false });
+    expect(descriptor(leaf, "trusted")!.get).toBe(descriptor(new WebLeaf(), "trusted")!.get);
+    expect([leaf.trusted, "trusted" in WebLeaf.prototype]).toEqual([true, false]);
+    expect(Object.hasOwn(new (class extends WebLeaf {})(), "trusted")).toBe(true);
+    Object.assign(leaf, { a: 1, b: 2, c: 3 });
+    expect([Reflect.set(leaf, "trusted", 0), Reflect.deleteProperty(leaf, "trusted"), { ...leaf }]).toEqual([
+      false,
+      false,
+      { trusted: true, a: 1, b: 2, c: 3 },
+    ]);
+    const pinned = new web.WebPinned();
+    expect([pinned.pinned, pinned.pin(), pinned.pin === new web.WebPinned().pin]).toEqual([1, 2, true]);
+    expect(descriptor(pinned, "pin")).toMatchObject({ writable: false, enumerable: true, configurable: false });
+  });
+
+  it("is extended by JavaScript classes", () => {
+    for (const Base of [WebTarget, WebElement, WebFragment, WebLeaf]) {
+      class Derived extends Base {
+        own = [1, 2, 3, 4];
+      }
+      const derived: any = new Derived();
+      expect(Object.getPrototypeOf(derived)).toBe(Derived.prototype);
+      expect([typeof derived.id, derived.own]).toEqual(["number", [1, 2, 3, 4]]);
+    }
+    const order: string[] = [];
+    const newTarget = new Proxy(function () {}, {
+      get: (target, key) => (order.push(String(key)), (target as any)[key]),
+    });
+    Reflect.construct(
+      WebElement,
+      [
+        {
+          get label() {
+            return (order.push("label"), "");
+          },
+        },
+      ],
+      newTarget,
+    );
+    expect(order).toEqual(["label", "prototype"]);
+    const prototype = Object.create(WebElement.prototype);
+    expect(Object.getPrototypeOf(web.withPrototype(prototype))).toBe(prototype);
+    expect(web.withPrototype(prototype).label).toBe("made");
+  });
+
+  it("callback interfaces", () => {
+    const WebFilter = web.interfaceObject("WebFilter");
+    expect([typeof WebFilter, Object.getPrototypeOf(WebFilter) === Function.prototype]).toEqual(["function", true]);
+    expect(Object.getOwnPropertyDescriptors(WebFilter)).toEqual({
+      length: { value: 0, writable: false, enumerable: false, configurable: true },
+      name: { value: "WebFilter", writable: false, enumerable: false, configurable: true },
+      ALL: { value: 0xffffffff, writable: false, enumerable: true, configurable: false },
+    });
+    expect(() => WebFilter()).toThrow(TypeError);
+    expect(() => new WebFilter()).toThrow(TypeError);
+    function receiver(this: unknown) {
+      "use strict";
+      return [this];
+    }
+    const object = { accept: receiver };
+    expect(web.callFilter(Object.assign(receiver, { accept: () => "not this" }))).toEqual([undefined]);
+    expect(web.callFilter(object)[0]).toBe(object);
+    expect(() => web.callFilter({})).toThrow(TypeError);
+  });
+
+  it("interface objects by name, and legacy factory functions", () => {
+    expect(web.interfaceObject("RenamedElement")).toBe(web.WebElement);
+    expect(web.interfaceObject("webkitPoint")).toBe(web.WebPoint);
+    expect(web.interfaceObject("WebSpace")).toBe(web.WebSpace);
+    expect(["", "WebElement", "WebStyle", "WebShape", "zzz"].map(name => web.interfaceObject(name))).toEqual(
+      Array(5).fill(undefined),
+    );
+    const Point = web.interfaceObject("Point");
+    expect([Point.name, Point.length, Point.prototype === web.WebPoint.prototype]).toEqual(["Point", 0, true]);
+    expect([new Point().x, new Point(3).x, new Point().constructor === web.WebPoint]).toEqual([-1, -3, true]);
+    expect(() => Point()).toThrow(TypeError);
+    class Below extends Point {}
+    expect([new Below(3).x, Object.getPrototypeOf(new Below()) === Below.prototype]).toEqual([-3, true]);
+  });
+
+  it("a struct without a Cell reads what it has just stored in a field", () => {
+    expect(new web.WebTarget().remember({})).toBe(true);
+  });
+
+  it("a struct without a Cell writes to a Cell of what extends it", () => {
+    const element = new web.WebElement();
+    expect([element.mark(), element.mark(), new web.WebTarget().mark()]).toEqual([false, true, false]);
+  });
+
+  it("a realm holds an instance", () => {
+    expect(web.pointOfRealm(null)).toBe(null);
+    web.pointOfRealm(new web.WebPoint(7));
+    for (let i = 0; i < 1000; i++) new web.WebPoint(i);
+    Bun.gc(true);
+    expect(web.pointOfRealm(null).x).toBe(7);
+  });
+
+  it("b.operation", () => {
+    const element = new WebElement();
+    expect([web.crop.length, web.crop(element), web.crop(element, 1, "2"), web.crop(element, 1, 2, 3)]).toEqual([
+      1, -1, 3, 3,
+    ]);
+    for (const args of [[], [element, 1], [{}]]) expect(() => web.crop(...args)).toThrow(TypeError);
+  });
+
+  it("runs reactions after the body, also when it threw", () => {
+    const [element, target] = [new WebElement(), new WebTarget()];
+    const seen: string[] = [];
+    target.listeners = () => void seen.push(element.label);
+    web.onReaction(target);
+    element.label = "changed";
+    web.onReaction(target);
+    expect(() => element.adopt(element)).toThrow("A node cannot adopt itself.");
+    expect(seen).toEqual(["changed", "changed"]);
+  });
+
+  it("extends EventEmitter", () => {
+    const emitter = new WebEmitter();
+    expect(emitter).toBeInstanceOf(EventEmitter);
+    expect(Object.getPrototypeOf(WebEmitter)).toBe(EventEmitter);
+    const seen: number[] = [];
+    emitter.on("a", (value: number) => seen.push(value));
+    emitter.emit("a", 1);
+    expect(seen).toEqual([1]);
+  });
+
+  it("finds what stands behind the global object", () => {
+    const { who } = web.WebGlobalBase.prototype;
+    const isImmutable = (it: Function) =>
+      !Reflect.setPrototypeOf(it.prototype, Object.create(Object.getPrototypeOf(it.prototype)));
+    expect([web.WebGlobal, web.WebGlobalBase, web.WebAll].map(isImmutable)).toEqual([true, true, false]);
+    expect(() => who()).toThrow(illegalInvocation);
+    web.setGlobalReceiver(new web.WebGlobal());
+    expect([who(), who.call(null), who.call(globalThis), new web.WebGlobalBase().who()]).toEqual([2, 2, 2, 1]);
+    expect(() => who.call({})).toThrow(illegalInvocation);
+  });
+
+  it("the collector follows fields and own properties, and drops the struct", () => {
+    const root = new WebLeaf();
+    let last = root;
+    for (let i = 0; i < 2000; i++) {
+      const next = new (i % 2 ? WebLeaf : WebPlain)();
+      next.label = `${i}`;
+      next.a = { i };
+      next.b = { i };
+      next.c = { i };
+      next.listeners = { i };
+      if (i % 2) next.extra = { i };
+      next.style.text = i;
+      next.adopt(last);
+      last = root;
+      root.extra = next;
+      last = next;
+      if (i % 500 === 0) Bun.gc(i % 1000 === 0);
+    }
+    last = undefined;
+    Bun.gc(true);
+    let count = 0;
+    for (let node = root.parent; node; node = node.parent, count++) {
+      const i = count;
+      if (node.label !== `${i}` || node.a.i + node.b.i + node.c.i + node.listeners.i + node.style.text !== 5 * i)
+        throw new Error(`node ${i} is broken`);
+      if (i % 2 && node.extra.i !== i) throw new Error(`the field of node ${i} is broken`);
+    }
+    expect(count).toBe(2000);
+    const before = web.droppedNodes();
+    for (let i = 0; i < 5000; i++) new (i % 2 ? WebLeaf : WebFragment)();
+    Bun.gc(true);
+    expect(web.droppedNodes() - before).toBeGreaterThan(4000);
+  });
 });

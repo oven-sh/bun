@@ -332,6 +332,25 @@ impl<C: JobContext> Job<C> {
     /// JS thread: build the job, keep the loop alive for it, hand it to the pool.
     #[track_caller]
     pub fn schedule(cx: &JsThread<'_>, off: C::OffThread, js: C::Js) {
+        let job = Self::create(cx, off, js, Some(cx.vm().ticket()));
+        // SAFETY: live until completed/released on this thread; the pool owns it now.
+        unsafe { WorkPool::schedule(&raw mut (*job).task) };
+    }
+
+    /// JS thread: for work that the caller has already done. The completion still waits its turn.
+    pub fn complete_later(cx: &JsThread<'_>, off: C::OffThread, js: C::Js) {
+        let job = Self::create(cx, off, js, None);
+        cx.vm()
+            .event_loop()
+            .enqueue_task(bun_event_loop::ConcurrentTask::Task::init(job));
+    }
+
+    fn create(
+        cx: &JsThread<'_>,
+        off: C::OffThread,
+        js: C::Js,
+        ticket: Option<Ticket>,
+    ) -> *mut Self {
         let job = bun_core::heap::into_raw(Box::new(Self {
             header: JobHeader {
                 // SAFETY: (this and the entry below) the erased dispatchers are
@@ -352,7 +371,7 @@ impl<C: JobContext> Job<C> {
                 },
                 generation: cx.vm().test_isolation_generation.get(),
             },
-            ticket: Some(cx.vm().ticket()),
+            ticket,
             task: WorkPoolTask {
                 node: Default::default(),
                 callback: Self::run_on_pool,
@@ -362,13 +381,12 @@ impl<C: JobContext> Job<C> {
             off,
             js,
         }));
-        // SAFETY: live until completed/released on this thread; the pool owns it now.
-        unsafe {
-            if C::CANCELLABLE {
-                cx.vm().jobs.with_mut(|j| j.push(&raw mut (*job).header));
-            }
-            WorkPool::schedule(&raw mut (*job).task);
+        if C::CANCELLABLE {
+            // SAFETY: live until completed/released on this thread.
+            let header = unsafe { &raw mut (*job).header };
+            cx.vm().jobs.with_mut(|j| j.push(header));
         }
+        job
     }
 
     fn run_on_pool(task: *mut WorkPoolTask) {

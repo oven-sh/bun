@@ -134,6 +134,31 @@ impl CompileTarget {
         self.to_npm_registry_url_with_url(buf, b"https://registry.npmjs.org")
     }
 
+    /// `(name, version)` of the npm package in `@oven` that has the UI library of `bun:desktop`.
+    pub fn desktop_package(&self) -> Option<(String, String)> {
+        let has_one = self.libc == Libc::Default
+            && matches!(
+                self.os,
+                OperatingSystem::Mac | OperatingSystem::Linux | OperatingSystem::Windows
+            );
+        let Version {
+            major,
+            minor,
+            patch,
+            ..
+        } = self.version;
+        has_one.then(|| {
+            (
+                format!(
+                    "bun-desktop-{}-{}",
+                    self.os.npm_name(),
+                    self.arch.npm_name()
+                ),
+                format!("{major}.{minor}.{patch}"),
+            )
+        })
+    }
+
     pub(crate) fn to_npm_registry_url_with_url<'a>(
         &self,
         buf: &'a mut [u8],

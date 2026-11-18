@@ -341,7 +341,7 @@ pub fn is_moved_to_file_start(hir: &File, statement: StmtId) -> bool {
         StmtKind::ExportDefault(value) => can_move_expression(hir, value),
         _ => false,
     };
-    can_move && find_transpiled_mark(&hir.text).is_none()
+    can_move && !hir.stands_as_written()
 }
 
 fn can_move_class(hir: &File, class: ClassId) -> bool {

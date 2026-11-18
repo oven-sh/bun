@@ -252,7 +252,7 @@ impl Lookup<'_, '_> {
         }
         let mut variables = COMMONJS_VARIABLES.into_iter();
         let variable = variables.find(|variable| variable.name() == name)?;
-        let is_written_module = find_marked_format(&self.hir.text) == Some(ModuleFormat::Esm);
+        let is_written_module = find_marked_format(self.hir) == Some(ModuleFormat::Esm);
         (!is_written_module).then_some(Binding::CommonJs(variable))
     }
 

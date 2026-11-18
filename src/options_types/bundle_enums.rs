@@ -71,12 +71,24 @@ bun_core::comptime_string_map! {
 #[derive(Default)]
 pub struct WindowsOptions {
     pub hide_console: bool,
+    pub imports_from_system32_only: bool,
     pub icon: Option<Box<[u8]>>,
     pub title: Option<Box<[u8]>>,
     pub publisher: Option<Box<[u8]>>,
     pub version: Option<Box<[u8]>>,
     pub description: Option<Box<[u8]>>,
     pub copyright: Option<Box<[u8]>>,
+}
+
+/// `--desktop`. What is missing here comes from package.json.
+#[derive(Default)]
+pub struct DesktopOptions {
+    pub name: Option<Box<[u8]>>,
+    pub identifier: Option<Box<[u8]>>,
+    pub version: Option<Box<[u8]>>,
+    pub icon: Option<Box<[u8]>>,
+    /// `compile.desktop` of `Bun.build`, if it is an object.
+    pub json: Box<[u8]>,
 }
 
 #[repr(u8)]

@@ -1,5 +1,6 @@
 import * as b from "bun-builtins-table";
 import { classesWithInspectMethod } from "./classes-with-inspect-method.ts";
+import { undescribedPrototype } from "./external-values.ts";
 
 const marked = (mark: b.BuiltinMark, paths: readonly b.BuiltinPath[]) =>
   paths.flatMap(path => b.extend(path, { marks: [mark] }));
@@ -198,4 +199,15 @@ export default b.declarations(
   b.extend("native:Bindgen:ffi.bind.ts:openLibrary", { loadsMachineCodeAs: "bun:ffi.dlopen" }),
   b.extend("native:Bindgen:ffi.bind.ts:linkLibrary", { loadsMachineCodeAs: "bun:ffi.linkSymbols" }),
   b.extend("native:Bindgen:ffi.bind.ts:makeFunction", { loadsMachineCodeAs: "bun:ffi.CFunction" }),
+  marked("IsOptional", [
+    "%WindowOfProgram%",
+    undescribedPrototype,
+    "bun:desktop",
+    "bun:desktop/dom",
+    "bun:desktop/electron",
+    "bun:desktop/jsx-dev-runtime",
+    "bun:desktop/jsx-runtime",
+    "native:Bindgen:render.bind.ts:PureComponent",
+    "native:Bindgen:render.bind.ts:RenderComponent",
+  ]),
 );

@@ -54,6 +54,13 @@ new!(pub BUN_BYTECODE_ORDER_NAMES_OUT: string, "BUN_BYTECODE_ORDER_NAMES_OUT", {
 // A compiled executable writes the payload order file of this run here at exit; `%p` in the path becomes the pid.
 new!(pub BUN_BYTECODE_ORDER_OUT: string, "BUN_BYTECODE_ORDER_OUT", {});
 new!(pub BUN_COMPILE_TARGET_TARBALL_URL: string, "BUN_COMPILE_TARGET_TARBALL_URL", {});
+// The UI library of `bun:desktop`: a file to use, or where to download it from.
+new!(pub BUN_DESKTOP_LIBRARY: string, "BUN_DESKTOP_LIBRARY", {});
+// 1 keeps the UI on the thread that runs JavaScript. "main" gives it the main thread, as 2 does on macOS.
+new!(pub BUN_DESKTOP_THREADS: string, "BUN_DESKTOP_THREADS", {});
+new!(pub BUN_DESKTOP_UTILITY_PROCESS: string, "BUN_DESKTOP_UTILITY_PROCESS", {});
+new!(pub ELECTRON_RUN_AS_NODE: string, "ELECTRON_RUN_AS_NODE", {});
+new!(pub BUN_DESKTOP_TARBALL_URL: string, "BUN_DESKTOP_TARBALL_URL", {});
 // JavaScriptCore's option of that name: the engine logs the phases of an AOT build. The front end logs its stages beside them.
 new!(pub BUN_JSC_logAOTPhaseTimes: boolean, "BUN_JSC_logAOTPhaseTimes", { default: false });
 new!(pub BUN_CONFIG_DISABLE_COPY_FILE_RANGE: boolean, "BUN_CONFIG_DISABLE_COPY_FILE_RANGE", { default: false });

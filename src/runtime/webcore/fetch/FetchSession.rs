@@ -256,6 +256,7 @@ impl FetchSession {
                 id: NEXT_POOL_ID.fetch_add(1, Ordering::Relaxed),
                 idle_timeout_seconds: 0,
                 max_idle_sockets: 0,
+                offers_h2: false,
             },
             keep_alive: true,
             ssl_config: None,

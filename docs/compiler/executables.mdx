@@ -1124,6 +1124,111 @@ This uses Bun's minifier to reduce the code size. Overall though, Bun's binary i
 
 ---
 
+## Desktop apps
+
+<Warning>`bun:desktop` is experimental.</Warning>
+
+`--desktop` puts the executable of a `bun:desktop` app into the bundle that the operating system expects, with the UI library that draws its windows.
+
+<Tabs>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun compile --desktop ./app.tsx
+
+    # The same without compiling ahead of time, which also works for another platform
+    bun build --compile --desktop --target=bun-darwin-arm64 ./app.tsx --outfile dist/Notes
+    ```
+
+  </Tab>
+  <Tab title="JavaScript">
+    ```ts build.ts icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ["./app.tsx"],
+      compile: {
+        outfile: "./dist/Notes",
+        desktop: { name: "Notes", identifier: "com.example.notes", icon: "./icon.png" },
+      },
+    });
+    ```
+  </Tab>
+</Tabs>
+
+| Target  | Output         | Executable             | Resources            |
+| ------- | -------------- | ---------------------- | -------------------- |
+| macOS   | `Notes.app`    | `Contents/MacOS/Notes` | `Contents/Resources` |
+| Linux   | `notes.AppDir` | `usr/bin/notes`        | `usr/share/notes`    |
+| Windows | `Notes`        | `Notes.exe`            | `resources`          |
+
+`--outfile` names the bundle. Keep its files together: the executable only loads the UI library of its own bundle. The musl, Android and FreeBSD targets have no UI library.
+
+The settings come from `"desktop"` in the `package.json` nearest to the entry point. `compile.desktop` takes the same keys, and `--desktop-name`, `--desktop-identifier`, `--desktop-version` and `--desktop-icon` override four of them.
+
+```json package.json icon="file-json"
+{
+  "name": "notes",
+  "version": "1.2.0",
+  "desktop": {
+    "name": "Notes",
+    "identifier": "com.example.notes",
+    "icon": "./icon.png",
+    "category": "productivity",
+    "urlSchemes": ["notes"],
+    "fileAssociations": [{ "extensions": ["md"], "name": "Markdown", "mimeType": "text/markdown" }],
+    "resources": ["./templates", { "from": "./bin/helper", "to": "tools/helper" }],
+    "infoPlist": { "NSMicrophoneUsageDescription": "To record voice notes." }
+  }
+}
+```
+
+| Key                | Default                                 | Meaning                                                                                                                     |
+| ------------------ | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `name`             | `productName`, then `name`              | The name people see                                                                                                         |
+| `identifier`       | `sh.bun.app.` and the name in lowercase | The bundle identifier on macOS, the `.desktop` file, icon name and window class on Linux, and the AppUserModelID on Windows |
+| `version`          | `version`                               | `Info.plist` and the `.exe` get the part before a `-` or `+`                                                                |
+| `description`      | `description`                           | The `Comment` of the `.desktop` file                                                                                        |
+| `copyright`        |                                         | For `Info.plist` and the `.exe`                                                                                             |
+| `icon`             |                                         | A square `.png`, ideally of 1024 pixels. In an array, a `.icns`, `.svg` or `.ico` is used as it is                          |
+| `category`         |                                         | The end of a `public.app-category.*` name, such as `developer-tools`                                                        |
+| `urlSchemes`       |                                         | The URLs that the app opens                                                                                                 |
+| `fileAssociations` |                                         | The files that the app opens                                                                                                |
+| `resources`        |                                         | Files and directories to copy into the resources directory. Symbolic links are followed                                     |
+| `infoPlist`        |                                         | Keys to add to or replace in `Info.plist`. `null` removes a key                                                             |
+| `dom`              | `false`                                 | The program starts in a window, like with `--preload=bun:desktop/dom`                                                       |
+| `pages`            |                                         | HTML files and scripts of pages to compile. See [Pages](#pages)                                                             |
+| `preloads`         |                                         | Preload scripts to compile                                                                                                  |
+
+Nothing is unpacked when the app starts: the UI library is loaded from where it is, and resources are plain files. `--trim`, `--aot-order` and the other flags of `bun compile` apply as they do without `--desktop`.
+
+A build overwrites the files of an earlier bundle and removes none, so delete the bundle before a build that you distribute. Bun refuses to write into a directory that has files and is not a bundle.
+
+- **macOS**: on a Mac, Bun signs the bundle ad hoc, which is enough to run it there. To distribute it, [sign it with your identity](#code-signing-on-macos) and notarize it. A bundle built on another system is not signed as a whole.
+- **Linux**: `AppRun` starts the app on X11 and Wayland. `appimagetool notes.AppDir` makes an AppImage of it (it needs an icon), and `usr` is laid out to be copied into a `.deb`, `.rpm` or Flatpak. URL schemes and file associations apply once the `.desktop` file is installed. Graphics drivers generate machine code, so unlike other executables that `bun compile` builds, the app does not turn on `PR_SET_MDWE`.
+- **Windows**: the executable opens no console. Its icon and version are only set when you build on Windows. URL schemes and file associations are left to an installer.
+
+### Pages
+
+`bun compile --desktop` compiles the scripts of the HTML files that you pass to it or list in `pages`, which takes paths and glob patterns.
+
+```bash terminal icon="terminal"
+bun compile --desktop ./main.js ./index.html
+```
+
+- Classic scripts, module scripts and inline scripts are compiled, each with the meaning that it has in a browser. The HTML is not changed.
+- The page is embedded in the executable with the style sheets, images, fonts and other files that it names, unless they are among the `resources`. The pages that it shows in frames or links to are treated like itself.
+- These files have to be in the directory of `package.json` (or `--root`, if you pass it), beside or below a file that you list, or in an installed package. The build fails if a URL leads anywhere else. A URL that starts with `/` is looked up in the directory of the file that names it, then in those above it, within the same limits.
+- The build follows `import`, import maps, and the URLs that are written out in `new Worker()`, `importScripts()` and `new URL(..., import.meta.url)`. An import that is no URL and is in no import map is resolved like in any other file, so a module can import npm packages.
+- List the scripts whose URLs are computed in `pages` too. A `.js` file is taken for a module if it has an `import` or `export` statement. Embed other data with `--asset`.
+- A `file:` URL finds these files below `__dirname`, `import.meta.dirname` and `app.getAppPath()`. It does not find the code of the main process. `/$bunfs/root` is the directory of `package.json`, unless you pass `--root`. If you serve pages under another URL, see [`app.setCompiledScripts()`](/runtime/desktop#security).
+- URLs that differ only in their query or fragment load one module.
+- The built-in objects of these pages are [read-only](/compiler/compatibility). Other pages do not get compiled scripts. A page that replaces built-in methods, as `zone.js` does, belongs among the `resources`.
+- What is not compiled is interpreted: `on*` attributes, `eval()`, `new Function()`, scripts that are not UTF-8 or call `eval()` outside of a function, and inline scripts whose text has changed since the build.
+
+### The UI library
+
+Bun downloads the UI library for the target from npm (`@oven/bun-desktop-<os>-<arch>`) and caches it. Set `BUN_DESKTOP_LIBRARY` to use a local file.
+
+---
+
 ## Windows-specific flags
 
 When compiling a standalone executable on Windows, platform-specific options customize metadata on the generated `.exe` file:
@@ -1363,6 +1468,7 @@ interface CompileBuildOptions {
   aotRecordOrder?: boolean; // With aot: build an executable that writes an order file when it runs (default: false)
   trim?: boolean | TrimOptions; // Remove the Bun and Node.js APIs your code never calls (default: false)
   disallowCodeGenerationFromStrings?: boolean | "strict"; // eval() and new Function() throw (default: false)
+  desktop?: boolean | DesktopBundleOptions; // Bundle a bun:desktop app (default: false)
   windows?: {
     icon?: string; // Path to .ico file
     hideConsole?: boolean; // Hide console window

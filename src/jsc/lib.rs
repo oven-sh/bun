@@ -23,6 +23,7 @@
 // the wrapper as the next-largest single fan-in after the e0204b3/80284f8
 // accessor inlining (every `VirtualMachine::get_or_null()` ≥3×/run_callback).
 // Precedent: 064951400fa4 did this for `bun_alloc`/`bun_ast`.
+#![feature(freeze)]
 #![feature(thread_local)]
 
 extern crate alloc;
@@ -458,6 +459,8 @@ pub mod zig_stack_trace;
 #[path = "bindgen.rs"]
 pub mod bindgen;
 #[cfg(debug_assertions)]
+pub(crate) mod bindgen_interface_test;
+#[cfg(debug_assertions)]
 #[path = "bindgen_test.rs"]
 pub(crate) mod bindgen_test;
 #[path = "BunCPUProfiler.rs"]
@@ -493,6 +496,8 @@ pub struct InitializeOptions {
     pub locks_builtins: bool,
     /// This process is `bun compile`: a release build of Bun takes no B3, Air or macro assembler option from `BUN_JSC_*`.
     pub is_compiler: bool,
+    /// An executable made with `--desktop`, a process for its pages, or [`preloads_desktop`].
+    pub is_desktop_program: bool,
 }
 
 /// Binding for JSCInitialize in ZigGlobalObject.cpp
@@ -517,6 +522,7 @@ pub fn initialize(options: InitializeOptions) {
             options.runs_compiled_code,
             options.locks_builtins,
             options.is_compiler,
+            options.is_desktop_program,
         )
     };
 }
@@ -528,6 +534,21 @@ pub fn expect_vm_per_thread() {
     unsafe {
         let env = bun_sys::environ();
         JSC__useOptionsForVMPerThread(env.as_ptr().cast(), env.len());
+    }
+}
+
+pub fn preloads_desktop(preloads: &[Box<[u8]>]) -> bool {
+    (preloads.iter()).any(|it| matches!(it.strip_prefix(b"bun:desktop"), Some([] | [b'/', ..])))
+}
+
+/// The global object of the main thread is a window. Before the first VM.
+pub fn start_in_window() {
+    Bun__startInWindow();
+}
+
+pub fn start_in_window_if_preloaded(preloads: &[Box<[u8]>]) {
+    if preloads.iter().any(|it| &**it == b"bun:desktop/dom") {
+        start_in_window();
     }
 }
 
@@ -1478,8 +1499,10 @@ unsafe extern "C" {
         runs_compiled_code: bool,
         locks_builtins: bool,
         is_compiler: bool,
+        is_desktop_program: bool,
     );
     fn JSC__useOptionsForVMPerThread(env: *const *const c_char, count: usize);
+    safe fn Bun__startInWindow();
 }
 
 #[path = "generated_bindgen.rs"]

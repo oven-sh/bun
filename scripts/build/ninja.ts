@@ -31,6 +31,7 @@ const ruleVars = {
   copy_exe: [],
   dsymutil: [],
   duplicate_symbols: [],
+  order_hints: [],
   rc: ["rcflags"],
   shim_verify: ["spec"],
   smoke_test: [],

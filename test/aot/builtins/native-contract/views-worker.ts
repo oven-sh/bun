@@ -1,7 +1,7 @@
 // One process of the test: bun --expose-internals views-worker.ts <request.json> <reports.jsonl>
 // As worker.ts, for the overloads of which the table says that they leave the storage of views alone.
-import { aotBuiltinEntries } from "bun:internal-for-testing";
 import { ftruncateSync, openSync, readFileSync, writeSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { addLiveCandidates } from "../differential/live";
 import { Realm } from "../differential/members";
 import { Table } from "../differential/table-description";
@@ -25,7 +25,8 @@ process.on("unhandledRejection", () => {});
 process.on("uncaughtException", () => {});
 
 sayCurrent(`${setUpPrefix}table`);
-const realm = new Realm(new Table(aotBuiltinEntries()));
+const dump = JSON.parse(readFileSync(join(dirname(requestPath), "table.json"), "utf8"));
+const realm = new Realm(new Table(dump), { isOfThisBuild: true });
 sayCurrent(`${setUpPrefix}live candidates`);
 await addLiveCandidates(realm);
 sayCurrent(`${setUpPrefix}host instances`);

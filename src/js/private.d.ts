@@ -1441,6 +1441,11 @@ interface $BunModules {
   "node:string_decoder": typeof import("node:string_decoder");
   "@vercel/fetch": $ModuleValue<typeof import("./thirdparty/vercel_fetch")>;
   "bun:bake": $ModuleValue<typeof import("./bun/bake")>;
+  "bun:desktop": $ModuleValue<typeof import("./bun/desktop")>;
+  "bun:desktop/dom": $ModuleValue<typeof import("./bun/desktop.dom")>;
+  "bun:desktop/electron": $ModuleValue<typeof import("./bun/desktop.electron")>;
+  "bun:desktop/jsx-dev-runtime": $ModuleValue<typeof import("./bun/desktop.jsx-dev-runtime")>;
+  "bun:desktop/jsx-runtime": $ModuleValue<typeof import("./bun/desktop.jsx-runtime")>;
   "bun:ffi": $ModuleValue<typeof import("./bun/ffi")>;
   "bun:sql": $ModuleValue<typeof import("./bun/sql")>;
   "bun:sqlite": $ModuleValue<typeof import("./bun/sqlite")>;

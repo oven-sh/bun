@@ -92,6 +92,11 @@ export interface BuiltinFeatureUse {
 
 export interface BuiltinEntry {
   id: number;
+  /**
+   * What generated code names it by, if no other built-in has the same. It is larger than any id. An id changes with every
+   * entry that is added before it, and each file that has one is then compiled again.
+   */
+  key?: number;
   path: string;
   kind: BuiltinKind;
   uses: BuiltinFeatureUse[];

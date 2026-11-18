@@ -62,6 +62,17 @@ pub(crate) fn compile_to_executable(
     log_time_outside_stages("before the build");
     let bundler = request.bundler.take().expect("one call per request");
     let target = check_request(request)?;
+    if let Some(desktop) = request.executable.desktop {
+        request.executable.flags |= Flags::LOADS_GRAPHICS_DRIVERS;
+        (request.executable.flags).set(Flags::STARTS_IN_WINDOW, desktop.starts_in_window);
+        // SAFETY: the loader outlives the request, and the build has not started.
+        let env = unsafe { &*request.executable.env };
+        bun_standalone_graph::desktop::library_for(request.executable.target, env)
+            .map_err(CompileFailure::Executable)?;
+    }
+    if request.options.has_realms_of_the_web {
+        request.executable.flags |= Flags::LOADS_GRAPHICS_DRIVERS;
+    }
     // Code from disk finds what it imports as under `bun run`: by the package.json and tsconfig.json files that lie there.
     if request.options.loads_code_from_disk {
         let disabled = Flags::DISABLE_AUTOLOAD_PACKAGE_JSON | Flags::DISABLE_AUTOLOAD_TSCONFIG;
@@ -340,6 +351,7 @@ fn write_product(
     // What is asked of the file itself wants the file.
     let asks_for_this_bun_as_it_is = settings.target.is_this_bun()
         && settings.executable_path.is_none()
+        && settings.desktop.is_none()
         && !options.trim.is_enabled()
         && product.untrimmed.is_none()
         && !options.obfuscates
@@ -367,6 +379,9 @@ fn write_product(
 
     // SAFETY: the loader outlives the request, and the build, which reads it, has ended.
     let env = unsafe { &mut *settings.env };
+    if let Some(bundle) = settings.desktop {
+        (bundle.write(settings.target, env)).map_err(CompileFailure::Executable)?;
+    }
     let mut executable_request = ExecutableRequest {
         graph,
         root_dir: settings.root_dir,
@@ -392,6 +407,10 @@ fn write_product(
         let (directory, path) = executable_location(settings.root_dir, outfile);
         let build_id = written.details.as_ref().and_then(|it| it.build_id.as_ref());
         reports::write_obfuscation_map(build, directory, path, build_id)?;
+    }
+    if let Some(warning) = (settings.desktop).and_then(|bundle| bundle.sign(settings.target)) {
+        // SAFETY: the log outlives the request, and the build, which writes to it, has ended.
+        unsafe { &mut *request.log }.add_warning(None, bun_ast::Loc::EMPTY, warning.as_bytes());
     }
     let mut details = written.details;
     // Nobody asked for what every executable leaves out, so the build says nothing about it.
@@ -575,7 +594,7 @@ fn build_program(
         .flat_map(|outfile| [&b".map"[..], b".map.js"].map(|end| [&outfile[..], end].concat()));
     let metafiles = request.executable.metafiles.into_iter();
     let metafiles = metafiles.filter(|path| !path.is_empty());
-    let options = AotOptions {
+    let mut options = AotOptions {
         omits_foreign_calls: !target.left_out.has_foreign_calls(),
         code_generation_from_strings: match target.left_out.has_code_from_strings() {
             true => request.options.code_generation_from_strings,
@@ -584,6 +603,14 @@ fn build_program(
         other_products: maps.chain(metafiles.filter_map(to_absolute)).collect(),
         ..request.options.clone()
     };
+    if let Some(desktop) = request.executable.desktop {
+        options.has_realms_of_the_web = true;
+        options.starts_in_window = desktop.starts_in_window;
+        options.pages.clone_from(&desktop.pages);
+    }
+    if options.has_realms_of_the_web {
+        options.option_words.push(Box::from(&b"several-realms"[..]));
+    }
     // Anything but an executable at that path is a file of the user's, which the program may name.
     let is_executable = |path: &[u8]| {
         let path = ZBox::from_bytes(path);

@@ -1,4 +1,5 @@
 #include "IsolatedModuleCache.h"
+#include "SyntheticModuleType.h"
 #include "BunClientData.h"
 #include "ModuleLoader.h"
 #include "ZigGlobalObject.h"
@@ -9,6 +10,21 @@
 #include <JavaScriptCore/UnlinkedFunctionExecutable.h>
 
 namespace Bun {
+
+bool IsolatedModuleCache::isTagCacheable(SyntheticModuleType tag)
+{
+    switch (tag) {
+    case SyntheticModuleType::JavaScript:
+    case SyntheticModuleType::PackageJSONTypeModule:
+    case SyntheticModuleType::PackageJSONTypeCommonJS:
+    // ESM tag is used by builtins that ship real JS source (e.g. bun:wrap).
+    // Their providers are constant across globals, so caching is safe.
+    case SyntheticModuleType::ESM:
+        return true;
+    default:
+        return false;
+    }
+}
 
 #if ENABLE(AOT)
 void didCacheSource(JSC::VM&, const WTF::String& key, bool isPluginSource);

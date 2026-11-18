@@ -55,7 +55,7 @@ use bun_core::{EncodedSlice, String as BunString, Timespec, TimespecMockMode, WT
 use bun_event_loop::EventLoopTimer::{EventLoopTimer, State as TimerState, Tag as TimerTag};
 use bun_io::KeepAlive;
 
-use crate::virtual_machine::{self, VirtualMachine, runtime_hooks};
+use crate::virtual_machine::{self, MainEntryPoint, VirtualMachine, runtime_hooks};
 use crate::{self as jsc, EncodedSliceJsc as _, JSGlobalObject, JSValue, JsError, LogJsc};
 
 bun_core::define_scoped_log!(log, Worker, hidden);
@@ -208,6 +208,7 @@ pub enum Status {
 // round-tripped from `create()`; it is only ever handed back to C++.
 unsafe extern "C" {
     safe fn WebWorker__workerThreadStarted(proxy: *mut c_void);
+    safe fn WebWorker__hasNativeEntry(proxy: *mut c_void) -> bool;
     safe fn WebWorker__workerGlobalScopeStarted(proxy: *mut c_void, global: &JSGlobalObject);
     safe fn WebWorker__workerGlobalScopeDestroyed(
         proxy: *mut c_void,
@@ -436,6 +437,7 @@ impl WebWorker {
         let specifier = spec_slice.slice();
         let is_text = specifier.starts_with(b"data:") || specifier.starts_with(b"blob:");
         let runs_apart = match is_text {
+            _ if WebWorker__hasNativeEntry(proxy) => false,
             true => crate::compiled_program::runs_worker_of_text_apart(),
             false => crate::compiled_program::runs_worker_from_disk_apart(),
         };
@@ -1019,7 +1021,12 @@ impl WebWorker {
             .with_mut(|preload| preload.clone_from(&self.preloads));
 
         // The parent only stored the raw specifier.
-        let path = match resolve_entry_point_specifier(vm, &self.unresolved_specifier, dot_slash) {
+        let resolved = (!WebWorker__hasNativeEntry(self.messaging_proxy))
+            .then(|| resolve_entry_point_specifier(vm, &self.unresolved_specifier, dot_slash));
+        if resolved.is_none() {
+            vm.main_entry_point.set(MainEntryPoint::Native);
+        }
+        let path = match resolved.transpose() {
             Ok(p) => p,
             Err(unresolved) => {
                 vm.exit_handler.exit_code.set(1);
@@ -1034,7 +1041,9 @@ impl WebWorker {
             }
         };
 
-        if crate::compiled_program::refuses_start_of_worker_at(path) {
+        if let Some(path) = path
+            && crate::compiled_program::refuses_start_of_worker_at(path)
+        {
             vm.exit_handler.exit_code.set(1);
             let message = [
                 &b"Cannot start a Worker at '"[..],

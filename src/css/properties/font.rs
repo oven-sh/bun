@@ -218,7 +218,7 @@ pub enum FontStretch {
 
 impl FontStretch {
     // Two payload variants tried in declaration order.
-    pub(crate) fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, Self> {
+    pub fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         if let Ok(kw) = input.try_parse(FontStretchKeyword::parse) {
             return Ok(FontStretch::Keyword(kw));
         }
@@ -318,7 +318,7 @@ pub enum FontFamily<'bump> {
 }
 
 impl<'bump> FontFamily<'bump> {
-    pub(crate) fn parse(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, Self> {
+    pub fn parse(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         if let Ok(value) = input.try_parse(|p| p.expect_string()) {
             return Ok(FontFamily::FamilyName(value));
         }

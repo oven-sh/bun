@@ -21,12 +21,17 @@ const {
   startGCProfiler,
   stopGCProfiler,
   discardGCProfiler,
+  heapSizes,
+  countGlobalObjects,
 }: {
   isStringOneByteRepresentation(content: string): boolean;
   /** The session's id. */
   startGCProfiler(): number;
   stopGCProfiler(session: number): GCEvent[];
   discardGCProfiler(session: number): void;
+  /** Unlike `jsc.heapStats()`, these two don't visit every object. */
+  heapSizes(): { heapSize: number; heapCapacity: number; extraMemorySize: number };
+  countGlobalObjects(): number;
 } = $cpp("NodeV8.cpp", "Bun::createNodeV8Binding");
 
 const setNewContextsHaveGC = $newCppFunction("NodeVM.cpp", "jsFunctionSetNewContextsHaveGC", 1);
@@ -204,7 +209,7 @@ function totalmem() {
 }
 
 function getHeapStatistics() {
-  const stats = jsc.heapStats();
+  const stats = heapSizes();
   const memory = jsc.memoryUsage();
 
   // These numbers need to be plausible, even if incorrect
@@ -225,7 +230,7 @@ function getHeapStatistics() {
 
     // -- Copied from Node:
     does_zap_garbage: 0,
-    number_of_native_contexts: stats.globalObjectCount,
+    number_of_native_contexts: countGlobalObjects(),
     number_of_detached_contexts: 0,
     total_global_handles_size: 8192,
     used_global_handles_size: 2208,
@@ -253,7 +258,7 @@ const kHeapSpaces = [
   "trusted_large_object_space",
 ];
 function getHeapSpaceStatistics() {
-  const stats = jsc.heapStats();
+  const stats = heapSizes();
   const spaces = [];
   for (let i = 0; i < kHeapSpaces.length; i++) {
     const space_name = kHeapSpaces[i];

@@ -2,7 +2,7 @@ import { closeSync } from "node:fs";
 import { BuildError } from "../error.ts";
 import { openElf } from "./elf-file.ts";
 import { featureNamed } from "./features.ts";
-import type { SectionGraph } from "./graph.ts";
+import { madeByLinker, type SectionGraph } from "./graph.ts";
 import { elfImage, machOImage, peImage, type LinkedImage } from "./linked-image.ts";
 import {
   EdgeKind,
@@ -65,7 +65,8 @@ function findCuttableRuns(graph: SectionGraph, partition: Partition, policy: Out
   for (let node = 0; node < graph.placedCount; node++) {
     const output = graph.output[node]!;
     const set = partition.setOf[node]!;
-    if (!policy.isMovable(output) || partition.isRetained[node] === 1 || set === 0) {
+    const isOrdered = policy.isMovable(output) && graph.object[node] !== madeByLinker;
+    if (!isOrdered || partition.isRetained[node] === 1 || set === 0) {
       close();
       continue;
     }

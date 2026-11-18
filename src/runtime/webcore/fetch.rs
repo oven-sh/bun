@@ -483,6 +483,13 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     } else if url.is_blob() {
         url_type = URLType::Blob;
     }
+    if url_type != URLType::Blob && crate::desktop::web::blob::Bun__isDesktopRealm(global_this) {
+        let err = ctx.to_type_error(
+            jsc::ErrorCode::INVALID_URL,
+            format_args!("fetch() URL is invalid"),
+        );
+        return Ok(JSPromise::rejected_promise(global_this, err).to_js());
+    }
 
     // **Start with the harmless ones.**
 

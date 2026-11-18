@@ -139,6 +139,7 @@ export default function (
   urlIsServer: boolean,
   isNodeInspector: boolean,
   reportNodeInspectorServerStarted: (url: string, controlCallback?: (message: string) => void, error?: string) => void,
+  isDesktopApp: boolean,
 ): void {
   if (urlIsServer) {
     connectToUnixServer(executionContextId, url, createBackend, send, close);
@@ -146,6 +147,7 @@ export default function (
   }
 
   if (isNodeInspector) {
+    if (isDesktopApp) cdpAdapterConstructor().servesDesktopApp = true;
     // node:inspector's inspector.open(): connections speak the V8 Chrome
     // DevTools Protocol, the listening URL is reported back to the inspected
     // thread (which prints Node's "Debugger listening on ..." line), and a

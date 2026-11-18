@@ -858,6 +858,7 @@ impl TranspilerJob {
                 transpiler.options.target,
                 HardcodedAliasCfg {
                     rewrite_jest_for_tests: transpiler.options.rewrite_jest_for_tests,
+                    ..Default::default()
                 },
             ) {
                 import_record.path.text = replacement.path.as_bytes();

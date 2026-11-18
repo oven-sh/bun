@@ -9,6 +9,7 @@ use super::library::find_default_library_entry_points;
 use super::{BundlerInputs, CompileProduct, CompileRequest, ExecutableSettings, RequestOrigin};
 pub(super) use crate::cli::build_command::compile_outfile;
 use crate::cli::command::Context;
+use crate::cli::desktop_bundle::DesktopBundle;
 use crate::cli::run_compiled;
 use bun_aot::report::build_rows::write_note_row;
 use bun_bundler::aot::expand_entry_points;
@@ -63,7 +64,7 @@ pub(super) fn use_default_entry_point(ctx: &mut ContextData) {
     match find_default_entry_point(working_directory) {
         Ok(found) => {
             ctx.args.entry_points = vec![found.path];
-            if ctx.bundler_options.outfile.is_empty() {
+            if ctx.bundler_options.outfile.is_empty() && ctx.bundler_options.desktop.is_none() {
                 ctx.bundler_options.outfile = found.executable_name;
             }
         }
@@ -93,7 +94,7 @@ pub(super) fn use_installed_executable(ctx: &mut ContextData) {
         Ok(NamedEntryPoint::Executable(found)) => {
             note_installed_executable(working_directory, written, &found.path);
             ctx.args.entry_points[0] = found.path;
-            if ctx.bundler_options.outfile.is_empty() {
+            if ctx.bundler_options.outfile.is_empty() && ctx.bundler_options.desktop.is_none() {
                 ctx.bundler_options.outfile = found.executable_name;
             }
         }
@@ -335,7 +336,8 @@ fn apply_bundler_options(ctx: &ContextData, this_transpiler: &mut Transpiler<'st
         .clone_from(&ctx.bundler_options.asset_naming);
     this_transpiler.options.react_fast_refresh = ctx.bundler_options.react_fast_refresh;
     this_transpiler.options.react_compiler = if ctx.bundler_options.react_compiler {
-        if this_transpiler.options.target.is_server_side() {
+        if this_transpiler.options.target.is_server_side() && ctx.bundler_options.desktop.is_none()
+        {
             bun_ast::runtime::ReactCompilerMode::Ssr
         } else {
             bun_ast::runtime::ReactCompilerMode::Client
@@ -569,6 +571,7 @@ pub(super) fn request_from_context<'r>(
     event_loop: &'r AnyEventLoop,
     product: CompileProduct<'r>,
     root_dir: Fd,
+    desktop: Option<&'r DesktopBundle>,
     origin: RequestOrigin,
 ) -> CompileRequest<'r, 'static> {
     let Configuration {
@@ -604,6 +607,7 @@ pub(super) fn request_from_context<'r>(
             root_dir,
             env,
             windows: &ctx.bundler_options.windows,
+            desktop,
             exec_argv: ctx
                 .bundler_options
                 .compile_exec_argv

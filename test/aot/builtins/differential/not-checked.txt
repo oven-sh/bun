@@ -8,6 +8,8 @@ AtomicsWait/1: it is not called: it blocks the thread
 BunBuild/0: it is not called: it blocks, starts a process or opens a socket
 BunBundleFeature/0: it is not called: this realm does not have its holder
 BunConnect/0: it is not called: it blocks, starts a process or opens a socket
+BunDesktopDomDocument/0: it is not called: this realm does not have its holder
+BunDesktopDomWindow/0: it is not called: this realm does not have its holder
 BunDollar/0: it is not called: it blocks, starts a process or opens a socket
 BunDollar/1: it is not called: it blocks, starts a process or opens a socket
 BunFFICString/0: it is not called: it dereferences an arbitrary pointer

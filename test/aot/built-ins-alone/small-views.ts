@@ -3,6 +3,7 @@
 // of views, and sees the move by what the cell weighs. A row that takes bytes in a place that may be any object is called where `routes` has a call for it.
 //
 //   bun small-views.ts <aot_builtin_table.json> [<path>]      the last line that it prints is `SmallViewsFound` below, as JSON; the rows of <path> are read as if they did not write TypedArrayStorage
+import { desktopInternals } from "bun:internal-for-testing";
 import { deserialize, estimateShallowMemoryUsageOf, serialize } from "bun:jsc";
 import { readTable, type Entry, type Overload, type Parameter, type TableType } from "./table";
 
@@ -151,11 +152,14 @@ const timingSafeEqual: Route[] = [
   [view => nodeCrypto.timingSafeEqual(eight(), view)],
 ];
 const crc32: Route[] = [[view => require("node:zlib").crc32(view)]];
+const decodesMessage: Route[] = [[view => desktopInternals.decodesMessage("notice", view)]];
 const routes: Record<string, Route[]> = {
   "native:Bindgen:Crypto.bind.ts:timingSafeEqual": timingSafeEqual,
   "%NativeFunctions%.CryptoBindTsTimingSafeEqual": timingSafeEqual,
   "native:Bindgen:node_zlib_binding.bind.ts:crc32": crc32,
   "%NativeFunctions%.Node_zlib_bindingBindTsCrc32": crc32,
+  "native:Bindgen:dom.bind.ts:decodesMessage": decodesMessage,
+  "%NativeFunctions%.DomBindTsDecodesMessage": decodesMessage,
   "%NodeCryptoBindingCrypto%.pbkdf2Sync": [
     [view => nodeCrypto.pbkdf2Sync(view, eight(), 1, 8, "sha1")],
     [view => nodeCrypto.pbkdf2Sync(eight(), view, 1, 8, "sha1")],

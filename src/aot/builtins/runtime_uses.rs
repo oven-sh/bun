@@ -381,7 +381,7 @@ fn holders_that_come_with_first_promise() -> &'static [BuiltinId] {
     static HOLDERS: OnceLock<Box<[BuiltinId]>> = OnceLock::new();
     HOLDERS.get_or_init(|| {
         let makes_promise = |id: BuiltinId| marks_of(id).contains(Marks::MAKES_PROMISE);
-        let makers = BuiltinId::ALL.into_iter();
+        let makers = BuiltinId::ALL.iter().copied();
         let makers = makers.filter(|&id| is_of_language(id) && makes_promise(id));
         let holders = makers.filter_map(|id| table::entry(id).holder.map(table::canonical_id));
         let mut holders: Vec<BuiltinId> = holders

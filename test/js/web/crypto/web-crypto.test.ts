@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-import { createCipheriv, createSecretKey, KeyObject, type webcrypto } from "node:crypto";
+import { createCipheriv, createHash, createSecretKey, KeyObject, type webcrypto } from "node:crypto";
 
 type AlgorithmIdentifier = webcrypto.AlgorithmIdentifier;
 type HmacImportParams = webcrypto.HmacImportParams;
@@ -20,6 +20,25 @@ it("getRandomValues and randomUUID have the lengths of the IDL", () => {
   expect(crypto.getRandomValues.length).toBe(1);
   expect(crypto.randomUUID.length).toBe(0);
 });
+
+it.each(["SHA-1", "SHA-256", "SHA-384", "SHA-512"])(
+  "small %s digests settle later, in the order of the calls",
+  async name => {
+    const sizes = [4096, 0, 64, 63, 1024];
+    const settled: (number | string)[] = [];
+    const digests = sizes.map(size => {
+      const bytes = new Uint8Array(size).fill(1);
+      const digest = crypto.subtle.digest(name, bytes);
+      bytes.fill(2);
+      return digest.then(it => (settled.push(size), Buffer.from(it).toString("hex")));
+    });
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    settled.push("microtasks");
+    const hash = (size: number) => createHash(name).update(Buffer.alloc(size, 1)).digest("hex");
+    expect(await Promise.all(digests)).toEqual(sizes.map(hash));
+    expect(settled).toEqual(["microtasks", ...sizes]);
+  },
+);
 
 describe("Web Crypto", () => {
   // https://github.com/oven-sh/bun/issues/3795

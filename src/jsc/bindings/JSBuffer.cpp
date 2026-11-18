@@ -14,6 +14,7 @@
 #include "JavaScriptCore/JSCJSValue.h"
 
 #include "JSBuffer.h"
+#include "DesktopRealm.h"
 
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/ExceptionScope.h"
@@ -586,7 +587,7 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_allocUnsafeBody(JSC::JSGl
     RETURN_IF_EXCEPTION(throwScope, {});
     auto result = allocBufferUnsafe(lexicalGlobalObject, length);
     RETURN_IF_EXCEPTION(throwScope, {});
-    if (Bun__Node__ZeroFillBuffers) memset(result->typedVector(), 0, length);
+    if (Bun__Node__ZeroFillBuffers || Bun::isDesktopRealm(lexicalGlobalObject)) memset(result->typedVector(), 0, length);
     RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
 

@@ -1412,6 +1412,7 @@ impl<'a> Resolver<'a> {
                     self.opts.target,
                     HardcodedAliasCfg {
                         rewrite_jest_for_tests: self.opts.rewrite_jest_for_tests,
+                        ..Default::default()
                     },
                 )
                 // Node's `--expose-internals`.

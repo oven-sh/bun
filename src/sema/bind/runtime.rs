@@ -224,8 +224,10 @@ pub struct EvalScope {
     pub file_symbols: IdList<SymbolId>,
     pub constructor_symbols: IdList<SymbolId>,
     pub is_sloppy: bool,
-    /// It sees no name of the file.
-    pub is_in_global_code: bool,
+    /// The scope of the function that sees the global scope alone, if it is in one.
+    pub global_code: ScopeId,
+    /// That function stands for a script.
+    pub is_in_script: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]

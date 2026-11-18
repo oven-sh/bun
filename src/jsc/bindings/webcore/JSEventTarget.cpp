@@ -21,6 +21,7 @@
 #include "config.h"
 #include "JSEventTarget.h"
 
+#include "DesktopRealm.h"
 #include "IDLTypes.h"
 #include "JSAddEventListenerOptions.h"
 #include "JSDOMBinding.h"
@@ -97,7 +98,7 @@ const ClassInfo JSEventTarget::s_info = { "EventTarget"_s, &Base::s_info, nullpt
 
 JSObject* JSEventTarget::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    return JSEventTargetPrototype::create(vm, globalObject, globalObject.objectPrototype());
+    return JSEventTargetPrototype::create(vm, globalObject, Bun::desktopRealmPrototypeAbove(&globalObject, "EventTarget"_s));
 }
 
 JSValue JSEventTarget::getConstructor(VM& vm, const JSGlobalObject* globalObject)
@@ -191,6 +192,12 @@ static inline JSC::EncodedJSValue jsEventTargetPrototypeFunction_dispatchEventBo
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
+    if (!argument0.value().inherits<JSEvent>()) [[unlikely]] {
+        JSValue result = Bun::desktopRealmDispatch(lexicalGlobalObject, impl, argument0.value());
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (result)
+            return JSValue::encode(result);
+    }
     auto event = convert<IDLInterface<Event>>(*lexicalGlobalObject, argument0.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 0, "event"_s, "EventTarget"_s, "dispatchEvent"_s, "Event"_s); });
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, impl.dispatchEventForBindings(*event))));

@@ -14,8 +14,7 @@ pub(crate) fn statement_esm_syntax(hir: &File<'_>, stmt: StmtId) -> EsmSyntax {
 }
 
 pub(crate) fn file_esm_syntax(hir: &File<'_>) -> EsmSyntax {
-    if find_marked_format(&hir.text) == Some(ModuleFormat::Esm) || has_written_top_level_await(hir)
-    {
+    if find_marked_format(hir) == Some(ModuleFormat::Esm) || has_written_top_level_await(hir) {
         return EsmSyntax::ExportOrTopLevelAwait;
     }
     let statements = hir

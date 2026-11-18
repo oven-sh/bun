@@ -7,7 +7,7 @@ const TAIL: [u8; 4] = [0x00, 0x00, 0xff, 0xff];
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum InflateError {
+pub enum InflateError {
     Corrupt = 1,
     TooLarge,
     OutOfMemory,

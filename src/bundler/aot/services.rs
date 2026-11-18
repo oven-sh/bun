@@ -1,4 +1,5 @@
 use super::assets::EmbeddedFiles;
+use super::pages::Pages;
 use super::plugins::PluginRequests;
 use super::{assets, components, data_loaders, defines, native_plugins, page_bundles};
 use crate::options_impl::BundleOptions;
@@ -31,6 +32,7 @@ use bun_sema_driver::host::{from_native, is_regular_file, to_native};
 use bun_threading::Guarded;
 use core::ptr::NonNull;
 use std::borrow::Cow;
+use std::collections::BTreeSet;
 
 pub(crate) struct BuildContext {
     bundle: NonNull<BundleV2<'static>>,
@@ -230,6 +232,7 @@ pub(crate) struct BundlerServices {
     assets: Box<[Vec<u8>]>,
     /// An asset below this folder is embedded under its path from the root, where the code beside it looks for it. Any other is embedded under its name alone.
     assets_root: Vec<u8>,
+    files_of_pages: BTreeSet<Vec<u8>>,
     names_wanted: NamesWanted,
     names_of_packages: Guarded<NamesOfPackages>,
 }
@@ -469,6 +472,7 @@ impl BundlerServices {
             files_for_file_system: Guarded::new(FilesForFileSystem::default()),
             assets: Box::default(),
             assets_root: Vec::new(),
+            files_of_pages: BTreeSet::new(),
             names_wanted,
             names_of_packages: Guarded::new(NamesOfPackages::default()),
         }
@@ -481,6 +485,14 @@ impl BundlerServices {
     ) -> BundlerServices {
         self.assets = assets;
         self.assets_root = assets_root;
+        self
+    }
+
+    pub(crate) fn with_pages(mut self, pages: &Pages) -> BundlerServices {
+        self.files_of_pages = pages.files();
+        let mut files = self.files_for_file_system.lock();
+        pages.embedded.iter().for_each(|it| files.embed(it, false));
+        drop(files);
         self
     }
 
@@ -638,7 +650,9 @@ impl BundlerServices {
             None => self.is_near_code(module_path, source_path),
             Some(_) => around.all(|asset| is_reached_through_symlink(asset, source_path)),
         };
-        is_left_out && matches!(kind(), Ok(bun_sys::ExistsAtType::File))
+        is_left_out
+            && !self.files_of_pages.contains(source_path)
+            && matches!(kind(), Ok(bun_sys::ExistsAtType::File))
     }
 
     pub(crate) fn take_files_for_file_system(&self) -> FilesForFileSystem {

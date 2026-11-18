@@ -11,6 +11,16 @@ pub enum HardcodedModule {
     AbortController,
     #[strum(serialize = "bun:bake")]
     BunBake,
+    #[strum(serialize = "bun:desktop")]
+    BunDesktop,
+    #[strum(serialize = "bun:desktop/electron")]
+    BunDesktopElectron,
+    #[strum(serialize = "bun:desktop/dom")]
+    BunDesktopDom,
+    #[strum(serialize = "bun:desktop/jsx-dev-runtime")]
+    BunDesktopJsxDevRuntime,
+    #[strum(serialize = "bun:desktop/jsx-runtime")]
+    BunDesktopJsxRuntime,
     #[strum(serialize = "bun:ffi")]
     BunFfi,
     #[strum(serialize = "bun:jsc")]
@@ -210,6 +220,11 @@ bun_core::comptime_string_map! {
         // Bun
         b"bun" => HardcodedModule::Bun,
         b"bun:bake" => HardcodedModule::BunBake,
+        b"bun:desktop" => HardcodedModule::BunDesktop,
+        b"bun:desktop/electron" => HardcodedModule::BunDesktopElectron,
+        b"bun:desktop/dom" => HardcodedModule::BunDesktopDom,
+        b"bun:desktop/jsx-dev-runtime" => HardcodedModule::BunDesktopJsxDevRuntime,
+        b"bun:desktop/jsx-runtime" => HardcodedModule::BunDesktopJsxRuntime,
         b"bun:ffi" => HardcodedModule::BunFfi,
         b"bun:jsc" => HardcodedModule::BunJsc,
         b"bun:main" => HardcodedModule::BunMain,
@@ -714,6 +729,11 @@ const BUN_EXTRA_ALIAS_KVS: &[AliasKv] = &[
     entry!("bun:test"),
     entry!("bun:test/vitest"),
     entry!("bun:bake"),
+    entry!("bun:desktop"),
+    entry!("bun:desktop/electron"),
+    entry!("bun:desktop/dom"),
+    entry!("bun:desktop/jsx-dev-runtime"),
+    entry!("bun:desktop/jsx-runtime"),
     entry!("bun:ffi"),
     entry!("bun:jsc"),
     entry!("bun:main"),
@@ -934,6 +954,8 @@ fn lookup(
 #[derive(Copy, Clone, Default)]
 pub struct Cfg {
     pub rewrite_jest_for_tests: bool,
+    /// `--desktop`
+    pub has_modules_of_electron: bool,
 }
 
 impl Alias {
@@ -950,6 +972,7 @@ impl Alias {
             return None;
         }
         if target.is_bun() {
+            let name = Self::as_builtin(name, cfg);
             if cfg.rewrite_jest_for_tests {
                 return lookup(&BUN_TEST_ALIAS_MAP, name);
             } else {
@@ -959,6 +982,22 @@ impl Alias {
             return lookup(&NODE_ALIAS_MAP, name);
         }
         None
+    }
+
+    /// An executable has it only when it is built with `--desktop`.
+    pub fn is_desktop_module(name: &[u8]) -> bool {
+        name.starts_with(b"bun:desktop") && HardcodedModule::MAP.get(name).is_some()
+    }
+
+    /// The module of Bun's that a name of Electron's stands for, or else `name`.
+    pub fn as_builtin(name: &[u8], cfg: Cfg) -> &[u8] {
+        match name {
+            _ if !cfg.has_modules_of_electron => name,
+            b"electron" | b"electron/main" | b"electron/common" | b"electron/renderer"
+            | b"electron/utility" => b"bun:desktop/electron",
+            b"original-fs" | b"node:original-fs" => b"node:fs",
+            _ => name,
+        }
     }
 
     /// Programs import `bun:fs` (#16883), so `bun:` + a bare Node builtin name means that builtin.

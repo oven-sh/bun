@@ -7,6 +7,7 @@ import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { callsOf, checkCall, emptyReport, type CallReport } from "./check-call";
 import { addHostInstances } from "../native-contract/host-instances";
 import { openersOfWhatTheLibraryHolds } from "./held-by-the-library";
+import { openersOfWhatPagesHold } from "./in-a-page";
 import { candidatesForTheirClass } from "./instances";
 import { addLiveCandidates } from "./live";
 import { Realm } from "./members";
@@ -28,7 +29,10 @@ const table = new Table(tablePath === null ? aotBuiltinEntries() : JSON.parse(re
 const realm = new Realm(table);
 try {
   await addLiveCandidates(realm);
-  const failures = await addHostInstances(realm, candidatesForTheirClass, openersOfWhatTheLibraryHolds);
+  const failures = await addHostInstances(realm, candidatesForTheirClass, [
+    ...openersOfWhatTheLibraryHolds,
+    ...openersOfWhatPagesHold,
+  ]);
   if (failures.length > 0) throw new Error(failures.join("\n"));
 } catch (error) {
   // The handlers above would swallow this and the process would exit quietly without making any of its calls.

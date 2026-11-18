@@ -18,7 +18,8 @@ import { runWorkers, type Results } from "./native-contract/run-workers";
 import { isQuietForViews } from "./native-contract/targets";
 
 const filter = process.env.AOT_BUILTINS_FILTER ?? ".";
-const quiet = aotBuiltinEntries().entries.flatMap(entry =>
+const dump = aotBuiltinEntries();
+const quiet = dump.entries.flatMap(entry =>
   new RegExp(filter).test(entry.path) ? entry.overloads.filter(isQuietForViews).map(overload => overload.token) : [],
 );
 const maxWorkers = 2;
@@ -69,6 +70,7 @@ const run = async (options: { filter: string; toldQuiet?: string }) => {
   using folder = tempDir("aot-quiet-rows-and-views", {});
   return await runWorkers({
     executable: bunExe(),
+    table: JSON.stringify(dump),
     environment: bunEnv,
     folder: String(folder),
     workerCount: Math.min(availableParallelism(), maxWorkers),

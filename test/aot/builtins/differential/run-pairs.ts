@@ -63,6 +63,13 @@ function textOfParameters(value: unknown): string | undefined {
   }
 }
 
+const isEvent = (value: unknown) => isObject(value) && !types.isProxy(value) && Object.hasOwn(value, "isTrusted");
+function withoutTimeStamp(event: any) {
+  const members: Record<string, unknown> = {};
+  for (const name in event) if (name !== "timeStamp") members[name] = event[name];
+  return members;
+}
+
 function isSameValue(left: unknown, right: unknown): boolean {
   if (types.isDate(left) && types.isDate(right))
     return Object.is(Reflect.apply(timeOf, left, []), Reflect.apply(timeOf, right, []));
@@ -71,6 +78,8 @@ function isSameValue(left: unknown, right: unknown): boolean {
   if (types.isRegExp(left) && types.isRegExp(right) && left.lastIndex !== right.lastIndex) return false;
   if (typeof left === "symbol" && typeof right === "symbol")
     return left === right || (isNew(left) && isNew(right) && left.description === right.description);
+  // No two events are made at the same time.
+  if (isEvent(left) && isEvent(right)) [left, right] = [left, right].map(withoutTimeStamp);
   try {
     return Bun.deepEquals(left, right, true);
   } catch {

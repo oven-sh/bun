@@ -10,10 +10,10 @@ use crate::permessage_deflate::{
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Params {
-    pub(crate) server_max_window_bits: u8,
-    pub(crate) client_max_window_bits: u8,
-    pub(crate) server_no_context_takeover: u8,
-    pub(crate) client_no_context_takeover: u8,
+    pub server_max_window_bits: u8,
+    pub client_max_window_bits: u8,
+    pub server_no_context_takeover: u8,
+    pub client_no_context_takeover: u8,
 }
 
 impl Default for Params {
@@ -36,7 +36,7 @@ impl Params {
 pub type WebSocketDeflate = PerMessageDeflate;
 /// Parent module matches `websocket_deflate::Error::*` against `decompress()`'s
 /// error type.
-pub(crate) type Error = InflateError;
+pub type Error = InflateError;
 
 /// The streams are per connection: with context takeover (the default)
 /// each message's back-references reach into the previous message's window.
@@ -59,7 +59,7 @@ const INFLATE_BUFFER_SIZE: usize = 128 * 1024;
 impl PerMessageDeflate {
     /// RFC 7692 names each parameter after the side whose compressor it limits: `server_*`
     /// configures the server's compressor and the client's decompressor.
-    pub(crate) fn init(params: Params, is_server: bool) -> Box<Self> {
+    pub fn init(params: Params, is_server: bool) -> Box<Self> {
         let server = (
             params.server_max_window_bits,
             params.server_no_context_takeover == 1,
@@ -105,7 +105,7 @@ impl PerMessageDeflate {
     }
 
     /// Inflate one message onto `out`, failing if it exceeds `max_len` bytes.
-    pub(crate) fn decompress(
+    pub fn decompress(
         &mut self,
         in_buf: &[u8],
         out: &mut Vec<u8>,
@@ -129,7 +129,7 @@ impl PerMessageDeflate {
         Ok(())
     }
 
-    pub(crate) fn compress(&mut self, in_buf: &[u8], out: &mut Vec<u8>) -> bun_zlib::Result<()> {
+    pub fn compress(&mut self, in_buf: &[u8], out: &mut Vec<u8>) -> bun_zlib::Result<()> {
         deflate_message(&mut self.deflater, in_buf, out)?;
         if self.compress_no_context_takeover {
             self.deflater.reset();

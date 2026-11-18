@@ -76,6 +76,7 @@ use {bun_css_jsc as _, bun_install_jsc as _, bun_patch_jsc as _, bun_semver_jsc 
 pub(crate) mod generated_bindgen; // include!()s ${BUN_CODEGEN_DIR}/generated_bindgen_bun_runtime.rs
 pub(crate) mod generated_host_exports; // include!()s ${BUN_CODEGEN_DIR}/generated_host_exports.rs
 
+pub(crate) mod desktop;
 pub(crate) mod dns_jsc;
 pub(crate) mod image;
 pub(crate) mod test_runner;

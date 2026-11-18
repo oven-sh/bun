@@ -223,6 +223,21 @@ plugin({
     }
   });
 
+  test.each([
+    ["bun:jsc", { stdout: "main ran\n", stderr: "", exitCode: 0 }],
+    ["bun:missing", { stdout: "", stderr: 'error: preload not found "bun:missing"\n', exitCode: 1 }],
+  ])("preloads %s", async (name, expected) => {
+    using dir = tempDir("preload-bun-builtin", { "main.js": `console.log("main ran");` });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--no-install", "--preload", name, "main.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual(expected);
+  });
+
   test("reports a preloaded node: module that doesn't exist", async () => {
     using dir = tempDir("preload-missing-builtin", { "main.js": `console.log("main ran");` });
     await using proc = Bun.spawn({

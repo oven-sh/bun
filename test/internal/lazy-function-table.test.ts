@@ -37,6 +37,7 @@ var object = { method() { return function inMethod() { return a + 7000000; }; },
 class C { method() { return function inClass() { return a + 9000000; }; } }
 if (a) { Foo.conditional = function inBlock() { return a + 10000000; }; }
 for (let i = 0, f = function inLoopHead() { return i + 11000000; }; i < 1; i++);
+for (let name of a) Foo[name] = function inLoopBody() { return name + 11500000; };
 call(function argument() { return a + 12000000; });
 return a`);
   expect(functions).toEqual([

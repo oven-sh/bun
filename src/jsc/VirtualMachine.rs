@@ -144,6 +144,8 @@ pub enum MainEntryPoint {
     /// `bun bake`: `src/js/internal/bake.ts` serves the app in the working directory. There is no
     /// entry module, so `main` is `None`.
     Bake,
+    /// A worker whose creator gave it a function. `main` is `None`.
+    Native,
 }
 
 /// The built-in module that `Bun__loadBuiltinEntryPoint` runs. Mirrors
@@ -153,6 +155,7 @@ pub enum MainEntryPoint {
 pub enum BuiltinEntryPoint {
     Html = 0,
     Bake = 1,
+    Native = 2,
 }
 
 pub struct VirtualMachine {
@@ -765,6 +768,8 @@ pub fn is_smol_mode() -> bool {
 
 #[derive(Default)]
 pub struct ExitHandler {
+    /// Unlike `RareData::cleanup_hooks`, also after `process.exit()`.
+    pub last_steps: Cell<Option<fn()>>,
     pub exit_code: Cell<u8>,
     /// `bun test` sets this at the end of a run unless `node:test` APIs were used: jest and vitest never fire a test file's `process.on('exit')` listeners.
     pub skip_exit_listeners: Cell<bool>,
@@ -1387,6 +1392,10 @@ impl VirtualMachine {
         if budget > MIN_BUDGET {
             JSC__Heap__setInitialAllocationBudget(self.jsc_vm(), budget);
         }
+    }
+
+    pub fn hand_over_idle_collections(&self) -> bool {
+        self.gc_controller.hand_over()
     }
 
     /// Hand the executable's shared bytecode string table (if any) to JSC as this VM's `DecoderStringTable`.
@@ -2170,6 +2179,10 @@ impl VirtualMachine {
         // Node's FreeEnvironment sets `is_stopping` before `RunCleanup`: the
         // Node-API env teardown below refuses every `NAPI_PREAMBLE` call.
         self.handle.stop();
+
+        if let Some(last_steps) = self.exit_handler.last_steps.take() {
+            last_steps();
+        }
 
         if self.exit_tears_down_napi_envs() {
             self.run_cleanup_hooks();
@@ -3467,6 +3480,7 @@ impl VirtualMachine {
             }
             MainEntryPoint::Html => Some(BuiltinEntryPoint::Html),
             MainEntryPoint::Bake => Some(BuiltinEntryPoint::Bake),
+            MainEntryPoint::Native => Some(BuiltinEntryPoint::Native),
         };
         let global = self.global();
         let promise = if let Some(builtin) = builtin {
@@ -4225,6 +4239,13 @@ impl VirtualMachine {
     /// long after it has settled and the module loader has let go of it.
     pub fn pending_internal_promise(&self) -> Option<*mut JSInternalPromise> {
         Some(self.pending_internal_promise.get().get()?.to_cell()?.cast())
+    }
+
+    pub fn is_loading_entry_point(&self) -> bool {
+        self.is_in_preload.get()
+            || self.pending_internal_promise().is_some_and(|promise| {
+                crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Pending
+            })
     }
 
     pub fn set_pending_internal_promise(&self, promise: Option<*mut JSInternalPromise>) {
@@ -5414,9 +5435,9 @@ impl VirtualMachine {
     /// continues in the worker's normal event loop, as in Node.
     pub(crate) fn load_entry_point_for_web_worker(
         &self,
-        entry_path: &[u8],
+        entry_path: Option<&[u8]>,
     ) -> crate::CrateResult<*mut JSInternalPromise> {
-        let promise = self.reload_entry_point(Some(entry_path))?;
+        let promise = self.reload_entry_point(entry_path)?;
         self.event_loop()
             .wait_for_worker_entry_evaluation(jsc::AnyPromise::Internal(promise));
         if let Some(worker) = self.worker_ref() {

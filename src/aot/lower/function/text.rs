@@ -7,8 +7,7 @@ use bun_sema::erasure::{
 };
 use bun_sema::fold::{Constant, Decision};
 use bun_sema::hir::{
-    BinOp, ExprId, ExprKind, FnBody, FnId, PropKind, StmtId, StmtKind, end_of_expr,
-    find_transpiled_mark, start_of,
+    BinOp, ExprId, ExprKind, FnBody, FnId, PropKind, StmtId, StmtKind, end_of_expr, start_of,
 };
 use bun_sema::module_format::list_this_of_file;
 use rustc_hash::FxHashMap;
@@ -63,7 +62,7 @@ impl FileLowering<'_, '_, '_, '_> {
         let hir = self.hir;
         let atoms = &self.queries.files().atoms;
         let is_of_program = self.inputs.sources.kind(self.file) == SourceKind::Program;
-        let stands_as_written = is_of_program && find_transpiled_mark(&hir.text).is_some();
+        let stands_as_written = is_of_program && hir.stands_as_written();
         let written = self.values_written_in_place.take();
         let written = written.into_iter().filter(|_| !stands_as_written);
         let mut values_first_in_text = Vec::new();

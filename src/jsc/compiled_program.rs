@@ -811,6 +811,7 @@ mod write_execute {
         use bun_exe_format::executable_memory_filter::{Libraries, program};
         use bun_removable_features::{Feature, is_removed};
         let loads_no_library = [
+            Feature::Desktop,
             Feature::Ffi,
             Feature::NativeAddons,
             Feature::SqliteExtensions,
@@ -1086,7 +1087,9 @@ pub(crate) fn use_image(graph: &'static dyn StandaloneModuleGraph) {
         use_image_on_this_thread(program);
         Bun__AOT__takePagesForTablesOfFirstThread();
         #[cfg(not(bun_hardened))]
-        write_execute::deny();
+        if !graph.loads_graphics_drivers() {
+            write_execute::deny();
+        }
         #[cfg(bun_hardened)]
         {
             let code = Bun__AOT__imageCode();

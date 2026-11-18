@@ -583,6 +583,7 @@ struct RuntimeLoadInputs<'c, 's> {
 fn create_runtime_modules(archive: &'static Archive, options: &Options<'_>) -> RuntimeModules {
     let runtime_modules = RuntimeModules::new(archive, options.load.omits_builtin_modules)
         .with_test_aliases(options.load.runs_tests)
+        .with_desktop_modules(options.aot)
         .with_first_texts(options.aot.takes_first_texts);
     #[cfg(test)]
     let runtime_modules = runtime_modules.with_replaced_sources(&options.load.in_memory_files);
@@ -635,7 +636,10 @@ impl<'a> Build<'a> {
         let disk = create_disk(options, self.threads);
         let application_session = sessions.application;
         let atoms = Interner::new_in(application_session);
-        let builtin_names = BuiltinNames::new(&atoms);
+        let mut builtin_names = BuiltinNames::new(&atoms);
+        if options.aot.has_realms_of_the_web {
+            builtin_names.keep_globals_aside(crate::load::globals_of_the_web::kept_aside());
+        }
         let archive = Archive::embedded();
         let natives = archive.manifest().natives().iter();
         let natives = natives.map(|native| (&*native.name, native.is_also_member_of_global_this));
@@ -652,6 +656,7 @@ impl<'a> Build<'a> {
             &atoms,
             self.platform,
             options.aot.runs_in_place || options.load.runs_tests,
+            options.aot.has_realms_of_the_web,
         );
         let shared = SharedLoadInputs {
             disk: &disk,
@@ -1672,6 +1677,7 @@ mod tests {
         let paths = |public_path: &str, file_name: &str| EntryPointPaths {
             public_path: public_path.as_bytes().to_vec(),
             source_path: source_path_of(file_name.as_bytes()),
+            is_loaded_by_page: false,
         };
         let names_written = vec![
             paths("/$bunfs/root/worker", "/project/main.ts"),

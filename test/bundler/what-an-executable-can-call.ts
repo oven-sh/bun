@@ -364,6 +364,8 @@ export function placesThatMakeSystemCalls(file: Uint8Array, numbers: readonly nu
     if (number !== undefined && numbers.includes(number)) places.push({ number, address, code: codeAt(elf, address, 128, 4) });
   };
   const segmentOf = (address: number) => elf.segments.find(each => address >= each.address && address < each.address + (each.end - each.offset))!;
+  // Code on arm64 that lies more than 128 MB from the stub branches to a thunk, which branches to the stub.
+  if (elf.isArm64) for (const { address } of placesIn(elf, name => name === "syscall")) elf.importAt.set(address, "syscall");
   for (const { address } of placesIn(elf, name => name === "syscall")) {
     const segment = segmentOf(address);
     if (segment.isExecutable) found(numberLoadedAhead(elf, segment.offset + (address - segment.address), segment.offset, true), address);

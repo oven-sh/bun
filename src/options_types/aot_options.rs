@@ -55,6 +55,18 @@ impl fmt::Debug for Preload {
     }
 }
 
+/// `--desktop`. All paths and patterns are absolute.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PageOptions {
+    /// HTML files and scripts.
+    pub listed: Vec<Vec<u8>>,
+    pub preloads: Vec<Vec<u8>>,
+    /// What lies beside the executable and need not be in it.
+    pub shipped: Vec<Vec<u8>>,
+    /// The directory of package.json, or nothing.
+    pub app_directory: Vec<u8>,
+}
+
 #[derive(Clone, Debug)]
 pub struct AotOptions {
     pub heap: HeapSize,
@@ -118,6 +130,13 @@ pub struct AotOptions {
     /// `bun test --aot --isolate` or `--parallel`: the runner gives each test file a fresh realm of one VM, and each realm runs an instance of the program of its own.
     /// `Bun.s3` and the environments of native addons are carried from one realm to the next, so a later file may call a function of an earlier one.
     pub runs_in_several_realms: bool,
+    /// `--desktop`: some of the realms are windows and workers of the web, whose global objects have other names than Bun's.
+    pub has_realms_of_the_web: bool,
+    /// For a command that takes no `--desktop`: the build sets it and stops where the program imports `bun:desktop` without `has_realms_of_the_web`.
+    pub imports_desktop: Option<Arc<AtomicBool>>,
+    /// The global object of the program is a window.
+    pub starts_in_window: bool,
+    pub pages: PageOptions,
     pub replaced_by_tests: ReplacedByTests,
     /// Only a build of Bun with Fuzzilli looks at it.
     pub preload: Option<Preload>,
@@ -209,6 +228,10 @@ impl Default for AotOptions {
             entry_points_run_again: false,
             typescript_drops_absent_exports: false,
             runs_in_several_realms: false,
+            has_realms_of_the_web: false,
+            imports_desktop: None,
+            starts_in_window: false,
+            pages: PageOptions::default(),
             replaced_by_tests: ReplacedByTests::default(),
             preload: None,
             thread_count: None,
@@ -278,6 +301,10 @@ mod tests {
             entry_points_run_again,
             typescript_drops_absent_exports,
             runs_in_several_realms,
+            has_realms_of_the_web,
+            imports_desktop,
+            starts_in_window,
+            pages,
             replaced_by_tests,
             preload,
             thread_count,
@@ -338,6 +365,10 @@ mod tests {
         assert!(!entry_points_run_again);
         assert!(!typescript_drops_absent_exports);
         assert!(!runs_in_several_realms);
+        assert!(!has_realms_of_the_web);
+        assert!(imports_desktop.is_none());
+        assert!(!starts_in_window);
+        assert_eq!(pages, PageOptions::default());
         assert!(builtins.is_empty());
         assert!(test_files.is_empty());
         assert!(preloads.is_empty());

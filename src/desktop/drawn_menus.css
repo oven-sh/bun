@@ -1,0 +1,113 @@
+:root {
+  color-scheme: light dark;
+  font: 14px system-ui;
+  cursor: default;
+  user-select: none;
+  overflow: hidden;
+  --line: light-dark(#0002,#fff2);
+  color: light-dark(#2e3436, #eeeeec);
+}
+body {
+  margin: 0;
+}
+[role="menubar"] {
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  padding: 0 4px;
+  font-size: 13px;
+  background: light-dark(#f6f6f6, #2b2b2b);
+  border-bottom: 1px solid var(--line);
+}
+[role="menubar"] > * {
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+[role="menubar"] > :hover {
+  background: #8883;
+}
+[role="menubar"] > [aria-expanded="true"] {
+  background: #8884;
+}
+[role="menu"] {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  position: fixed;
+  width: max-content;
+  max-width: min(800px, 100vw);
+  max-height: 100vh;
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: 4px 0;
+  background: light-dark(#fff, #2f2f2f);
+  border-radius: 6px;
+  box-shadow:
+    0 0 0 1px var(--line),
+    0 4px 12px #0003;
+}
+[role="menu"] > * {
+  grid-column: 1/-1;
+}
+[role="menu"] > div {
+  display: grid;
+  grid-template-columns: subgrid;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 20px;
+  white-space: nowrap;
+}
+[role="menu"] > .selected {
+  color: AccentColorText;
+  background: AccentColor;
+}
+[aria-disabled="true"] {
+  opacity: 0.5;
+}
+[role="menu"] > [role="heading"] {
+  opacity: 0.7;
+  font-size: 12px;
+  font-weight: 600;
+}
+hr {
+  margin: 8px 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+b {
+  display: flex;
+  width: 28px;
+}
+span {
+  grid-column: 2;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+small {
+  display: block;
+  opacity: 0.7;
+  font-size: 12px;
+  padding-bottom: 4px;
+}
+kbd {
+  display: flex;
+  justify-self: end;
+  margin-left: 8px;
+  opacity: 0.6;
+  font: inherit;
+}
+.selected kbd,
+kbd:has(svg) {
+  opacity: 1;
+}
+kbd:has(svg) {
+  margin: 0 -4px 0 20px;
+}
+svg,
+img {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+}

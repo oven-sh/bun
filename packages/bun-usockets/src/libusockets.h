@@ -574,6 +574,8 @@ int us_ssl_ctx_add_ca_cert(struct ssl_ctx_st *ctx, const char *content);
 void us_internal_ssl_client_verify_defaults(struct ssl_st *ssl, struct ssl_ctx_st *ctx);
 /* 1 when the verify step of this handshake asked the owner for the server's name. */
 int us_ssl_identity_checked(struct ssl_st *ssl);
+size_t us_ssl_verified_issuers(struct ssl_st *ssl, uint8_t **out);
+int us_ssl_ctx_has_user_ca(struct ssl_ctx_st *ctx);
 /* Why the SSL_* call that just returned failed, NUL-terminated. Clears the thread's queue. 0 when nothing is queued. */
 int us_ssl_take_error_reason(char *reason, size_t length);
 /* For an SSL that no us_socket_t drives: its callbacks go to `wrapper`, which must outlive `ssl`. */
@@ -606,6 +608,13 @@ void us_wakeup_loop(us_loop_r loop) nonnull_fn_decl;
 
 /* Hook up timers in existing loop */
 void us_loop_integrate(us_loop_r loop) nonnull_fn_decl;
+
+/* Makes one loop of the process wait in another event loop, such as a window system's. `wait` returns when `source` (the
+ * epoll or kqueue fd, the IOCP handle) is ready, after `timeout_ns` (-1: never), or whenever it likes. */
+typedef void (*us_foreign_wait_t)(intptr_t source, long long timeout_ns);
+void us_loop_set_foreign_wait(us_loop_r loop, us_foreign_wait_t wait);
+/* Before `wait` runs JavaScript. */
+void us_loop_foreign_wait_reenter(us_loop_r loop) nonnull_fn_decl;
 
 /* Public interfaces for polls */
 

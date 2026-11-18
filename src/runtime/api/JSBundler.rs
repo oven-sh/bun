@@ -21,11 +21,13 @@ use bun_options_types::aot_options::AotOptions;
 use bun_options_types::compile_target::CompileTarget;
 use bun_options_types::schema::api; // bun.schema.api
 use bun_options_types::trim::TrimRequest;
+use bun_options_types::{DesktopOptions, WindowsOptions};
 use bun_standalone_graph::StandaloneModuleGraph;
 
 use crate::api::js_bundle_completion_task::{BuildOwner, JSBundleCompletionTask};
 use crate::cli::compile_command::RequestOrigin;
 use crate::cli::compile_options::{self, CompileFlags, OptionError, TrimFlags};
+use crate::cli::desktop_bundle::{self, DesktopBundle};
 
 // `CompileTarget.fromJS` / `.fromSlice` are JSC-aware option parsers shared
 // with the CLI build path; live in `bun_bundler_jsc::options_jsc`.
@@ -254,6 +256,9 @@ pub(crate) mod js_bundler {
         pub(crate) windows_version: OwnedString,
         pub(crate) windows_description: OwnedString,
         pub(crate) windows_copyright: OwnedString,
+        desktop_options: Option<DesktopOptions>,
+        /// With it, `outfile` is the executable in the bundle.
+        pub(crate) desktop: Option<DesktopBundle>,
         pub(crate) outfile: OwnedString,
         pub(crate) assets: Vec<Box<[u8]>>,
         pub(crate) autoload_dotenv: bool,
@@ -283,6 +288,8 @@ pub(crate) mod js_bundler {
                 windows_version: OwnedString::default(),
                 windows_description: OwnedString::default(),
                 windows_copyright: OwnedString::default(),
+                desktop_options: None,
+                desktop: None,
                 outfile: OwnedString::default(),
                 assets: Vec::new(),
                 autoload_dotenv: true,
@@ -640,6 +647,46 @@ pub(crate) mod js_bundler {
     }
 
     impl CompileOptions {
+        fn plan_desktop_bundle(
+            &mut self,
+            global_this: &JSGlobalObject,
+            entry_point: &[u8],
+            outdir: &[u8],
+        ) -> JsResult<()> {
+            let Some(options) = self.desktop_options.take() else {
+                return Ok(());
+            };
+            let request = desktop_bundle::Request {
+                options: &options,
+                target: &self.compile_target,
+                working_directory: bun_resolver::fs::FileSystem::get().top_level_dir(),
+                entry_point,
+                outdir,
+                outfile: &self.outfile.list,
+            };
+            let mut windows = WindowsOptions::default();
+            let bundle = DesktopBundle::plan(&request, &mut windows).map_err(|error| {
+                global_this
+                    .throw_invalid_arguments(format_args!("{}", bstr::BStr::new(error.slice())))
+            })?;
+            self.windows_hide_console |= windows.hide_console;
+            for (written, default) in [
+                (&mut self.windows_icon_path, windows.icon),
+                (&mut self.windows_title, windows.title),
+                (&mut self.windows_version, windows.version),
+                (&mut self.windows_description, windows.description),
+                (&mut self.windows_copyright, windows.copyright),
+            ] {
+                if written.is_empty() {
+                    written.append_slice_exact(&default.unwrap_or_default())?;
+                }
+            }
+            self.outfile = OwnedString::default();
+            self.outfile.append_slice_exact(&bundle.executable)?;
+            self.desktop = Some(bundle);
+            Ok(())
+        }
+
         fn from_js(
             global_this: &JSGlobalObject,
             config: JSValue,
@@ -774,6 +821,19 @@ pub(crate) mod js_bundler {
                     let slice = windows_copyright.to_utf8(global_this)?;
                     this.windows_copyright.append_slice_exact(slice.slice())?;
                 }
+            }
+
+            if let Some(desktop) = object.get_own_truthy(global_this, "desktop")? {
+                let mut options = DesktopOptions::default();
+                if desktop.is_object() && !desktop.is_array() {
+                    let json = desktop.json_stringify_fast(global_this)?;
+                    options.json = json.to_utf8().slice().into();
+                } else if desktop != JSValue::TRUE {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "compile.desktop must be a boolean or an object"
+                    )));
+                }
+                this.desktop_options = Some(options);
             }
 
             if let Some(outfile) = object.get_own(global_this, &BunString::static_("outfile"))? {
@@ -1749,6 +1809,10 @@ pub(crate) mod js_bundler {
                         this.source_map = options::SourceMapOption::External;
                     }
 
+                    if let Some(entry_point) = this.entry_points.keys().first() {
+                        compile.plan_desktop_bundle(global_this, entry_point, &this.outdir.list)?;
+                    }
+
                     if compile.outfile.is_empty() {
                         let entry_point: &[u8] = &this.entry_points.keys()[0];
                         // The build expands the patterns again, and reports one without a match.
@@ -1791,6 +1855,10 @@ pub(crate) mod js_bundler {
 
                         compile.outfile.append_slice_exact(outfile)?;
                     }
+                } else if compile.desktop_options.is_some() {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "cannot use compile.desktop with target 'browser'"
+                    )));
                 } else {
                     compile.aot = None;
                 }

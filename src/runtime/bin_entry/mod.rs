@@ -166,6 +166,16 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
         Bun__askForAddressSpaceToStart();
     }
 
+    #[cfg(unix)]
+    bun_removable_features::call_removable_or!(
+        Desktop,
+        ReturnDefault,
+        {},
+        crate::desktop::main_thread::recognize_internal_modes,
+        // SAFETY: fn contract.
+        unsafe { core::slice::from_raw_parts(argv, argc as usize) }
+    );
+
     // 0. Capture argv FIRST — before the crash handler, whose panic path
     //    dumps the command line via `bun_core::argv()`.
     //    SAFETY: `argc`/`argv` come from the C runtime; the argv block lives
@@ -214,17 +224,32 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     //    wires stdout/stderr `Source`s.
     output::stdio::init();
     let _flush = output::flush_guard();
+    // After stdio::init: a truncated executable is reported from here.
+    if bun_standalone_graph::Graph::is_desktop_program() {
+        bun_crash_handler::never_report();
+    }
     // After stdio::init (fd 0 is open even if we were exec'd with it closed), before any thread.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pregrow_fd_table();
 
+    #[cfg(unix)]
+    bun_removable_features::call_removable_or!(
+        Desktop,
+        ReturnDefault,
+        {},
+        crate::desktop::main_thread::lend_if_needed,
+        run
+    );
+    run()
+}
+
+fn run() -> ! {
     // 5. Per-thread stack-limit cache for the JS recursion guard.
     StackCheck::configure_thread();
     bun_io::ParentDeathWatchdog::install();
 
     // 7. CLI dispatch.
     crate::cli::Cli::start();
-    // `Global::exit` is `-> !`; it coerces to the `c_int` return type.
     Global::exit(0)
 }
 

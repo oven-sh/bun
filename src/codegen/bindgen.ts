@@ -9,14 +9,19 @@ import {
   cppClasses,
   cppCounts,
   cppHeader,
+  cppInterfaceInfos,
+  cppInterfaces,
   cppSource,
   cppTables,
   dts,
+  globalRows,
+  inlineWhatIsNotShared,
   rustForCrate,
   type SchemaFile,
 } from "./bindgen-emit.ts";
 import { loadSchemaFile, sortTypes } from "./bindgen-load.ts";
 import { Guards } from "./builtins/guards.ts";
+import { writeWebGlobals } from "./generate-web-globals.ts";
 import { argParse, writeIfNotChanged } from "./helpers.ts";
 
 const args = argParse(["sources", "types-only", "codegen-path", "types-path", "engine-directory", "builtin-uses"]);
@@ -60,13 +65,18 @@ function emit<T>(file: SchemaFile, text: (file: SchemaFile, guards: Guards) => T
     throw new Error(`${file.origin.stem}.bind.ts: ${(error as Error).message}`, { cause: error });
   }
 }
-for (const file of files) {
+const cppSources = inlineWhatIsNotShared(files.map(file => emit(file, cppSource)));
+for (const [i, file] of files.entries()) {
   writeIfNotChanged(path.join(codegenPath, `Generated${file.origin.namespace}.h`), emit(file, cppHeader));
-  writeIfNotChanged(path.join(codegenPath, `Generated${file.origin.namespace}.cpp`), emit(file, cppSource));
+  writeIfNotChanged(path.join(codegenPath, `Generated${file.origin.namespace}.cpp`), cppSources[i]);
 }
 writeIfNotChanged(path.join(codegenPath, "GeneratedBindings+Tables.h"), cppTables(tables));
 writeIfNotChanged(path.join(codegenPath, "GeneratedBindings+Counts.h"), cppCounts(tables));
 writeIfNotChanged(path.join(codegenPath, "GeneratedBindings+Classes.h"), cppClasses(tables));
+writeIfNotChanged(path.join(codegenPath, "GeneratedBindings+Interfaces.h"), cppInterfaces(tables));
+writeIfNotChanged(path.join(codegenPath, "GeneratedBindings+InterfaceInfos.h"), cppInterfaceInfos(tables));
+const webGlobals = globalRows(files);
+if (webGlobals.length) writeWebGlobals(codegenPath, webGlobals);
 for (const [crate, crateFiles] of Map.groupBy(files, file => file.origin.crate)) {
   writeIfNotChanged(path.join(codegenPath, `generated_bindgen_${crate}.rs`), rustForCrate(crateFiles));
 }

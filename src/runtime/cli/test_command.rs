@@ -2701,6 +2701,7 @@ impl TestCommand {
                 && !run_compiled::test_files_share_global(ctx),
             runs_compiled_code: run_compiled::runs_compiled_code(),
             locks_builtins: run_compiled::is_checked(),
+            is_desktop_program: jsc::preloads_desktop(&ctx.preloads),
             ..Default::default()
         });
         run_compiled::list_refused_changes();
@@ -2824,6 +2825,9 @@ impl TestCommand {
             graph: run_compiled::graph(),
             ..Default::default()
         };
+        if options.graph.is_none() {
+            bun_jsc::start_in_window_if_preloaded(&ctx.preloads);
+        }
         let vm = VirtualMachine::init(ctx.log, options)?;
         crate::jsc_hooks::runtime_state_of(vm)
             .test_runner

@@ -1,5 +1,6 @@
 //! Node-API (N-API) implementation.
 
+use crate::desktop::main_thread as lent_main_thread;
 use core::cell::{Cell, UnsafeCell};
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::mem::{ManuallyDrop, MaybeUninit};
@@ -32,6 +33,18 @@ use bun_threading::{Guarded, Mutex};
 /// `bun_jsc::JSValue` type.
 trait JSValueNapiExt {
     fn is_async_context_frame(self) -> bool;
+}
+
+macro_rules! on_js_thread {
+    (unsafe $call:expr) => {
+        // SAFETY: the contract of the function, which calls itself.
+        on_js_thread!({ unsafe { $call } })
+    };
+    ($call:expr) => {
+        if lent_main_thread::is_current() {
+            return lent_main_thread::leave(move || $call);
+        }
+    };
 }
 
 unsafe extern "C" {
@@ -644,6 +657,7 @@ extern "C" fn napi_get_undefined(
     env_: Option<&NapiEnv>,
     result_: Option<&Out<napi_value>>,
 ) -> napi_status {
+    on_js_thread!(napi_get_undefined(env_, result_));
     bun_output::scoped_log!(napi, "napi_get_undefined");
     ungated!(env, env_);
     env.check_gc();
@@ -657,6 +671,7 @@ extern "C" fn napi_get_null(
     env_: Option<&NapiEnv>,
     result_: Option<&Out<napi_value>>,
 ) -> napi_status {
+    on_js_thread!(napi_get_null(env_, result_));
     bun_output::scoped_log!(napi, "napi_get_null");
     ungated!(env, env_);
     env.check_gc();
@@ -675,6 +690,7 @@ extern "C" fn napi_get_boolean(
     value: u8,
     result_: Option<&Out<napi_value>>,
 ) -> napi_status {
+    on_js_thread!(napi_get_boolean(env_, value, result_));
     bun_output::scoped_log!(napi, "napi_get_boolean");
     ungated!(env, env_);
     env.check_gc();
@@ -688,6 +704,7 @@ extern "C" fn napi_create_array(
     env_: Option<&NapiEnv>,
     result_: Option<&Out<napi_value>>,
 ) -> napi_status {
+    on_js_thread!(napi_create_array(env_, result_));
     bun_output::scoped_log!(napi, "napi_create_array");
     ungated!(env, env_);
     env.check_gc();
@@ -706,6 +723,7 @@ extern "C" fn napi_create_array_with_length(
     length: usize,
     result_: Option<&Out<napi_value>>,
 ) -> napi_status {
+    on_js_thread!(napi_create_array_with_length(env_, length, result_));
     bun_output::scoped_log!(napi, "napi_create_array_with_length");
     ungated!(env, env_);
     env.check_gc();
@@ -741,6 +759,7 @@ extern "C" fn napi_create_int32(
     value: i32,
     result_: Option<&Out<napi_value>>,
 ) -> napi_status {
+    on_js_thread!(napi_create_int32(env_, value, result_));
     bun_output::scoped_log!(napi, "napi_create_int32");
     ungated!(env, env_);
     env.check_gc();
@@ -755,6 +774,7 @@ extern "C" fn napi_create_uint32(
     value: u32,
     result_: Option<&Out<napi_value>>,
 ) -> napi_status {
+    on_js_thread!(napi_create_uint32(env_, value, result_));
     bun_output::scoped_log!(napi, "napi_create_uint32");
     ungated!(env, env_);
     env.check_gc();
@@ -769,6 +789,7 @@ extern "C" fn napi_create_int64(
     value: i64,
     result_: Option<&Out<napi_value>>,
 ) -> napi_status {
+    on_js_thread!(napi_create_int64(env_, value, result_));
     bun_output::scoped_log!(napi, "napi_create_int64");
     ungated!(env, env_);
     env.check_gc();
@@ -786,6 +807,7 @@ unsafe extern "C" fn napi_create_string_latin1(
     length: usize,
     result_: Option<&Out<napi_value>>,
 ) -> napi_status {
+    on_js_thread!(unsafe napi_create_string_latin1(env_, str_, length, result_));
     ungated!(env, env_);
     let result = get_out!(env, result_);
 
@@ -840,6 +862,7 @@ unsafe extern "C" fn napi_create_string_utf8(
     length: usize,
     result_: Option<&Out<napi_value>>,
 ) -> napi_status {
+    on_js_thread!(unsafe napi_create_string_utf8(env_, str_, length, result_));
     ungated!(env, env_);
     let result = get_out!(env, result_);
 
@@ -884,6 +907,7 @@ unsafe extern "C" fn napi_create_string_utf16(
     length: usize,
     result_: Option<&Out<napi_value>>,
 ) -> napi_status {
+    on_js_thread!(unsafe napi_create_string_utf16(env_, str_, length, result_));
     ungated!(env, env_);
     let result = get_out!(env, result_);
 
@@ -1042,6 +1066,7 @@ extern "C" fn napi_get_prototype(
     object_: napi_value,
     result_: Option<&Out<napi_value>>,
 ) -> napi_status {
+    on_js_thread!(napi_get_prototype(env_, object_, result_));
     bun_output::scoped_log!(napi, "napi_get_prototype");
     let env = preamble!(env_);
     let result = get_out!(env, result_);
@@ -1119,6 +1144,7 @@ extern "C" fn napi_is_array(
     value_: napi_value,
     result_: Option<&Out<bool>>,
 ) -> napi_status {
+    on_js_thread!(napi_is_array(env_, value_, result_));
     bun_output::scoped_log!(napi, "napi_is_array");
     ungated!(env, env_);
     env.check_gc();
@@ -1137,6 +1163,7 @@ extern "C" fn napi_get_array_length(
     value_: napi_value,
     result_: Option<&Out<u32>>,
 ) -> napi_status {
+    on_js_thread!(napi_get_array_length(env_, value_, result_));
     bun_output::scoped_log!(napi, "napi_get_array_length");
     let env = preamble!(env_);
     let result = get_out!(env, result_);
@@ -1163,6 +1190,7 @@ extern "C" fn napi_strict_equals(
     rhs_: napi_value,
     result_: Option<&Out<bool>>,
 ) -> napi_status {
+    on_js_thread!(napi_strict_equals(env_, lhs_, rhs_, result_));
     bun_output::scoped_log!(napi, "napi_strict_equals");
     let env = preamble!(env_);
     let result = get_out!(env, result_);
@@ -1282,6 +1310,7 @@ extern "C" fn napi_open_handle_scope(
     env_: Option<&NapiEnv>,
     result_: Option<&Out<napi_handle_scope>>,
 ) -> napi_status {
+    on_js_thread!(napi_open_handle_scope(env_, result_));
     bun_output::scoped_log!(napi, "napi_open_handle_scope");
     ungated!(env, env_);
     env.check_gc();
@@ -1295,6 +1324,7 @@ extern "C" fn napi_close_handle_scope(
     env_: Option<&NapiEnv>,
     handle_scope: napi_handle_scope,
 ) -> napi_status {
+    on_js_thread!(napi_close_handle_scope(env_, handle_scope));
     bun_output::scoped_log!(napi, "napi_close_handle_scope");
     ungated!(env, env_);
     env.check_gc();
@@ -1312,6 +1342,12 @@ extern "C" fn napi_async_init(
     _async_resource_name: napi_value,
     async_ctx_: Option<&Out<*mut c_void>>,
 ) -> napi_status {
+    on_js_thread!(napi_async_init(
+        env_,
+        _async_resource,
+        _async_resource_name,
+        async_ctx_
+    ));
     bun_output::scoped_log!(napi, "napi_async_init");
     let env = get_env!(env_);
     let async_ctx = get_out!(env, async_ctx_);
@@ -1322,6 +1358,7 @@ extern "C" fn napi_async_init(
 // we don't support async contexts
 #[unsafe(no_mangle)]
 extern "C" fn napi_async_destroy(env_: Option<&NapiEnv>, _async_ctx: *mut c_void) -> napi_status {
+    on_js_thread!(napi_async_destroy(env_, _async_ctx));
     bun_output::scoped_log!(napi, "napi_async_destroy");
     let env = get_env!(env_);
     env.ok()
@@ -1340,6 +1377,15 @@ unsafe extern "C" fn napi_make_callback(
     args: *const napi_value,
     maybe_result: Option<&Out<napi_value>>,
 ) -> napi_status {
+    on_js_thread!(unsafe napi_make_callback(
+        env_,
+        _async_ctx,
+        recv_,
+        func_,
+        arg_count,
+        args,
+        maybe_result
+    ));
     bun_output::scoped_log!(napi, "napi_make_callback");
     let env = preamble!(env_);
     let (recv, func) = (recv_.get(), func_.get());
@@ -1386,6 +1432,7 @@ extern "C" fn napi_open_escapable_handle_scope(
     env_: Option<&NapiEnv>,
     result_: Option<&Out<napi_escapable_handle_scope>>,
 ) -> napi_status {
+    on_js_thread!(napi_open_escapable_handle_scope(env_, result_));
     bun_output::scoped_log!(napi, "napi_open_escapable_handle_scope");
     ungated!(env, env_);
     env.check_gc();
@@ -1399,6 +1446,7 @@ extern "C" fn napi_close_escapable_handle_scope(
     env_: Option<&NapiEnv>,
     scope: napi_escapable_handle_scope,
 ) -> napi_status {
+    on_js_thread!(napi_close_escapable_handle_scope(env_, scope));
     bun_output::scoped_log!(napi, "napi_close_escapable_handle_scope");
     ungated!(env, env_);
     env.check_gc();
@@ -1415,6 +1463,7 @@ extern "C" fn napi_escape_handle(
     escapee: napi_value,
     result_: Option<&Out<napi_value>>,
 ) -> napi_status {
+    on_js_thread!(napi_escape_handle(env_, scope_, escapee, result_));
     bun_output::scoped_log!(napi, "napi_escape_handle");
     ungated!(env, env_);
     env.check_gc();
@@ -1451,6 +1500,7 @@ extern "C" fn napi_open_callback_scope(
     _context: *mut c_void,
     _result: *mut c_void,
 ) -> napi_status {
+    on_js_thread!(napi_open_callback_scope(_env, _resource, _context, _result));
     bun_output::scoped_log!(napi, "napi_open_callback_scope");
     NapiStatus::ok as napi_status
 }
@@ -1460,6 +1510,7 @@ extern "C" fn napi_close_callback_scope(
     _env: Option<&NapiEnv>,
     _scope: *mut c_void,
 ) -> napi_status {
+    on_js_thread!(napi_close_callback_scope(_env, _scope));
     bun_output::scoped_log!(napi, "napi_close_callback_scope");
     NapiStatus::ok as napi_status
 }
@@ -1489,6 +1540,7 @@ extern "C" fn napi_is_error(
     value_: napi_value,
     result_: Option<&Out<bool>>,
 ) -> napi_status {
+    on_js_thread!(napi_is_error(env_, value_, result_));
     bun_output::scoped_log!(napi, "napi_is_error");
     ungated!(env, env_);
     env.check_gc();
@@ -1515,6 +1567,7 @@ extern "C" fn napi_is_arraybuffer(
     value_: napi_value,
     result_: Option<&Out<bool>>,
 ) -> napi_status {
+    on_js_thread!(napi_is_arraybuffer(env_, value_, result_));
     bun_output::scoped_log!(napi, "napi_is_arraybuffer");
     ungated!(env, env_);
     env.check_gc();
@@ -1562,6 +1615,12 @@ extern "C" fn napi_get_arraybuffer_info(
     data: Option<&Out<*mut u8>>,
     byte_length: Option<&Out<usize>>,
 ) -> napi_status {
+    on_js_thread!(napi_get_arraybuffer_info(
+        env_,
+        arraybuffer_,
+        data,
+        byte_length
+    ));
     bun_output::scoped_log!(napi, "napi_get_arraybuffer_info");
     ungated!(env, env_);
     env.check_gc();
@@ -1596,6 +1655,15 @@ extern "C" fn napi_get_typedarray_info(
     maybe_arraybuffer: Option<&Out<napi_value>>,
     maybe_byte_offset: Option<&Out<usize>>,
 ) -> napi_status {
+    on_js_thread!(napi_get_typedarray_info(
+        env_,
+        typedarray_,
+        maybe_type,
+        maybe_length,
+        maybe_data,
+        maybe_arraybuffer,
+        maybe_byte_offset
+    ));
     bun_output::scoped_log!(napi, "napi_get_typedarray_info");
     ungated!(env, env_);
     env.check_gc();
@@ -1654,6 +1722,7 @@ extern "C" fn napi_is_dataview(
     value_: napi_value,
     result_: Option<&Out<bool>>,
 ) -> napi_status {
+    on_js_thread!(napi_is_dataview(env_, value_, result_));
     bun_output::scoped_log!(napi, "napi_is_dataview");
     ungated!(env, env_);
     let result = get_out!(env, result_);
@@ -1676,6 +1745,14 @@ extern "C" fn napi_get_dataview_info(
     maybe_arraybuffer: Option<&Out<napi_value>>,
     maybe_byte_offset: Option<&Out<usize>>,
 ) -> napi_status {
+    on_js_thread!(napi_get_dataview_info(
+        env_,
+        dataview_,
+        maybe_bytelength,
+        maybe_data,
+        maybe_arraybuffer,
+        maybe_byte_offset
+    ));
     bun_output::scoped_log!(napi, "napi_get_dataview_info");
     ungated!(env, env_);
     env.check_gc();
@@ -1700,6 +1777,7 @@ extern "C" fn napi_get_dataview_info(
 
 #[unsafe(no_mangle)]
 extern "C" fn napi_get_version(env_: Option<&NapiEnv>, result_: Option<&Out<u32>>) -> napi_status {
+    on_js_thread!(napi_get_version(env_, result_));
     bun_output::scoped_log!(napi, "napi_get_version");
     let env = get_env!(env_);
     let result = get_out!(env, result_);
@@ -1715,6 +1793,7 @@ extern "C" fn napi_create_promise(
     deferred_: Option<&Out<napi_deferred>>,
     promise_: Option<&Out<napi_value>>,
 ) -> napi_status {
+    on_js_thread!(napi_create_promise(env_, deferred_, promise_));
     bun_output::scoped_log!(napi, "napi_create_promise");
     let env = preamble!(env_);
     let deferred = get_out!(env, deferred_);
@@ -1765,6 +1844,7 @@ extern "C" fn napi_resolve_deferred(
     deferred: Option<AddonBox<Deferred>>,
     resolution_: napi_value,
 ) -> napi_status {
+    on_js_thread!(napi_resolve_deferred(env_, deferred, resolution_));
     bun_output::scoped_log!(napi, "napi_resolve_deferred");
     let env = get_env!(env_);
     let resolution = resolution_.get();
@@ -1779,6 +1859,7 @@ extern "C" fn napi_reject_deferred(
     deferred: Option<AddonBox<Deferred>>,
     rejection_: napi_value,
 ) -> napi_status {
+    on_js_thread!(napi_reject_deferred(env_, deferred, rejection_));
     bun_output::scoped_log!(napi, "napi_reject_deferred");
     let env = get_env!(env_);
     let rejection = rejection_.get();
@@ -1793,6 +1874,7 @@ extern "C" fn napi_is_promise(
     value_: napi_value,
     is_promise_: Option<&Out<bool>>,
 ) -> napi_status {
+    on_js_thread!(napi_is_promise(env_, value_, is_promise_));
     bun_output::scoped_log!(napi, "napi_is_promise");
     ungated!(env, env_);
     env.check_gc();
@@ -1826,6 +1908,7 @@ extern "C" fn napi_create_date(
     time: f64,
     result_: Option<&Out<napi_value>>,
 ) -> napi_status {
+    on_js_thread!(napi_create_date(env_, time, result_));
     bun_output::scoped_log!(napi, "napi_create_date");
     let env = preamble!(env_);
     let result = get_out!(env, result_);
@@ -1842,6 +1925,7 @@ extern "C" fn napi_is_date(
     value_: napi_value,
     is_date_: Option<&Out<bool>>,
 ) -> napi_status {
+    on_js_thread!(napi_is_date(env_, value_, is_date_));
     bun_output::scoped_log!(napi, "napi_is_date");
     ungated!(env, env_);
     env.check_gc();
@@ -2108,7 +2192,7 @@ impl napi_async_work {
 
         env.complete_in_context(context, || {
             // SAFETY: `napi_create_async_work`'s contract.
-            unsafe { complete(env.get(), status as napi_status, data) }
+            lent_main_thread::enter(|| unsafe { complete(env.get(), status as napi_status, data) })
         });
 
         env.surface_exception(global)
@@ -2251,6 +2335,7 @@ extern "C" fn napi_get_buffer_info(
     data: Option<&Out<*mut u8>>,
     length: Option<&Out<usize>>,
 ) -> napi_status {
+    on_js_thread!(napi_get_buffer_info(env_, value_, data, length));
     bun_output::scoped_log!(napi, "napi_get_buffer_info");
     ungated!(env, env_);
     let value = value_.get();
@@ -2350,6 +2435,15 @@ unsafe extern "C" fn napi_create_async_work(
     data: *mut c_void,
     result_: Option<&Out<*mut napi_async_work>>,
 ) -> napi_status {
+    on_js_thread!(unsafe napi_create_async_work(
+        env_,
+        _async_resource,
+        _async_resource_name,
+        execute_,
+        complete,
+        data,
+        result_
+    ));
     bun_output::scoped_log!(napi, "napi_create_async_work");
     let env = get_env!(env_);
     let result = get_out!(env, result_);
@@ -2367,6 +2461,7 @@ extern "C" fn napi_delete_async_work(
     env_: Option<&NapiEnv>,
     work_: Option<AddonBox<napi_async_work>>,
 ) -> napi_status {
+    on_js_thread!(napi_delete_async_work(env_, work_));
     bun_output::scoped_log!(napi, "napi_delete_async_work");
     let env = get_env!(env_);
     let Some(work) = work_ else {
@@ -2383,6 +2478,7 @@ unsafe extern "C" fn napi_queue_async_work(
     env_: Option<&NapiEnv>,
     work_: Option<&napi_async_work>,
 ) -> napi_status {
+    on_js_thread!(unsafe napi_queue_async_work(env_, work_));
     bun_output::scoped_log!(napi, "napi_queue_async_work");
     let env = get_env!(env_);
     let Some(work) = work_ else {
@@ -2400,6 +2496,7 @@ extern "C" fn napi_cancel_async_work(
     env_: Option<&NapiEnv>,
     work_: Option<&napi_async_work>,
 ) -> napi_status {
+    on_js_thread!(napi_cancel_async_work(env_, work_));
     bun_output::scoped_log!(napi, "napi_cancel_async_work");
     let env = get_env!(env_);
     let Some(work) = work_ else {
@@ -2417,6 +2514,7 @@ extern "C" fn napi_get_node_version(
     env_: Option<&NapiEnv>,
     version_: Option<&Out<*const napi_node_version>>,
 ) -> napi_status {
+    on_js_thread!(napi_get_node_version(env_, version_));
     bun_output::scoped_log!(napi, "napi_get_node_version");
     let env = get_env!(env_);
     let version = get_out!(env, version_);
@@ -2434,6 +2532,7 @@ extern "C" fn napi_get_uv_event_loop(
     env_: Option<&NapiEnv>,
     loop_: Option<&Out<napi_event_loop>>,
 ) -> napi_status {
+    on_js_thread!(napi_get_uv_event_loop(env_, loop_));
     bun_output::scoped_log!(napi, "napi_get_uv_event_loop");
     let env = get_env!(env_);
     let loop_out = get_out!(env, loop_);
@@ -2570,7 +2669,7 @@ impl Finalizer {
 
         // SAFETY: env is valid, and the addon gave `fun` together with `data` and `hint`.
         unsafe {
-            (self.fun)(env, self.data, self.hint);
+            lent_main_thread::enter(|| (self.fun)(env, self.data, self.hint));
             Bun__napi_remove_finalizer(env, Some(self.fun), self.hint, self.data);
         }
 
@@ -2933,7 +3032,7 @@ impl ThreadSafeFunction {
         };
         env.complete_in_context(self.context, || {
             // SAFETY: the addon's callback, with its context and an item it queued.
-            unsafe { call_js(env.as_mut_ptr(), js, self.ctx, item) }
+            lent_main_thread::enter(|| unsafe { call_js(env.as_mut_ptr(), js, self.ctx, item) })
         });
         env.surface_exception(global_object)
     }
@@ -2949,7 +3048,9 @@ impl ThreadSafeFunction {
         };
         while let Some(item) = items.read_item() {
             // SAFETY: as in `deliver`.
-            unsafe { call_js(ptr::null_mut(), napi_value(0), self.ctx, item) };
+            lent_main_thread::enter(|| unsafe {
+                call_js(ptr::null_mut(), napi_value(0), self.ctx, item)
+            });
         }
     }
 
@@ -3180,6 +3281,19 @@ unsafe extern "C" fn napi_create_threadsafe_function(
     call_js_cb: Option<napi_threadsafe_function_call_js>,
     result_: Option<&Out<napi_threadsafe_function>>,
 ) -> napi_status {
+    on_js_thread!(unsafe napi_create_threadsafe_function(
+        env_,
+        func_,
+        _async_resource,
+        _async_resource_name,
+        max_queue_size,
+        initial_thread_count,
+        thread_finalize_data,
+        thread_finalize_cb,
+        context,
+        call_js_cb,
+        result_
+    ));
     bun_output::scoped_log!(napi, "napi_create_threadsafe_function");
     let env = get_env!(env_);
     let result = get_out!(env, result_);
@@ -3319,6 +3433,7 @@ extern "C" fn napi_unref_threadsafe_function(
     _env: napi_env,
     func: Option<&ThreadSafeFunction>,
 ) -> napi_status {
+    on_js_thread!(napi_unref_threadsafe_function(_env, func));
     bun_output::scoped_log!(napi, "napi_unref_threadsafe_function");
     let Some(func) = func else {
         return NapiStatus::invalid_arg as napi_status;
@@ -3332,6 +3447,7 @@ extern "C" fn napi_ref_threadsafe_function(
     _env: napi_env,
     func: Option<&ThreadSafeFunction>,
 ) -> napi_status {
+    on_js_thread!(napi_ref_threadsafe_function(_env, func));
     bun_output::scoped_log!(napi, "napi_ref_threadsafe_function");
     let Some(func) = func else {
         return NapiStatus::invalid_arg as napi_status;

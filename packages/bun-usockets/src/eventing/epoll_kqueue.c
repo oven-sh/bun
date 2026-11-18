@@ -473,9 +473,29 @@ void us_loop_run(struct us_loop_t *loop) {
 extern unsigned int Bun__JSC_onBeforeWait(void * _Nonnull jsc_vm, uint64_t now_ns, int * _Nullable released_heap_access);
 extern void Bun__JSC_acquireHeapAccessAfterWait(void * _Nonnull jsc_vm);
 
+static struct us_loop_t *foreign_loop;
+static us_foreign_wait_t foreign_wait;
+static int foreign_released_heap_access;
+
+void us_loop_set_foreign_wait(struct us_loop_t *loop, us_foreign_wait_t wait) {
+    foreign_wait = wait;
+    __atomic_store_n(&foreign_loop, wait ? loop : NULL, __ATOMIC_RELAXED);
+}
+
+void us_loop_foreign_wait_reenter(struct us_loop_t *loop) {
+    if (foreign_released_heap_access) {
+        foreign_released_heap_access = 0;
+        Bun__JSC_acquireHeapAccessAfterWait(loop->data.jsc_vm);
+    }
+}
+
 void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout, uint64_t now_ns) {
-    if (loop->num_polls == 0)
+    const int is_foreign = UNLIKELY(loop == __atomic_load_n(&foreign_loop, __ATOMIC_RELAXED));
+    if (loop->num_polls == 0) {
+        if (is_foreign)
+            foreign_wait(loop->fd, 0);
         return;
+    }
 
     loop->data.tick_depth++;
 
@@ -501,7 +521,7 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     timeout = us_internal_clamp_to_sweep(loop, timeout, &sweep_ts);
 
     const unsigned int had_wakeups = __atomic_exchange_n(&loop->pending_wakeups, 0, __ATOMIC_ACQUIRE);
-    const int will_idle_inside_event_loop = had_wakeups == 0 && (!timeout || (timeout->tv_nsec != 0 || timeout->tv_sec != 0));
+    int will_idle_inside_event_loop = had_wakeups == 0 && (!timeout || (timeout->tv_nsec != 0 || timeout->tv_sec != 0));
     /* `now_ns` is the reading the JS side took to pick `timeout`
      * (timer::All::get_timeout), reused here to rate-limit the idle sweep; 0
      * if it had none to share. Nothing measures a deadline against it. */
@@ -515,8 +535,8 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
      * Only on a tick that really parks: there is no time to sweep in a poll that returns at once.
      * With no scavenger to hand off to, fall back to sweeping inline, rate-limited, because doing
      * it between ticks is what we are avoiding. */
-    const int handed_off = will_idle_inside_event_loop && mi_on_thread_idle_start();
-    if (!handed_off && will_idle_inside_event_loop) {
+    const int handed_off = will_idle_inside_event_loop && !is_foreign && mi_on_thread_idle_start();
+    if (!handed_off && will_idle_inside_event_loop && !is_foreign) {
         static const uint64_t idle_sweep_interval_ns = 100 * 1000000ULL;
         static _Thread_local uint64_t last_idle_sweep_ns = 0;
         const uint64_t sweep_now_ns = now_ns ? now_ns : us_internal_monotonic_ns();
@@ -524,6 +544,17 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
             last_idle_sweep_ns = sweep_now_ns;
             mi_on_thread_idle();
         }
+    }
+
+    static const struct timespec zero_ts = {0, 0};
+    if (is_foreign) {
+        foreign_released_heap_access = released_heap_access;
+        released_heap_access = 0;
+        foreign_wait(loop->fd, !will_idle_inside_event_loop ? 0 : !timeout ? -1
+            : (long long) timeout->tv_sec * 1000000000LL + timeout->tv_nsec);
+        us_loop_foreign_wait_reenter(loop);
+        will_idle_inside_event_loop = 0;
+        timeout = &zero_ts;
     }
 
     /* Fetch ready polls */

@@ -84,8 +84,9 @@ export class Realm {
   #idsInThisBuild: Map<string, number> | undefined;
   #nativeNames: Map<string, string> | undefined;
 
-  constructor(table: Table) {
+  constructor(table: Table, { isOfThisBuild = false } = {}) {
     this.table = table;
+    if (isOfThisBuild) this.#idsInThisBuild = new Map(table.dump.entries.map(entry => [entry.token, entry.id]));
     this.#hiddenRoots.set("%FFICallback%.prototype", () => this.#findPrototypeOfCallbacksOfFFI());
   }
 
@@ -111,6 +112,8 @@ export class Realm {
     const hidden = this.#hiddenRoots.get(entry.path);
     if (hidden) return hidden();
     if (entry.scope === "Module") return this.#findInAnswersOfBindings(entry.token);
+    // One makes the global object a window, and the other starts an app.
+    if (/^bun:desktop\/(dom|electron)$/.test(entry.path)) return undefined;
     // A package that Bun answers for by itself where none is installed.
     return entry.path.startsWith("%") || !(isBuiltin(entry.path) || modulesInPlaceOfPackages.includes(entry.path)) ? undefined : require(entry.path);
   }
@@ -257,7 +260,7 @@ export class Realm {
       if (token !== undefined) for (const ancestor of this.table.ancestryOf(token)) if (!classes.includes(ancestor)) classes.push(ancestor);
       current = Reflect.getPrototypeOf(current);
     }
-    const native = this.#nativeClassOf(value);
+    const native = this.#nativeClassOf(value, classes);
     const general = brandOf(value);
     // A BuildMessage passes for an Error and is none: native code knows it by the class of its cell. A shared buffer has the cell of any buffer.
     const isKnownByCell = native !== undefined && this.table.classes.get(native)?.instanceTest === "ClassInfoInherits";
@@ -275,11 +278,21 @@ export class Realm {
   }
 
   // The class of the cell, which is what an instance test of native code asks for.
-  #nativeClassOf(value: object): string | undefined {
+  #nativeClassOf(value: object, byPrototype: string[]): string | undefined {
     const name = /\(Structure [^:]+:\[[^,]+, ([^,]+),/.exec(jscDescribe(value))?.[1];
     if (name === undefined || name === "Object") return undefined;
     const joined = name.replaceAll(" ", "");
-    return this.table.classes.has(joined) ? joined : this.#classesByNativeName().get(joined);
+    // The `Event` of the web is %DesktopEvent% in the table.
+    const renamed = byPrototype.find(token => {
+      const { instanceTest, constructor, prototype } = this.table.classes.get(token)!;
+      const tag = Reflect.getOwnPropertyDescriptor(Object(this.valueOf(prototype ?? null)), Symbol.toStringTag)?.value;
+      return instanceTest === "ClassInfoInherits" && ((this.valueOf(constructor ?? null) as Function | undefined)?.name ?? tag) === joined;
+    });
+    if (renamed !== undefined) return renamed;
+    const named = this.table.classes.has(joined) ? joined : this.#classesByNativeName().get(joined);
+    // The table has `Element` and not `SVGSVGElement`.
+    const isOfItsPrototype = () => Reflect.getOwnPropertyDescriptor(Object(Reflect.getPrototypeOf(value)), Symbol.toStringTag)?.value === name;
+    return named ?? byPrototype.find(token => this.table.classes.get(token)!.instanceTest === "ClassInfoInherits" && isOfItsPrototype());
   }
 
   // Native code names a class by the last word of its path: "Headers Iterator", "StringDecoder".

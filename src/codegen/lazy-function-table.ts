@@ -257,7 +257,7 @@ export function findLazyFunctions(source: string): LazyFunctionTable | null {
   const namesOutside = new Map<string, number>();
   const namesInside = new Set<string>();
 
-  let arrowBodyEnd = -1;
+  let innerScopeEnd = -1;
   for (let index = bodyOpen + 1; index < match[bodyOpen]; index++) {
     const token = tokens[index];
 
@@ -265,7 +265,7 @@ export function findLazyFunctions(source: string): LazyFunctionTable | null {
       let end = index + 1;
       while (!closesBracket(tokens[end]) && tokens[end].text !== "," && tokens[end].text !== ";")
         end = opensBracket(tokens[end]) ? match[end] + 1 : end + 1;
-      arrowBodyEnd = Math.max(arrowBodyEnd, end);
+      innerScopeEnd = Math.max(innerScopeEnd, end);
     }
 
     if (token.kind === "punctuator" && token.text === "(") {
@@ -276,6 +276,12 @@ export function findLazyFunctions(source: string): LazyFunctionTable | null {
           if (isVariableReference(tokens, inner) && !namesOutside.has(tokens[inner].text))
             namesOutside.set(tokens[inner].text, tokens[inner].start);
         index = match[index];
+        if (isLoopHead && tokens[index + 1].text !== "{") {
+          let end = index + 1;
+          while (!closesBracket(tokens[end]) && tokens[end].text !== ";")
+            end = opensBracket(tokens[end]) ? match[end] + 1 : end + 1;
+          innerScopeEnd = Math.max(innerScopeEnd, end);
+        }
         continue;
       }
     }
@@ -316,7 +322,7 @@ export function findLazyFunctions(source: string): LazyFunctionTable | null {
       const isSkippable =
         !isGenerator &&
         !isAsync &&
-        index > arrowBodyEnd &&
+        index > innerScopeEnd &&
         tokens[functionBodyClose].start - tokens[parametersOpen].start > 16;
       if (!isSkippable) {
         for (let inner = parametersOpen; inner <= functionBodyClose; inner++)
@@ -333,7 +339,7 @@ export function findLazyFunctions(source: string): LazyFunctionTable | null {
         if (kind === "template" || kind === "templateHead") {
           const before = tokens[inner - 1];
           if (
-            before.kind === "identifier" ||
+            (before.kind === "identifier" && (before.text !== "of" || isPropertyName(tokens, inner - 1))) ||
             before.kind === "template" ||
             before.kind === "templateTail" ||
             before.text === ")" ||

@@ -146,10 +146,18 @@ impl Feature {
         features
     }
 
+    /// Only an executable that is built with `--desktop` loads `bun:desktop`.
+    pub fn all_open_to_any_code() -> FeatureSet {
+        let mut features = Feature::all_entered_from(EnteredFrom::Program);
+        features.subtract(&FeatureSet::from_features(&[Feature::Desktop]));
+        features
+    }
+
     pub fn all_that_leave_unasked() -> FeatureSet {
         let mut features = Feature::all_outside_compiled_programs();
         features.union_with(&Feature::all_entered_from(EnteredFrom::CompiledCode));
         features.insert(Feature::Test);
+        features.insert(Feature::Desktop);
         features
     }
 

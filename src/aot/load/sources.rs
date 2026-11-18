@@ -55,6 +55,8 @@ pub enum EntryPointKind {
     Main,
     Additional,
     LoadedByTestRunner,
+    /// Code that was not compiled finds it by its URL.
+    LoadedByPage,
     HostLoadedModule,
     ImportedModule,
     Library,

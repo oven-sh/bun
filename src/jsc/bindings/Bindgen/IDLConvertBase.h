@@ -80,6 +80,37 @@ private:
     const WTF::ASCIILiteral m_name;
 };
 
+// For an interface: the errors have no `code`, and what is out of range is a TypeError too.
+struct WebConversionContext : Bun::IDLConversionContextBase<WebConversionContext> {
+    using ElementContext = WebConversionContext;
+    static constexpr bool followsWebIDL = true;
+
+    explicit constexpr WebConversionContext(WTF::ASCIILiteral name)
+        : m_name(name)
+    {
+    }
+
+    auto source() const
+    {
+        return m_name;
+    }
+
+    template<typename String>
+    void throwGenericTypeError(JSC::JSGlobalObject& global, JSC::ThrowScope& scope, String&& message) const
+    {
+        JSC::throwTypeError(&global, scope, std::forward<String>(message));
+    }
+
+    template<typename String>
+    void throwGenericRangeError(JSC::JSGlobalObject& global, JSC::ThrowScope& scope, String&& message) const
+    {
+        JSC::throwTypeError(&global, scope, std::forward<String>(message));
+    }
+
+private:
+    const WTF::ASCIILiteral m_name;
+};
+
 // For a context made in the argument list of the conversion that takes it.
 template<typename Ctx>
 Ctx& asLvalue(Ctx&& ctx LIFETIME_BOUND) { return static_cast<Ctx&>(ctx); }

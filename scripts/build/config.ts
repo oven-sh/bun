@@ -154,6 +154,8 @@ export interface Config {
   pgoGenerate: string | undefined;
   /** IR PGO: .profdata file path (optimized build). Mutually exclusive with pgoGenerate. */
   pgoUse: string | undefined;
+  /** Symbol lists (scripts/orderfile/hints.ts) that the build turns into the order file of its own link. */
+  orderHints: string[];
   asan: boolean;
   assertions: boolean;
   logs: boolean;
@@ -462,6 +464,7 @@ export interface PartialConfig {
   relr?: boolean;
   pgoGenerate?: string;
   pgoUse?: string;
+  orderHints?: string;
   asan?: boolean;
   assertions?: boolean;
   logs?: boolean;
@@ -1509,6 +1512,10 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     relr: partial.relr ?? false,
     pgoGenerate,
     pgoUse,
+    orderHints: (partial.orderHints ?? "")
+      .split(",")
+      .filter(Boolean)
+      .map(path => resolve(cwd, path)),
     asan,
     assertions,
     logs,
@@ -1919,6 +1926,7 @@ export function formatConfig(cfg: Config, exe: string): string {
   if (cfg.relr) features.push("relr");
   if (cfg.pgoGenerate) features.push("pgo-gen");
   if (cfg.pgoUse) features.push("pgo-use");
+  if (cfg.orderHints.length) features.push("order-hints");
   if (cfg.asan) features.push("asan");
   if (cfg.assertions) features.push("assertions");
   if (cfg.logs) features.push("logs");

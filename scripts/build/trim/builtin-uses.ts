@@ -64,3 +64,6 @@ export function featuresWithDeclaredUse(uses: BuiltinUses, model: FeatureModel):
   }
   return used;
 }
+
+export const idsByKey = (uses: BuiltinUses): Map<number, number> =>
+  new Map(uses.entries.flatMap(({ key, id }) => (key === undefined ? [] : [[key, id]])));

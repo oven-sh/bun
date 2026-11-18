@@ -6,6 +6,7 @@ pub mod error;
 pub use error::{CertError, Error, Result};
 #[path = "AsyncHTTP.rs"]
 pub mod async_http;
+pub mod browser;
 #[path = "CertificateInfo.rs"]
 pub mod certificate_info;
 pub mod compress_body;
@@ -486,6 +487,8 @@ pub struct PoolOptions {
     pub id: u64,
     pub idle_timeout_seconds: u32,
     pub max_idle_sockets: u16,
+    /// Offer `h2` beside `http/1.1`.
+    pub offers_h2: bool,
 }
 
 impl<'a> HTTPClientResult<'a> {
@@ -713,6 +716,7 @@ impl ProxySettings {
 pub struct HTTPClient<'a> {
     pub(crate) result_callback: HTTPClientResultCallback,
     pub(crate) method: Method,
+    pub browser: Option<&'a dyn browser::Browser>,
     pub(crate) header_entries: headers::EntryList,
     pub(crate) header_buf: &'a [u8],
     pub(crate) url: URL<'a>,
@@ -1601,6 +1605,14 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
+    /// Whether a failed verification ends the handshake.
+    pub(crate) fn rejects_unauthorized(&self, is_with_proxy: bool) -> bool {
+        self.flags.reject_unauthorized
+            && (is_with_proxy
+                || !self.signals.get(signals::Field::CertErrors)
+                || self.browser.is_none())
+    }
+
     /// Whether a completed handshake still has an identity check to run. With
     /// `rejectUnauthorized: false` only a JS `checkServerIdentity` callback
     /// does, and like Node only when the chain itself verified; its verdict
@@ -1651,7 +1663,13 @@ impl<'a> HTTPClient<'a> {
 
                         self.state.certificate_info = Some(CertificateInfo {
                             cert,
+                            issuers: self
+                                .browser
+                                .map_or_else(Vec::new, |_| uws::verified_issuers(ssl)),
                             hostname: Box::<[u8]>::from(hostname),
+                            error: self
+                                .browser
+                                .and_then(|_| browser::certificate_error(ssl, hostname)),
                         });
 
                         // Park the connection until the JS-side
@@ -1802,8 +1820,12 @@ impl<'a> HTTPClient<'a> {
                     self.alpn_offer(),
                 );
 
-                if self.flags.reject_unauthorized {
+                if self.rejects_unauthorized(self.http_proxy.is_some()) {
                     socket.set_inline_reject();
+                }
+                if let Some(browser) = self.browser {
+                    // SAFETY: as above.
+                    browser.configure_tls(unsafe { &mut *ssl_ptr }, self.http_proxy.is_some());
                 }
 
                 if let Some(raw_socket) = socket
@@ -1830,6 +1852,7 @@ impl<'a> HTTPClient<'a> {
                                 0
                             },
                             self.unix_socket_path,
+                            self.browser.map_or(0, |_| self.pool.id),
                         );
                     }
                 }
@@ -1878,10 +1901,9 @@ impl<'a> HTTPClient<'a> {
     /// `BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT` env var, or
     /// `protocol: "http2"` on the fetch options.
     pub(crate) fn can_offer_h2(&self) -> bool {
-        // The h2 session transmits from `attach()` without consulting the
-        // `is_waiting_for_cert_check` park gate, so requests with a JS
-        // `checkServerIdentity` callback stay on HTTP/1.1.
-        if self.signals.get(signals::Field::CertErrors) {
+        // Requests share an h2 connection that one `checkServerIdentity`
+        // callback approved, which a session has to ask for.
+        if self.signals.get(signals::Field::CertErrors) && !self.pool.offers_h2 {
             return false;
         }
         if self.flags.forced_protocol == Some(Protocol::Http1_1) {
@@ -1903,6 +1925,7 @@ impl<'a> HTTPClient<'a> {
             return false;
         }
         self.flags.forced_protocol == Some(Protocol::Http2)
+            || self.pool.offers_h2
             || EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI.load(Ordering::Relaxed)
             || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT
                 .get()
@@ -1990,6 +2013,10 @@ impl<'a> HTTPClient<'a> {
                 bun_core::ffi::slice(proto, proto_len as usize)
             };
             if alpn == b"h2" {
+                if self.state.flags.is_waiting_for_cert_check {
+                    self.state.early_h2_frames = Some(Vec::new());
+                    return Continue(());
+                }
                 bun_core::scoped_log!(fetch, "ALPN negotiated h2 {}", BStr::new(self.url.href));
                 // This arm needs HttpSocket<true>, but the const-generic isn't
                 // unified here, so rebuild from the InternalSocket.
@@ -2060,6 +2087,15 @@ impl<'a> HTTPClient<'a> {
             );
             self.begin_attempt(body);
             return Break(NextStep::Connect);
+        }
+
+        if !IS_SSL
+            && self.browser.is_some()
+            && self.http_proxy.is_none()
+            && self.state.response_parser.received_len() > 0
+        {
+            self.state.flags.head_ends_with_connection = true;
+            self.handle_on_data_headers::<IS_SSL>(b"\n\n", socket, None)?;
         }
 
         self.fail(crate::Error::ConnectionClosed)
@@ -2399,7 +2435,11 @@ impl<'a> HTTPClient<'a> {
         }
 
         let body_len = self.body_len_for_send();
-        if body_len > 0 || self.method.has_request_body() {
+        let frames_body = match self.browser {
+            Some(_) => self.flags.is_streaming_request_body,
+            None => self.method.has_request_body(),
+        };
+        if body_len > 0 || frames_body {
             if self.flags.is_streaming_request_body {
                 // `StreamFraming`, decided by the producer. An upgrade tunnels the bytes unframed.
                 let framing = match &self.state.original_request_body {
@@ -2429,7 +2469,9 @@ impl<'a> HTTPClient<'a> {
         }
 
         Request {
-            method: self.method.as_str().as_bytes(),
+            method: self
+                .browser
+                .map_or_else(|| self.method.as_str().as_bytes(), |it| it.method()),
             path: self.url.pathname,
             headers,
         }
@@ -2557,6 +2599,7 @@ impl<'a> HTTPClient<'a> {
     /// [`InFlightRequest::connect`] sends it.
     pub(crate) fn begin_attempt(&mut self, body: HTTPRequestBody<'a>) {
         self.state = InternalState::init(body);
+        self.state.flags.is_decode_limited = self.browser.is_some();
         if self.flags.pool_bypass != PoolBypass::Off {
             self.flags.pool_bypass = if self.url.is_https() {
                 PoolBypass::ThisHop
@@ -2622,6 +2665,7 @@ impl InFlightRequest {
         // then fail in `first_call` anyway. Fail up front instead.
         if self.flags.forced_protocol == Some(Protocol::Http2)
             && self.signals.get(signals::Field::CertErrors)
+            && !self.pool.offers_h2
         {
             return self.fail(crate::Error::HTTP2Unsupported);
         }
@@ -2764,7 +2808,7 @@ impl<'a> HTTPClient<'a> {
             let mut buffer = RequestBuffer::default();
             let request = self.build_request(&mut buffer);
 
-            if self.http_proxy.is_some() {
+            if self.http_proxy.is_some() && !self.state.flags.has_negotiated_tunnel {
                 if self.url.is_https() {
                     bun_core::scoped_log!(fetch, "start proxy tunneling (https proxy)");
                     // DO the tunneling!
@@ -3065,6 +3109,11 @@ impl<'a> HTTPClient<'a> {
 
         match self.state.request_stage {
             RequestStage::Pending | RequestStage::Headers | RequestStage::Opened => {
+                if !self.state.flags.has_negotiated_tunnel
+                    && self.browser.is_some_and(|it| it.tunnels())
+                {
+                    return self.negotiate_tunnel::<IS_SSL>(None, socket);
+                }
                 bun_core::scoped_log!(fetch, "sendInitialRequestPayload");
                 self.set_timeout(&socket);
                 let result =
@@ -3327,11 +3376,20 @@ impl<'a> HTTPClient<'a> {
         socket: HttpSocket<IS_SSL>,
     ) -> ControlFlow<NextStep> {
         if !self.state.flags.is_waiting_for_cert_check {
-            // Never parked, or already resumed/reset by a redirect.
+            // Never parked, or already resumed/reset by a redirect. The handshake of a browser may wait for a signature.
+            if self.browser.is_some() && self.proxy_tunnel.is_some() {
+                return ProxyTunnel::receive(self, socket, &[]);
+            }
+            return Continue(());
+        }
+        if (self.browser).is_some_and(|it| !it.take_approval_of_certificate()) {
             return Continue(());
         }
         bun_core::scoped_log!(fetch, "resumeAfterCertCheck");
         self.state.flags.is_waiting_for_cert_check = false;
+        if self.state.early_h2_frames.is_some() {
+            return self.first_call::<IS_SSL>(socket);
+        }
         self.on_writable::<true, IS_SSL>(socket, None)
     }
 
@@ -3347,6 +3405,37 @@ impl<'a> HTTPClient<'a> {
             GenHttpContext::<IS_SSL>::terminate_socket(socket);
         }
         self.fail(err)
+    }
+
+    fn negotiate_tunnel<const IS_SSL: bool>(
+        &mut self,
+        incoming_data: Option<&[u8]>,
+        socket: HttpSocket<IS_SSL>,
+    ) -> ControlFlow<NextStep> {
+        use browser::Negotiation;
+        let step = self
+            .browser
+            .map_or(Negotiation::Failed, |it| it.negotiate(incoming_data));
+        self.state.request_stage = RequestStage::ProxyHandshake;
+        self.state.flags.is_negotiating_tunnel = matches!(step, Negotiation::Send(_));
+        self.state.flags.has_negotiated_tunnel = matches!(step, Negotiation::Done(_));
+        match step {
+            Negotiation::Send(bytes)
+                if bytes.is_empty()
+                    || write_to_socket::<IS_SSL>(socket, &bytes) == Ok(bytes.len()) =>
+            {
+                Continue(())
+            }
+            Negotiation::Done(rest) if self.url.is_https() => {
+                self.flags.proxy_tunneling = true;
+                self.start_proxy_handshake::<IS_SSL>(socket, &rest)
+            }
+            Negotiation::Done(rest) if rest.is_empty() => {
+                self.state.request_stage = RequestStage::Pending;
+                self.on_writable::<false, IS_SSL>(socket, None)
+            }
+            _ => self.close_and_fail::<IS_SSL>(crate::Error::ProxyConnectFailed, socket),
+        }
     }
 
     fn start_proxy_handshake<const IS_SSL: bool>(
@@ -3380,7 +3469,11 @@ impl<'a> HTTPClient<'a> {
             spare_capacity: self.url.href.len(),
         };
 
-        let fed = self.state.response_parser.feed(incoming_data, options);
+        let parser = &mut self.state.response_parser;
+        let fed = match self.browser {
+            Some(it) => parser.feed_leniently(incoming_data, options, |head| it.informed(head)),
+            None => parser.feed(incoming_data, options),
+        };
         let (mut response, to_read) = match fed {
             Ok(Some(parsed)) => parsed,
             // Does not re-arm the idle timer; see [`IDLE_TIMEOUT_SECONDS`].
@@ -3499,12 +3592,23 @@ impl<'a> HTTPClient<'a> {
             return ProxyTunnel::receive(self, socket, incoming_data);
         }
 
+        if self.state.flags.is_negotiating_tunnel {
+            return self.negotiate_tunnel::<IS_SSL>(Some(incoming_data), socket);
+        }
+
         // While parked waiting for the JS `checkServerIdentity` verdict, no
         // request has been written, so any data is unexpected. Must stay below
         // the proxy_tunnel dispatch above: a tunneled target's raw inner-TLS
         // records must keep reaching the SSLWrapper while parked.
         if self.state.flags.is_waiting_for_cert_check {
-            return self.close_and_fail::<IS_SSL>(crate::Error::UnexpectedData, socket);
+            const MAX_EARLY_H2_BYTES: usize = 16 * 1024;
+            return match &mut self.state.early_h2_frames {
+                Some(frames) if frames.len() + incoming_data.len() <= MAX_EARLY_H2_BYTES => {
+                    frames.extend_from_slice(incoming_data);
+                    Continue(())
+                }
+                _ => self.close_and_fail::<IS_SSL>(crate::Error::UnexpectedData, socket),
+            };
         }
 
         match self.state.response_stage {
@@ -3863,9 +3967,14 @@ impl<'a> HTTPClient<'a> {
     /// Reports what has arrived so far, as a result that is not the last one.
     fn send_partial_result(&mut self) {
         let mut result = self.to_result();
+        result.has_more = true;
+        if let Some(browser) = self.browser {
+            let expected = self.state.expected_length_of_decoded_body();
+            browser.take_body(&mut self.state.decoded_body.list, expected);
+            return self.result_callback.run(None, result);
+        }
         let mut decoded_body = core::mem::take(&mut self.state.decoded_body);
         result.body = decoded_body.list.as_slice();
-        result.has_more = true;
         self.result_callback.run(None, result);
         if decoded_body.list.capacity() <= DECODED_BODY_RETAIN_CAP {
             decoded_body.list.clear();
@@ -4230,6 +4339,14 @@ impl<'a> HTTPClient<'a> {
         let mut has_transfer_encoding = false;
         for header in response.headers.iter() {
             match KNOWN_HEADERS.get_ascii_case_insensitive(header.name()) {
+                Some(KnownHeader::ContentLength) if self.browser.is_some() => {
+                    let length = browser::content_length(&response.headers)?;
+                    self.state.content_length = if self.method.has_body() {
+                        length
+                    } else {
+                        Some(0)
+                    };
+                }
                 Some(KnownHeader::ContentLength) => {
                     // byte-level parse — header.value() is network bytes, not &str
                     //
@@ -4359,6 +4476,12 @@ impl<'a> HTTPClient<'a> {
             is_server_sent_events = false;
         }
 
+        if self.state.flags.head_ends_with_connection {
+            self.state.content_length = Some(0);
+            self.state.transfer_encoding = Encoding::Identity;
+            self.state.flags.allow_keepalive = false;
+        }
+
         // Don't do this for proxies because those connections will be open for awhile.
         if !self.flags.proxy_tunneling {
             //
@@ -4397,7 +4520,7 @@ impl<'a> HTTPClient<'a> {
 
         let status_code = response.status_code;
 
-        if status_code == 407 {
+        if status_code == 407 && self.browser.is_none() {
             // If the request is being proxied and passes through the 407 status code, then let's also not do HTTP Keep-Alive.
             self.flags.disable_keepalive = true;
         }

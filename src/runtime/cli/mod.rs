@@ -117,6 +117,7 @@ pub(crate) mod compile_command;
 pub(crate) mod compile_options;
 #[path = "create_command.rs"]
 pub(crate) mod create_command;
+pub(crate) mod desktop_bundle;
 #[path = "exec_command.rs"]
 pub(crate) mod exec_command;
 #[path = "fuzzilli_command.rs"]
@@ -1022,6 +1023,16 @@ pub(crate) mod command {
             }
         }
 
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+        if bun_removable_features::call_removable_or!(
+            Desktop,
+            ReturnDefault,
+            { false },
+            crate::desktop::has_pages_without_program,
+        ) {
+            return call_removable!(Desktop, Abort, boot_pages, log);
+        }
+
         // bun build --compile entry point
         if !bun_core::env_var::feature_flag::BUN_BE_BUN::get().unwrap_or(false) {
             if let Some(graph) = bun_standalone_graph::Graph::from_executable()? {
@@ -1276,6 +1287,19 @@ pub(crate) mod command {
         let entry_name = graph.main_module_path().to_vec().into_boxed_slice();
         super::run_command::RunCommand::boot_standalone(ctx, entry_name, graph)?;
         Ok(())
+    }
+
+    /// A process that `bun:desktop` has started for pages.
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+    #[cold]
+    #[inline(never)]
+    fn boot_pages(log: &mut bun_ast::Log) -> CmdResult {
+        arguments::disallow_code_generation_from_strings_as_compiled(&bun::argv().to_vec());
+        let ctx = write_context_no_parse(log);
+        ctx.args.target = Some(bun_options_types::schema::api::Target::Bun);
+        ctx.args.disable_default_env_files = true;
+        ctx.debug.global_cache = bun_options_types::global_cache::GlobalCache::disable;
+        super::run_command::RunCommand::boot_pages(ctx)
     }
 
     /// `bun [run] <script>` / `bun --version` / bare `bun`. The dominant tag

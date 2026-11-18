@@ -215,6 +215,9 @@ pub enum Tag {
     /// An N-API addon's `uv_timer_t` (POSIX, where Bun emulates libuv).
     UvTimer,
     WorkerWaitsForRoom,
+    WebAlarm,
+    /// `bun_ui::later`
+    Ui,
 }
 
 impl Tag {
@@ -243,6 +246,7 @@ impl Tag {
             Tag::TimeoutObject
             | Tag::ImmediateObject
             | Tag::StatWatcherScheduler
+            | Tag::WebAlarm
             | Tag::UpgradedDuplex
             | Tag::DNSResolver
             | Tag::DnsSdConnection
@@ -257,6 +261,7 @@ impl Tag {
             | Tag::AbortSignalTimeout
             | Tag::CronJob
             | Tag::QuicEndpoint
+            | Tag::Ui
             | Tag::FakeTimersTick
             | Tag::ViWait
             | Tag::UvTimer

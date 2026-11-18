@@ -1,0 +1,762 @@
+Notes: `i=` the initial value, unless it is written as it is computed. `~` numbers and colors are interpolated, `#` with lists that
+repeat. `x` is not animated. For a shorthand: the longhands, with `=` and what they are if they are left out, which is a value or
+another longhand, and with `!` if they are not lists. `full` and `cfull`: nothing is left out of the specified or of the computed
+value. `keep=`: what is written if everything could be left out.
+
+<lp> = <length-percentage>
+<lp+> = <length-percentage [0,inf]>
+<length+> = <length [0,inf]>
+<number+> = <number [0,inf]>
+<np+> = <number [0,inf]> | <percentage [0,inf]>
+<factor> = <number> | ^fraction <percentage>
+<alpha> = ^alpha <factor>
+<angle0> = <angle> | <zero-angle>
+<ratio> = <number+> [ / <number+> | +/_1 ]
+<line-width> = thin>>1px | medium>>3px | thick>>5px | ^snap <length+>
+<line-style> = none | hidden | dotted | dashed | solid | double | groove | ridge | inset | outset
+<visual-box> = content-box | padding-box | border-box
+<shape-box> = <visual-box> | margin-box
+<geometry-box> = <shape-box> | fill-box | stroke-box | view-box
+<coord-box> = <visual-box> | fill-box | stroke-box | view-box
+<svg-length> = <lp> | ^px <number>
+<svg-length+> = <lp+> | ^px <number+>
+<x-edge> = left | center | right
+<y-edge> = top | center | bottom
+<position> = ^position [ [ [ left | right ] <lp> ] && [ [ top | bottom ] <lp> ] | <position-1-2> ]
+<position-1-2> = [ <x-edge> | <lp> ] [ <y-edge> | <lp> ] | <x-edge> && <y-edge> | +center [ top | bottom ] | [ <x-edge> | <lp> ] +center
+<blend-mode> = normal | multiply | screen | overlay | darken | lighten | color-dodge | color-burn | hard-light | soft-light | difference | exclusion | hue | saturation | color | luminosity
+<axis> = block | inline | x | y
+<counter-name> = <custom-ident -none>
+<counter-style> = <symbols> | ^counter-style <custom-ident -none>
+<symbols> = ^symbols symbols( [ cyclic | numeric | alphabetic | symbolic | fixed ]?~symbolic <string>+ )
+<prefixed-display> = -webkit-box | -webkit-inline-box | -webkit-flex | -webkit-inline-flex
+
+<image> = <url> | <image-set> | <generated-image>
+<generated-image> = <gradient> | -webkit-cross-fade( <image-or-none> , <image-or-none> , <alpha> ) | ^light-dark light-dark( <image-or-none> , <image-or-none> ) | paint( <custom-ident> [ , <any> ]? ) | image( <color> )
+<url-modifiers> = cross-origin( anonymous | use-credentials ) || integrity( <string> ) || referrer-policy( no-referrer | no-referrer-when-downgrade | same-origin | origin | strict-origin | origin-when-cross-origin | strict-origin-when-cross-origin | unsafe-url )
+<image-or-none> = none | <image>
+<cursor-image> = <url> | <image-set> | light-dark( [ none | <cursor-image> ] , [ none | <cursor-image> ] )
+<image-set> = ^unprefix [ image-set( <image-set-option># ) | -webkit-image-set( <image-set-option># ) ]
+<image-set-option> = [ <string-url> | <url> | <generated-image> ] [ <resolution [0,inf]> && <image-type> | <resolution [0,inf]> | [ +1x ]~~1x ++1dppx <image-type>? ]
+<image-type> = type( <string> )
+<gradient> = ^gradient [ linear-gradient( <linear> ) | repeating-linear-gradient( <linear> ) | radial-gradient( <radial> ) | repeating-radial-gradient( <radial> ) | conic-gradient( <conic> ) | repeating-conic-gradient( <conic> ) ] | -webkit-linear-gradient( <old-linear> ) | -webkit-repeating-linear-gradient( <old-linear> ) | -webkit-radial-gradient( <old-radial> ) | -webkit-repeating-radial-gradient( <old-radial> ) | -webkit-gradient( <oldest> )
+<linear> = [ [ [ <angle0>~180deg | [ to [ [ left | right ] || [ top | bottom ] ] ]~to_bottom ] || <interpolation> ] , ]? <stops>
+<radial> = [ [ [ <radial-shape>? <at>? ]! || <interpolation> ] , ]? <stops>
+<radial-shape> = ellipse?~ellipse && <lp+>{2} | circle?~circle && <length+> | [ circle | ellipse ]~ellipse || <extent>~farthest-corner
+<extent> = closest-side | closest-corner | farthest-side | farthest-corner
+<at> = [ [ at <position> ]~at_center_center ]~at_50%_50%
+<conic> = [ [ [ [ from <angle0> ]?~from_0deg <at>? ]! || <interpolation> ] , ]? ^stops [ ^stop [ <color> [ <angle-percentage> | <zero-angle> ]{0,2} ] | <angle-percentage> | <zero-angle> ]#
+<stops> = ^stops [ ^stop [ <color> <lp>{0,2} ] | <lp> ]#
+<old-linear> = [ [ <angle0> | [ left | right ] || [ top | bottom ] ] , | +top, ] <stops>
+<old-radial> = [ ^position <position-1-2> , | +center, ] [ [ [ circle | ellipse ] || [ <extent> | contain | cover ] | <lp+>{2} ] , ]? <stops>
+<oldest> = [ linear , <old-point> , <old-point> | radial , <old-point> , <number+> , <old-point> , <number+> ] [ , [ from( <color> ) | to( <color> ) | ^old-stop color-stop( <alpha> , <color> ) ] ]*
+<old-point> = [ left>0% | center>50% | right>100% | <number> | <percentage> ] [ top>0% | center>50% | bottom>100% | <number> | <percentage> ]
+
+<basic-shape> = inset( <lp>{1,4}s <round> ) | circle( <shape-radius>?~closest-side <shape-at>? ) | ellipse( <shape-radius>{2}?~closest-side_closest-side <shape-at>? ) | polygon( [ [ [ nonzero | evenodd ]?~nonzero [ round <length+> ]?~round_0px ]! , ]?~nonzero_round_0px, [ <lp> <lp> ]# ) | ^to-inset rect( [ <lp> | auto ]{4} <round> ) | ^to-inset xywh( <lp>{2} <lp+>{2} <round> ) | path( [ <fill-rule> , ]? %<path-data> ) | shape( <fill-rule>? from <position> , <shape-command># )
+<shape-radius> = <lp+> | closest-side | farthest-side
+<shape-at> = at <position>
+<fill-rule> = [ nonzero | evenodd ]~nonzero
+<round> = [ round ^radii [ <lp+>{1,4}s [ / <lp+>{1,4}s ]? ] ]?~round_0px
+<shape-command> = move <end-point> | line <end-point> | hline [ to [ <lp> | left>>0% | center>>50% | right>>100% | x-start>>0% | x-end>>100% ] | by <lp> ] | vline [ to [ <lp> | top>>0% | center>>50% | bottom>>100% | y-start>>0% | y-end>>100% ] | by <lp> ] | curve [ to <position> with <control> [ / <control> ]? | by <lp>{2} with <relative-control> [ / <relative-control> ]? ] | smooth [ to <position> [ with <control> ]? | by <lp>{2} [ with <relative-control> ]? ] | arc <end-point> [ [ of <lp>{1,2} ] && [ %[ cw | ccw ] ]?~ccw && [ %[ large | small ] ]?~small && [ rotate <angle> ]?~rotate_0deg ] | close
+<end-point> = to <position> | by <lp>{2}
+<control> = <lp>{2} [ from [ start | end | origin ] ]~from_origin | <position>
+<relative-control> = <lp>{2} [ from [ start | end | origin ] ]?~from_start
+<ray> = ray( <angle> && [ <extent> | sides ]?~closest-side && contain? && <shape-at>? )
+
+<easing> = linear | ease | ease-in | ease-out | ease-in-out | step-start>>steps(1,_start) | step-end>>steps(1) | cubic-bezier( <number [0,1]> , <number> , <number [0,1]> , <number> ) | steps( <integer [2,inf]> , jump-none ) | steps( <integer [1,inf]> [ , [ jump-start | jump-end>end | jump-both | start | end ] ]?~,_end ) | ^linear linear( [ <number> && <percentage>{0,2} ]#{2,} )
+<range-name> = cover | contain | entry | exit | entry-crossing | exit-crossing | scroll
+<range-start> = <range-name> <lp>?~0% | <lp>
+<range-end> = <range-name> <lp>?~100% | <lp>
+<trigger-start> = <range-name> [ <lp>?~0% ]~calc(0%) | <lp>
+<trigger-end> = <range-name> [ <lp>?~100% ]~calc(100%) | <lp>
+<view-inset> = [ auto | <lp> ]{1,2}s
+<timeline> = auto | none | <dashed-ident> | scroll( [ [ root | nearest | self ]~nearest || <axis>~block ]? ) | view( [ <axis>~block || <view-inset>~auto ]? )
+<filter> = none | [ blur( <length+>? ) | hue-rotate( <angle0>? ) | drop-shadow( <color>? && [ <length>{2} <length+>? ] ) | brightness( <np+>? ) | contrast( <np+>? ) | saturate( <np+>? ) | grayscale( <limited>? ) | invert( <limited>? ) | opacity( <limited>? ) | sepia( <limited>? ) | <url> ]+
+<limited> = ^limit <np+>
+<transform-function> = matrix( <number>#{6} ) | matrix3d( <number>#{16} ) | translate( <lp> [ , <lp> ]? ) | translateX( <lp> ) | translateY( <lp> ) | translateZ( <length> ) | translate3d( <lp> , <lp> , <length> ) | scale( <factor>#{1,2} ) | scaleX( <factor> ) | scaleY( <factor> ) | scaleZ( <factor> ) | scale3d( <factor>#{3} ) | rotate( <angle0> ) | rotateX( <angle0> ) | rotateY( <angle0> ) | rotateZ( <angle0> ) | rotate3d( <number>#{3} , <angle0> ) | skew( <angle0>#{1,2} ) | skewX( <angle0> ) | skewY( <angle0> ) | perspective( <length+> | none )
+<paint> = none | context-fill | context-stroke | <color> | <url> [ none | <color> ]?
+
+<size-keyword> = min-content | max-content | fit-content | stretch | -webkit-min-content | -webkit-max-content | -webkit-fit-content | -webkit-fill-available
+<size> = auto | <size-keyword> | <anchored-size [0,inf]> | calc-size( [ <size-basis> , <size-sum> | any , <sum> ] )
+<size-basis> = auto | <size-keyword> | <anchored-sum> | calc-size( [ <size-basis> , <size-sum> | any , <sum> ] )
+<max-size> = none | <size-keyword> | <anchored-size [0,inf]> | calc-size( [ <size-keyword> | <sum> | <max-calc-size> ] , <size-sum> ) | calc-size( any , <sum> )
+<max-calc-size> = calc-size( [ <size-keyword> | <sum> | <max-calc-size> ] , <size-sum> ) | calc-size( any , <sum> )
+<margin> = auto | <anchored-size>
+<inset> = auto | <anchored-inset>
+<baseline-position> = baseline | first>_ && baseline | last && baseline
+<overflow-position> = unsafe | safe
+<content-position> = center | start | end | flex-start | flex-end
+<self-position> = <content-position> | self-start | self-end
+<content-distribution> = space-between | space-around | space-evenly | stretch
+<line-names> = '[' <custom-ident -span -auto>* ']'~[]
+<breadth> = <lp+> | min-content | max-content | auto | -webkit-min-content | -webkit-max-content
+<track-size> = <breadth> | <flex [0,inf]> | minmax( <breadth> , [ <breadth> | <flex [0,inf]> ] ) | fit-content( <lp+> )
+<fixed-size> = <lp+> | minmax( <lp+> , [ <breadth> | <flex [0,inf]> ] ) | minmax( <breadth> , <lp+> )
+<tracks> = [ <line-names>? <track-size> ]+ <line-names>?
+<fixed-tracks> = [ <line-names>? <fixed-size> ]+ <line-names>?
+<fixed-part> = [ <line-names>? [ <fixed-size> | repeat( <integer [1,inf]> , <fixed-tracks> ) ] ]* <line-names>?
+<track-list> = <fixed-part> repeat( [ auto-fill | auto-fit ] , <fixed-tracks> ) <fixed-part> | [ <line-names>? [ <track-size> | repeat( <integer [1,inf]> , <tracks> ) ] ]+ <line-names>?
+<names> = '[' <custom-ident -span -auto>* ']'
+<subgrid-part> = [ <names> | repeat( <integer [1,inf]> , <names>+ ) ]*
+<grid-template> = none | subgrid <subgrid-part> [ repeat( auto-fill , <names>+ ) <subgrid-part> ]? | <track-list>
+<grid-line> = auto | span && [ <integer [1,inf]>~1 || <line-name> ]=1 | ^not-zero <integer> || <line-name>
+<line-name> = <custom-ident -span -auto>
+<try-tactic> = ^as-written [ flip-block || flip-inline || flip-start || flip-x || flip-y ]
+<corner-shape> = %[ round>>superellipse(1) | scoop>>superellipse(-1) | bevel>>superellipse(0) | notch>>superellipse(-infinity) | square>>superellipse(infinity) | squircle>>superellipse(2) | superellipse( infinity | -infinity | <number> ) ]
+<rule-inset> = overlap-join | <lp>
+<feature-name> = <custom-ident>
+<font-stretch-keyword> = normal>>100% | ultra-condensed>>50% | extra-condensed>>62.5% | condensed>>75% | semi-condensed>>87.5% | semi-expanded>>112.5% | expanded>>125% | extra-expanded>>150% | ultra-expanded>>200%
+<generic-family> = serif | sans-serif | cursive | fantasy | monospace | system-ui | math | -webkit-body
+<common-ligatures> = common-ligatures | no-common-ligatures
+<discretionary-ligatures> = discretionary-ligatures | no-discretionary-ligatures
+<historical-ligatures> = historical-ligatures | no-historical-ligatures
+<contextual> = contextual | no-contextual
+<figures> = lining-nums | oldstyle-nums
+<figure-spacing> = proportional-nums | tabular-nums
+<fractions> = diagonal-fractions | stacked-fractions
+<east-asian-variant> = jis78 | jis83 | jis90 | jis04 | simplified | traditional
+<east-asian-width> = full-width | proportional-width
+<caps> = small-caps | all-small-caps | petite-caps | all-petite-caps | unicase | titling-caps
+<alternate> = stylistic( <feature-name> ) | historical-forms | styleset( <feature-name># ) | character-variant( <feature-name># ) | swash( <feature-name> ) | ornaments( <feature-name> ) | annotation( <feature-name> )
+<palette> = normal | light | dark | <dashed-ident> | ^palette-mix palette-mix( <interpolation> , [ <palette> && <percentage [0,100]>? ]#{2} )
+<range-limit> = standard | constrained | no-limit | ^limit-mix dynamic-range-limit-mix( [ <range-limit> && <percentage [0,100]> ]#{2,} )
+<repeat-style> = repeat-x | repeat-y | repeat>repeat-x no-repeat>_ | no-repeat>repeat-y repeat>_ | [ repeat | space | round | no-repeat ]{1,2}s
+<bg-size> = cover | contain | ^bg-size [ <lp+> | auto ]{1,2}
+<image-slice> = <np+>{1,4}s && fill?
+<image-width> = [ <number+> | <lp+> | auto ]{1,4}s
+<image-outset> = [ <number+> | <length+> ]{1,4}s
+<image-repeat> = [ stretch | repeat | round | space ]{1,2}s
+<nine-pieces> = <image-or-none> || ^fill <image-slice> [ / [ <image-width>? [ / <image-outset> ]? ]! ]? || <image-repeat>
+<quote> = open-quote | close-quote | no-open-quote | no-close-quote
+<counter> = counter( <counter-name> [ , [ none | <counter-style> ] ]?~,_decimal ) | counters( <counter-name> , <string> [ , [ none | <counter-style> ] ]?~,_decimal )
+<trigger-behavior> = play-once | play | play-forwards | play-backwards | pause | reset | replay | none
+<scope> = none | all | <dashed-ident>#
+<break> = auto | avoid | avoid-page | page | left | right | recto | verso | avoid-column | column
+<overflow> = visible | hidden | clip | scroll | auto | overlay
+<overscroll> = auto | contain | none | chain
+<intrinsic-size> = auto? [ none | <length+> ]
+<radius> = <lp+>{1,2}s
+<gap> = normal | <lp+>
+<spacing> = normal | <lp>
+<marker> = none | <url>
+<rule-widths> = ^one-auto [ <line-width> | repeat( [ <integer [1,inf]> | auto ] , <line-width># ) ]#
+<rule-styles> = ^one-auto [ <line-style> | repeat( [ <integer [1,inf]> | auto ] , <line-style># ) ]#
+<rule-colors> = ^one-auto [ <color> | repeat( [ <integer [1,inf]> | auto ] , <color># ) ]#
+<rule> = <line-width> || <line-style> || <color>
+<rules> = ^one-auto [ <rule> | repeat( [ <integer [1,inf]> | auto ] , <rule># ) ]#
+
+-webkit-border-horizontal-spacing = <length+>
+-webkit-border-image i=none = <nine-pieces>
+-webkit-border-vertical-spacing = <length+>
+-webkit-box-align i=stretch = stretch | start | end | center | baseline
+-webkit-box-direction i=normal = normal | reverse
+-webkit-box-flex = <number>
+-webkit-box-ordinal-group i=1 = <integer [1,inf]>
+-webkit-box-orient = horizontal | vertical | inline-axis | block-axis
+-webkit-box-pack i=start = start | end | center | justify
+-webkit-box-reflect i=none = none | [ above | below | left | right ] [ <lp> <nine-pieces>? | +0px ]
+-webkit-font-smoothing i=auto = auto | none | antialiased | subpixel-antialiased
+-webkit-line-clamp = none | <integer [1,inf]>
+-webkit-locale = auto | <string>
+-webkit-mask-box-image-outset i=0 ~ = <image-outset>
+-webkit-mask-box-image-repeat i=stretch = <image-repeat>
+-webkit-mask-box-image-slice i=0_fill ~ = <image-slice>
+-webkit-mask-box-image-source i=none mix = <image-or-none>
+-webkit-mask-box-image-width i=auto ~ = <image-width>
+-webkit-mask-position-x # = <'background-position-x'>
+-webkit-mask-position-y # = <'background-position-y'>
+-webkit-perspective-origin-x i=50% ~ = <x-edge> | <lp>
+-webkit-perspective-origin-y i=50% ~ = <y-edge> | <lp>
+-webkit-rtl-ordering i=logical = logical | visual
+-webkit-ruby-position i=before = before | after
+-webkit-tap-highlight-color i=rgba(0,_0,_0,_0.18) = <color>
+-webkit-text-combine i=none = none | horizontal
+-webkit-text-decorations-in-effect i=none = <'text-decoration-line'>
+-webkit-text-fill-color = <color>
+-webkit-text-security = none | disc | circle | square
+-webkit-text-stroke-color i=currentcolor ~ = <color>
+-webkit-text-stroke-width i=0px = <line-width>
+-webkit-transform-origin-x i=50% ~ = <x-edge> | <lp>
+-webkit-transform-origin-y i=50% ~ = <y-edge> | <lp>
+-webkit-transform-origin-z i=0px ~ = <length>
+-webkit-user-drag i=auto = auto | none | element
+-webkit-user-modify = read-only | read-write | read-write-plaintext-only
+accent-color = auto | <color>
+align-content = normal | <baseline-position> | <content-distribution> | <overflow-position>? <content-position>
+align-items = normal | stretch | <baseline-position> | <overflow-position>? <self-position>
+align-self = auto | normal | stretch | <baseline-position> | <overflow-position>? [ anchor-center | <self-position> ]
+alignment-baseline i=auto = auto | baseline | before-edge | text-before-edge | middle | central | after-edge | text-after-edge | ideographic | alphabetic | hanging | mathematical
+anchor-name = none | <dashed-ident>#
+anchor-scope i=none = <scope>
+animation-composition i=replace x = [ replace | add | accumulate ]#
+animation-delay = <time>#
+animation-direction = [ normal | reverse | alternate | alternate-reverse ]#
+animation-duration i=auto = [ auto | <time [0,inf]> ]#
+animation-fill-mode = [ none | forwards | backwards | both ]#
+animation-iteration-count = [ infinite | <number+> ]#
+animation-name = [ none | <keyframes-name> ]#
+animation-play-state = [ running | paused ]#
+animation-range-end = [ normal | <range-end> ]#
+animation-range-start = [ normal | <range-start> ]#
+animation-timeline = <timeline>#
+animation-timing-function = <easing>#
+animation-trigger i=none x = [ none | <dashed-ident> <trigger-behavior>{1,2} ]#
+-electron-corner-smoothing = system-ui | <percentage [0,inf]>
+app-region = none | drag | no-drag
+appearance = none | auto | base-select | checkbox | radio | button | listbox | menulist | menulist-button | meter | progress-bar | searchfield | textfield | textarea | slider-vertical
+aspect-ratio = auto || <ratio>
+backdrop-filter = <filter>
+backface-visibility = visible | hidden
+background-attachment = [ scroll | fixed | local ]#
+background-blend-mode = <blend-mode>#
+background-clip = [ <visual-box> | border-area || text ]#
+background-color i=transparent = <color>
+background-image mix = <image-or-none>#
+background-origin = <visual-box>#
+background-position-x # = [ center | [ left | right ] <lp>? | <lp> ]#
+background-position-y # = [ center | [ top | bottom ] <lp>? | <lp> ]#
+background-repeat = <repeat-style>#
+background-size # = <bg-size>#
+baseline-shift i=baseline ~ = baseline>>0px | sub | super | <svg-length>
+baseline-source i=auto = auto | first | last
+border-bottom-color = <color>
+border-bottom-left-radius = <radius>
+border-bottom-right-radius = <radius>
+border-bottom-style = <line-style>
+border-bottom-width i=medium = <line-width>
+border-collapse = separate | collapse
+border-image-outset i=0 ~ = <image-outset>
+border-image-repeat i=stretch = <image-repeat>
+border-image-slice i=100% ~ = <image-slice>
+border-image-source mix = <image-or-none>
+border-image-width i=1 ~ = <image-width>
+border-left-color = <color>
+border-left-style = <line-style>
+border-left-width i=medium = <line-width>
+border-right-color = <color>
+border-right-style = <line-style>
+border-right-width i=medium = <line-width>
+border-shape i=none ~ = none | ^same-shapes [ <basic-shape> [ <geometry-box> | half-border-box ]?~~border-box <basic-shape> [ <geometry-box> | half-border-box ]?~~padding-box ] | <basic-shape> [ <geometry-box> | half-border-box ]?~~half-border-box
+border-top-color = <color>
+border-top-left-radius = <radius>
+border-top-right-radius = <radius>
+border-top-style = <line-style>
+border-top-width i=medium = <line-width>
+bottom = <inset>
+box-decoration-break = slice | clone
+box-shadow = none | [ <color>? && [ <length>{2} [ <length+> <length>? ]? ] && inset? ]#
+box-sizing = content-box | border-box
+break-after i=auto = <break>
+break-before i=auto = <break>
+break-inside i=auto = auto | avoid | avoid-page | avoid-column
+buffered-rendering i=auto = auto | dynamic | static
+caption-side = top | bottom
+caret-animation i=auto = auto | manual
+caret-color = auto | <color>
+caret-shape i=auto = auto | bar | block | underscore
+clear = none | left | right | both | inline-start | inline-end
+clip = auto | rect( [ <length> | auto ]#{4} ) | ^commas rect( [ <length> | auto ]{4} )
+clip-path ~ = none | <url> | [ <basic-shape> || <geometry-box>~border-box ]=border-box
+clip-rule = nonzero | evenodd
+color i=canvastext = <color>
+color-interpolation i=srgb = auto | srgb | linearrgb
+color-interpolation-filters i=linearrgb = auto | srgb | linearrgb
+color-rendering i=auto = auto | optimizespeed | optimizequality
+color-scheme = normal | [ light | dark | <custom-ident -normal -only> ]+ && only?
+column-count = auto | <integer [1,inf]>
+column-fill i=balance = auto | balance
+column-gap = <gap>
+column-height i=auto ~ = auto | <length+>
+column-rule-break i=normal = none | normal | intersection
+column-rule-color i=currentcolor ~ # = <rule-colors>
+column-rule-inset-cap-end i=0px ~ = <rule-inset>
+column-rule-inset-cap-start i=0px ~ = <rule-inset>
+column-rule-inset-junction-end i=0px ~ = <rule-inset>
+column-rule-inset-junction-start i=0px ~ = <rule-inset>
+column-rule-style i=none = <rule-styles>
+column-rule-visibility-items i=normal = all | around | between | normal
+column-rule-width i=medium ~ # = <rule-widths>
+column-span i=none = none | all
+column-width = auto | <length+>
+column-wrap i=auto = auto | nowrap | wrap
+contain = none | strict | content | [ size | inline-size ] || layout || style || paint
+contain-intrinsic-height ~ = <intrinsic-size>
+contain-intrinsic-width ~ = <intrinsic-size>
+container-name = none | <custom-ident -none -and -or -not>+
+container-type = normal | [ size | inline-size ] || scroll-state || anchored
+content = normal | none | [ <image> | <string> | <counter> | <quote> ]+ [ / [ <string> | <counter> ]+ ]?
+content-visibility = visible | auto | hidden
+corner-bottom-left-shape i=round ~ = <corner-shape>
+corner-bottom-right-shape i=round ~ = <corner-shape>
+corner-top-left-shape i=round ~ = <corner-shape>
+corner-top-right-shape i=round ~ = <corner-shape>
+counter-increment = none | [ <counter-name> [ <integer> | +1 ] ]+
+counter-reset = none | [ <counter-name> [ <integer> | +0 ] ]+
+counter-set = none | [ <counter-name> [ <integer> | +0 ] ]+
+cursor = [ <cursor-image> ^integers <number>{2}? , ]* [ auto | default | none | context-menu | help | pointer | progress | wait | cell | crosshair | text | vertical-text | alias | copy | move | no-drop | not-allowed | grab | grabbing | e-resize | n-resize | ne-resize | nw-resize | s-resize | se-resize | sw-resize | w-resize | ew-resize | ns-resize | nesw-resize | nwse-resize | col-resize | row-resize | all-scroll | zoom-in | zoom-out | -webkit-grab>>grab | -webkit-grabbing>>grabbing | -webkit-zoom-in>>zoom-in | -webkit-zoom-out>>zoom-out ]
+cx i=0px ~ = <svg-length>
+cy i=0px ~ = <svg-length>
+d i=none = none | path( <path-data> )
+direction = ltr | rtl
+display = <display>
+dominant-baseline = auto | alphabetic | ideographic | middle | central | mathematical | hanging | use-script | no-change | reset-size | text-after-edge | text-before-edge
+dynamic-range-limit i=no-limit mix = <range-limit>
+empty-cells i=show = show | hide
+field-sizing = fixed | content
+fill = <paint>
+fill-opacity = <alpha>
+fill-rule = nonzero | evenodd
+filter = <filter>
+flex-basis = content | auto | <size-keyword> | <lp+> | calc-size( [ content | <size-basis> ] , <size-sum> ) | calc-size( any , <sum> )
+flex-direction = row | row-reverse | column | column-reverse
+flex-grow = <number+>
+flex-line-count i=1 ~ = <integer [1,inf]>
+flex-shrink = <number+>
+flex-wrap = nowrap | [ [ wrap | wrap-reverse ]~wrap && balance ] | wrap | wrap-reverse | balance
+float = none | left | right | inline-start | inline-end
+flood-color i=black = <color>
+flood-opacity = <alpha>
+font-family i=serif = [ <family-name> ]#
+font-feature-settings = normal | [ <tag> [ on>1 | off>0 | <integer [0,inf]> ]?~1 ]#
+font-kerning = auto | normal | none
+font-language-override i=normal = normal | ^language <string>
+font-optical-sizing = auto | none
+font-palette i=normal mix = <palette>
+font-size i=medium = xx-small | x-small | small | medium | large | x-large | xx-large | xxx-large | -webkit-xxx-large>xxx-large | larger | smaller | math | <lp+>
+font-size-adjust i=none ~ = none | ^from-font [ [ ex-height | cap-height | ch-width | ic-width | ic-height ]?~ex-height [ from-font | <number+> ] ]
+font-stretch i=normal = <font-stretch-keyword> | <percentage [0,inf]>
+font-style = normal | italic | [ [ [ [ [ oblique <angle [-90,90]>? ]~oblique_0deg ]~oblique_0rad ]~oblique_0grad ]~oblique_0turn ]=normal
+font-synthesis-small-caps i=auto = auto | none
+font-synthesis-style = auto | none
+font-synthesis-weight = auto | none
+font-variant-alternates i=normal = normal | stylistic( <feature-name> ) || historical-forms || styleset( <feature-name># ) || character-variant( <feature-name># ) || swash( <feature-name> ) || ornaments( <feature-name> ) || annotation( <feature-name> )
+font-variant-caps = normal | <caps>
+font-variant-east-asian i=normal = normal | <east-asian-variant> || <east-asian-width> || ruby
+font-variant-emoji i=normal = normal | text | emoji | unicode
+font-variant-ligatures = normal | none | <common-ligatures> || <discretionary-ligatures> || <historical-ligatures> || <contextual>
+font-variant-numeric = normal | <figures> || <figure-spacing> || <fractions> || ordinal || slashed-zero
+font-variant-position i=normal = normal | sub | super
+font-variation-settings = normal | [ <tag> <number> ]#
+font-weight i=normal = normal | bold | bolder | lighter | <number [1,1000]>
+forced-color-adjust i=auto = auto | none | preserve-parent-color
+frame-sizing i=auto = auto | content-width | content-height | content-block-size | content-inline-size
+grid-auto-columns = <track-size>+
+grid-auto-flow = [ row | column ]~row && dense | row | column | dense
+grid-auto-rows = <track-size>+
+grid-column-end = <grid-line>
+grid-column-start = <grid-line>
+grid-row-end = <grid-line>
+grid-row-start = <grid-line>
+grid-template-areas = none | <areas>
+grid-template-columns = <grid-template>
+grid-template-rows = <grid-template>
+height = <size>
+hyphenate-character i=auto = auto | <string>
+hyphenate-limit-chars i=auto = ^limit-chars [ auto | <integer [1,inf]> ]{1,3}
+hyphens = none | manual | auto
+image-orientation i=from-image = from-image | none
+image-rendering = auto | crisp-edges | pixelated | -webkit-optimize-contrast
+initial-letter i=normal = normal | <number [1,inf]> <integer [1,inf]> | <number [1,inf]> && [ drop | raise ]?
+interactivity = auto | inert | -internal-inert | -internal-escapes
+interest-delay-end i=normal ~ = normal | <time [0,inf]>
+interest-delay-start i=normal ~ = normal | <time [0,inf]>
+interpolate-size x = numeric-only | allow-keywords
+isolation = auto | isolate
+justify-content = normal | <content-distribution> | <overflow-position>? [ <content-position> | left | right ]
+justify-items i=legacy = normal | stretch | <baseline-position> | legacy && [ left | right | center ] | legacy | <overflow-position>? [ <self-position> | left | right ]
+justify-self = auto | normal | stretch | <baseline-position> | <overflow-position>? [ anchor-center | <self-position> | left | right ]
+left = <inset>
+letter-spacing = <spacing>
+lighting-color i=white ~ = <color>
+line-break = auto | loose | normal | strict | anywhere | after-white-space
+line-height = normal | <number+> | <lp+>
+list-style-image mix = <image-or-none>
+list-style-position = inside | outside
+list-style-type = none | <string> | <counter-style>
+margin-bottom = <margin>
+margin-left = <margin>
+margin-right = <margin>
+margin-top = <margin>
+margin-trim i=none = none | block-start>block && block-end>_ | block | block-start | block-end
+marker-end = <marker>
+marker-mid = <marker>
+marker-start = <marker>
+mask-clip = [ <coord-box> | no-clip | text ]#
+mask-composite = [ add | subtract | intersect | exclude ]#
+mask-image = <image-or-none>#
+mask-mode = [ alpha | luminance | match-source ]#
+mask-origin = <coord-box>#
+mask-repeat = <repeat-style>#
+mask-size # = <bg-size>#
+mask-type i=luminance = luminance | alpha
+math-depth i=0 ~ = ^math-depth [ auto-add | add( <integer> ) | <integer> ]
+math-shift i=normal = normal | compact
+math-style i=normal = normal | compact
+max-height = <max-size>
+max-width = <max-size>
+min-height = <size>
+min-width = <size>
+mix-blend-mode = <blend-mode> | plus-lighter
+object-fit = fill | contain | cover | none | scale-down
+object-position = <position>
+object-view-box i=none ~ = none | inset( <lp>{1,4}s <round> ) | ^to-inset rect( [ <lp> | auto ]{4} <round> ) | ^to-inset xywh( <lp>{2} <lp+>{2} <round> )
+offset-anchor i=auto ~ = auto | <position>
+offset-distance i=0px ~ = <lp>
+offset-path i=none ~ = none | [ [ <ray> | <url> | path( %<path-data> ) | ^not-path <basic-shape> ] || <coord-box>~border-box ]=border-box
+offset-position i=normal ~ = normal | auto | <position>
+offset-rotate i=auto ~ = ^offset-rotate [ [ auto | reverse ] || <angle> ]
+opacity = <alpha>
+order = <integer>
+orphans i=2 ~ = <integer [1,inf]>
+outline-color = <color> | -webkit-focus-ring-color
+outline-offset = <length>
+outline-style = auto | none | dotted | dashed | solid | double | groove | ridge | inset | outset
+outline-width i=medium = <line-width>
+overflow-anchor = auto | none | visible
+overflow-clip-margin = [ <visual-box>~padding-box || <length>~0px ]=0px
+overflow-wrap = normal | break-word | anywhere
+overflow-x = <overflow>
+overflow-y = <overflow>
+overlay = none | auto
+overscroll-behavior-x = <overscroll>
+overscroll-behavior-y = <overscroll>
+padding-bottom = <lp+>
+padding-left = <lp+>
+padding-right = <lp+>
+padding-top = <lp+>
+page i=auto x = auto | <custom-ident>
+page-margin-safety i=none x = none | clamp | add
+page-orientation i=upright x = upright | rotate-left | rotate-right
+paint-order = normal | ^paint-order [ fill || stroke || markers ]
+perspective = none | <length+>
+perspective-origin i=50%_50% ~ = <position>
+pointer-events = auto | none | visiblepainted | visiblefill | visiblestroke | visible | painted | fill | stroke | all | bounding-box
+position = static | relative | absolute | fixed | sticky
+position-anchor = normal | none | auto | <dashed-ident>
+position-area = none | <position-area>
+position-try-fallbacks = none | [ <dashed-ident> || <try-tactic> | <position-area> ]#
+position-try-order i=normal = normal | most-width | most-height | most-block-size | most-inline-size
+position-visibility i=anchors-visible = always | anchors-visible || no-overflow
+print-color-adjust i=economy = economy | exact
+quotes = auto | none | [ <string> <string> ]+
+r i=0px ~ = <svg-length+>
+reading-flow i=normal = normal | source-order | flex-visual | flex-flow | grid-rows | grid-columns | grid-order
+reading-order i=0 ~ = <integer>
+resize = none | both | horizontal | vertical | block | inline | auto
+right = <inset>
+rotate = none | ^rotate [ [ x | y | z | <number>{3} ]? && <angle> ]
+row-gap = <gap>
+row-rule-break i=normal = none | normal | intersection
+row-rule-color i=currentcolor ~ # = <rule-colors>
+row-rule-inset-cap-end i=0px ~ = <rule-inset>
+row-rule-inset-cap-start i=0px ~ = <rule-inset>
+row-rule-inset-junction-end i=0px ~ = <rule-inset>
+row-rule-inset-junction-start i=0px ~ = <rule-inset>
+row-rule-style i=none = <rule-styles>
+row-rule-visibility-items i=normal = all | around | between | normal
+row-rule-width i=medium ~ # = <rule-widths>
+ruby-align i=space-around = start | center | space-between | space-around
+ruby-overhang i=auto = auto | spaces | none>spaces
+ruby-position i=over = over | under
+rule-overlap i=row-over-column = row-over-column | column-over-row
+rx i=auto ~ = auto | <svg-length+>
+ry i=auto ~ = auto | <svg-length+>
+scale = none | ^scale <factor>{1,3}
+scroll-axis-lock i=auto = auto | none
+scroll-behavior = auto | smooth
+scroll-initial-target i=none = none | nearest
+scroll-margin-bottom = <length>
+scroll-margin-left = <length>
+scroll-margin-right = <length>
+scroll-margin-top = <length>
+scroll-marker-group i=none = none | [ before | after ] [ links | tabs ]?~links
+scroll-padding-bottom = auto | <lp+>
+scroll-padding-left = auto | <lp+>
+scroll-padding-right = auto | <lp+>
+scroll-padding-top = auto | <lp+>
+scroll-snap-align = [ none | start | end | center ]{1,2}s
+scroll-snap-stop i=normal = normal | always
+scroll-snap-type = none | [ x | y | block | inline | both ] [ mandatory | proximity ]?~proximity
+scroll-target-group i=none = none | auto
+scroll-timeline-axis x = <axis>#
+scroll-timeline-name x = [ none | <dashed-ident> ]#
+scrollbar-color = auto | <color>{2}
+scrollbar-gutter = auto | stable && both-edges?
+scrollbar-width = auto | thin | none
+shape-image-threshold i=0 ~ = <alpha>
+shape-margin i=0px ~ = <lp+>
+shape-outside ~ = none | <image> | [ <basic-shape> || <shape-box>~margin-box ]=margin-box
+shape-rendering = auto | optimizespeed | crispedges | geometricprecision
+size i=auto x = auto | <length+>{1,2} | [ [ a3 | a4 | a5 | b4 | b5 | jis-b4 | jis-b5 | ledger | legal | letter ] || [ portrait | landscape ]~portrait ]=portrait
+speak i=normal = none | normal | spell-out | digits | literal-punctuation | no-punctuation
+stop-color i=black = <color>
+stop-opacity = <alpha>
+stroke = <paint>
+stroke-dasharray = none | ^dashes [ [ <number+> | <lp+> ] [ , ]? ]+
+stroke-dashoffset = <svg-length>
+stroke-linecap = butt | round | square
+stroke-linejoin = miter | round | bevel
+stroke-miterlimit = <number+>
+stroke-opacity = <alpha>
+stroke-width = <svg-length+>
+tab-size ~ = <number+> | <length+>
+table-layout = auto | fixed
+text-align = start | end | left | right | center | justify | -webkit-left | -webkit-right | -webkit-center | -webkit-auto>>start | -webkit-match-parent | -internal-center
+text-align-last = auto | start | end | left | right | center | justify
+text-anchor = start | middle | end
+text-autospace i=no-autospace = normal | no-autospace
+text-box-edge i=auto = auto | text text>_ | [ text | cap | ex ] [ text | alphabetic ] | text
+text-box-trim i=none = none | trim-start | trim-end | trim-both
+text-combine-upright = none | all
+text-decoration-color = <color>
+text-decoration-line = none | spelling-error | grammar-error | underline || overline || line-through || blink
+text-decoration-skip-ink = auto | none | all
+text-decoration-style = solid | double | dotted | dashed | wavy
+text-decoration-thickness = auto | from-font | <lp>
+text-emphasis-color i=currentcolor ~ = <color>
+text-emphasis-position i=over = [ over | under ] && [ right | left ]?~right
+text-emphasis-style i=none = none | <string> | ^emphasis [ [ filled | open ] || [ dot | circle | double-circle | triangle | sesame ] ]
+text-fit i=none = [ none | grow | shrink ] [ consistent | per-line | per-line-all ]?~~consistent <percentage [0,inf]>?
+text-indent = <lp> && hanging? && each-line?
+text-justify i=auto = auto | none | inter-word | inter-character | distribute>inter-character
+text-orientation = mixed | upright | sideways | sideways-right
+text-overflow = clip | ellipsis
+text-rendering i=auto = auto | optimizespeed | optimizelegibility | geometricprecision
+text-shadow = none | [ <color>? && [ <length>{2} <length+>? ] ]#
+text-size-adjust i=auto ~ = auto | none>>100% | <percentage [0,inf]>
+text-spacing-trim i=normal = normal | space-all | space-first | trim-start
+text-transform = none | capitalize | uppercase | lowercase | math-auto
+text-underline-offset = auto | <lp>
+text-underline-position = auto | [ under | from-font ] || [ left | right ]
+text-wrap-mode = wrap | nowrap
+text-wrap-style = auto | balance | pretty | stable
+timeline-scope i=none x = <scope>
+timeline-trigger-activation-range-end i=normal x = [ normal | <trigger-end> ]#
+timeline-trigger-activation-range-start i=normal x = [ normal | <trigger-start> ]#
+timeline-trigger-active-range-end i=auto x = [ auto | normal | <trigger-end> ]#
+timeline-trigger-active-range-start i=auto x = [ auto | normal | <trigger-start> ]#
+timeline-trigger-name i=none x = [ none | <dashed-ident> ]#
+timeline-trigger-source i=auto x = <timeline>#
+top = <inset>
+touch-action = auto | none | manipulation | [ pan-x | pan-left | pan-right ] || [ pan-y | pan-up | pan-down ] || pinch-zoom
+transform = none | <transform-function>+
+transform-box = content-box | border-box | fill-box | stroke-box | view-box
+transform-origin i=50%_50% = [ [ <x-edge> | <lp> ] [ <y-edge> | <lp> ] | <x-edge> && <y-edge> ] <length>? | <position-1-2>
+transform-style i=flat = flat | preserve-3d
+transition-behavior = [ normal | allow-discrete ]#
+transition-delay = <time>#
+transition-duration = <time [0,inf]>#
+transition-property = none | [ all | ^property <custom-ident -none> ]#
+transition-timing-function = <easing>#
+translate = none | ^translate [ <lp> [ <lp> <length>? ]? ]
+trigger-scope i=none x = <scope>
+unicode-bidi x = normal | embed | isolate | bidi-override | isolate-override | plaintext | -webkit-isolate | -webkit-isolate-override | -webkit-plaintext
+user-select = auto | text | none | all
+vector-effect = none | non-scaling-stroke
+vertical-align ~ = baseline | sub | super | text-top | text-bottom | middle | top | bottom | -webkit-baseline-middle | <lp>
+view-timeline-axis i=block x = <axis>#
+view-timeline-inset i=auto ~ = <view-inset>#
+view-timeline-name i=none x = [ none | <dashed-ident> ]#
+view-transition-class i=none = none | <custom-ident -none>+
+view-transition-group i=normal = normal | none | contain | nearest | <custom-ident>
+view-transition-name i=none = none | match-element | <custom-ident -auto>
+view-transition-scope i=none = none | all
+visibility = visible | hidden | collapse
+white-space-collapse = collapse | preserve | preserve-breaks | break-spaces
+widows i=2 ~ = <integer [1,inf]>
+width = <size>
+will-change = auto | [ scroll-position | contents | <custom-ident -will-change -none -all -auto> ]#
+window-drag i=none = none | move
+word-break = normal | break-all | keep-all | break-word | auto-phrase
+word-spacing = <spacing>
+writing-mode = horizontal-tb | vertical-rl | vertical-lr | sideways-rl | sideways-lr | lr | lr-tb | rl | rl-tb | tb | tb-rl
+x i=0px ~ = <svg-length>
+y i=0px ~ = <svg-length>
+z-index = auto | <integer>
+zoom = normal | <np+>
+
+-webkit-border-radius : border-top-left-radius border-top-right-radius border-bottom-right-radius border-bottom-left-radius = <lp+>{1,4} [ / <lp+>{1,4} ]?
+-webkit-column-break-after : break-after = always @break-after=column | @break-after [ auto | avoid ]
+-webkit-column-break-before : break-before = always @break-before=column | @break-before [ auto | avoid ]
+-webkit-column-break-inside : break-inside = @break-inside [ auto | avoid ]
+-webkit-mask-box-image : -webkit-mask-box-image-source -webkit-mask-box-image-slice -webkit-mask-box-image-width -webkit-mask-box-image-outset -webkit-mask-box-image-repeat cfull = <'-webkit-mask-box-image-source'> || <'-webkit-mask-box-image-slice'> [ / [ <'-webkit-mask-box-image-width'>? [ / <'-webkit-mask-box-image-outset'> ]? ]! ]? || <'-webkit-mask-box-image-repeat'>
+-webkit-mask-composite : mask-composite = [ [ clear | source-in | destination-in ] @mask-composite=intersect | [ source-out | destination-out ] @mask-composite=subtract | xor @mask-composite=exclude | [ copy | source-over | source-atop | destination-over | destination-atop | plus-lighter ] @mask-composite=add | <'mask-composite'> ]#
+-webkit-perspective : perspective = @perspective [ none | <length+> | <number+> ]
+-webkit-text-stroke : -webkit-text-stroke-width -webkit-text-stroke-color cfull = <'-webkit-text-stroke-width'> || <'-webkit-text-stroke-color'>
+animation : animation-duration animation-timing-function animation-delay animation-iteration-count animation-direction animation-fill-mode animation-play-state animation-name animation-timeline! animation-range-start! animation-range-end! full keep=animation-name = [ <'animation-duration'> || <'animation-timing-function'> || <'animation-delay'> || <'animation-iteration-count'> || <'animation-direction'> || <'animation-fill-mode'> || <'animation-play-state'> || <'animation-name'> ]#
+animation-range : animation-range-start animation-range-end=? = [ <'animation-range-start'> <'animation-range-end'>? ]#
+background : background-image background-position-x background-position-y background-size background-repeat background-attachment background-origin=? background-clip=background-origin background-color! = [ <'background-image'> || <'background-position'> [ / <'background-size'> ]? || <'background-repeat'> || <'background-attachment'> || <'background-origin'> || <'background-clip'> || <'background-color'> ]#
+background-position : background-position-x background-position-y = [ @background-position-x [ center | [ left | right ] <lp>? ] && @background-position-y [ center | [ top | bottom ] <lp>? ] | @background-position-x [ <x-edge> | <lp> ] @background-position-y [ <y-edge> | <lp> ] | @background-position-y [ top | bottom ] @background-position-x=center | @background-position-x [ <x-edge> | <lp> ] @background-position-y=center ]#
+border : border-top-width border-right-width border-bottom-width border-left-width border-top-style border-right-style border-bottom-style border-left-style border-top-color border-right-color border-bottom-color border-left-color border-image-source border-image-slice border-image-width border-image-outset border-image-repeat cfull = @border-top-width,border-right-width,border-bottom-width,border-left-width <line-width> || @border-top-style,border-right-style,border-bottom-style,border-left-style <line-style> || @border-top-color,border-right-color,border-bottom-color,border-left-color <color>
+border-block : border-block-start-width border-block-end-width border-block-start-style border-block-end-style border-block-start-color border-block-end-color cfull = @border-block-start-width,border-block-end-width <line-width> || @border-block-start-style,border-block-end-style <line-style> || @border-block-start-color,border-block-end-color <color>
+border-block-color : border-block-start-color border-block-end-color = sides
+border-block-end : border-block-end-width border-block-end-style border-block-end-color cfull = any
+border-block-start : border-block-start-width border-block-start-style border-block-start-color cfull = any
+border-block-style : border-block-start-style border-block-end-style = sides
+border-block-width : border-block-start-width border-block-end-width = sides
+border-bottom : border-bottom-width border-bottom-style border-bottom-color cfull = any
+border-color : border-top-color border-right-color border-bottom-color border-left-color = sides
+border-image : border-image-source border-image-slice border-image-width border-image-outset border-image-repeat = <'border-image-source'> || <'border-image-slice'> [ / [ <'border-image-width'>? [ / <'border-image-outset'> ]? ]! ]? || <'border-image-repeat'>
+border-inline : border-inline-start-width border-inline-end-width border-inline-start-style border-inline-end-style border-inline-start-color border-inline-end-color cfull = @border-inline-start-width,border-inline-end-width <line-width> || @border-inline-start-style,border-inline-end-style <line-style> || @border-inline-start-color,border-inline-end-color <color>
+border-inline-color : border-inline-start-color border-inline-end-color = sides
+border-inline-end : border-inline-end-width border-inline-end-style border-inline-end-color cfull = any
+border-inline-start : border-inline-start-width border-inline-start-style border-inline-start-color cfull = any
+border-inline-style : border-inline-start-style border-inline-end-style = sides
+border-inline-width : border-inline-start-width border-inline-end-width = sides
+border-left : border-left-width border-left-style border-left-color cfull = any
+border-radius : border-top-left-radius border-top-right-radius border-bottom-right-radius border-bottom-left-radius = <lp+>{1,4} [ / <lp+>{1,4} ]?
+border-right : border-right-width border-right-style border-right-color cfull = any
+border-spacing : -webkit-border-horizontal-spacing -webkit-border-vertical-spacing = sides
+border-style : border-top-style border-right-style border-bottom-style border-left-style = sides
+border-top : border-top-width border-top-style border-top-color cfull = any
+border-width : border-top-width border-right-width border-bottom-width border-left-width = sides
+column-rule : column-rule-width column-rule-style column-rule-color = <rules>
+column-rule-inset : column-rule-inset-cap-start column-rule-inset-cap-end=column-rule-inset-cap-start column-rule-inset-junction-start=column-rule-inset-cap-start column-rule-inset-junction-end=? = <'column-rule-inset-cap-start'> <'column-rule-inset-cap-end'>? [ / <'column-rule-inset-junction-start'> <'column-rule-inset-junction-end'>? ]?
+column-rule-inset-cap : column-rule-inset-cap-start column-rule-inset-cap-end = sides
+column-rule-inset-end : column-rule-inset-cap-end column-rule-inset-junction-end = all
+column-rule-inset-junction : column-rule-inset-junction-start column-rule-inset-junction-end = sides
+column-rule-inset-start : column-rule-inset-cap-start column-rule-inset-junction-start = all
+columns : column-width column-count column-height column-wrap = [ <'column-width'> || <'column-count'> ] [ / <'column-height'> ]?
+contain-intrinsic-size : contain-intrinsic-width contain-intrinsic-height = sides
+container : container-name container-type = <'container-name'> [ / <'container-type'> ]?
+corner-block-end-shape : corner-end-start-shape corner-end-end-shape = sides
+corner-block-start-shape : corner-start-start-shape corner-start-end-shape = sides
+corner-bottom-shape : corner-bottom-left-shape corner-bottom-right-shape = sides
+corner-inline-end-shape : corner-start-end-shape corner-end-end-shape = sides
+corner-inline-start-shape : corner-start-start-shape corner-end-start-shape = sides
+corner-left-shape : corner-top-left-shape corner-bottom-left-shape = sides
+corner-right-shape : corner-top-right-shape corner-bottom-right-shape = sides
+corner-shape : corner-top-left-shape corner-top-right-shape corner-bottom-right-shape corner-bottom-left-shape = sides
+corner-top-shape : corner-top-left-shape corner-top-right-shape = sides
+flex : flex-grow=1 flex-shrink flex-basis=0% full cfull = <'flex-grow'> <'flex-shrink'>? <'flex-basis'>? | ^not-number <'flex-basis'> [ <'flex-grow'> <'flex-shrink'>? ]? | none @flex-grow=0 @flex-shrink=0 @flex-basis=auto
+flex-flow : flex-direction flex-wrap cfull = any
+font : font-style font-variant-ligatures font-variant-caps font-variant-numeric font-variant-east-asian font-variant-alternates font-variant-position font-variant-emoji font-weight font-stretch font-size line-height font-family font-optical-sizing font-size-adjust font-kerning font-feature-settings font-variation-settings font-language-override = [ <'font-style'> || @font-variant-caps [ normal | small-caps ] || <'font-weight'> || @font-stretch <font-stretch-keyword> ]? <'font-size'> [ / <'line-height'> ]? <'font-family'> | [ caption | icon | menu | message-box | small-caption | status-bar | -webkit-control | -webkit-small-control | -webkit-mini-control ] @font-size=16px @font-family=system-ui
+font-synthesis : font-synthesis-weight=none font-synthesis-style=none font-synthesis-small-caps=none = none | weight @font-synthesis-weight=auto || style @font-synthesis-style=auto || small-caps @font-synthesis-small-caps=auto
+font-variant : font-variant-ligatures font-variant-caps font-variant-alternates font-variant-numeric font-variant-east-asian font-variant-position font-variant-emoji = normal | @font-variant-ligatures none | @font-variant-ligatures <common-ligatures> || @font-variant-ligatures <discretionary-ligatures> || @font-variant-ligatures <historical-ligatures> || @font-variant-ligatures <contextual> || @font-variant-caps <caps> || @font-variant-alternates <alternate> || @font-variant-alternates <alternate> || @font-variant-alternates <alternate> || @font-variant-alternates <alternate> || @font-variant-alternates <alternate> || @font-variant-alternates <alternate> || @font-variant-alternates <alternate> || @font-variant-numeric <figures> || @font-variant-numeric <figure-spacing> || @font-variant-numeric <fractions> || @font-variant-numeric ordinal || @font-variant-numeric slashed-zero || @font-variant-east-asian <east-asian-variant> || @font-variant-east-asian <east-asian-width> || @font-variant-east-asian ruby || @font-variant-position [ sub | super ] || @font-variant-emoji [ text | emoji | unicode ]
+gap : row-gap column-gap = sides
+grid : grid-template-rows grid-template-columns grid-template-areas grid-auto-flow grid-auto-rows grid-auto-columns = [ [ auto-flow && dense ] @grid-auto-flow=dense | auto-flow @grid-auto-flow=row ] <'grid-auto-rows'>? / <'grid-template-columns'> | <'grid-template-rows'> / [ [ auto-flow && dense ] @grid-auto-flow=column @grid-auto-flow=dense | auto-flow @grid-auto-flow=column ] <'grid-auto-columns'>? | <'grid-template'>
+grid-area : grid-row-start grid-column-start=? grid-row-end=? grid-column-end=? = <'grid-row-start'> [ / <'grid-column-start'> [ / <'grid-row-end'> [ / <'grid-column-end'> ]? ]? ]?
+grid-column : grid-column-start grid-column-end=? = <'grid-column-start'> [ / <'grid-column-end'> ]?
+grid-row : grid-row-start grid-row-end=? = <'grid-row-start'> [ / <'grid-row-end'> ]?
+grid-template : grid-template-rows grid-template-columns grid-template-areas = <'grid-template-rows'> / <'grid-template-columns'> | none | [ @grid-template-rows <names>? @grid-template-areas <string> [ @grid-template-rows <track-size> | @grid-template-rows=auto ] @grid-template-rows <names>? ]+ [ / @grid-template-columns <tracks> ]?
+inset : top right bottom left = sides
+inset-block : inset-block-start inset-block-end = sides
+inset-inline : inset-inline-start inset-inline-end = sides
+interest-delay : interest-delay-start interest-delay-end = sides
+list-style : list-style-position list-style-image list-style-type=? cfull keep=list-style-type = <'list-style-position'> || <'list-style-image'> || <'list-style-type'>
+margin : margin-top margin-right margin-bottom margin-left = sides
+margin-block : margin-block-start margin-block-end = sides
+margin-inline : margin-inline-start margin-inline-end = sides
+marker : marker-start marker-mid marker-end = all
+mask : mask-image -webkit-mask-position-x -webkit-mask-position-y mask-size mask-repeat mask-origin mask-clip=mask-origin mask-composite mask-mode = [ <'mask-image'> || <'mask-position'> [ / <'mask-size'> ]? || <'mask-repeat'> || <'mask-origin'> || <'mask-clip'> || <'mask-composite'> || <'mask-mode'> ]#
+mask-position : -webkit-mask-position-x -webkit-mask-position-y = [ @-webkit-mask-position-x [ [ left | right ] <lp> ] && @-webkit-mask-position-y [ [ top | bottom ] <lp> ] | @-webkit-mask-position-x [ <x-edge> | <lp> ] @-webkit-mask-position-y [ <y-edge> | <lp> ] | @-webkit-mask-position-x <x-edge> && @-webkit-mask-position-y <y-edge> | @-webkit-mask-position-y [ top | bottom ] @-webkit-mask-position-x=center | @-webkit-mask-position-x [ <x-edge> | <lp> ] @-webkit-mask-position-y=center ]#
+offset : offset-position offset-path offset-distance offset-rotate offset-anchor = [ <'offset-position'>? [ <'offset-path'> [ <'offset-distance'> || <'offset-rotate'> ]? ]? ]! [ / <'offset-anchor'> ]?
+outline : outline-color outline-style outline-width cfull = any
+overflow : overflow-x overflow-y = sides
+overscroll-behavior : overscroll-behavior-x overscroll-behavior-y = sides
+padding : padding-top padding-right padding-bottom padding-left = sides
+padding-block : padding-block-start padding-block-end = sides
+padding-inline : padding-inline-start padding-inline-end = sides
+page-break-after : break-after = always @break-after=page | @break-after [ auto | avoid | left | right ]
+page-break-before : break-before = always @break-before=page | @break-before [ auto | avoid | left | right ]
+page-break-inside : break-inside = @break-inside [ auto | avoid ]
+place-content : align-content justify-content=? = <'align-content'> <'justify-content'>?
+place-items : align-items justify-items = sides
+place-self : align-self justify-self = sides
+position-try : position-try-order position-try-fallbacks = <'position-try-order'>? <'position-try-fallbacks'>
+row-rule : row-rule-width row-rule-style row-rule-color = <rules>
+row-rule-inset : row-rule-inset-cap-start row-rule-inset-cap-end=row-rule-inset-cap-start row-rule-inset-junction-start=row-rule-inset-cap-start row-rule-inset-junction-end=? = <'row-rule-inset-cap-start'> <'row-rule-inset-cap-end'>? [ / <'row-rule-inset-junction-start'> <'row-rule-inset-junction-end'>? ]?
+row-rule-inset-cap : row-rule-inset-cap-start row-rule-inset-cap-end = sides
+row-rule-inset-end : row-rule-inset-cap-end row-rule-inset-junction-end = all
+row-rule-inset-junction : row-rule-inset-junction-start row-rule-inset-junction-end = sides
+row-rule-inset-start : row-rule-inset-cap-start row-rule-inset-junction-start = all
+rule : column-rule-width column-rule-style column-rule-color row-rule-width row-rule-style row-rule-color = both column-rule
+rule-break : row-rule-break column-rule-break = all
+rule-color : column-rule-color row-rule-color = all
+rule-inset : row-rule-inset-cap-start row-rule-inset-cap-end row-rule-inset-junction-start row-rule-inset-junction-end column-rule-inset-cap-start column-rule-inset-cap-end column-rule-inset-junction-start column-rule-inset-junction-end = both row-rule-inset
+rule-inset-cap : row-rule-inset-cap-start row-rule-inset-cap-end column-rule-inset-cap-start column-rule-inset-cap-end = both row-rule-inset-cap
+rule-inset-end : column-rule-inset-cap-end column-rule-inset-junction-end row-rule-inset-cap-end row-rule-inset-junction-end = all
+rule-inset-junction : row-rule-inset-junction-start row-rule-inset-junction-end column-rule-inset-junction-start column-rule-inset-junction-end = both row-rule-inset-junction
+rule-inset-start : column-rule-inset-cap-start column-rule-inset-junction-start row-rule-inset-cap-start row-rule-inset-junction-start = all
+rule-style : column-rule-style row-rule-style = all
+rule-visibility-items : column-rule-visibility-items row-rule-visibility-items = all
+rule-width : column-rule-width row-rule-width = all
+scroll-margin : scroll-margin-top scroll-margin-right scroll-margin-bottom scroll-margin-left = sides
+scroll-margin-block : scroll-margin-block-start scroll-margin-block-end = sides
+scroll-margin-inline : scroll-margin-inline-start scroll-margin-inline-end = sides
+scroll-padding : scroll-padding-top scroll-padding-right scroll-padding-bottom scroll-padding-left = sides
+scroll-padding-block : scroll-padding-block-start scroll-padding-block-end = sides
+scroll-padding-inline : scroll-padding-inline-start scroll-padding-inline-end = sides
+scroll-timeline : scroll-timeline-name scroll-timeline-axis = [ <'scroll-timeline-name'> <'scroll-timeline-axis'>? ]#
+text-box : text-box-trim=trim-both text-box-edge = normal @text-box-trim=none | <'text-box-trim'> || <'text-box-edge'>
+text-decoration : text-decoration-line text-decoration-thickness text-decoration-style text-decoration-color = any
+text-emphasis : text-emphasis-style text-emphasis-color cfull = any
+text-wrap : text-wrap-mode text-wrap-style = any
+timeline-trigger : timeline-trigger-name timeline-trigger-source timeline-trigger-activation-range-start timeline-trigger-activation-range-end=? timeline-trigger-active-range-start timeline-trigger-active-range-end=? keep=timeline-trigger-name = [ [ <'timeline-trigger-name'>? <'timeline-trigger-source'>? [ <'timeline-trigger-activation-range-start'> <'timeline-trigger-activation-range-end'>? ]? ]! [ / <'timeline-trigger-active-range-start'> <'timeline-trigger-active-range-end'>? ]? ]#
+timeline-trigger-activation-range : timeline-trigger-activation-range-start timeline-trigger-activation-range-end=? = [ <'timeline-trigger-activation-range-start'> <'timeline-trigger-activation-range-end'>? ]#
+timeline-trigger-active-range : timeline-trigger-active-range-start timeline-trigger-active-range-end=? = [ <'timeline-trigger-active-range-start'> <'timeline-trigger-active-range-end'>? ]#
+transition : transition-property transition-duration transition-timing-function transition-delay transition-behavior = [ @transition-property [ none | <custom-ident -normal -allow-discrete -linear -ease -ease-in -ease-out -ease-in-out -step-start -step-end> ] || <'transition-duration'> || <'transition-timing-function'> || <'transition-delay'> || <'transition-behavior'> ]#
+view-timeline : view-timeline-name view-timeline-axis view-timeline-inset = [ <'view-timeline-name'> [ <'view-timeline-axis'> || <'view-timeline-inset'> ]? ]#
+white-space : white-space-collapse text-wrap-mode = normal | pre @white-space-collapse=preserve @text-wrap-mode=nowrap | pre-wrap @white-space-collapse=preserve | pre-line @white-space-collapse=preserve-breaks | <'white-space-collapse'> || <'text-wrap-mode'>
+
+<mq-length> = <zero> | <length>
+<mq-number> = <number>
+<mq-integer> = <integer>
+<mq-boolean> = <integer [0,1]>
+<mq-resolution> = <resolution [0,inf]>
+<anchored-fallback> = none | [ <dashed-ident> || <try-tactic> ] | any any | any <position-area> | <position-area> any | <position-area> | any
+<font-format> = collection | opentype | truetype | woff | woff2
+<font-tech> = features-opentype | features-aat | color-colrv0 | color-colrv1 | color-sbix | color-cbdt | variations | palettes
+<font-source> = <url> [ format( ^format [ <font-format> | <string> ] ) ]? [ tech( <font-tech># ) ]? | local( ^quoted <face-name> )
+<override> = normal | <percentage [0,inf]>
+<symbol> = <string> | <custom-ident>
+<range-bound> = infinite | <integer>
+<syntax-type> = <length>
+
+@counter-style/additive-symbols = ^descending [ <integer [0,inf]> && <symbol> ]#
+@counter-style/fallback = ^counter-style <custom-ident -none>
+@counter-style/negative = <symbol>{1,2}
+@counter-style/pad = <integer [0,inf]> && <symbol>
+@counter-style/prefix = <symbol>
+@counter-style/range = auto | [ ^ascending <range-bound>{2} ]#
+@counter-style/speak-as = auto | bullets | numbers | words | spell-out | ^counter-style <custom-ident -none>
+@counter-style/suffix = <symbol>
+@counter-style/symbols = <symbol>+
+@counter-style/system = cyclic | numeric | alphabetic | symbolic | additive | fixed [ <integer> | +1 ] | extends ^counter-style <custom-ident -none>
+@font-face/ascent-override = <override>
+@font-face/descent-override = <override>
+@font-face/font-display = auto | block | swap | fallback | optional
+@font-face/font-family = <face-name>
+@font-face/font-feature-settings = <'font-feature-settings'>
+@font-face/font-stretch = auto | <font-stretch-keyword> | <percentage [0,inf]>{1,2}s
+@font-face/font-style = auto | normal | italic | [ [ [ [ [ oblique <angle [-90,90]>{0,2}s ]~oblique_0deg ]~oblique_0rad ]~oblique_0grad ]~oblique_0turn ]=normal
+@font-face/font-variant = <'font-variant'>
+@font-face/font-variation-settings = <'font-variation-settings'>
+@font-face/font-weight = auto | normal | bold | <number [1,1000]>{1,2}s
+@font-face/line-gap-override = <override>
+@font-face/size-adjust = <percentage [0,inf]>
+@font-face/src = <font-sources>
+@font-face/unicode-range = <unicode-ranges>
+@font-palette-values/base-palette = light | dark | <integer [0,inf]>
+@font-palette-values/font-family = <face-name>#
+@font-palette-values/override-colors = [ <integer [0,inf]> ^absolute <color> ]#
+@property/inherits = true | false
+@property/syntax = <string>
+@view-transition/navigation = auto | none
+@view-transition/types = none | ^not-ua <custom-ident -none>+
+
+<@angle> = <angle>
+<@color> = <color>
+<@custom-ident> = <custom-ident>
+<@image> = <image>
+<@integer> = <integer>
+<@length> = <length>
+<@length-percentage> = <length-percentage>
+<@number> = <number>
+<@percentage> = <percentage>
+<@resolution> = <resolution [0,inf]>
+<@string> = <string>
+<@time> = <time>
+<@transform-function> = <transform-function>
+<@transform-list> = <transform-function>+
+<@url> = <url>

@@ -20,6 +20,8 @@
 
 #include "config.h"
 #include "JSDOMURL.h"
+
+#include "DesktopRealm.h"
 #include "BunClientData.h"
 
 #include "GeneratedObjectURLRegistry.h"
@@ -89,11 +91,32 @@ using JSDOMURLDOMConstructor = JSDOMConstructor<JSDOMURL>;
 
 /* Hash table for constructor */
 
+static JSC_DECLARE_HOST_FUNCTION(jsDOMURLConstructorFunction_createObjectURL);
+static JSC_DECLARE_HOST_FUNCTION(jsDOMURLConstructorFunction_revokeObjectURL);
+
+JSC_DEFINE_HOST_FUNCTION(jsDOMURLConstructorFunction_createObjectURL, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    if (!Bun::isDesktopRealm(globalObject)) [[likely]]
+        return Bun::Bindgen::Generated::ObjectURLRegistry::jsCreateObjectURL(globalObject, callFrame);
+    return Bun::desktopRealmCreateObjectURL(globalObject, callFrame->argument(0));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsDOMURLConstructorFunction_revokeObjectURL, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    if (!Bun::isDesktopRealm(globalObject) || !callFrame->argumentCount()) [[likely]]
+        return Bun::Bindgen::Generated::ObjectURLRegistry::jsRevokeObjectURL(globalObject, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    String url = callFrame->uncheckedArgument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    Bun::desktopRealmRevokeObjectURL(globalObject, url);
+    return encodedJSUndefined();
+}
+
 static const HashTableValue JSDOMURLConstructorTableValues[] = {
     { "parse"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsDOMURLConstructorFunction_parse, 1 } },
     { "canParse"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsDOMURLConstructorFunction_canParse, 1 } },
-    { "createObjectURL"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, Bun::Bindgen::Generated::ObjectURLRegistry::jsCreateObjectURL, 1 } },
-    { "revokeObjectURL"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, Bun::Bindgen::Generated::ObjectURLRegistry::jsRevokeObjectURL, 1 } },
+    { "createObjectURL"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsDOMURLConstructorFunction_createObjectURL, 1 } },
+    { "revokeObjectURL"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsDOMURLConstructorFunction_revokeObjectURL, 1 } },
 };
 
 size_t JSDOMURL::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
@@ -234,7 +257,14 @@ static inline JSValue jsDOMURL_originGetter(JSGlobalObject& lexicalGlobalObject,
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto& impl = thisObject.wrapped();
-    RELEASE_AND_RETURN(throwScope, (toJS<IDLUSVString>(lexicalGlobalObject, throwScope, impl.origin())));
+    auto origin = impl.origin();
+    if (origin == "null"_s) {
+        JSValue ofRegisteredScheme = Bun::desktopRealmOriginOf(thisObject.globalObject(), impl.href().string());
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (ofRegisteredScheme)
+            return ofRegisteredScheme;
+    }
+    RELEASE_AND_RETURN(throwScope, (toJS<IDLUSVString>(lexicalGlobalObject, throwScope, origin)));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsDOMURL_origin, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))

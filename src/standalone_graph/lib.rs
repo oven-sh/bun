@@ -19,6 +19,7 @@ pub use error::{Error, Result};
 #[path = "StandaloneModuleGraph.rs"]
 pub mod StandaloneModuleGraph;
 pub mod compiled_program;
+pub mod desktop;
 mod executable_file;
 pub mod executable_request;
 pub use compiled_program::{

@@ -12,6 +12,7 @@
 #include <JavaScriptCore/StringObject.h>
 #include <optional>
 #include <utility>
+#include <wtf/ScopedLambda.h>
 
 namespace Bun {
 template<> struct IDLHumanReadableName<Bindgen::IDLStrictNull> : BaseIDLHumanReadableName {
@@ -60,9 +61,23 @@ template<> struct IDLHumanReadableName<Bindgen::IDLStrictUTF8String> : BaseIDLHu
 };
 template<> struct IDLHumanReadableName<Bindgen::IDLLooseUTF8String> : IDLHumanReadableName<Bindgen::IDLStrictUTF8String> {};
 template<> struct IDLHumanReadableName<Bindgen::IDLRawString> : IDLHumanReadableName<Bindgen::IDLStrictUTF8String> {};
+template<Bindgen::WebString kind, bool nullToEmpty> struct IDLHumanReadableName<Bindgen::IDLWebString<kind, nullToEmpty>> : IDLHumanReadableName<Bindgen::IDLStrictUTF8String> {};
+template<typename IDL> struct IDLHumanReadableName<Bindgen::IDLStringImplOf<IDL>> : IDLHumanReadableName<Bindgen::IDLStrictUTF8String> {};
+template<typename IDL> struct IDLHumanReadableName<Bindgen::IDLAtomOf<IDL>> : IDLHumanReadableName<Bindgen::IDLStrictUTF8String> {};
 template<bool allowStringObject> struct IDLHumanReadableName<Bindgen::IDLStringView<allowStringObject>> : IDLHumanReadableName<Bindgen::IDLStrictUTF8String> {};
 template<bool allowShared> struct IDLHumanReadableName<Bindgen::IDLRawBufferSource<allowShared>> : BaseIDLHumanReadableName {
     static constexpr auto humanReadableName = std::to_array("ArrayBuffer or ArrayBufferView");
+};
+
+template<typename JSClass, bool allowShared> struct IDLHumanReadableName<Bindgen::IDLRawBuffer<JSClass, allowShared>> : BaseIDLHumanReadableName {
+    static constexpr auto humanReadableName = std::to_array("buffer");
+};
+template<typename IDL> struct IDLHumanReadableName<Bindgen::IDLSequenceList<IDL>> : BaseIDLHumanReadableName {
+    static constexpr auto humanReadableName = std::to_array("sequence");
+};
+template<typename IDL> struct IDLHumanReadableName<Bindgen::IDLSequenceVector<IDL>> : IDLHumanReadableName<Bindgen::IDLSequenceList<IDL>> {};
+template<typename Key, typename IDL> struct IDLHumanReadableName<Bindgen::IDLRecordList<Key, IDL>> : BaseIDLHumanReadableName {
+    static constexpr auto humanReadableName = std::to_array("record");
 };
 
 template<> struct IDLHumanReadableName<Bindgen::IDLRawCallable> : BaseIDLHumanReadableName {
@@ -169,6 +184,62 @@ private:
     JSC::EncodedJSValue m_values[count];
 };
 
+// The JS value that stands for a converted value: `bindgen::Element` in Rust. Generated code adds unions.
+inline JSC::JSValue asElement(JSC::VM&, JSC::JSValue value) { return value ? value : JSC::jsNull(); }
+inline JSC::JSValue asElement(JSC::VM&, JSC::JSCell* cell) { return cell ? JSC::JSValue(cell) : JSC::jsNull(); }
+inline JSC::JSValue asElement(JSC::VM&, bool value) { return JSC::jsBoolean(value); }
+inline JSC::JSValue asElement(JSC::VM& vm, JSStringAndImpl value)
+{
+    if (!value.string || value.string->tryGetValueImpl() == value.impl) [[likely]]
+        return asElement(vm, value.string);
+    return JSC::jsString(vm, WTF::String(value.impl));
+}
+template<typename T>
+    requires(std::is_arithmetic_v<T>)
+JSC::JSValue asElement(JSC::VM&, T value)
+{
+    return JSC::jsNumber(value);
+}
+template<typename T>
+    requires(std::is_enum_v<T>)
+JSC::JSValue asElement(JSC::VM&, T value)
+{
+    return JSC::jsNumber(static_cast<int32_t>(value));
+}
+template<typename T>
+JSC::JSValue asElement(JSC::VM& vm, const std::optional<T>& value)
+{
+    return value ? asElement(vm, *value) : JSC::jsNull();
+}
+
+// Empty if it threw.
+template<typename IDL, typename Ctx>
+ALWAYS_INLINE JSC::JSValue convertElement(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx)
+{
+    auto& vm = JSC::getVM(&globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    typename IDL::ImplementationType converted;
+    if (hasException(scope, Bun::convertIDLInto<IDL>(globalObject, value, ctx, converted))) [[unlikely]]
+        return {};
+    return asElement(vm, converted);
+}
+
+using ConvertElement = JSC::JSValue (*)(JSC::JSGlobalObject&, JSC::JSValue);
+template<typename IDL>
+JSC::JSValue convertElementOfList(JSC::JSGlobalObject& globalObject, JSC::JSValue value)
+{
+    static constexpr WebConversionContext ctx { "element"_s };
+    return convertElement<IDL>(globalObject, value, ctx);
+}
+// Empty if `value` is not iterable, or if it threw.
+JSC::JSValue iteratorMethodOf(JSC::JSGlobalObject&, JSC::JSValue);
+// Null if they threw.
+JSC::JSCellButterfly* createList(JSC::JSGlobalObject&, JSC::MarkedArgumentBuffer&);
+JSC::JSCellButterfly* listFromIterable(JSC::JSGlobalObject&, JSC::JSObject*, JSC::JSValue method, ConvertElement);
+void forEachInIterable(JSC::JSGlobalObject&, JSC::JSObject*, JSC::JSValue method, const WTF::ScopedLambda<void(JSC::JSValue)>&);
+WTF::String describeInstanceOf(WTF::ASCIILiteral className);
+JSC::JSCellButterfly* listFromRecord(JSC::JSGlobalObject&, JSC::JSObject*, ConvertElement key, ConvertElement value);
+
 // `b.rest`: the arguments of a call from `first` on. They stay in the frame of the caller unless one is converted.
 class RestArguments {
     WTF_FORBID_HEAP_ALLOCATION;
@@ -195,7 +266,34 @@ public:
         }
     }
 
+    // False if it threw.
+    template<typename IDL, typename Ctx>
+    ALWAYS_INLINE bool convertEach(JSC::JSGlobalObject& globalObject, Ctx& ctx)
+    {
+        auto scope = DECLARE_THROW_SCOPE(JSC::getVM(&globalObject));
+        for (size_t index = 0; index < m_size; ++index) {
+            JSC::JSValue converted = convertElement<IDL>(globalObject, at(index), ctx);
+            if (hasException(scope, !!converted)) [[unlikely]]
+                return false;
+            if (m_converted || converted != at(index)) [[unlikely]]
+                appendConverted(index, converted);
+        }
+        if (m_converted) [[unlikely]]
+            m_values = m_converted->data();
+        return true;
+    }
+
 private:
+    NEVER_INLINE void appendConverted(size_t index, JSC::JSValue value)
+    {
+        if (!m_converted) {
+            m_converted.emplace();
+            for (size_t i = 0; i < index; ++i)
+                m_converted->appendWithCrashOnOverflow(at(i));
+        }
+        m_converted->appendWithCrashOnOverflow(value);
+    }
+
     NEVER_INLINE void convertStringObjectsSlow(JSC::JSGlobalObject& globalObject)
     {
         auto scope = DECLARE_THROW_SCOPE(JSC::getVM(&globalObject));
@@ -349,6 +447,66 @@ template<> struct WebCore::Converter<Bun::Bindgen::IDLRawString> : Bun::DefaultT
     }
 };
 
+namespace Bun::Bindgen {
+// Null if they threw.
+JSC::JSString* toWebStringSlow(JSC::JSGlobalObject&, JSC::JSValue, WebString, bool nullToEmpty);
+JSStringAndImpl resolveString(JSC::JSGlobalObject&, JSC::JSString*);
+JSStringAndImpl atomizeString(JSC::JSGlobalObject&, JSC::JSString*);
+JSStringAndImpl atomLiteral(JSC::JSGlobalObject&, WTF::ASCIILiteral);
+}
+
+template<Bun::Bindgen::WebString kind, bool nullToEmpty>
+struct WebCore::Converter<Bun::Bindgen::IDLWebString<kind, nullToEmpty>> : Bun::DefaultContextConverter<Bun::Bindgen::IDLWebString<kind, nullToEmpty>> {
+    template<Bun::IDLConversionContext Ctx>
+    ALWAYS_INLINE static bool convertInto(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx&, JSC::JSString*& result)
+    {
+        if (kind == Bun::Bindgen::WebString::DOMString && value.isString()) [[likely]] {
+            result = JSC::asString(value);
+            return true;
+        }
+        result = Bun::Bindgen::toWebStringSlow(globalObject, value, kind, nullToEmpty);
+        return result;
+    }
+};
+
+template<typename IDL>
+struct WebCore::Converter<Bun::Bindgen::IDLStringImplOf<IDL>> : Bun::DefaultContextConverter<Bun::Bindgen::IDLStringImplOf<IDL>> {
+    template<Bun::IDLConversionContext Ctx>
+    ALWAYS_INLINE static bool convertInto(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx, Bun::Bindgen::JSStringAndImpl& result)
+    {
+        auto scope = DECLARE_THROW_SCOPE(JSC::getVM(&globalObject));
+        JSC::JSString* string;
+        if (Bun::Bindgen::hasException(scope, WebCore::Converter<IDL>::convertInto(globalObject, value, ctx, string))) [[unlikely]]
+            return false;
+        scope.release();
+        if (auto* impl = string->tryGetValueImpl()) [[likely]] {
+            result = { string, const_cast<WTF::StringImpl*>(impl) };
+            return true;
+        }
+        result = Bun::Bindgen::resolveString(globalObject, string);
+        return result.string;
+    }
+};
+
+template<typename IDL>
+struct WebCore::Converter<Bun::Bindgen::IDLAtomOf<IDL>> : Bun::DefaultContextConverter<Bun::Bindgen::IDLAtomOf<IDL>> {
+    template<Bun::IDLConversionContext Ctx>
+    ALWAYS_INLINE static bool convertInto(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx, Bun::Bindgen::JSStringAndImpl& result)
+    {
+        auto scope = DECLARE_THROW_SCOPE(JSC::getVM(&globalObject));
+        JSC::JSString* string;
+        if (Bun::Bindgen::hasException(scope, WebCore::Converter<IDL>::convertInto(globalObject, value, ctx, string))) [[unlikely]]
+            return false;
+        scope.release();
+        if (auto* impl = string->tryGetValueImpl(); impl && impl->isAtom()) [[likely]] {
+            result = { string, const_cast<WTF::StringImpl*>(impl) };
+            return true;
+        }
+        result = Bun::Bindgen::atomizeString(globalObject, string);
+        return result.string;
+    }
+};
+
 template<bool allowStringObject>
 struct WebCore::Converter<Bun::Bindgen::IDLStringView<allowStringObject>> : Bun::DefaultContextConverter<Bun::Bindgen::IDLStringView<allowStringObject>> {
     template<Bun::IDLConversionContext Ctx>
@@ -392,6 +550,95 @@ struct WebCore::Converter<Bun::Bindgen::IDLRawBufferSource<allowShared>> : Bun::
             ctx.throwTypeMustBe(globalObject, scope, "an ArrayBuffer or ArrayBufferView"_s);
         else
             Bun::Bindgen::throwNotUnsharedBufferSource(globalObject, scope, ctx);
+    }
+};
+
+template<typename JSClass, bool allowShared>
+struct WebCore::Converter<Bun::Bindgen::IDLRawBuffer<JSClass, allowShared>> : Bun::DefaultTryConverter<Bun::Bindgen::IDLRawBuffer<JSClass, allowShared>> {
+    template<Bun::IDLConversionContext Ctx>
+    static std::optional<JSC::JSValue> tryConvert(JSC::JSGlobalObject&, JSC::JSValue value, Ctx&)
+    {
+        auto* buffer = dynamicDowncast<JSClass>(value);
+        if (!buffer)
+            return std::nullopt;
+        if constexpr (!allowShared) {
+            if (buffer->isShared())
+                return std::nullopt;
+        }
+        return value;
+    }
+
+    template<Bun::IDLConversionContext Ctx>
+    static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
+    {
+        ctx.throwGenericTypeError(globalObject, scope, WTF::makeString(ctx.source(), " must be of type "_s, JSClass::info()->className));
+    }
+};
+
+template<typename IDL>
+struct WebCore::Converter<Bun::Bindgen::IDLSequenceList<IDL>> : Bun::DefaultTryConverter<Bun::Bindgen::IDLSequenceList<IDL>> {
+    template<Bun::IDLConversionContext Ctx>
+    static std::optional<JSC::JSCellButterfly*> tryConvert(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx&)
+    {
+        auto scope = DECLARE_THROW_SCOPE(JSC::getVM(&globalObject));
+        JSC::JSValue method = Bun::Bindgen::iteratorMethodOf(globalObject, value);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        if (!method)
+            return std::nullopt;
+        auto* list = Bun::Bindgen::listFromIterable(globalObject, JSC::asObject(value), method, Bun::Bindgen::convertElementOfList<IDL>);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        return list;
+    }
+
+    template<Bun::IDLConversionContext Ctx>
+    static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
+    {
+        ctx.throwTypeMustBe(globalObject, scope, "an iterable object"_s);
+    }
+};
+
+template<typename IDL>
+struct WebCore::Converter<Bun::Bindgen::IDLSequenceVector<IDL>> : Bun::DefaultTryConverter<Bun::Bindgen::IDLSequenceVector<IDL>> {
+    using Vector = typename Bun::Bindgen::IDLSequenceVector<IDL>::ImplementationType;
+
+    template<Bun::IDLConversionContext Ctx>
+    static std::optional<Vector> tryConvert(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx)
+    {
+        auto scope = DECLARE_THROW_SCOPE(JSC::getVM(&globalObject));
+        JSC::JSValue method = Bun::Bindgen::iteratorMethodOf(globalObject, value);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        if (!method)
+            return std::nullopt;
+        Vector result;
+        Bun::Bindgen::forEachInIterable(globalObject, JSC::asObject(value), method, [&](JSC::JSValue next) {
+            typename IDL::ImplementationType converted;
+            if (Bun::convertIDLInto<IDL>(globalObject, next, ctx, converted))
+                result.append(WTF::move(converted));
+        });
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        return result;
+    }
+
+    template<Bun::IDLConversionContext Ctx>
+    static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
+    {
+        ctx.throwTypeMustBe(globalObject, scope, "an iterable object"_s);
+    }
+};
+
+template<typename Key, typename IDL>
+struct WebCore::Converter<Bun::Bindgen::IDLRecordList<Key, IDL>> : Bun::DefaultContextConverter<Bun::Bindgen::IDLRecordList<Key, IDL>> {
+    template<Bun::IDLConversionContext Ctx>
+    static bool convertInto(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx, JSC::JSCellButterfly*& result)
+    {
+        auto scope = DECLARE_THROW_SCOPE(JSC::getVM(&globalObject));
+        if (!value.isObject()) [[unlikely]] {
+            ctx.throwTypeMustBe(globalObject, scope, "an object"_s);
+            return false;
+        }
+        scope.release();
+        result = Bun::Bindgen::listFromRecord(globalObject, JSC::asObject(value), Bun::Bindgen::convertElementOfList<Key>, Bun::Bindgen::convertElementOfList<IDL>);
+        return result;
     }
 };
 
@@ -456,7 +703,7 @@ struct WebCore::Converter<Bun::Bindgen::IDLRawInterface<JSClass>> : Bun::Default
     template<Bun::IDLConversionContext Ctx>
     static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
     {
-        ctx.throwTypeMustBe(globalObject, scope, WTF::makeString("an instance of "_s, JSClass::info()->className));
+        ctx.throwTypeMustBe(globalObject, scope, Bun::Bindgen::describeInstanceOf(JSClass::info()->className));
     }
 };
 

@@ -3840,6 +3840,12 @@ mod windows_impl {
         }
         Ok(())
     }
+    pub fn fsync(fd: Fd) -> Maybe<()> {
+        if bun_windows_sys::kernel32::FlushFileBuffers(fd.native()) == w::FALSE {
+            return Err(Error::from_win32(w::Win32Error::get(), Tag::fsync).with_fd(fd));
+        }
+        Ok(())
+    }
     /// `FSCTL_SET_SPARSE`: without it NTFS gives every byte below the end of a file real clusters.
     pub fn set_sparse(fd: Fd) -> Maybe<()> {
         w::sync_io::complete_overlapped(|ol| {
@@ -7838,6 +7844,51 @@ pub mod net {
                 )
             };
             (rc == 0).then_some(kind)
+        }
+
+        /// Whether the parent of this process made the other end of a local socket.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        pub fn is_from_parent(fd: Fd) -> bool {
+            let mut peer = libc::ucred {
+                pid: 0,
+                uid: 0,
+                gid: 0,
+            };
+            let mut len = size_of::<libc::ucred>() as socklen_t;
+            let (level, name) = (libc::SOL_SOCKET, libc::SO_PEERCRED);
+            // SAFETY: SO_PEERCRED writes at most `len` bytes into `peer`.
+            unsafe {
+                libc::getsockopt(
+                    fd.native(),
+                    level,
+                    name,
+                    (&raw mut peer).cast(),
+                    &raw mut len,
+                ) == 0
+                    && peer.pid == libc::getppid()
+                    && peer.uid == libc::geteuid()
+            }
+        }
+
+        #[cfg(target_os = "macos")]
+        pub fn is_from_parent(fd: Fd) -> bool {
+            let mut peer: libc::pid_t = 0;
+            let mut len = size_of::<libc::pid_t>() as socklen_t;
+            let (level, name) = (libc::SOL_LOCAL, libc::LOCAL_PEERPID);
+            let (mut user, mut group) = (0, 0);
+            // SAFETY: LOCAL_PEERPID writes at most `len` bytes into `peer`, and getpeereid(3) one id into each.
+            unsafe {
+                libc::getsockopt(
+                    fd.native(),
+                    level,
+                    name,
+                    (&raw mut peer).cast(),
+                    &raw mut len,
+                ) == 0
+                    && peer == libc::getppid()
+                    && libc::getpeereid(fd.native(), &raw mut user, &raw mut group) == 0
+                    && user == libc::geteuid()
+            }
         }
 
         pub fn is_connected(fd: Fd) -> bool {

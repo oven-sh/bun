@@ -21,6 +21,7 @@
 #include "config.h"
 #include "JSDOMFormData.h"
 
+#include "DesktopRealm.h"
 #include "IDLTypes.h"
 #include "JSDOMBinding.h"
 #include "JSDOMConstructor.h"
@@ -102,6 +103,10 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMFormDataDOMConstruc
     auto jsValue = toJSNewlyCreated<IDLInterface<DOMFormData>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, structure, WTF::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
+    if (!callFrame->argument(0).isUndefined()) [[unlikely]] {
+        Bun::desktopRealmFillFormData(castedThis->globalObject(), jsValue, callFrame->argument(0), callFrame->argument(1));
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
     return JSValue::encode(jsValue);
 }
 JSC_ANNOTATE_HOST_FUNCTION(JSDOMFormDataDOMConstructorConstruct, JSDOMFormDataDOMConstructor::construct);
@@ -201,6 +206,8 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_append2Body(JSC
     // A File appended without a new filename is stored as is. Anything else becomes a new File.
     if (argument2.value().isUndefined() && JSDOMFile__hasInstance(JSValue::encode(jsUndefined()), lexicalGlobalObject, JSValue::encode(argument1.value())))
         blobValue->setWrapper(asObject(argument1.value()));
+    else
+        Bun::desktopRealmTurnIntoFile(lexicalGlobalObject, argument1.value(), *blobValue, argument2.value().isUndefined() ? &filename : nullptr);
 
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.append(WTF::move(name), WTF::move(blobValue), WTF::move(filename)); })));
 }
@@ -367,6 +374,8 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_set2Body(JSC::J
     // A File appended without a new filename is stored as is. Anything else becomes a new File.
     if (argument2.value().isUndefined() && JSDOMFile__hasInstance(JSValue::encode(jsUndefined()), lexicalGlobalObject, JSValue::encode(argument1.value())))
         blobValue->setWrapper(asObject(argument1.value()));
+    else
+        Bun::desktopRealmTurnIntoFile(lexicalGlobalObject, argument1.value(), *blobValue, argument2.value().isUndefined() ? &filename : nullptr);
 
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.set(WTF::move(name), WTF::move(blobValue), WTF::move(filename)); })));
 }

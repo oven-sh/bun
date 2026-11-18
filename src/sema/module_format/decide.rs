@@ -8,7 +8,7 @@ use crate::bind::{Binding, Bound, CommonJsVariable, Decl, Parent, SymbolId};
 use crate::file_analysis::has_written_top_level_await;
 use crate::fold::{Decisions, FoldError, FoldErrorKind};
 use crate::hir::{
-    ExprId, File, Flags, FnBody, NodeData, PatId, PatKind, StmtId, StmtKind, VarKind,
+    ExprId, File, Flags, FnBody, NodeData, PatId, PatKind, ScriptOfPage, StmtId, StmtKind, VarKind,
     find_transpiled_mark, is_marked_as_commonjs,
 };
 use crate::import_sites::{ImportScan, is_runtime_import};
@@ -19,16 +19,19 @@ struct VariableUses {
     uses_require_or_path: bool,
 }
 
-pub(crate) fn find_marked_format(text: &[u8]) -> Option<ModuleFormat> {
-    let mark = find_transpiled_mark(text)?;
-    Some(match is_marked_as_commonjs(&text[mark]) {
+pub(crate) fn find_marked_format(hir: &File<'_>) -> Option<ModuleFormat> {
+    if hir.script_of_page == ScriptOfPage::Module {
+        return Some(ModuleFormat::Esm);
+    }
+    let mark = find_transpiled_mark(&hir.text)?;
+    Some(match is_marked_as_commonjs(&hir.text[mark]) {
         true => ModuleFormat::CommonJs,
         false => ModuleFormat::Esm,
     })
 }
 
 pub(crate) fn find_format_by_syntax(hir: &File<'_>) -> Option<ModuleFormat> {
-    if let Some(format) = find_marked_format(&hir.text) {
+    if let Some(format) = find_marked_format(hir) {
         return Some(format);
     }
     let is_export = |stmt| statement_esm_syntax(hir, stmt) == EsmSyntax::ExportOrTopLevelAwait;

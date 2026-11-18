@@ -203,6 +203,7 @@ use crate::timer::{DateHeaderTimer, EventLoopDelayMonitor};
 use bun_jsc::abort_signal::Timeout as AbortSignalTimeout;
 use bun_jsc::garbage_collection_controller::GarbageCollectionController;
 use bun_jsc::web_worker::WebWorker;
+use bun_web::exec::{Alarm, WebTask};
 
 // ════════════════════════════════════════════════════════════════════════════
 // Task dispatch
@@ -721,6 +722,10 @@ pub(crate) fn run_task(
             // `ptr` is the packed level (NOTE_MEMORYSTATUS_PRESSURE_* bits), not a pointer.
             crate::node::memory_pressure::emit(global, task.ptr() as usize as i32);
         }
+        task_tag::DesktopEventsTask => in_features!([Desktop], (global: &JSGlobalObject = global) {
+            crate::desktop::on_events(global);
+        }),
+        task_tag::WebTask => boxed_arm!(task, [Desktop], |steps: WebTask| { steps.run() }),
         // One feature for each kind of context a `NativePromiseContext` cell holds.
         task_tag::NativePromiseContextDeferredDerefTask => in_features!(
             [Serve, HtmlRewriter, S3Client],
@@ -833,7 +838,7 @@ fn run_task_cold(task: &Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 82,
+    task_tag::COUNT == 84,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1187,6 +1192,10 @@ unsafe fn __bun_io_pollable_on_io_error(
 /// `timer::ImmediateObject`, and the queue's ref comes with it.
 #[unsafe(no_mangle)]
 unsafe fn __bun_run_immediate_task(task: *mut (), vm: &VirtualMachine) -> bool {
+    if task == crate::desktop::tasks::PUMP {
+        in_features!([Desktop], (vm: &VirtualMachine = vm) { crate::desktop::tasks::pump(vm) });
+        return false;
+    }
     // SAFETY: per fn contract — the only producer (`TimerObjectInternals::init`)
     // stores a `*mut crate::timer::ImmediateObject`, so the cast is the identity.
     let queued = unsafe { bun_ptr::RefPtr::from_raw(task.cast::<crate::timer::ImmediateObject>()) };
@@ -1203,6 +1212,9 @@ unsafe fn __bun_run_immediate_task(task: *mut (), vm: &VirtualMachine) -> bool {
 /// `RuntimeState` is still installed.
 #[unsafe(no_mangle)]
 unsafe fn __bun_cancel_pending_immediate(task: *mut (), vm: &VirtualMachine) {
+    if task == crate::desktop::tasks::PUMP {
+        return crate::desktop::tasks::release_pump(vm);
+    }
     // SAFETY: per fn contract — the only producer (`TimerObjectInternals::init`)
     // stores a `*mut crate::timer::ImmediateObject`, so the cast is the identity.
     let queued = unsafe { bun_ptr::RefPtr::from_raw(task.cast::<crate::timer::ImmediateObject>()) };
@@ -1311,6 +1323,16 @@ pub(crate) unsafe fn fire_timer(
                 event_loop_timer,
                 |c, _now, vm| AbortSignalTimeout::run(c, vm)
             )
+        }
+        EventLoopTimerTag::Ui => {
+            in_features!([Desktop], (t: *mut EventLoopTimer = t) -> JsResult<()> {
+                // SAFETY: per fn contract.
+                unsafe { crate::desktop::fire_timer(t) };
+                Ok(())
+            })
+        }
+        EventLoopTimerTag::WebAlarm => {
+            feature_timer_arm!([Desktop], Alarm, timer, |c, _now, _vm| (*c).fire())
         }
         EventLoopTimerTag::WorkerWaitsForRoom => {
             feature_timer_arm!([WorkerConstructor], WebWorker, room_timer, |c, _now, vm| {
@@ -1741,6 +1763,8 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         }
         task_tag::PosixSignalTask => release!(PosixSignalTask),
         task_tag::MemoryPressureTask => release!(crate::node::memory_pressure::MemoryPressureTask),
+        task_tag::DesktopEventsTask => {}
+        task_tag::WebTask => release_boxed_in!([Desktop], WebTask),
         task_tag::ProcessWaiterThreadTask => {
             #[cfg(not(windows))]
             release_boxed_in!([ChildProcess], ProcessWaiterThreadTask<Process>);

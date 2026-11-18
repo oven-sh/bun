@@ -33,6 +33,16 @@ impl Default for ObjectURLRegistry {
 /// into any VM.
 pub(crate) struct Entry {
     blob: Blob,
+    owner: Owner,
+}
+
+#[derive(PartialEq, Eq)]
+pub(crate) enum Owner {
+    Program,
+    /// The URL is `blob:<origin>/<uuid>`.
+    Origin(Box<[u8]>),
+    /// There is no URL.
+    Message,
 }
 
 const _: fn() = || {
@@ -41,18 +51,18 @@ const _: fn() = || {
 };
 
 impl Entry {
-    pub(crate) fn init(blob: &Blob) -> Box<Entry> {
+    pub(crate) fn init(blob: &Blob, owner: Owner) -> Box<Entry> {
         let blob = blob.dupe_with_content_type(true);
         blob.global_this.set(core::ptr::null());
         blob.name.with_mut(|name| name.make_thread_shareable());
-        Box::new(Entry { blob })
+        Box::new(Entry { blob, owner })
     }
 }
 
 impl ObjectURLRegistry {
-    pub(crate) fn register(&self, vm: &VirtualMachine, blob: &Blob) -> UUID {
+    pub(crate) fn register(&self, vm: &VirtualMachine, blob: &Blob, owner: Owner) -> UUID {
         let uuid = vm.rare_data().next_uuid();
-        let entry = Entry::init(blob);
+        let entry = Entry::init(blob, owner);
 
         self.map.lock().insert(uuid.bytes, entry);
         uuid
@@ -68,12 +78,36 @@ impl ObjectURLRegistry {
         pathname: &[u8],
         global_object: &JSGlobalObject,
     ) -> Option<Blob> {
-        let uuid = uuid_from_pathname(pathname)?;
+        self.dupe_of(
+            &Owner::Program,
+            uuid_from_pathname(pathname)?,
+            global_object,
+        )
+    }
+
+    pub(crate) fn dupe_of(
+        &self,
+        owner: &Owner,
+        uuid: UUID,
+        global_object: &JSGlobalObject,
+    ) -> Option<Blob> {
         let map = self.map.lock();
-        let entry = map.get(&uuid.bytes)?;
+        let entry = map.get(&uuid.bytes).filter(|it| it.owner == *owner)?;
         let blob = entry.blob.dupe_with_content_type(true);
         blob.global_this.set(global_object);
         Some(blob)
+    }
+
+    pub(crate) fn inspect<R>(
+        &self,
+        owner: &Owner,
+        uuid: UUID,
+        inspect: impl FnOnce(&Blob) -> R,
+    ) -> Option<R> {
+        let map = self.map.lock();
+        Some(inspect(
+            &map.get(&uuid.bytes).filter(|it| it.owner == *owner)?.blob,
+        ))
     }
 
     pub(crate) fn resolve_and_dupe_to_js(
@@ -88,18 +122,25 @@ impl ObjectURLRegistry {
     }
 
     pub(crate) fn revoke(&self, pathname: &[u8]) {
-        let Some(uuid) = uuid_from_pathname(pathname) else {
-            return;
-        };
-        // Box<Entry> dropped here
-        let _ = self.map.lock().remove(&uuid.bytes);
+        if let Some(uuid) = uuid_from_pathname(pathname) {
+            self.remove(&Owner::Program, uuid);
+        }
+    }
+
+    pub(crate) fn remove(&self, owner: &Owner, uuid: UUID) {
+        let mut map = self.map.lock();
+        if map.get(&uuid.bytes).is_some_and(|it| it.owner == *owner) {
+            map.remove(&uuid.bytes);
+        }
     }
 
     pub(crate) fn has(&self, pathname: &[u8]) -> bool {
         let Some(uuid) = uuid_from_pathname(pathname) else {
             return false;
         };
-        self.map.lock().contains_key(&uuid.bytes)
+        let map = self.map.lock();
+        map.get(&uuid.bytes)
+            .is_some_and(|it| it.owner == Owner::Program)
     }
 }
 
@@ -109,7 +150,7 @@ fn uuid_from_pathname(pathname: &[u8]) -> Option<UUID> {
 
 pub(crate) fn create_object_url(object: BlobOrBuildArtifact<'_>) -> bun_core::String {
     let registry = ObjectURLRegistry::singleton();
-    let uuid = registry.register(VirtualMachine::get(), object.blob());
+    let uuid = registry.register(VirtualMachine::get(), object.blob(), Owner::Program);
     bun_core::String::create_format(format_args!("blob:{}", uuid))
 }
 

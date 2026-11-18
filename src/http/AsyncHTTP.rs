@@ -145,6 +145,7 @@ fn make_client<'a>(
     HTTPClient {
         result_callback,
         method,
+        browser: None,
         header_entries,
         header_buf,
         url,

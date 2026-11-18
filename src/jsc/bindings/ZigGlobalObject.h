@@ -62,7 +62,9 @@ struct node_module;
 #include "DOMStructureSlot.h"
 #include "BunPlugin.h"
 #include "JSMockFunction.h"
-#include "InternalModuleRegistry.h"
+#include <JavaScriptCore/JSInternalFieldObjectImplInlines.h>
+#include "BunClientData.h"
+#include "_NativeModule.h"
 #include "headers-handwritten.h"
 #include "BunMarkdownTagStrings.h"
 #include "BunGlobalScope.h"
@@ -114,6 +116,8 @@ public:
     }
 
     static const JSC::ClassInfo s_info;
+    // Adds the names in ZigGlobalObject.lut.txt, which the global objects of the web do not have.
+    static const JSC::ClassInfo s_infoWithBunGlobals;
     // The one write hook that is not JSGlobalObject's own, GlobalScope::setPrototype(), leaves the decision to JSGlobalObject's.
     static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::WriteHooksHonorImmutableProperties;
     static const JSC::GlobalObjectMethodTable& globalObjectMethodTable();
@@ -664,6 +668,10 @@ public:
 
     void finishCreation(JSC::VM&);
 
+    void extendConsole(JSC::VM&, JSC::JSObject* console);
+    JSC::JSObject* natives();
+    static bool isNameOfNative(JSC::VM&, UniquedStringImpl*);
+
 private:
     void addBuiltinGlobals(JSC::VM&);
 
@@ -796,7 +804,7 @@ inline Zig::GlobalObject* getDefaultGlobalObject()
 Zig::GlobalObject* defaultGlobalObjectSlow(JSC::JSGlobalObject*);
 inline Zig::GlobalObject* defaultGlobalObject(JSC::JSGlobalObject* lexicalGlobalObject)
 {
-    if (lexicalGlobalObject && lexicalGlobalObject->classInfo() == Zig::GlobalObject::info()) [[likely]]
+    if (lexicalGlobalObject && lexicalGlobalObject->classInfo() == &Zig::GlobalObject::s_infoWithBunGlobals) [[likely]]
         return uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     return defaultGlobalObjectSlow(lexicalGlobalObject);
 }

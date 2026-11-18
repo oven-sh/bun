@@ -235,13 +235,21 @@ extern "C" fn Bun__fetchBuiltinModule(
     }
 }
 
-/// Under `bun test`, "vitest" and "@jest/globals" resolve to builtin modules.
+/// Under `bun test`, "vitest" and "@jest/globals" resolve to builtin modules. So does "electron" in a desktop app.
 #[inline]
 pub fn alias_cfg() -> bun_resolve_builtins::Cfg {
     bun_resolve_builtins::Cfg {
         rewrite_jest_for_tests: crate::virtual_machine::isBunTest
             .load(core::sync::atomic::Ordering::Relaxed),
+        has_modules_of_electron: crate::virtual_machine::standalone_module_graph()
+            .is_some_and(|graph| graph.loads_graphics_drivers()),
     }
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__isExecutableWithoutDesktop() -> bool {
+    crate::virtual_machine::standalone_module_graph()
+        .is_some_and(|graph| !graph.loads_graphics_drivers())
 }
 
 #[inline]

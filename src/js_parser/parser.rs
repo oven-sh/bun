@@ -1380,6 +1380,7 @@ impl Default for PropertyOpts {
 
 pub struct ScanPassResult<'a> {
     pub import_records: Vec<ImportRecord<'a>>,
+    pub has_export_statement: bool,
     pub(crate) named_imports: bun_ast::ast_result::NamedImports,
     pub(crate) used_symbols: ParsePassSymbolUsageMap,
 }
@@ -1396,6 +1397,7 @@ impl<'a> ScanPassResult<'a> {
     pub fn init() -> ScanPassResult<'a> {
         ScanPassResult {
             import_records: Vec::new(),
+            has_export_statement: false,
             named_imports: Default::default(),
             used_symbols: ParsePassSymbolUsageMap::default(),
         }
@@ -1413,6 +1415,7 @@ impl<'a> ScanPassResult<'a> {
                 .into_iter()
                 .map(|_| unreachable!())
                 .collect(),
+            has_export_statement: false,
             named_imports: self.named_imports,
             used_symbols: self.used_symbols,
         }

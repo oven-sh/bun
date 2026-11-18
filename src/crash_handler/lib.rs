@@ -819,6 +819,47 @@ mod draft {
                 {
                     let _panic_guard = PANIC_MUTEX.lock();
 
+                    #[cfg(unix)]
+                    if let Some(record) = RECORDER.get() {
+                        let context = match seed {
+                            TraceSeed::FaultOnStack { context, .. } => Some(context),
+                            _ => None,
+                        };
+                        let fault = match reason {
+                            CrashReason::SegmentationFault(address)
+                            | CrashReason::BusError(address) => Some(address),
+                            _ => None,
+                        };
+                        record(reason.terminal_signal(), fault, context, &reason);
+                    }
+                    #[cfg(windows)]
+                    if let Some(record) = RECORDER.get() {
+                        use bun_sys::windows::*;
+                        const STATUS_FATAL_APP_EXIT: u32 = 0x4000_0015;
+                        let (code, fault) = match reason {
+                            CrashReason::SegmentationFault(address) => {
+                                (EXCEPTION_ACCESS_VIOLATION, Some(address))
+                            }
+                            CrashReason::IllegalInstruction(_) => {
+                                (EXCEPTION_ILLEGAL_INSTRUCTION, None)
+                            }
+                            CrashReason::DatatypeMisalignment => {
+                                (EXCEPTION_DATATYPE_MISALIGNMENT, None)
+                            }
+                            CrashReason::StackOverflow => (EXCEPTION_STACK_OVERFLOW, None),
+                            _ => (STATUS_FATAL_APP_EXIT, None),
+                        };
+                        match seed {
+                            TraceSeed::Fault {
+                                context: Some(context),
+                                ..
+                            } => record(code as core::ffi::c_int, fault, Some(context), &reason),
+                            _ => bun_core::debug::with_current_context(|_, context| {
+                                record(code as core::ffi::c_int, fault, Some(context), &reason)
+                            }),
+                        }
+                    }
+
                     // Use an raw unbuffered writer to stderr to avoid losing information on
                     // panic in a panic. There is also a possibility that `Output` related code
                     // is not configured correctly, so that would also mask the message.
@@ -1546,7 +1587,7 @@ mod draft {
             mc.map(Self)
         }
 
-        pub(crate) fn mcontext(self) -> &'a MContext {
+        pub fn mcontext(self) -> &'a MContext {
             self.0
         }
 
@@ -3371,6 +3412,25 @@ mod draft {
     pub fn suppress_reporting() {
         suppress_core_dumps_if_necessary();
         SUPPRESS_REPORTING.store(true, Ordering::Relaxed);
+    }
+
+    /// For a program whose crashes are the business of whoever ships it.
+    pub fn never_report() {
+        SUPPRESS_REPORTING.store(true, Ordering::Relaxed);
+    }
+
+    /// Gets the signal that ends the process, the address that could not be accessed, the registers at that point, and the
+    /// reason. It may be called from the handler of a signal. On Windows the first is the code of an exception.
+    pub type Recorder =
+        fn(core::ffi::c_int, Option<usize>, Option<SignalContext<'_>>, &dyn fmt::Display);
+
+    #[cfg(windows)]
+    pub type SignalContext<'a> = &'a bun_sys::windows::CONTEXT;
+
+    static RECORDER: std::sync::OnceLock<Recorder> = std::sync::OnceLock::new();
+
+    pub fn record_crashes_with(recorder: Recorder) {
+        let _ = RECORDER.set(recorder);
     }
 
     // src/ptr/ref_count.rs:16). Re-export so `bun_crash_handler::StoredTrace` paths

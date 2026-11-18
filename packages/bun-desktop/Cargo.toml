@@ -1,0 +1,26 @@
+[package]
+name = "bun_desktop"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Not a member of Bun's workspace: it has its own lockfile, unwinds on panic, and is loaded with dlopen.
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[profile.dev]
+opt-level = 1
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+strip = "symbols"

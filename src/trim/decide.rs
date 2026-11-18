@@ -234,6 +234,9 @@ fn retain_all_a_program_can_enter(retained: &mut RetainedFeatures, input: &TrimI
         if !builds_executables && !can_enter_test_runner(input.used) {
             features.subtract(&FeatureSet::from_features(&[Feature::Test]));
         }
+        if !builds_executables {
+            features.subtract(&FeatureSet::from_features(&[Feature::Desktop]));
+        }
     }
     retained.insert_set(&features, RetainReason::NotRequested);
 }
@@ -248,7 +251,7 @@ pub fn features_retained_by_name() -> FeatureSet {
 }
 
 fn features_reachable_by(cause: UnseenCodeCause) -> FeatureSet {
-    let program_features = Feature::all_entered_from(EnteredFrom::Program);
+    let program_features = Feature::all_open_to_any_code();
     match cause {
         UnseenCodeCause::ProgramNotCompiled => {
             let mut features = program_features;
@@ -476,7 +479,11 @@ mod tests {
             for &feature in Feature::ALL {
                 let is_removed = decision.unused.contains(feature);
                 match feature.entered_from() {
-                    EnteredFrom::Program => assert!(!is_removed, "{cause:?} {feature:?}"),
+                    EnteredFrom::Program => assert_eq!(
+                        is_removed,
+                        feature == Feature::Desktop,
+                        "{cause:?} {feature:?}"
+                    ),
                     EnteredFrom::CommandLine => assert!(is_removed, "{cause:?} {feature:?}"),
                     EnteredFrom::CompiledCode => assert_eq!(
                         is_removed,
@@ -794,6 +801,7 @@ mod tests {
                 let is_expected = match cause {
                     UnseenCodeCause::ProgramNotCompiled => false,
                     _ if feature.entered_from() == EnteredFrom::CompiledCode => !keeps_compilers,
+                    _ if feature == Feature::Desktop => !keeps_compilers,
                     _ => {
                         outside.contains(feature)
                             && !(keeps_compilers && ENTERED_BY_BUNDLER.contains(&feature))
@@ -828,6 +836,33 @@ mod tests {
             decide_request(&used, &template).unused,
             Feature::all_outside_compiled_programs()
         );
+    }
+
+    #[test]
+    fn desktop_stays_for_its_option_and_for_executables_that_program_builds() {
+        let keeps = |used: &UsedFeatures, request: &TrimRequest| {
+            !(decide_request(used, request).unused).contains(Feature::Desktop)
+        };
+        for feature in [
+            Feature::Sql,
+            Feature::ShadowRealm,
+            Feature::WorkerConstructor,
+        ] {
+            assert!(
+                !keeps(&using(&[feature]), &TrimRequest::default()),
+                "{feature:?}"
+            );
+        }
+        assert!(keeps(&using(&[Feature::Bundler]), &TrimRequest::default()));
+        for cause in UnseenCodeCause::ALL {
+            let used = UsedFeatures::with_cause(cause);
+            assert!(!keeps(&used, &removing_unused()), "{cause:?}");
+        }
+        let option = RuntimeRequirement::Feature(Feature::Desktop);
+        for request in [TrimRequest::default(), removing_unused()] {
+            let decision = decide_with_option(option, &request);
+            assert!(!decision.unused.contains(Feature::Desktop));
+        }
     }
 
     #[test]
@@ -1091,7 +1126,7 @@ mod tests {
 
     #[test]
     fn runtime_code_option_retains_program_features() {
-        let program_features = Feature::all_entered_from(EnteredFrom::Program);
+        let program_features = Feature::all_open_to_any_code();
         for requirement in [
             RuntimeRequirement::RuntimeCode,
             RuntimeRequirement::WholeRuntime,

@@ -154,7 +154,9 @@ impl Build<'_> {
                         steps.end("link stage: paths of entry points and folders");
                         let replaced = &loaded.contents.replaced_builtins;
                         debug_assert!(replaced.is_sorted_by(|left, right| left < right));
+                        let may_lack_bun = self.options.aot.has_realms_of_the_web;
                         program.replaceable_builtins = (replaced.iter())
+                            .filter(|&&number| may_lack_bun || number != BuiltinId::Bun.to_wire())
                             .map(|&number| ReplaceableBuiltin {
                                 member: BuiltinId::from_wire(number)
                                     .expect("the load lists members of the table"),
@@ -272,8 +274,12 @@ impl Build<'_> {
                         debug_assert_eq!(entry_points.len(), program.entries.len());
                         steps.end("link stage: built-ins that are replaced, names, stamps");
                         let listed_modules = (self.options.lists_modules).then(|| {
+                            let aliases = bun_resolve_builtins::Cfg {
+                                rewrite_jest_for_tests: runs_tests,
+                                has_modules_of_electron: self.options.aot.has_realms_of_the_web,
+                            };
                             let mut listed =
-                                collect_module_list(&loaded, &bound, &modules, runs_tests);
+                                collect_module_list(&loaded, &bound, &modules, aliases);
                             let embedded = self.provider.list_files_embedded_implicitly();
                             listed.add_embedded_files(&embedded, &self.options.load.project_root);
                             listed

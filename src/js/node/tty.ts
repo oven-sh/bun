@@ -23,6 +23,9 @@ const { validateInteger } = require("internal/validators");
 // going back to cooked never disturbs another one on the same terminal. Keep
 // that state per ReadStream rather than per process.
 const kRawModeState = Symbol("rawModeState");
+const kReader = Symbol("reader");
+const kBlocks = Symbol("blocks");
+const kUnrefed = Symbol("unrefed");
 
 type Environment = Record<string, string | undefined>;
 type DoneCallback = (error?: Error | null) => void;
@@ -36,6 +39,9 @@ declare global {
       $bunNativePtr?: $Bindgen.FileInternalReadableStreamSource;
       $start(): void;
       [kRawModeState]?: Uint8Array;
+      [kBlocks]?: boolean;
+      [kUnrefed]?: boolean;
+      [kReader]?: import("node:stream/web").ReadableStreamDefaultReader<Uint8Array>;
       ref(): this;
       unref(): this;
       setRawMode(flag: boolean): this;
@@ -74,6 +80,39 @@ function setUpReadStream() {
   return ReadStream;
 }
 
+async function readPolled(stream: $Node.TTYReadStream, size: number) {
+  let value: Uint8Array | undefined;
+  try {
+    let reader = stream[kReader];
+    if (!reader) {
+      const native = Bun.file(stream.fd!).stream();
+      stream.$bunNativePtr = native.$bunNativePtr as any;
+      reader = stream[kReader] = native.getReader();
+      if (stream[kUnrefed]) stream.$bunNativePtr!.updateRef(false);
+    }
+    ({ value } = await reader.read());
+  } catch (error: any) {
+    if (stream.destroyed) return;
+    // It cannot be polled: it blocks (ESPIPE, on macOS ENXIO), or kqueue refuses /dev/tty (EINVAL).
+    const code = error?.code;
+    if (code !== "ESPIPE" && code !== "ENXIO" && code !== "EINVAL") return stream.destroy(error);
+    stream[kBlocks] = true;
+    stream[kReader] = stream.$bunNativePtr = undefined;
+    return stream._read(size);
+  }
+  if (stream.destroyed) return;
+  try {
+    if (value) stream.bytesRead += value.length;
+    stream.push(value ?? null);
+  } catch (error) {
+    process.nextTick(rethrow, error);
+  }
+}
+
+function rethrow(error: unknown) {
+  throw error;
+}
+
 const prototypeOfReadStream = {
   get() {
     const Prototype = Object.create(require("internal/fs/streams").ReadStream.prototype);
@@ -85,6 +124,8 @@ const prototypeOfReadStream = {
       const source = this.$bunNativePtr;
       if (source?.updateRef) {
         source.updateRef(true);
+      } else if (this.isTTY) {
+        this[kUnrefed] = false;
       }
       return this;
     };
@@ -94,6 +135,8 @@ const prototypeOfReadStream = {
       const source = this.$bunNativePtr;
       if (source?.updateRef) {
         source.updateRef(false);
+      } else if (this.isTTY) {
+        this[kUnrefed] = true;
       }
       return this;
     };
@@ -147,7 +190,17 @@ const prototypeOfReadStream = {
       return this;
     };
 
+    if (process.platform !== "win32") {
+      // A non-blocking descriptor, as the master of a pty from node-pty, has to be polled.
+      Prototype._read = function (this: $Node.TTYReadStream, size: number) {
+        if (!this.isTTY || this[kBlocks])
+          return require("internal/fs/streams").ReadStream.prototype._read.$call(this, size);
+        readPolled(this, size);
+      };
+    }
+
     Prototype._destroy = function (this: $Node.TTYReadStream, err: Error | null, cb: DoneCallback) {
+      this[kReader]?.cancel().catch(() => {});
       if (isStdio(this.fd)) return cb(err);
       require("internal/fs/streams").ReadStream.prototype._destroy.$call(this, err, cb);
     };

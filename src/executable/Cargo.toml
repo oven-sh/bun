@@ -18,7 +18,11 @@ without_aot = ["dep:bun_aot_absent"]
 [dependencies]
 bun_aot = { workspace = true, features = ["linked_names", "linked_archive"], optional = true }
 bun_aot_absent = { workspace = true, optional = true }
+bun_dom.workspace = true
+bun_desktop.workspace = true
+bun_ui.workspace = true
 bun_runtime = { path = "../runtime" }
+bun_web.workspace = true
 
 [lints]
 workspace = true

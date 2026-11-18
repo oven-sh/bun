@@ -5,6 +5,7 @@
 #include <optional>
 #include <span>
 #include <utility>
+#include <JavaScriptCore/JSCellButterfly.h>
 #include <JavaScriptCore/ArgList.h>
 #include <JavaScriptCore/JSCJSValue.h>
 #include <JavaScriptCore/NativeFunction.h>
@@ -40,6 +41,16 @@ struct TrivialExtern {
 };
 
 template<> struct ExternTraits<bool> : TrivialExtern<bool> {};
+// `impl` lives for as long as `string` is on the stack.
+struct JSStringAndImpl {
+    JSC::JSString* string;
+    WTF::StringImpl* impl;
+};
+template<> struct ExternTraits<int8_t> : TrivialExtern<int8_t> {};
+template<> struct ExternTraits<int16_t> : TrivialExtern<int16_t> {};
+template<> struct ExternTraits<int64_t> : TrivialExtern<int64_t> {};
+template<> struct ExternTraits<float> : TrivialExtern<float> {};
+template<> struct ExternTraits<JSStringAndImpl> : TrivialExtern<JSStringAndImpl> {};
 template<> struct ExternTraits<uint8_t> : TrivialExtern<uint8_t> {};
 template<> struct ExternTraits<uint16_t> : TrivialExtern<uint16_t> {};
 template<> struct ExternTraits<int32_t> : TrivialExtern<int32_t> {};
@@ -47,6 +58,8 @@ template<> struct ExternTraits<uint32_t> : TrivialExtern<uint32_t> {};
 template<> struct ExternTraits<uint64_t> : TrivialExtern<uint64_t> {};
 template<> struct ExternTraits<double> : TrivialExtern<double> {};
 template<> struct ExternTraits<void*> : TrivialExtern<void*> {};
+template<> struct ExternTraits<JSC::JSObject*> : TrivialExtern<JSC::JSObject*> {};
+template<> struct ExternTraits<JSC::JSCellButterfly*> : TrivialExtern<JSC::JSCellButterfly*> {};
 template<> struct ExternTraits<JSC::JSString*> : TrivialExtern<JSC::JSString*> {};
 
 enum ExternNullPtr : uint8_t {};

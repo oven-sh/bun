@@ -10,7 +10,7 @@ import { addHostInstances } from "./host-instances";
 process.on("unhandledRejection", () => {});
 process.on("uncaughtException", () => {});
 
-const realm = new Realm(new Table(aotBuiltinEntries()));
+const realm = new Realm(new Table(aotBuiltinEntries()), { isOfThisBuild: true });
 await addLiveCandidates(realm);
 console.log(JSON.stringify(await addHostInstances(realm, candidatesForTheirClass, openersOfWhatTheLibraryHolds)));
 process.exit(0);

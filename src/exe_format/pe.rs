@@ -165,6 +165,7 @@ const IMAGE_SCN_MEM_READ: u32 = 0x4000_0000;
 
 // Directory indices and DLL characteristics
 const IMAGE_DIRECTORY_ENTRY_SECURITY: usize = 4;
+const IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG: usize = 10;
 const IMAGE_DLLCHARACTERISTICS_FORCE_INTEGRITY: u16 = 0x0080;
 
 pub const IMAGE_SUBSYSTEM_WINDOWS_GUI: u16 = 2;
@@ -603,6 +604,27 @@ impl PEFile {
     /// Set the Windows subsystem field in the optional header. Does not recompute the checksum.
     pub fn set_subsystem(&mut self, subsystem: u16) -> Result<(), Error> {
         self.get_optional_header_mut()?.subsystem = subsystem;
+        Ok(())
+    }
+
+    /// `/DEPENDENTLOADFLAG:0x800`, if there is a load configuration. Does not recompute the checksum.
+    pub fn import_from_system32_only(&mut self) -> Result<(), Error> {
+        const DEPENDENT_LOAD_FLAGS: u32 = 78;
+        const LOAD_LIBRARY_SEARCH_SYSTEM32: [u8; 2] = 0x800u16.to_le_bytes();
+        let directory =
+            self.get_optional_header_mut()?.data_directories[IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG];
+        if directory.size < DEPENDENT_LOAD_FLAGS + 2 {
+            return Ok(());
+        }
+        let address = directory.virtual_address.wrapping_add(DEPENDENT_LOAD_FLAGS);
+        let offset = (self.get_section_headers()?.iter())
+            .map(|it| (it, address.wrapping_sub(it.virtual_address)))
+            .find(|(it, within)| *within < it.size_of_raw_data)
+            .map(|(it, within)| it.pointer_to_raw_data as usize + within as usize)
+            .ok_or(Error::OutOfBounds)?;
+        (self.data.get_mut(offset..offset + 2))
+            .ok_or(Error::OutOfBounds)?
+            .copy_from_slice(&LOAD_LIBRARY_SEARCH_SYSTEM32);
         Ok(())
     }
 

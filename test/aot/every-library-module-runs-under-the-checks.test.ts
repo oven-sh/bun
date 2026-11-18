@@ -3,7 +3,7 @@
 // program. So it is tested here, once for all programs: every module of the library is run in an executable in which each such read asks whether the variable still is as it was born.
 // The modules come from the tables, not from a list in this file: whoever adds a module to the library has it run here, or is told that nothing draws it in.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { builtinModules } from "node:module";
 import { join, relative, sep } from "node:path";
@@ -49,6 +49,43 @@ const heldByNoExecutable = new Set<string>([
   "internal:streams/iter/transform",
 ]);
 
+/** Returns a line for each module that the executable holds. */
+async function runModules(names: string[], flags: string[], executable: string) {
+  const program = `import { aotRunEveryLibraryModule } from "bun:internal-for-testing";
+function name() {
+${names.map(name => `  require(${JSON.stringify(name)});`).join("\n")}
+}
+if (process.argv.length > 9) name();
+for (const line of aotRunEveryLibraryModule()) console.log(line);
+`;
+  using dir = tempDir("aot-every-library-module", { "app.js": program, "library": "the UI library" });
+  const cwd = String(dir);
+  const built = await run(
+    [
+      bunExe(),
+      "build",
+      "--compile",
+      "--aot",
+      "--aot-testing=CheckProofsAtRunTime",
+      "--aot-check=Validate",
+      ...flags,
+      "app.js",
+      "--outfile",
+      "app",
+    ],
+    cwd,
+    { ...env, BUN_DESKTOP_LIBRARY: join(cwd, "library") },
+  );
+  expect(built.stderr).not.toMatch(/^error\b/m);
+  expect(built.exitCode).toBe(0);
+
+  const { stdout, stderr, exitCode } = await run([join(cwd, executable)], cwd, env);
+  // "bun: internal AOT error: type check failed at node:path:34:5 (join)"
+  expect(stderr).not.toContain("internal AOT error");
+  expect(exitCode).toBe(0);
+  return stdout.trimEnd().split("\n");
+}
+
 test("every module of the library runs with each read of a variable that is stored first asked", async () => {
   const table = modulesOfLibrary();
   // Under the names that a program writes. A package of the library has its own.
@@ -59,39 +96,11 @@ test("every module of the library runs with each read of a variable that is stor
     if (name.startsWith("node:") || name.startsWith("bun:")) named.add(name);
     if (name.startsWith("thirdparty:")) named.add(packages[name] ?? name.slice("thirdparty:".length));
   }
-  const program = `import { aotRunEveryLibraryModule } from "bun:internal-for-testing";
-function name() {
-${[...named].map(name => `  require(${JSON.stringify(name)});`).join("\n")}
-}
-if (process.argv.length > 9) name();
-for (const line of aotRunEveryLibraryModule()) console.log(line);
-`;
-  using dir = tempDir("aot-every-library-module", { "app.js": program });
-  const cwd = String(dir);
-  const executable = join(cwd, isWindows ? "app.exe" : "app");
-  const built = await run(
-    [
-      bunExe(),
-      "build",
-      "--compile",
-      "--aot",
-      "--aot-testing=CheckProofsAtRunTime",
-      "--aot-check=Validate",
-      "app.js",
-      "--outfile",
-      executable,
-    ],
-    cwd,
-    env,
-  );
-  expect(built.stderr).not.toMatch(/^error\b/m);
-  expect(built.exitCode).toBe(0);
-
-  const { stdout, stderr, exitCode } = await run([executable], cwd, env);
-  // "bun: internal AOT error: type check failed at node:path:34:5 (join)"
-  expect(stderr).not.toContain("internal AOT error");
-  expect(exitCode).toBe(0);
-  const ran = stdout.trimEnd().split("\n");
+  const ran = await runModules([...named], [], isWindows ? "app.exe" : "app");
+  // Only an executable that is built with `--desktop` holds `bun:desktop`.
+  const left = [...named].filter(name => !ran.includes(name) && !ran.includes(`node:${name}`));
+  const inBundle = isMacOS ? "app.app/Contents/MacOS/app" : isWindows ? "app/app.exe" : "app.AppDir/AppRun";
+  ran.push(...(await runModules(left, ["--desktop", "--desktop-name=app"], inBundle)));
   expect(ran.filter(line => line.includes(" "))).toEqual([]);
   const hasRun = (name: string) =>
     ran.includes(name) || ran.includes(packages[name] ?? name.replace(/^thirdparty:/, ""));

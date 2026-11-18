@@ -21,6 +21,7 @@
 #include "root.h"
 #include "JSEvent.h"
 
+#include "DesktopRealm.h"
 #include "IDLTypes.h"
 #include "JSDOMAttribute.h"
 #include "JSDOMBinding.h"
@@ -189,7 +190,7 @@ const ClassInfo JSEvent::s_info = { "Event"_s, &Base::s_info, &JSEventTable, nul
 
 JSObject* JSEvent::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    return JSEventPrototype::create(vm, globalObject, globalObject.objectPrototype());
+    return JSEventPrototype::create(vm, globalObject, Bun::desktopRealmPrototypeAbove(&globalObject, "Event"_s));
 }
 
 JSValue JSEvent::getConstructor(VM& vm, const JSGlobalObject* globalObject)

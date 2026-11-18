@@ -41,6 +41,7 @@ export interface Section {
   exported?: true;
   live?: true;
   output?: string;
+  object?: string;
   foldedWith?: string[];
 }
 
@@ -83,7 +84,7 @@ export function graphOf(sections: Record<string, Section>): { graph: SectionGrap
     size,
     alignment: names.map(() => 16),
     output: details.map(section => section.output ?? ".text"),
-    object: names.map(() => "toy.o"),
+    object: details.map(section => section.object ?? "toy.o"),
     section: names.map(name => ".text." + name),
     successors: details.map(section => new Set((section.to ?? []).map(node))),
     roots: nodesWith("root"),

@@ -94,6 +94,7 @@ using namespace JSC;
     macro(format) \
     macro(globScan) \
     macro(globScanSync) \
+    macro(globals) \
     macro(handleEvent) \
     macro(hasWaitingResponses) \
     macro(headers) \
@@ -104,6 +105,7 @@ using namespace JSC;
     macro(hostname) \
     macro(httpOnly) \
     macro(ignoreBOM) \
+    macro(impl) \
     macro(importer) \
     macro(inherits) \
     macro(initialExports) \
@@ -122,6 +124,7 @@ using namespace JSC;
     macro(json) \
     macro(kResistStopPropagation) \
     macro(lazy) \
+    macro(lazyLoader) \
     macro(lightStandardStreams) \
     macro(lineText) \
     macro(loadEsmIntoCjs) \
@@ -210,6 +213,7 @@ using namespace JSC;
     macro(textEncoderStreamEncoder) \
     macro(toClass) \
     macro(toNamespacedPath) \
+    macro(transferrer) \
     macro(transform) \
     macro(type) \
     macro(updateRef) \
@@ -233,6 +237,7 @@ using namespace JSC;
     macro(exchange) \
     macro(hasWaitingResponses) \
     macro(heldChunk) \
+    macro(impl) \
     macro(isOpen) \
     macro(isPrepared) \
     macro(ownReadableState) \

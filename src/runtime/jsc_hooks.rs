@@ -37,7 +37,7 @@ use bun_jsc::{
 use bun_ast::ImportKind;
 use bun_ast::Loader;
 use bun_bundler::options::{self, ModuleType};
-use bun_resolve_builtins::Module as HardcodedModule;
+use bun_resolve_builtins::{Alias, Module as HardcodedModule};
 use bun_resolver::fs as Fs;
 use bun_resolver::node_fallbacks;
 use bun_resolver::{GlobalCache, ResultUnion as ResolveResultUnion};
@@ -575,9 +575,12 @@ fn load_preloads(vm: &VirtualMachine) -> bun_jsc::CrateResult<*mut JSInternalPro
             .strip_prefix(b"file://".as_slice())
             .unwrap_or(preload_slice);
 
-        // node: builtin specifiers bypass the file resolver — JSModuleLoader
+        // Builtin specifiers bypass the file resolver — JSModuleLoader
         // resolves them internally, so `bun --import node:*` works like Node's.
-        let module_name = if normalized.starts_with(b"node:") {
+        let is_builtin = normalized.starts_with(b"node:")
+            || (normalized.starts_with(b"bun:")
+                && Alias::has(normalized, bun_ast::Target::Bun, Default::default()));
+        let module_name = if is_builtin {
             bun_core::StringView::from_bytes(normalized)
         } else {
             // ── resolve ─────────────────────────────────────────────────────

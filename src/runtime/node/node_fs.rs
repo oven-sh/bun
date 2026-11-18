@@ -2091,6 +2091,26 @@ mod _async_tasks {
             Self::schedule(cx, args, vm, callback)
         }
 
+        #[cfg(unix)]
+        fn try_now(args: &A) -> Option<Maybe<R>> {
+            use NodeFSFunctionEnum as Op;
+            let opens = match F {
+                Op::Access | Op::Exists | Op::Lstat | Op::Readlink | Op::Stat => false,
+                Op::ReadFile | Op::Readdir | Op::Realpath | Op::RealpathNonNative => true,
+                _ => return None,
+            };
+            if !crate::desktop::quick_fs::is_on() {
+                return None;
+            }
+            let path = args.paths()[0]?.slice();
+            crate::desktop::quick_fs::try_now(path, || {
+                // Opening what exists can wait for the disk, a virus scanner or a permission prompt.
+                (!opens || !sys::exists(path)).then(|| {
+                    NodeFS::dispatch::<R, A, F>(&mut NodeFS::default(), args, Flavor::Async)
+                })
+            })
+        }
+
         /// [`Self::create`] for a caller that has no `Binding`.
         pub(crate) fn schedule(
             cx: &bun_jsc::JsThread<'_>,
@@ -2102,6 +2122,15 @@ mod _async_tasks {
             tracker.did_schedule(cx.global());
             let completion = FsCompletion::new(cx.global(), callback);
             let value = completion.value();
+            #[cfg(unix)]
+            if let Some(result) = Self::try_now(&args) {
+                let js = AsyncFSJs {
+                    completion,
+                    tracker,
+                };
+                bun_jsc::Job::<Self>::complete_later(cx, Self { result, args }, js);
+                return value;
+            }
             bun_jsc::Job::<Self>::schedule(
                 cx,
                 Self {

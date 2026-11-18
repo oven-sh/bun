@@ -1,6 +1,7 @@
 pub(crate) mod asked_by_test_runner;
 pub(crate) mod builtin_uses;
 pub(crate) mod bundled_commonjs;
+mod classic_scripts;
 pub(crate) mod compiler_declarations;
 pub(crate) mod contents;
 mod copied_factories;
@@ -11,6 +12,7 @@ pub(crate) mod fold_inputs;
 #[cfg(test)]
 mod format_grid;
 pub(crate) mod globals_of_a_window;
+pub(crate) mod globals_of_the_web;
 pub(crate) mod hoisted_mocks;
 pub(crate) mod host;
 pub(crate) mod import_functions;

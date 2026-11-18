@@ -44,20 +44,7 @@ public:
     // produced for the same path via `with {type: ...}` or require.extensions, and
     // lookup() doesn't compare the tag, so caching them would let a later
     // default-loader import of that path hit the wrong provider.
-    static bool isTagCacheable(SyntheticModuleType tag)
-    {
-        switch (tag) {
-        case SyntheticModuleType::JavaScript:
-        case SyntheticModuleType::PackageJSONTypeModule:
-        case SyntheticModuleType::PackageJSONTypeCommonJS:
-        // ESM tag is used by builtins that ship real JS source (e.g. bun:wrap).
-        // Their providers are constant across globals, so caching is safe.
-        case SyntheticModuleType::ESM:
-            return true;
-        default:
-            return false;
-        }
-    }
+    static bool isTagCacheable(SyntheticModuleType);
 
     // A key holds only the last provider inserted for it. It's a hit only if that provider was made from the same input:
     // the file or the same `pluginContents` and loader, with the same test globals ("bun:test" or "vitest").

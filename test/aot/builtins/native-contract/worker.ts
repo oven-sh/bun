@@ -1,7 +1,7 @@
 // One process of the test: bun --expose-internals worker.ts <request.json> <reports.jsonl>
 // A native function may end the process or never return, so none is called in the process of the test.
-import { aotBuiltinEntries } from "bun:internal-for-testing";
 import { ftruncateSync, openSync, readFileSync, writeFileSync, writeSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { addLiveCandidates } from "../differential/live";
 import { Realm } from "../differential/members";
 import { Table } from "../differential/table-description";
@@ -27,7 +27,8 @@ process.on("unhandledRejection", () => {});
 process.on("uncaughtException", () => {});
 
 sayCurrent(`${setUpPrefix}table`);
-const realm = new Realm(new Table(aotBuiltinEntries()));
+const dump = JSON.parse(readFileSync(join(dirname(requestPath), "table.json"), "utf8"));
+const realm = new Realm(new Table(dump), { isOfThisBuild: true });
 sayCurrent(`${setUpPrefix}live candidates`);
 await addLiveCandidates(realm);
 sayCurrent(`${setUpPrefix}host instances`);
@@ -36,7 +37,7 @@ sayCurrent(`${setUpPrefix}targets`);
 
 const traceSet = process.env.AOT_NATIVE_CONTRACT_TRACE ? (set: string) => writeFileSync(`${reportsPath}.set`, set) : undefined;
 const isFinished = new Set(finished);
-const targets = collectTargets(realm, new RegExp(filter));
+const targets = collectTargets(realm, new RegExp(filter), token => sayCurrent(`${setUpPrefix}targets of ${token}`));
 for (const [position, target] of targets.entries()) {
   if (position % count !== index || isFinished.has(target.name)) continue;
   sayCurrent(target.name);

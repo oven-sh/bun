@@ -35,6 +35,7 @@ pub(super) fn collect_entry_point_paths(
                 EntryPointKind::Main
                     | EntryPointKind::Additional
                     | EntryPointKind::LoadedByTestRunner
+                    | EntryPointKind::LoadedByPage
             ) && left_out.binary_search(&it.file).is_err()
         })
         .map(|it| {
@@ -46,6 +47,7 @@ pub(super) fn collect_entry_point_paths(
                     false => with_separators_of_host(to_native(file_name), cfg!(windows)),
                 },
                 public_path,
+                is_loaded_by_page: it.kind == EntryPointKind::LoadedByPage,
             }
         })
         .collect()
@@ -73,6 +75,7 @@ pub(super) fn collect_program_file_paths(
                     to_native(files.module(file).file_name()),
                     cfg!(windows),
                 ),
+                is_loaded_by_page: false,
             };
             (file, paths)
         })

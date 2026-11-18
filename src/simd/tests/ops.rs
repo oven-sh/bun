@@ -290,7 +290,7 @@ mod simd {
                 let mask = U8::from_array(bytes).simd_eq(1);
                 assert_eq!(mask.to_bitmask(), bits);
                 assert_eq!(mask.first_set(), bits.lowest_one().map(|it| it as usize));
-                let last = U8::position_near::<_, 1, false>([&bytes], |[v]| v.simd_eq(1));
+                let last = U8::rposition_near([&bytes], |[v]| v.simd_eq(1));
                 assert_eq!(last, bits.highest_one().map(|it| it as usize));
                 assert_eq!(
                     [mask.any(), mask.all()],

@@ -408,7 +408,7 @@ function testOnlySymbols(cfg: Config): string[] | undefined {
 
 /** One instruction in an inner loop. It has `#[target_feature]`, so rustc takes no more than `#[inline]` for it. */
 function inlinedSymbols(cfg: Config): string[] {
-  return cfg.hardened ? [] : ["*14brotli_matches4simd*6lookup*"];
+  return cfg.hardened ? [] : ["*6brotli7matches4simd*6lookup*"];
 }
 
 /**

@@ -85,8 +85,8 @@ mod simd {
                 );
                 assert_eq!(Vector::rposition(slice, test), last);
                 let near = [
-                    Vector::position_near::<S, 1, true>([slice], |[v]| test(v)),
-                    Vector::position_near::<S, 1, false>([slice], |[v]| test(v)),
+                    Vector::position_near([slice], |[v]| test(v)),
+                    Vector::rposition_near([slice], |[v]| test(v)),
                 ];
                 assert_eq!(near, [first, last]);
             }
@@ -182,9 +182,15 @@ mod simd {
         };
         let near = Vector::matches_near::<T, 2, FORWARD>(both, test);
         assert_eq!(check(near), len.min(block));
-        let near = Vector::position_near::<T, 2, FORWARD>([both[1], both[0]], test);
+        let near = match FORWARD {
+            true => Vector::position_near([both[1], both[0]], test),
+            false => Vector::rposition_near([both[1], both[0]], test),
+        };
         assert_eq!(near.map(turn), next(in_both, 0));
-        let near = Vector::position_near::<T, 1, FORWARD>([both[0]], |[v]| v.simd_eq(one));
+        let near = match FORWARD {
+            true => Vector::<T, N>::position_near([both[0]], |[v]| v.simd_eq(one)),
+            false => Vector::<T, N>::rposition_near([both[0]], |[v]| v.simd_eq(one)),
+        };
         assert_eq!(near.map(turn), next(in_a, 0));
         for from in [
             0,
@@ -309,7 +315,7 @@ mod simd {
         let (first, second) = from.split_at(len / 2);
         for (part, chunks) in [(first, len % 8), (second, usize::MAX)] {
             let (start, left) = (to.len(), Cell::new(chunks));
-            U8::append_chunks(to, part, |chunk| {
+            U8::append_chunks(part, to, |chunk| {
                 left.set(left.get().checked_sub(1)?);
                 Some(plus_one(chunk))
             });
@@ -623,6 +629,8 @@ mod simd {
         let ((slice, to), test) = (in_place(from), |v: U8| v.simd_eq(255));
         assert_eq!(U8::position(slice, test), None);
         assert_eq!(U8::rposition(slice, test), None);
+        assert_eq!(U8::position_near([slice; 2], |[a, b]| test(a & b)), None);
+        assert_eq!(U8::rposition_near([slice; 2], |[a, b]| test(a & b)), None);
         assert_eq!(U8::count(slice, test), 0);
         finds_no_255::<true>(slice);
         finds_no_255::<false>(slice);
@@ -636,7 +644,6 @@ mod simd {
         assert!(U8::matches_near::<_, 2, FORWARD>(pair, test).is_empty());
         let mut blocks = U8::matches_in::<_, 2, FORWARD>(pair, 1..usize::MAX, test);
         assert!(blocks.next().is_none());
-        assert_eq!(U8::position_near::<_, 2, FORWARD>(pair, test), None);
         let skipped = U8::skip::<_, FORWARD>(slice, 1, |v| [v.simd_eq(255); 2]);
         assert!(slice.len() - skipped < 4 * U8::LEN);
     }
@@ -664,12 +671,8 @@ mod simd {
             let last = |mut it: Matches| it.rfind(|&at| at == stays);
             let tests: [&dyn Fn([U8; 2]) -> _; 2] = [&|[v, _]| test(v), &|[_, v]| test(v)];
             for (pair, test) in tests.map(|test| ([slice; 2], test)) {
-                check(goes.min(stays), &|| {
-                    U8::position_near::<_, 2, true>(pair, test)
-                });
-                check(goes.max(stays), &|| {
-                    U8::position_near::<_, 2, false>(pair, test)
-                });
+                check(goes.min(stays), &|| U8::position_near(pair, test));
+                check(goes.max(stays), &|| U8::rposition_near(pair, test));
                 check(stays, &|| {
                     U8::matches_in::<_, 2, true>(pair, 0..usize::MAX, test).find_map(first)
                 });
@@ -711,8 +714,8 @@ mod simd {
             ],
         };
         let near = [
-            U8::position_near::<_, 2, true>(pair, both),
-            U8::position_near::<_, 2, false>(pair, both),
+            U8::position_near(pair, both),
+            U8::rposition_near(pair, both),
         ];
         let found = [
             [U8::position(slice, test), U8::rposition(slice, test)],

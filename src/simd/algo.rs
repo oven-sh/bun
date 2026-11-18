@@ -126,34 +126,39 @@ mod simd {
             Self::nearest_past::<S, FORWARD>(slice, seen, k, &test)
         }
 
-        /// The first or last `i` for which `test` holds for all `slices[..][i]`, with less code, if it is near.
-        pub fn position_near<S: Source<Lane = T>, const P: usize, const FORWARD: bool>(
+        /// The first `i` for which `test` holds for all `slices[..][i]`, with less code, if it is near.
+        pub fn position_near<S: Source<Lane = T>, const P: usize>(
             slices: [&[S]; P],
             test: impl Fn([Self; P]) -> Mask<T, N>,
         ) -> Option<usize> {
-            let (slices, find) = (of_same_len(slices), Isa::nearest_set::<T, N, FORWARD>);
-            let len = slices[0].len();
-            if FORWARD {
-                let Some(last) = len.checked_sub(N) else {
-                    return Self::nearest_in_short::<S, P, FORWARD>(slices, test);
-                };
-                let mut start = 0;
-                #[rustc_unroll(never)]
-                while start < last {
-                    let found = Self::nearest_at::<S, P, FORWARD>(slices, start, 1, &test);
-                    if found.is_some() {
-                        return found;
-                    }
-                    start += N;
+            let slices = of_same_len(slices);
+            let Some(last) = slices[0].len().checked_sub(N) else {
+                return Self::nearest_in_short::<S, P, true>(slices, test);
+            };
+            let mut start = 0;
+            #[rustc_unroll(never)]
+            while start < last {
+                let found = Self::nearest_at::<S, P, true>(slices, start, 1, &test);
+                if found.is_some() {
+                    return found;
                 }
-                return Self::nearest_at::<S, P, FORWARD>(slices, last, 1, &test);
+                start += N;
             }
+            Self::nearest_at::<S, P, true>(slices, last, 1, &test)
+        }
+
+        /// The last such `i`.
+        pub fn rposition_near<S: Source<Lane = T>, const P: usize>(
+            slices: [&[S]; P],
+            test: impl Fn([Self; P]) -> Mask<T, N>,
+        ) -> Option<usize> {
+            let slices = of_same_len(slices);
             let mut rest = slices;
             #[rustc_unroll(never)]
             while rest[0].len() > N {
                 let left = rest[0].len() - N;
                 let masks = Self::block(rest, left, 1, &test)?;
-                let found = find(&masks[..1], left);
+                let found = Isa::nearest_set::<T, N, false>(&masks[..1], left);
                 if found.is_some() {
                     return found;
                 }
@@ -161,10 +166,10 @@ mod simd {
                     *slice = slice.get(..left)?;
                 }
             }
-            if len < N {
-                return Self::nearest_in_short::<S, P, FORWARD>(slices, test);
+            if slices[0].len() < N {
+                return Self::nearest_in_short::<S, P, false>(slices, test);
             }
-            Self::nearest_at::<S, P, FORWARD>(slices, 0, 1, &test)
+            Self::nearest_at::<S, P, false>(slices, 0, 1, &test)
         }
 
         /// Each such `i` in the first or the last block.

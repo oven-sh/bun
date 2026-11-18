@@ -1,11 +1,12 @@
 //! A text in a text.
+use crate::{index_of_char, index_of_char_shared, last_index_of_char, last_index_of_char_shared};
 use bun_simd::{Int, Matches, SharedU8, Source};
 use core::ops::{ControlFlow, ControlFlow::*, Range};
 use core::ptr;
 
-pub(crate) trait Unit = Source<Lane: Ord + Into<u32>>;
+trait Unit = Source<Lane: Ord + Into<u32>>;
 /// For vectors of `N` and of `M` lanes.
-pub(crate) trait Fits<const N: usize, const M: usize> = Unit<Lane: Int<N> + Int<M>>;
+trait Fits<const N: usize, const M: usize> = Unit<Lane: Int<N> + Int<M>>;
 type SharedU16 = [SharedU8; 2];
 
 /// After so many bytes or false candidates, it can pay to look for better units than the ends.
@@ -160,7 +161,7 @@ fn differ_at<S: Unit>(a: &[S], b: &[S], i: usize) -> bool {
 
 /// `find` returns the first unit of what it found. Unlike an index, that takes one register.
 #[inline(always)]
-pub(crate) fn index_with<'a, S, const FORWARD: bool>(
+fn index_with<'a, S, const FORWARD: bool>(
     haystack: &'a [S],
     needle: &[S],
     find: impl FnOnce(&'a [S], &[S]) -> Option<&'a S>,
@@ -173,8 +174,55 @@ pub(crate) fn index_with<'a, S, const FORWARD: bool>(
     }
 }
 
+#[inline(always)]
+pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    match *needle {
+        [byte] => index_of_char(haystack, byte),
+        _ => index_with::<_, true>(haystack, needle, simd::memmem),
+    }
+}
+
+#[inline(always)]
+pub fn memmem_shared(haystack: &[SharedU8], needle: &[SharedU8]) -> Option<usize> {
+    match needle {
+        [byte] => index_of_char_shared(haystack, byte.get()),
+        _ => index_with::<_, true>(haystack, needle, simd::memmem_shared),
+    }
+}
+
+#[inline(always)]
+pub fn memrmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    match *needle {
+        [byte] => last_index_of_char(haystack, byte),
+        _ => index_with::<_, false>(haystack, needle, simd::memrmem),
+    }
+}
+
+#[inline(always)]
+pub fn memrmem_shared(haystack: &[SharedU8], needle: &[SharedU8]) -> Option<usize> {
+    match needle {
+        [byte] => last_index_of_char_shared(haystack, byte.get()),
+        _ => index_with::<_, false>(haystack, needle, simd::memrmem_shared),
+    }
+}
+
+#[inline(always)]
+pub fn memmem16_shared(haystack: &[[SharedU8; 2]], needle: &[[SharedU8; 2]]) -> Option<usize> {
+    index_with::<_, true>(haystack, needle, simd::memmem16_shared)
+}
+
+#[inline(always)]
+pub fn memrmem16(haystack: &[u16], needle: &[u16]) -> Option<usize> {
+    index_with::<_, false>(haystack, needle, simd::memrmem16)
+}
+
+#[inline(always)]
+pub fn memrmem16_shared(haystack: &[[SharedU8; 2]], needle: &[[SharedU8; 2]]) -> Option<usize> {
+    index_with::<_, false>(haystack, needle, simd::memrmem16_shared)
+}
+
 #[bun_simd::foreach_target]
-pub(crate) mod simd {
+mod simd {
     use isa::{U8, U16, Vector};
 
     #[inline(always)]
@@ -226,6 +274,16 @@ pub(crate) mod simd {
         }
     }
 
+    fn difference_by_vectors<S: Unit<Lane: Int<N>>, const N: usize, const FORWARD: bool>(
+        a: &[S],
+        b: &[S],
+    ) -> Option<usize> {
+        match FORWARD {
+            true => Vector::<_, N>::position_near([a, b], |[a, b]| a.simd_ne(b)),
+            false => Vector::<_, N>::rposition_near([a, b], |[a, b]| a.simd_ne(b)),
+        }
+    }
+
     /// The first or the last index at which they differ.
     #[inline(never)]
     fn difference<S: Fits<N, M>, const N: usize, const M: usize, const FORWARD: bool>(
@@ -233,12 +291,8 @@ pub(crate) mod simd {
         b: &[S],
     ) -> Option<usize> {
         match a.len().min(b.len()) {
-            len if len >= N => {
-                Vector::<_, N>::position_near::<S, 2, FORWARD>([a, b], |[a, b]| a.simd_ne(b))
-            }
-            len if len >= M => {
-                Vector::<_, M>::position_near::<S, 2, FORWARD>([a, b], |[a, b]| a.simd_ne(b))
-            }
+            len if len >= N => difference_by_vectors::<S, N, FORWARD>(a, b),
+            len if len >= M => difference_by_vectors::<S, M, FORWARD>(a, b),
             _ => difference_by_units::<S, FORWARD>(a, b),
         }
     }

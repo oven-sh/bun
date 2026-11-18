@@ -7,7 +7,7 @@ use bun_core::{self, Utf8Bytes};
 use bun_core::{declare_scope, scoped_log};
 use bun_semver::String as SemverString;
 use bun_simd::spare_capacity;
-use bun_simd_kernels::{Columns, MappingsState};
+use bun_simd_kernels::sourcemap::{Columns, MappingsState, count_delimiters, parse_mappings};
 
 use crate::vlq::decode as decode_vlq;
 use crate::{LineColumnOffset, Ordinal, ParseFail, ParseResult, ParsedSourceMap};
@@ -591,7 +591,7 @@ fn parse_simd(
         mapping.ensure_with_names()?;
     }
     // A comma or a semicolon follows each segment but the last.
-    mapping.reserve(bun_simd_kernels::count_mapping_delims(bytes) + 1)?;
+    mapping.reserve(count_delimiters(bytes) + 1)?;
 
     let (generated, to_generated) = spare_capacity(&mut mapping.generated);
     let (original, to_original) = spare_capacity(&mut mapping.original);
@@ -604,7 +604,7 @@ fn parse_simd(
         name_idx,
     };
     let mut state = MappingsState::default();
-    let (rows, resume_at) = bun_simd_kernels::parse_mappings(bytes, out, sources_count, &mut state);
+    let (rows, resume_at) = parse_mappings(bytes, out, sources_count, &mut state);
     to_generated.append(rows.generated);
     to_original.append(rows.original);
     to_src_idx.append(rows.src_idx);

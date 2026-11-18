@@ -1,6 +1,8 @@
 //! One pass over a source file, for the lexers.
-use crate::ByteSet;
+use crate::{ByteSet, count_char};
 use bun_simd::{Out, blocks};
+
+pub use simd::{odd_blocks, scanner_run_stops};
 
 /// From a bit, and the rows and columns that have it.
 const fn set_of(mut classes: &[(u32, u32, u32)]) -> ByteSet {
@@ -35,8 +37,17 @@ const STRING_STOP: ByteSet = ByteSet::new(&[
     0x80..=0xFF,
 ]);
 
+pub fn line_starts(text: &[u8]) -> Vec<u32> {
+    assert!(u32::try_from(text.len()).is_ok());
+    let room = count_char(text, b'\n') + 64;
+    let mut starts = Vec::with_capacity(1 + room);
+    starts.push(0);
+    bun_simd::extend_vec(&mut starts, room, |out| simd::line_starts(text, out));
+    starts
+}
+
 #[bun_simd::foreach_target]
-pub(crate) mod simd {
+mod simd {
     use crate::byte_set::simd::this_target::class;
     use isa::{I8, U8};
 

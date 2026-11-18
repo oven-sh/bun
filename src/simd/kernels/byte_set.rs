@@ -87,7 +87,7 @@ pub(crate) mod simd {
 
     #[export(up_to = avx2, up_to = neon)]
     pub fn far_prefix_len(set: &ByteSet, text: &[u8]) -> usize {
-        let outside = U8::position_near::<_, 1, true>([text], |[v]| class(v, set).simd_eq(0));
+        let outside = U8::position_near([text], |[v]| class(v, set).simd_eq(0));
         outside.unwrap_or(text.len())
     }
 
@@ -97,7 +97,7 @@ pub(crate) mod simd {
     pub fn prefix_len(set: &ByteSet, text: &[u8]) -> usize {
         let is_outside = |v| class(v, set).simd_eq(0);
         let Some((before_last, last)) = text.split_last_chunk() else {
-            let outside = U8::position_near::<_, 1, true>([text], |[v]| is_outside(v));
+            let outside = U8::position_near([text], |[v]| is_outside(v));
             return outside.unwrap_or(text.len());
         };
         let mut seen = 0;

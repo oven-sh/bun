@@ -40,17 +40,17 @@ pub(crate) fn last_index_of_pairs(haystack: &[SharedU8], needle: &[SharedU8]) ->
 
 // HOST_EXPORT(Bun__simd__swap16, c)
 pub(crate) fn swap16(bytes: &[AtomicU8]) {
-    kernels::bswap16_shared(bytes);
+    kernels::swap16_shared(bytes);
 }
 
 // HOST_EXPORT(Bun__simd__swap32, c)
 pub(crate) fn swap32(bytes: &[AtomicU8]) {
-    kernels::bswap32_shared(bytes);
+    kernels::swap32_shared(bytes);
 }
 
 // HOST_EXPORT(Bun__simd__swap64, c)
 pub(crate) fn swap64(bytes: &[AtomicU8]) {
-    kernels::bswap64_shared(bytes);
+    kernels::swap64_shared(bytes);
 }
 
 // HOST_EXPORT(Bun__simd__xxHash3, c)
@@ -60,47 +60,47 @@ pub(crate) fn xxhash3(bytes: &[SharedU8]) -> u64 {
 
 // HOST_EXPORT(Bun__simd__indexOfNonASCII8, c)
 pub(crate) fn index_of_non_ascii8(text: &[u8]) -> usize {
-    kernels::first_non_ascii8(text).unwrap_or(text.len())
+    kernels::index_of_non_ascii(text).unwrap_or(text.len())
 }
 
 // HOST_EXPORT(Bun__simd__indexOfNonASCII16, c)
 pub(crate) fn index_of_non_ascii16(text: &[u16]) -> usize {
-    kernels::first_non_ascii16(text).unwrap_or(text.len())
+    kernels::index_of_non_ascii16(text).unwrap_or(text.len())
 }
 
 // HOST_EXPORT(Bun__simd__indexOfASCIIUpper8, c)
 pub(crate) fn index_of_ascii_upper8(text: &[u8]) -> usize {
-    kernels::index_of_first_ascii_upper(text).unwrap_or(text.len())
+    kernels::index_of_ascii_upper(text).unwrap_or(text.len())
 }
 
 // HOST_EXPORT(Bun__simd__indexOfASCIIUpper16, c)
 pub(crate) fn index_of_ascii_upper16(text: &[u16]) -> usize {
-    kernels::index_of_first_ascii_upper16(text).unwrap_or(text.len())
+    kernels::index_of_ascii_upper16(text).unwrap_or(text.len())
 }
 
 // HOST_EXPORT(Bun__simd__indexOfANSIEscape8, c)
 pub(crate) fn index_of_ansi_escape8(text: &[u8]) -> usize {
-    kernels::index_of_escape_char8(text).unwrap_or(text.len())
+    kernels::index_of_ansi_escape(text).unwrap_or(text.len())
 }
 
 // HOST_EXPORT(Bun__simd__indexOfANSIEscape16, c)
 pub(crate) fn index_of_ansi_escape16(text: &[u16]) -> usize {
-    kernels::index_of_escape_char16(text).unwrap_or(text.len())
+    kernels::index_of_ansi_escape16(text).unwrap_or(text.len())
 }
 
 // HOST_EXPORT(Bun__simd__indexOfHTMLEscape8, c)
 pub(crate) fn index_of_html_escape8(text: &[u8]) -> usize {
-    kernels::index_of_html_escape_char8(text).unwrap_or(text.len())
+    kernels::index_of_html_escape(text).unwrap_or(text.len())
 }
 
 // HOST_EXPORT(Bun__simd__indexOfHTMLEscape16, c)
 pub(crate) fn index_of_html_escape16(text: &[u16]) -> usize {
-    kernels::index_of_html_escape_char16(text).unwrap_or(text.len())
+    kernels::index_of_html_escape16(text).unwrap_or(text.len())
 }
 
 // HOST_EXPORT(Bun__simd__htmlEscapeExtraLength8, c)
 pub(crate) fn html_escape_extra_length8(text: &[u8]) -> usize {
-    kernels::html_escape_extra_len8(text)
+    kernels::html_escape_extra_len(text)
 }
 
 // HOST_EXPORT(Bun__simd__htmlEscapeExtraLength16, c)

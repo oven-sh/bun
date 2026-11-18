@@ -1,6 +1,8 @@
 //! Words in as few bytes as they take.
 use bun_simd::{Out, Writer};
 
+pub use simd::{pack_words, unpack_words};
+
 /// LLVM knows its range even when it comes out of a table, so bounds checks on it go away.
 #[derive(Clone, Copy)]
 #[repr(u8)]
@@ -50,7 +52,7 @@ static PACKED: PackedWordTables = {
 };
 
 #[bun_simd::foreach_target]
-pub(crate) mod simd {
+mod simd {
     use isa::{I8, I16, I32, U8, U16, U32, x128};
 
     const GROUPS: usize = if U8::LEN > 32 { 8 } else { 4 };

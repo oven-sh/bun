@@ -2,6 +2,11 @@
 use bun_simd::Isa;
 use core::array::from_fn;
 
+pub use simd::{
+    count_printable_ascii16, visible_latin1_width, visible_latin1_width_exclude_ansi,
+    visible_utf16_width,
+};
+
 const BEL: u8 = 0x07;
 const CAN: u8 = 0x18;
 const SUB: u8 = 0x1A;
@@ -84,7 +89,7 @@ fn runs(starts: u64, ends: u64) -> (u64, u64) {
 }
 
 #[bun_simd::foreach_target]
-pub(crate) mod simd {
+mod simd {
     use isa::{I8, I16, Mask, U8, U16, x128};
 
     type Test = Mask<u8, { U8::LEN }>;

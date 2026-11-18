@@ -1,9 +1,15 @@
 //! From one buffer to another, or in place.
-use bun_simd::{Out, SharedOutU8, SharedU8, SharedWriter, Sink, Source};
+use bun_simd::{Out, SharedOutU8, SharedU8, SharedWriter, Sink};
 use core::sync::atomic::AtomicU8;
 
+pub use simd::{
+    copy_ascii_prefix_to_shared, copy_few_ascii_to_shared, copy_short_ascii_prefix_to_shared,
+    copy_u16_to_shared, copy_u16_to_u8, lower_ascii, lower_ascii16, swap16_shared, swap32_shared,
+    swap64_shared,
+};
+
 #[bun_simd::foreach_target]
-pub(crate) mod simd {
+mod simd {
     use isa::{I8, U8, U16, Vector};
 
     #[export]
@@ -27,17 +33,17 @@ pub(crate) mod simd {
     }
 
     #[export]
-    pub fn bswap16_shared(bytes: &[AtomicU8]) {
+    pub fn swap16_shared(bytes: &[AtomicU8]) {
         reverse_each::<2>(bytes);
     }
 
     #[export]
-    pub fn bswap32_shared(bytes: &[AtomicU8]) {
+    pub fn swap32_shared(bytes: &[AtomicU8]) {
         reverse_each::<4>(bytes);
     }
 
     #[export]
-    pub fn bswap64_shared(bytes: &[AtomicU8]) {
+    pub fn swap64_shared(bytes: &[AtomicU8]) {
         reverse_each::<8>(bytes);
     }
 
@@ -119,7 +125,7 @@ pub(crate) mod simd {
     fn append_low_bytes(from: &[u16], to: &mut impl Sink) {
         let from = &from[..from.len().min(to.remaining())];
         if from.len() >= U16::LEN {
-            return U8::append_chunks(to, from, |chunk| {
+            return U8::append_chunks(from, to, |chunk| {
                 let [low, high] = U16::load_or_zero(chunk);
                 Some(U8::narrow(low, high))
             });
@@ -140,49 +146,5 @@ pub(crate) mod simd {
         let mut to = SharedWriter::new(to);
         append_low_bytes(from, &mut to);
         to.len()
-    }
-
-    #[inline(always)]
-    fn fill<'a>(
-        mask: [u8; 4],
-        output: Out<'a, u8>,
-        input: &[impl Source<Lane = u8>],
-    ) -> &'a mut [u8] {
-        let output = output.take(input.len());
-        let (len, mask) = (output.len(), u32::from_le_bytes(mask));
-        let mask_at = |at: usize| U8::repeat(mask.rotate_right(8 * (at % 4) as u32).to_le_bytes());
-        if len >= U8::LEN {
-            return output.fill_chunks(input, |at, from| {
-                Some((U8::load(from) ^ mask_at(at)).to_array())
-            });
-        }
-        match U8::load_padded(&input[..len]) {
-            Some(it) => (it.lanes ^ mask_at(0)).store_partial(output),
-            None => &mut [],
-        }
-    }
-
-    #[export]
-    pub fn fill_with_mask<'a>(mask: [u8; 4], output: Out<'a, u8>, input: &[u8]) -> &'a mut [u8] {
-        fill(mask, output, input)
-    }
-
-    #[export]
-    pub fn fill_with_mask_from_shared<'a>(
-        mask: [u8; 4],
-        output: Out<'a, u8>,
-        input: &[SharedU8],
-    ) -> &'a mut [u8] {
-        fill(mask, output, input)
-    }
-
-    #[export]
-    pub fn mask_in_place(mask: [u8; 4], bytes: &mut [u8]) {
-        let (words, rest) = bytes.as_chunks_mut::<4>();
-        let masks = U8::repeat(mask);
-        U8::map_in_place(words.as_flattened_mut(), |v| v ^ masks);
-        for (byte, mask) in rest.iter_mut().zip(mask) {
-            *byte ^= mask;
-        }
     }
 }

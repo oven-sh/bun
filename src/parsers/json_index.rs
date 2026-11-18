@@ -1,11 +1,9 @@
 //! Stage 1 of the JSON parser: the streaming structural index of every token-significant byte,
 //! produced by the SIMD kernel or, for oddities and off native targets, the scalar indexer.
 use bun_ast::Range;
-use bun_simd_kernels::json_class as class;
+use bun_simd_kernels::json::{self, class};
 
-pub(crate) const FLAG_HAS_BACKSLASH_IN_STRING: u32 = 1 << 0;
-pub(crate) const FLAG_HAS_CTRL_IN_STRING: u32 = 1 << 1;
-pub(crate) const FLAG_ODDITY: u32 = 1 << 3;
+pub(crate) use json::{HAS_BACKSLASH_IN_STRING, HAS_CONTROL_IN_STRING};
 
 pub(crate) const SENTINELS: usize = 2;
 
@@ -36,7 +34,7 @@ pub struct StructuralIndex<'c> {
     done: bool,
 
     src_off: usize,
-    kernel_state: [u64; 3],
+    kernel_state: json::State,
 
     use_scalar: bool,
     s_i: usize,
@@ -76,7 +74,7 @@ impl<'c> StructuralIndex<'c> {
             index_error: None,
             done: false,
             src_off: 0,
-            kernel_state: [0; 3],
+            kernel_state: json::State::default(),
             use_scalar,
             s_i: 0,
             s_prev_scalar: false,
@@ -123,19 +121,18 @@ impl<'c> StructuralIndex<'c> {
             let word_off = self.src_off / 4096;
             let nwords = (chunk_len.div_ceil(64)).div_ceil(64);
             let (out, win) = bun_simd::spare_capacity(&mut self.win);
-            let (found, chunk_flags) = bun_simd_kernels::json_structural_index_chunk(
+            let Some((found, chunk_flags)) = json::index_chunk(
                 &self.contents[self.src_off..self.src_off + chunk_len],
                 self.src_off,
                 out,
                 &mut self.dirty[word_off..word_off + nwords],
                 &mut self.kernel_state,
-            );
-            if chunk_flags & FLAG_ODDITY != 0 {
+            ) else {
                 self.use_scalar = true;
                 self.s_skip = self.base + self.win.len();
                 self.dirty.fill(0);
                 return;
-            }
+            };
             win.append(found);
             self.flags |= chunk_flags;
             self.src_off += chunk_len;
@@ -216,11 +213,11 @@ impl<'c> StructuralIndex<'c> {
                             break;
                         }
                         if b == b'\\' {
-                            self.flags |= FLAG_HAS_BACKSLASH_IN_STRING;
+                            self.flags |= HAS_BACKSLASH_IN_STRING;
                             mark_dirty!(i);
                             if let Some(&e) = s.get(i + 1) {
                                 if e < 0x20 {
-                                    self.flags |= FLAG_HAS_CTRL_IN_STRING;
+                                    self.flags |= HAS_CONTROL_IN_STRING;
                                     mark_dirty!(i + 1);
                                 }
                             }
@@ -228,7 +225,7 @@ impl<'c> StructuralIndex<'c> {
                             continue;
                         }
                         if b < 0x20 {
-                            self.flags |= FLAG_HAS_CTRL_IN_STRING;
+                            self.flags |= HAS_CONTROL_IN_STRING;
                             mark_dirty!(i);
                         }
                         i += 1;
@@ -484,10 +481,7 @@ mod tests {
         assert!(x.is_dirty(7, 12));
         let p_start = src.find(&pad).unwrap();
         assert!(!x.is_dirty(p_start.next_multiple_of(64), src.len()));
-        assert_eq!(
-            x.flags & FLAG_HAS_BACKSLASH_IN_STRING,
-            FLAG_HAS_BACKSLASH_IN_STRING
-        );
+        assert_eq!(x.flags & HAS_BACKSLASH_IN_STRING, HAS_BACKSLASH_IN_STRING);
     }
 
     #[test]

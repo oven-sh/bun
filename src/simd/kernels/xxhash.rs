@@ -3,6 +3,8 @@ use crate::Byte;
 use bun_simd::{Isa, SharedU8, opaque};
 use core::slice;
 
+pub use simd::{xxhash3_64_shared, xxhash32, xxhash32_shared, xxhash64, xxhash64_shared};
+
 const PRIME32_1: u32 = 0x9E3779B1;
 const PRIME32_2: u32 = 0x85EBCA77;
 const PRIME32_3: u32 = 0xC2B2AE3D;
@@ -46,7 +48,7 @@ const UP_BY_32: [u8; 16] = [
 ];
 
 #[bun_simd::foreach_target]
-pub(crate) mod simd {
+mod simd {
     use isa::{U8, U64, Vector, x128};
 
     #[inline(always)]

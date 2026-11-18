@@ -255,7 +255,7 @@ function linesOf(file: Uint8Array): Buffer {
 }
 
 describe("Brotli: bun_simd runtime dispatch", () => {
-  // src/simd/kernels/brotli_entropy.rs is compiled for SSE4 and for AVX2 on x64, and for NEON on arm64. All
+  // src/simd/kernels/brotli/entropy.rs is compiled for SSE4 and for AVX2 on x64, and for NEON on arm64. All
   // three have to lead to the same bytes. These checksums are from google/brotli. The loops in src/brotli that read and
   // write bits are compiled with BMI2 and without.
   // Text takes turns with bytes of few, of many, and of scattered values, and some of it comes again with changes.
@@ -352,7 +352,7 @@ describe("Brotli: bun_simd runtime dispatch", () => {
 });
 
 describe("JPEG codec: bun_simd runtime dispatch", () => {
-  // src/simd/kernels/{jpeg,jpeg_colors}.rs are compiled for SSE4 and for AVX2 on x64, and for NEON on arm64. All
+  // src/simd/kernels/jpeg is compiled for SSE4 and for AVX2 on x64, and for NEON on arm64. All
   // three have to give the same bytes. These checksums are from libjpeg-turbo 3.2.0.
   // Two groups of 32 pixels and a remainder, and partial blocks on both edges.
   const width = 75;

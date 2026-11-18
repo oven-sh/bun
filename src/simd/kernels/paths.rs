@@ -2,6 +2,11 @@
 
 use bun_simd::Isa;
 
+pub use simd::{
+    count_slashes, index_of_untidy_slash, index_of_untidy_slash_or_non_ascii, last_index_of_slash,
+    last_index_of_slash_or_dot,
+};
+
 /// The lowest bit of `all` that is not in `others`.
 #[inline(always)]
 fn first_but(all: u64, others: u64) -> Option<u32> {
@@ -21,7 +26,7 @@ fn names(goes_on: u64, dots: u64, lane: usize) -> u64 {
 }
 
 #[bun_simd::foreach_target]
-pub(crate) mod simd {
+mod simd {
     use isa::{I8, U8};
 
     #[inline(always)]
@@ -83,20 +88,13 @@ pub(crate) mod simd {
     #[export(baseline)]
     #[inline]
     pub fn last_index_of_slash(path: &[u8]) -> Option<usize> {
-        U8::position_near::<_, 1, false>([path], |[v]| v.simd_eq(b'/'))
+        U8::rposition_near([path], |[v]| v.simd_eq(b'/'))
     }
 
     #[export(baseline)]
     #[inline]
     pub fn last_index_of_slash_or_dot(path: &[u8]) -> Option<usize> {
-        U8::position_near::<_, 1, false>([path], |[v]| (v | 1).simd_eq(b'/'))
-    }
-
-    #[export(baseline)]
-    #[inline]
-    pub fn common_prefix_length(a: &[u8], b: &[u8]) -> usize {
-        let differs = U8::position_near::<_, 2, true>([a, b], |[a, b]| a.simd_ne(b));
-        differs.unwrap_or_else(|| a.len().min(b.len()))
+        U8::rposition_near([path], |[v]| (v | 1).simd_eq(b'/'))
     }
 
     #[export(baseline)]

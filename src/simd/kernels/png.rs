@@ -3,14 +3,16 @@
 use bun_simd::{Isa, opaque};
 use core::hint::{black_box, select_unpredictable};
 
+pub use simd::filter_rgba;
+
 type Rgba = [u8; 4];
 
 const BLOCK: usize = 16;
 /// From a block that is not flat to the next look. A look at each block is hard to predict.
 const BUSY: usize = 4 * BLOCK;
 
-#[bun_simd::foreach_target]
-pub(crate) mod simd {
+#[bun_simd::foreach_target(avx2, sse4, neon, portable)]
+mod simd {
     use isa::x128::{I8, I16, U8, U16, U64};
 
     fn load_pixel<const BPP: usize>(pixel: [u8; BPP]) -> U8 {
@@ -24,7 +26,7 @@ pub(crate) mod simd {
     }
 
     /// Returns how far the bytes are from zero for each filter type. Panics unless `row` is shortest.
-    #[export(up_to = avx2, up_to = neon)]
+    #[export]
     pub fn filter_rgba(row: &[Rgba], above: &[Rgba], filtered: [&mut [Rgba]; 4]) -> [u64; 5] {
         let (len, [sub, up, average, paeth]) = (row.len(), filtered);
         let above = &above[..len];
@@ -151,7 +153,7 @@ pub(crate) mod simd {
         }
     }
 
-    #[export(up_to = avx2, up_to = neon)]
+    #[export]
     pub fn unfilter_up(row: &mut [u8], above: &[u8]) {
         isa::U8::zip_in_place(row, above, |x, b| x + b);
     }

@@ -33,7 +33,7 @@ use bun_collections::HashMap;
 use bun_core::vec::BorrowedBuf;
 use bun_core::{StackCheck, strings};
 use bun_simd::Out;
-use bun_simd_kernels::xml_class as class;
+use bun_simd_kernels::xml::{self as kernels, class};
 use bun_simdutf_sys::simdutf::{self, WithUtf8Len};
 
 use crate::xml_index::StructuralIndex;
@@ -183,7 +183,7 @@ pub trait Unit: Copy + Eq + Ord + core::hash::Hash + Default + 'static {
         chunk: &[Self],
         base_offset: usize,
         out: Out<'a, u32>,
-        state: &mut [u64; 3],
+        state: &mut kernels::State,
     ) -> &'a mut [u32];
     /// The fixed keys of the two output shapes, in this unit type.
     const KEY_TEXT: &'static [Self];
@@ -224,9 +224,9 @@ impl Unit for u8 {
         chunk: &[Self],
         base_offset: usize,
         out: Out<'a, u32>,
-        state: &mut [u64; 3],
+        state: &mut kernels::State,
     ) -> &'a mut [u32] {
-        bun_simd_kernels::xml_structural_index_chunk(chunk, base_offset, out, state)
+        kernels::index_chunk(chunk, base_offset, out, state)
     }
     const KEY_TEXT: &'static [Self] = b"#text";
     const KEY_NAME: &'static [Self] = b"name";
@@ -284,9 +284,9 @@ impl Unit for u16 {
         chunk: &[Self],
         base_offset: usize,
         out: Out<'a, u32>,
-        state: &mut [u64; 3],
+        state: &mut kernels::State,
     ) -> &'a mut [u32] {
-        bun_simd_kernels::xml_structural_index16_chunk(chunk, base_offset, out, state)
+        kernels::index_chunk16(chunk, base_offset, out, state)
     }
     const KEY_TEXT: &'static [Self] = utf16!(b"#text");
     const KEY_NAME: &'static [Self] = utf16!(b"name");

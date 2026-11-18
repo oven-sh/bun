@@ -189,6 +189,23 @@ fn portable_copies_take_the_paths_of_the_others() {
     }
 }
 
+#[bun_simd::foreach_target(avx2, sse4, neon, portable)]
+mod listed {
+    #[export]
+    pub fn len() -> usize {
+        isa::U8::LEN
+    }
+}
+
+#[test]
+fn portable_copies_have_the_widths_in_the_list() {
+    let lens = [Target::Portable64, Target::Portable32, Target::Portable].map(|target| {
+        limit_to(target);
+        listed::len()
+    });
+    assert_eq!(lens, [16, 32, 16]);
+}
+
 #[test]
 fn baseline_is_what_the_lowest_copy_has() {
     use bun_simd::baseline::Isa as Baseline;

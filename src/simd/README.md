@@ -50,6 +50,8 @@ In a module with `#[foreach_target]`:
 - These do not compile: `async`, `unsafe` and `extern` functions, and a fragment of several tokens from a macro around the module.
 - Name the module `simd`. The allowlists in `scripts/verify-baseline-static` match that name. Other names, and copies with further features, need lines of their own.
 
+In `kernels`, what serves only one file format or protocol is in a public module with its name. The twin of a function for `u16` ends in `16`. The one for shared memory ends in `_shared`, or in `_from_shared` or `_to_shared` if it copies between the two kinds. `from` comes before `to`.
+
 An op has the name that `core::simd` gives it, where there is one.
 
 | File                   | Contents                                                                               |
@@ -181,7 +183,7 @@ In Bun, lints keep `core::simd` and `core::arch` out of the kernels. Add the op 
 | `#[export(up_to = avx2, up_to = neon)]` | `avx2`, `sse4` and `neon`    |
 | `#[export(baseline)]`                   | The lowest of each family    |
 
-A module that needs more than a target has lists its copies, best first. `or` names what runs on a CPU that can run none of them, in place of the portable copy, which the list can then leave out. `MORE_FEATURES` has what the copy adds to its target.
+A module lists its copies, best first, if none of its exports needs the others, or if it needs more than a target has. The table then applies to those. `or` names what runs on a CPU that can run none of them, in place of the portable copy, which the list can then leave out. `MORE_FEATURES` has what the copy adds to its target.
 
 ```rust
 #[bun_simd::foreach_target(avx2 + "vpclmulqdq", sse4 + "pclmulqdq", neon + "aes")]
@@ -250,4 +252,4 @@ LLVM can still pick such an instruction for plain code in a kernel. Read the dis
 
 `BUN_SIMD_BENCHMARK_FILTER=memmem` with `-t "kernels on"` times only the rows that have this in their name. The time of a short call depends on the address of the code: between two builds of the same kernels, some rows differ by more than 10%.
 
-With the feature `test_support`, `limit_to` and `limit_to_with` pick a target, and features beyond it, for the thread and nothing is cached. `portable32` and `portable64` then run a kernel at those widths on any machine. `Memory` is exported, for a `Source` that counts its reads.
+With the feature `test_support`, `limit_to` and `limit_to_with` pick a target, and features beyond it, for the thread and nothing is cached. `portable32` and `portable64` then run a kernel at those widths on any machine, if its module has a target with them. `Memory` is exported, for a `Source` that counts its reads.

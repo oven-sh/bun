@@ -175,7 +175,7 @@ fn feature_of(target: Target, name: &str) -> &'static str {
 }
 
 impl Version {
-    /// From `target + "feature" + .., ..`, where `portable` stands for all its widths.
+    /// From `target + "feature" + .., ..`, where `portable` stands for the widths of the others too.
     fn all_in(list: &str) -> Vec<Self> {
         if list.is_empty() {
             return Target::ALL.map(|it| Self(it, Vec::new())).into();
@@ -192,6 +192,12 @@ impl Version {
             let features_of = |it| more.clone().map(|name| feature_of(it, name)).collect();
             all.extend(targets.map(|it| Self(it, features_of(it))));
         }
+        let has = |start| list.split(',').any(|it| it.starts_with(start));
+        all.retain(|it| match it.0 {
+            Target::Portable64 => has("avx512"),
+            Target::Portable32 => has("avx2"),
+            _ => true,
+        });
         for (i, a) in all.iter().enumerate() {
             let is_better = |b: &Self| match a.0.arch().filter(|_| a.0.arch() == b.0.arch()) {
                 Some(_) => a.0 as u8 <= b.0 as u8 && a.bits() & !b.bits() != 0,
@@ -255,8 +261,9 @@ fn targets_to_export(arguments: &str, versions: &[Version]) -> String {
     let [mut native, mut portable] = [const { String::new() }; 2];
     for family in versions.chunk_by(|a, b| a.0.arch() == b.0.arch()) {
         if family[0].0.arch().is_none() {
-            if IS_FOR_TESTS {
-                portable += "Portable64 portable64 Portable32 portable32";
+            let is_wide = |it: &&Version| IS_FOR_TESTS && it.0 != Target::Portable;
+            for version in family.iter().filter(is_wide) {
+                portable += &format!("{:?} {} ", version.0, version.module());
             }
             continue;
         }

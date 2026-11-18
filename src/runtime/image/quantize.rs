@@ -10,7 +10,7 @@
 //! Floyd–Steinberg error diffusion (`dither: true`).
 
 use bun_alloc::AllocError;
-use bun_simd_kernels::nearest_in_palette;
+use bun_simd_kernels::image::nearest_in_palette;
 
 pub(crate) struct QuantizeResult {
     /// `[colors][4]u8` RGBA palette, of at most the requested `colors`.

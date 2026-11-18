@@ -4,7 +4,7 @@
 //! channel layout.
 
 use bun_simd::Out;
-use bun_simd_kernels as kernels;
+use bun_simd_kernels::image as kernels;
 use std::collections::TryReserveError;
 
 // Per-format implementations live in their own files; codecs.rs is the

@@ -4,6 +4,8 @@ use core::array::from_fn;
 use core::hint::{Locality, prefetch_read};
 use std::collections::TryReserveError;
 
+pub use simd::{flip_horizontally, modulate, nearest_in_palette};
+
 type Pixel = [u8; 4];
 
 /// The pixels that one of the result is made of.
@@ -17,7 +19,7 @@ const SHIFT: u32 = 14;
 const ROUND: i32 = 1 << (SHIFT - 1);
 
 #[bun_simd::foreach_target]
-pub(crate) mod simd {
+mod simd {
     use isa::{F32, I32, U8, U32, Vector, x128};
 
     /// The rows share the weights and the bounds checks.
@@ -512,7 +514,7 @@ impl Filter {
     }
 }
 
-pub(crate) struct Axis {
+struct Axis {
     spans: Vec<Span>,
     weights: Vec<i16>,
     stride: usize,

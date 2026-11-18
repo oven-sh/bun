@@ -13,7 +13,7 @@ mod room;
 mod webp_encoder;
 
 use bun_simd::{Out, SharedOutU8, SharedU8};
-use bun_simd_kernels::{Columns, ColumnsOut};
+use bun_simd_kernels::sourcemap::{Columns, ColumnsOut};
 use core::mem::MaybeUninit;
 use core::sync::atomic::AtomicU8;
 

@@ -6,7 +6,10 @@ use core::array::from_fn;
 use core::hint::cold_path;
 use core::mem::MaybeUninit;
 
-const TOO_MUCH: f64 = 1e99;
+pub use simd::{estimate_costs, find_switches, remove_pairs, sort_leaves};
+
+/// More than anything costs. `remove_pairs` puts it first if no pair is left.
+pub const TOO_MUCH: f64 = 1e99;
 const MAX_SYMBOLS: usize = 704;
 const WORD: usize = 64;
 /// From a number to the index of its logarithm. An address on x86-64 cannot scale by the 16 bytes of an entry.
@@ -38,7 +41,7 @@ impl<const N: usize> Shuffle<N> for ByHistogram {
 }
 
 #[bun_simd::foreach_target(avx2, sse4, neon, portable)]
-pub(crate) mod simd {
+mod simd {
     use isa::x256::{F64, I64, U64};
     use isa::{I8, I16, I32, Mask, U16, Vector, x128, x256};
 
@@ -53,7 +56,7 @@ pub(crate) mod simd {
     }
 
     /// Adds up what `symbols` cost in each histogram, where one can take over the sum of the cheapest for `switch_cost`.
-    #[export(up_to = avx2, up_to = neon)]
+    #[export]
     pub fn find_switches(
         symbols: &[u16],
         // For each symbol up to the highest, as many as there are `costs`.
@@ -192,7 +195,7 @@ pub(crate) mod simd {
     }
 
     /// The bits for a prefix code and its symbols, for the sums of `common` and each of `others`. They have five or more of 64 to 704 symbols.
-    #[export(up_to = avx2, up_to = neon)]
+    #[export]
     pub fn estimate_costs(
         common: &[u32],
         others: [&[u32]; 4],
@@ -350,7 +353,7 @@ pub(crate) mod simd {
     }
 
     /// Returns how many have none of `merged`. One that costs less than the first, or as much with a smaller difference, trades places with it.
-    #[export(up_to = avx2, up_to = neon)]
+    #[export]
     pub fn remove_pairs(costs: &mut [f64], pairs: &mut [[u32; 2]], merged: [u32; 2]) -> usize {
         debug_assert!(costs.iter().all(|it| it.to_bits() != (-0f64).to_bits()));
         const LANES_IN: [u8; 16] = from_fn(const |bits| bits.count_ones() as u8);
@@ -497,7 +500,7 @@ pub(crate) mod simd {
     }
 
     /// Sorts the first `count` of `leaves` by their high halves, unless one is above 32766 or a slice is too short.
-    #[export(up_to = avx2, up_to = neon)]
+    #[export]
     pub fn sort_leaves(
         // If they are sorted, this has them in any order.
         leaves: &mut [u64],

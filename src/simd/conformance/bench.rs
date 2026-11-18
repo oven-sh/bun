@@ -141,7 +141,7 @@ fn searches(plain: &[u8]) {
             "index_of_not_char miss {n}", index_of_not_char(opaque(t), b'a');
             "index_of_char16 miss {n}", index_of_char16(opaque(wide), 1);
             "last_index_of_char16 miss {n}", last_index_of_char16(opaque(wide), 1);
-            "common_prefix_length {n}", common_prefix_length(opaque(t), opaque(&plain[1..]));
+            "common_prefix_len {n}", common_prefix_len(opaque(t), opaque(&plain[1..]));
             "template miss {n}", index_of_needs_escape_for_javascript_string(opaque(t), b'`');
         }
         lists::of_bytes(&mut { t });
@@ -187,11 +187,11 @@ fn escapes() {
         }
         let text = &text.repeat(1000);
         time! {
-            "index_of_escape_char8 hops through 1000 {name}", hop(text, index_of_escape_char8);
+            "index_of_ansi_escape hops through 1000 {name}", hop(text, index_of_ansi_escape);
         }
         let wide: &Vec<u16> = &text.iter().map(|&byte| byte.into()).collect();
         time! {
-            "index_of_escape_char16 hops through 1000 {name}", hop(wide, index_of_escape_char16);
+            "index_of_ansi_escape16 hops through 1000 {name}", hop(wide, index_of_ansi_escape16);
         }
     }
 }
@@ -246,7 +246,7 @@ fn styled_words(js: &[u8]) {
         let text: &Vec<_> = &(0..20_000).flat_map(&mut units).collect();
         time! {
             "visible_utf16_width hops through {name}", hop(text, |t| Some(visible_utf16_width(t).0).filter(|&len| len < t.len()));
-            "first_non_ascii16 hops through {name}", hop(&text[..100_000], first_non_ascii16);
+            "index_of_non_ascii16 hops through {name}", hop(&text[..100_000], index_of_non_ascii16);
         }
     }
     for (name, unit) in [("Cyrillic", 0x430), ("CJK", 0x4E00), ("emoji", 0xD83D)] {
@@ -286,7 +286,7 @@ fn pieces(js: &[u8]) {
             "width of 20000 {name}", each(all, visible_latin1_width_exclude_ansi);
             "lower_ascii of 20000 {name}", each(all, |t| _ = lower_ascii(t, out.as_mut_slice().into()));
             "copy_ascii_prefix of 20000 {name}", each(all, |t| _ = copy_ascii_prefix_to_shared(t, shared_out(out)));
-            "fill_with_mask of 20000 {name}", each(all, |t| _ = fill_with_mask([1, 2, 3, 4], out.as_mut_slice().into(), t));
+            "websocket::mask of 20000 {name}", each(all, |t| _ = websocket::mask([1, 2, 3, 4], t, out.as_mut_slice().into()));
             "encode_hex_lower of 20000 {name}", each(all, |t| _ = encode_hex_lower(t, out.as_mut_slice().into()));
         }
     }
@@ -379,7 +379,7 @@ fn shapes_of_calls(js: &[u8], lockfile: &[u8]) {
     }
     time! {
         "last_index_of_char of 20000 paths", each(paths, |t| branch_on(last_index_of_char(t, b'.')));
-        "common_prefix_length of 20000 paths", each(paths, |t| common_prefix_length(t, paths[0]));
+        "common_prefix_len of 20000 paths", each(paths, |t| common_prefix_len(t, paths[0]));
     }
     for needle in [
         &b"/node_modules/"[..],
@@ -632,9 +632,9 @@ fn whole_files(js: &[u8], json: &[u8], map: &[u8]) {
 
     let (index, dirty) = (&mut vec![MaybeUninit::uninit(); 8192 + 66], &mut [0; 2]);
     time!("json 256 KB", {
-        let mut state = [0; 3];
+        let mut state = json::State::default();
         for (i, chunk) in opaque(&json[..1 << 18]).chunks(8192).enumerate() {
-            opaque(json_structural_index_chunk(
+            opaque(json::index_chunk(
                 chunk,
                 i * 8192,
                 index.as_mut_slice().into(),
@@ -646,11 +646,11 @@ fn whole_files(js: &[u8], json: &[u8], map: &[u8]) {
 
     let xml = &b"<item id=\"7\" kind='a'>\n  <name>fish &amp; chips</name>\n</item>\n".repeat(120);
     time! {
-        "xml 8 KB", xml_structural_index_chunk(opaque(xml), 0, index.as_mut_slice().into(), &mut [0; 3]);
+        "xml 8 KB", xml::index_chunk(opaque(xml), 0, index.as_mut_slice().into(), &mut Default::default());
     }
     let xml: &Vec<u16> = &xml.iter().map(|&byte| byte.into()).collect();
     time! {
-        "xml16 8 K", xml_structural_index16_chunk(opaque(xml), 0, index.as_mut_slice().into(), &mut [0; 3]);
+        "xml16 8 K", xml::index_chunk16(opaque(xml), 0, index.as_mut_slice().into(), &mut Default::default());
     }
     let marks = &mut vec![0; js.len() / 4096];
     time! {
@@ -667,14 +667,14 @@ fn whole_files(js: &[u8], json: &[u8], map: &[u8]) {
         ("of one line", one_line.as_bytes(), false),
         ("all alike", &b"CAAC,".repeat(50_000), false),
     ] {
-        let cap = count_mapping_delims(map) + 1;
+        let cap = sourcemap::count_delimiters(map) + 1;
         let mut pairs = [(); 2].map(|()| Box::new_uninit_slice(cap));
         let mut indices = [(); 2].map(|()| Box::new_uninit_slice(cap));
         let pairs = &mut pairs.each_mut().map(|column| &mut column[..]);
         let indices = &mut indices.each_mut().map(|column| &mut column[..]);
         time!("mappings {name}", {
             let out = columns(pairs, indices, has_names);
-            parse_mappings(opaque(map), out, 1 << 20, &mut Default::default())
+            sourcemap::parse_mappings(opaque(map), out, 1 << 20, &mut Default::default())
         });
     }
 }
@@ -687,7 +687,7 @@ fn conversions(js: &[u8]) {
         time! {
             "copy_u16_to_u8 {n}", copy_u16_to_u8(opaque(wide), opaque(&mut out[..]).into());
             "lower_ascii16 {n}", lower_ascii16(opaque(wide), opaque(&mut wide_out[..]).into());
-            "fill_with_mask {n}", fill_with_mask([1, 2, 3, 4], opaque(&mut out[..]).into(), opaque(t));
+            "websocket::mask {n}", websocket::mask([1, 2, 3, 4], opaque(t), opaque(&mut out[..]).into());
             "encode_hex_lower {n}", encode_hex_lower(opaque(t), opaque(&mut out[..]).into());
         }
         let hex = &encode_hex_lower(t, out.as_mut_slice().into()).to_vec();
@@ -698,7 +698,7 @@ fn conversions(js: &[u8]) {
         time! {
             "decode_hex16 {n}", decode_hex16(opaque(hex.as_chunks().0), opaque(&mut out[..]).into());
             "lower_ascii {n}", lower_ascii(opaque(t), opaque(&mut out[..]).into());
-            "mask_in_place {n}", mask_in_place([1, 2, 3, 4], opaque(&mut out[..n]));
+            "websocket::mask_in_place {n}", websocket::mask_in_place([1, 2, 3, 4], opaque(&mut out[..n]));
         }
     }
     let words = &Random(7).words_of_all_sizes(4096);
@@ -911,26 +911,26 @@ fn jpeg() {
         ("busy", 2, 3),
         ("mixed", 128, 90),
     ] {
-        let block = |_| JpegBlock(from_fn(|i| i16::from(random.below(one_in) * i == 0) * 5));
+        let block = |_| jpeg::Block(from_fn(|i| i16::from(random.below(one_in) * i == 0) * 5));
         let blocks: &Vec<_> = &(0..64 * count).map(block).collect();
-        let quant = &JpegBlock([3; 64]);
+        let quant = &jpeg::Block([3; 64]);
         for size in [2, 3, 4, 5, 6, 7, 8, 10, 12, 14] {
             time!(
-                "jpeg_inverse_transform {size}, {name}, by {count}",
+                "jpeg::inverse_transform {size}, {name}, by {count}",
                 blocks.chunks(count).for_each(|it| {
-                    jpeg_inverse_transform(it, quant, size, out, STRIDE).unwrap();
+                    jpeg::inverse_transform(it, quant, size, out, STRIDE).unwrap();
                 })
             );
         }
     }
-    let blocks = &mut [JpegBlock([0; 64]); 32];
-    let steps = &[[16385; 64], [128; 64]].map(JpegBlock);
+    let blocks = &mut [jpeg::Block([0; 64]); 32];
+    let steps = &[[16385; 64], [128; 64]].map(jpeg::Block);
     let (masks, planes) = (&mut [[0; 1]; 32], &mut [[0; 4]; 32]);
     for n in [1, 8, 32] {
         let (blocks, masks, planes) = (&mut blocks[..n], &mut masks[..n], &mut planes[..n]);
         time! {
-            "jpeg_forward_transform {n}", jpeg_forward_transform(opaque(rows), STRIDE, steps, blocks, masks).unwrap();
-            "jpeg_forward_transform {n} with bit planes", jpeg_forward_transform(opaque(rows), STRIDE, steps, blocks, planes).unwrap();
+            "jpeg::forward_transform {n}", jpeg::forward_transform(opaque(rows), STRIDE, steps, blocks, masks).unwrap();
+            "jpeg::forward_transform {n} with bit planes", jpeg::forward_transform(opaque(rows), STRIDE, steps, blocks, planes).unwrap();
         }
     }
     let [y, cb, cr, c, d] = [0, 1, 2, 3, 4].map(|y| &rows[y * STRIDE..][..STRIDE]);
@@ -939,27 +939,27 @@ fn jpeg() {
         &mut [(); 3].map(|()| rows.clone()),
     );
     for (name, chroma) in [
-        ("4:4:4", JpegChroma::Full { cb, cr }),
-        ("4:2:2", JpegChroma::HalfWidth { cb, cr }),
+        ("4:4:4", jpeg::Chroma::Full { cb, cr }),
+        ("4:2:2", jpeg::Chroma::HalfWidth { cb, cr }),
         (
             "4:2:0",
-            JpegChroma::HalfSize {
+            jpeg::Chroma::HalfSize {
                 cb: [cb, c],
                 cr: [cr, d],
             },
         ),
     ] {
         for n in [20, 200, 2000] {
-            time!("jpeg_ycc_to_rgba {n} {name}", {
+            time!("jpeg::ycc_to_rgba {n} {name}", {
                 pixels.clear();
-                jpeg_ycc_to_rgba(opaque(y), chroma, n, pixels).unwrap()
+                jpeg::ycc_to_rgba(opaque(y), chroma, n, pixels).unwrap()
             });
         }
     }
     for n in [32, 480] {
-        time!("jpeg_rgba_to_ycc420 {n}x16", {
+        time!("jpeg::rgba_to_ycc420 {n}x16", {
             let into = planes.each_mut().map(|plane| &mut plane[..]);
-            jpeg_rgba_to_ycc420(opaque(rows).as_chunks().0, n, n, 8, into, n / 2).unwrap()
+            jpeg::rgba_to_ycc420(opaque(rows).as_chunks().0, n, n, 8, into, n / 2).unwrap()
         });
     }
 }
@@ -980,14 +980,17 @@ fn images() {
     let image: &Vec<[u8; 4]> = &(0..WIDTH * 768).map(pixel).collect();
     for n in [3, 16, 25, 4096, image.len()] {
         let pixels = &mut image[..n].to_vec();
-        time!("modulate {n} px", modulate(opaque(pixels), 1.0, 1.0));
+        time!(
+            "image::modulate {n} px",
+            image::modulate(opaque(pixels), 1.0, 1.0)
+        );
     }
     let [above, row] = [299, 300].map(|y| &image[y * WIDTH..][..WIDTH]);
     let rows = &mut [(); 4].map(|()| vec![[0; 4]; WIDTH]);
     for n in [3, 7, 15, WIDTH] {
-        time!("png_filter_rgba {n} px", {
+        time!("png::filter_rgba {n} px", {
             let into = rows.each_mut().map(|row| &mut row[..n]);
-            png_filter_rgba(opaque(&row[..n]), &above[..n], into)
+            png::filter_rgba(opaque(&row[..n]), &above[..n], into)
         });
     }
     for size in [1, 2, 4, 6, 8] {
@@ -995,19 +998,19 @@ fn images() {
         for (filter_type, name) in (1..).zip(["sub", "up", "average", "paeth"]) {
             let row = &mut row.to_vec();
             time! {
-                "png_unfilter {size} {name}", png_unfilter(filter_type, size, opaque(row), above);
+                "png::unfilter {size} {name}", png::unfilter(filter_type, size, opaque(row), above);
             }
         }
     }
     for (size, n) in [(1, 4096), (4, 4096), (8, 4096), (4, 128)] {
         let row = &mut row.as_flattened()[..n].to_vec();
         time! {
-            "png_unfilter {size} paeth of {n} below one color", png_unfilter(4, size, opaque(row), &[7; 4 * WIDTH][..n]);
+            "png::unfilter {size} paeth of {n} below one color", png::unfilter(4, size, opaque(row), &[7; 4 * WIDTH][..n]);
         }
     }
     for n in [3, 8, 16, 256] {
         time! {
-            "nearest_in_palette {n}", nearest_in_palette(opaque(&row[..n]), opaque([9, 8, 7, 255]));
+            "image::nearest_in_palette {n}", image::nearest_in_palette(opaque(&row[..n]), opaque([9, 8, 7, 255]));
         }
     }
     for (width, height) in [
@@ -1042,15 +1045,15 @@ fn images() {
         ([1, 16000], [1, 100]),
     ];
     for filter in [
-        Filter::Lanczos3,
-        Filter::Nearest,
-        Filter::Bilinear,
-        Filter::Mks2021,
+        image::Filter::Lanczos3,
+        image::Filter::Nearest,
+        image::Filter::Bilinear,
+        image::Filter::Mks2021,
     ] {
         for ([from_w, from_h], [w, h]) in sizes {
             let (from, out) = (&image[..from_w * from_h], &mut vec![[0; 4]; w * h]);
             time! {
-                "{filter:?} {from_w}x{from_h} to {w}x{h}", resize(filter, opaque(from), from_w, out.as_mut_slice().into(), w);
+                "{filter:?} {from_w}x{from_h} to {w}x{h}", image::resize(filter, opaque(from), from_w, out.as_mut_slice().into(), w);
             }
         }
     }
@@ -1063,8 +1066,8 @@ fn from_shared(js: &[u8]) {
         time! {
             "shared: index_of_char miss {n}", index_of_char_shared(shared(opaque(t)), b'x');
             "shared: last_index_of_char miss {n}", last_index_of_char_shared(shared(opaque(t)), b'x');
-            "shared: encode_hex_lower {n}", encode_hex_lower_shared(shared(opaque(t)), out.as_mut_slice().into());
-            "shared: fill_with_mask {n}", fill_with_mask_from_shared([1; 4], out.as_mut_slice().into(), shared(opaque(t)));
+            "shared: encode_hex_lower {n}", encode_hex_lower_from_shared(shared(opaque(t)), out.as_mut_slice().into());
+            "shared: websocket::mask {n}", websocket::mask_from_shared([1; 4], shared(opaque(t)), out.as_mut_slice().into());
         }
     }
     let (t, needle) = (&mut js.to_vec(), &mut b"function".to_vec());
@@ -1157,8 +1160,8 @@ pub(crate) fn at_the_end_of_a_page() {
         both("memmem", texts, |t| memmem(t, b"xy"));
         both("line_starts", texts, |t| line_starts(t));
         both("shared", texts, |t| index_of_char_shared(shared(t), b'x'));
-        both("fill_with_mask", texts, |t| {
-            fill_with_mask([0; 4], t.into(), text);
+        both("websocket::mask", texts, |t| {
+            websocket::mask([0; 4], text, t.into());
         });
         both("copy_u16_to_u8", texts, |t| {
             _ = copy_u16_to_u8(wide, t.into())
@@ -1166,7 +1169,7 @@ pub(crate) fn at_the_end_of_a_page() {
         both("encode_hex_lower", texts, |t| {
             encode_hex_lower(text, t.into());
         });
-        both("png_unfilter", texts, |t| png_unfilter(2, 1, t, text));
+        both("png::unfilter", texts, |t| png::unfilter(2, 1, t, text));
     }
 }
 

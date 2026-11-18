@@ -44,6 +44,15 @@ function owned(fd: number) {
 
 const lines = (text: string) => text.split("\n").filter(Boolean);
 
+// A child that ends before the handshake has closed its end of the pipe.
+function writeToChild(fd: number, bytes: Buffer) {
+  try {
+    fs.writeSync(fd, bytes);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EPIPE") throw error;
+  }
+}
+
 // The errors on stderr: without the source excerpt that is printed above each one, and without
 // the coverage lines of a fuzzilli build.
 const errorLines = (stderr: string) =>
@@ -80,8 +89,8 @@ async function runReprl(
   using data = owned(fds[REPRL_DRFD]!);
   using _fuzzout = owned(fds[REPRL_DWFD]!);
 
-  fs.writeSync(commands.fd, Buffer.concat(control));
-  fs.writeSync(data.fd, Buffer.concat(sources));
+  writeToChild(commands.fd, Buffer.concat(control));
+  writeToChild(data.fd, Buffer.concat(sources));
   commands.close();
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

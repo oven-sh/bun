@@ -7,17 +7,17 @@ use crate::generated_bindgen::system::{DesktopNet, DesktopShell};
 use crate::prelude::*;
 use crate::{files, realm, window};
 
-pub(crate) fn open_url(url: &[u8]) -> JsResult<()> {
+pub(crate) fn command_to_open(url: &[u8]) -> JsResult<SystemCommand> {
     let href = bun_url::whatwg::href_from_string(&bun_core::String::clone_utf8(url));
     if href.is_dead() {
         return Err(type_error(format_args!("Invalid URL")));
     }
-    perform(SystemCommand::OpenUrl(Text::lossy(&href.to_utf8())))
+    Ok(SystemCommand::OpenUrl(Text::lossy(&href.to_utf8())))
 }
 
 impl DesktopShell {
     pub(crate) fn open_external(_: Cx<'_, '_>, url: &[u8]) -> JsResult<JSValue> {
-        open_url(url)?;
+        perform(command_to_open(url)?)?;
         resolved(JSValue::UNDEFINED)
     }
 
@@ -49,12 +49,32 @@ impl DesktopShell {
         Ok(())
     }
 
-    pub(crate) fn read_shortcut_link(_: Cx<'_, '_>) -> JsResult<()> {
-        Err(unsupported("readShortcutLink"))
+    pub(crate) fn read_shortcut_link(_: Cx<'_, '_>, path: &[u8]) -> JsResult<JSValue> {
+        if !IS_WINDOWS {
+            return Err(unsupported("readShortcutLink"));
+        }
+        let path = files::absolute(&string(path)).into();
+        match catch(ask_shell(ShellCommand::ReadShortcut(path)))? {
+            Ok(details) => js(details),
+            Err(_) => Err(error(format_args!("Failed to read shortcut link"))),
+        }
     }
 
-    pub(crate) fn write_shortcut_link() -> bool {
-        false
+    pub(crate) fn write_shortcut_link<'a>(
+        _: Cx<'a, '_>,
+        path: &[u8],
+        operation: JsLocal<'a>,
+        options: JsLocal<'a>,
+    ) -> JsResult<bool> {
+        let (operation, options) = match operation.to_js() {
+            it if it.is_string() => (text_of(it)?, options.to_js()),
+            it => ("create".into(), it),
+        };
+        shell_agrees(ShellCommand::WriteShortcut {
+            path: files::absolute(&string(path)).into(),
+            operation: operation.into(),
+            details: crate::preferences::property_list(options)?,
+        })
     }
 }
 
@@ -93,8 +113,8 @@ impl DesktopNet {
         }
     }
 
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     pub(crate) fn get_online() -> bool {
-        true
+        crate::win32::has_network()
     }
 }

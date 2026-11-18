@@ -10,6 +10,7 @@ import {
   isWindows,
   libcPathForDlopen,
   tempDir,
+  tls,
 } from "harness";
 import { chmodSync, existsSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
@@ -266,6 +267,27 @@ describe.concurrent("--desktop", () => {
       return [ico[entry], ...pngSize(ico.subarray(ico.readUInt32LE(entry + 12)))];
     });
     expect(images).toEqual([16, 24, 32, 48, 64, 128, 256].map(size => [size % 256, size, size]));
+  });
+
+  test.each([
+    [0x800, "out/notes.exe", ["build", "--compile", "--desktop", ...forWindows, "app.ts", "--outfile=out"]],
+    [
+      0x800,
+      "out/notes.exe",
+      [
+        "-e",
+        `await Bun.build({ entrypoints: ["app.ts"], compile: { desktop: true, target: "bun-windows-x64", executablePath: "windows-template", outfile: "out" } })`,
+      ],
+    ],
+    [0, "out.exe", ["build", "--compile", ...forWindows, "app.ts", "--outfile=out"]],
+  ])("Windows: DependentLoadFlags %d in %s", async (flags, file, args) => {
+    const template = minimalPE64Template();
+    template.writeUInt32LE(4096 + 64, 64 + 24 + 112 + 10 * 8);
+    template.writeUInt32LE(0x140, 64 + 24 + 112 + 10 * 8 + 4);
+    template.fill(0, 512 + 64, 512 + 64 + 0x140).writeUInt32LE(0x140, 512 + 64);
+    using dir = project({ name: "notes" }, { "windows-template": template });
+    await bun(dir, ...args);
+    expect(readFileSync(join(String(dir), file)).readUInt32LE(512 + 64 + 76)).toBe(flags << 16);
   });
 
   test.skipIf(!isLinux || isMusl)("Linux: AppDir", async () => {
@@ -817,6 +839,131 @@ new Response(new Blob(["b"]).stream()).text().then(text => console.log([...found
       });
     });
 
+    test
+      .skipIf(!hasLibrary)
+      .each<[false | { remove?: string[] }]>([
+        [false],
+        ...(canTrim
+          ? [{}, { remove: ["inspector"] }, { remove: ["interpreter"] }, { remove: ["inspector", "interpreter"] }].map(
+              it => [it] as [object],
+            )
+          : []),
+      ])("a compiled app ignores --inspect, pauses no page and keeps no log, with trim: %j", async trim => {
+      using dir = project(
+        { name: "notes", desktop: { name: "Memo" } },
+        {
+          "app.js": `const { app, BrowserWindow, protocol } = require("bun:desktop/electron");
+protocol.registerSchemesAsPrivileged([{ scheme: "app", privileges: { standard: true, secure: true } }]);
+app.trustOrigins(["app://bundle"]);
+app.setCompiledScripts({ "app://bundle/": "/$bunfs/root/web/" });
+app.whenReady().then(async () => {
+  protocol.handle("app", () => new Response("<script src=/a.js></script>", { headers: { "content-type": "text/html" } }));
+  const { webContents } = new BrowserWindow();
+  await webContents.loadURL("app://bundle/");
+  webContents.debugger.attach();
+  const logged = new Promise(resolve => webContents.debugger.on("message", (_, method, params) => method === "Runtime.consoleAPICalled" && resolve(params.args)));
+  const outcome = method => webContents.debugger.sendCommand(method).then(() => "done", error => error.message);
+  for (const method of ["Debugger.enable", "HeapProfiler.takeHeapSnapshot", "DOM.getDocument", "CSS.enable", "Runtime.compileScript", "Runtime.enable"]) console.log(await outcome(method));
+  webContents.sendInputEvent({ type: "keyDown", keyCode: "a" });
+  console.log((await logged).map(it => it.subtype ?? it.type).join());
+  app.setWebEngine(null);
+  webContents.openDevTools();
+  await new Promise(setImmediate);
+  process.exit(0);
+});`,
+          "build.js": `const { success, logs } = await Bun.build({
+  entrypoints: ["./app.js", "./web/a.js"],
+  compile: { aot: true, outfile: "out", trim: ${JSON.stringify(trim)}, desktop: { name: "Memo" } },
+});
+if (!success) throw new AggregateError(logs);`,
+          "web/a.js": `console.log("early");
+addEventListener("keydown", () => console.log(() => {}, class {}, /a/, new Map([[1, 2]]), new Error("a"), new Date(0), Promise.resolve(), new Uint8Array(1), document.body));`,
+        },
+      );
+      expect(await run([bunExe(), "build.js"], String(dir))).toMatchObject({ exitCode: 0 });
+      const cmd = [join(String(dir), "out" + extension, executable), "--inspect-brk=0"];
+      const { stdout, stderr, exitCode } = await run(cmd, String(dir), { BUN_DESKTOP_HEADLESS: "1" });
+      const lacks = (feature: string) => !!trim && !!trim.remove?.includes(feature);
+      const [noDebugger, noParser] = lacks("interpreter")
+        ? Array(2).fill("This program does not run code from strings")
+        : ["This program has no debugger", "done"];
+      expect(stdout.trim().split("\n")).toEqual([
+        ...[noDebugger, "The page shares its heap with the app", "done", "done", noParser, "done"],
+        "function,function,regexp,map,error,date,promise,typedarray,node",
+      ]);
+      expect([stderr.includes("ws://"), stderr.includes("has no developer tools"), exitCode]).toEqual([
+        false,
+        lacks("inspector"),
+        0,
+      ]);
+    });
+
+    test.skipIf(!hasLibrary || !canTrim).each([
+      ["--trim", "true 1", ""],
+      ["--trim-without=Inspector", "false 1", "has no developer tools"],
+      ["--trim-without=Serve", "false 1", "--remote-debugging-port has failed"],
+      ["--trim-without=RegExp", "true 0", ""],
+    ])("--remote-debugging-port in an app that is compiled with %s", async (trim, expected, warning) => {
+      using dir = project(
+        { name: "notes", desktop: { name: "Memo" } },
+        {
+          "app.js": `const { app, BrowserWindow, protocol } = require("bun:desktop/electron");
+protocol.registerSchemesAsPrivileged([{ scheme: "app", privileges: { standard: true, secure: true } }]);
+app.trustOrigins(["app://bundle"]);
+app.setPath("userData", process.cwd());
+app.commandLine.appendSwitch("remote-debugging-port", "0");
+app.whenReady().then(async () => {
+  protocol.handle("app", () => new Response("aa", { headers: { "content-type": "text/html" } }));
+  const { webContents } = new BrowserWindow();
+  await webContents.loadURL("app://bundle/");
+  webContents.debugger.attach();
+  const { result } = await webContents.debugger.sendCommand("Page.searchInResource", { url: "app://bundle/", query: "a+", isRegex: true });
+  console.log(require("fs").existsSync("DevToolsActivePort"), result.length);
+  await new Promise(setImmediate);
+  process.exit(0);
+});`,
+        },
+      );
+      expect(
+        await run([bunExe(), "compile", "--desktop", trim, "app.js", "--outfile", "out"], String(dir)),
+      ).toMatchObject({ exitCode: 0 });
+      const cmd = [join(String(dir), "out" + extension, executable), "--remote-debugging-port=0"];
+      const { stdout, stderr, exitCode } = await run(cmd, String(dir), { BUN_DESKTOP_HEADLESS: "1" });
+      expect([stdout, stderr.includes(warning), exitCode]).toEqual([expected + "\n", true, 0]);
+    });
+
+    test.skipIf(!hasLibrary || !canTrim || !process.env.BUN_DESKTOP_TEST_ELECTRON)(
+      "Electron shows no developer tools for an app without the inspector",
+      async () => {
+        using dir = project(
+          { name: "notes", desktop: { name: "Memo" } },
+          {
+            "app.js": `const { app, BrowserWindow } = require("bun:desktop/electron");
+app.setPath("userData", process.cwd());
+app.setWebEngine({ type: "electron", path: process.env.BUN_DESKTOP_TEST_ELECTRON, args: process.getuid?.() === 0 ? ["--no-sandbox"] : [] });
+app.whenReady().then(async () => {
+  const { webContents } = new BrowserWindow({ webPreferences: { webEngine: true } });
+  await webContents.loadURL("data:text/html,");
+  process.on("warning", warning => (console.log(warning.message), app.exit(0)));
+  webContents.on("devtools-opened", () => app.exit(1));
+  webContents.openDevTools();
+});`,
+          },
+        );
+        expect(
+          await run(
+            [bunExe(), "compile", "--desktop", "--trim-without=Inspector", "app.js", "--outfile=out"],
+            String(dir),
+          ),
+        ).toMatchObject({ exitCode: 0 });
+        const cmd = [join(String(dir), "out" + extension, executable)];
+        expect(await run(cmd, String(dir), { BUN_DESKTOP_HEADLESS: "1" })).toMatchObject({
+          stdout: expect.stringContaining("has no developer tools"),
+          exitCode: 0,
+        });
+      },
+    );
+
     test.skipIf(!hasLibrary)("compiled scripts are subject to the policy of the page", async () => {
       using dir = project(
         { name: "notes", desktop: { name: "Memo" } },
@@ -899,6 +1046,98 @@ app.whenReady().then(() => {
         });
       },
     );
+
+    test
+      .skipIf(!hasLibrary || !isLinux)
+      .each([
+        [true, [], true],
+        [false, [], !canTrim],
+        ...(canTrim ? [[true, ["--trim"], true] as const] : []),
+      ] as const)("jit: %j %j for a page that was not compiled", async (jit, flags, generatesCode) => {
+      using dir = project(
+        { name: "notes", module: "app.js", desktop: { name: "Memo", jit } },
+        {
+          "app.js": `const { app, BrowserWindow, protocol } = require("bun:desktop/electron");
+protocol.registerSchemesAsPrivileged([{ scheme: "app", privileges: { standard: true, secure: true } }]);
+app.trustOrigins(["app://bundle"]);
+app.whenReady().then(() => {
+  const page = "<script>let sum = 0; for (let i = 0; i < 1e6; i++) sum += i & 1; console.log(sum);</script>";
+  protocol.handle("app", () => new Response(page, { headers: { "content-type": "text/html" } }));
+  const { webContents } = new BrowserWindow({ webPreferences: { sandbox: true } });
+  webContents.on("console-message", event => {
+    const read = name => require("fs").readFileSync("/proc/" + name + "/maps", "latin1");
+    console.log(event.message, /rwx/.test(read(webContents.getOSProcessId())), /rwx/.test(read("self")));
+    process.exit(0);
+  });
+  webContents.loadURL("app://bundle/");
+});`,
+        },
+      );
+      const built = await run([bunExe(), "compile", "--desktop", ...flags, "--outfile=out"], String(dir));
+      expect(built).toMatchObject({ exitCode: 0 });
+      const cmd = [join(String(dir), "out" + extension, executable)];
+      expect(await run(cmd, String(dir), withSandbox)).toMatchObject({
+        stdout: `500000 ${generatesCode} false\n`,
+        exitCode: 0,
+      });
+    });
+
+    test.skipIf(!hasLibrary || !canTrim).each([
+      [{}, {}, ["Intl", "Temporal", "WebAssembly"]],
+      [{ jit: true }, {}, []],
+      [{ jit: true }, { remove: ["brotli", "spawn"] }, ["woff2"]],
+      [{ jit: true }, { remove: ["fetch"] }, ["https", "wss"]],
+    ])("with %j and trim: %j a page that the build has not seen lacks %j", async (desktop, trim, lacking) => {
+      await using server = Bun.serve({
+        port: 0,
+        tls,
+        fetch: (request, server) =>
+          server.upgrade(request)
+            ? undefined
+            : new Response("served", { headers: { "access-control-allow-origin": "*" } }),
+        websocket: { message: (socket, message) => void socket.send(message) },
+      });
+      const font = readFileSync(join(import.meta.dir, "../../packages/bun-desktop/fixtures/space-mono-subset.woff2"));
+      using dir = project(undefined, {
+        "build.js": `const { success, logs } = await Bun.build({
+  entrypoints: ["./app.js"],
+  compile: { aot: true, outfile: "out", trim: ${JSON.stringify(trim)}, desktop: ${JSON.stringify({ name: "Memo", resources: ["app"], ...desktop })} },
+});
+if (!success) throw new AggregateError(logs);`,
+        "app.js": `const { app, BrowserWindow } = require("bun:desktop/electron");
+app.commandLine.appendSwitch("ignore-certificate-errors");
+app.whenReady().then(() => {
+  const { webContents } = new BrowserWindow();
+  webContents.on("console-message", ({ message }) => message.startsWith("[") && (console.log(message), app.exit(0)));
+  webContents.loadFile("page.html");
+});`,
+        "app/font.woff2": font,
+        "app/page.html": `<input pattern="\\p{L}+" value="1"><script>
+const event = (target, name) => new Promise((resolve, reject) => (target.addEventListener(name, resolve), target.addEventListener("error", reject)));
+const uses = {
+  woff2: () => new FontFace("a", "url(font.woff2)").load(),
+  https: () => fetch("https://localhost:${server.port}/").then(it => it.text()),
+  wss: () => event(new WebSocket("wss://localhost:${server.port}/"), "open"),
+  indexedDB: () => event(indexedDB.open("a"), "success"),
+  localStorage: () => localStorage.setItem("a", "b"),
+  streams: () => new Response(new Blob(["a"]).stream().pipeThrough(new CompressionStream("gzip")).pipeThrough(new DecompressionStream("gzip"))).text(),
+  subtle: () => crypto.subtle.digest("SHA-256", new Uint8Array(1)),
+  base64: () => atob(btoa("a")),
+  png: () => new OffscreenCanvas(1, 1).convertToBlob(),
+  pattern: () => document.querySelector("input:invalid").value,
+  worker: () => event(new Worker(URL.createObjectURL(new Blob(["postMessage(1)"]))), "message"),
+  Intl: () => new Intl.NumberFormat("de").format(1),
+  Temporal: () => Temporal.Now.instant(),
+  WebAssembly: () => WebAssembly.validate(new Uint8Array(8)),
+};
+Promise.all(Object.keys(uses).map(async name => { try { await uses[name](); } catch { return name; } })).then(all => console.log(JSON.stringify(all.filter(Boolean))));
+</script>`,
+      });
+      expect(await run([bunExe(), "build.js"], String(dir))).toMatchObject({ exitCode: 0 });
+      const cmd = [join(String(dir), "out" + extension, executable)];
+      const env = { BUN_DESKTOP_HEADLESS: "1", XDG_CONFIG_HOME: String(dir) };
+      expect(await run(cmd, String(dir), env)).toMatchObject({ stdout: JSON.stringify(lacking) + "\n", exitCode: 0 });
+    });
 
     describe.skipIf(!hasLibrary)("pages", () => {
       /** Runs it without the files that it was made from. */
@@ -1095,7 +1334,7 @@ worker [1,2,1,"undefined"]
         expect(exitCode).toBe(0);
       });
 
-      test.skipIf(isWindows)("file: URLs find what pages load, and nothing of the main process", async () => {
+      test("file: URLs find what pages load, and nothing of the main process", async () => {
         using dir = project(
           {
             "name": "notes",
@@ -1168,7 +1407,7 @@ finish({
             "ui/vendor/pkg/other.js": String.raw`export default "other";`,
           },
         );
-        symlinkSync("../real", join(String(dir), "ui/linked"));
+        symlinkSync("../real", join(String(dir), "ui/linked"), "dir");
         const sources = ["ui", "real", "main.js", "preload.js", "secret.js"];
         const { warnings, stdout, exitCode, inSandbox } = await compileAndRun(dir, sources, "main.js", "ui/index.html");
         expect(await inSandbox()).toBe(stdout);
@@ -1288,12 +1527,33 @@ app.whenReady().then(async () => {
         });
       });
 
+      test("an app cannot be told to be a part of another", async () => {
+        using dir = project({ name: "notes", main: "app.ts", desktop: { name: "Memo" } });
+        expect(await run([bunExe(), "compile", "--desktop", "app.ts", "--outfile=out"], String(dir))).toMatchObject({
+          exitCode: 0,
+        });
+        const as = async (role: string, env = {}) =>
+          (
+            await run(
+              [join(String(dir), "out" + extension, executable), "--bun-desktop-child=" + role, "library"],
+              String(dir),
+              { BUN_DESKTOP_HEADLESS: "1", ...env },
+            )
+          ).stdout;
+        expect(await Promise.all([as("page"), as("compiled-page"), as("gpu"), as("page", withSandbox)])).toEqual([
+          "started\n",
+          "started\n",
+          "started\n",
+          isLinux ? "" : "started\n",
+        ]);
+      });
+
       test.skipIf(!isLinux)("only the processes of pages that were compiled have the program", async () => {
         using dir = project(
           {
             "name": "notes",
             "main": "main.js",
-            "desktop": { "name": "Memo", "preloads": "preload.js", "pages": ["ui/*.html"] },
+            "desktop": { "name": "Memo", "preloads": "preload.js", "pages": ["ui/*.html"], "jit": true },
           },
           {
             "main.js": String.raw`const { app, BrowserWindow } = require("bun:desktop/electron");
@@ -1416,7 +1676,8 @@ written without
     });
   });
 
-  describe.skipIf(!isLinux || isMusl)("the modules of Electron are built in", () => {
+  describe.skipIf(isMacOS || isMusl)("the modules of Electron are built in", () => {
+    const app = isWindows ? "out/notes.exe" : "out.AppDir/AppRun";
     const api = (aot: boolean) =>
       `await Bun.build({ entrypoints: ["app.js"], compile: { aot: ${aot}, desktop: true, outfile: "out" } });`;
     const builds = [
@@ -1459,7 +1720,7 @@ written without
         );
         expect(await bun(dir, ...args)).toMatchObject({ exitCode: 0 });
         const env = { NAME: "electron", BUN_DESKTOP_HEADLESS: "1" };
-        expect(await run([join(String(dir), "out.AppDir/AppRun")], "/", env)).toMatchObject({
+        expect(await run([join(String(dir), app)], "/", env)).toMatchObject({
           stdout: "notes true true,true,true,true,true,true,true\ntrue true\n",
           exitCode: 0,
         });
@@ -1469,7 +1730,7 @@ written without
     test("not without --desktop", async () => {
       using dir = project({ name: "notes" }, { ...installed, "app.js": `console.log(require("electron"));` });
       expect(await bun(dir, "build", "--compile", "app.js", "--outfile=out")).toMatchObject({ exitCode: 0 });
-      expect(await run([join(String(dir), "out")], "/")).toMatchObject({
+      expect(await run([join(String(dir), isWindows ? "out.exe" : "out")], "/")).toMatchObject({
         stdout: "the path of Electron\n",
         exitCode: 0,
       });
@@ -1616,7 +1877,7 @@ app.whenReady().then(() => {
         String(dir),
       );
       expect(built).toMatchObject({ exitCode: 0 });
-      const cmd = [join(String(dir), "out.AppDir/AppRun")];
+      const cmd = [join(String(dir), app)];
       expect(await run(cmd, "/", { BUN_DESKTOP_HEADLESS: "1" })).toMatchObject({
         stdout: "A page gets Electron's modules from its preload script TypeError\n",
         exitCode: 0,
@@ -1624,13 +1885,13 @@ app.whenReady().then(() => {
     });
   });
 
-  test.skipIf(!!aotIsUnsupported || !isLinux || isMusl)("Bun.build with aot", async () => {
+  test.skipIf(!!aotIsUnsupported || isMacOS || isMusl)("Bun.build with aot", async () => {
     using dir = project(
       { name: "notes" },
       { "build.ts": `await Bun.build({ entrypoints: ["app.ts"], compile: { aot: true, desktop: true } });` },
     );
     expect(await bun(dir, "build.ts")).toMatchObject({ stderr: "", exitCode: 0 });
-    expect(await run([join(String(dir), "notes.AppDir/AppRun")], "/")).toMatchObject({
+    expect(await run([join(String(dir), isWindows ? "notes/notes.exe" : "notes.AppDir/AppRun")], "/")).toMatchObject({
       stdout: "started\n",
       exitCode: 0,
     });
@@ -1759,10 +2020,12 @@ app.whenReady().then(async () => {
     },
   );
 
-  test.skipIf(isWindows)("a compiled program does not take the argument that makes a process for pages", async () => {
+  test("a compiled program does not take the argument that makes a process for pages", async () => {
     using dir = project(undefined, { "app.ts": `console.log(process.argv.slice(2).join());` });
     expect(await bun(dir, "build", "--compile", "app.ts", "--outfile=plain")).toMatchObject({ exitCode: 0 });
-    expect(await run([join(String(dir), "plain"), "--bun-desktop-child=page", "a"], String(dir))).toMatchObject({
+    expect(
+      await run([join(String(dir), isWindows ? "plain.exe" : "plain"), "--bun-desktop-child=page", "a"], String(dir)),
+    ).toMatchObject({
       stdout: "--bun-desktop-child=page,a\n",
       exitCode: 0,
     });
@@ -1828,14 +2091,14 @@ app.whenReady().then(async () => {
     expect(exitCode).toBe(1);
   });
 
-  test.skipIf(isWindows)("follows links in resources, and stops at a cycle", async () => {
+  test("follows links in resources, and stops at a cycle", async () => {
     using dir = project({ name: "notes", desktop: { resources: ["data"] } }, { "data/a": "a", "outside/b": "b" });
-    symlinkSync("../outside", join(String(dir), "data/linked"));
+    symlinkSync("../outside", join(String(dir), "data/linked"), "dir");
     const args = ["build", "--compile", "--desktop", ...forMac, "app.ts"];
     expect(await bun(dir, ...args)).toMatchObject({ exitCode: 0 });
     expect(filesIn(join(String(dir), "notes.app/Contents/Resources/data"))).toEqual(["a", "linked/b"]);
 
-    symlinkSync("../data", join(String(dir), "outside/back"));
+    symlinkSync("../data", join(String(dir), "outside/back"), "dir");
     const { stderr, exitCode } = await bun(dir, ...args);
     expect(stderr).toContain("is a link to a directory above it");
     expect(exitCode).toBe(1);

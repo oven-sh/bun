@@ -15,7 +15,7 @@ use crate::api::trusted::{Factory, Trusted};
 use crate::generated_bindgen::window::*;
 
 mod callbacks;
-mod console;
+pub(crate) mod console;
 mod container;
 mod navigator;
 pub(crate) mod page;

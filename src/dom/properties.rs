@@ -225,6 +225,7 @@ pub(crate) enum Only {
     FirstLine,
     FirstLetter,
     Cue,
+    Placeholder,
 }
 
 impl Only {
@@ -236,6 +237,7 @@ impl Only {
             Pseudo::Part(part) if crate::name::is_name!(part, "cue" | "-internal-cue-node") => {
                 Only::Cue
             }
+            Pseudo::Part(part) if part == crate::name::name!("placeholder") => Only::Placeholder,
             _ => Only::All,
         }
     }
@@ -262,6 +264,9 @@ impl Only {
         };
         match self {
             Only::All => true,
+            Only::Placeholder => {
+                !matches!(id, Id::Direction | Id::TextOrientation | Id::WritingMode)
+            }
             Only::Cue => is_in(
                 "animation- background- color font- line-height opacity outline- ruby-position text-combine-upright text-decoration- \
                 text-shadow text-wrap- transition- visibility white-space-collapse",
@@ -1222,7 +1227,6 @@ impl Id {
             Id::R => Value::R(PositiveLp(size()?)),
             Id::Width => Value::Width(Size::Length(size()?)),
             Id::Height => Value::Height(Size::Length(size()?)),
-            Id::Transform => Value::Transform(Transforms::of_hint(source, cx.zoom)?),
             _ => return None,
         })
     }

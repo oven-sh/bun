@@ -54,6 +54,8 @@ struct Item {
     align: Align,
     stretches: bool,
     has_auto_margin: bool,
+    /// Across, if all its sizes are lengths or `auto`.
+    plain_limits: Option<[f32; 2]>,
     cross: f32,
     /// Whether it is measured from the end of the line, and the distance.
     baseline: Option<(bool, f32)>,
@@ -229,6 +231,7 @@ impl Item {
     }
 }
 
+#[inline(always)]
 fn resolve_flexible_lengths(items: &mut [Item], space: f32, main: usize) {
     let hypothetical: f32 = items.iter().map(|it| it.outer(it.size, main)).sum();
     let shrinks = hypothetical >= space;
@@ -294,11 +297,13 @@ impl Document {
     #[inline(always)]
     fn plain_flex_item(&mut self, container: &Container, id: BoxId) -> Option<Item> {
         let (it, main) = (&self.boxes[id], container.main);
-        let fixed = it.fixed_sizes().filter(|it| {
+        let fixed = it.sizes_in(container.size).filter(|it| {
             !it.traits.contains(Traits::HAS_AUTO_MARGIN)
                 && container.balanced.is_none()
                 && !container.is_webkit_box
         })?;
+        (fixed.traits.contains(Traits::HAS_FIXED_SIZES) || !it.is_divided_by_limits())
+            .then_some(())?;
         let (l, margin, edges) = (
             &it.style.layout,
             fixed.margin,
@@ -318,7 +323,7 @@ impl Document {
             height: None,
         };
         let stretches = matches!(align.0, AlignName::Normal | AlignName::Stretch)
-            && [fixed.height, fixed.width][main].is_none();
+            && matches!(sizes(&it.style)[1 - main], Size::Auto);
         let fills = stretches && !container.wraps;
         let has_automatic_minimum =
             matches!(sizes(&it.style)[2 + main], Size::Auto) && !it.overflow[main].scrolls();
@@ -394,6 +399,7 @@ impl Document {
             align,
             stretches,
             has_auto_margin: false,
+            plain_limits: Some(fixed.limits[1 - main]),
             cross: cross.max(0.0),
             baseline: None,
         })
@@ -585,6 +591,7 @@ impl Document {
             align,
             stretches,
             has_auto_margin,
+            plain_limits: None,
             cross,
             baseline,
         }
@@ -738,6 +745,286 @@ impl Document {
                 is_indefinite: container.size[1].is_none() && !item.has_definite_basis,
                 ..self.input_for(item.id, item.cross, &item.room)
             },
+        }
+    }
+
+    /// What `run_algorithm` comes to for most flex containers.
+    #[inline(always)]
+    pub(crate) fn lay_out_plain_flex(&mut self, id: BoxId, input: &Input) -> Option<Output> {
+        let it = &self.boxes[id];
+        (it.style.fixed().traits.contains(Traits::IS_PLAIN_FLEX)
+            && it.node != 0
+            && it.outside_marker == 0
+            && !(it.is_skipped || it.is_parking || it.splits_layers)
+            && self.boxes.is_unbroken(id))
+        .then_some(())?;
+        if it.style.layout.flex_direction == FlexDirection::Row {
+            self.lay_out_one_line::<0>(id, input)
+        } else {
+            self.lay_out_one_line::<1>(id, input)
+        }
+    }
+
+    #[inline(never)]
+    fn lay_out_one_line<const MAIN: usize>(&mut self, id: BoxId, input: &Input) -> Option<Output> {
+        crate::recovery::need_stack();
+        let it = &mut self.boxes[id];
+        let fixed = it.sizes_in([Some(input.basis.0), input.basis.1])?;
+        (it.layout.border, it.layout.padding, it.layout.size.width) =
+            (fixed.border, fixed.padding, input.width);
+        let (inset, count, l) = (
+            fixed.border + fixed.padding,
+            it.children.len(),
+            &*it.style.layout,
+        );
+        let inner = |height: f32| (height - inset.sums()[1]).max(0.0);
+        let definite = match input.height {
+            None => fixed.height.filter(|_| !input.ignores_height),
+            height => height.filter(|_| !input.is_indefinite),
+        };
+        let basis = (
+            (input.width - inset.sums()[0]).max(0.0),
+            definite.map(inner),
+        );
+        let (size, justify) = ([Some(basis.0), basis.1], l.justify_content);
+        let between_items = gap(
+            if MAIN == 0 { &l.column_gap } else { &l.row_gap },
+            size[MAIN],
+        );
+        let container = Container {
+            style: Rc::clone(&it.style),
+            main: MAIN,
+            is_reversed: false,
+            wraps: false,
+            wraps_back: false,
+            balanced: None,
+            is_webkit_box: false,
+            align_items: l.align_items,
+            size,
+            gaps: [between_items, 0.0],
+            is_probed: input.is_probe,
+        };
+        let mut items = SmallVec::<[Item; 4]>::with_capacity(count);
+        for index in 0..count {
+            let child = self.boxes[id].children[index];
+            let it = &self.boxes[child];
+            if !it.style.is_out_of_flow() {
+                (!matches!(
+                    align_self(&it.style, container.align_items).0,
+                    AlignName::Baseline | AlignName::LastBaseline
+                ))
+                .then_some(())?;
+                match self.plain_flex_item(&container, child) {
+                    Some(item) => items.push(item),
+                    None => {
+                        let it = &self.boxes[child];
+                        (!it.style.fixed().traits.contains(Traits::HAS_AUTO_MARGIN)
+                            && !it.is_foreign())
+                        .then_some(())?;
+                        items.push(self.flex_item(&container, child));
+                    }
+                }
+            }
+        }
+        let (items, mut output) = (&mut items[..], Output::default());
+        let (gaps, mut main_size) = (
+            between_items * items.len().saturating_sub(1) as f32,
+            basis.0,
+        );
+        let used =
+            |items: &[Item]| items.iter().map(|it| it.outer(it.size, MAIN)).sum::<f32>() + gaps;
+        if MAIN == 1 {
+            output.intrinsic = inset.sums()[1] + used(items).max(0.0);
+            output.height = fixed.height_for(input, output.intrinsic);
+            if input.is_probe {
+                return Some(output);
+            }
+            main_size = inner(output.height);
+        }
+        resolve_flexible_lengths(items, main_size - gaps, MAIN);
+        let input_of = |document: &Document, item: &Item| match item.plain_limits {
+            Some(_) if MAIN == 0 => Input {
+                width: item.size,
+                height: item.room.height,
+                basis,
+                ..Input::default()
+            },
+            Some(_) => Input {
+                width: item.cross,
+                height: Some(item.size),
+                is_indefinite: basis.1.is_none() && !item.has_definite_basis,
+                basis,
+                ..Input::default()
+            },
+            None => document.item_input(&container, item),
+        };
+        let mut line = 0.0f32;
+        for item in &mut *items {
+            if MAIN == 0 {
+                let input = input_of(self, item);
+                item.cross = match item.stretches && item.room.height.is_none() {
+                    true => {
+                        self.measure(
+                            item.id,
+                            Input {
+                                is_probe: self.divides_height(item.id),
+                                ..input
+                            },
+                        )
+                        .height
+                    }
+                    false => self.lay_out(item.id, input, None).height,
+                };
+            } else if item.plain_limits.is_none()
+                && !item.stretches
+                && self.boxes[item.id].ratio.is_some()
+            {
+                item.cross = self.resolve_width(
+                    item.id,
+                    &Room {
+                        height: Some(item.size),
+                        ..item.room
+                    },
+                    AutoSize::Fit,
+                );
+            }
+            line = line.max(item.outer(item.cross, 1 - MAIN));
+        }
+        let mut cross_size = basis.0;
+        if MAIN == 0 {
+            output.intrinsic = inset.sums()[1] + line;
+            if items.is_empty() && self.has_line_if_empty(self.boxes[id].node) {
+                output.intrinsic += unit(container.style.line_height());
+            }
+            output.height = fixed.height_for(input, output.intrinsic);
+            if input.is_probe {
+                return Some(output);
+            }
+            cross_size = inner(output.height);
+        }
+        line += diffused(cross_size - line, 0);
+        let (mut offset, between) = if justify == Align::NORMAL {
+            (0.0, 0.0)
+        } else {
+            container.content_alignment(justify, MAIN, main_size - used(items), items.len())
+        };
+        let (mut contents, mut gathers, last) = (
+            crate::scroll::Contents::default(),
+            count == items.len(),
+            items.len().wrapping_sub(1),
+        );
+        for (index, item) in items.iter_mut().enumerate() {
+            if MAIN == 0 {
+                let space = (line - item.margin.sums()[1]).max(0.0);
+                item.room.available[1] = Some(space);
+                if item.stretches && item.room.height.is_none() {
+                    item.room.height = Some(item.plain_limits.map_or_else(
+                        || self.clamp_height(item.id, space, item.size, &item.room),
+                        |it| clamp(space, it),
+                    ));
+                }
+            }
+            let own = self.lay_out(item.id, input_of(self, item), None);
+            let free = line - item.outer(if MAIN == 0 { own.height } else { item.cross }, 1 - MAIN);
+            let within = match item.align.0 {
+                AlignName::Normal
+                | AlignName::Stretch
+                | AlignName::Start
+                | AlignName::FlexStart => 0.0,
+                _ => {
+                    distribute(
+                        container.along_flow(
+                            item.align,
+                            1 - MAIN,
+                            self.boxes[item.id].starts_far(1 - MAIN),
+                            free,
+                        ),
+                        free,
+                        1,
+                    )
+                    .0
+                }
+            };
+            let along = inset.along(MAIN)[0] + diffused(offset, 0) + item.margin.along(MAIN)[0];
+            let across = inset.along(1 - MAIN)[0] + within + item.margin.along(1 - MAIN)[0];
+            let at = if MAIN == 0 {
+                [along, across]
+            } else {
+                [across, along]
+            };
+            offset += item.outer(item.size, MAIN) + between_items + between;
+            self.place_child(item.id, at, item.margin, basis);
+            self.absorb(item.id, &own, &mut output);
+            let it = &self.boxes[item.id];
+            gathers = gathers && contents.add(it);
+            output.uses_height |= if MAIN == 0 {
+                it.width_uses_height()
+            } else {
+                own.uses_height || crate::layout::is_relative(&it.style.layout.flex_basis.0)
+            };
+            let baseline = |own_baseline: Option<f32>| {
+                Some(at[1] + it.baseline_for(&container.style, own_baseline, own.height))
+            };
+            if index == 0 {
+                output.baselines[0] = baseline(own.baselines[0]);
+            }
+            if index == last {
+                output.baselines[1] = baseline(own.last_baseline);
+            }
+        }
+        output.last_baseline = output.baselines[1];
+        if gathers {
+            self.gathered.set(Some((id, contents)));
+        }
+        let it = &mut self.boxes[id];
+        it.layout.size.height = output.height;
+        it.forget_hoisted();
+        if count > items.len() {
+            self.pass_out_of_flow_items(
+                id,
+                &container,
+                inset,
+                [basis.0, inner(output.height)],
+                &mut output,
+            );
+        }
+        if !output.escapes.is_empty() {
+            self.lay_out_positioned(id, &mut output, None);
+        }
+        Some(output)
+    }
+
+    fn pass_out_of_flow_items(
+        &mut self,
+        id: BoxId,
+        container: &Container,
+        inset: Edges,
+        sizes: [f32; 2],
+        output: &mut Output,
+    ) {
+        for index in 0..self.boxes[id].children.len() {
+            let child = self.boxes[id].children[index];
+            let it = &mut self.boxes[child];
+            if it.style.is_out_of_flow() {
+                output.escapes |= it.out_of_flow();
+                it.static_position = [0, 1].map(|axis| {
+                    let align = match axis == container.main {
+                        true => container.justify_content(),
+                        false => align_self(&it.style, container.align_items),
+                    };
+                    let align = match container.along_flow(align, axis, it.starts_far(axis), 0.0) {
+                        AlignName::SpaceAround | AlignName::SpaceEvenly => AlignName::Center,
+                        AlignName::Baseline if container.wraps_back => AlignName::End,
+                        AlignName::LastBaseline if container.wraps_back => AlignName::Start,
+                        align => align,
+                    };
+                    let (edge, start) = (
+                        Edge::from(align, container.is_backwards(axis)),
+                        inset.along(axis)[0],
+                    );
+                    (edge.of([start, start + sizes[axis]]), edge)
+                });
+            }
         }
     }
 
@@ -1070,30 +1357,8 @@ impl Document {
             line_offset = exact_offset + line.cross + gaps[1] + between_lines;
         }
 
-        let count = self.boxes[id].children.len();
-        for index in 0..if count > items.len() { count } else { 0 } {
-            let child = self.boxes[id].children[index];
-            let it = &mut self.boxes[child];
-            if it.style.is_out_of_flow() {
-                output.escapes |= it.out_of_flow();
-                it.static_position = [0, 1].map(|axis| {
-                    let align = match axis == main {
-                        true => container.justify_content(),
-                        false => align_self(&it.style, container.align_items),
-                    };
-                    let align = match container.along_flow(align, axis, it.starts_far(axis), 0.0) {
-                        AlignName::SpaceAround | AlignName::SpaceEvenly => AlignName::Center,
-                        AlignName::Baseline if container.wraps_back => AlignName::End,
-                        AlignName::LastBaseline if container.wraps_back => AlignName::Start,
-                        align => align,
-                    };
-                    let (edge, start) = (
-                        Edge::from(align, container.is_backwards(axis)),
-                        inset.along(axis)[0],
-                    );
-                    (edge.of([start, start + sizes[axis]]), edge)
-                });
-            }
+        if self.boxes[id].children.len() > items.len() {
+            self.pass_out_of_flow_items(id, &container, inset, sizes, &mut output);
         }
         if let Some(breaks) = breaks {
             let mut flow = self.flow(id, input, inset, breaks);

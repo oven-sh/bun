@@ -11,6 +11,7 @@ use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 use crate::later::{self, Timer};
 use crate::protocol::{
     Command, Event, Input, Lane, Mouse, MouseAction, Reply, Request, SurfaceCommand, SystemRequest,
+    TouchPhase,
 };
 
 /// The `source` of a `pump` that only waits for the UI.
@@ -34,6 +35,8 @@ struct Queue {
     hold_timer: Cell<Option<Timer>>,
     on_message: Cell<Option<OnMessage>>,
     out_of_turn: Cell<Option<fn(&[u8]) -> bool>>,
+    /// How often the events were taken from where those who wait have seen them.
+    moves: Cell<u32>,
 }
 
 /// From another process.
@@ -59,11 +62,31 @@ impl Default for Queue {
             hold_timer: Cell::default(),
             on_message: Cell::default(),
             out_of_turn: Cell::default(),
+            moves: Cell::default(),
         }
     }
 }
 
 crate::state!(fn queue() -> Queue);
+
+struct Place {
+    at: usize,
+    moves: u32,
+}
+
+impl Place {
+    fn new(queue: &Queue, at: usize) -> Place {
+        let moves = queue.moves.get();
+        Place { at, moves }
+    }
+
+    fn get(&mut self, queue: &Queue) -> usize {
+        if self.moves != queue.moves.get() {
+            *self = Place::new(queue, 0);
+        }
+        self.at
+    }
+}
 
 impl Queue {
     fn receive(&self) {
@@ -245,16 +268,18 @@ impl Queue {
         accepts: fn(&[u8]) -> bool,
     ) -> JsResult<()> {
         let is_accepted = |it: &mut Event| matches!(it, Event::Message { message, .. } if accepts(&message.bytes));
-        for at in 0.. {
+        let mut place = Place::new(self, 0);
+        loop {
+            let at = place.get(self);
             let next = self
                 .events
                 .borrow_mut()
                 .get_mut(at)
                 .map(|it| it.take_if(is_accepted));
-            let Some(event) = next else { break };
+            let Some(event) = next else { return Ok(()) };
+            place.at += 1;
             crate::report(global, event.map_or(Ok(()), |it| self.deliver(global, it)))?;
         }
-        Ok(())
     }
 
     fn wait(
@@ -264,7 +289,7 @@ impl Queue {
         accepts: &dyn Fn(&Event) -> bool,
     ) -> JsResult<()> {
         let ui = crate::renderer(global)?;
-        let mut at = self.events.borrow().len();
+        let mut place = Place::new(self, self.events.borrow().len());
         loop {
             self.render(global)?;
             if is_done()? {
@@ -272,14 +297,14 @@ impl Queue {
             }
             while !(ui.pump)(NO_SOURCE, FOREVER, false) {}
             self.receive();
-            while at < self.events.borrow().len() {
-                let accepted = match &mut self.events.borrow_mut()[at] {
+            while place.get(self) < self.events.borrow().len() {
+                let accepted = match &mut self.events.borrow_mut()[place.at] {
                     Some(Event::Fatal(message)) => {
                         return Err(global.throw(format_args!("{}", &**message)));
                     }
                     event => event.take_if(|it| accepts(it)),
                 };
-                at += 1;
+                place.at += 1;
                 if let Some(event) = accepted {
                     crate::report(global, self.deliver(global, event))?;
                 }
@@ -355,7 +380,7 @@ pub fn wait_for_process(
     };
     let is_end = |it: &Event| matches!(it, Event::Disconnected { from } if *from == process);
     queue.waits.update(|it| it + 1);
-    let mut at = 0;
+    let mut place = Place::new(queue, 0);
     let result = loop {
         if is_done() {
             break true;
@@ -364,12 +389,12 @@ pub fn wait_for_process(
         if left.is_some_and(|it| it.is_zero()) {
             break false;
         }
-        let next = (queue.events.borrow_mut().get_mut(at))
+        let next = (queue.events.borrow_mut().get_mut(place.get(queue)))
             .map(|it| (it.as_ref().is_some_and(is_end), it.take_if(is_accepted)));
         match next {
             Some((true, _)) => break false,
             Some((false, event)) => {
-                at += 1;
+                place.at += 1;
                 let delivered = event.map_or(Ok(()), |it| queue.deliver(global, it));
                 if crate::report(global, delivered).is_err() {
                     break false;
@@ -405,6 +430,8 @@ pub fn is_input_pending(includes_continuous: bool) -> bool {
         Event::Surface { input, .. } => match input {
             Input::Key(_) | Input::Text { .. } => true,
             Input::Mouse(mouse) => includes_continuous || mouse.action != MouseAction::Move,
+            Input::Pen { mouse, .. } => includes_continuous || mouse.action != MouseAction::Move,
+            Input::Touch { phase, .. } => includes_continuous || *phase != TouchPhase::Move,
             Input::Wheel(_) => includes_continuous,
             _ => false,
         },
@@ -472,6 +499,18 @@ pub fn without_events<T>(accepts: fn(&[u8]) -> bool, steps: impl FnOnce() -> T) 
     if !queue.events.borrow().is_empty() && !queue.is_dispatching.get() {
         later::handle_events_soon();
     }
+    result
+}
+
+/// What happens meanwhile is handled, whatever is on the stack.
+pub fn with_events<T>(steps: impl FnOnce() -> T) -> T {
+    let queue = queue();
+    let before = (queue.is_dispatching.take(), queue.waits.take());
+    later::handle_events_soon();
+    let result = steps();
+    queue.is_dispatching.set(before.0);
+    queue.waits.set(before.1);
+    queue.moves.update(|it| it.wrapping_add(1));
     result
 }
 

@@ -511,7 +511,7 @@ impl Broadcast {
     pub fn send(&self, value: &Serialized) {
         broadcast(&self.key, value, |it| !self.is(it));
         if let Some(handle) = &self.in_host {
-            petition::broadcast(handle.id(), value.clone());
+            petition::broadcast(handle.id(), wire::Measured(value.clone(), 0));
         }
     }
 }
@@ -529,6 +529,17 @@ pub(crate) struct FarBroadcast {
     id: u32,
 }
 
+impl Address {
+    /// For that many more bytes from another process.
+    fn has_room_for(&self, bytes: usize) -> bool {
+        const OVERHEAD: usize = 1 << 10;
+        let mut side = self.sides[self.side].lock();
+        side.bytes_from_afar *= usize::from(!side.inbox.is_empty());
+        side.bytes_from_afar += bytes + OVERHEAD;
+        side.bytes_from_afar <= 2 * wire::LARGE
+    }
+}
+
 impl FarBroadcast {
     pub(crate) fn join(peer: Peer, id: u32, shelf: &Shelf, name: &[u8]) -> FarBroadcast {
         let partition = [&shelf.session.to_le_bytes(), &*shelf.bucket].concat();
@@ -542,9 +553,16 @@ impl FarBroadcast {
     }
 
     /// To other processes.
-    pub(crate) fn send(&self, value: &Serialized) {
-        let is_other = |it: &Member| !matches!(it, Member::In(peer, _) if *peer == self.peer);
-        broadcast(&self.key, value, is_other);
+    pub(crate) fn send(&self, value: &Serialized, bytes: usize) -> wire::Result<()> {
+        let has_room = core::cell::Cell::new(true);
+        broadcast(&self.key, value, |it| match it {
+            Member::Here(it) => {
+                has_room.update(|before| before && it.has_room_for(bytes));
+                has_room.get()
+            }
+            Member::In(peer, _) => *peer != self.peer,
+        });
+        has_room.get().then_some(()).ok_or(wire::Malformed)
     }
 }
 

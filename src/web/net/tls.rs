@@ -15,12 +15,14 @@ use bun_threading::Guarded;
 
 use crate::{Bytes, exec};
 
+#[cfg(windows)]
+use super::certificate_store as store;
 #[cfg(target_os = "macos")]
 use super::keychain as store;
 #[cfg(target_os = "linux")]
 use super::nss as store;
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 mod store {
     use super::{Bytes, Scheme, ZStr};
 
@@ -66,6 +68,31 @@ pub(super) enum Scheme {
     Pkcs1,
     Pss,
     Ecdsa,
+}
+
+#[cfg(any(target_os = "linux", windows))]
+fn der_integer(number: &[u8]) -> Vec<u8> {
+    let number = &number[number
+        .iter()
+        .take_while(|it| **it == 0)
+        .count()
+        .min(number.len() - 1)..];
+    let padding: &[u8] = if number[0] >= 0x80 { &[0] } else { &[] };
+    [
+        &[2, (padding.len() + number.len()) as u8][..],
+        padding,
+        number,
+    ]
+    .concat()
+}
+
+/// `raw` has two numbers of the same length.
+#[cfg(any(target_os = "linux", windows))]
+pub(super) fn pair_in_der(raw: &[u8]) -> Option<Vec<u8>> {
+    let (first, second) = (raw.len() >= 2).then(|| raw.split_at(raw.len() / 2))?;
+    let pair = [der_integer(first), der_integer(second)].concat();
+    let long_form: &[u8] = if pair.len() >= 0x80 { &[0x81] } else { &[] };
+    Some([&[0x30][..], long_form, &[pair.len() as u8], &pair].concat())
 }
 
 /// With the length of the digest.

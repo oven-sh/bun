@@ -1,10 +1,12 @@
 //! The scripts of pages and workers that were compiled into the executable, and the files that are embedded in it.
 
 use core::sync::atomic::{AtomicBool, Ordering};
+use std::borrow::Cow;
 use std::sync::LazyLock;
 
 use bun_core::{StringView, strings};
 use bun_jsc::virtual_machine::standalone_module_graph;
+use bun_paths::resolve_path::{platform_to_posix_in_place, posix_to_platform_in_place};
 pub use bun_resolver::scripts_of_pages::PRELOAD_PARAMETERS;
 use bun_resolver::scripts_of_pages::{CLASSIC, LIST, PRELOAD, name_of_inline};
 use bun_threading::RwLock;
@@ -126,10 +128,25 @@ pub fn is_for_any_document() -> bool {
     has_scripts() || !listed().is_empty() || !__bun_desktop_can_show_pages_without_program()
 }
 
+/// The program knows its modules by paths with the separators of the system.
+fn key_of(mut path: Vec<u8>) -> Vec<u8> {
+    posix_to_platform_in_place(&mut path);
+    path
+}
+
+fn with_slashes(key: &[u8]) -> Cow<'_, [u8]> {
+    let mut path = Cow::Borrowed(key);
+    if cfg!(windows) {
+        platform_to_posix_in_place(path.to_mut());
+    }
+    path
+}
+
 pub fn is_path(key: &[u8]) -> bool {
-    ROOTS.read().iter().any(|it| key.starts_with(&it.1))
+    let path = with_slashes(key);
+    ROOTS.read().iter().any(|it| path.starts_with(&it.1))
         || standalone_module_graph()
-            .is_some_and(|it| key.starts_with(it.base_public_path_with_default_suffix()))
+            .is_some_and(|it| path.starts_with(it.base_public_path_with_default_suffix()))
 }
 
 fn is_compiled(path: &[u8]) -> bool {
@@ -211,6 +228,7 @@ pub fn path_of(url: &[u8], form: Form) -> Option<Vec<u8>> {
         path.truncate(length);
         (is_named && is_compiled(&path)).then_some(path)
     })
+    .map(key_of)
 }
 
 /// A page can be at any URL below the directory that it is from.
@@ -222,6 +240,7 @@ pub fn path_of_inline(base: &[u8], text: impl Fn() -> Vec<u8>, is_module: bool) 
             .map(|it| [&path[..it], &name].concat())
             .find(|it| is_compiled(it))
     })
+    .map(key_of)
 }
 
 pub fn is_classic_script(path: &[u8]) -> bool {
@@ -229,7 +248,8 @@ pub fn is_classic_script(path: &[u8]) -> bool {
 }
 
 /// The one that begins most like `near`.
-pub fn url_of(path: &[u8], near: &Url) -> Option<Url> {
+pub fn url_of(key: &[u8], near: &Url) -> Option<Url> {
+    let path = &*with_slashes(key);
     let shared = |a: &[u8], b: &[u8]| a.iter().zip(b).take_while(|it| it.0 == it.1).count();
     let join = |base: &Url, start: &[u8], rest: &[u8]| {
         let mut relative = start.to_vec();
@@ -251,7 +271,7 @@ pub fn url_of(path: &[u8], near: &Url) -> Option<Url> {
         return join(&Url::parse(prefix)?, b"./", rest);
     }
     let Some(own) = near.file_path().and_then(|it| key_of_file(&it)) else {
-        return Url::parse(&bun_url::file_url_from_string(&StringView::from_bytes(path)).to_utf8());
+        return Url::parse(&bun_url::file_url_from_string(&StringView::from_bytes(key)).to_utf8());
     };
     let directory = strings::last_index_of_char(&path[..shared(path, &own)], b'/')? + 1;
     let up = b"../".repeat(strings::count_char(&own[directory..], b'/'));

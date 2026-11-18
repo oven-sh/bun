@@ -3,11 +3,19 @@ import { hasScreen, openScreen } from "./screen";
 
 import { $ } from "bun";
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isWindows, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isDebug, isLinux, isMacOS, isWindows, tempDir, tls } from "harness";
 import { chmodSync, copyFileSync, existsSync, linkSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 
 const hasNss = isLinux && !!Bun.which("openssl") && !new Bun.Glob("lib*/**/libnss3.so").scanSync("/usr").next().done;
+
+function putBunAt(path: string) {
+  try {
+    linkSync(bunExe(), path);
+  } catch {
+    copyFileSync(bunExe(), path);
+  }
+}
 
 const prelude = `
   const electron = require("electron");
@@ -86,6 +94,7 @@ function readMinidump(dump: Buffer) {
     magic: dump.toString("latin1", 0, 4),
     exception: [word(exception + 8), address(exception + 24)],
     pc,
+    hasTopOfStack: isIn(sp, thread + 24),
     hasStack: isIn(sp, thread + 24) && word(thread + 36) + word(thread + 32) === dump.length,
     crashedIn: modules.filter(it => isIn(pc, it)).map(it => [text(word(it + 20), "utf16le"), word(it + 76) > 4]),
     modules: modules.length,
@@ -94,7 +103,7 @@ function readMinidump(dump: Buffer) {
   };
 }
 
-describe.skipIf(!hasLibrary || !(isLinux || isMacOS)).concurrent("crashReporter", () => {
+describe.skipIf(!hasLibrary).concurrent("crashReporter", () => {
   const files = (start: string, main: string) => ({
     "package.json": JSON.stringify({ name: "fixture", productName: "Fixture", version: "1.2.3", main: "main.js" }),
     "main.js": `${prelude}
@@ -105,31 +114,31 @@ describe.skipIf(!hasLibrary || !(isLinux || isMacOS)).concurrent("crashReporter"
       app.whenReady().then(async () => {${main}\n}).then(() => app.quit());`,
     "utility.js": `process.crash();`,
   });
+  const withoutCore = isWindows ? [] : ["/bin/sh", "-c", 'ulimit -c 0 && exec "$@"', "--"];
+  const aborted = isWindows ? 3 : "SIGABRT";
   async function launch(dir: { toString(): string }, env: object) {
     await using proc = Bun.spawn({
-      cmd: [
-        "/bin/sh",
-        "-c",
-        'ulimit -c 0 && exec "$@"',
-        "--",
-        bunExe(),
-        "--preload=bun:desktop/electron",
-        ".",
-        "--debug-crash-handler-use-trace-string",
-      ],
+      cmd: [...withoutCore, bunExe(), "--preload=bun:desktop/electron", ".", "--debug-crash-handler-use-trace-string"],
       env: { ...bunEnv, BUN_DESKTOP_HEADLESS: "1", BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0", ...env },
       cwd: String(dir),
       stderr: "pipe",
     });
     const [stdout] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const dumps = [...new Bun.Glob("*/*.dmp").scanSync(join(String(dir), "data/Crashpad"))];
-    return { printed: stdout && JSON.parse(stdout), signal: proc.signalCode, dumps };
+    const dumps = [...new Bun.Glob("*/*.dmp").scanSync(join(String(dir), "data/Crashpad"))].map(it =>
+      it.replace("\\", "/"),
+    );
+    return { printed: stdout && JSON.parse(stdout), signal: proc.signalCode ?? (proc.exitCode || null), dumps };
   }
   const read = (dir: { toString(): string }, dump: string) => readFileSync(join(String(dir), "data/Crashpad", dump));
 
   test.each([
-    ["crash_handler.segfault()", "SIGSEGV", isMacOS ? 1 : 11, "Segmentation fault at address 0xDEADBEEF"],
-    ["crash_handler.panic()", "SIGABRT", isMacOS ? 10 : 6, "invoked crashByPanic() handler"],
+    [
+      "crash_handler.segfault()",
+      isWindows ? 3 : "SIGSEGV",
+      isWindows ? 0xc0000005 : isMacOS ? 1 : 11,
+      "Segmentation fault at address 0xDEADBEEF",
+    ],
+    ["crash_handler.panic()", aborted, isWindows ? 0x40000015 : isMacOS ? 10 : 6, "invoked crashByPanic() handler"],
   ])("writes a minidump after %s", async (crash, signal, code, message) => {
     using dir = tempDir(
       "crash",
@@ -186,7 +195,7 @@ describe.skipIf(!hasLibrary || !(isLinux || isMacOS)).concurrent("crashReporter"
     );
     expect(await launch(dir, {})).toEqual({
       printed: "submitURL must be specified when uploadToServer is true",
-      signal: "SIGABRT",
+      signal: aborted,
       dumps: [],
     });
   });
@@ -208,6 +217,32 @@ describe.skipIf(!hasLibrary || !(isLinux || isMacOS)).concurrent("crashReporter"
       "utility",
       true,
     ]);
+  });
+
+  test.skipIf(isASAN || isWindows)("covers the processes of pages", async () => {
+    using dir = tempDir("crash", {
+      ...files(
+        `crashReporter.start({ uploadToServer: false, extra: { a: "1" }, globalExtra: { all: "2" } })`,
+        `serve({ "/": "" });
+         (await open()).forcefullyCrashRenderer();
+         const { webContents } = new BrowserWindow({ webPreferences: { ...preload.webPreferences, sandbox: true } });
+         webContents.loadURL("app://trusted/").catch(() => {});
+         print([(await once(webContents, "render-process-gone"))[1].reason, crashReporter.getUploadedReports().length]);`,
+      ),
+      "preload.js": `require("electron").crashReporter.addExtraParameter("b", "3"), process.crash();`,
+    });
+    const { printed, dumps } = await launch(dir, { BUN_DESKTOP_PAGE_PROCESSES: "1" });
+    const { ofApp, ofProcess, hasTopOfStack, crashedIn } = readMinidump(read(dir, dumps[0]));
+    expect([
+      printed,
+      dumps.length,
+      ofApp.all,
+      ofProcess.a,
+      ofProcess.b,
+      ofProcess.process_type,
+      hasTopOfStack,
+      crashedIn.map(it => it[1]),
+    ]).toEqual([["crashed", 1], 1, "2", undefined, "3", "renderer", true, [true]]);
   });
 
   test.skipIf(isASAN)("a utility process hears that uploads have been turned off", async () => {
@@ -371,7 +406,7 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
     ).toEqual([[false, true]]);
   });
 
-  test.skipIf(isWindows).each(["app.quit", "app.exit", "process.exit"])("relaunched after %s()", async end => {
+  test.each(["app.quit", "app.exit", "process.exit"])("relaunched after %s()", async end => {
     expect(
       await run(
         `const { cookies } = session.defaultSession;
@@ -400,7 +435,7 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
     ).toEqual([[false, false]]);
   });
 
-  test.skipIf(isWindows)("a relaunched app has the variables whose names are numbers or not ASCII", async () => {
+  test("a relaunched app has the variables whose names are numbers or not ASCII", async () => {
     expect(
       await run(
         `if (process.argv.includes("again")) return print([process.env[1], process.env["é"]]);
@@ -446,7 +481,931 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
     ]);
   });
 
-  test.skipIf(isMacOS)("there are no updates without a bundle", async () => {
+  test.skipIf(!isWindows)("there are no updates without Squirrel", async () => {
+    expect(
+      await run(`
+        const { autoUpdater } = electron;
+        autoUpdater.on("error", (error, message) => print([error.message, message]));
+        autoUpdater.checkForUpdates();
+        autoUpdater.setFeedURL({ url: "http://127.0.0.1/" });
+        autoUpdater.checkForUpdates();
+        autoUpdater.quitAndInstall();
+        print(autoUpdater.getFeedURL());`),
+    ).toEqual([
+      ...["Update URL is not set", "Can not find Squirrel", "No update available, can't quit and install"].map(it => [
+        it,
+        it,
+      ]),
+      "http://127.0.0.1/",
+    ]);
+  });
+
+  test.skipIf(!isWindows)("updates are left to Squirrel", async () => {
+    using dir = tempDir("squirrel", {
+      "update.js": `const [what, name] = process.argv.slice(2);
+        require("fs").appendFileSync(require("path").dirname(process.execPath) + "/log", what + " " + name + "\\n");
+        if (what === "--checkForUpdate") console.log("50\\n100\\n" + JSON.stringify({ releasesToApply: [{ version: "1" }, { version: "2", releaseNotes: "new" }] }));`,
+      "app-1/package.json": JSON.stringify({ name: "fixture", main: "main.js" }),
+      "app-1/main.js": `const { app, autoUpdater } = require("electron");
+        process.env.BUN_OPTIONS = "../update.js";
+        for (const name of ["error", "checking-for-update", "update-available", "update-not-available"]) autoUpdater.on(name, () => console.log(name));
+        autoUpdater.on("update-available", () => autoUpdater.quitAndInstall());
+        autoUpdater.on("update-downloaded", (_, notes, version, date, feed) => {
+          console.log(notes, version, date instanceof Date, feed);
+          autoUpdater.quitAndInstall();
+        });
+        app.whenReady().then(() => (autoUpdater.setFeedURL({ url: "http://127.0.0.1/" }), autoUpdater.checkForUpdates()));`,
+    });
+    putBunAt(join(String(dir), "Update.exe"));
+    linkSync(join(String(dir), "Update.exe"), join(String(dir), "app-1/app.exe"));
+    await using proc = Bun.spawn({
+      cmd: [join(String(dir), "app-1/app.exe"), "--preload=bun:desktop/electron", "."],
+      env: { ...bunEnv, BUN_DESKTOP_HEADLESS: "1", BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
+      cwd: join(String(dir), "app-1"),
+      stderr: "inherit",
+    });
+    // What it starts has the pipe too.
+    expect(await proc.stdout.text()).toBe(
+      "checking-for-update\nupdate-available\nerror\nnew 2 true http://127.0.0.1/\n",
+    );
+    expect(readFileSync(join(String(dir), "log"), "utf8")).toBe(
+      "--checkForUpdate http://127.0.0.1/\n--update http://127.0.0.1/\n--processStartAndWait app.exe\n",
+    );
+    expect(await proc.exited).toBe(0);
+  });
+
+  test("a second instance tells the first one how it was started", async () => {
+    expect(
+      await run(`
+        const isSecond = process.argv.includes("again");
+        const isFirst = app.requestSingleInstanceLock({ isSecond });
+        if (isSecond) return process.exit(isFirst ? 1 : 7);
+        new BrowserWindow();
+        const second = require("child_process").spawn(process.execPath, ["--preload=bun:desktop/electron", ".", "again", "é \\"a\\""]);
+        const [[, argv, directory, data], [code]] = await Promise.all([once(app, "second-instance"), once(second, "exit")]);
+        print([isFirst, app.hasSingleInstanceLock(), argv.slice(-2), directory === process.cwd(), data, code]);`),
+    ).toEqual([[true, true, ["again", 'é "a"'], true, { isSecond: true }, 7]]);
+  });
+
+  describe.skipIf(!isWindows)("on Windows", () => {
+    const real = { BUN_DESKTOP_HEADLESS: "0" };
+    /** `send(window, message, w, l)` comes from another thread, as what the system sends. */
+    const send = `
+      const sender = new Worker(URL.createObjectURL(new Blob([\`
+        const { SendMessageW } = require("bun:ffi").dlopen("user32.dll", { SendMessageW: { args: ["i64", "u32", "i64", "i64"], returns: "i64" } }).symbols;
+        onmessage = ({ data }) => postMessage(Number(SendMessageW(...data)));\`])));
+      const send = async (window, ...rest) => {
+        sender.postMessage([window.getNativeWindowHandle().readBigInt64LE(), ...rest]);
+        return (await once(sender, "message"))[0].data;
+      };`;
+
+    /** `windowOfClass(name)` is one at the top that belongs to the app. */
+    const system = `
+      const fs = require("fs"), { dlopen, ptr, read, toBuffer } = require("bun:ffi");
+      const wide = it => Buffer.from(it + "\\0", "utf16le");
+      const { FindWindowExW, GetWindowThreadProcessId, PostMessageW, IsWindowVisible } = dlopen("user32.dll", {
+        FindWindowExW: { args: ["i64", "i64", "ptr", "i64"], returns: "i64" },
+        GetWindowThreadProcessId: { args: ["i64", "ptr"], returns: "u32" },
+        PostMessageW: { args: ["i64", "u32", "i64", "i64"], returns: "i32" },
+        IsWindowVisible: { args: ["i64"], returns: "i32" },
+      }).symbols;
+      const windowOfClass = name => {
+        for (let it = 0n, owner = new Uint32Array(1); (it = FindWindowExW(0, it, wide(name), 0)); ) if ((GetWindowThreadProcessId(it, owner), owner[0] === process.pid)) return it;
+      };
+      const failure = act => { try { act(); } catch (error) { return error.code ?? error.message; } };`;
+
+    test("a URL is one argument for the program that is registered for it, and a path is not a URL", async () => {
+      expect(
+        await run(
+          `${system}
+          const { shell } = electron, scheme = "bun-test-" + process.pid, program = path.join(__dirname, "program.cmd");
+          let heard;
+          const server = Bun.serve({ port: 0, fetch: async request => (heard((await request.json()).map(it => it.replace(scheme, "s"))), new Response()) });
+          const handler = [process.execPath, [path.join(__dirname, "handler.js"), server.url.href]];
+          const told = act => Promise.all([new Promise(done => (heard = done)), act()]).then(it => print(it[0]));
+          print(app.setAsDefaultProtocolClient("x", ...handler));
+          app.setAsDefaultProtocolClient(scheme, ...handler);
+          try {
+            for (const it of [program, program.replaceAll("\\\\", "/"), "batfile:" + program, "bun-test-nobody:a"]) print(await shell.openExternal(it).catch(error => error.message));
+            await told(() => shell.openExternal(scheme + ':a" --b "c %PATH% %41 é\\\\'));
+            serve({ "/": [program, "bun-test-nobody:a", scheme + ':x" --y "z'].map(it => "<a href='" + it + "'></a>").join("") });
+            const page = await open(), click = at => page.executeJavaScript("document.links[" + at + "].click()", true);
+            print((await Promise.all([once(page, "console-message"), click(0)]))[0][0].message);
+            print((await Promise.all([once(process, "warning"), click(1)]))[0][0].message);
+            await told(() => click(2));
+            print(fs.existsSync(path.join(__dirname, "ran")));
+            await shell.openExternal(require("url").pathToFileURL(program).href);
+            while (!fs.existsSync(path.join(__dirname, "ran"))) await Bun.sleep(5);
+          } finally {
+            app.removeAsDefaultProtocolClient(scheme, ...handler);
+            app.removeAsDefaultProtocolClient("x", ...handler);
+            server.stop(true);
+          }`,
+          {
+            "handler.js": `fetch(process.argv[2], { method: "POST", body: JSON.stringify(process.argv.slice(3)) });`,
+            "program.cmd": `@echo.> "%~dp0ran"`,
+          },
+          [],
+          real,
+        ),
+      ).toEqual([
+        false,
+        ...[
+          "it is not a URL",
+          "it is not a URL",
+          "no program opens batfile: URLs",
+          "no program opens bun-test-nobody: URLs",
+        ],
+        ["s:a%22%20--b%20%22c%20%25PATH%25%20%41%20%C3%A9%5C"],
+        "A path is not a URL",
+        "no program opens bun-test-nobody: URLs",
+        ["s:x%22%20--y%20%22z"],
+        false,
+      ]);
+    });
+
+    test("a link that another program has not escaped does not start the app", async () => {
+      expect(
+        await run("", {
+          "main.js": `${prelude}${system}
+            if (process.argv.includes("linked")) process.exit(7);
+            const scheme = "bun-test-" + process.pid, handler = [process.execPath, ["--preload=bun:desktop/electron", __dirname, "linked"]];
+            const { ShellExecuteExW } = dlopen("shell32.dll", { ShellExecuteExW: { args: ["ptr"], returns: "i32" } }).symbols;
+            const { WaitForSingleObject, GetExitCodeProcess } = dlopen("kernel32.dll", {
+              WaitForSingleObject: { args: ["u64", "u32"], returns: "u32" },
+              GetExitCodeProcess: { args: ["u64", "ptr"], returns: "i32" },
+            }).symbols;
+            app.setAsDefaultProtocolClient(scheme, ...handler);
+            for (const rest of ["a", 'a" --user-data-dir=other "', 'a" b "']) {
+              const [link, how, code] = [wide(scheme + ":" + rest), new BigUint64Array(14), new Int32Array(1)];
+              how.set([112n + (0x540n << 32n), 0n, 0n, BigInt(ptr(link))]);
+              ShellExecuteExW(how), WaitForSingleObject(how[13], 15000), GetExitCodeProcess(how[13], code);
+              print(code[0]);
+            }
+            app.removeAsDefaultProtocolClient(scheme, ...handler);
+            app.exit(0);`,
+        }),
+      ).toEqual([7, -1, -1]);
+    });
+
+    test("a page needs the user to open another program, and the app to open one of the system", async () => {
+      expect(
+        await run(
+          `serve({ "/": "" });
+          const page = await open();
+          const go = async (url, isByUser) => {
+            const said = Promise.race([once(page, "console-message"), once(process, "warning"), once(app, "asked")]);
+            await page.executeJavaScript("void (location = '" + url + "')", isByUser);
+            print((await said)[0].message);
+          };
+          await go("bun-test-nobody:a", false);
+          for (const url of ["search-ms:query=a", "SEARCH:a", "ms-msdt:a", "shell:a", "bun-test-nobody:a"]) await go(url, true);
+          session.defaultSession.setPermissionRequestHandler((_, name, answer, { externalURL }) => (answer(false), app.emit("asked", { message: name + " " + externalURL })));
+          await go("search-ms:query=a", false);`,
+          {},
+          [],
+          real,
+        ),
+      ).toEqual([
+        ...["bun-test-nobody", "search-ms", "search", "ms-msdt", "shell"].map(
+          it => `Not allowed to open ${it} URL in another program`,
+        ),
+        "no program opens bun-test-nobody: URLs",
+        "openExternal search-ms:query=a",
+      ]);
+    });
+
+    test("downloads say that they are from the internet, and have harmless names", async () => {
+      expect(
+        await run(
+          `${system}
+          const ses = session.defaultSession, zone = file => fs.readFileSync(file + ":Zone.Identifier", "utf8");
+          const server = Bun.serve({ port: 0, fetch: request => new Response("text", { headers: { "content-disposition": "attachment; filename=" + new URL(request.url).search.slice(1) } }) });
+          for (const name of ["NUL", "con.txt", "com1.a.b", "console", "a.LNK", "a.scf", "a.url", "a.{645FF040-5081-101B-9F08-00AA002F954E}", "Desktop.ini", "%TEMP%.txt", ".a.lnk", "..scf", "a.exe"]) {
+            const file = path.join(__dirname, "new");
+            const announced = new Promise(resolve => ses.once("will-download", (_, item) => (item.setSavePath(file), resolve([item, once(item, "done")]))));
+            ses.downloadURL(server.url + "?" + name);
+            const [item, done] = await announced;
+            print([item.getFilename(), (await done)[1], zone(file)].join());
+          }
+          const file = path.join(__dirname, "part"), announced = once(ses, "will-download");
+          ses.createInterruptedDownload({ path: file, urlChain: [server.url.href], offset: 1, length: 4 });
+          const [, item] = await announced;
+          item.resume();
+          print([item.getFilename(), (await once(item, "done"))[1], zone(file)].join());
+          server.stop(true);`,
+          { "part": "t" },
+        ),
+      ).toEqual(
+        [
+          ...["_NUL", "_con.txt", "_com1.a.b", "console", "a.LNK.download", "a.scf.download", "a.url.download"],
+          ...[
+            "a.{645FF040-5081-101B-9F08-00AA002F954E}.download",
+            "Desktop.ini.download",
+            "_TEMP_.txt",
+            "_a.lnk.download",
+            "_scf",
+            "a.exe",
+            "part",
+          ],
+        ].map(it => it + ",completed,[ZoneTransfer]\r\nZoneId=3\r\n"),
+      );
+    });
+
+    test("pages only ask other computers for files where the app has been", async () => {
+      expect(
+        await run(
+          `${system}
+          app.trustOrigins(["file:"], { injectedScripts: true });
+          const shared = "127.0.0.1/" + path.join(__dirname, "secret.txt").replace(":", "$").replaceAll("\\\\", "/");
+          const { webContents: page } = new BrowserWindow({ show: false });
+          await page.loadFile("index.html");
+          const ask = url => page.executeJavaScript("fetch(" + JSON.stringify(url) + ").then(it => it.text(), () => 'refused')");
+          const all = () => Promise.all(["file://", "file://///", "file:////%3F%3F/UNC/", "file://///%3F/UNC/", "file://./UNC/"].map(it => ask(it + shared)));
+          print([await ask("secret.txt"), await all()]);
+          const refusal = new Promise(done => page.on("console-message", it => it.message.startsWith("Failed to load") || done(it.message)));
+          await page.executeJavaScript("location = " + JSON.stringify("file://" + shared));
+          print(await refusal);
+          const isShared = fs.existsSync("//" + shared);
+          print([await net.fetch("file://" + shared).then(it => it.text(), () => isShared || "text"), (await all()).with(0, isShared ? await ask("file://" + shared) : "text")]);`,
+          { "index.html": "", "secret.txt": "text" },
+        ),
+      ).toEqual([
+        ["text", Array(5).fill("refused")],
+        "Not allowed to navigate top frame to file URL",
+        ["text", ["text", ...Array(4).fill("refused")]],
+      ]);
+    });
+
+    test("the documents of a Window only ask other computers for files where the app has been", async () => {
+      expect(
+        await run(
+          `${system}
+          const shared = "127.0.0.1/" + path.join(__dirname, "a.svg").replace(":", "$").replaceAll("\\\\", "/"), window = new (require("bun:desktop").Window)({ show: false });
+          await window.loadHTML("");
+          const show = src => Object.assign(window.document.createElement("img"), { src }).decode().then(() => "shown", () => "refused");
+          print([await show(require("url").pathToFileURL(path.join(__dirname, "a.svg")).href), await show("file://" + shared), await show("file://" + shared + "?again")]);
+          await net.fetch("file://" + shared).catch(() => {});
+          print(fs.existsSync("//" + shared) ? await show("file://" + shared + "?now") : "shown");`,
+          { "a.svg": `<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>` },
+        ),
+      ).toEqual([["shown", "refused", "refused"], "shown"]);
+    });
+
+    test("only the user talks to the first instance, which hangs up on those who say nothing", async () => {
+      expect(
+        await run(
+          `${system}
+          const isFirst = app.requestSingleInstanceLock();
+          if (process.argv.includes("again")) return process.exit(isFirst ? 1 : 7);
+          new BrowserWindow();
+          const pipe = fs.readFileSync(path.join(app.getPath("userData"), "lockfile"), "utf8");
+          print(failure(() => fs.openSync(pipe.replace(".", "127.0.0.1"), "w")) !== undefined);
+          const security = dlopen("advapi32.dll", {
+            GetNamedSecurityInfoW: { args: ["ptr", "i32", "u32", "i64", "i64", "i64", "i64", "ptr"], returns: "u32" },
+            ConvertSecurityDescriptorToStringSecurityDescriptorW: { args: ["ptr", "u32", "u32", "ptr", "ptr"], returns: "i32" },
+          }).symbols;
+          const [found, text, length] = [Buffer.alloc(8), Buffer.alloc(8), new Uint32Array(1)];
+          print(security.GetNamedSecurityInfoW(wide(pipe), 1, 0x14, 0, 0, 0, 0, found));
+          security.ConvertSecurityDescriptorToStringSecurityDescriptorW(read.ptr(ptr(found)), 1, 0x14, text, length);
+          print(toBuffer(read.ptr(ptr(text)), 0, length[0] * 2).toString("utf16le").split("\\0")[0]);
+          while (failure(() => fs.openSync(pipe, "w"))) await Bun.sleep(1);
+          const second = require("child_process").spawn(process.execPath, ["--preload=bun:desktop/electron", ".", "again"]);
+          const [[, argv], [code]] = await Promise.all([once(app, "second-instance"), once(second, "exit")]);
+          print([argv.at(-1), code]);`,
+        ),
+      ).toEqual([true, 0, expect.stringMatching(/^D:P\(A;;FA;;;[\w-]+\)S:\w*\(ML;;N[RW]N[RW];;;ME\)$/), ["again", 7]]);
+    });
+
+    test("the lock of the first instance does not send others to a file, and can be had when it is on its way out", async () => {
+      expect(
+        await run(
+          `${system}
+          const lock = path.join(app.getPath("userData"), "lockfile"), other = path.join(__dirname, "other");
+          const held = fs.openSync(lock, "w");
+          fs.writeSync(held, other);
+          print([app.requestSingleInstanceLock(), fs.readFileSync(other, "utf8")]);
+          fs.closeSync(held);
+          print(app.requestSingleInstanceLock());
+          const reader = new Worker(path.join(__dirname, "reader.js")), isReleased = new Int32Array(new SharedArrayBuffer(4));
+          reader.postMessage([lock, isReleased]);
+          await once(reader, "message");
+          app.releaseSingleInstanceLock();
+          Atomics.store(isReleased, 0, 1), Atomics.notify(isReleased, 0);
+          print(app.requestSingleInstanceLock());`,
+          {
+            "other": "untouched",
+            // It keeps the file until the app has tried a few times.
+            "reader.js": `onmessage = ({ data: [lock, isReleased] }) => {
+              const { GetProcessIoCounters } = require("bun:ffi").dlopen("kernel32.dll", { GetProcessIoCounters: { args: ["i64", "ptr"], returns: "i32" } }).symbols;
+              const file = require("fs").openSync(lock), counters = new BigUint64Array(6), others = () => (GetProcessIoCounters(-1, counters), counters[2]);
+              postMessage(0);
+              Atomics.wait(isReleased, 0, 0);
+              for (const enough = others() + 12n; others() < enough; );
+              require("fs").closeSync(file);
+            };`,
+          },
+        ),
+      ).toEqual([[false, "untouched"], true, true]);
+    });
+
+    test.each([
+      ["{", ["{"], {}],
+      ["", [""], {}],
+      [`{"a":1,"os_crypt":{"encrypted_key":"${btoa("DPAPIa")}"}}`, [], { a: 1, older: [btoa("DPAPIa")] }],
+      [`{"a":1,"os_crypt":{"encrypted_key":"a"}}`, [], { a: 1, older: ["a"] }],
+    ])("safeStorage keeps what it cannot use: %s", async (damaged, aside, kept) => {
+      expect(
+        await run(
+          `const fs = require("fs"), { safeStorage } = electron, read = name => fs.readFileSync(path.join(app.getPath("userData"), name), "utf8");
+          print([safeStorage.decryptString(safeStorage.encryptString("é")), fs.readdirSync(app.getPath("userData")).filter(it => /^Local State\\./.test(it)).map(read)]);
+          const { a, os_crypt } = JSON.parse(read("Local State"));
+          print({ a, older: os_crypt.older_encrypted_keys });`,
+          { "data/Local State": damaged },
+        ),
+      ).toEqual([["é", aside], kept]);
+    });
+
+    test("safeStorage reads what it has written with a key that was out of reach for a while", async () => {
+      expect(
+        await run("", {
+          "main.js": `${prelude}
+            const fs = require("fs"), { safeStorage } = electron, [role, ...secrets] = process.argv.slice(process.argv.indexOf("as") + 1 || Infinity);
+            const start = (...args) => Bun.spawn([process.execPath, "--preload=bun:desktop/electron", ".", "as", "other", ...args], { stderr: "inherit" }).stdout.json();
+            const file = path.join(__dirname, "shared", "Local State"), keys = () => JSON.parse(fs.readFileSync(file, "utf8")).os_crypt;
+            // The name of the key of the user that protects it.
+            const flip = key => { const other = Buffer.from(key, "base64"); other[5 + 24] ^= 1; fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace(key, other.toString("base64"))); };
+            if (role) app.setPath("userData", path.dirname(file));
+            app.whenReady().then(async () => {
+              const read = it => { try { return safeStorage.decryptString(Buffer.from(it, "hex")); } catch { return null; } };
+              if (role) return print([safeStorage.encryptString(String(secrets.length)).toString("hex"), secrets.map(read)]), app.quit();
+              const [first] = await start(), key = keys().encrypted_key;
+              flip(key);
+              const [second, without] = await start(first);
+              flip(keys().older_encrypted_keys[0]);
+              print([without, (await start(first, second))[1]]);
+              flip(keys().encrypted_key);
+              print([(await start(first, second))[1], keys().encrypted_key === key, keys().older_encrypted_keys.length]);
+              app.quit();
+            });`,
+        }),
+      ).toEqual([
+        [[null], ["0", "1"]],
+        [["0", null], true, 1],
+      ]);
+    });
+
+    test("safeStorage leaves alone what it cannot read now", async () => {
+      expect(
+        await run("", {
+          "data/Local State": "{}",
+          "main.js": `${prelude}${system}
+            const file = path.join(__dirname, "data", "Local State"), { CreateFileW, CloseHandle } = dlopen("kernel32.dll", {
+              CreateFileW: { args: ["ptr", "u32", "u32", "i64", "u32", "u32", "i64"], returns: "i64" },
+              CloseHandle: { args: ["i64"], returns: "i32" },
+            }).symbols;
+            const held = CreateFileW(wide(file), 0x40000000, 4, 0, 3, 0, 0);
+            app.whenReady().then(() => {
+              CloseHandle(held);
+              print([electron.safeStorage.isEncryptionAvailable(), fs.readFileSync(file, "utf8"), fs.readdirSync(path.dirname(file)).filter(it => it.startsWith("Local"))]);
+              app.quit();
+            });`,
+        }),
+      ).toEqual([[false, "{}", ["Local State"]]]);
+    });
+
+    test("apps that start together get the same key", async () => {
+      expect(
+        await run("", {
+          "main.js": `${prelude}
+            const { safeStorage } = electron, [role, ...secrets] = process.argv.slice(process.argv.indexOf("as") + 1 || Infinity);
+            const start = (...args) => Bun.spawn([process.execPath, "--preload=bun:desktop/electron", ".", "as", ...args], { stderr: "inherit" }).stdout.text();
+            if (role) app.setPath("userData", path.join(__dirname, "shared"));
+            app.whenReady().then(async () => {
+              if (role === "writer") process.stdout.write(safeStorage.encryptString("a").toString("hex"));
+              else if (role === "reader") print(secrets.map(it => safeStorage.decryptString(Buffer.from(it, "hex"))));
+              else process.stdout.write(await start("reader", ...(await Promise.all(Array.from({ length: 6 }, () => start("writer"))))));
+              app.quit();
+            });`,
+        }),
+      ).toEqual([Array(6).fill("a")]);
+    });
+
+    test("libraries of the system are not taken from the directory of the app", async () => {
+      using dir = tempDir("planted", {
+        "package.json": JSON.stringify({ name: "fixture", main: "main.js" }),
+        "authority.pem": tls.cert,
+        "main.js": `${prelude}${system}${rawServer}
+          const { GetModuleHandleW } = dlopen("kernel32.dll", { GetModuleHandleW: { args: ["ptr"], returns: "i64" } }).symbols;
+          app.whenReady().then(async () => {
+            await text(session.defaultSession, "https://localhost:" + (await raw(() => ["200 OK", "", ""], ${JSON.stringify(tls)})));
+            print(["ncrypt.dll", path.join(__dirname, "ncrypt.dll")].map(it => !!GetModuleHandleW(wide(it))));
+            app.quit();
+          });`,
+      });
+      copyFileSync(join(process.env.SystemRoot!, "System32/ncrypt.dll"), join(String(dir), "ncrypt.dll"));
+      putBunAt(join(String(dir), "app.exe"));
+      await using proc = Bun.spawn({
+        cmd: [join(String(dir), "app.exe"), "--preload=bun:desktop/electron", "."],
+        env: { ...bunEnv, BUN_DESKTOP_HEADLESS: "1", NODE_EXTRA_CA_CERTS: "authority.pem" },
+        cwd: String(dir),
+        stderr: "inherit",
+      });
+      expect(await proc.stdout.text()).toBe("[true,false]\n");
+      expect(await proc.exited).toBe(0);
+    });
+
+    test.each(["NTLM", "Negotiate"])(
+      "the identity of the user is only for the servers that are listed: %s",
+      async scheme => {
+        expect(
+          await run(
+            `${system}${rawServer}
+          const security = dlopen("sspicli.dll", {
+            AcquireCredentialsHandleW: { args: ["i64", "ptr", "u32", "i64", "i64", "i64", "i64", "ptr", "i64"], returns: "u32" },
+            AcceptSecurityContext: { args: ["ptr", "ptr", "ptr", "u32", "u32", "ptr", "ptr", "ptr", "i64"], returns: "u32" },
+            QueryContextAttributesW: { args: ["ptr", "u32", "ptr"], returns: "u32" },
+          }).symbols;
+          const words = (...all) => new BigUint64Array(all.map(BigInt)), credentials = words(0, 0);
+          security.AcquireCredentialsHandleW(0, wide("${scheme}"), 1, 0, 0, 0, 0, credentials, 0);
+          const port = await raw((line, { authorization }, state) => {
+            if (!authorization) return ["401 No", "WWW-Authenticate: ${scheme}\\r\\n", "who?"];
+            const [token, reply, known, name] = [Buffer.from(authorization.split(" ")[1], "base64"), Buffer.alloc(1 << 16), state.context, words(0)];
+            const [given, made] = [token, reply].map(it => words(it.length + 2 ** 33, ptr(it)));
+            const status = security.AcceptSecurityContext(credentials, known ?? null, words(2 ** 32, ptr(given)), 0x800, 0x10, (state.context ??= words(0, 0)), words(2 ** 32, ptr(made)), words(0), 0);
+            if (status === 0x90312) return ["401 No", "WWW-Authenticate: ${scheme} " + reply.toString("base64", 0, Number(made[0] % 2n ** 32n)) + "\\r\\n", "again"];
+            if (status) return ["403 No", "", status.toString(16)];
+            security.QueryContextAttributesW(state.context, 1, name);
+            const user = toBuffer(Number(name[0]), 0, 600).toString("utf16le").split("\\0")[0].split("\\\\").pop();
+            return ["200 OK", "", String(user.toLowerCase() === require("os").userInfo().username.toLowerCase())];
+          });
+          print(await Promise.all(["localhost", "localhost.b.test", "intranet"].map(host => text(session.defaultSession, "http://" + host + ":" + port))));`,
+            {},
+            ["--host-resolver-rules=MAP * 127.0.0.1", "--auth-server-allowlist=localhost"],
+          ),
+        ).toEqual([["200 true", "401 who?", "401 who?"]]);
+      },
+    );
+
+    /** It changes what the user has, for a moment. */
+    const onMachineForTests = test.skipIf(!isCI);
+    const withCertificates = test.skipIf(!isCI || !Bun.which("openssl"));
+    async function makeCertificate(kind: string[]) {
+      const [dir, name] = [tempDir("certificate", {}), "bun-test-" + crypto.randomUUID()];
+      await $`openssl req -x509 -newkey ${kind} -nodes -days 2 -subj /CN=${name} -addext subjectAltName=DNS:localhost -keyout key.pem -out cert.pem`
+        .cwd(String(dir))
+        .quiet();
+      const [cert, key] = ["cert.pem", "key.pem"].map(it => readFileSync(join(String(dir), it), "utf8"));
+      return { name, cert, key, dir: String(dir), [Symbol.dispose]: () => dir[Symbol.dispose]() };
+    }
+
+    withCertificates.each([
+      ["rsa:2048", "TLSv1.2", "Microsoft Enhanced RSA and AES Cryptographic Provider"],
+      ["rsa:2048", "TLSv1.3", "Microsoft Software Key Storage Provider"],
+      ["ec -pkeyopt ec_paramgen_curve:prime256v1", "TLSv1.3", "Microsoft Software Key Storage Provider"],
+    ])("a certificate of the user: %s, %s, %s", async (kind, maxVersion, provider) => {
+      using user = await makeCertificate(kind.split(" "));
+      await $`openssl pkcs12 -export -in cert.pem -inkey key.pem -passout pass:p -out user.p12`.cwd(user.dir);
+      await $`certutil -user -f -p p -csp ${provider} -importpfx MY user.p12 NoRoot`.cwd(user.dir).quiet();
+      try {
+        expect(
+          await run(
+            `${rawServer}
+            const serverFor = ca => raw((line, headers, { socket }) => ["200 OK", "", String(socket.getPeerCertificate().subject?.CN)], {
+              ...${JSON.stringify(tls)}, ca, requestCert: true, rejectUnauthorized: false, maxVersion: "${maxVersion}",
+            }).then(port => "https://localhost:" + port);
+            const [origin, other] = [await serverFor(${JSON.stringify(user.cert)}), await serverFor(${JSON.stringify(tls.cert)})];
+            const ses = session.defaultSession;
+            print([await text(ses, origin), await text(ses, origin, { credentials: "omit" }), await text(ses, other)]);`,
+            { "authority.pem": tls.cert },
+            [],
+            { NODE_EXTRA_CA_CERTS: "authority.pem" },
+          ),
+        ).toEqual([["200 " + user.name, "200 undefined", "200 undefined"]]);
+      } finally {
+        await $`certutil -user -delstore MY ${user.name}`.quiet();
+      }
+    });
+
+    withCertificates("a certificate that the user never trusts", async () => {
+      using server = await makeCertificate(["rsa:2048"]);
+      const ask = () =>
+        run(
+          `${rawServer}
+          print(await text(session.defaultSession, "https://localhost:" + (await raw(() => ["200 OK", "", "ok"], ${JSON.stringify({ cert: server.cert, key: server.key })}))));`,
+          { "authority.pem": server.cert },
+          [],
+          { NODE_EXTRA_CA_CERTS: "authority.pem" },
+        );
+      expect(await ask()).toEqual(["200 ok"]);
+      await $`certutil -user -f -addstore Disallowed cert.pem`.cwd(server.dir).quiet();
+      try {
+        expect(await ask()).toEqual(["net::ERR_CERT_AUTHORITY_INVALID"]);
+      } finally {
+        await $`certutil -user -delstore Disallowed ${server.name}`.quiet();
+      }
+    });
+
+    test("the app goes on after its hidden window was told to close", async () => {
+      expect(
+        await run(
+          `${system}
+          const window = new BrowserWindow({ show: false });
+          PostMessageW(windowOfClass("BunDesktopApp"), 0x10, 0, 0);
+          window.hookWindowMessage(0x8001, () => window.emit("later"));
+          PostMessageW(window.getNativeWindowHandle().readBigInt64LE(), 0x8001, 0, 0);
+          await once(window, "later");
+          window.setSize(300, 200);
+          print([!!windowOfClass("BunDesktopApp"), window.getSize()]);`,
+          {},
+          [],
+          real,
+        ),
+      ).toEqual([[true, [300, 200]]]);
+    });
+
+    test("trashItem() refuses what is not there", async () => {
+      expect(
+        await run(
+          `const file = path.join(__dirname, "file");
+          print(await Promise.all([file + "x", file].map(it => electron.shell.trashItem(it).then(() => "gone", () => "refused"))));
+          print(require("fs").existsSync(file));`,
+          { "file": "" },
+          [],
+          real,
+        ),
+      ).toEqual([["refused", "gone"], false]);
+    });
+
+    onMachineForTests("the clipboard", async () => {
+      expect(
+        await run(
+          `${system}
+          const { clipboard, ClipboardItem, nativeImage } = electron;
+          const user = dlopen("user32.dll", {
+            OpenClipboard: { args: ["i64"], returns: "i32" },
+            CloseClipboard: { returns: "i32" },
+            EmptyClipboard: { returns: "i32" },
+            GetClipboardData: { args: ["u32"], returns: "ptr" },
+            SetClipboardData: { args: ["u32", "ptr"], returns: "i64" },
+            RegisterClipboardFormatW: { args: ["ptr"], returns: "u32" },
+          }).symbols;
+          const memory = dlopen("kernel32.dll", {
+            GlobalAlloc: { args: ["u32", "u64"], returns: "ptr" },
+            GlobalLock: { args: ["ptr"], returns: "ptr" },
+            GlobalUnlock: { args: ["ptr"], returns: "i32" },
+            GlobalSize: { args: ["ptr"], returns: "u64_fast" },
+          }).symbols;
+          const opened = act => { while (!user.OpenClipboard(0)); try { return act(); } finally { user.CloseClipboard(); } };
+          const locked = (it, act) => { try { return act(toBuffer(memory.GlobalLock(it), 0, memory.GlobalSize(it))); } finally { memory.GlobalUnlock(it); } };
+          const get = format => opened(() => locked(user.GetClipboardData(format), Buffer.from));
+          const set = (format, bytes) => opened(() => {
+            const it = memory.GlobalAlloc(2, bytes.length);
+            locked(it, to => bytes.copy(to)), user.EmptyClipboard(), user.SetClipboardData(format, it);
+          });
+          const [HTML, TEXT, DIB, FILES] = [user.RegisterClipboardFormatW(wide("HTML Format")), 13, 8, 15];
+          const png = nativeImage.createFromBitmap(Buffer.from([0, 0, 255, 255, 0, 0, 0, 0]), { width: 2, height: 1 }).toPNG();
+          await clipboard.write([new ClipboardItem({ "text/plain": "é 😀", "text/html": "<b>é</b>", "image/png": new Blob([png]) })]);
+          const html = get(HTML), offset = name => Number(html.toString().match(name + ":(\\\\d+)")[1]);
+          print([get(TEXT).toString("utf16le").split("\\0")[0], html.toString("utf8", offset("StartFragment"), offset("EndFragment")), get(DIB).toString("hex", 40, 48)]);
+          const all = async () => Object.fromEntries(await Promise.all((await clipboard.read()).flatMap(item => item.types.map(async type => [type, await item.getType(type)]))));
+          print(Object.keys(await all()).sort());
+          set(DIB, Buffer.from("28000000" + "01000000" + "01000000" + "01001800" + "00".repeat(24) + "00ff0000", "hex"));
+          print(nativeImage.createFromBuffer(Buffer.from(await (await all())["image/png"].arrayBuffer())).toBitmap().toString("hex"));
+          set(HTML, Buffer.from("Version:0.9\\r\\nStartFragment:9999\\r\\nEndFragment:1\\r\\n"));
+          print(await Promise.all(Object.values(await all()).map(it => it.text())));
+          set(FILES, Buffer.concat([Buffer.from(new Uint32Array([20, 0, 0, 0, 1]).buffer), wide("C:\\\\a b\\0C:\\\\é\\0")]));
+          print(await (await all())["text/uri-list"].text());
+          clipboard.clear();
+          print(await clipboard.readText());`,
+          {},
+          [],
+          real,
+        ),
+      ).toEqual([
+        ["é 😀", "<b>é</b>", "0000ffffffffffff"],
+        ["image/png", "text/html", "text/plain"],
+        "00ff00ff",
+        [],
+        "file:///C:/a%20b\r\nfile:///C:/%C3%A9",
+        "",
+      ]);
+    });
+
+    onMachineForTests("dialogs", async () => {
+      expect(
+        await run(
+          `${system}
+          const { dialog } = electron, window = new BrowserWindow({ show: false });
+          const answer = async (asked, ...messages) => {
+            let result;
+            asked.then(it => (result = it));
+            for (let it; !result; await Bun.sleep(50)) if ((it = windowOfClass("#32770")) && IsWindowVisible(it)) for (const message of messages.splice(0, Infinity, messages.at(-1))) PostMessageW(it, ...message);
+            while (windowOfClass("#32770")) await Bun.sleep(5);
+            print(result);
+          };
+          const [check, press, accept, close] = [[0x471, 1, 0], it => [0x466, 100 + it, 0], [0x111, 1, 0], [0x10, 0, 0]];
+          const question = { message: "Sure?", detail: "Really", buttons: ["Yes", "No", "Maybe"], cancelId: 1, checkboxLabel: "Remember" };
+          await answer(dialog.showMessageBox(window, question), check, press(2));
+          await answer(dialog.showMessageBox(question), close);
+          print(await dialog.showMessageBox(window, { ...question, signal: AbortSignal.timeout(1) }));
+          const short = it => ({ ...it, filePath: it.filePath && path.basename(it.filePath), filePaths: it.filePaths?.map(it => path.basename(it)) });
+          await answer(dialog.showOpenDialog(window, { defaultPath: path.join(__dirname, "main.js") }).then(short), accept);
+          await answer(dialog.showSaveDialog(window, { defaultPath: path.join(__dirname, "é"), filters: [{ name: "Text", extensions: ["txt"] }] }).then(short), accept);
+          await answer(dialog.showSaveDialog(window, { defaultPath: __dirname }).then(short), close);`,
+          {},
+          [],
+          real,
+        ),
+      ).toEqual([
+        { response: 2, checkboxChecked: true },
+        { response: 1, checkboxChecked: false },
+        { response: 1, checkboxChecked: false },
+        { canceled: false, filePaths: ["main.js"] },
+        { canceled: false, filePath: "é.txt" },
+        { canceled: true, filePath: "" },
+      ]);
+    });
+
+    onMachineForTests("an icon in the notification area", async () => {
+      expect(
+        await run(
+          `${system}
+          const image = electron.nativeImage.createFromBitmap(Buffer.alloc(16 * 16 * 4, 255), { width: 16, height: 16 });
+          const [first, second] = [new electron.Tray(image), new electron.Tray(image)];
+          first.setToolTip("tip"), first.setImage(image);
+          print(first.getBounds().width > 0);
+          for (const [tray, id, message, name] of [[first, 1, 0x400, "click"], [second, 2, 0x7b, "right-click"], [first, 1, 0x203, "double-click"], [first, 1, 0x208, "middle-click"], [first, 1, 0x405, "balloon-click"]]) {
+            PostMessageW(windowOfClass("BunDesktopApp"), 0x8010, 3 | (4 << 16), message | (id << 16));
+            print((await once(tray, name))[2] ?? null);
+          }
+          second.setContextMenu(electron.Menu.buildFromTemplate([{ label: "Off", enabled: false }, { label: "On", click: () => app.emit("chosen") }]));
+          let isChosen = false;
+          app.once("chosen", () => (isChosen = true));
+          // It closes if another window comes to the front.
+          for (let menu; !isChosen; await Bun.sleep(20)) {
+            if (IsWindowVisible((menu = windowOfClass("#32768") ?? 0))) PostMessageW(menu, 0x1e5, 1, 0), PostMessageW(menu, 0x100, 0x0d, 1);
+            else PostMessageW(windowOfClass("BunDesktopApp"), 0x8010, 3 | (4 << 16), 0x7b | (2 << 16));
+          }
+          first.destroy();
+          print([first.isDestroyed(), second.getBounds().width > 0]);`,
+          {},
+          [],
+          real,
+        ),
+      ).toEqual([true, ...Array(4).fill({ x: 3, y: 4 }), null, [true, true]]);
+    });
+
+    test("what input methods ask, and characters without a key", async () => {
+      expect(
+        await run(
+          `${system}${send}
+          serve({ "/": "<body style=margin:0><input value=abcdef style='margin:20px;padding:0;border:0;font:16px/20px monospace'><input type=password value=secret>" });
+          const page = await open(undefined, { frame: false }), window = BrowserWindow.fromWebContents(page), memory = Buffer.alloc(200);
+          const ask = async request => (memory.fill(0).writeUInt32LE(200), [await send(window, 0x288, request, BigInt(ptr(memory))), ...new Uint32Array(memory.buffer, memory.byteOffset + 8, 6)]);
+          const text = ([, length, offset]) => memory.toString("utf16le", offset, offset + length * 2);
+          const select = (at, ...range) => page.executeJavaScript("(it => (it.focus(), it.setSelectionRange(" + range + "), new Promise(requestAnimationFrame)))(document.body.children[" + at + "])");
+          page.debugger.attach();
+          await page.debugger.sendCommand("Emulation.setFocusEmulationEnabled", { enabled: true });
+          await select(0, 2, 4);
+          let answer;
+          do answer = await ask(7);
+          while (answer[3] !== 2);
+          print([text(answer), answer]);
+          print([text((answer = await ask(4))), answer, await send(window, 0x288, 4, 0)]);
+          await select(0, 0, 0);
+          const { x, y } = electron.screen.dipToScreenPoint(window.getContentBounds()), { scaleFactor } = electron.screen.getPrimaryDisplay();
+          do answer = await ask(6);
+          while (answer[1] !== x + 20 * scaleFactor);
+          print([answer[0], (answer[2] - y) / scaleFactor >= 20, (answer[2] - y + answer[3]) / scaleFactor <= 40]);
+          for (const unit of [0xe9, 0xd83d, 0xde42, 7]) await send(window, 0x102, unit, 1);
+          while ((answer = await page.executeJavaScript("document.body.children[0].value")).length < 9) await Bun.sleep(1);
+          print(answer);
+          await select(1, 0, 6);
+          while ((await ask(7))[0] !== 0);
+          print((await ask(4))[0]);`,
+          {},
+          [],
+          real,
+        ),
+      ).toEqual([
+        ["abcdef", [44, 6, 32, 2, 4, 2, 4]],
+        ["cd", [36, 2, 32, 2, 0, 2, 0], 36],
+        [1, true, true],
+        "é🙂abcdef",
+        0,
+      ]);
+    });
+
+    test("shortcuts", async () => {
+      expect(
+        await run(`
+          const { shell } = electron, link = path.join(__dirname, "é.lnk"), target = process.env.ComSpec;
+          const details = { target, cwd: __dirname, args: "/c a", description: "d", icon: target, iconIndex: 1, appUserModelId: "a.b", toastActivatorClsid: "{0E8D2F1A-3B4C-4D5E-8F60-718293A4B5C6}" };
+          print([shell.writeShortcutLink(link, "update", details), shell.writeShortcutLink(link, details)]);
+          const lower = it => JSON.stringify(it).toLowerCase();
+          print(lower(shell.readShortcutLink(link)) === lower(details) || shell.readShortcutLink(link));
+          for (const operation of ["update", "replace"]) {
+            shell.writeShortcutLink(link, operation, { target, description: operation });
+            const { args, description, iconIndex } = shell.readShortcutLink(link);
+            print([args, description, iconIndex]);
+          }
+          try { shell.readShortcutLink(link + "x"); } catch (error) { print(error.message); }`),
+      ).toEqual([[false, true], true, ["/c a", "update", 1], ["/c a", "replace", 0], "Failed to read shortcut link"]);
+    });
+
+    test("the handler of a protocol", async () => {
+      expect(
+        await run(
+          `
+          const scheme = "bun-test-" + process.pid, other = [process.env.ComSpec, ["a b"]];
+          const handles = () => [app.isDefaultProtocolClient(scheme), app.isDefaultProtocolClient(scheme, ...other)];
+          try {
+            print([handles(), app.setAsDefaultProtocolClient(scheme, ...other), handles()]);
+            const { name, path: file, icon } = await app.getApplicationInfoForProtocol(scheme + "://a");
+            print([name === app.getApplicationNameForProtocol(scheme + "://a"), name !== "", path.basename(file).toLowerCase(), icon.isEmpty()]);
+            print([app.removeAsDefaultProtocolClient(scheme), handles()]);
+          } finally {
+            print([app.removeAsDefaultProtocolClient(scheme, ...other), handles(), app.getApplicationNameForProtocol(scheme + "://a")]);
+          }`,
+          {},
+          [],
+          real,
+        ),
+      ).toEqual([
+        [[false, false], true, [false, true]],
+        [true, true, "cmd.exe", false],
+        [true, [false, true]],
+        [true, [false, false], ""],
+      ]);
+    });
+
+    test("login items", async () => {
+      expect(
+        await run(`
+          const item = { path: path.join(__dirname, "a b.exe"), args: ["--hidden"] };
+          app.setAppUserModelId("bun.test." + process.pid);
+          try {
+            for (const settings of [{ openAtLogin: true }, { openAtLogin: true, enabled: false }, { openAtLogin: false }]) {
+              app.setLoginItemSettings({ ...item, ...settings });
+              const { openAtLogin, executableWillLaunchAtLogin, launchItems } = app.getLoginItemSettings(item);
+              print([openAtLogin, executableWillLaunchAtLogin, launchItems.map(it => [it.name === "bun.test." + process.pid, it.path === item.path, it.args, it.scope, it.enabled])]);
+            }
+          } finally {
+            app.setLoginItemSettings({ ...item, openAtLogin: false });
+          }`),
+      ).toEqual([
+        [true, true, [[true, true, ["--hidden"], "user", true]]],
+        [true, false, [[true, true, ["--hidden"], "user", false]]],
+        [false, false, []],
+      ]);
+    });
+
+    test("safeStorage keeps its key where Chromium does", async () => {
+      expect(
+        await run(`
+          const { safeStorage } = electron, encrypted = safeStorage.encryptString("é");
+          const { encrypted_key } = JSON.parse(require("fs").readFileSync(path.join(app.getPath("userData"), "Local State"), "utf8")).os_crypt;
+          print([encrypted.toString("latin1", 0, 3), encrypted.length, atob(encrypted_key).slice(0, 5), safeStorage.decryptString(encrypted)]);
+          encrypted[20] ^= 1;
+          try { safeStorage.decryptString(encrypted); } catch { print("refused"); }`),
+      ).toEqual([["v10", 3 + 12 + 2 + 16, "DPAPI", "é"], "refused"]);
+    });
+
+    test("jump lists", async () => {
+      expect(
+        await run(
+          `app.setAppUserModelId("bun.test." + process.pid);
+          const task = { type: "task", program: process.env.ComSpec, title: "Task", args: "" };
+          print([
+            app.setJumpList([{ type: "tasks", items: [task, { type: "separator" }, task] }]),
+            app.setJumpList([{ name: "Own", items: [task, { type: "separator" }] }]),
+            app.setUserTasks([task]),
+            app.getJumpListSettings().removedItems,
+            app.setJumpList(null),
+          ]);`,
+          {},
+          [],
+          real,
+        ),
+      ).toEqual([["ok", "invalidSeparatorError", true, [], "ok"]]);
+    });
+
+    test("messages of the system", async () => {
+      expect(
+        await run(
+          `${send}
+          const window = new BrowserWindow({ show: false });
+          const hooked = new Promise(done => window.hookWindowMessage(0x8001, (w, l) => done(print(["hook", w.readInt32LE(), l.readInt32LE()]))));
+          window.on("app-command", (_, command) => print(command));
+          window.on("system-context-menu", (event, point) => (event.preventDefault(), print(point)));
+          window.on("session-end", event => print(["session-end", event.reasons]));
+          await Promise.all([send(window, 0x8001, 1, 2), hooked]);
+          window.unhookAllWindowMessages();
+          await send(window, 0x8001, 3, 4);
+          print(window.isWindowMessageHooked(0x8001));
+          await Promise.all([send(window, 0x319, 0, 1 << 16), once(window, "app-command")]);
+          await Promise.all([send(window, 0xa5, 2, 5 | (6 << 16)), once(window, "system-context-menu")]);
+          print(await send(window, 0x11, 0, 0));
+          window.on("query-session-end", event => (event.preventDefault(), print(event.reasons)));
+          print(await send(window, 0x11, 0, 0x80000000));
+          await send(window, 0x16, 1, 0x40000001);`,
+          {},
+          [],
+          real,
+        ),
+      ).toEqual([
+        ["hook", 1, 2],
+        false,
+        "browser-backward",
+        { x: 5, y: 6 },
+        1,
+        ["logoff"],
+        0,
+        ["session-end", ["close-app", "critical"]],
+      ]);
+    });
+
+    test("the system is told what the parts of a title bar are", async () => {
+      expect(
+        await run(
+          `${send}
+          serve({ "/": "<body style=margin:0><p style='margin:0;height:30px;app-region:drag'><b style='float:left;width:30px;height:30px;app-region:no-drag'>" });
+          const page = await open(undefined, { x: 50, y: 50, width: 400, height: 300, titleBarStyle: "hidden", titleBarOverlay: { height: 30 } });
+          const window = BrowserWindow.fromWebContents(page), { x, y, width } = window.getContentBounds(), { scaleFactor } = electron.screen.getPrimaryDisplay();
+          const part = (left, top) => send(window, 0x84, 0, ((x + left) * scaleFactor) | (((y + top) * scaleFactor) << 16));
+          while ((await part(100, 20)) !== 2);
+          print([await part(15, 20), await part(100, 100), await part(100, 1), await part(width - 70, 20)]);`,
+          {},
+          [],
+          real,
+        ),
+      ).toEqual([[1, 1, 12, 9]]);
+    });
+
+    test("the accent color of a window", async () => {
+      expect(
+        await run(
+          `const window = new BrowserWindow({ show: false, accentColor: "#123456" });
+          print(window.getAccentColor());
+          window.setAccentColor(false);
+          print(window.getAccentColor());
+          try { window.setAccentColor(1); } catch (error) { print(error.name); }`,
+          {},
+          [],
+          real,
+        ),
+      ).toEqual(["#123456", false, "TypeError"]);
+    });
+
+    test("UI Automation", async () => {
+      const client = `const { dlopen, CFunction, read, ptr, toBuffer } = require("bun:ffi");
+        const ole = dlopen("ole32.dll", {
+          CoInitializeEx: { args: ["i64", "u32"], returns: "i32" },
+          CLSIDFromString: { args: ["ptr", "ptr"], returns: "i32" },
+          CoCreateInstance: { args: ["ptr", "i64", "u32", "ptr", "ptr"], returns: "i32" },
+        }).symbols;
+        const { SysAllocString } = dlopen("oleaut32.dll", { SysAllocString: { args: ["ptr"], returns: "ptr" } }).symbols;
+        const wide = it => Buffer.from(it + "\\0", "utf16le"), out = Buffer.alloc(8);
+        const id = (it, bytes = Buffer.alloc(16)) => (ole.CLSIDFromString(wide("{" + it + "}"), bytes), bytes);
+        const call = (object, slot, ...args) => {
+          const types = args.map(it => (typeof it === "object" ? "ptr" : "i64"));
+          const status = CFunction({ ptr: read.ptr(read.ptr(object), slot * 8), args: ["ptr", ...types, "ptr"], returns: "i32" })(object, ...args, out.fill(0));
+          if (status < 0) throw new Error(slot + ": " + (status >>> 0).toString(16));
+          return read.ptr(ptr(out));
+        };
+        const text = it => (it && read.u32(it, -4) ? toBuffer(it, 0, read.u32(it, -4)).toString("utf16le") : "");
+        ole.CoInitializeEx(0, 0);
+        ole.CoCreateInstance(id("ff48dba4-60ef-4201-aa87-54103eef594e"), 0, 1, id("30cbe57d-d9d0-452a-ab13-7ac5ac4825ee"), out);
+        const automation = read.ptr(ptr(out)), root = call(automation, 6, BigInt(process.argv[2])), anything = call(automation, 21);
+        let all;
+        do all = call(root, 6, 4, anything);
+        while (call(all, 3) < 6);
+        for (let index = 0; index < call(all, 3); index++) {
+          const it = call(all, 4, index), kind = { 50000: "button", 50002: "box", 50004: "edit", 50020: "text", 50030: "document", 50033: "pane" }[call(it, 21)];
+          console.log(kind, text(call(it, 23)));
+          if (kind === "button") call(call(it, 14, 10000, id("fb377fbe-8ea6-46d5-9c73-6499642d3059")), 3);
+          if (kind === "box") call(call(it, 14, 10015, id("94cf8058-9b8d-4ab9-8bfd-4cd0a33c8c70")), 3);
+          if (kind === "edit") call(call(it, 14, 10002, id("a94cd8b1-0844-4cd6-9d2d-640537ab39e9")), 3, SysAllocString(wide("new")));
+          if (kind === "document") console.log(text(call(call(call(it, 14, 10014, id("32eba289-3583-42c9-9c59-3b6d9a1e9b6a")), 7), 12, 5)));
+        }`;
+      expect(
+        await run(
+          `serve({ "/": "<title>Page</title><h1>Hello</h1><button onclick='document.title = 1'>Go</button><input type=checkbox aria-label=On><input aria-label=Name>" });
+          const page = await open(undefined, { frame: false });
+          const handle = BrowserWindow.fromWebContents(page).getNativeWindowHandle().readBigInt64LE();
+          print((await Bun.spawn([process.execPath, "client.js", String(handle)], { stderr: "inherit" }).stdout.text()).split("\\n"));
+          const state = () => page.executeJavaScript("[document.title, ...Array.from(document.querySelectorAll('input'), it => it.checked || it.value)].join()");
+          while ((await state()) !== "1,true,new") await new Promise(setImmediate);`,
+          { "client.js": client },
+          [],
+          real,
+        ),
+      ).toEqual([["pane ", "document Page", "Hello", "text Hello", "button Go", "box On", "edit Name", ""]]);
+    });
+  });
+
+  test.skipIf(!isLinux)("there are no updates without a bundle", async () => {
     expect(
       await run(`
         const { autoUpdater } = electron;
@@ -564,6 +1523,33 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
           });
         })\`));`),
     ).toEqual([[1, 0, true, true, [1, { a: 2 }], "Uncaught Error: thrown", 0, "text"]]);
+  });
+
+  test("timers are told apart after many have come and gone, and entries among many of another type", async () => {
+    expect(
+      await run(`
+        serve({ "/": "" });
+        const page = await open();
+        print(await page.executeJavaScript(\`new Promise(done => {
+          const fired = [];
+          const set = name => setTimeout(() => fired.push(name));
+          set("first");
+          Array.from({ length: 6500 }, set).forEach(clearTimeout);
+          for (let i = 0; i < 20_000; i++) clearTimeout(set(i));
+          [set("kept"), set("cleared"), set("last")].slice(1, 2).forEach(clearTimeout);
+          for (let i = 0; i < 2000; i++) performance.mark("a");
+          performance.measure("late", { start: 2, end: 3 });
+          performance.measure("early", { start: 1, end: 4 });
+          const names = entries => entries.map(it => it.name);
+          setTimeout(() => done([
+            fired,
+            names(performance.getEntriesByType("measure")),
+            names(performance.getEntriesByName("a", "measure")),
+            performance.getEntriesByType("mark").length,
+            performance.getEntriesByType("Mark").length,
+          ]));
+        })\`));`),
+    ).toEqual([[["first", "kept", "last"], ["early", "late"], [], 2000, 0]]);
   });
 
   test("timers that are set by what other timers resolve are nested", async () => {
@@ -862,6 +1848,58 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
     ).toEqual([["string", "bound proxy", "bound constructs", "bound preventDefault"]]);
   });
 
+  test("the name that a frame gives itself is known to its own origin", async () => {
+    expect(
+      await run(`
+        app.trustOrigins(["app://trusted", "app://other"], { inFrames: true, injectedScripts: true });
+        serve({
+          "/": "<iframe src=app://other/frame></iframe>",
+          "/frame": "<iframe src=app://other/1></iframe><iframe src=app://trusted/2></iframe><iframe src=app://trusted/3 name=given></iframe>",
+          "/1": "<script>name = 'same'</script>",
+          "/2": "<script>name = 'different'</script>",
+          "/3": "",
+        });
+        const page = await open("app://trusted/");
+        print(await page.executeJavaScript("['same', 'different', 'given'].map(it => { try { return [0, 1, 2].findIndex(at => frames[0][at] === frames[0][it]); } catch (error) { return error.name; } })"));`),
+    ).toEqual([[0, "SecurityError", 2]]);
+  });
+
+  test("a page knows what the app has changed since it was loaded", async () => {
+    expect(
+      await run(`
+        serve({ "/a": "", "/b": "", "/c": "" });
+        const seen = [];
+        for (const change of [it => it.clear(), it => it.removeEntryAtIndex(0)]) {
+          for (const before of ["0", "navigation.entries()"]) {
+            const page = await open("app://trusted/a");
+            await page.loadURL("app://trusted/b");
+            await page.loadURL("app://trusted/c");
+            await page.executeJavaScript(before + ", 0");
+            change(page.navigationHistory);
+            seen.push(await page.executeJavaScript("navigation.entries().map(it => it.url.at(-1)).join('') + history.length"));
+          }
+        }
+        const page = await open("app://trusted/a");
+        page.session.setUserAgent("new");
+        print([seen, await page.executeJavaScript("navigator.userAgent")]);`),
+    ).toEqual([[["c1", "c1", "bc2", "bc2"], "new"]]);
+  });
+
+  test("a change of a cookie is announced before it is confirmed", async () => {
+    expect(
+      await run(`
+        const own = Bun.serve({ port: 0, fetch: () => new Response("", { headers: { "content-type": "text/html" } }) }).url.origin;
+        app.trustOrigins([own]);
+        const page = await open(own + "/");
+        print(await page.executeJavaScript(\`(async () => {
+          let seen = 0, late = 0;
+          cookieStore.onchange = () => seen++;
+          for (let i = 1; i <= 50; i++) await (i % 2 ? cookieStore.set("a", i) : cookieStore.delete("a")), (late += seen < i);
+          return late;
+        })()\`));`),
+    ).toEqual([0]);
+  });
+
   test("a window of another origin", async () => {
     expect(
       await run(`
@@ -940,12 +1978,13 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
     ).toEqual(["finished"]);
   });
 
-  test.skipIf(isWindows)("what a busy program lets go of is freed between its tasks", async () => {
+  test("what a busy program lets go of is freed between its tasks", async () => {
     expect(
       await run(`
         serve({ "/": "" });
         await open();
-        const files = () => require("fs").readdirSync("/dev/fd").length, before = files();
+        const count = new Uint32Array(1), kernel = ${isWindows} && require("bun:ffi").dlopen("kernel32.dll", { GetProcessHandleCount: { args: ["i64", "ptr"] } }).symbols;
+        const files = () => (kernel ? (kernel.GetProcessHandleCount(-1, count), count[0]) : require("fs").readdirSync("/dev/fd").length), before = files();
         for (let i = 0; i < 20; i++) Bun.file(path.join(__dirname, "file" + i)).writer();
         const opened = files() - before;
         require("bun:jsc").edenGC();
@@ -956,6 +1995,34 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
         }
         print([opened, megabytes < 12]);`),
     ).toEqual([[20, true]]);
+  });
+
+  // All in all, the program allocates too little for a task to have to collect, and enough not to count as quiet.
+  test.each([
+    ["young", 400, "freed"],
+    ["old", 400, "freed"],
+    ["young", 1, "left for later"],
+  ])("garbage that is %s, in a busy program with a timer every %d ms, is %s", async (age, interval, expected) => {
+    expect(
+      await run(`
+        serve({ "/": "" });
+        await open();
+        const { edenGC, heapSize } = require("bun:jsc");
+        const allocate = kilobytes => Array.from({ length: kilobytes }, () => new Array(126).fill(0));
+        const { promise, resolve } = Promise.withResolvers();
+        globalThis.registry = new FinalizationRegistry(resolve);
+        const register = () => allocate(100).map(it => (registry.register(it, "freed"), it));
+        if (${age === "old"}) globalThis.held = register();
+        Bun.gc(true);
+        if (${age === "old"}) globalThis.held = allocate(heapSize() >> 11);
+        // How long the next collection takes is estimated from the last one.
+        for (let start = -Infinity; performance.now() - start > 20; edenGC()) start = performance.now();
+        if (${age === "young"}) register();
+        allocate(16000);
+        let rounds = 0;
+        setInterval(() => (++rounds > 10 ? resolve("left for later") : allocate(350)), ${interval});
+        print(await promise);`),
+    ).toEqual([expected]);
   });
 
   test.each([
@@ -1614,7 +2681,8 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
             postMessage([thrown, failures > 0, Array.isArray(lower)]);\`,
         });
         print(await (await open()).executeJavaScript(\`new Promise(done => new Worker("/worker.js").onmessage = it => done(it.data))\`));`),
-    ).toEqual([["DataError", true, true]]);
+      // On Windows a thread has far more stack than scripts get.
+    ).toEqual([["DataError", !isWindows, true]]);
   });
 
   test("a worker ends with responses that it has not read", async () => {
@@ -1740,6 +2808,16 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
         ["--flag=value"],
       ),
     ).toEqual([["browser", "string", "Fixture", "1.2.3", false, true], ["value", false], [true, true], true]);
+  });
+
+  test("a link brings no switches", async () => {
+    const main = `print(["before", "after"].map(it => app.commandLine.hasSwitch(it)));`;
+    expect(await run(main, {}, ["C:/file", "a b:c", "--before", "notes://x", "--", "--after"])).toEqual([
+      [true, false],
+    ]);
+    const added = run(main, {}, ["--before", "notes://x", "--after"]);
+    if (isWindows) expect(added).rejects.toThrow("exited with");
+    else expect(await added).toEqual([[true, false]]);
   });
 
   test("a page has the globals of a browser", async () => {
@@ -3530,6 +4608,52 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
       ).toEqual([[true, "a"], [["app://trusted/", 4], "b"], 2 << 20, [255, 0, 0, 255]]);
     });
 
+    test("savePage() saves the frames that are in other processes", async () => {
+      expect(
+        await run(
+          `app.trustOrigins(["app://trusted", "app://other", "app://third"], { inFrames: true });
+          serve({ "/": "<iframe src=app://other/a></iframe>", "/a": "<img src=/a.png><iframe src=app://third/b></iframe>", "/b": "<img src=/b.png>", "/a.png": "a", "/b.png": "b" });
+          const page = await open(), read = file => require("fs").readFileSync(file, "utf8");
+          await page.savePage(path.join(__dirname, "a.html"), "HTMLComplete");
+          const follow = (file, tag) => path.join(path.dirname(file), read(file).match("<" + tag + ' src="(.*?)"')[1]);
+          const outer = follow(path.join(__dirname, "a.html"), "iframe"), inner = follow(outer, "iframe");
+          print([read(follow(outer, "img")), read(follow(inner, "img"))]);
+          await page.savePage(path.join(__dirname, "a.mhtml"), "MHTML");
+          const parts = new Map(Array.from(read(path.join(__dirname, "a.mhtml")).matchAll(/^Content-Location: (.*)\\r\\n\\r\\n([^-]*)/gm), it => [it[1], atob(it[2])]));
+          const find = (url, tag) => parts.get(url).match("<" + tag + ' src="(.*?)"')[1], frame = find("app://trusted/", "iframe");
+          print([parts.get(find(frame, "img")), parts.get(find(find(frame, "iframe"), "img"))]);`,
+          {},
+          [],
+          apart,
+        ),
+      ).toEqual([
+        ["a", "b"],
+        ["a", "b"],
+      ]);
+    });
+
+    test("a shared worker is shared, and outlives the page that has started it", async () => {
+      expect(
+        await run(
+          `serve({ "/": "", "/a.js": "let count = 0; onconnect = ({ ports: [port] }) => (port.onmessage = () => port.postMessage(++count));", "/bad.js": "(" });
+          const [one, other] = [await open(), await open()];
+          const ask = "new Promise(done => { const { port } = (self.worker ??= new SharedWorker('/a.js')); port.onmessage = it => done(it.data); port.postMessage(0); })";
+          print([await one.executeJavaScript(ask), await other.executeJavaScript(ask), await one.executeJavaScript(ask)]);
+          print(await other.executeJavaScript("new Promise(done => (new SharedWorker('/a.js', { type: 'module' }).onerror = it => done(it.type)))"));
+          print(await Promise.all([one, other].map(it => it.executeJavaScript("new Promise(done => (new SharedWorker('/bad.js').onerror = it => done(it.type)))"))));
+          const first = one.getOSProcessId();
+          BrowserWindow.fromWebContents(one).destroy();
+          print([await other.executeJavaScript(ask), await (await open()).executeJavaScript(ask)]);
+          process.kill(first, "SIGKILL");
+          for (const end = Date.now() + 10_000; app.getAppMetrics().some(it => it.pid === first); await Bun.sleep(1)) if (Date.now() > end) throw new Error("It is still listed");
+          print(await other.executeJavaScript("self.worker = null, " + ask));`,
+          {},
+          [],
+          apart,
+        ),
+      ).toEqual([[1, 2, 3], "error", ["error", "error"], [4, 5], 1]);
+    });
+
     test("a frame that may not go back does not change where the page goes back to", async () => {
       expect(
         await run(
@@ -3831,6 +4955,100 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
       ).toEqual([true, ["mousemove-1"], ["mousedown0", "mouseup0"]]);
     });
 
+    describe("a process that says what it likes about service workers", () => {
+      /** `worker` has an event for the navigation of `waiting` to `/in/from`. `client` is that of `page`, which is in the same process. */
+      const forge = (answer: string, main: string) =>
+        run(
+          `const modes = [], ended = Promise.withResolvers();
+          using other = Bun.serve({ port: 0, fetch: () => (ended.resolve("followed"), new Response("secret")) });
+          using own = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch({ url, headers }) {
+            const { pathname } = new URL(url), mode = headers.get("sec-fetch-mode");
+            if (pathname === "/in/from" && modes.push(mode) && mode === "navigate") return ${answer};
+            if (pathname !== "/in/worker.js") return new Response("", { headers: { "content-type": "text/html" } });
+            return new Response('onfetch = event => void (event.request.mode === "navigate" && (fetch("/holds"), event.respondWith(new Promise(() => {}))));', { headers: { "content-type": "text/javascript" } });
+          } });
+          app.trustOrigins([own.url.origin, other.url.origin]);
+          const page = await open(own.url.href, { webPreferences: { sandbox: false } }), { webRequest } = page.session, upTo = length => Array.from({ length }, (_, it) => it);
+          await page.executeJavaScript(\`navigator.serviceWorker.register("/in/worker.js").then(it => new Promise(done => (it.installing.onstatechange = event => event.target.state === "activated" && done())))\`);
+          page.session.registerPreloadScript({ type: "frame", filePath: preload.webPreferences.preload });
+          await page.loadURL(own.url + "again");
+          const from = (contents, path) => new Promise(done => webRequest.onCompleted(it => it.url.includes(path) && (it.webContentsId || undefined) === contents && done(it.url)));
+          const holds = from(undefined, "/holds"), waiting = new BrowserWindow().webContents;
+          waiting.loadURL(own.url + "in/from").catch(() => {});
+          await holds;
+          const find = async contents => {
+            const probed = from(contents, "/who?" + contents);
+            page.send("fetch", upTo(64).map(client => [client, own.url + "who?" + contents + "," + client]));
+            return +(await probed).split(",")[1];
+          };
+          const [worker, client] = [await find(undefined), await find(page.id)];
+          const passOn = () => page.send("fetch", upTo(256).map(event => [worker, own.url + "in/from", event]));
+          ${main}`,
+          {
+            "preload.js": `const { decodesMessage } = require("bun:internal-for-testing").desktopInternals, { ipcRenderer } = require("electron");
+              const number = it => [...new Uint8Array(Uint32Array.of(it).buffer)], text = it => [...number(it.length), ...Buffer.from(it)], zeros = it => Array(it).fill(0);
+              const [navigate, cors, include] = [0, 3, 2];
+              const send = (client, url, mode, rest) =>
+                decodesMessage("call", new Uint8Array([client, 0, 0, ...text(url), ...text("GET"), ...zeros(10), mode, include, ...rest]));
+              const all = zeros(40).flatMap((_, a) => zeros(9).map((_, b) => event => [...zeros(a), 1, ...number(event), ...zeros(b)]));
+              ipcRenderer.on("fetch", (_, calls) => {
+                const forEvent = all.find(it => send(0, "http://a/", cors, it(0x7f7f7f7f)));
+                for (const [client, url, event] of calls) send(client, url, event === undefined ? cors : navigate, forEvent(event ?? 0));
+              });
+              const deeds = { ready: [9, 5, 0], "has no answer": [11, 1, 0, 0], "is handled": [11, 2, 0] };
+              ipcRenderer.on("tell", (_, client, name, numbers) => {
+                const [kind, ...rest] = deeds[name];
+                ipcRenderer.send("told", numbers.every(it => decodesMessage("deed", new Uint8Array([client, kind, 0, ...number(it), ...rest]))));
+              });`,
+          },
+          [],
+          { BUN_DESKTOP_PAGE_PROCESSES: "node" },
+        );
+      const tell = `const tell = async (...all) => (page.send("tell", ...all), (await once(ipcMain, "told"))[1]);`;
+
+      test("cannot follow the redirect of a navigation that it passes on", async () => {
+        expect(
+          await forge(
+            "Response.redirect(other.url.href)",
+            `webRequest.onCompleted(it => it.statusCode === 302 && ended.resolve(302));
+            passOn();
+            print(await ended.promise);
+            waiting.stop();`,
+          ),
+        ).toEqual([302]);
+      });
+
+      test("is done with an event that it has answered and handled", async () => {
+        expect(
+          await forge(
+            "new Response()",
+            `${tell}
+            const loaded = once(waiting, "did-finish-load");
+            print([await tell(worker, "has no answer", upTo(256)), await tell(worker, "is handled", upTo(256))]);
+            await loaded;
+            const all = new Promise(done => webRequest.onCompleted(() => modes.length === 257 && done()));
+            passOn();
+            await all;
+            print(modes.filter(it => it === "navigate").length);`,
+          ),
+        ).toEqual([[true, true], 1]);
+      });
+
+      test("is not remembered each time that it waits for one", async () => {
+        expect(
+          await forge(
+            "new Response()",
+            `${tell}
+            const ask = () => page.executeJavaScript("navigator.serviceWorker.getRegistrations().then(it => it.length, it => it.name)");
+            const seen = new Set();
+            for (let i = 0; i < 9; i++) seen.add(await tell(client, "ready", upTo(4096).map(it => it + 1e6))).add(await ask());
+            print([...seen]);
+            waiting.stop();`,
+          ),
+        ).toEqual([[true, 1]]);
+      });
+    });
+
     test("a page that does not return does not hold up other windows", async () => {
       expect(
         await run(
@@ -4052,6 +5270,36 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
         ["app", 1, 1, 3, "app"],
         ["1", "a1", "a1", "a1", "1"],
       ]);
+    });
+
+    test("only a trusted page can paint early", async () => {
+      expect(
+        await run(
+          `${start}
+          serve({ "/": "<!doctype html><p>" });
+          const page = await open();
+          page.focus();
+          for (const host of ["other", "trusted"]) {
+            let hasPainted;
+            do {
+              await page.loadURL("app://" + host + "/");
+              const answering = page.executeJavaScript(\`new Promise(resolve => {
+                onkeydown = () => {
+                  let hasPainted = false;
+                  document.body.append("a");
+                  for (const start = performance.now(); !hasPainted && performance.now() - start < 50; ) hasPainted = paintNow();
+                  resolve(hasPainted);
+                };
+                requestAnimationFrame(() => setTimeout(() => console.log("ready")));
+              })\`);
+              await once(page, "console-message");
+              page.sendInputEvent({ type: "keyDown", keyCode: "F2" });
+              hasPainted = await answering;
+            } while (host === "trusted" && !hasPainted);
+            print(hasPainted);
+          }`,
+        ),
+      ).toEqual([false, true]);
     });
 
     test("each site of a page has a process", async () => {
@@ -4478,6 +5726,12 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
           frame.remove();
         }
       })()\`);`,
+      "removing frames before their images are requested": `await page.executeJavaScript(\`
+        for (let i = 0; i < \${count}; i++) {
+          const frame = document.body.appendChild(document.createElement("iframe"));
+          frame.contentDocument.write("<img src=/never><input type=image src=/never><video poster=/never></video><svg><image href=/never />");
+          frame.remove();
+        }\`);`,
       "closing windows": `for (let i = 0; i < count; i++) BrowserWindow.fromWebContents(await open("app://trusted/page", preload)).destroy();`,
       "closing popups": `page.setWindowOpenHandler(() => ({ action: "allow" }));
         await page.executeJavaScript(\`(async () => {
@@ -4857,26 +6111,28 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
   test("HTTP/2 waits for the verdict on the certificate", async () => {
     expect(
       await run(
-        `let requests = 0, connections = 0;
-         const server = require("http2").createSecureServer(${JSON.stringify(tls)}, (request, response) => (requests++, response.end(request.httpVersion)));
-         server.on("secureConnection", socket => (connections++, socket.unref())).unref();
-         await once(server.listen(0), "listening");
-         const burst = ses => Promise.all(Array.from({ length: 8 }, () => ses.fetch("https://localhost:" + server.address().port).then(it => it.text(), error => error.message)));
+        `// A server may hear of the end of a handshake after its certificate has been refused, so each counts for itself.
+         const serve = async () => {
+           const seen = { requests: 0, connections: 0 };
+           const server = require("http2").createSecureServer(${JSON.stringify(tls)}, (request, response) => (seen.requests++, response.end(request.httpVersion)));
+           server.on("secureConnection", socket => (seen.connections++, socket.unref())).unref();
+           await once(server.listen(0), "listening");
+           seen.burst = ses => Promise.all(Array.from({ length: 8 }, () => ses.fetch("https://localhost:" + server.address().port).then(it => it.text(), error => error.message)));
+           return seen;
+         };
+         const [refused, accepted] = [await serve(), await serve()];
          const refusing = session.fromPartition("refusing");
          refusing.setCertificateVerifyProc((_, callback) => setImmediate(callback, -2));
-         print([[...new Set(await burst(refusing))], requests]);
-         connections = 0;
+         print([...new Set(await refused.burst(refusing))]);
          const requestsAtCheck = [];
-         session.defaultSession.setCertificateVerifyProc((_, callback) => setImmediate(() => (requestsAtCheck.push(requests), callback(-3))));
-         print([[...new Set([...(await burst(session.defaultSession)), ...(await burst(session.defaultSession))])], requestsAtCheck, requests, connections]);`,
+         session.defaultSession.setCertificateVerifyProc((_, callback) => setImmediate(() => (requestsAtCheck.push(accepted.requests), callback(-3))));
+         print([...new Set([...(await accepted.burst(session.defaultSession)), ...(await accepted.burst(session.defaultSession))])]);
+         print([refused.requests, requestsAtCheck, accepted.requests, accepted.connections]);`,
         { "authority.pem": tls.cert },
         [],
         { NODE_EXTRA_CA_CERTS: "authority.pem" },
       ),
-    ).toEqual([
-      [["net::ERR_FAILED"], 0],
-      [["2.0"], [0], 16, 1],
-    ]);
+    ).toEqual([["net::ERR_FAILED"], ["2.0"], [0, [0], 16, 1]]);
   });
 
   test("a connection with HTTP/2 whose certificate only the app accepts is used again", async () => {
@@ -5283,7 +6539,8 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
         struct buffer { unsigned long length; const char* value; };
         unsigned gss_import_name(unsigned* status, struct buffer* name, void* type, void** result) { *result = "name"; return 0; }
         unsigned gss_init_sec_context(unsigned* status, void* a, void** context, void* name, void* mechanism, unsigned flags, unsigned time,
-                                      void* bindings, void* input, void* b, struct buffer* output, void* c, void* d) {
+                                      void* bindings, struct buffer* input, void* b, struct buffer* output, void* c, void* d) {
+          if (input && input->length) return 1 << 16;
           *output = (struct buffer) { 6, flags & 1 ? "acting" : "ticket" };
           return 0;
         }
@@ -5299,6 +6556,8 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
            authorization ? ["200 OK", "", atob(authorization.slice(10))] : ["401 No", "WWW-Authenticate: Negotiate\\r\\nWWW-Authenticate: NTLM\\r\\n", "who?"]);
          const all = ses => Promise.all(["a.test", "b.a.test", "a.test.b.test", "c.test", "intranet"].map(host => text(ses, "http://" + host + ":" + port)));
          print(await all(session.defaultSession));
+         const replies = await raw((line, { authorization }) => ["401 No", "WWW-Authenticate: Negotiate" + (authorization ? " YQ==" : "") + "\\r\\n", authorization ? "again" : "who?"]);
+         print(await text(session.defaultSession, "http://a.test:" + replies));
          const ses = session.fromPartition("other");
          ses.allowNTLMCredentialsForDomains("c.test");
          print(await all(ses));
@@ -5315,6 +6574,7 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
         ),
       ).toEqual([
         ["200 ticket", "200 acting", "401 who?", "401 who?", "401 who?"],
+        "401 who?",
         ["401 who?", "401 who?", "401 who?", "200 ticket", "401 who?"],
         Array(5).fill("401 who?"),
       ]);
@@ -5651,7 +6911,106 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
     ).toEqual([["answer", "frame", "task"]]);
   });
 
-  test.skipIf(!isLinux || !Bun.which("openssl"))("a host that wants nothing but HTTPS is remembered", async () => {
+  test.each(["message", "timer"])("what a long task (%s) has changed is shown before what follows it", async kind => {
+    expect(
+      await run(`
+        serve({ "/": "<!doctype html><p style='width: 1px'>" });
+        const page = await open();
+        page.focus();
+        const answering = page.executeJavaScript(\`(\${kind =>
+          new Promise(resolve => {
+            const p = document.querySelector("p"), order = [];
+            const task = steps => {
+              if (kind === "timer") return setTimeout(steps);
+              const { port1, port2 } = new MessageChannel();
+              port1.onmessage = steps;
+              port2.postMessage(0);
+            };
+            new ResizeObserver(() => order.length && order.push("frame")).observe(p);
+            onkeyup = () =>
+              task(() => {
+                for (const start = performance.now(); performance.now() - start < 250; );
+                p.style.width = "2px";
+                history.pushState(null, "", "#a");
+                order.push("answer");
+                setTimeout(() => {
+                  order.push("task");
+                  requestAnimationFrame(() => setTimeout(resolve, 0, order));
+                });
+              });
+            requestAnimationFrame(() => setTimeout(() => console.log("ready")));
+          })})("${kind}")\`);
+        await once(page, "console-message");
+        page.sendInputEvent({ type: "keyDown", keyCode: "F2" });
+        page.sendInputEvent({ type: "keyUp", keyCode: "F2" });
+        print(await answering);`),
+    ).toEqual([["answer", "frame", "task"]]);
+  });
+
+  test.each([
+    ["is called off before the observers", "paintNow(true, say(false))", ["asked", false, "asked", false, false]],
+    ["is called off after them", "paintNow(true, say(true, false))", ["asked", 3, "asked", false]],
+    ["is agreed to", "paintNow(true, say(true, true))", ["asked", 3, "asked", true]],
+    ["waits for the observers", "paintNow(false, say(true))", ["asked", false]],
+    [
+      "is asked for in its callback",
+      "paintNow(true, function again() { order.push(paintNow(true, again)); return say(true)(); })",
+      [false, "asked", 3, false, "asked", true],
+    ],
+    [
+      "is asked for by an observer",
+      "paintNow(true, say(true, true), (heard = () => paintNow(true)))",
+      ["asked", false, "asked", true],
+    ],
+    ["has a callback that throws", "paintNow(true, () => { say()(); throw 1; })", ["asked", "error", false]],
+    [
+      "has a callback that resizes",
+      "paintNow(true, () => say(true)() && (p.style.width = order.length * 9 + 'px'))",
+      ["asked", 9, "asked", false],
+    ],
+    [
+      "has a callback that adds a sheet",
+      "paintNow(true, () => say(true)() && document.head.insertAdjacentHTML('beforeend', '<style>p{min-width:' + order.length * 9 + 'px}</style>') === undefined)",
+      ["asked", 9, "asked", false],
+    ],
+    [
+      "has a callback that starts a transition",
+      "paintNow(true, () => say(true)() && document.startViewTransition())",
+      ["asked", false],
+    ],
+  ])("an early paint %s", async (_, attempt, expected) => {
+    const [order] = await run(`
+      serve({ "/": "<!doctype html><p style='width: 1px; height: 1px'>" });
+      const page = await open();
+      page.focus();
+      for (let answer; !answer; ) {
+        page.reload();
+        await once(page, "did-finish-load");
+        const answering = page.executeJavaScript(\`new Promise(resolve => {
+          const p = document.querySelector("p"), order = [], say = (...answers) => () => (order.push("asked"), answers.shift());
+          let heard = () => p.offsetWidth;
+          new ResizeObserver(() => order.push(heard())).observe(p);
+          onerror = () => order.push("error");
+          onkeydown = () => {
+            const start = performance.now(), isInTime = () => performance.now() - start < 200, attempt = () => order.push(${attempt});
+            p.style.width = "3px";
+            do (order.length = 0), attempt();
+            while (!order.includes("asked") && isInTime());
+            attempt();
+            attempt();
+            resolve(isInTime() && [...order]);
+          };
+          requestAnimationFrame(() => setTimeout(() => console.log("ready")));
+        })\`);
+        await once(page, "console-message");
+        page.sendInputEvent({ type: "keyDown", keyCode: "F2" });
+        answer = await answering;
+        if (answer) print(answer);
+      }`);
+    expect((order as unknown[]).slice(0, expected.length)).toEqual(expected);
+  });
+
+  test.skipIf(isMacOS || !Bun.which("openssl"))("a host that wants nothing but HTTPS is remembered", async () => {
     using made = tempDir("hsts", {});
     await $`openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -subj /CN=a.test -addext ${"subjectAltName=DNS:a.test,DNS:*.a.test"} -keyout key -out cert`
       .cwd(String(made))
@@ -6958,7 +8317,7 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
     ).toEqual([result]);
   });
 
-  test.skipIf(!isLinux || !process.env.DISPLAY).each([
+  test.skipIf(isMacOS || (isLinux && !process.env.DISPLAY)).each([
     ["a very deep inline element fades", `nest(() => document.createElement("b"))[0]`, "{ duration: 9000 }"],
     ["an animation rests for ages", `document.createElement("p")`, `{ duration: 1e30, easing: "step-end" }`],
   ])("%s in a window on a display", async (_, element, timing) => {
@@ -7411,6 +8770,28 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
       ["NoModificationAllowedError", [1, 2], "of the worker"],
       [true, []],
     ]);
+  });
+
+  test.skipIf(isWindows)("the copy of a file has its holes", async () => {
+    expect(
+      await run(`
+        serve({ "/": "" });
+        const page = await open(), fs = require("fs"), files = path.join(app.getPath("userData"), "File System");
+        const blocks = () => fs.readdirSync(files, { recursive: true }).reduce((sum, it) => sum + fs.statSync(path.join(files, it)).blocks, 0);
+        await page.executeJavaScript(\`(async () => {
+          const file = await (self.handle = await (await navigator.storage.getDirectory()).getFileHandle("a", { create: true })).createWritable();
+          for (let i = 1; i <= 32; i++) await file.write({ type: "write", position: i << 20, data: new Uint8Array(4096).fill(i) });
+          await file.truncate(40 << 20);
+          await file.close();
+        })()\`);
+        const before = blocks();
+        print(await page.executeJavaScript(\`(async () => {
+          await (await handle.createWritable({ keepExistingData: true })).close();
+          const file = await handle.getFile(), at = async it => [...(await file.slice(it - 1, it + 1).bytes())];
+          return [file.size, await at(1 << 20), await at((32 << 20) + 4096), await at(39 << 20)];
+        })()\`));
+        print(blocks() <= before * 2);`),
+    ).toEqual([[40 << 20, [0, 1], [32, 0], [0, 0]], true]);
   });
 
   test("a File is read when it is read, and not after it has changed", async () => {
@@ -8347,6 +9728,8 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
          const [port] = require("fs").readFileSync(path.join(app.getPath("userData"), "DevToolsActivePort"), "utf8").split("\\n");
          const list = await (await fetch("http://127.0.0.1:" + port + "/json/list")).json();
          print(list.map(target => target.url));
+         await open("app://trusted/#b", { webPreferences: { devTools: false } });
+         print((await (await fetch("http://127.0.0.1:" + port + "/json/list")).json()).length);
          print((await fetch("http://127.0.0.1:" + port + "/json/list", { headers: { origin: "https://example.com" } })).status);
          page.debugger.attach();
          for (const type of ["mousePressed", "mouseReleased"]) {
@@ -8357,7 +9740,875 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
         {},
         ["--remote-debugging-port=0"],
       ),
-    ).toEqual([["app://trusted/"], 403, { result: { type: "number", value: 1 } }, "'Unknown.method' wasn't found"]);
+    ).toEqual([
+      ["app://trusted/"],
+      1,
+      403,
+      { result: { type: "number", value: 1, description: "1" } },
+      "'Unknown.method' wasn't found",
+    ]);
+  });
+
+  describe("the DevTools protocol", () => {
+    const inspect = (files: object, main: string, options = "{}", beside = {}) =>
+      run(
+        `
+        serve(${JSON.stringify(files)});
+        const page = await open(undefined, ${options});
+        const send = (method, params) => page.debugger.sendCommand(method, params);
+        const seen = [], waiting = [];
+        page.debugger.attach();
+        page.debugger.on("message", (_, method, params) => {
+          seen.push({ method, params });
+          waiting.splice(0).forEach(it => it());
+        });
+        const next = async (method, fits = () => true) => {
+          for (;;) {
+            const at = seen.findIndex(it => it.method === method && fits(it.params));
+            if (at >= 0) return seen.splice(at, 1)[0].params;
+            await new Promise(resolve => waiting.push(resolve));
+          }
+        };
+        const find = async selector => {
+          const { root } = await send("DOM.getDocument", { depth: -1 });
+          return (await send("DOM.querySelector", { nodeId: root.nodeId, selector })).nodeId;
+        };
+        ${main}`,
+        beside,
+      );
+
+    test("reports how the tree changes, and changes it", async () => {
+      expect(
+        await inspect(
+          { "/": "<!doctype html><p id=a>x</p>" },
+          `const nodeId = await find("p");
+           await page.executeJavaScript("a.className = 'b'; a.append(document.createElement('i')); a.firstChild.data = 'y'");
+           print((await next("DOM.attributeModified")).value);
+           print((await next("DOM.childNodeInserted")).node.nodeName);
+           print((await next("DOM.characterDataModified")).characterData);
+           await send("DOM.setAttributesAsText", { nodeId, text: 'title="t" lang=en', name: "class" });
+           print((await send("DOM.getOuterHTML", { nodeId })).outerHTML);
+           await send("DOM.removeNode", { nodeId });
+           print((await next("DOM.childNodeRemoved")).nodeId === nodeId);
+           print(await page.executeJavaScript("document.body.innerHTML"));`,
+        ),
+      ).toEqual(["b", "I", "y", '<p id="a" title="t" lang="en">y<i></i></p>', true, ""]);
+    });
+
+    test("finds the rules that apply, and edits them", async () => {
+      expect(
+        await inspect(
+          {
+            "/": "<!doctype html><link rel=stylesheet href=/a.css><body style='color: red'><p id=a style='top: 1px'>x",
+            "/a.css": "i, p { margin: 1px }\n@media all { p:hover { width: 5px } }\np::before { content: 'a' }",
+          },
+          `await send("DOM.enable");
+           await send("CSS.enable");
+           const nodeId = await find("p");
+           const authored = rules => rules.filter(it => it.rule.origin === "regular");
+           const texts = rules => authored(rules).map(it => [it.rule.selectorList.text, it.matchingSelectors, it.rule.style.cssText.trim(), it.rule.media?.[0]?.text ?? null]);
+           const before = await send("CSS.getMatchedStylesForNode", { nodeId });
+           print([texts(before.matchedCSSRules), before.inlineStyle.cssText, before.inherited[0].inlineStyle.cssText]);
+           print(before.pseudoElements.map(it => [it.pseudoType, texts(it.matches)]).filter(it => it[1].length));
+           await send("CSS.forcePseudoState", { nodeId, forcedPseudoClasses: ["hover"] });
+           print(texts((await send("CSS.getMatchedStylesForNode", { nodeId })).matchedCSSRules)[1]);
+           const { styleSheetId, range } = authored(before.matchedCSSRules)[0].rule.style;
+           await send("CSS.setStyleTexts", { edits: [{ styleSheetId, range, text: "margin: 7px" }] });
+           print((await send("CSS.getComputedStyleForNode", { nodeId })).computedStyle.filter(it => ["margin-top", "width"].includes(it.name)));
+           print((await send("DOM.getBoxModel", { nodeId })).model.margin.slice(0, 4));
+           page.debugger.detach();
+           print(await page.executeJavaScript("a.matches(':hover') + getComputedStyle(a).marginTop"));`,
+        ),
+      ).toEqual([
+        [[["i, p", [1], "margin: 1px", null]], "top: 1px", "color: red"],
+        [["before", [["p::before", [0], "content: 'a'", null]]]],
+        ["p:hover", [0], "width: 5px", "all"],
+        [
+          { name: "margin-top", value: "7px" },
+          { name: "width", value: "5px" },
+        ],
+        [8, 1, 27, 1],
+        "false7px",
+      ]);
+    });
+
+    test("highlights a node without the page noticing", async () => {
+      expect(
+        await inspect(
+          { "/": "<!doctype html><body style='margin: 0; background: #fff'><p style='margin: 0; height: 20px'>" },
+          `const pixel = async () => [...(await page.capturePage({ x: 5, y: 5, width: 1, height: 1 })).toBitmap().subarray(0, 3)];
+           await page.executeJavaScript("changes = new MutationObserver(() => {}); changes.observe(document, { subtree: true, childList: true, attributes: true })");
+           await send("Overlay.enable");
+           await send("Overlay.highlightNode", { nodeId: await find("p"), highlightConfig: { contentColor: { r: 0, g: 0, b: 255, a: 1 } } });
+           print(await pixel());
+           print(await page.executeJavaScript("[changes.takeRecords().length, document.elementFromPoint(5, 5).localName, document.documentElement.childElementCount]"));
+           await send("Overlay.hideHighlight");
+           print(await pixel());`,
+        ),
+      ).toEqual([
+        [255, 0, 0],
+        [0, "p", 2],
+        [255, 255, 255],
+      ]);
+    });
+
+    test.each([
+      ["{}", [["log", "early", { type: "string", value: "Object" }, null], "Error: thrown"]],
+      ["{ webPreferences: { devTools: false } }", []],
+    ])("recalls the text of what was logged before it came: %s", async (options, recalled) => {
+      expect(
+        await inspect(
+          { "/": "<script>console.log('early', { a: 1 }); throw new Error('thrown')</script>" },
+          `await send("Runtime.enable");
+           print(seen.flatMap(({ method, params: it }) =>
+             method === "Runtime.consoleAPICalled" ? [[it.type, it.args[0].value, it.args[1], it.stackTrace]] :
+             method === "Runtime.exceptionThrown" ? [it.exceptionDetails.exception.value] : []));`,
+          options,
+        ),
+      ).toEqual([recalled]);
+    });
+
+    describe("with a preload script", () => {
+      const files = {
+        "preload.js": `globalThis.secret = { f() {} };
+          addEventListener("log", () => console.log(secret));
+          addEventListener("a", function ofPreload() {});
+          addEventListener("a", { handleEvent() {} });
+          addEventListener("throw", () => { throw secret; });
+          addEventListener("report", () => reportError(secret));`,
+      };
+      const contexts = `await send("Runtime.enable");
+        const [ofPage, ofPreload] = [true, false].map(it => seen.find(({ params }) => params.context?.auxData.isDefault === it).params.context.id);
+        const type = (expression, contextId) => send("Runtime.evaluate", { expression, contextId, objectGroup: "console", includeCommandLineAPI: true, replMode: true });
+        const isSecret = async objectId => (await send("Runtime.callFunctionOn", { objectId, functionDeclaration: "function () { return this === globalThis.secret }" })).result.value;`;
+
+      test("what is logged or thrown stays in its world", async () => {
+        expect(
+          await inspect(
+            { "/": "" },
+            `${contexts}
+             await page.executeJavaScript("dispatchEvent(new Event('log'))");
+             const logged = await next("Runtime.consoleAPICalled");
+             print([logged.executionContextId === ofPreload, await isSecret(logged.args[0].objectId)]);
+             await page.executeJavaScript("dispatchEvent(new Event('report')), dispatchEvent(new Event('throw'))");
+             for (const { exceptionDetails: it } of [await next("Runtime.exceptionThrown"), await next("Runtime.exceptionThrown")]) {
+               print([it.executionContextId === ofPreload, await isSecret(it.exception.objectId)]);
+             }
+             await page.executeJavaScriptInIsolatedWorld(1000, [{ code: "console.log(globalThis.secret = {})" }]);
+             const other = await next("Runtime.consoleAPICalled");
+             print([[ofPage, ofPreload].includes(other.executionContextId), await isSecret(other.args[0].objectId)]);`,
+            "preload",
+            files,
+          ),
+        ).toEqual([
+          [true, true],
+          [true, true],
+          [true, true],
+          [false, true],
+        ]);
+      });
+
+      test("each world has its last result", async () => {
+        expect(
+          await inspect(
+            { "/": "" },
+            `${contexts}
+             await type("1", ofPage);
+             await type("secret", ofPreload);
+             print([(await type("$_", ofPage)).result.value, await isSecret((await type("$_", ofPreload)).result.objectId)]);`,
+            "preload",
+            files,
+          ),
+        ).toEqual([[1, true]]);
+      });
+
+      test("each world sees its listeners", async () => {
+        expect(
+          await inspect(
+            { "/": "<script>addEventListener('a', function ofPage() {})</script>" },
+            `${contexts}
+             for (const contextId of [ofPage, ofPreload]) {
+               const { listeners } = await send("DOMDebugger.getEventListeners", { objectId: (await type("window", contextId)).result.objectId });
+               print(listeners.filter(it => it.type === "a").map(it => it.handler.description));
+               print((await type("getEventListeners(window).a.map(it => it.listener.name).join()", contextId)).result.value);
+             }`,
+            "preload",
+            files,
+          ),
+        ).toEqual([["function ofPage() {}"], "ofPage", ["function ofPreload() {}", "Object"], "ofPreload,"]);
+      });
+    });
+
+    test("the helpers of the console work only for what is typed", async () => {
+      expect(
+        await inspect(
+          {
+            "/": "<p><script>taken = []; for (const name of Object.getOwnPropertyNames(Object)) if (Object[name].call) Object[name] = () => taken.push(name)</script>",
+          },
+          `await send("Runtime.enable");
+           await send("DOM.setInspectedNode", { nodeId: await find("p") });
+           const type = (expression, more) => send("Runtime.evaluate", { expression, objectGroup: "console", includeCommandLineAPI: true, ...more });
+           print((await type("copy('typed'), given = copy, $0.localName")).result.value);
+           print((await send("Runtime.evaluate", { expression: "given('not typed'), taken.join()" })).result.value);
+           await type("copy(await new Promise(resolve => setTimeout(resolve, 0, 'awaited')))", { replMode: true });
+           const pending = type("copy('once'), given = copy.bind(), await new Promise(resolve => (finish = resolve))", { replMode: true });
+           await send("Runtime.evaluate", { expression: "for (let i = 0; i < 9; i++) given('meanwhile'); finish()" });
+           await pending;
+           const unnamed = type("await new Promise(resolve => (finish = resolve))", { replMode: true });
+           await send("Runtime.evaluate", { expression: "given('unasked'), finish()" });
+           await unnamed;
+           print(seen.filter(it => it.method === "Runtime.inspectRequested").map(it => it.params.object.value));`,
+        ),
+      ).toEqual(["p", "", ["typed", "awaited", "once", "meanwhile"]]);
+    });
+
+    test("loads what the page names, with cookies only for its origin", async () => {
+      expect(
+        await inspect(
+          { "/": "" },
+          `const cookies = [];
+           const site = () => Bun.serve({ port: 0, hostname: "127.0.0.1", fetch(request) {
+             const { pathname, searchParams } = new URL(request.url);
+             if (pathname === "/") return new Response("", { headers: { "content-type": "text/html", "set-cookie": "a=1; SameSite=Strict" } });
+             cookies.push(pathname + " " + request.headers.get("cookie"));
+             return searchParams.has("to") ? Response.redirect(searchParams.get("to")) : new Response("content");
+           } }).url.origin;
+           const [own, other] = [site(), site()];
+           app.trustOrigins([own]);
+           await page.loadURL(own);
+           for (const url of [own + "/own", other + "/other", own + "/from?to=" + other + "/to", "app://trusted/", "file://host/share", other + "/in?to=app://trusted/"]) {
+             const { resource } = await send("Network.loadNetworkResource", { url, options: { includeCredentials: true } });
+             let text = "";
+             for (let it; resource.stream && !(it = await send("IO.read", { handle: resource.stream })).eof; ) text += atob(it.data);
+             print(resource.netErrorName ?? text);
+           }
+           print(cookies);`,
+        ),
+      ).toEqual([
+        ...["content", "content", "content", "", "net::ERR_ACCESS_DENIED", "net::ERR_BLOCKED_BY_CSP"],
+        ["/own a=1", "/other null", "/from a=1", "/from null", "/to null", "/in null"],
+      ]);
+    });
+
+    test("describes values without running scripts of the page", async () => {
+      const refused = "EvalError: Possible side-effect in debug-evaluate";
+      expect(
+        await inspect(
+          {
+            "/": `<p id=a>x</p><script>
+              var effects = 0, trap = () => void effects++, proxy = new Proxy({}, new Proxy({}, { get: trap }));
+              var all = { proxy, behind: Object.create(proxy), get accessor() { trap() }, toString: trap, error: Object.assign(new Error, { toString: trap }), list: [1, 2], map: new Map([[1, 2]]) };
+              Object.defineProperty(all, "native", { get: Object.prototype.toLocaleString });
+              a.at = a.remove;
+            </script>`,
+          },
+          `const { result } = await send("Runtime.evaluate", { expression: "all", generatePreview: true });
+           print(result.preview.properties.map(it => [it.name, it.type, it.subtype ?? null]));
+           const { result: members } = await send("Runtime.getProperties", { objectId: result.objectId, generatePreview: true });
+           print(members.filter(it => ["list", "map"].includes(it.name)).map(it => it.value.description));
+           for (const expression of ["all.list.length", "document.querySelector('p').textContent", "1 + 2", "trap()", "effects = 9", "all.accessor", "all.native", "a.at()", "proxy.a", "all.behind.a", "a.remove()"]) {
+             const { result } = await send("Runtime.evaluate", { expression, throwOnSideEffect: true });
+             print(result.value ?? result.description.split("\\n")[0]);
+           }
+           print(await page.executeJavaScript("[effects, a.isConnected]"));`,
+        ),
+      ).toEqual([
+        [
+          ["proxy", "object", "proxy"],
+          ["behind", "object", null],
+          ["toString", "function", null],
+          ["error", "object", "error"],
+          ["list", "object", "array"],
+        ],
+        ["Array(2)", "Map(1)"],
+        ...[2, "x", 3, ...Array(8).fill(refused)],
+        [0, true],
+      ]);
+    });
+
+    test("leaves alone what is not initialized, a stack that the page formats, and a length that it computes", async () => {
+      expect(
+        await inspect(
+          {
+            "/": `<script>let early = missing()</script><script>
+              var effects = 0, trap = (Error.prepareStackTrace = () => void effects++), lazy = new Error("lazy"), captured = new Error("captured"), sized = { get length() { trap() }, at: [].at };
+              Error.captureStackTrace(captured);
+            </script>`,
+          },
+          `const before = await page.executeJavaScript("effects");
+           for (const expression of ["early", "lazy.stack", "sized.at(0)", "lazy"]) {
+             print((await send("Runtime.evaluate", { expression, throwOnSideEffect: true, generatePreview: true })).result.description.split("\\n")[0]);
+           }
+           for (const expression of ["lazy", "captured", "Object.create(captured)"]) {
+             const { objectId } = (await send("Runtime.evaluate", { expression, generatePreview: true })).result;
+             print((await send("Runtime.getProperties", { objectId })).result.find(it => it.name === "message").value.value);
+           }
+           print((await page.executeJavaScript("effects")) - before);`,
+        ),
+      ).toEqual([
+        ...Array(3).fill("EvalError: Possible side-effect in debug-evaluate"),
+        "Error: lazy",
+        "lazy",
+        "captured",
+        "captured",
+        0,
+      ]);
+    });
+
+    test("the error for a string that cannot be described is one of the page", async () => {
+      // A rope that is too long to be resolved: the engine refuses before it allocates.
+      expect(
+        await inspect(
+          {
+            "/": "<script>var long = '', part = 'Ā'; for (let i = 0; i < 31; i++) (long += part), i < 30 && (part += part)</script>",
+          },
+          `const { objectId } = (await send("Runtime.evaluate", { expression: "long" })).result;
+           print((await send("Runtime.callFunctionOn", { objectId, functionDeclaration: "function () { return this instanceof RangeError }" })).result.value);`,
+        ),
+      ).toEqual([true]);
+    });
+
+    test("what Node.js gives a page is an object", async () => {
+      expect(
+        await inspect(
+          { "/": "" },
+          `const { objectId } = (await send("Runtime.evaluate", { expression: "require('fs')" })).result;
+           print((await send("Runtime.getProperties", { objectId })).result.find(it => it.name === "readFileSync").value.type);`,
+          "{ webPreferences: { nodeIntegration: true, contextIsolation: false } }",
+        ),
+      ).toEqual(["function"]);
+    });
+
+    test("shadow hosts in shadow hosts are described up to a limit", async () => {
+      expect(
+        await inspect(
+          {
+            "/": "<body><script>let at = document.body; for (let i = 0; i < 20000; i++) (at = at.appendChild(document.createElement('p'))).attachShadow({ mode: 'open' }); at.id = 'last'</script>",
+          },
+          `print((await send("DOM.getAttributes", { nodeId: await find("#last") })).attributes);`,
+        ),
+      ).toEqual([["id", "last"]]);
+    });
+
+    test("a listener is removed while the listeners are listed", async () => {
+      expect(
+        await inspect(
+          {
+            "/": "<p id=a onclick='('></p><script>function f() {} a.addEventListener('click', f); onerror = () => a.removeEventListener('click', f)</script>",
+          },
+          `const { objectId } = (await send("Runtime.evaluate", { expression: "a" })).result;
+           print((await send("DOMDebugger.getEventListeners", { objectId })).listeners.map(it => it.handler.description));`,
+        ),
+      ).toEqual([["function f() {}"]]);
+    });
+
+    test("selectors that double with each level of nesting are not spelled out", async () => {
+      expect(
+        await inspect(
+          { "/": `<style>b:not([${"a".repeat(1000)}]) { ${"i, && { color: red; ".repeat(7)} }</style><b></b>` },
+          `await send("DOM.enable");
+           await send("CSS.enable");
+           const { matchedCSSRules } = await send("CSS.getMatchedStylesForNode", { nodeId: await find("b") });
+           print([1, 7].map(depth => matchedCSSRules.find(it => it.rule.nestingSelectors.length === depth).matchingSelectors));`,
+        ),
+      ).toEqual([[[1], [0, 1]]]);
+    });
+
+    test("lists of selectors are split where they should be, however long", async () => {
+      expect(
+        await inspect(
+          {
+            "/": `<style>:is(i, u), [a="x,y"], a\\,b /* , */, b, :is(${"i,".repeat(200000)}s) { color: red }</style><b></b>`,
+          },
+          `await send("DOM.enable");
+           await send("CSS.enable");
+           const { matchedCSSRules } = await send("CSS.getMatchedStylesForNode", { nodeId: await find("b") });
+           print([matchedCSSRules.at(-1).rule.selectorList.selectors.length, matchedCSSRules.at(-1).matchingSelectors]);`,
+        ),
+      ).toEqual([[5, [3]]]);
+    });
+
+    test("positions that are out of range are refused", async () => {
+      expect(
+        await inspect(
+          { "/": "<style>b { color: red }</style><script>function f() { debugger }</script>" },
+          `await send("DOM.enable");
+           await send("CSS.enable");
+           const { styleSheetId } = (await next("CSS.styleSheetAdded")).header;
+           const range = { startLine: 0, startColumn: 1e300, endLine: 0, endColumn: 1e300 };
+           print(await send("CSS.setStyleTexts", { edits: [{ styleSheetId, range, text: "" }] }).catch(() => "refused"));
+           await send("Debugger.enable");
+           send("Runtime.evaluate", { expression: "f()" });
+           const [{ callFrameId }] = (await next("Debugger.paused")).callFrames;
+           print(await send("Debugger.setVariableValue", { callFrameId, scopeNumber: 4e9, variableName: "a", newValue: { value: 1 } }).catch(() => "refused"));
+           await send("Debugger.resume");`,
+        ),
+      ).toEqual(["refused", "refused"]);
+    });
+
+    test("an element that is renamed stays in its namespace", async () => {
+      expect(
+        await inspect(
+          { "/": "<p>a</p><svg><g/></svg>" },
+          `await send("DOM.setNodeName", { nodeId: await find("p"), name: "H1" });
+           await send("DOM.setNodeName", { nodeId: await find("g"), name: "foreignObject" });
+           print(await send("DOM.setNodeName", { nodeId: await find("h1"), name: "a b" }).catch(() => "refused"));
+           print(await page.executeJavaScript("document.body.innerHTML"));`,
+        ),
+      ).toEqual(["refused", "<h1>a</h1><svg><foreignObject></foreignObject></svg>"]);
+    });
+
+    test("only groups that were begun are ended", async () => {
+      expect(
+        await inspect(
+          { "/": "<script>console.groupEnd(); console.group('a'); console.groupEnd(); console.groupEnd()</script>" },
+          `await send("Runtime.enable");
+           print(seen.filter(it => it.method === "Runtime.consoleAPICalled").map(it => it.params.type));`,
+        ),
+      ).toEqual([["startGroup", "endGroup"]]);
+    });
+
+    test("the events of a command come before its result", async () => {
+      expect(
+        await run(
+          `serve({ "/": "<div><div><p>" });
+           await open();
+           const [port] = require("fs").readFileSync(path.join(app.getPath("userData"), "DevToolsActivePort"), "utf8").split("\\n");
+           const [target] = await (await fetch("http://127.0.0.1:" + port + "/json/list")).json();
+           const socket = new WebSocket(target.webSocketDebuggerUrl), heard = [];
+           let replied;
+           socket.onmessage = ({ data }) => ((data = JSON.parse(data)), heard.push(data.method ?? data.id), data.id && replied(data.result));
+           const send = (id, method, params) => new Promise(resolve => ((replied = resolve), socket.send(JSON.stringify({ id, method, params }))));
+           await once(socket, "open");
+           const { root } = await send(1, "DOM.getDocument", { depth: 0 });
+           await send(2, "DOM.requestChildNodes", { nodeId: root.nodeId });
+           print(heard);`,
+          {},
+          ["--remote-debugging-port=0"],
+        ),
+      ).toEqual([[1, "DOM.setChildNodes", 2]]);
+    });
+
+    test("a page goes on after a pause below two questions to the app", async () => {
+      expect(
+        await inspect(
+          {
+            "/": "<script>onkeydown = event => { if (event.key === 'a') open('about:blank#inner'); else debugger; }</script>",
+          },
+          `const press = keyCode => page.sendInputEvent({ type: "keyDown", keyCode });
+           page.setWindowOpenHandler(({ url }) => (press(url.endsWith("#outer") ? "a" : "b"), { action: "deny" }));
+           await send("Debugger.enable");
+           page.focus();
+           await Promise.all([send("Runtime.evaluate", { expression: "open('about:blank#outer')", userGesture: true }), send("Debugger.resume")]);
+           print(seen.map(it => it.method).filter(it => /paused|resumed/.test(it)));`,
+        ),
+      ).toEqual([["Debugger.paused", "Debugger.resumed"]]);
+    });
+
+    test("a binding is silent after it has been removed", async () => {
+      expect(
+        await inspect(
+          { "/": "" },
+          `await send("Runtime.addBinding", { name: "tell" });
+           await send("Runtime.evaluate", { expression: "tell('a')" });
+           await send("Runtime.removeBinding", { name: "tell" });
+           await send("Runtime.evaluate", { expression: "tell('b')" });
+           print(seen.filter(it => it.method === "Runtime.bindingCalled").map(it => it.params.payload));`,
+        ),
+      ).toEqual([["a"]]);
+    });
+
+    test("the command line has helpers, await, and lets a variable be declared again", async () => {
+      expect(
+        await inspect(
+          { "/": "<p>x</p>" },
+          `await send("DOM.setInspectedNode", { nodeId: await find("p") });
+           for (const expression of ["$0.localName + $$('p').length", "await Promise.resolve(5)", "let v = 1; v", "let v = 2; v", "{ a: 1 }.a"])
+             print((await send("Runtime.evaluate", { expression, includeCommandLineAPI: true, replMode: true, awaitPromise: true })).result.value ?? null);
+           print(await page.executeJavaScript("typeof $0 + v"));`,
+        ),
+      ).toEqual(["p1", 5, 1, 2, null, "undefined2"]);
+    });
+
+    test("pauses a page, and the app goes on", async () => {
+      expect(
+        await inspect(
+          {
+            "/": "<script src=/a.js></script>",
+            "/a.js":
+              "let ticks = 0;\nfunction f(n) {\n  const twice = n * 2;\n  return g(twice);\n}\nfunction g(x) {\n  return x + 1;\n}",
+          },
+          `await send("Debugger.enable");
+           const { scriptId } = await next("Debugger.scriptParsed", it => it.url.endsWith("/a.js"));
+           print((await send("Debugger.getScriptSource", { scriptId })).scriptSource.length);
+           const { breakpointId, locations } = await send("Debugger.setBreakpointByUrl", { url: "app://trusted/a.js", lineNumber: 3 });
+           print(locations.map(it => it.lineNumber));
+           const result = page.executeJavaScript("setTimeout(() => ticks++); f(2)");
+           const { callFrames: [frame], hitBreakpoints } = await next("Debugger.paused");
+           print([frame.functionName, frame.location.lineNumber, frame.scopeChain.map(it => it.type), hitBreakpoints[0] === breakpointId]);
+           print((await send("Runtime.getProperties", { objectId: frame.scopeChain[0].object.objectId })).result.map(it => [it.name, it.value.value]));
+           await new Promise(resolve => setTimeout(resolve));
+           const { callFrameId } = frame;
+           print((await send("Debugger.evaluateOnCallFrame", { callFrameId, expression: "[ticks, n + twice].join()" })).result.value);
+           print((await send("Debugger.evaluateOnCallFrame", { callFrameId, expression: "twice", throwOnSideEffect: true })).result.value);
+           await send("Debugger.stepInto");
+           const inner = await next("Debugger.paused");
+           print(inner.callFrames.slice(0, 2).map(it => it.functionName));
+           await send("Debugger.setVariableValue", { callFrameId: inner.callFrames[0].callFrameId, scopeNumber: 0, variableName: "x", newValue: { value: 10 } });
+           await send("Debugger.resume");
+           print(await result);`,
+        ),
+      ).toEqual([
+        108,
+        [3],
+        ["f", 3, ["local", "script", "global"], true],
+        [
+          ["twice", 4],
+          ["n", 2],
+        ],
+        "0,6",
+        4,
+        ["g", "f"],
+        11,
+      ]);
+    });
+
+    test.each(["page.debugger.detach()", "page.close()", "page.reload()"])(
+      "a paused page goes on after %s",
+      async end => {
+        expect(
+          await inspect(
+            { "/": "" },
+            `const other = await open();
+           await send("Debugger.enable");
+           page.executeJavaScript("setTimeout(() => { debugger })");
+           await next("Debugger.paused");
+           ${end};
+           print(await other.executeJavaScript("new Promise(resolve => setTimeout(resolve, 0, 1))"));`,
+          ),
+        ).toEqual([1]);
+      },
+    );
+
+    test("a command that pauses the page returns first", async () => {
+      expect(
+        await inspect(
+          { "/": "" },
+          `await send("Debugger.enable");
+           const evaluated = send("Runtime.evaluate", { expression: "debugger; 1" });
+           await next("Debugger.paused");
+           await send("Debugger.resume");
+           print((await evaluated).result.value);`,
+        ),
+      ).toEqual([1]);
+    });
+
+    test("the debugger is detached while the condition of a breakpoint runs", async () => {
+      expect(
+        await inspect(
+          { "/": "<script src=/a.js></script>", "/a.js": "function f() {\n  return 1;\n}" },
+          `ipcMain.on("detach", event => (page.debugger.detach(), (event.returnValue = true)));
+           await send("Debugger.enable");
+           await send("Debugger.setBreakpointByUrl", { url: "app://trusted/a.js", lineNumber: 1, condition: "detach()" });
+           const detached = once(page.debugger, "detach");
+           send("Runtime.evaluate", { expression: "f()" }).catch(() => {});
+           await detached;
+           print(await page.executeJavaScript("f()"));`,
+          "preload",
+          {
+            "preload.js": `const { contextBridge, ipcRenderer } = require("electron"); contextBridge.exposeInMainWorld("detach", () => ipcRenderer.sendSync("detach"));`,
+          },
+        ),
+      ).toEqual([1]);
+    });
+
+    test("a page that is paused in a listener gets no input, and the app does", async () => {
+      expect(
+        await inspect(
+          {
+            "/": "<script>seen = []; onmousedown = () => { seen.push('down'); debugger; seen.push('on') }; onkeydown = () => seen.push('key'); onresize = () => innerWidth === 300 && seen.push('resize')</script>",
+          },
+          `const { sendInputEvent } = require("bun:internal-for-testing").desktopInternals;
+           const window = page.getOwnerBrowserWindow();
+           await send("Debugger.enable");
+           sendInputEvent(window.id, { type: "mouseDown", x: 10, y: 10 });
+           await next("Debugger.paused");
+           const key = once(page, "before-input-event");
+           sendInputEvent(window.id, { type: "keyDown", keyCode: "a" });
+           print((await key)[1].key);
+           window.setContentSize(300, 200);
+           await send("Runtime.evaluate", { expression: "seen.push('evaluated')" });
+           await send("Debugger.resume");
+           print(await page.executeJavaScript("new Promise(resolve => seen.includes('resize') ? resolve() : addEventListener('resize', resolve)).then(() => seen)"));`,
+        ),
+      ).toEqual(["a", ["down", "evaluated", "on", "resize"]]);
+    });
+
+    test("pauses where an exception is thrown", async () => {
+      expect(
+        await inspect(
+          { "/": "" },
+          `await send("Debugger.enable");
+           await send("Debugger.setPauseOnExceptions", { state: "uncaught" });
+           page.executeJavaScript("setTimeout(() => { try { throw 1 } catch {} throw 2 })");
+           const { reason, data } = await next("Debugger.paused");
+           print([reason, data.value]);
+           await send("Debugger.resume");`,
+        ),
+      ).toEqual([["exception", 2]]);
+    });
+
+    test("shows requests, and changes how they fare", async () => {
+      expect(
+        await inspect(
+          { "/": "<link rel=stylesheet href=/a.css>", "/a.css": "p {}", "/b": "b" },
+          `await send("Page.enable");
+           await send("Network.enable");
+           await send("Page.reload");
+           const { requestId, loaderId } = await next("Network.requestWillBeSent", it => it.type === "Document");
+           print([requestId === loaderId, (await next("Page.frameNavigated")).frame.loaderId === loaderId]);
+           const sheet = await next("Network.responseReceived", it => it.type === "Stylesheet");
+           print([sheet.loaderId === loaderId, sheet.response.status, sheet.response.mimeType]);
+           print((await next("Network.loadingFinished", it => it.requestId === sheet.requestId)).encodedDataLength);
+           print(atob((await send("Network.getResponseBody", sheet)).body));
+           await next("Page.loadEventFired");
+           const { frameTree } = await send("Page.getResourceTree");
+           print(frameTree.resources.map(it => [it.url, it.type]));
+           print(await send("Page.getResourceContent", { frameId: frameTree.frame.id, url: "app://trusted/a.css" }));
+           print(await send("Page.getResourceContent", { url: "file:////host/share" }).catch(error => error.message));
+           await send("Network.setBlockedURLs", { urls: ["/b"] });
+           print(await page.executeJavaScript("fetch('/b').then(it => it.text(), it => it.name)"));
+           print((await next("Network.loadingFailed")).errorText);`,
+        ),
+      ).toEqual([
+        [true, true],
+        [true, 200, "text/css"],
+        4,
+        "p {}",
+        [["app://trusted/a.css", "Stylesheet"]],
+        { content: "p {}", base64Encoded: false },
+        "No resource with given URL found",
+        "TypeError",
+        "net::ERR_BLOCKED_BY_CLIENT",
+      ]);
+    });
+
+    test("shows and changes the storage", async () => {
+      expect(
+        await inspect(
+          { "/": "<script>localStorage.a = 1</script>" },
+          `await send("DOMStorage.enable");
+           const storageId = { storageKey: (await send("Storage.getStorageKey")).storageKey, isLocalStorage: true };
+           print((await send("DOMStorage.getDOMStorageItems", { storageId })).entries);
+           await send("DOMStorage.setDOMStorageItem", { storageId, key: "b", value: "2" });
+           print(await page.executeJavaScript("localStorage.a = 3, localStorage.b"));
+           print((await next("DOMStorage.domStorageItemUpdated")).newValue);`,
+        ),
+      ).toEqual([[["a", "1"]], "2", "3"]);
+    });
+  });
+
+  describe("--inspect", () => {
+    const where = `const url = require("inspector").url(); print(url ? new URL(url).hostname : null);`;
+
+    test.each(["--inspect=0", "--inspect=0.0.0.0:0"])("%s serves the app to this machine only", async flag => {
+      expect(await run(where, {}, [flag])).toEqual(["127.0.0.1"]);
+    });
+
+    test("is off unless it is asked for", async () => {
+      expect(await run(where)).toEqual([null]);
+    });
+
+    const client = `
+      const socket = new WebSocket(require("inspector").url()), pending = new Map(), events = [];
+      socket.onmessage = ({ data }) => ((data = JSON.parse(data)), data.id ? pending.get(data.id)(data.result) : events.push(data));
+      const send = (method, params) => new Promise(resolve => (pending.set(pending.size + 1, resolve), socket.send(JSON.stringify({ id: pending.size, method, params }))));
+      await new Promise(resolve => (socket.onopen = resolve));
+      await send("Runtime.enable", {});`;
+
+    test("throwOnSideEffect runs nothing that could have a side effect", async () => {
+      const refused = [
+        "touch()",
+        "plain.inner.value = 2",
+        "accessor",
+        "plain.accessor",
+        "plain.inherited",
+        "proxy.a",
+        "behind.a",
+        "behind",
+        "described",
+        "missing",
+      ];
+      expect(
+        await run(
+          `${client}
+           let effects = 0;
+           const trap = (globalThis.touch = () => void effects++);
+           globalThis.plain = { inner: { value: 1 }, get accessor() { return trap(); }, __proto__: { get inherited() { return trap(); } } };
+           globalThis.proxy = new Proxy({}, new Proxy({}, { get: trap }));
+           globalThis.behind = Object.create(proxy);
+           globalThis.described = Object.assign(new Error(), { toString: trap });
+           Object.defineProperty(globalThis, "accessor", { get: trap });
+           for (const expression of ["plain.inner.value", "plain.inner", "plain.missing", "1 + 2", ...${JSON.stringify(refused)}]) {
+             const { result } = await send("Runtime.evaluate", { expression, throwOnSideEffect: true });
+             print(result.value ?? result.description ?? result.type);
+           }
+           const { objectId } = (await send("Runtime.evaluate", { expression: "plain" })).result;
+           print((await send("Runtime.callFunctionOn", { objectId, functionDeclaration: "function () { touch(); }", throwOnSideEffect: true })).result.description);
+           print([effects, plain.inner.value]);`,
+          {},
+          ["--inspect=0"],
+        ),
+      ).toEqual([
+        1,
+        "Object",
+        "undefined",
+        3,
+        ...Array(11).fill("EvalError: Possible side-effect in debug-evaluate"),
+        [0, 1],
+      ]);
+    });
+
+    const console_ = `${client}
+      const evaluate = (expression, more) => send("Runtime.evaluate", { expression, includeCommandLineAPI: true, generatePreview: true, ...more });
+      const { result } = await evaluate("[1, 2]");
+      console.log(JSON.stringify([
+        (await evaluate("typeof require + typeof $peek")).result.value,
+        (await send("Runtime.evaluate", { expression: "typeof require" })).result.value,
+        [result.description, result.preview.description],
+        (await evaluate("throw new Error('x')")).exceptionDetails.text,
+        (await evaluate("[1].length", { throwOnSideEffect: true })).result.value,
+        events.find(it => it.method === "Runtime.executionContextCreated").params.context.auxData,
+      ]));`;
+
+    test("the console has require, and values are described for DevTools", async () => {
+      const expected = ["undefined", ["Array(2)", "Array(2)"], "Uncaught", null, { isDefault: true }];
+      expect(await run(console_, {}, ["--inspect=0"])).toEqual([["functionfunction", ...expected]]);
+    });
+
+    test.skipIf(isWindows)("the console works in a directory that is gone", async () => {
+      expect(
+        await run(
+          `${client}
+           const fs = require("fs"), gone = path.join(__dirname, "gone");
+           fs.mkdirSync(gone), process.chdir(gone), fs.rmdirSync(gone);
+           print((await send("Runtime.evaluate", { expression: "1 + 1", includeCommandLineAPI: true })).result.value);`,
+          {},
+          ["--inspect=0"],
+        ),
+      ).toEqual([2]);
+    });
+
+    test("none of that is for a program that is no app", async () => {
+      using dir = tempDir("electron", {
+        "index.js": `(async () => { require("inspector").open(0); ${console_}; process.exit(0); })()`,
+      });
+      await using proc = Bun.spawn({ cmd: [bunExe(), "index.js"], env: bunEnv, cwd: String(dir), stderr: "ignore" });
+      expect(await proc.stdout.json()).toEqual([
+        "undefinedundefined",
+        "undefined",
+        ["Array", "Array"],
+        "Error: x",
+        1,
+        null,
+      ]);
+    });
+
+    test("--inspect-brk pauses at the start of the app", async () => {
+      using dir = tempDir("electron", {
+        "package.json": "{}",
+        "index.js": `console.log("started");\nprocess.exit(0);`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--preload=bun:desktop/electron", ".", "--inspect-brk=0"],
+        env: { ...bunEnv, BUN_DESKTOP_HEADLESS: "1", XDG_CONFIG_HOME: String(dir) },
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      let said = "";
+      for await (const chunk of proc.stderr) if (/ws:\S+\s/.test((said += Buffer.from(chunk)))) break;
+      const socket = new WebSocket(said.match(/ws:\S+/)![0]);
+      const send = (method: string) => socket.send(JSON.stringify({ id: 1, method }));
+      const urls: Record<string, string> = {};
+      const paused = Promise.withResolvers<string>();
+      socket.onopen = () => ["Debugger.enable", "Runtime.runIfWaitingForDebugger"].forEach(send);
+      socket.onclose = () => paused.reject(new Error("closed"));
+      socket.onmessage = ({ data }) => {
+        const { method, params } = JSON.parse(data);
+        if (method === "Debugger.scriptParsed") urls[params.scriptId] = params.url;
+        if (method === "Debugger.paused") paused.resolve(urls[params.callFrames[0].location.scriptId]);
+      };
+      expect(await paused.promise).toEndWith("/index.js");
+      send("Debugger.resume");
+      expect(await proc.stdout.text()).toBe("started\n");
+    });
+  });
+
+  test("the app starts if the port for remote debugging is taken", async () => {
+    using taken = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response() });
+    expect(await run(`print(app.isReady());`, {}, ["--remote-debugging-port=" + taken.port])).toEqual([true]);
+  });
+
+  test("webContents.create() makes a target for remote debugging", async () => {
+    expect(
+      await run(
+        `serve({ "/": "" });
+         await open();
+         await electron.webContents.create().loadURL("app://created/");
+         const [port] = require("fs").readFileSync(path.join(app.getPath("userData"), "DevToolsActivePort"), "utf8").split("\\n");
+         print((await (await fetch("http://127.0.0.1:" + port + "/json")).json()).map(it => it.url));`,
+        {},
+        ["--remote-debugging-port=0"],
+      ),
+    ).toEqual([["app://trusted/", "app://created/"]]);
+  });
+
+  test("openDevTools() says what it lacks without a web engine", async () => {
+    const main = `app.setWebEngine(null); serve({ "/": "" }); const page = await open(); page.openDevTools(); print(page.isDevToolsOpened()); await new Promise(setImmediate);`;
+    const [printed, errors] = await runWithErrors(main, {}, [], {});
+    expect([printed, errors]).toEqual([[false], expect.stringContaining("See app.setWebEngine()")]);
+  });
+
+  test("selected text is dragged, on macOS only after the button has been held", async () => {
+    expect(
+      await run(`
+        serve({ "/": "<body style='margin: 0; font: 20px/20px monospace'>aaaaaaaaaaaaaaaaaaaa" });
+        const page = await open();
+        for (const isHeld of [false, true]) {
+          await page.executeJavaScript("drags = 0; onmousedown = () => (pressed = performance.now()); ondragstart = event => (drags++, event.preventDefault()); getSelection().selectAllChildren(document.body)");
+          page.sendInputEvent({ type: "mouseDown", x: 50, y: 10, button: "left", clickCount: 1 });
+          while (isHeld && process.platform === "darwin" && (await page.executeJavaScript("performance.now() - pressed")) <= 150);
+          page.sendInputEvent({ type: "mouseMove", x: 100, y: 10, modifiers: ["leftButtonDown"] });
+          print(await page.executeJavaScript("[drags, getSelection().toString().length < 20]"));
+          page.sendInputEvent({ type: "mouseUp", x: 100, y: 10, button: "left", clickCount: 1 });
+        }`),
+    ).toEqual([isMacOS ? [0, true] : [1, false], [1, false]]);
+  });
+
+  test.each([
+    ["image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", 1, "load"],
+    ["image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='5' height='6'/>", 5, "load"],
+    ["image/svg+xml,<a", 0, "error"],
+    ["image/png;base64,AAAA", 0, "error"],
+    ["image/gif;base64,R0lGODlhAAEAAYAAAAAAAP///ywAAAAAAQABAAACAUQALAAAAAABAAEAAAIBRAA7", 0, "load", false],
+    ["image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAAIAAgACAUQAOw==", 0, "load", false],
+    [
+      `image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='5' height='6'>${Buffer.alloc(9000, "<g/>")}</svg>`,
+      0,
+      "load",
+      false,
+    ],
+  ])("a tiny image is complete before the next task: %#", async (data, width, event, isTiny = true) => {
+    expect(
+      await run(`
+        serve({ "/": "" });
+        print(await (await open()).executeJavaScript(\`(async () => {
+          const image = Object.assign(new Image(), { src: ${JSON.stringify("data:" + data)} });
+          const before = image.complete;
+          await 0;
+          return [before, image.complete, image.naturalWidth, (await new Promise(resolve => (image.onload = image.onerror = resolve))).type];
+        })()\`));`),
+    ).toEqual([[false, isTiny, width, event]]);
   });
 
   test("what the debugger runs may evaluate strings, whatever the policy of the page", async () => {
@@ -8587,9 +10838,6 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
   });
 
   describe("service workers", () => {
-    const runInApp = (main: string, files?: Record<string, string>, args?: string[], env?: object) =>
-      run(main, files, args, { BUN_DESKTOP_PAGE_PROCESSES: undefined, ...env });
-
     /** `site(files)` is trusted, `foreign` is not. `control()` returns a page that `/worker.js` controls. */
     const sites = `
       const asked = [];
@@ -8614,7 +10862,7 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
 
     test("one answers for its pages, their frames and their workers", async () => {
       expect(
-        await runInApp(`${sites}
+        await run(`${sites}
           const [page, own] = await control(
             \`onfetch = event => {
               const { request } = event;
@@ -8653,9 +10901,21 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
       ]);
     });
 
+    test("one that is a module imports others", async () => {
+      expect(
+        await run(`${sites}
+          const own = site({ "/module.js": 'import text from "/text.js"; onmessage = event => event.source.postMessage(text);', "/text.js": 'export default "imported";' });
+          app.trustOrigins([own]);
+          print(await (await open(own + "/")).executeJavaScript(\`navigator.serviceWorker.register("/module.js", { type: "module" }).then(it => new Promise(done => {
+            navigator.serviceWorker.onmessage = event => done(event.data);
+            it.installing.postMessage(0);
+          }))\`));`),
+      ).toEqual(["imported"]);
+    });
+
     test("none runs code from an origin that is not trusted", async () => {
       expect(
-        await runInApp(`${sites}
+        await run(`${sites}
           const own = site({
             "/moved.js": () => Response.redirect(foreign + "/code.js"),
             "/imports.js": \`importScripts("\${foreign}/code.js")\`,
@@ -8694,7 +10954,7 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
       ],
     ])("%s from an origin that is not trusted is not code", async (_, answer) => {
       expect(
-        await runInApp(`${sites}
+        await run(`${sites}
           const [page, own] = await control(
             \`const early = fetch("/moved/code.js").then(async it => new Response(await it.text(), it));
             addEventListener("install", event => event.waitUntil(early.catch(() => {})));
@@ -8722,7 +10982,7 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
 
     test("an update does not follow an import to an origin that is not trusted", async () => {
       expect(
-        await runInApp(`${sites}
+        await run(`${sites}
           let times = 0;
           const [page] = await control('importScripts("/imported.js")', {
             "/imported.js": () => times++ ? Response.redirect(foreign + "/code.js") : new Response("", { headers: { "content-type": "text/javascript" } }),
@@ -8737,9 +10997,13 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
 
     test("what an origin keeps is counted and has limits", async () => {
       expect(
-        await runInApp(`${sites}
+        await run(`${sites}
           const script = text => () => new Response(text, { headers: { "content-type": "text/javascript" } });
+          let held;
           const [page] = await control("//" + Buffer.alloc(1 << 20, "a"), {
+            "/held.js": async () => (await held?.promise, script("")()),
+            "/hold": () => ((held = Promise.withResolvers()), new Response()),
+            "/release": () => (held.resolve(), new Response()),
             "/empty.js": "",
             "/large.js": script(Buffer.alloc(33 << 20, " ")),
             "/imports.js": 'importScripts("/half.js?1", "/half.js?2")',
@@ -8768,9 +11032,14 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
               await outcome(register("/imports.js", "/imports")),
               await outcome(register("/empty.js", "/" + "a".repeat(400 << 10))),
               await outcome(register("/empty.js", "/" + "b".repeat(400 << 10))),
-              new Set(await Promise.all(Array.from({ length: 300 }, () => outcome(own.update())))).size,
             ];
-            return result;
+            const held = await register("/held.js", "/held");
+            while (held.installing) await new Promise(resolve => (held.installing.onstatechange = resolve));
+            await fetch("/hold");
+            const updates = Array.from({ length: 300 }, () => outcome(held.update()));
+            await Promise.race(updates);
+            await fetch("/release");
+            return [...result, [...new Set(await Promise.all(updates))]];
           })()\`));
           await page.session.clearStorageData({ storages: ["serviceworkers"] });
           print(await page.executeJavaScript("navigator.storage.estimate().then(it => it.usageDetails)"));`),
@@ -8785,7 +11054,7 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
           "TypeError",
           "done",
           "QuotaExceededError",
-          2,
+          ["done", "AbortError"],
         ],
         {},
       ]);
@@ -8793,7 +11062,7 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
 
     test("no more than 32 of an origin run at once", async () => {
       expect(
-        await runInApp(`${sites}
+        await run(`${sites}
           const [page] = await control("", { "/echo.js": "onmessage = event => event.source.postMessage(registration.scope)" });
           print(await page.executeJavaScript(\`(async () => {
             const { serviceWorker } = navigator, all = [];
@@ -8811,7 +11080,7 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
 
     test("those that have failed to install count too", async () => {
       expect(
-        await runInApp(`${sites}
+        await run(`${sites}
           const [page] = await control("", {
             "/fails.js": \`oninstall = event => event.waitUntil(new Promise((_, reject) => {
               onmessage = event => (event.waitUntil(new Promise(() => {})), reject());
@@ -8835,7 +11104,7 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
 
     test("no more than 8 of an origin are loaded at once", async () => {
       expect(
-        await runInApp(`${sites}
+        await run(`${sites}
           const [all, eight] = [Promise.withResolvers(), Promise.withResolvers()];
           let [held, most] = [0, 0];
           const [page] = await control("", {
@@ -8864,7 +11133,7 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
 
     test("a notification has a largest size", async () => {
       expect(
-        await runInApp(`${sites}
+        await run(`${sites}
           const [page] = await control("");
           print(await page.executeJavaScript(\`navigator.serviceWorker.ready.then(own => Promise.all(
             [{ data: "a".repeat(1 << 20) + "a" }, { data: new Uint8Array(2 << 20) }, { body: "a".repeat(2 << 20) }, { data: "a" }]
@@ -8875,7 +11144,7 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
 
     test("an opaque response is only served once", async () => {
       expect(
-        await runInApp(`${sites}
+        await run(`${sites}
           const [page] = await control(\`
             let kept;
             onfetch = event => event.respondWith((kept ??= fetch("\${foreign}/code.js", { mode: "no-cors" })));\`);
@@ -8888,7 +11157,7 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
 
     test("none sees what a preload script asks for", async () => {
       expect(
-        await runInApp(
+        await run(
           `${sites}
           const [page] = await control('onfetch = event => event.respondWith(new Response("worker"))', {}, preload);
           page.send("go");
@@ -8911,7 +11180,7 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
 
     test("a cache does not give away the size of an opaque response", async () => {
       expect(
-        await runInApp(`${sites}
+        await run(`${sites}
           const image = size => () => new Response(new Uint8Array(size), { headers: { "content-type": "image/png" } });
           const other = site({ "/a": image(10), "/b": image(54321) }), [page] = await control("");
           print(await page.executeJavaScript(\`(async () => {
@@ -8928,7 +11197,7 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
 
     test("a scheme of the app has them if it says so", async () => {
       expect(
-        await runInApp(
+        await run(
           `for (const scheme of ["with", "without"])
             protocol.handle(scheme, ({ url }) =>
               url.endsWith("/worker.js")
@@ -8958,9 +11227,9 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
       ).toEqual(["TypeError", ["self.from = 1", 1]]);
     });
 
-    test.skipIf(isWindows)("a registration outlives the app", async () => {
+    test("a registration outlives the app", async () => {
       expect(
-        await runInApp(
+        await run(
           `${sites}
           const again = process.argv.find(it => it.startsWith("http:"));
           if (again) {
@@ -8980,7 +11249,7 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
       ).toEqual(["registered", "kept"]);
     });
 
-    test.skipIf(isWindows)("one that nothing needs cannot give itself more to do", async () => {
+    test("one that nothing needs cannot give itself more to do", async () => {
       const heard: string[] = [];
       const [first, last] = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
       using server = Bun.serve({
@@ -9004,7 +11273,7 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
           return new Response(script, { headers: { "content-type": "text/javascript" } });
         },
       });
-      await runInApp(
+      await run(
         `${sites}
         const url = "${server.url.origin}", other = site({});
         app.trustOrigins([url, other]);
@@ -9027,9 +11296,9 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
       expect(heard).toEqual(["?AbortError", "?last,1"]);
     });
 
-    test.skipIf(isWindows)("two instances of the app do not mix up their scripts", async () => {
+    test("two instances of the app do not mix up their scripts", async () => {
       expect(
-        await runInApp(`${sites}
+        await run(`${sites}
           const says = text => \`onmessage = event => event.source.postMessage("\${text}");\`;
           if (process.argv.includes("second")) {
             await control("");
@@ -9060,7 +11329,7 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
       ).toEqual(["first"]);
     });
 
-    test.skipIf(isWindows)("what is on the disk does not pass for a compiled script", async () => {
+    test("what is on the disk does not pass for a compiled script", async () => {
       using server = Bun.serve({
         port: 0,
         fetch: ({ url }) =>
@@ -9071,7 +11340,7 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
             : new Response("network", { headers: { "content-type": "text/html" } }),
       });
       expect(
-        await runInApp(
+        await run(
           `
           const url = "${server.url.origin}";
           app.trustOrigins([url]);
@@ -9094,7 +11363,7 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
 
     test("the app hears of them, and clears them", async () => {
       expect(
-        await runInApp(`${sites}
+        await run(`${sites}
           const { serviceWorkers } = session.defaultSession, heard = [];
           serviceWorkers.on("registration-completed", (_, it) => heard.push(new URL(it.scope).pathname));
           serviceWorkers.on("running-status-changed", it => heard.push(it.runningStatus));
@@ -9116,7 +11385,7 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
 
     test("one is told when a request is given up, and of cookies", async () => {
       expect(
-        await runInApp(`${sites}
+        await run(`${sites}
           const [page] = await control(\`
             const tell = async it => (await clients.matchAll())[0].postMessage(it);
             onfetch = event => {
@@ -9141,7 +11410,7 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
 
     test("routes are taken without asking it", async () => {
       expect(
-        await runInApp(`${sites}
+        await run(`${sites}
           const [page] = await control(\`
             addEventListener("install", event => event.waitUntil(Promise.all([
               event.addRoutes([
@@ -9157,7 +11426,7 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
 
     test("a notification is up to the app", async () => {
       expect(
-        await runInApp(`${sites}
+        await run(`${sites}
           const [page] = await control("");
           const show = () => page.executeJavaScript(\`navigator.serviceWorker.ready.then(async it => {
             await it.showNotification("Title", { tag: "a", data: { b: 1 }, actions: [{ action: "c", title: "C" }] });
@@ -9171,19 +11440,114 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
       ).toEqual([["Title", "a", { b: 1 }, [{ action: "c", title: "C" }], 0, 0], "TypeError"]);
     });
 
-    test.skipIf(isWindows)("a page in a process of its own has none", async () => {
+    test.skipIf(!isLinux)("pages in a sandbox have their own, and their own caches", async () => {
+      expect(
+        await runAsAsked(`${sites}
+          const worker = 'onfetch = event => event.request.url.endsWith("/a") && event.respondWith(caches.match("/a").then(it => it ?? new Response("nothing")));';
+          const [inside, own] = await control(worker, {}, { webPreferences: { sandbox: true } });
+          const where = () => Object.values(inside.session.serviceWorkers.getAllRunning()).map(it => [process.pid, inside.getOSProcessId()].indexOf(it.renderProcessId));
+          const look = 'Promise.all([!!navigator.serviceWorker.controller, caches.keys(), fetch("/a").then(it => it.text())])';
+          await inside.executeJavaScript('caches.open("a").then(it => it.put("/a", new Response("cached")))');
+          print([await inside.executeJavaScript(look), where()]);
+          const outside = await open(own + "/");
+          print(await outside.executeJavaScript(look));
+          await outside.executeJavaScript('new Promise(done => (navigator.serviceWorker.oncontrollerchange = () => done(), navigator.serviceWorker.register("/worker.js")))');
+          print([await outside.executeJavaScript(look), where()]);
+          print(await (await open(own + "/a")).executeJavaScript("document.body.textContent"));
+          print(await (await open(own + "/a", { webPreferences: { sandbox: true } })).executeJavaScript("document.body.textContent"));`),
+      ).toEqual([
+        [[true, ["a"], "cached"], [-1]],
+        [false, [], "<body>network"],
+        [
+          [true, [], "nothing"],
+          [-1, 0],
+        ],
+        "nothing",
+        "cached",
+      ]);
+    });
+
+    test.skipIf(isWindows)("those of pages in a sandbox do not run if there is none", async () => {
+      using server = Bun.serve({
+        port: 0,
+        fetch: ({ url }) =>
+          new Response("", { headers: { "content-type": url.endsWith(".js") ? "text/javascript" : "text/html" } }),
+      });
       expect(
         await run(
-          `${sites}
-          const own = site({ "/worker.js": "" });
-          app.trustOrigins([own]);
-          const page = await open(own + "/");
-          print([await page.executeJavaScript(\`navigator.serviceWorker.register("/worker.js").catch(error => error.name)\`), asked]);`,
+          `const url = "${server.url.origin}", isAgain = process.argv.includes("again");
+          app.trustOrigins([url]);
+          const page = await open(url + "/", { webPreferences: { sandbox: true } }), { serviceWorkers, cookies } = page.session;
+          if (isAgain) {
+            await page.executeJavaScript("navigator.serviceWorker.getRegistrations().then(() => {})");
+            const status = new Promise(done => serviceWorkers.on("running-status-changed", it => it.runningStatus !== "starting" && done(it.runningStatus)));
+            await cookies.set({ url, name: "a", value: "1" });
+            return print([await status, app.getAppMetrics().length]);
+          }
+          await page.executeJavaScript('navigator.serviceWorker.register("/worker.js"), navigator.serviceWorker.ready.then(it => it.cookies.subscribe([{ name: "a" }]))');
+          delete process.env.BUN_DESKTOP_PAGE_PROCESSES;
+          app.relaunch({ args: ["--preload=bun:desktop/electron", ".", "again"] });`,
           {},
           [],
-          { BUN_DESKTOP_PAGE_PROCESSES: "1" },
+          { BUN_DESKTOP_PAGE_PROCESSES: "asked", BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
         ),
-      ).toEqual([["SecurityError", ["/"]]]);
+      ).toEqual([["stopping", 1]]);
+    });
+
+    test("a redirect that scripts cannot see into survives in a cache", async () => {
+      expect(
+        await run(`${sites}
+          const worker = 'onfetch = event => void (event.request.url.endsWith("/from") && event.respondWith(caches.match("/kept")));';
+          const [page, own] = await control(worker, { "/redirect": () => Response.redirect("/to"), "/to": "<body>arrived" });
+          await page.executeJavaScript('caches.open("a").then(async it => it.put("/kept", await fetch("/redirect", { redirect: "manual" })))');
+          print(await page.executeJavaScript('caches.match("/kept").then(it => [it.type, it.status, [...it.headers]])'));
+          print(await (await open(own + "/from")).executeJavaScript("location.pathname + document.body.textContent"));`),
+      ).toEqual([["opaqueredirect", 0, []], "/toarrived"]);
+    });
+
+    test.skipIf(!isLinux)("one whose process has ended is started again", async () => {
+      expect(
+        await runAsAsked(`${sites}
+          const worker = 'let count = 0; onfetch = event => event.respondWith(event.request.url.endsWith("/never") ? new Promise(() => {}) : new Response(++count));';
+          const [page] = await control(worker, {}, { webPreferences: { sandbox: true } });
+          const ask = path => page.executeJavaScript('fetch("' + path + '").then(it => it.text(), it => it.name)');
+          const never = ask("/never");
+          print([await ask("/"), await ask("/")]);
+          process.kill(Object.values(page.session.serviceWorkers.getAllRunning())[0].renderProcessId, "SIGKILL");
+          print([await never, await ask("/"), page.isCrashed()]);`),
+      ).toEqual([
+        ["1", "2"],
+        ["TypeError", "1", false],
+      ]);
+    });
+
+    test.skipIf(!isLinux)("what waits for one that does not start has a limit", async () => {
+      expect(
+        await runAsAsked(`${sites}
+          const [page] = await control('while (navigator.userAgent === "hangs");', {}, { webPreferences: { sandbox: true } });
+          const end = () => new Promise(done => {
+            page.session.serviceWorkers.on("running-status-changed", it => it.runningStatus === "stopped" && done());
+            process.kill(app.getAppMetrics().find(it => it.pid !== process.pid && it.pid !== page.getOSProcessId()).pid, "SIGKILL");
+          });
+          const ask = "navigator.serviceWorker.getRegistrations().then(it => it.length, it => it.name)";
+          page.session.setUserAgent("hangs");
+          await end();
+          print(await page.executeJavaScript("for (let i = 0; i < 33_000; i++) navigator.serviceWorker.controller.postMessage(0);" + ask));
+          await end();
+          print(await page.executeJavaScript(ask));`),
+      ).toEqual(["QuotaExceededError", 1]);
+    });
+
+    test.skipIf(!isLinux)("pages that are not trusted have them in the sandbox", async () => {
+      expect(
+        await runAsAsked(`${sites}
+          app.setWebEngine({ type: "bun" });
+          const other = site({ "/worker.js": claims + 'importScripts("' + foreign + '/code.js"); onfetch = event => event.respondWith(new Response([self.ran, typeof Bun, typeof process]));' });
+          const page = await open(other + "/");
+          await page.executeJavaScript('new Promise(done => (navigator.serviceWorker.oncontrollerchange = () => done(), navigator.serviceWorker.register("/worker.js")))');
+          await page.loadURL(other + "/next");
+          print([await page.executeJavaScript("document.body.textContent"), Object.values(page.session.serviceWorkers.getAllRunning()).map(it => it.renderProcessId === process.pid)]);`),
+      ).toEqual([["true,undefined,undefined", [false]]]);
     });
   });
 

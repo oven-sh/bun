@@ -19,7 +19,7 @@ mod memo;
 pub mod raster;
 pub mod scan;
 pub mod scene;
-mod slant;
+pub mod slant;
 pub mod software;
 mod stretch;
 pub mod vector;

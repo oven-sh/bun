@@ -112,7 +112,7 @@ char* bd_vector_start(const char* shader)
     });
 }
 
-void* bd_vector_texture(IOSurfaceRef surface, int32_t width, int32_t height, BDKind kind)
+void* bd_vector_texture(IOSurfaceRef surface, int32_t width, int32_t height, BDKind kind, bool hasMemory)
 {
     @autoreleasepool {
         MTLPixelFormat format = surface || kind == BDColors ? MTLPixelFormatBGRA8Unorm : kind == BDImage ? MTLPixelFormatRGBA8Unorm : MTLPixelFormatDepth32Float_Stencil8;
@@ -123,7 +123,7 @@ void* bd_vector_texture(IOSurfaceRef surface, int32_t width, int32_t height, BDK
             descriptor.storageMode = MTLStorageModeShared;
             return (__bridge_retained void*)[device newTextureWithDescriptor:descriptor iosurface:surface plane:0];
         }
-        descriptor.storageMode = kind == BDImage ? MTLStorageModePrivate : MTLStorageModeMemoryless;
+        descriptor.storageMode = hasMemory ? MTLStorageModePrivate : MTLStorageModeMemoryless;
         if (kind == BDImage) {
             descriptor.usage = MTLTextureUsageShaderRead;
         } else if (kind != BDDepth) {
@@ -133,8 +133,6 @@ void* bd_vector_texture(IOSurfaceRef surface, int32_t width, int32_t height, BDK
         return (__bridge_retained void*)[device newTextureWithDescriptor:descriptor];
     }
 }
-
-void bd_vector_widen(IOSurfaceRef surface) { IOSurfaceSetValue(surface, kIOSurfaceColorSpace, kCGColorSpaceDisplayP3); }
 
 static void finish(size_t which)
 {

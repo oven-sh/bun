@@ -24,7 +24,7 @@ use crate::values::{Ctx, text};
 pub(crate) struct StyleSheet {
     sheet: Rc<style_sheet::StyleSheet>,
     location: Option<Box<[u8]>>,
-    pub(super) title: RefCell<DomString>,
+    pub(crate) title: RefCell<DomString>,
     pub(super) is_explicitly_enabled: Cell<bool>,
     is_origin_clean: Cell<bool>,
     /// For what it imports.
@@ -55,7 +55,7 @@ impl StyleSheet {
     }
 
     #[inline]
-    pub(super) fn get(&self) -> &style_sheet::StyleSheet {
+    pub(crate) fn get(&self) -> &style_sheet::StyleSheet {
         &self.sheet
     }
 
@@ -173,7 +173,10 @@ impl CSSStyleSheet {
         }
     }
 
-    fn imports<'a>(&'a self, heap: &JsHeap<'a>) -> impl Iterator<Item = &'a CSSStyleSheet> {
+    pub(crate) fn imports<'a>(
+        &'a self,
+        heap: &JsHeap<'a>,
+    ) -> impl Iterator<Item = &'a CSSStyleSheet> {
         js_StyleSheet::imports(self)
             .map(List::from_value)
             .into_iter()
@@ -205,7 +208,7 @@ impl CSSStyleSheet {
         })
     }
 
-    fn replace_source<'a>(&'a self, cx: &mut JsScope<'a>, source: Source) {
+    pub(crate) fn replace_source<'a>(&'a self, cx: &mut JsScope<'a>, source: Source) {
         Parent::Sheet(self).removed(&cx.heap, 0, u32::MAX);
         self.get().replace(source);
         self.changed(cx);
@@ -303,12 +306,12 @@ impl CSSStyleSheet {
 pub(crate) fn create_sheet<'a>(
     heap: &JsHeap<'a>,
     doc: &'a Doc,
-    text: &[u8],
+    source: Source,
     base_url: &[u8],
 ) -> &'a CSSStyleSheet {
     let made = js_CSSStyleSheet::create(
         doc.realm(heap),
-        StyleSheet::new(Source::of_sheet(text), base_url, None, false),
+        StyleSheet::new(source, base_url, None, false),
     );
     made.get().set_quirky(doc.quirks());
     made

@@ -3,10 +3,11 @@
 use core::mem::ManuallyDrop;
 
 use bun_alloc::WTFStringImplStruct;
-use bun_collections::{ArrayHashMap, HashMap};
+use bun_collections::ArrayHashMap;
 use bun_jsc::Weak;
 use bun_jsc::bindgen::{ClassStructure, PropertyNames};
 use bun_markup::Chars;
+use bun_web::HashMap;
 use bun_web::net::session::Session;
 use bun_web::realm::Realm;
 use bun_web::storage::areas::{Borrower, Changed, Items, Whose};
@@ -642,6 +643,15 @@ impl WebStorage {
 
     pub(crate) fn get_length<'a>(&self, heap: &JsHeap<'a>) -> Result<'a, u32> {
         Ok(self.area(heap)?.items.borrow().len() as u32)
+    }
+
+    pub(crate) fn entries(&self) -> Vec<(Atom, DomString)> {
+        self.area
+            .items
+            .borrow()
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect()
     }
 
     pub(crate) fn key<'a>(&self, heap: &JsHeap<'a>, index: u32) -> Result<'a, Option<Atom>> {

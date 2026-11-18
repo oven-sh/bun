@@ -9,6 +9,7 @@ use std::marker::PhantomData;
 use std::ops::Range;
 
 use super::edges::{Chain, Edges, Line, PERIOD, Rule, Shape};
+use super::gradient::Ramp;
 use super::raster::{Coverage, IntRect, Pixel, fill_through, prefer_wide};
 
 /// Eight of them.
@@ -296,11 +297,18 @@ pub struct Scanner {
     pieces: Vec<Piece>,
     parts: Vec<Part>,
     order: Vec<(f32, u32)>,
+    /// They are zero between uses.
+    turns: Vec<Turns>,
 }
+
+/// How the winding changes at a quarter of a column, in each quarter of eight rows.
+#[derive(Clone, Copy, Default)]
+#[repr(align(64))]
+struct Turns([u16; 32]);
 
 impl Rule {
     #[inline(always)]
-    fn has(self, winding: i32) -> bool {
+    pub(super) fn has(self, winding: i32) -> bool {
         match self {
             Rule::NonZero => winding != 0,
             Rule::EvenOdd => winding & 1 != 0,
@@ -1257,7 +1265,8 @@ fn fill_in_order<F: Floats>(
 
 impl Scanner {
     pub fn bytes(&self) -> usize {
-        self.sides.capacity() * size_of::<Side>()
+        self.turns.capacity() * size_of::<Turns>()
+            + self.sides.capacity() * size_of::<Side>()
             + self.mask.capacity()
             + self.members.capacity() * size_of::<Member>()
             + self.active.capacity() * size_of::<Chain>()
@@ -1553,6 +1562,129 @@ impl Scanner {
             top = part.bottom;
         }
         self.mask = mask;
+    }
+
+    /// Like `fill`. False if there is no shortcut.
+    pub fn shade(
+        &mut self,
+        edges: &Edges,
+        shape: &Shape,
+        rect: IntRect,
+        pixels: &mut [Pixel],
+        ramp: &Ramp,
+    ) -> bool {
+        prefer_wide!(shade_shape(self, edges, shape, rect, pixels, ramp));
+        false
+    }
+
+    /// `hand_over` for dense shapes, as if they were one. `area` is in one period.
+    pub fn hand_over_samples(
+        &mut self,
+        parts: &[(&Edges, &Shape)],
+        is_even_odd: bool,
+        area: IntRect,
+        take: &mut dyn FnMut(i32, i32, &[u8]),
+    ) {
+        prefer_wide!(hand_over_samples(self, parts, is_even_odd, area, take));
+        self.take_samples(parts, is_even_odd, area, take);
+    }
+
+    /// At 16 points of each pixel, which takes no sorting.
+    #[inline(always)]
+    pub(super) fn take_samples(
+        &mut self,
+        parts: &[(&Edges, &Shape)],
+        is_even_odd: bool,
+        area: IntRect,
+        take: &mut dyn FnMut(i32, i32, &[u8]),
+    ) {
+        const ONE: f32 = 65536.;
+        // No two are in one column.
+        const SHIFTS: [i32; 4] = [1 << 13, 5 << 13, 7 << 13, 3 << 13];
+        let (width, Scanner { turns, mask, .. }) = (area.width(), self);
+        let (last, matters) = ((width * 4) as f32, if is_even_odd { 1 } else { u16::MAX });
+        turns.resize(turns.len().max(width * 4 + 1), Turns::default());
+        let turns = &mut turns[..width * 4 + 1];
+        for y in (area.top..area.bottom).step_by(8) {
+            let (start, end, mut low, mut high) = (y * 4, (y + 8).min(area.bottom) * 4, last, 0f32);
+            for (edges, shape) in parts
+                .iter()
+                .filter(|it| it.1.area.top * 4 < end && it.1.area.bottom * 4 > start)
+            {
+                for chain in edges
+                    .chains_from(shape, y.max(shape.area.top))
+                    .0
+                    .iter()
+                    .filter(|it| it.top < end)
+                {
+                    let (mut index, by) = (chain.first, chain.winding as u16);
+                    while let Some(line) = edges.lines.get(index as usize).filter(|it| it.top < end)
+                    {
+                        index = line.below;
+                        let (from, to) = (line.top.max(start), line.bottom.min(end));
+                        if from >= to {
+                            continue;
+                        }
+                        let (first, step) = (
+                            (middle_below(line, from) - area.left as f32) * 4.,
+                            line.step * 4.,
+                        );
+                        let (least, most) = ordered(first, first + step * (to - from - 1) as f32);
+                        (low, high) = (low.min(least), high.max(most));
+                        if least >= 0. && most + 1. < last {
+                            let (mut x, step) = ((first * ONE) as i32, (step * ONE) as i32);
+                            for quarter in (from - start) as usize..(to - start) as usize {
+                                let turn = &mut turns[((x + SHIFTS[quarter % 4]) >> 16) as usize].0
+                                    [quarter % 32];
+                                (*turn, x) = (turn.wrapping_add(by), x.wrapping_add(step));
+                            }
+                        } else {
+                            for (steps, quarter) in
+                                ((from - start) as usize..(to - start) as usize).enumerate()
+                            {
+                                let turn = &mut turns[whole(
+                                    first + step * steps as f32 + SHIFTS[quarter % 4] as f32 / ONE,
+                                    last,
+                                ) as usize]
+                                    .0[quarter % 32];
+                                *turn = turn.wrapping_add(by);
+                            }
+                        }
+                    }
+                }
+            }
+            if low > high {
+                continue;
+            }
+            let (left, right, mut winding) = (
+                whole(low - 1., last) as usize / 4,
+                whole(high + 2., last) as usize / 4 + 1,
+                [0u16; 32],
+            );
+            mask.clear();
+            mask.resize(width * 8, 0);
+            let mut reached = left;
+            for (x, four) in (left..).zip(turns[left * 4..].as_chunks_mut::<4>().0) {
+                if x >= right && winding == [0; 32] {
+                    break;
+                }
+                let mut counts = [0u16; 32];
+                for turns in four {
+                    winding = from_fn(|it| winding[it].wrapping_add(turns.0[it]));
+                    counts = from_fn(|it| counts[it] + u16::from(winding[it] & matters != 0));
+                    *turns = Turns::default();
+                }
+                for (row, counts) in counts.as_chunks::<4>().0.iter().enumerate() {
+                    mask[row * width + x] =
+                        ((counts[0] + counts[1] + counts[2] + counts[3]) * 16).min(255) as u8;
+                }
+                reached = x + 1;
+            }
+            turns[width * 4] = Turns::default();
+            (y..end / 4)
+                .zip(mask.chunks_exact(width))
+                .for_each(|(y, row)| take(area.left + left as i32, y, &row[left..reached]));
+        }
     }
 
     /// Source-over, on the pixels of `rect`.

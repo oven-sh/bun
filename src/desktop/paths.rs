@@ -125,9 +125,9 @@ pub(crate) fn home() -> JsResult<String> {
 }
 
 pub(crate) fn temporary() -> JsResult<String> {
-    for name in ["TMPDIR", "TMP", "TEMP"] {
+    for name in &["TMPDIR", "TMP", "TEMP"][usize::from(cfg!(windows))..] {
         if let Some(mut path) = process::variable(name)? {
-            if path.len() > 1 && path.ends_with('/') {
+            if files::parent(&path).is_some() && path.ends_with(std::path::MAIN_SEPARATOR) {
                 path.pop();
             }
             return Ok(path);
@@ -164,6 +164,10 @@ fn user_directory(variable: &str, fallback: &str) -> JsResult<String> {
 pub(crate) fn path(name: &str) -> JsResult<String> {
     if let Some((_, path)) = paths().overridden.borrow().iter().find(|it| it.0 == name) {
         return Ok(path.clone());
+    }
+    #[cfg(windows)]
+    if let Some(path) = crate::win32::known_folder(name) {
+        return Ok(path);
     }
     let below = |name: &str, rest: &str| Ok(files::join(&[&path(name)?, rest]));
     match name {

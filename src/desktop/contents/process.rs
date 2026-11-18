@@ -4,13 +4,15 @@ use std::collections::VecDeque;
 use std::rc::{Rc, Weak};
 use std::time::{Duration, Instant};
 
-use bun_collections::HashMap;
 use bun_core::{CStringList, CodeGenerationFromStrings};
 use bun_jsc::{Strong, from_js_host_call_generic};
+use bun_sys::File;
 use bun_ui::protocol::{
-    COMPILED_PAGE_PROCESS_MARKER, LENT_IMAGE, Lane, PAGE_PROCESS_MARKER, PageCommand,
+    COMPILED_PAGE_PROCESS_MARKER, GPU_PROCESS_MARKER, LENT_IMAGE, Lane, Launch,
+    PAGE_PROCESS_MARKER, PageCommand,
 };
 use bun_ui::queue::{self, Heard};
+use bun_web::HashMap;
 use bun_web::client::{Twin, Update};
 use bun_web::host::{Answer, Host, Question, Reply};
 use bun_web::input::{Action, Input};
@@ -18,6 +20,7 @@ use bun_web::outside::serve;
 use bun_web::page::{self, Change, News, Order, Outcome, Query};
 use bun_web::remote::{self, Flags, Head, Kind, Peer, clerk};
 use bun_web::renderer::{self, Command, Conditions, Done, Renderer, Statics, Task};
+use bun_web::service::Lodging;
 use bun_web::wire::{self, Malformed, Message};
 
 use super::page::Page;
@@ -25,7 +28,7 @@ use super::place::{self, Place};
 use super::witness::Witness;
 use super::{alive, link};
 use crate::prelude::*;
-use crate::{command_line, files, process, task};
+use crate::{command_line, crash_reporter, files, process, task};
 
 const MOST_EXPECTED: usize = 1 << 16;
 /// From then on, windows of a site share one.
@@ -111,6 +114,7 @@ pub(super) struct Process {
     serving: Cell<u32>,
     is_deaf: Cell<bool>,
     last_conditions: Cell<u32>,
+    may_use_gpu: Cell<bool>,
     pub(super) witness: Witness,
     probed_at: Cell<Instant>,
     probe: RefCell<Option<Probe>>,
@@ -127,6 +131,8 @@ pub(super) struct Process {
     disposed: RefCell<VecDeque<u32>>,
     is_gone: Cell<bool>,
     was_killed_for: Cell<Option<&'static str>>,
+    /// What it writes about its crash.
+    report: RefCell<Option<File>>,
 }
 
 #[derive(Default)]
@@ -144,12 +150,19 @@ fn is_like_browser(place: &Place) -> bool {
     place::trusts_by_origin() || !place.is_trusted()
 }
 
-fn arguments(place: &Place) -> CStringList {
+fn path_of_library() -> String {
     unsafe extern "Rust" {
         safe fn __bun_desktop_path_of_library() -> &'static [u8];
     }
-    let executable = process::executable();
-    let library = files::absolute(&string(__bun_desktop_path_of_library()));
+    files::absolute(&string(__bun_desktop_path_of_library()))
+}
+
+fn may_log() -> bool {
+    super::logs_to_stderr() || place::is_for_testing()
+}
+
+fn arguments(place: &Place) -> CStringList {
+    let (executable, library) = (process::executable(), path_of_library());
     let restriction: Option<&[u8]> = match bun_core::code_generation_from_strings() {
         _ if !place.is_trusted() || place.runs_program() => None,
         CodeGenerationFromStrings::Allowed => None,
@@ -195,6 +208,7 @@ fn environment() -> JsResult<CStringList> {
                     | "ASAN_OPTIONS"
                     | "LSAN_OPTIONS"
                     | "UBSAN_OPTIONS"
+                    | "BUN_DESKTOP_PAGE_PROCESSES"
                     | "BUN_ENABLE_CRASH_REPORTING"
             )
     };
@@ -202,6 +216,43 @@ fn environment() -> JsResult<CStringList> {
     all.retain(|it| is_needed(&it.0));
     let entries = (all.iter()).map(|it| [it.0.as_bytes(), b"=", it.1.as_bytes()]);
     Ok(CStringList::from_parts(entries))
+}
+
+fn launch_of_gpu_process(owner: u32) -> JsResult<Launch> {
+    const FOR_DRIVERS: [&str; 14] = [
+        "AMD_",
+        "ASAN_OPTIONS",
+        "BUN_DESKTOP_",
+        "BUN_ENABLE_CRASH_REPORTING",
+        "BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING",
+        "DRI_PRIME",
+        "GALLIUM_",
+        "LD_LIBRARY_PATH",
+        "LIBGL_",
+        "LP_",
+        "LSAN_OPTIONS",
+        "MESA_",
+        "__EGL_",
+        "__NV_",
+    ];
+    let mut variables = process::variables()?;
+    variables.retain(|it| FOR_DRIVERS.iter().any(|prefix| it.0.starts_with(prefix)));
+    let without_files = ["MESA_SHADER_CACHE_DISABLE=true", "__GL_SHADER_DISK_CACHE=0"];
+    let variables = variables.iter().map(|it| format!("{}={}", it.0, it.1));
+    let exemption = command_line::switch("no-sandbox").map(|_| "--no-sandbox".into());
+    let fixed = [
+        process::executable(),
+        string(GPU_PROCESS_MARKER.to_bytes()),
+        path_of_library(),
+    ];
+    Ok(Launch {
+        arguments: fixed.into_iter().chain(exemption).map(Into::into).collect(),
+        environment: (without_files.into_iter().map(Into::into))
+            .chain(variables.map(Into::into))
+            .collect(),
+        may_log: may_log(),
+        owner,
+    })
 }
 
 fn statics(place: &Place) -> JsResult<Statics> {
@@ -309,13 +360,46 @@ pub(super) fn prepare(place: &Place, is_for_frame: bool) -> JsResult<()> {
 }
 
 pub(super) fn take(place: Place, may_share: bool, is_for_frame: bool) -> JsResult<Rc<Process>> {
-    let shared = find_shared(&place, is_for_frame).filter(|_| may_share);
+    take_for(
+        find_shared(&place, is_for_frame).filter(|_| may_share),
+        place,
+    )
+}
+
+fn take_for(shared: Option<Rc<Process>>, place: Place) -> JsResult<Rc<Process>> {
     let process = match shared.or_else(|| take_spare(&place)) {
         Some(known) => known.begin().map(|()| known)?,
         None => Process::spawn(place.clone())?,
     };
     process.settle(place);
     Ok(process.share())
+}
+
+struct Lease(Rc<Process>);
+
+impl Drop for Lease {
+    fn drop(&mut self) {
+        self.0.release();
+    }
+}
+
+pub(crate) fn keep_alive(peer: Peer) -> Option<Box<dyn core::any::Any>> {
+    let process = all().by_peer.borrow().get(&peer)?.0.upgrade()?;
+    Some(Box::new(Lease(process.share())))
+}
+
+pub(super) fn lease(place: Place) -> JsResult<Lodging> {
+    let is_like_in_browser = is_like_browser(&place);
+    let process = match find_shared(&place, true) {
+        Some(known) => known.share(),
+        None => take_for(None, place)?,
+    };
+    Ok(Lodging {
+        peer: process.peer,
+        pid: process.pid,
+        is_like_in_browser,
+        lease: Box::new(Lease(process)),
+    })
 }
 
 #[cfg(unix)]
@@ -336,6 +420,7 @@ mod system {
         may_log: bool,
     ) -> Option<u32> {
         let socket = File::from_fd(Fd::from_native(socket));
+        bun_ui::can_start_programs().then_some(())?;
         let options = PosixSpawnOptions {
             stdin: PosixStdio::Ignore,
             stdout: PosixStdio::Ignore,
@@ -404,8 +489,7 @@ impl Process {
         }
         let (arguments, environment) = (arguments(&place), environment()?);
         let opened = answer((ui()?.open_page_process)(place.is_trusted()))?;
-        let may_log = super::logs_to_stderr() || place::is_for_testing();
-        let Some(pid) = system::spawn(&arguments, &environment, opened.socket, may_log) else {
+        let Some(pid) = system::spawn(&arguments, &environment, opened.socket, may_log()) else {
             (ui()?.tell_page_process)(opened.id, PageCommand::Close);
             return Err(error(format_args!(
                 "Could not start a process for the page"
@@ -421,6 +505,7 @@ impl Process {
             serving: 0.into(),
             is_deaf: false.into(),
             last_conditions: 0.into(),
+            may_use_gpu: false.into(),
             witness: Witness::new(),
             probed_at: Instant::now().into(),
             probe: None.into(),
@@ -439,6 +524,7 @@ impl Process {
             disposed: Default::default(),
             is_gone: false.into(),
             was_killed_for: None.into(),
+            report: None.into(),
         });
         clerk::employ(this.peer, ui()?);
         queue::listen_to_processes(hear);
@@ -449,7 +535,15 @@ impl Process {
 
     fn begin(&self) -> JsResult<()> {
         let head = Head::new(Kind::Begin, 0, 0).with(Flags::HARMLESS);
-        self.send(Lane::Scripts, head, statics(&self.place.borrow())?);
+        let mut statics = statics(&self.place.borrow())?;
+        if self.report.borrow().is_none()
+            && let Some([ours, theirs]) = crash_reporter::file_for_page_process()
+        {
+            remote::give_file_for_report(self.peer, theirs);
+            self.report.replace(Some(ours));
+            statics.has_file_for_report = true;
+        }
+        self.send(Lane::Scripts, head, statics);
         Ok(())
     }
 
@@ -532,6 +626,10 @@ impl Process {
             && page.contents().session.is_persistent()
         {
             self.command(PageCommand::StoreFontsFor((&**site).into()));
+        }
+        if cfg!(target_os = "linux") && page.has_webgl() && !self.may_use_gpu.replace(true) {
+            let allow = |it| self.command(PageCommand::AllowGpu(it));
+            task::report(launch_of_gpu_process(page.owner().id).map(allow));
         }
         serve::admit(self.peer, &page.client, page.owner().id);
         (page.client).set_twin(Rc::new(OfPage(Rc::downgrade(self), page.id)));
@@ -858,6 +956,10 @@ fn hear(from: Peer, heard: Heard) -> JsResult<()> {
             crate::task::spawn(async move {
                 let status = bun_web::exec::blocking(move || system::reap(pid)).await;
                 let status = status.unwrap_or_default();
+                let report = |it: &Rc<Process>| Some((it.report.take()?, it.place.borrow().site()));
+                if let Some((report, site)) = process.as_ref().and_then(report) {
+                    crash_reporter::keep_report_in(report, site).await;
+                }
                 crate::task::report(process.map_or(Ok(()), |it| it.has_ended(status)));
             });
         }

@@ -3,7 +3,6 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, OnceLock};
 use std::time::{Duration, Instant};
@@ -759,7 +758,7 @@ fn drop_pixels(kept: usize) {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub fn bytes_of_pixels() -> usize {
     let of = |image: &Arc<Image>| match &**image {
         Image::Bitmap(it) if it.original.is_some() => it
@@ -1042,6 +1041,71 @@ fn with_frame<R>(
     }
 }
 
+/// A bitmap, for any thread.
+pub struct Kept(Arc<Image>);
+
+pub fn keep(id: u32) -> Option<Kept> {
+    IMAGES
+        .lock()
+        .get(&id)
+        .filter(|it| matches!(***it, Image::Bitmap(_)))
+        .cloned()
+        .map(Kept)
+}
+
+impl Kept {
+    pub fn first_frame(&self) -> Option<Pixmap> {
+        let Image::Bitmap(bitmap) = &*self.0 else {
+            return None;
+        };
+        let first = &bitmap.frames()?[0].0;
+        first
+            .shared()
+            .or_else(|| Pixmap::from_vec(first.data().to_vec(), first.width(), first.height()))
+    }
+
+    pub fn is_wide(&self) -> bool {
+        matches!(&*self.0, Image::Bitmap(it) if it.is_wide)
+    }
+
+    /// In Display P3, if it may have colors that sRGB lacks.
+    pub fn widen(&self) -> Option<Pixmap> {
+        let Image::Bitmap(bitmap) = &*self.0 else {
+            return None;
+        };
+        (bitmap.widen()?.make)()
+    }
+
+    /// Not premultiplied. In Display P3 or in sRGB, or with the numbers of the file.
+    pub fn decode_straight(&self, is_wide: Option<bool>) -> Option<Rgba> {
+        let Image::Bitmap(Bitmap {
+            encoded: Some(bytes),
+            ..
+        }) = &*self.0
+        else {
+            return None;
+        };
+        let (mut image, profile) = (
+            codec::decode(bytes, true, (0, 0))?,
+            codec::profile(bytes).filter(|it| Conversion::of(it).is_some()),
+        );
+        let own = profile.zip(is_wide).and_then(|(it, is_wide)| {
+            if is_wide {
+                Conversion::to_display_p3(&it)
+            } else {
+                Conversion::of(&it)
+            }
+        });
+        let known = is_wide
+            .filter(|it| *it != codec::is_display_p3(bytes))
+            .map(Conversion::between);
+        own.as_ref()
+            .or(known)
+            .inspect(|it| it.apply_to_colors(image.data.as_chunks_mut().0));
+        Some(image)
+    }
+}
+
 /// Releases it.
 pub fn take_recording(id: u32, width: i32, height: i32) -> Option<Pixmap> {
     let image = IMAGES.lock().remove(&id)?;
@@ -1319,28 +1383,138 @@ pub fn open(bytes: &[u8], density: f32, scale: f32) -> Option<Decoded> {
     })
 }
 
-type ReducedKey = (u32, u32, Size);
+/// Pixels that stay as they are.
+pub enum Held {
+    Frame(Arc<Frames>),
+    Shared(Pixmap),
+    Made(Arc<Pixmap>),
+}
+
+impl Held {
+    pub fn bytes(&self) -> usize {
+        match self {
+            Held::Frame(frames) => frames.iter().map(|it| it.0.data().len()).sum(),
+            other => other.data().len(),
+        }
+    }
+}
+
+impl std::ops::Deref for Held {
+    type Target = Pixmap;
+
+    #[inline]
+    fn deref(&self) -> &Pixmap {
+        match self {
+            Held::Frame(frames) => &frames[0].0,
+            Held::Shared(it) => it,
+            Held::Made(it) => it,
+        }
+    }
+}
+
+/// The first frame.
+pub fn hold(id: u32) -> Option<Held> {
+    let image = IMAGES.lock().get(&id).cloned();
+    match image.as_deref() {
+        Some(Image::Bitmap(bitmap)) => bitmap.frames().filter(|it| !it.is_empty()).map(Held::Frame),
+        Some(Image::Svg(_)) => None,
+        None => canvas::share(id).map(Held::Shared),
+    }
+}
+
+/// The last column and the last row are there twice.
+fn with_margin(source: &Pixmap) -> Option<Pixmap> {
+    let row = source.width() as usize * 4;
+    let mut data = Vec::with_capacity((row + 4) * (source.height() as usize + 1));
+    for row in source
+        .data()
+        .chunks_exact(row)
+        .chain(source.data().rchunks_exact(row).take(1))
+    {
+        data.extend_from_slice(row);
+        data.extend_from_slice(&row[row.len() - 4..]);
+    }
+    Pixmap::from_vec(data, source.width() + 1, source.height() + 1)
+}
+
+/// In the size that `pick` makes of that of the image.
+pub fn hold_with_margin(id: u32, pick: impl FnOnce(Size) -> Size) -> Option<Held> {
+    with_first_frame(id, |content, version| {
+        let Content::Pixels(pixmap) = content else {
+            return None;
+        };
+        let size = pick(size_of(pixmap));
+        remembered((id, version, size, true), || {
+            if size == size_of(pixmap) {
+                with_margin(pixmap)
+            } else {
+                with_margin(&resample(pixmap, size)?)
+            }
+        })
+        .map(Held::Made)
+    })?
+}
+
+/// Likewise, for an image that has no pixels.
+pub fn hold_drawing(id: u32, size: Size) -> Option<Held> {
+    with_first_frame(id, |content, version| {
+        let Content::Svg(drawing) = content else {
+            return None;
+        };
+        let draw = || {
+            let mut layer = Layer::new(IntRect::new(0, 0, size.0 as i32, size.1 as i32))?;
+            drawing.draw(
+                &mut layer,
+                Rect {
+                    x: 0.,
+                    y: 0.,
+                    width: size.0 as f32,
+                    height: size.1 as f32,
+                },
+                &Transform::identity(),
+                &Frame::new(1., false),
+            );
+            with_margin(&layer.pixmap)
+        };
+        remembered((id, version, size, true), draw).map(Held::Made)
+    })?
+}
+
+/// With whether it has a margin.
+type ReducedKey = (u32, u32, Size, bool);
 
 thread_local! {
-    static REDUCED: RefCell<VecDeque<(ReducedKey, Rc<Pixmap>)>> = RefCell::default();
+    static REDUCED: RefCell<VecDeque<(ReducedKey, Arc<Pixmap>)>> = RefCell::default();
 }
 
 /// `resample` for an image that is drawn piece by piece.
-pub fn resampled(id: u32, version: u32, source: &Pixmap, size: Size) -> Option<Rc<Pixmap>> {
-    let key = (id, version, size);
+pub fn resampled(id: u32, version: u32, source: &Pixmap, size: Size) -> Option<Arc<Pixmap>> {
+    remembered((id, version, size, false), || resample(source, size))
+}
+
+fn remembered(key: ReducedKey, make: impl FnOnce() -> Option<Pixmap>) -> Option<Arc<Pixmap>> {
+    const MAX_COUNT: usize = 512;
+    if let Some(known) =
+        REDUCED.with_borrow(|recent| recent.iter().find(|it| it.0 == key).map(|it| it.1.clone()))
+    {
+        return Some(known);
+    }
+    let (result, has_frames, mut bytes) =
+        (Arc::new(make()?), IMAGES.lock().contains_key(&key.0), 0);
     REDUCED.with_borrow_mut(|recent| {
-        if let Some((_, known)) = recent.iter().find(|(known, _)| *known == key) {
-            return Some(known.clone());
-        }
-        let result = Rc::new(resample(source, size)?);
+        recent.truncate(MAX_COUNT);
         recent.push_front((key, result.clone()));
-        let mut bytes = 0;
         recent.retain(|(kept, pixmap)| {
-            bytes += pixmap.data().len();
-            bytes <= DECODED_BYTES / 4 || *kept == key
+            let is_out_of_date = kept.0 == key.0 && kept.1 != key.1 && !has_frames;
+            bytes += if is_out_of_date {
+                0
+            } else {
+                pixmap.data().len()
+            };
+            !is_out_of_date && bytes <= DECODED_BYTES / 4 || *kept == key
         });
-        Some(result)
-    })
+    });
+    Some(result)
 }
 
 /// For each pixel of the result: the first source pixel that it covers, and the weights from there on, 256 in all.

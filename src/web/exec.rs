@@ -14,7 +14,6 @@ use std::sync::Arc;
 use std::task::Wake;
 use std::thread::ThreadId;
 
-use bun_collections::HashMap;
 use bun_event_loop::EventLoopTimer::{OwnedTimer, State as TimerState, Tag as TimerTag};
 use bun_event_loop::{BoxedTask, ContextId, Task, TaskTag, task_tag};
 use bun_io::JsKeepAlive;
@@ -24,6 +23,7 @@ use bun_jsc::{JSGlobalObject, JSValue, LoopKind, Strong, VmHandle};
 use bun_threading::work_pool::WorkPool;
 use bun_threading::{Futex, Guarded};
 
+use crate::HashMap;
 use crate::generated_bindgen::exec::{Bun__Web__onFulfilled, Bun__Web__onRejected};
 use crate::tasks;
 
@@ -299,6 +299,34 @@ pub fn block_pages<T: 'static>(
     global: &JSGlobalObject,
     future: impl Future<Output = T> + 'static,
 ) -> Option<T> {
+    block(
+        global,
+        future,
+        |wait| match crate::remote::is_page_process() {
+            true => bun_ui::queue::without_events(crate::remote::runs_no_script, wait),
+            false => wait(),
+        },
+    )
+}
+
+bun_ui::state!(fn pause() -> Cell<bool>);
+
+pub fn are_pages_paused() -> bool {
+    pause().get()
+}
+
+/// For a debugger, which the user has to be able to reach.
+pub fn pause_pages<T: 'static>(global: &JSGlobalObject, until: impl Future<Output = T> + 'static) {
+    let before = pause().replace(true);
+    block(global, until, |wait| bun_ui::queue::with_events(wait));
+    pause().set(before);
+}
+
+fn block<T: 'static>(
+    global: &JSGlobalObject,
+    future: impl Future<Output = T> + 'static,
+    around: fn(&dyn Fn()),
+) -> Option<T> {
     let result = Rc::new(Cell::new(None));
     let slot = Rc::clone(&result);
     let promise = with_js(|cx| {
@@ -312,11 +340,7 @@ pub fn block_pages<T: 'static>(
     tasks::set_suspended(global, true);
     crate::realm::set_paused(true);
     if let Some(promise) = promise.as_any_promise() {
-        let wait = || _ = global.bun_vm().wait_for_promise(promise);
-        match crate::remote::is_page_process() {
-            true => bun_ui::queue::without_events(crate::remote::runs_no_script, wait),
-            false => wait(),
-        }
+        around(&|| _ = global.bun_vm().wait_for_promise(promise));
     }
     crate::realm::set_paused(was_suspended);
     tasks::set_suspended(global, was_suspended);

@@ -1,5 +1,6 @@
 //! https://html.spec.whatwg.org/#the-imagebitmap-interface
 
+use core::cell::Cell;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_jsc::bindgen::{self, IntoError as _, JsHeap, JsInterface as _, JsScope};
@@ -9,20 +10,24 @@ use bun_jsc::{GlobalRef, JSPromise, JSPromiseStrong, JSValue, JsCell, JsResult};
 use bun_web::convert::blob_from_js;
 use bun_web::net::body::Data;
 
-use super::bitmap::{MAX_AREA, Owned, Source, area_of, decode, snapshot};
+use super::bitmap::{MAX_AREA, Owned, Source, area_of, decode, decode_again, snapshot};
 use super::context::normalized;
 use super::{Failure, host};
 use crate::abi::Rect;
 use crate::abi_graphics::{Decoded, Snapshot};
 use crate::generated_bindgen::canvas::{
-    CanvasImageSource, ImageBitmapOptions, ImageBitmapRenderingContext, ImageBitmapSource,
-    ImageOrientation, ResizeQuality, js_ImageBitmap, js_ImageBitmapRenderingContext as js_renderer,
+    CanvasImageSource, ColorSpaceConversion, ImageBitmapOptions, ImageBitmapRenderingContext,
+    ImageBitmapSource, ImageOrientation, PremultiplyAlpha, ResizeQuality, js_ImageBitmap,
+    js_ImageBitmapRenderingContext as js_renderer,
 };
 
 pub(crate) struct ImageBitmap {
     /// `None` once it is detached.
     pixels: JsCell<Option<(Owned, [u32; 2])>>,
     is_origin_clean: bool,
+    pub(super) is_straight: Cell<bool>,
+    /// What can be drawn, if it is straight.
+    premultiplied: JsCell<Option<Owned>>,
     bytes: AtomicUsize,
 }
 
@@ -39,6 +44,8 @@ impl ImageBitmap {
             ImageBitmap {
                 pixels: JsCell::new(Some((pixels, size))),
                 is_origin_clean,
+                is_straight: false.into(),
+                premultiplied: JsCell::new(None),
                 bytes,
             },
         )
@@ -48,17 +55,39 @@ impl ImageBitmap {
         self.bytes.load(Ordering::Relaxed)
     }
 
-    pub(crate) fn source(&self) -> Result<Source, Failure> {
+    pub(crate) fn exact_source(&self) -> Result<Source, Failure> {
         let pixels = self
             .pixels
             .get()
             .as_ref()
             .ok_or(Failure::invalid_state("The image source is detached."));
-        pixels.map(|(pixels, size)| Source::new(pixels.id(), *size, self.is_origin_clean))
+        pixels.map(|(pixels, size)| Source {
+            is_straight: self.is_straight.get(),
+            ..Source::new(pixels.id(), *size, self.is_origin_clean)
+        })
+    }
+
+    pub(crate) fn source(&self) -> Result<Source, Failure> {
+        let exact = self.exact_source()?;
+        if exact.is_straight && self.premultiplied.get().is_none() {
+            self.premultiplied.set(Some(snapshot(exact.whole())));
+            self.bytes
+                .update(Ordering::Relaxed, Ordering::Relaxed, |it| it * 2);
+        }
+        Ok(Source {
+            id: self
+                .premultiplied
+                .get()
+                .as_ref()
+                .map_or(exact.id, Owned::id),
+            is_straight: false,
+            ..exact
+        })
     }
 
     pub(crate) fn detach(&self) -> Option<Owned> {
         self.bytes.store(0, Ordering::Relaxed);
+        self.premultiplied.set(None);
         self.pixels.replace(None).map(|it| it.0)
     }
 
@@ -81,6 +110,8 @@ struct Wanted {
     resize: [Option<u32>; 2],
     flips: bool,
     quality: ResizeQuality,
+    is_straight: bool,
+    converts_colors: bool,
 }
 
 impl Wanted {
@@ -115,14 +146,21 @@ impl Wanted {
             flips: self.flips,
             is_smooth: self.quality != ResizeQuality::Pixelated,
             is_sharpened: self.quality == ResizeQuality::High,
+            are_straight: [source.is_straight, self.is_straight],
             ..source.whole()
         });
-        Ok(ImageBitmap::create(
-            heap,
-            pixels,
-            to,
-            source.is_origin_clean,
-        ))
+        let bitmap = ImageBitmap::create(heap, pixels, to, source.is_origin_clean);
+        bitmap.is_straight.set(self.is_straight);
+        Ok(bitmap)
+    }
+
+    /// 0 if that makes no difference.
+    fn decode_again(&self, image: u32) -> u32 {
+        if self.is_straight || !self.converts_colors {
+            decode_again(image, self.is_straight, self.converts_colors)
+        } else {
+            0
+        }
     }
 }
 
@@ -130,6 +168,7 @@ struct DecodeBlob {
     contents: Option<Data>,
     wanted: Wanted,
     decoded: Decoded,
+    again: u32,
 }
 
 impl JobContext for DecodeBlob {
@@ -145,6 +184,7 @@ impl JobContext for DecodeBlob {
                 .unwrap_or_default(),
             true,
         );
+        job.again = job.wanted.decode_again(job.decoded.id);
         Some(done)
     }
 
@@ -154,9 +194,16 @@ impl JobContext for DecodeBlob {
             0 => Err(Failure::invalid_state(
                 "The source image could not be decoded.",
             )),
-            id => job
+            id if job.again == 0 => job
                 .wanted
                 .crop(heap, &Source::new(id, job.decoded.size, true)),
+            _ => job.wanted.crop(
+                heap,
+                &Source {
+                    is_straight: job.wanted.is_straight,
+                    ..Source::new(job.again, job.decoded.size, true)
+                },
+            ),
         };
         promise.settle(
             &global,
@@ -169,7 +216,7 @@ impl JobContext for DecodeBlob {
 
 impl Drop for DecodeBlob {
     fn drop(&mut self) {
-        drop(Owned::adopt(self.decoded.id));
+        drop([self.decoded.id, self.again].map(Owned::adopt));
     }
 }
 
@@ -187,6 +234,8 @@ fn create<'a>(
         resize: [options.resize_width, options.resize_height],
         flips: options.image_orientation == ImageOrientation::FlipY,
         quality: options.resize_quality,
+        is_straight: options.premultiply_alpha == PremultiplyAlpha::None,
+        converts_colors: options.color_space_conversion == ColorSpaceConversion::Default,
     };
     if wanted.resize.contains(&Some(0)) {
         return Err(Failure::invalid_state("The resize size is 0.").into_error(&cx.heap));
@@ -208,22 +257,43 @@ fn create<'a>(
                     } else {
                         [Some(rgba), None]
                     },
+                    wanted.is_straight,
                 )
             });
-            let bitmap =
-                pixels.and_then(|it| wanted.crop(&cx.heap, &Source::new(it.id(), data.size, true)));
+            let bitmap = pixels.and_then(|it| {
+                wanted.crop(
+                    &cx.heap,
+                    &Source {
+                        is_straight: wanted.is_straight,
+                        ..Source::new(it.id(), data.size, true)
+                    },
+                )
+            });
             return resolved(cx, bitmap);
         }
         ImageBitmapSource::Image(it) => CanvasImageSource::Image(it),
         ImageBitmapSource::SvgImage(it) => CanvasImageSource::SvgImage(it),
         ImageBitmapSource::Video(it) => CanvasImageSource::Video(it),
         ImageBitmapSource::Canvas(it) => CanvasImageSource::Canvas(it),
-        ImageBitmapSource::Bitmap(it) => CanvasImageSource::Bitmap(it),
+        ImageBitmapSource::Bitmap(it) => {
+            let bitmap = it.exact_source().and_then(|it| wanted.crop(&cx.heap, &it));
+            return resolved(cx, bitmap);
+        }
         ImageBitmapSource::Offscreen(it) => CanvasImageSource::Offscreen(it),
     };
     let source = host::check_usability(cx, None, source)?
         .ok_or(Failure::invalid_state("The source image is not usable."));
-    let bitmap = source.and_then(|it| wanted.crop(&cx.heap, &it));
+    let bitmap = source.and_then(|it| match Owned::adopt(wanted.decode_again(it.id)) {
+        again if again.id() == 0 => wanted.crop(&cx.heap, &it),
+        again => wanted.crop(
+            &cx.heap,
+            &Source {
+                id: again.id(),
+                is_straight: wanted.is_straight,
+                ..it
+            },
+        ),
+    });
     resolved(cx, bitmap)
 }
 
@@ -248,6 +318,7 @@ fn decode_in_parallel(cx: &mut JsScope<'_>, blob: &Blob, wanted: Wanted) -> JSVa
             contents,
             wanted,
             decoded: Decoded::default(),
+            again: 0,
         },
         (promise, global),
     );

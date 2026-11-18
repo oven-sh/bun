@@ -9,7 +9,11 @@ use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use bun_ui::protocol::{Lane, PageCommand};
 
-pub use self::grants::{grant, is_granted, modification_of_directory, open_file, revoke_files};
+pub use self::grants::{
+    file_for_report, give_file_for_report, grant, is_granted, modification_of_directory, open_file,
+    revoke_files,
+};
+pub(crate) use self::grants::{keep_head, kept_head};
 pub use crate::wire::Peer;
 use crate::wire::{self, Malformed, Message};
 use crate::{channel, outside};
@@ -69,6 +73,8 @@ keywords! {
         NoRuling = b"no-ruling",
         Tidings = b"tidings",
         Area = b"area",
+        Lodger = b"lodger",
+        SharedWorker = b"shared-worker",
     }
 }
 

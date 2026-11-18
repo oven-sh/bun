@@ -3,14 +3,13 @@
 use bun_jsc::bindgen::{self, JsHeap, JsInterface as _, JsLocal, JsScope};
 use bun_jsc::{JSValue, JsResult};
 use bun_ui::Rect;
-use bun_ui::dom::{self, Change, Description, Hidden, Metrics, Place};
+use bun_ui::dom::{self, Change, Hidden, Metrics, Place};
 use bun_ui::main_global;
 use bun_ui::protocol::Size;
 
 use crate::api::core::{
     Atom, Doc, DomString, Element, Event, Node, Observers, append, global_of, remove, replace_all,
 };
-use crate::api::range::{self, Point};
 use crate::api::render::{self, RenderRoot};
 use crate::api::ui::{focus, layout};
 use crate::api::uievents::KeyboardEvent;
@@ -177,7 +176,7 @@ fn __bun_dom_key(it: dom::Event) -> String {
         .unwrap_or_default()
 }
 
-fn with_node<R>(
+pub(super) fn with_node<R>(
     node: JSValue,
     run: impl for<'a> FnOnce(&mut JsScope<'a>, &'a Node) -> Option<R>,
 ) -> Option<R> {
@@ -210,48 +209,6 @@ fn __bun_dom_metrics(it: dom::Document) -> Metrics {
 #[unsafe(no_mangle)]
 fn __bun_dom_is_node(it: dom::Node) -> bool {
     Node::from_js(heap(), it.0).is_some()
-}
-
-#[unsafe(no_mangle)]
-fn __bun_dom_describe(it: dom::Node) -> Description {
-    let description = with_node(it.0, |cx, it| {
-        Some(Description {
-            kind: it.node_type() as i32,
-            name: DomString::from_js_string(&cx.heap, it.get_node_name(&cx.heap))
-                .ok()?
-                .to_utf8()
-                .into_owned(),
-            local_name: it
-                .as_element()
-                .map(|it| it.local().as_utf8().into_owned())
-                .unwrap_or_default(),
-            value: it
-                .node_value()
-                .map(|it| it.to_utf8().into_owned())
-                .unwrap_or_default(),
-            is_root: it
-                .as_element()
-                .is_some_and(|element| it.doc().document_element() == Some(element)),
-        })
-    });
-    description.unwrap_or_default()
-}
-
-fn client_rects<'a>(cx: &mut JsScope<'a>, node: &'a Node) -> Vec<[f64; 4]> {
-    match node.as_element() {
-        Some(element) => element.client_rects(cx),
-        None => range::client_rects(cx, Point::new(node, 0), Point::new(node, node.length())),
-    }
-}
-
-#[unsafe(no_mangle)]
-fn __bun_dom_client_rects(it: dom::Node) -> Vec<[f64; 4]> {
-    with_node(it.0, |cx, it| Some(client_rects(cx, it))).unwrap_or_default()
-}
-
-#[unsafe(no_mangle)]
-fn __bun_dom_bounds_of(it: dom::Node) -> Option<[f64; 4]> {
-    with_node(it.0, |cx, it| Some(it.as_element()?.client_bounds(cx)))
 }
 
 #[unsafe(no_mangle)]

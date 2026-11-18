@@ -1,6 +1,6 @@
 // What a preload script sees. Each realm has its own.
 import * as b from "../codegen/bindgen-lib.ts";
-import { anything, flag, js, number, returnsObject, returnsPromise, sharing } from "./schema.ts";
+import { anything, flag, js, number, returnsObject, returnsPromise, sharing, text } from "./schema.ts";
 
 export default b.module({ feature: "Desktop", isCold: true, membersInTable: false });
 
@@ -121,7 +121,11 @@ export const RendererCrashReporter = b.interface("RendererCrashReporter", {
   ofModule: true,
   name: "CrashReporter",
   namespace: true,
-  static: { getParameters: returnsObject, ...sharing("nothing", "addExtraParameter removeExtraParameter") },
+  static: {
+    addExtraParameter: { args: { key: text, value: text } },
+    removeExtraParameter: { args: { key: text } },
+    getParameters: returnsObject,
+  },
 });
 
 export const RendererElectron = b.interface("RendererElectron", {

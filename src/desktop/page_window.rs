@@ -184,6 +184,7 @@ impl DesktopWindow {
             .and_then(|it| it.join(b"."));
         let mut directories = loaded_from().borrow_mut();
         if let Some(directory) = directory.filter(|it| !directories.contains(it)) {
+            bun_web::net::schemes::may_ask_for_file(&directory, true);
             directories.push(directory);
         }
         drop(directories);

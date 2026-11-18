@@ -124,13 +124,12 @@ static const StackFrame* innermostScript(VM& vm, const Vector<StackFrame>& stack
     return nullptr;
 }
 
-// `thrown` is an exception, the value that was thrown last, or empty for what is running.
-static Vector<StackFrame> stackOf(JSGlobalObject* realm, JSValue thrown)
+Vector<StackFrame> stackOf(JSGlobalObject* realm, JSValue thrown, size_t depth)
 {
     VM& vm = realm->vm();
     Vector<StackFrame> now;
     if (!thrown)
-        vm.interpreter.getStackTrace(realm, now, 0, 64);
+        vm.interpreter.getStackTrace(realm, now, 0, depth);
     for (auto* exception : { thrown ? dynamicDowncast<JSC::Exception>(thrown) : nullptr, vm.lastException() }) {
         if (exception && thrown && (exception == thrown || exception->value() == thrown))
             return exception->stack();
@@ -138,7 +137,6 @@ static Vector<StackFrame> stackOf(JSGlobalObject* realm, JSValue thrown)
     return now;
 }
 
-// Returns the URL.
 // A call is where the name of the function is, not where its arguments begin.
 static unsigned lengthOfCalledName(const StackFrame& frame, unsigned column)
 {
@@ -154,15 +152,22 @@ static unsigned lengthOfCalledName(const StackFrame& frame, unsigned column)
     return length;
 }
 
+LineColumn placeOf(const StackFrame& frame)
+{
+    auto position = frame.computeLineAndColumn();
+    return { position.line, position.column - lengthOfCalledName(frame, position.column) };
+}
+
+// Returns the URL.
 extern "C" BunString Bun__DesktopRealm__locate(JSGlobalObject* realm, EncodedJSValue thrown, uint32_t* lineAndColumn)
 {
     auto stack = stackOf(realm, JSValue::decode(thrown));
     auto* frame = innermostScript(realm->vm(), stack);
     if (!frame)
         return BunStringEmpty;
-    auto position = frame->computeLineAndColumn();
+    auto position = placeOf(*frame);
     lineAndColumn[0] = position.line;
-    lineAndColumn[1] = position.column - lengthOfCalledName(*frame, position.column);
+    lineAndColumn[1] = position.column;
     return Bun::toStringRef(Zig::sourceURL(realm->vm(), *frame)).leak();
 }
 

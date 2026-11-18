@@ -125,6 +125,8 @@ struct State {
     was_put_off: bool,
     has_to_ask_display: bool,
     last_frame: f64,
+    /// When the thread has last waited or finished a frame.
+    caught_up_at: f64,
     hurry_until: f64,
     /// When the first task of the host since the last frame ran.
     busy_since: Option<f64>,
@@ -270,9 +272,14 @@ impl State {
         Some(self.tasks[*self.timers.first()? as usize].time)
     }
 
+    /// Nothing has been shown for so long that it is noticed.
+    fn is_behind(&self, now: f64) -> bool {
+        (self.has_had_input || now >= LAUNCH_DURATION) && now - self.caught_up_at > BUSY_INTERVAL
+    }
+
     /// The host is still answering what the page has asked for, so a frame would soon be out of date.
     fn is_host_busy(&self, now: f64) -> bool {
-        if now <= self.hurry_until || now <= self.scrolls_until {
+        if now <= self.hurry_until || now <= self.scrolls_until || self.is_behind(now) {
             return false;
         }
         let Some(busy_since) = self.busy_since else {
@@ -294,7 +301,9 @@ impl State {
             let since_input = now - (self.hurry_until - HURRY_DURATION);
             return if since_last < frame_interval() {
                 FrameIsDue::No
-            } else if now - self.stale_since >= frame_interval() {
+            } else if now - self.stale_since >= frame_interval()
+                || self.is_behind(now) && !self.was_put_off
+            {
                 FrameIsDue::Yes
             } else if (frame_interval()..HURRY_DURATION).contains(&since_input)
                 && self.hurried_frames_left > 0
@@ -367,6 +376,7 @@ impl Default for Tasks {
                 was_put_off: false,
                 has_to_ask_display: false,
                 last_frame: 0.0,
+                caught_up_at: 0.0,
                 hurry_until: 0.0,
                 busy_since: None,
                 alarm_time: f64::INFINITY,
@@ -608,6 +618,16 @@ pub fn begins_frame(global: &JSGlobalObject, canvas: JSValue) {
     });
 }
 
+/// After a frame, and after waiting for something to do.
+pub fn caught_up() {
+    let vm = VirtualMachine::get();
+    if !TASKS.get().is_null()
+        && let Ok(mut state) = tasks_of(vm).0.try_borrow_mut()
+    {
+        state.caught_up_at = now(vm);
+    }
+}
+
 pub fn can_frame_wait(global: &JSGlobalObject) -> bool {
     with_state(global, |state, vm| state.is_host_busy(now(vm)))
 }
@@ -773,7 +793,8 @@ impl Tasks {
                 FrameIsDue::IfAwaited => self.takes_hurried_frame(),
             };
             if renders {
-                render_stale(global, true);
+                let may_wait = !self.0.borrow().is_behind(time);
+                render_stale(global, may_wait);
             } else {
                 let next = self.0.borrow_mut().next_task(time);
                 let Some(index) = next else {

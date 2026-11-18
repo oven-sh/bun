@@ -148,9 +148,13 @@ impl Document {
             false => (column_width + column_gap, 0.0),
         };
         let mut outer = outer.map(|it| self.flow(id, input, inset, it));
+        let trim = [0, 1].map(|side| {
+            style.rare.box_trim.sides()[side] || input.trim[side] && inset.along(1)[side] == 0.0
+        });
         let flow_input = Input {
             width: column_width,
             basis: (column_width, row_height.or(height)),
+            trim,
             ..Input::default()
         };
         let (mut y, mut strut, mut first, mut start) = (inset.top, Strut::default(), 0, 0.0);
@@ -378,9 +382,20 @@ impl Document {
                 AutoSize::Fill
             };
             let own_width = self.resolve_width(spanner, &room, auto);
-            let own_input = self.input_for(spanner, own_width, &room);
+            let is_first = breaks.spanners.is_empty() && y == inset.top;
+            let is_last = || {
+                self.boxes[flow]
+                    .children
+                    .iter()
+                    .rfind(|it| !self.boxes[**it].style.is_out_of_flow())
+                    == Some(&spanner)
+            };
+            let own_input = Input {
+                trim: [trim[0] && is_first, trim[1] && is_last()],
+                ..self.input_for(spanner, own_width, &room)
+            };
             let x = self.align_in_flow(&style, spanner, width, own_width, &mut margin);
-            let is_trimmed = rare.margin_trim.0[0] && breaks.spanners.is_empty() && y == inset.top;
+            let is_trimmed = rare.margin_trim.0[0] && is_first;
             let (mut top, used) = (
                 y + if is_trimmed {
                     0.0

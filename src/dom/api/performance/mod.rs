@@ -87,8 +87,8 @@ fn select<'a>(
 ) -> Vec<&'a Entry> {
     let mut found: Vec<_> = entries
         .filter(|it| {
-            name.is_none_or(|name| it.name == *name)
-                && kind.is_none_or(|kind| kind.eq_str(it.kind.name()))
+            kind.is_none_or(|kind| kind.eq_str(it.kind.name()))
+                && name.is_none_or(|name| it.name == *name)
         })
         .collect();
     found.order_by(|a, b| a.start.total_cmp(&b.start));
@@ -243,11 +243,11 @@ impl Performance {
         List::from_value(buffers.get(kind as u32))
     }
 
-    fn buffered(&self) -> impl Iterator<Item = &Entry> {
+    fn buffered(&self, kind: Option<&DomString>) -> impl Iterator<Item = &Entry> {
         let buffers = list(js_DomPerformance::buffers(self));
-        let kinds = Type::ALL
-            .into_iter()
-            .filter(|it| !it.is_only_for_observers());
+        let kinds = Type::ALL.into_iter().filter(move |it| {
+            !it.is_only_for_observers() && kind.is_none_or(|kind| kind.eq_str(it.name()))
+        });
         kinds
             .map(move |it| buffers.get(it as u32))
             .filter(|it| !it.is_undefined())
@@ -432,7 +432,7 @@ impl Performance {
     }
 
     pub(crate) fn get_entries<'a>(&'a self, _: &JsHeap<'a>) -> Vec<&'a Entry> {
-        select(self.buffered(), None, None)
+        select(self.buffered(None), None, None)
     }
 
     pub(crate) fn get_entries_by_type<'a>(
@@ -440,7 +440,7 @@ impl Performance {
         _: &JsHeap<'a>,
         kind: &DomString,
     ) -> Vec<&'a Entry> {
-        select(self.buffered(), None, Some(kind))
+        select(self.buffered(Some(kind)), None, None)
     }
 
     pub(crate) fn get_entries_by_name<'a>(
@@ -449,7 +449,7 @@ impl Performance {
         name: &DomString,
         kind: Option<&DomString>,
     ) -> Vec<&'a Entry> {
-        select(self.buffered(), Some(name), kind)
+        select(self.buffered(kind), Some(name), None)
     }
 
     pub(crate) fn clear_resource_timings<'a>(&'a self, heap: &JsHeap<'a>) {

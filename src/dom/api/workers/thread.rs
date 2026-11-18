@@ -227,6 +227,10 @@ impl Inbox {
         }
     }
 
+    pub(super) fn take_ports(&self) -> Vec<Endpoint> {
+        core::mem::take(&mut self.ports.lock().0)
+    }
+
     pub(super) fn is_closing(&self) -> bool {
         self.is_closing.load(Ordering::Relaxed)
     }
@@ -234,8 +238,7 @@ impl Inbox {
 
 fn accept_connections(cx: Cx<'_, '_>) {
     let inbox = Arc::clone(&realm_of(&cx.heap).extra::<OfWorker>().inbox.borrow());
-    let ports = core::mem::take(&mut inbox.ports.lock().0);
-    for port in ports {
+    for port in inbox.take_ports() {
         queue_task(
             &cx.heap,
             [MessagePort::new(&cx.heap, port).to_js()],
@@ -430,6 +433,13 @@ impl ClosableScope {
             .borrow()
             .is_closing
             .store(true, Ordering::Relaxed);
+        realm
+            .extra::<OfWorker>()
+            .outside
+            .borrow()
+            .iter()
+            .filter(|it| it.is_shared)
+            .for_each(|it| it.creator.post(|it| it.leave(false)));
         let client = realm.client();
         realm.stop();
         Thread::current().post(|| {

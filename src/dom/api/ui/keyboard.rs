@@ -14,10 +14,24 @@ use crate::api::uievents::{Keyboard, KeyboardEvent, Modifiers};
 pub(crate) struct Key {
     pub(crate) key: Atom,
     pub(crate) code: Atom,
+    /// 0 unless the system says.
+    pub(crate) key_code: u32,
     pub(crate) location: u32,
     pub(crate) repeat: bool,
     pub(crate) modifiers: Modifiers,
     pub(crate) is_composing: bool,
+}
+
+impl Key {
+    fn legacy_code(&self) -> u32 {
+        match self.key_code {
+            0 => keys::key_code(
+                self.key.as_utf8().as_bytes(),
+                self.code.as_utf8().as_bytes(),
+            ),
+            known => known,
+        }
+    }
 }
 
 const SHORTCUT: Modifiers = Modifiers::CONTROL
@@ -157,6 +171,14 @@ fn press_enter<'a>(cx: &mut Cx<'a>, ui: &'a Ui, target: &'a Element, key: &Key) 
     true
 }
 
+fn open_context_menu<'a>(cx: &mut Cx<'a>, ui: &'a Ui, target: &'a Element) {
+    let rect = layout::bounding_rect(cx, target);
+    ui.pointer()
+        .at
+        .set([rect.x + rect.width / 2.0, rect.y + rect.height / 2.0].map(f64::from));
+    mouse::context_menu(cx, ui, target, if cfg!(windows) { -1 } else { 2 });
+}
+
 fn default_key_down<'a>(
     cx: &mut Cx<'a>,
     ui: &'a Ui,
@@ -194,14 +216,11 @@ fn default_key_down<'a>(
             pointer::set_lock(cx, ui, None);
             super::interest::lose_all(cx, ui) | close_watcher::process(cx, ui)
         }
+        atom!("ContextMenu") if cfg!(windows) => true,
         name @ (atom!("ContextMenu") | atom!("F10"))
             if name == atom!("ContextMenu") || event.get_shift_key() && !IS_MAC =>
         {
-            let rect = layout::bounding_rect(cx, target);
-            ui.pointer()
-                .at
-                .set([rect.x + rect.width / 2.0, rect.y + rect.height / 2.0].map(f64::from));
-            mouse::context_menu(cx, ui, target);
+            open_context_menu(cx, ui, target);
             true
         }
         name => {
@@ -221,7 +240,7 @@ pub(crate) enum Outcome {
 
 /// Whatever has the focus.
 pub(super) fn press_at<'a>(cx: &mut Cx<'a>, ui: &'a Ui, target: &'a Element, key: &Key) {
-    let code = keys::key_code(key.key.as_utf8().as_bytes(), key.code.as_utf8().as_bytes());
+    let code = key.legacy_code();
     let event = key_event(&cx.heap, ui, atom!("keydown"), key, code, 0);
     if dispatch(cx, target, event) {
         run_default_actions(cx, target, event);
@@ -234,21 +253,22 @@ pub(crate) fn key_up<'a>(cx: &mut Cx<'a>, ui: &'a Ui, key: &Key) {
     ui.pressed_key.take();
     ui.pointer().modifiers.set(key.modifiers);
     let Some(target) = key_target(ui) else { return };
-    let event = key_event(
-        &cx.heap,
-        ui,
-        atom!("keyup"),
-        key,
-        keys::key_code(key.key.as_utf8().as_bytes(), key.code.as_utf8().as_bytes()),
-        0,
-    );
+    let event = key_event(&cx.heap, ui, atom!("keyup"), key, key.legacy_code(), 0);
     let was_pressed =
         key.key == atom!(" ") && target.has_state(State::ACTIVE) && is_pressed_with_space(target);
     if was_pressed {
         target.set_state(cx, State::ACTIVE, false);
     }
-    if dispatch(cx, target, event) && was_pressed {
+    let is_allowed = dispatch(cx, target, event);
+    if is_allowed && was_pressed {
         activation::click(cx, target, Trusted::Yes, Click::default());
+    }
+    if is_allowed
+        && cfg!(windows)
+        && key.key == atom!("ContextMenu")
+        && let Some(target) = key_target(ui)
+    {
+        open_context_menu(cx, ui, target);
     }
 }
 
@@ -261,10 +281,10 @@ pub(crate) fn key_down<'a>(cx: &mut Cx<'a>, ui: &'a Ui, key: &Key) -> Outcome {
     };
     let name = key.key.as_utf8();
     let is_for_input_method = key.is_composing || matches!(&*name, "Process" | "Dead");
-    let code = if is_for_input_method {
+    let code = if is_for_input_method && key.key_code == 0 {
         FOR_INPUT_METHOD
     } else {
-        keys::key_code(name.as_bytes(), key.code.as_utf8().as_bytes())
+        key.legacy_code()
     };
     let event = key_event(&cx.heap, ui, atom!("keydown"), key, code, 0);
     if ui.pointer().drag.get().is_some() {
@@ -311,6 +331,36 @@ pub(crate) fn handle_text<'a>(
     replaced: Option<[u32; 2]>,
 ) {
     let key = ui.pressed_key.take();
+    match key {
+        // What a dead key does not go with comes after its accent.
+        Some(key) if is_from_key && key.key_code != 0 => {
+            for character in text.to_utf8().chars() {
+                let text = DomString::from_utf8(character.encode_utf8(&mut [0; 4]));
+                type_text(
+                    cx,
+                    ui,
+                    &text,
+                    Some(Key {
+                        key: Atom::from_string(&text),
+                        ..key.clone()
+                    }),
+                    true,
+                    replaced,
+                );
+            }
+        }
+        key => type_text(cx, ui, text, key, is_from_key, replaced),
+    }
+}
+
+fn type_text<'a>(
+    cx: &mut Cx<'a>,
+    ui: &'a Ui,
+    text: &DomString,
+    key: Option<Key>,
+    is_from_key: bool,
+    replaced: Option<[u32; 2]>,
+) {
     if is_from_key && ui.composition_target().is_none() {
         let (Some(key), Some(target)) = (key, key_target(ui)) else {
             return;

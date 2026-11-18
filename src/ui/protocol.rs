@@ -283,6 +283,8 @@ pub struct Geometry {
     pub y: f32,
     /// How far below `y` the content begins.
     pub top: f32,
+    /// How far the frame reaches beyond the content at the other three edges.
+    pub border: f32,
     /// Of the content.
     pub width: f32,
     pub height: f32,
@@ -524,6 +526,23 @@ pub enum WindowEvent {
     Moving,
     Swipe(Direction),
     NewTab,
+    /// The user has let go of it.
+    Moved,
+    /// An `APPCOMMAND_`.
+    AppCommand(u32),
+    ThumbnailButton(u32),
+    /// In pixels of the screen.
+    WantsSystemMenu(Point),
+    Message {
+        message: u32,
+        w: u64,
+        l: u64,
+    },
+    /// With the `ENDSESSION_` flags.
+    SessionEnds {
+        is_question: bool,
+        reasons: u32,
+    },
 }
 
 #[repr(C, u8)]
@@ -594,6 +613,20 @@ pub enum Cursor {
     DragCopy,
     ContextMenu,
     Hidden,
+    #[cfg(windows)]
+    Wait,
+    #[cfg(windows)]
+    Progress,
+    #[cfg(windows)]
+    Help,
+    #[cfg(windows)]
+    Move,
+    #[cfg(windows)]
+    Cell,
+    #[cfg(windows)]
+    ZoomIn,
+    #[cfg(windows)]
+    ZoomOut,
 }
 
 /// The focused field. Offsets are in UTF-16 code units.
@@ -734,11 +767,33 @@ pub struct Wheel {
     pub is_precise: bool,
 }
 
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TouchPhase {
+    Start,
+    Move,
+    End,
+    Cancel,
+}
+
+/// Of a finger or a pen.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Contact {
+    pub size: [f32; 2],
+    pub pressure: f32,
+    /// In degrees.
+    pub tilt: [i16; 2],
+    pub twist: i16,
+}
+
 #[repr(C)]
 #[derive(Clone, Debug)]
 pub struct Key {
     pub key: Text,
     pub code: Text,
+    /// The virtual key of Windows. 0 leaves `keyCode` to be derived.
+    pub key_code: u8,
     pub location: u8,
     pub modifiers: u8,
     pub is_down: bool,
@@ -763,6 +818,16 @@ pub enum Input {
     Pinch {
         at: Located,
         delta: f32,
+    },
+    Touch {
+        phase: TouchPhase,
+        finger: i32,
+        at: Located,
+        contact: Contact,
+    },
+    Pen {
+        mouse: Mouse,
+        contact: Contact,
     },
     /// The library has scrolled `node` that far in all. It is out of date if the scroller has another `generation`.
     Scroll {
@@ -974,6 +1039,11 @@ pub struct SystemSettings {
     pub more_contrast: bool,
     pub reduced_transparency: bool,
     pub inverted_colors: bool,
+    /// Of Windows: window, window text, links, button, button text, highlight, highlighted text, gray text.
+    pub palette: Maybe<[u32; 8]>,
+    /// Whether the taskbar is dark.
+    pub has_dark_shell: Maybe<bool>,
+    pub touch_points: u32,
 }
 
 #[repr(u8)]
@@ -1111,8 +1181,94 @@ pub enum Question {
     CanAuthenticate,
     /// An `AVAuthorizationStatus`.
     Access(Media),
-    /// A property of `NSColor`, as `0xRRGGBBAA`.
+    /// A property of `NSColor`, or what Electron calls a color of Windows, as `0xRRGGBBAA`.
     Color(Text),
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct ThumbnailButton {
+    pub icon: Icon,
+    pub tool_tip: Text,
+    /// `THUMBBUTTONFLAGS`
+    pub flags: u32,
+}
+
+#[repr(C, u8)]
+#[derive(Debug)]
+pub enum TaskbarCommand {
+    OverlayIcon {
+        icon: Maybe<Icon>,
+        description: Text,
+    },
+    Buttons(List<ThumbnailButton>),
+    Clip(Rect),
+    ToolTip(Text),
+    Progress {
+        done: f32,
+        mode: Text,
+    },
+    AppDetails(PreferenceValue),
+}
+
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Accent {
+    AsUserLikes,
+    None,
+    OfSystem,
+    Own,
+}
+
+/// What only Windows has. Values are those of the API of Electron.
+#[repr(C, u8)]
+#[derive(Debug)]
+pub enum ShellCommand {
+    ReadShortcut(Text),
+    WriteShortcut {
+        path: Text,
+        operation: Text,
+        details: PreferenceValue,
+    },
+    JumpListSettings,
+    SetJumpList(Maybe<PreferenceValue>),
+    RecentDocuments,
+    ClearRecentDocuments,
+    DescribeDisplay(u64),
+    Taskbar {
+        window: u32,
+        command: TaskbarCommand,
+    },
+    SetAccent {
+        window: u32,
+        accent: Accent,
+        color: u32,
+    },
+    GetAccent(u32),
+    IsSnapped(u32),
+    IsInTabletMode(u32),
+    WatchMessage {
+        window: u32,
+        message: u32,
+        is_on: bool,
+    },
+    OpenSystemMenu {
+        window: u32,
+        at: Point,
+    },
+    /// `flags` are `NIIF_`.
+    Balloon {
+        tray: u32,
+        title: Text,
+        content: Text,
+        icon: Maybe<Icon>,
+        flags: u32,
+    },
+    FocusTray(u32),
+    /// The answer to [`WindowEvent::SessionEnds`].
+    LetSessionEnd(bool),
+    AvoidGpu,
+    AvoidSubpixels,
 }
 
 #[repr(u8)]
@@ -1128,7 +1284,11 @@ pub enum ActivityStep {
 #[repr(C, u8)]
 #[derive(Debug)]
 pub enum TrayCommand {
-    Create { name: Text, icon: Icon },
+    Create {
+        name: Text,
+        icon: Icon,
+        guid: Maybe<Text>,
+    },
     Destroy,
     Icon(Icon),
     ToolTip(Text),
@@ -1145,6 +1305,10 @@ pub enum TrayEvent {
     DoubleClick,
     MouseEnter,
     MouseLeave,
+    MouseMove,
+    BalloonShow,
+    BalloonClick,
+    BalloonClosed,
 }
 
 #[repr(u8)]
@@ -1564,6 +1728,7 @@ pub struct PageProcess {
 pub const PAGE_PROCESS_MARKER: &core::ffi::CStr = c"--bun-desktop-child=page";
 /// In its place if the pages run what was compiled into the executable.
 pub const COMPILED_PAGE_PROCESS_MARKER: &core::ffi::CStr = c"--bun-desktop-child=compiled-page";
+pub const GPU_PROCESS_MARKER: &core::ffi::CStr = c"--bun-desktop-child=gpu";
 pub const SOCKET_TO_PARENT: i32 = 3;
 pub const EXIT_WITHOUT_SANDBOX: i32 = 77;
 
@@ -1578,11 +1743,23 @@ pub enum PageCommand {
     TakeBack(u32),
     Represent(Proxy),
     StoreFontsFor(Text),
+    /// With how to start a process that has it.
+    AllowGpu(Launch),
     /// The length of a message.
     Handled(usize),
     /// What it remembers of the cookies.
     Outdate,
     Close,
+}
+
+#[repr(C)]
+#[derive(Clone, Debug, Default)]
+pub struct Launch {
+    pub arguments: List<Text>,
+    pub environment: List<Text>,
+    pub may_log: bool,
+    /// Who cannot have many of them.
+    pub owner: u32,
 }
 
 /// The surface of a frame, and that of the window, for which it may have a say.
@@ -1642,6 +1819,8 @@ pub struct Ui {
 
     /// Before `bun_desktop_init`.
     pub become_page_process: extern "C" fn(),
+    /// While there is only one thread. It only returns if there is no such thing.
+    pub become_gpu_process: extern "C" fn(has_sandbox: bool),
     /// While there is only one thread. Files can still be read.
     pub prepare_sandbox: extern "C" fn(),
     /// Between the two. False if there is none to be had.
@@ -1724,6 +1903,7 @@ pub struct Ui {
     pub application_for: extern "C" fn(url: Text) -> Outcome<Maybe<Application>>,
     /// A PNG, or nothing.
     pub file_icon: extern "C" fn(path: Text, side: u32) -> Outcome<List<u8>>,
+    pub ask_shell: extern "C" fn(ShellCommand) -> Outcome<PreferenceValue>,
     pub preference: extern "C" fn(key: Text) -> Outcome<Maybe<PreferenceValue>>,
     pub change_preference: extern "C" fn(PreferenceCommand) -> Maybe<Text>,
     pub answer: extern "C" fn(Question) -> Outcome<Maybe<u32>>,

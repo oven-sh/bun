@@ -83,6 +83,8 @@ pub struct Details {
     pub received: Option<Received>,
     pub redirect_url: Option<Url>,
     pub outcome: Option<Result<()>>,
+    /// Of the body that has arrived.
+    pub size: u64,
 }
 
 #[derive(Default)]
@@ -105,6 +107,7 @@ pub type Network = Box<dyn Fn(Option<&[u8]>) -> LocalFuture<'static, Result<Answ
 
 pub enum Paused {
     Continue(Outgoing),
+    ContinueWithoutCache(Outgoing),
     Fulfill(Answer),
 }
 
@@ -197,6 +200,9 @@ pub trait Embedder {
     fn source_of(&self, url: &Url) -> LocalFuture<'static, Result<Option<Vec<u8>>>>;
     fn cookie_changed(&self, change: &Change);
     fn service_workers_report(&self, news: crate::service::News);
+    fn lodge_worker(&self, url: &Url, is_compiled: bool) -> Option<crate::service::Lodging>;
+    /// For as long as the result is there.
+    fn keep_process(&self, peer: crate::remote::Peer) -> Option<Box<dyn core::any::Any>>;
     /// Without a window.
     fn lets_notify(&self, url: &Url) -> bool;
     /// Those of another program whose profile this is, once.

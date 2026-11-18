@@ -28,6 +28,23 @@ struct Smooth {
     to: [f32; 2],
     start: Option<f64>,
     duration: f64,
+    /// Where on the curve it starts.
+    coasts_from: Option<f32>,
+}
+
+/// The fling curve of Chromium, in pixels and seconds.
+mod coasting {
+    const ALPHA: f32 = -5707.62;
+    const BETA: f32 = 172.0;
+    const GAMMA: f32 = 3.7;
+
+    pub(super) fn position_at(time: f32) -> f32 {
+        ALPHA * (-GAMMA * time).exp() - BETA * time - ALPHA
+    }
+
+    pub(super) fn time_at(velocity: f32) -> f32 {
+        -((velocity + BETA) / (-ALPHA * GAMMA)).ln() / GAMMA
+    }
 }
 
 /// In place of the axis of a scrollbar.
@@ -304,7 +321,8 @@ impl Document {
             it.spread.set(rect);
             return rect.moved([it.layout.location.x, it.layout.location.y]);
         }
-        if !it.scrolls() && !it.style.contain().contains(Contain::LAYOUT) {
+        let spills = !it.scrolls() && !it.style.contain().contains(Contain::LAYOUT);
+        if spills {
             let inside = self.scrollable_overflow(id);
             let inside = self
                 .overflow_clip(id)
@@ -315,10 +333,28 @@ impl Document {
                 rect.union(&inside)
             };
         }
-        let rect = self
-            .own_transform(id)
-            .map_or(rect, |matrix| rect.transformed(&matrix));
+        let rect = self.overflow_of_parts(id, spills).unwrap_or_else(|| {
+            self.own_transform(id)
+                .map_or(rect, |matrix| rect.transformed(&matrix))
+        });
         rect.moved([it.layout.location.x, it.layout.location.y])
+    }
+
+    /// What is out of flow counts as if it were not transformed.
+    fn overflow_of_parts(&self, id: BoxId, spills: bool) -> Option<Rect> {
+        _ = self.transformed_parts(id)?;
+        let (extent, clip) = (self.extent(id), self.overflow_clip(id));
+        let inside = if spills {
+            self.boxes.transformed.get(&id)?.overflow.get()
+        } else {
+            Default::default()
+        };
+        let [in_flow, out_of_flow] = inside.map(|it| {
+            Some(clip.map_or(it, |clip| it.intersection(&clip))).filter(|it| !it.is_empty())
+        });
+        let transformed =
+            self.transformed_by_parts(id, in_flow.map_or(extent, |it| extent.union(&it)))?;
+        Some(out_of_flow.map_or(transformed, |it| transformed.union(&it)))
     }
 
     /// Only what is in the box has changed.
@@ -348,7 +384,7 @@ impl Document {
         let it = &self.boxes[id];
         let gathered = self.gathered.take().filter(|it| it.0 == id).map(|it| it.1);
         if it.overflow == [Overflow::Hidden; 2] {
-            return self.note_extents_of_scroller(id);
+            return self.note_extents_of_scroller(id, gathered);
         }
         if !(it.is_ordinary
             && it.turned == it.mode
@@ -388,7 +424,7 @@ impl Document {
         self.note_contents(id, contents);
     }
 
-    fn note_extents_of_scroller(&self, id: BoxId) {
+    fn note_extents_of_scroller(&self, id: BoxId, gathered: Option<Contents>) {
         let it = &self.boxes[id];
         if !(it.is_ordinary
             && it.turned == it.mode
@@ -398,7 +434,7 @@ impl Document {
         {
             return;
         }
-        let (whole, mut contents) = (self.border_box(id), Contents::default());
+        let (whole, mut contents) = (self.border_box(id), gathered.unwrap_or_default());
         it.spread.set(whole);
         it.ink.set(
             whole.union(
@@ -407,7 +443,9 @@ impl Document {
                     .grown(it.layout.border.top),
             ),
         );
-        if it.children.len() <= 8 && it.children.iter().all(|it| contents.add(&self.boxes[*it])) {
+        if gathered.is_some()
+            || it.children.len() <= 8 && it.children.iter().all(|it| contents.add(&self.boxes[*it]))
+        {
             self.note_layers(id, contents.layers, Layers::SCROLLS);
         }
     }
@@ -541,10 +579,10 @@ impl Document {
             client
         };
         let mut reach = least;
-        let mut add = |rect: Rect| {
+        let add = |to: &mut Rect, rect: Rect| {
             let rect = rect.intersection(&reachable);
             if !rect.is_empty() {
-                reach = reach.union(&rect);
+                *to = to.union(&rect);
             }
         };
         for child in it
@@ -553,16 +591,31 @@ impl Document {
             .skip(usize::from(it.has_legend && it.scrolls()))
         {
             if !it.is_replaced() && !self.boxes[*child].style.is_out_of_flow() {
-                add(self.overflow_contribution(*child));
+                add(&mut reach, self.overflow_contribution(*child));
             }
         }
-        it.hoisted
-            .iter()
-            .filter(|it| !self.is_fixed_to_viewport(**it))
-            .for_each(|it| add(self.overflow_contribution(*it)));
         it.inline
             .iter()
-            .for_each(|it| add(self.from_lines(id, it.lines.bounds)));
+            .for_each(|it| add(&mut reach, self.from_lines(id, it.lines.bounds)));
+        let hoisted = it
+            .hoisted
+            .iter()
+            .filter(|it| !self.is_fixed_to_viewport(**it))
+            .map(|it| self.overflow_contribution(*it));
+        match (!self.boxes.transformed.is_empty())
+            .then(|| self.boxes.transformed.get(&id))
+            .flatten()
+        {
+            Some(parts) => {
+                let out_of_flow = hoisted
+                    .filter(|it| !it.is_empty())
+                    .reduce(|a, b| a.union(&b))
+                    .unwrap_or_default();
+                parts.overflow.set([reach, out_of_flow]);
+                add(&mut reach, out_of_flow);
+            }
+            None => hoisted.for_each(|it| add(&mut reach, it)),
+        }
         if it.scrolls() {
             reach = Some(reach.union(&self.padded_flow(id)))
                 .filter(|it| !it.is_empty())
@@ -931,6 +984,7 @@ impl Document {
                 to,
                 start: None,
                 duration,
+                coasts_from: None,
             });
         }
     }
@@ -995,11 +1049,26 @@ impl Document {
         for mut smooth in core::mem::take(&mut self.scrolling.smooth) {
             let start = *smooth.start.get_or_insert(now - 16.0);
             let t = ((now - start) / smooth.duration).min(1.0) as f32;
-            let eased = Easing::EASE_IN_OUT.apply(t.into(), false) as f32;
-            let offset =
+            let eased = match smooth.coasts_from.map(|from| {
+                [
+                    from,
+                    crate::values::mix(from, coasting::time_at(0.0), t),
+                    coasting::time_at(0.0),
+                ]
+                .map(coasting::position_at)
+            }) {
+                Some([from, now, to]) => (now - from) / (to - from),
+                None => Easing::EASE_IN_OUT.apply(t.into(), false) as f32,
+            };
+            let mut offset =
                 [0, 1].map(|axis| crate::values::mix(smooth.from[axis], smooth.to[axis], eased));
+            let mut is_at_end = false;
+            if let Some(id) = smooth.coasts_from.and_then(|_| self.scroller(smooth.node)) {
+                offset = self.clamp_offset(id, offset);
+                is_at_end = offset == self.clamp_offset(id, smooth.to);
+            }
             self.set_scroll_offset(smooth.node, offset);
-            match t < 1.0 {
+            match t < 1.0 && !is_at_end {
                 true => self.scrolling.smooth.push(smooth),
                 false => {
                     self.scrolling
@@ -1043,6 +1112,58 @@ impl Document {
                 self.repaint(it);
             }
         }
+    }
+
+    /// What the user has just scrolled goes on, at first with that many pixels per second.
+    pub(crate) fn fling(&mut self, velocity: [f32; 2]) {
+        const TOO_SLOW: f32 = 50.0;
+        let fastest = velocity[0].abs().max(velocity[1].abs());
+        let Some((node, _)) = self.scrolling.settling.take_if(|_| fastest >= TOO_SLOW) else {
+            return;
+        };
+        let Some(id) = self.scroller(node) else {
+            return;
+        };
+        let (from, [start, end]) = (
+            self.scroll_offset(node),
+            [coasting::time_at(fastest).max(0.0), coasting::time_at(0.0)],
+        );
+        let way = coasting::position_at(end) - coasting::position_at(start);
+        let beyond = [0, 1].map(|axis| {
+            from[axis]
+                + if self.boxes[id].overflow[axis] == Overflow::Hidden {
+                    0.0
+                } else {
+                    velocity[axis] / fastest * way
+                }
+        });
+        let within = self.clamp_offset(id, beyond);
+        let snapped = self.snap(node, from, within, Intent::EndAndDirection);
+        let (to, duration) = (
+            if snapped == within { beyond } else { snapped },
+            f64::from(end - start) * 1000.0,
+        );
+        self.scrolling.smooth.push(Smooth {
+            by_user: true,
+            request: 0,
+            node,
+            from,
+            to,
+            start: None,
+            duration,
+            coasts_from: Some(start),
+        });
+    }
+
+    /// Returns whether anything did.
+    pub(crate) fn stop_coasting(&mut self) -> bool {
+        let stopped: Vec<_> = self
+            .scrolling
+            .smooth
+            .extract_if(.., |it| it.coasts_from.is_some())
+            .collect();
+        stopped.iter().for_each(|it| self.end_gesture(it.node));
+        !stopped.is_empty()
     }
 
     pub(crate) fn user_scroll(
@@ -1098,6 +1219,7 @@ impl Document {
                             to,
                             start: None,
                             duration: 150.0,
+                            coasts_from: None,
                         });
                     } else {
                         self.set_scroll_offset(node, to);

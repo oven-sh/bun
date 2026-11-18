@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use super::blur::{self, mirror};
 use super::border::{self, Border};
-use super::gradient::{Geometry, Gradient, Spread};
+use super::gradient::{Geometry, Gradient, Ramp, Spread};
 use super::raster::{
     Clip, Coverage, IntRect, Layer, Paint, Path, Pixel, average_scale, blend_row, has_radii,
     inner_band, map_point, map_rect, premultiply, scale, transform,
@@ -98,12 +98,22 @@ impl GlyphPlacer {
             },
             shift: 0,
             hint: is_at_rest
-                && frame.scale < 1.5
-                && size <= LARGEST_HINTED
-                && !cfg!(target_os = "macos"),
+                && (cfg!(windows)
+                    || frame.scale < 1.5 && size <= LARGEST_HINTED && !cfg!(target_os = "macos")),
             color: text::ink_for(text::face(face)?, color),
         };
         Some(GlyphPlacer { key, matrix })
+    }
+
+    /// For what goes to the screen as it is.
+    #[cfg(windows)]
+    pub fn for_parts_of_pixels(mut self, frame: &Frame, color: u32) -> GlyphPlacer {
+        if let Some(ink) = text::ink_for_parts(color).filter(|_| {
+            self.key.hint && frame.scale < 2. && self.key.size <= LARGEST_HINTED as u32 * 64
+        }) {
+            self.key.color = ink;
+        }
+        self
     }
 
     /// The same for all that place glyphs whole pixels apart.
@@ -153,6 +163,8 @@ fn draw_glyph(layer: &mut Layer, image: &GlyphImage, x: i32, y: i32, clip: &Clip
         GlyphPixels::Mask(mask) => {
             layer.fill(rect, Some(mask), clip, &Paint::Solid(premultiply(color)))
         }
+        #[cfg(any(test, windows))]
+        GlyphPixels::Parts(_) => {}
         GlyphPixels::Color(source) => {
             let alpha = color as u8;
             let copy = |left: i32, top: i32, row: &mut [Pixel]| {
@@ -459,6 +471,11 @@ impl Painter<'_> {
                 let clip = clip.within(Coverage::of_path(&scene.path(*verbs), rule, matrix, area));
                 self.paint(scene.content(index), layer, matrix, &clip);
             }
+            Item::PushClipOutline(outline)
+                if let Some(ramp) = self.ramp_in(index, outline, matrix, area) =>
+            {
+                self.fill_outline(layer, outline, matrix, clip, area, &Paint::Ramp(&ramp));
+            }
             Item::PushClipOutline(outline) => {
                 self.paint(
                     scene.content(index),
@@ -552,7 +569,7 @@ impl Painter<'_> {
                     premultiply(*color),
                     (opacity.clamp(0., 1.) * 255.).round() as u8,
                 );
-                self.fill_outline(layer, outline, matrix, clip, area, color);
+                self.fill_outline(layer, outline, matrix, clip, area, &Paint::Solid(color));
             }
             Item::PushLayer { opacity, blend, .. } => {
                 let group = self.render_layer(index, matrix, area).map(|mut group| {
@@ -653,20 +670,92 @@ impl Painter<'_> {
         matrix: &Transform,
         clip: &Clip,
         area: IntRect,
-        color: Pixel,
+        paint: &Paint,
     ) {
-        let paint = Paint::Solid(color);
         if outline.how != 0 || outline.crisp {
-            return layer.fill_coverage(&self.cover(outline, matrix, area), clip, &paint);
+            return layer.fill_coverage(&self.cover(outline, matrix, area), clip, paint);
         }
         let (path, clip) = (self.scene.path(outline.verbs), clip.within_rect(area));
         match (outline.stroke.width > 0., outline.even_odd) {
             (true, _) => self.with_stroke(&outline.stroke, |it| {
-                layer.fill_path(&path, it, matrix, &clip, &paint)
+                layer.fill_path(&path, it, matrix, &clip, paint)
             }),
-            (_, true) => layer.fill_path(&path, Fill::EvenOdd, matrix, &clip, &paint),
-            (_, false) => layer.fill_path(&path, Fill::NonZero, matrix, &clip, &paint),
+            (_, true) => layer.fill_path(&path, Fill::EvenOdd, matrix, &clip, paint),
+            (_, false) => layer.fill_path(&path, Fill::NonZero, matrix, &clip, paint),
         }
+    }
+
+    /// With the transform from device pixels to its space.
+    fn shade(&self, item: &Item, matrix: &Transform) -> Option<(Gradient, Transform)> {
+        let Item::Shade {
+            from,
+            to,
+            matrix: by,
+            stops,
+            spread,
+            ..
+        } = item
+        else {
+            return None;
+        };
+        let geometry = match from[2] < 0. && to[2] < 0. {
+            true => Geometry::Linear {
+                from: [from[0], from[1]],
+                to: [to[0], to[1]],
+            },
+            false => Geometry::Radial {
+                from: *from,
+                to: *to,
+            },
+        };
+        let spread = [Spread::Pad, Spread::Repeat, Spread::Reflect][usize::from(*spread).min(2)];
+        Some((
+            Gradient::new(geometry, self.scene.stops(*stops), spread, false),
+            matrix.pre_concat(transform(*by)).invert()?,
+        ))
+    }
+
+    /// If it is all over the clip at `index`, and nothing else is in there.
+    fn ramp_in(
+        &self,
+        index: usize,
+        outline: &abi::Outline,
+        matrix: &Transform,
+        area: IntRect,
+    ) -> Option<Ramp> {
+        let holds = |it: &Rect,
+                     Rect {
+                         x,
+                         y,
+                         width,
+                         height,
+                     }: Rect| {
+            let slack = (width + height) / 4096.;
+            it.x - slack <= x
+                && it.y - slack <= y
+                && x + width <= it.x + it.width + slack
+                && y + height <= it.y + it.height + slack
+        };
+        let content = self.scene.content(index);
+        let shade = match &self.scene.items[content.clone()] {
+            [shade @ Item::Shade { bounds, .. }] if holds(bounds, outline.bounds) => shade,
+            [
+                Item::PushClip(shape),
+                shade @ Item::Shade { bounds, .. },
+                Item::Pop,
+            ] if !self.frame.snaps
+                && !has_radii(shape)
+                && holds(&shape.rect, outline.bounds)
+                && holds(bounds, outline.bounds) =>
+            {
+                shade
+            }
+            _ => return None,
+        };
+        let (gradient, inverse) = self
+            .shade(shade, matrix)
+            .filter(|_| !self.left_out.iter().any(|it| content.contains(it)))?;
+        gradient.ramp(&inverse, [area.left, area.top])
     }
 
     fn cover(&self, outline: &abi::Outline, matrix: &Transform, area: IntRect) -> Coverage {
@@ -725,30 +814,17 @@ impl Painter<'_> {
             | Item::PushProjection(_) => {}
             Item::Mask { .. } | Item::Input | Item::Pop => {}
             Item::Path { outline, color } => {
-                self.fill_outline(layer, outline, matrix, clip, area, premultiply(*color));
+                self.fill_outline(
+                    layer,
+                    outline,
+                    matrix,
+                    clip,
+                    area,
+                    &Paint::Solid(premultiply(*color)),
+                );
             }
-            Item::Shade {
-                from,
-                to,
-                matrix: by,
-                stops,
-                spread,
-                ..
-            } => {
-                let geometry = match from[2] < 0. && to[2] < 0. {
-                    true => Geometry::Linear {
-                        from: [from[0], from[1]],
-                        to: [to[0], to[1]],
-                    },
-                    false => Geometry::Radial {
-                        from: *from,
-                        to: *to,
-                    },
-                };
-                let spread =
-                    [Spread::Pad, Spread::Repeat, Spread::Reflect][usize::from(*spread).min(2)];
-                let gradient = Gradient::new(geometry, scene.stops(*stops), spread, false);
-                let Some(inverse) = matrix.pre_concat(transform(*by)).invert() else {
+            Item::Shade { .. } => {
+                let Some((gradient, inverse)) = self.shade(item, matrix) else {
                     return;
                 };
                 layer.fill(

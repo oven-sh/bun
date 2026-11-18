@@ -1071,6 +1071,42 @@ test("Debugger.scriptParsed reports isModule and scriptLanguage from JSC's scrip
   ]);
 });
 
+test("the first client connects after bun test --isolate has dropped the global object that called open()", async () => {
+  const empty = `require("bun:test").test("empty", () => {});`;
+  using dir = tempDir("inspector-isolate", {
+    "a.test.js": empty,
+    "b.test.js": `require("bun:test").test("opens", () => {
+      const inspector = require("node:inspector");
+      inspector.open(0, "127.0.0.1");
+      require("fs").writeFileSync("url", inspector.url());
+    });`,
+    "c.test.js": empty,
+    "d.test.js": `require("bun:test").test("connects", async () => {
+      for (let i = 0; i < 3; i++) {
+        Bun.gc(true);
+        await new Promise(setImmediate);
+      }
+      const ws = new WebSocket(require("fs").readFileSync("url", "utf8"));
+      await new Promise((resolve, reject) => ((ws.onopen = resolve), (ws.onerror = reject)));
+      ws.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: "1 + 1" } }));
+      console.log(JSON.parse(await new Promise(resolve => (ws.onmessage = it => resolve(it.data)))).result.result.value);
+      ws.close();
+    });`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--isolate", "./a.test.js", "./b.test.js", "./c.test.js", "./d.test.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ answer: stdout.trim().split("\n").at(-1), stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+    answer: "2",
+    stderrIfFailed: "",
+    exitCode: 0,
+  });
+});
+
 test("disconnect does not clobber a console method reassigned by user code", () => {
   const session = new inspector.Session();
   session.connect();

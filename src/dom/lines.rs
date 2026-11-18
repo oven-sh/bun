@@ -2,12 +2,15 @@
 
 use core::cell::{Cell, OnceCell};
 use core::hint::select_unpredictable;
+use core::mem::take;
 use core::ops::Range;
 use std::rc::Rc;
 
 use smallvec::{SmallVec, smallvec};
 
-use crate::abi::{CLUSTER_BREAK_BEFORE, CLUSTER_SOFT_HYPHEN, CLUSTER_SPACE, Cluster, Letter, Rect};
+use crate::abi::{
+    CLUSTER_BREAK_BEFORE, CLUSTER_SOFT_HYPHEN, CLUSTER_SPACE, Cluster, Face, Letter, Rect,
+};
 use crate::block::{Floats, clears};
 use crate::boxes::{BoxId, Kind};
 use crate::characters::{Punctuation, is_blank, is_cursive, is_ideographic};
@@ -24,7 +27,7 @@ use crate::layout::{
 use crate::order::Order as _;
 use crate::platform::Shaped;
 use crate::positioned::Edge;
-use crate::properties::Style;
+use crate::properties::{Id, Style, Value};
 use crate::tree::NodeId;
 use crate::types::*;
 use crate::values::{Auto, Lp};
@@ -80,6 +83,8 @@ pub(crate) struct Line {
     end: f32,
     pub(crate) clusters: Range<u32>,
     pub(crate) fragments: Range<u32>,
+    /// Of the text, by `text-fit`.
+    pub(crate) scale: f32,
     pub(crate) overflow: Option<Box<Truncation>>,
     pub(crate) clamp: Option<Box<Truncation>>,
 }
@@ -420,6 +425,7 @@ struct Cut {
     cluster: u32,
 }
 
+#[derive(Clone, Copy)]
 struct Broken {
     start: Cut,
     /// One past the last item.
@@ -1268,12 +1274,188 @@ fn widen_bases(
 }
 
 /// Above and below the baseline, adding up to the font size before they are rounded.
-pub(crate) fn em_box(metrics: &crate::abi::FontMetrics, size: f32) -> [f32; 2] {
+fn em_box(metrics: &crate::abi::FontMetrics, size: f32) -> [f32; 2] {
     [metrics.ascent, metrics.descent].map(|it| {
         (it * size / (metrics.ascent + metrics.descent).max(1.0) - 0.01)
             .ceil()
             .min(it)
     })
+}
+
+/// Likewise, for the face that the cluster has got.
+pub(crate) fn em_box_at(inline: &Inline, cluster: u32, style: &Style, scale: f32) -> [f32; 2] {
+    let Some(face) = inline
+        .paragraph_of(cluster)
+        .shaped
+        .faces
+        .get(usize::from(inline.clusters[cluster as usize].face))
+    else {
+        return em_box(&style.metrics, style.font.size.0);
+    };
+    em_box_of(
+        &scaled(face, scale),
+        &style.metrics,
+        style.has_central_baseline(),
+    )
+}
+
+pub(crate) fn em_box_of(
+    face: &Face,
+    primary: &crate::abi::FontMetrics,
+    is_centered: bool,
+) -> [f32; 2] {
+    let up = (face.size
+        * if is_centered {
+            0.5
+        } else {
+            crate::platform::part_above_baseline(face)
+        }
+        * 64.0)
+        .round()
+        / 64.0;
+    [
+        up.ceil().min(primary.ascent),
+        (face.size - up).ceil().min(primary.descent),
+    ]
+}
+
+#[inline]
+pub(crate) fn scaled(face: &Face, scale: f32) -> Face {
+    let [ascent, descent, line_gap] = if scale == 1.0 {
+        [face.ascent, face.descent, face.line_gap]
+    } else {
+        scaled_extent([face.ascent, face.descent, face.line_gap], scale)
+    };
+    Face {
+        id: face.id,
+        size: face.size * scale,
+        ascent,
+        descent,
+        line_gap,
+    }
+}
+
+fn scaled_extent([ascent, descent, line_gap]: [f32; 3], scale: f32) -> [f32; 3] {
+    let [ascent, descent, all] =
+        [ascent, descent, ascent + descent + line_gap].map(|it| unit(it * scale));
+    [ascent, descent, all - ascent - descent]
+}
+
+#[derive(Clone, Copy)]
+struct TextFit {
+    grows: bool,
+    is_consistent: bool,
+    spares_last_lines: bool,
+    limit: Option<f32>,
+}
+
+impl TextFit {
+    fn of(root: &Style) -> Option<TextFit> {
+        let words = || {
+            root.other_if_set(Id::TextFit)
+                .into_iter()
+                .flat_map(str::split_ascii_whitespace)
+        };
+        let has = |word| words().any(|it| it == word);
+        let limit = words()
+            .find_map(|it| it.strip_suffix('%')?.parse::<f32>().ok())
+            .map(|it| it / 100.0);
+        (has("grow") || has("shrink")).then(|| TextFit {
+            grows: has("grow"),
+            is_consistent: !has("per-line") && !has("per-line-all"),
+            spares_last_lines: has("per-line"),
+            limit,
+        })
+    }
+
+    /// Nothing if the line has no say.
+    fn scale(self, line: &Broken, scalable: f32, free: f32) -> Option<f32> {
+        (unit(scalable) > 0.0 && free.abs() >= 2.0 && (scalable + free).is_finite())
+            .then_some(())?;
+        if (free > 0.0) != self.grows || self.spares_last_lines && line.is_forced {
+            return Some(1.0);
+        }
+        let scale =
+            (1.0 + (free + scalable - ceil_to_unit(scalable)) / ceil_to_unit(scalable)).max(0.0);
+        Some(match self.grows {
+            true => scale
+                .min(self.limit.map_or(f32::MAX, |it| it.max(1.0)))
+                .min(1e6),
+            false => scale.max(self.limit.map_or(0.0, |it| it.min(1.0))),
+        })
+    }
+}
+
+impl Source<'_> {
+    /// The clusters of text on the line, each with the spacing that does not depend on the font size.
+    fn visit_text(&self, line: &Broken, mut visit: impl FnMut(u32, f32)) {
+        for item in self.inline.items[line.start.item..line.end_item]
+            .iter()
+            .filter(|it| it.kind == ItemKind::Text)
+        {
+            let [letters, words] = [
+                &item.style.text.letter_spacing.0,
+                &item.style.text.word_spacing.0,
+            ]
+            .map(|it| it.resolve(0.0));
+            for at in item.clusters.start.max(line.start.cluster)
+                ..item.clusters.end.min(line.next.cluster)
+            {
+                visit(
+                    at,
+                    match self.inline.character(at) {
+                        '\t' => f32::MAX,
+                        ' ' | '\u{a0}' => letters + words,
+                        _ => letters,
+                    },
+                );
+            }
+        }
+    }
+
+    fn scalable_width(
+        &self,
+        line: &Broken,
+        advances: &[f32],
+        indent: f32,
+        counts_tabs: bool,
+    ) -> f32 {
+        let edges = (line.start.item..line.end_item).filter(|it| {
+            self.inline.items[*it].clusters.is_empty()
+                && !matches!(
+                    self.inline.items[*it].kind,
+                    ItemKind::Float(_) | ItemKind::OutOfFlow(_)
+                )
+        });
+        let all = indent
+            + edges.map(|it| self.widths[it]).sum::<f32>()
+            + advances[line.start.cluster as usize..line.next.cluster as usize]
+                .iter()
+                .sum::<f32>();
+        let (mut parts, mut hanging) = (Vec::new(), all - line.width);
+        self.visit_text(line, |at, fixed| {
+            parts.push((
+                advances[at as usize],
+                if counts_tabs && fixed == f32::MAX {
+                    0.0
+                } else {
+                    fixed
+                },
+            ))
+        });
+        while let Some((advance, _)) = parts.pop_if(|it| it.0 <= hanging + TOLERANCE) {
+            hanging -= advance;
+        }
+        parts
+            .iter()
+            .map(|(advance, fixed)| (advance - fixed).max(0.0))
+            .sum::<f32>()
+            - hanging
+    }
+}
+
+fn unite(a: [f32; 2], b: [f32; 2]) -> [f32; 2] {
+    [a[0].max(b[0]), a[1].max(b[1])]
 }
 
 fn margin(value: &Auto<Lp>, basis: f32) -> f32 {
@@ -1408,7 +1590,6 @@ fn baseline_shift(style: &Style, parent: &Style, [above, below]: [f32; 2], scale
             VerticalAlignName::Super => -(parent.font.size.0 / 3.0 + 1.0 / scale),
             VerticalAlignName::TextTop => above - parent.metrics.ascent,
             VerticalAlignName::TextBottom => parent.metrics.descent - below,
-            VerticalAlignName::Middle if parent.has_central_baseline() => (above - below) / 2.0,
             VerticalAlignName::Middle => (above - below - parent.metrics.x_height) / 2.0,
             _ => 0.0,
         },
@@ -1446,9 +1627,9 @@ pub(crate) fn trimmed(
     flips: bool,
     line: &Line,
 ) -> f32 {
-    let side = side ^ usize::from(flips);
+    let (side, scaled) = (side ^ usize::from(flips), document.style_on(line, root));
     [line.baseline - line.y, line.y + line.height - line.baseline][side]
-        - text_edges(document, root)[side]
+        - text_edges(document, scaled.as_ref().unwrap_or(root))[side]
 }
 
 impl TextBoxTrim {
@@ -1503,8 +1684,10 @@ struct Placement<'a> {
     slots: Slots,
     document: &'a Document,
     inline: &'a Inline,
+    items: &'a [Item],
     root: &'a Style,
     widths: &'a [f32],
+    scale: f32,
     embedded: &'a [Embedded],
     /// The room below the text of the line before that annotations may take. Negative if they stick out of it.
     room_for_annotations: f32,
@@ -1532,13 +1715,13 @@ impl<'a> Placement<'a> {
     fn style_of(&self, key: u32) -> &'a Style {
         match key {
             0 => self.root,
-            key => &self.inline.items[key as usize - 1].style,
+            key => &self.items[key as usize - 1].style,
         }
     }
 
     fn pieces(&mut self, line: &Broken, base_level: u8) -> Pieces {
-        let (inline, mut pieces) = (self.inline, Pieces::new());
-        let items = inline.items[..line.end_item]
+        let (inline, all, mut pieces) = (self.inline, self.items, Pieces::new());
+        let items = all[..line.end_item]
             .iter()
             .enumerate()
             .skip(line.start.item);
@@ -1549,9 +1732,10 @@ impl<'a> Placement<'a> {
             .rfind(|it| !is_blank(it))
             .map_or(line.start.cluster, |it| it + 1);
         if trailing > line.start.cluster && trailing == line.next.cluster {
-            self.lines.advances[trailing as usize - 1] -= inline.autospace_after(trailing - 1);
+            self.lines.advances[trailing as usize - 1] -=
+                inline.autospace_after(trailing - 1) * self.scale;
         }
-        for (index, item) in items.clone().rev() {
+        for (_, item) in items.clone().rev() {
             let range = item.clusters.start.max(line.start.cluster)
                 ..item.clusters.end.min(line.next.cluster);
             let is_space = |at: &u32| {
@@ -1559,7 +1743,7 @@ impl<'a> Placement<'a> {
                     == CLUSTER_SPACE
             };
             let spaces = range.clone().rev().take_while(is_space).count();
-            if !inline.items[index].style.text.collapse.preserves_spaces() {
+            if !item.style.text.collapse.preserves_spaces() {
                 range
                     .clone()
                     .rev()
@@ -1652,7 +1836,7 @@ impl<'a> Placement<'a> {
             && let Some(last) = pieces.iter().rposition(|it| !it.clusters.is_empty())
         {
             let (item, level) = (pieces[last].item, pieces[last].level);
-            let width = self.document.hyphen(&inline.items[item].style).1;
+            let width = self.document.hyphen(&all[item].style).1;
             pieces.insert(
                 last + 1,
                 Piece {
@@ -1677,7 +1861,7 @@ impl<'a> Placement<'a> {
         if let Some(found) = self.slots.find(key, boxes, |it| it.key) {
             return found;
         }
-        let item = &self.inline.items[key as usize - 1];
+        let item = &self.items[key as usize - 1];
         let parent = self.inline_box(boxes, item.parent);
         let extent = self.strut(&item.style);
         let (origin, shift) = match line_relative(&item.style) {
@@ -1790,15 +1974,81 @@ impl<'a> Placement<'a> {
             end,
             clusters,
             fragments: first..first + 1,
+            scale: 1.0,
             overflow: None,
             clamp: None,
         });
         y + height - self.room_for_annotations.min(0.0)
     }
 
+    /// `place` with larger or smaller text. `items` is what the last time has left.
+    #[cold]
+    fn place_scaled(
+        &mut self,
+        mut line: Broken,
+        scale: f32,
+        items: &mut Vec<Item>,
+        y: f32,
+        edges: [f32; 2],
+        indent: f32,
+    ) -> f32 {
+        let (document, source) = (
+            self.document,
+            Source {
+                inline: self.inline,
+                root: self.root,
+                widths: self.widths,
+            },
+        );
+        line.width +=
+            (scale - 1.0) * source.scalable_width(&line, &self.lines.advances, indent, false);
+        source.visit_text(&line, |at, fixed| {
+            let advance = &mut self.lines.advances[at as usize];
+            *advance = fixed.min(*advance) + (*advance - fixed).max(0.0) * scale;
+        });
+        if items.is_empty() {
+            items.extend_from_slice(self.items);
+        }
+        let parent = |index: &usize| (self.items.get(*index)?.parent as usize).checked_sub(1);
+        for index in (line.start.item..line.end_item)
+            .chain(core::iter::successors(parent(&line.start.item), parent))
+        {
+            let own = &self.items[index];
+            let has_text = matches!(
+                own.kind,
+                ItemKind::Text | ItemKind::Break | ItemKind::Open(_) | ItemKind::Close(_)
+            );
+            items[index].style = if has_text {
+                Rc::new(document.scaled_style(&own.style, scale))
+            } else {
+                Rc::clone(&own.style)
+            };
+        }
+        let (root, slots, lines, out_of_flow) = (
+            document.scaled_style(self.root, scale),
+            take(&mut self.slots),
+            take(&mut self.lines),
+            take(&mut self.out_of_flow),
+        );
+        let mut scaled = Placement {
+            items,
+            root: &root,
+            scale,
+            slots,
+            lines,
+            out_of_flow,
+            ..*self
+        };
+        let end = scaled.place(&line, y, edges, indent);
+        (self.trim, self.room_for_annotations) = (scaled.trim, scaled.room_for_annotations);
+        (self.slots, self.lines, self.out_of_flow) =
+            (scaled.slots, scaled.lines, scaled.out_of_flow);
+        end
+    }
+
     /// Returns where the line ends.
     fn place(&mut self, line: &Broken, mut y: f32, [left, right]: [f32; 2], indent: f32) -> f32 {
-        let (inline, root) = (self.inline, self.root);
+        let (inline, items, root) = (self.inline, self.items, self.root);
         let base_level = match inline.clusters.paragraphs.is_empty() {
             true => u8::from(root.is_rtl()),
             false => inline.paragraph_of(line.start.cluster).shaped.base_level,
@@ -1814,13 +2064,14 @@ impl<'a> Placement<'a> {
                 is_uniform: true,
                 ..
             },
-        ] = &inline.items[line.start.item..line.end_item]
+        ] = &items[line.start.item..line.end_item]
             && !(rtl
                 || inline.has_bidi
                 || line.has_hyphen
                 || self.has_quirks
                 || self.trim[0]
-                || self.document.boxes.has_annotations)
+                || self.document.boxes.has_annotations
+                || self.scale != 1.0)
             && align != TextAlign::Justify
             && item.style.text.collapse == WhiteSpaceCollapse::Collapse
             && !item.style.has_central_baseline()
@@ -1841,9 +2092,9 @@ impl<'a> Placement<'a> {
         let is_annotation = self.is_annotation;
         if (align == TextAlign::Justify || is_annotation) && free > 0.0 {
             let advances = &mut self.lines.advances;
-            let justify = |piece: &Piece| match inline.items[piece.item].kind {
+            let justify = |piece: &Piece| match items[piece.item].kind {
                 _ if is_annotation => TextJustify::Auto,
-                ItemKind::Text => inline.items[piece.item].style.text.justify,
+                ItemKind::Text => items[piece.item].style.text.justify,
                 _ => root.text.justify,
             };
             let last = (line.start.cluster..line.next.cluster)
@@ -1906,7 +2157,7 @@ impl<'a> Placement<'a> {
         let (first_out_of_flow, mut first_after_content) = (self.out_of_flow.len(), usize::MAX);
         let mut left_of_content = 0;
         for piece in &pieces {
-            let item = &inline.items[piece.item];
+            let item = &items[piece.item];
             let key = match item.kind {
                 ItemKind::Open(_) => piece.item as u32 + 1,
                 _ => item.parent,
@@ -2021,6 +2272,7 @@ impl<'a> Placement<'a> {
                         let cluster = &inline.clusters[piece.clusters.start as usize];
                         let faces = &inline.paragraph_of(piece.clusters.start).shaped.faces;
                         extent = faces.get(usize::from(cluster.face)).map(|face| {
+                            let face = scaled(face, self.scale);
                             let [ascent, descent] = match item.style.has_central_baseline() {
                                 true => crate::writing::centered(face.ascent, face.descent),
                                 false => [face.ascent, face.descent],
@@ -2053,7 +2305,7 @@ impl<'a> Placement<'a> {
                 let index = self.inline_box(&mut boxes, at);
                 let grown = &mut boxes[index].range;
                 *grown = [grown[0].min(range[0]), grown[1].max(range[1])];
-                (at, range) = (inline.items[at as usize - 1].parent, [x, x + piece.width]);
+                (at, range) = (items[at as usize - 1].parent, [x, x + piece.width]);
             }
             content.push((piece, x, owner, origin, shift));
             x += piece.width;
@@ -2066,9 +2318,8 @@ impl<'a> Placement<'a> {
             it.extent = [0.0; 2];
         }
         let [mut above, mut below] = boxes[0].extent;
-        let aligned = |index: usize| {
-            line_relative(&inline.items[(boxes[index].key as usize).checked_sub(1)?].style)
-        };
+        let aligned =
+            |index: usize| line_relative(&items[(boxes[index].key as usize).checked_sub(1)?].style);
         let origins = || (1..boxes.len()).filter(|index| boxes[*index].origin == *index);
         for index in origins() {
             let missing =
@@ -2086,53 +2337,102 @@ impl<'a> Placement<'a> {
         }
         let mut annotations = Vec::new();
         if self.document.boxes.has_annotations && has_content {
-            let mut extents: Vec<(usize, [f32; 2])> = Vec::new();
-            for (piece, _, _, origin, shift) in content
-                .iter()
-                .filter(|it| it.3 == 0 || aligned(it.3).is_none())
-            {
+            let (mut extents, mut taken) = (Vec::<(usize, [f32; 2])>::new(), [f32::MIN; 2]);
+            for (piece, _, _, origin, shift) in &content {
                 let (item, embedded) = (
-                    &inline.items[piece.item],
+                    &items[piece.item],
                     self.embedded.get(piece.item).copied().unwrap_or_default(),
                 );
                 let [up, down] = match item.kind {
-                    ItemKind::Text => em_box(&item.style.metrics, item.style.font.size.0),
+                    ItemKind::Text if piece.clusters.is_empty() => {
+                        em_box(&item.style.metrics, item.style.font.size.0)
+                    }
+                    ItemKind::Text
+                        if piece
+                            .clusters
+                            .clone()
+                            .all(|it| inline.character(it) == '\t') =>
+                    {
+                        continue;
+                    }
+                    ItemKind::Text => {
+                        em_box_at(inline, piece.clusters.start, &item.style, self.scale)
+                    }
                     ItemKind::Atomic(_) => embedded.extent(),
                     _ => continue,
                 };
-                extents.extend((*origin == 0).then_some((piece.item, [up - shift, down + shift])));
+                match (origin, aligned(*origin)) {
+                    (0, _) => extents.push((piece.item, [up - shift, down + shift])),
+                    (_, side) => {
+                        let shift = shift
+                            + if side == Some(VerticalAlignName::Top) {
+                                boxes[*origin].extent[0] - above
+                            } else {
+                                below - boxes[*origin].extent[1]
+                            };
+                        taken = unite(taken, [up - shift, down + shift]);
+                    }
+                }
             }
             let widest = |all: &mut dyn Iterator<Item = [f32; 2]>| {
                 all.reduce(|a, b| [a[0].max(b[0]), a[1].max(b[1])])
                     .unwrap_or_default()
             };
-            let text = widest(&mut extents.iter().map(|it| it.1));
+            let text = unite(widest(&mut extents.iter().map(|it| it.1)), taken);
+            // Those that are as far from the text share a baseline.
+            let mut columns: Vec<(Range<usize>, usize, usize, [f32; 2])> = Vec::new();
             for index in line.start.item..line.end_item {
-                let ItemKind::Annotation(_, base) = inline.items[index].kind else {
+                let ItemKind::Annotation(id, base) = items[index].kind else {
                     continue;
                 };
-                let around = widest(
-                    &mut extents
-                        .iter()
-                        .filter(|it| (base as usize..index).contains(&it.0))
-                        .map(|it| it.1),
+                let side = usize::from(
+                    items[base as usize].style.text.ruby_position == RubyPosition::Under,
                 );
-                let [up, down] = em_box(
-                    &inline.items[index].style.metrics,
-                    inline.items[index].style.font.size.0,
-                );
-                let baseline = match inline.items[base as usize].style.text.ruby_position {
-                    RubyPosition::Over => -around[0] - down,
-                    RubyPosition::Under => around[1] + up,
-                };
-                extents.extend(
-                    (self.embedded[index].size[1] > 0.0)
-                        .then_some((index, [up - baseline, down + baseline])),
-                );
-                annotations.push((index, baseline));
+                let level = columns
+                    .iter()
+                    .rev()
+                    .take_while(|it| it.0.end >= base as usize)
+                    .filter(|it| it.1 == side)
+                    .map(|it| it.2 + 1)
+                    .max()
+                    .unwrap_or(0);
+                columns.push((
+                    base as usize..index,
+                    side,
+                    level,
+                    self.document
+                        .extent_of_annotation(id, &self.embedded[index]),
+                ));
             }
+            let reaches = [0, 1].map(|side| {
+                let is_base = |item: usize| {
+                    columns
+                        .iter()
+                        .any(|it| (it.1, it.2) == (side, 0) && it.0.contains(&item))
+                };
+                let bases = extents
+                    .iter()
+                    .filter(|it| is_base(it.0))
+                    .map(|it| it.1)
+                    .reduce(unite)
+                    .filter(|it| it[0] + it[1] != 0.0);
+                let mut reach = bases.unwrap_or([above, below])[side];
+                for level in 0.. {
+                    let on_level = || columns.iter().filter(|it| (it.1, it.2) == (side, level));
+                    let Some(extent) = on_level().map(|it| it.3).reduce(unite) else {
+                        return (level > 0).then_some(reach);
+                    };
+                    reach += extent[1 - side];
+                    annotations.extend(
+                        on_level().map(|it| (it.0.end, if side == 0 { -reach } else { reach })),
+                    );
+                    reach += extent[side];
+                }
+                None
+            });
+            annotations.order_by_key(|it| it.0);
             for (index, extent) in &mut extents {
-                let item = &inline.items[*index];
+                let item = &items[*index];
                 if let Some((_, is_under)) = self
                     .document
                     .emphasis_mark(&item.style)
@@ -2141,7 +2441,10 @@ impl<'a> Placement<'a> {
                     extent[usize::from(is_under)] += item.style.font.size.0 / 2.0;
                 }
             }
-            let all = widest(&mut extents.iter().map(|it| it.1));
+            let all = unite(
+                unite(widest(&mut extents.iter().map(|it| it.1)), taken),
+                reaches.map(|it| it.unwrap_or(f32::MIN)),
+            );
             let sticks_out = |side: usize| {
                 if all[side] > text[side] {
                     all[side] - [above, below][side]
@@ -2170,7 +2473,7 @@ impl<'a> Placement<'a> {
         let mut order: SmallVec<[_; 4]> = boxes[1..].iter().collect();
         order.order_by_key(|it| it.key);
         for it in order {
-            let item = &inline.items[it.key as usize - 1];
+            let item = &items[it.key as usize - 1];
             if !matches!(item.kind, ItemKind::Open(_)) {
                 continue;
             }
@@ -2214,15 +2517,14 @@ impl<'a> Placement<'a> {
                 .unwrap_or_default()
         };
         for (index, below_baseline) in annotations {
-            let (ItemKind::Annotation(id, base), it) =
-                (inline.items[index].kind, &self.embedded[index])
+            let (ItemKind::Annotation(id, base), it) = (items[index].kind, &self.embedded[index])
             else {
                 continue;
             };
             let ([left, right], baseline) = (column(base, index), y + above + below_baseline);
             let [before, after] = [self.widths[base as usize], self.widths[index]];
-            let overhang = it.size[0] - (right - left);
-            let x = match inline.items[base as usize].style.text.ruby_align {
+            let overhang = it.margin[3] + it.size[0] + it.margin[1] - (right - left);
+            let x = match items[base as usize].style.text.ruby_align {
                 RubyAlign::Start => left,
                 _ => {
                     left - (overhang + after - before) / 2.0 * if rtl { -1.0 } else { 1.0 }
@@ -2233,8 +2535,8 @@ impl<'a> Placement<'a> {
             let fragment = Fragment {
                 kind: FragmentKind::Atomic(id),
                 item: index as u32,
-                x,
-                y: baseline - it.baseline,
+                x: x + it.margin[3],
+                y: baseline - it.baseline + it.margin[0],
                 width,
                 height,
                 baseline,
@@ -2243,7 +2545,7 @@ impl<'a> Placement<'a> {
             self.lines.fragments.push(fragment);
         }
         for (piece, x, owner, origin, shift) in content {
-            let item = &inline.items[piece.item];
+            let item = &items[piece.item];
             let (offset, layer) = (boxes[owner].offset, boxes[owner].layer);
             let (x, baseline) = (x + offset[0], baseline_of(origin) + shift + offset[1]);
             let (ascent, descent) = (item.style.metrics.ascent, item.style.metrics.descent);
@@ -2270,7 +2572,7 @@ impl<'a> Placement<'a> {
                 _ => continue,
             };
             let baseline = if item.style.has_central_baseline() {
-                rect[1] + self.document.current_style(item).metrics.ascent
+                rect[1] + self.document.current_style(item).metrics.ascent * self.scale
             } else {
                 baseline
             };
@@ -2292,7 +2594,7 @@ impl<'a> Placement<'a> {
             .enumerate()
             .skip(first_out_of_flow)
         {
-            if inline.items[*item].style.was_inline {
+            if items[*item].style.was_inline {
                 position[1] += edges[1].of([0.0, height]);
             } else if if rtl {
                 index < left_of_content
@@ -2314,6 +2616,7 @@ impl<'a> Placement<'a> {
             end,
             clusters: line.start.cluster..line.next.cluster,
             fragments: first..self.lines.fragments.len() as u32,
+            scale: self.scale,
             overflow: None,
             clamp: None,
         });
@@ -3971,16 +4274,20 @@ impl Prose {
         let count_at = |available: f32| {
             let (mut first, mut indent, mut count) = (0, indents[0], 0);
             while first < self.runs.len() && count < 7 {
+                let (next, width, _) = self.break_line(
+                    first,
+                    [indent, available, 0.0],
+                    self.breaks_words[0],
+                    hyphens,
+                )?;
                 (first, indent, count) = (
-                    self.break_line(
-                        first,
-                        [indent, available, 0.0],
-                        self.breaks_words[0],
-                        hyphens,
-                    )?
-                    .0,
+                    next,
                     indents[2],
-                    count + 1,
+                    if width > available + TOLERANCE {
+                        7
+                    } else {
+                        count + 1
+                    },
                 );
             }
             Some(count)
@@ -4265,7 +4572,7 @@ impl Document {
         {
             return None;
         }
-        let ellipsis = self.shape_plain("…", style);
+        let ellipsis = self.shape_plain("…", self.style_on(line, style).as_ref().unwrap_or(style));
         let width: f32 = ellipsis.clusters().iter().map(|it| it.advance).sum();
         let pieces = || {
             lines.fragments_of(line).iter().flat_map(|fragment| {
@@ -4309,6 +4616,48 @@ impl Document {
                 .unwrap_or(line.left),
         };
         Some(Box::new(truncation))
+    }
+
+    /// Above and below its baseline.
+    fn extent_of_annotation(&self, id: BoxId, embedded: &Embedded) -> [f32; 2] {
+        let it = &self.boxes[id];
+        let edges = it.layout.border + it.layout.padding;
+        if [
+            edges.top,
+            edges.bottom,
+            embedded.margin[0],
+            embedded.margin[2],
+        ] != [0.0; 4]
+        {
+            return embedded.extent();
+        }
+        let Some((inline, line)) = it
+            .children
+            .first()
+            .and_then(|it| self.boxes[*it].inline.as_deref())
+            .and_then(|it| Some((it, it.lines.lines.first()?)))
+        else {
+            return [0.0; 2];
+        };
+        let extents = inline
+            .lines
+            .fragments
+            .iter()
+            .filter_map(|it| match &it.kind {
+                FragmentKind::Text { clusters, .. } if !clusters.is_empty() => {
+                    let style = &inline.items[it.item as usize].style;
+                    let ([up, down], shift) = (
+                        em_box_at(inline, clusters.start, style, 1.0),
+                        it.y + style.metrics.ascent - line.baseline,
+                    );
+                    Some([up - shift, down + shift])
+                }
+                FragmentKind::Atomic(_) if it.width > 0.0 => {
+                    Some([line.baseline - it.y, it.y + it.height - line.baseline])
+                }
+                _ => None,
+            });
+        extents.reduce(unite).unwrap_or_default()
     }
 
     fn lay_out_embedded(
@@ -4405,6 +4754,33 @@ impl Document {
         output
     }
 
+    #[cold]
+    fn scaled_style(&self, style: &Style, scale: f32) -> Style {
+        let mut scaled = style.clone();
+        scaled
+            .groups
+            .set(&Value::FontSize(FontSize::new(style.font.size.0 * scale)));
+        let m = &mut scaled.metrics;
+        [m.ascent, m.descent, m.line_gap] = scaled_extent([m.ascent, m.descent, m.line_gap], scale);
+        for it in [
+            &mut m.x_height,
+            &mut m.cap_height,
+            &mut m.zero_advance,
+            &mut m.space_advance,
+            &mut m.underline_offset,
+            &mut m.underline_thickness,
+        ] {
+            *it *= scale;
+        }
+        scaled
+    }
+
+    /// If it is another one.
+    #[inline]
+    pub(crate) fn style_on(&self, line: &Line, style: &Style) -> Option<Style> {
+        (line.scale != 1.0).then(|| self.scaled_style(style, line.scale))
+    }
+
     fn with_leading(&self, ascent: f32, descent: f32, line_height: f32) -> [f32; 2] {
         let scale = self.environment.scale;
         let above =
@@ -4446,13 +4822,31 @@ impl Document {
     fn has_level_lines(&self, id: BoxId, input: &Input) -> Option<bool> {
         let it = &self.boxes[id];
         let (root, container) = (&*it.style, &self.boxes[it.parent]);
-        (!(self.boxes.has_annotations || input.trim != [false; 2] || it.has_turned_children)
+        (!(self.boxes.has_annotations
+            || input.trim != [false; 2]
+            || it.has_turned_children
+            || self.boxes.fits_text && TextFit::of(root).is_some())
             && [it.mode, it.turned, container.mode, root.text.writing_mode]
                 == [WritingMode::HorizontalTb; 4])
             .then(|| {
                 container.overflow[0] != Overflow::Visible
                     && container.style.layout.text_overflow == TextOverflow::Ellipsis
             })
+    }
+
+    /// How many lines `text-wrap: balance` is about, if the rest is clamped.
+    fn balanced_lines(&self, id: BoxId) -> Option<usize> {
+        let (it, container) = (&self.boxes[id], &self.boxes[self.boxes[id].parent]);
+        let is_clamped = it.style.text.wrap_style == TextWrapStyle::Balance
+            && container.is_clamped()
+            && container.children.first() == Some(&id);
+        container
+            .style
+            .rare
+            .line_clamp
+            .0
+            .filter(|_| is_clamped)
+            .map(|it| it.0 as usize)
     }
 
     /// What `run_algorithm` comes to for prose, and what the fragments cover. `floats` are in the way.
@@ -4470,7 +4864,9 @@ impl Document {
         let indents = if is_plain {
             [0.0; 3]
         } else {
-            self.text_indents(id, input.width)
+            self.balanced_lines(id)
+                .is_none()
+                .then(|| self.text_indents(id, input.width))?
         };
         let mut inline = self.boxes[id].inline.take()?;
         let mut lines = core::mem::take(&mut inline.lines);
@@ -4704,6 +5100,7 @@ impl Document {
                 end: start + used,
                 clusters,
                 fragments: index..index + 1,
+                scale: 1.0,
                 overflow: None,
                 clamp: None,
             });
@@ -4828,13 +5225,28 @@ impl Document {
             lefts.resize(letters.len() + 1, 0.0);
             loop {
                 let (mut x, mut used, mut cut, mut is_forced) = (0.0, 0.0, (first, 0.0), true);
-                for (at, (it, left)) in letters[..before_break]
-                    .iter()
-                    .zip(&mut lefts[..])
-                    .enumerate()
-                    .skip(first)
-                {
-                    let here = (at, used);
+                let mut may_fit = first == 0
+                    && (breaking == 0 || before_break as f32 * metrics.average_advance <= limit);
+                for (at, it) in letters[..before_break].iter().enumerate().skip(first) {
+                    if may_fit && it.advance > 0.0 {
+                        let (mut end, mut odd) = (x, 0);
+                        for (it, left) in letters[at..before_break].iter().zip(&mut lefts[at..]) {
+                            (*left, end, odd) = (
+                                end,
+                                end + it.advance,
+                                odd | it.advance.to_bits().wrapping_sub(1) >> 24 & 0x80
+                                    | u32::from(it.flags),
+                            );
+                        }
+                        if odd <= u32::from(CLUSTER_SPACE | CLUSTER_BREAK_BEFORE)
+                            && (end <= limit || breaking == 0)
+                        {
+                            (x, used) = (end, end);
+                            break;
+                        }
+                        may_fit = false;
+                    }
+                    let (here, left) = ((at, used), &mut lefts[at]);
                     (cut, *left) = (select_unpredictable(it.flags & breaking != 0, here, cut), x);
                     if it.advance > 0.0 && it.flags <= CLUSTER_SPACE | CLUSTER_BREAK_BEFORE {
                         x += it.advance;
@@ -4997,6 +5409,7 @@ impl Document {
                     end: start + used,
                     clusters,
                     fragments,
+                    scale: 1.0,
                     overflow: None,
                     clamp: None,
                 });
@@ -5863,6 +6276,7 @@ impl Document {
                 end: line_end,
                 clusters,
                 fragments,
+                scale: 1.0,
                 overflow: None,
                 clamp: None,
             });
@@ -5990,6 +6404,7 @@ impl Document {
             end: x + label.width,
             clusters,
             fragments: 0..1,
+            scale: 1.0,
             overflow: None,
             clamp: None,
         };
@@ -6245,6 +6660,8 @@ impl Document {
                 let ItemKind::Annotation(child, _) = inline.items[index].kind else {
                     continue;
                 };
+                let mut margin = crate::layout::margin(&self.boxes[child].style, basis.0);
+                let width = (width - margin.sums()[0]).max(0.0);
                 let own = self.lay_out(
                     child,
                     Input {
@@ -6255,26 +6672,31 @@ impl Document {
                     None,
                 );
                 self.absorb(child, &own, &mut output);
-                let baseline = own.baselines[0].unwrap_or(own.height);
-                let baseline = if self.boxes[id].mode.flips_lines() {
-                    own.height - baseline
-                } else {
-                    baseline
-                };
+                let mut baseline = own.baselines[0].unwrap_or(own.height);
+                if self.boxes[id].mode.flips_lines() {
+                    (baseline, margin.top, margin.bottom) =
+                        (own.height - baseline, margin.bottom, margin.top);
+                }
                 embedded[index] = Embedded {
                     size: [width, own.height],
-                    margin: [0.0; 4],
-                    baseline,
+                    margin: margin.to_array(),
+                    baseline: margin.top + baseline,
                 };
             }
         }
         inline.size_atomics(&root, &widths);
         let in_the_way = floats.are_in_the_way();
+        let trims_at_breaks = if breaks.is_some() {
+            self.trims_at_breaks(id)
+        } else {
+            [false; 2]
+        };
         let may_be_prose = (if breaks.is_some() {
-            !in_the_way
+            !in_the_way && trims_at_breaks == [false; 2]
         } else {
             !embedded.is_empty()
-        }) && self.has_level_lines(id, input).is_some();
+        }) && self.has_level_lines(id, input).is_some()
+            && self.balanced_lines(id).is_none();
         let indents = self.text_indents(id, width);
         let mut lines = Lines {
             lines: old_lines,
@@ -6337,23 +6759,86 @@ impl Document {
         {
             improved = Breaker::improve(sources, &hyphen, &mut lines.advances, indents, width);
         } else if is_plain && bisects {
-            let mut count_at = |available| {
-                let mut count = 0;
-                breaker!(&mut lines.advances, 0.0).visit_lines(indents, available, |_| count += 1);
-                count
+            // Too many if a word does not fit.
+            let mut ends_at = |available, last: u32| {
+                let mut ends = Vec::new();
+                breaker!(&mut lines.advances, 0.0).visit_lines(indents, available, |line| {
+                    let breaks_word = !line.is_forced
+                        && inline.clusters[line.next.cluster as usize].flags & CLUSTER_BREAK_BEFORE
+                            == 0
+                        && !is_space(inline, line.next.cluster.saturating_sub(1));
+                    ends.extend(core::iter::repeat_n(
+                        line.next.cluster,
+                        if line.start.cluster >= last {
+                            0
+                        } else if breaks_word || line.width > available + TOLERANCE {
+                            7
+                        } else {
+                            1
+                        },
+                    ));
+                });
+                ends
             };
-            let count = count_at(width);
-            if (2..=6).contains(&count) {
+            let mut ends = ends_at(width, u32::MAX);
+            ends.truncate(self.balanced_lines(id).unwrap_or(usize::MAX));
+            if let (count @ 2..=6, Some(last)) = (ends.len(), ends.last().copied())
+                && ends.array_windows().all(|[a, b]| a != b)
+            {
                 let (mut low, mut high) = (width / count as f32 / 2.0, width);
                 while high - low > (high * f32::EPSILON).max(1.0) {
                     let middle = (low + high) / 2.0;
-                    if count_at(middle) > count {
+                    if ends_at(middle, last).len() > count {
                         low = middle
                     } else {
                         high = middle
                     }
                 }
                 narrowest = high;
+            }
+        }
+        let (fit, mut common_scale, mut scaled_items) = (
+            self.boxes.fits_text.then(|| TextFit::of(&root)).flatten(),
+            None::<f32>,
+            Vec::new(),
+        );
+        let follows_float = || {
+            container
+                .children
+                .iter()
+                .take_while(|it| **it != id)
+                .map(|it| &self.boxes[*it].style)
+                .filter(|it| !it.is_out_of_flow())
+                .last()
+                .is_some_and(|it| it.is_floating())
+        };
+        let fit = fit.filter(|_| {
+            !inline.has_ruby
+                && !inline
+                    .items
+                    .iter()
+                    .any(|it| matches!(it.kind, ItemKind::Float(_)))
+                && !follows_float()
+        });
+        let scale_of =
+            |fit: TextFit, line: &Broken, advances: &[f32], indent: f32, available: f32| {
+                let source = sources[usize::from(!line.start.is_start())];
+                fit.scale(
+                    line,
+                    source.scalable_width(line, advances, indent, fit.is_consistent),
+                    available + indent - line.width,
+                )
+            };
+        if let Some(fit) = fit.filter(|it| it.is_consistent) {
+            let (mut all, mut indent) = (Vec::new(), indents[0]);
+            breaker!(&mut lines.advances, 0.0)
+                .visit_lines(indents, width.min(narrowest), |line| all.push(*line));
+            for line in &all {
+                common_scale = scale_of(fit, line, &lines.advances, indent, width)
+                    .into_iter()
+                    .chain(common_scale)
+                    .reduce(f32::min);
+                indent = indents[2 - usize::from(line.is_forced)];
             }
         }
 
@@ -6365,8 +6850,10 @@ impl Document {
             },
             document: self,
             inline,
+            items: &inline.items,
             root: &root,
             widths: &widths,
+            scale: 1.0,
             embedded: &embedded,
             room_for_annotations: input.room_for_annotations,
             trim: input.trim,
@@ -6566,15 +7053,35 @@ impl Document {
                 root: placement.root,
                 widths: placement.widths,
             } = sources[usize::from(!at.is_start())];
+            placement.items = &placement.inline.items;
             let (out_of_flow, state) = (
                 placement.out_of_flow.len(),
                 (placement.trim, placement.room_for_annotations),
             );
+            placement.trim[0] |=
+                trims_at_breaks[0] && flow.as_ref().is_some_and(|it| it.follows_break(slot.y));
             holds = [
                 holds[0].max(line.width),
                 if line.is_forced { holds[1] } else { width },
             ];
-            y = placement.place(&line, slot.y, [slot.x, slot.x + slot.width], indent);
+            let scale = fit.and_then(|it| {
+                if it.is_consistent {
+                    common_scale.filter(|it| *it > 0.0)
+                } else {
+                    scale_of(it, &line, &placement.lines.advances, indent, slot.width)
+                }
+            });
+            y = match scale.filter(|it| *it != 1.0) {
+                Some(scale) => placement.place_scaled(
+                    line,
+                    scale,
+                    &mut scaled_items,
+                    slot.y,
+                    [slot.x, slot.x + slot.width],
+                    indent,
+                ),
+                None => placement.place(&line, slot.y, [slot.x, slot.x + slot.width], indent),
+            };
             if y - slot.y > height
                 && floats.len() > 0
                 && space_at(floats, slot.y, y - slot.y).width < slot.width
@@ -6596,10 +7103,16 @@ impl Document {
                 continue;
             }
             if let (Some(flow), Some(last)) = (&mut flow, placement.lines.lines.last()) {
+                let bottom = y - if trims_at_breaks[1] && last.has_content {
+                    trimmed(self, &root, 1, placement.flips, last)
+                } else {
+                    0.0
+                };
                 if let Some(resumed) = flow
-                    .break_before_line(id, &columns, [slot.y, y], &root.text)
+                    .break_before_line(id, &columns, [slot.y, bottom], &root.text)
                     .filter(|_| last.has_content)
                 {
+                    (placement.trim, placement.room_for_annotations) = (state.0, 0.0);
                     placement
                         .lines
                         .fragments
@@ -6771,6 +7284,7 @@ impl Document {
             && !inline.has_bidi;
         let is_simple = is_plain_flow
             && !self.boxes.has_annotations
+            && fit.is_none()
             && !has_ellipsis
             && !flips
             && inline.first_line.is_none()

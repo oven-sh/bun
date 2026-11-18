@@ -168,11 +168,41 @@ pub struct Shape {
     /// Nothing is outside.
     pub area: IntRect,
     pub(super) is_intricate: bool,
+    /// Its chains are in no order.
+    pub is_dense: bool,
+    pub role: Role,
     /// Of the edges, in quarters of rows.
     pub length: u32,
     line_count: u32,
     /// In `Edges::periods`.
     periods: Option<u32>,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum Role {
+    Whole,
+    /// It is filled together with the others.
+    Part,
+    /// Its area has all others.
+    LastPart,
+}
+
+/// What `Outline::finish` makes.
+#[derive(Clone, Copy, Default, PartialEq)]
+pub enum Density {
+    #[default]
+    Never,
+    IfItPays,
+    Always,
+}
+
+pub const MAX_DENSE_WIDTH: usize = 4096;
+/// In quarters of rows. With more, nothing is filled.
+pub const MAX_LENGTH: u64 = 1 << 29;
+
+/// For edges of so many quarters of rows: on average there is one in every few pixels.
+pub fn is_dense(length: u64, area: IntRect) -> bool {
+    length > 1 << 17 && length > area.area() as u64 / 2
 }
 
 impl Shape {
@@ -183,9 +213,35 @@ impl Shape {
             rule: Rule::NonZero,
             area,
             is_intricate: false,
+            is_dense: false,
+            role: Role::Whole,
             length: 0,
             line_count: 0,
             periods: None,
+        }
+    }
+}
+
+impl Shape {
+    fn period(&self) -> i32 {
+        if self.is_dense && self.length / 32 < self.line_count {
+            STRIP
+        } else {
+            PERIOD
+        }
+    }
+
+    /// The last one gets the area of all.
+    pub fn into_part(self, all: Option<IntRect>) -> Shape {
+        Shape {
+            area: all.unwrap_or(self.area),
+            is_dense: true,
+            role: if all.is_some() {
+                Role::LastPart
+            } else {
+                Role::Part
+            },
+            ..self
         }
     }
 }
@@ -199,10 +255,13 @@ pub struct Edges {
     turns: Vec<i32>,
     /// Where the chains for each period of a shape's rows start.
     periods: Vec<u32>,
+    /// Only for shapes that get an index.
+    pub density: Density,
 }
 
 /// So many rows, from a multiple of it on, look the same whether or not those above were filled before.
 pub const PERIOD: i32 = 32;
+pub const STRIP: i32 = 8;
 
 impl Edges {
     pub fn clear(&mut self) {
@@ -226,9 +285,9 @@ impl Edges {
     /// For filling it a period at a time without going through all that is above.
     pub fn index(&mut self, shape: &mut Shape) {
         const LITTLE: u64 = 1 << 10;
-        let period = |quarter: i32| {
-            (quarter.div_euclid(PERIOD * 4) - shape.area.top.div_euclid(PERIOD)).max(0) as usize
-        };
+        let shift = shape.period().trailing_zeros();
+        let period =
+            |quarter: i32| ((quarter >> (shift + 2)) - (shape.area.top >> shift)).max(0) as usize;
         let (
             Edges {
                 lines,
@@ -238,7 +297,9 @@ impl Edges {
             },
             count,
         ) = (self, period(shape.area.bottom * 4 - 1) + 1);
-        if u64::from(shape.line_count) * (count as u64 - 1) < LITTLE {
+        if u64::from(shape.line_count) * (count as u64 - 1) < LITTLE && !shape.is_dense
+            || shape.area.is_empty()
+        {
             return;
         }
         let (all, first) = (
@@ -288,12 +349,136 @@ impl Edges {
                 i32::MAX,
             );
         };
+        let period = shape.period();
         let at =
-            first as usize + (y.div_euclid(PERIOD) - shape.area.top.div_euclid(PERIOD)) as usize;
+            first as usize + (y.div_euclid(period) - shape.area.top.div_euclid(period)) as usize;
         (
             &self.chains[self.periods[at] as usize..self.periods[at + 1] as usize],
-            (y + PERIOD) & -PERIOD,
+            (y + period) & -period,
         )
+    }
+
+    /// For each strip of `STRIP` rows from `top` on, in one period. `take` gets its number and columns outside of which there is nothing, then
+    /// `true` with those that are inside in all of its rows. False if that is too much work.
+    pub fn strips(
+        &self,
+        shape: &Shape,
+        top: i32,
+        bottom: i32,
+        mut take: impl FnMut(usize, Range<i32>, bool),
+    ) -> bool {
+        const FEW: usize = 12;
+        let (area, mut active, mut count) = (
+            shape.area,
+            [Chain {
+                first: END,
+                top: 0,
+                winding: 0,
+            }; FEW],
+            0,
+        );
+        let (first, mut waiting) = (
+            top.max(area.top & -STRIP),
+            self.chains_from(shape, top.max(area.top)).0,
+        );
+        if shape.is_intricate || shape.is_dense || waiting.len() > FEW * 4 {
+            return false;
+        }
+        for y in (first..bottom.min(area.bottom)).step_by(STRIP as usize) {
+            let (start, end) = (y * 4, (y + STRIP).min(bottom) * 4);
+            let quarters =
+                |from: i32, to: i32| (((1u64 << (to - from)) - 1) << (from - start)) as u32;
+            // From where to where, in which quarters, and the winding.
+            let (mut sides, mut found) = ([(0f32, 0f32, 0, 0); FEW], 0);
+            while let Some((it, rest)) = waiting.split_first().filter(|it| it.0.top < end) {
+                let Some(place) = active.get_mut(count) else {
+                    return false;
+                };
+                (*place, count, waiting) = (*it, count + 1, rest);
+            }
+            for index in 0..count {
+                let (mut chain, mut low, mut high) = (active[index], f32::MAX, f32::MIN);
+                while let Some(line) = self
+                    .lines
+                    .get(chain.first as usize)
+                    .filter(|it| it.bottom <= start)
+                {
+                    chain.first = line.below;
+                }
+                let (mut next, mut from, mut to) = (chain.first, end, start);
+                while let Some(line) = self.lines.get(next as usize).filter(|it| it.top < end) {
+                    let [a, b] = [line.top.max(start), line.bottom.min(end)];
+                    (low, high, from, to, next) = (
+                        low.min(line.at(a)).min(line.at(b)),
+                        high.max(line.at(a)).max(line.at(b)),
+                        from.min(a),
+                        b,
+                        line.below,
+                    );
+                }
+                if from < to {
+                    let place = sides[..found].partition_point(|it| it.0 < low);
+                    sides.copy_within(place..found, place + 1);
+                    (sides[place], active[found], found) = (
+                        (low, high, quarters(from, to), chain.winding),
+                        chain,
+                        found + 1,
+                    );
+                }
+            }
+            count = found;
+            let (all, column) = (quarters(start, end), |x: f32| {
+                floor(x.clamp(area.left as f32, area.right as f32))
+            });
+            let Some(leftmost) = sides[..found].first() else {
+                continue;
+            };
+            let (mut winding, mut up, mut down, mut reach, mut inside) =
+                (0, 0, 0, f32::MIN, SmallVec::<_, 4>::new());
+            for (index, &(_, high, rows, turn)) in sides[..found].iter().enumerate() {
+                let (same, other) = if turn > 0 {
+                    (&mut up, &mut down)
+                } else {
+                    (&mut down, &mut up)
+                };
+                if rows == all {
+                    winding += turn;
+                } else if turn.abs() != 1 || *same & rows & !*other != 0 {
+                    return false;
+                } else {
+                    (*same, *other) = (*same | rows & !*other, *other & !rows);
+                    if *same == all {
+                        (*same, winding) = (0, winding + turn);
+                    }
+                }
+                reach = reach.max(high);
+                if up | down == 0
+                    && shape.rule.has(winding)
+                    && (area.top..=area.bottom - (end - start) / 4).contains(&y)
+                {
+                    inside.push(
+                        (column(reach) + 1).min(area.right) - i32::from(reach < area.left as f32)
+                            ..sides[..found]
+                                .get(index + 1)
+                                .map_or(area.right, |it| column(it.0)),
+                    );
+                }
+            }
+            take(
+                (y - top) as usize / STRIP as usize,
+                (column(leftmost.0) - 1).max(area.left)..if up | down == 0 && winding == 0 {
+                    (column(reach) + 2).min(area.right)
+                } else {
+                    area.right
+                },
+                false,
+            );
+            inside
+                .into_iter()
+                .filter(|it| !it.is_empty())
+                .for_each(|it| take((y - top) as usize / STRIP as usize, it, true));
+        }
+        true
     }
 
     /// Only what matters in `area` is kept.
@@ -336,7 +521,6 @@ pub struct Outline<'a> {
 impl Outline<'_> {
     /// With more, nothing is filled.
     const MAX_COUNT: usize = 1 << 22;
-    const MAX_LENGTH: u64 = 1 << 29;
     const MAX_SORTED_LENGTH: u64 = 1 << 23;
 
     fn is_full(&self) -> bool {
@@ -585,6 +769,7 @@ impl Outline<'_> {
             lines,
             chains,
             turns,
+            density,
             ..
         } = edges;
         let bounds = IntRect::new(
@@ -594,7 +779,7 @@ impl Outline<'_> {
             rows[1].saturating_add(3) >> 2,
         )
         .intersect(area);
-        if is_full || length > Self::MAX_LENGTH || rows[0] >= rows[1] || bounds.is_empty() {
+        if is_full || length > MAX_LENGTH || rows[0] >= rows[1] || bounds.is_empty() {
             lines.truncate(first_line);
             chains.truncate(first_chain);
             return Shape::blank(IntRect::default());
@@ -618,12 +803,21 @@ impl Outline<'_> {
             }
             (top, winding) = (bottom, winding + turn);
         }
-        chains[first_chain..].sort_unstable_by_key(|it| it.top);
+        let is_dense = *density == Density::Always
+            || *density == Density::IfItPays
+                && is_dense(length, bounds)
+                && bounds.width() <= MAX_DENSE_WIDTH
+                && matches!(rule, Rule::NonZero | Rule::EvenOdd);
+        if !is_dense {
+            chains[first_chain..].sort_unstable_by_key(|it| it.top);
+        }
         Shape {
             chains: first_chain as u32..chains.len() as u32,
             rule,
             area: bounds,
             is_intricate: length > Self::MAX_SORTED_LENGTH,
+            is_dense,
+            role: Role::Whole,
             length: length as u32,
             line_count: (lines.len() - first_line) as u32,
             periods: None,

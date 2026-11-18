@@ -1,5 +1,6 @@
 //! The domains `Network` and `Fetch`.
 
+use std::collections::VecDeque;
 use std::rc::{Rc, Weak};
 
 use bun_web::headers::HeaderList;
@@ -9,9 +10,10 @@ use bun_web::net::embedder::{About, Details, Outgoing, Paused, Received, Request
 use bun_web::net::response::{Answer, Cached, is_null_body_status};
 use bun_web::request::{Destination, RequestBody};
 use bun_web::time::wall_now;
+use bun_web::url::Url;
 
 use super::contents::Contents;
-use super::{Emit, Outcome, seconds, target_id_of};
+use super::{Emit, Failure, Outcome, seconds, target_id_of};
 use crate::contents::inspection;
 use crate::prelude::*;
 use crate::session::load::{all_at_once, from_pairs, latin1};
@@ -19,7 +21,7 @@ use crate::task::{self, LocalFuture};
 use crate::text;
 use crate::value::Value;
 
-const MOST_BODIES: usize = 200;
+const ROOM_FOR_BODIES: usize = 100 << 20;
 
 /// `*` is any text, `?` any character, and a backslash escapes.
 fn matches(pattern: &[u8], text: &[u8]) -> bool {
@@ -47,6 +49,7 @@ struct Known {
     id: u32,
     kind: &'static str,
     redirect: Value,
+    sent: f64,
 }
 
 #[derive(Default)]
@@ -65,7 +68,19 @@ pub(super) struct Watcher {
     reports: Cell<bool>,
     patterns: RefCell<Vec<String>>,
     paused: RefCell<Vec<(String, task::Sender<Value>)>>,
-    bodies: RefCell<Vec<(String, SharedBytes)>>,
+    bodies: RefCell<VecDeque<Kept>>,
+    /// The last of each parameter of the commands that change how requests fare.
+    conditions: RefCell<Value>,
+    /// The request for the document that is to come.
+    next_loader: RefCell<Option<String>>,
+    /// The token of a document, and the request that it has come from.
+    loader: RefCell<(String, String)>,
+}
+
+struct Kept {
+    request: String,
+    url: String,
+    body: SharedBytes,
 }
 
 fn watchers_of(contents: JSValue) -> Vec<Rc<Watcher>> {
@@ -87,6 +102,9 @@ impl Watcher {
             patterns: RefCell::default(),
             paused: RefCell::default(),
             bodies: RefCell::default(),
+            conditions: Value::empty().into(),
+            next_loader: RefCell::default(),
+            loader: RefCell::default(),
         })
     }
 
@@ -129,18 +147,56 @@ impl Watcher {
         Ok(Value::empty())
     }
 
-    pub(super) fn body(&self, params: &Value) -> Outcome {
+    fn body_of(&self, params: &Value) -> Result<SharedBytes, Failure> {
         let bodies = self.bodies.borrow();
-        let found = bodies.iter().find(|it| params["requestId"].is(&it.0));
-        let (_, bytes) = found.ok_or("No resource with given identifier found")?;
-        Ok(record! { "body": text::base64(bytes), "base64Encoded": true })
+        let found = bodies.iter().find(|it| params["requestId"].is(&it.request));
+        Ok((found.ok_or("No resource with given identifier found")?.body).clone())
+    }
+
+    pub(super) fn body(&self, params: &Value) -> Outcome {
+        Ok(record! { "body": text::base64(&self.body_of(params)?), "base64Encoded": true })
+    }
+
+    pub(super) fn search(&self, params: &Value) -> Outcome {
+        Ok(record! { "result": super::scripts::search(&string(&self.body_of(params)?), params) })
+    }
+
+    pub(super) fn body_from(&self, url: &str) -> Option<SharedBytes> {
+        let bodies = self.bodies.borrow();
+        Some(bodies.iter().rfind(|it| it.url == url)?.body.clone())
+    }
+
+    pub(super) fn change_conditions(&self, params: &Value) {
+        self.conditions.replace(self.conditions.take().and(params));
+    }
+
+    pub(super) fn loader(&self) -> String {
+        let token = self.contents.token();
+        if self.loader.borrow().0 != token {
+            let request = self.next_loader.take().unwrap_or_else(|| token.clone());
+            self.loader.replace((token, request));
+        }
+        self.loader.borrow().1.clone()
+    }
+
+    fn obstacle(&self, url: &Url) -> Option<NetError> {
+        let conditions = self.conditions.borrow();
+        let is_blocked = |it: &Value| matches(format!("*{}*", it.text()).as_bytes(), url.href());
+        if conditions["urls"].items().iter().any(is_blocked) {
+            return Some(NetError::BlockedByClient);
+        }
+        (conditions["offline"].is_truthy() && url.is_http())
+            .then_some(NetError::InternetDisconnected)
     }
 
     fn tell(&self, method: &str, params: &Value) -> JsResult<()> {
         if self.reports.get() {
             let about = record! {
                 "frameId": &*target_id_of(self.contents.object()),
-                "loaderId": self.contents.token(),
+                "loaderId": match params["type"].is("Document") {
+                    true => params["requestId"].display(),
+                    false => self.loader(),
+                },
                 "documentURL": self.contents.page().url(),
                 "timestamp": seconds(),
             };
@@ -183,8 +239,34 @@ pub(super) fn record_of(headers: &HeaderList, separator: &str) -> Value {
     Value::Record(headers.combined().map(|it| member(it.0)).collect())
 }
 
-fn describe(about: &About, response: &Received) -> Value {
+fn timing(sent: f64) -> Value {
+    let waited = (seconds() - sent) * 1e3;
+    let known = record! {
+        "requestTime": sent,
+        "sendStart": 0,
+        "sendEnd": 0,
+        "pushStart": 0,
+        "pushEnd": 0,
+        "receiveHeadersStart": waited,
+        "receiveHeadersEnd": waited,
+    };
+    let unknown = ["proxy", "dns", "connect", "ssl"].map(|it| [it, "Start", it, "End"]);
+    let unknown = unknown
+        .as_flattened()
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|it| it.concat());
+    let unknown = unknown.chain(["workerStart".into(), "workerReady".into()]);
+    unknown.fold(known, |all, it| all.with(&it, -1))
+}
+
+fn describe(about: &About, response: &Received, sent: f64) -> Value {
     let kind = latin1(&response.headers.get_or_empty(b"content-type"));
+    let charset = response
+        .headers
+        .mime()
+        .and_then(|it| it.parameter(b"charset").map(latin1));
     record! {
         "url": string(about.url.href()),
         "status": i32::from(response.status),
@@ -192,7 +274,10 @@ fn describe(about: &About, response: &Received) -> Value {
         "headers": record_of(&response.headers, "\n"),
         "mimeType": text::before(&kind, ";"),
         "fromDiskCache": response.cached != Cached::No,
+        "charset": charset.unwrap_or_default(),
         "encodedDataLength": 0,
+        "securityState": if about.url.scheme() == b"http" { "insecure" } else { "secure" },
+        "timing": timing(sent),
     }
 }
 
@@ -210,7 +295,12 @@ pub(crate) fn request_changed(
     let Some(at) = requests.iter().position(|it| it.id == about.id) else {
         return Ok(());
     };
-    let response = || Value::from(details.received.as_ref().map(|it| describe(about, it)));
+    let (received, sent) = (details.received.as_ref(), requests[at].sent);
+    let response = || Value::from(received.map(|it| describe(about, it, sent)));
+    let transferred = match received.is_some_and(|it| it.cached == Cached::Local) {
+        true => 0.,
+        false => details.size as f64,
+    };
     let known = record! { "requestId": request_id(about), "type": requests[at].kind };
     let (method, params) = match event {
         RequestEvent::BeforeRedirect => {
@@ -223,7 +313,7 @@ pub(crate) fn request_changed(
         ),
         RequestEvent::Completed => (
             "Network.loadingFinished",
-            record! { "encodedDataLength": 0 },
+            record! { "encodedDataLength": transferred },
         ),
         RequestEvent::ErrorOccurred => {
             let error = (details.outcome.and_then(Result::err)).unwrap_or(NetError::Failed);
@@ -238,8 +328,14 @@ pub(crate) fn request_changed(
         requests.swap_remove(at);
     }
     drop(requests);
-    let params = known.and(&params);
-    (watchers_of_page(page).iter()).try_for_each(|it| it.tell(method, &params))
+    let data = record! { "dataLength": details.size as f64, "encodedDataLength": transferred };
+    let (data, params) = (known.clone().and(&data), known.and(&params));
+    watchers_of_page(page).iter().try_for_each(|it| {
+        if event == RequestEvent::Completed {
+            it.tell("Network.dataReceived", &data)?;
+        }
+        it.tell(method, &params)
+    })
 }
 
 fn kind_of(destination: Option<Destination>) -> &'static str {
@@ -276,6 +372,7 @@ pub(crate) fn pause(
         id,
         kind,
         redirect: Value::Undefined,
+        sent: seconds(),
     });
     drop(requests);
     let bytes = match &request.body {
@@ -289,6 +386,8 @@ pub(crate) fn pause(
             "url": string(about.url.href()),
             "method": string(&request.method),
             "headers": record_of(&request.headers, ", "),
+            "initialPriority": "High",
+            "referrerPolicy": "strict-origin-when-cross-origin",
             "hasPostData": request.body.is_some(),
             "postData": bytes.map(|it| string(it)),
             "postDataEntries": bytes.map(|it| list![record! { "bytes": text::base64(it) }]),
@@ -300,10 +399,24 @@ pub(crate) fn pause(
     };
     let (watchers, url) = (watchers_of_page(page), about.url.clone());
     for it in &watchers {
+        if kind == "Document" {
+            it.loader();
+            it.next_loader.replace(Some(request_id(about)));
+        }
         task::report(it.tell("Network.requestWillBeSent", &described));
     }
     Box::pin(async move {
+        let mut uses_cache = true;
         for watcher in watchers {
+            watcher.obstacle(&url).map_or(Ok(()), Err)?;
+            let conditions = watcher.conditions.borrow().clone();
+            uses_cache &= !conditions["cacheDisabled"].is_truthy();
+            for (name, value) in conditions["headers"].members() {
+                (request.headers).set(name.text().as_bytes(), value.text().as_bytes());
+            }
+            if let latency @ 1.. = conditions["latency"].number() as u64 {
+                task::sleep(latency).await;
+            }
             let Some(answer) = watcher.pause(url.href(), &described) else {
                 continue;
             };
@@ -332,16 +445,24 @@ pub(crate) fn pause(
                 request.body = Some(all_at_once(decode(&answer["postData"])));
             }
         }
-        Ok(Paused::Continue(request))
+        Ok(match uses_cache {
+            true => Paused::Continue(request),
+            false => Paused::ContinueWithoutCache(request),
+        })
     })
 }
 
 pub(crate) fn keep_body(page: JSValue, about: &About, body: &SharedBytes) {
     for watcher in watchers_of_page(page) {
         let mut bodies = watcher.bodies.borrow_mut();
-        bodies.push((request_id(about), body.clone()));
-        if bodies.len() > MOST_BODIES {
-            bodies.remove(0);
+        bodies.push_back(Kept {
+            request: request_id(about),
+            url: string(about.url.href()),
+            body: body.clone(),
+        });
+        let mut size = bodies.iter().map(|it| it.body.len() + 1024).sum::<usize>();
+        while let Some(oldest) = bodies.pop_front_if(|_| size > ROOM_FOR_BODIES) {
+            size -= oldest.body.len() + 1024;
         }
     }
 }

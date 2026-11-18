@@ -2,20 +2,21 @@
 
 use core::cell::{Cell, RefCell};
 
-use bun_jsc::bindgen::{IntoError as _, JsHeap, JsInterface as _, JsScope, Result};
+use bun_jsc::bindgen::{IntoError as _, JsHeap, JsInterface as _, JsLocal, JsScope, Result};
 use bun_jsc::{DOMExceptionCode, JSValue};
 use bun_web::channel::Endpoint;
 
 use super::Failure;
-use super::bitmap::{MAX_AREA, Source, area_of, snapshot};
+use super::bitmap::{MAX_AREA, Source, area_of, has_alpha, snapshot};
 use super::context::Context;
 use super::element::{Frame, commit};
 use super::encoding::encode_in_parallel;
-use super::host::{DEFAULT_SETTINGS, Kind, Mode, Settings};
+use super::host::{DEFAULT_SETTINGS, Kind, Mode};
 use super::image_bitmap::ImageBitmap;
 use super::text::Inherited;
 use super::transfer::send_frame;
 use crate::api::core::EventTarget;
+use crate::api::webgl::Readback;
 use crate::generated_bindgen::canvas::{
     HTMLCanvasElement, ImageEncodeOptions, OffscreenRenderingContextId as Id,
     js_OffscreenCanvas as js,
@@ -110,40 +111,47 @@ impl OffscreenCanvas {
         }
     }
 
-    fn set_context<'a>(&'a self, heap: &JsHeap<'a>, settings: &Settings) -> &'a Context {
-        let kind = Kind::Offscreen {
+    fn kind(&self) -> Kind {
+        Kind::Offscreen {
             has_placeholder: js::placeholder(self).is_some() || self.frames.borrow().is_some(),
-        };
-        let context = Context::create(
-            self.realm(heap),
-            self.to_js(),
-            self.bitmap_size(),
-            kind,
-            settings,
-        );
-        js::set_context(self, Some(context));
-        context
+        }
     }
 
-    fn backing<'a>(&'a self, heap: &JsHeap<'a>) -> &'a Context {
-        js::context(self).unwrap_or_else(|| self.set_context(heap, &DEFAULT_SETTINGS))
+    fn backing<'a>(&'a self, heap: &JsHeap<'a>, wanted: Readback) -> &'a Context {
+        js::context(self)
+            .map(|it| it.up_to_date(wanted))
+            .unwrap_or_else(|| {
+                let context = Context::create(
+                    self.realm(heap),
+                    self.to_js(),
+                    self.bitmap_size(),
+                    self.kind(),
+                    &DEFAULT_SETTINGS,
+                );
+                js::set_context(self, Some(context));
+                context
+            })
     }
 
-    pub(super) fn source<'a>(&'a self, heap: &JsHeap<'a>) -> core::result::Result<Source, Failure> {
+    pub(crate) fn source<'a>(
+        &'a self,
+        heap: &JsHeap<'a>,
+        wanted: Readback,
+    ) -> core::result::Result<Source, Failure> {
         self.require_attached()
-            .map(|()| self.backing(heap).bitmap.source())
+            .map(|()| self.backing(heap, wanted).bitmap.source())
     }
 
     #[optimize(size)]
     pub(super) fn update_placeholder<'a>(&'a self, cx: Cx<'_, 'a>) -> Result<'a, ()> {
         let context = js::context(self);
-        let size = context.map_or_else(|| self.bitmap_size(), |it| it.bitmap.size());
+        let size = context.map_or_else(|| self.bitmap_size(), |it| it.shown().size());
         match js::placeholder(self) {
             Some(element) => commit(
                 cx,
                 element,
                 context.map_or(Frame::Blank, |it| {
-                    Frame::Shared(std::rc::Rc::clone(&it.bitmap))
+                    Frame::Shared(std::rc::Rc::clone(it.shown()))
                 }),
                 size,
             ),
@@ -189,25 +197,39 @@ impl OffscreenCanvas {
 
     pub(crate) fn get_context<'a>(
         &'a self,
-        heap: &JsHeap<'a>,
+        cx: Cx<'_, 'a>,
         id: Id,
-        settings: &Settings,
-    ) -> core::result::Result<JSValue, Failure> {
-        self.require_attached()?;
+        options: JsLocal<'a>,
+    ) -> Result<'a, JSValue> {
         let wanted = match id {
             Id::TwoD => Mode::TwoD,
             Id::Bitmaprenderer => Mode::BitmapRenderer,
-            Id::Webgl | Id::Webgl2 | Id::Webgpu => return Ok(JSValue::NULL),
+            Id::Webgl => Mode::WebGl,
+            Id::Webgl2 => Mode::WebGl2,
+            Id::Webgpu => Mode::None,
         };
-        if self.mode.get() == Mode::None {
-            self.set_context(heap, wanted.takes(settings));
+        let settings = wanted.settings(cx, options.to_js())?;
+        self.require_attached()
+            .map_err(|it| it.into_error(&cx.heap))?;
+        if self.mode.get() == Mode::None
+            && wanted != Mode::None
+            && let Some(made) = Context::create_for(
+                cx,
+                wanted,
+                self,
+                self.bitmap_size(),
+                self.kind(),
+                &settings,
+                options.to_js(),
+            )?
+            && self.mode.get() == Mode::None
+        {
+            js::set_context(self, Some(made));
             self.mode.set(wanted);
         }
-        Ok(if self.mode.get() == wanted {
-            self.backing(heap).exposed(self.realm(heap), wanted)
-        } else {
-            JSValue::NULL
-        })
+        Ok(js::context(self)
+            .filter(|_| self.mode.get() == wanted)
+            .map_or(JSValue::NULL, |it| it.exposed(self.realm(&cx.heap), wanted)))
     }
 
     #[optimize(size)]
@@ -220,7 +242,7 @@ impl OffscreenCanvas {
                 "Cannot transfer an ImageBitmap from an OffscreenCanvas with no context",
             ));
         }
-        let context = self.backing(heap);
+        let context = self.backing(heap, Readback::Transfer);
         let (source, size) = (context.bitmap.source(), context.bitmap.size());
         if !(1..=MAX_AREA).contains(&area_of(size)) {
             return Err(Failure::Dom(
@@ -250,7 +272,16 @@ impl OffscreenCanvas {
     ) -> Result<'a, JSValue> {
         let context = self
             .require_attached()
-            .map(|()| self.backing(&cx.heap))
+            .map(|()| {
+                self.backing(
+                    &cx.heap,
+                    if has_alpha(options.r#type) {
+                        Readback::AsDrawn
+                    } else {
+                        Readback::Premultiplied
+                    },
+                )
+            })
             .and_then(|it| {
                 it.bitmap.require_origin_clean()?;
                 if let [0, _] | [_, 0] = self.size.get() {

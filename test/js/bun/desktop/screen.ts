@@ -1,4 +1,4 @@
-import { isArm64, isLinux, isMacOS, tempDir } from "harness";
+import { isArm64, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { hasWayland, openCompositor } from "./compositor";
 import { hasLibrary } from "./library";
@@ -43,17 +43,29 @@ export async function openScreen() {
 export const screens = [...(hasScreen ? ["X11"] : []), ...(hasWayland ? ["Wayland"] : [])];
 
 /** There is only the one that somebody may be looking at. */
-export const ownScreen = hasLibrary && isMacOS && isArm64 && process.env.BUN_DESKTOP_TEST_SCREEN ? ["macOS"] : [];
-const freePlaces = Array.from({ length: 16 }, (_, index) => ({
-  x: 20 + (index % 4) * 240,
-  y: 50 + (index >> 2) * 160,
-}));
+const names = isWindows ? ["GDI", "DirectComposition"] : isMacOS && isArm64 ? ["macOS"] : [];
+export const ownScreen = hasLibrary && process.env.BUN_DESKTOP_TEST_SCREEN ? names : [];
+const freePlaces = isWindows
+  ? [0, 1, 2, 3, 5, 6, 7, 8].map(index => ({
+      x: 10 + (index % 3) * 350,
+      y: 10 + Math.floor(index / 3) * 250,
+      alwaysOnTop: true,
+    }))
+  : Array.from({ length: 16 }, (_, index) => ({ x: 20 + (index % 4) * 240, y: 50 + (index >> 2) * 160 }));
+const waiting: (() => void)[] = [];
 
 export async function openOn(where: string) {
-  if (where === "macOS") {
+  if (names.includes(where)) {
+    while (!freePlaces.length) await new Promise<void>(resolve => waiting.push(resolve));
     const place = freePlaces.shift()!;
-    const env = { BUN_DESKTOP_HEADLESS: "0", SCREEN: where, PLACE: JSON.stringify(place) };
-    return { env, [Symbol.asyncDispose]: async () => void freePlaces.push(place) };
+    const renderer = { GDI: "software", DirectComposition: "gpu" }[where];
+    const env = {
+      BUN_DESKTOP_HEADLESS: "0",
+      BUN_DESKTOP_RENDERER: renderer,
+      SCREEN: where,
+      PLACE: JSON.stringify(place),
+    };
+    return { env, [Symbol.asyncDispose]: async () => (freePlaces.push(place), waiting.shift()?.()) };
   }
   if (where !== "Wayland") return where === "X11" ? openScreen() : null;
   const compositor = openCompositor();
@@ -69,7 +81,29 @@ export const readScreen = `
     CGContextDrawImage: { args: ["ptr", "f64", "f64", "f64", "f64", "ptr"] },
     CFRelease: { args: ["ptr"] },
   }).symbols;
+  const gdi = process.platform === "win32" && process.env.SCREEN && {
+    ...require("bun:ffi").dlopen("user32.dll", { GetDC: { args: ["i64"], returns: "i64" } }).symbols,
+    ...require("bun:ffi").dlopen("dwmapi.dll", { DwmSetWindowAttribute: { args: ["i64", "u32", "ptr", "u32"], returns: "i32" } }).symbols,
+    ...require("bun:ffi").dlopen("gdi32.dll", {
+      CreateCompatibleDC: { args: ["i64"], returns: "i64" },
+      CreateBitmap: { args: ["i32", "i32", "u32", "u32", "i64"], returns: "i64" },
+      SelectObject: { args: ["i64", "i64"], returns: "i64" },
+      BitBlt: { args: ["i64", "i32", "i32", "i32", "i32", "i64", "i32", "i32", "u32"], returns: "i32" },
+      GetBitmapBits: { args: ["i64", "i32", "ptr"], returns: "i32" },
+      DeleteObject: { args: ["i64"], returns: "i32" },
+    }).symbols,
+  };
+  const [display, copy] = gdi ? [gdi.GetDC(0), gdi.CreateCompatibleDC(0)] : [];
+  // The system draws a border over the first row.
+  if (gdi) require("electron").app.on("browser-window-created", (_, it) => gdi.DwmSetWindowAttribute(it.getNativeWindowHandle().readBigInt64LE(), 34, new Int32Array([-2]), 4));
   const grab = ({ x, y, width, height }) => {
+    if (gdi) {
+      const [pixels, bitmap] = [Buffer.alloc(width * height * 4), gdi.CreateBitmap(width, height, 1, 32, 0)];
+      const before = gdi.SelectObject(copy, bitmap);
+      gdi.BitBlt(copy, 0, 0, width, height, display, x, y, 0xcc0020);
+      gdi.SelectObject(copy, before), gdi.GetBitmapBits(bitmap, pixels.length, pixels), gdi.DeleteObject(bitmap);
+      return pixels;
+    }
     if (windowServer) {
       const number = +require("electron").BrowserWindow.getAllWindows()[0].getMediaSourceId().split(":")[1];
       const [pixels, image] = [Buffer.alloc(width * height * 4), windowServer.CGWindowListCreateImage(x, y, width, height, 8, number, 17)];

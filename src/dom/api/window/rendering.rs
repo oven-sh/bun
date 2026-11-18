@@ -9,6 +9,7 @@ use super::callbacks::{FramePhase, list};
 use super::*;
 use crate::api::events::{ErrorEvent, EventFlags, EventInit, dispatch, fire, is_listened_to, now};
 use crate::api::performance;
+use crate::api::realm::last_client_of;
 use crate::api::transition::{self, PageRevealEvent};
 use crate::api::ui::refs::Refs;
 use crate::api::ui::{Ui, entry as ui};
@@ -30,6 +31,7 @@ bitflags::bitflags! {
         /// Its scripts have run with those of the page around it.
         const HALF_RENDERED = 1 << 9;
         const AWARE_OF_ENVIRONMENT = 1 << 10;
+        const PAINTING_EARLY = 1 << 11;
     }
 }
 
@@ -516,37 +518,84 @@ impl Window {
         it.early_paints_left.set(2);
     }
 
-    /// For a script that takes long to answer input: shows what it has so far, unless an observer has yet to hear of a new size.
-    pub(crate) fn paint_now<'a>(&'a self, cx: Cx<'_, 'a>, delivers_resizes: bool) {
+    /// For a script that takes long to answer input: shows what it has so far. Returns whether it did.
+    pub(crate) fn paint_now<'a>(
+        &'a self,
+        cx: Cx<'_, 'a>,
+        delivers_resizes: bool,
+        is_settled: Option<JsLocal<'a, Callable>>,
+    ) -> bool {
         let (it, doc, time) = (&self.rendering, self.document(), now());
         let is_worth_it = it.early_paints_left.get() > 0
             && time - it.unpainted_since.get() >= EARLY_PAINT_AFTER
             && time - it.input_time.get() <= EARLY_PAINT_UNTIL;
         let is_possible = self.is(Is::PAINTED)
-            && !self.is(Is::RENDERING | Is::RESIZED)
+            && !self.is(Is::RENDERING | Is::PAINTING_EARLY)
             && self.surface() != 0
-            && !self.is_in_any_container()
-            && !self.is_disposed();
-        if !(is_worth_it && is_possible && self.is_scheduled())
-            || transition::has_view_transitions(doc)
+            && !self.is_in_any_container();
+        let is_allowed =
+            || last_client_of(self.realm(&cx.heap)).is_none_or(|it| !it.is_like_in_browser());
+        if !(is_worth_it
+            && is_possible
+            && self.is_scheduled()
+            && self.can_paint_early()
+            && is_allowed())
         {
-            return;
+            return false;
         }
-        doc.synced_engine(cx, |engine, _| {
-            engine.set_time(time - self.time_origin());
-            engine.update_layout_for_frame()
-        });
-        if delivers_resizes {
-            observers::deliver_resizes(cx, doc, false);
-        } else if observers::has_resized_boxes(&cx.heap, doc) {
-            return;
+        it.early_paints_left.update(|it| it - 1);
+        self.toggle(Is::PAINTING_EARLY, true);
+        let is_ready =
+            self.prepare_early_paint(cx, delivers_resizes, is_settled.map(JsLocal::to_js));
+        self.toggle(Is::PAINTING_EARLY, false);
+        if is_ready {
+            _ = highlight::flush_highlights(cx, doc);
+            Ui::of(doc)
+                .into_iter()
+                .for_each(|it| ui::show_selection(cx, it));
+            self.paint(doc);
         }
-        it.early_paints_left.update(|it| it.saturating_sub(1));
-        _ = highlight::flush_highlights(cx, doc);
-        Ui::of(doc)
-            .into_iter()
-            .for_each(|it| ui::show_selection(cx, it));
-        self.paint(doc);
+        is_ready
+    }
+
+    fn can_paint_early(&self) -> bool {
+        !self.is_disposed()
+            && !self.is(Is::RESIZED)
+            && !transition::has_view_transitions(self.document())
+    }
+
+    /// False if `is_settled` objects, before the observers hear of the new sizes or after, or if one has yet to hear of a size.
+    fn prepare_early_paint<'a>(
+        &'a self,
+        cx: Cx<'_, 'a>,
+        delivers_resizes: bool,
+        is_settled: Option<JSValue>,
+    ) -> bool {
+        let doc = self.document();
+        let ask_and_lay_out = |cx: Cx<'_, 'a>| {
+            let has_agreed = is_settled.is_none_or(|it| {
+                it.call(cx.global(), JSValue::UNDEFINED, &[])
+                    .map_err(|error| events::report_for(cx, it, error))
+                    .is_ok_and(JSValue::to_boolean)
+            });
+            (has_agreed && self.can_paint_early()).then(|| {
+                doc.synced_engine(cx, |engine, _| {
+                    engine.set_time(now() - self.time_origin());
+                    engine.update_layout_for_frame();
+                    engine.sizes_version
+                })
+            })
+        };
+        if ask_and_lay_out(cx).is_none() {
+            return false;
+        }
+        if !delivers_resizes {
+            return !observers::has_resized_boxes(&cx.heap, doc);
+        }
+        observers::deliver_resizes(cx, doc, false);
+        let delivered = doc.engine(|engine, _| engine.sizes_version);
+        ask_and_lay_out(cx)
+            .is_some_and(|it| it == delivered || !observers::has_resized_boxes(&cx.heap, doc))
     }
 
     fn paint(&self, doc: &Doc) {
@@ -613,7 +662,26 @@ impl Window {
         }
     }
 
+    pub(crate) fn paint_while_paused<'a>(&'a self, cx: Cx<'_, 'a>) {
+        let is_possible = self.is(Is::PAINTED)
+            && !self.is(Is::RESIZED)
+            && self.surface() != 0
+            && !self.is_in_any_container()
+            && !self.is_disposed();
+        if bun_web::exec::are_pages_paused()
+            && is_possible
+            && !transition::has_view_transitions(self.document())
+        {
+            self.document()
+                .synced_engine(cx, |engine, _| engine.update_layout_for_frame());
+            self.paint(self.document());
+        }
+    }
+
     fn update_rendering<'a>(&'a self, cx: Cx<'_, 'a>) {
+        if bun_web::exec::are_pages_paused() {
+            return self.post(&cx.heap, render_on_time);
+        }
         let time = now();
         if !self.begin_frame(cx, time) {
             return;
@@ -651,6 +719,7 @@ impl Window {
             .iter()
             .filter(|it| it.is(Is::HALF_RENDERED))
             .for_each(|it| it.render_in_container(cx));
+        tasks::caught_up();
     }
 
     fn begin_frame<'a>(&'a self, cx: Cx<'_, 'a>, time: f64) -> bool {
@@ -750,6 +819,7 @@ impl Window {
             event.set(EventFlags::CANCELABLE);
             dispatch(cx, self, event);
         }
+        crate::api::webgl::present(cx, doc);
         ui::fix_up_focus(cx, ui);
         take_requests(cx, doc);
         let version = Some(doc.synced_engine(cx, |engine, _| engine.update_layout_for_frame()));

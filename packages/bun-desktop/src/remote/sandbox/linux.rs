@@ -1,4 +1,7 @@
-use std::os::unix::fs::MetadataExt as _;
+use std::fs::File;
+use std::os::fd::AsRawFd as _;
+use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use libc::*;
@@ -310,7 +313,39 @@ impl Program {
     }
 }
 
-fn filter(own: u32, generates_code: bool) -> Program {
+/// What a driver does to what it has opened.
+fn allow_driver(it: &mut Program, opens_files: bool) {
+    const OF_FILES: &[c_long] = &[
+        #[cfg(target_arch = "x86_64")]
+        SYS_access,
+        SYS_faccessat,
+        SYS_getdents64,
+        SYS_memfd_create,
+        SYS_mlock,
+        SYS_munlock,
+        SYS_newfstatat,
+        #[cfg(target_arch = "x86_64")]
+        SYS_readlink,
+        SYS_readlinkat,
+        #[cfg(target_arch = "x86_64")]
+        SYS_stat,
+    ];
+    it.limit(SYS_ioctl, ENOTTY, &[NOT_STANDARD]);
+    if opens_files {
+        it.always(OF_FILES, ALLOW);
+        it.limit(
+            SYS_openat,
+            EPERM,
+            &[NoBitsBut(
+                2,
+                O_RDWR | O_CLOEXEC | O_DIRECTORY | O_NOCTTY | O_NOFOLLOW | O_NONBLOCK,
+            )],
+        );
+        it.limit(SYS_mmap, EPERM, &[Above(4, 2)]);
+    }
+}
+
+fn filter(own: u32, generates_code: bool, more: impl FnOnce(&mut Program)) -> Program {
     #[cfg(target_arch = "x86_64")]
     const ARCHITECTURE: u32 = 0xc000_003e;
     #[cfg(target_arch = "aarch64")]
@@ -323,6 +358,7 @@ fn filter(own: u32, generates_code: bool) -> Program {
     it.load(std::mem::offset_of!(seccomp_data, nr) as u32);
     it.jump(BPF_JGE, OF_X32, 0, 1);
     it.end(SECCOMP_RET_KILL_PROCESS);
+    more(&mut it);
     for (call, error, conditions) in LIMITED {
         it.limit(*call, *error, conditions);
     }
@@ -387,13 +423,12 @@ fn has_other_threads() -> bool {
     !std::fs::metadata("/proc/self/task").is_ok_and(|it| it.nlink() == 3)
 }
 
-fn give_up_directories() {
+fn give_up(is_meant: impl Fn(c_int, &stat) -> bool) {
     for it in 4..256 {
         let mut about = std::mem::MaybeUninit::<stat>::uninit();
         // SAFETY: it is written to unless that fails. The number stays in use.
         unsafe {
-            if fstat(it, about.as_mut_ptr()) == 0 && about.assume_init().st_mode & S_IFMT == S_IFDIR
-            {
+            if fstat(it, about.as_mut_ptr()) == 0 && is_meant(it, about.assume_init_ref()) {
                 dup3(0, it, O_CLOEXEC);
             }
         }
@@ -428,10 +463,17 @@ fn leave_file_system() {
     set_capabilities(0);
 }
 
-/// For this thread, and those that it starts. Not every kernel has it.
-fn enter_landlock(may_read: bool) {
+const WRITE_FILE: u64 = 1 << 1;
+const READ_FILE: u64 = 1 << 2;
+const READ_DIRECTORY: u64 = 1 << 3;
+const CONTROL_DEVICE: u64 = 1 << 15;
+
+/// For this thread, and those that it starts. Not every kernel has it. `kept` are the rights to what is below a path.
+fn enter_landlock(kept: &[(PathBuf, u64)]) -> bool {
     const ASKS_FOR_VERSION: u32 = 1;
-    const READ_FILE_AND_DIRECTORY: u64 = 0b1100;
+    const BELOW_PATH: u32 = 1;
+    #[repr(C, packed)]
+    struct Below(u64, c_int);
     // SAFETY: the size is at most that of the array.
     unsafe {
         let version = syscall(
@@ -441,7 +483,7 @@ fn enter_landlock(may_read: bool) {
             ASKS_FOR_VERSION,
         );
         let (rights_to_files, fields) = match version {
-            ..=0 => return,
+            ..=0 => return false,
             1 => (13, 1),
             2 => (14, 1),
             3 => (15, 1),
@@ -449,44 +491,53 @@ fn enter_landlock(may_read: bool) {
             5 => (16, 2),
             _ => (16, 3),
         };
-        let handled = [
-            ((1u64 << rights_to_files) - 1) & !if may_read { READ_FILE_AND_DIRECTORY } else { 0 },
-            0b11,
-            0b11,
-        ];
+        let handled = [(1u64 << rights_to_files) - 1, 0b11, 0b11];
         let size = fields * size_of::<u64>();
         let rules = syscall(SYS_landlock_create_ruleset, &handled, size, 0u32);
-        if rules >= 0 {
-            syscall(SYS_landlock_restrict_self, rules, 0u32);
-            close(rules as c_int);
+        for (path, rights) in kept {
+            if let Ok(it) = File::options().read(true).custom_flags(O_PATH).open(path) {
+                let rights = if path.is_dir() {
+                    *rights
+                } else {
+                    rights & !READ_DIRECTORY
+                };
+                syscall(
+                    SYS_landlock_add_rule,
+                    rules,
+                    BELOW_PATH,
+                    &Below(rights & handled[0], it.as_raw_fd()),
+                    0u32,
+                );
+            }
         }
+        let has_entered = rules >= 0 && syscall(SYS_landlock_restrict_self, rules, 0u32) == 0;
+        close(rules as c_int);
+        has_entered
     }
 }
 
 static IS_PREPARED: AtomicBool = AtomicBool::new(false);
 
-pub fn prepare() {
+/// Returns whether only `kept` is left.
+fn prepare_with(kept: &[(PathBuf, u64)]) -> Option<bool> {
     // SAFETY: it only takes numbers.
-    if !has_other_threads()
-        && unsafe { prctl(PR_SET_NO_NEW_PRIVS, 1usize, 0usize, 0usize, 0usize) } == 0
-    {
-        // It goes first when memory runs out.
-        drop(std::fs::write("/proc/self/oom_score_adj", "300"));
-        enter_namespaces();
-        enter_landlock(true);
-        IS_PREPARED.store(true, Ordering::Relaxed);
-    }
+    (!has_other_threads()
+        && unsafe { prctl(PR_SET_NO_NEW_PRIVS, 1usize, 0usize, 0usize, 0usize) } == 0)
+        .then_some(())?;
+    // It goes first when memory runs out.
+    drop(std::fs::write("/proc/self/oom_score_adj", "300"));
+    enter_namespaces();
+    Some(enter_landlock(kept))
 }
 
-pub fn enter(generates_code: bool) -> bool {
-    if !IS_PREPARED.load(Ordering::Relaxed) {
-        return false;
-    }
-    give_up_directories();
-    limit_resources();
-    leave_file_system();
-    enter_landlock(false);
-    let mut filter = filter(std::process::id(), generates_code);
+pub fn prepare() {
+    IS_PREPARED.store(
+        prepare_with(&[("/".into(), READ_FILE | READ_DIRECTORY)]).is_some(),
+        Ordering::Relaxed,
+    );
+}
+
+fn install(mut filter: Program) -> bool {
     let program = sock_fprog {
         len: filter.0.len() as u16,
         filter: filter.0.as_mut_ptr(),
@@ -500,6 +551,87 @@ pub fn enter(generates_code: bool) -> bool {
             &program,
         ) == 0
     }
+}
+
+/// For each context.
+static MAY_OPEN_FILES: AtomicBool = AtomicBool::new(false);
+
+fn devices(directory: &str, is_wanted: impl Fn(&str) -> bool) -> Vec<PathBuf> {
+    Vec::from_iter(
+        std::fs::read_dir(directory)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|it| it.file_name().to_str().is_some_and(&is_wanted))
+            .map(|it| it.path()),
+    )
+}
+
+fn prepare_for_devices(devices: Vec<PathBuf>, opens_files: bool) -> bool {
+    const OF_SYSTEM: &str = "/lib /lib64 /usr/lib /usr/lib64 /usr/share/egl /usr/share/glvnd /usr/share/nvidia /usr/share/drirc.d /usr/share/libdrm \
+        /etc/ld.so.cache /etc/egl /etc/glvnd /etc/nvidia /etc/drirc /nix/store /run/opengl-driver /var/lib/snapd/lib /proc/driver/nvidia /proc/cpuinfo \
+        /proc/meminfo /proc/self /sys/bus/pci /sys/class/drm /sys/dev/char /sys/devices /sys/module/nvidia";
+    let readable = if opens_files { OF_SYSTEM } else { "/" }
+        .split_whitespace()
+        .map(|it| (it.into(), READ_FILE | READ_DIRECTORY));
+    let devices = devices
+        .into_iter()
+        .map(|it| (it, READ_FILE | WRITE_FILE | CONTROL_DEVICE));
+    MAY_OPEN_FILES.store(opens_files, Ordering::Relaxed);
+    prepare_with(&Vec::from_iter(
+        readable
+            .chain(devices)
+            .chain([("/dev/dri".into(), READ_DIRECTORY)]),
+    ))
+    .is_some_and(|is_limited| is_limited || !opens_files)
+}
+
+/// Of a GPU.
+pub fn prepare_for_driver() -> bool {
+    let of_nvidia = devices("/dev", |it| {
+        it.strip_prefix("nvidia")
+            .is_some_and(|it| it == "ctl" || it == "-modeset" || it.parse::<u8>().is_ok())
+    });
+    let opens_files = !of_nvidia.is_empty();
+    let others = [
+        devices("/dev/dri", |it| it.starts_with("renderD")),
+        devices("/dev", |it| matches!(it, "dxg" | "mali0")),
+    ];
+    prepare_for_devices([of_nvidia, others.concat()].concat(), opens_files)
+}
+
+/// Once it is loaded.
+pub fn enter_with_driver(vendor: &str) -> bool {
+    const OF_NVIDIA: u32 = 195;
+    let opens_files = MAY_OPEN_FILES.load(Ordering::Relaxed) && vendor.starts_with("NVIDIA");
+    give_up(|it, about| match about.st_mode & S_IFMT {
+        S_IFDIR | S_IFSOCK => true,
+        S_IFCHR => !opens_files && major(about.st_rdev) == OF_NVIDIA,
+        // SAFETY: it only takes numbers.
+        S_IFREG => about.st_nlink > 0 && unsafe { fcntl(it, F_GETFL) } & O_ACCMODE != O_RDONLY,
+        _ => false,
+    });
+    limit_resources();
+    if opens_files {
+        set_capabilities(0);
+    } else {
+        leave_file_system();
+        enter_landlock(&[]);
+    }
+    install(filter(std::process::id(), true, |it| {
+        allow_driver(it, opens_files)
+    }))
+}
+
+pub fn enter(generates_code: bool) -> bool {
+    if !IS_PREPARED.load(Ordering::Relaxed) {
+        return false;
+    }
+    give_up(|_, about| about.st_mode & S_IFMT == S_IFDIR);
+    limit_resources();
+    leave_file_system();
+    enter_landlock(&[]);
+    install(filter(std::process::id(), generates_code, |_| {}))
 }
 
 #[cfg(test)]
@@ -652,6 +784,47 @@ mod tests {
                 && go.send(()).is_ok()
                 && other.join().unwrap()
         }));
+    }
+
+    #[test]
+    fn a_driver_only_has_its_devices() {
+        for (has_nvidia, vendor) in [(false, "NVIDIA"), (true, "Intel"), (true, "NVIDIA")] {
+            let opens_files = has_nvidia && vendor == "NVIDIA";
+            assert!(holds_in_child(|| {
+                let open = || File::options().read(true).write(true).open("/dev/zero");
+                let (socket, _other) = std::os::unix::net::UnixDatagram::pair().unwrap();
+                // One that goes on opening files is not loaded where nothing could limit that.
+                if !prepare_for_devices(vec!["/dev/zero".into()], has_nvidia) {
+                    return has_nvidia;
+                }
+                let device = open().unwrap();
+                // SAFETY: a new mapping, and numbers.
+                let maps = || unsafe {
+                    mmap(
+                        std::ptr::null_mut(),
+                        4096,
+                        PROT_READ | PROT_WRITE,
+                        MAP_SHARED,
+                        device.as_raw_fd(),
+                        0,
+                    ) != MAP_FAILED
+                        && fork() == -1
+                };
+                enter_with_driver(vendor)
+                    && maps()
+                    && socket.send(&[0]).is_err()
+                    && open().is_ok() == opens_files
+                    && std::fs::read("/proc/meminfo").is_ok() == opens_files
+                    && std::fs::metadata("/etc/passwd").is_ok() == opens_files
+                    && std::fs::read_link("/proc/self/exe").is_ok() == opens_files
+                    && std::fs::read("/etc/passwd").is_err()
+                    && std::fs::read_dir("/").is_err()
+                    && File::create(std::env::temp_dir().join("a_driver_only_has_its_devices"))
+                        .is_err()
+                    && std::net::UdpSocket::bind("127.0.0.1:0").is_err()
+                    && std::os::unix::net::UnixDatagram::unbound().is_err()
+            }));
+        }
     }
 
     #[test]

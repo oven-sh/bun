@@ -1,7 +1,7 @@
 //! Selecting with the mouse.
 
 use super::layout::{By, Direction, ScrollUnit, Unit};
-use super::pointer::{Tracking, chain_of};
+use super::pointer::{self, Tracking, chain_of};
 use super::prelude::*;
 use crate::api::editing;
 use crate::api::forms::text_control;
@@ -70,6 +70,18 @@ fn around<'a>(
 }
 
 pub(super) fn start<'a>(cx: &mut Cx<'a>, ui: &'a Ui, target: &'a Element, button: i16) {
+    begin(cx, ui, target, button, true);
+}
+
+pub(super) fn start_instead_of_dragging<'a>(cx: &mut Cx<'a>, ui: &'a Ui) {
+    let pointer = ui.pointer();
+    pointer.may_drag_selection.set(false);
+    let at = pointer.at.replace(pointer.pressed_at.get());
+    pointer::element_under(cx, ui).inspect(|it| begin(cx, ui, it, 0, false));
+    pointer.at.set(at);
+}
+
+fn begin<'a>(cx: &mut Cx<'a>, ui: &'a Ui, target: &'a Element, button: i16, may_drag: bool) {
     let (pointer, control) = (ui.pointer(), target.out_of_control());
     let bits = looks(
         cx,
@@ -98,7 +110,7 @@ pub(super) fn start<'a>(cx: &mut Cx<'a>, ui: &'a Ui, target: &'a Element, button
     if is_over && button != 0 {
         return;
     }
-    if is_over && pointer.clicks.get() == 1 && !has_shift && is_on_selection(cx, ui) {
+    if may_drag && is_over && pointer.clicks.get() == 1 && !has_shift && is_on_selection(cx, ui) {
         return pointer.may_drag_selection.set(true);
     }
     if !fire(

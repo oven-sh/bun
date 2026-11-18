@@ -4,15 +4,16 @@ use bun_core::strings;
 use bun_http_types::{ETag, MimeType};
 use bun_simdutf_sys::simdutf;
 use bun_sys::{Fd, File, O};
+use bun_threading::RwLock;
 
 use super::body::{Blob, Data, SharedBytes};
 use super::error::{NetError, Result};
 use super::response::Answer;
-use crate::compiled;
 use crate::exec::blocking;
 use crate::headers::{HeaderList, digits, trim_tabs_and_spaces};
 use crate::mime::Mime;
 use crate::url::{Url, percent_decode};
+use crate::{Bytes, compiled};
 
 /// https://fetch.spec.whatwg.org/#data-url-processor
 pub fn process_data_url(url: &Url) -> Option<(Vec<u8>, Vec<u8>)> {
@@ -114,6 +115,22 @@ pub fn mime_of_file(path: &[u8]) -> Vec<u8> {
         .to_vec()
 }
 
+/// To ask another computer for a file is to log in there, so documents only ask those that the app has asked.
+pub fn may_ask_for_file(url: &Url, is_app: bool) -> bool {
+    static ASKED: RwLock<Vec<Bytes>> = RwLock::new(Vec::new());
+    let host = url.hostname();
+    if !cfg!(windows) || ASKED.read().iter().any(|it| **it == *host) {
+        return true;
+    }
+    if host.is_empty() {
+        return is_app || url.file_path().is_some();
+    }
+    if is_app {
+        ASKED.write().push(host.into());
+    }
+    is_app
+}
+
 const READ_AT_ONCE: u64 = 1 << 20;
 
 pub(super) async fn fetch_file(url: &Url, asked: &HeaderList) -> Result<Answer> {
@@ -128,7 +145,9 @@ pub(super) async fn fetch_file(url: &Url, asked: &HeaderList) -> Result<Answer> 
     }
     let name = path.clone();
     let open = move || {
-        let file = File::openat(Fd::cwd(), &name, O::RDONLY | O::CLOEXEC | O::NONBLOCK, 0)?;
+        // A FIFO would wait for a writer. On Windows the flag asks for overlapped reads.
+        let at_once = if cfg!(windows) { 0 } else { O::NONBLOCK };
+        let file = File::openat(Fd::cwd(), &name, O::RDONLY | O::CLOEXEC | at_once, 0)?;
         let stat = file.stat()?;
         if !bun_sys::S::ISREG(stat.st_mode as _) {
             return Err(NetError::FileNotFound);

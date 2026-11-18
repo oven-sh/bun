@@ -144,6 +144,8 @@ pub fn wait(
     let timeout = timeout();
     trace!("waits for {timeout:?}");
     arm(source, timeout);
+    // The wait that this one is in may have had its event.
+    HAS_POSTED.set(false);
     bd_loop_pump(timeout != Some(Duration::ZERO));
     HAS_POSTED.set(false);
     IS_READY.take()

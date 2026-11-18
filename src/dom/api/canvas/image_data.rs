@@ -206,11 +206,15 @@ impl ImageData {
         Ok(js_ImageData::create(heap, ImageData::new(size, settings, otherwise)).with_data(data))
     }
 
-    pub(super) fn is_wide(&self) -> bool {
+    pub(crate) fn size(&self) -> [u32; 2] {
+        self.size
+    }
+
+    pub(crate) fn is_wide(&self) -> bool {
         self.color_space == PredefinedColorSpace::DisplayP3
     }
 
-    pub(super) fn with_pixels<R>(
+    pub(crate) fn with_pixels<R>(
         &self,
         heap: &JsHeap<'_>,
         read: impl FnOnce(&[u8]) -> R,

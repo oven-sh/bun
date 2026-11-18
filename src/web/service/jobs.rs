@@ -18,6 +18,7 @@ use crate::net::body::Chunk;
 use crate::net::fetch::{self, Controller, Initiator, Observer, Role};
 use crate::net::response::is_ok_status;
 use crate::request::{CacheMode, Credentials, Destination, Mode, Redirect};
+use crate::storage::if_for_page_processes;
 use crate::time::wall_now;
 use crate::{mime, trust};
 
@@ -70,9 +71,22 @@ pub(super) struct Wanted {
     referrer: Option<Referrer>,
 }
 
-impl Observer for Agent {
+impl Agent {
+    /// For the worker that starts with `main`.
+    pub(super) fn may_install(&self, script: &Url, main: &Url, bucket: &[u8]) -> bool {
+        let is_trusted = |it| trust::is_trusted(it, self.app_path());
+        (trust::has_sandbox_for_the_rest()
+            && if_for_page_processes(bucket).is_some()
+            && !is_trusted(main))
+            || (!compiled::is_exclusive() && is_trusted(script))
+    }
+}
+
+struct Installing<'a>(&'a Agent, &'a Url, Bytes);
+
+impl Observer for Installing<'_> {
     fn allows(&self, request: &Request, _: Option<&Url>) -> bool {
-        trust::is_trusted(&request.url, self.app_path())
+        self.0.may_install(&request.url, self.1, &self.2)
     }
 }
 
@@ -224,9 +238,10 @@ impl Registry {
                     return settle(reply, Outcome::Failed(Failure::Quota, NO_ROOM));
                 }
                 if found.is_none() {
+                    let plain = if_for_page_processes(&caller.bucket).unwrap_or(&caller.bucket);
                     self.contents.borrow_mut().registrations.push(Registration {
                         id,
-                        ancestors: match strings::contains_char(&caller.bucket, b'^') {
+                        ancestors: match strings::contains_char(plain, b'^') {
                             true => caller.info.ancestors,
                             false => Vec::new(),
                         },
@@ -303,22 +318,28 @@ impl Registry {
         self.install(id, worker, reply, is_first).await;
     }
 
-    async fn load(&self, id: Id, mut request: Request, bypasses_cache: bool) -> Result<Loaded> {
+    async fn load(
+        &self,
+        (id, script): (Id, &Url),
+        mut request: Request,
+        bypasses_cache: bool,
+    ) -> Result<Loaded> {
         let agent = self.contents.borrow().agent.clone();
-        let (scope, ancestors) = (self.contents.borrow_mut().registration(id))
-            .map(|it| (it.scope.clone(), it.ancestors.clone()))
+        let (scope, ancestors, bucket) = (self.contents.borrow_mut().registration(id))
+            .map(|it| (it.scope.clone(), it.ancestors.clone(), it.bucket.clone()))
             .ok_or(crate::net::NetError::Aborted)?;
         let initiator = Initiator {
             ancestors,
             prohibits_mixed_content: true,
+            is_in_page_process: if_for_page_processes(&bucket).is_some(),
             ..agent.initiator(Role::Page, Some(Origin::of(&scope)))
         };
         if bypasses_cache {
             request.cache = CacheMode::NoCache;
         }
-        let controller = Controller::default();
+        let (controller, observer) = (Controller::default(), Installing(&agent, script, bucket));
         let loading = async {
-            let fetching = fetch::fetch(&self.session, &initiator, request, &agent, &controller);
+            let fetching = fetch::fetch(&self.session, &initiator, request, &observer, &controller);
             let Response { head, body } = fetching.await.map_err(|it| it.error)?;
             let (mut body, mut all) = (body.unwrap_or_default(), Vec::new());
             while let Some(more) = body.read().await? {
@@ -367,11 +388,8 @@ impl Registry {
                 (request.referrer, request.referrer_policy) = (Some(url), policy);
             }
             let bypasses_cache = update_via_cache != UpdateViaCache::All || is_stale;
-            let loaded = match compiled::is_exclusive() {
-                true => None,
-                false => self.load(id, request, bypasses_cache).await.ok(),
-            };
-            let loaded = loaded.ok_or((Failure::Type, "The script could not be fetched."))?;
+            let loaded = (self.load((id, &script), request, bypasses_cache).await)
+                .map_err(|_| (Failure::Type, "The script could not be fetched."))?;
             if loaded.head.kind == ResponseType::OpaqueRedirect {
                 let is_update = self.newest(id, |it| it.info.url == script) == Some(true);
                 let failure = if is_update {
@@ -430,7 +448,10 @@ impl Registry {
                         Credentials::Include,
                     ),
                 };
-                let loaded = self.load(id, request, imports.bypasses_cache).await.ok();
+                let loaded = (self
+                    .load((id, &script), request, imports.bypasses_cache)
+                    .await)
+                    .ok();
                 let good = loaded.filter(|it| {
                     is_ok_status(it.head.status) && {
                         let kind = essence(it);

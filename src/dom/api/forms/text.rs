@@ -377,6 +377,7 @@ impl<'a> TextControl<'a> {
         state.direction.take();
         state.undos.take();
         state.redos.take();
+        state.last_input_type.take();
         self.changed(cx);
     }
 

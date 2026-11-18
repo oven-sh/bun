@@ -135,7 +135,7 @@ fn emit_key(
     state: &WindowState,
     down: bool,
     mut key: String,
-    code: &str,
+    (code, key_code): (&str, u8),
     is_held: bool,
     mut bits: u8,
 ) {
@@ -170,7 +170,7 @@ fn emit_key(
     }
     #[cfg(target_os = "macos")]
     crate::platform::macos::did_send_key();
-    let is_repeat = is_held || (was_down && !code.is_empty());
+    let is_repeat = is_held || (was_down && !code.is_empty() && key_code == 0);
     let is_composing = with_ime(state, |ime, _| ime.composing.is_some()).unwrap_or(false);
     let (key, location, code) = (key.into(), keys::location(code), code.into());
     bridge::emit_input(
@@ -178,6 +178,7 @@ fn emit_key(
         ui::Input::Key(ui::Key {
             key,
             code,
+            key_code,
             location,
             modifiers: bits,
             is_down: down,
@@ -207,7 +208,14 @@ fn emit_raw_key(raw: RawKey) {
     };
     let code = keys::dom_code(raw.scan_code);
     let key = keys::key_for_symbol(raw.symbol, code).unwrap_or_else(|| "Unidentified".to_owned());
-    emit_key(&state, raw.down, key, code, raw.is_repeat, raw.modifiers);
+    emit_key(
+        &state,
+        raw.down,
+        key,
+        (code, raw.key_code),
+        raw.is_repeat,
+        raw.modifiers,
+    );
 }
 
 pub fn raw_key(raw: RawKey) {
@@ -392,7 +400,7 @@ pub fn report_key_taken_by_ime() {
             &state,
             raw.down,
             key.unwrap_or_else(|| "Process".to_owned()),
-            code,
+            (code, raw.key_code),
             raw.is_repeat,
             raw.modifiers,
         );
@@ -568,8 +576,12 @@ fn target_at(state: &WindowState, position: Point) -> Target {
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn is_on_frame(window: u32, position: Point) -> bool {
-    window::state(window).is_ok_and(|state| matches!(target_at(&state, position), Target::Frame(_)))
+pub fn part_at(window: u32, position: Point) -> Option<Part> {
+    if let Target::Frame(part) = target_at(&*window::state(window).ok()?, position) {
+        Some(part)
+    } else {
+        None
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -617,16 +629,85 @@ fn emit_mouse(
             motion.report_scrolls(id);
         }
     });
+    let mouse = ui::Mouse {
+        at,
+        action,
+        button,
+        buttons: state.pointer.buttons.get(),
+        clicks,
+    };
+    #[cfg(windows)]
+    if let Some(contact) = PEN.get() {
+        return bridge::emit_input(id, ui::Input::Pen { mouse, contact });
+    }
+    bridge::emit_input(id, ui::Input::Mouse(mouse));
+}
+
+#[cfg(windows)]
+thread_local! {
+    static PEN: Cell<Option<ui::Contact>> = const { Cell::new(None) };
+    /// And the surfaces that they came down on.
+    static FINGERS: RefCell<Vec<(i32, u32)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// What `handle` is told meanwhile is about the pen.
+#[cfg(windows)]
+pub fn with_pen(contact: ui::Contact, run: impl FnOnce()) {
+    PEN.set(Some(contact));
+    run();
+    PEN.set(None);
+}
+
+/// Whether what is there can tell fingers and pens from a mouse.
+#[cfg(windows)]
+pub fn takes_contacts(window: u32, position: Point) -> bool {
+    if_enabled(window).is_some_and(|it| {
+        it.cover.get().is_none()
+            && it.kept_cover.get().is_none()
+            && matches!(target_at(&it, position), Target::Surface(_))
+    })
+}
+
+/// Returns whether a surface has the finger.
+#[cfg(windows)]
+pub fn touch(
+    window: u32,
+    phase: ui::TouchPhase,
+    finger: i32,
+    position: Point,
+    contact: ui::Contact,
+    modifiers: Modifiers,
+) -> bool {
+    let Ok(state) = window::state(window) else {
+        return false;
+    };
+    if phase == ui::TouchPhase::Start
+        && takes_contacts(window, position)
+        && let Target::Surface(id) = target_at(&state, position)
+    {
+        FINGERS.with_borrow_mut(|it| it.push((finger, id)));
+        if surface::is_focusable(id) {
+            focus(&state, Some(id));
+        }
+        surface::change_motion(id, |motion| motion.report_scrolls(id));
+    }
+    let Some(id) = FINGERS.with_borrow(|it| it.iter().find(|it| it.0 == finger).map(|it| it.1))
+    else {
+        return false;
+    };
+    if matches!(phase, ui::TouchPhase::End | ui::TouchPhase::Cancel) {
+        FINGERS.with_borrow_mut(|it| it.retain(|it| it.0 != finger));
+    }
     bridge::emit_input(
         id,
-        ui::Input::Mouse(ui::Mouse {
-            at,
-            action,
-            button,
-            buttons: state.pointer.buttons.get(),
-            clicks,
-        }),
+        ui::Input::Touch {
+            phase,
+            finger,
+            at: located(&state, id, position, modifiers),
+            contact,
+        },
     );
+    true
 }
 
 pub fn cursor_changed(state: &WindowState) {
@@ -669,7 +750,7 @@ const LEFT: u8 = 0;
 const RIGHT: u8 = 2;
 
 fn button_bit(button: u8) -> u8 {
-    [1, 4, 2, 8, 16][usize::from(button.min(4))]
+    [1, 4, 2, 8, 16, 32][usize::from(button.min(5))]
 }
 
 fn act(state: &WindowState, f: impl FnOnce(&dyn Window)) {
@@ -795,6 +876,8 @@ fn mouse_move(state: &WindowState, position: Point, is_pressed: bool, modifiers:
     }
 }
 
+pub const PIXELS_PER_LINE: f32 = if cfg!(windows) { 100. / 3. } else { 40. };
+
 fn scroll(
     state: &WindowState,
     position: Point,
@@ -803,7 +886,6 @@ fn scroll(
     phase: Phase,
     modifiers: Modifiers,
 ) {
-    const PIXELS_PER_LINE: f32 = 40.;
     let Target::Surface(id) = target_at(state, position) else {
         return;
     };
@@ -920,6 +1002,7 @@ pub fn handle(window: u32, event: Input) {
             phase,
             modifiers,
         } => scroll(state, at, delta, is_precise, phase, modifiers),
+        #[cfg(unix)]
         Input::Pinch {
             at,
             delta,
@@ -995,7 +1078,7 @@ pub fn synthesize(state: &WindowState, modifiers: Modifiers, event: Synthetic) {
             let code = code
                 .get()
                 .map_or_else(|| keys::code_for_key(&key), ui::Text::into_string);
-            emit_key(state, is_down, key, &code, is_repeat, modifiers);
+            emit_key(state, is_down, key, (&code, 0), is_repeat, modifiers);
             if let Some(text) = text.filter(|_| is_down) {
                 MAY_TYPE.set(true);
                 insert_text(state, None, text);

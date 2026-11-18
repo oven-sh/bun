@@ -688,11 +688,15 @@ impl Font {
         );
         if uses_typographic || [ascent, descent] == [0.; 2] && typographic[..2] != [0.; 2] {
             [ascent, descent, leading] = typographic;
-        } else if let Some(os2) = os2.filter(|_| [ascent, descent] == [0.; 2]) {
+        } else if let Some(os2) = os2.filter(|_| [ascent, descent] == [0.; 2] || cfg!(windows)) {
+            let height = ascent - descent;
             (ascent, descent) = (
                 os2.u16(74).unwrap_or(0).into(),
                 -f32::from(os2.u16(76).unwrap_or(0)),
             );
+            if cfg!(windows) {
+                leading = (leading + height - (ascent - descent)).max(0.);
+            }
         }
         let delta = |tag: &Tag| variations::metric_delta(self, tag, coords);
         let newer = os2.filter(|it| it.u16(0) >= Some(2));
@@ -748,7 +752,7 @@ impl Font {
     }
 
     /// The weight, the width in percent, and whether it is slanted.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(windows, target_os = "macos"))]
     pub fn style(&self) -> (f32, f32, bool) {
         const WIDTHS: [f32; 9] = [50., 62.5, 75., 87.5, 100., 112.5, 125., 150., 200.];
         let declared = self

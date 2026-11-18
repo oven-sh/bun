@@ -1410,6 +1410,9 @@ voiceschanged
 volumechange
 vspace
 waitingforkey
+webglcontextcreationerror
+webglcontextlost
+webglcontextrestored
 webkitAnimationEnd
 webkitAnimationIteration
 webkitAnimationStart

@@ -360,9 +360,10 @@ impl Page {
         self.tell_renderer(|it| {
             it.decode_image(left.take().unwrap_or_default(), |_, it| send.send(it));
         })?;
+        let left = left.map(|it| (self.place() == Place::App).then_some(it));
         Ok(async {
             match left {
-                Some(bytes) => LooseBitmap::decode(bytes).await,
+                Some(bytes) => LooseBitmap::decode(bytes?).await,
                 None => from_afar.await.flatten(),
             }
         })

@@ -123,6 +123,20 @@ pub trait Wire: Sized {
     }
 }
 
+/// With the number of bytes that it was read from.
+pub struct Measured<T>(pub T, pub usize);
+
+impl<T: Wire> Wire for Measured<T> {
+    fn write(self, to: &mut Writer) {
+        self.0.write(to);
+    }
+
+    fn read(from: &mut Reader<'_>) -> Result<Self> {
+        let before = from.rest.len();
+        T::read(from).map(|it| Measured(it, before - from.rest.len()))
+    }
+}
+
 /// What travels by itself.
 pub trait Message: Wire {
     /// By its first two bytes.
@@ -481,6 +495,36 @@ macro_rules! wire {
             }
         }
     )*};
+    (impl enum $Name:ident by parts { $($Variant:ident $(($($part:ident),*))? $({ $($field:ident),* })?,)* }) => {
+        const _: () = {
+            use $crate::wire::{Malformed, Reader, Wire, Writer};
+
+            enum Tag {
+                $($Variant,)*
+            }
+
+            impl Wire for $Name {
+                fn write(self, to: &mut Writer) {
+                    match self {
+                        $($Name::$Variant $(($($part),*))? $({ $($field),* })? => {
+                            (Tag::$Variant as u16).write(to);
+                            $($($part.write(to);)*)?
+                            $($($field.write(to);)*)?
+                        })*
+                    }
+                }
+
+                fn read(from: &mut Reader<'_>) -> $crate::wire::Result<Self> {
+                    let tag = u16::read(from)?;
+                    $(if tag == Tag::$Variant as u16 {
+                        $($(let $part = Wire::read(from)?;)*)?
+                        return Ok($Name::$Variant $(($($part),*))? $({ $($field: Wire::read(from)?),* })?);
+                    })*
+                    Err(Malformed)
+                }
+            }
+        };
+    };
     (impl $Name:ident(_)) => {
         impl $crate::wire::Wire for $Name {
             fn write(self, to: &mut $crate::wire::Writer) {

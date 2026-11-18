@@ -71,7 +71,21 @@ Everything else, and every `<iframe>` that has a `src` or a `srcdoc`, is rendere
 
 `ELECTRON_ENABLE_LOGGING=1` prints the console of pages.
 
-`--remote-debugging-port=9222` serves enough of the DevTools protocol for `chromium.connectOverCDP()` of Playwright to evaluate scripts, click, type and take screenshots. `webContents.debugger` has the same commands. There is no DevTools window.
+`webContents.openDevTools()` shows the developer tools that come with the [web engine](#security): Electron, or the Chrome, Edge or Chromium that is installed. Bun has no copy of them. They cannot reach the network, unless you show them with `setDevToolsWebContents()`, where the session of that `WebContents` decides. Without a web engine the call prints a warning.
+
+For a trusted page these panels work: Elements, Console, Sources, Network, Memory, and the local storage, the session storage and the cookies in Application. The page shares its thread with the app. While it is paused at a breakpoint the app goes on, and the other trusted pages wait. In an app that was built with `bun compile`, Sources needs `--compile-inspector`, and cannot pause in code that was compiled ahead of time.
+
+The console has the text of what was logged before the tools were opened, except in an app that was compiled. Until an expression that names `copy()` or `inspect()` has its result, a script of the page can make these calls in its place.
+
+`webPreferences.devTools: false` turns them off for a window and hides it from `--remote-debugging-port`. `trim: { remove: ["inspector"] }` in `Bun.build` turns them and the port off for a compiled app. Neither turns off `webContents.debugger`.
+
+`--inspect`, `--inspect-wait` and `--inspect-brk` after the path of the app serve the main process on `127.0.0.1:9229`, or on the port after the `=`. Open `chrome://inspect` to connect. An app that was compiled ignores them.
+
+```bash terminal icon="terminal"
+bun --preload=bun:desktop/electron . --inspect
+```
+
+`--remote-debugging-port=9222` serves the DevTools protocol for the pages, for example to `chromium.connectOverCDP()` of Playwright. Whoever connects can run scripts in pages and in preload scripts, and read cookies and files. `webContents.debugger` has the same commands.
 
 `BUN_DESKTOP_HEADLESS=1` runs without a display server.
 
@@ -84,19 +98,31 @@ These throw or reject:
 | Module            | What                                          |
 | ----------------- | --------------------------------------------- |
 | `app`             | `enableSandbox`                               |
-| `webContents`     | `startDrag`, except on macOS                  |
+| `webContents`     | `startDrag` on Linux                          |
 | `dialog`          | `showCertificateTrustDialog`, except on macOS |
 | `desktopCapturer` | All of it with Chromium as the web engine     |
 
 `contentTracing` records the process of the app: the performance timelines of pages and workers, and samples of the stack of the main thread. See `getCategories()`. `netLog` has the requests of that process, with their status and response headers.
 
-`crashReporter` writes minidumps on macOS and Linux, for the main process and for utility processes, into the directories that Crashpad uses. Nothing is written until the app calls `start()`. A dump has the registers and up to 512 KB of the stack of the thread that crashed, the paths of the executable and of the loaded libraries (which can have the name of the user), the message of the crash and the parameters. It has neither the heap nor other threads. Trusted pages run in the main process, so unlike in Electron its stack can have pieces of what a page was working on, such as text, URLs and form values. Treat reports as personal data. A report waits in `queued` and is uploaded when the app is launched again. There is one attempt: a report that the server has refused, or that is over the rate limit, stays in `completed`. What other programs have put into `pending` is left alone. `ignoreSystemCrashHandler` and the parameters of preload scripts are ignored. A compiled app never reports its crashes to Bun.
+`crashReporter` writes minidumps into the directories that Crashpad uses. Nothing is written until the app calls `start()`. A dump has the registers and up to 512 KB of the stack of the thread that crashed, the paths of the executable and of the loaded libraries (which can have the name of the user), the message of the crash and the parameters. It has neither the heap nor other threads. Trusted pages run in the main process, so unlike in Electron its stack can have pieces of what a page was working on, such as text, URLs and form values. Treat reports as personal data. A report waits in `queued` and is uploaded when the app is launched again. There is one attempt: a report that the server has refused, or that is over the rate limit, stays in `completed`. What other programs have put into `pending` is left alone. `ignoreSystemCrashHandler` and the parameters of preload scripts are ignored. A compiled app never reports its crashes to Bun.
 
 These do nothing: network emulation, the settings of the host resolver, and the `webPreferences` `offscreen` and `nodeIntegrationInWorker` for a trusted page.
+
+On Windows, `print()` saves a PDF, a `Notification` shows its title, body and buttons only, and a window that others cover counts as visible. `app.importCertificate()` fails: client certificates come from the personal store of the user, if their key is reachable through CNG. Both kinds of `powerSaveBlocker` keep the display on.
+
+On Windows, `shell.openExternal()` only takes `file:` URLs and URLs whose scheme has a registered handler, and passes them on as one escaped argument. Use `shell.openPath()` for paths. Downloads are marked as coming from the internet. A document can only ask for `file://server/share` URLs after the app has asked that server for a file, for example with `loadURL()`, `downloadURL()` or `net.fetch()`, so check the URLs that pages pass to these. This does not apply to pages that the web engine renders.
+
+On Windows, a page without a `setPermissionRequestHandler()` only opens a URL in another program after a click or a key, and never with the schemes of the system, such as `search-ms:`, `shell:` and `ms-*:`. With a handler, the permission `openExternal` decides. On other systems, pages open any URL unless the handler refuses.
+
+The switches on the command line end at the first URL. On Windows, the app exits if more arguments follow a URL, because whoever wrote a link can add them. Put `--` before the URL to pass more. Every program of the user can send arguments to `second-instance`, also if the app runs as administrator.
+
+On Windows, the key of `safeStorage` is in the file `Local State`. If the system cannot open it, a new key is made. The old one stays in the file, and is tried for what the new one does not decrypt. A file that is not JSON is renamed to `Local State.*.bad`.
 
 `print()` and `printToPDF()` give a copy of a trusted page to the web engine, which lays it out. Videos, and frames that the engine renders, are empty in it.
 
 `autoUpdater` works on macOS, and reads the feeds of Squirrel.Mac. An update has to have the bundle identifier of the app, and to satisfy its designated requirement, which is checked after the download and again before the installation. An app with an ad hoc signature cannot be updated. Unlike in Electron, the whole archive is downloaded even if the feed has a delta, nothing is installed after the app was killed or while another instance of it runs, and only `quitAndInstall()` asks for the password of an administrator. It only asks if the user can change neither the bundle nor its executable, because that is what runs as root. As with Squirrel.Mac, whoever can rename what is in the folder of the app can put another executable in its place while the prompt is shown. The app installs the update itself while it exits, so it exits later, and writes the outcome to `~/Library/Caches/<bundle identifier>.ShipIt/ShipIt_stderr.log`.
+
+On Windows, `autoUpdater` runs the `Update.exe` that Squirrel.Windows has installed with the app.
 
 `.asar` archives are not read at run time. Unpack them with `asar extract`, and compile or ship the directory. Native addons have to use Node-API.
 

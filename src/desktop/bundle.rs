@@ -111,6 +111,7 @@ fn spawn(
     command: &[&str],
     options: &PosixSpawnOptions<'_>,
 ) -> Option<bun_spawn_sys::spawn_process::PosixSpawnResult> {
+    bun_ui::can_start_programs().then_some(())?;
     let program = tool(command[0]);
     let arguments = [&[&*program], &command[1..]].concat();
     let arguments = CStringList::from_parts(arguments.iter().map(|it| [it.as_bytes()]));

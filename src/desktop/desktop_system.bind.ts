@@ -3,6 +3,7 @@ import { DesktopPoint, DesktopRectangle } from "./desktop_base.bind.ts";
 import {
   anything,
   flag,
+  flagIfAny,
   js,
   noticesListeners,
   number,
@@ -34,8 +35,8 @@ export const DesktopShell = b.interface("DesktopShell", {
     showItemInFolder: { args: { path: text }, ...js },
     trashItem: { args: { path: text }, ...returnsPromise },
     beep: js,
-    readShortcutLink: js,
-    writeShortcutLink: { returns: b.bool },
+    readShortcutLink: { args: { path: text }, ...returnsObject },
+    writeShortcutLink: { args: { path: text, operation: anything, options: anything }, ...returnsFlag },
   },
 });
 
@@ -70,11 +71,14 @@ export const DesktopNativeTheme = b.interface("DesktopNativeTheme", {
     ...noticesListeners,
     themeSource: { getter: text, setter: js },
     shouldUseDarkColors: setting,
-    shouldUseDarkColorsForSystemIntegratedUI: { ...setting, rustName: "should_use_dark_colors" },
+    shouldUseDarkColorsForSystemIntegratedUI: {
+      ...setting,
+      rustName: "should_use_dark_colors_for_system_integrated_ui",
+    },
     shouldUseHighContrastColors: setting,
     shouldUseInvertedColorScheme: setting,
     prefersReducedTransparency: setting,
-    inForcedColorsMode: { getter: b.bool },
+    inForcedColorsMode: setting,
   },
 });
 
@@ -173,7 +177,15 @@ export const DesktopGlobalShortcut = b.interface("DesktopGlobalShortcut", {
   },
 });
 
-export const BalloonOptions = b.dictionary({ title: ownedTextIfAny, content: ownedTextIfAny });
+export const BalloonOptions = b.dictionary({
+  icon: b.any.falsyAsNull,
+  iconType: ownedTextIfAny,
+  title: ownedTextIfAny,
+  content: ownedTextIfAny,
+  largeIcon: flagIfAny,
+  noSound: flag,
+  respectQuietTime: flag,
+});
 
 export const DesktopTray = b.interface("DesktopTray", {
   ofModule: true,
@@ -197,7 +209,9 @@ export const DesktopTray = b.interface("DesktopTray", {
     getGUID: { returns: b.string.utf8.nullable, rustName: "get_guid" },
     setIgnoreDoubleClickEvents: { args: { ignore: flag } },
     getIgnoreDoubleClickEvents: { returns: b.bool },
-    ...sharing("nothing", "focus removeBalloon setPressedImage"),
+    removeBalloon: js,
+    focus: js,
+    ...sharing("nothing", "setPressedImage"),
   },
 });
 

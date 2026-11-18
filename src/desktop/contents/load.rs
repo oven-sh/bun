@@ -18,6 +18,7 @@ use bun_web::net::body::{Blob, Body, Data, Source as _};
 use bun_web::net::embedder::ClientId;
 use bun_web::net::fetch::{self, Controller, IsolationKind, Observer, Role};
 use bun_web::net::response::{Head, Response, ResponseType};
+use bun_web::net::schemes::may_ask_for_file;
 use bun_web::origin::Origin;
 use bun_web::referrer::ReferrerPolicy;
 use bun_web::request::{
@@ -341,6 +342,8 @@ pub(super) struct Loaded {
     has_crossed_origins: bool,
     /// By a redirect.
     pub(super) is_led_by_stranger: bool,
+    /// By a service worker.
+    is_made_in_page_process: bool,
     pub(super) encoding: Cell<Option<Encoding>>,
     pub(super) essence: Option<String>,
     pub(super) required_csp: Option<String>,
@@ -581,6 +584,12 @@ impl Observer for Watcher<'_> {
         (self.contents.get().may_show(&string(request.url.href()))).is_ok()
     }
 
+    fn leads_to_page_process(&self, url: &Url) -> Option<bool> {
+        let is_led_by_stranger = self.pending.is_led_by_stranger.get()
+            || (self.navigation.initiating_page()).is_some_and(|it| !it.place().is_trusted());
+        task::or_warning(self.contents.get().will_be_apart(url, is_led_by_stranger))?
+    }
+
     fn blocked_as_mixed_content(&self, request: &request::Request, first: Option<&Url>) {
         (self.parent.iter()).for_each(|it| it.report_mixed_content(first.unwrap_or(&request.url)));
     }
@@ -641,7 +650,7 @@ impl Promised {
     }
 }
 
-fn can_evaluate() -> JsResult<bool> {
+pub(crate) fn can_evaluate() -> JsResult<bool> {
     Ok(catch(invoke(global().to_js_value(), "eval", &[js("true")?]))?.is_ok())
 }
 
@@ -846,7 +855,11 @@ impl Contents {
                 .map(Initiator::origin)
                 .unwrap_or_default(),
         );
-        if (scheme == "data" && !self.is_frame()) || (scheme == "file" && origin != "file://") {
+        let is_in_reach = || {
+            origin == "file://"
+                && Url::parse(url.as_bytes()).is_none_or(|it| may_ask_for_file(&it, false))
+        };
+        if (scheme == "data" && !self.is_frame()) || (scheme == "file" && !is_in_reach()) {
             page.tell(Controls::abort_navigation)?;
             return page.log_error(&format!(
                 "Not allowed to navigate top frame to {scheme} URL"
@@ -1519,6 +1532,10 @@ impl Contents {
         }
     }
 
+    pub(crate) fn guest_at_any_rate(&self) -> JsResult<&'static Remote> {
+        self.guest().map_or_else(|| self.show_guest(false), Ok)
+    }
+
     /// The page stays until there is something else to show.
     fn load_in_guest(&self, url: &str, mut navigation: Navigation) -> JsResult<()> {
         let mut leaves = navigation.may_unload || self.guest().is_some();
@@ -1669,9 +1686,7 @@ impl Contents {
             it.is_form,
             csp.map(str::as_bytes),
         );
-        if !place::is_all_in_app()
-            || (self.sandbox_of_next(&HeaderList::default())).forbids("allow-same-origin")
-        {
+        if (self.sandbox_of_next(&HeaderList::default())).forbids("allow-same-origin") {
             initiator.service = Handler::Nobody;
         }
         Ok((request, initiator))
@@ -1753,7 +1768,9 @@ impl Contents {
         let is_led_by_stranger = loaded.is_led_by_stranger
             || (creator.as_ref()).is_some_and(|it| !it.place().is_trusted());
         let mut page = self.new_page(&loaded.url, about)?;
-        if !page.client.allows_embedder(&loaded.headers) {
+        if !page.client.allows_embedder(&loaded.headers)
+            || (loaded.is_made_in_page_process && page.place() == place::Place::App)
+        {
             page.forget_creator();
             return self.show_error(&loaded.url, NetError::BlockedByResponse, navigation);
         }
@@ -1850,6 +1867,22 @@ impl Contents {
         {
             return page.log_error("A sandbox keeps the frame from opening another program");
         }
+        if IS_WINDOWS && url.as_bytes().get(1) == Some(&b':') {
+            return page.log_error("A path is not a URL");
+        }
+        let scheme = before(url, ":").to_ascii_lowercase();
+        if IS_WINDOWS
+            && (scheme == "file"
+                || (!navigation.is_by_user || is_for_windows_itself(&scheme))
+                    && self
+                        .session
+                        .handler("setPermissionRequestHandler")?
+                        .is_none())
+        {
+            return page.log_error(&format!(
+                "Not allowed to open {scheme} URL in another program"
+            ));
+        }
         let more = object!({ "externalURL": url });
         if initiator.is_none_or(|it| !same(it, page)) {
             let origin = || {
@@ -1869,12 +1902,31 @@ impl Contents {
         let url = url.to_owned();
         page.request_permission("openExternal", more, move |is_granted| {
             if is_granted {
-                perform(SystemCommand::OpenUrl(url.into()))
+                tell_system(SystemCommand::OpenUrl(url.into()))
             } else {
                 Ok(())
             }
         })
     }
+}
+
+/// Some of these log in to other computers, or run what they find there.
+fn is_for_windows_itself(scheme: &str) -> bool {
+    [
+        "ms-",
+        "microsoft",
+        "windows",
+        "explorer",
+        "search",
+        "ie.",
+        "onenote",
+    ]
+    .iter()
+    .any(|it| scheme.starts_with(it))
+        || matches!(
+            scheme,
+            "shell" | "hcp" | "its" | "mk" | "res" | "mhtml" | "ldap"
+        )
 }
 
 async fn fetch_document(
@@ -2103,6 +2155,8 @@ async fn fetch_document(
         ),
         has_crossed_origins: head.has_cross_origin_redirects,
         reserved: head.reserved.clone().into(),
+        is_made_in_page_process: head.is_from_service_worker
+            && (head.reserved.as_ref()).is_none_or(|it| it.is_apart),
         is_led_by_stranger: pending.is_led_by_stranger.get(),
         encoding: Some(encoding).into(),
         required_csp: csp,

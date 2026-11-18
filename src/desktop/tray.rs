@@ -47,6 +47,10 @@ pub(crate) fn handle(id: u32, event: TrayEvent, at: Point) -> JsResult<()> {
         TrayEvent::DoubleClick => "double-click",
         TrayEvent::MouseEnter => return announce(tray.to_js(), "mouse-enter", &[js(at)?]),
         TrayEvent::MouseLeave => return announce(tray.to_js(), "mouse-leave", &[js(at)?]),
+        TrayEvent::MouseMove => return announce(tray.to_js(), "mouse-move", &[js(at)?]),
+        TrayEvent::BalloonShow => return announce(tray.to_js(), "balloon-show", &[]),
+        TrayEvent::BalloonClick => return announce(tray.to_js(), "balloon-click", &[]),
+        TrayEvent::BalloonClosed => return announce(tray.to_js(), "balloon-closed", &[]),
     };
     announce(tray.to_js(), name, &[js(tray.bounds()?)?, js(at)?])
 }
@@ -64,6 +68,7 @@ impl Tray {
             let command = TrayCommand::Create {
                 name: paths::app_name()?.into(),
                 icon: icon(image)?,
+                guid: guid.map(Text::lossy).into(),
             };
             perform(SystemCommand::Tray { id, command })
         };
@@ -138,7 +143,7 @@ impl Tray {
     pub(crate) fn pop_up_context_menu<'a>(&self, _: Cx<'a, '_>, menu: JsLocal<'a>) -> JsResult<()> {
         let menu = cast(menu.to_js())
             .or_else(|| fields::menu(self))
-            .filter(|_| IS_MAC && self.is_shown.get());
+            .filter(|_| (IS_MAC || IS_WINDOWS) && self.is_shown.get());
         fields::set_open_menu(self, menu);
         menu.map_or(Ok(()), |it| it.pop_up_under_tray(self.id))
     }
@@ -169,11 +174,43 @@ impl Tray {
         self.is_destroyed.get()
     }
 
-    pub(crate) fn display_balloon(&self, _: Cx<'_, '_>, it: &BalloonOptions) -> JsResult<()> {
-        notification::show_plain(
-            it.title.as_deref().unwrap_or_default(),
-            it.content.as_deref().unwrap_or_default(),
-        )
+    pub(crate) fn display_balloon<'a>(
+        &self,
+        _: Cx<'a, '_>,
+        it: &BalloonOptions<'a>,
+    ) -> JsResult<()> {
+        let [title, content] = [&it.title, &it.content].map(|it| it.as_deref().unwrap_or_default());
+        if !IS_WINDOWS {
+            return notification::show_plain(title, content);
+        }
+        let kinds: [&[u8]; 4] = [b"none", b"info", b"warning", b"error"];
+        let kind = (kinds.iter()).position(|kind| Some(*kind) == it.icon_type.as_deref());
+        ask_shell(ShellCommand::Balloon {
+            tray: self.id,
+            title: Text::lossy(title),
+            content: Text::lossy(content),
+            icon: it.icon.map(icon).transpose()?.into(),
+            flags: kind.unwrap_or(kinds.len()) as u32
+                | u32::from(it.no_sound) << 4
+                | u32::from(it.large_icon != Some(false)) << 5
+                | u32::from(it.respect_quiet_time) << 7,
+        })
+        .map(drop)
+    }
+
+    pub(crate) fn remove_balloon(&self, _: Cx<'_, '_>) -> JsResult<()> {
+        ask_shell(ShellCommand::Balloon {
+            tray: self.id,
+            title: Text::new(),
+            content: Text::new(),
+            icon: Maybe::No,
+            flags: 0,
+        })
+        .map(drop)
+    }
+
+    pub(crate) fn focus(&self, _: Cx<'_, '_>) -> JsResult<()> {
+        ask_shell(ShellCommand::FocusTray(self.id)).map(drop)
     }
 
     pub(crate) fn get_guid(&self) -> Option<&str> {

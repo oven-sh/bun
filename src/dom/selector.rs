@@ -651,8 +651,52 @@ pub(crate) struct Sought {
     pub(crate) wanted: SmallVec<[Wanted; 2]>,
     /// For each selector.
     steps: Box<[Option<Box<[Step]>>]>,
-    /// A match has all that are in one of them.
-    pub(crate) attributes: Option<Box<[SmallVec<[Name; 1]>]>>,
+    /// A match is of one of them.
+    pub(crate) kinds: SmallVec<[Kind; 1]>,
+}
+
+/// What follows from the keys of which a document knows how many elements have them.
+#[derive(Clone, Default)]
+pub(crate) struct Kind {
+    pub(crate) own: SmallVec<[Name; 2]>,
+    /// Of other elements.
+    pub(crate) around: SmallVec<[Name; 1]>,
+    /// The element has all of these bits, which are for all its keys.
+    pub(crate) filter: u64,
+}
+
+impl Kind {
+    const MOST: usize = 32;
+
+    fn add_all(list: &[Selector], outer: &Kind, out: &mut SmallVec<[Kind; 1]>) {
+        for (index, selector) in list.iter().enumerate() {
+            let (subject, mut kind) = (&selector.compounds[0], outer.clone());
+            kind.own.extend(subject.counted_keys());
+            kind.around.extend(
+                selector.compounds[1..]
+                    .iter()
+                    .flat_map(Compound::counted_keys),
+            );
+            kind.filter |= filter(
+                subject
+                    .simples
+                    .iter()
+                    .filter_map(|it| best_key(core::iter::once(it))),
+            );
+            match subject.simples.iter().find_map(|it| {
+                if let Simple::Is(list) = it {
+                    Some(list)
+                } else {
+                    None
+                }
+            }) {
+                Some(inner) if out.len() + inner.len() + list.len() - index <= Kind::MOST => {
+                    Kind::add_all(inner, &kind, out)
+                }
+                _ => out.push(kind),
+            }
+        }
+    }
 }
 
 impl Sought {
@@ -669,16 +713,8 @@ impl Sought {
                 .unwrap_or(u64::MAX)
         });
         let steps: Box<[_]> = list.iter().map(Step::all_of).collect();
-        let counted = |it: &Selector| {
-            it.compounds[0]
-                .attribute_keys()
-                .filter(|it| *it != key::attribute(name!("class")))
-                .collect()
-        };
-        let attributes = list
-            .iter()
-            .map(|it| Some(counted(it)).filter(|it: &SmallVec<_>| !it.is_empty()))
-            .collect();
+        let mut kinds = SmallVec::new();
+        Kind::add_all(&list, &Kind::default(), &mut kinds);
         let required = (if let [Some(only)] = &steps[..] {
             only[0].filters[0]
         } else {
@@ -730,7 +766,7 @@ impl Sought {
             required,
             wanted,
             steps,
-            attributes,
+            kinds,
         }
     }
 
@@ -901,12 +937,16 @@ impl Compound {
     }
 
     /// An element has to have all of them.
-    pub(crate) fn attribute_keys(&self) -> impl Iterator<Item = Name> + '_ {
-        let of_attributes = self
-            .simples
-            .iter()
-            .filter(|it| matches!(it, Simple::Attribute(_) | Simple::Exists(..)));
-        of_attributes.filter_map(|it| best_key(core::iter::once(it)))
+    fn counted_keys(&self) -> impl Iterator<Item = Name> + '_ {
+        let counted = self.simples.iter().filter(|it| {
+            matches!(
+                it,
+                Simple::Attribute(_) | Simple::Exists(..) | Simple::Tag(..)
+            )
+        });
+        counted
+            .filter_map(|it| best_key(core::iter::once(it)))
+            .filter(|it| *it != key::attribute(name!("class")))
     }
 
     /// An element has to have one of them.

@@ -1,7 +1,7 @@
 //! <https://html.spec.whatwg.org/#the-global-scope>
 
-use bun_collections::HashMap;
 use bun_jsc::{JSString, JsResult, from_js_host_call};
+use bun_web::HashMap;
 use bun_web::host::Host;
 use bun_web::origin::Origin;
 use bun_web::realm::Scope;

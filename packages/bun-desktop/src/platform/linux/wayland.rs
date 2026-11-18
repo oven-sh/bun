@@ -10,6 +10,7 @@ mod window;
 mod wire;
 
 use std::cell::{Cell, OnceCell, RefCell};
+use std::io::Write;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -218,7 +219,8 @@ impl Wayland {
     fn event(&'static self, event: Event) {
         match (event.kind, event.opcode) {
             (Kind::Display, 0) => {
-                eprintln!(
+                _ = writeln!(
+                    std::io::stderr(),
                     "The Wayland compositor has closed the connection: {}",
                     event.text(2).0
                 );

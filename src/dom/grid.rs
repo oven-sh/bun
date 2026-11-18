@@ -488,6 +488,19 @@ impl GridInfo {
         )
     }
 
+    /// The columns and the rows.
+    pub(crate) fn strips(&self) -> Vec<Rect> {
+        let Some(([left, right], [top, bottom])) = self.extent(0).zip(self.extent(1)) else {
+            return Vec::new();
+        };
+        let of =
+            |axis: usize| (0..self.tracks[axis].len()).filter_map(move |it| self.track(axis, it));
+        of(0)
+            .map(|[start, end]| Rect::from_edges(start, top, end, bottom))
+            .chain(of(1).map(|[start, end]| Rect::from_edges(left, start, right, end)))
+            .collect()
+    }
+
     /// The resolved value of `grid-template-columns` or `grid-template-rows`.
     pub(crate) fn write(&self, axis: usize, out: &mut Out) {
         let (lines, tracks, mut words) = (&self.lines[axis], &self.tracks[axis], Vec::new());

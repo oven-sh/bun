@@ -90,7 +90,10 @@ pub(super) fn describe(kind: &str, it: &Key) -> Value {
         "type": kind,
         "key": &*it.key,
         "code": &*it.code,
-        "windowsVirtualKeyCode": virtual_key_code(&it.key, &it.code),
+        "windowsVirtualKeyCode": match it.key_code {
+            0 => virtual_key_code(&it.key, &it.code),
+            known => known,
+        },
         "location": if it.location == 3 { 0 } else { it.location },
         "isKeypad": it.location == 3,
         "autoRepeat": it.is_repeat,

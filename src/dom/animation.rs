@@ -81,6 +81,24 @@ impl Animated {
     }
 }
 
+/// The index in `transition-property`.
+fn transition_for(style: &Style, target: Target) -> Option<usize> {
+    style
+        .transition
+        .property
+        .iter()
+        .rposition(|property| match (property, target) {
+            (TransitionProperty::All, _) => true,
+            (TransitionProperty::Known(prop), Target::Property(id)) => {
+                prop.longhands(style.flow()).contains(&id)
+            }
+            (TransitionProperty::Other(name), Target::Custom(custom)) => {
+                Name::new(name.as_bytes()) == custom
+            }
+            _ => false,
+        })
+}
+
 #[derive(Clone, PartialEq)]
 struct Stop {
     offset: f32,
@@ -2855,13 +2873,25 @@ impl Document {
     }
 
     /// If an ancestor is in a transition: what `node` inherits when they are over.
-    pub(crate) fn inherited_after_transitions(&self, node: NodeId) -> Option<Rc<Style>> {
+    pub(crate) fn inherited_after_transitions(
+        &self,
+        node: NodeId,
+        style: &Style,
+    ) -> Option<Rc<Style>> {
+        let is_inherited = |target| {
+            if let Target::Property(id) = target {
+                id.is_inherited() || style.deps.contains(Deps::PARENT)
+            } else {
+                true
+            }
+        };
+        let counts = |it: &Animation| matches!(&it.kind, Kind::Transition { end, .. } if is_inherited(end.target()) && transition_for(style, end.target()).is_some());
         let is_in_transition = |id| {
             self.tree[id].has(Flags::ANIMATED)
                 && self
                     .effective_animations(id)
                     .iter()
-                    .any(|it| self.animations.all[it].order() == 0)
+                    .any(|it| counts(&self.animations.all[it]))
         };
         self.tree
             .flat_ancestors(node)
@@ -2905,20 +2935,7 @@ impl Document {
     ) {
         let t = &after.transition;
         ALLOWS_KEYWORDS.set(after.ink.interpolate_size == InterpolateSize::AllowKeywords);
-        let matching = |target: Target| {
-            t.property
-                .iter()
-                .rposition(|property| match (property, target) {
-                    (TransitionProperty::All, _) => true,
-                    (TransitionProperty::Known(prop), Target::Property(id)) => {
-                        prop.longhands(after.flow()).contains(&id)
-                    }
-                    (TransitionProperty::Other(name), Target::Custom(custom)) => {
-                        Name::new(name.as_bytes()) == custom
-                    }
-                    _ => false,
-                })
-        };
+        let matching = |target| transition_for(after, target);
         let takes_time =
             |index: &usize| t.duration.at(*index).0.max(0.0) + t.delay.at(*index).0 > 0.0;
         let mut running = self.animations_of(node);
@@ -2966,7 +2983,23 @@ impl Document {
                 }
             }
         }
-        let mut interrupted = Vec::new();
+        let (mut interrupted, mut replaced) = (Vec::new(), None);
+        if running.iter().any(|it| {
+            self.animations.all[it]
+                .overridden
+                .contains(Overridden::KEYFRAMES)
+        }) && let Some(base) = self.tree.element(node).and_then(|it| it.base_style.clone())
+        {
+            running
+                .iter()
+                .for_each(|it| self.update_tracks(*it, &base, parent));
+            replaced = Some(self.animated_values(
+                &self.stack_of(node, |id, it| running.contains(&id) && !it.is_finished),
+                before,
+                false,
+                |it| it.sample,
+            ));
+        }
         for id in running {
             let animation = &self.animations.all[&id];
             let Kind::Transition {
@@ -2986,11 +3019,14 @@ impl Document {
             if let Some(sample) = animation.sample.filter(|_| !animation.is_finished) {
                 let under = self.value_in(before, target);
                 let track = animation.tracks.iter().find(|it| it.target == target);
-                let current = track.map(|track| {
-                    with_current_color(before.ink.color, || {
-                        self.sample_track(track, sample, &under)
-                    })
-                });
+                let current = match &replaced {
+                    Some(values) => values.iter().find(|it| it.target() == target).cloned(),
+                    None => track.map(|track| {
+                        with_current_color(before.ink.color, || {
+                            self.sample_track(track, sample, &under)
+                        })
+                    }),
+                };
                 let shortening = (sample.progress * shortening + 1.0 - shortening)
                     .abs()
                     .min(1.0);
@@ -3185,6 +3221,14 @@ impl Document {
             self.animations.filled.push(node);
         }
         self.forget_samples(node);
+    }
+
+    pub(crate) fn keep_composite(&mut self, id: u32) {
+        self.animations
+            .all
+            .get_mut(&id)
+            .into_iter()
+            .for_each(|it| it.overridden |= Overridden::COMPOSITE);
     }
 
     pub(crate) fn set_timing(&mut self, id: u32, timing: Timing, members: u16) {
@@ -3618,6 +3662,13 @@ impl Document {
         });
         let is_listed =
             |it: &&Animated| animation.keyframes.is_empty() || !matches!(it, Animated::Custom(..));
+        let written = |it: &Animated| {
+            if let Animated::Custom(name, None) = it {
+                Some((Prop::Custom(*name), Out::new()))
+            } else {
+                it.written(style)
+            }
+        };
         let finish =
             |(range, offset, easing, adds, values, computed_offset): Frame| ComputedKeyframe {
                 range,
@@ -3628,7 +3679,7 @@ impl Document {
                 values: values
                     .iter()
                     .filter(is_listed)
-                    .filter_map(|it| it.written(style))
+                    .filter_map(written)
                     .collect(),
             };
         frames.into_iter().map(finish).collect()

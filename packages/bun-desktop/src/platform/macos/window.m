@@ -283,6 +283,10 @@ static void tickAll(void* context)
     BunDesktopClock* clock;
     /// In place of the clock while something scrolls.
     CADisplayLink* pacer;
+    dispatch_source_t alarm;
+    CFTimeInterval refresh, paintsFrom, paintsBy, paintingTook;
+    bool isAlarmSet, isPaintDue;
+    unsigned timesInTheWay;
     id urgency;
     bool wantsFrame, isAwake, isScrolling, wasSeen, wasVisible;
     CFTimeInterval lastScroll;
@@ -426,7 +430,7 @@ static void tickAll(void* context)
 {
     NSRect frame = owned.frame;
     NSSize size = self.bounds.size;
-    return (BDGeometry) { frame.origin.x, primaryHeight() - NSMaxY(frame), frame.size.height - size.height, size.width, size.height,
+    return (BDGeometry) { frame.origin.x, primaryHeight() - NSMaxY(frame), frame.size.height - size.height, 0, size.width, size.height,
         owned.backingScaleFactor, self.isMaximized, isFullscreen(owned), false };
 }
 
@@ -696,20 +700,42 @@ static void findReach(CALayer* layer, CALayer* root, double* edges)
     [self stopPacing];
 }
 
+static bool isClock(const char* name) { return !strcmp(getenv("BUN_DESKTOP_CLOCK") ?: "", name); }
+
 /// The window server takes what was committed around the time of a refresh, and the clock only calls half a frame before that.
 /// Up to macOS 15, scroll events keep arriving between refreshes, and would have to wait.
 - (void)setScrolling:(bool)isOn
 {
     isScrolling = isOn;
-    if (!isOn || pacer || NSProcessInfo.processInfo.operatingSystemVersion.majorVersion <= 15)
+    if (!isOn || pacer || NSProcessInfo.processInfo.operatingSystemVersion.majorVersion <= 15 || isClock("video"))
         return;
     float most = owned.screen.maximumFramesPerSecond ?: 60;
     pacer = [self displayLinkWithTarget:self selector:@selector(pace:)];
     pacer.preferredFrameRateRange = CAFrameRateRangeMake(MIN(60, most), most, most);
     [pacer addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
     urgency = [NSProcessInfo.processInfo beginActivityWithOptions:NSActivityLatencyCritical reason:@"Scrolling"];
+    __weak BunDesktopView* weak = self;
+    alarm = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, DISPATCH_TIMER_STRICT, dispatch_get_main_queue());
+    dispatch_source_set_event_handler(alarm, ^{
+        [weak alarmRings];
+    });
+    dispatch_source_set_timer(alarm, DISPATCH_TIME_FOREVER, DISPATCH_TIME_FOREVER, 0);
+    dispatch_resume(alarm);
     lastPace = CACurrentMediaTime();
     isAwake = true;
+}
+
+- (void)setAlarm:(CFTimeInterval)time
+{
+    isAlarmSet = true;
+    dispatch_source_set_timer(alarm, dispatch_time(DISPATCH_TIME_NOW, (time - CACurrentMediaTime()) * NSEC_PER_SEC), DISPATCH_TIME_FOREVER, 0);
+}
+
+- (void)alarmRings
+{
+    isAlarmSet = false;
+    if (isPaintDue)
+        [self paintPaced];
 }
 
 - (void)stopPacing
@@ -718,27 +744,57 @@ static void findReach(CALayer* layer, CALayer* root, double* edges)
         return;
     [pacer invalidate];
     pacer = nil;
+    dispatch_source_cancel(alarm);
+    alarm = nil;
+    isAlarmSet = isPaintDue = false;
     [NSProcessInfo.processInfo endActivity:urgency];
     urgency = nil;
     _frequency = owned.screen.maximumFramesPerSecond;
 }
 
-/// Right after a refresh, when the events for the next frame have arrived. The window server may be late, and must not take that frame yet.
+/// Right after a refresh, when the window server takes a frame. It may be late, and must not take the next one yet.
+/// It misses the next refresh if it has to share the GPU for too long.
 - (void)pace:(CADisplayLink*)link
 {
     CFTimeInterval interval = MAX(link.targetTimestamp - link.timestamp, 1 / link.preferredFrameRateRange.maximum);
-    commitsFrom = link.timestamp + interval * 9 / 16;
+    refresh = link.timestamp;
+    commitsFrom = refresh + interval / 2;
+    // The main queue waits for a nested run loop.
+    paintsBy = isAlarmSet || isClock("early") ? refresh : refresh + interval - 0.0025 - paintingTook;
+    paintsFrom = MIN(refresh + MAX(interval / 2, interval - 0.0075), paintsBy);
     lastPace = CACurrentMediaTime();
     bd_trace("paced", lastPace - link.timestamp);
     _frequency = 1 / interval;
     [clock remove:self];
+    isPaintDue = true;
+    if (paintsFrom > lastPace)
+        [self setAlarm:paintsFrom];
+    else
+        [self paintPaced];
+}
+
+- (void)paintPaced
+{
+    CFTimeInterval began = CACurrentMediaTime();
+    bool isInTheWay = windowServerIsBusy();
+    // A display that shows a surface as it is keeps it until the next refresh.
+    if (isInTheWay && began < paintsBy && timesInTheWay < 3)
+        return [self setAlarm:MIN(began + 0.0004, paintsBy)];
+    timesInTheWay = isInTheWay ? timesInTheWay + 1 : 0;
+    isPaintDue = false;
+    waitedToCommit = 0;
     [self tick:nil];
+    CFTimeInterval ended = CACurrentMediaTime();
+    paintingTook = MAX(MIN(ended - began - waitedToCommit, 1 / _frequency), paintingTook * 0.9);
+    bd_paced(paintsFrom - refresh, began - refresh, ended - refresh, isInTheWay);
     if (isScrolling || !pacer)
         return;
     [self stopLink];
     if (wantsFrame)
         [self startLink];
 }
+
+- (bool)isTooLate { return pacer && (isPaintDue || CACurrentMediaTime() + paintingTook > refresh + 1 / _frequency); }
 
 - (void)stopLinkForGood
 {
@@ -1743,6 +1799,7 @@ bool bd_window_is_active(void* pointer) { return view.window.isKeyWindow; }
 bool bd_window_is_visible(void* pointer) { return view.needsFrames; }
 void bd_window_request_frame(void* pointer, bool isLeisurely) { [view requestFrame:isLeisurely]; }
 void bd_window_set_scrolling(void* pointer, bool isOn) { [view setScrolling:isOn]; }
+bool bd_window_is_too_late(void* pointer) { return view.isTooLate; }
 void* bd_window_layer(void* pointer) { return (__bridge void*)view.layer; }
 void bd_window_fit_backdrop(void* pointer, double* edges)
 {

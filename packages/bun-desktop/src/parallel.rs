@@ -46,7 +46,7 @@ thread_local! {
 }
 
 /// 0 unless this is a helper.
-pub fn seat() -> usize {
+fn seat() -> usize {
     SEAT.get()
 }
 
@@ -151,11 +151,32 @@ pub fn in_bands<T: Send>(
     if pixels < MANY_PIXELS {
         return work(0, rows);
     }
-    let height = (rows.len() / width).div_ceil(threads() * 2);
-    for_each(
-        rows.chunks_mut(height * width).enumerate(),
-        |(index, band)| work(index * height, band),
+    let height = (rows.len() / width / MANY_BANDS)
+        .next_multiple_of(BAND_HEIGHT)
+        .max(BAND_HEIGHT);
+    let bands = Vec::from_iter(
+        rows.chunks_mut(height * width)
+            .map(|it| Mutex::new(Some(it))),
     );
+    let threads = threads().min(bands.len());
+    on_threads(threads, || {
+        own_first(bands.len(), threads).for_each(|index| {
+            { bands[index].lock().take() }
+                .into_iter()
+                .for_each(|it| work(index * height, it))
+        })
+    });
+}
+
+/// As in `paint::batch`.
+const BAND_HEIGHT: usize = 32;
+const MANY_BANDS: usize = 256;
+
+/// All numbers up to `count`, so that a thread tends to get the rows that it had the last time.
+pub fn own_first(count: usize, threads: usize) -> impl Iterator<Item = usize> {
+    (seat() % threads..count)
+        .step_by(threads)
+        .chain((0..count).rev())
 }
 
 #[cfg(test)]

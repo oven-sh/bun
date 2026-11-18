@@ -4,7 +4,7 @@
 #![allow(dead_code, unreachable_pub)] // Each side uses its half.
 
 /// Bumped with every change to this file, to the library's exports, or to its JSON messages.
-pub const ABI_VERSION: u32 = 36;
+pub const ABI_VERSION: u32 = 40;
 
 #[path = "abi_accessibility.rs"]
 pub mod accessibility;

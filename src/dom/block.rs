@@ -1501,6 +1501,27 @@ impl Document {
             }
             output.intrinsic += row - own;
         }
+        if self.boxes[id].style.display() == Display::RubyText
+            && let Some(baseline) = output.baselines[0]
+        {
+            let (metrics, flips) = (
+                self.boxes[id].style.metrics,
+                self.boxes[id].mode.flips_lines(),
+            );
+            self.shift_children(
+                id,
+                inset.top
+                    + if flips {
+                        metrics.descent
+                    } else {
+                        metrics.ascent
+                    }
+                    - baseline,
+                &mut output,
+                None,
+            );
+            output.intrinsic = inset.sums()[1] + metrics.ascent + metrics.descent;
+        }
         self.finish_height(id, input, inset, &mut output);
         output.collapses_through = at_top && output.height == 0.0;
         if output.height != output.intrinsic {
@@ -1697,7 +1718,9 @@ impl LayoutBox {
             output.last_baseline = own.last_baseline.map(placed).or(output.last_baseline);
             let last = match self.kind {
                 Kind::Table => None,
-                Kind::Block if self.scrolls() => Some(own.height + margin_bottom),
+                Kind::Block if self.scrolls() && !self.is_orthogonal() => {
+                    Some(own.height + margin_bottom)
+                }
                 Kind::Block | Kind::Lines | Kind::Columns => own.baselines[1],
                 _ => own.baselines[0],
             };

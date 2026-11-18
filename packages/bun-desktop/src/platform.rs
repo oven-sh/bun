@@ -10,8 +10,8 @@ mod headless;
 mod linux;
 #[cfg(target_os = "macos")]
 pub mod macos;
-#[cfg(target_os = "windows")]
-compile_error!("there is no backend for Windows yet");
+#[cfg(windows)]
+pub mod windows;
 
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -32,7 +32,7 @@ pub use crate::protocol::{Cursor, Display, Geometry, Point};
 use crate::protocol::{Maybe, PreferenceCommand, PreferenceValue, Text};
 use crate::window::Options;
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub use linux::keysym_to_char;
 
 pub fn start(is_headless: bool, is_accessory: bool) -> Result<Box<dyn Platform>> {
@@ -41,7 +41,9 @@ pub fn start(is_headless: bool, is_accessory: bool) -> Result<Box<dyn Platform>>
     }
     #[cfg(target_os = "macos")]
     return macos::start(is_accessory);
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
+    return windows::start(is_accessory);
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     linux::start(is_accessory)
 }
 
@@ -58,7 +60,15 @@ pub fn change_preference(_: &PreferenceCommand) -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(windows)]
+pub use windows::{answer, ask_shell};
+
+#[cfg(unix)]
+pub fn ask_shell(_: crate::protocol::ShellCommand) -> Result<crate::protocol::PreferenceValue> {
+    crate::error::bail!("only Windows can do that")
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn answer(_: &crate::protocol::Question) -> Maybe<u32> {
     Maybe::No
 }
@@ -69,6 +79,28 @@ pub fn run_as_root(
     _: &crate::protocol::List<crate::protocol::List<Text>>,
 ) -> Result<Text> {
     crate::error::bail!("there is nobody to ask")
+}
+
+#[cfg(not(target_os = "macos"))]
+fn displays_changed(before: &[Display], now: &[Display]) {
+    use crate::bridge::emit_system;
+    use crate::protocol::SystemEvent;
+    let metrics = |it: &Display| (it.bounds, it.work_area, it.scale, it.frequency);
+    for display in now {
+        match before.iter().find(|it| it.id == display.id) {
+            None => emit_system(SystemEvent::DisplayAdded(display.id)),
+            Some(old) if metrics(old) != metrics(display) => {
+                emit_system(SystemEvent::DisplayChanged(display.id))
+            }
+            Some(_) => {}
+        }
+    }
+    for display in before
+        .iter()
+        .filter(|old| now.iter().all(|it| it.id != old.id))
+    {
+        emit_system(SystemEvent::DisplayRemoved(display.id));
+    }
 }
 
 pub trait Platform {
@@ -128,13 +160,13 @@ pub trait Platform {
         Vec::new()
     }
     /// To wait for. `dispatch` is called when one is readable.
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     fn descriptors(&self) -> Vec<i32>;
     /// Sends what is buffered, and returns when `dispatch` has to be called at the latest.
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     fn before_waiting(&self) -> Option<std::time::Instant>;
     /// Handles what has happened, without blocking.
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     fn dispatch(&self, readable: &[i32]);
     fn has_screen_reader(&self) -> bool;
     fn accessibility_changed(&self, events: &[accessibility::Event]);
@@ -165,11 +197,30 @@ pub trait Window {
     }
     /// With each frame.
     fn set_scrolling(&self, _is_on: bool) {}
+    /// What is painted now is not shown earlier than the next frame.
+    fn is_too_late(&self) -> bool {
+        false
+    }
     /// Between frames. `Some(false)` if it is worth asking again in a moment, `None` to wait for the next frame.
     fn can_present(&self) -> Option<bool>;
     /// Shows what `paint` puts into a buffer. It may be called later, on another thread.
     #[cfg(not(target_os = "macos"))]
     fn present(&self, paint: Painter);
+    /// Before `can_lift`, `present` and `commit`.
+    #[cfg(windows)]
+    fn begin_frame(&self, _is_scrolling: bool, _is_opaque: bool) {}
+    /// There is something that would be.
+    #[cfg(windows)]
+    fn can_lift(&self) -> bool {
+        false
+    }
+    /// Returns the contents that it keeps until the next call.
+    #[cfg(windows)]
+    fn commit(&self, _lifted: Vec<crate::paint::flatten::Lifted>) -> Vec<u128> {
+        Vec::new()
+    }
+    /// It has not been seen for a while.
+    fn release_pixels(&self) {}
     /// The `CALayer` of the view.
     #[cfg(target_os = "macos")]
     fn layer(&self) -> *mut std::ffi::c_void;
@@ -199,11 +250,11 @@ pub trait Window {
     fn imitate_backdrop(&self, _parts: &[BackdropPart]) {}
     /// The next background replaces what addons have set until now, and not what they set later.
     fn claim_background(&self) {}
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     fn name_for_portals(&self) -> String {
         String::new()
     }
-    /// `NSView*`, the XID or the id of the `wl_surface`.
+    /// `NSView*`, `HWND`, the XID or the id of the `wl_surface`.
     fn handle(&self) -> u64;
 }
 
@@ -246,10 +297,12 @@ pub type Modifiers = u8;
 pub struct RawKey {
     pub down: bool,
     pub is_repeat: bool,
-    /// The evdev code or the `kVK_` code.
+    /// The evdev code, the `kVK_` code, or the scan code with 0xE0 in front of an extended one.
     pub scan_code: u32,
-    /// The keysym. On macOS the character, and `u32::MAX` for a dead key.
+    /// The keysym. Elsewhere the character, `keys::DEAD`, or on Windows the virtual key with `keys::NAMED`.
     pub symbol: u32,
+    /// As in `protocol::Key`.
+    pub key_code: u8,
     /// Before this key.
     pub modifiers: Modifiers,
 }
@@ -295,6 +348,7 @@ pub enum Input {
         phase: Phase,
         modifiers: Modifiers,
     },
+    #[cfg(unix)]
     Pinch {
         at: Point,
         delta: f32,
@@ -339,3 +393,61 @@ pub struct Painted {
 
 #[cfg(not(target_os = "macos"))]
 pub type Painter = Box<dyn FnOnce(Pixels) -> Painted + Send>;
+
+/// The scheme, and the URL as one argument on a command line of Windows. A single letter is a drive.
+#[cfg(any(test, windows))]
+pub fn quoted_for_handler(url: &str) -> Option<(&str, String)> {
+    use std::fmt::Write as _;
+    let (scheme, bytes, mut quoted) = (url.split_once(':')?.0, url.as_bytes(), String::from('"'));
+    let is_scheme = scheme.len() > 1
+        && bytes[0].is_ascii_alphabetic()
+        && scheme
+            .bytes()
+            .all(|it| it.is_ascii_alphanumeric() || b"+-.".contains(&it));
+    for (at, &byte) in bytes.iter().enumerate() {
+        let is_escape = byte == b'%'
+            && bytes
+                .get(at + 1..at + 3)
+                .is_some_and(|it| it.iter().all(u8::is_ascii_hexdigit));
+        match is_escape || byte.is_ascii_alphanumeric() || b"-._~:/?#[]@!$&'()*+,;=".contains(&byte)
+        {
+            true => quoted.push(byte.into()),
+            false => _ = write!(quoted, "%{byte:02X}"),
+        }
+    }
+    is_scheme.then(|| (scheme, quoted + "\""))
+}
+
+#[cfg(test)]
+mod handler_tests {
+    use super::quoted_for_handler;
+
+    #[test]
+    fn a_url_is_one_argument() {
+        for it in [
+            "c:/a.exe",
+            "C:\\a.exe",
+            "a.exe",
+            ":a",
+            "",
+            "1a:b",
+            "\\\\host\\a:b",
+            "a b:c",
+            "a\\b:c",
+        ] {
+            assert_eq!(quoted_for_handler(it), None, "{it}");
+        }
+        assert_eq!(
+            quoted_for_handler("ab:x\" --c \"\\"),
+            Some(("ab", "\"ab:x%22%20--c%20%22%5C\"".into()))
+        );
+        assert_eq!(
+            quoted_for_handler("ab:%41%path%^|é\n"),
+            Some(("ab", "\"ab:%41%25path%25%5E%7C%C3%A9%0A\"".into()))
+        );
+        assert_eq!(
+            quoted_for_handler("https://a.b/c?d=e&f#g"),
+            Some(("https", "\"https://a.b/c?d=e&f#g\"".into()))
+        );
+    }
+}

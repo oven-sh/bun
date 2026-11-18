@@ -15,7 +15,7 @@ use bun_web::tasks::{self, Work};
 
 use super::{Document, Nearby, Step, disposed, ports_in};
 use crate::bridge::Link;
-use crate::generated_bindgen::electron::DesktopProcess;
+use crate::generated_bindgen::electron::{DesktopProcess, ElectronCrashReporter};
 use crate::generated_bindgen::renderer::{
     ExecutionScript, RendererContextBridge, RendererCrashReporter, RendererElectron, RendererIpc,
     RendererProcess, RendererWebUtils, WebSource, js_RendererContextBridge,
@@ -827,20 +827,38 @@ impl RendererWebUtils {
     }
 }
 
+/// Those of the app are none of its business.
 impl RendererCrashReporter {
-    pub(crate) fn nothing() {}
+    pub(crate) fn add_extra_parameter(key: &[u8], value: &[u8]) {
+        if is_page_process() {
+            ElectronCrashReporter::add_extra_parameter(key, value);
+        }
+    }
+
+    pub(crate) fn remove_extra_parameter(key: &[u8]) {
+        if is_page_process() {
+            ElectronCrashReporter::remove_extra_parameter(key);
+        }
+    }
 
     pub(crate) fn get_parameters(cx: Cx<'_, '_>) -> JsResult<JSValue> {
-        Ok(JSValue::create_empty_object(cx.global(), 0))
+        let all = JSValue::create_empty_object(cx.global(), 0);
+        if is_page_process() {
+            crate::crash_reporter::put_parameters(all)?;
+        }
+        Ok(all)
     }
 }
 
+pub(crate) fn has_node(realm: &Realm) -> bool {
+    Preload::of(realm).is_some_and(|it| !it.is_sandboxed)
+}
+
 fn unless_sandboxed(realm: &Realm, module: fn() -> JSValue) -> JSValue {
-    let is_sandboxed = Preload::of(realm).is_none_or(|it| it.is_sandboxed);
-    if is_sandboxed {
-        JSValue::UNDEFINED
-    } else {
+    if has_node(realm) {
         module()
+    } else {
+        JSValue::UNDEFINED
     }
 }
 

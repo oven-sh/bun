@@ -553,6 +553,7 @@ impl Traversal {
             && !(it.moves || it.repositions || it.changes_container || it.resizes)
             && is_plain(old)
             && is_plain(new)
+            && !rules.has_own_values()
             && old.is_positioned() == new.is_positioned()
             && old.customs.has_same_locals(&new.customs)
             && old.customs.differences(&new.customs).is_empty()
@@ -1232,6 +1233,18 @@ impl Document {
         };
         self.tree[id].unset(Flags::STYLE_DIRTY | Flags::DIRTY_DESCENDANTS);
         if element.is_generated() && element.pseudo == Pseudo::None {
+            if let Some(old) = element
+                .style
+                .clone()
+                .filter(|it| !it.inherits_the_same_as(parent))
+            {
+                let new = self.anonymous_style(parent, old.display());
+                self.tree
+                    .element_to_style(id)
+                    .into_iter()
+                    .for_each(|it| it.style = Some(Rc::clone(&new)));
+                self.apply_damage(id, &old, &new, false, traversal);
+            }
             return;
         }
         let is_input = element.tag == name!("input");
@@ -1445,7 +1458,8 @@ impl Document {
             is_provisional = self
                 .anchored
                 .get_mut(&id)
-                .is_some_and(|it| core::mem::take(&mut it.is_unresolved));
+                .is_some_and(|it| core::mem::take(&mut it.is_unresolved))
+                && !self.queries.before.contains_key(&id);
             base = self.with_anchors(id, base);
         }
         let base_changed = !old_base.as_ref().is_some_and(|it| Rc::ptr_eq(it, &base));
@@ -2172,7 +2186,7 @@ impl Document {
         let takes_time = |style: &Style| style.transition.duration.iter().any(|it| it.0 > 0.0);
         let mut before = None;
         match old.filter(|_| was_rendered) {
-            _ if self.containers.is_empty() => {}
+            _ if self.containers.is_empty() && !self.anchored.contains_key(&id) => {}
             None if is_fresh => self.take_back_transitions(id, 0),
             None => {
                 self.queries.before.remove(&id);
@@ -2196,7 +2210,7 @@ impl Document {
         let takes_time = takes_time(new);
         let inherited = |this: &Self| {
             if takes_time {
-                this.inherited_after_transitions(id)
+                this.inherited_after_transitions(id, new)
             } else {
                 None
             }
@@ -2380,7 +2394,7 @@ impl Document {
         if self.tree.element(id).is_some_and(|it| it.id != Name::NONE) {
             self.id_changed(id);
         }
-        self.svg_changed(id);
+        self.only_svg_element_changed(id);
         if style.display() != Display::None && !is_in_new_box {
             self.request_box(id, style.display());
         }
@@ -2866,6 +2880,7 @@ impl Document {
 
     fn drop_generated(&mut self, id: NodeId, generated: NodeId) {
         self.mark_rebuild(id);
+        self.counters_are_stale = true;
         self.free_subtree(generated);
         let slots = self
             .tree

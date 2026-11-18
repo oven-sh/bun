@@ -407,6 +407,40 @@ impl EventTarget {
         }
     }
 
+    /// The type, the callback, and whether it captures, is passive and is for once.
+    pub(crate) fn for_each_listener<'a>(
+        &'a self,
+        cx: Cx<'_, 'a>,
+        mut visit: impl FnMut(Cx<'_, 'a>, Atom, JSValue, [bool; 3]),
+    ) {
+        let Some(listeners) = self.listeners() else {
+            return;
+        };
+        let mut all = listeners.all.borrow().clone();
+        all.retain(|it| !listeners.is_aborted(*it));
+        let callbacks = List::from_fn(&cx.heap, all.len() as u32, |at| {
+            listeners.callback(all[at as usize])
+        });
+        for (it, callback) in all.into_iter().zip(callbacks.values()) {
+            let name = it.key.kind().name();
+            let callback = if it.is.contains(Is::HANDLER) {
+                self.handler(cx, &name)
+            } else {
+                callback
+            };
+            visit(
+                cx,
+                name,
+                callback,
+                [
+                    it.key.0 & 1 != 0,
+                    it.is.contains(Is::PASSIVE),
+                    it.is.contains(Is::ONCE),
+                ],
+            );
+        }
+    }
+
     pub(crate) fn remove_all_listeners(&self) {
         self.listeners().map(|it| (it.all.take(), it.many.take()));
         js_EventTarget::set_listeners(self, None);

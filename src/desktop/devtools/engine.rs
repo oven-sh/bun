@@ -183,6 +183,16 @@ impl Session for EngineSession {
         (remote.engine()).inspect_in_order(method, params, &id, Box::new(then));
     }
 
+    fn reveal(self: Rc<Self>, [x, y]: [f64; 2]) {
+        crate::task::spawn(async move {
+            let point = record! { "x": x.round(), "y": y.round() };
+            if let Ok(found) = self.inspect("DOM.getNodeForLocation", point).await {
+                let node = found.pick(&["backendNodeId"]);
+                self.emit("Overlay.inspectNodeRequested", node);
+            }
+        });
+    }
+
     fn close(&self) {
         self.children.take().iter().for_each(|it| it.close());
         self.swapped_back.take();

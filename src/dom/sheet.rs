@@ -404,6 +404,8 @@ impl Within {
     }
 }
 
+use crate::api::core::DomString;
+
 unsafe extern "C" {
     fn Bun__Desktop__mappedResource(bytes: *const u8, len: usize) -> *const u8;
 }
@@ -413,6 +415,7 @@ pub(crate) enum Source {
     Owned(Rc<[u8]>),
     /// The pages of a file that ships with the program.
     Mapped(&'static [u8]),
+    Ascii(DomString),
 }
 
 impl Source {
@@ -430,6 +433,14 @@ impl Source {
             false => Source::Mapped(unsafe { core::slice::from_raw_parts(mapped, bytes.len()) }),
         }
     }
+
+    pub(crate) fn of_text(text: DomString) -> Source {
+        if text.ascii().is_some() {
+            Source::Ascii(text)
+        } else {
+            Source::copy_of(text.to_utf8().as_bytes())
+        }
+    }
 }
 
 impl Default for Source {
@@ -445,6 +456,7 @@ impl core::ops::Deref for Source {
         match self {
             Source::Owned(bytes) => bytes,
             Source::Mapped(bytes) => bytes,
+            Source::Ascii(text) => text.latin1().unwrap_or_default(),
         }
     }
 }
@@ -559,6 +571,11 @@ impl Block {
         }
     }
 
+    /// The text that it is in, and where it starts.
+    pub(crate) fn place(&self) -> (&Source, usize) {
+        (&self.source, self.range.start as usize)
+    }
+
     pub(crate) fn within(&self) -> Within {
         self.within
     }
@@ -643,7 +660,11 @@ impl Block {
         }
         let prop = Prop::from_name(name).filter(|it| self.within.allows(*it, important))?;
         let value = match (self.within, prop) {
-            (Within::Hints, Prop::Long(Id::Transform)) => Declared::Text(value.into()),
+            (Within::Hints, Prop::Long(id))
+                if value == crate::hints::OWN.as_bytes() && crate::hints::can_be_own(id) =>
+            {
+                Declared::Text(value.into())
+            }
             _ => Declared::parse_within(prop, value, self.within)?,
         };
         Some(Rc::new(Declaration::new(prop, important, value, None)))

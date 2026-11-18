@@ -58,6 +58,26 @@ impl Session {
             .with_cookies(|jar| jar.all().iter().map(describe).collect())
     }
 
+    pub(crate) fn cookies_for(&self, urls: &[Url]) -> Value {
+        let applies = |it: &&Cookie| urls.iter().any(|url| it.applies_to(url));
+        (self.network).with_cookies(|jar| jar.all().iter().filter(applies).map(describe).collect())
+    }
+
+    /// With the `name`, and the `url`, the `domain` and the `path` if there are any.
+    pub(crate) fn remove_cookies_like(&self, like: &Value) {
+        let given = |name: &str| like[name].as_text().map(str::as_bytes);
+        let url = given("url").map(Url::parse);
+        self.network.with_cookies(|jar| {
+            jar.remove_if(Cause::Explicit, |it| {
+                given("name") == Some(&*it.name)
+                    && (url.as_ref())
+                        .is_none_or(|url| url.as_ref().is_some_and(|url| it.applies_to(url)))
+                    && given("domain").is_none_or(|domain| *it.domain == *without_dot(domain))
+                    && given("path").is_none_or(|path| *it.path == *path)
+            })
+        });
+    }
+
     pub(crate) fn set_cookie(&self, details: &CookieDetails<'_>) -> JsResult<()> {
         let url =
             (details.url).ok_or_else(|| error(format_args!("Missing required option 'url'")))?;

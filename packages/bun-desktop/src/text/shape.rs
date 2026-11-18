@@ -425,6 +425,72 @@ impl Shaped {
         (self.base_level, self.skipped, self.skipped_letters) = (0, 0, 0);
     }
 
+    /// What much text in ASCII takes.
+    fn spell_by_pairs(&mut self, text: &[u8], runs: &[TextRun], fonts: &mut Fonts) -> Option<()> {
+        let (script, mut at) = (
+            if text.iter().any(u8::is_ascii_alphabetic) {
+                Script::LATIN
+            } else {
+                Script::COMMON
+            },
+            0,
+        );
+        self.letters.resize(text.len(), UNSPELLED);
+        for run in runs {
+            let end = (run.end as usize).clamp(at, text.len());
+            fonts.primary_for_ascii(run.font).filter(|_| {
+                run.word_break & (abi::RUN_UPRIGHT | abi::RUN_VERTICAL) == 0
+                    && run.word_spacing == 0.
+            })?;
+            if at == end {
+                continue;
+            }
+            let (resolved, face, metrics) = fonts.measured_instance(run.font, 0, run.size, 1.);
+            let (candidate, size, index) = (
+                &resolved.candidates[0],
+                metrics.size,
+                self.index_of(metrics)
+                    .try_into()
+                    .ok()
+                    .filter(|_| !face.file.has_color)?,
+            );
+            let features_hash = candidate.features_hash ^ u64::from(run.letter_spacing != 0.);
+            let shaping = Shaping {
+                face,
+                size,
+                script,
+                is_rtl: false,
+                is_vertical: false,
+                capitalizes: false,
+                language: &resolved.language,
+                features: &[],
+                features_hash,
+            };
+            let scale = size / face.units_per_em() / STEPS_PER_UNIT as f32;
+            WORDS.with_borrow_mut(|words| {
+                words.spell_known(
+                    &shaping,
+                    text,
+                    at..end,
+                    &mut self.letters,
+                    [scale, run.letter_spacing],
+                    index,
+                )
+            })?;
+            at = end;
+        }
+        (at == text.len()).then_some(())?;
+        if text.contains(&b'-') {
+            let after_hyphens = text
+                .array_windows()
+                .enumerate()
+                .filter(|(_, [a, b])| *a == b'-' && b.is_ascii_digit());
+            after_hyphens
+                .for_each(|it| self.letters[it.0 + 1].flags = flags_in_ascii(text, it.0 + 1));
+        }
+        Some(())
+    }
+
     /// What most text takes. `runs` start at `from`.
     fn spell(
         &mut self,
@@ -1347,7 +1413,8 @@ pub fn shape_rest(text: &str, runs: &[TextRun], from: usize, known: usize, outpu
 
 fn shape_with(text: &str, runs: &[TextRun], direction: u8, may_spell: bool, output: &mut Shaped) {
     output.clear();
-    let bidi = (direction == abi::DIRECTION_RTL || may_be_bidirectional(text))
+    let is_ascii = text.is_ascii();
+    let bidi = (direction == abi::DIRECTION_RTL || !is_ascii && may_be_bidirectional(text))
         .then(|| unicode::resolve_bidi(text, direction));
     output.base_level = bidi.as_ref().map_or(0, |bidi| bidi.0);
 
@@ -1356,13 +1423,24 @@ fn shape_with(text: &str, runs: &[TextRun], direction: u8, may_spell: bool, outp
         && runs
             .iter()
             .all(|run| run.word_break & 3 != abi::BREAK_ALL && !fonts.may_shrink(run.font));
-    if is_simple && may_spell && !text.is_empty() && output.spell(text, runs, 0, fonts).is_some() {
-        return;
+    if is_simple && may_spell && !text.is_empty() {
+        if is_ascii
+            && output
+                .spell_by_pairs(text.as_bytes(), runs, fonts)
+                .is_some()
+        {
+            return;
+        }
+        output.letters.clear();
+        output.faces.clear();
+        if output.spell(text, runs, 0, fonts).is_some() {
+            return;
+        }
     }
     output.letters.clear();
     output.joined.clear();
     output.faces.clear();
-    if is_simple && text.is_ascii() {
+    if is_simple && is_ascii {
         output.itemize_ascii(text, runs, fonts);
     } else {
         output.itemize(text, runs, bidi.as_ref().map(|bidi| &bidi.1[..]), fonts);
@@ -1484,10 +1562,11 @@ mod tests {
         let isolated = "see \u{2066}a.b()\u{2069}, \u{2068}x-1\u{2069}-2 (\u{2066}-\u{2069}a) é-5 \u{2066}\u{2066} y\u{2069}\u{2069}\n";
         let mixed = "Тест «да» AV — 12 Ωμέγα-3 日本語の文章、「テスト」です。React 漢字（株）ぁー\u{3000}中 한국어 문장, ├── │ ✓ x\n";
         let sequences = "a ⚠\u{fe0f} b❤\u{fe0f}\u{200d}🔥 1\u{fe0f}\u{20e3} 👍🏽x-1 🇯🇵🇺🇸 👨\u{200d}👩\u{200d}👧 ✔\u{fe0e}e\u{301} fi-7 日\u{fe0f}\n";
+        let ascii = "\t\tTo  AVAT. \"Type\" a > b\tx-1 -2 a-b (A) $-1 ?' 12 W.\t\n";
         let (mut expected, mut actual) = (Shaped::default(), Shaped::default());
         for (family, text) in font_families()
             .iter()
-            .flat_map(|family| [latin, isolated, mixed, sequences].map(|it| (family, it)))
+            .flat_map(|family| [latin, isolated, mixed, sequences, ascii].map(|it| (family, it)))
         {
             let [regular, bold] =
                 [400., 700.].map(|it| describe(Description::new(family.as_bytes(), it)));
@@ -1498,7 +1577,7 @@ mod tests {
                     font,
                     size: 15.,
                     letter_spacing: spacing,
-                    word_spacing: spacing,
+                    word_spacing: if start % 2 == 0 { spacing } else { 0. },
                     word_break: abi::BREAK_KEEP_ALL * (start % 3 / 2) as u8,
                 };
                 let runs = [

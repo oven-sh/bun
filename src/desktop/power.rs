@@ -64,7 +64,9 @@ fn will_listen(event: &str) -> JsResult<()> {
 }
 
 fn watch_power_source() -> JsResult<()> {
-    later::after(10_000., |_| watch_power_source()).detach();
+    if !IS_WINDOWS {
+        later::after(10_000., |_| watch_power_source()).detach();
+    }
     let is_on_battery = answer((ui()?.is_on_battery)())?;
     match state().was_on_battery.replace(Some(is_on_battery)) {
         Some(before) if before != is_on_battery => emit(
@@ -77,6 +79,9 @@ fn watch_power_source() -> JsResult<()> {
 }
 
 pub(crate) fn observed(notification: &str) -> JsResult<()> {
+    if IS_WINDOWS && notification == "power source" {
+        return watch_power_source();
+    }
     let Some(&(event, ..)) = SESSION_EVENTS.iter().find(|it| it.2 == notification) else {
         return Ok(());
     };

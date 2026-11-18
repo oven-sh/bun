@@ -620,34 +620,6 @@ impl Css for Transform {
 pub(crate) struct Transforms(pub(crate) NoneOrSpaces<Transform>);
 
 impl Transforms {
-    /// Stands for what the attribute says.
-    pub(crate) const ATTRIBUTE: &str = "\u{1}";
-
-    /// What `of_hint` reads, and no author can declare.
-    pub(crate) fn hint(matrix: &abi::Matrix) -> [u8; 49] {
-        core::array::from_fn(|at| {
-            if at == 0 {
-                1
-            } else {
-                b'a' + (matrix[(at - 1) / 8].to_bits() >> ((at - 1) % 8 * 4) & 15) as u8
-            }
-        })
-    }
-
-    pub(crate) fn of_hint(source: &[u8], zoom: f32) -> Option<Transforms> {
-        let (&[a, b, c, d, e, f], []) = source.strip_prefix(&[1])?.as_chunks::<8>() else {
-            return None;
-        };
-        Some(Transforms::of_matrix(
-            [a, b, c, d, e, f].map(|it| {
-                f32::from_bits(it.iter().rev().fold(0, |all, it| {
-                    all << 4 | u32::from(it.wrapping_sub(b'a') & 15)
-                }))
-            }),
-            zoom,
-        ))
-    }
-
     pub(crate) fn of_matrix([a, b, c, d, e, f]: abi::Matrix, zoom: f32) -> Transforms {
         let moved = Transform::Translate(Name::Translate, Lp::Px(e * zoom), Lp::Px(f * zoom), 0.0);
         Transforms(NoneOrSpaces(Rc::new([

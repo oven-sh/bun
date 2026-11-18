@@ -4,8 +4,12 @@ import { hasScreen, openScreen, readScreen } from "./screen";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
-const chromium = ["google-chrome-stable", "google-chrome", "chromium-browser", "chromium", "microsoft-edge"]
-  .map(name => Bun.which(name))
+const chromium = ["google-chrome-stable", "google-chrome", "chromium-browser", "chromium", "microsoft-edge", "msedge"]
+  .map(name =>
+    Bun.which(name, {
+      PATH: process.env.PATH + ";C:/Program Files (x86)/Microsoft/Edge/Application".repeat(+isWindows),
+    }),
+  )
   .find(Boolean);
 const args = process.getuid?.() === 0 ? ["--no-sandbox"] : [];
 const engines = [
@@ -453,6 +457,96 @@ for (const engine of engines) {
       ]);
     });
 
+    test.each(["detach", "bottom"])("openDevTools() shows what is in a trusted page: %s", async mode => {
+      expect(
+        await run(`
+          let requests = 0;
+          const origin = site({ "/": () => (requests++, new Response("")) });
+          const page = await open("<p id=found-it>x</p><script>console.log('logged', 6 * 7)</script>");
+          page.openDevTools({ mode: "${mode}" });
+          await once(page, "devtools-opened");
+          const tools = page.devToolsWebContents;
+          print([page.isDevToolsOpened(), tools.getURL().split("?")[0], BrowserWindow.getAllWindows().length]);
+          const text = "(function text(it) { return it.nodeType === 3 ? it.data : [it.shadowRoot ?? [], ...it.childNodes].flat().map(text).join('') })(document.body)";
+          for (const [panel, wanted] of [["elements", "found-it"], ["console", "logged 42"]]) {
+            await tools.executeJavaScript("InspectorFrontendAPI.showPanel('" + panel + "')");
+            await until(async () => (await tools.executeJavaScript(text)).includes(wanted));
+          }
+          print(await tools.executeJavaScript("fetch('" + origin + "', { mode: 'no-cors' }).then(() => 'fetched', error => error.name)"));
+          print([requests, await page.executeJavaScript("innerHeight < " + page.getOwnerBrowserWindow().getContentSize()[1])]);
+          const closed = once(page, "devtools-closed");
+          page.closeDevTools();
+          await closed;
+          print([page.isDevToolsOpened(), page.devToolsWebContents, tools.isDestroyed()]);`),
+      ).toEqual([
+        [true, "devtools://devtools/bundled/devtools_app.html", 1],
+        "TypeError",
+        [0, mode === "bottom"],
+        [false, null, true],
+      ]);
+    });
+
+    test("a site in the place of the developer tools neither hears nor is heard, and their place is left as it was", async () => {
+      expect(
+        await run(`
+          const origin = site({ "/": "<script>heard = []; toHostReceive = it => heard.push(it); self.toHost?.(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression: 'obeyed = 1' } }))</script>" });
+          const page = await open("");
+          const tools = new BrowserWindow({ webPreferences: { webEngine: true } }).webContents;
+          const asked = new Promise(resolve => tools.setWindowOpenHandler(({ url }) => (resolve(url), { action: "deny" })));
+          page.setDevToolsWebContents(tools);
+          page.openDevTools();
+          await once(page, "devtools-opened");
+          const text = "(function text(it) { return it.nodeType === 3 ? it.data : [it.shadowRoot ?? [], ...it.childNodes].flat().map(text).join('') })(document.body)";
+          await page.executeJavaScript("console.log('logged', 6 * 7)");
+          await tools.executeJavaScript("InspectorFrontendAPI.showPanel('console')");
+          await until(async () => (await tools.executeJavaScript(text)).includes("logged 42"));
+          await page.executeJavaScript("void (chatter = setInterval(() => console.log('secret'), 1))");
+          await tools.loadURL(origin);
+          await page.executeJavaScript("clearInterval(chatter), console.log('secret')");
+          await new Promise(setImmediate);
+          print([await tools.executeJavaScript("heard"), await page.executeJavaScript("typeof obeyed")]);
+          page.closeDevTools();
+          print(["focus", "will-navigate", "render-process-gone"].map(it => tools.listenerCount(it)));
+          await tools.executeJavaScript("void open('about:blank#a')", true);
+          print(await asked);`),
+      ).toEqual([[[], "undefined"], [0, 0, 0], "about:blank#a"]);
+    });
+
+    test.each(["it", "page"])("%s.openDevTools() for each WebContents that is created", async whose => {
+      expect(
+        await run(`
+          const page = await open("");
+          app.on("web-contents-created", (_, it) => ${whose}.openDevTools());
+          page.openDevTools();
+          print(require("electron").webContents.getAllWebContents().map(it => it.getType()));`),
+      ).toEqual([["window", "remote"]]);
+    });
+
+    test.each([
+      ["page.closeDevTools()", ["window"]],
+      ["page.closeDevTools(), page.openDevTools()", ["window", "remote"]],
+      ["page.destroy()", []],
+      ["it.destroy()", ["window"]],
+    ])("%s while openDevTools() creates its WebContents", async (act, left) => {
+      expect(
+        await run(`
+          const page = await open("");
+          app.on("window-all-closed", () => {});
+          app.once("web-contents-created", (_, it) => (${act}));
+          page.openDevTools();
+          print(require("electron").webContents.getAllWebContents().map(it => it.getType()));`),
+      ).toEqual([left]);
+    });
+
+    test("openDevTools() does nothing if the window says so", async () => {
+      expect(
+        await run(`
+          const page = await open("", {}, { webPreferences: { devTools: false } });
+          page.openDevTools();
+          print(require("electron").webContents.getAllWebContents().length);`),
+      ).toEqual([1]);
+    });
+
     test("a frame is painted below what is above it, and only gets its own input", async () => {
       expect(
         await run(`
@@ -851,7 +945,7 @@ for (const engine of engines) {
           page.reload();
           await until(() => page.getTitle() === "theirs" && !page.isLoading());
           serves = true;
-          await page.executeJavaScript("history.pushState(null, '', '/other')");
+          await page.executeJavaScript("void setTimeout(() => history.pushState(null, '', '/other'))");
           await until(() => page.getTitle() === "ours" && !page.isLoading());
           page.navigationHistory.goBack();
           await until(() => page.getURL().endsWith("#b") && !page.isLoading());
@@ -1605,11 +1699,11 @@ for (const engine of engines) {
       ).toEqual(["launch-failed"]);
     });
 
-    test.skipIf(isWindows).each([
+    test.each([
       ["app.quit()", [0, null]],
       ["app.exit(3)", [3, null]],
-      ["process.kill(process.pid, 'SIGKILL')", [null, "SIGKILL"]],
-      ["process.crash()", [null, "SIGABRT"]],
+      ["process.kill(process.pid, 'SIGKILL')", isWindows ? [1, null] : [null, "SIGKILL"]],
+      ["process.crash()", isWindows ? [3, null] : [null, "SIGABRT"]],
     ])("the engine does not outlive %s", async (end, status) => {
       using dir = tempDir("webview", {
         "package.json": JSON.stringify({ name: "fixture", main: "main.js" }),
@@ -1622,7 +1716,12 @@ for (const engine of engines) {
           });`,
       });
       await using proc = Bun.spawn({
-        cmd: ["/bin/sh", "-c", 'ulimit -c 0 && exec "$@"', "--", bunExe(), "--preload=bun:desktop/electron", "."],
+        cmd: [
+          ...(isWindows ? [] : ["/bin/sh", "-c", 'ulimit -c 0 && exec "$@"', "--"]),
+          bunExe(),
+          "--preload=bun:desktop/electron",
+          ".",
+        ],
         env: { ...bunEnv, BUN_DESKTOP_HEADLESS: "1", ENGINE: JSON.stringify(engine), ELECTRON_ENABLE_LOGGING: "1" },
         cwd: String(dir),
         stderr: "pipe",
@@ -1633,10 +1732,19 @@ for (const engine of engines) {
       expect([proc.exitCode, proc.signalCode]).toEqual(status);
     });
 
-    test.skipIf(isWindows).each(["engine", "renderer"])("a page comes back after its %s has died", async which => {
+    test.each(["engine", "renderer"])("a page comes back after its %s has died", async which => {
       expect(
         await run(`
           const { Menu } = require("electron");
+          const children = () => {
+            if (!${isWindows}) return require("child_process").execSync("pgrep -P " + process.pid + " || true").toString().match(/\\d+/g);
+            const next = { args: ["i64", "ptr"], returns: "i32" };
+            const help = require("bun:ffi").dlopen("kernel32.dll", { CreateToolhelp32Snapshot: { args: ["u32", "u32"], returns: "i64" }, Process32FirstW: next, Process32NextW: next }).symbols;
+            const [all, entry, found] = [help.CreateToolhelp32Snapshot(2, 0), Buffer.alloc(568), []];
+            entry.writeUInt32LE(entry.length);
+            for (let has = help.Process32FirstW(all, entry); has; has = help.Process32NextW(all, entry)) if (entry.readUInt32LE(32) === process.pid) found.push(entry.readUInt32LE(8));
+            return found;
+          };
           const origin = site({ "/": "<title>first</title>", "/next": "<title>next</title>" });
           const window = new BrowserWindow();
           const page = window.webContents;
@@ -1647,7 +1755,7 @@ for (const engine of engines) {
           for (const recover of [() => page.reload(), press]) {
             const gone = once(page, "render-process-gone");
             if ("${which}" === "renderer") page.forcefullyCrashRenderer();
-            else for (const it of require("child_process").execSync("pgrep -P " + process.pid + " || true").toString().match(/\\d+/g)) try { process.kill(+it, "SIGKILL"); } catch {}
+            else for (const it of children()) try { process.kill(+it, "SIGKILL"); } catch {}
             await gone;
             await until(() => page.isCrashed());
             print(page.getURL() === origin + "/next");

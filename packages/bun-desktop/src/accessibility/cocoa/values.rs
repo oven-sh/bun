@@ -90,7 +90,7 @@ fn main_value(forest: &Forest, id: Id, node: &Node) -> Option<Value> {
         _ if has_range(node) && node.number(Number::Now).is_some() => {
             node.number(Number::Now).map(Value::Number)
         }
-        _ if node.has(abi::TEXT_FIELD) => Some(Value::Text(forest.field_text(id).text)),
+        _ if node.has(abi::TEXT_FIELD) => Some(Value::Text(forest.field_value(id).text)),
         _ => text(node.text(Text::Value).unwrap_or_default()),
     }
 }
@@ -355,7 +355,7 @@ fn attributed(forest: &Forest, block: &Block, range: Range<usize>) -> Value {
 }
 
 fn text_value(forest: &Forest, id: Id, name: &str) -> Option<Value> {
-    let block = forest.field_text(id);
+    let block = forest.field_value(id);
     let selected = selected_in(forest, id, &block);
     match name {
         "AXInsertionPointLineNumber" => {
@@ -625,7 +625,7 @@ pub fn value(forest: &Forest, id: Id, name: &str) -> Option<Value> {
 }
 
 fn value_for_index(forest: &Forest, id: Id, name: &str, index: usize) -> Option<Value> {
-    let block = forest.field_text(id);
+    let block = forest.field_value(id);
     let unit = |unit| {
         block
             .units(forest, unit)
@@ -704,7 +704,7 @@ fn value_for_marker(forest: &Forest, id: Id, name: &str, at: Position) -> Option
         .find(|it| name.contains(it.0))
         .map(|it| it.1);
     let within = || {
-        forest.field_text(
+        forest.field_value(
             forest
                 .closest(at.node, |it| it.has(abi::TEXT_FIELD))
                 .unwrap_or(id),
@@ -713,7 +713,7 @@ fn value_for_marker(forest: &Forest, id: Id, name: &str, at: Position) -> Option
     match name {
         "UIElement" => Some(Value::Element(forest.exposed(at.node))),
         "Index" => {
-            let block = forest.field_text(id);
+            let block = forest.field_value(id);
             count(to_utf16(&block.text, block.offset_of(forest, at)?))
         }
         "Line" => {
@@ -746,7 +746,7 @@ pub fn value_for(forest: &Forest, id: Id, name: &str, parameter: Parameter) -> O
             forest.grid(id).at(row, column).map(Value::Element)
         }
         Parameter::Range(range) => {
-            let block = forest.field_text(id);
+            let block = forest.field_value(id);
             value_for_text(
                 forest,
                 id,
@@ -757,7 +757,7 @@ pub fn value_for(forest: &Forest, id: Id, name: &str, parameter: Parameter) -> O
             )
         }
         Parameter::Point(point) if name == "AXRangeForPosition" => {
-            let block = forest.field_text(id);
+            let block = forest.field_value(id);
             value_for_index(
                 forest,
                 id,
@@ -866,7 +866,7 @@ pub fn is_settable(forest: &Forest, id: Id, name: &str) -> bool {
 
 fn select(id: Id, range: Range<usize>) -> Option<()> {
     let ends = read(|forest| {
-        let block = forest.field_text(id);
+        let block = forest.field_value(id);
         let range = utf8_range(&block, range);
         Some([
             block.position(range.start, false)?,

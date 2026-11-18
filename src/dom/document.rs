@@ -62,6 +62,8 @@ pub(crate) struct Environment {
     pub(crate) fixes_text_areas: bool,
     /// What the user of macOS has chosen for selected text, light and dark.
     pub(crate) highlight: [u32; 2],
+    pub(crate) palette: Option<bun_web::host::Palette>,
+    pub(crate) has_touch: bool,
     pub(crate) titlebar_area: Option<[f32; 4]>,
     pub(crate) root_font: RootUnits,
     pub(crate) initial_font: RootUnits,
@@ -227,8 +229,7 @@ pub(crate) struct Document {
     /// The `svg` elements that have what others refer to, and how often those have changed.
     /// With what refers to each.
     pub(crate) referenced_svgs: RefCell<Map<NodeId, Set<NodeId>>>,
-    /// And some that used to be.
-    pub(crate) referenced_elements: RefCell<Set<NodeId>>,
+    pub(crate) references: RefCell<crate::svg::References>,
     pub(crate) svg_generation: u32,
     pub(crate) environment_changes: u32,
     /// By their data.
@@ -374,6 +375,15 @@ impl Counts {
         }
     }
 
+    #[inline]
+    fn tag(element: &Element) -> Name {
+        if element.is_generated() {
+            Name::NONE
+        } else {
+            key::tag(element.tag)
+        }
+    }
+
     fn add(&mut self, key: Name) {
         let count = &mut self.0[Counts::place(key)];
         *count = count.saturating_add((key != Name::NONE).into());
@@ -381,6 +391,7 @@ impl Counts {
 
     #[inline]
     fn add_all(&mut self, element: &Element) {
+        self.add(Counts::tag(element));
         for it in element.attributes_besides_class() {
             self.add(key::attribute(it.name));
             self.add(it.key);
@@ -389,6 +400,7 @@ impl Counts {
 
     #[inline]
     fn remove_all(&mut self, element: &Element) {
+        self.remove(Counts::tag(element));
         for it in element.attributes_besides_class() {
             self.remove(key::attribute(it.name));
             self.remove(it.key);
@@ -397,6 +409,7 @@ impl Counts {
 
     fn remove(&mut self, key: Name) {
         let count = &mut self.0[Counts::place(key)];
+        debug_assert!(key == Name::NONE || *count != 0);
         *count -= u16::from(key != Name::NONE && !matches!(*count, 0 | u16::MAX));
     }
 }
@@ -524,6 +537,8 @@ impl Document {
             is_object: false,
             more_contrast: false,
             forces_colors: false,
+            palette: None,
+            has_touch: false,
             fullscreen: false,
             overlay_scrollbars: false,
             is_active: true,
@@ -594,7 +609,7 @@ impl Document {
             anchors: Default::default(),
             implicit_anchors: Default::default(),
             referenced_svgs: Default::default(),
-            referenced_elements: Default::default(),
+            references: Default::default(),
             svg_generation: 0,
             environment_changes: 0,
             paths: Default::default(),
@@ -737,7 +752,7 @@ impl Document {
             }
         }
         (self.counters_are_stale, self.marks.are_stale) = (true, true);
-        self.svg_changed(parent);
+        self.svg_children_changed(parent);
     }
 
     /// Of what leaves its place.
@@ -1024,6 +1039,11 @@ impl Document {
                     && it.is_ready()
                     && !node.has(Flags::AUTO_DIRECTION | Flags::REDIRECTS_CHILDREN)
             });
+            if is_rendered && is_ready {
+                node.element()
+                    .into_iter()
+                    .for_each(|it| self.attribute_keys.add_all(it));
+            }
             if is_rendered && !is_ready && !self.prepare_quickly(at) {
                 self.prepare(at, true);
                 self.derive_state(at, true);
@@ -1495,6 +1515,7 @@ impl Document {
             self.tree[id].unset(Flags::REBUILD | Flags::REBUILD_BELOW);
             self.forget_lock(id);
         }
+        self.svg_subtree_leaves(child);
         self.children_changed(child, false);
         self.tree.unlink(child);
         self.insert(parent, child, before);
@@ -2141,7 +2162,7 @@ impl Document {
             return self.svg_element_moved(id);
         }
         if can_be_hint {
-            self.update_hints(id);
+            self.hint_changed(id, name);
         }
         if is_math {
             self.math_changed(id);
@@ -2892,6 +2913,7 @@ impl Document {
             old.scale,
             old.dark,
             old.highlight,
+            old.palette,
             old.forces_colors,
         ) == (
             new.zoom,
@@ -2899,6 +2921,7 @@ impl Document {
             new.scale,
             new.dark,
             new.highlight,
+            new.palette,
             new.forces_colors,
         ) {
             true => self.pictures.outdate(),
@@ -2956,12 +2979,14 @@ impl Document {
         } else if (
             old.dark,
             old.highlight,
+            old.palette,
             old.color_scheme,
             old.forces_colors,
             old.quirks,
         ) != (
             new.dark,
             new.highlight,
+            new.palette,
             new.color_scheme,
             new.forces_colors,
             new.quirks,
@@ -3243,6 +3268,9 @@ impl Document {
             .collect();
         for (id, resolution) in users {
             self.set_replaced(id, Some(image.at_resolution(resolution)));
+            if image == Replaced::default() {
+                self.generated_image_is_broken(id);
+            }
         }
         self.externals
             .values_mut()
@@ -3346,9 +3374,13 @@ impl Document {
                 .tree
                 .style(*id)
                 .map_or(Contain::empty(), |it| it.contain());
-            let own = self
-                .own_box(*id)
-                .filter(|_| contain.intersects(Contain::SIZE | Contain::INLINE_SIZE));
+            let is_foreign = self.has_foreign_objects
+                && self.tree.element(*id).is_some_and(|it| {
+                    (it.namespace, it.tag) == (Namespace::Svg, name!("foreignObject"))
+                });
+            let own = self.own_box(*id).filter(|_| {
+                contain.intersects(Contain::SIZE | Contain::INLINE_SIZE) && !is_foreign
+            });
             let size = own.map(|own| {
                 let ([_, _, width, height], [top, right, bottom, left], it) =
                     (self.content_box(own), self.gutters(own), &self.boxes[own]);
@@ -3398,8 +3430,13 @@ impl Document {
     }
 
     pub(crate) fn mark_in_container(&self, id: NodeId, has_new_answers: bool, is_resized: bool) {
+        let backdrop = self
+            .tree
+            .element(id)
+            .map(|it| it.generated[crate::tree::BACKDROP]);
         for child in self
             .rendered_children(id)
+            .chain(backdrop)
             .filter(|it| self.tree.style(*it).is_some())
         {
             let (queries, measures) = (

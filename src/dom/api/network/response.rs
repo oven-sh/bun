@@ -220,6 +220,7 @@ impl Response {
             allows_timing: of(|it| it.allows_timing, *kind != b"cors"),
             includes_credentials: of(|it| it.includes_credentials, false),
             has_credentials_mode_include: of(|it| it.has_credentials_mode_include, false),
+            kept_as: internal.as_ref().map_or(0, |it| it.kept_as),
             answer: match internal {
                 Some(it) => Answer::new(it.status, &it.status_text, it.headers.clone(), body),
                 None => Answer::new(*status, status_text, headers, body),

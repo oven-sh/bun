@@ -189,6 +189,25 @@ impl Observer for Redirects {
     }
 }
 
+/// With whether the request wanted to leave.
+struct StaysAt(Origin, Cell<bool>);
+
+impl Observer for StaysAt {
+    fn allows(&self, request: &Request, _: Option<&Url>) -> bool {
+        self.1.set(!self.0.is_origin_of(&request.url));
+        !self.1.get()
+    }
+}
+
+/// No redirect leads to what the app serves.
+struct StaysOnWeb;
+
+impl Observer for StaysOnWeb {
+    fn allows(&self, request: &Request, first: Option<&Url>) -> bool {
+        first.is_none() || request.url.is_http()
+    }
+}
+
 #[derive(Default)]
 pub(super) struct Sender {
     pub(super) origin: Option<Origin>,
@@ -227,21 +246,25 @@ impl Session {
             .map_err(|it| it.error)
     }
 
-    pub(crate) async fn load_head(
+    /// Nobody but `trusted` gets credentials.
+    pub(crate) async fn load_for_tools(
         &self,
         url: &str,
-        includes_credentials: bool,
-    ) -> Result<(u16, HeaderList)> {
-        let mut request = request_for(url)?;
-        request.credentials = if includes_credentials {
-            Credentials::Include
-        } else {
-            Credentials::Omit
-        };
-        let Response { head, .. } = self
-            .load(request, Sender::default(), &(), &Controller::default())
-            .await?;
-        Ok((head.status, head.headers))
+        trusted: Option<Origin>,
+    ) -> Result<Response> {
+        let (mut request, controller) = (request_for(url)?, Controller::default());
+        if let Some(origin) = trusted.filter(|it| it.is_origin_of(&request.url)) {
+            let (own, observer) = (request_for(url)?, StaysAt(origin, Cell::default()));
+            let loaded = self
+                .load(own, Sender::default(), &observer, &controller)
+                .await;
+            if !observer.1.get() {
+                return loaded;
+            }
+        }
+        request.credentials = Credentials::Omit;
+        let (sender, controller) = (Sender::default(), Controller::default());
+        self.load(request, sender, &StaysOnWeb, &controller).await
     }
 
     pub(super) async fn load_directly(&self, request: Request) -> Result<Answer> {

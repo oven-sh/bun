@@ -73,6 +73,19 @@ impl EventType {
         }
     }
 
+    pub(super) fn name(self) -> Atom {
+        Known::at(self.0 as usize).map_or_else(
+            || {
+                MADE_UP.with_borrow(|all| {
+                    all.iter()
+                        .find(|it| *it.1 == self.0)
+                        .map_or(Atom::EMPTY, |it| it.0.clone())
+                })
+            },
+            Atom::of,
+        )
+    }
+
     pub(super) fn is_press(self) -> bool {
         self == atom!("click").into()
             || self == atom!("mousedown").into()

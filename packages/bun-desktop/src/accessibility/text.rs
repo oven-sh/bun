@@ -214,8 +214,22 @@ pub fn from_utf16(text: &str, offset: usize) -> usize {
         .map_or(text.len(), |it| it.0)
 }
 
+/// Of a leaf. UI Automation only gets to what has a character.
 fn text_of(node: &Node) -> &str {
-    if node.is_text() { node.name() } else { "" }
+    let is_object = || {
+        !matches!(
+            node.role,
+            Role::Generic | Role::None | Role::Paragraph | Role::WebArea
+        ) || node.has(abi::FOCUSABLE)
+            || !node.name().is_empty()
+    };
+    match node.is_text() {
+        true => node.name(),
+        false if cfg!(windows) && !node.has(abi::EDITABLE | abi::TEXT_FIELD) && is_object() => {
+            "\u{fffc}"
+        }
+        false => "",
+    }
 }
 
 pub fn union(a: Rect, b: Rect) -> Rect {
@@ -375,6 +389,16 @@ impl Forest {
 
     pub fn field_text(&self, field: Id) -> Block {
         self.without_last_break(self.gather(self.leaves_of(field)))
+    }
+
+    /// With the break that holds an empty editor open: VoiceOver tells where the caret is if there is a character.
+    pub fn field_value(&self, field: Id) -> Block {
+        let block = self.gather(self.leaves_of(field));
+        if block.leaves.len() == 1 {
+            block
+        } else {
+            self.without_last_break(block)
+        }
     }
 
     /// The leaves that no start of a paragraph separates from this one.
@@ -563,6 +587,126 @@ impl Forest {
         let block = self.gather(self.leaves_from(start.node, end.node));
         let [start, end] = [start, end].map(|it| block.offset_of(self, it).unwrap_or(0));
         (block, start..end.max(start))
+    }
+
+    // ───────────────────────────── units without gaps ─────────────────────────────
+
+    /// The same for all positions between the same two characters.
+    #[cfg(windows)]
+    pub fn normalized(&self, position: Position, is_upstream: bool) -> Position {
+        self.locate(position)
+            .and_then(|it| it.0.position(it.1, is_upstream))
+            .unwrap_or(position)
+    }
+
+    /// The end of a block is the character that breaks the line.
+    #[cfg(windows)]
+    fn unit_starts(&self, block: &Block, unit: Unit) -> Vec<usize> {
+        let holder = |it: Id| {
+            self.closest(it, |it| {
+                it.has(abi::CLICKABLE | abi::TEXT_FIELD) || it.role == Role::Image
+            })
+        };
+        let style = |it: Id| {
+            let node = self.get(it)?;
+            let numbers = [abi::Number::FontSize, abi::Number::Color].map(|it| node.number(it));
+            Some((
+                node.states & (abi::BOLD | abi::ITALIC | abi::UNDERLINED | abi::STRUCK),
+                numbers,
+                node.text(abi::Text::FontFamily),
+                holder(it),
+            ))
+        };
+        let (mut starts, leaves) = (
+            vec![0],
+            block
+                .leaves
+                .iter()
+                .filter(|it| !it.1.is_empty())
+                .collect::<Vec<_>>(),
+        );
+        match unit {
+            Unit::Style => starts.extend(
+                leaves
+                    .array_windows()
+                    .filter(|[a, b]| style(a.0) != style(b.0))
+                    .map(|[_, b]| b.1.start),
+            ),
+            _ => starts.extend(block.units(self, unit).into_iter().map(|it| it.start)),
+        }
+        if unit == Unit::Word {
+            let is_visible = |at: usize| !block.text[at..].starts_with(char::is_whitespace);
+            starts.extend(
+                leaves
+                    .array_windows()
+                    .filter(|[a, b]| holder(a.0) != holder(b.0) && is_visible(b.1.start))
+                    .map(|[_, b]| b.1.start),
+            );
+            starts.sort_unstable();
+        }
+        starts.extend((unit == Unit::Character).then_some(block.text.len()));
+        starts.dedup();
+        starts
+    }
+
+    /// The end of the block before, if this is the start of one.
+    #[cfg(windows)]
+    pub fn before_break(&self, position: Position) -> Option<Position> {
+        let block = self.adjacent_block(&self.locate(position).filter(|it| it.1 == 0)?.0, false)?;
+        block.position(block.text.len(), true)
+    }
+
+    /// Of the first unit that starts after `from`.
+    #[cfg(windows)]
+    pub fn start_after(&self, from: Position, unit: Unit) -> Option<Position> {
+        let (block, offset) = self.locate(from)?;
+        match self
+            .unit_starts(&block, unit)
+            .into_iter()
+            .find(|it| *it > offset)
+        {
+            Some(start) => block.position(start, false),
+            None => self.adjacent_block(&block, true)?.position(0, false),
+        }
+    }
+
+    /// Of the last unit that starts before `from`, or there if `is_inclusive`.
+    #[cfg(windows)]
+    pub fn start_before(&self, from: Position, unit: Unit, is_inclusive: bool) -> Option<Position> {
+        let (block, offset) = self.locate(from)?;
+        if let Some(start) = self
+            .unit_starts(&block, unit)
+            .into_iter()
+            .rfind(|it| *it < offset + usize::from(is_inclusive))
+        {
+            return block.position(start, false);
+        }
+        let block = self.adjacent_block(&block, false)?;
+        block.position(*self.unit_starts(&block, unit).last()?, false)
+    }
+
+    /// In the window, one for each piece of a line.
+    #[cfg(windows)]
+    pub fn rects_between(&self, range: [Position; 2]) -> Vec<Rect> {
+        let (block, range) = self.between(range);
+        let shown = block.leaves.iter().filter(|it| {
+            it.1.start < range.end && it.1.end > range.start && !self.is_offscreen(it.0)
+        });
+        let rects =
+            shown.flat_map(
+                |(id, own)| match self.get(*id).filter(|it| !it.runs.is_empty()) {
+                    Some(node) => {
+                        let inside = range.start.max(own.start) - own.start
+                            ..range.end.min(own.end) - own.start;
+                        Self::rects_in(node, inside, false)
+                            .into_iter()
+                            .map(|it| self.bounds(*id, Some(it), true))
+                            .collect()
+                    }
+                    None => vec![self.bounds(*id, None, true)],
+                },
+            );
+        rects.filter(|it| it.width > 0. && it.height > 0.).collect()
     }
 
     // ───────────────────────────── geometry ─────────────────────────────

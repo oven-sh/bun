@@ -9,7 +9,6 @@ use core::time::Duration;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 
-use bun_collections::HashMap;
 use bun_threading::guarded::GuardedLock;
 use bun_threading::{Guarded, Mutex};
 
@@ -18,6 +17,7 @@ use super::key::{self, Key, KeyRange};
 use super::large::LARGE;
 use super::sql::{self, Connection as Sql, SqlError, Value::*};
 use crate::Bytes;
+use crate::HashMap;
 use crate::exec::{Receiver, Sender, oneshot, sleep, spawn_background};
 use crate::net::record::{RecordReader, RecordWriter};
 

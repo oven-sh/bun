@@ -188,6 +188,64 @@ impl<F: Floats> Gauge<F> {
     }
 }
 
+pub struct Disc<F> {
+    steps: F,
+    reach: F,
+}
+
+impl<F: Floats> Disc<F> {
+    #[inline(always)]
+    pub fn new(radius: f32) -> Self {
+        Disc {
+            steps: F::new(std::array::from_fn(|it| it as f32)),
+            reach: F::new([radius + 0.5; 8]),
+        }
+    }
+
+    /// Like `Gauge::coverage`.
+    #[inline(always)]
+    pub fn coverage(&self, [x, y]: [f32; 2]) -> F {
+        let (x, all) = (F::new([x; 8]).add(self.steps), |it: f32| F::new([it; 8]));
+        self.reach
+            .sub(x.mul(x).add(all(y * y)).sqrt())
+            .max(all(0.))
+            .min(all(1.))
+            .mul(all(255.))
+            .add(all(0.5))
+    }
+
+    #[inline(always)]
+    pub fn measure(&self, row: &mut [u8], [x, y]: [f32; 2]) {
+        for (index, run) in row.chunks_mut(8).enumerate() {
+            run.copy_from_slice(&self.coverage([x + (index * 8) as f32, y]).bytes()[..run.len()]);
+        }
+    }
+}
+
+pub fn measure_disc(row: &mut [u8], center: [f32; 2], radius: f32) {
+    prefer_wide!(measure_disc(row, center, radius));
+    Disc::<[f32; 8]>::new(radius).measure(row, center);
+}
+
+/// Like `fill`.
+pub fn fill_disc<'a>(
+    rows: impl Iterator<Item = (&'a mut [Pixel], [f32; 2])>,
+    radius: f32,
+    color: Pixel,
+) {
+    prefer_wide!(fill_disc(rows, radius, color));
+    let disc = Disc::<[f32; 8]>::new(radius);
+    for (row, [x, y]) in rows {
+        for (index, run) in row.chunks_mut(8).enumerate() {
+            fill_through(
+                run,
+                color,
+                &disc.coverage([x + (index * 8) as f32, y]).bytes()[..run.len()],
+            );
+        }
+    }
+}
+
 fn measure<'a>(rows: impl Iterator<Item = (&'a mut [u8], [f32; 2])>, slant: &Slant) {
     prefer_wide!(measure_slant(rows, slant));
     Gauge::<[f32; 8]>::new(slant).measure(rows);

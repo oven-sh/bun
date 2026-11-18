@@ -225,6 +225,10 @@ impl Known {
         }
     }
 
+    pub(crate) fn at(index: usize) -> Option<Known> {
+        ALL.get(index).copied()
+    }
+
     #[inline]
     pub(crate) fn from_latin1(text: &[u8]) -> Known {
         Known::find(Name::hash(text, false), |it| it == text)

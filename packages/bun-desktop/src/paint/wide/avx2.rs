@@ -27,6 +27,27 @@ pub fn scale(pixels: Eight, by: Factors) -> Eight {
     _mm256_or_si256(multiply(even), _mm256_slli_epi16::<8>(multiply(odd)))
 }
 
+#[cfg(any(test, windows))]
+#[inline]
+#[target_feature(enable = "avx2")]
+pub fn scale_channels(pixels: Eight, by: Eight) -> Eight {
+    let multiply = |a, b| {
+        _mm256_mulhi_epu16(
+            _mm256_add_epi16(_mm256_mullo_epi16(a, b), _mm256_set1_epi16(128)),
+            _mm256_set1_epi16(257),
+        )
+    };
+    let low = _mm256_set1_epi16(255);
+    let even = multiply(_mm256_and_si256(pixels, low), _mm256_and_si256(by, low));
+    _mm256_or_si256(
+        even,
+        _mm256_slli_epi16::<8>(multiply(
+            _mm256_srli_epi16::<8>(pixels),
+            _mm256_srli_epi16::<8>(by),
+        )),
+    )
+}
+
 #[inline]
 #[target_feature(enable = "avx2")]
 pub fn add(a: Eight, b: Eight) -> Eight {
@@ -282,19 +303,78 @@ pub fn spread_pairs(by: [[u8; 2]; 8]) -> [Factors; 2] {
 /// They are all readable.
 #[inline]
 #[target_feature(enable = "avx2")]
-unsafe fn across(texels: *const Pixel, [a, b, c, d]: [u32; 4], weights: __m256i) -> __m256i {
+unsafe fn neighbors(texels: *const Pixel, [a, b, c, d]: [u32; 4]) -> __m256i {
     // SAFETY: the caller's contract.
     let pair = |index: u32| unsafe { texels.add(index as usize).cast::<i64>().read_unaligned() };
     let neighbors = _mm256_broadcastsi128_si256(_mm_setr_epi8(
         0, 4, 1, 5, 2, 6, 3, 7, 8, 12, 9, 13, 10, 14, 11, 15,
     ));
-    _mm256_maddubs_epi16(
-        _mm256_shuffle_epi8(
-            _mm256_setr_epi64x(pair(a), pair(b), pair(c), pair(d)),
-            neighbors,
-        ),
-        weights,
+    _mm256_shuffle_epi8(
+        _mm256_setr_epi64x(pair(a), pair(b), pair(c), pair(d)),
+        neighbors,
     )
+}
+
+/// # Safety
+/// Likewise.
+#[inline]
+#[target_feature(enable = "avx2")]
+unsafe fn across(texels: *const Pixel, at: [u32; 4], weights: __m256i) -> __m256i {
+    // SAFETY: the caller's contract.
+    _mm256_maddubs_epi16(
+        weights,
+        _mm256_xor_si256(unsafe { neighbors(texels, at) }, _mm256_set1_epi8(i8::MIN)),
+    )
+}
+
+pub struct Stretcher(__m256i);
+
+impl Stretcher {
+    #[inline]
+    #[target_feature(enable = "avx2")]
+    pub fn new(step: i32) -> Self {
+        Stretcher(_mm256_mullo_epi32(
+            _mm256_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7),
+            _mm256_set1_epi32(step),
+        ))
+    }
+
+    /// # Safety
+    /// There is a texel after that at `last`, which is not negative.
+    #[inline]
+    #[target_feature(enable = "avx2")]
+    pub unsafe fn at(&self, line: *const Pixel, start: i32, last: i32) -> Eight {
+        let low = _mm256_broadcastsi128_si256(_mm_setr_epi8(
+            1, -1, 1, -1, 1, -1, 1, -1, 5, -1, 5, -1, 5, -1, 5, -1,
+        ));
+        let x = _mm256_min_epi32(
+            _mm256_max_epi32(
+                _mm256_add_epi32(_mm256_set1_epi32(start), self.0),
+                _mm256_setzero_si256(),
+            ),
+            _mm256_set1_epi32(last),
+        );
+        let [a, b, c, d, e, f, g, h] =
+            super::store(_mm256_srli_epi32::<16>(x)).map(u32::from_ne_bytes);
+        let mix = |pairs, spread| {
+            let difference = _mm256_sub_epi16(
+                _mm256_srli_epi16::<8>(pairs),
+                _mm256_and_si256(pairs, _mm256_set1_epi16(255)),
+            );
+            let change = _mm256_add_epi16(
+                _mm256_mullo_epi16(difference, _mm256_shuffle_epi8(x, spread)),
+                _mm256_set1_epi16(128),
+            );
+            _mm256_srli_epi16::<8>(_mm256_add_epi16(_mm256_slli_epi16::<8>(pairs), change))
+        };
+        // SAFETY: the caller's contract.
+        let (first, second) =
+            unsafe { (neighbors(line, [a, b, e, f]), neighbors(line, [c, d, g, h])) };
+        _mm256_packus_epi16(
+            mix(first, low),
+            mix(second, _mm256_or_si256(low, _mm256_set1_epi8(8))),
+        )
+    }
 }
 
 pub struct Sampler<'a> {
@@ -342,20 +422,20 @@ impl<'a> Sampler<'a> {
         let [a, b, c, d, e, f, g, h] =
             super::store(_mm256_add_epi32(line, _mm256_srli_epi32::<16>(x)))
                 .map(u32::from_ne_bytes);
-        let right = _mm256_and_si256(_mm256_srli_epi32::<10>(x), _mm256_set1_epi32(63));
+        let right = _mm256_and_si256(_mm256_srli_epi32::<9>(x), _mm256_set1_epi32(127));
         let weights = _mm256_add_epi32(
             _mm256_sub_epi32(_mm256_slli_epi32::<8>(right), right),
-            _mm256_set1_epi32(64),
+            _mm256_set1_epi32(128),
         );
-        let down = _mm256_and_si256(_mm256_srli_epi32::<1>(y), _mm256_set1_epi32(0x7E00));
+        let down = _mm256_and_si256(_mm256_srli_epi32::<1>(y), _mm256_set1_epi32(0x7F00));
         let mix = |above, below, spread| {
             let change = _mm256_mulhrs_epi16(
                 _mm256_sub_epi16(below, above),
                 _mm256_shuffle_epi8(down, spread),
             );
-            _mm256_srli_epi16::<6>(_mm256_add_epi16(
+            _mm256_srli_epi16::<7>(_mm256_add_epi16(
                 _mm256_add_epi16(above, change),
-                _mm256_set1_epi16(32),
+                _mm256_set1_epi16(128 * 128 + 64),
             ))
         };
         let (first, second) = (

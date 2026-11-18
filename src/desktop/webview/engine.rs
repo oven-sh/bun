@@ -570,6 +570,8 @@ pub(crate) struct Engine {
     pub(super) backend: Backend,
     itself: Weak<Engine>,
     child: Strong,
+    #[cfg(windows)]
+    family: Cell<Option<crate::win32::Family>>,
     views: RefCell<BTreeMap<i32, Root<Remote>>>,
     sessions: RefCell<BTreeMap<i32, Root<Session>>>,
     /// Frames, ports, downloads and workers.
@@ -661,6 +663,15 @@ impl Engine {
         } else {
             -1
         };
+        #[cfg(windows)]
+        let frames = match frames {
+            -1 => -1,
+            handle => {
+                use bun_sys::FdExt as _;
+                let handle = bun_sys::Fd::from_system(handle as usize as *mut _);
+                handle.make_lib_uv_owned().map_or(-1, |it| it.uv())
+            }
+        };
         if frames >= 0 {
             stdio.push(global(), frames.into())?;
         }
@@ -669,6 +680,8 @@ impl Engine {
             "stdio": stdio,
             "env": process::copy_of_environment(environment, &["ELECTRON_RUN_AS_NODE", "NODE_OPTIONS"])?,
             "windowsHide": true,
+            // Or else it is killed before it has written what sites have stored.
+            "detached": IS_WINDOWS && kind == Kind::Electron,
         });
         let spawn = [js(&*choice.path)?, js(arguments)?, how];
         let child = invoke(
@@ -676,11 +689,17 @@ impl Engine {
             "spawn",
             &spawn,
         );
-        #[cfg(unix)]
         if frames >= 0 {
-            let _ = bun_sys::close(bun_sys::Fd::from_native(frames));
+            let _ = bun_sys::close(bun_sys::Fd::from_uv(frames));
         }
         let child = child?;
+        #[cfg(windows)]
+        let family = match get(child, "pid")? {
+            id if id.is_number() && kind == Kind::Chromium => {
+                crate::win32::Family::of(id.as_number() as u32)
+            }
+            _ => None,
+        };
         let is_on_wayland =
             cfg!(target_os = "linux") && process::variable("WAYLAND_DISPLAY")?.is_some();
         let user_agent = app::user_agent()?;
@@ -695,6 +714,8 @@ impl Engine {
             metrics: Default::default(),
             collected: Default::default(),
             child: keep(child),
+            #[cfg(windows)]
+            family: Cell::new(family),
             backend: Backend::new(user_agent.clone(), scale),
             itself: Weak::clone(engine),
             views: Default::default(),
@@ -1134,6 +1155,10 @@ impl Engine {
             it.into_iter()
                 .try_for_each(|it| invoke(it, "destroy", &[]).map(drop))
         }));
+        #[cfg(windows)]
+        if let Some(family) = self.family.take() {
+            family.end();
+        }
         files::remove_all(&self.directory);
         self.pending
             .take()

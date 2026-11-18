@@ -1663,6 +1663,16 @@ describe("editing", () => {
     ]).toEqual(["<p>ab</p>", "<p>ab</p><p><br></p>", "<p>ab</p>", "<p>a</p>", "<p>ab</p>", "<p>ab</p><p><br></p>"]);
   });
 
+  test("what is typed after a script has set the value is undone", () => {
+    using page = open("<textarea></textarea>");
+    const field = page.$("textarea");
+    field.focus();
+    const run = (command: string, value?: string) => (page.document.execCommand(command, false, value), field.value);
+    run("insertText", "a");
+    field.value = "";
+    expect([run("insertText", "b"), run("undo")]).toEqual(["b", ""]);
+  });
+
   test("text that is nested deeply is replaced", () => {
     expect(edit("<b>".repeat(400) + "[a]", "insertText", "c").replaceAll(/<.*?>/g, "")).toBe("c");
   });
@@ -1974,6 +1984,27 @@ describe("nodes that no script has asked for", () => {
     expect([count() - before, root.textContent.length, root.innerHTML.length]).toEqual([0, 1000, 12011]);
     expect(root.querySelector("ins").parentNode.childNodes.length).toBe(1000);
     expect(count() - before).toBe(1000);
+  });
+
+  test('have no object after getElementsByTagName("*") has counted them, until it is asked between single moves', () => {
+    using page = open("<div></div>");
+    const count = () => (Bun.gc(true), heapStats().objectTypeCounts.HTMLModElement ?? 0);
+    const [div, before] = [page.$("div"), count()];
+    div.innerHTML = "<p><ins>a</ins><!----><input><ins></ins></p>".repeat(100);
+    const all = div.getElementsByTagName("*");
+    const lengths = [all.length, all.length];
+    div.append("text");
+    lengths.push(all.length);
+    for (let i = 0; i < 100; i++) div.append(page.document.createElement("i"));
+    lengths.push(all.length);
+    expect([lengths, count() - before]).toEqual([[400, 400, 400, 500], 0]);
+    expect([1, 2, 3].map(() => (div.firstChild.remove(), all.length))).toEqual([496, 492, 488]);
+    expect(count() - before).toBeGreaterThanOrEqual(194);
+    page.document.implementation.createHTMLDocument().body.append(div);
+    div.lastElementChild.remove();
+    expect([all.length, all[1].localName, [...all].length]).toEqual([487, "ins", 487]);
+    div.replaceChildren();
+    expect(all.length).toBe(0);
   });
 
   test("have no object after they have left a document with quirks", () => {
@@ -2508,6 +2539,25 @@ describe("text that is appended to", () => {
   });
 });
 
+test("the only match among many siblings is found however often it has been asked for", () => {
+  using page = open(`<i></i>${"<p></p>".repeat(3000)}<b id="last"></b>`);
+  const { head, body } = page.document;
+  const found = () => [...new Set(Array.from({ length: 50 }, () => (head.toggleAttribute("a"), page.$("b")?.id)))];
+  const seen = [found()];
+  body.insertAdjacentHTML("afterbegin", `<b id="first"></b>`);
+  seen.push(found());
+  body.firstChild.remove();
+  seen.push(found());
+  body.firstChild.append(body.lastChild);
+  body.insertAdjacentHTML("beforeend", `<b id="new"></b>`);
+  seen.push(found());
+  body.firstChild.remove();
+  seen.push(found());
+  body.lastChild.remove();
+  seen.push(found());
+  expect(seen).toEqual([["last"], ["first"], ["last"], ["last"], ["new"], [undefined]]);
+});
+
 test("margins collapse through a block that is no longer a flex item", () => {
   using page = open(`<div style="display: flex; flex-direction: column">
     <div id="outer" style="display: flex; flex-direction: column"><div id="inner"><p style="margin: 18px 0 2px; height: 32px"></p></div></div>
@@ -2698,7 +2748,7 @@ describe("content-visibility", () => {
   });
 });
 
-test.skipIf(isWindows)("a panic in the engine does not end the process", async () => {
+test("a panic in the engine does not end the process", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -2722,7 +2772,7 @@ test.skipIf(isWindows)("a panic in the engine does not end the process", async (
   expect(exitCode).toBe(0);
 });
 
-test.skipIf(isWindows).concurrent.each(["block", "flex", "inline-block", "grid; grid: subgrid / subgrid"])(
+test.concurrent.each(["block", "flex", "inline-block", "grid; grid: subgrid / subgrid"])(
   "a deep tree that is laid out with little stack left does not end the process: %s",
   async display => {
     await using proc = Bun.spawn({

@@ -2761,6 +2761,12 @@ pub(crate) fn inject<'a>(
                     return None;
                 }
             }
+            if inject_options.imports_from_system32_only {
+                if let Err(e) = pe_file.import_from_system32_only() {
+                    bun_core::pretty_errorln!("Error setting PE load flags: {}", e);
+                    return None;
+                }
+            }
             // Always strip authenticode when adding .bun section for --compile
             if let Err(e) = pe_file.add_bun_section(bytes, additions.has_code) {
                 bun_core::pretty_errorln!("Error adding Bun section to PE file: {}", e);

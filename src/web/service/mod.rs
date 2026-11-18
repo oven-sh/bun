@@ -1,11 +1,13 @@
 //! <https://w3c.github.io/ServiceWorker/>. The registrations of a session are on the main thread. A realm makes a [`Call`] and gets a [`Notice`].
 
+pub mod far;
 mod jobs;
 mod registry;
 pub mod router;
 mod stored;
 
 use core::any::Any;
+use core::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use bun_threading::Guarded;
@@ -26,6 +28,7 @@ use crate::net::response::{Answer, Response, ResponseType};
 use crate::net::session::Session;
 use crate::origin::{Origin, is_potentially_trustworthy};
 use crate::referrer::ReferrerPolicy;
+use crate::remote::Peer;
 use crate::request::Request;
 use crate::scheme::{Privileges, privileges_of};
 use crate::timing::ResourceTiming;
@@ -187,6 +190,8 @@ pub enum News {
         worker: WorkerInfo,
         scope: Url,
         status: RunningStatus,
+        /// If it is another one.
+        process: Option<u32>,
     },
     Console {
         worker: Id,
@@ -270,6 +275,8 @@ pub struct Served {
     pub allows_timing: bool,
     pub includes_credentials: bool,
     pub has_credentials_mode_include: bool,
+    /// See [`crate::net::response::Head`].
+    pub kept_as: u32,
     pub answer: Answer,
 }
 
@@ -294,8 +301,6 @@ crate::wire! {
     }
 }
 
-crate::wire!(impl never Handler, Reserved);
-
 /// What may handle the requests of a client.
 #[derive(Clone, Default)]
 pub enum Handler {
@@ -319,7 +324,7 @@ pub enum Handler {
 pub struct Busy {
     pending: Arc<Pending>,
     /// That has a time limit.
-    _event: Option<Arc<()>>,
+    _event: Option<Arc<Limit>>,
 }
 
 impl Busy {
@@ -331,24 +336,40 @@ impl Busy {
     }
 }
 
-struct Pending(Arc<Session>, Id);
+enum Pending {
+    Here(Arc<Session>, Id),
+    Far(far::Occasion),
+}
 
 impl Drop for Pending {
     fn drop(&mut self) {
-        send(&self.0, ToRegistry::Idle(self.1));
+        match self {
+            Pending::Here(session, worker) => send(session, ToRegistry::Idle(*worker)),
+            Pending::Far(it) => it.report(far::Progress::Over),
+        }
+    }
+}
+
+#[derive(Default)]
+struct Limit(Option<far::Occasion>);
+
+impl Drop for Limit {
+    fn drop(&mut self) {
+        (self.0.iter()).for_each(|it| it.report(far::Progress::Handled));
     }
 }
 
 /// The registry knows a client for as long as this is there.
 pub struct Presence {
-    session: Arc<Session>,
+    /// `None` if the host has the one that counts.
+    session: Option<Arc<Session>>,
     pub(crate) id: Id,
 }
 
 impl Presence {
     pub(crate) fn new(session: &Arc<Session>, id: Id) -> Arc<Presence> {
         Arc::new(Presence {
-            session: Arc::clone(session),
+            session: Some(Arc::clone(session)),
             id,
         })
     }
@@ -356,7 +377,7 @@ impl Presence {
 
 impl Drop for Presence {
     fn drop(&mut self) {
-        send(&self.session, ToRegistry::Gone(self.id));
+        (self.session.iter()).for_each(|it| send(it, ToRegistry::Gone(self.id)));
     }
 }
 
@@ -372,6 +393,15 @@ pub struct Control {
 pub struct Reserved {
     pub(crate) presence: Arc<Presence>,
     pub(crate) control: Option<Control>,
+    /// In a page process.
+    pub is_apart: bool,
+}
+
+pub(crate) fn bucket_for(bucket: Vec<u8>, is_apart: bool) -> Bytes {
+    match is_apart {
+        true => crate::storage::for_page_processes(&bucket),
+        false => bucket.into(),
+    }
 }
 
 /// <https://w3c.github.io/ServiceWorker/#dfn-script-resource-map>
@@ -390,6 +420,16 @@ const MOST_BYTES_OF_SCRIPTS: usize = 32 << 20;
 const MOST_IMPORTS: usize = 1024;
 
 impl Imports {
+    /// False if that is one too many.
+    pub(crate) fn note_use(&mut self, url: &Url) -> bool {
+        if self.is_complete || self.used.contains(url) {
+            return true;
+        }
+        self.used.push(url.clone());
+        self.used.truncate(MOST_IMPORTS);
+        self.used.last() == Some(url)
+    }
+
     pub(crate) fn has_room_for(&self, more: &Loaded) -> bool {
         let used = self.loaded.iter().map(|it| it.1.bytes.len()).sum::<usize>();
         self.loaded.len() < MOST_IMPORTS && used + more.bytes.len() <= MOST_BYTES_OF_SCRIPTS
@@ -421,10 +461,22 @@ pub struct Start {
 pub struct Outside {
     session: Arc<Session>,
     worker: WorkerInfo,
+    host: Option<crate::outside::Outside>,
 }
 
 impl Outside {
+    fn new(session: &Arc<Session>, worker: WorkerInfo) -> Outside {
+        Outside {
+            session: Arc::clone(session),
+            worker,
+            host: None,
+        }
+    }
+
     pub fn log(&self, level: Level, message: String, line: u32, url: String) {
+        if let Some(host) = self.host {
+            return host.log(level, message, line, url);
+        }
         let news = News::Console {
             worker: self.worker.id,
             level,
@@ -436,6 +488,9 @@ impl Outside {
     }
 
     pub async fn may_notify(&self) -> bool {
+        if let Some(host) = self.host {
+            return host.may_notify().await == Some(true);
+        }
         let url = self.worker.url.clone();
         let asking =
             (self.session).consult(move |it| core::future::ready(Ok(it.lets_notify(&url))));
@@ -454,6 +509,15 @@ pub fn notification_was_closed(session: &Arc<Session>, id: Id) {
 
 /// Dropping it terminates the worker.
 pub type Running = Box<dyn Any>;
+
+/// A page process for a service worker.
+pub struct Lodging {
+    pub peer: Peer,
+    pub pid: u32,
+    pub is_like_in_browser: bool,
+    /// The process is there for as long as this.
+    pub lease: Box<dyn Any>,
+}
 
 #[derive(Clone)]
 pub(crate) struct Address {
@@ -483,6 +547,25 @@ pub(crate) struct Caller {
     pub(crate) agent: Agent,
     /// If it is a service worker.
     pub(crate) worker: Option<Id>,
+    pub(crate) weight: Option<Arc<Weight>>,
+}
+
+/// Of a call from another process, for as long as it is kept.
+pub(crate) struct Weight(Arc<AtomicUsize>, usize);
+
+impl Weight {
+    pub(crate) fn new(account: Arc<AtomicUsize>, bytes: usize) -> Option<Weight> {
+        let bytes = bytes + (16 << 10);
+        let before = account.fetch_add(bytes, Ordering::Relaxed);
+        let weight = Weight(account, bytes);
+        (before < crate::wire::LARGE).then_some(weight)
+    }
+}
+
+impl Drop for Weight {
+    fn drop(&mut self) {
+        self.0.fetch_sub(self.1, Ordering::Relaxed);
+    }
 }
 
 pub(crate) enum ToRegistry {

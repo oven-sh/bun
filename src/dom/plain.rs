@@ -202,6 +202,14 @@ pub(crate) fn svg_length(source: &[u8], zoom: f32) -> Option<Lp> {
     }
 }
 
+pub(crate) fn number(source: &[u8]) -> Option<f64> {
+    let p = &mut Plain {
+        rest: source,
+        zoom: 1.0,
+    };
+    p.number().filter(|_| p.rest.is_empty())
+}
+
 impl Id {
     pub(crate) fn is_plain(self, source: &[u8]) -> bool {
         let p = &mut Plain {

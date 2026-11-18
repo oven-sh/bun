@@ -10,7 +10,7 @@ use crate::boxes::{BoxId, Kind, LayoutBox, VIEWPORT};
 use crate::document::Document;
 use crate::fragment::Breaks;
 use crate::name::{is_name, name};
-use crate::properties::Style;
+use crate::properties::{Id, Style};
 use crate::selector::Pseudo;
 use crate::types::*;
 use crate::values::{Auto, Lp, Normal, PositiveLp, Size};
@@ -736,6 +736,10 @@ bitflags::bitflags! {
         const LEAVES_NO_TRACE = 1 << 8;
         /// As a block container, words in ASCII are shaped as they are, and that is all.
         const WRITES_PLAINLY = 1 << 9;
+        /// Like `HAS_FIXED_SIZES`, but for percentages in the sizes.
+        const HAS_SIMPLE_SIZES = 1 << 10;
+        /// As a flex container, it has one line that goes to the right or down.
+        const IS_PLAIN_FLEX = 1 << 11;
     }
 }
 
@@ -865,6 +869,22 @@ impl Style {
             Traits::HAS_FIXED_SIZES,
             has_fixed_padding && has_fixed_margin && sizes(self).into_iter().all(is_fixed),
         );
+        traits.set(
+            Traits::HAS_SIMPLE_SIZES,
+            has_fixed_padding
+                && has_fixed_margin
+                && sizes(self)
+                    .into_iter()
+                    .all(|it| matches!(it, Size::Auto | Size::Length(_))),
+        );
+        traits.set(
+            Traits::IS_PLAIN_FLEX,
+            matches!(self.display(), Display::Flex | Display::InlineFlex)
+                && matches!(l.flex_direction, FlexDirection::Row | FlexDirection::Column)
+                && l.flex_wrap == FlexWrap::default()
+                && self.contain().is_empty()
+                && !self.is_rtl(),
+        );
         let height = size(&l.height, 1).map(|it| clamp(it, limits[1]));
         let (margin, outset) = (
             resolve_margin(self, 0.0),
@@ -917,9 +937,9 @@ impl Style {
             ) && text.line_break != LineBreak::Anywhere
                 && self.display() != Display::BlockRuby
                 && !self.is_rtl()
-                && self
-                    .other_if_set(crate::properties::Id::TextEmphasisStyle)
-                    .is_none(),
+                && [Id::TextEmphasisStyle, Id::TextFit]
+                    .iter()
+                    .all(|it| self.other_if_set(*it).is_none()),
         );
         self.measures.0.set(Fixed {
             units: units_per_pixel(),
@@ -936,7 +956,7 @@ impl Style {
     }
 }
 
-fn resolve_padding(style: &Style, basis: f32) -> Edges {
+pub(crate) fn resolve_padding(style: &Style, basis: f32) -> Edges {
     let (l, resolve) = (&style.layout, |it: &PositiveLp| {
         resolve(&it.0, basis).max(0.0)
     });
@@ -1038,6 +1058,56 @@ impl LayoutBox {
             && !self.has_legend
             && fixed.traits.contains(Traits::HAS_FIXED_SIZES))
         .then_some(fixed)
+    }
+
+    /// Likewise, with what percentages come to in a containing block of that size.
+    #[inline(always)]
+    pub(crate) fn sizes_in(&self, basis: [Option<f32>; 2]) -> Option<Fixed> {
+        let mut fixed = self.style.fixed();
+        (self.is_ordinary
+            && self.turned == self.mode
+            && self.collapsed.is_none()
+            && !self.has_legend
+            && fixed.traits.contains(Traits::HAS_SIMPLE_SIZES))
+        .then_some(())?;
+        if !fixed.traits.contains(Traits::HAS_FIXED_SIZES) {
+            ([fixed.width, fixed.height], fixed.limits) =
+                self.resolve_percentages(basis, (fixed.border + fixed.padding).sums());
+        }
+        Some(fixed)
+    }
+
+    #[inline(never)]
+    fn resolve_percentages(
+        &self,
+        basis: [Option<f32>; 2],
+        edges: [f32; 2],
+    ) -> ([Option<f32>; 2], [[f32; 2]; 2]) {
+        let (l, outside) = (&*self.style.layout, self.outside(edges));
+        let size = |it: &Size, axis: usize, basis| {
+            if let Size::Length(it) = it {
+                Some((resolve_if_definite(it, basis)? + outside[axis]).max(edges[axis]))
+            } else {
+                None
+            }
+        };
+        let limits = |min, max, axis: usize| {
+            [
+                size(min, axis, basis[axis].or(Some(0.0))).unwrap_or(edges[axis]),
+                size(max, axis, basis[axis]).unwrap_or(f32::INFINITY),
+            ]
+        };
+        let limits = [
+            limits(&l.min_width, &l.max_width.0, 0),
+            limits(&l.min_height, &l.max_height.0, 1),
+        ];
+        (
+            [
+                size(&l.width, 0, basis[0]),
+                size(&l.height, 1, basis[1]).map(|it| clamp(it, limits[1])),
+            ],
+            limits,
+        )
     }
 
     /// What the scrollbars take from the padding box.
@@ -1159,7 +1229,7 @@ impl LayoutBox {
     }
 
     /// Whether its limits say how many tracks or lines it has.
-    fn is_divided_by_limits(&self) -> bool {
+    pub(crate) fn is_divided_by_limits(&self) -> bool {
         let l = &self.style.layout;
         (self.uses_parent != [false; 2] || is_relative(&l.min_width) || is_relative(&l.max_width.0))
             && match self.kind {
@@ -1345,7 +1415,16 @@ impl LayoutBox {
                 intrinsic,
                 intrinsic,
             );
-            return height.map(|it| it.max(edges[1]));
+            return height.map(|it| {
+                it.max(
+                    edges[1]
+                        - if self.style.contain().contains(Contain::SIZE) {
+                            self.legend_excess
+                        } else {
+                            0.0
+                        },
+                )
+            });
         }
         if self.is_cell() {
             let least = self.resolve_size(
@@ -2161,6 +2240,14 @@ impl Document {
             let output = self.lay_out_plain_block(id, input, floats);
             self.record(id, Memo::new(key, &output), is_resized);
             self.note_extents(id);
+        } else if self.boxes[id].kind == Kind::Flex
+            && floats.is_none()
+            && let Some(output) = self.lay_out_plain_flex(id, input)
+        {
+            self.record(id, Memo::new(key, &output), is_resized);
+            if !input.is_probe {
+                self.note_extents(id);
+            }
         } else if input.is_probe {
             self.boxes[id].layout.size.width = input.width;
             let output = self.lay_out_flex(id, input, None);

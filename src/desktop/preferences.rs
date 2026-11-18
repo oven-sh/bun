@@ -3,11 +3,13 @@
 use bun_jsc::Strong;
 use bun_ui::protocol::{
     Media, NotificationCenter as Center, Preference, PreferenceCommand, PreferenceValue as Value,
-    Question, Reply, Request, SystemRequest,
+    Question, Reply, Request, SystemRequest, SystemSettings,
 };
 use bun_ui::queue;
 
-use crate::generated_bindgen::system::{DesktopNativeTheme, DesktopSystemPreferences};
+use crate::generated_bindgen::system::{
+    DesktopNativeTheme, DesktopSystemPreferences, js_DesktopSystemPreferences,
+};
 use crate::prelude::*;
 use crate::text::{contains, split};
 use crate::{power, theme};
@@ -59,6 +61,24 @@ pub(crate) fn observed(name: &str, object: &str, info: Value) -> JsResult<()> {
     Ok(())
 }
 
+pub(crate) fn colors_may_have_changed(
+    before: &SystemSettings,
+    now: &SystemSettings,
+) -> JsResult<()> {
+    let object = js_DesktopSystemPreferences::CLASS.constructor(heap());
+    if let Some(accent) = now.accent.get().filter(|_| now.accent != before.accent) {
+        announce(
+            object,
+            "accent-color-changed",
+            &[js(format!("{accent:08X}"))?],
+        )?;
+    }
+    if now.palette != before.palette {
+        announce(object, "color-changed", &[])?;
+    }
+    Ok(())
+}
+
 fn subscribe(center: Center, name: &[u8], callback: JsLocal<'_, Callable>) -> JsResult<u32> {
     let name = string(name);
     if IS_MAC {
@@ -91,7 +111,13 @@ fn color(words: &str) -> JsResult<Option<String>> {
     let capitalize = |it: &str| it[..1].to_ascii_uppercase() + &it[1..];
     let mut words = split(words, "-");
     let first = words.next().unwrap_or_default();
-    let name = format!("{first}{}Color", words.map(capitalize).collect::<String>());
+    color_named(&format!(
+        "{first}{}Color",
+        words.map(capitalize).collect::<String>()
+    ))
+}
+
+fn color_named(name: &str) -> JsResult<Option<String>> {
     ui()?;
     Ok(ask(Question::Color(name.into()))?.map(|it| format!("#{it:08X}")))
 }
@@ -194,6 +220,9 @@ impl DesktopSystemPreferences {
             tertiary-label text-background text under-page-background unemphasized-selected-content-background \
             unemphasized-selected-text-background unemphasized-selected-text window-background window-frame-text ";
         let name = string(name);
+        if IS_WINDOWS {
+            return color_named(&name)?.ok_or_else(|| error(format_args!("Unknown color: {name}")));
+        }
         if contains(&name, " ") || !contains(NAMES, &format!(" {name} ")) {
             return Err(error(format_args!("Unknown color: {name}")));
         }

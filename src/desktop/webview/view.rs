@@ -8,7 +8,7 @@ use bun_ui::Region;
 use bun_ui::TREE_OF_IMAGE;
 use bun_ui::protocol::{
     Clipboard, ClipboardPart, Cursor, DragPhase, FramePixels, Input, InputField, Key, Located,
-    Mouse, MouseAction, SurfaceCommand, WebViewCommand,
+    Mouse, MouseAction, SurfaceCommand, TouchPhase, WebViewCommand,
 };
 use bun_ui::surfaces::{self, News};
 
@@ -120,6 +120,8 @@ pub(super) struct View {
     with_focus: Slot,
     hovered: Slot,
     captured: Slot,
+    touched: Slot,
+    fingers: RefCell<Vec<(i32, Located)>>,
     has_popup: Cell<bool>,
     popup_watch: Cell<Option<Timer>>,
     awaits_regions: Cell<bool>,
@@ -188,6 +190,8 @@ impl View {
             with_focus: Default::default(),
             hovered: Default::default(),
             captured: Default::default(),
+            touched: Default::default(),
+            fingers: Default::default(),
             has_popup: Default::default(),
             popup_watch: Default::default(),
             awaits_regions: Default::default(),
@@ -391,7 +395,12 @@ impl View {
                 .retain(|it| !Rc::ptr_eq(it, target));
         }
         self.engine.ignore(&target.session);
-        for slot in [&self.with_focus, &self.hovered, &self.captured] {
+        for slot in [
+            &self.with_focus,
+            &self.hovered,
+            &self.captured,
+            &self.touched,
+        ] {
             if holds(slot, target) {
                 slot.take();
             }
@@ -826,6 +835,38 @@ impl View {
         Some(())
     }
 
+    /// All fingers go where the first one went.
+    async fn touch(self: Rc<Self>, phase: TouchPhase, finger: i32, at: Located) -> Option<()> {
+        if phase == TouchPhase::Start && self.fingers.borrow().is_empty() {
+            let target = self.target_at(at).await;
+            self.touched.replace(target);
+            self.ask_at("watchListsAt", at).await;
+        }
+        let is_down = matches!(phase, TouchPhase::Start | TouchPhase::Move);
+        self.fingers.borrow_mut().retain(|it| it.0 != finger);
+        (self.fingers.borrow_mut()).extend(is_down.then_some((finger, at)));
+        let target = self.touched.borrow().clone()?;
+        let describe = |(id, at): &(i32, Located)| {
+            record! { "id": *id }.and(&target.describe(*at, self.magnified.get()))
+        };
+        let points: Vec<_> = self.fingers.borrow().iter().map(describe).collect();
+        let kind = match phase {
+            TouchPhase::Start => "touchStart",
+            _ if !points.is_empty() => "touchMove",
+            TouchPhase::Cancel => "touchCancel",
+            _ => "touchEnd",
+        };
+        let params = record! { "type": kind, "touchPoints": Value::from_iter(points), "modifiers": keys::modifiers(at.modifiers) };
+        self.dispatch(&target, "Input.dispatchTouchEvent", params)
+            .await;
+        match phase {
+            TouchPhase::Start => self.focus_around(target).await,
+            TouchPhase::Move => return None,
+            _ => {}
+        }
+        self.inspect_focus().await
+    }
+
     async fn wheel(
         self: Rc<Self>,
         mut at: Located,
@@ -1155,6 +1196,9 @@ impl View {
                 }
                 self.enqueue(view.mouse(mouse), mouse.action == MouseAction::Move);
             }
+            Input::Touch {
+                phase, finger, at, ..
+            } => self.enqueue(view.touch(phase, finger, at), false),
             Input::Wheel(wheel) => self.enqueue(view.wheel(wheel.at, wheel.delta, false), false),
             Input::Pinch { at, delta } => {
                 self.enqueue(view.wheel(at, [0., -100. * f64::from(delta)], true), false)
@@ -1233,6 +1277,7 @@ impl View {
         let key = Key {
             key: name.into(),
             code: name.into(),
+            key_code: 0,
             location: 0,
             modifiers,
             is_down: true,

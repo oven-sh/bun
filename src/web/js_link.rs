@@ -25,7 +25,7 @@ pub trait Native {
         );
     }
 
-    fn inspect(&self, _owner: JSValue, _: Inspected<'_>) -> JsResult<()> {
+    fn inspect(&self, _owner: JSValue, _: Logged<'_>) -> JsResult<()> {
         Ok(())
     }
 
@@ -191,7 +191,7 @@ impl Link for JsLink {
         })
     }
 
-    fn inspect(&self, it: Inspected<'_>) {
+    fn inspect(&self, it: Logged<'_>) {
         let global = bun_ui::main_global();
         if let Some((native, owner)) = self.hooks.get(global)
             && native.inspect(owner, it).is_err()

@@ -3,9 +3,12 @@
 use core::sync::atomic::{AtomicU32, Ordering};
 use std::collections::VecDeque;
 
-use bun_collections::HashMap;
 use bun_jsc::job::{Completion, Job, JobContext, JsAffine, JsThread};
 use bun_jsc::{JsResult, Strong, Weak};
+
+use bun_web::HashMap;
+use bun_web::net::schemes::process_data_url;
+use bun_web::url::Url;
 
 use super::host::{self, Destination, Resource};
 use super::*;
@@ -138,6 +141,10 @@ impl Contents {
         }
     }
 
+    pub(super) fn is_vector(&self) -> bool {
+        matches!(self.pixels, Pixels::Vector { .. })
+    }
+
     pub(crate) fn replaced(&self, density: f64) -> Replaced {
         Replaced::new(
             self.id(),
@@ -154,6 +161,7 @@ impl Contents {
             size,
             is_origin_clean: self.is_origin_clean,
             ignored_orientation: self.orientation,
+            is_straight: false,
         }
     }
 
@@ -204,7 +212,7 @@ impl Picture {
         self.contents.get().is_some()
     }
 
-    /// At once, if it has.
+    /// At once, if it has. Never, if the page is gone.
     #[optimize(size)]
     pub(crate) fn when_settled<'a>(
         &self,
@@ -215,8 +223,11 @@ impl Picture {
         if self.is_settled() {
             return then(cx, value);
         }
-        let value = Strong::create(value, cx.global());
-        self.waiters.borrow_mut().push((value, Box::new(then)));
+        if !self.list.is_disposed.get() {
+            self.waiters
+                .borrow_mut()
+                .push((Strong::create(value, cx.global()), Box::new(then)));
+        }
     }
 
     #[optimize(size)]
@@ -261,6 +272,33 @@ impl Picture {
                 },
             );
         }
+        if request.len() <= 8192
+            && request.starts_with("data:")
+            && element.is_some_and(|it| it.is_html(atom!("img")))
+            && document.allows_inline_images(&cx.heap)
+            && let Some((mime, bytes)) =
+                Url::parse(request.as_bytes()).and_then(|it| process_data_url(&it))
+        {
+            if mime.starts_with(b"image/svg+xml") {
+                return self.load_vector(
+                    cx,
+                    &Resource {
+                        requested: request.as_bytes().to_vec(),
+                        bytes: bytes.into(),
+                        mime,
+                        status: 200,
+                        is_readable: true,
+                        is_same_origin: true,
+                    },
+                );
+            }
+            if is_tiny(&bytes) {
+                return self.settle(
+                    cx,
+                    Contents::raster(decode(&bytes, is_oriented), &bytes, is_oriented, true),
+                );
+            }
+        }
         let destination = match element.map(|it| it.html_tag()) {
             Some(atom!("object")) => Destination::Object,
             Some(atom!("embed")) => Destination::Embed,
@@ -296,6 +334,9 @@ impl Picture {
         let scope = LAST_FONT_SCOPE.fetch_add(1, Ordering::Relaxed) + 1;
         let (id, Replaced { size, ratio, .. }) =
             embedded::create_vector(&resource.bytes, &resource.requested, scope);
+        if id == 0 {
+            return self.settle(cx, None);
+        }
         let [width, height, ratio] =
             [size[0], size[1], ratio].map(|it| it.map_or(f64::NAN, f64::from));
         let pixels = Pixels::Vector {
@@ -407,6 +448,58 @@ impl VectorLoad {
         }
         self
     }
+}
+
+/// With all of its frames, which can be larger than a GIF says.
+fn is_tiny(file: &[u8]) -> bool {
+    let number = |low, high| usize::from(u16::from_le_bytes([low, high]));
+    let pixels = match *file {
+        [
+            0x89,
+            b'P',
+            b'N',
+            b'G',
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            b'I',
+            b'H',
+            b'D',
+            b'R',
+            0,
+            0,
+            a,
+            b,
+            0,
+            0,
+            c,
+            d,
+            ..,
+        ] if !bun_core::strings::contains(file, b"acTL") => number(b, a) * number(d, c),
+        [b'G', b'I', b'F', b'8', _, _, a, b, c, d, ..] => {
+            let reach = |&[mark, e, f, g, h, i, j, k, l]: &[u8; 9]| {
+                (mark == b',').then(|| {
+                    number(a, b)
+                        .max(number(e, f) + number(i, j))
+                        .saturating_mul(number(c, d).max(number(g, h) + number(k, l)))
+                })
+            };
+            let (frames, largest) = file
+                .array_windows()
+                .filter_map(reach)
+                .fold((0, 0), |(frames, largest), it| {
+                    (frames + 1, it.max(largest))
+                });
+            largest.saturating_mul(frames)
+        }
+        _ => return file.len() < 16,
+    };
+    pixels <= 1 << 14
 }
 
 struct Decode {

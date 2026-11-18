@@ -1,6 +1,6 @@
 //! What happens to the surface that shows a page.
 
-use bun_ui::protocol::{self, DragPhase, Located, MouseAction};
+use bun_ui::protocol::{self, DragPhase, Located, MouseAction, TouchPhase};
 use bun_ui::surfaces::News;
 
 use crate::host::{ChosenFile, Keystroke};
@@ -113,6 +113,43 @@ impl From<Located> for Place {
     }
 }
 
+impl From<protocol::Mouse> for Mouse {
+    fn from(it: protocol::Mouse) -> Mouse {
+        Mouse {
+            action: match it.action {
+                MouseAction::Move => Action::Move,
+                MouseAction::Down => Action::Down,
+                MouseAction::Up => Action::Up,
+                MouseAction::Leave => Action::Leave,
+            },
+            place: Place {
+                modifiers: u32::from(it.at.modifiers)
+                    | if it.at.is_handled {
+                        COMPOSITOR_SCROLLS
+                    } else {
+                        0
+                    },
+                ..it.at.into()
+            },
+            button: it.button.into(),
+            buttons: it.buttons.into(),
+            clicks: it.clicks as i32,
+        }
+    }
+}
+
+impl From<protocol::Contact> for Details {
+    fn from(it: protocol::Contact) -> Details {
+        Details {
+            size: it.size.map(f64::from),
+            pressure: Some(it.pressure.into()),
+            tangential_pressure: 0.,
+            tilt: it.tilt.map(i32::from),
+            twist: it.twist.into(),
+        }
+    }
+}
+
 impl From<News> for Input {
     fn from(news: News) -> Input {
         use protocol::Input as Native;
@@ -128,26 +165,30 @@ impl From<News> for Input {
                 },
                 is_quiet: false,
             },
-            Native::Mouse(it) => Input::Mouse(Mouse {
-                action: match it.action {
-                    MouseAction::Move => Action::Move,
-                    MouseAction::Down => Action::Down,
-                    MouseAction::Up => Action::Up,
-                    MouseAction::Leave => Action::Leave,
+            Native::Mouse(it) => Input::Mouse(it.into()),
+            Native::Pen { mouse, contact } => Input::Pen {
+                mouse: mouse.into(),
+                details: contact.into(),
+            },
+            Native::Touch {
+                phase,
+                finger,
+                at,
+                contact,
+            } => Input::Touch {
+                phase: match phase {
+                    TouchPhase::Start => Phase::Start,
+                    TouchPhase::Move => Phase::Move,
+                    TouchPhase::End => Phase::End,
+                    TouchPhase::Cancel => Phase::Cancel,
                 },
-                place: Place {
-                    modifiers: u32::from(it.at.modifiers)
-                        | if it.at.is_handled {
-                            COMPOSITOR_SCROLLS
-                        } else {
-                            0
-                        },
-                    ..it.at.into()
-                },
-                button: it.button.into(),
-                buttons: it.buttons.into(),
-                clicks: it.clicks as i32,
-            }),
+                fingers: vec![Finger {
+                    id: finger,
+                    place: at.into(),
+                    details: contact.into(),
+                }],
+                modifiers: at.modifiers.into(),
+            },
             Native::Wheel(it) => Input::Wheel {
                 place: it.at.into(),
                 delta: it.delta,
@@ -176,6 +217,7 @@ impl From<News> for Input {
                 is_down: it.is_down,
                 key: (*it.key).into(),
                 code: (*it.code).into(),
+                key_code: it.key_code.into(),
                 location: it.location.into(),
                 modifiers: it.modifiers.into(),
                 repeats: it.is_repeat,

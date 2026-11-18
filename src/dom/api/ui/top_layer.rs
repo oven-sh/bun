@@ -17,6 +17,10 @@ pub(crate) struct Layers {
     pub(crate) fullscreen_events: RefCell<Vec<fullscreen::Pending>>,
     /// A tooltip or a validation message, which only the engine knows.
     bubble: Cell<NodeId>,
+    /// What the inspector draws, likewise.
+    overlay: Cell<NodeId>,
+    /// It has the mouse.
+    pub(crate) picker: RefCell<Option<std::rc::Weak<crate::api::inspector::Inspector>>>,
 }
 
 pub(crate) fn set_in_top_layer<'a>(cx: &mut Cx<'a>, ui: &'a Ui, element: &'a Element, on: bool) {
@@ -39,7 +43,11 @@ fn changed<'a>(cx: &mut Cx<'a>, ui: &'a Ui) {
         .filter(|it| it.is_connected() && it.doc() == ui.doc())
         .map(|it| it.id());
     let ids = shown
-        .chain(Some(ui.layers.bubble.get()).filter(|it| *it != 0))
+        .chain(
+            [ui.layers.bubble.get(), ui.layers.overlay.get()]
+                .into_iter()
+                .filter(|it| *it != 0),
+        )
         .collect();
     ui.doc().engine(|engine, _| engine.set_top_layer(ids));
     if let Some(focused) = ui.focused() {
@@ -80,6 +88,21 @@ pub(crate) fn hide_bubble<'a>(cx: &mut Cx<'a>, ui: &'a Ui) {
     if bubble != 0 {
         changed(cx, ui);
         ui.doc().engine(|engine, _| engine.remove(bubble));
+    }
+}
+
+/// The style and the text of each part.
+pub(crate) fn show_overlay<'a>(cx: &mut Cx<'a>, ui: &'a Ui, parts: &[[String; 2]]) {
+    let root = ui.doc().document_element().filter(|_| !parts.is_empty());
+    if root.is_none() && ui.layers.overlay.get() == 0 {
+        return;
+    }
+    let old = ui.layers.overlay.replace(root.map_or(0, |it| {
+        it.engine(|engine, root| engine.create_overlay(root, parts))
+    }));
+    changed(cx, ui);
+    if old != 0 {
+        ui.doc().engine(|engine, _| engine.remove(old));
     }
 }
 

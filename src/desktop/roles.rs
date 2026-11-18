@@ -2,6 +2,7 @@
 
 use bun_ui::protocol::{MenuRole, WindowCommand};
 
+use crate::contents::Contents;
 use crate::generated_bindgen::window::DesktopWindow;
 use crate::prelude::*;
 use crate::window::Window;
@@ -55,7 +56,7 @@ macro_rules! roles {
 
 roles! {
     "undo", "Undo", Some("CommandOrControl+Z"), Undo, Page("undo");
-    "redo", "Redo", Some("Shift+CommandOrControl+Z"), Redo, Page("redo");
+    "redo", "Redo", Some(if IS_WINDOWS { "Control+Y" } else { "Shift+CommandOrControl+Z" }), Redo, Page("redo");
     "cut", "Cut", Some("CommandOrControl+X"), Cut, Page("cut");
     "copy", "Copy", Some("CommandOrControl+C"), Copy, Page("copy");
     "paste", "Paste", Some("CommandOrControl+V"), Paste, Page("paste");
@@ -78,7 +79,8 @@ roles! {
     "zoom", "Zoom", None, None, Window(|it| it.zoom_frame(!it.fills_work_area()?));
     "togglefullscreen", "Toggle Full Screen", Some(by_platform("Control+Command+F", "F11")), None,
         Window(|it| it.tell(WindowCommand::Fullscreen(!it.fills_screen()?)));
-    "quit", by_platform("Quit %", "Quit"), Some("CommandOrControl+Q"), None, Leave(&App(app::quit));
+    "quit", by_platform("Quit %", if IS_WINDOWS { "Exit" } else { "Quit" }),
+        if IS_WINDOWS { Option::None } else { Some("CommandOrControl+Q") }, None, Leave(&App(app::quit));
     "about", "About %", None, None, App(|| app::show_about_panel().map(drop));
     "hide", "Hide %", Some("Command+H"), None, Leave(&App(app::hide));
     "hideothers", "Hide Others", Some("Command+Alt+H"), None,
@@ -129,7 +131,12 @@ fn contents_in(window: &Window) -> JsResult<Option<JSValue>> {
 pub(crate) fn tell_page(window: &Window, method: &str) -> JsResult<()> {
     match window.downcast::<DesktopWindow>() {
         Some(window) => window.edit(method),
-        None => contents_in(window)?.map_or(Ok(()), |it| invoke(it, method, &[]).map(drop)),
+        None => {
+            let is_for_page = matches!(method, "reload" | "reloadIgnoringCache" | "toggleDevTools");
+            let inspected = |it| cast::<Contents>(it)?.inspects().filter(|_| is_for_page);
+            let contents = contents_in(window)?.map(|it| inspected(it).map_or(it, Contents::to_js));
+            contents.map_or(Ok(()), |it| invoke(it, method, &[]).map(drop))
+        }
     }
 }
 

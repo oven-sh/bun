@@ -3,8 +3,6 @@
 use std::fs::{self, File};
 use std::hash::{Hash as _, Hasher as _};
 use std::io::Write as _;
-use std::os::fd::AsRawFd as _;
-use std::os::unix::fs::MetadataExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -29,7 +27,29 @@ pub fn map(path: &Path) -> Option<&'static [u8]> {
     map_file(&File::open(path).ok()?)
 }
 
+#[cfg(windows)]
 pub fn map_file(file: &File) -> Option<&'static [u8]> {
+    use crate::win32::{
+        CloseHandle, CreateFileMappingW, FILE_MAP_READ, MapViewOfFile, PAGE_READONLY, Str,
+    };
+    let len = file.metadata().ok()?.len().try_into().ok()?;
+    let mapping = CreateFileMappingW(
+        std::os::windows::io::AsRawHandle::as_raw_handle(file) as isize,
+        0,
+        PAGE_READONLY,
+        0,
+        0,
+        Str::NULL,
+    );
+    let start = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0);
+    CloseHandle(mapping);
+    // SAFETY: it is never unmapped, and fonts are replaced, not written to.
+    (!start.is_null()).then(|| unsafe { std::slice::from_raw_parts(start.cast(), len) })
+}
+
+#[cfg(unix)]
+pub fn map_file(file: &File) -> Option<&'static [u8]> {
+    use std::os::fd::AsRawFd as _;
     let len = std::io::Seek::seek(&mut &*file, std::io::SeekFrom::End(0))
         .ok()?
         .try_into()
@@ -52,9 +72,13 @@ fn cache_directory() -> Option<PathBuf> {
     if cfg!(target_os = "macos") {
         return Some(std::env::home_dir()?.join("Library/Caches"));
     }
-    let chosen = std::env::var_os("XDG_CACHE_HOME")
-        .map(PathBuf::from)
-        .filter(|it| it.is_absolute());
+    let chosen = std::env::var_os(if cfg!(windows) {
+        "LOCALAPPDATA"
+    } else {
+        "XDG_CACHE_HOME"
+    })
+    .map(PathBuf::from)
+    .filter(|it| it.is_absolute());
     chosen.or_else(|| Some(std::env::home_dir()?.join(".cache")))
 }
 
@@ -110,10 +134,11 @@ pub fn open_stored(
         write(path, original, data).ok()?;
     }
     let file = File::open(path).ok()?;
-    let (key, mut mapped) = (
-        (path.to_owned(), file.metadata().ok()?.ino()),
-        MAPPED.lock(),
-    );
+    #[cfg(unix)]
+    let number = std::os::unix::fs::MetadataExt::ino(&file.metadata().ok()?);
+    #[cfg(windows)]
+    let number = std::os::windows::fs::MetadataExt::creation_time(&file.metadata().ok()?);
+    let (key, mut mapped) = ((path.to_owned(), number), MAPPED.lock());
     let all = mapped
         .get_or_insert_default()
         .get(&key)

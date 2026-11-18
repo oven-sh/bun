@@ -64,6 +64,8 @@ pub(crate) enum Filter {
     Children,
     /// Some of the children, by their kind. A node has one such.
     Parts(fn(&Element) -> bool),
+    /// With a version of the arena and how many there were, for as long as nothing else has been asked for.
+    All(Cell<Option<(u64, u32)>>),
     Descendants {
         test: &'static Test,
         keys: u64,
@@ -159,6 +161,7 @@ impl Filter {
     #[inline]
     fn may_match(&self, it: &Element) -> bool {
         match self {
+            Filter::All(_) => true,
             Filter::Descendants { test, .. } => (test.matches)(it),
             Filter::DescendantsByName(name, matches) => matches(name, it),
             Filter::Tag { html, other, .. } => {
@@ -182,6 +185,7 @@ impl Filter {
 
     fn may_match_bare(&self, root: &Node, it: &crate::tree::Element) -> bool {
         match self {
+            Filter::All(_) => true,
             Filter::Descendants { test, .. } => match test.bare {
                 _ if !test.tags.is_empty() && !test.tags.contains(&it.local.known()) => false,
                 Bare::None => false,
@@ -749,6 +753,9 @@ impl Collection {
         let last = found.last().map(|it| unsafe { &**it });
         let wanted = wanted.max(found.len() + found.len() / 2);
         let missing = wanted - found.len();
+        if let Filter::All(counted) = &self.filter {
+            counted.set(None);
+        }
         let mut add = |it: &Element| found.push(&raw const **it);
         match &self.filter {
             Filter::Listed(list) => list(root, &mut add),
@@ -796,6 +803,38 @@ impl Collection {
     pub(crate) fn len(&self) -> u32 {
         self.fixed()
             .map_or_else(|| self.with_found(usize::MAX, <[_]>::len) as u32, List::len)
+    }
+
+    /// For scripts.
+    #[inline]
+    fn length(&self) -> u32 {
+        match &self.filter {
+            Filter::All(counted) => self.count_all(counted),
+            _ => self.len(),
+        }
+    }
+
+    #[inline(never)]
+    fn count_all(&self, counted: &Cell<Option<(u64, u32)>>) -> u32 {
+        let Some((version, mut count)) = counted.get() else {
+            return self.len();
+        };
+        let root = self.owner();
+        let now = root.arena().version.get();
+        if version != now && !root.arena().has_same_elements_as_at(version) {
+            // From now on a list is corrected, which is less work than counting again.
+            if root.arena().moves_since(version).is_some() {
+                counted.set(None);
+                return self.len();
+            }
+            count = root.read(|tree, id| {
+                tree.descendants_with(id, u64::MAX)
+                    .filter(|it| tree.element(*it).is_some() && !tree.object(*it).is_null())
+                    .count()
+            }) as u32;
+        }
+        counted.set(Some((now, count)));
+        count
     }
 
     #[inline]
@@ -889,7 +928,7 @@ macro_rules! members {
         $(impl $name {
             #[inline]
             pub(crate) fn get_length(&self, _: &JsHeap<'_>) -> u32 {
-                self.len()
+                self.length()
             }
 
             #[inline]
@@ -1149,7 +1188,7 @@ impl Node {
                 filter([&html, name].into_iter().map(|it| key::tag(it.name())))
             };
             let filter = if *name == atom!("*") {
-                Filter::descendants(&Test::ALL)
+                Filter::All(Cell::new(Some((0, 0))))
             } else {
                 Filter::Tag {
                     html,

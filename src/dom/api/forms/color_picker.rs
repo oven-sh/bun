@@ -106,12 +106,13 @@ pub(crate) fn semantics(input: Input<'_>, part: &Element) -> Semantics {
         ]
         .concat(),
         () if part.is_part(WELL) => [
-            named(
-                "slider",
-                "Color well with two-dimensional slider for selecting saturation and lightness",
-            ),
+            named("slider", "Color well"),
             vec![
-                ("aria-roledescription", "2D slider".to_owned()),
+                (
+                    "aria-roledescription",
+                    "Color well with two-dimensional slider for selecting saturation and lightness"
+                        .to_owned(),
+                ),
                 ("aria-valuenow", saturation.to_string()),
                 (
                     "aria-valuetext",

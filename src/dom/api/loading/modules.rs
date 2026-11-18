@@ -1,13 +1,13 @@
 //! <https://html.spec.whatwg.org/#integration-with-the-javascript-module-system>
 
 use bun_alloc::WTFStringImplStruct as Impl;
-use bun_collections::HashMap;
 use bun_core::StringView;
 use bun_jsc::bun_string_jsc::StringJsc;
 use bun_jsc::{
     JSPromise, JSPropertyIterator, JSPropertyIteratorOptions, JsResult, bun_string_jsc,
     from_js_host_call, to_js_host_call,
 };
+use bun_web::HashMap;
 use bun_web::client::{Script, ScriptType};
 use bun_web::compiled::{self, Form};
 use bun_web::csp::Metadata;

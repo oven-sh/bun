@@ -12,7 +12,7 @@ use bun_core::strings;
 use bun_js_parser::{ParserOptions, ScanPassResult};
 use bun_options_types::aot_options::AotOptions;
 use bun_parsers::json::ParsedJson;
-use bun_paths::resolve_path::relative_alloc;
+use bun_paths::resolve_path::{relative_alloc, slashes_to_posix_in_place};
 use bun_resolve_builtins::HardcodedModule::{Alias, Cfg};
 use bun_resolver::compiled_program::join_public_file_path;
 use bun_resolver::scripts_of_pages::{CLASSIC, LIST, PRELOAD, PRELOAD_PARAMETERS, name_of_inline};
@@ -756,7 +756,10 @@ impl Pages {
         let paths: Vec<_> = (scripts.map(|it| it.public_path.clone()))
             .chain(documents)
             .collect();
-        let data = paths.join(&b'\n').into_boxed_slice();
+        let mut data = paths.join(&b'\n').into_boxed_slice();
+        if root.starts_with(b"B:/") {
+            slashes_to_posix_in_place(&mut data);
+        }
         (!data.is_empty()).then(|| {
             OutputFile::init(Options {
                 size: Some(data.len()),

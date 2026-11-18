@@ -11,16 +11,17 @@ use bun_web::channel::Endpoint;
 use bun_web::held::Held;
 
 use super::Failure;
-use super::bitmap::{Bitmap, Owned, Source, Unencoded};
+use super::bitmap::{Bitmap, Owned, Source, Unencoded, has_alpha};
 use super::context::Context;
 use super::encoding::{data_url, encode_in_parallel};
-use super::host::{self, DEFAULT_SETTINGS, Kind, Mode, Settings};
+use super::host::{self, DEFAULT_SETTINGS, Kind, Mode};
 use super::offscreen::OffscreenCanvas;
 use crate::api::core::steps::Steps;
 use crate::api::core::{DomString, Edge, Element, Known, atom};
 use crate::api::events::call_back;
 use crate::api::graphics::can_draw;
 use crate::api::images::show_replaced;
+use crate::api::webgl::Readback;
 use crate::generated_bindgen::canvas::HTMLCanvasElement;
 use crate::hints::non_negative_integer;
 use crate::tree::Replaced;
@@ -94,7 +95,10 @@ fn show<'a>(cx: Cx<'_, 'a>, canvas: &'a Element) {
     let id = committed(canvas)
         .map(|it| it.id)
         .filter(|it| *it != 0)
-        .or_else(|| Some(context_of(&cx.heap, canvas)?.bitmap.id()));
+        .or_else(|| Some(context_of(&cx.heap, canvas)?.shown().id()));
+    context_of(&cx.heap, canvas)
+        .and_then(Context::webgl)
+        .inspect(|it| it.show_soon(cx));
     let [width, height] = size_of_element(canvas).map(f64::from);
     show_replaced(
         cx,
@@ -115,17 +119,19 @@ fn set_context<'a>(cx: Cx<'_, 'a>, canvas: &'a Element, context: &'a Context) ->
 }
 
 /// What has the bitmap, even if no script has asked for a context.
-fn backing<'a>(cx: Cx<'_, 'a>, canvas: &'a Element) -> &'a Context {
-    context_of(&cx.heap, canvas).unwrap_or_else(|| {
-        let made = Context::create(
-            canvas.doc().heap(&cx.heap),
-            canvas.to_js(),
-            size_of_element(canvas),
-            Kind::Element,
-            &DEFAULT_SETTINGS,
-        );
-        set_context(cx, canvas, made)
-    })
+fn backing<'a>(cx: Cx<'_, 'a>, canvas: &'a Element, wanted: Readback) -> &'a Context {
+    context_of(&cx.heap, canvas)
+        .map(|it| it.up_to_date(wanted))
+        .unwrap_or_else(|| {
+            let made = Context::create(
+                canvas.doc().heap(&cx.heap),
+                canvas.to_js(),
+                size_of_element(canvas),
+                Kind::Element,
+                &DEFAULT_SETTINGS,
+            );
+            set_context(cx, canvas, made)
+        })
 }
 
 #[optimize(size)]
@@ -150,14 +156,18 @@ pub(super) fn commit<'a>(cx: Cx<'_, 'a>, canvas: &'a Element, frame: Frame, size
 }
 
 impl HTMLCanvasElement {
-    pub(super) fn source<'a>(&'a self, cx: Cx<'_, 'a>) -> Source {
+    pub(crate) fn source<'a>(&'a self, cx: Cx<'_, 'a>, wanted: Readback) -> Source {
         match committed(self) {
             Some(source) if source.id != 0 => source,
-            None if state(self).mode.get() == Mode::BitmapRenderer => {
-                backing(cx, self).bitmap.source()
+            None if matches!(
+                state(self).mode.get(),
+                Mode::BitmapRenderer | Mode::WebGl | Mode::WebGl2
+            ) =>
+            {
+                backing(cx, self, wanted).bitmap.source()
             }
             blank => {
-                let source = backing(cx, self).bitmap.source();
+                let source = backing(cx, self, wanted).bitmap.source();
                 Source {
                     size: blank.map_or_else(|| size_of_element(self).map(f64::from), |it| it.size),
                     ..source
@@ -215,7 +225,15 @@ impl HTMLCanvasElement {
         quality: JsLocal<'a>,
     ) -> Result<'a, Option<Unencoded>> {
         let context = match committed(self) {
-            None => backing(cx, self),
+            None => backing(
+                cx,
+                self,
+                if has_alpha(mime_type) {
+                    Readback::AsDrawn
+                } else {
+                    Readback::Premultiplied
+                },
+            ),
             Some(source) => {
                 let copy = Context::create(
                     &cx.heap,
@@ -241,23 +259,30 @@ impl HTMLCanvasElement {
         &'a self,
         cx: Cx<'_, 'a>,
         id: &[u8],
-        settings: &Settings,
+        options: JsLocal<'a>,
     ) -> Result<'a, JSValue> {
         let (it, wanted) = (state(self), Mode::of(id));
+        let settings = wanted.settings(cx, options.to_js())?;
         if it.mode.get() == Mode::Placeholder {
             return Err(
                 Failure::invalid_state("Control was transferred to an OffscreenCanvas.")
                     .into_error(&cx.heap),
             );
         }
-        if it.mode.get() == Mode::None && wanted != Mode::None && can_draw() {
-            let made = Context::create(
-                self.doc().heap(&cx.heap),
-                self.to_js(),
+        if it.mode.get() == Mode::None
+            && wanted != Mode::None
+            && can_draw()
+            && let Some(made) = Context::create_for(
+                cx,
+                wanted,
+                self,
                 size_of_element(self),
                 Kind::Element,
-                wanted.takes(settings),
-            );
+                &settings,
+                options.to_js(),
+            )?
+            && it.mode.get() == Mode::None
+        {
             set_context(cx, self, made);
             it.mode.set(wanted);
         }

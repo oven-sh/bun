@@ -1,14 +1,17 @@
 //! What a page process has been given.
 
+use std::collections::VecDeque;
 use std::sync::LazyLock;
 
-use bun_collections::{HashMap, StringSet};
+use bun_collections::StringSet;
 use bun_core::ZBox;
 use bun_sys::{E, Error, Fd, File, O, PosixStat, S, Tag};
 use bun_threading::Guarded;
 
 use super::petition::{self, Opened};
-use super::{HOST, Peer, is_page_process};
+use super::{HOST, Peer, is_page_process, next_ticket};
+use crate::HashMap;
+use crate::net::response::Head;
 use crate::storage::Shelf;
 use crate::wire::{self, Malformed, Reader, Wire, Writer};
 
@@ -16,6 +19,10 @@ use crate::wire::{self, Malformed, Reader, Wire, Writer};
 struct Given {
     files: StringSet,
     shelves: Vec<Shelf>,
+    for_report: Option<File>,
+    /// And the size of each.
+    heads: VecDeque<(Head, usize)>,
+    in_heads: usize,
 }
 
 static GIVEN: LazyLock<Guarded<HashMap<Peer, Given>>> = LazyLock::new(Default::default);
@@ -37,6 +44,59 @@ pub fn is_granted(to: Peer, path: &[u8]) -> bool {
 pub fn revoke_files(of: Peer) {
     if let Some(given) = GIVEN.lock().get_mut(&of) {
         given.files = StringSet::default();
+    }
+}
+
+/// With what it is not going to see.
+pub(crate) fn keep_head(of: Peer, head: &mut Head) {
+    const MOST_BYTES: usize = 2 << 20;
+    let headers = head.headers.iter().map(|it| it.0.len() + it.1.len());
+    let size = size_of::<Head>() + head.url.href().len() + headers.sum::<usize>();
+    let mut all = GIVEN.lock();
+    let Some(given) = all.get_mut(&of) else {
+        return;
+    };
+    head.kept_as = next_ticket();
+    let kept = Head {
+        referrer: None,
+        reserved: None,
+        ..head.clone()
+    };
+    given.heads.push_back((kept, size));
+    given.in_heads += size;
+    while given.in_heads > MOST_BYTES
+        && let Some((_, size)) = given.heads.pop_front()
+    {
+        given.in_heads -= size;
+    }
+}
+
+pub(crate) fn kept_head(of: Peer, number: u32) -> Option<Head> {
+    let all = GIVEN.lock();
+    let heads = &all.get(&of)?.heads;
+    let found = heads.iter().rfind(|it| it.0.kept_as == number);
+    found.map(|it| it.0.clone())
+}
+
+/// About its crash.
+pub fn give_file_for_report(to: Peer, file: File) {
+    if let Some(given) = GIVEN.lock().get_mut(&to) {
+        given.for_report = Some(file);
+    }
+}
+
+pub(super) fn take_file_for_report(of: Peer) -> Option<File> {
+    GIVEN.lock().get_mut(&of)?.for_report.take()
+}
+
+/// In a page process, once.
+pub fn file_for_report() -> Option<File> {
+    petition::file_for_report()?.1
+}
+
+pub(crate) fn keep_only_shelves(of: Peer, is_kept: impl Fn(&Shelf) -> bool) {
+    if let Some(given) = GIVEN.lock().get_mut(&of) {
+        given.shelves.retain(is_kept);
     }
 }
 

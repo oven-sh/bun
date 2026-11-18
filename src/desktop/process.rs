@@ -83,9 +83,9 @@ pub(crate) fn home_of_user() -> String {
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
 pub(crate) fn home_of_user() -> String {
-    "/".into()
+    crate::win32::known_folder("home").unwrap_or_default()
 }
 
 #[cfg(unix)]
@@ -94,14 +94,29 @@ pub(crate) fn is_running(id: u32) -> bool {
     i32::try_from(id).is_ok_and(|id| id > 0 && unsafe { libc::kill(id, 0) } == 0)
 }
 
-#[cfg(not(unix))]
-pub(crate) fn is_running(_: u32) -> bool {
-    false
+#[cfg(windows)]
+pub(crate) fn is_running(id: u32) -> bool {
+    use bun_sys::windows::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, Win32Error, kernel32};
+    use std::os::windows::io::AsRawHandle as _;
+    const STILL_ACTIVE: u32 = 259;
+    match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, id) {
+        Ok(process) => {
+            let mut code = 0;
+            // SAFETY: an open handle, and room for the code.
+            unsafe { kernel32::GetExitCodeProcess(process.as_raw_handle(), &raw mut code) };
+            code == STILL_ACTIVE
+        }
+        Err(error) => error == Win32Error::ACCESS_DENIED,
+    }
 }
 
 /// Waits for it, and returns whether it has succeeded.
+#[cfg(unix)]
 pub(crate) fn run(command: &[&str]) -> JsResult<bool> {
     use bun_spawn::sync::{Options, Stdio, spawn};
+    if !bun_ui::can_start_programs() {
+        return Ok(false);
+    }
     let (search, mut found) = (
         variable("PATH")?.unwrap_or_default(),
         bun_paths::path_buffer_pool::get(),
@@ -129,6 +144,9 @@ pub(crate) fn run(command: &[&str]) -> JsResult<bool> {
 #[cfg(unix)]
 pub(crate) fn start(command: &[String], environment: &CStringList) {
     use bun_spawn_sys::spawn_process::{PosixSpawnOptions, PosixStdio, spawn_process_posix};
+    if !bun_ui::can_start_programs() {
+        return;
+    }
     let options = PosixSpawnOptions {
         stdin: PosixStdio::Ignore,
         detached: true,
@@ -139,8 +157,14 @@ pub(crate) fn start(command: &[String], environment: &CStringList) {
     let _ = spawn_process_posix(&options, arguments.as_list(), Some(environment.as_list()));
 }
 
-#[cfg(not(unix))]
-pub(crate) fn start(_: &[String], _: &CStringList) {}
+#[cfg(windows)]
+pub(crate) fn start(command: &[String], environment: &CStringList) {
+    if !bun_ui::can_start_programs() {
+        return;
+    }
+    let entries = environment.unterminated().iter().flatten();
+    crate::win32::start(command, entries.map(|it| string(it.to_cstr().to_bytes())));
+}
 
 state!(fn last_steps() -> RefCell<Vec<fn()>>);
 
@@ -187,11 +211,16 @@ fn usage() -> Usage {
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
 fn usage() -> Usage {
+    use bun_sys::windows::{GetProcessMemoryInfo, GetProcessTimes, kernel32::GetCurrentProcess};
+    let (times, memory) = (
+        GetProcessTimes(GetCurrentProcess()),
+        GetProcessMemoryInfo(GetCurrentProcess()),
+    );
     Usage {
-        cpu_seconds: 0.,
-        peak_kilobytes: 0.,
+        cpu_seconds: times.map_or(0., |it| (it.kernel + it.user) as f64 / 1e7),
+        peak_kilobytes: memory.map_or(0., |it| kilobytes(it.PeakWorkingSetSize)),
     }
 }
 
@@ -245,9 +274,11 @@ fn kernel_release() -> String {
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
 fn kernel_release() -> String {
-    String::new()
+    let version = bun_sys::windows::detect_runtime_version();
+    text::split_once(version, ".")
+        .map_or_else(String::new, |(major, build)| format!("{major}.0.{build}"))
 }
 
 fn version_of_macos() -> Option<String> {
@@ -260,6 +291,10 @@ state!(fn system_version() -> core::cell::OnceCell<String>);
 
 impl DesktopProcess {
     pub(crate) fn crash() {
+        // No handler gets to see `abort` there.
+        #[cfg(windows)]
+        bun_crash_handler::panic_impl(b"process.crash()", None);
+        #[cfg(unix)]
         std::process::abort()
     }
 

@@ -25,6 +25,9 @@ inline bool isDesktopRealm(JSC::JSGlobalObject* globalObject)
 {
     return globalObject->globalObjectMethodTable()->promiseRejectionTracker == &desktopRealmTrackRejection;
 }
+// `thrown` is an exception, the value that was thrown last, or empty for what is running.
+Vector<JSC::StackFrame> stackOf(JSC::JSGlobalObject*, JSC::JSValue thrown, size_t depth = 64);
+JSC::LineColumn placeOf(const JSC::StackFrame&);
 // What the prototype of WebCore's class inherits from: in a window or a worker, that of the interface with the same name.
 JSC::JSObject* desktopRealmPrototypeAbove(JSC::JSGlobalObject*, ASCIILiteral name);
 // Its constructor. Null in other realms.

@@ -1,5 +1,6 @@
 //! Desktop entries and default applications, as freedesktop.org has them.
 
+use crate::generated_bindgen::app::LoginItemOptions;
 use crate::prelude::*;
 use crate::{files, paths, process, text};
 
@@ -13,7 +14,7 @@ fn value(text: &str) -> String {
 }
 
 /// For the `Exec` key, which is unescaped twice.
-pub(crate) fn exec(command: &[String]) -> String {
+fn exec(command: &[String]) -> String {
     let quote = |argument: &String| {
         let escaped = text::escape(argument, |it| match it {
             '\\' => Some("\\\\"),
@@ -28,7 +29,7 @@ pub(crate) fn exec(command: &[String]) -> String {
     value(&command.iter().map(quote).collect::<Vec<_>>().join(" "))
 }
 
-pub(crate) fn write_entry(file: &str, exec: &str, more: &str) -> JsResult<()> {
+fn write_entry(file: &str, exec: &str, more: &str) -> JsResult<()> {
     let (name, icon) = (value(&paths::app_name()?), paths::identifier()?);
     let entry =
         format!("[Desktop Entry]\nType=Application\nName={name}\nExec={exec}\nIcon={icon}\n{more}");
@@ -39,11 +40,11 @@ pub(crate) fn write_entry(file: &str, exec: &str, more: &str) -> JsResult<()> {
     files::or_throw(files::write(file, entry.as_bytes(), 0o644))
 }
 
-pub(crate) fn installed_entry() -> JsResult<String> {
+fn installed_entry() -> JsResult<String> {
     Ok(paths::identifier()? + ".desktop")
 }
 
-pub(crate) fn autostart_entry() -> JsResult<String> {
+fn autostart_entry() -> JsResult<String> {
     Ok(files::join(&[
         &paths::path("appData")?,
         "autostart",
@@ -51,11 +52,11 @@ pub(crate) fn autostart_entry() -> JsResult<String> {
     ]))
 }
 
-pub(crate) fn handler_entry(scheme: &str) -> JsResult<String> {
+fn handler_entry(scheme: &str) -> JsResult<String> {
     Ok(format!("{}.{scheme}-handler.desktop", paths::identifier()?))
 }
 
-pub(crate) fn own_applications() -> JsResult<String> {
+fn own_applications() -> JsResult<String> {
     let data = paths::variable_or_in_home("XDG_DATA_HOME", &[".local", "share"])?;
     Ok(files::join(&[&data, "applications"]))
 }
@@ -81,7 +82,7 @@ fn find_entry(applications: &[String], entry: &str) -> Option<String> {
     (applications.iter().map(|it| files::join(&[it, entry]))).find(|it| files::exists(it))
 }
 
-pub(crate) fn is_installed(entry: &str) -> JsResult<bool> {
+fn is_installed(entry: &str) -> JsResult<bool> {
     Ok(find_entry(&applications()?, entry).is_some())
 }
 
@@ -93,7 +94,7 @@ fn read_key(file: &str, group: &str, key: &str) -> Option<String> {
 }
 
 /// What `xdg-mime query default` prints, which takes a hundred times as long.
-pub(crate) fn default_application(kind: &str) -> JsResult<Option<String>> {
+fn default_application(kind: &str) -> JsResult<Option<String>> {
     let applications = applications()?;
     let find = |file: String, group| {
         let entries = read_key(&file, group, kind)?;
@@ -122,15 +123,19 @@ pub(crate) fn default_application(kind: &str) -> JsResult<Option<String>> {
     }))
 }
 
-pub(crate) fn name_of_default_application(kind: &str) -> JsResult<Option<String>> {
-    let (entry, applications) = (default_application(kind)?, applications()?);
+fn kind_of(scheme: &str) -> String {
+    format!("x-scheme-handler/{scheme}")
+}
+
+pub(crate) fn name_of_handler(scheme: &str) -> JsResult<Option<String>> {
+    let (entry, applications) = (default_application(&kind_of(scheme))?, applications()?);
     let file = entry.and_then(|it| find_entry(&applications, &it));
     Ok(file.and_then(|it| read_key(&it, "Desktop Entry", "Name")))
 }
 
 /// The name and the executable.
 pub(crate) fn handler_of(scheme: &str) -> JsResult<Option<[String; 2]>> {
-    let entry = default_application(&format!("x-scheme-handler/{scheme}"))?;
+    let entry = default_application(&kind_of(scheme))?;
     let (applications, search) = (applications()?, process::variable("PATH")?);
     let find = || {
         let file = find_entry(&applications, &entry?)?;
@@ -149,6 +154,53 @@ pub(crate) fn handler_of(scheme: &str) -> JsResult<Option<[String; 2]>> {
     Ok(find())
 }
 
-pub(crate) fn set_default_application(entry: &str, kind: &str) -> JsResult<bool> {
+fn set_default_application(entry: &str, kind: &str) -> JsResult<bool> {
     process::run(&["xdg-mime", "default", entry, kind])
+}
+
+pub(crate) fn handle(scheme: &str, command: &[String], is_usual: bool) -> JsResult<bool> {
+    let (kind, installed) = (kind_of(scheme), installed_entry()?);
+    if is_usual && is_installed(&installed)? {
+        return set_default_application(&installed, &kind);
+    }
+    let entry = handler_entry(scheme)?;
+    write_entry(
+        &files::join(&[&own_applications()?, &entry]),
+        &format!("{} %u", exec(command)),
+        &format!("NoDisplay=true\nMimeType={kind};\n"),
+    )?;
+    set_default_application(&entry, &kind)
+}
+
+pub(crate) fn handles(scheme: &str, _: &[String]) -> JsResult<bool> {
+    let entry = default_application(&kind_of(scheme))?;
+    Ok(entry == Some(handler_entry(scheme)?) || entry == Some(installed_entry()?))
+}
+
+pub(crate) fn stop_handling(scheme: &str, command: &[String]) -> JsResult<bool> {
+    let handles = handles(scheme, command)?;
+    if handles {
+        files::remove(&files::join(&[
+            &own_applications()?,
+            &handler_entry(scheme)?,
+        ]));
+    }
+    Ok(handles)
+}
+
+pub(crate) fn login_item(_: &[String]) -> JsResult<JSValue> {
+    let opens = files::exists(&autostart_entry()?);
+    Ok(object!({
+        "executableWillLaunchAtLogin": opens,
+        "openAtLogin": opens,
+        "wasOpenedAtLogin": false,
+    }))
+}
+
+pub(crate) fn set_login_item(settings: &LoginItemOptions, command: &[String]) -> JsResult<()> {
+    if !settings.open_at_login {
+        files::remove(&autostart_entry()?);
+        return Ok(());
+    }
+    write_entry(&autostart_entry()?, &exec(command), "")
 }

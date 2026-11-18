@@ -156,7 +156,7 @@ impl IntoJs for Answer {
 }
 
 fn is_native() -> JsResult<bool> {
-    Ok(IS_MAC && !is_headless()?)
+    Ok((IS_MAC || IS_WINDOWS) && !is_headless()?)
 }
 
 fn on_abort(signal: Option<JSValue>, method: &str, listener: JSValue) -> JsResult<()> {

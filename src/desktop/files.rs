@@ -68,6 +68,24 @@ pub(crate) fn write(path: &str, contents: &[u8], mode: bun_sys::Mode) -> bun_sys
     File::openat(Fd::cwd(), path.as_bytes(), flags, mode)?.write_all(contents)
 }
 
+/// It survives a power cut.
+#[cfg(windows)]
+pub(crate) fn write_for_good(
+    path: &str,
+    contents: &[u8],
+    mode: bun_sys::Mode,
+) -> bun_sys::Result<()> {
+    let flags = O::WRONLY | O::CREAT | O::TRUNC | O::CLOEXEC;
+    let file = File::openat(Fd::cwd(), path.as_bytes(), flags, mode)?;
+    file.write_all(contents)?;
+    bun_sys::fsync(file.handle())
+}
+
+pub(crate) fn append(path: &str, contents: &[u8]) -> bun_sys::Result<()> {
+    let flags = O::WRONLY | O::APPEND | O::CLOEXEC;
+    File::openat(Fd::cwd(), path.as_bytes(), flags, 0)?.write_all(contents)
+}
+
 pub(crate) fn make_directory(path: &str, mode: bun_sys::Mode) -> bun_sys::Result<()> {
     bun_sys::mkdir_recursive_at_mode(Fd::cwd(), path.as_bytes(), mode)
 }
@@ -105,10 +123,8 @@ pub(crate) fn is_inside(path: &str, directory: &str) -> bool {
 }
 
 pub(crate) fn rename(from: &str, to: &str) -> bun_sys::Result<()> {
-    bun_sys::rename(
-        &ZBox::from_bytes(from.as_bytes()),
-        &ZBox::from_bytes(to.as_bytes()),
-    )
+    let [from, to] = [from, to].map(|it| ZBox::from_bytes(it.as_bytes()));
+    bun_sys::renameat(Fd::cwd(), &from, Fd::cwd(), &to)
 }
 
 /// Also to another file system.

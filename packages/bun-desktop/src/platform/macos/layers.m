@@ -1,9 +1,10 @@
 // For `paint/layers`: surfaces, the layers that show them, and the GPU that draws on them.
 #import "bridge.h"
-#import <sys/event.h>
 #import <IOSurface/IOSurfaceObjC.h>
 #import <Metal/Metal.h>
 #import <QuartzCore/QuartzCore.h>
+#import <dlfcn.h>
+#import <sys/event.h>
 
 void bd_release(void* object) { CFRelease(object); }
 
@@ -24,6 +25,21 @@ void* bd_surface_create(int32_t width, int32_t height)
 }
 
 bool bd_surface_is_in_use(IOSurfaceRef surface) { return IOSurfaceIsInUse(surface); }
+
+/// For a layer. The window server keeps what it has set up for the surface as long as this exists.
+void* bd_surface_contents(IOSurfaceRef surface)
+{
+    static CFTypeRef (*create)(IOSurfaceRef);
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        create = dlsym(RTLD_DEFAULT, "CAIOSurfaceCreate");
+    });
+    return (void*)((create ? create(surface) : NULL) ?: CFRetain(surface));
+}
+
+static __weak IOSurface* replaced;
+void bd_surface_was_replaced(void* surface) { replaced = (__bridge IOSurface*)surface; }
+bool windowServerIsBusy(void) { return replaced.isInUse; }
 
 /// With the GPU, so that there is nothing to fetch.
 static const bool sharesMemory = TARGET_CPU_ARM64;
@@ -78,6 +94,8 @@ void bd_layer_place(void* pointer, double x, double y, double width, double heig
 }
 
 void bd_layer_show(void* layer, void* surface) { ((__bridge CALayer*)layer).contents = (__bridge id)surface; }
+
+void bd_surface_make_wide(void* surface) { IOSurfaceSetValue(surface, kIOSurfaceColorSpace, kCGColorSpaceDisplayP3); }
 
 void bd_layer_blink(void* pointer, uint32_t rgba, double secondsAgo, bool blinks)
 {
@@ -160,7 +178,7 @@ void bd_layer_animate(void* pointer, bool fades, const double* samples, size_t c
 void bd_layer_set_opaque(void* layer, bool isOpaque) { ((__bridge CALayer*)layer).opaque = isOpaque; }
 void bd_layer_remove(void* layer) { [(__bridge CALayer*)layer removeFromSuperlayer]; }
 
-CFTimeInterval commitsFrom;
+CFTimeInterval commitsFrom, waitedToCommit;
 
 /// Other timers are put off by several frames in a process that the system takes for unimportant.
 void bd_layers_wait(void)
@@ -169,9 +187,11 @@ void bd_layers_wait(void)
     CFTimeInterval left = commitsFrom - CACurrentMediaTime();
     if (left <= 0)
         return;
+    waitedToCommit = left;
     timers = timers ?: kqueue();
     struct kevent64_s timer = { .filter = EVFILT_TIMER, .flags = EV_ADD | EV_ONESHOT, .fflags = NOTE_NSECONDS | NOTE_CRITICAL, .data = left * 1e9 + 1 };
-    kevent64(timers, &timer, 1, &timer, 1, 0, NULL);
+    if (kevent64(timers, &timer, 1, &timer, 1, 0, NULL) != 1 || timer.flags & EV_ERROR)
+        [NSThread sleepForTimeInterval:commitsFrom - CACurrentMediaTime()];
 }
 
 void bd_layers_flush(void)

@@ -37,27 +37,50 @@ pub struct Gradient {
     stops: Vec<(f32, [f32; 4])>,
 }
 
-/// The first pixel is at `first` of the way from one to the other.
-#[inline(always)]
-pub(super) fn between<F: Floats>(
-    [from, to]: [[f32; 4]; 2],
+/// From one color to another, along a line.
+#[derive(Clone, Copy)]
+pub struct Ramp {
+    pub(super) ends: [[f32; 4]; 2],
+    /// How much of the way the pixel at `origin` has come, and what a column and a row add to that.
+    origin: [i32; 2],
     first: f32,
-    step: f32,
-    row: &mut [Pixel],
-) {
-    let (all, steps) = (
-        |it: f32| F::new([it; 8]),
-        F::new(std::array::from_fn(|it| it as f32 * step)),
-    );
-    let (start, by) = (
-        from.map(|it| all(it + 0.5)),
-        [0, 1, 2, 3].map(|it| all(to[it] - from[it])),
-    );
-    for (index, run) in row.chunks_mut(8).enumerate() {
-        let progress = all(first + (index * 8) as f32 * step)
-            .add(steps)
-            .max(all(0.))
-            .min(all(1.));
+    pub(super) steps: [f32; 2],
+}
+
+impl Ramp {
+    pub(super) fn at(&self, x: i32, y: i32) -> f32 {
+        self.first
+            + (x - self.origin[0]) as f32 * self.steps[0]
+            + (y - self.origin[1]) as f32 * self.steps[1]
+    }
+
+    pub fn shade(&self, x: i32, y: i32, row: &mut [Pixel]) {
+        shade_between(self.ends, self.at(x, y), self.steps[0], row);
+    }
+}
+
+pub(super) struct Mixer<F> {
+    start: [F; 4],
+    by: [F; 4],
+    steps: F,
+}
+
+impl<F: Floats> Mixer<F> {
+    #[inline(always)]
+    pub(super) fn new([from, to]: [[f32; 4]; 2], step: f32) -> Self {
+        let all = |it: f32| F::new([it; 8]);
+        Mixer {
+            start: from.map(|it| all(it + 0.5)),
+            by: [0, 1, 2, 3].map(|it| all(to[it] - from[it])),
+            steps: F::new(std::array::from_fn(|it| it as f32 * step)),
+        }
+    }
+
+    /// The first pixel is at `first` of the way from one to the other.
+    #[inline(always)]
+    pub(super) fn eight(&self, first: f32) -> [Pixel; 8] {
+        let (Mixer { start, by, steps }, all) = (self, |it: f32| F::new([it; 8]));
+        let progress = all(first).add(*steps).max(all(0.)).min(all(1.));
         let [r, g, b, a] = [
             start[0].add(by[0].mul(progress)).whole(),
             start[1].add(by[1].mul(progress)).whole(),
@@ -68,6 +91,15 @@ pub(super) fn between<F: Floats>(
         for (it, color) in colors.iter_mut().enumerate() {
             *color = (r[it] | g[it] << 8 | b[it] << 16 | a[it] << 24).to_le_bytes();
         }
+        colors
+    }
+}
+
+#[inline(always)]
+pub(super) fn between<F: Floats>(ends: [[f32; 4]; 2], first: f32, step: f32, row: &mut [Pixel]) {
+    let mixer = Mixer::<F>::new(ends, step);
+    for (index, run) in row.chunks_mut(8).enumerate() {
+        let colors = mixer.eight(first + (index * 8) as f32 * step);
         match run.first_chunk_mut() {
             Some(run) => *run = colors,
             None => run.copy_from_slice(&colors[..run.len()]),
@@ -117,7 +149,7 @@ impl Gradient {
             }
             _ => true,
         };
-        covers_all && self.stops.iter().all(|it| it.1[3] == 255.)
+        covers_all && !self.stops.is_empty() && self.stops.iter().all(|it| it.1[3] == 255.)
     }
 
     /// For `vector/shader.h`. False if it has no colors, or too many.
@@ -293,6 +325,38 @@ impl Gradient {
         }
     }
 
+    /// If that is all it is. It is most exact near `origin`.
+    pub fn ramp(&self, inverse: &Transform, origin: [i32; 2]) -> Option<Ramp> {
+        let (Geometry::Linear { from, to }, Spread::Pad, &[(start, a), (end, b)]) =
+            (self.geometry, self.spread, &self.stops[..])
+        else {
+            return None;
+        };
+        let ((x, y), dx, dy) = (
+            map_point(inverse, origin[0] as f32 + 0.5, origin[1] as f32 + 0.5),
+            to[0] - from[0],
+            to[1] - from[1],
+        );
+        let steps = [
+            inverse.sx * dx + inverse.ky * dy,
+            inverse.kx * dx + inverse.sy * dy,
+        ]
+        .map(|it| it / (dx * dx + dy * dy) / (end - start));
+        let (first, scale) = (
+            (self.offset_at(x, y)? - start) / (end - start),
+            if self.premultiplied { 1. } else { a[3] / 255. },
+        );
+        let is_plain = (self.premultiplied || a[3] == b[3])
+            && end - start > 1e-3
+            && (first + steps[0] + steps[1]).is_finite();
+        is_plain.then(|| Ramp {
+            ends: [a, b].map(|[r, g, b, a]| [r * scale, g * scale, b * scale, a]),
+            origin,
+            first,
+            steps,
+        })
+    }
+
     /// `inverse` maps device pixels to the gradient's space.
     pub fn shade(&self, inverse: &Transform, x: i32, y: i32, row: &mut [Pixel]) {
         if let (Geometry::Linear { from, to }, Spread::Pad) = (self.geometry, self.spread)
@@ -321,6 +385,72 @@ impl Gradient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_ramp_is_like_its_rows() {
+        use super::super::raster::{Clip, IntRect, Layer, Paint};
+        use crate::gfx::{Command::*, Fill, Point};
+        let at = Point::new;
+        let path = [
+            MoveTo(at(0., 0.)),
+            CurveTo(at(90., -40.), at(120., 70.), at(60., 50.)),
+            LineTo(at(3., 61.)),
+            LineTo(at(30., 30.)),
+            Close,
+        ];
+        for (colors, turn, rect) in [
+            (
+                [0xFF00_00FF, 0x0040_FFFF],
+                0.3f32,
+                IntRect::new(-7, -20, 86, 90),
+            ),
+            (
+                [0xFF00_0080, 0x00FF_0080],
+                -0.9,
+                IntRect::new(10, -60, 53, 33),
+            ),
+        ] {
+            let stops = [(0.2, colors[0]), (0.7, colors[1])]
+                .map(|(offset, color)| GradientStop { offset, color });
+            let gradient = Gradient::new(
+                Geometry::Linear {
+                    from: [0., 10.],
+                    to: [90., 40.],
+                },
+                &stops,
+                Spread::Pad,
+                false,
+            );
+            let matrix =
+                Transform::from_row(turn.cos(), turn.sin(), -turn.sin(), turn.cos(), 4.4, 1.3);
+            let inverse = matrix.invert().unwrap();
+            let ramp = gradient
+                .ramp(&inverse, [rect.left + 5, rect.top + 9])
+                .unwrap();
+            let [a, b] = [
+                Paint::Ramp(&ramp),
+                Paint::Shader(&|x, y, row| gradient.shade(&inverse, x, y, row)),
+            ]
+            .map(|paint| {
+                let mut layer = Layer::new(rect).unwrap();
+                layer.fill(
+                    rect,
+                    None,
+                    &Clip::new(rect),
+                    &Paint::Solid([9, 80, 30, 200]),
+                );
+                layer.fill_path(&path, Fill::NonZero, &matrix, &Clip::new(rect), &paint);
+                layer
+            });
+            assert!(
+                a.pixels()
+                    .as_flattened()
+                    .iter()
+                    .zip(b.pixels().as_flattened())
+                    .all(|(a, b)| a.abs_diff(*b) <= 2)
+            );
+        }
+    }
 
     #[test]
     fn a_row_is_like_its_pixels() {

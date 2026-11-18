@@ -743,6 +743,14 @@ impl<'a> Band<'a> {
     fn mask(&mut self, primitive: &Primitive, texture: &Texture, color: Pixel, area: IntRect) {
         let (left, top) = (primitive.bounds.x as i32, primitive.bounds.y as i32);
         let start = (area.top - top) as usize * texture.width + (area.left - left) as usize;
+        #[cfg(windows)]
+        if matches!(primitive.kind, Kind::Mask(Sprite { is_color: true, .. }, _)) {
+            return super::raster::fill_rows_through_parts(
+                self.rows(area)
+                    .zip(texture.data().as_chunks().0[start..].chunks(texture.width)),
+                color,
+            );
+        }
         fill_rows_through(
             self.rows(area)
                 .zip(texture.data()[start..].chunks(texture.width)),
@@ -803,7 +811,7 @@ impl<'a> Band<'a> {
             && texture.width.min(rows) > 1
         {
             let at = |first: i32, pixel: i32, start: f32, step: f32| {
-                fixed(first as f32 + (pixel as f32 + 0.5 - start) * step - 0.5) + (1 << 9)
+                fixed(first as f32 + (pixel as f32 + 0.5 - start) * step - 0.5) + (1 << 8)
             };
             let left = at(part.left, area.left, bounds.x, step[0]);
             let last = [texture.width, rows].map(|it| ((it as i32 - 1) << 16) - 1);
@@ -928,7 +936,7 @@ impl<'a> Band<'a> {
                 .ceil()
                 .clamp(0., width) as usize;
             let [u, v] = [0, 1].map(|axis| fixed(first[axis] + steps[axis] * start as f32));
-            Some((row.get_mut(start..end)?, [u.saturating_add(1 << 9), v]))
+            Some((row.get_mut(start..end)?, [u.saturating_add(1 << 8), v]))
         });
         draw_samples(
             rows,

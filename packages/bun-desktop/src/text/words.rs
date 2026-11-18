@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use std::hash::{Hash, Hasher};
 use std::ops::Range;
 
-use super::breaks::{flags_in_ascii, is_letter};
+use super::breaks::{flags_in_ascii, is_letter, is_mark};
 use super::fonts::{Face, is_default_ignorable};
 use super::pages::Pages;
 use super::reach::Reach;
@@ -174,6 +174,7 @@ const END: u8 = 0;
 /// In most text, the advance of a glyph depends on the next one.
 struct Pairs {
     ascii: Box<[[Pair; 128]; 128]>,
+    has_complex_ascii: bool,
     others: Others<6>,
 }
 
@@ -384,6 +385,7 @@ impl Pairs {
                     flags,
                 },
             );
+            self.has_complex_ascii |= pair.advance < 0.;
         }
         Some((*pair, 1)).filter(|it| it.0.advance > 0.)
     }
@@ -416,26 +418,20 @@ impl Pairs {
         let Some(mut row) = text.first().and_then(|it| self.ascii.get(usize::from(*it))) else {
             return 0;
         };
-        let (face, mut carried) = (u32::from(face) << 24, u32::from(flags) << 16);
+        let (face, mut carried) = (u16::from(face) << 8, flags);
         for (index, (second, letter)) in text[1..].iter().zip(letters).enumerate() {
-            let pair = row[usize::from(second & 0x7f)];
+            let pair = &row[usize::from(second & 0x7f)];
             if *second as i8 <= 0 || pair.advance.to_bits() as i32 <= 0 {
                 return index;
             }
-            let rest = u32::from(pair.glyph)
-                | u32::from(pair.flags[0]) << 16
-                | u32::from(pair.flags[1]) << 24;
-            let own = rest & 0xff_ffff | carried | face;
+            let [flags, face] = (u16::from(pair.flags[0] | carried) | face).to_le_bytes();
             *letter = Letter {
                 advance: pair.advance * scale + spacing,
-                glyph: own as u16,
-                flags: (own >> 16) as u8,
-                face: (own >> 24) as u8,
+                glyph: pair.glyph,
+                flags,
+                face,
             };
-            (carried, row) = (
-                rest >> 8 & 0xff_0000,
-                &self.ascii[usize::from(second & 0x7f)],
-            );
+            (carried, row) = (pair.flags[1], &self.ascii[usize::from(second & 0x7f)]);
         }
         text.len() - 1
     }
@@ -492,8 +488,14 @@ impl Pairs {
         let bytes = text.as_bytes();
         while at < text.len() {
             let Some((pair, len)) = self.get(shaping, text, at, buffer) else {
-                let unaffected =
-                    &bytes[start..back(text, at.max(start), reach.after.max(1) - 1, start)];
+                let is_composed = text[at..].chars().nth(1).is_some_and(is_mark);
+                let unaffected = &bytes[start
+                    ..back(
+                        text,
+                        at.max(start),
+                        reach.after.max(1) - usize::from(!is_composed),
+                        start,
+                    )];
                 let end = start
                     + unaffected
                         .iter()
@@ -660,8 +662,9 @@ thread_local! {
 fn widen(text: &str, word: &Range<usize>, item: &Range<usize>, reach: Reach) -> Range<usize> {
     let bytes = word.start.saturating_sub(reach.before + 1).max(item.start)
         ..(word.end + reach.after).min(item.end);
+    let next = (bytes.end + usize::from(reach.after > 0)).min(item.end);
     if text.as_bytes()[bytes.start..word.start].is_ascii()
-        && text.as_bytes()[word.end..bytes.end].is_ascii()
+        && text.as_bytes()[word.end..next].is_ascii()
     {
         return bytes;
     }
@@ -669,9 +672,19 @@ fn widen(text: &str, word: &Range<usize>, item: &Range<usize>, reach: Reach) -> 
         .chars()
         .rev()
         .take(reach.before + 1);
-    let after = text[word.end..item.end].chars().take(reach.after);
+    let end = word.end
+        + text[word.end..item.end]
+            .chars()
+            .take(reach.after)
+            .map(char::len_utf8)
+            .sum::<usize>();
+    // They make another glyph of their letter.
+    let marks = text[end..item.end]
+        .chars()
+        .take_while(|it| is_mark(*it) && end > word.end)
+        .take(4);
     word.start - before.map(char::len_utf8).sum::<usize>()
-        ..word.end + after.map(char::len_utf8).sum::<usize>()
+        ..end + marks.map(char::len_utf8).sum::<usize>()
 }
 
 impl Words {
@@ -714,6 +727,60 @@ impl Words {
             spelling,
             to,
         );
+    }
+
+    /// For ASCII, a letter for each byte of `text`. Fails unless all pairs in `range` are known.
+    pub fn spell_known(
+        &mut self,
+        shaping: &Shaping,
+        text: &[u8],
+        range: Range<usize>,
+        letters: &mut [Letter],
+        [scale, spacing]: [f32; 2],
+        face: u8,
+    ) -> Option<()> {
+        let identity = shaping.identity();
+        let table = self.tables.iter_mut().find(|it| it.identity == identity)?;
+        let pairs = table
+            .pairs
+            .as_ref()
+            .filter(|it| range.len() <= 96 || !it.has_complex_ascii)?;
+        self.uses += 1;
+        table.last_use = self.uses;
+        let (text, mut at, is_blank) = (&text[..range.end], range.start, |it: &u8| {
+            matches!(it, b'\t' | b'\n')
+        });
+        while at < text.len() {
+            let mut last = Letter {
+                advance: 0.,
+                glyph: NO_GLYPH,
+                flags: flags_in_ascii(text, at),
+                face,
+            };
+            if !is_blank(&text[at]) {
+                at += pairs.spell(
+                    &text[at..],
+                    &mut letters[at..],
+                    last.flags,
+                    [scale, spacing],
+                    face,
+                );
+                let pair = pairs
+                    .ascii
+                    .get(usize::from(text[at]))
+                    .map(|it| it[usize::from(END)])
+                    .filter(|it| it.advance > 0. && text.get(at + 1).is_none_or(is_blank))?;
+                last = Letter {
+                    advance: pair.advance * scale + spacing,
+                    glyph: pair.glyph,
+                    flags: flags_in_ascii(text, at),
+                    face,
+                };
+            }
+            letters[at] = last;
+            at += 1;
+        }
+        Some(())
     }
 }
 
@@ -931,6 +998,7 @@ impl Memory {
                 .ok()
                 .map(|ascii| Pairs {
                     ascii,
+                    has_complex_ascii: false,
                     others: Others::default(),
                 });
         }

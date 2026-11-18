@@ -1,6 +1,6 @@
 //! `screen`
 
-use bun_ui::protocol::Display;
+use bun_ui::protocol::{Display, PreferenceValue};
 use bun_ui::value::decimal;
 
 use crate::generated_bindgen::base::{DesktopPoint, DesktopRectangle};
@@ -97,7 +97,7 @@ fn describe(mut it: Display) -> JsResult<JSValue> {
         width: it.width,
         height: it.height,
     };
-    Ok(object!({
+    let described = object!({
         "accelerometerSupport": "unknown",
         "bounds": it.bounds,
         "colorDepth": 24,
@@ -117,7 +117,13 @@ fn describe(mut it: Display) -> JsResult<JSValue> {
         "touchSupport": "unknown",
         "workArea": it.work_area,
         "workAreaSize": size(it.work_area),
-    }))
+    });
+    if let PreferenceValue::Dictionary(details) = ask_shell(ShellCommand::DescribeDisplay(it.id))? {
+        for it in details {
+            assign(described, &it.key, js(it.value)?)?;
+        }
+    }
+    Ok(described)
 }
 
 pub(crate) fn changed(event: &str, id: u64) -> JsResult<()> {

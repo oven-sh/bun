@@ -97,6 +97,11 @@ impl Challenge {
         self.get(b"realm")
     }
 
+    /// It answers what was sent.
+    pub(super) fn is_reply(&self) -> bool {
+        !self.token.is_empty()
+    }
+
     pub(super) fn is_stale(&self) -> bool {
         self.scheme == AuthScheme::Digest && self.get(b"stale").eq_ignore_ascii_case(b"true")
     }
@@ -227,7 +232,7 @@ enum Secret {
     Digest(Login, Arc<Digest>),
     Ntlm(Login),
     /// Of who is logged in to the system.
-    Negotiate,
+    Ambient(AuthScheme),
 }
 
 /// What a server or a proxy is expected to accept.
@@ -245,7 +250,8 @@ impl Identity {
                 Secret::Digest(login, Digest::new(challenge)?.into())
             }
             (AuthScheme::Ntlm, Some(login)) => Secret::Ntlm(login),
-            (AuthScheme::Negotiate, None) => Secret::Negotiate,
+            (AuthScheme::Negotiate, None) => Secret::Ambient(challenge.scheme),
+            (AuthScheme::Ntlm, None) if cfg!(windows) => Secret::Ambient(challenge.scheme),
             _ => return None,
         };
         Some(Identity {
@@ -259,14 +265,14 @@ impl Identity {
             Secret::Basic(_) => AuthScheme::Basic,
             Secret::Digest(..) => AuthScheme::Digest,
             Secret::Ntlm(_) => AuthScheme::Ntlm,
-            Secret::Negotiate => AuthScheme::Negotiate,
+            Secret::Ambient(scheme) => scheme,
         }
     }
 
     pub(super) fn login(&self) -> Option<&Login> {
         match &self.secret {
             Secret::Basic(login) | Secret::Digest(login, _) | Secret::Ntlm(login) => Some(login),
-            Secret::Negotiate => None,
+            Secret::Ambient(_) => None,
         }
     }
 
@@ -369,7 +375,7 @@ pub(super) struct Peer<'a> {
 enum Round {
     First,
     Ntlm,
-    Negotiate(gssapi::Context),
+    Ambient(gssapi::Context),
     Last,
 }
 
@@ -377,6 +383,13 @@ enum Round {
 pub(super) struct Handshake {
     pub identity: Identity,
     round: Round,
+}
+
+fn name_of_ambient(scheme: AuthScheme) -> &'static [u8] {
+    match scheme {
+        AuthScheme::Ntlm => b"NTLM",
+        _ => b"Negotiate",
+    }
 }
 
 fn with_token(scheme: &[u8], token: &[u8]) -> Vec<u8> {
@@ -415,11 +428,11 @@ impl Handshake {
                 Round::Last,
             ),
             Secret::Ntlm(_) => (with_token(b"NTLM", &ntlm::negotiate_message()), Round::Ntlm),
-            Secret::Negotiate => {
-                let mut context = gssapi::Context::new(peer)?;
+            Secret::Ambient(scheme) => {
+                let mut context = gssapi::Context::new(*scheme, peer)?;
                 (
-                    with_token(b"Negotiate", &context.step(b"")?),
-                    Round::Negotiate(context),
+                    with_token(name_of_ambient(*scheme), &context.step(b"")?),
+                    Round::Ambient(context),
                 )
             }
         };
@@ -441,7 +454,10 @@ impl Handshake {
                     &ntlm::authenticate_message(self.identity.login()?, token, peer)?,
                 ))
             }
-            Round::Negotiate(context) => Some(with_token(b"Negotiate", &context.step(token)?)),
+            Round::Ambient(context) => Some(with_token(
+                name_of_ambient(self.identity.scheme()),
+                &context.step(token)?,
+            )),
             Round::First | Round::Last => None,
         }
     }

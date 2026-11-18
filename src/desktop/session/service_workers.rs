@@ -1,4 +1,4 @@
-//! The service workers of trusted origins.
+//! The service workers of a session.
 
 use bun_web::host::Level;
 use bun_web::origin::Origin;
@@ -36,6 +36,7 @@ impl Session {
                 worker,
                 scope,
                 status,
+                process,
             } => {
                 let id = version(worker.id);
                 let mut running = self.own_workers.running.borrow_mut();
@@ -44,7 +45,7 @@ impl Session {
                     running.push(record! {
                         "scriptUrl": string(worker.url.href()),
                         "scope": string(scope.href()),
-                        "renderProcessId": process::id(),
+                        "renderProcessId": process.unwrap_or_else(process::id),
                         "versionId": id,
                     });
                 }

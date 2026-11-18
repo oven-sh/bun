@@ -225,6 +225,10 @@ impl Session for ContentsSession {
         }
         self.close_current();
     }
+
+    fn reveal(self: Rc<Self>, point: [f64; 2]) {
+        self.with_current(move |it| it.into_iter().for_each(|it| it.reveal(point)));
+    }
 }
 
 pub(super) fn targets() -> JsResult<Vec<Value>> {
@@ -252,18 +256,19 @@ const SAME_SITE: [[&str; 2]; 3] = [
     ["strict", "Strict"],
 ];
 
-fn cookies() -> Outcome {
-    let cookies = session::default()?.all_cookies().into_items().into_iter();
-    let cookies = cookies.map(|mut it| {
+pub(super) fn cookies(all: Value) -> Outcome {
+    let cookies = all.into_items().into_iter().map(|mut it| {
         let (expires, same_site) = (it.take("expirationDate"), it.take("sameSite"));
         let same_site = SAME_SITE.iter().find(|it| same_site.is(it[0]));
+        let size = it["name"].text().len() + it["value"].text().len();
         (it.with("expires", expires.as_number().unwrap_or(-1.)))
+            .and(&record! { "size": size as f64, "priority": "Medium" })
             .with("sameSite", same_site.map(|it| it[1]))
     });
     Ok(record! { "cookies": cookies.collect::<Value>() })
 }
 
-fn set_cookie(it: &Value) -> JsResult<()> {
+pub(super) fn set_cookie(session: &session::Session, it: &Value) -> JsResult<()> {
     let domain = it["domain"].text();
     let url = it["url"].as_text().map_or_else(
         || {
@@ -278,7 +283,7 @@ fn set_cookie(it: &Value) -> JsResult<()> {
     );
     let same_site = SAME_SITE.iter().find(|name| it["sameSite"].is(name[1]));
     let text = |name: &str| it[name].as_text().map(str::as_bytes);
-    session::default()?.set_cookie(&CookieDetails {
+    session.set_cookie(&CookieDetails {
         url: Some(url.as_bytes()),
         name: text("name"),
         value: text("value"),
@@ -291,8 +296,16 @@ fn set_cookie(it: &Value) -> JsResult<()> {
     })
 }
 
+#[derive(Clone, Copy, PartialEq)]
+pub(super) enum Client {
+    /// The page can wait for what has this.
+    Person,
+    Program,
+}
+
 pub(super) struct Connection {
-    socket: Strong,
+    send: Box<dyn Fn(String)>,
+    client: Client,
     sessions: RefCell<Vec<(Rc<str>, Rc<dyn Session>)>>,
     pages: RefCell<Vec<Weak<ContentsSession>>>,
     browser_sessions: RefCell<Vec<String>>,
@@ -303,9 +316,14 @@ pub(super) struct Connection {
 }
 
 impl Connection {
-    pub(super) fn new(socket: JSValue, target: Option<Contents>) -> JsResult<Rc<Connection>> {
+    pub(super) fn new(
+        send: Box<dyn Fn(String)>,
+        client: Client,
+        target: Option<Contents>,
+    ) -> JsResult<Rc<Connection>> {
         let connection = Rc::new(Connection {
-            socket: keep(socket),
+            send,
+            client,
             sessions: RefCell::default(),
             pages: RefCell::default(),
             browser_sessions: RefCell::default(),
@@ -313,8 +331,6 @@ impl Connection {
             auto_attach: RefCell::default(),
         });
         if let Some(target) = target {
-            let close = function(socket, |socket, _| invoke(socket, "close", &[]))?;
-            target.invoke("once", &[js("destroyed")?, close])?;
             let session = ContentsSession::new(&connection, target, None)?;
             connection.only.get_or_init(|| session);
         }
@@ -322,8 +338,7 @@ impl Connection {
     }
 
     fn send(&self, message: &Value) {
-        let text = js(message.to_json());
-        task::report(text.and_then(|it| invoke(self.socket.get(), "send", &[it]).map(drop)));
+        (self.send)(message.to_json());
     }
 
     pub(super) fn emitter(self: &Rc<Self>, session: Option<Rc<str>>) -> Emit {
@@ -353,7 +368,7 @@ impl Connection {
         emit: Emit,
     ) -> JsResult<Rc<PageSession>> {
         let frames = Frames::new(Rc::downgrade(self), contents.clone(), Rc::clone(&emit));
-        PageSession::new(contents, emit, Some(frames))
+        PageSession::new(contents, emit, self.client, Some(frames))
     }
 
     fn attach(self: &Rc<Self>, contents: Contents, parent: Option<&str>) -> JsResult<Value> {
@@ -377,7 +392,10 @@ impl Connection {
     }
 
     fn attach_when_decided(self: &Rc<Self>, contents: Contents) -> JsResult<()> {
-        if self.auto_attach.borrow().is_none() || contents.is_destroyed() {
+        if self.auto_attach.borrow().is_none()
+            || contents.is_destroyed()
+            || !contents.is_inspectable()
+        {
             return Ok(());
         }
         if !contents.is_undecided()? {
@@ -434,8 +452,13 @@ impl Connection {
 
     fn run(self: &Rc<Self>, method: &str, params: &Value, from: Option<&str>) -> Outcome {
         let target = || contents::with_target_id(params["targetId"].text());
+        let only = self.only.get().map(|it| it.contents.get_session());
+        let session = || match only {
+            Some(only) => Ok(only),
+            None => session::default(),
+        };
         match method {
-            "Browser.close" => {
+            "Browser.close" if self.client == Client::Program => {
                 later::soon(|_| invoke(app::object(), "quit", &[]).map(drop));
                 Ok(Value::empty())
             }
@@ -447,11 +470,14 @@ impl Connection {
                 "userAgent": user_agent()?,
             }),
             "Storage.clearCookies" => {
-                session::default()?.remove_all_cookies();
+                session()?.remove_all_cookies();
                 Ok(Value::empty())
             }
-            "Storage.getCookies" => cookies(),
-            "Storage.setCookies" => done(params["cookies"].items().iter().try_for_each(set_cookie)),
+            "Storage.getCookies" => cookies(session()?.all_cookies()),
+            "Storage.setCookies" => {
+                let (session, mut all) = (session()?, params["cookies"].items().iter());
+                done(all.try_for_each(|it| set_cookie(session, it)))
+            }
             "Target.attachToBrowserTarget" => {
                 let id = random_id();
                 self.browser_sessions.borrow_mut().push(id.clone());
@@ -496,7 +522,7 @@ impl Connection {
         let reply = move |outcome: Outcome| {
             connection.send(&match outcome {
                 Ok(result) => about.with("result", result),
-                Err(Failure(it)) => about.with("error", record! { "code": -32000, "message": it }),
+                Err(failure) => about.with("error", failure.describe()),
             });
         };
         let known = (self.sessions.borrow().iter())
@@ -504,13 +530,19 @@ impl Connection {
         let session = known.or_else(|| Some(Rc::clone(self.only.get()?) as Rc<dyn Session>));
         let is_of_browser =
             id.is_none_or(|id| self.browser_sessions.borrow().iter().any(|it| it == id));
+        let is_for_browser = method.starts_with("Browser.")
+            || (method.starts_with("Storage.") && method.ends_with("Cookies"));
         match session {
-            Some(session) if !matches!(text::before(method, "."), "Browser" | "Storage") => {
+            Some(session) if !is_for_browser => {
                 session.handle(method, params, Box::new(reply));
             }
             None if !is_of_browser => reply(Err("Session with given id not found.".into())),
             _ => reply(self.run(method, &params, id)),
         }
+    }
+
+    pub(super) fn reveal(&self, point: [f64; 2]) {
+        self.only.get().inspect(|it| Rc::clone(it).reveal(point));
     }
 
     pub(super) fn close(self: &Rc<Self>) -> JsResult<()> {

@@ -561,6 +561,7 @@ impl Animation {
             self.retarget(cx);
             self.engine(|engine, id| {
                 sent.send_keyframes(engine, id);
+                engine.keep_composite(id);
                 engine.set_timing(id, sent.timing(), u16::MAX);
             });
             self.changed(cx);

@@ -10,6 +10,7 @@ use crate::headers::HeaderList;
 use crate::net::body::{Blob, Body, Data};
 use crate::origin::Origin;
 use crate::referrer::ReferrerPolicy;
+use crate::remote::bodies::OnDemand;
 use crate::service::Handler;
 use crate::url::Url;
 use crate::wire::{self, Wire};
@@ -137,7 +138,7 @@ impl Wire for RequestBody {
     fn write(self, to: &mut wire::Writer) {
         match self {
             RequestBody::Data(data) => Ok(data),
-            streamed => Err(streamed.open()),
+            streamed => Err(OnDemand(streamed.open())),
         }
         .write(to);
     }
@@ -145,7 +146,7 @@ impl Wire for RequestBody {
     fn read(from: &mut wire::Reader<'_>) -> wire::Result<RequestBody> {
         Ok(match Wire::read(from)? {
             Ok(data) => RequestBody::Data(data),
-            Err(body) => RequestBody::Stream(Some(body)),
+            Err(OnDemand(body)) => RequestBody::Stream(Some(body)),
         })
     }
 }
@@ -225,9 +226,28 @@ pub struct Starter {
     pub(crate) urls: Vec<Url>,
     pub(crate) destination: Destination,
     pub(crate) has_user_activation: bool,
+    /// Of the event, for a service worker in another process.
+    pub(crate) number: u32,
 }
 
-crate::wire!(impl never Starter);
+/// The host keeps it.
+impl Wire for Starter {
+    fn write(self, to: &mut wire::Writer) {
+        (self.number, self.destination).write(to);
+    }
+
+    fn read(from: &mut wire::Reader<'_>) -> wire::Result<Starter> {
+        let (number, destination) = Wire::read(from)?;
+        Ok(Starter {
+            origin: None,
+            has_tainted_origin: false,
+            urls: Vec::new(),
+            destination,
+            has_user_activation: false,
+            number,
+        })
+    }
+}
 
 impl Request {
     pub fn new(

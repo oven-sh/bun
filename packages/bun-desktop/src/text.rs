@@ -8,6 +8,7 @@ mod breaks;
     path = "text/fontconfig.rs"
 )]
 #[cfg_attr(target_os = "macos", path = "text/core_text.rs")]
+#[cfg_attr(windows, path = "text/direct_write.rs")]
 mod catalog;
 mod decoded;
 mod fonts;
@@ -23,6 +24,8 @@ mod shaper;
 mod woff;
 mod words;
 
+#[cfg(windows)]
+pub use catalog::AVOIDS_SUBPIXELS;
 #[cfg(target_os = "macos")]
 pub use catalog::about_glyph;
 pub use decoded::{keep_font, map_file, open_stored, store_for};
@@ -39,6 +42,8 @@ pub use fonts::{
     unregister_font,
 };
 pub use line::{Line, glyph_extent, ink_spans};
+#[cfg(windows)]
+pub use raster::ink_for_parts;
 pub use raster::{GlyphImage, GlyphPixels, correct_stroke, glyph_path, ink_for, rasterize};
 pub use shape::{Shaped, shape, shape_rest};
 

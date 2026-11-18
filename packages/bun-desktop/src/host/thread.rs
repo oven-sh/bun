@@ -3,7 +3,6 @@
 use std::cell::{Cell, OnceCell};
 use std::collections::VecDeque;
 use std::ffi::{CStr, c_void};
-use std::mem::MaybeUninit;
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, mpsc};
@@ -129,7 +128,30 @@ fn wake() {
 }
 
 /// Not with `std::thread`, which allocates what only the end of the thread frees: the process may end first.
+#[cfg(windows)]
 pub fn detach(stack_size: usize, run: fn()) -> bool {
+    use crate::win32::{CloseHandle, CreateThread, STACK_SIZE_PARAM_IS_A_RESERVATION};
+    unsafe extern "system" fn start(run: *mut c_void) -> u32 {
+        // SAFETY: what `detach` has passed.
+        unsafe { std::mem::transmute::<*mut c_void, fn()>(run)() };
+        0
+    }
+    // SAFETY: what `start` expects.
+    CloseHandle(unsafe {
+        CreateThread(
+            0,
+            stack_size,
+            start,
+            run as *mut c_void,
+            STACK_SIZE_PARAM_IS_A_RESERVATION,
+            None,
+        )
+    }) != 0
+}
+
+#[cfg(unix)]
+pub fn detach(stack_size: usize, run: fn()) -> bool {
+    use std::mem::MaybeUninit;
     extern "C" fn start(run: *mut c_void) -> *mut c_void {
         // SAFETY: what `detach` has passed.
         unsafe { std::mem::transmute::<*mut c_void, fn()>(run)() };
@@ -165,10 +187,21 @@ pub fn is_needed_for_frames() {
     unsafe {
         libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE, 0)
     };
+    #[cfg(windows)]
+    crate::win32::SetThreadPriority(
+        crate::win32::GetCurrentThread(),
+        crate::win32::THREAD_PRIORITY_ABOVE_NORMAL,
+    );
 }
 
 /// Of the current thread. Linux takes 15 bytes.
 pub fn set_name(name: &CStr) {
+    #[cfg(windows)]
+    let _ = crate::win32::SetThreadDescription(
+        crate::win32::GetCurrentThread(),
+        crate::win32::Wide::new(&*name.to_string_lossy()).str(),
+    );
+    #[cfg(unix)]
     // SAFETY: it is a C string.
     unsafe {
         #[cfg(target_os = "linux")]
@@ -180,7 +213,7 @@ pub fn set_name(name: &CStr) {
 
 /// `run` calls `enter`.
 pub fn spawn(run: fn()) {
-    let is_wanted = std::env::var("BUN_DESKTOP_THREADS").as_deref() != Ok("1");
+    let is_wanted = cfg!(windows) || std::env::var("BUN_DESKTOP_THREADS").as_deref() != Ok("1");
     if (system::RUNS_ON_ANY_THREAD && is_wanted || guest::is_on())
         && !EXISTS.swap(true, Ordering::Relaxed)
     {

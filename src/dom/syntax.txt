@@ -325,7 +325,7 @@ font-palette i=normal mix = <palette>
 font-size i=medium = xx-small | x-small | small | medium | large | x-large | xx-large | xxx-large | -webkit-xxx-large>xxx-large | larger | smaller | math | <lp+>
 font-size-adjust i=none ~ = none | ^from-font [ [ ex-height | cap-height | ch-width | ic-width | ic-height ]?~ex-height [ from-font | <number+> ] ]
 font-stretch i=normal = <font-stretch-keyword> | <percentage [0,inf]>
-font-style = normal | italic | [ [ oblique <angle [-90,90]>? ]~oblique_0deg ]=normal
+font-style = normal | italic | [ [ [ [ [ oblique <angle [-90,90]>? ]~oblique_0deg ]~oblique_0rad ]~oblique_0grad ]~oblique_0turn ]=normal
 font-synthesis-small-caps i=auto = auto | none
 font-synthesis-style = auto | none
 font-synthesis-weight = auto | none
@@ -729,7 +729,7 @@ white-space : white-space-collapse text-wrap-mode = normal | pre @white-space-co
 @font-face/font-family = <face-name>
 @font-face/font-feature-settings = <'font-feature-settings'>
 @font-face/font-stretch = auto | <font-stretch-keyword> | <percentage [0,inf]>{1,2}s
-@font-face/font-style = auto | normal | italic | [ [ oblique <angle [-90,90]>{0,2}s ]~oblique_0deg ]=normal
+@font-face/font-style = auto | normal | italic | [ [ [ [ [ oblique <angle [-90,90]>{0,2}s ]~oblique_0deg ]~oblique_0rad ]~oblique_0grad ]~oblique_0turn ]=normal
 @font-face/font-variant = <'font-variant'>
 @font-face/font-variation-settings = <'font-variation-settings'>
 @font-face/font-weight = auto | normal | bold | <number [1,1000]>{1,2}s

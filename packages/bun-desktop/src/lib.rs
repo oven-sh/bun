@@ -7,6 +7,8 @@
 mod abi;
 #[path = "../../../src/dom/abi_graphics.rs"]
 mod abi_graphics;
+#[path = "../../../src/dom/abi_webgl.rs"]
+mod abi_webgl;
 mod accessibility;
 mod allocator;
 mod app;
@@ -16,7 +18,7 @@ mod canvas;
 mod codec;
 mod cover;
 mod diagnostics;
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 mod egl;
 mod error;
 mod frame;
@@ -45,7 +47,10 @@ mod system_icu;
 mod table;
 mod text;
 mod unicode;
+pub mod webgl;
 mod webview;
+#[cfg(windows)]
+mod win32;
 mod window;
 
 use std::cell::RefCell;

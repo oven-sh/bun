@@ -7,6 +7,10 @@ const PROTOCOL: &str = "../../src/ui/protocol.rs";
 const FRAMEWORKS: &str = "Accessibility AppKit ApplicationServices Carbon CoreFoundation CoreGraphics CoreServices CoreText CoreVideo \
     Foundation IOKit IOSurface Metal QuartzCore Security ServiceManagement UserNotifications";
 
+/// By `__delayLoadHelper2` in `src/win32/functions.rs`.
+const LOADED_LATER: &str =
+    "advapi32 combase d3d11 dwmapi gdi32 imm32 ole32 oleaut32 shcore shell32 user32 winmm";
+
 /// Splits at the commas that are not in brackets.
 fn members(body: &str) -> Vec<&str> {
     let (mut depth, mut start, mut all) = (0, 0, Vec::new());
@@ -163,6 +167,20 @@ fn header(protocol: &str) -> String {
 fn main() {
     println!("cargo::rerun-if-changed=src/platform/macos");
     println!("cargo::rerun-if-changed={PROTOCOL}");
+    if var("CARGO_CFG_TARGET_OS").unwrap() == "windows" {
+        LOADED_LATER
+            .split(' ')
+            .for_each(|name| println!("cargo::rustc-link-arg=/DELAYLOAD:{name}.dll"));
+        // Only from System32.
+        println!("cargo::rustc-link-arg=/DEPENDENTLOADFLAG:0x800");
+        // The C library comes with the system, and vcruntime140.dll does not.
+        ["msvcrt", "vcruntime", "libucrt"]
+            .iter()
+            .for_each(|name| println!("cargo::rustc-link-arg=/NODEFAULTLIB:{name}.lib"));
+        ["libcmt", "libvcruntime", "ucrt"]
+            .iter()
+            .for_each(|name| println!("cargo::rustc-link-arg=/DEFAULTLIB:{name}.lib"));
+    }
     if var("CARGO_CFG_TARGET_OS").unwrap() != "macos" {
         return;
     }

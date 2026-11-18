@@ -592,6 +592,13 @@ pub fn catch_up(id: u32) {
     let Some(surface) = get(id) else { return };
     let mut surface = surface.borrow_mut();
     diagnostics::fingers_moved(host::interval());
+    if surface
+        .window
+        .and_then(window::platform_window)
+        .is_some_and(|it| it.is_too_late())
+    {
+        return;
+    }
     if let Some(late) = surface
         .starved_at
         .map(|it| it.elapsed())
@@ -692,7 +699,7 @@ pub fn begin_frames_until(state: &WindowState, end: Instant) {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(windows, target_os = "macos"))]
 pub fn begin_frames_at_once(state: &WindowState) {
     in_window(state)
         .iter()

@@ -121,6 +121,8 @@ public:
             m_work = 0;
             m_settlesAt = now + quietAfter + settleAfter;
         }
+        if (allocated != m_allocatedAtLastWait)
+            m_hasLookedForEvents = false;
         m_lastWait = now;
         m_allocatedAtLastWait = allocated;
         if (m_burst > activityBytes) {
@@ -139,7 +141,7 @@ public:
             if (m_stopsSweeper.exchange(false) && m_step == Step::Collect)
                 heap.sweeper().stopSweeping();
             uint64_t young = allocated - m_allocatedAtLastCollection;
-            if (destroyWithin(slack, now))
+            if (collectWithin(slack, young) || destroyWithin(slack, now))
                 return 0_s;
             if (young < nurseryBytes || now - m_lastRequest < minimumGap)
                 return std::min(timeout, m_due - now);
@@ -157,6 +159,7 @@ public:
     void didGetEvents(bool hasInput)
     {
         auto now = MonotonicTime::now();
+        m_hasLookedForEvents = false;
         if (hasInput || now - m_lastEvent > lullAfter)
             m_framesSince = now;
         m_lastEvent = now;
@@ -174,6 +177,32 @@ private:
         KeepSweeping,
         Release,
         Settle };
+
+    // Before a task runs out of the budget, and has to wait for it.
+    bool collectWithin(Seconds slack, uint64_t young)
+    {
+        auto& heap = m_vm.heap;
+        // A program that is starting keeps what it makes.
+        if (!heap.sizeAfterLastFullCollection() && m_patience == mostPatience)
+            return false;
+        uint64_t worthCollecting = std::max<uint64_t>(smallestNurseryBytes, heap.sizeAfterLastFullCollection() / 8) << m_patience;
+        if (young < std::clamp<uint64_t>(heap.allocationBudgetThisCycle() * 3 / 4, smallestNurseryBytes, worthCollecting))
+            return false;
+        Seconds estimate = heap.lastEdenGCLength() * std::clamp(static_cast<double>(young) / m_youngAtLastEdenCollection, 0.5, 2.0);
+        if (estimate + marginOfSlack > slack || heap.isDeferred() || !Options::useGC())
+            return false;
+        if (bool isFull = hasGrown(growthWhileBusy); isFull || estimate > longestPause) {
+            collect(isFull ? CollectionScope::Full : CollectionScope::Eden, false);
+            return true;
+        }
+        // What has arrived in the meantime comes first.
+        if (!std::exchange(m_hasLookedForEvents, true))
+            return true;
+        m_hasLookedForEvents = false;
+        JSLockHolder lock(m_vm);
+        heap.collectSync(CollectionScope::Eden);
+        return true;
+    }
 
     // Else the allocator does, in the middle of a task. The blocks stay.
     bool destroyWithin(Seconds slack, MonotonicTime now)
@@ -310,6 +339,12 @@ private:
     {
         if (scope == CollectionScope::Full)
             m_freedNodesAtLastFullCollection = Bun__DOM__freedNodes();
+        else {
+            m_youngAtLastEdenCollection = std::max<uint64_t>(1, m_vm.heap.totalBytesAllocated() - m_allocatedAtLastCollection);
+            auto hasKept = [&](unsigned part) { return m_vm.heap.sizeAfterLastCollection() > m_sizeAfterLastCollection + m_youngAtLastEdenCollection / part; };
+            m_patience = std::clamp(m_patience + hasKept(4) - !hasKept(8), 0, mostPatience);
+        }
+        m_sizeAfterLastCollection = m_vm.heap.sizeAfterLastCollection();
         m_allocatedAtLastCollection = m_vm.heap.totalBytesAllocated();
         m_hasUnsweptBlocks = true;
         m_stopsSweeper = true;
@@ -317,6 +352,8 @@ private:
 
     static constexpr uint32_t nodesOfAView = 120;
     static constexpr uint64_t nurseryBytes = 24 * MB;
+    static constexpr uint64_t smallestNurseryBytes = 2 * MB;
+    static constexpr int mostPatience = 3;
     static constexpr uint64_t worthReleasing = 4 * MB;
     static constexpr double activityBytes = 256 * KB;
     static constexpr double bytesPerSecondOfChatter = 256 * KB;
@@ -327,6 +364,7 @@ private:
     static constexpr double growthWhenQuiet = 1.12;
     static constexpr double growthWhenSettled = 1.06;
     static constexpr Seconds marginOfSlack = 2_ms;
+    static constexpr Seconds longestPause = 10_ms;
     static constexpr Seconds minimumGap = 100_ms;
     static constexpr Seconds lullAfter = 150_ms;
     static constexpr Seconds quietAfterInput = 1_s;
@@ -356,10 +394,14 @@ private:
     size_t m_agingRounds { 0 };
     Step m_step { Step::Collect };
     bool m_hasBeenQuiet { false };
+    bool m_hasLookedForEvents { false };
     std::atomic<bool> m_stopsSweeper { false };
     std::atomic<bool> m_hasUnsweptBlocks { false };
     BlockDirectory* m_directoryToSweep { nullptr };
     unsigned m_blockToSweep { 0 };
+    std::atomic<uint64_t> m_youngAtLastEdenCollection { 1 };
+    std::atomic<int> m_patience { mostPatience };
+    size_t m_sizeAfterLastCollection { 0 };
 };
 
 } // namespace Bun

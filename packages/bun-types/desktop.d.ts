@@ -437,6 +437,7 @@ declare module "bun:desktop" {
     requestSingleInstanceLock(additionalData?: unknown): boolean;
     hasSingleInstanceLock(): boolean;
     releaseSingleInstanceLock(): void;
+    /** On Windows, whoever wrote a link can add arguments after it. Do not act on what follows a URL in `process.argv`. */
     setAsDefaultProtocolClient(protocol: string, path?: string, args?: string[]): boolean;
     isDefaultProtocolClient(protocol: string, path?: string, args?: string[]): boolean;
     removeAsDefaultProtocolClient(protocol: string, path?: string, args?: string[]): boolean;

@@ -2,9 +2,14 @@
 
 pub mod alarm;
 #[cfg_attr(target_os = "macos", path = "host/macos.rs")]
-#[cfg_attr(not(target_os = "macos"), path = "host/linux.rs")]
-mod system;
+#[cfg_attr(
+    any(target_os = "linux", target_os = "freebsd"),
+    path = "host/linux.rs"
+)]
+#[cfg_attr(windows, path = "host/windows.rs")]
+pub mod system;
 pub mod thread;
+#[cfg(unix)]
 mod unix;
 
 use std::cell::{Cell, OnceCell, RefCell};
@@ -126,7 +131,7 @@ pub fn wait_for_frame(window: u32, since: Instant) {
 }
 
 /// The window has another size, and shows what is drawn next together with that.
-#[cfg(target_os = "macos")]
+#[cfg(any(windows, target_os = "macos"))]
 pub fn before_resized_frame(window: u32) {
     let Some(state) = window::state(window)
         .ok()
@@ -185,6 +190,15 @@ pub fn deliver_events(patience: Duration) {
     }
     let deadline = Instant::now() + patience;
     while is_handled() != [true; 3] && thread::wait_for_jobs(deadline) {
+        thread::run_jobs();
+    }
+}
+
+/// JavaScript has this long to bring it about.
+#[cfg(windows)]
+pub fn linger(patience: Duration, is_done: impl Fn() -> bool) {
+    let deadline = Instant::now() + patience;
+    while !is_done() && !thread::is_answering() && thread::wait_for_jobs(deadline) {
         thread::run_jobs();
     }
 }
@@ -311,6 +325,7 @@ fn has_work() -> bool {
 }
 
 /// On the thread that runs JavaScript. Returns whether `other` is readable.
+#[cfg(unix)]
 pub fn wait_for(source: Option<isize>, other: i32, timeout: Option<Duration>) -> bool {
     let mut others = vec![other];
     unix::poll(&unix::WAKE, source, &mut others, timeout);

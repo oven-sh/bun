@@ -4,16 +4,19 @@ use std::cell::RefCell;
 use std::ffi::c_void;
 use std::mem::MaybeUninit;
 use std::slice::{from_raw_parts, from_raw_parts_mut};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::LazyLock;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
 use crate::abi::{Matrix, Slice};
 use crate::abi_graphics::{
     Area, Commands, Decoded, Format, Graphics, Pen, Sink, TextMetrics, TextStyle,
 };
 use crate::canvas::Loan;
+use crate::gfx::Pixmap;
 use crate::hash::FastMap;
 use crate::host::thread;
 use crate::icc::Conversion;
+use crate::sync::Mutex;
 use crate::{canvas, codec, guard, images};
 
 static GRAPHICS: Graphics = Graphics {
@@ -29,7 +32,9 @@ static GRAPHICS: Graphics = Graphics {
     has_wide_colors,
     encode,
     decode,
+    decode_again,
     open,
+    webgl: &crate::webgl::WEBGL,
 };
 
 #[unsafe(no_mangle)]
@@ -40,6 +45,12 @@ pub extern "C" fn bun_desktop_graphics() -> *const Graphics {
 thread_local! {
     /// Of the canvases that this thread, to which they belong, has read and not drawn on since.
     static LOANS: RefCell<FastMap<u32, Loan>> = RefCell::default();
+}
+
+/// It gets other pixels.
+pub fn end_loan(canvas: u32) {
+    LOANS.with_borrow_mut(|it| it.remove(&canvas));
+    take_renewed(canvas);
 }
 
 fn byte_count(width: u32, height: u32) -> usize {
@@ -54,12 +65,52 @@ unsafe extern "C" fn draw(commands: *const Commands) {
     // SAFETY: the contract of `Graphics`.
     let commands = unsafe { canvas::Owned::new(&*commands) };
     // A canvas may be released while its thread ends.
-    _ = LOANS.try_with(|loans| {
-        Some(loans.borrow_mut())
-            .filter(|it| !it.is_empty())
-            .map(|mut it| commands.canvases().for_each(|id| drop(it.remove(&id))))
+    let take_back = |loans: &RefCell<FastMap<u32, Loan>>| -> Vec<_> {
+        let loans = Some(loans.borrow_mut()).filter(|it| !it.is_empty());
+        loans.map_or_default(|mut it| {
+            commands
+                .canvases()
+                .filter_map(|id| Some((id, it.remove(&id)?.area())))
+                .collect()
+        })
+    };
+    let read = LOANS.try_with(take_back).unwrap_or_default();
+    let turn =
+        (!read.is_empty() || IS_RENEWING.load(Ordering::Relaxed)).then(|| renew(&commands, &read));
+    post_limited(commands.bytes(), move || {
+        std::rc::Rc::new(commands).run();
+        for (id, area) in read {
+            let loan = canvas::lend_unasked(id, area);
+            let mut all = RENEWED.lock();
+            match (all.get_mut(&id).filter(|it| Some(it.0) == turn), loan) {
+                (Some(awaited), Some(loan)) => awaited.1 = Some(loan),
+                (Some(_), None) => drop(all.remove(&id)),
+                (None, _) => {}
+            }
+        }
     });
-    post_limited(commands.bytes(), move || std::rc::Rc::new(commands).run());
+}
+
+/// With the turn from which it has to come.
+type Awaited = (u32, Option<Loan>);
+
+/// What was read before it was drawn on is probably going to be read again.
+static RENEWED: LazyLock<Mutex<FastMap<u32, Awaited>>> = LazyLock::new(Mutex::default);
+static IS_RENEWING: AtomicBool = AtomicBool::new(false);
+
+fn renew(commands: &canvas::Owned, read: &[(u32, Area)]) -> u32 {
+    static TURN: AtomicU32 = AtomicU32::new(0);
+    let (turn, mut all) = (TURN.fetch_add(1, Ordering::Relaxed), RENEWED.lock());
+    commands.canvases().for_each(|id| drop(all.remove(&id)));
+    all.extend(read.iter().map(|it| (it.0, (turn, None))));
+    IS_RENEWING.store(!all.is_empty(), Ordering::Relaxed);
+    turn
+}
+
+fn take_renewed(id: u32) -> Option<Loan> {
+    IS_RENEWING
+        .load(Ordering::Relaxed)
+        .then(|| RENEWED.lock().remove(&id)?.1)?
 }
 
 /// Scripts do not get far ahead of the pixels.
@@ -103,18 +154,36 @@ unsafe extern "C" fn is_in_stroke(
 }
 
 unsafe extern "C" fn read(id: u32, area: &Area, is_on_black: bool, rgba: *mut u8) {
+    const FEW_PIXELS: usize = 1 << 21;
     // SAFETY: the contract of `Graphics`.
     let pixels =
         unsafe { from_raw_parts_mut(rgba.cast(), byte_count(area[2] as u32, area[3] as u32) / 4) };
     let read = |loans: &mut FastMap<u32, Loan>| {
-        if !loans.get(&id).is_some_and(|it| it.has(*area)) {
-            let area = *area;
-            loans.remove(&id);
-            loans.extend(thread::ask(move || canvas::lend(id, area)).map(|it| (id, it)));
+        loans.extend(take_renewed(id).map(|it| (id, it)));
+        if let Some(loan) = loans.get(&id).filter(|it| it.has(*area)) {
+            return loan.read(*area, is_on_black, pixels);
         }
-        loans
-            .get(&id)
-            .is_some_and(|it| it.read(*area, is_on_black, pixels))
+        let (area, start, count) = (*area, pixels.as_mut_ptr().expose_provenance(), pixels.len());
+        loans.remove(&id);
+        // The thread that has painted them has them in its cache, but windows wait for it.
+        let lent = thread::ask(move || {
+            // SAFETY: the caller waits.
+            let pixels =
+                unsafe { from_raw_parts_mut(std::ptr::with_exposed_provenance_mut(start), count) };
+            canvas::lend(id, area).map(|it| {
+                (
+                    (count <= FEW_PIXELS).then(|| it.read(area, is_on_black, pixels)),
+                    it,
+                )
+            })
+        });
+        lent.is_some_and(|(is_read, loan)| {
+            (
+                is_read.unwrap_or_else(|| loan.read(area, is_on_black, pixels)),
+                loans.insert(id, loan),
+            )
+                .0
+        })
     };
     if !guard("error", false, || LOANS.with_borrow_mut(read)) {
         pixels.fill(MaybeUninit::new([0; 4]));
@@ -129,6 +198,7 @@ unsafe extern "C" fn write(id: u32, area: &Area, dirty: &Area, rgba: *const u8) 
         let weight = rgba.len() >> 6;
         match LOANS
             .with_borrow_mut(|it| it.remove(&id))
+            .or_else(|| take_renewed(id))
             .filter(|it| it.is_all_in(dirty))
         {
             Some(mut loan) => {
@@ -145,16 +215,25 @@ unsafe extern "C" fn write(id: u32, area: &Area, dirty: &Area, rgba: *const u8) 
     });
 }
 
-unsafe extern "C" fn insert(&[width, height]: &[u32; 2], rgba: *const u8, wide: *const u8) -> u32 {
+fn pixmap_from([width, height]: [u32; 2], rgba: Vec<u8>, stays_straight: bool) -> Option<Pixmap> {
+    if stays_straight {
+        Pixmap::from_vec(rgba, width, height)
+    } else {
+        images::pixmap_from_rgba(width, height, rgba)
+    }
+}
+
+unsafe extern "C" fn insert(
+    &[width, height]: &[u32; 2],
+    rgba: *const u8,
+    wide: *const u8,
+    is_straight: bool,
+) -> u32 {
     guard("error", None, || {
         // SAFETY: the contract of `Graphics`.
-        let copy = |it: *const u8| {
-            images::pixmap_from_rgba(
-                width,
-                height,
-                unsafe { from_raw_parts(it, byte_count(width, height)) }.to_vec(),
-            )
-        };
+        let bytes =
+            |it: *const u8| unsafe { from_raw_parts(it, byte_count(width, height)) }.to_vec();
+        let copy = |it| pixmap_from([width, height], bytes(it), is_straight);
         let id = images::next_id();
         match (rgba.is_null(), wide.is_null()) {
             (true, _) => images::insert_as(id, copy(wide)?, true, None),
@@ -200,6 +279,16 @@ unsafe extern "C" fn decode(bytes: Slice<u8>, is_oriented: bool) -> Decoded {
         images::decode(unsafe { bytes.get() }.to_vec(), is_oriented).ok()
     })
     .unwrap_or_default()
+}
+
+extern "C" fn decode_again(image: u32, is_straight: bool, converts_colors: bool) -> u32 {
+    let decode = || {
+        images::keep(image)?
+            .decode_straight(converts_colors.then_some(false))
+            .and_then(|it| pixmap_from([it.width, it.height], it.data, is_straight))
+            .map(images::insert)
+    };
+    guard("error", None, decode).unwrap_or(0)
 }
 
 unsafe extern "C" fn open(bytes: Slice<u8>, density: f32, scale: f32) -> Decoded {

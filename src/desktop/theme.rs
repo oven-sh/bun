@@ -1,6 +1,7 @@
 //! `nativeTheme`
 
 use bun_ui::protocol::{SystemSettings, Theme};
+use bun_web::host::Palette;
 
 use crate::generated_bindgen::system::{DesktopNativeTheme, js_DesktopNativeTheme};
 use crate::prelude::*;
@@ -62,7 +63,7 @@ pub(crate) fn as_order() -> JsResult<Order> {
         is_dark: is_dark()?,
         reduces_motion: reduces_motion()?,
         increases_contrast: increases_contrast()?,
-        forces_colors: forces_colors(),
+        forces_colors: forces_colors()?,
         reduces_transparency: settings()?.reduced_transparency,
     })
 }
@@ -87,7 +88,7 @@ pub(crate) fn settings() -> JsResult<SystemSettings> {
     if let Some(known) = state().settings.get() {
         return Ok(known);
     }
-    let settings = if IS_MAC {
+    let settings = if IS_MAC || IS_WINDOWS {
         answer((ui()?.system_settings)())?
     } else {
         let overlays = crate::process::variable("BUN_DESKTOP_OVERLAY_SCROLLBARS")?;
@@ -104,19 +105,31 @@ pub(crate) fn reduces_motion() -> JsResult<bool> {
     Ok(answer((ui()?.system_state)())?.reduces_motion)
 }
 
-pub(crate) fn forces_colors() -> bool {
-    crate::command_line::switch("force-high-contrast").is_some()
+pub(crate) fn forces_colors() -> JsResult<bool> {
+    Ok(crate::command_line::switch("force-high-contrast").is_some()
+        || (IS_WINDOWS && settings()?.more_contrast))
 }
 
 pub(crate) fn increases_contrast() -> JsResult<bool> {
-    Ok(forces_colors() || settings()?.more_contrast)
+    Ok(forces_colors()? || settings()?.more_contrast)
+}
+
+pub(crate) fn palette() -> JsResult<Option<Palette>> {
+    let settings = settings()?;
+    Ok(settings.palette.get().map(|colors| Palette {
+        colors,
+        is_for_contrast: settings.more_contrast,
+    }))
 }
 
 pub(crate) fn settings_changed(mut now: SystemSettings) -> JsResult<()> {
     if now.overlay_scrollbars.get().is_none() {
         now.overlay_scrollbars = settings()?.overlay_scrollbars;
     }
-    state().settings.set(Some(now));
+    let before = state().settings.replace(Some(now));
+    if let Some(before) = before.filter(|_| IS_WINDOWS) {
+        crate::preferences::colors_may_have_changed(&before, &now)?;
+    }
     updated()
 }
 
@@ -153,7 +166,13 @@ impl DesktopNativeTheme {
         Ok(settings()?.reduced_transparency)
     }
 
-    pub(crate) fn get_in_forced_colors_mode() -> bool {
+    pub(crate) fn get_should_use_dark_colors_for_system_integrated_ui(
+        _: Cx<'_, '_>,
+    ) -> JsResult<bool> {
+        settings()?.has_dark_shell.get().map_or_else(is_dark, Ok)
+    }
+
+    pub(crate) fn get_in_forced_colors_mode(_: Cx<'_, '_>) -> JsResult<bool> {
         forces_colors()
     }
 }

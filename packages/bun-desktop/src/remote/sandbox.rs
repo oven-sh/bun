@@ -6,3 +6,5 @@
 mod system;
 
 pub use system::{enter, prepare};
+#[cfg(target_os = "linux")]
+pub use system::{enter_with_driver, prepare_for_driver};

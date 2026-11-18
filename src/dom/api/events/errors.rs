@@ -11,6 +11,7 @@ use super::*;
 use crate::api::core::by_name::{call_directly, member};
 use crate::api::realm::is_program;
 use crate::api::realm::queue_task;
+use crate::api::window::console;
 
 unsafe extern "C" {
     safe fn Bun__DesktopRealm__rememberRejection(global: &JSGlobalObject, promise: JSValue);
@@ -175,19 +176,40 @@ impl WindowTarget {
             return print_error(cx, error);
         }
         let url = bstr::ByteSlice::to_str_lossy(&*at.url).into_owned();
-        if self.host().console_audience() == bun_web::host::ConsoleAudience::Inspector {
-            let text = DomString::from_utf8(&message).to_js(&cx.heap).to_js();
+        let audience = self.host().console_audience();
+        if console::is_noted(audience) {
+            let [text, file, nameless] = [
+                if is_rejection {
+                    "Uncaught (in promise)"
+                } else {
+                    "Uncaught"
+                },
+                &url,
+                "",
+            ]
+            .map(|it| DomString::from_utf8(it).to_js(&cx.heap).to_js());
+            let place = [
+                nameless,
+                file,
+                0.into(),
+                JSValue::js_number(at.line.saturating_sub(1).into()),
+                JSValue::js_number(at.column.saturating_sub(1).into()),
+            ];
             let is_of_world =
                 !core::ptr::eq(Bun__IsolatedWorld__pageOrItself(cx.global()), cx.global());
-            self.host()
-                .link()
-                .inspect(bun_web::host::Inspected::Exception {
-                    text: &message,
-                    url: &url,
-                    line: at.line,
-                    column: at.column,
-                    error: if is_of_world { text } else { error },
-                });
+            let realm = if is_of_world {
+                &cx.heap
+            } else {
+                self.realm(&cx.heap)
+            };
+            console::note(
+                realm,
+                self,
+                audience,
+                "exception",
+                List::from_fn(realm, 5, |it| place[it as usize]).to_js(),
+                &[text, error],
+            );
         }
         self.host().uncaught(
             message,

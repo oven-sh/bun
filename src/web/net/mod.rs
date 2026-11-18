@@ -3,18 +3,21 @@
 pub mod auth;
 pub mod body;
 mod cache;
+#[cfg(windows)]
+mod certificate_store;
 mod chain;
 pub mod checks;
 pub mod cookies;
 pub mod embedder;
 pub mod error;
 pub mod fetch;
+#[cfg_attr(windows, path = "sspi.rs")]
 mod gssapi;
 mod hsts;
 mod http;
 #[cfg(target_os = "macos")]
 mod keychain;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 mod library;
 #[cfg(target_os = "linux")]
 mod nss;

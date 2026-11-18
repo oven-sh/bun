@@ -2,6 +2,7 @@
 
 use core::cell::{Cell, RefCell};
 use core::hint::{Locality, prefetch_read, prefetch_write};
+use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicU32, Ordering};
 use std::borrow::Cow;
 use std::rc::Rc;
@@ -894,11 +895,15 @@ impl FreeList {
     }
 }
 
+struct Room(Box<MaybeUninit<Element>>);
+
 pub(crate) struct Tree {
     nodes: Vec<Node>,
     cold: Vec<Cold>,
     /// The address of the newest one.
     last_element: usize,
+    /// Of elements that were freed since the last frame. Unlike what the allocator has next, they tend to be in the cache.
+    rooms: Vec<Room>,
     /// The parent of what was last sought, and could only be there once. It may be gone.
     pub(crate) last_found_in: Cell<NodeId>,
     free: FreeList,
@@ -1020,6 +1025,7 @@ impl Tree {
             nodes,
             cold: vec![Cold::default(), Cold::default()],
             last_element: 0,
+            rooms: Vec::new(),
             last_found_in: Cell::new(0),
             free: FreeList::default(),
             cut_at: Cell::new(0),
@@ -1326,14 +1332,17 @@ impl Tree {
         namespace: Namespace,
         fill: impl FnOnce(&mut Element),
     ) -> Box<Element> {
-        let room = Box::<Element>::new_uninit();
+        let room = self.rooms.pop().map_or_else(Box::new_uninit, |it| it.0);
         let address = room.as_ptr().addr();
         let step = address.wrapping_sub(core::mem::replace(&mut self.last_element, address));
-        let later = room
-            .as_ptr()
-            .cast::<u8>()
-            .cast_mut()
-            .wrapping_add(step.wrapping_mul(6));
+        let later = match self.rooms.iter().nth_back(5) {
+            Some(it) => it.0.as_ptr().cast::<u8>().cast_mut(),
+            None => room
+                .as_ptr()
+                .cast::<u8>()
+                .cast_mut()
+                .wrapping_add(step.wrapping_mul(6)),
+        };
         [0, 64]
             .into_iter()
             .for_each(|it| prefetch_write(later.wrapping_add(it), Locality::L1));
@@ -1342,13 +1351,35 @@ impl Tree {
         element
     }
 
+    pub(crate) fn give_up_rooms(&mut self) {
+        self.rooms = Vec::new();
+    }
+
+    #[inline(always)]
+    fn vacate(&mut self, id: NodeId, take_leave: impl FnOnce(&Element)) {
+        const MOST_ROOMS: usize = if cfg!(bun_asan) { 0 } else { 1024 };
+        let Data::Element(element) = core::mem::replace(&mut self[id], Node::new(Data::Free)).data
+        else {
+            return;
+        };
+        take_leave(&element);
+        if self.rooms.len() < MOST_ROOMS {
+            let element = Box::into_raw(element);
+            // SAFETY: it is not looked at as an element again, and the layout is the same.
+            self.rooms.push(Room(unsafe {
+                element.drop_in_place();
+                Box::from_raw(element.cast())
+            }));
+        }
+    }
+
     #[inline]
     pub(crate) fn free(&mut self, id: NodeId) {
         if self.cold[id as usize].last_comment.get() != 0 {
             self.free_comments_in(id);
         }
         self.sequence.shape_changed(id);
-        self[id] = Node::new(Data::Free);
+        self.vacate(id, |_| {});
         self.cold[id as usize] = Cold::default();
         self.free.push(id);
         self.ancestry.forget(id);
@@ -1376,7 +1407,7 @@ impl Tree {
                     self.free_comments_in(id);
                 }
                 self.sequence.shape_changed(id);
-                self[id] = Node::new(Data::Free);
+                self.vacate(id, |_| {});
                 self.cold[id as usize] = Cold::default();
                 self.ancestry.forget(id);
             }
@@ -1439,11 +1470,7 @@ impl Tree {
             }
             self.cold[id as usize] = Cold::default();
             self.ancestry.forget(id);
-            if let Data::Element(element) =
-                core::mem::replace(&mut self[id], Node::new(Data::Free)).data
-            {
-                take_leave(id, &element);
-            }
+            self.vacate(id, |element| take_leave(id, element));
         }
         self.free.push_all(ids);
         ids.len() as u32

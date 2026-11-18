@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::ops::Range;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -145,6 +146,8 @@ pub struct Cache {
     pub lifted: Vec<Lifted>,
     /// The `contents` whose pixels are not needed again.
     pub known_contents: Vec<u128>,
+    #[cfg(target_os = "macos")]
+    has_dug_at: Option<Instant>,
 }
 
 /// A `PushTransform` or a `PushLayer` with what drives it.
@@ -231,13 +234,24 @@ impl Mover<'_> {
     }
 }
 
-/// A picture in front of everything else, which the system moves or fades.
+#[derive(Clone, Copy, PartialEq)]
+pub enum Depth {
+    Above,
+    /// The primitives have a hole for it.
+    Below,
+    /// What was in that hole.
+    #[cfg(target_os = "macos")]
+    Ground,
+}
+
+/// A picture in front of the primitives or behind them, which the system moves or fades.
 #[cfg_attr(
-    not(target_os = "macos"),
+    not(any(windows, target_os = "macos")),
     expect(dead_code, reason = "Core Animation does it")
 )]
 pub struct Lifted {
     pub item: usize,
+    pub depth: Depth,
     pub clip: IntRect,
     pub radius: f32,
     pub is_smooth: bool,
@@ -253,11 +267,22 @@ pub struct Lifted {
     pub moves: Option<Curve>,
     origin: [f64; 5],
     is_clipped: bool,
+    can_sink: Cell<bool>,
     /// The run of an invisible primitive, which finds out what happens to it, and what was visible of that.
     marker: (u32, IntRect),
 }
 
 impl Lifted {
+    /// From back to front, whichever scene it is of.
+    #[cfg(any(windows, target_os = "macos"))]
+    pub fn order(&self) -> impl Ord + use<> {
+        (
+            CARET - self.marker.0,
+            self.item,
+            matches!(self.depth, Depth::Above | Depth::Below),
+        )
+    }
+
     fn follow_marker(&mut self, primitives: &[Primitive]) -> Option<()> {
         let mut found = primitives
             .iter()
@@ -270,8 +295,16 @@ impl Lifted {
             || it.radii == [it.radii[0]; 4] && self.clip == self.marker.1 && self.radius == 0.;
         (self.radius, self.opacity) = (self.radius + it.radii[0], self.opacity * it.opacity);
         self.is_smooth |= it.smoothing > 0.3;
-        (it.visible() == self.marker.1 && has_shape && is_uncovered(primitives, index))
-            .then_some(())
+        let has_shape = has_shape && !(self.is_smooth && cfg!(windows));
+        self.depth = if is_uncovered(primitives, index) {
+            Depth::Above
+        } else {
+            Depth::Below
+        };
+        (it.visible() == self.marker.1
+            && has_shape
+            && (self.depth == Depth::Above || self.can_sink.get()))
+        .then_some(())
     }
 }
 
@@ -279,7 +312,7 @@ fn is_color(sprite: &Sprite) -> bool {
     sprite.tile.is_color
 }
 
-fn bgra(layer: &Layer, rect: IntRect) -> Vec<u8> {
+pub fn bgra(layer: &Layer, rect: IntRect) -> Vec<u8> {
     let mut pixels = Vec::with_capacity(rect.area() as usize);
     for y in rect.top..rect.bottom {
         pixels.extend(
@@ -298,6 +331,20 @@ fn needs_this_thread(item: &Item) -> bool {
         item,
         Item::Image { .. } | Item::ImagePart { .. } | Item::Caret { .. }
     )
+}
+
+fn is_cheaper_in_part(item: &Item) -> bool {
+    match item {
+        Item::PushLayer { filters, .. } => filters.range().is_empty(),
+        _ => !matches!(
+            item,
+            Item::Backdrop { .. }
+                | Item::PushPattern { .. }
+                | Item::PushProjection(_)
+                | Item::Svg { .. }
+                | Item::Shadow { .. }
+        ),
+    }
 }
 
 fn painted_rect(layer: &Layer) -> IntRect {
@@ -464,6 +511,8 @@ impl Cache {
             let sprite = key.rasterize().map(|image| {
                 let (is_color, bytes) = match image.pixels {
                     GlyphPixels::Mask(mask) => (false, mask),
+                    #[cfg(any(test, windows))]
+                    GlyphPixels::Parts(parts) => (false, parts.iter().map(|it| it[3]).collect()),
                     GlyphPixels::Color(layer) => (true, bgra(&layer, layer.rect)),
                 };
                 let rect = image.rect;
@@ -810,8 +859,17 @@ fn is_uncovered(primitives: &[Primitive], index: usize) -> bool {
     })
 }
 
+#[cfg(any(windows, target_os = "macos"))]
+#[derive(Clone, Copy, PartialEq)]
+pub struct Caret {
+    pub rect: IntRect,
+    pub color: u32,
+    pub since: Instant,
+    pub blinks: bool,
+}
+
 /// Removes the caret if it could as well be in front of everything, and returns where it is and its color.
-#[cfg(target_os = "macos")]
+#[cfg(any(windows, target_os = "macos"))]
 pub fn lift_caret(primitives: &mut Vec<Primitive>) -> Option<(IntRect, u32)> {
     let index = primitives.iter().position(|it| it.run == CARET)?;
     let caret = primitives[index];
@@ -821,22 +879,152 @@ pub fn lift_caret(primitives: &mut Vec<Primitive>) -> Option<(IntRect, u32)> {
     let is_plain = caret.opacity == 1.
         && caret.radii == [0.; 4]
         && IntRect::around(caret.bounds) == IntRect::nearest(caret.bounds);
-    let is_whole = primitives[index + 1..].iter().all(|it| it.run != CARET);
+    let is_whole = primitives[index + 1..]
+        .iter()
+        .all(|it| it.run != CARET && !(is_marker(it) && it.visible().overlaps(caret.visible())));
     (is_plain && is_whole && is_uncovered(primitives, index)).then(|| primitives.remove(index))?;
     Some((caret.visible(), color))
 }
 
 /// Returns the identities of those that have to stay where they are.
-#[cfg(target_os = "macos")]
+#[cfg(any(windows, target_os = "macos"))]
 pub fn lift(primitives: &mut Vec<Primitive>, lifted: &mut [Lifted]) -> Vec<[f64; 5]> {
-    let refused = lifted
+    const MAX_HOLES: usize = 8;
+    let mut refused: Vec<_> = lifted
         .iter_mut()
         .filter_map(|it| it.follow_marker(primitives).is_none().then_some(it.origin))
         .collect();
+    let (mut sunk, place) = (SmallVec::<_, 4>::new(), |it: &Lifted| {
+        primitives.iter().position(|other| other.run == it.marker.0)
+    });
+    for it in lifted
+        .iter_mut()
+        .filter(|it| it.depth == Depth::Below && it.can_sink.get())
+    {
+        match place(it) {
+            Some(index) if software::last_to_hide(&primitives[index..], it.marker.1) > 0 => {
+                it.contents = None
+            }
+            index if sunk.len() < MAX_HOLES => sunk.push((index, it.marker)),
+            _ => refused.push(it.origin),
+        }
+    }
+    let is_under = |index, area: IntRect| {
+        sunk.iter()
+            .any(|(at, (_, hole))| index < *at && hole.overlaps(area))
+    };
+    refused.extend(
+        lifted
+            .iter()
+            .filter(|it| it.depth == Depth::Above && is_under(place(it), it.marker.1))
+            .map(|it| it.origin),
+    );
     if !lifted.is_empty() {
-        primitives.retain(|it| !is_marker(it));
+        primitives.retain(|it| !is_marker(it) || sunk.iter().any(|(_, marker)| marker.0 == it.run));
     }
     refused
+}
+
+/// Removes the primitive at `index`, and returns what those before it have in its place.
+#[cfg(any(test, target_os = "macos"))]
+fn dig(primitives: &mut Vec<Primitive>, index: usize) -> Vec<Primitive> {
+    let (hole, after) = (primitives[index].visible(), primitives.split_off(index));
+    let (mut ground, before) = (Vec::new(), std::mem::take(primitives));
+    for it in before {
+        if it.visible().overlaps(hole) {
+            ground.push(Primitive {
+                clip: it.clip.intersect(hole),
+                ..it
+            });
+            primitives.extend(
+                it.visible()
+                    .without(hole)
+                    .map(|clip| Primitive { clip, ..it }),
+            );
+        } else {
+            primitives.push(it);
+        }
+    }
+    primitives.extend_from_slice(&after[1..]);
+    ground
+}
+
+/// Makes the holes for those that go below, and has `keep` keep what was in them. Fails with one that has to stay where it is.
+#[cfg(target_os = "macos")]
+pub fn sink(
+    compositor: &mut software::Compositor,
+    cache: &mut Cache,
+    keep: impl Fn(u128, &mut dyn FnMut() -> Option<Layer>) -> Option<()>,
+) -> Result<(), [f64; 5]> {
+    const PAUSE: Duration = Duration::from_millis(500);
+    let mut pixels_left = if cache.has_dug_at.is_some_and(|it| it.elapsed() < PAUSE) {
+        1 << 19
+    } else {
+        1 << 23
+    };
+    while let Some(index) = compositor.primitives.iter().position(is_marker) {
+        let (run, hole) = (
+            compositor.primitives[index].run,
+            compositor.primitives[index].visible(),
+        );
+        let ground = dig(&mut compositor.primitives, index);
+        let Some(&Lifted {
+            item,
+            origin,
+            marker,
+            ..
+        }) = cache.lifted.iter().find(|it| it.marker.0 == run)
+        else {
+            continue;
+        };
+        let ground = &ground[software::last_to_hide(&ground, hole)..];
+        let is_flat = ground
+            .iter()
+            .all(|it| matches!(it.kind, Kind::Quad { .. }) && software::uniform_part(it) == hole);
+        let area = if is_flat {
+            IntRect::new(hole.left, hole.top, hole.left + 1, hole.top + 1)
+        } else {
+            hole
+        };
+        let paint = || compositor.atlas.snapshot(ground, area, 1, || false);
+        let (mut color, mut digest) = (
+            is_flat.then(paint).flatten(),
+            Digest::new(IntRect::default()),
+        );
+        digest.value(
+            color
+                .as_ref()
+                .map(Layer::pixels)
+                .ok_or_else(|| (software::hash_of_snapshot(ground, hole), hole)),
+        );
+        let contents = digest.finish();
+        let mut within_limits = || {
+            pixels_left -= hole.area() + ground.iter().map(|it| it.visible().area()).sum::<i64>();
+            (pixels_left >= 0).then(|| cache.has_dug_at = Some(Instant::now()))?;
+            paint()
+        };
+        keep(contents, &mut || color.take().or_else(&mut within_limits)).ok_or(origin)?;
+        let (depth, contents) = (Depth::Ground, Some(contents));
+        cache.lifted.push(Lifted {
+            item,
+            depth,
+            can_sink: true.into(),
+            clip: hole,
+            radius: 0.,
+            is_smooth: false,
+            opacity: 1.,
+            rect: hole,
+            contents,
+            pixels: None,
+            drawn: None,
+            fades: None,
+            moves: None,
+            origin,
+            is_clipped: false,
+            marker,
+        });
+    }
+    Ok(())
 }
 
 pub fn fill(cache: &mut Cache, rect: IntRect, color: u32) {
@@ -1263,24 +1451,24 @@ impl Flattener<'_> {
                 .fold(IntRect::default(), |all, (image, x, y)| {
                     all.union(image.rect.offset(*x, *y))
                 });
-            let mut mask = vec![0u8; rect.area() as usize];
-            for (image, x, y) in &images {
-                let GlyphPixels::Mask(coverage) = &image.pixels else {
-                    continue;
-                };
+            let depth = images
+                .first()
+                .map_or(1, |it| it.0.coverage().len() / it.0.rect.area() as usize);
+            let mut mask = vec![0u8; rect.area() as usize * depth];
+            for (image, x, y) in images.iter().filter(|_| depth > 0) {
                 let start = (image.rect.top + y - rect.top) as usize * rect.width()
                     + (image.rect.left + x - rect.left) as usize;
-                for (to, from) in mask[start..]
-                    .chunks_mut(rect.width())
-                    .zip(coverage.chunks(image.rect.width()))
+                for (to, from) in mask[start * depth..]
+                    .chunks_mut(rect.width() * depth)
+                    .zip(image.coverage().chunks(image.rect.width() * depth))
                 {
                     to.iter_mut()
                         .zip(from)
                         .for_each(|(to, from)| *to += multiply(255 - *to, *from));
                 }
             }
-            let tile =
-                (!rect.is_empty()).then(|| atlas.insert(false, rect.width(), rect.height(), &mask));
+            let tile = (!mask.is_empty())
+                .then(|| atlas.insert(depth > 1, rect.width(), rect.height(), &mask));
             Raster {
                 sprite: tile.map(|tile| Sprite { tile, rect }),
                 last_used: draw,
@@ -1350,7 +1538,9 @@ impl Flattener<'_> {
             height: 0.,
         });
         let mut cells = Cells::new([origin.left, origin.top], bounds.intersect(clip), matrix);
-        cells.range(&self.painter, range.clone(), matrix);
+        let can_share =
+            parallel::threads() > 1 && !scene.items[range.clone()].iter().any(needs_this_thread);
+        cells.range(&self.painter, range.clone(), matrix, can_share);
         let shown = cells.shown;
         let row = |row| {
             (shown.left..shown.right)
@@ -1372,9 +1562,7 @@ impl Flattener<'_> {
                 .fold(IntRect::default(), |all, it| all.union(it.1))
         };
         let area: i64 = bands.iter().flatten().map(|it| it.1.area()).sum();
-        let is_shared = area >= WHOLE_AREA / 2
-            && parallel::threads() > 1
-            && !scene.items[range.clone()].iter().any(needs_this_thread);
+        let is_shared = area >= WHOLE_AREA / 2 && can_share;
         if !is_shared {
             bands.dedup_by(|next, band| {
                 let (all, more) = (around(band), around(next));
@@ -1412,10 +1600,30 @@ impl Flattener<'_> {
         let mut painted = Mutex::new(Vec::new());
         match is_shared {
             true => {
-                let jobs: Vec<_> = bands
-                    .iter()
-                    .map(|band| (frame.rescaled(1.), band))
-                    .collect();
+                let load =
+                    |band: &[(u128, IntRect)]| band.iter().map(|it| cells.load(it.1)).sum::<u32>();
+                let parts = if scene.items[range.clone()].iter().all(is_cheaper_in_part) {
+                    parallel::threads() as u32 * 2
+                } else {
+                    1
+                };
+                let (most, mut jobs) = (
+                    bands.iter().map(|it| load(it)).sum::<u32>() / parts,
+                    Vec::new(),
+                );
+                for mut rest in bands.iter().map(Vec::as_slice) {
+                    let share = load(rest).div_ceil(load(rest).div_ceil(most.max(1)).max(1));
+                    while !rest.is_empty() {
+                        let (part, after) = rest.split_at(
+                            (1..rest.len())
+                                .find(|it| load(&rest[..*it]) >= share)
+                                .unwrap_or(rest.len()),
+                        );
+                        jobs.push((frame.rescaled(1.), part));
+                        rest = after;
+                    }
+                }
+                jobs.sort_by_cached_key(|it| std::cmp::Reverse(load(it.1)));
                 parallel::for_each(jobs.into_iter(), |(frame, band)| {
                     let cells = paint(&frame, band);
                     painted.lock().extend(cells);
@@ -1774,6 +1982,7 @@ impl Flattener<'_> {
             (inner.len() == mover.inner).then_some(())?;
             has_contents = !primitives.iter().all(is_marker);
             for it in &mut inner {
+                it.can_sink.set(false);
                 it.follow_marker(&primitives)?;
                 it.marker = marker;
                 if fades {
@@ -1846,6 +2055,8 @@ impl Flattener<'_> {
             origin,
             is_clipped,
             marker,
+            depth: Depth::Above,
+            can_sink: false.into(),
             #[cfg(target_os = "macos")]
             drawn: None,
         });
@@ -1891,6 +2102,8 @@ impl Flattener<'_> {
         let (contents, is_clipped) = (Some(digest.finish()), visible != rect);
         self.cache.lifted.push(Lifted {
             item,
+            depth: Depth::Above,
+            can_sink: true.into(),
             clip: visible,
             radius: 0.,
             is_smooth: false,
@@ -2197,6 +2410,8 @@ impl Flattener<'_> {
                 };
                 let (run, reach) = (self.next_run(), (size * matrix.sx * 3.) as i32 + 2);
                 if text::face(face).is_some_and(|face| !face.file.has_color) {
+                    #[cfg(windows)]
+                    let placer = placer.for_parts_of_pixels(frame, color);
                     let pieces = scene.glyphs(glyphs).chunks(GLYPHS_PER_MASK);
                     return pieces.for_each(|piece| {
                         self.glyph_mask(&placer, piece, (color, run), clip, reach)
@@ -3007,6 +3222,11 @@ impl Flattener<'_> {
         area: IntRect,
         reduction: i32,
     ) -> (Digest, impl FnOnce() -> Option<Layer> + use<'_>) {
+        self.cache
+            .lifted
+            .iter()
+            .filter(|it| it.marker.1.overlaps(area))
+            .for_each(|it| it.can_sink.set(false));
         let mut digest = Digest::new(area);
         let (atlas, frame, can_render) = (self.atlas, self.painter.frame, self.can_render());
         let primitives = &self.cache.primitives[first..];
@@ -3179,7 +3399,9 @@ mod tests {
         }
     }
 
+    /// Time stands still, or layers would settle on a slow machine.
     fn flatten(scene: &Scene, cache: &mut Cache, compositor: &mut Compositor) -> Vec<Primitive> {
+        static NOW: std::sync::LazyLock<Instant> = std::sync::LazyLock::new(Instant::now);
         let placement = Placement {
             movers: &[],
             staying: None,
@@ -3193,7 +3415,10 @@ mod tests {
         cache.begin();
         paint(
             scene,
-            &Frame::new(2., true),
+            &Frame {
+                now: *NOW,
+                ..Frame::new(2., true)
+            },
             &placement,
             &compositor.atlas,
             cache,
@@ -3427,6 +3652,147 @@ mod tests {
             (false, true)
         );
         assert_eq!(shows(Frame::new(1., false)), (true, false));
+    }
+
+    #[test]
+    fn what_is_dug_out_fits_under_the_hole() {
+        let (area, hole, atlas) = (
+            IntRect::new(0, 0, 64, 48),
+            IntRect::new(10, 8, 50, 30),
+            Atlas::default(),
+        );
+        let quad = |[x, y, width, height]: [f32; 4], radius, color| Primitive {
+            radii: [radius; 4],
+            ..Primitive::new(
+                Rect {
+                    x,
+                    y,
+                    width,
+                    height,
+                },
+                area,
+                solid(color),
+            )
+        };
+        let all = vec![
+            quad([0., 0., 64., 48.], 0., 0x2040_60FF),
+            quad([4.5, 4.5, 30., 40.], 9., 0xFF00_0080),
+            quad([52., 0., 9., 9.], 0., 0xFF),
+            Primitive::new(hole.to_rect(), area, solid(0)),
+            quad([30., 20., 30., 20.], 0., 0x00FF_00FF),
+        ];
+        let mut rest = all.clone();
+        let ground = dig(&mut rest, 3);
+        let [whole, under, over] =
+            [&all, &ground, &rest].map(|it| atlas.snapshot(it, area, 1, || false).unwrap());
+        assert!(over.row(9, 10, 50).iter().all(|it| *it == [0; 4]));
+        assert!(
+            whole
+                .pixels()
+                .iter()
+                .zip(under.pixels().iter().zip(over.pixels()))
+                .all(|(whole, (under, over))| whole == if over[3] == 0 { under } else { over })
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    mod below {
+        use super::*;
+
+        const AREA: IntRect = IntRect {
+            left: 0,
+            top: 0,
+            right: 2000,
+            bottom: 2000,
+        };
+
+        fn quad(color: u32) -> Primitive {
+            Primitive::new(AREA.to_rect(), AREA, solid(color))
+        }
+
+        /// One for each view, with something over it.
+        fn canvases(items: &[usize], background: u32) -> (Compositor, Cache) {
+            let (mut compositor, mut cache) = (Compositor::default(), Cache::default());
+            for (number, &item) in items.iter().enumerate() {
+                let marker = (CARET - 1 - number as u32, AREA);
+                let label = IntRect::new(5, 5, 9, 9);
+                compositor.primitives.extend([
+                    quad(background),
+                    Primitive {
+                        run: marker.0,
+                        ..quad(0)
+                    },
+                    Primitive::new(label.to_rect(), AREA, solid(0xFF)),
+                ]);
+                cache.lifted.push(Lifted {
+                    item,
+                    depth: Depth::Above,
+                    can_sink: true.into(),
+                    clip: AREA,
+                    radius: 0.,
+                    is_smooth: false,
+                    opacity: 1.,
+                    rect: AREA,
+                    contents: Some(0),
+                    pixels: None,
+                    drawn: None,
+                    fades: None,
+                    moves: None,
+                    origin: [number as f64; 5],
+                    is_clipped: false,
+                    marker,
+                });
+            }
+            (compositor, cache)
+        }
+
+        #[test]
+        fn views_keep_their_order() {
+            let (mut compositor, mut cache) = canvases(&[500, 3], 0x80);
+            assert!(lift(&mut compositor.primitives, &mut cache.lifted).is_empty());
+            assert!(sink(&mut compositor, &mut cache, |_, paint| paint().map(drop)).is_ok());
+            cache.lifted.sort_by_key(Lifted::order);
+            assert!(cache.lifted.iter().map(|it| (it.item, it.depth)).eq([
+                (500, Depth::Ground),
+                (500, Depth::Below),
+                (3, Depth::Ground),
+                (3, Depth::Below)
+            ]));
+        }
+
+        #[test]
+        fn what_is_hidden_is_not_shown() {
+            let (mut compositor, mut cache) = canvases(&[500, 3], 0xFF);
+            assert!(lift(&mut compositor.primitives, &mut cache.lifted).is_empty());
+            assert_eq!(
+                (
+                    cache.lifted[0].contents,
+                    cache.lifted[1].contents,
+                    compositor
+                        .primitives
+                        .iter()
+                        .filter(|it| is_marker(it))
+                        .count()
+                ),
+                (None, Some(0), 1)
+            );
+        }
+
+        #[test]
+        fn there_are_limits() {
+            let (mut compositor, mut cache) = canvases(&[1; 9], 0x80);
+            assert_eq!(
+                lift(&mut compositor.primitives, &mut cache.lifted),
+                [[8.; 5]]
+            );
+            assert_eq!(
+                sink(&mut compositor, &mut cache, |_, paint| paint().map(drop)),
+                Err([2.; 5])
+            );
+            let (mut compositor, mut cache) = canvases(&[1], 0xFF);
+            assert!(lift(&mut compositor.primitives, &mut cache.lifted).is_empty());
+            assert_eq!(sink(&mut compositor, &mut cache, |_, _| None), Err([0.; 5]));
+        }
     }
 
     #[test]

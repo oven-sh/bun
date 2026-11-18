@@ -19,6 +19,7 @@ use bun_web::exec::{self, Thread};
 use bun_web::held::Held;
 use bun_web::host::Host;
 use bun_web::origin::Origin;
+use bun_web::outside::{self, AboutSharedWorker, Claim};
 use bun_web::request::{Credentials, Destination, InitiatorType, Mode};
 use bun_web::service::{self, Presence};
 use bun_web::url::Url;
@@ -73,6 +74,10 @@ struct Running {
     presence: Cell<Option<Arc<Presence>>>,
     /// Of a service worker, which has no owners.
     ended: Cell<Option<Box<dyn Fn()>>>,
+    /// What the host says about a shared one.
+    claim: Cell<Option<Claim>>,
+    /// While other processes use it.
+    itself: Cell<Option<Rc<Running>>>,
 }
 
 struct Owner {
@@ -101,6 +106,7 @@ impl Drop for Running {
                 all.shared.remove(key);
             }
         });
+        self.leave(false);
         thread::forget(self.id);
         if let Some(thread) = self.thread.take() {
             // SAFETY: the reference that `start` returned.
@@ -127,6 +133,8 @@ impl Running {
             owners: RefCell::default(),
             presence: None.into(),
             ended: None.into(),
+            claim: None.into(),
+            itself: None.into(),
         });
         OF_THREAD.with(|it| {
             let mut all = it.borrow_mut();
@@ -172,7 +180,23 @@ impl Running {
             .enter(|cx, _| WindowTarget::of_realm(&cx.heap).map(|it| steps(it.host())))
     }
 
+    fn leave(&self, has_failed: bool) {
+        if self.claim.take().is_some() {
+            outside::leave_shared_worker(self.id, has_failed);
+        }
+    }
+
+    fn connect(&self, port: Endpoint) {
+        match self.claim.get() {
+            Some(Claim::IsElsewhere) => outside::connect_to_shared_worker(self.id, port),
+            _ => self.inbox.connect(port),
+        }
+    }
+
     fn fail(&self, failure: Failure) {
+        if let Failure::ToStart = failure {
+            self.leave(true);
+        }
         let failure = Rc::new(failure);
         for object in self.objects() {
             let failure = Rc::clone(&failure);
@@ -187,6 +211,7 @@ impl Running {
             .filter_map(Weak::upgrade)
             .for_each(|it| drop(it.take()));
         self.ended.take().into_iter().for_each(|it| it());
+        self.itself.take();
     }
 
     /// <https://html.spec.whatwg.org/#run-a-worker>
@@ -231,7 +256,43 @@ impl Running {
         };
         let outside = ToOutside::new(cx, here, is_shared);
         let (this, name) = (Rc::downgrade(self), name.units().collect::<Vec<_>>());
+        let options = [
+            is_module.into(),
+            credentials as u8,
+            self.options.has_extended_lifetime.into(),
+            self.options.is_secure.into(),
+        ];
+        let claiming = is_shared
+            .then(|| {
+                client.claim_shared_worker(
+                    self.id,
+                    &url,
+                    &name
+                        .iter()
+                        .flat_map(|it| it.to_le_bytes())
+                        .collect::<Vec<_>>(),
+                    options,
+                )
+            })
+            .flatten();
+        self.claim.set(claiming.as_ref().map(|_| Claim::Granted));
         exec::spawn(async move {
+            if let Some(claiming) = claiming {
+                let claim = claiming.await;
+                let Some(this) = this.upgrade() else { return };
+                match claim {
+                    Some(Claim::Granted) => {}
+                    Some(Claim::IsElsewhere) => {
+                        this.claim.set(claim);
+                        return this
+                            .inbox
+                            .take_ports()
+                            .into_iter()
+                            .for_each(|it| this.connect(it));
+                    }
+                    _ => return this.give_up(),
+                }
+            }
             let script = match client
                 .compiled_path(
                     &url,
@@ -349,6 +410,17 @@ fn __bun_dom_start_service_worker(
         started: Some(started),
     })
     .then(|| Box::new(this) as _)
+}
+
+#[unsafe(no_mangle)]
+fn __bun_dom_tell_shared_worker(id: u32, news: AboutSharedWorker) {
+    let Some(it) = Running::find(id) else { return };
+    match news {
+        AboutSharedWorker::IsUsed(is_used) => it.itself.set(is_used.then(|| Rc::clone(&it))),
+        AboutSharedWorker::Connect(port) => it.inbox.connect(port),
+        AboutSharedWorker::Ended { has_failed: true } => it.give_up(),
+        AboutSharedWorker::Ended { has_failed: false } => it.end(),
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -602,7 +674,7 @@ impl SharedWorker {
             .clone()
             .unwrap_or_else(|| Running::new(asked.options.clone(), Some(key)));
         running.add_owner(cx, this.to_js(), &this.owner);
-        running.inbox.connect(theirs);
+        running.connect(theirs);
         if found.is_none() {
             running.start(cx, asked);
         }

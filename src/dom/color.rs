@@ -1,6 +1,7 @@
 //! Colors.
 
 use core::cell::{Cell, RefCell};
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering::Relaxed};
 use std::io::Write as _;
 use std::rc::Rc;
 
@@ -588,6 +589,8 @@ const SYSTEM: &[(&str, u32, u32)] = &[
     ("highlighttext", 0xff, 0xff),
     #[cfg(target_os = "macos")]
     ("selecteditemtext", 0xff, 0x3b3b3bff),
+    #[cfg(windows)]
+    ("highlight", 0x0078d4ff, 0x1967d2ff),
     ("accentcolor", 0x0075ffff, 0x0075ffff),
     ("activetext", 0xff0000ff, 0xff0000ff),
     (
@@ -648,9 +651,68 @@ fn look_up(table: &[(&str, u32, u32)], name: &[u8], is_dark: bool) -> Option<u32
         .map(|it| if is_dark { it.2 } else { it.1 })
 }
 
+/// The index in the palette of the system.
+const IN_PALETTE: &[(&str, u32, u32)] = &[
+    (
+        "canvas field activecaption appworkspace background inactivecaption infobackground menu scrollbar window",
+        0,
+        0,
+    ),
+    (
+        "canvastext fieldtext captiontext infotext menutext windowtext",
+        1,
+        1,
+    ),
+    ("activetext linktext visitedtext", 2, 2),
+    ("buttonface buttonhighlight buttonshadow threedface", 3, 3),
+    (
+        "buttontext buttonborder activeborder inactiveborder threeddarkshadow threedhighlight threedlightshadow threedshadow windowframe",
+        4,
+        4,
+    ),
+    ("highlight", 5, 5),
+    ("highlighttext", 6, 6),
+    ("graytext inactivecaptiontext", 7, 7),
+];
+const FORCED_FROM_PALETTE: &[(&str, u32, u32)] = &[
+    ("-webkit-link -webkit-activelink", 2, 2),
+    ("accentcolor selecteditem -webkit-focus-ring-color", 5, 5),
+    ("accentcolortext selecteditemtext", 6, 6),
+];
+
+/// Zeros if there is none.
+static OF_SYSTEM: [AtomicU32; 8] = [const { AtomicU32::new(0) }; 8];
+static IS_FOR_CONTRAST: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn set_palette(palette: Option<bun_web::host::Palette>) {
+    OF_SYSTEM
+        .iter()
+        .zip(palette.map_or([0; 8], |it| it.colors))
+        .for_each(|(to, from)| to.store(from, Relaxed));
+    IS_FOR_CONTRAST.store(palette.is_some_and(|it| it.is_for_contrast), Relaxed);
+}
+
+fn in_palette(table: &[(&str, u32, u32)], name: &[u8]) -> Option<u32> {
+    Some(OF_SYSTEM[look_up(table, name, false)? as usize].load(Relaxed)).filter(|it| *it != 0)
+}
+
+fn unforced(name: &[u8], is_dark: bool) -> Option<u32> {
+    let of_system = if cfg!(windows) && !is_dark {
+        in_palette(IN_PALETTE, name)
+    } else {
+        None
+    };
+    of_system.or_else(|| look_up(SYSTEM, name, is_dark))
+}
+
 /// A system color.
 pub(crate) fn forced(name: &[u8], is_dark: bool) -> u32 {
-    look_up(FORCED, name, is_dark)
+    let of_system = IS_FOR_CONTRAST
+        .load(Relaxed)
+        .then(|| in_palette(IN_PALETTE, name).or_else(|| in_palette(FORCED_FROM_PALETTE, name)))
+        .flatten();
+    of_system
+        .or_else(|| look_up(FORCED, name, is_dark))
         .or_else(|| look_up(SYSTEM, name, is_dark))
         .unwrap_or(0)
 }
@@ -702,7 +764,7 @@ fn keyword_value(name: &[u8], cx: &Ctx) -> Option<u32> {
         () if cfg!(target_os = "macos") && !cx.dark && eq(name, "selecteditem") => {
             Some(cx.highlight)
         }
-        () => look_up(SYSTEM, name, cx.dark),
+        () => unforced(name, cx.dark),
     }
 }
 

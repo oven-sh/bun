@@ -76,6 +76,7 @@ fn handle_key<'a>(cx: &mut Cx<'a>, window: &'a Window, ui: &'a Ui, stroke: Keyst
     let key = Key {
         key: atom_of(&stroke.key),
         code: atom_of(&stroke.code),
+        key_code: stroke.key_code,
         location: stroke.location,
         repeat: stroke.repeats,
         modifiers: Modifiers::from_bits_truncate(stroke.modifiers),
@@ -288,8 +289,37 @@ fn handle<'a>(cx: &mut Cx<'a>, window: &'a Window, ui: &'a Ui, input: Input) -> 
     }
 }
 
+#[cold]
+fn handle_while_paused<'a>(cx: &mut Cx<'a>, window: &'a Window, ui: &'a Ui, input: Input) {
+    match input {
+        Input::Mouse(_) => _ = crate::api::inspector::pick(cx, ui, &input, false),
+        Input::Key(stroke) if stroke.is_down => window.host().unhandled_key(stroke),
+        Input::Pen { .. }
+        | Input::Touch { .. }
+        | Input::Wheel { .. }
+        | Input::Pinch { .. }
+        | Input::Key(_)
+        | Input::KeyTaken
+        | Input::Text { .. }
+        | Input::Compose { .. }
+        | Input::Drag { .. } => {}
+        input => crate::api::loading::queue_task(ui.doc(), [], |_, doc, []| {
+            Window::of(doc).map_or((), |it| {
+                it.enter_as_task(|cx, window, ui| handle_input(cx, window, ui, input))
+            })
+        }),
+    }
+}
+
 pub(crate) fn handle_input<'a>(cx: &mut Cx<'a>, window: &'a Window, ui: &'a Ui, input: Input) {
-    if !frames::input::route(cx, ui, &input) && handle(cx, window, ui, input) {
+    if bun_web::exec::are_pages_paused() {
+        return handle_while_paused(cx, window, ui, input);
+    }
+    let is_for_frame = frames::input::route(cx, ui, &input);
+    if ui.layers.picker.borrow().is_some()
+        && crate::api::inspector::pick(cx, ui, &input, is_for_frame)
+        || !is_for_frame && handle(cx, window, ui, input)
+    {
         window.render_now(cx);
     }
     if !ui.doc().arena().is_scheduled.get() {

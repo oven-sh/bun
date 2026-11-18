@@ -86,6 +86,9 @@ export const tables = {
       WebKitCSSMatrix WheelEvent XMLDocument
       CanvasGradient CanvasPattern CanvasRenderingContext2D HTMLCanvasElement ImageBitmap
       ImageBitmapRenderingContext ImageData OffscreenCanvas OffscreenCanvasRenderingContext2D
+      WebGL2RenderingContext WebGLActiveInfo WebGLBuffer WebGLContextEvent WebGLFramebuffer WebGLObject WebGLProgram WebGLQuery
+      WebGLRenderbuffer WebGLRenderingContext WebGLSampler WebGLShader WebGLShaderPrecisionFormat WebGLSync WebGLTexture
+      WebGLTransformFeedback WebGLUniformLocation WebGLVertexArrayObject
       Path2D TextMetrics CaretPosition Option PageRevealEvent Clipboard ClipboardChangeEvent ClipboardItem
       HTMLEmbedElement HTMLFrameElement HTMLIFrameElement HTMLObjectElement
       AbstractRange Attr BeforeUnloadEvent CDATASection CharacterData Comment CustomElementRegistry
@@ -139,7 +142,10 @@ export const tables = {
     interfaces: `DOMMatrix DOMMatrixReadOnly DOMPoint DOMPointReadOnly DOMQuad DOMRect DOMRectReadOnly FileList FontFace
       FontFaceSet FontFaceSetLoadEvent CanvasGradient CanvasPattern ImageBitmap ImageBitmapRenderingContext ImageData OffscreenCanvas
       OffscreenCanvasRenderingContext2D Path2D TextMetrics CustomEvent ErrorEvent Event EventTarget
-      PromiseRejectionEvent`,
+      PromiseRejectionEvent
+      WebGL2RenderingContext WebGLActiveInfo WebGLBuffer WebGLContextEvent WebGLFramebuffer WebGLObject WebGLProgram WebGLQuery
+      WebGLRenderbuffer WebGLRenderingContext WebGLSampler WebGLShader WebGLShaderPrecisionFormat WebGLSync WebGLTexture
+      WebGLTransformFeedback WebGLUniformLocation WebGLVertexArrayObject`,
   },
   /** Dedicated or shared. */
   ownedWorker: {},

@@ -68,7 +68,8 @@ export const ConsoleNamespace = b.interface("ConsoleNamespace", {
   static: {
     assert: { args: { condition: b.bool.loose.default(false), data }, ...runs },
     ...each("debug dir dirxml error group groupCollapsed info log table trace warn", { args: { data }, ...runs }),
-    ...each("clear groupEnd profile profileEnd timeStamp", { rustName: "nothing" }),
+    ...each("clear groupEnd", runs),
+    ...each("profile profileEnd timeStamp", { rustName: "nothing" }),
     ...each("count countReset time timeEnd", { args: { label }, ...runs }),
     timeLog: { args: { label, data }, ...runs },
   },
@@ -98,6 +99,7 @@ export const DomWindow = b.interface("DomWindow", {
   exposed: inWindows,
   includes: [ImageBitmapFactories, WindowOrWorkerGlobalScope],
   internalFields: {
+    log: b.any,
     context: b.any,
     openedBeside: b.any,
     popups: b.any,
@@ -169,7 +171,7 @@ export const DomWindow = b.interface("DomWindow", {
     ...each("blur captureEvents releaseEvents", { rustName: "do_nothing" }),
     ...each("requestAnimationFrame webkitRequestAnimationFrame", requestFrame),
     ...each("cancelAnimationFrame webkitCancelAnimationFrame", cancelFrame),
-    paintNow: { args: { deliversResizes: flag }, ...runs },
+    paintNow: { args: { deliversResizes: flag, isSettled: b.callable.optional }, returns: b.bool, ...runs },
     requestIdleCallback: {
       args: { callback: b.callable, options: IdleRequestOptions.default({}) },
       returns: b.u32,

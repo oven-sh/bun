@@ -12,7 +12,7 @@ macro_rules! library {
             fn open() -> Option<$library> {
                 // SAFETY: a library of the system, whose headers have these types. `_opened` keeps it loaded.
                 unsafe {
-                    let opened = bun_sys::DynLib::open($path).ok()?;
+                    let opened = bun_sys::DynLib::open(&super::library::of_system($path)?).ok()?;
                     Some($library {
                         $($name: opened.lookup_as(ZStr::from_slice_with_nul(concat!(stringify!($name), "\0").as_bytes()))?,)*
                         $($($constant: opened.lookup_as(ZStr::from_slice_with_nul(concat!(stringify!($constant), "\0").as_bytes()))?,)*)?
@@ -25,3 +25,17 @@ macro_rules! library {
 }
 
 pub(super) use library;
+
+#[cfg(unix)]
+pub(super) fn of_system(name: &[u8]) -> Option<Vec<u8>> {
+    Some(name.into())
+}
+
+/// By its name alone it would be looked for next to the program first.
+#[cfg(windows)]
+pub(super) fn of_system(name: &[u8]) -> Option<Vec<u8>> {
+    let mut directory = [0; 260];
+    let length = bun_sys::windows::GetSystemDirectoryW(&mut directory).ok()?;
+    let directory = String::from_utf16(&directory[..length]).ok()?;
+    Some([directory.as_bytes(), b"\\", name].concat())
+}

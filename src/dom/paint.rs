@@ -4,6 +4,8 @@ use core::fmt::Write as _;
 use core::ops::Range;
 use std::rc::Rc;
 
+use smallvec::{SmallVec, smallvec};
+
 use crate::abi::{
     self, BlendMode, Item, LineStyle, Matrix, PathVerb, Radii, Rect, RoundedRect, Slice, Source,
     Span,
@@ -14,6 +16,7 @@ use crate::compositor::{Timeline, corners, interpolate, simplify};
 use crate::contour::{Contour, Edge};
 use crate::document::Document;
 use crate::effects::{Areas, Effects, Subject};
+use crate::fragment::{Assigned, ColumnPath, Piece};
 use crate::geometry::translation;
 use crate::inline::ItemKind;
 use crate::lines::FragmentKind;
@@ -198,6 +201,8 @@ pub(crate) struct Painter<'a> {
     /// In something that is transparent, but can be hit.
     pub(crate) is_hidden: bool,
     pub(crate) is_copy: bool,
+    /// Only what is in it is painted.
+    column: ColumnPath,
     pub(crate) contents: Map<BoxId, Space>,
     pub(crate) svg: crate::svg_paint::Vector<'a>,
     /// It has painted something that changes by itself.
@@ -545,6 +550,14 @@ impl Document {
             }
             inline.outset.set((inline.items.len() as u32, outset));
         }
+        if self.boxes.fits_text {
+            outset *= inline
+                .lines
+                .lines
+                .iter()
+                .map(|it| it.scale)
+                .fold(1.0, f32::max);
+        }
         let (whole, bounds) = (
             Rect::new([0.0, 0.0, it.layout.size.width, it.layout.size.height]),
             inline.lines.bounds,
@@ -624,6 +637,10 @@ impl Document {
             .has(Flags::ANIMATED)
             .then(|| self.swept(id, &ink))
             .flatten();
+        let swept = self.transformed_parts(id).map_or(swept, |it| {
+            it.map(|it| ink.transformed(&it.2))
+                .reduce(|a, b| a.union(&b))
+        });
         swept.unwrap_or_else(|| {
             self.own_transform(id)
                 .map_or(ink, |matrix| ink.transformed(&matrix))
@@ -1398,6 +1415,7 @@ impl<'a> Painter<'a> {
             fixed: 0,
             is_hidden: false,
             is_copy: false,
+            column: ColumnPath::new(),
             contents,
             svg,
             is_volatile: false,
@@ -1427,6 +1445,7 @@ impl<'a> Painter<'a> {
             fixed: 0,
             is_hidden: false,
             is_copy: false,
+            column: ColumnPath::new(),
             contents,
             svg,
             is_volatile: false,
@@ -1954,6 +1973,33 @@ impl<'a> Painter<'a> {
             .outer_ink(id)
             .moved(space.origin)
             .touches(&space.visible)
+            || self.is_elsewhere(id, |it| it.is_monolithic.then_some(&it.own))
+    }
+
+    /// Whether `part` of the box is in another column than the one that is painted.
+    #[inline]
+    pub(crate) fn is_elsewhere(
+        &self,
+        id: BoxId,
+        part: impl Fn(&Assigned) -> Option<&ColumnPath>,
+    ) -> bool {
+        !self.column.is_empty()
+            && self
+                .document
+                .boxes
+                .assigned
+                .get(&id)
+                .and_then(part)
+                .is_some_and(|it| it[0] == self.column[0] && !it.starts_with(&self.column))
+    }
+
+    fn pieces_here(&self, id: BoxId, pieces: &'a [Piece]) -> SmallVec<[&'a Piece; 4]> {
+        pieces
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !self.is_elsewhere(id, |it| it.pieces.get(*index)))
+            .map(|it| it.1)
+            .collect()
     }
 
     /// And some that are not.
@@ -1997,7 +2043,7 @@ impl<'a> Painter<'a> {
             .and_then(|_| document.pieces(id))
             .and_then(|it| document.whole_overflow_clip(id).zip(Some(it)))
         {
-            let rects = pieces.iter().map(|it| {
+            let rects = self.pieces_here(id, pieces).into_iter().map(|it| {
                 self.snap_rect(
                     clip.moved(it.shift)
                         .intersection(&it.clip)
@@ -2153,7 +2199,9 @@ impl<'a> Painter<'a> {
         if layers.contains(Layers::IS_STICKY) {
             self.layers_depend_on_scroller(id);
         }
-        if document.is_blank(child) {
+        if document.is_blank(child)
+            || self.is_elsewhere(child, |it| it.is_monolithic.then_some(&it.own))
+        {
             return;
         }
         let space = self.place(
@@ -2308,10 +2356,49 @@ impl<'a> Painter<'a> {
         if !is_transformed && document.is_in_depth(id) {
             return self.in_depth(id, &space);
         }
+        let is_split = document.transformed_parts(id).is_some();
+        let differs = |whole: Matrix| {
+            document
+                .transformed_parts(id)
+                .into_iter()
+                .flatten()
+                .any(|it| it.2.iter().zip(whole).any(|(a, b)| (a - b).abs() > 0.001))
+        };
+        if let Some(parts) = document
+            .transformed_parts(id)
+            .filter(|_| !is_transformed && document.own_transform(id).is_some_and(differs))
+        {
+            space.origin = space.origin.map(|it| self.snap(it));
+            let (contents, was_copy, outer) = (
+                core::mem::take(&mut self.contents),
+                core::mem::replace(&mut self.is_copy, true),
+                self.column.clone(),
+            );
+            for (path, _, own) in
+                parts.filter(|it| outer.first() != it.0.first() || it.0.starts_with(&outer))
+            {
+                let matrix = multiply(
+                    &multiply(&translation(space.origin), &own),
+                    &translation(space.origin.map(|it| -it)),
+                );
+                let Some(inverse) = invert(&matrix) else {
+                    continue;
+                };
+                let mut space = Space {
+                    visible: space.visible.transformed(&inverse),
+                    ..space
+                };
+                self.link(&Item::PushTransform(matrix), &mut space);
+                self.column.clone_from(path);
+                self.placed_stacking_context(id, space, true);
+                self.contents.clear();
+            }
+            (self.contents, self.is_copy, self.column) = (contents, was_copy, outer);
+            return;
+        }
         let it = &document.boxes[id];
         let (style, was_hidden) = (&it.style, self.is_hidden);
-        let sampled = document.tree[it.node]
-            .has(Flags::ANIMATED)
+        let sampled = (document.tree[it.node].has(Flags::ANIMATED) && !is_split)
             .then(|| document.compositor.sampled.get(&it.node))
             .flatten();
         if sampled.is_some_and(|it| matches!(it.timeline, Timeline::Offset(..))) {
@@ -2923,12 +3010,13 @@ impl<'a> Painter<'a> {
                 Foreground::Lines => self.paint_segment(*id, Painted::Lines, *space),
                 Foreground::Replaced => self.replaced(*id, space),
                 Foreground::Copy => {
-                    let (contents, was_copy) = (
+                    let (contents, was_copy, column) = (
                         core::mem::take(&mut self.contents),
                         core::mem::replace(&mut self.is_copy, true),
+                        core::mem::take(&mut self.column),
                     );
                     self.placed_stacking_context(*id, *space, false);
-                    (self.contents, self.is_copy) = (contents, was_copy);
+                    (self.contents, self.is_copy, self.column) = (contents, was_copy, column);
                 }
                 Foreground::Math => self.math(*id, space),
             }
@@ -2951,9 +3039,11 @@ impl<'a> Painter<'a> {
                 continue;
             }
             match self.document.pieces(*id) {
-                Some(pieces) => pieces
+                Some(pieces) => self
+                    .pieces_here(*id, pieces)
                     .iter()
                     .for_each(|it| self.outline(style, it.rect.moved(space.origin), space)),
+                None if self.is_elsewhere(*id, |it| Some(&it.own)) => {}
                 None => self.outline(
                     style,
                     self.document.border_box(*id).moved(space.origin),
@@ -3056,15 +3146,17 @@ impl<'a> Painter<'a> {
                     origin: [space.origin[0] + x, space.origin[1] + y],
                     ..space
                 };
-                phases.foreground.extend(
-                    document
-                        .boxes
-                        .copies
-                        .get(&child)
-                        .into_iter()
-                        .flatten()
-                        .map(|it| (Foreground::Copy, child, moved(it))),
-                );
+                let copies = document
+                    .boxes
+                    .copies
+                    .get(&child)
+                    .into_iter()
+                    .flatten()
+                    .enumerate()
+                    .filter(|(index, _)| !self.is_elsewhere(child, |it| it.pieces.get(*index)));
+                phases
+                    .foreground
+                    .extend(copies.map(|it| (Foreground::Copy, child, moved(it.1))));
             }
             if own.is_in_inline {
                 let [x, _, width, _] = document.content_box(id);
@@ -3200,14 +3292,20 @@ impl<'a> Painter<'a> {
     fn decorations(&mut self, id: BoxId, space: &Space) {
         let (document, it) = (self.document, &self.document.boxes[id]);
         match document.pieces(id) {
+            None if self.is_elsewhere(id, |it| Some(&it.own)) => {}
             None => self.decorate(id, document.border_box(id), space),
             Some(pieces) if it.style.rare.decoration_break == DecorationBreak::Clone => {
-                pieces
+                self.pieces_here(id, pieces)
                     .iter()
+                    .filter(|it| !it.is_past_end)
                     .for_each(|it| self.decorate(id, it.rect, space));
             }
             Some(pieces) => {
-                for piece in pieces {
+                for piece in self
+                    .pieces_here(id, pieces)
+                    .into_iter()
+                    .filter(|it| !it.is_past_end)
+                {
                     let mut space = *space;
                     self.clip(
                         square(self.snap_rect(piece.clip.moved(space.origin))),
@@ -3245,9 +3343,8 @@ impl<'a> Painter<'a> {
             [rare.rule_color.resolve(it.style.color()); 4],
             [line_style(style); 4],
         );
-        for line in document
-            .pieces(flow)
-            .unwrap_or_default()
+        for line in self
+            .pieces_here(flow, document.pieces(flow).unwrap_or_default())
             .iter()
             .map(|it| it.clip)
             .filter(|it| it.width + it.height > 0.0)
@@ -3285,7 +3382,7 @@ impl<'a> Painter<'a> {
         let (mut rect, mut border, mut gap) = (
             border_box
                 .moved(space.origin)
-                .shrunk([above, 0.0, below, 0.0]),
+                .shrunk(it.mode.physical_sides(&[above, 0.0, below, 0.0])),
             it.border(),
             None,
         );
@@ -3425,7 +3522,7 @@ impl<'a> Painter<'a> {
             &mut |painter| painter.text_mask(id, space),
         );
         if is_part && has_background {
-            self.behind_cells(id, id, space);
+            self.behind_cells(id, id, [border_box.x, border_box.y], space);
         } else if it.kind == Kind::Table {
             let groups = it
                 .children
@@ -3434,7 +3531,7 @@ impl<'a> Painter<'a> {
             groups
                 .clone()
                 .chain(groups.flat_map(|it| &document.boxes[*it].children))
-                .for_each(|it| self.behind_cells(*it, id, space));
+                .for_each(|it| self.behind_cells(*it, id, [border_box.x, border_box.y], space));
         }
         match &it.collapsed {
             _ if is_native => self.native_control(id, shape.rect, space),
@@ -3539,7 +3636,8 @@ impl<'a> Painter<'a> {
     }
 
     /// The background of a row, a column or a group of them. The space is that of `around`, which has the cells.
-    fn behind_cells(&mut self, part: BoxId, around: BoxId, space: &Space) {
+    /// `shift` is that of the piece of `around` that is painted.
+    fn behind_cells(&mut self, part: BoxId, around: BoxId, shift: [f32; 2], space: &Space) {
         let document = self.document;
         let (style, rect_of) = (&document.boxes[part].style, |id| {
             document
@@ -3550,11 +3648,7 @@ impl<'a> Painter<'a> {
         if !style.has_background() || !style.is_visible() {
             return;
         }
-        let (whole, mut cells, axis) = (
-            rect_of(part),
-            vec![around],
-            1 - document.boxes[around].block_axis(),
-        );
+        let (mut cells, axis) = (vec![around], 1 - document.boxes[around].block_axis());
         while cells.iter().any(|it| !document.boxes[*it].is_cell()) {
             let is_inside = |it: &BoxId| {
                 matches!(document.boxes[*it].kind, Kind::Row | Kind::RowGroup)
@@ -3567,20 +3661,60 @@ impl<'a> Painter<'a> {
                 .filter(is_inside)
                 .collect();
         }
-        let ([from, to], is_rtl) = (whole.span(axis), document.boxes[around].style.is_rtl());
-        for (id, cell, rect) in cells
+        // Each with where all of the box would be.
+        let pieces_of = |id: BoxId| -> SmallVec<[[Rect; 2]; 1]> {
+            let all = rect_of(id);
+            document.pieces(id).map_or_else(
+                || smallvec![[all; 2]],
+                |it| {
+                    it.iter()
+                        .map(|it| [it.rect.moved([all.x, all.y]), all.moved(it.shift)])
+                        .collect()
+                },
+            )
+        };
+        let painted = document
+            .pieces(around)
+            .and_then(|it| {
+                it.iter()
+                    .find(|it| it.shift == shift || [it.rect.x, it.rect.y] == shift)
+            })
+            .map(|it| it.rect.moved(space.origin));
+        let (parts, is_rtl) = (
+            pieces_of(part),
+            document.boxes[around].style.is_rtl()
+                != (document.boxes[around].mode == WritingMode::SidewaysLr),
+        );
+        for (id, [rect, all]) in cells
             .into_iter()
-            .map(|it| (it, &document.boxes[it], rect_of(it)))
+            .flat_map(|id| pieces_of(id).into_iter().map(move |it| (id, it)))
         {
-            let start = if is_rtl {
-                rect.span(axis)[1] - 0.01
-            } else {
-                rect.span(axis)[0] + 0.01
+            let (cell, start) = (
+                &document.boxes[id],
+                if is_rtl {
+                    rect.span(axis)[1] - 0.01
+                } else {
+                    rect.span(axis)[0] + 0.01
+                },
+            );
+            let has_start = |it: &Rect| (it.span(axis)[0]..it.span(axis)[1]).contains(&start);
+            let overlap = |it: &Rect| {
+                it.span(1 - axis)[1].min(rect.span(1 - axis)[1])
+                    - it.span(1 - axis)[0].max(rect.span(1 - axis)[0])
             };
-            if (part == around || (from..to).contains(&start))
-                && cell.style.is_visible()
-                && rect.touches(&space.visible)
-            {
+            let whole = match &parts[..] {
+                [[_, whole]] if part == around => Some(*whole),
+                parts => parts
+                    .iter()
+                    .filter(|it| has_start(&it[0]))
+                    .max_by(|a, b| overlap(&a[0]).total_cmp(&overlap(&b[0])))
+                    .map(|it| it[1]),
+            };
+            if let Some(whole) = whole.filter(|_| {
+                painted.as_ref().is_none_or(has_start)
+                    && cell.style.is_visible()
+                    && rect.touches(&space.visible)
+            }) {
                 let whole = Some((self.snap_rect(whole), [0.0; 4], [0.0; 4]));
                 let frame = Frame {
                     shape: square(self.snap_rect(rect)),
@@ -3592,7 +3726,7 @@ impl<'a> Painter<'a> {
                 let (contour, inside) = (
                     Contour::of(&cell.style, &document.frame_of(id, frame.shape.rect)),
                     Space {
-                        origin: [rect.x, rect.y],
+                        origin: [all.x, all.y],
                         ..*space
                     },
                 );

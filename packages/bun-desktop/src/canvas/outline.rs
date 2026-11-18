@@ -16,6 +16,12 @@ impl Outline<'_> {
         path
     }
 
+    /// For what is not all of a contour.
+    pub fn walk_from(self, start: Option<Point>, mut take: impl FnMut(Command)) {
+        start.into_iter().for_each(|it| take(Command::MoveTo(it)));
+        self.walk(take);
+    }
+
     /// None of them if there is no room for all.
     #[inline(always)]
     pub fn verbs(mut self, room: &mut [Verb]) -> &[Verb] {

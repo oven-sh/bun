@@ -301,9 +301,12 @@ impl Poster<'_> {
                     *id,
                 );
             }
-            // VoiceOver would name the color instead of what is adjusted in the pop-up.
+            // VoiceOver would name the color, or what has the focus in the pop-up, instead of what is adjusted.
             Event::ValueChanged(id)
-                if forest.get(*id)?.role == Role::ColorWell && !forest.is_focused(*id) => {}
+                if !forest.is_focused(*id)
+                    && forest
+                        .closest(*id, |it| it.role == Role::ColorWell)
+                        .is_some() => {}
             Event::ValueChanged(id) => self.post("AXValueChanged", *id),
             Event::StatesChanged(id, changed) => {
                 self.states_changed(*id, forest.get(*id)?, *changed)

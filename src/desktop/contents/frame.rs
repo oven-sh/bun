@@ -74,9 +74,12 @@ pub(super) fn obey(parent: &Page, number: u32, message: ToFrame) -> JsResult<()>
     };
     match message {
         ToFrame::OwnerChanged(element) => {
-            if let Some(it) = &it.embedded {
-                let kind = it.kind.clone();
-                it.element.replace(Owner { kind, ..*element });
+            if let Some(embedded) = &it.embedded {
+                let kind = embedded.kind.clone();
+                let old = embedded.element.replace(Owner { kind, ..*element });
+                if old.name != embedded.element.borrow().name {
+                    it.tell_name();
+                }
             }
             match it.is_apart() {
                 true => it.page().tell(Controls::environment_changed),

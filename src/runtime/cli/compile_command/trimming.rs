@@ -2,8 +2,8 @@ use std::borrow::Cow;
 
 use bun_core::{ZBox, ZStr};
 use bun_options_types::aot_options::{AotOptions, ExplainSet};
-use bun_options_types::trim::{Feature, TrimRequest};
-use bun_removable_features::RuntimeRequirement;
+use bun_options_types::trim::{Feature, FeatureSet, TrimFeature, TrimRequest};
+use bun_removable_features::{RuntimeRequirement, features_running_uncompiled_code};
 use bun_standalone_graph::StandaloneModuleGraph::{Flags, target_executable};
 use bun_standalone_graph::with_executable_image;
 use bun_trim::{
@@ -117,6 +117,20 @@ impl Trimming {
     }
 }
 
+// Markup alone comes to these: a WOFF2 font, an https: URL, a frame of another site, a `pattern` attribute.
+const ENTERED_BY_DESKTOP: [Feature; 10] = [
+    Feature::Desktop,
+    Feature::Base64Globals,
+    Feature::BrotliDecoder,
+    Feature::ChildProcess,
+    Feature::LibdeflateCompressor,
+    Feature::RegExp,
+    Feature::RegExpFromString,
+    Feature::RegExpUnicodeProperties,
+    Feature::Tls,
+    Feature::TlsSockets,
+];
+
 fn find_settings_and_template(
     request: &mut CompileRequest<'_, '_>,
 ) -> Result<(bun_trim::ExecutableSettings, ZBox), CompileFailure> {
@@ -127,11 +141,26 @@ fn find_settings_and_template(
         executable.embeds_source_maps,
     );
     add_build_option_requirements(request.options, &mut settings.exec_argv);
+    let mut require = |features: FeatureSet, label: &[u8]| {
+        (settings.exec_argv).extend(features.iter().map(|feature| OptionRequirement {
+            requirement: RuntimeRequirement::Feature(feature),
+            label: label.into(),
+        }));
+    };
     if executable.flags.contains(Flags::LOADS_GRAPHICS_DRIVERS) {
-        settings.exec_argv.push(OptionRequirement {
-            requirement: RuntimeRequirement::Feature(Feature::Desktop),
-            label: Box::from(&b"--desktop"[..]),
-        });
+        require(FeatureSet::from_features(&ENTERED_BY_DESKTOP), b"--desktop");
+    }
+    if executable.desktop.is_some_and(|it| it.keeps_jit) {
+        let mut features = features_running_uncompiled_code();
+        for name in [
+            TrimFeature::Jit,
+            TrimFeature::Intl,
+            TrimFeature::Temporal,
+            TrimFeature::Webassembly,
+        ] {
+            features.union_with(&name.features());
+        }
+        require(features, b"\"jit\" of \"desktop\"");
     }
     // SAFETY: the loader outlives the request, and nothing below this call reaches the transpiler.
     let env = unsafe { &mut *executable.env };

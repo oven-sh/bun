@@ -1,5 +1,7 @@
+use std::cell::Cell;
 use std::ffi::{CString, c_char, c_void};
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use super::{SHADER, Scene, Step};
 use crate::error::{Context as _, Result, ensure};
@@ -40,6 +42,7 @@ unsafe extern "C" {
         width: i32,
         height: i32,
         kind: Kind,
+        has_memory: bool,
     ) -> Option<Object>;
     fn bd_vector_write(
         texture: &c_void,
@@ -49,7 +52,6 @@ unsafe extern "C" {
     ) -> *mut c_char;
     safe fn bd_vector_finish() -> *mut c_char;
     safe fn bd_vector_schedule();
-    safe fn bd_vector_widen(surface: &c_void);
     fn bd_vector_draw(
         scene: &Description,
         colors: &c_void,
@@ -150,6 +152,7 @@ pub fn hand_over() -> Option<Started> {
 pub fn take_over(_: Started) {}
 
 pub fn rest() {
+    SPARE_ROOM.take();
     bd_vector_rest();
 }
 
@@ -164,6 +167,9 @@ fn finish() -> Result<()> {
 
 /// Of a target.
 pub const MAX_AREA: i64 = 1 << 24;
+
+/// Of a shape.
+pub const MAX_UNITS: usize = 1 << 23;
 
 pub const CUTS_BETWEEN_PIXELS: bool = true;
 
@@ -182,7 +188,7 @@ impl Texture {
     pub fn new(width: i32, height: i32) -> Result<Texture> {
         ensure!(width.max(height) <= Self::MAX_SIDE, "it is too large");
         Ok(Texture {
-            object: bd_vector_texture(None, width, height, Kind::Image)
+            object: bd_vector_texture(None, width, height, Kind::Image, true)
                 .context("there is no memory")?,
             size: [width, height],
         })
@@ -219,9 +225,9 @@ impl Page {
     fn new(size @ [width, height]: [i32; 2], is_wide: bool) -> Option<Page> {
         let surface = Rc::new(Surface::new(width, height)?);
         if is_wide {
-            bd_vector_widen(surface.object());
+            surface.make_wide();
         }
-        let object = bd_vector_texture(Some(surface.object()), width, height, Kind::Image)?;
+        let object = bd_vector_texture(Some(surface.object()), width, height, Kind::Image, true)?;
         Some(Page {
             texture: Rc::new(Texture { object, size }),
             surface,
@@ -231,6 +237,36 @@ impl Page {
 
     fn is_free(&self) -> bool {
         Rc::strong_count(&self.surface) == 1 && !(self.was_shown && self.surface.is_in_use())
+    }
+}
+
+/// Where colors and depths go when the chip has no room for more triangles.
+struct SpareRoom {
+    size: [i32; 2],
+    textures: [Object; 2],
+    used_at: Instant,
+}
+
+thread_local! {
+    static SPARE_ROOM: Cell<Option<SpareRoom>> = const { Cell::new(None) };
+}
+
+impl SpareRoom {
+    fn take(size @ [width, height]: [i32; 2]) -> Result<SpareRoom> {
+        let new =
+            |kind| bd_vector_texture(None, width, height, kind, true).context("there is no memory");
+        let textures = match SPARE_ROOM.take().filter(|it| it.size == size) {
+            Some(it) => it.textures,
+            None => {
+                finish()?;
+                [new(Kind::Colors)?, new(Kind::Depths)?]
+            }
+        };
+        Ok(SpareRoom {
+            size,
+            textures,
+            used_at: Instant::now(),
+        })
     }
 }
 
@@ -250,7 +286,7 @@ impl Target {
     pub fn new(width: i32, height: i32, is_wide: bool) -> Result<Target> {
         ensure!(width.max(height) <= Texture::MAX_SIDE, "it is too large");
         let (size, new) = ([width, height], |kind| {
-            bd_vector_texture(None, width, height, kind)
+            bd_vector_texture(None, width, height, kind, false)
         });
         let all = || {
             Some(Target {
@@ -297,6 +333,11 @@ impl Target {
     }
 
     pub fn end_frame(&mut self, is_complete: bool) {
+        SPARE_ROOM.set(
+            SPARE_ROOM
+                .take()
+                .filter(|it| it.used_at.elapsed() < Duration::from_millis(500)),
+        );
         self.frame = self.pages.last_mut().filter(|_| is_complete).map(|page| {
             page.was_shown = true;
             page.surface.clone()
@@ -343,12 +384,14 @@ impl Target {
 
     pub fn draw(&mut self, scene: &mut Scene) -> Result<()> {
         let before = self.texture();
-        let turns = self.page().was_shown || scene.uses(&before);
+        let turns = self.page().was_shown
+            || scene.uses(&before)
+            || scene.needs_samples && scene.backdrop.is_none();
         if turns {
             self.turn_page()?;
         }
         let (loads, textures) = (
-            scene.backdrop.is_none() && !turns && !scene.needs_samples,
+            scene.backdrop.is_none() && !turns,
             scene
                 .textures
                 .iter()
@@ -382,20 +425,29 @@ impl Target {
             stays_opaque: scene.stays_opaque,
             loads,
         };
+        let room = scene
+            .has_large_shape
+            .then(|| SpareRoom::take(self.size))
+            .transpose()?;
+        let [colors, depths] = room
+            .as_ref()
+            .map_or([&self.colors, &self.depths], |it| it.textures.each_ref());
         let depth = if scene.needs_samples {
-            &self.depths
+            depths
         } else {
             &self.depth
         };
         // SAFETY: the units only refer to words and the steps to textures that there are, and the clips are within the target.
-        unsafe {
+        let result = unsafe {
             failure(bd_vector_draw(
                 &description,
-                &self.colors,
+                colors,
                 depth,
                 &before.object,
                 &self.page().texture.object,
             ))
-        }
+        };
+        SPARE_ROOM.set(room.or_else(|| SPARE_ROOM.take()));
+        result
     }
 }

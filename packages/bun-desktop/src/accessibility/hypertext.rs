@@ -1,7 +1,9 @@
 //! The text of a node as AT-SPI has it: one character stands for each child that is not text.
 
 use super::forest::{Forest, Id};
-use super::text::{Block, Position};
+use super::text::Block;
+#[cfg(unix)]
+use super::text::Position;
 
 const EMBEDDED: char = '\u{fffc}';
 
@@ -29,6 +31,7 @@ impl Forest {
     }
 
     /// In bytes. What is in an embedded node is before its character, or after it if `is_end`.
+    #[cfg(unix)]
     pub fn offset_in_hypertext(
         &self,
         block: &Block,
@@ -46,6 +49,7 @@ impl Forest {
         })
     }
 
+    #[cfg(unix)]
     pub fn position_in_hypertext(
         &self,
         block: &Block,

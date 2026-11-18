@@ -176,6 +176,7 @@ impl Typing {
                         is_repeat: false,
                         scan_code,
                         symbol,
+                        key_code: 0,
                         modifiers: modifiers(state as u16),
                     });
                     self.type_key(window, down, symbol, state as u16);
@@ -273,6 +274,7 @@ impl Typing {
             is_repeat,
             scan_code,
             symbol,
+            key_code: 0,
             modifiers: modifiers(state),
         };
         let state_and_direction = u32::from(state) | if down { 0 } else { ibus::RELEASED };

@@ -2,6 +2,7 @@
 
 use core::ffi::{c_int, c_void};
 
+#[cfg(unix)]
 unsafe extern "C" {
     safe fn EVP_aes_128_cbc() -> *const c_void;
     safe fn EVP_CIPHER_CTX_new() -> *mut c_void;
@@ -22,7 +23,9 @@ unsafe extern "C" {
         length: c_int,
     ) -> c_int;
     fn EVP_CipherFinal_ex(context: *mut c_void, out: *mut u8, written: *mut c_int) -> c_int;
+}
 
+unsafe extern "C" {
     safe fn EVP_aead_aes_256_gcm() -> *const c_void;
     fn EVP_AEAD_CTX_new(
         aead: *const c_void,
@@ -65,6 +68,7 @@ pub(crate) enum Direction {
 
 pub(crate) const TAG: usize = 16;
 
+#[cfg(unix)]
 pub(crate) fn aes_128_cbc(
     direction: Direction,
     key: &[u8; 16],

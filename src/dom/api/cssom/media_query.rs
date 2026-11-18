@@ -1,6 +1,7 @@
 //! <https://drafts.csswg.org/cssom-view/#the-mediaquerylist-interface>
 
-use core::cell::Cell;
+use core::cell::{Cell, RefCell};
+use std::rc::Rc;
 
 use bun_jsc::JSObject;
 use bun_jsc::bindgen::{JsHeap, JsInterface, JsLocal, JsScope, Result};
@@ -16,15 +17,21 @@ use crate::values::{Out, text};
 pub(crate) struct MediaQueryList {
     pub(crate) base: EventTarget,
     pub(crate) fields: js_MediaQueryList::Fields,
-    condition: Condition,
-    media: Out,
+    parsed: Rc<Parsed>,
     /// While the document holds it.
     reported: Cell<Option<bool>>,
     serial: u64,
 }
 
+struct Parsed {
+    source: Box<[u8]>,
+    condition: Condition,
+    media: Out,
+}
+
+/// How many, and what the last ones are for.
 #[derive(Default)]
-struct Made(Cell<u64>);
+struct Made(Cell<u64>, RefCell<[Option<Rc<Parsed>>; 32]>);
 
 impl MediaQueryList {
     fn doc(&self) -> &Doc {
@@ -32,12 +39,12 @@ impl MediaQueryList {
     }
 
     pub(crate) fn get_media(&self) -> &[u8] {
-        &self.media
+        &self.parsed.media
     }
 
     fn evaluate(&self) -> bool {
         self.doc()
-            .engine(|engine, _| self.condition.evaluate(&engine.environment) == Some(true))
+            .engine(|engine, _| self.parsed.condition.evaluate(&engine.environment) == Some(true))
     }
 
     pub(crate) fn get_matches<'a>(&'a self, cx: &mut JsScope<'a>) -> bool {
@@ -67,12 +74,22 @@ pub(crate) fn match_media<'a>(
     doc: &'a Doc,
     query: &[u8],
 ) -> &'a MediaQueryList {
-    let (condition, queries) = media_list(query);
+    let parsed = {
+        let known = &mut doc.extra::<Made>().1.borrow_mut()[bun_wyhash::hash(query) as usize % 32];
+        known.take_if(|it| *it.source != *query);
+        Rc::clone(known.get_or_insert_with(|| {
+            let (condition, queries) = media_list(query);
+            Rc::new(Parsed {
+                source: query.into(),
+                condition,
+                media: queries.join(&b", "[..]),
+            })
+        }))
+    };
     let list = MediaQueryList {
         base: Default::default(),
         fields: Default::default(),
-        condition,
-        media: queries.join(&b", "[..]),
+        parsed,
         reported: Cell::new(None),
         serial: doc
             .extra::<Made>()
@@ -116,7 +133,7 @@ pub(crate) fn report_media_queries<'a>(cx: &mut JsScope<'a>, doc: &'a Doc) {
         if list.reported.replace(Some(matches)) != Some(matches) {
             let event = MediaQueryListEvent::new(
                 list.realm(&cx.heap),
-                DomString::from_utf8(text(&list.media)),
+                DomString::from_utf8(text(&list.parsed.media)),
                 matches,
             );
             dispatch(cx, list, event);

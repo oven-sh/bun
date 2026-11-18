@@ -9,9 +9,27 @@ impl Cursor {
             b"pointer" => Cursor::PointingHand,
             b"text" => Cursor::IBeam,
             b"vertical-text" => Cursor::VerticalIBeam,
-            b"crosshair" | b"cell" => Cursor::Crosshair,
+            #[cfg(windows)]
+            b"wait" => Cursor::Wait,
+            #[cfg(windows)]
+            b"progress" => Cursor::Progress,
+            #[cfg(windows)]
+            b"help" => Cursor::Help,
+            #[cfg(windows)]
+            b"cell" => Cursor::Cell,
+            #[cfg(windows)]
+            b"zoom-in" => Cursor::ZoomIn,
+            #[cfg(windows)]
+            b"zoom-out" => Cursor::ZoomOut,
+            #[cfg(windows)]
+            b"move" | b"all-scroll" => Cursor::Move,
+            #[cfg(unix)]
+            b"cell" => Cursor::Crosshair,
+            #[cfg(unix)]
+            b"move" | b"all-scroll" => Cursor::ClosedHand,
+            b"crosshair" => Cursor::Crosshair,
             b"grab" => Cursor::OpenHand,
-            b"grabbing" | b"move" | b"all-scroll" => Cursor::ClosedHand,
+            b"grabbing" => Cursor::ClosedHand,
             b"not-allowed" | b"no-drop" => Cursor::NotAllowed,
             b"alias" => Cursor::DragLink,
             b"copy" => Cursor::DragCopy,

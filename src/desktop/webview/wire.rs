@@ -314,10 +314,9 @@ pub(crate) fn to_js(value: &Value, find: Find<'_>) -> JsResult<JSValue> {
     result
 }
 
-impl IntoJs for &Value {
-    fn into_js(self, _: &Realm) -> JsResult<JSValue> {
-        to_js(self, &|_| Ok(JSValue::UNDEFINED))
-    }
+#[unsafe(no_mangle)]
+fn __bun_desktop_data_to_js(value: &Value) -> JsResult<JSValue> {
+    to_js(value, &|_| Ok(JSValue::UNDEFINED))
 }
 
 struct FromJs<'a> {

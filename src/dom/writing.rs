@@ -212,12 +212,18 @@ impl LayoutBox {
 
     /// The first and the last that it gives to `container`.
     pub(crate) fn baselines_for(&self, container: &Style, own: &Output) -> [f32; 2] {
-        [own.baselines[0], own.last_baseline].map(|it| {
-            match it.filter(|_| !self.is_foreign() && !self.is_replaced()) {
-                Some(it) => self.clamp_baseline(it, own.height),
-                None => container.made_up_baseline(self.turned, own.height),
-            }
-        })
+        [
+            self.baseline_for(container, own.baselines[0], own.height),
+            self.baseline_for(container, own.last_baseline, own.height),
+        ]
+    }
+
+    #[inline]
+    pub(crate) fn baseline_for(&self, container: &Style, own: Option<f32>, height: f32) -> f32 {
+        match own.filter(|_| !self.is_foreign() && !self.is_replaced()) {
+            Some(it) => self.clamp_baseline(it, height),
+            None => container.made_up_baseline(self.turned, height),
+        }
     }
 
     pub(crate) fn spans_columns(&self) -> bool {

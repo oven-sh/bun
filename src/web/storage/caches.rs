@@ -11,6 +11,9 @@ use crate::headers::{HeaderList, split};
 use crate::net::record::{RecordReader, RecordWriter};
 use crate::remote::petition;
 
+use crate::net::response::{Head, ResponseType};
+use crate::url::Url;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct CacheId(pub i64);
 
@@ -31,11 +34,13 @@ pub struct CachedResponse {
     pub status_text: Bytes,
     pub headers: HeaderList,
     pub body: Option<Vec<u8>>,
+    /// See [`Head`]. It is not stored.
+    pub kept_as: u32,
 }
 
 crate::wire!(impl CacheId(_));
 crate::wire!(impl CachedRequest { url, method, headers, navigation });
-crate::wire!(impl CachedResponse { kind, url, is_redirected, omits_credentials, status, status_text, headers, body });
+crate::wire!(impl CachedResponse { kind, url, is_redirected, omits_credentials, status, status_text, headers, body, kept_as });
 crate::wire!(impl QueryOptions { ignores_search, ignores_vary });
 crate::wire!(impl enum PutError { Duplicate, Sql(SqlError), });
 
@@ -110,7 +115,37 @@ impl CachedResponse {
             status_text: it.bytes()?.into(),
             headers: HeaderList::read(&mut it)?,
             body: None,
+            kept_as: 0,
         })
+    }
+
+    pub fn head_if_opaque(&self) -> Option<Head> {
+        let kind = ResponseType::parse(&self.kind).filter(|_| self.kind.starts_with(b"opaque"))?;
+        Some(Head {
+            status: self.status,
+            status_text: self.status_text.clone(),
+            redirects: self.is_redirected.into(),
+            includes_credentials: !self.omits_credentials,
+            kept_as: self.kept_as,
+            ..Head::new(kind, Url::parse(&self.url)?, self.headers.clone())
+        })
+    }
+
+    pub fn of_opaque(head: &Head) -> CachedResponse {
+        let mut headers = head.headers.clone();
+        headers.delete(b"vary");
+        headers.delete(b"set-cookie");
+        CachedResponse {
+            kind: head.kind.as_bytes().into(),
+            url: head.url.without_fragment().into(),
+            is_redirected: head.redirects > 0,
+            omits_credentials: !head.includes_credentials,
+            status: head.status,
+            status_text: head.status_text.clone(),
+            headers,
+            body: None,
+            kept_as: head.kept_as,
+        }
     }
 }
 

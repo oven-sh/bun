@@ -1,8 +1,11 @@
 //! Documents, for what is outside of them and is no script.
 
-use bun_jsc::{JSValue, JsResult};
+use std::rc::Rc;
+
+use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
 use crate::abi::Rect;
+use crate::data::Value;
 use crate::protocol::Size;
 
 /// The indices among the element children that lead from the body to an element.
@@ -28,15 +31,6 @@ pub struct Event(pub JSValue);
 pub struct Node(pub JSValue);
 
 #[derive(Default)]
-pub struct Description {
-    pub kind: i32,
-    pub name: String,
-    pub local_name: String,
-    pub value: String,
-    pub is_root: bool,
-}
-
-#[derive(Default)]
 pub struct Metrics {
     pub viewport: [i32; 2],
     pub scroll: [f64; 2],
@@ -48,12 +42,43 @@ pub enum Hidden {
     NotRendered,
 }
 
+/// What an [`Inspector`] needs from its session.
+pub trait Session {
+    fn emit(&self, method: &str, params: Value);
+    /// That of the document.
+    fn frame(&self) -> String;
+    fn frame_in(&self, element: JSValue) -> Option<String>;
+    fn object(&self, id: &Value) -> Option<JSValue>;
+}
+
+/// The domains of the DevTools protocol that are about documents.
+pub trait Inspector {
+    /// `None` if it is none of them.
+    fn run(&self, it: Document, method: &str, params: &Value) -> Option<Result<Value, String>>;
+    /// Reports what has changed. False if nobody wants to know.
+    fn look(&self, it: Document) -> bool;
+    /// Has the client show the element that is there.
+    fn reveal(&self, it: Document, point: [f64; 2]);
+    fn close(&self, it: Document);
+}
+
+pub fn create_inspector(session: Box<dyn Session>) -> Rc<dyn Inspector> {
+    __bun_dom_create_inspector(session)
+}
+
+/// An array of what `getEventListeners()` has in its arrays.
+pub fn listeners_of(realm: &JSGlobalObject, target: JSValue) -> JSValue {
+    __bun_dom_listeners_of(realm, target)
+}
+
 unsafe extern "Rust" {
+    safe fn __bun_dom_create_inspector(session: Box<dyn Session>) -> Rc<dyn Inspector>;
+    safe fn __bun_dom_listeners_of(realm: &JSGlobalObject, target: JSValue) -> JSValue;
+    safe fn __bun_dom_node_with_id(id: u32) -> Option<JSValue>;
+    safe fn __bun_dom_id_of(it: Node) -> u32;
+    safe fn __bun_dom_label(it: Node) -> Option<String>;
     safe fn __bun_dom_metrics(it: Document) -> Metrics;
     safe fn __bun_dom_is_node(it: Node) -> bool;
-    safe fn __bun_dom_describe(it: Node) -> Description;
-    safe fn __bun_dom_client_rects(it: Node) -> Vec<[f64; 4]>;
-    safe fn __bun_dom_bounds_of(it: Node) -> Option<[f64; 4]>;
     safe fn __bun_dom_reveal(it: Node) -> Result<(), Hidden>;
     safe fn __bun_dom_focus(it: Node);
     safe fn __bun_dom_change(it: Document, place: Place<'_>, change: Change<'_>) -> JsResult<()>;
@@ -114,17 +139,17 @@ impl Node {
         __bun_dom_is_node(self)
     }
 
-    pub fn describe(self) -> Description {
-        __bun_dom_describe(self)
+    pub fn with_id(id: u32) -> Option<Node> {
+        __bun_dom_node_with_id(id).map(Node)
     }
 
-    pub fn client_rects(self) -> Vec<[f64; 4]> {
-        __bun_dom_client_rects(self)
+    pub fn id(self) -> u32 {
+        __bun_dom_id_of(self)
     }
 
-    /// Of an element.
-    pub fn bounds(self) -> Option<[f64; 4]> {
-        __bun_dom_bounds_of(self)
+    /// As `div#id.class`
+    pub fn label(self) -> Option<String> {
+        __bun_dom_label(self)
     }
 
     pub fn reveal(self) -> Result<(), Hidden> {

@@ -121,7 +121,7 @@ export const CanvasRenderingContext2DSettings = b.dictionary(
     desynchronized: b.bool.loose.default(false),
     willReadFrequently: b.bool.loose.default(false),
   },
-  { ...webidl, nonObjectAsEmpty: true },
+  { ...webidl, fromJS: true, nonObjectAsEmpty: true },
 );
 export const ContextAttributes = b.dictionary({
   alpha: b.bool,
@@ -263,6 +263,7 @@ export const Canvas2D = b.interface("Canvas2D", {
   internalFields: {
     ...each("canvas fillStyle strokeStyle savedStyles", b.any),
     renderer: b.ref("ImageBitmapRenderingContext"),
+    webgl: b.ref("WebGL"),
   },
   estimatedSize: true,
 });
@@ -417,7 +418,7 @@ export const ImageBitmapFactories = b.mixin("ImageBitmapFactories", {
   },
 });
 
-const contextOptions = CanvasRenderingContext2DSettings.default({});
+const contextOptions = b.any.omittable;
 const encoding = { type: text.default("image/png"), quality: b.any.omittable };
 
 export const HTMLCanvasElement = b.interface("HTMLCanvasElement", {
@@ -449,11 +450,7 @@ export const OffscreenCanvas = b.interface("OffscreenCanvas", {
   construct: { args: { width: side, height: side } },
   proto: {
     ...each("width height", { getter: b.f64, setter: { type: side, ...js } }),
-    getContext: {
-      args: { contextId: OffscreenRenderingContextId, options: contextOptions },
-      returns: b.any,
-      ...fallible,
-    },
+    getContext: { args: { contextId: OffscreenRenderingContextId, options: contextOptions }, returns: b.any, ...js },
     transferToImageBitmap: { returns: ImageBitmap, ...fallible },
     convertToBlob: { args: { options: ImageEncodeOptions.default({}) }, ...promise },
     oncontextlost: OnEvent.of('crate::api::core::atom!("contextlost")'),

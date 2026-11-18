@@ -430,6 +430,26 @@ fn drop_request<'a>(cx: Cx<'_, 'a>, image: &'a Element) {
     stop_delaying(cx, delayed);
 }
 
+#[optimize(size)]
+fn fire_unless_changed<'a>(cx: Cx<'_, 'a>, image: &'a Element, event: Known) {
+    let (document, serial) = (image.doc(), state(image).serial.get());
+    delay_load(cx, document);
+    queue_task(
+        document,
+        &[image.to_js(), document.to_js()],
+        move |cx, values| {
+            if let Some(image) =
+                element_in(&cx.heap, values[0]).filter(|it| state(it).serial.get() == serial)
+            {
+                fire(cx, image, event, Default::default());
+            }
+            let document = Node::from_js(&cx.heap, values[1]).and_then(Node::as_doc);
+            stop_delaying(cx, document);
+            Ok(())
+        },
+    );
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum OnError {
     Break,
@@ -445,6 +465,23 @@ fn fetch_image<'a>(
     on_error: OnError,
 ) {
     let used = Pictures::request(cx, image.doc(), selected.url.clone(), Some(image));
+    if used.is_settled()
+        && on_error == OnError::Break
+        && selected.url.to_utf8().starts_with("data:")
+    {
+        let is_available = used.contents().is_some();
+        settle(cx, image, Some(used), selected);
+        end_decoding(cx, image, is_available);
+        return fire_unless_changed(
+            cx,
+            image,
+            if is_available {
+                atom!("load")
+            } else {
+                atom!("error")
+            },
+        );
+    }
     let (picture, wanted) = (used.picture(), used.picture());
     drop(state(image).pending.replace(Some(used)));
     if delays_load {
@@ -600,8 +637,7 @@ fn queue_update<'a>(cx: Cx<'_, 'a>, image: &'a Element) {
             ))
         })
         .filter(|it| may_reuse_image(&cx.heap, document, &it.1.url));
-    let serial = it.serial.get().wrapping_add(1);
-    it.serial.set(serial);
+    it.serial.update(|it| it.wrapping_add(1));
     if let Some((picture, selected)) = available {
         watch(&cx.heap, image);
         it.is_queued.set(false);
@@ -610,22 +646,7 @@ fn queue_update<'a>(cx: Cx<'_, 'a>, image: &'a Element) {
         }
         drop_request(cx, image);
         settle(cx, image, Some(picture), selected);
-        delay_load(cx, document);
-        queue_task(
-            document,
-            &[image.to_js(), document.to_js()],
-            move |cx, values| {
-                if let Some(image) =
-                    element_in(&cx.heap, values[0]).filter(|it| state(it).serial.get() == serial)
-                {
-                    fire(cx, image, atom!("load"), Default::default());
-                }
-                let document = Node::from_js(&cx.heap, values[1]).and_then(Node::as_doc);
-                stop_delaying(cx, document);
-                Ok(())
-            },
-        );
-        return;
+        return fire_unless_changed(cx, image, atom!("load"));
     }
     if !it.has_picture() || image.attr(atom!("src")) != *it.decoding_for.borrow() {
         end_decoding(cx, image, false);
@@ -953,6 +974,22 @@ impl HTMLImageElement {
             .as_ref()
             .and_then(|it| it.contents())
             .map(|it| it.source(self.doc(), size)))
+    }
+
+    /// In pixels, if it has none itself.
+    pub(crate) fn size_of_texture(&self) -> Option<[f64; 2]> {
+        let [width, height] = state(self)
+            .picture()?
+            .contents()
+            .filter(|it| it.is_vector())?
+            .size;
+        Some(
+            [(atom!("width"), width), (atom!("height"), height)].map(|(name, own)| {
+                self.with_attr(name, non_negative_integer)
+                    .flatten()
+                    .map_or(own, f64::from)
+            }),
+        )
     }
 }
 

@@ -536,6 +536,9 @@ pub(super) async fn send(
     observer: Option<&Progress>,
     connection: Connection<'_>,
 ) -> Result<Answer> {
+    if !bun_ui::has_http_client() {
+        return Err(NetError::Failed);
+    }
     let (mut upgrade, mut upgraded) = (None, None);
     let (bytes, streamed) = match body {
         None => (None, None),

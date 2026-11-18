@@ -52,7 +52,6 @@ constants! {
         get_pdf_viewer_enabled -> bool = false;
         get_webdriver -> bool = false;
         get_do_not_track -> Option<&str> = None;
-        get_max_touch_points -> i32 = 0;
         java_enabled -> bool = false;
     }
     NetworkInformation {
@@ -158,6 +157,10 @@ fn may_be_handled(scheme: &[u8]) -> bool {
 impl DomNavigator {
     fn window(&self) -> &Window {
         self.scope().downcast().expect("what has made it")
+    }
+
+    pub(crate) fn get_max_touch_points(&self) -> i32 {
+        self.window().environment().touch_points as i32
     }
 
     pub(crate) fn get_plugins<'a>(&'a self, heap: &JsHeap<'a>) -> &'a PluginArray {

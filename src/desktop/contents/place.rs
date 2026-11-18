@@ -3,6 +3,7 @@
 use std::rc::Rc;
 
 use bun_web::origin::{Origin, Site};
+use bun_web::service::Lodging;
 use bun_web::url::Url;
 use bun_web::{compiled, trust};
 
@@ -13,6 +14,7 @@ use crate::text::before;
 use crate::{app, process};
 
 const SANDBOXED: &str = " sandboxed";
+const WORKERS: &str = " workers";
 
 #[derive(Clone, Default, PartialEq)]
 pub(super) enum Place {
@@ -35,6 +37,13 @@ impl Place {
         match self {
             Place::App => None,
             Place::Apart { role, .. } => Some(*role),
+        }
+    }
+
+    pub(super) fn site(&self) -> Rc<str> {
+        match self {
+            Place::App => "".into(),
+            Place::Apart { site, .. } => Rc::clone(site),
         }
     }
 
@@ -186,30 +195,88 @@ impl Contents {
     }
 
     fn key_of(&self, site: &Site) -> String {
-        format!(
-            "{} {}",
-            self.session.network().id(),
-            string(site.as_bytes())
-        )
+        key_of(self.session.network().id(), site)
     }
-}
 
-impl Page {
-    /// Of a trusted page that can reach this one, whose window may have other preferences.
-    fn place_of_kin(&self, otherwise: &Place) -> Option<Place> {
-        let site_of = |it: &Page| {
-            let origin = it.client.origin();
-            (!origin.is_opaque()).then(|| Site::of_origin(&origin))
-        };
-        let (own, site) = (self.contents(), site_of(self)?);
+    /// Of a trusted page that can reach a document of `site`, whose window may have other preferences.
+    fn place_of_kin(&self, site: &Site, otherwise: &Place) -> Option<Place> {
         let is_kin = |it: &&Page| {
             it.is_started()
                 && it.place().is_trusted()
                 && (it.place().runs_program() || otherwise.role() != Some(Role::Compiled))
-                && site_of(it).is_some_and(|it| it == site)
+                && it.site().is_some_and(|it| it == *site)
         };
-        let others = own.members().into_iter().filter(|it| !same(*it, own));
+        let others = self.members().into_iter().filter(|it| !same(*it, self));
         others.map(Contents::page).find(is_kin).map(Page::place)
+    }
+
+    fn trusts_next(
+        &self,
+        url: &Url,
+        is_sandboxed: bool,
+        is_led_by_stranger: bool,
+    ) -> JsResult<bool> {
+        let parent = self.embedded.as_ref().map(|_| self.embedder());
+        Ok(
+            match (trusts_by_origin(), trust::has_sandbox_for_the_rest()) {
+                (_, false) => true,
+                _ if parent.is_some_and(|it| !it.place().is_trusted()) => false,
+                _ if is_led_by_stranger && !self.has_shown_trusted.get() => false,
+                (true, true) => !is_sandboxed && trust::is_trusted(url, app::path()?.as_bytes()),
+                (false, true) => self.is_trusted(&string(url.href()))?,
+            },
+        )
+    }
+
+    /// The document at `url`. `None` if it will not have the storage of its origin.
+    pub(super) fn will_be_apart(
+        &self,
+        url: &Url,
+        is_led_by_stranger: bool,
+    ) -> JsResult<Option<bool>> {
+        if is_all_in_app() {
+            return Ok(Some(false));
+        }
+        if !self.trusts_next(url, false, is_led_by_stranger)? {
+            return Ok((!trust::is_trusted_origin(Origin::of(url).as_bytes())).then_some(true));
+        }
+        let site = Site::of(url);
+        let otherwise = self.place_of_trusted(&self.key_of(&site), compiled::is_for_site_of(url));
+        Ok(Some(
+            self.place_of_kin(&site, &otherwise).unwrap_or(otherwise) != Place::App,
+        ))
+    }
+}
+
+fn key_of(session: u32, site: &Site) -> String {
+    format!("{session} {}", string(site.as_bytes()))
+}
+
+/// In a process that shows no pages.
+pub(crate) fn lodge_worker(session: u32, url: &Url, is_compiled: bool) -> JsResult<Lodging> {
+    if !has_sandbox() {
+        return Err(unsupported("sandbox"));
+    }
+    let is_trusted = trust::is_trusted(url, app::path()?.as_bytes());
+    let apart = if moves_node_for_testing() {
+        ""
+    } else {
+        WORKERS
+    };
+    super::process::lease(Place::Apart {
+        role: match (is_trusted, is_compiled) {
+            (false, _) if trust::has_sandbox_for_the_rest() => Role::Stranger,
+            (_, true) => Role::Compiled,
+            _ => Role::Trusted,
+        },
+        site: (key_of(session, &Site::of(url)) + apart).into(),
+    })
+}
+
+impl Page {
+    fn site(&self) -> Option<Site> {
+        let origin = self.client.origin();
+        (!origin.is_opaque()).then(|| Site::of_origin(&origin))
     }
 
     /// Once it has its origin.
@@ -250,20 +317,14 @@ impl Page {
         let site = site + if is_sandboxed { SANDBOXED } else { "" };
         let is_led_by_stranger = creator.is_some_and(|it| !it.place().is_trusted())
             || (about.loaded.as_ref()).is_some_and(|it| it.is_led_by_stranger);
-        let is_trusted = match (trusts_by_origin(), trust::has_sandbox_for_the_rest()) {
-            (_, false) => true,
-            _ if self.parent().is_some_and(|it| !it.place().is_trusted()) => false,
-            _ if is_led_by_stranger && !it.has_shown_trusted.get() => false,
-            (true, true) => !is_sandboxed && trust::is_trusted(&parsed, app::path()?.as_bytes()),
-            (false, true) => it.is_trusted(&url)?,
-        };
-        if !is_trusted {
+        if !it.trusts_next(&parsed, is_sandboxed, is_led_by_stranger)? {
             let (role, site) = (Role::Stranger, site.into());
             return Ok(Place::Apart { role, site });
         }
         let runs_program = self.client.runs_program() || compiled::is_for_site_of(&parsed);
         let otherwise = it.place_of_trusted(&site, runs_program);
-        Ok(self.place_of_kin(&otherwise).unwrap_or(otherwise))
+        let of_kin = (self.site()).and_then(|site| it.place_of_kin(&site, &otherwise));
+        Ok(of_kin.unwrap_or(otherwise))
     }
 }
 

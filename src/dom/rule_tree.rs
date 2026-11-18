@@ -57,19 +57,27 @@ pub(crate) struct EngineText {
     pub(crate) blocks: Vec<(u32, Rc<Block>)>,
 }
 
-enum Item {
+impl EngineText {
+    pub(crate) const PLACEHOLDER: &[u8] = b"_:_;";
+}
+
+pub(crate) enum Item {
     Rule(Range<usize>, Option<Range<usize>>),
     Declaration(Range<usize>),
 }
 
 #[derive(Clone, Copy, PartialEq)]
-enum Level {
+pub(crate) enum Level {
     Sheet,
     Rules,
     RulesAndDeclarations,
 }
 
-fn items(source: &[u8], range: Range<usize>, level: Level) -> impl Iterator<Item = Item> {
+pub(crate) fn items(
+    source: &[u8],
+    range: Range<usize>,
+    level: Level,
+) -> impl Iterator<Item = Item> {
     let (source, mut at) = (&source[..range.end], range.start);
     core::iter::from_fn(move || {
         match if level == Level::RulesAndDeclarations {
@@ -631,7 +639,7 @@ impl Rule {
                         &self.settings.base_url.borrow(),
                     )),
                 ));
-                out.text.extend_from_slice(b"_:_;");
+                out.text.extend_from_slice(EngineText::PLACEHOLDER);
             }
         }
         match self.features.get() {

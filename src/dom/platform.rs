@@ -684,6 +684,20 @@ pub(crate) fn word(table: &[u8], at: usize) -> Option<usize> {
     Some(u16::from_be_bytes(*table.get(at..)?.first_chunk()?).into())
 }
 
+/// How much of an em is above the baseline.
+pub(crate) fn part_above_baseline(face: &abi::Face) -> f32 {
+    let (table, part) = (font_table(face, *b"OS/2"), |[up, down]: [f32; 2]| {
+        Some(up / (up + down)).filter(|it| *it > 0.0 && *it <= 1.0)
+    });
+    let typographic = word(table, 68)
+        .zip(word(table, 70))
+        .map(|(up, down)| [f32::from(up as i16), -f32::from(down as i16)]);
+    typographic
+        .and_then(part)
+        .or_else(|| part([face.ascent, face.descent]))
+        .unwrap_or(1.0)
+}
+
 pub(crate) fn has_positioning_feature(face: &abi::Face, tag: [u8; 4]) -> bool {
     let table = font_table(face, *b"GPOS");
     let list = word(table, 6).and_then(|it| {

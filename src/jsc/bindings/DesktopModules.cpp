@@ -84,43 +84,6 @@ extern "C" EncodedJSValue Bun__Desktop__functionPrototype(JSGlobalObject* global
     return JSValue::encode(globalObject->functionPrototype());
 }
 
-JSString* objectPrototypeToStringOutOfLine(JSGlobalObject*, JSValue);
-
-extern "C" EncodedJSValue Bun__Desktop__toStringTag(JSGlobalObject* globalObject, EncodedJSValue object)
-{
-    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
-    JSString* text = objectPrototypeToStringOutOfLine(globalObject, JSValue::decode(object));
-    RETURN_IF_EXCEPTION(scope, {});
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsSubstring(globalObject, text, 8, text->length() - 9)));
-}
-
-extern "C" EncodedJSValue Bun__Desktop__ownProperties(JSGlobalObject* globalObject, EncodedJSValue value)
-{
-    auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSObject* object = JSValue::decode(value).toObject(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-    object->methodTable()->getOwnPropertyNames(object, globalObject, names, DontEnumPropertiesMode::Include);
-    RETURN_IF_EXCEPTION(scope, {});
-    MarkedArgumentBuffer all;
-    for (auto& name : names) {
-        PropertyDescriptor descriptor;
-        bool exists = object->getOwnPropertyDescriptor(globalObject, name, descriptor);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (!exists)
-            continue;
-        bool hasValue = descriptor.isDataDescriptor();
-        for (JSValue each : { JSValue(jsString(vm, name.string())), jsBoolean(descriptor.enumerable()), jsBoolean(descriptor.configurable()), jsBoolean(hasValue), hasValue ? descriptor.value() : jsUndefined() })
-            all.append(each);
-    }
-    if (all.hasOverflowed()) {
-        throwOutOfMemoryError(globalObject, scope);
-        return {};
-    }
-    RELEASE_AND_RETURN(scope, JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), all)));
-}
-
 extern "C" EncodedJSValue Bun__Desktop__createWeakMap(JSGlobalObject* globalObject)
 {
     return JSValue::encode(JSWeakMap::create(getVM(globalObject), globalObject->weakMapStructure()));

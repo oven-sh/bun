@@ -2,16 +2,14 @@
 
 use core::sync::atomic::AtomicU32;
 
-use bun_collections::HashMap;
 use bun_ui::protocol::Lane;
 
 use super::*;
+use crate::HashMap;
 use crate::remote::{self, HOST, Head, Kind, OF_PAGES, Peer};
 use crate::wire::{Malformed, Reader, Writer};
 
 const MOST_PORTS: usize = 1 << 16;
-/// What a message counts as, at least.
-const OVERHEAD: usize = 1 << 10;
 
 #[derive(Default)]
 struct Tables {
@@ -141,13 +139,9 @@ pub(crate) fn accept(from: Peer, id: u32, arrival: Arrival, length: usize) -> wi
     match arrival {
         Arrival::Message(message) => {
             drop(all);
-            let mut other = endpoint.0.sides[1 - endpoint.0.side].lock();
-            other.bytes_from_afar *= usize::from(!other.inbox.is_empty());
-            other.bytes_from_afar += length + OVERHEAD;
-            if from != HOST && other.bytes_from_afar > 2 * wire::LARGE {
+            if from != HOST && !endpoint.peer().has_room_for(length) {
                 return Err(Malformed);
             }
-            drop(other);
             endpoint.send(message);
         }
         Arrival::Closed => {

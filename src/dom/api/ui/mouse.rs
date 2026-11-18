@@ -10,6 +10,8 @@ use crate::api::editing::{self, clipboard, input_method, spelling};
 use crate::api::forms::{self, input::Input, text_control};
 use crate::api::uievents::{Modifiers, PointerEvent, WheelEvent};
 
+/// For how long the button has to be down before a selection can be dragged.
+const TEXT_DRAG_DELAY: f64 = if IS_MAC { 150.0 } else { 0.0 };
 const DRAG_DISTANCE: f64 = 4.0;
 const WHEEL_GESTURE_GAP: f64 = 500.0;
 const ALL: EventInit = EventInit {
@@ -208,6 +210,12 @@ fn mouse_move<'a>(cx: &mut Cx<'a>, ui: &'a Ui) {
         return follow(cx, ui);
     }
     let ([x, y], [from_x, from_y]) = (pointer.at.get(), pointer.pressed_at.get());
+    if pointer.may_drag_selection.get()
+        && host::now() - pointer.press_time.get() < TEXT_DRAG_DELAY
+        && [x, y] != [from_x, from_y]
+    {
+        selecting::start_instead_of_dragging(cx, ui);
+    }
     if (pointer.may_drag_selection.get() || pointer.draggable().is_some())
         && (x - from_x).hypot(y - from_y) >= DRAG_DISTANCE
     {
@@ -253,8 +261,8 @@ fn click_event<'a>(
     )
 }
 
-pub(super) fn context_menu<'a>(cx: &mut Cx<'a>, ui: &'a Ui, target: &'a Element) {
-    let event = click_event(&cx.heap, ui, atom!("contextmenu"), 2, 0);
+pub(super) fn context_menu<'a>(cx: &mut Cx<'a>, ui: &'a Ui, target: &'a Element, button: i16) {
+    let event = click_event(&cx.heap, ui, atom!("contextmenu"), button, 0);
     if dispatch(cx, target, event) {
         let misspelled = spelling::select_misspelling(cx, ui);
         super::context_menu::show(cx, ui, ui.pointer().at.get(), &misspelled);
@@ -279,6 +287,7 @@ fn press<'a>(cx: &mut Cx<'a>, ui: &'a Ui, target: &'a Element) {
     }));
     pointer.set_press_target(Some(target));
     pointer.pressed_at.set(pointer.at.get());
+    pointer.press_time.set(host::now());
 }
 
 /// The default action of `mousedown`. What it gives can get the context menu.
@@ -397,7 +406,7 @@ fn mouse_down<'a>(cx: &mut Cx<'a>, ui: &'a Ui, button: i16, is_first: bool) -> O
         if IS_MAC {
             selecting::select_for_context_menu(cx, ui, target);
         }
-        context_menu(cx, ui, target);
+        context_menu(cx, ui, target, 2);
     }
     None
 }
@@ -509,12 +518,16 @@ fn mouse_up<'a>(cx: &mut Cx<'a>, ui: &'a Ui, button: i16) {
         );
     }
     if button == 2 && cfg!(windows) && target.is_connected() {
-        context_menu(cx, ui, target);
+        context_menu(cx, ui, target, 2);
     }
     if proceeds && matches!(button, 3 | 4) {
         crate::api::history::traverse(cx, ui.doc(), if button == 3 { -1 } else { 1 });
     }
-    pointer::refresh_hover(cx, ui);
+    if captured.is_some() {
+        pointer::refresh_hover(cx, ui)
+    } else {
+        pointer::refresh_hover_soon(cx, ui)
+    }
 }
 
 #[derive(Clone, Copy)]

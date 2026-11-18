@@ -4,7 +4,7 @@ use std::cell::{Cell, RefCell};
 use std::mem::MaybeUninit;
 use std::ops::Range;
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crate::abi::{self, Filter, GradientStop, Rect, Span, TextRun};
 use crate::abi_graphics::{
@@ -14,25 +14,30 @@ use crate::gfx::{self, Cap, Fill, Join, Pixmap, Point, Stroke, Transform, Walk a
 use crate::hash::{FastMap, FastSet};
 use crate::icc::Conversion;
 use crate::images::{self, Content};
+use crate::paint::batch::{self, Hides};
 use crate::paint::blend::Mode as BlendMode;
-use crate::paint::edges::{Edges, Shape};
+use crate::paint::blur;
+use crate::paint::edges::{Density, Edges, Shape};
 use crate::paint::gradient::{Geometry, Gradient, Spread};
 use crate::paint::raster::{
-    Clip, Coverage, IntRect, Layer, Paint, Path, Pixel, Rows, View, average_scale, demultiply_row,
-    map_point, map_rect, premultiply, scale, trace,
+    Clip, Coverage, IntRect, Layer, Paint, Path, Pixel, Rows, View, are_opaque, average_scale,
+    demultiply_row, map_point, map_rect, premultiply, scale, trace,
 };
 use crate::paint::scan::Scanner;
 use crate::paint::scene::{Frame, intersect, outset};
 use crate::paint::warp;
-use crate::paint::{batch, blur};
 use crate::paint::{cpu, filter};
+use crate::small_vec::SmallVec;
 use crate::text::{self, Line};
 use crate::{parallel, surface};
 
 mod gpu;
 mod outline;
+mod parts;
+mod sources;
 
 use outline::Outline;
+use sources::{Drawn, Glyphs, Images};
 
 #[cfg(target_os = "macos")]
 pub use gpu::picture;
@@ -83,6 +88,9 @@ struct Canvas {
     accelerated: Option<Box<gpu::Accelerated>>,
     known: gpu::Known,
     load: gpu::Load,
+    /// For the rest of the frame, which may hide it.
+    waiting: Option<Box<Batch>>,
+    experience: batch::Experience,
 }
 
 thread_local! {
@@ -134,7 +142,17 @@ pub fn with_pixels<R>(id: u32, f: impl FnOnce(&Pixmap, u32) -> R) -> Option<R> {
     Some(f(&canvas.layer.as_ref()?.pixmap, canvas.version))
 }
 
+/// They are copied if the canvas changes.
+pub fn share(id: u32) -> Option<Pixmap> {
+    let canvas = settled(id)?;
+    let mut canvas = canvas.try_borrow_mut().ok()?;
+    let pixmap = &mut canvas.layer.as_mut()?.pixmap;
+    pixmap.allow_sharing();
+    pixmap.shared()
+}
+
 thread_local! {
+    static LAST_TO_WAIT: Cell<u32> = const { Cell::new(0) };
     static PATTERNS: RefCell<FastMap<u32, Arc<Pixmap>>> = RefCell::default();
     /// The canvases and the tiles that are in Display P3.
     static WIDE: RefCell<FastSet<u32>> = RefCell::default();
@@ -155,7 +173,7 @@ pub fn take_changes(
     everything: bool,
     f: impl FnOnce([u32; 2], [u32; 4], &mut dyn Iterator<Item = &[Pixel]>),
 ) -> Option<()> {
-    let canvas = get(id)?;
+    let canvas = settled(id)?;
     let canvas = &mut *canvas.borrow_mut();
     let changed = std::mem::take(&mut canvas.changed);
     let Some(layer) = &canvas.layer else {
@@ -190,6 +208,20 @@ pub fn take_changes(
         &mut (area.top..area.bottom).map(|y| layer.row(y, area.left, area.right)),
     );
     Some(())
+}
+
+pub fn set_wide(id: u32, is_now: bool) {
+    if is_wide(id) != is_now {
+        images::note_wide();
+        WIDE.with_borrow_mut(|it| {
+            if is_now {
+                it.insert(id)
+            } else {
+                it.remove(&id)
+            }
+        });
+        get(id).inspect(|it| it.borrow_mut().state.is_wide = is_now);
+    }
 }
 
 /// What another process has drawn.
@@ -947,7 +979,8 @@ impl Placed {
         );
         let is_copy = frame_is_unscaled(&placement)
             && (placement.tx - dx).abs() + (placement.ty - dy).abs() < 1e-3
-            && part.to_rect() == from;
+            && part.to_rect() == from
+            && dx.abs().max(dy.abs()) < 1e9;
         Placed {
             from,
             part,
@@ -1084,10 +1117,19 @@ enum Figure {
     Stroke(Span, Pen),
     StrokeRect(Rect, Pen),
     TurnedRect(Rect),
+    FillPart(Span, Option<Point>),
+    /// With the offset of the dashes.
+    StrokePart(Span, Option<Point>, f32),
+    /// In `Batch::links`.
+    LastPart(Range<u32>, IntRect, Fill),
     /// In pixels, as are those below.
     Rect(Rect),
     AlignedRect(IntRect),
+    Disc([f32; 2], f32),
     Clear(IntRect),
+    Glyphs(Range<u32>, IntRect),
+    /// The ink has the opacity.
+    Image(Drawn),
 }
 
 enum Ink {
@@ -1103,84 +1145,260 @@ struct Job {
     setting: u32,
 }
 
+type PutOffClip = (Arc<gpu::Mask>, OnceLock<Clip>);
+
 /// What changes less often.
 #[derive(Clone)]
 struct Setting {
     matrix: Transform,
     inverse: Option<Transform>,
-    clip: Clip,
+    /// With what is missing of it, and all.
+    clip: (Clip, Option<PutOffClip>),
     dashes: Vec<f32>,
     alpha: f32,
     is_smooth: bool,
+    mode: BlendMode,
+    /// In `Batch::lists`.
+    list: u32,
 }
 
-/// What is drawn with source-over and without effects waits here for more of its kind.
+impl Setting {
+    #[inline]
+    fn clip(&self) -> &Clip {
+        match &self.clip {
+            (clip, None) => clip,
+            (clip, Some((mask, all))) => all.get_or_init(|| mask.get().within_rect(clip.rect)),
+        }
+    }
+}
+
+/// What has no effects waits here for more of its kind.
 #[derive(Default)]
 struct Batch {
-    jobs: Vec<Job>,
-    settings: Vec<Setting>,
-    styles: Vec<Style>,
+    shared: Shared,
+    lists: Vec<Rc<Owned>>,
     has_setting: bool,
+    /// The one that clips, because it is what is filled.
+    ignores_path: bool,
     /// That are only kept for the jobs, at most.
     bytes: usize,
 }
 
-impl Batch {
-    const MAX_BYTES: usize = 4 << 20;
+#[derive(Default)]
+struct Shared {
+    jobs: Vec<Job>,
+    settings: Vec<Setting>,
+    styles: Vec<Style>,
+    links: Path,
+    /// For the parts of strokes, by the first job that it is for.
+    pens: Vec<(usize, Pen)>,
+    glyphs: Glyphs,
+    images: Images,
+}
 
-    fn add(&mut self, state: &State, figure: Figure, style: &Style) {
+impl Batch {
+    const MAX_BYTES: usize = 8 << 20;
+
+    #[inline]
+    fn add(&mut self, state: &State, figure: Figure, style: &Style, list: &Rc<Owned>) {
+        let ink = match style {
+            Style::Color(color) => Ink::Solid(pixel_of(*color, state.alpha)),
+            style => {
+                self.shared.styles.push(style.clone());
+                Ink::Style(self.shared.styles.len() as u32 - 1)
+            }
+        };
+        self.add_in(state, figure, ink, list);
+    }
+
+    #[inline]
+    fn add_in(&mut self, state: &State, figure: Figure, ink: Ink, list: &Rc<Owned>) {
+        let Shared { jobs, settings, .. } = &mut self.shared;
         if !std::mem::replace(&mut self.has_setting, true) {
+            if !self.lists.last().is_some_and(|it| Rc::ptr_eq(it, list)) {
+                self.bytes += if self.lists.is_empty() {
+                    0
+                } else {
+                    list.bytes()
+                };
+                self.lists.push(list.clone());
+            }
             let State {
                 matrix,
                 alpha,
                 is_smooth,
+                mode,
                 ..
             } = *state;
-            let known = self.settings.last().and_then(|it| it.clip.mask.as_ref());
+            let missing = state
+                .put_off
+                .as_ref()
+                .filter(|_| !self.ignores_path)
+                .map(|it| it.mask(&state.clip));
+            self.bytes += missing
+                .as_ref()
+                .filter(|it| Arc::strong_count(it) == 2)
+                .map_or(0, |_| state.clip.rect.area() as usize);
+            let known = settings.last().and_then(|it| it.clip.0.mask.as_ref());
             let mask = state
                 .clip
                 .mask
                 .as_ref()
                 .filter(|it| !known.is_some_and(|known| Arc::ptr_eq(known, it)));
             self.bytes += size_of_val(&state.dashes[..]) + mask.map_or(0, |it| it.data.len());
-            self.settings.push(Setting {
+            settings.push(Setting {
                 matrix,
                 inverse: matrix.invert(),
-                clip: state.clip.clone(),
+                clip: (state.clip.clone(), missing.map(|it| (it, OnceLock::new()))),
                 dashes: state.dashes.clone(),
                 alpha,
                 is_smooth,
+                mode,
+                list: self.lists.len() as u32 - 1,
             });
         }
-        let ink = match style {
-            Style::Color(color) => Ink::Solid(pixel_of(*color, state.alpha)),
-            style => {
-                self.styles.push(style.clone());
-                Ink::Style(self.styles.len() as u32 - 1)
-            }
-        };
-        self.jobs.push(Job {
+        jobs.push(Job {
             figure,
             ink,
-            setting: self.settings.len() as u32 - 1,
+            setting: settings.len() as u32 - 1,
         });
     }
 
-    fn paint(&mut self, canvas: &mut Canvas, list: &Owned) {
-        if let Some(layer) = canvas.layer.as_mut().filter(|_| !self.jobs.is_empty()) {
-            batch::paint(layer, &(&*self, list));
-            canvas.changed = self
-                .settings
-                .iter()
-                .fold(canvas.changed, |all, it| all.union(it.clip.rect));
+    /// False unless it is better that way.
+    #[cold]
+    fn add_in_parts(
+        &mut self,
+        state: &State,
+        verbs: Span,
+        rule: Option<Fill>,
+        list: &Rc<Owned>,
+    ) -> bool {
+        let (pen, scale, period) = (
+            state.pen,
+            state.matrix.sx.abs(),
+            state.dashes.iter().sum::<f32>(),
+        );
+        let stroke = parts::Stroke {
+            width: pen.width * scale,
+            dashes: if period > 0. {
+                state.dashes.len() as f32 / 2. / period / scale
+            } else {
+                0.
+            },
+            may_be_cut: pen.cap == wire::Cap::Butt
+                || (pen.cap, pen.join) == (wire::Cap::Round, wire::Join::Round),
+        };
+        if rule.is_none()
+            && (state.matrix.has_skew() || scale != state.matrix.sy.abs() || scale == 0.)
+        {
+            return false;
+        }
+        let Some(parts) = parts::split(
+            &list.parts,
+            verbs,
+            state.clip.rect,
+            rule.is_none().then_some(stroke),
+        ) else {
+            return false;
+        };
+        self.shared
+            .pens
+            .extend(rule.is_none().then_some((self.shared.jobs.len(), pen)));
+        for part in parts.all {
+            let (from, along) = part.from.unzip();
+            let offset = (f64::from(pen.dash_offset) + along.unwrap_or(0.) / f64::from(scale))
+                .rem_euclid(period.max(f32::MIN_POSITIVE).into()) as f32;
+            self.add_in(
+                state,
+                if rule.is_some() {
+                    Figure::FillPart(part.verbs, from)
+                } else {
+                    Figure::StrokePart(part.verbs, from, offset)
+                },
+                Ink::Solid([0; 4]),
+                list,
+            );
+        }
+        let first = self.shared.links.len() as u32;
+        for link in parts.links {
+            self.shared
+                .links
+                .extend(link.iter().enumerate().map(|(index, it)| {
+                    if index == 0 {
+                        gfx::Command::MoveTo(*it)
+                    } else {
+                        gfx::Command::LineTo(*it)
+                    }
+                }));
+        }
+        let reach = if rule.is_some() {
+            0.
+        } else {
+            stroke.width
+                * if pen.join == wire::Join::Miter {
+                    pen.miter_limit.max(1.5)
+                } else {
+                    1.5
+                }
+                / 2.
+        };
+        let figure = Figure::LastPart(
+            first..self.shared.links.len() as u32,
+            around(outset(parts.bounds, reach + 10.)),
+            rule.unwrap_or(Fill::NonZero),
+        );
+        self.add(
+            state,
+            figure,
+            if rule.is_some() {
+                &state.fill
+            } else {
+                &state.stroke
+            },
+            list,
+        );
+        true
+    }
+
+    fn is_full(&self) -> bool {
+        let [all, largest] = self.shared.images.bytes;
+        self.bytes + self.shared.glyphs.bytes() > Self::MAX_BYTES
+            || all - largest > Self::MAX_BYTES * 3
+    }
+
+    fn paint(&mut self, canvas: &mut Canvas) {
+        if self.shared.jobs.is_empty() && self.shared.images.is_empty() {
+            return self.shared.glyphs.clear();
+        }
+        if let Some(layer) = &mut canvas.layer {
+            let parts: SmallVec<_, 4> = self.lists.iter().map(|it| &it.parts[..]).collect();
+            canvas.changed = canvas.changed.union(batch::paint(
+                layer,
+                &(&self.shared, &parts[..]),
+                &mut canvas.experience,
+            ));
         }
         self.clear();
     }
 
     fn clear(&mut self) {
-        self.jobs.clear();
-        self.settings.clear();
-        self.styles.clear();
+        let Shared {
+            jobs,
+            settings,
+            styles,
+            links,
+            pens,
+            glyphs,
+            images,
+        } = &mut self.shared;
+        jobs.clear();
+        links.clear();
+        pens.clear();
+        settings.clear();
+        styles.clear();
+        glyphs.clear();
+        images.clear();
+        self.lists.clear();
         (self.has_setting, self.bytes) = (false, 0);
     }
 }
@@ -1200,27 +1418,76 @@ fn stroke(pen: Pen, dashes: &[f32]) -> Stroke<'_> {
     }
 }
 
-impl batch::Jobs for (&Batch, &Owned) {
+impl batch::Jobs for (&Shared, &[&[u32]]) {
     fn len(&self) -> usize {
         self.0.jobs.len()
     }
 
     fn trace(&self, job: usize, area: IntRect, edges: &mut Edges, room: &mut batch::Room) -> Shape {
-        let (job, verbs, path) = (
-            &self.0.jobs[job],
-            |it: Span| self.1.outline(it),
-            &mut room.path,
-        );
-        let Setting {
+        let (index, job, path) = (job, &self.0.jobs[job], &mut room.path);
+        let setting @ Setting {
             matrix,
             inverse,
-            clip,
             dashes,
+            list,
             ..
         } = &self.0.settings[job.setting as usize];
+        let clip = setting.clip();
+        let verbs = |it: Span| Outline(&self.1[*list as usize][it.range()]);
         let (area, identity) = (area.intersect(clip.rect), Transform::identity());
         path.clear();
+        edges.density = if matches!(
+            job.figure,
+            Figure::FillPart(..) | Figure::StrokePart(..) | Figure::LastPart(..)
+        ) {
+            Density::Always
+        } else {
+            Density::IfItPays
+        };
         let (style, matrix) = match job.figure {
+            Figure::FillPart(span, from) => {
+                verbs(span).walk_from(from, |it| path.push(it));
+                return trace(
+                    edges,
+                    &mut room.stroke,
+                    path,
+                    Fill::NonZero.into(),
+                    &identity,
+                    area,
+                )
+                .into_part(None);
+            }
+            Figure::StrokePart(span, from, dash_offset) => {
+                let (pen, mut all) = (
+                    self.0.pens[self.0.pens.partition_point(|it| it.0 <= index) - 1].1,
+                    Path::new(),
+                );
+                verbs(span).walk_from(from, |it| all.push(it));
+                inverse
+                    .iter()
+                    .for_each(|it| prune(all.iter().map(|command| command.transform(it)), path));
+                return trace(
+                    edges,
+                    &mut room.stroke,
+                    path,
+                    stroke(Pen { dash_offset, ..pen }, dashes).into(),
+                    matrix,
+                    area,
+                )
+                .into_part(None);
+            }
+            Figure::LastPart(ref links, around, _) => {
+                let links = &self.0.links[links.start as usize..links.end as usize];
+                return trace(
+                    edges,
+                    &mut room.stroke,
+                    links,
+                    Fill::NonZero.into(),
+                    &identity,
+                    area.intersect(around),
+                )
+                .into_part(Some(area.intersect(around)));
+            }
             Figure::Fill(span, rule) => {
                 verbs(span).walk(|it| path.push(it));
                 (rule.into(), &identity)
@@ -1244,8 +1511,34 @@ impl batch::Jobs for (&Batch, &Owned) {
             Figure::Rect(rect) => {
                 return Shape::blank(IntRect::around(rect).outset(1).intersect(area));
             }
-            Figure::AlignedRect(rect) | Figure::Clear(rect) => {
-                return Shape::blank(rect.intersect(area));
+            Figure::Disc([x, y], radius) => {
+                return Shape::blank(
+                    IntRect::around(outset(
+                        Rect {
+                            x,
+                            y,
+                            width: 0.,
+                            height: 0.,
+                        },
+                        radius + 0.5,
+                    ))
+                    .intersect(area),
+                );
+            }
+            Figure::Image(_) if setting.mode.clears_backdrop() => return Shape::blank(area),
+            Figure::AlignedRect(rect)
+            | Figure::Clear(rect)
+            | Figure::Glyphs(_, rect)
+            | Figure::Image(Drawn::Copy(.., rect)) => return Shape::blank(rect.intersect(area)),
+            Figure::Image(Drawn::Picture(picture)) => {
+                let picture = &self.0.images.pictures[picture as usize];
+                if !picture.needs_edges(clip) {
+                    return Shape::blank(
+                        IntRect::around(map_rect(&picture.placement, picture.from)).intersect(area),
+                    );
+                }
+                path.extend(rect_commands(picture.from));
+                (Fill::NonZero.into(), &picture.placement)
             }
         };
         trace(edges, &mut room.stroke, path, style, matrix, area)
@@ -1259,15 +1552,58 @@ impl batch::Jobs for (&Batch, &Owned) {
         scanner: &mut Scanner,
         on: &mut View,
     ) {
+        if !shape.area.overlaps(on.rect) {
+            return;
+        }
         let job = &self.0.jobs[job];
         let setting = &self.0.settings[job.setting as usize];
         let mut draw = |paint: &Paint| match (&job.figure, paint) {
             (Figure::Rect(rect), Paint::Solid(color)) => {
-                on.fill_rect(*rect, *color, setting.clip.rect)
+                on.fill_rect(*rect, *color, setting.clip().rect)
             }
             (Figure::Clear(_), Paint::Solid(color)) => on.set(shape.area, *color),
-            (Figure::AlignedRect(_), _) => on.fill(shape.area, None, &setting.clip, paint),
-            _ => on.fill_shape(edges, shape, scanner, &setting.clip, paint),
+            (&Figure::Disc(center, radius), _) => on.fill_disc(
+                center,
+                radius,
+                shape.area,
+                setting.clip(),
+                (paint, setting.mode),
+                &mut Default::default(),
+            ),
+            (&Figure::Image(Drawn::Copy(source, corner, rect)), Paint::Solid([.., by]))
+                if setting.mode != BlendMode::SourceOver =>
+            {
+                shape.area.without(rect).for_each(|it| on.set(it, [0; 4]));
+                self.0.images.combine(
+                    source,
+                    corner,
+                    shape.area.intersect(rect),
+                    *by,
+                    setting.mode,
+                    on,
+                );
+            }
+            (Figure::AlignedRect(_), _) if setting.mode != BlendMode::SourceOver => {
+                on.combine_rect(shape.area, setting.clip(), paint, setting.mode)
+            }
+            _ if setting.mode != BlendMode::SourceOver => {
+                on.combine_shape(edges, shape, scanner, setting.clip(), paint, setting.mode)
+            }
+            (Figure::AlignedRect(_), _) => on.fill(shape.area, None, setting.clip(), paint),
+            (Figure::Glyphs(which, _), Paint::Solid(color)) => {
+                self.0
+                    .glyphs
+                    .paint(which.clone(), *color, setting.clip(), on)
+            }
+            (&Figure::Image(Drawn::Copy(source, corner, _)), Paint::Solid([.., by])) => self
+                .0
+                .images
+                .copy(source, corner, shape.area, *by, setting.clip(), on),
+            (&Figure::Image(Drawn::Picture(picture)), Paint::Solid([.., by])) => self
+                .0
+                .images
+                .paint(picture, *by, setting.clip(), (edges, shape, scanner), on),
+            _ => on.fill_shape(edges, shape, scanner, setting.clip(), paint),
         };
         match job.ink {
             Ink::Solid(color) => draw(&Paint::Solid(color)),
@@ -1280,14 +1616,129 @@ impl batch::Jobs for (&Batch, &Owned) {
         }
     }
 
+    fn paint_parts(
+        &self,
+        job: usize,
+        parts: &[(&Edges, &Shape)],
+        scanner: &mut Scanner,
+        on: &mut View,
+    ) {
+        let (job, Some((_, last))) = (&self.0.jobs[job], parts.last()) else {
+            return;
+        };
+        let (setting, is_even_odd) = (
+            &self.0.settings[job.setting as usize],
+            matches!(
+                job.figure,
+                Figure::Fill(_, Fill::EvenOdd) | Figure::LastPart(.., Fill::EvenOdd)
+            ),
+        );
+        let mut draw = |paint: &Paint| {
+            on.combine_samples(
+                parts,
+                is_even_odd,
+                last.area,
+                scanner,
+                setting.clip(),
+                (paint, setting.mode),
+            )
+        };
+        match job.ink {
+            Ink::Solid(color) => draw(&Paint::Solid(color)),
+            Ink::Style(style) => self.0.styles[style as usize].with_paint(
+                &setting.matrix,
+                setting.alpha,
+                setting.is_smooth,
+                draw,
+            ),
+        }
+    }
+
+    fn is_part(&self, job: usize) -> bool {
+        matches!(
+            self.0.jobs[job].figure,
+            Figure::FillPart(..) | Figure::StrokePart(..)
+        )
+    }
+
+    #[inline]
+    fn weight(&self, job: usize) -> usize {
+        let job = &self.0.jobs[job];
+        match job.figure {
+            Figure::Fill(span, _) | Figure::FillPart(span, _) => span.range().len() / 2,
+            Figure::Stroke(span, _) | Figure::StrokePart(span, ..) => {
+                span.range().len()
+                    * if self.0.settings[job.setting as usize].dashes.is_empty() {
+                        1
+                    } else {
+                        16
+                    }
+            }
+            _ => usize::from(self.0.settings[job.setting as usize].clip.1.is_some()) * 32,
+        }
+    }
+
     fn cost(&self, job: usize, shape: &Shape) -> u64 {
         let (job, area) = (&self.0.jobs[job], shape.area.area() as u64);
         let inside = match (&job.ink, &job.figure) {
             (Ink::Style(_), _) => area * 2,
-            (_, Figure::Stroke(..) | Figure::StrokeRect(..)) => 0,
+            (
+                _,
+                Figure::Stroke(..)
+                | Figure::StrokeRect(..)
+                | Figure::FillPart(..)
+                | Figure::StrokePart(..),
+            ) => 0,
+            (_, Figure::Image(Drawn::Picture(_))) => area,
+            _ if area >= parallel::MANY_PIXELS as u64 => area * 3 / 4,
+            (_, Figure::Glyphs(..) | Figure::Image(_) | Figure::Disc(..)) => area / 3,
             _ => area / 8,
         };
         100 + u64::from(shape.length) * 4 + inside
+    }
+
+    fn hides(&self, job: usize, shape: &Shape) -> Hides {
+        const WIDE: f32 = 6.;
+        const LARGE: i64 = 200;
+        let job = &self.0.jobs[job];
+        let setting = &self.0.settings[job.setting as usize];
+        let is_opaque = match job.ink {
+            Ink::Solid(color) => color[3] == 255,
+            Ink::Style(style) => {
+                setting.alpha == 1.
+                    && matches!(&self.0.styles[style as usize], Style::Gradient(it) if it.is_opaque())
+                    && setting.inverse.is_some()
+            }
+        };
+        match job.figure {
+            Figure::Clear(rect) => Hides::Rect(rect),
+            _ if !is_opaque
+                || setting.clip().mask.is_some()
+                || setting.mode != BlendMode::SourceOver =>
+            {
+                Hides::Nothing
+            }
+            Figure::Disc(center, radius) => Hides::Disc(center, radius - 0.5),
+            Figure::AlignedRect(rect) => Hides::Rect(rect),
+            Figure::Rect(Rect {
+                x,
+                y,
+                width,
+                height,
+            }) => Hides::Rect(IntRect::new(
+                x.ceil() as i32,
+                y.ceil() as i32,
+                (x + width).floor() as i32,
+                (y + height).floor() as i32,
+            )),
+            Figure::Fill(..) | Figure::TurnedRect(_) if shape.area.area() >= LARGE => Hides::Inside,
+            Figure::Stroke(_, pen) | Figure::StrokeRect(_, pen)
+                if pen.width * average_scale(&setting.matrix) >= WIDE =>
+            {
+                Hides::Inside
+            }
+            _ => Hides::Nothing,
+        }
     }
 }
 
@@ -1414,7 +1865,7 @@ impl Owned {
             (0, None::<Rc<RefCell<Canvas>>>, false, BATCH.take());
         let pause = |canvas: &RefCell<Canvas>, batch: &mut Batch, next: usize| {
             let canvas = &mut *canvas.borrow_mut();
-            batch.paint(canvas, &self);
+            batch.paint(canvas);
             canvas.pause(&self, next);
         };
         let mut next = 0;
@@ -1460,6 +1911,14 @@ impl Owned {
                             self.is_partial && crate::host::thread::has_jobs(),
                         )
                     });
+                    if let Some(waiting) = current
+                        .as_ref()
+                        .and_then(|it| it.borrow_mut().waiting.take())
+                    {
+                        batch = *waiting;
+                        batch.has_setting = false;
+                        batch.shared.images.forget();
+                    }
                 }
                 command => {
                     let Some(canvas) = &current else { continue };
@@ -1473,9 +1932,21 @@ impl Owned {
                 }
             }
         }
-        current
-            .into_iter()
-            .for_each(|it| pause(&it, &mut batch, self.commands.len()));
+        if let Some(canvas) = current {
+            if self.is_partial
+                && canvas.borrow().experience.much_was_hidden
+                && !batch.shared.jobs.is_empty()
+                && batch.shared.images.bytes[0] <= Batch::MAX_BYTES
+            {
+                get(LAST_TO_WAIT.replace(selected))
+                    .inspect(|it| it.borrow_mut().paint_what_waits());
+                canvas.borrow_mut().waiting = Some(Box::new(std::mem::take(&mut batch)));
+            }
+            pause(&canvas, &mut batch, self.commands.len());
+        }
+        if !self.is_partial {
+            batch.shared.images.end_frame();
+        }
         BATCH.set(batch);
         if !self.is_partial {
             let changed = CHANGED.take();
@@ -1488,18 +1959,30 @@ impl Owned {
     }
 }
 
+fn clipped(clip: &Clip, path: &Path, rule: Fill) -> Clip {
+    let bounds = path_bounds(path);
+    let area = around(bounds).intersect(clip.rect);
+    if IntRect::around(bounds).to_rect() == bounds && is_upright_rect(path) {
+        return clip.within_rect(area);
+    }
+    let coverage = Coverage::of_path(path, rule, &Transform::identity(), area);
+    match coverage.data.iter().all(|value| *value == 255) {
+        true => clip.within_rect(coverage.rect),
+        false => clip.within(coverage),
+    }
+}
+
 impl State {
-    fn clip_to(&mut self, path: &Path, rule: Fill) {
-        let bounds = path_bounds(path);
-        let area = around(bounds).intersect(self.clip.rect);
-        if IntRect::around(bounds).to_rect() == bounds && is_upright_rect(path) {
-            return self.clip = self.clip.within_rect(area);
-        }
-        let coverage = Coverage::of_path(path, rule, &Transform::identity(), area);
-        self.clip = match coverage.data.iter().all(|value| *value == 255) {
-            true => self.clip.within_rect(coverage.rect),
-            false => self.clip.within(coverage),
-        };
+    fn clips_to_rect(&self) -> bool {
+        self.clip.mask.is_none() && self.put_off.is_none()
+    }
+
+    /// Whether there was anything.
+    fn clip_to_what_was_put_off(&mut self) -> bool {
+        self.put_off
+            .take()
+            .map(|it| self.clip = it.mask(&self.clip).get().within_rect(self.clip.rect))
+            .is_some()
     }
 }
 
@@ -1517,6 +2000,16 @@ impl Canvas {
             accelerated: None,
             known: Default::default(),
             load: Default::default(),
+            waiting: None,
+            experience: Default::default(),
+        }
+    }
+
+    fn paint_what_waits(&mut self) {
+        if let Some(mut batch) = self.waiting.take() {
+            batch.paint(self);
+            batch.shared.images.end_frame();
+            BATCH.set(*batch);
         }
     }
 
@@ -1533,6 +2026,7 @@ impl Canvas {
     }
 
     fn replace(&mut self, pixels: Layer) {
+        self.paint_what_waits();
         self.changed = self.changed.union(pixels.rect);
         match &mut self.layer {
             Some(layer) if layer.rect == pixels.rect => *layer = pixels,
@@ -1594,15 +2088,13 @@ impl Canvas {
             } => {
                 self.clips
                     .extend(saves.then(|| (state.clip.clone(), state.put_off.clone())));
-                if self.accelerated.is_none()
-                    || !state.put_off_clip(
-                        list,
-                        verbs,
-                        fill_rule(is_even_odd),
-                        &mut self.known.masked,
-                    )
-                {
-                    state.clip_to(&list.path(verbs), fill_rule(is_even_odd));
+                if !state.put_off_clip(
+                    list,
+                    verbs,
+                    fill_rule(is_even_odd),
+                    self.accelerated.as_ref().map(|_| &mut self.known.masked),
+                ) {
+                    state.clip = clipped(&state.clip, &list.path(verbs), fill_rule(is_even_odd));
                 }
             }
             Command::RestoreClip => self
@@ -1622,20 +2114,19 @@ impl Canvas {
                 {
                     return true;
                 }
-                while let Some(path) = self.state.put_off.take() {
-                    self.state.clip_to(&path.outline().path(), path.rule);
-                    (self.state.put_off, batch.has_setting) = (path.before.clone(), false);
-                    self.known.forget(&Command::RestoreClip);
-                }
-                if batch.bytes > Batch::MAX_BYTES {
-                    batch.paint(self, list);
+                if batch.is_full() {
+                    batch.paint(self);
                 }
                 if let Command::Reset(size) = command {
                     batch.clear();
                     self.reset(size);
                     self.select(id, place.start, false);
-                } else if self.accelerated.is_some() || !self.put_off(command, batch) {
-                    batch.paint(self, list);
+                } else if self.accelerated.is_some() || !self.put_off(id, command, batch, list) {
+                    if self.state.clip_to_what_was_put_off() {
+                        batch.has_setting = false;
+                        self.known.forget(&Command::RestoreClip);
+                    }
+                    batch.paint(self);
                     self.draw(id, command, list);
                 }
                 return true;
@@ -1645,18 +2136,23 @@ impl Canvas {
     }
 
     /// False if it has to be drawn now.
-    fn put_off(&self, command: Command, batch: &mut Batch) -> bool {
+    #[inline]
+    fn put_off(&self, id: u32, command: Command, batch: &mut Batch, list: &Rc<Owned>) -> bool {
         let (Some(target), state) = (&self.layer, &self.state) else {
             return false;
         };
-        let is_shared = target.pixmap.is_shared();
+        let (is_shared, is_over) = (
+            target.pixmap.is_shared(),
+            state.mode == BlendMode::SourceOver,
+        );
+        let is_plain = is_over && state.clips_to_rect() && matches!(state.fill, Style::Color(_));
         let (figure, style) = match command {
             Command::ClearRect(rect) => {
                 let device = map_rect(&state.matrix, upright(rect));
                 let pixels = IntRect::nearest(device);
                 if state.matrix.has_skew()
                     || pixels.to_rect() != device
-                    || state.clip.mask.is_some()
+                    || !state.clips_to_rect()
                     || is_shared
                 {
                     return false;
@@ -1664,34 +2160,170 @@ impl Canvas {
                 if pixels.intersect(state.clip.rect) == target.rect {
                     batch.clear();
                 }
-                batch.add(state, Figure::Clear(pixels), &Style::Color(0));
-                batch.jobs.last_mut().into_iter().for_each(|it| {
-                    it.ink = Ink::Solid([0, 0, 0, if self.is_opaque { 255 } else { 0 }])
-                });
+                batch.add_in(
+                    state,
+                    Figure::Clear(pixels),
+                    Ink::Solid([0, 0, 0, if self.is_opaque { 255 } else { 0 }]),
+                    list,
+                );
                 return true;
             }
-            _ if state.mode != BlendMode::SourceOver || state.has_effects() => return false,
+            _ if state.has_effects() || self.is_opaque && state.mode.may_open() => return false,
+            Command::Image {
+                image,
+                size,
+                from,
+                to,
+            } if image != id
+                && (is_over
+                    || !matches!(state.mode, BlendMode::Source | BlendMode::Clear)
+                        && state.clips_to_rect()) =>
+            {
+                let drawn = batch.shared.images.add(
+                    image,
+                    size,
+                    [upright(from), upright(to)],
+                    &state.matrix,
+                    [state.is_smooth, state.is_wide],
+                    &mut batch.bytes,
+                );
+                let Some(drawn) = drawn.filter(|it| is_over || matches!(it, Drawn::Copy(..)))
+                else {
+                    return false;
+                };
+                batch.add_in(
+                    state,
+                    Figure::Image(drawn),
+                    Ink::Solid([0, 0, 0, (state.alpha.min(1.) * 255. + 0.5) as u8]),
+                    list,
+                );
+                return true;
+            }
+            _ if state.mode.clears_backdrop() => return false,
+            Command::Text { .. } if !is_over => return false,
+            Command::Fill { verbs, is_even_odd }
+                if verbs.range().len() > parts::LONG
+                    && batch.add_in_parts(state, verbs, Some(fill_rule(is_even_odd)), list) =>
+            {
+                return true;
+            }
+            Command::Stroke { verbs }
+                if verbs.range().len()
+                    > parts::LONG / if state.dashes.is_empty() { 1 } else { 32 }
+                    && batch.add_in_parts(state, verbs, None, list) =>
+            {
+                return true;
+            }
             Command::Fill { verbs, is_even_odd } => {
-                (Figure::Fill(verbs, fill_rule(is_even_odd)), &state.fill)
+                const FEW_WORDS: usize = 16;
+                const RADII: Range<f32> = 1. ..40.;
+                let mut room = [wire::Verb::Close; 5];
+                let figure = match if verbs.range().len() <= FEW_WORDS {
+                    list.outline(verbs).verbs(&mut room)
+                } else {
+                    &[]
+                } {
+                    &[
+                        wire::Verb::Arc {
+                            center,
+                            radius,
+                            sweep,
+                            ..
+                        },
+                    ]
+                    | &[
+                        wire::Verb::Arc {
+                            center,
+                            radius,
+                            sweep,
+                            ..
+                        },
+                        wire::Verb::Close,
+                    ] if sweep.abs() >= std::f32::consts::TAU && RADII.contains(&radius) => {
+                        Some(Figure::Disc(center, (radius * radius - 1. / 12.).sqrt()))
+                    }
+                    verbs if is_plain => gpu::parallelogram(verbs)
+                        .filter(|[a, b, c]| a.y == b.y && b.x == c.x || a.x == b.x && b.y == c.y)
+                        .map(|[a, _, c]| {
+                            Figure::Rect(upright(Rect {
+                                x: a.x,
+                                y: a.y,
+                                width: c.x - a.x,
+                                height: c.y - a.y,
+                            }))
+                        }),
+                    _ => None,
+                };
+                (
+                    figure.unwrap_or(Figure::Fill(verbs, fill_rule(is_even_odd))),
+                    &state.fill,
+                )
+            }
+            Command::Text {
+                text,
+                style,
+                at,
+                alignment,
+                max_width,
+                strokes: false,
+            } => {
+                let Style::Color(color) = state.fill else {
+                    return false;
+                };
+                let (line, matrix) = place_text(
+                    &list.text[text.range()],
+                    &style,
+                    &state.matrix,
+                    at,
+                    alignment,
+                    max_width,
+                );
+                let color = with_alpha(color, state.alpha);
+                let Some((which, bounds)) =
+                    batch
+                        .shared
+                        .glyphs
+                        .add(&line, &matrix, color, state.clip.rect)
+                else {
+                    return false;
+                };
+                batch.add_in(
+                    state,
+                    Figure::Glyphs(which, bounds),
+                    Ink::Solid(premultiply(color)),
+                    list,
+                );
+                return true;
             }
             Command::Stroke { verbs } => (Figure::Stroke(verbs, state.pen), &state.stroke),
             Command::StrokeRect(rect) => {
                 (Figure::StrokeRect(upright(rect), state.pen), &state.stroke)
             }
             Command::FillRect(_) if is_shared => return false,
+            Command::FillRect(rect)
+                if is_over
+                    && let Some(path) =
+                        state.clip_within(gpu::corners(upright(rect), &state.matrix))
+                    && let Some(verbs) = path.verbs_in(list) =>
+            {
+                (batch.has_setting, batch.ignores_path) = (false, true);
+                batch.add(state, Figure::Fill(verbs, path.rule), &state.fill, list);
+                (batch.has_setting, batch.ignores_path) = (false, false);
+                return true;
+            }
             Command::FillRect(rect) => {
                 let device = map_rect(&state.matrix, upright(rect));
-                let figure = match (&state.fill, IntRect::nearest(device)) {
+                let figure = match IntRect::nearest(device) {
                     _ if state.matrix.has_skew() => Figure::TurnedRect(upright(rect)),
-                    (Style::Color(_), _) if state.clip.mask.is_none() => Figure::Rect(device),
-                    (_, pixels) if pixels.to_rect() == device => Figure::AlignedRect(pixels),
+                    _ if is_plain => Figure::Rect(device),
+                    pixels if pixels.to_rect() == device => Figure::AlignedRect(pixels),
                     _ => Figure::TurnedRect(upright(rect)),
                 };
                 (figure, &state.fill)
             }
             _ => return false,
         };
-        batch.add(state, figure, style);
+        batch.add(state, figure, style, list);
         true
     }
 
@@ -1846,12 +2478,54 @@ fn keep_snapshot(mut wanted: Snapshot) {
         WIDE.with_borrow_mut(|it| it.extend(wanted.is_wide.then_some(wanted.id)));
     } else {
         let widen = images::widen(wanted.source)
+            .filter(|_| !wanted.are_straight[0])
             .and_then(|it| it.then(move |whole| snapshot(Content::Pixels(whole), &wanted)));
         images::insert_as(wanted.id, pixmap, wanted.is_wide, widen);
     }
 }
 
+/// All of an image or a canvas.
+pub fn copy(source: u32, to: [u32; 2]) -> Option<Pixmap> {
+    let (size, is_wide) = (to.map(|it| it as f32), images::is_wide(source));
+    let part = Rect {
+        x: 0.,
+        y: 0.,
+        width: size[0],
+        height: size[1],
+    };
+    let wanted = Snapshot {
+        id: 0,
+        source,
+        size,
+        part,
+        to,
+        flips: false,
+        is_smooth: true,
+        is_sharpened: false,
+        are_straight: [false; 2],
+        is_tile: false,
+        is_wide,
+    };
+    allow_sharing(source);
+    images::with_first_frame(source, |content, _| snapshot(content, &wanted))?
+}
+
 fn snapshot(content: Content, wanted: &Snapshot) -> Option<Pixmap> {
+    let (mut copy, [from, to]) = (draw_snapshot(content, wanted)?, wanted.are_straight);
+    if from != to && copy.data().as_chunks::<4>().0.iter().any(|it| it[3] != 255) {
+        let pixels = copy.data_mut().as_chunks_mut().0;
+        if to {
+            demultiply_row(pixels)
+        } else {
+            pixels
+                .iter_mut()
+                .for_each(|it| *it = premultiply(u32::from_be_bytes(*it)))
+        }
+    }
+    Some(copy)
+}
+
+fn draw_snapshot(content: Content, wanted: &Snapshot) -> Option<Pixmap> {
     const MAX_SHARPENED_WIDTH: i32 = 1 << 16;
     if let (Content::Pixels(it), false) = (content, wanted.flips)
         && wanted.part
@@ -1871,7 +2545,7 @@ fn snapshot(content: Content, wanted: &Snapshot) -> Option<Pixmap> {
     if let (Content::Pixels(it), false, true) = (
         content,
         wanted.flips,
-        wanted.is_sharpened && width <= MAX_SHARPENED_WIDTH,
+        wanted.is_sharpened && !wanted.are_straight[0] && width <= MAX_SHARPENED_WIDTH,
     ) {
         let (all, part) = (
             IntRect::new(0, 0, it.width() as i32, it.height() as i32),
@@ -1895,13 +2569,31 @@ fn snapshot(content: Content, wanted: &Snapshot) -> Option<Pixmap> {
     if wanted.flips {
         state.matrix = Transform::from_row(1., 0., 0., -1., 0., to.height);
     }
-    state.draw_image(
-        Onto::Layer(&mut target),
-        content,
-        wanted.size,
-        wanted.part,
-        to,
-    );
+    let draw = |content, target: &mut Layer| {
+        state.draw_image(Onto::Layer(target), content, wanted.size, wanted.part, to)
+    };
+    draw(content, &mut target);
+    if let (Content::Pixels(it), [true, _]) = (content, wanted.are_straight) {
+        let (mut colors, mut drawn) = (
+            Pixmap::from_vec(it.data().to_vec(), it.width(), it.height())?,
+            Layer::new(target.rect)?,
+        );
+        colors
+            .data_mut()
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .for_each(|it| it[3] = 255);
+        draw(Content::Pixels(&colors), &mut drawn);
+        let pairs = target
+            .pixmap
+            .data_mut()
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .zip(drawn.pixels());
+        pairs.for_each(|(to, from)| to[..3].copy_from_slice(&from[..3]));
+    }
     Some(target.pixmap)
 }
 
@@ -1929,10 +2621,26 @@ pub fn lend(id: u32, area: Area) -> Option<Loan> {
     })
 }
 
+/// If that takes no waiting for the GPU.
+pub fn lend_unasked(id: u32, area: Area) -> Option<Loan> {
+    get(id).filter(|it| it.borrow().accelerated.is_none())?;
+    lend(id, area)
+}
+
 impl Loan {
     pub fn has(&self, area: Area) -> bool {
         let wanted = self.layer.rect.intersect(pixels(area));
         wanted.is_empty() || self.known.contains(wanted)
+    }
+
+    pub fn area(&self) -> Area {
+        let IntRect {
+            left,
+            top,
+            right,
+            bottom,
+        } = self.known;
+        [left, top, right - left, bottom - top]
     }
 
     pub fn is_all_in(&self, area: Area) -> bool {
@@ -1966,7 +2674,7 @@ impl Loan {
             |first, band| {
                 let copy = |to: &mut [MaybeUninit<Pixel>], from| {
                     let to = to.write_copy_of_slice(from);
-                    if !is_on_black {
+                    if !(is_on_black || self.is_opaque || are_opaque(from)) {
                         demultiply_row(to);
                     }
                 };
@@ -2252,6 +2960,262 @@ mod tests {
         );
         take_changes(1, false, |_, _, _| {});
         step(1, 0);
-        take_changes(1, false, |_, area, _| assert_eq!(area, [0, 0, 80, 60]));
+        take_changes(1, false, |_, [x, y, width, height], _| {
+            assert_eq!([x, y, width, height], [0, 0, 39, 60])
+        });
+    }
+
+    #[test]
+    fn what_is_held_for_a_batch_is_limited() {
+        let (mut batch, all) = (
+            Batch::default(),
+            Rect {
+                x: 0.,
+                y: 0.,
+                width: 2048.,
+                height: 2048.,
+            },
+        );
+        let is_full = [0, 0, 1, 2].map(|it| {
+            images::insert_as(7000 + it, Pixmap::new(2048, 2048).unwrap(), false, None);
+            batch.shared.images.add(
+                7000 + it,
+                [2048.; 2],
+                [all; 2],
+                &Transform::identity(),
+                [true, false],
+                &mut batch.bytes,
+            );
+            batch.is_full()
+        });
+        (7000..7003).for_each(images::release);
+        assert_eq!(is_full, [false, false, false, true]);
+    }
+
+    #[test]
+    fn only_one_batch_waits() {
+        let create = |id| Command::Create {
+            id,
+            size: [if id == 3 { 4096 } else { 8 }, 1024],
+            is_opaque: false,
+            is_read_often: true,
+            is_wide: false,
+        };
+        run(vec![create(1), create(2), create(3)], &[]);
+        let (area, size) = (
+            Rect {
+                x: 0.,
+                y: 0.,
+                width: 8.,
+                height: 8.,
+            },
+            [4096., 1024.],
+        );
+        let waiting = [
+            (1, Command::FillRect(area)),
+            (2, Command::FillRect(area)),
+            (
+                1,
+                Command::Image {
+                    image: 3,
+                    size,
+                    from: area,
+                    to: area,
+                },
+            ),
+        ]
+        .map(|(id, command)| {
+            let mut commands = Vec::new();
+            [Command::Select(id), command]
+                .iter()
+                .for_each(|it| it.write(&mut commands));
+            get(id).unwrap().borrow_mut().experience.much_was_hidden = true;
+            Rc::new(Owned {
+                commands,
+                parts: Vec::new(),
+                stops: Vec::new(),
+                filters: Vec::new(),
+                dashes: Vec::new(),
+                text: Vec::new(),
+                is_partial: true,
+            })
+            .run();
+            [1, 2].map(|it| get(it).unwrap().borrow().waiting.is_some())
+        });
+        assert_eq!(waiting, [[true, false], [false, true], [false, true]]);
+        assert_eq!(
+            [1, 2].map(|it| with_pixels(it, |it, _| it.data()[3])),
+            [Some(255); 2]
+        );
+    }
+
+    #[test]
+    fn paths_that_are_too_long_are_left_out() {
+        let split = |count: u32, height: i32| {
+            let mut words = Vec::new();
+            (0..count)
+                .map(|it| [(it % 64) as f32, (it % 2) as f32 * height as f32])
+                .enumerate()
+                .for_each(|(at, it)| {
+                    if at == 0 {
+                        Verb::Move(it)
+                    } else {
+                        Verb::Line(it)
+                    }
+                    .write(&mut words)
+                });
+            parts::split(
+                &words,
+                Span {
+                    start: 0,
+                    end: words.len() as u32,
+                },
+                IntRect::new(0, 0, 64, height),
+                None,
+            )
+            .is_some()
+        };
+        assert_eq!([split(8000, 16384), split(9000, 16384)], [true, false]);
+        let verbs: Vec<_> = (0..400_000)
+            .map(|it| [(it * 7 % 64) as f32, (it % 2 * 9) as f32])
+            .enumerate()
+            .map(|(at, it)| {
+                if at == 0 {
+                    Verb::Move(it)
+                } else {
+                    Verb::Line(it)
+                }
+            })
+            .collect();
+        let (all, after) = (
+            Span {
+                start: 0,
+                end: verbs.len() as u32 * 3,
+            },
+            Rect {
+                x: 0.,
+                y: 9.,
+                width: 1.,
+                height: 1.,
+            },
+        );
+        run(
+            vec![
+                Command::Create {
+                    id: 1,
+                    size: [64, 10],
+                    is_opaque: false,
+                    is_read_often: true,
+                    is_wide: false,
+                },
+                Command::Select(1),
+                Command::Fill {
+                    verbs: all,
+                    is_even_odd: false,
+                },
+                Command::FillRect(after),
+            ],
+            &verbs,
+        );
+        assert_eq!(
+            with_pixels(1, |it, _| it.data().iter().filter(|it| **it != 0).count()),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn parts_add_up() {
+        let at = |it: u32| {
+            [
+                (it.wrapping_mul(0x9E37_79B9) >> 16 & 255) as f32 * 1.3 - 20.,
+                (it.wrapping_mul(0x85EB_CA6B) >> 16 & 255) as f32 - 20.,
+            ]
+        };
+        let contour = |first: u32, count: u32| {
+            std::iter::once(Verb::Move(at(first))).chain((first + 1..first + count).map(
+                move |it| {
+                    if it % 5 == 0 {
+                        Verb::Quad(at(it + 7), at(it))
+                    } else {
+                        Verb::Line(at(it))
+                    }
+                },
+            ))
+        };
+        let verbs: Vec<_> = contour(0, 900)
+            .chain([Verb::Close])
+            .chain(contour(1000, 30))
+            .chain(contour(2000, 900))
+            .collect();
+        let mut words = Vec::new();
+        verbs.iter().for_each(|it| it.write(&mut words));
+        let (all, area) = (
+            Span {
+                start: 0,
+                end: words.len() as u32,
+            },
+            IntRect::new(0, 0, 300, 200),
+        );
+        assert_eq!(
+            parts::split(&words, all, area, None).map(|it| (it.all.len(), it.links.len())),
+            Some((9, 3))
+        );
+        for is_even_odd in [false, true] {
+            run(
+                vec![
+                    Command::Create {
+                        id: 1,
+                        size: [300, 200],
+                        is_opaque: false,
+                        is_read_often: true,
+                        is_wide: false,
+                    },
+                    Command::Select(1),
+                    Command::Fill {
+                        verbs: all,
+                        is_even_odd,
+                    },
+                ],
+                &verbs,
+            );
+            let (mut edges, mut whole) = (Edges::default(), Layer::new(area).unwrap());
+            edges.density = Density::Always;
+            let mut shape = trace(
+                &mut edges,
+                &mut Default::default(),
+                &Outline(&words).path(),
+                Fill::NonZero.into(),
+                &Transform::identity(),
+                area,
+            );
+            edges.index(&mut shape);
+            for mut band in whole.view().split(32) {
+                band.combine_samples(
+                    &[(&edges, &shape)],
+                    is_even_odd,
+                    area,
+                    &mut Default::default(),
+                    &Clip::new(area),
+                    (&Paint::Solid([0, 0, 0, 255]), BlendMode::SourceOver),
+                );
+            }
+            let exact = Coverage::of_path(
+                &Outline(&words).path(),
+                fill_rule(is_even_odd),
+                &Transform::identity(),
+                area,
+            );
+            let off = whole
+                .pixels()
+                .iter()
+                .zip(&exact.data)
+                .map(|(a, b)| u32::from(a[3].abs_diff(*b)))
+                .sum::<u32>()
+                / exact.data.len() as u32;
+            assert!(
+                with_pixels(1, |it, _| it.data() == whole.pixmap.data()).unwrap() && off < 24,
+                "{off}"
+            );
+        }
     }
 }

@@ -9,7 +9,7 @@ use crate::background::Frame;
 use crate::boxes::{BoxId, Kind};
 use crate::editing::Mark;
 use crate::inline::{COMBINED, Inline, ItemKind, OPENING, UPRIGHT};
-use crate::lines::{Fragment, FragmentKind, Line, em_box};
+use crate::lines::{Fragment, FragmentKind, Line, em_box_at, em_box_of, scaled};
 use crate::order::Order as _;
 use crate::paint::{Painter, Space, alpha, resolve_padding, rounded, square};
 use crate::platform::Shaped;
@@ -76,6 +76,7 @@ impl<'a> Painter<'a> {
             if it.style.is_out_of_flow()
                 || it.style.is_floating()
                 || boxes[it.parent].kind == Kind::Lines
+                || boxes[it.parent].outside_marker == id
             {
                 break;
             }
@@ -152,6 +153,11 @@ impl<'a> Painter<'a> {
             }) {
                 continue;
             }
+            if self.is_elsewhere(id, |it| {
+                it.lines.get(inline.lines.lines.element_offset(line)?)
+            }) {
+                continue;
+            }
             let truncation = line.clamp.as_ref().or(line.overflow.as_ref());
             let first_line = inline
                 .first_line
@@ -170,8 +176,8 @@ impl<'a> Painter<'a> {
                     .filter(|_| layer == 0);
                 let metrics = &style.metrics;
                 if let Some(all) = all.map(|it| Rect {
-                    y: line.baseline - metrics.ascent,
-                    height: metrics.ascent + metrics.descent,
+                    y: line.baseline - metrics.ascent * line.scale,
+                    height: (metrics.ascent + metrics.descent) * line.scale,
                     ..it
                 }) {
                     let shape =
@@ -248,7 +254,14 @@ impl<'a> Painter<'a> {
                     FragmentKind::Hyphen => {
                         let origin = [rect.x, space.origin[1] + fragment.baseline];
                         self.shaped(
-                            &document.hyphen(&item.style).0,
+                            &document
+                                .hyphen(
+                                    document
+                                        .style_on(line, &item.style)
+                                        .as_ref()
+                                        .unwrap_or(&item.style),
+                                )
+                                .0,
                             origin,
                             style.ink.text_fill_color.resolve(style.color()),
                             space,
@@ -654,6 +667,8 @@ impl<'a> Painter<'a> {
         color: Option<u32>,
         space: &Space,
     ) {
+        let scaled = self.document.style_on(line, style);
+        let style = scaled.as_ref().unwrap_or(style);
         let Some((mark, is_under)) = self.document.emphasis_mark(style) else {
             return;
         };
@@ -668,9 +683,12 @@ impl<'a> Painter<'a> {
             mark.clusters().iter().map(|it| it.advance).sum::<f32>(),
         );
         let metrics = self.document.fonts.metrics(style.font_id, face.size);
+        let Some((first, ..)) = inline.positions(fragment).next() else {
+            return;
+        };
         let ([up, down], [own_up, own_down]) = (
-            em_box(&style.metrics, style.font.size.0),
-            em_box(&metrics, face.size),
+            em_box_at(inline, first, style, line.scale),
+            em_box_of(face, &metrics, false),
         );
         let below = if is_under {
             down + own_up
@@ -781,25 +799,48 @@ impl<'a> Painter<'a> {
         );
         let shaped =
             |at: u32| &paragraph.shaped.clusters()[(at - paragraph.first_cluster) as usize];
-        let width = |at: u32| shaped(at).advance - style.letter_spacing();
-        let (first, size) = (&inline.clusters[clusters.start as usize], style.font.size.0);
+        let width = |at: u32| (shaped(at).advance - style.letter_spacing()) * line.scale;
+        let (first, size) = (
+            &inline.clusters[clusters.start as usize],
+            style.font.size.0 * line.scale,
+        );
         let (face, is_combined) = (
-            paragraph.shaped.faces[usize::from(first.face)],
+            scaled(&paragraph.shaped.faces[usize::from(first.face)], line.scale),
             first.flags & COMBINED != 0,
         );
-        let total: f32 = clusters.clone().map(width).sum();
+        let continues = |at: &u32| {
+            is_combined
+                && inline
+                    .clusters
+                    .get(*at as usize)
+                    .is_some_and(|it| it.flags & COMBINED != 0 && it.advance == 0.0)
+        };
+        let start = clusters.start
+            - (paragraph.first_cluster + 1..=clusters.start)
+                .rev()
+                .take_while(continues)
+                .count() as u32;
+        let end = clusters.end
+            + (clusters.end..paragraph.first_cluster + paragraph.shaped.count() as u32)
+                .take_while(continues)
+                .count() as u32;
+        let (before, total): (f32, f32) = (
+            (start..clusters.start).map(width).sum(),
+            (start..end).map(width).sum(),
+        );
         let scale = if is_combined {
             (size * 1.1 / total).min(1.0)
         } else {
             1.0
         };
-        let center = origin[1] + fragment.y + style.metrics.ascent;
+        let center = origin[1] + fragment.y + style.metrics.ascent * line.scale;
         let at = [
-            origin[0] - space.origin[0] + fragment.x,
+            origin[0] - space.origin[0] + fragment.x
+                - if start < clusters.start { size } else { 0.0 },
             center - space.origin[1],
         ];
         let space = self.transformed(&[0.0, -scale, 1.0, 0.0, at[0], at[1]], space);
-        let (start, mut x) = (self.out.glyphs.len() as u32, -total / 2.0);
+        let (start, mut x) = (self.out.glyphs.len() as u32, before - total / 2.0);
         for (at, left, _) in inline.positions(fragment) {
             let [dx, dy] = match is_combined {
                 true => [x, (size + face.ascent - face.descent) / 2.0],
@@ -809,8 +850,8 @@ impl<'a> Painter<'a> {
                 .iter()
                 .filter(|_| only.contains(&at));
             self.out.glyphs.extend(glyphs.map(|it| Glyph {
-                x: it.x + dx,
-                y: it.y + dy,
+                x: it.x * line.scale + dx,
+                y: it.y * line.scale + dy,
                 ..*it
             }));
             x += width(at);
@@ -939,11 +980,17 @@ impl<'a> Painter<'a> {
                         .map(|it| inline.advance(core::slice::from_ref(fragment), it))
                         .sum::<f32>();
                 }
-                self.out.glyphs.extend(
-                    shaped.glyphs()[cluster.glyphs.range()]
-                        .iter()
-                        .map(|it| Glyph { x: it.x + x, ..*it }),
-                );
+                self.out
+                    .glyphs
+                    .extend(
+                        shaped.glyphs()[cluster.glyphs.range()]
+                            .iter()
+                            .map(|it| Glyph {
+                                x: it.x * line.scale + x,
+                                y: it.y * line.scale,
+                                ..*it
+                            }),
+                    );
             }
         }
         let glyphs = Span {
@@ -952,7 +999,7 @@ impl<'a> Painter<'a> {
         };
         let face = shaped.faces.get(usize::from(own.first()?.face))?;
         (glyphs.end > start || crate::platform::renderer().is_none() && fragment.width > 0.0)
-            .then_some((*face, glyphs))
+            .then_some((scaled(face, line.scale), glyphs))
     }
 
     /// They keep text legible on an image.
@@ -1125,7 +1172,7 @@ impl<'a> Painter<'a> {
                     if all.end - 1 <= last && inline.is_newline(all.end - 1)
                         || goes_on && !ends_inline_block()
                     {
-                        let width = style.metrics.space_advance;
+                        let width = style.metrics.space_advance * line.scale;
                         if line.rtl {
                             left -= width
                         } else {
@@ -1174,6 +1221,11 @@ impl<'a> Painter<'a> {
         space: &Space,
     ) {
         let (fragment, Decorating { by, font, baseline }) = (on.2, of);
+        let scaled = [font, text].map(|it| self.document.style_on(on.1, it));
+        let (font, text) = (
+            scaled[0].as_ref().unwrap_or(font),
+            scaled[1].as_ref().unwrap_or(text),
+        );
         let (size, ascent) = (font.font.size.0, text.metrics.ascent);
         let scale = self.document.environment.scale;
         let (offset, mut position) = (
@@ -1602,10 +1654,12 @@ impl<'a> Painter<'a> {
 fn trimmed(inline: &Inline, line: &Line, fragment: &Fragment, at: u32) -> f32 {
     match inline.clusters[at as usize].flags & OPENING {
         0 => 0.0,
-        _ => inline.trimmed_start(
-            at,
-            &inline.items[fragment.item as usize].style,
-            at == line.clusters.start,
-        ),
+        _ => {
+            inline.trimmed_start(
+                at,
+                &inline.items[fragment.item as usize].style,
+                at == line.clusters.start,
+            ) * line.scale
+        }
     }
 }

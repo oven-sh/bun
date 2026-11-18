@@ -319,7 +319,13 @@ impl Url {
             return None;
         }
         let path = bun_url::path_from_file_url(&StringView::borrow_utf8(&self.href));
-        (!path.is_dead()).then(|| path.to_owned_slice())
+        let path = (!path.is_dead()).then(|| path.to_owned_slice())?;
+        // The others are relative, devices, or other computers in disguise.
+        let is_plain = match self.hostname() {
+            b"" => matches!(path[..], [b'a'..=b'z' | b'A'..=b'Z', b':', b'\\', ..]),
+            host => host != b".",
+        };
+        (is_plain || !cfg!(windows)).then_some(path)
     }
 }
 

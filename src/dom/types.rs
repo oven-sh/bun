@@ -1161,7 +1161,7 @@ impl Css for abi::FontSetting {
     fn lerp(&self, to: &Self, t: Mixing) -> Option<Self> {
         (self.tag == to.tag).then(|| abi::FontSetting {
             tag: self.tag,
-            value: t.of(self.value, to.value),
+            value: t.of(self.value, to.value).clamp(f32::MIN, f32::MAX),
         })
     }
 }

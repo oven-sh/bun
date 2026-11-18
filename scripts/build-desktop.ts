@@ -8,7 +8,17 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
@@ -30,7 +40,12 @@ function run(command: string, args: string[], cwd = root) {
 
 /** The app that has the old file mapped keeps it. */
 function replace(from: string, to: string) {
-  rmSync(to, { force: true });
+  try {
+    rmSync(to, { force: true });
+  } catch {
+    // Windows lets it be renamed.
+    renameSync(to, `${to}.${Date.now()}.old`);
+  }
   copyFileSync(from, to);
 }
 

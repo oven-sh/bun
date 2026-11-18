@@ -1,13 +1,11 @@
 //! A bug in the engine takes down what it has computed, then the page, and not the process.
 
-#[cfg(unix)]
 use core::ffi::c_void;
 
 use crate::boxes::{Boxes, VIEWPORT};
 use crate::document::Document;
 use crate::tree::DOCUMENT;
 
-#[cfg(unix)]
 unsafe extern "C" {
     fn Bun__DesktopRecovery__run(
         run: unsafe extern "C" fn(*mut c_void),
@@ -17,7 +15,6 @@ unsafe extern "C" {
     fn Bun__DesktopRecovery__abandon() -> !;
 }
 
-#[cfg(unix)]
 pub(crate) fn install() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
@@ -40,7 +37,6 @@ pub(crate) fn install() {
 }
 
 /// `None` if it panics.
-#[cfg(unix)]
 #[inline]
 pub(crate) fn attempt<F: FnOnce() -> R, R>(run: F) -> Option<R> {
     unsafe extern "C" fn call<F: FnOnce() -> R, R>(context: *mut c_void) {
@@ -52,14 +48,6 @@ pub(crate) fn attempt<F: FnOnce() -> R, R>(run: F) -> Option<R> {
     // SAFETY: `context` outlives the call and has the type that `call` expects.
     unsafe { Bun__DesktopRecovery__run(call::<F, R>, (&raw mut context).cast()) };
     context.1
-}
-
-#[cfg(not(unix))]
-pub(crate) fn install() {}
-
-#[cfg(not(unix))]
-pub(crate) fn attempt<R>(run: impl FnOnce() -> R) -> Option<R> {
-    Some(run())
 }
 
 /// For what recurses as deep as the tree is. A script may have left little.
@@ -101,7 +89,7 @@ impl Document {
         self.svg_size_in_layout.set(None);
         self.svg_ids = Default::default();
         self.referenced_svgs.undo_leak();
-        self.referenced_elements.undo_leak();
+        self.references.undo_leak();
         self.paths = Default::default();
         self.requests.undo_leak();
         self.images.undo_leak();

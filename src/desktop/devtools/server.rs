@@ -2,16 +2,17 @@
 
 use std::rc::Rc;
 
+use bun_removable_features::{Feature, is_removed};
 use bun_web::headers::HeaderList;
 use bun_web::runtime::create_response;
 use bun_web::url::Url;
 
-use super::connection::{Connection, product, targets, user_agent};
+use super::connection::{Client, Connection, product, targets, user_agent};
 use super::contents::{self, Contents};
-use super::random_id;
+use super::{TRIMMED, random_id};
 use crate::prelude::*;
 use crate::value::Value;
-use crate::{dialog, files, paths, realm};
+use crate::{dialog, files, paths, realm, task};
 
 state!(fn connections() -> RefCell<Vec<(u32, Rc<Connection>)>>);
 state!(fn last_connection() -> Cell<u32>);
@@ -79,7 +80,16 @@ fn id_of(socket: JSValue) -> JsResult<u32> {
 fn opened(arguments: &[JSValue]) -> JsResult<()> {
     let socket = argument(arguments, 0);
     let target = cast(get(get(socket, "data")?, "target")?);
-    let connection = Connection::new(socket, target.map(Contents::new))?;
+    let target = target.map(Contents::new);
+    if let Some(target) = &target {
+        let close = function(socket, |socket, _| invoke(socket, "close", &[]))?;
+        target.invoke("once", &[js("destroyed")?, close])?;
+    }
+    let kept = keep(socket);
+    let send = move |json: String| {
+        task::report(js(json).and_then(|it| invoke(kept.get(), "send", &[it]).map(drop)));
+    };
+    let connection = Connection::new(Box::new(send), Client::Program, target)?;
     let id = id_of(socket)?;
     connections().borrow_mut().push((id, connection));
     Ok(())
@@ -101,7 +111,18 @@ fn closed(arguments: &[JSValue]) -> JsResult<()> {
     found.map_or(Ok(()), |it| it.1.close())
 }
 
+/// The app starts all the same.
 pub(crate) fn listen(port: u16) -> JsResult<()> {
+    if is_removed(Feature::Inspector) {
+        return warn(TRIMMED);
+    }
+    catch(start(port))?.or_else(|thrown| {
+        let reason = message_of(thrown)?;
+        warn(&format!("--remote-debugging-port has failed: {reason}"))
+    })
+}
+
+fn start(port: u16) -> JsResult<()> {
     let browser_path = format!("/devtools/browser/{}", random_id());
     let path = browser_path.clone();
     let fetch = function(JSValue::UNDEFINED, move |_, arguments| {

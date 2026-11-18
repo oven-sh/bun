@@ -79,6 +79,7 @@ mod command {
     const TIMEOUT_MS: i32 = 5000;
 
     pub(super) fn output_of(command: &[&[u8]]) -> Option<Vec<u8>> {
+        bun_ui::can_start_programs().then_some(())?;
         let options = PosixSpawnOptions {
             stdin: PosixStdio::Ignore,
             stdout: PosixStdio::Buffer,

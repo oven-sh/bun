@@ -1,8 +1,6 @@
 //! In the process with the windows.
 
 use std::collections::VecDeque;
-use std::os::fd::{AsFd as _, BorrowedFd, IntoRawFd as _, OwnedFd};
-use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, Once, mpsc};
@@ -10,6 +8,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use super::ring::{Consumer, Producer, Shared};
+use super::system::{self, AsFd as _, BorrowedFd, OwnedFd, UnixStream, WITHOUT_WAITING};
 use super::{
     Asked, DOWN, Fetch, Header, LENT, Reader, Sent, Source, Told, UP, Writer, bytes_of, clock,
     receive, ring, send_all, send_answer, send_some,
@@ -23,8 +22,8 @@ use crate::host::thread;
 use crate::paint::allowance::Allowance;
 use crate::paint::scene::Scene;
 use crate::protocol::{
-    self, Dragged, Event, Input, InputField, Maybe, Message, PageCommand, PageProcess, Proxy,
-    SurfaceCommand, WebViewCommand,
+    self, Dragged, Event, Input, InputField, Launch, Maybe, Message, PageCommand, PageProcess,
+    Proxy, SurfaceCommand, WebViewCommand,
 };
 use crate::sync::{Condvar, Mutex, MutexGuard};
 use crate::{accessibility, bridge, canvas, images, surface, text, webview};
@@ -87,6 +86,7 @@ pub struct Page {
     lent: Mutex<FastSet<u32>>,
     /// Where decoded fonts are stored.
     fonts: Mutex<Option<PathBuf>>,
+    of_gpu: Mutex<Option<Launch>>,
     fetcher: Mutex<Fetcher>,
     answers: UnixStream,
     petitions: UnixStream,
@@ -216,9 +216,10 @@ fn get(id: u32) -> Option<Arc<Page>> {
     PAGES.lock().get(&id).cloned()
 }
 
-static THREADS: Mutex<Vec<JoinHandle<()>>> = Mutex::new(Vec::new());
+static THREADS: Mutex<Vec<(u32, JoinHandle<()>)>> = Mutex::new(Vec::new());
 
 fn spawn(
+    page: u32,
     name: &str,
     stack_size: usize,
     run: impl FnOnce() + Send + 'static,
@@ -228,19 +229,19 @@ fn spawn(
         .stack_size(stack_size)
         .spawn(run)?;
     let mut all = THREADS.lock();
-    all.extract_if(.., |it| it.is_finished())
-        .for_each(|it| drop(it.join()));
-    all.push(thread);
+    all.extract_if(.., |it| it.1.is_finished())
+        .for_each(|it| drop(it.1.join()));
+    all.push((page, thread));
     Ok(())
 }
 
-/// Before the process exits, so that nothing is left halfway.
-pub fn close_all() {
-    Vec::from_iter(PAGES.lock().values().cloned())
+fn close_and_wait(is_meant: impl Fn(u32) -> bool) {
+    Vec::from_iter(PAGES.lock().values().filter(|it| is_meant(it.id)).cloned())
         .iter()
         .for_each(|it| it.close());
     let deadline = Instant::now() + Duration::from_millis(500);
-    for thread in std::mem::take(&mut *THREADS.lock()) {
+    let threads = Vec::from_iter(THREADS.lock().extract_if(.., |it| is_meant(it.0)));
+    for (_, thread) in threads {
         while !thread.is_finished() && Instant::now() < deadline {
             std::thread::sleep(Duration::from_micros(50));
         }
@@ -248,6 +249,11 @@ pub fn close_all() {
             drop(thread.join());
         }
     }
+}
+
+/// Before the process exits, so that nothing is left halfway.
+pub fn close_all() {
+    close_and_wait(|_| true);
 }
 
 pub fn open(is_trusted: bool) -> Result<PageProcess> {
@@ -288,6 +294,7 @@ pub fn open(is_trusted: bool) -> Result<PageProcess> {
         lanes: [lane(0, bell.0.try_clone()?), lane(1, other_bell.0)],
         lent: Mutex::default(),
         fonts: Mutex::default(),
+        of_gpu: Mutex::default(),
         fetcher: Mutex::new(Fetcher {
             socket: pixels.0,
             next: 0,
@@ -327,11 +334,13 @@ pub fn open(is_trusted: bool) -> Result<PageProcess> {
         images,
         in_fonts: 0,
         in_images: 0,
+        #[cfg(target_os = "linux")]
+        gpu: Default::default(),
     };
-    spawn("page", 512 << 10, move || listener.run())?;
+    spawn(id, "page", 512 << 10, move || listener.run())?;
     Ok(PageProcess {
         id,
-        socket: OwnedFd::from(bell.1).into_raw_fd(),
+        socket: system::give_away(bell.1.into()),
     })
 }
 
@@ -349,6 +358,7 @@ pub fn command(id: u32, command: PageCommand) {
         PageCommand::Lend(image) => _ = page.lent.lock().insert(image),
         PageCommand::TakeBack(image) => _ = page.lent.lock().remove(&image),
         PageCommand::StoreFontsFor(site) => *page.fonts.lock() = text::store_for(&site),
+        PageCommand::AllowGpu(launch) => *page.of_gpu.lock() = Some(launch),
         PageCommand::Handled(length) => {
             let mut unhandled = page.unhandled.lock();
             *unhandled = unhandled.saturating_sub(length + OVERHEAD);
@@ -438,7 +448,7 @@ impl Original {
             ) else {
                 return;
             };
-            drop(spawn("pixels", 256 << 10, move || {
+            drop(spawn(page.id, "pixels", 256 << 10, move || {
                 page.take_pixels(&socket)
             }));
         });
@@ -448,7 +458,7 @@ impl Original {
             &fetcher.socket,
             &[bytes_of(&request)],
             None,
-            libc::MSG_DONTWAIT,
+            WITHOUT_WAITING,
         )
         .is_ok_and(|it| it == size_of::<Fetch>())
         {
@@ -642,6 +652,8 @@ struct Listener {
     images: FastMap<u32, Image>,
     in_fonts: usize,
     in_images: usize,
+    #[cfg(target_os = "linux")]
+    gpu: super::gpu::Process,
 }
 
 /// The numbers of the images of pages, which would use up those of the app.
@@ -1018,6 +1030,17 @@ impl Listener {
             }
             #[cfg(not(target_os = "macos"))]
             Asked::Native => return None,
+            #[cfg(target_os = "linux")]
+            Asked::Gpu => {
+                thread::release_jobs();
+                let launch = self.page.of_gpu.lock().clone();
+                file = launch
+                    .and_then(|it| self.gpu.connect(&it))
+                    .map(|it| OwnedFd::from(it).into());
+                None
+            }
+            #[cfg(not(target_os = "linux"))]
+            Asked::Gpu => return None,
             Asked::Local => text::font_named(name()?),
             Asked::Fonts => {
                 text::fonts_of(numbers[0])
@@ -1341,7 +1364,7 @@ impl Listener {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use std::io::Read as _;
     use std::os::fd::{AsRawFd as _, FromRawFd as _};
@@ -1418,7 +1441,7 @@ mod tests {
         let mut part = bytes_of(&[0u8]);
         // SAFETY: zeros are a message without parts, which then gets some that outlive the call.
         unsafe {
-            let (mut message, mut control): (libc::msghdr, super::super::WithDescriptors<4>) =
+            let (mut message, mut control): (libc::msghdr, system::WithDescriptors<4>) =
                 (std::mem::zeroed(), std::mem::zeroed());
             (
                 control.header.cmsg_len,
@@ -1451,6 +1474,14 @@ mod tests {
         assert!(get(page.id).is_some());
         command(page.id, PageCommand::Close);
         assert!(page.is_given_up());
+    }
+
+    #[test]
+    fn no_thread_is_left_at_the_exit() {
+        let page = Hostile::new();
+        let known = Arc::downgrade(&get(page.id).unwrap());
+        close_and_wait(|it| it == page.id);
+        assert_eq!(known.strong_count(), 0);
     }
 
     #[test]

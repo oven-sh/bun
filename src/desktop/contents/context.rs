@@ -139,6 +139,24 @@ impl Contents {
         }
     }
 
+    fn naming(&self, page: &Page, to: &Knowing) -> Change {
+        let name = self.name();
+        let is_public = self.parent().is_some_and(|it| {
+            name == self.element().name || it.page().origin_key() == page.origin_key()
+        });
+        let is_told = is_public || to.is_for(page);
+        Change::Renamed {
+            name: if is_told { name } else { String::new() },
+            is_public,
+        }
+    }
+
+    pub(super) fn tell_name(&self) {
+        if let Some(page) = fields::page(self) {
+            self.tell_each(|to| self.naming(page, to));
+        }
+    }
+
     pub(super) fn tell_children(&self) -> JsResult<()> {
         if self.context.group.known_to.borrow().len() > 1 {
             self.tell_pages(&Change::Children(
@@ -158,7 +176,7 @@ impl Contents {
         for it in &members {
             let related = Some(members[0].id).filter(|first| *first != it.id);
             to.tell(it.id, it.creation(related, to));
-            to.tell(it.id, Change::Renamed(it.name()));
+            to.tell(it.id, it.naming(it.page(), to));
             to.tell(it.id, Contents::showing(it.page(), to));
         }
         self.context.group.known_to.borrow_mut().push(to.clone());
@@ -254,8 +272,8 @@ impl Contents {
     }
 
     pub(super) fn rename(&self, name: String) {
-        self.context.name.replace(name.clone());
-        self.tell_pages(&Change::Renamed(name));
+        self.context.name.replace(name);
+        self.tell_name();
     }
 
     pub(super) fn set_opened_by(&self, opener: Option<&Contents>) {
@@ -266,6 +284,9 @@ impl Contents {
     pub(super) fn set_page(&self, page: &Page) {
         fields::set_page(self, Some(page));
         self.tell_each(|to| Contents::showing(page, to));
+        if !self.context.name.borrow().is_empty() {
+            self.tell_name();
+        }
     }
 
     /// One that scripts in this one can have the window of.

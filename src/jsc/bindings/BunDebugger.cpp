@@ -54,6 +54,10 @@ static PausedWait& pausedWait()
 
 static bool waitingForConnection = false;
 static bool bunControllerInstalled = false;
+// Protected, so the host that its controller owns stays too.
+static JSC::JSGlobalObject* desktopApp = nullptr;
+static Inspector::InjectedScriptHost* hostOfDesktopApp = nullptr;
+void extendCommandLineOfDesktopApp(JSC::JSGlobalObject*, Inspector::InjectedScriptHost&);
 // Tracks whether connectFrontend has ever been called on the Bun-installed
 // inspector controller; once true, the exit path must leak that controller
 // (see Bun__InspectorConnection__disconnectAllOnExit) even if every
@@ -149,6 +153,8 @@ public:
         this->hasEverConnected = true;
         bunControllerHasEverConnected = true;
         globalObject->inspectorController().connectFrontend(*this, true, false); // waitingForConnection
+        if (hostOfDesktopApp && globalObject == desktopApp)
+            extendCommandLineOfDesktopApp(globalObject, *hostOfDesktopApp);
 
         Inspector::JSGlobalObjectDebugger* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());
         if (debugger) {
@@ -590,6 +596,12 @@ extern "C" unsigned int Bun__createJSDebugger(Zig::GlobalObject* globalObject)
 }
 extern "C" void Bun__tickWhilePaused(bool*);
 
+extern "C" void Bun__Debugger__setDesktopApp(JSC::JSGlobalObject* globalObject)
+{
+    if (!desktopApp)
+        gcProtect(desktopApp = globalObject);
+}
+
 extern "C" void Bun__ensureDebugger(ScriptExecutionContextIdentifier scriptId, bool pauseOnStart)
 {
 
@@ -604,7 +616,10 @@ extern "C" void Bun__ensureDebugger(ScriptExecutionContextIdentifier scriptId, b
     // below). node:inspector re-enters this from waitForDebugger() at runtime.
     if (!bunControllerInstalled) {
         bunControllerInstalled = true;
-        globalObject->m_inspectorController = makeUnique<Inspector::JSGlobalObjectInspectorController>(*globalObject, Bun::BunInjectedScriptHost::create());
+        auto host = Bun::BunInjectedScriptHost::create();
+        if (globalObject == desktopApp)
+            hostOfDesktopApp = host.ptr();
+        globalObject->m_inspectorController = makeUnique<Inspector::JSGlobalObjectInspectorController>(*globalObject, WTF::move(host));
         globalObject->m_inspectorDebuggable = BunJSGlobalObjectDebuggable::create(*globalObject);
         globalObject->m_inspectorDebuggable->init();
     }
@@ -957,6 +972,7 @@ extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObje
     arguments.append(jsBoolean(isUrlServer));
     arguments.append(jsBoolean(isNodeInspector));
     arguments.append(JSFunction::create(vm, debuggerGlobalObject, 3, String("reportNodeInspectorServerStarted"_s), jsFunctionReportNodeInspectorServerStarted, ImplementationVisibility::Public));
+    arguments.append(jsBoolean(desktopApp));
 
     JSC::call(debuggerGlobalObject, debuggerDefaultFn, arguments, "Bun__initJSDebuggerThread - debuggerDefaultFn"_s);
     scope.assertNoException();

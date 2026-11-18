@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, LazyLock};
 
 use super::decoded::map;
-use super::fonts::{Capabilities, DEFAULT_OBLIQUE_ANGLE, Like, Origin, index_of, listed_file};
-use super::sfnt::{self, variations};
+use super::fonts::{Capabilities, Like, Origin, index_of, listed_file};
+use super::sfnt;
 use super::woff::write_sfnt;
 use crate::abi::Rect;
 use crate::gfx::{Command, Path, PathBuilder as _};
@@ -474,33 +474,6 @@ fn without_glyphs(font: &Object) -> Option<&'static [u8]> {
     Some(write_sfnt(0x0001_0000, TABLES.iter().filter_map(table).collect())?.leak())
 }
 
-fn capabilities(font: &sfnt::Font) -> Capabilities {
-    let (axes, (weight, stretch, is_slanted)) = (variations::axes(font), font.style());
-    let range = |tag: &sfnt::Tag| {
-        axes.iter()
-            .find(|axis| axis.tag == *tag)
-            .map(|axis| (axis.min, axis.max))
-    };
-    let slope = if is_slanted {
-        DEFAULT_OBLIQUE_ANGLE
-    } else {
-        0.
-    };
-    Capabilities {
-        weight: range(b"wght")
-            .filter(|(_, max)| *max >= 100.)
-            .unwrap_or((weight, weight)),
-        stretch: range(b"wdth")
-            .filter(|(_, max)| *max >= 50.)
-            .unwrap_or((stretch, stretch)),
-        slope: match (range(b"slnt"), range(b"ital")) {
-            (Some((min, max)), _) => (-max, -min),
-            (None, Some((min, max))) => (min * DEFAULT_OBLIQUE_ANGLE, max * DEFAULT_OBLIQUE_ANGLE),
-            _ => (slope, slope),
-        },
-    }
-}
-
 #[derive(Default)]
 pub struct Catalog {
     /// What was asked for, in lower case.
@@ -566,7 +539,7 @@ impl Catalog {
             })
         });
         let opened = font.and_then(|font| {
-            let mut capabilities = capabilities(&sfnt::Font::new(font.data, font.index)?);
+            let mut capabilities = Capabilities::of(&sfnt::Font::new(font.data, font.index)?);
             if file.is_none() {
                 capabilities.weight =
                     css_weight(native).map_or(capabilities.weight, |weight| (weight, weight));

@@ -6,6 +6,7 @@ use crate::abi::{Matrix, Rect};
 use crate::boxes::{BoxId, Kind, VIEWPORT};
 use crate::document::Document;
 use crate::engine_event::ForNode;
+use crate::fragment::Piece;
 use crate::inline::Inline;
 use crate::layout::margin;
 use crate::layout::{at_least, at_most};
@@ -437,8 +438,16 @@ impl Document {
         if self.boxes[id].is_foreign_object {
             offset = multiply(&self.foreign_matrix(id), &offset);
         }
-        self.own_transform(id)
-            .map_or(offset, |own| multiply(&offset, &own))
+        let Some(own) = self.own_transform(id) else {
+            return offset;
+        };
+        match self.pieces(id).and_then(<[_]>::first) {
+            Some(Piece { rect, .. }) => multiply(
+                &multiply(&offset, &translation([rect.x, rect.y])),
+                &multiply(&own, &translation([-rect.x, -rect.y])),
+            ),
+            None => multiply(&offset, &own),
+        }
     }
 
     /// From the coordinates of the border box.

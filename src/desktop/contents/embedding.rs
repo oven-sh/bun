@@ -36,7 +36,7 @@ impl Holder for Contents {
     }
 
     fn origin_in_window(&self) -> Point {
-        fields::view(self.owner()).map_or(Point { x: 0., y: 0. }, View::origin_in_content)
+        fields::view(self.owner()).map_or(Point { x: 0., y: 0. }, View::origin_of_contents)
     }
 
     fn preferences(&self) -> JSValue {

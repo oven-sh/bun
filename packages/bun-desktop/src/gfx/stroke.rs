@@ -948,26 +948,29 @@ impl Stroke<'_> {
             Self::resolution(matrix),
             self.dashes_of(path, matrix, corners),
         );
-        if let ([Command::MoveTo(from), Command::LineTo(to)], false) =
-            (path, dashed.is_some() || self.cap == Cap::Round)
-            && distance(*from, *to) > NEARLY_ZERO * 0.25 / resolution
-            && let Some(along) = unit(*to - *from)
-        {
-            let radius = self.width / 2.;
-            let (normal, start) = (Point::new(along.y, -along.x) * radius, *from);
+        let bar = |start: Point, to: Point| {
+            let along = unit(to - start).filter(|_| {
+                self.cap != Cap::Round && distance(start, to) > NEARLY_ZERO * 0.25 / resolution
+            })?;
+            let normal = Point::new(along.y, -along.x) * (self.width / 2.);
             let beyond = if self.cap == Cap::Square {
                 Point::new(-normal.y, normal.x)
             } else {
                 Point::ZERO
             };
-            let (from, to) = (start - beyond, *to + beyond);
-            return take(&[
+            let (from, to) = (start - beyond, to + beyond);
+            Some([
                 Command::MoveTo(start + normal),
                 Command::LineTo(to + normal),
                 Command::LineTo(to - normal),
                 Command::LineTo(from - normal),
                 Command::LineTo(from + normal),
-            ]);
+            ])
+        };
+        if let (&[Command::MoveTo(from), Command::LineTo(to)], None) = (path, &dashed)
+            && let Some(bar) = bar(from, to)
+        {
+            return take(&bar);
         }
         let window = self.window(matrix, corners);
         let mut stroker = Stroker {
@@ -986,7 +989,15 @@ impl Stroke<'_> {
         contours(
             dashed.as_deref().unwrap_or(path),
             &mut room.segments,
-            |contour| window.parts(contour, |part| stroker.contour(part, take)),
+            |contour| match contour.segments[..] {
+                [Segment::Line([from, to])]
+                    if !contour.is_closed
+                        && let Some(bar) = bar(from, to) =>
+                {
+                    take(&bar)
+                }
+                _ => window.parts(contour, |part| stroker.contour(part, take)),
+            },
         );
         room.sides = stroker.sides;
     }

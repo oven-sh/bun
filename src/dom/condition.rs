@@ -109,6 +109,7 @@ impl Feature {
 pub(crate) enum Actual {
     Number(f32),
     Keyword(Name),
+    Both(Name, Name),
 }
 
 pub(crate) enum Operand {
@@ -682,6 +683,7 @@ impl Condition {
             Condition::Any(list) => fold(list, true),
             Condition::Boolean(feature) => Some(match subject.feature(*feature)? {
                 Actual::Number(number) => number != 0.0,
+                Actual::Both(..) => true,
                 Actual::Keyword(keyword) => {
                     keyword != name!("none") && keyword != name!("no-preference")
                 }
@@ -689,6 +691,9 @@ impl Condition {
             Condition::Compare(feature, comparison, operand) => {
                 Some(match (subject.feature(*feature)?, operand) {
                     (Actual::Keyword(actual), Operand::Keyword(expected)) => actual == *expected,
+                    (Actual::Both(one, other), Operand::Keyword(expected)) => {
+                        one == *expected || other == *expected
+                    }
                     (Actual::Number(actual), Operand::Number(it)) => {
                         comparison.holds(actual.into(), subject.compute(it), 1.0 / 128.0)
                     }

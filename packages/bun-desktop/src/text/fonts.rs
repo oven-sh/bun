@@ -41,7 +41,7 @@ pub struct File {
     pub index: u32,
     pub font: sfnt::Font,
     pub tables: Tables,
-    #[cfg(target_os = "macos")]
+    #[cfg(any(windows, target_os = "macos"))]
     pub native: Option<super::catalog::Native>,
     pub has_color: bool,
     /// Advances are not proportional to the size.
@@ -64,7 +64,7 @@ impl File {
             #[cfg(target_os = "macos")]
             index,
             tables: Tables::new(&font),
-            #[cfg(target_os = "macos")]
+            #[cfg(any(windows, target_os = "macos"))]
             native: super::catalog::Native::of(data, index, origin),
             has_color: has_table(b"COLR") || has_table(b"CBDT") || has_table(b"sbix"),
             has_tracking: has_table(b"trak"),
@@ -257,6 +257,38 @@ pub struct Capabilities {
     pub stretch: Range,
     /// In degrees, with italic as 14.
     pub slope: Range,
+}
+
+#[cfg(any(windows, target_os = "macos"))]
+impl Capabilities {
+    pub fn of(font: &sfnt::Font) -> Capabilities {
+        let (axes, (weight, stretch, is_slanted)) = (variations::axes(font), font.style());
+        let range = |tag: &sfnt::Tag| {
+            axes.iter()
+                .find(|axis| axis.tag == *tag)
+                .map(|axis| (axis.min, axis.max))
+        };
+        let slope = if is_slanted {
+            DEFAULT_OBLIQUE_ANGLE
+        } else {
+            0.
+        };
+        Capabilities {
+            weight: range(b"wght")
+                .filter(|(_, max)| *max >= 100.)
+                .unwrap_or((weight, weight)),
+            stretch: range(b"wdth")
+                .filter(|(_, max)| *max >= 50.)
+                .unwrap_or((stretch, stretch)),
+            slope: match (range(b"slnt"), range(b"ital")) {
+                (Some((min, max)), _) => (-max, -min),
+                (None, Some((min, max))) => {
+                    (min * DEFAULT_OBLIQUE_ANGLE, max * DEFAULT_OBLIQUE_ANGLE)
+                }
+                _ => (slope, slope),
+            },
+        }
+    }
 }
 
 record! {
@@ -907,6 +939,9 @@ impl System {
             ),
         };
         crate::diagnostics::log!("fallback for {character:?}: {found:?}");
+        if self.fallbacks.len() == 1 << 16 {
+            self.fallbacks.clear();
+        }
         self.fallbacks.insert(key, found);
         found
     }
@@ -1738,7 +1773,7 @@ fn metrics_of(fonts: &mut Fonts, font: u32, size: f32) -> FontMetrics {
     let declared = face
         .metrics
         .average_width
-        .filter(|width| *width > 0. && !is_apple)
+        .filter(|width| *width > 0. && !is_apple && !cfg!(windows))
         .map(|width| width * scale);
     let average = declared.unwrap_or_else(|| advance('x', size * 0.5));
     let widest = if is_apple {

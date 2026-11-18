@@ -263,7 +263,7 @@ impl Contents {
         Ok(())
     }
 
-    fn tell_of_pruning(&self, except: Option<&Contents>) -> JsResult<()> {
+    pub(super) fn tell_of_pruning(&self, except: Option<&Contents>) -> JsResult<()> {
         if except.is_none_or(|it| !same(it, self)) && self.page().is_started() {
             let keys: Vec<String> = self
                 .items()

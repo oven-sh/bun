@@ -19,8 +19,10 @@ use bun_web::net::response::{Answer, Cached};
 use bun_web::net::tls::ClientIdentity;
 use bun_web::net::{NetError, Result};
 use bun_web::origin::Origin;
+use bun_web::remote::Peer;
 use bun_web::request::Destination;
 use bun_web::runtime::{create_certificate_chain, create_headers};
+use bun_web::service::Lodging;
 use bun_web::time::wall_now;
 use bun_web::url::Url;
 
@@ -489,12 +491,21 @@ impl Embedder for ForNetwork {
         notify(|| self.session().service_workers_report(news));
     }
 
+    fn lodge_worker(&self, url: &Url, is_compiled: bool) -> Option<Lodging> {
+        let session = self.session().network().id();
+        query(|| crate::contents::place::lodge_worker(session, url, is_compiled)).ok()
+    }
+
+    fn keep_process(&self, peer: Peer) -> Option<Box<dyn core::any::Any>> {
+        crate::contents::process::keep_alive(peer)
+    }
+
     fn lets_notify(&self, url: &Url) -> bool {
         query(|| self.session().lets_notify(url)).unwrap_or(false)
     }
 
     fn encrypt(&self, bytes: &[u8]) -> Option<Vec<u8>> {
-        os_crypt::can_encrypt().then(|| os_crypt::encrypt(bytes))
+        os_crypt::can_encrypt().then(|| os_crypt::encrypt(bytes))?
     }
 
     fn decrypt(&self, bytes: &[u8]) -> Option<Vec<u8>> {

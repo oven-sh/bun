@@ -40,6 +40,8 @@ struct Shared {
     deps: Deps,
     generation: u32,
     style: Rc<Style>,
+    /// `RuleList::has_own_values`
+    has_own_values: bool,
 }
 
 /// The style of an element in one that has `display: none`.
@@ -206,6 +208,13 @@ impl RuleList {
 
     pub(crate) fn matched(&self) -> &[Matched] {
         &self.matched
+    }
+
+    /// Whether the elements that it is for have different values.
+    pub(crate) fn has_own_values(&self) -> bool {
+        self.matched.iter().any(|it| {
+            it.level == Level::Hints && it.block.declarations().list.iter().any(|it| it.is_own())
+        })
     }
 
     fn has_important(&self) -> bool {
@@ -612,6 +621,7 @@ impl Subject for Environment {
             F::ColorGamut => Actual::Keyword(name!("srgb")),
             F::DynamicRange => Actual::Keyword(name!("standard")),
             F::DevicePosture => Actual::Keyword(name!("continuous")),
+            F::AnyPointer if self.has_touch => Actual::Both(name!("fine"), name!("coarse")),
             F::Pointer | F::AnyPointer => Actual::Keyword(name!("fine")),
             F::Hover | F::AnyHover => Actual::Keyword(name!("hover")),
             F::Scripting => Actual::Keyword(name!("enabled")),
@@ -1122,6 +1132,12 @@ impl Lookup for Resolver<'_> {
     }
 }
 
+impl Declaration {
+    pub(crate) fn is_own(&self) -> bool {
+        matches!(&self.value, Declared::Text(it) if **it == *crate::hints::OWN.as_bytes())
+    }
+}
+
 enum Outcome {
     Wide(Wide),
     Values(Rc<[Value]>),
@@ -1131,20 +1147,17 @@ impl Resolver<'_> {
     fn resolve(&mut self, declaration: &Declaration, block: &Block) -> Outcome {
         let (cx, prop) = (self.cx, declaration.prop);
         self.block = core::ptr::from_ref(block).addr();
-        if matches!(&declaration.value, Declared::Text(it) if **it == *Transforms::ATTRIBUTE.as_bytes())
-            && prop == Prop::Long(Id::Transform)
+        if let Prop::Long(id) = prop
+            && declaration.is_own()
         {
-            cx.uses(Deps::ATTRIBUTES);
-            let matrix = self
+            let value = self
                 .document
                 .tree
                 .element(self.id)
-                .and_then(crate::svg::transform_attribute);
-            return Outcome::Values(Rc::new([Value::Transform(
-                matrix
-                    .map(|it| Transforms::of_matrix(it, cx.zoom))
-                    .unwrap_or_default(),
-            )]));
+                .and_then(|it| it.own_value(id, cx.zoom));
+            return value.map_or(Outcome::Wide(Wide::Unset), |it| {
+                Outcome::Values(Rc::new([it]))
+            });
         }
         let is_valid = matches!(declaration.value, Declared::Text(_));
         let parse = |source: &[u8]| {
@@ -1323,6 +1336,8 @@ struct Plan {
     styled: Styled,
     /// The properties of `Groups::ink` that it sets.
     inks: Box<[Id]>,
+    /// Those that attributes give values to.
+    own: Box<[Id]>,
 }
 
 /// What `revert` and `revert-layer` have ruled out.
@@ -1434,9 +1449,18 @@ impl Plan {
             .filter(|it| is_ink(it.0) && !inherits(it.1))
             .map(|it| it.0)
             .collect();
+        let of_hints = longhands
+            .iter()
+            .map(|it| (it.0, &matched[usize::from(it.1.0)], usize::from(it.1.1)))
+            .filter(|it| it.1.level == Level::Hints);
+        let own = of_hints
+            .filter(|it| it.1.block.declarations().list[it.2].is_own())
+            .map(|it| it.0)
+            .collect();
         Plan {
             styled: by_page.map(|it| Styled::by(it.0)).collect(),
             inks,
+            own,
             customs: customs.into(),
             longhands: longhands.into(),
         }
@@ -1464,13 +1488,20 @@ impl Document {
         &self,
         id: NodeId,
         inclusive: bool,
+        needs_box: bool,
         accepts: &dyn Fn(&Style) -> bool,
     ) -> Option<Container<'_>> {
+        let is_hidden = |it: &NodeId| {
+            needs_box
+                && self.tree.style(*it).is_none()
+                && self.recall_hidden(*it, |it| accepts(&it.style)) == Some(true)
+        };
         let candidates = inclusive
             .then_some(id)
             .into_iter()
             .chain(self.tree.flat_ancestors(id));
         candidates
+            .take_while(|it| !is_hidden(it))
             .filter_map(|id| Some((id, self.tree.style(id)?)))
             .find_map(|(id, style)| {
                 accepts(style).then_some(Container {
@@ -1490,9 +1521,11 @@ impl Document {
         query: &ContainerQuery,
     ) -> bool {
         let matches = |wanted: &Rc<Wanted>| {
+            let needs_box = wanted.axes.contains(&true);
             let container = self.find_container(
                 id,
-                inclusive && !(is_beside && wanted.axes.contains(&true)),
+                inclusive && !(is_beside && needs_box),
+                needs_box,
                 &|style| {
                     let (kind, [width, height, inline, block]) =
                         (style.layout.container_type, wanted.axes);
@@ -1789,6 +1822,47 @@ impl Document {
         self.match_active_rules(id, bloom, with_starting)
     }
 
+    /// Also those that are overridden. The one that wins comes last. `id` may be generated, and `pseudo` need not be.
+    pub(crate) fn rules_for_inspector(&self, id: NodeId, pseudo: Pseudo) -> Vec<Matched> {
+        let (mut found, Some(element)) = (Found::new(), self.tree.element(id)) else {
+            return Vec::new();
+        };
+        let own = (!element.is_generated()).then(|| {
+            (
+                id,
+                pseudo,
+                element.hints.as_ref().filter(|_| pseudo == Pseudo::None),
+            )
+        });
+        let as_part = (pseudo == Pseudo::None && element.pseudo != Pseudo::None).then_some((
+            element.originator,
+            element.pseudo,
+            None,
+        ));
+        for (of, pseudo, hints) in own.into_iter().chain(as_part) {
+            self.activate_rules(of);
+            self.tree.matched_part.set(id);
+            self.with_query(of, pseudo, None, |query| {
+                let pseudo_state = if of == id {
+                    query.pseudo_state
+                } else {
+                    element.state
+                };
+                self.collect_rules(
+                    &Query {
+                        signature: Name::NONE,
+                        keeps_all: true,
+                        pseudo_state,
+                        ..query
+                    },
+                    &mut found,
+                    hints,
+                );
+            });
+        }
+        found.into_iter().map(|it| it.1).collect()
+    }
+
     /// For an element that no rule is waiting for.
     pub(crate) fn match_active_rules(
         &self,
@@ -1829,7 +1903,7 @@ impl Document {
                         );
                         let [expected, matched] = [&expected, &matched]
                             .map(|it| RuleList::new(it.iter().map(|it| it.1.clone()).collect(), 0));
-                        expected.has_same_winners(&matched)
+                        expected.len() > 1 << 16 || expected.has_same_winners(&matched)
                     });
                 });
                 let (memo, key) = decided.ok_or(())?;
@@ -3053,17 +3127,32 @@ impl Document {
         adjust: Adjust,
     ) -> Rc<Style> {
         let generations = self.environment.generations();
-        let shared = rules.shared.borrow();
-        let found = shared.iter().find(|it| {
+        let mut shared = rules.shared.borrow_mut();
+        let found = shared.iter_mut().find(|it| {
             (it.adjust, it.generation) == (adjust, generations(it.deps))
                 && (Rc::ptr_eq(&it.parent, parent)
                     || !it.deps.contains(Deps::PARENT) && it.parent.inherits_the_same_as(parent))
         });
-        if let Some(found) = found {
+        if let Some(found) = found
+            && (!found.has_own_values
+                || self.take_own_values(id, rules, &mut found.style).is_some())
+        {
+            debug_assert!(
+                !found.has_own_values || {
+                    let mut count = 0;
+                    found
+                        .style
+                        .differences(&self.cascade(id, rules, parent, adjust, &[], &[]), |_| {
+                            count += 1
+                        });
+                    count == 0
+                }
+            );
             return Rc::clone(&found.style);
         }
         let similar = shared.first().filter(|it| {
             (it.adjust, it.generation) == (adjust, generations(it.deps))
+                && !it.has_own_values
                 && !it.deps.intersects(Deps::PARENT | Deps::INK)
                 && it.style.zoom == it.parent.zoom
                 && it.parent.inherits_the_same_but_ink(parent)
@@ -3101,10 +3190,11 @@ impl Document {
                 .for_each(|last| style.groups.share_with(&last.style));
             Rc::new(style)
         });
-        let mut shared = rules.shared.borrow_mut();
+        let (mut shared, has_own_values) = (rules.shared.borrow_mut(), rules.has_own_values());
         if !style
             .deps
             .intersects(Deps::ATTRIBUTES | Deps::SIBLINGS | Deps::CONTAINER)
+            && !(has_own_values && style.deps.contains(Deps::REVERTED))
         {
             rules.may_have_shared.set(true);
             shared.truncate(5);
@@ -3121,10 +3211,26 @@ impl Document {
                     deps: style.deps,
                     generation,
                     style,
+                    has_own_values,
                 },
             );
         }
         style
+    }
+
+    /// Turns the style of another element with these rules into that of this one.
+    fn take_own_values(&self, id: NodeId, rules: &RuleList, style: &mut Rc<Style>) -> Option<()> {
+        let (element, mut values) = (self.tree.element(id)?, SmallVec::<[Value; 4]>::new());
+        for it in &rules.plan(style.flow()).own {
+            let value = element.own_value(*it, style.zoom)?;
+            if style.get(*it) != value {
+                values.push(value);
+            }
+        }
+        if !values.is_empty() {
+            Rc::make_mut(style).amend(&values, Deps::empty());
+        }
+        Some(())
     }
 
     pub(crate) fn with_context<R>(

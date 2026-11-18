@@ -1,6 +1,6 @@
 import { desktopInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isMacOS } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows } from "harness";
 
 let nextFontScope = 5000;
 
@@ -114,8 +114,18 @@ describe("cascade", () => {
             ["rgba(179, 215, 255, 0.8)", "rgb(0, 0, 0)", "rgb(153, 200, 255)", "rgb(59, 59, 59)"],
           ]
         : [
-            ["rgba(0, 65, 198, 0.8)", "rgb(255, 255, 255)", "rgb(25, 103, 210)", "rgb(255, 255, 255)"],
-            ["rgba(0, 65, 198, 0.8)", "rgb(255, 255, 255)", "rgb(153, 200, 255)", "rgb(59, 59, 59)"],
+            [
+              isWindows ? "rgb(0, 120, 212)" : "rgba(0, 65, 198, 0.8)",
+              "rgb(255, 255, 255)",
+              "rgb(25, 103, 210)",
+              "rgb(255, 255, 255)",
+            ],
+            [
+              isWindows ? "rgb(25, 103, 210)" : "rgba(0, 65, 198, 0.8)",
+              "rgb(255, 255, 255)",
+              "rgb(153, 200, 255)",
+              "rgb(59, 59, 59)",
+            ],
           ],
     );
   });
@@ -1445,6 +1455,203 @@ test.each<[string, string, (a: any) => unknown, unknown]>([
     "<table style='border-spacing: 0; font: 10px/10px a'><tr style='vertical-align: baseline'><td style='padding: 0; align-content: start'><div id=a>a</div><td style='padding: 20px 0 0'>a</table>",
     a => a.getBoundingClientRect().y,
     0,
+  ],
+  [
+    "punctuation is only a first letter if a letter follows",
+    "<style>p { float: left; clear: left; margin: 0; font: 10px/10px a } p::first-letter { font-size: 20px }</style><div id=a><p>.<p>.<i>a</i><p>.<br>a<p><wbr>a<p>.<i style='float: left'></i>a<p>.<i style='display: inline-block'>a</i><p><q></q></div>",
+    a => [...a.children].map(it => it.offsetWidth),
+    [10, 30, 10, 10, 30, 20, 20],
+  ],
+  [
+    "an annotation is as high as what is in it",
+    "<div id=a style='font: 10px/10px a'><ruby>a<rt><i style='display: inline-block; width: 5px; height: 30px'></i></rt></ruby></div>",
+    a => [a.offsetHeight, a.querySelector("i").offsetTop, a.querySelector("rt").getBoundingClientRect().height],
+    [40, 0, 5],
+  ],
+  [
+    "the annotations of a line share their baseline",
+    "<div id=a style='font: 10px/10px a'><ruby>a<rt>a</rt><b style='font: 20px/20px a'>a</b><rt>a</rt></ruby></div>",
+    a => [...a.querySelectorAll("rt")].map(it => it.getBoundingClientRect().y),
+    [0, 0],
+  ],
+  [
+    "an annotation has margins",
+    "<div id=a style='font: 10px/10px a'><ruby>a<rt style='margin: 10px'>a</rt></ruby></div>",
+    a => (it => [a.offsetHeight, it.x, it.y, it.width])(a.querySelector("rt").getBoundingClientRect()),
+    [35, 10, 10, 5],
+  ],
+  [
+    "text-box-trim of columns applies to each",
+    "<div style='columns: 2; gap: 0; column-fill: auto; width: 40px; height: 32px; font: 10px/20px a; text-box-trim: trim-both; orphans: 1; widows: 1'>a<br>a<br><b id=a>a</b></div>",
+    a => [a.offsetLeft, a.offsetTop],
+    [20, 0],
+  ],
+  [
+    "a vertical cell is not on the baseline of its row",
+    "<table style='border-collapse: collapse; font: 10px/10px a'><tr id=a style='vertical-align: baseline'><td style='padding: 0 0 4px; writing-mode: vertical-rl'><div style='width: 5px; height: 30px'></div><td style='padding: 0 0 9px'>a</table>",
+    a => a.offsetHeight,
+    34,
+  ],
+  [
+    "percentages of flex items",
+    "<div id=a style='display: flex; width: 100px; height: 40px'><div style='width: 50%; height: 50%; max-width: 40%'></div><div style='display: flex; flex-direction: column; flex: 1; min-height: 25%'><div style='height: 100%; width: 30%'></div><div style='flex: 1 0 25%; align-self: end; min-width: 10%'></div></div><div style='position: absolute; width: 1px; height: 1px'></div></div>",
+    a => [...a.querySelectorAll("*")].map(it => [it.offsetLeft, it.offsetTop, it.offsetWidth, it.offsetHeight]),
+    [
+      [0, 0, 40, 20],
+      [40, 0, 60, 40],
+      [40, 0, 18, 30],
+      [94, 30, 6, 10],
+      [0, 0, 1, 1],
+    ],
+  ],
+  [
+    "text-fit scales all lines alike",
+    "<div id=a style='font: 10px/1 a; width: 120px; white-space: pre; text-fit: grow'><b>aaaaaa</b>\n<b>aaa</b></div>",
+    a => [...a.children].map(it => (it => [it.x, it.y, it.width, it.height])(it.getBoundingClientRect())),
+    [
+      [0, 0, 120, 20],
+      [0, 20, 60, 20],
+    ],
+  ],
+  [
+    "text-fit scales each line",
+    "<div id=a style='font: 10px/1 a; width: 120px; white-space: pre; text-fit: grow per-line-all'><b>aaaa</b>\n<b>aaa</b></div>",
+    a => [...a.children].map(it => (it => [it.x, it.y, it.width, it.height])(it.getBoundingClientRect())),
+    [
+      [0, 0, 120, 30],
+      [0, 30, 120, 40],
+    ],
+  ],
+  [
+    "text-fit spares the last line",
+    "<div id=a style='font: 10px/1 a; width: 60px; text-fit: grow per-line'><b>aaa</b> <b>aaaa</b></div>",
+    a => [...a.children].map(it => (it => [it.x, it.y, it.width, it.height])(it.getBoundingClientRect())),
+    [
+      [0, 0, 60, 20],
+      [0, 20, 40, 10],
+    ],
+  ],
+  [
+    "text-fit has a limit and leaves lengths alone",
+    "<div id=a style='font: 10px/1 a'><div style='width: 50px; white-space: pre; text-fit: shrink 80%'>aaaaaaaaaa</div><div style='width: 110px; letter-spacing: 5px; text-fit: grow'>aa</div><div style='width: 60px; line-height: 12px; text-fit: grow'>aa</div><div style='width: 60px; text-fit: grow'><i style='float: left; width: 1px; height: 1px'></i>aa</div><div style='width: 21px; text-fit: grow'>aa</div></div>",
+    a => [...a.children].map(it => it.offsetHeight),
+    [8, 50, 12, 10, 10],
+  ],
+  [
+    "text-fit follows the width and the style",
+    "<div id=a style='font: 10px/1 a; width: 40px'>aa</div>",
+    a => ["text-fit: grow", "width: 60px", "text-fit: none"].map(it => ((a.style.cssText += it), a.offsetHeight)),
+    [20, 30, 10],
+  ],
+  [
+    "balancing breaks no word",
+    "<div id=a style='font: 10px/1 a; width: 150px; overflow-wrap: break-word; text-wrap: balance'><b>aaaaaaaaaaa</b> <b>aaaa aa</b></div>",
+    a => [...a.children].map(it => it.getClientRects().length),
+    [1, 1],
+  ],
+  [
+    "what overflows is not balanced",
+    "<div id=a style='font: 10px/1 a; width: 50px; text-wrap: balance'><b>a</b> <b>a</b> <b>a</b> <b>a</b> aaaaaa</div>",
+    a => [...a.children].map(it => it.offsetTop),
+    [0, 0, 0, 10],
+  ],
+  [
+    "only the lines that the clamp leaves are balanced",
+    "<div id=a style='font: 10px/1 a; width: 70px; text-wrap: balance; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden'><b>a</b> <b>a</b> <b>a</b> <b>a</b> <b>a</b> <b>a</b> <b>a</b> <b>a</b> <b>a</b></div>",
+    a => [...a.children].map(it => it.offsetTop),
+    [0, 0, 0, 0, 10, 10, 10, 10, 20],
+  ],
+  [
+    "a vertical annotation touches its base",
+    "<div style='font: 20px/1 a; writing-mode: vertical-rl'><ruby id=a>aa<rt>a</rt></ruby></div>",
+    a => a.lastChild.getBoundingClientRect().x - a.getBoundingClientRect().right,
+    0,
+  ],
+  [
+    "an annotation does not cover a box at the top of the line before",
+    "<div id=a style='font: 10px/1 a; width: 20px'><i style='display: inline-block; vertical-align: top; width: 20px; height: 30px'></i><br><ruby>a<rt>a</rt></ruby></div>",
+    a => a.offsetHeight,
+    45,
+  ],
+  [
+    "combined text has its own white space and breaks as its letters do",
+    "<div id=a style='font: 10px/1 a; writing-mode: vertical-rl; height: 30px'><p style='margin: 0'>aa<b style='text-combine-upright: all; letter-spacing: 3px'>a a</b>aa<p style='margin: 0; height: max-content'>a<b style='text-combine-upright: all'> </b></div>",
+    a => [...a.children].map(it => [it.offsetWidth, it.scrollHeight]),
+    [
+      [10, 50],
+      [10, 20],
+    ],
+  ],
+  [
+    "middle is half an x above a central baseline",
+    "<div style='font: 20px/1 a; writing-mode: vertical-rl'><i id=a style='display: inline-block; vertical-align: middle; width: 40px; height: 5px'></i><b>a</b></div>",
+    a => a.nextSibling.getBoundingClientRect().x - a.getBoundingClientRect().x,
+    2,
+  ],
+  [
+    "a fieldset that contains its size ignores its legend",
+    "<fieldset id=a style='font: 10px/1 a; contain: size; border: 0; padding: 0'><legend>a</legend></fieldset>",
+    a => a.offsetHeight,
+    0,
+  ],
+  [
+    "the margin of a flex item comes after its forced break",
+    "<div style='columns: 5; gap: 0; column-fill: auto; width: 100px; height: 100px'><div style='display: flex; flex-flow: column'><div style='height: 95px'></div><div id=a style='height: 50px; margin-top: 10px; break-before: column'></div></div></div>",
+    a => [a.offsetLeft, a.offsetTop],
+    [20, 10],
+  ],
+  [
+    "what a flex item sticks out of its column is not added to the next",
+    "<div style='columns: 2; gap: 0; column-fill: auto; width: 100px; height: 60px'><div style='display: flex; flex-flow: column'><div style='contain: size; height: 100px'></div><div id=a style='contain: size; height: 100px'></div></div></div>",
+    a => [a.offsetLeft, a.offsetTop],
+    [50, 0],
+  ],
+  [
+    "each fragment of a box is transformed by itself",
+    "<div id=a style='overflow: auto; width: 100px; height: 100px'><div style='columns: 5; gap: 0; column-fill: auto; height: 100px'><div style='transform: rotate(180deg); height: 500px'></div></div></div>",
+    a => [a.scrollWidth, a.scrollHeight],
+    [100, 100],
+  ],
+  [
+    "a box that has left its columns is whole",
+    "<div id=a style='columns: 2; writing-mode: vertical-rl; font: 10px/1 a'>a<p style='min-width: 200px; margin: 0'>a</div>",
+    a => (
+      a.offsetHeight,
+      (a.style.cssText = "display: inline-block; font: 10px/1 a"),
+      [...a.lastChild.getClientRects()].map(it => [it.width, it.height])
+    ),
+    [[200, 10]],
+  ],
+  [
+    "quotes are no longer nested when those around them are gone",
+    "<style>.q::before { content: open-quote } .q::after { content: close-quote } .s::before, .s::after { content: '' }</style><div id=a style='font: 10px/1 a; quotes: &quot;a&quot; &quot;a&quot; &quot;aa&quot; &quot;aa&quot;'><b class=q></b></div>",
+    a => ["q", "", "q", "q s"].map(it => ((a.className = it), a.firstChild.offsetWidth)),
+    [40, 20, 40, 20],
+  ],
+  [
+    "transformed boxes in one another over very many columns can be scrolled to",
+    "<div id=a style='columns: 1px; gap: 0; width: 1px; height: 1px; column-fill: auto'>" +
+      "<div style='transform: scale(1)'>".repeat(59) +
+      "<div style='transform: scale(1, 2); height: 1500px'>",
+    a => a.scrollWidth,
+    1500,
+  ],
+  [
+    "many transformed boxes in one another overflow column by column",
+    "<div id=a style='columns: 1px; gap: 0; width: 1px; height: 2px; column-fill: auto'>" +
+      "<div style='transform: scale(1)'><i style='position: absolute'></i>".repeat(99) +
+      "<div style='transform: scale(1, 2); height: 120px'>",
+    a => [a.scrollWidth, a.scrollHeight],
+    [60, 3],
+  ],
+  [
+    "the transform of a box in vertical columns starts from its first fragment",
+    "<div style='writing-mode: vertical-rl; columns: 2; gap: 0; width: 100px; height: 200px; column-fill: auto'><div id=a style='width: 200px; transform: scale(.5); transform-origin: 0 0'></div></div>",
+    a => [...a.getClientRects()].map(it => [it.x - a.parentNode.getBoundingClientRect().x, it.width]),
+    [
+      [0, 50],
+      [0, 50],
+    ],
   ],
 ])("%s", (_, html, measure, expected) => {
   using page = open(`<body style="margin: 0">${html}`);
@@ -2996,4 +3203,270 @@ describe("anchor positioning", () => {
     );
     expect(page.computed("b", "order")).toBe("1");
   });
+});
+
+describe("shapes that differ in their geometry alone", () => {
+  const all = (page: ReturnType<typeof open>, property: string) =>
+    [...page.document.querySelectorAll("rect")].map(it => page.window.getComputedStyle(it).getPropertyValue(property));
+  const rects = (css = "", around = "") =>
+    open(
+      `<style>${css}</style><svg ${around}><rect x=1 width=4 /><rect x=2 width=4 /><rect x=2 width=5 /><rect x=-3.5 width=0 /></svg>`,
+    );
+
+  test.each([
+    ["", "x", ["1px", "2px", "2px", "-3.5px"]],
+    ["", "width", ["4px", "4px", "5px", "0px"]],
+    ["rect { x: 9px }", "x", ["9px", "9px", "9px", "9px"]],
+    ["rect { inline-size: 9px }", "width", ["9px", "9px", "9px", "9px"]],
+    ["rect { x: revert-layer }", "x", ["1px", "2px", "2px", "-3.5px"]],
+    ["rect { x: var(--a, revert-layer) }", "x", ["1px", "2px", "2px", "-3.5px"]],
+    ["rect { x: revert }", "x", ["0px", "0px", "0px", "0px"]],
+    ["svg { zoom: 2 }", "x", ["1px", "2px", "2px", "-3.5px"]],
+  ])("%s %s", (css, property, values) => {
+    using page = rects(css);
+    expect(all(page, property)).toEqual(values);
+  });
+
+  test.each(["", "display=none"])("follow their attributes in <svg %s>", around => {
+    using page = rects("", around);
+    const rect = page.$("rect");
+    const after = (...values: string[]) => (
+      values.forEach(it => rect.setAttribute("x", it)),
+      all(page, "x").slice(0, 2)
+    );
+    expect([
+      after("1"),
+      after("2"),
+      after("7"),
+      after("1em"),
+      after("8"),
+      after("1em", "9"),
+      after("a"),
+      after("\x01"),
+      after("5."),
+    ]).toEqual(["1px", "2px", "7px", "16px", "8px", "9px", "0px", "0px", "0px"].map(it => [it, "2px"]));
+  });
+
+  test("follow what has changed while they were away", () => {
+    using page = rects();
+    const rect = page.$("rect");
+    all(page, "x");
+    rect.remove();
+    rect.setAttribute("x", "6");
+    page.$("svg").append(rect);
+    expect(all(page, "x")).toEqual(["2px", "2px", "-3.5px", "6px"]);
+  });
+
+  test("keep it when they are painted in another color", () => {
+    using page = open(`<style>.a rect { opacity: 0.5 }</style><svg>${"<rect x=1 />".repeat(20)}</svg>`);
+    all(page, "x");
+    page.$("rect").setAttribute("x", "2");
+    page.$("svg").classList.add("a");
+    expect(new Set(all(page, "x").slice(1))).toEqual(new Set(["1px"]));
+  });
+
+  test("pass it on to what inherits it, and start transitions", () => {
+    using page = open(
+      "<style>g { transition: transform 100s } rect { transform: inherit }</style><svg><g transform='translate(1)'><rect/></g><g transform='translate(2)'><rect/></g></svg>",
+    );
+    expect(all(page, "transform")).toEqual(["matrix(1, 0, 0, 1, 1, 0)", "matrix(1, 0, 0, 1, 2, 0)"]);
+    page.$("g").setAttribute("transform", "translate(3)");
+    expect(page.$("g").getAnimations()).toHaveLength(1);
+  });
+
+  test("a gradient follows its own transform", () => {
+    using page = open("<svg><linearGradient gradientTransform='scale(2)'/></svg>");
+    const gradient = page.$("linearGradient");
+    page.computed("linearGradient", "transform");
+    gradient.setAttribute("transform", "scale(9)");
+    page.computed("linearGradient", "transform");
+    gradient.setAttribute("gradientTransform", "scale(3)");
+    expect(page.computed("linearGradient", "transform")).toBe("matrix(3, 0, 0, 3, 0, 0)");
+  });
+});
+
+test("a generated image inherits what changes", () => {
+  using page = open(
+    "<style>li { list-style: inside linear-gradient(red, red); font: 20px/0 serif; width: fit-content }</style><li>",
+  );
+  const before = page.$("li").getBoundingClientRect().width;
+  page.$("li").style.fontSize = "40px";
+  expect(page.$("li").getBoundingClientRect().width).toBe(2 * before);
+  page.$("li").style.visibility = "hidden";
+  expect(page.document.elementFromPoint(12, 5)).not.toBe(page.$("li"));
+});
+
+describe("transitions", () => {
+  const started = (page: ReturnType<typeof open>) =>
+    page.document.getAnimations().map(it => (it as CSSTransition).transitionProperty);
+
+  test("of an inherited font size start none of what is relative to it", () => {
+    using page = open(
+      "<style>div { transition: font-size 9s } p { width: 1em; transition: width 9s } .a { font-size: 30px }</style><div><p>",
+    );
+    started(page);
+    page.$("div").className = "a";
+    expect(started(page)).toEqual(["font-size"]);
+  });
+
+  test("start when a box gets its first fallback", () => {
+    using page = open(`<style>
+      div { position: relative; width: 300px; height: 9px } p { position: absolute; left: 300px; width: 50px; margin: 0 }
+      .a { position-try-fallbacks: --a; transition: left 100s steps(2, start) } @position-try --a { left: 200px }
+    </style><div><p>`);
+    expect(page.$("p").offsetLeft).toBe(300);
+    page.$("p").className = "a";
+    expect(page.$("p").offsetLeft).toBe(250);
+  });
+
+  test("with other keyframes are reversed from what these give", () => {
+    using page = open("<p style='left: 0; transition: left 100s linear'>");
+    const p = page.$("p");
+    started(page);
+    p.style.left = "100px";
+    const [transition] = p.getAnimations();
+    transition.currentTime = 50000;
+    (transition.effect as KeyframeEffect).setKeyframes({});
+    p.style.left = "0px";
+    expect((p.getAnimations()[0].effect as KeyframeEffect).getKeyframes()[0].left).toBe("100px");
+  });
+
+  test("to no value have an empty one in the keyframe", () => {
+    using page = open("<p style='--a: a; transition: --a 9s allow-discrete'>");
+    started(page);
+    page.$("p").style.removeProperty("--a");
+    expect((page.$("p").getAnimations()[0].effect as KeyframeEffect).getKeyframes().map(it => it["--a"])).toEqual([
+      "a",
+      "",
+    ]);
+  });
+});
+
+test("the effect that a script gives to an animation keeps its composite operation", () => {
+  using page = open("<style>@keyframes a { to { left: 1px } }</style><p style='animation: a 9s'>");
+  const [animation] = page.$("p").getAnimations();
+  animation.effect = new page.window.KeyframeEffect(page.$("p"), { left: "2px" }, 9000);
+  page.$("p").style.animationComposition = "add";
+  page.computed("p", "left");
+  expect((animation.effect as KeyframeEffect).composite).toBe("replace");
+});
+
+test.each([
+  [
+    "a container without a box answers nothing",
+    "<style>i { container-type: size; display: block; width: 9px } @container (width: 9px) { p { order: 1 } }</style><i><b hidden><i><p>",
+    "p",
+    null,
+    "order",
+    "0",
+  ],
+  [
+    "a foreignObject is no size container",
+    "<style>@container (width >= 0) { p { order: 1 } }</style><svg><foreignObject width=9 height=9 style='container-type: size'><p>",
+    "p",
+    null,
+    "order",
+    "0",
+  ],
+  [
+    "a placeholder has the direction of its field",
+    "<style>::placeholder { direction: rtl }</style><input placeholder=a>",
+    "input",
+    "::placeholder",
+    "direction",
+    "ltr",
+  ],
+])("%s", (_, html, selector, pseudo, property, value) => {
+  using page = open(html);
+  expect(page.window.getComputedStyle(page.$(selector), pseudo).getPropertyValue(property)).toBe(value);
+});
+
+test("a backdrop measures its dialog", () => {
+  using page = open(
+    "<style>::backdrop { font-size: 10cqw }</style><dialog style='container-type: inline-size; width: 100px'>",
+  );
+  page.$("dialog").showModal();
+  expect(page.window.getComputedStyle(page.$("dialog"), "::backdrop").fontSize).toBe("10px");
+});
+
+test("font: stretch in calc(), no slant in any unit, settings stay finite", () => {
+  using page = open("<p style='font: medium serif'>");
+  const { style } = page.$("p");
+  style.fontStretch = "calc(50%)";
+  expect(style.font).toBe("ultra-condensed medium serif");
+  expect(new page.window.FontFace("a", "url(a)", { style: "oblique 0rad" }).style).toBe("normal");
+  page
+    .$("p")
+    .animate(
+      { fontVariationSettings: ["'aaaa' 0", "'aaaa' 9"] },
+      { duration: 2, delay: -1, fill: "both", easing: "linear(3e38, 3e38)" },
+    )
+    .pause();
+  expect(page.computed("p", "font-variation-settings")).toBe('"aaaa" 3.40282e+38');
+});
+
+test.each([
+  "video",
+  "video, audio",
+  "audio, [data-a]",
+  "video[data-a], i",
+  ":is(audio, video):not(b *)",
+  ":is(audio, section > video)",
+  "section video",
+  "nav video, section i",
+  "i + video",
+  "foreignObject",
+])("querySelector(%s) follows what comes and goes", selector => {
+  using page = open("<main></main>");
+  const main = page.$("main");
+  const html = "<section><i></i><video data-a></video><video></video><svg><foreignObject/></svg></section>";
+  const expected = Object.assign(page.document.createElement("main"), { innerHTML: html }).querySelectorAll(
+    selector,
+  ).length;
+  const count = () => page.document.querySelectorAll(selector).length;
+  const ways = [
+    () => (main.innerHTML = html),
+    () => main.append(page.document.createRange().createContextualFragment(html)),
+    () =>
+      main.append(
+        page.document.adoptNode(new page.window.DOMParser().parseFromString(html, "text/html").body.firstChild!),
+      ),
+    () => main.insertAdjacentHTML("afterbegin", html),
+  ];
+  const away = [
+    () => (main.textContent = ""),
+    () => main.firstChild!.remove(),
+    () => main.replaceChildren(),
+    () => page.document.createElement("p").append(main.firstChild!),
+  ];
+  expect(ways.flatMap((add, i) => [count(), (add(), count()), (away[i](), count())])).toEqual(
+    ways.flatMap(() => [0, expected, 0]),
+  );
+  expect(expected).toBeGreaterThan(0);
+});
+
+test("lists of the same media query are on their own", () => {
+  using page = open("");
+  const [a, b, c] = ["(MIN-WIDTH: 0px)", "(MIN-WIDTH: 0px)", "(max-width: 0px)"].map(it => page.window.matchMedia(it));
+  expect([a === b, a.media, b.media, c.media, a.matches, b.matches, c.matches]).toEqual([
+    false,
+    "(min-width: 0px)",
+    "(min-width: 0px)",
+    "(max-width: 0px)",
+    true,
+    true,
+    false,
+  ]);
+});
+
+test.each(["disc", "decimal"])("a broken image of a marker gives way to %s", async type => {
+  using page = open(
+    `<style>li { list-style: inside ${type}; width: fit-content }</style><li><li style="list-style-image: url('data:image/png,')">`,
+  );
+  const [usual, broken] = page.document.querySelectorAll("li");
+  for (const end = performance.now() + 4000; broken.offsetWidth !== usual.offsetWidth && performance.now() < end;) {
+    await new Promise(resolve => page.window.requestAnimationFrame(resolve));
+  }
+  expect(broken.offsetWidth).toBe(usual.offsetWidth);
+  expect(usual.offsetWidth).toBeGreaterThan(5);
 });

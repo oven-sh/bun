@@ -61,6 +61,7 @@ fn key(contents: &Contents, params: &Value) -> JsResult<()> {
             is_down: kind != "keyUp",
             key: params["key"].text().to_owned(),
             code: params["code"].text().to_owned(),
+            key_code: 0,
             location: params["location"].int() as u32,
             modifiers: held.into(),
             repeats: params["autoRepeat"].is_truthy(),

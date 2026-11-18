@@ -10,15 +10,15 @@ use super::serialize::{
 use crate::api::core::{NodeFlags as F, *};
 use crate::api::{cssom, frames};
 use crate::name::{Map, Set};
-use bun_web::page::{Resource, printed_from};
+use bun_web::page::{Resource, file_of_frame, printed_from};
 
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum Purpose<'r> {
     Print,
     /// In which resources are known by their URLs.
     Archive,
-    /// Beside a folder with the resources.
-    Save(&'r str),
+    /// Beside a folder with the resources, and one with the documents that are in other processes.
+    Save([&'r str; 2]),
 }
 
 fn name_of_file(url: &str) -> String {
@@ -87,6 +87,7 @@ struct Copier<'c, 'a> {
     purpose: Purpose<'c>,
     parts: &'c mut Parts,
     of_frames: Vec<(crate::tree::NodeId, DomString)>,
+    apart: Vec<(crate::tree::NodeId, DomString)>,
     out: Buffer,
 }
 
@@ -152,7 +153,7 @@ impl<'a> Copier<'_, 'a> {
         }
         let name = self.parts.add(self.page, text, destination);
         match self.purpose {
-            Purpose::Save(folder) => DomString::from_utf8(&format!("./{folder}/{name}")),
+            Purpose::Save([folder, _]) => DomString::from_utf8(&format!("./{folder}/{name}")),
             _ => url,
         }
     }
@@ -168,6 +169,8 @@ impl<'a> Copier<'_, 'a> {
                 (atom!("src"), None),
                 (atom!("srcdoc"), Some(markup.1.clone())),
             ]);
+        } else if let Some(url) = self.apart.iter().find(|it| it.0 == element.id()) {
+            changed.extend([(atom!("src"), Some(url.1.clone())), (atom!("srcdoc"), None)]);
         } else {
             changed.extend(
                 [atom!("srcset"), atom!("integrity"), atom!("crossorigin")].map(|it| (it, None)),
@@ -311,14 +314,17 @@ pub(crate) fn snapshot<'a>(
     purpose: Purpose<'_>,
     parts: &mut Parts,
 ) -> bindgen::Result<'a, DomString> {
-    let (mut in_frames, mut on_paper) = (Vec::new(), Vec::new());
+    let (mut in_frames, mut elsewhere) = (Vec::new(), Vec::new());
     for (element, inner) in
         frames::entry::windows_in_this_process(doc).filter(|it| it.0.is_html(atom!("iframe")))
     {
-        if let Some(apart) =
-            frames::entry::page_apart_from(element).filter(|_| purpose == Purpose::Print)
-        {
-            on_paper.push((element.id(), DomString::from_utf8(&printed_from(apart))));
+        if let Some(apart) = frames::entry::page_apart_from(element) {
+            let url = if let Purpose::Save([_, folder]) = purpose {
+                format!("./{folder}/{}.html", file_of_frame(apart))
+            } else {
+                printed_from(apart)
+            };
+            elsewhere.push((element.id(), DomString::from_utf8(&url)));
             continue;
         }
         let own = inner.map(|it| it.page).filter(|it| *it != 0);
@@ -329,13 +335,13 @@ pub(crate) fn snapshot<'a>(
         match own.filter(|_| purpose == Purpose::Print) {
             Some(own) => {
                 parts.frames.push((own, markup.to_utf8().into_owned()));
-                on_paper.push((element.id(), DomString::from_utf8(&printed_from(own))));
+                elsewhere.push((element.id(), DomString::from_utf8(&printed_from(own))));
             }
             None => in_frames.push((element.id(), markup)),
         }
     }
     if purpose == Purpose::Print {
-        return for_paper(cx, doc, [&on_paper, &in_frames]);
+        return for_paper(cx, doc, [&elsewhere, &in_frames]);
     }
     let mut copier = Copier {
         cx,
@@ -344,6 +350,7 @@ pub(crate) fn snapshot<'a>(
         purpose,
         parts,
         of_frames: in_frames,
+        apart: elsewhere,
         out: Buffer::default(),
     };
     if !doc.quirks() {

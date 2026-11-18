@@ -17,7 +17,7 @@ mod x11;
 use std::cell::Cell;
 
 pub use self::keysyms::keysym_to_char;
-use super::{Display, Platform, WindowButton};
+use super::{Platform, WindowButton, displays_changed};
 use crate::bridge;
 use crate::error::Result;
 use crate::protocol::SystemEvent;
@@ -60,23 +60,4 @@ fn buttons(layout: &str) -> [Vec<WindowButton>; 2] {
         _ => None,
     };
     [left, right].map(|side| side.split(',').filter_map(button).collect())
-}
-
-fn displays_changed(before: &[Display], now: &[Display]) {
-    let metrics = |it: &Display| (it.bounds, it.work_area, it.scale, it.frequency);
-    for display in now {
-        match before.iter().find(|it| it.id == display.id) {
-            None => bridge::emit_system(SystemEvent::DisplayAdded(display.id)),
-            Some(old) if metrics(old) != metrics(display) => {
-                bridge::emit_system(SystemEvent::DisplayChanged(display.id))
-            }
-            Some(_) => {}
-        }
-    }
-    for display in before
-        .iter()
-        .filter(|old| now.iter().all(|it| it.id != old.id))
-    {
-        bridge::emit_system(SystemEvent::DisplayRemoved(display.id));
-    }
 }

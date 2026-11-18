@@ -103,6 +103,7 @@ crate::wire! {
         pub is_accessibility_active: bool,
         pub has_screen_reader: bool,
         pub is_headless: bool,
+        pub has_file_for_report: bool,
         pub tracing: Option<Tracing>,
     }
 
@@ -136,6 +137,7 @@ impl Statics {
             is_accessibility_active: bun_ui::surfaces::is_accessibility_active(),
             has_screen_reader: bun_ui::surfaces::has_screen_reader(),
             is_headless: false,
+            has_file_for_report: false,
             tracing: None,
         }
     }

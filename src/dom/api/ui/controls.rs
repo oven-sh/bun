@@ -225,7 +225,7 @@ fn take_snapshot<'a>(cx: &mut Cx<'a>, window: &'a Window, purpose: &page::Purpos
     let purpose = match purpose {
         page::Purpose::Print => Purpose::Print,
         page::Purpose::Archive => Purpose::Archive,
-        page::Purpose::Save(folder) => Purpose::Save(folder),
+        page::Purpose::Save { resources, frames } => Purpose::Save([resources, frames]),
     };
     let mut parts = Parts::default();
     let markup = snapshot(cx, window.document(), window.page, purpose, &mut parts)
@@ -289,7 +289,8 @@ fn __bun_dom_answer(page: u32, query: Query) -> Option<Outcome> {
             })))
         }
         Query::Render {} => window.enter_as_task(|cx, window, ui| {
-            surface::handle_input(cx, window, ui, Input::Frame { is_urgent: true })
+            surface::handle_input(cx, window, ui, Input::Frame { is_urgent: true });
+            crate::api::webgl::present_all(cx);
         }),
         Query::SelectionText {} => {
             outcome =

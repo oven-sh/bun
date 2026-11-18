@@ -35,6 +35,11 @@ pub enum Mode {
 }
 
 impl Mode {
+    /// Whether what was opaque may no longer be.
+    pub fn may_open(self) -> bool {
+        self.clears_backdrop() || matches!(self, Mode::DestinationOut | Mode::Xor)
+    }
+
     /// Where the source is transparent.
     pub fn clears_backdrop(self) -> bool {
         matches!(

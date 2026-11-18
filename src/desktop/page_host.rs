@@ -46,10 +46,12 @@ fn environment_of(window: &DesktopWindow) -> JsResult<Environment> {
         is_dark: theme::is_dark()?,
         reduces_motion: answer((ui()?.system_state)())?.reduces_motion,
         increases_contrast: theme::increases_contrast()?,
-        forces_colors: theme::forces_colors(),
+        forces_colors: theme::forces_colors()?,
         reduces_transparency: settings.reduced_transparency,
         light_highlight: (settings.highlight.get()).map_or(default.light_highlight, |it| it[0]),
         dark_highlight: (settings.highlight.get()).map_or(default.dark_highlight, |it| it[1]),
+        palette: theme::palette()?,
+        touch_points: settings.touch_points,
         display: Some(host::Display {
             bounds: widen(display.bounds),
             work_area: widen(display.work_area),
@@ -103,7 +105,7 @@ impl PageHost {
         self.with_window(|window| {
             let is_external = [&b"http:"[..], b"https:", b"mailto:"].map(|it| url.starts_with(it));
             match dispatch(window.to_js(), "will-navigate", &[js(string(url))?])? {
-                true if is_external.contains(&true) => shell::open_url(url),
+                true if is_external.contains(&true) => tell_system(shell::command_to_open(url)?),
                 _ => Ok(()),
             }
         })
@@ -247,7 +249,7 @@ impl Native for OfProgram {
             }
             (Question::HasWebEngine {}, _) => Answer::HasWebEngine(true),
             (Question::Locale {}, _) => Answer::Locale(Some(app::locale()?.into())),
-            (Question::HasSpellChecker {}, _) => Answer::HasSpellChecker(IS_MAC),
+            (Question::HasSpellChecker {}, _) => Answer::HasSpellChecker(HAS_SPELL_CHECKER),
             (Question::ChecksSpelling {}, _) => Answer::ChecksSpelling(true),
             (Question::StorageDirectory {}, _) => {
                 Answer::StorageDirectory(Some(paths::path("userData")?))

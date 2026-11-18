@@ -105,7 +105,7 @@ impl DesktopBrowserWindow {
     }
 
     pub(crate) fn get_focused_window(_: &JsHeap<'_>) -> JSValue {
-        window::if_it_is::<Self>(window::focused())
+        window::if_it_is::<Self>(window::focused_for_app())
     }
 
     pub(crate) fn from_id(_: &JsHeap<'_>, id: Option<f64>) -> JSValue {

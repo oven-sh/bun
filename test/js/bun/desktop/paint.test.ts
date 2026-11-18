@@ -1,73 +1,21 @@
+import { dlopen, ptr } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux, isMacOS, libcPathForDlopen, tempDir } from "harness";
-import { existsSync, readFileSync } from "node:fs";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isWindows, libcPathForDlopen, tempDir } from "harness";
+import { readFileSync } from "node:fs";
+import { release } from "node:os";
 import { join } from "node:path";
 import { crc32, deflateSync } from "node:zlib";
 import { hasLibrary } from "./library";
-import { openOn, ownScreen, readScreen, screens } from "./screen";
+import { hasGPU, renderTo as renderWith } from "./render";
+import { openOn, ownScreen, screens } from "./screen";
 
 /** paint-sandbox.test.ts runs these tests with pages in other processes. */
 const hasSandbox = import.meta.url.endsWith("?sandbox");
 const place = hasSandbox ? { BUN_DESKTOP_PAGE_PROCESSES: "1" } : {};
 
-/** What `script` returns, and the colors that the page then has at `points`. */
+const renderTo: typeof renderWith = (where, html, script, points, zoom, main, env) =>
+  renderWith(where, html, script, points, zoom, main, { ...place, ...env });
 const render = renderTo.bind(null, "memory");
-
-/** `main` runs in the app, before `script`. On a screen, what is drawn step by step has to end up like a picture that is painted at once. */
-async function renderTo(
-  where: string,
-  html: string,
-  script: string,
-  points: number[][] = [],
-  zoom = 1,
-  main = "",
-  env = {},
-) {
-  await using screen = await openOn(where);
-  using dir = tempDir("paint", {
-    "package.json": JSON.stringify({ name: "fixture", main: "main.js" }),
-    "index.html": "<!doctype html><style>body { margin: 0 }</style>" + html,
-    "main.js": `
-      const { app, BrowserWindow } = require("electron");
-      app.setPath("userData", __dirname + "/data");
-      app.trustOrigins(["file:", "about:"], { injectedScripts: true, inFrames: true });
-      ${readScreen}
-      const until = async condition => {
-        for (const end = Date.now() + 10_000; !(await condition()); await Bun.sleep(1)) if (Date.now() > end) throw new Error("gave up on " + condition);
-      };
-      app.whenReady().then(async () => {
-        const window = new BrowserWindow({ width: 200, height: 100, useContentSize: true, ...(process.env.PLACE && { ...JSON.parse(process.env.PLACE), frame: false, roundedCorners: false }) });
-        await window.loadFile("index.html");
-        const page = window.webContents;
-        page.setZoomFactor(${zoom});
-        const shown = (x, y) => colorAt(window.getContentBounds().x + x, window.getContentBounds().y + y);
-        const showsPage = async () => {
-          const [painted, seen] = [(await page.capturePage()).toBitmap(), grab(window.getContentBounds())];
-          return painted.filter((value, index) => index % 4 === 1 && !(Math.abs(value - seen[index]) <= 16)).length < painted.length / 400;
-        };
-        ${main}
-        const result = await page.executeJavaScript(${JSON.stringify(`(async () => {${script}})()`)});
-        if (process.env.SCREEN) await until(showsPage);
-        const colors = [];
-        for (const [x, y] of ${JSON.stringify(points)}) {
-          const [b, g, r] = (await page.capturePage({ x, y, width: 1, height: 1 })).toBitmap();
-          if (process.env.SCREEN) await until(() => Buffer.from(shown(x, y), "hex").every((value, index) => Math.abs(value - [r, g, b][index]) <= 8));
-          // The window server of macOS converts colors.
-          colors.push(process.env.SCREEN && !process.env.PLACE ? shown(x, y) : Buffer.from([r, g, b]).toString("hex"));
-        }
-        console.log(JSON.stringify([result ?? null, ...colors]));
-      }).then(() => app.exit(0), error => { console.error(error); app.exit(1); });`,
-  });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "--preload=bun:desktop/electron", "."],
-    env: { ...bunEnv, BUN_DESKTOP_HEADLESS: "1", ...place, ...screen?.env, ...env },
-    cwd: String(dir),
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  if (exitCode !== 0) throw new Error(`exited with ${exitCode}\n${stdout}\n${stderr}`);
-  return JSON.parse(stdout);
-}
 
 const svg = (source: string) =>
   `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" ${source}</svg>`)}`;
@@ -1393,6 +1341,136 @@ describe.skipIf(!hasLibrary).concurrent.each(["memory", ...screens, ...ownScreen
     },
   );
 
+  test.each([3, 700, 1500])(
+    "the first read of %p squared pixels has what was drawn, and nothing around it",
+    async side => {
+      const script = `
+      return [2, ${side}].flatMap(size => [true, false].map(alpha => {
+        const it = new OffscreenCanvas(size, size).getContext("2d", { alpha, willReadFrequently: true });
+        (it.fillStyle = "#f008"), it.fillRect(0, 0, size, size - 1);
+        const all = new Uint32Array(it.getImageData(-1, -1, ${side}, ${side}).data.buffer), counts = {};
+        for (const pixel of all) counts[pixel.toString(16)] = -~counts[pixel.toString(16)];
+        return [counts, all[${side + 1}].toString(16)];
+      }));`;
+      const edge = side * 2 - 1;
+      expect(await render("", script)).toEqual([
+        [
+          [{ "0": side * side - 2, "880000ff": 2 }, "880000ff"],
+          [{ "0": side * side - 4, "ff000088": 2, "ff000000": 2 }, "ff000088"],
+          [{ "0": edge, "880000ff": side * side - edge }, "880000ff"],
+          [{ "0": edge, "ff000088": side * side - edge }, "ff000088"],
+        ],
+      ]);
+    },
+  );
+
+  test("a canvas that is read in every frame has what was drawn last", async () => {
+    const script = `
+      const context = a.getContext("2d"), seen = [];
+      const fill = (red, side = 20) => ((context.fillStyle = "rgb(" + red + " 0 0)"), context.fillRect(0, 0, side, side));
+      const frame = () => new Promise(requestAnimationFrame);
+      for (const change of [
+        () => fill(1),
+        () => (fill(2), frame()),
+        async () => (fill(3), await frame(), fill(4), frame()),
+        async () => (fill(5), await frame(), await frame(), fill(6, 10)),
+        async () => (fill(7), await frame(), context.putImageData(new ImageData(10, 10), 10, 10)),
+        async () => (fill(8), await frame(), await frame(), context.putImageData(new ImageData(20, 20), 0, 0)),
+        async () => ((a.width = 10), fill(9), frame()),
+        async () => ((a.width = 20), fill(10), frame()),
+      ]) {
+        await change();
+        seen.push([1, 15].map(at => context.getImageData(at, at, 1, 1).data[0]).join());
+      }
+      return seen;`;
+    expect(await render("<canvas id=a width=20 height=20></canvas>", script)).toEqual([
+      ["1,1", "2,2", "4,4", "6,5", "7,0", "0,0", "9,0", "10,10"],
+    ]);
+  });
+
+  test.each([
+    ["a stop changes", "stop.setAttribute('stop-color', 'lime')"],
+    ["a stop comes", "g.append(stop.cloneNode()); g.lastChild.setAttribute('stop-color', 'lime'); stop.remove()"],
+    [
+      "a color is inherited",
+      "stop.setAttribute('stop-color', 'currentColor'); await frame(); around.setAttribute('color', 'lime')",
+    ],
+    ["a selector begins to match", "around.classList.add('lime')"],
+    [
+      "a selector begins to match what has no box",
+      "g.setAttribute('display', 'none'); await frame(); around.classList.add('lime')",
+    ],
+    [
+      "a sibling makes a selector match what has no box",
+      "g.setAttribute('display', 'none'); await frame(); around.prepend(document.createElementNS(g.namespaceURI, 'desc'))",
+    ],
+    ["another element has the id now", "g.remove()"],
+    ["another element is the first with the id", "around.prepend(spare.firstChild)"],
+    [
+      "it moves to another svg and changes there",
+      "other.moveBefore(around, null); await frame(); other.classList.add('lime')",
+    ],
+    [
+      "it has changed before",
+      "stop.setAttribute('stop-color', 'blue'); await frame(); stop.setAttribute('stop-color', 'lime')",
+    ],
+  ])("what refers to a gradient through other elements is painted again when %s", async (_, change) => {
+    const html = `<style>.lime stop, desc ~ * stop { stop-color: lime }</style>
+      <svg width=100 height=100 style="float: left"><g id=around><linearGradient id=g><stop id=stop stop-color=red /></linearGradient></g>
+        <defs><linearGradient id=h href=#g /><g id=shape><rect width=40 height=40 fill=url(#h) /></g><g id=spare><linearGradient id=g><stop stop-color=lime /></linearGradient></g></defs>
+        <rect width=40 height=40 fill=url(#h) /><use href=#shape x=50 /><rect y=50 width=40 height=40 fill=blue /></svg>
+      <svg id=other width=100 height=100 style="float: left"><use href=#shape /><rect x=50 width=40 height=40 fill=url(#h) /></svg>`;
+    const script = `
+      const [g, stop] = [around.firstChild, around.firstChild.firstChild], frame = () => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)));
+      await frame();
+      ${change}`;
+    expect(
+      (
+        await render(html, script, [
+          [20, 20],
+          [70, 20],
+          [120, 20],
+          [170, 20],
+          [20, 70],
+        ])
+      ).slice(1),
+    ).toEqual(["00ff00", "00ff00", "00ff00", "00ff00", "0000ff"]);
+  });
+
+  test("very many shadow trees with a gradient each are removed at once", async () => {
+    const script = `
+      const frame = () => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)));
+      for (let i = 0; i < ${isASAN || isDebug ? 2000 : 30_000}; i++) {
+        a.appendChild(document.createElement("div")).attachShadow({ mode: "open" }).innerHTML =
+          "<svg width=9 height=9 style=position:absolute><linearGradient id=g><stop stop-color=red /></linearGradient><rect width=9 height=9 fill=url(#g) /></svg>";
+      }
+      await frame();
+      a.replaceChildren();
+      await frame();`;
+    expect(await render("<div id=a></div>", script, [[4, 4]])).toEqual([null, "ffffff"]);
+  });
+
+  test("a gradient is where both the shape and its clip path are", async () => {
+    const html = `<svg width=200 height=100 style="display: block"><linearGradient id=g><stop offset=.4 stop-color=#f00 /><stop offset=.6 stop-color=#00f /></linearGradient>
+      <clipPath id=in clipPathUnits=objectBoundingBox><path d="M.5 0 1 .5 .5 1 0 .5Z" /></clipPath><clipPath id=out><path d="M130 0 200 50 130 100 60 50Z" /></clipPath>
+      <rect width=60 height=60 fill=url(#g) clip-path=url(#in) transform="translate(50 50) rotate(45) translate(-30 -30)" />
+      <rect x=110 y=10 width=40 height=80 fill=url(#g) clip-path=url(#out) /></svg>`;
+    expect(
+      (
+        await render(html, "", [
+          [35, 35],
+          [65, 65],
+          [50, 20],
+          [115, 50],
+          [145, 50],
+          [105, 50],
+          [155, 50],
+          [112, 11],
+        ])
+      ).slice(1),
+    ).toEqual(["ff0000", "0000ff", "ffffff", "ff0000", "0000ff", "ffffff", "ffffff", "ffffff"]);
+  });
+
   test.each([true, false])("a canvas that was read keeps up with what changes it (alpha: %p)", async alpha => {
     const script = `
       const context = a.getContext("2d", { alpha: ${alpha} }), other = new OffscreenCanvas(20, 20).getContext("2d");
@@ -1651,6 +1729,16 @@ describe.skipIf(!hasLibrary).concurrent.each(["memory", ...screens, ...ownScreen
     const html = `<style>::-webkit-scrollbar { width: 20px; background: #f00 }</style>
       <div style="width: 50px; height: 50px; overflow: hidden; scrollbar-gutter: stable; background: #0f0"><p style="height: 99px">`;
     expect(await render(html, "", [[40, 25]])).toEqual([null, "00ff00"]);
+  });
+
+  test("a marker outside of its item is not underlined with it", async () => {
+    const html = `<li style="margin-left: 60px; font: 20px/20px monospace; list-style: outside '    '; text-decoration: underline #f00 20px; text-underline-offset: -16px">`;
+    expect(
+      await render(html + "&nbsp;", "", [
+        [40, 10],
+        [66, 10],
+      ]),
+    ).toEqual([null, "ffffff", "ff0000"]);
   });
 
   test("an underline is on the baseline of the element that has it", async () => {
@@ -1986,7 +2074,7 @@ test.skipIf(!hasLibrary)("what a damaged database has is not taken for what it c
   ]);
 });
 
-describe.concurrent.each(screens)("the compositor on %s", where => {
+describe.concurrent.each([...screens, ...(isWindows ? ownScreen : [])])("the compositor on %s", where => {
   const show = (html: string, main: string, script = "", points: number[][] = []) =>
     renderTo(where, html, script, points, 1, main);
   const wheel = (x: number, y: number, deltaY: number) => `
@@ -2105,9 +2193,9 @@ describe.concurrent.each(screens)("the compositor on %s", where => {
       const [places, shades] = [new Set(), new Set()];
       page.executeJavaScript("document.body.className = 'moved'");
       await until(() => {
-        const { x, y } = window.getContentBounds();
-        places.add(grab({ x, y: y + 10, width: 200, height: 1 }).findIndex((value, index) => index % 4 === 0 && value < 128) / 4);
-        return shades.add(shown(10, 60)).has("cccccc") && places.has(100);
+        const picture = grab(window.getContentBounds());
+        places.add(picture.subarray(10 * 800, 11 * 800).findIndex((value, index) => index % 4 === 0 && value < 128) / 4);
+        return shades.add(picture.toString("hex", 60 * 800 + 40, 60 * 800 + 43)).has("cccccc") && places.has(100);
       });
       if (places.size < 4 || shades.size < 4) throw new Error("it has jumped: " + [...places, ...shades]);`;
     const script = `await Promise.all(document.getAnimations().map(it => it.finished)); return [a.getBoundingClientRect().x, getComputedStyle(b).opacity];`;
@@ -2183,7 +2271,7 @@ describe.concurrent.each(screens)("the compositor on %s", where => {
   test("what changes while it is scrolled, under a backdrop filter", async () => {
     const html = `${style}<i style="position: fixed; inset: 0 0 auto; height: 30px; backdrop-filter: invert(1)"></i>${rows}`;
     const main = `await until(showsPage);
-      ${wheel(100, 50, 100)} await until(() => shown(100, 50) === "00ff00");
+      ${wheel(100, 50, 100)} await until(() => shown(100, 10) === "ff00ff");
       await page.executeJavaScript("document.querySelectorAll('p')[1].style.background = '#000'");
       await until(() => shown(100, 50) === "000000");`;
     expect(
@@ -2202,9 +2290,18 @@ describe.concurrent.each(screens)("the compositor on %s", where => {
       window.center();
       const seen = [size, window.getBounds()];
       await until(() => page.executeJavaScript("innerWidth === 300"));
-      await page.executeJavaScript("seen = " + JSON.stringify([...seen, window.getBounds()]));`;
-    const centered = { ...(where === "Wayland" ? { x: 0, y: 0 } : { x: 100, y: 100 }), width: 300, height: 200 };
-    expect(await show("", main, "return seen")).toEqual([[[300, 200], centered, centered]]);
+      await page.executeJavaScript("seen = " + JSON.stringify([require("electron").screen.getPrimaryDisplay().workArea, ...seen, window.getBounds()]));`;
+    const [[{ x, y, width, height }, ...seen]] = await show("", main, "return seen");
+    const centered = {
+      ...(where === "Wayland"
+        ? { x: 0, y: 0 }
+        : isWindows
+          ? { x: x + width / 2 - 150, y: y + height / 2 - 100 }
+          : { x: 100, y: 100 }),
+      width: 300,
+      height: 200,
+    };
+    expect(seen).toEqual([[300, 200], centered, centered]);
   });
 
   test("a window that is resized, hidden and shown", async () => {
@@ -2215,7 +2312,7 @@ describe.concurrent.each(screens)("the compositor on %s", where => {
         await until(() => shown(size[0] - 30, size[1] - 10) === "ffffff" && shown(size[0] - 10, size[1] - 10) === "000000");
       }
       window.hide();
-      await until(() => shown(10, 10) === "000000");
+      await until(() => shown(10, 10) ${isWindows ? '!== "ffffff"' : '=== "000000"'});
       await page.executeJavaScript("document.body.style.background = '#0f0'");
       window.show();`;
     expect(
@@ -2360,6 +2457,26 @@ describe.skipIf(!hasLibrary).concurrent("canvas", () => {
     expect(await render("", script)).toEqual([["width1", "width1,height2"]]);
   });
 
+  test("a gradient without colors hides nothing", async () => {
+    const script = `
+      const it = new OffscreenCanvas(100, 100).getContext("2d", { willReadFrequently: true });
+      it.fillStyle = "#f00";
+      for (let n = 0; n < 300; n++) it.fillRect(8, 8, 24, 24), it.fillRect(66, 66, 8, 8);
+      it.fillStyle = it.createLinearGradient(0, 0, 9, 9);
+      it.fillRect(0, 0, 50, 50), it.arc(70, 70, 25, 0, 7), it.fill();
+      return [[20, 20], [70, 70]].map(at => it.getImageData(...at, 1, 1).data.join());`;
+    expect(await render("", script)).toEqual([["255,0,0,255", "255,0,0,255"]]);
+  });
+
+  test("what comes after text and images that are very far away is drawn", async () => {
+    const script = `
+      const [it, other] = [0, 0].map(() => new OffscreenCanvas(9, 9).getContext("2d", { willReadFrequently: true }));
+      for (const far of [3e9, -3e9, 2 ** 31 - 4]) it.fillText("a", 0, far), it.fillText("a", far, 0), it.drawImage(other.canvas, far, 0), it.drawImage(other.canvas, 0, far);
+      it.fillRect(0, 0, 9, 9);
+      return it.getImageData(4, 4, 1, 1).data[3];`;
+    expect(await render("", script)).toEqual([255]);
+  });
+
   test("only bitmaps of a reasonable width are sharpened", async () => {
     const script = `
       const darkest = async resizeWidth => {
@@ -2420,6 +2537,88 @@ describe.skipIf(!hasLibrary).concurrent("canvas", () => {
     expect(await render("", script)).toEqual([[true, true, true]]);
   });
 
+  const compare = `
+    let seed = 1;
+    const random = (most = 1) => ((seed = (seed * 16807) % 2147483647) / 2147483647) * most;
+    const make = (width = 300, height = 200) => new OffscreenCanvas(width, height).getContext("2d", { willReadFrequently: true });
+    const pixels = it => it.getImageData(0, 0, it.canvas.width, it.canvas.height).data;
+    const most = (a, b) => a.reduce((all, it, at) => Math.max(all, Math.abs(it - b[at])), 0);
+    const mean = (a, b) => a.reduce((all, it, at) => all + Math.abs(it - b[at]), 0) / a.length;`;
+
+  test("many things at once are like one after the other", async () => {
+    const script = `${compare}
+      const draw = pause => {
+        const [it, tile] = [make(), make(20, 20)];
+        seed = 1;
+        for (let n = 0; n < 9000; n++) {
+          const [x, y, size] = [random(340) - 20, random(240) - 20, random(60) + 2];
+          it.fillStyle = it.strokeStyle = "rgb(" + [random(255), random(255), random(255)].join(" ") + " / " + (n % 5 ? 1 : 0.5) + ")";
+          it.beginPath();
+          [
+            () => (it.rect(x, y, size, size / 2), it.fill()),
+            () => (it.arc(x, y, size / 2, 0, 7), it.fill()),
+            () => (it.moveTo(x, y), it.lineTo(x + size, y + 9), it.lineTo(x + 5, y + size), it.fill()),
+            () => ((it.lineWidth = size / 3), it.moveTo(x, y), it.quadraticCurveTo(x, y + size, x + size, y + size), it.stroke()),
+            () => it.fillText("Hage", x, y),
+            () => it.drawImage(tile.canvas, x | 0, y | 0),
+            () => it.drawImage(tile.canvas, 2, 2, 9, 9, x, y, size, size),
+            () => (it.save(), it.translate(x, y), it.rotate(size), it.drawImage(tile.canvas, 0, 0), it.restore()),
+            () => (it.save(), it.arc(x, y, size / 2, 0, 4), it.clip(), it.fillRect(x - 9, y - 9, 20, 20), it.fillText("in", x, y), it.restore()),
+            () => ((it.globalCompositeOperation = ["lighter", "multiply", "destination-out", "xor"][(n >> 4) % 4]), it.ellipse(x, y, size / 3, 9, 1, 0, 7), it.fill(), (it.globalCompositeOperation = "source-over")),
+            () => it.clearRect(x | 0, y | 0, 9, 17),
+          ][n % 11]();
+          if (n % 1500 == 0) (tile.fillStyle = it.fillStyle), tile.fillRect(random(10), random(10), 12, 12);
+          if (n % 2500 == 7) tile.putImageData(new ImageData(5, 5), 3, 3), it.putImageData(new ImageData(50, 50), x, y);
+          if (n % 3500 == 9) it.drawImage(it.canvas, 10, 10);
+          pause(it, n);
+        }
+        return pixels(it);
+      };
+      return most(draw(() => {}), draw((it, n) => n % 3 || it.getImageData(0, 0, 1, 1)));`;
+    expect(await render("", script)).toEqual([0]);
+  });
+
+  test.each(["source-over", "destination-atop", "source-in", "multiply"])(
+    "a filter that does nothing does not change images: %s",
+    async operator => {
+      const script = `${compare}
+      const tile = make(20, 20), worst = [];
+      (tile.fillStyle = "#08f8"), tile.fillRect(0, 0, 20, 20), (tile.fillStyle = "#f80"), tile.fillRect(0, 0, 20, 9);
+      for (const clip of [() => {}, it => it.rect(20, 30, 200, 100), it => it.arc(150, 100, 70, 0, 7)])
+        for (const place of [it => it.drawImage(tile.canvas, 140, 90), it => it.drawImage(tile.canvas, 290, -7), it => it.drawImage(tile.canvas, -50, 40, 900, 100), it => (it.setTransform(30, 30, -30, 30, 900, -200), (it.imageSmoothingEnabled = false), it.drawImage(tile.canvas, 0, 0))]) {
+          const draw = filter => { const it = make(); (it.fillStyle = "#0a08"), it.fillRect(0, 0, 200, 200), it.beginPath(), it.rect(0, 0, 300, 200), it.clip(), it.beginPath(), clip(it); if (clip.length) it.clip(); (it.globalAlpha = 0.75), (it.globalCompositeOperation = "${operator}"), (it.filter = filter), place(it); return pixels(it).map((value, at, all) => (at % 4 < 3 ? (value * all[at | 3]) / 255 : value)); };
+          worst.push(most(draw("none"), draw("opacity(1)")));
+        }
+      return Math.max(...worst) < 4;`;
+      expect(await render("", script)).toEqual([true]);
+    },
+  );
+
+  test.each([
+    "",
+    "it.setLineDash([9, 4, 2, 4])",
+    "it.lineJoin = it.lineCap = 'round'",
+    "it.scale(0.5, 0.5), (it.lineDashOffset = 3), it.setLineDash([20, 9])",
+  ])("a very long line is like its segments: %s", async style => {
+    const script = `${compare}
+      const points = Array.from({ length: 2500 }, (_, n) => [n * 0.36, 100 + Math.sin(n / 40) * 60 + random(70) - 35]);
+      const draw = finish => { const it = make(900, 200); ${style}; it.lineWidth = 1.5, it.globalAlpha = 0.5, it.beginPath(), points.forEach(point => it.lineTo(...point)), finish(it), it.stroke(); return pixels(it); };
+      const [plain, withFilter] = [draw(() => {}), draw(it => (it.filter = "opacity(1)"))];
+      return [mean(plain, withFilter) < 1.5, Math.max(...new Set(plain.filter((_, at) => at % 4 == 3)))];`;
+    expect(await render("", script)).toEqual([[true, 128]]);
+  });
+
+  test("a part of an image has nothing of what is around it, and all of its edges", async () => {
+    const script = `${compare}
+      const [source, it] = [make(4, 4), make(40, 40)];
+      source.fillStyle = "#f00", source.fillRect(0, 0, 4, 4), source.fillStyle = "#0f0", source.fillRect(1, 1, 2, 2), source.fillStyle = "#00f", source.fillRect(3, 3, 1, 1);
+      it.drawImage(source.canvas, 1, 1, 2, 2, 0, 0, 40, 40);
+      const inside = new Set(new Uint32Array(pixels(it).buffer)).size;
+      it.drawImage(source.canvas, 0, 0, 40, 40);
+      return [inside, ...it.getImageData(39, 39, 1, 1).data, ...it.getImageData(0, 39, 1, 1).data];`;
+    expect(await render("", script)).toEqual([[1, 0, 0, 255, 255, 255, 0, 0, 255]]);
+  });
+
   test("six digits are a color, and six other characters are not", async () => {
     const script = `
       const it = new OffscreenCanvas(1, 1).getContext("2d");
@@ -2447,13 +2646,6 @@ describe.skipIf(!hasLibrary).concurrent("canvas", () => {
     expect(await render("", script)).toEqual([[true, 0, 0, 255, 255, true, "TypeError", 0]]);
   });
 });
-
-const hasGPU = isMacOS
-  ? process.arch === "arm64"
-  : isLinux &&
-    ["/usr/lib64", "/usr/lib", "/usr/lib/x86_64-linux-gnu", "/usr/lib/aarch64-linux-gnu"].some(it =>
-      existsSync(it + "/libEGL_mesa.so.0"),
-    );
 
 describe.skipIf(!hasLibrary || !hasGPU).concurrent("a canvas that the GPU draws", () => {
   const onGPU = (where: string, html: string, script: string, points: number[][] = []) =>
@@ -2530,6 +2722,10 @@ describe.skipIf(!hasLibrary || !hasGPU).concurrent("a canvas that the GPU draws"
     [
       "long outlines",
       `it.fillStyle = "#00f8"; for (let i = 0; i < 3000; i++) it.lineTo(60 + Math.cos(i / 30) * (i / 60 + 5), 40 + Math.sin(i / 31) * 35); it.fill("evenodd")`,
+    ],
+    [
+      "curves that cross themselves",
+      `it.fillStyle = "#00f8"; it.fill(new Path2D("M10 40C200 -60 -80 -60 110 40C-900 700 900 700 10 40z"), "evenodd"); it.fill(new Path2D("M0 70C9e4 -9e4 9e4 9e4 120 5Q60 200 60 9L0 9z")); clipOften(it); it.clip(new Path2D("M5 5C300 90 -200 90 115 5z")); it.fillRect(0, 0, 120, 30)`,
     ],
     [
       "areas of charts",
@@ -2792,6 +2988,201 @@ describe.skipIf(!hasLibrary || !hasGPU).concurrent("a canvas that the GPU draws"
       ]),
     ).toEqual([null, "0000ff", "0000ff", "0000ff", "00ffff", "ffff00", "ffffff"]);
   });
+
+  test.each(["memory", ...screens, ...ownScreen])(
+    "is shown in %s between what is clipped, faded, filtered or moved",
+    async where => {
+      const html = `<style>body { background: #00f } div, canvas, i { position: absolute; width: 30px; height: 30px; top: 0 } div { top: 10px; overflow: hidden } i { width: 10px; height: 10px; background: #fff }</style>
+      <canvas style="width: 200px; height: 100px" width=200 height=100></canvas>
+      <div style="left: 0"><canvas width=30 height=30></canvas><i></i></div>
+      <div style="left: 40px; border-radius: 15px; background: linear-gradient(#000 50%, #0f0 50%)"><canvas width=30 height=30></canvas><i style="left: 10px"></i></div>
+      <div style="left: 80px; background: #000"><canvas width=30 height=30 style="opacity: 0.5"></canvas><i></i></div>
+      <div style="left: 120px; background: #000"><canvas width=30 height=30></canvas><i style="background: none; backdrop-filter: invert(1)"></i></div>
+      <div style="left: 160px; background: #000"><i id=fading style="width: 20px; height: 20px"></i><canvas width=30 height=30></canvas><i></i></div>
+      <div id=moved style="top: 60px; background: #0f0"><canvas width=30 height=30></canvas><i></i></div>`;
+      const script = `
+      fading.animate({ opacity: [1, 1, 0.99] }, { duration: 1e7 });
+      for (const alpha of [0.2, 1, 0.6]) {
+        for (const it of [...document.querySelectorAll("canvas")].map(it => it.getContext("2d"))) it.reset(), (it.fillStyle = "#f00"), (it.globalAlpha = alpha), it.fillRect(0, 0, 200, 100);
+        moved.style.left = alpha * 100 + "px";
+        await new Promise(requestAnimationFrame), await new Promise(requestAnimationFrame);
+      }`;
+      const points = [
+        [35, 5],
+        [5, 15],
+        [20, 30],
+        [41, 11],
+        [55, 15],
+        [55, 22],
+        [55, 32],
+        [100, 30],
+        [125, 15],
+        [140, 30],
+        [175, 25],
+        [185, 35],
+        [65, 65],
+        [80, 80],
+        [110, 80],
+        [30, 80],
+      ];
+      const colors = [
+        "990066",
+        "ffffff",
+        "d60029",
+        "990066",
+        "ffffff",
+        "990000",
+        "996600",
+        "4d0000",
+        "66ffff",
+        "990000",
+        "ff6666",
+        "990000",
+        "ffffff",
+        "996600",
+        "990066",
+        "990066",
+      ];
+      const isNear = (seen: string, at: number) =>
+        Buffer.from(seen, "hex").every((it, index) => Math.abs(it - Buffer.from(colors[at], "hex")[index]) <= 1);
+      expect(
+        (await onGPU(where, html, script, points)).slice(1).map((it, at) => (isNear(it, at) ? colors[at] : it)),
+      ).toEqual(colors);
+    },
+  );
+
+  test.each([...screens, ...ownScreen].flatMap(where => ["#fff", "#fff8"].map(background => [where, background])))(
+    "stays behind the view that covers it in %s, whose background is %s",
+    async (where, background) => {
+      const draw = (color: string) =>
+        JSON.stringify(
+          `(async () => { for (let n = 0; n < 5; n++) (it = a.getContext("2d")), it.reset(), (it.fillStyle = "${color}"), it.fillRect(0, 0, 60, 60), await new Promise(requestAnimationFrame); })()`,
+        );
+      const covering = `<body style="margin: 0; background: ${background}"><canvas id=a width=100 height=60 style="position: absolute; left: 20px; top: 20px"></canvas><i style="position: absolute; left: 30px; top: 30px; width: 10px; height: 10px; background: #00f"></i>`;
+      const main = `
+      const view = new (require("electron").WebContentsView)();
+      view.setBackgroundColor("#0000");
+      view.setBounds({ x: 0, y: 0, width: 150, height: 100 });
+      window.contentView.addChildView(view);
+      await view.webContents.loadURL("about:blank");
+      await view.webContents.executeJavaScript("document.write(" + ${JSON.stringify(JSON.stringify(covering))} + ")");
+      const isNear = (color, x, y) => Buffer.from(shown(x, y), "hex").every((it, at) => Math.abs(it - color[at]) <= 8);
+      await Promise.all([page.executeJavaScript(${draw("#f00")}), view.webContents.executeJavaScript(${draw("#0f0")})]);
+      await until(() => isNear([0, 0, 255], 35, 35));
+      console.log(JSON.stringify([isNear([0, 255, 0], 50, 50), isNear(${background == "#fff" ? "[255, 255, 255]" : "[255, 136, 136]"}, 10, 10), isNear([255, 255, 255], 100, 50)]));
+      app.exit(0);
+      await new Promise(() => {});`;
+      const html = `${"<p style='position: absolute; width: 1px; height: 1px; background: #fff'></p>".repeat(50)}<canvas id=a width=200 height=100 style="position: absolute"></canvas>`;
+      expect(await renderTo(where, html, "", [], 1, main, { BUN_DESKTOP_RENDERER: "gpu" })).toEqual([true, true, true]);
+    },
+  );
+
+  test("takes a path with a million parts", async () => {
+    const script = `
+      const it = new OffscreenCanvas(64, 64).getContext("2d");
+      for (let i = 0; i < 200000; i++) it.bezierCurveTo(8 + (i % 7), 8, 56, 8 + (i % 5), i % 2 ? 8 : 56, i % 2 ? 8 : 56);
+      it.rect(0, 40, 20, 20), it.fill();
+      return [[10, 50], [30, 60], [62, 2]].map(at => it.getImageData(...at, 1, 1).data[3]);`;
+    expect(await onGPU("memory", "", script)).toEqual([[255, 0, 0]]);
+  });
+});
+
+test.each(isMacOS ? ownScreen : [])(
+  "the frames of a scroll on %s wait for their time, and others follow",
+  async where => {
+    await using screen = await openOn(where);
+    using dir = tempDir("paced", {
+      "package.json": JSON.stringify({ name: "fixture", main: "main.js" }),
+      "index.html": `<body style="margin: 0"><div style="height: 9000px; background: repeating-linear-gradient(#000, #fff 50px)">`,
+      "main.js": `
+      const { app, BrowserWindow, screen } = require("electron");
+      const { dlopen } = require("bun:ffi");
+      const events = dlopen("/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices", {
+        CGEventCreateScrollWheelEvent2: { args: ["ptr", "u32", "u32", "i32", "i32", "i32"], returns: "u64" },
+        CGEventSetLocation: { args: ["u64", "f64", "f64"] },
+      }).symbols;
+      const { objc_getClass, objc_msgSend, sel_registerName } = dlopen("/usr/lib/libobjc.A.dylib", {
+        objc_getClass: { args: ["cstring"], returns: "u64" },
+        objc_msgSend: { args: ["u64", "u64", "u64", "u64", "u64"], returns: "u64" },
+        sel_registerName: { args: ["cstring"], returns: "u64" },
+      }).symbols;
+      const selector = name => sel_registerName(Buffer.from(name + "\\0"));
+      const ask = (object, name, a = 0n, b = 0n, c = 0n) => objc_msgSend(object, selector(name), a, b, c);
+      app.setPath("userData", __dirname + "/data");
+      app.trustOrigins(["file:"], { injectedScripts: true });
+      app.whenReady().then(async () => {
+        const window = new BrowserWindow({ width: 200, height: 100, frame: false, ...JSON.parse(process.env.PLACE) });
+        await window.loadFile("index.html");
+        const frames = count => window.webContents.executeJavaScript("(async () => { for (let i = 0; i < " + count + "; i++) await new Promise(requestAnimationFrame); return scrollY; })()");
+        await frames(3);
+        const wheel = events.CGEventCreateScrollWheelEvent2(null, 0, 1, -4, 0, 0);
+        events.CGEventSetLocation(wheel, 50, screen.getPrimaryDisplay().size.height - 50);
+        const event = ask(objc_getClass(Buffer.from("NSEvent\\0")), "eventWithCGEvent:", wheel);
+        const view = ask(ask(window.getNativeWindowHandle().readBigUInt64LE(), "window"), "delegate");
+        const ended = window.webContents.executeJavaScript("new Promise(done => (onscrollend = () => done(scrollY)))");
+        for (let i = 0; i < 20; i++) {
+          ask(view, "performSelectorOnMainThread:withObject:waitUntilDone:", selector("scrollWheel:"), event, 1n);
+          await frames(1);
+        }
+        console.log(await ended, await frames(5));
+      }).then(() => app.exit(0), error => { console.log(error); app.exit(1); });`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--preload=bun:desktop/electron", ".", "--use-mock-keychain"],
+      env: { ...bunEnv, ...screen!.env, BUN_DESKTOP_THREADS: "2", BUN_DESKTOP_LOG: "frames" },
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("80 80\n");
+    const interval = +stderr.match(/scrolled for \d+ frames of ([\d.]+)ms/)![1];
+    const partsUntil = (step: string) =>
+      [
+        ...stderr.matchAll(
+          new RegExp(
+            String.raw`([\d.]+)\] \S+ paced\D+([\d.]+).*(?:\n(?!.* paced).*)*?\n\D+([\d.]+)\] \S+ ${step}`,
+            "g",
+          ),
+        ),
+      ].map(([, called, late, done]) => (+done - +called + +late) / interval);
+    const [painted, committed] = [partsUntil("painted\n"), partsUntil("committed")];
+    // Darwin 25 is macOS 26.
+    const isPaced = parseInt(release()) >= 25;
+    expect([
+      painted.filter(it => it >= 0.5).length >= 10,
+      committed.filter(it => it < 1).length >= 10,
+      committed.filter(it => it < 0.5),
+    ]).toEqual([isPaced, isPaced, []]);
+    expect(stderr).toMatch(/painted from \[.*\] to \[.*\] ms after the refresh/);
+    expect(stderr).toMatch(/shown [1-9]\d* times/);
+  },
+);
+
+test.skipIf(!hasLibrary || isWindows).concurrent("the log waits for a reader that is slow", async () => {
+  using dir = tempDir("paint", {
+    "package.json": JSON.stringify({ name: "fixture", main: "main.js" }),
+    "main.js": `
+      const { app, BrowserWindow } = require("electron");
+      const { writeSync } = require("fs");
+      app.setPath("userData", __dirname + "/data");
+      app.whenReady().then(() => {
+        process.stderr.write("");
+        try { for (;;) writeSync(2, "-"); } catch {}
+        writeSync(1, "full");
+        new BrowserWindow().destroy();
+        app.exit(0);
+      });`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--preload=bun:desktop/electron", "."],
+    env: { ...bunEnv, BUN_DESKTOP_HEADLESS: "1", BUN_DESKTOP_LOG: "1" },
+    cwd: String(dir),
+    stderr: "pipe",
+    lazy: true,
+  });
+  await proc.stdout.getReader().read();
+  expect(await proc.stderr.text()).toMatch(/-\[desktop .* <- CreateWindow/);
+  expect(await proc.exited).toBe(0);
 });
 
 describe.skipIf(!hasLibrary).concurrent("web fonts", () => {
@@ -3184,6 +3575,113 @@ test.skipIf(!hasLibrary).concurrent("the rule of nested columns reaches the end 
   ).toEqual([null, "0000ff", "0000ff", "ffffff"]);
 });
 
+test.skipIf(!hasLibrary).concurrent("text-fit scales the glyphs and the lines that depend on the font", async () => {
+  const html = (style: string) =>
+    `<div style="position: absolute; top: 0; white-space: pre; text-decoration: underline 10%; ${style}">HH</div>`;
+  const script = `
+    const { width } = document.querySelector("div").getBoundingClientRect();
+    document.querySelector("div").style.cssText += "font-size: 10px; text-fit: grow; width: " + width + "px";`;
+  const points = Array.from({ length: 60 }, (_, it) => [3 + (it % 12) * 8, 10 + Math.floor(it / 12) * 18]);
+  const dark = (colors: unknown[]) => colors.slice(1).map(it => (it as string) < "8");
+  const [fitted, large] = await Promise.all([
+    render(html("font: 80px/1 monospace"), script, points),
+    render(html("font: 80px/1 monospace"), "", points),
+  ]);
+  expect(dark(large)).toContain(true);
+  expect(dark(fitted).filter((it, index) => it !== dark(large)[index]).length).toBeLessThan(4);
+});
+
+test.skipIf(!hasLibrary).concurrent.each([
+  [
+    "a box is transformed in each column",
+    `<div style="transform: scaleX(0.5); height: 80px; background: #00f"><p style="margin: 0; height: 60px"></p><p style="margin: 0; height: 20px; background: #0f0"></p></div>`,
+    [
+      [10, 10],
+      [50, 10],
+      [90, 10],
+      [110, 10],
+      [150, 10],
+      [150, 30],
+      [190, 30],
+    ],
+    ["ffffff", "0000ff", "ffffff", "ffffff", "0000ff", "00ff00", "ffffff"],
+  ],
+  [
+    "a repeated header is transformed with its column",
+    `<div style="transform: scaleX(0.5)"><table style="border-spacing: 0; width: 100%"><thead style="break-inside: avoid"><td style="padding: 0; height: 5px; background: #00f"><tbody><td style="padding: 0; height: 60px"></table></div>`,
+    [
+      [10, 2],
+      [50, 2],
+      [90, 2],
+      [110, 2],
+      [150, 2],
+      [190, 2],
+    ],
+    ["ffffff", "0000ff", "ffffff", "ffffff", "0000ff", "ffffff"],
+  ],
+  [
+    "the background of a row goes on in the next column",
+    `<table style="border-spacing: 0; width: 100%"><tr style="height: 80px; background: linear-gradient(#00f 60px, #0f0 0)"><td></table>`,
+    [
+      [50, 30],
+      [150, 10],
+      [150, 30],
+    ],
+    ["0000ff", "0000ff", "00ff00"],
+  ],
+  [
+    "and that of a column",
+    `<table style="border-spacing: 0; width: 100%"><col style="background: linear-gradient(#00f 60px, #0f0 0)"><col><tr style="height: 80px"><td><td></table>`,
+    [
+      [20, 30],
+      [70, 30],
+      [120, 10],
+      [120, 30],
+      [170, 30],
+    ],
+    ["0000ff", "ffffff", "0000ff", "00ff00", "ffffff"],
+  ],
+  [
+    "the shadow of a box is where it ends",
+    `<div style="height: 20px; box-shadow: 0 10px #00f"><div style="height: 60px"></div></div>`,
+    [
+      [50, 25],
+      [150, 5],
+    ],
+    ["0000ff", "ffffff"],
+  ],
+  [
+    "a marker is in the column of the first line",
+    `<div style="height: 30px"></div><div style="display: list-item; margin-left: 50px; font: 20px/20px monospace; list-style: square; color: #00f"><div style="height: 5px"></div>&nbsp;</div>`,
+    [
+      [36, 46],
+      [136, 11],
+    ],
+    ["ffffff", "0000ff"],
+  ],
+])("%s", async (_, html, points, colors) => {
+  expect(
+    await render(`<div style="columns: 2; gap: 0; column-fill: auto; height: 40px">${html}</div>`, "", points),
+  ).toEqual([null, ...colors]);
+});
+
+test.skipIf(!hasLibrary).concurrent("the background of a vertical table leaves out its caption", async () => {
+  const html = `<table style="writing-mode: vertical-lr; border-spacing: 0; background: #00f"><caption style="width: 20px"></caption><td style="padding: 0; width: 20px; height: 40px"></table>`;
+  expect(
+    await render(html, "", [
+      [10, 30],
+      [30, 10],
+    ]),
+  ).toEqual([null, "ffffff", "0000ff"]);
+});
+
+test.skipIf(!hasLibrary).concurrent("the parts of combined text are side by side", async () => {
+  const html = (content: string) =>
+    `<style>p::before { content: ${content}; text-combine-upright: all }</style><p style="margin: 0; font: 80px/1 monospace; writing-mode: vertical-rl">`;
+  const points = Array.from({ length: 40 }, (_, it) => [2 * it, 40]);
+  expect(await render(html("'H' 'H'"), "", points)).toEqual(await render(html("'HH'"), "", points));
+});
+
 test
   .skipIf(!hasLibrary)
   .concurrent("hidden fixed boxes that leave a hidden scroller leave the page as it is", async () => {
@@ -3191,6 +3689,24 @@ test
     <div style="position: fixed; overflow: auto; visibility: hidden">a<div style="position: fixed; animation: k 99s">a<i style="position: fixed">a</i></div></div>`;
     expect(await render(html, `return document.elementFromPoint(5, 5).localName`, [[5, 5]])).toEqual(["p", "0000ff"]);
   });
+
+test.skipIf(!hasLibrary).concurrent("transformed boxes in one another over very many columns are painted", async () => {
+  const html = `<div style="columns: 10px; gap: 0; width: 10px; height: 20px; column-fill: auto">${'<div style="transform: scale(1.0001, 1); transform-origin: 0 0">'.repeat(60)}<div style="height: 30000px; background: #00f">`;
+  expect(await render(html, `return document.elementFromPoint(55, 5).style.height`, [[55, 5]])).toEqual([
+    "30000px",
+    "0000ff",
+  ]);
+});
+
+test.skipIf(!hasLibrary).concurrent.each([
+  ["font-size: .0001px; letter-spacing: 20px; text-fit: shrink", 40],
+  ["font-size: .0001px; letter-spacing: 20px; text-fit: shrink per-line-all", 40],
+  ["font-size: .001px; text-fit: grow", 0],
+])("text that is too small is not fitted with '%s'", async (style, width) => {
+  const html = `<div style="width: 20px; white-space: nowrap; ${style}">ab</div><p style="margin: 0; height: 20px; background: #00f">`;
+  const script = `const range = new Range(); range.selectNodeContents(document.querySelector("div")); return Math.round(range.getBoundingClientRect().width)`;
+  expect(await render(html, script, [[5, 5]])).toEqual([width, "0000ff"]);
+});
 
 test.skipIf(!hasLibrary).concurrent("quotes follow the language", async () => {
   const script = `
@@ -3303,6 +3819,138 @@ describe.skipIf(!hasLibrary).concurrent("untrusted markup", () => {
       const nested = count => "<a>".repeat(count) + "</a>".repeat(count);
       return [entities(10), entities(1000), nested(1000), nested(6000)].map(fails)`;
     expect(await render("", script)).toEqual([[false, true, false, true]]);
+  });
+});
+
+describe.skipIf(!isWindows).each(ownScreen)("with the machine to itself, on %s", where => {
+  const system = `
+    const ffi = require("bun:ffi"), { screen, nativeImage } = require("electron");
+    const user = ffi.dlopen("user32.dll", {
+      mouse_event: { args: ["u32", "i32", "i32", "u32", "i64"] },
+      SystemParametersInfoW: { args: ["u32", "u32", "i64", "u32"], returns: "i32" },
+      FindWindowW: { args: ["ptr", "i64"], returns: "i64" },
+      GetWindowThreadProcessId: { args: ["i64", "ptr"], returns: "u32" },
+    }).symbols;
+    const move = (x, y) => {
+      const [content, { size }] = [window.getContentBounds(), screen.getPrimaryDisplay()];
+      user.mouse_event(0x8001, Math.ceil(((content.x + x) * 65536) / size.width), Math.ceil(((content.y + y) * 65536) / size.height), 0, 0);
+    };
+    const button = isDown => user.mouse_event(isDown ? 2 : 4, 0, 0, 0, 0);
+    let turn = 0;
+    const moveUntil = (x, y, name) => until(() => (move(x + (turn++ % 2), y), page.executeJavaScript("seen.has(" + JSON.stringify(name) + ")")));`;
+  const boxes = `<style>i { position: absolute; width: 40px; height: 40px; background: #000 } #b { left: 120px; top: 40px }</style><i id=a></i><i id=b></i>
+    <script>
+      var seen = new Map();
+      for (const type of ["mousemove", "mousedown", "dragstart", "dragover", "drop", "dragend"]) addEventListener(type, event => {
+        const it = event.dataTransfer;
+        if (type === "dragstart") it.setData("text/plain", "é");
+        if (event.target === b) event.preventDefault();
+        seen.set(type + " " + event.target.id, it && [it.getData("text/plain"), [...it.files].map(it => it.name), it.dropEffect]);
+      });
+    </script>`;
+  const press = `await moveUntil(10, 10, "mousemove a"); button(true);`;
+
+  test("what is dragged in a page", async () => {
+    const main = `${system}
+      await page.executeJavaScript("a.draggable = true");
+      ${press}
+      try { await moveUntil(10, 10, "mousedown a"); await moveUntil(30, 30, "dragstart a"); await moveUntil(140, 60, "dragover b"); } finally { button(false); }
+      await until(() => page.executeJavaScript("seen.has('dragend a')"));`;
+    expect(await renderTo(where, boxes, `return [seen.get("drop b"), seen.get("dragend a")[2]]`, [], 1, main)).toEqual([
+      [["é", [], "copy"], "copy"],
+    ]);
+  });
+
+  test("files that are dragged", async () => {
+    const main = `${system}
+      ${press}
+      try {
+        await moveUntil(10, 10, "mousedown a");
+        page.startDrag({ files: [__dirname + "\\\\main.js", __dirname + "\\\\index.html"], icon: nativeImage.createFromBitmap(Buffer.alloc(64, 255), { width: 4, height: 4 }) });
+        await moveUntil(140, 60, "dragover b");
+      } finally { button(false); }
+      await until(() => page.executeJavaScript("seen.has('drop b')"));`;
+    expect(await renderTo(where, boxes, `return seen.get("drop b")[1]`, [], 1, main)).toEqual([
+      ["main.js", "index.html"],
+    ]);
+  });
+
+  test("the display gets another scale", async () => {
+    const main = `${system}
+      const state = async () => [screen.getPrimaryDisplay().scaleFactor, window.getContentSize(), await page.executeJavaScript("[devicePixelRatio, innerWidth, innerHeight]"), (await page.capturePage()).toBitmap().length / 4];
+      const scale = async (steps, to) => (user.SystemParametersInfoW(0x9f, steps, 1, 1), await until(async () => (await state()).join() === to.join()));
+      try { await scale(1, [1.25, [200, 100], [1.25, 200, 100], 250 * 125]); } finally { await scale(0, [1, [200, 100], [1, 200, 100], 200 * 100]); }`;
+    expect(
+      await renderTo(
+        where,
+        boxes,
+        "",
+        [
+          [10, 10],
+          [60, 10],
+          [130, 50],
+        ],
+        1,
+        main,
+      ),
+    ).toEqual([null, "000000", "ffffff", "000000"]);
+  });
+
+  test("a maximized window leaves room for a hidden taskbar, and does not wait for it", async () => {
+    const main = `${system}
+      const { SHAppBarMessage } = ffi.dlopen("shell32.dll", { SHAppBarMessage: { args: ["u32", "ptr"], returns: "u64_fast" } }).symbols;
+      const { OpenProcess } = ffi.dlopen("kernel32.dll", { OpenProcess: { args: ["u32", "i32", "u32"], returns: "i64" } }).symbols;
+      const { NtSuspendProcess, NtResumeProcess } = ffi.dlopen("ntdll.dll", { NtSuspendProcess: { args: ["i64"], returns: "i32" }, NtResumeProcess: { args: ["i64"], returns: "i32" } }).symbols;
+      const [bar, owner] = [Buffer.alloc(48), new Uint32Array(1)];
+      const hide = state => (bar.writeUInt32LE(48), bar.writeUInt32LE(state, 40), SHAppBarMessage(10, bar));
+      const before = SHAppBarMessage(4, (bar.writeUInt32LE(48), bar)), place = window.getBounds();
+      user.GetWindowThreadProcessId(user.FindWindowW(Buffer.from("Shell_TrayWnd\\0", "utf16le"), 0), owner);
+      const shell = OpenProcess(0x800, 0, owner[0]);
+      try {
+        hide(1);
+        window.maximize();
+        await until(() => page.executeJavaScript("innerHeight === screen.height - 1"));
+        window.unmaximize();
+        NtSuspendProcess(shell);
+        const watchdog = new Worker(URL.createObjectURL(new Blob([\`setTimeout(() => (require("bun:ffi").dlopen("ntdll.dll", { NtResumeProcess: { args: ["i64"] } }).symbols.NtResumeProcess(\${shell}n), postMessage(0)), 5000)\`])));
+        const start = performance.now();
+        window.maximize();
+        await until(() => page.executeJavaScript("innerHeight === screen.height - 1"));
+        if (performance.now() - start > 4000) throw new Error("it has waited");
+        watchdog.terminate();
+      } finally {
+        NtResumeProcess(shell), hide(before);
+      }
+      await until(() => page.executeJavaScript("innerHeight === screen.availHeight && innerHeight < screen.height - 1"));
+      window.unmaximize();
+      await until(() => page.executeJavaScript("innerHeight === 100"));`;
+    expect(await renderTo(where, boxes, "", [[10, 10]], 1, main)).toEqual([null, "000000"]);
+  });
+
+  test.each([
+    [2, "1", true],
+    [2, undefined, false],
+    [1, "1", false],
+  ])("ClearType: the system says %d, and the app %s", async (kind, LCD_TEXT, hasColor) => {
+    const { SystemParametersInfoW } = dlopen("user32.dll", {
+      SystemParametersInfoW: { args: ["u32", "u32", "i64", "u32"], returns: "i32" },
+    }).symbols;
+    const before = new Uint32Array(2);
+    (SystemParametersInfoW(0x4a, 0, ptr(before), 0), SystemParametersInfoW(0x200a, 0, ptr(before, 4), 0));
+    const set = (isOn: number, kind: number) => (
+      SystemParametersInfoW(0x4b, isOn, 0, 0),
+      SystemParametersInfoW(0x200b, 0, kind, 0)
+    );
+    const main = `await until(showsPage);
+      await page.executeJavaScript("seen = " + grab(window.getContentBounds()).some((it, at, all) => at % 4 === 0 && Math.abs(it - all[at + 2]) > 32));`;
+    set(1, kind);
+    try {
+      expect(await renderTo(where, "Some text ".repeat(20), "return seen", [], 1, main, { LCD_TEXT })).toEqual([
+        hasColor,
+      ]);
+    } finally {
+      set(before[0], before[1]);
+    }
   });
 });
 

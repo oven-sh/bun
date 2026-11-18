@@ -100,17 +100,17 @@ impl Platform for Headless {
         Clipboard::default()
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     fn descriptors(&self) -> Vec<i32> {
         Vec::new()
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     fn before_waiting(&self) -> Option<std::time::Instant> {
         None
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     fn dispatch(&self, _: &[i32]) {}
 
     fn has_screen_reader(&self) -> bool {

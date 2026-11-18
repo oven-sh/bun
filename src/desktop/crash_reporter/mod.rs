@@ -4,11 +4,14 @@ mod minidump;
 
 use core::cell::OnceCell;
 
+use std::rc::Rc;
+
 use bun_deflate::{Format, Level, compress_to_vec};
 use bun_jsc::JSString;
+use bun_sys::File;
 use bun_web::exec::blocking;
 use bun_web::headers::HeaderList;
-use minidump::{About, Annotations};
+use minidump::{About, Annotations, Target};
 
 use crate::generated_bindgen::electron::{
     CrashReporterOptions, DesktopProcess, ElectronCrashReporter,
@@ -24,6 +27,12 @@ const LONGEST_VALUE: usize = 20320;
 const HOUR: i64 = 3600;
 /// Not `pending`: libraries that send reports themselves delete what they find there.
 const TO_UPLOAD: &str = "queued";
+
+const PLATFORM: [&str; 2] = match () {
+    () if IS_MAC => ["darwin", "OS X"],
+    () if IS_WINDOWS => ["win32", "Win64"],
+    () => ["linux", "Linux"],
+};
 
 struct Started {
     directory: String,
@@ -137,7 +146,7 @@ fn publish_parameters() {
         "arm64"
     };
     let own = [
-        ("platform", if IS_MAC { "darwin" } else { "linux" }),
+        ("platform", PLATFORM[0]),
         ("process_type", kind),
         ("ptype", kind),
         ("osarch", architecture),
@@ -150,7 +159,7 @@ fn publish_parameters() {
 
 const PLACES: [&str; 3] = ["new", TO_UPLOAD, "completed"];
 
-fn begin(started: Started) {
+fn begin(started: Started, file: Option<File>) {
     let started = state().started.get_or_init(|| started);
     let report = random_id();
     let name = format!("{}.dmp", uuid(report));
@@ -158,12 +167,17 @@ fn begin(started: Started) {
         PLACES.map(|it| files::join(&[&started.directory, it, &name]));
     publish_parameters();
     minidump::prepare(About {
-        paths: [
-            unfinished,
-            to_upload,
-            to_keep,
-            Settings::path(&started.directory),
-        ],
+        target: file.map_or_else(
+            || {
+                Target::Paths([
+                    unfinished,
+                    to_upload,
+                    to_keep,
+                    Settings::path(&started.directory),
+                ])
+            },
+            Target::File,
+        ),
         report,
         client: Settings::of(&started.directory).client,
         system_version: DesktopProcess::get_system_version(),
@@ -194,7 +208,80 @@ pub(crate) fn begin_in_utility_process(given: &Value) {
         compresses: false,
         limits_rate: false,
     };
-    begin(started);
+    begin(started, None);
+}
+
+#[cfg(target_os = "linux")]
+fn file_without_name(_: &str) -> Option<File> {
+    use bun_sys::{MemfdFlags, ftruncate, memfd_create};
+    let file = File::from_fd(memfd_create(c"report".into(), MemfdFlags::NonExecutable).ok()?);
+    ftruncate(file.fd(), minidump::LARGEST as i64).ok()?;
+    // SAFETY: it only takes numbers.
+    let status = unsafe { libc::fcntl(file.fd().native(), libc::F_ADD_SEALS, libc::F_SEAL_GROW) };
+    (status == 0).then_some(file)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn file_without_name(directory: &str) -> Option<File> {
+    use bun_sys::O;
+    let path = files::join(&[directory, "new", &random_uuid()]);
+    let how = O::RDWR | O::CREAT | O::EXCL | O::CLOEXEC;
+    let file = File::openat(bun_sys::Fd::cwd(), path.as_bytes(), how, 0o600).ok()?;
+    files::remove(&path);
+    Some(file)
+}
+
+pub(crate) fn file_for_page_process() -> Option<[File; 2]> {
+    let file = file_without_name(&state().started.get()?.directory)?;
+    Some([File::from_fd(bun_sys::dup(file.fd()).ok()?), file])
+}
+
+pub(crate) fn begin_in_page_process(file: File) {
+    let started = Started {
+        directory: String::new(),
+        annotations: Vec::new(),
+        kind_of_process: "renderer",
+        url: String::new(),
+        compresses: false,
+        limits_rate: false,
+    };
+    begin(started, Some(file));
+}
+
+/// Once the page process has ended.
+pub(crate) async fn keep_report_in(file: File, site: Rc<str>) {
+    const MOST: usize = 64;
+    const MOST_FOR_SITE: usize = 4;
+    state!(fn kept() -> RefCell<Vec<Rc<str>>>);
+    let mut start = [0; 4];
+    let has_room = |all: &[Rc<str>]| {
+        all.len() < MOST && all.iter().filter(|it| **it == site).count() < MOST_FOR_SITE
+    };
+    let Some(started) = state().started.get() else {
+        return;
+    };
+    if file.pread_all(&mut start, 0).is_err() || start == [0; 4] || !has_room(&kept().borrow()) {
+        return;
+    }
+    kept().borrow_mut().push(site);
+    let keep = move || {
+        let size = bun_sys::get_file_size(file.fd()).ok()?;
+        let mut dump = vec![0; (size as usize).min(minidump::LARGEST)];
+        file.pread_all(&mut dump, 0).ok()?;
+        let (settings, report) = (Settings::of(&started.directory), random_id());
+        let dump = minidump::complete(dump, report, settings.client, &started.annotations)?;
+        let name = format!("{}.dmp", uuid(report));
+        let [unfinished, to_upload, to_keep] =
+            PLACES.map(|it| files::join(&[&started.directory, it, &name]));
+        files::write(&unfinished, &dump, 0o600).ok()?;
+        let target = if settings.uploads() {
+            to_upload
+        } else {
+            to_keep
+        };
+        files::rename(&unfinished, &target).ok()
+    };
+    blocking(keep).await;
 }
 
 /// Their paths without the extension.
@@ -387,6 +474,14 @@ fn set(all: &mut Annotations, key: &str, value: &str) {
     all.push((key.into(), value.into()));
 }
 
+pub(crate) fn put_parameters(into: JSValue) -> JsResult<()> {
+    for (key, value) in &*state().parameters.borrow() {
+        let key = bun_core::String::clone_utf8(key.as_bytes());
+        into.put_may_be_index(global(), &key, js(&**value)?)?;
+    }
+    Ok(())
+}
+
 impl ElectronCrashReporter {
     pub(crate) fn start<'a>(_: Cx<'a, '_>, options: &CrashReporterOptions<'a>) -> JsResult<()> {
         let text = |it: JsLocal<'a, JSString>| text_of(it.to_js());
@@ -423,7 +518,7 @@ impl ElectronCrashReporter {
         for (key, value) in [
             ("prod", "Electron"),
             ("ver", modules::ELECTRON),
-            ("plat", if IS_MAC { "OS X" } else { "Linux" }),
+            ("plat", PLATFORM[1]),
             ("bun", bun_core::Global::package_json_version_with_sha),
         ] {
             set(&mut annotations, key, value);
@@ -444,9 +539,9 @@ impl ElectronCrashReporter {
             compresses,
             limits_rate: options.rate_limit,
         };
-        begin(started);
+        begin(started, None);
         upload_soon();
-        Ok(())
+        crate::contents::process::statics_changed()
     }
 
     pub(crate) fn add_extra_parameter(key: &[u8], value: &[u8]) {
@@ -467,14 +562,7 @@ impl ElectronCrashReporter {
 
     pub(crate) fn get_parameters(_: Cx<'_, '_>) -> JsResult<JSValue> {
         let all = object!({});
-        for (key, value) in &*state().parameters.borrow() {
-            all.put_may_be_index(
-                global(),
-                &bun_core::String::clone_utf8(key.as_bytes()),
-                js(&**value)?,
-            )?;
-        }
-        Ok(all)
+        put_parameters(all).map(|()| all)
     }
 
     pub(crate) fn get_last_crash_report(_: Cx<'_, '_>) -> JsResult<JSValue> {

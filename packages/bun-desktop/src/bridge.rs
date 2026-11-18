@@ -8,7 +8,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::error::{Result, failure};
 use crate::protocol::{
-    DragPhase, Event, Input, Lane, Message, MouseAction, Reply, SystemEvent, WindowEvent,
+    DragPhase, Event, Input, Lane, Message, MouseAction, Reply, SystemEvent, TouchPhase,
+    WindowEvent,
 };
 use crate::remote::{guest, pages};
 use crate::sync::Mutex;
@@ -162,7 +163,8 @@ fn is_replaceable(event: &Event) -> bool {
                 phase: DragPhase::Over,
                 ..
             } => true,
-            Input::Mouse(mouse) => mouse.action == MouseAction::Move,
+            Input::Mouse(mouse) | Input::Pen { mouse, .. } => mouse.action == MouseAction::Move,
+            Input::Touch { phase, .. } => *phase == TouchPhase::Move,
             Input::Scroll { has_ended, .. } => !has_ended,
             _ => false,
         },
@@ -187,6 +189,7 @@ fn replaces(new: &Event, old: &Event) -> bool {
             },
         ) if id == other => match (input, before) {
             (Input::Scroll { node, .. }, Input::Scroll { node: other, .. }) => node == other,
+            (Input::Touch { finger, .. }, Input::Touch { finger: other, .. }) => finger == other,
             _ => discriminant(input) == discriminant(before),
         },
         (Event::Window { id, .. }, Event::Window { id: other, .. }) => id == other,
@@ -205,6 +208,8 @@ pub fn emit(event: Event) {
             input,
             Input::Frame { .. }
                 | Input::Mouse(_)
+                | Input::Pen { .. }
+                | Input::Touch { .. }
                 | Input::Wheel(_)
                 | Input::Pinch { .. }
                 | Input::Scroll { .. }
@@ -212,7 +217,10 @@ pub fn emit(event: Event) {
                 | Input::Text { .. }
         );
         is_awaited |= matches!(input, Input::Key(_) | Input::Resize { .. })
-            || matches!(input, Input::Mouse(_)) && !is_replaceable_now;
+            || matches!(
+                input,
+                Input::Mouse(_) | Input::Pen { .. } | Input::Touch { .. }
+            ) && !is_replaceable_now;
     }
     if !is_frequent || diagnostics::logs_frames() {
         crate::diagnostics::log!("-> {:.200}", format!("{event:?}"));

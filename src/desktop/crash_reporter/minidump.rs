@@ -7,9 +7,10 @@ use core::ops::Range;
 use core::sync::atomic::{AtomicPtr, Ordering::SeqCst};
 
 use bun_core::debug::{frame_address, strip_return_address_signature};
-use bun_core::{RacyCell, ZBox, heap, strings};
+use bun_core::{RacyCell, heap, strings};
 use bun_crash_handler::SignalContext;
 
+use self::disk::{File, Path};
 use super::Settings;
 
 pub(super) type Annotations = Vec<(String, String)>;
@@ -36,11 +37,17 @@ struct Buffers {
     scratch: [[u8; 2 * PAGE]; 3],
 }
 
+pub(super) const LARGEST: usize = size_of::<Buffers>() + MOST_OF_STACK;
+
+pub(super) enum Target<Path> {
+    /// Where it is written, where it goes then if it is to be uploaded and if it is not, and what says which.
+    Paths([Path; 4]),
+    /// In a sandbox. The app does the rest.
+    File(bun_sys::File),
+}
+
 struct Prepared {
-    unfinished: ZBox,
-    to_upload: ZBox,
-    to_keep: ZBox,
-    settings: ZBox,
+    target: Target<Path>,
     /// Of `Buffers::start`.
     length: usize,
     facts: system::Facts,
@@ -141,8 +148,7 @@ impl core::fmt::Write for Output<'_> {
 }
 
 pub(super) struct About<'a> {
-    /// Where it is written, where it goes then if it is to be uploaded and if it is not, and what says which.
-    pub(super) paths: [String; 4],
+    pub(super) target: Target<String>,
     pub(super) report: [u8; 16],
     pub(super) client: [u8; 16],
     pub(super) system_version: &'a str,
@@ -198,18 +204,37 @@ pub(super) fn prepare(about: About<'_>) {
     out.put_words(LINKS, &[1, 0, 28, LINKED as u32]);
     out.put_words(LINKED, &[1]);
 
-    let [unfinished, to_upload, to_keep, settings] =
-        about.paths.map(|it| ZBox::from_bytes(it.as_bytes()));
     let prepared = Prepared {
-        unfinished,
-        to_upload,
-        to_keep,
-        settings,
+        facts: system::facts(matches!(about.target, Target::File(_))),
+        target: match about.target {
+            Target::Paths(all) => Target::Paths(all.map(|it| disk::path(&it))),
+            Target::File(file) => Target::File(file),
+        },
         length: out.length,
-        facts: system::facts(),
     };
     PREPARED.store(heap::into_raw(Box::new(prepared)), SeqCst);
     bun_crash_handler::record_crashes_with(record);
+}
+
+/// With what a process in a sandbox has not been told.
+pub(super) fn complete(
+    mut dump: Vec<u8>,
+    report: [u8; 16],
+    client: [u8; 16],
+    annotations: &[(String, String)],
+) -> Option<Vec<u8>> {
+    let length = dump.len().next_multiple_of(4);
+    (length > CONTEXT && dump.starts_with(b"MDMP")).then_some(())?;
+    let room = annotations.iter().map(|it| it.0.len() + it.1.len() + 32);
+    dump.resize(length + 4 + room.sum::<usize>(), 0);
+    let mut out = Output {
+        bytes: &mut dump,
+        length,
+    };
+    out.put(CRASHPAD + 4, &report);
+    out.put(CRASHPAD + 20, &client);
+    out.add_annotations(CRASHPAD + 36, &[], None, annotations);
+    Some(dump)
 }
 
 pub(super) fn set_parameters(parameters: Annotations) {
@@ -220,8 +245,146 @@ pub(super) fn set_parameters(parameters: Annotations) {
     }
 }
 
-#[derive(Clone, Copy)]
-struct File(c_int);
+#[cfg(unix)]
+mod disk {
+    use core::ffi::c_int;
+
+    pub(super) type Path = bun_core::ZBox;
+
+    pub(super) fn path(path: &str) -> Path {
+        Path::from_bytes(path.as_bytes())
+    }
+
+    pub(super) fn rename(from: &Path, to: &Path) {
+        // SAFETY: terminated strings.
+        unsafe { libc::rename(from.as_ptr(), to.as_ptr()) };
+    }
+
+    #[derive(Clone, Copy)]
+    pub(super) struct File(c_int);
+
+    impl File {
+        pub(super) fn open(path: &Path, is_new: bool) -> Option<File> {
+            let how = match is_new {
+                true => libc::O_RDWR | libc::O_CREAT | libc::O_EXCL,
+                false => libc::O_RDONLY,
+            };
+            // SAFETY: a terminated string.
+            let file = unsafe { libc::open(path.as_ptr(), how | libc::O_CLOEXEC, 0o600) };
+            (file >= 0).then_some(File(file))
+        }
+
+        pub(super) fn write_from(self, address: usize, length: usize, offset: usize) -> isize {
+            super::system::write_from(self.0, address, length, offset as i64)
+        }
+
+        pub(super) fn read_start(self, into: &mut [u8]) -> &[u8] {
+            // SAFETY: there is room for as much as is read.
+            let read = unsafe { libc::pread(self.0, into.as_mut_ptr().cast(), into.len(), 0) };
+            &into[..read.max(0) as usize]
+        }
+
+        pub(super) fn of(file: &bun_sys::File) -> File {
+            File(file.fd().native())
+        }
+
+        pub(super) fn truncate(self, length: usize) {
+            // SAFETY: it is open.
+            unsafe { libc::ftruncate(self.0, length as i64) };
+        }
+
+        pub(super) fn close(self) {
+            // SAFETY: as above.
+            unsafe { libc::close(self.0) };
+        }
+    }
+}
+
+#[cfg(windows)]
+mod disk {
+    pub(super) type Path = crate::win32::Wide;
+
+    /// `OVERLAPPED`
+    type Offset = [usize; 4];
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn CreateFileW(
+            path: *const u16,
+            access: u32,
+            sharing: u32,
+            security: usize,
+            how: u32,
+            flags: u32,
+            template: usize,
+        ) -> isize;
+        fn WriteFile(file: isize, from: usize, length: u32, done: &mut u32, at: &mut Offset)
+        -> i32;
+        fn ReadFile(
+            file: isize,
+            into: *mut u8,
+            length: u32,
+            done: &mut u32,
+            at: &mut Offset,
+        ) -> i32;
+        fn SetFileInformationByHandle(file: isize, what: u32, value: &i64, size: u32) -> i32;
+        fn CloseHandle(file: isize) -> i32;
+        fn MoveFileW(from: *const u16, to: *const u16) -> i32;
+    }
+
+    pub(super) fn path(path: &str) -> Path {
+        Path::new(path)
+    }
+
+    pub(super) fn rename(from: &Path, to: &Path) {
+        // SAFETY: terminated strings.
+        unsafe { MoveFileW(from.as_ptr(), to.as_ptr()) };
+    }
+
+    #[derive(Clone, Copy)]
+    pub(super) struct File(isize);
+
+    impl File {
+        pub(super) fn open(path: &Path, is_new: bool) -> Option<File> {
+            let (access, how) = match is_new {
+                true => (0xc000_0000, 1),
+                false => (0x8000_0000, 3),
+            };
+            // SAFETY: a terminated string.
+            let file = unsafe { CreateFileW(path.as_ptr(), access, 7, 0, how, 0, 0) };
+            (file != -1).then_some(File(file))
+        }
+
+        pub(super) fn write_from(self, address: usize, length: usize, offset: usize) -> isize {
+            let (mut done, mut at) = (0, [0, 0, offset, 0]);
+            // SAFETY: the kernel checks the addresses.
+            unsafe { WriteFile(self.0, address, length as u32, &mut done, &mut at) };
+            done as isize
+        }
+
+        pub(super) fn read_start(self, into: &mut [u8]) -> &[u8] {
+            let (mut done, length) = (0, into.len() as u32);
+            // SAFETY: there is room for as much as is read.
+            unsafe { ReadFile(self.0, into.as_mut_ptr(), length, &mut done, &mut [0; 4]) };
+            &into[..done as usize]
+        }
+
+        pub(super) fn of(file: &bun_sys::File) -> File {
+            File(file.fd().native().expose_provenance() as isize)
+        }
+
+        pub(super) fn truncate(self, length: usize) {
+            const END_OF_FILE: u32 = 6;
+            // SAFETY: it is open, and takes a number of that size.
+            unsafe { SetFileInformationByHandle(self.0, END_OF_FILE, &(length as i64), 8) };
+        }
+
+        pub(super) fn close(self) {
+            // SAFETY: it is open.
+            unsafe { CloseHandle(self.0) };
+        }
+    }
+}
 
 impl File {
     /// As far as it can be read.
@@ -230,7 +393,7 @@ impl File {
         while done < length {
             let at = start.wrapping_add(done);
             let part = (length - done).min(PAGE - at % PAGE);
-            let written = system::write_from(self.0, at, part, (offset + done) as i64);
+            let written = self.write_from(at, part, offset + done);
             if written <= 0 {
                 break;
             }
@@ -246,9 +409,7 @@ impl File {
     /// By way of the file, as far as it can be read.
     fn read_memory(self, start: usize, length: usize, into: &mut [u8]) -> &[u8] {
         let length = self.write_memory(start, length.min(into.len()), 0);
-        // SAFETY: there is room for `length`.
-        let read = unsafe { libc::pread(self.0, into.as_mut_ptr().cast(), length, 0) };
-        &into[..read.max(0) as usize]
+        self.read_start(&mut into[..length])
     }
 }
 
@@ -263,6 +424,8 @@ fn address(bytes: &[u8], at: usize) -> Option<usize> {
 struct Modules<'a> {
     table: Output<'a>,
     rest: Output<'a>,
+    /// The checksum and the time of the next one, by which the image is found.
+    stamp: [u32; 2],
 }
 
 impl Modules<'_> {
@@ -279,7 +442,8 @@ impl Modules<'_> {
         });
         self.table.put_address(at, base);
         let size = u32::try_from(size).unwrap_or(u32::MAX);
-        self.table.put_words(at + 8, &[size, 0, 0, name]);
+        let [checksum, time] = self.stamp;
+        self.table.put_words(at + 8, &[size, checksum, time, name]);
         self.table
             .put_words(at + 76, &[length as u32, record as u32]);
         Some(())
@@ -298,15 +462,12 @@ fn without_quotations(message: &[u8]) -> &[u8] {
 }
 
 /// Another process of the app may have changed that.
-fn uploads(settings: &ZBox, scratch: &mut [u8]) -> bool {
-    // SAFETY: a terminated string, and room for as much as is read.
-    let read = unsafe {
-        let file = libc::open(settings.as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC);
-        let read = libc::pread(file, scratch.as_mut_ptr().cast(), scratch.len(), 0);
-        libc::close(file);
-        read
-    };
-    Settings::parse(&scratch[..read.max(0) as usize]).is_some_and(|it| it.uploads())
+fn uploads(settings: &Path, scratch: &mut [u8]) -> bool {
+    File::open(settings, false).is_some_and(|file| {
+        let read = Settings::parse(file.read_start(scratch));
+        file.close();
+        read.is_some_and(|it| it.uploads())
+    })
 }
 
 #[inline(never)]
@@ -328,12 +489,13 @@ fn record(
     };
     // SAFETY: they go with `prepared`.
     let buffers = unsafe { &mut *buffers };
-    let how = libc::O_RDWR | libc::O_CREAT | libc::O_EXCL | libc::O_CLOEXEC;
-    // SAFETY: a terminated string.
-    let file = File(unsafe { libc::open(prepared.unfinished.as_ptr(), how, 0o600) });
-    if file.0 < 0 {
+    let file = match &prepared.target {
+        Target::Paths([unfinished, ..]) => File::open(unfinished, true),
+        Target::File(file) => Some(File::of(file)),
+    };
+    let Some(file) = file else {
         return;
-    }
+    };
     let mut out = Output {
         bytes: &mut buffers.start,
         length: prepared.length,
@@ -364,6 +526,12 @@ fn record(
         EXCEPTION + 24,
         fault.unwrap_or(registers[machine::PC] as usize),
     );
+    #[cfg(windows)]
+    if let Some(fault) = fault {
+        out.put_address(EXCEPTION + 24, registers[machine::PC] as usize);
+        out.put_words(EXCEPTION + 32, &[2]);
+        out.put_address(EXCEPTION + 48, fault);
+    }
     out.put_words(20, &[bun_core::time::timestamp() as u32]);
 
     let mut message = Output {
@@ -382,29 +550,24 @@ fn record(
         bytes: &mut buffers.modules,
         length: 4,
     };
-    let mut modules = Modules { table, rest: out };
-    let mut stack = system::stack(prepared.facts);
-    system::survey(
-        prepared.facts,
-        file,
-        &mut buffers.scratch,
-        &mut modules,
-        &mut stack,
-    );
+    let mut modules = Modules {
+        table,
+        rest: out,
+        stamp: [0; 2],
+    };
+    let (facts, sp) = (&prepared.facts, registers[machine::SP] as usize);
+    let mut stack = system::stack(facts, file, sp);
+    system::survey(facts, file, &mut buffers.scratch, &mut modules, &mut stack);
     let Modules {
         mut table,
         rest: mut out,
+        ..
     } = modules;
     table.put_words(0, &[((table.length - 4) / MODULE_SIZE) as u32]);
     let at_table = out.length;
     out.put_words(DIRECTORY + 4, &[table.length as u32, at_table as u32]);
 
-    // SAFETY: it is open.
-    unsafe { libc::ftruncate(file.0, 0) };
-    let (sp, at_stack) = (
-        registers[machine::SP] as usize,
-        (at_table + table.length).next_multiple_of(16),
-    );
+    let at_stack = (at_table + table.length).next_multiple_of(16);
     // After an overflow it points below the stack.
     let start = sp.saturating_sub(128).max(stack.start);
     let length = stack.end.saturating_sub(start).min(MOST_OF_STACK);
@@ -422,18 +585,19 @@ fn record(
         out.put_words(DIRECTORY + 4 * 12 + 4, &[4]);
     }
 
+    file.truncate(at_stack + size);
     let is_whole =
-        file.write(&out.bytes[..at_table], 0) && file.write(&table.bytes[..table.length], at_table);
-    let target = match uploads(&prepared.settings, &mut buffers.scratch[0]) {
-        true => &prepared.to_upload,
-        false => &prepared.to_keep,
+        file.write(&table.bytes[..table.length], at_table) && file.write(&out.bytes[..at_table], 0);
+    let Target::Paths([unfinished, to_upload, to_keep, settings]) = &prepared.target else {
+        return;
     };
-    // SAFETY: terminated strings, and an open file.
-    unsafe {
-        libc::close(file.0);
-        if is_whole {
-            libc::rename(prepared.unfinished.as_ptr(), target.as_ptr());
-        }
+    let target = match uploads(settings, &mut buffers.scratch[0]) {
+        true => to_upload,
+        false => to_keep,
+    };
+    file.close();
+    if is_whole {
+        disk::rename(unfinished, target);
     }
 }
 
@@ -470,6 +634,15 @@ mod machine {
         ];
         (all, it.__rflags as u32)
     }
+
+    #[cfg(windows)]
+    pub(super) fn read(it: super::SignalContext<'_>) -> ([u64; REGISTERS], u32) {
+        let all = [
+            it.Rax, it.Rcx, it.Rdx, it.Rbx, it.Rsp, it.Rbp, it.Rsi, it.Rdi, it.R8, it.R9, it.R10,
+            it.R11, it.R12, it.R13, it.R14, it.R15, it.Rip,
+        ];
+        (all, it.EFlags)
+    }
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -500,6 +673,14 @@ mod machine {
         all[FP..].copy_from_slice(&[it.__fp, it.__lr, it.__sp, it.__pc]);
         (all, it.__cpsr)
     }
+
+    #[cfg(windows)]
+    pub(super) fn read(it: super::SignalContext<'_>) -> ([u64; REGISTERS], u32) {
+        let mut all = [0; REGISTERS];
+        all[..FP].copy_from_slice(&it.X);
+        all[FP..].copy_from_slice(&[it.Fp, it.Lr, it.Sp, it.Pc]);
+        (all, it.Cpsr)
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -508,22 +689,68 @@ mod system {
 
     pub(super) const PLATFORM: u32 = 0x8201;
 
-    /// Where the arguments and the environment begin, above the stack of the first thread.
-    pub(super) type Facts = usize;
+    type Images = Vec<(usize, Box<[u8]>)>;
 
-    pub(super) fn facts() -> Facts {
-        // SAFETY: any number will do.
-        unsafe { libc::getauxval(libc::AT_RANDOM) as usize }
+    pub(super) struct Facts {
+        /// Where the arguments and the environment begin, above the stack of the first thread.
+        top: usize,
+        /// In a sandbox, where no more are loaded.
+        images: Option<Images>,
     }
 
-    /// The end. Other threads have their descriptors there.
-    pub(super) fn stack(facts: Facts) -> Range<usize> {
+    fn images() -> Images {
+        unsafe extern "C" fn note(
+            info: *mut libc::dl_phdr_info,
+            _: usize,
+            all: *mut core::ffi::c_void,
+        ) -> c_int {
+            // SAFETY: what the loader knows about an image, and the list below.
+            unsafe {
+                let (info, all) = (&*info, &mut *all.cast::<Images>());
+                let segments = core::slice::from_raw_parts(info.dlpi_phdr, info.dlpi_phnum.into());
+                let name = match core::ffi::CStr::from_ptr(info.dlpi_name).to_bytes() {
+                    b"" => crate::process::executable().as_bytes().into(),
+                    name => name.into(),
+                };
+                if let Some(first) = segments.iter().find(|it| it.p_type == libc::PT_LOAD) {
+                    all.push((
+                        (info.dlpi_addr + first.p_vaddr) as usize & !(PAGE - 1),
+                        name,
+                    ));
+                }
+            }
+            0
+        }
+        let mut all = Images::new();
+        // SAFETY: it outlives the call.
+        unsafe { libc::dl_iterate_phdr(Some(note), (&raw mut all).cast()) };
+        all
+    }
+
+    pub(super) fn facts(is_in_sandbox: bool) -> Facts {
+        Facts {
+            // SAFETY: any number will do.
+            top: unsafe { libc::getauxval(libc::AT_RANDOM) as usize },
+            images: is_in_sandbox.then(images),
+        }
+    }
+
+    /// Other threads have their descriptors at the end.
+    pub(super) fn stack(facts: &Facts, file: File, sp: usize) -> Range<usize> {
         let end = match thread() == crate::process::id() {
-            true => facts,
+            true => facts.top,
             // SAFETY: it reads a register.
             false => unsafe { libc::pthread_self() as usize },
         };
-        end..end
+        let mut pages = (sp.saturating_sub(128) & !(PAGE - 1)..end)
+            .step_by(PAGE)
+            .take(65);
+        let is_there = |it: &usize| file.write_memory(*it, 1, 0) == 1;
+        facts
+            .images
+            .as_ref()
+            .and_then(|_| pages.find(is_there))
+            .unwrap_or(end)..end
     }
 
     /// Past AddressSanitizer, which objects to its own gaps in the stack.
@@ -587,12 +814,18 @@ mod system {
     }
 
     pub(super) fn survey(
-        _: Facts,
+        facts: &Facts,
         file: File,
         [lines, headers, notes]: &mut [[u8; 2 * PAGE]; 3],
         modules: &mut Modules<'_>,
         stack: &mut Range<usize>,
     ) {
+        if let Some(images) = &facts.images {
+            for (base, path) in images {
+                add(file, *base, path, [headers, notes], modules);
+            }
+            return;
+        }
         // SAFETY: a terminated string.
         let maps = unsafe { libc::open(c"/proc/self/maps".as_ptr(), libc::O_RDONLY) };
         // The last mapping of the beginning of a file.
@@ -664,7 +897,7 @@ mod system {
         ) -> isize;
     }
 
-    pub(super) fn facts() -> Facts {
+    pub(super) fn facts(_: bool) -> Facts {
         const TASK_DYLD_INFO: u32 = 17;
         let (mut info, mut count) = ([0u32; 5], 5);
         // SAFETY: there is room for `count`.
@@ -682,7 +915,7 @@ mod system {
         }
     }
 
-    pub(super) fn stack(facts: Facts) -> Range<usize> {
+    pub(super) fn stack(facts: &Facts, _: File, _: usize) -> Range<usize> {
         // SAFETY: they read fields of this thread's descriptor.
         let (end, size) = unsafe {
             let this = libc::pthread_self();
@@ -727,7 +960,8 @@ mod system {
         const LC_UUID: u32 = 0x1b;
         let image = file.read_memory(base, usize::MAX, scratch);
         let header: mach_header_64 = bun_core::read_prefix(image)?;
-        let (mut code, mut id) = (u64::MAX..0, [0u8; 16]);
+        let (start, end) = (u64::MAX, 0);
+        let (mut code, mut id) = (start..end, [0u8; 16]);
         for it in LoadCommandIterator::new(header.ncmds, &image[size_of_val(&header)..]) {
             if it.cmd() == LC_UUID {
                 id = bun_core::read_prefix(it.data.get(8..)?)?;
@@ -750,7 +984,7 @@ mod system {
     }
 
     pub(super) fn survey(
-        facts: Facts,
+        facts: &Facts,
         file: File,
         [entry, path, image]: &mut [[u8; 2 * PAGE]; 3],
         modules: &mut Modules<'_>,
@@ -767,6 +1001,102 @@ mod system {
             add(file, base, path, image, modules);
         }
         add(file, loader, b"/usr/lib/dyld", image, modules)
+    }
+}
+
+#[cfg(windows)]
+mod system {
+    use super::*;
+
+    pub(super) const PLATFORM: u32 = 2;
+
+    pub(super) struct Facts;
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        safe fn GetCurrentThreadId() -> u32;
+        safe fn GetCurrentThreadStackLimits(low: &mut usize, high: &mut usize);
+        fn K32EnumProcessModules(
+            process: isize,
+            modules: *mut u8,
+            size: u32,
+            needed: &mut u32,
+        ) -> i32;
+        fn K32GetModuleFileNameExW(
+            process: isize,
+            module: usize,
+            path: *mut u16,
+            length: u32,
+        ) -> u32;
+    }
+
+    const THIS_PROCESS: isize = -1;
+
+    pub(super) fn facts(_: bool) -> Facts {
+        Facts
+    }
+
+    pub(super) fn stack(_: &Facts, _: File, _: usize) -> Range<usize> {
+        let (mut low, mut high) = (0, 0);
+        GetCurrentThreadStackLimits(&mut low, &mut high);
+        low..high
+    }
+
+    pub(super) fn thread() -> u32 {
+        GetCurrentThreadId()
+    }
+
+    pub(super) fn exception(code: c_int) -> (u32, u32) {
+        (code as u32, 0)
+    }
+
+    fn add(
+        file: File,
+        base: usize,
+        [path, image]: [&mut [u8]; 2],
+        modules: &mut Modules<'_>,
+    ) -> Option<()> {
+        const CODE_VIEW: u32 = 2;
+        let mut units = [0; 520];
+        let room = units.len() as u32;
+        // SAFETY: the buffer with its length.
+        let length =
+            unsafe { K32GetModuleFileNameExW(THIS_PROCESS, base, units.as_mut_ptr(), room) };
+        let mut path = Output {
+            bytes: path,
+            length: 0,
+        };
+        for it in char::decode_utf16(units[..length as usize].iter().copied()) {
+            let _ = path.write_char(it.unwrap_or(char::REPLACEMENT_CHARACTER));
+        }
+        let path = &path.bytes[..path.length];
+        let headers = file.read_memory(base, PAGE, image);
+        let headers = headers.get(word(headers, 60)? as usize..)?;
+        let [time, size, checksum, debug, debug_size] =
+            [8, 80, 88, 184, 188].map(|at| word(headers, at));
+        modules.stamp = [checksum?, time?];
+        let entries = file.read_memory(base + debug? as usize, debug_size? as usize, image);
+        let mut entries = entries.as_chunks::<28>().0.iter();
+        let found = entries.find(|it| word(*it, 12) == Some(CODE_VIEW));
+        let (length, at) =
+            (found.and_then(|it| word(it, 16).zip(word(it, 20)))).unwrap_or_default();
+        let identity = file.read_memory(base + at as usize, length as usize, image);
+        modules.add(base, size? as usize, path, &[identity])
+    }
+
+    pub(super) fn survey(
+        _: &Facts,
+        file: File,
+        [all, path, image]: &mut [[u8; 2 * PAGE]; 3],
+        modules: &mut Modules<'_>,
+        _: &mut Range<usize>,
+    ) {
+        let (mut needed, room) = (0, all.len() as u32);
+        // SAFETY: the buffer with its size. It takes no lock.
+        unsafe { K32EnumProcessModules(THIS_PROCESS, all.as_mut_ptr(), room, &mut needed) };
+        for base in all[..needed.min(room) as usize].as_chunks().0 {
+            add(file, usize::from_le_bytes(*base), [path, image], modules);
+        }
     }
 }
 

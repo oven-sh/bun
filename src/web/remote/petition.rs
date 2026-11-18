@@ -3,12 +3,12 @@
 use core::sync::atomic::{AtomicU32, Ordering};
 use std::sync::OnceLock;
 
-use bun_collections::HashMap;
 use bun_sys::{Fd, File};
 use bun_threading::Guarded;
 
 use super::{HOST, Head, Kind, next_ticket};
 use crate::Bytes;
+use crate::HashMap;
 use crate::channel::Serialized;
 use crate::exec::{Receiver, oneshot};
 use crate::locks::{Answer, LockInfo, Priority};
@@ -18,7 +18,7 @@ use crate::storage::indexed::far::{Operation, Output, Step};
 use crate::storage::indexed::{Failure, Mode, Schema, Table};
 use crate::storage::key::Key;
 use crate::storage::{Shelf, SqlError, Usage};
-use crate::wire;
+use crate::wire::{self, Measured};
 
 type Stored<T> = Result<T, Failure>;
 type Queried<T> = Result<T, SqlError>;
@@ -91,11 +91,12 @@ petitions! {
         Abort = abort(transaction: u32);
         Persist = persist(shelf: Shelf);
         RequestLock = request_lock(lock: u32, shelf: Shelf, info: LockInfo, priority: Priority, answer: u32, theft: u32);
-        Broadcast = broadcast(member: u32, value: Serialized);
+        Broadcast = broadcast(member: u32, value: Measured<Serialized>);
     }
     ask {
         OpenFile = open_file(path: Bytes) -> Opened;
         Descriptor = descriptor(of: u32) -> ();
+        FileForReport = file_for_report() -> ();
         /// The transactions of the connection that have started since the last time.
         Begin = begin(connection: u32, transaction: u32, mode: Mode, tables: Vec<Table>, started: u32) -> Vec<u32>;
         Run = run(transaction: u32, steps: Vec<Step>, then: Operation) -> Stored<Output>;

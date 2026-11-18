@@ -5,9 +5,10 @@ use std::ops::Range;
 use super::blend::Factor;
 use super::blur::{Kernel, Strip, convolve_strips};
 use super::edges::{Edges, Shape};
+use super::gradient::{Mixer, Ramp};
 use super::raster::{self, IntRect, Outlined, Pixel};
 use super::scan::{Floats, Scanner, Sink, Stored};
-use super::slant::{Gauge, Slant};
+use super::slant::{Disc, Gauge, Slant};
 use super::warp::Samples;
 
 #[cfg_attr(target_arch = "x86_64", path = "wide/avx2.rs")]
@@ -16,8 +17,8 @@ mod lanes;
 
 pub use lanes::is_available;
 use lanes::{
-    Eight, Numbers, Sampler, add, change, cover, is_clear, is_opaque, kept, prefetch, scale, splat,
-    spread, spread_pairs, weigh,
+    Eight, Numbers, Sampler, Stretcher, add, change, cover, is_clear, is_opaque, kept, prefetch,
+    scale, splat, spread, spread_pairs, weigh,
 };
 
 macro_rules! wide {
@@ -82,7 +83,97 @@ impl Sink<Numbers> for Filler<'_> {
     }
 }
 
+/// Likewise.
+struct Shader<'a> {
+    pixels: &'a mut [Pixel],
+    mixer: Mixer<Numbers>,
+    /// For the first pixel.
+    first: f32,
+    steps: [f32; 2],
+    width: u32,
+    /// Of the width, times 2^40.
+    reciprocal: u64,
+    is_opaque: bool,
+}
+
+impl Shader<'_> {
+    #[inline(always)]
+    fn at(&self, place: u32) -> f32 {
+        let row = ((u64::from(place) * self.reciprocal) >> 40) as u32;
+        self.first + (place - row * self.width) as f32 * self.steps[0] + row as f32 * self.steps[1]
+    }
+}
+
+impl Sink<Numbers> for Shader<'_> {
+    #[inline(always)]
+    fn eights(&mut self, places: &[u32], alphas: &[Stored]) {
+        // SAFETY: the processor has the instructions.
+        unsafe { shade_eights(self, places, alphas) };
+    }
+
+    #[inline(always)]
+    fn expect(&self, place: u32) {
+        prefetch(self.pixels.as_ptr().wrapping_add(place as usize + 4));
+    }
+
+    fn some(&mut self, place: usize, alphas: &[u8]) {
+        for (place, alphas) in (place..).step_by(8).zip(alphas.chunks(8)) {
+            // SAFETY: likewise.
+            unsafe { shade_some(self, place, alphas) };
+        }
+    }
+
+    #[inline(always)]
+    fn run(&mut self, places: Range<usize>, alpha: u8) {
+        // SAFETY: likewise.
+        unsafe { shade_run(self, places, alpha) };
+    }
+}
+
 wide! {
+
+pub fn shade_shape(scanner: &mut Scanner, edges: &Edges, shape: &Shape, rect: IntRect, pixels: &mut [Pixel], ramp: &Ramp) -> bool {
+    let (width, is_opaque) = (rect.width() as u32, ramp.ends.iter().all(|it| it[3] == 255.));
+    if pixels.len() >= 1 << 24 || !(1..1 << 15).contains(&width) {
+        return false;
+    }
+    let (mixer, first, reciprocal) = (Mixer::new(ramp.ends, ramp.steps[0]), ramp.at(rect.left, rect.top), (1 << 40) / u64::from(width) + 1);
+    scanner.scan(edges, shape, rect, Shader { pixels, mixer, first, steps: ramp.steps, width, reciprocal, is_opaque });
+    true
+}
+
+#[inline]
+fn shade_eights(shader: &mut Shader, places: &[u32], alphas: &[Stored]) {
+    for (place, alphas) in places.iter().zip(alphas) {
+        let colors = load(shader.mixer.eight(shader.at(*place)));
+        if let Some(eight) = shader.pixels.get_mut(*place as usize..).and_then(|it| it.first_chunk_mut()) {
+            *eight = store(cover(load(*eight), colors, alphas.get()));
+        }
+    }
+}
+
+/// Up to eight.
+#[inline]
+fn shade_some(shader: &mut Shader, place: usize, alphas: &[u8]) {
+    let mut colors = shader.mixer.eight(shader.at(place as u32));
+    blend_through(&mut shader.pixels[place..][..alphas.len()], &mut colors[..alphas.len()], alphas);
+}
+
+#[inline]
+fn shade_run(shader: &mut Shader, places: Range<usize>, alpha: u8) {
+    let (first, step, row) = (shader.at(places.start as u32), shader.steps[0], &mut shader.pixels[places.clone()]);
+    let (len, by, replaces) = (row.len(), splat(alpha), alpha == 255 && shader.is_opaque);
+    let (runs, rest) = row.as_chunks_mut();
+    for (index, run) in runs.iter_mut().enumerate() {
+        let colors = shader.mixer.eight(first + (index * 8) as f32 * step);
+        *run = if replaces { colors } else { store(over(load(*run), scale(load(colors), by))) };
+    }
+    match (rest.len(), row.last_chunk_mut()) {
+        (0, _) => {}
+        (_, Some(last)) if replaces => *last = shader.mixer.eight(first + (len - 8) as f32 * step),
+        (rest, _) => shade_some(shader, places.end - rest, &[alpha; 8][..rest]),
+    }
+}
 
 #[inline]
 fn over(target: Eight, source: Eight) -> Eight {
@@ -129,6 +220,30 @@ pub fn fill_through<'a>(rows: impl Iterator<Item = (&'a mut [Pixel], &'a [u8])>,
     }
 }
 
+#[cfg(any(test, windows))]
+pub fn fill_through_parts<'a>(rows: impl Iterator<Item = (&'a mut [Pixel], &'a [Pixel])>, color: Pixel) {
+    let (all, alpha) = (load([color; 8]), load([[color[3]; 4]; 8]));
+    let eight = |pixels: &[Pixel; 8], coverage: &[Pixel; 8]| {
+        (*coverage != [[0; 4]; 8]).then_some(())?;
+        let by = load(match is_opaque(load(*pixels)) {
+            true => *coverage,
+            false => std::array::from_fn(|at| if pixels[at][3] == 255 { coverage[at] } else { [coverage[at][3]; 4] }),
+        });
+        let kept = load(store(lanes::scale_channels(alpha, by)).map(|it| it.map(|it| !it)));
+        Some(add(lanes::scale_channels(all, by), lanes::scale_channels(load(*pixels), kept)))
+    };
+    for (row, coverage) in rows {
+        update(row, coverage, eight);
+    }
+}
+
+pub fn fill_through_eights<'a>(rows: impl Iterator<Item = (&'a mut [[Pixel; 8]], &'a [[u8; 8]])>, color: Pixel) {
+    let all = load([color; 8]);
+    for (pixels, coverage) in rows.flat_map(|(row, coverage)| row.iter_mut().zip(coverage)).filter(|it| *it.1 != [0; 8]) {
+        *pixels = store(over(load(*pixels), scale(all, spread(u64::from_le_bytes(*coverage)))));
+    }
+}
+
 pub fn fill_slant<'a>(rows: impl Iterator<Item = (&'a mut [Pixel], [f32; 2])>, slant: &Slant, color: Pixel) {
     let (all, gauge, none) = (load([color; 8]), Gauge::<Numbers>::new(slant), Numbers::new([1.; 8]));
     for (row, [mut x, y]) in rows {
@@ -144,12 +259,52 @@ pub fn fill_slant<'a>(rows: impl Iterator<Item = (&'a mut [Pixel], [f32; 2])>, s
     }
 }
 
+pub fn fill_disc<'a>(rows: impl Iterator<Item = (&'a mut [Pixel], [f32; 2])>, radius: f32, color: Pixel) {
+    let (all, none, disc) = (load([color; 8]), Numbers::new([1.; 8]), Disc::<Numbers>::new(radius));
+    for (row, [mut x, y]) in rows {
+        for run in row.chunks_mut(8) {
+            let coverage = disc.coverage([x, y]);
+            x += 8.;
+            match run.first_chunk_mut() {
+                _ if coverage.above(none) == 0 => {}
+                Some(run) => *run = store(cover(load(*run), all, coverage)),
+                None => update(run, &coverage.bytes(), |pixels, coverage| Some(over(load(*pixels), scale(all, spread(u64::from_le_bytes(*coverage)))))),
+            }
+        }
+    }
+}
+
+pub fn measure_disc(row: &mut [u8], center: [f32; 2], radius: f32) {
+    Disc::<Numbers>::new(radius).measure(row, center);
+}
+
+pub fn draw_samples_in_slant<'a>(rows: impl Iterator<Item = (&'a mut [Pixel], [f32; 2], [i32; 2])>, slant: &Slant, source: &Samples, by: u8) {
+    let (sampler, all, step, gauge, none) = (Sampler::new(source), splat(by), source.step, Gauge::<Numbers>::new(slant), Numbers::new([1.; 8]));
+    for (row, [mut x, y], mut start) in rows {
+        for run in row.chunks_mut(8) {
+            let (coverage, at) = (gauge.coverage([x, y]), start);
+            (x, start) = (x + 8., [start[0].wrapping_add(step[0].wrapping_mul(8)), start[1].wrapping_add(step[1].wrapping_mul(8))]);
+            if coverage.above(none) != 0 {
+                let colors = if by == 255 { sampler.at(at) } else { scale(sampler.at(at), all) };
+                match run.first_chunk_mut() {
+                    Some(run) => *run = store(cover(load(*run), colors, coverage)),
+                    None => update(run, &store(scale(colors, spread(u64::from_le_bytes(coverage.bytes())))), |pixels, colors| Some(over(load(*pixels), load(*colors)))),
+                }
+            }
+        }
+    }
+}
+
 pub fn measure_slant<'a>(rows: impl Iterator<Item = (&'a mut [u8], [f32; 2])>, slant: &Slant) {
     Gauge::<Numbers>::new(slant).measure(rows);
 }
 
 pub fn write_alphas(scanner: &mut Scanner, edges: &Edges, shape: &Shape, rect: IntRect, alphas: &mut [u8]) {
     scanner.scan::<Numbers>(edges, shape, rect, alphas);
+}
+
+pub fn hand_over_samples(scanner: &mut Scanner, parts: &[(&Edges, &Shape)], is_even_odd: bool, area: IntRect, take: &mut dyn FnMut(i32, i32, &[u8])) {
+    scanner.take_samples(parts, is_even_odd, area, take);
 }
 
 pub fn fill_shape(scanner: &mut Scanner, edges: &Edges, shape: &Shape, rect: IntRect, pixels: &mut [Pixel], color: Pixel) {
@@ -222,16 +377,20 @@ pub fn premultiply(row: &mut [[u8; 4]]) {
 }
 
 pub fn demultiply(row: &mut [Pixel]) {
-    update(row, &vec![(); row.len()], |pixels, _| {
-        if is_opaque(load(*pixels)) || is_clear(load(*pixels)) {
-            return None;
+    let (runs, rest) = row.as_chunks_mut();
+    for pixels in runs {
+        if !is_opaque(load(*pixels)) && !is_clear(load(*pixels)) {
+            let (bits, by) = (pixels.map(u32::from_le_bytes), pixels.map(|it| raster::RECIPROCALS[usize::from(it[3])]));
+            let divide = |shift: u32| std::array::from_fn::<u32, 8, _>(|it| (((bits[it] >> shift & 255) * by[it] + (1 << 15)) >> 16).min(255) << shift);
+            let [r, g, b] = [divide(0), divide(8), divide(16)];
+            *pixels = std::array::from_fn(|it| (r[it] | g[it] | b[it] | bits[it] & 255 << 24).to_le_bytes());
         }
-        let mut straight = *pixels;
-        for pixel in &mut straight {
-            *pixel = raster::divide_by_alpha(*pixel);
-        }
-        Some(load(straight))
-    });
+    }
+    rest.iter_mut().for_each(|it| *it = raster::demultiply(*it));
+}
+
+pub fn are_opaque(pixels: &[Pixel]) -> bool {
+    pixels.iter().fold(!0, |all, it| all & u32::from_le_bytes(*it)) >> 24 == 255
 }
 
 pub fn stamp<'a>(runs: impl Iterator<Item = &'a mut [Pixel; 8]>, colors: [Pixel; 8]) {
@@ -251,6 +410,25 @@ pub fn composite(row: &mut [Pixel], source: &[Pixel], factors: [Factor; 2]) {
 
 pub fn convolve(source: &[Strip], start: i32, target: &mut [Strip], kernel: &Kernel) {
     convolve_strips(source, start, target, kernel);
+}
+
+pub fn draw_upright_samples<'a>(rows: impl Iterator<Item = (&'a mut [Pixel], [i32; 2])>, source: &Samples, by: u8) {
+    let (stretcher, all, mut line) = (Stretcher::new(source.step[0]), splat(by), Vec::new());
+    for (row, start) in rows {
+        let [mut x, last] = source.line(start, row.len(), &mut line);
+        assert!((last >> 16) as usize + 1 < line.len());
+        for run in row.chunks_mut(8) {
+            // SAFETY: as asserted.
+            let colors = unsafe { stretcher.at(line.as_ptr(), x, last) };
+            x = x.wrapping_add(source.step[0].wrapping_mul(8));
+            let colors = if by == 255 { colors } else { scale(colors, all) };
+            match run.first_chunk_mut() {
+                Some(run) if is_opaque(colors) => *run = store(colors),
+                Some(run) => *run = store(over(load(*run), colors)),
+                None => update(run, &store(colors), |pixels, colors| Some(over(load(*pixels), load(*colors)))),
+            }
+        }
+    }
 }
 
 pub fn draw_samples<'a>(rows: impl Iterator<Item = (&'a mut [Pixel], [i32; 2])>, source: &Samples, by: u8) {
@@ -285,7 +463,7 @@ fn has_margin(source: &Samples) -> bool {
     last[0].min(last[1]) >= 0
         && column + 1 < width
         && width <= 1 << 15
-        && (row + 2) * width <= texels.len()
+        && (row + 1) * width + column + 2 <= texels.len()
 }
 
 #[cfg(test)]
@@ -353,6 +531,21 @@ mod tests {
             check(0, &|it| fill_through(it, color, &coverage), &|it| {
                 scale(color, coverage[it])
             });
+            let parts: Vec<_> = pairs.iter().map(|&[a, b]| [a, b, a ^ b, a]).collect();
+            let channel = |it: usize, at: usize| {
+                over(
+                    row[it],
+                    scale(color, parts[it][if row[it][3] == 255 { at } else { 3 }]),
+                )[at]
+            };
+            let mut painted = row.clone();
+            raster::fill_rows_through_parts(std::iter::once((&mut painted[..], &parts[..])), color);
+            assert_eq!(
+                painted,
+                (0..length)
+                    .map(|it| std::array::from_fn(|at| channel(it, at)))
+                    .collect::<Vec<Pixel>>()
+            );
             check(0, &|it| blend_row(it, &colors, by), &|it| {
                 scale(colors[it], by)
             });
@@ -396,6 +589,28 @@ mod tests {
                 &|it| scale(samples.at(start, it as i32), by),
             );
             draw_samples(std::iter::once((&mut composed[..], start)), &samples, by);
+            let mut line = Vec::new();
+            let [x, last] = samples.line(start, length, &mut line);
+            check(
+                0,
+                &|it| {
+                    super::super::warp::draw_upright_samples(
+                        std::iter::once((it, start)),
+                        &samples,
+                        by,
+                    )
+                },
+                &|it| {
+                    let at = (x + step[0] * it as i32).clamp(0, last) as usize;
+                    let mix = |channel: usize| {
+                        (usize::from(line[at >> 16][channel]) * (256 - (at >> 8 & 255))
+                            + usize::from(line[(at >> 16) + 1][channel]) * (at >> 8 & 255)
+                            + 128)
+                            >> 8
+                    };
+                    scale(std::array::from_fn(|it| mix(it) as u8), by)
+                },
+            );
             sampled = composed.iter().fold(sampled, |all, it| {
                 all.wrapping_mul(31).wrapping_add(u32::from_le_bytes(*it))
             });
@@ -406,6 +621,6 @@ mod tests {
                 assert_eq!(run, std::array::from_fn(|it| over(row[it], colors[it])));
             }
         }
-        assert!(sampled == 1_549_185_354 || !is_available(), "{sampled}");
+        assert!(sampled == 423_509_673 || !is_available(), "{sampled}");
     }
 }

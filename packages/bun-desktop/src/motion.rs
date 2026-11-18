@@ -5,7 +5,7 @@ use crate::bridge;
 use crate::diagnostics::{self, Incident};
 use crate::gfx::{Point, Transform};
 use crate::hash::FastMap;
-#[cfg(target_os = "macos")]
+#[cfg(any(windows, target_os = "macos"))]
 use crate::paint::flatten::Mover;
 use crate::paint::raster::map_rect;
 use crate::paint::scene::{Scene, intersect, union};
@@ -615,7 +615,7 @@ impl Motion {
             .collect()
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(windows, target_os = "macos"))]
     pub fn set_lifted(&mut self, items: Vec<usize>) {
         self.lifted = items;
         self.find_next();
@@ -705,7 +705,7 @@ impl Motion {
     }
 
     /// What goes on for a while, and is not moved twice.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(windows, target_os = "macos"))]
     pub fn movers(&self, scene: &Scene, now: f64) -> Vec<Mover<'_>> {
         const WORTH_IT: f64 = 300.;
         let items = || {

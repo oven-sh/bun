@@ -7,6 +7,15 @@ use std::sync::LazyLock;
 
 use crate::bun::{abi::Host, bun_desktop_set_host};
 
+#[cfg(windows)]
+fn symbol(name: &str) -> *mut c_void {
+    std::ptr::with_exposed_provenance_mut(crate::win32::address_of(
+        crate::win32::wide!("icu.dll"),
+        &CString::new(name).unwrap(),
+    ))
+}
+
+#[cfg(unix)]
 fn symbol(name: &str) -> *mut c_void {
     static LIBRARY: LazyLock<(usize, String)> = LazyLock::new(|| {
         let versions = (60..100)

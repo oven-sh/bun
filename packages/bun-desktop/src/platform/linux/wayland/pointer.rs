@@ -563,7 +563,7 @@ impl Wayland {
                     x: event.fixed(4),
                     y: event.fixed(5),
                 };
-                let gesture = if input::is_on_frame(window.id, at) {
+                let gesture = if input::part_at(window.id, at).is_some() {
                     Gesture::Press
                 } else {
                     Gesture::Tap

@@ -298,6 +298,22 @@ FUNCTION Corner place(uint index BUFFERS) {
   curve.c = controls.zw;
   curve.d = ends.zw;
   curve.is_line = (result.flags & IS_LINE) != 0u;
+  if (kind == WEDGE && head.x != 0u) {
+    uint which = unit_bits & 255u;
+    uint left = head.x & 511u;
+    uint stride = 1u;
+    while (left > 1u && which >= (left + 1u) / 3u) {
+      which -= (left + 1u) / 3u;
+      left = (left + 2u) / 3u;
+      stride *= 3u;
+    }
+    result.at = point_at(
+        curve,
+        fraction(
+            float((which * 3u + (corner < 2u ? 1u - corner : corner)) * stride),
+            float(head.x)));
+    return result;
+  }
   if (kind == WEDGE) {
     result.at =
         corner == 1u

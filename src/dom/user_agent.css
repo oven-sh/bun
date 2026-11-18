@@ -1564,6 +1564,16 @@ nobr wbr {
   pointer-events: none;
   overlay: auto;
 }
+:root::-internal-overlay {
+  all: initial;
+  display: block;
+  position: fixed;
+  box-sizing: border-box;
+  font: 400 12px/18px system-ui;
+  white-space: pre;
+  pointer-events: none;
+  overlay: auto;
+}
 ::highlight(-internal-match) {
   background-color: #ff0;
   color: #000;

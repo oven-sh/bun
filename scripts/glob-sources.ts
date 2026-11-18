@@ -31,7 +31,7 @@ interface SourcePattern {
  * To add a new source list: add an entry here. The `Sources` type and
  * `globAllSources()` pick it up automatically.
  */
-const importedByBindgenInput = ["src/desktop/schema.ts", "src/dom/api/core/reflect.ts"];
+const importedByBindgenInput = ["src/desktop/schema.ts", "src/dom/api/core/reflect.ts", "src/dom/abi_webgl*.rs"];
 
 const patterns = {
   /** `packages/bun-error/*` — error overlay page */

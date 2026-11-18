@@ -168,6 +168,7 @@ impl Arena {
             self.panics.set(0);
         }
         self.free_dead(engine);
+        engine.tree.give_up_rooms();
     }
 
     /// # Safety

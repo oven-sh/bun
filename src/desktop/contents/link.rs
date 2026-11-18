@@ -5,7 +5,7 @@ use bun_web::csp::Delivery;
 use bun_web::dom;
 use bun_web::host::{
     Activation, Answer, Arrival, Browser, Connection, ConsoleAudience, DialogAnswer, DialogKind,
-    Display, Environment, FileChoice, Inspected, Keystroke, Notice, Permission, Question,
+    Display, Environment, FileChoice, Keystroke, Logged, Notice, Permission, Question,
     Rect as Area, Reply, Verdict,
 };
 use bun_web::js_link::{Native, NativeHost};
@@ -16,7 +16,7 @@ use bun_web::url::Url;
 
 use bun_web::page::News as ForElement;
 
-use super::inspection::{News, with_news};
+use super::inspection::News;
 use super::page::Page;
 use super::{Contents, Kind, fields, frame, hooks, load, logs_to_stderr, object_in, or_undefined};
 
@@ -80,11 +80,13 @@ fn environment(page: &Page) -> JsResult<Environment> {
         reduces_motion: (emulated.reduces_motion).map_or_else(theme::reduces_motion, Ok)?,
         increases_contrast: (emulated.increases_contrast)
             .map_or_else(theme::increases_contrast, Ok)?,
-        forces_colors: (emulated.forces_colors).unwrap_or_else(theme::forces_colors),
+        forces_colors: (emulated.forces_colors).map_or_else(theme::forces_colors, Ok)?,
         reduces_transparency: (emulated.reduces_transparency)
             .unwrap_or(settings.reduced_transparency),
         light_highlight: (settings.highlight.get()).map_or(otherwise.light_highlight, |it| it[0]),
         dark_highlight: (settings.highlight.get()).map_or(otherwise.dark_highlight, |it| it[1]),
+        palette: theme::palette()?,
+        touch_points: settings.touch_points,
         display: Some(Display {
             bounds: on_device(area(display.bounds)),
             work_area: on_device(area(display.work_area)),
@@ -116,7 +118,7 @@ fn environment(page: &Page) -> JsResult<Environment> {
 }
 
 fn has_spell_checker(page: &Page) -> bool {
-    IS_MAC && page.contents().preferences.checks_spelling
+    HAS_SPELL_CHECKER && page.contents().preferences.checks_spelling
 }
 
 fn runs_scripts(page: &Page) -> bool {
@@ -571,7 +573,7 @@ impl Native for OfWindow {
                 session,
                 method,
                 params,
-            } if !page.is_disposed() => {
+            } if page.is_active() => {
                 return page.contents().notify(News::Inspected {
                     session,
                     method: &method,
@@ -652,15 +654,18 @@ impl Native for OfWindow {
                     .collect(),
             ),
             Question::Arrival {} => Answer::Arrival(arrival(page)),
-            Question::ConsoleAudience {} => Answer::ConsoleAudience(match it.has_observers() {
-                true => ConsoleAudience::Inspector,
-                false
-                    if logs_to_stderr()
-                        || has_listeners(it.owner().to_js(), "console-message")? =>
-                {
-                    ConsoleAudience::App
+            Question::ConsoleAudience {} => Answer::ConsoleAudience({
+                let is_heard = !it.has_observers()
+                    && (logs_to_stderr() || has_listeners(it.owner().to_js(), "console-message")?);
+                let is_kept = it.preferences.allows_dev_tools
+                    && global().bun_vm().standalone_module_graph.is_none();
+                match (is_heard, is_kept) {
+                    _ if it.has_observers() => ConsoleAudience::Inspector,
+                    (true, true) => ConsoleAudience::AppAndPosterity,
+                    (true, false) => ConsoleAudience::App,
+                    (false, true) => ConsoleAudience::Posterity,
+                    (false, false) => ConsoleAudience::Nobody,
                 }
-                false => ConsoleAudience::Nobody,
             }),
             Question::PermissionState { name, media_type } => {
                 let more = or_undefined(
@@ -718,8 +723,8 @@ impl Native for OfWindow {
         }))
     }
 
-    fn inspect(&self, owner: JSValue, it: Inspected<'_>) -> JsResult<()> {
-        with_news(it, &|news| page_in(owner).contents().notify(news))
+    fn inspect(&self, owner: JSValue, it: Logged<'_>) -> JsResult<()> {
+        page_in(owner).contents().notify(News::Logged(it))
     }
 
     fn for_blank_frames(&self) -> Option<&'static dyn Native> {

@@ -495,6 +495,7 @@ fn key(name: Known) -> Key {
     Key {
         key: name.into(),
         code: name.into(),
+        key_code: 0,
         location: 0,
         repeat: false,
         modifiers: Modifiers::empty(),
@@ -575,7 +576,7 @@ fn set_value<'a>(cx: &mut Cx<'a>, ui: &'a Ui, element: &'a Element, text: &DomSt
 fn show_context_menu<'a>(cx: &mut Cx<'a>, ui: &'a Ui, element: &'a Element) {
     ui.pointer().at.set(center_of(cx, element));
     ui.note_user_activation(false);
-    mouse::context_menu(cx, ui, element);
+    mouse::context_menu(cx, ui, element, 2);
 }
 
 /// `node` is what the library calls it.

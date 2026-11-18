@@ -9,7 +9,7 @@ use bun_jsc::{
     ErrorCode, JSGlobalObject, JSMap, JSPromise, JSPromiseStrong, JSString, JSValue, JsError,
     JsResult, MarkedArgumentBuffer, Strong,
 };
-use bun_ui::protocol::{Command, Outcome, SystemCommand, Ui};
+use bun_ui::protocol::{Command, Outcome, PreferenceValue, ShellCommand, SystemCommand, Ui};
 use bun_ui::value::IntoJs;
 use bun_web::tasks::{self, Work};
 
@@ -564,6 +564,18 @@ pub(crate) fn tell_system(command: SystemCommand) -> JsResult<()> {
 
 pub(crate) fn perform(command: SystemCommand) -> JsResult<()> {
     bun_ui::perform(global(), Command::System(command))
+}
+
+/// `false` where there is no such thing.
+pub(crate) fn ask_shell(command: ShellCommand) -> JsResult<PreferenceValue> {
+    match crate::IS_WINDOWS {
+        true => answer((ui()?.ask_shell)(command)),
+        false => Ok(PreferenceValue::Flag(false)),
+    }
+}
+
+pub(crate) fn shell_agrees(command: ShellCommand) -> JsResult<bool> {
+    Ok(matches!(ask_shell(command)?, PreferenceValue::Flag(true)))
 }
 
 pub(crate) fn is_headless() -> JsResult<bool> {

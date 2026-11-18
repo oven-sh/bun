@@ -47,6 +47,9 @@ pub fn scale(pixels: Eight, by: Factors) -> Eight {
     [multiply(pixels[0], by[0]), multiply(pixels[1], by[1])]
 }
 
+#[cfg(any(test, windows))]
+pub use scale as scale_channels;
+
 #[inline]
 #[target_feature(enable = "neon")]
 pub fn add(a: Eight, b: Eight) -> Eight {
@@ -302,23 +305,30 @@ pub fn spread_pairs(by: [[u8; 2]; 8]) -> [Factors; 2] {
 /// They are all readable.
 #[inline]
 #[target_feature(enable = "neon")]
-unsafe fn across(
-    texels: *const Pixel,
-    [a, b, c, d]: [u32; 4],
-    right: uint8x16_t,
-) -> [int16x8_t; 2] {
+unsafe fn neighbors(texels: *const Pixel, [a, b, c, d]: [u32; 4]) -> [uint8x16_t; 2] {
     // SAFETY: the caller's contract.
     let pair = |index: u32| {
         vcreate_u32(unsafe { texels.add(index as usize).cast::<u64>().read_unaligned() })
     };
-    let (first, second, left) = (
+    let (first, second) = (
         vcombine_u32(pair(a), pair(b)),
         vcombine_u32(pair(c), pair(d)),
-        vsubq_u8(vdupq_n_u8(64), right),
     );
-    let (near, far) = (
+    [
         vreinterpretq_u8_u32(vuzp1q_u32(first, second)),
         vreinterpretq_u8_u32(vuzp2q_u32(first, second)),
+    ]
+}
+
+/// # Safety
+/// Likewise.
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn across(texels: *const Pixel, at: [u32; 4], right: uint8x16_t) -> [int16x8_t; 2] {
+    // SAFETY: the caller's contract.
+    let ([near, far], left) = (
+        unsafe { neighbors(texels, at) },
+        vsubq_u8(vdupq_n_u8(128), right),
     );
     let low = vmlal_u8(
         vmull_u8(vget_low_u8(near), vget_low_u8(left)),
@@ -329,6 +339,80 @@ unsafe fn across(
         vreinterpretq_s16_u16(low),
         vreinterpretq_s16_u16(vmlal_high_u8(vmull_high_u8(near, left), far, right)),
     ]
+}
+
+pub struct Stretcher([int32x4_t; 2]);
+
+impl Stretcher {
+    #[inline]
+    #[target_feature(enable = "neon")]
+    pub fn new(step: i32) -> Self {
+        Stretcher([0, 4].map(|from| {
+            vmulq_n_s32(
+                vreinterpretq_s32_u8(bytes([
+                    from,
+                    0,
+                    0,
+                    0,
+                    from + 1,
+                    0,
+                    0,
+                    0,
+                    from + 2,
+                    0,
+                    0,
+                    0,
+                    from + 3,
+                    0,
+                    0,
+                    0,
+                ])),
+                step,
+            )
+        }))
+    }
+
+    /// # Safety
+    /// There is a texel after that at `last`, which is not negative.
+    #[inline]
+    #[target_feature(enable = "neon")]
+    pub unsafe fn at(&self, line: *const Pixel, start: i32, last: i32) -> Eight {
+        let four = |steps| {
+            let x = vreinterpretq_u32_s32(vminq_s32(
+                vmaxq_s32(vaddq_s32(vdupq_n_s32(start), steps), vdupq_n_s32(0)),
+                vdupq_n_s32(last),
+            ));
+            let (at, right) = (
+                vshrq_n_u32::<16>(x),
+                pick(vreinterpretq_u8_u32(x), [1, 5, 9, 13]),
+            );
+            // SAFETY: the caller's contract.
+            let [near, far] = unsafe {
+                neighbors(
+                    line,
+                    [
+                        vgetq_lane_u32::<0>(at),
+                        vgetq_lane_u32::<1>(at),
+                        vgetq_lane_u32::<2>(at),
+                        vgetq_lane_u32::<3>(at),
+                    ],
+                )
+            };
+            let mix = |near, far, right| {
+                vmlaq_u16(
+                    vshlq_n_u16::<8>(vmovl_u8(near)),
+                    vsubl_u8(far, near),
+                    vmovl_u8(right),
+                )
+            };
+            let low = mix(vget_low_u8(near), vget_low_u8(far), vget_low_u8(right));
+            vrshrn_high_n_u16::<8>(
+                vrshrn_n_u16::<8>(low),
+                mix(vget_high_u8(near), vget_high_u8(far), vget_high_u8(right)),
+            )
+        };
+        [four(self.0[0]), four(self.0[1])]
+    }
 }
 
 pub struct Sampler<'a> {
@@ -397,8 +481,8 @@ impl<'a> Sampler<'a> {
             vgetq_lane_u32::<2>(at),
             vgetq_lane_u32::<3>(at),
         ];
-        let right = pick(vshrq_n_u8::<2>(vreinterpretq_u8_u32(x)), [1, 5, 9, 13]);
-        let down = vreinterpretq_u8_u32(vandq_u32(vshrq_n_u32::<1>(y), vdupq_n_u32(0x7E00)));
+        let right = pick(vshrq_n_u8::<1>(vreinterpretq_u8_u32(x)), [1, 5, 9, 13]);
+        let down = vreinterpretq_u8_u32(vandq_u32(vshrq_n_u32::<1>(y), vdupq_n_u32(0x7F00)));
         let mix = |above, below, from: u8| {
             let order = vaddq_u8(
                 bytes([0, 1, 0, 1, 0, 1, 0, 1, 4, 5, 4, 5, 4, 5, 4, 5]),
@@ -419,8 +503,8 @@ impl<'a> Sampler<'a> {
                 across(self.rows[1].as_ptr(), at, right),
             )
         };
-        vqrshrun_high_n_s16::<6>(
-            vqrshrun_n_s16::<6>(mix(above[0], below[0], 0)),
+        vqrshrun_high_n_s16::<7>(
+            vqrshrun_n_s16::<7>(mix(above[0], below[0], 0)),
             mix(above[1], below[1], 8),
         )
     }

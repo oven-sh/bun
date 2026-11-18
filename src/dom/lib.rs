@@ -1,10 +1,11 @@
 //! Styles, layout and display lists for the DOM of `bun:desktop`.
 #![feature(cell_leak, hint_prefetch, thread_local)]
-#![cfg_attr(unix, feature(rt, update_panic_count))]
+#![feature(rt, update_panic_count)]
 #![cfg_attr(unix, allow(internal_features))]
 
 mod abi;
 mod abi_graphics;
+mod abi_webgl;
 mod accessibility;
 mod anchor;
 mod animation;

@@ -5,12 +5,12 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::Weak;
 
-use bun_collections::HashMap;
 use bun_collections::index_sort::sort_slice_by_key;
 
 use super::jobs::{Job, Turns};
 use super::router::MOST_CONDITIONS;
 use super::*;
+use crate::HashMap;
 use crate::client::bucket_of;
 use crate::compiled::{self, Form};
 use crate::exec::{self, Either, Shared, oneshot};
@@ -21,11 +21,12 @@ use crate::net::fetch::{self, Controller, EndOfBody, Initiator, Observer};
 use crate::net::response::is_ok_status;
 use crate::net::session::OF_MAIN_THREAD;
 use crate::origin::Site;
+use crate::outside::serve;
+use crate::remote::is_page_process;
 use crate::request::{InitiatorType, Mode, Redirect};
-use crate::storage::Origins;
 use crate::storage::caches::{CachedRequest, Caches, QueryOptions};
+use crate::storage::{Origins, if_for_page_processes};
 use crate::time::{monotonic_now, wall_now};
-use crate::trust;
 
 /// In milliseconds.
 const LONGEST_IDLENESS: f64 = 30e3;
@@ -71,6 +72,7 @@ pub(super) struct Run {
     client: ClientId,
     started: Shared<Option<Address>>,
     thread: Option<Running>,
+    process: Option<u32>,
 }
 
 #[derive(Clone)]
@@ -96,7 +98,7 @@ pub(super) struct Worker {
     pub(super) pending: u32,
     pub(super) idle_since: f64,
     /// With when their time has begun.
-    pub(super) events: VecDeque<(f64, Weak<()>)>,
+    pub(super) events: VecDeque<(f64, Weak<Limit>)>,
     /// When it last got an event that no service worker has made.
     pub(super) needed_at: f64,
     pub(super) clicked_at: f64,
@@ -155,6 +157,9 @@ impl Known {
         }
     }
 }
+
+const MOST_AWAITING: usize = 1024;
+const MOST_WORLDS: usize = 64;
 
 #[derive(Default)]
 pub(super) struct Contents {
@@ -301,6 +306,9 @@ pub(crate) struct Registry {
 }
 
 pub(crate) fn send(session: &Arc<Session>, message: ToRegistry) {
+    if is_page_process() {
+        return;
+    }
     let kept = Arc::clone(session);
     session
         .main()
@@ -378,9 +386,10 @@ impl Registry {
         let contents = self.contents.borrow();
         let is_wanted = (contents.registrations.iter()).any(|it| !it.subscriptions.is_empty());
         let session = Arc::downgrade(&self.session);
-        let tell = move |change: &Change| {
+        let tell = move |change: &Change, by: Option<ClientId>| {
             if let Some(session) = session.upgrade().filter(|_| change.is_news()) {
-                let is_by_worker = change.is_loss() || Client::is_thread_of_service_worker();
+                let is_by_worker = change.is_loss()
+                    || (by.and_then(Client::find)).is_some_and(|it| it.is_service_worker());
                 let change = change.clone().into();
                 send(&session, ToRegistry::CookieChanged(change, is_by_worker));
             }
@@ -395,13 +404,15 @@ impl Registry {
 
     fn report_status(&self, id: Id, status: RunningStatus) -> Option<()> {
         let mut contents = self.contents.borrow_mut();
-        let (worker, registration) =
-            (contents.workers.get(&id)).map(|it| (it.info.clone(), it.registration))?;
+        let found = contents.workers.get(&id)?;
+        let (worker, registration) = (found.info.clone(), found.registration);
+        let process = found.run.as_ref().and_then(|it| it.process);
         let scope = (contents.registration(registration)).map(|it| it.scope.clone());
         self.report(News::Status {
             scope: scope.unwrap_or_else(|| worker.url.clone()),
             worker,
             status,
+            process,
         });
         Some(())
     }
@@ -662,10 +673,12 @@ impl Registry {
                 Outcome::Registrations(all.collect())
             }
             Call::Ready => {
-                self.contents
-                    .borrow_mut()
-                    .awaiting_ready
-                    .push((caller, ticket));
+                let mut contents = self.contents.borrow_mut();
+                let all = contents.awaiting_ready.iter();
+                if all.filter(|it| it.0.info.id == caller.info.id).count() < MOST_WORLDS {
+                    contents.awaiting_ready.push((caller, ticket));
+                }
+                drop(contents);
                 self.tell_who_is_ready();
                 return None;
             }
@@ -677,7 +690,12 @@ impl Registry {
                     None => (Source::Client(current(&caller)), monotonic_now()),
                 };
                 if is_for_caller(registration) && monotonic_now() - since < LONGEST_EVENT {
-                    exec::spawn(self.dispatch_since(since, id, Event::Message(source, message)));
+                    let event = Event::Message(source, message);
+                    let (dispatch, weight) = (self.dispatch_since(since, id, event), caller.weight);
+                    exec::spawn(async move {
+                        dispatch.await;
+                        drop(weight);
+                    });
                 }
                 return None;
             }
@@ -735,7 +753,10 @@ impl Registry {
             Call::GetClient(id) => {
                 let mut contents = self.contents.borrow_mut();
                 let known = contents.known.get_mut(&id);
-                if let Some(it) = known.filter(|it| it.caller.is_none() && it.bucket == bucket) {
+                let is_awaited = |it: &&mut Known| {
+                    it.caller.is_none() && it.bucket == bucket && it.awaited.len() < MOST_AWAITING
+                };
+                if let Some(it) = known.filter(is_awaited) {
                     it.awaited.push((caller.address, ticket));
                     return None;
                 }
@@ -783,6 +804,9 @@ impl Registry {
                     None => Outcome::Failed(Failure::Type, "The client is gone."),
                 }
             }
+            Call::Unsubscribe(id, _) if self.contents.borrow_mut().registration(id).is_none() => {
+                Outcome::Done
+            }
             Call::Subscribe(id, _)
             | Call::Unsubscribe(id, _)
             | Call::GetSubscriptions(id)
@@ -800,10 +824,8 @@ impl Registry {
             Call::ShowNotification(registration, mut shown) => {
                 shown.tells_of_closing = self.are_needed(&bucket);
                 let (this, address) = (Rc::clone(self), caller.address);
-                let outside = Outside {
-                    session: Arc::clone(&self.session),
-                    worker: self.contents.borrow().control(registration)?.worker,
-                };
+                let worker = self.contents.borrow().control(registration)?.worker;
+                let outside = Outside::new(&self.session, worker);
                 exec::spawn(async move {
                     if !outside.may_notify().await {
                         let failure = Outcome::Failed(Failure::Type, "There is no permission.");
@@ -966,12 +988,11 @@ impl Registry {
         if let Some(run) = &worker.run {
             return Some(run.started.clone());
         }
+        let (url, mut all) = (&worker.info.url, contents.registrations.iter());
+        let bucket = &all.find(|it| it.id == worker.registration)?.bucket;
         let may_run = match worker.is_compiled {
-            true => compiled::path_of(worker.info.url.href(), form_of(worker.is_module)).is_some(),
-            false => {
-                !compiled::is_exclusive()
-                    && trust::is_trusted(&worker.info.url, contents.agent.app_path())
-            }
+            true => compiled::path_of(url.href(), form_of(worker.is_module)).is_some(),
+            false => contents.agent.may_install(url, url, bucket),
         };
         if !may_run {
             return None;
@@ -1011,6 +1032,7 @@ impl Registry {
             client,
             started: started.clone(),
             thread: None,
+            process: None,
         });
         go.send(());
         exec::spawn_background(Rc::clone(self).watch(id, client));
@@ -1088,15 +1110,20 @@ impl Registry {
         client: ClientId,
         scripts: Scripts,
     ) -> Option<Receiver<(Thread, bool)>> {
+        let about = |it: &Worker| (it.info.url.clone(), it.is_compiled, it.registration);
+        let (url, is_compiled, own) = self.contents.borrow().workers.get(&id).map(about)?;
+        let is_apart = (self.contents.borrow_mut().registration(own))
+            .is_some_and(|it| if_for_page_processes(&it.bucket).is_some());
+        let lodging = match is_apart {
+            true => Some(self.session.lodge_worker(&url, is_compiled)?),
+            false => None,
+        };
         let mut contents = self.contents.borrow_mut();
         let is_this_run = |it: &&Worker| it.run.as_ref().is_some_and(|it| it.client == client);
         let worker = contents.workers.get(&id).filter(is_this_run)?;
         let registration =
             (contents.registrations.iter()).find(|it| it.id == worker.registration)?;
-        let outside = Outside {
-            session: Arc::clone(&self.session),
-            worker: worker.info.clone(),
-        };
+        let outside = Outside::new(&self.session, worker.info.clone());
         let own = Own {
             client,
             worker: worker.info.clone(),
@@ -1113,7 +1140,12 @@ impl Registry {
             worker.is_compiled,
         );
         let ((started, start), this) = (oneshot(), Rc::clone(self));
-        let thread = crate::dom::start_service_worker(Start {
+        let process = lodging.as_ref().map(|it| it.pid);
+        let start_it = |it| match lodging {
+            Some(lodging) => serve::workers::start(lodging, it),
+            None => crate::dom::start_service_worker(it),
+        };
+        let thread = start_it(Start {
             seed,
             is_module: worker.is_module,
             source: scripts.source.clone(),
@@ -1123,7 +1155,8 @@ impl Registry {
         });
         let worker = contents.workers.get_mut(&id)?;
         worker.scripts = Some(scripts);
-        worker.run.as_mut()?.thread = thread;
+        let run = worker.run.as_mut()?;
+        (run.thread, run.process) = (thread, process);
         Some(start)
     }
 
@@ -1189,7 +1222,7 @@ impl Registry {
 
     fn occupy(&self, id: Id, since: f64) -> Option<Busy> {
         let mut contents = self.contents.borrow_mut();
-        let (worker, event) = (contents.workers.get_mut(&id)?, Arc::new(()));
+        let (worker, event) = (contents.workers.get_mut(&id)?, Arc::default());
         while worker
             .events
             .pop_front_if(|it| it.1.strong_count() == 0)
@@ -1199,7 +1232,7 @@ impl Registry {
         worker.needed_at = worker.needed_at.max(since);
         worker.pending += 1;
         Some(Busy {
-            pending: Arc::new(Pending(Arc::clone(&self.session), id)),
+            pending: Arc::new(Pending::Here(Arc::clone(&self.session), id)),
             _event: Some(event),
         })
     }
@@ -1357,18 +1390,27 @@ impl Registry {
         let mut contents = self.contents.borrow_mut();
         let control = registration.and_then(|it| contents.control(it));
         let uses = control.as_ref().map(|it| it.registration);
+        let is_apart = if_for_page_processes(&bucket).is_some();
         let known = earlier.and_then(|it| Some((it, contents.known.get_mut(&it.id)?)));
         let Some((earlier, known)) = known.filter(|it| it.1.bucket == bucket) else {
             let id = uses.map(|_| ClientId::next().0)?;
             contents.known.insert(id, Known::expected(bucket, uses));
             let presence = Presence::new(&self.session, id);
-            return Some(Reserved { presence, control });
+            return Some(Reserved {
+                presence,
+                control,
+                is_apart,
+            });
         };
         let released = core::mem::replace(&mut known.uses, uses).filter(|it| uses != Some(*it));
         drop(contents);
         released.into_iter().for_each(|it| self.go_on(it));
         let presence = Arc::clone(earlier);
-        Some(Reserved { presence, control })
+        Some(Reserved {
+            presence,
+            control,
+            is_apart,
+        })
     }
 
     /// Redirects are not followed.
@@ -1445,6 +1487,7 @@ impl Registry {
             allows_timing: matches!(kind, None | Some(ResponseType::Basic)),
             includes_credentials: !it.omits_credentials,
             has_credentials_mode_include: false,
+            kept_as: 0,
             answer: Answer::new(it.status, &it.status_text, it.headers, body),
         })
     }
@@ -1486,12 +1529,15 @@ impl Registry {
         is_for_network: bool,
     ) -> Handled {
         let mut reserved = None;
+        let bucket_of = |origin: &Origin| {
+            let bucket = bucket_of(origin, &initiator.ancestors);
+            bucket_for(bucket, initiator.is_in_page_process)
+        };
         let (control, client) = match &initiator.service {
             Handler::Nobody => (None, None),
             Handler::Registration { id, client } => {
                 let mut contents = self.contents.borrow_mut();
-                let bucket =
-                    (initiator.origin.as_ref()).map(|it| bucket_of(it, &initiator.ancestors));
+                let bucket = initiator.origin.as_ref().map(bucket_of);
                 let is_own = (contents.registration(*id).zip(bucket))
                     .is_some_and(|(it, bucket)| *it.bucket == *bucket);
                 (contents.control(*id).filter(|_| is_own), Some(*client))
@@ -1501,7 +1547,7 @@ impl Registry {
                 client,
                 reserved: earlier,
             } => {
-                let bucket = bucket_of(&Origin::of(&request.url), &initiator.ancestors).into();
+                let bucket = bucket_of(&Origin::of(&request.url));
                 reserved = self.reserve(agent, bucket, &request.url, earlier.as_ref());
                 (reserved.as_ref().and_then(|it| it.control.clone()), *client)
             }
@@ -1631,6 +1677,7 @@ impl From<Response> for Served {
             allows_timing: head.allows_timing,
             includes_credentials: head.includes_credentials,
             has_credentials_mode_include: head.has_credentials_mode_include,
+            kept_as: 0,
             answer: Answer {
                 cached: head.cached,
                 protocol: head.protocol,

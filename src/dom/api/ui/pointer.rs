@@ -67,6 +67,7 @@ pub(crate) struct Pointer {
     has_lost_target: Cell<bool>,
     is_hover_cut: Cell<bool>,
     pub(super) pressed_at: Cell<[f64; 2]>,
+    pub(super) press_time: Cell<f64>,
     pub(super) clicks: Cell<i32>,
     /// `pointerdown` was canceled.
     pub(super) skips_mouse_events: Cell<bool>,
@@ -78,6 +79,7 @@ pub(crate) struct Pointer {
     pub(super) cursor: Cell<&'static str>,
     /// The frame that is coming knows what it has to be.
     is_cursor_stale: Cell<bool>,
+    is_hover_stale: Cell<bool>,
     /// By the style of what is hovered.
     cursor_asked_for: Cell<&'static str>,
     pub(super) wheel_time: Cell<f64>,
@@ -638,6 +640,15 @@ pub(super) fn refresh_hover<'a>(cx: &mut Cx<'a>, ui: &'a Ui) {
     update_cursor(cx, ui);
 }
 
+/// With the next frame, if there is one: a hit test before it would paint what is about to change again.
+pub(super) fn refresh_hover_soon<'a>(cx: &mut Cx<'a>, ui: &'a Ui) {
+    if ui.doc().arena().is_scheduled.get() {
+        ui.pointer().is_hover_stale.set(true)
+    } else {
+        refresh_hover(cx, ui)
+    }
+}
+
 fn refresh_hover_after_scroll<'a>(cx: &mut Cx<'a>, ui: &'a Ui) {
     let left = ui.pointer().scrolled_at.get() + SCROLL_PAUSE - host::now();
     ui.pointer().waits_to_hover.set(left > 0.0);
@@ -661,7 +672,7 @@ pub(crate) fn after_paint<'a>(cx: &mut Cx<'a>, ui: &'a Ui, has_moved: bool) {
     if pointer.is_cursor_stale.take() | (pointer.cursor_asked_for.replace(asked_for) != asked_for) {
         show_cursor(cx, ui);
     }
-    if has_moved && !pointer.waits_to_hover.get() {
+    if (pointer.is_hover_stale.take() || has_moved) && !pointer.waits_to_hover.get() {
         refresh_hover_after_scroll(cx, ui);
     }
 }

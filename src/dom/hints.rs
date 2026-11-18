@@ -3,10 +3,11 @@
 use crate::api::core::{Known, Meaning};
 use crate::document::Document;
 use crate::name::{Name, is_name, name};
+use crate::properties::{Id, Prop, Value};
 use crate::selector::key;
 use crate::transform::Transforms;
 use crate::tree::{Attribute, Data, Element, Fact, Flags, Namespace, NodeId, State};
-use crate::values::Out;
+use crate::values::{Auto, Lp, Out, PositiveLp, Size, finite};
 
 const SVG_PRESENTATION: &str = " alignment-baseline baseline-shift buffered-rendering clip clip-path clip-rule color \
     color-interpolation color-interpolation-filters color-rendering cursor direction display dominant-baseline fill \
@@ -47,7 +48,82 @@ pub(crate) fn is_presentation_attribute(element: &Element, name: Name) -> bool {
     }
 }
 
+/// As the value of a hint, it stands for what the attribute says: shapes that differ in their geometry alone have the same rules.
+pub(crate) const OWN: &str = "\u{1}";
+
+const LENGTHS: [(Id, Name); 9] = [
+    (Id::X, name!("x")),
+    (Id::Y, name!("y")),
+    (Id::Width, name!("width")),
+    (Id::Height, name!("height")),
+    (Id::Cx, name!("cx")),
+    (Id::Cy, name!("cy")),
+    (Id::R, name!("r")),
+    (Id::Rx, name!("rx")),
+    (Id::Ry, name!("ry")),
+];
+
+pub(crate) fn can_be_own(id: Id) -> bool {
+    id == Id::Transform || LENGTHS.iter().any(|it| it.0 == id)
+}
+
+fn own_matrix(element: &Element) -> Option<crate::abi::Matrix> {
+    crate::svg::transform_attribute(element).filter(|it| it.iter().all(|it| it.is_finite()))
+}
+
+fn own_number(name: Name, value: &str) -> Option<f64> {
+    crate::plain::number(value.as_bytes())
+        .filter(|_| !value.starts_with('-') || is_name!(name, "x" | "y" | "cx" | "cy"))
+}
+
 impl Element {
+    pub(crate) fn own_value(&self, id: Id, zoom: f32) -> Option<Value> {
+        let length = |name| {
+            Some(Lp::Px(finite(
+                (own_number(name, self.attribute(name)?)? * f64::from(zoom)) as f32,
+            )))
+        };
+        (self.namespace == Namespace::Svg).then_some(())?;
+        Some(match id {
+            Id::X => Value::X(length(name!("x"))?),
+            Id::Y => Value::Y(length(name!("y"))?),
+            Id::Width => Value::Width(Size::Length(length(name!("width"))?)),
+            Id::Height => Value::Height(Size::Length(length(name!("height"))?)),
+            Id::Cx => Value::Cx(length(name!("cx"))?),
+            Id::Cy => Value::Cy(length(name!("cy"))?),
+            Id::R => Value::R(PositiveLp(length(name!("r"))?)),
+            Id::Rx => Value::Rx(Auto(Some(PositiveLp(length(name!("rx"))?)))),
+            Id::Ry => Value::Ry(Auto(Some(PositiveLp(length(name!("ry"))?)))),
+            Id::Transform => Value::Transform(Transforms::of_matrix(own_matrix(self)?, zoom)),
+            _ => return None,
+        })
+    }
+
+    /// Whether they are what they were before the attribute has changed.
+    fn keeps_hints(&self, name: Name) -> bool {
+        let has = |id| {
+            self.hints.as_ref().is_some_and(|it| {
+                it.declarations()
+                    .list
+                    .iter()
+                    .any(|it| it.prop == Prop::Long(id) && it.is_own())
+            })
+        };
+        match LENGTHS.iter().find(|it| it.1 == name) {
+            Some(it) => {
+                has(it.0)
+                    && self
+                        .attribute(name)
+                        .is_some_and(|it| own_number(name, it).is_some())
+            }
+            None => {
+                is_name!(name, "transform" | "gradientTransform" | "patternTransform")
+                    && has(Id::Transform)
+                    && own_matrix(self).is_some()
+            }
+        }
+    }
+
     pub(crate) fn input_type(&self) -> Name {
         match self.attribute(name!("type")) {
             None | Some("text") => name!("text"),
@@ -740,6 +816,11 @@ fn hints(element: &Element, table: Option<&Element>, is_outer_svg: bool) -> Out 
             match &*attribute.qualified() {
                 "width" | "height"
                     if !is_outer_svg && is_name!(element.tag, "svg" | "symbol" | "use") => {}
+                name @ ("x" | "y" | "width" | "height" | "cx" | "cy" | "r" | "rx" | "ry")
+                    if own_number(attribute.name, &attribute.value).is_some() =>
+                {
+                    declare(name, OWN)
+                }
                 name @ ("font-size" | "letter-spacing" | "word-spacing" | "transform-origin"
                 | "x" | "y" | "width" | "height" | "cx" | "cy" | "r" | "rx" | "ry") => {
                     declare(
@@ -774,18 +855,8 @@ fn hints(element: &Element, table: Option<&Element>, is_outer_svg: bool) -> Out 
                 name => declare(name, &attribute.value),
             }
         }
-        if let Some(matrix) =
-            crate::svg::transform_attribute(element).filter(|it| it.iter().all(|it| it.is_finite()))
-        {
-            let hint = Transforms::hint(&matrix);
-            declare(
-                "transform",
-                if element.has_moved {
-                    Transforms::ATTRIBUTE
-                } else {
-                    crate::values::text(&hint)
-                },
-            );
+        if own_matrix(element).is_some() {
+            declare("transform", OWN);
         }
         match element.attribute(name!("space http://www.w3.org/XML/1998/namespace")) {
             Some("preserve") => declare("white-space-collapse", "preserve-spaces"),
@@ -911,6 +982,13 @@ fn text_direction(text: &str) -> Option<bool> {
 const DERIVED: State = State::from_bits_retain(0xff << 24);
 
 impl Document {
+    pub(crate) fn hint_changed(&mut self, id: NodeId, name: Name) {
+        match self.tree.element(id).is_some_and(|it| it.keeps_hints(name)) {
+            true => self.tree.mark_style(id, Flags::RECASCADE),
+            false => self.update_hints(id),
+        }
+    }
+
     pub(crate) fn update_hints(&mut self, id: NodeId) {
         let Some(element) = self.tree.element(id) else {
             return;
@@ -929,12 +1007,17 @@ impl Document {
         let block = self
             .styles
             .block(&source, crate::sheet::Within::Hints, &self.base_url);
-        if let Some(element) = self.tree.element_mut(id)
-            && element.hints.as_ref().map(std::rc::Rc::as_ptr)
-                != block.as_ref().map(std::rc::Rc::as_ptr)
+        let Some(element) = self.tree.element_mut(id) else {
+            return;
+        };
+        if element.hints.as_ref().map(std::rc::Rc::as_ptr)
+            != block.as_ref().map(std::rc::Rc::as_ptr)
         {
             element.rare_mut().hints = block;
             self.tree.mark_style(id, Flags::REMATCH);
+        }
+        if bun_core::strings::contains_char(&source, OWN.as_bytes()[0]) {
+            self.tree.mark_style(id, Flags::RECASCADE);
         }
     }
 

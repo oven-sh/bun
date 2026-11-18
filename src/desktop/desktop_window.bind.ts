@@ -12,7 +12,6 @@ import {
   returnsObject,
   returnsPromise,
   returnsText,
-  sharing,
   text,
   textIfAny,
   withAccessors,
@@ -78,12 +77,14 @@ export const WindowInit = b.dictionary(
     type: { type: ownedTextIfAny, rustName: "kind" },
     autoHideMenuBar: flag,
     tabbingIdentifier: ownedTextIfAny,
+    accentColor: anything,
     launchCover: anything,
     webContents: anything,
     webPreferences: anything,
   },
   { webidl: true },
 );
+export const ProgressOptions = b.dictionary({ mode: ownedTextIfAny });
 export const WorkspaceOptions = b.dictionary({ visibleOnFullScreen: flag });
 export const EndCoverOptions = b.dictionary({ dropInput: flag, keep: b.array(DesktopRectangle).nullable });
 export const CoverFieldInit = b.dictionary({
@@ -146,6 +147,8 @@ export const DesktopBaseWindow = b.interface("DesktopBaseWindow", {
     contentsView: view,
     browserViews: b.any,
     touchBar: b.ref("ElectronTouchBar"),
+    thumbarClicks: b.any,
+    hooks: b.any,
   },
   construct,
   static: { ...statics, clearLaunchCover: js },
@@ -279,7 +282,7 @@ export const DesktopBaseWindow = b.interface("DesktopBaseWindow", {
     setAutoHideCursor: switchTo,
     setTouchBar: { args: { touchBar: b.any }, ...js },
     setAspectRatio: { args: { aspectRatio: number, extraSize: DesktopRectangle.nullable.optional }, ...js },
-    setProgressBar: { args: { progress: number }, ...js },
+    setProgressBar: { args: { progress: number, options: ProgressOptions.nullable.optional }, ...js },
     invalidateShadow: js,
     addTabbedWindow: { args: { window }, ...js },
     selectNextTab: js,
@@ -288,14 +291,20 @@ export const DesktopBaseWindow = b.interface("DesktopBaseWindow", {
     mergeAllWindows: js,
     moveTabToNewWindow: js,
     toggleTabBar: js,
-    ...sharing(
-      "nothing",
-      "hookWindowMessage setAccentColor setAppDetails setOverlayIcon " +
-        "setThumbnailClip setThumbnailToolTip unhookAllWindowMessages unhookWindowMessage",
-    ),
-    ...sharing("no", "getAccentColor isSnapped isTabletMode isWindowMessageHooked setThumbarButtons", {
-      returns: b.bool,
-    }),
+    setOverlayIcon: { args: { overlay: b.any.falsyAsNull, description: text.default("") }, ...js },
+    setThumbarButtons: { args: { buttons: b.any }, ...returnsFlag },
+    setThumbnailClip: { args: { region: DesktopRectangle }, ...js },
+    setThumbnailToolTip: { args: { toolTip: text }, ...js },
+    setAppDetails: { args: { options: b.any }, ...js },
+    setAccentColor: { args: { accentColor: anything }, ...js },
+    getAccentColor: returnsObject,
+    isSnapped: returnsFlag,
+    snapped: { getter: b.bool, ...js },
+    isTabletMode: returnsFlag,
+    hookWindowMessage: { args: { message: b.u32, callback: b.callable }, ...js },
+    isWindowMessageHooked: { args: { message: b.u32 }, returns: b.bool },
+    unhookWindowMessage: { args: { message: b.u32 }, ...js },
+    unhookAllWindowMessages: js,
   }),
 });
 
@@ -359,7 +368,7 @@ export const DesktopView = b.interface("DesktopView", {
   name: "View",
   rustPath: "crate::view::View",
   prototypeBase: "EventEmitter",
-  internalFields: { parent: view, children: b.any, root: window, shownIn: window, contents: b.any },
+  internalFields: { parent: view, children: b.any, root: window, shownIn: window, contents: b.any, docked: view },
   construct: {},
   proto: {
     children: { getter: b.any, ...js },

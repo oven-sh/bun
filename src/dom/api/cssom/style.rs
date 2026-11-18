@@ -430,15 +430,18 @@ impl CSSStyleDeclaration {
             return Ok(accepts.key(DomString::from_impl(name).to_utf8().as_bytes()));
         };
         let known = &mut RECENT_NAMES.borrow_mut()[slot_of(name)];
-        if known
-            .as_ref()
-            .is_none_or(|it| !core::ptr::eq(it.0.as_impl(), name))
+        if let Some(found) = known
+            .iter()
+            .flatten()
+            .find(|it| core::ptr::eq(it.0.as_impl(), name))
         {
-            let name = DomString::from_impl(name);
-            let key = accepts.key(name.to_utf8().as_bytes());
-            *known = key.map(|it| (name, it));
+            return Ok(Some(found.1));
         }
-        Ok(known.as_ref().map(|it| it.1))
+        let (name, [newer, older]) = (DomString::from_impl(name), known);
+        let key = accepts.key(name.to_utf8().as_bytes());
+        key.into_iter()
+            .for_each(|it| *older = newer.replace((name.clone(), it)));
+        Ok(key)
     }
 
     pub(crate) fn js_get_property_value<'a>(
@@ -562,7 +565,7 @@ pub(crate) fn property_of_attribute(name: &[u8]) -> Option<Prop> {
 static RECENT: Recent<[Option<(DomString, Prop)>; 2], 128> = Recent::new();
 
 #[thread_local]
-static RECENT_NAMES: Recent<Option<(DomString, Key)>, 128> = Recent::new();
+static RECENT_NAMES: Recent<[Option<(DomString, Key)>; 2], 128> = Recent::new();
 
 fn slot_of(name: &WTFStringImplStruct) -> usize {
     core::ptr::from_ref(name)

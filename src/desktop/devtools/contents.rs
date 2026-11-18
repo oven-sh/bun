@@ -1,5 +1,11 @@
 //! What a session needs from a `WebContents`.
 
+use bun_web::headers::HeaderList;
+use bun_web::net::NetError;
+use bun_web::net::response::Response;
+use bun_web::trust::is_trusted_origin;
+use bun_web::url::Url;
+
 use super::target_id_of;
 use crate::contents::{self, inspection};
 use crate::prelude::*;
@@ -69,6 +75,40 @@ impl Contents {
 
     pub(super) fn token(&self) -> String {
         string(self.page().token())
+    }
+
+    /// The page may have chosen the URL.
+    pub(super) async fn load_for_page(
+        &self,
+        url: &str,
+        includes_credentials: bool,
+    ) -> Result<Response, NetError> {
+        let url = Url::parse(url.as_bytes()).ok_or(NetError::InvalidUrl)?;
+        let origin = self.page().exact_origin();
+        let is_in_reach = url.is_http()
+            || url.scheme() == b"data"
+            || origin.is_origin_of(&url)
+            || is_trusted_origin(origin.as_bytes());
+        let is_on_other_machine =
+            url.scheme() == b"file" && (!url.host().is_empty() || url.path().starts_with(b"//"));
+        if !is_in_reach || is_on_other_machine {
+            return Err(NetError::AccessDenied);
+        }
+        let trusted = includes_credentials.then_some(origin);
+        (self.get_session())
+            .load_for_tools(&string(url.href()), trusted)
+            .await
+    }
+
+    pub(super) async fn load_whole(&self, url: &str) -> Option<(u16, HeaderList, Vec<u8>)> {
+        const LONGEST: usize = 128 << 20;
+        let Response { head, body } = self.load_for_page(url, true).await.ok()?;
+        let (mut body, mut all) = (body.unwrap_or_default(), Vec::new());
+        while let Some(more) = body.read().await.ok()? {
+            all.extend_from_slice(&more);
+            (all.len() <= LONGEST).then_some(())?;
+        }
+        Some((head.status, head.headers, all))
     }
 
     pub(super) fn simulate(&self, input: bun_web::input::Input) -> JsResult<()> {

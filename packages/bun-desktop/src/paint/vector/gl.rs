@@ -467,6 +467,9 @@ fn with_device<R>(f: impl FnOnce(&mut Device) -> Result<R>) -> Result<R> {
 /// Of a target.
 pub const MAX_AREA: i64 = 1 << 23;
 
+/// Of a shape.
+pub const MAX_UNITS: usize = 1 << 21;
+
 /// Mesa's software renderer lets samples of the pixels next to the scissor box through.
 pub const CUTS_BETWEEN_PIXELS: bool = false;
 

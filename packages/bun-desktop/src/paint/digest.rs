@@ -8,7 +8,7 @@ use super::stretch::Stretch;
 use crate::abi::{Filter, GradientShape, Item, Outline, PathVerb, Rect, RoundedRect, Stroke, Tile};
 use crate::gfx::Transform;
 use crate::hash::SECRETS;
-use crate::images;
+use crate::{images, parallel};
 
 #[derive(Clone, Copy)]
 struct Wide([u64; 2]);
@@ -64,7 +64,7 @@ impl Digest {
     }
 
     pub fn lengths<const N: usize>(&mut self, lengths: [f32; N]) {
-        self.value(lengths.map(|length| (length * 128.).round() as i32));
+        self.value(lengths.map(|length| (length * 128. + 0.5f32.copysign(length)) as i32));
     }
 
     pub fn matrix(&mut self, matrix: &Transform) {
@@ -451,6 +451,8 @@ pub struct Cells {
     start: Digest,
     /// `None` if there is nothing in it.
     digests: Vec<Option<Digest>>,
+    /// How many items are in it.
+    loads: Vec<u32>,
 }
 
 impl Cells {
@@ -464,9 +466,9 @@ impl Cells {
             shown: IntRect::default(),
             start,
             digests: Vec::new(),
+            loads: Vec::new(),
         };
         cells.shown = cells.touched(area);
-        cells.digests = vec![None; cells.shown.area() as usize];
         cells
     }
 
@@ -484,6 +486,13 @@ impl Cells {
         )
     }
 
+    pub fn load(&self, pixels: IntRect) -> u32 {
+        let IntRect { left, top, .. } = self
+            .touched(pixels)
+            .offset(-self.shown.left, -self.shown.top);
+        self.loads[top as usize * self.shown.width() + left as usize]
+    }
+
     /// With its pixels, as far as they are `within`.
     pub fn at(&self, column: i32, row: i32, within: IntRect) -> Option<(u128, IntRect)> {
         let mut digest = self.digests[(row - self.shown.top) as usize * self.shown.width()
@@ -496,25 +505,82 @@ impl Cells {
         Some((digest.finish(), pixels.offset(x, y)))
     }
 
-    fn add(&mut self, cells: IntRect, value: u128) {
-        for row in self
-            .digests
-            .chunks_exact_mut(self.shown.width())
-            .skip((cells.top - self.shown.top) as usize)
-            .take(cells.height())
-        {
-            row[(cells.left - self.shown.left) as usize..][..cells.width()]
-                .iter_mut()
-                .for_each(|it| it.get_or_insert(self.start).value(value));
-        }
+    /// `shares` if other threads can help.
+    pub fn range(
+        &mut self,
+        painter: &Painter,
+        range: Range<usize>,
+        matrix: &Transform,
+        shares: bool,
+    ) {
+        let (mut digests, mut loads) = (
+            vec![None; self.shown.area() as usize],
+            vec![0; self.shown.area() as usize],
+        );
+        self.children(painter, range, matrix, shares, &mut |cells, value| {
+            let cells = cells.offset(-self.shown.left, -self.shown.top);
+            for at in (cells.top..cells.bottom)
+                .map(|row| row as usize * self.shown.width() + cells.left as usize)
+                .flat_map(|it| it..it + cells.width())
+            {
+                digests[at].get_or_insert(self.start).value(value);
+                loads[at] += 1;
+            }
+        });
+        (self.digests, self.loads) = (digests, loads);
     }
 
-    pub fn range(&mut self, painter: &Painter, range: Range<usize>, matrix: &Transform) {
+    fn children(
+        &self,
+        painter: &Painter,
+        range: Range<usize>,
+        matrix: &Transform,
+        shares: bool,
+        add: &mut dyn FnMut(IntRect, u128),
+    ) {
+        const MANY: usize = 256;
+        let Painter {
+            scene,
+            frame,
+            left_out,
+        } = *painter;
+        if !shares || scene.children(range.clone()).nth(MANY).is_none() {
+            return self.items(painter, scene.children(range), matrix, shares, add);
+        }
+        let all: Vec<_> = scene.children(range).collect();
+        let mut parts: Vec<_> = all
+            .chunks(all.len().div_ceil(parallel::threads() * 2))
+            .map(|it| (it, frame.rescaled(1.), Vec::new()))
+            .collect();
+        parallel::for_each(parts.iter_mut(), |(part, frame, found)| {
+            self.items(
+                &Painter {
+                    scene,
+                    frame,
+                    left_out,
+                },
+                part.iter().copied(),
+                matrix,
+                false,
+                &mut |cells, value| found.push((cells, value)),
+            );
+        });
+        parts
+            .into_iter()
+            .flat_map(|it| it.2)
+            .for_each(|(cells, value)| add(cells, value));
+    }
+
+    fn items(
+        &self,
+        painter: &Painter,
+        all: impl Iterator<Item = usize>,
+        matrix: &Transform,
+        shares: bool,
+        add: &mut dyn FnMut(IntRect, u128),
+    ) {
         let scene = painter.scene;
-        for index in scene
-            .children(range)
-            .filter(|it| !painter.left_out.contains(it))
-        {
+        for index in all.filter(|it| !painter.left_out.contains(it)) {
             let (item, bounds) = (
                 &scene.items[index],
                 IntRect::around(map_rect(matrix, scene.bounds(index))),
@@ -548,14 +614,14 @@ impl Cells {
                     matrix,
                     IntRect::default().outset(1 << 24),
                 );
-                self.add(cells, digest.finish());
+                add(cells, digest.finish());
                 continue;
             };
             digest.item(painter, item, matrix);
             digest.matrix(&inner);
-            self.add(cells, digest.finish());
-            self.range(painter, scene.content(index), &inner);
-            self.add(cells, 0);
+            add(cells, digest.finish());
+            self.children(painter, scene.content(index), &inner, shares, add);
+            add(cells, 0);
         }
     }
 }

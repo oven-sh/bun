@@ -2,16 +2,16 @@
 
 use std::rc::Rc;
 
-use bun_collections::HashMap;
 use bun_jsc::from_js_host_call_generic;
 use bun_ui::protocol::Lane;
 use bun_ui::queue::{self, Heard};
 use bun_ui::surfaces;
+use bun_web::HashMap;
 use bun_web::client::{Client, ScriptLocation, Scripts};
 use bun_web::convert::resolve_blob_url;
 use bun_web::dom;
 use bun_web::host::{
-    Answer, Browser, Connection, Environment, Host, Inspected, Level, Link, Notice, Question,
+    Answer, Browser, Connection, Environment, Host, Level, Link, Logged, Notice, Question,
     Relation, Relative, Reply, ToFrame, Wish,
 };
 use bun_web::input::Input;
@@ -25,7 +25,6 @@ use bun_web::url::Url;
 use bun_web::wire::Message;
 
 use super::{Document, Links, obey, perform};
-use crate::contents::inspection::with_news;
 use crate::devtools::agent;
 use crate::generated_bindgen::electron::DesktopProcess;
 use crate::prelude::*;
@@ -42,6 +41,8 @@ struct State {
     /// And the page that it is for.
     environment: RefCell<Option<(u32, Box<Environment>)>>,
     newest_conditions: Cell<u32>,
+    /// What is on its way may be older than that.
+    has_moved_window: Cell<bool>,
 }
 
 state!(fn state() -> State);
@@ -219,6 +220,10 @@ impl ToHost {
 
 impl Link for ToHost {
     fn tell(&self, notice: Notice) {
+        if let Notice::MoveWindow { .. } = notice {
+            state().has_moved_window.set(true);
+            state().environment.take();
+        }
         let lane = match notice {
             Notice::IpcSend { .. } | Notice::IpcInvoke { .. } => Lane::Elsewhere,
             _ => Lane::Scripts,
@@ -283,8 +288,8 @@ impl Link for ToHost {
         }
     }
 
-    fn inspect(&self, it: Inspected<'_>) {
-        if with_news(it, &|news| agent::far::tell(self.page, news)).is_err() {
+    fn inspect(&self, it: Logged<'_>) {
+        if agent::far::tell(self.page, it).is_err() {
             global().clear_exception_except_termination();
         }
     }
@@ -346,7 +351,7 @@ fn forget_history(page: u32) {
 }
 
 fn prepare(page: u32, it: Conditions) {
-    let is_newest = it.number > state().newest_conditions.get();
+    let is_newest = it.number > state().newest_conditions.get() && !state().has_moved_window.get();
     state().newest_conditions.update(|now| now.max(it.number));
     (state().environment).replace(is_newest.then_some((page, it.environment)));
 }
@@ -394,6 +399,11 @@ fn start(page: u32, how: Start) -> JsResult<()> {
 
 fn begin(statics: &Statics) -> JsResult<()> {
     statics.adopt();
+    if statics.has_file_for_report
+        && let Some(file) = remote::file_for_report()
+    {
+        crate::crash_reporter::begin_in_page_process(file);
+    }
     statics.tracing.iter().for_each(crate::tracing::join);
     let path = js(&*statics.resources_path)?;
     process::object().put(global(), b"resourcesPath", path);
@@ -457,6 +467,12 @@ fn handle(head: Head, message: &[u8]) -> JsResult<()> {
             });
         }
         Kind::Area => from_js_host_call_generic(global(), || areas::changed(&open(message))),
+        Kind::Lodger => from_js_host_call_generic(global(), || {
+            bun_web::service::far::obey(head.about, open(message));
+        }),
+        Kind::SharedWorker => from_js_host_call_generic(global(), || {
+            dom::tell_shared_worker(head.about, open(message));
+        }),
         Kind::Release => {
             state().is_held.set(false);
             Ok(())

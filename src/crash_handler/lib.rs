@@ -832,6 +832,33 @@ mod draft {
                         };
                         record(reason.terminal_signal(), fault, context, &reason);
                     }
+                    #[cfg(windows)]
+                    if let Some(record) = RECORDER.get() {
+                        use bun_sys::windows::*;
+                        const STATUS_FATAL_APP_EXIT: u32 = 0x4000_0015;
+                        let (code, fault) = match reason {
+                            CrashReason::SegmentationFault(address) => {
+                                (EXCEPTION_ACCESS_VIOLATION, Some(address))
+                            }
+                            CrashReason::IllegalInstruction(_) => {
+                                (EXCEPTION_ILLEGAL_INSTRUCTION, None)
+                            }
+                            CrashReason::DatatypeMisalignment => {
+                                (EXCEPTION_DATATYPE_MISALIGNMENT, None)
+                            }
+                            CrashReason::StackOverflow => (EXCEPTION_STACK_OVERFLOW, None),
+                            _ => (STATUS_FATAL_APP_EXIT, None),
+                        };
+                        match seed {
+                            TraceSeed::Fault {
+                                context: Some(context),
+                                ..
+                            } => record(code as core::ffi::c_int, fault, Some(context), &reason),
+                            _ => bun_core::debug::with_current_context(|_, context| {
+                                record(code as core::ffi::c_int, fault, Some(context), &reason)
+                            }),
+                        }
+                    }
 
                     // Use an raw unbuffered writer to stderr to avoid losing information on
                     // panic in a panic. There is also a possibility that `Output` related code
@@ -3397,14 +3424,15 @@ mod draft {
     }
 
     /// Gets the signal that ends the process, the address that could not be accessed, the registers at that point, and the
-    /// reason. It may be called from the handler of a signal.
-    #[cfg(unix)]
-    pub type Recorder = fn(c_int, Option<usize>, Option<SignalContext<'_>>, &dyn fmt::Display);
+    /// reason. It may be called from the handler of a signal. On Windows the first is the code of an exception.
+    pub type Recorder =
+        fn(core::ffi::c_int, Option<usize>, Option<SignalContext<'_>>, &dyn fmt::Display);
 
-    #[cfg(unix)]
+    #[cfg(windows)]
+    pub type SignalContext<'a> = &'a bun_sys::windows::CONTEXT;
+
     static RECORDER: std::sync::OnceLock<Recorder> = std::sync::OnceLock::new();
 
-    #[cfg(unix)]
     pub fn record_crashes_with(recorder: Recorder) {
         let _ = RECORDER.set(recorder);
     }

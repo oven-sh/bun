@@ -12,7 +12,7 @@ use bun_options_types::compile_target::CompileTarget;
 use bun_options_types::context::ContextData;
 use bun_options_types::{DesktopOptions, WindowsOptions};
 use bun_parsers::json::ParsedJson;
-use bun_paths::resolve_path::{join_abs_string_spill, platform};
+use bun_paths::resolve_path::{join_abs_string_spill, platform, platform_to_posix_in_place};
 use bun_standalone_graph::StandaloneModuleGraph::CompileError;
 use bun_standalone_graph::desktop::{Layout, library_for};
 use bun_sys::{Fd, File, O};
@@ -30,7 +30,7 @@ macro_rules! fail {
 /// `src/desktop/paths.rs` reads it. It also tells a bundle of an earlier build from another directory.
 const MANIFEST: &[u8] = b"desktop.json";
 
-const KEYS: [&[u8]; 14] = [
+const KEYS: [&[u8]; 15] = [
     b"name",
     b"identifier",
     b"version",
@@ -45,6 +45,7 @@ const KEYS: [&[u8]; 14] = [
     b"dom",
     b"pages",
     b"preloads",
+    b"jit",
 ];
 
 /// The suffix of `public.app-category.*`, and freedesktop.org's categories.
@@ -89,6 +90,7 @@ pub(crate) struct DesktopBundle {
     pub(crate) shown_path: Vec<u8>,
     pub(crate) executable: Vec<u8>,
     pub(crate) starts_in_window: bool,
+    pub(crate) keeps_jit: bool,
     pub(crate) pages: PageOptions,
     root: Vec<u8>,
     library: Vec<u8>,
@@ -197,6 +199,17 @@ impl<'a> Layers<'a> {
 
     fn string(&self, key: &str) -> Result<Option<&'a [u8]>> {
         self.get(key).map(|setting| setting.string()).transpose()
+    }
+
+    fn boolean(&self, key: &str) -> Result<bool> {
+        match self.get(key) {
+            None => Ok(false),
+            Some(Setting {
+                value: JsonValue::Boolean(value),
+                ..
+            }) => Ok(*value),
+            Some(setting) => fail!("{} must be a boolean", setting.label),
+        }
     }
 }
 
@@ -949,14 +962,7 @@ impl DesktopBundle {
         check_version(version)?;
         let description = (layers.string("description")?).or_else(|| in_package(b"description"));
         let copyright = layers.string("copyright")?;
-        let starts_in_window = match layers.get("dom") {
-            None => false,
-            Some(Setting {
-                value: JsonValue::Boolean(value),
-                ..
-            }) => *value,
-            Some(setting) => fail!("{} must be a boolean", setting.label),
-        };
+        let (starts_in_window, keeps_jit) = (layers.boolean("dom")?, layers.boolean("jit")?);
         check_text("The description", description.unwrap_or_default())?;
         check_text("The copyright", copyright.unwrap_or_default())?;
         let category = match layers.string("category")? {
@@ -1059,6 +1065,7 @@ impl DesktopBundle {
                     add(path, ico);
                 }
                 windows.hide_console = true;
+                windows.imports_from_system32_only = true;
                 windows.title.get_or_insert_with(|| name.into());
                 // What the Task Manager and the taskbar show as the name.
                 windows.description.get_or_insert_with(|| name.into());
@@ -1145,8 +1152,13 @@ impl DesktopBundle {
             let Some(setting) = layers.get(key) else {
                 return Ok(Vec::new());
             };
-            let written = setting.strings()?.into_iter();
-            Ok(written.map(|it| join(setting.directory, &[it])).collect())
+            // In a pattern, a backslash is no separator.
+            let pattern = |it| {
+                let mut path = join(setting.directory, &[it]);
+                platform_to_posix_in_place(&mut path);
+                path
+            };
+            Ok(setting.strings()?.into_iter().map(pattern).collect())
         };
         let pages = PageOptions {
             listed: paths("pages")?,
@@ -1159,6 +1171,7 @@ impl DesktopBundle {
             shown_path,
             executable,
             starts_in_window,
+            keeps_jit,
             pages,
             root,
             library: layout.library,

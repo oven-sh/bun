@@ -16,13 +16,10 @@ use crate::paint::raster::{
 
 const SKEW: f32 = 0.25;
 /// Those of Skia in Chromium.
-const GAMMA: f32 = if cfg!(target_os = "windows") {
-    2.2
-} else {
-    1.2
-};
+const GAMMA: f32 = 1.2;
+const USES_SRGB: bool = cfg!(any(windows, target_os = "macos"));
 const CONTRAST: f32 = if cfg!(target_os = "windows") {
-    0.5
+    1.
 } else if cfg!(target_os = "macos") {
     0.
 } else {
@@ -32,6 +29,9 @@ const MAX_GLYPH_PIXELS: i64 = 1 << 24;
 
 pub enum GlyphPixels {
     Mask(Vec<u8>),
+    /// For blue, green and red, and for all of them.
+    #[cfg(any(test, windows))]
+    Parts(Vec<[u8; 4]>),
     Color(Layer),
 }
 
@@ -39,6 +39,17 @@ pub struct GlyphImage {
     /// Relative to the pixel that the glyph's origin is in.
     pub rect: IntRect,
     pub pixels: GlyphPixels,
+}
+
+impl GlyphImage {
+    pub fn coverage(&self) -> &[u8] {
+        match &self.pixels {
+            GlyphPixels::Mask(it) => it,
+            #[cfg(any(test, windows))]
+            GlyphPixels::Parts(it) => it.as_flattened(),
+            GlyphPixels::Color(_) => &[],
+        }
+    }
 }
 
 /// With y up.
@@ -336,7 +347,7 @@ fn rasterize_color(
 }
 
 fn to_linear(value: f32) -> f32 {
-    match cfg!(target_os = "macos") {
+    match USES_SRGB {
         true if value <= 0.04045 => value / 12.92,
         true => ((value + 0.055) / 1.055).powf(2.4),
         false => value.powf(GAMMA),
@@ -344,7 +355,7 @@ fn to_linear(value: f32) -> f32 {
 }
 
 fn from_linear(value: f32) -> f32 {
-    match cfg!(target_os = "macos") {
+    match USES_SRGB {
         true if value <= 0.003_130_8 => value * 12.92,
         true => 1.055 * value.powf(1. / 2.4) - 0.055,
         false => value.powf(1. / GAMMA),
@@ -359,6 +370,19 @@ pub fn ink_for(face: &Face, color: u32) -> u32 {
         false => shade_for(color),
     }
 }
+
+/// The same for text that is drawn for the parts of pixels: 3 bits of each channel.
+#[cfg(windows)]
+pub fn ink_for_parts(color: u32) -> Option<u32> {
+    let [r, g, b, _] = color
+        .to_be_bytes()
+        .map(|it| it >> 5 << 5 | it >> 5 << 2 | it >> 6);
+    super::catalog::subpixels().map(|_| u32::from_be_bytes([r, g, b, FOR_PARTS]))
+}
+
+/// In place of the alpha of an ink.
+#[cfg(any(test, windows))]
+const FOR_PARTS: u8 = 0xFE;
 
 /// 3 bits of luminance, as a shade of gray: `SkComputeLuminance` of `SkMaskGamma::CanonicalColor`.
 fn shade_for(color: u32) -> u32 {
@@ -382,9 +406,9 @@ pub fn correct_stroke(face: &Face, size: f32, color: u32, coverage: &mut [u8]) {
 }
 
 /// `SkTMaskGamma_build_correcting_lut`, which makes blending look as if it were done in linear light.
-fn correct(coverage: &mut [u8], shade: u32) {
+fn correction(shade: u32) -> &'static [u8; 256] {
     static TABLES: [OnceLock<[u8; 256]>; 8] = [const { OnceLock::new() }; 8];
-    let table = TABLES[shade as usize >> 5].get_or_init(|| {
+    TABLES[shade as usize >> 5].get_or_init(|| {
         let source = shade as f32 / 255.;
         let (target, linear_source) = (1. - source, to_linear(source));
         let linear_target = to_linear(target);
@@ -394,10 +418,54 @@ fn correct(coverage: &mut [u8], shade: u32) {
             let blended = from_linear(linear_source * alpha + linear_target * (1. - alpha));
             ((blended - target) / (source - target) * 255. + 0.5) as u8
         })
-    });
+    })
+}
+
+fn correct(coverage: &mut [u8], shade: u32) {
+    let table = correction(shade);
     coverage
         .iter_mut()
         .for_each(|value| *value = table[usize::from(*value)]);
+}
+
+/// `parts` go from the left to the right.
+#[cfg(any(test, windows))]
+fn from_parts(parts: impl Iterator<Item = [u8; 3]>, is_blue_first: bool, ink: u32) -> GlyphPixels {
+    let [r, g, b, kind] = ink.to_be_bytes();
+    let [r, g, b, all] = [r.into(), g.into(), b.into(), shade_for(ink) >> 24].map(correction);
+    let average = |tables: [&[u8; 256]; 3], it: [u8; 3]| {
+        ((0..3)
+            .map(|at| u32::from(tables[at][usize::from(it[at])]))
+            .sum::<u32>()
+            / 3) as u8
+    };
+    if kind != FOR_PARTS {
+        return GlyphPixels::Mask(parts.map(|it| average([r; 3], it)).collect());
+    }
+    let pixel = |it: [u8; 3]| {
+        let [red, green, blue] = if is_blue_first {
+            [it[2], it[1], it[0]]
+        } else {
+            it
+        }
+        .map(usize::from);
+        [b[blue], g[green], r[red], average([all; 3], it)]
+    };
+    GlyphPixels::Parts(parts.map(pixel).collect())
+}
+
+/// Each part gets what a pixel would get that has it in its middle. `thirds` has three columns for each pixel.
+#[cfg(any(test, windows))]
+fn parts_of(thirds: &Coverage) -> impl Iterator<Item = [u8; 3]> {
+    thirds
+        .data
+        .chunks_exact(thirds.rect.width())
+        .flat_map(|row| {
+            let at = move |x: usize| u32::from(row.get(x.wrapping_sub(1)).copied().unwrap_or(0));
+            (0..row.len()).step_by(3).map(move |x| {
+                [x, x + 1, x + 2].map(|it| ((at(it) + at(it + 1) + at(it + 2) + 1) / 3) as u8)
+            })
+        })
 }
 
 /// How far a black rectangle on white reaches beyond the left and the right edge of `exact`, with a gamma of 2.
@@ -473,6 +541,38 @@ pub fn rasterize(
     {
         return Some(image);
     }
+    #[cfg(windows)]
+    if let Some(native) = face
+        .file
+        .native
+        .as_ref()
+        .filter(|_| hint && !face.file.has_color)
+        && let Ok((rect, mut values)) = native.coverage(
+            face,
+            glyph,
+            size,
+            &matrix.pre_concat(flip(face)).pre_scale(1., -1.),
+        )
+    {
+        let pixels = match super::catalog::subpixels() {
+            _ if rect.is_empty() => return None,
+            Some(is_blue_first) => from_parts(
+                values.as_chunks().0.iter().copied(),
+                is_blue_first,
+                foreground,
+            ),
+            None => {
+                correct(&mut values, foreground >> 24);
+                GlyphPixels::Mask(values)
+            }
+        };
+        return Some(GlyphImage { rect, pixels });
+    }
+    #[cfg(windows)]
+    let hint = hint
+        && !face.embolden
+        && size <= 48.
+        && (face.file.font.table(b"glyf").is_none() || super::catalog::is_hinted(&face.file.font));
     let hinted = hint.then(|| hint::outline(face, glyph, size)).flatten();
     let path = hinted.unwrap_or_else(|| {
         outline(
@@ -497,6 +597,37 @@ pub fn rasterize(
         0.
     };
     let rect = device_bounds(path_bounds(&path, stroke), &matrix)?.outset(growth.is_some().into());
+    #[cfg(windows)]
+    if let Some(is_blue_first) =
+        super::catalog::subpixels().filter(|_| foreground as u8 == FOR_PARTS)
+    {
+        let rect = IntRect {
+            left: rect.left - 1,
+            right: rect.right + 1,
+            ..rect
+        };
+        let (matrix, wide) = (
+            matrix.post_scale(3., 1.),
+            IntRect {
+                left: rect.left * 3,
+                right: rect.right * 3,
+                ..rect
+            },
+        );
+        let mut thirds = Coverage::of_path(&path, Fill::NonZero, &matrix, wide);
+        if face.embolden {
+            thirds.unite(&Coverage::of_path(
+                &path,
+                Stroke::new(stroke),
+                &matrix,
+                wide,
+            ));
+        }
+        return Some(GlyphImage {
+            rect,
+            pixels: from_parts(parts_of(&thirds), is_blue_first, foreground),
+        });
+    }
     let mut coverage = growth.map_or_else(
         || Coverage::of_path(&path, Fill::NonZero, &matrix, rect),
         |it| fill_grown(&path, &matrix, it, rect),
@@ -508,6 +639,10 @@ pub fn rasterize(
             &matrix,
             rect,
         ));
+    }
+    #[cfg(windows)]
+    if hint && !super::catalog::is_smooth() {
+        coverage.harden();
     }
     if growth.is_some() || !cfg!(target_os = "macos") {
         correct(
@@ -529,6 +664,34 @@ pub fn rasterize(
 mod tests {
     use super::*;
     use crate::gfx::PathBuilder as _;
+
+    #[test]
+    fn covers_the_parts_of_pixels() {
+        let thirds = Coverage {
+            rect: IntRect::new(0, 0, 9, 1),
+            data: vec![0, 0, 0, 0, 255, 255, 255, 0, 0],
+        };
+        assert_eq!(
+            parts_of(&thirds).collect::<Vec<_>>(),
+            [[0, 0, 0], [85, 170, 255], [170, 85, 0]]
+        );
+        let drawn = |is_blue_first, ink| match from_parts(parts_of(&thirds), is_blue_first, ink) {
+            GlyphPixels::Parts(it) => it[1].to_vec(),
+            GlyphPixels::Mask(it) => it,
+            GlyphPixels::Color(_) => unreachable!(),
+        };
+        let (usual, reversed) = (
+            drawn(false, FOR_PARTS.into()),
+            drawn(true, FOR_PARTS.into()),
+        );
+        assert!(
+            usual[0] == 255
+                && usual[1] > usual[2]
+                && [usual[2], usual[1], usual[0], usual[3]] == *reversed,
+            "{usual:?} {reversed:?}"
+        );
+        assert_eq!(drawn(false, 0xFF)[1], usual[3]);
+    }
 
     #[test]
     fn grows_by_what_is_measured() {

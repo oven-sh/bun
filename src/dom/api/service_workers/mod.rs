@@ -5,10 +5,10 @@ mod events;
 use core::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use bun_collections::HashMap;
 use bun_core::strings;
 use bun_jsc::bindgen::{self, ClassStructure, JsHeap, JsInterface, JsList, JsLocal, JsScope};
 use bun_jsc::{JSObject, JSValue, Strong};
+use bun_web::HashMap;
 use bun_web::exec;
 use bun_web::headers::is_valid_value;
 use bun_web::held::Held;

@@ -41,7 +41,7 @@ use crate::service::{self, Handler, Reserved, Routing, Served};
 use crate::storage::{Kinds, Origins};
 use crate::time::{monotonic_now, wall_now};
 use crate::url::Url;
-use crate::{Bytes, compiled, mime, sniff};
+use crate::{Bytes, compiled, sniff};
 
 crate::wire! {
     #[derive(Clone, Copy, PartialEq, Eq)]
@@ -134,6 +134,11 @@ pub trait Observer {
     /// A service worker has got the response from the URL of the request.
     fn accepts(&self, request: &Request, first: Option<&Url>) -> bool {
         self.allows(request, first)
+    }
+
+    /// Whether the document is going to be in a page process. `None` if service workers are to leave it alone.
+    fn leads_to_page_process(&self, _: &Url) -> Option<bool> {
+        None
     }
 
     fn blocked_as_mixed_content(&self, _: &Request, _first: Option<&Url>) {}
@@ -688,7 +693,12 @@ impl Fetch<'_> {
                 .await;
         }
         match request.url.scheme() {
-            b"file" => return schemes::fetch_file(&request.url, &request.headers).await,
+            b"file" => {
+                if !schemes::may_ask_for_file(&request.url, self.initiator.origin.is_none()) {
+                    return Err(NetError::AccessDenied);
+                }
+                return schemes::fetch_file(&request.url, &request.headers).await;
+            }
             b"data" => return schemes::fetch_data(&request.url),
             b"blob" => {
                 let blob = match self.request.blob.clone() {
@@ -842,19 +852,14 @@ impl Fetch<'_> {
                 self.send(request, includes_credentials, partition.cloned())
                     .await?
             }
+            Paused::ContinueWithoutCache(changed) => {
+                self.send(changed, includes_credentials, None).await?
+            }
         };
-        let is_text = |it: &[u8]| {
-            (it.starts_with(b"text/") && it != b"text/event-stream")
-                || mime::is_json(it)
-                || mime::is_xml(it)
-                || mime::is_javascript(it)
+        let is_stream = |it: &[u8]| {
+            it == b"text/event-stream" || it.starts_with(b"audio/") || it.starts_with(b"video/")
         };
-        if self.request.destination == Destination::Empty
-            && answer
-                .headers
-                .mime()
-                .is_some_and(|it| is_text(it.essence()))
-        {
+        if !(answer.headers.mime()).is_some_and(|it| is_stream(it.essence())) {
             let (source, session) = (core::mem::take(&mut answer.body), Arc::clone(self.session));
             answer.body = Body::new(Inspected {
                 source,
@@ -947,7 +952,7 @@ impl Fetch<'_> {
         let (session, url) = (self.session, &self.request.url);
         if headers.contains(b"set-cookie") {
             session.cookies_loaded().await;
-            session.with_cookies(|jar| {
+            session.with_cookies_for(self.initiator.client, |jar| {
                 headers
                     .values(b"set-cookie")
                     .for_each(|it| _ = jar.receive(it, url, context))
@@ -964,7 +969,7 @@ impl Fetch<'_> {
         };
         if asks_for(SiteData::Cookies) {
             session.cookies_loaded().await;
-            session.clear_cookies(core::slice::from_ref(url), true);
+            session.clear_cookies(core::slice::from_ref(url), true, self.initiator.client);
         }
         if asks_for(SiteData::Storage) {
             let origins = Origins {
@@ -1146,6 +1151,12 @@ impl Fetch<'_> {
         if !service::is_allowed_at(&request.url) && (self.navigates() || !request.url.is_http()) {
             return Ok(None);
         }
+        let Some(is_apart) = (match self.navigates() {
+            true => self.observer.leads_to_page_process(&request.url),
+            false => Some(self.initiator.is_in_page_process),
+        }) else {
+            return Ok(None);
+        };
         let is_only_from_app = |url: &Url| {
             can_run_code(self.request.destination)
                 && (compiled::is_exclusive() || session.serves(url))
@@ -1165,6 +1176,7 @@ impl Fetch<'_> {
                 urls: self.urls.clone(),
                 destination: request.destination,
                 has_user_activation: request.has_user_activation,
+                number: 0,
             });
         }
         let (mode, redirect, lent) = (request.mode, request.redirect, Arc::default());
@@ -1178,6 +1190,7 @@ impl Fetch<'_> {
         };
         let start = monotonic_now();
         let mut initiator = self.initiator.clone();
+        initiator.is_in_page_process = is_apart;
         if let Handler::Matching { reserved, .. } = &mut initiator.service {
             *reserved = earlier.map(|it| it.presence);
         }
@@ -1430,6 +1443,7 @@ impl Fetch<'_> {
             referrer: self.referrer.clone(),
             reserved: self.reserved.take(),
             is_from_service_worker: is_served,
+            kept_as: 0,
         };
         let ending = Ending {
             session: Arc::clone(session),
@@ -1514,6 +1528,7 @@ impl Ending {
                     cached: *cached,
                 }),
                 outcome: Some(outcome.map(|_| ())),
+                size: outcome.unwrap_or(0),
                 ..Details::default()
             });
         }
@@ -1592,6 +1607,10 @@ struct Inspected {
 impl Source for Inspected {
     fn poll_read(&mut self, cx: &mut Context<'_>) -> Poll<Read> {
         let read = ready!(self.source.poll_read(cx));
+        const LARGEST: usize = 10 << 20;
+        if self.copy.len() > LARGEST {
+            return Poll::Ready(read);
+        }
         if let Ok(Some(chunk)) = &read {
             self.copy.extend_from_slice(chunk);
         } else if read.is_ok() {

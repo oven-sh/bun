@@ -2,11 +2,11 @@
 
 use core::ffi::{c_int, c_void};
 use core::ptr::null_mut;
-use std::os::windows::io::{AsRawHandle as _, IntoRawHandle as _};
+use std::os::windows::io::{AsRawHandle as _, HandleOrInvalid, IntoRawHandle as _, OwnedHandle};
 
 use bun_core::WStr;
 use bun_windows_sys::externs as win32;
-use win32::{BOOL, DWORD, HANDLE};
+use win32::{BOOL, DWORD, HANDLE, Win32Error};
 
 type PSID = *mut c_void;
 
@@ -164,19 +164,17 @@ impl User {
         })
     }
 
-    fn create(&self, path: &WStr) {
+    /// `describe` gets the SID, and answers in SDDL.
+    fn descriptor(&self, describe: impl FnOnce(&str) -> String) -> Option<Local<c_void>> {
         let mut sid: *mut u16 = null_mut();
         // SAFETY: a valid SID and a valid out-param.
         if unsafe { ConvertSidToStringSidW(self.sid(), &mut sid) } == 0 {
-            return;
+            return None;
         }
         let sid = Local(sid);
         // SAFETY: the system wrote a NUL-terminated string.
         let user = String::from_utf16_lossy(unsafe { bun_core::ffi::wstr_units(sid.0) });
-        let text: Vec<u16> =
-            format!("O:{user}D:P(A;OICI;FA;;;{user})(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)\0")
-                .encode_utf16()
-                .collect();
+        let text: Vec<u16> = describe(&user).encode_utf16().chain([0]).collect();
         let mut descriptor: *mut c_void = null_mut();
         // SAFETY: `text` is NUL-terminated; `descriptor` is a valid out-param.
         if unsafe {
@@ -188,17 +186,52 @@ impl User {
             )
         } == 0
         {
-            return;
+            return None;
         }
-        let descriptor = Local(descriptor);
-        let mut attributes = win32::SECURITY_ATTRIBUTES {
-            nLength: size_of::<win32::SECURITY_ATTRIBUTES>() as DWORD,
-            lpSecurityDescriptor: descriptor.0,
-            bInheritHandle: 0,
+        Some(Local(descriptor))
+    }
+
+    fn create(&self, path: &WStr) {
+        let Some(descriptor) = self.descriptor(|user| {
+            format!("O:{user}D:P(A;OICI;FA;;;{user})(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)")
+        }) else {
+            return;
         };
         // SAFETY: `path` is NUL-terminated; `descriptor` outlives the call.
-        unsafe { win32::CreateDirectoryW(path.as_ptr(), &mut attributes) };
+        unsafe { win32::CreateDirectoryW(path.as_ptr(), &mut attributes(&descriptor)) };
     }
+}
+
+fn attributes(descriptor: &Local<c_void>) -> win32::SECURITY_ATTRIBUTES {
+    win32::SECURITY_ATTRIBUTES {
+        nLength: size_of::<win32::SECURITY_ATTRIBUTES>() as DWORD,
+        lpSecurityDescriptor: descriptor.0,
+        bInheritHandle: 0,
+    }
+}
+
+/// The only instance of a pipe of bytes, which programs of this user on this computer can write to: elevated or not, but not from a sandbox.
+pub fn make_inbound_pipe(name: &WStr, buffer_size: DWORD) -> Result<OwnedHandle, Win32Error> {
+    const FILE_FLAG_FIRST_PIPE_INSTANCE: DWORD = 0x0008_0000;
+    const PIPE_REJECT_REMOTE_CLIENTS: DWORD = 8;
+    let descriptor = User::current()
+        .and_then(|it| it.descriptor(|user| format!("D:P(A;;GA;;;{user})S:(ML;;NWNR;;;ME)")))
+        .ok_or_else(Win32Error::get)?;
+    let mut attributes = attributes(&descriptor);
+    // SAFETY: `name` is NUL-terminated; `descriptor` outlives the call; the result is a new handle or `INVALID_HANDLE_VALUE`.
+    let handle = unsafe {
+        HandleOrInvalid::from_raw_handle(win32::kernel32::CreateNamedPipeW(
+            name.as_ptr(),
+            win32::PIPE_ACCESS_INBOUND | FILE_FLAG_FIRST_PIPE_INSTANCE,
+            PIPE_REJECT_REMOTE_CLIENTS,
+            1,
+            0,
+            buffer_size,
+            0,
+            (&raw mut attributes).cast(),
+        ))
+    };
+    OwnedHandle::try_from(handle).map_err(|_| Win32Error::get())
 }
 
 /// Makes the folder unless there is something at `path`.

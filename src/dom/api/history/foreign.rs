@@ -371,7 +371,7 @@ impl ForeignWindow {
                     Some(name) => self
                         .context()
                         .children()
-                        .find(|it| it.name() == name.to_utf8()),
+                        .find(|it| it.has_public_name(&name.to_utf8())),
                     None => key
                         .get_number()
                         .and_then(|it| self.context().children().nth(it as usize)),

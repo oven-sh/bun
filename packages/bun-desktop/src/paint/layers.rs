@@ -42,6 +42,7 @@ pub trait Target {
     fn create(&mut self, width: i32, height: i32) -> Option<Self::Surface>;
     /// The system may still be reading it.
     fn is_in_use(surface: &Self::Surface) -> bool;
+    fn was_replaced(_surface: &Self::Surface) {}
     /// Valid until `unlock`.
     fn lock(surface: &Self::Surface, writes: bool) -> Locked;
     fn unlock(surface: &Self::Surface, wrote: bool);
@@ -1310,6 +1311,7 @@ impl<T: Target> Layers<T> {
             self.target
                 .show(buffer.position, rect, &buffer.surface, is_opaque);
             let old = self.shown.insert(buffer.position, buffer);
+            old.iter().for_each(|it| T::was_replaced(&it.surface));
             self.spare.extend(old.map(|old| Buffer {
                 last_shown: now,
                 ..old

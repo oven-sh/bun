@@ -6,11 +6,11 @@ use core::ptr::NonNull;
 use std::io::Write as _;
 use std::rc::Rc;
 
-use bun_collections::HashMap;
 use bun_jsc::bindgen::{JsHeap, JsInterface, JsLocal, JsScope, Result};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{DOMExceptionCode, JSPromise, JSValue, Strong, Weak};
 
+use bun_web::HashMap;
 use bun_web::exec::with_realm;
 use bun_web::held::Held;
 use bun_web::media::Connection;

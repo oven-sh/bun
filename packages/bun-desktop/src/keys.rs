@@ -130,6 +130,9 @@ const CODES: [&str; 128] = [
     "ContextMenu",
 ];
 
+const F13_TO_F24: [&str; 12] = [
+    "F13", "F14", "F15", "F16", "F17", "F18", "F19", "F20", "F21", "F22", "F23", "F24",
+];
 const FN: u32 = 464;
 
 #[cfg(target_os = "macos")]
@@ -147,16 +150,72 @@ fn evdev_code(virtual_key: u32) -> u32 {
         .map_or(0, |code| (*code).into())
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(windows)]
+fn evdev_code(scan_code: u32) -> u32 {
+    const OTHERS: [(u16, u8); 43] = [
+        (0x45, 119),
+        (0x54, 99),
+        (0x59, 117),
+        (0x70, 93),
+        (0x71, 123),
+        (0x72, 122),
+        (0x73, 89),
+        (0x76, 194),
+        (0x77, 91),
+        (0x78, 90),
+        (0x79, 92),
+        (0x7B, 94),
+        (0x7D, 124),
+        (0x7E, 121),
+        (0xF1, 123),
+        (0xF2, 122),
+        (0xE010, 165),
+        (0xE019, 163),
+        (0xE01C, 96),
+        (0xE01D, 97),
+        (0xE020, 113),
+        (0xE022, 164),
+        (0xE024, 166),
+        (0xE02E, 114),
+        (0xE030, 115),
+        (0xE035, 98),
+        (0xE036, 54),
+        (0xE037, 99),
+        (0xE038, 100),
+        (0xE045, 69),
+        (0xE046, 119),
+        (0xE04B, 105),
+        (0xE04D, 106),
+        (0xE04F, 107),
+        (0xE050, 108),
+        (0xE051, 109),
+        (0xE052, 110),
+        (0xE053, 111),
+        (0xE05E, 116),
+        (0xE069, 159),
+        (0xE06A, 158),
+        (0xE0F1, 123),
+        (0xE0F2, 122),
+    ];
+    match scan_code {
+        _ if let Some(other) = OTHERS.iter().find(|it| u32::from(it.0) == scan_code) => {
+            other.1.into()
+        }
+        ..=0x58 => scan_code,
+        0x64..=0x6E => scan_code - 0x64 + 183,
+        0xE047..=0xE049 => scan_code - 0xE047 + 102,
+        0xE05B..=0xE05D => scan_code - 0xE05B + 125,
+        _ => 0,
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn evdev_code(code: u32) -> u32 {
     code
 }
 
 /// The `code` of a DOM `KeyboardEvent`.
 pub fn dom_code(scan_code: u32) -> &'static str {
-    const F13_TO_F24: [&str; 12] = [
-        "F13", "F14", "F15", "F16", "F17", "F18", "F19", "F20", "F21", "F22", "F23", "F24",
-    ];
     match evdev_code(scan_code) {
         158 => "BrowserBack",
         159 => "BrowserForward",
@@ -230,6 +289,114 @@ pub fn modifier_bit(key: &str) -> Option<u8> {
     })
 }
 
+#[cfg(any(windows, target_os = "macos"))]
+pub const DEAD: u32 = u32::MAX;
+
+/// By itself, AltGr.
+#[cfg(windows)]
+pub const NAMED: u32 = 1 << 30;
+
+/// With a virtual key that means something else on such a keyboard.
+#[cfg(windows)]
+pub const JAPANESE: u32 = 0x100;
+
+#[cfg(windows)]
+pub fn name_of_virtual_key(key: u32) -> Option<&'static str> {
+    const FROM_BACKSPACE: [&str; 40] = [
+        "Backspace",
+        "Tab",
+        "",
+        "",
+        "Clear",
+        "Enter",
+        "",
+        "",
+        "Shift",
+        "Control",
+        "Alt",
+        "Pause",
+        "CapsLock",
+        "HangulMode",
+        "",
+        "JunjaMode",
+        "FinalMode",
+        "HanjaMode",
+        "",
+        "Escape",
+        "Convert",
+        "NonConvert",
+        "Accept",
+        "ModeChange",
+        "",
+        "PageUp",
+        "PageDown",
+        "End",
+        "Home",
+        "ArrowLeft",
+        "ArrowUp",
+        "ArrowRight",
+        "ArrowDown",
+        "Select",
+        "Print",
+        "Execute",
+        "PrintScreen",
+        "Insert",
+        "Delete",
+        "Help",
+    ];
+    const FROM_BROWSER_BACK: [&str; 14] = [
+        "BrowserBack",
+        "BrowserForward",
+        "BrowserRefresh",
+        "BrowserStop",
+        "BrowserSearch",
+        "BrowserFavorites",
+        "BrowserHome",
+        "AudioVolumeMute",
+        "AudioVolumeDown",
+        "AudioVolumeUp",
+        "MediaTrackNext",
+        "MediaTrackPrevious",
+        "MediaStop",
+        "MediaPlayPause",
+    ];
+    Some(match key as usize {
+        key @ 0x08..=0x2F => FROM_BACKSPACE[key - 0x08],
+        0x5B | 0x5C => "Meta",
+        0x5D => "ContextMenu",
+        key @ 0x70..=0x79 => CODES[key - 0x70 + 59],
+        key @ 0x7A..=0x7B => CODES[key - 0x7A + 87],
+        key @ 0x7C..=0x87 => F13_TO_F24[key - 0x7C],
+        0x90 => "NumLock",
+        0x91 => "ScrollLock",
+        key @ 0xA6..=0xB3 => FROM_BROWSER_BACK[key - 0xA6],
+        0xE5 => "Process",
+        key @ 0x115..=0x119 => ["KanaMode", "", "", "", "KanjiMode"][key - 0x115],
+        key @ 0x1F0..=0x1F6 => [
+            "Alphanumeric",
+            "Katakana",
+            "Hiragana",
+            "Hankaku",
+            "Zenkaku",
+            "Romaji",
+            "KanaMode",
+        ][key - 0x1F0],
+        _ => "",
+    })
+    .filter(|it| !it.is_empty())
+}
+
+/// The `key` of a DOM `KeyboardEvent`.
+#[cfg(windows)]
+pub fn key_for_symbol(symbol: u32, _code: &'static str) -> Option<String> {
+    Some(match symbol {
+        DEAD => "Dead".to_owned(),
+        NAMED => "AltGraph".to_owned(),
+        _ if symbol > NAMED => name_of_virtual_key(symbol - NAMED)?.to_owned(),
+        _ => char::from_u32(symbol).filter(|it| !it.is_control())?.into(),
+    })
+}
+
 /// The `key` of a DOM `KeyboardEvent`, from the character that the key stands for.
 #[cfg(target_os = "macos")]
 pub fn key_for_symbol(symbol: u32, code: &'static str) -> Option<String> {
@@ -248,13 +415,13 @@ pub fn key_for_symbol(symbol: u32, code: &'static str) -> Option<String> {
         }
         _ if NAMED.split(' ').any(|it| it == code) => code.to_owned(),
         _ if modifier_bit(side).is_some() => side.to_owned(),
-        _ if symbol == u32::MAX => "Dead".to_owned(),
+        _ if symbol == DEAD => "Dead".to_owned(),
         _ => char::from_u32(symbol).filter(is_printable)?.into(),
     })
 }
 
 /// The `key` of a DOM `KeyboardEvent`, from a keysym.
-#[cfg(not(target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub fn key_for_symbol(symbol: u32, code: &'static str) -> Option<String> {
     let named = match symbol {
         0xFF08 => "Backspace",

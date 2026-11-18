@@ -85,6 +85,7 @@ impl Window {
         self.view.environment.replace(new);
         let (it, viewport) = (self.environment(), self.viewport_size());
         let narrow = |it: f64| it as f32;
+        crate::color::set_palette(it.palette);
         self.document().engine(|engine, _| {
             engine.set_environment(crate::document::Environment {
                 viewport: viewport.map(|it| narrow(it).max(0.0)),
@@ -95,6 +96,8 @@ impl Window {
                     .map_or(viewport, |it| [it.bounds.width, it.bounds.height])
                     .map(narrow),
                 highlight: [it.light_highlight, it.dark_highlight],
+                palette: it.palette,
+                has_touch: it.touch_points > 0,
                 titlebar_area: self.titlebar_area().map(|it| it.map(narrow)),
                 dark: it.is_dark,
                 reduced_motion: it.reduces_motion,

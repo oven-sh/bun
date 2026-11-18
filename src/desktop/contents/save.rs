@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 
 use bun_web::client::Resource;
-use bun_web::page::{self, Purpose};
+use bun_web::page::{self, Purpose, file_of_frame, printed_from};
 use bun_web::request::Destination;
 
 use super::page::Page;
@@ -21,8 +21,8 @@ struct Wanted {
     name: String,
 }
 
-async fn snapshot(page: &Page, purpose: Purpose) -> JsResult<(String, Vec<Wanted>)> {
-    let (snapshot, pages) = (page.snapshot(purpose).await?, page.with_descendants()?);
+fn wanted_in(page: &Page, resources: Vec<page::Resource>) -> JsResult<Vec<Wanted>> {
+    let pages = page.with_descendants()?;
     let wanted = |it: page::Resource| {
         Some(Wanted {
             by: Root::new(pages.iter().find(|by| by.get().id == it.page)?.get()),
@@ -32,8 +32,7 @@ async fn snapshot(page: &Page, purpose: Purpose) -> JsResult<(String, Vec<Wanted
             url: it.url,
         })
     };
-    let wanted = snapshot.resources.into_iter().filter_map(wanted);
-    Ok((snapshot.markup, wanted.collect()))
+    Ok(resources.into_iter().filter_map(wanted).collect())
 }
 
 fn referred_to_by(sheet: &Resource) -> Vec<String> {
@@ -51,7 +50,8 @@ fn write(path: &str, contents: &[u8]) -> JsResult<()> {
 }
 
 async fn save_archive(page: &Root<Page>, path: &str) -> JsResult<()> {
-    let (markup, mut wanted) = snapshot(page.get(), Purpose::Archive).await?;
+    let snapshot = page.get().snapshot(Purpose::Archive).await?;
+    let mut wanted = wanted_in(page.get(), snapshot.resources)?;
     let (boundary, url) = (
         format!("----MultipartBoundary--{}----", random_uuid()),
         page.get().url(),
@@ -70,7 +70,10 @@ async fn save_archive(page: &Root<Page>, path: &str) -> JsResult<()> {
             archive += "\r\n";
         }
     };
-    add("text/html", &url, markup.as_bytes());
+    add("text/html", &url, snapshot.markup.as_bytes());
+    for (page, markup) in &snapshot.frames {
+        add("text/html", &printed_from(*page), markup.as_bytes());
+    }
     let (mut next, most) = (0, wanted.len() + MOST_INDIRECT);
     let mut listed: BTreeSet<_> = (wanted.iter())
         .map(|it| (it.by.get().id, it.url.clone()))
@@ -112,18 +115,39 @@ async fn save_archive(page: &Root<Page>, path: &str) -> JsResult<()> {
     write(path, archive.as_bytes())
 }
 
+async fn save_resources(wanted: Vec<Wanted>, folder: &str) -> JsResult<()> {
+    files::or_throw(files::make_directory(folder, 0o777))?;
+    for it in wanted {
+        if let Some(found) = it.by.get().fetch(&it.url, it.destination)?.await {
+            write(&files::join(&[folder, &it.name]), &found.bytes)?;
+        }
+    }
+    Ok(())
+}
+
 async fn save_with_resources(page: &Root<Page>, path: &str) -> JsResult<()> {
     let extension = bun_paths::extension(path.as_bytes()).len();
     let folder = format!("{}_files", &path[..path.len() - extension]);
-    let purpose = Purpose::Save(encode_path(files::name(&folder)));
-    let (markup, wanted) = snapshot(page.get(), purpose).await?;
-    files::or_throw(files::make_directory(&folder, 0o777))?;
-    for it in wanted {
-        if let Some(found) = it.by.get().fetch(&it.url, it.destination)?.await {
-            write(&files::join(&[&folder, &it.name]), &found.bytes)?;
+    let purpose = Purpose::Save {
+        resources: encode_path(files::name(&folder)),
+        frames: encode_path(files::name(&folder)),
+    };
+    let apart = page.get().contents().pages_apart_below()?;
+    let snapshot = page.get().snapshot_of_process(purpose).await?;
+    save_resources(wanted_in(page.get(), snapshot.resources)?, &folder).await?;
+    for frame in apart {
+        let name = file_of_frame(frame.get().id);
+        let purpose = Purpose::Save {
+            resources: name.clone(),
+            frames: ".".into(),
+        };
+        if let Some(it) = frame.get().snapshot_of_frame(purpose).await? {
+            let path = files::join(&[&folder, &name]);
+            save_resources(wanted_in(frame.get(), it.resources)?, &path).await?;
+            write(&format!("{path}.html"), it.markup.as_bytes())?;
         }
     }
-    write(path, markup.as_bytes())
+    write(path, snapshot.markup.as_bytes())
 }
 
 pub(super) fn save(page: &Page, path: String, kind: String) -> JsResult<JSValue> {

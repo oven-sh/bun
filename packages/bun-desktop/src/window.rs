@@ -65,13 +65,13 @@ pub struct WindowState {
     /// How long it has lately taken.
     drawing_time: Cell<Duration>,
     /// When it moved there.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(windows, target_os = "macos"))]
     covered_caret: Cell<Option<Instant>>,
     /// By the app, so that it is drawn before it comes back.
     #[cfg(target_os = "macos")]
     was_hidden: Cell<bool>,
     /// The identities of animations, and when that turned out.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(windows, target_os = "macos"))]
     unlifted: RefCell<Vec<([f64; 5], Instant)>>,
     forget_at: Cell<Option<Instant>>,
     geometry: Cell<Geometry>,
@@ -94,9 +94,20 @@ impl WindowState {
         }
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(windows, target_os = "macos"))]
     pub fn is_shown(&self) -> bool {
         self.is_shown.get()
+    }
+
+    #[cfg(any(windows, target_os = "macos"))]
+    fn is_opaque(&self) -> bool {
+        let options = self.options.borrow();
+        options
+            .background_color
+            .get()
+            .map_or(options.background == Background::Opaque, |color| {
+                color & 0xFF == 0xFF
+            })
     }
 
     fn measure(&self, geometry: Geometry) {
@@ -119,7 +130,10 @@ impl WindowState {
             width,
             height: top + height,
             scale,
-            origin: (geometry.x, geometry.y + geometry.top - top),
+            origin: (
+                geometry.x + geometry.border,
+                geometry.y + geometry.top - top,
+            ),
             content: Rect {
                 x: 0.,
                 y: top,
@@ -187,24 +201,15 @@ pub fn any_is_stale() -> bool {
     })
 }
 
-#[cfg(target_os = "macos")]
-pub mod layers {
+#[cfg(any(windows, target_os = "macos"))]
+mod lifting {
     use super::*;
-    use crate::paint::layers::core_animation::Caret;
-    use crate::paint::software;
+    use crate::paint::flatten::Caret;
 
-    thread_local! {
-        static HAS_CHANGES: Cell<bool> = const { Cell::new(false) };
-        static RELEASE_AT: Cell<Option<Instant>> = const { Cell::new(None) };
-        static PAUSE_AT: Cell<Option<Instant>> = const { Cell::new(None) };
-        /// The surface, and the place in its window.
-        static POINTER: Cell<Option<(u32, platform::Point)>> = const { Cell::new(None) };
-        static LOOK_AT: Cell<Option<Instant>> = const { Cell::new(None) };
-    }
-
-    /// Leaves out what Core Animation can move, fade or blink in a layer of its own.
+    /// Leaves out what the system can move, fade or blink in a layer of its own.
     pub(super) fn flatten(state: &WindowState) -> Option<Caret> {
         const RETRY: Duration = Duration::from_secs(2);
+        #[cfg(target_os = "macos")]
         if core_animation::gpu_has_spoiled_surfaces() {
             for state in ids().into_iter().filter_map(|id| super::state(id).ok()) {
                 state
@@ -225,7 +230,7 @@ pub mod layers {
             .iter()
             .filter_map(moved_at)
             .max()
-            .filter(|_| state.is_active.get());
+            .filter(|_| state.is_active.get() && cfg!(target_os = "macos"));
         // The window server misses frames when it does.
         let blinks = !surfaces.iter().any(|it| it.borrow().is_scrolling());
         state
@@ -297,43 +302,57 @@ pub mod layers {
             .motion
             .movers(&surface.scene, surface::milliseconds(now));
         movers.retain(|it| {
-            core_animation::uses_gpu()
-                && state
-                    .unlifted
-                    .borrow()
-                    .iter()
-                    .all(|(refused, _)| *refused != it.identity())
+            state
+                .unlifted
+                .borrow()
+                .iter()
+                .all(|(refused, _)| *refused != it.identity())
         });
+        #[cfg(target_os = "macos")]
+        movers.retain(|_| core_animation::uses_gpu());
+        #[cfg(windows)]
+        if !movers.is_empty() && platform_window(state.id).is_none_or(|it| !it.can_lift()) {
+            movers.clear();
+        }
         movers
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub mod layers {
+    use super::*;
+    use crate::paint::flatten::Caret;
+    use crate::paint::software;
+
+    thread_local! {
+        static HAS_CHANGES: Cell<bool> = const { Cell::new(false) };
+        static RELEASE_AT: Cell<Option<Instant>> = const { Cell::new(None) };
+        static PAUSE_AT: Cell<Option<Instant>> = const { Cell::new(None) };
+        /// The surface, and the place in its window.
+        static POINTER: Cell<Option<(u32, platform::Point)>> = const { Cell::new(None) };
+        static LOOK_AT: Cell<Option<Instant>> = const { Cell::new(None) };
     }
 
     pub(super) fn present(
         state: &WindowState,
         window: &dyn platform::Window,
-        caret: Option<Caret>,
+        mut caret: Option<Caret>,
     ) {
-        let options = state.options.borrow();
-        let is_opaque = options
-            .background_color
-            .get()
-            .map_or(options.background == Background::Opaque, |color| {
-                color & 0xFF == 0xFF
-            });
         let Metrics {
             width,
             height,
             scale,
             ..
         } = state.metrics.get();
-        let mut layers = state.layers.borrow_mut();
-        let layers = layers.get_or_insert_with(|| Layers::new(Tree::new(window.layer())));
+        let mut borrowed = state.layers.borrow_mut();
+        let layers = borrowed.get_or_insert_with(|| Layers::new(Tree::new(window.layer())));
         let all = IntRect::new(
             0,
             0,
             (width * scale).ceil() as i32,
             (height * scale).ceil() as i32,
         );
-        layers.target.begin(scale.into(), is_opaque);
+        layers.target.begin(scale.into(), state.is_opaque());
         let ports: Vec<_> = surface::shown_in(state)
             .iter()
             .filter_map(|it| it.borrow_mut().scrolled_port())
@@ -357,12 +376,44 @@ pub mod layers {
             layers.keep_apart(left..right);
             layers.target.keep_apart(left..right);
         }
-        layers.paint(&mut state.compositor.lock(), all.right, all.bottom);
+        drop(borrowed);
+        let sink = || {
+            flatten::sink(
+                &mut state.compositor.lock(),
+                &mut state.cache.borrow_mut(),
+                |contents, paint| {
+                    state
+                        .layers
+                        .borrow_mut()
+                        .as_mut()?
+                        .target
+                        .keep(contents, paint)
+                },
+            )
+        };
+        while let Err(refused) = sink() {
+            state.unlifted.borrow_mut().push((refused, Instant::now()));
+            caret = lifting::flatten(state);
+        }
+        let (compositor, cache, Some(layers)) = (
+            &mut *state.compositor.lock(),
+            &mut *state.cache.borrow_mut(),
+            &mut *state.layers.borrow_mut(),
+        ) else {
+            return;
+        };
+        layers.target.set_holes(
+            cache
+                .lifted
+                .iter()
+                .filter(|it| it.depth == flatten::Depth::Ground)
+                .map(|it| it.clip),
+        );
+        layers.paint(compositor, all.right, all.bottom);
         layers.target.show_caret(caret);
         if let Some(port) = ports.first().filter(|_| diagnostics::logs_misses()) {
             layers.target.witness(in_pixels(*port, scale));
         }
-        let cache = &mut *state.cache.borrow_mut();
         cache.known_contents = layers.target.show_lifted(std::mem::take(&mut cache.lifted));
         HAS_CHANGES.set(true);
         PAUSE_AT.set(
@@ -616,9 +667,9 @@ pub fn create(options: Options, icon: Option<&[u8]>, cover: Option<u32>) -> Resu
         compositor: Arc::default(),
         #[cfg(target_os = "macos")]
         layers: RefCell::default(),
-        #[cfg(target_os = "macos")]
+        #[cfg(any(windows, target_os = "macos"))]
         covered_caret: Cell::default(),
-        #[cfg(target_os = "macos")]
+        #[cfg(any(windows, target_os = "macos"))]
         unlifted: RefCell::default(),
         #[cfg(target_os = "macos")]
         was_hidden: Cell::default(),
@@ -721,6 +772,7 @@ fn release_memory() {
 fn forget_what_was_drawn(state: &WindowState) {
     *state.compositor.lock() = Compositor::default();
     state.cache.take();
+    platform_window(state.id).inspect(|it| it.release_pixels());
     #[cfg(target_os = "macos")]
     if let Some(layers) = &mut *state.layers.borrow_mut() {
         layers.forget_contents();
@@ -762,14 +814,20 @@ pub fn bounds_changed(id: u32) {
 }
 
 /// What is drawn now is shown together with the new size.
-#[cfg(target_os = "macos")]
+#[cfg(any(windows, target_os = "macos"))]
 pub fn was_resized(id: u32) {
     bounds_changed(id);
     host::before_resized_frame(id);
     if state(id).is_ok_and(|state| state.is_shown.get()) {
         draw_if_stale(id);
+        #[cfg(target_os = "macos")]
         layers::leave_to_appkit();
     }
+}
+
+#[cfg(windows)]
+pub fn user_acts(id: u32, event: WindowEvent) {
+    emit(id, event);
 }
 
 pub fn activation_changed(id: u32, is_active: bool) {
@@ -809,6 +867,7 @@ pub fn close_requested(id: u32) {
 }
 
 /// By someone else.
+#[cfg(unix)]
 pub fn was_closed(id: u32) {
     if state(id).is_ok() {
         forget(id);
@@ -828,9 +887,12 @@ pub fn appearance_changed() {
 
 /// Whether it is shown, and until when.
 pub fn blink(since: Instant, now: Instant) -> (bool, Instant) {
-    const PHASE: Duration = Duration::from_millis(500);
-    let phases = (now.saturating_duration_since(since).as_millis() / PHASE.as_millis()) as u32;
-    (phases.is_multiple_of(2), since + PHASE * (phases + 1))
+    #[cfg(windows)]
+    let phase = Duration::from_millis(crate::win32::GetCaretBlinkTime().max(100).into());
+    #[cfg(unix)]
+    let phase = Duration::from_millis(500);
+    let phases = (now.saturating_duration_since(since).as_millis() / phase.as_millis()) as u32;
+    (phases.is_multiple_of(2), since + phase * (phases + 1))
 }
 
 fn draw(state: &WindowState, window: &dyn platform::Window) {
@@ -852,8 +914,18 @@ fn try_to_draw(state: &WindowState, window: &dyn platform::Window) {
     state.measure(state.geometry.get());
     let start = diagnostics::logs_frames().then(Instant::now);
     #[cfg(target_os = "macos")]
-    let caret = diagnostics::measure(Step::Flatten, || layers::flatten(state));
-    #[cfg(not(target_os = "macos"))]
+    let caret = diagnostics::measure(Step::Flatten, || lifting::flatten(state));
+    #[cfg(windows)]
+    {
+        window.begin_frame(
+            surface::shown_in(state)
+                .iter()
+                .any(|it| it.borrow().is_scrolling()),
+            state.is_opaque(),
+        );
+        diagnostics::measure(Step::Flatten, || lifting::flatten(state));
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let mut next = None;
         let mut after = |it: Rc<RefCell<Surface>>, _| {
@@ -880,6 +952,12 @@ fn try_to_draw(state: &WindowState, window: &dyn platform::Window) {
             diagnostics::measure(Step::Paint, || compositor.lock().paint(pixels))
         })
     });
+    #[cfg(windows)]
+    {
+        let lifted = std::mem::take(&mut state.cache.borrow_mut().lifted);
+        state.cache.borrow_mut().known_contents =
+            diagnostics::measure(Step::Commit, || window.commit(lifted));
+    }
 }
 
 /// Returns when it has to be drawn again. `after` gets each surface, and how much is lifted by then.
@@ -949,7 +1027,7 @@ fn flatten_surfaces(
         );
         #[cfg(target_os = "macos")]
         let (movers, in_motion, staying) = (
-            &layers::movers(state, &surface, frame.now),
+            &lifting::movers(state, &surface, frame.now),
             &[],
             Some(
                 state
@@ -960,7 +1038,13 @@ fn flatten_surfaces(
                     .collect::<Vec<_>>(),
             ),
         );
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(windows)]
+        let (movers, in_motion, staying) = (
+            &lifting::movers(state, &surface, frame.now),
+            &surface.motion.in_motion(),
+            None::<Vec<_>>,
+        );
+        #[cfg(not(any(windows, target_os = "macos")))]
         let (movers, in_motion, staying) = (&[], &surface.motion.in_motion(), None::<Vec<_>>);
         flatten::paint(
             &surface.scene,

@@ -5,10 +5,10 @@ use core::cell::{Cell, OnceCell, RefCell};
 use core::ffi::c_void;
 use std::rc::Rc;
 
-use bun_collections::HashMap;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
+use crate::HashMap;
 use crate::client::Client;
 use crate::held::Held;
 use crate::net::embedder::ClientId;
@@ -139,6 +139,8 @@ pub struct Realm {
     extras: RefCell<Vec<Rc<dyn Any>>>,
     /// What follows the origin.
     blob_urls: OnceCell<Held<BlobUrls>>,
+    /// Those that an inspector knows about, or will.
+    pub console_groups: Cell<u32>,
     pub console_counts: RefCell<HashMap<Bytes, u32>>,
     pub console_timers: RefCell<HashMap<Bytes, f64>>,
 }
@@ -297,6 +299,7 @@ extern "C" fn Bun__WebRealm__create(
         timers: Timers::default(),
         extras: RefCell::default(),
         blob_urls: OnceCell::new(),
+        console_groups: Cell::default(),
         console_counts: RefCell::default(),
         console_timers: RefCell::default(),
     }))

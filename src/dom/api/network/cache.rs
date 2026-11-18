@@ -6,7 +6,7 @@ use bun_jsc::bindgen::JsList;
 use bun_web::exec::{self, Either};
 use bun_web::headers::split;
 use bun_web::net::fetch::Controller;
-use bun_web::net::response::{Head, ResponseType, is_ok_status};
+use bun_web::net::response::is_ok_status;
 use bun_web::request::{InitiatorType, Navigation};
 use bun_web::storage::caches::{
     CacheId, CachedRequest, CachedResponse, Caches, PutError, QueryOptions,
@@ -152,17 +152,7 @@ fn restore_response(heap: &JsHeap<'_>, it: CachedResponse) -> JSValue {
         .into_iter()
         .find(|kind| **kind == *it.kind)
         .unwrap_or(b"default");
-    if let Some((kind, url)) = ResponseType::parse(kind)
-        .filter(|it| it.as_bytes().starts_with(b"opaque"))
-        .zip(Url::parse(&it.url))
-    {
-        let head = Head {
-            status: it.status,
-            status_text: it.status_text,
-            redirects: it.is_redirected.into(),
-            includes_credentials: !it.omits_credentials,
-            ..Head::new(kind, url, it.headers)
-        };
+    if let Some(head) = it.head_if_opaque() {
         let response = Response::new(
             heap,
             About::of(&head),
@@ -222,19 +212,7 @@ fn to_store(
         internal,
     } = about;
     if let Some(it) = internal.filter(|it| it.is_cors_cross_origin()) {
-        let (url, mut headers) = (it.url.without_fragment().into(), it.headers.clone());
-        headers.delete(b"vary");
-        headers.delete(b"set-cookie");
-        return Ok(CachedResponse {
-            kind: kind.into(),
-            url,
-            is_redirected: it.redirects > 0,
-            omits_credentials: !it.includes_credentials,
-            status: it.status,
-            status_text: it.status_text.clone(),
-            headers,
-            body: None,
-        });
+        return Ok(CachedResponse::of_opaque(&it));
     }
     Ok(CachedResponse {
         kind: kind.into(),
@@ -245,6 +223,7 @@ fn to_store(
         status_text,
         headers,
         body: None,
+        kept_as: 0,
     })
 }
 

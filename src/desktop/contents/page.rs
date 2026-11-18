@@ -329,9 +329,7 @@ impl Page {
         self.sandbox.replace(sandbox);
         self.place.replace(self.choose_place(&about)?);
         (self.client).treat_as_stranger(!self.place.borrow().is_trusted());
-        if !matches!(*self.place.borrow(), Place::App) {
-            drop(self.client.give_up_place());
-        }
+        self.client.move_out(*self.place.borrow() != Place::App);
         self.is_initial.set(about.is_initial);
         self.base_url
             .replace(match about.creator.as_ref().filter(|_| inherits_origin) {
@@ -387,6 +385,7 @@ impl Page {
             reserved: None,
         });
         (self.client).treat_as_stranger(!opener.place().is_trusted());
+        self.client.move_out(opener.place() != Place::App);
         self.is_initial.set(false);
     }
 
@@ -778,26 +777,27 @@ impl Page {
     }
 
     pub(crate) async fn snapshot(&self, purpose: OfSnapshot) -> JsResult<Snapshot> {
-        const PATIENCE_WITH_FRAME: u64 = 1000;
-        let apart = match purpose {
-            OfSnapshot::Print => self.contents().pages_apart_below()?,
-            _ => Vec::new(),
-        };
-        let mut taken = self.snapshot_of_process(purpose).await?;
+        let apart = self.contents().pages_apart_below()?;
+        let mut taken = self.snapshot_of_process(purpose.clone()).await?;
         for it in &apart {
-            let of_frame = it.get().snapshot_of_process(OfSnapshot::Print);
-            if let Some(of_frame) = task::within(PATIENCE_WITH_FRAME, of_frame)
-                .await
-                .transpose()?
-            {
+            if let Some(of_frame) = it.get().snapshot_of_frame(purpose.clone()).await? {
                 taken.frames.push((it.get().id, of_frame.markup));
                 taken.frames.extend(of_frame.frames);
+                taken.resources.extend(of_frame.resources);
             }
         }
         Ok(taken)
     }
 
-    async fn snapshot_of_process(&self, purpose: OfSnapshot) -> JsResult<Snapshot> {
+    pub(super) async fn snapshot_of_frame(
+        &self,
+        purpose: OfSnapshot,
+    ) -> JsResult<Option<Snapshot>> {
+        const PATIENCE: u64 = 1000;
+        (task::within(PATIENCE, self.snapshot_of_process(purpose)).await).transpose()
+    }
+
+    pub(super) async fn snapshot_of_process(&self, purpose: OfSnapshot) -> JsResult<Snapshot> {
         let mut taken = (self.ask_later(|it, reply| it.snapshot(purpose, reply))).await?;
         let is_beside =
             |id| (self.contents().related_page(id)).is_some_and(|it| it.is_beside(self));
@@ -824,6 +824,10 @@ impl Page {
         .map(map_in)
     }
 
+    pub(super) fn has_webgl(&self) -> bool {
+        self.owner().preferences.has_webgl && app::has_webgl()
+    }
+
     /// Before it sends requests.
     pub(super) fn update_agent(&self) -> JsResult<()> {
         let now = (
@@ -831,8 +835,12 @@ impl Page {
             self.contents().session.accept_language()?,
         );
         if *self.sent_as.borrow() != now {
-            self.client
-                .set_agent(now.0.as_bytes(), now.1.as_bytes(), app::path()?.as_bytes());
+            self.client.set_agent(
+                now.0.as_bytes(),
+                now.1.as_bytes(),
+                app::path()?.as_bytes(),
+                self.has_webgl(),
+            );
             self.sent_as.replace(now);
         }
         Ok(())
@@ -856,6 +864,14 @@ impl Page {
         Ok(async { client.load(request?, Purpose::Use, false).await })
     }
 
+    pub(crate) fn exact_origin(&self) -> bun_web::origin::Origin {
+        self.client.origin()
+    }
+
+    pub(crate) fn is_secure(&self) -> bool {
+        self.client.is_secure()
+    }
+
     pub(super) fn has_feature(&self, name: &[u8]) -> bool {
         Feature::parse(name).map_or_else(
             || self.parent().is_none(),
@@ -864,6 +880,7 @@ impl Page {
     }
 
     pub(super) fn log_error(&self, message: &str) -> JsResult<()> {
+        (self.contents()).notify(super::inspection::News::Complaint(message))?;
         self.log_with("error", message, 0, None, "")
     }
 

@@ -91,11 +91,23 @@ const CONSOLE_LEVEL_MAP: Record<string, string> = {
   debug: "debug",
 };
 
+// V8 has the size in the description, and DevTools tells by it how to show a preview.
+function withSize(remote: AnyObject | undefined): AnyObject | undefined {
+  if (InspectorCDPAdapter.servesDesktopApp && remote?.size !== undefined) {
+    remote.description = `${remote.description}(${remote.size})`;
+    withSize(remote.preview);
+  }
+  return remote;
+}
+
 class InspectorCDPAdapter {
+  // Its clients are the developer tools of a browser.
+  static servesDesktopApp = false;
   #writeToBackend: (message: string) => void;
   #writeToClient: (message: string) => void;
   #nextBackendId = 1;
   #nextExceptionId = 1;
+  #isPausedInWith = false;
   #pending = new Map<
     number,
     { clientId: number | string | null; method: string; onResult?: (result: AnyObject, error?: AnyObject) => void }
@@ -181,7 +193,50 @@ class InspectorCDPAdapter {
     this.#writeToBackend(JSON.stringify(params === undefined ? { id, method } : { id, method, params }));
   }
 
+  // JSC cannot stop at the first side effect, so only `a.b.c` is answered, by a function of the command line API.
+  #evaluateWithoutSideEffects(id: number | string, method: string, params: AnyObject): void {
+    const { callFrameId, objectGroup } = params;
+    const reply = (result: AnyObject | undefined, error?: unknown) => {
+      if (error || !result || result.wasThrown) {
+        const description = "EvalError: Possible side-effect in debug-evaluate";
+        result = { result: { type: "object", subtype: "error", className: "EvalError", description }, wasThrown: true };
+      }
+      this.#replyToClient(id, this.#translateResult(method, result));
+    };
+    const expression = `${params.expression}`.trim();
+    if (method !== "Runtime.callFunctionOn" && /^[\d\s+\-*/%().]+$/.test(expression)) {
+      return this.#dispatchClientCommand(id, method, { ...params, throwOnSideEffect: false });
+    }
+    const names = expression.split(".");
+    const isPath = names.every(it => /^[A-Za-z_$][\w$]*$/.test(it));
+    if (
+      !isPath ||
+      method === "Runtime.callFunctionOn" ||
+      params.returnByValue ||
+      (callFrameId && this.#isPausedInWith)
+    ) {
+      return reply(undefined);
+    }
+    const ask = (backendMethod: string, more: AnyObject, then: (objectId: string) => void) => {
+      const quietly = { objectGroup, includeCommandLineAPI: true, doNotPauseOnExceptionsAndMuteConsole: true, ...more };
+      this.#sendToBackend(backendMethod, quietly, null, method, (result, error) =>
+        error || result.wasThrown ? reply(undefined) : then(result.result.objectId),
+      );
+    };
+    // JSC describes an array without looking at what is in it.
+    ask("Runtime.evaluate", { expression: `[$peek, $peek(() => 0, "${names[0]}")]` }, objectId =>
+      ask(method, { callFrameId, expression: `[${names[0]}]` }, first => {
+        const functionDeclaration = `function (first) { return this[0](() => first[0], "${names.join('", "')}"); }`;
+        const call = { objectId, functionDeclaration, arguments: [{ objectId: first }] };
+        this.#sendToBackend("Runtime.callFunctionOn", call, null, method, reply);
+      }),
+    );
+  }
+
   #dispatchClientCommand(id: number | string, method: string, params: AnyObject): void {
+    if (params.throwOnSideEffect && InspectorCDPAdapter.servesDesktopApp) {
+      return this.#evaluateWithoutSideEffects(id, method, params);
+    }
     switch (method) {
       // ── Runtime ──────────────────────────────────────────────────────────
       case "Runtime.enable":
@@ -193,6 +248,7 @@ class InspectorCDPAdapter {
             origin: "",
             name: "Bun",
             uniqueId: String(EXECUTION_CONTEXT_ID),
+            auxData: InspectorCDPAdapter.servesDesktopApp ? { isDefault: true } : undefined,
           },
         });
         this.#sendToBackend("Runtime.enable");
@@ -528,11 +584,11 @@ class InspectorCDPAdapter {
       case "Runtime.evaluate":
       case "Runtime.callFunctionOn":
       case "Debugger.evaluateOnCallFrame": {
-        const out: AnyObject = { result: result.result ?? { type: "undefined" } };
+        const out: AnyObject = { result: withSize(result.result) ?? { type: "undefined" } };
         if (result.wasThrown) {
           out.exceptionDetails = {
             exceptionId: this.#nextExceptionId++,
-            text: result.result?.description ?? "Uncaught",
+            text: (InspectorCDPAdapter.servesDesktopApp ? undefined : result.result?.description) ?? "Uncaught",
             lineNumber: 0,
             columnNumber: 0,
             exception: result.result,
@@ -546,6 +602,7 @@ class InspectorCDPAdapter {
           configurable: false,
           enumerable: false,
           ...property,
+          value: withSize(property.value),
         }));
         const out: AnyObject = { result: properties };
         const { internalProperties } = result;
@@ -603,6 +660,7 @@ class InspectorCDPAdapter {
           this: frame.this,
           canBeRestarted: false,
         }));
+        this.#isPausedInWith = callFrames.some(frame => frame.scopeChain.some(scope => scope.type === "with"));
         const { data, asyncStackTrace } = params;
         const cdpParams: AnyObject = { callFrames, reason: "other", data };
         switch (params.reason) {
@@ -689,7 +747,7 @@ class InspectorCDPAdapter {
         : (CONSOLE_LEVEL_MAP[level] ?? "log");
     this.#emitToClient("Runtime.consoleAPICalled", {
       type,
-      args,
+      args: (args as AnyObject[]).map(withSize),
       executionContextId: EXECUTION_CONTEXT_ID,
       timestamp: message.timestamp ?? Date.now(),
       stackTrace: this.#translateStackTrace(message.stackTrace),

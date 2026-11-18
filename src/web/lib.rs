@@ -97,6 +97,9 @@ pub mod wire;
 
 type Bytes = Box<[u8]>;
 
+/// For keys that come and go: `bun_collections::HashMap` ends up searching all its slots for each new one.
+pub type HashMap<K, V> = bun_collections::hashbrown::HashMap<K, V, bun_wyhash::BuildHasher>;
+
 /// `bun_core::fast_random()` gives all threads the same numbers.
 fn random() -> u64 {
     let mut bytes = [0; 8];

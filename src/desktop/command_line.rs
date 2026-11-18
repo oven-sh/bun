@@ -6,8 +6,22 @@ use crate::text;
 
 state!(fn switches() -> RefCell<Vec<(String, String)>>);
 
+fn is_url(argument: &str) -> bool {
+    let (scheme, _) = text::split_once(argument, ":").unwrap_or_default();
+    // One letter is a drive.
+    scheme.len() > 1
+        && scheme.starts_with(|it: char| it.is_ascii_alphabetic())
+        && !scheme.bytes().any(|it| it.is_ascii_whitespace())
+}
+
+/// Windows pastes a link into the command line, so whoever wrote the link can add arguments.
+pub(crate) fn has_more_after_url(arguments: &[String]) -> bool {
+    let before_end = arguments.iter().take_while(|it| *it != "--");
+    before_end.skip_while(|it| !is_url(it)).nth(1).is_some()
+}
+
 pub(crate) fn read(arguments: &[String]) {
-    for argument in arguments.iter().take_while(|it| *it != "--") {
+    for argument in (arguments.iter()).take_while(|it| *it != "--" && !is_url(it)) {
         let Some(rest) = argument
             .strip_prefix("--")
             .or_else(|| argument.strip_prefix('-'))

@@ -46,7 +46,11 @@ impl Owned {
     }
 
     /// All of them, in sRGB, in Display P3 or in both.
-    pub(super) fn from_pixels(size: [u32; 2], both: [Option<&[u8]>; 2]) -> Owned {
+    pub(super) fn from_pixels(
+        size: [u32; 2],
+        both: [Option<&[u8]>; 2],
+        is_straight: bool,
+    ) -> Owned {
         assert!(
             both != [None; 2]
                 && both
@@ -56,7 +60,9 @@ impl Owned {
         );
         let [rgba, wide] = both.map(|it| it.map_or(core::ptr::null(), <[u8]>::as_ptr));
         // SAFETY: as asserted.
-        Owned::adopt(graphics().map_or(0, |it| unsafe { (it.insert)(&size, rgba, wide) }))
+        Owned::adopt(graphics().map_or(0, |it| unsafe {
+            (it.insert)(&size, rgba, wide, is_straight)
+        }))
     }
 
     pub(crate) fn id(&self) -> u32 {
@@ -104,6 +110,12 @@ pub(crate) fn decode(bytes: &[u8], is_oriented: bool) -> Decoded {
     })
 }
 
+pub(super) fn decode_again(image: u32, is_straight: bool, converts_colors: bool) -> u32 {
+    graphics().map_or(0, |it| {
+        (it.decode_again)(image, is_straight, converts_colors)
+    })
+}
+
 /// What can be drawn.
 #[derive(Clone, Copy)]
 pub(crate) struct Source {
@@ -112,6 +124,8 @@ pub(crate) struct Source {
     pub(crate) is_origin_clean: bool,
     /// The one of EXIF that was applied and has to be undone, or 1.
     pub(crate) ignored_orientation: u8,
+    /// The colors are not premultiplied. It can only be copied.
+    pub(crate) is_straight: bool,
 }
 
 impl Source {
@@ -122,10 +136,11 @@ impl Source {
             size: size.map(f64::from),
             is_origin_clean,
             ignored_orientation: 1,
+            is_straight: false,
         }
     }
 
-    pub(super) fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         !(self.size[0] > 0.0 && self.size[1] > 0.0)
     }
 
@@ -178,6 +193,7 @@ impl Source {
             flips: false,
             is_smooth: true,
             is_sharpened: false,
+            are_straight: [self.is_straight, false],
             is_tile: false,
             is_wide: false,
         }
@@ -198,8 +214,9 @@ pub(crate) struct Bitmap {
     pixels: Owned,
     size: Cell<[u32; 2]>,
     pub(super) is_origin_clean: Cell<bool>,
+    is_straight: Cell<bool>,
     /// In Display P3.
-    pub(super) is_wide: bool,
+    pub(super) is_wide: Cell<bool>,
     bytes: AtomicUsize,
 }
 
@@ -215,8 +232,9 @@ impl Bitmap {
         size: [u32; 2],
         is_opaque: bool,
         is_read_often: bool,
-        is_wide: bool,
+        color_space: PredefinedColorSpace,
     ) -> Rc<Bitmap> {
+        let is_wide = color_space == PredefinedColorSpace::DisplayP3;
         let pixels = Owned::reserve();
         pixels.recorder.send(Command::Create {
             id: pixels.id,
@@ -229,7 +247,8 @@ impl Bitmap {
             pixels,
             size: Cell::new(size),
             is_origin_clean: Cell::new(true),
-            is_wide,
+            is_straight: Cell::new(false),
+            is_wide: Cell::new(is_wide),
             bytes: bytes_of(size).into(),
         })
     }
@@ -254,7 +273,10 @@ impl Bitmap {
     }
 
     pub(crate) fn source(&self) -> Source {
-        Source::new(self.id(), self.size(), self.is_origin_clean.get())
+        Source {
+            is_straight: self.is_straight.get(),
+            ..Source::new(self.id(), self.size(), self.is_origin_clean.get())
+        }
     }
 
     pub(super) fn reset(&self, size: [u32; 2]) {
@@ -264,7 +286,15 @@ impl Bitmap {
             .record(self.id(), |list| list.push(Command::Reset(size)));
     }
 
-    pub(super) fn erase(&self) {
+    /// By pixels that no command draws.
+    pub(crate) fn will_be_replaced(&self, size: [u32; 2], is_straight: bool, is_wide: bool) {
+        self.is_straight.set(is_straight);
+        self.is_wide.set(is_wide);
+        self.size.set(size);
+        self.bytes.store(bytes_of(size), Ordering::Relaxed);
+    }
+
+    pub(crate) fn erase(&self) {
         self.is_origin_clean.set(true);
         self.recorder()
             .record(self.id(), |list| list.push(Command::Erase));
@@ -331,13 +361,20 @@ impl Bitmap {
             .filter(|it| (0.0..=1.0).contains(it))
             .unwrap_or(0.92);
         Some(Unencoded {
-            rgba: self.read([0, 0, width?, height?], format == Format::Jpeg)?,
+            rgba: self.read(
+                [0, 0, width?, height?],
+                format == Format::Jpeg || self.is_straight.get(),
+            )?,
             size,
             format,
-            is_wide: self.is_wide,
+            is_wide: self.is_wide.get(),
             quality: (quality * 100.0).round().clamp(1.0, 100.0) as u8,
         })
     }
+}
+
+pub(super) fn has_alpha(mime_type: &[u8]) -> bool {
+    format_of(mime_type) != Format::Jpeg
 }
 
 fn format_of(mime_type: &[u8]) -> Format {

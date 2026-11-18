@@ -93,6 +93,7 @@ unsafe extern "C" {
     safe fn bd_window_is_visible(view: &c_void) -> bool;
     safe fn bd_window_request_frame(view: &c_void, is_leisurely: bool);
     safe fn bd_window_set_scrolling(view: &c_void, is_on: bool);
+    safe fn bd_window_is_too_late(view: &c_void) -> bool;
     safe fn bd_window_layer(view: &c_void) -> *mut c_void;
     safe fn bd_window_fit_backdrop(view: &c_void, edges: &mut [f64; 2]);
     safe fn bd_window_content_view(view: &c_void) -> *mut c_void;
@@ -374,6 +375,10 @@ impl Window for View {
         bd_window_set_scrolling(&self.view, is_on && crate::host::thread::exists());
     }
 
+    fn is_too_late(&self) -> bool {
+        bd_window_is_too_late(&self.view)
+    }
+
     fn can_present(&self) -> Option<bool> {
         const MIN_INTERVAL: Duration = Duration::from_millis(1);
         Some(
@@ -598,9 +603,15 @@ extern "C" fn bd_raw_key(down: bool, is_repeat: bool, scan_code: u32, symbol: u3
             is_repeat,
             scan_code,
             symbol,
+            key_code: 0,
             modifiers,
         })
     });
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn bd_paced(was_due: f64, began: f64, ended: f64, was_in_the_way: bool) {
+    crate::diagnostics::paced(was_due, began, ended, was_in_the_way);
 }
 
 #[unsafe(no_mangle)]

@@ -905,6 +905,7 @@ impl platform::Window for Window {
             x,
             y,
             top,
+            border: 0.,
             width: width as f32,
             height: height as f32 - top,
             scale: self.scale.get(),

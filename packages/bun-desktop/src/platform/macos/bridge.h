@@ -107,6 +107,8 @@ void *bd_accessibility_names(uint64_t node, BDNameKind kind);
 void *bd_accessibility_value(uint64_t node, const char *name,
                              const BDParameter *parameter);
 void bd_trace(const char *step, double secondsSinceEvent);
+/// In seconds after the refresh.
+void bd_paced(double wasDue, double began, double ended, bool wasInTheWay);
 void traceLaunch(const char *step);
 void bd_log(const char *message);
 void bd_loop_event(BDLoopEvent event);
@@ -172,7 +174,9 @@ CGFloat primaryHeight(void);
 /// `body` runs a loop of its own.
 void soon(void (^body)(void));
 /// What is painted before then waits.
-extern CFTimeInterval commitsFrom;
+extern CFTimeInterval commitsFrom, waitedToCommit;
+/// It has not finished drawing the last frame.
+bool windowServerIsBusy(void);
 void whenIdle(void (^body)(void));
 void giveFocusBack(NSWindow *window);
 void displaysChanged(void);

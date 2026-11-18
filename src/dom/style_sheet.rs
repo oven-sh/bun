@@ -280,6 +280,70 @@ impl StyleSheet {
         );
     }
 
+    /// They are other ones once the text has changed.
+    pub(crate) fn sources(&self) -> Vec<Source> {
+        self.update_chunks();
+        self.chunks
+            .borrow()
+            .iter()
+            .map(|it| it.source.clone())
+            .collect()
+    }
+
+    /// With the declarations that scripts have edited.
+    pub(crate) fn text(&self) -> Out {
+        let mut text = Out::new();
+        for chunk in &*self.chunks.borrow() {
+            let end = chunk.blocks.iter().fold(0, |start, (at, block)| {
+                text.extend(
+                    [
+                        &chunk.source[start..*at as usize],
+                        &block.editable().list.serialize(),
+                    ]
+                    .concat(),
+                );
+                *at as usize + EngineText::PLACEHOLDER.len()
+            });
+            text.extend_from_slice(&chunk.source[end..]);
+        }
+        text
+    }
+
+    /// In `text`.
+    pub(crate) fn place_of(&self, block: &Rc<Block>) -> Option<usize> {
+        let ((source, start), mut shift) = (block.place(), 0);
+        for chunk in &*self.chunks.borrow() {
+            let is_in_it = matches!(&chunk.compiled, Some(Compiling::Done(it)) if core::ptr::eq(&raw const **it.source(), &raw const **source) && !source.is_empty());
+            let edited = || {
+                chunk
+                    .blocks
+                    .iter()
+                    .find(|it| Rc::ptr_eq(&it.1, block))
+                    .map(|it| it.0 as usize)
+            };
+            let found = if is_in_it {
+                start.checked_sub(self.wrapping.borrow().len())
+            } else {
+                edited()
+            };
+            let before = chunk
+                .blocks
+                .iter()
+                .take_while(|it| found.is_none_or(|found| (it.0 as usize) < found));
+            let (added, replaced) = before.fold((0, 0), |sum, it| {
+                (
+                    sum.0 + it.1.editable().list.serialize().len(),
+                    sum.1 + EngineText::PLACEHOLDER.len(),
+                )
+            });
+            shift += found.unwrap_or(chunk.source.len()) + added - replaced;
+            if found.is_some() {
+                return Some(shift);
+            }
+        }
+        None
+    }
+
     /// What its `@import` rules ask for.
     pub(crate) fn wanted_imports(&self, document: &mut Document, owner: NodeId) -> Vec<Import> {
         let can_wait = |it: &Chunk| {

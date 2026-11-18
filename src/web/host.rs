@@ -39,6 +39,8 @@ wire! {
         /// Behind selected text, as 0xRRGGBBAA
         pub light_highlight: u32,
         pub dark_highlight: u32,
+        pub palette: Option<Palette>,
+        pub touch_points: u32,
         pub display: Option<Display>,
         pub zoom: f64,
         pub is_active: bool,
@@ -84,6 +86,13 @@ wire! {
         pub shown: Option<[f64; 4]>,
     }
 
+    /// As in `SystemSettings`.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub struct Palette {
+        pub colors: [u32; 8],
+        pub is_for_contrast: bool,
+    }
+
     #[derive(Clone, PartialEq)]
     pub struct FontSettings {
         pub size: f32,
@@ -105,6 +114,8 @@ impl Default for Environment {
             reduces_transparency: false,
             light_highlight: 0xb3d7ffff,
             dark_highlight: 0x3f638bff,
+            palette: None,
+            touch_points: 0,
             display: None,
             zoom: 1.0,
             is_active: true,
@@ -161,11 +172,14 @@ keywords! {
 }
 
 wire! {
-    #[derive(Default, PartialEq, Eq)]
+    #[derive(Clone, Copy, Default, PartialEq, Eq)]
     pub enum ConsoleAudience {
         #[default]
         Nobody,
+        /// An inspector may come later.
+        Posterity,
         App,
+        AppAndPosterity,
         /// And the app.
         Inspector,
     }
@@ -237,6 +251,8 @@ wire! {
         pub is_down: bool,
         pub key: String,
         pub code: String,
+        /// 0 leaves it to be derived.
+        pub key_code: u32,
         pub location: u32,
         pub modifiers: u32,
         pub repeats: bool,
@@ -571,23 +587,21 @@ pub trait Link {
         Box::new(Nobody)
     }
 
-    fn inspect(&self, _: Inspected<'_>) {}
+    /// For the part of the inspector that is where the page is.
+    fn inspect(&self, _: Logged<'_>) {}
 }
 
-/// For the part of the inspector that is where the page is.
+/// A message of the console, or an `exception` with the text and what was thrown.
 #[derive(Clone, Copy)]
-pub enum Inspected<'a> {
-    Console {
-        method: &'a str,
-        values: &'a [JSValue],
-    },
-    Exception {
-        text: &'a str,
-        url: &'a str,
-        line: u32,
-        column: u32,
-        error: JSValue,
-    },
+pub struct Logged<'a> {
+    /// The global object that the values are of.
+    pub realm: JSValue,
+    pub kind: &'a str,
+    /// In milliseconds since 1970
+    pub time: f64,
+    /// The function, the URL, the script, the line and the column of each frame, or `undefined`.
+    pub stack: JSValue,
+    pub values: &'a [JSValue],
 }
 
 struct Nobody;
@@ -631,7 +645,7 @@ impl Link for Rehearsed {
         Box::new(Rehearsed(self.0.for_blank_frame()))
     }
 
-    fn inspect(&self, it: Inspected<'_>) {
+    fn inspect(&self, it: Logged<'_>) {
         self.0.inspect(it);
     }
 }

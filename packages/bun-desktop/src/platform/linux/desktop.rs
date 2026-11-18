@@ -351,7 +351,7 @@ impl Desktop {
     fn tray(&self, id: u32, command: TrayCommand) -> Result<()> {
         let mut trays = self.trays.borrow_mut();
         match command {
-            TrayCommand::Create { name, icon } => {
+            TrayCommand::Create { name, icon, .. } => {
                 trays.push((id, Tray::new(id, name.into_string(), &icon)?.into()))
             }
             TrayCommand::Destroy => trays.retain(|it| it.0 != id),

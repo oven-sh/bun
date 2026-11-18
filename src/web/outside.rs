@@ -10,26 +10,30 @@ use core::task::{Context, Poll, Waker};
 use std::sync::Arc;
 use std::task::Wake;
 
-use bun_collections::HashMap;
 use bun_threading::{Futex, Guarded};
 use bun_ui::protocol::Lane;
 
 use crate::Bytes;
-use crate::client::{Client, Update};
+use crate::HashMap;
+use crate::channel::Endpoint;
+use crate::client::{Client, Loaded, Update};
 use crate::convert::resolve_blob_url;
 use crate::exec::{Receiver, Sender, Thread, oneshot};
-use crate::net::body::{Blob, Body};
-use crate::net::cookies::Cookie;
+use crate::host::Level;
+use crate::net::body::Blob;
+use crate::net::cookies::{Change, Cookie};
 use crate::net::embedder::ClientId;
 use crate::net::response::Response;
 use crate::net::web_socket::Accepted;
 use crate::net::{Progress, Result};
+use crate::remote::bodies::OnDemand;
 use crate::remote::{self, Flags, HOST, Head, Kind};
 use crate::request::Request;
 use crate::storage::AreaChange;
 use crate::storage::areas::Items;
 use crate::url::Url;
-use crate::wire;
+use crate::wire::Measured;
+use crate::{service, wire};
 
 macro_rules! calls {
     (
@@ -88,7 +92,7 @@ calls! {
         /// A call whose result is no longer wanted.
         Cancel = cancel(ticket: u32);
         Forget = forget();
-        StartWorker = start_worker(id: ClientId, url: Url, is_shared: bool);
+        StartWorker = start_worker(id: ClientId, url: Url, is_shared: bool, reserved: Option<u32>);
         AnnounceBlobUrl = announce_blob_url(url: Url, is_revoked: bool);
         #[size = large]
         LendBlob = lend_blob(ticket: u32, blob: Option<Blob>);
@@ -96,18 +100,65 @@ calls! {
         WatchAreas = watch_areas();
         #[size = large]
         ChangeArea = change_area(is_local: bool, change: AreaChange, number: u64);
+        ListenToServiceWorkers = listen_to_service_workers();
+        #[size = large]
+        CallServiceWorkers = call_service_workers(ticket: u32, call: Measured<service::Call>);
+        /// The script of a service worker has run.
+        AnnounceStart = announce_start(handles_fetch: bool);
+        #[size = large]
+        ReportProgress = report_progress(event: u32, progress: service::far::Progress);
+        Log = log(level: Level, message: String, line: u32, url: String);
+        ConnectToSharedWorker = connect_to_shared_worker(worker: u32, port: Endpoint);
+        LeaveSharedWorker = leave_shared_worker(worker: u32, has_failed: bool);
     }
     call {
         #[size = large]
         Fetch = fetch(request: Box<Request>, reports_upload: bool) -> Result<Box<Response>>;
-        Connect = connect(url: Url, protocols: Vec<Bytes>, frames: Body) -> Result<Accepted>;
+        Connect = connect(url: Url, protocols: Vec<Bytes>, frames: OnDemand) -> Result<Accepted>;
         SourceOf = source_of(url: Url) -> Result<Option<Vec<u8>>>;
         /// And until when it holds, unless it is outdated.
         CookieString = cookie_string() -> (Vec<u8>, f64);
-        Cookies = cookies() -> Vec<Cookie>;
-        SetCookie = set_cookie(text: Vec<u8>) -> bool;
+        Cookies = cookies(url: Option<Url>) -> Vec<Cookie>;
+        /// And what it would have been told about that.
+        SetCookie = set_cookie(text: Vec<u8>) -> (bool, Vec<Change>);
         BorrowArea = borrow_area(is_local: bool) -> Items;
+        /// For a service worker.
+        Import = import(request: Box<Request>) -> Result<Box<Loaded>>;
+        MayNotify = may_notify() -> bool;
+        /// The process chooses the number.
+        ClaimSharedWorker = claim_shared_worker(worker: u32, url: Url, name: Bytes, options: [u8; 4]) -> Claim;
     }
+}
+
+crate::wire! {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum Claim {
+        Granted,
+        IsElsewhere,
+        Refused,
+    }
+
+    /// For the main thread.
+    pub enum AboutSharedWorker {
+        /// Whether other processes use it.
+        IsUsed(bool),
+        Connect(Endpoint),
+        Ended { has_failed: bool },
+    }
+}
+
+impl wire::Message for AboutSharedWorker {
+    fn most_bytes(_: u16) -> usize {
+        16
+    }
+}
+
+pub fn connect_to_shared_worker(worker: u32, port: Endpoint) {
+    Outside(ClientId(0)).connect_to_shared_worker(worker, port);
+}
+
+pub fn leave_shared_worker(worker: u32, has_failed: bool) {
+    Outside(ClientId(0)).leave_shared_worker(worker, has_failed);
 }
 
 impl Call {
@@ -116,7 +167,7 @@ impl Call {
         matches!(
             self,
             Call::CookieString {}
-                | Call::Cookies {}
+                | Call::Cookies { .. }
                 | Call::SetCookie { .. }
                 | Call::BorrowArea { .. }
         )
@@ -162,6 +213,11 @@ impl Outside {
     /// On the thread of the client.
     pub(crate) fn enter(client: ClientId) -> Outside {
         (expected().lock().threads).insert(client.0, Thread::current());
+        Outside(client)
+    }
+
+    /// Of a client on another thread.
+    pub(crate) fn of(client: ClientId) -> Outside {
         Outside(client)
     }
 
@@ -253,6 +309,17 @@ impl<T> Drop for Pending<T> {
             self.by.cancel(self.ticket);
         }
     }
+}
+
+/// For tests.
+pub fn forge_call(client: u32, call: &[u8]) -> bool {
+    let head = Head::new(Kind::Call, client, remote::next_ticket());
+    wire::decode::<Call>(call).is_ok_and(|it| remote::send(HOST, Lane::Elsewhere, head, it))
+}
+
+/// For tests.
+pub fn forge_deed(client: u32, deed: &[u8]) -> bool {
+    wire::decode(deed).is_ok_and(|it| (Outside(ClientId(client)).tell(it), true).1)
 }
 
 pub(crate) fn returned(ticket: u32, value: Option<Return>) {

@@ -3,6 +3,8 @@
 use super::raster::{
     Clip, Coverage, IntRect, Layer, Paint, Pixel, map_point, map_rect, over, prefer_wide, scale,
 };
+use super::scan::Floats as _;
+use super::slant::{Gauge, Slant};
 use crate::abi::{Rect, RoundedRect, Tile};
 use crate::gfx::{Pixmap, Transform};
 
@@ -127,19 +129,75 @@ impl Samples<'_> {
         });
         let (at, across, down) = (
             (y >> 16) as usize * self.width + (x >> 16) as usize,
-            x as u64 >> 10 & 63,
-            y as u64 >> 10 & 63,
+            x as u64 >> 9 & 127,
+            y as u64 >> 9 & 127,
         );
         let spread = |at: usize| {
             let bits = u64::from(u32::from_le_bytes(self.texels[at]));
             (bits | bits << 24) & 0xFF_00FF_00FF_00FF
         };
         let mix = |a: u64, b: u64, by: u64| {
-            (a * (64 - by) + b * by + 0x20_0020_0020_0020) >> 6 & 0xFF_00FF_00FF_00FF
+            (a * (128 - by) + b * by + 0x40_0040_0040_0040) >> 7 & 0xFF_00FF_00FF_00FF
         };
         let line = |at: usize| mix(spread(at), spread(at + 1), across);
         let mixed = mix(line(at), line(at + self.width), down);
         ((mixed | mixed >> 24) as u32).to_le_bytes()
+    }
+}
+
+impl Samples<'_> {
+    /// What is at the height of a row of pixels, and one more. Returns where the row starts in that, and the last position.
+    #[inline(always)]
+    pub(super) fn line(&self, [x, y]: [i32; 2], length: usize, to: &mut Vec<Pixel>) -> [i32; 2] {
+        let ends = [
+            x,
+            x.saturating_add(self.step[0].saturating_mul(length as i32)),
+        ]
+        .map(|it| it.clamp(0, self.last[0]) >> 16);
+        let (first, last, y) = (
+            ends[0].min(ends[1]),
+            (ends[0].max(ends[1]) + 1).min(self.last[0] >> 16),
+            y.clamp(0, self.last[1]),
+        );
+        let [above, below] = [y >> 16, ((y >> 16) + 1).min(self.last[1] >> 16)]
+            .map(|it| &self.texels[it as usize * self.width..][first as usize..=last as usize]);
+        let down = (y >> 8 & 255) as u16;
+        to.resize(above.len() + 1, [0; 4]);
+        for (to, (a, b)) in to
+            .as_flattened_mut()
+            .iter_mut()
+            .zip(above.as_flattened().iter().zip(below.as_flattened()))
+        {
+            *to = ((u16::from(*a) * (256 - down) + u16::from(*b) * down + 128) >> 8) as u8;
+        }
+        [x.wrapping_sub(first << 16), (last - first) << 16]
+    }
+}
+
+/// `draw_samples` without steps down. It is more exact, and needs no room after the last column and row.
+pub fn draw_upright_samples<'a>(
+    rows: impl Iterator<Item = (&'a mut [Pixel], [i32; 2])>,
+    source: &Samples,
+    by: u8,
+) {
+    prefer_wide!(draw_upright_samples(rows, source, by));
+    let mut line = Vec::new();
+    for (row, start) in rows {
+        let [mut x, last] = source.line(start, row.len(), &mut line);
+        for pixel in row {
+            let at = x.clamp(0, last);
+            let (left, right, across) = (
+                line[(at >> 16) as usize],
+                line[(at >> 16) as usize + 1],
+                (at >> 8 & 255) as u16,
+            );
+            let color = std::array::from_fn(|it| {
+                ((u16::from(left[it]) * (256 - across) + u16::from(right[it]) * across + 128) >> 8)
+                    as u8
+            });
+            *pixel = over(*pixel, scale(color, by));
+            x = x.wrapping_add(source.step[0]);
+        }
     }
 }
 
@@ -157,6 +215,26 @@ pub fn draw_samples<'a>(
                 color => over(*pixel, scale(color, by)),
             };
         }
+    }
+}
+
+/// Likewise, and with what `slant::fill` takes.
+pub fn draw_samples_in_slant<'a>(
+    rows: impl Iterator<Item = (&'a mut [Pixel], [f32; 2], [i32; 2])>,
+    slant: &Slant,
+    source: &Samples,
+    by: u8,
+) {
+    prefer_wide!(draw_samples_in_slant(rows, slant, source, by));
+    let gauge = Gauge::<[f32; 8]>::new(slant);
+    for (row, [x, y], start) in rows {
+        let coverage = (0..).flat_map(|it| gauge.coverage([x + (it * 8) as f32, y]).bytes());
+        (0..)
+            .zip(row)
+            .zip(coverage)
+            .for_each(|((steps, pixel), coverage)| {
+                *pixel = over(*pixel, scale(scale(source.at(start, steps), by), coverage))
+            });
     }
 }
 
@@ -253,6 +331,30 @@ pub fn draw(
             return;
         }
         (u, v) = (u - (1 << 15) + 128, v - (1 << 15) + 128);
+        if dv == 0
+            && [
+                u,
+                v,
+                du * (row.len() as i64 + 8),
+                last_column << 16,
+                last_row << 16,
+            ]
+            .iter()
+            .all(|it| it.abs() < 1 << 30)
+        {
+            let samples = Samples {
+                texels: pixels,
+                width,
+                step: [du as i32, 0],
+                last: [last_column, last_row].map(|it| (it as i32) << 16),
+            };
+            row.fill([0; 4]);
+            return draw_upright_samples(
+                std::iter::once((row, [u as i32, v as i32])),
+                &samples,
+                255,
+            );
+        }
         let (mut rows, mut columns, mut known) = ([row_at(0); 2], [0; 2], (i64::MIN, i64::MIN));
         for pixel in row {
             if known != (u >> 16, v >> 8) {

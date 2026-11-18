@@ -213,6 +213,7 @@ impl Ui {
         }
         if node.parent() == Some(self.doc()) {
             top_layer::hide_bubble(cx, self);
+            top_layer::show_overlay(cx, self, &[]);
         }
         if !self.interested().is_empty() {
             interest::before_remove(cx, self, element);

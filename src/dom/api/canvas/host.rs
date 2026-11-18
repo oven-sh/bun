@@ -1,17 +1,20 @@
 //! What a context asks of its canvas and of the document.
 
+use std::rc::Rc;
+
 use bun_jsc::JSValue;
 use bun_jsc::bindgen::{IntoError as _, JsHeap, JsInterface as _, JsScope, Result};
 use bun_jsc::virtual_machine::VirtualMachine;
 
 use super::Failure;
-use super::bitmap::Source;
+use super::bitmap::{Bitmap, Source};
 use super::context::Context;
 use super::element::size_of_element;
 use super::offscreen::OffscreenCanvas;
 use super::recorder::Recorder;
 use super::text::{Font, Inherited};
-use crate::api::core::{Doc, Element, Node, atom};
+use crate::api::core::{Doc, Element, EventTarget, Node, atom};
+use crate::api::webgl::{self, Readback};
 use crate::api::{images, on_behalf};
 pub(super) use crate::generated_bindgen::canvas::CanvasRenderingContext2DSettings as Settings;
 use crate::generated_bindgen::canvas::{
@@ -32,6 +35,8 @@ pub(super) enum Mode {
     None,
     TwoD,
     BitmapRenderer,
+    WebGl,
+    WebGl2,
     Placeholder,
 }
 
@@ -40,6 +45,8 @@ impl Mode {
         match id {
             b"2d" => Mode::TwoD,
             b"bitmaprenderer" => Mode::BitmapRenderer,
+            b"webgl" | b"experimental-webgl" => Mode::WebGl,
+            b"webgl2" => Mode::WebGl2,
             _ => Mode::None,
         }
     }
@@ -60,16 +67,73 @@ pub(super) const DEFAULT_SETTINGS: Settings = Settings {
 };
 
 impl Mode {
-    pub(super) fn takes(self, settings: &Settings) -> &Settings {
-        if self == Mode::TwoD {
-            settings
+    /// They are read even if the context exists.
+    pub(super) fn settings<'a>(self, cx: Cx<'_, 'a>, options: JSValue) -> Result<'a, Settings> {
+        Ok(if self == Mode::TwoD {
+            Settings::from_js(cx.global(), options)?
         } else {
-            &DEFAULT_SETTINGS
-        }
+            DEFAULT_SETTINGS
+        })
     }
 }
 
 impl Context {
+    /// `None` if there is no such context.
+    pub(super) fn create_for<'a>(
+        cx: Cx<'_, 'a>,
+        mode: Mode,
+        canvas: &'a EventTarget,
+        size: [u32; 2],
+        kind: Kind,
+        settings: &Settings,
+        options: JSValue,
+    ) -> Result<'a, Option<&'a Context>> {
+        if let Mode::WebGl | Mode::WebGl2 = mode {
+            let Some(webgl) =
+                webgl::Context::create(cx, canvas.to_js(), mode == Mode::WebGl2, size, options)?
+            else {
+                return Ok(None);
+            };
+            let backing = Context::create(
+                canvas.realm(&cx.heap),
+                canvas.to_js(),
+                [0; 2],
+                kind,
+                &DEFAULT_SETTINGS,
+            );
+            js::set_webgl(backing, Some(webgl));
+            webgl.set_backing(backing);
+            return Ok(Some(backing));
+        }
+        Ok(Some(Context::create(
+            canvas.realm(&cx.heap),
+            canvas.to_js(),
+            size,
+            kind,
+            settings,
+        )))
+    }
+
+    pub(super) fn webgl(&self) -> Option<&webgl::Context> {
+        js::webgl(self)
+    }
+
+    /// With the pixels of the drawing buffer, if there is one.
+    pub(super) fn up_to_date(&self, wanted: Readback) -> &Context {
+        self.webgl().inspect(|it| it.copy_to(&self.bitmap, wanted));
+        self
+    }
+
+    pub(crate) fn present_now(&self) {
+        if self.has_placeholder.get() {
+            present(self);
+        }
+    }
+
+    pub(super) fn shown(&self) -> &Rc<Bitmap> {
+        self.webgl().map_or(&self.bitmap, webgl::Context::front)
+    }
+
     pub(super) fn create<'a>(
         heap: &JsHeap<'a>,
         canvas: JSValue,
@@ -94,6 +158,7 @@ impl Context {
         match mode {
             Mode::None | Mode::Placeholder => JSValue::NULL,
             Mode::TwoD => self.to_js(),
+            Mode::WebGl | Mode::WebGl2 => self.webgl().map_or(JSValue::NULL, |it| it.to_js()),
             Mode::BitmapRenderer => (js::renderer(self).unwrap_or_else(|| {
                 let renderer = js_renderer::create(heap, ImageBitmapRenderingContext::default());
                 js_renderer::set_context(renderer, Some(self));
@@ -223,7 +288,7 @@ pub(super) fn is_focused<'a>(cx: Cx<'_, 'a>, context: &Context, element: &'a Ele
             .is_some_and(|it| it.contains(element))
 }
 
-pub(super) fn canvas_size(heap: &JsHeap<'_>, context: &Context) -> [u32; 2] {
+pub(crate) fn canvas_size(heap: &JsHeap<'_>, context: &Context) -> [u32; 2] {
     context
         .element(heap)
         .map(size_of_element)
@@ -259,8 +324,10 @@ pub(super) fn check_usability<'a>(
     };
     let source = match image {
         CanvasImageSource::Bitmap(it) => it.source().map(Some),
-        CanvasImageSource::Canvas(it) => with_pixels(it.source(cx)),
-        CanvasImageSource::Offscreen(it) => it.source(&cx.heap).and_then(with_pixels),
+        CanvasImageSource::Canvas(it) => with_pixels(it.source(cx, Readback::Premultiplied)),
+        CanvasImageSource::Offscreen(it) => it
+            .source(&cx.heap, Readback::Premultiplied)
+            .and_then(with_pixels),
         CanvasImageSource::Image(it) => it.source(cx),
         CanvasImageSource::SvgImage(it) => images::source_of_svg_image(it),
         CanvasImageSource::Video(it) => Ok(it.source(&cx.heap)),
@@ -279,6 +346,7 @@ pub(super) fn check_usability<'a>(
 
 pub(super) fn present(context: &Context) {
     context.will_present.set(false);
+    context.webgl().inspect(|it| it.show_now());
     let global = VirtualMachine::get().global();
     // SAFETY: the recorder presents between tasks, and holds the context.
     let result = unsafe {
@@ -294,6 +362,11 @@ pub(super) fn present(context: &Context) {
     }
 }
 
-pub(crate) fn present_canvases(_: Cx<'_, '_>) {
+pub(crate) fn flush_canvases() {
+    Recorder::current().flush();
+}
+
+pub(crate) fn present_canvases(cx: Cx<'_, '_>) {
+    webgl::present_all(cx);
     Recorder::current().present();
 }

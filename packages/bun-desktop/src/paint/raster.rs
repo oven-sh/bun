@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use super::blur::blur;
 use super::edges::{Edges, Rule, Shape};
+use super::gradient::Ramp;
 use super::scan::Scanner;
 use super::{blend, edges};
 use crate::abi::{Matrix, Rect, RoundedRect};
@@ -326,16 +327,17 @@ pub fn demultiply(pixel: Pixel) -> [u8; 4] {
     }
 }
 
+pub(super) static RECIPROCALS: [u32; 256] = {
+    let (mut table, mut alpha) = ([0; 256], 1);
+    while alpha < 256 {
+        table[alpha] = ((255 << 16) + alpha as u32 / 2) / alpha as u32;
+        alpha += 1;
+    }
+    table
+};
+
 #[inline(always)]
-pub(super) fn divide_by_alpha(pixel: Pixel) -> [u8; 4] {
-    const RECIPROCALS: [u32; 256] = {
-        let (mut table, mut alpha) = ([0; 256], 1);
-        while alpha < 256 {
-            table[alpha] = ((255 << 16) + alpha as u32 / 2) / alpha as u32;
-            alpha += 1;
-        }
-        table
-    };
+fn divide_by_alpha(pixel: Pixel) -> [u8; 4] {
     let (bits, by) = (
         u32::from_le_bytes(pixel),
         RECIPROCALS[usize::from(pixel[3])],
@@ -440,6 +442,22 @@ pub fn fill_through(row: &mut [Pixel], color: Pixel, coverage: &[u8]) {
     rest.iter_mut()
         .zip(covered_rest)
         .for_each(|(pixel, by)| *pixel = over(*pixel, scale(color, *by)));
+}
+
+/// With a coverage for each channel. That of the alpha is for all where something shows through.
+#[cfg(any(test, windows))]
+pub fn fill_rows_through_parts<'a>(
+    rows: impl Iterator<Item = (&'a mut [Pixel], &'a [Pixel])>,
+    color: Pixel,
+) {
+    prefer_wide!(fill_through_parts(rows, color));
+    for (pixel, by) in rows.flat_map(|(row, coverage)| row.iter_mut().zip(coverage)) {
+        let by = if pixel[3] == 255 { *by } else { [by[3]; 4] };
+        *pixel = std::array::from_fn(|at| {
+            multiply(color[at], by[at])
+                .saturating_add(multiply(pixel[at], 255 - multiply(color[3], by[at])))
+        });
+    }
 }
 
 /// The colors of a box.
@@ -613,9 +631,24 @@ pub fn premultiply_row(row: &mut [[u8; 4]]) {
         .for_each(|it| *it = premultiply(u32::from_be_bytes(*it)));
 }
 
+pub fn are_opaque(pixels: &[Pixel]) -> bool {
+    prefer_wide!(are_opaque(pixels));
+    pixels.iter().all(|it| it[3] == 255)
+}
+
 pub fn demultiply_row(row: &mut [Pixel]) {
     prefer_wide!(demultiply(row));
     row.iter_mut().for_each(|it| *it = demultiply(*it));
+}
+
+fn fill_through_eights<'a>(
+    rows: impl Iterator<Item = (&'a mut [[Pixel; 8]], &'a [[u8; 8]])>,
+    color: Pixel,
+) {
+    prefer_wide!(fill_through_eights(rows, color));
+    rows.for_each(|(row, coverage)| {
+        fill_through(row.as_flattened_mut(), color, coverage.as_flattened())
+    });
 }
 
 pub fn stamp<'a>(runs: impl Iterator<Item = &'a mut [Pixel; 8]>, colors: [Pixel; 8]) {
@@ -916,6 +949,7 @@ pub enum Paint<'a> {
     Solid(Pixel),
     /// Writes the pixels of row `y` from column `x` on.
     Shader(&'a dyn Fn(i32, i32, &mut [Pixel])),
+    Ramp(&'a Ramp),
 }
 
 pub enum Rows<'a> {
@@ -935,6 +969,27 @@ impl<'a> Iterator for RowsMut<'a> {
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         self.rows.next().map(|it| &mut it[self.columns.clone()])
+    }
+}
+
+/// For the colors and the alphas of a row.
+pub type Room = (Vec<Pixel>, Vec<u8>, Vec<u8>);
+
+/// `room` is as long as the row.
+fn combine_through(
+    row: &mut [Pixel],
+    above: &[Pixel],
+    mode: blend::Mode,
+    mask: &[u8],
+    room: &mut [Pixel],
+) {
+    room.copy_from_slice(row);
+    blend::blend(room, above, mode);
+    for ((pixel, from), coverage) in row.iter_mut().zip(room).zip(mask) {
+        for (channel, from) in pixel.iter_mut().zip(from) {
+            *channel =
+                multiply(*from, *coverage).saturating_add(multiply(*channel, 255 - coverage));
+        }
     }
 }
 
@@ -986,6 +1041,9 @@ impl<'a> View<'a> {
             Paint::Solid(color) if clip.mask.is_none() || clip.open.contains(shape.area) => {
                 scanner.fill(edges, shape, self.rect, self.pixels, color);
             }
+            Paint::Ramp(ramp)
+                if (clip.mask.is_none() || clip.open.contains(shape.area))
+                    && scanner.shade(edges, shape, self.rect, self.pixels, ramp) => {}
             _ => {
                 let mut room = Default::default();
                 scanner.hand_over(
@@ -1027,6 +1085,197 @@ impl<'a> View<'a> {
         }
     }
 
+    /// `fill`, for a width that is a multiple of 8.
+    #[inline]
+    pub fn fill_eights(&mut self, rect: IntRect, shape: &[[u8; 8]], clip: &Clip, color: Pixel) {
+        let area = rect.intersect(clip.rect).intersect(self.rect);
+        if (area.left, area.right) != (rect.left, rect.right) || clip.mask.is_some() {
+            return self.fill(rect, Some(shape.as_flattened()), clip, &Paint::Solid(color));
+        }
+        if area.top < area.bottom {
+            let coverage = shape[(area.top - rect.top) as usize * (rect.width() / 8)..]
+                .chunks_exact(rect.width() / 8);
+            fill_through_eights(
+                self.rows_mut(area)
+                    .map(|it| it.as_chunks_mut().0)
+                    .zip(coverage),
+                color,
+            );
+        }
+    }
+
+    /// Source-over. `area` is within the pixmap, whose corner is at `[x, y]`.
+    #[inline]
+    pub fn blend(&mut self, area: IntRect, pixmap: &Pixmap, [x, y]: [i32; 2], by: u8) {
+        let (area, width) = (area.intersect(self.rect), pixmap.width() as usize);
+        if !area.is_empty() {
+            let pixels = pixmap.data().as_chunks().0[(area.top - y) as usize * width..]
+                .chunks_exact(width)
+                .map(|it| &it[(area.left - x) as usize..]);
+            blend_rows(self.rows_mut(area).zip(pixels), by);
+        }
+    }
+
+    /// As wide as a multiple of 8, if there is room in `within`.
+    #[inline]
+    pub fn widened(&self, area: IntRect, within: IntRect) -> IntRect {
+        let (area, within) = (area.intersect(self.rect), within.intersect(self.rect));
+        let right = (area.left + ((area.right - area.left + 7) & !7)).min(within.right);
+        IntRect {
+            left: (right - ((area.right - area.left + 7) & !7)).max(within.left),
+            right,
+            ..area
+        }
+    }
+
+    /// `area` is what is in the clip's rectangle of what is around it.
+    pub fn fill_disc(
+        &mut self,
+        [x, y]: [f32; 2],
+        radius: f32,
+        area: IntRect,
+        clip: &Clip,
+        (paint, mode): (&Paint, blend::Mode),
+        room: &mut Room,
+    ) {
+        if let (&Paint::Solid(color), None, blend::Mode::SourceOver) = (paint, &clip.mask, mode) {
+            let area = self.widened(area, clip.rect);
+            let left = area.left as f32 + 0.5 - x;
+            return super::slant::fill_disc(
+                self.rows_mut(area)
+                    .zip(area.top..)
+                    .map(|(row, top)| (row, [left, top as f32 + 0.5 - y])),
+                radius,
+                color,
+            );
+        }
+        let (area, mut alphas) = (area.intersect(self.rect), std::mem::take(&mut room.2));
+        alphas.resize(area.width(), 0);
+        for top in area.top..area.bottom {
+            super::slant::measure_disc(
+                &mut alphas,
+                [area.left as f32 + 0.5 - x, top as f32 + 0.5 - y],
+                radius,
+            );
+            self.combine_part_of_row(
+                [area.left, top],
+                alphas.len(),
+                Some(&alphas),
+                clip,
+                (paint, mode),
+                room,
+            );
+        }
+        room.2 = alphas;
+    }
+
+    /// `fill_shape`, in a mode that leaves alone what is around it.
+    pub fn combine_shape(
+        &mut self,
+        edges: &Edges,
+        shape: &Shape,
+        scanner: &mut Scanner,
+        clip: &Clip,
+        paint: &Paint,
+        mode: blend::Mode,
+    ) {
+        let mut room = Default::default();
+        scanner.hand_over(
+            edges,
+            shape,
+            self.rect.top..self.rect.bottom,
+            |x, y, alphas| {
+                self.combine_part_of_row(
+                    [x, y],
+                    alphas.len(),
+                    Some(alphas),
+                    clip,
+                    (paint, mode),
+                    &mut room,
+                )
+            },
+        );
+    }
+
+    /// Likewise, for dense shapes. The view is in one period.
+    pub fn combine_samples(
+        &mut self,
+        parts: &[(&Edges, &Shape)],
+        is_even_odd: bool,
+        area: IntRect,
+        scanner: &mut Scanner,
+        clip: &Clip,
+        (paint, mode): (&Paint, blend::Mode),
+    ) {
+        let (area, mut room) = (area.intersect(self.rect), Default::default());
+        scanner.hand_over_samples(parts, is_even_odd, area, &mut |x, y, alphas| {
+            self.combine_part_of_row(
+                [x, y],
+                alphas.len(),
+                Some(alphas),
+                clip,
+                (paint, mode),
+                &mut room,
+            )
+        });
+    }
+
+    /// Likewise.
+    pub fn combine_rect(&mut self, rect: IntRect, clip: &Clip, paint: &Paint, mode: blend::Mode) {
+        let (area, mut room) = (rect.intersect(self.rect), Default::default());
+        (area.top..area.bottom).for_each(|y| {
+            self.combine_part_of_row(
+                [area.left, y],
+                area.width(),
+                None,
+                clip,
+                (paint, mode),
+                &mut room,
+            )
+        });
+    }
+
+    fn combine_part_of_row(
+        &mut self,
+        [left, y]: [i32; 2],
+        width: usize,
+        shape: Option<&[u8]>,
+        clip: &Clip,
+        (paint, mode): (&Paint, blend::Mode),
+        room: &mut Room,
+    ) {
+        if mode == blend::Mode::SourceOver {
+            return self.fill_part_of_row([left, y], width, shape, clip, paint, room);
+        }
+        let (right, colors) = (left + width as i32, &mut room.0);
+        colors.clear();
+        colors.resize(width * 2, [0; 4]);
+        let (above, other) = colors.split_at_mut(width);
+        match (paint, shape) {
+            (Paint::Solid(color), None) => above.fill(*color),
+            (Paint::Solid(color), Some(shape)) => fill_through(above, *color, shape),
+            (Paint::Shader(shade), None) => shade(left, y, above),
+            (Paint::Shader(shade), Some(shape)) => {
+                shade(left, y, other);
+                blend_through(above, other, shape);
+            }
+            (Paint::Ramp(ramp), None) => ramp.shade(left, y, above),
+            (Paint::Ramp(ramp), Some(shape)) => {
+                ramp.shade(left, y, other);
+                blend_through(above, other, shape);
+            }
+        }
+        let row = self.row_mut(y, left, right);
+        match clip
+            .mask
+            .as_ref()
+            .filter(|_| !clip.open.contains(IntRect::new(left, y, right, y + 1)))
+        {
+            Some(mask) => combine_through(row, above, mode, mask.row(y, left, right), other),
+            None => blend::blend(row, above, mode),
+        }
+    }
+
     /// It is inside of the clip's rectangle.
     fn fill_part_of_row(
         &mut self,
@@ -1035,9 +1284,9 @@ impl<'a> View<'a> {
         shape: Option<&[u8]>,
         clip: &Clip,
         paint: &Paint,
-        room: &mut (Vec<Pixel>, Vec<u8>),
+        room: &mut Room,
     ) {
-        let (right, (colors, combined)) = (left + width as i32, room);
+        let (right, (colors, combined, _)) = (left + width as i32, room);
         let is_open = clip.open.contains(IntRect::new(left, y, right, y + 1));
         let mask = clip
             .mask
@@ -1056,13 +1305,17 @@ impl<'a> View<'a> {
         match (paint, coverage) {
             (Paint::Solid(color), None) => fill_row(row, *color),
             (Paint::Solid(color), Some(coverage)) => fill_through(row, *color, coverage),
-            (Paint::Shader(shade), coverage) => {
+            (Paint::Shader(_) | Paint::Ramp(_), coverage) => {
                 let Range { start, end } = coverage.map_or(0..row.len(), covered_part);
                 if start == end {
                     return;
                 }
                 colors.resize(end - start, [0; 4]);
-                shade(left + start as i32, y, colors);
+                match paint {
+                    Paint::Shader(shade) => shade(left + start as i32, y, colors),
+                    Paint::Ramp(ramp) => ramp.shade(left + start as i32, y, colors),
+                    Paint::Solid(_) => {}
+                }
                 match coverage {
                     Some(coverage) => {
                         blend_through(&mut row[start..end], colors, &coverage[start..end])
@@ -1073,16 +1326,15 @@ impl<'a> View<'a> {
         }
     }
 
-    fn rows_mut(&mut self, area: IntRect) -> impl Iterator<Item = &mut [Pixel]> {
+    #[inline]
+    pub fn rows_mut(&mut self, area: IntRect) -> impl Iterator<Item = &mut [Pixel]> {
         let (width, start, above) = (
             self.rect.width(),
             (area.left - self.rect.left) as usize,
             (area.top - self.rect.top) as usize,
         );
-        self.pixels
+        self.pixels[above * width..][..area.height() * width]
             .chunks_exact_mut(width)
-            .skip(above)
-            .take(area.height())
             .map(move |it| &mut it[start..start + area.width()])
     }
 
@@ -1482,18 +1734,14 @@ impl Layer {
                     blend::blend(row, above, mode);
                     continue;
                 };
-                row.clone_into(&mut blended);
-                blend::blend(&mut blended, above, mode);
-                for ((pixel, from), coverage) in row
-                    .iter_mut()
-                    .zip(&blended)
-                    .zip(mask.row(y, left, area.right))
-                {
-                    for (channel, from) in pixel.iter_mut().zip(from) {
-                        *channel = multiply(*from, *coverage)
-                            .saturating_add(multiply(*channel, 255 - coverage));
-                    }
-                }
+                blended.resize(row.len(), [0; 4]);
+                combine_through(
+                    row,
+                    above,
+                    mode,
+                    mask.row(y, left, area.right),
+                    &mut blended,
+                );
             }
         });
     }

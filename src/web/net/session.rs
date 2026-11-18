@@ -8,7 +8,6 @@ use core::time::Duration;
 use std::rc::Rc;
 use std::sync::{Arc, Weak};
 
-use bun_collections::HashMap;
 use bun_core::{SensitiveCString, ZBox, strings};
 use bun_http::ssl_config::{SSLConfig, SharedPtr as Tls, global_registry};
 use bun_http::{CertificateInfo, HTTPThread};
@@ -19,7 +18,9 @@ use super::auth::Logins;
 use super::cache::HttpCache;
 use super::checks::Allowed;
 use super::cookies::{Cause, Change, Cookie, Jar, SameSite};
-use super::embedder::{About, Decision, Details, Embedder, RequestEvent, ResourceType, Verdict};
+use super::embedder::{
+    About, ClientId, Decision, Details, Embedder, RequestEvent, ResourceType, Verdict,
+};
 use super::error::{NetError, Result};
 use super::hsts::Hsts;
 use super::http::{self, Exchange};
@@ -28,11 +29,13 @@ use super::record::{RecordReader, RecordWriter};
 use super::tls::{self, Choice};
 use super::tunnel::is_socks;
 use crate::Bytes;
+use crate::HashMap;
 use crate::exec::{self, Thread};
 use crate::locks::LockManager;
 use crate::origin::{Origin, Site, registrable_domain};
 use crate::pattern::{UrlFilter, glob_matches};
-use crate::service::{self, Registry};
+use crate::remote::Peer;
+use crate::service::{self, Lodging, Registry};
 use crate::storage::{Origins, Storage};
 use crate::url::Url;
 
@@ -62,7 +65,8 @@ pub struct Settings {
     pub reports_answers: bool,
 }
 
-pub type CookieWatcher = Box<dyn Fn(&Change) + Send>;
+/// It is told who has made the change.
+pub type CookieWatcher = Box<dyn Fn(&Change, Option<ClientId>) + Send>;
 
 pub struct Session {
     id: u32,
@@ -254,6 +258,16 @@ impl Session {
                 &it.embedders.borrow().iter().find(|it| it.0 == id)?.1,
             ))
         })
+    }
+
+    /// On the main thread.
+    pub(crate) fn lodge_worker(&self, url: &Url, is_compiled: bool) -> Option<Lodging> {
+        Session::embedder(self.id)?.lodge_worker(url, is_compiled)
+    }
+
+    /// On the main thread.
+    pub(crate) fn keep_process(&self, peer: Peer) -> Option<Box<dyn core::any::Any>> {
+        Session::embedder(self.id)?.keep_process(peer)
     }
 
     pub(crate) fn notify(&self, steps: impl FnOnce(&dyn Embedder) + Send + 'static) {
@@ -589,20 +603,28 @@ impl Session {
     }
 
     pub fn with_cookies<R>(self: &Arc<Self>, steps: impl FnOnce(&mut Jar) -> R) -> R {
+        self.with_cookies_for(None, steps)
+    }
+
+    pub(crate) fn with_cookies_for<R>(
+        self: &Arc<Self>,
+        client: Option<ClientId>,
+        steps: impl FnOnce(&mut Jar) -> R,
+    ) -> R {
         self.load_cookies_if_allowed();
         let (result, changes) = {
             let mut jar = self.jar.lock();
             (steps(&mut jar), jar.take_changes())
         };
         if !changes.is_empty() {
-            self.cookies_changed(changes);
+            self.cookies_changed(changes, client);
         }
         result
     }
 
-    fn cookies_changed(self: &Arc<Self>, changes: Vec<super::cookies::Change>) {
+    fn cookies_changed(self: &Arc<Self>, changes: Vec<Change>, by: Option<ClientId>) {
         for (_, watcher) in self.cookie_watchers.lock().iter() {
-            changes.iter().for_each(watcher);
+            changes.iter().for_each(|it| watcher(it, by));
         }
         let lasts = changes.iter().any(|it| it.cookie.expires.is_some());
         self.has_unsaved_cookies.fetch_or(lasts, Ordering::AcqRel);
@@ -623,11 +645,11 @@ impl Session {
     }
 
     /// Of the sites of `urls`, or of all others.
-    pub fn clear_cookies(self: &Arc<Self>, urls: &[Url], is_listed: bool) {
+    pub fn clear_cookies(self: &Arc<Self>, urls: &[Url], is_listed: bool, by: Option<ClientId>) {
         let is_of_site = |cookie: &Cookie, url: &Url| {
             registrable_domain(url.hostname()) == registrable_domain(&cookie.domain)
         };
-        self.with_cookies(|jar| {
+        self.with_cookies_for(by, |jar| {
             jar.remove_if(Cause::Explicit, |it| {
                 urls.iter().any(|url| is_of_site(it, url)) == is_listed
             })

@@ -38,7 +38,8 @@ impl Drop for Pixels {
 }
 
 enum Moved {
-    ImageBitmap(Pixels),
+    /// And whether they are straight.
+    ImageBitmap(Pixels, bool),
     OffscreenCanvas {
         size: [u64; 2],
         placeholder: Option<Endpoint>,
@@ -53,19 +54,35 @@ impl Graphic for Pixels {
 
 impl Graphic for Moved {
     fn loosen(self: Box<Self>) -> Option<LooseBitmap> {
-        let Moved::ImageBitmap(Pixels {
-            id,
-            size,
-            is_origin_clean,
-        }) = &*self
+        let Moved::ImageBitmap(
+            Pixels {
+                id,
+                size,
+                is_origin_clean,
+            },
+            is_straight,
+        ) = &*self
         else {
             return None;
         };
+        let source = Source::new(*id, *size, *is_origin_clean);
+        let premultiplied = is_straight.then(|| {
+            snapshot(
+                Source {
+                    is_straight: true,
+                    ..source
+                }
+                .whole(),
+            )
+        });
         Some(LooseBitmap {
             size: *size,
-            rgba: Source::new(*id, *size, *is_origin_clean)
-                .read(PredefinedColorSpace::Srgb)?
-                .into(),
+            rgba: Source {
+                id: premultiplied.as_ref().map_or(*id, Owned::id),
+                ..source
+            }
+            .read(PredefinedColorSpace::Srgb)?
+            .into(),
         })
     }
 }
@@ -76,7 +93,7 @@ fn cloneable(bitmap: &ImageBitmap) -> core::result::Result<Source, Failure> {
         "The ImageBitmap is detached, or not origin-clean.",
     );
     bitmap
-        .source()
+        .exact_source()
         .ok()
         .filter(|it| it.is_origin_clean)
         .ok_or(refused)
@@ -85,7 +102,9 @@ fn cloneable(bitmap: &ImageBitmap) -> core::result::Result<Source, Failure> {
 impl ImageBitmap {
     #[optimize(size)]
     pub(crate) fn serialize<'a>(&'a self, cx: Cx<'_, 'a>, _: bool) -> Result<'a, JSValue> {
-        let source = cloneable(self).map_err(|it| it.into_error(&cx.heap))?;
+        let source = cloneable(self)
+            .and_then(|_| self.source())
+            .map_err(|it| it.into_error(&cx.heap))?;
         let read = |color_space| {
             let pixels = source
                 .read(color_space)
@@ -121,7 +140,7 @@ impl ImageBitmap {
                 .filter(|it| it.len() as u64 == area_of(size).saturating_mul(4))
         });
         Ok(both[0].map_or(JSValue::NULL, |_| {
-            ImageBitmap::create(&cx.heap, Owned::from_pixels(size, both), size, true).to_js()
+            ImageBitmap::create(&cx.heap, Owned::from_pixels(size, both, false), size, true).to_js()
         }))
     }
 }
@@ -149,11 +168,14 @@ impl<'a> Transferable<'a> {
         Box::new(match self {
             Transferable::ImageBitmap(bitmap) => {
                 let size = [bitmap.get_width(), bitmap.get_height()];
-                Moved::ImageBitmap(Pixels {
-                    id: bitmap.detach().map_or(0, Owned::into_id),
-                    size,
-                    is_origin_clean: true,
-                })
+                Moved::ImageBitmap(
+                    Pixels {
+                        id: bitmap.detach().map_or(0, Owned::into_id),
+                        size,
+                        is_origin_clean: true,
+                    },
+                    bitmap.is_straight.get(),
+                )
             }
             Transferable::OffscreenCanvas(canvas) => {
                 let (size, element, endpoint) = canvas.detach();
@@ -168,9 +190,11 @@ impl<'a> Transferable<'a> {
 
 pub(crate) fn receive<'a>(heap: &JsHeap<'a>, moved: Box<dyn Graphic>) -> JSValue {
     match (moved as Box<dyn Any>).downcast().map(|it| *it) {
-        Ok(Moved::ImageBitmap(pixels)) => {
+        Ok(Moved::ImageBitmap(pixels, is_straight)) => {
             let size = pixels.size;
-            ImageBitmap::create(heap, pixels.adopt(), size, true).to_js()
+            let bitmap = ImageBitmap::create(heap, pixels.adopt(), size, true);
+            bitmap.is_straight.set(is_straight);
+            bitmap.to_js()
         }
         Ok(Moved::OffscreenCanvas { size, placeholder }) => {
             OffscreenCanvas::received(heap, size, placeholder).to_js()
@@ -181,7 +205,7 @@ pub(crate) fn receive<'a>(heap: &JsHeap<'a>, moved: Box<dyn Graphic>) -> JSValue
             {
                 ImageBitmap::create(
                     heap,
-                    Owned::from_pixels(size, [Some(&rgba), None]),
+                    Owned::from_pixels(size, [Some(&rgba), None], false),
                     size,
                     true,
                 )
@@ -237,7 +261,7 @@ fn frame_arrived<'a>(cx: Cx<'_, 'a>, placeholder: JsLocal<'a>) {
 }
 
 pub(super) fn send_frame(placeholder: &Endpoint, context: Option<&Context>, size: [u32; 2]) {
-    let source = context.map(|it| it.bitmap.source());
+    let source = context.map(|it| it.shown().source());
     let is_origin_clean = source.as_ref().is_none_or(|it| it.is_origin_clean);
     let id = source
         .filter(|it| !it.is_empty())

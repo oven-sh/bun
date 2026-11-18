@@ -11,6 +11,11 @@ use crate::input::Input;
 use crate::wire::messages;
 use crate::{dom, wire};
 
+/// Without the extension.
+pub fn file_of_frame(page: u32) -> String {
+    format!("{page}~frame")
+}
+
 pub fn printed_from(page: u32) -> String {
     format!("https://{page}.page.print.invalid/")
 }
@@ -41,8 +46,8 @@ wire! {
     pub enum Purpose {
         Print,
         Archive,
-        /// The resources go into that folder.
-        Save(String),
+        /// The folders for the resources and for the pages in frames. See [`file_of_frame`].
+        Save { resources: String, frames: String },
     }
 
     pub struct Resource {
@@ -119,7 +124,8 @@ wire! {
         Shows { page: u32, origin: Option<String>, is_initial: bool },
         /// For where its document is not.
         Children(Vec<u32>),
-        Renamed(String),
+        /// `is_public` if it is a property of the window of the parent.
+        Renamed { name: String, is_public: bool },
         OpenedBy(Option<u32>),
         Crashed,
         Closed,

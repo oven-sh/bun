@@ -1,13 +1,17 @@
 import { hasLibrary } from "./library";
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const prelude = readFileSync(join(import.meta.dir, "accessibility.fixture.js"), "utf8");
-const chromium = ["google-chrome-stable", "google-chrome", "chromium-browser", "chromium", "microsoft-edge"]
-  .map(name => Bun.which(name))
+const chromium = ["google-chrome-stable", "google-chrome", "chromium-browser", "chromium", "microsoft-edge", "msedge"]
+  .map(name =>
+    Bun.which(name, {
+      PATH: process.env.PATH + ";C:/Program Files (x86)/Microsoft/Edge/Application".repeat(+isWindows),
+    }),
+  )
   .find(Boolean);
 const engine = {
   type: "chromium",
@@ -370,7 +374,7 @@ describe.skipIf(!hasLibrary).concurrent("what a screen reader is told", () => {
       10
       20
       40
-      AXValue = ""
+      AXValue = "\\n"
       AXSelectedTextRange = 0..0
       AXInsertionPointLineNumber = 0"
     `);
@@ -1314,6 +1318,10 @@ describe.skipIf(!hasLibrary).concurrent("what a screen reader is told", () => {
         ask("do focus AXIncrement");
         await until(() => ask("get focus AXValue") === "1");
         print(await page.executeJavaScript("c.value"));
+        await hear("AXValueChanged AXSlider");
+        press("Escape");
+        await until(() => ask("get focus AXValue") === "0");
+        print(...await hear("AXValueChanged AXSlider", /AXSlider/));
         press("Tab", "shift");
         press("Tab", "shift");
         await until(() => ask("get focus AXTitle") === '"#00ff00"');
@@ -1322,13 +1330,14 @@ describe.skipIf(!hasLibrary).concurrent("what a screen reader is told", () => {
     ).toMatchInlineSnapshot(`
       "AXColorWell AXValue="rgb 1.00000 0.00000 0.00000 1"
         AXGroup AXApplicationDialog AXTitle="Color picker" AXDescription="Color picker"
-          AXSlider AXTitle="Color well with two-dimensional slider for selecting saturation and lightness" AXDescription="Color well with two-dimensional slider for selecting saturation and lightness" AXValue=100 AXFocused=true
+          AXSlider AXTitle="Color well" AXDescription="Color well" AXValue=100 AXFocused=true
           AXSlider AXTitle="Hue slider" AXDescription="Hue slider" AXValue=0
           AXTextField AXTitle="Hex color value" AXDescription="Hex color value" AXValue="#ff0000"
             AXStaticText AXValue="#ff0000"
           AXButton AXTitle="#00ff00" AXDescription="#00ff00"
       AXValueChanged AXSlider
-      #ff1203"
+      #ff1203
+      AXValueChanged AXSlider"
     `);
   });
 
@@ -1515,6 +1524,7 @@ describe.skipIf(!hasLibrary).concurrent("what a screen reader is told", () => {
           await until(() => ask("get #a>3 AXTitle") === '"unmute"');
           ask("do #a>0 AXPress");
           await until(() => ask("get #a>0 AXTitle") === '"pause"' && ask("get #a>1 AXMaxValue") === "100");
+          await sees("a.currentTime > 0", true);
           press("Space");
           await sees("a.paused", true);
           press("Home");

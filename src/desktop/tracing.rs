@@ -64,6 +64,8 @@ fn categories(options: &Value) -> Vec<&'static str> {
 fn samples(on_thread: &Value) -> Vec<Value> {
     let mut json = bun_core::String::EMPTY;
     Bun__stopCPUProfiler(VirtualMachine::get().jsc_vm(), Some(&mut json), None);
+    #[cfg(windows)]
+    crate::win32::set_fine_clock(false);
     let profile = Value::parse(json.to_utf8().slice()).unwrap_or_default();
     let nodes = profile["nodes"].items();
     let mut parents = vec![None; nodes.len() + 1];
@@ -123,6 +125,8 @@ impl Recording {
     fn start(categories: Vec<&'static str>, room: usize) {
         if recording().borrow().is_none() {
             if categories.contains(&SAMPLES) {
+                #[cfg(windows)]
+                crate::win32::set_fine_clock(true);
                 bun_jsc::bun_cpu_profiler::start_cpu_profiler(VirtualMachine::get().jsc_vm());
             }
             trace::restart(room);

@@ -1,7 +1,7 @@
 //! The input that is passed on to the web engine.
 
-use bun_ui::protocol::{DragPhase, Input, Key, Located, Mouse, MouseAction, Wheel};
-use bun_web::input::{self, Action, Drag};
+use bun_ui::protocol::{DragPhase, Input, Key, Located, Mouse, MouseAction, TouchPhase, Wheel};
+use bun_web::input::{self, Action, Drag, Phase};
 
 use crate::prelude::*;
 
@@ -15,7 +15,7 @@ pub(super) fn for_engine(it: input::Input, zoom: f64) -> Option<Input> {
         ..Default::default()
     };
     Some(match it {
-        input::Input::Mouse(it) => Input::Mouse(Mouse {
+        input::Input::Mouse(it) | input::Input::Pen { mouse: it, .. } => Input::Mouse(Mouse {
             at,
             action: match it.action {
                 Action::Down => MouseAction::Down,
@@ -36,6 +36,26 @@ pub(super) fn for_engine(it: input::Input, zoom: f64) -> Option<Input> {
             at,
             delta: finite(delta),
         },
+        input::Input::Touch {
+            phase,
+            fingers,
+            modifiers,
+        } => Input::Touch {
+            phase: match phase {
+                Phase::Start => TouchPhase::Start,
+                Phase::Move => TouchPhase::Move,
+                Phase::End => TouchPhase::End,
+                Phase::Cancel => TouchPhase::Cancel,
+            },
+            finger: fingers.first()?.id,
+            at: Located {
+                x: finite(fingers[0].place.window[0] / zoom),
+                y: finite(fingers[0].place.window[1] / zoom),
+                modifiers: modifiers as u8,
+                ..at
+            },
+            contact: Default::default(),
+        },
         input::Input::Drag { phase, files, .. } => Input::Drag {
             phase: match phase {
                 Drag::Enter => DragPhase::Enter,
@@ -49,6 +69,7 @@ pub(super) fn for_engine(it: input::Input, zoom: f64) -> Option<Input> {
         input::Input::Key(it) => Input::Key(Key {
             key: it.key.into(),
             code: it.code.into(),
+            key_code: it.key_code as u8,
             location: it.location as u8,
             modifiers: it.modifiers as u8,
             is_down: it.is_down,

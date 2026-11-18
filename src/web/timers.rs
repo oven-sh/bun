@@ -2,10 +2,10 @@
 
 use core::cell::{Cell, RefCell};
 
-use bun_collections::HashMap;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 use smallvec::SmallVec;
 
+use crate::HashMap;
 use crate::realm::Realm;
 use crate::tasks::{self, TaskId, Work};
 

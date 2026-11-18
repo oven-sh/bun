@@ -63,6 +63,11 @@ function open(content: any) {
     $,
     center,
     mouse,
+    // macOS selects anew unless the button has been down for a while.
+    grabText(at: { x: number; y: number }) {
+      mouse("mouseDown", at);
+      for (const start = performance.now(); isMacOS && performance.now() - start <= 150;) Bun.sleepSync(5);
+    },
     click(selector: string, more?: object) {
       for (const type of ["mouseMove", "mouseDown", "mouseUp"]) mouse(type, center(selector), more);
     },
@@ -485,6 +490,18 @@ describe.skipIf(!hasLibrary)("bun:desktop", () => {
       expect(it.$("#b").matches(":hover")).toBe(true);
     });
 
+    test.each(["visibility: hidden", "pointer-events: none", "display: none", "translate: 0 99px"])(
+      "what a click uncovers with %s is hovered",
+      async style => {
+        using it = open("<div id=a style='height:50px'></div><div id=b style='height:50px;margin-top:-50px'></div>");
+        it.$("#b").onclick = () => (it.$("#b").style.cssText += style);
+        const over = new Promise(resolve => (it.$("#a").onmouseover = resolve));
+        it.click("#b");
+        await over;
+        expect(it.$("#a").matches(":hover")).toBe(true);
+      },
+    );
+
     test("pointer capture", () => {
       using it = open("<div id=a style='height:50px'></div><div id=b style='height:50px'></div>");
       it.$("#a").onpointerdown = (event: any) => event.target.setPointerCapture(event.pointerId);
@@ -600,7 +617,7 @@ describe.skipIf(!hasLibrary)("bun:desktop", () => {
       using it = open(`<p id=a ${attribute} style='user-select:text'><span>two</span></p><textarea id=b></textarea>`);
       const log = record(it.window.document, "drop", it => it.dataTransfer.dropEffect);
       it.click("span", { clickCount: 2 });
-      it.mouse("mouseDown", it.center("span"));
+      it.grabText(it.center("span"));
       it.mouse("mouseMove", it.center("#b"));
       it.mouse("mouseUp", it.center("#b"));
       expect([log, it.$("#a").textContent, it.$("#b").value]).toEqual([[effect], left, "two"]);
@@ -643,7 +660,7 @@ describe.skipIf(!hasLibrary)("bun:desktop", () => {
       const at = { x: it.$("#a").getBoundingClientRect().x + 8, y: it.center("#a").y };
       it.mouse("mouseDown", at, { clickCount: 3 });
       it.mouse("mouseUp", at, { clickCount: 3 });
-      it.mouse("mouseDown", at);
+      it.grabText(at);
       it.mouse("mouseMove", it.center("#e"));
       it.mouse("mouseUp", it.center("#e"));
       expect([...log, it.$("#e").innerHTML.replace(' id="a"', "")]).toEqual([
@@ -660,7 +677,7 @@ describe.skipIf(!hasLibrary)("bun:desktop", () => {
       const released = new Promise(
         resolve => ((it.window.document.ondragend = resolve), (it.window.document.onmouseup = resolve)),
       );
-      it.mouse("mouseDown", it.center("span"));
+      it.grabText(it.center("span"));
       it.mouse("mouseMove", it.center("textarea"));
       it.mouse("mouseUp", it.center("textarea"));
       await released;
@@ -1254,7 +1271,7 @@ describe.skipIf(!hasLibrary)("bun:desktop", () => {
     const { innerHeight } = it.window.window;
     act(() => it.window.setMenu(Menu.buildFromTemplate(titles)));
     while (it.window.window.innerHeight === innerHeight) await new Promise(resolve => setImmediate(resolve));
-    expect(innerHeight - it.window.window.innerHeight).toBe(28);
+    expect(innerHeight - it.window.window.innerHeight).toBe(isWindows ? 26 : 28);
     const click = (x: number, y: number) =>
       ["mouseMove", "mouseDown", "mouseUp"].forEach(type => it.mouse(type, { x, y }));
     click(20, 14);
@@ -1446,7 +1463,7 @@ describe.skipIf(!hasLibrary)("garbage collection", () => {
   });
 });
 
-describe.skipIf(!hasLibrary || isWindows)("node:fs lookups", () => {
+describe.skipIf(!hasLibrary)("node:fs lookups", () => {
   async function run(script: string) {
     using dir = tempDir("desktop-fs", { "file.txt": "12345" });
     const before = `import { app, Window } from "bun:desktop"; import fs from "node:fs";

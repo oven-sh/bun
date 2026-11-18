@@ -38,15 +38,19 @@ test.skipIf(!hasLibrary || !hasKeyring)(
   },
 );
 
-test.skipIf(!hasLibrary || isWindows).each(["memory", ...screens])(
+test.skipIf(!hasLibrary).each(["memory", ...screens])(
   "launch cover, painted to %s",
   async where => {
     await using screen = await openOn(where);
-    using dir = tempDir("launch-cover", { "package.json": JSON.stringify({ name: "covered" }) });
+    using dir = tempDir("launch-cover", {
+      "package.json": JSON.stringify({ name: "covered" }),
+      "AppData/Roaming/empty": "",
+    });
     const home = String(dir);
     const env = {
       ...bunEnv,
       HOME: home,
+      USERPROFILE: home,
       XDG_CONFIG_HOME: join(home, "config"),
       BUN_DESKTOP_HEADLESS: "1",
       ...screen?.env,
@@ -57,16 +61,23 @@ test.skipIf(!hasLibrary || isWindows).each(["memory", ...screens])(
     };
     await Bun.write(join(home, "app.ts"), Bun.file(join(import.meta.dir, "launch-cover.fixture.ts")));
     await run([bunExe(), "build", "--compile", "--desktop", "app.ts", "--outfile=covered"]);
-    const executable = join(home, isMacOS ? "covered.app/Contents/MacOS/covered" : "covered.AppDir/AppRun");
+    const executable = join(
+      home,
+      isMacOS ? "covered.app/Contents/MacOS/covered" : isWindows ? "covered/covered.exe" : "covered.AppDir/AppRun",
+    );
     const seen: string[] = [];
     const launch = async (step: string, ...args: string[]) =>
       seen.push(`${[step, ...args].join(" ")}: ${await run([executable, ...args], step)}`);
 
     await launch("save");
-    const data = join(home, isMacOS ? "Library/Application Support" : "config", "covered");
-    expect(["LaunchCover", "LaunchCover.json"].map(name => statSync(join(data, name)).mode & 0o777)).toEqual([
-      0o600, 0o600,
-    ]);
+    const data = join(
+      home,
+      isMacOS ? "Library/Application Support" : isWindows ? "AppData/Roaming" : "config",
+      "covered",
+    );
+    expect(["LaunchCover", "LaunchCover.json"].map(name => statSync(join(data, name)).mode & 0o777)).toEqual(
+      Array(2).fill(isWindows ? 0o666 : 0o600),
+    );
     for (const step of [
       "type",
       "replace",

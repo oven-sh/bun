@@ -1,5 +1,8 @@
 //! In the host.
 
+mod shared;
+pub(crate) mod workers;
+
 use core::cell::RefCell;
 use core::mem::ManuallyDrop;
 use std::collections::VecDeque;
@@ -7,11 +10,11 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use bun_collections::HashMap;
 use bun_ui::protocol::Lane;
 
 use super::{Call, Deed, News, Return};
 use crate::Bytes;
+use crate::HashMap;
 use crate::client::{Client, Twin, Update};
 use crate::convert::resolve_blob_url;
 use crate::exec::{self, Either, Sender, oneshot, race};
@@ -19,10 +22,10 @@ use crate::headers::{HeaderList, is_cors_safelisted, is_forbidden_method, is_tok
 use crate::net::body::Blob;
 use crate::net::embedder::ClientId;
 use crate::net::fetch::Controller;
-use crate::net::response::{Response, ResponseType};
+use crate::net::response::{Head as ResponseHead, Response, ResponseType};
 use crate::net::session::Session;
 use crate::origin::Origin;
-use crate::remote::{self, Flags, Head, Kind, OF_PAGES, Peer};
+use crate::remote::{self, Flags, Head, Kind, OF_PAGES, Peer, grants};
 use crate::request::{Destination, InitiatorType, Mode, Request};
 use crate::storage::areas::{self, Borrower, Whose};
 use crate::url::Url;
@@ -50,6 +53,7 @@ struct Guest {
     wanted_blobs: HashMap<u32, (u32, Sender<Blob>)>,
     /// Dropping one ends the call.
     calls: HashMap<u32, Sender<()>>,
+    of_workers: workers::Records,
 }
 
 static GUESTS: bun_ui::Lasting<ManuallyDrop<RefCell<HashMap<Peer, Guest>>>> =
@@ -83,9 +87,23 @@ pub fn dismiss(peer: Peer, client: ClientId) {
         guest.tabs.remove(&client.0);
         guest.blob_urls.retain(|_, maker| *maker != client.0);
         guest.wanted_blobs.retain(|_, it| it.0 != client.0);
-        guest.clients.remove(&client.0)
+        let gone = guest.clients.remove(&client.0)?;
+        let (session, bucket) = (gone.session.id(), gone.bucket());
+        let is_same = |it: &Rc<Client>| it.session.id() == session && it.bucket() == bucket;
+        if !guest.clients.values().any(is_same) {
+            let used = Vec::from_iter(
+                guest
+                    .clients
+                    .values()
+                    .map(|it| (it.session.id(), it.bucket())),
+            );
+            grants::keep_only_shelves(peer, |it| {
+                (used.iter()).any(|used| used.0 == it.session && *used.1 == *it.bucket)
+            });
+        }
+        Some((gone, guest.of_workers.take_those_of(client.0)))
     });
-    known.iter().for_each(Client::dispose);
+    (known.iter()).for_each(|it| it.0.dispose());
 }
 
 fn borrower(peer: Peer, client: &Client, is_local: bool) -> Option<Borrower> {
@@ -102,17 +120,14 @@ fn borrower(peer: Peer, client: &Client, is_local: bool) -> Option<Borrower> {
 }
 
 pub(crate) fn forget(peer: Peer) {
+    shared::forget(peer);
     let guest = GUESTS.with(|it| it.borrow_mut().remove(&peer));
     (guest.iter().flat_map(|it| it.clients.values())).for_each(Client::dispose);
 }
 
-fn tell(peer: Peer, client: u32, news: News) {
-    remote::send(
-        peer,
-        Lane::Elsewhere,
-        Head::new(Kind::News, client, 0),
-        news,
-    );
+fn tell(peer: Peer, client: u32, news: News) -> bool {
+    let head = Head::new(Kind::News, client, 0);
+    remote::send(peer, Lane::Elsewhere, head, news)
 }
 
 struct OfWorker(Peer, u32);
@@ -133,11 +148,22 @@ pub(crate) fn deed(from: Peer, head: Head, deed: Deed) -> wire::Result<()> {
         (wanted.zip(blob).into_iter()).for_each(|(wanted, blob)| wanted.1.send(blob));
         return Ok(());
     }
+    if let Deed::ConnectToSharedWorker { worker, port } = deed {
+        shared::connect((from, worker), port);
+        return Ok(());
+    }
+    if let Deed::LeaveSharedWorker { worker, has_failed } = deed {
+        shared::leave((from, worker), has_failed);
+        return Ok(());
+    }
     let Some(client) = with_guest(from, |it| it.clients.get(&head.about).cloned()) else {
         return Ok(());
     };
     match deed {
-        Deed::Cancel { .. } | Deed::LendBlob { .. } => {}
+        Deed::Cancel { .. }
+        | Deed::LendBlob { .. }
+        | Deed::ConnectToSharedWorker { .. }
+        | Deed::LeaveSharedWorker { .. } => {}
         Deed::AnnounceBlobUrl { url, is_revoked } => with_guest(from, |it| {
             if is_revoked {
                 it.blob_urls.remove(url.href());
@@ -162,6 +188,7 @@ pub(crate) fn deed(from: Peer, head: Head, deed: Deed) -> wire::Result<()> {
             id: ClientId(id),
             url,
             is_shared,
+            reserved,
         } => {
             let is_own = url.scheme() == b"data"
                 || Origin::of(&url).as_bytes() == client.origin().as_bytes();
@@ -178,14 +205,32 @@ pub(crate) fn deed(from: Peer, head: Head, deed: Deed) -> wire::Result<()> {
             else {
                 return Ok(());
             };
-            let worker = Client::for_worker(client.seed_worker(url, &headers, is_shared, None));
+            let reserved = with_guest(from, |it| it.of_workers.take_reserved(reserved?, &url));
+            let seed = client.seed_worker(url, &headers, is_shared, reserved);
+            with_guest(from, |it| it.of_workers.keep(id, seed.presence()));
+            let worker = Client::for_worker(seed);
             worker.worker_has_started();
             worker.set_twin(Rc::new(OfWorker(from, id)));
             with_guest(from, |it| it.clients.insert(id, worker));
         }
-        Deed::WatchCookies {} => client.watch_cookies(|client, change| {
-            client.update_twin(|| Update::Cookie(change.clone()));
-        }),
+        Deed::ListenToServiceWorkers {} => workers::listen(from, head.about, &client),
+        Deed::CallServiceWorkers { ticket, call } => {
+            return workers::call(from, &client, ticket, call);
+        }
+        Deed::AnnounceStart { handles_fetch } => {
+            workers::has_started(from, head.about, handles_fetch);
+        }
+        Deed::ReportProgress { event, progress } => {
+            workers::note_progress(from, head.about, event, progress);
+        }
+        Deed::Log {
+            level,
+            message,
+            line,
+            url,
+        } => (workers::outside_of(from, head.about))
+            .map_or((), |it| it.log(level, message, line, url)),
+        Deed::WatchCookies {} => client.watch_cookies(Client::tell_twin_of_cookie),
     }
     Ok(())
 }
@@ -237,14 +282,14 @@ fn is_allowed(request: &Request) -> bool {
                     _ => false,
                 })
     };
-    !matches!(request.mode, Mode::Navigate | Mode::WebSocket)
-        && !matches!(
+    let navigates = request.mode == Mode::Navigate
+        || matches!(
             request.destination,
-            Destination::Document
-                | Destination::Frame
-                | Destination::Iframe
-                | Destination::ServiceWorker
-        )
+            Destination::Document | Destination::Frame | Destination::Iframe
+        );
+    request.mode != Mode::WebSocket
+        && request.destination != Destination::ServiceWorker
+        && (!navigates || request.starter.is_some())
         && is_token(&request.method)
         && !is_forbidden_method(&request.method)
         && request.cors_exempt_headers.iter().all(|it| is_exempt(it.0))
@@ -253,19 +298,17 @@ fn is_allowed(request: &Request) -> bool {
                 && request.headers.iter().all(needs_no_cors)))
 }
 
-fn without_secrets(mut response: Response) -> Box<Response> {
-    response.head.reserved = None;
-    let head = &mut response.head;
-    let (exposed, is_hidden) = (
-        head.exposed_headers(),
-        head.kind == ResponseType::OpaqueRedirect,
-    );
-    let is_needed = |name: &[u8]| match &*name.to_ascii_lowercase() {
-        b"access-control-expose-headers" | b"content-type" | b"referrer-policy" => true,
-        b"content-encoding" | b"content-length" | b"server-timing" => head.allows_timing,
-        _ => false,
-    };
-    (head.headers).retain(|name, _| !is_hidden && (exposed.contains(name) || is_needed(name)));
+/// With `is_object`, scripts can pass it on.
+fn without_secrets(
+    peer: Peer,
+    mut response: Response,
+    destination: Destination,
+    is_object: bool,
+) -> Box<Response> {
+    if is_object && response.head.kind != ResponseType::Basic {
+        remote::keep_head(peer, &mut response.head);
+    }
+    response.head.hide_secrets(destination);
     response.into()
 }
 
@@ -283,6 +326,7 @@ impl Guest {
                 if self.workers.len() > MOST_WORKERS {
                     self.workers.pop_front();
                 }
+                self.of_workers.reserve(&response.head);
             }
             Destination::Style | Destination::Script if self.referrers.len() < MOST_REFERRERS => {
                 self.referrers.insert(hash_of(url), ());
@@ -326,19 +370,21 @@ async fn perform(from: Peer, head: Head, client: Rc<Client>, call: Call) -> Retu
                 let note = |guest: &mut Guest| guest.note(destination, it);
                 GUESTS.with(|all| all.borrow_mut().get_mut(&from).map_or((), note));
             };
-            Return::Fetch(fetched.inspect(note).map(without_secrets))
+            let is_object = destination == Destination::Empty || client.is_service_worker();
+            let hide = |it| without_secrets(from, it, destination, is_object);
+            Return::Fetch(fetched.inspect(note).map(hide))
         }
         Call::Connect {
             url,
             protocols,
             frames,
-        } => Return::Connect(client.connect_for_twin(url, &protocols, frames).await),
+        } => Return::Connect(client.connect_for_twin(url, &protocols, frames.0).await),
         Call::SourceOf { url } if !client.origin().is_origin_of(&url) => Return::SourceOf(Ok(None)),
         Call::SourceOf { url } => Return::SourceOf(client.session.source_of(&url).await),
         Call::CookieString {} if client.origin().is_opaque() => {
             Return::CookieString(Default::default())
         }
-        Call::Cookies {} if client.origin().is_opaque() => Return::Cookies(Vec::new()),
+        Call::Cookies { .. } if client.origin().is_opaque() => Return::Cookies(Vec::new()),
         Call::BorrowArea { is_local } => Return::BorrowArea(
             (borrower(from, &client, is_local).map(|it| areas::lend(&it))).unwrap_or_default(),
         ),
@@ -348,14 +394,41 @@ async fn perform(from: Peer, head: Head, client: Rc<Client>, call: Call) -> Retu
             let until = expiries.fold(f64::MAX, f64::min);
             Return::CookieString((client.cookie_string(), until))
         }
-        Call::Cookies {} => Return::Cookies(client.cookies(None)),
-        Call::SetCookie { text } => Return::SetCookie(client.set_cookie(&text)),
+        Call::Cookies { url } => {
+            let scope = client.as_service_worker().map(|it| it.registration.scope);
+            let is_own = |it: &Url| scope.is_some_and(|scope| it.href().starts_with(scope.href()));
+            Return::Cookies(client.cookies(url.filter(is_own)))
+        }
+        Call::Import { request } => Return::Import(client.load_script(*request).await.map(|it| {
+            let mut it = Box::new(it);
+            it.head.hide_secrets(Destination::Script);
+            it
+        })),
+        Call::ClaimSharedWorker {
+            worker,
+            url,
+            name,
+            options,
+        } => {
+            let key = [&client.partition_key(), url.href(), &name].join(&b'\n');
+            Return::ClaimSharedWorker(shared::claim((from, worker), &client, key.into(), options))
+        }
+        Call::MayNotify {} => Return::MayNotify(match workers::outside_of(from, head.about) {
+            Some(it) => it.may_notify().await,
+            None => false,
+        }),
+        Call::SetCookie { text } => Return::SetCookie(client.set_cookie_for_twin(&text)),
     }
 }
 
 pub(crate) fn call(from: Peer, head: Head, mut call: Call) -> wire::Result<()> {
     let back = Head::new(Kind::Return, head.about, head.ticket);
     let mut outlives_process = false;
+    match &mut call {
+        Call::Fetch { request, .. } => workers::identify(from, head.about, request),
+        Call::Import { request } => workers::make_import(from, head.about, request)?,
+        _ => {}
+    }
     match &mut call {
         call if call.is_harmless() != head.flags.contains(Flags::HARMLESS) => {
             return Err(Malformed);
@@ -384,7 +457,7 @@ pub(crate) fn call(from: Peer, head: Head, mut call: Call) -> wire::Result<()> {
         return Ok(());
     };
     with_guest(from, |guest| {
-        if let Call::Fetch { request, .. } = &mut call {
+        if let Call::Fetch { request, .. } | Call::Import { request } = &mut call {
             if request.url.scheme() == b"blob" && client.origin().is_origin_of(&request.url) {
                 request.blob = resolve_blob_url(&request.url);
             }

@@ -363,7 +363,7 @@ impl Transaction<'_> {
             .filter(|_| !attempts.is_proxy)
             .unwrap_or_default();
         let may_act_as_user = is_listed(&self.session.settings.read().delegates, &hostname);
-        let blocks = handshake.identity.scheme() == AuthScheme::Negotiate;
+        let blocks = handshake.identity.login().is_none();
         let step = move || {
             let peer = Peer {
                 hostname: &hostname,
@@ -415,13 +415,16 @@ impl Transaction<'_> {
         headers: &HeaderList,
     ) -> Result<Option<Identity>> {
         let is_new = |it: &Identity| !attempts.refused.iter().any(|refused| refused.is_same(it));
-        if challenge.scheme == AuthScheme::Negotiate {
+        if let Some(ambient) = Identity::new(challenge, None) {
             let is_trusted = attempts.is_proxy
                 || is_listed(
                     &self.session.settings.read().trusted_servers,
                     attempts.peer.hostname(),
                 );
-            return Ok(Identity::new(challenge, None).filter(|it| is_trusted && is_new(it)));
+            let ambient = (is_trusted && is_new(&ambient)).then_some(ambient);
+            if ambient.is_some() || challenge.scheme == AuthScheme::Negotiate {
+                return Ok(ambient);
+            }
         }
         let known = self
             .session
@@ -445,12 +448,10 @@ impl Transaction<'_> {
             headers: headers.clone(),
         };
         let about = self.requester.about.clone();
-        Ok(Identity::new(
-            challenge,
-            self.session
-                .consult(move |it| it.log_in(&about, prompt))
-                .await?,
-        ))
+        let login = (self.session)
+            .consult(move |it| it.log_in(&about, prompt))
+            .await?;
+        Ok(login.and_then(|it| Identity::new(challenge, Some(it))))
     }
 
     /// Whether to try again. `body` is read if the connection is still needed.
@@ -492,7 +493,13 @@ impl Transaction<'_> {
             .filter(|_| has_tried && !challenges.iter().any(Challenge::is_stale))
         {
             self.session.logins.lock().forget(&attempts.key, &refused);
+            let is_ambient = refused.login().is_none();
             attempts.refused.push(refused);
+            // What else it accepts is only said at the start.
+            if is_ambient && !is_for_tunnel && challenges.iter().any(Challenge::is_reply) {
+                attempts.authorization = None;
+                return Ok(true);
+            }
         }
         for challenge in challenges.iter() {
             let renewed = last
@@ -511,8 +518,8 @@ impl Transaction<'_> {
                 return Ok(false);
             };
             if challenge.scheme.is_for_connection() && !is_for_tunnel {
-                let needs_certificate = challenge.scheme == AuthScheme::Negotiate
-                    && self.request.url.scheme() == b"https";
+                let needs_certificate =
+                    identity.login().is_none() && self.request.url.scheme() == b"https";
                 if !needs_certificate || self.certificate.is_none() {
                     self.pool = Some(self.session.pool_for(None));
                 }

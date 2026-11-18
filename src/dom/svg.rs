@@ -3,6 +3,8 @@
 use core::f32::consts::SQRT_2;
 use std::rc::Rc;
 
+use smallvec::{SmallVec, smallvec};
+
 use crate::abi::{Matrix, Rect, RoundedRect};
 use crate::boxes::{BoxId, Kind};
 use crate::document::Document;
@@ -12,7 +14,7 @@ use crate::path::{Numbers, Path, at_distance, distance};
 use crate::properties::{Id, Style};
 use crate::svg_paint::{Change, Reads};
 use crate::svg_values::*;
-use crate::tree::{Element, Namespace, NodeId, Tree};
+use crate::tree::{Element, Flags, Namespace, NodeId, Tree};
 use crate::types::*;
 use crate::values::{Css, Ctx, Lp, Size, parse_all};
 
@@ -344,9 +346,38 @@ pub(crate) enum Bounds {
 pub(crate) struct Ids {
     answers: Map<(NodeId, Name), Option<NodeId>>,
     wanted: Set<Name>,
-    found: Map<NodeId, Name>,
+    /// With the scopes of which they are the answer.
+    found: Map<NodeId, (Name, SmallVec<[NodeId; 2]>)>,
     /// The first element with each `id`, until the next change.
     of_scope: Map<NodeId, Map<Name, NodeId>>,
+}
+
+/// Who has looked at an element since it has last changed.
+#[derive(Default)]
+pub(crate) struct References {
+    users: Map<NodeId, SmallVec<[NodeId; 2]>>,
+    pairs: Set<(NodeId, NodeId)>,
+    /// Nothing tells when their styles change.
+    has_unstyled: bool,
+}
+
+impl References {
+    /// Some users are gone.
+    const MOST: usize = 1 << 18;
+
+    fn add(&mut self, element: NodeId, user: NodeId, is_styled: bool) {
+        self.has_unstyled |= !is_styled;
+        if self.pairs.insert((element, user)) {
+            self.users.entry(element).or_default().push(user);
+        }
+    }
+
+    fn take_users(&mut self, element: NodeId, to: &mut SmallVec<[NodeId; 4]>) {
+        for user in self.users.remove(&element).into_iter().flatten() {
+            self.pairs.remove(&(element, user));
+            to.push(user);
+        }
+    }
 }
 
 impl Ids {
@@ -375,7 +406,13 @@ impl Ids {
             });
         self.answers.insert((scope, id), found);
         self.wanted.insert(id);
-        self.found.extend(found.map(|it| (it, id)));
+        found.into_iter().for_each(|it| {
+            self.found
+                .entry(it)
+                .or_insert((id, SmallVec::new()))
+                .1
+                .push(scope)
+        });
         found
     }
 }
@@ -406,37 +443,114 @@ impl Document {
         }
     }
 
+    /// The elements in it are as they were, or tell by themselves.
+    #[inline]
+    pub(crate) fn only_svg_element_changed(&mut self, id: NodeId) {
+        if self
+            .tree
+            .element(id)
+            .is_some_and(|it| it.namespace == Namespace::Svg)
+        {
+            self.users_changed(smallvec![id]);
+        }
+    }
+
+    #[inline]
+    pub(crate) fn svg_children_changed(&mut self, id: NodeId) {
+        match !self.references.get_mut().has_unstyled
+            && self
+                .tree
+                .style(id)
+                .is_some_and(|it| it.display() != Display::None)
+        {
+            true => self.only_svg_element_changed(id),
+            false => self.svg_changed(id),
+        }
+    }
+
+    /// It keeps its styles.
+    pub(crate) fn svg_subtree_leaves(&mut self, id: NodeId) {
+        self.svg_or_reference_changed(id, Change::Inside);
+    }
+
     pub(crate) fn svg_element_moved(&mut self, id: NodeId) {
-        let referenced = self.referenced_elements.get_mut();
-        let is_referenced = !referenced.is_empty()
+        let users = &self.references.get_mut().users;
+        match !users.is_empty()
             && core::iter::once(id)
                 .chain(self.tree.flat_ancestors(id))
-                .any(|it| referenced.contains(&it));
-        self.svg_or_reference_changed(
-            id,
-            if is_referenced {
-                Change::Itself
-            } else {
-                Change::Place
+                .any(|it| users.contains_key(&it))
+        {
+            true => self.users_changed(smallvec![id]),
+            false => self
+                .outer_svg(id)
+                .into_iter()
+                .for_each(|outer| self.note_svg_change(id, outer, Change::Place)),
+        }
+    }
+
+    /// With those that refer to them, or to what they are in.
+    fn users_changed(&mut self, all: SmallVec<[NodeId; 4]>) {
+        self.users_changed_without(all, Flags::empty());
+    }
+
+    fn users_changed_without(&mut self, mut all: SmallVec<[NodeId; 4]>, gone: Flags) {
+        while let Some(id) = all.pop() {
+            if !self.tree.contains(id) || self.tree[id].flags.get().intersects(gone) {
+                continue;
+            }
+            let Some(outer) = self.outer_svg(id) else {
+                self.repaint_subtree(id);
+                self.boxes.mark_ink(self.nearest_box(id));
+                continue;
+            };
+            let references = self.references.get_mut();
+            if !references.users.is_empty() {
+                core::iter::successors(Some(id), |it| {
+                    (*it != outer).then(|| self.tree[*it].parent)
+                })
+                .for_each(|it| references.take_users(it, &mut all));
+            }
+            self.note_svg_change(id, outer, Change::Itself);
+        }
+    }
+
+    /// Without their styles having changed.
+    fn may_affect_references_in(&mut self, id: NodeId) -> bool {
+        const FEW: usize = 32;
+        let (
+            References {
+                users,
+                has_unstyled,
+                ..
             },
+            is_viewport,
+        ) = (
+            self.references.get_mut(),
+            self.tree
+                .element(id)
+                .is_some_and(|it| is_name!(it.tag, "svg" | "symbol")),
         );
+        (is_viewport
+            || *has_unstyled
+            || self
+                .tree
+                .style(id)
+                .is_none_or(|it| it.display() == Display::None))
+            && self
+                .tree
+                .descendants(id)
+                .enumerate()
+                .any(|(index, it)| index == FEW || users.contains_key(&it))
     }
 
     fn svg_or_reference_changed(&mut self, id: NodeId, change: Change) {
+        if change == Change::Itself && !self.may_affect_references_in(id) {
+            return self.users_changed(smallvec![id]);
+        }
         let Some(outer) = self.outer_svg(id) else {
             return;
         };
-        self.svg_changes = self.svg_changes.wrapping_add(1);
-        if !self.path_bounds.get_mut().is_empty() {
-            self.path_bounds.get_mut().remove(&id);
-        }
-        if self.tree.style(outer).is_some() {
-            self.repaint(outer);
-        }
-        if let Some(users) = Some(self.referenced_svgs.get_mut())
-            .filter(|it| !it.is_empty() && change != Change::Place)
-            .and_then(|it| it.remove(&outer))
-        {
+        if let Some(users) = self.referenced_svgs.get_mut().remove(&outer) {
             self.svg_generation += 1;
             for user in users {
                 if !self.tree.contains(user) {
@@ -444,12 +558,20 @@ impl Document {
                 }
                 match self.outer_svg(user) {
                     Some(_) => self.svg_or_reference_changed(user, Change::Inside),
-                    None => {
-                        self.repaint_subtree(user);
-                        self.boxes.mark_ink(self.nearest_box(user));
-                    }
+                    None => self.users_changed(smallvec![user]),
                 }
             }
+        }
+        self.note_svg_change(id, outer, change);
+    }
+
+    fn note_svg_change(&mut self, id: NodeId, outer: NodeId, change: Change) {
+        self.svg_changes = self.svg_changes.wrapping_add(1);
+        if !self.path_bounds.get_mut().is_empty() {
+            self.path_bounds.get_mut().remove(&id);
+        }
+        if self.tree.style(outer).is_some() {
+            self.repaint(outer);
         }
         if let Some(own) = self.own_box(outer) {
             let recordings = self.boxes.recordings.get_mut();
@@ -506,12 +628,18 @@ impl Document {
         self.svg_has_read(Reads::REFERENCES);
         let found = self.svg_ids.borrow_mut().look_up(&self.tree, own, id);
         let user = self.outer_svg(from).unwrap_or(from);
+        self.references.borrow_mut().add(
+            found?,
+            from,
+            self.tree
+                .style(found?)
+                .is_some_and(|it| it.display() != Display::None),
+        );
         self.referenced_svgs
             .borrow_mut()
             .entry(self.outer_svg(found?)?)
             .or_default()
             .insert(user);
-        self.referenced_elements.borrow_mut().extend(found);
         found
     }
 
@@ -553,25 +681,40 @@ impl Document {
         ids.tree_changed();
         if ids.found.get(&id).map_or_else(
             || name.is_some_and(|it| ids.wanted.contains(&it)),
-            |it| Some(*it) != name,
+            |it| Some(it.0) != name,
         ) {
             self.forget_svg_references();
         }
     }
 
+    /// They are marked as visited.
     pub(crate) fn nodes_removed(&mut self, ids: &[NodeId]) {
         let known = self.svg_ids.get_mut();
         known.tree_changed();
-        if !known.found.is_empty() && ids.iter().any(|it| known.found.contains_key(it)) {
-            self.forget_svg_references();
+        if known.found.is_empty() {
+            return;
         }
+        let (references, mut users) = (self.references.get_mut(), SmallVec::new());
+        if references.pairs.len().max(known.wanted.len()) > References::MOST {
+            return self.forget_svg_references();
+        }
+        for id in ids {
+            if let Some((name, scopes)) = known.found.remove(id) {
+                scopes
+                    .into_iter()
+                    .for_each(|it| _ = known.answers.remove(&(it, name)));
+                references.take_users(*id, &mut users);
+                self.smil.needs_update = !self.smil.is_empty();
+            }
+        }
+        self.users_changed_without(users, Flags::VISITED);
     }
 
     fn forget_svg_references(&mut self) {
         self.svg_ids.take();
         self.smil.needs_update = !self.smil.is_empty();
         self.referenced_svgs.get_mut().clear();
-        self.referenced_elements.get_mut().clear();
+        self.references.take();
         self.referenced_svg_changed();
     }
 

@@ -16,10 +16,10 @@ use core::future::poll_fn;
 use core::task::{Poll, Waker};
 use std::rc::Rc;
 
-use bun_collections::HashMap;
 use bun_core::strings;
 use bun_jsc::bindgen::{self, JsHeap, JsInterface, JsLocal, JsScope};
 use bun_jsc::{JSGlobalObject, JSValue, Strong};
+use bun_web::HashMap;
 use bun_web::client::{Client, Cors, Purpose, Resource, potential_cors_request, preload_key};
 use bun_web::convert::resolve_blob_url;
 use bun_web::encoding::Encoding;

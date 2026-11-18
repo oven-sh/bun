@@ -1,6 +1,6 @@
 //! Pens and fingers.
 
-use core::cell::Cell;
+use core::cell::{Cell, RefCell};
 
 use super::layout::ScrollUnit;
 use super::mouse::{self, Action};
@@ -13,6 +13,7 @@ use crate::types::Display;
 
 const SLOP: f64 = 15.0;
 const DOUBLE_TAP_TIME: f64 = 400.0;
+const LONG_PRESS_TIME: f64 = 1000.0;
 
 bitflags::bitflags! {
     /// What `touch-action` allows.
@@ -73,6 +74,23 @@ pub(crate) struct Touches {
     is_handled: Cell<bool>,
     taps: Cell<i32>,
     tapped_at: Cell<Option<f64>>,
+    started_at: Cell<f64>,
+    /// How far the last moves have scrolled, and when.
+    trail: RefCell<Vec<(f64, [f64; 2])>>,
+}
+
+impl Touches {
+    /// In pixels per second.
+    fn velocity(&self) -> [f32; 2] {
+        const RECENT: f64 = 80.0;
+        let (now, trail) = (host::now(), self.trail.take());
+        let mut recent = trail.iter().filter(|it| now - it.0 <= RECENT);
+        let Some(&(since, _)) = recent.next() else {
+            return [0.0; 2];
+        };
+        let way = recent.fold([0.0; 2], |all, (_, it)| [all[0] + it[0], all[1] + it[1]]);
+        way.map(|it| (it * 1000.0 / (now - since).max(8.0)) as f32)
+    }
 }
 
 pub(crate) struct Contact {
@@ -329,6 +347,10 @@ fn pan<'a>(cx: &mut Cx<'a>, ui: &'a Ui, finger: &'a Pointer, from: [f64; 2]) {
     let Some(target) = finger.touch_target().filter(|it| it.is_connected()) else {
         return;
     };
+    let mut trail = ui.touches.trail.take();
+    trail.drain(..trail.len().saturating_sub(15));
+    trail.push((host::now(), delta));
+    ui.touches.trail.replace(trail);
     if !layout::user_scroll(cx, target, delta, ScrollUnit::Pixel, false) {
         ui.any_container()
             .into_iter()
@@ -381,7 +403,10 @@ fn note_result(ui: &Ui, proceeds: bool) {
 
 pub(crate) fn start<'a>(cx: &mut Cx<'a>, ui: &'a Ui, contacts: &[Contact], modifiers: Modifiers) {
     let is_alone = ui.fingers().is_empty() && contacts.len() == 1;
-    ui.touches.may_tap.set(is_alone);
+    ui.touches
+        .may_tap
+        .set(!ui.doc().engine(|engine, _| engine.stop_coasting()) && is_alone);
+    ui.touches.started_at.set(host::now());
     ui.touches.is_handled.update(|it| it && !is_alone);
     let mut started = Refs::default();
     for contact in contacts {
@@ -459,10 +484,23 @@ pub(crate) fn end<'a>(
         changed,
         modifiers,
     );
-    if let Some(only) = changed
+    let velocity = ui.touches.velocity();
+    if cfg!(windows) && !is_canceled && is_any_scrolling(changed) && ui.fingers().is_empty() {
+        ui.doc().engine(|engine, _| engine.fling(velocity));
+        ui.doc().invalidate(cx);
+    }
+    let Some(only) = changed
         .first()
         .filter(|_| !is_canceled && proceeds && ui.touches.may_tap.get() && changed.len() == 1)
-    {
-        tap(cx, ui, only, modifiers);
+    else {
+        return;
+    };
+    match only.touch_target().filter(|it| {
+        cfg!(windows)
+            && it.is_connected()
+            && host::now() - ui.touches.started_at.get() >= LONG_PRESS_TIME
+    }) {
+        Some(target) => with_pointer(cx, ui, only, |cx| mouse::context_menu(cx, ui, target, -1)),
+        None => tap(cx, ui, only, modifiers),
     }
 }

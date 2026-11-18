@@ -222,21 +222,6 @@ pub(super) fn identities() -> Vec<(Vec<Bytes>, Key)> {
     })
 }
 
-fn der_integer(number: &[u8]) -> Vec<u8> {
-    let number = &number[number
-        .iter()
-        .take_while(|it| **it == 0)
-        .count()
-        .min(number.len() - 1)..];
-    let padding: &[u8] = if number[0] >= 0x80 { &[0] } else { &[] };
-    [
-        &[2, (padding.len() + number.len()) as u8][..],
-        padding,
-        number,
-    ]
-    .concat()
-}
-
 impl Key {
     pub(super) fn supports(&self, scheme: Scheme, _: usize) -> bool {
         const RSA: c_int = 1;
@@ -256,13 +241,7 @@ impl Key {
                 let (start, end) = ([0x30, 17 + size, 0x30, 13, 6, 9], [last_arc, 5, 0, 4, size]);
                 self.sign_raw(scheme, &[&start[..], &SHA2, &end, digest].concat())
             }
-            Scheme::Ecdsa => {
-                let raw = self.sign_raw(scheme, digest).filter(|it| it.len() >= 2)?;
-                let (first, second) = raw.split_at(raw.len() / 2);
-                let pair = [der_integer(first), der_integer(second)].concat();
-                let long_form: &[u8] = if pair.len() >= 0x80 { &[0x81] } else { &[] };
-                Some([&[0x30][..], long_form, &[pair.len() as u8], &pair].concat())
-            }
+            Scheme::Ecdsa => super::tls::pair_in_der(&self.sign_raw(scheme, digest)?),
         }
     }
 

@@ -71,6 +71,7 @@ bun_core::comptime_string_map! {
 #[derive(Default)]
 pub struct WindowsOptions {
     pub hide_console: bool,
+    pub imports_from_system32_only: bool,
     pub icon: Option<Box<[u8]>>,
     pub title: Option<Box<[u8]>>,
     pub publisher: Option<Box<[u8]>>,

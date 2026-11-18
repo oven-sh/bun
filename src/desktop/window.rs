@@ -5,8 +5,8 @@ use std::rc::Rc;
 
 use bun_ui::protocol::{
     Background, CoverField, CoverPicture, EffectState, Geometry, Limits, Material, MouseAction,
-    Overlay, SHIFT, SurfaceCommand, Synthetic, SyntheticKey, WindowCommand as To, WindowEvent,
-    WindowKind, WindowOptions, WindowStyle,
+    Overlay, SHIFT, SurfaceCommand, Synthetic, SyntheticKey, TaskbarCommand, WindowCommand as To,
+    WindowEvent, WindowKind, WindowOptions, WindowStyle,
 };
 use bun_ui::{queue, surfaces};
 
@@ -15,7 +15,7 @@ use crate::drawn_menus::DrawnMenus;
 use crate::generated_bindgen::base::{DesktopPoint, DesktopRectangle};
 use crate::generated_bindgen::window::{
     CoverFieldInit, DesktopBrowserWindow, DesktopWindow, EndCoverOptions, InputInit,
-    OverlayOptions, WindowInit, WorkspaceOptions, js_DesktopBaseWindow as fields,
+    OverlayOptions, ProgressOptions, WindowInit, WorkspaceOptions, js_DesktopBaseWindow as fields,
 };
 use crate::menu::{self, Menu, MenuItem};
 use crate::prelude::*;
@@ -24,7 +24,7 @@ use crate::touch_bar::{self, TouchBar};
 use crate::view::View;
 use crate::{app, cover, paths, screen};
 
-const MENU_BAR_HEIGHT: f32 = 28.;
+const MENU_BAR_HEIGHT: f32 = if IS_WINDOWS { 26. } else { 28. };
 const UNLIMITED: f32 = 32767.;
 
 #[derive(Default)]
@@ -58,6 +58,15 @@ pub(crate) fn with_id(id: u32) -> Option<&'static Window> {
 
 pub(crate) fn focused() -> Option<&'static Window> {
     windows().focused.get().and_then(with_id)
+}
+
+/// DevTools belong to the window that they are for.
+pub(crate) fn focused_for_app() -> Option<&'static Window> {
+    let window = focused()?;
+    match window.is_internal {
+        true => crate::contents::window_of_focused_dev_tools().or(Some(window)),
+        false => Some(window),
+    }
 }
 
 fn next_id() -> u32 {
@@ -155,8 +164,21 @@ fn background(vibrancy: Option<&[u8]>, state: EffectState, is_transparent: bool)
     }
 }
 
-fn is_see_through(material: Option<&[u8]>) -> bool {
-    matches!(material, Some(b"mica" | b"tabbed" | b"acrylic"))
+/// By a value of the option `backgroundMaterial`.
+fn backdrop(name: Option<&[u8]>) -> Option<Background> {
+    let material = match name? {
+        b"mica" => Material::Window,
+        b"tabbed" => Material::Titlebar,
+        b"acrylic" => Material::Popover,
+        _ => return None,
+    };
+    Some(match cfg!(windows) {
+        true => Background::Blurred {
+            material,
+            state: EffectState::FollowsWindow,
+        },
+        false => Background::Transparent,
+    })
 }
 
 fn at_most(width: f32, height: f32) -> Maybe<Size> {
@@ -173,8 +195,8 @@ fn bounds_of(it: Geometry) -> Rect {
     Rect {
         x: it.x,
         y: it.y,
-        width: it.width,
-        height: it.top + it.height,
+        width: it.width + it.border * 2.,
+        height: it.top + it.height + it.border,
     }
 }
 
@@ -233,6 +255,29 @@ impl<'a> Plan<'a> {
         }
     }
 
+    pub(crate) fn for_dev_tools(
+        title: String,
+        [x, y, width, height]: [Option<f32>; 4],
+        takes_focus: bool,
+    ) -> Self {
+        let plan = Plan::for_message(title, width.unwrap_or(800.), height.unwrap_or(600.));
+        Plan {
+            options: WindowOptions {
+                x: x.into(),
+                y: y.into(),
+                min_width: 400.,
+                min_height: 400.,
+                show: true,
+                focus: takes_focus,
+                resizable: true,
+                minimizable: true,
+                ..plan.options
+            },
+            style: WindowStyle::default(),
+            ..plan
+        }
+    }
+
     fn new(it: &WindowInit<'a>, background_color: Option<u32>) -> JsResult<Self> {
         let unless_false = |it: Option<bool>| it != Some(false);
         let length = |it: Option<f64>, otherwise| it.map_or(otherwise, finite);
@@ -242,7 +287,7 @@ impl<'a> Plan<'a> {
         );
         let inset = (bar == b"hiddenInset").then_some(Point { x: 12., y: 11. });
         let effect = effect_state(it.visual_effect_state.as_deref().unwrap_or_default());
-        let is_see_through = it.transparent || is_see_through(it.background_material.as_deref());
+        let backdrop = backdrop(it.background_material.as_deref());
         let (show, frame, resizable) = (
             unless_false(it.show),
             unless_false(it.frame),
@@ -270,7 +315,10 @@ impl<'a> Plan<'a> {
                 .map(Point::from)
                 .or(inset)
                 .into(),
-            background: background(it.vibrancy.as_deref(), effect, is_see_through),
+            background: match background(it.vibrancy.as_deref(), effect, it.transparent) {
+                Background::Opaque => backdrop.unwrap_or_default(),
+                other => other,
+            },
             background_color: background_color.into(),
             resizable,
             movable: unless_false(it.movable),
@@ -336,7 +384,7 @@ impl<'a> Plan<'a> {
 
 #[derive(Default)]
 pub(crate) struct State {
-    id: u32,
+    pub(crate) id: u32,
     is_internal: bool,
     is_modal: bool,
     is_transparent: bool,
@@ -598,15 +646,21 @@ impl Window {
         if it.skip_taskbar {
             window.set(To::SkipTaskbar(true))?;
         }
+        if let accent = it.accent_color.to_js()
+            && (accent.is_boolean() || accent.is_string())
+        {
+            window.change_accent(accent)?;
+        }
         if it.fullscreen && it.simple_fullscreen {
             window.simple_full_screen.set(true);
             window.set(To::SimpleFullscreen(true))?;
         }
-        if it.use_content_size && window.above_content() > 0. {
+        let extra = window.around_content();
+        if it.use_content_size && extra.height > 0. {
             let Rect { width, height, .. } = bounds_of(window.geometry.get());
             window.tell(To::Size(Size {
-                width,
-                height: height + window.above_content(),
+                width: width + extra.width,
+                height: height + extra.height,
             }))?;
         }
         if has_page {
@@ -650,7 +704,7 @@ impl Window {
         Ok(window)
     }
 
-    fn check(&self) -> JsResult<()> {
+    pub(crate) fn check(&self) -> JsResult<()> {
         match (self.is_destroyed.get(), self.is_a::<DesktopWindow>()) {
             (false, _) => Ok(()),
             (true, true) => Err(error(format_args!("The window has been destroyed"))),
@@ -915,7 +969,11 @@ impl Window {
     }
 
     pub(crate) fn raise(&self) -> JsResult<()> {
-        self.tell(if IS_MAC { To::MoveTop } else { To::Focus })
+        self.tell(if IS_MAC || IS_WINDOWS {
+            To::MoveTop
+        } else {
+            To::Focus
+        })
     }
 
     pub(crate) fn zoom_frame(&self, maximizes: bool) -> JsResult<()> {
@@ -974,6 +1032,15 @@ impl Window {
                 announce(app::object(), "new-window-for-tab", &[])
             }
             WindowEvent::Moving => announce(self.to_js(), "will-move", &[js(self.bounds()?)?]),
+            WindowEvent::Moved => self.emit("moved"),
+            WindowEvent::AppCommand(it) => self.app_command(it),
+            WindowEvent::ThumbnailButton(it) => self.thumbnail_button_was_clicked(it),
+            WindowEvent::WantsSystemMenu(at) => self.offer_system_menu(at),
+            WindowEvent::Message { message, w, l } => self.got_message(message, w, l),
+            WindowEvent::SessionEnds {
+                is_question,
+                reasons,
+            } => self.session_ends(is_question, reasons),
             WindowEvent::Visibility(it) => {
                 if it {
                     self.minimized_changed(false)?;
@@ -1480,16 +1547,22 @@ impl Window {
         self.geometry.get().top + self.menu_bar_height.get()
     }
 
+    /// By how much the bounds are larger than the content.
+    fn around_content(&self) -> Size {
+        let border = self.geometry.get().border;
+        Size {
+            width: border * 2.,
+            height: self.above_content() + border,
+        }
+    }
+
     fn content_bounds(&self) -> JsResult<Rect> {
-        let geometry = self.ask_geometry()?;
-        let (bounds, bar) = (
-            bounds_of(geometry),
-            geometry.top + self.menu_bar_height.get(),
-        );
+        let (it, bar) = (self.ask_geometry()?, self.menu_bar_height.get());
         Ok(Rect {
-            y: bounds.y + bar,
-            height: bounds.height - bar,
-            ..bounds
+            x: it.x + it.border,
+            y: it.y + it.top + bar,
+            width: it.width,
+            height: it.height - bar,
         })
     }
 }
@@ -1562,18 +1635,12 @@ fn pair(a: f32, b: f32) -> [f64; 2] {
 }
 
 impl Window {
-    pub(crate) fn nothing(&self) {}
-
-    pub(crate) fn no(&self) -> bool {
-        false
-    }
-
     pub(crate) fn get_all_windows(_: Cx<'_, '_>) -> JsResult<JSValue> {
         all_of::<Window>()
     }
 
     pub(crate) fn get_focused_window(_: &JsHeap<'_>) -> JSValue {
-        if_it_is::<Window>(focused())
+        if_it_is::<Window>(focused_for_app())
     }
 
     pub(crate) fn from_id(_: &JsHeap<'_>, id: Option<f64>) -> JSValue {
@@ -1644,14 +1711,18 @@ impl Window {
         move_above(source: &[u8]) => |it| {
             let number = source.strip_prefix(b"window:").and_then(|it| before(&string(it), ":").parse().ok());
             let number = number.ok_or_else(|| error(format_args!("Invalid media source id")))?;
-            if IS_MAC { it.tell(To::MoveAbove(number)) } else { it.raise() }
+            if IS_MAC || IS_WINDOWS { it.tell(To::MoveAbove(number)) } else { it.raise() }
         };
         set_aspect_ratio(ratio: f64, extra: Option<&DesktopRectangle>) => |it| {
             let extra = extra.map_or_else(Size::default, |it| size(it.width.unwrap_or(0.), it.height.unwrap_or(0.)));
             it.tell(To::AspectRatio { ratio: finite(ratio), extra })
         };
-        set_progress_bar(done: f64) => |it| {
+        set_progress_bar(done: f64, options: Option<&ProgressOptions>) => |it| {
             it.check()?;
+            if IS_WINDOWS {
+                let mode = Text::lossy(options.and_then(|it| it.mode.as_deref()).unwrap_or_default());
+                return it.tell_taskbar(TaskbarCommand::Progress { done: finite(done), mode }).map(drop);
+            }
             tell_system(SystemCommand::Progress { done: finite(done), app_id: paths::identifier()?.into() })
         };
         invalidate_shadow() => |it| it.tell(To::InvalidateShadow);
@@ -1691,13 +1762,16 @@ impl Window {
         set_full_screen(on: bool) => |it| it.tell(To::Fullscreen(on));
         set_bounds(to: &DesktopRectangle, animates: bool) => |it| it.change_bounds(to, animates);
         set_content_bounds(to: &DesktopRectangle, animates: bool) => |it| {
-            let bar = f64::from(it.above_content());
-            let (y, height) = (to.y.map(|it| it - bar), to.height.map(|it| it + bar));
-            it.change_bounds(&DesktopRectangle { y, height, ..*to }, animates)
+            let (top, extra) = (f64::from(it.above_content()), it.around_content());
+            let [wider, taller] = [extra.width, extra.height].map(f64::from);
+            let (x, width) = (to.x.map(|it| it - wider / 2.), to.width.map(|it| it + wider));
+            let (y, height) = (to.y.map(|it| it - top), to.height.map(|it| it + taller));
+            it.change_bounds(&DesktopRectangle { x, y, width, height }, animates)
         };
         set_size(width: f64, height: f64) => |it| it.tell(To::Size(it.within_limits(size(width, height))));
         set_content_size(width: f64, height: f64) => |it| {
-            it.tell(To::Size(it.within_limits(size(width, height + f64::from(it.above_content())))))
+            let extra = it.around_content();
+            it.tell(To::Size(it.within_limits(size(width + f64::from(extra.width), height + f64::from(extra.height)))))
         };
         set_position(x: f64, y: f64) => |it| it.tell(To::Position(Point { x: finite(x), y: finite(y) }));
         center() => |it| it.move_to_center();
@@ -1723,7 +1797,7 @@ impl Window {
         });
         set_vibrancy(kind: Option<&[u8]>) => |it| it.tell(To::Background(background(kind, it.effect, it.is_transparent)));
         set_background_material(material: Option<&[u8]>) => |it| {
-            it.tell(To::Background(background(None, it.effect, is_see_through(material))))
+            it.tell(To::Background(backdrop(material).unwrap_or_default()))
         };
         set_title_bar_overlay(options: &OverlayOptions) => |it| it.change_overlay(options);
         set_window_button_visibility(on: bool) => |it| {

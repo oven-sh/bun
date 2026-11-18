@@ -49,7 +49,7 @@ use crate::{app, renderer};
 
 pub(crate) use self::history::{Document, Entry, History};
 pub(crate) use self::hooks::all_chosen;
-pub(crate) use self::load::{How, Request};
+pub(crate) use self::load::{How, Request, can_evaluate};
 
 type Values<'a, 'b> = &'b [JsLocal<'a>];
 type Method<T> = fn(&'static T, &[JSValue]) -> JsResult<JSValue>;
@@ -155,6 +155,7 @@ struct Preferences {
     throttles_background: bool,
     is_transparent: bool,
     checks_spelling: bool,
+    has_webgl: bool,
     focuses_on_navigation: bool,
     isolates_context: bool,
     integrates_node: bool,
@@ -165,6 +166,7 @@ struct Preferences {
     fixes_text_areas: bool,
     keeps_window_size: bool,
     reports_preferred_size: bool,
+    allows_dev_tools: bool,
     zoom_factor: f64,
     preload: Option<String>,
     default_encoding: Option<Encoding>,
@@ -220,6 +222,7 @@ impl Preferences {
             throttles_background: is_left_on("backgroundThrottling")?,
             is_transparent: is_set("transparent")?,
             checks_spelling: is_left_on("spellcheck")?,
+            has_webgl: is_left_on("webgl")?,
             focuses_on_navigation: is_left_on("focusOnNavigation")?,
             isolates_context: is_left_on("contextIsolation")?,
             integrates_node,
@@ -233,6 +236,7 @@ impl Preferences {
             fixes_text_areas: !is_left_on("textAreasAreResizable")?,
             keeps_window_size: is_set("disableHtmlFullscreenWindowResize")?,
             reports_preferred_size: is_set("enablePreferredSizeMode")?,
+            allows_dev_tools: is_left_on("devTools")?,
             default_encoding: text_if_any(get(given, "defaultEncoding")?)?
                 .and_then(|it| Encoding::for_label(it.as_bytes())),
             fonts: read_fonts(given)?,
@@ -350,8 +354,16 @@ pub(crate) fn to_edit(window: JSValue) -> JsResult<JSValue> {
     focused().map_or_else(|| get(window, "webContents"), |it| Ok(it.to_js()))
 }
 
+pub(crate) fn window_of_focused_dev_tools() -> Option<&'static Window> {
+    fields::inspects(focused()?)?.window()
+}
+
 pub(crate) fn theme_changed() -> JsResult<()> {
     of_app().try_for_each(Contents::environment_changed)
+}
+
+pub(crate) fn update_agents() {
+    crate::task::report(alive().try_for_each(|it| it.page().update_agent()));
 }
 
 pub(crate) fn dictionary_changed() -> JsResult<()> {
@@ -586,6 +598,10 @@ impl Contents {
 
     pub(crate) fn window(&self) -> Option<&'static Window> {
         fields::view(self.owner())?.window()
+    }
+
+    pub(crate) fn view(&self) -> Option<&'static View> {
+        fields::view(self.itself())
     }
 
     fn window_object(&self) -> JSValue {
@@ -891,6 +907,7 @@ impl Contents {
     }
 
     fn may_unload(&self, is_closing: bool) -> JsResult<bool> {
+        self.notify(News::Leaving)?;
         let mut agrees = self.page().may_be_unloaded()?;
         for it in self.pages_apart_below()? {
             agrees = agrees && it.get().may_be_unloaded()?;
@@ -933,6 +950,7 @@ impl Contents {
         self.discard();
         self.guest().map_or(Ok(()), Remote::end)?;
         fields::inspector(self).map_or(Ok(()), Debugger::end)?;
+        self.end_dev_tools()?;
         self.notify(News::Destroyed)?;
         all().alive.borrow_mut().retain(|it| !same(it.get(), self));
         if self.is_frame() && self.is_busy() {

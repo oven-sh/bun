@@ -2,8 +2,8 @@
 
 use std::rc::Weak;
 
-use bun_collections::HashMap;
 use bun_jsc::Strong;
+use bun_web::HashMap;
 use bun_web::dom::Left;
 use bun_web::page::Change;
 
@@ -30,6 +30,7 @@ pub(crate) struct Context {
     page: Cell<u32>,
     origin: RefCell<String>,
     name: RefCell<String>,
+    is_name_public: Cell<bool>,
     is_initial: Cell<bool>,
     is_closed: Cell<bool>,
     has_crashed: Cell<bool>,
@@ -90,6 +91,10 @@ impl Context {
 
     pub(super) fn has_name(&self, name: &str) -> bool {
         *self.name.borrow() == name
+    }
+
+    pub(super) fn has_public_name(&self, name: &str) -> bool {
+        self.is_name_public.get() && !name.is_empty() && self.has_name(name)
     }
 
     pub(crate) fn name(&self) -> String {
@@ -364,6 +369,7 @@ fn create(id: u32, [embedder, parent, opener, related]: [Option<u32>; 4], frame:
         page,
         origin,
         name,
+        is_name_public,
         is_initial,
         is_closed,
         has_crashed,
@@ -379,6 +385,7 @@ fn create(id: u32, [embedder, parent, opener, related]: [Option<u32>; 4], frame:
             page,
             origin,
             name,
+            is_name_public,
             is_initial,
             is_closed,
             has_crashed,
@@ -445,7 +452,10 @@ fn __bun_dom_change_context(id: u32, change: Change) {
             }
         }
         Change::Children(all) => drop(this.children_elsewhere.replace(all)),
-        Change::Renamed(name) => drop(this.name.replace(name)),
+        Change::Renamed { name, is_public } => {
+            this.name.replace(name);
+            this.is_name_public.set(is_public);
+        }
         Change::OpenedBy(opener) => this.set_opener(opener.and_then(Context::with_id)),
         Change::Crashed => this.has_crashed.set(true),
         Change::Closed => this.is_closed.set(true),

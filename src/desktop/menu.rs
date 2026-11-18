@@ -904,7 +904,7 @@ pub(crate) fn chosen(command: u32, is_by_key: bool) -> JsResult<()> {
                 .as_ref()
                 .filter(|_| is_by_key)
                 .map(|it| it.modifiers);
-            return item.activate(window::focused(), modifiers);
+            return item.activate(window::focused_for_app(), modifiers);
         }
     }
     Ok(())

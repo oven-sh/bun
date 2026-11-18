@@ -8,11 +8,11 @@ use std::collections::VecDeque;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
-use bun_collections::HashMap;
 use bun_core::strings;
 use bun_jsc::{JSGlobalObject, JSValue};
 use bun_threading::Guarded;
 
+use crate::HashMap;
 use crate::compiled::{self, Form};
 use crate::csp::embedded::RequiredCsp;
 use crate::csp::{Delivery, Directive, Inline, Metadata, Verdict, Violation, strip_for_report};
@@ -33,16 +33,18 @@ use crate::net::session::Session;
 use crate::net::web_socket::{Accepted, Connection, Handshake};
 use crate::net::{NetError, Result};
 use crate::origin::{Origin, Site, is_potentially_trustworthy};
-use crate::outside::Outside;
+use crate::outside::{Claim, Outside};
 use crate::permissions_policy::{Declared, Feature, PermissionsPolicy};
 use crate::policy_container::PolicyContainer;
 use crate::referrer::ReferrerPolicy;
+use crate::remote::bodies::OnDemand;
 use crate::remote::grants::Access;
 use crate::reporting::{Member, Members, ReportType, to_json};
 use crate::request::{
     CacheMode, Credentials, Destination, InitiatorType, Mode, Redirect, Request, RequestBody,
 };
 use crate::scheme::{Privileges, privileges_of};
+use crate::service::far::Told;
 use crate::service::{
     self, Address, Call, Caller, ClientInfo, ClientKind, Control, Failure, Handler, Notice,
     Outcome, Own, Presence, Reserved, ToRegistry, WindowState, WorkerInfo,
@@ -54,6 +56,7 @@ use crate::time::monotonic_now;
 use crate::time::wall_now;
 use crate::timing::{NavigationType, ResourceTiming};
 use crate::url::Url;
+use crate::wire::Measured;
 use crate::{Bytes, mime, remote, trust};
 
 const MAX_UNREAD_TIMINGS: usize = 250;
@@ -125,6 +128,7 @@ crate::wire! {
         Timing(Box<ResourceTiming>),
         Report { kind: ReportType, body: Members },
         Cookie(cookies::Change),
+        Service(Box<Told>),
     }
 
     /// What a page process makes the client of a document from.
@@ -141,6 +145,8 @@ crate::wire! {
         navigation_start: f64,
         previous: Option<ClientId>,
         access: Access,
+        id_for_service_workers: u32,
+        control: Option<Control>,
     }
 
     /// What a frame needs to know of a parent in another process.
@@ -241,10 +247,12 @@ crate::wire! {
         user_agent: Bytes,
         accept_language: Bytes,
         app_path: Bytes,
+        has_webgl: bool,
         /// In a sandbox, where it runs the scripts that it likes.
         is_like_in_browser: bool,
         /// It has the origin of trusted documents, and not their storage.
         is_kept_apart: bool,
+        is_in_page_process: bool,
     }
 }
 
@@ -259,8 +267,10 @@ impl Agent {
             user_agent: self.user_agent.clone(),
             accept_language: self.accept_language.clone(),
             app_path: self.app_path.clone(),
+            has_webgl: self.has_webgl,
             is_like_in_browser: false,
             is_kept_apart: false,
+            is_in_page_process: false,
         }
     }
 
@@ -359,6 +369,31 @@ impl WorkerSeed {
         }
     }
 
+    pub(crate) fn from_host(seed: Seed, ancestors: Vec<Origin>, own: Own) -> WorkerSeed {
+        WorkerSeed {
+            id: seed.id,
+            responsible: seed.id,
+            token: seed.token,
+            session: Session::stand_in_for(seed.session),
+            role: seed.role,
+            agent: seed.agent,
+            document: seed.document,
+            ancestors,
+            is_secure: true,
+            kind: ClientKind::ServiceWorker,
+            creator: None,
+            control: None,
+            presence: None,
+            own: Some(own),
+            unread_timings: UnreadTimings::default(),
+            is_far: true,
+        }
+    }
+
+    pub(crate) fn session(&self) -> &Arc<Session> {
+        &self.session
+    }
+
     /// To be dropped when the worker has ended.
     pub fn presence(&self) -> Option<Arc<Presence>> {
         self.presence.clone()
@@ -388,10 +423,12 @@ pub(crate) fn bucket_of(origin: &Origin, ancestors: &[Origin]) -> Vec<u8> {
 /// A worker shares them with the client that fetches its first scripts.
 type UnreadTimings = Arc<Guarded<Vec<ResourceTiming>>>;
 
-#[derive(Clone)]
-pub struct Loaded {
-    pub head: Head,
-    pub bytes: SharedBytes,
+crate::wire! {
+    #[derive(Clone)]
+    pub struct Loaded {
+        pub head: Head,
+        pub bytes: SharedBytes,
+    }
 }
 
 struct Deferred {
@@ -435,6 +472,7 @@ pub struct Client {
     twin: RefCell<Option<Rc<dyn Twin>>>,
     previous: Cell<Option<ClientId>>,
     cookie_watcher: Cell<Option<fn(&Client, &cookies::Change)>>,
+    changes_for_answer: RefCell<Option<Vec<cookies::Change>>>,
     service: RefCell<Service>,
     /// Until when what the host has said, and how often that has passed.
     cookies_last: Cell<(f64, u32)>,
@@ -646,6 +684,7 @@ impl Observer for Fetching<'_> {
             && self.client.allows_request(request, first)
             && (!(request.may_become_code
                 || first.is_some_and(|it| self.client.may_serve_as_code(it)))
+                || self.client.agent.borrow().is_like_in_browser
                 || self.client.trusts(&request.url))
             && (first.is_some() || self.client.integrity_policy_allows(request))
             && (request.initiator_type == Some(InitiatorType::XmlHttpRequest)
@@ -747,6 +786,7 @@ impl Client {
             twin: RefCell::default(),
             previous: Cell::default(),
             cookie_watcher: Cell::default(),
+            changes_for_answer: RefCell::default(),
             service: RefCell::default(),
             cookies_last: Cell::default(),
             watches_areas: Cell::default(),
@@ -830,21 +870,27 @@ impl Client {
         CLIENTS.with_borrow(|it| it.get(&id.0)?.upgrade())
     }
 
-    pub(crate) fn is_thread_of_service_worker() -> bool {
-        let is_one = |it: Rc<Client>| it.service.borrow().own.is_some();
-        CLIENTS.with_borrow(|it| it.values().filter_map(Weak::upgrade).any(is_one))
-    }
-
     pub fn set_scripts(&self, scripts: Rc<dyn Scripts>) {
         self.scripts.replace(Some(scripts));
     }
 
-    pub fn set_agent(&self, user_agent: &[u8], accept_language: &[u8], app_path: &[u8]) {
+    pub fn has_webgl(&self) -> bool {
+        self.agent.borrow().has_webgl
+    }
+
+    pub fn set_agent(
+        &self,
+        user_agent: &[u8],
+        accept_language: &[u8],
+        app_path: &[u8],
+        has_webgl: bool,
+    ) {
         let before = self.agent.borrow().clone();
         self.agent.replace(Agent {
             user_agent: user_agent.into(),
             accept_language: accept_language.into(),
             app_path: app_path.into(),
+            has_webgl,
             ..before
         });
         self.update_twin(|| Update::Agent(self.agent.borrow().clone()));
@@ -858,11 +904,26 @@ impl Client {
         self.agent.borrow_mut().is_like_in_browser = true;
     }
 
+    pub fn is_like_in_browser(&self) -> bool {
+        self.agent.borrow().is_like_in_browser
+    }
+
     pub fn treat_as_stranger(&self, is_stranger: bool) {
         let origin = self.origin();
         let is_kept_apart = is_stranger
             && (origin.as_bytes() == b"file://" || trust::is_trusted_origin(origin.as_bytes()));
         self.agent.borrow_mut().is_kept_apart = is_kept_apart;
+    }
+
+    /// It has nothing to do with the service workers of the other side.
+    pub fn move_out(&self, is_moved: bool) {
+        let mut agent = self.agent.borrow_mut();
+        let before = core::mem::replace(&mut agent.is_in_page_process, is_moved);
+        if before != is_moved || agent.is_kept_apart {
+            drop(agent);
+            let mut service = self.service.borrow_mut();
+            (service.id, service.presence, service.control) = (None, None, None);
+        }
     }
 
     pub fn set_twin(&self, twin: Rc<dyn Twin>) {
@@ -900,6 +961,8 @@ impl Client {
                 session: self.session.id(),
                 bucket: self.bucket().into(),
             })),
+            id_for_service_workers: self.id_for_service_workers(),
+            control: self.service.borrow().control.clone(),
         })
     }
 
@@ -941,6 +1004,8 @@ impl Client {
                 self.document.replace(seed.document);
                 self.navigation_timing.replace(seed.navigation_timing);
                 self.navigation_start.set(seed.navigation_start);
+                let mut service = self.service.borrow_mut();
+                (service.id, service.control) = (Some(seed.id_for_service_workers), seed.control);
             }
             Update::Url(url) => self.set_url(url),
             Update::Agent(agent) => drop(self.agent.replace(agent)),
@@ -950,6 +1015,11 @@ impl Client {
                 crate::realm::tell_scripts(self.id, kind, body, JSValue::UNDEFINED);
             }
             Update::Cookie(change) => self.cookie_watcher.get().map_or((), |it| it(self, &change)),
+            Update::Service(told) => {
+                if let Some(host) = self.outside() {
+                    service::far::hear(self, host, *told);
+                }
+            }
         }
     }
 
@@ -1078,6 +1148,12 @@ impl Client {
             document.refuses_required_csp,
         ) = (policies, required_csp, refuses_required_csp);
         drop(document);
+        let is_apart = |it: &Client| it.agent.borrow().is_in_page_process;
+        let side = (commit.reserved.as_ref().map(|it| it.is_apart))
+            .or_else(|| commit.policies_of.map(is_apart));
+        if let Some(it) = side {
+            self.move_out(it);
+        }
         let (reserved, control) = match commit.reserved {
             _ if self.origin().is_opaque() => (None, None),
             Some(it) => (Some(it.presence), it.control),
@@ -1105,6 +1181,7 @@ impl Client {
         Some(Reserved {
             presence: service.presence?,
             control: service.control,
+            is_apart: self.agent.borrow().is_in_page_process,
         })
     }
 
@@ -1127,12 +1204,17 @@ impl Client {
         }
     }
 
-    fn id_for_service_workers(&self) -> u32 {
+    pub(crate) fn id_for_service_workers(&self) -> u32 {
         self.service.borrow().id.unwrap_or(self.id.0)
+    }
+
+    fn bucket_for_service_workers(&self) -> Bytes {
+        service::bucket_for(self.bucket(), self.agent.borrow().is_in_page_process)
     }
 
     fn as_caller(&self) -> Caller {
         Caller {
+            weight: None,
             address: Address {
                 thread: Thread::current(),
                 client: self.id,
@@ -1149,7 +1231,7 @@ impl Client {
             },
             home_url: self.home_url(),
             referrer: (self.referrer_source()).map(|it| (it, self.policies().referrer_policy)),
-            bucket: self.bucket().into(),
+            bucket: self.bucket_for_service_workers(),
             agent: self.agent.borrow().clone(),
             worker: self.service.borrow().own.as_ref().map(|it| it.worker.id),
         }
@@ -1197,14 +1279,10 @@ impl Client {
             || (service.own.as_ref()).is_some_and(|it| !is_installed(it) && self.trusts(url))
     }
 
-    /// They run in the process of the app.
     pub fn may_use_service_workers(&self) -> bool {
         self.is_secure()
             && !self.origin().is_opaque()
             && !matches!(self.role, Role::App { .. })
-            && self.far.get().is_none()
-            && self.twin.borrow().is_none()
-            && !self.agent.borrow().is_like_in_browser
             && !self.agent.borrow().is_kept_apart
     }
 
@@ -1225,6 +1303,9 @@ impl Client {
         if let Some(listener) = service.listener.clone() {
             drop(service);
             listener(notice);
+        } else if let Notice::Controller(_) | Notice::State(..) = notice {
+            drop(service);
+            self.update_twin(|| Update::Service(Told::Notice(notice).into()));
         } else if let Notice::Message(..) = notice
             && service.unheard.len() < MOST_NOTES_FOR_SERVICE_WORKERS
         {
@@ -1237,20 +1318,33 @@ impl Client {
         let unheard = core::mem::take(&mut self.service.borrow_mut().unheard);
         unheard.into_iter().for_each(&*listener);
         self.service.borrow_mut().listener = Some(listener);
-        if self.may_use_service_workers() {
+        if let Some(outside) = self.outside() {
+            outside.listen_to_service_workers();
+        } else if self.may_use_service_workers() {
             self.greet_registry();
         }
     }
 
     /// The outcome comes with `ticket`.
     pub fn call_service_workers(&self, ticket: u32, call: Call) {
+        self.call_service_workers_with(ticket, call, None);
+    }
+
+    pub(crate) fn call_service_workers_with(
+        &self,
+        ticket: u32,
+        call: Call,
+        weight: Option<Arc<service::Weight>>,
+    ) {
         let is_allowed = self.may_use_service_workers()
             && match &call {
                 Call::Register { scope, script, .. } => {
                     let (destination, mode) = (Destination::ServiceWorker, Mode::SameOrigin);
                     let request =
                         Request::new(script.clone(), destination, mode, Credentials::Omit);
-                    self.report_request(&request, None);
+                    if self.twin.borrow().is_none() {
+                        self.report_request(&request, None);
+                    }
                     [scope, script]
                         .iter()
                         .all(|it| service::is_allowed_at(it) && self.origin().is_origin_of(it))
@@ -1259,9 +1353,14 @@ impl Client {
                 Call::GetRegistration(url) => self.origin().is_origin_of(url),
                 _ => true,
             };
-        if is_allowed {
-            let caller = self.as_caller().into();
-            service::send(&self.session, ToRegistry::Call(caller, ticket, call));
+        if let Some(outside) = self.outside().filter(|_| is_allowed) {
+            outside.call_service_workers(ticket, Measured(call, 0));
+        } else if is_allowed {
+            let caller = Caller {
+                weight,
+                ..self.as_caller()
+            };
+            service::send(&self.session, ToRegistry::Call(caller.into(), ticket, call));
         } else {
             let failure = Outcome::Failed(Failure::Security, "The URL is not allowed here.");
             self.notice(Notice::Settled(ticket, failure));
@@ -1274,6 +1373,21 @@ impl Client {
 
     pub fn as_service_worker(&self) -> Option<Own> {
         self.service.borrow().own.clone()
+    }
+
+    /// `None` if there is nobody to ask.
+    pub fn claim_shared_worker(
+        &self,
+        worker: u32,
+        url: &Url,
+        name: &[u8],
+        options: [u8; 4],
+    ) -> Option<impl Future<Output = Option<Claim>> + use<>> {
+        Some((self.outside()?).claim_shared_worker(worker, url.clone(), name.into(), options))
+    }
+
+    pub(crate) fn is_service_worker(&self) -> bool {
+        self.service.borrow().own.is_some()
     }
 
     fn handler_for_new_client(&self, source: Option<&Client>) -> Handler {
@@ -1325,12 +1439,13 @@ impl Client {
         reserved: Option<Reserved>,
     ) -> WorkerSeed {
         let inherited = (self.service.borrow().control.clone()).filter(|_| url.scheme() == b"blob");
+        let reserved_id = reserved.as_ref().map(|it| it.presence.id);
         let (mut presence, control) =
             reserved.map_or((None, inherited), |it| (Some(it.presence), it.control));
         let id = ClientId::next();
         if presence.is_none() && self.may_use_service_workers() && url.scheme() != b"data" {
             let uses = control.as_ref().map(|it| it.registration);
-            let expected = ToRegistry::Expect(id.0, self.bucket().into(), uses);
+            let expected = ToRegistry::Expect(id.0, self.bucket_for_service_workers(), uses);
             service::send(&self.session, expected);
             presence = Some(Presence::new(&self.session, id.0));
         }
@@ -1354,7 +1469,7 @@ impl Client {
             document.policies.document_isolation_policy = Default::default();
         }
         if let Some(outside) = self.outside() {
-            outside.start_worker(id, url.clone(), is_shared);
+            outside.start_worker(id, url.clone(), is_shared, reserved_id);
         }
         document.inherited_url = (url.scheme() == b"blob").then(|| self.home_url());
         document.creation_url = url.clone();
@@ -2238,9 +2353,37 @@ impl Client {
         });
         let outliving = Outliving(self, request.keepalive.into());
         self.outliving.borrow_mut().0 += outliving.1;
-        let initiator = self.initiator();
+        let initiator = self.initiator_of(&mut request)?;
         (fetch::fetch(&self.session, &initiator, request, &observer, controller).await)
             .map_err(|it| it.error)
+    }
+
+    fn initiator_of(&self, request: &mut Request) -> Result<Initiator> {
+        let mut initiator = self.initiator();
+        match request.destination {
+            Destination::Worker | Destination::SharedWorker if request.mode == Mode::SameOrigin => {
+                initiator.service = match self.may_use_service_workers() {
+                    true => self.handler_for_new_client(Some(self)),
+                    false => Handler::Nobody,
+                };
+            }
+            Destination::Embed | Destination::Object | Destination::Report => {
+                initiator.service = Handler::Nobody;
+            }
+            _ => {}
+        }
+        if let Some(handler) = request.handler.take_if(|_| self.outside().is_none()) {
+            initiator.service = handler;
+        }
+        if let Some(starter) = &request.starter {
+            if !self.allows_request(request, None) {
+                return Err(NetError::BlockedByCsp);
+            }
+            initiator.embedder_policy = Default::default();
+            request.has_user_activation = starter.has_user_activation;
+            initiator.origin.clone_from(&starter.origin);
+        }
+        Ok(initiator)
     }
 
     async fn run_fetch(&self, mut request: Request, controller: &Controller) -> Result<Response> {
@@ -2253,6 +2396,7 @@ impl Client {
             });
         }
         self.prepare(&mut request, controller);
+        let initiator = self.initiator_of(&mut request)?;
         let (start, name) = (monotonic_now(), Bytes::from(request.url.href()));
         let timed = request
             .initiator_type
@@ -2270,30 +2414,6 @@ impl Client {
         let outlives = u32::from(request.keepalive);
         self.kept_alive.update(|it| it + kept_alive);
         self.outliving.borrow_mut().0 += outlives;
-        let mut initiator = self.initiator();
-        match request.destination {
-            Destination::Worker | Destination::SharedWorker if request.mode == Mode::SameOrigin => {
-                initiator.service = match self.may_use_service_workers() {
-                    true => self.handler_for_new_client(Some(self)),
-                    false => Handler::Nobody,
-                };
-            }
-            Destination::Embed | Destination::Object | Destination::Report => {
-                initiator.service = Handler::Nobody;
-            }
-            _ => {}
-        }
-        if let Some(handler) = request.handler.take() {
-            initiator.service = handler;
-        }
-        if let Some(starter) = &request.starter {
-            if !self.allows_request(&request, None) {
-                return Err(NetError::BlockedByCsp);
-            }
-            initiator.embedder_policy = Default::default();
-            request.has_user_activation = starter.has_user_activation;
-            initiator.origin.clone_from(&starter.origin);
-        }
         let is_for_host = |it: &Far| match request.url.scheme() {
             b"blob" => request.blob.is_none(),
             b"data" => it.handles_data,
@@ -2560,18 +2680,25 @@ impl Client {
     }
 
     /// A service worker keeps to what it was installed with.
-    async fn load_script(&self, mut request: Request) -> Result<Loaded> {
+    pub(crate) async fn load_script(&self, mut request: Request) -> Result<Loaded> {
         let Some(own) = self.as_service_worker() else {
             return self.fetch_whole(request, &Controller::default()).await;
         };
-        if compiled::is_exclusive() && request.destination.is_script_like() {
+        if compiled::is_exclusive()
+            && request.destination.is_script_like()
+            && self.twin.borrow().is_none()
+        {
             return Err(NetError::BlockedByClient);
+        }
+        if let Some(outside) = self.outside() {
+            let loaded = outside.import(request.into()).await;
+            return loaded.ok_or(NetError::Aborted)?.map(|it| *it);
         }
         let url = request.url.clone();
         {
             let mut imports = own.imports.lock();
-            if !imports.is_complete && !imports.used.contains(&url) {
-                imports.used.push(url.clone());
+            if !imports.note_use(&url) {
+                return Err(NetError::InsufficientResources);
             }
             if let Some(known) = imports.loaded.iter().find(|it| it.0 == url) {
                 let is_allowed = self.allows_request(&request, None);
@@ -2856,7 +2983,7 @@ impl Client {
     /// `url` is for service workers.
     pub fn cookies(&self, url: Option<Url>) -> Vec<Cookie> {
         if let Some(outside) = self.outside() {
-            return outside.cookies().wait().unwrap_or_default();
+            return outside.cookies(url).wait().unwrap_or_default();
         }
         let url = url.unwrap_or_else(|| self.cookie_url());
         self.session.with_cookies(|it| {
@@ -2869,13 +2996,31 @@ impl Client {
 
     pub fn set_cookie(&self, text: &[u8]) -> bool {
         if let Some(outside) = self.outside() {
-            return outside.set_cookie(text.to_vec()).wait() == Some(true);
+            let (is_set, changes) = (outside.set_cookie(text.to_vec()).wait()).unwrap_or_default();
+            for change in changes {
+                let (id, update) = (self.id, Update::Cookie(change));
+                Thread::current().post(move || Client::find(id).map_or((), |it| it.apply(update)));
+            }
+            return is_set;
         }
         let url = self.cookie_url();
         !self.origin().is_opaque()
-            && self
-                .session
-                .with_cookies(|it| it.receive(text, &url, &self.cookie_context(&url, true)))
+            && (self.session).with_cookies_for(Some(self.id), |it| {
+                it.receive(text, &url, &self.cookie_context(&url, true))
+            })
+    }
+
+    pub(crate) fn set_cookie_for_twin(&self, text: &[u8]) -> (bool, Vec<cookies::Change>) {
+        self.changes_for_answer.replace(Some(Vec::new()));
+        let is_set = self.set_cookie(text);
+        (is_set, self.changes_for_answer.take().unwrap_or_default())
+    }
+
+    pub(crate) fn tell_twin_of_cookie(&self, change: &cookies::Change) {
+        match &mut *self.changes_for_answer.borrow_mut() {
+            Some(all) => all.push(change.clone()),
+            None => _ = self.update_twin(|| Update::Cookie(change.clone())),
+        }
     }
 
     /// `None` unless the host has it.
@@ -2901,11 +3046,11 @@ impl Client {
             self.cookie_watcher.set(Some(watcher));
             return outside.watch_cookies();
         }
-        let (id, thread) = (self.id, Thread::current());
-        let tell = move |change: &cookies::Change| {
+        let (id, thread, is_twin) = (self.id, Thread::current(), self.twin.borrow().is_some());
+        let tell = move |change: &cookies::Change, _| {
             if change.is_news() {
                 let change = change.clone();
-                thread.post(move || {
+                let steps = move || {
                     let sees = |it: &Rc<Client>| {
                         let url = it.cookie_url();
                         !it.origin().is_opaque()
@@ -2914,7 +3059,11 @@ impl Client {
                     if let Some(client) = Client::find(id).filter(sees) {
                         watcher(&client, &change);
                     }
-                });
+                };
+                match is_twin {
+                    true => thread.run(steps),
+                    false => thread.post(steps),
+                }
             }
         };
         self.session.watch_cookies(id.0, Some(Box::new(tell)));
@@ -2923,7 +3072,7 @@ impl Client {
     /// `watcher` runs on the thread that makes the change.
     pub(crate) fn watch_cookie_string(&self, watcher: impl Fn() + Send + Sync + 'static) {
         let host = Bytes::from(self.url().hostname());
-        let tell = move |it: &cookies::Change| {
+        let tell = move |it: &cookies::Change, _| {
             if !it.cookie.is_http_only && cookies::domain_matches(&host, &it.cookie.domain) {
                 watcher();
             }
@@ -2960,7 +3109,9 @@ impl Client {
     async fn run_connect_web_socket(&self, url: &Url, protocols: &[Bytes]) -> Result<Connection> {
         let (uplink, frames) = pipe(0);
         let accepted = match self.outside() {
-            Some(it) => (it.connect(url.clone(), protocols.to_vec(), frames).await)
+            Some(it) => (it
+                .connect(url.clone(), protocols.to_vec(), OnDemand(frames))
+                .await)
                 .unwrap_or(Err(NetError::Aborted)),
             None => self.shake_hands(url, protocols, frames).await,
         };

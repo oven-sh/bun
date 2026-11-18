@@ -540,6 +540,12 @@ impl Shorthand {
         initials: &[Part],
         is_computed: bool,
     ) -> Option<Out> {
+        fn without_calc(value: &[u8]) -> &[u8] {
+            value
+                .strip_prefix(b"calc(")
+                .and_then(|it| it.strip_suffix(b")"))
+                .unwrap_or(value)
+        }
         let of = |prop| self.index(prop).map(|it| values[it]);
         let value = |prop| match prop {
             Prop::Short(index) => get(index).try_join(
@@ -551,12 +557,15 @@ impl Shorthand {
                     .collect::<Option<Vec<_>>>()?,
                 None,
             ),
-            Prop::Long(Id::FontStretch) if of(prop)?.ends_with(b"%") => {
+            Prop::Long(Id::FontStretch)
+                if let Some(percent) =
+                    Some(without_calc(of(prop)?)).filter(|it| it.ends_with(b"%")) =>
+            {
                 const NAMES: &str = "50% ultra-condensed 62.5% extra-condensed 75% condensed 87.5% semi-condensed 100% normal \
                     112.5% semi-expanded 125% expanded 150% extra-expanded 200% ultra-expanded";
                 NAMES
                     .split_ascii_whitespace()
-                    .skip_while(|it| Some(it.as_bytes()) != of(prop))
+                    .skip_while(|it| it.as_bytes() != percent)
                     .nth(1)
                     .map(Into::into)
             }
@@ -580,7 +589,7 @@ impl Shorthand {
                         .syntax()
                         .write(part, grammar::Mode::Computed(&cx))
                         .as_deref()
-                        == Some(values[index])
+                        == Some(without_calc(values[index]))
                 || self.ids[0][index]
                     .syntax()
                     .write(

@@ -23,8 +23,8 @@ use crate::generated_bindgen::canvas::{
     CanvasFontVariantCaps, CanvasImageSource, CanvasLineCap, CanvasLineJoin,
     CanvasRenderingContext2D, CanvasRenderingContext2DSettings as Settings, CanvasStyle,
     CanvasTextAlign, CanvasTextBaseline, CanvasTextRendering, ContextAttributes,
-    GlobalCompositeOperation, ImageDataSettings, ImageSmoothingQuality, Path2D,
-    PredefinedColorSpace, js_Canvas2D as js, js_CanvasGradient, js_CanvasPattern, js_TextMetrics,
+    GlobalCompositeOperation, ImageDataSettings, ImageSmoothingQuality, Path2D, js_Canvas2D as js,
+    js_CanvasGradient, js_CanvasPattern, js_TextMetrics,
 };
 use crate::name::Name;
 use crate::platform::graphics;
@@ -336,7 +336,7 @@ impl Context {
                 size,
                 !settings.alpha,
                 settings.will_read_frequently,
-                settings.color_space == PredefinedColorSpace::DisplayP3,
+                settings.color_space,
             ),
             settings,
             states: JsCell::new(vec![State::new()]),
@@ -356,6 +356,9 @@ impl Context {
 
     /// https://html.spec.whatwg.org/#concept-canvas-set-bitmap-dimensions
     pub(crate) fn set_dimensions(&self, heap: &JsHeap<'_>, size: [u32; 2]) {
+        if let Some(webgl) = js::webgl(self) {
+            return webgl.resize(size);
+        }
         let before = self.bitmap.bytes();
         self.bitmap.is_origin_clean.set(true);
         self.reset_to(size);
@@ -426,7 +429,7 @@ impl Context {
             let due = self.stale.get() & needs;
             if !due.is_empty() {
                 self.stale.set(self.stale.get() - due);
-                self.state().record(due, list, self.bitmap.is_wide);
+                self.state().record(due, list, self.bitmap.is_wide.get());
             }
             let command = command(list);
             list.push(command);
@@ -707,7 +710,7 @@ impl Context {
                     styles: [Style::Color(ring), Style::Color(ring)],
                     ..State::new()
                 }
-                .record(parts, list, self.bitmap.is_wide);
+                .record(parts, list, self.bitmap.is_wide.get());
                 Command::Stroke {
                     verbs: self.record_path(path, list),
                 }
@@ -902,8 +905,8 @@ impl Context {
         image.with_pixels(heap, |rgba| {
             if left < right && top < bottom {
                 let mut rgba = Cow::Borrowed(rgba);
-                if image.is_wide() != self.bitmap.is_wide {
-                    convert(rgba.to_mut(), self.bitmap.is_wide);
+                if image.is_wide() != self.bitmap.is_wide.get() {
+                    convert(rgba.to_mut(), self.bitmap.is_wide.get());
                 }
                 self.bitmap.write(
                     at,
@@ -1169,7 +1172,7 @@ impl CanvasDrawing {
         Ok(image.map(|image| {
             let wanted = Snapshot {
                 is_tile: true,
-                is_wide: self.bitmap.is_wide,
+                is_wide: self.bitmap.is_wide.get(),
                 ..image.whole()
             };
             let bytes = area_of(wanted.to).saturating_mul(4) as usize;

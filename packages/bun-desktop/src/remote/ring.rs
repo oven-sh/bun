@@ -1,9 +1,10 @@
 //! Bytes from one process to another, through memory that both can write to. Nothing in it is trusted.
 
-use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd};
 use std::sync::Arc;
 use std::sync::atomic::Ordering::SeqCst;
 use std::sync::atomic::{AtomicU32, AtomicU64};
+
+use super::system::{self, OwnedFd};
 
 #[repr(C, align(128))]
 struct Positions {
@@ -26,59 +27,14 @@ unsafe impl Send for Shared {}
 // SAFETY: as above.
 unsafe impl Sync for Shared {}
 
-#[cfg(not(target_os = "macos"))]
-fn anonymous_file() -> Option<OwnedFd> {
-    // SAFETY: a C string. The descriptor is nobody else's.
-    unsafe {
-        let file = libc::memfd_create(
-            c"bun:desktop".as_ptr(),
-            libc::MFD_CLOEXEC | libc::MFD_ALLOW_SEALING,
-        );
-        let file = (file >= 0).then(|| OwnedFd::from_raw_fd(file))?;
-        let seals = libc::F_SEAL_SHRINK | libc::F_SEAL_GROW | libc::F_SEAL_SEAL;
-        (libc::ftruncate(file.as_raw_fd(), SIZE as _) == 0
-            && libc::fcntl(file.as_raw_fd(), libc::F_ADD_SEALS, seals) == 0)
-            .then_some(file)
-    }
-}
-
-/// Its size can only be set once.
-#[cfg(target_os = "macos")]
-fn anonymous_file() -> Option<OwnedFd> {
-    let name = std::ffi::CString::new(format!("/bun{:x}.{:x}", std::process::id(), super::clock()))
-        .ok()?;
-    // SAFETY: as above.
-    unsafe {
-        let file = libc::shm_open(
-            name.as_ptr(),
-            libc::O_RDWR | libc::O_CREAT | libc::O_EXCL,
-            0o600,
-        );
-        let file = (file >= 0).then(|| OwnedFd::from_raw_fd(file))?;
-        libc::shm_unlink(name.as_ptr());
-        (libc::ftruncate(file.as_raw_fd(), SIZE as _) == 0).then_some(file)
-    }
-}
-
 impl Shared {
     pub fn create() -> Option<(Arc<Shared>, OwnedFd)> {
-        let file = anonymous_file()?;
+        let file = system::share(SIZE)?;
         Some((Shared::map(&file)?, file))
     }
 
     pub fn map(file: &OwnedFd) -> Option<Arc<Shared>> {
-        // SAFETY: a new mapping of a file that has this size for good.
-        let start = unsafe {
-            libc::mmap(
-                std::ptr::null_mut(),
-                SIZE,
-                libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_SHARED,
-                file.as_raw_fd(),
-                0,
-            )
-        };
-        (start != libc::MAP_FAILED).then(|| Arc::new(Shared(start.cast())))
+        system::map(file, SIZE).map(|it| Arc::new(Shared(it)))
     }
 }
 
@@ -93,7 +49,7 @@ impl Shared {
 impl Drop for Shared {
     fn drop(&mut self) {
         // SAFETY: nothing refers to it any more.
-        unsafe { libc::munmap(self.0.cast(), SIZE) };
+        unsafe { system::unmap(self.0, SIZE) };
     }
 }
 

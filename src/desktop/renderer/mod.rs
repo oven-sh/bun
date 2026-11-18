@@ -5,8 +5,8 @@ pub(crate) mod preload;
 
 use std::rc::Rc;
 
-use bun_collections::HashMap;
 use bun_jsc::{JSMap, Strong, from_js_host_call, from_js_host_call_generic};
+use bun_web::HashMap;
 use bun_web::channel::{Endpoint, LooseBitmap, Message, Serialized, Transferred};
 use bun_web::client::Client;
 use bun_web::compiled::PRELOAD_PARAMETERS;
@@ -25,7 +25,7 @@ use crate::realm::{self, Realm};
 use crate::webview::wire;
 use crate::{files, process, task};
 
-const OF_PRELOAD: u32 = 999;
+pub(crate) const OF_PRELOAD: u32 = 999;
 
 /// `WebGlobalObject::NodeGlobals`
 #[derive(Clone, Copy)]
@@ -84,14 +84,6 @@ fn clone(value: JSValue, transfer: JSValue, to: &Realm) -> JsResult<JSValue> {
 pub(crate) fn run_compiled(realm: &Realm, path: &[u8]) -> JsResult<JSValue> {
     let path = bun_core::String::clone_utf8(path);
     from_js_host_call(realm, || Bun__WebRealm__runCompiled(realm, &path, true))
-}
-
-/// What the app gets for a value of a page.
-pub(crate) fn handle_of(value: JSValue) -> JSValue {
-    match value.is_object() {
-        true => Bun__RealmBridge__keep(value),
-        false => value,
-    }
 }
 
 /// The values that it takes and gives are those of `realm`. The page keeps it alive.
@@ -363,6 +355,20 @@ impl Document {
             return Ok(None);
         };
         Ok(object_in(Some(map_in(worlds).get(global(), js(id)?)?)).map(realm::of))
+    }
+
+    pub(crate) fn has_world(&self, id: u32) -> JsResult<bool> {
+        Ok(self.known_realm(id)?.is_some())
+    }
+
+    pub(crate) fn id_of_world(&self, realm: &Realm) -> JsResult<Option<u32>> {
+        if core::ptr::eq(self.world_with_id(0)?.realm, realm) {
+            return Ok(Some(0));
+        }
+        with_elements(wire::items_of(self.worlds())?, |all| {
+            let found = (all.as_chunks().0.iter()).find(|[_, it]| *it == realm.to_js_value());
+            Ok(found.map(|[id, _]| id.as_number() as u32))
+        })
     }
 
     fn for_each_realm(&self, mut step: impl FnMut(&Realm)) -> JsResult<()> {

@@ -28,7 +28,8 @@ use crate::webview::{engine, wire};
 use crate::window::{self, Window};
 use crate::{
     command_line, cover, dialog, files, notification, os_crypt, paths, power, preferences, process,
-    screen, shortcuts, single_instance, text, theme, touch_bar, tray, updater, utility, xdg,
+    registration, screen, shortcuts, single_instance, text, theme, touch_bar, tray, updater,
+    utility,
 };
 use bun_web::net::tls::import_pkcs12;
 
@@ -99,7 +100,12 @@ pub(crate) fn has_display() -> JsResult<bool> {
 
 pub(crate) fn become_electron() -> JsResult<()> {
     state().is_electron.set(true);
-    command_line::read(process::arguments()?.get(1..).unwrap_or_default());
+    let arguments = process::arguments()?;
+    let arguments = arguments.get(1..).unwrap_or_default();
+    if cfg!(windows) && command_line::has_more_after_url(arguments) {
+        bun_core::Global::exit(u32::MAX);
+    }
+    command_line::read(arguments);
     if command_line::switch("enable-sandbox").is_some() && !crate::contents::place::enable_sandbox()
     {
         return Err(unsupported("--enable-sandbox"));
@@ -107,6 +113,7 @@ pub(crate) fn become_electron() -> JsResult<()> {
     if let Some(directory) = command_line::value("user-data-dir") {
         paths::set_path("userData", files::absolute(&directory))?;
     }
+    crate::devtools::inspect_app()?;
     later::soon(|_| start_soon());
     Ok(())
 }
@@ -143,7 +150,15 @@ pub(crate) fn started() -> JsResult<()> {
     state().has_display.set(system.has_display);
     theme::start_with(system.is_dark);
     tell_identity()?;
-    if IS_MAC {
+    for (switch, command) in [
+        ("disable-gpu", ShellCommand::AvoidGpu),
+        ("disable-lcd-text", ShellCommand::AvoidSubpixels),
+    ] {
+        if command_line::switch(switch).is_some() {
+            ask_shell(command)?;
+        }
+    }
+    if IS_MAC || (IS_WINDOWS && is_electron() && system.has_display) {
         menu::set_default_application_menu()?;
     }
     if is_electron() {
@@ -188,6 +203,7 @@ fn finish_launching() -> JsResult<()> {
 fn load_key(next: fn() -> JsResult<()>) -> JsResult<()> {
     let does_without = match IS_MAC {
         true => is_headless()? && command_line::switch("use-mock-keychain").is_none(),
+        false if IS_WINDOWS => false,
         false => {
             is_headless()? || command_line::value("password-store").as_deref() == Some("basic")
         }
@@ -455,6 +471,12 @@ fn system_locale() -> JsResult<&'static str> {
     Ok(state().system_locale.get_or_init(|| locale))
 }
 
+pub(crate) fn has_webgl() -> bool {
+    ["disable-gpu", "disable-webgl", "disable-3d-apis"]
+        .iter()
+        .all(|it| command_line::switch(it).is_none())
+}
+
 pub(crate) fn path() -> JsResult<&'static str> {
     DesktopApp::path()
 }
@@ -486,6 +508,8 @@ pub(crate) fn languages() -> JsResult<Vec<String>> {
         PreferenceValue::Text(it) => Some(it.into_string()),
         _ => None,
     });
+    #[cfg(windows)]
+    let chosen = chosen.chain(crate::win32::preferred_languages());
     let chosen: Vec<String> = chosen.collect();
     Ok(if chosen.is_empty() {
         vec![system_locale()?.into()]
@@ -539,7 +563,7 @@ fn set_identifier(id: &str) -> JsResult<()> {
 }
 
 fn file_icon(path: &str, side: u32) -> JsResult<JSValue> {
-    let png = if IS_MAC {
+    let png = if IS_MAC || IS_WINDOWS {
         answer((ui()?.file_icon)(path.into(), side))?.into_vec()
     } else {
         Vec::new()
@@ -587,16 +611,17 @@ pub(crate) fn show_about_panel() -> JsResult<JSValue> {
 
 pub(crate) fn set_user_agent(value: String) {
     state().user_agent.replace(Some(value));
+    crate::contents::update_agents();
 }
 
 pub(crate) fn user_agent() -> JsResult<String> {
     if let Some(chosen) = &*state().user_agent.borrow() {
         return Ok(chosen.clone());
     }
-    let system = if IS_MAC {
-        "Macintosh; Intel Mac OS X 10_15_7"
-    } else {
-        "X11; Linux x86_64"
+    let system = match () {
+        () if IS_MAC => "Macintosh; Intel Mac OS X 10_15_7",
+        () if IS_WINDOWS => "Windows NT 10.0; Win64; x64",
+        () => "X11; Linux x86_64",
     };
     let name = text::escape(&paths::app_name()?, |it| {
         (!it.is_ascii_graphic()).then_some("")
@@ -694,6 +719,9 @@ impl DesktopApp {
 
     #[cfg(not(target_os = "macos"))]
     pub(crate) fn get_running_under_arm64_translation() -> bool {
+        #[cfg(windows)]
+        return crate::win32::is_translated();
+        #[cfg(unix)]
         false
     }
 
@@ -915,8 +943,11 @@ impl DesktopApp {
         clear_recent_documents()
     }
 
-    pub(crate) fn get_recent_documents() -> Vec<String> {
-        state().recent_documents.borrow().clone()
+    pub(crate) fn get_recent_documents(_: Cx<'_, '_>) -> JsResult<JSValue> {
+        match IS_WINDOWS && !is_headless()? {
+            true => js(ask_shell(ShellCommand::RecentDocuments)?),
+            false => js(state().recent_documents.borrow().clone()),
+        }
     }
 
     pub(crate) fn set_about_panel_options(options: &AboutPanelOptions) {
@@ -938,7 +969,7 @@ impl DesktopApp {
     }
 
     pub(crate) fn is_emoji_panel_supported() -> bool {
-        IS_MAC
+        IS_MAC || IS_WINDOWS
     }
 
     pub(crate) fn request_single_instance_lock<'a>(
@@ -975,48 +1006,33 @@ impl DesktopApp {
             })?;
             return Ok(true);
         }
-        let (kind, installed) = (
-            format!("x-scheme-handler/{scheme}"),
-            xdg::installed_entry()?,
-        );
-        if path.is_none() && xdg::is_installed(&installed)? {
-            return xdg::set_default_application(&installed, &kind);
-        }
         let command = command(path, strings(arguments.filter(|_| path.is_some())))?;
-        let entry = xdg::handler_entry(&scheme)?;
-        xdg::write_entry(
-            &files::join(&[&xdg::own_applications()?, &entry]),
-            &format!("{} %u", xdg::exec(&command)),
-            &format!("NoDisplay=true\nMimeType={kind};\n"),
-        )?;
-        xdg::set_default_application(&entry, &kind)
+        registration::handle(&scheme, &command, path.is_none())
     }
 
     pub(crate) fn is_default_protocol_client<'a>(
         _: Cx<'a, '_>,
         protocol: JsLocal<'a>,
+        path: Option<&[u8]>,
+        arguments: Option<Texts>,
     ) -> JsResult<bool> {
         let scheme = scheme_of(protocol)?;
         if IS_MAC {
             let found = answer((ui()?.application_for)(format!("{scheme}://").into()))?.get();
             return Ok(found.map(|it| it.bundle.into_string()) == Some(paths::identifier()?));
         }
-        let entry = xdg::default_application(&format!("x-scheme-handler/{scheme}"))?;
-        Ok(entry == Some(xdg::handler_entry(&scheme)?) || entry == Some(xdg::installed_entry()?))
+        let command = command(path, strings(arguments.filter(|_| path.is_some())))?;
+        registration::handles(&scheme, &command)
     }
 
     pub(crate) fn remove_as_default_protocol_client<'a>(
-        cx: Cx<'a, '_>,
+        _: Cx<'a, '_>,
         protocol: JsLocal<'a>,
+        path: Option<&[u8]>,
+        arguments: Option<Texts>,
     ) -> JsResult<bool> {
-        if IS_MAC || !Self::is_default_protocol_client(cx, protocol)? {
-            return Ok(false);
-        }
-        files::remove(&files::join(&[
-            &xdg::own_applications()?,
-            &xdg::handler_entry(&scheme_of(protocol)?)?,
-        ]));
-        Ok(true)
+        let command = command(path, strings(arguments.filter(|_| path.is_some())))?;
+        Ok(!IS_MAC && registration::stop_handling(&scheme_of(protocol)?, &command)?)
     }
 
     pub(crate) fn get_application_name_for_protocol(_: Cx<'_, '_>, url: &[u8]) -> JsResult<String> {
@@ -1025,10 +1041,7 @@ impl DesktopApp {
             true => answer((ui()?.application_for)(url.into()))?
                 .get()
                 .map(|it| it.name.into_string()),
-            false => xdg::name_of_default_application(&format!(
-                "x-scheme-handler/{}",
-                text::before(&url, ":")
-            ))?,
+            false => registration::name_of_handler(text::before(&url, ":"))?,
         };
         Ok(name.unwrap_or_default())
     }
@@ -1040,7 +1053,7 @@ impl DesktopApp {
         let found = match IS_MAC {
             true => (answer((ui()?.application_for)(Text::lossy(url)))?.get())
                 .map(|it| [it.name.into_string(), it.path.into_string()]),
-            false => xdg::handler_of(text::before(&string(url), ":"))?,
+            false => registration::handler_of(text::before(&string(url), ":"))?,
         };
         let Some([name, path]) = found else {
             return Err(error(format_args!(
@@ -1056,19 +1069,21 @@ impl DesktopApp {
         options: Option<&FileIconOptions>,
     ) -> JsResult<JSValue> {
         let is_small = options.is_some_and(|it| it.size.as_deref() == Some(b"small"));
-        resolved(file_icon(&string(path), if is_small { 32 } else { 64 })?)
+        let side = if is_small { 16 } else { 32 } * if IS_WINDOWS { 1 } else { 2 };
+        resolved(file_icon(&string(path), side)?)
     }
 
-    pub(crate) fn get_login_item_settings(_: Cx<'_, '_>) -> JsResult<JSValue> {
+    pub(crate) fn get_login_item_settings(
+        _: Cx<'_, '_>,
+        options: Option<&LoginItemOptions>,
+    ) -> JsResult<JSValue> {
         if IS_MAC {
             return Ok(js_DesktopLoginItemSettings::create(heap(), Default::default()).to_js());
         }
-        let opens = files::exists(&xdg::autostart_entry()?);
-        Ok(object!({
-            "executableWillLaunchAtLogin": opens,
-            "openAtLogin": opens,
-            "wasOpenedAtLogin": false,
-        }))
+        registration::login_item(&command(
+            options.and_then(|it| it.path.as_deref()),
+            strings(options.and_then(|it| it.args.as_ref())),
+        )?)
     }
 
     pub(crate) fn set_login_item_settings(
@@ -1078,13 +1093,8 @@ impl DesktopApp {
         if IS_MAC {
             return perform(SystemCommand::OpenAtLogin(settings.open_at_login));
         }
-        let (path, arguments) = (settings.path.as_deref(), strings(settings.args.as_ref()));
-        if !settings.open_at_login {
-            files::remove(&xdg::autostart_entry()?);
-            return Ok(());
-        }
-        let command = command(path, arguments)?;
-        xdg::write_entry(&xdg::autostart_entry()?, &xdg::exec(&command), "")
+        let command = command(settings.path.as_deref(), strings(settings.args.as_ref()))?;
+        registration::set_login_item(settings, &command)
     }
 
     pub(crate) fn get_fonts(_: Cx<'_, '_>) -> JsResult<Vec<Text>> {
@@ -1100,9 +1110,12 @@ impl DesktopApp {
     }
 
     pub(crate) fn get_gpu_feature_status(_: Cx<'_, '_>) -> JsResult<JSValue> {
-        Ok(
-            object!({ "gpu_compositing": "enabled", "webgl": "unavailable_off", "webgpu": "unavailable_off" }),
-        )
+        let webgl = match has_webgl() {
+            true if cfg!(target_os = "linux") => "enabled",
+            true => "unavailable_off",
+            false => "disabled_off",
+        };
+        Ok(object!({ "gpu_compositing": "enabled", "webgl": webgl, "webgpu": "unavailable_off" }))
     }
 
     pub(crate) fn get_gpu_info(_: Cx<'_, '_>) -> JsResult<JSValue> {
@@ -1202,11 +1215,32 @@ impl DesktopApp {
     }
 
     pub(crate) fn get_jump_list_settings(_: Cx<'_, '_>) -> JsResult<JSValue> {
-        Ok(object!({ "minItems": 0, "removedItems": array(&[])? }))
+        match IS_WINDOWS {
+            true => js(ask_shell(ShellCommand::JumpListSettings)?),
+            false => Ok(object!({ "minItems": 0, "removedItems": array(&[])? })),
+        }
     }
 
-    pub(crate) fn set_jump_list() -> &'static str {
-        "error"
+    pub(crate) fn set_jump_list<'a>(_: Cx<'a, '_>, categories: JsLocal<'a>) -> JsResult<String> {
+        let categories = match categories.to_js() {
+            it if it.is_null() => None,
+            it if it.is_array() => Some(bun_ui::preferences::from_js(global(), it, 0)?),
+            _ => {
+                return Err(type_error(format_args!(
+                    "Argument must be null or an array of categories"
+                )));
+            }
+        };
+        match ask_shell(ShellCommand::SetJumpList(categories.into()))? {
+            PreferenceValue::Text(result) => Ok(result.into_string()),
+            _ => Ok("error".into()),
+        }
+    }
+
+    pub(crate) fn set_user_tasks<'a>(cx: Cx<'a, '_>, tasks: JsLocal<'a>) -> JsResult<bool> {
+        let categories = array(&[object!({ "type": "tasks", "items": tasks.to_js() })])?;
+        let categories = JsLocal::new(&cx.heap, categories);
+        Ok(Self::set_jump_list(cx, categories)? == "ok")
     }
 
     pub(crate) fn start_accessing_security_scoped_resource(_: Cx<'_, '_>) -> JsResult<JSValue> {
@@ -1232,7 +1266,13 @@ impl DesktopApp {
     ) -> JsResult<()> {
         let mut pairs = Vec::new();
         for url in texts_of(roots.to_js().keys(global())?)? {
-            let directory = text_of(get_by_value(global(), roots.to_js(), js(&*url)?)?)?;
+            let mut directory = text_of(get_by_value(global(), roots.to_js(), js(&*url)?)?)?;
+            if IS_WINDOWS {
+                directory = crate::text::replace(&directory, "\\", "/");
+                if let Some(rest) = directory.strip_prefix("/$bunfs/") {
+                    directory = format!("B:/~BUN/{rest}");
+                }
+            }
             pairs.push((url.as_bytes().into(), directory.as_bytes().into()));
         }
         compiled::extend(
@@ -1290,7 +1330,7 @@ pub(crate) fn clear_recent_documents() -> JsResult<()> {
     if IS_MAC {
         tell_system(SystemCommand::SendAction("clearRecentDocuments:".into()))
     } else {
-        Ok(())
+        ask_shell(ShellCommand::ClearRecentDocuments).map(drop)
     }
 }
 

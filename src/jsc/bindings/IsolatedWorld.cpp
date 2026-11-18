@@ -2252,6 +2252,21 @@ extern "C" JSGlobalObject* Bun__IsolatedWorld__pageOrItself(JSGlobalObject* real
     return page ? page : realm;
 }
 
+extern "C" bool Bun__IsolatedWorld__hasAdded(JSGlobalObject* realm, EncodedJSValue listener)
+{
+    JSObject* object = JSValue::decode(listener).getObject();
+    if (!object || !IsolatedWorld::isSealed(object))
+        return object && object->realmMayBeNull() == realm;
+    return asObject(object->getPrototypeDirect())->getDirect(realm->vm(), IsolatedWorld::handlersName(realm->vm())) == realm;
+}
+
+extern "C" bool Bun__IsolatedWorld__mayHold(JSGlobalObject* realm, EncodedJSValue value, bool hasNode)
+{
+    JSObject* object = JSValue::decode(value).getObject();
+    JSGlobalObject* home = object ? object->realmMayBeNull() : nullptr;
+    return !home || home == realm || (isDesktopRealm(home) ? !IsolatedWorld::is(home) && !IsolatedWorld::is(realm) : hasNode);
+}
+
 // The world, if `value` stands for what one has thrown last. It is asked once.
 extern "C" JSGlobalObject* Bun__IsolatedWorld__takeThrown(JSGlobalObject* page, EncodedJSValue value, EncodedJSValue* original)
 {

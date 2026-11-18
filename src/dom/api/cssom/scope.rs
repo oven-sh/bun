@@ -126,6 +126,7 @@ fn flush_scope<'a>(heap: &JsHeap<'a>, scope: &'a Node) {
     let lists = [scope.try_edge_list(Edge::Sheets), adopted];
     scope.engine(|engine, id| {
         let (mut compiled, mut of_user) = (Vec::new(), Vec::new());
+        let mut last = Vec::new();
         if let Some(keys) = scope.try_extra::<InjectedKeys>() {
             for (sheet, key) in
                 sheets_in(heap, scope.try_edge_list(Edge::InjectedSheets)).zip(&*keys.0.borrow())
@@ -133,7 +134,13 @@ fn flush_scope<'a>(heap: &JsHeap<'a>, scope: &'a Node) {
                 sheet.get().collect(
                     engine,
                     sheet.scoping_root(),
-                    if key.1 { &mut of_user } else { &mut compiled },
+                    if key.1 {
+                        &mut of_user
+                    } else if key.0 == OF_INSPECTOR {
+                        &mut last
+                    } else {
+                        &mut compiled
+                    },
                 );
             }
             engine.set_user_sheets(of_user);
@@ -142,8 +149,23 @@ fn flush_scope<'a>(heap: &JsHeap<'a>, scope: &'a Node) {
             .into_iter()
             .flat_map(|it| sheets_in(heap, it))
             .for_each(|it| it.get().collect(engine, it.scoping_root(), &mut compiled));
+        compiled.append(&mut last);
         engine.set_sheets(id, &compiled);
     });
+}
+
+/// Without those that they import.
+pub(crate) fn sheets_of<'a>(
+    heap: &JsHeap<'a>,
+    scope: &'a Node,
+) -> impl Iterator<Item = &'a CSSStyleSheet> {
+    [
+        scope.try_edge_list(Edge::InjectedSheets),
+        scope.try_edge_list(Edge::Sheets),
+        adopted(heap, scope),
+    ]
+    .into_iter()
+    .flat_map(|it| sheets_in(heap, it))
 }
 
 /// Tells the engine.
@@ -300,6 +322,9 @@ pub(crate) fn prefer_sheets_titled<'a>(
 #[derive(Default)]
 struct InjectedKeys(RefCell<Vec<(u32, bool)>>);
 
+/// The key of a sheet that comes after those of the page.
+pub(crate) const OF_INSPECTOR: u32 = u32::MAX;
+
 /// The page does not see it. It takes the place of the one with that key.
 pub(crate) fn inject_sheet<'a>(
     cx: &mut JsScope<'a>,
@@ -320,7 +345,13 @@ pub(crate) fn inject_sheet<'a>(
         keys.borrow_mut().push((key, is_of_user));
         sheets.push(
             &cx.heap,
-            super::create_sheet(&cx.heap, doc, text, doc.base_url().to_utf8().as_bytes()).to_js(),
+            super::create_sheet(
+                &cx.heap,
+                doc,
+                crate::sheet::Source::of_sheet(text),
+                doc.base_url().to_utf8().as_bytes(),
+            )
+            .to_js(),
         );
     }
     sheets_changed(cx, doc);

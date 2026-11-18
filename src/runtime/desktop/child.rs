@@ -4,6 +4,7 @@ use core::ffi::{CStr, c_char};
 use core::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
+use bun_core::{getenv_z, zstr};
 use bun_removable_features::{Feature, is_removed};
 use bun_standalone_graph::Graph;
 
@@ -11,6 +12,7 @@ use super::protocol::{EXIT_WITHOUT_SANDBOX, SOCKET_TO_PARENT, Ui};
 
 static LIBRARY_FOR_PAGES: OnceLock<&'static [u8]> = OnceLock::new();
 static RUNS_PROGRAM: AtomicBool = AtomicBool::new(false);
+static HAS_GPU: AtomicBool = AtomicBool::new(false);
 
 pub(super) fn library() -> Option<&'static [u8]> {
     LIBRARY_FOR_PAGES.get().copied()
@@ -54,7 +56,18 @@ unsafe fn drop_options_in_environment() {
 }
 
 pub(super) fn is_supported() -> bool {
-    cfg!(target_os = "linux") && (!Graph::is_in_executable() || Graph::is_desktop_program())
+    match Graph::is_in_executable() {
+        true => cfg!(target_os = "linux") && Graph::is_desktop_program(),
+        false => cfg!(any(target_os = "linux", target_os = "macos")),
+    }
+}
+
+fn is_being_tested() -> bool {
+    let names = [
+        zstr!("BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING"),
+        zstr!("BUN_DESKTOP_PAGE_PROCESSES"),
+    ];
+    names.into_iter().all(|it| getenv_z(it).is_some())
 }
 
 /// # Safety
@@ -65,7 +78,7 @@ pub(super) unsafe fn recognize(arguments: &[*const c_char]) {
         if let [_, mode, library, ..] = *arguments
             && let Some(role) =
                 (CStr::from_ptr(mode).to_bytes()).strip_prefix(b"--bun-desktop-child=")
-            && (!Graph::is_in_executable() || is_supported())
+            && (!Graph::is_in_executable() || (is_supported() && is_being_tested()))
         {
             #[cfg(target_os = "linux")]
             {
@@ -75,17 +88,20 @@ pub(super) unsafe fn recognize(arguments: &[*const c_char]) {
                         .for_each(|it| _ = libc::close(it));
                 }
             }
+            HAS_GPU.store(role == b"gpu", Ordering::Relaxed);
             match role {
                 _ if !is_from_parent(SOCKET_TO_PARENT) => libc::_exit(1),
-                b"page" | b"compiled-page" if Graph::is_in_executable() => {
-                    RUNS_PROGRAM.store(role != b"page", Ordering::Relaxed);
-                    drop_options_in_environment();
+                b"page" | b"compiled-page" | b"gpu" if Graph::is_in_executable() => {
+                    RUNS_PROGRAM.store(role == b"compiled-page", Ordering::Relaxed);
+                    if role != b"gpu" {
+                        drop_options_in_environment();
+                    }
                     match bun_standalone_graph::desktop::library_in_bundle() {
                         Some(own) => _ = LIBRARY_FOR_PAGES.set(own.leak()),
                         None => libc::_exit(1),
                     }
                 }
-                b"page" | b"compiled-page" => {
+                b"page" | b"compiled-page" | b"gpu" => {
                     _ = LIBRARY_FOR_PAGES.set(CStr::from_ptr(library).to_bytes())
                 }
                 _ => libc::_exit(1),
@@ -100,6 +116,13 @@ fn is_sandbox_wanted() -> bool {
 
 /// While there is only one thread.
 pub(super) fn prepare() {
+    if HAS_GPU.load(Ordering::Relaxed) {
+        if let Some(Ok(opened)) = library().map(super::Library::open) {
+            (opened.ui.become_gpu_process)(is_sandbox_wanted());
+        }
+        // SAFETY: nothing has been started.
+        unsafe { libc::_exit(1) }
+    }
     if let Some(path) = library().filter(|_| is_sandbox_wanted())
         && let Ok(opened) = super::Library::open(path)
     {

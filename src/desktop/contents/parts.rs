@@ -294,6 +294,7 @@ fn restore(it: &'static Contents, given: &[JSValue]) -> JsResult<JSValue> {
     let mut history = it.history.borrow_mut();
     (history.entries, history.index) = (entries, index);
     drop(history);
+    it.tell_of_pruning(None)?;
     it.restore(index, &url)
 }
 
@@ -309,7 +310,8 @@ fn remove_entry(it: &'static Contents, given: &[JSValue]) -> JsResult<JSValue> {
     let mut history = it.history.borrow_mut();
     history.entries.remove(index);
     history.index -= usize::from(index < history.index);
-    Ok(JSValue::TRUE)
+    drop(history);
+    it.tell_of_pruning(None).map(|()| JSValue::TRUE)
 }
 
 pub(super) fn all_entries(it: &Contents) -> JsResult<JSValue> {
@@ -327,7 +329,7 @@ const NAVIGATION_HISTORY: Methods<Contents> = &[
         js(it.can_go_to_offset(argument(given, 0).as_i32()))
     }),
     ("clear", |it, _| {
-        it.forget_history();
+        it.forget_history()?;
         NOTHING
     }),
     ("getActiveIndex", |it, _| {

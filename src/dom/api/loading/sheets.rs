@@ -316,19 +316,15 @@ fn update_style<'a>(cx: Cx<'_, 'a>, style: &'a Element) {
     if doc.is_fully_active() {
         note_title(cx, style);
     }
-    let text = text.to_utf8();
-    let made = cssom::create_sheet(
-        &cx.heap,
-        doc,
-        text.as_bytes(),
-        doc.base_url().to_utf8().as_bytes(),
-    );
+    let source = crate::sheet::Source::of_text(text);
+    let has_imports = mentions_import(&source);
+    let made = cssom::create_sheet(&cx.heap, doc, source, doc.base_url().to_utf8().as_bytes());
     set_sheet(cx, style, made);
     if !doc.is_fully_active() {
         return;
     }
     let serial = it.restart();
-    if !strings::contains_char(text.as_bytes(), b'@') {
+    if !has_imports {
         return fire_later(doc, style, atom!("load"));
     }
     let blocks_rendering = blocks_rendering(&cx.heap, style);
@@ -373,11 +369,15 @@ fn create_linked<'a>(
     made
 }
 
+fn mentions_import(css: &[u8]) -> bool {
+    strings::split(css, b"@")
+        .skip(1)
+        .any(|it| matches!(it.first(), Some(b'i' | b'I' | b'\\')))
+}
+
+/// In whatever encoding.
 fn may_import(css: &[u8]) -> bool {
-    !css.is_ascii()
-        || strings::split(css, b"@")
-            .skip(1)
-            .any(|it| matches!(it.first(), Some(b'i' | b'I' | b'\\')))
+    !css.is_ascii() || mentions_import(css)
 }
 
 /// <https://html.spec.whatwg.org/#link-type-stylesheet>

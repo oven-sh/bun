@@ -2,6 +2,7 @@ import * as b from "../codegen/bindgen-lib.ts";
 import {
   anything,
   flag,
+  flagIfAny,
   js,
   noticesListeners,
   numberIfAny,
@@ -28,7 +29,13 @@ export const AboutPanelOptions = b.dictionary({
   credits: ownedTextIfAny,
   copyright: ownedTextIfAny,
 });
-export const LoginItemOptions = b.dictionary({ openAtLogin: flag, path: ownedTextIfAny, args: ownedTexts.nullable });
+export const LoginItemOptions = b.dictionary({
+  openAtLogin: flag,
+  enabled: flagIfAny,
+  name: ownedTextIfAny,
+  path: ownedTextIfAny,
+  args: ownedTexts.nullable,
+});
 export const FileIconOptions = b.dictionary({ size: ownedTextIfAny });
 
 export const DesktopCommandLine = b.interface("DesktopCommandLine", {
@@ -140,7 +147,7 @@ export const DesktopApp = b.interface("DesktopApp", {
     getBadgeCount: { returns: b.f64 },
     addRecentDocument: { args: { path: text }, ...js },
     clearRecentDocuments: js,
-    getRecentDocuments: { returns: texts },
+    getRecentDocuments: returnsObject,
     setAboutPanelOptions: { args: { options: AboutPanelOptions } },
     showAboutPanel: returnsPromise,
     showEmojiPanel: js,
@@ -149,12 +156,12 @@ export const DesktopApp = b.interface("DesktopApp", {
     hasSingleInstanceLock: { returns: b.bool },
     releaseSingleInstanceLock: {},
     setAsDefaultProtocolClient: { args: protocol, ...returnsFlag },
-    isDefaultProtocolClient: { args: { protocol: b.any }, ...returnsFlag },
-    removeAsDefaultProtocolClient: { args: { protocol: b.any }, ...returnsFlag },
+    isDefaultProtocolClient: { args: protocol, ...returnsFlag },
+    removeAsDefaultProtocolClient: { args: protocol, ...returnsFlag },
     getApplicationNameForProtocol: { args: { url: text }, ...returnsText },
     getApplicationInfoForProtocol: { args: { url: text }, ...returnsPromise },
     getFileIcon: { args: { path: text, options: FileIconOptions.nullable.optional }, ...returnsPromise },
-    getLoginItemSettings: returnsObject,
+    getLoginItemSettings: { args: { options: LoginItemOptions.nullable.optional }, ...returnsObject },
     setLoginItemSettings: { args: { settings: LoginItemOptions }, ...js },
     getFonts: { returns: texts, ...js },
     disableHardwareAcceleration: {},
@@ -175,7 +182,8 @@ export const DesktopApp = b.interface("DesktopApp", {
     getCurrentActivityType: { returns: b.string.utf8 },
     invalidateCurrentActivity: js,
     getJumpListSettings: returnsObject,
-    setJumpList: { returns: b.string.utf8 },
+    setJumpList: { args: { categories: b.any }, ...returnsText },
+    setUserTasks: { args: { tasks: b.any }, ...returnsFlag },
     startAccessingSecurityScopedResource: returnsObject,
     resolveProxy: { args: { url: b.any }, ...returnsPromise },
     setProxy: { args: { config: b.any }, ...returnsPromise },
@@ -188,6 +196,6 @@ export const DesktopApp = b.interface("DesktopApp", {
       "configureHostResolver configureWebAuthn disableDomainBlockingFor3DAPIs " +
         "setClientCertRequestPasswordHandler setToastActivatorCLSID",
     ),
-    ...sharing("no", "isUnityRunning setUserTasks", { returns: b.bool }),
+    ...sharing("no", "isUnityRunning", { returns: b.bool }),
   }),
 });

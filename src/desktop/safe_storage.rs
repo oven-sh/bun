@@ -163,7 +163,8 @@ impl ElectronSafeStorage {
 
     pub(crate) fn encrypt_string(_: Cx<'_, '_>, text: &[u8]) -> JsResult<JSValue> {
         check("encryptString")?;
-        buffer(&os_crypt::encrypt(text))
+        let failure = "Error while encrypting the text provided to safeStorage.encryptString.";
+        buffer(&os_crypt::encrypt(text).ok_or_else(|| error(format_args!("{failure}")))?)
     }
 
     pub(crate) fn decrypt_string<'a>(_: Cx<'a, '_>, encrypted: JsLocal<'a>) -> JsResult<String> {
@@ -201,7 +202,9 @@ impl ElectronSafeStorage {
     }
 
     pub(crate) fn set_use_plain_text_encryption(is_allowed: bool) {
-        state().allows_plain_text.set(is_allowed && !IS_MAC);
+        state()
+            .allows_plain_text
+            .set(is_allowed && !IS_MAC && !IS_WINDOWS);
     }
 
     pub(crate) fn get_selected_storage_backend() -> &'static str {

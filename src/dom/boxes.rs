@@ -264,6 +264,7 @@ pub(crate) struct Boxes {
     /// What has to be painted again is in these.
     pub(crate) changed: RefCell<Vec<BoxId>>,
     pub(crate) has_annotations: bool,
+    pub(crate) fits_text: bool,
     /// A containing block may list an out-of-flow box that is no longer its own.
     pub(crate) has_lost_out_of_flow: bool,
     /// That of the viewport has been derived from it.
@@ -276,6 +277,9 @@ pub(crate) struct Boxes {
     /// Spanners, while the widths of columns are measured.
     /// Where table sections are repeated, relative to themselves.
     pub(crate) copies: Map<BoxId, Vec<[f32; 2]>>,
+    pub(crate) assigned: Map<BoxId, crate::fragment::Assigned>,
+    /// See `Document::transformed_parts`.
+    pub(crate) transformed: Map<BoxId, crate::fragment::Transformed>,
     pub(crate) lattices: Map<BoxId, crate::table::Lattice>,
     /// See `Document::column`.
     pub(crate) columns: RefCell<Map<BoxId, Option<[f32; 2]>>>,
@@ -370,6 +374,13 @@ impl LayoutBox {
             reach: Extent::default(),
             spread: Extent::default(),
         }
+    }
+
+    pub(crate) fn strips_of_grid(&self) -> Vec<Rect> {
+        self.rare
+            .as_ref()
+            .and_then(|it| it.grid.as_ref())
+            .map_or_else(Vec::new, |it| it.strips())
     }
 
     pub(crate) fn grid_if_any(&mut self) -> Option<&mut crate::grid::GridInfo> {
@@ -530,6 +541,7 @@ impl Boxes {
             parked_stale: Vec::new(),
             changed: RefCell::default(),
             has_annotations: false,
+            fits_text: false,
             has_lost_out_of_flow: false,
             style_of_root: None,
             has_pinned_styles: false,
@@ -537,6 +549,8 @@ impl Boxes {
             sized_by_viewport: Set::default(),
             pieces: Map::default(),
             copies: Map::default(),
+            assigned: Map::default(),
+            transformed: Map::default(),
             lattices: Map::default(),
             columns: RefCell::default(),
             math: Map::default(),
@@ -612,10 +626,7 @@ impl Boxes {
             self.tables.remove(&id);
             self.lattices.remove(&id);
         }
-        if !self.pieces.is_empty() {
-            self.pieces.remove(&id);
-            self.copies.remove(&id);
-        }
+        self.forget_pieces(id);
         let it = &mut self[id];
         core::mem::take(&mut it.children)
             .into_iter()
@@ -728,8 +739,21 @@ impl Boxes {
     }
 
     #[inline]
+    fn forget_pieces(&mut self, id: BoxId) {
+        if !self.pieces.is_empty() {
+            self.pieces.remove(&id);
+            self.copies.remove(&id);
+            self.assigned.remove(&id);
+            self.transformed.remove(&id);
+        }
+    }
+
+    #[inline]
     fn note_columns(&mut self, id: BoxId, is_under: bool) {
         if core::mem::replace(&mut self[id].is_under_columns, is_under) != is_under {
+            self.forget_pieces(id);
+            self[id].cache.forget_layout();
+            self[id].forget_extents();
             let (marker, below) = (
                 self[id].outside_marker,
                 is_under || self[id].kind == Kind::Columns,
@@ -1143,9 +1167,9 @@ impl Document {
         }
         let has_text = |it: &Item| {
             it.kind == ItemKind::Text
-                && !inline.text[it.start as usize..it.end as usize]
-                    .trim_start()
-                    .is_empty()
+                && inline.text[it.start as usize..it.end as usize]
+                    .chars()
+                    .any(char::is_alphanumeric)
         };
         let is_after_first_letter = || {
             self.tree
@@ -2583,6 +2607,8 @@ impl Document {
             || inline.items[kept..]
                 .iter()
                 .any(|it| it.style.other_if_set(Id::TextEmphasisStyle).is_some());
+        self.boxes.fits_text =
+            self.boxes.fits_text || self.boxes[id].style.other_if_set(Id::TextFit).is_some();
         self.boxes.has_pinned_styles |= inline.first_line.is_some()
             || inline
                 .items
@@ -2686,6 +2712,61 @@ impl Document {
         Some(Rc::new(style))
     }
 
+    /// Whether nothing but punctuation is between them.
+    #[cold]
+    fn has_letter_after(&self, siblings: &Siblings, mut id: NodeId) -> bool {
+        let block = &self.boxes[siblings.parent];
+        for (around, style) in siblings
+            .open
+            .iter()
+            .rev()
+            .map(|it| (it.0, &it.1))
+            .chain([(block.node, &block.style)])
+            .filter(|it| it.0 != 0)
+        {
+            let mut children = Gathered::new();
+            self.gather(around, style, &mut children);
+            let next = children
+                .iter()
+                .position(|(Child::Text(it, _) | Child::Element(it, _))| *it == id)
+                .map_or(children.len(), |it| it + 1);
+            if let Some(found) = self.starts_with_letter(&children[next..], 0) {
+                return found;
+            }
+            id = around;
+        }
+        false
+    }
+
+    fn starts_with_letter(&self, children: &[Child], depth: u16) -> Option<bool> {
+        use crate::characters::{is_connector, is_opening_or_dash, is_punctuation};
+        children.iter().find_map(|child| match child {
+            Child::Text(id, _) => {
+                let is_letter = |it: char| {
+                    !(it.is_whitespace()
+                        || is_punctuation(it)
+                        || is_connector(it)
+                        || is_opening_or_dash(it))
+                };
+                crate::values::text(self.tree[*id].text().unwrap_or_default())
+                    .chars()
+                    .any(is_letter)
+                    .then_some(true)
+            }
+            Child::Element(_, style) if style.is_floating() || style.is_out_of_flow() => None,
+            Child::Element(id, style)
+                if depth < MAX_DEPTH
+                    && self.kind_of(*id, style).is_none()
+                    && !is_name!(self.tree.html_tag(*id), "br" | "wbr") =>
+            {
+                let mut inside = Gathered::new();
+                self.gather(*id, style, &mut inside);
+                self.starts_with_letter(&inside, depth + 1)
+            }
+            Child::Element(..) => Some(false),
+        })
+    }
+
     /// Returns how much of the text it has taken.
     fn add_first_letter(
         &mut self,
@@ -2727,7 +2808,7 @@ impl Document {
             letter = next(letter);
         }
         if data[letter..].starts_with(char::is_whitespace)
-            || letter == data.len() && data[start.0..].is_empty()
+            || letter == data.len() && !self.has_letter_after(siblings, id)
         {
             return 0;
         }
@@ -2968,6 +3049,7 @@ impl Document {
             return self.lines(siblings).line_break(id, style);
         }
         if tag == name!("wbr") {
+            siblings.is_before_first_letter = false;
             return self.lines(siblings).text(id, "\u{200b}", style);
         }
         if siblings.open.len() >= usize::from(MAX_DEPTH) {

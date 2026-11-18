@@ -4,6 +4,7 @@ use super::body::Body;
 use crate::Bytes;
 use crate::headers::{HeaderList, tokens};
 use crate::referrer::ReferrerPolicy;
+use crate::request::Destination;
 use crate::service::{Reserved, Routing};
 use crate::url::Url;
 
@@ -110,6 +111,8 @@ crate::wire! {
         /// The client that is made from it.
         pub reserved: Option<Reserved>,
         pub is_from_service_worker: bool,
+        /// By the host, with what a service worker passes on without seeing it.
+        pub kept_as: u32,
     }
 }
 
@@ -133,7 +136,25 @@ impl Head {
             referrer: None,
             reserved: None,
             is_from_service_worker: false,
+            kept_as: 0,
         }
+    }
+
+    /// From a page process.
+    pub(crate) fn hide_secrets(&mut self, destination: Destination) {
+        let is_media = matches!(destination, Destination::Audio | Destination::Video);
+        let (exposed, is_hidden) = (
+            self.exposed_headers(),
+            self.kind == ResponseType::OpaqueRedirect,
+        );
+        let is_needed = |name: &[u8]| match &*name.to_ascii_lowercase() {
+            b"access-control-expose-headers" | b"content-type" | b"referrer-policy" => true,
+            b"content-encoding" | b"content-length" => self.allows_timing || is_media,
+            b"content-range" => is_media,
+            b"server-timing" => self.allows_timing,
+            _ => false,
+        };
+        (self.headers).retain(|name, _| !is_hidden && (exposed.contains(name) || is_needed(name)));
     }
 
     pub fn referrer_policy(&self) -> ReferrerPolicy {

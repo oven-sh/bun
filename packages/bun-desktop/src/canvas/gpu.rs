@@ -126,9 +126,50 @@ pub struct ClipPath {
     pub rule: Fill,
     pub before: Option<Rc<ClipPath>>,
     count: u32,
+    mask: RefCell<Option<Arc<Mask>>>,
+}
+
+/// For the thread that needs it first.
+pub struct Mask {
+    within: Clip,
+    paths: Vec<(Box<[u32]>, Fill)>,
+    made: OnceLock<Clip>,
+}
+
+impl Mask {
+    pub fn get(&self) -> &Clip {
+        self.made.get_or_init(|| {
+            self.paths
+                .iter()
+                .fold(self.within.clone(), |clip, (path, rule)| {
+                    clipped(&clip, &Outline(path).path(), *rule)
+                })
+        })
+    }
 }
 
 impl ClipPath {
+    pub fn mask(&self, within: &Clip) -> Arc<Mask> {
+        let fits = |it: &Arc<Mask>| {
+            it.within.rect.contains(within.rect)
+                && it.within.mask.as_ref().map(Arc::as_ptr) == within.mask.as_ref().map(Arc::as_ptr)
+        };
+        let known = self.mask.take().filter(fits);
+        let all = std::iter::successors(Some(self), |it| it.before.as_deref());
+        let mask = known.unwrap_or_else(|| {
+            Arc::new(Mask {
+                within: within.clone(),
+                paths: all.map(|it| (it.outline().0.into(), it.rule)).collect(),
+                made: OnceLock::new(),
+            })
+        });
+        self.mask.borrow_mut().insert(mask).clone()
+    }
+
+    pub fn verbs_in(&self, list: &Rc<Owned>) -> Option<Span> {
+        Rc::ptr_eq(&self.list, list).then_some(self.verbs)
+    }
+
     pub fn outline(&self) -> Outline<'_> {
         self.list.outline(self.verbs)
     }
@@ -165,13 +206,13 @@ fn points(mut path: Outline, mut take: impl FnMut(Point)) {
 }
 
 impl State {
-    /// False if a mask is better, as it is for a few small ones. `masked` counts their pixels.
+    /// False if a mask is better, as it is for a few small ones on a GPU. `masked` counts their pixels.
     pub(super) fn put_off_clip(
         &mut self,
         list: &Rc<Owned>,
         verbs: Span,
         rule: Fill,
-        masked: &mut i64,
+        masked: Option<&mut i64>,
     ) -> bool {
         const MAX_PATHS: u32 = 8;
         const FEW_PIXELS: i64 = 1 << 16;
@@ -206,23 +247,27 @@ impl State {
             return false;
         }
         let clip = self.clip.within_rect(around(bounds));
-        if *masked + clip.rect.area() <= FEW_PIXELS {
-            *masked += clip.rect.area();
-            return false;
+        if let Some(masked) = masked {
+            if *masked + clip.rect.area() <= FEW_PIXELS {
+                *masked += clip.rect.area();
+                return false;
+            }
+            *masked = FEW_PIXELS;
         }
-        (*masked, self.clip) = (FEW_PIXELS, clip);
+        self.clip = clip;
         self.put_off = Some(Rc::new(ClipPath {
             list: list.clone(),
             verbs,
             rule,
             before: self.put_off.take(),
             count,
+            mask: RefCell::default(),
         }));
         true
     }
 
     /// The one path that clips, if it is what shows of the parallelogram.
-    fn clip_within(&self, [a, b, c]: [Point; 3]) -> Option<&ClipPath> {
+    pub(super) fn clip_within(&self, [a, b, c]: [Point; 3]) -> Option<&ClipPath> {
         const SLACK: f32 = 1e-3;
         const FEW: usize = 256;
         let (path, inverse) = (
@@ -510,7 +555,51 @@ impl Accelerated {
     }
 }
 
-fn parallelogram(verbs: &[Verb]) -> Option<[Point; 3]> {
+pub(super) fn halvings(scale: f32) -> u32 {
+    if scale < 0.5 {
+        (1. / scale).log2().min(15.) as u32
+    } else {
+        0
+    }
+}
+
+/// An image without pixels gets those that it shows as, or almost twice as many in each direction. With whether it is the former.
+pub(super) fn pixels_for_drawing(
+    placement: &Transform,
+    size: [f32; 2],
+) -> Option<([f32; 2], bool)> {
+    const MAX_SIDE: f32 = 1024.;
+    let (scales, all) = (
+        <[f32; 2]>::from(placement.get_scale()),
+        map_rect(
+            placement,
+            Rect {
+                x: 0.,
+                y: 0.,
+                width: size[0],
+                height: size[1],
+            },
+        ),
+    );
+    let fits = !placement.has_skew()
+        && placement.sx.min(placement.sy) > 0.
+        && [all.x, all.y, all.width, all.height]
+            .iter()
+            .all(|it| (it - it.round()).abs() < 1e-3);
+    let pixels = [0, 1].map(|axis| {
+        if fits {
+            (size[axis] * scales[axis]).round()
+        } else {
+            (size[axis] * ((scales[axis].log2() * 4.).floor() / 4. + 1.).exp2()).ceil()
+        }
+    });
+    pixels
+        .iter()
+        .all(|it| (1. ..=MAX_SIDE).contains(it))
+        .then_some((pixels, fits))
+}
+
+pub(super) fn parallelogram(verbs: &[Verb]) -> Option<[Point; 3]> {
     let [
         Verb::Move(a),
         Verb::Line(b),
@@ -532,7 +621,7 @@ fn version_of(image: u32) -> Option<u32> {
         .or_else(|| images::with_first_frame(image, |_, version| version))
 }
 
-fn corners(
+pub(super) fn corners(
     Rect {
         x,
         y,
@@ -1077,6 +1166,8 @@ impl Painter<'_> {
                             }
                             self.scene.stamp(glyph.address, rect, ink);
                         }
+                        #[cfg(any(test, windows))]
+                        GlyphPixels::Parts(_) => {}
                         GlyphPixels::Color(layer) => {
                             if is_new
                                 && let Source::Scene(address, _) =
@@ -1194,8 +1285,8 @@ impl Painter<'_> {
         }
         let (scale_x, scale_y) = placement.get_scale();
         let halvings = |scale: f32| {
-            if scale < 0.5 && is_smooth && !is_borrowed {
-                (1. / scale).log2().min(15.) as u32
+            if is_smooth && !is_borrowed {
+                halvings(scale)
             } else {
                 0
             }
@@ -1241,39 +1332,15 @@ impl Painter<'_> {
         }
     }
 
-    /// An image without pixels gets those that it shows as, or almost twice as many in each direction.
     fn drawing(&mut self, image: u32, size: [f32; 2], [from, to]: [Rect; 2]) -> bool {
-        const MAX_SIDE: f32 = 1024.;
         let Placed {
             from, placement, ..
         } = Placed::new(&self.state.matrix, size, size, from, to);
-        let (scales, all) = (
-            <[f32; 2]>::from(placement.get_scale()),
-            map_rect(
-                &placement,
-                Rect {
-                    x: 0.,
-                    y: 0.,
-                    width: size[0],
-                    height: size[1],
-                },
-            ),
-        );
-        let fits = !placement.has_skew()
-            && placement.sx.min(placement.sy) > 0.
-            && [all.x, all.y, all.width, all.height]
-                .iter()
-                .all(|it| (it - it.round()).abs() < 1e-3);
-        let pixels = [0, 1].map(|axis| {
-            if fits {
-                (size[axis] * scales[axis]).round()
-            } else {
-                (size[axis] * ((scales[axis].log2() * 4.).floor() / 4. + 1.).exp2()).ceil()
-            }
-        });
-        if !pixels.iter().all(|it| (1. ..=MAX_SIDE).contains(it)) || self.state.is_wide {
+        let Some((pixels, _)) =
+            pixels_for_drawing(&placement, size).filter(|_| !self.state.is_wide)
+        else {
             return false;
-        }
+        };
         let variant = 1 << 31 | (pixels[0] as u32) << 12 | pixels[1] as u32;
         let (which, Some(known)) = ([variant, self.scene.generation()], self.known.image(image))
         else {
@@ -1404,6 +1471,7 @@ impl Painter<'_> {
 impl Canvas {
     /// Not while there are jobs.
     fn speed_up(&mut self) {
+        self.paint_what_waits();
         if let Some(rect) = self
             .layer
             .as_ref()
@@ -1496,6 +1564,11 @@ impl Canvas {
 
     /// The layer gets the pixels that are wanted.
     fn submit(&mut self, wanted: IntRect) {
+        if self.waiting.is_some() {
+            let start = Instant::now();
+            self.paint_what_waits();
+            self.load.spent += start.elapsed();
+        }
         let (Some(gpu), Some(layer)) = (&mut self.accelerated, &mut self.layer) else {
             return;
         };
@@ -1545,7 +1618,7 @@ impl Canvas {
                     command => _ = self.run(log.id, command, &list, place, &mut batch),
                 }
             }
-            batch.paint(self, &list);
+            batch.paint(self);
         }
         (self.state, self.clips) = now;
         (self.load.changes, self.load.rests) = (self.load.changes + 4, false);

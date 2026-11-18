@@ -40,11 +40,6 @@ fn tell(peer: Peer, id: u32, about: About) {
     send(peer, Lane::Elsewhere, Head::new(Kind::Body, id, 0), about);
 }
 
-/// A page only sends a body once the network wants it.
-fn asked_at_first(sender: Peer) -> usize {
-    if sender == HOST { WINDOW } else { 0 }
-}
-
 #[derive(Default)]
 struct Wanted {
     bytes: usize,
@@ -105,10 +100,8 @@ impl Leaving {
         .await;
     }
 
-    async fn send(mut self, mut body: Body) {
+    async fn send(mut self, mut body: Body, mut reads_ahead: bool) {
         let (head, mut bytes) = (Head::new(Kind::Chunk, self.key.1, 0).to_bytes(), Vec::new());
-        // That an upload fails is known before a server that does not wait for it has answered.
-        let mut reads_ahead = self.key.0 == HOST;
         while core::mem::take(&mut reads_ahead) || self.wanted().await.is_some() {
             let chunk = match race(body.read(), self.abandoned()).await {
                 Either::First(Ok(Some(chunk))) => chunk,
@@ -239,13 +232,45 @@ crate::wire! {
     }
 }
 
+/// What is not sent until it is read.
+pub struct OnDemand(pub(crate) Body);
+
+impl Wire for OnDemand {
+    fn write(self, to: &mut Writer) {
+        follow(to, Vec::new(), self.0, 0);
+    }
+
+    fn read(from: &mut Reader<'_>) -> wire::Result<OnDemand> {
+        arrive(from, 0).map(OnDemand)
+    }
+}
+
+/// `bytes` need not be asked for.
+fn follow(to: &mut Writer, start: Vec<u8>, body: Body, bytes: usize) {
+    static NEXT: AtomicU32 = AtomicU32::new(0);
+    let peer = to.peer().expect("it is for another process");
+    let id = NEXT.fetch_add(1, Ordering::Relaxed);
+    (start, Rest::Follows(id)).write(to);
+    let wanted = Arc::new(Guarded::new(Wanted {
+        bytes,
+        ..Wanted::default()
+    }));
+    LEAVING.lock().insert((peer, id), Arc::clone(&wanted));
+    let leaving = Leaving {
+        key: (peer, id),
+        wanted,
+        end: Err(NetError::Aborted),
+    };
+    // That an upload fails is known before a server that does not wait for it has answered.
+    let reads_ahead = peer == HOST;
+    to.afterwards(move || exec::spawn_background(leaving.send(body, reads_ahead)));
+}
+
 /// On a JS thread, which passes on what is not there yet.
 impl Wire for Body {
     fn write(mut self, to: &mut Writer) {
-        static NEXT: AtomicU32 = AtomicU32::new(0);
-        let peer = to.peer().expect("it is for another process");
         let mut start = Vec::new();
-        while peer != HOST && start.len() < MOST_IN_CHUNK {
+        while start.len() < MOST_IN_CHUNK {
             match self.poll_read(&mut Context::from_waker(Waker::noop())) {
                 Poll::Ready(Ok(Some(chunk))) if chunk.len() > WINDOW => {
                     self = [chunk.into(), self].into_iter().collect();
@@ -256,49 +281,37 @@ impl Wire for Body {
                 Poll::Pending => break,
             }
         }
-        let id = NEXT.fetch_add(1, Ordering::Relaxed);
-        (start, Rest::Follows(id)).write(to);
-        let wanted = Arc::new(Guarded::new(Wanted {
-            bytes: if peer == HOST {
-                0
-            } else {
-                asked_at_first(HOST)
-            },
-            ..Wanted::default()
-        }));
-        LEAVING.lock().insert((peer, id), Arc::clone(&wanted));
-        let leaving = Leaving {
-            key: (peer, id),
-            wanted,
-            end: Err(NetError::Aborted),
-        };
-        to.afterwards(move || exec::spawn_background(leaving.send(self)));
+        follow(to, start, self, WINDOW);
     }
 
     fn read(from: &mut Reader<'_>) -> wire::Result<Body> {
-        let peer = from.peer().ok_or(Malformed)?;
-        let (start, rest) = <(Vec<u8>, Rest)>::read(from)?;
-        let rest = match rest {
-            Rest::None(Ok(())) => return Ok(start.into()),
-            Rest::None(Err(error)) => Body::new(error),
-            Rest::Follows(id) => {
-                let (key, mut all) = ((peer, id), ARRIVING.lock());
-                let count = || all.range((peer, 0)..=(peer, u32::MAX)).count();
-                if (peer != HOST && count() >= MOST_BODIES) || all.contains_key(&key) {
-                    return Err(Malformed);
-                }
-                let arrived = Arc::new(Guarded::new(Arrived {
-                    expected: asked_at_first(peer),
-                    ..Arrived::default()
-                }));
-                all.insert(key, Arc::clone(&arrived));
-                Body::new(Arriving {
-                    key,
-                    arrived,
-                    window: WINDOW,
-                })
-            }
-        };
-        Ok(rest.after(start))
+        arrive(from, WINDOW)
     }
+}
+
+fn arrive(from: &mut Reader<'_>, expected: usize) -> wire::Result<Body> {
+    let peer = from.peer().ok_or(Malformed)?;
+    let (start, rest) = <(Vec<u8>, Rest)>::read(from)?;
+    let rest = match rest {
+        Rest::None(Ok(())) => return Ok(start.into()),
+        Rest::None(Err(error)) => Body::new(error),
+        Rest::Follows(id) => {
+            let (key, mut all) = ((peer, id), ARRIVING.lock());
+            let count = || all.range((peer, 0)..=(peer, u32::MAX)).count();
+            if (peer != HOST && count() >= MOST_BODIES) || all.contains_key(&key) {
+                return Err(Malformed);
+            }
+            let arrived = Arc::new(Guarded::new(Arrived {
+                expected,
+                ..Arrived::default()
+            }));
+            all.insert(key, Arc::clone(&arrived));
+            Body::new(Arriving {
+                key,
+                arrived,
+                window: WINDOW,
+            })
+        }
+    };
+    Ok(rest.after(start))
 }

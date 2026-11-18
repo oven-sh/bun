@@ -2,6 +2,7 @@
 //! `BUN_DESKTOP_LOG=frames` every frame as well.
 
 use std::cell::RefCell;
+use std::io::{ErrorKind, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -17,10 +18,23 @@ pub fn logs() -> bool {
 
 #[cold]
 pub fn print(module: &str, message: std::fmt::Arguments) {
-    eprintln!(
-        "[desktop {:9.2}] {module}: {message}",
+    let line = format!(
+        "[desktop {:9.2}] {module}: {message}\n",
         milliseconds(Instant::now())
     );
+    let (mut rest, mut to) = (line.as_bytes(), std::io::stderr().lock());
+    while !rest.is_empty() {
+        match to.write(rest) {
+            Ok(count @ 1..) => rest = &rest[count..],
+            // Not every pipe blocks.
+            Err(error)
+                if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::Interrupted) =>
+            {
+                std::thread::sleep(Duration::from_millis(1))
+            }
+            _ => break,
+        }
+    }
 }
 
 macro_rules! log {
@@ -88,7 +102,7 @@ pub enum Step {
     Jobs,
     Flatten,
     Paint,
-    #[cfg(target_os = "macos")]
+    #[cfg(any(windows, target_os = "macos"))]
     Commit,
 }
 
@@ -130,6 +144,12 @@ struct Scroll {
     last_frame: Option<Instant>,
     /// How many moves came in each eighth of the time between two frames.
     phases: [u32; 8],
+    /// When painting began and ended, in milliseconds after the refresh.
+    #[cfg(target_os = "macos")]
+    paced: [Vec<f64>; 2],
+    /// For the window server, and how often in vain.
+    #[cfg(target_os = "macos")]
+    waited: [u32; 2],
 }
 
 thread_local! {
@@ -170,6 +190,35 @@ fn print_what_was_shown(interval: Duration) {
     log!(
         "shown {} times, {delays:.1?} ms after they were painted, and not for one frame: {uneven:?}",
         all.len()
+    );
+}
+
+#[cfg(target_os = "macos")]
+pub fn paced(was_due: f64, began: f64, ended: f64, was_in_the_way: bool) {
+    if logs_misses() {
+        SCROLL.with_borrow_mut(|it| {
+            it.paced
+                .iter_mut()
+                .zip([began, ended])
+                .for_each(|(all, time)| all.push(time * 1000.));
+            it.waited[0] += u32::from(was_in_the_way || began - was_due > 0.001);
+            it.waited[1] += u32::from(was_in_the_way);
+        });
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn print_pace(paced: [Vec<f64>; 2], [late, in_vain]: [u32; 2]) {
+    let [began, ended] = paced.map(|mut all| {
+        all.sort_by(f64::total_cmp);
+        [0.02, 0.5, 0.98].map(|part| {
+            all.get((all.len() as f64 * part) as usize)
+                .copied()
+                .unwrap_or_default()
+        })
+    });
+    log!(
+        "painted from {began:.1?} to {ended:.1?} ms after the refresh, {late} times later than due, {in_vain} times while the window server was busy"
     );
 }
 
@@ -256,6 +305,8 @@ pub fn frame_began(at: Instant, interval: Duration, is_scrolling: bool, is_follo
                 );
                 #[cfg(target_os = "macos")]
                 print_what_was_shown(interval);
+                #[cfg(target_os = "macos")]
+                print_pace(it.paced, it.waited);
             }
         }
     });

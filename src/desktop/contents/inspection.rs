@@ -2,12 +2,18 @@
 
 use std::rc::Rc;
 
-use bun_web::host::Inspected;
+use bun_removable_features::{Feature, is_removed};
+use bun_web::host::Logged;
 
 use super::page::Page;
 use super::{Contents, of_app, parts};
+use crate::devtools::TRIMMED;
+use crate::devtools::frontend::Frontend;
+use crate::generated_bindgen::contents::js_ElectronWebContents as fields;
 use crate::prelude::*;
-use crate::renderer::handle_of;
+use crate::value::Value;
+use crate::webview::engine::Kind;
+use crate::webview::remote::Remote;
 
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum Stage {
@@ -20,49 +26,20 @@ pub(crate) enum News<'a> {
     DocumentCreated,
     NavigatedWithinDocument(&'a str),
     Reached(Stage),
-    Console(&'a str, &'a [JSValue]),
-    Exception {
-        text: &'a str,
-        url: &'a str,
-        line: u32,
-        column: u32,
-        error: JSValue,
-    },
+    Logged(Logged<'a>),
+    /// By the browser
+    Complaint(&'a str),
     /// By the process that has the page.
     Inspected {
         session: u32,
         method: &'a str,
         params: &'a str,
     },
+    /// The page is about to be asked.
+    Leaving,
     FramesChanged,
     GuestCommitted,
     Destroyed,
-}
-
-pub(crate) fn with_news(
-    it: Inspected<'_>,
-    tell: &dyn Fn(News<'_>) -> JsResult<()>,
-) -> JsResult<()> {
-    match it {
-        Inspected::Console { method, values } => {
-            let handles = array(&[])?;
-            (values.iter()).try_for_each(|it| handles.push(global(), handle_of(*it)))?;
-            with_elements(handles, |all| tell(News::Console(method, all)))
-        }
-        Inspected::Exception {
-            text,
-            url,
-            line,
-            column,
-            error,
-        } => tell(News::Exception {
-            text,
-            url,
-            line,
-            column,
-            error: handle_of(error),
-        }),
-    }
 }
 
 pub(crate) struct Observer {
@@ -97,10 +74,21 @@ pub(super) struct Inspection {
     pub(super) has_network: Cell<bool>,
     media: Cell<Option<EmulatedMedia>>,
     pub(super) seems_focused: Cell<bool>,
+    frontend: RefCell<Option<Rc<Frontend>>>,
+    opening: Cell<Opening>,
+}
+
+/// The app hears of the `WebContents` that is made for the frontend.
+#[derive(Clone, Copy, Default, PartialEq)]
+enum Opening {
+    #[default]
+    No,
+    Yes,
+    CalledOff,
 }
 
 pub(crate) fn inspectable() -> impl Iterator<Item = &'static Contents> {
-    of_app()
+    of_app().filter(|it| it.is_inspectable())
 }
 
 /// Of a page, or of a frame that is not in the web engine.
@@ -109,6 +97,10 @@ pub(crate) fn around(object: JSValue) -> Option<&'static Contents> {
 }
 
 impl Contents {
+    pub(crate) fn is_inspectable(&self) -> bool {
+        self.preferences.allows_dev_tools
+    }
+
     pub(crate) fn observe(&self, observer: &Rc<Observer>) {
         (self.inspection.observers.borrow_mut()).push(Rc::clone(observer));
     }
@@ -128,6 +120,60 @@ impl Contents {
 
     pub(super) fn dismisses_dialogs(&self) -> bool {
         (self.inspection.observers.borrow().iter()).any(|it| it.dismisses_dialogs)
+    }
+
+    pub(super) fn frontend(&self) -> Option<Rc<Frontend>> {
+        self.inspection.frontend.borrow().clone()
+    }
+
+    /// Electron knows about extensions.
+    pub(super) fn guest_with_dev_tools(&self) -> Option<&'static Remote> {
+        let is_free = self.frontend().is_none()
+            && fields::host_of_dev_tools(self).is_none()
+            && !is_removed(Feature::Inspector);
+        (self.guest()).filter(|it| is_free && it.engine().kind == Kind::Electron)
+    }
+
+    pub(super) fn start_dev_tools(&self, options: &Value, panel: Option<&str>) -> JsResult<()> {
+        self.check()?;
+        if let Some(frontend) = self.frontend() {
+            return match options["activate"] {
+                Value::Bool(false) => Ok(()),
+                _ => frontend.activate(),
+            };
+        }
+        if !self.is_inspectable() {
+            return Ok(());
+        }
+        if is_removed(Feature::Inspector) {
+            return warn(TRIMMED);
+        }
+        if self.inspection.opening.replace(Opening::Yes) == Opening::No {
+            let host = fields::host_of_dev_tools(self).filter(|it| !it.is_destroyed());
+            let frontend = Frontend::open(self, host, options, panel);
+            let opening = self.inspection.opening.take();
+            self.inspection.frontend.replace(frontend?);
+            if opening == Opening::CalledOff {
+                return self.end_dev_tools();
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn end_dev_tools(&self) -> JsResult<()> {
+        if self.inspection.opening.get() == Opening::Yes {
+            self.inspection.opening.set(Opening::CalledOff);
+        }
+        (self.inspection.frontend.take()).map_or(Ok(()), |it| it.close())
+    }
+
+    pub(crate) fn set_inspects(&self, inspected: Option<&Contents>) {
+        fields::set_inspects(self, inspected);
+    }
+
+    /// If it shows DevTools.
+    pub(crate) fn inspects(&self) -> Option<&Contents> {
+        fields::inspects(self)
     }
 
     pub(crate) fn inspect_network(&self, is_on: bool) {

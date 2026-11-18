@@ -221,9 +221,22 @@ simple_enums! {
         Now, Min, Max, Step, Level, PositionInSet, SetSize, RowCount, ColumnCount, RowSpan, ColumnSpan, FontSize, Color, Frame, Layer
     }
     tree::Relation { ActiveDescendant, Controls, DescribedBy, Details, ErrorMessage, FlowTo, LabelledBy, Owns, Target, RadioGroup, Headers }
+}
+
+#[cfg(unix)]
+simple_enums! {
     Cursor {
         Arrow, IBeam, VerticalIBeam, Crosshair, OpenHand, ClosedHand, PointingHand, ResizeLeft, ResizeRight, ResizeLeftRight, ResizeUp, ResizeDown,
         ResizeUpDown, ResizeUpLeftDownRight, ResizeUpRightDownLeft, ResizeColumn, ResizeRow, NotAllowed, DragLink, DragCopy, ContextMenu, Hidden
+    }
+}
+
+#[cfg(windows)]
+simple_enums! {
+    Cursor {
+        Arrow, IBeam, VerticalIBeam, Crosshair, OpenHand, ClosedHand, PointingHand, ResizeLeft, ResizeRight, ResizeLeftRight, ResizeUp, ResizeDown,
+        ResizeUpDown, ResizeUpLeftDownRight, ResizeUpRightDownLeft, ResizeColumn, ResizeRow, NotAllowed, DragLink, DragCopy, ContextMenu, Hidden,
+        Wait, Progress, Help, Move, Cell, ZoomIn, ZoomOut
     }
 }
 

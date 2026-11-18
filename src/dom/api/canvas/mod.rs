@@ -14,7 +14,7 @@ mod recorder;
 mod text;
 mod transfer;
 
-pub(crate) use bitmap::{Owned, Source, decode, drop_font_scope, open};
+pub(crate) use bitmap::{Bitmap, Owned, Source, decode, drop_font_scope, open};
 pub(crate) use context::Context;
 pub(crate) use element::CANVAS_STEPS;
 pub(crate) use host::*;
@@ -23,6 +23,7 @@ pub(crate) use image_data::ImageData;
 pub(crate) use offscreen::OffscreenCanvas;
 pub(crate) use paint::{CanvasGradient, CanvasPattern};
 pub(crate) use path::Path;
+pub(crate) use recorder::Recorder;
 pub(crate) use text::TextMetrics;
 pub(crate) use transfer::{Transferable, receive};
 

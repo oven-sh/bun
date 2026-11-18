@@ -873,7 +873,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--env <inline|prefix*|disable>   Inline environment variables into the bundle as process.env.${name}. Defaults to 'disable'. To inline environment variables matching a prefix, use my prefix like 'FOO_PUBLIC_*'."
         ),
         parse_param!(
-            "--desktop                        Build a <b>bun:desktop<r> app: a .app for macOS, an AppDir for Linux. Requires --compile"
+            "--desktop                        Build a <b>bun:desktop<r> app: a .app for macOS, an AppDir for Linux, a directory for Windows. Requires --compile"
         ),
         parse_param!(
             "--desktop-name <STR>             With --desktop: the name people see. Defaults to productName or name in package.json"

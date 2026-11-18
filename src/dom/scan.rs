@@ -344,6 +344,25 @@ pub(crate) fn end_of_block(source: &[u8], brace: usize) -> (usize, bool) {
     skip(source, brace + 1, |byte| byte == b'}')
 }
 
+/// Where the comma is.
+pub(crate) fn end_of_list_item(source: &[u8], mut at: usize) -> usize {
+    let mut depth = 0usize;
+    while let Some(&byte) = source.get(at) {
+        at = match byte {
+            b',' if depth == 0 => return at,
+            b'\\' => at + 2,
+            b'"' | b'\'' => after_string(source, at),
+            b'/' if source.get(at + 1) == Some(&b'*') => after_comment(source, at),
+            _ => {
+                depth = (depth + usize::from(matches!(byte, b'(' | b'[')))
+                    .saturating_sub(matches!(byte, b')' | b']').into());
+                at + 1
+            }
+        };
+    }
+    source.len()
+}
+
 /// After the semicolon.
 pub(crate) fn end_of_statement(source: &[u8], at: usize) -> usize {
     skip(source, at, |byte| byte == b';').0 + 1

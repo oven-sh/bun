@@ -4,22 +4,22 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-use bun_collections::HashMap;
 use bun_sys::{E, Fd, File, O, S};
 use bun_threading::{Futex, Guarded};
 use bun_ui::protocol::{Lane, PageCommand, Ui};
 
 use super::petition::{Opened, Petition, Ruling, Tidings};
 use super::{Head, Kind, Peer, grants};
+use crate::HashMap;
 use crate::channel::FarBroadcast;
 use crate::exec::{Line, Sender};
 use crate::locks::LockRequest;
 use crate::net::session::Session;
-use crate::storage::caches::{CacheId, Caches};
+use crate::storage::caches::{CacheId, CachedResponse, Caches};
 use crate::storage::files::{Draft, Entry, Locator, OpenFile, is_valid_name};
 use crate::storage::indexed::far::{Operation, Supervised, require_key};
 use crate::storage::indexed::{Connection, Notice, Place, Turn};
-use crate::storage::{Shelf, SqlError};
+use crate::storage::{Shelf, SqlError, for_page_processes};
 use crate::wire::{self, Malformed};
 
 const MOST_HANDLES: usize = 1 << 17;
@@ -56,7 +56,7 @@ struct Shared {
     awaited: HashMap<u32, Option<Kept>>,
     events: HashMap<u32, Sender<bool>>,
     last_event: u32,
-    caches: VecDeque<(u32, CacheId)>,
+    caches: VecDeque<(Shelf, CacheId)>,
 }
 
 struct Clerk {
@@ -96,6 +96,29 @@ fn rule(peer: Peer, ticket: u32, ruling: Option<Ruling>) {
     let head = |kind| Head::new(kind, 0, ticket);
     if !ruling.is_some_and(|it| super::send(peer, Lane::Elsewhere, head(Kind::Ruling), it)) {
         super::send_head(peer, Lane::Elsewhere, head(Kind::NoRuling));
+    }
+}
+
+fn without_secrets(peer: Peer, it: CachedResponse) -> CachedResponse {
+    let Some(mut head) = it.head_if_opaque() else {
+        return it;
+    };
+    grants::keep_head(peer, &mut head);
+    head.hide_secrets(crate::request::Destination::Empty);
+    CachedResponse {
+        headers: head.headers,
+        kept_as: head.kept_as,
+        ..it
+    }
+}
+
+fn with_secrets(peer: Peer, it: CachedResponse) -> CachedResponse {
+    match grants::kept_head(peer, it.kept_as).filter(|it| it.is_cors_cross_origin()) {
+        Some(head) => CachedResponse {
+            body: it.body,
+            ..CachedResponse::of_opaque(&head)
+        },
+        None => it,
     }
 }
 
@@ -180,13 +203,13 @@ impl Clerk {
             .ok_or(Failure::Refused)
     }
 
-    fn caches(&self, shelf: Shelf, cache: Option<CacheId>) -> Outcome<Caches> {
-        if cache.is_some_and(|it| !self.shared.lock().caches.contains(&(shelf.session, it))) {
+    fn caches(&self, shelf: &Shelf, cache: Option<CacheId>) -> Outcome<Caches> {
+        if cache.is_some_and(|it| !self.shared.lock().caches.contains(&(shelf.clone(), it))) {
             return Err(Failure::Refused);
         }
         Ok(Caches {
-            storage: Arc::clone(&self.session(&shelf)?.storage),
-            bucket: shelf.bucket,
+            storage: Arc::clone(&self.session(shelf)?.storage),
+            bucket: for_page_processes(&shelf.bucket),
         })
     }
 
@@ -345,8 +368,8 @@ impl Clerk {
                 self.later(theft, async { stolen.await.map(Ruling::Stolen) })
             }
             Petition::Broadcast { member, value } => {
-                kept!(self, member, Kept::Broadcast(it) => it.send(&value));
-                Ok(())
+                kept!(self, member, Kept::Broadcast(it) => it.send(&value.0, value.1))
+                    .map_err(|_| Failure::Malformed)
             }
             Petition::TakeTurn { turn, shelf, name } => {
                 require_key(&name)?;
@@ -401,23 +424,27 @@ impl Clerk {
             }
             Petition::Usage { shelf } => {
                 let storage = Arc::clone(&self.session(&shelf)?.storage);
-                self.call(ticket, storage.usage(shelf.bucket.into()), Ruling::Usage)
+                self.call(
+                    ticket,
+                    storage.usage_with(shelf.bucket.to_vec(), for_page_processes(&shelf.bucket)),
+                    Ruling::Usage,
+                )
             }
             Petition::CacheNames { shelf } => {
-                let names = self.caches(shelf, None)?.names();
+                let names = self.caches(&shelf, None)?.names();
                 self.call(ticket, names, Ruling::CacheNames)
             }
             Petition::HasCache { shelf, name } => {
-                let has = self.caches(shelf, None)?.has(name);
+                let has = self.caches(&shelf, None)?.has(name);
                 self.call(ticket, has, Ruling::HasCache)
             }
             Petition::OpenCache { shelf, name } => {
-                let (session, shared) = (shelf.session, Arc::clone(&self.shared));
-                let opened = self.caches(shelf, None)?.open(name);
+                let (own, shared) = (shelf.clone(), Arc::clone(&self.shared));
+                let opened = self.caches(&shelf, None)?.open(name);
                 let note = move |it: &CacheId| {
-                    let known = &mut shared.lock().caches;
-                    if !known.contains(&(session, *it)) {
-                        known.push_back((session, *it));
+                    let (known, it) = (&mut shared.lock().caches, (own, *it));
+                    if !known.contains(&it) {
+                        known.push_back(it);
                     }
                     if known.len() > MOST_CACHES {
                         known.pop_front();
@@ -427,7 +454,7 @@ impl Clerk {
                 self.call(ticket, opened, Ruling::OpenCache)
             }
             Petition::DeleteCache { shelf, name } => {
-                let deleted = self.caches(shelf, None)?.delete(name);
+                let deleted = self.caches(&shelf, None)?.delete(name);
                 self.call(ticket, deleted, Ruling::DeleteCache)
             }
             Petition::FirstResponse {
@@ -436,7 +463,9 @@ impl Clerk {
                 asked,
                 options,
             } => {
-                let found = (self.caches(shelf, None)?).first_response(name, asked, options);
+                let found = (self.caches(&shelf, None)?).first_response(name, asked, options);
+                let peer = self.peer;
+                let found = async move { Ok(found.await?.map(|it| without_secrets(peer, it))) };
                 self.call(ticket, found, Ruling::FirstResponse)
             }
             Petition::Requests {
@@ -445,7 +474,7 @@ impl Clerk {
                 asked,
                 options,
             } => {
-                let found = (self.caches(shelf, Some(cache))?).requests(cache, asked, options);
+                let found = (self.caches(&shelf, Some(cache))?).requests(cache, asked, options);
                 self.call(ticket, found, Ruling::Requests)
             }
             Petition::Responses {
@@ -455,8 +484,12 @@ impl Clerk {
                 options,
                 limit,
             } => {
-                let caches = self.caches(shelf, Some(cache))?;
-                let found = caches.responses(cache, asked, options, limit);
+                let caches = self.caches(&shelf, Some(cache))?;
+                let (found, peer) = (caches.responses(cache, asked, options, limit), self.peer);
+                let found = async move {
+                    let all = found.await?.into_iter();
+                    Ok(all.map(|it| without_secrets(peer, it)).collect())
+                };
                 self.call(ticket, found, Ruling::Responses)
             }
             Petition::RemoveCached {
@@ -465,7 +498,7 @@ impl Clerk {
                 asked,
                 options,
             } => {
-                let removed = (self.caches(shelf, Some(cache))?).remove(cache, asked, options);
+                let removed = (self.caches(&shelf, Some(cache))?).remove(cache, asked, options);
                 self.call(ticket, removed, Ruling::RemoveCached)
             }
             Petition::PutCached {
@@ -473,7 +506,9 @@ impl Clerk {
                 cache,
                 entries,
             } => {
-                let stored = (self.caches(shelf, Some(cache))?).put(cache, entries);
+                let entries = entries.into_iter();
+                let entries = entries.map(|it| (it.0, with_secrets(self.peer, it.1)));
+                let stored = (self.caches(&shelf, Some(cache))?).put(cache, entries.collect());
                 self.call(ticket, stored, Ruling::PutCached)
             }
             Petition::CreateRoot { shelf } => {
@@ -551,6 +586,10 @@ impl Clerk {
                     _ => None,
                 };
                 return Ok((Ruling::Descriptor(()), file));
+            }
+            Petition::FileForReport {} => {
+                let file = grants::take_file_for_report(self.peer);
+                return Ok((Ruling::FileForReport(()), file));
             }
             Petition::Begin {
                 connection,

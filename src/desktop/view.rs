@@ -42,6 +42,8 @@ pub(crate) struct View {
     owns_surface: Cell<bool>,
     placed: Cell<Option<Placement>>,
     auto_resize: Cell<Option<AutoResize>>,
+    /// What the view that is docked leaves of the bounds.
+    room: Cell<Option<Rect>>,
     /// And where the library has it.
     image: RefCell<Option<(Option<Rc<Bitmap>>, u32)>>,
 }
@@ -139,6 +141,64 @@ impl View {
         self.lineage().fold(Point { x: 0., y: 0. }, add)
     }
 
+    pub(crate) fn origin_of_contents(&self) -> Point {
+        let Rect { x, y, .. } = self.confined(self.origin_in_content());
+        Point { x, y }
+    }
+
+    fn confined(&self, Point { x, y }: Point) -> Rect {
+        let Rect { width, height, .. } = self.bounds.get();
+        let Some(room) = self.room.get() else {
+            return Rect {
+                x,
+                y,
+                width,
+                height,
+            };
+        };
+        let (left, top) = (room.x.clamp(0., width), room.y.clamp(0., height));
+        Rect {
+            x: x + left,
+            y: y + top,
+            width: room.width.clamp(0., width - left),
+            height: room.height.clamp(0., height - top),
+        }
+    }
+
+    /// It fills the bounds, behind the contents.
+    pub(crate) fn dock(&self, view: Option<&View>) -> JsResult<()> {
+        let before = fields::docked(self);
+        if before.map(View::to_js) == view.map(View::to_js) {
+            return Ok(());
+        }
+        fields::set_docked(self, view);
+        self.room.take();
+        if let Some(before) = before {
+            fields::set_parent(before, None);
+            before.arrange(None, 0)?;
+        }
+        if let Some(view) = view {
+            fields::set_parent(view, Some(self));
+        }
+        self.fit_docked()?;
+        self.rearrange()
+    }
+
+    fn fit_docked(&self) -> JsResult<()> {
+        let bounds = Rect {
+            x: 0.,
+            y: 0.,
+            ..self.bounds.get()
+        };
+        fields::docked(self).map_or(Ok(()), |it| it.change_bounds(bounds))
+    }
+
+    pub(crate) fn confine(&self, room: Rect) -> JsResult<()> {
+        let is_needed = fields::docked(self).is_some() && room.width > 0. && room.height > 0.;
+        self.room.set(is_needed.then_some(room));
+        self.place()
+    }
+
     pub(crate) fn titlebar_area(&self) -> JsResult<Option<Rect>> {
         let (area, origin) = (
             self.window()
@@ -163,6 +223,7 @@ impl View {
 
     /// Puts the surfaces of the tree in `window`, in the order in which they are painted. Returns the next index.
     pub(crate) fn arrange(&self, window: Option<&Window>, index: u32) -> JsResult<u32> {
+        let index = fields::docked(self).map_or(Ok(index), |it| it.arrange(window, index))?;
         let next = index + u32::from(self.show_in(window, index)?);
         self.children()
             .try_fold(next, |index, child| child?.arrange(window, index))
@@ -187,13 +248,9 @@ impl View {
     }
 
     fn place(&self) -> JsResult<()> {
-        let (surface, Point { x, y }) = (self.surface.get(), self.origin());
+        let surface = self.surface.get();
         let (bounds, is_visible, radius) = (
-            Rect {
-                x,
-                y,
-                ..self.bounds.get()
-            },
+            self.confined(self.origin()),
             self.is_drawn(),
             self.radius.get(),
         );
@@ -216,6 +273,7 @@ impl View {
     fn place_tree(&self) -> JsResult<()> {
         self.place()?;
         self.changed()?;
+        fields::docked(self).map_or(Ok(()), View::place_tree)?;
         self.children().try_for_each(|it| it?.place_tree())
     }
 
@@ -227,6 +285,7 @@ impl View {
 
     pub(crate) fn tree_changed(&self) -> JsResult<()> {
         self.changed()?;
+        fields::docked(self).map_or(Ok(()), View::tree_changed)?;
         self.children().try_for_each(|it| it?.tree_changed())
     }
 
@@ -266,6 +325,7 @@ impl View {
         if self.bounds.replace(bounds) == bounds {
             return Ok(());
         }
+        self.fit_docked()?;
         self.place_tree()?;
         self.center_image()?;
         self.children().try_for_each(|it| it?.follow(bounds))?;
@@ -379,6 +439,12 @@ impl View {
     pub(crate) fn for_window(contents: JSValue, preferences: JSValue) -> JsResult<&'static View> {
         let view = js_DesktopWebContentsView::create(heap(), View::default());
         view.show_contents(contents, preferences, Kind::Window)?;
+        Ok(view)
+    }
+
+    pub(crate) fn for_dev_tools(preferences: JSValue) -> JsResult<&'static View> {
+        let view = js_DesktopWebContentsView::create(heap(), View::default());
+        view.show_contents(JSValue::UNDEFINED, preferences, Kind::Remote)?;
         Ok(view)
     }
 

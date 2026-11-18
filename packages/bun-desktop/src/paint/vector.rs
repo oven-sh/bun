@@ -16,7 +16,8 @@ use crate::gfx::{Cap, Command, Fill, Join, Point, Stroke, Transform, Walk};
 use crate::sync::Mutex;
 
 #[cfg_attr(target_os = "macos", path = "vector/metal.rs")]
-#[cfg_attr(not(target_os = "macos"), path = "vector/gl.rs")]
+#[cfg_attr(not(any(target_os = "macos", windows)), path = "vector/gl.rs")]
+#[cfg_attr(windows, path = "vector/none.rs")]
 mod device;
 
 #[cfg(target_os = "macos")]
@@ -288,6 +289,7 @@ impl Sample {
 macro_rules! numbers {
     ($($name:ident = $value:literal,)*) => {
         $(const $name: u32 = $value;)*
+        #[cfg(unix)]
         const SHADER: &str = concat!($("#define ", stringify!($name), " ", $value, "u\n",)* include_str!("vector/shader.h"));
     };
 }
@@ -370,6 +372,7 @@ const WIDE: f32 = 512.;
 #[derive(Clone, Copy, PartialEq)]
 enum Mode {
     Blend,
+    #[cfg(unix)]
     Opaque,
     /// `Blend`, of what has one color up to its edges.
     Tint,
@@ -576,6 +579,7 @@ pub struct Scene {
     was_crowded: bool,
     is_part: bool,
     needs_samples: bool,
+    has_large_shape: bool,
     /// What there is below it all, if not what there was before.
     backdrop: Option<Pixel>,
     clip: IntRect,
@@ -589,6 +593,8 @@ pub struct Scene {
     generation: u32,
     /// The corners of those that have more than a color take three times the room.
     units_per_pass: usize,
+    /// Of a shape.
+    max_units: usize,
     points: Vec<Point>,
     corners: Vec<Point>,
     path: Vec<Command>,
@@ -1139,7 +1145,8 @@ fn halves_of(low: i32, high: i32) -> u32 {
 
 impl Scene {
     pub fn new(area: IntRect, stays_opaque: bool) -> Scene {
-        let (words, units, opaque, steps, textures) = Default::default();
+        let ((words, units, opaque, steps, textures), failures) =
+            (Default::default(), STATE.lock().1);
         let mut scene = Scene {
             area,
             stays_opaque,
@@ -1154,19 +1161,29 @@ impl Scene {
             was_crowded: false,
             is_part: false,
             needs_samples: false,
+            has_large_shape: false,
             backdrop: None,
             clip: area,
             mask: [0; 2],
             is_mixed: false,
             blockers: Vec::new(),
             generation: 0,
-            units_per_pass: 1 << 20 >> (STATE.lock().1 * 2),
+            units_per_pass: 1 << 20 >> (failures * 2),
+            max_units: Self::max_units(area, failures),
             points: Vec::new(),
             corners: Vec::new(),
             path: Vec::new(),
         };
         scene.start_over(None);
         scene
+    }
+
+    fn max_units(area: IntRect, failures: u32) -> usize {
+        if failures == 0 && area.area() <= Self::MAX_AREA_WITH_MANY_UNITS {
+            device::MAX_UNITS
+        } else {
+            Self::MANY_UNITS
+        }
     }
 
     /// Without a clip.
@@ -1180,7 +1197,7 @@ impl Scene {
         self.steps.clear();
         self.textures.clear();
         self.blockers.clear();
-        (self.pixels_of_textures, self.covered) = (0, 0.);
+        (self.pixels_of_textures, self.covered, self.has_large_shape) = (0, 0., false);
         (
             self.backdrop,
             self.needs_samples,
@@ -1229,8 +1246,17 @@ impl Scene {
             };
             (part.area, part.clip, part.mask, part.opaque_clip) =
                 (self.area, self.clip, self.mask, self.opaque_clip);
-            (part.was_crowded, part.is_part, part.units_per_pass) =
-                (self.was_crowded, true, self.units_per_pass / 4);
+            (
+                part.was_crowded,
+                part.is_part,
+                part.units_per_pass,
+                part.max_units,
+            ) = (
+                self.was_crowded,
+                true,
+                self.units_per_pass / 4,
+                self.max_units,
+            );
         }
         true
     }
@@ -1273,6 +1299,7 @@ impl Scene {
             self.covered + part.covered,
             self.needs_samples || part.needs_samples,
         );
+        self.has_large_shape |= part.has_large_shape;
         true
     }
 
@@ -1310,7 +1337,9 @@ impl Scene {
     }
 
     const MAX_WORDS: usize = 1 << 21;
-    const MAX_UNITS: usize = 1 << 20;
+    /// A shape with more takes memory for each sample.
+    const MANY_UNITS: usize = 1 << 20;
+    const MAX_AREA_WITH_MANY_UNITS: i64 = 6 << 20;
     const MAX_TEXTURES: usize = 256;
     /// Others wait for the GPU, and systems do not let them wait for long.
     const COVERED_PER_PASS: f32 = 2e9;
@@ -1347,6 +1376,7 @@ impl Scene {
     }
 
     /// The first unit copies what there was before.
+    #[cfg(unix)]
     fn steps(&mut self, copies: bool) -> &[Step] {
         self.stop_blocking();
         self.steps[0].first = u32::from(!copies);
@@ -1421,7 +1451,7 @@ impl Scene {
         });
         let mut path = std::mem::take(&mut self.path);
         if is_fine {
-            self.count(path.iter().copied(), before);
+            self.count(&path, before);
         }
         path.clear();
         self.path = path;
@@ -1634,6 +1664,7 @@ impl Scene {
         }
     }
 
+    #[cfg(unix)]
     fn opaque_steps(&self) -> [Step; 2] {
         let ends = [
             self.units.len(),
@@ -1702,12 +1733,13 @@ impl Scene {
     /// With room for what ends a shape.
     #[inline]
     fn fits(&self, [_, units]: [usize; 2]) -> bool {
-        self.words.len() + 8 <= Self::MAX_WORDS && self.units.len() - units <= Self::MAX_UNITS
+        self.words.len() + 8 <= Self::MAX_WORDS && self.units.len() - units <= self.max_units
     }
 
     /// False if it has taken back what was added since.
     fn keep(&mut self, is_fine: bool, [words, units]: [usize; 2]) -> bool {
         let is_fine = is_fine && self.fits([words, units]);
+        self.has_large_shape |= is_fine && self.units.len() - units > Self::MANY_UNITS;
         if !is_fine {
             self.words.truncate(words);
             self.units.truncate(units);
@@ -2130,7 +2162,7 @@ impl Scene {
                 .map(|[a, b]| steps(*b - *a).min(longest))
                 .sum::<f32>();
             is_fine = points.iter().fold(true, |all, it| all & is_near(*it))
-                && points.len() <= Self::MAX_UNITS;
+                && points.len() <= stroker.scene.max_units;
             match points[..] {
                 _ if !is_fine => {}
                 [from, to] => {
@@ -2217,6 +2249,34 @@ impl Scene {
             word(center, center),
         ]);
         self.add_units(patch, WEDGE, count);
+    }
+
+    /// What is between it and the lines that it adds to `polygon`, in triangles that are as small as they can be.
+    fn bulge(&mut self, curve: [Point; 4], tolerance: f32, polygon: &mut Vec<Point>) {
+        const MOST: f32 = 486.;
+        let count = curviness(curve) * (TOLERANCE / tolerance);
+        if count > MOST * MOST {
+            return halves(curve, 0.5)
+                .into_iter()
+                .for_each(|it| self.bulge(it, tolerance, polygon));
+        }
+        polygon.push(curve[3]);
+        let (patch, count, [a, b, c, d]) =
+            (self.words.len() as u32, count.sqrt().ceil() as u32, curve);
+        let units = std::iter::successors(Some(count), |it| Some(it.div_ceil(3)))
+            .take_while(|it| *it > 1)
+            .map(|it| (it + 1) / 3)
+            .sum::<u32>();
+        self.covered +=
+            ((b - a).cross(c - a).abs() + (c - a).cross(d - a).abs() + (b - a).cross(d - a).abs())
+                .min(self.clip.area() as f32 * units as f32 * 2.);
+        self.words.extend([
+            word(a, d),
+            [count, 0, relative(0, patch), 0],
+            word(b, c),
+            [0; 4],
+        ]);
+        self.add_units(patch, WEDGE, units);
     }
 
     /// What is within `radius` of a rectangle, or within `reach` of the edge of that. `axis` connects the middles of two sides.
@@ -2647,16 +2707,25 @@ impl Scene {
     }
 
     /// Triangles that add up to the winding number.
-    fn count(&mut self, path: impl Walk, before: [usize; 2]) {
-        let (mut points, head) = (std::mem::take(&mut self.points), [0; 2]);
-        segments(path, |segment| match segment {
+    fn count(&mut self, path: &[Command], before: [usize; 2]) {
+        let (mut points, head, tolerance) = (
+            std::mem::take(&mut self.points),
+            [0; 2],
+            if path.len() > 1 << 14 {
+                TOLERANCE * 1.5
+            } else {
+                TOLERANCE
+            },
+        );
+        segments(path.iter().copied(), |segment| match segment {
             _ if !self.fits(before) => points.clear(),
             Err(_) => self.polygon(&mut points, head),
             Ok((segment, is_line)) => {
                 points.extend(points.is_empty().then_some(segment[0]));
-                points.push(segment[3]);
-                if !is_line {
-                    self.wedges(segment, segment[0], head);
+                if is_line {
+                    points.push(segment[3])
+                } else {
+                    self.bulge(segment, tolerance, &mut points)
                 }
             }
         });
@@ -2776,7 +2845,7 @@ impl Scene {
         let before = [words, self.units.len()];
         if !is_simple {
             self.polygon(corners, [0; 2]);
-            self.count(path.iter().copied(), before);
+            self.count(path, before);
             is_kept = self.keep(self.covered - covered < Self::MAX_COVERED, before);
         }
         if !is_kept {
@@ -2834,5 +2903,33 @@ pub mod tests {
 
     pub fn forgive() {
         *STATE.lock() = (State::On, 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_shape_can_be_large() {
+        let point = |it: u32| Point::new((it * 7 % 64) as f32, (it * 11 % 61) as f32);
+        for (side, failures, count, is_taken, is_large) in [
+            (64, 0, 1000, true, false),
+            (64, 0, 200_000, true, true),
+            (64, 1, 200_000, false, false),
+            (4096, 0, 200_000, false, false),
+        ] {
+            let (mut scene, curves) = (
+                Scene::new(IntRect::new(0, 0, side, side), false),
+                (0..count).map(|it| Command::CurveTo(point(it), point(it + 3), point(it + 5))),
+            );
+            (scene.units_per_pass, scene.max_units) =
+                (1 << 20, Scene::max_units(scene.area, failures));
+            let path = Vec::from_iter([Command::MoveTo(Point::ZERO)].into_iter().chain(curves));
+            assert_eq!(
+                scene.fill(path.into_iter(), Fill::EvenOdd, Ink::solid([255; 4])),
+                is_taken
+            );
+            assert_eq!(
+                (scene.has_large_shape, scene.len() > Scene::MANY_UNITS),
+                (is_large, is_large)
+            );
+        }
     }
 }

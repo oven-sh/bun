@@ -89,7 +89,7 @@ records! {
     Rect { x: f32, y: f32, width: f32, height: f32 }
     Pen { width: f32, miter_limit: f32, dash_offset: f32, cap: Cap, join: Join }
     TextStyle { font: u32, size: f32, letter_spacing: f32, word_spacing: f32, is_right_to_left: bool, baseline: Baseline }
-    Snapshot { id: u32, source: u32, size: [f32; 2], part: Rect, to: [u32; 2], flips: bool, is_smooth: bool, is_sharpened: bool, is_tile: bool, is_wide: bool }
+    Snapshot { id: u32, source: u32, size: [f32; 2], part: Rect, to: [u32; 2], flips: bool, is_smooth: bool, is_sharpened: bool, are_straight: [bool; 2], is_tile: bool, is_wide: bool }
 }
 
 macro_rules! choices {
@@ -235,6 +235,8 @@ pub struct Snapshot {
     pub is_smooth: bool,
     /// With a cubic filter, if it is enlarged.
     pub is_sharpened: bool,
+    /// The colors of `source` and of `id` are not premultiplied. Nothing can draw such an image.
+    pub are_straight: [bool; 2],
     /// Only `Paint::Pattern` can use it.
     pub is_tile: bool,
     /// Of a tile. Others are in the color space of the source.
@@ -340,7 +342,12 @@ pub struct Graphics {
     /// `rgba` covers `area`, and `dirty` is inside of that.
     pub write: unsafe extern "C" fn(canvas: u32, area: &Area, dirty: &Area, rgba: *const u8),
     /// In sRGB, in Display P3, or in both. The other one is null.
-    pub insert: unsafe extern "C" fn(size: &[u32; 2], rgba: *const u8, wide: *const u8) -> u32,
+    pub insert: unsafe extern "C" fn(
+        size: &[u32; 2],
+        rgba: *const u8,
+        wide: *const u8,
+        is_straight: bool,
+    ) -> u32,
     /// From sRGB to Display P3, or back.
     pub convert: unsafe extern "C" fn(rgba: *mut u8, pixels: usize, widens: bool),
     /// Whether it may have colors that sRGB lacks. It waits.
@@ -355,6 +362,9 @@ pub struct Graphics {
         *mut c_void,
     ) -> bool,
     pub decode: unsafe extern "C" fn(bytes: Slice<u8>, is_oriented: bool) -> Decoded,
+    /// 0 if the image was not decoded from a file.
+    pub decode_again: extern "C" fn(image: u32, is_straight: bool, converts_colors: bool) -> u32,
     /// Does not wait for the pixels. Fails unless the image is large enough for that to be worthwhile.
     pub open: unsafe extern "C" fn(bytes: Slice<u8>, density: f32, scale: f32) -> Decoded,
+    pub(crate) webgl: &'static crate::abi_webgl::WebGl,
 }

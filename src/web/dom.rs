@@ -3,8 +3,9 @@
 use bun_jsc::{JSGlobalObject, JSValue};
 
 use crate::channel::{Endpoint, LooseBitmap};
-use crate::host::{Clipped, Host};
+use crate::host::{Clipped, Host, Logged};
 use crate::net::embedder::ClientId;
+use crate::outside::AboutSharedWorker;
 use crate::page::{About, Change, Order, Outcome, Query};
 use crate::service::{Running, Start};
 
@@ -66,6 +67,8 @@ unsafe extern "Rust" {
         image: LooseBitmap,
         then: Box<dyn FnOnce()>,
     );
+    #[link_name = "__bun_dom_tell_shared_worker"]
+    pub safe fn tell_shared_worker(worker: u32, news: AboutSharedWorker);
     #[link_name = "__bun_dom_can_paste"]
     pub safe fn can_paste() -> bool;
     #[link_name = "__bun_dom_change_context"]
@@ -87,6 +90,11 @@ unsafe extern "Rust" {
         opening: Opening,
         client: ClientId,
     ) -> Option<JSValue>;
+    /// The last messages, the oldest first.
+    #[link_name = "__bun_dom_recall_log"]
+    pub safe fn recall_log(window: JSValue, visit: &mut dyn FnMut(Logged<'_>));
+    #[link_name = "__bun_dom_forget_log"]
+    pub safe fn forget_log(window: JSValue);
     #[link_name = "__bun_dom_follow_response"]
     pub safe fn follow_response(page: u32, links: &[u8]);
     #[link_name = "__bun_dom_window_of"]

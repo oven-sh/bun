@@ -4634,7 +4634,7 @@
         },
         {
           "name": "desktop",
-          "description": "Build a bun:desktop app: a .app for macOS, an AppDir for Linux. Requires --compile",
+          "description": "Build a bun:desktop app: a .app for macOS, an AppDir for Linux, a directory for Windows. Requires --compile",
           "hasValue": false,
           "required": false,
           "multiple": false

@@ -19,6 +19,7 @@ pub mod protocol;
 pub mod value;
 
 pub mod clipboard;
+pub mod data;
 pub mod dom;
 mod generated_bindgen;
 pub mod image;
@@ -35,6 +36,14 @@ unsafe extern "C" {
     /// Null if it has thrown.
     safe fn Bun__Desktop__load(global: &JSGlobalObject) -> Option<&'static Ui>;
     safe fn Bun__Desktop__process(global: &JSGlobalObject) -> JSValue;
+}
+
+// `trim: { remove }` can take them out of an executable that keeps `bun:desktop`.
+unsafe extern "Rust" {
+    #[link_name = "__bun_desktop_has_http_client"]
+    pub safe fn has_http_client() -> bool;
+    #[link_name = "__bun_desktop_can_start_programs"]
+    pub safe fn can_start_programs() -> bool;
 }
 
 static UI: OnceLock<&'static Ui> = OnceLock::new();

@@ -128,6 +128,16 @@ fn require(path: &[u8], kind: Kind) -> Result {
     }
 }
 
+/// Also if it is being read, which `rename` refuses on Windows.
+fn replace(path: &[u8], by: &[u8]) -> Result {
+    Ok(bun_sys::renameat(
+        Fd::cwd(),
+        &ZBox::from_bytes(by),
+        Fd::cwd(),
+        &ZBox::from_bytes(path),
+    )?)
+}
+
 fn entries_of(directory: &[u8]) -> Result<Vec<(Bytes, Kind)>> {
     let (directory, mut found) = (Dir::open(directory)?, Vec::new());
     let mut entries = bun_sys::iterate_dir(directory.fd());
@@ -433,10 +443,7 @@ impl Locator {
                     if kind_of(&to) == Some(Kind::Directory) {
                         return Err(FileError::IsDirectory);
                     }
-                    Ok(bun_sys::rename(
-                        &ZBox::from_bytes(from),
-                        &ZBox::from_bytes(to),
-                    )?)
+                    replace(&to, &from)
                 })
             }
         )
@@ -488,7 +495,8 @@ impl Locator {
                                 O::RDONLY
                             } else {
                                 O::RDWR
-                            } | O::CLOEXEC,
+                            } | O::CLOEXEC
+                                | O::NOFOLLOW,
                             0,
                         )?,
                     })
@@ -532,9 +540,10 @@ impl Locator {
                         position: 0,
                     };
                     if let (true, Some(target)) = (keeps_data, &copy.file) {
-                        bun_sys::copy_file(
-                            File::openat(Fd::cwd(), &copy.path, O::RDONLY | O::CLOEXEC, 0)?.fd(),
-                            target.file.fd(),
+                        let flags = O::RDONLY | O::CLOEXEC | O::NOFOLLOW;
+                        copy_data(
+                            &File::openat(Fd::cwd(), &copy.path, flags, 0)?,
+                            &target.file,
                         )?;
                     }
                     Ok(Draft {
@@ -545,6 +554,34 @@ impl Locator {
             }
         )
     }
+}
+
+/// It takes nothing to make a hole, however large.
+#[cfg(unix)]
+fn copy_data(from: &File, to: &File) -> Result {
+    const SEEK_DATA: i32 = if cfg!(target_os = "macos") { 4 } else { 3 };
+    const SEEK_HOLE: i32 = 7 - SEEK_DATA;
+    let size = bun_sys::get_file_size(from.fd())? as i64;
+    if bun_sys::lseek(from.fd(), 0, SEEK_HOLE).is_ok_and(|it| it < size) {
+        let (mut at, mut buffer) = (0, vec![0; 1 << 20]);
+        while let Ok(data) = bun_sys::lseek(from.fd(), at, SEEK_DATA)
+            && data < size
+        {
+            let hole = bun_sys::lseek(from.fd(), data, SEEK_HOLE)?;
+            let most = buffer.len().min((hole - data) as usize);
+            let length = from.pread_all(&mut buffer[..most], data as u64)?;
+            to.pwrite_all(&buffer[..length], data)?;
+            at = data + length.max(1) as i64;
+        }
+        return Ok(bun_sys::ftruncate(to.fd(), size)?);
+    }
+    from.seek_to(0)?;
+    Ok(bun_sys::copy_file(from.fd(), to.fd())?)
+}
+
+#[cfg(windows)]
+fn copy_data(from: &File, to: &File) -> Result {
+    Ok(bun_sys::copy_file(from.fd(), to.fd())?)
 }
 
 pub struct OpenFile {
@@ -674,10 +711,7 @@ impl Draft {
             require(&copy.path, Kind::File)?;
             let OpenFile { file, _lock } = copy.file.take().ok_or(FileError::Failed)?;
             drop(file);
-            Ok(
-                bun_sys::rename(&ZBox::from_bytes(&copy.swap), &ZBox::from_bytes(&copy.path))
-                    .map(|()| None)?,
-            )
+            replace(&copy.path, &copy.swap).map(|()| None)
         });
         async {
             match result.await.unwrap_or(Err(FileError::Failed))? {

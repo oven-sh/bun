@@ -60,10 +60,19 @@ fn read_pixels(from: &mut impl Read, length: usize) -> std::io::Result<Vec<u8>> 
     Ok(rows)
 }
 
-/// The end for the other process. A file would be written to the disk.
-pub fn open_channel() -> Result<i32> {
+#[cfg(windows)]
+fn pipe() -> Result<(File, i32)> {
+    use std::os::windows::io::FromRawHandle as _;
+    let (mut ours, mut theirs) = (0, 0);
+    crate::win32::succeeded(crate::win32::CreatePipe(&mut ours, &mut theirs, 0, 1 << 21))?;
+    // SAFETY: nothing else closes it.
+    Ok((unsafe { File::from_raw_handle(ours as _) }, theirs as i32))
+}
+
+#[cfg(unix)]
+fn pipe() -> Result<(std::os::unix::net::UnixStream, i32)> {
     use std::os::fd::{AsRawFd as _, IntoRawFd as _};
-    let (mut ours, theirs) = std::os::unix::net::UnixStream::pair()?;
+    let (ours, theirs) = std::os::unix::net::UnixStream::pair()?;
     for (socket, option) in [(&ours, libc::SO_RCVBUF), (&theirs, libc::SO_SNDBUF)] {
         let size: libc::c_int = 1 << 21;
         // SAFETY: `size` is as long as it is said to be.
@@ -77,6 +86,12 @@ pub fn open_channel() -> Result<i32> {
             )
         };
     }
+    Ok((ours, theirs.into_raw_fd()))
+}
+
+/// The end for the other process. A file would be written to the disk.
+pub fn open_channel() -> Result<i32> {
+    let (mut ours, theirs) = pipe()?;
     let (sender, receiver) = std::sync::mpsc::channel();
     std::thread::Builder::new()
         .name("web frames".into())
@@ -95,7 +110,7 @@ pub fn open_channel() -> Result<i32> {
         })?;
     CHANNEL.set(Some(receiver));
     OWED.set(0);
-    Ok(theirs.into_raw_fd())
+    Ok(theirs)
 }
 
 impl View {

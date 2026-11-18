@@ -2,7 +2,6 @@
 
 use std::cell::RefCell;
 use std::mem::MaybeUninit;
-use std::os::fd::BorrowedFd;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::thread::LocalKey;
 use std::time::{Duration, Instant};
@@ -12,7 +11,7 @@ use crate::codec::Rgba;
 use crate::error::{Context as _, Result};
 use crate::host::{self, platform, thread};
 use crate::protocol::*;
-use crate::remote::{guest, pages, sandbox};
+use crate::remote::{guest, pages, sandbox, system};
 use crate::{app, bridge, cover, guard, images, surface, text, webview};
 
 fn here<T>(work: impl FnOnce() -> Result<T>) -> Outcome<T> {
@@ -167,12 +166,7 @@ unsafe extern "C" fn petition(bytes: *const u8, length: usize, is_answered: bool
 
 unsafe extern "C" fn rule(to: u32, bytes: *const u8, length: usize, descriptor: i32) {
     // SAFETY: the caller's contract.
-    let (bytes, descriptor) = unsafe {
-        (
-            crate::borrow(bytes, length),
-            (descriptor >= 0).then(|| BorrowedFd::borrow_raw(descriptor)),
-        )
-    };
+    let (bytes, descriptor) = unsafe { (crate::borrow(bytes, length), system::borrow(descriptor)) };
     pages::rule(to, bytes, descriptor);
 }
 
@@ -234,6 +228,12 @@ static UI: Ui = Ui {
     prepare_sandbox: function!(|| -> () { sandbox::prepare() }),
     enter_sandbox: function!(|generates_code: bool| -> bool { sandbox::enter(generates_code) }),
     become_page_process: function!(|| -> () { guest::connect() }),
+    become_gpu_process: function!(|has_sandbox: bool| -> () {
+        #[cfg(target_os = "linux")]
+        crate::remote::gpu::serve(has_sandbox);
+        #[cfg(not(target_os = "linux"))]
+        let _ = has_sandbox;
+    }),
     open_page_process: function!(here |is_trusted: bool| -> PageProcess { pages::open(is_trusted)? }),
     tell_page_process: function!(|id: u32, command: PageCommand| -> () {
         guard("error", (), || pages::command(id, command))
@@ -322,6 +322,7 @@ static UI: Ui = Ui {
     answer,
     run_as_root: function!(here |prompt: Text, commands: List<List<Text>>| -> Text { crate::platform::run_as_root(&prompt, &commands)? }),
     named_image: function!(ask |name: Text| -> List<u8> { platform()?.named_image(&name).into() }),
+    ask_shell: function!(ask |command: ShellCommand| -> PreferenceValue { crate::platform::ask_shell(command)? }),
     preference: function!(here |key: Text| -> Maybe<PreferenceValue> { crate::platform::preference(&key) }),
     change_preference: function!(|command: PreferenceCommand| -> Maybe<Text> {
         failure(here(|| crate::platform::change_preference(&command)))

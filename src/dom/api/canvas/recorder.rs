@@ -92,6 +92,7 @@ pub(crate) struct Recorder {
     list: JsCell<List>,
     /// The contexts whose placeholder is behind.
     to_present: JsCell<Vec<Strong>>,
+    pub(crate) webgl: crate::api::webgl::Contexts,
 }
 
 thread_local! {

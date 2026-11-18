@@ -994,6 +994,14 @@ impl Builder {
         if self.are_contexts_closed && !crate::boxes::is_collapsible_space(data.as_bytes(), style) {
             self.reopen_contexts(style);
         }
+        let starts_combined = combines(style)
+            && !self
+                .items
+                .last()
+                .is_some_and(|it| it.kind == ItemKind::Text && it.parent == self.parent);
+        if starts_combined {
+            (self.after_space, self.trailing_space) = (true, None);
+        }
         self.push(ItemKind::Text, node, style, "");
         let (index, first) = (self.items.len() - 1, self.segments.len());
         self.text.reserve(data.len());
@@ -1075,9 +1083,23 @@ impl Builder {
                 self.map(first, base + offset, character.len_utf8(), start);
             }
         }
+        if starts_combined
+            && self.items[index].start as usize == self.text.len()
+            && !data.is_empty()
+        {
+            self.text.push(' ');
+            self.segments
+                .last_mut()
+                .into_iter()
+                .for_each(|it| it.end += 1);
+        }
         let item = &mut self.items[index];
         item.end = self.text.len() as u32;
         item.segments = first as u32..self.segments.len() as u32;
+        if combines(style) {
+            self.remove_trailing_space();
+            self.after_space = false;
+        }
     }
 
     /// `first_line` is the style of `::first-line`, if it applies. `former` is what it replaces, with the style of its box.
@@ -1098,6 +1120,9 @@ impl Builder {
                 let all = parts[0].segments.start..parts[parts.len() - 1].segments.end;
                 parts.iter_mut().for_each(|it| it.segments = all.clone());
             }
+        }
+        if self.root.text.writing_mode.is_vertical() {
+            narrow_combined_text(document, &self.text, &mut self.items);
         }
         let first_line = first_line.map(|root| {
             let mut items = self.items.clone();
@@ -2375,13 +2400,7 @@ impl Inline {
                 let base = self.items[base as usize].clusters.start + 1..clusters.start;
                 base.for_each(|at| *self.clusters.adjust(at).1 &= !abi::CLUSTER_BREAK_BEFORE);
             }
-            ItemKind::Text
-                if text.combine == TextCombine::All
-                    && matches!(
-                        text.writing_mode,
-                        WritingMode::VerticalRl | WritingMode::VerticalLr
-                    ) =>
-            {
+            ItemKind::Text if combines(&item.style) => {
                 let continues = clusters.start > 0
                     && self.items[..index]
                         .last()
@@ -2392,13 +2411,13 @@ impl Inline {
                         at == clusters.start && !continues,
                     );
                     cluster.advance = if is_first {
-                        item.style.font.size.0 + item.style.letter_spacing()
+                        item.style.font.size.0
                     } else {
                         0.0
                     };
                     cluster.flags = COMBINED
                         | if is_first {
-                            abi::CLUSTER_BREAK_BEFORE
+                            cluster.flags & abi::CLUSTER_BREAK_BEFORE
                         } else {
                             0
                         };
@@ -2436,8 +2455,6 @@ impl Inline {
                         at.checked_sub(1)
                             .map_or(0, |it| self.clusters.letter(it).flags)
                     };
-                    let after_combined =
-                        self.clusters.are_adjusted && flags_before() & COMBINED != 0;
                     if text.autospace == TextAutospace::Normal
                         && at > 0
                         && (is_ideograph(character) || is_ideograph(before))
@@ -2506,9 +2523,7 @@ impl Inline {
                         }
                         _ => {}
                     }
-                    if text.line_break == LineBreak::Anywhere
-                        || after_combined && character.is_alphanumeric()
-                    {
+                    if text.line_break == LineBreak::Anywhere {
                         *self.clusters.adjust(at).1 |= abi::CLUSTER_BREAK_BEFORE;
                     }
                     if is_vertical
@@ -2520,6 +2535,57 @@ impl Inline {
                 }
             }
             _ => {}
+        }
+    }
+}
+
+fn combines(style: &Style) -> bool {
+    style.text.combine == TextCombine::All
+        && matches!(
+            style.text.writing_mode,
+            WritingMode::VerticalRl | WritingMode::VerticalLr
+        )
+}
+
+/// With narrower glyphs if the font has some that make combined text fit.
+#[cold]
+fn narrow_combined_text(document: &Document, text: &str, items: &mut [Item]) {
+    for all in items
+        .chunk_by_mut(|a, b| {
+            a.kind == ItemKind::Text && b.kind == ItemKind::Text && a.parent == b.parent
+        })
+        .filter(|it| it[0].kind == ItemKind::Text && combines(&it[0].style))
+    {
+        let (own, text) = (
+            &all[0].style,
+            &text[all[0].start as usize..all[all.len() - 1].end as usize],
+        );
+        let fits = |style: &Style| {
+            document
+                .shape_plain(text, style)
+                .clusters()
+                .iter()
+                .map(|it| it.advance - style.letter_spacing())
+                .sum::<f32>()
+                <= style.font.size.0 * 1.1
+        };
+        let with = |tag: &[u8; 4]| {
+            let mut defined = document.defined_for_font(all[0].node, own);
+            defined.features.push(abi::FontSetting {
+                tag: *tag,
+                value: 1.0,
+            });
+            Style {
+                font_id: document.fonts.describe(own, &defined),
+                ..Style::clone(own)
+            }
+        };
+        if let Some(narrow) = (!fits(own))
+            .then(|| [b"hwid", b"twid", b"qwid"].into_iter().map(with).find(fits))
+            .flatten()
+            .map(Rc::new)
+        {
+            all.iter_mut().for_each(|it| it.style = Rc::clone(&narrow));
         }
     }
 }

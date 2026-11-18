@@ -213,16 +213,16 @@ impl Document {
         scope: NodeId,
         sought: &'a Sought,
     ) -> Option<Selection<'a>> {
-        (sought.is_plain && !self.tree.has_searched_enough()).then(|| Selection {
-            matcher: Matcher::new(
+        let matcher = || {
+            Matcher::new(
                 &self.tree,
                 self.tree.host_of(self.tree[scope].scope),
                 NodeId::MAX,
                 None,
-            ),
-            sought,
-            limit: usize::MAX,
-        })
+            )
+        };
+        (sought.is_plain && !self.tree.has_searched_enough())
+            .then(|| self.selection_with(matcher(), sought, self.tree.is_rendered(scope)))
     }
 
     #[inline]
@@ -244,21 +244,42 @@ impl Document {
         };
         let matcher = Matcher::new(&self.tree, host, scope, None);
         debug_assert_eq!(self.tree.cut_at.get(), 0);
-        let having = |all: &SmallVec<_>| {
-            all.iter()
-                .map(|it| self.attribute_keys.at_most(*it))
-                .min()
-                .unwrap_or(0)
-        };
-        let limit = sought
-            .attributes
-            .as_ref()
-            .filter(|_| is_rendered)
-            .map_or(usize::MAX, |it| it.iter().map(having).sum());
+        self.selection_with(matcher, sought, is_rendered)
+    }
+
+    #[inline]
+    fn selection_with<'a>(
+        &self,
+        matcher: Matcher<'a>,
+        sought: &'a Sought,
+        is_rendered: bool,
+    ) -> Selection<'a> {
+        let (mut limit, mut filters) = (0usize, SmallVec::new());
+        for kind in &sought.kinds {
+            let most = match is_rendered {
+                true if kind
+                    .around
+                    .iter()
+                    .any(|it| self.attribute_keys.at_most(*it) == 0) =>
+                {
+                    0
+                }
+                true => kind
+                    .own
+                    .iter()
+                    .map(|it| self.attribute_keys.at_most(*it))
+                    .min()
+                    .unwrap_or(usize::MAX),
+                false => usize::MAX,
+            };
+            limit = limit.saturating_add(most);
+            filters.extend((most != 0).then_some(kind.filter));
+        }
         Selection {
             matcher,
             sought,
             limit,
+            filters,
         }
     }
 
@@ -398,6 +419,8 @@ pub(crate) struct Selection<'a> {
     sought: &'a Sought,
     /// How many can match at most.
     limit: usize,
+    /// Of the `Sought::kinds` that there can be.
+    filters: SmallVec<[u64; 4]>,
 }
 
 impl Selection<'_> {
@@ -417,7 +440,6 @@ impl Selection<'_> {
         let tree = self.matcher.tree;
         tree.descendants_with(root, self.sought.keys)
             .filter(|it| self.matcher.any(&self.sought.list, *it))
-            .take(self.limit)
             .map(|it| tree.cell(it))
             .filter(|it| !it.is_null())
     }
@@ -468,15 +490,15 @@ impl Selection<'_> {
             1,
         );
         while !pending.is_empty() {
-            let count = match sought.required {
-                0 => tree.next_with(
-                    &mut pending,
-                    |keys| keys & sought.keys != 0,
-                    &mut batch[..size],
-                ),
-                required => tree.next_with(
+            let count = match self.filters[..] {
+                [required] if required != 0 => tree.next_with(
                     &mut pending,
                     |keys| keys & required == required,
+                    &mut batch[..size],
+                ),
+                ref all => tree.next_with(
+                    &mut pending,
+                    |keys| keys & sought.keys != 0 && all.iter().any(|it| keys & it == *it),
                     &mut batch[..size],
                 ),
             };
@@ -513,8 +535,12 @@ impl Selection<'_> {
                 .take_while(|it| *it != 0)
                 .any(|it| it == root)
         };
-        let found = (self.limit == 1 && is_below()).then(|| {
-            tree.element_children(parent).find(|it| {
+        let children = || {
+            tree.element_children(parent)
+                .inspect(|_| tree.sequence.walked.update(|it| it + 1))
+        };
+        let found = (self.limit == 1 && !tree.sequence.is_current() && is_below()).then(|| {
+            children().find(|it| {
                 tree[*it].keys & self.sought.required == self.sought.required && self.has(*it)
             })
         });
@@ -740,6 +766,18 @@ pub(crate) fn decodes_message<'a>(
             return bytes.split_first().is_some_and(|(page, it)| {
                 decode(it).is_ok_and(|it| remote::forge((*page).into(), it))
             });
+        }
+        b"call" => {
+            return remote::is_page_process()
+                && bytes.split_first().is_some_and(|(client, it)| {
+                    bun_web::outside::forge_call((*client).into(), it)
+                });
+        }
+        b"deed" => {
+            return remote::is_page_process()
+                && bytes.split_first().is_some_and(|(client, it)| {
+                    bun_web::outside::forge_deed((*client).into(), it)
+                });
         }
         b"port" => match remote::open(u32::MAX, &bytes) {
             Ok(Arrival::Message(it)) => it,

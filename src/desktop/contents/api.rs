@@ -28,6 +28,7 @@ use crate::prelude::*;
 use crate::realm::{self, Module};
 use crate::session::Session;
 use crate::text::{split, split_once};
+use crate::value::Value;
 use crate::webview::embedded;
 use crate::webview::remote::Remote;
 use crate::webview::{print, wire};
@@ -127,7 +128,7 @@ macro_rules! promises {
 }
 
 impl Contents {
-    fn check(&self) -> JsResult<()> {
+    pub(super) fn check(&self) -> JsResult<()> {
         if self.is_destroyed.get() {
             Err(type_error(format_args!("Object has been destroyed")))
         } else {
@@ -496,16 +497,17 @@ impl Contents {
         self.traverse(index as usize, true)
     }
 
-    pub(super) fn forget_history(&self) {
+    pub(super) fn forget_history(&self) -> JsResult<()> {
         self.guest().into_iter().for_each(Remote::clear_history);
         let mut history = self.history.borrow_mut();
         let current = history.entries.get(history.index).cloned();
         (history.entries, history.index) = (current.into_iter().collect(), 0);
+        drop(history);
+        self.tell_of_pruning(None)
     }
 
     pub(crate) fn clear_history(&self, _: Cx<'_, '_>) -> JsResult<()> {
-        self.forget_history();
-        Ok(())
+        self.forget_history()
     }
 
     pub(crate) fn load_url<'a>(
@@ -699,6 +701,9 @@ impl Contents {
     }
 
     pub(crate) fn get_dev_tools_title(&self, _: Cx<'_, '_>) -> JsResult<String> {
+        if let Some(frontend) = self.frontend() {
+            return frontend.title();
+        }
         let title = text_if_any(self.remembered("setDevToolsTitle")?)?;
         Ok(title.unwrap_or_else(|| "Developer Tools".to_owned()))
     }
@@ -728,7 +733,18 @@ impl Contents {
         is_waiting_for_response: "isWaitingForResponse", |it| Ok(it.loading.is_pending());
         is_crashed: "isCrashed", |it| Ok(it.has_crashed());
         is_currently_audible: "isCurrentlyAudible", |_| Ok(false);
-        is_dev_tools_opened: "isDevToolsOpened", |_| Ok(false);
+    }
+
+    pub(crate) fn is_dev_tools_opened(&self, _: Cx<'_, '_>) -> JsResult<bool> {
+        Ok(match self.guest_with_dev_tools() {
+            Some(guest) => guest.mirrored("isDevToolsOpened").is_truthy(),
+            None => self.frontend().is_some_and(|it| it.is_open()),
+        })
+    }
+
+    pub(crate) fn is_dev_tools_focused(&self, _: Cx<'_, '_>) -> JsResult<bool> {
+        let frontend = self.frontend().filter(|it| it.contents().is_focused());
+        frontend.map_or(Ok(false), |it| it.contents().is_window_focused())
     }
 
     pub(crate) fn is_destroyed(&self) -> bool {
@@ -761,7 +777,7 @@ impl Contents {
     }
 
     pub(crate) fn get_owner_browser_window(&self, _: Cx<'_, '_>) -> JsResult<JSValue> {
-        js(self.window().map(JsInterface::to_js))
+        js((self.inspects().unwrap_or(self).window()).map(JsInterface::to_js))
     }
 
     pub(crate) fn get_last_web_preferences(&self, _: Cx<'_, '_>) -> JsResult<JSValue> {
@@ -886,7 +902,7 @@ impl Contents {
                 "Must specify either 'file' or 'files' option"
             )));
         }
-        if !IS_MAC {
+        if !IS_MAC && !IS_WINDOWS {
             return Err(unsupported("startDrag"));
         }
         let paths = paths.into_iter().map(Text::from).collect();
@@ -1135,31 +1151,77 @@ impl Contents {
     }
 
     fn told_dev_tools(&self, method: &str, given: &[JSValue]) -> JsResult<bool> {
-        let options = spread(object!({}), argument(given, 0))?;
-        options.put(global(), b"mode", js("detach")?);
-        self.told_guest(method, &[options])
+        let guest = self.guest_with_dev_tools();
+        Ok(guest
+            .map(|it| it.tell_page(method, given))
+            .transpose()?
+            .is_some())
     }
 
-    pub(crate) fn open_dev_tools<'a>(&self, _: Cx<'a, '_>, values: Values<'a, '_>) -> JsResult<()> {
-        match self.told_dev_tools("openDevTools", raw(values))? {
+    fn show_dev_tools(&self, method: &str, given: &[JSValue]) -> JsResult<()> {
+        let options = spread(object!({}), argument(given, 0))?;
+        let detached = spread(object!({}), options)?;
+        detached.put(global(), b"mode", js("detach")?);
+        match self.told_dev_tools(method, &[detached])? {
             true => Ok(()),
-            false => warn("openDevTools is not supported by bun:desktop/electron"),
+            false => self.start_dev_tools(&wire::data_from_js(options)?, None),
         }
     }
 
-    pub(crate) fn toggle_dev_tools<'a>(
+    pub(crate) fn open_dev_tools<'a>(&self, _: Cx<'a, '_>, values: Values<'a, '_>) -> JsResult<()> {
+        self.show_dev_tools("openDevTools", raw(values))
+    }
+
+    pub(crate) fn close_dev_tools<'a>(&self, _: Cx<'a, '_>, _: Values<'a, '_>) -> JsResult<()> {
+        self.told_dev_tools("closeDevTools", &[])?;
+        self.end_dev_tools()
+    }
+
+    pub(crate) fn toggle_dev_tools<'a>(&self, _: Cx<'a, '_>, _: Values<'a, '_>) -> JsResult<()> {
+        match self.frontend() {
+            Some(_) => self.end_dev_tools(),
+            None => self.show_dev_tools("toggleDevTools", &[]),
+        }
+    }
+
+    pub(crate) fn inspect_element<'a>(
         &self,
         _: Cx<'a, '_>,
         values: Values<'a, '_>,
     ) -> JsResult<()> {
-        self.told_dev_tools("toggleDevTools", raw(values)).map(drop)
+        if self.told_dev_tools("inspectElement", raw(values))? {
+            return Ok(());
+        }
+        let [x, y] = [0, 1].map(|it| argument(raw(values), it).to_number(global()));
+        self.start_dev_tools(&Value::empty(), Some("elements"))?;
+        let point = [x?, y?];
+        self.frontend().inspect(|it| it.reveal_element_at(point));
+        Ok(())
+    }
+
+    pub(crate) fn set_dev_tools_title<'a>(
+        &self,
+        _: Cx<'a, '_>,
+        values: Values<'a, '_>,
+    ) -> JsResult<()> {
+        match self.frontend() {
+            Some(frontend) => frontend.set_title(text_at(raw(values), 0)?),
+            None => self.remember("setDevToolsTitle", raw(values)),
+        }
+    }
+
+    pub(crate) fn set_dev_tools_web_contents(&self, contents: &Contents) {
+        fields::set_host_of_dev_tools(self, Some(contents));
+    }
+
+    pub(crate) fn get_dev_tools_web_contents(&self) -> JSValue {
+        let frontend = self.frontend().filter(|it| it.is_open());
+        frontend.map_or(JSValue::NULL, |it| it.contents().to_js())
     }
 
     only_for_guest! {
         center_selection: "centerSelection",
-        close_dev_tools: "closeDevTools",
         copy_video_frame_at: "copyVideoFrameAt",
-        inspect_element: "inspectElement",
         inspect_service_worker: "inspectServiceWorker",
         inspect_shared_worker: "inspectSharedWorker",
         inspect_shared_worker_by_id: "inspectSharedWorkerById",
@@ -1167,7 +1229,6 @@ impl Contents {
     }
 
     settings_of_guest! {
-        set_dev_tools_title: "setDevToolsTitle",
         set_image_animation_policy: "setImageAnimationPolicy",
         set_web_rtciphandling_policy: "setWebRTCIPHandlingPolicy",
         set_web_rtcudpport_range: "setWebRTCUDPPortRange",
@@ -1310,6 +1371,7 @@ impl Contents {
                     is_down: kind != b"keyUp",
                     key,
                     code,
+                    key_code: 0,
                     location: has(&["left"]) | (has(&["right"]) * 2) | (has(&["iskeypad"]) * 3),
                     modifiers,
                     repeats: has(&["isautorepeat"]) != 0,

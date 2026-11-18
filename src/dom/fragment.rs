@@ -1,15 +1,20 @@
 //! Fragmentation. What flows through columns is laid out in one strip, with every box and line assigned to the column that it
 //! starts in. Once the outermost multi-column container is done, they are moved to where their columns are.
 
+use core::cell::Cell;
 use core::ops::Range;
 
-use crate::abi::Rect;
+use smallvec::{SmallVec, smallvec};
+
+use crate::abi::{Matrix, Rect};
 use crate::block::Floats;
 use crate::boxes::{BoxId, Kind};
 use crate::document::Document;
+use crate::geometry::translation;
 use crate::layout::{Edges, Input, Output, Point, Room};
 use crate::lines::FragmentKind;
 use crate::name::{Map, is_name};
+use crate::order::Order as _;
 use crate::properties::{Style, Text};
 use crate::types::*;
 
@@ -289,6 +294,29 @@ pub(crate) struct Piece {
     pub(crate) shift: [f32; 2],
     /// Only limited where the box is cut. For a column, the middle of the gap before it.
     pub(crate) clip: Rect,
+    /// Only what overflows the box is here.
+    pub(crate) is_past_end: bool,
+}
+
+/// The flow of the outermost multi-column container, the column in it, and those in the ones that are nested.
+pub(crate) type ColumnPath = SmallVec<[u32; 3]>;
+
+/// What is in a box is painted once for each part. One that has more is transformed as a whole.
+const MOST_TRANSFORMED_PARTS: usize = 64;
+
+pub(crate) struct Transformed {
+    parts: Vec<(ColumnPath, Rect)>,
+    /// What `LayoutBox::reach` is made of, and valid with it: what is in flow and what is not.
+    pub(crate) overflow: Cell<[Rect; 2]>,
+}
+
+/// The columns of a box whose container, or which itself, is transformed column by column.
+pub(crate) struct Assigned {
+    pub(crate) own: ColumnPath,
+    pub(crate) is_monolithic: bool,
+    /// Or copies.
+    pub(crate) pieces: Vec<ColumnPath>,
+    pub(crate) lines: Vec<ColumnPath>,
 }
 
 fn join(first: BreakBetween, second: BreakBetween) -> BreakBetween {
@@ -420,6 +448,10 @@ impl Flow<'_> {
         self.breaks.range(self.column, self.breaks.insets.len())[1] - self.top
     }
 
+    pub(crate) fn follows_break(&self, y: f32) -> bool {
+        y <= self.start() + TOLERANCE && self.column > self.breaks.row(self.column).first
+    }
+
     fn start_of_next(&self) -> f32 {
         self.breaks.range(self.column + 1, self.breaks.insets.len())[0] - self.top
     }
@@ -535,6 +567,14 @@ impl Flow<'_> {
         Some(self.break_at(y, appeal, false))
     }
 
+    /// Only once.
+    fn must_break(&mut self, key: (BoxId, Option<usize>), before: BreakBetween) -> bool {
+        self.is_separated
+            && join(self.outcome.after, before) == BreakBetween::Column
+            && self.breaks.open.is_none_or(|it| self.column < it)
+            && self.forced.replace(key) != Some(key)
+    }
+
     /// For a child, or a row of them, from `top` to `bottom`.
     pub(crate) fn decide(
         &mut self,
@@ -549,12 +589,7 @@ impl Flow<'_> {
         }
         let between = join(self.outcome.after, own.before);
         let is_separated = self.is_separated || !is_in_flow;
-        if is_in_flow
-            && is_separated
-            && between == BreakBetween::Column
-            && self.breaks.open.is_none_or(|it| self.column < it)
-            && self.forced.replace((id, line)) != Some((id, line))
-        {
+        if is_in_flow && self.must_break((id, line), own.before) {
             return Decision::Move(Appeal::Perfect, true);
         }
         let before = match between {
@@ -1067,12 +1102,24 @@ impl Mapping<'_> {
         ];
         self.outer.map_or(at, |it| it.locate(row.outer_column, at))
     }
+
+    fn path(&self, column: usize, root: &Root) -> ColumnPath {
+        let mut path = self.outer.map_or_else(
+            || smallvec![root.flow],
+            |it| it.path(self.breaks.row(column).outer_column, root),
+        );
+        path.push(column as u32);
+        path
+    }
 }
 
 struct Root {
     mode: WritingMode,
     size: [f32; 2],
     baselines: [Option<f32>; 2],
+    flow: BoxId,
+    /// How many transformed boxes are around, and the columns that are used in the outermost.
+    transformed: (u32, Vec<ColumnPath>),
 }
 
 impl Root {
@@ -1172,6 +1219,24 @@ impl Document {
             cloned,
             depth,
         }
+    }
+
+    /// Whether `text-box-trim` applies after and before breaks between its lines.
+    pub(crate) fn trims_at_breaks(&self, id: BoxId) -> [bool; 2] {
+        [0, 1].map(|side| {
+            let mut around = self
+                .boxes
+                .containers(id)
+                .map(|it| &self.boxes[it])
+                .take_while(|it| matches!(it.kind, Kind::Block | Kind::Columns));
+            let nearest =
+                around.find(|it| it.kind == Kind::Columns || it.style.rare.box_trim.sides()[side]);
+            nearest.is_some_and(|it| {
+                it.style.rare.box_trim.sides()[side]
+                    && (it.kind == Kind::Columns
+                        || it.style.rare.decoration_break == DecorationBreak::Clone)
+            })
+        })
     }
 
     /// Whether the height includes the borders and paddings of all the pieces.
@@ -1394,8 +1459,17 @@ impl Document {
                 top = resumed + band.lead;
             }
             top -= (top - flow.end()).min(band.gap).max(0.0);
+            let before = if band.is_block {
+                self.boxes[key.0].style.rare.break_before
+            } else {
+                band.between[0]
+            };
+            if top > flow.end() + TOLERANCE && flow.must_break(key, before) {
+                y = flow.break_at(y, Appeal::Perfect, true);
+                top = y + band.lead + band.margin;
+            }
             while top > flow.end() + TOLERANCE && flow.column < MAX_COLUMNS {
-                top += flow.start_of_next() - flow.end();
+                top += flow.start_of_next() - flow.end().max(y.min(top));
                 y = flow.break_at(y, Appeal::Perfect, false);
             }
             flow.is_separated |= band.is_block && top > y.max(flow.start());
@@ -1745,7 +1819,13 @@ impl Document {
             mode: self.boxes[flow].turned,
             size,
             baselines: [None; 2],
+            flow,
+            transformed: Default::default(),
         };
+        self.boxes.assigned.retain(|_, it| it.own[0] != flow);
+        self.boxes
+            .transformed
+            .retain(|_, it| it.parts[0].0[0] != flow);
         (
             self.boxes[flow].layout.size.width,
             self.boxes[flow].layout.size.height,
@@ -1797,9 +1877,24 @@ impl Document {
                     .moved(origin),
                 shift: [0.0; 2],
                 clip,
+                is_past_end: false,
             }
         });
         self.boxes.pieces.insert(flow, columns.collect());
+        if root.transformed.0 > 0 {
+            let pieces = (0..breaks.tally.reach[0].len().max(1))
+                .map(|it| mapping.path(it, root))
+                .collect();
+            self.boxes.assigned.insert(
+                flow,
+                Assigned {
+                    own: mapping.path(0, root),
+                    is_monolithic: false,
+                    pieces,
+                    lines: Vec::new(),
+                },
+            );
+        }
         self.distribute_contents(flow, mapping, [0.0; 2], origin, shift, root);
     }
 
@@ -1842,6 +1937,24 @@ impl Document {
         } else {
             root.mode.turn_axes(it.size())[0]
         };
+        if let (marker @ 1.., WritingMode::HorizontalTb) = (it.outside_marker, root.mode) {
+            let (first, layout) = (
+                mapping.breaks.placed.get(&id).map_or(0, |it| it.column),
+                &self.boxes[marker].layout,
+            );
+            let [x, y] = [at[0] + layout.location.x, at[1] + layout.location.y];
+            let [x, y] = mapping.locate(
+                mapping
+                    .breaks
+                    .column_at(first, y + layout.size.height / 2.0),
+                [x, y],
+            );
+            self.boxes[marker].layout.location = Point {
+                x: x - origin[0],
+                y: y + shift - origin[1],
+            };
+        }
+        let it = &self.boxes[id];
         let children: Vec<_> = it
             .children
             .iter()
@@ -1891,6 +2004,14 @@ impl Document {
                 [x, y + shift]
             };
             let whole = root.physical(locate(placed.column, placed.top), size);
+            let (is_transformed, first_used) = (
+                !placed.is_monolithic && own.style.has_transform(),
+                root.transformed.1.len(),
+            );
+            root.transformed.0 += u32::from(is_transformed);
+            if root.transformed.0 > 0 {
+                self.assign_columns(child, placed, mapping, root);
+            }
             let layout = &mut self.boxes[child].layout;
             layout.location = Point {
                 x: whole.x - origin[0],
@@ -1901,7 +2022,14 @@ impl Document {
             }
             (layout.size.width, layout.size.height) = (whole.width, whole.height);
             if !placed.pieces.is_empty() {
-                let mut consumed = 0.0;
+                let (mut consumed, last) = (
+                    0.0,
+                    placed
+                        .pieces
+                        .iter()
+                        .rposition(|it| it.2 > it.1)
+                        .unwrap_or(0),
+                );
                 let pieces =
                     placed
                         .pieces
@@ -1914,8 +2042,8 @@ impl Document {
                             let rect = root
                                 .physical([x, y], [size[0], bottom - top])
                                 .moved([-whole.x, -whole.y]);
-                            let [above, below] = [0, placed.pieces.len() - 1]
-                                .map(|it| if index == it { FAR } else { 0.0 });
+                            let [above, below] =
+                                [index == 0, index >= last].map(|it| if it { FAR } else { 0.0 });
                             let clip = root.physical(
                                 [x - FAR, y - above],
                                 [size[0] + 2.0 * FAR, bottom - top + above + below],
@@ -1924,6 +2052,7 @@ impl Document {
                                 rect,
                                 shift: [moved.x - whole.x, moved.y - whole.y],
                                 clip: clip.moved([-whole.x, -whole.y]),
+                                is_past_end: index > last,
                             }
                         });
                 self.boxes.pieces.insert(child, pieces.collect());
@@ -1965,7 +2094,45 @@ impl Document {
                     root,
                 );
             }
+            let around = if placed.copies.is_empty() {
+                root.transformed.0
+            } else {
+                core::mem::take(&mut root.transformed.0)
+            };
             self.distribute_contents(child, mapping, at, origin, shift, root);
+            root.transformed.0 = around;
+            if is_transformed {
+                let depth = mapping.path(placed.column, root).len();
+                let mut used = root.transformed.1.split_off(first_used);
+                used.iter_mut().for_each(|it| it.truncate(depth));
+                used.order_by(Ord::cmp);
+                used.dedup();
+                let part = |path: &ColumnPath| {
+                    let column = path[depth - 1] as usize;
+                    let (top, bottom) = match placed.pieces.iter().find(|it| it.0 == column) {
+                        Some(piece) => (piece.1, piece.2),
+                        None if column == placed.column => (placed.top, placed.top + placed.height),
+                        None => (mapping.breaks.start(column), mapping.breaks.start(column)),
+                    };
+                    (
+                        path.clone(),
+                        root.physical(locate(column, top), [size[0], bottom - top])
+                            .moved([-whole.x, -whole.y]),
+                    )
+                };
+                if (2..=MOST_TRANSFORMED_PARTS).contains(&used.len()) {
+                    self.boxes.transformed.insert(
+                        child,
+                        Transformed {
+                            parts: used.iter().map(part).collect(),
+                            overflow: Cell::default(),
+                        },
+                    );
+                    self.boxes[child].forget_extents();
+                }
+                root.transformed.1.append(&mut used);
+                root.transformed.0 -= 1;
+            }
             if let Some(first) = placed.copies.first() {
                 let place = |it: &(usize, f32)| root.physical(locate(it.0, it.1), size);
                 let mut all: Vec<_> = placed.copies.iter().map(place).collect();
@@ -1985,6 +2152,132 @@ impl Document {
                 );
             }
         }
+    }
+
+    fn assign_columns(&mut self, id: BoxId, placed: &Placed, mapping: &Mapping, root: &mut Root) {
+        let path = |column: usize| mapping.path(column, root);
+        let (pieces, lines) = (
+            placed.pieces.iter().map(|it| path(it.0)).collect(),
+            placed.lines.iter().map(|it| path(*it)).collect(),
+        );
+        let mut assigned = Assigned {
+            own: path(placed.column),
+            is_monolithic: placed.is_monolithic,
+            pieces,
+            lines,
+        };
+        if let Some(first) = placed.copies.first() {
+            (assigned.is_monolithic, assigned.pieces) =
+                (true, placed.copies.iter().map(|it| path(it.0)).collect());
+            if first.0 < placed.column {
+                core::mem::swap(&mut assigned.own, &mut assigned.pieces[0]);
+            }
+        }
+        let on_lines = self.boxes[id].inline.iter().flat_map(|it| {
+            it.lines
+                .lines
+                .iter()
+                .zip(&assigned.lines)
+                .flat_map(|(line, path)| {
+                    it.lines.fragments_of(line).iter().map(move |it| (it, path))
+                })
+        });
+        let atomics = on_lines.filter_map(|(it, path)| {
+            if let FragmentKind::Atomic(child) = it.kind {
+                Some((child, path.clone()))
+            } else {
+                None
+            }
+        });
+        let whole: Vec<_> = atomics
+            .chain(
+                Some((self.boxes[id].outside_marker, assigned.own.clone())).filter(|it| it.0 != 0),
+            )
+            .collect();
+        for (id, own) in whole {
+            self.boxes.assigned.insert(
+                id,
+                Assigned {
+                    own,
+                    is_monolithic: true,
+                    pieces: Vec::new(),
+                    lines: Vec::new(),
+                },
+            );
+        }
+        root.transformed.1.extend(
+            core::iter::once(&assigned.own)
+                .chain(&assigned.pieces)
+                .chain(&assigned.lines)
+                .cloned(),
+        );
+        self.boxes.assigned.insert(id, assigned);
+    }
+
+    /// For each column that a box has something in, if there are several: its fragment there and its transform.
+    pub(crate) fn transformed_parts(
+        &self,
+        id: BoxId,
+    ) -> Option<impl Iterator<Item = (&ColumnPath, Rect, Matrix)>> {
+        let (parts, style) = (
+            &(!self.boxes.transformed.is_empty())
+                .then(|| self.boxes.transformed.get(&id))??
+                .parts,
+            &self.boxes[id].style,
+        );
+        let placed = |it: &Rect| {
+            multiply(
+                &multiply(
+                    &translation([it.x, it.y]),
+                    &style.transform(it.width, it.height),
+                ),
+                &translation([-it.x, -it.y]),
+            )
+        };
+        style.has_transform().then(|| {
+            parts
+                .iter()
+                .map(move |(path, rect)| (path, *rect, placed(rect)))
+        })
+    }
+
+    /// What `inside` is transformed to, of which each part has what is nearest.
+    pub(crate) fn transformed_by_parts(&self, id: BoxId, inside: Rect) -> Option<Rect> {
+        let axis = 1 - self.boxes[id].block_axis();
+        let parts: Vec<_> = self
+            .transformed_parts(id)?
+            .map(|it| (it.1.span(axis)[0], it.2))
+            .collect();
+        let starts: Vec<_> = parts.iter().map(|it| it.0).collect();
+        let parts = parts.into_iter().map(|(start, matrix)| {
+            let [first, last] = inside.span(axis);
+            let from = if starts.iter().any(|it| *it < start) {
+                start.max(first)
+            } else {
+                first
+            };
+            let to = starts
+                .iter()
+                .copied()
+                .filter(|it| *it > start)
+                .fold(last, f32::min)
+                .max(from);
+            let own = if axis == 0 {
+                Rect {
+                    x: from,
+                    width: to - from,
+                    ..inside
+                }
+            } else {
+                Rect {
+                    y: from,
+                    height: to - from,
+                    ..inside
+                }
+            };
+            own.transformed(&matrix)
+        });
+        parts.reduce(|a, b| a.union(&b))
     }
 
     /// `locate` tells where the box would be if it were in that column.

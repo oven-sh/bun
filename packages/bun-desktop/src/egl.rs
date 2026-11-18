@@ -1,4 +1,4 @@
-//! Contexts of the system's OpenGL ES, without a window.
+//! Contexts of the system's OpenGL ES or OpenGL, without a window.
 
 use std::ffi::{CStr, c_char, c_void};
 use std::ptr::{null, null_mut};
@@ -39,19 +39,20 @@ functions! {
     make_current = c"eglMakeCurrent"(Handle, Handle, Handle, Handle) -> u32;
     query_device_string = c"eglQueryDeviceStringEXT"(Handle, i32) -> *const c_char;
     query_devices = c"eglQueryDevicesEXT"(i32, *mut Handle, *mut i32) -> u32;
+    release_thread = c"eglReleaseThread"() -> u32;
 }
 
 static FUNCTIONS: OnceLock<Option<Functions>> = OnceLock::new();
 
 fn functions() -> Option<&'static Functions> {
-    // SAFETY: it only asks. Drivers crash if they cannot run the code they write.
     FUNCTIONS
         .get_or_init(|| {
-            if unsafe { libc::prctl(libc::PR_GET_MDWE, 0, 0, 0, 0) } <= 0 {
-                Functions::load()
-            } else {
-                None
+            // SAFETY: it only asks. Drivers crash if they cannot run the code they write.
+            #[cfg(target_os = "linux")]
+            if unsafe { libc::prctl(libc::PR_GET_MDWE, 0, 0, 0, 0) } > 0 {
+                return None;
             }
+            Functions::load()
         })
         .as_ref()
 }
@@ -70,25 +71,51 @@ pub struct Context {
 }
 
 impl Context {
-    /// Of version 3, with robust access, and lost when the GPU is reset. It is current.
+    /// For OpenGL ES 3, with robust access, and lost when the GPU is reset. It is current.
     pub fn new(takes_software: bool) -> Option<Context> {
         const DEVICE: u32 = 0x313F;
         const EXTENSIONS: i32 = 0x3055;
         const OPENGL_ES: u32 = 0x30A0;
-        const ATTRIBUTES: [i32; 7] = [0x3098, 3, 0x30BF, 1, 0x3138, 0x31BF, 0x3038];
-        let (egl, mut devices, mut count) = (functions()?, [null_mut(); 16], 0);
+        let attributes = [0x3098, 3, 0x30BF, 1, 0x3138, 0x31BF, 0x3038];
+        // It takes files to find them, which a sandbox takes away.
+        static DEVICES: OnceLock<Vec<usize>> = OnceLock::new();
+        if !takes_software
+            && DEVICES.get().is_none()
+            && !["/dev/dri", "/dev/nvidiactl", "/dev/dxg", "/dev/mali0"]
+                .iter()
+                .any(|it| std::path::Path::new(it).exists())
+        {
+            return None;
+        }
+        let egl = functions()?;
         // SAFETY: handles go back to where they came from, and the list is terminated.
         unsafe {
-            (egl.query_devices)(16, devices.as_mut_ptr(), &mut count);
-            let (software, hardware): (Vec<_>, Vec<_>) = devices[..count.clamp(0, 16) as usize]
-                .iter()
-                .partition(|it| {
-                    let extensions = (egl.query_device_string)(**it, EXTENSIONS);
-                    !extensions.is_null()
-                        && CStr::from_ptr(extensions)
-                            .to_string_lossy()
-                            .contains("EGL_MESA_device_software")
-                });
+            let query = || {
+                let (mut devices, mut count) = ([null_mut(); 16], 0);
+                (egl.query_devices)(16, devices.as_mut_ptr(), &mut count);
+                Vec::from_iter(
+                    devices[..count.clamp(0, 16) as usize]
+                        .iter()
+                        .map(|it| it.expose_provenance()),
+                )
+            };
+            let devices = if crate::remote::has_gpu_for_page() {
+                DEVICES.get_or_init(query).clone()
+            } else {
+                query()
+            };
+            let devices = Vec::from_iter(
+                devices
+                    .iter()
+                    .map(|it| std::ptr::with_exposed_provenance_mut(*it)),
+            );
+            let (software, hardware): (Vec<_>, Vec<_>) = devices.iter().partition(|it| {
+                let extensions = (egl.query_device_string)(**it, EXTENSIONS);
+                !extensions.is_null()
+                    && CStr::from_ptr(extensions)
+                        .to_string_lossy()
+                        .contains("EGL_MESA_device_software")
+            });
             hardware
                 .into_iter()
                 .chain(software.into_iter().filter(|_| takes_software))
@@ -104,7 +131,7 @@ impl Context {
                         display,
                         null_mut(),
                         null_mut(),
-                        ATTRIBUTES.as_ptr(),
+                        attributes.as_ptr(),
                     ))
                     .filter(|it| !it.is_null())?;
                     Some(Context {
@@ -135,6 +162,9 @@ impl Drop for Context {
     fn drop(&mut self) {
         self.set_current(false);
         // SAFETY: likewise.
-        unsafe { (self.egl.destroy_context)(self.display, self.handle) };
+        unsafe {
+            (self.egl.destroy_context)(self.display, self.handle);
+            (self.egl.release_thread)();
+        }
     }
 }

@@ -7,7 +7,7 @@ use std::sync::OnceLock;
 use bun_core::ZStr;
 use bun_sys::DynLib;
 
-use super::auth::{Peer, channel_binding};
+use super::auth::{AuthScheme, Peer, channel_binding};
 
 #[cfg_attr(all(target_os = "macos", target_arch = "x86_64"), repr(C, packed(2)))]
 #[cfg_attr(not(all(target_os = "macos", target_arch = "x86_64")), repr(C))]
@@ -78,8 +78,6 @@ struct Library {
 
 const NAMES: &[&[u8]] = if cfg!(target_os = "macos") {
     &[b"/System/Library/Frameworks/GSS.framework/GSS"]
-} else if cfg!(windows) {
-    &[]
 } else {
     &[
         b"libgssapi_krb5.so.2",
@@ -131,7 +129,7 @@ pub(super) struct Context {
 unsafe impl Send for Context {}
 
 impl Context {
-    pub(super) fn new(peer: &Peer<'_>) -> Option<Context> {
+    pub(super) fn new(_: AuthScheme, peer: &Peer<'_>) -> Option<Context> {
         const HOST_BASED_SERVICE: &[u8] = b"\x2a\x86\x48\x86\xf7\x12\x01\x02\x01\x04";
         let (library, service, mut name) =
             (library()?, [b"HTTP@", peer.hostname].concat(), null_mut());

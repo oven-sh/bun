@@ -1,13 +1,12 @@
 //! In the process of a page.
 
 use std::cell::Cell;
-use std::os::fd::{AsRawFd as _, FromRawFd as _, IntoRawFd as _, OwnedFd};
-use std::os::unix::net::UnixStream;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use super::ring::{Consumer, Producer, Shared};
+use super::system::{self, OwnedFd, UnixStream, WITHOUT_WAITING};
 use super::valid::Valid;
 use super::{
     Asked, DOWN, Fetch, Header, LENT, Reader, Sent, Told, UP, Writer, bytes_of, clock, receive,
@@ -16,7 +15,7 @@ use super::{
 use crate::abi::{self, Item, Rect};
 use crate::gfx::Pixmap;
 use crate::hash::{FastMap, FastSet};
-use crate::host::{self, thread};
+use crate::host::thread;
 use crate::images::{self, Exported};
 use crate::motion::Tables;
 use crate::paint::scene::{Scene, copy};
@@ -76,17 +75,13 @@ fn host() -> &'static Host {
 }
 
 fn host_is_gone() -> ! {
-    // SAFETY: nothing is left to do.
-    unsafe { libc::_exit(0) }
+    system::exit()
 }
 
 pub fn connect() {
-    let descriptor = SOCKET_TO_PARENT;
-    // SAFETY: it was inherited for this.
-    let bell = unsafe { UnixStream::from_raw_fd(descriptor) };
-    // SAFETY: a descriptor.
-    unsafe { libc::fcntl(descriptor, libc::F_SETFD, libc::FD_CLOEXEC) };
     let connect = || {
+        // SAFETY: it was inherited for this.
+        let bell = UnixStream::from(unsafe { system::adopt(SOCKET_TO_PARENT) }?);
         bell.set_nonblocking(false).ok()?;
         let next = || receive(&bell, &mut [0], 0).ok()?;
         let [memory, other_bell, room, answers, pixels, petitions] =
@@ -603,7 +598,7 @@ pub fn petition(bytes: &[u8], is_answered: bool) -> Ruling {
     let answer = Answer::from(&socket);
     Ruling {
         bytes: answer.bytes.into(),
-        descriptor: answer.descriptor.map_or(-1, OwnedFd::into_raw_fd),
+        descriptor: answer.descriptor.map_or(-1, system::give_away),
     }
 }
 
@@ -639,6 +634,13 @@ pub fn ask_about_glyph(font: u32, glyph: u32, question: [f32; 4]) -> Vec<u8> {
         [&Writer::default().put(question).0, &[]],
     )
     .bytes
+}
+
+#[cfg(target_os = "linux")]
+pub fn connect_to_gpu() -> Option<super::gpu::Line> {
+    Some(super::gpu::Line(
+        ask(Asked::Gpu, [0; 2], [&[], &[]]).descriptor?.into(),
+    ))
 }
 
 pub fn font_named(name: &str) -> Option<u32> {
@@ -836,8 +838,8 @@ pub fn pump(source: Option<isize>, timeout: Option<Duration>) -> bool {
     take_events();
     if timeout != Some(Duration::ZERO) && !bridge::has_events() {
         let mut down = host().down[0].lock();
-        if down.ring.will_sleep() && host::wait_for(source, down.bell.as_raw_fd(), timeout) {
-            down.listen(libc::MSG_DONTWAIT);
+        if down.ring.will_sleep() && system::wait_for(source, &down.bell, timeout) {
+            down.listen(WITHOUT_WAITING);
         }
         down.ring.is_awake();
         drop(down);

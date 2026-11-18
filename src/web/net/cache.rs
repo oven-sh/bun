@@ -4,7 +4,7 @@ use core::task::{Context, Poll, ready};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use bun_collections::{ArrayHashMap, HashMap};
+use bun_collections::ArrayHashMap;
 use bun_core::{ZBox, strings};
 use bun_sha_hmac::sha::evp::SHA256;
 use bun_sys::{Dir, Fd, File, O};
@@ -15,6 +15,7 @@ use super::error::{NetError, Result};
 use super::record::{RecordReader, RecordWriter};
 use super::response::{Answer, Cached};
 use crate::Bytes;
+use crate::HashMap;
 use crate::exec::{self, LocalFuture, blocking};
 use crate::headers::{HeaderList, digits, split};
 use crate::origin::Origin;

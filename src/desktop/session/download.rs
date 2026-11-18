@@ -78,17 +78,60 @@ fn file_name(url: &str, disposition: &str, suggested: Option<&str>) -> String {
         .trim_end_matches(['.', ' '])
         .chars()
         .map(|it| {
-            if is_reserved(it) || disguises(it) {
+            if is_reserved(it) || disguises(it) || (IS_WINDOWS && it == '%') {
                 '_'
             } else {
                 it
             }
         })
         .collect();
-    if name.starts_with('.') || name.is_empty() {
-        format!("_{}", name.trim_start_matches('.'))
+    let name = match name.starts_with('.') || name.is_empty() {
+        true => format!("_{}", name.trim_start_matches('.')),
+        false => name,
+    };
+    if IS_WINDOWS {
+        harmless_on_windows(&name)
     } else {
         name
+    }
+}
+
+/// https://learn.microsoft.com/windows/win32/fileio/naming-a-file
+fn harmless_on_windows(name: &str) -> String {
+    let lower = name.to_ascii_lowercase();
+    let stem = before(&lower, ".").trim_end();
+    let is_port = (stem
+        .strip_prefix("com")
+        .or_else(|| stem.strip_prefix("lpt")))
+    .is_some_and(|it| it.chars().count() == 1 && it.chars().all(char::is_numeric));
+    let is_device = is_port
+        || matches!(
+            stem,
+            "con" | "prn" | "aux" | "nul" | "conin$" | "conout$" | "clock$"
+        );
+    let extension = bun_paths::extension(lower.as_bytes());
+    // The system acts on these when it comes across them.
+    let is_active = matches!(extension, b".lnk" | b".scf" | b".url" | b".local")
+        || matches!(extension, b".library-ms" | b".searchconnector-ms")
+        || matches!(extension, [b'.', b'{', .., b'}'])
+        || lower == "desktop.ini";
+    let (start, end) = (
+        if is_device { "_" } else { "" },
+        if is_active { ".download" } else { "" },
+    );
+    format!("{start}{name}{end}")
+}
+
+/// Programs are careful with a file that says that it is from the internet.
+fn mark_as_downloaded(path: &str) {
+    if IS_WINDOWS {
+        let (mark, zone) = (
+            format!("{path}:Zone.Identifier"),
+            b"[ZoneTransfer]\r\nZoneId=3\r\n",
+        );
+        if !files::exists(&mark) {
+            _ = files::write(&mark, zone, 0o600);
+        }
     }
 }
 
@@ -481,6 +524,7 @@ impl DownloadItem {
             )
             .ok()?,
         );
+        mark_as_downloaded(path);
         while let Some(chunk) = controller.race(body.read()).await.ok()? {
             let paused = resumed.borrow().clone();
             if let Some(resumed) = paused {
@@ -583,6 +627,9 @@ impl DownloadItem {
                     "interrupted".clone_into(&mut state);
                 }
                 files::remove(&temporary);
+            }
+            if state == "completed" {
+                mark_as_downloaded(&item.get().save_path.borrow());
             }
             drop(held);
             item.get().set("getState", &*state);

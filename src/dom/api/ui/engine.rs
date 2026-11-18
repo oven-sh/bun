@@ -188,6 +188,26 @@ impl Document {
         bubble
     }
 
+    pub(crate) fn create_overlay(&mut self, root: NodeId, parts: &[[String; 2]]) -> NodeId {
+        let create = |engine: &mut Document, style: &str| {
+            let made = engine.create_element(Atom::new("div"), Namespace::Html, None);
+            engine.set_pseudo(made, b"-internal-overlay", root);
+            engine.set_attribute(made, "style", Some(style));
+            made
+        };
+        let overlay = create(self, "inset:0");
+        for [style, text] in parts {
+            let (part, text) = (
+                create(self, style),
+                self.tree.create(Data::Text((&**text).into())),
+            );
+            self.insert(part, text, 0);
+            self.insert(overlay, part, 0);
+        }
+        self.insert(DOCUMENT, overlay, 0);
+        overlay
+    }
+
     pub(crate) fn place_bubble(&mut self, bubble: NodeId, [x, y]: [f32; 2]) {
         self.update_layout_for(bubble);
         let (Rect { width, height, .. }, [right, bottom]) =

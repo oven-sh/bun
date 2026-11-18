@@ -74,6 +74,18 @@ crate::wire! {
     }
 }
 
+const FOR_PAGE_PROCESSES: &[u8] = b"^sandbox";
+
+/// Of caches and service workers. What comes from them may be code, and what runs in the app gets none from outside.
+pub(crate) fn for_page_processes(bucket: &[u8]) -> Bytes {
+    [bucket, FOR_PAGE_PROCESSES].concat().into()
+}
+
+/// The bucket that it goes with.
+pub(crate) fn if_for_page_processes(bucket: &[u8]) -> Option<&[u8]> {
+    bucket.strip_suffix(FOR_PAGE_PROCESSES)
+}
+
 bitflags::bitflags! {
     #[derive(Clone, Copy)]
     pub struct Kinds: u8 {
@@ -477,23 +489,36 @@ impl Storage {
         if let Some(shelf) = self.far_shelf(&bucket) {
             return SqlError::unless(petition::usage(shelf)).await;
         }
+        let of_code = Bytes::from(&*bucket);
+        self.usage_with(bucket, of_code).await
+    }
+
+    pub(crate) async fn usage_with(
+        self: Arc<Self>,
+        bucket: Vec<u8>,
+        of_code: Bytes,
+    ) -> sql::Result<Usage> {
         let this = Arc::clone(&self);
         let measure = move |sql: &mut Connection| {
-            let mut sum = |query| {
-                sql.one(query, &[Text(&bucket)], |it| it.real(0))
+            let mut sum = |bucket: &[u8], query| {
+                sql.one(query, &[Text(bucket)], |it| it.real(0))
                     .map(Option::unwrap_or_default)
             };
             Ok(Usage {
                 of_databases: sum(
+                    &bucket,
                     "SELECT total(length(key) + iif(typeof(value) = 'text', CAST(value AS INTEGER), length(value))) FROM records JOIN tables ON id = tab WHERE bucket = ?",
                 )? + sum(
+                    &bucket,
                     "SELECT total(length(name) + length(stores)) FROM databases WHERE bucket = ?",
                 )?,
                 of_caches: sum(
+                    &of_code,
                     // The size of an opaque response is a secret.
                     "SELECT total(length(request) + iif(substr(response, 5, 6) = CAST('opaque' AS BLOB), 7 << 20, length(response) + ifnull(length(body), 0))) FROM cached JOIN cache_names ON id = cache WHERE bucket = ?",
                 )?,
                 of_service_workers: sum(
+                    &of_code,
                     "SELECT total(length(value)) FROM scripts WHERE bucket = ?",
                 )?,
                 of_files: this.size_of_files(&bucket) as f64,

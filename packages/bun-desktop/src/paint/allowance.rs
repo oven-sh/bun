@@ -13,7 +13,16 @@ thread_local! {
     static CHARGED: Cell<u64> = const { Cell::new(0) };
 }
 
+#[cfg(windows)]
+fn clocks() -> [u64; 2] {
+    use crate::win32::{GetCurrentProcess, GetProcessTimes, GetTickCount64};
+    let (mut kernel, mut user) = (0, 0);
+    GetProcessTimes(GetCurrentProcess(), &mut 0, &mut 0, &mut kernel, &mut user);
+    [GetTickCount64() * MILLISECOND, (kernel + user) * 100]
+}
+
 /// The time, and that which this process has used.
+#[cfg(unix)]
 fn clocks() -> [u64; 2] {
     [libc::CLOCK_MONOTONIC, libc::CLOCK_PROCESS_CPUTIME_ID].map(|clock| {
         let mut time = libc::timespec {

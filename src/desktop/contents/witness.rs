@@ -1,4 +1,5 @@
-//! What the user and the app have really done to the pages of a process, which may claim more.
+//! What the user and the app have really done to the pages of a process, which may claim more. If a page has a
+//! preload script, there is no telling whether that has said what the process claims it has.
 
 use std::collections::VecDeque;
 

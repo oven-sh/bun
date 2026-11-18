@@ -491,6 +491,7 @@ impl Document {
                         .filter(|last| Rc::ptr_eq(last.0, &it.style))
                         .unwrap_or_else(|| {
                             let is_aligned = match it.style.layout.align_content.0 {
+                                _ if it.is_orthogonal() => false,
                                 AlignName::Normal => !matches!(
                                     it.style.layout.vertical_align,
                                     VerticalAlign::Keyword(
@@ -1196,7 +1197,17 @@ impl Document {
                 .0
                 .filter(|_| self.environment.quirks == crate::document::Quirks::All)
                 .map_or(own.height, |it| it.max(own.intrinsic));
-            measured.push(([height, own.intrinsic], baseline));
+            measured.push((
+                [
+                    height,
+                    if it.is_orthogonal() {
+                        own.height
+                    } else {
+                        own.intrinsic
+                    },
+                ],
+                baseline,
+            ));
         }
         let extent = |rows: &[Row]| {
             let shown = || rows.iter().filter(|it| !it.is_collapsed);

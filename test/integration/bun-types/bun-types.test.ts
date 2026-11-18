@@ -527,6 +527,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "sourcemap.bind.ts": null,
   "subprocess.bind.ts": null,
   "svg.bind.ts": null,
+  "webgl.bind.ts": null,
   "window.bind.ts": null,
   "test_context.bind.ts": null,
   "trim_testing.bind.ts": null,

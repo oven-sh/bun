@@ -4,9 +4,10 @@ use std::rc::Rc;
 
 use bun_web::tasks::Priority;
 
+use super::connection::Client;
 use super::contents::Contents;
 use super::page::PageSession;
-use super::{Failure, Session as _};
+use super::{Failure, Session as _, after_events};
 use crate::generated_bindgen::contents::js_ElectronDebugger as fields;
 use crate::prelude::*;
 use crate::task;
@@ -41,7 +42,7 @@ impl Debugger {
             });
         };
         let contents = Contents::new(fields::contents(self).expect("it was made with one"));
-        let session = PageSession::new(contents, Rc::new(emit), None)?;
+        let session = PageSession::new(contents, Rc::new(emit), Client::Person, None)?;
         self.0.replace(Some(session));
         Ok(())
     }
@@ -71,8 +72,12 @@ impl Debugger {
         let session = self.0.borrow().clone();
         let session = session.ok_or_else(|| error(format_args!("No target available")))?;
         let (method, params) = (string(method), wire::data_from_js(params.to_js())?);
+        let (reply, outcome) = task::oneshot();
+        session.handle(&method, params, Box::new(move |it| reply.send(it)));
         Ok(task::promise(async move {
-            match session.run(&method, params).await {
+            let outcome = (outcome.await).unwrap_or_else(|| Err("Target closed".into()));
+            after_events().await;
+            match outcome {
                 Ok(result) => js(&result),
                 Err(Failure(message)) => Err(error(format_args!("{message}"))),
             }

@@ -164,13 +164,18 @@ impl bun_event_loop::Taskable for DesktopEventsTask {
 extern "C" fn wait_for_ui(source: isize, mut timeout_ns: c_longlong) {
     #[cfg(unix)]
     quick_fs::begin_turn();
-    if timeout_ns != 0 && !IDLE_WORK.get().is_null() {
+    let is_idle = timeout_ns != 0;
+    if is_idle && !IDLE_WORK.get().is_null() {
         // SAFETY: it is never freed, and this is the thread of its VM.
         timeout_ns = unsafe {
             Bun__DesktopIdleWork__beforeWait(IDLE_WORK.get(), timeout_ns, bun_web::tasks::slack())
         };
     }
-    if !(library().ui.pump)(source, timeout_ns, IS_TICKING.replace(false)) {
+    let has_events = (library().ui.pump)(source, timeout_ns, IS_TICKING.replace(false));
+    if is_idle {
+        bun_web::tasks::caught_up();
+    }
+    if !has_events {
         return;
     }
     if !IDLE_WORK.get().is_null() {
@@ -296,6 +301,16 @@ fn __bun_desktop_can_sandbox_pages() -> bool {
     return child::is_supported();
     #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
     false
+}
+
+#[unsafe(no_mangle)]
+fn __bun_desktop_has_http_client() -> bool {
+    !bun_removable_features::is_removed(bun_removable_features::Feature::HttpClient)
+}
+
+#[unsafe(no_mangle)]
+fn __bun_desktop_can_start_programs() -> bool {
+    !bun_removable_features::is_removed(bun_removable_features::Feature::ChildProcess)
 }
 
 #[unsafe(no_mangle)]

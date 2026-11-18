@@ -13,7 +13,6 @@ pub(crate) mod parts;
 pub(crate) mod protocol;
 mod service_workers;
 pub(crate) mod socket;
-#[cfg(unix)]
 pub(crate) mod updates;
 
 use std::rc::Rc;
@@ -129,7 +128,7 @@ fn create(key: String, storage_path: Option<String>) -> JsResult<&'static Sessio
             trusted_servers: Default::default(),
             download_path: Default::default(),
             preloads: Default::default(),
-            checks_spelling: IS_MAC.into(),
+            checks_spelling: HAS_SPELL_CHECKER.into(),
             spelling_languages: Default::default(),
         },
     );
@@ -377,7 +376,7 @@ impl Session {
                 .iter()
                 .filter_map(|it| Url::parse(it.as_bytes()))
                 .collect();
-            self.network.clear_cookies(&urls, only.is_some());
+            self.network.clear_cookies(&urls, only.is_some(), None);
         }
         let stored: [(Kinds, &[&str]); 4] = [
             (Kinds::AREAS, &["localstorage"]),
@@ -561,6 +560,7 @@ impl Session {
         self.remember_call("setUserAgent", arguments.collect());
         self.user_agent.replace(Some(user_agent));
         self.languages.replace(languages);
+        crate::contents::update_agents();
     }
 
     pub(crate) fn change_proxy(&self, config: JSValue) -> JsResult<JSValue> {
@@ -793,13 +793,13 @@ impl Session {
         _: Cx<'_, '_>,
         word: &[u8],
     ) -> JsResult<bool> {
-        if IS_MAC {
+        if HAS_SPELL_CHECKER {
             let request = Request::System(SystemRequest::LearnSpelling(Text::lossy(word)));
             bun_ui::queue::promise_of(global(), request, |_, _| {
                 crate::contents::dictionary_changed().map(|()| JSValue::UNDEFINED)
             })?;
         }
-        Ok(IS_MAC)
+        Ok(HAS_SPELL_CHECKER)
     }
 
     pub(crate) fn remove_word_from_spell_checker_dictionary(&self) -> bool {

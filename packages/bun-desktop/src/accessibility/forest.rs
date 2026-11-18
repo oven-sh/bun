@@ -19,6 +19,7 @@ pub struct Id {
     pub node: u32,
 }
 
+#[cfg(unix)]
 impl Id {
     pub fn bits(self) -> u64 {
         u64::from(self.tree) << 32 | u64::from(self.node)
@@ -321,15 +322,22 @@ pub enum Event {
     },
     /// `at` counts characters.
     #[cfg(not(target_os = "macos"))]
+    #[cfg(unix)]
     HypertextChanged {
         id: Id,
         at: usize,
         deleted: String,
         inserted: String,
     },
+    #[cfg(windows)]
+    HypertextChanged {
+        id: Id,
+        inserted: String,
+    },
     SelectionChanged {
         within: Id,
         extends: bool,
+        #[cfg(unix)]
         was_extended: bool,
         direction: Direction,
         granularity: Granularity,
@@ -1134,7 +1142,14 @@ impl Forest {
             );
         }
         self.find_live_changes(&created, &mut events);
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(windows)]
+        for (id, old) in hypertexts.into_iter().filter(|it| self.get(it.0).is_some()) {
+            events.push(Event::HypertextChanged {
+                id,
+                inserted: difference(&old, &self.hypertext(id).text, 0).2.to_owned(),
+            });
+        }
+        #[cfg(not(any(target_os = "macos", windows)))]
         for (id, old) in hypertexts.into_iter().filter(|it| self.get(it.0).is_some()) {
             let new = self.hypertext(id);
             let caret = self
@@ -1178,13 +1193,13 @@ impl Forest {
             let within = self
                 .closest(new[1].node, |it| it.has(abi::TEXT_FIELD))
                 .unwrap_or(id(update.root));
-            let (extends, was_extended) = (
-                new[0] != new[1],
-                old_selection.is_some_and(|it| it[0] != it[1]),
-            );
+            let extends = new[0] != new[1];
+            #[cfg(unix)]
+            let was_extended = old_selection.is_some_and(|it| it[0] != it[1]);
             events.push(Event::SelectionChanged {
                 within,
                 extends,
+                #[cfg(unix)]
                 was_extended,
                 direction,
                 granularity,

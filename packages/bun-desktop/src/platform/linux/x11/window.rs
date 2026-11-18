@@ -578,6 +578,7 @@ impl platform::Window for Window {
             x,
             y,
             top: 0.,
+            border: 0.,
             width,
             height,
             scale,

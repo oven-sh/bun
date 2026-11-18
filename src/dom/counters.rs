@@ -216,6 +216,10 @@ impl Document {
 
     fn append_generated(&mut self, parent: NodeId, data: Data) -> NodeId {
         let child = self.tree.create(data);
+        self.tree[child].keys = self
+            .tree
+            .element(child)
+            .map_or(0, crate::selector::filter_of);
         self.tree.link(parent, child, 0);
         self.tree[child].scope = self.tree[parent].scope;
         child
@@ -239,6 +243,40 @@ impl Document {
             .element_to_style(child)
             .into_iter()
             .for_each(|it| it.rare_mut().replaced = Some(shown));
+    }
+
+    /// One that is broken gives way to `list-style-type`.
+    fn image_of_marker<'a>(&self, style: &'a Style) -> Option<&'a Image> {
+        style.text.list_image.0.as_ref().filter(|it| {
+            match it.chosen(self.environment.scale * self.environment.zoom) {
+                Some((Image::Url(url), _)) if style.text.list_type != ListStyleType::None => {
+                    self.images.borrow().get(&self.oriented_url(url, style))
+                        != Some(&Some(Replaced::default()))
+                }
+                _ => true,
+            }
+        })
+    }
+
+    pub(crate) fn generated_image_is_broken(&mut self, id: NodeId) {
+        let marker = self.tree[id].parent;
+        let Some(element) = self
+            .tree
+            .element(marker)
+            .filter(|it| it.pseudo == crate::selector::Pseudo::Marker)
+        else {
+            return;
+        };
+        if let Some(style) = element
+            .style
+            .clone()
+            .filter(|it| it.rare.content == Content::Normal && self.image_of_marker(it).is_none())
+        {
+            let item = element.originator;
+            self.generate_content(marker, &style);
+            self.mark_rebuild(item);
+            self.mark_parent_rebuild(item);
+        }
     }
 
     /// `size` is that of an image that is drawn.
@@ -343,9 +381,9 @@ impl Document {
         while self.tree[id].first_child != 0 {
             self.remove(self.tree[id].first_child);
         }
-        self.counter_users.remove(&id);
+        self.counters_are_stale |= self.counter_users.remove(&id).is_some();
         let Content::Items(items, alt) = &style.rare.content else {
-            if let Some(image) = &style.text.list_image.0 {
+            if let Some(image) = self.image_of_marker(style) {
                 self.append_generated_image(id, image, style);
                 self.append_generated(id, Data::Text(" ".into()));
             }
@@ -488,7 +526,7 @@ impl Document {
                 continue;
             };
             if style.rare.content != Content::Normal
-                || style.text.list_image.0.is_some()
+                || self.image_of_marker(style).is_some()
                 || is_disclosure(style)
                 || is_named(style, &["disc", "circle", "square"])
             {

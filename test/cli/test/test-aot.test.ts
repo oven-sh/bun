@@ -54,9 +54,9 @@ describe.skipIf(!supported)("bun test --aot", () => {
 
   test.concurrent("reports the syntax error in a file with preserved JSX", async () => {
     using dir = tempDir("test-aot-preserve-syntax", {
-      "a.test.tsx": "/** @jsxRuntime preserve */\nexport const element = <div />;\nexport const broken = ;\n",
+      "a.test.tsx": "\nexport const element = <div />;\nexport const broken = ;\n",
     });
-    const { stderr, exitCode } = await runTests(String(dir), true, [], false);
+    const { stderr, exitCode } = await runTests(String(dir), true, ["--jsx-runtime=preserve"], false);
     expect(stderr).toContain("Unexpected ;");
     expect(stderr).toMatch(/a\.test\.tsx:3:23\b/);
     expect(stderr).not.toContain("--aot does not support preserved JSX");

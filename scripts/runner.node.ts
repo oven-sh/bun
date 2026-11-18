@@ -4244,6 +4244,33 @@ async function main(): Promise<void> {
     }
   }
 
+  // Temporary: a build of main and this one, for test/internal/simd-integration-temp.test.ts.
+  if (process.env.BUN_SIMD_BENCHMARK && options.step) {
+    const step = options.step;
+    const name = `bun-${step.replace("-build-bun", "")}`;
+    const fetchBuild = async (build: string | undefined) => {
+      const folder = ownTemporaryFolder(mkdtempSync(join(tmpdir(), "compare-")));
+      const args = [
+        "artifact",
+        "download",
+        `${name}.zip`,
+        folder,
+        "--step",
+        step,
+        ...(build ? ["--build", build] : []),
+      ];
+      spawnSync("buildkite-agent", args, { stdio: "inherit", timeout: 120_000 });
+      await unzip(join(folder, `${name}.zip`), folder);
+      return join(folder, name, isWindows ? "bun.exe" : "bun");
+    };
+    try {
+      const main = await fetchBuild("01a1ed83-d1d9-4061-a559-627cb1028f19");
+      process.env.BUN_SIMD_COMPARE = JSON.stringify([main, await fetchBuild(options["build-id"])]);
+    } catch (error) {
+      console.warn(error);
+    }
+  }
+
   const downloaded =
     doRunTests && options.step ? getExecPathFromBuildkite(options.step, options["build-id"]) : undefined;
   // runTests() awaits it.

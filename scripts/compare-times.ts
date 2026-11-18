@@ -1,6 +1,6 @@
 // Temporary: times from JavaScript, in this build and in a build of main.
-import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
-import { cpus, tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
+import { cpus } from "node:os";
 import { join } from "node:path";
 import zlib from "node:zlib";
 
@@ -47,24 +47,14 @@ if (mode === "child") {
     }
   }
 } else {
-  const fetchBuild = (step: string, build?: string) => {
-    const dir = mkdtempSync(join(tmpdir(), "compare-"));
-    const more = build ? ["--build", build] : [];
-    Bun.spawnSync(["buildkite-agent", "artifact", "download", "bun-*.zip", dir, "--step", step, ...more], {
-      stdio: ["ignore", "inherit", "inherit"],
-    });
-    const zip = readdirSync(dir).find(it => !it.includes("profile"))!;
-    const unpack = process.platform === "win32" ? ["tar", "-xf", zip] : ["unzip", "-q", zip];
-    Bun.spawnSync(unpack, { cwd: dir, stdio: ["ignore", "inherit", "inherit"] });
-    return join(dir, zip.slice(0, -4), process.platform === "win32" ? "bun.exe" : "bun");
-  };
-  const builds = mode === "local" ? rest : [fetchBuild(mode, rest[0]), fetchBuild(mode)];
+  const builds = rest;
   console.log(cpus().length, "x", cpus()[0].model);
   for (const it of builds) console.log(Bun.spawnSync([it, "--revision"]).stdout.toString().trim());
   for (const script of [[import.meta.path, "child", builds[0]]]) {
     const best = new Map<string, number[]>();
     for (let turn = 0; turn < 4; turn++) {
-      const { stdout } = Bun.spawnSync([builds[turn % 2], ...script], { stderr: "inherit" });
+      const { stdout, success } = Bun.spawnSync([builds[turn % 2], ...script], { stderr: "inherit" });
+      if (!success) process.exit(1);
       for (const line of stdout.toString().trim().split(/\r?\n/)) {
         const [name, time] = line.split("\t");
         const row = best.get(name) ?? [Infinity, Infinity];

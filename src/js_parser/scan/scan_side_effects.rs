@@ -405,11 +405,8 @@ impl SideEffects {
                     loc: expr.loc,
                 };
 
-                // Otherwise the object can be removed. What stays is the conversion of each
-                // computed key to a property key, and each value with side effects. A key is
-                // converted where it was, in an object literal: `key + ""` throws for a Symbol
-                // and asks an object for `valueOf` first. A literal of keys ends in front of the
-                // next value that stays, because a key is converted before its value runs.
+                // Otherwise only the side effects stay. An object literal converts a computed key
+                // as a property key, so the keys stay in one, ahead of the next value that stays.
                 let mut keys: Option<G::PropertyList> = None;
                 let object_of_keys = |properties: G::PropertyList| E::Object {
                     properties,

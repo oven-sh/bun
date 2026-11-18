@@ -312,6 +312,7 @@ dependencies = [
  "bun_core",
  "bun_highway",
  "bun_removable_features",
+ "bun_sema_standalone",
  "thiserror",
 ]
 

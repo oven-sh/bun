@@ -1226,6 +1226,41 @@ describe("bundler", () => {
       bundleErrors: { "/dep.jsx": ["--aot does not support preserved JSX"] },
     });
 
+    for (const backend of ["cli", "api"] as const) {
+      for (const format of ["esm", "cjs"] as const) {
+        itBundled(`jsx/PreserveBundleCanBeTranspiledOnLoad-${backend}-${format}`, {
+          files: {
+            "/in.ts": 'import element from "./dep.jsx"; export { element }; console.log(element);',
+            "/dep.jsx": `
+              const attrs = globalThis.jsxProps;
+              export default [<div />, <span {...attrs} key="x" />].join(" ");
+            `,
+            "/node_modules/react/index.js": "export const createElement = type => type;",
+            "/node_modules/react/jsx-runtime.js": "export const jsx = type => type;",
+            "/node_modules/react/jsx-dev-runtime.js": "export const jsxDEV = type => type;",
+          },
+          backend,
+          format,
+          target: "bun",
+          jsx: { runtime: "preserve" },
+          skipOnEsbuild: true,
+          run: [
+            { stdout: "div span", setCwd: true },
+            {
+              bunArgs: ["run", "--jsx-runtime=preserve"],
+              exitCode: 1,
+              stdout: "",
+              setCwd: true,
+              validate({ stderr }) {
+                expect(stderr).toContain("Cannot preserve JSX in a file that Bun runs");
+                expect(stderr).toMatch(/out\.js:\d+:\d+/);
+              },
+            },
+          ],
+        });
+      }
+    }
+
     itBundled("jsx/PreserveCliRuntimeFlag", {
       files: {
         "/in.tsx": `console.log(<span>Hello</span>);`,

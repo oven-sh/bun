@@ -2352,20 +2352,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `var { a, b } = require("bun:wrap")`. An import statement can't stand in the function that wraps a CommonJS module.
+    /// Bind helper exports with `require` inside a CommonJS wrapper.
     #[optimize(size)]
     #[inline(never)]
-    pub(crate) fn generate_runtime_require_stmt(
+    pub(crate) fn generate_require_stmt(
         &mut self,
-        imports: &[u8],
+        import_path: &'a [u8],
+        imports: &[(&'static [u8], Ref)],
         parts: &mut ListManaged<'a, js_ast::Part>,
+        is_internal: bool,
+        tag: bun_ast::PartTag,
     ) -> Result<(), crate::Error> {
-        let import_record_id = self.add_import_record(
-            ImportKind::Require,
-            bun_ast::Loc::EMPTY,
-            RuntimeImports::NAME,
-        );
-        {
+        let import_record_id =
+            self.add_import_record(ImportKind::Require, bun_ast::Loc::EMPTY, import_path);
+        if is_internal {
             let record = &mut self.import_records.items_mut()[import_record_id as usize];
             record.path.namespace = b"runtime";
             record.flags.insert(bun_ast::ImportRecordFlags::IS_INTERNAL);
@@ -2373,19 +2373,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
         declared_symbols.ensure_total_capacity(imports.len())?;
         let mut properties = BumpVec::<B::Property>::with_capacity_in(imports.len(), self.arena);
-        for &import in imports {
-            let r = self
-                .runtime_imports
-                .get(import as usize)
-                .expect("unreachable");
+        for &(name, binding_ref) in imports {
             let key = self.new_expr(
                 E::String {
-                    data: RuntimeImports::ALL[import as usize].into(),
+                    data: name.into(),
                     ..Default::default()
                 },
                 bun_ast::Loc::EMPTY,
             );
-            let value = self.b(B::Identifier { r#ref: r }, bun_ast::Loc::EMPTY);
+            let value = self.b(B::Identifier { r#ref: binding_ref }, bun_ast::Loc::EMPTY);
             properties.push(B::Property {
                 flags: bun_ast::flags::PROPERTY_NONE,
                 key,
@@ -2393,7 +2389,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 default_value: None,
             });
             declared_symbols.append_assume_capacity(DeclaredSymbol {
-                ref_: r,
+                ref_: binding_ref,
                 is_top_level: true,
             });
         }
@@ -2429,7 +2425,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             stmts: self.arena.alloc_slice_fill_with(1, |_| stmt).into(),
             declared_symbols,
             import_record_indices: js_ast::PartImportRecordIndices::init_one(import_record_id),
-            tag: bun_ast::PartTag::Runtime,
+            tag,
             ..Default::default()
         });
         Ok(())

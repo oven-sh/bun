@@ -1,6 +1,7 @@
 use crate::LinkerContext;
 use crate::analyze_transpiled_module::ModuleInfo;
 use crate::bundle_v2::bake_types::{HmrRuntimeSide, get_hmr_runtime};
+use crate::bundled_ast::Flags as AstFlags;
 use crate::linker_context_mod::{GenerateChunkCtx, LinkerOptionsMode};
 use crate::mal_prelude::*;
 use crate::options;
@@ -418,9 +419,18 @@ pub(crate) fn post_process_js_chunk(
         is_executable = true;
     }
 
-    // Add @bun comments and CJS wrapper start for each chunk when targeting Bun.
     let is_bun = c.graph.ast.items_target()[chunk.entry_point.source_index() as usize].is_bun();
-    if is_bun {
+    let ast_flags = c.graph.ast.items_flags();
+    // Keeping chunks with preserved JSX eligible for runtime transpilation.
+    let has_bun_pragma = is_bun
+        && !chunk
+            .files_with_parts_in_chunk
+            .keys()
+            .iter()
+            .any(|&source_index| {
+                ast_flags[source_index as usize].contains(AstFlags::HAS_PRESERVED_JSX)
+            });
+    if has_bun_pragma {
         if c.options.generate_bytecode_cache && output_format == options::OutputFormat::Cjs {
             const INPUT: &[u8] =
                 b"// @bun @bytecode @bun-cjs\n(function(exports, require, module, __filename, __dirname) {";
@@ -742,7 +752,7 @@ pub(crate) fn post_process_js_chunk(
             }
         }
         options::OutputFormat::Cjs => {
-            if is_bun {
+            if has_bun_pragma {
                 j.push_static(b"})\n");
                 line_offset.advance(b"})\n");
             }

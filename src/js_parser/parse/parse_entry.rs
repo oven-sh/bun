@@ -2368,9 +2368,7 @@ impl<'a> Parser<'a> {
                 },
             );
 
-            if i > 0 && wrap_mode == WrapMode::BunCommonjs {
-                p.generate_runtime_require_stmt(&runtime_imports[0..i], &mut before)?;
-            } else if i > 0 {
+            if i > 0 {
                 let imports: Vec<(&'static [u8], js_ast::Ref)> = runtime_imports[0..i]
                     .iter()
                     .map(|&key| {
@@ -2378,16 +2376,25 @@ impl<'a> Parser<'a> {
                         (RuntimeImports::ALL[key as usize], symbol)
                     })
                     .collect();
-                p.generate_import_stmt(
-                    RuntimeImports::NAME,
-                    &imports,
-                    &mut before,
-                    None,
-                    b"import_",
-                    true,
-                    js_ast::PartTag::Runtime,
-                )
-                .expect("unreachable");
+                if wrap_mode == WrapMode::BunCommonjs {
+                    p.generate_require_stmt(
+                        RuntimeImports::NAME,
+                        &imports,
+                        &mut before,
+                        true,
+                        js_ast::PartTag::Runtime,
+                    )?;
+                } else {
+                    p.generate_import_stmt(
+                        RuntimeImports::NAME,
+                        &imports,
+                        &mut before,
+                        None,
+                        b"import_",
+                        true,
+                        js_ast::PartTag::Runtime,
+                    )?;
+                }
             }
         }
 
@@ -2411,30 +2418,32 @@ impl<'a> Parser<'a> {
             let runtime_imports = with_symbols(p.jsx_imports.runtime_import_names(&mut buf));
             let source_imports = with_symbols(p.jsx_imports.source_import_names());
 
-            if !runtime_imports.is_empty() {
-                p.generate_import_stmt(
-                    import_source,
-                    &runtime_imports,
-                    &mut before,
-                    None,
-                    b"",
-                    false,
-                    js_ast::PartTag::JsxImport,
-                )
-                .expect("unreachable");
-            }
-
-            if !source_imports.is_empty() {
-                p.generate_import_stmt(
-                    package_name,
-                    &source_imports,
-                    &mut before,
-                    None,
-                    b"",
-                    false,
-                    js_ast::PartTag::JsxImport,
-                )
-                .expect("unreachable");
+            for (import_path, imports) in [
+                (import_source, runtime_imports),
+                (package_name, source_imports),
+            ] {
+                if imports.is_empty() {
+                    continue;
+                }
+                if wrap_mode == WrapMode::BunCommonjs {
+                    p.generate_require_stmt(
+                        import_path,
+                        &imports,
+                        &mut before,
+                        false,
+                        js_ast::PartTag::JsxImport,
+                    )?;
+                } else {
+                    p.generate_import_stmt(
+                        import_path,
+                        &imports,
+                        &mut before,
+                        None,
+                        b"",
+                        false,
+                        js_ast::PartTag::JsxImport,
+                    )?;
+                }
             }
         }
 

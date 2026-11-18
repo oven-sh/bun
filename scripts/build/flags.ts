@@ -2047,6 +2047,18 @@ export const fileOverrides: FileOverride[] = [
     desc: "Same as highway_json.cpp below: the XML structural-index kernel must be optimized even in debug builds.",
   },
   {
+    file: "src/jsc/bindings/highway_zstd.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the kernels run over every literal that zstd compresses.",
+  },
+  {
+    file: "src/jsc/bindings/highway_zstd.cpp",
+    extraFlags: ["-fstack-clash-protection"],
+    when: c => c.x64 && (c.linux || c.freebsd),
+    desc: "A frame of several pages gets probed, like those of the Rust code that calls it.",
+  },
+  {
     file: "src/jsc/bindings/highway_json.cpp",
     extraFlags: ["-O2"],
     when: c => c.debug,

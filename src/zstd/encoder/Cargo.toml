@@ -17,6 +17,9 @@ bun_removable_features.workspace = true
 bun_threading.workspace = true
 bun_zstd_decoder.workspace = true
 
+[dev-dependencies]
+bun_highway = { workspace = true, features = ["test_support"] }
+
 [[test]]
 name = "encode"
 path = "tests/encode.rs"

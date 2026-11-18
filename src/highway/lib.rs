@@ -4,6 +4,7 @@
 
 pub mod brotli;
 pub mod webp;
+pub mod zstd;
 
 unsafe extern "C" {
     fn highway_index_of_char(haystack: *const u8, haystack_len: usize, needle: u8) -> usize;

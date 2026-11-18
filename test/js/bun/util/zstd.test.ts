@@ -604,6 +604,57 @@ describe.skipIf(!isASAN)("a failed allocation is an error, not a crash", () => {
   });
 });
 
+// On CPUs that have the instructions for it, src/jsc/bindings/highway_zstd.cpp takes blocks with 4096 or more. It counts them
+// in batches of 3712 and groups of 128, by their 2 highest bits, and writes 64 codes at a time to each of 4 streams.
+describe("literals compress to what zstd 1.5.7 makes of them", () => {
+  function generate(length: number, byte: (below: (limit: number) => number) => number) {
+    let state = 1;
+    const below = (limit: number) => {
+      state ^= state << 13;
+      state ^= state >>> 17;
+      state ^= state << 5;
+      return (state >>> 8) % limit;
+    };
+    return Uint8Array.from({ length }, () => byte(below));
+  }
+  const summary = (frames: Uint8Array[]) => Bun.hash.crc32(Buffer.concat(frames)).toString(16);
+
+  const lengths = [
+    ...Array.from({ length: 40 }, (_, i) => 4090 + 7 * i),
+    ...Array.from({ length: 60 }, (_, i) => 7400 + 13 * i),
+    ...[-1, 0, 1, 63, 64, 65, 127, 128].map(more => 3 * 3712 + more),
+    40_000,
+  ];
+  it.each<[string, Parameters<typeof generate>[1], string]>([
+    ["below 64", below => below(1 + below(64)), "bb725258"],
+    ["from 64", below => 64 + below(1 + below(64)), "a54c637c"],
+    ["from 128", below => 128 + below(1 + below(64)), "ea4e0340"],
+    ["from 192", below => 255 - below(1 + below(64)), "fd4b71c2"],
+    ["below 128", below => below(1 + below(128)), "2692621f"],
+    ["seldom from 64", below => (below(200) ? below(1 + below(64)) : 64 + below(192)), "608ac342"],
+    ["seldom from 128", below => (below(200) ? 32 + below(1 + below(95)) : 128 + below(128)), "9c5e2c5e"],
+    ["long codes", below => below(1 + below(1 + below(256))), "163887a6"],
+    ["a code of 1 bit", below => (below(16) < 9 ? 200 : below(256)), "71317cdd"],
+    ["nothing to gain, and no room left", below => (below(140) ? below(256) : 200), "404d578e"],
+  ])("%s", (_, byte, expected) => {
+    // Short codes where the streams start and end.
+    const common = byte(() => 0);
+    const bytes = generate(40_000, byte).fill(common, -7);
+    const inputs = lengths.map(length => bytes.slice(-length).fill(common, 0, 4));
+    expect(summary(inputs.map(input => zstdCompressSync(input, { level: 1 })))).toBe(expected);
+  });
+
+  it("no room left at a level that is content with little gain", () => {
+    const bytes = generate(4300, below => (below(140) ? below(256) : 200));
+    expect(summary([0, 100, 200].map(less => zstdCompressSync(bytes.subarray(less), { level: 19 })))).toBe("2eedd71b");
+  });
+
+  it("a whole block", () => {
+    const bytes = generate(128 * 1024, below => below(1 + below(64)));
+    expect(summary([0, 1, 200].map(less => zstdCompressSync(bytes.subarray(less), { level: 1 })))).toBe("8c0ed0aa");
+  });
+});
+
 it("zlib.constants has the numbers that the errors of src/zstd have", () => {
   const source = readFileSync(path.join(__dirname, "../../../../src/zstd/decoder/error.rs"), "utf8");
   const errors = Array.from(

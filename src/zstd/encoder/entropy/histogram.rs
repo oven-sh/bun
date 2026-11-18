@@ -1,5 +1,6 @@
 //! Counting symbols.
 
+use bun_highway::zstd::{are_quicker_for, count_bytes};
 use bun_zstd_decoder::array::At;
 
 /// How often each of `N` symbols occurs.
@@ -20,6 +21,7 @@ impl Histogram<256> {
                 add(&mut counts, symbols);
                 counts
             }
+            len if are_quicker_for(len) => count_in_vectors(symbols),
             1500..16_384 => count_interleaved::<1>(symbols),
             _ => count_interleaved::<2>(symbols),
         })
@@ -53,6 +55,11 @@ pub(crate) fn add(counts: &mut [u32; 256], symbols: &[u8]) {
     for &symbol in symbols {
         *counts.at_mut(usize::from(symbol)) += 1;
     }
+}
+
+#[inline(never)]
+fn count_in_vectors(symbols: &[u8]) -> [u32; 256] {
+    count_bytes(symbols).unwrap_or_else(|| count_interleaved::<2>(symbols))
 }
 
 /// With several tables, a symbol that repeats does not wait for its last count to be stored.

@@ -815,6 +815,15 @@ bun::N_AVX3_DL::Adler32       [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VN
 
 
 # ----------------------------------------------------------------------------
+# Bun zstd encoder (src/jsc/bindings/highway_zstd.cpp).
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (3 symbols)
+# ----------------------------------------------------------------------------
+bun::N_AVX3_DL::CountGroups     [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
+bun::N_AVX3_DL::ZstdCountBytes  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI2, BMI1, BMI2]
+bun::N_AVX3_DL::ZstdWriteCodes  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2]
+
+
+# ----------------------------------------------------------------------------
 # Bun Brotli (src/brotli).
 # Gate: with_bmi2! (src/highway/lib.rs) via is_x86_feature_detected!("bmi2"). (8 symbols)
 # ----------------------------------------------------------------------------

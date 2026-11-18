@@ -6,6 +6,10 @@ edition.workspace = true
 [lib]
 path = "lib.rs"
 
+[features]
+# For tests that link without the C++ objects: kernels that not all CPUs have are left out.
+test_support = []
+
 [lints]
 workspace = true
 

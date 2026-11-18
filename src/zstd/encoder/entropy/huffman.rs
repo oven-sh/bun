@@ -1,6 +1,7 @@
 //! Huffman codes for literals.
 
 use bun_highway::with_bmi2;
+use bun_highway::zstd::{Written, are_quicker_for, write_codes};
 use bun_zstd_decoder::array::At;
 use bun_zstd_decoder::format::HUFFMAN_TABLE_LOG_MAX;
 use bun_zstd_decoder::{Error, Result};
@@ -36,6 +37,12 @@ impl Code {
 
     const fn new(value: u16, bits: u8) -> Self {
         Self((value as u64).unbounded_shl(64 - bits as u32) | bits as u64)
+    }
+
+    /// The same in 16 bits.
+    #[inline(always)]
+    fn short(self) -> u16 {
+        (self.0 >> 48 | self.0) as u16
     }
 }
 
@@ -320,6 +327,42 @@ impl Pending {
     }
 }
 
+/// Returns the length of the stream.
+fn finish_written(written: &Written, out: &mut [u8]) -> Option<usize> {
+    let mut writer = WordWriter::new(out)?;
+    writer.advance(written.len as u32);
+    let mut pending = Pending {
+        bits: written.bits.rotate_right(written.bit_count as u32),
+        count: written.bit_count,
+    };
+    pending.add(Code::END_MARK);
+    pending.flush(&mut writer)?;
+    writer.finish(pending.count > 0)
+}
+
+#[inline(always)]
+fn compress_4_streams(
+    symbols: &[u8],
+    out: &mut [u8],
+    compress_1_stream: impl Fn(&[u8], &mut [u8]) -> Option<usize>,
+) -> Option<usize> {
+    if out.len() < JUMP_TABLE_LEN + 3 + 8 || symbols.len() < 12 {
+        return None;
+    }
+    let (jump_table, streams) = out.split_first_chunk_mut::<JUMP_TABLE_LEN>()?;
+    let mut jumps = jump_table.as_chunks_mut().0.iter_mut();
+    let mut position = 0;
+    for segment in symbols.chunks(symbols.len().div_ceil(4)) {
+        let len = compress_1_stream(segment, streams.get_mut(position..)?)?;
+        let short_len = u16::try_from(len).ok()?;
+        if let Some(jump) = jumps.next() {
+            *jump = short_len.to_le_bytes();
+        }
+        position += len;
+    }
+    Some(JUMP_TABLE_LEN + position)
+}
+
 impl Table {
     pub(super) const EMPTY: Self = Self {
         codes: [Code(0); 256],
@@ -546,22 +589,15 @@ impl Table {
         )
     }
 
-    fn compress_4_streams(&self, symbols: &[u8], out: &mut [u8]) -> Option<usize> {
-        if out.len() < JUMP_TABLE_LEN + 3 + 8 || symbols.len() < 12 {
-            return None;
-        }
-        let (jump_table, streams) = out.split_first_chunk_mut::<JUMP_TABLE_LEN>()?;
-        let mut jumps = jump_table.as_chunks_mut().0.iter_mut();
-        let mut position = 0;
-        for segment in symbols.chunks(symbols.len().div_ceil(4)) {
-            let len = self.compress_1_stream(segment, streams.get_mut(position..)?)?;
-            let short_len = u16::try_from(len).ok()?;
-            if let Some(jump) = jumps.next() {
-                *jump = short_len.to_le_bytes();
+    #[inline(never)]
+    fn compress_in_vectors(&self, symbols: &[u8], out: &mut [u8]) -> Option<usize> {
+        let codes = self.codes.map(Code::short);
+        compress_4_streams(symbols, out, |symbols, out| {
+            match write_codes(symbols, &codes, out) {
+                Some(written) => finish_written(&written, out),
+                None => self.compress_1_stream(symbols, out),
             }
-            position += len;
-        }
-        Some(JUMP_TABLE_LEN + position)
+        })
     }
 
     /// `None` if there is no room, or too little to compress.
@@ -573,8 +609,12 @@ impl Table {
     ) -> Option<usize> {
         if is_single_stream {
             self.compress_1_stream(symbols, out)
+        } else if are_quicker_for(symbols.len()) {
+            self.compress_in_vectors(symbols, out)
         } else {
-            self.compress_4_streams(symbols, out)
+            compress_4_streams(symbols, out, |symbols, out| {
+                self.compress_1_stream(symbols, out)
+            })
         }
     }
 }

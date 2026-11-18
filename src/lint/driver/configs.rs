@@ -479,6 +479,8 @@ pub(crate) struct Loader<'l> {
     ignored_eslint_config: OnceLock<(Vec<u8>, Vec<u8>)>,
     /// [`Loader::ignored_eslint_configs_below`]
     ignored_eslint_configs_below: Guarded<Vec<(Vec<u8>, Vec<u8>)>>,
+    /// [`Loader::note_eslint_config_not_read`]: absolute directories. Only `--doctor` fills it.
+    eslint_configs_not_read: Guarded<Vec<Vec<u8>>>,
     /// Cache for [`Loader::has_oxlint_config`], keyed by directory.
     has_oxlint_config: Guarded<FxHashMap<Vec<u8>, bool>>,
     /// True if the working directory or one of its parents has an `eslint.config.*`, and ESLint is the run's tool.
@@ -829,6 +831,7 @@ impl<'l> Loader<'l> {
             tool: OnceLock::new(),
             ignored_eslint_config: OnceLock::new(),
             ignored_eslint_configs_below: Default::default(),
+            eslint_configs_not_read: Default::default(),
             has_oxlint_config: Default::default(),
             has_eslint_config_file: OnceLock::new(),
             lacks_file: OnceLock::new(),
@@ -842,6 +845,11 @@ impl<'l> Loader<'l> {
             tsconfigs: Default::default(),
             frameworks: Default::default(),
         }
+    }
+
+    /// `--doctor`
+    pub(crate) fn is_doctor(&self) -> bool {
+        self.options.doctor
     }
 
     /// True if anything reads `searched_from` and `tsconfigs`, which only `InferGlobals::ByOptions` does.
@@ -2146,22 +2154,105 @@ impl<'l> Loader<'l> {
         })
     }
 
+    /// The nearest file among `names`, walking up from `directory`, relative to the working directory.
+    fn nearest_file(&self, directory: &[u8], names: &[&[u8]]) -> Option<Vec<u8>> {
+        paths::ancestors(directory).find_map(|directory| {
+            let mut files = names.iter().map(|name| paths::join(directory, name));
+            let found = files.find(|it| fs::is_file(it))?;
+            Some(paths::relative(self.cwd(), &found))
+        })
+    }
+
+    /// The ESLint config that applies in `directory`, flat or ESLint 8, relative to the working directory.
+    fn nearest_eslint_config(&self, directory: &[u8]) -> Option<Vec<u8>> {
+        let flat: Vec<&[u8]> = self.config_names_for(Some(Flavor::Eslint)).collect();
+        let legacy: Vec<&[u8]> = (eslintrc::NAMES.iter().copied())
+            .filter(|it| *it != b"package.json")
+            .collect();
+        (self.nearest_file(directory, &flat)).or_else(|| self.nearest_file(directory, &legacy))
+    }
+
     /// Returns the nearest oxlint config, walking up from `directory`, and the ESLint config that also applies there
     /// and is ignored, if any. Both paths are relative to the working directory.
     fn nearest_oxlint_config(&self, directory: &[u8]) -> Option<(Vec<u8>, Option<Vec<u8>>)> {
-        let nearest = |names: &mut dyn Iterator<Item = &'static [u8]>| {
-            let names: Vec<&[u8]> = names.collect();
-            paths::ancestors(directory).find_map(|directory| {
-                let mut files = names.iter().map(|name| paths::join(directory, name));
-                let found = files.find(|it| fs::is_file(it))?;
-                Some(paths::relative(self.cwd(), &found))
-            })
+        let oxlint: Vec<&[u8]> = self.config_names_for(Some(Flavor::Oxlint)).collect();
+        let oxlint_config = self.nearest_file(directory, &oxlint)?;
+        Some((oxlint_config, self.nearest_eslint_config(directory)))
+    }
+
+    /// Records `directory` when it has an ESLint config and this run reads oxlint's configs there instead. ESLint,
+    /// when a script runs it, reads that one, unless the directory is in `node_modules`, which ESLint always ignores.
+    /// For `--doctor`, for a directory that the run lints files in.
+    pub(crate) fn note_eslint_config_not_read(&self, directory: &[u8]) {
+        let in_node_modules = strings::split(directory, b"/").any(|it| it == b"node_modules");
+        if in_node_modules
+            || !self.applies_in(directory)
+            || self.tool_in(directory) != Some(Flavor::Oxlint)
+        {
+            return;
+        }
+        let mut flat = self.config_names_for(Some(Flavor::Eslint));
+        let has_flat = flat.any(|it| fs::is_file(&paths::join(directory, it)));
+        if has_flat || eslintrc::has_eslintrc_file(directory) {
+            (self.eslint_configs_not_read.lock()).push(directory.to_vec());
+        }
+    }
+
+    /// Loads the ESLint configs that this run doesn't read, but ESLint does when a script runs it, so that `--doctor`
+    /// sees the modules they load: the nearest flat config, or else the ESLint 8 cascade, from the working directory
+    /// and from each directory an oxlint config hides them in. Not the file `in_use`. Returns the packages that the
+    /// ESLint 8 configs name, loaded or not.
+    #[optimize(size)]
+    pub(crate) fn load_eslint_configs_not_read(&self, in_use: Option<&[u8]>) -> Vec<Vec<u8>> {
+        let (options, cwd) = (self.options, self.cwd());
+        let absolute = |path: &[u8]| paths::resolve(cwd, &paths::from_native(path));
+        let mut modules = eslintrc::Modules {
+            environment: self.environment,
+            registry: self.linter.registry(),
+            plugins_from: options
+                .resolve_plugins_relative_to
+                .as_ref()
+                .map(|it| absolute(it)),
+            command_line: (paths::join(cwd, b"__placeholder__.js"), Json::Null),
+            printed: Vec::new(),
+            pipes: &options.pipes,
         };
-        let oxlint_config = nearest(&mut self.config_names_for(Some(Flavor::Oxlint)))?;
-        let legacy = eslintrc::NAMES.iter().filter(|it| **it != b"package.json");
-        let eslint_config = nearest(&mut self.config_names_for(Some(Flavor::Eslint)))
-            .or_else(|| nearest(&mut legacy.copied()));
-        Some((oxlint_config, eslint_config))
+        let mut directories = self.eslint_configs_not_read.lock().clone();
+        directories.push(cwd.to_vec());
+        bun_lint::utils::sort::sort_unstable(&mut directories);
+        directories.dedup();
+        let flat: Vec<&[u8]> = self.config_names_for(Some(Flavor::Eslint)).collect();
+        let reads_cascade = self.tool() != Some(Flavor::EslintRc);
+        let (mut flat_files, mut legacy_files): (Vec<Vec<u8>>, Vec<Vec<u8>>) =
+            (Vec::new(), Vec::new());
+        for directory in &directories {
+            let nearest = self.nearest_file(directory, &flat).map(|it| absolute(&it));
+            // A flat config anywhere above turns ESLint 8's files off.
+            let has_flat = nearest.is_some();
+            flat_files.extend(nearest.filter(|it| in_use != Some(&it[..])));
+            if reads_cascade
+                && !has_flat
+                && let Ok(cascade) = eslintrc::cascade(directory, cwd, &mut modules)
+            {
+                // A file that names nothing loads nothing, so its script doesn't have to run.
+                let files = cascade
+                    .into_iter()
+                    .filter(|it| eslintrc::names_packages(&it.json));
+                legacy_files.extend(files.map(|it| it.path));
+            }
+        }
+        bun_lint::utils::sort::sort_unstable(&mut flat_files);
+        flat_files.dedup();
+        for path in &flat_files {
+            let _ = evaluate::evaluate(self.environment, evaluate::ESLINT, path);
+        }
+        bun_lint::utils::sort::sort_unstable(&mut legacy_files);
+        legacy_files.dedup();
+        let mut named = Vec::new();
+        for path in &legacy_files {
+            named.extend(modules.load_all(path));
+        }
+        named
     }
 
     /// True if `directory` or one of its ancestors has an oxlint config. Only called when [`Loader::tool`] is `None`.

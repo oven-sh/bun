@@ -322,6 +322,9 @@ fn search(
                     (loader.tsconfigs.lock()).push(paths::join(&directory.path, &file.name));
                 }
             }
+            if loader.is_doctor() && !directory.is_hidden {
+                loader.note_eslint_config_not_read(&directory.path);
+            }
             let own = match directory.relative.is_empty() {
                 true => Ok(Arc::clone(&directory.inherited)),
                 false => {

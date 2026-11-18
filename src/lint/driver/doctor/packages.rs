@@ -1,6 +1,6 @@
 //! Works out which of the replaced tool's packages can be uninstalled. A package is only called removable if its name
 //! follows that tool's naming scheme and nothing we check uses it. We check the config, the `scripts` and `lint-staged`
-//! sections of `package.json`, and the packages that stay.
+//! sections of `package.json`, the packages that stay, and what a tool that stays loads from its own config.
 
 use super::{sorted, texts};
 use crate::configs::installed_package;
@@ -141,9 +141,9 @@ fn required_by(installed: &Json) -> Vec<Vec<u8>> {
     names
 }
 
-/// True if any word of the shell command `command` is `name` or a path ending in `name`.
+/// True if any word of the shell command `command` is `name` or a path ending in `name`. `--plugin=name` counts.
 fn runs(command: &[u8], name: &[u8]) -> bool {
-    strings::tokenize_any(command, b" \t\n;&|()\"'")
+    strings::tokenize_any(command, b" \t\n;&|()\"'=")
         .any(|word| word == name || paths::basename(word) == name)
 }
 
@@ -176,12 +176,14 @@ pub(crate) struct Packages {
 
 impl Packages {
     /// Reads the `package.json` closest to `cwd`. `is_tool_package` says whether a package only exists to serve the
-    /// replaced tool. `need` says why a run still needs a package, if it does.
+    /// replaced tool. `need` says why a run still needs a package, if it does. `loads` names the packages that a
+    /// package that stays loads when it runs, beyond its own dependencies: the plugins in the replaced tool's config.
     #[optimize(size)]
     pub(crate) fn new(
         cwd: &[u8],
         is_tool_package: &dyn Fn(&[u8]) -> bool,
         need: &dyn Fn(&[u8]) -> Option<Need>,
+        loads: &dyn Fn(&[u8]) -> Vec<Vec<u8>>,
     ) -> Packages {
         let mut packages = Packages::default();
         let read = |it: &[u8]| fs::read(&paths::join(it, b"package.json")).ok();
@@ -207,10 +209,9 @@ impl Packages {
         }
         // A package that stays keeps its own dependencies installed, and so on down the tree.
         while let Some(stays) = staying.pop().filter(|_| !packages.removable.is_empty()) {
-            let Some(installed) = installed_package(directory, &stays) else {
-                continue;
-            };
-            let uses = required_by(&installed);
+            let installed = installed_package(directory, &stays);
+            let mut uses = installed.as_ref().map(required_by).unwrap_or_default();
+            uses.extend(loads(&stays));
             let (still_needed, removable) = std::mem::take(&mut packages.removable)
                 .into_iter()
                 .partition(|it| uses.contains(it));

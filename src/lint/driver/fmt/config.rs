@@ -829,6 +829,14 @@ impl Formatters {
     }
 }
 
+/// The package that the import specifier `specifier` is in: `@acme/prettier-plugin/example` is in
+/// `@acme/prettier-plugin`.
+fn package_of_specifier(specifier: &[u8]) -> Vec<u8> {
+    let parts = if specifier.starts_with(b"@") { 2 } else { 1 };
+    let package: Vec<&[u8]> = strings::split(specifier, b"/").take(parts).collect();
+    package.join(&b"/"[..])
+}
+
 impl Plugins {
     /// `json` is an options object that may have `plugins`.
     fn from_options(json: &Json) -> Option<Plugins> {
@@ -847,7 +855,7 @@ impl Plugins {
             packages: (plugins.iter().filter_map(Json::as_str))
                 .filter(|it| !it.starts_with(b".") && !it.starts_with(b"/"))
                 .filter(|it| !it.starts_with(b"file:"))
-                .map(<[u8]>::to_vec)
+                .map(package_of_specifier)
                 .collect(),
             endings: (plugins.iter())
                 .filter_map(|it| plugin_endings(it.as_str()?))
@@ -859,6 +867,14 @@ impl Plugins {
 }
 
 impl Config {
+    /// The packages that Prettier loads as plugins for any file this config applies to.
+    fn all_plugin_packages(&self) -> impl Iterator<Item = &[u8]> {
+        let in_overrides = self.overrides.iter().filter_map(|it| it.plugins.as_ref());
+        (std::iter::once(&self.plugins).chain(in_overrides))
+            .flat_map(|it| &it.packages)
+            .map(|it| &it[..])
+    }
+
     /// Returns `select(override)` for the last override that matches the file at `path`, considering only overrides for
     /// which `select` returns `Some`.
     fn in_last_override<'s, T>(
@@ -1000,6 +1016,8 @@ pub(crate) type Found = Result<Arc<Scope>, Fatal>;
 struct Listed {
     /// The configuration files, as indices into [`NAMES`].
     candidates: Vec<usize>,
+    /// The Prettier configuration files that this run's tool doesn't read. Only `--doctor` fills it.
+    not_read: Vec<usize>,
     has_editorconfig: bool,
     is_project_root: bool,
 }
@@ -1020,6 +1038,8 @@ pub(crate) struct Configs<'c> {
     lacks_file: OnceLock<bool>,
     /// [`Configs::note`]
     note: OnceLock<Vec<u8>>,
+    /// [`Configs::prettier_configs_not_read`], as (directory, index into [`NAMES`]) pairs. Only `--doctor` fills it.
+    not_read: Guarded<Vec<(Vec<u8>, usize)>>,
     /// True if the caller has already made sure that a file's configuration files apply.
     applies_everywhere: bool,
     pub(crate) flavor: Flavor,
@@ -1092,6 +1112,7 @@ impl<'c> Configs<'c> {
             arguments: Default::default(),
             lacks_file: OnceLock::new(),
             note: OnceLock::new(),
+            not_read: Guarded::new(Vec::new()),
             applies_everywhere,
             flavor: Flavor::Prettier,
             tsconfigs: Guarded::new(FxHashMap::default()),
@@ -1399,13 +1420,14 @@ impl<'c> Configs<'c> {
                 listed.is_project_root = true;
             } else if !is_directory && is_called(name, b".editorconfig") {
                 listed.has_editorconfig = true;
-            } else if !is_directory {
-                listed.candidates.extend(
-                    NAMES
-                        .iter()
-                        .position(|it| is_called(name, it))
-                        .filter(|at| *at < count),
-                );
+            } else if !is_directory
+                && let Some(at) = NAMES.iter().position(|it| is_called(name, it))
+            {
+                if at < count {
+                    listed.candidates.push(at);
+                } else if self.options.doctor {
+                    listed.not_read.push(at);
+                }
             }
         }
         self.scope_of(directory, listed, above)
@@ -1415,14 +1437,16 @@ impl<'c> Configs<'c> {
     fn scope_of(&self, directory: &[u8], listed: Listed, above: Option<&Scope>) -> Found {
         let Listed {
             mut candidates,
+            mut not_read,
             has_editorconfig,
             is_project_root,
         } = listed;
         let mut config = above.and_then(|it| it.config.clone());
-        if self.named.is_none() && self.options.config_lookup && self.applies_in(directory) {
-            // Try them in order, because a `package.json` doesn't have to contain a configuration.
-            sort_slice(&mut candidates[..]);
-            candidates.dedup();
+        // Try them in order, because a `package.json` doesn't have to contain a configuration.
+        sort_slice(&mut candidates[..]);
+        candidates.dedup();
+        let applies = self.applies_in(directory);
+        if self.named.is_none() && self.options.config_lookup && applies {
             if let [first, second, ..] = candidates[..]
                 && second < OXFMT_NAME_COUNT
             {
@@ -1440,20 +1464,35 @@ impl<'c> Configs<'c> {
                 ));
             }
             let mut candidates = candidates.into_iter();
+            let mut winner = None;
             for at in candidates.by_ref() {
                 if let Some(found) =
                     self.load(&paths::join(directory, NAMES[at]), at < OXFMT_NAME_COUNT)?
                 {
+                    let rest = candidates.as_slice();
                     if at < OXFMT_NAME_COUNT
-                        && let Some(other) =
-                            candidates.find_map(|it| prettier_config_name(directory, it))
+                        && let Some(other) = rest
+                            .iter()
+                            .find_map(|it| prettier_config_name(directory, *it))
                     {
                         self.note_ignored(&found.path, &other);
                     }
                     config = Some(found);
+                    winner = Some(at);
                     break;
                 }
             }
+            // Prettier reads the first of its own, so the rest don't count. It never reads oxfmt's.
+            if winner.is_some_and(|at| at < OXFMT_NAME_COUNT) {
+                not_read.extend(candidates);
+            }
+        } else {
+            not_read.extend(candidates);
+        }
+        // Prettier, when a script runs it, still reads them.
+        if self.options.doctor && applies {
+            let prettier_configs = not_read.into_iter().filter(|at| *at >= OXFMT_NAME_COUNT);
+            (self.not_read.lock()).extend(prettier_configs.map(|at| (directory.to_vec(), at)));
         }
         if self.flavor == Flavor::Oxfmt {
             let editorconfigs = self.oxfmt_editorconfig.iter().map(Arc::clone).collect();
@@ -1729,6 +1768,71 @@ impl<'c> Configs<'c> {
     /// The path of the configuration file that applies in `scope`.
     pub(crate) fn config_file_path<'s>(&'s self, scope: &'s Scope) -> Option<&'s [u8]> {
         (self.config_of(scope).ok().flatten()).map(|config| &config.path[..])
+    }
+
+    /// The Prettier config files that this run doesn't read, loaded: an oxfmt config or `--config` takes their place.
+    /// One per visited directory, the first of [`NAMES`] that has one, as Prettier picks it. `shadows_ancestors`:
+    /// the working directory's own Prettier config is in use, so none above it applies. For `--doctor`.
+    fn prettier_configs_not_read(&self, shadows_ancestors: bool) -> Vec<Arc<Config>> {
+        let mut recorded = self.not_read.lock().clone();
+        // Deepest directory first, and within one, in Prettier's order.
+        bun_lint::utils::sort::sort_by(&mut recorded, |a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+        recorded.dedup();
+        let cwd = &self.environment.cwd[..];
+        let named = self.named.as_ref().and_then(|it| it.as_ref().ok());
+        let mut configs: Vec<Arc<Config>> = Vec::new();
+        let (mut taken, mut taken_above): (Option<&[u8]>, bool) = (None, shadows_ancestors);
+        // Loading a config that the run doesn't use can't warn about it.
+        let warnings = self.warnings.lock().len();
+        // Of the working directory's ancestors, only the nearest one applies to its files.
+        for (directory, at) in &recorded {
+            let is_above = paths::is_at_or_inside(directory, cwd);
+            if taken == Some(&directory[..]) || (is_above && taken_above) {
+                continue;
+            }
+            let path = paths::join(directory, NAMES[*at]);
+            let found = match named {
+                Some(named) if named.path == path => None,
+                _ => self.load(&path, false).ok().flatten(),
+            };
+            if found.is_some() || named.is_some_and(|it| it.path == path) {
+                taken = Some(directory);
+                taken_above |= is_above;
+            }
+            configs.extend(found);
+        }
+        self.warnings.lock().truncate(warnings);
+        configs
+    }
+
+    /// The packages that Prettier loads when a script runs it in this project: the plugins of the Prettier configs of
+    /// `scopes`, and of the ones this run doesn't read. What loading a config imports is among the modules that
+    /// `--doctor` records.
+    #[optimize(size)]
+    pub(crate) fn packages_loaded_by_prettier<'s>(
+        &self,
+        scopes: impl Iterator<Item = &'s Scope>,
+    ) -> Vec<Vec<u8>> {
+        let in_use: Vec<Arc<Config>> = scopes
+            .filter_map(|it| self.config_of(it).ok().flatten())
+            .filter(|it| !it.is_oxfmt)
+            .cloned()
+            .collect();
+        let own = self.for_directory(&self.environment.cwd).ok();
+        let own_config = own
+            .as_ref()
+            .and_then(|it| self.config_of(it).ok().flatten());
+        let shadows_ancestors = own_config.is_some_and(|it| !it.is_oxfmt && self.named.is_none());
+        let mut packages: Vec<Vec<u8>> = Vec::new();
+        for config in (in_use.into_iter()).chain(self.prettier_configs_not_read(shadows_ancestors))
+        {
+            for name in config.all_plugin_packages() {
+                if !packages.iter().any(|it| it == name) {
+                    packages.push(name.to_vec());
+                }
+            }
+        }
+        packages
     }
 
     /// True if `--no-svelte` or `svelte = false` in `[fmt]` keeps a component in `directory`, whose scope is `scope`,

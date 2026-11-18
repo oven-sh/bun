@@ -258,6 +258,7 @@ fn search(
     pool: &Pool,
     search: &Search,
     exclusions: &Exclusions,
+    walk: Walk,
     are_all_in_repositories: &(dyn Fn() -> bool + Sync),
     found: &mut Vec<Target>,
 ) -> Result<Option<usize>, Fatal> {
@@ -274,18 +275,23 @@ fn search(
     );
     let mut level = Vec::new();
     if fs::kind(&search.base_path) == Some(fs::Kind::Directory) {
-        let inherited = loader.for_directory(&search.base_path)?;
+        // A search for reading uses the working directory's configuration, as `listFilesWithNodeFs` does.
+        let configured = match walk.for_reading {
+            true => &loader.environment().cwd[..],
+            false => &search.base_path[..],
+        };
+        let inherited = loader.for_directory(configured)?;
         // From here on, a directory is only listed if it isn't ignored. ESLint always lists the starting directory,
         // because the base path can be further down.
         let is_hidden = (inherited.config).is_directory_ignored(&search.base_path, dotfiles)
             && !inherited.config.is_outside(&search.base_path);
         let name = paths::basename(&search.base_path);
-        if (!is_hidden || loader.looks_for_configurations_in(&inherited, name))
+        if (!is_hidden || !walk.for_reading && loader.looks_for_configurations_in(&inherited, name))
             && let Some(ignores) =
                 loader.ignore_files_at(&search.base_path, &inherited, are_all_in_repositories)
         {
             let real = fs::real_path(&search.base_path);
-            if loader.collects_tsconfigs() {
+            if loader.collects_tsconfigs() && !walk.for_reading {
                 (loader.searched_from.lock()).push(search.base_path.clone());
             }
             level.push(Directory {
@@ -311,7 +317,7 @@ fn search(
                 return;
             };
             let entries = std::mem::take(&mut listing.entries);
-            if loader.collects_tsconfigs() {
+            if loader.collects_tsconfigs() && !walk.for_reading {
                 // TypeScript reads one even if an ignore file excludes it. The consumer knows whether file names are
                 // case-sensitive here.
                 let names = [&b"tsconfig.json"[..], b"jsconfig.json"];
@@ -322,7 +328,7 @@ fn search(
                     (loader.tsconfigs.lock()).push(paths::join(&directory.path, &file.name));
                 }
             }
-            let own = match directory.relative.is_empty() {
+            let own = match directory.relative.is_empty() || walk.for_reading {
                 true => Ok(Arc::clone(&directory.inherited)),
                 false => {
                     let files = entries
@@ -341,7 +347,10 @@ fn search(
             };
             // ESLint looks up the configuration for anything that isn't a directory, whatever its name.
             let lacks_file = loader.lacks_eslint_config_file(&own);
-            if lacks_file && let Some(file) = entries.iter().find(|it| !it.is_directory) {
+            if lacks_file
+                && !walk.for_reading
+                && let Some(file) = entries.iter().find(|it| !it.is_directory)
+            {
                 let path = paths::join(&directory.path, &file.name);
                 failure.lock().get_or_insert(config_file_missing(&path));
                 return;
@@ -378,12 +387,17 @@ fn search(
             let within = own.config.within(&directory.path, seen);
             let mut within = within.with_frameworks(frameworks);
             for mut entry in entries {
+                if walk.for_reading
+                    && (entry.name.starts_with(b".") || entry.name == b"node_modules")
+                {
+                    continue;
+                }
                 let path = paths::join(&directory.path, &entry.name);
                 let (mut real, mut is_loop) = (None, false);
-                // ESLint treats a link as a file, and finds out what it is when it reads it. ESLint 8 and oxlint
-                // resolve the link and follow it. As in the `ignore` crate, which oxlint walks with, a loop is a link
-                // to one of the directories on the path from the search's starting directory.
-                if entry.is_link && own.flavor != Flavor::Eslint {
+                // ESLint treats a link as a file, and finds out what it is when it reads it. ESLint 8, oxlint and
+                // `listFilesWithNodeFs` resolve the link and follow it. As in the `ignore` crate, which oxlint walks
+                // with, a loop is a link to one of the directories on the path from the search's starting directory.
+                if entry.is_link && (own.flavor != Flavor::Eslint || walk.for_reading) {
                     match fs::link_target_kind(&path) {
                         Ok(Some(fs::Kind::Directory)) => {
                             let Some(end) = fs::real_path(&path) else {
@@ -425,10 +439,15 @@ fn search(
                         continue;
                     }
                     let cwd = &loader.environment().cwd[..];
+                    // The configuration ignores nothing outside its directory.
+                    let is_external = walk.for_reading && own.config.is_outside(&path);
                     let is_hidden = is_hidden
-                        || within.is_directory_ignored(&path, dotfiles)
-                        || lacks_file && !paths::is_at_or_inside(cwd, &path);
-                    if !is_hidden || loader.looks_for_configurations_in(&own, &entry.name) {
+                        || !is_external && within.is_directory_ignored(&path, dotfiles)
+                        || lacks_file && !walk.for_reading && !paths::is_at_or_inside(cwd, &path);
+                    if !is_hidden
+                        || !walk.for_reading
+                            && loader.looks_for_configurations_in(&own, &entry.name)
+                    {
                         // ESLint 8 keeps following the loop until the system returns ELOOP.
                         if is_loop {
                             let label = "too many symbolic links encountered";
@@ -476,14 +495,18 @@ fn search(
                         is_matched.store(true, Ordering::Relaxed);
                     }
                 }
-                if let Some(FileConfig::Matched(config)) = selected.or(config)
-                    && let Some(size) = listing.size_of(&entry.name)
-                {
+                let status = match selected.or(config) {
+                    Some(FileConfig::Matched(config)) => Status::Matched(config),
+                    Some(FileConfig::Unconfigured) if walk.for_reading => Status::Unconfigured,
+                    Some(FileConfig::External) if walk.for_reading => Status::External,
+                    _ => continue,
+                };
+                if let Some(size) = listing.size_of(&entry.name) {
                     files.push(Target {
                         path,
                         size,
                         loaded: Arc::clone(&own),
-                        status: Status::Matched(config),
+                        status,
                     });
                 }
             }
@@ -501,6 +524,52 @@ fn search(
         Some(error) => Err(error),
         None => Ok(is_matched.iter().position(|it| !it.load(Ordering::Relaxed))),
     }
+}
+
+/// [`Modules::list_files`](bun_lint::modules::Modules::list_files): [`list_as_eslint_8`] in a run with ESLint 8's
+/// configuration files, [`list_with_fs`] in every other run.
+pub(crate) fn list_files(
+    run_state: (&Linter, &Environment, &Host),
+    loader: &Loader,
+    pool: &Pool,
+    patterns: &[&[u8]],
+    extensions: &[&[u8]],
+) -> Result<Vec<Listed>, Vec<u8>> {
+    let cwd_config = loader.for_directory(&loader.environment().cwd).ok();
+    match cwd_config.is_some_and(|it| it.flavor == Flavor::EslintRc) {
+        true => list_as_eslint_8(run_state, pool, patterns, extensions),
+        false => list_with_fs(loader, pool, patterns, extensions),
+    }
+}
+
+/// eslint-plugin-import's `listFilesWithNodeFs(patterns, extensions)`: the files under `patterns` with one of
+/// `extensions` that the run doesn't ignore, searched as [`Walk::for_reading`] says. Sorted by path. `Err` has the
+/// message of the error the search throws.
+fn list_with_fs(
+    loader: &Loader,
+    pool: &Pool,
+    patterns: &[&[u8]],
+    extensions: &[&[u8]],
+) -> Result<Vec<Listed>, Vec<u8>> {
+    let patterns: Vec<Vec<u8>> = patterns.iter().map(|it| it.to_vec()).collect();
+    let walk = Walk {
+        error_on_unmatched_pattern: false,
+        for_reading: true,
+    };
+    let targets = find_files_with(loader, pool, &patterns, walk).map_err(|error| error.0)?;
+    let has_extension = |path: &[u8]| {
+        let extension = paths::extname(path);
+        let without_dot = extension.strip_prefix(b".").unwrap_or(extension);
+        (extensions.iter()).any(|it| it.strip_prefix(b".").unwrap_or(it) == without_dot)
+    };
+    let listed = targets.into_iter().filter_map(|it| {
+        let is_listed = !matches!(it.status, Status::Ignored) && has_extension(&it.path);
+        is_listed.then_some(Listed {
+            path: it.path,
+            is_ignored: false,
+        })
+    });
+    Ok(listed.collect())
 }
 
 /// Returns what ESLint 8 and 9's `new FileEnumerator({ extensions }).iterateFiles(patterns)` yields. It searches from
@@ -571,6 +640,17 @@ fn split_exclusions<'p>(
     (Cow::Owned(selecting), exclusions)
 }
 
+/// How [`find_files`] searches.
+#[derive(Clone, Copy)]
+struct Walk {
+    /// ESLint's `errorOnUnmatchedPattern`: `Err` if an argument selects no file.
+    error_on_unmatched_pattern: bool,
+    /// The files are read, not linted: `node_modules` and dot entries are skipped, a file without a matching `files`
+    /// or outside the configuration's directory is listed instead of failing, only the configuration the search
+    /// starts with applies, and the arguments aren't the run's.
+    for_reading: bool,
+}
+
 /// ESLint's `findFiles`. `patterns` is the list of arguments. The files are in no particular order, without duplicates.
 pub(crate) fn find_files(
     loader: &Loader,
@@ -578,6 +658,20 @@ pub(crate) fn find_files(
     patterns: &[Vec<u8>],
     error_on_unmatched_pattern: bool,
 ) -> Result<Vec<Target>, Fatal> {
+    let walk = Walk {
+        error_on_unmatched_pattern,
+        for_reading: false,
+    };
+    find_files_with(loader, pool, patterns, walk)
+}
+
+fn find_files_with(
+    loader: &Loader,
+    pool: &Pool,
+    patterns: &[Vec<u8>],
+    walk: Walk,
+) -> Result<Vec<Target>, Fatal> {
+    let error_on_unmatched_pattern = walk.error_on_unmatched_pattern;
     let cwd = &loader.environment().cwd;
     let first = patterns.first();
     let (patterns, exclusions) = split_exclusions(loader, patterns);
@@ -615,12 +709,14 @@ pub(crate) fn find_files(
         searches[at].patterns.push(wanted);
     };
     // This has to happen before any configuration lookup.
-    for pattern in patterns {
-        let path = paths::resolve(cwd, &paths::from_native(pattern));
-        match fs::kind(&path) {
-            Some(fs::Kind::File) => loader.name(paths::dirname(&path)),
-            Some(fs::Kind::Directory) => loader.name(&path),
-            None => {}
+    if !walk.for_reading {
+        for pattern in patterns {
+            let path = paths::resolve(cwd, &paths::from_native(pattern));
+            match fs::kind(&path) {
+                Some(fs::Kind::File) => loader.name(paths::dirname(&path)),
+                Some(fs::Kind::Directory) => loader.name(&path),
+                None => {}
+            }
         }
     }
     let (mut missing, mut excluded_argument) = (None, None);
@@ -640,8 +736,12 @@ pub(crate) fn find_files(
                 excluded_argument.get_or_insert(pattern);
             }
             Some((fs::Kind::File, size)) => {
-                let loaded = loader.for_directory(paths::dirname(&path))?;
-                if loader.lacks_eslint_config_file(&loaded) {
+                let configured = match walk.for_reading {
+                    true => &cwd[..],
+                    false => paths::dirname(&path),
+                };
+                let loaded = loader.for_directory(configured)?;
+                if loader.lacks_eslint_config_file(&loaded) && !walk.for_reading {
                     return Err(config_file_missing(&path));
                 }
                 let status = match loader.ignores_named_file(&pattern, &path, &loaded) {
@@ -712,6 +812,7 @@ pub(crate) fn find_files(
             pool,
             it,
             &exclusions,
+            walk,
             &|| *are_all_in_repositories,
             &mut searched,
         )? {

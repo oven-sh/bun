@@ -33,35 +33,36 @@ if (mode === "child") {
       kind === "exe"
         ? readFileSync(names).subarray(8 << 20, 9 << 20)
         : Buffer.concat(names.split(" ").map(it => readFileSync(join(repo, it))));
-    for (const size of [300, 2000, 20000, 200000]) {
+    for (const size of [300, 2000]) {
       const data = all.subarray(1000, 1000 + size);
-      for (const quality of [0, 1, 4, 5, 7, 9, 10, 11]) {
+      for (const quality of [10, 11]) {
         const options = { params: { [k.BROTLI_PARAM_QUALITY]: quality } };
         const hash = Bun.hash.crc32(zlib.brotliCompressSync(data, options)).toString(16);
         console.log(
           `q${quality} ${data.length} ${kind} ${hash}\t${best(() => zlib.brotliCompressSync(data, options))}`,
         );
       }
-      const packed = zlib.brotliCompressSync(data);
-      console.log(`decode ${data.length} ${kind}\t${best(() => zlib.brotliDecompressSync(packed))}`);
     }
   }
 } else {
   const builds = rest;
   console.log(cpus().length, "x", cpus()[0].model);
   for (const it of builds) console.log(Bun.spawnSync([it, "--revision"]).stdout.toString().trim());
-  for (const script of [[import.meta.path, "child", builds[0]]]) {
-    const best = new Map<string, number[]>();
-    for (let turn = 0; turn < 4; turn++) {
-      const { stdout, success } = Bun.spawnSync([builds[turn % 2], ...script], { stderr: "inherit" });
-      if (!success) process.exit(1);
-      for (const line of stdout.toString().trim().split(/\r?\n/)) {
-        const [name, time] = line.split("\t");
-        const row = best.get(name) ?? [Infinity, Infinity];
-        row[turn % 2] = Math.min(row[turn % 2], Number(time));
-        best.set(name, row);
-      }
+  const best = new Map<string, number[]>();
+  for (let turn = 0; turn < 7 * 9; turn++) {
+    const side = turn % 9;
+    const { stdout, success } = Bun.spawnSync([builds[side ? 1 : 0], import.meta.path, "child", builds[0]], {
+      stderr: "inherit",
+      env: { ...process.env, BUN_SIMD_FORM: "x".repeat(Math.max(0, side - 1)) },
+    });
+    if (!success) process.exit(1);
+    for (const line of stdout.toString().trim().split(/\r?\n/)) {
+      const [name, time] = line.split("\t");
+      const row = best.get(name) ?? Array(9).fill(Infinity);
+      row[side] = Math.min(row[side], Number(time));
+      best.set(name, row);
     }
-    for (const [name, [a, b]] of best) console.log(`ROW\t${name}\t${a}\t${b}\t${(b / a).toFixed(3)}`);
   }
+  for (const [name, [main, ...forms]] of best)
+    console.log(`ROW\t${name}\t${main}\t${forms.map(it => (it / main).toFixed(3)).join("\t")}`);
 }

@@ -8,6 +8,27 @@ use crate::memory::{self, Result};
 
 pub(super) const BATCH: usize = 64;
 
+type Form = fn(&mut [f64], &mut [[u32; 2]], [u32; 2]) -> usize;
+
+/// Temporary.
+fn form() -> Form {
+    use bun_simd_kernels::brotli::temp::*;
+    static FORM: std::sync::OnceLock<Form> = std::sync::OnceLock::new();
+    const ALL: [Form; 8] = [
+        remove_pairs,
+        form_1,
+        form_2,
+        form_3,
+        form_4,
+        form_5,
+        form_6,
+        form_7,
+    ];
+    #[allow(clippy::disallowed_methods)]
+    let choose = || ALL[std::env::var("BUN_SIMD_FORM").map_or(0, |it| it.len() % 8)];
+    *FORM.get_or_init(choose)
+}
+
 #[derive(Clone, Copy)]
 struct Summary {
     cost: f64,
@@ -147,7 +168,7 @@ impl Pairs {
         let padded = self.count.next_multiple_of(PAIR_GROUP);
         self.clusters[self.count..padded].fill(merged);
         let (cost_changes, clusters) = (&mut self.cost_changes, &mut self.clusters);
-        self.count = remove_pairs(&mut cost_changes[..padded], &mut clusters[..padded], merged);
+        self.count = form()(&mut cost_changes[..padded], &mut clusters[..padded], merged);
     }
 }
 

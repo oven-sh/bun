@@ -1406,15 +1406,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmt: &mut Stmt,
         data: &mut S::Label,
     ) -> Result<(), Error> {
+        // Forbid functions inside labels in strict mode
+        if p.is_strict_mode() && matches!(data.stmt.data, StmtData::SFunction(_)) {
+            p.mark_strict_mode_feature(
+                StrictModeFeature::LabelFunctionStmt,
+                js_lexer::range_of_identifier(p.source, data.stmt.loc),
+                b"",
+            )?;
+        }
+
         p.push_scope_for_visit_pass(js_ast::scope::Kind::Label, stmt.loc)
             .expect("unreachable");
         let name = p.load_name_from_ref(data.name.ref_);
-        if js_lexer::is_strict_mode_reserved_word(name) {
-            p.mark_feature_under_kept_directive(
+        // In sloppy code a label keeps its name in the output, unless the minifier names it.
+        if js_lexer::is_strict_mode_reserved_word(name)
+            && (p.is_strict_mode() || !p.options.features.minify_identifiers)
+        {
+            p.mark_strict_mode_feature(
                 StrictModeFeature::ReservedWord,
                 js_lexer::range_of_identifier(p.source, data.name.loc),
                 name,
-            );
+            )?;
         }
         let ref_ = p.new_symbol(js_ast::symbol::Kind::Label, name);
         data.name.ref_ = ref_;
@@ -1746,14 +1758,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmt: &mut Stmt,
         data: &mut S::With,
     ) -> Result<(), Error> {
-        p.mark_feature_under_kept_directive(
+        p.mark_strict_mode_feature(
             StrictModeFeature::WithStatement,
             bun_ast::Range {
                 loc: stmt.loc,
                 len: 4,
             },
             b"",
-        );
+        )?;
         p.visit_expr(&mut data.value);
 
         p.push_scope_for_visit_pass(js_ast::scope::Kind::With, data.body_loc)
@@ -2049,6 +2061,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let decl: &mut G::Decl = &mut local.decls.slice_mut()[0];
                         if let js_ast::binding::Data::BIdentifier(b_id) = decl.binding.data {
                             if let Some(val) = decl.value {
+                                p.mark_strict_mode_feature(
+                                    StrictModeFeature::ForInVarInit,
+                                    p.source.range_of_operator_before(val.loc, b"="),
+                                    b"",
+                                )?;
                                 let id_ref = b_id.r#ref;
                                 stmts.push(Stmt::assign(
                                     Expr::init_identifier(id_ref, decl.binding.loc),
@@ -2311,6 +2328,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         p.record_declared_symbol(data.name.ref_);
+        // The enum lowers to a `var` with this name.
+        let enum_name = p.load_name_from_ref(data.name.ref_);
+        p.validate_declared_symbol_name(data.name.loc, enum_name);
         p.push_scope_for_visit_pass(js_ast::scope::Kind::Entry, stmt.loc)?;
         p.record_declared_symbol(data.arg);
 
@@ -2509,6 +2529,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         data: &mut S::Namespace,
     ) -> Result<(), Error> {
         p.record_declared_symbol(data.name.ref_);
+        // The namespace lowers to a `var` with this name.
+        let namespace_name = p.load_name_from_ref(data.name.ref_);
+        p.validate_declared_symbol_name(data.name.loc, namespace_name);
 
         // Scan ahead for any variables inside this namespace. This must be done
         // ahead of time before visiting any statements inside the namespace

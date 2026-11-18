@@ -40,12 +40,6 @@ pub mod options {
         Cjs,
         InternalBakeDev,
     }
-    impl Format {
-        #[inline]
-        pub(crate) const fn is_esm(self) -> bool {
-            matches!(self, Format::Esm)
-        }
-    }
     /// Canonical home is here (the parser is the consumer
     /// — `P::should_allow_unresolved_dynamic_specifier`). `bun_bundler::options`
     /// re-exports this so `BundleOptions.allow_unresolved` and
@@ -1042,6 +1036,13 @@ pub struct ExprIn {
     pub(crate) is_object_keys_argument: bool,
 }
 
+/// What is around some code: its scope, and the keyword of its class for the note of a strict mode error.
+#[derive(Clone, Copy)]
+pub(crate) struct Enclosing {
+    pub(crate) scope: js_ast::StoreRef<Scope>,
+    pub(crate) class_keyword: bun_ast::Range,
+}
+
 /// This function exists to tie all of these checks together in one place
 /// This can sometimes show up on benchmarks as a small thing.
 #[inline]
@@ -1091,8 +1092,12 @@ pub struct ParsedPath<'a> {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum StrictModeFeature {
+    AssignToEvalOrArguments,
     DeleteBareName,
     EvalOrArguments,
+    ForInVarInit,
+    IfElseFunctionStmt,
+    LabelFunctionStmt,
     ReservedWord,
     WithStatement,
 }
@@ -1173,6 +1178,13 @@ impl bun_collections::pool::ObjectPoolType for StringVoidMap {
 }
 
 bun_collections::object_pool!(pub StringVoidMapPool: StringVoidMap, threadsafe, 32);
+
+/// The names that one parameter list has bound so far.
+pub(crate) struct ParameterNames {
+    pub(crate) seen: bun_collections::pool::PoolGuard<StringVoidMap>,
+    /// Sloppy code can bind a name twice. A bundle still needs to know: see `Ast::sloppy_only_syntax`.
+    pub(crate) can_repeat: bool,
+}
 
 pub(crate) type StringBoolMap = StringHashMap<bool>;
 pub(crate) type RefMap = HashMap<Ref, ()>;

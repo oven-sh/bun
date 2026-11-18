@@ -143,6 +143,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         class_opts: &ParseClassOptions<'a>,
     ) -> Result<G::Class, Error> {
         let p = self;
+        let old_enclosing_class_keyword =
+            core::mem::replace(&mut p.enclosing_class_keyword, class_keyword);
         let mut extends: Option<Expr> = None;
         let mut has_decorators: bool = false;
         let mut has_auto_accessor: bool = false;
@@ -270,6 +272,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         p.allow_in = old_allow_in;
         p.allow_private_identifiers = old_allow_private_identifiers;
+        p.enclosing_class_keyword = old_enclosing_class_keyword;
         let close_brace_loc = p.lexer.loc();
         p.lexer.expect(T::TCloseBrace)?;
 

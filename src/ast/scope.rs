@@ -527,7 +527,7 @@ impl Scope {
     }
 
     pub fn recursive_set_strict_mode(&mut self, kind: StrictModeKind) {
-        if self.strict_mode == StrictModeKind::SloppyMode {
+        if !self.strict_mode.has_early_errors() && self.strict_mode != kind {
             self.strict_mode = kind;
             for child in self.children.slice_mut() {
                 child.recursive_set_strict_mode(kind);

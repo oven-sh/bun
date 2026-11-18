@@ -49,6 +49,44 @@ use crate::{
 /// runtime.
 pub type EventLoop = Option<core::ptr::NonNull<bun_event_loop::AnyEventLoop>>;
 
+/// The hashbang that `post_process_js_chunk` prints first, and the banner without it.
+pub(crate) struct HashbangAndBanner<'a> {
+    pub(crate) hashbang: &'a [u8],
+    pub(crate) banner: &'a [u8],
+}
+
+/// What makes a chunk strict code as a whole.
+#[derive(Clone, Copy)]
+enum StrictChunk {
+    /// Bun loads the scripts of an HTML file with one `<script type="module">`.
+    ModuleScript,
+    /// Bake gives each client chunk of an app to the framework as a module script.
+    FrameworkModuleScript,
+    /// ESM output in which the linker prints an `import` or `export` statement, so only a module loader takes it.
+    EsModule,
+    /// ESM output in which the linker prints neither. Unless a file prints one, a script loader takes it too.
+    EsModuleOrScript,
+    /// Bun runs a file that starts with `// @bun` as a module, unless it is `// @bun @bun-cjs`.
+    BunModule,
+    /// A "use strict" directive of the banner leads the chunk.
+    BannerDirective,
+    /// The "use strict" directive of the entry point, at this position, leads the chunk.
+    EntryDirective(Loc),
+}
+
+impl StrictChunk {
+    /// A chunk that a script loader takes runs there as sloppy mode code, so it still builds with what it held before this check. To refuse that too is a changed default.
+    fn refuses(self, kind: bun_ast::SloppyOnlyKind) -> bool {
+        use bun_ast::SloppyOnlyKind as Kind;
+        match self {
+            StrictChunk::EsModuleOrScript => {
+                matches!(kind, Kind::RepeatedParameter | Kind::EvalOrArguments)
+            }
+            _ => true,
+        }
+    }
+}
+
 bun_core::declare_scope!(LinkerCtx, visible);
 bun_core::declare_scope!(TreeShake, hidden);
 
@@ -609,6 +647,257 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
         self.graph.symbols.follow_all();
 
         Ok(chunks)
+    }
+
+    /// The directives that lead `chunk`: those of its entry point. The dev server gives every module its own closure, which gets them.
+    pub(crate) fn directives_of_chunk(&self, chunk: &Chunk) -> bun_ast::StoreSlice<Stmt> {
+        if chunk.is_entry_point() && self.options.output_format != Format::InternalBakeDev {
+            self.graph.ast.items_directives()[chunk.entry_point.source_index() as usize]
+        } else {
+            bun_ast::StoreSlice::EMPTY
+        }
+    }
+
+    pub(crate) fn hashbang_and_banner_of_chunk(&self, chunk: &Chunk) -> HashbangAndBanner<'_> {
+        let banner = self.options.banner;
+        let no_hashbang = HashbangAndBanner {
+            hashbang: b"",
+            banner,
+        };
+        if !chunk.is_entry_point() {
+            return no_hashbang;
+        }
+        let source_hashbang =
+            self.graph.ast.items_hashbang()[chunk.entry_point.source_index() as usize];
+        // If source file has a hashbang, use it
+        if !source_hashbang.is_empty() {
+            return HashbangAndBanner {
+                hashbang: source_hashbang.slice(),
+                banner,
+            };
+        }
+        // Otherwise check if banner starts with hashbang
+        if banner.starts_with(b"#!") {
+            let newline_pos = strings::index_of_char(banner, b'\n')
+                .map(|n| n as usize)
+                .unwrap_or(banner.len());
+            return HashbangAndBanner {
+                hashbang: &banner[..newline_pos],
+                banner: strings::trim_left(&banner[newline_pos..], b"\r\n"),
+            };
+        }
+        no_hashbang
+    }
+
+    /// What `post_process_js_chunk` prints for the Bun target ahead of the banner: the pragma, and for CommonJS the start of the function that wraps the chunk.
+    pub(crate) fn bun_header_of_chunk(&self, chunk: &Chunk) -> &'static [u8] {
+        let target = self.graph.ast.items_target()[chunk.entry_point.source_index() as usize];
+        let is_cjs = self.options.output_format == Format::Cjs;
+        match (target.is_bun(), self.options.generate_bytecode_cache, is_cjs) {
+            (false, _, _) => b"",
+            (true, true, true) => {
+                b"// @bun @bytecode @bun-cjs\n(function(exports, require, module, __filename, __dirname) {"
+            }
+            (true, true, false) => b"// @bun @bytecode\n",
+            (true, false, true) => {
+                b"// @bun @bun-cjs\n(function(exports, require, module, __filename, __dirname) {"
+            }
+            (true, false, false) => b"// @bun\n",
+        }
+    }
+
+    /// Why every file of `chunk` is strict code, if that is so.
+    fn why_chunk_is_strict(&self, chunk: &Chunk) -> Option<StrictChunk> {
+        if !chunk.content.is_javascript() {
+            return None;
+        }
+        if chunk.flags.contains(crate::chunk::Flags::HAS_HTML_CHUNK) {
+            return Some(StrictChunk::ModuleScript);
+        }
+        let target = self.graph.ast.items_target()[chunk.entry_point.source_index() as usize];
+        if target.is_bun() && self.options.output_format != Format::Cjs {
+            return Some(StrictChunk::BunModule);
+        }
+        if self.framework.is_some() && self.chunk_side(chunk) == crate::options::Side::Client {
+            return Some(StrictChunk::FrameworkModuleScript);
+        }
+        if self.options.output_format.is_always_strict_mode() {
+            if self.prints_import_or_export(chunk) {
+                return Some(StrictChunk::EsModule);
+            }
+            // The banner is printed ahead of ESM output too.
+            if !self.options.banner.is_empty() && self.is_chunk_strict_with(chunk, b"") {
+                return Some(StrictChunk::BannerDirective);
+            }
+            return Some(StrictChunk::EsModuleOrScript);
+        }
+        let use_strict = self
+            .directives_of_chunk(chunk)
+            .slice()
+            .iter()
+            .find(|stmt| matches!(stmt.data, bun_ast::StmtData::SDirective(directive) if directive.value.slice() == b"use strict"))
+            .map(|stmt| stmt.loc);
+        // With no banner, the directives of the entry point are the first statements of the chunk.
+        if self.options.banner.is_empty() {
+            return use_strict.map(StrictChunk::EntryDirective);
+        }
+        if self.is_chunk_strict_with(chunk, b"") {
+            return Some(StrictChunk::BannerDirective);
+        }
+        let use_strict = use_strict?;
+        self.is_chunk_strict_with(chunk, b"\"use strict\";")
+            .then_some(StrictChunk::EntryDirective(use_strict))
+    }
+
+    /// Does the linker print an `import` or `export` statement in the ESM output of `chunk`: one between chunks, or the exports of the entry point? The `import` of an external module, which a file prints, is not asked.
+    fn prints_import_or_export(&self, chunk: &Chunk) -> bool {
+        let js = chunk.content.javascript();
+        if !js.cross_chunk_prefix_stmts.is_empty() || !js.cross_chunk_suffix_stmts.is_empty() {
+            return true;
+        }
+        if !chunk.is_entry_point() {
+            return false;
+        }
+        // As in `generate_entry_point_tail_js`.
+        let entry_point = chunk.entry_point.source_index() as usize;
+        let flags = self.graph.meta.items_flags()[entry_point];
+        flags.wrap == WrapKind::Cjs
+            || !self.graph.meta.items_sorted_and_filtered_export_aliases()[entry_point].is_empty()
+            || Self::chunk_default_export_is_namespace(
+                flags,
+                self.graph.ast.items_flags()[entry_point],
+            )
+    }
+
+    /// Parses what `post_process_js_chunk` prints around the files of `chunk`, with `directives` for those of the entry point: is a file strict mode code there?
+    fn is_chunk_strict_with(&self, chunk: &Chunk, directives: &[u8]) -> bool {
+        let HashbangAndBanner { hashbang, banner } = self.hashbang_and_banner_of_chunk(chunk);
+        let bun_header = self.bun_header_of_chunk(chunk);
+        let (open, close): (&[u8], &[u8]) = match self.options.output_format {
+            Format::Iife => (b"(() => {", b"})();"),
+            Format::Cjs if !bun_header.is_empty() => (b"", b"})"),
+            _ => (b"", b""),
+        };
+        let mut text: Vec<u8> = Vec::new();
+        if !hashbang.is_empty() {
+            text.extend_from_slice(hashbang);
+            text.push(b'\n');
+        }
+        for piece in [bun_header, banner, b"\n", directives, open] {
+            text.extend_from_slice(piece);
+        }
+        // An empty block stands for the files.
+        let files = Loc {
+            start: text.len() as i32,
+        };
+        for piece in [b"{}".as_slice(), close, b"\n", self.options.footer] {
+            text.extend_from_slice(piece);
+        }
+        parse_only_text(&text, true, false, |parsed| parsed.is_strict_block(files)) == Some(true)
+    }
+
+    /// A chunk that is strict code as a whole does not parse with the `Ast::sloppy_only_syntax` of a file in it. Only the linker knows the chunk.
+    pub(crate) fn report_sloppy_only_syntax(&self, chunks: &[Chunk<'a>], log: &mut Log) {
+        if self.bundle.sloppy_only_syntax.is_empty() {
+            return;
+        }
+        let sources = self.parse_graph().input_files.items_source();
+        let strict: Vec<Option<StrictChunk>> = chunks
+            .iter()
+            .map(|chunk| self.why_chunk_is_strict(chunk))
+            .collect();
+        let mut files: Vec<_> = self.bundle.sloppy_only_syntax.iter().collect();
+        files.sort_unstable_by_key(|(source_index, _)| *source_index);
+
+        for (source_index, found) in files {
+            let holders = chunks.iter().zip(&strict).filter_map(|(chunk, why)| {
+                let why = (*why)?;
+                chunk
+                    .files_with_parts_in_chunk
+                    .contains(source_index)
+                    .then_some((chunk, why))
+            });
+            let holders: Vec<(&Chunk<'a>, StrictChunk)> = holders.collect();
+            let source = &sources[*source_index as usize];
+            let parts = self.graph.ast.items_parts()[*source_index as usize].as_slice();
+            let live = &self.graph.parts_live[*source_index as usize];
+            // Tree shaking removed the part of this syntax, so no chunk prints it.
+            let is_removed = |syntax: &bun_ast::SloppyOnlySyntax| {
+                let part = parts
+                    .iter()
+                    .position(|part| part.sloppy_only_id == syntax.part);
+                syntax.part != 0 && part.is_some_and(|part| !live.is_set(part))
+            };
+            for syntax in found.iter().filter(|syntax| !is_removed(syntax)) {
+                let Some(&(chunk, why)) = holders.iter().find(|(_, why)| why.refuses(syntax.kind))
+                else {
+                    continue;
+                };
+                let entry_point = &sources[chunk.entry_point.source_index() as usize];
+                let text = bstr::BStr::new(syntax.text.slice());
+                let in_strict_mode = format!("{text} cannot be used in strict mode");
+                let (message, note) = match why {
+                    StrictChunk::EsModule => (
+                        format!("{text} cannot be used with the ESM output format due to strict mode"),
+                        Some(bun_ast::range_data(
+                            None,
+                            Range::NONE,
+                            b"This output file has an \"import\" or \"export\" statement, so it loads only as an ECMAScript module, which is strict mode code.".as_slice(),
+                        )),
+                    ),
+                    StrictChunk::EsModuleOrScript => (
+                        format!("{text} cannot be used with the ESM output format due to strict mode"),
+                        None,
+                    ),
+                    StrictChunk::FrameworkModuleScript => (
+                        in_strict_mode,
+                        Some(bun_ast::range_data(
+                            None,
+                            Range::NONE,
+                            b"Bun gives the client files of an app to its framework as module scripts, which are strict mode code.".as_slice(),
+                        )),
+                    ),
+                    StrictChunk::ModuleScript => (
+                        in_strict_mode,
+                        Some(bun_ast::range_data(
+                            Some(entry_point),
+                            Range::NONE,
+                            b"Bun loads the scripts of an HTML file with one <script type=\"module\">, which is strict mode code.".as_slice(),
+                        )),
+                    ),
+                    StrictChunk::BunModule => (
+                        in_strict_mode,
+                        Some(bun_ast::range_data(
+                            None,
+                            Range::NONE,
+                            b"Bun runs this bundle as an ECMAScript module, which is strict mode code. For the \"bun\" target, only the \"cjs\" output format is not a module.".as_slice(),
+                        )),
+                    ),
+                    StrictChunk::BannerDirective => (
+                        in_strict_mode,
+                        Some(bun_ast::range_data(
+                            None,
+                            Range::NONE,
+                            b"The \"use strict\" directive of the banner makes the whole bundle strict mode code.".as_slice(),
+                        )),
+                    ),
+                    StrictChunk::EntryDirective(loc) => (
+                        in_strict_mode,
+                        Some(bun_ast::range_data(
+                            Some(entry_point),
+                            entry_point.range_of_string(loc),
+                            b"The \"use strict\" directive of the entry point makes the whole bundle strict mode code:".as_slice(),
+                        )),
+                    ),
+                };
+                log.add_range_error_with_notes(
+                    Some(source),
+                    syntax.range,
+                    message.into_bytes(),
+                    note.into_iter().collect(),
+                );
+            }
+        }
     }
 
     pub(crate) fn tree_shaking_and_code_splitting(&mut self) -> Result<(), AllocError> {

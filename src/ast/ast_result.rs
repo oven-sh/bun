@@ -106,6 +106,30 @@ pub struct Ast<'a> {
     pub import_meta_ref: Ref,
     /// Output depends on more than the source text (macros, `import.meta.glob`), so don't cache it.
     pub depends_on_more_than_source: bool,
+    /// Only populated when bundling: the linker reports these for a file that it prints in a strict chunk.
+    pub sloppy_only_syntax: AstVec<SloppyOnlySyntax>,
+}
+
+/// Syntax that strict code cannot hold (a `with` statement, a repeated parameter), found in sloppy code.
+#[derive(Clone, Copy)]
+pub struct SloppyOnlySyntax {
+    pub kind: SloppyOnlyKind,
+    /// `Part::sloppy_only_id` of the part that holds the syntax, or 0 if no one part holds it.
+    pub part: u32,
+    pub range: Range,
+    /// What the syntax is, as the start of a message: "With statements", before "cannot be used in strict mode".
+    pub text: StoreStr,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SloppyOnlyKind {
+    WithStatement,
+    DeleteOfName,
+    /// A label, a name that nothing declares, or a name that a direct `eval` pins: no renamer moves it.
+    ReservedWord,
+    RepeatedParameter,
+    /// A declaration of `eval` or `arguments`, or an assignment to one of them.
+    EvalOrArguments,
 }
 
 // `parts`/`symbols`/`import_records` are now `ArenaVec`s and need an allocator,
@@ -151,6 +175,7 @@ impl<'a> Ast<'a> {
             has_commonjs_export_names: false,
             import_meta_ref: Ref::NONE,
             depends_on_more_than_source: false,
+            sloppy_only_syntax: AstAlloc::vec(),
         }
     }
 }

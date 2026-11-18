@@ -781,35 +781,18 @@ fn legacy_octal_forms_without_an_extension() {
 }
 
 #[test]
-fn octal_escapes_that_bun_run_reports() {
-    let reported = [
-        (r#"x = "\4";"#, 2),
-        (r#"x = '\1';"#, 2),
-        (r#"x = "a\04";"#, 3),
-        (r#"x = "\00";"#, 3),
-        (r#"x = "\08";"#, 2),
-        (r#"x = "\49a";"#, 2),
-        (r#"x = "\049a";"#, 3),
-        (r#"x = "\478";"#, 3),
-        (r#"x = { "\4": 1 };"#, 2),
-        (r#"function f() { "\4"; }"#, 2),
-    ];
-    for (text, len) in reported {
-        parsed("a.js", text, |_, hir| {
-            let errors = of_class(hir, EarlyError);
-            let [error] = errors[..] else {
-                panic!("{text}: {errors:?}");
-            };
-            let start = text.find('\\').unwrap() as u32;
-            assert_eq!(
-                (error.code, error.start, error.end),
-                (1487, start, start + len),
-                "{text}"
-            );
-            assert_ne!(hir.rare_syntax & rare::LEGACY_OCTAL, 0, "{text}");
-        });
-    }
+fn legacy_octal_escapes_of_javascript_are_no_error() {
     let accepted = [
+        r#"x = "\4";"#,
+        r#"x = '\1';"#,
+        r#"x = "a\04";"#,
+        r#"x = "\00";"#,
+        r#"x = "\08";"#,
+        r#"x = "\49a";"#,
+        r#"x = "\049a";"#,
+        r#"x = "\478";"#,
+        r#"x = { "\4": 1 };"#,
+        r#"function f() { "\4"; }"#,
         r#"x = "\4a";"#,
         r#"x = "\4'";"#,
         r#"x = '\4"';"#,

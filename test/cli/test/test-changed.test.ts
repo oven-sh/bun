@@ -399,6 +399,50 @@ describe.concurrent("bun test --changed", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The scan parses like a bundle and writes no output, so the syntax of sloppy mode code is not its concern.
+  test("a sloppy CommonJS dependency does not hide the tests that reach a changed file through it", async () => {
+    using dir = tempDir("test-changed-sloppy", {
+      "package.json": JSON.stringify({ name: "sloppy" }),
+      "value.cjs": `module.exports = 1;\n`,
+      "helper.cjs": `var arguments = [require("./value.cjs")];\nwith (arguments) module.exports = arguments[0];\n`,
+      "helper.test.js": `const { test, expect } = require("bun:test");\nconst value = require("./helper.cjs");\ntest("helper", () => expect(value).toBe(1));\n`,
+    });
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "value.cjs"), "// touched\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(stderr).toContain("helper.test.js:");
+    expect(stderr).toContain("1 pass");
+    expect(exitCode).toBe(0);
+  });
+
+  // The scan reads which files import which. An early error of strict mode code is for the run: the
+  // file stays in the module graph, and the test that reaches a changed file through it runs and fails.
+  test.each([
+    [
+      "a function as the body of if",
+      "if (value) function f() {}",
+      "Function declarations inside if statements cannot be used in an ECMAScript module",
+    ],
+    ["a repeated parameter", "function f(a, a) {}", '"a" cannot be bound multiple times in the same parameter list'],
+    ["a repeated parameter of an arrow function", "(a, a) => a;", '"a" cannot be bound multiple times'],
+    ["an assignment to eval", "if (!value) eval = 1;", "Invalid assignment target"],
+  ])("a dependency with %s does not hide the tests behind it", async (_, code, message) => {
+    using dir = tempDir("test-changed-early-error", {
+      "package.json": JSON.stringify({ name: "early-error" }),
+      "value.mjs": `export default 1;\n`,
+      "helper.mjs": `import value from "./value.mjs";\n${code}\nexport default value;\n`,
+      "helper.test.js": `import { test, expect } from "bun:test";\nimport value from "./helper.mjs";\ntest("helper", () => expect(value).toBe(1));\n`,
+    });
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "value.mjs"), "// touched\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(stderr).toContain(message);
+    expect(stderr).toContain("helper.test.js");
+    expect(exitCode).toBe(1);
+  });
+
   // https://github.com/oven-sh/bun/issues/29590: a tsconfig `paths` alias
   // like "@/*" must be followed when building the module graph.
   test("tsconfig paths alias is followed when computing the module graph", async () => {

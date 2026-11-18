@@ -1036,6 +1036,9 @@ pub struct Part {
     // tree-shaking recursion's hot "already visited?" check touches a few KB
     // of bitset words instead of striding across every 272-byte `Part`.
     pub tag: PartTag,
+
+    /// Not 0 for a part whose code has an entry in `Ast::sloppy_only_syntax`: the entry holds the same number.
+    pub sloppy_only_id: u32,
 }
 
 pub type PartImportRecordIndices = Vec<u32, bun_alloc::AstAlloc>;
@@ -1083,6 +1086,7 @@ impl Default for Part {
             can_be_removed_if_unused: false,
             force_tree_shaking: false,
             tag: PartTag::None,
+            sloppy_only_id: 0,
         }
     }
 }
@@ -1161,11 +1165,21 @@ pub struct NamedExport {
 #[strum(serialize_all = "snake_case")]
 pub enum StrictModeKind {
     SloppyMode,
+    /// Module syntax that does not prove a module: `import.meta`, a type-only import, a line of the REPL.
+    ImplicitStrictModeMaybeModule,
     ExplicitStrictMode,
     ImplicitStrictModeImport,
     ImplicitStrictModeExport,
     ImplicitStrictModeTopLevelAwait,
     ImplicitStrictModeClass,
+}
+
+impl StrictModeKind {
+    /// Whether the parser reports the early errors of strict code here. Bun can still run a `MaybeModule` file as sloppy code.
+    #[inline]
+    pub fn has_early_errors(self) -> bool {
+        !matches!(self, Self::SloppyMode | Self::ImplicitStrictModeMaybeModule)
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]

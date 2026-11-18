@@ -76,6 +76,26 @@ impl<'a> ParsedOnly<'_, 'a> {
             top_level_await: self.p.top_level_await_keyword.len > 0,
         }
     }
+    /// Whether a "use strict" directive makes the block statement that starts at `at` strict mode code.
+    pub fn is_strict_block(&self, at: js_ast::Loc) -> bool {
+        self.p.scopes_in_order.iter().flatten().any(|order| {
+            order.loc == at
+                && order.scope_ref().strict_mode == js_ast::StrictModeKind::ExplicitStrictMode
+        })
+    }
+}
+
+/// `module_type`, but from the extension where it decides: one caller of the parser takes the option from "package.json" alone.
+pub fn module_type_by_extension_or_package(
+    extension: &[u8],
+    module_type: options::ModuleType,
+) -> options::ModuleType {
+    match extension {
+        b".mjs" | b".mts" => options::ModuleType::Esm,
+        b".cjs" | b".cts" => options::ModuleType::Cjs,
+        b".js" | b".ts" => module_type,
+        _ => options::ModuleType::Unknown,
+    }
 }
 
 /// Module record flags found while parsing.
@@ -154,6 +174,10 @@ pub struct Options<'a> {
     /// The source is one of JavaScriptCore's builtins: `@name` is a name.
     pub jsc_builtin_syntax: bool,
     pub output_format: options::Format,
+    /// The output always loads as strict code, so the parser reports `Ast::sloppy_only_syntax` itself. For a bundle that is linked, the linker does.
+    pub strict_output: bool,
+    /// The caller reads only which files import which, and runs or prints none of them. A strict mode early error is for the parse that does.
+    pub module_graph_scan: bool,
 
     pub transform_only: bool,
 
@@ -264,6 +288,8 @@ impl<'a> Options<'a> {
             module_type: self.module_type,
             jsc_builtin_syntax: self.jsc_builtin_syntax,
             output_format: self.output_format,
+            strict_output: self.strict_output,
+            module_graph_scan: self.module_graph_scan,
             transform_only: self.transform_only,
             import_meta_glob: self.import_meta_glob,
             import_meta_main_value: self.import_meta_main_value,
@@ -344,6 +370,8 @@ impl<'a> Options<'a> {
             module_type: options::ModuleType::Unknown,
             jsc_builtin_syntax: false,
             output_format: options::Format::Esm,
+            strict_output: false,
+            module_graph_scan: false,
             transform_only: false,
             import_meta_glob: None,
             import_meta_main_value: None,
@@ -1921,13 +1949,18 @@ impl<'a> Parser<'a> {
         // Checked after `to_ast`, which marks TypeScript type-only imports unused.
         let mut reject_import_statements = false;
 
+        // False where only `options.module_type` or a guess below makes the file CommonJS.
+        let mut is_commonjs_by_syntax = false;
+
         if p.is_deoptimized_commonjs() {
             exports_kind = js_ast::ExportsKind::Cjs;
+            is_commonjs_by_syntax = true;
         } else if p.esm_export_keyword.len > 0 || p.top_level_await_keyword.len > 0 {
             exports_kind = js_ast::ExportsKind::Esm;
         } else if uses_exports_ref || uses_module_ref || p.has_top_level_return || p.has_with_scope
         {
             exports_kind = js_ast::ExportsKind::Cjs;
+            is_commonjs_by_syntax = true;
             if p.options.features.commonjs_at_runtime {
                 wrap_mode = WrapMode::BunCommonjs;
                 reject_import_statements = true;
@@ -2003,6 +2036,25 @@ impl<'a> Parser<'a> {
 
             if exports_kind == js_ast::ExportsKind::Cjs && p.options.features.commonjs_at_runtime {
                 wrap_mode = WrapMode::BunCommonjs;
+            }
+        }
+
+        // `prepare_for_visit_pass` reported the file that `import`, `export` or a top-level `await` makes a module.
+        if p.lexer.legacy_html_comment_range.len > 0
+            && !is_commonjs_by_syntax
+            && !p.options.repl_mode
+        {
+            let is_module = match p.module_type_by_extension_or_package() {
+                options::ModuleType::Esm => true,
+                options::ModuleType::Cjs => false,
+                // `import.meta` and a type-only import prove no module: `exports_kind` says how the file runs.
+                options::ModuleType::Unknown => {
+                    (p.has_import_meta || p.has_type_only_import)
+                        && exports_kind != js_ast::ExportsKind::Cjs
+                }
+            };
+            if is_module {
+                p.report_legacy_html_comment();
             }
         }
 

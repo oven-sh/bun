@@ -27,6 +27,7 @@ describe.skipIf(!!unsupported)("compile/aot/react-compiler", () => {
     "unmemoized-callbacks",
     "star-export-beside-component",
     "imports-of-dropped-code",
+    "sloppy-syntax-in-a-component-file",
   ])(
     "%s",
     name =>

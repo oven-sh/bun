@@ -246,13 +246,9 @@ test("Valid unicode escapes in identifiers should work", async () => {
 // Invalid escape-sequence diagnostics in `decode_escape_sequences` reported
 // caret locations at text-relative offsets instead of absolute source
 // positions, landing the caret several columns left of the backslash (or on
-// an unrelated earlier line/character). Two kinds of bugs fed into this:
-//   1. `hex_start` in the `\u{...}` branch over-subtracted by the width of
-//      `{`, and the string-path caller passed the opening-quote offset
-//      where the decoder expects the content-start offset.
-//   2. The legacy-octal `\0`..`\7` + `8`/`9` branch built `Range.loc.start`
-//      from `octal_start` alone, ignoring the absolute `start` argument that
-//      every sibling error path adds.
+// an unrelated earlier line/character): `hex_start` in the `\u{...}` branch
+// over-subtracted by the width of `{`, and the string-path caller passed the
+// opening-quote offset where the decoder expects the content-start offset.
 // Pin the caret under the `\` for every affected escape and quote style.
 describe("invalid-escape caret points at the backslash (#31134)", () => {
   const cases = [
@@ -298,28 +294,6 @@ describe("invalid-escape caret points at the backslash (#31134)", () => {
       msg: "Unicode escape sequence is out of range",
       pattern: "\\u{110000}",
       expectCol: 7,
-    },
-    // Legacy-octal `\08`/`\09`:
-    {
-      name: "\\08 double-quote with prefix",
-      source: 'var a = "aaaaa\\08";',
-      msg: "Invalid legacy octal literal",
-      pattern: "\\08",
-      expectCol: 15,
-    },
-    {
-      name: "\\08 double-quote without prefix",
-      source: 'var a = "\\08";',
-      msg: "Invalid legacy octal literal",
-      pattern: "\\08",
-      expectCol: 10,
-    },
-    {
-      name: "\\09 single-quote with prefix",
-      source: "var a = 'aaaaa\\09';",
-      msg: "Invalid legacy octal literal",
-      pattern: "\\09",
-      expectCol: 15,
     },
   ];
 

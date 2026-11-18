@@ -402,6 +402,72 @@ describe("bundler", () => {
       stdout: "react\nreact",
     },
   });
+  // The parser names the namespace of an unwrapped require() after the path:
+  // "package" for "react/package.json", "static" for "react-dom/static". The
+  // renamer gives it a free name in the output, so a reserved word there is not
+  // an error of the strict mode code that has the require().
+  itBundled("cjs2esm/UnwrappedModuleRequireOfAPathNamedLikeAReservedWord", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./directive.cjs";
+        import "./babel.cjs";
+        import "./tsc.cjs";
+        import "./typed.ts";
+        export const version = require("react/package.json").version;
+        console.log("module", version);
+      `,
+      "/directive.cjs": /* js */ `
+        "use strict";
+        console.log("directive", require("react/package.json").version);
+        const { prerender } = require("react-dom/static");
+        console.log("destructured", prerender());
+      `,
+      "/babel.cjs": /* js */ `
+        "use strict";
+        function _interopRequireDefault(e) { return e && e.__esModule ? e : { default: e }; }
+        var _static = _interopRequireDefault(require("react-dom/static"));
+        console.log("babel", _static.default.prerender());
+      `,
+      "/tsc.cjs": /* js */ `
+        "use strict";
+        var __importDefault = (this && this.__importDefault) || function (mod) { return (mod && mod.__esModule) ? mod : { "default": mod }; };
+        Object.defineProperty(exports, "__esModule", { value: true });
+        const static_1 = __importDefault(require("react-dom/static"));
+        console.log("tsc", static_1.default.prerender());
+      `,
+      "/typed.ts": /* ts */ `
+        export const version: string = require("react/package.json").version;
+        console.log("typescript", version);
+      `,
+      ...fakeReactNodeModules,
+      "/node_modules/react-dom/package.json": /* json */ `
+        { "name": "react-dom", "version": "2.0.0", "main": "index.js" }
+      `,
+      "/node_modules/react-dom/index.js": `exports.dom = 1;`,
+      "/node_modules/react-dom/static.js": `exports.prerender = () => "prerendered";`,
+    },
+    run: {
+      stdout:
+        "directive 2.0.0\ndestructured prerendered\nbabel prerendered\ntsc prerendered\ntypescript 2.0.0\nmodule 2.0.0",
+    },
+  });
+  // A binding that the file itself declares with such a name is still an error.
+  itBundled("cjs2esm/ImportBindingNamedLikeAReservedWordBesideUnwrappedRequire", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as static from "react-dom/static";
+        console.log(require("react/package.json").version, static.prerender());
+      `,
+      ...fakeReactNodeModules,
+      "/node_modules/react-dom/package.json": /* json */ `
+        { "name": "react-dom", "version": "2.0.0", "main": "index.js" }
+      `,
+      "/node_modules/react-dom/static.js": `exports.prerender = () => "prerendered";`,
+    },
+    bundleErrors: {
+      "/entry.js": ['"static" is a reserved word and cannot be used in an ECMAScript module'],
+    },
+  });
   // `sideEffect(); module.exports = require("./main")` in an unwrapped package
   // becomes `sideEffect(); export * from "./main"`, so the file needs no
   // `__commonJS` wrapper and the named import binds to the export directly.

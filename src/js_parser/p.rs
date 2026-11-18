@@ -18,6 +18,7 @@ use crate::defines::{Define, DefineData};
 use crate::lexer as js_lexer;
 use crate::lower::hoist_test_mocks::{MockApi, is_test_module};
 use crate::parse::parse_entry::Options as ParserOptions;
+use crate::parser::Enclosing;
 use crate::renamer;
 use crate::{
     ARGUMENTS_STR as arguments_str, DeferredArrowArgErrors, DeferredErrors,
@@ -176,6 +177,7 @@ pub(crate) struct ParserSnapshot<'a> {
     scopes_in_order_len: usize,
     scopes_in_order_for_enum_len: usize,
     symbols_len: usize,
+    replaced_functions_len: usize,
     allocated_names_len: usize,
     import_records_len: usize,
 }
@@ -250,6 +252,11 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) has_top_level_return: bool,
     pub(crate) latest_return_had_semicolon: bool,
     pub(crate) has_import_meta: bool,
+    /// An import that TypeScript erases, such as `import type`.
+    pub(crate) has_type_only_import: bool,
+    /// The keyword that proves this file a module, and which of the three it is. Set before the visit pass.
+    pub(crate) es_module_keyword: bun_ast::Range,
+    pub(crate) es_module_kind: js_ast::StrictModeKind,
     pub(crate) has_es_module_syntax: bool,
     pub(crate) top_level_await_keyword: bun_ast::Range,
     pub(crate) fn_or_arrow_data_parse: FnOrArrowDataParse,
@@ -283,6 +290,12 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) macro_call_count: MacroCallCountType,
 
     pub(crate) hoisted_ref_for_sloppy_mode_block_fn: RefRefMap,
+
+    /// Each function declaration that a later declaration in the same scope replaced, with that scope and that later declaration.
+    pub(crate) replaced_functions: Vec<(Enclosing, js_ast::scope::Member, js_ast::scope::Member)>,
+
+    /// See `Ast::sloppy_only_syntax`.
+    pub(crate) sloppy_only_syntax: Vec<js_ast::SloppyOnlySyntax>,
 
     // Used for forcing CommonJS
     pub(crate) has_with_scope: bool,
@@ -489,6 +502,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // These are for handling ES6 imports and exports
     pub(crate) esm_import_keyword: bun_ast::Range,
     pub(crate) esm_export_keyword: bun_ast::Range,
+    /// The class that `parse_class` parses, and later the class that `visit_class` visits.
     pub(crate) enclosing_class_keyword: bun_ast::Range,
     pub(crate) import_items_for_namespace: HashMap<Ref, ImportItemForNamespaceMap>,
     pub(crate) is_import_item: RefMap,
@@ -2161,7 +2175,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let ref_ = ident.ref_;
 
         if self.options.features.inlining {
-            if let Some(replacement) = self.const_values.get(&ref_) {
+            // `delete x` is about the name: strict code rejects it, and sloppy code answers false.
+            if let Some(replacement) = self.const_values.get(&ref_)
+                && !opts.is_delete_target()
+            {
                 let replacement = *replacement;
                 self.ignore_usage(ref_);
                 return replacement;
@@ -3272,6 +3289,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.fn_or_arrow_data_visit.is_outside_fn_or_arrow = true;
         self.module_scope = self.current_scope;
         self.has_es_module_syntax = self.has_es_module_syntax
+            || self.has_import_meta
+            || self.has_type_only_import
             || self.esm_import_keyword.len > 0
             || self.esm_export_keyword.len > 0
             || self.top_level_await_keyword.len > 0;
@@ -3336,18 +3355,49 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // ECMAScript modules are always interpreted as strict mode. This has to be
         // done before "hoistSymbols" because strict mode can alter hoisting (!).
-        if self.esm_import_keyword.len > 0 {
-            self.module_scope_mut()
-                .recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeImport);
-        } else if self.esm_export_keyword.len > 0 {
-            self.module_scope_mut()
-                .recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeExport);
+        let unproven = js_ast::StrictModeKind::ImplicitStrictModeMaybeModule;
+        let (keyword, kind) = if self.esm_export_keyword.len > 0 {
+            (
+                self.esm_export_keyword,
+                js_ast::StrictModeKind::ImplicitStrictModeExport,
+            )
         } else if self.top_level_await_keyword.len > 0 {
-            self.module_scope_mut()
-                .recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeTopLevelAwait);
+            (
+                self.top_level_await_keyword,
+                js_ast::StrictModeKind::ImplicitStrictModeTopLevelAwait,
+            )
+        } else if self.esm_import_keyword.len > 0 {
+            (
+                self.esm_import_keyword,
+                js_ast::StrictModeKind::ImplicitStrictModeImport,
+            )
+        } else if self.has_import_meta || self.has_type_only_import {
+            (bun_ast::Range::NONE, unproven)
+        } else {
+            (bun_ast::Range::NONE, js_ast::StrictModeKind::SloppyMode)
+        };
+        // A line of the REPL never runs as a module.
+        if keyword.len > 0 && !self.options.repl_mode {
+            self.es_module_keyword = keyword;
+            self.es_module_kind = kind;
+        }
+        if kind != js_ast::StrictModeKind::SloppyMode {
+            let kind = match self.options.repl_mode {
+                true => unproven,
+                false => kind,
+            };
+            self.module_scope_mut().recursive_set_strict_mode(kind);
+        }
+
+        // Legacy HTML comments are not allowed in ESM files
+        if self.lexer.legacy_html_comment_range.len > 0 && self.is_file_considered_esm() {
+            self.report_legacy_html_comment();
         }
 
         self.hoist_symbols(self.module_scope_ref());
+        if !self.replaced_functions.is_empty() {
+            self.report_duplicate_function_declarations();
+        }
 
         let mut generated_symbols_count: u32 = 3;
 
@@ -3420,6 +3470,87 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.options.bundle || self.options.features.minify_identifiers
     }
 
+    /// True once `import`, `export` or a top-level `await` proves a module. Not for a file that is one by its extension alone.
+    #[inline]
+    pub(crate) fn is_file_considered_esm(&self) -> bool {
+        self.es_module_keyword.len > 0
+    }
+
+    #[cold]
+    pub(crate) fn report_legacy_html_comment(&mut self) {
+        if self.options.module_graph_scan {
+            return;
+        }
+        let notes = self.why_es_module();
+        self.log().add_range_error_fmt_with_notes(
+            Some(self.source),
+            self.lexer.legacy_html_comment_range,
+            notes,
+            format_args!("Legacy HTML single-line comments are not allowed in ECMAScript modules"),
+        );
+    }
+
+    /// Runs after hoisting: only then is the strict mode of every scope final.
+    fn report_duplicate_function_declarations(&mut self) {
+        if self.options.module_graph_scan {
+            return;
+        }
+        let mut why_module: Option<bun_ast::Data> = None;
+        for (enclosing, replaced, replacing) in core::mem::take(&mut self.replaced_functions) {
+            let scope = enclosing.scope;
+            let is_module_top_level = scope.parent.is_none() && self.is_file_considered_esm();
+            let is_strict_block =
+                scope.strict_mode.has_early_errors() && scope.kind == js_ast::scope::Kind::Block;
+            if !is_module_top_level && !is_strict_block {
+                continue;
+            }
+
+            // `Symbol.original_name` is an arena-owned `StoreStr` valid for 'a.
+            let name: &'a [u8] = self.symbols[replaced.ref_.inner_index() as usize]
+                .original_name
+                .slice();
+            let is_function = |p: &Self, member: js_ast::scope::Member| {
+                p.symbols[member.ref_.inner_index() as usize]
+                    .kind
+                    .is_function()
+            };
+            // A `var` between two functions hides nothing: then the function that the scope ends up with is the duplicate.
+            let member = match scope.members.get(name).copied() {
+                _ if is_function(self, replacing) => replacing,
+                Some(last) if is_function(self, last) => last,
+                _ => continue,
+            };
+
+            let why = if is_module_top_level {
+                why_module
+                    .get_or_insert_with(|| {
+                        why_duplicate_function(
+                            "Duplicate top-level function declarations are not allowed in an ECMAScript module.",
+                            self.why_es_module(),
+                        )
+                    })
+                    .clone()
+            } else {
+                let (where_, notes) = self.why_strict_mode(enclosing);
+                why_duplicate_function(
+                    &format!(
+                        "Duplicate function declarations are not allowed in nested blocks {}.",
+                        bstr::BStr::new(where_)
+                    ),
+                    notes,
+                )
+            };
+            let source = self.source;
+            self.log().add_symbol_already_declared_error_with_note(
+                source,
+                name,
+                member.loc,
+                replaced.loc,
+                Some(why),
+            );
+        }
+    }
+
     fn hoist_symbols(&mut self, mut scope: js_ast::StoreRef<js_ast::Scope>) {
         // This runs before the visit pass, so it walks the scope tree at the full
         // nesting depth the parser allowed; deep trees must error here instead of
@@ -3436,6 +3567,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             for child in scope.children.slice_mut() {
                 child.recursive_set_strict_mode(js_ast::StrictModeKind::ExplicitStrictMode);
             }
+        } else if scope.kind == js_ast::scope::Kind::ClassName {
+            // A class is strict code, and both the hoisting below and the duplicate check read that.
+            scope.recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeClass);
         }
 
         // `StoreRef` is the arena back-pointer with safe `Deref`/`DerefMut` —
@@ -4522,7 +4656,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if !(alias == b"default" || alias == b"db") {
                         self.log().add_error(
                             Some(self.source),
-                            item.name.loc,
+                            item.alias_loc,
                             b"sqlite imports only support the \"default\" or \"db\" imports",
                         );
                         break;
@@ -4535,7 +4669,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if item.alias.slice() != b"default" {
                         self.log().add_error(
                             Some(self.source),
-                            item.name.loc,
+                            item.alias_loc,
                             b"This loader type only supports the \"default\" import",
                         );
                         break;
@@ -4789,108 +4923,199 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // TODO:
     pub(crate) fn check_for_non_bmp_code_point(&mut self, _: bun_ast::Loc, _: &[u8]) {}
 
-    /// A bundle keeps the "use strict" of the code, and one such error would make the whole bundle unparsable.
-    pub(crate) fn mark_feature_under_kept_directive(
-        &mut self,
-        feature: StrictModeFeature,
-        r: bun_ast::Range,
-        detail: &[u8],
-    ) {
-        if self.options.bundle
-            && self.current_scope().strict_mode == js_ast::StrictModeKind::ExplicitStrictMode
-        {
-            // It adds to the log, and nothing in it fails.
-            let _ = self.mark_strict_mode_feature(feature, r, detail);
-        }
-    }
-
     pub(crate) fn mark_strict_mode_feature(
         &mut self,
         feature: StrictModeFeature,
         r: bun_ast::Range,
         detail: &[u8],
     ) -> Result<(), crate::Error> {
-        let text: &'a [u8] = match feature {
-            StrictModeFeature::DeleteBareName => b"Delete of a bare identifier",
-            StrictModeFeature::WithStatement => b"With statements",
-            StrictModeFeature::EvalOrArguments => bun_alloc::arena_format!(
-                in self.arena,
-                "Declarations with the name \"{}\"",
-                bstr::BStr::new(detail)
-            )
-            .into_bump_str()
-            .as_bytes(),
-            StrictModeFeature::ReservedWord => bun_alloc::arena_format!(
-                in self.arena,
-                "\"{}\" is a reserved word and",
-                bstr::BStr::new(detail)
-            )
-            .into_bump_str()
-            .as_bytes(),
-        };
+        self.mark_strict_mode_feature_in(self.enclosing(), feature, r, detail);
+        Ok(())
+    }
 
-        let scope = self.current_scope();
-        if self.is_strict_mode() {
-            let mut why: &'a [u8] = b"";
-            let mut where_: bun_ast::Range = bun_ast::Range::NONE;
-            match scope.strict_mode {
-                js_ast::StrictModeKind::ImplicitStrictModeImport => {
-                    where_ = self.esm_import_keyword
-                }
-                js_ast::StrictModeKind::ImplicitStrictModeExport => {
-                    where_ = self.esm_export_keyword
-                }
-                js_ast::StrictModeKind::ImplicitStrictModeTopLevelAwait => {
-                    where_ = self.top_level_await_keyword
-                }
-                js_ast::StrictModeKind::ImplicitStrictModeClass => {
-                    why = b"All code inside a class is implicitly in strict mode";
-                    where_ = self.enclosing_class_keyword;
-                }
-                js_ast::StrictModeKind::ExplicitStrictMode => {
-                    why = b"Strict mode is triggered by a \"use strict\" directive";
-                }
-                _ => {}
+    /// `enclosing` is what is around the code at `r`.
+    fn mark_strict_mode_feature_in(
+        &mut self,
+        enclosing: Enclosing,
+        feature: StrictModeFeature,
+        r: bun_ast::Range,
+        detail: &[u8],
+    ) {
+        let is_strict = enclosing.scope.strict_mode.has_early_errors();
+        // Sloppy code matters to a bundle only: see `record_sloppy_only_syntax`.
+        if self.options.module_graph_scan || (!is_strict && !self.options.bundle) {
+            return;
+        }
+        use js_ast::SloppyOnlyKind as Kind;
+        // `None`: sloppy code has it only where the output holds it in another form, or not at all.
+        let (kind, text): (Option<Kind>, &'a [u8]) = match feature {
+            StrictModeFeature::DeleteBareName => {
+                (Some(Kind::DeleteOfName), b"Delete of a bare identifier")
             }
-            if why.is_empty() {
-                why = bun_alloc::arena_format!(
+            StrictModeFeature::WithStatement => (Some(Kind::WithStatement), b"With statements"),
+            StrictModeFeature::ForInVarInit => (None, b"Variable initializers inside for-in loops"),
+            StrictModeFeature::EvalOrArguments => (
+                Some(Kind::EvalOrArguments),
+                bun_alloc::arena_format!(
                     in self.arena,
-                    "This file is implicitly in strict mode because of the \"{}\" keyword here",
-                    bstr::BStr::new(self.source.text_for_range(where_))
+                    "Declarations with the name \"{}\"",
+                    bstr::BStr::new(detail)
                 )
                 .into_bump_str()
-                .as_bytes();
+                .as_bytes(),
+            ),
+            StrictModeFeature::AssignToEvalOrArguments => (
+                Some(Kind::EvalOrArguments),
+                bun_alloc::arena_format!(
+                    in self.arena,
+                    "Assignments to \"{}\"",
+                    bstr::BStr::new(detail)
+                )
+                .into_bump_str()
+                .as_bytes(),
+            ),
+            StrictModeFeature::ReservedWord => (
+                Some(Kind::ReservedWord),
+                bun_alloc::arena_format!(
+                    in self.arena,
+                    "\"{}\" is a reserved word and",
+                    bstr::BStr::new(detail)
+                )
+                .into_bump_str()
+                .as_bytes(),
+            ),
+            StrictModeFeature::IfElseFunctionStmt => {
+                (None, b"Function declarations inside if statements")
             }
-            // bun_ast::Data is !Copy (Cow) — build the notes Box directly.
-            let notes: Box<[bun_ast::Data]> =
-                Box::new([bun_ast::range_data(Some(self.source), where_, why.to_vec())]);
+            StrictModeFeature::LabelFunctionStmt => (None, b"Function declarations inside labels"),
+        };
+
+        if is_strict {
+            let (where_, notes) = self.why_strict_mode(enclosing);
             self.log().add_range_error_fmt_with_notes(
                 Some(self.source),
                 r,
                 notes,
-                format_args!("{} cannot be used in strict mode", bstr::BStr::new(text)),
-            );
-        } else if self.is_strict_mode_output_format() {
-            self.log().add_range_error_fmt(
-                Some(self.source),
-                r,
                 format_args!(
-                    "{} cannot be used with the ESM output format due to strict mode",
-                    bstr::BStr::new(text)
+                    "{} cannot be used {}",
+                    bstr::BStr::new(text),
+                    bstr::BStr::new(where_)
                 ),
             );
+        } else if let Some(kind) = kind {
+            self.record_sloppy_only_syntax(kind, r, text);
         }
-        Ok(())
     }
 
+    /// Tree shaking removes a part as a whole, so each entry from `first` on names the part of its code. Code that makes no part is in no output.
+    #[cold]
+    fn tag_sloppy_only_syntax(&mut self, first: usize, appended: bool) -> u32 {
+        if !appended {
+            self.sloppy_only_syntax.truncate(first);
+            return 0;
+        }
+        for syntax in &mut self.sloppy_only_syntax[first..] {
+            syntax.part = self.part_generation;
+        }
+        self.part_generation
+    }
+
+    /// `text` names syntax at `r` of sloppy code that strict code cannot hold: an error if the output is strict, which for a bundle the linker knows.
+    pub(crate) fn record_sloppy_only_syntax(
+        &mut self,
+        kind: js_ast::SloppyOnlyKind,
+        r: bun_ast::Range,
+        text: &'a [u8],
+    ) {
+        if self.options.strict_output {
+            let why: Box<[bun_ast::Data]> = Box::new([bun_ast::range_data(
+                Some(self.source),
+                bun_ast::Range::NONE,
+                b"The development server sends this code to the browser as a module script, which is strict mode code."
+                    .as_slice(),
+            )]);
+            self.log().add_range_error_fmt_with_notes(
+                Some(self.source),
+                r,
+                why,
+                format_args!("{} cannot be used in strict mode", bstr::BStr::new(text)),
+            );
+        } else if self.options.bundle {
+            self.sloppy_only_syntax.push(js_ast::SloppyOnlySyntax {
+                kind,
+                part: 0,
+                range: r,
+                text: js_ast::StoreStr::new(text),
+            });
+        }
+    }
+
+    /// The phrase that completes "... cannot be used {}" and the note that points at the trigger.
+    fn why_strict_mode(&self, enclosing: Enclosing) -> (&'static [u8], Box<[bun_ast::Data]>) {
+        match enclosing.scope.strict_mode {
+            js_ast::StrictModeKind::ImplicitStrictModeClass => (
+                b"in strict mode",
+                Box::new([bun_ast::range_data(
+                    Some(self.source),
+                    enclosing.class_keyword,
+                    b"All code inside a class is implicitly in strict mode".as_slice(),
+                )]),
+            ),
+            js_ast::StrictModeKind::ExplicitStrictMode => (
+                b"in strict mode",
+                Box::new([bun_ast::range_data(
+                    Some(self.source),
+                    bun_ast::Range::NONE,
+                    b"Strict mode is triggered by a \"use strict\" directive".as_slice(),
+                )]),
+            ),
+            js_ast::StrictModeKind::ImplicitStrictModeImport
+            | js_ast::StrictModeKind::ImplicitStrictModeExport
+            | js_ast::StrictModeKind::ImplicitStrictModeTopLevelAwait => {
+                (b"in an ECMAScript module", self.why_es_module())
+            }
+            js_ast::StrictModeKind::SloppyMode
+            | js_ast::StrictModeKind::ImplicitStrictModeMaybeModule => {
+                (b"in strict mode", Box::new([]))
+            }
+        }
+    }
+
+    /// The note that says what made this file an ECMAScript module.
+    pub(crate) fn why_es_module(&self) -> Box<[bun_ast::Data]> {
+        let what = match self.es_module_kind {
+            js_ast::StrictModeKind::ImplicitStrictModeExport => "of the \"export\" keyword here:",
+            js_ast::StrictModeKind::ImplicitStrictModeTopLevelAwait => {
+                "of the top-level \"await\" keyword here:"
+            }
+            js_ast::StrictModeKind::ImplicitStrictModeImport => "of the \"import\" keyword here:",
+            _ => match (
+                self.module_type_by_extension_or_package(),
+                self.source.path.name().ext,
+            ) {
+                (options::ModuleType::Esm, b".mjs" | b".mts") => "of its file extension.",
+                (options::ModuleType::Esm, _) => {
+                    "the \"package.json\" file of its package has \"type\": \"module\"."
+                }
+                _ if self.has_import_meta => "it uses \"import.meta\".",
+                _ if self.has_type_only_import => "it has a type-only import.",
+                _ => return Box::new([]),
+            },
+        };
+        why_es_module(self.source, self.es_module_keyword, what)
+    }
+
+    pub(crate) fn module_type_by_extension_or_package(&self) -> options::ModuleType {
+        crate::parse::parse_entry::module_type_by_extension_or_package(
+            self.source.path.name().ext,
+            self.options.module_type,
+        )
+    }
+
+    /// Strict code whose early errors the parser reports: see `StrictModeKind::has_early_errors`.
     #[inline]
     pub(crate) fn is_strict_mode(&self) -> bool {
-        self.current_scope().strict_mode != js_ast::StrictModeKind::SloppyMode
-    }
-
-    #[inline]
-    pub(crate) fn is_strict_mode_output_format(&self) -> bool {
-        self.options.bundle && self.options.output_format.is_esm()
+        self.current_scope().strict_mode.has_early_errors()
     }
 
     /// Declare an ambient symbol resolvable BY NAME via [`Self::find_symbol`]
@@ -5034,18 +5259,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<Ref, crate::Error> {
         // p.checkForNonBMPCodePoint(loc, name)
 
-        // Forbid declaring a symbol with a reserved word in strict mode
-        if self.is_strict_mode()
-            && name.as_ptr() != arguments_str.as_ptr()
-            && bun_ast::lexer_tables::is_strict_mode_reserved_word(name)
-        {
-            self.mark_strict_mode_feature(
-                StrictModeFeature::ReservedWord,
-                js_lexer::range_of_identifier(self.source, loc),
-                name,
-            )?;
-        }
-
         // Allocate a new symbol
         let mut ref_ = self.new_symbol(kind, name);
 
@@ -5104,6 +5317,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.symbols[symbol_idx].link.set(ref_);
 
                     let existing_kind = self.symbols[symbol_idx].kind;
+                    if existing_kind.is_function() {
+                        let replacing = js_ast::scope::Member { ref_, loc };
+                        self.replaced_functions
+                            .push((self.enclosing(), existing, replacing));
+                    }
                     // If these are both functions, remove the overwritten declaration
                     if kind.is_function() && existing_kind.is_function() {
                         self.symbols[symbol_idx].set_remove_overwritten_function_declaration(true);
@@ -5129,6 +5347,97 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         *entry.value_ptr = js_ast::scope::Member { ref_, loc };
         Ok(ref_)
+    }
+
+    /// What is around the code that the parser is on, in the parse pass and in the visit pass.
+    #[inline]
+    fn enclosing(&self) -> Enclosing {
+        Enclosing {
+            scope: self.current_scope,
+            class_keyword: self.enclosing_class_keyword,
+        }
+    }
+
+    /// Visit-pass check, since ESM and class bodies only become strict after parsing.
+    #[inline]
+    pub(crate) fn validate_declared_symbol_name(&mut self, loc: bun_ast::Loc, name: &[u8]) {
+        // In sloppy code the bundler renames a bound reserved word (`package` to `_package`).
+        if is_eval_or_arguments(name)
+            || (self.is_strict_mode() && js_lexer::is_strict_mode_reserved_word(name))
+        {
+            self.report_declared_symbol_name(loc, name);
+        }
+    }
+
+    /// For a binding of an `S::Import`. One that the parser made (the namespace of an unwrapped `require()`) is not `Kind::Import`: the renamer names it.
+    pub(crate) fn validate_import_name(&mut self, loc: bun_ast::Loc, ref_: Ref) {
+        if self.symbols[ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Import {
+            let name = self.load_name_from_ref(ref_);
+            self.validate_declared_symbol_name(loc, name);
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn report_declared_symbol_name(&mut self, loc: bun_ast::Loc, name: &[u8]) {
+        let feature = if is_eval_or_arguments(name) {
+            StrictModeFeature::EvalOrArguments
+        } else {
+            StrictModeFeature::ReservedWord
+        };
+        self.mark_strict_mode_feature(
+            feature,
+            js_lexer::range_of_identifier(self.source, loc),
+            name,
+        )
+        .expect("unreachable");
+    }
+
+    /// For a bundle, after the visit pass: the renamer keeps each name that a direct `eval` can reach.
+    #[cold]
+    fn check_names_that_direct_eval_pins(&mut self, pins_module_scope: bool) {
+        let mut reported: Vec<Ref> = Vec::new();
+        let mut scopes = vec![self.module_scope_ref()];
+        while let Some(scope) = scopes.pop() {
+            if scope.strict_mode.has_early_errors() {
+                continue;
+            }
+            scopes.extend(
+                scope
+                    .children
+                    .iter()
+                    .filter(|child| child.contains_direct_eval),
+            );
+            if scope.parent.is_none() && !pins_module_scope {
+                continue;
+            }
+            for (name, member) in scope.members.iter() {
+                // The renamer moves an import, and `e_identifier` reports an unbound name.
+                let is_bound = !matches!(
+                    self.symbols[member.ref_.inner_index() as usize].kind,
+                    js_ast::symbol::Kind::Unbound | js_ast::symbol::Kind::Import
+                );
+                // A parameter is also a member of the body scope, and a hoisted `var` of each block around it.
+                if is_bound
+                    && js_lexer::is_strict_mode_reserved_word(name)
+                    && !reported.contains(&member.ref_)
+                {
+                    reported.push(member.ref_);
+                    let range = js_lexer::range_of_identifier(self.source, member.loc);
+                    // A sloppy scope: its error has no note about a class.
+                    let enclosing = Enclosing {
+                        scope,
+                        class_keyword: bun_ast::Range::NONE,
+                    };
+                    self.mark_strict_mode_feature_in(
+                        enclosing,
+                        StrictModeFeature::ReservedWord,
+                        range,
+                        name,
+                    );
+                }
+            }
+        }
     }
 
     pub(crate) fn validate_function_name(&mut self, func: &G::Fn) {
@@ -5492,6 +5801,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let arena = self.arena;
         let mut opts = PrependTempRefsOpts::default();
         let mut part_stmts = bun_alloc::vec_from_iter_in(stmts.iter().copied(), arena);
+        let first_sloppy_only_syntax = self.sloppy_only_syntax.len();
 
         self.visit_stmts_and_prepend_temp_refs(&mut part_stmts, &mut opts)?;
 
@@ -5536,6 +5846,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let appended = !part_stmts.is_empty();
+        let sloppy_only_id = match self.sloppy_only_syntax.len() > first_sloppy_only_syntax {
+            true => self.tag_sloppy_only_syntax(first_sloppy_only_syntax, appended),
+            false => 0,
+        };
         if appended {
             // SAFETY: `into_bump_slice_mut` leaks the BumpVec into the arena and
             // returns the unique `&'a mut [T]` for that allocation. We compute
@@ -5579,6 +5893,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 } else {
                     bun_ast::PartTag::None
                 },
+                sloppy_only_id,
                 ..Default::default()
             });
             // `symbol_uses` / `import_symbol_property_uses` were already reset
@@ -5977,12 +6292,38 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         None
     }
 
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn report_invalid_assignment_target(&mut self, expr: &Expr) {
+        // An identifier here is `eval` or `arguments`: an early error of strict mode code only.
+        if let js_ast::ExprData::EIdentifier(ident) = &expr.data {
+            if self.options.module_graph_scan {
+                return;
+            }
+            // Sloppy code can assign to them: the cause is then a strict chunk.
+            if !self.is_strict_mode() {
+                let name = self.load_name_from_ref(ident.ref_);
+                self.mark_strict_mode_feature(
+                    StrictModeFeature::AssignToEvalOrArguments,
+                    js_lexer::range_of_identifier(self.source, expr.loc),
+                    name,
+                )
+                .expect("unreachable");
+                return;
+            }
+        }
+        self.log()
+            .add_error(Some(self.source), expr.loc, b"Invalid assignment target");
+    }
+
     // PERF: takes `&Expr` — `Expr` inlines `ExprData`, so a by-value pass copies
     // the full union. The only caller (`visit_expr_in_out`) already holds `&mut Expr`.
     pub(crate) fn is_valid_assignment_target(&self, expr: &Expr) -> bool {
         match &expr.data {
             js_ast::ExprData::EIdentifier(ident) => {
-                !is_eval_or_arguments(self.load_name_from_ref(ident.ref_))
+                // The renamer keeps `eval` and `arguments`, and a bundle can print sloppy code in a strict chunk.
+                !((self.is_strict_mode() || self.options.bundle)
+                    && is_eval_or_arguments(self.load_name_from_ref(ident.ref_)))
             }
             js_ast::ExprData::EDot(e) => e.optional_chain.is_none(),
             js_ast::ExprData::EIndex(e) => e.optional_chain.is_none(),
@@ -7207,6 +7548,33 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 }
 
+fn why_es_module(
+    source: &bun_ast::Source,
+    keyword: bun_ast::Range,
+    what: &str,
+) -> Box<[bun_ast::Data]> {
+    Box::new([bun_ast::range_data(
+        Some(source),
+        keyword,
+        format!("This file is considered to be an ECMAScript module because {what}").into_bytes(),
+    )])
+}
+
+/// One note: `rule`, and behind it the reason that the code is strict, with its location.
+fn why_duplicate_function(rule: &str, reason: Box<[bun_ast::Data]>) -> bun_ast::Data {
+    let mut text = rule.as_bytes().to_vec();
+    let mut location = None;
+    if let Some(note) = reason.into_vec().pop() {
+        text.push(b' ');
+        text.extend_from_slice(&note.text);
+        location = note.location;
+    }
+    bun_ast::Data {
+        text: text.into(),
+        location,
+    }
+}
+
 /// The unscoped npm package of a specifier (`react/x`) or path (`node_modules<sep>react<sep>x.js`).
 fn path_package_name<'a>(path: &fs::Path<'a>) -> Option<&'a [u8]> {
     let (name_to_use, separators): (&[u8], &[u8]) =
@@ -8259,6 +8627,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             scopes_in_order_len: self.scopes_in_order.len(),
             scopes_in_order_for_enum_len: self.scopes_in_order_for_enum.len(),
             symbols_len: self.symbols.len(),
+            replaced_functions_len: self.replaced_functions.len(),
             allocated_names_len: self.allocated_names.len(),
             import_records_len: self.import_records.len(),
         }
@@ -8316,6 +8685,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.ref_to_ts_namespace_member.remove(&ref_);
             }
         }
+        self.replaced_functions
+            .truncate(snapshot.replaced_functions_len);
         self.allocated_names.truncate(snapshot.allocated_names_len);
         self.import_records.truncate(snapshot.import_records_len);
     }
@@ -9029,6 +9400,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if self.module_scope().contains_direct_eval {
             let pin = bundling && exports_kind == js_ast::ExportsKind::Cjs;
             let module_scope = self.module_scope_ref();
+            if bundling {
+                self.check_names_that_direct_eval_pins(pin);
+            }
             for member in module_scope.members.values() {
                 let kind = self.symbols[member.ref_.inner_index() as usize].kind;
                 if kind == js_ast::symbol::Kind::Import {
@@ -9356,6 +9730,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ts_enums,
             import_meta_ref: self.import_meta_ref,
             depends_on_more_than_source: self.depends_on_more_than_source(),
+            sloppy_only_syntax: bun_alloc::AstAlloc::vec_from_slice(&self.sloppy_only_syntax),
 
             symbols,
             parts: parts_list,
@@ -9642,6 +10017,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_top_level_return: false,
             latest_return_had_semicolon: false,
             has_import_meta: false,
+            has_type_only_import: false,
+            es_module_keyword: bun_ast::Range::NONE,
+            es_module_kind: js_ast::StrictModeKind::SloppyMode,
             has_es_module_syntax: false,
             top_level_await_keyword: bun_ast::Range::NONE,
             fn_or_arrow_data_parse,
@@ -9665,6 +10043,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_classic_runtime_warned: false,
             macro_call_count: 0,
             hoisted_ref_for_sloppy_mode_block_fn: Default::default(),
+            replaced_functions: Vec::new(),
+            sloppy_only_syntax: Vec::new(),
             has_with_scope: false,
             has_top_level_function_merged_with_var: false,
             is_file_considered_to_have_esm_exports: false,

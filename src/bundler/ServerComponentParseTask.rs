@@ -147,6 +147,7 @@ fn task_callback(
         content_hash_for_additional_file: 0,
         package_name: bun_ast::StoreStr::EMPTY,
         client_copy_options: None,
+        sloppy_only_syntax: bun_alloc::AstAlloc::vec(),
     })
 }
 

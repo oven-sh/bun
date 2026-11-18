@@ -1,7 +1,7 @@
 use crate::LinkerContext;
 use crate::analyze_transpiled_module::ModuleInfo;
 use crate::bundle_v2::bake_types::{HmrRuntimeSide, get_hmr_runtime};
-use crate::linker_context_mod::{GenerateChunkCtx, LinkerOptionsMode};
+use crate::linker_context_mod::{GenerateChunkCtx, HashbangAndBanner, LinkerOptionsMode};
 use crate::mal_prelude::*;
 use crate::options;
 use crate::options_impl::TargetExt as _;
@@ -376,36 +376,7 @@ pub(crate) fn post_process_js_chunk(
     let mut newline_before_comment = false;
     let mut is_executable = false;
 
-    // Extract hashbang and banner for entry points
-    let (hashbang, banner): (&[u8], &[u8]) = if chunk.is_entry_point() {
-        'brk: {
-            let source_hashbang =
-                c.graph.ast.items_hashbang()[chunk.entry_point.source_index() as usize];
-
-            // If source file has a hashbang, use it
-            if !source_hashbang.is_empty() {
-                break 'brk (source_hashbang.slice(), c.options.banner);
-            }
-
-            // Otherwise check if banner starts with hashbang
-            if !c.options.banner.is_empty() && c.options.banner.starts_with(b"#!") {
-                let newline_pos = strings::index_of_char(c.options.banner, b'\n')
-                    .map(|n| n as usize)
-                    .unwrap_or(c.options.banner.len());
-                let banner_hashbang = &c.options.banner[..newline_pos];
-
-                break 'brk (
-                    banner_hashbang,
-                    strings::trim_left(&c.options.banner[newline_pos..], b"\r\n"),
-                );
-            }
-
-            // No hashbang anywhere
-            break 'brk (b"", c.options.banner);
-        }
-    } else {
-        (b"", c.options.banner)
-    };
+    let HashbangAndBanner { hashbang, banner } = c.hashbang_and_banner_of_chunk(chunk);
 
     // Start with the hashbang if there is one. This must be done before the
     // banner because it only works if it's literally the first character.
@@ -420,25 +391,9 @@ pub(crate) fn post_process_js_chunk(
 
     // Add @bun comments and CJS wrapper start for each chunk when targeting Bun.
     let is_bun = c.graph.ast.items_target()[chunk.entry_point.source_index() as usize].is_bun();
-    if is_bun {
-        if c.options.generate_bytecode_cache && output_format == options::OutputFormat::Cjs {
-            const INPUT: &[u8] =
-                b"// @bun @bytecode @bun-cjs\n(function(exports, require, module, __filename, __dirname) {";
-            j.push_static(INPUT);
-            line_offset.advance(INPUT);
-        } else if c.options.generate_bytecode_cache {
-            j.push_static(b"// @bun @bytecode\n");
-            line_offset.advance(b"// @bun @bytecode\n");
-        } else if output_format == options::OutputFormat::Cjs {
-            const INPUT: &[u8] =
-                b"// @bun @bun-cjs\n(function(exports, require, module, __filename, __dirname) {";
-            j.push_static(INPUT);
-            line_offset.advance(INPUT);
-        } else {
-            j.push_static(b"// @bun\n");
-            line_offset.advance(b"// @bun\n");
-        }
-    }
+    let bun_header = c.bun_header_of_chunk(chunk);
+    j.push_static(bun_header);
+    line_offset.advance(bun_header);
 
     // Add the banner (excluding any hashbang part) for all chunks
     if !banner.is_empty() {
@@ -453,31 +408,26 @@ pub(crate) fn post_process_js_chunk(
 
     // Add the top-level directives if present (but omit "use strict" in ES
     // modules because all ES modules are automatically in strict mode).
-    // The dev server gives every module its own closure, and the prologue goes there.
-    if chunk.is_entry_point() && output_format != options::OutputFormat::InternalBakeDev {
-        let directives = c.graph.ast.items_directives()[chunk.entry_point.source_index() as usize];
-
-        for stmt in directives.slice() {
-            let js_ast::StmtData::SDirective(directive) = stmt.data else {
-                continue;
-            };
-            let directive = directive.value.slice();
-            if directive == b"use strict" && output_format.is_always_strict_mode() {
-                continue;
-            }
-            let mut buf = MutableString::init_empty();
-            // The printer escapes string literals ASCII-only for the bun target.
-            bun_core::handle_oom(js_printer::quote_for_json(directive, &mut buf, is_bun));
-            bun_core::handle_oom(buf.append_slice(if c.options.minify_whitespace {
-                b";".as_slice()
-            } else {
-                b";\n".as_slice()
-            }));
-            let quoted = buf.take_slice();
-            line_offset.advance(&quoted);
-            j.push_owned(quoted.into_boxed_slice());
-            newline_before_comment = true;
+    for stmt in c.directives_of_chunk(chunk).slice() {
+        let js_ast::StmtData::SDirective(directive) = stmt.data else {
+            continue;
+        };
+        let directive = directive.value.slice();
+        if directive == b"use strict" && output_format.is_always_strict_mode() {
+            continue;
         }
+        let mut buf = MutableString::init_empty();
+        // The printer escapes string literals ASCII-only for the bun target.
+        bun_core::handle_oom(js_printer::quote_for_json(directive, &mut buf, is_bun));
+        bun_core::handle_oom(buf.append_slice(if c.options.minify_whitespace {
+            b";".as_slice()
+        } else {
+            b";\n".as_slice()
+        }));
+        let quoted = buf.take_slice();
+        line_offset.advance(&quoted);
+        j.push_owned(quoted.into_boxed_slice());
+        newline_before_comment = true;
     }
 
     let mut preload_registration = module_preload_registration(c, chunk, chunk_index, &ctx.chunks)?;

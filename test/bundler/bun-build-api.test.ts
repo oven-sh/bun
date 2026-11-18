@@ -2798,3 +2798,91 @@ test("the hash in a chunk's name follows everything that the chunk reaches, thro
   expect(first.filter(name => !changed.includes(name))).toHaveLength(count);
   expect(changed).toContain(first.find(name => name.startsWith("apart-"))!);
 });
+
+// Sloppy mode code can hold syntax that strict mode code cannot, for example a `with` statement.
+// Only the linker knows if the output file that holds a sloppy file is strict mode code as a whole.
+test.concurrent("sloppy-only syntax in a strict output file is an error that says why the file is strict", async () => {
+  using dir = tempDir("build-sloppy-only-syntax", {
+    "strict.js": `"use strict";\nconsole.log(require("./dep.cjs"));\n`,
+    "sloppy.js": `console.log(require("./dep.cjs"));\n`,
+    "dep.cjs": `var scope = { value: 1 };\nwith (scope) module.exports = value;\n`,
+    "module-tag.html": `<!doctype html><script type="module" src="./page.js"></script>`,
+    // Bun prints one module script for the scripts of a page, also for a tag that has no type.
+    "classic-tag.html": `<!doctype html><script src="./dep.cjs"></script>`,
+    "page.js": `import value from "./dep.cjs";\nconsole.log(value);\n`,
+  });
+  const at = (position: { file: string; line: number; column: number } | null) =>
+    position && [path.basename(position.file), position.line, position.column].join(":");
+  const logs = async (entry: string, options: Omit<Bun.BuildConfig, "entrypoints">) => {
+    const build = await Bun.build({ entrypoints: [join(String(dir), entry)], throw: false, ...options });
+    return build.logs.map(log => ({
+      message: log.message,
+      at: at(log.position),
+      notes: log.notes.map(note => ({ message: note.message, at: at(note.position) })),
+    }));
+  };
+  const inStrictMode = (message: string, at: string | null) => [
+    { message: "With statements cannot be used in strict mode", at: "dep.cjs:2:1", notes: [{ message, at }] },
+  ];
+
+  // The ESM output of a CommonJS entry point ends with `export default`, so only a module loader takes it.
+  expect(await logs("sloppy.js", { format: "esm" })).toEqual([
+    {
+      message: "With statements cannot be used with the ESM output format due to strict mode",
+      at: "dep.cjs:2:1",
+      notes: [
+        {
+          message:
+            'This output file has an "import" or "export" statement, so it loads only as an ECMAScript module, which is strict mode code.',
+          at: null,
+        },
+      ],
+    },
+  ]);
+  // This output has no `import` and no `export` statement. It also loads as a script, where a `with` statement runs.
+  expect(await logs("page.js", { format: "esm" })).toEqual([]);
+  const entryDirective = 'The "use strict" directive of the entry point makes the whole bundle strict mode code:';
+  expect(await logs("strict.js", { format: "cjs" })).toEqual(inStrictMode(entryDirective, "strict.js:1:1"));
+  const bannerDirective = 'The "use strict" directive of the banner makes the whole bundle strict mode code.';
+  expect(await logs("sloppy.js", { format: "cjs", banner: '"use strict";' })).toEqual(
+    inStrictMode(bannerDirective, null),
+  );
+  const moduleScript =
+    'Bun loads the scripts of an HTML file with one <script type="module">, which is strict mode code.';
+  for (const format of ["esm", "iife"] as const) {
+    expect(await logs("module-tag.html", { format })).toEqual(inStrictMode(moduleScript, "module-tag.html:-1:-1"));
+    expect(await logs("classic-tag.html", { format })).toEqual(inStrictMode(moduleScript, "classic-tag.html:-1:-1"));
+  }
+  const bunModule =
+    'Bun runs this bundle as an ECMAScript module, which is strict mode code. For the "bun" target, only the "cjs" output format is not a module.';
+  for (const format of ["esm", "iife"] as const) {
+    expect(await logs("sloppy.js", { format, target: "bun" })).toEqual(inStrictMode(bunModule, null));
+  }
+
+  expect(await logs("sloppy.js", { format: "cjs" })).toEqual([]);
+  expect(await logs("sloppy.js", { format: "iife" })).toEqual([]);
+  expect(await logs("sloppy.js", { format: "cjs", target: "bun" })).toEqual([]);
+});
+
+test.concurrent("an error about a named import points at the imported name, not at its local alias", async () => {
+  using dir = tempDir("build-import-alias-position", {
+    "entry.mjs": `import { missing as localName } from "./mod.mjs";\nconsole.log(localName);\n`,
+    "mod.mjs": `export const present = 1;\n`,
+  });
+  const build = await Bun.build({ entrypoints: [join(String(dir), "entry.mjs")], throw: false });
+  expect(
+    build.logs.map(log => ({
+      message: log.message,
+      line: log.position?.line,
+      column: log.position?.column,
+      length: log.position?.length,
+    })),
+  ).toEqual([
+    {
+      message: expect.stringMatching(/^No matching export in ".*mod\.mjs" for import "missing"$/),
+      line: 1,
+      column: 10,
+      length: 7,
+    },
+  ]);
+});

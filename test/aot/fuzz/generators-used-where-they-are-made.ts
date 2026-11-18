@@ -28,7 +28,7 @@ const parameters = [
   "",
   "",
   ", extra = box.x",
-  ", extra = noted(box.x)",
+  ", extra = passed(box.x)",
   ", { x: extra } = box",
   ", [extra] = [box.x]",
   ", extra = box.x > 4 ? risky() : 0",
@@ -70,7 +70,7 @@ export function generate(random: Random): string {
     const make = random.pick([
       `gen${scene}(n, box)`,
       `gen${scene}(n, box)`,
-      `gen${scene}(noted(n), box)`,
+      `gen${scene}(passed(n), box)`,
       `gen${scene}(n, box, 1)`,
     ]);
     const rounds = random.pick([1, 1, 3, 200]);
@@ -113,7 +113,7 @@ const others = [];
 function unknown() {
   for (const made of others) log.push("elsewhere " + shown(made.next()));
 }
-function noted(value) {
+function passed(value) {
   log.push("argument");
   return value;
 }

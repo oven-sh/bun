@@ -7,6 +7,7 @@ use bun_ast::ExportsKind;
 use bun_ast::Source;
 use bun_core::{FeatureFlags, env_var};
 use bun_core::{String as BunString, StringView, ZStr};
+use bun_js_parser::parse::parse_entry::module_type_by_extension_or_package;
 use bun_js_parser::{CacheLookup, ParsedForCache, ParserOptions};
 use bun_js_printer::analyze_transpiled_module::ModuleInfo;
 use bun_paths::resolve_path::{self as path_handler, platform};
@@ -88,7 +89,8 @@ bun_core::declare_scope!(cache, visible);
 /// Version 51: A `bun:` specifier that names no builtin is printed as it is written.
 /// Version 52: Every directive is printed: a `"use strict"` in a function body too, and the
 /// prologue of the file first.
-const EXPECTED_VERSION: u32 = 52;
+/// Version 53: The parser reports strict-mode early errors that older entries transpiled.
+const EXPECTED_VERSION: u32 = 53;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a
@@ -920,6 +922,10 @@ impl bun_js_parser::TranspilerCache for RuntimeTranspilerCache {
 
         let mut features_hasher = Wyhash::init(SEED);
         parser_options.hash_for_runtime_transpiler(&mut features_hasher, used_jsx);
+        // The module type decides how a file runs, and with the extension if its legacy HTML comment is an error.
+        let module_type = parser_options.module_type;
+        let by_extension = module_type_by_extension_or_package(source.path.name().ext, module_type);
+        features_hasher.update(&[module_type as u8, by_extension as u8]);
         let features_hash = features_hasher.final_();
         parser_options.hash_test_features_for_runtime_transpiler(&mut features_hasher);
         let test_features_hash = features_hasher.final_();

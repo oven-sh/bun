@@ -4225,6 +4225,732 @@ describe("bundler", () => {
       api.expectFile("/out.js").toContain("var arguments = 1;");
     },
   });
+  // A `with` statement in a sloppy CommonJS dependency cannot run inside an ES
+  // module (modules are strict). The ESM output of a CommonJS entry point ends
+  // with `export default`, so only a module loader takes it: bundling it is an
+  // error in the dependency instead of a SyntaxError when the bundle loads.
+  itBundled("edgecase/SloppyWithStatementESMOutputIsAnError", {
+    files: {
+      "/entry.js": /* js */ `
+        const dep = require("./dep.cjs");
+        console.log(dep);
+      `,
+      "/dep.cjs": /* js */ `
+        var obj = { foo() { return "foo" } };
+        with (obj) { module.exports = foo() }
+      `,
+    },
+    format: "esm",
+    bundleErrors: {
+      "/dep.cjs": ["With statements cannot be used with the ESM output format due to strict mode"],
+    },
+  });
+  // ESM output with no `import` and no `export` statement also loads as a
+  // script, where sloppy mode code runs. It still builds with a `with`
+  // statement, `delete` of a name and a reserved word that no renamer moves, as
+  // it did before the linker checked a chunk.
+  itBundled("edgecase/SloppyWithStatementESMOutputThatLoadsAsAScript", {
+    files: {
+      "/entry.js": /* js */ `
+        import dep from "./dep.cjs";
+        console.log(dep);
+      `,
+      "/dep.cjs": /* js */ `
+        var obj = { foo() { return "foo" } };
+        with (obj) { module.exports = foo() }
+      `,
+    },
+    format: "esm",
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).not.toMatch(/^(import|export)\b/m);
+    },
+    run: { stdout: "foo" },
+  });
+  itBundled("edgecase/SloppyDeleteBareNameESMOutput", {
+    files: {
+      "/entry.js": /* js */ `
+        x = 1;
+        delete x;
+        console.log(typeof x);
+      `,
+    },
+    format: "esm",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("delete x");
+    },
+  });
+  itBundled("edgecase/SloppyWithStatementCJSOutput", {
+    files: {
+      "/entry.js": /* js */ `
+        const dep = require("./dep.cjs");
+        console.log(dep);
+      `,
+      "/dep.cjs": /* js */ `
+        var obj = { foo() { return "foo" } };
+        with (obj) { module.exports = foo() }
+      `,
+    },
+    format: "cjs",
+    run: { stdout: "foo" },
+  });
+  // Sloppy-mode constructs that the bundler rewrites are not an error for ESM
+  // output: the renamer renames bound reserved words, and block-level function
+  // declarations in an `if` or a label are lowered to `let` plus a `var`.
+  itBundled("edgecase/SloppyReservedWordBindingsESMOutputAreRenamed", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(require("./dep.cjs"));
+      `,
+      "/dep.cjs": /* js */ `
+        var package = 1, interface = 2;
+        function f(static) { return static + package + interface }
+        function protected() {}
+        try {} catch (private) {}
+        module.exports = f(3) + typeof protected;
+      `,
+    },
+    format: "esm",
+    run: { stdout: "6function" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("var _package = 1");
+    },
+  });
+  itBundled("edgecase/SloppyBlockLevelFunctionsESMOutputAreLowered", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(require("./dep.cjs"));
+      `,
+      "/dep.cjs": /* js */ `
+        lbl: function f() {}
+        if (0) function g() {}
+        module.exports = typeof f + typeof g;
+      `,
+    },
+    format: "esm",
+    run: { stdout: "functionundefined" },
+  });
+  // Only the minifier renames a label. Without it a reserved word as a label goes into the output.
+  itBundled("edgecase/SloppyReservedWordLabelESMOutput", {
+    files: {
+      "/entry.js": /* js */ `
+        package: for (;;) break package;
+      `,
+    },
+    format: "esm",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("package:");
+    },
+  });
+  itBundled("edgecase/SloppyReservedWordLabelESMOutputIsRenamedByTheMinifier", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(require("./dep.cjs"));
+      `,
+      "/dep.cjs": /* js */ `
+        var count = 0;
+        static: for (var i = 0; i < 3; i++) {
+          for (;;) { count++; continue static; }
+        }
+        module.exports = count;
+      `,
+    },
+    format: "esm",
+    minifyIdentifiers: true,
+    run: { stdout: "3" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("static");
+    },
+  });
+  // The label of a module is an error of the file, which no renaming takes away.
+  itBundled("edgecase/ReservedWordLabelInModuleIsAnErrorWithTheMinifier", {
+    files: {
+      "/entry.js": /* js */ `
+        static: for (;;) break static;
+        export {};
+      `,
+    },
+    format: "esm",
+    minifyIdentifiers: true,
+    bundleErrors: {
+      "/entry.js": ['"static" is a reserved word and cannot be used in an ECMAScript module'],
+    },
+  });
+  // The printer writes numbers in decimal and escapes as `\xNN`, so legacy octal
+  // syntax never reaches the output and is not an error for ESM output.
+  itBundled("edgecase/SloppyLegacyOctalESMOutputIsReprinted", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(JSON.stringify(require("./dep.cjs")));
+      `,
+      "/dep.cjs": /* js */ `
+        var n = 010, m = 08, s = "\\1", t = "\\012";
+        module.exports = [n, m, s, t];
+      `,
+    },
+    format: "esm",
+    run: { stdout: '[8,8,"\\u0001","\\n"]' },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("var n = 8");
+      expect(out).not.toContain("010");
+      expect(out).not.toContain("\\1");
+    },
+  });
+  // A for-in initializer is lowered to an assignment before the loop, so it is
+  // not an error for any output format.
+  itBundled("edgecase/SloppyForInInitializerIsLowered", {
+    files: {
+      "/entry.js": /* js */ `
+        for (var i = "init" in {}) ;
+        console.log(i);
+      `,
+    },
+    format: "esm",
+    run: { stdout: "init" },
+  });
+  // The sloppy-mode constructs that an ES module rejects are reported in the
+  // file that has ESM syntax, no matter the output format. The legacy octal
+  // number is not reported yet.
+  itBundled("edgecase/StrictModeConstructsInESMFileCJSOutput", {
+    files: {
+      "/entry.js": /* js */ `
+        export let n = 010;
+        with (x) y;
+      `,
+    },
+    format: "cjs",
+    bundleErrors: {
+      "/entry.js": ["With statements cannot be used in an ECMAScript module"],
+    },
+  });
+  // Only the "esm" output format is strict mode code. An IIFE keeps the sloppy
+  // constructs as written.
+  itBundled("edgecase/SloppyWithStatementIIFEOutput", {
+    files: {
+      "/entry.js": /* js */ `
+        var scope = { greeting: "hi" };
+        with (scope) { console.log(greeting); }
+      `,
+    },
+    format: "iife",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("with (scope)");
+    },
+    run: { stdout: "hi" },
+  });
+  // A duplicate parameter name is only valid in sloppy mode, and the renamer
+  // does not change it, so it cannot go into ESM output.
+  itBundled("edgecase/SloppyDuplicateParametersESMOutputIsAnError", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(require("./dep.cjs"));
+      `,
+      "/dep.cjs": /* js */ `
+        function f(a, a) { return a }
+        module.exports = f(1, 2);
+      `,
+    },
+    format: "esm",
+    bundleErrors: {
+      "/dep.cjs": ['Duplicate parameter "a" cannot be used with the ESM output format due to strict mode'],
+    },
+  });
+  itBundled("edgecase/SloppyDuplicateParametersCJSOutput", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(require("./dep.cjs"));
+      `,
+      "/dep.cjs": /* js */ `
+        function f(a, a) { return a }
+        module.exports = f(1, 2);
+      `,
+    },
+    format: "cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("function f(a, a)");
+    },
+  });
+  // The renamer only renames bound symbols. An unbound reserved word is printed
+  // as written, so it would make the ESM output a syntax error:
+  // https://github.com/oven-sh/bun/issues/32193
+  itBundled("edgecase/SloppyUnboundReservedWordESMOutputIsAnError", {
+    files: {
+      "/entry.cjs": /* js */ `
+        exports.x = 1;
+        console.log(package);
+        static = 2;
+      `,
+    },
+    format: "esm",
+    bundleErrors: {
+      "/entry.cjs": [
+        '"package" is a reserved word and cannot be used with the ESM output format due to strict mode',
+        '"static" is a reserved word and cannot be used with the ESM output format due to strict mode',
+      ],
+    },
+  });
+  itBundled("edgecase/SloppyUnboundReservedWordCJSOutput", {
+    files: {
+      "/entry.cjs": /* js */ `
+        exports.x = 1;
+        console.log(typeof package);
+      `,
+    },
+    format: "cjs",
+    run: { stdout: "undefined" },
+  });
+  itBundled("edgecase/SloppyUnboundReservedWordReplacedByDefine", {
+    files: {
+      "/entry.cjs": /* js */ `
+        exports.x = 1;
+        console.log(package);
+      `,
+    },
+    format: "esm",
+    define: {
+      package: "123",
+    },
+    run: { stdout: "123" },
+  });
+  // A direct `eval` pins every name that it can reach, so the renamer cannot
+  // move a reserved word out of the way of the strict code of ESM output.
+  itBundled("edgecase/SloppyReservedWordBindingPinnedByEvalESMOutputIsAnError", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(require("./function.cjs"), require("./function-name.cjs"));
+      `,
+      "/function.cjs": /* js */ `
+        function f(static) {
+          { var interface = 2; }
+          return eval("static + interface");
+        }
+        module.exports = f(3);
+      `,
+      "/function-name.cjs": /* js */ `
+        module.exports = (function protected() { return eval("typeof protected") })();
+      `,
+    },
+    format: "esm",
+    bundleErrors: {
+      "/function.cjs": [
+        '"static" is a reserved word and cannot be used with the ESM output format due to strict mode',
+        '"interface" is a reserved word and cannot be used with the ESM output format due to strict mode',
+      ],
+      "/function-name.cjs": [
+        '"protected" is a reserved word and cannot be used with the ESM output format due to strict mode',
+      ],
+    },
+  });
+  itBundled("edgecase/SloppyReservedWordBindingPinnedByEvalAtTopLevelESMOutputIsAnError", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(require("./dep.cjs"));
+      `,
+      "/dep.cjs": /* js */ `
+        var package = 1;
+        module.exports = eval("package");
+      `,
+    },
+    format: "esm",
+    bundleErrors: {
+      "/dep.cjs": ['"package" is a reserved word and cannot be used with the ESM output format due to strict mode'],
+    },
+  });
+  itBundled("edgecase/SloppyReservedWordBindingPinnedByEvalCJSOutput", {
+    files: {
+      "/entry.js": /* js */ `
+        module.exports = require("./dep.cjs");
+        console.log(module.exports);
+      `,
+      "/dep.cjs": /* js */ `
+        var package = 1;
+        function f(static) {
+          var interface = 2;
+          return eval("static + interface + package");
+        }
+        module.exports = f(3);
+      `,
+    },
+    format: "cjs",
+    run: { stdout: "6" },
+  });
+  // `--minify-syntax` substitutes a single-use `let` into the next statement
+  // and visits the result again. The strict-mode errors of the substituted
+  // expression must not be reported a second time. The legacy octals are not
+  // reported yet.
+  itBundled("edgecase/StrictModeErrorsReportedOnceWithMinifySyntax", {
+    files: {
+      "/entry.js": /* js */ `
+        "use strict";
+        function f() { let n = 010; return n + 1; }
+        function g() { let s = "\\1"; return s + "a"; }
+        function h() { let d = delete x; return d + 1; }
+        function t(a) { let y = 5; return \`\\1\${a}\` + y; }
+        console.log(f(), g(), h(), t(1));
+      `,
+    },
+    minifySyntax: true,
+    bundleErrors: {
+      "/entry.js": ["Delete of a bare identifier cannot be used in strict mode"],
+    },
+  });
+  // `eval` and `arguments` are not renamed, so an assignment to them in a
+  // sloppy file cannot go into ESM output.
+  itBundled("edgecase/SloppyEvalAssignmentESMOutputIsAnError", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(require("./dep.cjs"));
+      `,
+      "/dep.cjs": /* js */ `
+        eval = 0;
+        arguments++;
+        module.exports = typeof eval;
+      `,
+    },
+    format: "esm",
+    bundleErrors: {
+      "/dep.cjs": [
+        'Assignments to "eval" cannot be used with the ESM output format due to strict mode',
+        'Assignments to "arguments" cannot be used with the ESM output format due to strict mode',
+      ],
+    },
+  });
+  itBundled("edgecase/SloppyEvalAssignmentCJSOutput", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(require("./dep.cjs"));
+      `,
+      "/dep.cjs": /* js */ `
+        eval = 0;
+        module.exports = typeof eval;
+      `,
+    },
+    format: "cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("eval = 0;");
+    },
+  });
+  // A chunk is strict mode code as a whole when it is an ES module, or when a
+  // "use strict" directive leads it. Then the sloppy-only syntax of a file in
+  // it would make the chunk a SyntaxError when it loads, so the build fails.
+  const sloppyOnlyDependency = /* js */ `
+    function pinned(interface) { return eval("interface") }
+    var p = pinned(7);
+    static: for (;;) break static;
+    var u = typeof package;
+    function f(a, a) { return a }
+    eval = 0;
+    arguments = 1;
+    var o = { v: 5 }, w, x = 1;
+    with (o) { w = v }
+    module.exports = [f(1, 2), w, delete x, p, u].join();
+  `;
+  const sloppyOnlySyntax = [
+    '"static" is a reserved word and',
+    '"package" is a reserved word and',
+    'Duplicate parameter "a"',
+    'Assignments to "eval"',
+    'Assignments to "arguments"',
+    "With statements",
+    "Delete of a bare identifier",
+    '"interface" is a reserved word and',
+  ];
+  const inStrictMode = "cannot be used in strict mode";
+  const inESMOutput = "cannot be used with the ESM output format due to strict mode";
+  // ESM output with no `import` and no `export` statement also loads as a script. It refuses what it
+  // refused before the linker checked a chunk, and builds with the rest.
+  const refusedByESMOutputThatLoadsAsAScript = [
+    'Duplicate parameter "a"',
+    'Assignments to "eval"',
+    'Assignments to "arguments"',
+  ];
+  type ChunkKind = {
+    name: string;
+    /** The end of each error, or `false` for a chunk that is sloppy mode code. */
+    strict: string | false;
+    /** What the chunk refuses, if that is not all of the sloppy-only syntax. */
+    refuses?: string[];
+    /** The entry point starts with "use strict". */
+    useStrict?: boolean;
+    /** The entry point has an `export` statement. */
+    exports?: boolean;
+    format: "esm" | "cjs" | "iife";
+    banner?: string;
+    footer?: string;
+    target?: "bun";
+    bytecode?: boolean;
+  };
+  const wrapper = { banner: "(function () {", footer: "})();" };
+  const chunkKinds: ChunkKind[] = [
+    { name: "ESM", format: "esm", strict: inESMOutput, refuses: refusedByESMOutputThatLoadsAsAScript },
+    // With an `export` statement, only a module loader takes the output.
+    { name: "ESMWithExport", format: "esm", exports: true, strict: inESMOutput },
+    { name: "StrictBannerESM", format: "esm", banner: '"use strict";', strict: inStrictMode },
+    // The printer drops the "use strict" of the entry point from ESM output, so the output is as without it.
+    {
+      name: "StrictEntryESM",
+      format: "esm",
+      useStrict: true,
+      strict: inESMOutput,
+      refuses: refusedByESMOutputThatLoadsAsAScript,
+    },
+    { name: "CJS", format: "cjs", strict: false },
+    { name: "IIFE", format: "iife", strict: false },
+    { name: "StrictEntryCJS", format: "cjs", useStrict: true, strict: inStrictMode },
+    { name: "StrictEntryIIFE", format: "iife", useStrict: true, strict: inStrictMode },
+    { name: "StrictBannerCJS", format: "cjs", banner: '"use strict";', strict: inStrictMode },
+    { name: "StrictBannerIIFE", format: "iife", banner: "/* lib */ 'use strict';", strict: inStrictMode },
+    // The banner is printed ahead of the directives of the entry point. A comment or a directive in it leaves them directives.
+    {
+      name: "StrictEntryBehindLegalCommentCJS",
+      format: "cjs",
+      useStrict: true,
+      banner: "/*! lib | MIT */",
+      strict: inStrictMode,
+    },
+    {
+      name: "StrictEntryBehindDirectiveCJS",
+      format: "cjs",
+      useStrict: true,
+      banner: "'use client';",
+      strict: inStrictMode,
+    },
+    // A statement in it makes them plain strings.
+    { name: "StrictEntryBehindEmptyStatementCJS", format: "cjs", useStrict: true, banner: ";", strict: false },
+    { name: "StrictEntryBehindCodeCJS", format: "cjs", useStrict: true, banner: "var banner = 1;", strict: false },
+    // A function that the banner opens takes them as its own.
+    { name: "StrictEntryInWrapperCJS", format: "cjs", useStrict: true, ...wrapper, strict: inStrictMode },
+    { name: "WrapperCJS", format: "cjs", ...wrapper, strict: false },
+    // Bun runs a file that starts with "// @bun" as a module, and one that starts with "// @bun @bun-cjs" as CommonJS.
+    { name: "BunCJS", format: "cjs", target: "bun", strict: false },
+    { name: "StrictEntryBunCJS", format: "cjs", target: "bun", useStrict: true, strict: inStrictMode },
+    {
+      name: "StrictEntryBunCJSBytecode",
+      format: "cjs",
+      target: "bun",
+      bytecode: true,
+      useStrict: true,
+      strict: inStrictMode,
+    },
+    { name: "BunIIFE", format: "iife", target: "bun", strict: inStrictMode },
+    { name: "BunESM", format: "esm", target: "bun", strict: inStrictMode },
+  ];
+  for (const { name, strict, refuses = sloppyOnlySyntax, useStrict, exports, ...options } of chunkKinds) {
+    const files = {
+      "/entry.js": `${useStrict ? '"use strict";\n' : ""}import dep from "./dep.cjs";\nconsole.log(dep);\n${exports ? "export default dep;\n" : ""}`,
+      "/dep.cjs": sloppyOnlyDependency,
+    };
+    if (strict === false) {
+      itBundled(`edgecase/SloppyOnlySyntax${name}Output`, {
+        files,
+        ...options,
+        run: { stdout: "2,5,false,7,undefined" },
+      });
+      continue;
+    }
+    // For the CLI, the test harness puts a banner in quotation marks, which makes it a string.
+    for (const backend of options.banner ? (["api"] as const) : (["cli", "api"] as const)) {
+      itBundled(`edgecase/SloppyOnlySyntax${name}OutputIsAnError${backend === "api" ? "API" : ""}`, {
+        files,
+        ...options,
+        backend,
+        bundleErrors: { "/dep.cjs": refuses.map(syntax => `${syntax} ${strict}`) },
+      });
+    }
+  }
+  // Each output file has its own entry point. The file under the "use strict"
+  // of its entry point is the one that cannot hold the dependency.
+  itBundled("edgecase/SloppyOnlySyntaxInOneOfTwoCJSOutputFilesIsAnError", {
+    files: {
+      "/sloppy.js": `import dep from "./dep.cjs";\nconsole.log(dep);\n`,
+      "/strict.js": `"use strict";\nimport dep from "./dep.cjs";\nconsole.log(dep);\n`,
+      "/dep.cjs": sloppyOnlyDependency,
+    },
+    entryPoints: ["/sloppy.js", "/strict.js"],
+    outdir: "/out",
+    format: "cjs",
+    bundleErrors: { "/dep.cjs": sloppyOnlySyntax.map(syntax => `${syntax} ${inStrictMode}`) },
+  });
+  // The same with ESM output: the file with an `export` statement is the one that only a module loader takes.
+  for (const entryPoints of [
+    ["/script.js", "/module.js"],
+    ["/module.js", "/script.js"],
+  ]) {
+    itBundled(
+      `edgecase/SloppyOnlySyntaxInOneOfTwoESMOutputFilesIsAnError${entryPoints[0] === "/module.js" ? "ModuleFirst" : ""}`,
+      {
+        files: {
+          "/script.js": `import dep from "./with.cjs";\nconsole.log(dep);\n`,
+          "/module.js": `import dep from "./with.cjs";\nexport default dep;\n`,
+          "/with.cjs": `var o = { v: 5 };\nwith (o) module.exports = v;\n`,
+        },
+        entryPoints,
+        outdir: "/out",
+        format: "esm",
+        bundleErrors: { "/with.cjs": [`With statements ${inESMOutput}`] },
+      },
+    );
+  }
+  itBundled("edgecase/SloppyOnlySyntaxInTheSloppyOneOfTwoCJSOutputFiles", {
+    files: {
+      "/sloppy.js": `import dep from "./dep.cjs";\nconsole.log(dep);\n`,
+      "/strict.js": `"use strict";\nconsole.log((function () { return this === undefined })());\n`,
+      "/dep.cjs": sloppyOnlyDependency,
+    },
+    entryPoints: ["/sloppy.js", "/strict.js"],
+    outdir: "/out",
+    format: "cjs",
+    run: [
+      { file: "/out/sloppy.js", stdout: "2,5,false,7,undefined" },
+      { file: "/out/strict.js", stdout: "true" },
+    ],
+  });
+  // With code splitting the dependency is in a chunk that no entry point leads. That chunk is an ES module.
+  itBundled("edgecase/SloppyOnlySyntaxInSharedChunkIsAnError", {
+    files: {
+      "/a.js": `import dep from "./dep.cjs";\nconsole.log("a", dep);\n`,
+      "/b.js": `import dep from "./dep.cjs";\nconsole.log("b", dep);\n`,
+      "/dep.cjs": sloppyOnlyDependency,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    outdir: "/out",
+    splitting: true,
+    bundleErrors: { "/dep.cjs": sloppyOnlySyntax.map(syntax => `${syntax} ${inESMOutput}`) },
+  });
+  // A chunk that imports another chunk has an `import` statement, also when it exports nothing.
+  itBundled("edgecase/SloppyOnlySyntaxInChunkThatImportsAChunkIsAnError", {
+    files: {
+      "/a.js": `import "./shared.js";\nimport dep from "./dep.cjs";\nconsole.log("a", dep);\n`,
+      "/b.js": `import "./shared.js";\nconsole.log("b");\n`,
+      "/shared.js": `console.log("shared");\n`,
+      "/dep.cjs": sloppyOnlyDependency,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    outdir: "/out",
+    splitting: true,
+    bundleErrors: { "/dep.cjs": sloppyOnlySyntax.map(syntax => `${syntax} ${inESMOutput}`) },
+  });
+  // The "use strict" of a dependency stays inside the wrapper of that
+  // dependency, so the other files of the output stay sloppy mode code.
+  itBundled("edgecase/SloppyOnlySyntaxBesideStrictDependencyCJSOutput", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(require("./dep.cjs"), require("./strict.cjs"));
+      `,
+      "/dep.cjs": sloppyOnlyDependency,
+      "/strict.cjs": /* js */ `
+        "use strict";
+        module.exports = (function () { return this === undefined })();
+      `,
+    },
+    format: "cjs",
+    run: { stdout: "2,5,false,7,undefined true" },
+  });
+  // A file that tree shaking removes is in no output file, so its syntax is no
+  // concern of the output.
+  itBundled("edgecase/SloppyOnlySyntaxInFileThatTreeShakingRemovesESMOutput", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from "./lib/a.js";
+        import { b } from "./lib/b.js";
+        console.log(a);
+      `,
+      "/lib/package.json": JSON.stringify({ name: "lib", sideEffects: false }),
+      "/lib/a.js": `export const a = 1;`,
+      "/lib/b.js": /* js */ `
+        import c from "./c.cjs";
+        export const b = c;
+      `,
+      "/lib/c.cjs": /* js */ `
+        var o = { v: 2 };
+        with (o) module.exports = v;
+      `,
+    },
+    format: "esm",
+    run: { stdout: "1" },
+  });
+  // Tree shaking removes a top-level statement as a whole. Syntax in a
+  // statement that it removes, or that the parser drops, is in no output file.
+  const partlyRemovedScript = /* js */ `
+    var x = 1;
+    function unusedDelete() { delete x; }
+    function unusedWith(o) { with (o) { return x; } }
+    false && delete x;
+    console.log("side effect");
+  `;
+  for (const [name, options] of [
+    ["ESMWithExport", { format: "esm" }],
+    ["BunESM", { format: "esm", target: "bun" }],
+    ["StrictEntryCJS", { format: "cjs" }],
+  ] as const) {
+    itBundled(`edgecase/SloppyOnlySyntaxInStatementThatTreeShakingRemoves${name}`, {
+      files: {
+        "/entry.js": `${name === "StrictEntryCJS" ? '"use strict";\n' : ""}import "./script.js";\n${name === "ESMWithExport" ? "export default 1;\n" : ""}`,
+        "/script.js": partlyRemovedScript,
+      },
+      ...options,
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).not.toContain("delete x");
+        expect(out).not.toContain("with (o)");
+      },
+      run: { stdout: "side effect" },
+    });
+  }
+  // The statement stays when something uses it, and code that the bundler
+  // removes from inside a statement that stays is still reported.
+  itBundled("edgecase/SloppyOnlySyntaxInStatementThatStaysIsAnError", {
+    files: {
+      "/entry.js": `import "./script.js";\nexport default 1;\n`,
+      "/script.js": /* js */ `
+        var x = 1;
+        function usedDelete() { return delete x; }
+        function usedWithDeadBranch(o) { if (false) { with (o) { return x; } } return 2; }
+        console.log(usedDelete(), usedWithDeadBranch({}));
+      `,
+    },
+    format: "esm",
+    bundleErrors: {
+      "/script.js": [`Delete of a bare identifier ${inESMOutput}`, `With statements ${inESMOutput}`],
+    },
+  });
+  // A legacy HTML comment in sloppy mode code is a comment, and the parser warns.
+  itBundled("edgecase/LegacyHTMLCommentInCommonJSDependency", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(require("./dep.cjs"));
+      `,
+      "/dep.cjs": `var a = 1, b = 0;\nmodule.exports = a <!--b\n;\n--> the end\n`,
+    },
+    format: "cjs",
+    bundleWarnings: {
+      "/dep.cjs": [
+        'Treating "<!--" as the start of a legacy HTML single-line comment',
+        'Treating "-->" as the start of a legacy HTML single-line comment',
+      ],
+    },
+    run: { stdout: "1" },
+  });
+  // A class body is strict mode code, so a function in a block of a method is
+  // local to that block and does not replace the outer function.
+  for (const format of ["cjs", "esm"] as const) {
+    itBundled(`edgecase/BlockFunctionInClassBodyStaysInItsBlock${format.toUpperCase()}`, {
+      files: {
+        "/entry.js": /* js */ `
+          function f() { return "outer" }
+          class A {
+            m() {
+              { function f() { return "inner" } }
+              return f();
+            }
+          }
+          console.log(new A().m());
+        `,
+      },
+      format,
+      run: { stdout: "outer" },
+    });
+  }
 
   // Without code splitting, each entry point gets its own output file, even when
   // entry points import each other. Each file runs its modules in the order that

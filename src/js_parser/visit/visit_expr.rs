@@ -54,8 +54,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         if in_.assign_target != js_ast::AssignTarget::None && !self.is_valid_assignment_target(e) {
-            self.log()
-                .add_error(Some(self.source), e.loc, b"Invalid assignment target");
+            self.report_invalid_assignment_target(e);
         }
 
         // Explicit match over the tags that have a visitor defined below.
@@ -106,6 +105,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     fn e_number(_: &mut Self, _e: &mut Expr, _: ExprIn) {
         // idc about legacy octal loc
+    }
+
+    /// The renamer leaves an unbound reserved word as written; a strict chunk would not parse.
+    #[cold]
+    #[inline(never)]
+    fn report_unbound_reserved_word(p: &mut Self, loc: bun_ast::Loc, name: &[u8]) {
+        p.mark_strict_mode_feature(
+            StrictModeFeature::ReservedWord,
+            js_lexer::range_of_identifier(p.source, loc),
+            name,
+        )
+        .expect("unreachable");
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn report_delete_of_bare_name(p: &mut Self, loc: bun_ast::Loc) {
+        p.mark_strict_mode_feature(
+            StrictModeFeature::DeleteBareName,
+            js_lexer::range_of_identifier(p.source, loc),
+            b"",
+        )
+        .expect("unreachable");
     }
 
     fn e_this(p: &mut Self, e: &mut Expr, _: ExprIn) {
@@ -334,6 +356,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 *e = p.value_for_require(expr.loc);
                 return;
+            }
+
+            if !p.is_strict_mode()
+                && p.options.bundle
+                && js_lexer::is_strict_mode_reserved_word(name)
+            {
+                Self::report_unbound_reserved_word(p, expr.loc, name);
             }
         }
 
@@ -1302,15 +1331,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             Op::UnDelete => {
-                if matches!(e_.value.data, js_ast::ExprData::EIdentifier(_)) {
-                    p.mark_feature_under_kept_directive(
-                        StrictModeFeature::DeleteBareName,
-                        js_lexer::range_of_identifier(p.source, e_.value.loc),
-                        b"",
-                    );
-                }
+                let name_loc = e_.value.loc;
+                let was_name = matches!(e_.value.data, js_ast::ExprData::EIdentifier(_));
                 p.delete_target = e_.value.data;
                 p.visit_expr_in_out(&mut e_.value, ExprIn::default());
+                // The visit makes an exported member of a TypeScript namespace a property access.
+                if was_name
+                    && !p.is_revisit_for_substitution
+                    && !matches!(e_.value.data, js_ast::ExprData::EDot(_))
+                {
+                    Self::report_delete_of_bare_name(p, name_loc);
+                }
             }
             _ => {
                 let assign_target = Op::unary_assign_target(e_.op);

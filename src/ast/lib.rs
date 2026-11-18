@@ -1823,15 +1823,25 @@ impl Log {
         new_loc: Loc,
         old_loc: Loc,
     ) {
+        self.add_symbol_already_declared_error_with_note(source, name, new_loc, old_loc, None)
+    }
+
+    /// `why` is one more note, behind the one that names the first declaration.
+    pub fn add_symbol_already_declared_error_with_note(
+        &mut self,
+        source: &Source,
+        name: &[u8],
+        new_loc: Loc,
+        old_loc: Loc,
+        why: Option<Data>,
+    ) {
         let note_text = alloc_print(format_args!(
             "\"{}\" was originally declared here",
             bstr::BStr::new(name)
         ));
-        let notes: Box<[Data]> = Box::new([self.tracked_range_data(
-            Some(source),
-            source.range_of_identifier(old_loc),
-            note_text,
-        )]);
+        let originally =
+            self.tracked_range_data(Some(source), source.range_of_identifier(old_loc), note_text);
+        let notes: Box<[Data]> = core::iter::once(originally).chain(why).collect();
 
         self.add_range_error_fmt_with_notes(
             Some(source),
@@ -2568,7 +2578,7 @@ pub mod target;
 
 pub use ast_result::{
     Ast, CommonJSNamedExport, CommonJSNamedExports, ConstValuesMap, NamedExports, NamedImports,
-    TopLevelSymbolToParts, TsEnumsMap,
+    SloppyOnlyKind, SloppyOnlySyntax, TopLevelSymbolToParts, TsEnumsMap,
 };
 pub use import_record::{Flags as ImportRecordFlags, ImportRecord, Tag as ImportRecordTag};
 pub use loader::{Loader, LoaderHashTable, SideEffects};

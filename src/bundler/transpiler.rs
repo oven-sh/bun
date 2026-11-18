@@ -1311,6 +1311,8 @@ impl<'a> Transpiler<'a> {
                     module_type: to_parser_module_type(this_parse.module_type),
                     jsc_builtin_syntax: false,
                     output_format: p_opts::Format::Esm,
+                    strict_output: false,
+                    module_graph_scan: false,
                     transform_only: self.options.transform_only,
                     import_meta_glob: None,
                     import_meta_main_value: None,

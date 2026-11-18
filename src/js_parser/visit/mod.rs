@@ -9,9 +9,9 @@ pub(crate) mod visit_stmt;
 use crate::lexer as js_lexer;
 use crate::p::{LowerUsingDeclarationsContext, P};
 use crate::parser::{
-    ExprIn, FnOnlyDataVisit, FnOrArrowDataVisit, ImportItemForNamespaceMap, PrependTempRefsOpts,
-    Ref, RelocateVarsMode, ScopeOrder, StmtsKind, StrictModeFeature, StringVoidMap, VisitArgsOpts,
-    VisitDeclOpts, is_eval_or_arguments,
+    ExprIn, FnOnlyDataVisit, FnOrArrowDataVisit, ImportItemForNamespaceMap, ParameterNames,
+    PrependTempRefsOpts, Ref, RelocateVarsMode, ScopeOrder, StmtsKind, StrictModeFeature,
+    StringVoidMap, VisitArgsOpts, VisitDeclOpts,
 };
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast as js_ast;
@@ -101,15 +101,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Some(name) = func.name {
             if let Some(name_ref) = name.ref_.to_nullable() {
                 self.record_declared_symbol_in(name_ref, is_expr);
-                let symbol_name = self.load_name_from_ref(name_ref);
-                if is_eval_or_arguments(symbol_name) {
-                    self.mark_strict_mode_feature(
-                        StrictModeFeature::EvalOrArguments,
-                        js_lexer::range_of_identifier(self.source, name.loc),
-                        symbol_name,
-                    )
-                    .expect("unreachable");
-                }
             }
         }
 
@@ -134,12 +125,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             &VisitArgsOpts {
                 has_rest_arg: func.flags.contains(flags::Function::HasRestArg),
                 body: body_stmts,
-                is_unique_formal_parameters: true,
+                is_unique_formal_parameters: func
+                    .flags
+                    .contains(flags::Function::IsUniqueFormalParameters),
             },
         );
 
         self.push_scope_for_visit_pass(ScopeKind::FunctionBody, body_loc)
             .expect("unreachable");
+
+        // The body's own "use strict" applies to the name, so check it in the body scope.
+        if let Some(name) = func.name {
+            if let Some(name_ref) = name.ref_.to_nullable() {
+                let symbol_name = self.load_name_from_ref(name_ref);
+                self.validate_declared_symbol_name(name.loc, symbol_name);
+            }
+        }
         // Stmt is Copy — copy the slice into a bump-backed Vec.
         let mut stmts = BumpVec::with_capacity_in(body_stmts.len(), self.arena);
         stmts.extend_from_slice(body_stmts);
@@ -222,9 +223,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn visit_args(&mut self, args: &mut [G::Arg], opts: &VisitArgsOpts) {
         let strict_loc = fn_body_contains_use_strict(opts.body);
         let has_simple_args = Self::is_simple_parameter_list(args, opts.has_rest_arg);
-        // StringVoidMap::get returns a pool guard; Drop releases.
-        let mut duplicate_args_check: Option<bun_collections::pool::PoolGuard<StringVoidMap>> =
-            None;
 
         // Section 15.2.1 Static Semantics: Early Errors: "It is a Syntax Error if
         // FunctionBodyContainsUseStrict of FunctionBody is true and
@@ -243,21 +241,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Section 15.1.1 Static Semantics: Early Errors: "Multiple occurrences of
         // the same BindingIdentifier in a FormalParameterList is only allowed for
         // functions which have simple parameter lists and which are not defined in
-        // strict mode code."
-        if opts.is_unique_formal_parameters
+        // strict mode code." A bundle can print sloppy code in a strict chunk.
+        let can_repeat = !(opts.is_unique_formal_parameters
             || strict_loc.is_some()
             || !has_simple_args
-            || self.is_strict_mode()
-        {
-            duplicate_args_check = Some(StringVoidMap::get());
-        }
+            || self.is_strict_mode());
+        // The map comes from a pool and goes back to it on `Drop`.
+        let mut names = (!can_repeat || self.options.bundle).then(|| ParameterNames {
+            seen: StringVoidMap::get(),
+            can_repeat,
+        });
 
         for arg in args.iter_mut() {
             self.visit_ts_decorators(arg.ts_decorators);
 
-            // reborrow per-iter.
-            let dup: Option<&mut StringVoidMap> = duplicate_args_check.as_deref_mut();
-            self.visit_binding(arg.binding, dup);
+            self.visit_binding(arg.binding, names.as_mut());
             if let Some(default) = arg.default.as_mut() {
                 self.visit_expr(default);
             }
@@ -784,10 +782,40 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmt
     }
 
+    #[cold]
+    #[inline(never)]
+    fn report_duplicate_parameter(&mut self, loc: bun_ast::Loc, name: &'a [u8], can_repeat: bool) {
+        if self.options.module_graph_scan {
+            return;
+        }
+        let range = js_lexer::range_of_identifier(self.source, loc);
+        if can_repeat {
+            let text = bun_alloc::arena_format!(
+                in self.arena,
+                "Duplicate parameter \"{}\"",
+                bstr::BStr::new(name)
+            );
+            self.record_sloppy_only_syntax(
+                js_ast::SloppyOnlyKind::RepeatedParameter,
+                range,
+                text.into_bump_str().as_bytes(),
+            );
+            return;
+        }
+        self.log().add_range_error_fmt(
+            Some(self.source),
+            range,
+            format_args!(
+                "\"{}\" cannot be bound multiple times in the same parameter list",
+                bstr::BStr::new(name)
+            ),
+        );
+    }
+
     pub(crate) fn visit_binding(
         &mut self,
         binding: BindingNodeIndex,
-        mut duplicate_arg_check: Option<&mut StringVoidMap>,
+        mut duplicate_arg_check: Option<&mut ParameterNames>,
     ) {
         if !self.stack_check.is_safe_to_recurse() {
             self.report_stack_overflow(binding.loc);
@@ -813,24 +841,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let name: &'a [u8] = self.symbols[bind.r#ref.inner_index() as usize]
                     .original_name
                     .slice();
-                if is_eval_or_arguments(name) {
-                    self.mark_strict_mode_feature(
-                        StrictModeFeature::EvalOrArguments,
-                        js_lexer::range_of_identifier(self.source, binding.loc),
-                        name,
-                    )
-                    .expect("unreachable");
-                }
-                if let Some(dup) = duplicate_arg_check {
-                    if dup.get_or_put_contains(name) {
-                        self.log().add_range_error_fmt(
-                            Some(self.source),
-                            js_lexer::range_of_identifier(self.source, binding.loc),
-                            format_args!(
-                                "\"{}\" cannot be bound multiple times in the same parameter list",
-                                bstr::BStr::new(name)
-                            ),
-                        );
+                self.validate_declared_symbol_name(binding.loc, name);
+                if let Some(names) = duplicate_arg_check {
+                    if names.seen.get_or_put_contains(name) {
+                        self.report_duplicate_parameter(binding.loc, name, names.can_repeat);
                     }
                 }
             }
@@ -959,6 +973,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if has_if_scope {
             self.push_scope_for_visit_pass(ScopeKind::Block, stmt.loc)
                 .expect("unreachable");
+            if self.is_strict_mode() {
+                self.mark_strict_mode_feature(
+                    StrictModeFeature::IfElseFunctionStmt,
+                    js_lexer::range_of_identifier(self.source, stmt.loc),
+                    b"",
+                )
+                .expect("unreachable");
+            }
         }
 
         let old_is_inside_single_stmt_body = self.is_inside_single_stmt_body;
@@ -1001,6 +1023,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.enclosing_class_keyword = class.class_keyword;
         self.vis_scope()
             .recursive_set_strict_mode(StrictModeKind::ImplicitStrictModeClass);
+        if let Some(name) = class.class_name {
+            let original_name: &'a [u8] = self.symbols[name.ref_.inner_index() as usize]
+                .original_name
+                .slice();
+            self.validate_declared_symbol_name(name.loc, original_name);
+        }
 
         // Insert a shadowing name that spans the whole class, which matches
         // JavaScript's semantics. The class body (and extends clause) "captures" the

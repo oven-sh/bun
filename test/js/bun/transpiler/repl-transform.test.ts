@@ -273,6 +273,36 @@ describe("Bun.Transpiler replMode", () => {
     });
   });
 
+  // A line of the REPL is never an ES module, also when it has a top-level `await`.
+  describe("sloppy mode syntax beside a top-level await", () => {
+    const transpiler = new Bun.Transpiler({ loader: "tsx", replMode: true });
+
+    test("runs as sloppy mode code", async () => {
+      const ctx = vm.createContext({ Promise });
+      const run = async (code: string) => await vm.runInContext(transpiler.transformSync(code), ctx);
+      expect(await run("await 1; 010")).toEqual({ value: 8 });
+      expect(await run("await 1; '\\101'")).toEqual({ value: "A" });
+      expect(await run("var found; await 1; with ({ inner: 5 }) found = inner; found")).toEqual({ value: 5 });
+      expect(await run("var x = 1; await 1; delete x")).toEqual({ value: false });
+      expect(await run("await 1; function twice() { return 1 } function twice() { return 2 } twice()")).toEqual({
+        value: 2,
+      });
+      expect(await run("await 1; function dup(a, a) { return a } dup(1, 2)")).toEqual({ value: 2 });
+      expect(await run("await 1; eval = 5; eval")).toEqual({ value: 5 });
+      expect(await run("await 1; if (true) function inIf() {}")).toBeUndefined();
+      expect(await run("await 1; label: function inLabel() {}")).toBeUndefined();
+    });
+
+    test("strict mode code keeps its errors", () => {
+      expect(() => transpiler.transformSync("await 1; class A { m() { with (x) y } }")).toThrow(
+        "With statements cannot be used in strict mode",
+      );
+      expect(() => transpiler.transformSync("'use strict'; await 1; with (x) y")).toThrow(
+        "With statements cannot be used in strict mode",
+      );
+    });
+  });
+
   describe("no transform cases", () => {
     const transpiler = new Bun.Transpiler({ loader: "tsx", replMode: true });
 

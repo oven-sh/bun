@@ -1,7 +1,7 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 
-// A plain function declaration as the body of a label or of `if`, in strict code. ECMAScript rejects it there. Plain Bun runs it: its transpiler turns the function into a `let` in a block of its own. So the program builds, the name ends with the statement, and a binding of the same name around it is left alone. This CommonJS file is strict only inside the class.
+// A plain function declaration as the body of a label or of `if`, in strict code. ECMAScript rejects it there, and so does plain Bun. The build does not: it turns the function into a `let` in a block of its own. So the program builds, the name ends with the statement, and a binding of the same name around it is left alone. This CommonJS file is strict only inside the class.
 module.exports = {};
 function row(label, f) { let said; try { said = String(f()); } catch (e) { said = "threw " + e.name; } console.log(label + ": " + said); }
 class Strict {

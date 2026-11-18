@@ -349,6 +349,20 @@ it.each(["add", "install"] as const)(
   },
 );
 
+// The scan prints no output file, so it has no reason to refuse syntax that only sloppy mode code can hold.
+it("bun add --analyze scans a sloppy file that ESM output could not hold", async () => {
+  expect(
+    await analyze(
+      "add",
+      `
+      const bar = require("bar");
+      var scope = { bar };
+      with (scope) module.exports = bar;
+      `,
+    ),
+  ).toEqual({ added: ["bar"], errors: [], exitCode: 0 });
+});
+
 it("bun add --analyze leaves out builtins, paths and aliases, with or without a subpath", async () => {
   expect(
     await analyze(

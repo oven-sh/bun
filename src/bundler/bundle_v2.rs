@@ -117,6 +117,9 @@ pub struct BundleV2<'a> {
     /// If false we can skip TLA validation and propagation.
     pub(crate) has_any_top_level_await_modules: bool,
 
+    /// `Ast::sloppy_only_syntax` of each file that has any, with the source index of the file.
+    pub(crate) sloppy_only_syntax: Vec<(IndexInt, bun_alloc::AstVec<bun_ast::SloppyOnlySyntax>)>,
+
     /// Barrel optimization: tracks which exports have been requested from each
     /// module encountered during barrel BFS. Keys are source indices. Values
     /// track requested export names for deduplication and cycle detection.
@@ -2744,6 +2747,7 @@ pub mod bv2_impl {
                 drain_defer_task: DeferredBatchTask::default(),
                 asynchronous: false,
                 has_any_top_level_await_modules: false,
+                sloppy_only_syntax: Vec::new(),
                 requested_exports: Vec::new(),
             });
             if let Some(bo) = bake_options {
@@ -7047,6 +7051,16 @@ pub mod bv2_impl {
 
                     this.has_any_top_level_await_modules = this.has_any_top_level_await_modules
                         || !result.ast.top_level_await_keyword.is_empty();
+
+                    if !result.sloppy_only_syntax.is_empty() {
+                        this.sloppy_only_syntax.push((
+                            result.source.index.0,
+                            core::mem::replace(
+                                &mut result.sloppy_only_syntax,
+                                bun_alloc::AstAlloc::vec(),
+                            ),
+                        ));
+                    }
 
                     // Warning: `input_files` and `ast` arrays may resize in this function call
                     // It is not safe to cache slices from them.

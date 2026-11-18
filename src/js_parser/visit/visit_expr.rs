@@ -587,21 +587,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 tag_initializer = Some(initializer);
                                 tag_binding = binding;
                             } else {
-                                if let Data::EDot(dot) = tag.data
-                                    && dot.is_import_property_use
-                                {
-                                    let base = match dot.target.data {
-                                        Data::EIdentifier(id) => Some(id.ref_),
-                                        Data::EImportIdentifier(id) => Some(id.ref_),
-                                        _ => None,
-                                    };
-                                    if let Some(base) = base
-                                        && let Some(properties) =
-                                            p.import_symbol_property_uses.get_ptr_mut(&base)
-                                        && let Some(use_) = properties.get_mut(dot.name.slice())
-                                    {
-                                        use_.is_jsx_tag = true;
+                                let mut member = tag;
+                                let mut is_complete_tag = true;
+                                while let Data::EDot(dot) = member.data {
+                                    if dot.is_import_property_use {
+                                        let base = match dot.target.data {
+                                            Data::EIdentifier(id) => Some(id.ref_),
+                                            Data::EImportIdentifier(id) => Some(id.ref_),
+                                            _ => None,
+                                        };
+                                        if let Some(base) = base
+                                            && let Some(properties) =
+                                                p.import_symbol_property_uses.get_ptr_mut(&base)
+                                            && let Some(use_) = properties.get_mut(dot.name.slice())
+                                        {
+                                            use_.is_jsx_tag = true;
+                                            use_.needs_capital_for_jsx |= is_complete_tag;
+                                        }
                                     }
+                                    member = dot.target;
+                                    is_complete_tag = false;
+                                }
+                                if let Data::EImportIdentifier(id) = root.data {
+                                    p.symbols[id.ref_.inner_index() as usize]
+                                        .set_import_used_in_jsx_tag(true);
                                 }
                                 let ref_ = match tag.data {
                                     Data::EIdentifier(id) => Some(id.ref_),

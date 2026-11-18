@@ -108,7 +108,7 @@ pub struct Symbol {
 
 bitflags::bitflags! {
     #[derive(Copy, Clone, Eq, PartialEq, Default, Debug)]
-    pub struct SymbolFlags: u8 {
+    pub struct SymbolFlags: u16 {
         /// Holds a function that returns the value. See `defer_requires.rs` in the parser.
         const IS_DEFERRED_REQUIRE = 1 << 0;
 
@@ -134,6 +134,9 @@ bitflags::bitflags! {
 
         /// A call of this function declaration or lifted export ignores `this`.
         const CALL_IGNORES_THIS = 1 << 7;
+
+        /// This import is printed as part of a preserved JSX tag.
+        const IMPORT_USED_IN_JSX_TAG = 1 << 8;
     }
 }
 
@@ -156,6 +159,7 @@ macro_rules! symbol_flag_accessors {
 
 symbol_flag_accessors! {
     is_deferred_require, set_is_deferred_require => IS_DEFERRED_REQUIRE;
+    import_used_in_jsx_tag, set_import_used_in_jsx_tag => IMPORT_USED_IN_JSX_TAG;
     must_start_with_capital_letter_for_jsx, set_must_start_with_capital_letter_for_jsx => MUST_START_WITH_CAPITAL_LETTER_FOR_JSX;
     must_not_be_renamed, set_must_not_be_renamed => MUST_NOT_BE_RENAMED;
     import_used_as_value, set_import_used_as_value => IMPORT_USED_AS_VALUE;

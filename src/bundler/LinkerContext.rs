@@ -2884,6 +2884,7 @@ struct PropertyAccess {
     count: u32,
     is_call_target: bool,
     is_jsx_tag: bool,
+    needs_capital_for_jsx: bool,
 }
 
 /// What following an import to its export needs.
@@ -3730,6 +3731,7 @@ impl<'m, 'a> ImportMatcher<'m, 'a> {
                         count: prop_use.count_estimate,
                         is_call_target: prop_use.is_call_target,
                         is_jsx_tag: prop_use.is_jsx_tag,
+                        needs_capital_for_jsx: prop_use.needs_capital_for_jsx,
                     });
                 }
             }
@@ -3931,7 +3933,10 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
         cycle_detector: &mut Vec<ImportTracker>,
         source_index: crate::IndexInt,
         member_resolutions: &mut ImportMemberResolutions,
+        jsx_imports: &mut Vec<(Ref, Ref)>,
     ) {
+        let has_preserved_jsx = self.graph.ast.items_flags()[source_index as usize]
+            .contains(AstFlags::HAS_PRESERVED_JSX);
         let meta = self.graph.meta.split_mut();
         let imports_to_bind = &mut meta.imports_to_bind[source_index as usize];
         let mut matcher = ImportMatcher {
@@ -3962,8 +3967,8 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
                 .cmp(&keys[b as usize].inner_index())
         });
 
-        // Items of `ns.name()` left unbound, each with its `ns`.
-        let mut method_call_items: HashMap<Ref, Ref> = HashMap::default();
+        // Unbound property reads that must keep their namespace.
+        let mut namespace_items: HashMap<Ref, Ref> = HashMap::default();
         for &i in &order {
             let i = i as usize;
             let (import_ref, named_import) = (keys[i], &values[i]);
@@ -3991,17 +3996,19 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
                 &mut re_exports,
             );
 
-            if is_call_item
+            let kind = if is_call_item
                 && !matcher.binds_call_item(source_index, import_ref, named_import, &result)
             {
-                continue;
-            }
+                MatchImportKind::Ignore
+            } else {
+                result.kind
+            };
 
-            match result.kind {
+            match kind {
                 MatchImportKind::Normal
                     if matcher.method_call_item_needs_this(import_ref, named_import, &result) =>
                 {
-                    method_call_items.insert(import_ref, named_import.namespace_ref);
+                    namespace_items.insert(import_ref, named_import.namespace_ref);
                 }
                 MatchImportKind::Normal | MatchImportKind::NormalAndNamespace => {
                     matcher.bind_matched_import(imports_to_bind, import_ref, &result, re_exports);
@@ -4070,6 +4077,25 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
                 }
                 MatchImportKind::Ignore => {}
             }
+
+            if has_preserved_jsx {
+                let symbol = matcher.symbol_mut(import_ref);
+                if symbol.import_used_in_jsx_tag()
+                    || symbol.must_start_with_capital_letter_for_jsx()
+                {
+                    jsx_imports.push((import_ref, import_ref));
+                    if symbol.import_item_status == ImportItemStatus::Missing
+                        && let Some(namespace) = &symbol.namespace_alias
+                    {
+                        // A missing namespace property still reads as `undefined`.
+                        // Keeping the access gives it a spelling valid inside a JSX tag.
+                        symbol.import_item_status = ImportItemStatus::Generated;
+                        if !is_call_item {
+                            namespace_items.insert(import_ref, namespace.namespace_ref);
+                        }
+                    }
+                }
+            }
         }
 
         let (accesses, keeps_this) = matcher.resolve_import_property_accesses(
@@ -4078,8 +4104,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
             member_resolutions,
         );
 
-        // A part that calls such an item reads its namespace.
-        if !method_call_items.is_empty() {
+        if !namespace_items.is_empty() {
             let mut namespace_uses: Vec<(Ref, u32)> = Vec::new();
             for part in self.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice() {
                 namespace_uses.clear();
@@ -4092,7 +4117,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
                     if item_use.count_estimate() == 0 {
                         continue;
                     }
-                    if let Some(&namespace_ref) = method_call_items.get(item) {
+                    if let Some(&namespace_ref) = namespace_items.get(item) {
                         namespace_uses.push((namespace_ref, item_use.count_estimate()));
                     }
                 }
@@ -4111,6 +4136,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
             &accesses,
             &keeps_this,
             member_resolutions,
+            jsx_imports,
         );
     }
 
@@ -4128,6 +4154,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
         accesses: &[PropertyAccess],
         keeps_this: &[(Ref, bun_ast::StoreStr)],
         member_resolutions: &ImportMemberResolutions,
+        jsx_imports: &mut Vec<(Ref, Ref)>,
     ) {
         let id = source_index as usize;
         let ast = self.graph.ast.split_mut();
@@ -4161,11 +4188,14 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
                 };
 
                 if access.is_jsx_tag {
-                    self.graph
-                        .symbols
-                        .get_mut(resolved.r#ref)
-                        .unwrap()
-                        .set_must_start_with_capital_letter_for_jsx(true);
+                    jsx_imports.push((base, resolved.r#ref));
+                    if access.needs_capital_for_jsx {
+                        self.graph
+                            .symbols
+                            .get_mut(resolved.r#ref)
+                            .unwrap()
+                            .set_must_start_with_capital_letter_for_jsx(true);
+                    }
                 }
 
                 if !bound_bases.contains(&base) {

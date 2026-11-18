@@ -53,6 +53,7 @@ pub(crate) fn scan_imports_and_exports(
 
     let input_files: &[Source] = this.parse_graph().input_files.items_source();
     let loaders: &[Loader] = this.parse_graph().input_files.items_loader();
+    let mut jsx_imports = Vec::new();
 
     {
         let css_asts = &this.parse_graph().css_asts;
@@ -508,6 +509,7 @@ pub(crate) fn scan_imports_and_exports(
                         &mut cycle_detector,
                         source_index_.get(),
                         &mut member_resolutions,
+                        &mut jsx_imports,
                     );
 
                     if log.errors > 0 {
@@ -1330,34 +1332,36 @@ pub(crate) fn scan_imports_and_exports(
     }
 
     // Checking final links; pinned export names cannot satisfy JSX component-name rules.
-    for (id, imports) in this.graph.ast.items_named_imports().iter().enumerate() {
-        for (&ref_, import) in imports.keys().iter().zip(imports.values()) {
-            let members = this.graph.import_member_bindings.get(&ref_);
-            let refs = core::iter::once(ref_).chain(
-                members
-                    .into_iter()
-                    .flat_map(|members| members.values().copied()),
-            );
-            for ref_ in refs {
-                let invalid = is_invalid_jsx_component_name(&mut this.graph.symbols, ref_);
-                if invalid {
-                    let loc = if import.alias_loc.is_empty() {
-                        this.graph.ast.items_import_records()[id].as_slice()
-                            [import.import_record_index as usize]
-                            .range
-                            .loc
-                    } else {
-                        import.alias_loc
-                    };
-                    log.add_error(
-                        Some(&input_files[id]),
-                        loc,
-                        b"Cannot preserve JSX tag because its linked binding requires an invalid JSX name",
-                    );
-                    break;
-                }
-            }
+    jsx_imports.sort_unstable_by_key(|&(local, printed)| {
+        (
+            local.source_index(),
+            local.inner_index(),
+            printed.source_index(),
+            printed.inner_index(),
+        )
+    });
+    jsx_imports.dedup();
+    for (local, printed) in jsx_imports {
+        if !is_invalid_jsx_component_name(&mut this.graph.symbols, printed) {
+            continue;
         }
+        let id = local.source_index() as usize;
+        let import = this.graph.ast.items_named_imports()[id]
+            .get(&local)
+            .unwrap();
+        let loc = if import.alias_loc.is_empty() {
+            this.graph.ast.items_import_records()[id].as_slice()
+                [import.import_record_index as usize]
+                .range
+                .loc
+        } else {
+            import.alias_loc
+        };
+        log.add_error(
+            Some(&input_files[id]),
+            loc,
+            b"Cannot preserve JSX tag because its linked binding requires an invalid JSX name",
+        );
     }
     if log.errors > 0 {
         return Err(ScanImportsAndExportsError::ImportResolutionFailed);
@@ -1368,9 +1372,7 @@ pub(crate) fn scan_imports_and_exports(
 /// Validate the binding printed as a complete JSX tag and retain its capitalization requirement.
 fn is_invalid_jsx_component_name(symbols: &mut symbol::Map, ref_: Ref) -> bool {
     let original = symbols.get_const(ref_).unwrap();
-    if !original.must_start_with_capital_letter_for_jsx() {
-        return false;
-    }
+    let needs_capital = original.must_start_with_capital_letter_for_jsx();
     let linked = symbols.follow(ref_);
     let symbol = symbols.get_const(linked).unwrap();
     let linked = match &symbol.namespace_alias {
@@ -1380,6 +1382,9 @@ fn is_invalid_jsx_component_name(symbols: &mut symbol::Map, ref_: Ref) -> bool {
         Some(alias) => symbols.follow(alias.namespace_ref),
         None => linked,
     };
+    if !needs_capital {
+        return false;
+    }
     let symbol = symbols.get_mut(linked).unwrap();
     symbol.set_must_start_with_capital_letter_for_jsx(true);
     symbol.must_not_be_renamed()

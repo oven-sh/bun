@@ -204,6 +204,125 @@ describe("bundler", () => {
   describe("jsx preserve", () => {
     for (const backend of ["cli", "api"] as const) {
       for (const minify of [false, true]) {
+        for (const dynamic of [false, true]) {
+          itBundled(`jsx/PreserveMissingNamespaceMember-${backend}-${minify}-${dynamic}`, {
+            files: {
+              "/in.jsx": `
+                ${dynamic ? 'const ns = await import("./component");' : 'import * as ns from "./component";'}
+                console.log(<ns.Missing /> === undefined);
+                try {
+                  console.log(<ns.Missing.Child />);
+                } catch (error) {
+                  console.log(error instanceof TypeError);
+                }
+              `,
+              "/component.js": "export const Present = 0;",
+            },
+            backend,
+            format: "esm",
+            jsx: { runtime: "preserve" },
+            minifyIdentifiers: minify,
+            minifySyntax: minify,
+            minifyWhitespace: minify,
+            // esbuild 0.18 prints an undefined expression in the JSX tag.
+            skipOnEsbuild: true,
+            bundleWarnings: dynamic ? undefined : { "/in.jsx": ['Import "Missing" will always be undefined'] },
+            onAfterBundle(api) {
+              const out = api.readFile("/out.js");
+              const { code } = transformSync(out, { loader: "jsx", jsxFactory: "globalThis.__jsxPreserveFactory" });
+              api.writeFile("/out.js", `globalThis.__jsxPreserveFactory = type => type;\n${code}`);
+            },
+            run: { stdout: "true\ntrue" },
+          });
+        }
+      }
+
+      itBundled(`jsx/PreserveUnicodeImportedTag-${backend}`, {
+        files: {
+          "/in.jsx": `
+            import { Étiquette } from "./component.js";
+            console.log(<Étiquette />, <Étiquette.Élément></Étiquette.Élément>);
+          `,
+          "/component.js": 'export const Étiquette = Object.assign(() => "binding", { Élément: () => "member" });',
+        },
+        backend,
+        external: ["./component.js"],
+        target: "bun",
+        jsx: { runtime: "preserve" },
+        // esbuild 0.18 escapes imported JSX names with its default ASCII charset.
+        skipOnEsbuild: true,
+        onAfterBundle(api) {
+          const out = api.readFile("/out.js");
+          const { code } = transformSync(out, { loader: "jsx", jsxFactory: "globalThis.__jsxPreserveFactory" });
+          api.writeFile("/out.js", `globalThis.__jsxPreserveFactory = type => type();\n${code}`);
+        },
+        run: { stdout: "binding member" },
+      });
+
+      itBundled(`jsx/PreserveDecoratedPrivateMethod-${backend}`, {
+        files: {
+          "/in.tsx": `
+            const decorate = method => method;
+            class View {
+              @decorate #answer() { return 7; }
+              render() { return <div answer={this.#answer()}>{this.#answer()}</div>; }
+            }
+            console.log(new View().render());
+          `,
+        },
+        backend,
+        jsx: { runtime: "preserve" },
+        // esbuild 0.18 predates standard decorators.
+        skipOnEsbuild: true,
+        onAfterBundle(api) {
+          const out = api.readFile("/out.js");
+          const { code } = transformSync(out, { loader: "jsx", jsxFactory: "globalThis.__jsxPreserveFactory" });
+          api.writeFile(
+            "/out.js",
+            `globalThis.__jsxPreserveFactory = (_, props, child) => props.answer + child;\n${code}`,
+          );
+        },
+        run: { stdout: "14" },
+      });
+
+      itBundled(`jsx/PreserveReentrantClassInParameterDefault-${backend}`, {
+        files: {
+          "/in.jsx": `
+            function field(component, C = class { value = <Comp />; }) { return new C().value; }
+            function staticField(component, C = class { static value = <Comp />; }) { return C.value; }
+            function computedKey(component, C = class { [<Comp />]() {} }) {
+              return Object.getOwnPropertyNames(C.prototype)[1];
+            }
+            for (const render of [field, staticField, computedKey]) {
+              let entered = false;
+              globalThis.factory = { get h() {
+                if (!entered) {
+                  entered = true;
+                  render("inner");
+                }
+                return type => type;
+              } };
+              console.log(render("outer"));
+            }
+          `,
+        },
+        backend,
+        jsx: { runtime: "preserve" },
+        define: { Comp: "component" },
+        minifyIdentifiers: true,
+        // The reference API harness does not forward defines.
+        skipOnEsbuild: true,
+        onAfterBundle(api) {
+          const out = api.readFile("/out.js");
+          const { code } = transformSync(out, { loader: "jsx", jsxFactory: "globalThis.factory.h" });
+          api.writeFile("/out.js", code);
+        },
+        run: { stdout: "outer\nouter\nouter" },
+      });
+    }
+
+    for (const backend of ["cli", "api"] as const) {
+      for (const minify of [false, true]) {
         itBundled(`jsx/PreserveEmptyNamespaceAlias-${backend}-${minify}`, {
           files: {
             "/in.jsx": 'import * as Component from "./bridge"; console.log(<Component />.marker);',
@@ -1255,7 +1374,8 @@ describe("bundler", () => {
 
     itBundled("jsx/PreserveSourcemapSimple", {
       files: {
-        "/in.tsx": `export const A = <section id="x">hello</section>;
+        "/in.tsx": `export const A = <section id="x">hello
+          </section>;
           export const B = <>{...items}</>;`,
         "/tsconfig.json": `{"compilerOptions":{"target":"ESNext"}}`,
       },
@@ -1304,9 +1424,14 @@ describe("bundler", () => {
             sourceIndex: source.indexOf("...items"),
           },
           {
-            token: "closing tag",
+            token: "closing delimiter",
             generatedIndex: generated.indexOf("</section>"),
             sourceIndex: source.indexOf("</section>"),
+          },
+          {
+            token: "closing tag name",
+            generatedIndex: generated.indexOf("</section>") + 2,
+            sourceIndex: source.indexOf("</section>") + 2,
           },
         ];
 

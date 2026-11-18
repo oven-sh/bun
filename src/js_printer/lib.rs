@@ -2366,20 +2366,9 @@ pub(crate) mod __gated_printer {
         }
 
         fn next_utf16_code_point(text: &[u16], i: &mut usize) -> u32 {
-            const FIRST_LOW_SURROGATE: u32 = 0xDC00;
-
-            let mut c = text[*i] as u32;
-            *i += 1;
-
-            if c >= FIRST_HIGH_SURROGATE as u32 && c < FIRST_LOW_SURROGATE && *i < text.len() {
-                let next = text[*i] as u32;
-                if next >= FIRST_LOW_SURROGATE && next <= LAST_LOW_SURROGATE as u32 {
-                    c = 0x10000 + (((c & 0x03ff) << 10) | (next & 0x03ff));
-                    *i += 1;
-                }
-            }
-
-            c
+            let (code_point, len) = strings::decode_wtf16_raw(&text[*i..]);
+            *i += usize::from(len);
+            code_point
         }
 
         fn print_utf16_as_utf8(&mut self, text: &[u16]) {
@@ -2556,33 +2545,62 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        fn print_jsx_tag(&mut self, tag: Expr) {
+        fn print_jsx_tag(&mut self, tag: Expr, map_opening_tag: bool) {
             match &tag.data {
                 ExprData::EIdentifier(id) => {
                     let name = self.name_for_symbol(id.ref_);
-                    self.add_source_mapping_for_name(tag.loc, name, id.ref_);
+                    if map_opening_tag {
+                        self.add_source_mapping_for_name(tag.loc, name, id.ref_);
+                    }
                     self.print(name);
                 }
+                ExprData::EImportIdentifier(id) => {
+                    let symbol = self.import_symbol_for_printing(id.ref_);
+                    debug_assert!(symbol.import_item_status != js_ast::ImportItemStatus::Missing);
+                    let (ref_, property) = symbol
+                        .namespace_alias
+                        .as_ref()
+                        .map_or((id.ref_, &[][..]), |namespace| {
+                            (namespace.namespace_ref, namespace.alias.slice())
+                        });
+                    let name = self.name_for_symbol(ref_);
+                    if map_opening_tag {
+                        self.add_source_mapping_for_name(tag.loc, name, ref_);
+                    }
+                    self.print(name);
+                    if !property.is_empty() {
+                        self.print(b".");
+                        self.print(property);
+                    }
+                }
                 ExprData::EString(str_) => {
-                    self.add_source_mapping(tag.loc);
+                    if map_opening_tag {
+                        self.add_source_mapping(tag.loc);
+                    }
                     self.print_jsx_name_string(str_);
+                }
+                ExprData::EThis(_) => {
+                    if map_opening_tag {
+                        self.add_source_mapping(tag.loc);
+                    }
+                    self.print(b"this");
                 }
                 ExprData::EDot(dot) => {
                     if dot.optional_chain.is_none()
                         && dot.is_import_property_use
                         && let Some(binding) = self.import_member_binding(dot.target, &dot.name)
                     {
-                        self.print_jsx_tag(binding);
+                        self.print_jsx_tag(binding, map_opening_tag);
                         return;
                     }
-                    self.print_jsx_tag(dot.target);
+                    self.print_jsx_tag(dot.target, map_opening_tag);
                     self.print(b".");
-                    self.add_source_mapping(dot.name_loc);
+                    if map_opening_tag {
+                        self.add_source_mapping(dot.name_loc);
+                    }
                     self.print(dot.name.slice());
                 }
-                _ => {
-                    self.print_expr(tag, Level::Member, ExprFlag::none());
-                }
+                _ => unreachable!("the JSX visitor validates the tag expression"),
             }
         }
 
@@ -4445,12 +4463,7 @@ pub(crate) mod __gated_printer {
                     // Potentially use a property access instead of an identifier
                     let mut did_print = false;
 
-                    let ref_ = if self.options.module_type != bundle_opts::Format::InternalBakeDev {
-                        self.symbols().follow(e.ref_)
-                    } else {
-                        e.ref_
-                    };
-                    let symbol = self.symbols().get_const(ref_).unwrap();
+                    let symbol = self.import_symbol_for_printing(e.ref_);
 
                     if symbol.import_item_status == js_ast::ImportItemStatus::Missing {
                         self.print_undefined(expr.loc, level);
@@ -4700,7 +4713,7 @@ pub(crate) mod __gated_printer {
                     self.add_source_mapping(expr.loc);
                     self.print(b"<");
                     if let Some(tag) = e_.tag {
-                        self.print_jsx_tag(tag);
+                        self.print_jsx_tag(tag, true);
                     }
 
                     if e_.tag.is_some() {
@@ -4816,7 +4829,8 @@ pub(crate) mod __gated_printer {
                         self.add_source_mapping(e_.close_tag_loc);
                         self.print(b"</");
                         if let Some(tag) = e_.tag {
-                            self.print_jsx_tag(tag);
+                            self.add_source_mapping(e_.close_tag_name_loc);
+                            self.print_jsx_tag(tag, false);
                         }
                         self.print(b">");
                     }
@@ -4873,6 +4887,15 @@ pub(crate) mod __gated_printer {
             } else {
                 self.print_string_characters_utf8(str.slice8(), c);
             }
+        }
+
+        fn import_symbol_for_printing(&self, ref_: Ref) -> &'a js_ast::Symbol {
+            let ref_ = if self.options.module_type != bundle_opts::Format::InternalBakeDev {
+                self.symbols().follow(ref_)
+            } else {
+                ref_
+            };
+            self.symbols().get_const(ref_).unwrap()
         }
 
         pub(crate) fn print_namespace_alias(&mut self, namespace: &G::NamespaceAlias) {

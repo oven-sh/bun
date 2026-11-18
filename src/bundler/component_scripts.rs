@@ -16,9 +16,24 @@ pub(crate) fn for_each<'a>(path: &[u8], contents: &'a [u8], mut each: impl FnMut
     // A script ends at the next `</script`, so each part between two of them is searched by itself.
     let mut rest = contents;
     while !rest.is_empty() {
-        let end = strings::index_of(rest, b"</script").unwrap_or(rest.len());
+        let end = end_tag(rest).unwrap_or(rest.len());
         scripts_before_end_tag(&rest[..end], &mut each);
         rest = &rest[(end + b"</script".len()).min(rest.len())..];
+    }
+}
+
+/// The index of the next `</script` that a space, `/` or `>` ends, as in HTML.
+fn end_tag(text: &[u8]) -> Option<usize> {
+    let mut from = 0;
+    loop {
+        let at = from + strings::index_of(&text[from..], b"</script")?;
+        from = at + b"</script".len();
+        if text
+            .get(from)
+            .is_none_or(|&c| c.is_ascii_whitespace() || c == b'/' || c == b'>')
+        {
+            return Some(at);
+        }
     }
 }
 
@@ -159,6 +174,11 @@ mod tests {
                 "an open comment in a style",
                 "<style>/* <!-- */</style>\n<script>\n  const arrow = \"-->\";\n  import './a';\n</script>\n",
                 "\n  const arrow = \"-->\";\n  import './a';\n",
+            ),
+            (
+                "a longer tag name in a string",
+                "<script>\n  const tag = \"</scripture>\";\n  import './a';\n</script >\n",
+                "\n  const tag = \"</scripture>\";\n  import './a';\n",
             ),
             (
                 "quotes",

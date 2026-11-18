@@ -419,6 +419,21 @@ test("a TypeScript signature without a body as the body of if starts under bun r
   }
 });
 
+// The build adds an import of the test runner's names to this file. What makes a file a module for bun run is what is written in it.
+test("a test file with no import stays sloppy mode code in a compiled test run", async () => {
+  using dir = tempDir("aot-early-errors", {
+    "globals.test.js": `if (true) function f() {}\nfunction g() {} function g() {}\ntest("runs", () => expect(typeof g).toBe("function"));\n`,
+  });
+  const cwd = String(dir);
+  const counted = ({ stderr, exitCode }: { stderr: string; exitCode: number }) => ({
+    counts: ["pass", "fail"].map(word => stderr.match(new RegExp(`^ (\\d+) ${word}`, "m"))?.[1]),
+    exitCode,
+  });
+  const expected = { counts: ["1", "0"], exitCode: 0 };
+  expect(counted(await run(cwd, "test"))).toEqual(expected);
+  expect(counted(await run(cwd, "test", "--aot"))).toEqual(expected);
+});
+
 // Bun's parser takes this import for one of a value, so the file is a module to it. The build reads an import of the type `as`, which proves
 // nothing, and starts the program.
 test.failing("a function as the body of if behind import { type as } stops bun run and a build alike", async () => {

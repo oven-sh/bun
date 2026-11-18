@@ -1566,20 +1566,25 @@ test.skipIf(!isLinux)("--parallel forwards the flags of the transpiler to worker
   expect(exitCode).toBe(0);
 });
 
-test.each([
+test.concurrent.each([
   ["--jsx-runtime=react-jsxdev", "dev"],
   ["--jsx-runtime=react-jsx", "prod"],
   ["--jsx-side-effects", "dev"],
 ])("--parallel forwards %s with the same JSX development mode", async (flag, expected) => {
   const fixture = `
     import { test, expect } from "bun:test";
-    test("runtime", () => expect(<div />).toBe(${JSON.stringify(expected)}));
+    test("runtime", () => {
+      expect(<div />).toBe(${JSON.stringify(expected)});
+      let calls = 0;
+      <div count={() => calls++} />;
+      expect(calls).toBe(${flag === "--jsx-side-effects" ? 1 : 0});
+    });
   `;
   using dir = tempDir("parallel-jsx-runtime", {
     "a.test.jsx": fixture,
     "b.test.jsx": fixture,
-    "node_modules/react/jsx-dev-runtime.js": 'export const jsxDEV = () => "dev";',
-    "node_modules/react/jsx-runtime.js": 'export const jsx = () => "prod";',
+    "node_modules/react/jsx-dev-runtime.js": 'export const jsxDEV = (_, { count }) => (count?.(), "dev");',
+    "node_modules/react/jsx-runtime.js": 'export const jsx = (_, { count }) => (count?.(), "prod");',
   });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "--parallel=2", flag],

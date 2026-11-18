@@ -1809,7 +1809,7 @@ class BuildMessage {
   name: string;
   position?: Position;
   message: string;
-  level: "error" | "warn" | "info" | "debug" | "verbose";
+  level: "error" | "warn" | "note" | "debug" | "verbose";
 }
 
 class ResolveMessage extends BuildMessage {
@@ -2056,7 +2056,7 @@ declare class ResolveMessage {
     | "at_conditional"
     | "url"
     | "internal";
-  readonly level: "error" | "warn" | "info" | "debug" | "verbose";
+  readonly level: "error" | "warn" | "note" | "debug" | "verbose";
 
   toString(): string;
 }

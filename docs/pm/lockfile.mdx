@@ -68,17 +68,23 @@ The `lockfileVersion` field at the top of `bun.lock` is the version of the forma
 At `lockfileVersion` 2 and later, Bun rejects a lockfile that has:
 
 - an integrity hash that Bun does not support
-- an npm package from a tarball URL outside the configured registry with no integrity hash
-- a `.bun-tag` on a git dependency that is not a safe path component
+- an npm package with no integrity hash, from a tarball URL outside both the configured registry and the default registry
+- a `.bun-tag` on a `git` dependency that is not a safe path component
 
-At `lockfileVersion` 0 and 1, Bun still reads such a lockfile.
+At `lockfileVersion` 0 and 1, Bun still reads such a lockfile. Two checks apply at every version. Bun rejects a `.bun-tag` longer than 256 characters, and a `.bun-tag` on a `github` dependency that is not a safe path component.
 
 Bun picks the version when it saves the lockfile:
 
 - A new lockfile gets `2`.
 - An existing lockfile keeps its version. The exception is `0`, which becomes `1`.
-- A lockfile gets `3` while `overrides` has a nested or version-scoped rule. When you remove the last such rule, the lockfile goes back to `2`.
-- If a lockfile cannot pass the checks of `lockfileVersion` 2, Bun writes `1`, also when `overrides` has a nested or version-scoped rule.
+- A lockfile gets `3` while `overrides` has a nested or version-scoped rule. When you remove the last such rule, a lockfile at `3` goes back to `2`.
+
+Before Bun writes `3`, or a `2` that the lockfile did not have before, it checks the packages. Bun writes `1` instead when it finds one of these:
+
+- an npm package with no supported integrity hash, from a tarball URL outside the default registry
+- a `.bun-tag` on a `git` dependency that is not a safe path component
+
+This check ignores the registries in your configuration, so the result is the same on every machine. Such a lockfile stays at `1`, also with object values in `overrides`. Bun v1.4.0 and later reads object values at every `lockfileVersion`.
 
 A version of Bun that does not know the `lockfileVersion` stops with `Unsupported lockfile version`. Run `bun upgrade`.
 

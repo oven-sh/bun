@@ -107,13 +107,13 @@ function errorParser(text: string) {
   return list;
 }
 
-function warnParser(text: string): [message: string, fileLine: string][] {
+function warnParser(text: string): [message: string, fileLine: string | null][] {
   const diagnostics = text.split(/^(?=(?:error|warn|note|debug|verbose): )/m);
   return diagnostics.flatMap(diagnostic => {
     const header = /^warn: (.*)/.exec(diagnostic);
     if (!header) return [];
     const location = /^ {3}at (.+:\d+:\d+)$/m.exec(diagnostic);
-    return location ? [[header[1], location[1]]] : [];
+    return [[header[1], location?.[1] ?? null]];
   });
 }
 
@@ -1134,6 +1134,7 @@ function expectBundled(
         if (ESBUILD) return;
         const warningText = Bun.stripANSI(stderr.toUnixString());
         const allWarnings = warnParser(warningText).flatMap(([error, source]) => {
+          if (source == null) return [{ error, file: "<bun>" }];
           const location = source.match(/bun-build-tests[\/\\](.*):(\d+):(\d+)/);
           if (!location) return [];
           const [, fullFilename, line, col] = location;

@@ -594,8 +594,9 @@ describe("css", () => {
     run: { stdout: "a foo_e7Ht-A" },
   });
 
-  // The two imports of entry.js stay one range of statements: a.js and b.js start together, as with a JSON file.
-  // The class names that b.js reads print ahead of every file, not between the two imports.
+  // The two imports of entry.js stay one range of statements, as with a JSON file: the class names that b.js reads
+  // print ahead of every file, not between the two imports. A range calls b.js ahead of the `await` of a.js, with
+  // or without a stylesheet. The unbundled run prints `a` first: the JSON file is the control for the order here.
   for (const [kind, value] of Object.entries({ CSSModule: "./x.module.css", JSON: "./x.json" })) {
     itBundled(`css-module/ValueOf${kind}DoesNotSplitTheFileThatLoadsItsReader`, {
       files: {

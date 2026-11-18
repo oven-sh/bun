@@ -580,13 +580,18 @@ export default function () {
     },
   );
 
-  // With a separate SSR graph, three graphs share the row of the stylesheet. The server graph and the SSR graph
-  // each write a chunk for their own import() of it.
+  // With a separate SSR graph, three graphs share the row of the stylesheet, and each graph has an import() of it:
+  // the route (server graph), the copy of Button that the server loads through `ssrManifest` (SSR graph) and the
+  // copy of Button for the browser (client graph). Each import() loads a chunk of its own graph.
   test.concurrent("a route and a client component import() one CSS module with a separate SSR graph", async () => {
     using dir = tempDir("bake-production-css-module-ssr", {
       "server.ts": `
+        import { ssrManifest } from "bun:bake/server";
         export async function prerender(meta) {
-          return { files: { "index.html": "<body>page=" + (await meta.pageModule.default()) + "</body>" } };
+          const [[client, { Button }]] = Object.entries(ssrManifest);
+          const ssr = await import(Button.specifier);
+          const body = "page=" + (await meta.pageModule.default()) + " ssr=" + (await ssr.Button()) + " client=" + client;
+          return { files: { "index.html": "<body>" + body + "</body>" } };
         }
       `,
       "app.ts": `
@@ -620,10 +625,23 @@ export default function () {
       stderr: "pipe",
     });
     const [, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
-    const html = await Bun.file(path.join(String(dir), "dist", "index.html"))
+    const dist = path.join(String(dir), "dist");
+    const html = await Bun.file(path.join(dist, "index.html"))
       .text()
       .catch(() => stderr);
-    expect(html).toBe(`<body>page=${namespace} Button</body>`);
+    const client = html.match(/ client=\.\/([^<]+\.js)<\/body>$/)?.[1];
+    expect(html).toBe(`<body>page=${namespace} Button ssr=${namespace} client=./${client}</body>`);
+
+    await using run = Bun.spawn({
+      cmd: [bunExe(), "-e", `import { Button } from "./${client}"; console.log(await Button());`],
+      env: bunEnv,
+      cwd: path.join(dist, "_bun"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , runExitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+    expect(stdout.trim()).toBe(namespace);
+    expect(runExitCode).toBe(0);
     expect(exitCode).toBe(0);
   });
 

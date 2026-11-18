@@ -244,6 +244,8 @@ pub(crate) fn compute_chunks<'a>(
                 // The stylesheet of an `import()` can be an entry point too. Its JS stub takes the CSS chunk of that entry point.
                 if !this.options.css_chunking
                     && let Some(stylesheet) = css_js_stubs.stylesheet_of(source_index)
+                    && this.graph.files.items_entry_point_kind()[stylesheet as usize]
+                        .is_entry_point()
                     && let Some(entry_id) = entry_source_indices
                         .iter()
                         .position(|&entry| entry == stylesheet)

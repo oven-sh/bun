@@ -341,7 +341,8 @@ describe("bundler", () => {
     outputs
       .map(output => ({ file: basename(output.path), kind: output.kind, loader: output.loader }))
       .sort((a, b) => (a.file < b.file ? -1 : 1));
-  const hashedChunk = (name: string) => expect.stringMatching(new RegExp(`^${name}-[a-z0-9]{8}\\.js$`));
+  const hashedChunk = (name: string) =>
+    expect.stringMatching(new RegExp(`^${name.replaceAll(".", "\\.")}-[a-z0-9]{8}\\.js$`));
 
   for (const target of ["bun", "browser"] as const) {
     // The namespace object needs `__export`, and nothing else here uses the runtime.
@@ -690,7 +691,8 @@ describe("bundler", () => {
   }
 
   // The entry point that makes the import() has CSS of its own. The CSS of the stylesheet is written once, under
-  // the name of the stylesheet, also when that name has a hash.
+  // the name of the stylesheet, also when that name has a hash. The CSS of the entry point holds the rules of
+  // the stylesheet too, as it does with no stylesheet entry point.
   for (const [naming, entryNaming] of Object.entries({ Default: undefined, WithHash: "[name]-[hash].[ext]" })) {
     itBundled(`splitting/DynamicImportOfUserSpecifiedCSSEntryPointNextToOtherCSS${naming}`, {
       files: {
@@ -707,16 +709,22 @@ describe("bundler", () => {
       entryNaming,
       outdir: "/out",
       onAfterBundle(api) {
-        const outputs = readdirSync(api.outdir)
-          .map(file => file.replace(/-[a-z0-9]{8}\./, "-[hash]."))
-          .sort();
-        expect(outputs).toEqual(
+        const files = readdirSync(api.outdir).sort();
+        expect(files.map(file => file.replace(/-[a-z0-9]{8}\./, "-[hash]."))).toEqual(
           entryNaming
             ? ["entry-[hash].css", "entry-[hash].js", "styles.module-[hash].css", "styles.module-[hash].js"]
             : ["entry.css", "entry.js", "styles.module-[hash].js", "styles.module.css"],
         );
+        const rulesOf = (file: string) => api.readFile("/out/" + file).match(/^\.[\w-]+/gm);
+        const [entryCss, stylesheetCss] = files.filter(file => file.endsWith(".css"));
+        expect({ entry: rulesOf(entryCss), stylesheet: rulesOf(stylesheetCss) }).toEqual({
+          entry: [".base", ".foo_-MSaAA"],
+          stylesheet: [".foo_-MSaAA"],
+        });
+        // The name of the entry point can have a hash: a file with a fixed name loads it.
+        api.writeFile("/out/launch.js", `import "./${files.find(file => /^entry.*\.js$/.test(file))}";`);
       },
-      run: entryNaming ? undefined : { file: "/out/entry.js", env, stdout: "default,foo foo_-MSaAA" },
+      run: { file: "/out/launch.js", env, stdout: "default,foo foo_-MSaAA" },
     });
   }
 
@@ -951,8 +959,10 @@ describe("bundler", () => {
       outdir: "/out",
       chunkNaming,
       onAfterBundle(api) {
-        const inDirectory = where ? readdirSync(api.outdir + "/sub").filter(file => file.endsWith(".js")) : [];
-        expect(jsOutputsOf(api).concat(inDirectory).sort()).toEqual(["a.js", "b.js", "shared.module.js"]);
+        const outputs = (readdirSync(api.outdir, { recursive: true }) as string[])
+          .map(file => file.replaceAll("\\", "/"))
+          .filter(file => file.endsWith(".js"));
+        expect(outputs.sort()).toEqual([first, "b.js", "shared.module.js"].sort());
       },
       run: [
         { file: "/out/" + first, stdout: "a foo_4fd8ng" },

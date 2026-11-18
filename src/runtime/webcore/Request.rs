@@ -12,7 +12,7 @@ use crate::generated_bindgen::response::js_Request as js;
 use crate::webcore::BlobExt as _;
 use crate::webcore::body::{self, BodyHiveHandle, BodyMixin, Value as BodyValue};
 use crate::webcore::jsc::{HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsRef, JsResult};
-use crate::webcore::{AbortSignal, Blob, CookieMap, FetchHeaders, ReadableStream, Response};
+use crate::webcore::{AbortSignal, Blob, CookieMap, ReadableStream, Response};
 use bun_alloc::AllocError;
 use bun_core::{Output, fmt as bun_fmt};
 use bun_core::{String as BunString, StringView, strings};
@@ -142,16 +142,13 @@ impl BodyMixin for Request {
     fn get_body_value(&self) -> &mut BodyValue {
         Request::get_body_value(self)
     }
-    #[inline]
-    fn get_fetch_headers(&self) -> Option<core::ptr::NonNull<FetchHeaders>> {
-        // Opaque C++ handle. Return the raw `*mut`
-        // directly (via `HeadersRef::as_ptr`) so the provenance is mutable;
-        // going through `as_deref()` would derive it from a `&FetchHeaders`
-        // and make the later `as_mut()` UB under Stacked Borrows.
-        self.headers.get().as_ref().map(|h| {
-            core::ptr::NonNull::new(h.as_ptr())
-                .expect("HeadersRef wraps a non-null *mut FetchHeaders")
-        })
+    fn get_content_type_header(&self) -> Option<bun_core::Utf8Bytes<'_>> {
+        if let Some(headers) = self.headers_mut().as_mut() {
+            return Some(headers.fast_get(HTTPHeaderName::ContentType)?.to_utf8());
+        }
+        // Bun.serve creates the headers on first use. Until then they are in the uws request.
+        let req = bun_opaque::opaque_deref(self.request_context.get().get_request()?);
+        Some(bun_core::Utf8Bytes::Borrowed(req.header(b"content-type")?))
     }
     #[inline]
     fn get_form_data_encoding(

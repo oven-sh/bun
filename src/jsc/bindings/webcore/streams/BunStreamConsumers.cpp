@@ -45,6 +45,9 @@
 #include <wtf/Vector.h>
 #include <wtf/text/StringBuilder.h>
 
+// Body.rs: types `blob` from the Content-Type of `owner`, the Request or Response whose body it is.
+extern "C" void Body__setBlobTypeFromOwner(JSC::EncodedJSValue owner, JSC::EncodedJSValue blob);
+
 namespace WebCore {
 
 using namespace JSC;
@@ -921,8 +924,9 @@ JSValue readableStreamIntoText(JSGlobalObject* globalObject, WebCore::JSReadable
     RELEASE_AND_RETURN(scope, convertChunkArrayPromise(vm, globalObject, arrayResult, ChunkArrayConversion::Text));
 }
 
-// The buffered-native fast path (RSI:1240-1268).
-JSValue tryUseReadableStreamBufferedFastPath(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream, const Identifier& method)
+// The buffered-native fast path (RSI:1240-1268). `bodyOwner` is readableStreamToBlob's: when it
+// is a cell, the result is a Blob and takes its type from that Request or Response.
+static ALWAYS_INLINE JSValue useReadableStreamBufferedFastPath(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream, const Identifier& method, JSValue bodyOwner)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -953,12 +957,24 @@ JSValue tryUseReadableStreamBufferedFastPath(JSGlobalObject* globalObject, WebCo
         stream->m_lockedWithoutReader = false;
         readableStreamCloseIfPossible(globalObject, stream);
         RETURN_IF_EXCEPTION(scope, {});
+        if (bodyOwner.isCell())
+            Body__setBlobTypeFromOwner(JSValue::encode(bodyOwner), JSValue::encode(promise->result()));
         return promise;
     }
     auto* runtime = JSStreamsRuntime::from(globalObject);
     auto* derived = JSPromise::create(vm, globalObject->promiseStructure());
+    if (bodyOwner.isCell()) {
+        auto* context = InternalFieldTuple::create(vm, defaultGlobalObject(globalObject)->internalFieldTupleStructure(), stream, bodyOwner);
+        promise->performPromiseThenWithContext(vm, globalObject, runtime->onBufferedFastPathBodyBlobSettled(), runtime->onBufferedFastPathBodyBlobRejected(), derived, context);
+        return derived;
+    }
     promise->performPromiseThenWithContext(vm, globalObject, runtime->onBufferedFastPathSettled(), runtime->onBufferedFastPathRejected(), derived, stream);
     return derived;
+}
+
+JSValue tryUseReadableStreamBufferedFastPath(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream, const Identifier& method)
+{
+    return useReadableStreamBufferedFastPath(globalObject, stream, method, jsUndefined());
 }
 
 // The direct read loop shared by readableStreamTo{Text,Array}Direct.
@@ -1315,13 +1331,13 @@ JSValue readableStreamToJSON(JSGlobalObject* globalObject, WebCore::JSReadableSt
     return derived;
 }
 
-JSValue readableStreamToBlob(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream)
+JSValue readableStreamToBlob(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream, JSValue bodyOwner)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (auto* error = unusableStreamError(globalObject, stream))
         RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, error));
-    JSValue fastPath = tryUseReadableStreamBufferedFastPath(globalObject, stream, builtinNames(vm).blobPublicName());
+    JSValue fastPath = useReadableStreamBufferedFastPath(globalObject, stream, builtinNames(vm).blobPublicName(), bodyOwner);
     RETURN_IF_EXCEPTION(scope, {});
     if (fastPath)
         return fastPath;
@@ -1334,7 +1350,7 @@ JSValue readableStreamToBlob(JSGlobalObject* globalObject, WebCore::JSReadableSt
     }
     auto* runtime = JSStreamsRuntime::from(globalObject);
     auto* derived = JSPromise::create(vm, globalObject->promiseStructure());
-    arrayPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReadableStreamToBlobFulfilled(), jsUndefined(), derived, jsUndefined());
+    arrayPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReadableStreamToBlobFulfilled(), jsUndefined(), derived, bodyOwner);
     return derived;
 }
 
@@ -1455,12 +1471,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionTransferToNativeReadableStream, (JSGlobalObje
 
 // [reaction-convention] handlers (FOR_EACH_WEB_STREAMS_REACTION_HANDLER_BUN_CONSUMERS).
 
-JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onBufferedFastPathRejected, (JSGlobalObject * globalObject, CallFrame* callFrame))
+static EncodedJSValue bufferedFastPathRejected(JSGlobalObject* globalObject, JSReadableStream* stream, JSValue error)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* stream = uncheckedDowncast<JSReadableStream>(callFrame->uncheckedArgument(1));
-    JSValue error = callFrame->argument(0);
     stream->m_lockedWithoutReader = false;
     auto* cancelPromise = Bun::WebStreams::readableStreamCancel(globalObject, stream, error);
     RETURN_IF_EXCEPTION(scope, {});
@@ -1472,6 +1486,17 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onBufferedFastPathRejected, (JSGlob
     return {};
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onBufferedFastPathRejected, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    return bufferedFastPathRejected(globalObject, uncheckedDowncast<JSReadableStream>(callFrame->uncheckedArgument(1)), callFrame->argument(0));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onBufferedFastPathBodyBlobRejected, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto* context = uncheckedDowncast<InternalFieldTuple>(callFrame->uncheckedArgument(1));
+    return bufferedFastPathRejected(globalObject, uncheckedDowncast<JSReadableStream>(context->getInternalField(0)), callFrame->argument(0));
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onBufferedFastPathSettled, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = getVM(globalObject);
@@ -1481,6 +1506,20 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onBufferedFastPathSettled, (JSGloba
     Bun::WebStreams::readableStreamCloseIfPossible(globalObject, stream);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(callFrame->argument(0));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onBufferedFastPathBodyBlobSettled, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* context = uncheckedDowncast<InternalFieldTuple>(callFrame->uncheckedArgument(1));
+    auto* stream = uncheckedDowncast<JSReadableStream>(context->getInternalField(0));
+    JSValue blob = callFrame->argument(0);
+    stream->m_lockedWithoutReader = false;
+    Bun::WebStreams::readableStreamCloseIfPossible(globalObject, stream);
+    RETURN_IF_EXCEPTION(scope, {});
+    Body__setBlobTypeFromOwner(JSValue::encode(context->getInternalField(1)), JSValue::encode(blob));
+    return JSValue::encode(blob);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadableStreamToArrayBufferFulfilled, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -1538,6 +1577,9 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadableStreamToBlobFulfilled, (J
     RETURN_IF_EXCEPTION(scope, {});
     Bun::WebStreams::releaseInternalChunkArray(globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, {});
+    JSValue bodyOwner = callFrame->argument(1);
+    if (bodyOwner.isCell())
+        Body__setBlobTypeFromOwner(JSValue::encode(bodyOwner), JSValue::encode(blob));
     return JSValue::encode(blob);
 }
 

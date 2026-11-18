@@ -269,16 +269,9 @@ impl BodyMixin for Response {
     fn get_body_value(&self) -> &mut BodyValue {
         Response::get_body_value(self)
     }
-    #[inline]
-    fn get_fetch_headers(&self) -> Option<core::ptr::NonNull<FetchHeaders>> {
-        // Opaque C++ handle. Return the raw `*mut`
-        // directly (via `HeadersRef::as_ptr`) so the provenance is mutable;
-        // going through `as_deref()` would derive it from a `&FetchHeaders`
-        // and make the later `as_mut()` UB under Stacked Borrows.
-        self.init.get().headers.as_ref().map(|h| {
-            core::ptr::NonNull::new(h.as_ptr())
-                .expect("HeadersRef wraps a non-null *mut FetchHeaders")
-        })
+    fn get_content_type_header(&self) -> Option<Utf8Bytes<'_>> {
+        let headers = self.init_mut().headers.as_mut()?;
+        Some(headers.fast_get(HTTPHeaderName::ContentType)?.to_utf8())
     }
     #[inline]
     fn get_form_data_encoding(

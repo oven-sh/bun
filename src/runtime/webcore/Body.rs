@@ -30,6 +30,31 @@ fn set_blob_content_type(blob: &Blob, mime_type: MimeType) {
         .set(blob::BlobContentType::from(mime_type));
 }
 
+/// What a `blob()` result gets when its Request or Response has no `Content-Type`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum UntypedBlob {
+    /// `text/plain;charset=utf-8`, unless the Blob has a type of its own or is empty.
+    IsText,
+    Unchanged,
+}
+
+/// The one place a `blob()` result takes its type from the `Content-Type` of its
+/// Request or Response: https://fetch.spec.whatwg.org/#concept-body-mime-type
+fn set_blob_type_from_content_type(
+    blob: &Blob,
+    content_type: Option<&[u8]>,
+    otherwise: UntypedBlob,
+) {
+    if let Some(content_type) = content_type {
+        set_blob_content_type(blob, MimeType::init(content_type));
+    } else if otherwise == UntypedBlob::IsText
+        && !blob.content_type_was_set.get()
+        && blob.store.get().is_some()
+    {
+        set_blob_content_type(blob, bun_http_types::MimeType::TEXT);
+    }
+}
+
 bun_core::declare_scope!(BodyValue, visible);
 bun_core::declare_scope!(BodyMixin, visible);
 
@@ -978,22 +1003,18 @@ impl Value {
                     }
                     Action::None | Action::GetBlob => {
                         let blob = new.use_();
-                        if let Some(fetch_headers) = headers {
-                            // `headers` is a live C++ FetchHeaders handle;
-                            // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
-                            let fetch_headers =
-                                bun_opaque::opaque_deref_mut(fetch_headers.as_ptr());
-                            if let Some(content_type) =
-                                fetch_headers.fast_get(HTTPHeaderName::ContentType)
-                            {
-                                let content_slice = content_type.to_utf8();
-                                let mime_type = MimeType::init(content_slice.slice());
-                                set_blob_content_type(&blob, mime_type);
-                            }
-                        }
-                        if !blob.content_type_was_set.get() && blob.store.get().is_some() {
-                            set_blob_content_type(&blob, bun_http_types::MimeType::TEXT);
-                        }
+                        let content_type = headers
+                            .and_then(|headers| {
+                                // `FetchHeaders` is an opaque ZST FFI handle (S008): safe deref.
+                                bun_opaque::opaque_deref_mut(headers.as_ptr())
+                                    .fast_get(HTTPHeaderName::ContentType)
+                            })
+                            .map(|value| value.to_utf8());
+                        set_blob_type_from_content_type(
+                            &blob,
+                            content_type.as_ref().map(|value| value.slice()),
+                            UntypedBlob::IsText,
+                        );
                         promise.resolve(cx.global(), blob.into_js(cx.global()))?;
                     }
                 }
@@ -1272,12 +1293,25 @@ pub(crate) fn extract(global_this: &JSGlobalObject, value: JSValue) -> JsResult<
     Ok(Body::new(body_value))
 }
 
+/// `readableStreamToBlob` (BunStreamConsumers.cpp) built `blob` from the body stream of `owner`.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Body__setBlobTypeFromOwner(owner: JSValue, blob: JSValue) {
+    let Some(blob) = blob.as_class_ref::<Blob>() else {
+        return;
+    };
+    if let Some(response) = owner.as_class_ref::<webcore::Response>() {
+        response.set_blob_type(&blob, UntypedBlob::Unchanged);
+    } else if let Some(request) = owner.as_class_ref::<webcore::Request>() {
+        request.set_blob_type(&blob, UntypedBlob::Unchanged);
+    }
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Mixin
 // ────────────────────────────────────────────────────────────────────────────
 
 /// Mixin trait with provided methods.
-/// Implementers supply `get_body_value`, `get_fetch_headers`, `get_form_data_encoding`,
+/// Implementers supply `get_body_value`, `get_content_type_header`, `get_form_data_encoding`,
 /// and optionally override `get_body_readable_stream`.
 pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     /// R-2 interior-mutability boundary: implementors project `&mut Value`
@@ -1286,11 +1320,8 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     /// short and do not hold it across a call that re-enters JS.
     #[allow(clippy::mut_from_ref)]
     fn get_body_value(&self) -> &mut Value;
-    /// `FetchHeaders` is an
-    /// opaque, intrusively-refcounted C++ handle whose accessors take `&mut self`
-    /// (FFI signature is `*mut`). Returning `NonNull` instead of `&FetchHeaders`
-    /// avoids deriving `&mut T` from `&T` at the call sites (UB).
-    fn get_fetch_headers(&self) -> Option<NonNull<FetchHeaders>>;
+    /// The `Content-Type` of the header list, which types what `blob()` returns.
+    fn get_content_type_header(&self) -> Option<Utf8Bytes<'_>>;
     fn get_form_data_encoding(&self) -> JsResult<Option<Box<bun_core::form_data::AsyncFormData>>>;
 
     // ────────────────────────────────────────────────────────────────────
@@ -1404,9 +1435,20 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         Ok(cloned)
     }
 
+    fn set_blob_type(&self, blob: &Blob, otherwise: UntypedBlob) {
+        let content_type = self.get_content_type_header();
+        set_blob_type_from_content_type(
+            blob,
+            content_type.as_ref().map(|value| value.slice()),
+            otherwise,
+        );
+    }
+
+    /// `this_value` is empty when a macro reads the body.
     fn read_locked_body(
         &self,
         global_this: &JSGlobalObject,
+        this_value: JSValue,
         action: Action,
         owned_readable: Option<ReadableStream>,
     ) -> JsResult<JSValue> {
@@ -1429,7 +1471,17 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             Action::GetArrayBuffer => global_this.readable_stream_to_array_buffer(readable.value),
             Action::GetBytes => global_this.readable_stream_to_bytes(readable.value),
             Action::GetText => global_this.readable_stream_to_text(readable.value),
-            Action::GetBlob => global_this.readable_stream_to_blob(readable.value),
+            Action::GetBlob => {
+                // The reaction that builds the Blob holds the owner and types the Blob from it
+                // (`Body__setBlobTypeFromOwner`).
+                let owner = if this_value.is_empty() {
+                    self.js_ref()
+                } else {
+                    Some(this_value)
+                };
+                global_this
+                    .readable_stream_to_blob(readable.value, owner.unwrap_or(JSValue::UNDEFINED))
+            }
             Action::GetFormData(form_data) => {
                 let encoding_js = match &form_data.take().unwrap().encoding {
                     bun_core::form_data::Encoding::Multipart(multipart) => {
@@ -1470,7 +1522,12 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 }
                 let value = self.get_body_value();
                 if matches!(value, Value::Locked(_)) {
-                    return self.read_locked_body(global_object, Action::GetText, Some(readable));
+                    return self.read_locked_body(
+                        global_object,
+                        this_value.to_js(),
+                        Action::GetText,
+                        Some(readable),
+                    );
                 }
             }
             let value = self.get_body_value();
@@ -1480,7 +1537,12 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 {
                     return Ok(handle_body_already_used(global_object));
                 }
-                return self.read_locked_body(global_object, Action::GetText, None);
+                return self.read_locked_body(
+                    global_object,
+                    this_value.to_js(),
+                    Action::GetText,
+                    None,
+                );
             }
         }
 
@@ -1606,7 +1668,12 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
                 if matches!(value, Value::Locked(_)) {
-                    return self.read_locked_body(global_object, Action::GetJSON, Some(readable));
+                    return self.read_locked_body(
+                        global_object,
+                        this_value.to_js(),
+                        Action::GetJSON,
+                        Some(readable),
+                    );
                 }
             }
             let value = self.get_body_value();
@@ -1620,7 +1687,12 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
                 if matches!(value, Value::Locked(_)) {
-                    return self.read_locked_body(global_object, Action::GetJSON, None);
+                    return self.read_locked_body(
+                        global_object,
+                        this_value.to_js(),
+                        Action::GetJSON,
+                        None,
+                    );
                 }
             }
         }
@@ -1657,6 +1729,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 if matches!(value, Value::Locked(_)) {
                     return self.read_locked_body(
                         global_object,
+                        this_value.to_js(),
                         Action::GetArrayBuffer,
                         Some(readable),
                     );
@@ -1672,7 +1745,12 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
                 if matches!(value, Value::Locked(_)) {
-                    return self.read_locked_body(global_object, Action::GetArrayBuffer, None);
+                    return self.read_locked_body(
+                        global_object,
+                        this_value.to_js(),
+                        Action::GetArrayBuffer,
+                        None,
+                    );
                 }
             }
         }
@@ -1705,7 +1783,12 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
                 if matches!(value, Value::Locked(_)) {
-                    return self.read_locked_body(global_object, Action::GetBytes, Some(readable));
+                    return self.read_locked_body(
+                        global_object,
+                        this_value.to_js(),
+                        Action::GetBytes,
+                        Some(readable),
+                    );
                 }
             }
             let value = self.get_body_value();
@@ -1718,7 +1801,12 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
                 if matches!(value, Value::Locked(_)) {
-                    return self.read_locked_body(global_object, Action::GetBytes, None);
+                    return self.read_locked_body(
+                        global_object,
+                        this_value.to_js(),
+                        Action::GetBytes,
+                        None,
+                    );
                 }
             }
         }
@@ -1782,6 +1870,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         if matches!(value, Value::Locked(_)) {
             return self.read_locked_body(
                 global_object,
+                this_value.to_js(),
                 Action::GetFormData(Some(encoder)),
                 self.get_body_readable_stream(),
             );
@@ -1850,7 +1939,12 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 }
                 value.to_blob_if_possible();
                 if matches!(value, Value::Locked(_)) {
-                    return self.read_locked_body(global_object, Action::GetBlob, Some(readable));
+                    return self.read_locked_body(
+                        global_object,
+                        this_value,
+                        Action::GetBlob,
+                        Some(readable),
+                    );
                 }
             }
             let value = self.get_body_value();
@@ -1865,7 +1959,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
                 if matches!(value, Value::Locked(_)) {
-                    return self.read_locked_body(global_object, Action::GetBlob, None);
+                    return self.read_locked_body(global_object, this_value, Action::GetBlob, None);
                 }
             }
         }
@@ -1873,19 +1967,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         let value = self.get_body_value();
         let blob = value.use_();
         if blob.content_type().is_empty() {
-            if let Some(fetch_headers) = BodyMixin::get_fetch_headers(self) {
-                // `fetch_headers` is a live C++ FetchHeaders handle;
-                // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
-                let fetch_headers = bun_opaque::opaque_deref_mut(fetch_headers.as_ptr());
-                if let Some(content_type) = fetch_headers.fast_get(HTTPHeaderName::ContentType) {
-                    let content_slice = content_type.to_utf8();
-                    let mime_type = MimeType::init(content_slice.slice());
-                    set_blob_content_type(&blob, mime_type);
-                }
-            }
-            if !blob.content_type_was_set.get() && blob.store.get().is_some() {
-                set_blob_content_type(&blob, bun_http_types::MimeType::TEXT);
-            }
+            self.set_blob_type(&blob, UntypedBlob::IsText);
         }
         Ok(JSPromise::resolved_promise_value(
             global_object,

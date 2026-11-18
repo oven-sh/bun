@@ -352,6 +352,170 @@ for (const { body, fn } of bodyTypes) {
         });
       });
     });
+    // https://fetch.spec.whatwg.org/#concept-body-mime-type: the type of what blob()
+    // returns is the Content-Type header, also when the body is a stream that has to be read.
+    describe("blob() of a ReadableStream body", () => {
+      const bytes = (text: string) => new TextEncoder().encode(text);
+      const streams: Record<string, () => ReadableStream> = {
+        "start()": () =>
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(bytes("a"));
+              controller.enqueue(bytes("bc"));
+              controller.close();
+            },
+          }),
+        "async pull()": () =>
+          new ReadableStream({
+            async pull(controller) {
+              await Promise.resolve();
+              controller.enqueue(bytes("abc"));
+              controller.close();
+            },
+          }),
+        "direct": () =>
+          new ReadableStream({
+            type: "direct",
+            async pull(controller) {
+              controller.write("a");
+              await controller.flush();
+              controller.write("bc");
+              controller.close();
+            },
+          } as any),
+        "TransformStream": () => {
+          const { readable, writable } = new TransformStream();
+          const writer = writable.getWriter();
+          writer.write(bytes("abc"));
+          writer.close();
+          return readable;
+        },
+        "async generator": () =>
+          ReadableStream.from(
+            (async function* () {
+              yield bytes("a");
+              yield bytes("bc");
+            })(),
+          ),
+      };
+      const each = <T>(value: T) => Object.fromEntries(Object.keys(streams).map(name => [name, value]));
+      const read = async (subject: Request | Response) => {
+        const blob = await subject.blob();
+        return [blob.type, await blob.text()];
+      };
+      // A stream that holds its last chunk back until `finish()`.
+      const held = () => {
+        const gate = Promise.withResolvers<void>();
+        const stream = new ReadableStream({
+          async pull(controller) {
+            controller.enqueue(bytes("ab"));
+            await gate.promise;
+            controller.enqueue(bytes("c"));
+            controller.close();
+          },
+        });
+        return { stream, finish: gate.resolve };
+      };
+
+      test("has the type of the Content-Type header", async () => {
+        const results: Record<string, string[]> = {};
+        for (const [name, stream] of Object.entries(streams)) {
+          results[name] = await read(fn(stream(), { "content-type": "image/jpeg" }));
+        }
+        expect(results).toEqual(each(["image/jpeg", "abc"]));
+      });
+
+      test("has no type without a Content-Type header", async () => {
+        const results: Record<string, string[]> = {};
+        for (const [name, stream] of Object.entries(streams)) {
+          results[name] = await read(fn(stream()));
+        }
+        expect(results).toEqual(each(["", "abc"]));
+      });
+
+      test("reads the header when the stream ends", async () => {
+        const set = fn(streams["start()"](), { "content-type": "image/jpeg" });
+        set.headers.set("content-type", "image/png");
+
+        const removed = fn(streams["start()"](), { "content-type": "image/jpeg" });
+        removed.headers.delete("content-type");
+
+        const late = held();
+        const changedWhileReading = fn(late.stream, { "content-type": "image/jpeg" });
+        const pending = read(changedWhileReading);
+        changedWhileReading.headers.set("content-type", "image/png");
+        late.finish();
+
+        expect({
+          "set before blob()": await read(set),
+          "deleted before blob()": await read(removed),
+          "set while blob() reads": await pending,
+        }).toEqual({
+          "set before blob()": ["image/png", "abc"],
+          "deleted before blob()": ["", "abc"],
+          "set while blob() reads": ["image/png", "abc"],
+        });
+      });
+
+      test("each clone() takes its own header", async () => {
+        const original = fn(streams["async pull()"](), { "content-type": "image/jpeg" });
+        const clone = original.clone();
+        clone.headers.set("content-type", "image/png");
+        expect(await Promise.all([read(original), read(clone)])).toEqual([
+          ["image/jpeg", "abc"],
+          ["image/png", "abc"],
+        ]);
+      });
+
+      test("a stream that moves to another body takes that body's header", async () => {
+        const first = fn(streams["start()"](), { "content-type": "image/jpeg" });
+        expect(await read(fn(first.body, { "content-type": "image/png" }))).toEqual(["image/png", "abc"]);
+      });
+
+      test("a subclass takes the header too", async () => {
+        const headers = { "content-type": "image/jpeg" };
+        const stream = streams["start()"]();
+        const subject =
+          body === Request
+            ? new (class extends Request {})("http://example.com/", { method: "POST", body: stream, headers })
+            : new (class extends Response {})(stream, { headers });
+        expect(await read(subject)).toEqual(["image/jpeg", "abc"]);
+      });
+
+      test("the stream's own readers do not take the header", async () => {
+        const headers = { "content-type": "image/jpeg" };
+        const viaBun = await Bun.readableStreamToBlob(fn(streams["start()"](), headers).body!);
+        const viaStream: Blob = await (fn(streams["start()"](), headers).body as any).blob();
+        const viaNode = await (await import("node:stream/consumers")).blob(fn(streams["start()"](), headers).body!);
+        expect({
+          "Bun.readableStreamToBlob": [viaBun.type, await viaBun.text()],
+          "ReadableStream.prototype.blob": [viaStream.type, await viaStream.text()],
+          "node:stream/consumers": [viaNode.type, await viaNode.text()],
+        }).toEqual({
+          "Bun.readableStreamToBlob": ["", "abc"],
+          "ReadableStream.prototype.blob": ["", "abc"],
+          "node:stream/consumers": ["", "abc"],
+        });
+      });
+
+      test("a stream that fails rejects with its error", async () => {
+        const error = new Error("stream failed");
+        const subject = fn(
+          new ReadableStream({
+            pull(controller) {
+              controller.error(error);
+            },
+          }),
+          { "content-type": "image/jpeg" },
+        );
+        expect(
+          await subject.blob().then(
+            () => "resolved",
+            reason => reason,
+          ),
+        ).toBe(error);
+      });
+    });
     for (const { string, buffer } of utf8) {
       describe("arrayBuffer()", () => {
         test("undefined", async () => {
@@ -2035,5 +2199,203 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
     });
     release();
     expect(await text).toBe("payload");
+  });
+});
+
+// Native code fills these bodies. Once `.body` made a stream of one, blob() reads it
+// through that stream, and the result still takes the Content-Type of its owner.
+describe("blob() of a native body stream has the type of the Content-Type header", () => {
+  test("a fetch() Response whose .body was read, while the body still arrives", async () => {
+    const rest = Promise.withResolvers<void>();
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            async pull(controller) {
+              controller.enqueue(new TextEncoder().encode("ab"));
+              await rest.promise;
+              controller.enqueue(new TextEncoder().encode("c"));
+              controller.close();
+            },
+          }),
+          { headers: { "content-type": "image/jpeg" } },
+        ),
+    });
+    const typed = await fetch(server.url);
+    const changed = await fetch(server.url);
+    expect([typed.body, changed.body]).toEqual([expect.any(ReadableStream), expect.any(ReadableStream)]);
+    const blobs = Promise.all([typed.blob(), changed.blob()]);
+    changed.headers.set("content-type", "image/png");
+    rest.resolve();
+    const [typedBlob, changedBlob] = await blobs;
+    expect([typedBlob.type, await typedBlob.text(), changedBlob.type, await changedBlob.text()]).toEqual([
+      "image/jpeg",
+      "abc",
+      "image/png",
+      "abc",
+    ]);
+  });
+
+  test("a fetch() Response whose body fails rejects with the error of the connection", async () => {
+    const accepted = Promise.withResolvers<Socket>();
+    using listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        data(socket) {
+          socket.write("HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\nContent-Length: 3\r\n\r\nab");
+          accepted.resolve(socket);
+        },
+      },
+    });
+    const response = await fetch(`http://127.0.0.1:${listener.port}/`);
+    expect(response.body).toBeInstanceOf(ReadableStream);
+    const blob = response.blob();
+    (await accepted.promise).end();
+    expect(
+      await blob.then(
+        () => "resolved",
+        reason => reason.code,
+      ),
+    ).toBe("ECONNRESET");
+  });
+
+  test("a Bun.serve request whose .body was read", async () => {
+    const asked = Promise.withResolvers<void>();
+    const read = async (request: Request) => {
+      expect(request.body).toBeInstanceOf(ReadableStream);
+      const pending = request.blob();
+      if (new URL(request.url).pathname === "/held") asked.resolve();
+      const blob = await pending;
+      return Response.json([blob.type, await blob.text()]);
+    };
+    await using server = Bun.serve({
+      port: 0,
+      routes: { "/route": { POST: request => read(request) } },
+      async fetch(request) {
+        const path = new URL(request.url).pathname;
+        if (path === "/headers") expect(request.headers.get("content-type")).toBe("image/jpeg");
+        if (path === "/set") request.headers.set("content-type", "image/png");
+        if (path === "/delete") request.headers.delete("content-type");
+        if (path === "/await") await Promise.resolve();
+        return read(request);
+      },
+    });
+    const post = async (path: string) => {
+      const response = await fetch(new URL(path, server.url), {
+        method: "POST",
+        body: "abc",
+        headers: { "content-type": "image/jpeg" },
+      });
+      return await response.json();
+    };
+    // The body arrives only after the handler asked for the Blob.
+    const held = async () => {
+      const socket = net.connect(server.port, "127.0.0.1");
+      const chunks: Buffer[] = [];
+      socket.on("data", chunk => chunks.push(chunk));
+      const closed = new Promise<void>((resolve, reject) => {
+        socket.once("close", () => resolve());
+        socket.once("error", reject);
+      });
+      socket.write(
+        "POST /held HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Type: image/jpeg\r\nContent-Length: 3\r\n\r\n",
+      );
+      await asked.promise;
+      socket.write("abc");
+      await closed;
+      const response = Buffer.concat(chunks).toString("latin1");
+      return JSON.parse(response.slice(response.indexOf("\r\n\r\n") + 4));
+    };
+    expect({
+      "/untouched": await post("/untouched"),
+      "/headers": await post("/headers"),
+      "/set": await post("/set"),
+      "/delete": await post("/delete"),
+      "/await": await post("/await"),
+      "/route": await post("/route"),
+      "/held": await held(),
+    }).toEqual({
+      "/untouched": ["image/jpeg", "abc"],
+      "/headers": ["image/jpeg", "abc"],
+      "/set": ["image/png", "abc"],
+      "/delete": ["", "abc"],
+      "/await": ["image/jpeg", "abc"],
+      "/route": ["image/jpeg", "abc"],
+      "/held": ["image/jpeg", "abc"],
+    });
+  });
+
+  test("a Bun.serve request with no body, before its headers are read", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const path = new URL(request.url).pathname;
+        if (path === "/set") request.headers.set("content-type", "image/png");
+        if (path === "/delete") request.headers.delete("content-type");
+        const blob = await request.blob();
+        return Response.json([blob.type, blob.size]);
+      },
+    });
+    const post = async (path: string) => {
+      const response = await fetch(new URL(path, server.url), {
+        method: "POST",
+        headers: { "content-type": "image/jpeg" },
+      });
+      return await response.json();
+    };
+    expect({
+      "/untouched": await post("/untouched"),
+      "/set": await post("/set"),
+      "/delete": await post("/delete"),
+    }).toEqual({
+      "/untouched": ["image/jpeg", 0],
+      "/set": ["image/png", 0],
+      "/delete": ["", 0],
+    });
+  });
+
+  test("the stdout of a subprocess", async () => {
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", "process.stdout.write('abc')"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const blob = await new Response(proc.stdout, { headers: { "content-type": "image/jpeg" } }).blob();
+    expect([blob.type, await blob.text(), await proc.exited]).toEqual(["image/jpeg", "abc", 0]);
+  });
+
+  // The stream's read holds the Response until it can type the Blob. Nothing else does.
+  test("a Response whose stream never ends is collected with its stream", async () => {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { heapStats } = require("bun:jsc");
+          const responses = () => {
+            Bun.gc(true);
+            return heapStats().objectTypeCounts.Response ?? 0;
+          };
+          const before = responses();
+          let pending = [];
+          for (let i = 0; i < 2000; i++) {
+            const stream = new ReadableStream({ pull: () => new Promise(() => {}) });
+            pending.push(new Response(stream, { headers: { "content-type": "image/jpeg" } }).blob());
+          }
+          await Promise.resolve();
+          pending = null;
+          const after = responses();
+          console.log(after - before < 200 ? "collected" : "kept " + (after - before));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "collected\n", stderr: "", exitCode: 0 });
   });
 });

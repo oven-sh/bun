@@ -407,13 +407,13 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToJSON(Zig::Global
     RELEASE_AND_RETURN(scope, JSValue::encode(readableStreamToJSON(globalObject, stream)));
 }
 
-extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToBlob(Zig::GlobalObject* globalObject, JSC::EncodedJSValue streamValue)
+extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToBlob(Zig::GlobalObject* globalObject, JSC::EncodedJSValue streamValue, JSC::EncodedJSValue bodyOwner)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* stream = toReadableStream(globalObject, scope, streamValue);
     RETURN_IF_EXCEPTION(scope, {});
-    RELEASE_AND_RETURN(scope, JSValue::encode(readableStreamToBlob(globalObject, stream)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(readableStreamToBlob(globalObject, stream, JSValue::decode(bodyOwner))));
 }
 
 extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToFormData(Zig::GlobalObject* globalObject, JSC::EncodedJSValue streamValue, JSC::EncodedJSValue contentType)

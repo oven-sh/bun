@@ -636,7 +636,8 @@ JSC::JSValue readableStreamToArray(JSC::JSGlobalObject*, JSReadableStream*); // 
 JSC::JSValue readableStreamToArrayBuffer(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — BunStreamConsumers.cpp
 JSC::JSValue readableStreamToBytes(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — BunStreamConsumers.cpp
 JSC::JSValue readableStreamToJSON(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — BunStreamConsumers.cpp
-JSC::JSValue readableStreamToBlob(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — BunStreamConsumers.cpp
+// `bodyOwner`: the Request or Response whose body the stream is. Its Content-Type types the Blob.
+JSC::JSValue readableStreamToBlob(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue bodyOwner = JSC::jsUndefined()); // userJS: yes — BunStreamConsumers.cpp
 JSC::JSValue readableStreamToFormData(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue contentType); // userJS: yes — BunStreamConsumers.cpp
 
 // The buffered fast path: returns the native handle's own .text()/.arrayBuffer()/... promise,
@@ -717,7 +718,7 @@ JSC::EncodedJSValue ZigGlobalObject__readableStreamToArrayBuffer(Zig::GlobalObje
 JSC::EncodedJSValue ZigGlobalObject__readableStreamToBytes(Zig::GlobalObject*, JSC::EncodedJSValue stream); // userJS: yes
 JSC::EncodedJSValue ZigGlobalObject__readableStreamToText(Zig::GlobalObject*, JSC::EncodedJSValue stream); // userJS: yes
 JSC::EncodedJSValue ZigGlobalObject__readableStreamToJSON(Zig::GlobalObject*, JSC::EncodedJSValue stream); // userJS: yes
-JSC::EncodedJSValue ZigGlobalObject__readableStreamToBlob(Zig::GlobalObject*, JSC::EncodedJSValue stream); // userJS: yes
+JSC::EncodedJSValue ZigGlobalObject__readableStreamToBlob(Zig::GlobalObject*, JSC::EncodedJSValue stream, JSC::EncodedJSValue bodyOwner); // userJS: yes
 JSC::EncodedJSValue ZigGlobalObject__readableStreamToFormData(Zig::GlobalObject*, JSC::EncodedJSValue stream, JSC::EncodedJSValue contentType); // userJS: yes
 
 } // extern "C"

@@ -1485,19 +1485,23 @@ fn compare(change: &mut FileChange<'_>, flags: DiffFlags, style: Style) {
             }
         }
     }
-    let nopts = normalize::Options {
-        minify_syntax: flags.minify,
-        dce: false,
-        relayout: true,
-    };
     // Readable JS is compared on the aggressive key and shown as written; minified JS is shown re-printed,
     // so it gets the gentler display print.
     let readable_js = matches!(normalize::kind_for(path), Some(normalize::Kind::Js(_)))
         && !flags.unminify
         && !old.is_some_and(normalize::looks_minified)
         && !new.is_some_and(normalize::looks_minified);
+    let nopts = normalize::Options {
+        minify_syntax: flags.minify,
+        dce: false,
+        relayout: true,
+        source_map: style.pretty,
+    };
     let popts = if readable_js {
-        normalize::Options::KEY
+        normalize::Options {
+            source_map: style.pretty && old.is_some() && new.is_some(),
+            ..normalize::Options::KEY
+        }
     } else {
         nopts
     };
@@ -1505,7 +1509,7 @@ fn compare(change: &mut FileChange<'_>, flags: DiffFlags, style: Style) {
     let (norm_old, norm_new) = match (flags.raw, readable_js, old, new) {
         (true, ..) => (None, None),
         // Both sides of readable JS are keyed together so their locals get lockstep names.
-        (false, true, Some(o), Some(n)) => match normalize::normalize_key_pair(path, o, n) {
+        (false, true, Some(o), Some(n)) => match normalize::normalize_key_pair(path, o, n, popts) {
             Some((ko, kn)) => (Some(ko), Some(kn)),
             None => (
                 normalize::normalize(path, o, popts),
@@ -1573,7 +1577,7 @@ fn compare(change: &mut FileChange<'_>, flags: DiffFlags, style: Style) {
                 normalize::stands_for(path, raw, &shown.text, nopts, renamed.is_some())
             });
             let keys = if js_family && faithful {
-                normalize::normalize_key_pair(path, o, n)
+                normalize::normalize_key_pair(path, o, n, normalize::Options::KEY)
             } else {
                 None
             };

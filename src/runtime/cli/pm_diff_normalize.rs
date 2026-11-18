@@ -14,7 +14,7 @@ pub(crate) struct MapPoint {
 
 pub(crate) struct Normalized {
     pub text: Vec<u8>,
-    /// Every source-map point in printed order (JS only; empty when the printer gave none).
+    /// Every source-map point in printed order. Empty for CSS and JSON, and without `Options::source_map`.
     pub map: Vec<MapPoint>,
     /// `import`/`require` specifiers, in source order, internal/unused ones dropped.
     pub imports: Vec<Vec<u8>>,
@@ -65,6 +65,8 @@ pub(crate) struct Options {
     pub dce: bool,
     /// One declaration / call per line: undo `var a, b, c` and `a(), b()` chains (the un-minified display).
     pub relayout: bool,
+    /// Fill `Normalized::map` (JS only).
+    pub source_map: bool,
 }
 
 impl Options {
@@ -73,7 +75,15 @@ impl Options {
         minify_syntax: true,
         dce: true,
         relayout: false,
+        source_map: true,
     };
+
+    const fn without_source_map(self) -> Options {
+        Options {
+            source_map: false,
+            ..self
+        }
+    }
 }
 
 pub(crate) fn normalize(path: &[u8], bytes: &[u8], options: Options) -> Option<Normalized> {
@@ -142,21 +152,23 @@ pub(crate) fn normalize_minified_pair(
 
 /// Both sides of a readable JS file printed as the comparison key: aggressive options plus every local renamed
 /// in lockstep, so a bundler's `utils` → `utils$1` (or any consistent rename) is not a difference. Never displayed.
+/// `options` are `Options::KEY`, with or without a source map.
 pub(crate) fn normalize_key_pair(
     path: &[u8],
     old: &[u8],
     new: &[u8],
+    options: Options,
 ) -> Option<(Normalized, Normalized)> {
-    key_pair(path, old, new, Options::KEY).map(|(o, n, _)| (o, n))
+    key_pair(path, old, new, [options; 2]).map(|(o, n, _)| (o, n))
 }
 
 /// Returns the two comparison keys and a sorted list of every name in them that was not renamed,
-/// such as the names of globals and exports.
+/// such as the names of globals and exports. The two `options` may differ only in `source_map`.
 fn key_pair(
     path: &[u8],
     old: &[u8],
     new: &[u8],
-    options: Options,
+    options: [Options; 2],
 ) -> Option<(Normalized, Normalized, Vec<Vec<u8>>)> {
     let Some(Kind::Js(loader)) = kind_for(path) else {
         return None;
@@ -168,8 +180,8 @@ fn key_pair(
     let (arena_o, arena_n) = (Arena::new(), Arena::new());
     let source_o = bun_ast::Source::init_path_string(path, old);
     let source_n = bun_ast::Source::init_path_string(path, new);
-    let mut ast_o = parse_js(&arena_o, &source_o, loader, options)?;
-    let mut ast_n = parse_js(&arena_n, &source_n, loader, options)?;
+    let mut ast_o = parse_js(&arena_o, &source_o, loader, options[0])?;
+    let mut ast_n = parse_js(&arena_n, &source_n, loader, options[1])?;
     pin_exports(&mut ast_o);
     pin_exports(&mut ast_n);
     let profiles = [
@@ -190,8 +202,8 @@ fn key_pair(
         }
         namer.taken
     };
-    let o = print_js(&arena_o, ast_o, &source_o, options)?;
-    let n = print_js(&arena_n, ast_n, &source_n, options)?;
+    let o = print_js(&arena_o, ast_o, &source_o, options[0])?;
+    let n = print_js(&arena_n, ast_n, &source_n, options[1])?;
     Some((o, n, as_written))
 }
 
@@ -205,6 +217,7 @@ pub(crate) fn same_program(path: &[u8], old: &[u8], shown: &[u8], removed: &[u32
 }
 
 fn same_key(path: &[u8], old: &[u8], shown: &[u8], removed: &[u32], options: Options) -> bool {
+    let options = [options.without_source_map(), options];
     let Some((old, shown, as_written)) = key_pair(path, old, shown, options) else {
         return false;
     };
@@ -264,9 +277,9 @@ pub(crate) fn stands_for(
     renamed: bool,
 ) -> bool {
     if renamed {
-        return same_key(path, raw, shown, &[], options);
+        return same_key(path, raw, shown, &[], options.without_source_map());
     }
-    let print = |bytes: &[u8]| normalize(path, bytes, options);
+    let print = |bytes: &[u8]| normalize(path, bytes, options.without_source_map());
     matches!((print(raw), print(shown)), (Some(a), Some(b)) if a.text == b.text)
 }
 
@@ -392,15 +405,12 @@ fn print_js<'a>(
         mangled_props: None,
         ..Default::default()
     };
-    bun_js_printer::print_ast::<false, true>(
-        &mut printer,
-        arena,
-        &ast,
-        symbols,
-        source,
-        print_opts,
-    )
-    .ok()?;
+    let print_ast = if options.source_map {
+        bun_js_printer::print_ast::<false, true>
+    } else {
+        bun_js_printer::print_ast::<false, false>
+    };
+    print_ast(&mut printer, arena, &ast, symbols, source, print_opts).ok()?;
     let mut text = printer.ctx.get_written().to_vec();
 
     let mut map = Vec::new();
@@ -448,15 +458,17 @@ fn print_js<'a>(
         for point in &mut map {
             point.gen_line += 1;
         }
-        map.insert(
-            0,
-            MapPoint {
-                gen_line: 0,
-                gen_col: 0,
-                orig_line: 0,
-                orig_col: 0,
-            },
-        );
+        if options.source_map {
+            map.insert(
+                0,
+                MapPoint {
+                    gen_line: 0,
+                    gen_col: 0,
+                    orig_line: 0,
+                    orig_col: 0,
+                },
+            );
+        }
     }
     Some(Normalized {
         text,

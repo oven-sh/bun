@@ -2958,7 +2958,12 @@ mod posix_impl {
         {
             // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
             // valid NUL-terminated C string.
-            unsafe { libc::faccessat(dir.native(), sub.as_ptr(), libc::F_OK, 0) == 0 }
+            while unsafe { libc::faccessat(dir.native(), sub.as_ptr(), libc::F_OK, 0) } != 0 {
+                if last_errno() != libc::EINTR {
+                    return false;
+                }
+            }
+            true
         }
     }
     /// Calls extern C `is_executable_file` (c-bindings.cpp:72-89) via FFI.

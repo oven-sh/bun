@@ -92,7 +92,11 @@ extern "C" bool is_executable_file(const char* path)
 {
 #if defined(O_EXEC) && !OS(LINUX)
     // musl defines O_EXEC as O_PATH, which opens any file.
-    return !!Bun::OwnedFd { open(path, O_EXEC | O_CLOEXEC | O_NONBLOCK | O_NOCTTY, 0) };
+    int fd;
+    do {
+        fd = open(path, O_EXEC | O_CLOEXEC | O_NONBLOCK | O_NOCTTY, 0);
+    } while (fd < 0 && errno == EINTR);
+    return !!Bun::OwnedFd { fd };
 #endif // defined(O_EXEC) && !OS(LINUX)
 
     struct stat st;

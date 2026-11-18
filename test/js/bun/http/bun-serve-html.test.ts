@@ -26,6 +26,8 @@ test.concurrent.each([true, false])("a served HTML module must be executable (de
     "plain.tsx": "/** @jsxRuntime preserve */\nconsole.log('plain');\n",
     "broken.html": '<script type="module" src="./broken.tsx"></script>',
     "broken.tsx": "/** @jsxRuntime preserve */\nconsole.log(<div />);\n",
+    "node_modules/react/jsx-runtime.js": "export const jsx = () => null;",
+    "node_modules/react/jsx-dev-runtime.js": "export const jsxDEV = () => null;",
     "server.ts": `
       import plain from "./plain.html";
       import broken from "./broken.html";

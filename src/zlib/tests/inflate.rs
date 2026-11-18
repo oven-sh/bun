@@ -1274,18 +1274,6 @@ fn a_period_that_a_stored_block_has_broken_is_over() {
 }
 
 #[test]
-fn a_period_that_goes_on_in_the_next_block_comes_last_in_the_checksum() {
-    let mut raw = Writer::default();
-    raw.fixed(false).literals(b"abc").literals(&[7; 300]);
-    raw.end_block().fixed(true).copy(258, 1).end_block();
-    let raw = raw.finish();
-    let stream = in_zlib(&raw, &plain::inflate(&raw, &[]).bytes, None);
-    let mut inflater = Inflater::new(Container::Zlib);
-    let status = inflater.inflate_to_vec(&mut &stream[..], &mut Vec::with_capacity(999), 999);
-    assert_eq!(status, Ok(Status::StreamEnd));
-}
-
-#[test]
 fn the_checksum_has_all_blocks_wherever_the_room_gets_short() {
     let plain = Random::new(15).bytes(620);
     let lengths = [vec![8; 255], vec![9; 2]].concat();
@@ -1301,6 +1289,225 @@ fn the_checksum_has_all_blocks_wherever_the_room_gets_short() {
                 let status = inflater.inflate_to_vec(&mut &stream[..], &mut out, max);
                 assert!(status == Ok(Status::StreamEnd) && out == plain);
             }
+        }
+    }
+}
+
+#[test]
+fn the_longest_match_may_follow_long_literals() {
+    // One code of each length, and two of the longest.
+    let chain = |symbols: &[usize], alphabet: usize| {
+        let mut lengths = vec![0; alphabet];
+        (1..)
+            .zip(symbols)
+            .for_each(|(bits, &it)| lengths[it] = bits.min(15));
+        lengths
+    };
+    let literals = chain(
+        &[0, 1, 2, 3, 4, 5, 6, 7, 8, 256, 9, 10, 11, 12, 284, 13],
+        286,
+    );
+    let distances = chain(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 29, 28], 30);
+    let mut stream = Writer::default();
+    stream.dynamic(true, &literals, &distances);
+    for (first, second) in (0..14).flat_map(|it| (0..14).map(move |other| (it, other))) {
+        stream
+            .literals(&[first, second])
+            .copy(257, WINDOW_SIZE)
+            .literals(&[second]);
+        stream.copy(250, 20_000);
+    }
+    let dictionary = Random::new(16).bytes(WINDOW_SIZE);
+    check(
+        &stream.end_block().finish(),
+        &dictionary,
+        &mut Random::new(1),
+    );
+}
+
+#[test]
+fn what_the_window_has_put_together_comes_first() {
+    let plain = Random::new(17).bytes(600);
+    for pending in 1..4 {
+        let (stored, rest) = plain[9..].split_at(256 - pending);
+        let mut raw = Writer::default();
+        raw.stored(false, &plain[..9]).stored(false, stored);
+        raw.fixed(false).literals(&rest[..pending]).end_block();
+        let raw = raw
+            .fixed(true)
+            .literals(&rest[pending..])
+            .end_block()
+            .finish();
+        let stream = [&[0x08, 0x1d], &in_zlib(&raw, &plain, None)[2..]].concat();
+        let (mut inflater, mut out) = (Inflater::new(Container::Zlib), Vec::with_capacity(99_999));
+        let (mut first, mut second) = stream.split_at(2 + 5 + 9);
+        inflater.inflate_to_vec(&mut first, &mut out, 9).unwrap();
+        let status = inflater.inflate_to_vec(&mut second, &mut out, usize::MAX);
+        assert!(status == Ok(Status::StreamEnd) && out == plain);
+    }
+}
+
+#[test]
+fn only_the_end_of_a_long_dictionary_is_within_reach() {
+    let dictionary = Random::new(18).bytes(700);
+    for (distance, end) in [
+        (512, None),
+        (513, Some(End::Damaged(Damage::DistanceTooFarBack))),
+    ] {
+        let stream = Writer::default()
+            .fixed(true)
+            .copy(9, distance)
+            .end_block()
+            .finish();
+        let mut inflater = Inflater::with_window_bits(Container::Raw, 9).unwrap();
+        inflater.set_dictionary(&dictionary).unwrap();
+        let result = run(&mut inflater, &stream, false, || (99, 99));
+        assert_eq!(result.end, end.unwrap_or(End::Stream(stream.len())));
+        assert!(dictionary[700 - 512..].starts_with(&result.bytes));
+    }
+}
+
+#[test]
+fn a_period_that_goes_on_in_the_next_block_comes_last_in_the_checksum() {
+    let plain = [&b"x"[..], &[7; 1 + 258 * 5]].concat();
+    let mut raw = Writer::default();
+    raw.fixed(false)
+        .literals(&plain[..2])
+        .copy(258, 1)
+        .copy(258, 1)
+        .end_block();
+    raw.fixed(true).copy(258, 1).copy(258, 1).copy(258, 1);
+    let raw = raw.end_block().finish();
+    for stream in [in_zlib(&raw, &plain, None), in_gzip(&raw, &plain)] {
+        let mut inflater = Inflater::new(Container::ZlibOrGzip);
+        let result = run(&mut inflater, &stream, false, || (999, 9999));
+        assert!(result.end == End::Stream(stream.len()) && result.bytes == plain);
+    }
+}
+
+#[test]
+fn a_match_that_is_complete_need_not_stay_within_reach() {
+    let mut first = Writer::default();
+    first
+        .fixed(true)
+        .literals(&Random::new(19).bytes(400))
+        .copy(9, 400);
+    let stream = first.literals(&[0; 9]).end_block().finish();
+    let mut inflater = Inflater::with_window_bits(Container::Raw, 8).unwrap();
+    let (mut first, rest) = stream.split_at(stream.len() - 9);
+    let (bytes, _) = step(&mut inflater, &mut first, 999, false);
+    assert_eq!(bytes.len(), 409);
+    let result = run(&mut inflater, rest, false, || (9, 999));
+    assert_eq!((result.bytes, result.end), (vec![0; 9], End::Stream(9)));
+}
+
+#[test]
+fn stored_bytes_may_follow_less_than_a_window() {
+    let bytes = Random::new(20).bytes(25_000);
+    let pieces = [
+        Writer::default().stored(false, &bytes[..9000]).finish(),
+        Writer::default().stored(false, &bytes[9000..]).finish(),
+        Writer::default()
+            .fixed(true)
+            .copy(9, 1 << 14)
+            .end_block()
+            .finish(),
+    ];
+    let (stream, mut lens) = (pieces.concat(), pieces.iter().map(Vec::len));
+    let mut inflater = Inflater::with_window_bits(Container::Raw, 14).unwrap();
+    let result = run(&mut inflater, &stream, false, || {
+        (lens.next().unwrap(), 99_999)
+    });
+    assert_eq!(result.end, End::Stream(stream.len()));
+    assert!(result.bytes == plain::inflate(&stream, &[]).bytes);
+}
+
+#[test]
+fn symbol_16_repeats_zeros_too() {
+    let mut stream = Writer::default();
+    stream.put(1 | 2 << 1, 3).put(0, 5).put(0, 5).put(18 - 4, 4);
+    for symbol in &plain::CODE_LENGTH_ORDER[..18] {
+        stream.put(
+            if [1, 16, 17, 18].contains(symbol) {
+                2
+            } else {
+                0
+            },
+            3,
+        );
+    }
+    let (one, previous, few_zeros, zeros) = (0b00, 0b10, 0b01, 0b11);
+    for (first, second) in [
+        ((few_zeros, 7, 3), (zeros, 127, 7)),
+        ((zeros, 127, 7), (few_zeros, 7, 3)),
+    ] {
+        let mut stream = stream.clone();
+        stream.put(one, 2);
+        for (symbol, extra, bits) in [first, (previous, 3, 2), second, (previous, 0, 2)] {
+            stream.put(symbol, 2).put(extra, bits);
+        }
+        stream.put(zeros, 2).put(98 - 11, 7).put(one, 2).put(one, 2);
+        let stream = stream.put(0b100, 3).finish();
+        assert_eq!(plain::inflate(&stream, &[]).bytes, [0, 0]);
+        check(&stream, &[], &mut Random::new(1));
+    }
+}
+
+#[test]
+fn the_fields_of_a_gzip_header_may_have_zeros_and_be_cut_anywhere() {
+    let raw = Writer::default().stored(true, b"abc").finish();
+    let trailer = &in_gzip(&raw, b"abc")[48..];
+    let stream = [b"\x1f\x8b\x08\x0c123456\x05\0a\0b\0cname\0", trailer].concat();
+    let without_extra = [b"\x1f\x8b\x08\x08123456n\0", trailer].concat();
+    for stream in [stream, without_extra] {
+        for len in 1..stream.len() {
+            let result = run(&mut Inflater::new(Container::Gzip), &stream, false, || {
+                (len, 9)
+            });
+            assert_eq!(
+                (&result.bytes[..], result.end),
+                (&b"abc"[..], End::Stream(stream.len()))
+            );
+        }
+    }
+}
+
+#[test]
+fn a_literal_that_waits_for_room_has_no_distance() {
+    let mut lengths = vec![0; 265];
+    (1..)
+        .zip([0, 1, 2, 3, 4, 5, 6, 7, 264, 8])
+        .for_each(|(bits, it)| lengths[it] = bits);
+    lengths[256] = 10;
+    let mut distances = vec![0; 18];
+    (distances[0], distances[17]) = (1, 1);
+    let mut stream = Writer::default();
+    stream.stored(false, &Random::new(21).bytes(400));
+    stream.dynamic(true, &lengths, &distances).copy(10, 400);
+    let stream = stream.literals(&[0; 400]).end_block().finish();
+    for room in 410..450 {
+        let mut inflater = Inflater::with_window_bits(Container::Raw, 8).unwrap();
+        let result = run(&mut inflater, &stream, false, || (stream.len(), room));
+        assert_eq!(result.end, End::Stream(stream.len()), "{room}");
+        assert!(result.bytes == plain::inflate(&stream, &[]).bytes);
+    }
+}
+
+#[test]
+fn what_comes_before_the_last_period_may_differ_anywhere() {
+    for period in [1, 3, 128, 200, 256, 300] {
+        for odd in 0..600 {
+            let mut start: Vec<u8> = (0..600).map(|at| (at % period % 251) as u8).collect();
+            start[odd] = 255;
+            let mut stream = Writer::default();
+            stream.fixed(true).literals(&start);
+            (0..3).for_each(|_| _ = stream.copy(258, period));
+            let stream = stream.end_block().finish();
+            // So that a step ends in front of the matches.
+            let mut out = Vec::with_capacity(start.len() + SPARE_CAPACITY - 1);
+            let status = raw_with(&[]).inflate_to_vec(&mut &stream[..], &mut out, usize::MAX);
+            assert_eq!(status, Ok(Status::StreamEnd));
+            assert!(out == plain::inflate(&stream, &[]).bytes, "{period} {odd}");
         }
     }
 }

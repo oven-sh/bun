@@ -77,7 +77,7 @@ fn copy_cells<T: Copy>(
     }
 }
 
-/// `from` starts `distance` bytes in front of `to`, or does not overlap it. May write up to 31 bytes too many.
+/// `from` starts `distance` bytes in front of `to`, or does not overlap it. May write up to 32 bytes too many.
 /// Something will soon be written `next_offset` bytes behind the start of `to`.
 #[inline(always)]
 pub fn copy_match(from: &Span, to: &Span, distance: usize, len: usize, next_offset: Option<usize>) {
@@ -169,6 +169,7 @@ mod tests {
     /// Looks at all that the kernel loads, and leaves nothing usable behind `len`.
     #[unsafe(no_mangle)]
     unsafe extern "C" fn highway_repeat(from: *const u8, to: *mut u8, period: usize, len: usize) {
+        assert!((1..CHUNK).contains(&period) && (1..=MAX_LEN).contains(&len));
         // SAFETY: the promises that `copy_cells()` makes.
         let (from, to) = unsafe {
             (

@@ -2,7 +2,7 @@
 
 use crate::plain::{CODE_LENGTH_ORDER, DISTANCES, LENGTHS, fixed_lengths};
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct Writer {
     bytes: Vec<u8>,
     bits: usize,

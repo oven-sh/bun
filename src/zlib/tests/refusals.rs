@@ -2,6 +2,7 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::fmt::Debug;
 
+use bun_core::vec::BorrowedBuf;
 use bun_zlib::deflate::{self, Flush, compress};
 use bun_zlib::inflate::{Container, SPARE_CAPACITY, Status};
 use bun_zlib::{Deflater, Error, Inflater, Result};
@@ -283,9 +284,12 @@ fn stored_and_fixed_blocks_wait_without_tables() {
 
 #[test]
 fn short_or_stored_messages_do_not_take_the_memory_for_long_ones() {
-    for (window_bits, level, len, piece) in
-        [(9, 0, 5000, 450), (9, 1, 1500, 9999), (14, 0, 60_000, 8000)]
-    {
+    for (window_bits, level, len, piece) in [
+        (9, 0, 5000, 450),
+        (9, 1, 1500, 9999),
+        (14, 0, 60_000, 8000),
+        (14, 0, 60_000, 9000),
+    ] {
         let stream = raw(&Random::new(4).bytes(len), level, 8);
         let mut inflater = Inflater::with_window_bits(Container::Raw, window_bits).unwrap();
         let mut out = Vec::with_capacity(99_999);
@@ -453,11 +457,25 @@ fn refused_memory_is_an_error_where_a_small_window_needs_more() {
         let mut stream = Writer::default();
         stream.stored(false, &bytes[..len]).fixed(true).copy(9, len);
         let stream = stream.end_block().finish();
+        let expected = [&bytes[..len], &bytes[..9]].concat();
         refuse_each_allocation(|| {
-            let (mut inflater, mut out) =
-                (Inflater::with_window_bits(Container::Raw, 9)?, Vec::new());
-            inflater.inflate_to_vec(&mut &stream[..], &mut out, usize::MAX)?;
-            Ok(out)
+            let mut room = [0; 3200];
+            let mut out = BorrowedBuf::from(&mut room[..]);
+            let mut inflater = Inflater::with_window_bits(Container::Raw, 9)?;
+            let status = inflater.inflate(&mut &stream[..], out.unfilled())?;
+            assert!(status == Status::StreamEnd && out.filled() == expected);
+            Ok(())
         });
     }
+}
+
+#[test]
+fn spare_capacity_is_enough_behind_the_last_block_too() {
+    let mut stream = Writer::default();
+    stream.fixed(false).literals(&[7; 900]).end_block();
+    let stream = stream.fixed(true).end_block().finish();
+    let mut out = Vec::with_capacity(900 + SPARE_CAPACITY);
+    let status = Inflater::new(Container::Raw).inflate_to_vec(&mut &stream[..], &mut out, 9999);
+    assert!(status == Ok(Status::StreamEnd) && out == [7; 900]);
+    assert_eq!(out.capacity(), 900 + SPARE_CAPACITY);
 }

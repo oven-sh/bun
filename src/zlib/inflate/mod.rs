@@ -794,21 +794,22 @@ impl Inflater {
             self.hand_out_pending(out);
         }
         let tables = current_tables(&self.dynamic, fixed).ok_or(Error::Internal)?;
-        let mut is_long_block = false;
+        // Not before a step has brought the checksum up to date, nor behind periods that have ended, as many are short.
+        let mut looks_for_periods = false;
         while let (room @ SLACK.., written) = (out.room(), out.len())
             && let Some(vec) = out.target.vec()
         {
             let (start, history) = (vec.len(), written.min(self.max_distance));
-            let result = if is_long_block
+            let result = if looks_for_periods
                 && let Some(repeated) = LongestMatch::peek(tables, bits)
                 && repeated.distance <= self.max_distance
                 && let Some(periods_len) =
                     last_periods_len(vec.split_at(start - written).1, repeated.distance)
             {
-                // As a step of this block came before.
                 debug_assert_eq!(out.unchecked, 0);
                 let len = repeated.take_all(bits, 0, room - MAX_MATCH_LEN);
                 append_periods(vec, repeated.distance, periods_len, len, &mut self.checksum);
+                looks_for_periods = len > room - MAX_MATCH_LEN;
                 Ok(None)
             } else {
                 let reach = Reach {
@@ -819,6 +820,7 @@ impl Inflater {
                 let distance = Cell::from_mut(&mut self.pending_distance);
                 let result = decode_step(tables, bits, vec, room.min(STEP), reach, distance);
                 out.unchecked += vec.len() - start;
+                looks_for_periods = true;
                 result
             };
             out.unrecorded += vec.len() - start;
@@ -829,7 +831,6 @@ impl Inflater {
             if status.is_some() {
                 return Ok(status);
             }
-            is_long_block = true;
             if out.room() < SLACK {
                 out.target.grow_early(bits.rest.len());
             }

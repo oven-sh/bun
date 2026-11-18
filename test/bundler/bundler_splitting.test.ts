@@ -597,12 +597,7 @@ describe("bundler", () => {
     outdir: "/out",
     onAfterBundle(api) {
       const outputs = jsOutputsOf(api);
-      expect(outputs).toEqual([
-        "dynamic.js",
-        "static.js",
-        hashedChunk("styles.module"),
-        hashedChunk("styles.module"),
-      ]);
+      expect(outputs).toEqual(["dynamic.js", "static.js", hashedChunk("styles.module"), hashedChunk("styles.module")]);
       const chunk = api.readFile("/out/dynamic.js").match(/import\("\.\/(styles\.module-[a-z0-9]{8}\.js)"\)/)![1];
       const shared = outputs.find(file => file.startsWith("styles.module-") && file !== chunk)!;
       expect(api.readFile("/out/static.js")).toContain(`from "./${shared}";`);
@@ -897,10 +892,20 @@ describe("bundler", () => {
   // A bare import does not, and neither does an import from a package that has no side effects. b.js prints no
   // class names in any of them.
   for (const [name, other, shared, chunk] of [
-    ["UnusedDefaultImportNextToReaderOfCSSModule", `import styles from './shared.module.css';`, "./shared.module.css", "shared.module"],
+    [
+      "UnusedDefaultImportNextToReaderOfCSSModule",
+      `import styles from './shared.module.css';`,
+      "./shared.module.css",
+      "shared.module",
+    ],
     ["UnusedDefaultImportNextToReaderOfJSON", `import styles from './shared.json';`, "./shared.json", "a"],
     ["BareImportNextToReaderOfCSSModule", `import './shared.module.css';`, "./shared.module.css", undefined],
-    ["UnusedDefaultImportNextToReaderOfCSSModuleWithoutSideEffects", `import styles from 'lib/x.module.css';`, "lib/x.module.css", undefined],
+    [
+      "UnusedDefaultImportNextToReaderOfCSSModuleWithoutSideEffects",
+      `import styles from 'lib/x.module.css';`,
+      "lib/x.module.css",
+      undefined,
+    ],
   ] as const) {
     itBundled(`splitting/${name}`, {
       files: {

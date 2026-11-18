@@ -982,8 +982,8 @@ impl ChunkLayout<'_, '_> {
             Section::ClassNames => &mut self.class_names,
             Section::Files => &mut self.part_ranges,
         };
-        let ends_range = matches!(section, Section::Files)
-            && core::mem::take(&mut self.ends_range_of_files);
+        let ends_range =
+            matches!(section, Section::Files) && core::mem::take(&mut self.ends_range_of_files);
         if let Some(last_range) = ranges.last_mut()
             && !ends_range
         {
@@ -1013,7 +1013,12 @@ impl ChunkLayout<'_, '_> {
             self.c.graph.meta.items_flags()[source_index as usize].wrap == Wrap::None;
         // The dev server format takes one range per file.
         let stylesheet = (self.c.options.output_format != OutputFormat::InternalBakeDev)
-            .then(|| self.c.parse_graph().css_js_stubs.stylesheet_of(source_index))
+            .then(|| {
+                self.c
+                    .parse_graph()
+                    .css_js_stubs
+                    .stylesheet_of(source_index)
+            })
             .flatten();
         let is_class_names = stylesheet.is_some();
         if can_be_split {

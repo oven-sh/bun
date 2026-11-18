@@ -283,6 +283,37 @@ describe("bundler", () => {
       }
     }
 
+    for (const backend of ["cli", "api"] as const) {
+      for (const minify of [false, true]) {
+        itBundled(`jsx/PreserveLessThanDelimiter-${backend}-${minify}`, {
+          // esbuild 0.18 merges adjacent `<` tokens when minifying preserved JSX.
+          skipOnEsbuild: minify,
+          files: {
+            "/in.jsx": `
+              const value = 1;
+              console.log(value < <div />, value < <div></div>, value < <></>, value << <div />);
+            `,
+          },
+          backend,
+          jsx: { runtime: "preserve" },
+          minifyWhitespace: minify,
+          onAfterBundle(api) {
+            const out = api.readFile("/out.js");
+            const { code } = transformSync(out, {
+              loader: "jsx",
+              jsxFactory: "globalThis.__jsxPreserveFactory",
+              jsxFragment: "globalThis.__jsxPreserveFragment",
+            });
+            api.writeFile(
+              "/out.js",
+              `globalThis.__jsxPreserveFactory = () => 2; globalThis.__jsxPreserveFragment = null;\n${code}`,
+            );
+          },
+          run: { stdout: "true true true 4" },
+        });
+      }
+    }
+
     describe.each(["cli", "api", "bunfig"] as const)("tsconfig preserve precedence (%s)", source => {
       describe.each(["react", "react-jsx", "react-jsxdev"])("tsconfig jsx=%s", jsx => {
         itBundled(`jsx/PreserveOverridesTsconfig-${source}-${jsx}`, {

@@ -4693,6 +4693,10 @@ pub(crate) mod __gated_printer {
                     self.print(b'"');
                 }
                 ExprData::EJsxElement(e_) => {
+                    if self.prev_op_end == self.writer.written() && self.writer.prev_char() == b'<'
+                    {
+                        self.print(b" ");
+                    }
                     self.add_source_mapping(expr.loc);
                     self.print(b"<");
                     if let Some(tag) = e_.tag {

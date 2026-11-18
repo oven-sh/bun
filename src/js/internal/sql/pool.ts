@@ -815,9 +815,9 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
     this.totalQueries--;
     const reserved = connection.flags & PooledConnectionFlags.reserved;
     if (reserved) {
-      connection.flags &= ~PooledConnectionFlags.reserved;
       // closes a connection whose maxLifetime ran out
       (connection.connection as NativeConnection).unhold();
+      connection.flags &= ~PooledConnectionFlags.reserved;
     }
     if (this.#closeIfDrained() || connection.state !== PooledConnectionState.open) {
       return;

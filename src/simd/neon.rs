@@ -284,7 +284,7 @@ impl<const S: bool> Lanes<i32, 4, S> {
 impl<const S: bool> Lanes<u32, 4, S> {
     #[inline]
     #[target_feature(enable = "neon")]
-    pub fn distances(a: Lanes<u8, 16, S>, b: Lanes<u8, 16, S>) -> Self {
+    pub fn sums_of_4_abs_diffs(a: Lanes<u8, 16, S>, b: Lanes<u8, 16, S>) -> Self {
         Self::new(vpaddlq_u16(vpaddlq_u8(a.abs_diff(b).0.into())))
     }
 }

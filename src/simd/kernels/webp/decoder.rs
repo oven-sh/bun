@@ -659,8 +659,8 @@ mod simd {
             return l.saturating_add(up).saturating_sub(down) + it;
         }
         let [from_l, from_t]: [I32; 2] = [
-            U32::distances(l, tl).bitcast(),
-            U32::distances(t, tl).bitcast(),
+            U32::sums_of_4_abs_diffs(l, tl).bitcast(),
+            U32::sums_of_4_abs_diffs(t, tl).bitcast(),
         ];
         let [with_l, with_t]: [I32; 2] = [(l + it).bitcast(), (t + it).bitcast()];
         from_l.simd_gt(from_t).select(with_l, with_t).bitcast()

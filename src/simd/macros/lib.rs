@@ -380,15 +380,8 @@ pub fn foreach_target(list: TokenStream, item: TokenStream) -> TokenStream {
         for (i, version) in versions.iter().enumerate() {
             let (target, name) = (version.0, version.0.name());
             let mut copy = TokenStream::new();
-            // The dead code is reported by copies that all exports refer to.
-            let reports = match list.is_empty() {
-                true => target == Target::Portable,
-                false => {
-                    target.arch().is_some()
-                        && target.arch() != versions.get(i + 1).and_then(|it| it.0.arch())
-                }
-            };
-            if !reports {
+            // Only the last copy of an architecture reports dead code. An export can leave out the others.
+            if target.arch() == versions.get(i + 1).and_then(|it| it.0.arch()) {
                 copy.extend(parse("#![allow(dead_code)]"));
             }
             // The other copies need `|v| f(v)`: a function with features is no `impl Fn`.

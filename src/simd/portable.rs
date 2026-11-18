@@ -174,9 +174,9 @@ impl<const N: usize, const B: usize> Lanes<i32, N, B> {
 }
 
 impl<const B: usize> Lanes<u32, 4, B> {
-    /// The sum of the absolute differences of each 4 lanes. The second and the last must be zero.
+    /// The second and the last sum must be zero.
     #[inline]
-    pub fn distances(a: Lanes<u8, 16, B>, b: Lanes<u8, 16, B>) -> Self {
+    pub fn sums_of_4_abs_diffs(a: Lanes<u8, 16, B>, b: Lanes<u8, 16, B>) -> Self {
         let pairs: Self = Lanes::<u16, 8, B>::sums_of_2(a.abs_diff(b)).bitcast();
         debug_assert!(pairs[1] | pairs[3] == 0);
         (pairs & 0xFFFF) + (pairs >> 16)

@@ -53,9 +53,9 @@ mod simd {
     /// For a `bool` that comes from memory, LLVM does not find the addition with carry.
     #[inline(always)]
     fn structural([opens, closes, not_anywhere, not_in_tag]: [u64; 4], is_open: &mut u64) -> u64 {
-        let (inside, carry) = opens.carrying_add(!closes, *is_open != 0);
+        let (outside, carry) = opens.carrying_add(!closes, *is_open != 0);
         *is_open = carry.into();
-        !not_anywhere | !not_in_tag & (inside ^ !closes)
+        !not_anywhere | !not_in_tag & !outside
     }
 
     /// Panics unless there is room for 64 more than `text` has.

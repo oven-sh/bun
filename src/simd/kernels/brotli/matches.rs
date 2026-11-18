@@ -130,7 +130,7 @@ pub fn short_codes_of_five(
     let halves = |rank: usize| U64::from_slice(&ranked[rank..]).bitcast::<F32>();
     let costs = halves(1).deinterleave(halves(3)).1;
     let is_dropped = is_like_best.cast() & costs.simd_ge(hopeless) | costs.simd_gt(0.0);
-    let dropped: Vector<u64, 1> = is_dropped.cast::<i32>().to_vector().cast::<i16>().bitcast();
+    let dropped: Vector<u64, 1> = is_dropped.cast::<i16>().to_vector().bitcast();
     (best, others & !dropped[0])
 }
 
@@ -166,6 +166,7 @@ impl<'a> Rows<'a> {
         }
     }
 
+    /// With the length of `costs`, one check of `at` does for both.
     #[inline(always)]
     fn look_up(&self, table: &CostByCopyLength, at: usize) -> F32 {
         F32::from_slice(&table[..self.costs.len()][at..])

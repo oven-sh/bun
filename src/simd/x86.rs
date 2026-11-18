@@ -198,7 +198,7 @@ impl<I: Xmm> Vector<i32, 4, I> {
 impl<I: Xmm> Vector<u32, 4, I> {
     #[inline]
     #[target_feature(enable = "sse2")]
-    pub fn distances(a: Vector<u8, 16, I>, b: Vector<u8, 16, I>) -> Self {
+    pub fn sums_of_4_abs_diffs(a: Vector<u8, 16, I>, b: Vector<u8, 16, I>) -> Self {
         Self::new(_mm_sad_epu8(a.0.into(), b.0.into()))
     }
 }

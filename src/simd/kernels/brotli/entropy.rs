@@ -59,7 +59,7 @@ mod simd {
     #[export]
     pub fn find_switches(
         symbols: &[u16],
-        // For each symbol up to the highest, as many as there are `costs`.
+        // For each symbol up to the highest, as many as there are `costs`. All sums stay finite.
         symbol_costs: &[[f64; 8]],
         switch_cost: f64,
         // The sums, for up to 16 groups of histograms.
@@ -93,7 +93,7 @@ mod simd {
             for group in (0..groups - 1).rev() {
                 smallest = step(group).min(smallest);
             }
-            *previous = zeros.trailing_zeros().min(8 * groups as u32 - 1) as u8;
+            *previous = zeros.trailing_zeros() as u8;
             previous = cheapest;
             min_cost = min_in_all_lanes(smallest);
             max_cost = Eight::splat(match position {
@@ -101,9 +101,8 @@ mod simd {
                 _ => switch_cost,
             });
         }
-        let costs = costs.as_flattened();
-        let first = costs.iter().position(|&cost| cost == min_cost[0]);
-        *previous = first.unwrap_or(costs.len() - 1) as u8;
+        let first = (costs.as_flattened().iter()).position(|&cost| cost == min_cost[0]);
+        *previous = first.unwrap_or(0) as u8;
     }
 
     /// Makes entries from `known` on for the numbers that are not below it, and points to them.

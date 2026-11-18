@@ -33,11 +33,14 @@ export function receive(reader: net.Socket, expected: Buffer) {
 export async function bytesWrittenUntil(written: Promise<void>, handle: { bytesWritten: number }) {
   const samples = new Set<number>();
   let pending = true;
-  const settled = written.finally(() => (pending = false));
+  const settle = () => {
+    pending = false;
+  };
+  written.then(settle, settle);
   while (pending) {
     samples.add(handle.bytesWritten);
     await new Promise(resolve => setImmediate(resolve));
   }
-  await settled;
+  await written;
   return [...samples];
 }

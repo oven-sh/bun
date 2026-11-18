@@ -584,12 +584,18 @@ describe.skipIf(skip)("node:net queue of unsent bytes under short sends", () => 
     for (let i = 0; i < 40; i++) {
       (p.client as any)._write(Buffer.alloc(0), "buffer", (err?: Error | null) => (err ? reject(err) : resolve()));
     }
+    // No writable event sends more, so the peer gets what the 41 writes sent.
+    fault.set({ syscall: "send", action: "errno", errno: "EAGAIN", repeat: -1, fd: handle.fd });
+    while (state.received < 41 * 1024) await once(p.serverSock, "data");
+    const sentByWrites = state.received;
+    fault.set({ syscall: "send", action: "short", bytes: 1024, repeat: -1, fd: handle.fd });
     const bytesWritten = await bytesWrittenUntil(written, handle);
     p.client.end();
     await once(p.serverSock, "end");
 
-    expect({ queuedTail, bytesWritten, ...state }).toEqual({
+    expect({ queuedTail, sentByWrites, bytesWritten, ...state }).toEqual({
       queuedTail: payload.length - 1024,
+      sentByWrites: 41 * 1024,
       bytesWritten: [payload.length],
       received: payload.length,
       intact: true,

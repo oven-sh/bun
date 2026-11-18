@@ -464,9 +464,12 @@ describe("unix domain socket without websocket", () => {
       const count = 32;
       const size = 256 * 1024;
       const path = randomSocketPath();
-      const { promise: connection, resolve: onConnection, reject: onServerError } = Promise.withResolvers<net.Socket>();
+      const { promise: connection, resolve: onConnection } = Promise.withResolvers<net.Socket>();
+      // Rejects when the server or the socket fails. Each wait below races it.
+      const { promise: failed, reject: onFailure } = Promise.withResolvers<never>();
+      failed.catch(() => {});
       const server = net.createServer(onConnection);
-      server.on("error", onServerError);
+      server.on("error", onFailure);
       let socket: net.Socket | undefined;
       try {
         server.listen(path);
@@ -484,22 +487,25 @@ describe("unix domain socket without websocket", () => {
           },
         });
         // An inspectee that exits early fails the wait at once.
-        const orExit = <T>(wait: Promise<T>, what: string) =>
+        const orFailure = <T>(wait: Promise<T>, what: string) =>
           Promise.race([
+            failed,
             wait,
             inspectee.exited.then(code => {
               throw new Error(`the inspectee exited with code ${code} before ${what}`);
             }),
           ]);
 
-        socket = await orExit(connection, "it connected");
-        const { promise: received, resolve: onReceived, reject } = Promise.withResolvers<void>();
-        socket.on("error", reject);
-        socket.on("close", () => reject(new Error("the socket closed before the client had all messages")));
-        // `await received` below reads a rejection. Until then it is not an unhandled one.
-        received.catch(() => {});
+        socket = await orFailure(connection, "it connected");
+        const { promise: received, resolve: onReceived } = Promise.withResolvers<void>();
+        const { promise: closed, resolve: onClosed } = Promise.withResolvers<void>();
         let next = 0;
         let mismatches = 0;
+        socket.on("error", onFailure);
+        socket.on("close", () => {
+          if (next < count) onFailure(new Error("the socket closed before the client had all messages"));
+          onClosed();
+        });
         // Frames are a 4-byte big-endian length, then that many bytes of JSON.
         let chunks: Buffer[] = [];
         let buffered = 0;
@@ -534,21 +540,28 @@ describe("unix domain socket without websocket", () => {
           socket.write(frame);
         }
         socket.pause();
-        await orExit(logged, "it logged all messages");
+        await orFailure(logged, "it logged all messages");
         const receivedWhilePaused = next;
-        const closed = once(socket, "close");
         socket.resume();
-        await orExit(received, "the client had all messages");
+        await orFailure(received, "the client had all messages");
         inspectee.send("done");
         const exitCode = await inspectee.exited;
         // The counts are final once the socket has closed.
-        await closed;
+        await Promise.race([failed, closed]);
 
-        expect({ receivedWhilePaused, received: next, mismatches, bytesOfPartialFrame: buffered, exitCode }).toEqual({
+        expect({
+          receivedWhilePaused,
+          received: next,
+          mismatches,
+          bytesOfPartialFrame: buffered,
+          atFrameBoundary: inHeader,
+          exitCode,
+        }).toEqual({
           receivedWhilePaused: 0,
           received: count,
           mismatches: 0,
           bytesOfPartialFrame: 0,
+          atFrameBoundary: true,
           exitCode: 0,
         });
       } finally {

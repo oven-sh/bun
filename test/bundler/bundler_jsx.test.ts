@@ -293,6 +293,47 @@ describe("bundler", () => {
         run: { stdout: "14" },
       });
 
+      for (const runtime of ["classic", "preserve"] as const) {
+        itBundled(`jsx/DecoratedPrivateGetterReceiver-${runtime}-${backend}`, {
+          files: {
+            "/in.tsx": `
+              let next = 0;
+              let reenter = () => new View();
+              function identity<T>(value: T): T { return value; }
+              function decorate<T>(getter: T): T { return getter; }
+              globalThis.render = (_name, _props, child) => child;
+              class View {
+                id = ++next;
+                @decorate get #answer() {
+                  if (this.id === 1) reenter();
+                  return function (this: View) { return this.id; };
+                }
+                value = <div>{identity(this).#answer()}</div>;
+                read(value = identity(this).#answer()) { return value; }
+                readFromBinding() { return receiver.#answer(); }
+              }
+              const outer = new View(), other = new View();
+              reenter = () => other.read();
+              let receiver = outer;
+              console.log(outer.value, outer.read());
+              reenter = () => { receiver = other; };
+              console.log(outer.readFromBinding());
+            `,
+          },
+          backend,
+          jsx: { runtime, factory: "globalThis.render" },
+          minifyIdentifiers: backend === "api",
+          // esbuild 0.18 predates standard decorators.
+          skipOnEsbuild: true,
+          onAfterBundle(api) {
+            if (runtime !== "preserve") return;
+            const { code } = transformSync(api.readFile("/out.js"), { loader: "jsx", jsxFactory: "globalThis.render" });
+            api.writeFile("/out.js", code);
+          },
+          run: { stdout: "1 1\n1" },
+        });
+      }
+
       itBundled(`jsx/PreserveReentrantClassInParameterDefault-${backend}`, {
         files: {
           "/in.jsx": `

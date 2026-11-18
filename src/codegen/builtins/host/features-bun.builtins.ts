@@ -221,7 +221,15 @@ export default b.declarations(
   ),
   extendAll(
     desktopFeatures,
-    ...nativeBindings("Bindgen", "dom.bind.ts", "askAsAssistiveTechnology", "dumpDisplayList", "panicInEngine"),
+    ...nativeBindings(
+      "Bindgen",
+      "dom.bind.ts",
+      "askAsAssistiveTechnology",
+      "countEngines",
+      "decodesMessage",
+      "dumpDisplayList",
+      "panicInEngine",
+    ),
   ),
   extendAll(desktopFeatures, "%WindowOfProgram%"),
   extendAll(desktopFeatures, "%NativeImage%"),

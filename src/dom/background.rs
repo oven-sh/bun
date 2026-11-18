@@ -35,6 +35,43 @@ impl Frame {
         })
     }
 
+    /// Where an opaque border hides it, the background does not go on to the edge, where it would shine through.
+    fn background_area(&self, area: BoxArea, style: &Style, scale: f32) -> RoundedRect {
+        if area != BoxArea::BorderBox
+            || self.border.contains(&0.0)
+            || self.shape.radii == [[0.0; 2]; 4]
+            || style.background.border_image.0.is_some()
+        {
+            return self.area(area);
+        }
+        let (p, l) = (&style.paint, &style.layout);
+        let styles = [
+            l.border_top_style,
+            l.border_right_style,
+            l.border_bottom_style,
+            l.border_left_style,
+        ];
+        let is_opaque = [p.border_top, p.border_right, p.border_bottom, p.border_left]
+            .into_iter()
+            .all(|it| alpha(it.resolve(style.color())) == 0xff);
+        if !is_opaque
+            || styles
+                .iter()
+                .any(|it| matches!(it, BorderStyle::Dotted | BorderStyle::Dashed))
+        {
+            return self.shape;
+        }
+        let part = if styles.contains(&BorderStyle::Double) {
+            6.0
+        } else {
+            2.0
+        };
+        self.shape.shrunk(
+            self.border
+                .map(|it| ((it * scale + 0.01) / part).floor() / scale),
+        )
+    }
+
     pub(crate) fn area(&self, area: BoxArea) -> RoundedRect {
         match area {
             BoxArea::PaddingBox => self.shape.shrunk(self.border),
@@ -119,7 +156,7 @@ pub(crate) fn gradient_shape(
                 center,
                 radius: radius.map(|it| it.max(0.001)),
             },
-            radius[0],
+            if radius[1] > 0.0 { radius[0] } else { 0.0 },
         )
     };
     match kind {
@@ -175,9 +212,14 @@ pub(crate) fn gradient_stops(
     } else {
         32
     };
-    let position = |stop: &Stop| {
-        Some((stop.position.as_ref()?.resolve(length) / length.max(0.001)).clamp(-1e9, 1e9))
+    let fraction = |it: &crate::values::Lp| {
+        if length > 0.0 {
+            it.resolve(length) / length.max(0.001)
+        } else {
+            it.resolve(1.0) - it.resolve(0.0)
+        }
     };
+    let position = |stop: &Stop| Some(fraction(stop.position.as_ref()?).clamp(-1e9, 1e9));
     let colored = || gradient.stops.iter().filter(|it| it.color.is_some());
     let mut offsets = spread_positions(colored().map(position).collect()).into_iter();
     let (mut previous, mut hint): (Option<(GradientStop, Exact)>, Option<f32>) = (None, None);
@@ -194,8 +236,8 @@ pub(crate) fn gradient_stops(
             .exact(Some(current))
             .unwrap_or_else(|| Exact::legacy(0));
         let is_plain = gradient.interpolation == Interpolation::SRGB
-            && exact.is_legacy
-            && previous.is_none_or(|it| it.1.is_legacy);
+            && exact.is_plain()
+            && previous.is_none_or(|it| it.1.is_plain());
         if let Some((from, before)) =
             previous.filter(|it| it.0.offset < to.offset && (hint.is_some() || !is_plain))
         {
@@ -220,6 +262,19 @@ pub(crate) fn gradient_stops(
         }
         (previous, hint) = (Some((to, exact)), None);
     }
+}
+
+fn average(stops: &[GradientStop]) -> u32 {
+    let (mut sums, mut total) = ([0.0; 4], 0.0);
+    for [from, to] in stops.array_windows() {
+        let (weight, [a, b]) = (
+            to.offset - from.offset,
+            [from, to].map(|it| it.color.to_be_bytes()),
+        );
+        (0..4).for_each(|it| sums[it] += weight * (f32::from(a[it]) + f32::from(b[it])) / 2.0);
+        total += weight;
+    }
+    u32::from_be_bytes(sums.map(|it| (it / total).round() as u8))
 }
 
 /// An image that can be painted.
@@ -308,11 +363,15 @@ impl<'a> Painter<'a> {
                     self.out.stops.len() as u32,
                 );
                 gradient_stops(gradient, length, style.ink.color, &mut self.out.stops);
-                if let (true, [first, .., last]) =
-                    (gradient.repeating, &mut self.out.stops[start as usize..])
-                    && first.offset == last.offset
+                let has_no_size = length == 0.0 && matches!(shape, GradientShape::Radial { .. });
+                if let all @ [first, .., last] = &self.out.stops[start as usize..]
+                    && (has_no_size || gradient.repeating && first.offset == last.offset)
                 {
-                    let color = last.color;
+                    let color = if gradient.repeating && first.offset < last.offset {
+                        average(all)
+                    } else {
+                        last.color
+                    };
                     self.out.stops.truncate(start as usize);
                     self.out
                         .stops
@@ -473,6 +532,7 @@ impl<'a> Painter<'a> {
             [snapped.x, snapped.y],
             [0.0; 2],
         );
+        let available = [extent[0] - size[0], extent[1] - size[1]];
         for axis in (0..2).filter(|it| repeat[*it] == RepeatKind::Round && whole[*it] > 0.0) {
             let rounded = whole[axis] / (whole[axis] / size[axis]).round().max(1.0);
             if is_auto[1 - axis] && repeat[1 - axis] != RepeatKind::Round {
@@ -487,9 +547,7 @@ impl<'a> Painter<'a> {
                 continue;
             }
             let (offset, [start, end]) = (
-                [placement.x, placement.y][axis]
-                    .0
-                    .resolve(extent[axis] - size[axis]),
+                [placement.x, placement.y][axis].0.resolve(available[axis]),
                 clip.rect.span(axis),
             );
             let repeats = matches!(repeat[axis], RepeatKind::Repeat | RepeatKind::Round);
@@ -637,7 +695,11 @@ impl<'a> Painter<'a> {
             *space,
         );
         match contour {
-            None => paint(self, frame.area(area), space),
+            None => paint(
+                self,
+                frame.background_area(area, style, self.document.environment.scale),
+                space,
+            ),
             Some(contour) if contour.is_collapsed() => {}
             Some(contour) => {
                 match area {
@@ -681,7 +743,11 @@ impl<'a> Painter<'a> {
             b.image.len() - 1,
         );
         if contour.is_none() && !style.paints().contains(crate::properties::Paints::LAYERS) {
-            self.fill(frame.shape, color, space);
+            self.fill(
+                frame.background_area(BoxArea::BorderBox, style, self.document.environment.scale),
+                color,
+                space,
+            );
         } else if style.has_background() {
             let group = self.isolate_backgrounds(style, frame.shape.rect, space);
             let local = |index: usize| {
@@ -874,26 +940,33 @@ impl<'a> Painter<'a> {
                 },
                 if reference.is_some() { space } else { scaled },
             );
+            let image = m.image[index]
+                .0
+                .as_ref()
+                .filter(|_| reference.is_none())
+                .and_then(|it| document.ready_as(it, style, true));
+            let (mut clip, mut inside) = (square(space.visible), *space);
+            if *m.clip.at(index) != BoxArea::NoClip {
+                clip = subject.area(*m.clip.at(index));
+            }
+            if blend != BlendMode::Normal && filters.end == start && reference.is_none() {
+                if image.is_none() {
+                    continue;
+                }
+                self.clip(clip, &mut inside);
+                clip = square(clip.rect);
+            }
+            let space = &inside;
             let group = (blend != BlendMode::Normal || filters.end > start)
                 .then(|| self.begin_group(space.visible, 1.0, blend, filters, space));
             if let Some(element) = element {
                 self.svg_mask(element, &subject.user_space(), space);
-            } else if let (None, Some(image)) = (
-                &reference,
-                m.image[index]
-                    .0
-                    .as_ref()
-                    .and_then(|it| document.ready_as(it, style, true)),
-            ) {
+            } else if let Some(image) = image {
                 let placement = Placement {
                     x: m.x.at(index),
                     y: m.y.at(index),
                     size: m.size.at(index),
                     repeat: *m.repeat.at(index),
-                };
-                let clip = match m.clip.at(index) {
-                    BoxArea::NoClip => space.visible,
-                    area => subject.area(*area).rect,
                 };
                 let text = document
                     .own_box(subject.node)
@@ -901,7 +974,7 @@ impl<'a> Painter<'a> {
                 let group = text.map(|it| {
                     (
                         it,
-                        self.begin_group(clip, 1.0, BlendMode::Normal, Span::default(), space),
+                        self.begin_group(clip.rect, 1.0, BlendMode::Normal, Span::default(), space),
                     )
                 });
                 let area = match &subject.areas {
@@ -910,7 +983,7 @@ impl<'a> Painter<'a> {
                     }
                     _ => subject.area(*m.origin.at(index)),
                 };
-                self.image(&image, &placement, area.rect, square(clip), style, space);
+                self.image(&image, &placement, area.rect, clip, style, space);
                 if let Some((text, outer)) = group {
                     self.marker(&Item::Mask { luminance: false });
                     self.text_mask(text, space);

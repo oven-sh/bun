@@ -22,6 +22,7 @@
 #include <JavaScriptCore/AOTCompiledFrame.h>
 #include <JavaScriptCore/AOTFunctionDescription.h>
 #include <JavaScriptCore/AOTHost.h>
+#include <JavaScriptCore/AOTVMState.h>
 #endif
 
 namespace Bun {
@@ -297,6 +298,15 @@ extern "C" void Bun__DOM__announceNameInWindow([[maybe_unused]] JSGlobalObject* 
 {
 #if ENABLE(AOT)
     AOT::didAnnounceNameAboveGlobalObject(globalObject->vm(), nameOrNull);
+#endif
+}
+
+extern "C" bool Bun__DOM__hearsOfNamesInWindow([[maybe_unused]] JSGlobalObject* globalObject)
+{
+#if ENABLE(AOT)
+    return !globalObject->vm().aotState().hashesOfNamesTakenAsUnannounced.isEmpty();
+#else
+    return false;
 #endif
 }
 

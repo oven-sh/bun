@@ -14,6 +14,7 @@ pub(crate) mod focus;
 pub(crate) mod fullscreen;
 pub(crate) mod host;
 pub(crate) mod image_map;
+pub(crate) mod interest;
 pub(crate) mod invokers;
 pub(crate) mod keyboard;
 mod keys;
@@ -95,6 +96,8 @@ pub(crate) struct Ui {
     pub(crate) is_focused: Cell<bool>,
     pub(crate) framing: crate::api::frames::Frames,
     pub(crate) has_spell_checker: bool,
+    /// Its invalid forms and fieldsets are among `dirty_controls`.
+    pub(crate) scope_of_dirty_groups: Cell<usize>,
     pub(crate) focus: focus::Focus,
     pub(crate) assistive: assistive::Assistive,
     pub(crate) activation: activation::Activation,
@@ -139,6 +142,7 @@ slots!(Ui = js_Ui {
     fingers: pointer::Pointer,
     frames: Frame,
     plugins: Element,
+    interested: Element,
 ]);
 
 impl Ui {
@@ -208,6 +212,9 @@ impl Ui {
         }
         if node.parent() == Some(self.doc()) {
             top_layer::hide_bubble(cx, self);
+        }
+        if !self.interested().is_empty() {
+            interest::before_remove(cx, self, element);
         }
         pointer::forget(cx, self, element);
     }

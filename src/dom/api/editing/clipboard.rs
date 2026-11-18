@@ -237,6 +237,19 @@ pub(crate) fn offer_selection<'a>(cx: &mut Cx<'a>, ui: &'a Ui) {
     }
 }
 
+pub(crate) fn offer_what_is_selected_by<'a>(
+    cx: &mut Cx<'a>,
+    ui: &'a Ui,
+    steps: impl FnOnce(&mut Cx<'a>) -> bool,
+) -> bool {
+    let before = super::selected_span(ui);
+    let result = steps(cx);
+    if cfg!(target_os = "linux") && super::selected_span(ui) != before {
+        offer_selection(cx, ui);
+    }
+    result
+}
+
 pub(crate) fn paste_selection<'a>(cx: &mut Cx<'a>, ui: &'a Ui) {
     if edit_target(cx, ui).is_some() {
         paste_from(cx, ui, Clipboard::Selection, true);

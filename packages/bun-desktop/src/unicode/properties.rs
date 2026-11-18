@@ -1,9 +1,45 @@
 //! What shaping needs to know about characters.
 
+use std::sync::atomic::{AtomicU16, Ordering::Relaxed};
+
 use crate::bun::host;
 
 fn property(character: u32, property: u32) -> i32 {
     (host().character_property)(character, property)
+}
+
+const IS_KNOWN: u16 = 1 << 15;
+const DECOMPOSES: u16 = 1 << 14;
+const COMPOSES_WITH_PREVIOUS: u16 = 1 << 13;
+
+/// The flags above, the category, and the combining class in the low half.
+#[inline]
+fn traits(character: u32) -> u16 {
+    static KNOWN: [AtomicU16; 0x3400] = [const { AtomicU16::new(0) }; _];
+    let find = || {
+        let flag = |on: bool, flag: u16| if on { flag } else { 0 };
+        let flags = IS_KNOWN
+            | flag((host().decompose)(character) != 0, DECOMPOSES)
+            | flag(property(character, 0x100E) == 2, COMPOSES_WITH_PREVIOUS);
+        flags
+            | (property(character, 0x1005) as u16 & 31) << 8
+            | property(character, 0x1002) as u16 & 255
+    };
+    let Some(slot) = KNOWN.get(character as usize) else {
+        return if let 0x4e00..=0x9fff = character {
+            IS_KNOWN | u16::from(category::OTHER_LETTER) << 8
+        } else {
+            find()
+        };
+    };
+    match slot.load(Relaxed) {
+        0 => {
+            let found = find();
+            slot.store(found, Relaxed);
+            found
+        }
+        known => known,
+    }
 }
 
 /// `UCharCategory`
@@ -31,6 +67,7 @@ pub mod category {
             0x4e00..=0x9fff | 0xac00..=0xd7a3 => OTHER_LETTER,
             // Apple's ICU knows what Apple uses them for.
             0xe000..=0xf8ff => PRIVATE_USE,
+            0x80..0x3400 => (super::traits(character) >> 8) as u8 & 31,
             _ => super::property(character, 0x1005) as u8,
         }
     }
@@ -58,7 +95,11 @@ pub fn joining_type(character: u32) -> i32 {
 }
 
 pub fn combining_class(character: u32) -> u8 {
-    property(character, 0x1002) as u8
+    if character < 0x3400 {
+        traits(character) as u8
+    } else {
+        property(character, 0x1002) as u8
+    }
 }
 
 /// `UIndicPositionalCategory`
@@ -91,11 +132,13 @@ pub fn mirror(character: u32) -> u32 {
 
 /// The second one may be 0.
 pub fn decompose(character: u32) -> Option<(u32, u32)> {
-    Some((host().decompose)(character))
-        .filter(|it| *it != 0)
+    (traits(character) & DECOMPOSES != 0)
+        .then(|| (host().decompose)(character))
         .map(|it| (it as u32, (it >> 32) as u32))
 }
 
 pub fn compose(first: u32, second: u32) -> Option<u32> {
-    Some((host().compose)(first, second)).filter(|it| *it != 0)
+    (!(0x4e00..=0x9fff).contains(&first) && traits(second) & COMPOSES_WITH_PREVIOUS != 0)
+        .then(|| (host().compose)(first, second))
+        .filter(|it| *it != 0)
 }

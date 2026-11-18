@@ -356,6 +356,10 @@ impl Exact {
         }
     }
 
+    pub(crate) fn is_plain(&self) -> bool {
+        self.is_legacy && self.missing == 0
+    }
+
     fn lacks(&self, index: usize) -> bool {
         self.missing >> index & 1 != 0
     }
@@ -1230,7 +1234,7 @@ impl Palette {
 }
 
 thread_local! {
-    static PALETTE: RefCell<Palette> = RefCell::default();
+    static PALETTE: RefCell<Box<Palette>> = RefCell::default();
     static HAS_WRITTEN_CURRENT_COLOR: Cell<bool> = const { Cell::new(false) };
 }
 
@@ -1275,7 +1279,7 @@ impl Color {
     pub(crate) const TRANSPARENT: Color = Color::Rgba(0);
 
     fn new(exact: Exact, is_passing: bool) -> Color {
-        match exact.is_legacy && exact.missing == 0 {
+        match exact.is_plain() {
             true => Color::Rgba(exact.rgba()),
             false => Color::Exact(
                 exact.rgba(),

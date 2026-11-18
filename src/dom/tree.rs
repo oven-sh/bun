@@ -1,6 +1,6 @@
 //! The part of the DOM that styles and layout need. JavaScript has the whole of it, and mirrors what is connected.
 
-use core::cell::Cell;
+use core::cell::{Cell, RefCell};
 use core::hint::{Locality, prefetch_read, prefetch_write};
 use core::sync::atomic::{AtomicU32, Ordering};
 use std::borrow::Cow;
@@ -8,6 +8,7 @@ use std::rc::Rc;
 
 use smallvec::SmallVec;
 
+use crate::api::core::bare::Sketch;
 use crate::api::core::{Atom, DomString, Ns, QualName, StoredText};
 
 use crate::boxes::BoxId;
@@ -16,6 +17,7 @@ use crate::name::{Map, Name, Set, name};
 use crate::properties::Style;
 use crate::rules::Classes;
 use crate::selector::{Found, Pseudo};
+use crate::sequence::Sequence;
 use crate::sheet::Block;
 
 /// 0 is no node.
@@ -187,15 +189,34 @@ pub(crate) enum Attributes {
 }
 
 impl Attributes {
-    #[inline]
+    fn unshare(&mut self) {
+        *self = Attributes::Own(self.to_vec());
+    }
+
+    #[inline(always)]
     pub(crate) fn to_mut(&mut self) -> &mut Vec<Attribute> {
-        if let Attributes::Shared(shared) = self {
-            *self = Attributes::Own(shared.to_vec());
+        if let Attributes::Shared(_) = self {
+            self.unshare();
         }
         match self {
             Attributes::Own(own) => own,
             Attributes::Shared(_) => unreachable!(),
         }
+    }
+
+    /// With room for another.
+    #[inline]
+    pub(crate) fn to_mut_for_more(&mut self) -> &mut Vec<Attribute> {
+        if let Attributes::Shared(shared) = self {
+            let mut own = Vec::with_capacity(shared.len() + 1);
+            own.extend_from_slice(shared);
+            *self = Attributes::Own(own);
+        }
+        let own = self.to_mut();
+        if own.len() == own.capacity() {
+            own.reserve_exact(1 + own.len() / 2);
+        }
+        own
     }
 
     #[inline]
@@ -241,6 +262,26 @@ pub(crate) struct Likeness {
     pub(crate) classes: Option<Rc<Classes>>,
     pub(crate) attributes: Attributes,
     pub(crate) keys: u64,
+}
+
+impl Likeness {
+    #[inline(always)]
+    pub(crate) fn of(it: &mut Element, keys: u64) -> Likeness {
+        Likeness {
+            tag: it.tag,
+            namespace: it.namespace,
+            local: it.local.clone(),
+            space: it.space.clone(),
+            is_unprepared: it.is_unprepared
+                || it.inline_style.is_some()
+                || it.hints.is_some()
+                || it.is_style_refused,
+            id: it.id,
+            classes: it.classes.clone(),
+            attributes: it.attributes.share(),
+            keys,
+        }
+    }
 }
 
 /// What an `img`, a `canvas` or the like shows.
@@ -428,6 +469,10 @@ impl Element {
         }
     }
 
+    pub(crate) fn has_rare(&self) -> bool {
+        self.rare.is_some()
+    }
+
     /// To take something away.
     pub(crate) fn rare_if_any(&mut self) -> Option<&mut Rare> {
         self.rare.as_deref_mut()
@@ -507,6 +552,70 @@ pub(crate) enum Data {
     },
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum Fact {
+    /// No ancestor in the flat tree skips its contents.
+    Unskipped = 1,
+    /// Its text decides the direction of nothing.
+    Undirecting = 2,
+}
+
+/// What was found out by visiting the ancestors of rendered nodes.
+pub(crate) struct Ancestry {
+    /// The node, `epoch` and the facts.
+    known: [Cell<u64>; 256],
+    epoch: Cell<u32>,
+}
+
+impl Default for Ancestry {
+    fn default() -> Ancestry {
+        Ancestry {
+            known: [const { Cell::new(0) }; 256],
+            epoch: Cell::new(0),
+        }
+    }
+}
+
+impl Ancestry {
+    const FACTS: u32 = 3;
+
+    #[inline(always)]
+    fn entry(&self, id: NodeId) -> (&Cell<u64>, u64) {
+        (
+            &self.known[id as usize % self.known.len()],
+            u64::from(id) << 32 | u64::from(self.epoch.get()),
+        )
+    }
+
+    #[inline(always)]
+    pub(crate) fn has(&self, id: NodeId, fact: Fact) -> bool {
+        let (entry, without_facts) = self.entry(id);
+        (entry.get() ^ without_facts) & !u64::from(Ancestry::FACTS - fact as u32) == fact as u64
+    }
+
+    /// Of a node and of ancestors, in that order.
+    pub(crate) fn note(&self, path: &[NodeId], fact: Fact) {
+        for (entry, without_facts) in path.iter().rev().map(|it| self.entry(*it)) {
+            entry.update(|it| if it & !u64::from(Ancestry::FACTS) == without_facts { it } else { without_facts } | fact as u64);
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn forget(&self, id: NodeId) {
+        self.entry(id)
+            .0
+            .update(|it| if it >> 32 == u64::from(id) { 0 } else { it });
+    }
+
+    #[inline]
+    pub(crate) fn forget_all(&self) {
+        self.epoch.update(|it| it.wrapping_add(Ancestry::FACTS + 1));
+        if self.epoch.get() == 0 {
+            self.known.iter().for_each(|it| it.set(0));
+        }
+    }
+}
+
 /// A cache line. The rest is in `Cold`.
 #[repr(C, align(64))]
 pub(crate) struct Node {
@@ -531,7 +640,7 @@ const _: () = assert!(size_of::<Node>() == 64);
 
 #[derive(Default)]
 pub(crate) struct Cold {
-    /// The JavaScript object, `BARE`, or null.
+    /// The JavaScript object, a `Sketch`, or null.
     cell: Cell<*const crate::api::core::Node>,
     pub(crate) last_child: NodeId,
     /// With `DIRTY_DESCENDANTS`, the child that has them all, or 0. Of a bare comment, the one before it in its parent.
@@ -541,8 +650,6 @@ pub(crate) struct Cold {
     /// Of the bare ones among its children.
     last_comment: Cell<NodeId>,
 }
-
-const BARE: *const crate::api::core::Node = core::ptr::dangling();
 
 pub(crate) enum Step {
     Enter(NodeId),
@@ -656,6 +763,14 @@ impl Node {
         }
     }
 
+    pub(crate) fn stored_text(&self) -> Option<&StoredText> {
+        if let Data::Text(text) = &self.data {
+            Some(text)
+        } else {
+            None
+        }
+    }
+
     pub(crate) fn has(&self, flags: Flags) -> bool {
         self.flags.get().intersects(flags)
     }
@@ -679,46 +794,78 @@ pub(crate) struct FreeList {
     /// Those of `words` that are before it are 0.
     first: usize,
     len: usize,
+    /// The first of `ids` that was not 0, which is taken out of them, and its index.
+    lowest: (u64, usize),
 }
 
 impl FreeList {
     #[inline]
     pub(crate) fn push(&mut self, id: u32) {
-        let word = id as usize / 64;
+        self.push_word(1 << (id % 64), id as usize / 64);
+        self.len += 1;
+    }
+
+    fn push_all(&mut self, ids: &[u32]) {
+        for run in ids.chunk_by(|a, b| a / 64 == b / 64) {
+            self.push_word(
+                run.iter().fold(0, |all, it| all | 1 << (it % 64)),
+                run[0] as usize / 64,
+            );
+        }
+        self.len += ids.len();
+    }
+
+    #[inline]
+    fn push_word(&mut self, ids: u64, word: usize) {
+        if self.lowest.0 != 0 && word <= self.lowest.1 {
+            let (old, old_word) = core::mem::take(&mut self.lowest);
+            if word == old_word {
+                debug_assert!(old & ids == 0);
+                self.lowest = (old | ids, word);
+                return;
+            }
+            self.put(old, old_word);
+        }
+        self.put(ids, word);
+    }
+
+    #[inline]
+    fn put(&mut self, ids: u64, word: usize) {
         if word >= self.ids.len() {
             self.ids.resize(word + 64, 0);
             self.words.resize(word / 64 + 2, 0);
         }
-        debug_assert!(self.ids[word] >> (id % 64) & 1 == 0);
-        self.ids[word] |= 1 << (id % 64);
+        debug_assert!(self.ids[word] & ids == 0);
+        self.ids[word] |= ids;
         self.words[word / 64] |= 1 << (word % 64);
-        (self.first, self.len) = (self.first.min(word / 64), self.len + 1);
+        self.first = self.first.min(word / 64);
     }
 
     #[inline]
     pub(crate) fn pop(&mut self) -> Option<u32> {
         self.len = self.len.checked_sub(1)?;
+        if self.lowest.0 == 0 {
+            self.take_lowest();
+        }
+        let (ids, word) = self.lowest;
+        self.lowest.0 = ids & (ids - 1);
+        Some(word as u32 * 64 + ids.trailing_zeros())
+    }
+
+    fn take_lowest(&mut self) {
         while self.words[self.first] == 0 {
             self.first += 1;
         }
         let words = &mut self.words[self.first];
         let word = self.first * 64 + words.trailing_zeros() as usize;
-        let ids = &mut self.ids[word];
-        let id = word as u32 * 64 + ids.trailing_zeros();
-        *ids &= *ids - 1;
-        if *ids == 0 {
-            *words &= *words - 1;
-        }
-        Some(id)
+        *words &= *words - 1;
+        self.lowest = (core::mem::take(&mut self.ids[word]), word);
     }
 
     /// What `pop` is likely to return after `last` and so many others.
     #[inline]
     pub(crate) fn ahead(&self, last: u32, others: usize) -> u32 {
-        let ids = (0..others).fold(
-            self.ids.get(last as usize / 64).copied().unwrap_or(0),
-            |ids, _| ids & ids.wrapping_sub(1),
-        );
+        let ids = (0..others).fold(self.lowest.0, |ids, _| ids & ids.wrapping_sub(1));
         if ids == 0 {
             last + others as u32 + 1
         } else {
@@ -747,8 +894,10 @@ pub(crate) struct Tree {
     found: Found,
     /// Nothing that selectors can see has changed since they have put something in `found`.
     is_as_found: Cell<bool>,
-    /// Some nodes of the document that nothing around them skips.
-    unskipped: [Cell<NodeId>; 64],
+    pub(crate) sequence: Sequence,
+    /// By `mark_style`, which tends to be in tree order.
+    pub(crate) marked: RefCell<Vec<NodeId>>,
+    pub(crate) ancestry: Ancestry,
 }
 
 /// The nodes of a subtree that is leaving the document, which have `Flags::VISITED`.
@@ -765,17 +914,38 @@ impl Gone<'_> {
             .is_some_and(|it| it.has(Flags::VISITED))
     }
 
+    #[inline(always)]
     pub(crate) fn leave_map<V>(&self, map: &mut Map<NodeId, V>) {
+        if !map.is_empty() {
+            self.leave_entries(map);
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn leave_set(&self, set: &mut Set<NodeId>) {
+        if !set.is_empty() {
+            self.leave_members(set);
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn leave_list<T>(&self, list: &mut Vec<T>, id: impl Fn(&T) -> NodeId) {
+        if !list.is_empty() {
+            list.retain(|it| !self.has(id(it)));
+        }
+    }
+
+    #[inline(never)]
+    fn leave_entries<V>(&self, map: &mut Map<NodeId, V>) {
         match map.capacity() {
-            _ if map.is_empty() => {}
             size if size < 4 * self.ids.len() => map.retain(|id, _| !self.has(*id)),
             _ => self.ids.iter().for_each(|it| _ = map.remove(it)),
         }
     }
 
-    pub(crate) fn leave_set(&self, set: &mut Set<NodeId>) {
+    #[inline(never)]
+    fn leave_members(&self, set: &mut Set<NodeId>) {
         match set.capacity() {
-            _ if set.is_empty() => {}
             size if size < 4 * self.ids.len() => set.retain(|id| !self.has(*id)),
             _ => self.ids.iter().for_each(|it| _ = set.remove(it)),
         }
@@ -796,6 +966,32 @@ impl core::ops::IndexMut<NodeId> for Tree {
     }
 }
 
+const AT_ONCE: usize = 1 << 12;
+
+/// One call takes half as long as a fault for each page.
+fn map_in<T>(room: &mut [core::mem::MaybeUninit<T>]) {
+    #[cfg(target_os = "linux")]
+    {
+        unsafe extern "C" {
+            fn madvise(
+                address: *mut u8,
+                length: usize,
+                advice: core::ffi::c_int,
+            ) -> core::ffi::c_int;
+        }
+        const MADV_POPULATE_WRITE: core::ffi::c_int = 23;
+        let (start, length) = (
+            room.as_mut_ptr().cast::<u8>(),
+            room.len().min(AT_ONCE) * size_of::<T>(),
+        );
+        let skipped = start.align_offset(bun_alloc::page_size()).min(length);
+        // SAFETY: the pages start in `room`, and what they hold does not change.
+        unsafe { madvise(start.add(skipped), length - skipped, MADV_POPULATE_WRITE) };
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = room;
+}
+
 pub(crate) const DOCUMENT: NodeId = 1;
 
 impl Tree {
@@ -813,7 +1009,9 @@ impl Tree {
             language: Box::default(),
             found: Found::default(),
             is_as_found: Cell::new(true),
-            unskipped: [const { Cell::new(0) }; 64],
+            sequence: Sequence::default(),
+            marked: RefCell::default(),
+            ancestry: Ancestry::default(),
         }
     }
 
@@ -853,7 +1051,18 @@ impl Tree {
     }
 
     #[inline]
-    fn prefetch_data(&self, id: NodeId) {
+    pub(crate) fn prefetch_links(&self, id: NodeId) {
+        prefetch_read(self.nodes.as_ptr().wrapping_add(id as usize), Locality::L1);
+    }
+
+    #[inline]
+    pub(crate) fn prefetch_node(&self, id: NodeId) {
+        self.prefetch_links(id);
+        self.prefetch_cell(id);
+    }
+
+    #[inline]
+    pub(crate) fn prefetch_data(&self, id: NodeId) {
         match self.nodes.get(id as usize).map(|it| &it.data) {
             Some(Data::Element(it)) => {
                 prefetch_read(&raw const it.tag, Locality::L1);
@@ -877,6 +1086,11 @@ impl Tree {
         if let Some(it) = ids.get(4).and_then(|it| self.element(*it)) {
             prefetch_read(it.attributes.as_ptr(), Locality::L1);
         }
+    }
+
+    #[inline]
+    pub(crate) fn prefetch_cell(&self, id: NodeId) {
+        prefetch_read(self.cold.as_ptr().wrapping_add(id as usize), Locality::L1);
     }
 
     pub(crate) fn found(&self) -> &Found {
@@ -908,21 +1122,152 @@ impl Tree {
         id
     }
 
+    fn add_vacant(&mut self) -> NodeId {
+        if self.nodes.len() == self.nodes.capacity() {
+            self.grow();
+        }
+        self.nodes.push(Node::new(Data::Free));
+        self.cold.push(Cold::default());
+        (self.nodes.len() - 1) as NodeId
+    }
+
+    #[inline]
     fn vacant(&mut self) -> NodeId {
-        let id = self.free.pop().unwrap_or_else(|| {
-            // Pages that are not touched cost nothing, and copies do.
-            if self.nodes.len() == 1 << 10 {
-                self.nodes.reserve(1 << 16);
-                self.cold.reserve(1 << 16);
-            }
-            self.nodes.push(Node::new(Data::Free));
-            self.cold.push(Cold::default());
-            (self.nodes.len() - 1) as NodeId
-        });
+        let id = self.free.pop().unwrap_or_else(|| self.add_vacant());
         let later = self.free.ahead(id, 6) as usize;
         prefetch_write(self.nodes.as_mut_ptr().wrapping_add(later), Locality::L1);
         prefetch_write(self.cold.as_mut_ptr().wrapping_add(later), Locality::L1);
         id
+    }
+
+    #[cold]
+    fn grow(&mut self) {
+        self.expect(1);
+    }
+
+    #[cold]
+    fn make_room(&mut self) {
+        if self.nodes.len() == self.nodes.capacity() {
+            self.grow();
+        }
+        if self.nodes.len() >= 4 * AT_ONCE {
+            map_in(self.nodes.spare_capacity_mut());
+            map_in(self.cold.spare_capacity_mut());
+        }
+    }
+
+    /// So many nodes are likely to be created.
+    pub(crate) fn expect(&mut self, count: usize) {
+        fn reserve<T>(all: &mut Vec<T>, more: usize) {
+            // Pages that are not touched cost nothing, and copies do.
+            let capacity = match all.len() + more {
+                needed @ 0x400..0x4_0000 => (needed * 4).max(1 << 16),
+                needed => needed.max(all.capacity() * 2),
+            };
+            let mut roomier = Vec::new();
+            if all.capacity() - all.len() < more && roomier.try_reserve_exact(capacity).is_ok() {
+                roomier.append(all);
+                *all = roomier;
+            }
+        }
+        let more = count.saturating_sub(self.free.len());
+        reserve(&mut self.nodes, more);
+        reserve(&mut self.cold, more);
+    }
+
+    pub(crate) fn create_bare(&mut self, data: Data, keys: u64) -> NodeId {
+        let id = self.create(data);
+        self[id].keys = keys;
+        self.make_bare(id);
+        id
+    }
+
+    /// A new last child, which is bare.
+    #[inline(always)]
+    pub(crate) fn append_bare(&mut self, parent: NodeId, data: Data, keys: u64) -> NodeId {
+        let sketch = Sketch::of(&data);
+        let reused = self.free.pop();
+        let id = reused.unwrap_or(self.nodes.len() as NodeId);
+        let previous = core::mem::replace(&mut self.cold_mut(parent).last_child, id);
+        let above = &mut self[parent];
+        let (scope, is_news) = (above.scope, keys & !above.keys_below != 0);
+        match previous {
+            0 => above.first_child = id,
+            _ => self[previous].next = id,
+        }
+        let node = Node {
+            parent,
+            previous,
+            scope,
+            keys,
+            ..Node::new(data)
+        };
+        if reused.is_none() {
+            if id.is_multiple_of(AT_ONCE as u32) || self.nodes.len() == self.nodes.capacity() {
+                self.make_room();
+            }
+            self.nodes.push(node);
+            self.cold.push(Cold {
+                cell: Cell::new(sketch.to_cell()),
+                ..Cold::default()
+            });
+        } else {
+            prefetch_write(
+                self.nodes.as_mut_ptr().wrapping_add(id as usize + 6),
+                Locality::L1,
+            );
+            // It is `Data::Free`.
+            let _ = core::mem::ManuallyDrop::new(core::mem::replace(&mut self[id], node));
+            self.cold_mut(id).cell.set(sketch.to_cell());
+        }
+        if is_news {
+            self.add_keys_below(parent, keys);
+        }
+        id
+    }
+
+    /// A copy of an element, which is about to get copies of its descendants.
+    #[inline]
+    pub(crate) fn append_bare_like(&mut self, of: NodeId, parent: NodeId) -> NodeId {
+        self.prefetch_after(of);
+        if let Some(it) = self.element(of + 4) {
+            prefetch_read(
+                it.attributes.as_ptr().cast::<usize>().wrapping_sub(2),
+                Locality::L1,
+            );
+        }
+        let (keys, keys_below) = (self[of].keys, self[of].keys_below);
+        let Some(Likeness {
+            tag,
+            namespace,
+            local,
+            space,
+            is_unprepared,
+            id,
+            classes,
+            attributes,
+            ..
+        }) = self.element_to_style(of).map(|it| Likeness::of(it, keys))
+        else {
+            return 0;
+        };
+        let element = self.new_element(tag, namespace, |element| {
+            (
+                element.local,
+                element.is_unprepared,
+                element.id,
+                element.classes,
+                element.attributes,
+            ) = (local, is_unprepared, id, classes, attributes);
+            space
+                .into_iter()
+                .for_each(|it| element.rare_mut().space = Some(it));
+        });
+        self.add_keys_below(parent, keys | keys_below);
+        self.sequence.shape_changed(parent);
+        let copy = self.append_bare(parent, Data::Element(element), keys);
+        self[copy].keys_below = keys_below;
+        copy
     }
 
     #[inline(always)]
@@ -932,6 +1277,17 @@ impl Tree {
         namespace: Namespace,
         fill: impl FnOnce(&mut Element),
     ) -> NodeId {
+        let element = self.new_element(tag, namespace, fill);
+        self.create(Data::Element(element))
+    }
+
+    #[inline(always)]
+    pub(crate) fn new_element(
+        &mut self,
+        tag: Name,
+        namespace: Namespace,
+        fill: impl FnOnce(&mut Element),
+    ) -> Box<Element> {
         let room = Box::<Element>::new_uninit();
         let address = room.as_ptr().addr();
         let step = address.wrapping_sub(core::mem::replace(&mut self.last_element, address));
@@ -945,18 +1301,48 @@ impl Tree {
             .for_each(|it| prefetch_write(later.wrapping_add(it), Locality::L1));
         let mut element = Box::write(room, Element::new(tag, namespace));
         fill(&mut element);
-        self.create(Data::Element(element))
+        element
     }
 
+    #[inline]
     pub(crate) fn free(&mut self, id: NodeId) {
         if self.cold[id as usize].last_comment.get() != 0 {
             self.free_comments_in(id);
         }
+        self.sequence.shape_changed(id);
         self[id] = Node::new(Data::Free);
         self.cold[id as usize] = Cold::default();
         self.free.push(id);
-        if self.unskipped(id).get() == id {
-            self.unskipped(id).set(0);
+        self.ancestry.forget(id);
+    }
+
+    pub(crate) fn free_all(&mut self, ids: &[NodeId]) {
+        const AT_A_TIME: usize = 32;
+        let chunk = |index: usize| ids.chunks(AT_A_TIME).nth(index).unwrap_or_default();
+        (0..2)
+            .flat_map(chunk)
+            .for_each(|it| self.prefetch_node(*it));
+        chunk(0).iter().for_each(|it| self.prefetch_data(*it));
+        for (index, now) in ids.chunks(AT_A_TIME).enumerate() {
+            chunk(index + 2)
+                .iter()
+                .for_each(|it| self.prefetch_node(*it));
+            chunk(index + 1)
+                .iter()
+                .for_each(|it| self.prefetch_data(*it));
+            now.iter()
+                .filter_map(|it| self.element(*it))
+                .for_each(|it| prefetch_read(it.attributes.as_ptr(), Locality::L1));
+            for id in now.iter().copied() {
+                if self.cold[id as usize].last_comment.get() != 0 {
+                    self.free_comments_in(id);
+                }
+                self.sequence.shape_changed(id);
+                self[id] = Node::new(Data::Free);
+                self.cold[id as usize] = Cold::default();
+                self.ancestry.forget(id);
+            }
+            self.free.push_all(now);
         }
     }
 
@@ -998,8 +1384,41 @@ impl Tree {
         count
     }
 
+    /// The same, if they have been listed.
+    pub(crate) fn free_these_below(
+        &mut self,
+        root: NodeId,
+        ids: &[NodeId],
+        mut take_leave: impl FnMut(NodeId, &Element),
+    ) -> u32 {
+        self[root].first_child = 0;
+        self.free_below(root);
+        self.sequence.forget();
+        for (index, id) in ids.iter().copied().enumerate() {
+            self.prefetch_in(&ids[index..]);
+            if self.cold[id as usize].last_comment.get() != 0 {
+                self.free_comments_in(id);
+            }
+            self.cold[id as usize] = Cold::default();
+            self.ancestry.forget(id);
+            if let Data::Element(element) =
+                core::mem::replace(&mut self[id], Node::new(Data::Free)).data
+            {
+                take_leave(id, &element);
+            }
+        }
+        self.free.push_all(ids);
+        ids.len() as u32
+    }
+
     pub(crate) fn count_freed(count: usize) {
-        FREED_NODES.fetch_add(count as u32, Ordering::Relaxed);
+        // It is an estimate, which is not worth locking the bus for.
+        FREED_NODES.store(
+            FREED_NODES
+                .load(Ordering::Relaxed)
+                .wrapping_add(count as u32),
+            Ordering::Relaxed,
+        );
     }
 
     /// For another tree, where `Document::rehome` corrects the ids.
@@ -1030,33 +1449,16 @@ impl Tree {
         &self.cold[id as usize].visit
     }
 
-    fn unskipped(&self, id: NodeId) -> &Cell<NodeId> {
-        &self.unskipped[id as usize & 63]
-    }
-
-    /// For when a node gets another parent in the flat tree, or begins to skip its contents.
-    pub(crate) fn forget_unskipped(&mut self) {
-        self.unskipped = [const { Cell::new(0) }; 64];
-    }
-
     pub(crate) fn is_in_skipped_contents(&self, id: NodeId) -> bool {
-        let is_known = |it: NodeId| self.unskipped(it).get() == it;
-        if is_known(id) {
-            return false;
+        let (mut at, mut path) = (id, SmallVec::<[NodeId; 64]>::new());
+        while at != DOCUMENT && !self.ancestry.has(at, Fact::Unskipped) {
+            path.push(at);
+            at = self.flat_parent(at);
+            if at == 0 || self[at].has(Flags::SKIPPED) {
+                return at != 0;
+            }
         }
-        let Some(last) = self
-            .flat_ancestors(id)
-            .find(|it| self[*it].has(Flags::SKIPPED) || is_known(*it) || *it == DOCUMENT)
-        else {
-            return false;
-        };
-        if self[last].has(Flags::SKIPPED) {
-            return true;
-        }
-        core::iter::once(id)
-            .chain(self.flat_ancestors(id))
-            .take_while(|it| *it != last)
-            .for_each(|it| self.unskipped(it).set(it));
+        self.ancestry.note(&path, Fact::Unskipped);
         false
     }
 
@@ -1080,7 +1482,7 @@ impl Tree {
         let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut self.found));
         for node in &mut self.nodes {
             node.layout_box = 0;
-            node.unset(Flags::REBUILD);
+            node.unset(Flags::REBUILD | Flags::VISITED);
         }
     }
 
@@ -1088,10 +1490,34 @@ impl Tree {
         self.nodes.len() - self.free.len()
     }
 
+    /// Greater than all ids.
+    pub(crate) fn capacity(&self) -> usize {
+        self.nodes.len()
+    }
+
+    /// Searches have cost more than filling `sequence` does.
+    #[inline]
+    pub(crate) fn has_searched_enough(&self) -> bool {
+        self.sequence.walked.get() > self.nodes.len()
+    }
+
+    #[inline]
+    pub(crate) fn prepare_to_search(&mut self, root: NodeId) {
+        if self.has_searched_enough() {
+            let (mut sequence, path) = (
+                core::mem::take(&mut self.sequence),
+                core::iter::successors(Some(root), |it| Some(self[*it].parent)),
+            );
+            sequence.fill(self, path.take_while(|it| *it != 0).last().unwrap_or(root));
+            self.sequence = sequence;
+        }
+    }
+
     pub(crate) fn contains(&self, id: NodeId) -> bool {
         (self.nodes.get(id as usize)).is_some_and(|node| !matches!(node.data, Data::Free))
     }
 
+    #[inline]
     pub(crate) fn link(&mut self, parent: NodeId, child: NodeId, before: NodeId) {
         let previous = match before {
             0 => core::mem::replace(&mut self.cold_mut(parent).last_child, child),
@@ -1104,12 +1530,23 @@ impl Tree {
         let node = &mut self[child];
         (node.parent, node.previous, node.next) = (parent, previous, before);
         let keys = node.keys | node.keys_below;
+        if node.element().is_some() {
+            self.sequence.shape_changed(parent);
+            self.sequence.shape_changed(child);
+        }
         self.add_keys_below(parent, keys);
     }
 
     /// Of `root` and its descendants.
+    #[inline]
     pub(crate) fn set_scope(&mut self, root: NodeId, scope: NodeId) {
-        let mut next = if self[root].scope == scope { 0 } else { root };
+        if self[root].scope != scope {
+            self.change_scope(root, scope);
+        }
+    }
+
+    fn change_scope(&mut self, root: NodeId, scope: NodeId) {
+        let mut next = root;
         while next != 0 {
             let mut at = next;
             prefetch_write(
@@ -1128,7 +1565,7 @@ impl Tree {
     #[inline]
     pub(crate) fn cell(&self, id: NodeId) -> *const crate::api::core::Node {
         let cell = self.object(id);
-        if cell == BARE {
+        if Sketch::from_cell(cell).is_some() {
             crate::api::core::bare::make_object(self, id)
         } else {
             cell
@@ -1145,12 +1582,26 @@ impl Tree {
 
     #[inline]
     pub(crate) fn is_bare(&self, id: NodeId) -> bool {
-        self.object(id) == BARE
+        self.sketch(id).is_some()
+    }
+
+    #[inline]
+    pub(crate) fn sketch(&self, id: NodeId) -> Option<Sketch> {
+        Sketch::from_cell(self.object(id))
+    }
+
+    /// What it takes to make objects for them.
+    #[inline]
+    pub(crate) fn prefetch_children(&self, id: NodeId) {
+        [self[id].first_child, self.cold[id as usize].last_child]
+            .into_iter()
+            .for_each(|it| self.prefetch_node(it));
     }
 
     #[inline]
     pub(crate) fn make_bare(&mut self, id: NodeId) {
-        self.cold_mut(id).cell.set(BARE);
+        let sketch = Sketch::of(&self[id].data);
+        self.cold_mut(id).cell.set(sketch.to_cell());
     }
 
     #[inline]
@@ -1202,7 +1653,11 @@ impl Tree {
             .map(|it| (it, self.visit(it).get()))
     }
 
+    #[inline]
     pub(crate) fn take_comments(&self, parent: NodeId) -> SmallVec<[(NodeId, NodeId); 4]> {
+        if self.cold[parent as usize].last_comment.get() == 0 {
+            return SmallVec::new();
+        }
         let all = SmallVec::from_iter(self.comments_in(parent));
         self.cold[parent as usize].last_comment.set(0);
         all
@@ -1240,6 +1695,8 @@ impl Tree {
         if first == 0 {
             return 0;
         }
+        self.sequence.shape_changed(from);
+        self.sequence.shape_changed(to);
         match before {
             0 => self[to].first_child = first,
             _ => self[before].next = first,
@@ -1261,11 +1718,52 @@ impl Tree {
         self.cold_mut(id).cell.set(cell);
     }
 
+    /// Of two nodes of one tree.
+    pub(crate) fn precedes(&self, a: NodeId, b: NodeId) -> bool {
+        let up = |id: NodeId| self.walk(id, |it| it.parent);
+        let (depth_a, depth_b) = (up(a).count(), up(b).count());
+        let mut both = up(a)
+            .skip(depth_a.saturating_sub(depth_b))
+            .zip(up(b).skip(depth_b.saturating_sub(depth_a)));
+        let Some((a, b)) = both
+            .find(|(a, b)| self[*a].parent == self[*b].parent)
+            .filter(|(a, b)| a != b)
+        else {
+            return depth_a < depth_b;
+        };
+        let (mut after_a, mut after_b) = (a, b);
+        loop {
+            (after_a, after_b) = (self[after_a].next, self[after_b].next);
+            if after_a == b || after_b == 0 {
+                return true;
+            }
+            if after_b == a || after_a == 0 {
+                return false;
+            }
+        }
+    }
+
+    /// In the place of others, which may stay for a while.
+    #[inline(always)]
+    pub(crate) fn add_keys(&mut self, id: NodeId, keys: u64) {
+        let keys = Some(self[id].keys | keys)
+            .filter(|it| it.count_ones() < 12)
+            .unwrap_or_else(|| self.element(id).map_or(0, crate::selector::filter_of));
+        self.set_keys(id, keys);
+    }
+
+    #[inline(always)]
     pub(crate) fn set_keys(&mut self, id: NodeId, keys: u64) {
         self[id].keys = keys;
+        if self.sequence.is_current()
+            && let Some(element) = self.nodes[id as usize].element()
+        {
+            self.sequence.attributes_changed(id, keys, element);
+        }
         self.add_keys_below(self[id].parent, keys);
     }
 
+    #[inline(always)]
     fn add_keys_below(&mut self, mut id: NodeId, keys: u64) {
         while id != 0 && keys & !self[id].keys_below != 0 {
             self[id].keys_below |= keys;
@@ -1279,14 +1777,21 @@ impl Tree {
 
     pub(crate) fn unlink(&mut self, child: NodeId) {
         if self[child].parent != 0 {
-            self.forget_unskipped();
+            self.ancestry.forget_all();
         }
+        self.unlink_unknown(child);
+    }
+
+    /// `ancestry` has nothing on it or on what is in it, or it is told.
+    #[inline]
+    pub(crate) fn unlink_unknown(&mut self, child: NodeId) {
         let node = &mut self[child];
         let (parent, previous, next) = (node.parent, node.previous, node.next);
         (node.parent, node.previous, node.next) = (0, 0, 0);
         if parent == 0 {
             return;
         }
+        self.sequence.shape_changed(child);
         match previous {
             0 => self[parent].first_child = next,
             _ => self[previous].next = next,
@@ -1310,16 +1815,19 @@ impl Tree {
         next
     }
 
+    #[inline(always)]
     pub(crate) fn element(&self, id: NodeId) -> Option<&Element> {
         self.nodes.get(id as usize)?.element()
     }
 
+    #[inline(always)]
     pub(crate) fn element_mut(&mut self, id: NodeId) -> Option<&mut Element> {
         self.forget_found();
         self.element_to_style(id)
     }
 
     /// To change what selectors do not look at.
+    #[inline(always)]
     pub(crate) fn element_to_style(&mut self, id: NodeId) -> Option<&mut Element> {
         match &mut self.nodes.get_mut(id as usize)?.data {
             Data::Element(element) => Some(element),
@@ -1427,9 +1935,10 @@ impl Tree {
         fit: impl Fn(u64) -> bool,
         found: &mut [NodeId],
     ) -> usize {
-        let (nodes, mut count) = (&self.nodes[..], 0);
+        let (nodes, mut count, mut walked) = (&self.nodes[..], 0, self.sequence.walked.get());
         while let Some(mut id) = pending.pop() {
             while id != 0 {
+                walked += 1;
                 let node = &nodes[id as usize];
                 prefetch_read(core::ptr::from_ref(node).wrapping_add(8), Locality::L1);
                 let this = core::mem::replace(&mut id, node.next);
@@ -1448,11 +1957,13 @@ impl Tree {
                     count += 1;
                     if count == found.len() {
                         pending.push(id);
+                        self.sequence.walked.set(walked);
                         return count;
                     }
                 }
             }
         }
+        self.sequence.walked.set(walked);
         count
     }
 
@@ -1490,7 +2001,15 @@ impl Tree {
     }
 
     /// `root` and its descendants, with the shadow trees.
+    #[inline]
     pub(crate) fn visit_subtree(&self, root: NodeId, mut visit: impl FnMut(NodeId)) {
+        match self[root].first_child == 0 && !self[root].has(Flags::REDIRECTS_CHILDREN) {
+            true => visit(root),
+            false => self.visit_all_in(root, visit),
+        }
+    }
+
+    fn visit_all_in(&self, root: NodeId, mut visit: impl FnMut(NodeId)) {
         let (mut roots, mut next) = (Vec::new(), Some(root));
         while let Some(root) = next {
             for id in core::iter::once(root).chain(self.descendants(root)) {
@@ -1667,6 +2186,12 @@ impl Tree {
     }
 
     pub(crate) fn mark_style(&self, id: NodeId, flags: Flags) {
+        if !self[id].has(Flags::STYLE_DIRTY) {
+            let mut marked = self.marked.borrow_mut();
+            if marked.len() < 1 << 14 {
+                marked.push(id);
+            }
+        }
         self[id].set(flags);
         let mut child = id;
         for ancestor in self.flat_ancestors(id) {

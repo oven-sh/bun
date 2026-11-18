@@ -185,7 +185,7 @@ impl HTMLElement {
     }
 
     pub(crate) fn set_inner_text<'a>(&'a self, cx: Cx<'_, 'a>, text: DomString) {
-        if !text.units().any(|it| it == 0x0a || it == 0x0d) {
+        if !text.has_newline() {
             return string_replace_all(cx, text, self);
         }
         let fragment = rendered_text_fragment(cx, self.doc(), &text);
@@ -344,6 +344,10 @@ fn base_changed<'a>(cx: Cx<'_, 'a>, doc: &'a Doc) {
         .unwrap_or(fallback);
     if doc.is(DocFlags::HAS_PAGE) {
         doc.engine(|engine, _| engine.base_url = base.to_utf8().as_bytes().into());
+        doc.window()
+            .filter(|_| base != doc.base_url())
+            .into_iter()
+            .for_each(|it| it.host().base_url_changed(base.to_utf8().into_owned()));
     }
     doc.set_base_url(base);
 }

@@ -3,16 +3,28 @@
 use core::borrow::Borrow;
 use std::rc::Rc;
 
-use bun_jsc::bindgen::{self, JsHeap, JsScope};
+use bun_jsc::JSString;
+use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope};
 use smallvec::SmallVec;
 
 use super::atom::{AtomKey, qualified};
+use super::atoms::TEXTS;
 use super::steps::{AttrChange, Has};
 use super::{NodeFlags as F, *};
 use crate::document::Document;
 use crate::name::Name;
 use crate::selector::Pseudo;
 use crate::tree::{self, Attribute, Inert, Namespace, NodeId, Space, State};
+
+/// Of `bits_of_kind`. The others are for `known_name`.
+pub(super) const OWN_BITS: u32 = 4;
+
+/// The `bits_of_kind` of a new element with that qualified name.
+#[inline(always)]
+pub(super) const fn bits_for(name: Known) -> u16 {
+    const { assert!((Known::Other as u16) < u16::MAX >> OWN_BITS) };
+    (name as u16 + 1) << OWN_BITS
+}
 
 impl Attribute {
     #[inline]
@@ -48,14 +60,22 @@ impl Document {
         attribute: &Attribute,
         read: impl FnOnce(&DomString) -> R,
     ) -> Option<R> {
-        let bases = &self.smil.effects.bases;
-        match if bases.is_empty() {
-            None
-        } else {
-            bases.get(&(id, attribute.name))
-        } {
-            Some((_, base)) => base.as_ref().map(|it| read(&DomString::from_utf8(it))),
-            None => Some(read(attribute.value.string())),
+        let base;
+        Some(read(match self.smil.effects.bases.is_empty() {
+            true => attribute.value.string(),
+            false => {
+                base = self.value_without_smil(id, attribute)?;
+                &base
+            }
+        }))
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn value_without_smil(&self, id: NodeId, attribute: &Attribute) -> Option<DomString> {
+        match self.smil.effects.bases.get(&(id, attribute.name)) {
+            Some((_, base)) => base.as_ref().map(|it| DomString::from_utf8(it)),
+            None => Some(attribute.value.string().clone()),
         }
     }
 
@@ -90,16 +110,10 @@ impl Document {
 /// It has steps that all elements share.
 #[inline]
 pub(super) fn is_global(name: &Atom) -> bool {
-    matches!(
-        name.known(),
-        atom!("name")
-            | atom!("slot")
-            | atom!("blocking")
-            | atom!("popover")
-            | atom!("nonce")
-            | atom!("autofocus")
-            | atom!("elementtiming")
-    ) || is_handler(name)
+    match name.known() {
+        Known::Other => is_handler(name),
+        name => name.meaning().contains(Meaning::STEPS),
+    }
 }
 
 #[inline]
@@ -169,6 +183,7 @@ impl Element {
 
     pub(crate) fn set_prefix(&self, prefix: Option<Atom>) {
         let space = Space::new(self.ns(), prefix);
+        self.bits_of_kind().update(|it| it % (1 << OWN_BITS));
         self.arena().write(|engine| {
             engine
                 .tree
@@ -206,6 +221,53 @@ impl Element {
         self.kind().is_html() && self.doc().is_html_doc()
     }
 
+    /// Of the qualified name.
+    #[inline(always)]
+    fn known_name(&self) -> Known {
+        match self.bits_of_kind().get() >> OWN_BITS {
+            0 => self.remember_name(),
+            name => Known::from_index(name - 1),
+        }
+    }
+
+    #[cold]
+    fn remember_name(&self) -> Known {
+        let name = if self.prefix().is_some() {
+            Known::Other
+        } else {
+            self.tag()
+        };
+        self.bits_of_kind().update(|it| it | bits_for(name));
+        name
+    }
+
+    /// For the steps of its kind.
+    #[inline]
+    pub(crate) fn own_bit(&self) -> bool {
+        self.bits_of_kind().get() & 1 != 0
+    }
+
+    #[inline]
+    pub(crate) fn set_own_bit(&self, on: bool) {
+        self.bits_of_kind().update(|it| it & !1 | u16::from(on));
+    }
+
+    #[inline]
+    pub(super) fn tag_name_to_js<'a>(&self, heap: &JsHeap<'a>) -> JsLocal<'a, JSString> {
+        match self.known_name() {
+            Known::Other => self.tag_name().to_js(heap),
+            name => super::string::known_to_js(heap, name, self.ignores_case()),
+        }
+    }
+
+    #[inline]
+    pub(super) fn local_name_to_js<'a>(&self, heap: &JsHeap<'a>) -> JsLocal<'a, JSString> {
+        match self.known_name() {
+            Known::Other => self.with(|it| it.local.to_js(heap)),
+            name => super::string::known_to_js(heap, name, false),
+        }
+    }
+
     pub(crate) fn tag_name(&self) -> Atom {
         if self.ignores_case() {
             self.qualified_name().to_ascii_uppercase()
@@ -222,6 +284,11 @@ impl Element {
 
     #[inline]
     pub(crate) fn flush_style<'a>(&'a self, _: &mut JsScope<'a>) {
+        self.serialize_style();
+    }
+
+    #[inline]
+    pub(super) fn serialize_style(&self) {
         if self.has(F::STYLE_DIRTY) {
             seams::flush_style(self);
         }
@@ -274,6 +341,16 @@ impl Element {
     #[inline]
     pub(crate) fn has_attr(&self, name: impl AtomKey) -> bool {
         self.with_attr_string(name, |_| ()).is_some()
+    }
+
+    /// In any namespace.
+    #[inline]
+    pub(crate) fn has_any_attr(&self, names: &[Known]) -> bool {
+        self.with(|it| {
+            it.attributes
+                .iter()
+                .any(|it| names.contains(&it.local.known()))
+        })
     }
 
     pub(crate) fn attr_ns(&self, ns: &Ns, local: &Atom) -> Option<DomString> {
@@ -409,14 +486,191 @@ impl Element {
         }
     }
 
+    /// To a string of a script.
+    #[inline]
+    pub(crate) fn set_attr_to_impl<'a>(
+        &'a self,
+        cx: &mut JsScope<'a>,
+        name: &Atom,
+        value: &bun_core::WTFStringImplStruct,
+    ) {
+        if !self.store_any_unnoticed(name.known(), value) {
+            self.set_noticed_attr(cx, name, value);
+        }
+    }
+
+    /// Likewise, for a name that is a constant.
+    #[inline(always)]
+    pub(super) fn set_known_attr<'a>(
+        &'a self,
+        cx: &mut JsScope<'a>,
+        name: Known,
+        value: &bun_core::WTFStringImplStruct,
+    ) {
+        if !DomString::with_impl(
+            value,
+            #[inline(always)]
+            |it| self.store_unnoticed(name, it),
+        ) {
+            self.set_noticed_attr(cx, &name.into(), value);
+        }
+    }
+
+    fn store_any_unnoticed(&self, name: Known, value: &bun_core::WTFStringImplStruct) -> bool {
+        DomString::with_impl(
+            value,
+            #[inline(always)]
+            |it| self.store_unnoticed(name, it),
+        )
+    }
+
+    #[inline(never)]
+    fn set_noticed_attr<'a>(
+        &'a self,
+        cx: &mut JsScope<'a>,
+        name: &Atom,
+        value: &bun_core::WTFStringImplStruct,
+    ) {
+        if DomString::with_impl(value, |it| self.store_attr(cx, name, Some(it))).is_none() {
+            self.change_attr_with_steps(
+                cx,
+                &QualName::plain(name),
+                Some(&DomString::from_impl(value)),
+            );
+        }
+    }
+
+    /// Whether it was enough to store the value.
+    #[inline(always)]
+    fn store_unnoticed(&self, name: Known, value: &DomString) -> bool {
+        let (doc, meaning) = (self.doc(), name.meaning());
+        if meaning.intersects(Meaning::STEPS | Meaning::OTHER)
+            || self.has(F::CUSTOM | F::HAS_EXPLICIT_ELEMENTS | F::HAS_ATTR_NODES)
+            || !self.kind().is_html()
+            || doc.is(DocFlags::OBSERVES_ATTRIBUTES | DocFlags::RECORDS_EDITS)
+            || name != atom!("class") && self.steps().contains(Has::ATTRIBUTE_CHANGED)
+        {
+            return false;
+        }
+        let may_change = name != atom!("id")
+            || !self.has(F::CONNECTED | F::NAMED) && self.kind() != Kind::Object;
+        let Some(has_changed) = self.arena().write(
+            #[inline(always)]
+            |engine| {
+                engine.store_attribute(
+                    self.id(),
+                    name,
+                    value,
+                    self.is_rendered(),
+                    may_change,
+                    doc.quirks(),
+                )
+            },
+        ) else {
+            return false;
+        };
+        if has_changed {
+            self.attributes_changed();
+            self.arena().record_attribute(self, &name.into());
+            if name == atom!("id") {
+                self.toggle(F::HAS_ID, !value.is_empty());
+            }
+        }
+        true
+    }
+
     /// Whether it had one.
+    #[inline]
     fn change_attr<'a>(
         &'a self,
         cx: &mut JsScope<'a>,
         name: &QualName,
         new: Option<&DomString>,
     ) -> bool {
+        let stored = if name.ns == Ns::None {
+            self.store_attr(cx, &name.local, new)
+        } else {
+            None
+        };
+        stored.unwrap_or_else(|| self.change_attr_with_steps(cx, name, new))
+    }
+
+    /// `change_attr`, unless something but the engine has to hear of it.
+    fn store_attr<'a>(
+        &'a self,
+        cx: &mut JsScope<'a>,
+        name: &Atom,
+        new: Option<&DomString>,
+    ) -> Option<bool> {
+        let (doc, id, is_id) = (self.doc(), self.id(), *name == atom!("id"));
+        if self.has(F::CUSTOM | F::HAS_EXPLICIT_ELEMENTS | F::HAS_ATTR_NODES)
+            || self.has_observed_attribute(name)
+            || *name != atom!("class")
+                && (self.steps().contains(Has::ATTRIBUTE_CHANGED)
+                    || matches!(name.known(), atom!("style") | atom!("form"))
+                    || is_global(name))
+        {
+            return None;
+        }
+        let (index, is_same) = self.arena().read(|engine| {
+            let attributes = engine.tree.element(id).map_or(&[][..], |it| &it.attributes);
+            let index = attributes
+                .iter()
+                .position(|it| it.local == *name && it.space.is_none());
+            (
+                index,
+                index.and_then(|it| {
+                    engine.script_value(id, &attributes[it], |old| Some(old) == new)
+                }),
+            )
+        });
+        match is_same {
+            Some(true) => return Some(true),
+            None if new.is_none() => return Some(false),
+            _ if is_id => return None,
+            _ => {}
+        }
+        self.attributes_changed();
+        self.arena().record_attribute(self, name);
+        if self.tell_engine(index.ok_or_else(|| (name.clone(), None)), new) {
+            doc.invalidate(cx);
+        }
+        Some(is_same.is_some())
+    }
+
+    /// Whether a frame has to be asked for.
+    #[inline]
+    fn tell_engine(
+        &self,
+        place: Result<usize, (Atom, Option<Rc<Space>>)>,
+        new: Option<&DomString>,
+    ) -> bool {
+        let doc = self.doc();
+        self.change(|engine, id| {
+            engine.set_script_value(id, place, new, doc.quirks());
+            self.is_rendered()
+                && !self.arena().is_scheduled.get()
+                && (doc.is(DocFlags::IS_ACCESSIBLE)
+                    || if self.kind().is_svg() {
+                        engine.needs_attention()
+                    } else {
+                        engine.has_pending()
+                    })
+        })
+    }
+
+    fn change_attr_with_steps<'a>(
+        &'a self,
+        cx: &mut JsScope<'a>,
+        name: &QualName,
+        new: Option<&DomString>,
+    ) -> bool {
         let is_plain = name.ns == Ns::None;
+        // It is looked up.
+        let atom = new
+            .filter(|_| is_plain && name.local == atom!("name"))
+            .map(|it| Atom::from_string(it).to_dom_string());
+        let new = atom.as_ref().or(new);
         if is_plain && name.local == atom!("style") {
             self.flush_style(cx);
         }
@@ -450,25 +704,16 @@ impl Element {
         if !is_plain {
             self.set(F::HAS_NAMESPACED_ATTR);
         }
-        let needs_frame = old.as_ref() != new && {
-            let place = index.ok_or_else(|| {
-                (
-                    name.local.clone(),
-                    (!is_plain).then(|| Space::new(name.ns.clone(), name.prefix.clone())),
-                )
-            });
-            self.change(|engine, id| {
-                engine.set_script_value(id, place, new, doc.quirks());
-                self.is_rendered()
-                    && !self.arena().is_scheduled.get()
-                    && (doc.is(DocFlags::IS_ACCESSIBLE)
-                        || if self.kind().is_svg() {
-                            engine.needs_attention()
-                        } else {
-                            engine.has_pending()
-                        })
-            })
-        };
+        let needs_frame = old.as_ref() != new
+            && self.tell_engine(
+                index.ok_or_else(|| {
+                    (
+                        name.local.clone(),
+                        (!is_plain).then(|| Space::new(name.ns.clone(), name.prefix.clone())),
+                    )
+                }),
+                new,
+            );
         self.run_attribute_steps(
             cx,
             &AttrChange {
@@ -493,25 +738,34 @@ impl Element {
     ) -> bindgen::Result<'a, bool> {
         if !self.ignores_case()
             || self.has(F::CUSTOM | F::HAS_NAMESPACED_ATTR | F::HAS_EXPLICIT_ELEMENTS)
-            || self.steps().contains(Has::ATTRIBUTE_CHANGED)
-            || self.doc().is(DocFlags::OBSERVES_ATTRIBUTES
-                | DocFlags::RECORDS_EDITS
-                | DocFlags::IS_ACCESSIBLE)
+            || self.doc().is(DocFlags::IS_ACCESSIBLE)
         {
             return Ok(false);
         }
-        let value = DomString::from_js_string(heap, value)?;
-        self.attributes_changed();
-        Atom::with_lowercased(heap, name, |name| {
-            self.arena()
-                .write(|engine| engine.change_attribute_unnoticed(self.id(), name, value))
+        let value = super::string::impl_of(heap, value)?;
+        Atom::with_lowercased_and_keyed(heap, name, |local, name| {
+            if name == Name::NONE {
+                return !crate::api::trusted::is_required()
+                    && self.store_any_unnoticed(local.known(), value);
+            }
+            self.attributes_changed();
+            let store = |value: &DomString| {
+                self.arena().write(|engine| {
+                    if self.is_rendered() {
+                        engine.change_attribute_unnoticed(self.id(), local, value)
+                    } else {
+                        engine.set_keyed_attribute(self.id(), local, name, value)
+                    }
+                })
+            };
+            !self.has_observed_attribute(local) && DomString::with_impl(value, store)
         })
     }
 
     fn run_attribute_steps<'a>(&'a self, cx: &mut JsScope<'a>, change: &AttrChange<'_>) {
         let AttrChange { name, old, new } = *change;
         let doc = self.doc();
-        if doc.is(DocFlags::OBSERVES_ATTRIBUTES | DocFlags::RECORDS_EDITS) {
+        if self.has_observed_attribute(&name.local) {
             queue_mutation_record(&cx.heap, self, Record::Attribute { name, old });
         }
         if self.has(F::CUSTOM) {
@@ -538,11 +792,25 @@ impl Element {
                 );
                 self.toggle(F::HAS_ID, new.is_some());
                 if let Some(scope) = self.scope().filter(|_| old != new) {
-                    let [old, new] = [old, new].map(|it| it.map(Atom::from_string));
-                    old.iter().for_each(|it| scope.remove_id(it, self.id()));
-                    new.iter()
-                        .for_each(|it| scope.add_id(&cx.heap, it.clone(), self.id()));
-                    old.iter().chain(&new).for_each(|it| doc.id_changed(cx, it));
+                    old.into_iter().for_each(|it| {
+                        scope.remove_id(Name::sought(it.to_utf8().as_bytes()), self.id())
+                    });
+                    new.into_iter().for_each(|it| {
+                        scope.add_id(&cx.heap, Name::sought(it.to_utf8().as_bytes()), self.id())
+                    });
+                    if doc.is(DocFlags::WATCHES_IDS) {
+                        old.into_iter()
+                            .chain(new)
+                            .for_each(|it| doc.id_changed(cx, &Atom::from_string(it)));
+                    }
+                    if self.arena().has_remote_owners.get() {
+                        old.into_iter()
+                            .chain(new)
+                            .for_each(|it| crate::api::forms::id_changed(cx, scope, it));
+                    }
+                    if old.is_some() {
+                        crate::api::ui::interest::id_changed(cx, self);
+                    }
                 }
                 if self.has(F::NAMED) || self.kind() == Kind::Object {
                     self.name_changed(cx);
@@ -557,7 +825,7 @@ impl Element {
             }
             atom!("slot") => {
                 if let Some(shadow) = self.parent_element().and_then(Element::shadow_root) {
-                    slots::assign_slottables(cx, shadow);
+                    slots::slot_attribute_changed(cx, shadow, self);
                 }
             }
             atom!("form") if crate::api::forms::is_listed(self) => {
@@ -566,6 +834,7 @@ impl Element {
             atom!("blocking") => doc.invalidate(cx),
             atom!("nonce") => self.set_nonce(new.cloned().unwrap_or_default()),
             atom!("popover") => crate::api::ui::popover::attribute_changed(cx, self),
+            atom!("interestfor") => crate::api::ui::interest::forget(cx, self),
             atom!("autofocus") => self.toggle(F::AUTOFOCUS, change.new.is_some()),
             atom!("elementtiming") => crate::api::performance::time_element(&cx.heap, self),
             _ if is_handler(&name.local) => {
@@ -670,7 +939,7 @@ impl Element {
         };
         known
             .nodes()
-            .find(|it| it.with_inert(|it| it.name.ns == name.ns && it.name.local == name.local))?
+            .find(|it| it.with_inert(|it| it.name.local == name.local && it.name.ns == name.ns))?
             .downcast()
     }
 
@@ -681,6 +950,31 @@ impl Element {
             attr.attach(heap, self);
             attr
         })
+    }
+
+    pub(super) fn attr_node_at<'a>(&'a self, heap: &JsHeap<'a>, index: u32) -> Option<&'a Attr> {
+        let name = self.arena().read(|engine| {
+            let has_value = |it: &&Attribute| {
+                it.is_visible() && engine.script_value(self.id(), it, |_| ()).is_some()
+            };
+            engine
+                .tree
+                .element(self.id())?
+                .attributes
+                .iter()
+                .filter(has_value)
+                .nth(index as usize)
+                .map(Attribute::qual_name)
+        })?;
+        let likely = self
+            .try_edge_list(Edge::AttributeNodes)
+            .and_then(|it| it.node(index))
+            .filter(|it| it.with_inert(|it| it.name == name));
+        Some(
+            likely
+                .and_then(Node::downcast)
+                .unwrap_or_else(|| self.attr_node(heap, name)),
+        )
     }
 
     pub(crate) fn set_attr_node<'a>(
@@ -873,7 +1167,7 @@ fn invalid_name<'a>(heap: &JsHeap<'a>, name: &Atom) -> bindgen::Error<'a> {
 }
 
 #[inline]
-fn ends_name(unit: u16) -> bool {
+const fn ends_name(unit: u16) -> bool {
     unit < 64
         && (1 | 1 << 9 | 1 << 10 | 1 << 12 | 1 << 13 | 1 << 0x20 | 1 << 0x2f | 1u64 << 0x3e) >> unit
             & 1
@@ -902,22 +1196,42 @@ pub(crate) fn validate_element_name<'a>(heap: &JsHeap<'a>, name: &Atom) -> bindg
 
 /// <https://dom.spec.whatwg.org/#valid-attribute-local-name>
 #[inline]
-pub(crate) fn validate_attribute_name<'a>(
-    heap: &JsHeap<'a>,
-    name: &Atom,
-) -> bindgen::Result<'a, ()> {
-    let is_valid_latin1 =
-        |it: &[u8]| !it.is_empty() && !it.iter().any(|it| *it == b'=' || ends_name((*it).into()));
-    let is_valid = match name.as_known() {
-        Some(known) => is_valid_latin1(known.as_bytes()),
+pub(super) fn is_valid_attribute_name(name: &Atom) -> bool {
+    const fn is_valid_latin1(mut text: &[u8]) -> bool {
+        let is_empty = text.is_empty();
+        while let [unit, rest @ ..] = text
+            && *unit != b'='
+            && !ends_name(*unit as u16)
+        {
+            text = rest;
+        }
+        !is_empty && text.is_empty()
+    }
+    static OF_KNOWN: [bool; TEXTS.len()] = {
+        let (mut all, mut index) = ([false; TEXTS.len()], 0);
+        while index < all.len() {
+            all[index] = is_valid_latin1(TEXTS[index].as_bytes());
+            index += 1;
+        }
+        all
+    };
+    match OF_KNOWN.get(name.known() as usize) {
+        Some(is_valid) => *is_valid,
         None if name.as_impl().is_8bit() => is_valid_latin1(name.as_impl().latin1_slice()),
         None => !name
             .as_impl()
             .utf16_slice()
             .iter()
             .any(|it| *it == 0x3d || ends_name(*it)),
-    };
-    if is_valid {
+    }
+}
+
+#[inline]
+pub(crate) fn validate_attribute_name<'a>(
+    heap: &JsHeap<'a>,
+    name: &Atom,
+) -> bindgen::Result<'a, ()> {
+    if is_valid_attribute_name(name) {
         Ok(())
     } else {
         Err(invalid_name(heap, name))

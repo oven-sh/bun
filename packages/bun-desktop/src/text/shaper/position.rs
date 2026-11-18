@@ -343,5 +343,9 @@ fn follow(glyphs: &mut [Glyph], child: usize, direction: Direction, depth: u32) 
 
 /// Makes offsets relative to where the glyphs are, instead of to what they are attached to.
 pub fn finish(glyphs: &mut [Glyph], direction: Direction) {
-    (0..glyphs.len()).for_each(|it| follow(glyphs, it, direction, 64));
+    for index in 0..glyphs.len() {
+        if glyphs[index].attached_to != 0 {
+            follow(glyphs, index, direction, 64);
+        }
+    }
 }

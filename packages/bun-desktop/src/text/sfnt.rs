@@ -10,6 +10,9 @@ pub mod memo;
 pub mod variations;
 pub mod work;
 
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU16, AtomicUsize, Ordering::Relaxed};
+
 use crate::abi::Rect;
 use crate::gfx::{self, Path};
 #[cfg(not(target_os = "macos"))]
@@ -110,6 +113,18 @@ struct Charmap {
     is_symbol: bool,
     is_mac_roman: bool,
     selectors: Option<Data>,
+    known: Option<&'static Known>,
+}
+
+/// The glyphs of the characters that have been asked about, in pages of the first plane. There is none where there are no glyphs.
+type Known = [OnceLock<Page>; 256];
+type Page = Option<Box<[AtomicU16; 256]>>;
+
+/// Whether so many bytes are left of what all fonts may take for that.
+fn may_remember(bytes: usize) -> bool {
+    static LEFT: AtomicUsize = AtomicUsize::new(8 << 20);
+    LEFT.try_update(Relaxed, Relaxed, |it| it.checked_sub(bytes))
+        .is_ok()
 }
 
 const WORK_PER_GLYPH: usize = 1 << 21;
@@ -144,6 +159,7 @@ impl Charmap {
             is_symbol: id == (3, 0),
             is_mac_roman: id == (1, 0),
             selectors: find((0, 5), &[14]),
+            known: None,
         })
     }
 
@@ -196,6 +212,41 @@ impl Charmap {
                     .checked_add(if format == 12 { offset } else { 0 })
             }
         }
+    }
+
+    fn may_have(&self, [first, last]: [u32; 2]) -> bool {
+        let table = self.table;
+        let start = || match table.u16(0)? {
+            4 => {
+                let count = usize::from(table.u16(6)? / 2);
+                let segment = Data::partition(count, |it| {
+                    table
+                        .u16(14 + it * 2)
+                        .is_some_and(|end| u32::from(end) < first)
+                });
+                table
+                    .u16(16 + (count + segment) * 2)
+                    .filter(|_| segment < count)
+                    .map(u32::from)
+            }
+            12 | 13 => {
+                let count = table.u32(12)? as usize;
+                let index = Data::partition(count, |it| {
+                    table.u32(20 + it * 12).is_some_and(|end| end < first)
+                });
+                table.u32(16 + Some(index).filter(|it| *it < count)? * 12)
+            }
+            _ => Some(0),
+        };
+        start().is_some_and(|it| it <= last)
+    }
+
+    #[cold]
+    fn new_page(&self, place: &'static OnceLock<Page>, character: u32) -> Option<&'static Page> {
+        let is_empty = !self.may_have([character & !255, character | 255]);
+        (is_empty || may_remember(512)).then(|| {
+            place.get_or_init(|| (!is_empty).then(|| Box::new([const { AtomicU16::new(0) }; 256])))
+        })
     }
 
     fn map(&self, code: u32) -> Option<u32> {
@@ -390,8 +441,41 @@ impl Font {
         self.charmap.is_some()
     }
 
+    /// For a font that stays.
+    pub fn remember_glyphs(&mut self) {
+        let charmap = self
+            .charmap
+            .as_mut()
+            .filter(|it| !it.is_symbol && !it.is_mac_roman && may_remember(size_of::<Known>()));
+        charmap
+            .into_iter()
+            .for_each(|it| it.known = Some(Box::leak(Box::new([const { OnceLock::new() }; 256]))));
+    }
+
+    #[inline]
     pub fn glyph(&self, character: u32) -> Option<u32> {
+        const MISSING: u16 = u16::MAX;
         let charmap = self.charmap.as_ref()?;
+        if let Some(page) = charmap.known.and_then(|it| it.get(character as usize >> 8))
+            && let Some(page) = page.get().or_else(|| charmap.new_page(page, character))
+        {
+            let slot = &page.as_ref()?[character as usize & 255];
+            return match slot.load(Relaxed) {
+                0 => {
+                    let found = charmap.map(character);
+                    slot.store(
+                        found.map_or(
+                            MISSING,
+                            |it| if it < MISSING.into() { it as u16 } else { 0 },
+                        ),
+                        Relaxed,
+                    );
+                    found
+                }
+                MISSING => None,
+                known => Some(known.into()),
+            };
+        }
         memo::remembered(
             u32::from(charmap.is_symbol) + u32::from(charmap.is_mac_roman) * 2,
             charmap.table,
@@ -683,5 +767,40 @@ impl Font {
             100.,
             flags & 2 != 0,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn what_is_remembered_about_glyphs_is_limited() {
+        let cmap = [
+            0, 0, 0, 1, 0, 3, 0, 1, 0, 0, 0, 12, 0, 6, 0, 12, 0, 0, 0, 65, 0, 1, 0, 7,
+        ];
+        let file = [
+            &[0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0][..],
+            b"cmap",
+            &[0, 0, 0, 0, 0, 0, 0, 28, 0, 0, 0, 24],
+            &cmap,
+        ]
+        .concat()
+        .leak();
+        let mut pages = 0;
+        for _ in 0..200 {
+            let mut font = Font::new(file, 0).unwrap();
+            font.remember_glyphs();
+            assert!((0..256).all(|it| font.glyph(it * 256 + 65) == (it == 0).then_some(7)));
+            pages += font
+                .charmap
+                .unwrap()
+                .known
+                .into_iter()
+                .flatten()
+                .filter(|it| it.get().is_some())
+                .count();
+        }
+        assert!(pages <= 1 << 14);
     }
 }

@@ -568,15 +568,15 @@ fn name_of_file(file: JSValue) -> DomString {
 pub(crate) fn of_chosen_files<'a>(
     cx: &mut Cx<'a>,
     doc: &'a Doc,
-    event: JSValue,
+    files: &[bun_web::host::ChosenFile],
 ) -> Option<&'a DataTransfer> {
     let heap = doc.heap(&cx.heap);
-    let chosen = crate::api::core::by_name::member(global_of(heap), event, "paths")?;
-    let count = Some(chosen.get_length(global_of(heap)).ok()? as u32).filter(|it| *it > 0)?;
+    files.first()?;
     let data = DataTransfer::new(heap, Mode::ReadWrite);
-    for file in (0..count).filter_map(|it| {
-        bun_web::convert::file_chosen(global_of(heap), chosen.get_index(global_of(heap), it).ok()?)
-    }) {
+    for file in files
+        .iter()
+        .filter_map(|it| bun_web::convert::file_at(global_of(heap), it.0.as_bytes()))
+    {
         data.add(
             heap,
             host::type_of_file(file).unwrap_or_default(),

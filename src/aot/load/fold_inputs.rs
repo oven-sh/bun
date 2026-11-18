@@ -11,7 +11,7 @@ use bun_sema::fold::{
 use bun_sema::hir_from_data::DataValue;
 use bun_sema::session::Arena;
 
-use crate::builtins::Platforms;
+use crate::builtins::{BuiltinId, Platforms, table};
 use crate::diagnostics::LoadMessages;
 use crate::load::data_modules::parse_json;
 use crate::load::globals_of_the_web::is_absent_or_different;
@@ -94,13 +94,16 @@ pub(crate) fn create_application_fold_inputs<'s>(
         false => collect_defines_held_in_every_run(platform, arena, atoms),
     };
     if has_realms_of_the_web {
+        let find_global = |name: Atom| table::global(table::find_name(atoms.bytes(name))?);
         held_in_every_run.retain(|define| {
-            let global = match (define.path.root, define.path.members) {
-                (DefineRoot::Global(known::globalThis), &[member, ..]) => member,
-                (DefineRoot::Global(root), _) => root,
-                _ => return true,
+            let DefineRoot::Global(root) = define.path.root else {
+                return true;
             };
-            !is_absent_or_different(atoms.bytes(global))
+            let global = match (find_global(root), define.path.members) {
+                (Some(BuiltinId::GlobalThis), &[member, ..]) => find_global(member),
+                (global, _) => global,
+            };
+            !global.is_some_and(is_absent_or_different)
         });
     }
     let mut defines = defines_without_hot_reloading(arena, atoms);

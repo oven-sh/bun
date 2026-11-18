@@ -450,6 +450,14 @@ impl Document {
             if let Some(resolved) = resolved.as_mut().filter(|_| is_table) {
                 *resolved += self.height_of_captions(id, cross);
             }
+            if let (Size::MinContent | Size::MaxContent, true) =
+                (basis, self.boxes[id].is_orthogonal())
+            {
+                resolved = Some(
+                    self.orthogonal_content(id, cross, container.size[0].unwrap_or(0.0))
+                        [usize::from(*basis == Size::MaxContent)],
+                );
+            }
             let mut known = None;
             let mut content = |document: &mut Document| {
                 *known.get_or_insert_with(|| {
@@ -485,7 +493,7 @@ impl Document {
                 let content = match () {
                     () if is_table => intrinsic,
                     () if self.boxes[id].is_orthogonal() => {
-                        self.orthogonal_min_content(id, cross, container.size[0].unwrap_or(0.0))
+                        self.orthogonal_content(id, cross, container.size[0].unwrap_or(0.0))[0]
                     }
                     () => content.max(intrinsic),
                 };
@@ -636,8 +644,9 @@ impl Document {
         let mut items = self.flex_items(id, container);
         let it = &self.boxes[id];
         let edges = it.border_and_padding(0.0).sums();
-        let limit = container.size[1]
-            .unwrap_or_else(|| it.height_limits(&Room::default(), edges, None)[1] - edges[1]);
+        let limit = container.size[1].unwrap_or_else(|| {
+            it.height_limits(&self.room_for_widths(id), edges, None)[1] - edges[1]
+        });
         let (lines, mut sizes) = (break_lines(&items, container, limit), [0.0f32; 2]);
         for line in &lines {
             let (mut widest, mut ascents, mut descents) = (0.0, [f32::MIN; 2], [f32::MIN; 2]);
@@ -707,7 +716,6 @@ impl Document {
             ..Container::new(&it.style, [Some(width), it.inner_height(input, inset)])
         };
         let (main, cross, gaps) = (container.main, 1 - container.main, container.gaps);
-        let has_ratio = it.ratio.is_some() && input.height.is_none();
         let mut items = self.flex_items(id, &container);
         let mut output = Output {
             uses_height: main == 1 && container.wraps,
@@ -751,7 +759,7 @@ impl Document {
                 let mut own = Output::default();
                 if main == 0 {
                     let input = self.item_input(&container, item);
-                    own = match item.stretches && (item.room.height.is_none() || has_ratio) {
+                    own = match item.stretches && item.room.height.is_none() {
                         true => self.measure(
                             item.id,
                             Input {

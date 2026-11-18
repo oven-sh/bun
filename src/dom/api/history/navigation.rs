@@ -703,9 +703,7 @@ impl Navigation {
         cx: &mut Cx<'a>,
         entry: Entry,
         is_by_user: bool,
-        resume: JSValue,
     ) -> bool {
-        js_Navigation::set_resume(self, resume);
         let HistoryEntry {
             url,
             navigation_state,
@@ -891,10 +889,7 @@ impl Navigation {
             }
             self.suppresses_scroll.set(is_intercepted);
             if is_intercepted {
-                host::run(
-                    cx,
-                    js_Navigation::resume(self).unwrap_or(JSValue::UNDEFINED),
-                );
+                history.proceed(cx);
             }
             return;
         }
@@ -989,7 +984,12 @@ impl Navigation {
         if let Some(ui) = Ui::of(self.window().document())
             .filter(|it| resets_focus && it.focus.changes.get() == event.course.focus_serial)
         {
-            if event.user_initiated || allows_feature(ui, "focus-without-user-activation") {
+            if event.user_initiated
+                || allows_feature(
+                    ui,
+                    bun_web::permissions_policy::Feature::FocusWithoutUserActivation,
+                )
+            {
                 self.reset_focus(cx, ui);
             }
         }

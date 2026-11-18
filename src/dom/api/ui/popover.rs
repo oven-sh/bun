@@ -8,7 +8,7 @@ use super::prelude::*;
 use super::top_layer::{
     Toggled, fire_before_toggle, keep_queued_toggle, queue_toggle, set_in_top_layer,
 };
-use super::{dialog, invokers};
+use super::{dialog, interest, invokers};
 use crate::api::forms;
 use crate::generated_bindgen::interaction::js_ShownPopover;
 
@@ -69,6 +69,10 @@ pub(crate) fn state(element: &Element) -> Option<Mode> {
 
 pub(crate) fn invoker_of(element: &Element) -> Option<&Element> {
     shown(element)?.invoker()
+}
+
+pub(super) fn is_hiding(element: &Element) -> bool {
+    shown(element).is_some_and(|it| it.is_hiding.get())
 }
 
 pub(crate) fn invoked_by(invoker: &Element) -> Option<&Element> {
@@ -371,6 +375,7 @@ fn hide_checked<'a>(
     }
     if how.fires_events {
         fire_before_toggle(cx, element, false, how.source);
+        interest::popover_hides(cx, element);
         if !is_still_valid()? {
             return Ok(());
         }
@@ -449,6 +454,7 @@ fn clicked_popover<'a>(ui: &Ui, target: &'a Element) -> Option<&'a Element> {
     let invoked = |at: &'a Element| {
         forms::select::picker_popover(at)
             .or_else(|| invokers::popover_target(at))
+            .or_else(|| interest::target_of(at))
             .filter(|it| is_light_dismissed(it))
     };
     higher(

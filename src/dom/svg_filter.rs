@@ -3,7 +3,7 @@
 use crate::abi::{
     self, BlendMode, INPUT_ALPHA, INPUT_GRAPHIC, INPUT_NOTHING, Item, Matrix, Primitive, Rect,
 };
-use crate::effects::Subject;
+use crate::effects::UserSpace;
 use crate::geometry::translation;
 use crate::name::{Name, is_name, name};
 use crate::paint::{Painter, Space, blend_mode};
@@ -174,11 +174,11 @@ impl<'a> Painter<'a> {
     pub(crate) fn svg_filter(
         &mut self,
         filter: &Node<'a>,
-        subject: &Subject,
+        user: UserSpace,
         inputs: &mut Vec<Input<'a>>,
         is_tainted: &mut bool,
     ) {
-        let (document, user) = (filter.document, subject.user_space());
+        let document = filter.document;
         let region = document.resource_region(filter, name!("filterUnits"), user.bounds);
         let is_relative =
             filter.element.attribute(name!("primitiveUnits")) == Some("objectBoundingBox");

@@ -7,8 +7,10 @@ use super::scene::{Scene, erases};
 use super::stretch::Stretch;
 use crate::abi::{Filter, GradientShape, Item, Outline, PathVerb, Rect, RoundedRect, Stroke, Tile};
 use crate::gfx::Transform;
+use crate::hash::SECRETS;
 use crate::images;
 
+#[derive(Clone, Copy)]
 struct Wide([u64; 2]);
 
 impl Hasher for Wide {
@@ -41,6 +43,7 @@ impl Hasher for Wide {
 }
 
 /// Of what is painted into an area, wherever the area is.
+#[derive(Clone, Copy)]
 pub struct Digest {
     hasher: Wide,
     origin: (f32, f32),
@@ -49,7 +52,7 @@ pub struct Digest {
 impl Digest {
     pub fn new(area: IntRect) -> Digest {
         let mut digest = Digest {
-            hasher: Wide([0x243F_6A88_85A3_08D3, 0x1319_8A2E_0370_7344]),
+            hasher: Wide([SECRETS[0], SECRETS[1]]),
             origin: (area.left as f32, area.top as f32),
         };
         digest.value((area.width(), area.height()));
@@ -375,7 +378,6 @@ impl Digest {
         let scene = painter.scene;
         for index in scene
             .children(range)
-            .take_while(|index| *index < painter.limit)
             .filter(|it| !painter.left_out.contains(it))
         {
             let item = &scene.items[index];
@@ -387,6 +389,10 @@ impl Digest {
                 continue;
             }
             self.item(painter, item, matrix);
+            scene
+                .border_over(index)
+                .into_iter()
+                .for_each(|it| self.lengths(it));
             let inside = index + 1..scene.end(index).saturating_sub(1);
             match *item {
                 Item::PushTransform(by) => {
@@ -424,6 +430,124 @@ impl Digest {
 
     pub fn finish(self) -> u128 {
         u128::from(self.hasher.0[0]) << 64 | u128::from(self.hasher.0[1])
+    }
+}
+
+/// The digests of the cells of a grid.
+pub struct Cells {
+    /// The corner of the cell in column and row 0.
+    origin: [i32; 2],
+    /// Columns and rows.
+    pub shown: IntRect,
+    start: Digest,
+    /// `None` if there is nothing in it.
+    digests: Vec<Option<Digest>>,
+}
+
+impl Cells {
+    const SIZE: [i32; 2] = [256, 128];
+
+    pub fn new(origin: [i32; 2], area: IntRect, matrix: &Transform) -> Cells {
+        let mut start = Digest::new(IntRect::new(origin[0], origin[1], origin[0], origin[1]));
+        start.matrix(matrix);
+        let mut cells = Cells {
+            origin,
+            shown: IntRect::default(),
+            start,
+            digests: Vec::new(),
+        };
+        cells.shown = cells.touched(area);
+        cells.digests = vec![None; cells.shown.area() as usize];
+        cells
+    }
+
+    fn touched(&self, area: IntRect) -> IntRect {
+        let ([x, y], [width, height]) = (self.origin, Cells::SIZE);
+        let (column, row) = (
+            |it: i32| (it - x).div_euclid(width),
+            |it: i32| (it - y).div_euclid(height),
+        );
+        IntRect::new(
+            column(area.left),
+            row(area.top),
+            column(area.right - 1) + 1,
+            row(area.bottom - 1) + 1,
+        )
+    }
+
+    /// With its pixels, as far as they are `within`.
+    pub fn at(&self, column: i32, row: i32, within: IntRect) -> Option<(u128, IntRect)> {
+        let mut digest = self.digests[(row - self.shown.top) as usize * self.shown.width()
+            + (column - self.shown.left) as usize]?;
+        let ([x, y], [width, height]) = (self.origin, Cells::SIZE);
+        let pixels = IntRect::new(0, 0, width, height)
+            .offset(column * width, row * height)
+            .intersect(within.offset(-x, -y));
+        digest.value(pixels);
+        Some((digest.finish(), pixels.offset(x, y)))
+    }
+
+    fn add(&mut self, cells: IntRect, value: u128) {
+        for row in self
+            .digests
+            .chunks_exact_mut(self.shown.width())
+            .skip((cells.top - self.shown.top) as usize)
+            .take(cells.height())
+        {
+            row[(cells.left - self.shown.left) as usize..][..cells.width()]
+                .iter_mut()
+                .for_each(|it| it.get_or_insert(self.start).value(value));
+        }
+    }
+
+    pub fn range(&mut self, painter: &Painter, range: Range<usize>, matrix: &Transform) {
+        let scene = painter.scene;
+        for index in scene
+            .children(range)
+            .filter(|it| !painter.left_out.contains(it))
+        {
+            let (item, bounds) = (
+                &scene.items[index],
+                IntRect::around(map_rect(matrix, scene.bounds(index))),
+            );
+            let cells = if erases(item) {
+                self.shown
+            } else {
+                self.touched(bounds).intersect(self.shown)
+            };
+            if cells.is_empty() || bounds.is_empty() && !erases(item) {
+                continue;
+            }
+            let inner = match *item {
+                Item::PushTransform(by) => Some(painter.frame.concat(matrix, by)),
+                Item::PushVector(by) => Some(matrix.pre_concat(transform(by))),
+                Item::PushLayer { filters, .. }
+                    if scene.filters(filters).is_empty() && scene.mask(index).is_none() =>
+                {
+                    Some(*matrix)
+                }
+                Item::PushClip(_) | Item::PushClipPath { .. } | Item::PushClipOutline(_) => {
+                    Some(*matrix)
+                }
+                _ => None,
+            };
+            let mut digest = self.start;
+            let Some(inner) = inner else {
+                digest.range(
+                    painter,
+                    index..scene.end(index),
+                    matrix,
+                    IntRect::default().outset(1 << 24),
+                );
+                self.add(cells, digest.finish());
+                continue;
+            };
+            digest.item(painter, item, matrix);
+            digest.matrix(&inner);
+            self.add(cells, digest.finish());
+            self.range(painter, scene.content(index), &inner);
+            self.add(cells, 0);
+        }
     }
 }
 

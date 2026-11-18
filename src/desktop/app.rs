@@ -28,7 +28,7 @@ use crate::webview::{engine, wire};
 use crate::window::{self, Window};
 use crate::{
     command_line, cover, dialog, files, notification, os_crypt, paths, power, preferences, process,
-    screen, shortcuts, single_instance, text, theme, tray, updater, utility, xdg,
+    screen, shortcuts, single_instance, text, theme, touch_bar, tray, updater, utility, xdg,
 };
 use bun_web::net::tls::import_pkcs12;
 
@@ -358,7 +358,7 @@ pub(crate) fn handle(event: SystemEvent) -> JsResult<()> {
             has_screen_reader,
         } => {
             let had_screen_reader = surfaces::has_screen_reader();
-            surfaces::accessibility_changed(global(), is_active, has_screen_reader)?;
+            surfaces::accessibility_changed(is_active, has_screen_reader)?;
             if had_screen_reader == has_screen_reader {
                 return Ok(());
             }
@@ -372,6 +372,11 @@ pub(crate) fn handle(event: SystemEvent) -> JsResult<()> {
             )
         }
         SystemEvent::Observed { name, object, info } => preferences::observed(&name, &object, info),
+        SystemEvent::TouchBar {
+            item,
+            value,
+            is_selected,
+        } => touch_bar::was_touched(item, value, is_selected),
         SystemEvent::Pushed(info) => notification::was_pushed(info),
         SystemEvent::Activity {
             step,
@@ -1019,17 +1024,17 @@ impl DesktopApp {
         _: Cx<'_, '_>,
         url: &[u8],
     ) -> JsResult<JSValue> {
-        if !IS_MAC {
-            return Err(unsupported("getApplicationInfoForProtocol"));
-        }
-        let Some(found) = answer((ui()?.application_for)(Text::lossy(url)))?.get() else {
+        let found = match IS_MAC {
+            true => (answer((ui()?.application_for)(Text::lossy(url)))?.get())
+                .map(|it| [it.name.into_string(), it.path.into_string()]),
+            false => xdg::handler_of(text::before(&string(url), ":"))?,
+        };
+        let Some([name, path]) = found else {
             return Err(error(format_args!(
                 "Unable to retrieve installation path to app"
             )));
         };
-        resolved(
-            object!({ "name": &found.name, "path": &found.path, "icon": file_icon(&found.path, 64)? }),
-        )
+        resolved(object!({ "name": name, "path": &*path, "icon": file_icon(&path, 64)? }))
     }
 
     pub(crate) fn get_file_icon(
@@ -1192,7 +1197,7 @@ impl DesktopApp {
     ) -> JsResult<()> {
         let mut pairs = Vec::new();
         for url in texts_of(roots.to_js().keys(global())?)? {
-            let directory = text_of(get(roots.to_js(), &url)?)?;
+            let directory = text_of(get_by_value(global(), roots.to_js(), js(&*url)?)?)?;
             pairs.push((url.as_bytes().into(), directory.as_bytes().into()));
         }
         compiled::extend(

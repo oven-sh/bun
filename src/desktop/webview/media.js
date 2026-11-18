@@ -240,28 +240,32 @@ class Client {
   source(id, type, fragment) {
     const it = this.objects.get(id);
     URL.revokeObjectURL(it.src.split("#")[0]);
+    it.sent = null;
     it.src = URL.createObjectURL(new Blob(it.parts?.splice(0), { type })) + "#" + fragment;
   }
-  async picture(it, width) {
+  /** Timers and idle tasks, which `convertToBlob()` waits for, can be rare in a page that is never shown. */
+  async picture(it, width, onlyIfNew) {
     let frame;
-    for (let tries = 0; ; tries++) {
+    for (let tries = 0; !frame; tries++) {
       if (it.readyState < 2 || tries === 50) return null;
       try {
         frame = new VideoFrame(it);
-        if (it.paused || frame.timestamp !== it.shown) break;
-        frame.close();
-      } catch {}
-      await new Promise(done => setTimeout(done, 8));
+      } catch {
+        await new Promise(done => setTimeout(done, 10));
+      }
     }
-    it.shown = frame.timestamp;
-    const height = Math.ceil((width * it.videoHeight) / it.videoWidth);
-    const context = (it.context ??= document.createElement("canvas").getContext("2d", { alpha: false }));
-    if (context.canvas.width !== width || context.canvas.height !== height)
-      Object.assign(context.canvas, { width, height });
+    const height = Math.ceil((width * it.videoHeight) / it.videoWidth),
+      { timestamp } = frame,
+      sent = String([timestamp, width, height]);
+    if (onlyIfNew && it.sent === sent) return frame.close();
+    it.sent = sent;
+    const context = (it.context ??= document.createElement("canvas").getContext("2d", { alpha: false })),
+      { canvas } = context;
+    if (canvas.width !== width || canvas.height !== height) Object.assign(canvas, { width, height });
     context.drawImage(frame, 0, 0, width, height);
     frame.close();
-    // `toBlob` waits up to a second for idle time, which a page that is not on screen may never have.
-    return context.canvas.toDataURL("image/jpeg", 0.85).slice("data:image/jpeg;base64,".length);
+    const url = canvas.toDataURL("image/jpeg", 0.85);
+    return [url.slice(url.indexOf(",") + 1), timestamp / 1e6];
   }
   set(target, name, value) {
     target[name] = value;

@@ -13,7 +13,18 @@ unsafe extern "C" {
     fn Bun__DOM__writeBarrier(vm: *mut c_void, cell: *const u8);
     fn Bun__DOM__collections(vm: *mut c_void) -> u32;
     safe fn Bun__DOM__listCreate(global: &JSGlobalObject, capacity: u32) -> JSValue;
+    safe fn Bun__DOM__listCopyWithout(
+        global: &JSGlobalObject,
+        list: JSValue,
+        value: JSValue,
+    ) -> JSValue;
     safe fn Bun__DOM__listLength(list: JSValue) -> u32;
+    fn Bun__DOM__listOfCells(
+        global: &JSGlobalObject,
+        nodes: *const *const c_void,
+        length: u32,
+        offset: usize,
+    ) -> JSValue;
     safe fn Bun__DOM__listGet(list: JSValue, index: u32) -> JSValue;
     safe fn Bun__DOM__listSet(global: &JSGlobalObject, list: JSValue, index: u32, value: JSValue);
     safe fn Bun__DOM__listPush(global: &JSGlobalObject, list: JSValue, value: JSValue);
@@ -101,6 +112,24 @@ impl<'a> List<'a> {
         })
     }
 
+    /// # Safety
+    /// They point to nodes that are alive.
+    pub(crate) unsafe fn from_pointers(heap: &JsHeap<'a>, nodes: &[*const Node]) -> List<'a> {
+        // SAFETY: the caller's contract.
+        let offset = nodes
+            .first()
+            .map_or(0, |it| it.addr() - unsafe { &**it }.to_js().encoded());
+        // SAFETY: the pointer and the length are of one slice, and all nodes are at the same offset in their cells.
+        List::from_value(unsafe {
+            Bun__DOM__listOfCells(
+                global_of(heap),
+                nodes.as_ptr().cast(),
+                nodes.len() as u32,
+                offset,
+            )
+        })
+    }
+
     pub(crate) fn from_nodes<'n>(
         heap: &JsHeap<'a>,
         nodes: impl IntoIterator<Item = &'n Node>,
@@ -108,6 +137,11 @@ impl<'a> List<'a> {
         let list = List::new(heap);
         nodes.into_iter().for_each(|it| list.push(heap, it.to_js()));
         list
+    }
+
+    /// With room for one more.
+    pub(crate) fn copy_without<'b>(self, heap: &JsHeap<'b>, value: JSValue) -> List<'b> {
+        List::from_value(Bun__DOM__listCopyWithout(global_of(heap), self.0, value))
     }
 
     /// Of what `to_js` has answered.
@@ -130,8 +164,25 @@ impl<'a> List<'a> {
         self.0
     }
 
+    /// Until it changes. `None` if they are stored in another way.
+    #[inline(always)]
+    pub(super) fn contiguous(&self) -> Option<&[JSValue]> {
+        const INDEXING_TYPE: usize = 4;
+        const BUTTERFLY: usize = 8;
+        let cell = self.0.encoded() as *const *const JSValue;
+        // SAFETY: it is an array. The length comes before the values.
+        unsafe {
+            (cell.cast::<u8>().add(INDEXING_TYPE).read_volatile() & 0x0e == 0x08).then(|| {
+                let values = cell.byte_add(BUTTERFLY).read();
+                core::slice::from_raw_parts(values, values.cast::<u32>().sub(2).read() as usize)
+            })
+        }
+    }
+
+    #[inline]
     pub(crate) fn len(self) -> u32 {
-        Bun__DOM__listLength(self.0)
+        self.contiguous()
+            .map_or_else(|| Bun__DOM__listLength(self.0), |it| it.len() as u32)
     }
 
     pub(crate) fn is_empty(self) -> bool {
@@ -139,8 +190,12 @@ impl<'a> List<'a> {
     }
 
     /// The empty value after the end.
+    #[inline]
     pub(crate) fn get(self, index: u32) -> JSValue {
-        Bun__DOM__listGet(self.0, index)
+        self.contiguous().map_or_else(
+            || Bun__DOM__listGet(self.0, index),
+            |it| it.get(index as usize).copied().unwrap_or_default(),
+        )
     }
 
     pub(crate) fn set(self, heap: &JsHeap<'_>, index: u32, value: JSValue) {
@@ -171,7 +226,11 @@ impl<'a> List<'a> {
     /// What follows it.
     #[inline]
     pub(crate) fn value_of_key(self, key: JSValue) -> Option<JSValue> {
-        Some(Bun__DOM__listValueOfKey(self.0, key)).filter(|it| !it.is_empty())
+        let found = match self.contiguous() {
+            Some(all) => all.as_chunks().0.iter().find(|[it, _]| *it == key)?[1],
+            None => Bun__DOM__listValueOfKey(self.0, key),
+        };
+        Some(found).filter(|it| !it.is_empty())
     }
 
     pub(crate) fn contains(self, value: JSValue) -> bool {

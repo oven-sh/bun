@@ -87,13 +87,12 @@ impl RadioNodeList {
 
 impl HTMLFormControlsCollection {
     pub(crate) fn named_get<'a>(&'a self, heap: &JsHeap<'a>, name: &Impl) -> Option<JSValue> {
-        let name = Atom::from_impl(name);
-        match *self.named(&name) {
+        match *Atom::with_impl(name, |it| self.named(it)) {
             [] => return None,
             [only] => return Some(only.to_js()),
             _ => {}
         }
-        let filter = Filter::listed_by_name(name, |form, name, add| {
+        let filter = Filter::listed_by_name(Atom::from_impl(name), |form, name, add| {
             elements_of(form).named(name).into_iter().for_each(add)
         });
         Some(NodeList::of_class(heap, js_RadioNodeList::CLASS, self.owner(), filter).to_js())
@@ -169,17 +168,20 @@ impl HTMLFormElement {
 
     /// https://html.spec.whatwg.org/#dom-form-nameditem
     pub(crate) fn named_get<'a>(&'a self, heap: &JsHeap<'a>, name: &Impl) -> Option<JSValue> {
-        let name = Atom::from_impl(name);
-        let only = match *controls_or_images_named(self, &name) {
-            [] => return self.once_named(&name).map(|it| it.to_js()),
+        Atom::with_impl(name, |it| self.item_named(heap, it))
+    }
+
+    fn item_named<'a>(&'a self, heap: &JsHeap<'a>, name: &Atom) -> Option<JSValue> {
+        let only = match *controls_or_images_named(self, name) {
+            [] => return self.once_named(name).map(|it| it.to_js()),
             [only] => only.to_js(),
-            _ => return Some(self.list_named(heap, &name)),
+            _ => return Some(self.list_named(heap, name)),
         };
         let (mut names, elements) = (
             self.extra::<Names>().past.borrow_mut(),
             self.edge_list(heap, Edge::PastNames),
         );
-        match *names.entry(name).or_insert_with(|| elements.len()) {
+        match *names.entry_ref(name).or_insert_with(|| elements.len()) {
             index if index < elements.len() => elements.set(heap, index, only),
             _ => elements.push(heap, only),
         }

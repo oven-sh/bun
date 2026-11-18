@@ -98,7 +98,7 @@ impl NativeImage {
     }
 
     /// `None` if it is empty.
-    fn pixels(&self, global: &JSGlobalObject) -> JsResult<Option<Rc<Bitmap>>> {
+    pub fn pixels(&self, global: &JSGlobalObject) -> JsResult<Option<Rc<Bitmap>>> {
         let bitmap = match &self.contents {
             Contents::Pixels(bitmap) => Rc::clone(bitmap),
             Contents::Encoded(bytes, _) if bytes.is_empty() => return Ok(None),

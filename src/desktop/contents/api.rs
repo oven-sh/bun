@@ -5,6 +5,9 @@ use std::rc::Rc;
 use bun_jsc::JSMap;
 use bun_ui::protocol::{SurfaceCommand, WindowCommand};
 use bun_web::headers::HeaderList;
+use bun_web::host::Keystroke;
+use bun_web::input::{Action, Input, Mouse, Place};
+use bun_web::page::{Controls, Focused, Search};
 use bun_web::url::{Url, percent_decode};
 
 use bun_web::request::Destination;
@@ -12,8 +15,8 @@ use bun_web::request::Destination;
 use super::load::{How, Navigation, Request};
 use super::page::Page;
 use super::{
-    Contents, Kind, Numbers as _, Values, all, field, fields, lazily, nothing, object_in, of_app,
-    parts, spread, text_at, text_if_any, without_hash,
+    Contents, Device, Kind, Numbers as _, Values, all, field, fields, lazily, nothing, object_in,
+    of_app, parts, save, spread, text_at, text_if_any, without_hash,
 };
 use crate::devtools::{self, debugger::Debugger};
 use crate::generated_bindgen::contents::{
@@ -24,6 +27,7 @@ use crate::prelude::*;
 use crate::realm::{self, Module};
 use crate::session::Session;
 use crate::text::{split, split_once};
+use crate::webview::embedded;
 use crate::webview::remote::Remote;
 use crate::webview::{print, wire};
 use crate::{accelerator, app, files, process, task};
@@ -154,11 +158,22 @@ impl Contents {
         self.guest().map_or(Ok(()), |it| it.set(setter, values))
     }
 
+    /// The first argument.
+    fn remembered(&self, setter: &str) -> JsResult<JSValue> {
+        let values = map_in(self.settings()?).get(global(), js(setter)?)?;
+        match values.is_array() {
+            true => values.get_index(global(), 0),
+            false => Ok(JSValue::UNDEFINED),
+        }
+    }
+
     fn edit(&self, command: &str) -> JsResult<()> {
         match self.guest() {
             Some(guest) => guest.edit(command),
-            None if self.is_destroyed.get() => {}
-            None => self.started_page()?.tell("edit", &[js(command)?])?,
+            None if self.is_destroyed.get() || self.has_crashed() => {}
+            None => self
+                .started_page()?
+                .tell(|it| it.edit(command.to_owned()))?,
         }
         Ok(())
     }
@@ -228,7 +243,7 @@ impl Contents {
     fn change_zoom_level(&self, level: f64) -> JsResult<()> {
         self.check()?;
         let mode = self.zoom_mode.borrow().clone();
-        if mode != "disabled" {
+        if mode != "disabled" && !self.has_crashed() {
             match &*mode {
                 "default" => self.session.set_zoom_level(&self.zoom_key(), level),
                 _ => self.own_zoom.set(Some(level)),
@@ -275,14 +290,15 @@ impl Contents {
         then(stopped, move |stopped| {
             let page = stopped
                 .map_err(|it| global().throw_value(it))
-                .and_then(|_| this.get().started_page());
+                .and_then(|_| this.get().live_page());
             result.settle(page.map(|it| it.execute(world, code.get(), is_by_user)))
         })?;
         Ok(promise)
     }
 
     fn insert(&self, given: &[JSValue]) -> JsResult<()> {
-        self.page().tell("insertText", &[js(text_at(given, 0)?)?])
+        let text = text_at(given, 0)?;
+        self.page().tell(|it| it.insert_text(text))
     }
 
     pub(crate) fn nothing(&self) {}
@@ -316,10 +332,7 @@ impl Contents {
     }
 
     pub(crate) fn get_focused_frame(&self, _: Cx<'_, '_>) -> JsResult<JSValue> {
-        let found = self.guest().map_or_else(
-            || self.page().ask("focusedFrame", &[]),
-            Remote::focused_frame,
-        )?;
+        let found = (self.guest()).map_or_else(|| self.focused_below(), Remote::focused_frame)?;
         match found.is_object() {
             true => Ok(found),
             false if self.is_focused() => self.main_frame(),
@@ -360,7 +373,7 @@ impl Contents {
     }
 
     pub(crate) fn get_background_throttling(&self, _: Cx<'_, '_>) -> JsResult<bool> {
-        Ok(false)
+        Ok(self.throttles_background.get())
     }
 
     pub(crate) fn set_background_throttling<'a>(
@@ -368,7 +381,22 @@ impl Contents {
         _: Cx<'a, '_>,
         value: JsLocal<'a>,
     ) -> JsResult<()> {
+        self.throttles_background.set(value.to_js().to_boolean());
+        self.was_shown.set(true);
+        self.environment_changed()?;
         self.remember("setBackgroundThrottling", &[value.to_js()])
+    }
+
+    pub(crate) fn get_caret_browsing_enabled(&self, _: Cx<'_, '_>) -> JsResult<bool> {
+        Ok(self.remembered("setCaretBrowsingEnabled")?.to_boolean())
+    }
+
+    pub(crate) fn set_caret_browsing_enabled<'a>(
+        &self,
+        _: Cx<'a, '_>,
+        value: JsLocal<'a>,
+    ) -> JsResult<()> {
+        self.remember("setCaretBrowsingEnabled", &[value.to_js()])
     }
 
     pub(crate) fn get_frame_rate(&self, _: Cx<'_, '_>) -> JsResult<f64> {
@@ -656,13 +684,34 @@ impl Contents {
     }
 
     pub(crate) fn get_web_rtciphandling_policy(&self, _: Cx<'_, '_>) -> JsResult<String> {
-        let values = map_in(self.settings()?).get(global(), js("setWebRTCIPHandlingPolicy")?)?;
-        let policy = if values.is_array() {
-            text_if_any(values.get_index(global(), 0)?)?
-        } else {
-            None
-        };
+        let policy = text_if_any(self.remembered("setWebRTCIPHandlingPolicy")?)?;
         Ok(policy.unwrap_or_else(|| "default".to_owned()))
+    }
+
+    pub(crate) fn get_udp_ports(&self, _: Cx<'_, '_>) -> JsResult<JSValue> {
+        let given = self.remembered("setWebRTCUDPPortRange")?;
+        spread(object!({ "min": 0, "max": 0 }), given)
+    }
+
+    pub(crate) fn get_dev_tools_title(&self, _: Cx<'_, '_>) -> JsResult<String> {
+        let title = text_if_any(self.remembered("setDevToolsTitle")?)?;
+        Ok(title.unwrap_or_else(|| "Developer Tools".to_owned()))
+    }
+
+    pub(crate) fn duplicate(&self, _: Cx<'_, '_>) -> JsResult<JSValue> {
+        self.check()?;
+        let preferences = spread(object!({}), self.preferences())?;
+        preferences.put(global(), b"session", self.session.to_js());
+        let copy = Contents::create(preferences, Kind::Remote)?;
+        let history = parts::navigation_history(self)?;
+        let state = object!({
+            "entries": invoke(history, "getAllEntries", &[])?,
+            "index": invoke(history, "getActiveIndex", &[])?,
+        });
+        if !self.history.borrow().entries.is_empty() {
+            invoke(parts::navigation_history(copy)?, "restore", &[state])?;
+        }
+        Ok(copy.to_js())
     }
 
     pub(crate) fn is_loading(&self, _: Cx<'_, '_>) -> JsResult<bool> {
@@ -672,7 +721,7 @@ impl Contents {
     mirrored! {
         is_loading_main_frame: "isLoadingMainFrame", |it| it.check().map(|()| it.is_busy());
         is_waiting_for_response: "isWaitingForResponse", |it| Ok(it.loading.is_pending());
-        is_crashed: "isCrashed", |it| Ok(it.crashed_at.borrow().is_some());
+        is_crashed: "isCrashed", |it| Ok(it.has_crashed());
         is_currently_audible: "isCurrentlyAudible", |_| Ok(false);
         is_dev_tools_opened: "isDevToolsOpened", |_| Ok(false);
     }
@@ -686,9 +735,11 @@ impl Contents {
     }
 
     pub(crate) fn get_osprocess_id(&self, _: Cx<'_, '_>) -> JsResult<JSValue> {
-        js(self
-            .guest()
-            .map_or_else(|| process::id().into(), |it| it.mirrored("pid").number()))
+        js(match self.guest() {
+            Some(guest) => guest.mirrored("pid").number(),
+            None if self.has_crashed() => 0.,
+            None => process::id().into(),
+        })
     }
 
     pub(crate) fn get_process_id(&self, _: Cx<'_, '_>) -> JsResult<JSValue> {
@@ -709,10 +760,36 @@ impl Contents {
     }
 
     pub(crate) fn get_last_web_preferences(&self, _: Cx<'_, '_>) -> JsResult<JSValue> {
-        let defaults =
-            object!({ "contextIsolation": true, "nodeIntegration": false, "sandbox": true });
-        let all = spread(defaults, self.preferences())?;
-        all.delete_property(global(), b"session").map(|_| all)
+        let (it, given) = (&self.preferences, self.preferences());
+        let all = object!({
+            "contextIsolation": it.isolates_context,
+            "javascript": it.runs_scripts,
+            "sandbox": it.is_sandboxed,
+            "webSecurity": it.has_web_security,
+            "allowRunningInsecureContent": match get(given, "allowRunningInsecureContent")? {
+                given if given.is_undefined() => !it.has_web_security,
+                given => given.to_boolean(),
+            },
+        });
+        for name in [
+            "disableDialogs",
+            "disablePopups",
+            "disableWakeLocks",
+            "experimentalFeatures",
+            "nodeIntegration",
+            "nodeIntegrationInSubFrames",
+            "nodeIntegrationInWorker",
+            "safeDialogs",
+            "webviewTag",
+        ] {
+            let is_set = get(given, name)?.to_boolean();
+            all.put(global(), name.as_bytes(), is_set.into());
+        }
+        for name in ["enableBlinkFeatures", "safeDialogsMessage"] {
+            let text = text_if_any(get(given, name)?)?.unwrap_or_default();
+            all.put(global(), name.as_bytes(), js(text)?);
+        }
+        Ok(all)
     }
 
     pub(crate) fn get_or_create_dev_tools_target_id(&self, _: Cx<'_, '_>) -> JsResult<JSValue> {
@@ -740,31 +817,66 @@ impl Contents {
         _: Cx<'a, '_>,
         values: Values<'a, '_>,
     ) -> JsResult<()> {
-        let guest = self
-            .started_guest()?
-            .ok_or_else(|| unsupported("beginFrameSubscription"))?;
-        guest.subscribe(field(raw(values).last().copied()));
-        Ok(())
+        let subscriber = field(raw(values).last().copied());
+        if let Some(guest) = self.started_guest()? {
+            guest.subscribe(subscriber);
+            return Ok(());
+        }
+        fields::set_subscriber(self, subscriber);
+        self.environment_changed()
+    }
+
+    pub(super) fn deliver_frame(&self) -> JsResult<()> {
+        let Some(subscriber) = fields::subscriber(self).filter(|it| it.is_callable()) else {
+            return Ok(());
+        };
+        let bitmap = answer((bun_ui::renderer(global())?.capture)(
+            self.surface,
+            None.into(),
+        ))?;
+        let image = NativeImage::from_pixels(bitmap).to_js(global());
+        let dirty = spread(object!({ "x": 0, "y": 0 }), invoke(image, "getSize", &[])?)?;
+        call(subscriber, &[image, dirty]).map(drop)
     }
 
     pub(crate) fn end_frame_subscription(&self, _: Cx<'_, '_>) -> JsResult<()> {
         if let Some(guest) = self.guest() {
             guest.subscribe(JSValue::UNDEFINED);
         }
-        Ok(())
+        fields::set_subscriber(self, JSValue::UNDEFINED);
+        self.page().tell(Controls::environment_changed)
     }
 
     pub(crate) fn show_definition_for_selection(&self, _: Cx<'_, '_>) -> JsResult<()> {
         let (Some(window), true) = (self.window(), IS_MAC) else {
             return Ok(());
         };
-        let selected =
-            text_if_any(self.page().ask("selectionText", &[])?)?.filter(|it| !it.is_empty());
+        let selected = Some(self.page().ask(Controls::selection_text)?).filter(|it| !it.is_empty());
         selected.map_or(Ok(()), |it| window.tell(WindowCommand::LookUp(it.into())))
     }
 
-    pub(crate) fn start_drag(&self, _: Cx<'_, '_>) -> JsResult<()> {
-        Err(unsupported("startDrag"))
+    pub(crate) fn start_drag<'a>(&self, _: Cx<'a, '_>, item: JsLocal<'a>) -> JsResult<()> {
+        let [file, files, icon] = ["file", "files", "icon"].map(|it| get(item.to_js(), it));
+        let paths = match files? {
+            files if files.is_array() => texts_of(files)?,
+            _ => text_if_any(file?)?.into_iter().collect(),
+        };
+        let icon = NativeImage::with(global(), icon?, |it| it.icon(global()))?;
+        if paths.is_empty() {
+            return Err(error(format_args!(
+                "Must specify either 'file' or 'files' option"
+            )));
+        }
+        if icon.bytes.is_empty() {
+            return Err(error(format_args!("Must specify non-empty 'icon' option")));
+        }
+        if !IS_MAC {
+            return Err(unsupported("startDrag"));
+        }
+        let paths = paths.into_iter().map(Text::from).collect();
+        (self.window()).map_or(Ok(()), |it| {
+            it.tell(WindowCommand::DragFiles { paths, icon })
+        })
     }
 
     pub(crate) fn send<'a>(&self, _: Cx<'a, '_>, values: Values<'a, '_>) -> JsResult<()> {
@@ -811,17 +923,23 @@ impl Contents {
         if self.told_guest("copyImageAt", raw(values))? || !self.page().is_started() {
             return Ok(());
         }
-        let url = get(self.page().ask("hitInfo", raw(values))?, "srcURL")?;
-        if !url.to_boolean() {
+        let at = |index| argument(raw(values), index).to_number(global());
+        let (x, y) = (at(0)?, at(1)?);
+        let found = self.page().ask(|it, reply| it.hit_info(x, y, reply))?;
+        let Some(url) = found.map(|it| it.src_url).filter(|it| !it.is_empty()) else {
             return Ok(());
-        }
-        let fetched = self.page().fetch(&text_of(url)?, Destination::Image)?;
-        task::spawn(async {
-            if let Some(it) = fetched.await {
-                let clipboard = bun_ui::clipboard::module(heap());
-                let bytes = buffer(&it.bytes);
-                task::report(bytes.and_then(|it| invoke(clipboard, "writeImage", &[it]).map(drop)));
-            }
+        };
+        let fetched = self.page().fetch(&url, Destination::Image)?;
+        let copy = |bytes| {
+            let pixels = NativeImage::from_bytes(bytes).pixels(global())?;
+            let Some(pixels) = pixels.and_then(Rc::into_inner) else {
+                return Ok(());
+            };
+            let image = NativeImage::from_pixels(pixels).to_js(global());
+            invoke(bun_ui::clipboard::module(heap()), "writeImage", &[image]).map(drop)
+        };
+        task::spawn(async move {
+            task::report(fetched.await.map_or(Ok(()), |it| copy(it.bytes.to_vec())));
         });
         Ok(())
     }
@@ -854,17 +972,29 @@ impl Contents {
             return Err(error(format_args!("Must provide non-empty search content")));
         }
         self.last_search.update(|it| it + 1);
-        let (id, values) = (self.last_search.get(), keep(array(raw(values))?));
+        let (id, text) = (self.last_search.get(), text_at(raw(values), 0)?);
+        let options = object_in(raw(values).get(1).copied());
+        let flag = |name, otherwise| {
+            let given = options.map(|it| get(it, name)).transpose()?;
+            JsResult::Ok(
+                (given.filter(|it| !it.is_undefined())).map_or(otherwise, JSValue::to_boolean),
+            )
+        };
+        let search = Search {
+            is_forward: flag("forward", true)?,
+            goes_on: flag("findNext", true)?,
+            matches_case: flag("matchCase", false)?,
+        };
         self.later(move |it| {
-            if it.is_destroyed.get() {
+            if it.is_destroyed.get() || it.has_crashed() {
                 return Ok(());
             }
-            let found = with_elements(values.get(), |all| it.started_page()?.ask("find", all))?;
+            let found = (it.started_page()?).ask(|it, reply| it.find(text, search, reply))?;
             let result = object!({
                 "requestId": id,
-                "activeMatchOrdinal": get(found, "active")?,
-                "matches": get(found, "matches")?,
-                "selectionArea": spread(js(Rect::default())?, get(found, "rect")?)?,
+                "activeMatchOrdinal": found.active,
+                "matches": found.matches,
+                "selectionArea": found.area,
                 "finalUpdate": true,
             });
             it.announce("found-in-page", &[result])
@@ -880,20 +1010,100 @@ impl Contents {
         if self.told_guest("stopFindInPage", raw(values))? {
             Ok(())
         } else {
-            self.page().tell("stopFind", raw(values))
+            let action = text_if_any(argument(raw(values), 0))?;
+            let keeps_selection = action.is_some_and(|it| it != "clearSelection");
+            self.page().tell(|it| it.stop_finding(keeps_selection))
         }
     }
 
     pub(crate) fn print<'a>(&self, _: Cx<'a, '_>, values: Values<'a, '_>) -> JsResult<()> {
         let (options, callback) = (argument(raw(values), 0), argument(raw(values), 1));
-        if let Some(guest) = self.guest() {
-            return print::print_remote(guest, None, wire::data_from_js(options)?, callback);
+        let options = wire::data_from_js(options)?;
+        match self.guest() {
+            Some(guest) => print::print_remote(guest, None, options, callback),
+            None => print::print_page(self.live_page()?, options, callback),
         }
-        if callback.is_callable() {
-            let reason = js("print is not supported by bun:desktop/electron")?;
-            call(callback, &[false.into(), reason])?;
+    }
+
+    pub(crate) fn adjust_selection<'a>(
+        &self,
+        _: Cx<'a, '_>,
+        values: Values<'a, '_>,
+    ) -> JsResult<()> {
+        if self.told_guest("adjustSelection", raw(values))? {
+            return Ok(());
         }
-        Ok(())
+        let by = argument(raw(values), 0);
+        let (start, end) = (get(by, "start")?.as_i32(), get(by, "end")?.as_i32());
+        (self.focused_page()?).tell(|it| it.adjust_selection(start, end))
+    }
+
+    /// `undefined` if no frame has the focus.
+    fn focused_below(&self) -> JsResult<JSValue> {
+        let below = |id| {
+            self.related_page(id)
+                .filter(|it| same(it.owner(), self.owner()))
+        };
+        match self.page().ask(Controls::focused_frame)? {
+            Focused::Itself => Ok(JSValue::UNDEFINED),
+            Focused::Page(id) => Ok(field(below(id).map(Page::handle))),
+            Focused::Guest { page, frame } => {
+                let guest = below(page).map(|it| it.with_number(frame)).transpose()?;
+                (guest.flatten()).map_or(Ok(JSValue::UNDEFINED), embedded::Controls::focused_frame)
+            }
+        }
+    }
+
+    fn focused_page(&self) -> JsResult<&'static Page> {
+        let frame = cast::<parts::WebFrameMain>(self.focused_below()?);
+        Ok(frame.map_or_else(|| self.page(), parts::WebFrameMain::page))
+    }
+
+    fn scroll_vertically(&self, method: &str, top: f64) -> JsResult<()> {
+        match self.told_guest(method, &[])? {
+            true => Ok(()),
+            false => self.page().tell(|it| it.scroll_vertically(top)),
+        }
+    }
+
+    pub(crate) fn scroll_to_top<'a>(&self, _: Cx<'a, '_>, _: Values<'a, '_>) -> JsResult<()> {
+        self.scroll_vertically("scrollToTop", 0.)
+    }
+
+    pub(crate) fn scroll_to_bottom<'a>(&self, _: Cx<'a, '_>, _: Values<'a, '_>) -> JsResult<()> {
+        self.scroll_vertically("scrollToBottom", 1e9)
+    }
+
+    fn emulate_device(&self, device: Option<Device>) -> JsResult<()> {
+        self.device.set(device);
+        match self.size().filter(|_| self.guest().is_none()) {
+            Some(size) => self.page().tell(|it| it.input(self.on_device(size))),
+            None => Ok(()),
+        }
+    }
+
+    pub(crate) fn enable_device_emulation<'a>(
+        &self,
+        _: Cx<'a, '_>,
+        values: Values<'a, '_>,
+    ) -> JsResult<()> {
+        let given = wire::data_from_js(argument(raw(values), 0))?;
+        let size = |name: &str| ["width", "height"].map(|it| given[name][it].number());
+        self.emulate_device(Some(Device {
+            screen: size("screenSize"),
+            view: size("viewSize"),
+            scale: given["deviceScaleFactor"].number(),
+        }))?;
+        self.remember("enableDeviceEmulation", raw(values))
+    }
+
+    pub(crate) fn disable_device_emulation<'a>(
+        &self,
+        _: Cx<'a, '_>,
+        values: Values<'a, '_>,
+    ) -> JsResult<()> {
+        self.emulate_device(None)?;
+        self.remember("disableDeviceEmulation", raw(values))
     }
 
     fn told_dev_tools(&self, method: &str, given: &[JSValue]) -> JsResult<bool> {
@@ -918,18 +1128,18 @@ impl Contents {
     }
 
     only_for_guest! {
-        adjust_selection: "adjustSelection",
         center_selection: "centerSelection",
         close_dev_tools: "closeDevTools",
+        copy_video_frame_at: "copyVideoFrameAt",
         inspect_element: "inspectElement",
-        scroll_to_bottom: "scrollToBottom",
-        scroll_to_top: "scrollToTop",
+        inspect_service_worker: "inspectServiceWorker",
+        inspect_shared_worker: "inspectSharedWorker",
+        inspect_shared_worker_by_id: "inspectSharedWorkerById",
+        save_video_frame_as: "saveVideoFrameAs",
     }
 
     settings_of_guest! {
-        disable_device_emulation: "disableDeviceEmulation",
-        enable_device_emulation: "enableDeviceEmulation",
-        set_caret_browsing_enabled: "setCaretBrowsingEnabled",
+        set_dev_tools_title: "setDevToolsTitle",
         set_image_animation_policy: "setImageAnimationPolicy",
         set_web_rtciphandling_policy: "setWebRTCIPHandlingPolicy",
         set_web_rtcudpport_range: "setWebRTCUDPPortRange",
@@ -946,13 +1156,15 @@ impl Contents {
         };
         insert_css: "insertCSS", |it, given| {
             it.check()?;
-            resolved(it.started_page()?.ask("insertCSS", &[js(text_at(given, 0)?)?])?)
+            let origin = object_in(given.get(1).copied()).map(|it| get(it, "cssOrigin")).transpose()?;
+            let is_of_user = text_if_any(field(origin))?.is_some_and(|it| it == "user");
+            resolved(it.live_page()?.insert_css(text_at(given, 0)?, is_of_user)?)
         };
-        remove_inserted_css: "removeInsertedCSS", |it, given| resolved(nothing(it.page().tell("removeInsertedCSS", given))?);
-        insert_text: "insertText", |it, given| resolved(nothing(it.insert(given))?);
+        remove_inserted_css: "removeInsertedCSS", |it, given| resolved(nothing(it.page().remove_inserted_css(argument(given, 0)))?);
+        insert_text: "insertText", |it, given| resolved(nothing(it.live_page().and_then(|_| it.insert(given)))?);
         get_printers_async: "getPrintersAsync", |_, _| resolved(array(&[])?);
-        print_to_pdf: "printToPDF", |_, _| Err(unsupported("printToPDF"));
-        save_page: "savePage", |_, _| Err(unsupported("savePage"));
+        print_to_pdf: "printToPDF", |it, given| print::print_to_pdf(it.live_page()?, wire::data_from_js(argument(given, 0))?);
+        save_page: "savePage", |it, given| save::save(it.live_page()?, text_at(given, 0)?, text_at(given, 1)?);
         set_visual_zoom_level_limits: "setVisualZoomLevelLimits", |_, _| resolved(JSValue::UNDEFINED);
         take_heap_snapshot: "takeHeapSnapshot", |_, given| {
             match crate::process::write_heap_snapshot(&text_at(given, 0)?) {
@@ -978,13 +1190,12 @@ impl Contents {
         );
         let promise = result.promise();
         let capture = move || {
-            let (it, time) = (
-                this.get(),
-                invoke(realm::native(global(), "performance")?, "now", &[])?,
-            );
+            let it = this.get();
             it.check()?;
-            let frame = object!({ "t": "frame", "s": it.surface, "time": time, "isUrgent": true });
-            it.started_page()?.tell("handleEvent", &[frame])?;
+            if it.has_crashed() {
+                return Ok(NativeImage::from_bytes(Vec::new()).to_js(global()));
+            }
+            (it.started_page()?).tell(|it| it.input(Input::Frame { is_urgent: true }))?;
             let bitmap = answer((bun_ui::renderer(global())?.capture)(
                 it.surface,
                 area.into(),
@@ -1011,40 +1222,60 @@ impl Contents {
             | has(&["alt"]) << 2
             | has(&["meta", "command", "cmd"]) << 3;
         let (x, y) = (it.x, it.y);
-        let (sx, sy) = (it.global_x.unwrap_or(x), it.global_y.unwrap_or(y));
+        let place = Place {
+            window: [x, y],
+            screen: [it.global_x.unwrap_or(x), it.global_y.unwrap_or(y)],
+            modifiers: m,
+        };
         if self.guest().is_none() {
             self.started_page()?;
         }
         self.input(match it.r#type {
-            b"char" => object!({ "t": "text", "text": it.key_code, "key": false }),
-            b"mouseWheel" => object!({
-                "t": "wheel", "x": x, "y": y, "sx": sx, "sy": sy, "dx": -it.delta_x, "dy": -it.delta_y,
-                "precise": true, "phase": "move", "m": m,
-            }),
+            b"char" => Input::Text {
+                text: string(it.key_code),
+                is_typed: false,
+                range: None,
+            },
+            b"mouseWheel" => Input::Wheel {
+                place,
+                delta: [-it.delta_x, -it.delta_y],
+                is_precise: true,
+                is_handled: false,
+            },
             kind if kind.starts_with(b"mouse") => {
-                let (b, bit) = match it.button {
+                let (button, bit) = match it.button {
                     Some(b"middle") => (1, 4),
                     Some(b"right") => (2, 2),
                     _ => (0, 1),
                 };
-                let held = has(&["leftbuttondown"]) | has(&["rightbuttondown"]) << 1 | has(&["middlebuttondown"]) << 2;
-                let e = match kind {
-                    b"mouseDown" => "down",
-                    b"mouseUp" => "up",
-                    b"mouseLeave" => "leave",
-                    _ => "move",
+                let held = has(&["leftbuttondown"])
+                    | has(&["rightbuttondown"]) << 1
+                    | has(&["middlebuttondown"]) << 2;
+                let action = match kind {
+                    b"mouseDown" => Action::Down,
+                    b"mouseUp" => Action::Up,
+                    b"mouseLeave" => Action::Leave,
+                    _ => Action::Move,
                 };
-                object!({
-                    "t": "mouse", "e": e, "x": x, "y": y, "sx": sx, "sy": sy, "b": b,
-                    "buttons": if e == "down" { held | bit } else { held }, "n": it.click_count, "m": m,
+                Input::Mouse(Mouse {
+                    action,
+                    place,
+                    button,
+                    buttons: (held | if action == Action::Down { bit } else { 0 }) as u16,
+                    clicks: it.click_count as i32,
                 })
             }
             kind => {
                 let name = accelerator::parse(&string(it.key_code))?.key;
                 let [key, code] = devtools::input::describe_key(&name, m & 1 != 0);
-                object!({
-                    "t": "key", "e": if kind == b"keyUp" { "up" } else { "down" }, "key": key,
-                    "code": code, "location": 0, "repeat": has(&["isautorepeat"]) != 0, "m": m, "composing": false,
+                Input::Key(Keystroke {
+                    is_down: kind != b"keyUp",
+                    key,
+                    code,
+                    location: 0,
+                    modifiers: m,
+                    repeats: has(&["isautorepeat"]) != 0,
+                    is_composing: false,
                 })
             }
         })

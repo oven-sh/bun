@@ -729,6 +729,14 @@ describe("document type declaration", () => {
     });
   });
 
+  test("default attributes are bounded", () => {
+    const declared = (count: number) => Array.from({ length: count }, (_, i) => `a${i} CDATA "x"`).join(" ");
+    const doc = (count: number) =>
+      `<!DOCTYPE d [<!ATTLIST e ${declared(count)}>]><d>${Buffer.alloc(4 * 2000, "<e/>")}</d>`;
+    expect(syntaxError(doc(1000)).message).toBe("XML Parse error: Default attributes exceed the amplification limit");
+    expect((XML.parse(doc(3)) as any).d.e[1999]).toEqual({ "@a0": "x", "@a1": "x", "@a2": "x" });
+  });
+
   test("entity expansion is bounded (billion laughs)", () => {
     let decls = `<!ENTITY l0 "ha">`;
     for (let i = 1; i <= 12; i++)

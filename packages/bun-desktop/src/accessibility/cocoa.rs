@@ -176,6 +176,13 @@ fn has_range(node: &Node) -> bool {
         || node.role == Role::SpinButton
 }
 
+/// VoiceOver takes it for granted of a combo box.
+fn has_characters(node: &Node) -> bool {
+    node.has(abi::TEXT_FIELD)
+        || node.is_text()
+        || node.role == Role::Combobox && !node.has(abi::MENU_LIST)
+}
+
 fn is_row(node: &Node) -> bool {
     matches!(node.role, Role::Row | Role::TreeItem)
 }
@@ -228,7 +235,7 @@ pub fn attribute_names(forest: &Forest, id: Id) -> Vec<&'static str> {
     );
     add(node.role == Role::WebArea, "AXLoaded AXLoadingProgress");
     add(
-        node.has(abi::TEXT_FIELD) || node.is_text(),
+        has_characters(node),
         "AXInsertionPointLineNumber AXNumberOfCharacters AXSelectedText AXSelectedTextRange AXSelectedTextRanges AXVisibleCharacterRange",
     );
     add(
@@ -359,7 +366,7 @@ pub fn parameterized_names(forest: &Forest, id: Id) -> Vec<&'static str> {
     names.extend(
         values::WITH_RANGES
             .split_ascii_whitespace()
-            .filter(|_| node.has(abi::TEXT_FIELD) || node.is_text()),
+            .filter(|_| has_characters(node)),
     );
     names.extend(node.is_table().then_some("AXCellForColumnAndRow"));
     names.extend(

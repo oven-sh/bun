@@ -388,7 +388,7 @@ fn hand_over<'a>(
     }
     modules.borrow_mut().loads.insert((key, kind), Load::Done);
     if kind == ScriptType::CssModule {
-        let doc = crate::api::interim::current_document(cx)?;
+        let doc = crate::api::on_behalf::current_document(cx)?;
         return Ok(create_module_sheet(&cx.heap, doc, &source, url.href()).to_js());
     }
     let source = utf8_text(&source);

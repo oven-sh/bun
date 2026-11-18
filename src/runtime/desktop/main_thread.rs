@@ -173,6 +173,8 @@ pub(crate) fn lend_if_needed(run: fn() -> !) {
                 )
             };
             ROLE.set(Role::JavaScript);
+            bun_core::output::Source::configure_thread_no_js();
+            bun_core::current_work::ensure_signal_stack();
             run()
         });
     if thread.is_err() {

@@ -1,18 +1,14 @@
-//! The functions that the realm of a page gets. Its scripts may get hold of them, and pass anything.
+//! What a page wants of other windows.
 
 use bun_web::convert::token_for_path;
-use bun_web::js_link::link_to;
+use bun_web::host::{Chosen, Opened, ToGuest, Verdict, Wish};
+use bun_web::page::News;
 use bun_web::trust;
 
-use super::inspection::News;
 use super::load::Initiator;
 use super::page::Page;
-use super::{
-    Contents, Methods, NOTHING, Numbers as _, bind, callable_at, fields, frame, link, nothing,
-    object_in, spread, text_at, text_if_any,
-};
+use super::{Contents, link, spread};
 use crate::prelude::*;
-use crate::realm::{methods_for_page, methods_of};
 use crate::webview::embedded::Controls;
 
 /// What stands for the files that the user or the app has chosen.
@@ -23,19 +19,6 @@ pub(crate) fn all_chosen(paths: JSValue) -> JsResult<JSValue> {
             .try_for_each(|it| all.push(global(), token_for_path(global(), *it)))
     })?;
     Ok(all)
-}
-
-pub(super) fn with_files(event: JSValue) -> JsResult<JSValue> {
-    let copy = spread(object!({}), event)?;
-    copy.put(global(), b"paths", all_chosen(get(event, "paths")?)?);
-    Ok(copy)
-}
-
-fn relative(page: &Page, other: Option<&Contents>) -> JsResult<JSValue> {
-    match (other, page.agent()) {
-        (Some(other), Some(agent)) if !page.is_disposed() => other.window_for(&agent),
-        _ => Ok(JSValue::NULL),
-    }
 }
 
 pub(super) fn show_context_menu(page: &Page, given: JSValue) -> JsResult<()> {
@@ -60,232 +43,119 @@ pub(super) fn show_context_menu(page: &Page, given: JSValue) -> JsResult<()> {
     )
 }
 
-const OF_POPUP: Methods<Contents> = &[
-    ("isClosed", |it, _| js(it.is_destroyed.get())),
-    ("close", |it, _| {
-        it.later(Contents::close_now);
-        NOTHING
-    }),
-    ("focus", |it, _| {
-        nothing(if it.is_destroyed.get() {
-            Ok(())
-        } else {
-            it.focus_window()
-        })
-    }),
-];
-
-/// What `window.open()` returns.
-fn open(page: &'static Page, given: &[JSValue]) -> JsResult<JSValue> {
-    let (url, target) = (text_at(given, 0)?, text_at(given, 1)?);
+pub(super) fn open(
+    page: &'static Page,
+    wish: &Wish,
+    target: &str,
+    features: &str,
+    popup: u32,
+) -> JsResult<Opened> {
     let name = if target.eq_ignore_ascii_case("_blank") {
         ""
     } else {
-        &target
+        target
     };
-    let more = [argument(given, 3), argument(given, 4)];
-    let Some(opened) = page
-        .contents()
-        .open(page, &url, name, &text_at(given, 2)?, more)?
-    else {
-        return Ok(JSValue::NULL);
+    let Some(opened) = page.contents().open(page, wish, name, features)? else {
+        return Ok(Opened::Nothing);
     };
     if opened.page().opener().is_some() {
-        return opened.page().window();
+        return Ok(Opened::Page(opened.page().id));
     }
     let guest = opened.guest();
     if guest.is_none()
-        && page.agent().is_some()
+        && page.has_relatives.get()
         && opened
             .opened_by()
             .is_some_and(|it| same(it, page.contents()))
     {
-        return relative(page, Some(opened));
+        return Ok(Opened::Context(opened.id));
     }
-    let popup = bind(object!({}), opened, OF_POPUP)?;
-    let both = array(&[
-        page.to_js(),
-        guest.map_or(JSValue::UNDEFINED, JsInterface::to_js),
-    ])?;
-    let connect = function(both, move |both, given| {
-        let page = Page::given(&[both.get_index(global(), 0)?], 0)?;
-        let guest = cast::<crate::webview::remote::Remote>(both.get_index(global(), 1)?);
-        let Some(guest) = guest.filter(|it| it.get_is_opened_by_page()) else {
-            return Ok(JSValue::UNDEFINED);
-        };
-        let controls = Controls::create(
-            page.to_js(),
-            object!({
-                "origin": function(array(&[0.into(), 0.into()])?, |it, _| Ok(it))?,
-                "scale": function(1.into(), |it, _| Ok(it))?,
-            }),
-            argument(given, 0),
-        )?;
-        controls.open_popup(guest, &url, &target)?;
-        methods_for_page(controls.to_js())
+    if opened.is_destroyed.get() {
+        page.later(move |it| it.tell(|it| it.tell_frame(popup, News::Closed)));
+        return Ok(Opened::Popup);
+    }
+    let controls = (guest.filter(|it| it.get_is_opened_by_page()))
+        .map(|guest| {
+            let controls = Controls::create(page.to_js(), popup, 1.)?;
+            controls.open_popup(guest, &wish.url, target)?;
+            JsResult::Ok(controls.to_js())
+        })
+        .transpose()?;
+    let both = array(&[opened.to_js(), controls.unwrap_or(JSValue::UNDEFINED)])?;
+    page.numbered()?.set(global(), js(popup)?, both)?;
+    let forget = listener(page, move |it, _| {
+        it.numbered()?.remove(global(), js(popup)?)?;
+        it.tell(|it| it.tell_frame(popup, News::Closed))
     })?;
-    popup.put(global(), b"connect", connect);
-    page.ask("remoteWindow", &[popup])
+    invoke(opened.to_js(), "once", &[js("destroyed")?, forget])?;
+    Ok(Opened::Popup)
 }
 
-/// False if there is no such window yet.
-fn navigate_other(page: &'static Page, given: &[JSValue]) -> JsResult<JSValue> {
-    let (target, context, options) = (text_at(given, 0)?, page.contents(), argument(given, 2));
+pub(super) fn create_guest(page: &Page, number: u32, scale: f64) -> JsResult<()> {
+    let known = page.numbered()?;
+    if known.get(global(), js(number)?)?.is_object() {
+        return Ok(());
+    }
+    let controls = Controls::create(page.to_js(), number, scale)?;
+    known.set(global(), js(number)?, controls.to_js())
+}
+
+pub(super) fn tell_guest(page: &Page, number: u32, message: ToGuest) -> JsResult<()> {
+    let found = page.numbered()?.get(global(), js(number)?)?;
+    if let Some(frame) = cast::<Controls>(found) {
+        if let ToGuest::Remove = message {
+            page.numbered()?.remove(global(), js(number)?)?;
+        }
+        return frame.obey(message);
+    }
+    if !found.is_array() {
+        return Ok(());
+    }
+    let popup = cast::<Contents>(found.get_index(global(), 0)?);
+    match (message, popup) {
+        (ToGuest::Close, Some(popup)) => {
+            popup.later(Contents::close_now);
+            Ok(())
+        }
+        (ToGuest::Focus, Some(popup)) => popup.focus_window(),
+        (message @ (ToGuest::Location { .. } | ToGuest::Post { .. }), _) => {
+            cast::<Controls>(found.get_index(global(), 1)?).map_or(Ok(()), |it| it.obey(message))
+        }
+        _ => Ok(()),
+    }
+}
+
+pub(super) fn choose_window(
+    page: &Page,
+    target: &str,
+    wish: Option<Wish>,
+    becomes_opener: bool,
+) -> JsResult<Chosen> {
+    let context = page.contents();
     let is_keyword = ["_self", "_parent", "_top"]
         .iter()
         .any(|it| target.eq_ignore_ascii_case(it));
-    let found = if is_keyword || trust::trusts_all_frames() {
-        context.choose(&target)?
+    let may_choose = link::knows_other_windows(page) || context.is_frame();
+    let found = if may_choose && (is_keyword || trust::trusts_all_frames()) {
+        context.choose(target)?
     } else {
         None
     };
     let Some(found) = found else {
-        return Ok(JSValue::FALSE);
+        return Ok(Chosen::Nothing);
     };
-    if get(options, "becomesOpener")?.to_boolean() {
-        fields::set_opened_by(found, Some(context));
+    if becomes_opener {
+        found.set_opened_by(Some(context));
     }
-    text_if_any(argument(given, 1))?
-        .map(|url| found.navigate(page, &url, options))
-        .transpose()?;
-    relative(page, Some(found))
+    Ok(Chosen::Context {
+        id: found.id,
+        verdict: wish.map_or(Ok(Verdict::Granted), |it| found.judge(page, it, None))?,
+    })
 }
 
-/// Only natives call these.
-const LINKED: Methods<Page> = &[
-    ("consoleCalled", |it, given| match given {
-        [kind, values @ ..] => nothing(
-            it.contents()
-                .notify(News::Console(&text_of(*kind)?, values)),
-        ),
-        [] => Ok(JSValue::UNDEFINED),
-    }),
-    ("allowsJavaScriptUrl", |it, given| {
-        let (source, initiator) = (argument(given, 0), cast(argument(given, 1)).unwrap_or(it));
-        let frame = match it.parent() {
-            Some(parent) if same(parent, initiator) => argument(given, 2),
-            _ => JSValue::UNDEFINED,
-        };
-        js(initiator.allows_javascript_url(source, frame)?
-            && (same(it, initiator)
-                || it.policy_allows_javascript_url(source, JSValue::UNDEFINED)?))
-    }),
-    ("createRemoteFrame", |it, given| {
-        let element = methods_of(argument(given, 0))?;
-        methods_for_page(Controls::create(it.to_js(), element, argument(given, 1))?.to_js())
-    }),
-    ("exception", |it, given| {
-        nothing(it.contents().notify(News::Exception {
-            text: &text_at(given, 0)?,
-            url: &text_at(given, 1)?,
-            line: argument(given, 2).as_u32(),
-            column: argument(given, 3).as_u32(),
-            error: argument(given, 4),
-        }))
-    }),
-    ("getOpener", |it, _| {
-        let opened_by = it
-            .contents()
-            .opened_by()
-            .filter(|_| link::knows_other_windows(it));
-        opened_by.map_or_else(
-            || it.opener().map_or(Ok(JSValue::NULL), Page::window),
-            |other| relative(it, Some(other)),
-        )
-    }),
-    ("navigate", |it, given| {
-        let options = argument(given, 1);
-        let named = cast::<Page>(get(options, "initiator")?)
-            .filter(|named| !named.is_disposed() && it.agent().is_some_and(|it| it.has(named)));
-        nothing(it.contents().wish(
-            it,
-            &text_at(given, 0)?,
-            options,
-            Initiator::of(named.unwrap_or(it)),
-        ))
-    }),
-    ("open", open),
-    ("traverseTo", |it, given| {
-        let (key, fail) = (text_at(given, 0)?, keep(callable_at(given, 1)?));
-        it.later(move |it| match it.contents().traverse_to(&key)? {
-            Some(name) => call(fail.get(), &[js(name)?]).map(drop),
-            None => Ok(()),
-        });
-        NOTHING
-    }),
-];
-
-const LINKED_OF_RELATIVES: Methods<Page> = &[
-    ("container", |it, _| {
-        object_in(fields::element(it.contents()))
-            .map_or(Ok(JSValue::UNDEFINED), |it| get(it, "handle"))
-    }),
-    ("createLocalFrame", |it, given| {
-        frame::create(it, methods_of(argument(given, 0))?)
-    }),
-    ("frameElement", |it, _| {
-        match it
-            .parent()
-            .is_some_and(|parent| parent.origin_key() == it.origin_key())
-        {
-            true => it.contents().ask_element("self", &[]),
-            false => Ok(JSValue::NULL),
-        }
-    }),
-    ("navigateFrom", |it, given| {
-        js(it.contents().navigate(
-            it.relative_given(given)?,
-            &text_at(given, 1)?,
-            argument(given, 2),
-        )?)
-    }),
-    ("owner", |it, _| Ok(it.to_js())),
-    ("parent", |it, _| {
-        relative(it, it.contents().parent().or_else(|| Some(it.contents())))
-    }),
-    ("postMessage", |it, given| {
-        nothing(it.post_message(it.relative_given(given)?, given))
-    }),
-];
-
-const TOP: Methods<Page> = &[("top", |it, _| relative(it, Some(it.owner())))];
-
-/// If the windows that it opens are too.
-const OF_OPENERS: Methods<Page> = &[("disown", |it, _| {
-    fields::set_opened_by(it.contents(), None);
-    NOTHING
-})];
-
-const OF_TARGETS: Methods<Page> = &[("navigateOther", navigate_other)];
-
-pub(super) fn about_document(page: &Page, into: JSValue) -> JsResult<JSValue> {
-    page.loaded()
-        .unwrap_or_default()
-        .describe(into)
-        .map(|()| into)
-}
-
-fn linked(page: &Page) -> JsResult<JSValue> {
-    let host = bind(link::of_window(page), page, LINKED)?;
-    if page.agent().is_some() {
-        bind(bind(host, page, LINKED_OF_RELATIVES)?, page, TOP)?;
-        if link::knows_other_windows(page) {
-            bind(host, page, OF_OPENERS)?;
-        }
-        if link::knows_other_windows(page) || page.contents().is_frame() {
-            bind(host, page, OF_TARGETS)?;
-        }
-    }
-    Ok(link_to(host))
-}
-
-pub(super) fn of_document(page: &Page) -> JsResult<JSValue> {
-    let contents = page.contents();
-    let hooks = object!({
-        "link": linked(page)?,
-        "linkOfBlankFrames": link_to(link::of_blank_frames(page)),
-        "surface": if contents.guest().is_some() { 0 } else { contents.surface },
-        "url": page.url(),
-    });
-    about_document(page, hooks)
+pub(super) fn navigate(page: &Page, wish: Wish) -> JsResult<()> {
+    let named = (wish.initiator)
+        .and_then(|it| page.contents().related_page(it))
+        .filter(|it| page.has_relatives.get() && it.origin_key() == page.origin_key());
+    (page.contents()).wish(page, wish, Initiator::of(named.unwrap_or(page)), None)
 }

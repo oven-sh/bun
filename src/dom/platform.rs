@@ -2,6 +2,7 @@
 
 use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
+use std::rc::Rc;
 
 use crate::abi::{self, Cluster, FontMetrics, FontSetting, Glyph, Slice, TextRun};
 use crate::abi_graphics::Graphics;
@@ -30,20 +31,24 @@ pub(crate) fn renderer() -> Option<&'static abi::Renderer> {
 #[derive(Default)]
 #[repr(C)]
 pub(crate) struct Shaped {
-    pub(crate) text: Box<str>,
+    pub(crate) text: String,
     /// One for each cluster, or none.
-    pub(crate) letters: Box<[abi::Letter]>,
+    pub(crate) letters: Vec<abi::Letter>,
+    /// Where the characters are that do not start a letter.
+    joined: Box<[u32]>,
     pub(crate) label: Option<crate::lines::Label>,
     spelled_out: core::cell::OnceCell<(Box<[Cluster]>, Box<[Glyph]>)>,
     pub(crate) faces: smallvec::SmallVec<[abi::Face; 1]>,
     pub(crate) base_level: u8,
+    /// Stands in for the runs and the direction. 0 after `shape_rest`.
+    pub(crate) how: u64,
 }
 
 impl Shaped {
     #[inline]
     fn spelled_out(&self) -> &(Box<[Cluster]>, Box<[Glyph]>) {
         self.spelled_out.get_or_init(|| {
-            let (clusters, glyphs) = abi::spell_out(&self.text, &self.letters);
+            let (clusters, glyphs) = abi::spell_out(&self.text, &self.letters, &self.joined);
             (clusters.into(), glyphs.into())
         })
     }
@@ -64,11 +69,76 @@ impl Shaped {
             self.letters.len()
         }
     }
+
+    /// How many clusters start in that part of the text.
+    pub(crate) fn count_in(&self, range: core::ops::Range<usize>) -> usize {
+        let before = |offset: usize| self.joined.partition_point(|it| (*it as usize) < offset);
+        match self.letters.len() {
+            0 => {
+                self.clusters()
+                    .partition_point(|it| (it.start as usize) < range.end)
+                    - self
+                        .clusters()
+                        .partition_point(|it| (it.start as usize) < range.start)
+            }
+            len if len == self.text.len() => range.len(),
+            _ => {
+                self.text.as_bytes()[range.clone()]
+                    .chunks(255)
+                    .map(|it| {
+                        usize::from(
+                            it.iter()
+                                .fold(0, |count, it| count + u8::from(*it as i8 >= -0x40)),
+                        )
+                    })
+                    .sum::<usize>()
+                    - (before(range.end) - before(range.start))
+            }
+        }
+    }
+
+    /// How many clusters start before `offset`, which tends to be near the end.
+    pub(crate) fn count_before(&self, offset: usize) -> usize {
+        self.count() - self.count_in(offset..self.text.len())
+    }
+
+    /// Of a cluster that tends to be near the end.
+    pub(crate) fn start_of(&self, cluster: usize) -> usize {
+        match self.letters.len() {
+            0 => self.clusters()[cluster].start as usize,
+            len if len == self.text.len() => cluster,
+            len => self
+                .text
+                .char_indices()
+                .rev()
+                .filter(|it| self.joined.binary_search(&(it.0 as u32)).is_err())
+                .nth(len - 1 - cluster)
+                .map_or(0, |it| it.0),
+        }
+    }
+
+    /// How many letters the two start with.
+    pub(crate) fn letters_in_common(&self, other: &Shaped) -> usize {
+        if self.faces.iter().zip(&other.faces).all(|it| it.0 == it.1) {
+            self.letters
+                .iter()
+                .zip(&other.letters)
+                .take_while(|it| it.0 == it.1)
+                .count()
+        } else {
+            0
+        }
+    }
+
+    pub(crate) fn has_a_letter_per_character(&self) -> bool {
+        !self.letters.is_empty() && self.joined.is_empty()
+    }
 }
 
 pub(crate) struct Fonts {
     pub(crate) device_scale: f32,
     pub(crate) scope: u32,
+    pub(crate) settings: Option<std::sync::Arc<bun_web::host::FontSettings>>,
     metrics: RefCell<Map<(u32, u32), FontMetrics>>,
     pub(crate) used: RefCell<Set<Wanted>>,
     pub(crate) newly_used: RefCell<Vec<Wanted>>,
@@ -171,9 +241,17 @@ pub(crate) struct Defined {
 }
 
 impl Fonts {
+    /// The second is for `monospace`.
+    pub(crate) fn medium_sizes(&self) -> [f32; 2] {
+        self.settings
+            .as_ref()
+            .map_or([16.0, 13.0], |it| [it.size, it.monospace_size])
+    }
+
     pub(crate) fn new(scope: u32) -> Fonts {
         Fonts {
             scope,
+            settings: None,
             device_scale: 1.0,
             metrics: RefCell::default(),
             used: RefCell::default(),
@@ -209,18 +287,19 @@ impl Fonts {
         id
     }
 
-    pub(crate) fn note_written(&self, text: &str, runs: &[TextRun]) {
+    pub(crate) fn note_written(&self, text: &str, from: usize, runs: &[TextRun]) {
         self.has_written.set(true);
         let Some(awaited) = self
             .awaited
             .as_deref()
-            .filter(|it| text.bytes().any(|byte| it[usize::from(byte)]))
+            .filter(|it| text[from..].bytes().any(|byte| it[usize::from(byte)]))
         else {
             return;
         };
         let mut runs = runs.iter().peekable();
-        for (at, character) in text
+        for (at, character) in text[from..]
             .char_indices()
+            .map(|it| (from + it.0, it.1))
             .filter(|it| awaited[usize::from(text.as_bytes()[it.0])])
         {
             while runs.next_if(|it| it.end as usize <= at).is_some() {}
@@ -284,9 +363,25 @@ impl Fonts {
             .0
             .strip_prefix('"')
             .and_then(|it| it.strip_suffix('"'));
+        let chosen = self
+            .settings
+            .as_ref()
+            .filter(|it| !it.generic.is_empty())
+            .map(|settings| {
+                let chosen = |name: &[u8]| {
+                    settings.generic.iter().find(|it| {
+                        name.split_first() == Some((&abi::GENERIC_FAMILY, it.0.as_bytes()))
+                    })
+                };
+                font.family
+                    .names()
+                    .flat_map(|it| [chosen(it).map_or(it, |it| it.1.as_bytes()), b"\0"])
+                    .collect::<Vec<_>>()
+                    .concat()
+            });
         let description = abi::FontDescription {
             scope: self.scope,
-            families: Slice::new(&font.family.0),
+            families: Slice::new(chosen.as_deref().unwrap_or(&font.family.0)),
             weight: font.weight.0,
             stretch: font.stretch.0,
             style,
@@ -322,6 +417,7 @@ impl Fonts {
             emoji: match groups.other(Id::FontVariantEmoji) {
                 "text" => abi::EMOJI_AS_TEXT,
                 "emoji" => abi::EMOJI_IN_COLOR,
+                "unicode" => abi::EMOJI_AS_IN_UNICODE,
                 _ => abi::EMOJI_NORMAL,
             },
             palette_family: Slice::new(&defined.palette_family),
@@ -357,27 +453,143 @@ impl Fonts {
     }
 }
 
-pub(crate) fn shape(text: &str, runs: &[TextRun], direction: u8) -> Shaped {
-    let Some(renderer) = renderer() else {
-        return shape_squares(text, runs, direction);
+/// Next to the direction: a line may start with anything but a space.
+pub(crate) const BREAKS_ANYWHERE: u8 = 0x80;
+
+fn allow_break(flags: &mut u8) {
+    *flags |= if *flags & abi::CLUSTER_SPACE == 0 {
+        abi::CLUSTER_BREAK_BEFORE
+    } else {
+        0
     };
-    // SAFETY: the arguments outlive the call, and the result is copied before the next one.
-    unsafe {
-        let shaped = (renderer.shape)(Slice::new(text.as_bytes()), Slice::new(runs), direction);
-        let letters = shaped.letters.get();
-        Shaped {
-            text: text.into(),
-            letters: letters.into(),
-            label: crate::lines::Label::new(text, letters, shaped.faces.get()),
-            spelled_out: if letters.is_empty() {
-                (shaped.clusters.get().into(), shaped.glyphs.get().into()).into()
-            } else {
-                Default::default()
-            },
-            faces: shaped.faces.get().into(),
-            base_level: shaped.base_level,
-        }
+}
+
+/// For a text that starts with `known` bytes of a former one. `runs` start at `from`. Also returns from where on it has been shaped, and how many letters have stayed the same.
+pub(crate) fn shape_rest(
+    former: Rc<Shaped>,
+    known: usize,
+    text: &str,
+    (runs, from): (&[TextRun], usize),
+    direction: u8,
+) -> Result<(Shaped, usize, usize), Rc<Shaped>> {
+    let Some(renderer) = renderer().filter(|_| !former.letters.is_empty()) else {
+        return Err(former);
+    };
+    // SAFETY: as in `shape`.
+    let (letters, joined, faces, skipped) = unsafe {
+        let rest = (renderer.shape_rest)(
+            Slice::new(text.as_bytes()),
+            Slice::new(runs),
+            from as u32,
+            known as u32,
+        );
+        (
+            rest.letters.get(),
+            rest.joined.get(),
+            rest.faces.get(),
+            rest.skipped as usize,
+        )
+    };
+    if letters.is_empty() || skipped > known || former.faces.len() + faces.len() > 256 {
+        return Err(former);
     }
+    let (kept, mut all) = (former.count_before(skipped), former.faces.clone());
+    let indices = faces.iter().map(|face| {
+        all.extend((!all.contains(face)).then_some(*face));
+        all.iter().position(|it| it == face).unwrap_or(0) as u8
+    });
+    let indices: smallvec::SmallVec<[u8; 8]> = indices.collect();
+    let letters = letters.iter().map(|&(mut it)| {
+        it.face = indices[usize::from(it.face)];
+        if direction & BREAKS_ANYWHERE != 0 {
+            allow_break(&mut it.flags);
+        }
+        it
+    });
+    let same = kept
+        + former.letters[kept..]
+            .iter()
+            .zip(letters.clone())
+            .take_while(|it| *it.0 == it.1)
+            .count();
+    let joined = [
+        &former.joined[..former.joined.partition_point(|it| (*it as usize) < skipped)],
+        joined,
+    ]
+    .concat()
+    .into();
+    let (mut own_text, mut own_letters) = match Rc::try_unwrap(former) {
+        Ok(it) => (it.text, it.letters),
+        Err(it) => {
+            let (mut text, mut letters) = (
+                String::with_capacity(text.len() * 5 / 4),
+                Vec::with_capacity((kept + letters.len()) * 5 / 4),
+            );
+            text.push_str(&it.text[..skipped]);
+            letters.extend_from_slice(&it.letters[..kept]);
+            (text, letters)
+        }
+    };
+    own_text.truncate(skipped);
+    own_text.push_str(&text[skipped..]);
+    own_letters.truncate(kept);
+    own_letters.extend(letters);
+    let label = crate::lines::Label::new(text, &own_letters, &all);
+    Ok((
+        Shaped {
+            text: own_text,
+            letters: own_letters,
+            joined,
+            label,
+            faces: all,
+            ..Shaped::default()
+        },
+        skipped,
+        same,
+    ))
+}
+
+pub(crate) fn shape(text: &str, runs: &[TextRun], direction: u8) -> Shaped {
+    let (anywhere, direction) = (
+        direction & BREAKS_ANYWHERE != 0,
+        direction & !BREAKS_ANYWHERE,
+    );
+    let mut shaped = match renderer() {
+        None => shape_squares(text, runs, direction),
+        // SAFETY: the arguments outlive the call, and the result is copied before the next one.
+        Some(renderer) => unsafe {
+            let shaped = (renderer.shape)(Slice::new(text.as_bytes()), Slice::new(runs), direction);
+            let letters = shaped.letters.get();
+            Shaped {
+                text: text.into(),
+                letters: letters.into(),
+                joined: shaped.joined.get().into(),
+                label: None,
+                spelled_out: if letters.is_empty() {
+                    (shaped.clusters.get().into(), shaped.glyphs.get().into()).into()
+                } else {
+                    Default::default()
+                },
+                faces: shaped.faces.get().into(),
+                base_level: shaped.base_level,
+                how: 0,
+            }
+        },
+    };
+    if anywhere {
+        shaped
+            .letters
+            .iter_mut()
+            .for_each(|it| allow_break(&mut it.flags));
+        shaped
+            .spelled_out
+            .get_mut()
+            .into_iter()
+            .flat_map(|it| &mut it.0)
+            .for_each(|it| allow_break(&mut it.flags));
+    }
+    shaped.label = crate::lines::Label::new(text, &shaped.letters, &shaped.faces);
+    shaped
 }
 
 /// On the clock of the renderer.
@@ -497,9 +709,11 @@ fn shape_squares(text: &str, runs: &[TextRun], direction: u8) -> Shaped {
     Shaped {
         text: text.into(),
         spelled_out: (clusters.into(), Box::default()).into(),
-        letters: Box::default(),
+        letters: Vec::new(),
+        joined: Box::default(),
         label: None,
         faces: runs.iter().map(face).collect(),
         base_level,
+        how: 0,
     }
 }

@@ -380,7 +380,7 @@ impl AriaNotifier {
     ) {
         let doc = self.doc();
         if let Some(ui) = Ui::of(doc).filter(|it| it.assistive.tree.get() != 0)
-            && host::allows_feature(ui, "aria-notify")
+            && host::allows_feature(ui, bun_web::permissions_policy::Feature::AriaNotify)
         {
             doc.engine(|engine, _| {
                 engine.announce_to_user(

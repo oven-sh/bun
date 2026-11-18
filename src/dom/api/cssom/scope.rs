@@ -67,14 +67,15 @@ pub(crate) fn scope_adopted<'a>(cx: &mut JsScope<'a>, scope: &'a Node, old: &'a 
     }
 }
 
-/// Those of adopted sheets, and of sheets that scripts have filled.
-pub(crate) fn rules_without_markup<'a>(heap: &JsHeap<'a>, doc: &'a Doc) -> Vec<u8> {
-    let filled = sheets_in(heap, doc.try_edge_list(Edge::Sheets)).filter(|it| {
+/// Those of adopted and of injected sheets, and of sheets that scripts have filled.
+pub(crate) fn rules_without_markup<'a>(heap: &JsHeap<'a>, scope: &'a Node) -> Vec<u8> {
+    let filled = sheets_in(heap, scope.try_edge_list(Edge::Sheets)).filter(|it| {
         it.get_href().is_none()
             && js_StyleSheet::owner_node(it).is_some_and(|it| it.first_child().is_none())
     });
     let lists = filled
-        .chain(sheets_in(heap, adopted(heap, doc)))
+        .chain(sheets_in(heap, adopted(heap, scope)))
+        .chain(sheets_in(heap, scope.try_edge_list(Edge::InjectedSheets)))
         .filter_map(|it| it.get_css_rules(heap).ok());
     let rules = lists.flat_map(|list| (0..list.get_length()).filter_map(|at| list.item(heap, at)));
     rules
@@ -122,13 +123,21 @@ fn flush_scope<'a>(heap: &JsHeap<'a>, scope: &'a Node) {
             adopters.push(heap, doc.to_js());
         }
     }
-    let lists = [
-        scope.try_edge_list(Edge::Sheets),
-        adopted,
-        scope.try_edge_list(Edge::InjectedSheets),
-    ];
+    let lists = [scope.try_edge_list(Edge::Sheets), adopted];
     scope.engine(|engine, id| {
-        let mut compiled = Vec::new();
+        let (mut compiled, mut of_user) = (Vec::new(), Vec::new());
+        if let Some(keys) = scope.try_extra::<InjectedKeys>() {
+            for (sheet, key) in
+                sheets_in(heap, scope.try_edge_list(Edge::InjectedSheets)).zip(&*keys.0.borrow())
+            {
+                sheet.get().collect(
+                    engine,
+                    sheet.scoping_root(),
+                    if key.1 { &mut of_user } else { &mut compiled },
+                );
+            }
+            engine.set_user_sheets(of_user);
+        }
         lists
             .into_iter()
             .flat_map(|it| sheets_in(heap, it))
@@ -177,12 +186,22 @@ impl InstructionStyle {
 fn list_in_scope<'a>(cx: &mut JsScope<'a>, owner: &'a Node, sheet: &'a CSSStyleSheet) {
     let Some(scope) = owner.scope() else { return };
     let list = scope.edge_list(&cx.heap, Edge::Sheets);
-    let precedes = |index: &u32| {
-        CSSStyleSheet::from_js(&cx.heap, list.get(*index))
+    let precedes = |index: u32| {
+        CSSStyleSheet::from_js(&cx.heap, list.get(index))
             .and_then(|it| js_StyleSheet::owner_node(it))
-            .is_some_and(|it| it.compare_order(owner).is_lt())
+            .is_none_or(|it| owner.compare_order(it).is_gt())
     };
-    let index = (0..list.len()).rev().find(precedes).map_or(0, |it| it + 1);
+    let (mut index, mut end) = (0, list.len());
+    if end > 0 && precedes(end - 1) {
+        index = end;
+    }
+    while index < end {
+        let middle = index.midpoint(end);
+        match precedes(middle) {
+            true => index = middle + 1,
+            false => end = middle,
+        }
+    }
     list.insert(&cx.heap, index, sheet.to_js());
     js_StyleSheet::set_scope(sheet, Some(scope));
     sheets_changed(cx, scope);
@@ -277,23 +296,28 @@ pub(crate) fn prefer_sheets_titled<'a>(
     }
 }
 
-/// Of the sheets in `Edge::InjectedSheets`, in their order.
+/// Of the sheets in `Edge::InjectedSheets`, in their order, and whether they have the origin of the user.
 #[derive(Default)]
-struct InjectedKeys(RefCell<Vec<u32>>);
+struct InjectedKeys(RefCell<Vec<(u32, bool)>>);
 
 /// The page does not see it. It takes the place of the one with that key.
-pub(crate) fn inject_sheet<'a>(cx: &mut JsScope<'a>, doc: &'a Doc, key: u32, text: Option<&[u8]>) {
+pub(crate) fn inject_sheet<'a>(
+    cx: &mut JsScope<'a>,
+    doc: &'a Doc,
+    key: u32,
+    new: Option<(&[u8], bool)>,
+) {
     let (sheets, keys) = (
         doc.edge_list(&cx.heap, Edge::InjectedSheets),
         &doc.extra::<InjectedKeys>().0,
     );
-    let old = keys.borrow().iter().position(|it| *it == key);
+    let old = keys.borrow().iter().position(|it| it.0 == key);
     if let Some(at) = old {
         keys.borrow_mut().remove(at);
         sheets.remove(&cx.heap, sheets.get(at as u32));
     }
-    if let Some(text) = text {
-        keys.borrow_mut().push(key);
+    if let Some((text, is_of_user)) = new {
+        keys.borrow_mut().push((key, is_of_user));
         sheets.push(
             &cx.heap,
             super::create_sheet(&cx.heap, doc, text, doc.base_url().to_utf8().as_bytes()).to_js(),

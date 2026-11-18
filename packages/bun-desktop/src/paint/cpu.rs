@@ -306,8 +306,6 @@ pub fn tile_origins(
 pub struct Painter<'a> {
     pub scene: &'a Scene,
     pub frame: &'a Frame,
-    /// The items from this index on are left out.
-    pub limit: usize,
     pub left_out: &'a [usize],
 }
 
@@ -378,11 +376,7 @@ impl Painter<'_> {
     }
 
     pub fn paint(&self, range: Range<usize>, layer: &mut Layer, matrix: &Transform, clip: &Clip) {
-        for index in self
-            .scene
-            .children(range)
-            .take_while(|index| *index < self.limit)
-        {
+        for index in self.scene.children(range) {
             let area =
                 IntRect::around(map_rect(matrix, self.scene.bounds(index))).intersect(clip.rect);
             if (!area.is_empty() || erases(&self.scene.items[index]))
@@ -496,6 +490,25 @@ impl Painter<'_> {
                     layer.draw(&group, None, clip);
                 }
             }
+            Item::PushLayer {
+                opacity,
+                blend: BlendMode::Normal,
+                filters,
+                ..
+            } if let [Item::Path { outline, color }, Item::Pop] =
+                &scene.items[index + 1..scene.end(index)]
+                && scene.filters(*filters).is_empty() =>
+            {
+                let color = scale(
+                    premultiply(*color),
+                    (opacity.clamp(0., 1.) * 255.).round() as u8,
+                );
+                layer.fill_coverage(
+                    &self.cover(outline, matrix, area),
+                    clip,
+                    &Paint::Solid(color),
+                );
+            }
             Item::PushLayer { opacity, blend, .. } => {
                 let group = self.render_layer(index, matrix, area).map(|mut group| {
                     group.scale_alpha(*opacity);
@@ -519,6 +532,16 @@ impl Painter<'_> {
                     Some(stretch) => stretch.paint(self, layer, matrix, &clip.within_rect(area)),
                     None => self.paint_leaf(&scene.items[index], layer, matrix, clip, area),
                 }
+            }
+            Item::Fill { shape, color } if let Some(widths) = scene.border_over(index) => {
+                let hidden = widths.map(|it| frame.snap_width(it) / 2.);
+                self.fill_shape(
+                    layer,
+                    &border::inset(&frame.snap_shape(shape), hidden),
+                    matrix,
+                    clip,
+                    &Paint::Solid(premultiply(*color)),
+                )
             }
             item => self.paint_leaf(item, layer, matrix, clip, area),
         }
@@ -1018,11 +1041,7 @@ impl Painter<'_> {
         matrix: &Transform,
         area: IntRect,
     ) -> Option<()> {
-        if let Some((range, luminance)) = self
-            .scene
-            .mask(index)
-            .filter(|(range, _)| range.start <= self.limit)
-        {
+        if let Some((range, luminance)) = self.scene.mask(index) {
             let mut mask = Layer::new(area)?;
             self.paint(range, &mut mask, matrix, &Clip::new(area));
             group.keep(&mask, luminance);
@@ -1362,8 +1381,26 @@ pub fn snap_shadow(
 }
 
 pub fn snap_tile(frame: &Frame, tile: &Tile) -> Tile {
+    let (snapped, unless_adjoining) = (
+        frame.snap(tile.rect),
+        |size: f32, step: f32, snapped: f32| {
+            if (size - step).abs() < 0.001 {
+                step
+            } else {
+                snapped
+            }
+        },
+    );
+    let (width, height) = (
+        unless_adjoining(tile.rect.width, tile.step[0], snapped.width),
+        unless_adjoining(tile.rect.height, tile.step[1], snapped.height),
+    );
     Tile {
-        rect: frame.snap(tile.rect),
+        rect: Rect {
+            width,
+            height,
+            ..snapped
+        },
         step: tile.step,
     }
 }

@@ -68,9 +68,20 @@ fn part<'a>(
     pseudo: &str,
     tag: Known,
 ) -> &'a Element {
+    part_before(cx, host, parent, pseudo, tag, None)
+}
+
+fn part_before<'a>(
+    cx: &mut Cx<'a>,
+    host: &'a Element,
+    parent: &'a Node,
+    pseudo: &str,
+    tag: Known,
+    before: Option<&'a Node>,
+) -> &'a Element {
     let made = host.doc().create_html(&cx.heap, tag);
     made.set_pseudo(pseudo, host);
-    insert(cx, made, parent, None, Observers::Suppress);
+    insert(cx, made, parent, before, Observers::Suppress);
     made
 }
 
@@ -161,7 +172,7 @@ fn user_changed<'a>(cx: &mut Cx<'a>, element: &'a Element) {
 pub(crate) fn normalize_newlines(text: &DomString) -> DomString {
     const CR: u16 = 13;
     const LF: u16 = 10;
-    if !text.units().any(|it| it == CR) {
+    if !text.chars().contains(b'\r') {
         return text.clone();
     }
     let (mut out, mut last) = (StringBuilder::with_capacity(text.len() as usize), 0);
@@ -175,13 +186,12 @@ pub(crate) fn normalize_newlines(text: &DomString) -> DomString {
 }
 
 fn without_newlines(text: &DomString) -> DomString {
-    let is_newline = |it: &u16| matches!(it, 10 | 13);
-    if !text.units().any(|it| is_newline(&it)) {
+    if !text.has_newline() {
         return text.clone();
     }
     let mut out = StringBuilder::with_capacity(text.len() as usize);
     text.units()
-        .filter(|it| !is_newline(it))
+        .filter(|it| !matches!(it, 10 | 13))
         .for_each(|it| out.push_unit(it));
     out.finish()
 }
@@ -260,16 +270,21 @@ pub(crate) fn is_disabled(element: &Element) -> bool {
         | atom!("fieldset")
         | atom!("input")
         | atom!("select")
-        | atom!("textarea") => {}
+        | atom!("textarea") => {
+            if element.is_rendered() && element.is_connected() {
+                return element.has_state(State::DISABLED);
+            }
+        }
         _ if is_form_associated_custom(element) => {}
         _ => return false,
     }
     let disables = |(child, parent): (&Node, &Node)| {
         parent.is_html(atom!("fieldset"))
             && parent.as_element().is_some_and(has_attribute)
-            && parent
-                .first_html_child(atom!("legend"))
-                .is_none_or(|it| &**it != child)
+            && !(child.is_html(atom!("legend"))
+                && parent
+                    .first_html_child(atom!("legend"))
+                    .is_some_and(|it| &**it == child))
     };
     has_attribute(element)
         || element
@@ -307,6 +322,28 @@ fn seen_from<'a>(element: &Element, target: Option<&'a Element>) -> Option<&'a N
 }
 
 fn controls_of(form: &Element) -> impl Iterator<Item = &Element> {
+    static CONTROLS: Test = Test {
+        bare: Bare::None,
+        reads: Reads::Ties,
+        matches: is_listed,
+        belongs: |form, it| form_owner(it).is_some_and(|it| **it == *form),
+        lists: |form, add| {
+            may_have_remote_owners(form) && {
+                add.into_iter().for_each(|add| {
+                    form.as_element()
+                        .into_iter()
+                        .flat_map(find_controls_of)
+                        .for_each(add)
+                });
+                true
+            }
+        },
+        ..Test::ALL
+    };
+    form.unseen_collection(15, &CONTROLS).elements()
+}
+
+fn find_controls_of(form: &Element) -> impl Iterator<Item = &Element> {
     let (anywhere, inside) = if may_have_remote_owners(form) {
         (Some(form.referrers()), None)
     } else {
@@ -384,7 +421,12 @@ fn render<'a>(cx: &mut Cx<'a>, element: &'a Element) {
         atom!("input") => Input::new(element).render(cx),
         atom!("textarea") => TextControl::of_textarea(element).render(cx),
         atom!("select") => Select::new(element).render(cx),
-        atom!("button") => button::update_default(cx, element),
+        atom!("button") => {
+            button::update_default(cx, element);
+            if element.has_attr(atom!("interestfor")) && is_disabled(element) {
+                crate::api::ui::interest::forget(cx, element);
+            }
+        }
         atom!("meter") | atom!("progress") => gauge::render(cx, element),
         _ => {}
     }
@@ -393,7 +435,7 @@ fn render<'a>(cx: &mut Cx<'a>, element: &'a Element) {
 /// https://html.spec.whatwg.org/#concept-form-reset-control
 fn reset<'a>(cx: &mut Cx<'a>, element: &'a Element) {
     match element.html_tag() {
-        atom!("input") => Input::new(element).reset(cx),
+        atom!("input") => return Input::new(element).reset(cx),
         atom!("textarea") => textarea::reset(cx, element),
         atom!("select") => Select::new(element).reset(cx),
         atom!("output") => button::reset_output(cx, element),
@@ -411,10 +453,10 @@ fn is_group(element: &Element) -> bool {
 }
 
 fn update<'a>(cx: &mut Cx<'a>, controls: Refs<'a, Element>) {
-    let mut groups = Refs::default();
+    let (mut groups, mut seen) = (Refs::default(), crate::name::Set::default());
     input::remembering_groups(|| {
         let mut add = |heap: &JsHeap<'a>, group: &Element| {
-            if !groups.contains(group) {
+            if seen.insert(group.id()) {
                 groups.push(heap, group);
             }
         };
@@ -452,6 +494,7 @@ pub(crate) fn flush<'a>(cx: &mut Cx<'a>, doc: &'a Doc) {
     };
     let dirty = ui.dirty_controls();
     ui.set_dirty_controls(Refs::default());
+    ui.scope_of_dirty_groups.set(0);
     dirty.iter().for_each(|it| control(it).is_stale.set(false));
     let still_here = Refs::collect(
         &cx.heap,
@@ -484,8 +527,34 @@ fn inserted<'a>(cx: &mut Cx<'a>, element: &'a Element, _: bool) {
 fn attribute_changed<'a>(cx: &mut Cx<'a>, element: &'a Element, change: &AttrChange<'_>) {
     if change.is(atom!("form")) {
         element.clear_edge(&cx.heap, Edge::ParserForm);
+        dirty_forms(cx, element.root());
     }
     dirty(cx, element);
+}
+
+fn dirty_forms<'a>(cx: &mut Cx<'a>, scope: &'a Node) {
+    scope
+        .objects_with_tag(atom!("form"))
+        .filter(|it| it.is_html(atom!("form")))
+        .for_each(|it| dirty(cx, it));
+}
+
+/// Another element goes by it.
+pub(crate) fn id_changed<'a>(cx: &mut Cx<'a>, scope: &'a Node, id: &DomString) {
+    static REMOTE: Test = Test {
+        bare: Bare::None,
+        reads: Reads::Ties,
+        matches: |it| is_listed(it) && it.has_attr(atom!("form")),
+        ..Test::ALL
+    };
+    let found = scope
+        .unseen_collection(17, &REMOTE)
+        .all_named(&Atom::from_string(id), |it| [it.attr(atom!("form")), None]);
+    let controls = Refs::collect(&cx.heap, found);
+    if !controls.is_empty() {
+        controls.iter().for_each(|it| dirty(cx, it));
+        dirty_forms(cx, scope);
+    }
 }
 
 fn removed<'a>(cx: &mut Cx<'a>, element: &'a Element, scope: &'a Node, _: bool) {
@@ -496,7 +565,11 @@ fn removed<'a>(cx: &mut Cx<'a>, element: &'a Element, scope: &'a Node, _: bool) 
         element.clear_edge(&cx.heap, Edge::ParserForm);
         element.ties_changed();
     }
-    if element.has_state(State::INVALID) {
+    let address = core::ptr::from_ref(scope).addr();
+    if element.has_state(State::INVALID)
+        && Ui::of(scope.doc())
+            .is_some_and(|it| it.scope_of_dirty_groups.replace(address) != address)
+    {
         let groups = [atom!("form"), atom!("fieldset")]
             .into_iter()
             .flat_map(|it| scope.objects_with_tag(it));
@@ -569,7 +642,7 @@ pub(crate) fn before_blur<'a>(cx: &mut Cx<'a>, ui: &'a Ui, element: &'a Element)
 
 pub(crate) fn focus_changed<'a>(cx: &mut Cx<'a>, element: &'a Element) {
     if let Some(input) = Input::of(element).filter(|it| it.kind().has_date_fields()) {
-        date_fields::render(cx, input);
+        date_fields::focus_changed(cx, input);
     }
 }
 

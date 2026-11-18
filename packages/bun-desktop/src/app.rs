@@ -219,6 +219,8 @@ pub fn obey(id: u32, command: WindowCommand) -> Result<()> {
             options.resizable = limits.is_resizable;
         }
         WindowCommand::ShowAsSheet(_) => window::draw_before_showing(id),
+        WindowCommand::Enabled(is_enabled) => input::set_enabled(&state, *is_enabled),
+        WindowCommand::AutoHideCursor(hides) => state.keeps_cursor.set(!hides),
         _ => {}
     }
     let result = window.command(&command);

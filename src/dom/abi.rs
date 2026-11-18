@@ -4,7 +4,7 @@
 #![allow(dead_code, unreachable_pub)] // Each side uses its half.
 
 /// Bumped with every change to this file, to the library's exports, or to its JSON messages.
-pub const ABI_VERSION: u32 = 23;
+pub const ABI_VERSION: u32 = 28;
 
 #[path = "abi_accessibility.rs"]
 pub mod accessibility;
@@ -123,6 +123,7 @@ pub const ADJUST_IC_HEIGHT: u8 = 5;
 pub const EMOJI_NORMAL: u8 = 0;
 pub const EMOJI_AS_TEXT: u8 = 1;
 pub const EMOJI_IN_COLOR: u8 = 2;
+pub const EMOJI_AS_IN_UNICODE: u8 = 3;
 
 pub const PALETTE_LIGHT: u32 = u32::MAX - 1;
 pub const PALETTE_DARK: u32 = u32::MAX;
@@ -221,7 +222,7 @@ pub struct Glyph {
 
 pub const NO_GLYPH: u16 = u16::MAX;
 
-/// A cluster of one character at bidi level 0, whose glyph is at its origin.
+/// A cluster at bidi level 0, whose glyph is at its origin.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Letter {
@@ -231,27 +232,31 @@ pub struct Letter {
     pub face: u8,
 }
 
-pub fn spell_out(text: &str, letters: &[Letter]) -> (Vec<Cluster>, Vec<Glyph>) {
-    let mut glyphs = Vec::with_capacity(letters.len());
-    let clusters = text.char_indices().zip(letters).map(|((start, _), it)| {
-        let first = glyphs.len() as u32;
-        glyphs.extend((it.glyph != NO_GLYPH).then_some(Glyph {
-            id: it.glyph.into(),
-            x: 0.0,
-            y: 0.0,
-        }));
-        Cluster {
-            start: start as u32,
-            advance: it.advance,
-            glyphs: Span {
-                start: first,
-                end: glyphs.len() as u32,
-            },
-            bidi_level: 0,
-            flags: it.flags,
-            face: it.face.into(),
-        }
-    });
+pub fn spell_out(text: &str, letters: &[Letter], joined: &[u32]) -> (Vec<Cluster>, Vec<Glyph>) {
+    let (mut glyphs, mut joined) = (Vec::with_capacity(letters.len()), joined.iter().peekable());
+    let clusters = text
+        .char_indices()
+        .filter(|it| joined.next_if_eq(&&(it.0 as u32)).is_none())
+        .zip(letters)
+        .map(|((start, _), it)| {
+            let first = glyphs.len() as u32;
+            glyphs.extend((it.glyph != NO_GLYPH).then_some(Glyph {
+                id: it.glyph.into(),
+                x: 0.0,
+                y: 0.0,
+            }));
+            Cluster {
+                start: start as u32,
+                advance: it.advance,
+                glyphs: Span {
+                    start: first,
+                    end: glyphs.len() as u32,
+                },
+                bidi_level: 0,
+                flags: it.flags,
+                face: it.face.into(),
+            }
+        });
     (clusters.collect(), glyphs)
 }
 
@@ -272,11 +277,15 @@ pub struct ShapedText {
     /// In logical order.
     pub clusters: Slice<Cluster>,
     pub glyphs: Slice<Glyph>,
-    /// One for each character in place of `clusters` and `glyphs`, or none.
+    /// In place of `clusters` and `glyphs`, or none.
     pub letters: Slice<Letter>,
+    /// Where the characters are that do not start a letter, ascending.
+    pub joined: Slice<u32>,
     pub faces: Slice<Face>,
     /// 0 or 1: what `DIRECTION_AUTO` resolved to.
     pub base_level: u8,
+    /// Where the letters of `shape_rest` start in the text.
+    pub skipped: u32,
 }
 
 // ───────────────────────────── painting ─────────────────────────────
@@ -775,6 +784,14 @@ pub struct Renderer {
     /// One paragraph of UTF-8. The result is valid until the next call.
     pub shape:
         unsafe extern "C" fn(text: Slice<u8>, runs: Slice<TextRun>, direction: u8) -> ShapedText,
+    /// Likewise, if the first `known` bytes have been shaped to letters with the same runs, whatever came after them. Leaves out what is still right.
+    /// `runs` start at `from`, where one has ended. There are no letters if it takes `shape`.
+    pub shape_rest: unsafe extern "C" fn(
+        text: Slice<u8>,
+        runs: Slice<TextRun>,
+        from: u32,
+        known: u32,
+    ) -> ShapedText,
     /// Replaces what the surface shows.
     pub submit: unsafe extern "C" fn(surface: u32, list: *const DisplayList),
     /// For `text-decoration-skip-ink`: for each glyph that has ink between `top` and `bottom`, which are measured down

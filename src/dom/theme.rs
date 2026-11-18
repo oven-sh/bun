@@ -1,6 +1,6 @@
 //! What controls look like unless the page styles them.
 
-use crate::abi::{Item, Outline, Rect, RoundedRect, Stroke};
+use crate::abi::{Item, Outline, Radii, Rect, RoundedRect, Stroke};
 use crate::boxes::BoxId;
 use crate::color::mix_colors;
 use crate::name::{is_name, name};
@@ -8,7 +8,7 @@ use crate::paint::{Painter, Space, alpha, fit, square};
 use crate::path::Path;
 use crate::properties::{Id, Style};
 use crate::selector::Pseudo;
-use crate::tree::{Element, State};
+use crate::tree::{Element, NodeId, State};
 use crate::types::{Appearance, FillRule};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -354,6 +354,86 @@ impl Painter<'_> {
                     [x(near + offset), rect.y + far],
                 ];
                 self.stroke(&Path::polygon(line, false), pixel, color, space);
+            }
+        }
+    }
+
+    #[cold]
+    pub(crate) fn missing_image(
+        &mut self,
+        node: NodeId,
+        content: Rect,
+        clip: RoundedRect,
+        space: &Space,
+    ) {
+        const ICON: [(u32, &[[u8; 2]]); 8] = [
+            (
+                0x9999_99ff,
+                &[[0, 0], [11, 0], [15, 4], [15, 8], [7, 16], [0, 16]],
+            ),
+            (0x9999_99ff, &[[15, 11], [15, 16], [10, 16]]),
+            (
+                0xc6d8_f4ff,
+                &[[1, 1], [10, 1], [10, 5], [14, 5], [14, 9], [8, 15], [1, 15]],
+            ),
+            (0xc6d8_f4ff, &[[14, 12], [14, 15], [11, 15]]),
+            (0xffff_ffff, &[[11, 2], [13, 4], [11, 4]]),
+            (0xffff_ffff, &[[2, 6], [3, 4], [5, 3], [7, 4], [8, 6]]),
+            (
+                0x58ae_39ff,
+                &[[1, 15], [3, 12], [6, 10], [9, 10], [12, 11], [8, 15]],
+            ),
+            (0x58ae_39ff, &[[13, 13], [14, 14], [14, 15], [11, 15]]),
+        ];
+        let document = self.document;
+        let Some(element) = document.tree.element(node) else {
+            return;
+        };
+        if element.pseudo == Pseudo::Part(name!("-internal-alt-icon")) {
+            let rect = self.snap_rect(content);
+            for (color, corners) in ICON {
+                let at = |it: &[u8; 2]| {
+                    [
+                        rect.x + f32::from(it[0]) * rect.width / 16.0,
+                        rect.y + f32::from(it[1]) * rect.height / 16.0,
+                    ]
+                };
+                self.polygon(&corners.iter().map(at).collect::<Vec<_>>(), color, space);
+            }
+        } else if element.html_tag() == name!("img")
+            && [name!("src"), name!("srcset")]
+                .into_iter()
+                .all(|it| element.attribute(it).is_none())
+            && document.tree.html_tag(document.tree[node].parent) != name!("picture")
+            && !document.replacements.contains_key(&node)
+        {
+            let (rect, pixel, mut space) = (
+                self.snap_rect(content),
+                1.0 / document.environment.scale,
+                *space,
+            );
+            if content.width.min(content.height) > 2.0 * pixel {
+                if clip.radii != Radii::default() {
+                    self.clip(clip, &mut space);
+                }
+                let [across, down] = [
+                    Rect {
+                        height: pixel,
+                        ..rect
+                    },
+                    Rect {
+                        width: pixel,
+                        ..rect
+                    },
+                ];
+                [
+                    across,
+                    across.moved([0.0, rect.height - pixel]),
+                    down,
+                    down.moved([rect.width - pixel, 0.0]),
+                ]
+                .into_iter()
+                .for_each(|it| self.fill(square(it), 0xc0c0_c0ff, &space));
             }
         }
     }

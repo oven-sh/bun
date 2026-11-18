@@ -1,4 +1,5 @@
 import { hasLibrary } from "./library";
+import { hasScreen, openScreen } from "./screen";
 
 import { $ } from "bun";
 import { afterAll, describe, expect, test } from "bun:test";
@@ -60,6 +61,17 @@ async function runWithErrors(main: string, files: Record<string, string>, args: 
 }
 
 describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
+  test("inline caches can rely on the prototypes of every page", async () => {
+    expect(
+      await run(
+        `serve({ "/": "<p>" });
+         const options = { webPreferences: { ...preload.webPreferences, contextIsolation: false, sandbox: false } };
+         for (let i = 0; i < 4; i++) print(await (await open(undefined, options)).executeJavaScript("isLeaf(Element.prototype)"));`,
+        { "preload.js": `window.isLeaf = it => require("bun:jsc").jscDescribe(it).includes("Leaf");` },
+      ),
+    ).toEqual([true, true, true, true]);
+  });
+
   test.each([
     ["is slow to load", `app.once("ready", done);`],
     ["waits for it", `await app.whenReady(); done();`],
@@ -92,6 +104,20 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
         { BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
       ),
     ).toEqual([0, 1]);
+  });
+
+  test.skipIf(isWindows)("a relaunched app has the variables whose names are numbers or not ASCII", async () => {
+    expect(
+      await run(
+        `if (process.argv.includes("again")) return print([process.env[1], process.env["é"]]);
+        Object.assign(process.env, { 1: "a", "é": "b" });
+        app.relaunch({ args: ["again"] });
+        app.quit();`,
+        {},
+        [],
+        { BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
+      ),
+    ).toEqual([["a", "b"]]);
   });
 
   test("what is up to the system checks its arguments", async () => {
@@ -632,6 +658,156 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
         },
       ),
     ).toEqual([[true, true, 1], "undefined"]);
+  });
+
+  test("contentTracing", async () => {
+    expect(
+      await run(`
+        const { contentTracing } = electron;
+        using server = Bun.serve({ port: 0, fetch: () => new Response("", { headers: { "content-type": "text/html" } }) });
+        app.trustOrigins([server.url.origin]);
+        const page = await open(server.url.href);
+        print(await contentTracing.stopRecording().catch(error => error.message));
+        for (const options of [{}, { included_categories: ["disabled-by-default-v8.*"], excluded_categories: ["*"] }, { categoryFilter: "blink.*,disabled-by-default-v8.cpu_profiler" }, { categoryFilter: "-blink.*" }]) {
+          await contentTracing.startRecording(options);
+          await page.executeJavaScript(\`(async function busy() {
+            performance.mark("a");
+            const timed = new Promise(resolve => new PerformanceObserver(resolve).observe({ type: "resource" }));
+            await Promise.all([fetch("/c").then(it => it.text()), timed]);
+            for (const end = performance.now() + 20; performance.now() < end; );
+            performance.measure("b", "a");
+          })()\`);
+          const { traceEvents } = await Bun.file(await contentTracing.stopRecording()).json();
+          const nodes = traceEvents.flatMap(it => it.args.data?.cpuProfile?.nodes ?? []);
+          print([traceEvents.filter(it => it.ph !== "M" && !/paint|visib/.test(it.args.entryType)).map(it => it.ph + " " + path.basename(it.name)).join(), nodes.some(it => it.callFrame.functionName.includes("busy") && it.parent)]);
+        }`),
+    ).toEqual([
+      "Failed to stop tracing (was a trace in progress?)",
+      ["I a,b c,e c,b b,e b", false],
+      ["P Profile,P ProfileChunk", true],
+      ["I a,b b,e b,P Profile,P ProfileChunk", true],
+      ["b c,e c", false],
+    ]);
+  });
+
+  test("netLog", async () => {
+    expect(
+      await run(`
+        const { netLog } = electron;
+        using server = Bun.serve({ port: 0, fetch: () => new Response("", { headers: { "set-cookie": "a=secret" } }) });
+        const file = path.join(__dirname, "log.json");
+        using rude = Bun.listen({ port: 0, hostname: "127.0.0.1", socket: { data: socket => socket.end() } });
+        for (const captureMode of ["default", "includeSensitive"]) {
+          await netLog.startLogging(file, { captureMode });
+          print(netLog.currentlyLogging);
+          await net.fetch(server.url + "a");
+          await net.fetch("http://127.0.0.1:" + rude.port).catch(() => {});
+          await netLog.stopLogging();
+          const { constants, events } = await Bun.file(file).json();
+          print([constants.netError.ERR_EMPTY_RESPONSE, events.filter(it => it.type === 2).map(it => it.params.method ?? it.params.net_error ?? 0), events.flatMap(it => it.params.headers ?? []).filter(it => /^HTTP|cookie/i.test(it))]);
+        }
+        print(session.defaultSession.netLog.currentlyLogging);
+        for (const fail of [() => netLog.stopLogging(), () => netLog.startLogging(""), () => netLog.startLogging(file, { captureMode: "a" }), () => netLog.startLogging(file + "/a")])
+          print(await (async () => fail())().catch(error => error.message));`),
+    ).toEqual([
+      true,
+      [-324, ["GET", 0, "GET", -324], ["HTTP/1.1 200", "set-cookie: [8 bytes were stripped]"]],
+      true,
+      [-324, ["GET", 0, "GET", -324], ["HTTP/1.1 200", "set-cookie: a=secret"]],
+      false,
+      "No net log in progress",
+      "The first parameter must be a valid string",
+      "Invalid value for captureMode",
+      "Failed to create file",
+    ]);
+  });
+
+  test("TouchBar", async () => {
+    expect(
+      await run(`
+        const { TouchBar } = electron;
+        const { TouchBarButton, TouchBarGroup, TouchBarOtherItemsProxy, TouchBarScrubber } = TouchBar;
+        const button = new TouchBarButton({ label: "a" });
+        button.on("change", (...about) => print(about));
+        button.label = "b";
+        print([button.label, button.enabled, new TouchBarScrubber({ items: [] }).mode]);
+        const bar = new TouchBar({ items: [new TouchBarGroup({ items: new TouchBar({ items: [button] }) })], escapeItem: button });
+        print(bar.escapeItem === button);
+        for (const it of [bar, [button], null]) new BrowserWindow().setTouchBar(it);
+        for (const fail of [() => new TouchBar(), () => new TouchBar([1]), () => new TouchBar([button, button]), () => new TouchBar([new TouchBarOtherItemsProxy(), new TouchBarOtherItemsProxy()]), () => (bar.escapeItem = {})])
+          try { fail(); } catch (error) { print(error.message); }`),
+    ).toEqual([
+      ["1", "button"],
+      ["b", true, "free"],
+      true,
+      "Must specify options object as first argument",
+      "Each item must be an instance of TouchBarItem",
+      "Cannot add a single instance of TouchBarItem multiple times in a TouchBar",
+      "Must only have one OtherItemsProxy per TouchBar",
+      "Escape item must be an instance of TouchBarItem",
+    ]);
+  });
+
+  test("savePage", async () => {
+    expect(
+      await run(`
+        serve({ "/": "<!doctype html><title>é</title><script>document.title += 1</script>" });
+        const page = await open(), file = path.join(__dirname, "saved.html");
+        await page.savePage(file, "HTMLOnly");
+        print(await Bun.file(file).text());`),
+    ).toEqual(["<!doctype html><title>é</title><script>document.title += 1</script>"]);
+  });
+
+  test("a window is disabled while it has a modal window", async () => {
+    expect(
+      await run(`
+        const parent = new BrowserWindow(), child = new BrowserWindow({ parent, modal: true, show: false });
+        for (const step of ["isVisible", "show", "hide", "show", "destroy"]) child[step](), print(parent.isEnabled());`),
+    ).toEqual([true, false, true, false, true]);
+  });
+
+  const hasX11 = isLinux && !!process.env.DISPLAY && ["xdotool", "xprop", "xwininfo"].every(it => Bun.which(it));
+  test.skipIf(!hasX11)("what the X server is told of a window", async () => {
+    expect(
+      await run(
+        `
+        const { ImageView, nativeImage } = electron;
+        const ask = (...command) => require("child_process").execFileSync(command[0], command.slice(1), { encoding: "utf8" });
+        const until = async condition => { while (!(await condition())) await new Promise(setImmediate); };
+        const red = nativeImage.createFromBitmap(Buffer.from([0, 0, 255, 255]), { width: 1, height: 1 });
+        serve({ "/": "<script>seen = []; onmousedown = e => seen.push(e.button)</script>" });
+        const page = await open(), window = BrowserWindow.fromWebContents(page), other = new BrowserWindow({ show: false });
+        const [id, otherId] = [window, other].map(it => "0x" + it.getNativeWindowHandle().readUInt32LE().toString(16));
+        window.setIcon(red);
+        await until(() => ask("xprop", "-id", id, "-f", "_NET_WM_ICON", "32c", "_NET_WM_ICON").includes("= 1, 1, 4294901760"));
+        window.setShape([{ x: 0, y: 0, width: 50, height: 60 }, { x: 70, y: 0, width: 30, height: 10 }]);
+        await until(() => ask("xwininfo", "-id", id, "-shape").includes("Window shape extents:  100x60+0+0"));
+        window.setShape([]);
+        await until(() => ask("xwininfo", "-id", id, "-shape").includes("No window shape defined"));
+        other.setParentWindow(window);
+        await until(() => ask("xprop", "-id", otherId, "WM_TRANSIENT_FOR").includes(id));
+        other.setParentWindow(null);
+        await until(() => !ask("xprop", "-id", otherId, "WM_TRANSIENT_FOR").includes(id));
+        print("done");`,
+        {},
+        [],
+        { BUN_DESKTOP_HEADLESS: undefined },
+      ),
+    ).toEqual(["done"]);
+  });
+
+  test.skipIf(!isLinux)("app.getApplicationInfoForProtocol()", async () => {
+    expect(
+      await run(
+        `process.env.XDG_DATA_HOME = process.env.XDG_CONFIG_HOME = __dirname;
+        const { name, path: file } = await app.getApplicationInfoForProtocol("demo://a");
+        print([name, path.basename(file), await app.getApplicationInfoForProtocol("nobody://a").catch(error => error.message)]);`,
+        {
+          "mimeapps.list": "[Default Applications]\nx-scheme-handler/demo=demo.desktop\n",
+          "applications/demo.desktop": "[Desktop Entry]\nName=Demo\nExec=env %u\n",
+        },
+      ),
+    ).toEqual([["Demo", "env", expect.any(String)]]);
   });
 
   describe("scripts that run while the tree changes", () => {
@@ -2737,6 +2913,57 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
     });
   });
 
+  test("each frame has prototypes of its own, which are alike", async () => {
+    expect(
+      await run(`
+        app.trustOrigins(["app://trusted"], { inFrames: true, injectedScripts: true });
+        serve({ "/": "<iframe src=/a></iframe>".repeat(4), "/a": "" });
+        const page = await open();
+        print(await page.executeJavaScript(\`
+          const describe = realm => ["Node", "Element", "HTMLElement", "Document", "Event", "Navigator", "DOMTokenList", "NodeList"].map(name => {
+            const { prototype } = realm[name];
+            const isOwn = it => typeof it !== "function" || it instanceof realm.Function;
+            return Reflect.ownKeys(prototype).map(key => {
+              const { value, get, set, ...flags } = Object.getOwnPropertyDescriptor(prototype, key);
+              return [String(key), typeof value === "object" ? "" : String(value), value?.length, get?.name, set?.name, [value, get, set].every(isOwn), Object.values(flags)];
+            });
+          }).join();
+          const expected = describe(window);
+          delete frames[1].Node.prototype.appendChild;
+          frames[2].Element.prototype.remove = frames[2].Element.prototype.added = null;
+          const late = document.body.appendChild(document.createElement("iframe")).contentWindow;
+          const thrown = realm => { try { realm.Node.prototype.contains.call(0); } catch (error) { return error instanceof realm.TypeError; } };
+          [frames[0], frames[1], frames[2], frames[3], late].map(it => [describe(it) === expected, thrown(it), it.document.body instanceof it.EventTarget].join())\`));`),
+    ).toEqual([["true,true,true", "false,true,true", "false,true,true", "true,true,true", "true,true,true"]]);
+  });
+
+  test("AbortSignal extends the EventTarget of the page", async () => {
+    expect(
+      await run(`
+        serve({ "/": "" });
+        const page = await open();
+        print(await page.executeJavaScript(\`
+          const controller = new AbortController(), seen = [];
+          controller.signal.addEventListener("abort", event => seen.push(event.type, event.target === controller.signal), { once: true });
+          controller.abort();
+          [Object.getPrototypeOf(AbortSignal) === EventTarget, Object.getPrototypeOf(AbortSignal.prototype) === EventTarget.prototype, ...seen]\`));`),
+    ).toEqual([[true, true, "abort", true]]);
+  });
+
+  test("what looks like a window is no source of a message", async () => {
+    expect(
+      await run(`
+        serve({ "/": "<iframe></iframe><iframe sandbox srcdoc=x></iframe>" });
+        const page = await open();
+        print(await page.executeJavaScript(\`
+          const fake = {};
+          fake.window = fake;
+          [window, frames[0], frames[1], new MessageChannel().port1, fake].map(source => {
+            try { return new MessageEvent("message", { source }).source === source; } catch (error) { return error.name; }
+          })\`));`),
+    ).toEqual([[true, true, true, true, "TypeError"]]);
+  });
+
   test("an empty frame that shares the realm stops with its window", async () => {
     expect(
       await run(`
@@ -2750,6 +2977,9 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
             all.push(new WeakRef(inside));
             inside.body.innerHTML = "<img src=/never><link rel=stylesheet href=/never><video src=/never></video>";
             frame.contentWindow.setInterval(() => (inside, ticks++));
+            frame.contentWindow.fetch("/never").then(() => inside, () => ticks++);
+            frame.contentWindow.scheduler.postTask(() => inside, { delay: 1e6 });
+            inside.startViewTransition(() => new Promise(() => inside));
           }
           requestAnimationFrame(() => {
             document.body.replaceChildren();
@@ -2962,6 +3192,86 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
         isLinux ? { SSL_CERT_FILE: "authority.pem" } : { NODE_EXTRA_CA_CERTS: "authority.pem" },
       ),
     ).toEqual([["ok", "ok", 1], ["localhost", "-----BEGIN CERTIFICATE-----", false], "net::ERR_FAILED"]);
+  });
+
+  test("a class that is made while an export of node:stream is replaced", async () => {
+    expect(
+      await run(
+        `const stream = require("stream");
+         const { Writable } = stream;
+         const server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+         stream.Writable = 1;
+         try { net.request(server.url.href); } catch (error) { print(error.name); }
+         stream.Writable = Writable;
+         const request = net.request(server.url.href);
+         const [response] = await once(request.end(), "response");
+         print([request instanceof Writable, String(await response.toArray())]);
+         server.stop(true);`,
+      ),
+    ).toEqual(["TypeError", [true, "ok"]]);
+  });
+
+  test.skipIf(isWindows)("a closed stdin is /dev/null before the main thread opens a file", async () => {
+    const main = `console.log(fs.fstatSync(0).rdev === fs.statSync("/dev/null").rdev)`;
+    const env = { ...bunEnv, BUN_DESKTOP_THREADS: "main" };
+    const runs = Array.from({ length: 4 }, () =>
+      $`sh -c ${'exec "$0" -e "$1" <&-'} ${bunExe()} ${main}`.env(env).text(),
+    );
+    expect(await Promise.all(runs)).toEqual(Array(4).fill("true\n"));
+  });
+
+  test("HTTP/2 waits for the verdict on the certificate", async () => {
+    expect(
+      await run(
+        `let requests = 0, connections = 0;
+         const server = require("http2").createSecureServer(${JSON.stringify(tls)}, (request, response) => (requests++, response.end(request.httpVersion)));
+         server.on("secureConnection", socket => (connections++, socket.unref())).unref();
+         await once(server.listen(0), "listening");
+         const burst = ses => Promise.all(Array.from({ length: 8 }, () => ses.fetch("https://localhost:" + server.address().port).then(it => it.text(), error => error.message)));
+         const refusing = session.fromPartition("refusing");
+         refusing.setCertificateVerifyProc((_, callback) => setImmediate(callback, -2));
+         print([[...new Set(await burst(refusing))], requests]);
+         connections = 0;
+         const requestsAtCheck = [];
+         session.defaultSession.setCertificateVerifyProc((_, callback) => setImmediate(() => (requestsAtCheck.push(requests), callback(-3))));
+         print([[...new Set([...(await burst(session.defaultSession)), ...(await burst(session.defaultSession))])], requestsAtCheck, requests, connections]);`,
+        { "authority.pem": tls.cert },
+        [],
+        { NODE_EXTRA_CA_CERTS: "authority.pem" },
+      ),
+    ).toEqual([
+      [["net::ERR_FAILED"], 0],
+      [["2.0"], [0], 16, 1],
+    ]);
+  });
+
+  test("an expired authority does not hide the chain that is valid", async () => {
+    const fixture = (file: string) =>
+      readFileSync(join(import.meta.dir, "../../node/tls/fixtures/expired-intermediate", file), "utf8");
+    expect(
+      await run(
+        `const server = Bun.serve({
+           port: 0,
+           tls: ${JSON.stringify({ key: fixture("leaf.key"), cert: fixture("leaf.pem") + fixture("int-valid.pem") })},
+           fetch: () => new Response("ok"),
+         });
+         // After this one, those of the system are asked too.
+         const unknown = Bun.serve({ port: 0, tls: ${JSON.stringify(tls)}, fetch: () => new Response("ok") });
+         print(await net.fetch("https://localhost:" + unknown.port).catch(error => error.message));
+         unknown.stop(true);
+         session.defaultSession.setCertificateVerifyProc((request, callback) => {
+           let length = 0;
+           for (let it = request.validatedCertificate; it; it = it.issuerCert) length++;
+           print([request.verificationResult, length]);
+           callback(-3);
+         });
+         print(await (await net.fetch("https://localhost:" + server.port)).text());
+         server.stop(true);`,
+        { "authorities.pem": fixture("int-expired.pem") + fixture("root.pem") },
+        [],
+        { NODE_EXTRA_CA_CERTS: "authorities.pem" },
+      ),
+    ).toEqual(["net::ERR_CERT_AUTHORITY_INVALID", ["net::OK", 3], "ok"]);
   });
 
   test("a certificate that the server leaves out is fetched, and not trusted for that", async () => {
@@ -3667,6 +3977,28 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
     ).toEqual([6]);
   });
 
+  test("a sandboxed frame is not told of cookies", async () => {
+    expect(
+      await run(`
+        const listens = '<script>cookieStore.onchange = event => parent.postMessage(origin, "*"); parent.postMessage("ready", "*")</script>';
+        const { url } = Bun.serve({ port: 0, fetch: ({ url }) => new Response(url.endsWith("/frame") ? listens : "<body>", { headers: { "content-type": "text/html" } }) });
+        app.trustOrigins([url.origin], { inFrames: true });
+        print(await (await open(url.href)).executeJavaScript(\`(async () => {
+          const heard = [];
+          const hear = wanted => new Promise(resolve => (onmessage = ({ data }) => (heard.push(data === origin ? "own" : data), data === wanted && resolve())));
+          for (const sandbox of ["allow-scripts", "allow-scripts allow-same-origin"]) {
+            document.body.append(Object.assign(document.createElement("iframe"), { sandbox, src: "/frame" }));
+            await hear("ready");
+          }
+          for (const name of ["a", "b"]) {
+            document.cookie = name + "=1; SameSite=None; Secure";
+            await hear(origin);
+          }
+          return heard;
+        })()\`));`),
+    ).toEqual([["ready", "ready", "own", "own"]]);
+  });
+
   test("cookies outlive the process, unless they are for the session", async () => {
     expect(
       await run(
@@ -3678,6 +4010,22 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
          Bun.spawnSync([process.execPath, "--preload=bun:desktop/electron", ".", "again"], { stdout: "inherit", stderr: "inherit" });`,
       ),
     ).toEqual([[["kept", "1", "a.test", true]]]);
+  });
+
+  test("cookies that could not be saved are saved the next time", async () => {
+    expect(
+      await run(
+        `const { cookies, storagePath } = session.defaultSession;
+         if (process.argv.includes("again")) return print((await cookies.get({})).map(it => it.name));
+         const { mkdirSync, rmdirSync } = require("node:fs");
+         mkdirSync(storagePath + "/Cookie Jar~", { recursive: true });
+         await cookies.set({ url: "https://a.test/", name: "kept", value: "1", expirationDate: Date.now() / 1000 + 60 });
+         await cookies.flushStore();
+         rmdirSync(storagePath + "/Cookie Jar~");
+         await cookies.flushStore();
+         Bun.spawnSync([process.execPath, "--preload=bun:desktop/electron", ".", "again"], { stdout: "inherit", stderr: "inherit" });`,
+      ),
+    ).toEqual([["kept"]]);
   });
 
   test("a page that has little stack left", async () => {
@@ -4017,6 +4365,111 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
     ).toEqual([[false, 0, "/frame"]]);
   });
 
+  test("copyImageAt() copies pixels, and nothing if there are none", async () => {
+    expect(
+      await run(`
+        const { clipboard, nativeImage } = require("electron");
+        const png = nativeImage.createFromBitmap(Buffer.alloc(16, 255), { width: 2, height: 2 }).toPNG();
+        const bodies = [png, "not an image", Buffer.concat([png, Buffer.from("more")])];
+        protocol.handle("app", ({ url }) =>
+          url.endsWith(".png")
+            ? new Response(bodies.shift(), { headers: { "cache-control": "no-store" } })
+            : new Response("<img src=/a.png width=100 height=100>", { headers: { "content-type": "text/html" } }));
+        const page = await open();
+        clipboard.writeText("before");
+        page.copyImageAt(50, 50);
+        await page.executeJavaScript("fetch('/').then(it => it.text())");
+        print([bodies.length, await clipboard.readText()]);
+        page.copyImageAt(50, 50);
+        while (await clipboard.readText()) await new Promise(setImmediate);
+        const [item] = await clipboard.read();
+        const copied = Buffer.from(await (await item.getType("image/png")).arrayBuffer());
+        print([nativeImage.createFromBuffer(copied).getSize(), copied.includes("more")]);`),
+    ).toEqual([
+      [1, "before"],
+      [{ width: 2, height: 2 }, false],
+    ]);
+  });
+
+  test("a view that outlives its window goes on without one", async () => {
+    expect(
+      await run(`
+        process.on("uncaughtException", error => print(error.message));
+        app.on("window-all-closed", () => {});
+        serve({ "/": "", "/next": "" });
+        const [window, view] = [new electron.BaseWindow({ width: 400, height: 300 }), new WebContentsView()];
+        window.contentView.addChildView(view);
+        const page = view.webContents;
+        await page.loadURL("app://trusted/");
+        window.destroy();
+        await page.executeJavaScript("focus(), moveTo(1, 1), resizeTo(200, 200)", true);
+        page.focus();
+        page.setZoomFactor(2);
+        await page.loadURL("app://trusted/next");
+        print([page.getOwnerBrowserWindow(), await page.executeJavaScript("location.pathname")]);`),
+    ).toEqual([[null, "/next"]]);
+  });
+
+  test("a file chooser that cannot be shown is as good as cancelled", async () => {
+    expect(
+      await run(`
+        process.on("uncaughtException", error => print("uncaught " + error.message));
+        process.on("warning", warning => print(warning.message));
+        electron.dialog.showOpenDialog = async () => { throw new Error("no chooser") };
+        serve({ "/": "<input type=file>" });
+        const page = await open();
+        print(await page.executeJavaScript(\`new Promise(done => {
+          const input = document.querySelector("input");
+          input.oncancel = event => done(event.type);
+          input.click();
+        })\`, true));`),
+    ).toEqual(["no chooser", "cancel"]);
+  });
+
+  test("a page cannot move its window off the screen or make it larger than that", async () => {
+    const [{ x, y, width, height }, ...seen] = await run(`
+      serve({ "/": "" });
+      const page = await open();
+      let asked;
+      page.on("content-bounds-updated", (_, bounds) => (asked = bounds));
+      print(electron.screen.getPrimaryDisplay().workArea);
+      for (const move of ["resizeTo(1e9, 1e9)", "resizeTo(200, 100), moveTo(1e9, 1e9)", "moveBy(-1e9, -1e9)"]) {
+        print(await page.executeJavaScript(move + ", [screenX, screenY, outerWidth, outerHeight]"));
+        await page.executeJavaScript("new Promise(done => setTimeout(done))");
+        print(Object.values(asked));
+      }
+      page.setWindowOpenHandler(() => ({ action: "allow" }));
+      const created = once(page, "did-create-window");
+      await page.executeJavaScript("void open('/', '', 'width=99999,height=99999,left=99999,top=99999')");
+      print(Object.values((await created)[0].getBounds()));`);
+    const twice = (...bounds: number[]) => [bounds, bounds];
+    expect(seen).toEqual([
+      ...twice(x, y, width, height),
+      ...twice(x + width - 200, y + height - 100, 200, 100),
+      ...twice(x, y, 200, 100),
+      [x, y, width, height],
+    ]);
+  });
+
+  test("a frame that is removed at the end of the stack is gone", async () => {
+    expect(
+      await run(`
+        app.trustOrigins(["app://trusted"], { inFrames: true });
+        serve({ "/": "<iframe src=/frame></iframe>".repeat(4), "/frame": "" });
+        const page = await open();
+        await page.executeJavaScript(\`{
+          globalThis.windows = Array.from(frames);
+          let depth = 0;
+          (function descend() {
+            try { descend(); } catch {}
+            if (++depth % 50 === 0) document.querySelector("iframe")?.remove();
+          })();
+          new Promise(done => setTimeout(done));
+        }\`);
+        print([page.mainFrame.frames.length, await page.executeJavaScript("windows.map(it => it.closed)")]);`),
+    ).toEqual([[0, [true, true, true, true]]]);
+  });
+
   test("the app hears of the errors of an isolated world, and the page does not", async () => {
     expect(
       await run(`
@@ -4176,6 +4629,143 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
       ["navigate", "document", "cross-site"],
       ["theirs", false],
     ]);
+  });
+
+  describe("a request that is repeated", () => {
+    const sites = `
+      const headers = { "content-type": "text/html", "cache-control": "no-store" };
+      const told = async request => {
+        print([request.method, await request.text(), ...["sec-fetch-site", "sec-fetch-user", "cookie"].map(it => request.headers.get(it))]);
+        return new Response("", { headers });
+      };
+      const server = Bun.serve({ port: 0, routes: {
+        "/": () => new Response("", { headers }),
+        "/told": told,
+        "/moved": () => new Response(null, { status: 303, headers: { location: "/told" } }),
+      } });
+      const [own, other] = ["127.0.0.1", "localhost"].map(it => "http://" + it + ":" + server.port);
+      app.trustOrigins([own, other]);
+      await electron.session.defaultSession.cookies.set({ url: own, name: "a", value: "b", sameSite: "strict" });
+      const page = await open(other);
+      const after = async (step, event = "did-finish-load") => {
+        const done = once(page, event);
+        typeof step === "string" ? page.executeJavaScript(step) : step();
+        return done;
+      };
+      const post = to => "document.body.innerHTML = '<form method=post action=" + own + to + "><input name=c value=d>'; document.forms[0].submit()";`;
+
+    test("comes from whoever has made it", async () => {
+      expect(
+        await run(`${sites}
+          await after("location = '" + own + "/told'");
+          await after(() => page.navigationHistory.goBack());
+          await after("history.forward()");
+          await after(() => page.reload());
+          await after("location.reload()");
+          server.stop(true);`),
+      ).toEqual([
+        ["GET", "", "cross-site", null, null],
+        ["GET", "", "cross-site", null, null],
+        ["GET", "", "cross-site", null, null],
+        ["GET", "", "same-origin", null, "a=b"],
+      ]);
+    });
+
+    test("does not have the body that a redirect has dropped", async () => {
+      expect(
+        await run(`${sites}
+          await after(post("/moved"));
+          await after("location.reload()");
+          server.stop(true);`),
+      ).toEqual([
+        ["GET", "", "cross-site", null, null],
+        ["GET", "", "same-origin", null, "a=b"],
+      ]);
+    });
+
+    test("does not have a body after replaceState()", async () => {
+      expect(
+        await run(`${sites}
+          await after(post("/told"));
+          await page.executeJavaScript("history.replaceState(null, '')");
+          await after(() => page.reload());
+          server.stop(true);`),
+      ).toEqual([
+        ["POST", "c=d", "cross-site", null, null],
+        ["GET", "", "same-origin", null, "a=b"],
+      ]);
+    });
+
+    test("is not sent on the way through the history if it has a body", async () => {
+      expect(
+        await run(`${sites}
+          await after(post("/told"));
+          await after(() => page.navigationHistory.goBack());
+          print((await after("history.forward()", "did-fail-load"))[2]);
+          server.stop(true);`),
+      ).toEqual([["POST", "c=d", "cross-site", null, null], "ERR_CACHE_MISS"]);
+    });
+  });
+
+  test("a download belongs to the frame that has started it", async () => {
+    expect(
+      await run(`
+        app.trustOrigins(["app://trusted", "app://other"], { inFrames: true, injectedScripts: true });
+        serve({ "/": "<iframe src=app://other/frame></iframe><a href=data:,a download></a>", "/frame": "<a href=data:,b download></a>" });
+        const page = await open();
+        const [frame] = page.mainFrame.frames;
+        const names = new Map([[frame, "inner"], [page.mainFrame, "outer"], [null, "none"]]);
+        for (const start of [frame, page.mainFrame].map(it => () => it.executeJavaScript("document.links[0].click()")).concat(() => page.downloadURL("data:,c"))) {
+          const told = new Promise(resolve => page.session.once("will-download", (event, item, _, by) => {
+            event.preventDefault();
+            resolve([item.getInitiatorOrigin(), names.get(by)]);
+          }));
+          start();
+          print(await told);
+        }`),
+    ).toEqual([
+      ["app://other", "inner"],
+      ["app://trusted", "outer"],
+      ["", "none"],
+    ]);
+  });
+
+  test("a page without the focus does not get at the clipboard", async () => {
+    expect(
+      await run(`
+        serve({ "/": "" });
+        const page = await open();
+        const use = "Promise.all([navigator.clipboard.writeText('a'), navigator.clipboard.readText()].map(it => it.then(() => 'done', it => it.name)))";
+        print(await page.executeJavaScript(use));
+        page.debugger.attach();
+        await page.debugger.sendCommand("Emulation.setFocusEmulationEnabled", { enabled: true });
+        print(await page.executeJavaScript(use));`),
+    ).toEqual([
+      ["NotAllowedError", "NotAllowedError"],
+      ["done", "done"],
+    ]);
+  });
+
+  test.skipIf(!hasScreen)("a frame of another origin does not raise the window by itself", async () => {
+    await using screen = await openScreen();
+    expect(
+      await run(
+        `app.trustOrigins(["app://trusted", "app://other"], { inFrames: true, injectedScripts: true });
+        serve({ "/": "<iframe src=app://other/frame></iframe>", "/frame": "" });
+        const page = await open();
+        const [own, second] = [BrowserWindow.fromWebContents(page), new BrowserWindow()];
+        await once(second, "focus");
+        own.on("focus", () => print("raised"));
+        await page.mainFrame.frames[0].executeJavaScript("top.focus()");
+        await once(new BrowserWindow(), "focus");
+        print("asked");
+        page.mainFrame.frames[0].executeJavaScript("top.focus()", true);
+        await once(own, "focus");`,
+        {},
+        [],
+        screen.env,
+      ),
+    ).toEqual(["asked", "raised"]);
   });
 
   test("what a handler imports does not get the nonce of a script", async () => {
@@ -4392,6 +4982,17 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
         print(await (await open()).executeJavaScript("document.body.firstChild.offsetHeight"));`),
     ).toEqual([9]);
   });
+
+  test.each(["<p style=display:grid>", "<p style=display:flex>", "<table><td>"])(
+    "a formula in %s in columns",
+    async around => {
+      expect(
+        await run(`
+        serve({ "/": "<div style=columns:2>${around}<math display=block><mi>a" });
+        print(await (await open()).executeJavaScript("document.querySelector('math').getClientRects().length"));`),
+      ).toEqual([1]);
+    },
+  );
 
   test("a window has no more than 1000 frames", async () => {
     expect(
@@ -4708,6 +5309,375 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
       ["a.txt", "text/plain", 10, "23", 10, "blob", true, "a.txt", true, "0123456789", "0123456789", "234"],
       [10, "NotReadableError", "NotReadableError", "TypeError", "NotReadableError", "89-0", "a.txt", "0123456789"],
       "NotFoundError",
+    ]);
+  });
+
+  test("the timing of a navigation starts with the navigation", async () => {
+    const [first, second, opened] = await run(`
+      let answer;
+      serve({ "/": "<p>a", "/slow": () => new Promise(resolve => (answer = resolve)) });
+      const look = \`(([it], { timing }) => ({
+        order: [it.fetchStart, it.responseStart, it.responseEnd, it.domInteractive, it.loadEventEnd].every((time, i, all) => time > 0 && time >= (all[i - 1] ?? 0)),
+        hasUnloaded: [it.unloadEventStart > 0, it.unloadEventEnd >= it.unloadEventStart, timing.unloadEventEnd > 0],
+        domLoading: timing.domLoading >= timing.navigationStart,
+        confidence: it.confidence?.value,
+        origin: performance.timeOrigin,
+        interactive: it.domInteractive,
+      }))(performance.getEntriesByType("navigation"), performance)\`;
+      const contents = await open();
+      print(await contents.executeJavaScript(look));
+      const loaded = contents.loadURL("app://trusted/slow");
+      while (!answer) await new Promise(setImmediate);
+      const askedAt = performance.timeOrigin + performance.now();
+      while (performance.timeOrigin + performance.now() < askedAt + 5);
+      answer(new Response("<p>b", { headers: { "content-type": "text/html" } }));
+      await loaded;
+      const { origin, ...rest } = await contents.executeJavaScript(look);
+      print({ ...rest, isBeforeRequest: origin <= askedAt + 1 });
+      await contents.executeJavaScript("document.open(); document.write('c'); document.close()");
+      print(await contents.executeJavaScript(look));
+    `);
+    expect(first).toMatchObject({ order: true, hasUnloaded: [false, true, false], domLoading: true });
+    expect(first.confidence).toBeString();
+    expect(second).toMatchObject({ order: true, hasUnloaded: [true, true, true], isBeforeRequest: true });
+    expect(opened.interactive).toBe(second.interactive);
+  });
+
+  test("an <object> asks for the image by the URL that it has, not by the one that it was redirected to", async () => {
+    expect(
+      await run(`
+        app.trustOrigins([], { inFrames: true });
+        const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==", "base64");
+        const asked = [];
+        serve({
+          "/": "<object data=/from></object>",
+          "/from": () => (asked.push("from"), Response.redirect("app://trusted/to")),
+          "/to": () => (asked.push("to"), new Response(png, { headers: { "content-type": "image/png" } })),
+        });
+        const contents = await open();
+        print([await contents.executeJavaScript("document.querySelector('object').offsetWidth"), asked]);
+      `),
+    ).toEqual([[1, ["from", "to", "from", "to"]]]);
+  });
+
+  test("the document of a frame without a box has no boxes", async () => {
+    expect(
+      await run(`
+        app.trustOrigins([], { inFrames: true });
+        const asked = [];
+        serve({
+          "/": "<iframe src=/in style=display:none></iframe>",
+          "/in": \`<!doctype html><html style="display:flex;font-size:20px"><style>@keyframes k{to{opacity:0}}</style><body style="display:inline">
+            <p id=a style="height:2rem;animation:k 9s">a  b</p><input id=i><object data=/object></object><div style="height:3000px"></div>\`,
+          "/object": () => (asked.push("object"), new Response("")),
+        });
+        const contents = await open();
+        const look = \`(w => (w.i.focus({ preventScroll: true }), [w.innerWidth, w.a.offsetHeight, w.getComputedStyle(w.a).height, w.getComputedStyle(w.document.documentElement).display,
+          w.getComputedStyle(w.document.body).display, w.a.innerText, w.document.getAnimations().length, w.document.activeElement.id, w.scrollY,
+          (w.i.animate({ order: [7, 7] }, 9000), w.getComputedStyle(w.i).order), w.i.getAnimations()[0].cancel()]))(frames[0])\`;
+        const display = value => contents.executeJavaScript("document.querySelector('iframe').style.display = '" + value + "'; " + look);
+        print([await contents.executeJavaScript(look), asked]);
+        print(await display(""));
+        await contents.executeJavaScript("frames[0].scrollTo(0, 100); frames[0].i.blur()");
+        print(await display("none"));
+        print(await display(""));
+      `),
+    ).toEqual([
+      [[0, 0, "40px", "flex", "block", "a  b", 0, "", 0, "7", null], []],
+      [300, 40, "40px", "flex", "block", "a b", 1, "i", 0, "7", null],
+      [300, 0, "40px", "flex", "block", "a  b", 0, "", 0, "7", null],
+      [300, 40, "40px", "flex", "block", "a b", 1, "i", 100, "7", null],
+    ]);
+  });
+
+  test("webFrame knows the frames of its origin", async () => {
+    expect(
+      await run(
+        `app.trustOrigins(["app://other"], { inFrames: true });
+         serve({ "/": "<iframe name=a src=/in></iframe><iframe id=b name=b src=/in></iframe><iframe id=c src=app://other/in></iframe>", "/in": "<title>in</title>" });
+         const heard = new Set();
+         ipcMain.on("top", (event, isTop) => heard.add(String(isTop)));
+         const page = await open(undefined, { webPreferences: { ...preload.webPreferences, nodeIntegrationInSubFrames: true } });
+         print([...heard].sort());
+         print(await page.executeJavaScript("look()"));`,
+        {
+          "preload.js": `const { contextBridge, ipcRenderer, webFrame } = require("electron");
+            ipcRenderer.send("top", webFrame.top ? webFrame.top.frameToken === webFrame.frameToken : null);
+            const name = frame => frame && frame.executeJavaScript("name");
+            contextBridge.exposeInMainWorld("look", () => Promise.all([
+              webFrame.parent, webFrame.firstChild, webFrame.firstChild.nextSibling, webFrame.firstChild.nextSibling.nextSibling, webFrame.firstChild.parent,
+              webFrame.findFrameByName("b"), webFrame.getFrameForSelector("#b"), webFrame.getFrameForSelector("#c"), webFrame.getFrameForSelector("body"),
+              webFrame.findFrameByToken(webFrame.firstChild.frameToken), webFrame.findFrameByRoutingId(webFrame.firstChild.routingId),
+            ].map(name)));`,
+        },
+      ),
+    ).toEqual([
+      ["false", "null", "true"],
+      [null, "a", "b", null, "", "b", "b", null, null, "a", "a"],
+    ]);
+  });
+
+  test("a page is visible until its window is hidden, or for good if it is not throttled", async () => {
+    expect(
+      await run(`
+        serve({ "/": "<script>log = [document.visibilityState]; document.onvisibilitychange = () => log.push(document.visibilityState)</script>" });
+        const log = page => page.executeJavaScript("new Promise(resolve => setTimeout(resolve)).then(() => log.join())");
+        const frames = page => page.executeJavaScript("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve)))).then(() => 3)");
+        const unshown = await open(undefined, { show: false });
+        print([await frames(unshown), await log(unshown), unshown.mainFrame.visibilityState, unshown.getBackgroundThrottling()]);
+        unshown.getOwnerBrowserWindow().hide();
+        print([await log(unshown), unshown.mainFrame.visibilityState]);
+        unshown.setBackgroundThrottling(false);
+        print([await frames(unshown), await log(unshown), unshown.backgroundThrottling]);
+        unshown.setBackgroundThrottling(true);
+        print(await log(unshown));
+        print(await log(await open(undefined, { show: false, paintWhenInitiallyHidden: false })));
+        const eager = await open(undefined, { webPreferences: { backgroundThrottling: false } });
+        eager.getOwnerBrowserWindow().hide();
+        print([await frames(eager), await log(eager)]);
+        const view = new WebContentsView();
+        new BrowserWindow().contentView.addChildView(view);
+        await view.webContents.loadURL("app://trusted/");
+        view.setBounds({ x: 0, y: 0, width: 9, height: 9 });
+        print(await log(view.webContents));`),
+    ).toEqual([
+      [3, "visible", "visible", true],
+      ["visible,hidden", "hidden"],
+      [3, "visible,hidden,visible", false],
+      "visible,hidden,visible,hidden",
+      "hidden",
+      [3, "visible"],
+      "hidden,visible",
+    ]);
+  });
+
+  test("nothing runs in place of a page that has crashed, and a frame that is gone cannot be read", async () => {
+    const gone = "Render frame was disposed before WebFrameMain could be accessed";
+    expect(
+      await run(`
+        app.trustOrigins([], { inFrames: true });
+        serve({ "/": "<iframe src=/in></iframe>", "/in": "a" });
+        const page = await open();
+        const [frame] = page.mainFrame.frames;
+        await page.executeJavaScript("document.querySelector('iframe').remove()");
+        while (!frame.isDestroyed()) await new Promise(setImmediate);
+        const read = name => { try { return typeof frame[name]; } catch (error) { return error.message; } };
+        print(["url", "origin", "parent", "routingId", "detached", "frameTreeNodeId"].map(read));
+        page.forcefullyCrashRenderer();
+        const failure = promise => promise.then(() => "", error => error.message);
+        print(await Promise.all([page.executeJavaScript("1"), page.insertCSS("a{}"), page.insertText("a")].map(failure)));
+        page.selectAll();
+        page.sendInputEvent({ type: "mouseDown", x: 1, y: 1 });
+        page.setZoomFactor(2);
+        print([(await page.capturePage()).isEmpty(), page.getOSProcessId(), page.mainFrame.origin, page.isCrashed()]);
+        page.reload();
+        await once(page, "did-finish-load");
+        print([await page.executeJavaScript("origin"), page.getZoomFactor()]);`),
+    ).toEqual([
+      [gone, gone, gone, gone, "boolean", "number"],
+      [gone, gone, gone],
+      [true, 0, "", true],
+      ["app://trusted", 1],
+    ]);
+  });
+
+  test("insertCSS() goes before the sheets of the page, or has the origin of the user", async () => {
+    expect(
+      await run(`
+        serve({ "/": "<style>p { order: 2 } b { order: 2 !important } i { order: revert }</style><p>a</p><b class=c>b</b><i>c</i><div><template shadowrootmode=open><s class=c></s></template></div>" });
+        const page = await open();
+        const look = () => page.executeJavaScript("[...document.body.children, document.querySelector('div').shadowRoot.firstChild].map(it => getComputedStyle(it).order).join('')");
+        const author = await page.insertCSS("p, i, s { order: 1 }");
+        print(await look());
+        await page.removeInsertedCSS(author);
+        const user = await page.insertCSS("p, i { order: 1 } .c { order: 3 !important }", { cssOrigin: "user" });
+        print(await look());
+        await page.executeJavaScript("document.querySelector('p').className = 'c'");
+        print(await look());
+        await page.removeInsertedCSS(user);
+        print(await look());`),
+    ).toEqual(["22000", "23103", "33103", "22000"]);
+  });
+
+  test("the preferences for fonts, text areas and encodings", async () => {
+    expect(
+      await run(`
+        serve({ "/": "<!doctype html><p style=width:10em>a</p><code>b</code><textarea></textarea>" });
+        const look = \`(([p, code, area], size = (it, value) => (it.style.fontSize = value, getComputedStyle(it).fontSize)) =>
+          [size(p, ""), size(code, ""), size(p, "small"), size(code, "small"), size(p, "2rem"), size(p, "0.2em"), getComputedStyle(p).width, size(p, "3px"), size(p, "0"),
+           getComputedStyle(p).fontFamily, getComputedStyle(area).resize, matchMedia("(min-width: 21em)").matches].join(" "))(document.body.children)\`;
+        print(await (await open()).executeJavaScript(look));
+        print(await (await open(undefined, { webPreferences: { zoomFactor: 2 } })).executeJavaScript(\`((it, context) => [
+          ...["font-size: 0.2em", "font-size: 0.2em; zoom: 2", "zoom: 0.25", "font-size: calc(0.1em)"].map(css => (it.style.cssText = css, getComputedStyle(it).fontSize)),
+          (context.font = "small monospace", context.font)].join(" "))(document.body.firstChild, document.createElement("canvas").getContext("2d"))\`));
+        const webPreferences = { defaultFontSize: 20, defaultMonospaceFontSize: 11, minimumFontSize: 9, defaultFontFamily: { standard: "A" }, textAreasAreResizable: false };
+        print(await (await open(undefined, { webPreferences })).executeJavaScript(look));
+        const server = Bun.serve({ port: 0, fetch: () => new Response(new Uint8Array([0xc3, 0xa9]), { headers: { "content-type": "text/html" } }) });
+        app.trustOrigins([server.url.origin]);
+        print(await (await open(server.url.href, { webPreferences: { defaultEncoding: "UTF-8" } })).executeJavaScript("document.body.textContent"));`),
+    ).toEqual([
+      expect.stringMatching(/^16px 13px 13px 12px 32px 6px 32px 3px 0px .* both true$/),
+      "6px 6px 16px 1.6px 12px monospace",
+      "20px 11px 17.8px 10px 40px 9px 40px 9px 0px A none false",
+      "é",
+    ]);
+  });
+
+  test("a page reports its cursor, theme color, preferred size and frames", async () => {
+    expect(
+      await run(`
+        serve({ "/": "<!doctype html><body style=margin:0><a href=/ style='display:block;width:50px;height:40px'></a>" });
+        const page = await open(undefined, { useContentSize: true, webPreferences: { enablePreferredSizeMode: true } });
+        const after = async (event, act) => { const heard = once(page, event); await act(); return (await heard)[1]; };
+        const move = (x, y) => () => page.sendInputEvent({ type: "mouseMove", x, y });
+        const run = code => () => page.executeJavaScript(code);
+        print([await after("cursor-changed", move(5, 5)), await after("cursor-changed", move(200, 200))]);
+        print(await after("cursor-changed", run("document.documentElement.style.cursor = 'crosshair'")));
+        print([
+          await after("did-change-theme-color", run("document.head.innerHTML = '<meta name=theme-color content=no><meta name=theme-color content=red>'")),
+          await after("did-change-theme-color", run("document.head.innerHTML = ''")),
+        ]);
+        print(await after("preferred-size-changed", run("document.links[0].style.width = '70px'")));
+        const frame = await new Promise(resolve => page.beginFrameSubscription((image, dirty) => resolve([image.getSize(), dirty])));
+        page.endFrameSubscription();
+        print(frame);
+        page.enableDeviceEmulation({ screenSize: { width: 500, height: 600 }, viewSize: { width: 200, height: 100 }, deviceScaleFactor: 2 });
+        print(await page.executeJavaScript("[innerWidth, innerHeight, devicePixelRatio, screen.width]"));
+        page.disableDeviceEmulation();
+        print(await page.executeJavaScript("[innerWidth, innerHeight, devicePixelRatio]"));`),
+    ).toEqual([
+      ["hand", "pointer"],
+      "crosshair",
+      ["#FF0000", null],
+      { width: 70, height: 40 },
+      [
+        { width: 400, height: 300 },
+        { x: 0, y: 0, width: 400, height: 300 },
+      ],
+      [200, 100, 2, 500],
+      [400, 300, 1],
+    ]);
+  });
+
+  test("scrollToBottom(), adjustSelection(), clone() and getLastWebPreferences()", async () => {
+    expect(
+      await run(`
+        serve({ "/": "<p id=p style=height:3000px>hello world", "/b": "b" });
+        const page = await open(undefined, { webPreferences: { nodeIntegration: true, partition: undefined } });
+        page.scrollToBottom();
+        print(await page.executeJavaScript("scrollY > 2000"));
+        page.scrollToTop();
+        await page.executeJavaScript("getSelection().setBaseAndExtent(p.firstChild, 2, p.firstChild, 5)");
+        page.adjustSelection({ start: -1, end: 3 });
+        print(await page.executeJavaScript("[scrollY, String(getSelection()), document.queryCommandSupported('paste')]"));
+        const { sandbox, nodeIntegration, webSecurity, webviewTag } = page.getLastWebPreferences();
+        print([sandbox, nodeIntegration, webSecurity, webviewTag]);
+        await page.loadURL("app://trusted/b");
+        const copy = page.clone();
+        await once(copy, "did-finish-load");
+        print([copy.getURL(), copy.navigationHistory.length()]);`),
+    ).toEqual([true, [0, "ello wo", false], [false, true, true, false], ["app://trusted/b", 2]]);
+  });
+
+  test("a window that does not paint while it is hidden is ready once it is shown", async () => {
+    expect(
+      await run(`
+        serve({ "/": "a" });
+        const window = new BrowserWindow({ show: false, paintWhenInitiallyHidden: false });
+        window.once("ready-to-show", () => print(window.isVisible()));
+        await Promise.all([once(window.webContents, "ready-to-show"), window.loadURL("app://trusted/")]);
+        window.show();`),
+    ).toEqual([true]);
+  });
+
+  test("savePage()", async () => {
+    const [failures, only, complete, files, archive] = await run(`
+      const fs = require("fs");
+      const source = "<!doctype html><title>t</title><link rel=stylesheet href=/s.css><script src=/a/x.js></script><img src=/b/x.js><a href=/next>é</a>";
+      serve({ "/": source, "/s.css": "a { background: url(i.png) }", "/a/x.js": "document.title = 'u'", "/b/x.js": "", "/i.png": "png" });
+      const page = await open();
+      const file = name => path.join(__dirname, "saved", name);
+      print(await Promise.all([page.savePage("a.html", "HTMLOnly"), page.savePage(file("a.html"), "no")].map(it => it.catch(error => error.message))));
+      await page.savePage(file("only.html"), "HTMLOnly");
+      print(fs.readFileSync(file("only.html"), "utf8") === source);
+      await page.savePage(file("all.html"), "HTMLComplete");
+      print(fs.readFileSync(file("all.html"), "utf8"));
+      print(fs.readdirSync(file("all_files")).sort());
+      await page.savePage(file("all.mhtml"), "MHTML");
+      print(fs.readFileSync(file("all.mhtml"), "utf8").match(/(?<=^Content-Location: ).*/gm));`);
+    expect(failures).toEqual([
+      "Path must be absolute",
+      "Error processing argument at index 1, conversion failure from no",
+    ]);
+    expect(only).toBe(true);
+    expect(complete).toEndWith(
+      `<title>u</title><link rel="stylesheet" href="./all_files/s.css"><script src="./all_files/x.js"></script></head><body><img src="./all_files/(2)x.js"><a href="app://trusted/next">é</a></body></html>`,
+    );
+    expect(files).toContain("x.js");
+    expect(archive).toEqual(expect.arrayContaining(["app://trusted/", "app://trusted/s.css", "app://trusted/i.png"]));
+  });
+
+  test("savePage() fetches for a frame what the frame may fetch", async () => {
+    expect(
+      await run(`
+        app.trustOrigins(["app://trusted"], { inFrames: true });
+        const asked = [];
+        const note = (body, type) => request => (asked.push(new URL(request.url).pathname), new Response(body, { headers: { "content-type": type } }));
+        const headers = { "content-type": "text/html", "content-security-policy": "img-src 'none'" };
+        serve({
+          "/": "<iframe src=/frame></iframe><img src=/both.png>",
+          "/frame": () => new Response("<link rel=stylesheet href=/s.css><img src=/both.png><img src=/refused.png>", { headers }),
+          "/s.css": note("a { background: url(/indirect.png) }", "text/css"),
+          "/both.png": note("", "image/png"),
+          "/refused.png": note("", "image/png"),
+          "/indirect.png": note("", "image/png"),
+        });
+        const page = await open("app://trusted/#--><b>");
+        for (const kind of ["HTMLComplete", "MHTML"]) {
+          asked.length = 0;
+          await page.savePage(path.join(__dirname, kind), kind);
+          print(asked.sort());
+        }
+        print(require("fs").readFileSync(path.join(__dirname, "HTMLComplete"), "utf8").split("\\n")[1]);`),
+    ).toEqual([
+      ["/both.png", "/s.css"],
+      ["/both.png", "/s.css"],
+      "<!-- saved from url=(0029)app://trusted/#-%2D%3E%3Cb%3E -->",
+    ]);
+  });
+
+  test("an archive of a page has an end if its style sheets have none", async () => {
+    expect(
+      await run(`
+        protocol.handle("app", ({ url }) =>
+          url.includes(".css")
+            ? new Response("a { background: url(/" + (parseInt(url.split("/")[3]) + 1) + ".css) }", { headers: { "content-type": "text/css" } })
+            : new Response("<link rel=stylesheet href=/0.css>", { headers: { "content-type": "text/html" } }),
+        );
+        const page = await open();
+        await page.savePage(path.join(__dirname, "a.mhtml"), "MHTML");
+        print(require("fs").readFileSync(path.join(__dirname, "a.mhtml"), "utf8").match(/^Content-Location/gm).length);`),
+    ).toEqual([2002]);
+  });
+
+  test("a blob: URL is shown in a window if it cannot run scripts", async () => {
+    expect(
+      await run(`
+        app.setWebEngine(null);
+        serve({ "/": "a" });
+        const page = await open();
+        const go = async (type, event) => {
+          await page.loadURL("app://trusted/");
+          const arrived = once(page, event);
+          await page.executeJavaScript("void (location = URL.createObjectURL(new Blob(['<script>document.title = 1</scr' + 'ipt>'], { type: '" + type + "' })))");
+          return (await arrived)[2];
+        };
+        await go("text/plain", "did-finish-load");
+        print([page.getURL().slice(0, 19), await page.executeJavaScript("[document.contentType, document.title]")]);
+        print([await go("text/html", "did-fail-load"), await go("image/svg+xml", "did-fail-load")]);`),
+    ).toEqual([
+      ["blob:app://trusted/", ["text/plain", ""]],
+      ["ERR_BLOCKED_BY_CLIENT", "ERR_BLOCKED_BY_CLIENT"],
     ]);
   });
 
@@ -5313,6 +6283,30 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
       [true, "An object could not be cloned."],
       [true, "Error processing argument at index 0 of send, conversion failure: channel must be a string"],
     ]);
+  });
+
+  test("contextBridge makes objects of the world that gets them, whoever got that shape before", async () => {
+    expect(
+      await run(
+        `serve({ "/": "" });
+        const event = { type: "text", at: { line: 1 } };
+        const all = [await open(undefined, preload), await open(undefined, preload)];
+        for (let round = 0; round < 6; round++) {
+          for (const contents of all) {
+            contents.send("event", event);
+            print(await contents.executeJavaScript("api.last().then(([isOwn, it]) => [isOwn, it instanceof Object, it.at instanceof Object, it])"));
+          }
+          if (round % 2) Bun.gc(round === 3);
+        }`,
+        {
+          "preload.js": `
+            const { contextBridge, ipcRenderer } = require("electron");
+            let next = Promise.withResolvers();
+            ipcRenderer.on("event", (_, it) => next.resolve([it instanceof Object && it.at instanceof Object, it]));
+            contextBridge.exposeInMainWorld("api", { last: () => next.promise.finally(() => (next = Promise.withResolvers())) });`,
+        },
+      ),
+    ).toEqual(Array(12).fill([true, true, true, { type: "text", at: { line: 1 } }]));
   });
 
   test("the classes can be extended, and what they hold survives a collection", async () => {

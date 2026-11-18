@@ -8,7 +8,6 @@ use bun_web::pattern::{MatchPattern, UrlFilter};
 
 use super::mirror::Setting;
 use super::{Session, Values, from_js};
-use crate::generated_bindgen::session::ElectronNetLog;
 use crate::prelude::*;
 use crate::value::Value;
 use crate::webview::worker::ServiceWorker;
@@ -203,20 +202,6 @@ impl Session {
             .extensions
             .borrow_mut()
             .retain(|it| it.0["id"].text().as_bytes() != id);
-    }
-}
-
-impl ElectronNetLog {
-    pub(crate) fn get_currently_logging() -> bool {
-        false
-    }
-
-    pub(crate) fn start_logging(_: Cx<'_, '_>) -> JsResult<JSValue> {
-        Err(unsupported("netLog.startLogging"))
-    }
-
-    pub(crate) fn stop_logging(_: Cx<'_, '_>) -> JsResult<JSValue> {
-        resolved(JSValue::UNDEFINED)
     }
 }
 

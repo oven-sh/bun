@@ -149,7 +149,7 @@ fn header(protocol: &str) -> String {
         written: Vec::new(),
         text: String::new(),
     };
-    let wanted = "WindowOptions WindowCommand WindowEvent Display List<BackdropPart> BackdropPart \
+    let wanted = "WindowOptions TouchBarItem WindowCommand WindowEvent Display List<BackdropPart> BackdropPart \
         MenuItem SystemCommand FileFilter SystemRequest SystemEvent Reply SystemState Maybe<Application> Preference \
         Maybe<PreferenceValue> PreferenceCommand ClipboardPart Cursor Dragged Question List<List<Text>>";
     wanted.split(' ').for_each(|it| drop(header.name(it)));
@@ -209,6 +209,7 @@ fn main() {
         "menu",
         "system",
         "text",
+        "touchbar",
         "window",
     ]
     .map(compile)

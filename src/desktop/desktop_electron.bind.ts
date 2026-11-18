@@ -8,8 +8,8 @@ import {
   returnsObject,
   returnsPromise,
   returnsText,
-  sharing,
   text,
+  textIfAny,
   texts,
 } from "./schema.ts";
 
@@ -117,7 +117,8 @@ export const ElectronContentTracing = b.interface("ElectronContentTracing", {
   static: {
     getCategories: returnsPromise,
     getTraceBufferUsage: returnsPromise,
-    ...sharing("refuse", "startRecording stopRecording", returnsPromise),
+    startRecording: { args: { options: anything }, ...returnsPromise },
+    stopRecording: { args: { resultFilePath: textIfAny }, ...returnsObject },
   },
 });
 
@@ -143,11 +144,4 @@ export const ElectronPushNotifications = b.interface("ElectronPushNotifications"
     registerForAPNSNotifications: { rustName: "register", ...returnsPromise },
     unregisterForAPNSNotifications: { rustName: "unregister", ...js },
   },
-});
-
-export const ElectronTouchBar = b.interface("ElectronTouchBar", {
-  ofModule: true,
-  name: "TouchBar",
-  rustPath: "crate::unsupported::TouchBar",
-  construct: js,
 });

@@ -32,13 +32,31 @@ fn rows_of(table: &Node) -> impl Iterator<Item = &Element> + Clone {
     of(atom!("thead")).chain(body).chain(of(atom!("tfoot")))
 }
 
-fn has_rows_in_tree_order(table: &Node) -> bool {
-    let rank = |it: &Element| match it.html_tag() {
+fn rank(child: &Element) -> Option<u8> {
+    match child.html_tag() {
         atom!("thead") => Some(0),
         atom!("tbody") | atom!("tr") => Some(1),
         atom!("tfoot") => Some(2),
         _ => None,
-    };
+    }
+}
+
+fn is_in_its_place(table: &Node, moved: &Element) -> bool {
+    let of = |it: &Node| rank(it.as_element()?);
+    let own = rank(moved).filter(|_| moved.parent() == Some(table));
+    own.is_none_or(|own| {
+        moved
+            .previous_siblings()
+            .find_map(of)
+            .is_none_or(|it| it <= own)
+            && moved
+                .next_siblings()
+                .find_map(of)
+                .is_none_or(|it| own <= it)
+    })
+}
+
+fn has_rows_in_tree_order(table: &Node) -> bool {
     ![atom!("thead"), atom!("tfoot")]
         .into_iter()
         .any(|it| table.may_have_below(it))
@@ -55,6 +73,7 @@ static ROWS: Test = Test {
             true
         }
     },
+    allows_move: Some(is_in_its_place),
     ..Test::ALL
 };
 

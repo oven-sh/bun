@@ -12,7 +12,7 @@ use bun_collections::HashMap;
 use bun_core::{SensitiveCString, ZBox, strings};
 use bun_http::ssl_config::{SSLConfig, SharedPtr as Tls, global_registry};
 use bun_http::{CertificateInfo, HTTPThread};
-use bun_sys::{Fd, File, O};
+use bun_sys::{E, Fd, File, O};
 use bun_threading::{Guarded, RwLock};
 
 use super::auth::Logins;
@@ -81,6 +81,7 @@ pub struct Session {
     has_loaded_cookies: AtomicBool,
     has_read_cookies: AtomicBool,
     has_unsaved_cookies: AtomicBool,
+    is_cookie_flush_queued: AtomicBool,
     cookie_watchers: Guarded<Vec<(u32, CookieWatcher)>>,
     locks: Guarded<HashMap<Bytes, LockManager>>,
     pool: AtomicU64,
@@ -190,6 +191,7 @@ impl Session {
             has_loaded_cookies: AtomicBool::new(false),
             has_read_cookies: AtomicBool::new(false),
             has_unsaved_cookies: AtomicBool::new(false),
+            is_cookie_flush_queued: AtomicBool::new(false),
             cookie_watchers: Guarded::default(),
             locks: Guarded::default(),
             pool: AtomicU64::new(next_pool()),
@@ -499,7 +501,8 @@ impl Session {
         if self.has_loaded_cookies.swap(true, Ordering::AcqRel) {
             return;
         }
-        self.read_cookies();
+        // It is tried again before the file is replaced.
+        let _ = self.read_cookies();
         let embedder = Session::embedder(self.id).filter(|it| it.encrypt(b"").is_some());
         let imported = match embedder {
             Some(embedder) => self.storage.import_cookies(&|it| embedder.decrypt(it)),
@@ -512,13 +515,27 @@ impl Session {
     }
 
     /// The key may come later than the first request.
-    fn read_cookies(&self) -> Option<()> {
-        (!self.has_read_cookies.load(Ordering::Acquire)).then_some(())?;
-        let encrypted = File::read_from(Fd::cwd(), self.cookie_file(b"")?.as_bytes()).ok()?;
-        let stored = parse_cookies(&Session::embedder(self.id)?.decrypt(&encrypted)?)?;
-        self.jar.lock().restore(stored);
-        self.has_read_cookies.store(true, Ordering::Release);
-        Some(())
+    fn read_cookies(&self) -> bun_sys::Result<()> {
+        let is_read = self.has_read_cookies.load(Ordering::Acquire);
+        let Some(file) = self.cookie_file(b"").filter(|_| !is_read) else {
+            return Ok(());
+        };
+        let encrypted = match File::read_from(Fd::cwd(), file.as_bytes()) {
+            Err(error) if error.get_errno() == E::ENOENT => return Ok(()),
+            read => read?,
+        };
+        let plain = Session::embedder(self.id).and_then(|it| it.decrypt(&encrypted));
+        if let Some(stored) = plain.and_then(|it| parse_cookies(&it)) {
+            self.jar.lock().restore(stored);
+            self.has_read_cookies.store(true, Ordering::Release);
+        }
+        Ok(())
+    }
+
+    fn load_cookies_if_allowed(&self) {
+        if !self.has_loaded_cookies.load(Ordering::Acquire) && self.main.is_current() {
+            self.load_cookies();
+        }
     }
 
     /// Before [`with_cookies`](Self::with_cookies), on another thread than the main one.
@@ -532,9 +549,7 @@ impl Session {
     }
 
     pub fn with_cookies<R>(self: &Arc<Self>, steps: impl FnOnce(&mut Jar) -> R) -> R {
-        if !self.has_loaded_cookies.load(Ordering::Acquire) && self.main.is_current() {
-            self.load_cookies();
-        }
+        self.load_cookies_if_allowed();
         let (result, changes) = {
             let mut jar = self.jar.lock();
             (steps(&mut jar), jar.take_changes())
@@ -549,14 +564,18 @@ impl Session {
         for (_, watcher) in self.cookie_watchers.lock().iter() {
             changes.iter().for_each(watcher);
         }
-        let saves = changes.iter().any(|it| it.cookie.expires.is_some())
-            && !self.has_unsaved_cookies.swap(true, Ordering::AcqRel);
+        let lasts = changes.iter().any(|it| it.cookie.expires.is_some());
+        self.has_unsaved_cookies.fetch_or(lasts, Ordering::AcqRel);
+        let saves = lasts && !self.is_cookie_flush_queued.swap(true, Ordering::AcqRel);
         let session = Arc::clone(self);
         self.notify(move |embedder| {
             changes.iter().for_each(|it| embedder.cookie_changed(it));
             if saves {
                 exec::spawn_background(async move {
                     exec::sleep(Duration::from_secs(1)).await;
+                    session
+                        .is_cookie_flush_queued
+                        .store(false, Ordering::Release);
                     session.flush_cookies();
                 });
             }
@@ -582,25 +601,33 @@ impl Session {
         watchers.extend(watcher.map(|it| (id, it)));
     }
 
-    /// On the main thread.
-    pub fn flush_cookies(&self) -> Option<()> {
-        self.has_unsaved_cookies
-            .swap(false, Ordering::AcqRel)
-            .then_some(())?;
-        let (partial, file) = (self.cookie_file(b"~")?, self.cookie_file(b"")?);
-        self.read_cookies();
+    /// On the main thread. What could not be saved is tried again the next time.
+    pub fn flush_cookies(&self) {
+        if self.has_unsaved_cookies.swap(false, Ordering::AcqRel)
+            && !matches!(self.write_cookies(), Ok(true))
+        {
+            self.has_unsaved_cookies.store(true, Ordering::Release);
+        }
+    }
+
+    /// `false` without a file or a key.
+    fn write_cookies(&self) -> bun_sys::Result<bool> {
+        let Some((partial, file)) = self.cookie_file(b"~").zip(self.cookie_file(b"")) else {
+            return Ok(false);
+        };
+        self.read_cookies()?;
         let plain = serialize_cookies(self.jar.lock().all());
-        let encrypted = Session::embedder(self.id)?.encrypt(&plain)?;
+        let Some(encrypted) = Session::embedder(self.id).and_then(|it| it.encrypt(&plain)) else {
+            return Ok(false);
+        };
         File::make_open(
             partial.as_bytes(),
             O::WRONLY | O::CREAT | O::TRUNC | O::CLOEXEC,
             0o600,
-        )
-        .ok()?
-        .write_all(&encrypted)
-        .ok()?;
+        )?
+        .write_all(&encrypted)?;
         self.has_read_cookies.store(true, Ordering::Release);
-        bun_sys::rename(&partial, &file).ok()
+        bun_sys::rename(&partial, &file).map(|()| true)
     }
 }
 

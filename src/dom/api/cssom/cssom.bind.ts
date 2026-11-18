@@ -34,17 +34,23 @@ export const CSSStyleDeclaration = b.interface("CSSStyleDeclaration", {
     cssText: { getter: text, setter: { type: b.DOMString.nullToEmpty.utf8 }, ...ce },
     length: { getter: b.u32, ...runs },
     item: { args: { index }, returns: text, ...runs },
-    getPropertyValue: { args: { property: text }, returns: b.DOMString, ...runs },
+    getPropertyValue: {
+      args: { property: b.DOMString },
+      returns: b.DOMString,
+      rustName: "js_get_property_value",
+      ...js,
+    },
     getPropertyPriority: { args: { property: text }, returns: text },
     setProperty: {
       args: {
-        property: text,
+        property: b.DOMString,
         value: b.DOMString.nullToEmpty.utf8,
         priority: b.DOMString.nullToEmpty.utf8.default(""),
       },
+      rustName: "js_set_property",
       ...ce,
     },
-    removeProperty: { args: { property: text }, returns: b.DOMString, ...ce },
+    removeProperty: { args: { property: b.DOMString }, returns: b.DOMString, ...ce },
     parentRule: { getter: b.ref("CSSRule").nullable, field: "parentRule" },
   },
 });
@@ -485,7 +491,7 @@ export const CSSNamespace = b.interface("CSSNamespace", {
 
 export const ElementCSSInlineStyle = b.mixin("ElementCSSInlineStyle", {
   on: DomElement,
-  proto: { style: { getter: CSSStyleProperties, putForwards: "cssText", ...heap } },
+  proto: { style: { getter: CSSStyleProperties, putForwards: "cssText", shortcut: "styleEdge", ...heap } },
 });
 for (const it of [HTMLElement, MathMLElement, SVGElement]) b.include(it, ElementCSSInlineStyle);
 

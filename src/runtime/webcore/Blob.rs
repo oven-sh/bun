@@ -1018,6 +1018,9 @@ impl BlobExt for Blob {
     }
 
     fn json(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        if self.snapshot().is_some() {
+            return Ok(web_blob::read(cx, self, |blob, cx, _| blob.to_json(cx)));
+        }
         let _store = self.store.get().clone();
         let cx = cx.js_thread();
         JSPromise::wrap(cx.global(), |_| self.to_json(&cx))
@@ -1042,6 +1045,11 @@ impl BlobExt for Blob {
     }
 
     fn form_data(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        if self.snapshot().is_some() {
+            return Ok(web_blob::read(cx, self, |blob, cx, _| {
+                blob.to_form_data(cx)
+            }));
+        }
         let _store = self.store.get().clone();
         let cx = cx.js_thread();
         JSPromise::wrap(cx.global(), |_| self.to_form_data(&cx))

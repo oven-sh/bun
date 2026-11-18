@@ -230,13 +230,18 @@ pub fn working_on<R>(step: Step, path: &[u8], work: impl FnOnce() -> R) -> R {
     work()
 }
 
-/// Gives this thread an alternate signal stack, so that a build that overflows the stack can report it. Does nothing
-/// outside a build.
+/// Gives this thread an alternate signal stack, so that it can report that it has overflowed its stack.
+#[cfg(unix)]
+pub fn ensure_signal_stack() {
+    let _ = AT_END_OF_THREAD.try_with(GivesRecordBack::ensure_signal_stack);
+}
+
+/// [`ensure_signal_stack`], during a build.
 #[inline]
 pub fn ensure_build_signal_stack() {
     #[cfg(unix)]
     if STEP_OF_BUILD.load(Relaxed) != 0 {
-        let _ = AT_END_OF_THREAD.try_with(GivesRecordBack::ensure_signal_stack);
+        ensure_signal_stack();
     }
 }
 

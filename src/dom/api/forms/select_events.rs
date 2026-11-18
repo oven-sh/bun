@@ -124,7 +124,7 @@ impl<'a> Select<'a> {
                 focus::Cause::Script,
                 focus::Options {
                     is_visible,
-                    prevents_scroll: false,
+                    ..Default::default()
                 },
             );
         }

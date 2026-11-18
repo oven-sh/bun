@@ -3,7 +3,7 @@
 use crate::document::Document;
 use crate::name::{Name, is_name, name};
 use crate::selector::key;
-use crate::tree::{Data, Element, Flags, Namespace, NodeId, State};
+use crate::tree::{Data, Element, Fact, Flags, Namespace, NodeId, State};
 use crate::values::Out;
 
 const SVG_PRESENTATION: &str = " alignment-baseline baseline-shift buffered-rendering clip clip-path clip-rule color \
@@ -93,6 +93,95 @@ impl Element {
             || self.html_tag() == name!("bdi"),
             |it| it == Direction::Auto,
         )
+    }
+
+    /// False for most of those whose name means nothing to `Document::prepare` and `Document::derive_state`.
+    #[inline(always)]
+    pub(crate) fn may_be_special(&self) -> bool {
+        const BITS: [u64; 2] = {
+            let (mut bits, mut index) = ([0; 2], 0);
+            let all = [
+                name!("a"),
+                name!("area"),
+                name!("details"),
+                name!("dialog"),
+                name!("bdi"),
+                name!("button"),
+                name!("input"),
+                name!("select"),
+                name!("textarea"),
+                name!("fieldset"),
+                name!("optgroup"),
+                name!("option"),
+                name!("svg"),
+                name!("td"),
+                name!("th"),
+                name!("colgroup"),
+                name!("thead"),
+                name!("tbody"),
+                name!("tfoot"),
+            ];
+            while index < all.len() {
+                bits[(all[index].bits() >> 63) as usize] |= 1 << (all[index].bits() >> 24 & 63);
+                index += 1;
+            }
+            bits
+        };
+        BITS[(self.tag.bits() >> 63) as usize] >> (self.tag.bits() >> 24 & 63) & 1 != 0
+    }
+
+    /// What it adds to the state that it inherits, if that is all there is to preparing it while no table styles its cells.
+    #[inline(always)]
+    pub(crate) fn own_state(&self) -> Option<State> {
+        if self.namespace != Namespace::Html
+            || self.is_unprepared
+            || self.has_rare()
+            || self
+                .attributes_besides_class()
+                .any(|it| is_name!(it.name, "dir" | "contenteditable"))
+        {
+            return None;
+        }
+        if self.may_be_special() {
+            self.own_state_by_name()
+        } else {
+            Some(State::empty())
+        }
+    }
+
+    /// There is nothing to prepare, unless it inherits a state.
+    #[inline(always)]
+    pub(crate) fn is_ready(&self) -> bool {
+        self.namespace == Namespace::Html
+            && !self.is_unprepared
+            && self.state.is_empty()
+            && !self.may_be_special()
+            && !self.has_rare()
+            && self.has_only_classes()
+    }
+
+    fn own_state_by_name(&self) -> Option<State> {
+        let is_special = is_name!(
+            self.tag,
+            "details"
+                | "dialog"
+                | "bdi"
+                | "button"
+                | "input"
+                | "select"
+                | "textarea"
+                | "fieldset"
+                | "optgroup"
+                | "option"
+                | "svg"
+        );
+        (!is_special).then(|| {
+            if is_name!(self.tag, "a" | "area") && self.has(name!("href")) {
+                State::LINK
+            } else {
+                State::empty()
+            }
+        })
     }
 
     /// Its text does not count for the direction of an ancestor.
@@ -690,7 +779,7 @@ fn hints(element: &Element, table: Option<&Element>, is_outer_svg: bool) -> Out 
     out
 }
 
-pub(crate) fn can_be_hint(element: &Element, name: Name) -> bool {
+pub(crate) const fn can_be_hint_in_html(name: Name) -> bool {
     is_name!(
         name,
         "lang"
@@ -726,7 +815,33 @@ pub(crate) fn can_be_hint(element: &Element, name: Name) -> bool {
             | "rows"
             | "width source"
             | "height source"
-    ) || element.namespace == Namespace::MathMl
+    )
+}
+
+/// By anything but selectors, `attr()` and accessibility.
+pub(crate) const fn is_read_in_html(name: Name) -> bool {
+    can_be_hint_in_html(name)
+        || can_change_state(name)
+        || is_name!(
+            name,
+            "id" | "style"
+                | "value"
+                | "part"
+                | "start"
+                | "reversed"
+                | "colspan"
+                | "rowspan"
+                | "span"
+                | "multiple"
+                | "viewBox"
+                | "requiredExtensions"
+                | "systemLanguage"
+        )
+}
+
+pub(crate) fn can_be_hint(element: &Element, name: Name) -> bool {
+    can_be_hint_in_html(name)
+        || element.namespace == Namespace::MathMl
         || element.namespace == Namespace::Svg
             && (is_presentation_attribute(element, name)
                 || is_name!(
@@ -738,7 +853,7 @@ pub(crate) fn can_be_hint(element: &Element, name: Name) -> bool {
                 ))
 }
 
-pub(crate) fn can_change_state(name: Name) -> bool {
+pub(crate) const fn can_change_state(name: Name) -> bool {
     is_name!(
         name,
         "href"
@@ -886,11 +1001,10 @@ impl Document {
         let (mut child, mut at) = (id, self.tree[id].parent);
         while let Some(ancestor) = self.tree.element(at) {
             if ancestor.html_tag() == name!("fieldset") && ancestor.has(name!("disabled")) {
-                let legend = self
-                    .tree
-                    .element_children(at)
-                    .find(|it| self.tree.html_tag(*it) == name!("legend"));
-                if legend != Some(child) {
+                let is_legend = |it: &NodeId| self.tree.html_tag(*it) == name!("legend");
+                if !is_legend(&child)
+                    || self.tree.element_children(at).find(is_legend) != Some(child)
+                {
                     return true;
                 }
             }
@@ -1026,6 +1140,9 @@ impl Document {
         };
         let toggled = (element.state & DERIVED) ^ self.derived_state(id, element);
         if element.has_auto_direction() {
+            if !is_new && !self.tree[id].has(Flags::AUTO_DIRECTION) {
+                self.tree.ancestry.forget_all();
+            }
             self.tree[id].set(Flags::AUTO_DIRECTION);
             self.has_auto_direction = true;
         } else {
@@ -1083,8 +1200,19 @@ impl Document {
         if let Some(accessibility) = &mut self.accessibility {
             accessibility.contents_changed(parent);
         }
-        let mut at = if self.has_auto_direction { parent } else { 0 };
-        while at != 0 {
+        if self.has_auto_direction && !self.tree.ancestry.has(parent, Fact::Undirecting) {
+            self.directions_may_change(parent);
+        }
+    }
+
+    fn directions_may_change(&mut self, parent: NodeId) {
+        let (mut at, mut path, mut directs) =
+            (parent, smallvec::SmallVec::<[NodeId; 64]>::new(), false);
+        while at != 0 && !self.tree.ancestry.has(at, Fact::Undirecting) {
+            path.push(at);
+            directs |= [at, self.tree[at].slot]
+                .into_iter()
+                .any(|it| self.tree[it].has(Flags::AUTO_DIRECTION));
             if self.tree[at].has(Flags::AUTO_DIRECTION) {
                 self.stale_directions.insert(at);
             }
@@ -1102,6 +1230,9 @@ impl Document {
             } else {
                 self.tree[at].parent
             };
+        }
+        if !directs && self.tree.is_rendered(parent) {
+            self.tree.ancestry.note(&path, Fact::Undirecting);
         }
     }
 

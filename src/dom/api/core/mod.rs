@@ -29,6 +29,7 @@ pub(crate) mod named;
 mod node;
 pub(crate) mod observers;
 pub(crate) mod page;
+mod recent;
 pub(crate) mod reflect;
 pub(crate) mod seams;
 mod selectors;
@@ -43,7 +44,7 @@ pub(crate) mod url;
 use bun_jsc::bindgen::{Error, JsHeap};
 
 pub(crate) use agent::Agent;
-pub(crate) use atom::{Atom, Ns, QualName};
+pub(crate) use atom::{Atom, Meaning, Ns, QualName};
 pub(crate) use atoms::{Known, atom};
 pub(crate) use bun_jsc::DOMExceptionCode as DomError;
 pub(crate) use changes::Reads;
@@ -61,8 +62,9 @@ pub(crate) use mould::Mould;
 pub(crate) use mutation::*;
 pub(crate) use node::{Node, NodeFlags, NodeInterface, node_interface};
 pub(crate) use observers::{MutationObserver, MutationRecord, Record, queue_mutation_record};
+pub(crate) use recent::Recent;
 pub(crate) use slots::{ShadowFlags, assign_slottables};
-pub(crate) use string::{DomString, StoredText, StringBuilder, is_ascii_whitespace};
+pub(crate) use string::{DomString, StoredText, StringBuilder, impl_of, is_ascii_whitespace};
 pub(crate) use tokens::DOMTokenList;
 
 pub(crate) use crate::generated_bindgen::collections::{

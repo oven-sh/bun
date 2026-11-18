@@ -53,7 +53,7 @@ macro_rules! keys {
         }
 
         thread_local! {
-            static KEYS: [Atom; [$($text),*].len()] = [$(Atom::new($text)),*];
+            static KEYS: Box<[Atom; [$($text),*].len()]> = Box::new([$(Atom::new($text)),*]);
         }
     };
 }

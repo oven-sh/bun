@@ -29,6 +29,8 @@ struct Entry {
     ancestors: [u32; 3],
     states: State,
     slot: u16,
+    /// `tag_of_part`, by which those for pseudo-elements are ordered.
+    part: u16,
     /// For an element that has the key.
     always_matches: bool,
     follows_from_signature: bool,
@@ -89,7 +91,7 @@ const ELEMENTS: usize = 0;
 const PSEUDOS: usize = 1;
 const STARTING: usize = 2;
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Index {
     by_key: Map<Name, Bucket>,
     by_parent_key: Map<Name, Bucket>,
@@ -114,20 +116,30 @@ impl Index {
                     ))
             && context.container.is_none()
             && context.scope.is_none();
+        let add = |bucket: &mut Bucket| {
+            let all = &mut bucket[part];
+            all.insert(
+                if part == PSEUDOS {
+                    all.partition_point(|it| it.part <= entry.part)
+                } else {
+                    all.len()
+                },
+                entry.clone(),
+            );
+        };
         if let Some(keys) = key
             .map(|it| smallvec::smallvec![it])
             .or_else(|| compounds[0].keys())
         {
             keys.iter()
-                .for_each(|key| self.by_key.entry(*key).or_default()[part].push(entry.clone()));
+                .for_each(|key| add(self.by_key.entry(*key).or_default()));
         } else if compounds[0].combinator == Combinator::Child
             && let Some(keys) = compounds[1].keys()
         {
-            keys.iter().for_each(|key| {
-                self.by_parent_key.entry(*key).or_default()[part].push(entry.clone())
-            });
+            keys.iter()
+                .for_each(|key| add(self.by_parent_key.entry(*key).or_default()));
         } else {
-            self.others[part].push(entry);
+            add(&mut self.others);
         }
     }
 
@@ -155,6 +167,7 @@ struct Candidates {
 #[repr(C)]
 pub(crate) struct Classes {
     pub(crate) filter: u64,
+    pub(crate) second_filter: u64,
     hash: u64,
     names: Box<[Name]>,
     /// The hash of those that are in `Dependencies::of_others`, as of its version.
@@ -162,6 +175,8 @@ pub(crate) struct Classes {
     /// The version of the rule set that has last seen them.
     activated: Cell<u32>,
     pub(crate) source: StoredText,
+    /// Whether that has no name twice, and a space between two.
+    is_tidy: Cell<Option<bool>>,
     /// The newest first.
     pub(crate) decided: RefCell<[Decided; 2]>,
     candidates: RefCell<SmallVec<[(u32, Rc<Candidates>); 1]>>,
@@ -190,13 +205,44 @@ impl Classes {
             .split_ascii_whitespace()
             .map(|it| name(it.as_bytes()))
             .collect();
-        let filter = crate::selector::filter(names.iter().map(|it| key::class(*it)));
+        let keys = || names.iter().map(|it| key::class(*it));
+        let (filter, second_filter) = (
+            crate::selector::filter(keys()),
+            crate::selector::second_filter(keys()),
+        );
         Classes {
             source: source.clone(),
             hash: keyed_hash(&**source),
             names,
             filter,
+            second_filter,
             ..Classes::default()
+        }
+    }
+}
+
+impl Classes {
+    pub(crate) fn is_tidy(&self) -> bool {
+        let is_tidy = self.is_tidy.get().unwrap_or_else(|| {
+            let mut seen = Set::default();
+            bun_core::strings::split(self.source.as_bytes(), b" ")
+                .all(|it| !it.is_empty() && !it.iter().any(u8::is_ascii_whitespace))
+                && self.names.iter().all(|it| seen.insert(*it))
+        });
+        self.is_tidy.set(Some(is_tidy));
+        is_tidy
+    }
+
+    pub(crate) fn note_tidiness(&self) {
+        self.is_tidy.set(Some(true));
+    }
+}
+
+impl Classes {
+    pub(crate) fn prefetch(&self) {
+        crate::forecast::prefetch(&*self.names);
+        if let StoredText::Ascii(it) = &self.source {
+            crate::forecast::prefetch(it.as_impl());
         }
     }
 }
@@ -220,6 +266,17 @@ fn salt_of(pseudo: Pseudo) -> Option<u64> {
         .map(|it| it as u64)
 }
 
+/// The same for what `Pseudo::selects`.
+fn tag_of_part(pseudo: Pseudo) -> u16 {
+    match pseudo {
+        Pseudo::Part(part) if part == name!("-internal-cue-node") => {
+            tag_of_part(Pseudo::Part(name!("cue")))
+        }
+        Pseudo::Part(part) => (part.bits() >> 8) as u16 | 1,
+        _ => 0,
+    }
+}
+
 /// Changes with the rules that apply.
 pub(crate) fn last_version() -> u32 {
     LAST_VERSION.get()
@@ -230,6 +287,7 @@ fn next_version() -> u32 {
     LAST_VERSION.get()
 }
 
+#[derive(Clone)]
 struct Waiting {
     deferred: u32,
     next: u32,
@@ -241,6 +299,7 @@ const END: u32 = u32::MAX - 1;
 /// An element has had the key.
 const SEEN: u32 = u32::MAX;
 
+#[derive(Clone)]
 struct Slot {
     sheet: Rc<Sheet>,
     rank: u16,
@@ -306,7 +365,7 @@ pub(crate) const UNLAYERED: u16 = u16::MAX - 1;
 pub(crate) const INLINE: u16 = u16::MAX;
 
 /// The rules of the style sheets of a document or of a shadow root.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct RuleSet {
     /// By the last `set_sheets`.
     pub(crate) was_reordered: bool,
@@ -326,6 +385,8 @@ pub(crate) struct RuleSet {
     has_starting: bool,
     /// Whose sheet does not select by class.
     pub(crate) is_of_user_agent: bool,
+    /// The rank of the first sheet that has the origin of the user.
+    pub(crate) first_of_user: Option<u16>,
     host: Vec<Entry>,
     slotted: Vec<Entry>,
     parts: Vec<Entry>,
@@ -336,6 +397,7 @@ pub(crate) struct RuleSet {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum Level {
     UserAgent,
+    User,
     Hints,
     /// Of the shadow tree that the element hosts, which is 0, or of one that it is slotted in. The first slot has `u8::MAX`.
     Inner(u8),
@@ -394,6 +456,19 @@ impl RuleSet {
         self.by_rank().map(|slot| &slot.sheet)
     }
 
+    /// Before `set_sheets`.
+    pub(crate) fn of_user_agent(sheet: &Rc<Sheet>) -> (RuleSet, Dependencies) {
+        let (mut rules, mut dependencies) = (
+            RuleSet {
+                is_of_user_agent: true,
+                ..Default::default()
+            },
+            Dependencies::default(),
+        );
+        rules.add(sheet, None, &mut dependencies);
+        (rules, dependencies)
+    }
+
     /// Returns the keys of the elements to match again, or `None` for all. The rules that wait are not counted.
     pub(crate) fn set_sheets(
         &mut self,
@@ -401,7 +476,11 @@ impl RuleSet {
         media: &dyn Subject,
         dependencies: &mut Dependencies,
     ) -> Option<Set<Name>> {
-        let position = |sheet: &Rc<Sheet>| sheets.iter().rposition(|it| Rc::ptr_eq(it, sheet));
+        let mut places = Map::<_, [usize; 2]>::default();
+        for (index, sheet) in sheets.iter().enumerate() {
+            places.entry(Rc::as_ptr(sheet)).or_insert([index; 2])[1] = index;
+        }
+        let position = |sheet: &Rc<Sheet>| places.get(&Rc::as_ptr(sheet)).map(|it| it[1]);
         let mut subjects = Some(Set::default());
         let mut affects = |rule: &Rule| match (&mut subjects, rule.selector.compounds[0].keys()) {
             (Some(subjects), Some(keys)) => subjects.extend(keys),
@@ -429,18 +508,20 @@ impl RuleSet {
                 .for_each(|it| it.retain(&mut keeps));
             self.compact();
         }
+        let mut free: Vec<_> = (0..self.slots.len())
+            .rev()
+            .filter(|it| self.slots[*it].is_removed)
+            .collect();
+        let mut known: Set<_> = self.slots.iter().map(|it| Rc::as_ptr(&it.sheet)).collect();
         for sheet in sheets {
-            if !self.slots.iter().any(|it| Rc::ptr_eq(&it.sheet, sheet)) {
+            if known.insert(Rc::as_ptr(sheet)) {
                 sheet.rules.iter().for_each(|rule| affects(rule));
-                self.add(sheet, dependencies);
+                self.add(sheet, free.pop(), dependencies);
             }
         }
         for slot in &mut self.slots {
             slot.rank = position(&slot.sheet).unwrap_or(0) as u16;
-            slot.first_rank = sheets
-                .iter()
-                .position(|it| Rc::ptr_eq(it, &slot.sheet))
-                .unwrap_or(0);
+            slot.first_rank = places.get(&Rc::as_ptr(&slot.sheet)).map_or(0, |it| it[0]);
             if slot.active_media.is_empty() {
                 slot.evaluate_media(media);
             }
@@ -532,7 +613,7 @@ impl RuleSet {
         }
     }
 
-    fn add(&mut self, sheet: &Rc<Sheet>, dependencies: &mut Dependencies) {
+    fn add(&mut self, sheet: &Rc<Sheet>, free: Option<usize>, dependencies: &mut Dependencies) {
         let (rank, first_rank, layer_ranks, active_media) = Default::default();
         let new = Slot {
             sheet: Rc::clone(sheet),
@@ -542,7 +623,7 @@ impl RuleSet {
             active_media,
             is_removed: false,
         };
-        let slot = match self.slots.iter().position(|it| it.is_removed) {
+        let slot = match free {
             Some(free) => {
                 self.slots[free] = new;
                 free
@@ -628,6 +709,7 @@ impl RuleSet {
         let entry = Entry {
             ancestors: selector.ancestor_hashes(),
             states: selector.states(),
+            part: tag_of_part(selector.pseudo),
             rule,
             slot,
             always_matches: false,
@@ -773,7 +855,7 @@ impl RuleSet {
         found
     }
 
-    fn visit_candidates(&self, query: &Query, part: usize, mut visit: impl FnMut(&Entry)) {
+    fn visit_candidates<'a>(&'a self, query: &Query, part: usize, mut visit: impl FnMut(&Entry)) {
         let Some(element) = query.tree.element(query.id) else {
             return;
         };
@@ -787,6 +869,17 @@ impl RuleSet {
             element.state,
         );
         let applies = |it: &&Entry| state.contains(it.states) && self.is_active(it);
+        let tag = tag_of_part(query.pseudo);
+        let of_part = |bucket: &'a Bucket| {
+            let all = &*bucket[part];
+            if part == PSEUDOS {
+                &all[all.partition_point(|it| it.part < tag)
+                    ..all.partition_point(|it| it.part <= tag)]
+            } else {
+                all
+            }
+            .iter()
+        };
         for (element, map, is_parent) in [
             (Some(element), &self.index.by_key, false),
             (parent, &self.index.by_parent_key, true),
@@ -809,13 +902,10 @@ impl RuleSet {
             let keys =
                 key::besides_classes(element).filter(|it| is_parent || *it != CLASS_ATTRIBUTE);
             for bucket in keys.filter_map(|key| map.get(&key)) {
-                bucket[part].iter().filter(applies).for_each(&mut visit);
+                of_part(bucket).filter(applies).for_each(&mut visit);
             }
         }
-        self.index.others[part]
-            .iter()
-            .filter(applies)
-            .for_each(visit);
+        of_part(&self.index.others).filter(applies).for_each(visit);
     }
 
     fn is_active(&self, entry: &Entry) -> bool {
@@ -1198,7 +1288,14 @@ impl RuleSet {
         let matched = |entry: &Entry, proximity: u16| {
             let (slot, rule) = (&self.slots[usize::from(entry.slot)], &entry.rule);
             let layer = slot.layer_ranks[usize::from(rule.context.layer)];
-            let priority = u128::from(layer) << 96
+            let is_of_user = self.first_of_user.is_some_and(|it| slot.rank >= it);
+            let (level, only) = if is_of_user {
+                (Level::User, Only::of(query.pseudo))
+            } else {
+                (level, only)
+            };
+            let priority = u128::from(is_of_user) << 112
+                | u128::from(layer) << 96
                 | u128::from(rule.selector.specificity) << 64
                 | u128::from(!proximity) << 48
                 | u128::from(slot.rank) << 32
@@ -1337,6 +1434,7 @@ fn scope_roots(scope: &Rc<ScopeRule>, query: &Query, host: NodeId) -> SmallVec<[
 
 // ───────────────────────────── invalidation ─────────────────────────────
 
+#[derive(Clone)]
 struct Affected {
     relation: Relation,
     /// `None` is any element.
@@ -1344,6 +1442,7 @@ struct Affected {
     filter: u64,
 }
 
+#[derive(Clone)]
 struct Mentioned([u64; 128]);
 
 impl Default for Mentioned {
@@ -1362,7 +1461,7 @@ impl Mentioned {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct Dependencies {
     /// Whether it matters for every element.
     of_subject: Map<Name, bool>,

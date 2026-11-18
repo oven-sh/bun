@@ -226,9 +226,16 @@ impl Resource {
                 sizes: [transferred, encoded, decoded],
             },
         ) = (&self.record, &self.record.timing, self.end.get());
+        let since = |time| {
+            if self.kind == Type::Navigation && time != 0.0 {
+                since(self.origin, time).max(0.1)
+            } else {
+                since(self.origin, time)
+            }
+        };
         let detailed = |time| {
             if self.allows_timing() {
-                since(self.origin, time)
+                since(time)
             } else {
                 0.0
             }
@@ -244,7 +251,7 @@ impl Resource {
             | b"connectEnd" => detailed(timing.fetch_start),
             b"requestStart" => detailed(timing.request_start),
             b"responseStart" | b"finalResponseHeadersStart" => detailed(timing.response_start),
-            b"responseEnd" => since(self.origin, time),
+            b"responseEnd" => since(time),
             b"transferSize" if self.allows_timing() => transferred as f64,
             b"encodedBodySize" => encoded as f64,
             b"decodedBodySize" => decoded as f64,
@@ -329,6 +336,23 @@ impl DomPerformanceNavigationTiming {
 
     pub(crate) fn get_not_restored_reasons(&self) -> Option<JsLocal<'_, JSObject>> {
         None
+    }
+
+    pub(crate) fn get_confidence<'a>(
+        &'a self,
+        heap: &JsHeap<'a>,
+    ) -> &'a PerformanceTimingConfidence {
+        js_PerformanceTimingConfidence::create(self.realm(heap), Default::default())
+    }
+}
+
+impl PerformanceTimingConfidence {
+    pub(crate) fn get_randomized_trigger_rate(&self) -> f64 {
+        0.0
+    }
+
+    pub(crate) fn get_value(&self) -> &'static [u8] {
+        b"high"
     }
 }
 

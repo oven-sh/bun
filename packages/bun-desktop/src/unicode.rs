@@ -25,8 +25,10 @@ impl Script {
             '\u{410}'..='\u{44f}' => Script(*b"Cyrl"),
             '\u{5d0}'..='\u{5ea}' => Script(*b"Hebr"),
             '\u{620}'..='\u{63f}' | '\u{641}'..='\u{64a}' => Script(*b"Arab"),
-            '\u{3041}'..='\u{3096}' => Script(*b"Hira"),
-            '\u{30a1}'..='\u{30fa}' => Script(*b"Kana"),
+            // They are one for OpenType.
+            '\u{3041}'..='\u{3096}' | '\u{309d}'..='\u{309f}' | '\u{30a1}'..='\u{30fa}' => {
+                Script(*b"Kana")
+            }
             '\u{ac00}'..='\u{d7a3}' => Script(*b"Hang"),
             _ => Script((host().script_of)(character.into()).to_be_bytes()),
         }
@@ -56,19 +58,32 @@ pub mod line_break {
     pub const UNKNOWN: i32 = 0;
     pub const AMBIGUOUS: i32 = 1;
     pub const ALPHABETIC: i32 = 2;
+    pub const BREAK_BOTH: i32 = 3;
     pub const BREAK_AFTER: i32 = 4;
+    pub const CONTINGENT_BREAK: i32 = 7;
     pub const CLOSE_PUNCTUATION: i32 = 8;
+    pub const COMBINING_MARK: i32 = 9;
     pub const EXCLAMATION: i32 = 11;
+    pub const GLUE: i32 = 12;
     pub const HYPHEN: i32 = 13;
+    pub const IDEOGRAPHIC: i32 = 14;
+    pub const INSEPARABLE: i32 = 15;
     pub const INFIX_NUMERIC: i32 = 16;
+    pub const NONSTARTER: i32 = 18;
     pub const NUMERIC: i32 = 19;
     pub const OPEN_PUNCTUATION: i32 = 20;
     pub const POSTFIX_NUMERIC: i32 = 21;
     pub const PREFIX_NUMERIC: i32 = 22;
     pub const COMPLEX_CONTEXT: i32 = 24;
     pub const BREAK_SYMBOLS: i32 = 27;
+    pub const WORD_JOINER: i32 = 30;
+    pub const H2: i32 = 31;
+    pub const H3: i32 = 32;
     pub const CLOSE_PARENTHESIS: i32 = 36;
+    pub const SMALL_KANA: i32 = 37;
     pub const HEBREW_LETTER: i32 = 38;
+    pub const EMOJI_BASE: i32 = 40;
+    pub const EMOJI_MODIFIER: i32 = 41;
     pub const UNAMBIGUOUS_HYPHEN: i32 = 48;
 
     pub fn of(character: char) -> i32 {

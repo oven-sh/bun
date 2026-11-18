@@ -270,7 +270,7 @@ impl XMLHttpRequest {
         password: Option<&[u8]>,
     ) -> Result<'a> {
         let method = bytes_of(method);
-        client_of(self.realm(&cx.heap))
+        client_or_program(self.realm(&cx.heap))
             .ok_or_else(|| invalid_state(&cx.heap, "The document is not active."))?;
         if !is_token(&method) {
             return Err(cx.heap.dom_exception(
@@ -468,9 +468,10 @@ impl XMLHttpRequest {
             .filter(|_| takes_body());
         self.check_opened(&cx.heap)?;
         let realm = self.realm(&cx.heap);
-        let (Some(mut options), Some(client)) =
-            (self.options.borrow().as_deref().cloned(), client_of(realm))
-        else {
+        let (Some(mut options), Some(client)) = (
+            self.options.borrow().as_deref().cloned(),
+            client_or_program(realm),
+        ) else {
             return Err(invalid_state(&cx.heap, "The document is not active."));
         };
         self.tells_upload

@@ -243,15 +243,22 @@ fn relevant_side(style: &Style) -> usize {
 
 /// Whether the inner edge is no rounded rectangle.
 fn curves_cross(
-    RoundedRect {
-        rect,
-        radii: [a, b, c, d],
-    }: &RoundedRect,
+    RoundedRect { rect, radii }: &RoundedRect,
     [top, right, bottom, left]: [f32; 4],
 ) -> bool {
+    let inner = |corner: usize, x: f32, y: f32| {
+        Some([radii[corner][0] - x, radii[corner][1] - y])
+            .filter(|it| it[0] > 0.0 && it[1] > 0.0)
+            .unwrap_or_default()
+    };
+    let [a, b, c, d] = [
+        inner(0, left, top),
+        inner(1, right, top),
+        inner(2, right, bottom),
+        inner(3, left, bottom),
+    ];
     let crosses = |length: f32, [start, end]: [f32; 2], radii: [f32; 2]| {
-        (radii[0] - start).max(0.0) + (radii[1] - end).max(0.0)
-            > (length - start - end).max(0.0) + 0.5
+        radii[0] + radii[1] > (length - start - end).max(0.0) + 0.5
     };
     [[a[0], b[0]], [d[0], c[0]]]
         .into_iter()

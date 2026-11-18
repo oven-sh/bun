@@ -41,6 +41,18 @@ struct Marked {
     is_misspelled: bool,
 }
 
+fn is_misspelling(mark: &Mark) -> bool {
+    *mark == Mark::Highlight(crate::name::name!("::spelling-error"))
+}
+
+fn is_upright(inline: &Inline, fragment: &Fragment) -> bool {
+    let FragmentKind::Text { clusters, .. } = &fragment.kind else {
+        return false;
+    };
+    inline.clusters.letters(clusters).is_none()
+        && inline.clusters.letter(clusters.start).flags & (UPRIGHT | COMBINED) != 0
+}
+
 fn visible_lines(inline: &Inline) -> &[Line] {
     &inline.lines.lines
         [..(inline.lines.visible.unwrap_or(u32::MAX) as usize).min(inline.lines.lines.len())]
@@ -111,12 +123,22 @@ impl<'a> Painter<'a> {
             is_plain = false;
             self.backplates(inline, block, space);
         }
-        let far = inline
-            .outset
-            .get()
-            .filter(|_| document.boxes[id].children.is_empty() && inline.first_line.is_none())
-            .map(|it| it + 64.0);
-        for line in visible_lines(inline) {
+        let far = Some(inline.outset.get())
+            .filter(|it| {
+                it.0 as usize == inline.items.len()
+                    && document.boxes[id].children.is_empty()
+                    && inline.first_line.is_none()
+            })
+            .map(|it| it.1 + 64.0);
+        let mut lines = visible_lines(inline);
+        if let Some(reach) = far.zip(inline.lines.overhang).map(|it| it.0 + it.1) {
+            lines = &lines[..lines
+                .partition_point(|it| it.y + space.origin[1] - reach <= space.visible.bottom())];
+            lines = &lines[lines.partition_point(|it| {
+                it.y + it.height + space.origin[1] + reach < space.visible.y
+            })..];
+        }
+        for line in lines {
             let is_far = |it: &Fragment, reach: f32| {
                 it.y + space.origin[1] - reach > space.visible.bottom()
                     || it.y + it.height + space.origin[1] + reach < space.visible.y
@@ -188,7 +210,7 @@ impl<'a> Painter<'a> {
                     fragment.rect().moved(space.origin),
                 );
                 let has_effects = style.paints().contains(Paints::TEXT_EFFECTS)
-                    || has_marks && !document.marks.of(item.node).is_empty();
+                    || has_marks && document.marks_of(item.node).next().is_some();
                 is_plain &= !has_effects
                     && item.parent == 0
                     && std::rc::Rc::ptr_eq(style, block)
@@ -198,7 +220,7 @@ impl<'a> Painter<'a> {
                     );
                 if let FragmentKind::Atomic(child) = fragment.kind {
                     if truncation.is_none_or(|it| it.shows(fragment.x, fragment.width, line.rtl)) {
-                        if self.document.marks.is_selected(item.node) {
+                        if has_marks && document.is_selected(item.node) {
                             self.fill(
                                 square(rect),
                                 self.selection_background(item.node, style),
@@ -223,10 +245,10 @@ impl<'a> Painter<'a> {
                     FragmentKind::Box(left, right) => {
                         self.inline_box(id, inline, line, fragment, [*left, *right], physical)
                     }
-                    FragmentKind::Hyphen(shaped) => {
+                    FragmentKind::Hyphen => {
                         let origin = [rect.x, space.origin[1] + fragment.baseline];
                         self.shaped(
-                            shaped,
+                            &document.hyphen(&item.style).0,
                             origin,
                             style.ink.text_fill_color.resolve(style.color()),
                             space,
@@ -284,7 +306,7 @@ impl<'a> Painter<'a> {
 
     fn highlight_replaced(&mut self, node: NodeId, style: &Style, rect: Rect, space: &Space) {
         let (document, mut below) = (self.document, style.color());
-        for (_, mark) in document.marks.of(node) {
+        for (_, mark) in document.marks_of(node) {
             if let Mark::Highlight(name) = mark
                 && let Some(highlight) = document.highlight(node, Pseudo::Highlight(*name))
             {
@@ -550,10 +572,7 @@ impl<'a> Painter<'a> {
         origin: [f32; 2],
         space: &Space,
     ) {
-        if let FragmentKind::Text { clusters, .. } = &fragment.kind
-            && inline.clusters.letters(clusters).is_none()
-            && inline.clusters[clusters.start as usize].flags & (UPRIGHT | COMBINED) != 0
-        {
+        if is_upright(inline, fragment) {
             return self.upright_glyphs(inline, line, fragment, only, color, blur, origin, space);
         }
         if alpha(color) > 0
@@ -860,17 +879,31 @@ impl<'a> Painter<'a> {
             self.out
                 .glyphs
                 .reserve(if is_whole { shown.len() } else { 0 });
+            let mut exceptions = inline.lines.exceptions_from(shown.start).iter();
+            let mut exception = exceptions.next().copied().unwrap_or((u32::MAX, 0.0));
             for (it, at) in letters.iter().zip(shown) {
+                let (mut advance, mut x) = (it.advance, left - fragment.x);
+                if at == exception.0 {
+                    (advance, x) = (
+                        exception.1,
+                        if it.flags & OPENING != 0 {
+                            x - (advance - exception.1)
+                        } else {
+                            x
+                        },
+                    );
+                    exception = exceptions.next().copied().unwrap_or((u32::MAX, 0.0));
+                }
                 if it.glyph != NO_GLYPH
-                    && (is_whole || only.contains(&at) && left + it.advance >= near && left <= far)
+                    && (is_whole || only.contains(&at) && left + advance >= near && left <= far)
                 {
                     self.out.glyphs.push(Glyph {
                         id: it.glyph.into(),
-                        x: left - fragment.x,
+                        x,
                         y: 0.0,
                     });
                 }
-                left += it.advance;
+                left += advance;
             }
             let glyphs = Span {
                 start,
@@ -881,17 +914,23 @@ impl<'a> Painter<'a> {
                 glyphs,
             ));
         }
-        for (at, left, advance) in inline.positions(fragment) {
-            let cluster = &inline.clusters[at as usize];
+        let own = inline.clusters.part(clusters);
+        for ((at, left, advance), cluster) in inline.positions(fragment).zip(own) {
             if only.contains(&at)
                 && left + advance >= near
                 && left <= far
                 && truncation.is_none_or(|it| it.shows(left, advance, line.rtl))
             {
-                let mut x = left - fragment.x - trimmed(inline, line, fragment, at);
+                let mut x = left
+                    - fragment.x
+                    - if cluster.flags & OPENING != 0 {
+                        trimmed(inline, line, fragment, at)
+                    } else {
+                        0.0
+                    };
                 if *rtl {
                     let joined = (at + 1..clusters.end).take_while(|it| {
-                        let next = &inline.clusters[*it as usize];
+                        let next = &own[(it - clusters.start) as usize];
                         next.glyphs.start == next.glyphs.end
                             && next.flags == 0
                             && next.advance > 0.0
@@ -911,9 +950,7 @@ impl<'a> Painter<'a> {
             start,
             end: self.out.glyphs.len() as u32,
         };
-        let face = shaped
-            .faces
-            .get(usize::from(inline.clusters[clusters.start as usize].face))?;
+        let face = shaped.faces.get(usize::from(own.first()?.face))?;
         (glyphs.end > start || crate::platform::renderer().is_none() && fragment.width > 0.0)
             .then_some((*face, glyphs))
     }
@@ -968,8 +1005,12 @@ impl<'a> Painter<'a> {
         clusters: &Range<u32>,
     ) -> Option<[f32; 2]> {
         let truncation = line.clamp.as_ref().or(line.overflow.as_ref());
-        let shown = inline.positions(fragment).filter(|(at, left, advance)| {
-            clusters.contains(at) && truncation.is_none_or(|it| it.shows(*left, *advance, line.rtl))
+        let inside = inline
+            .positions(fragment)
+            .skip_while(|it| it.0 < clusters.start)
+            .take_while(|it| it.0 < clusters.end);
+        let shown = inside.filter(|(_, left, advance)| {
+            truncation.is_none_or(|it| it.shows(*left, *advance, line.rtl))
         });
         shown
             .map(|it| [it.1, it.1 + it.2])
@@ -989,14 +1030,37 @@ impl<'a> Painter<'a> {
             &inline.items[fragment.item as usize],
             SmallVec::new(),
         );
-        for (range, mark) in document.marks.of(item.node) {
-            let clusters = match item.kind {
-                ItemKind::Break => item.clusters.clone(),
-                _ => {
-                    inline.cluster_at(inline.text_offset(item, range.start))
-                        ..inline.cluster_at(inline.text_offset(item, range.end))
-                }
-            };
+        let clusters_of = |range: &Range<u32>| match item.kind {
+            ItemKind::Break => item.clusters.clone(),
+            _ => inline.cluster_in(item, range.start)..inline.cluster_in(item, range.end),
+        };
+        let all: SmallVec<[_; 2]> = document.marks_of(item.node).collect();
+        let pieces = all
+            .iter()
+            .copied()
+            .enumerate()
+            .flat_map(|(index, (range, mark))| {
+                let whole = clusters_of(range);
+                let below = all[..index]
+                    .iter()
+                    .map(|it| clusters_of(&it.0))
+                    .flat_map(|it| [it.start, it.end]);
+                let mut edges: SmallVec<[u32; 4]> = below
+                    .filter(|it| whole.contains(it) && !is_misspelling(mark))
+                    .chain([whole.start, whole.end])
+                    .collect();
+                edges.order_by(Ord::cmp);
+                edges.dedup();
+                (1..edges.len()).map(move |it| {
+                    (
+                        edges[it - 1]..edges[it],
+                        edges[it] == whole.end,
+                        range,
+                        mark,
+                    )
+                })
+            });
+        for (clusters, is_last, range, mark) in pieces {
             let Some([mut left, mut right]) = Painter::extent(inline, line, fragment, &clusters)
             else {
                 continue;
@@ -1010,10 +1074,11 @@ impl<'a> Painter<'a> {
             {
                 None => (None, default.0, default.1),
                 Some(highlight) => {
+                    let current = default.1.filter(|_| !highlight.has_colors).or(below);
                     let own = highlight.style(
                         style,
                         &document.styles.initial,
-                        below.unwrap_or_else(|| style.color()),
+                        current.unwrap_or_else(|| style.color()),
                     );
                     let (background, color) = match highlight.has_colors {
                         true => (
@@ -1047,7 +1112,7 @@ impl<'a> Painter<'a> {
                         }
                         _ => false,
                     };
-                    let goes_on = (range.end == u32::MAX || last >= all.end)
+                    let goes_on = (range.end == u32::MAX && is_last || last >= all.end)
                         && *rtl == line.rtl
                         && !inline.lines.fragments_of(line).iter().any(is_after);
                     let ends_inline_block = || {
@@ -1084,7 +1149,6 @@ impl<'a> Painter<'a> {
             };
             let rect =
                 self.snap_rect(Rect::from_edges(left, top, right, bottom).moved(space.origin));
-            let is_misspelled = *mark == Mark::Highlight(crate::name::name!("::spelling-error"));
             marked.push(Marked {
                 clusters,
                 rect,
@@ -1093,7 +1157,7 @@ impl<'a> Painter<'a> {
                 style: custom,
                 is_selected: *mark == Mark::Selection,
                 is_composing: *mark == Mark::Composition,
-                is_misspelled,
+                is_misspelled: is_misspelling(mark),
             });
         }
         marked
@@ -1274,10 +1338,13 @@ impl<'a> Painter<'a> {
                     );
                 }
             }
-            let origin = [
-                space.origin[0] + shadow.offset[0],
-                space.origin[1] + shadow.offset[1],
-            ];
+            let [x, y] = shadow.offset;
+            let [x, y] = if is_upright(inline, fragment) {
+                [y, -x]
+            } else {
+                [x, y]
+            };
+            let origin = [space.origin[0] + x, space.origin[1] + y];
             self.glyphs(
                 inline,
                 line,
@@ -1291,7 +1358,7 @@ impl<'a> Painter<'a> {
         }
     }
 
-    fn selection_background(&self, node: NodeId, style: &Style) -> u32 {
+    pub(crate) fn selection_background(&self, node: NodeId, style: &Style) -> u32 {
         let highlight = self
             .document
             .highlight(node, Pseudo::Selection)
@@ -1465,6 +1532,7 @@ impl<'a> Painter<'a> {
                 == Some(&PaintKind::Stroke);
             for strokes in [strokes_first, !strokes_first] {
                 match strokes {
+                    true if over.iter().any(|it| it.style.is_some()) => {}
                     true => painter.text_stroke(inline, line, fragment, run.clone(), style, space),
                     false => painter.glyphs(
                         inline,

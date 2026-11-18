@@ -4,7 +4,6 @@ use std::rc::Rc;
 
 use bun_ui::protocol::{Input, SurfaceCommand};
 use bun_web::exec::{Either, race};
-use bun_web::host::Keystroke;
 
 use super::chromium::to_engine;
 use super::debugger::Debugger;
@@ -13,8 +12,8 @@ use super::input;
 use super::remote::{Emitted, Remote, Role, is_about_main_frame, is_prevented};
 use super::view::View;
 use crate::contents::inspection::News;
-use crate::contents::{Contents, Document, Entry, How, Request};
-use crate::generated_bindgen::webview::{SurfaceEvent, js_WebEngineRemote as fields};
+use crate::contents::{Contents, Document, Entry, How, Request, text_if_any};
+use crate::generated_bindgen::webview::js_WebEngineRemote as fields;
 use crate::prelude::*;
 use crate::session::readable;
 use crate::task::LocalFuture;
@@ -40,6 +39,10 @@ pub(super) struct Guest {
     /// Until the engine has removed the entry of that document, which is the first of the history.
     has_spare_entry: Cell<bool>,
     relayed: RefCell<Option<Rc<Relayed>>>,
+    /// The origin that has asked for the navigation under way, if it was not the app, and where that has got to.
+    under_way: RefCell<(Option<String>, String)>,
+    /// URLs in the history, and the origin that has asked for each.
+    asked_for: RefCell<Vec<(String, String)>>,
 }
 
 /// A navigation that a document in the engine starts.
@@ -67,6 +70,14 @@ pub(crate) struct Load<'a> {
     pub(crate) base_of_data: Option<&'a str>,
 }
 
+pub(crate) fn origin_of_frame(frame: JSValue) -> JsResult<String> {
+    let origin = match frame.is_object() {
+        true => text_if_any(get(frame, "origin")?)?,
+        false => None,
+    };
+    Ok(origin.unwrap_or_else(|| "null".to_owned()))
+}
+
 pub(crate) fn create(
     contents: &Contents,
     how: How,
@@ -74,13 +85,7 @@ pub(crate) fn create(
 ) -> JsResult<&'static Remote> {
     let (engine, session) = contents.get_session().link()?;
     let (size, scale) = match contents.size() {
-        Some(size) => (
-            [
-                get(size, "width")?.as_number(),
-                get(size, "height")?.as_number(),
-            ],
-            get(size, "scale")?.as_number(),
-        ),
+        Some(it) => (it.size, it.scale),
         None => ([800., 600.], screen::primary_display()?.scale.into()),
     };
     let view = View::new(&engine, contents.surface(), size, scale, false)?;
@@ -104,10 +109,12 @@ pub(crate) fn create(
         withheld: Default::default(),
         has_spare_entry: false.into(),
         relayed: Default::default(),
+        under_way: Default::default(),
+        asked_for: Default::default(),
     };
     drop(history);
     let object = contents.to_js();
-    let remote = Remote::create(object, object, view, session, Role::Guest(guest))?;
+    let remote = Remote::create(object, object, view, session, Role::Guest(guest.into()))?;
     for handlers in [ipc::main()?, get(object, "ipc")?] {
         engine.send(Order::Handle {
             channels: ipc::channels_of(handlers)?,
@@ -217,7 +224,11 @@ impl Guest {
         }
         let own = own.items().iter().zip(0..).map(|(it, index)| {
             let document = Document::Guest(remote.id(), index);
-            Entry::new(it["url"].display(), it["title"].text().to_owned(), document)
+            let entry = Entry::new(it["url"].display(), it["title"].text().to_owned(), document);
+            let asked_for = self.asked_for.borrow();
+            let known = asked_for.iter().find(|known| it["url"].is(&known.0));
+            known.inspect(|it| entry.set_initiator(&it.1));
+            entry
         });
         let (before, after) = (self.before.borrow(), self.after.borrow());
         let mut history = remote.host().history().borrow_mut();
@@ -227,6 +238,25 @@ impl Guest {
         history.index =
             (before.len() + mirrored["index"].number() as usize).min(history.entries.len() - 1);
         Ok(())
+    }
+
+    /// After a detour it is nobody in particular who asks.
+    fn redirect(&self, url: String) -> String {
+        let (origin, from) = &mut *self.under_way.borrow_mut();
+        let from = origin_of(&core::mem::replace(from, url));
+        if let Some(origin) = origin.as_mut().filter(|it| **it != from) {
+            "null".clone_into(origin);
+        }
+        origin.clone().unwrap_or_else(|| "null".to_owned())
+    }
+
+    fn note_initiator(&self, url: String, origin: String) {
+        let mut all = self.asked_for.borrow_mut();
+        match all.iter_mut().find(|it| it.0 == url) {
+            Some(known) if known.1 != origin => "null".clone_into(&mut known.1),
+            Some(_) => {}
+            None => all.push((url, origin)),
+        }
     }
 
     pub(super) fn emit(&self, remote: &Remote, mut emitted: Emitted) -> JsResult<bool> {
@@ -273,21 +303,33 @@ impl Guest {
             "did-navigate-in-page" => emitted.argument(1).is_truthy(),
             _ => false,
         };
-        let url = emitted.argument(0).clone();
+        let url = emitted.argument(0).display();
+        let shown_for = match name {
+            "did-navigate" => self.under_way.take().0,
+            _ => has_arrived.then(|| origin_of(&url)),
+        };
+        if let Some(origin) = shown_for.clone() {
+            self.note_initiator(url.clone(), origin);
+            self.update(remote)?;
+        }
         emitted.on(remote.contents(), |event| {
             if let Some(event) = event.filter(|it| may_return && !it.get_default_prevented()) {
-                let initiator = if is_navigation {
-                    get(event.to_js(), "initiator")?
+                let frame = get(event.to_js(), "initiator")?;
+                let origin = if is_navigation {
+                    let origin = origin_of_frame(frame)?;
+                    self.under_way.replace((Some(origin.clone()), url.clone()));
+                    origin
                 } else {
-                    remote.main_frame()?
+                    self.redirect(url.clone())
                 };
-                if host.take_over(url.display(), initiator, How::Push)? {
+                if host.take_over(url.clone(), frame, origin, How::Push)? {
                     event.prevent_default();
                 }
             }
             if has_arrived && !self.is_destroyed.get() {
                 let how = How::Traverse(host.history().borrow().index);
-                host.take_over(url.display(), remote.main_frame()?, how)?;
+                let origin = shown_for.unwrap_or_else(|| "null".to_owned());
+                host.take_over(url, remote.main_frame()?, origin, how)?;
             }
             is_prevented(event)
         })
@@ -423,6 +465,7 @@ impl Remote {
         };
         if let Some(guest) = self.guest() {
             guest.last_asked_for.replace(it.url.to_owned());
+            guest.under_way.replace((None, it.url.to_owned()));
             guest.end_relay();
             if guest.stands_in.get() {
                 guest.relayed.replace(Some(Rc::new(Relayed {
@@ -456,6 +499,7 @@ impl Remote {
             return Ok(Box::pin(self.load(it)));
         };
         guest.last_asked_for.replace(it.url.to_owned());
+        (guest.under_way).replace((Some(source.origin.clone()), it.url.to_owned()));
         guest.end_relay();
         let (is_there, kind) = (self.shows_origin(&source.origin)?, self.engine().kind);
         let standing_in = (!is_there).then(|| {
@@ -587,7 +631,11 @@ impl Remote {
         if index >= entries.len() {
             return Ok(self.load(load));
         }
-        let is_for_guest = |at: usize| self.host().is_for_guest(&entries[at].url());
+        // To the engine, they are what the user has asked for.
+        let is_for_guest = |at: usize| {
+            let it = &entries[at];
+            JsResult::Ok(it.foreign_initiator().is_none() && self.host().is_for_guest(&it.url())?)
+        };
         let (mut first, mut end) = (index, index + 1);
         while first > 0 && is_for_guest(first - 1)? {
             first -= 1;
@@ -604,29 +652,13 @@ impl Remote {
         Ok(self.ask("navigationHistory.restore", list![options]))
     }
 
-    pub(crate) fn handle_event(&self, event: JSValue) -> JsResult<()> {
-        SurfaceEvent::from_js(global(), event, |it| {
-            if *it.t == *b"resize" {
-                self.view.shown_at.set(self.view.scale);
-                self.view.resize([it.width, it.height]);
-                return Ok(());
-            }
-            let input = input::from_script(&it, self.view.zoom.get())?;
-            if let Some(Input::Key(key)) = &input
-                && self.host().before_input(&Keystroke {
-                    is_down: key.is_down,
-                    key: (*key.key).into(),
-                    code: (*key.code).into(),
-                    location: key.location.into(),
-                    modifiers: key.modifiers.into(),
-                    repeats: key.is_repeat,
-                    is_composing: key.is_composing,
-                })?
-            {
-                return tell(Command::KeyWasHandled);
-            }
-            input.map_or(Ok(()), |it| self.view.input(it))
-        })
+    pub(crate) fn handle(&self, input: bun_web::input::Input) -> JsResult<()> {
+        if let bun_web::input::Input::Resize { extent, .. } = input {
+            self.view.shown_at.set(self.view.scale);
+            self.view.resize(extent.size);
+            return Ok(());
+        }
+        input::for_engine(input, self.view.zoom.get()).map_or(Ok(()), |it| self.view.input(it))
     }
 
     pub(crate) fn environment_changed(&self) -> JsResult<()> {

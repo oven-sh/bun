@@ -9,6 +9,7 @@ use crate::generated_bindgen::core::{
     ChildNode, DomComment as Comment, ElementLookups, GetRootNodeOptions, NonDocumentTypeChildNode,
     NonElementParentNode, ParentNode, ProcessingInstruction, Slottable,
 };
+use crate::tree::{Data, NodeId, Tree};
 
 type Any<'a> = JsLocal<'a>;
 type Str<'a> = JsLocal<'a, JSString>;
@@ -43,10 +44,6 @@ fn as_string<'a>(heap: &JsHeap<'a>, value: JSValue) -> Str<'a> {
 }
 
 impl Node {
-    pub(crate) fn get_node_type(&self) -> i32 {
-        self.node_type() as i32
-    }
-
     pub(crate) fn inspect<'a>(&'a self, cx: Cx<'_, 'a>) -> Result<'a, JSValue> {
         if self.is_element() {
             return seams::serialize_outer(cx, self);
@@ -67,9 +64,12 @@ impl Node {
         match self.node_type() {
             NodeType::Element => self
                 .as_element()
-                .map_or(Atom::EMPTY, Element::tag_name)
-                .to_js(heap),
-            NodeType::Text => Atom::of(atom!("#text")).to_js(heap),
+                .map_or_else(|| Atom::EMPTY.to_js(heap), |it| it.tag_name_to_js(heap)),
+            NodeType::Text => {
+                self.bits_of_kind()
+                    .set(super::element::bits_for(atom!("#text")));
+                Atom::of(atom!("#text")).to_js(heap)
+            }
             NodeType::Comment => Atom::of(atom!("#comment")).to_js(heap),
             NodeType::CData => Atom::of(atom!("#cdata-section")).to_js(heap),
             NodeType::Document => Atom::of(atom!("#document")).to_js(heap),
@@ -101,12 +101,28 @@ impl Node {
         self.parent_element()
     }
 
-    pub(crate) fn node_value<'a>(&'a self, cx: Cx<'_, 'a>) -> Option<DomString> {
+    pub(crate) fn node_value(&self) -> Option<DomString> {
         let Some(attr) = self.downcast::<Attr>() else {
             return self.as_character_data().map(CharacterData::data);
         };
-        attr.owner().into_iter().for_each(|it| it.flush_style(cx));
+        attr.owner().into_iter().for_each(Element::serialize_style);
         Some(attr.value())
+    }
+
+    /// If the slot is that of text.
+    #[inline(always)]
+    fn text_to_js<'a>(
+        &self,
+        heap: &JsHeap<'a>,
+        slot: impl FnOnce(&Tree, NodeId) -> Option<NodeId>,
+    ) -> Option<Str<'a>> {
+        self.read(|tree, id| {
+            if let Data::Text(text) = &tree[slot(tree, id)?].data {
+                Some(text.string().to_js(heap))
+            } else {
+                None
+            }
+        })
     }
 
     fn change_value<'a>(&'a self, cx: Cx<'_, 'a>, value: DomString) -> Result<'a> {
@@ -118,8 +134,12 @@ impl Node {
         Ok(())
     }
 
-    pub(crate) fn get_node_value<'a>(&'a self, cx: Cx<'_, 'a>) -> Result<'a, Option<Str<'a>>> {
-        Ok(self.node_value(cx).map(|it| it.to_js(&cx.heap)))
+    pub(crate) fn get_node_value<'a>(&'a self, heap: &JsHeap<'a>) -> Option<Str<'a>> {
+        if self.is_element() {
+            return None;
+        }
+        self.text_to_js(heap, |_, id| Some(id))
+            .or_else(|| Some(self.node_value()?.to_js(heap)))
     }
 
     pub(crate) fn set_node_value<'a>(
@@ -131,13 +151,16 @@ impl Node {
         self.change_value(cx, value)
     }
 
-    pub(crate) fn get_text_content<'a>(&'a self, cx: Cx<'_, 'a>) -> Result<'a, Option<Str<'a>>> {
-        let text = if self.is_element() || self.as_fragment().is_some() {
-            Some(self.descendant_text_content())
-        } else {
-            self.node_value(cx)
-        };
-        Ok(text.map(|it| it.to_js(&cx.heap)))
+    pub(crate) fn get_text_content<'a>(&'a self, heap: &JsHeap<'a>) -> Option<Str<'a>> {
+        if !self.is_element() && self.as_fragment().is_none() {
+            return self.get_node_value(heap);
+        }
+        let only_child =
+            |tree: &Tree, id: NodeId| Some(tree[id].first_child).filter(|it| tree[*it].next == 0);
+        Some(
+            self.text_to_js(heap, only_child)
+                .unwrap_or_else(|| self.descendant_text_content().to_js(heap)),
+        )
     }
 
     pub(crate) fn set_text_content<'a>(
@@ -218,9 +241,9 @@ impl Node {
                         == other.with_inert(|it| it.data.clone())
             }
             Kind::Attr | Kind::Instruction => {
-                inert(self) == inert(other) && self.node_value(cx) == other.node_value(cx)
+                inert(self) == inert(other) && self.node_value() == other.node_value()
             }
-            _ => self.node_value(cx) == other.node_value(cx),
+            _ => self.node_value() == other.node_value(),
         }
     }
 
@@ -519,7 +542,7 @@ impl ParentNode {
     pub(crate) fn js_query_selector<'a>(
         &'a self,
         cx: Cx<'_, 'a>,
-        selectors: &[u8],
+        selectors: Str<'a>,
     ) -> Result<'a, Option<&'a Element>> {
         self.query_selector(cx, selectors)
     }
@@ -529,7 +552,7 @@ impl ParentNode {
     pub(crate) fn js_query_selector_all<'a>(
         &'a self,
         cx: Cx<'_, 'a>,
-        selectors: &[u8],
+        selectors: Str<'a>,
     ) -> Result<'a, &'a NodeList> {
         let found = self.query_selector_all(cx, selectors)?;
         Ok(NodeList::from_list(&cx.heap, found))
@@ -542,7 +565,7 @@ impl ElementLookups {
         heap: &JsHeap<'a>,
         name: JsAtom<'a>,
     ) -> JSValue {
-        self.elements_by_tag_name(heap, Atom::from_impl(name.get()))
+        Atom::with_impl(name.get(), |it| self.elements_by_tag_name(heap, it))
     }
 
     pub(crate) fn get_elements_by_tag_name_ns<'a>(
@@ -565,7 +588,7 @@ impl ElementLookups {
         heap: &JsHeap<'a>,
         names: JsAtom<'a>,
     ) -> JSValue {
-        self.elements_by_class_name(heap, Atom::from_impl(names.get()))
+        Atom::with_impl(names.get(), |it| self.elements_by_class_name(heap, it))
     }
 }
 
@@ -575,7 +598,17 @@ impl NonElementParentNode {
         heap: &JsHeap<'a>,
         id: Str<'a>,
     ) -> Result<'a, Option<&'a Element>> {
-        Ok(self.element_by_id(&Atom::from_js_string(heap, id)?))
+        let mut room = [0; 64];
+        let text = match super::string::short_rope(id, &mut room) {
+            Some(text) => Some(text),
+            None => Some(super::string::impl_of(heap, id)?)
+                .filter(|it| it.is_8bit())
+                .map(|it| it.latin1_slice()),
+        };
+        match text.filter(|it| super::string::is_ascii(it)) {
+            Some(text) => Ok(self.element_by_id_text(text)),
+            None => Ok(self.element_by_id(&Atom::from_js_string(heap, id)?)),
+        }
     }
 }
 
@@ -646,8 +679,9 @@ impl Slottable {
 }
 
 impl CharacterData {
-    pub(crate) fn get_data<'a>(&'a self, cx: Cx<'_, 'a>) -> Result<'a, Str<'a>> {
-        Ok(self.data().to_js(&cx.heap))
+    pub(crate) fn get_data<'a>(&'a self, heap: &JsHeap<'a>) -> Str<'a> {
+        self.text_to_js(heap, |_, id| Some(id))
+            .unwrap_or_else(|| self.data().to_js(heap))
     }
 
     pub(crate) fn set_data<'a>(&'a self, cx: Cx<'_, 'a>, value: Str<'a>) -> Result<'a> {
@@ -878,9 +912,7 @@ impl Attr {
     }
 
     pub(crate) fn get_value<'a>(&'a self, cx: Cx<'_, 'a>) -> Result<'a, Str<'a>> {
-        Ok(Node::node_value(self, cx)
-            .unwrap_or_default()
-            .to_js(&cx.heap))
+        Ok(Node::node_value(self).unwrap_or_default().to_js(&cx.heap))
     }
 
     pub(crate) fn set_value<'a>(&'a self, cx: Cx<'_, 'a>, value: Str<'a>) -> Result<'a> {
@@ -899,13 +931,13 @@ impl Attr {
 
 macro_rules! reflect {
     ($($get:ident $set:ident $name:tt;)*) => {
-        $(pub(crate) fn $get<'a>(&'a self, cx: Cx<'_, 'a>) -> Result<'a, Str<'a>> {
-            Ok(self.with_attr_string(atom!($name), |it| it.to_js(&cx.heap)).unwrap_or_else(|| DomString::default().to_js(&cx.heap)))
+        $(pub(crate) fn $get<'a>(&'a self, heap: &JsHeap<'a>) -> Str<'a> {
+            self.with_attr_string(atom!($name), |it| it.to_js(heap)).unwrap_or_else(|| Atom::EMPTY.to_js(heap))
         }
 
         pub(crate) fn $set<'a>(&'a self, cx: Cx<'_, 'a>, value: Str<'a>) -> Result<'a> {
-            let value = string(&cx.heap, value)?;
-            self.set_attr(cx, atom!($name), value);
+            let value = super::string::impl_of(&cx.heap, value)?;
+            self.set_known_attr(cx, atom!($name), value);
             Ok(())
         })*
     };
@@ -954,11 +986,11 @@ impl Element {
     }
 
     pub(crate) fn get_local_name<'a>(&'a self, heap: &JsHeap<'a>) -> Str<'a> {
-        self.local().to_js(heap)
+        self.local_name_to_js(heap)
     }
 
     pub(crate) fn get_tag_name<'a>(&'a self, heap: &JsHeap<'a>) -> Str<'a> {
-        self.tag_name().to_js(heap)
+        self.tag_name_to_js(heap)
     }
 
     reflect! {
@@ -1025,21 +1057,19 @@ impl Element {
 
     pub(crate) fn get_attribute<'a>(
         &'a self,
-        cx: Cx<'_, 'a>,
+        heap: &JsHeap<'a>,
         name: Str<'a>,
     ) -> Result<'a, Option<Str<'a>>> {
         if self.ignores_case() && !self.has(F::HAS_NAMESPACED_ATTR | F::STYLE_DIRTY) {
-            return Atom::with_lowercased(&cx.heap, name, |name| {
-                self.with_attr_string(name, |it| it.to_js(&cx.heap))
+            return Atom::with_lowercased(heap, name, |name| {
+                self.with_attr_string(name, |it| it.to_js(heap))
             });
         }
-        let name = self.attribute_name(&cx.heap, name)?;
+        let name = self.attribute_name(heap, name)?;
         if name == atom!("style") {
-            self.flush_style(cx);
+            self.serialize_style();
         }
-        Ok(self
-            .attr_by_qualified_name(&name)
-            .map(|it| it.to_js(&cx.heap)))
+        Ok(self.attr_by_qualified_name(&name).map(|it| it.to_js(heap)))
     }
 
     pub(crate) fn get_attribute_ns<'a>(
@@ -1069,6 +1099,14 @@ impl Element {
             return Ok(());
         }
         let checked = self.name_to_set(&cx.heap, name)?;
+        if let Some(value) = value
+            .as_string()
+            .filter(|_| checked.ns == Ns::None && !crate::api::trusted::is_required())
+        {
+            let value = super::string::impl_of(&cx.heap, value)?;
+            self.set_attr_to_impl(cx, &checked.local, value);
+            return Ok(());
+        }
         let value = self.compliant_attribute_value(cx, &checked, value)?;
         let name = if self.has(F::HAS_NAMESPACED_ATTR) || checked.ns != Ns::None {
             self.name_to_set(&cx.heap, name)?
@@ -1188,10 +1226,14 @@ impl Element {
         self.remove_attr_node(cx, Some(attr))
     }
 
+    pub(crate) fn js_matches<'a>(&'a self, cx: Cx<'_, 'a>, selectors: Str<'a>) -> Result<'a, bool> {
+        self.matches(cx, selectors)
+    }
+
     pub(crate) fn js_closest<'a>(
         &'a self,
         cx: Cx<'_, 'a>,
-        selectors: &[u8],
+        selectors: Str<'a>,
     ) -> Result<'a, Option<&'a Element>> {
         self.closest(cx, selectors)
     }
@@ -1317,7 +1359,7 @@ impl Element {
 macro_rules! collections {
     ($($get:ident $key:literal $test:expr;)*) => {
         $(pub(crate) fn $get<'a>(&'a self, heap: &JsHeap<'a>) -> JSValue {
-            self.cached_collection(heap, $key, Atom::EMPTY, |_| HTMLCollection::new(heap, self, Filter::descendants(const { &$test })).to_js())
+            self.cached_collection(heap, $key, &Atom::EMPTY, |_| HTMLCollection::new(heap, self, Filter::descendants(const { &$test })).to_js())
         })*
     };
 }
@@ -1344,7 +1386,7 @@ impl Doc {
         heap: &JsHeap<'a>,
         name: JsAtom<'a>,
     ) -> JSValue {
-        self.elements_by_name(heap, Atom::from_impl(name.get()))
+        Atom::with_impl(name.get(), |it| self.elements_by_name(heap, it))
     }
 
     pub(crate) fn get_doctype(&self) -> Option<&DocumentType> {

@@ -1,7 +1,6 @@
 import * as b from "../codegen/bindgen-lib.ts";
 import {
   anything,
-  flag,
   js,
   number,
   ownedTextIfAny,
@@ -91,36 +90,6 @@ export const ElectronServiceWorkerMain = b.interface("ElectronServiceWorkerMain"
   },
 });
 
-/** `bun_ui::script::event_of()` */
-export const SurfaceEvent = b.dictionary(
-  {
-    t: b.string.utf8.owned,
-    e: ownedTextIfAny,
-    x: amount,
-    y: amount,
-    m: b.u32.wrap.default(0),
-    b: b.u32.wrap.default(0),
-    buttons: b.u32.wrap.default(0),
-    n: b.u32.wrap.default(0),
-    dx: amount,
-    dy: amount,
-    delta: amount,
-    width: amount,
-    height: amount,
-    key: b.any,
-    code: ownedTextIfAny,
-    location: b.u32.wrap.default(0),
-    repeat: flag,
-    composing: flag,
-    text: ownedTextIfAny,
-    range: numbers,
-    selection: numbers,
-    paths: ownedTexts.nullable,
-    direction: amount,
-  },
-  { fromJS: true },
-);
-
 /** A `WebContents` while its page is in the web engine, or an `<iframe>` that is. */
 export const WebEngineRemote = b.interface("WebEngineRemote", {
   ofModule: true,
@@ -134,8 +103,6 @@ export const WebEngineRemote = b.interface("WebEngineRemote", {
     dialog: b.any,
     onFrame: b.any,
     page: b.any,
-    element: b.any,
-    deliver: b.any,
     embedder: b.any,
     carrier: b.ref("ElectronPortCarrier"),
     popup: b.ref("WebEngineRemote"),
@@ -144,22 +111,11 @@ export const WebEngineRemote = b.interface("WebEngineRemote", {
   proto: {},
 });
 
-/** What an `<iframe>` element calls. The engine does not start for a frame that shows nothing. */
+/** What an `<iframe>` element controls. The engine does not start for a frame that shows nothing. */
 export const WebEngineFrameControls = b.interface("WebEngineFrameControls", {
   ofModule: true,
   rustPath: "crate::webview::embedded::Controls",
   noInterfaceObject: true,
-  internalFields: { page: b.any, element: b.any, deliver: b.any, dispose: b.any, frame: WebEngineRemote },
-  proto: {
-    navigate: { args: { attributes: b.object }, ...js },
-    attribute: { args: { name: text, value: b.string.utf8.nullable }, ...js },
-    location: { args: { path: b.object, method: text, url: text }, ...js },
-    post: { args: { path: b.object, envelope: b.object, targetOrigin: text }, ...js },
-    place: { args: { width: number, height: number, isVisible: b.bool.loose, colorScheme: text, zoom: number }, ...js },
-    input: { args: { event: b.object }, ...js },
-    exitFullscreen: {},
-    edit: { args: { command: text }, returns: b.bool },
-    focusedFrame: returnsObject,
-    dispose: js,
-  },
+  internalFields: { page: b.any, dispose: b.any, frame: WebEngineRemote },
+  proto: {},
 });

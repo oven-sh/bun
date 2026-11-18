@@ -62,18 +62,20 @@ enum Item {
     Declaration(Range<usize>),
 }
 
-fn items(
-    source: &[u8],
-    range: Range<usize>,
-    has_declarations: bool,
-    is_nested: bool,
-) -> impl Iterator<Item = Item> {
+#[derive(Clone, Copy, PartialEq)]
+enum Level {
+    Sheet,
+    Rules,
+    RulesAndDeclarations,
+}
+
+fn items(source: &[u8], range: Range<usize>, level: Level) -> impl Iterator<Item = Item> {
     let (source, mut at) = (&source[..range.end], range.start);
     core::iter::from_fn(move || {
-        match if has_declarations {
+        match if level == Level::RulesAndDeclarations {
             scan::next_item(source, at)
         } else {
-            scan::next_rule(source, at, is_nested)
+            scan::next_rule(source, at, level == Level::Rules)
         } {
             Next::End(_) => None,
             Next::Statement { start, end } => {
@@ -176,7 +178,7 @@ impl<'a> Place<'a> {
     /// <https://drafts.csswg.org/css-syntax/#parse-a-rule>
     pub(crate) fn parse_rule(self, rule: &[u8]) -> Option<Rule> {
         let source = Source::copy_of(rule);
-        let mut all = items(&source, 0..source.len(), false, false);
+        let mut all = items(&source, 0..source.len(), Level::Sheet);
         let found = match (all.next(), all.next()) {
             (Some(Item::Rule(prelude, body)), None) => self.parse(&source, prelude, body),
             _ => None,
@@ -190,7 +192,7 @@ impl<'a> Place<'a> {
     pub(crate) fn parse_sheet(self, source: &Source, allows_imports: bool) -> Vec<Rc<Rule>> {
         let (mut rules, mut latest): (Vec<Rc<Rule>>, _) = (Vec::new(), Rank::Import);
         self.settings.namespaces.take();
-        for item in items(source, 0..source.len(), false, false) {
+        for item in items(source, 0..source.len(), Level::Sheet) {
             let Item::Rule(prelude, body) = item else {
                 continue;
             };
@@ -373,8 +375,11 @@ impl Rule {
             for item in items(
                 &self.source,
                 self.body.clone().unwrap_or_default(),
-                place.inside.has_declarations(),
-                true,
+                if place.inside.has_declarations() {
+                    Level::RulesAndDeclarations
+                } else {
+                    Level::Rules
+                },
             ) {
                 match item {
                     Item::Declaration(range) if place.inside.has_declarations() => {

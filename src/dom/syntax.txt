@@ -301,7 +301,7 @@ fill = <paint>
 fill-opacity = <alpha>
 fill-rule = nonzero | evenodd
 filter = <filter>
-flex-basis = content | calc-size( content , <size-sum> ) | <size>
+flex-basis = content | auto | <size-keyword> | <lp+> | calc-size( [ content | <size> ] , <size-sum> ) | calc-size( any , <sum> )
 flex-direction = row | row-reverse | column | column-reverse
 flex-grow = <number+>
 flex-line-count i=1 ~ = <integer [1,inf]>

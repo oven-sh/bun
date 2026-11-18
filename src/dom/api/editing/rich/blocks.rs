@@ -1,6 +1,6 @@
 //! https://w3c.github.io/editing/docs/execCommand/#block-formatting-commands
 
-use super::looks::{editable, host_of, is_editable, is_white, share_host, shares_host_with_parent};
+use super::looks::{editable, host_of, inherits_host, is_editable, is_white, share_host};
 use super::tags::*;
 use super::*;
 use crate::types::{Display, TextAlign};
@@ -308,8 +308,8 @@ impl<'a> Editor<'_, 'a> {
         if host_of(start.node).is_none() {
             return Ok(());
         }
-        let entered = |from: &'a Node, it: Maybe<'a>| {
-            it.filter(|it| share_host(from, it) && !is_break(*it) && !self.is_atomic(it))
+        let entered = |it: Maybe<'a>| {
+            it.filter(|it| inherits_host(it) && !is_break(*it) && !self.is_atomic(it))
         };
         let space_before =
             |it: Point<'a>| self.fluid_space(it.node, unit_before(it.node, it.offset));
@@ -321,12 +321,20 @@ impl<'a> Editor<'_, 'a> {
             true => self.precedes_break(it.node),
             false => unit_at(it.node, it.offset) == Some(NEWLINE) || is_break(child_after(it)),
         };
+        // It is the same for all that is on the way to it.
+        let shown = Cell::new(None);
+        let line_goes_on = |find: &dyn Fn() -> Maybe<'a>| {
+            shown.set(shown.get().or_else(find));
+            shown.get().is_some()
+        };
         loop {
-            if let Some(it) = entered(start.node, child_before(start)) {
+            self.go_on()?;
+            if let Some(it) = entered(child_before(start)) {
+                shown.set(shown.get().filter(|known| *known != it));
                 start = end_of(it);
             } else if start.offset == 0
-                && !self.follows_break(start.node)
-                && shares_host_with_parent(start.node)
+                && inherits_host(start.node)
+                && line_goes_on(&|| self.shown_before(start.node))
             {
                 start = before(start.node)?;
             } else if space_before(start).is_some() {
@@ -336,17 +344,21 @@ impl<'a> Editor<'_, 'a> {
             }
         }
         let (mut end, mut length, mut collapses) = (start, 0u32, starts_line(start));
+        shown.take();
         loop {
-            if let Some(it) = entered(end.node, child_after(end)) {
+            self.go_on()?;
+            if let Some(it) = entered(child_after(end)) {
+                shown.set(shown.get().filter(|known| *known != it));
                 end = at(it, 0);
             } else if is_at_end(end)
-                && !self.precedes_break(end.node)
-                && shares_host_with_parent(end.node)
+                && inherits_host(end.node)
+                && line_goes_on(&|| self.shown_after(end.node))
             {
                 end = after(end.node)?;
             } else if let Some(space) = self.fluid_space(end.node, unit_at(end.node, end.offset)) {
                 if removes_collapsed && collapses && space != NBSP {
                     self.delete_data(end.node, end.offset, 1)?;
+                    shown.take();
                 } else {
                     collapses = space != NBSP;
                     end.offset += 1;
@@ -357,9 +369,9 @@ impl<'a> Editor<'_, 'a> {
             }
         }
         while removes_collapsed && is_before(start, end) {
-            if let Some(it) = entered(end.node, child_before(end)) {
+            if let Some(it) = entered(child_before(end)) {
                 end = end_of(it);
-            } else if end.offset == 0 && shares_host_with_parent(end.node) {
+            } else if end.offset == 0 && inherits_host(end.node) {
                 end = before(end.node)?;
             } else if is_at_end(end)
                 && space_before(end).is_some_and(|it| it != NBSP)

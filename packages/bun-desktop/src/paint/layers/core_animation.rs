@@ -53,7 +53,7 @@ pub fn flush() {
     bd_layers_flush();
 }
 
-pub use metal::finish_and_check as gpu_has_spoiled_surfaces;
+pub use metal::{finish_and_check as gpu_has_spoiled_surfaces, note_pause, waits_for_pause};
 
 pub fn uses_gpu() -> bool {
     static IS_WANTED: LazyLock<bool> =
@@ -370,8 +370,8 @@ impl Target for Tree {
         bd_surface_unlock(&surface.surface, wrote);
     }
 
-    fn can_draw(&mut self) -> bool {
-        self.buffers.is_some() && metal::is_ready()
+    fn can_draw(&mut self, painting_took: Duration) -> bool {
+        self.buffers.is_some() && metal::is_ready(painting_took * 4 > crate::host::interval())
     }
 
     fn draw(&mut self, instances: &[Instance], passes: &[Pass<Surface>]) -> bool {

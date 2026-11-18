@@ -114,7 +114,7 @@ impl Selection {
         self.toggle(State::UPSTREAM, false);
         self.goal_x.set(f64::NAN);
         if self.doc().is(DocFlags::HAS_PAGE) {
-            pending::selection_changed(cx, self.doc());
+            crate::api::ui::seams::selection_changed(cx, self.doc());
         }
     }
 
@@ -242,7 +242,7 @@ impl Selection {
     fn select_for_script<'a>(&'a self, cx: Cx<'_, 'a>, anchor: Point<'a>, focus: Point<'a>) {
         self.select(cx, anchor, focus);
         self.toggle(State::FROM_SCRIPT, true);
-        pending::focus_selection(cx, self);
+        crate::api::ui::seams::focus_selection(cx, self);
     }
 }
 
@@ -387,7 +387,7 @@ impl Selection {
             let main = self.of_document();
             main.use_range(cx, Some(range), false);
             main.toggle(State::EXPOSED | State::FROM_SCRIPT, true);
-            pending::focus_selection(cx, main);
+            crate::api::ui::seams::focus_selection(cx, main);
         }
     }
 
@@ -486,7 +486,11 @@ impl Selection {
         direction: JsLocal<'a, JSString>,
         granularity: JsLocal<'a, JSString>,
     ) -> Result<'a> {
-        pending::modify_selection(cx, self.of_document(), [alter, direction, granularity])
+        crate::api::ui::seams::modify_selection(
+            cx,
+            self.of_document(),
+            [alter, direction, granularity],
+        )
     }
 
     pub(crate) fn delete_from_document<'a>(&'a self, cx: Cx<'_, 'a>) -> Result<'a> {
@@ -534,7 +538,7 @@ impl Selection {
         let control =
             Some(span.start().node.out_of_control()).filter(|it| *it != span.start().node);
         control
-            .and_then(|it| pending::selected_text_of_control(cx, it))
+            .and_then(|it| crate::api::ui::seams::selected_text_of_control(cx, it))
             .unwrap_or_else(|| {
                 self.doc().sync(cx);
                 let ends = ends_for_engine(span.start(), span.end());

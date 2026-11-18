@@ -901,8 +901,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
     }
 
-    let mut pool = session.map(|c| c.pool()).unwrap_or_default();
-    pool.offers_h2 &= !request_has_tls;
+    let pool = session.map(|c| c.pool()).unwrap_or_default();
 
     // signal: AbortSignal | null | undefined;
     // WebIDL `AbortSignal?` member: present iff not undefined. A present `null`

@@ -257,6 +257,20 @@ fn push_short(units: &mut Vec<u8>, more: &[u8]) {
     units.truncate(end);
 }
 
+#[inline(always)]
+fn repeat_short(units: &mut Vec<u8>, before: &[u8], range: Range<usize>, after: &[u8]) {
+    let len = units.len();
+    units.extend_from_slice(&[0; SHORT + 3]);
+    if let Some(from) = units[range.start..].first_chunk::<SHORT>().copied()
+        && let Some(to) = units.last_chunk_mut::<{ SHORT + 3 }>()
+    {
+        to[..before.len()].copy_from_slice(before);
+        to[before.len()..][..SHORT].copy_from_slice(&from);
+        to[before.len() + range.len()..][..after.len()].copy_from_slice(after);
+    }
+    units.truncate(len + before.len() + range.len() + after.len());
+}
+
 impl Default for Text {
     fn default() -> Text {
         Text::Latin1(Vec::new())
@@ -319,14 +333,24 @@ impl Text {
     #[inline(always)]
     pub fn repeat(&mut self, range: Range<usize>) {
         match self {
-            Text::Latin1(units) if range.len() <= SHORT => {
-                let len = units.len();
-                units.extend_from_slice(&[0; SHORT]);
-                units.copy_within(range.start..range.start + SHORT, len);
-                units.truncate(len + range.len());
-            }
+            Text::Latin1(units) if range.len() <= SHORT => repeat_short(units, b"", range, b""),
             Text::Latin1(units) => units.extend_from_within(range),
             Text::Utf16(units) => units.extend_from_within(range),
+        }
+    }
+
+    /// With the name that it has there.
+    #[inline(always)]
+    pub fn push_end_tag(&mut self, name: Range<usize>) {
+        #[inline(never)]
+        fn in_parts(text: &mut Text, name: Range<usize>) {
+            text.push_str("</");
+            text.repeat(name);
+            text.push_byte(b'>');
+        }
+        match self {
+            Text::Latin1(units) if name.len() <= SHORT => repeat_short(units, b"</", name, b">"),
+            _ => in_parts(self, name),
         }
     }
 

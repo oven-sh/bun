@@ -65,7 +65,7 @@ fn segments_within(source: &[u8], depth: u8) -> Vec<Segment<'_>> {
             match p.next_including_whitespace_and_comments().copied() {
                 Ok(Token::Function(name)) if eq(name, "var") && depth < 128 => {
                     all.extend((!before.is_empty()).then(|| Segment::Text(&source[before])));
-                    nested(p, |p| {
+                    crate::values::visit_nested(p, |p| {
                         let (name, has_fallback, from) = (
                             ident(p).unwrap_or_default().to_vec(),
                             comma(p),
@@ -77,17 +77,13 @@ fn segments_within(source: &[u8], depth: u8) -> Vec<Segment<'_>> {
                             has_fallback
                                 .then(|| segments_within(&source[from..p.position()], depth + 1)),
                         ));
-                        Some(())
                     });
                     *start = p.position();
                 }
                 Ok(
                     Token::Function(_) | Token::OpenParen | Token::OpenSquare | Token::OpenCurly,
                 ) if depth < 128 => {
-                    nested(p, |p| {
-                        scan(p, source, start, all, depth + 1);
-                        Some(())
-                    });
+                    crate::values::visit_nested(p, |p| scan(p, source, start, all, depth + 1));
                 }
                 Ok(_) => {}
                 Err(_) => return,

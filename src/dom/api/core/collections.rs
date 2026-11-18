@@ -19,7 +19,7 @@ use crate::name::{Map, Name, name};
 use crate::selector::{filter, key};
 
 type Add<'r, 'a> = &'r mut dyn FnMut(&'a Element);
-type Found = Vec<*const Node>;
+type Found = SmallVec<[*const Node; 2]>;
 
 /// For descendants.
 pub(crate) struct Test {
@@ -33,6 +33,8 @@ pub(crate) struct Test {
     pub(crate) belongs: fn(&Node, &Element) -> bool,
     /// Whether it has listed them, as there is more to it for now.
     pub(crate) lists: for<'a> fn(&'a Node, Option<Add<'_, 'a>>) -> bool,
+    /// Whether there is still no more to it after an element has moved, if `lists` takes long to tell.
+    pub(crate) allows_move: Option<fn(&Node, &Element) -> bool>,
 }
 
 /// Which of the elements that have no object yet it is asked about.
@@ -50,6 +52,7 @@ impl Test {
         matches: |_| true,
         belongs: |_, _| true,
         lists: |_, _| false,
+        allows_move: None,
     };
 }
 
@@ -75,7 +78,6 @@ pub(crate) enum Filter {
     Class(Box<[DomString]>),
     Listed(for<'a> fn(&'a Node, Add<'_, 'a>)),
     ListedByName(Atom, for<'a> fn(&'a Node, &Atom, Add<'_, 'a>)),
-    Uncached(for<'a> fn(&'a Node, Add<'_, 'a>)),
 }
 
 fn keys_of_tags(tags: &[Known]) -> u64 {
@@ -104,11 +106,6 @@ impl Filter {
         list: for<'a> fn(&'a Node, &Atom, Add<'_, 'a>),
     ) -> Filter {
         Filter::ListedByName(name, list)
-    }
-
-    /// For what depends on more than the tree and the attributes.
-    pub(crate) fn uncached(list: for<'a> fn(&'a Node, Add<'_, 'a>)) -> Filter {
-        Filter::Uncached(list)
     }
 
     fn reads(&self) -> Reads {
@@ -225,11 +222,29 @@ impl Filter {
             }
     }
 
+    fn stays_in_tree_order(&self, root: &Node, since: u64) -> bool {
+        let Filter::Descendants {
+            test: Test {
+                allows_move: Some(allows),
+                ..
+            },
+            ..
+        } = self
+        else {
+            return false;
+        };
+        root.arena().moves_since(since).is_some_and(|it| {
+            it.iter()
+                .filter_map(|it| it.node.as_element())
+                .all(|it| allows(root, it))
+        })
+    }
+
     /// The descendants that match, and nothing else.
     fn is_in_tree_order(&self, root: &Node) -> bool {
         match self {
             Filter::Descendants { test, .. } => !(test.lists)(root, None),
-            Filter::Listed(_) | Filter::ListedByName(..) | Filter::Uncached(_) => false,
+            Filter::Listed(_) | Filter::ListedByName(..) => false,
             _ => true,
         }
     }
@@ -244,7 +259,7 @@ pub(crate) struct Collection {
     version_of_attributes: Cell<u64>,
     names: OnceCell<Box<RefCell<Names>>>,
     /// Where something was last looked for.
-    hint: Cell<u32>,
+    hints: Cell<[u32; 2]>,
     /// `Arena::collections` then. What was corrected is not relied on to keep nodes alive.
     corrected_at: Cell<Option<NonZeroU32>>,
     reads: Reads,
@@ -338,7 +353,7 @@ impl Collection {
             version: Cell::new(0),
             version_of_attributes: Cell::new(0),
             names: OnceCell::new(),
-            hint: Cell::new(0),
+            hints: Cell::new([0; 2]),
             corrected_at: Cell::new(None),
             is_complete: Cell::new(false),
             was_in_tree_order: Cell::new(false),
@@ -372,6 +387,11 @@ impl Collection {
         }
     }
 
+    /// For one that is `listed`.
+    pub(crate) fn outdate(&self) {
+        self.version.set(0);
+    }
+
     #[inline]
     fn has_only_live_nodes(&self, root: &Node) -> bool {
         self.corrected_at
@@ -395,11 +415,23 @@ impl Collection {
     #[inline(never)]
     fn catch_up(&self, root: &Node, found: &mut Found) {
         let arena = root.arena();
+        if self.filter.flag().is_none()
+            && self.was_in_tree_order.get()
+            && arena.has_same_elements_as_at(self.version.get())
+            && arena.version_of(self.reads) == self.version_of_attributes.get()
+            && !root.has(F::USER_AGENT)
+            && self.has_only_live_nodes(root)
+        {
+            return self.version.set(arena.version.get());
+        }
         let is_worth_it = (found.len() > 8
             || self.is_complete.get() && self.filter.flag().is_none())
             && !root.has(F::USER_AGENT)
             && self.has_only_live_nodes(root);
-        let is_in_tree_order = self.filter.is_in_tree_order(root);
+        let is_in_tree_order = is_worth_it
+            && self.was_in_tree_order.get()
+            && self.filter.stays_in_tree_order(root, self.version.get())
+            || self.filter.is_in_tree_order(root);
         let was_in_tree_order = self.was_in_tree_order.replace(is_in_tree_order);
         let corrected = match self.filter.flag() {
             _ if !is_worth_it => None,
@@ -417,29 +449,35 @@ impl Collection {
             self.names.get().inspect(|it| it.borrow_mut().forget());
         }
         root.set(self.filter.flag().unwrap_or(F::empty()));
-        self.version
-            .set(if matches!(self.filter, Filter::Uncached(_)) {
-                0
-            } else {
-                arena.version.get()
-            });
+        self.version.set(arena.version.get());
         self.version_of_attributes.set(arena.version_of(self.reads));
     }
 
     fn position(&self, found: &[*const Node], node: &Node) -> Option<usize> {
-        let hint = self.hint.get() as usize;
-        let likely = [
-            hint,
-            hint + 1,
-            hint.wrapping_sub(1),
-            found.len().wrapping_sub(1),
-        ];
-        let index = likely
-            .into_iter()
-            .find(|it| found.get(*it).is_some_and(|it| core::ptr::eq(*it, node)))
-            .or_else(|| found.iter().position(|it| core::ptr::eq(*it, node)))?;
-        self.hint.set(index as u32);
-        Some(index)
+        let [last, other] = self.hints.get();
+        let is_at = |it: &u32| {
+            found
+                .get(*it as usize)
+                .is_some_and(|it| core::ptr::eq(*it, node))
+        };
+        let near = |hint: u32| {
+            [hint, hint + 1, hint.wrapping_sub(1)]
+                .into_iter()
+                .find(is_at)
+        };
+        let (index, kept) = match near(last) {
+            Some(index) => (index, other),
+            None => (
+                near(other)
+                    .or_else(|| Some((found.len() as u32).wrapping_sub(1)).filter(is_at))
+                    .or_else(|| {
+                        Some(found.iter().position(|it| core::ptr::eq(*it, node))? as u32)
+                    })?,
+                last,
+            ),
+        };
+        self.hints.set([index, kept]);
+        Some(index as usize)
     }
 
     /// Before they are used, or `found` is corrected.
@@ -497,12 +535,7 @@ impl Collection {
         }
         match nodes {
             [only] => found.insert(index, *only),
-            _ => {
-                _ = found.splice(
-                    index..index,
-                    nodes.iter().map(|it| core::ptr::from_ref(*it)),
-                )
-            }
+            _ => found.insert_many(index, nodes.iter().map(|it| core::ptr::from_ref(*it))),
         }
         Some(())
     }
@@ -669,13 +702,12 @@ impl Collection {
     #[inline(never)]
     fn find(&self, root: &Node, found: &mut Found, wanted: usize) {
         // SAFETY: it is current.
-        let (last, missing) = (
-            found.last().map(|it| unsafe { &**it }),
-            wanted - found.len(),
-        );
+        let last = found.last().map(|it| unsafe { &**it });
+        let wanted = wanted.max(found.len() + found.len() / 2);
+        let missing = wanted - found.len();
         let mut add = |it: &Element| found.push(&raw const **it);
         match &self.filter {
-            Filter::Listed(list) | Filter::Uncached(list) => list(root, &mut add),
+            Filter::Listed(list) => list(root, &mut add),
             Filter::ListedByName(name, list) => list(root, name, &mut add),
             Filter::Descendants { test, .. } if !self.was_in_tree_order.get() => {
                 _ = (test.lists)(root, Some(&mut add))
@@ -685,12 +717,10 @@ impl Collection {
                     last.map_or_else(|| root.first_child(), Node::next_sibling),
                     |it| it.next_sibling(),
                 );
-                found.extend(
-                    children
-                        .filter(|it| filter.takes_child(it))
-                        .take(missing)
-                        .map(core::ptr::from_ref),
-                );
+                children
+                    .filter(|it| filter.takes_child(it))
+                    .take(missing)
+                    .for_each(|it| found.push(it));
                 return self.is_complete.set(found.len() < wanted);
             }
             filter => {
@@ -887,7 +917,7 @@ impl HTMLCollection {
     }
 
     pub(crate) fn named_get<'a>(&'a self, _: &JsHeap<'a>, name: &Impl) -> Option<JSValue> {
-        self.named(&Atom::from_impl(name))
+        Atom::with_impl(name, |it| self.named(it))
             .first()
             .map(|it| it.to_js())
     }
@@ -937,15 +967,14 @@ impl HTMLAllCollection {
     }
 
     pub(crate) fn named_get<'a>(&'a self, heap: &JsHeap<'a>, name: &Impl) -> Option<JSValue> {
-        let name = Atom::from_impl(name);
-        match *self.all_named(&name, names_in_all) {
+        match *Atom::with_impl(name, |it| self.all_named(it, names_in_all)) {
             [] => None,
             [only] => Some(only.to_js()),
             _ => Some(
                 HTMLCollection::new(
                     heap,
                     self.owner(),
-                    Filter::DescendantsByName(name, |name, it| {
+                    Filter::DescendantsByName(Atom::from_impl(name), |name, it| {
                         names_in_all(it).contains(&Some(name.to_dom_string()))
                     }),
                 )
@@ -998,6 +1027,18 @@ impl Node {
         })
     }
 
+    pub(super) fn list_of_children(&self) -> &Collection {
+        let this = self.to_js();
+        let list = self.edge(Edge::ChildNodes).unwrap_or_else(|| {
+            allocate_quietly(self.doc().global(), |heap| {
+                // SAFETY: it is `self`.
+                unsafe { Node::from_js_unchecked(this) }.child_nodes(heap)
+            })
+        });
+        // SAFETY: what `child_nodes` makes, which the edge holds.
+        unsafe { Collection::from_js_unchecked(list) }
+    }
+
     pub(crate) fn children_collection<'a>(&'a self, heap: &JsHeap<'a>) -> JSValue {
         self.same_object(heap, Edge::Children, || {
             HTMLCollection::new(heap, self, Filter::Children).to_js()
@@ -1009,27 +1050,38 @@ impl Node {
         &self,
         heap: &JsHeap<'_>,
         kind: u8,
-        key: Atom,
+        key: &Atom,
         make: impl FnOnce(&Atom) -> JSValue,
     ) -> JSValue {
         #[derive(Default)]
-        struct Keys(core::cell::RefCell<crate::name::Map<(u8, Atom), u32>>);
+        struct Keys(RefCell<Indices>);
+        type Indices = Map<(u8, usize), (u32, Atom)>;
+        fn remember(
+            heap: &JsHeap<'_>,
+            keys: &mut Indices,
+            all: List<'_>,
+            kind: u8,
+            key: &Atom,
+            made: JSValue,
+        ) {
+            if keys.len() < 256 || key.is_empty() {
+                keys.insert((kind, key.identity()), (all.len(), key.clone()));
+                all.push(heap, made);
+            }
+        }
         let (mut keys, all) = (
             self.extra::<Keys>().0.borrow_mut(),
             self.edge_list(heap, Edge::Collections),
         );
-        if let Some(index) = keys.get(&(kind, key.clone())) {
+        if let Some((index, _)) = keys.get(&(kind, key.identity())) {
             return all.get(*index);
         }
-        let made = make(&key);
-        if keys.len() < 256 || key.is_empty() {
-            keys.insert((kind, key), all.len());
-            all.push(heap, made);
-        }
+        let made = make(key);
+        remember(heap, &mut keys, all, kind, key, made);
         made
     }
 
-    pub(crate) fn elements_by_tag_name<'a>(&'a self, heap: &JsHeap<'a>, name: Atom) -> JSValue {
+    pub(crate) fn elements_by_tag_name<'a>(&'a self, heap: &JsHeap<'a>, name: &Atom) -> JSValue {
         let is_html = self.doc().is_html_doc();
         self.cached_collection(heap, is_html.into(), name, |name| {
             let html = if is_html {
@@ -1074,7 +1126,7 @@ impl Node {
         )
     }
 
-    pub(crate) fn elements_by_class_name<'a>(&'a self, heap: &JsHeap<'a>, names: Atom) -> JSValue {
+    pub(crate) fn elements_by_class_name<'a>(&'a self, heap: &JsHeap<'a>, names: &Atom) -> JSValue {
         self.cached_collection(heap, 2, names, |it| {
             HTMLCollection::new(
                 heap,
@@ -1085,28 +1137,35 @@ impl Node {
         })
     }
 
-    pub(crate) fn elements_by_name<'a>(&'a self, heap: &JsHeap<'a>, name: Atom) -> JSValue {
+    pub(crate) fn elements_by_name<'a>(&'a self, heap: &JsHeap<'a>, name: &Atom) -> JSValue {
+        self.cached_collection(heap, 3, name, |it| {
+            NodeList::live(
+                heap,
+                self,
+                Filter::listed_by_name(it.clone(), |root, name, add| {
+                    root.descendants_named(name).into_iter().for_each(add)
+                }),
+            )
+            .to_js()
+        })
+    }
+
+    /// The HTML elements with that `name`.
+    pub(crate) fn descendants_named(&self, name: &Atom) -> SmallVec<[&Element; 2]> {
         static NAMED: Test = Test {
             bare: Bare::With(atom!("name")),
             reads: Reads::Ties,
             matches: |it| it.kind().is_html() && it.has_attr(atom!("name")),
             ..Test::ALL
         };
-        fn list<'a>(root: &'a Node, name: &Atom, add: Add<'_, 'a>) {
-            root.unseen_collection(13, &NAMED)
-                .all_named(name, |it| [it.attr(atom!("name")), None])
-                .into_iter()
-                .for_each(add);
-        }
-        self.cached_collection(heap, 3, name, |it| {
-            NodeList::live(heap, self, Filter::listed_by_name(it.clone(), list)).to_js()
-        })
+        self.unseen_collection(13, &NAMED)
+            .all_named(name, |it| [it.attr(atom!("name")), None])
     }
 
     /// For `Collection::all_named`. No script has it.
     pub(crate) fn unseen_collection(&self, kind: u8, test: &'static Test) -> &Collection {
         let make = |heap: &JsHeap<'_>| {
-            self.cached_collection(heap, kind, Atom::EMPTY, |_| {
+            self.cached_collection(heap, kind, &Atom::EMPTY, |_| {
                 Collection::create(
                     self.doc().realm(heap),
                     js_HTMLCollection::CLASS,

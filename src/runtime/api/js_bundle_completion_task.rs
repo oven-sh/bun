@@ -1073,13 +1073,14 @@ impl JSBundleCompletionTask {
         // Owned so the static bound holds without tying `&mut self` to `'a`.
         transpiler.options.banner = std::borrow::Cow::Owned(config.banner.list.clone());
         transpiler.options.footer = std::borrow::Cow::Owned(config.footer.list.clone());
+        let is_desktop = config
+            .compile
+            .as_ref()
+            .is_some_and(|it| it.desktop.is_some());
+        transpiler.options.is_desktop_app = is_desktop;
         transpiler.options.react_fast_refresh = config.react_fast_refresh;
         transpiler.options.react_compiler = if config.react_compiler.is_enabled() {
             config.react_compiler_output_mode.unwrap_or_else(|| {
-                let is_desktop = config
-                    .compile
-                    .as_ref()
-                    .is_some_and(|it| it.desktop.is_some());
                 if config.target.is_server_side() && !is_desktop {
                     bun_ast::runtime::ReactCompilerMode::Ssr
                 } else {

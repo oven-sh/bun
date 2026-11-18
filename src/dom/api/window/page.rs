@@ -1,10 +1,15 @@
 //! How a window comes about, gets another document, and goes.
 
+use bun_web::dom::Opening;
+use bun_web::host::Host;
+use bun_web::page::About;
+
 use super::*;
-use crate::api::core::by_name::member;
-use crate::api::events::{Event, EventInit, dispatch_for_document, fire, now};
+use crate::api::events::{Event, EventInit, dispatch_for_document, fire, from_event_loop, now};
 use crate::api::frames::entry::{close_frames, is_in_frame};
+use crate::api::history::Context;
 use crate::api::history::entry::{renewed, unload};
+use crate::api::performance;
 use crate::api::ui::Ui;
 use crate::api::ui::entry::{attach_ui, cancel_gestures, detach_ui};
 use crate::api::ui::prelude::Refs;
@@ -17,48 +22,50 @@ unsafe extern "C" {
 #[thread_local]
 static LAST_FONT_SCOPE: Cell<u32> = Cell::new(0x6000_0000);
 
-/// Where the scripts of a window run.
-#[derive(Clone, Copy)]
-pub(crate) enum Home<'a> {
-    /// It is the global object. The agent is that of other windows of its origin.
-    OwnRealm(JSValue, Option<&'a Agent>),
-    SharedRealm,
-}
-
 impl Window {
-    /// `tools` is what its host has handed over.
+    /// `global` is the global object of the realm, if the window is to be that.
     pub(crate) fn open_page<'a>(
         cx: Cx<'_, 'a>,
-        tools: JSValue,
-        home: Home<'a>,
-        base_url: Option<DomString>,
+        it: Opening,
+        global: Option<JSValue>,
     ) -> &'a Window {
-        let (object, related) = match home {
-            Home::OwnRealm(global, related) => (global, related),
-            Home::SharedRealm => (Bun__DOM__createOtherWindow(cx.global()), None),
+        let (object, time_origin) = match global {
+            Some(global) => (global, performance::navigation_start(&cx.heap)),
+            None => (Bun__DOM__createOtherWindow(cx.global()), now()),
         };
+        let context = Context::with_id(it.context);
+        let related = context
+            .filter(|_| it.has_relatives)
+            .and_then(Context::agent);
         related.into_iter().for_each(|it| it.serve(&cx.heap));
-        let link = member(cx.global(), tools, "link").unwrap_or(tools);
         let this = WindowTarget::create(
-            &cx.heap,
             object,
-            [tools, link],
-            now(),
+            it.host_needs,
+            it.host,
+            time_origin,
             related.is_some(),
-            |heap, base| js_DomWindow::create(heap, Window::new(base)),
+            |heap, base| js_DomWindow::create(heap, Window::new(base, it.page)),
         );
-        let [surface, font_scope] =
-            ["surface", "fontScope"].map(|it| this.tool(it).map(|it| it.as_number() as u32));
-        this.font_scope
-            .set(font_scope.or(surface).unwrap_or_default());
+        this.font_scope.set(it.font_scope.unwrap_or(it.surface));
+        context
+            .into_iter()
+            .for_each(|context| this.settle_in(&cx.heap, context, it.has_relatives));
         Agent::of(&cx.heap).offer_window(this);
-        let url = this
-            .text_of_tool(cx, "url")
-            .unwrap_or_else(|| "about:blank".into());
-        let base_url = base_url.filter(|_| url.to_utf8().starts_with("about:"));
-        this.show_new_document(cx, url, base_url)
-            .create_registry(&cx.heap);
-        match surface.unwrap_or_default() {
+        let base_url = it
+            .about
+            .base_url
+            .clone()
+            .filter(|_| it.about.url.starts_with("about:"));
+        this.show_new_document(
+            cx,
+            &About {
+                base_url,
+                ..it.about
+            },
+        )
+        .create_registry(&cx.heap);
+        this.enlist(&cx.heap);
+        match it.surface {
             0 => this.environment_changed(cx),
             surface => this.show_on(cx, surface),
         }
@@ -66,84 +73,96 @@ impl Window {
     }
 
     /// For an `<iframe>` that has nothing to load.
-    pub(crate) fn open_empty_frame<'a>(&'a self, cx: Cx<'_, 'a>) -> &'a Window {
-        let tools = JSValue::create_empty_object_with_null_prototype(cx.global());
-        for (name, from) in [
-            ("link", "linkOfBlankFrames"),
-            ("linkOfBlankFrames", "linkOfBlankFrames"),
-        ] {
-            self.tool(from)
-                .into_iter()
-                .for_each(|it| tools.put(cx.global(), name.as_bytes(), it));
-        }
+    pub(crate) fn open_empty_frame<'a>(&'a self, _: Cx<'_, 'a>) -> &'a Window {
         LAST_FONT_SCOPE.update(|it| it + 1);
-        tools.put(cx.global(), b"fontScope", LAST_FONT_SCOPE.get().into());
-        let made = self.open_beside(tools);
+        let host = Host::of_blank_frame_in(self.host());
+        let made = self.open_beside(Opening {
+            font_scope: Some(LAST_FONT_SCOPE.get()),
+            ..Opening::new(host, self.what_host_needs())
+        });
         made.document().forbid_scripts(self.document());
         made
     }
 
     /// In the realm that outlives those of frames.
-    pub(crate) fn open_beside(&self, tools: JSValue) -> &Window {
+    pub(crate) fn open_beside(&self, mut it: Opening) -> &Window {
         let doc = self.document();
+        it.about.base_url = Some(doc.base_url().to_utf8().into_owned());
         let made = bun_web::exec::with_realm(doc.agent().global(), |cx| {
-            Window::open_page(cx, tools, Home::SharedRealm, Some(doc.base_url())).to_js()
+            Window::open_page(cx, it, None).to_js()
         });
         // SAFETY: what has just been made.
         unsafe { Window::from_js_unchecked(made) }
     }
 
-    fn text_of_tool<'a>(&'a self, cx: Cx<'_, 'a>, name: &str) -> Option<DomString> {
-        DomString::from_js_string(
-            &cx.heap,
-            JsLocal::new(&cx.heap, self.tool(name)?).as_string()?,
-        )
-        .ok()
+    /// In its realm.
+    pub(crate) fn enter<R>(&self, steps: impl for<'b> FnOnce(Cx<'_, 'b>, &'b Window) -> R) -> R {
+        bun_web::exec::with_realm(global_of_cell(self), |cx| {
+            // SAFETY: it is one.
+            steps(cx, unsafe { Window::from_js_unchecked(self.to_js()) })
+        })
     }
 
-    fn show_new_document<'a>(
-        &'a self,
-        cx: Cx<'_, 'a>,
-        url: DomString,
-        base_url: Option<DomString>,
-    ) -> &'a Doc {
+    /// Nothing happens in a page that is gone.
+    pub(crate) fn enter_as_task(&self, steps: impl for<'b> FnOnce(Cx<'_, 'b>, &'b Window, &'b Ui)) {
+        from_event_loop::<Window>(global_of_cell(self), self.to_js(), |cx, window| {
+            if let Some(ui) = Ui::of(window.document()) {
+                steps(cx, window, ui);
+            }
+        });
+    }
+
+    pub(crate) fn apply_policy(&self, heap: &JsHeap<'_>, is_for_new_document: bool) {
+        if self.document().has_realm(heap) {
+            crate::api::trusted::apply_policy(self.realm(heap), is_for_new_document);
+        }
+        if self
+            .document()
+            .own_client(heap)
+            .is_some_and(|it| it.policies().csp.restricts_style_attributes())
+        {
+            self.document()
+                .set_doc_flags(DocFlags::CHECKS_STYLE_ATTRIBUTES, true);
+        }
+    }
+
+    /// What the response asks for before there is anything in the document.
+    pub(crate) fn follow_response(
+        &self,
+        heap: &JsHeap<'_>,
+        links: &[u8],
+        is_for_new_document: bool,
+    ) {
+        self.apply_policy(heap, is_for_new_document);
+        self.document()
+            .own_client(heap)
+            .into_iter()
+            .for_each(|it| it.follow_links(links));
+    }
+
+    fn show_new_document<'a>(&'a self, cx: Cx<'_, 'a>, about: &About) -> &'a Doc {
+        let text = |it: &Option<String>| it.as_deref().map(DomString::from_utf8);
         let old = self.doc().and_then(Ui::of);
-        let doc = Doc::new_for_window(cx, self.font_scope.get(), url);
+        let doc = Doc::new_for_window(cx, self.font_scope.get(), DomString::from_utf8(&about.url));
         self.show(&cx.heap, doc);
         attach_ui(cx, doc, old);
         old.into_iter().for_each(detach_ui);
-        if let Some(base_url) = base_url {
+        if let Some(base_url) = text(&about.base_url) {
             doc.engine(|engine, _| engine.base_url = base_url.to_utf8().as_bytes().into());
             doc.set_base_url(base_url.clone());
             doc.set_inherited_base_url(Some(base_url));
         }
-        doc.set_legacy_encoding(
-            self.text_of_tool(cx, "encoding")
-                .filter(|it| !it.eq_str("utf-8")),
-        );
-        doc.set_content_type(
-            self.text_of_tool(cx, "contentType")
-                .unwrap_or_else(|| "text/html".into()),
-        );
-        doc.set_last_modified(self.text_of_tool(cx, "lastModified"));
-        if let Some(language) = self.text_of_tool(cx, "language") {
-            doc.engine(|engine, _| engine.set_language(language.to_utf8().as_bytes()));
+        doc.set_legacy_encoding(text(&about.encoding).filter(|it| !it.eq_str("utf-8")));
+        doc.set_content_type(text(&about.content_type).unwrap_or_else(|| "text/html".into()));
+        doc.set_last_modified(text(&about.last_modified));
+        if let Some(language) = &about.language {
+            doc.engine(|engine, _| engine.set_language(language.as_bytes()));
         }
         doc
     }
 
-    pub(crate) fn about_changed(&self, heap: &JsHeap<'_>, about: JSValue) {
-        for name in ["encoding", "contentType", "lastModified", "language"] {
-            self.tools().put(
-                global_of(heap),
-                name.as_bytes(),
-                member(global_of(heap), about, name).unwrap_or(JSValue::UNDEFINED),
-            );
-        }
-    }
-
     /// The first document of a window leaves it to the next one of the same origin.
-    pub(crate) fn renew<'a>(&'a self, cx: Cx<'_, 'a>, url: DomString, base_url: Option<DomString>) {
+    pub(crate) fn renew<'a>(&'a self, cx: Cx<'_, 'a>, about: &About) {
         let old = self.document();
         if let Some(ui) = Ui::of(old) {
             cancel_gestures(cx, ui);
@@ -152,8 +171,8 @@ impl Window {
         let children = Refs::collect(&cx.heap, old.children());
         replace_all(cx, None, old);
         old.leave_window();
-        self.show_new_document(cx, url, base_url)
-            .create_registry(&cx.heap);
+        performance::renewed(self.realm(&cx.heap), self);
+        self.show_new_document(cx, about).create_registry(&cx.heap);
         children
             .iter()
             .for_each(|it| insert(cx, it, old, None, Observers::Suppress));
@@ -161,6 +180,7 @@ impl Window {
         renewed(self);
         self.forget_layout();
         self.show_on(cx, self.surface());
+        self.follow_response(&cx.heap, &about.links, true);
     }
 
     pub(crate) fn show_on<'a>(&'a self, cx: Cx<'_, 'a>, surface: u32) {
@@ -202,6 +222,7 @@ impl Window {
                 },
             );
         }
+        let start = bun_web::time::monotonic_now();
         if self.has_listeners(atom!("unload")) {
             dispatch_for_document(
                 cx,
@@ -209,6 +230,8 @@ impl Window {
                 Event::new(self.realm(&cx.heap), atom!("unload"), EventInit::default()),
             );
         }
+        doc.own_client(&cx.heap)
+            .inspect(|it| it.has_unloaded(start));
         let ui = Ui::of(doc);
         if let Some(ui) = ui {
             cancel_gestures(cx, ui);
@@ -221,6 +244,7 @@ impl Window {
         self.stop_rendering(&cx.heap);
         bun_ui::surfaces::send_no_frames_to(self.to_js());
         self.dispose();
+        self.resign();
         crate::api::loading::window_has_closed(doc);
         crate::api::media::window_has_closed(doc);
         ui.into_iter().for_each(detach_ui);

@@ -34,6 +34,41 @@ struct Options {
     filter: Option<Box<[Atom]>>,
 }
 
+/// How many are for all attributes of the descendants.
+#[thread_local]
+static UNFILTERED: Cell<u32> = Cell::new(0);
+
+/// `bit_of` the attributes of descendants that others are, or were, for.
+#[thread_local]
+static FILTERED: Cell<u64> = Cell::new(0);
+
+#[inline(always)]
+fn bit_of(attribute: &Atom) -> u64 {
+    1 << ((attribute.identity() as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 58)
+}
+
+impl Options {
+    fn is_unfiltered(&self) -> bool {
+        self.subtree && self.types.contains(DocFlags::OBSERVES_ATTRIBUTES) && self.filter.is_none()
+    }
+
+    fn share(self) -> Rc<Options> {
+        UNFILTERED.update(|it| it + u32::from(self.is_unfiltered()));
+        self.filter
+            .iter()
+            .flatten()
+            .filter(|_| self.subtree)
+            .for_each(|it| FILTERED.update(|all| all | bit_of(it)));
+        Rc::new(self)
+    }
+}
+
+impl Drop for Options {
+    fn drop(&mut self) {
+        UNFILTERED.update(|it| it - u32::from(self.is_unfiltered()));
+    }
+}
+
 #[derive(Clone)]
 struct Registration {
     /// One that is transient shares them with its source.
@@ -98,20 +133,73 @@ impl Node {
         self.toggle(F::OBSERVED, !all.is_empty());
     }
 
+    /// Itself, or an ancestor.
+    #[inline(always)]
+    fn closest_observed(&self) -> Option<&Node> {
+        let mut at = self;
+        while !at.has(F::OBSERVED) {
+            at = at.parent()?;
+        }
+        Some(at)
+    }
+
+    /// Whether `queue_mutation_record` may have something to do.
+    #[inline]
+    pub(super) fn has_observed_children(&self) -> bool {
+        self.doc().is(DocFlags::RECORDS_EDITS)
+            || self.doc().is(DocFlags::OBSERVES_CHILDREN)
+                && (self.is_connected() || self.closest_observed().is_some())
+    }
+
+    /// As `has_observed_children`.
+    #[inline]
+    pub(crate) fn has_observed_attribute(&self, local: &Atom) -> bool {
+        self.doc()
+            .is(DocFlags::OBSERVES_ATTRIBUTES | DocFlags::RECORDS_EDITS)
+            && (self.has(F::OBSERVED)
+                || self.doc().is(DocFlags::RECORDS_EDITS)
+                || (UNFILTERED.get() != 0 || FILTERED.get() & bit_of(local) != 0)
+                    && (self.is_connected() || self.closest_observed().is_some()))
+    }
+
+    /// Of an attribute in no namespace.
+    pub(crate) fn has_observed_old_value<'a>(&'a self, heap: &JsHeap<'a>, local: &Atom) -> bool {
+        let mut is_wanted = false;
+        let matters = |node: &Node, it: &Options| {
+            it.old_values.contains(DocFlags::OBSERVES_ATTRIBUTES)
+                && (it.subtree || node == self)
+                && it.filter.as_ref().is_none_or(|it| it.contains(local))
+        };
+        self.for_each_registration(heap, matters, |_, _| is_wanted = true);
+        is_wanted
+    }
+
     /// Of itself and its ancestors.
     #[inline]
     fn for_each_registration<'a>(
         &'a self,
         heap: &JsHeap<'a>,
-        mut visit: impl FnMut(&'a Node, &'a MutationObserver, &Rc<Options>),
+        matters: impl Fn(&Node, &Options) -> bool,
+        mut visit: impl FnMut(&'a MutationObserver, &Rc<Options>),
     ) {
-        for node in self.inclusive_ancestors().filter(|it| it.has(F::OBSERVED)) {
-            let (Some(links), mut has_stale) = (node.try_edge_list(Edge::Observers), false) else {
-                continue;
-            };
-            for (index, it) in node.extra::<Registrations>().0.borrow().iter().enumerate() {
+        for node in core::iter::successors(self.closest_observed(), |it| {
+            it.parent()?.closest_observed()
+        }) {
+            let (mut links, mut has_stale) = (None, false);
+            for (index, it) in node
+                .extra::<Registrations>()
+                .0
+                .borrow()
+                .iter()
+                .enumerate()
+                .filter(|it| matters(node, &it.1.options))
+            {
+                let Some(links) = *links.get_or_insert_with(|| node.try_edge_list(Edge::Observers))
+                else {
+                    break;
+                };
                 match observer_of(links.get(index as u32)) {
-                    Some(observer) => visit(node, observer, &it.options),
+                    Some(observer) => visit(observer, &it.options),
                     None => has_stale = true,
                 }
             }
@@ -145,12 +233,15 @@ pub(crate) fn queue_mutation_record<'a>(
     };
     // The nodes hold them.
     let mut interested = SmallVec::<[(&MutationObserver, bool); 4]>::new();
-    target.for_each_registration(heap, |node, observer, it| {
-        let is_filtered = matches!((&record, &it.filter), (Record::Attribute { name, .. }, Some(filter)) if name.ns != Ns::None || !filter.contains(&name.local));
-        if !it.types.intersects(wanted) || node != target && !it.subtree || is_filtered {
-            return;
-        }
-        match interested.iter_mut().find(|it| core::ptr::eq(it.0, observer)) {
+    let matters = |node: &Node, it: &Options| {
+        let is_filtered = || matches!((&record, &it.filter), (Record::Attribute { name, .. }, Some(filter)) if name.ns != Ns::None || !filter.contains(&name.local));
+        it.types.intersects(wanted) && (it.subtree || node == target) && !is_filtered()
+    };
+    target.for_each_registration(heap, matters, |observer, it| {
+        match interested
+            .iter_mut()
+            .find(|it| core::ptr::eq(it.0, observer))
+        {
             Some(known) => known.1 |= it.old_values.intersects(wanted),
             None => interested.push((observer, it.old_values.intersects(wanted))),
         }
@@ -197,25 +288,27 @@ pub(crate) fn queue_mutation_record<'a>(
 
 /// `node` was removed from `parent`.
 pub(crate) fn observe_transiently<'a>(heap: &JsHeap<'a>, node: &'a Node, parent: &'a Node) {
-    parent.for_each_registration(heap, |at, observer, it| {
-        if it.subtree && at != node {
-            node.register(
+    let has_only_data = node.kind().is_character_data();
+    let matters = |at: &Node, it: &Options| {
+        it.subtree && at != node && (!has_only_data || it.types.contains(DocFlags::OBSERVES_DATA))
+    };
+    parent.for_each_registration(heap, matters, |observer, it| {
+        node.register(
+            heap,
+            observer.link(heap),
+            Registration {
+                options: Rc::clone(it),
+                is_transient: true,
+            },
+        );
+        observer
+            .list(
                 heap,
-                observer.link(heap),
-                Registration {
-                    options: Rc::clone(it),
-                    is_transient: true,
-                },
-            );
-            observer
-                .list(
-                    heap,
-                    js_MutationObserver::transient,
-                    js_MutationObserver::set_transient,
-                )
-                .push(heap, node.to_js());
-            observer.activate(heap, node);
-        }
+                js_MutationObserver::transient,
+                js_MutationObserver::set_transient,
+            )
+            .push(heap, node.to_js());
+        observer.activate(heap, node);
     });
 }
 
@@ -367,12 +460,13 @@ impl MutationObserver {
             .attribute_filter
             .as_ref()
             .map(|it| it.iter().map(|it| Atom::from_impl(it.get())).collect());
-        let options = Rc::new(Options {
+        let options = Options {
             types: flags(options.child_list, attributes, data),
             old_values: flags(false, old_attributes, old_data),
             subtree: options.subtree,
             filter,
-        });
+        }
+        .share();
         target.doc().set_doc_flags(options.types, true);
         target.unregister(heap, |_, _| false);
         let link = self.link(heap);

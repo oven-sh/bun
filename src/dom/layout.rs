@@ -231,6 +231,8 @@ pub(crate) struct Output {
     pub(crate) uses_height: bool,
     /// It has added floats to the formatting context around it.
     pub(crate) has_floats: bool,
+    /// Those around it make no difference to it, nor to where it is.
+    pub(crate) ignores_floats: bool,
     pub(crate) escapes: Claims,
 }
 
@@ -353,8 +355,15 @@ struct Memo {
     margins: [Strut; 2],
     collapses_through: bool,
     uses_height: bool,
-    has_floats: bool,
+    floats: FloatUse,
     escapes: Claims,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum FloatUse {
+    NoneMet,
+    Depends,
+    Ignores,
 }
 
 impl Memo {
@@ -369,8 +378,16 @@ impl Memo {
             collapses_through,
             uses_height,
             has_floats,
+            ignores_floats,
             escapes,
         } = *output;
+        let floats = if has_floats {
+            FloatUse::Depends
+        } else if ignores_floats {
+            FloatUse::Ignores
+        } else {
+            FloatUse::NoneMet
+        };
         Memo {
             key,
             height,
@@ -380,9 +397,13 @@ impl Memo {
             margins,
             collapses_through,
             uses_height,
-            has_floats,
+            floats,
             escapes,
         }
+    }
+
+    fn has_floats(&self) -> bool {
+        self.floats == FloatUse::Depends
     }
 
     #[inline(always)]
@@ -395,10 +416,12 @@ impl Memo {
             margins,
             collapses_through,
             uses_height,
-            has_floats,
+            floats,
             escapes,
             ..
         } = *self;
+        let (has_floats, ignores_floats) =
+            (floats == FloatUse::Depends, floats == FloatUse::Ignores);
         Output {
             height,
             intrinsic,
@@ -409,6 +432,7 @@ impl Memo {
             collapses_through,
             uses_height,
             has_floats,
+            ignores_floats,
             escapes,
         }
     }
@@ -428,10 +452,14 @@ pub(crate) struct Cache {
     widths: Option<(u32, Widths)>,
     /// What a block has made of it to get `performed`, and its offset from the content edge.
     pub(crate) settled: Option<(Setting, f32)>,
-    /// A pass has laid it out for more than one width.
+    /// It has been laid out for more than one width.
     had_other_width: bool,
     /// The contents have changed, and the rest is only there to be compared with.
     is_stale: bool,
+    /// They have not since a grid has last looked at them.
+    pub(crate) knows_contents: bool,
+    /// They may have been laid out for something else than `performed`.
+    pub(crate) has_touched_children: bool,
 }
 
 /// All that the width and the offset of a child depend on, in a block that has neither floats nor breaks.
@@ -458,6 +486,13 @@ impl Cache {
     pub(crate) fn clear(&mut self) {
         (self.widths, self.is_stale) = (None, false);
         self.forget_layout();
+    }
+
+    /// The contents are the same.
+    pub(crate) fn clear_outside(&mut self) {
+        let knows_contents = self.knows_contents && !self.is_stale;
+        self.clear();
+        self.knows_contents = knows_contents;
     }
 
     fn measured(&mut self) -> &mut [(Memo, u32)] {
@@ -516,18 +551,34 @@ impl Cache {
         ));
     }
 
+    /// The size of the containing block, and what `note_settled` was told.
+    pub(crate) fn settled_in(&self) -> Option<([f32; 2], f32)> {
+        self.settled
+            .filter(|_| self.is_current())
+            .map(|(setting, x)| (setting.0.map(f32::from_bits), x))
+    }
+
     pub(crate) fn unsettle(&mut self) {
         self.settled = None;
     }
 
     pub(crate) fn forget_layout(&mut self) {
-        (self.performed, self.was_measured, self.settled) = (None, None, None);
+        (
+            self.performed,
+            self.was_measured,
+            self.settled,
+            self.knows_contents,
+        ) = (None, None, None, false);
         self.measured.iter_mut().for_each(|it| it.clear());
     }
 
     /// Whether it was not yet.
     pub(crate) fn make_stale(&mut self) -> bool {
         !core::mem::replace(&mut self.is_stale, true)
+    }
+
+    pub(crate) fn has_kept_style(&self) -> bool {
+        self.performed.is_some()
     }
 
     pub(crate) fn is_current(&self) -> bool {
@@ -538,6 +589,14 @@ impl Cache {
         self.performed
             .as_ref()
             .map_or_else(Strut::default, |it| it.margins[1])
+    }
+
+    #[inline(always)]
+    pub(crate) fn prefetch_performed(&self) {
+        core::hint::prefetch_read(
+            (&raw const self.was_measured).cast::<u8>().wrapping_sub(1),
+            core::hint::Locality::L1,
+        );
     }
 
     /// Whether an out-of-flow box in it has its containing block outside.
@@ -659,6 +718,8 @@ bitflags::bitflags! {
         const IS_QUIET = 1 << 5;
         /// All sizes and edges are lengths or `auto`.
         const HAS_FIXED_SIZES = 1 << 6;
+        /// As an inline element, it takes no room and moves nothing.
+        const IS_PLAIN_IN_LINES = 1 << 7;
     }
 }
 
@@ -699,10 +760,10 @@ impl Fixed {
 impl Style {
     #[inline(always)]
     pub(crate) fn fixed(&self) -> Fixed {
-        if self.plainness.4.get().units != units_per_pixel() {
+        if self.measures.0.get().units != units_per_pixel() {
             self.find_fixed();
         }
-        self.plainness.4.get()
+        self.measures.0.get()
     }
 
     #[cold]
@@ -790,7 +851,23 @@ impl Style {
             resolve_margin(self, 0.0),
             crate::paint::decoration_extent(self),
         );
-        self.plainness.4.set(Fixed {
+        let has_no_edges = has_fixed_padding
+            && has_fixed_margin
+            && edges == [0.0; 2]
+            && [margin.left, margin.right] == [0.0; 2];
+        let is_on_baseline = matches!(
+            l.vertical_align,
+            VerticalAlign::Keyword(VerticalAlignName::Baseline)
+        );
+        traits.set(
+            Traits::IS_PLAIN_IN_LINES,
+            has_no_edges
+                && is_on_baseline
+                && !self.is_positioned()
+                && self.rare.box_trim == TextBoxTrim::None
+                && self.rare.decoration_break != DecorationBreak::Clone,
+        );
+        self.measures.0.set(Fixed {
             units: units_per_pixel(),
             traits,
             border,
@@ -1011,6 +1088,34 @@ impl LayoutBox {
                 self.tag,
                 "input" | "textarea" | "select" | "meter" | "progress"
             ) && !self.style.look.is_checkable()
+    }
+
+    /// A control with a percentage for a width has no least width.
+    fn gives_way(&self) -> bool {
+        is_name!(self.tag, "input" | "textarea" | "select")
+            && is_relative(&self.style.layout.width)
+            && !self.style.look.is_checkable()
+            && !self
+                .style
+                .contain()
+                .intersects(Contain::SIZE | Contain::INLINE_SIZE)
+    }
+
+    /// Whether its limits say how many tracks or lines it has.
+    fn is_divided_by_limits(&self) -> bool {
+        let l = &self.style.layout;
+        (self.uses_parent != [false; 2] || is_relative(&l.min_width) || is_relative(&l.max_width.0))
+            && match self.kind {
+                Kind::Grid => crate::grid::repeats_automatically(&self.style),
+                Kind::Flex => {
+                    l.flex_wrap.wraps
+                        && matches!(
+                            l.flex_direction,
+                            FlexDirection::Column | FlexDirection::ColumnReverse
+                        )
+                }
+                _ => false,
+            }
     }
 
     /// What `box-sizing` leaves out.
@@ -1323,6 +1428,12 @@ impl Document {
         if turns {
             self.turn_children(id, WritingMode::HorizontalTb);
         }
+        if self.boxes[id].gives_way()
+            && let [width, height] = self.fixed_content_size(id)
+            && (width.is_some() || height.is_none() && self.boxes[id].tag == name!("select"))
+        {
+            widths.sizes[0] = 0.0;
+        }
         if self.boxes[id].kind != Kind::Table {
             widths.sizes = widths.sizes.map(|it| it.max(0.0) + inset);
         }
@@ -1364,6 +1475,9 @@ impl Document {
         let inner = height.map(|height| (height - edges[1] - it.gutters().sums()[1]).max(0.0));
         let inner = inner.or_else(|| room.basis[1].filter(|_| passes));
         let percentages = edges[0] - it.border_and_padding(0.0).sums()[0];
+        if it.is_divided_by_limits() {
+            (self.boxes[id].cache.widths, self.basis_for_widths) = (None, (id, room.basis));
+        }
         let mut widths = self.intrinsic_widths(id, inner);
         let it = &self.boxes[id];
         widths.sizes = widths.sizes.map(|it| it + percentages);
@@ -1375,6 +1489,18 @@ impl Document {
         }
         widths.uses_height &= reads_parent || it.has_auto_size(1);
         widths
+    }
+
+    /// What `content_widths` has been given.
+    pub(crate) fn room_for_widths(&self, id: BoxId) -> Room {
+        Room {
+            basis: if self.basis_for_widths.0 == id {
+                self.basis_for_widths.1
+            } else {
+                [None; 2]
+            },
+            ..Room::default()
+        }
     }
 
     /// `content_widths` of a box with `fixed_sizes`.
@@ -1763,7 +1889,7 @@ impl Document {
         }
         let it = &self.boxes[id];
         if it.cache.performed.as_ref().is_some_and(|known| {
-            !it.cache.is_stale && !known.has_floats && it.holds_for_height(known, &key)
+            !it.cache.is_stale && !known.has_floats() && it.holds_for_height(known, &key)
         }) && self.is_plain_block(id, input, None)
         {
             return Found::ForOtherHeight;
@@ -1817,18 +1943,18 @@ impl Document {
             it.layout.size.height = known.height;
             return;
         }
-        it.cache.had_other_width |=
-            it.cache.pass == self.layout_pass && it.layout.size.width != input.width;
+        it.cache.had_other_width |= it.cache.pass != 0 && it.layout.size.width != input.width;
         it.cache.pass = self.layout_pass;
         let is_affected = floats.as_ref().is_some_and(|it| it.are_in_the_way());
         let (key, is_resized, mut differs_in_width, mut differs_in_size) =
             (Key::new(input), it.cache.performed.is_some(), false, false);
-        if let Some(known) = it
-            .cache
-            .performed
-            .as_ref()
-            .filter(|it| !is_affected && !it.has_floats)
-        {
+        if let Some(known) = it.cache.performed.as_ref().filter(|it| {
+            if is_affected {
+                it.floats == FloatUse::Ignores
+            } else {
+                !it.has_floats()
+            }
+        }) {
             if known.key.width != key.width {
                 let key = Key {
                     width: known.key.width,
@@ -1877,8 +2003,11 @@ impl Document {
                     it.parent
                 };
                 *self.boxes[at].cache.retire(None) = None;
+                self.boxes[at].cache.has_touched_children = true;
             }
         }
+        let parent = self.boxes[id].parent;
+        self.boxes[parent].cache.has_touched_children = true;
         self.boxes.prefetch_after(id);
         let count = floats.as_ref().map_or(0, |it| it.len());
         if differs_in_width
@@ -1924,11 +2053,21 @@ impl Document {
         } else if !is_affected && let Some(output) = self.lay_out_label(id, input) {
             self.record(id, Memo::new(key, &output), is_resized);
             self.note_extents_of_lines(id, None);
-        } else if !is_affected
-            && self.boxes[id].kind == Kind::Lines
-            && let Some((output, painted)) = self.lay_out_prose(id, input)
+        } else if self.boxes[id].kind == Kind::Lines
+            && let Some((output, painted)) =
+                self.lay_out_prose(id, input, floats.as_deref().filter(|_| is_affected))
         {
-            self.record(id, Memo::new(key, &output), is_resized);
+            self.record(
+                id,
+                Memo::new(
+                    key,
+                    &Output {
+                        has_floats: is_affected,
+                        ..output
+                    },
+                ),
+                is_resized,
+            );
             self.note_extents_of_lines(id, Some(painted));
         } else if self.is_plain_block(id, input, floats.as_deref()) {
             let output = self.lay_out_plain_block(id, input, floats);
@@ -1939,16 +2078,25 @@ impl Document {
             let output = self.lay_out_flex(id, input, None);
             self.record(id, Memo::new(key, &output), is_resized);
         } else {
+            self.gathered.set(None);
             let output = self.compute(id, input, floats.as_deref_mut());
+            let has_floats =
+                is_affected && !output.ignores_floats || floats.is_some_and(|it| it.len() != count);
             self.record(
                 id,
-                Memo {
-                    has_floats: is_affected || floats.is_some_and(|it| it.len() != count),
-                    ..Memo::new(key, &output)
-                },
+                Memo::new(
+                    key,
+                    &Output {
+                        has_floats,
+                        ..output
+                    },
+                ),
                 is_resized,
             );
-            if matches!(self.boxes[id].kind, Kind::Flex | Kind::Grid) && self.boxes.is_unbroken(id)
+            if (matches!(self.boxes[id].kind, Kind::Flex | Kind::Grid)
+                || output.ignores_floats
+                || self.gathered.get().is_some_and(|it| it.0 == id))
+                && self.boxes.is_unbroken(id)
             {
                 self.note_extents(id);
             }
@@ -1967,7 +2115,7 @@ impl Document {
             ),
         );
         let it = &self.boxes[child];
-        let had_other_width = it.cache.pass == self.layout_pass && it.layout.size.width != width;
+        let had_other_width = it.layout.size.width != width;
         if !(it.kind == Kind::Lines
             && it.uses_parent == [false; 2]
             && it.children.is_empty()
@@ -2022,7 +2170,7 @@ impl Document {
             .settled
             .filter(|settled| settled.0 == setting && !it.cache.is_stale)?;
         let known = it.cache.performed.as_ref().filter(|known| {
-            it.layout.size.width.to_bits() == known.key.width && !known.has_floats
+            it.layout.size.width.to_bits() == known.key.width && !known.has_floats()
         })?;
         (it.layout.size.height, it.cache.pass) = (known.height, self.layout_pass);
         Some((x, it.layout.margin, known.output()))
@@ -2255,7 +2403,7 @@ impl Document {
         }
         let it = &mut self.boxes[id];
         it.cache.forget_other_widths();
-        let (mut old, covered) = (core::mem::take(&mut it.cache), it.covered());
+        let (mut old, before) = (core::mem::take(&mut it.cache), it.cover());
         let Some((input, output)) = old.performed.map(|it| (it.key.input(), it.output())) else {
             return true;
         };
@@ -2266,6 +2414,7 @@ impl Document {
         if self.boxes[VIEWPORT].size() != self.environment.viewport
             || output.has_floats
             || !output.escapes.is_empty()
+                && (self.boxes.has_lost_out_of_flow || it.style.is_out_of_flow())
             || is_subgrid
             || it.mode.is_vertical()
             || it.is_cell()
@@ -2313,6 +2462,9 @@ impl Document {
         {
             return true;
         }
+        if !output.escapes.is_empty() && !self.refresh_escapees(id) {
+            return true;
+        }
         let cache = &mut self.boxes[id].cache;
         (
             cache.measured,
@@ -2337,12 +2489,7 @@ impl Document {
             }
             ancestor = it.parent;
         }
-        if covered.is_some() && covered == self.boxes[id].covered() {
-            self.repaint_eventually(id);
-        } else {
-            self.boxes.mark_ink_around(id);
-            self.moved_boxes_in_scrollers.push(id);
-        }
+        self.note_new_contents(id, &before);
         false
     }
 
@@ -2401,7 +2548,7 @@ impl Document {
                 break;
             }
         }
-        self.layout_fuel = usize::MAX;
+        (self.layout_fuel, self.boxes.has_lost_out_of_flow) = (usize::MAX, false);
     }
 
     /// Of the content box, where it does not depend on the contents.
@@ -2608,6 +2755,9 @@ impl Document {
         ignores: [bool; 2],
     ) -> [f32; 2] {
         let (it, fixed) = (&self.boxes[id], self.fixed_content_size(id));
+        if self.environment.is_object && it.kind == Kind::Svg && it.parent == VIEWPORT {
+            return it.turned.turn_axes(self.environment.viewport);
+        }
         let edges = it.border_and_padding(room.basis[0].unwrap_or(0.0)).sums();
         let natural = self.natural_size(id);
         let natural = [0, 1].map(|axis| fixed[axis].or(natural[axis]).map(|it| it + edges[axis]));
@@ -2651,7 +2801,8 @@ impl Document {
         );
         let (transfer, default) = (
             |axis: usize, other: f32| it.transfer(axis, other, edges),
-            it.turned.turn_axes([300.0, 150.0]),
+            it.turned
+                .turn_axes([300.0 * it.style.zoom, 150.0 * it.style.zoom]),
         );
         if (width, height, natural) == (None, None, [None; 2]) && it.ratio.is_some() {
             let limit = |it: f32| transfer(0, it).filter(|_| it.is_finite()).unwrap_or(it);

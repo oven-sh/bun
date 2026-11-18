@@ -75,7 +75,7 @@ fn from_job<'a>(captured: JSValue) -> &'a ViewTransition {
 fn is_visible(doc: &Doc) -> bool {
     doc.window()
         .and_then(|it| it.downcast::<Window>())
-        .is_some_and(|it| it.is(Is::VISIBLE))
+        .is_some_and(|it| it.is(Is::DRAWN))
 }
 
 macro_rules! step {

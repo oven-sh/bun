@@ -108,6 +108,11 @@ extern "C" void Bun__DOM__appendToFormData(JSGlobalObject*, EncodedJSValue data,
     }
 }
 
+extern "C" void Bun__DOM__appendTextToFormData(EncodedJSValue data, StringImpl* name, StringImpl* value)
+{
+    entriesOf(JSValue::decode(data)).append(name, String(value));
+}
+
 extern "C" StringImpl* Bun__DOM__entryOfFormData(EncodedJSValue data, uint32_t index, StringImpl** value, void** file)
 {
     auto& items = entriesOf(JSValue::decode(data)).items();

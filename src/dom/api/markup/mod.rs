@@ -1,11 +1,11 @@
 //! From markup to nodes, and back.
 
 mod parser;
-mod pending;
 mod sanitizer;
 mod serialize;
 mod serialize_xml;
 mod sink;
+mod snapshot;
 mod xml;
 
 use core::cell::Cell;
@@ -19,6 +19,7 @@ pub(crate) use parser::{DocumentParser, throws_on_markup_insertion};
 use sanitizer::Safety;
 pub(crate) use sanitizer::Sanitizer;
 pub(crate) use serialize_xml::{WellFormed, outer_xml};
+pub(crate) use snapshot::{Parts, Purpose, snapshot};
 pub(crate) use xml::parse_document as parse_xml_document;
 
 use crate::api::core::*;
@@ -111,6 +112,7 @@ pub(crate) fn parse_html_fragment<'a>(
         allows_patches: !options.is_inert,
         keeps_mode: true,
     };
+    sink::expect_markup(doc, markup, markup.len());
     without_collecting(cx, |cx| {
         html::parse_fragment(
             markup,
@@ -120,6 +122,7 @@ pub(crate) fn parse_html_fragment<'a>(
             &mut Sink::new(cx, doc, client),
         )
     });
+    sink::markup_was_parsed(doc, markup.len());
     doc.report_bare(cx);
     root
 }
@@ -191,12 +194,14 @@ pub(crate) fn parse_html_document<'a>(
         return Ok(());
     }
     let mut parser = html::Parser::new(options);
-    parser.write(markup.chars());
+    sink::expect_markup(doc, markup.chars(), markup.len() as usize);
+    parser.write_shared(markup);
     parser.end();
     without_collecting(cx, |cx| {
         let mut sink = Sink::new(cx, doc, Client::Inert);
         while !matches!(parser.run(&mut sink), html::Stop::Finished) {}
     });
+    sink::markup_was_parsed(doc, markup.len() as usize);
     doc.report_bare(cx);
     Ok(())
 }
@@ -473,5 +478,11 @@ impl XMLSerializer {
         root: &'a Node,
     ) -> Result<'a, Str<'a>> {
         Ok(outer_xml(cx, root, WellFormed::Optional)?.to_js(&cx.heap))
+    }
+}
+
+fn before_constructing<'a>(cx: &mut JsScope<'a>, parent: &'a Node, name: &Atom, is: Option<&Atom>) {
+    if custom::look_up(custom::registry_of(parent), name, is).is_some() {
+        crate::api::events::microtask_checkpoint(cx);
     }
 }

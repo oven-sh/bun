@@ -14,6 +14,7 @@ use crate::generated_bindgen::core::{
     js_DesktopEventTarget as js_EventTarget,
 };
 use crate::generated_bindgen::events::js_Listeners;
+use crate::name::Map;
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq)]
@@ -22,14 +23,14 @@ bitflags::bitflags! {
         const PASSIVE = 1 << 1;
         /// `on*`
         const HANDLER = 1 << 2;
-        /// What it has for a callback is for `pending::compile_handler`.
+        /// What it has for a callback is for `compile_handler`.
         const UNCOMPILED = 1 << 3;
         const CALLABLE = 1 << 4;
     }
 }
 
 /// The type, and whether it captures.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(super) struct Key(u32);
 
 impl Key {
@@ -67,8 +68,21 @@ pub(crate) struct Listeners {
     /// `Key::bit` of all that it has ever had.
     keys: Cell<u64>,
     next_serial: Cell<u32>,
-    free_slots: Cell<u32>,
+    many: RefCell<Option<Box<Many>>>,
 }
+
+/// What it takes to search when there are few.
+#[derive(Default)]
+struct Many {
+    /// The serials of those that are no handlers, by their keys and callbacks.
+    serials: Map<(Key, usize), u32>,
+    /// In `rest`.
+    free_slots: Vec<u32>,
+    /// How many can be added before those that are aborted go.
+    until_sweep: usize,
+}
+
+const FEW: usize = 16;
 
 impl Listeners {
     fn rest(&self) -> Option<List<'_>> {
@@ -92,16 +106,11 @@ impl Listeners {
     }
 
     fn store(&self, heap: &JsHeap<'_>, value: JSValue) -> u32 {
-        let free = || {
-            Some(
-                self.rest()
-                    .filter(|_| self.free_slots.get() > 0)?
-                    .position(JSValue::UNDEFINED)?
-                    + 2,
-            )
+        let free = || match &mut *self.many.borrow_mut() {
+            Some(many) => many.free_slots.pop(),
+            None => Some(self.rest()?.position(JSValue::UNDEFINED)? + 2),
         };
         if let Some(slot) = (0..2).find(|it| self.value(*it).is_empty()).or_else(free) {
-            self.free_slots.update(|it| it - u32::from(slot >= 2));
             self.set_value(heap, slot, value);
             return slot;
         }
@@ -112,7 +121,9 @@ impl Listeners {
     }
 
     fn release(&self, heap: &JsHeap<'_>, slot: u32) {
-        self.free_slots.update(|it| it + u32::from(slot >= 2));
+        if let Some(many) = self.many.borrow_mut().as_mut().filter(|_| slot >= 2) {
+            many.free_slots.push(slot);
+        }
         self.set_value(
             heap,
             slot,
@@ -167,12 +178,87 @@ impl Listeners {
             .find(|it| test(*it))
     }
 
+    /// One that is no handler.
+    fn find_callback(&self, key: Key, callback: JSValue) -> Option<Listener> {
+        let is_it = |it: Listener| {
+            it.key == key && self.callback(it) == callback && !it.is.contains(Is::HANDLER)
+        };
+        let Some(many) = &*self.many.borrow() else {
+            return self.find(key, is_it);
+        };
+        let (serial, all) = (
+            *many.serials.get(&(key, callback.encoded()))?,
+            self.all.borrow(),
+        );
+        all[all.partition_point(|it| (it.key, it.serial) < (key, serial))..]
+            .iter()
+            .copied()
+            .find(|it| is_it(*it))
+    }
+
+    fn sweep(&self, heap: &JsHeap<'_>, key: Key) {
+        let is_time = self.many.borrow_mut().as_mut().map(|it| {
+            it.until_sweep = it
+                .until_sweep
+                .checked_sub(1)
+                .unwrap_or_else(|| it.serials.len() / 4);
+            it.until_sweep == 0
+        });
+        match is_time {
+            None => core::iter::from_fn(|| self.find(key, |it| self.is_aborted(it)))
+                .for_each(|it| self.remove(heap, it)),
+            Some(true) => {
+                let aborted = Vec::from_iter(
+                    self.all
+                        .borrow()
+                        .iter()
+                        .copied()
+                        .filter(|it| self.is_aborted(*it)),
+                );
+                aborted.into_iter().for_each(|it| self.remove(heap, it));
+            }
+            Some(false) => {}
+        }
+    }
+
+    #[cold]
+    fn index(&self) -> Box<Many> {
+        let serials = self
+            .all
+            .borrow()
+            .iter()
+            .filter(|it| !it.is.contains(Is::HANDLER))
+            .map(|it| ((it.key, self.callback(*it).encoded()), it.serial))
+            .collect();
+        let free_slots = self
+            .rest()
+            .into_iter()
+            .flat_map(List::values)
+            .zip(2..)
+            .filter(|it| it.0.is_undefined())
+            .map(|it| it.1)
+            .collect();
+        Box::new(Many {
+            serials,
+            free_slots,
+            until_sweep: 0,
+        })
+    }
+
     fn has(&self, key: Key, unless: Is) -> bool {
         self.find(key, |it| !it.is.intersects(unless) && !self.is_aborted(it))
             .is_some()
     }
 
     fn add(&self, heap: &JsHeap<'_>, key: Key, is: Is, callback: JSValue, signal: Option<JSValue>) {
+        if self.all.borrow().len() >= FEW || self.many.borrow().is_some() {
+            let mut many = self.many.take().unwrap_or_else(|| self.index());
+            if !is.contains(Is::HANDLER) {
+                many.serials
+                    .insert((key, callback.encoded()), self.next_serial.get());
+            }
+            self.many.replace(Some(many));
+        }
         let (callback, signal) = (
             self.store(heap, callback),
             signal.map_or(NO_SIGNAL, |it| self.store(heap, it)),
@@ -195,9 +281,25 @@ impl Listeners {
     }
 
     fn remove(&self, heap: &JsHeap<'_>, listener: Listener) {
-        self.all
+        let mut all = self.all.borrow_mut();
+        let start = all.partition_point(|it| (it.key, it.serial) < (listener.key, listener.serial));
+        let Some(offset) = all[start..]
+            .iter()
+            .position(|it| it.callback == listener.callback)
+        else {
+            return;
+        };
+        all.remove(start + offset);
+        drop(all);
+        if let Some(many) = self
+            .many
             .borrow_mut()
-            .retain(|it| it.callback != listener.callback);
+            .as_mut()
+            .filter(|_| !listener.is.contains(Is::HANDLER))
+        {
+            many.serials
+                .remove(&(listener.key, self.callback(listener).encoded()));
+        }
         self.release(heap, listener.callback);
         if listener.signal != NO_SIGNAL {
             self.release(heap, listener.signal);
@@ -301,7 +403,7 @@ impl EventTarget {
     }
 
     pub(crate) fn remove_all_listeners(&self) {
-        self.listeners().map(|it| it.all.take());
+        self.listeners().map(|it| (it.all.take(), it.many.take()));
         js_EventTarget::set_listeners(self, None);
     }
 
@@ -365,14 +467,11 @@ impl EventTarget {
         let kind = EventType::for_listener(name);
         let key = Key::new(kind, captures);
         if let Some(listeners) = self.listeners() {
-            while let Some(it) = listeners.find(key, |it| {
-                listeners.is_aborted(it)
-                    || listeners.callback(it) == callback && !it.is.contains(Is::HANDLER)
-            }) {
-                if !listeners.is_aborted(it) {
-                    return Ok(());
-                }
-                listeners.remove(heap, it);
+            listeners.sweep(heap, key);
+            match listeners.find_callback(key, callback) {
+                Some(it) if listeners.is_aborted(it) => listeners.remove(heap, it),
+                Some(_) => return Ok(()),
+                None => {}
             }
         }
         let mut is = if once { Is::ONCE } else { Is::empty() };
@@ -399,9 +498,7 @@ impl EventTarget {
         };
         if let (Some(listeners), Some(kind), Some(callback)) =
             (self.listeners(), EventType::of(name), callback)
-            && let Some(found) = listeners.find(Key::new(kind, captures), |it| {
-                listeners.callback(it) == callback.to_js() && !it.is.contains(Is::HANDLER)
-            })
+            && let Some(found) = listeners.find_callback(Key::new(kind, captures), callback.to_js())
         {
             self.remove_listener(heap, listeners, found);
         }

@@ -1221,6 +1221,10 @@ int us_x509_verify_cert(X509_STORE_CTX *ctx, int purpose) {
   return us_x509_verify_chain(ctx);
 }
 
+void us_x509_store_ignore_expired_trust_anchors(X509_STORE *store) {
+  X509_STORE_set_flags(store, X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS);
+}
+
 /* For a client: the certificates above the leaf on the path that verifies, each as a u32 length and DER, for OPENSSL_free. 0 if there are none. */
 size_t us_ssl_verified_issuers(SSL *ssl, uint8_t **out) {
   SSL_CTX *ctx = SSL_get_SSL_CTX(ssl);
@@ -1231,8 +1235,9 @@ size_t us_ssl_verified_issuers(SSL *ssl, uint8_t **out) {
   CBB cbb;
   CBB_zero(&cbb);
   if (walk && X509_STORE_CTX_init(walk, shared ? shared : SSL_CTX_get_cert_store(ctx), sk_X509_value(sent, 0), sent) &&
-      X509_STORE_CTX_set_default(walk, "ssl_server") && us_x509_verify_cert(walk, X509_PURPOSE_SSL_SERVER) > 0 &&
-      CBB_init(&cbb, 4096)) {
+      X509_STORE_CTX_set_default(walk, "ssl_server") &&
+      X509_VERIFY_PARAM_set1(X509_STORE_CTX_get0_param(walk), SSL_CTX_get0_param(ctx)) &&
+      us_x509_verify_cert(walk, X509_PURPOSE_SSL_SERVER) > 0 && CBB_init(&cbb, 4096)) {
     STACK_OF(X509) *chain = X509_STORE_CTX_get0_chain(walk);
     int ok = 1;
     for (size_t i = 1; ok && i < sk_X509_num(chain); i++) {

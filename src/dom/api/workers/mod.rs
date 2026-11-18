@@ -6,10 +6,10 @@ use core::cell::{Cell, RefCell};
 use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU32, Ordering};
+use std::collections::BTreeMap;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
-use bun_collections::HashMap;
 use bun_jsc::bindgen::{self, ClassStructure, JsHeap, JsInterface, JsList, JsLocal, JsScope};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSObject, JSValue};
@@ -78,8 +78,8 @@ struct Owner {
 
 #[derive(Default)]
 struct OfThread {
-    by_id: HashMap<u32, Weak<Running>>,
-    shared: HashMap<Bytes, u32>,
+    by_id: BTreeMap<u32, Weak<Running>>,
+    shared: BTreeMap<Bytes, u32>,
 }
 
 thread_local! {

@@ -429,7 +429,7 @@ pub(crate) fn scope_random<'a>(property: Prop, source: &'a [u8]) -> Cow<'a, [u8]
             if !matches!(token, Token::Function(_) | Token::OpenParen) || depth > MAX_DEPTH {
                 continue;
             }
-            nested(p, |p| {
+            crate::values::visit_nested(p, |p| {
                 if matches!(token, Token::Function(name) if eq(name, "random")) {
                     *count += 1;
                     p.skip_whitespace();
@@ -448,7 +448,6 @@ pub(crate) fn scope_random<'a>(property: Prop, source: &'a [u8]) -> Cow<'a, [u8]
                     }
                 }
                 visit(p, depth + 1, count, replace);
-                Some(())
             });
         }
     }

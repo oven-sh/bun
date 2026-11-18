@@ -749,7 +749,12 @@ impl Document {
             self.focus_part(current);
         }
         if old != current && self.scroll_part(group).is_some() && self.scroller(group).is_some() {
-            self.scroll_into_view(current, [crate::scroll::Alignment::Nearest; 2], 0, true);
+            self.scroll_into_view(
+                current,
+                [crate::scroll::Alignment::Nearest; 2],
+                0,
+                crate::scroll::Scrollers::Nearest,
+            );
         }
     }
 

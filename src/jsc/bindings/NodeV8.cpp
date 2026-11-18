@@ -3,14 +3,17 @@
 #include "root.h"
 
 #include "ErrorCode.h"
+#include "ExtendedDOMIsoSubspaces.h"
 #include "NodeV8.h"
 #include "ZigGlobalObject.h"
 
+#include <JavaScriptCore/HeapIterationScope.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCJSValue.h>
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/SubspaceInlines.h>
 #include <wtf/StdLibExtras.h>
 
 namespace Bun {
@@ -94,6 +97,31 @@ JSC_DEFINE_HOST_FUNCTION(functionStopGCProfiler, (JSGlobalObject * globalObject,
     return JSValue::encode(result);
 }
 
+JSC_DEFINE_HOST_FUNCTION(functionHeapSizes, (JSGlobalObject * globalObject, CallFrame*))
+{
+    auto& vm = JSC::getVM(globalObject);
+    size_t capacity = vm.heap.capacity();
+    size_t size = WebCore::clientData(vm)->heapSizeAfterLastCollection();
+    JSObject* result = constructEmptyObject(globalObject);
+    Bun::putDirectNamed(vm, result, "heapSize"_s, jsNumber(size ? size : capacity));
+    Bun::putDirectNamed(vm, result, "heapCapacity"_s, jsNumber(std::max(size, capacity)));
+    Bun::putDirectNamed(vm, result, "extraMemorySize"_s, jsNumber(vm.heap.extraMemorySize()));
+    return JSValue::encode(result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionCountGlobalObjects, (JSGlobalObject * globalObject, CallFrame*))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto& subspaces = WebCore::clientData(vm)->heapData().subspaces();
+    HeapIterationScope iterationScope(vm.heap);
+    unsigned count = 0;
+    for (auto* subspace : { subspaces.m_subspaceForWorkerGlobalScope, subspaces.m_subspaceForNodeVMGlobalObject, subspaces.m_subspaceForBakeGlobalScope, subspaces.m_subspaceForWebGlobalObject }) {
+        if (subspace)
+            subspace->forEachLiveCell([&](HeapCell*, HeapCell::Kind) { ++count; });
+    }
+    return JSValue::encode(jsNumber(count));
+}
+
 JSC::JSValue createNodeV8Binding(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -102,6 +130,8 @@ JSC::JSValue createNodeV8Binding(JSC::JSGlobalObject* globalObject)
     object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "startGCProfiler"_s), 0, functionStartGCProfiler, ImplementationVisibility::Public, JSC::NoIntrinsic, 0);
     object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "stopGCProfiler"_s), 1, functionStopGCProfiler, ImplementationVisibility::Public, JSC::NoIntrinsic, 0);
     object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "discardGCProfiler"_s), 1, functionDiscardGCProfiler, ImplementationVisibility::Public, JSC::NoIntrinsic, 0);
+    object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "heapSizes"_s), 0, functionHeapSizes, ImplementationVisibility::Public, JSC::NoIntrinsic, 0);
+    object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "countGlobalObjects"_s), 0, functionCountGlobalObjects, ImplementationVisibility::Public, JSC::NoIntrinsic, 0);
     return object;
 }
 

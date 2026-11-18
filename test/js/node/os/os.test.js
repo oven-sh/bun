@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { realpathSync } from "fs";
-import { bunEnv, bunExe, bunRun, compileFixture, isGlibc, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, compileFixture, isGlibc, isRoot, isWindows, tempDir } from "harness";
 import { isIPv4, isIPv6 } from "node:net";
 import * as os from "node:os";
 import { join } from "node:path";
@@ -140,6 +140,16 @@ it.skipIf(process.platform === "win32")("userInfo reads the passwd entry, not th
     env: { ...bunEnv, USER: "somebody-else", HOME: "/somewhere-else", SHELL: "/something-else" },
   });
   expect(await proc.stdout.json()).toEqual(os.userInfo());
+  expect(await proc.exited).toBe(0);
+});
+
+it.skipIf(!isRoot)("userInfo has the ids of the user that it names", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-p", `process.seteuid("daemon"), JSON.stringify(os.userInfo())`],
+    env: bunEnv,
+  });
+  const id = flag => Number(Bun.spawnSync({ cmd: ["id", flag, "daemon"] }).stdout.toString());
+  expect(await proc.stdout.json()).toMatchObject({ username: "daemon", uid: id("-u"), gid: id("-g") });
   expect(await proc.exited).toBe(0);
 });
 

@@ -178,6 +178,7 @@ fn get_ready() {
     }
     ATTEMPTS.set((count + 1, Some(Instant::now())));
     let start = || {
+        crate::host::thread::is_needed_for_frames();
         let time = Instant::now();
         match set_up() {
             Ok(()) => {
@@ -191,23 +192,40 @@ fn get_ready() {
     drop(std::thread::Builder::new().name("GPU".into()).spawn(start));
 }
 
-/// Getting ready takes time and memory, so not for a frame or two, and not while the app starts.
-pub fn is_ready() -> bool {
-    const IN_A_ROW: u32 = 4;
-    thread_local! {
-        static ASKED: Cell<(Option<Instant>, u32)> = const { Cell::new((None, 0)) };
+const ENOUGH: u32 = 20;
+
+thread_local! {
+    static ASKED: Cell<(Option<Instant>, u32)> = const { Cell::new((None, 0)) };
+    static IS_WANTED: Cell<bool> = const { Cell::new(false) };
+}
+
+pub fn waits_for_pause() -> bool {
+    IS_WANTED.get()
+}
+
+pub fn note_pause() {
+    if IS_WANTED.take() {
+        get_ready();
     }
+}
+
+/// Getting ready takes time and memory, so not for a frame or two, and not while the app starts. It holds up the window server, so it waits for a pause if it can.
+pub fn is_ready(is_urgent: bool) -> bool {
     let is_ready = IS_USABLE.load(Ordering::Acquire);
     if !is_ready {
         let (last, times) = ASKED.get();
-        let times = if last.is_some_and(|it| it.elapsed() < crate::host::interval() * 3) {
-            times + 1
-        } else {
-            0
+        let frames = last.map_or(u128::MAX, |it| {
+            it.elapsed().as_micros() / crate::host::interval().as_micros()
+        });
+        let times = match frames {
+            0..3 => times + ENOUGH / 4,
+            3..15 => times + 1,
+            _ => 0,
         };
         ASKED.set((Some(Instant::now()), times));
-        if times >= IN_A_ROW {
-            get_ready();
+        IS_WANTED.set(IS_WANTED.get() || times >= ENOUGH);
+        if is_urgent {
+            note_pause();
         }
     }
     is_ready

@@ -524,9 +524,10 @@ for (const engine of engines) {
         }
         return respond("<title>echo</title>")();
       };
-      const other = site({ "/echo": echo, "/nothing": () => new Response(null, { status: 204 }), "/top": "<script>top.location = location.search.slice(1)</script>" }).replace("127.0.0.1", "localhost");
-      const own = site({ "/echo": echo, "/quiet": "<meta name=referrer content=no-referrer>", "/to": request => Response.redirect(new URL(request.url).search.slice(1)) });
-      app.trustOrigins([own], { except: [own + "/echo"] });
+      const redirect = request => Response.redirect(new URL(request.url).search.slice(1));
+      const other = site({ "/echo": echo, "/to": redirect, "/nothing": () => new Response(null, { status: 204 }), "/top": "<script>top.location = location.search.slice(1)</script>" }).replace("127.0.0.1", "localhost");
+      const own = site({ "/echo": echo, "/quiet": "<meta name=referrer content=no-referrer>", "/to": redirect, "/echo/to": redirect, "/trusted": echo });
+      app.trustOrigins([own], { except: [own + "/echo", own + "/echo/*"] });
       for (const url of [own, other]) for (const sameSite of ["strict", "lax"])
         await session.defaultSession.cookies.set({ url, name: sameSite, value: "1", sameSite });
       const events = ["did-start-loading", "did-start-navigation", "will-navigate", "navigation-entry-committed", "did-navigate", "did-finish-load", "did-stop-loading"];
@@ -556,6 +557,53 @@ for (const engine of engines) {
           await until(() => last);
           print(last);`),
       ).toEqual([["GET", ...headers]]);
+    });
+
+    const back = `own + "/trusted"`;
+    test.each([
+      ["the page", `own + "/echo"`, `location = to`, ["same-origin", "strict=1; lax=1"]],
+      ["the page, by a redirect", `own + "/echo"`, `location = "/echo/to?" + to`, ["same-origin", "strict=1; lax=1"]],
+      ["the page, by another site", `own + "/echo"`, `location = other + "/to?" + to`, ["cross-site", "lax=1"]],
+      ["a frame", `own + "/echo"`, `frame(to)`, ["cross-site", "lax=1"]],
+      ["a frame, by a redirect", `own + "/echo"`, `frame(location.origin + "/echo/to?" + to)`, ["cross-site", "lax=1"]],
+      ["another site, by a redirect", `other + "/"`, `location = own + "/echo/to?" + to`, ["cross-site", "lax=1"]],
+    ])("a trusted site is told who has asked for its page: %s", async (_, from, script, headers) => {
+      expect(
+        await run(`${echo}
+          const { page } = await go(${from}, "{ const [own, other, to] = " + JSON.stringify([own, other, ${back}]) + ";" + ${JSON.stringify(
+            `const frame = to => document.body.append(Object.assign(document.createElement("iframe"), { sandbox: "allow-scripts allow-same-origin allow-top-navigation", src: other + "/top?" + to })); ${script}; }`,
+          )});
+          await until(() => page.getURL() === ${back} && !page.isLoading());
+          print([last[1], last[3]]);`),
+      ).toEqual([headers]);
+    });
+
+    test("a trusted site is told that a window has asked for the page of its opener", async () => {
+      expect(
+        await run(`${echo}
+          const { page } = await go(own + "/a", "void (location = '/echo')");
+          page.executeJavaScript("void open('" + other + "/')", true);
+          const [{ webContents: opened }] = await once(page, "did-create-window");
+          await until(() => opened.getURL() === other + "/" && !opened.isLoading());
+          await opened.executeJavaScript("void (opener.location = '" + own + "/trusted')", true);
+          await until(() => page.getURL() === ${back} && !page.isLoading());
+          print([last[1], last[3]]);`),
+      ).toEqual([["cross-site", "lax=1"]]);
+    });
+
+    test("a site is told again who has asked for its page when the history goes back to it", async () => {
+      expect(
+        await run(`${echo}
+          const { page } = await go(own + "/a", "void (location = '" + other + "/echo')");
+          await page.loadURL(own + "/b");
+          last = undefined;
+          const seen = [];
+          for (const name of events) page.on(name, () => seen.push(name));
+          page.navigationHistory.goBack();
+          await until(() => page.getURL() === other + "/echo" && !page.isLoading());
+          const { navigationHistory: history } = page;
+          print([last[1], last[3], seen.includes("will-navigate"), history.getActiveIndex(), history.getAllEntries().map(it => new URL(it.url).pathname)]);`),
+      ).toEqual([["cross-site", "lax=1", false, 1, ["/a", "/echo", "/b"]]]);
     });
 
     test("a site is told that the app has asked for its page", async () => {
@@ -961,11 +1009,17 @@ for (const engine of engines) {
             const context = new OffscreenCanvas(32, 16).getContext("2d");
             context.drawImage(video, 0, 0);
             const ended = new Promise(resolve => (video.onended = resolve));
+            const times = [];
+            const note = (_, { mediaTime }) => ((video.loop = times.push(mediaTime) < 3), video.requestVideoFrameCallback(note));
+            video.requestVideoFrameCallback(note);
+            video.loop = true;
             await video.play();
             await ended;
-            return [video.videoWidth, video.clientHeight, context.getImageData(8, 8, 1, 1).data[1] > 200, video.paused];
+            // WebM counts milliseconds.
+            const areOfFrames = times.every(it => Math.abs(it * 1000 - Math.round(it * 1000)) < 1e-6);
+            return [video.videoWidth, video.clientHeight, context.getImageData(8, 8, 1, 1).data[1] > 200, video.paused, areOfFrames];
           }})("\${recorded}")\`));`),
-      ).toEqual([[32, 16, true, true]]);
+      ).toEqual([[32, 16, true, true, true]]);
     });
 
     test("each frame of a video is presented once", async () => {
@@ -1009,6 +1063,114 @@ for (const engine of engines) {
           await page.executeJavaScript("new Promise(resolve => { onafterprint = () => resolve(); print(); })");
           print((await Bun.file(file).text()).slice(0, 5));`),
       ).toEqual(["a b.pdf", "%PDF-"]);
+    });
+
+    test("printToPDF() and print() of a trusted page", async () => {
+      expect(
+        await run(`
+          const page = await open("<title>own</title><p style='break-after:page'>1<p>2<noscript><p style='break-before:page'>3</noscript><script>log = []; onbeforeprint = onafterprint = e => log.push(e.type)</script>");
+          const look = pdf => [pdf.toString("latin1").match(/Type .Page\\b/g).length, ...pdf.toString("latin1").match(/MediaBox \\[0 0 (\\d+)[.\\d]* (\\d+)/).slice(1)];
+          print((await Promise.all([page.printToPDF({}), page.mainFrame.printToPDF({ pageSize: "A4", landscape: true, pageRanges: "1" })])).map(look));
+          print(await page.executeJavaScript("log"));
+          print(await Promise.all([{ pageSize: "x" }, { landscape: 1 }, undefined].map(it => page.printToPDF(it).catch(error => error.message))));
+          await page.executeJavaScript("document.body.innerHTML = '<div></div>'; document.body.firstChild.attachShadow({ mode: 'closed' }).innerHTML = '<p style=break-after:page>1<p style=break-after:page>2<p>3'");
+          print(look(await page.printToPDF({}))[0]);
+          print(await new Promise(done => page.print({ deviceName: "none" }, (...it) => done(it))));`),
+      ).toEqual([
+        [
+          [2, "612", "792"],
+          [1, "842", "595"],
+        ],
+        ["beforeprint", "beforeprint", "afterprint", "afterprint"],
+        ["Invalid pageSize x", "landscape must be a boolean", "options must be an object"],
+        3,
+        [false, "Invalid deviceName provided"],
+      ]);
+    });
+
+    test("the engine gets the HTML behind a blob: URL of a trusted page", async () => {
+      expect(
+        await run(`
+          const page = await open("a");
+          const arrived = once(page, "page-title-updated");
+          await page.executeJavaScript("void (location = URL.createObjectURL(new Blob(['<script>document.title = origin</scr' + 'ipt>'], { type: 'text/html' })))");
+          print((await arrived)[1]);`),
+      ).toEqual(["null"]);
+    });
+
+    const turn = "break-before:page";
+    test.each([
+      [2, `<p>1<p style=${turn}>2`],
+      [1, `<style>p+p{${turn}}</style><p>1<p style=${turn}>2`, "", "style-src 'none'"],
+      [1, `<p>1<noscript><style>p+*{display:block;${turn}}</style>2</noscript>`, "", "style-src 'none'"],
+      [
+        1,
+        `<p>1<p>2`,
+        `document.body.append(Object.assign(document.createElementNS("urn:a", "style"), { textContent: "p+p{${turn}}" }))`,
+        "style-src 'none'",
+      ],
+      [2, `<p>1<p>2`, `document.body.lastChild.style.breakBefore = "page"`, "style-src 'none'"],
+      [
+        3,
+        `<p>1<div>`,
+        `document.body.lastChild.attachShadow({ mode: "closed" }).innerHTML = "<style>p{${turn}}</style><p>2<p>3"`,
+      ],
+      [
+        2,
+        `<style>:checked+p,:placeholder-shown+p{${turn}}</style>1<input type=checkbox><p>2</p><input placeholder=a><p>3`,
+        `document.body.children[0].click(); document.body.children[2].value = "b"`,
+      ],
+      [2, `<p>1<p>2`, `onbeforeprint = () => (document.body.lastChild.style.breakBefore = "page")`],
+    ])("a page of the app is printed as it is shown, on %d: %s %s", async (pages, html, script = "", policy) => {
+      expect(
+        await run(`
+          const page = await open(${JSON.stringify("<!doctype html>" + html)}, ${JSON.stringify(policy && { "content-security-policy": policy })});
+          await page.executeJavaScript(${JSON.stringify(script + "; 0")});
+          print((await page.printToPDF({})).toString("latin1").match(/Type .Page\\b/g).length);`),
+      ).toEqual([pages]);
+    });
+
+    test("what a frame refers to is fetched for the frame when a page is printed", async () => {
+      expect(
+        await run(`
+          app.trustOrigins(["app://trusted"], { inFrames: true });
+          const asked = new Set();
+          const elsewhere = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: ({ url }) => (asked.add(new URL(url).pathname), new Response("")) }).url.origin;
+          const refers = name =>
+            "<link rel=stylesheet href=/" + name + ".css><style>p { background: url(/" + name + "-inline.png) }</style><p style='border-image: url(/" + name + "-attribute.png) 1'>a</p>" +
+            "<img src=/" + name + ".png referrerpolicy=no-referrer><img src=" + elsewhere + "/" + name + "-far.png>";
+          const files = {
+            "/": respond(refers("top") + "<iframe sandbox src=/free></iframe><iframe src=/bound></iframe><iframe id=blank></iframe><script>blank.contentDocument.body.innerHTML = '<img src=/blank.png>'</script>"),
+            "/free": respond(refers("free")),
+            "/bound": respond(refers("bound"), { "content-security-policy": "img-src 'none'" }),
+          };
+          const page = await open(({ url }) => {
+            const { pathname } = new URL(url);
+            asked.add(pathname);
+            const sheet = respond("body { background: url(" + pathname + ".png) }", { "content-type": "text/css" });
+            return (files[pathname] ?? (pathname.endsWith(".css") ? sheet : respond("")))();
+          });
+          asked.clear();
+          await page.printToPDF({ printBackground: true });
+          print([...asked].sort());`),
+      ).toEqual([
+        [
+          "/blank.png",
+          "/bound.css",
+          ...["-attribute.png", "-far.png", "-inline.png", ".css", ".css.png", ".png"].map(it => "/free" + it),
+          ...["-attribute.png", "-far.png", "-inline.png", ".css", ".css.png", ".png"].map(it => "/top" + it),
+        ],
+      ]);
+    });
+
+    test("the options for printing a page of the app", async () => {
+      expect(
+        await run(`
+          const page = await open("<p>1<p style=${turn}>2");
+          print((await page.mainFrame.printToPDF({ pageRanges: "2" })).toString("latin1").match(/Type .Page\\b/g).length);
+          page.session.on("will-download", (_, item) => item.setSavePath(path.join(app.getPath("userData"), "printed.pdf")));
+          print(await new Promise(done => page.print({}, (...result) => done(result))));`),
+      ).toEqual([1, [true, ""]]);
     });
 
     test("the engine shows no dialog of its own to print", async () => {
@@ -1112,6 +1274,22 @@ for (const engine of engines) {
             print([state, item.getSavePath() && (await Bun.file(item.getSavePath()).text())]);
           }`),
       ).toEqual(["a.txt", ["completed", "hello"], "a.txt", ["cancelled", ""]]);
+    });
+
+    test("a download is a request of the site", async () => {
+      expect(
+        await run(`
+          const headers = { "content-disposition": "attachment" };
+          const other = site({ "/file": request => new Response(String(request.headers.get("cookie")), { headers }) }).replace("127.0.0.1", "localhost");
+          const origin = site({});
+          await session.defaultSession.cookies.set({ url: other, name: "a", value: "b", sameSite: "strict" });
+          const { webContents: page } = new BrowserWindow();
+          await page.loadURL(origin);
+          const file = path.join(__dirname, "file");
+          page.executeJavaScript("location.href = '" + new URL("/file", other) + "'", true);
+          const item = await new Promise(resolve => session.defaultSession.once("will-download", (_, item) => (item.setSavePath(file), item.once("done", () => resolve(item)))));
+          print([item.getInitiatorOrigin() === new URL(origin).origin, await Bun.file(file).text()]);`),
+      ).toEqual([[true, "null"]]);
     });
 
     test.skipIf(!isElectron)("setWebEngineHosts", async () => {

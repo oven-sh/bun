@@ -155,7 +155,6 @@ fn button_colors(
     }
 }
 
-/// In a square of 24 pixels.
 /// Lines in a square of 24 pixels.
 fn symbol_lines(button: WindowButton, is_maximized: bool) -> &'static [&'static [[f32; 2]]] {
     match (button, is_maximized) {

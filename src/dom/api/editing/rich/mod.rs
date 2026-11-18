@@ -57,6 +57,8 @@ struct Editor<'c, 'a> {
     /// All that is in a `Nodes`.
     kept: List<'a>,
     steps: Cell<u32>,
+    /// Neither it nor an ancestor is hidden, until the next change.
+    shown: Cell<Maybe<'a>>,
 }
 
 fn at(node: &Node, offset: u32) -> Point<'_> {
@@ -153,12 +155,17 @@ impl<'a> Editor<'_, 'a> {
         run(&mut self.cx.borrow_mut())
     }
 
-    fn change<R>(&self, run: impl FnOnce(&mut Cx<'a>) -> R) -> Step<R> {
+    fn go_on(&self) -> Step {
         if self.steps.get() > MAX_STEPS {
             Err(Stuck)
         } else {
-            Ok(self.with(run))
+            Ok(())
         }
+    }
+
+    fn change<R>(&self, run: impl FnOnce(&mut Cx<'a>) -> R) -> Step<R> {
+        self.shown.take();
+        self.go_on().map(|()| self.with(run))
     }
 
     /// For a walk that calls itself. Nothing is changed after one that had to stop.
@@ -663,6 +670,7 @@ fn enter<'a, R: Default>(
         active,
         kept,
         steps: 0.into(),
+        shown: None.into(),
     });
     kept.to_js().ensure_still_alive();
     active.stop_following();

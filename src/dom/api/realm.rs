@@ -33,6 +33,22 @@ pub(crate) fn client_of(heap: &JsHeap<'_>) -> Option<Rc<Client>> {
         .client()
 }
 
+/// For what a script requests.
+pub(crate) fn client_or_program(heap: &JsHeap<'_>) -> Option<Rc<Client>> {
+    if is_program(global_of(heap)) {
+        Some(Client::of_program())
+    } else {
+        client_of(heap)
+    }
+}
+
+pub(crate) fn is_program(global: &JSGlobalObject) -> bool {
+    unsafe extern "C" {
+        safe fn Bun__isDesktopRealm(global: &JSGlobalObject) -> bool;
+    }
+    !Bun__isDesktopRealm(global)
+}
+
 /// <https://storage.spec.whatwg.org/#storage-shelf>
 pub(crate) struct Shelf {
     pub(crate) storage: Arc<Storage>,
@@ -128,6 +144,13 @@ pub(crate) fn queue_task_after<const N: usize>(
     };
     match Realm::of(global_of(heap)) {
         Some(realm) => realm.queue_task_after(milliseconds, &values, run),
+        None if milliseconds > 0.0 => Some(tasks::post_delayed(
+            global_of(heap),
+            milliseconds,
+            false,
+            Work::Once(Box::new(run)),
+            &values,
+        )),
         None => Some(tasks::post(
             global_of(heap),
             Priority::Host,

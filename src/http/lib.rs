@@ -1662,7 +1662,9 @@ impl<'a> HTTPClient<'a> {
 
                         self.state.certificate_info = Some(CertificateInfo {
                             cert,
-                            issuers: uws::verified_issuers(ssl),
+                            issuers: self
+                                .browser
+                                .map_or_else(Vec::new, |_| uws::verified_issuers(ssl)),
                             hostname: Box::<[u8]>::from(hostname),
                             error: self
                                 .browser
@@ -3377,6 +3379,9 @@ impl<'a> HTTPClient<'a> {
             if self.browser.is_some() && self.proxy_tunnel.is_some() {
                 return ProxyTunnel::receive(self, socket, &[]);
             }
+            return Continue(());
+        }
+        if (self.browser).is_some_and(|it| !it.take_approval_of_certificate()) {
             return Continue(());
         }
         bun_core::scoped_log!(fetch, "resumeAfterCertCheck");

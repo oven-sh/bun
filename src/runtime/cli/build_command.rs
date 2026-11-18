@@ -268,6 +268,7 @@ impl BuildCommand {
             .options
             .asset_naming
             .clone_from(&ctx.bundler_options.asset_naming);
+        this_transpiler.options.is_desktop_app = ctx.bundler_options.desktop.is_some();
         this_transpiler.options.react_fast_refresh = ctx.bundler_options.react_fast_refresh;
         this_transpiler.options.react_compiler = if ctx.bundler_options.react_compiler {
             if this_transpiler.options.target.is_server_side()

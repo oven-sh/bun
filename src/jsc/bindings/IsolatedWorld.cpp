@@ -878,7 +878,7 @@ private:
             RELEASE_AND_RETURN(scope, twinOf(object));
         if (auto* signal = dynamicDowncast<WebCore::JSAbortSignal>(object)) {
             auto* realm = uncheckedDowncast<Zig::GlobalObject>(m_realm);
-            JSValue follower = WebCore::toJS(realm, realm, WebCore::AbortSignal::any(*realm->scriptExecutionContext(), { &signal->wrapped() }));
+            JSValue follower = WebCore::toJS(realm, realm, WebCore::AbortSignal::any(*realm->scriptExecutionContext(), { &signal->wrapped() }).get());
             RETURN_IF_EXCEPTION(scope, {});
             m_world.pair(object, asObject(follower));
             return follower;

@@ -110,7 +110,7 @@ extern "C" size_t Bun__DesktopHost__findBreaks(uint8_t kind, const uint8_t* text
         { UBRK_WORD, "en" },
     } };
     using Iterator = std::unique_ptr<UBreakIterator, decltype([](UBreakIterator* iterator) { ubrk_close(iterator); })>;
-    static thread_local std::array<Iterator, kinds.size()> iterators;
+    [[clang::always_destroy]] static thread_local std::array<Iterator, kinds.size()> iterators;
     if (kind >= kinds.size() || length > INT32_MAX)
         return 0;
     UErrorCode status = U_ZERO_ERROR;

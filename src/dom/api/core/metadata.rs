@@ -16,6 +16,7 @@ struct Told {
     title: RefCell<DomString>,
     is_setting_title: Cell<bool>,
     has_color_scheme: Cell<bool>,
+    has_theme_color: Cell<bool>,
     sizes_container: Cell<bool>,
 }
 
@@ -86,6 +87,27 @@ fn update_color_scheme<'a>(cx: Cx<'_, 'a>, doc: &'a Doc) {
     doc.invalidate(cx);
 }
 
+pub(crate) fn tell_theme_color(doc: &Doc) {
+    let color = |it: &Element| {
+        let media = it.attr(atom!("media")).unwrap_or_default();
+        let content = it
+            .attr(atom!("content"))
+            .filter(|_| doc.engine(|engine, _| engine.match_media(media.to_utf8().as_bytes())))?;
+        crate::bindings::parse_rgba(content.to_utf8().trim_ascii().as_bytes(), 0xff)
+    };
+    let is_candidate = |it: &&Element| {
+        it.is_html(atom!("meta")) && lowercase(it, atom!("name")).eq_str("theme-color")
+    };
+    let found = doc.extra::<Told>().has_theme_color.get().then(|| {
+        doc.elements_with_objects()
+            .filter(is_candidate)
+            .find_map(color)
+    });
+    doc.window()
+        .into_iter()
+        .for_each(|it| it.host().theme_color_changed(found.flatten()));
+}
+
 /// <https://drafts.csswg.org/css-sizing-4/#responsive-iframes>
 fn allow_sizing(doc: &Doc, content: &str) -> Option<()> {
     let origins = content
@@ -120,18 +142,14 @@ pub(super) fn meta_changed<'a>(cx: Cx<'_, 'a>, meta: &'a Element) {
     if name.eq_str("color-scheme") || doc.extra::<Told>().has_color_scheme.get() {
         update_color_scheme(cx, doc);
     }
+    if name.eq_str("theme-color") || doc.extra::<Told>().has_theme_color.get() {
+        doc.extra::<Told>().has_theme_color.set(true);
+        tell_theme_color(doc);
+    }
     let Some(content) = meta.attr(atom!("content")).filter(|_| meta.is_connected()) else {
         return;
     };
     match &*name.to_utf8() {
-        "theme-color" => {
-            let media = meta.attr(atom!("media")).unwrap_or_default();
-            if doc.engine(|engine, _| engine.match_media(media.to_utf8().as_bytes())) {
-                window
-                    .host()
-                    .theme_color_changed(content.to_utf8().into_owned());
-            }
-        }
         "responsive-embedded-sizing" => _ = allow_sizing(doc, &content.to_utf8()),
         "referrer" => {
             let value = content.to_ascii_lowercase();
@@ -149,9 +167,9 @@ pub(super) fn meta_changed<'a>(cx: Cx<'_, 'a>, meta: &'a Element) {
     }
     match &*lowercase(meta, atom!("http-equiv")).to_utf8() {
         "content-security-policy" if meta.parent().is_some_and(|it| it.is_html(atom!("head"))) => {
-            window
-                .host()
-                .add_security_policy(content.to_utf8().into_owned())
+            crate::api::window::Window::of(doc)
+                .into_iter()
+                .for_each(|it| it.add_security_policy(cx, &content))
         }
         "default-style" => cssom::prefer_sheets_titled(cx, doc, content, true),
         "content-language" if !content.units().any(|it| it == u16::from(b',')) => {

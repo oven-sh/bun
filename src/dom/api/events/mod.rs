@@ -7,7 +7,6 @@ mod errors;
 mod handlers;
 pub(crate) mod listeners;
 pub(crate) mod page_events;
-mod pending;
 mod script;
 mod types;
 mod window;

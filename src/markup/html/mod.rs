@@ -236,11 +236,32 @@ pub enum Stop<N> {
     Finished,
 }
 
-#[derive(Default)]
-struct Input {
+struct Input<D: Dom> {
     text: Text,
+    /// In place of `text`.
+    shared: Option<D::Text>,
     at: usize,
     ends_with_return: bool,
+}
+
+impl<D: Dom> Default for Input<D> {
+    fn default() -> Self {
+        Input {
+            text: Text::default(),
+            shared: None,
+            at: 0,
+            ends_with_return: false,
+        }
+    }
+}
+
+impl<D: Dom> Input<D> {
+    #[inline]
+    fn chars(&self) -> Chars<'_> {
+        self.shared
+            .as_ref()
+            .map_or_else(|| self.text.chars(), D::chars_of_text)
+    }
 }
 
 fn push_normalized(text: &mut Text, mut more: Chars<'_>) {
@@ -256,9 +277,9 @@ fn push_normalized(text: &mut Text, mut more: Chars<'_>) {
 pub struct Parser<D: Dom> {
     state: State<D>,
     tokenizer: Tokenizer,
-    input: Input,
+    input: Input<D>,
     /// What follows the insertion point of each script that is running.
-    suspended: Vec<Input>,
+    suspended: Vec<Input<D>>,
     has_ended: bool,
 }
 
@@ -284,15 +305,40 @@ impl<D: Dom> Parser<D> {
         {
             more = more.skip(1);
         }
-        if self.input.at > self.input.text.len() / 2 {
-            self.count_lines();
-            self.input.text.drop_front(self.input.at);
-            if self.suspended.is_empty() {
-                self.tokenizer.lines.dropped(self.input.at);
-            }
-            self.input.at = 0;
+        if self.input.at > self.input.text.len() / 2 || self.input.shared.is_some() {
+            self.drop_what_was_read();
         }
         push_normalized(&mut self.input.text, more);
+    }
+
+    /// The same, without a copy if it is worth it.
+    pub fn write_shared(&mut self, more: &D::Text) {
+        let chars = D::chars_of_text(more);
+        if chars.len() < 1 << 12
+            || self.input.at < self.input.chars().len()
+            || self.input.ends_with_return
+            || !matches!(chars, Chars::Latin1(_))
+            || chars.contains(b'\r')
+        {
+            return self.write(chars);
+        }
+        self.drop_what_was_read();
+        self.input.shared = Some(more.clone());
+    }
+
+    fn drop_what_was_read(&mut self) {
+        self.count_lines();
+        match self.input.shared.take() {
+            Some(shared) => self
+                .input
+                .text
+                .push(D::chars_of_text(&shared).skip(self.input.at)),
+            None => self.input.text.drop_front(self.input.at),
+        }
+        if self.suspended.is_empty() {
+            self.tokenizer.lines.dropped(self.input.at);
+        }
+        self.input.at = 0;
     }
 
     pub fn end(&mut self) {
@@ -301,7 +347,7 @@ impl<D: Dom> Parser<D> {
 
     fn count_lines(&mut self) {
         if self.suspended.is_empty() {
-            with_units!(self.input.text.chars(), units => self.tokenizer.lines.advance(units, self.input.at));
+            with_units!(self.input.chars(), units => self.tokenizer.lines.advance(units, self.input.at));
         }
     }
 
@@ -316,8 +362,11 @@ impl<D: Dom> Parser<D> {
             return;
         };
         let written = core::mem::replace(&mut self.input, rest);
-        let unread = written.text.chars().skip(written.at);
+        let unread = written.chars().skip(written.at);
         if !unread.is_empty() {
+            if self.input.shared.is_some() {
+                self.drop_what_was_read();
+            }
             let old = self.input.at;
             self.input.at = self.input.text.unread(old, unread);
             if self.suspended.is_empty() {
@@ -338,8 +387,9 @@ impl<D: Dom> Parser<D> {
             state: &mut self.state,
             sink,
         };
-        let at = &mut self.input.at;
-        let stop = with_units!(self.input.text.chars(), units => self.tokenizer.run(units, at, input, &mut builder));
+        let mut at = self.input.at;
+        let stop = with_units!(self.input.chars(), units => self.tokenizer.run(units, &mut at, input, &mut builder));
+        self.input.at = at;
         builder.pin_open();
         stop
     }
@@ -347,7 +397,7 @@ impl<D: Dom> Parser<D> {
     pub fn unread(&self) -> Text {
         let mut all = Text::default();
         for input in core::iter::once(&self.input).chain(self.suspended.iter().rev()) {
-            all.push(input.text.chars().skip(input.at));
+            all.push(input.chars().skip(input.at));
         }
         all
     }

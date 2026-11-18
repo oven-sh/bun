@@ -29,13 +29,13 @@
   white-space: nowrap;
 }
 audio::-webkit-media-controls {
-  color: #000;
+  color: light-dark(#000, #fff);
 }
 audio::-webkit-media-controls-panel {
   flex: 1;
   padding: 0 12px;
   border-radius: 27px;
-  background: #f1f3f4;
+  background: light-dark(#f1f3f4, #3b3b3b);
 }
 ::-webkit-media-controls-play-button,
 ::-webkit-media-controls-mute-button,

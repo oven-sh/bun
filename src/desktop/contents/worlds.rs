@@ -3,12 +3,18 @@
 use bun_jsc::{JSMap, from_js_host_call, from_js_host_call_generic};
 use bun_web::channel::Endpoint;
 use bun_web::convert::path_of_file;
+use bun_web::dom::Opening;
 use bun_web::exec::{block_pages, settled, with_realm};
+use bun_web::host::Host;
+use bun_web::page::Controls;
 use bun_web::realm::Realm as OfTheWeb;
 use bun_web::{compiled, dom, trust};
 
 use super::page::Page;
-use super::{Methods, Numbers as _, bind, field, hooks, lazily, object_in, text_if_any};
+use super::{
+    Contents, Methods, Numbers as _, bind, field, lazily, link, nothing, object_in, text_at,
+    text_if_any,
+};
 use crate::generated_bindgen::contents::js_ElectronPage as fields;
 use crate::preload::{self, Preload};
 use crate::prelude::*;
@@ -39,13 +45,8 @@ unsafe extern "C" {
         window: JSValue,
         page: Option<&Realm>,
     ) -> Option<&'static Realm>;
-    safe fn Bun__DesktopRealm__setUpPage(
-        global: &Realm,
-        realm: &Realm,
-        host: JSValue,
-        base_url: JSValue,
-        agent: JSValue,
-    ) -> JSValue;
+    safe fn Bun__DesktopRealm__setUpMembers(realm: &Realm);
+    safe fn Bun__DesktopRealm__run(realm: &Realm);
     safe fn Bun__DesktopRealm__members(realm: &Realm) -> JSValue;
     safe fn Bun__DesktopRealm__inject(
         realm: &Realm,
@@ -83,8 +84,12 @@ pub(crate) fn run_compiled(realm: &Realm, path: &[u8]) -> JsResult<JSValue> {
     from_js_host_call(realm, || Bun__WebRealm__runCompiled(realm, &path, true))
 }
 
-pub(super) fn release(realm: JSValue) {
-    Bun__DesktopRealm__dispose(realm::of(realm), false);
+/// What the app gets for a value of a page.
+pub(super) fn handle_of(value: JSValue) -> JSValue {
+    match value.is_object() {
+        true => Bun__RealmBridge__keep(value),
+        false => value,
+    }
 }
 
 /// The values that it takes and gives are those of `realm`. The page keeps it alive.
@@ -124,11 +129,6 @@ impl World {
             false => Ok(value),
         }
     }
-
-    /// For the app.
-    pub(super) fn handle_of_window(self) -> JSValue {
-        Bun__RealmBridge__keep(self.window)
-    }
 }
 
 const FOR_PRELOAD: Methods<Page> = &[
@@ -163,14 +163,88 @@ const FOR_PRELOAD: Methods<Page> = &[
         let is_by_user = argument(given, 2).to_boolean();
         Ok(it.execute(argument(given, 0).as_u32(), argument(given, 1), is_by_user))
     }),
-    ("insertCSS", |it, given| it.ask("insertCSS", given)),
-    ("removeInsertedCSS", |it, given| {
-        it.ask("removeInsertedCSS", given)
+    ("insertCSS", |it, given| {
+        it.insert_css(text_at(given, 0)?, argument(given, 1).to_boolean())
     }),
-    ("insertText", |it, given| it.ask("insertText", given)),
+    ("removeInsertedCSS", |it, given| {
+        nothing(it.remove_inserted_css(argument(given, 0)))
+    }),
+    ("insertText", |it, given| {
+        let text = text_at(given, 0)?;
+        nothing(it.tell(|it| it.insert_text(text)))
+    }),
+    ("frameToken", |it, _| js(it.token())),
+    ("routingId", |it, _| js(it.id)),
+    ("relative", relative),
+    ("isolatedWorlds", |it, _| {
+        let ids = elements(wire::items_of(it.worlds()?)?)?
+            .into_iter()
+            .step_by(2);
+        js((ids.map(JSValue::as_u32))
+            .filter(|it| *it > OF_PRELOAD)
+            .collect::<Vec<_>>())
+    }),
 ];
 
+/// One that would be in the same process.
+fn relative(page: &'static Page, given: &[JSValue]) -> JsResult<JSValue> {
+    if page.is_disposed() {
+        return Err(disposed());
+    }
+    let (contents, more) = (page.contents(), argument(given, 1));
+    let in_frame = |it: Option<&JSValue>| it.and_then(|it| cast(*it)).map(Contents::page);
+    let find = |is_it: &dyn Fn(&Page) -> bool| {
+        let all = page.owner().page().with_descendants()?;
+        JsResult::Ok(all.iter().map(Root::get).find(|it| is_it(it)))
+    };
+    let found = match &*text_of(argument(given, 0))? {
+        "top" => Some(page.owner().page()),
+        "parent" => page.parent(),
+        "opener" => (contents.opened_by().map(Contents::page)).or_else(|| page.opener()),
+        "firstChild" => with_elements(page.frames_if_any()?, |all| Ok(in_frame(all.first())))?,
+        "nextSibling" => match page.parent() {
+            Some(parent) => with_elements(parent.frames_if_any()?, |all| {
+                let mut from_own = all.iter().skip_while(|it| **it != contents.to_js());
+                Ok(in_frame(from_own.nth(1)))
+            })?,
+            None => None,
+        },
+        "name" => contents.choose(&text_of(more)?)?.map(Contents::page),
+        "selector" => contents.related_page(page.inspect("selectFrame", &[more])?.as_u32()),
+        "token" => {
+            let token = text_of(more)?;
+            find(&|it| it.token() == token.as_bytes())?
+        }
+        _ => find(&|it| more.get_number() == Some(it.id.into()))?,
+    };
+    match found.filter(|it| it.origin_key() == page.origin_key()) {
+        Some(found) => bind(object!({}), found, FOR_PRELOAD),
+        None => Ok(JSValue::NULL),
+    }
+}
+
 impl Page {
+    pub(super) fn insert_css(&self, css: String, is_of_user: bool) -> JsResult<JSValue> {
+        js((self.ask(|it, reply| it.insert_sheet(css, is_of_user, reply))?).to_string())
+    }
+
+    pub(super) fn remove_inserted_css(&self, key: JSValue) -> JsResult<()> {
+        let key = key.to_number(global())? as u32;
+        self.tell(|it| it.remove_sheet(key))
+    }
+
+    /// `undefined` if there is no document.
+    pub(crate) fn inspect(&self, method: &str, arguments: &[JSValue]) -> JsResult<JSValue> {
+        let Some(controller) = object_in(fields::controller(self)) else {
+            return Ok(JSValue::UNDEFINED);
+        };
+        if object_in(fields::inspected(self)).is_none() {
+            let methods = realm::methods_of(Bun__RealmBridge__keep(controller))?;
+            fields::set_inspected(self, methods);
+        }
+        invoke(field(fields::inspected(self)), method, arguments)
+    }
+
     fn worlds(&self) -> JsResult<JSValue> {
         lazily(
             fields::worlds(self),
@@ -242,7 +316,7 @@ impl Page {
         match (self.opener(), self.known_realm(0)?) {
             (Some(opener), _) if !self.is_disposed() => Ok(World {
                 realm: opener.world_with_id(0)?.realm,
-                window: realm::peek(self.window()?),
+                window: dom::window_of(field(fields::controller(self))),
                 is_borrowed: true,
             }),
             (None, Some(main)) => self
@@ -259,8 +333,8 @@ impl Page {
                 return Err(disposed());
             }
             if is_by_user {
-                let main = self.world_with_id(0)?;
-                dom::activate(main.realm, main.window);
+                (self.owner().context.last_input).set(bun_web::time::monotonic_now());
+                self.tell(Controls::activate)?;
             }
             let world = self.world_with_id(world)?;
             match catch(world.inject(code, true))? {
@@ -286,56 +360,43 @@ impl Page {
         })
     }
 
+    fn describe(&self) -> bun_web::page::About {
+        let loaded = self.loaded().unwrap_or_default();
+        loaded.describe(self.url(), self.inherited_base_url())
+    }
+
     pub(super) fn document_changed(&self) -> JsResult<()> {
-        let url = js(self.url())?;
-        let about = hooks::about_document(self, object!({ "url": url }))?;
         self.for_each_realm(Bun__DesktopRealm__documentChanged)?;
-        if self.known_realm(0)?.is_some() {
-            self.tell("aboutChanged", &[about])?;
-        }
-        self.tell(
-            "renew",
-            &[url, super::or_undefined(self.inherited_base_url())?],
-        )?;
-        self.apply_policy(true)?;
-        self.follow_links();
-        Ok(())
+        self.tell(|it| it.renew(self.describe()))
     }
 
-    fn follow_links(&self) {
-        if let Some(loaded) = self.loaded() {
-            self.client
-                .follow_links(&loaded.headers.get_or_empty(b"link"));
+    fn opening(&self) -> Opening {
+        let (contents, host) = (self.contents(), link::of_window(self));
+        Opening {
+            page: self.id,
+            context: contents.id,
+            surface: match contents.guest() {
+                Some(_) => 0,
+                None => contents.surface,
+            },
+            has_relatives: self.has_relatives.get(),
+            about: self.describe(),
+            // SAFETY: the window holds it.
+            ..Opening::new(unsafe { Host::of(host) }, host)
         }
-    }
-
-    pub(super) fn apply_policy(&self, is_for_new_document: bool) -> JsResult<()> {
-        if let Some(realm) = self.known_realm(0)? {
-            dom::apply_policy(realm, is_for_new_document);
-        }
-        if self.client.policies().csp.restricts_style_attributes() {
-            self.tell("checkStyleAttributes", &[])?;
-        }
-        Ok(())
     }
 
     /// Makes the realm and the empty document, and runs the preload scripts.
     pub(super) fn start(&self) -> JsResult<()> {
         let (contents, preferences) = (self.contents(), &*self.contents().preferences);
-        if let Some(create_page) = object_in(fields::create_page(self)) {
-            let controller = controls_of(call(create_page, &[hooks::of_document(self)?])?)?;
-            fields::set_controller(self, controller);
-            let of_opener = self.opener().map_or(Ok(JSValue::UNDEFINED), Page::window);
-            let document = realm::peek(invoke(controller, "currentDocument", &[])?);
-            let of_opener = get(realm::peek(of_opener?), "document")?;
-            dom::lend_client(document, self.client.id, of_opener);
+        if let Some(opener) = self.opener() {
+            let opened = from_js_host_call_generic(global(), || {
+                dom::open_page_beside(opener.id, self.opening(), self.client.id)
+            })?;
+            fields::set_controller(self, opened.ok_or_else(disposed)?);
             return Ok(());
         }
-        let joined = trust::trusts_any_frame()
-            .then(|| contents.join(self))
-            .transpose()?;
-        joined.iter().for_each(|it| self.set_agent(&it.0));
-        let (agent, window) = joined.unzip();
+        self.has_relatives.set(trust::trusts_any_frame());
         let mut preloads = Vec::new();
         if self.parent().is_none() || preferences.integrates_node_in_frames {
             preloads = contents.session.preloads_of_frames();
@@ -349,27 +410,22 @@ impl Page {
             _ => NodeGlobals::None,
         };
 
-        let host = hooks::of_document(self)?;
         let node = if has_preload && !preferences.isolates_context {
             of_preload
         } else {
             NodeGlobals::None
         };
-        let realm = self.create_realm(0, node, field(window.flatten()), None)?;
-        let shared = match agent.as_ref().and_then(|it| it.root()) {
-            Some(root) => invoke(root.controller, "shared", &[])?,
-            None => JSValue::UNDEFINED,
-        };
-        let base_url = super::or_undefined(self.inherited_base_url())?;
-        let page = from_js_host_call(global(), || {
-            Bun__DesktopRealm__setUpPage(global(), realm, host, base_url, shared)
+        let window = dom::window_to_take_over(contents.id);
+        let realm = self.create_realm(0, node, window, None)?;
+        let (main, mut opening) = (World::of(realm), self.opening());
+        let links = core::mem::take(&mut opening.about.links);
+        let controller = from_js_host_call(global(), || {
+            Bun__DesktopRealm__setUpMembers(realm);
+            dom::open_page(realm, opening, Some(main.window))
         })?;
-        let controller = controls_of(page)?;
-        let main = World::of(realm);
-        agent.map_or(Ok(()), |it| contents.joined(&it, main, controller))?;
+        Bun__DesktopRealm__run(realm);
         fields::set_controller(self, controller);
-        self.apply_policy(false)?;
-        self.follow_links();
+        dom::follow_response(self.id, &links);
         if !has_preload {
             return Ok(());
         }
@@ -424,29 +480,21 @@ impl Page {
     }
 
     pub(super) fn dispose_worlds(&self) -> JsResult<()> {
-        let agent = self.agent();
-        let (root, is_reachable) = (
-            agent.as_ref().and_then(|it| it.root()),
-            agent.as_ref().is_some_and(|it| it.has_other_pages()),
-        );
-        // Other documents use the modules of the first one.
-        self.for_each_realm(|it| match root {
-            Some(root) if root.realm == it.to_js_value() => {
+        let left = dom::leave_relatives(field(fields::controller(self)));
+        let needed = self.known_realm(0)?.filter(|_| left.is_needed);
+        self.for_each_realm(|it| match needed {
+            Some(needed) if core::ptr::eq(needed, it) => {
                 OfTheWeb::of(it).map_or((), OfTheWeb::stop)
             }
-            _ => Bun__DesktopRealm__dispose(it, is_reachable),
+            _ => Bun__DesktopRealm__dispose(it, left.is_reachable),
         })?;
         fields::set_worlds(self, JSValue::UNDEFINED);
-        agent.map_or(Ok(()), |it| it.leave())
-    }
-
-    /// A structured clone in the realm of the page.
-    pub(super) fn clone_to_main_world(&self, value: JSValue) -> JsResult<JSValue> {
-        clone(value, JSValue::UNDEFINED, self.world_with_id(0)?.realm)
+        (left.released.into_iter()).for_each(|it| Bun__DesktopRealm__dispose(realm::of(it), false));
+        Ok(())
     }
 }
 
-fn disposed() -> bun_jsc::JsError {
+pub(super) fn disposed() -> bun_jsc::JsError {
     error(format_args!(
         "Render frame was disposed before WebFrameMain could be accessed"
     ))
@@ -476,11 +524,4 @@ fn run_preload(preload: &Preload, world: World, file: &str) -> JsResult<()> {
         }
     };
     preload.run(function, file)
-}
-
-fn controls_of(handle: JSValue) -> JsResult<JSValue> {
-    let controls = crate::realm::methods_of(handle)?;
-    let window = invoke(controls, "currentWindow", &[])?;
-    controls.put(global(), b"window", window);
-    Ok(controls)
 }

@@ -78,7 +78,11 @@ impl Location {
         };
         if core::ptr::eq(source, window) {
             History::of(&cx.heap, window).navigate(cx, url, options, "");
-        } else if !host::navigate_from(cx, window, source, url, &options) {
+        } else if !window
+            .context()
+            .filter(|_| window.cluster().is_some_and(|it| it.has(source)))
+            .is_some_and(|it| host::navigate_from(it, source, url, &options))
+        {
             return Err(dom_error(
                 &cx.heap,
                 DomError::SecurityError,

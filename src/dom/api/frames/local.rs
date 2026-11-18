@@ -1,9 +1,11 @@
 //! A frame whose document is in this process.
 
 use bun_core::strings;
+use bun_web::input::{Extent, Input};
 
 use super::*;
-use crate::api::ui::{host::queue_task, tabbing};
+use crate::api::ui::layout::Looks;
+use crate::api::ui::{host::queue_task, surface, tabbing};
 use crate::api::window::Is;
 use crate::scroll::Revealed;
 
@@ -73,7 +75,7 @@ impl Frame {
         self.deferred.take();
         if is_initial && matches_about_blank(&url.to_utf8()) {
             if !url.eq_str("about:blank") {
-                host::set_initial_url(cx, self, &url);
+                host::set_initial_url(self, &url);
             }
             if element.is_html(atom!("iframe")) {
                 fire(cx, element, atom!("load"), PLAIN);
@@ -143,7 +145,7 @@ impl Frame {
                 .into_iter()
                 .for_each(|it| crate::api::core::html::take_frame_margins(cx, it));
         } else if change.is(atom!("scrolling")) {
-            host::environment_changed(cx, self);
+            host::environment_changed(self);
         }
     }
 
@@ -165,17 +167,17 @@ impl Frame {
         self.show(cx);
     }
 
-    pub(crate) fn loading<'a>(&'a self, cx: &mut Cx<'a>) {
+    pub(super) fn loading<'a>(&'a self, cx: &mut Cx<'a>) {
         self.delay_load(cx, true);
     }
 
-    pub(crate) fn navigating(&self) {
+    pub(super) fn navigating(&self) {
         self.deferred.take();
     }
 
     /// It stays with the empty document if it was to load another one lazily.
     pub(crate) fn went_to_fragment<'a>(&'a self, cx: &mut Cx<'a>) {
-        if self.element().attr_is(atom!("loading"), "lazy") && host::is_initial(cx, self) {
+        if self.element().attr_is(atom!("loading"), "lazy") && host::is_initial(self) {
             self.deferred.take();
             self.inner()
                 .and_then(|it| it.doc().window())
@@ -195,7 +197,7 @@ impl Frame {
         later(cx, self, fires.into(), |cx, [frame, fires]| {
             let Some(frame) = current(frame) else { return };
             if plugins::is_plugin(frame.element()) {
-                if !fires.as_boolean() && host::is_initial(cx, frame) {
+                if !fires.as_boolean() && host::is_initial(frame) {
                     plugins::fail(cx, frame.element());
                 } else {
                     plugins::show(cx, frame.element());
@@ -214,7 +216,7 @@ impl Frame {
         });
     }
 
-    pub(crate) fn use_web_engine<'a>(&'a self, cx: &mut Cx<'a>, url: &DomString) {
+    pub(super) fn use_web_engine<'a>(&'a self, cx: &mut Cx<'a>, url: &DomString) {
         let url = url.to_js(&cx.heap).to_js();
         later(cx, self, url, |cx, [frame, url]| {
             let url = DomString::from_js(cx, JsLocal::new(&cx.heap, url)).ok();
@@ -224,7 +226,7 @@ impl Frame {
         });
     }
 
-    pub(crate) fn show_image<'a>(&'a self, cx: &mut Cx<'a>, url: &DomString) {
+    pub(super) fn show_image<'a>(&'a self, cx: &mut Cx<'a>, url: &DomString) {
         if self.is_current() {
             plugins::show_image(cx, self.element(), url);
         }
@@ -244,15 +246,36 @@ impl Frame {
         if !self.is_current() || !element.is_rendered() || self.set(Flags::MEASURING, true) {
             return;
         }
-        let [_, _, width, height, ..] =
-            layout::laid_out(cx, element, |engine, id| engine.box_sizes(id)).map(f64::from);
-        let zoom = self.outer_window().map_or(1.0, Window::zoom);
-        host::place_local(
-            cx,
-            self,
-            [width * zoom, height * zoom],
-            width * height > 0.0,
-        );
+        let is_fallback =
+            || !element.doc().runs_scripts() && element.closest_html(atom!("canvas")).is_some();
+        let counts_as_shown =
+            !matches!(element.html_tag(), atom!("iframe") | atom!("frame")) || is_fallback();
+        let has_yet_to_get_box = !counts_as_shown
+            && !self.is(Flags::WAS_DISPLAYED)
+            && layout::looks_like(cx, element, Looks::SKIPPED);
+        let sizes = if has_yet_to_get_box {
+            None
+        } else {
+            layout::laid_out(cx, element, |engine, id| {
+                (counts_as_shown || engine.tree[id].layout_box != 0).then(|| engine.box_sizes(id))
+            })
+        };
+        if let Some(inner) = self
+            .inner()
+            .map(Ui::doc)
+            .filter(|it| it.engine(|engine, _| engine.set_displayed(sizes.is_some())))
+        {
+            inner.invalidate(cx);
+        }
+        match sizes.map(|it| it.map(f64::from)) {
+            Some([_, _, width, height, ..]) => {
+                let zoom = self.outer_window().map_or(1.0, Window::zoom);
+                self.set(Flags::WAS_DISPLAYED, true);
+                self.size.set([width * zoom, height * zoom]);
+                host::place_local(self, self.size.get(), width * height > 0.0);
+            }
+            None => host::place_local(self, self.size.get(), false),
+        }
         self.set(Flags::MEASURING, false);
         let scheme = if element.is_rendered() {
             element.engine(|engine, id| engine.style_bits(id, COLOR_SCHEME_BITS))
@@ -261,7 +284,23 @@ impl Frame {
             0
         };
         if self.color_scheme.replace(scheme) != scheme {
-            host::environment_changed(cx, self);
+            host::environment_changed(self);
+        }
+    }
+
+    pub(crate) fn give_size_to(&self, window: &Window) {
+        if let Some((size, scale, _)) = self.placement.get() {
+            window.enter_as_task(|cx, window, ui| {
+                surface::handle_input(
+                    cx,
+                    window,
+                    ui,
+                    Input::Resize {
+                        extent: Extent { size, scale },
+                        is_quiet: true,
+                    },
+                )
+            });
         }
     }
 
@@ -293,6 +332,13 @@ impl Frame {
                 .iter()
                 .any(|value| it.to_utf8().eq_ignore_ascii_case(value))
         })
+    }
+
+    pub(crate) fn is_object(&self) -> bool {
+        matches!(
+            self.element().kind(),
+            crate::api::core::Kind::Embed | crate::api::core::Kind::Object
+        )
     }
 
     pub(crate) fn color_scheme<'a>(&'a self, cx: &mut Cx<'a>) -> u32 {

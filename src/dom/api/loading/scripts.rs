@@ -160,13 +160,20 @@ pub(super) fn fetching_of(node: &Node) -> Fetching {
     }
 }
 
+enum Provenance {
+    Inline {
+        base: Bytes,
+    },
+    /// With what the URL was before it was redirected. Stacks show it.
+    Fetched {
+        requested: Bytes,
+    },
+}
+
 struct Classic {
     source: DomString,
     url: Bytes,
-    /// What `url` was before it was redirected. Stacks show it.
-    requested: Option<Bytes>,
-    /// Of an inline one.
-    base: Option<Bytes>,
+    provenance: Provenance,
     position: (u32, u32),
     is_muted: bool,
     fetching: Fetching,
@@ -177,42 +184,57 @@ impl Classic {
         Classic {
             source,
             url: utf8(Some(doc.url())),
-            requested: None,
-            base: Some(utf8(Some(doc.base_url()))),
+            provenance: Provenance::Inline {
+                base: utf8(Some(doc.base_url())),
+            },
             position,
             is_muted: false,
             fetching,
         }
     }
 
+    fn is_inline(&self) -> bool {
+        matches!(self.provenance, Provenance::Inline { .. })
+    }
+
+    fn base(&self) -> &Bytes {
+        if let Provenance::Inline { base } = &self.provenance {
+            base
+        } else {
+            &self.url
+        }
+    }
+
+    fn shown_url(&self) -> &Bytes {
+        if let Provenance::Fetched { requested } = &self.provenance {
+            requested
+        } else {
+            &self.url
+        }
+    }
+
     fn evaluate_as_it_is<'a>(&self, cx: Cx<'_, 'a>) -> Result<'a, JSValue> {
-        modules::evaluate_classic(
-            cx,
-            &self.source,
-            &self.url,
-            self.base.as_ref().unwrap_or(&self.url),
-            self.position,
-        )
+        modules::evaluate_classic(cx, &self.source, &self.url, self.base(), self.position)
     }
 
     fn evaluate_here<'a>(&self, cx: Cx<'_, 'a>) -> Result<'a, JSValue> {
-        if self.base.is_none()
+        if !self.is_inline()
             && let Some(path) = bun_web::compiled::path_of(&self.url)
         {
             return modules::run_compiled(cx, &path, true);
         }
-        let shown = self.requested.as_ref().unwrap_or(&self.url);
+        let shown = self.shown_url();
         if self.is_muted {
             WindowTarget::of_realm(&cx.heap).inspect(|it| it.mute_errors(shown));
         }
         let base = if self.is_muted {
             b"about:blank"
         } else {
-            &**self.base.as_ref().unwrap_or(&self.url)
+            &**self.base()
         };
         let key = modules::key_of_classic_script(&cx.heap, base, &self.fetching);
         let base = key.as_ref().map_or(base, |it| it.as_bytes());
-        if self.base.is_none() && !self.is_muted {
+        if !self.is_inline() && !self.is_muted {
             modules::script_was_fetched(&cx.heap, base);
         }
         modules::evaluate_classic(cx, &self.source, shown, base, self.position)
@@ -223,8 +245,7 @@ impl Classic {
     fn evaluate<'a>(self, cx: Cx<'_, 'a>, doc: &'a Doc) -> JSValue {
         let mut result = JSValue::UNDEFINED;
         run_script(cx, |cx| {
-            if doc.has_realm(&cx.heap) && (self.base.is_some() || doc.may_run_script_at(&self.url))
-            {
+            if doc.has_realm(&cx.heap) && (self.is_inline() || doc.may_run_script_at(&self.url)) {
                 doc.in_realm(|cx| {
                     match if doc.is_of_program() {
                         self.evaluate_as_it_is(cx)
@@ -232,9 +253,7 @@ impl Classic {
                         self.evaluate_here(cx)
                     } {
                         Ok(value) => result = value,
-                        Err(error) => {
-                            report_error(cx, error, self.requested.as_ref().unwrap_or(&self.url))
-                        }
+                        Err(error) => report_error(cx, error, self.shown_url()),
                     }
                 });
             }
@@ -312,8 +331,7 @@ fn execute<'a>(cx: Cx<'_, 'a>, doc: &'a Doc, script: JSValue, ready: Ready) {
             Classic {
                 source,
                 url: resource.url.href().into(),
-                requested: Some(requested),
-                base: None,
+                provenance: Provenance::Fetched { requested },
                 position: (0, 0),
                 is_muted: !resource.is_readable,
                 fetching,
@@ -526,10 +544,13 @@ pub(super) fn prepare<'a>(cx: Cx<'_, 'a>, script: &'a Element) -> Option<()> {
         } else {
             "SVGScriptElement text"
         };
-        source = Trusted::Script
-            .check(cx, doc, source, sink)
-            .map_err(|it| cx.catch(it))
-            .ok()?;
+        source = match Trusted::Script.check(cx, doc, source, sink) {
+            Ok(trusted) => trusted,
+            Err(error) => {
+                let _ = cx.catch(error);
+                return None;
+            }
+        };
         (!it.has_started.get()).then_some(())?;
     }
     let src = source_url(script);
@@ -689,13 +710,22 @@ pub(crate) const SCRIPT_STEPS: Steps = Steps {
     ..Steps::NONE
 };
 
-impl HTMLScriptElement {
-    pub(crate) fn get_is_async(&self) -> bool {
-        Script::of(self).forces_async.get() || self.has_attr(atom!("async"))
-    }
+macro_rules! is_async {
+    ($($element:ty),+) => {$(
+        impl $element {
+            pub(crate) fn get_is_async(&self) -> bool {
+                Script::of(self).forces_async.get() || self.has_attr(atom!("async"))
+            }
 
-    pub(crate) fn set_is_async<'a>(&'a self, cx: Cx<'_, 'a>, value: bool) {
-        Script::of(self).forces_async.set(false);
-        self.toggle_attr(cx, atom!("async"), value);
-    }
+            pub(crate) fn set_is_async<'a>(&'a self, cx: Cx<'_, 'a>, value: bool) {
+                Script::of(self).forces_async.set(false);
+                self.toggle_attr(cx, atom!("async"), value);
+            }
+        }
+    )+};
 }
+
+is_async!(
+    HTMLScriptElement,
+    crate::generated_bindgen::svg::SVGScriptElement
+);

@@ -1,5 +1,7 @@
 //! Paints inline SVG.
 
+use core::cell::OnceCell;
+use core::ops::Range;
 use std::rc::Rc;
 
 use crate::abi::{self, BlendMode, GradientStop, Item, Matrix, Outline, Rect, Span, Stroke, Tile};
@@ -7,16 +9,22 @@ use crate::boxes::BoxId;
 use crate::document::Document;
 use crate::effects::{BLACK, Subject, UserSpace};
 use crate::geometry::translation;
-use crate::name::{Name, is_name, name};
+use crate::name::{Map, Name, is_name, name};
 use crate::paint::{Painter, Picture, Space, alpha, square};
 use crate::path::Path;
 use crate::properties::Style;
-use crate::svg::{Bounds, Node, fit_view, href, onto, rotation, scaling, view_box};
+use crate::segments::Shown;
+use crate::selector::Pseudo;
+use crate::svg::{
+    Bounds, Node, fit_view, href, is_graphic, onto, passes_tests, rotation, scaling, view_box,
+};
 use crate::svg_text::{Placed, TextLayout};
 use crate::svg_values::*;
-use crate::tree::{Element, Namespace, NodeId};
+use crate::tree::{Element, Namespace, NodeId, Tree};
 use crate::types::*;
 use crate::values::mix;
+
+const MIN_PARTS: usize = 32;
 
 /// What an `svg` has painted, with the origin in the corner of its border box.
 pub(crate) struct Recording {
@@ -27,9 +35,57 @@ pub(crate) struct Recording {
     generation: Option<u32>,
     /// `None` if it has colors that are not those of shapes.
     tints: Option<Vec<Tint>>,
+    reads: Reads,
+    blends: bool,
+    /// Unless it is small.
+    parts: Vec<Part>,
+    /// The elements that have changed, and whether it is not only something in them.
+    changed: Map<NodeId, bool>,
+}
+
+bitflags::bitflags! {
+    /// What a picture depends on, other than the elements that it shows and the size of their viewport.
+    #[derive(Clone, Copy, Default, PartialEq)]
+    pub(crate) struct Reads: u8 {
+        const REFERENCES = 1;
+        const MATRIX = 1 << 1;
+        const VISIBLE = 1 << 2;
+        const ANYTHING = 1 << 3;
+    }
+}
+
+/// What an element has painted, up to the `start` of the `next`. After the last child comes one without a node.
+#[derive(Clone, Copy)]
+struct Part {
+    node: NodeId,
+    start: Shown,
+    tints: u32,
+    next: u32,
+    viewport: [f32; 2],
+    reads: Reads,
+}
+
+struct Previous {
+    recording: Recording,
+    by_node: OnceCell<Map<NodeId, u32>>,
+}
+
+impl Previous {
+    /// `expected` are the siblings that are left.
+    fn find(&self, node: NodeId, expected: &Range<u32>) -> Option<u32> {
+        let parts = &self.recording.parts;
+        if expected.is_empty() || parts[expected.start as usize].node == node {
+            return (!expected.is_empty()).then_some(expected.start);
+        }
+        self.by_node
+            .get_or_init(|| parts.iter().map(|it| it.node).zip(0..).collect())
+            .get(&node)
+            .copied()
+    }
 }
 
 /// The fill or the stroke of a shape.
+#[derive(Clone, Copy)]
 struct Tint {
     node: NodeId,
     kind: PaintKind,
@@ -39,7 +95,28 @@ struct Tint {
 
 impl Recording {
     pub(crate) fn can_be_tinted(&self) -> bool {
-        self.tints.is_some()
+        self.tints.is_some() && self.changed.is_empty()
+    }
+
+    /// False if it is of no use any more.
+    pub(crate) fn note_change(
+        &mut self,
+        tree: &Tree,
+        mut id: NodeId,
+        outer: NodeId,
+        is_itself: bool,
+    ) -> bool {
+        if self.changed.len() >= self.parts.len() / 2 {
+            return false;
+        }
+        *self.changed.entry(id).or_default() |= is_itself;
+        while id != outer {
+            id = tree[id].parent;
+            if self.changed.try_insert(id, false).is_err() {
+                break;
+            }
+        }
+        true
     }
 
     /// Also in `shown`, which begins with a copy of the items. False if it has to be recorded again.
@@ -100,6 +177,12 @@ pub(crate) struct Vector<'a> {
     /// Those that are being painted.
     resources: Vec<(*const Document, NodeId)>,
     tints: Option<Vec<Tint>>,
+    /// While it is recorded.
+    parts: Option<Vec<Part>>,
+    previous: Option<Rc<Previous>>,
+    /// The previous parts of the children of the element that is being painted.
+    inside: Range<u32>,
+    outdated: Reads,
 }
 
 enum Brush<'a> {
@@ -164,6 +247,20 @@ fn has_transform((node, element): &(Node, &Element)) -> bool {
 }
 
 impl Document {
+    pub(crate) fn svg_has_read(&self, what: Reads) {
+        self.svg_reads.update(|it| it | what);
+    }
+
+    /// Whether what was painted last has nothing that is adapted to pixels.
+    pub(crate) fn is_only_shapes(&self) -> bool {
+        self.own_box(self.tree.root_element()).is_some_and(|it| {
+            let reads = self.boxes.recordings.borrow().get(&it).map(|it| it.reads);
+            self.boxes[it].children.is_empty()
+                && self.boxes[it].style.is_bare()
+                && reads.is_some_and(|it| !it.intersects(Reads::MATRIX | Reads::ANYTHING))
+        })
+    }
+
     /// `index` is that of `x`, `y`, `width` or `height`.
     pub(crate) fn length_in_units(
         &self,
@@ -358,6 +455,19 @@ impl Document {
             Some("repeat") => abi::SPREAD_REPEAT,
             _ => abi::SPREAD_PAD,
         };
+        if spread != abi::SPREAD_PAD {
+            stops.insert(
+                0,
+                GradientStop {
+                    offset: 0.0,
+                    ..stops[0]
+                },
+            );
+            stops.push(GradientStop {
+                offset: 1.0,
+                color: last,
+            });
+        }
         invert(&matrix).map(|_| Brush::Shade {
             from,
             to,
@@ -463,6 +573,7 @@ impl<'a> Painter<'a> {
     }
 
     fn matrix_in_svg(&self, space: &Space) -> Matrix {
+        self.document.svg_has_read(Reads::MATRIX);
         multiply(
             &self.svg.to_root.unwrap_or(IDENTITY),
             &self.out.links[space.link as usize].matrix,
@@ -481,7 +592,7 @@ impl<'a> Painter<'a> {
         self.vector(translation(origin), &mut inside);
         if !it.children.is_empty() {
             self.depends_on_outside();
-            self.svg_contents(id, &inside);
+            self.svg_contents(id, &inside, Vector::default());
             return;
         }
         let (size, scale, known) = (
@@ -489,18 +600,51 @@ impl<'a> Painter<'a> {
             document.environment.scale,
             document.boxes.recordings.borrow_mut().remove(&id),
         );
-        let recording = match known.filter(|it| {
-            (it.size, it.scale) == (size, scale)
-                && it.generation.is_none_or(|it| it == document.svg_generation)
-        }) {
-            Some(recording) => recording,
-            None => {
-                let (mut painter, referred) = (
+        let (blends, mut outdated) = (document.blends_in_svg.get(), Reads::ANYTHING);
+        if let Some(known) = &known {
+            outdated.set(
+                Reads::MATRIX | Reads::VISIBLE,
+                (known.size, known.scale) != (size, scale)
+                    || known.changed.get(&it.node) == Some(&true),
+            );
+            outdated.set(
+                Reads::REFERENCES,
+                known
+                    .generation
+                    .is_some_and(|it| it != document.svg_generation),
+            );
+        }
+        let recording = match known {
+            Some(known) if outdated == Reads::ANYTHING && known.changed.is_empty() => known,
+            known => {
+                let (mut painter, outer) = (
                     Painter::new(document, None, Picture::default(), Default::default()),
-                    document.svg_references.replace(false),
+                    document.svg_reads.take(),
                 );
+                let previous = known.filter(|it| !it.parts.is_empty() && it.blends == blends);
+                previous
+                    .iter()
+                    .for_each(|it| painter.out.reserve_like(&it.picture));
+                let vector = Vector {
+                    tints: previous
+                        .as_ref()
+                        .is_none_or(|it| it.tints.is_some())
+                        .then(Vec::new),
+                    parts: Some(Vec::with_capacity(
+                        previous.as_ref().map_or(0, |it| it.parts.len() + 8),
+                    )),
+                    inside: 0..previous.as_ref().map_or(0, |it| it.parts.len() as u32 - 1),
+                    previous: previous.map(|recording| {
+                        Rc::new(Previous {
+                            recording,
+                            by_node: OnceCell::new(),
+                        })
+                    }),
+                    outdated,
+                    ..Vector::default()
+                };
                 painter.painted_node = it.node;
-                let tints = painter.svg_contents(
+                let Vector { tints, parts, .. } = painter.svg_contents(
                     id,
                     &Space {
                         origin: [0.0; 2],
@@ -508,12 +652,17 @@ impl<'a> Painter<'a> {
                         scroller: abi::NO_SCROLLER,
                         visible: document.ink(id),
                     },
+                    vector,
                 );
                 painter.enter(0);
                 if painter.is_volatile {
                     self.depends_on_outside();
                 }
-                let generation = document.svg_references.replace(referred).then_some(
+                let (reads, parts) = (
+                    document.svg_reads.replace(outer),
+                    parts.filter(|it| it.len() >= MIN_PARTS).unwrap_or_default(),
+                );
+                let generation = reads.contains(Reads::REFERENCES).then_some(
                     document
                         .svg_generation
                         .wrapping_sub(painter.is_volatile.into()),
@@ -524,6 +673,10 @@ impl<'a> Painter<'a> {
                     scale,
                     generation,
                     tints: tints.filter(|_| generation.is_none()),
+                    reads,
+                    blends,
+                    parts,
+                    changed: Map::default(),
                 }
             }
         };
@@ -535,9 +688,11 @@ impl<'a> Painter<'a> {
         document.boxes.recordings.borrow_mut().insert(id, recording);
     }
 
-    fn svg_contents(&mut self, id: BoxId, space: &Space) -> Option<Vec<Tint>> {
+    fn svg_contents(&mut self, id: BoxId, space: &Space, vector: Vector<'a>) -> Vector<'a> {
         let document = self.document;
-        let root = document.svg_node(document.boxes[id].node)?;
+        let Some(root) = document.svg_node(document.boxes[id].node) else {
+            return Vector::default();
+        };
         let to_root = invert(&self.out.links[space.link as usize].matrix);
         let (outer, mut inside) = (
             core::mem::replace(
@@ -545,8 +700,7 @@ impl<'a> Painter<'a> {
                 Vector {
                     is_on: true,
                     to_root,
-                    tints: Some(Vec::new()),
-                    ..Vector::default()
+                    ..vector
                 },
             ),
             *space,
@@ -561,14 +715,141 @@ impl<'a> Painter<'a> {
         {
             self.svg_children(&root, &inside);
         }
-        core::mem::replace(&mut self.svg, outer).tints
+        core::mem::replace(&mut self.svg, outer)
     }
 
     fn svg_children(&mut self, node: &Node<'a>, space: &Space) {
+        if self.svg.parts.is_some()
+            && self.svg.resources.is_empty()
+            && !is_name!(node.tag, "use" | "switch")
+        {
+            return self.record_children(node, space);
+        }
+        let parts = self.svg.parts.take();
         node.document
             .svg_children(node)
             .iter()
             .for_each(|it| self.svg_element(it, space));
+        self.svg.parts = parts;
+    }
+
+    fn begin_part(&mut self, node: NodeId, viewport: [f32; 2]) -> usize {
+        let (parts, tints) = (
+            self.svg.parts.get_or_insert_default(),
+            self.svg.tints.as_ref().map_or(0, Vec::len) as u32,
+        );
+        parts.push(Part {
+            node,
+            start: Shown::of(&self.out),
+            tints,
+            next: parts.len() as u32 + 1,
+            viewport,
+            reads: Reads::empty(),
+        });
+        parts.len() - 1
+    }
+
+    fn copy_parts(&mut self, previous: Option<&Previous>, range: Range<u32>) {
+        let Some(Previous {
+            recording: from, ..
+        }) = previous.filter(|_| !range.is_empty())
+        else {
+            return;
+        };
+        let (first, end, start) = (
+            &from.parts[range.start as usize],
+            &from.parts[range.end as usize],
+            Shown::of(&self.out),
+        );
+        self.out
+            .append_part(&from.picture, &first.start, &end.start);
+        let (parts, mut first_tint) = (self.svg.parts.get_or_insert_default(), 0);
+        if let (Some(tints), Some(from)) = (&mut self.svg.tints, &from.tints) {
+            first_tint = tints.len() as u32;
+            let moved = |it: &Tint| Tint {
+                item: it.item.map(|it| it - first.start.items() + start.items()),
+                ..*it
+            };
+            tints.extend(
+                from[first.tints as usize..end.tints as usize]
+                    .iter()
+                    .map(moved),
+            );
+        }
+        let at = parts.len() as u32;
+        parts.extend(
+            from.parts[range.start as usize..range.end as usize]
+                .iter()
+                .map(|it| Part {
+                    start: it.start.moved(&first.start, &start),
+                    tints: it.tints.wrapping_sub(first.tints).wrapping_add(first_tint),
+                    next: it.next - range.start + at,
+                    ..*it
+                }),
+        );
+    }
+
+    /// What has not changed is copied.
+    fn record_children(&mut self, node: &Node<'a>, space: &Space) {
+        let (document, previous, outdated) =
+            (self.document, self.svg.previous.clone(), self.svg.outdated);
+        let (previous, viewport) = (previous.as_deref(), document.viewport_in(node));
+        let (mut expected, mut unchanged) = (core::mem::take(&mut self.svg.inside), 0..0);
+        self.enter(space.link);
+        for id in document.tree.element_children(node.id) {
+            let Some(element) = document.tree.element(id).filter(|it| is_graphic(it)) else {
+                continue;
+            };
+            let known = previous.and_then(|it| {
+                it.find(id, &expected)
+                    .map(|at| (at, &it.recording.parts[at as usize]))
+            });
+            let change = previous.and_then(|it| it.recording.changed.get(&id));
+            if let Some((_, part)) = known.filter(|it| expected.contains(&it.0)) {
+                expected.start = part.next;
+            }
+            if let Some((at, part)) = known.filter(|(_, it)| {
+                change.is_none() && it.viewport == viewport && !it.reads.intersects(outdated)
+            }) {
+                if unchanged.end != at {
+                    self.copy_parts(previous, core::mem::replace(&mut unchanged, at..at));
+                }
+                unchanged.end = part.next;
+                document.svg_has_read(part.reads);
+                continue;
+            }
+            self.copy_parts(previous, core::mem::take(&mut unchanged));
+            let (own, reads, was_volatile) = (
+                self.begin_part(id, viewport),
+                document.svg_reads.take(),
+                core::mem::take(&mut self.is_volatile),
+            );
+            self.svg.inside = known.map_or(0..0, |(at, part)| at + 1..part.next - 1);
+            self.svg.outdated = if change == Some(&true) {
+                outdated | Reads::MATRIX | Reads::VISIBLE
+            } else {
+                outdated
+            };
+            if let Some(child) = passes_tests(element)
+                .then(|| document.svg_child(node, id, viewport))
+                .flatten()
+            {
+                self.svg_element(&child, space);
+                self.enter(space.link);
+            }
+            if self.is_volatile || element.style.is_none() {
+                document.svg_has_read(Reads::ANYTHING);
+            }
+            if let Some(parts) = &mut self.svg.parts {
+                (parts[own].next, parts[own].reads) =
+                    (parts.len() as u32, document.svg_reads.get());
+            }
+            document.svg_has_read(reads);
+            self.is_volatile |= was_volatile;
+        }
+        self.copy_parts(previous, unchanged);
+        self.begin_part(0, viewport);
+        self.svg.outdated = outdated;
     }
 
     fn with_context(&mut self, node: &Node<'a>, space: &Space, paint: impl FnOnce(&mut Self)) {
@@ -750,7 +1031,7 @@ impl<'a> Painter<'a> {
                 let paint = |painter: &mut Self, space: &Space| {
                     painter.vector_image(
                         image.image,
-                        [rect.width, rect.height],
+                        [[rect.width, rect.height]; 2],
                         stretches,
                         &node.style,
                         space,
@@ -1023,6 +1304,11 @@ impl<'a> Painter<'a> {
                 PaintKind::Fill => {
                     let brush = self.brush(node, kind, &|| fill.bounds, &IDENTITY, space);
                     match (brush, rect) {
+                        (Some(brush @ Brush::Shade { .. }), Some(rect)) => {
+                            let mut inside = *space;
+                            self.clip(square(rect), &mut inside);
+                            self.cover(&brush, rect, &inside);
+                        }
                         (Some(brush), Some(rect)) => self.cover(&brush, rect, space),
                         (Some(brush), None) => self.paint_outline(fill, &brush, space),
                         (None, _) => {}
@@ -1066,6 +1352,9 @@ impl<'a> Painter<'a> {
                         &space,
                     );
                 }
+                PaintKind::Markers
+                    if [&svg.marker_start.0, &svg.marker_mid.0, &svg.marker_end.0]
+                        == [&None; 3] => {}
                 PaintKind::Markers => {
                     for (marker, matrix, clip) in
                         document.svg_markers(node, &self.matrix_in_svg(space))
@@ -1117,20 +1406,64 @@ impl<'a> Painter<'a> {
             .iter()
             .filter(|it| !it.is_hidden && layout.runs[it.run].node.style.is_visible())
             .collect();
+        let can_be_selected = !node.document.marks.is_empty()
+            && node.uses.is_none()
+            && !self.svg.is_clip
+            && self.svg.resources.is_empty();
+        let is_selected = |it: &Placed| {
+            let (text, at) = layout.source(it);
+            can_be_selected
+                && node.document.marks_of(text).any(|it| it.0.contains(&at))
+                && layout.runs[it.run].node.style.ink.user_select != UserSelect::None
+        };
         let is_alike = |a: &&Placed, b: &&Placed| {
             (a.run, face(a), a.stretch, a.is_upright) == (b.run, face(b), b.stretch, b.is_upright)
                 && a.radians == 0.0
                 && b.radians == 0.0
+                && is_selected(a) == is_selected(b)
         };
-        shown
-            .chunk_by(is_alike)
-            .for_each(|it| self.svg_fragment(&layout, it, space));
+        for fragment in shown.chunk_by(is_alike).filter(|it| is_selected(it[0])) {
+            let node = &layout.runs[fragment[0].run].node;
+            let verbs: Vec<_> = fragment
+                .iter()
+                .flat_map(|it| {
+                    Path::rect(layout.extent(it))
+                        .transformed(&layout.matrix(it))
+                        .verbs
+                })
+                .collect();
+            let (outline, color) = (
+                self.outline_of(&Path::from(&verbs[..]), FillRule::Nonzero),
+                self.selection_background(node.id, &node.style),
+            );
+            self.emit(&Item::Path { outline, color }, space);
+        }
+        for fragment in shown.chunk_by(is_alike) {
+            let node = &layout.runs[fragment[0].run].node;
+            let highlight = is_selected(fragment[0])
+                .then(|| node.document.highlight(node.id, Pseudo::Selection))
+                .flatten();
+            let selected = highlight.map(|it| {
+                node.with_style(it.style(
+                    &node.style,
+                    &node.document.styles.initial,
+                    node.style.color(),
+                ))
+            });
+            self.svg_fragment(&layout, fragment, selected.as_ref().unwrap_or(node), space);
+        }
     }
 
     /// The characters only differ in where they are.
-    fn svg_fragment(&mut self, layout: &TextLayout<'a>, fragment: &[&Placed], space: &Space) {
+    fn svg_fragment(
+        &mut self,
+        layout: &TextLayout<'a>,
+        fragment: &[&Placed],
+        node: &Node<'a>,
+        space: &Space,
+    ) {
         let (first, scale, mut space) = (fragment[0], layout.scale, *space);
-        let (node, [a, b, c, d, ..]) = (&layout.runs[first.run].node, layout.matrix(first));
+        let [a, b, c, d, ..] = layout.matrix(first);
         let turn = if first.is_upright {
             rotation(-core::f32::consts::FRAC_PI_2)
         } else {

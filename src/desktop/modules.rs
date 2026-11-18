@@ -4,7 +4,8 @@ use bun_jsc::virtual_machine::VirtualMachine;
 
 use crate::clipboard::Clipboard;
 use crate::generated_bindgen::{
-    contents, electron as only_electron, ipc as channels, menu, session, system, window as windows,
+    contents, electron as only_electron, ipc as channels, menu, session, system, touch_bar,
+    window as windows,
 };
 use crate::prelude::*;
 use crate::realm::{self, Module};
@@ -177,7 +178,11 @@ fn of_utility_process() -> JsResult<JSValue> {
     Ok(all)
 }
 
-pub(crate) fn electron(_: Cx<'_, '_>) -> JsResult<JSValue> {
+pub(crate) fn electron(cx: Cx<'_, '_>) -> JsResult<JSValue> {
+    if !core::ptr::eq(cx.global(), global()) {
+        let message = format_args!("A page gets Electron's modules from its preload script");
+        return Err(cx.global().throw(message));
+    }
     pretend_to_be_electron()?;
     let all = if !VirtualMachine::get().is_main_thread.get() {
         object!({})
@@ -228,7 +233,7 @@ fn of_main_process() -> JsResult<JSValue> {
         "ImageView": windows::js_DesktopImageView,
         "MessageChannelMain": channels::js_ElectronMessageChannelMain,
         "ShareMenu": menu::js_ElectronShareMenu,
-        "TouchBar": only_electron::js_ElectronTouchBar,
+        "TouchBar": touch_bar::js_ElectronTouchBar,
         "View": windows::js_DesktopView,
         "WebContentsView": windows::js_DesktopWebContentsView,
         "autoUpdater": only_electron::js_ElectronAutoUpdater,

@@ -76,11 +76,12 @@ impl StylePropertyMapReadOnly {
         cx: &mut JsScope<'a>,
         index: u32,
     ) -> Result<'a, Option<[JSValue; 2]>> {
-        let Some(key @ Key::Property(prop)) = self.style().key_at(cx, index) else {
+        let Some(Key::Property(prop)) = self.style().key_at(cx, index) else {
             return Ok(None);
         };
+        let name = self.style().item(cx, index);
         Ok(Some([
-            to_js::utf8(&cx.heap, &*key.name())?.to_js(),
+            to_js::utf8(&cx.heap, &*name)?.to_js(),
             self.values_of(cx, prop)?.to_js(),
         ]))
     }

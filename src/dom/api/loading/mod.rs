@@ -1,6 +1,6 @@
 //! What a document loads, and what waits for that.
 
-pub(crate) mod bridge;
+pub(crate) mod for_host;
 mod links;
 mod modules;
 mod parsing;
@@ -54,10 +54,6 @@ use crate::api::realm::{client_of, hold, last_client_of, spawn};
 use crate::api::window::Window;
 use crate::generated_bindgen::core::ProcessingInstruction;
 use crate::generated_bindgen::loading::*;
-
-unsafe extern "C" {
-    safe fn Bun__isDesktopRealm(global: &JSGlobalObject) -> bool;
-}
 
 node_interface!(ProcessingInstruction, Kind::Instruction);
 
@@ -131,7 +127,7 @@ impl Doc {
     }
 
     pub(crate) fn is_of_program(&self) -> bool {
-        !Bun__isDesktopRealm(self.global())
+        crate::api::realm::is_program(self.global())
     }
 
     /// What runs in a program can do whatever the program can.
@@ -144,7 +140,7 @@ impl Doc {
     }
 
     /// Where its scripts run. A window can have the realm of another one, and none of its own.
-    fn has_realm(&self, heap: &JsHeap<'_>) -> bool {
+    pub(crate) fn has_realm(&self, heap: &JsHeap<'_>) -> bool {
         WindowTarget::of_realm(self.realm(heap))
             .zip(self.window())
             .is_some_and(|it| core::ptr::eq(it.0, it.1))
@@ -225,13 +221,7 @@ impl Doc {
         let lent = self
             .try_extra::<Loading>()
             .and_then(|it| it.lent_client.borrow().clone());
-        lent.or_else(|| {
-            if self.is_of_program() {
-                Some(Client::of_program())
-            } else {
-                client_of(self.realm(heap))
-            }
-        })
+        lent.or_else(|| crate::api::realm::client_or_program(self.realm(heap)))
     }
 }
 

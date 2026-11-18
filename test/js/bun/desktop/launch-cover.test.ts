@@ -4,7 +4,7 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { statSync } from "node:fs";
 import { join } from "node:path";
-import { hasScreen, openScreen } from "./screen";
+import { openOn, screens } from "./screen";
 
 const hasKeyring = isLinux && ["dbus-run-session", "gnome-keyring-daemon"].every(it => Bun.which(it));
 test.skipIf(!hasLibrary || !hasKeyring)(
@@ -38,10 +38,10 @@ test.skipIf(!hasLibrary || !hasKeyring)(
   },
 );
 
-test.skipIf(!hasLibrary || isWindows).each(hasScreen ? ["memory", "a screen"] : ["memory"])(
+test.skipIf(!hasLibrary || isWindows).each(["memory", ...screens])(
   "launch cover, painted to %s",
   async where => {
-    await using screen = where === "a screen" ? await openScreen() : null;
+    await using screen = await openOn(where);
     using dir = tempDir("launch-cover", { "package.json": JSON.stringify({ name: "covered" }) });
     const home = String(dir);
     const env = {
@@ -67,13 +67,25 @@ test.skipIf(!hasLibrary || isWindows).each(hasScreen ? ["memory", "a screen"] : 
     expect(["LaunchCover", "LaunchCover.json"].map(name => statSync(join(data, name)).mode & 0o777)).toEqual([
       0o600, 0o600,
     ]);
-    for (const step of ["type", "second", "early", "discarded", "keep", "unfocused", "click", "changed", "wider"])
+    for (const step of [
+      "type",
+      "replace",
+      "second",
+      "early",
+      "discarded",
+      "keep",
+      "unfocused",
+      "click",
+      "changed",
+      "wider",
+    ])
       await launch(step);
     await launch("type", "--hidden");
     for (const step of ["crash", "type", "save", "part", "changed", "clear", "type", "uncovered"]) await launch(step);
     expect(seen).toEqual([
       "save: false [] [] true",
       "type: true [] waits [b]",
+      "replace: true [draft ] waits [draft é한!글]",
       "second: true [] [] 1 2 false 1",
       "early: true [] waits [s]",
       "discarded: false [] []",

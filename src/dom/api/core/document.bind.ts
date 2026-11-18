@@ -61,7 +61,7 @@ const writes = { args: { text: b.rest(b.any) }, ...ce } as const;
 export const DocumentMembers = b.partial("DocumentMembers", {
   on: Doc,
   proto: {
-    implementation: { getter: b.any.returning("DOMImplementation"), ...heap },
+    implementation: { getter: b.any.returning("DOMImplementation"), shortcut: "implementationEdge", ...heap },
     URL: { getter: usvString, rustName: "url" },
     documentURI: { getter: usvString, rustName: "url" },
     compatMode: { getter: atom },

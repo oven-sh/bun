@@ -132,7 +132,6 @@ impl KeyboardEvent {
         self.keyboard.borrow().key_code
     }
 
-    #[expect(clippy::too_many_arguments, clippy::fn_params_excessive_bools)]
     pub(crate) fn init_keyboard_event<'a>(
         &self,
         heap: &JsHeap<'a>,

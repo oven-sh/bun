@@ -7,17 +7,18 @@ use super::hint::Styles;
 use super::reach::{Reach, reach};
 use super::sfnt::variations::{self, Axis};
 use super::sfnt::{self, Metrics, Tag, bitmap, color};
+use super::shape::Sorts;
 use super::shaper::{Feature, Plan, Tables};
 use crate::abi::{self, FontMetrics};
 use crate::bridge;
 use crate::error::{Context as _, Result};
-use crate::hash::{FastHasher, FastMap};
+use crate::hash::{FastHasher, FastMap, keyed};
 use crate::host::thread;
 use crate::json::record;
 use crate::protocol::{FontFace, FontFaceStyle, FontSource, List, Maybe, Reply, Text};
 use crate::small_vec::SmallVec;
 use crate::sync::{Mutex, RwLock};
-use crate::unicode::{self, Script};
+use crate::unicode::{self, Script, compose, decompose};
 
 pub const DEFAULT_OBLIQUE_ANGLE: f32 = 14.;
 const BOLD_THRESHOLD: f32 = 600.;
@@ -40,8 +41,9 @@ pub struct File {
 
 impl File {
     fn load(data: &'static [u8], index: u32) -> Option<&'static File> {
-        let font =
+        let mut font =
             sfnt::Font::new(data, index).filter(|it| it.units_per_em > 0 && it.has_charmap())?;
+        font.remember_glyphs();
         let has_table = |tag: &Tag| font.table(tag).is_some();
         Some(Box::leak(Box::new(File {
             data,
@@ -350,6 +352,8 @@ pub struct Candidate {
     skew: bool,
     is_smoothed: bool,
     faces: SmallVec<(u32, &'static Face), 1>,
+    /// With the size that it was for.
+    last_instance: Option<(f32, &'static Face, abi::Face)>,
 }
 
 impl Candidate {
@@ -367,6 +371,26 @@ impl Candidate {
 
     pub fn covers(&self, character: char) -> bool {
         self.is_for(character) && self.file.covers(character)
+    }
+
+    /// With marks that are part of the letter, or apart from it.
+    fn covers_equivalent(&self, cluster: &str) -> bool {
+        let covers = |it: u32| char::from_u32(it).is_some_and(|it| self.covers(it));
+        let mut characters = cluster.chars().map(u32::from);
+        match characters.next() {
+            Some(alone @ 0xC0..0x2000) if characters.clone().next().is_none() => {
+                let mut parts = std::iter::successors(decompose(alone), |it| {
+                    (!covers(it.0)).then(|| decompose(it.0)).flatten()
+                });
+                parts.clone().all(|it| it.1 == 0 || covers(it.1)) && parts.any(|it| covers(it.0))
+            }
+            Some(first @ ..0x2000) => characters
+                .try_fold(first, |letter, mark| {
+                    compose(letter, mark).or_else(|| covers(mark).then_some(letter))
+                })
+                .is_some_and(covers),
+            _ => false,
+        }
     }
 
     /// Rounded like Blink's.
@@ -420,6 +444,9 @@ pub struct Resolved {
     ascii: [u16; 128],
     /// What itemizing has found out about characters.
     pub known: Vec<u64>,
+    pub sorts: Sorts,
+    /// For the last size that has been asked about.
+    levels: Option<(f32, Levels)>,
     fallbacks: FastMap<(char, Presentation), u16>,
     pub language: Vec<u8>,
     pub device_scale: f32,
@@ -452,6 +479,7 @@ pub struct Fonts {
     /// By the address of the data.
     web_files: FastMap<usize, Option<&'static File>>,
     next_web_id: u32,
+    pages_of_sorts: usize,
 }
 
 pub static FONTS: LazyLock<Mutex<Fonts>> = LazyLock::new(|| {
@@ -463,6 +491,7 @@ pub static FONTS: LazyLock<Mutex<Fonts>> = LazyLock::new(|| {
             fallbacks: FastMap::default(),
         },
         instances: Instances::default(),
+        pages_of_sorts: 0,
         described: Vec::new(),
         ids: FastMap::default(),
         web: Vec::new(),
@@ -644,9 +673,7 @@ impl System {
         } else {
             &[]
         };
-        let mut hasher = FastHasher::default();
-        language.hash(&mut hasher);
-        let key = (character, color, hasher.finish());
+        let key = (character, color, keyed(language));
         if let Some(found) = self.fallbacks.get(&key) {
             return *found;
         }
@@ -747,11 +774,10 @@ fn candidate(
             *tag = *small;
         }
     }
-    let mut hasher = FastHasher::default();
-    (&wanted.language, wanted.language_override).hash(&mut hasher);
-    for (tag, value) in &features {
-        (tag, *value as u32).hash(&mut hasher);
-    }
+    let features: Vec<_> = features
+        .iter()
+        .map(|(tag, value)| (*tag, *value as u32))
+        .collect();
     let size_adjust = file
         .aspect(wanted.size_adjust.0, &variations)
         .map(|aspect| wanted.size_adjust.1 / aspect);
@@ -769,12 +795,9 @@ fn candidate(
             .min(10_000.),
         features: features
             .iter()
-            .map(|(tag, value)| Feature {
-                tag: *tag,
-                value: *value as u32,
-            })
+            .map(|&(tag, value)| Feature { tag, value })
             .collect(),
-        features_hash: hasher.finish(),
+        features_hash: keyed((&wanted.language, wanted.language_override, &features)),
         variations,
         optical_sizing: wanted.optical_sizing && !has_optical_size && file.axis(b"opsz").is_some(),
         is_taller: cfg!(target_os = "macos")
@@ -787,6 +810,10 @@ fn candidate(
         embolden: wanted.synthesis & abi::SYNTHESIZE_WEIGHT != 0
             && wanted.weight >= BOLD_THRESHOLD
             && offered.weight.1 < BOLD_THRESHOLD
+            && (offered.weight.1 <= 400.
+                || web
+                    .as_ref()
+                    .is_none_or(|web| web.descriptors.weight.is_some()))
             && !file.has_color,
         skew: wanted.synthesis & abi::SYNTHESIZE_STYLE != 0
             && wanted.slope() > 0.
@@ -796,13 +823,16 @@ fn candidate(
             && !file.has_color,
         web,
         faces: SmallVec::new(),
+        last_instance: None,
     }
 }
 
 impl Instances {
     fn get(&mut self, candidate: &Candidate, size: f32) -> &'static Face {
         let file = candidate.file;
-        let optical_size = candidate.optical_sizing.then_some((*b"opsz", size));
+        let optical_size = candidate
+            .optical_sizing
+            .then_some((*b"opsz", size * candidate.size_adjust));
         let settings = candidate.variations.iter().copied().chain(optical_size);
         let coords = variations::normalize(&file.font, &file.axes, settings);
         let key = (
@@ -813,6 +843,9 @@ impl Instances {
         );
         self.0.entry(key).or_insert_with_key(|(_, coords, ..)| {
             let mut faces = FACES.write();
+            if (faces.len() + 1).is_multiple_of(MANY) {
+                forget_plans(&faces);
+            }
             let face = Box::leak(Box::new(Face {
                 id: faces.len() as u32,
                 file,
@@ -828,6 +861,16 @@ impl Instances {
             face
         })
     }
+}
+
+/// New faces or descriptions.
+const MANY: usize = 1024;
+
+fn forget_plans(faces: &[&Face]) {
+    faces
+        .iter()
+        .for_each(|it| *it.plans.lock() = FastMap::default());
+    super::hint::release_memory();
 }
 
 fn family_names(families: &[u8]) -> impl Iterator<Item = (bool, &str)> {
@@ -902,6 +945,8 @@ fn resolve(wanted: &Description, system: &mut System, web: &[Arc<WebFont>]) -> R
         candidates,
         ascii: [0; 128],
         known: Vec::new(),
+        sorts: Sorts::default(),
+        levels: None,
         fallbacks: FastMap::default(),
         language,
         emoji: wanted.emoji,
@@ -915,6 +960,26 @@ pub fn is_default_ignorable(character: char) -> bool {
         0xAD | 0x34F | 0x61C | 0x115F..=0x1160 | 0x17B4..=0x17B5 | 0x180B..=0x180F | 0x200B..=0x200F
         | 0x202A..=0x202E | 0x2060..=0x206F | 0x3164 | 0xFE00..=0xFE0F | 0xFEFF | 0xFFA0 | 0xFFF0..=0xFFF8
         | 0x1BCA0..=0x1BCA3 | 0x1D173..=0x1D17A | 0xE0000..=0xE0FFF)
+}
+
+/// What `font-variant-emoji` makes of it.
+fn with_variant(emoji: u8, first: char, presentation: Presentation) -> Presentation {
+    let is_open = || {
+        matches!(presentation, Presentation::Any | Presentation::PrefersColor)
+            && unicode::is_emoji(first)
+    };
+    match emoji {
+        abi::EMOJI_AS_TEXT if is_open() => Presentation::Text,
+        abi::EMOJI_IN_COLOR if !first.is_ascii() && is_open() => Presentation::Color,
+        abi::EMOJI_AS_IN_UNICODE if is_open() => {
+            if presentation == Presentation::Any {
+                Presentation::Text
+            } else {
+                Presentation::Color
+            }
+        }
+        _ => presentation,
+    }
 }
 
 impl Fonts {
@@ -952,6 +1017,15 @@ impl Fonts {
         (first.file.ascii & PRINTABLE == PRINTABLE && !has_ranges).then_some(0)
     }
 
+    /// Whether `select` looks at the fallbacks for the text before a character that no listed font has.
+    pub fn is_for_text(&mut self, font: u32, character: char, presentation: Presentation) -> bool {
+        let emoji = self.resolved(font).map_or(abi::EMOJI_NORMAL, |it| it.emoji);
+        matches!(
+            with_variant(emoji, character, presentation),
+            Presentation::Any | Presentation::Text
+        )
+    }
+
     /// The index of the candidate that draws a grapheme cluster. `recent` has the fallbacks for the text before it.
     pub fn select(
         &mut self,
@@ -967,13 +1041,7 @@ impl Fonts {
             return Some(index.into());
         }
         let first = cluster.chars().next()?;
-        let is_open = matches!(presentation, Presentation::Any | Presentation::PrefersColor)
-            && unicode::is_emoji(first);
-        let presentation = match resolved.emoji {
-            abi::EMOJI_AS_TEXT if is_open => Presentation::Text,
-            abi::EMOJI_IN_COLOR if is_open && !first.is_ascii() => Presentation::Color,
-            _ => presentation,
-        };
+        let presentation = with_variant(resolved.emoji, first, presentation);
         let suits = |candidate: &Candidate| match presentation {
             Presentation::Color => candidate.file.has_color,
             Presentation::Text => !candidate.file.has_color,
@@ -982,11 +1050,14 @@ impl Fonts {
         let covers_all = |candidate: &Candidate| {
             (cluster.chars())
                 .all(|character| is_default_ignorable(character) || candidate.covers(character))
+                || candidate.covers_equivalent(cluster)
         };
         let listed = &resolved.candidates[..resolved.listed];
         let found = listed
             .iter()
             .position(|candidate| suits(candidate) && covers_all(candidate));
+        // Fonts that have control characters tend to leave them blank.
+        let found = found.or_else(|| first.is_control().then_some(resolved.primary));
         let is_text = matches!(presentation, Presentation::Any | Presentation::Text);
         let found = found.or_else(|| {
             recent
@@ -996,7 +1067,7 @@ impl Fonts {
         });
         let index = found.unwrap_or_else(|| {
             let index = self.select_fallback(font, first, presentation);
-            recent.extend(is_text.then_some(index));
+            recent.extend((is_text && !recent.contains(&index)).then_some(index));
             index
         });
         if let [byte] = cluster.as_bytes() {
@@ -1079,6 +1150,56 @@ impl Fonts {
             face
         });
         (resolved, face)
+    }
+
+    /// `instance`, with its metrics. `size` is multiplied with `factor`.
+    pub fn measured_instance(
+        &mut self,
+        font: u32,
+        index: usize,
+        size: f32,
+        factor: f32,
+    ) -> (&Resolved, &'static Face, abi::Face) {
+        let resolved = self.described[font as usize]
+            .resolved
+            .as_mut()
+            .expect("it was resolved");
+        let known = resolved.candidates[index]
+            .last_instance
+            .filter(|it| it.0 == size && factor == 1.);
+        let (_, face, metrics) = known.unwrap_or_else(|| {
+            let (resolved, face) = self.instance(font, index, size);
+            let candidate = &resolved.candidates[index];
+            (
+                size,
+                face,
+                candidate.line_metrics(
+                    face,
+                    size * candidate.size_adjust * factor,
+                    resolved.device_scale,
+                ),
+            )
+        });
+        let resolved = self.described[font as usize]
+            .resolved
+            .as_mut()
+            .expect("it was resolved");
+        if known.is_none() && factor == 1. {
+            resolved.candidates[index].last_instance = Some((size, face, metrics));
+        }
+        (resolved, face, metrics)
+    }
+
+    /// There are more pages of them.
+    pub fn count_sorts(&mut self, more: usize) {
+        self.pages_of_sorts += more;
+        if self.pages_of_sorts > 4096 {
+            self.pages_of_sorts = 0;
+            self.described
+                .iter_mut()
+                .flat_map(|it| &mut it.resolved)
+                .for_each(|it| it.sorts = Sorts::default());
+        }
     }
 
     fn invalidate(&mut self, scope: u32) {
@@ -1195,6 +1316,9 @@ pub fn describe(description: Description) -> u32 {
         .iter()
         .find(|id| fonts.described[**id as usize].description == description);
     known.copied().unwrap_or_else(|| {
+        if (fonts.described.len() + 1).is_multiple_of(MANY) {
+            forget_plans(&FACES.read());
+        }
         ids.push(fonts.described.len() as u32);
         fonts.described.push(Described {
             description,
@@ -1295,7 +1419,10 @@ impl Recipe {
 }
 
 pub fn metrics(font: u32, size: f32) -> FontMetrics {
-    let fonts = &mut *FONTS.lock();
+    metrics_of(&mut FONTS.lock(), font, size)
+}
+
+fn metrics_of(fonts: &mut Fonts, font: u32, size: f32) -> FontMetrics {
     let Some(primary) = fonts.primary(font) else {
         return FontMetrics {
             ascent: (size * 0.8).round(),
@@ -1370,14 +1497,45 @@ pub fn metrics(font: u32, size: f32) -> FontMetrics {
     }
 }
 
-/// The ascent and the descent, scaled to add up to the size.
-pub fn em_box(font: u32, size: f32) -> (f32, f32) {
+/// Up from the baseline, but for the descents.
+#[derive(Clone, Copy)]
+pub struct Levels {
+    pub ascent: f32,
+    pub descent: f32,
+    /// Scaled to add up to the size.
+    pub em_ascent: f32,
+    pub em_descent: f32,
+    pub alphabetic: f32,
+    pub hanging: f32,
+    pub ideographic: f32,
+}
+
+pub fn levels(font: u32, size: f32) -> Levels {
     let fonts = &mut *FONTS.lock();
+    if let Some((_, known)) = fonts
+        .resolved(font)
+        .and_then(|it| it.levels)
+        .filter(|it| it.0 == size)
+    {
+        return known;
+    }
+    let FontMetrics {
+        ascent, descent, ..
+    } = metrics_of(fonts, font, size);
+    let mut levels = Levels {
+        ascent,
+        descent,
+        em_ascent: size * 0.8,
+        em_descent: size * 0.2,
+        alphabetic: 0.,
+        hanging: ascent * 0.8,
+        ideographic: -descent,
+    };
     let Some(primary) = fonts.primary(font) else {
-        return (size * 0.8, size * 0.2);
+        return levels;
     };
     let (resolved, face) = fonts.instance(font, primary, size);
-    let size = size * resolved.candidates[primary].size_adjust;
+    let adjusted = size * resolved.candidates[primary].size_adjust;
     let typographic = face
         .file
         .font
@@ -1388,19 +1546,24 @@ pub fn em_box(font: u32, size: f32) -> (f32, f32) {
     let (ascent, descent) = typographic
         .filter(is_usable)
         .unwrap_or((face.metrics.ascent, -face.metrics.descent));
-    let ascent = (ascent * size / (ascent + descent).max(1.) * 64.).round() / 64.;
-    (ascent, size - ascent)
-}
-
-/// Those that the font has a position for.
-pub fn baselines(font: u32, size: f32, tags: [&[u8; 4]; 3]) -> [Option<f32>; 3] {
-    let fonts = &mut *FONTS.lock();
-    let Some(primary) = fonts.primary(font) else {
-        return [None; 3];
-    };
-    let (resolved, face) = fonts.instance(font, primary, size);
-    let scale = size * resolved.candidates[primary].size_adjust / face.units_per_em();
-    tags.map(|it| Some(face.file.font.baseline(it)? * scale))
+    levels.em_ascent = (ascent * adjusted / (ascent + descent).max(1.) * 64.).round() / 64.;
+    levels.em_descent = adjusted - levels.em_ascent;
+    for (tag, level) in [
+        (b"romn", &mut levels.alphabetic),
+        (b"hang", &mut levels.hanging),
+        (b"ideo", &mut levels.ideographic),
+    ] {
+        *level = face
+            .file
+            .font
+            .baseline(tag)
+            .map_or(*level, |it| it * (adjusted / face.units_per_em()));
+    }
+    fonts
+        .resolved(font)
+        .into_iter()
+        .for_each(|it| it.levels = Some((size, levels)));
+    levels
 }
 
 pub fn decode_font(bytes: Vec<u8>) -> bool {
@@ -1467,4 +1630,41 @@ pub fn font_families() -> List<Text> {
     let mut names: Vec<&str> = fonts.system.catalog.family_names().collect();
     names.sort_unstable();
     names.into_iter().map(Text::from).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::abi::TextRun;
+    use crate::text::shape::{Shaped, shape};
+
+    #[test]
+    fn plans_do_not_pile_up() {
+        crate::system_icu::install();
+        for value in 0..MANY * 3 {
+            let features = vec![abi::FontSetting {
+                tag: *b"ss01",
+                value: value as f32,
+            }];
+            let font = describe(Description {
+                features,
+                ..Description::new(b"", 400.)
+            });
+            let run = TextRun {
+                end: 1,
+                font,
+                size: 16.,
+                letter_spacing: 0.,
+                word_spacing: 0.,
+                word_break: 0,
+            };
+            shape("a", &[run], abi::DIRECTION_LTR, &mut Shaped::default());
+        }
+        assert!(
+            FACES
+                .read()
+                .iter()
+                .all(|it| it.plans.lock().len() <= MANY * 2)
+        );
+    }
 }

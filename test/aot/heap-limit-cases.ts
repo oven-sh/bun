@@ -1392,6 +1392,11 @@ attempt("copies", () => {
   for (let i = 0; i < 6; i++) all.push(structuredClone(part));
   return all;
 });
+attempt("one copy", () => {
+  const lists: unknown[] = [];
+  for (let i = 0; i < 20_000; i++) lists.push(JSON.parse("[" + '{"a":1,"b":2},'.repeat(8) + "0]"));
+  return structuredClone([part, lists]);
+});
 attempt("a small text afterward", () => JSON.parse("[1,2,3]"));
 attempt("a small copy afterward", () => structuredClone([1, { a: 2 }]));
 `,
@@ -1399,7 +1404,7 @@ attempt("a small copy afterward", () => structuredClone([1, { a: 2 }]));
         const { stdout, stderr, exitCode } = await run([await build(String(folder))], String(folder), smallHeap);
         expect({ stdout, stderr, exitCode }).toEqual({
           stdout:
-            "a text RangeError Out of memory\na text and a reviver RangeError Out of memory\ncopies RangeError Out of memory\na small text afterward finished 3\na small copy afterward finished 2\n",
+            "a text RangeError Out of memory\na text and a reviver RangeError Out of memory\ncopies RangeError Out of memory\none copy RangeError Out of memory\na small text afterward finished 3\na small copy afterward finished 2\n",
           stderr: "",
           exitCode: 0,
         });

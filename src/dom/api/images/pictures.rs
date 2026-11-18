@@ -12,8 +12,8 @@ use super::*;
 use crate::abi_graphics::Decoded;
 use crate::api::canvas::{Owned, Source, decode, drop_font_scope, open};
 use crate::api::core::global_of;
-use crate::api::interim::in_realm_of;
 use crate::api::loading::may_reuse_image;
+use crate::api::on_behalf::in_realm_of;
 use crate::document::Request;
 use crate::embedded;
 use crate::tree::Replaced;
@@ -242,6 +242,25 @@ impl Picture {
         let (is_oriented, request) = url
             .strip_prefix(UNORIENTED)
             .map_or((true, &*url), |it| (false, it));
+        if let Some(source) =
+            crate::cascade::image_of_user_agent(request).filter(|_| element.is_none())
+        {
+            let (requested, bytes) = (
+                request.as_bytes().to_vec(),
+                source.as_bytes().to_vec().into(),
+            );
+            return self.load_vector(
+                cx,
+                &Resource {
+                    requested,
+                    bytes,
+                    mime: Vec::new(),
+                    status: 200,
+                    is_readable: true,
+                    is_same_origin: true,
+                },
+            );
+        }
         let destination = match element.map(|it| it.html_tag()) {
             Some(atom!("object")) => Destination::Object,
             Some(atom!("embed")) => Destination::Embed,
@@ -657,8 +676,14 @@ impl Pictures {
         let file = bun_base64::decode_alloc(encoded)
             .ok()
             .filter(|it| it.len().div_ceil(3) * 4 == encoded.len());
+        let (is_oriented, is_origin_clean) = (true, true);
         let Some(contents) = file.and_then(|it| {
-            Contents::raster(open(&it, density as f32, scale as f32), &it, true, true)
+            Contents::raster(
+                open(&it, density as f32, scale as f32),
+                &it,
+                is_oriented,
+                is_origin_clean,
+            )
         }) else {
             return false;
         };

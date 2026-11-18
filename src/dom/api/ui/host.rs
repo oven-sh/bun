@@ -46,7 +46,7 @@ pub(crate) fn is_sandboxed(ui: &Ui, missing_flag: &str) -> bool {
         .is_some_and(|it| it.host().is_sandboxed(missing_flag.into()))
 }
 
-pub(crate) fn allows_feature(ui: &Ui, feature: &'static str) -> bool {
+pub(crate) fn allows_feature(ui: &Ui, feature: bun_web::permissions_policy::Feature) -> bool {
     ui.doc()
         .last_window()
         .is_none_or(|it| it.host().allows_feature(feature) != Some(false))
@@ -85,7 +85,11 @@ fn tell_surface(ui: &Ui, command: SurfaceCommand) {
     }
 }
 
-pub(crate) fn set_cursor(ui: &Ui, cursor: &str) {
+pub(crate) fn set_cursor(ui: &Ui, cursor: &'static str) {
+    ui.doc()
+        .window()
+        .into_iter()
+        .for_each(|it| it.host().cursor_changed(cursor.into()));
     tell_surface(ui, SurfaceCommand::Cursor(Cursor::named(cursor.as_bytes())));
 }
 
@@ -113,6 +117,7 @@ pub(crate) fn set_input_method(ui: &Ui, around: &Surroundings, caret: Rect) {
         selection: around.selection,
         composing: around.composing.into(),
         caret,
+        is_out_of_date: bun_ui::queue::are_edits_waiting(),
     };
     tell_surface(ui, SurfaceCommand::Field(Some(field).into()));
 }
@@ -250,7 +255,7 @@ pub(crate) fn pick_files<'a>(
             let Some(input) = Element::from_value(input.get()) else {
                 return;
             };
-            crate::api::interim::queue_task(input.doc(), &[input.to_js()], move |cx, values| {
+            crate::api::on_behalf::queue_task(input.doc(), &[input.to_js()], move |cx, values| {
                 Element::from_value(values[0]).into_iter().for_each(|it| {
                     crate::api::forms::entry::paths_picked(
                         cx,

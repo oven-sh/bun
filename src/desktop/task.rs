@@ -35,7 +35,9 @@ pub(crate) async fn within<T>(milliseconds: u64, future: impl Future<Output = T>
 }
 
 /// It is cancelled when it is dropped.
-pub(crate) struct Timer(#[expect(dead_code)] Sender<()>);
+pub(crate) struct Timer {
+    _cancel: Sender<()>,
+}
 
 impl Timer {
     pub(crate) fn new(milliseconds: u64, work: impl FnOnce() + 'static) -> Timer {
@@ -49,7 +51,7 @@ impl Timer {
                 work();
             }
         });
-        Timer(sender)
+        Timer { _cancel: sender }
     }
 }
 
@@ -92,6 +94,16 @@ pub(crate) fn busy_promise(future: impl Future<Output = JsResult<JSValue>> + 'st
         drop(done);
         result
     })
+}
+
+/// For what fails because of the system, when a page has asked for it.
+pub(crate) fn or_warning<T>(result: JsResult<T>) -> Option<T> {
+    match catch(result) {
+        Ok(Ok(value)) => return Some(value),
+        Ok(Err(thrown)) => report(message_of(thrown).and_then(|it| warn(&it))),
+        Err(error) => report(Err(error)),
+    }
+    None
 }
 
 pub(crate) fn throw(thrown: &Strong) -> bun_jsc::JsError {

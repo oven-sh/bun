@@ -122,6 +122,12 @@ pub fn detach(stack_size: usize, run: fn()) -> bool {
         libc::pthread_attr_init(attributes.as_mut_ptr());
         libc::pthread_attr_setstacksize(attributes.as_mut_ptr(), stack_size);
         libc::pthread_attr_setdetachstate(attributes.as_mut_ptr(), libc::PTHREAD_CREATE_DETACHED);
+        #[cfg(target_os = "macos")]
+        libc::pthread_attr_set_qos_class_np(
+            attributes.as_mut_ptr(),
+            libc::qos_class_t::QOS_CLASS_USER_INITIATED,
+            0,
+        );
         let status = libc::pthread_create(
             thread.as_mut_ptr(),
             attributes.as_ptr(),
@@ -131,6 +137,15 @@ pub fn detach(stack_size: usize, run: fn()) -> bool {
         libc::pthread_attr_destroy(attributes.as_mut_ptr());
         status == 0
     }
+}
+
+/// The current thread. One that waits for it does not lend its priority.
+pub fn is_needed_for_frames() {
+    #[cfg(target_os = "macos")]
+    // SAFETY: it only takes numbers.
+    unsafe {
+        libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE, 0)
+    };
 }
 
 /// Of the current thread. Linux takes 15 bytes.

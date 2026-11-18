@@ -12,7 +12,7 @@ use crate::api::core::{Atom, Edge, Element, Node, Ns, atom};
 use crate::api::core::{Doc, ReadyState};
 use crate::api::events::now;
 use crate::api::graphics::Failure;
-use crate::api::interim::{add_listener, remove_listener, resolve};
+use crate::api::on_behalf::{add_listener, remove_listener, resolve};
 use crate::document::Document;
 use crate::generated_bindgen::svg::{SVGAnimationElement, SVGSVGElement};
 use crate::smil::Instance;

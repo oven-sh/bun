@@ -51,6 +51,7 @@ fn socket() -> JsResult<String> {
 #[cfg(unix)]
 fn received(message: &[u8]) -> JsResult<()> {
     use bun_jsc::StringJsc as _;
+    use bun_ui::protocol::SystemCommand;
     let parsed = bun_core::String::clone_utf8(message).to_js_by_parse_json(global());
     let Some(message) = catch(parsed)?.ok().filter(|it| it.is_object()) else {
         return Ok(());
@@ -58,6 +59,10 @@ fn received(message: &[u8]) -> JsResult<()> {
     let arguments = get(message, "argv")?;
     if !is_held() || !arguments.is_array() {
         return Ok(());
+    }
+    let token = get(message, "token")?;
+    if token.is_string() {
+        tell_system(SystemCommand::ActivationToken(text_of(token)?.into()))?;
     }
     let details = [
         arguments,
@@ -127,6 +132,7 @@ pub(crate) fn request(additional_data: JSValue) -> JsResult<bool> {
         "argv": get(process::object(), "argv")?,
         "cwd": files::absolute("."),
         "additionalData": additional_data,
+        "token": process::variable("XDG_ACTIVATION_TOKEN")?,
     });
     let message = message.json_stringify_fast(global())?;
     let taken = take(socket()?, &message.to_utf8()).map_err(|it| error(format_args!("{it}")))?;

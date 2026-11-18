@@ -40,6 +40,8 @@ pub(crate) struct InputMethod {
     start: Cell<u32>,
     length: Cell<u32>,
     told: RefCell<Told>,
+    /// The library takes it for granted that an edit does what it says.
+    owes_news: Cell<bool>,
 }
 
 fn fire_composition<'a>(cx: &mut Cx<'a>, target: &'a Element, name: Known, data: DomString) {
@@ -53,9 +55,11 @@ fn fire_composition<'a>(cx: &mut Cx<'a>, target: &'a Element, name: Known, data:
 
 /// The offsets of an input method are in the text node that has the caret.
 fn select<'a>(cx: &mut Cx<'a>, ui: &'a Ui, offsets: Option<[u32; 2]>) {
-    if let Some(([start, end], node)) = offsets
-        .zip(selected(ui).map(|it| it.end().node))
-        .filter(|(it, node)| node.is_text() && it[1] <= node.length())
+    let found = offsets
+        .zip(selected(ui).map(|it| it.end()))
+        .map(|(it, caret)| (bun_ui::protocol::from_start(it, caret.offset), caret.node));
+    if let Some(([start, end], node)) =
+        found.filter(|(it, node)| node.is_text() && it[1] <= node.length())
     {
         range::selection_of(&cx.heap, ui.doc()).select(
             cx,
@@ -240,6 +244,11 @@ pub(crate) fn type_text<'a>(
     super::insert_text(cx, ui, text, atom!("insertText"), By::Script);
 }
 
+pub(crate) fn expect_edit<'a>(cx: &mut Cx<'a>, ui: &'a Ui) {
+    ui.editing.input_method.owes_news.set(true);
+    ui.doc().invalidate(cx);
+}
+
 /// Something else has told the library something.
 pub(crate) fn forget_what_was_told(ui: &Ui) {
     ui.editing.input_method.told.take();
@@ -322,15 +331,19 @@ pub(super) fn update<'a>(cx: &mut Cx<'a>, ui: &'a Ui) -> bool {
         }
         _ => None,
     };
-    if same.is_some_and(|it| it.1 == layout_version) {
+    let owes_news = &ui.editing.input_method.owes_news;
+    if same.is_some_and(|it| it.1 == layout_version) && !owes_news.get() {
         return false;
     }
     let caret = layout::caret_rect(cx, caret).unwrap_or_default();
     let has_changed = same.is_none_or(|it| it.0 != caret);
     if has_changed {
         ui.set_input_method_node(Some(end.node));
-        host::set_input_method(ui, &around, caret);
         show_composition(ui);
+    }
+    if has_changed || owes_news.get() {
+        owes_news.set(bun_ui::queue::are_edits_waiting());
+        host::set_input_method(ui, &around, caret);
     }
     told.replace(Told::Enabled {
         around,

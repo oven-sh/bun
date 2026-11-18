@@ -71,6 +71,7 @@ pub fn open_channel() -> Result<i32> {
     std::thread::Builder::new()
         .name("web frames".into())
         .spawn(move || {
+            crate::host::thread::is_needed_for_frames();
             let mut next = || {
                 let mut length = [0; 4];
                 ours.read_exact(&mut length).ok()?;

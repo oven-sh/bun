@@ -29,6 +29,7 @@ mod json;
 mod keys;
 mod motion;
 mod paint;
+mod parallel;
 mod platform;
 mod png_rows;
 #[path = "../../../src/ui/protocol.rs"]
@@ -117,31 +118,55 @@ extern "C" fn font_metrics(font: u32, size: f32) -> abi::FontMetrics {
     })
 }
 
-unsafe extern "C" fn shape(
-    text: abi::Slice<u8>,
-    runs: abi::Slice<abi::TextRun>,
-    direction: u8,
-) -> abi::ShapedText {
+/// # Safety
+/// It is alive, and UTF-8.
+unsafe fn as_str<'a>(text: abi::Slice<u8>) -> &'a str {
+    // SAFETY: the caller's contract.
+    unsafe {
+        debug_assert!(std::str::from_utf8(text.get()).is_ok());
+        std::str::from_utf8_unchecked(text.get())
+    }
+}
+
+fn lend(shape: impl FnOnce(&mut text::Shaped)) -> abi::ShapedText {
     thread_local! {
         static SHAPED: RefCell<text::Shaped> = RefCell::default();
     }
-    // SAFETY: the contract of `abi::Renderer`.
-    let (text, runs) = unsafe { (text.get(), runs.get()) };
     SHAPED.with_borrow_mut(|shaped| {
-        let text = std::str::from_utf8(text).unwrap_or_default();
-        if !guard("error", false, || {
-            (text::shape(text, runs, direction, shaped), true).1
-        }) {
+        if !guard("error", false, || (shape(shaped), true).1) {
             *shaped = text::Shaped::default();
         }
         abi::ShapedText {
             clusters: abi::Slice::new(&shaped.clusters),
             glyphs: abi::Slice::new(&shaped.glyphs),
             letters: abi::Slice::new(&shaped.letters),
+            joined: abi::Slice::new(&shaped.joined),
             faces: abi::Slice::new(&shaped.faces),
             base_level: shaped.base_level,
+            skipped: shaped.skipped as u32,
         }
     })
+}
+
+unsafe extern "C" fn shape(
+    text: abi::Slice<u8>,
+    runs: abi::Slice<abi::TextRun>,
+    direction: u8,
+) -> abi::ShapedText {
+    // SAFETY: the contract of `abi::Renderer`.
+    let (text, runs) = unsafe { (as_str(text), runs.get()) };
+    lend(|shaped| text::shape(text, runs, direction, shaped))
+}
+
+unsafe extern "C" fn shape_rest(
+    text: abi::Slice<u8>,
+    runs: abi::Slice<abi::TextRun>,
+    from: u32,
+    known: u32,
+) -> abi::ShapedText {
+    // SAFETY: the contract of `abi::Renderer`.
+    let (text, runs) = unsafe { (as_str(text), runs.get()) };
+    lend(|shaped| text::shape_rest(text, runs, from as usize, known as usize, shaped))
 }
 
 unsafe extern "C" fn submit(surface: u32, list: *const abi::DisplayList) {
@@ -242,6 +267,7 @@ static RENDERER: abi::Renderer = abi::Renderer {
     font_describe,
     font_metrics,
     shape,
+    shape_rest,
     submit,
     ink_spans,
     submit_composited,

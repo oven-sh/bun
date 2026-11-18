@@ -403,7 +403,6 @@ impl Document {
     fn fallback_height(&mut self, id: BoxId) -> f32 {
         self.boxes.sized_by_viewport.insert(id);
         let (mode, viewport) = (self.boxes[id].turned, &self.boxes[VIEWPORT]);
-        let gutters = viewport.turned.turn_axes(viewport.gutters().sums());
         let axis = usize::from(!mode.is_vertical());
         let around = core::iter::successors(Some(self.boxes[id].parent), |it| {
             Some(self.boxes[*it].parent).filter(|it| *it != 0)
@@ -424,7 +423,7 @@ impl Document {
             fixed(&l.max_height.0, 5).unwrap_or(f32::INFINITY),
         ];
         clamp(fixed(&l.height, 1).unwrap_or(f32::INFINITY), limits)
-            .min(self.environment.viewport[axis] - gutters[axis])
+            .min(self.environment.viewport[axis])
     }
 
     /// What `room` is in the mode of an orthogonal box.
@@ -468,8 +467,8 @@ impl Document {
         })
     }
 
-    /// The min-content height of an orthogonal box, whatever its style says.
-    pub(crate) fn orthogonal_min_content(&mut self, id: BoxId, width: f32, basis: f32) -> f32 {
+    /// The min-content and max-content heights of an orthogonal box, whatever its style says.
+    pub(crate) fn orthogonal_content(&mut self, id: BoxId, width: f32, basis: f32) -> [f32; 2] {
         self.in_own_mode(id, basis, |document| {
             let edges = document.boxes[id].border_and_padding(0.0).sums();
             document
@@ -482,7 +481,7 @@ impl Document {
                     edges,
                     true,
                 )
-                .sizes[0]
+                .sizes
         })
     }
 
@@ -514,7 +513,10 @@ impl Document {
             basis: [Some(input.basis.0), input.basis.1],
             height: None,
         };
-        let room = self.own_room(id, &room);
+        let room = Room {
+            height: input.has_definite_width.then_some(input.width),
+            ..self.own_room(id, &room)
+        };
         self.in_own_mode(id, input.basis.0, |document| {
             let edges = document.boxes[id].border_and_padding(0.0).sums();
             let intrinsic = document

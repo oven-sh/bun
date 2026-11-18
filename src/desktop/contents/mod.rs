@@ -15,14 +15,19 @@ mod open;
 pub(crate) mod page;
 pub(crate) mod parts;
 mod sandbox;
+mod save;
 pub(crate) mod worlds;
 
 use std::rc::Rc;
+use std::sync::Arc;
 
 use bun_ui::protocol::{Command, SurfaceCommand};
 use bun_ui::surfaces;
+use bun_web::encoding::Encoding;
 use bun_web::headers::HeaderList;
-use bun_web::host::Activation;
+use bun_web::host::{Activation, FontSettings, Owner};
+use bun_web::input::{Action, Extent, Input, Mouse, Place};
+use bun_web::page::{Change, Controls, News as ForElement};
 
 use self::context::Context;
 use self::frame::Embedded;
@@ -117,16 +122,11 @@ impl Numbers for JSValue {
     }
 }
 
-fn callable_at(arguments: &[JSValue], index: usize) -> JsResult<JSValue> {
-    let found = Some(argument(arguments, index)).filter(|it| it.is_callable());
-    found.ok_or_else(|| type_error(format_args!("A function is required")))
-}
-
 fn text_at(arguments: &[JSValue], index: usize) -> JsResult<String> {
     text_of(argument(arguments, index))
 }
 
-fn text_if_any(value: JSValue) -> JsResult<Option<String>> {
+pub(crate) fn text_if_any(value: JSValue) -> JsResult<Option<String>> {
     value.is_string().then(|| text_of(value)).transpose()
 }
 
@@ -156,8 +156,45 @@ struct Preferences {
     integrates_node: bool,
     integrates_node_in_frames: bool,
     is_sandboxed: bool,
+    fixes_text_areas: bool,
+    keeps_window_size: bool,
+    reports_preferred_size: bool,
     zoom_factor: f64,
     preload: Option<String>,
+    default_encoding: Option<Encoding>,
+    fonts: Option<Arc<FontSettings>>,
+}
+
+fn read_fonts(given: JSValue) -> JsResult<Option<Arc<FontSettings>>> {
+    let size = |name| JsResult::Ok(get(given, name)?.get_number().map(|it| it as i32 as f32));
+    let [size, monospace_size, minimum_size] = [
+        size("defaultFontSize")?,
+        size("defaultMonospaceFontSize")?,
+        size("minimumFontSize")?,
+    ];
+    let families = object_in(Some(get(given, "defaultFontFamily")?));
+    if families.is_none() && size.or(monospace_size).or(minimum_size).is_none() {
+        return Ok(None);
+    }
+    let family = |name| families.map_or(Ok(None), |it| text_if_any(get(it, name)?));
+    let mut generic = Vec::new();
+    for (name, in_css) in [
+        ("serif", "serif"),
+        ("sansSerif", "sans-serif"),
+        ("monospace", "monospace"),
+        ("cursive", "cursive"),
+        ("fantasy", "fantasy"),
+        ("math", "math"),
+    ] {
+        generic.extend(family(name)?.map(|it| (in_css.to_owned(), it)));
+    }
+    Ok(Some(Arc::new(FontSettings {
+        size: size.unwrap_or(16.),
+        monospace_size: monospace_size.unwrap_or(13.),
+        minimum_size: minimum_size.unwrap_or(0.),
+        standard: family("standard")?,
+        generic,
+    })))
 }
 
 impl Preferences {
@@ -183,6 +220,12 @@ impl Preferences {
             } else {
                 sandbox.to_boolean()
             },
+            fixes_text_areas: !is_left_on("textAreasAreResizable")?,
+            keeps_window_size: is_set("disableHtmlFullscreenWindowResize")?,
+            reports_preferred_size: is_set("enablePreferredSizeMode")?,
+            default_encoding: text_if_any(get(given, "defaultEncoding")?)?
+                .and_then(|it| Encoding::for_label(it.as_bytes())),
+            fonts: read_fonts(given)?,
             zoom_factor: get(given, "zoomFactor")?.get_number().unwrap_or(1.),
             preload: text_if_any(get(given, "preload")?)?,
         })
@@ -206,10 +249,20 @@ pub(crate) enum Kind {
     Print,
 }
 
+/// What is emulated. Nothing where there is a zero.
+#[derive(Clone, Copy)]
+struct Device {
+    screen: [f64; 2],
+    view: [f64; 2],
+    scale: f64,
+}
+
 pub(crate) struct State {
     id: u32,
     surface: u32,
     kind: Cell<Kind>,
+    link: Rc<dyn bun_web::page::Link>,
+    size: Cell<Option<Extent>>,
     session: &'static Session,
     preferences: Rc<Preferences>,
     context: Context,
@@ -226,6 +279,11 @@ pub(crate) struct State {
     crashed_at: RefCell<Option<String>>,
     ignores_menu_shortcuts: Cell<bool>,
     is_muted: Cell<bool>,
+    throttles_background: Cell<bool>,
+    /// And the page has not been told otherwise.
+    was_shown: Cell<bool>,
+    theme_color: Cell<Option<u32>>,
+    device: Cell<Option<Device>>,
     background: Cell<u32>,
     user_agent: RefCell<Option<String>>,
     zoom_mode: RefCell<String>,
@@ -288,13 +346,13 @@ pub(crate) fn theme_changed() -> JsResult<()> {
 }
 
 pub(crate) fn dictionary_changed() -> JsResult<()> {
-    of_app().try_for_each(|it| it.page().tell("dictionaryChanged", &[]))
+    of_app().try_for_each(|it| it.page().tell(Controls::dictionary_changed))
 }
 
 pub(crate) fn online_changed(is_online: bool) {
     alive().for_each(|it| {
         it.page()
-            .later(move |page| page.tell("onlineChanged", &[is_online.into()]))
+            .later(move |page| page.tell(|it| it.online_changed(is_online)))
     });
 }
 
@@ -304,11 +362,11 @@ enum Start<'a> {
     OpenedByGuest(JSValue, &'static Session),
     Opened {
         opener: &'a Page,
-        /// Makes the first document in the realm of `opener`.
-        create_page: Option<JSValue>,
+        /// The first document is in the realm of `opener`.
+        borrows_realm: bool,
         is_related: bool,
     },
-    Framed(&'a Page, JSValue),
+    Framed(&'a Page, u32, &'a Owner),
 }
 
 const OF_FRAMES: &[&str] = &[
@@ -343,7 +401,7 @@ impl Contents {
             object!({})
         };
         let (session, preferences) = match *start {
-            Start::Framed(parent, _) => (
+            Start::Framed(parent, ..) => (
                 parent.contents().session,
                 Rc::clone(&parent.contents().preferences),
             ),
@@ -360,7 +418,7 @@ impl Contents {
             }
         };
         let creator = match *start {
-            Start::Framed(page, _)
+            Start::Framed(page, ..)
             | Start::Opened {
                 opener: page,
                 is_related: true,
@@ -373,11 +431,19 @@ impl Contents {
             id: all().last_id.get(),
             surface: surfaces::next_id(),
             kind: kind.into(),
+            link: bun_web::page::here(),
+            size: None.into(),
             session,
+            throttles_background: preferences.throttles_background.into(),
+            was_shown: false.into(),
+            theme_color: None.into(),
+            device: None.into(),
             preferences,
             context: Context::new(creator.map(Page::contents)),
             embedded: match *start {
-                Start::Framed(parent, element) => Some(Embedded::new(parent, element)?),
+                Start::Framed(parent, number, element) => {
+                    Some(Embedded::new(parent, number, element)?)
+                }
                 _ => None,
             },
             history: Default::default(),
@@ -407,7 +473,18 @@ impl Contents {
                 fields::set_opener(this, opener.to_js());
                 fields::set_opened_by(this, is_related.then(|| opener.contents()));
             }
-            Start::Framed(parent, element) => this.embed(parent, element)?,
+            Start::Framed(parent, ..) => this.embed(parent),
+        }
+        let embedded = this.embedded.as_ref();
+        this.tell_pages(Change::Created {
+            embedder: fields::embedder(this).map(|it| it.id),
+            frame: embedded.map_or(0, |it| it.number),
+            image: embedded.map_or(0, |it| it.image),
+            opener: this.opened_by().map(|it| it.id),
+            related: creator.map(|it| it.contents().id),
+        });
+        if let Start::Framed(_, _, element) = *start {
+            this.rename(element.name.clone());
         }
         this.tell_surface(SurfaceCommand::Create {
             size: Size {
@@ -417,24 +494,23 @@ impl Contents {
             scale: 1.,
             is_focusable: true,
         })?;
-        let receive = listener(this, |it, arguments| it.handle(argument(arguments, 0)))?;
-        surfaces::listen_with_script(global(), this.surface, receive);
+        this.listen_to(this.surface);
         let about = About {
             is_initial: true,
             referrer: creator.map(Page::url).unwrap_or_default(),
             creator: creator.map(|it| Creator::Page(Rc::new(Root::new(it)))),
             ..Default::default()
         };
-        this.show_from_now(this.new_page("about:blank", about)?)?;
+        this.show_from_now(this.new_page("about:blank", about)?);
         this.page().forget_creator();
         all().alive.borrow_mut().push(Root::new(this));
         if let Start::Opened {
             opener,
-            create_page: Some(create_page),
+            borrows_realm: true,
             ..
         } = *start
         {
-            this.page().adopt(opener, create_page);
+            this.page().adopt(opener);
         }
         if !matches!(kind, Kind::Frame | Kind::Print) {
             announce(app::object(), "web-contents-created", &[this.to_js()])?;
@@ -495,9 +571,8 @@ impl Contents {
         &self.owner().history
     }
 
-    /// The last event that has told it.
-    pub(crate) fn size(&self) -> Option<JSValue> {
-        object_in(fields::size(self))
+    pub(crate) fn size(&self) -> Option<Extent> {
+        self.size.get()
     }
 
     pub(crate) fn window(&self) -> Option<&'static Window> {
@@ -511,6 +586,23 @@ impl Contents {
     fn is_visible(&self) -> JsResult<bool> {
         let is_drawn = fields::view(self.owner()).is_some_and(View::is_drawn);
         Ok(is_drawn && self.window().map(Window::is_on_screen).transpose()? == Some(true))
+    }
+
+    /// What the page takes itself to be.
+    fn seems_shown(&self) -> JsResult<bool> {
+        let (it, window) = (self.owner(), self.window());
+        let is_shown = match (fields::view(it), window) {
+            (None, _) => true,
+            (_, Some(window)) if it.kind.get() == Kind::Window && window.paints_unshown() => true,
+            (Some(view), Some(window)) => {
+                it.is_visible()? && view.has_area() && !window.is_out_of_sight()
+            }
+            _ => false,
+        };
+        if is_shown || it.throttles_background.get() {
+            it.was_shown.set(is_shown);
+        }
+        Ok(it.was_shown.get())
     }
 
     fn is_window_focused(&self) -> JsResult<bool> {
@@ -560,7 +652,7 @@ impl Contents {
     pub(crate) fn environment_changed(&self) -> JsResult<()> {
         match self.guest() {
             Some(guest) => guest.environment_changed(),
-            None => self.page().tell("environmentChanged", &[]),
+            None => self.page().tell(Controls::environment_changed),
         }
     }
 
@@ -638,25 +730,24 @@ impl Contents {
     // ── documents ──
 
     fn new_page(&self, url: &str, mut about: About) -> JsResult<&'static Page> {
-        about.sandbox = self.sandbox_of_next(about.headers())?;
+        about.sandbox = self.sandbox_of_next(about.headers());
         Page::create(self, url, about)
     }
 
-    fn sandbox_of_next(&self, headers: &HeaderList) -> JsResult<sandbox::Sandbox> {
+    fn sandbox_of_next(&self, headers: &HeaderList) -> sandbox::Sandbox {
         let mut sandbox = match (self.parent(), self.opener_page()) {
             (Some(parent), _) => parent.page().sandbox(),
             (None, Some(opener)) => opener.sandbox().of_popups(),
             _ => Default::default(),
         };
-        if self.embedded.as_ref().is_some_and(|it| it.kind == "iframe") {
-            self.attribute("sandbox")?
-                .into_iter()
-                .for_each(|it| sandbox.restrict(it.as_bytes()));
+        let element = self.element();
+        if element.kind == "iframe" {
+            (element.sandbox.into_iter()).for_each(|it| sandbox.restrict(it.as_bytes()));
         }
         headers
             .values(b"content-security-policy")
             .for_each(|it| sandbox.restrict_by_policy(it));
-        Ok(sandbox)
+        sandbox
     }
 
     fn opener_page(&self) -> Option<&'static Page> {
@@ -671,51 +762,66 @@ impl Contents {
         Ok(self.page())
     }
 
+    fn has_crashed(&self) -> bool {
+        self.crashed_at.borrow().is_some()
+    }
+
+    pub(crate) fn live_page(&self) -> JsResult<&'static Page> {
+        match self.has_crashed() {
+            true => Err(worlds::disposed()),
+            false => self.started_page(),
+        }
+    }
+
+    fn on_device(&self, real: Extent) -> Input {
+        let or = |emulated: f64, real| if emulated > 0. { emulated } else { real };
+        Input::Resize {
+            extent: self.device.get().map_or(real, |it| Extent {
+                size: [or(it.view[0], real.size[0]), or(it.view[1], real.size[1])],
+                scale: or(it.scale, real.scale),
+            }),
+            is_quiet: false,
+        }
+    }
+
     fn show(&self, page: &Page, source: &str, markup: Markup<'_>) -> JsResult<()> {
         if !page.is_started() {
             page.start()?;
         }
-        if page.is_initial() && page.agent().is_some() {
-            self.tell_element("measure", &[])?;
-            if let Some(size) = self.size() {
-                let quiet = spread(object!({}), size)?;
-                quiet.put(global(), b"isQuiet", JSValue::TRUE);
-                page.tell("handleEvent", &[quiet])?;
+        if page.is_initial() && page.has_relatives.get() {
+            self.tell_element(ForElement::Measure)?;
+            if self.is_frame() {
+                page.tell(|it| it.follow_container(false))?;
+            } else if let Some(extent) = self.size() {
+                let is_quiet = true;
+                page.tell(|it| it.input(Input::Resize { extent, is_quiet }))?;
             }
             self.notify(News::DocumentCreated)?;
-            return page.tell("parseHTML", &[js("")?]);
+            return page.tell(Controls::stay_empty);
         }
-        self.size()
-            .map_or(Ok(()), |it| page.tell("handleEvent", &[it]))?;
-        if self.is_focused()
-            || self.inspection.seems_focused.get()
-            || self.ask_element("isFocused", &[])?.to_boolean()
-        {
-            page.tell(
-                "handleEvent",
-                &[object!({ "t": "focus", "s": self.surface })],
-            )?;
+        if self.is_frame() {
+            page.tell(|it| it.follow_container(true))?;
+        } else if let Some(size) = self.size() {
+            page.tell(|it| it.input(self.on_device(size)))?;
+        }
+        if self.is_focused() || self.inspection.seems_focused.get() {
+            page.tell(|it| it.input(Input::Focus { direction: 0 }))?;
         }
         self.notify(News::DocumentCreated)?;
-        match markup {
-            Markup::Html => page.tell("loadHTML", &[js(source)?]),
-            Markup::StartOfHtml => page.tell("loadHTML", &[js(source)?, JSValue::TRUE]),
-            Markup::Xml(kind) => page.tell("loadXML", &[js(source)?, js(kind)?]),
-        }
+        page.tell(|it| match markup {
+            Markup::Html => it.load_html(source.to_owned(), false),
+            Markup::StartOfHtml => it.load_html(source.to_owned(), true),
+            Markup::Xml(kind) => it.load_xml(source.to_owned(), kind.to_owned()),
+        })
     }
 
     pub(crate) fn leave_page(&self) -> JsResult<()> {
         self.page().dispose()?;
-        fields::set_page(
-            self,
-            Some(self.new_page(
-                "about:blank",
-                About {
-                    is_initial: true,
-                    ..Default::default()
-                },
-            )?),
-        );
+        let about = About {
+            is_initial: true,
+            ..Default::default()
+        };
+        self.set_page(self.new_page("about:blank", about)?);
         Ok(())
     }
 
@@ -727,9 +833,12 @@ impl Contents {
         self.page().dispose()?;
         self.cancel_pending()?;
         let (old, url) = (self.page(), self.page().url_in_history());
-        let page = self.new_page(&url, About::default())?;
+        let mut about = About::default();
+        about.sandbox.keep_only(Vec::new());
+        let page = Page::create(self, &url, about)?;
         page.succeed(old);
-        fields::set_page(self, Some(page));
+        self.set_page(page);
+        self.tell_pages(Change::Crashed);
         self.has_crashed_at(url);
         self.set_loading(false)?;
         let details = object!({ "reason": reason, "exitCode": 2 });
@@ -743,7 +852,7 @@ impl Contents {
 
     fn may_unload(&self, is_closing: bool) -> JsResult<bool> {
         Ok(self.page().may_be_unloaded()?
-            || (!is_closing && !self.page().ask("hasBeenActive", &[])?.to_boolean())
+            || (!is_closing && !self.page().has_been_active.get())
             || (!self.is_frame() && !self.dispatch("will-prevent-unload", &[])?))
     }
 
@@ -795,27 +904,30 @@ impl Contents {
 
     // ── input ──
 
-    pub(crate) fn input(&self, event: JSValue) -> JsResult<()> {
-        self.handle(spread(object!({ "s": self.surface }), event)?)
+    fn listen_to(&self, surface: u32) {
+        let this = Root::new(self);
+        surfaces::listen_with(surface, move |it| this.get().input(it.into()));
     }
 
-    fn handle(&self, event: JSValue) -> JsResult<()> {
-        let kind = get(event, "t")?.to_utf8(global())?;
-        let mut event = event;
-        match &*kind {
-            b"resize" => {
-                // The library repeats what `place()` has said, which may have changed since.
-                if self.is_frame() && !get(event, "isQuiet")?.to_boolean() {
-                    return Ok(());
+    pub(crate) fn input(&self, mut input: Input) -> JsResult<()> {
+        if input.may_activate() {
+            (self.owner().context.last_input).set(bun_web::time::monotonic_now());
+        }
+        match &input {
+            // The library repeats what `place()` has said, which may have changed since.
+            Input::Resize { .. } if self.is_frame() => return Ok(()),
+            Input::Resize { extent, .. } => {
+                self.size.set(Some(*extent));
+                fields::pending_guest(self).map_or(Ok(()), |it| it.handle(input.clone()))?;
+                if self.guest().is_none() && self.device.get().is_some() {
+                    input = self.on_device(*extent);
                 }
-                fields::set_size(self, event);
-                fields::pending_guest(self).map_or(Ok(()), |it| it.handle_event(event))?;
             }
-            b"focus" if !self.is_frame() => {
+            Input::Focus { .. } if !self.is_frame() => {
                 all().focused.set(self.id);
                 self.emit("focus", &[])?;
             }
-            b"blur" => {
+            Input::Blur { .. } => {
                 if self.is_focused() {
                     all().focused.set(0);
                 }
@@ -824,44 +936,39 @@ impl Contents {
                     return Ok(());
                 }
             }
-            b"mouse" | b"wheel"
-                if !self.is_frame() && !self.before_mouse(event, *kind == *b"wheel")? =>
+            Input::Mouse(it) if !self.is_frame() && !self.before_mouse(it.place, Some(it))? => {
+                return Ok(());
+            }
+            Input::Wheel { place, .. }
+                if !self.is_frame() && !self.before_mouse(*place, None)? =>
             {
                 return Ok(());
             }
-            b"drag" if !self.is_frame() && self.guest().is_none() => {
-                event = hooks::with_files(event)?
+            Input::Key(key) if !self.is_destroyed.get() && self.before_input(key)? => {
+                self.page().tell(|it| it.input(Input::KeyTaken))?;
+                return tell(Command::KeyWasHandled);
             }
             _ => {}
         }
-        match self.guest() {
+        match (self.guest(), input) {
             _ if self.is_destroyed.get() => Ok(()),
-            Some(guest) => guest.handle_event(event),
-            None if *kind == *b"key" && !self.page().is_started() => {
-                let key = bun_web::host::Keystroke {
-                    is_down: text_of(get(event, "e")?)? == "down",
-                    key: text_of(get(event, "key")?)?,
-                    code: text_of(get(event, "code")?)?,
-                    location: get(event, "location")?.as_u32(),
-                    modifiers: get(event, "m")?.as_u32(),
-                    repeats: get(event, "repeat")?.to_boolean(),
-                    is_composing: get(event, "composing")?.to_boolean(),
-                };
-                if !self.before_input(&key)? && key.is_down {
+            (Some(guest), input) => guest.handle(input),
+            (None, Input::Key(key)) if !self.page().is_started() => {
+                if key.is_down {
                     link::handle_shortcut(self.page(), &key)?;
                 }
                 tell(Command::KeyWasHandled)
             }
-            None => self.page().tell("handleEvent", &[event]),
+            (None, input) => self.page().tell(|it| it.input(input)),
         }
     }
 
-    /// False if the page is not to see it.
-    fn before_mouse(&self, event: JSValue, is_wheel: bool) -> JsResult<bool> {
-        let button = get(event, "b")?.get_number().map(|it| it as usize);
+    /// `mouse` is `None` for the wheel. False if the page is not to see it.
+    fn before_mouse(&self, place: Place, mouse: Option<&Mouse>) -> JsResult<bool> {
+        let (button, action) = (mouse.map(|it| it.button), mouse.map(|it| it.action));
         if let Some(3 | 4) = button {
             if let Some(window) = self.window()
-                && text_of(get(event, "e")?)? == "up"
+                && action == Some(Action::Up)
             {
                 let command = if button == Some(3) {
                     "browser-backward"
@@ -877,23 +984,23 @@ impl Contents {
         {
             return Ok(true);
         }
-        let kind = match &*text_of(get(event, "e")?)? {
-            _ if is_wheel => "mouseWheel",
-            "down" => "mouseDown",
-            "up" => "mouseUp",
-            "leave" => "mouseLeave",
-            _ => "mouseMove",
+        let kind = match action {
+            None => "mouseWheel",
+            Some(Action::Down) => "mouseDown",
+            Some(Action::Up) => "mouseUp",
+            Some(Action::Leave) => "mouseLeave",
+            Some(Action::Move) => "mouseMove",
         };
-        let modifiers = modifier_names(get(event, "m")?.as_u32())?;
+        let modifiers = modifier_names(place.modifiers)?;
         let input = object!({
             "type": kind,
             "modifiers": modifiers,
-            "x": get(event, "x")?,
-            "y": get(event, "y")?,
-            "globalX": get(event, "sx")?,
-            "globalY": get(event, "sy")?,
-            "clickCount": get(event, "n")?,
-            "button": *button.and_then(|it| ["left", "middle", "right"].get(it)).unwrap_or(&"none"),
+            "x": place.window[0],
+            "y": place.window[1],
+            "globalX": place.screen[0],
+            "globalY": place.screen[1],
+            "clickCount": or_undefined(mouse.map(|it| it.clicks))?,
+            "button": *button.and_then(|it| ["left", "middle", "right"].get(it as usize)).unwrap_or(&"none"),
         });
         if !self.dispatch("before-mouse-event", &[input])? {
             return Ok(false);
@@ -906,7 +1013,7 @@ impl Contents {
     }
 
     /// Whether the app has taken the key.
-    pub(crate) fn before_input(&self, key: &bun_web::host::Keystroke) -> JsResult<bool> {
+    fn before_input(&self, key: &bun_web::host::Keystroke) -> JsResult<bool> {
         if self.is_frame()
             || (!has_listeners(self.to_js(), "before-input-event")?
                 && !has_listeners(self.to_js(), "input-event")?)

@@ -55,7 +55,7 @@ extern "C" double Bun__DOM__localTime(JSC::JSGlobalObject* globalObject)
 
 extern "C" uint64_t Bun__DOM__clusterAt(const char16_t* text, uint32_t length, uint32_t offset)
 {
-    static thread_local std::unique_ptr<UBreakIterator, ICUDeleter<ubrk_close>> characters;
+    [[clang::always_destroy]] static thread_local std::unique_ptr<UBreakIterator, ICUDeleter<ubrk_close>> characters;
     UErrorCode status = U_ZERO_ERROR;
     if (!characters)
         characters.reset(ubrk_open(UBRK_CHARACTER, "", nullptr, 0, &status));

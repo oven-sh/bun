@@ -1,48 +1,25 @@
-//! What is said to the host of the page with JS values. The rest is in `bun_web::host`.
+//! What it takes to go elsewhere.
 
 use bun_jsc::JSGlobalObject;
 
 use bun_web::client::ScriptLocation;
+use bun_web::csp::{Delivery, Inline};
+use bun_web::host::{Chosen, Level, Opened, Traversal as Outcome, Verdict, Wish};
 
-use super::navigate::{Options, Source};
+use super::navigate::Options;
 use super::*;
 
 use crate::api::events::{ErrorDescription, where_thrown};
 use crate::api::loading::came_with;
-use crate::api::ui::controls::create_controls;
-
-pub(super) fn text(cx: &Cx<'_>, value: &str) -> JSValue {
-    DomString::from_utf8(value).to_js(&cx.heap).to_js()
-}
-
-pub(super) fn create_remote_frame<'a>(
-    cx: &mut Cx<'a>,
-    window: &'a Window,
-    frame: JSValue,
-    receiver: JSValue,
-) -> JSValue {
-    window
-        .ask_host(cx, "createRemoteFrame", &[frame, receiver])
-        .unwrap_or(JSValue::UNDEFINED)
-}
-
-pub(super) fn run<'a>(cx: &mut Cx<'a>, steps: JSValue) {
-    if steps.is_callable() {
-        let result = steps.call(cx.global(), JSValue::UNDEFINED, &[]);
-        bun_web::exec::report(cx, result.map(drop).map_err(Into::into));
-    }
-}
-
-/// Pages that can reach each other have one.
-pub(super) fn owner<'a>(cx: &mut Cx<'a>, window: &'a Window) -> Option<JSValue> {
-    window.ask_host(cx, "owner", &[])
-}
+use crate::api::realm::Kept;
 
 fn calling_window<'a>(cx: &mut Cx<'a>, callee: &'a Window, is_entry: bool) -> &'a Window {
     unsafe extern "C" {
         safe fn Bun__DOM__callingWindow(global: &JSGlobalObject, is_entry: bool) -> JSValue;
     }
-    let window = owner(cx, callee).map(|_| Bun__DOM__callingWindow(cx.global(), is_entry));
+    let window = callee
+        .cluster()
+        .map(|_| Bun__DOM__callingWindow(cx.global(), is_entry));
     window
         .and_then(|it| WindowTarget::of(&cx.heap, it)?.downcast())
         .unwrap_or(callee)
@@ -58,90 +35,100 @@ pub(super) fn entry<'a>(cx: &mut Cx<'a>, callee: &'a Window) -> &'a Window {
     calling_window(cx, callee, true)
 }
 
-/// `NavigateRequest`, and what only the host reads.
-fn describe<'a>(cx: &mut Cx<'a>, options: &Options<'a>) -> JSValue {
-    let object = cx.heap.create_empty_object().to_js();
-    let source = match options.source {
-        Source::Other => "",
-        Source::Form => "form",
-        Source::Link => "link",
-        Source::Script => "script",
-    };
-    let mut put = |name: &'static str, value: &dyn Fn(&Cx<'a>) -> Option<JSValue>| {
-        if let Some(value) = value(cx) {
-            object.put(cx.global(), name.as_bytes(), value);
-        }
-    };
-    put("source", &|cx| Some(text(cx, source)));
-    for (name, is) in [
-        ("replace", options.replace),
-        ("isByUser", options.is_by_user),
-        ("hasActivation", options.has_activation),
-        ("hasTextActivation", options.has_text_activation),
-    ] {
-        put(name, &|_| Some(is.into()));
-    }
-    for (name, value) in [
-        ("download", &options.download),
-        ("srcdoc", &options.srcdoc),
-        ("referrerPolicy", &options.referrer_policy),
-    ] {
-        put(name, &|cx| Some(value.as_ref()?.to_js(&cx.heap).to_js()));
-    }
-    put("replaceIn", &|_| Some(options.replace_in?.to_js()));
-    put("element", &|_| Some(options.element?.to_js()));
-    put("initiator", &|_| options.initiator);
-    put("navigationState", &|cx| {
-        Some(
-            cx.heap
-                .create_buffer(&options.navigation_state.as_ref()?.0)
-                .ok()?
-                .to_js(),
-        )
-    });
-    if let Some(post) = &options.post {
-        put("method", &|cx| Some(text(cx, "POST")));
-        put("formData", &|_| Some(post.form_data));
-        put("body", &|_| Some(post.body));
-        put("contentType", &|cx| Some(text(cx, &post.content_type)));
-    }
-    object
+fn wish(url: &str, options: &Options<'_>) -> Box<Wish> {
+    let text = |it: &Option<DomString>| it.as_ref().map(|it| it.to_utf8().into_owned());
+    Box::new(Wish {
+        url: url.into(),
+        source: options.source,
+        replaces: options.replace,
+        is_by_user: options.is_by_user,
+        has_activation: options.has_activation,
+        has_text_activation: options.has_text_activation,
+        download: text(&options.download),
+        srcdoc: text(&options.srcdoc),
+        referrer_policy: text(&options.referrer_policy),
+        navigation_state: options.navigation_state.clone(),
+        post: options.post.as_ref().map(|it| it.sent.clone()),
+        initiator: options.initiator.map(|it| it.page),
+        ..Default::default()
+    })
 }
 
-pub(super) fn navigate<'a>(
-    cx: &mut Cx<'a>,
-    window: &'a Window,
-    url: &str,
-    options: &Options<'a>,
-    markup: Option<JSValue>,
-) {
-    let (url, options) = (text(cx, url), describe(cx, options));
-    options.put(cx.global(), b"mayUnload", JSValue::TRUE);
-    markup
-        .into_iter()
-        .for_each(|it| options.put(cx.global(), b"markup", it));
-    window.ask_host(cx, "navigate", &[url, options]);
+pub(super) fn navigate(window: &Window, url: &str, options: &Options<'_>, markup: Option<String>) {
+    window.host().navigate(Box::new(Wish {
+        may_unload: true,
+        markup,
+        ..*wish(url, options)
+    }));
 }
 
 /// Whether `source` may.
-pub(super) fn navigate_from<'a>(
-    cx: &mut Cx<'a>,
-    window: &'a Window,
-    source: &'a Window,
+fn carry_out(
+    verdict: Verdict,
+    target: &Context,
+    source: &Window,
     url: &str,
-    options: &Options<'a>,
+    options: &Options<'_>,
 ) -> bool {
-    let arguments = [
-        owner(cx, source).unwrap_or(JSValue::UNDEFINED),
-        text(cx, url),
-        describe(cx, options),
-    ];
-    window
-        .ask_host(cx, "navigateFrom", &arguments)
-        .is_some_and(JSValue::to_boolean)
+    let options = match verdict {
+        Verdict::Refused => return false,
+        Verdict::Granted => return true,
+        Verdict::UpToPage => Options {
+            push: false,
+            has_activation: false,
+            navigation_state: None,
+            noopener: None,
+            ..options.clone()
+        },
+        Verdict::UpToForeignPage => Options {
+            replace: options.replace,
+            is_by_user: options.is_by_user,
+            ..Default::default()
+        },
+    };
+    let Some(window) = target.window() else {
+        return true;
+    };
+    let is_by_other_origin = window
+        .host()
+        .origin()
+        .is_none_or(|it| Some(it) != source.host().origin());
+    let options = Options {
+        initiator: Some(source),
+        is_by_other_origin,
+        ..options
+    };
+    window.enter(|cx, window| {
+        History::of(&cx.heap, window).navigate(cx, url, options.in_other_scope(), "")
+    });
+    true
 }
 
-/// The window, or false if there is none of that name. `None` if windows have no names.
+/// Whether `source` may.
+pub(super) fn navigate_from(
+    target: &Context,
+    source: &Window,
+    url: &str,
+    options: &Options<'_>,
+) -> bool {
+    carry_out(
+        source
+            .host()
+            .navigate_window(target.id(), wish(url, options)),
+        target,
+        source,
+        url,
+        options,
+    )
+}
+
+pub(super) enum Target {
+    /// Windows have no names.
+    Unknown,
+    Missing,
+    Window(JSValue),
+}
+
 pub(super) fn navigate_other<'a>(
     cx: &mut Cx<'a>,
     window: &'a Window,
@@ -149,27 +136,31 @@ pub(super) fn navigate_other<'a>(
     url: Option<&str>,
     options: &Options<'a>,
     becomes_opener: bool,
-) -> Option<JSValue> {
-    let arguments = [
-        text(cx, target),
-        url.map_or(JSValue::NULL, |it| text(cx, it)),
-        describe(cx, options),
-    ];
-    arguments[2].put(cx.global(), b"becomesOpener", becomes_opener.into());
-    window.ask_host(cx, "navigateOther", &arguments)
-}
-
-/// For a window that shares the realm.
-fn create_popup<'a>(
-    cx: &mut Cx<'a>,
-    [opener, _]: [JsLocal<'a>; 2],
-    _: u64,
-    given: &[JsLocal<'a>],
-) -> Result<'a, JSValue> {
-    let both = Window::from_js(&cx.heap, opener.to_js()).zip(given.first());
-    Ok(both.map_or(JSValue::UNDEFINED, |(opener, tools)| {
-        create_controls(&cx.heap, opener.open_beside(tools.to_js())).to_js()
-    }))
+) -> Target {
+    if !window.knows_other_windows()
+        && !window
+            .context()
+            .is_some_and(|it| window.cluster().is_some() && it.container().is_some())
+    {
+        return Target::Unknown;
+    }
+    let Chosen::Context { id, verdict } = window.host().choose_window(
+        target.into(),
+        url.map(|it| wish(it, options)),
+        becomes_opener,
+    ) else {
+        return Target::Missing;
+    };
+    let Some(found) = Context::with_id(id) else {
+        return Target::Missing;
+    };
+    if let Some(url) = url {
+        carry_out(verdict, found, window, url, options);
+    }
+    window
+        .relative(&cx.heap, |_| Some(found))
+        .filter(|it| it.is_object())
+        .map_or(Target::Missing, Target::Window)
 }
 
 pub(super) fn open<'a>(
@@ -180,21 +171,17 @@ pub(super) fn open<'a>(
     features: &str,
     options: &Options<'a>,
 ) -> JSValue {
-    let create_page = window
-        .realm(&cx.heap)
-        .create_callback(create_popup, [window.to_js(), JSValue::UNDEFINED], 0)
-        .to_js();
-    let arguments = [
-        text(cx, url),
-        text(cx, target),
-        text(cx, features),
-        create_page,
-        describe(cx, options),
-    ];
-    window
-        .ask_host(cx, "open", &arguments)
-        .filter(|it| it.is_object())
-        .unwrap_or(JSValue::NULL)
+    let popup = crate::api::frames::next_number();
+    let opened = match window
+        .host()
+        .open(wish(url, options), target.into(), features.into(), popup)
+    {
+        Opened::Nothing => None,
+        Opened::Page(page) => Window::of_page(page).map(|it| it.window()),
+        Opened::Context(id) => window.relative(&cx.heap, |_| Context::with_id(id)),
+        Opened::Popup => Some(ForeignWindow::of_popup(&cx.heap, window, popup)),
+    };
+    opened.unwrap_or(JSValue::NULL)
 }
 
 /// False if it has no list of entries.
@@ -204,25 +191,82 @@ pub(super) fn traverse_to<'a>(
     window: &'a Window,
     key: &str,
 ) -> bool {
-    let fail = crate::api::interim::once(&cx.heap, &[navigation.to_js()], {
-        let key = key.to_owned();
-        move |cx, values| {
-            let name = DomString::from_js(cx, JsLocal::new(&cx.heap, values[1]))?;
-            let error = [
-                ("SecurityError", DomError::SecurityError),
-                ("InvalidStateError", DomError::InvalidStateError),
-            ]
-            .into_iter()
-            .find(|it| name.eq_str(it.0))
-            .map(|it| it.1);
-            Navigation::from_value(values[0])
+    if window.context().is_none() {
+        return false;
+    }
+    let (navigation, given) = (Kept::new(cx, navigation.to_js()), key.to_owned());
+    window.host().traverse_to(key.into(), move |_, outcome| {
+        let error = match outcome {
+            Outcome::Begun => return,
+            Outcome::Aborted => None,
+            Outcome::Forbidden => Some(DomError::SecurityError),
+            Outcome::Impossible => Some(DomError::InvalidStateError),
+        };
+        navigation.enter(|cx, it| {
+            Navigation::from_value(it.to_js())
                 .into_iter()
-                .for_each(|it| it.give_up_traversal(cx, Some(&key), error));
-            Ok(())
-        }
+                .for_each(|it| it.give_up_traversal(cx, Some(&given), error))
+        });
     });
-    let key = text(cx, key);
-    window.ask_host(cx, "traverseTo", &[key, fail]).is_some()
+    true
+}
+
+fn is_in_source<'a>(cx: &mut Cx<'a>, window: &'a Window, text: &DomString) -> bool {
+    let owner = core::iter::successors(Some(window), |it| it.opened_beside())
+        .last()
+        .unwrap_or(window);
+    !owner.is_disposed() && came_with(cx, owner.document(), text)
+}
+
+fn policy_allows<'a>(cx: &mut Cx<'a>, window: &'a Window, source: &str, frame: JSValue) -> bool {
+    window.document().own_client(&cx.heap).is_none_or(|it| {
+        it.enforce(
+            it.policies()
+                .csp
+                .check_inline(Inline::Navigation, source.as_bytes(), b"", true),
+            frame,
+        )
+    })
+}
+
+fn allows_javascript_url<'a>(
+    cx: &mut Cx<'a>,
+    window: &'a Window,
+    source: &DomString,
+    initiator: &'a Window,
+) -> bool {
+    let frame = crate::api::frames::container(window.document())
+        .filter(|it| it.doc() == initiator.document());
+    let text = source.to_utf8();
+    if initiator.host().is_sandboxed("allow-scripts".into())
+        || !policy_allows(
+            cx,
+            initiator,
+            &text,
+            frame.map_or(JSValue::UNDEFINED, |it| it.to_js()),
+        )
+    {
+        return false;
+    }
+    // Without a policy: what the document came with, and nothing that was put into it since.
+    let has_policy = || {
+        initiator
+            .document()
+            .own_client(&cx.heap)
+            .is_some_and(|it| it.policies().csp.restricts_scripts())
+    };
+    let is_up_to_page = !bun_web::compiled::is_exclusive()
+        && (has_policy() || bun_web::trust::trusts_injected_scripts());
+    if !is_up_to_page && !is_in_source(cx, initiator, source) {
+        initiator.host().console(
+            Level::Error,
+            "Refused to run an inline script that is not in the source of the document".into(),
+            0,
+            initiator.url(),
+        );
+        return false;
+    }
+    core::ptr::eq(window, initiator) || policy_allows(cx, window, &text, JSValue::UNDEFINED)
 }
 
 /// What the script comes to.
@@ -230,25 +274,45 @@ pub(super) fn run_javascript_url<'a>(
     cx: &mut Cx<'a>,
     window: &'a Window,
     source: &DomString,
-    initiator: JSValue,
+    initiator: Option<&'a Window>,
 ) -> JSValue {
     let doc = window.document();
-    let frame = crate::api::frames::container(doc);
-    let arguments = [
-        source.to_js(&cx.heap).to_js(),
-        initiator,
-        frame.map_or(JSValue::UNDEFINED, |it| it.to_js()),
-    ];
     let is_allowed = doc.runs_scripts()
         && if doc.is_of_program() {
             came_with(cx, doc, source)
         } else {
-            window.ask_host(cx, "allowsJavaScriptUrl", &arguments) == Some(JSValue::TRUE)
+            window.context().is_some()
+                && allows_javascript_url(cx, window, source, initiator.unwrap_or(window))
         };
     if !is_allowed {
         return JSValue::UNDEFINED;
     }
     crate::api::loading::run_javascript_url(cx, window.document(), source.clone())
+}
+
+impl Window {
+    /// Of a `<meta>`.
+    pub(crate) fn add_security_policy<'a>(&'a self, cx: &mut Cx<'a>, policy: &DomString) {
+        let Some(client) = self
+            .document()
+            .own_client(&cx.heap)
+            .filter(|_| self.context().is_some() && !self.is_disposed())
+        else {
+            return;
+        };
+        let is_own = is_in_source(cx, self, &DomString::concat(&[&"\0".into(), policy]));
+        client.add_csp(
+            policy.to_utf8().as_bytes(),
+            if is_own {
+                Delivery::Meta
+            } else {
+                Delivery::InjectedMeta
+            },
+        );
+        self.host()
+            .security_policy_added(policy.to_utf8().into_owned(), is_own);
+        self.apply_policy(&cx.heap, false);
+    }
 }
 
 pub(super) fn describe_error<'a>(
@@ -273,9 +337,4 @@ pub(super) fn describe_error<'a>(
         lineno: at.line,
         colno: at.column,
     }
-}
-
-/// Of what it has told.
-pub(super) fn entry_from<'a>(cx: &mut Cx<'a>, value: JsLocal<'a>) -> Option<HistoryEntry> {
-    HistoryEntry::from_script(cx.global(), value.to_js())
 }

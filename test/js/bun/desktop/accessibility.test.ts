@@ -612,6 +612,54 @@ describe.skipIf(!hasLibrary).concurrent("what a screen reader is told", () => {
     ).toBe("[#a, #r, #l, #k, #b]");
   });
 
+  test("the keyboard leaves a group that it is through with", async () => {
+    expect(
+      await run(`
+        const page = await open('<div role=group id=all><nav id=n><button id=a>a</button></nav><main id=m><section aria-label=s id=s tabindex=-1><button id=b>b</button><button id=c>c</button></section><button id=d>d</button></main></div>');
+        for (const id of "cs") {
+          await page.executeJavaScript(id + ".focus()");
+          await hear("AXFocusedUIElementChanged #" + id);
+          for (const [within, rest] of [["#m", "#s"], ["#all", "#m"], ["#all", "#m back"], ["root", "#all"], ["root", "#all back"]])
+            print(within + " " + rest + " " + ask("get " + within + " AXUIElementsForSearchPredicate ?AXKeyboardFocusableSearchKey " + rest));
+        }`),
+    ).toMatchInlineSnapshot(`
+      "#m #s [#d]
+      #all #m []
+      #all #m back [#a]
+      root #all [#a, #b, #c, #d]
+      root #all back [#d, #c, #b, #a]
+      #m #s [#b, #c, #d]
+      #all #m []
+      #all #m back [#a]
+      root #all [#a, #b, #c, #d]
+      root #all back [#d, #c, #b, #a]"
+    `);
+  });
+
+  test("a combo box without a field has characters", async () => {
+    expect(
+      await run(`
+        await open('<button role=combobox id=c aria-label=Font aria-expanded=false>Serif</button>');
+        print(...get("#c", "AXValue", "AXNumberOfCharacters", "AXSelectedTextRange", "AXInsertionPointLineNumber"));`),
+    ).toMatchInlineSnapshot(`
+      "AXValue = "Serif"
+      AXNumberOfCharacters = 5
+      AXSelectedTextRange = 0..0
+      AXInsertionPointLineNumber = inf"
+    `);
+  });
+
+  test("a selection that goes with the focus is no news", async () => {
+    expect(
+      await run(`
+        const page = await open('<input role=combobox id=c aria-controls=l aria-activedescendant=o aria-expanded=true><div role=listbox id=l><p role=option id=o>o</div><button id=b>b</button>');
+        await page.executeJavaScript("c.focus()");
+        await hear("AXSelectedChildrenChanged #l");
+        await page.executeJavaScript("b.focus()");
+        print(...await hear("AXFocusedUIElementChanged #b", /Focused|Children/));`),
+    ).toBe("AXFocusedUIElementChanged #b");
+  });
+
   test("the selection follows the focus unless the author says what is selected", async () => {
     expect(
       await run(`
@@ -1138,6 +1186,7 @@ describe.skipIf(!hasLibrary).concurrent("what a screen reader is told", () => {
         await until(() => ask("get focus AXValueDescription") === '"X: 100, Y: 100"');
         print(ask("tree #c"));
         press("Left");
+        print(...await hear("AXValueChanged AXSlider", /^AXValueChanged (#c|AXSlider)$/));
         await until(() => ask("get focus AXValueDescription") === '"X: 99, Y: 100"');
         press("Tab");
         await until(() => ask("get focus AXTitle") === '"Hue slider"');
@@ -1157,6 +1206,7 @@ describe.skipIf(!hasLibrary).concurrent("what a screen reader is told", () => {
           AXTextField AXTitle="Hex color value" AXDescription="Hex color value" AXValue="#ff0000"
             AXStaticText AXValue="#ff0000"
           AXButton AXTitle="#00ff00" AXDescription="#00ff00"
+      AXValueChanged AXSlider
       #ff1203"
     `);
   });

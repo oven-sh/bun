@@ -72,7 +72,7 @@ impl<'a, 'b> Subject<'a, 'b> {
                         .transformed(&user.matrix),
                 )
             }
-            (Areas::Css(frame, margin), BoxArea::MarginBox) => frame.shape.outset(*margin),
+            (Areas::Css(frame, margin), BoxArea::MarginBox) => frame.shape.with_margin(*margin),
             (Areas::Css(frame, _), _) => frame.area(area),
             (Areas::Svg(node), _) => square(
                 self.document
@@ -189,6 +189,21 @@ impl Document {
         }
     }
 
+    /// For a filter, that counts as a part of the box.
+    fn with_overflow(&self, node: NodeId, user: UserSpace) -> UserSpace {
+        let own = self
+            .own_box(node)
+            .filter(|it| !self.boxes[*it].is_foreign_object && self.overflow_clip(*it).is_none());
+        let unzoomed = |id| {
+            self.scrollable_overflow(id)
+                .transformed(&scaling(1.0 / user.matrix[0], 1.0 / user.matrix[0]))
+        };
+        UserSpace {
+            bounds: own.map_or(user.bounds, |it| user.bounds.union(&unzoomed(it))),
+            ..user
+        }
+    }
+
     /// What `ink` becomes. `reference` is the border box.
     pub(crate) fn filtered(&self, node: NodeId, style: &Style, ink: Rect, reference: Rect) -> Rect {
         style
@@ -206,7 +221,8 @@ impl Document {
                         [reference.width / style.zoom, reference.height / style.zoom],
                     )
                     .map_or(ink, |filter| {
-                        let user = UserSpace::of_box(reference, style.zoom);
+                        let user =
+                            self.with_overflow(node, UserSpace::of_box(reference, style.zoom));
                         ink.union(
                             &filter
                                 .document
@@ -420,9 +436,15 @@ impl<'a> Painter<'a> {
             let found = document
                 .filter_element(subject.node, url, viewport)
                 .filter(|_| !document.foreign_frames.iter().any(is_seen));
-            found
-                .into_iter()
-                .for_each(|it| self.svg_filter(&it, subject, &mut inputs, &mut is_tainted));
+            let Some(found) = found else { continue };
+            let user = match subject.areas {
+                Areas::Css(..) if !is_backdrop => {
+                    self.depends_on_contents();
+                    document.with_overflow(subject.node, subject.user_space())
+                }
+                _ => subject.user_space(),
+            };
+            self.svg_filter(&found, user, &mut inputs, &mut is_tainted);
         }
         (
             Span {
@@ -455,6 +477,10 @@ impl<'a> Painter<'a> {
             },
             filters.start < filters.end || has_mask,
         );
+        let needs_group = has_inner || isolates || opacity < 1.0 || blend != BlendMode::Normal;
+        if clips_with_mask || needs_group {
+            self.document.svg_has_read(crate::svg_paint::Reads::VISIBLE);
+        }
         let groups = match clips_with_mask {
             true => [
                 Some(self.begin_group(
@@ -466,7 +492,7 @@ impl<'a> Painter<'a> {
                 )),
                 has_inner.then(|| self.begin_group(bounds, 1.0, BlendMode::Normal, filters, space)),
             ],
-            false if has_inner || isolates || opacity < 1.0 || blend != BlendMode::Normal => [
+            false if needs_group => [
                 None,
                 Some(self.begin_group(bounds, opacity, blend, filters, space)),
             ],

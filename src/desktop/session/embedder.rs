@@ -441,6 +441,7 @@ impl Embedder for ForNetwork {
     }
 
     fn answered(&self, about: &About, report: Answered) {
+        super::net_log::add(about, &report);
         notify(|| {
             let (details, outcome) = (object!({}), report.outcome.as_ref());
             let members = record! {

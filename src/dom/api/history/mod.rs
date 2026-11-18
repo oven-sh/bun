@@ -1,5 +1,6 @@
 //! <https://html.spec.whatwg.org/#navigation-and-session-history>, as far as it is up to a document.
 
+mod context;
 pub(crate) mod entry;
 mod events;
 mod foreign;
@@ -29,6 +30,7 @@ use crate::generated_bindgen::history::*;
 use crate::generated_bindgen::view::ScrollBehavior;
 use crate::generated_bindgen::window::js_DomWindow;
 
+pub(crate) use self::context::{Cluster, Context};
 pub(crate) use self::events::*;
 pub(crate) use self::foreign::{ForeignLocation, ForeignWindow};
 pub(crate) use self::forms::{Submission, encoding_of_form, plan_form_navigation};
@@ -194,7 +196,7 @@ fn queue_task<'a, const N: usize>(
 ) {
     let all: smallvec::SmallVec<[JSValue; 4]> =
         [window.to_js()].into_iter().chain(values).collect();
-    crate::api::interim::queue_task(window.document(), &all, |cx, all| {
+    crate::api::on_behalf::queue_task(window.document(), &all, |cx, all| {
         if let Some(window) = Window::from_value(all[0]) {
             steps(cx, window, core::array::from_fn(|at| all[at + 1]));
         }
@@ -221,8 +223,18 @@ fn can_rewrite_url(window: &Window, url: &str) -> bool {
         || url.path() == current.path() && (is_file || url.search() == current.search())
 }
 
+enum Traversal {
+    /// It goes on when it gets the ticket back.
+    ByHost(u32),
+    Own {
+        url: String,
+        key: String,
+    },
+}
+
 #[derive(Default)]
 pub(crate) struct History {
+    traversal: RefCell<Option<Box<Traversal>>>,
     entries: RefCell<Vec<Entry>>,
     index: Cell<usize>,
     navigations: Cell<u32>,
@@ -461,25 +473,31 @@ impl History {
         Ok(state)
     }
 
-    /// What hosts the page wants to go to the entry, and does in `proceed`.
+    fn proceed<'a>(&'a self, cx: &mut Cx<'a>) {
+        match self.traversal.take().map(|it| *it) {
+            Some(Traversal::ByHost(ticket)) => self.window().host().proceed(ticket),
+            Some(Traversal::Own { url, key }) => self.pop_state(cx, &url, &key),
+            None => {}
+        }
+    }
+
     /// False if the page stays where it is.
     fn will_traverse<'a>(
         &'a self,
         cx: &mut Cx<'a>,
-        key: &[u8],
+        key: &str,
         is_by_user: bool,
-        proceed: JSValue,
+        traversal: Traversal,
     ) -> bool {
-        let entry = self.find(&|it| it.key.as_bytes() == key);
+        self.traversal.replace(Some(traversal.into()));
+        let entry = self.find(&|it| it.key == key);
         self.remember_scroll();
         let proceeds = match (entry, self.window().navigation()) {
-            (Some(entry), Some(navigation)) => {
-                navigation.fire_for_traversal(cx, entry, is_by_user, proceed)
-            }
+            (Some(entry), Some(navigation)) => navigation.fire_for_traversal(cx, entry, is_by_user),
             _ => true,
         };
         if proceeds {
-            host::run(cx, proceed);
+            self.proceed(cx);
         }
         proceeds
             || self
@@ -545,15 +563,7 @@ impl History {
                 return;
             };
             let HistoryEntry { url, key, .. } = entry.borrow().clone();
-            let wanted = key.clone();
-            let proceed =
-                crate::api::interim::once(&cx.heap, &[history.to_js()], move |cx, values| {
-                    History::from_value(values[0])
-                        .into_iter()
-                        .for_each(|it| it.pop_state(cx, &url, &key));
-                    Ok(())
-                });
-            history.will_traverse(cx, wanted.as_bytes(), false, proceed);
+            history.will_traverse(cx, &key.clone(), false, Traversal::Own { url, key });
         });
     }
 

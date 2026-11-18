@@ -669,6 +669,98 @@ app.whenReady().then(async () => {
     });
   });
 
+  describe.skipIf(!isLinux || isMusl)("the modules of Electron are built in", () => {
+    const api = (aot: boolean) =>
+      `await Bun.build({ entrypoints: ["app.js"], compile: { aot: ${aot}, desktop: true, outfile: "out" } });`;
+    const builds = [
+      ["bun build", false, ["build", "--compile", "--desktop", "app.js", "--outfile=out"]],
+      ["Bun.build", false, ["-e", api(false)]],
+      ["bun compile", true, ["compile", "--desktop", "app.js", "--outfile=out"]],
+      ["Bun.build with aot", true, ["-e", api(true)]],
+    ] as const;
+    const installed = {
+      "node_modules/electron/package.json": JSON.stringify({ name: "electron", version: "1.0.0" }),
+      "node_modules/electron/index.js": `module.exports = "the path of Electron";`,
+    };
+
+    for (const [name, isAot, args] of builds) {
+      test.skipIf(isAot && (!!aotIsUnsupported || isDebug)).each([
+        ["is not installed", {}],
+        ["is installed", installed],
+      ])(`${name}, when the package %s`, async (_, files) => {
+        using dir = project(
+          { name: "notes" },
+          {
+            ...files,
+            "app.js": `
+              import { createRequire } from "node:module";
+              const made = createRequire(import.meta.url)(process.env.NAME);
+              const { app } = require("electron");
+              const { imported } = await import("./imports.js");
+              console.log(app.name, made.app === app, imported.map(it => it === app).join());
+              console.log(require("original-fs") === require("fs"), (await import("node:original-fs")).default === require("fs"));
+              process.exit(0);
+            `,
+            "imports.js": `
+              import electron, { app } from "electron";
+              import * as main from "electron/main";
+              import { app as own } from "bun:desktop/electron";
+              export const imported = [electron.app, app, main.app, own, (await import("electron/common")).app,
+                require("electron/renderer").app, require("electron/utility").app];
+            `,
+          },
+        );
+        expect(await bun(dir, ...args)).toMatchObject({ exitCode: 0 });
+        const env = { NAME: "electron", BUN_DESKTOP_HEADLESS: "1" };
+        expect(await run([join(String(dir), "out.AppDir/AppRun")], "/", env)).toMatchObject({
+          stdout: "notes true true,true,true,true,true,true,true\ntrue true\n",
+          exitCode: 0,
+        });
+      });
+    }
+
+    test("not without --desktop", async () => {
+      using dir = project({ name: "notes" }, { ...installed, "app.js": `console.log(require("electron"));` });
+      expect(await bun(dir, "build", "--compile", "app.js", "--outfile=out")).toMatchObject({ exitCode: 0 });
+      expect(await run([join(String(dir), "out")], "/")).toMatchObject({
+        stdout: "the path of Electron\n",
+        exitCode: 0,
+      });
+    });
+
+    test.skipIf(!hasLibrary || !!aotIsUnsupported || isDebug)("not for pages", async () => {
+      using dir = project(
+        { name: "notes" },
+        {
+          "app.js": `const { app, BrowserWindow, protocol } = require("electron");
+protocol.registerSchemesAsPrivileged([{ scheme: "app", privileges: { standard: true, secure: true } }]);
+app.trustOrigins(["app://bundle"]);
+app.setCompiledScripts({ "app://bundle/web/": "/$bunfs/root/web/" });
+const interpreted = 'import("electron").then(() => "imported", error => error.name).then(it => console.log(compiled, it))';
+app.whenReady().then(() => {
+  protocol.handle("app", ({ url }) => url.endsWith(".js")
+    ? new Response(interpreted, { headers: { "content-type": "text/javascript" } })
+    : new Response("<script type=module src=/web/page.js></script><script type=module src=/other.js></script>", { headers: { "content-type": "text/html" } }));
+  const { webContents } = new BrowserWindow();
+  webContents.on("console-message", event => (console.log(event.message), process.exit(0)));
+  webContents.loadURL("app://bundle/");
+});`,
+          "web/page.js": `try { window.compiled = typeof require("electron"); } catch (error) { window.compiled = error instanceof Error && error.message; }`,
+        },
+      );
+      const built = await run(
+        [bunExe(), "compile", "--desktop", "app.js", "web/page.js", "--outfile=out"],
+        String(dir),
+      );
+      expect(built).toMatchObject({ exitCode: 0 });
+      const cmd = [join(String(dir), "out.AppDir/AppRun")];
+      expect(await run(cmd, "/", { BUN_DESKTOP_HEADLESS: "1" })).toMatchObject({
+        stdout: "A page gets Electron's modules from its preload script TypeError\n",
+        exitCode: 0,
+      });
+    });
+  });
+
   test.skipIf(!!aotIsUnsupported || !isLinux || isMusl)("Bun.build with aot", async () => {
     using dir = project(
       { name: "notes" },

@@ -6,17 +6,17 @@ use std::rc::Rc;
 
 use smallvec::SmallVec;
 
-use crate::abi::{CLUSTER_SPACE, Rect};
+use crate::abi::{CLUSTER_SPACE, Matrix, Rect};
 use crate::boxes::{BoxId, Kind};
 use crate::cascade::Highlight;
 use crate::document::Document;
 use crate::inline::{Inline, Item, ItemKind};
-use crate::lines::{FragmentKind, Line};
-use crate::name::{Map, Name, is_name, name};
+use crate::lines::{Fragment, FragmentKind, Line};
+use crate::name::{Map, Name, Set, is_name, name};
 use crate::order::Order as _;
 use crate::properties::Style;
 use crate::selector::Pseudo;
-use crate::tree::{DOCUMENT, Data, Gone, Namespace, NodeId, State};
+use crate::tree::{DOCUMENT, Data, Flags, Gone, Namespace, NodeId, State};
 use crate::types::*;
 
 /// In text, a UTF-8 offset. Else the child after the point, or 0.
@@ -42,7 +42,7 @@ pub(crate) struct Marks {
     pub(crate) caret: Option<bool>,
     pub(crate) highlights: Vec<(Mark, i32, Vec<Range>)>,
     pub(crate) are_stale: bool,
-    by_node: Map<NodeId, SmallVec<[(Span<u32>, Mark); 1]>>,
+    marked: Marked,
     pub(crate) styles: RefCell<Map<NodeId, SmallVec<[(Pseudo, Option<Rc<Highlight>>); 1]>>>,
     /// Rules are activated late.
     pub(crate) styled_pseudos: usize,
@@ -50,9 +50,38 @@ pub(crate) struct Marks {
     pub(crate) restyled: Vec<NodeId>,
 }
 
+#[derive(Default)]
+struct Marked {
+    by_node: Map<NodeId, SmallVec<[(Span<u32>, Mark); 1]>>,
+    /// Elements that are selected with all that is in them, and with something after them.
+    selected: Set<NodeId>,
+}
+
+impl Marked {
+    fn of(&self, document: &Document, node: NodeId) -> impl Iterator<Item = &(Span<u32>, Mark)> {
+        static ALL: (Span<u32>, Mark) = (0..u32::MAX, Mark::Selection);
+        let is_selected = !self.selected.is_empty() && document.may_be_marked(node) && {
+            let around = core::iter::once(node).chain(document.tree.flat_ancestors(node));
+            around
+                .take_while(|it| {
+                    !document
+                        .tree
+                        .element(*it)
+                        .is_some_and(|it| it.is_generated())
+                })
+                .any(|it| self.selected.contains(&it))
+        };
+        self.by_node
+            .get(&node)
+            .into_iter()
+            .flatten()
+            .chain(is_selected.then_some(&ALL))
+    }
+}
+
 impl Marks {
     pub(crate) fn is_empty(&self) -> bool {
-        self.by_node.is_empty()
+        self.marked.by_node.is_empty() && self.marked.selected.is_empty()
     }
 
     pub(crate) fn forget(&mut self, gone: &Gone) {
@@ -63,20 +92,14 @@ impl Marks {
             .iter_mut()
             .for_each(|it| it.2.retain(survives));
     }
-
-    pub(crate) fn of(&self, node: NodeId) -> &[(Span<u32>, Mark)] {
-        self.by_node.get(&node).map_or(&[], |it| it)
-    }
-
-    pub(crate) fn is_selected(&self, node: NodeId) -> bool {
-        self.of(node).iter().any(|it| it.1 == Mark::Selection)
-    }
 }
 
 enum Visit {
     Text(Span<u32>),
     /// Whether the range has its start.
     Enter,
+    /// The range has all of it, which need not be visited if the answer is yes.
+    Inside,
     /// Whether the range has all of it.
     Leave(bool),
 }
@@ -109,9 +132,11 @@ impl Inline {
     }
 
     fn offset_of(&self, cluster: u32) -> u32 {
-        self.clusters
-            .get(cluster as usize)
-            .map_or(self.text.len() as u32, |it| it.start)
+        if (cluster as usize) < self.clusters.len() {
+            self.clusters.start_of(cluster)
+        } else {
+            self.text.len() as u32
+        }
     }
 
     fn last_place(&self) -> u32 {
@@ -137,7 +162,7 @@ impl Inline {
         {
             return (end, false);
         }
-        let has_collapsed = self.clusters[end as usize - 1].flags & CLUSTER_SPACE != 0
+        let has_collapsed = self.clusters.letter(end - 1).flags & CLUSTER_SPACE != 0
             && self.advance(self.lines.fragments_of(line), end - 1) == 0.0;
         if self.is_newline(end - 1) || has_collapsed {
             (end - 1, false)
@@ -180,15 +205,13 @@ impl Inline {
 }
 
 impl Document {
-    fn visit_range(&self, range: &Range, visit: &mut dyn FnMut(NodeId, Visit)) {
-        let path = |point: &Point| {
-            core::iter::once(point.node)
-                .chain(self.tree.flat_ancestors(point.node))
-                .collect::<Vec<_>>()
-        };
-        let (to_start, to_end) = (path(&range[0]), path(&range[1]));
+    fn visit_range(&self, range: &Range, visit: &mut dyn FnMut(NodeId, Visit) -> bool) {
+        let path = |node: NodeId| core::iter::once(node).chain(self.tree.flat_ancestors(node));
+        let (to_start, mut to_end): (Vec<_>, Vec<_>) =
+            (path(range[0].node).collect(), path(range[1].node).collect());
         if let Some(common) = to_start.iter().find(|it| to_end.contains(it)) {
-            self.visit_in(*common, range, &to_start, &mut false, visit);
+            to_end.extend(path(self.tree.host_of(range[1].node)));
+            self.visit_in(*common, range, [&to_start, &to_end], &mut false, visit);
         }
     }
 
@@ -200,18 +223,18 @@ impl Document {
                     .chain(self.tree.flat_ancestors(it.node))
                     .for_each(&mut *visit)
             });
-            self.visit_range(range, &mut |it, _| visit(it));
+            self.visit_range(range, &mut |it, _| (visit(it), false).1);
         }
     }
 
-    /// Whether the range goes on.
+    /// Whether the range goes on. `to_end` is empty unless the end is in there.
     fn visit_in(
         &self,
         id: NodeId,
         range: &Range,
-        to_start: &[NodeId],
+        [to_start, to_end]: [&[NodeId]; 2],
         started: &mut bool,
-        visit: &mut dyn FnMut(NodeId, Visit),
+        visit: &mut dyn FnMut(NodeId, Visit) -> bool,
     ) -> bool {
         let ([start, end], was_started) = (range, *started);
         if let Some(text) = self.tree[id].text() {
@@ -234,42 +257,138 @@ impl Document {
             );
             return end.node != id;
         }
-        if was_started
-            && self.hides_contents(id)
-            && end.node != id
-            && !self.tree.flat_ancestors(end.node).any(|it| it == id)
-        {
+        if was_started && to_end.is_empty() && self.hides_contents(id) {
             return true;
         }
         if was_started {
             visit(id, Visit::Enter);
         }
-        let host = |node: NodeId| {
-            Some(self.tree.host_of(node))
-                .filter(|it| *it != 0)
-                .unwrap_or(node)
-        };
-        let is_at =
-            |point: &Point, child: NodeId| host(point.node) == host(id) && point.offset == child;
-        let children = self
-            .tree
-            .flat_children(id)
-            .take_while(|_| bun_core::StackCheck::init().is_safe_to_recurse())
-            .chain([0]);
-        for child in children {
-            *started |= is_at(start, child);
-            if is_at(end, child) {
-                return false;
-            }
-            if child != 0
-                && (*started || to_start.contains(&child))
-                && !self.visit_in(child, range, to_start, started, visit)
-            {
-                return false;
+        if !(was_started && to_end.is_empty() && visit(id, Visit::Inside)) {
+            let host = |node: NodeId| {
+                Some(self.tree.host_of(node))
+                    .filter(|it| *it != 0)
+                    .unwrap_or(node)
+            };
+            let here = |point: &Point, may_be: bool| {
+                (may_be && host(point.node) == host(id)).then_some(point.offset)
+            };
+            let (starts_at, ends_at) = (here(start, !was_started), here(end, !to_end.is_empty()));
+            let children = self
+                .tree
+                .flat_children(id)
+                .take_while(|_| bun_core::StackCheck::init().is_safe_to_recurse())
+                .chain([0]);
+            for child in children {
+                *started |= starts_at == Some(child);
+                if ends_at == Some(child) {
+                    return false;
+                }
+                if child != 0
+                    && (*started || to_start.contains(&child))
+                    && !self.visit_in(
+                        child,
+                        range,
+                        [to_start, if to_end.contains(&child) { to_end } else { &[] }],
+                        started,
+                        visit,
+                    )
+                {
+                    return false;
+                }
             }
         }
         visit(id, Visit::Leave(was_started));
         true
+    }
+
+    fn contents_of(&self, id: NodeId) -> Range {
+        [
+            Point {
+                node: id,
+                offset: self.tree.flat_children(id).next().unwrap_or(0),
+            },
+            Point {
+                node: id,
+                offset: 0,
+            },
+        ]
+    }
+
+    fn may_be_marked(&self, id: NodeId) -> bool {
+        self.tree[id].text().is_some()
+            || self.tree.html_tag(id) == name!("br")
+            || self
+                .own_box(id)
+                .is_some_and(|it| self.boxes[it].is_replaced())
+    }
+
+    pub(crate) fn marks_of(&self, node: NodeId) -> impl Iterator<Item = &(Span<u32>, Mark)> {
+        self.marks.marked.of(self, node)
+    }
+
+    pub(crate) fn is_selected(&self, node: NodeId) -> bool {
+        self.marks_of(node).any(|it| it.1 == Mark::Selection)
+    }
+
+    /// If the block has no other boxes, and the items are like the nodes in it.
+    fn plain_lines(&self, id: NodeId) -> Option<(BoxId, &Inline)> {
+        let (own, tree) = (&self.boxes[self.own_box(id)?], &self.tree);
+        let &[lines] = &own.children[..] else {
+            return None;
+        };
+        let inline = self.inline(lines).filter(|_| {
+            self.boxes[lines].children.is_empty()
+                && !own.is_parking
+                && !tree[id].has(Flags::REDIRECTS_CHILDREN)
+        })?;
+        let is_like_node = |it: &Item| {
+            let is_child = || {
+                tree[it.node].parent
+                    == it
+                        .parent
+                        .checked_sub(1)
+                        .map_or(id, |it| inline.items[it as usize].node)
+            };
+            match it.kind {
+                ItemKind::Text => tree[it.node].text().is_some() && is_child(),
+                ItemKind::Open(_) => {
+                    is_child()
+                        && !tree[it.node].has(Flags::REDIRECTS_CHILDREN | Flags::SKIPPED)
+                        && tree.html_tag(it.node) != name!("p")
+                        && it.style.display() == Display::Inline
+                }
+                ItemKind::Break => is_child(),
+                kind => matches!(kind, ItemKind::Close(_) | ItemKind::Control),
+            }
+        };
+        inline
+            .is_plain
+            .get_or_init(|| !inline.has_split_text && inline.items.iter().all(is_like_node))
+            .then_some((lines, inline))
+    }
+
+    /// The texts and the line breaks, each with its style.
+    fn plain_texts(&self, id: NodeId) -> Option<impl Iterator<Item = (&Item, &[u8], &Style)>> {
+        let (inline, mut known) = (self.plain_lines(id)?.1, None);
+        Some(
+            inline
+                .items
+                .iter()
+                .filter(|it| matches!(it.kind, ItemKind::Text | ItemKind::Break))
+                .map(move |it| {
+                    let style = known
+                        .filter(|known: &(u32, _)| {
+                            known.0 == it.parent && it.kind == ItemKind::Text
+                        })
+                        .map_or_else(|| &**self.current_style(it), |it| it.1);
+                    known = (it.kind == ItemKind::Text).then_some((it.parent, style));
+                    (
+                        it,
+                        &inline.text.as_bytes()[it.start as usize..it.end as usize],
+                        style,
+                    )
+                }),
+        )
     }
 
     fn hides_contents(&self, id: NodeId) -> bool {
@@ -278,9 +397,24 @@ impl Document {
 
     pub(crate) fn forget_highlights(&mut self) {
         self.marks.styles.get_mut().clear();
-        let marked: Vec<NodeId> = self.marks.by_node.keys().copied().collect();
+        let marked: Vec<NodeId> = self.marks.marked.by_node.keys().copied().collect();
         for it in marked {
-            self.repaint(self.tree.flat_parent(it));
+            self.repaint_marks(it);
+        }
+        if !self.marks.marked.selected.is_empty() {
+            self.pictures.discard();
+        }
+    }
+
+    fn repaint_marks(&mut self, node: NodeId) {
+        let parent = self.tree.flat_parent(node);
+        match self
+            .tree
+            .element(parent)
+            .is_some_and(crate::svg::has_svg_children)
+        {
+            true => self.svg_changed(parent),
+            false => self.repaint(parent),
         }
     }
 
@@ -288,7 +422,7 @@ impl Document {
         if !core::mem::take(&mut self.marks.are_stale) {
             return;
         }
-        let mut by_node: Map<_, SmallVec<_>> = Map::default();
+        let mut new = Marked::default();
         let highlights = self
             .marks
             .highlights
@@ -301,49 +435,110 @@ impl Document {
             .filter(|it| it[0] != it[1])
             .map(|it| (Mark::Selection, it));
         for (mark, range) in highlights.chain(selection) {
-            let mut previous = 0;
-            self.visit_range(range, &mut |id, visit| match visit {
-                Visit::Text(_) | Visit::Enter if self.tree[id].layout_box != 0 => {
-                    // An open end: the range goes on after the text.
-                    if let Some(it) = by_node
-                        .get_mut(&core::mem::take(&mut previous))
-                        .and_then(|it: &mut SmallVec<[(Span<u32>, Mark); 1]>| it.last_mut())
+            let (mut previous, mut range) = (0, *range);
+            loop {
+                let mut last = 0;
+                self.visit_range(&range, &mut |id, visit| match visit {
+                    Visit::Text(span)
+                        if mark == Mark::Selection
+                            && self
+                                .tree
+                                .element(self.tree[id].parent)
+                                .is_some_and(crate::svg::has_svg_children) =>
                     {
-                        it.0.end = u32::MAX;
+                        new.by_node
+                            .entry(id)
+                            .or_default()
+                            .extend((!span.is_empty()).then_some((span, mark)));
+                        false
                     }
-                    if let Visit::Text(span) = visit
-                        && !span.is_empty()
+                    Visit::Text(_) | Visit::Enter if self.tree[id].layout_box != 0 => {
+                        // An open end: the range goes on after the text.
+                        if let Some(it) = new
+                            .by_node
+                            .get_mut(&core::mem::take(&mut previous))
+                            .and_then(|it| it.last_mut())
+                        {
+                            it.0.end = u32::MAX;
+                        }
+                        new.selected
+                            .extend(Some(core::mem::take(&mut last)).filter(|it| *it != 0));
+                        if let Visit::Text(span) = visit
+                            && !span.is_empty()
+                        {
+                            new.by_node.entry(id).or_default().push((span, mark));
+                            previous = id;
+                        }
+                        false
+                    }
+                    Visit::Inside
+                        if mark == Mark::Selection
+                            && self.tree[id].layout_box != 0
+                            && !self.may_be_marked(id) =>
                     {
-                        by_node.entry(id).or_default().push((span, mark));
-                        previous = id;
+                        last = id;
+                        true
                     }
+                    Visit::Leave(true)
+                        if mark != Mark::Composition
+                            && self.may_be_marked(id)
+                            && (mark == Mark::Selection
+                                || self.tree.html_tag(id) != name!("br")) =>
+                    {
+                        new.by_node.entry(id).or_default().push((0..1, mark));
+                        false
+                    }
+                    _ => false,
+                });
+                if last == 0 {
+                    break;
                 }
-                Visit::Leave(true) if mark != Mark::Composition => {
-                    let is_replaced = self
-                        .own_box(id)
-                        .is_some_and(|it| self.boxes[it].is_replaced());
-                    if is_replaced
-                        || mark == Mark::Selection && self.tree.html_tag(id) == name!("br")
-                    {
-                        by_node.entry(id).or_default().push((0..1, mark));
-                    }
-                }
-                _ => {}
+                range = self.contents_of(last);
+            }
+        }
+        for all in new.by_node.values_mut().filter(|it| it.len() > 1) {
+            all.chunk_by_mut(|a, b| a.1 == b.1)
+                .for_each(|it| it.order_by_key(|it| it.0.start));
+            all.dedup_by(|it, before| {
+                let overlaps = it.1 == before.1 && it.0.start < before.0.end;
+                before.0.end = if overlaps {
+                    before.0.end.max(it.0.end)
+                } else {
+                    before.0.end
+                };
+                overlaps
             });
         }
-        if by_node.is_empty() {
+        let old = core::mem::replace(&mut self.marks.marked, new);
+        if self.marks.is_empty() {
             self.marks.styles.get_mut().clear();
         }
-        let old = core::mem::replace(&mut self.marks.by_node, by_node);
-        let new = &self.marks.by_node;
-        let changed: Vec<NodeId> = old
-            .keys()
-            .chain(new.keys())
-            .filter(|it| old.get(*it) != new.get(*it))
-            .copied()
-            .collect();
+        let new = &self.marks.marked;
+        let (mut changed, mut budget): (Vec<NodeId>, usize) = (
+            old.by_node
+                .keys()
+                .chain(new.by_node.keys())
+                .copied()
+                .collect(),
+            2048,
+        );
+        for id in old
+            .selected
+            .symmetric_difference(&new.selected)
+            .filter(|it| self.tree.contains(**it))
+        {
+            self.visit_range(&self.contents_of(*id), &mut |id, _| {
+                budget = budget.saturating_sub(1);
+                changed.extend((budget > 0).then_some(id));
+                budget == 0
+            });
+            if budget == 0 {
+                return self.pictures.discard();
+            }
+        }
+        changed.retain(|it| !old.of(self, *it).eq(new.of(self, *it)));
         for it in changed {
-            self.repaint(self.tree.flat_parent(it));
+            self.repaint_marks(it);
         }
     }
 
@@ -357,14 +552,7 @@ impl Document {
             Some(own) => self.boxes[own].parent,
             None => self.tree[id].layout_box,
         };
-        let is_it = |it: &&Item| {
-            it.node == id
-                && matches!(
-                    it.kind,
-                    ItemKind::Text | ItemKind::Break | ItemKind::Atomic(_)
-                )
-        };
-        Some((lines, self.inline(lines)?.items.iter().find(is_it)?))
+        Some((lines, self.inline(lines)?.leaf(id)?))
     }
 
     fn edge_place(&self, id: NodeId, last: bool) -> Option<Place> {
@@ -433,7 +621,7 @@ impl Document {
                 };
                 let inline = self.inline(lines)?;
                 let at = inline
-                    .cluster_at(inline.text_offset(item, point.offset))
+                    .cluster_in(item, point.offset)
                     .min(inline.last_place());
                 return Some(Place {
                     lines,
@@ -846,7 +1034,7 @@ impl Document {
                 _ => outside(y, rect.span(1)) * 4096.0 + outside(x, rect.span(0)),
             }
         };
-        let mut candidates: Vec<_> = (it.children.iter().copied())
+        let candidates = (it.children.iter().copied())
             .filter(|child| !self.boxes[*child].style.is_out_of_flow())
             .filter(|child| {
                 self.boxes[*child].layout.size.height > 0.0
@@ -855,10 +1043,8 @@ impl Document {
                         .iter()
                         .any(|it| self.boxes[*it].style.is_floating())
             })
-            .filter(|child| !self.is_generated(self.boxes[*child].node))
-            .collect();
-        candidates.order_by(|a, b| distance(a).total_cmp(&distance(b)));
-        let found = candidates.into_iter().find_map(|child| {
+            .filter(|child| !self.is_generated(self.boxes[*child].node));
+        let point_in = |child: BoxId| {
             let own = &self.boxes[child];
             if own.is_replaced() || it.style.is_editable() && !own.style.is_editable() {
                 let is_after = local(child)[1] > own.layout.size.height / 2.0;
@@ -884,6 +1070,18 @@ impl Document {
                 });
             }
             self.point_in_box(child, point)
+        };
+        let mut others = Vec::new();
+        let found = candidates.map(|it| (distance(&it), it)).find_map(|it| {
+            if it.0 == 0.0 {
+                return point_in(it.1);
+            }
+            others.push(it);
+            None
+        });
+        let found = found.or_else(|| {
+            others.order_by(|a, b| a.0.total_cmp(&b.0));
+            others.into_iter().find_map(|it| point_in(it.1))
         });
         found.or_else(|| {
             (it.node != 0 && !it.is_replaced()).then(|| {
@@ -1037,9 +1235,7 @@ impl Document {
     }
 
     fn selectable_beside(&self, root: NodeId, place: Place, forward: bool) -> Option<Place> {
-        let (root, mut all) = (self.tree[root].layout_box, Vec::new());
-        self.collect_lines_in(root, self.boxes[root].style.is_editable(), &mut all);
-        let index = all.iter().position(|it| *it == place.lines)?;
+        let root = self.tree[root].layout_box;
         let find = |lines: &BoxId| {
             let (last, is_own) = (self.inline(*lines)?.last_place(), *lines == place.lines);
             let at = match forward {
@@ -1054,32 +1250,73 @@ impl Document {
                 upstream: false,
             })
         };
-        if forward {
-            all[index..].iter().find_map(find)
-        } else {
-            all[..=index].iter().rev().find_map(find)
+        self.lines_from(root, place.lines, forward)
+            .find_map(|it| find(&it))
+    }
+
+    fn may_have_caret(&self, id: BoxId, root: BoxId) -> bool {
+        (self.boxes[id].style.is_editable() || !self.boxes[root].style.is_editable())
+            && !self.is_generated(self.boxes[id].node)
+    }
+
+    /// The first or the last ones that the caret can be in.
+    fn lines_in(&self, id: BoxId, root: BoxId, forward: bool) -> Option<BoxId> {
+        self.may_have_caret(id, root).then_some(())?;
+        match &self.boxes[id].inline {
+            Some(inline) => inline
+                .lines
+                .lines
+                .iter()
+                .any(|it| it.height > 0.0)
+                .then_some(id),
+            None => self.lines_among(&self.boxes[id].children, root, forward),
         }
     }
 
-    fn collect_lines_in(&self, id: BoxId, is_editable: bool, out: &mut Vec<BoxId>) {
-        let it = &self.boxes[id];
-        if is_editable && !it.style.is_editable() || self.is_generated(it.node) {
-            return;
+    fn lines_among(&self, boxes: &[BoxId], root: BoxId, forward: bool) -> Option<BoxId> {
+        let find = |it: &BoxId| self.lines_in(*it, root, forward);
+        if forward {
+            boxes.iter().find_map(find)
+        } else {
+            boxes.iter().rev().find_map(find)
         }
-        match &it.inline {
-            Some(inline) => out.extend(
-                inline
-                    .lines
-                    .lines
-                    .iter()
-                    .any(|it| it.height > 0.0)
-                    .then_some(id),
-            ),
-            None => it
-                .children
-                .iter()
-                .for_each(|child| self.collect_lines_in(*child, is_editable, out)),
-        }
+    }
+
+    /// `first` and those after or before it. None if `lines_in` does not lead to it.
+    fn lines_from(
+        &self,
+        root: BoxId,
+        first: BoxId,
+        forward: bool,
+    ) -> impl Iterator<Item = BoxId> + '_ {
+        let up = move |id: BoxId| {
+            core::iter::successors(Some(id), move |it| {
+                Some(self.boxes[*it].parent).filter(|parent| *it != root && *parent != 0)
+            })
+        };
+        let is_among = self.lines_in(first, root, forward) == Some(first)
+            && up(first).last() == Some(root)
+            && up(first)
+                .skip(1)
+                .all(|it| self.boxes[it].inline.is_none() && self.may_have_caret(it, root))
+            && up(first)
+                .zip(up(first).skip(1))
+                .all(|(it, parent)| self.boxes[parent].children.contains(&it));
+        core::iter::successors(is_among.then_some(first), move |at| {
+            up(*at).zip(up(*at).skip(1)).find_map(|(it, parent)| {
+                let siblings = &self.boxes[parent].children;
+                let index = siblings.iter().position(|sibling| *sibling == it)?;
+                self.lines_among(
+                    if forward {
+                        &siblings[index + 1..]
+                    } else {
+                        &siblings[..index]
+                    },
+                    root,
+                    forward,
+                )
+            })
+        })
     }
 
     fn step(&self, place: Place, forward: bool) -> Option<Place> {
@@ -1123,17 +1360,17 @@ impl Document {
         x: f32,
     ) -> Option<(Point, bool)> {
         let place = self.place_of(from, upstream)?;
-        let (inline, mut all) = (self.inline(place.lines)?, Vec::new());
+        let inline = self.inline(place.lines)?;
         let forward = match direction {
             0 | 1 => direction == 0,
             _ => (direction == 3) != self.boxes[place.lines].style.is_rtl(),
         };
         let root_box = self.tree[root].layout_box;
-        self.collect_lines_in(root_box, self.boxes[root_box].style.is_editable(), &mut all);
-        let index = all.iter().position(|it| *it == place.lines);
-        let neighbor = index
-            .and_then(|it| all.get(if forward { it + 1 } else { it.checked_sub(1)? }))
-            .copied();
+        let neighbor = core::cell::LazyCell::new(|| {
+            self.lines_from(root_box, place.lines, forward)
+                .take(2)
+                .nth(1)
+        });
         let edge = |lines: BoxId, last: bool| {
             Some(Place {
                 lines,
@@ -1145,7 +1382,7 @@ impl Document {
                 upstream: false,
             })
         };
-        let across = || edge(neighbor?, !forward);
+        let across = || edge((*neighbor)?, !forward);
         let here = |at: u32| Place {
             at,
             upstream: false,
@@ -1212,13 +1449,13 @@ impl Document {
                 };
                 let far = || {
                     let mut lines = self
-                        .inline(neighbor?)?
+                        .inline((*neighbor)?)?
                         .lines
                         .lines
                         .iter()
                         .filter(|it| it.height > 0.0);
                     Some((
-                        neighbor?,
+                        (*neighbor)?,
                         if forward {
                             lines.next()
                         } else {
@@ -1256,7 +1493,7 @@ impl Document {
                 );
             }
             4 | 5 => here(paragraph_edge(place.at)),
-            6 => edge(*(if forward { all.last() } else { all.first() })?, forward)?,
+            6 => edge(self.lines_in(root_box, root_box, !forward)?, forward)?,
             7 => {
                 let scroller = self
                     .boxes
@@ -1329,66 +1566,117 @@ impl Document {
 
     pub(crate) fn range_rects(&self, range: &Range) -> Vec<Rect> {
         let mut rects = Vec::new();
-        let mut entered: Vec<usize> = Vec::new();
-        let mut whole: Vec<(usize, NodeId)> = Vec::new();
-        self.visit_range(range, &mut |id, visit| match visit {
-            Visit::Enter => entered.push(rects.len()),
-            Visit::Leave(false) => {}
-            Visit::Leave(true) => {
-                let start = entered.pop().unwrap_or(0);
-                whole.retain(|it| self.tree.flat_parent(it.1) != id);
-                whole.push((start, id));
-            }
-            Visit::Text(span) => {
-                let Some((lines, item)) = self.as_leaf(id) else {
-                    return rects.extend(self.svg_text_rects(id, &span).into_iter().flatten());
-                };
-                let (Some(inline), matrix) = (self.inline(lines), self.lines_to_viewport(lines))
-                else {
-                    return;
-                };
-                let place = |it: Rect| match self.has_depth.get() {
-                    true => self.map_to_viewport(
-                        lines,
-                        self.line_matrix(lines)
-                            .map_or(it, |turn| it.transformed(&turn)),
-                    ),
-                    false => it.transformed(&matrix),
-                };
-                if range[0] == range[1] {
-                    let caret = self
-                        .place_of(range[0], false)
-                        .and_then(|it| self.caret_at(it));
-                    return rects.extend(caret.map(|it| place(Rect { width: 0.0, ..it })));
+        let (mut entered, mut whole, mut known) = (Vec::new(), Vec::<(usize, NodeId)>::new(), None);
+        let mut matrix_of = |lines: BoxId| {
+            known
+                .insert(
+                    known
+                        .filter(|it: &(BoxId, _)| it.0 == lines)
+                        .unwrap_or_else(|| (lines, self.lines_to_viewport(lines))),
+                )
+                .1
+        };
+        let place = |lines: BoxId, matrix: &Matrix, it: Rect| match self.has_depth.get() {
+            true => self.map_to_viewport(
+                lines,
+                self.line_matrix(lines)
+                    .map_or(it, |turn| it.transformed(&turn)),
+            ),
+            false => it.transformed(matrix),
+        };
+        let mut add = |id: NodeId, visit: Visit| {
+            match visit {
+                Visit::Enter => entered.push((rects.len(), whole.len())),
+                Visit::Inside => {
+                    let (lines, inline) = self
+                        .plain_lines(id)
+                        .filter(|it| !it.1.has_bidi && !self.boxes[it.0].style.is_rtl())?;
+                    let is_text = |it: &&Fragment| {
+                        matches!(&it.kind, FragmentKind::Text { clusters, .. } if !clusters.is_empty())
+                            && inline.items[it.item as usize].kind == ItemKind::Text
+                    };
+                    let matrix = matrix_of(lines);
+                    rects.extend(
+                        inline
+                            .lines
+                            .fragments
+                            .iter()
+                            .filter(is_text)
+                            .map(|it| place(lines, &matrix, it.rect())),
+                    );
+                    return Some(());
                 }
-                let clusters = inline.cluster_at(inline.text_offset(item, span.start))
-                    ..inline.cluster_at(inline.text_offset(item, span.end));
-                for fragment in inline
-                    .lines
-                    .fragments
-                    .iter()
-                    .filter(|it| inline.items[it.item as usize].node == id)
-                {
-                    let inside = inline
-                        .positions(fragment)
-                        .filter(|it| clusters.contains(&it.0));
-                    if let Some([left, right]) = inside
-                        .map(|it| [it.1, it.1 + it.2])
-                        .reduce(|a, b| [a[0].min(b[0]), a[1].max(b[1])])
+                Visit::Leave(false) => {}
+                Visit::Leave(true) => {
+                    let (start, before) = entered.pop().unwrap_or_default();
+                    whole.truncate(before);
+                    whole.push((start, id));
+                }
+                Visit::Text(span) => {
+                    let Some((lines, item)) = self.as_leaf(id) else {
+                        rects.extend(self.svg_text_rects(id, &span).into_iter().flatten());
+                        return None;
+                    };
+                    let (inline, matrix) = (self.inline(lines)?, matrix_of(lines));
+                    if range[0] == range[1] {
+                        let caret = self
+                            .place_of(range[0], false)
+                            .and_then(|it| self.caret_at(it));
+                        rects.extend(
+                            caret.map(|it| place(lines, &matrix, Rect { width: 0.0, ..it })),
+                        );
+                        return None;
+                    }
+                    let clusters =
+                        inline.cluster_in(item, span.start)..inline.cluster_in(item, span.end);
+                    for fragment in inline
+                        .lines
+                        .fragments_with(&clusters)
+                        .iter()
+                        .filter(|it| inline.items[it.item as usize].node == id)
                     {
-                        rects.push(place(Rect {
-                            x: left,
-                            width: right - left,
-                            ..fragment.rect()
-                        }));
+                        if let FragmentKind::Text { clusters: all, .. } = &fragment.kind
+                            && clusters.start <= all.start
+                            && all.end <= clusters.end
+                            && !all.is_empty()
+                        {
+                            rects.push(place(lines, &matrix, fragment.rect()));
+                            continue;
+                        }
+                        let inside = inline
+                            .positions(fragment)
+                            .skip_while(|it| it.0 < clusters.start)
+                            .take_while(|it| it.0 < clusters.end);
+                        if let Some([left, right]) = inside
+                            .map(|it| [it.1, it.1 + it.2])
+                            .reduce(|a, b| [a[0].min(b[0]), a[1].max(b[1])])
+                        {
+                            rects.push(place(
+                                lines,
+                                &matrix,
+                                Rect {
+                                    x: left,
+                                    width: right - left,
+                                    ..fragment.rect()
+                                },
+                            ));
+                        }
                     }
                 }
             }
-        });
-        for (index, id) in whole.into_iter().rev() {
-            rects.splice(index..index, self.client_rects(id));
+            None
+        };
+        self.visit_range(range, &mut |id, visit| add(id, visit).is_some());
+        if whole.is_empty() {
+            return rects;
         }
-        rects
+        let (mut all, mut done) = (Vec::with_capacity(rects.len() + whole.len()), 0);
+        for (index, id) in whole {
+            all.extend_from_slice(&rects[core::mem::replace(&mut done, index)..index]);
+            all.extend(self.client_rects(id));
+        }
+        all.extend_from_slice(&rects[done..]);
+        all
     }
 
     pub(crate) fn is_inert(&self, id: NodeId, style: &Style) -> bool {
@@ -1423,6 +1711,11 @@ impl Document {
 
     fn collect_contents(&self, id: NodeId, out: &mut InnerText) {
         if self.tree.html_tag(id) != name!("select") {
+            if let Some(texts) = self.plain_texts(id) {
+                return texts
+                    .filter(|it| it.2.is_visible())
+                    .for_each(|it| out.push(it.1));
+            }
             let children = self
                 .tree
                 .children(id)
@@ -1529,7 +1822,13 @@ impl Document {
         let around_end: Vec<_> = core::iter::once(range[1].node)
             .chain(self.tree.flat_ancestors(range[1].node))
             .collect();
-        self.visit_range(range, &mut |id, visit| {
+        let shows = |id: NodeId, style: &Style| {
+            style.is_visible()
+                && (!only_selectable
+                    || (style.ink.user_select != UserSelect::None || style.is_editable())
+                        && !self.is_inert(id, style))
+        };
+        let mut add = |id: NodeId, visit: Visit| {
             if only_selectable
                 && !matches!(visit, Visit::Leave(_))
                 && self.tree[id].layout_box != 0
@@ -1547,14 +1846,17 @@ impl Document {
                     out.extend_from_slice(text);
                 }
             };
+            if let Visit::Inside = visit {
+                self.plain_texts(id)?
+                    .filter(|it| it.0.kind == ItemKind::Break || shows(it.0.node, it.2))
+                    .for_each(|it| push(it.1, &mut breaks));
+                return Some(());
+            }
             let Visit::Text(span) = visit else {
-                let Some(style) = self
+                let style = self
                     .tree
                     .style(id)
-                    .filter(|_| self.tree[id].layout_box != 0)
-                else {
-                    return;
-                };
+                    .filter(|_| self.tree[id].layout_box != 0)?;
                 let (is_end, display) = (matches!(visit, Visit::Leave(_)), style.display());
                 let has_next = |display| {
                     self.tree.next_elements(id).any(|it| {
@@ -1582,24 +1884,18 @@ impl Document {
                 {
                     breaks = breaks.max(1);
                 }
-                return;
+                return None;
             };
-            let Some((lines, item)) = self.as_leaf(id) else {
-                return;
-            };
-            let (Some(inline), style) = (self.inline(lines), self.current_style(item)) else {
-                return;
-            };
-            let is_selectable = || {
-                (style.ink.user_select != UserSelect::None || style.is_editable())
-                    && !self.is_inert(id, style)
-            };
-            if style.is_visible() && (!only_selectable || is_selectable()) {
-                let [start, end] =
-                    [span.start, span.end].map(|it| inline.text_offset(item, it) as usize);
-                push(&inline.text.as_bytes()[start..end], &mut breaks);
-            }
-        });
+            let (lines, item) = self.as_leaf(id)?;
+            let inline = self
+                .inline(lines)
+                .filter(|_| shows(id, self.current_style(item)))?;
+            let [start, end] =
+                [span.start, span.end].map(|it| inline.text_offset(item, it) as usize);
+            push(&inline.text.as_bytes()[start..end], &mut breaks);
+            None
+        };
+        self.visit_range(range, &mut |id, visit| add(id, visit).is_some());
         if !out.is_empty() && out.len() == trailing.0 {
             out.extend(core::iter::repeat_n(b'\n', trailing.1));
         }

@@ -183,6 +183,37 @@ pub(crate) fn modify<'a>(
     None
 }
 
+/// Moves its ends by that many characters.
+pub(crate) fn adjust<'a>(cx: &mut Cx<'a>, ui: &'a Ui, by: [i32; 2]) -> Option<()> {
+    let selection = range::try_selection(ui.doc())?;
+    let span = selection.span()?;
+    let (root, mut ends) = (
+        selection_root(cx, span.start().node),
+        [span.start(), span.end()],
+    );
+    for (end, by) in ends.iter_mut().zip(by) {
+        for _ in 0..by.unsigned_abs() {
+            let next = moved_from(
+                cx,
+                root,
+                *end,
+                if by < 0 {
+                    Direction::Backward
+                } else {
+                    Direction::Forward
+                },
+                Reach::Character,
+            );
+            if core::mem::replace(end, next) == next {
+                return None;
+            }
+        }
+    }
+    range::compare_points(ends[0], ends[1])
+        .is_le()
+        .then(|| selection.select(cx, ends[0], ends[1]))
+}
+
 /// `Range.expand()`. Without a unit it gets all of its tree.
 pub(crate) fn expand<'a>(cx: &mut Cx<'a>, range: &'a Range, unit: Option<Unit>) {
     let root = range.start().node.root();
@@ -513,14 +544,19 @@ pub(crate) fn schedule_selection_events<'a>(cx: &mut Cx<'a>, ui: &'a Ui, target:
             _ = Ui::from_value(ui).map(|it| fire_selection_events(cx, it))
         });
     }
-    if !waiting.contains(target) {
-        ui.set_changed_selections(waiting.with(&cx.heap, target));
+    if ui.editing.changed_selections.borrow_mut().insert(target) {
+        ui.set_changed_selections(waiting.followed_by(&cx.heap, target));
     }
 }
 
 fn fire_selection_events<'a>(cx: &mut Cx<'a>, ui: &'a Ui) {
     let (targets, doc): (_, &Node) = (ui.changed_selections(), ui.doc());
     ui.set_changed_selections(Refs::default());
+    let has_doc = ui
+        .editing
+        .changed_selections
+        .take()
+        .contains(&core::ptr::from_ref(doc));
     for target in targets.iter() {
         let control = text_control(target);
         if target.scope().is_none_or(|it| it == doc) {
@@ -533,7 +569,7 @@ fn fire_selection_events<'a>(cx: &mut Cx<'a>, ui: &'a Ui) {
                     ..PLAIN
                 },
             );
-        } else if !targets.contains(doc) {
+        } else if !has_doc {
             fire(cx, doc, atom!("selectionchange"), PLAIN);
         }
         if control.is_some_and(|it| it.take_select_event()) {

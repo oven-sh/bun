@@ -13,6 +13,7 @@ pub mod gradient;
 mod graph;
 #[cfg(any(test, target_os = "macos"))]
 pub mod layers;
+mod memo;
 pub mod raster;
 pub mod scene;
 pub mod software;

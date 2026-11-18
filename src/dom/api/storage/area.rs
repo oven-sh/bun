@@ -461,7 +461,6 @@ impl StorageEvent {
         self.change.borrow().url.clone()
     }
 
-    #[expect(clippy::too_many_arguments)]
     pub(crate) fn init_storage_event(
         &self,
         name: Atom,

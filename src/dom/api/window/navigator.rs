@@ -10,7 +10,7 @@ use bun_web::url::Url;
 use super::screen::WindowControlsOverlay;
 use super::*;
 use crate::api::transfer::clipboard::Clipboard;
-use crate::api::{interim, ui};
+use crate::api::{on_behalf, ui};
 use crate::generated_bindgen::interaction::UserActivation;
 
 const PLATFORM: &str = match () {
@@ -215,8 +215,8 @@ impl DomNavigator {
         let without_placeholder = strings::index_of(text.as_bytes(), b"%s")
             .map(|at| DomString::from_utf8(&[&text[..at], &text[at + 2..]].concat()));
         let resolved = without_placeholder
-            .and_then(|it| interim::resolve(cx, doc, &it))
-            .filter(|_| interim::resolve(cx, doc, url).is_some());
+            .and_then(|it| on_behalf::resolve(cx, doc, &it))
+            .filter(|_| on_behalf::resolve(cx, doc, url).is_some());
         let Some(resolved) = resolved.and_then(|it| Url::parse(it.to_utf8().as_bytes())) else {
             return Err(cx.heap.dom_exception(
                 DOMExceptionCode::SyntaxError,

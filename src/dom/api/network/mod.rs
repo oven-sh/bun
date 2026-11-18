@@ -1,10 +1,10 @@
 //! What scripts load with.
 
 mod body;
-pub(crate) mod bridge;
 mod cache;
 mod event_source;
 mod fetch;
+pub(crate) mod for_engine;
 mod form_data;
 mod headers;
 mod request;
@@ -32,7 +32,9 @@ pub(crate) use self::web_socket::{CloseEvent, WebSocket};
 pub(crate) use self::xhr::XMLHttpRequest;
 use crate::api::core::*;
 use crate::api::events::{Event, EventInit, Trusted, WindowTarget, dispatch, fire};
-use crate::api::realm::{Kept, client_of, last_client_of, queue_task_after, spawn};
+use crate::api::realm::{
+    Kept, client_of, client_or_program, last_client_of, queue_task_after, spawn,
+};
 use crate::generated_bindgen::network::*;
 
 type Cx<'c, 'a> = &'c mut JsScope<'a>;
@@ -42,7 +44,7 @@ type Str<'a> = JsLocal<'a, JSString>;
 
 /// <https://html.spec.whatwg.org/#api-base-url>
 pub(crate) fn base_url(heap: &JsHeap<'_>) -> Option<Url> {
-    match WindowTarget::of_realm(heap).and_then(WindowTarget::doc) {
+    match WindowTarget::of_realm_or_program(heap).and_then(WindowTarget::doc) {
         Some(doc) => Url::parse(doc.base_url().to_utf8().as_bytes()),
         None => Some(last_client_of(heap)?.url()),
     }

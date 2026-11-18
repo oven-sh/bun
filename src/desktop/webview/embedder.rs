@@ -1,6 +1,7 @@
 //! What is around a page of the web engine: a `WebContents`, or a window of the program.
 
 use bun_ui::protocol::Point;
+use bun_web::page::News;
 
 use super::remote::Remote;
 use crate::contents::{Contents, page::Page};
@@ -37,7 +38,7 @@ pub(crate) trait Holder {
         false
     }
 
-    fn mirror(&self, _scale: JSValue, _area: JSValue) -> JsResult<()> {
+    fn mirror(&self, _scale: f64, _area: JSValue) -> JsResult<()> {
         Ok(())
     }
 
@@ -59,7 +60,8 @@ pub(crate) trait Embedder {
     fn url(&self) -> JsResult<String>;
     fn origin(&self) -> JsResult<String>;
     fn log_error(&self, message: &str) -> JsResult<()>;
-    fn path_of(&self, file: JSValue) -> JsResult<String>;
+    fn id(&self) -> u32;
+    fn tell_element(&self, number: u32, news: News) -> JsResult<()>;
 
     fn is_disposed(&self) -> bool {
         false
@@ -87,10 +89,6 @@ pub(crate) trait Embedder {
 
     fn referrer_policy(&self) -> &'static [u8] {
         b""
-    }
-
-    fn clone_message(&self, message: JSValue) -> JsResult<JSValue> {
-        Ok(message)
     }
 
     /// A `Set`, if it keeps track of them.

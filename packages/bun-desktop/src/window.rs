@@ -52,6 +52,8 @@ pub struct WindowState {
     /// What is left of it, over the surfaces.
     pub kept_cover: Cell<Option<u32>>,
     pub is_active: Cell<bool>,
+    pub is_disabled: Cell<bool>,
+    pub keeps_cursor: Cell<bool>,
     pub pointer: Pointer,
     pub frame_buttons: RefCell<frame::Buttons>,
     /// The platform asks for frames.
@@ -106,22 +108,21 @@ impl WindowState {
         } = geometry;
         let options = self.options.borrow();
         let fills_screen = geometry.is_fullscreen || geometry.is_maximized;
-        let draws_frame = is_client_decorated && options.frame && !geometry.is_fullscreen;
-        let top = if draws_frame && !options.hidden_title_bar {
-            frame::TITLEBAR_HEIGHT
+        let top = if is_client_decorated {
+            geometry.top
         } else {
             0.
         };
         self.set_metrics(Metrics {
             width,
-            height,
+            height: top + height,
             scale,
-            origin: (geometry.x, geometry.y + geometry.top),
+            origin: (geometry.x, geometry.y + geometry.top - top),
             content: Rect {
                 x: 0.,
                 y: top,
                 width,
-                height: (height - top).max(0.),
+                height,
             },
             has_border: top > 0. && !fills_screen,
             has_resize_handles: is_client_decorated && options.resizable && !fills_screen,
@@ -192,6 +193,7 @@ pub mod layers {
     thread_local! {
         static HAS_CHANGES: Cell<bool> = const { Cell::new(false) };
         static RELEASE_AT: Cell<Option<Instant>> = const { Cell::new(None) };
+        static PAUSE_AT: Cell<Option<Instant>> = const { Cell::new(None) };
     }
 
     /// Leaves out what Core Animation can move, fade or blink in a layer of its own.
@@ -330,14 +332,11 @@ pub mod layers {
             .iter()
             .filter_map(|it| it.borrow_mut().scrolled_port())
             .collect();
-        layers.set_scrolling(ports.first().map(|it| {
-            IntRect::nearest(Rect {
-                x: it.x * scale,
-                y: it.y * scale,
-                width: it.width * scale,
-                height: it.height * scale,
-            })
-        }));
+        layers.set_scrolling(ports.first().map(|it| in_pixels(*it, scale)));
+        surface::shown_in(state)
+            .into_iter()
+            .filter_map(|it| it.borrow_mut().take_jump())
+            .for_each(|it| layers.note_jump(in_pixels(it, scale)));
         if layers.frames_scrolled().is_multiple_of(8) {
             let shows = software::see_through(&state.compositor.lock().primitives, all);
             let points = [shows.start, shows.end].map(|it| f64::from(it) / f64::from(scale));
@@ -351,11 +350,31 @@ pub mod layers {
         let cache = &mut *state.cache.borrow_mut();
         cache.known_contents = layers.target.show_lifted(std::mem::take(&mut cache.lifted));
         HAS_CHANGES.set(true);
+        PAUSE_AT.set(
+            core_animation::waits_for_pause().then(|| Instant::now() + Duration::from_millis(400)),
+        );
         RELEASE_AT.set(
             RELEASE_AT
                 .get()
                 .or_else(|| Some(Instant::now() + SPARES_LAST)),
         );
+    }
+
+    fn in_pixels(
+        Rect {
+            x,
+            y,
+            width,
+            height,
+        }: Rect,
+        scale: f32,
+    ) -> IntRect {
+        IntRect::nearest(Rect {
+            x: x * scale,
+            y: y * scale,
+            width: width * scale,
+            height: height * scale,
+        })
     }
 
     /// Not from inside of AppKit, which commits what belongs together.
@@ -371,11 +390,15 @@ pub mod layers {
         HAS_CHANGES.set(false);
     }
 
-    pub fn next_release() -> Option<Instant> {
-        RELEASE_AT.get()
+    pub fn next_chore() -> Option<Instant> {
+        RELEASE_AT.get().into_iter().chain(PAUSE_AT.get()).min()
     }
 
-    pub fn release_what_is_due() {
+    pub fn do_chores() {
+        if PAUSE_AT.get().is_some_and(|time| time <= Instant::now()) {
+            PAUSE_AT.set(None);
+            core_animation::note_pause();
+        }
         if RELEASE_AT.get().is_some_and(|time| time <= Instant::now()) {
             let mut has_spares = false;
             for state in ids().into_iter().filter_map(|id| state(id).ok()) {
@@ -511,6 +534,8 @@ pub fn create(options: Options, icon: Option<&[u8]>, cover: Option<u32>) -> Resu
         cover: Cell::new(cover),
         kept_cover: Cell::default(),
         is_active: Cell::default(),
+        is_disabled: Cell::default(),
+        keeps_cursor: Cell::default(),
         pointer: Pointer::default(),
         frame_buttons: RefCell::default(),
         is_shown: Cell::default(),
@@ -855,7 +880,6 @@ fn flatten_surfaces(
                 in_motion,
                 origin,
                 clip,
-                background,
             },
             atlas,
             cache,
@@ -873,7 +897,6 @@ fn flatten_surfaces(
         in_motion: &[],
         origin: (0, 0),
         clip: everything,
-        background,
     };
     flatten::paint(
         &scene,

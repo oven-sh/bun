@@ -16,9 +16,14 @@ pub(crate) struct Integer {
     pub(crate) name: Known,
     pub(crate) default: i32,
     pub(crate) min: i32,
+    pub(crate) limit: Limit,
+}
+
+pub(crate) enum Limit {
+    None,
     /// With it, the attribute may be anything that is not negative.
-    pub(crate) max: Option<i32>,
-    pub(crate) throws_below: Option<i32>,
+    AtMost(i32),
+    ThrowsBelow(i32),
 }
 
 pub(crate) struct Enumerated {
@@ -83,12 +88,13 @@ macro_rules! strings {
         $(impl $name {
             #[inline]
             pub(crate) fn get<'a>(&self, heap: &JsHeap<'a>, name: Known) -> Str<'a> {
-                element_of(self).attr(name).unwrap_or_default().to_js(heap)
+                element_of(self).with_attr_string(name, |it| it.to_js(heap)).unwrap_or_else(|| Atom::EMPTY.to_js(heap))
             }
 
             #[inline]
             pub(crate) fn set<'a>(&self, cx: Cx<'_, 'a>, name: Known, value: JsStringImpl<'a>) {
-                set(cx, self, name, Some(text(value)));
+                // SAFETY: the caller holds it.
+                element_of(unsafe { Node::from_cell(self.to_js()) }).set_attr_to_impl(cx, &name.into(), value.get());
             }
         })*
     };
@@ -208,7 +214,13 @@ impl Integer {
         let value = element
             .with_attr(self.name, |it| parse_long(it.as_bytes()))
             .flatten();
-        let value = value.map(|it| self.max.map_or(it, |max| it.min(max.into())));
+        let value = value.map(|it| {
+            if let Limit::AtMost(max) = self.limit {
+                it.min(max.into())
+            } else {
+                it
+            }
+        });
         value
             .and_then(|it| i32::try_from(it).ok())
             .filter(|it| *it >= self.min)
@@ -216,14 +228,18 @@ impl Integer {
     }
 
     fn set<'a>(&self, cx: Cx<'_, 'a>, node: &Node, value: i64) -> Result<'a> {
-        if self.throws_below.is_some_and(|it| value < it.into()) {
+        if matches!(self.limit, Limit::ThrowsBelow(it) if value < it.into()) {
             return Err(dom_error(
                 &cx.heap,
                 DomError::IndexSizeError,
                 "The value is too small.",
             ));
         }
-        let min = if self.max.is_some() { 0 } else { self.min };
+        let min = if matches!(self.limit, Limit::AtMost(_)) {
+            0
+        } else {
+            self.min
+        };
         let value = i32::try_from(value)
             .ok()
             .filter(|it| *it >= min)

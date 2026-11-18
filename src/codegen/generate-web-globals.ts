@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { GlobalRow } from "./bindgen-emit.ts";
 import { writeIfNotChanged } from "./helpers.ts";
-import { dependsOnRealm, replacesBun, sameObject, tables, type Table } from "./web-globals.ts";
+import { dependsOnRealm, keptAside, replacesBun, sameObject, tables, type Table } from "./web-globals.ts";
 
 const words = (text = "") => text.split(/\s+/).filter(Boolean);
 const u64 = (value: bigint) => BigInt.asUintN(64, value);
@@ -158,6 +158,7 @@ static constexpr ASCIILiteral sameObjectNames[] = { ${literals(same)} };
     join(directory, "web_globals.rs"),
     `const ABSENT_OR_DIFFERENT: &[&str] = &[${list([...different, "Blob", "File", "SharedArrayBuffer", "console", "self"])}];
 const DEPENDS_ON_REALM: &[&str] = &[${list(words(dependsOnRealm))}];
+const KEPT_ASIDE: &[&str] = &[${list(words(keptAside))}];
 `,
   );
 }

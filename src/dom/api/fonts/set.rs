@@ -12,7 +12,7 @@ use crate::api::core::{
     seams,
 };
 use crate::api::events::{Event, EventInit, Trusted, dispatch};
-use crate::api::{cssom, interim};
+use crate::api::{cssom, on_behalf};
 use crate::declarations::{Accepts, DeclarationList, Key, Specified};
 use crate::font_face;
 use crate::generated_bindgen::fonts::*;
@@ -263,7 +263,7 @@ impl FontFaceSet {
     pub(super) fn started<'a>(&'a self, cx: &mut JsScope<'a>, face: &'a FontFace) {
         let loading = list(js_FontFaceSet::loading(self));
         loading.push(&cx.heap, face.to_js());
-        interim::delay_load(cx, self.doc());
+        on_behalf::delay_load(cx, self.doc());
         if loading.len() > 1 {
             return;
         }
@@ -288,7 +288,7 @@ impl FontFaceSet {
             return;
         }
         done.push(&cx.heap, face.to_js());
-        interim::allow_load(cx, self.doc());
+        on_behalf::allow_load(cx, self.doc());
         if !loading.is_empty() {
             return;
         }

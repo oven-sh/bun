@@ -567,6 +567,13 @@ pub(super) fn leave_button<'a>(cx: &mut Cx<'a>, input: Input<'a>) {
     });
 }
 
+pub(super) fn focus_changed<'a>(cx: &mut Cx<'a>, input: Input<'a>) {
+    if !focus::has_focus(input.element) {
+        with_fields(input, |it| it.activate(Some(0), false));
+    }
+    render(cx, input);
+}
+
 pub(super) fn activate_at<'a>(cx: &mut Cx<'a>, input: Input<'a>, x: f64) {
     let before = field_elements(input)
         .filter(|it| f64::from(layout::bounding_rect(cx, it).x) <= x)

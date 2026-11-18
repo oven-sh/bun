@@ -3,11 +3,12 @@
 use core::cell::Cell;
 
 use super::prelude::*;
-use super::{details, image_map, tabbing, top_layer};
+use super::{details, image_map, interest, tabbing, top_layer};
 use crate::api::editing;
 use crate::api::forms::{self, InputType};
 use crate::api::frames::{self, Frame};
 use crate::api::uievents::FocusEvent;
+use crate::name::Map;
 use crate::scroll::Alignment;
 use crate::tree::NodeId;
 use crate::types::Display;
@@ -39,11 +40,14 @@ pub(crate) enum Cause {
 #[derive(Clone, Copy, Default)]
 pub(crate) struct Options {
     pub(crate) prevents_scroll: bool,
+    /// What has the focus already is not scrolled into view again.
+    pub(crate) leaves_focused_alone: bool,
     pub(crate) is_visible: Option<bool>,
 }
 
 pub(crate) const WITHOUT_SCROLLING: Options = Options {
     prevents_scroll: true,
+    leaves_focused_alone: true,
     is_visible: None,
 };
 
@@ -317,7 +321,7 @@ pub(crate) fn set_focus<'a>(
         state.had_key.set(false);
     }
     if let Some(old) = old {
-        frames::input::blur_focused_frame(cx, ui);
+        frames::input::blur_focused_frame(ui);
         if is_visible.is_none()
             && cause == Cause::Script
             && old.has_state(State::FOCUS_VISIBLE)
@@ -333,6 +337,7 @@ pub(crate) fn set_focus<'a>(
         mark_chain(cx, ui, old, false);
         old.set_state(cx, State::FOCUS_VISIBLE, false);
         forms::focus_changed(cx, old);
+        interest::focus_changed(cx, ui, old, false);
         if ui.is_focused.get() {
             fire_focus(cx, old, false, new);
         }
@@ -355,6 +360,7 @@ pub(crate) fn set_focus<'a>(
                 .unwrap_or_else(|| takes_text || !state.was_by_mouse.get() || state.had_key.get()),
         );
         forms::focus_changed(cx, new);
+        interest::focus_changed(cx, ui, new, true);
         if takes_text && ui.pointer().autoscrolls().is_some() {
             ui.pointer().stop_tracking();
         }
@@ -395,6 +401,10 @@ pub(crate) fn focus<'a>(cx: &mut Cx<'a>, element: &'a Element, cause: Cause, opt
     let Some(ui) = Ui::of(element.doc()).filter(|_| element.is_connected()) else {
         return;
     };
+    let stays = |it: &Element| options.leaves_focused_alone && ui.focused() == Some(it);
+    if stays(element) {
+        return;
+    }
     let target = if ui.doc().document_element() == Some(element) && !supports_focus(cx, element) {
         None
     } else if delegates_focus(element) {
@@ -417,9 +427,13 @@ pub(crate) fn focus<'a>(cx: &mut Cx<'a>, element: &'a Element, cause: Cause, opt
         };
         Some(control)
     };
-    if set_focus(cx, ui, target, cause, options.is_visible)
+    if !target.is_some_and(stays)
+        && set_focus(cx, ui, target, cause, options.is_visible)
         && let Some(target) = target.filter(|_| !options.prevents_scroll)
     {
+        if target.is_html(atom!("input")) {
+            layout::scroll_into_view(cx, target, Alignment::CenterIfNeeded);
+        }
         if !editing::reveal_caret_in(cx, target) {
             layout::scroll_into_view(cx, target, Alignment::CenterIfNeeded);
         }
@@ -526,7 +540,7 @@ pub(crate) fn control_scrolling<'a>(
 /// The focus goes with a node that is removed.
 pub(crate) fn drop_focus<'a>(cx: &mut Cx<'a>, ui: &'a Ui, removed: &'a Element) {
     let Some(old) = ui.focused() else { return };
-    frames::input::blur_focused_frame(cx, ui);
+    frames::input::blur_focused_frame(ui);
     ui.set_focused(None);
     ui.focus.serial.update(|it| it.wrapping_add(1));
     mark_chain(cx, ui, old, false);
@@ -588,7 +602,7 @@ pub(crate) fn autofocus_inserted<'a>(cx: &mut Cx<'a>, element: &'a Element) {
             frames::top_of_same_origin(ui).filter(|it| !it.focus.has_autofocused.get())
         && !host::is_sandboxed(ui, "allow-scripts")
     {
-        top.set_autofocus_candidates(top.autofocus_candidates().with(&cx.heap, element));
+        top.set_autofocus_candidates(top.autofocus_candidates().followed_by(&cx.heap, element));
         top.doc().invalidate(cx);
     }
 }
@@ -606,7 +620,16 @@ pub(crate) fn flush_autofocus_candidates<'a>(cx: &mut Cx<'a>, ui: &'a Ui) {
         return end_autofocus(ui.doc());
     }
     let candidates = ui.autofocus_candidates();
-    for (index, element) in candidates.iter().enumerate() {
+    let last_places: Map<*const Element, usize> = candidates
+        .iter()
+        .enumerate()
+        .map(|(index, it)| (core::ptr::from_ref(it), index))
+        .collect();
+    for (index, element) in candidates
+        .iter()
+        .enumerate()
+        .filter(|(index, it)| last_places.get(&core::ptr::from_ref(*it)) == Some(index))
+    {
         let Some(own) = Ui::of(element.doc())
             .filter(|it| frames::top_of_same_origin(it).is_some_and(|it| core::ptr::eq(it, ui)))
         else {

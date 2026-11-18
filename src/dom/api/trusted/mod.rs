@@ -24,6 +24,12 @@ type Result<'a, T = ()> = bindgen::Result<'a, T>;
 #[thread_local]
 static IS_REQUIRED: Cell<bool> = Cell::new(false);
 
+/// By any realm.
+#[inline]
+pub(crate) fn is_required() -> bool {
+    IS_REQUIRED.get()
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Trusted {
     Html,
@@ -237,20 +243,21 @@ impl Doc {
         end: &str,
         sink: &str,
     ) -> Result<'a, DomString> {
-        let (mut all, mut is_trusted) = (StringBuilder::default(), true);
+        let (mut parts, mut is_trusted) = (SmallVec::<[DomString; 1]>::new(), true);
         for it in texts {
-            match Trusted::Html.text_of(&cx.heap, it.to_js()) {
-                Some(text) => all.push(text),
-                None => {
-                    is_trusted = false;
-                    all.push(&DomString::from_js(cx, *it)?);
-                }
-            }
+            let trusted = Trusted::Html.text_of(&cx.heap, it.to_js()).cloned();
+            is_trusted &= trusted.is_some();
+            parts.push(trusted.map_or_else(|| DomString::from_js(cx, *it), Ok)?);
         }
-        let all = if is_trusted {
-            all.finish()
+        let all = if let [only] = &parts[..] {
+            only.clone()
         } else {
-            Trusted::Html.check(cx, self, all.finish(), sink)?
+            DomString::concat(&parts.iter().collect::<Vec<_>>())
+        };
+        let all = if is_trusted {
+            all
+        } else {
+            Trusted::Html.check(cx, self, all, sink)?
         };
         Ok(if end.is_empty() {
             all
@@ -614,11 +621,6 @@ extern "C" fn Bun__DOM__textOfTrustedScript(global: &JSGlobalObject, value: JSVa
     Trusted::Script
         .text_of(heap, value)
         .map_or(JSValue::UNDEFINED, |it| it.to_js(heap).to_js())
-}
-
-#[unsafe(no_mangle)]
-fn __bun_dom_apply_policy(realm: &JSGlobalObject, is_for_new_document: bool) {
-    apply_policy(JsHeap::from_global(realm), is_for_new_document);
 }
 
 /// What the Content Security Policy says about strings that become code.

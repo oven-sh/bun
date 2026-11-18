@@ -166,7 +166,7 @@ impl Controller {
         self.aborted.lock().0
     }
 
-    pub(crate) fn is_in_use(&self) -> bool {
+    pub fn is_in_use(&self) -> bool {
         Arc::strong_count(&self.aborted) > 1
     }
 

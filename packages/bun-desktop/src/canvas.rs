@@ -1,6 +1,7 @@
 //! What `src/dom/api/canvas` draws on.
 
 use std::cell::RefCell;
+use std::mem::MaybeUninit;
 use std::rc::Rc;
 
 use crate::abi::{self, Filter, GradientStop, PathVerb, Rect, RoundedRect, Span, TextRun};
@@ -20,8 +21,8 @@ use crate::paint::raster::{
 use crate::paint::scene::{Frame, outset};
 use crate::paint::warp;
 use crate::paint::{cpu, filter};
-use crate::surface;
 use crate::text::{self, Line};
+use crate::{parallel, surface};
 
 enum Style {
     Color(u32),
@@ -687,29 +688,15 @@ fn line(text: &str, style: &TextStyle) -> Line {
 }
 
 /// From the y coordinate that was given down to the alphabetic baseline.
-fn baseline_offset(style: &TextStyle) -> f32 {
-    let ((em_ascent, em_descent), [alphabetic, hanging, ideographic]) =
-        (text::em_box(style.font, style.size), baselines(style));
-    match style.baseline {
-        Baseline::Alphabetic => alphabetic,
-        Baseline::Top => em_ascent,
-        Baseline::Hanging => hanging,
-        Baseline::Middle => (em_ascent - em_descent) / 2.,
-        Baseline::Ideographic => ideographic,
-        Baseline::Bottom => -em_descent,
+fn baseline_offset(levels: &text::Levels, baseline: Baseline) -> f32 {
+    match baseline {
+        Baseline::Alphabetic => levels.alphabetic,
+        Baseline::Top => levels.em_ascent,
+        Baseline::Hanging => levels.hanging,
+        Baseline::Middle => (levels.em_ascent - levels.em_descent) / 2.,
+        Baseline::Ideographic => levels.ideographic,
+        Baseline::Bottom => -levels.em_descent,
     }
-}
-
-fn baselines(style: &TextStyle) -> [f32; 3] {
-    let (metrics, given) = (
-        text::metrics(style.font, style.size),
-        text::baselines(style.font, style.size, [b"romn", b"hang", b"ideo"]),
-    );
-    [
-        given[0].unwrap_or(0.),
-        given[1].unwrap_or(metrics.ascent * 0.8),
-        given[2].unwrap_or(-metrics.descent),
-    ]
 }
 
 /// `wire::Commands`, for another thread.
@@ -927,9 +914,7 @@ impl Canvas {
         };
         match command {
             Command::Erase => {
-                target
-                    .pixels_mut()
-                    .fill([0, 0, 0, if self.is_opaque { 255 } else { 0 }])
+                State::new(target.rect).clear_rect(target, target.rect.to_rect(), self.is_opaque)
             }
             Command::Fill { verbs, is_even_odd } => {
                 state.fill_path(target, &list.path(verbs), fill_rule(is_even_odd))
@@ -961,7 +946,7 @@ impl Canvas {
                 };
                 let (x, y) = (
                     x - line.width * squeeze * alignment,
-                    y + baseline_offset(&style),
+                    y + baseline_offset(&text::levels(style.font, style.size), style.baseline),
                 );
                 state.draw_text(
                     target,
@@ -977,10 +962,13 @@ impl Canvas {
                 from,
                 to,
             } if image == id => {
-                let copy = target.pixmap.clone();
+                target.pixmap.allow_sharing();
+                let Some(before) = target.pixmap.shared() else {
+                    return;
+                };
                 state.draw_image(
                     target,
-                    Content::Pixels(&copy),
+                    Content::Pixels(&before),
                     size,
                     upright(from),
                     upright(to),
@@ -992,6 +980,9 @@ impl Canvas {
                 from,
                 to,
             } => {
+                if state.mode == BlendMode::Source {
+                    allow_sharing(image);
+                }
                 images::with_first_frame(image, |content, _| {
                     state.draw_image(target, content, size, upright(from), upright(to))
                 });
@@ -1008,26 +999,24 @@ impl Canvas {
 }
 
 pub fn measure(text: &[u8], style: &TextStyle) -> TextMetrics {
-    let (line, shift) = (
+    let (line, levels) = (
         line(std::str::from_utf8(text).unwrap_or_default(), style),
-        baseline_offset(style),
+        text::levels(style.font, style.size),
     );
-    let (ink, metrics) = (line.ink_bounds(), text::metrics(style.font, style.size));
-    let ((em_ascent, em_descent), [alphabetic, hanging, ideographic]) =
-        (text::em_box(style.font, style.size), baselines(style));
+    let (ink, shift) = (line.ink_bounds(), baseline_offset(&levels, style.baseline));
     TextMetrics {
         width: line.width,
         ink_left: -ink.x,
         ink_right: ink.x + ink.width,
         ink_ascent: -ink.y - shift,
         ink_descent: ink.y + ink.height + shift,
-        font_ascent: metrics.ascent - shift,
-        font_descent: metrics.descent + shift,
-        em_ascent: em_ascent - shift,
-        em_descent: em_descent + shift,
-        hanging: hanging - shift,
-        alphabetic: alphabetic - shift,
-        ideographic: ideographic - shift,
+        font_ascent: levels.ascent - shift,
+        font_descent: levels.descent + shift,
+        em_ascent: levels.em_ascent - shift,
+        em_descent: levels.em_descent + shift,
+        hanging: levels.hanging - shift,
+        alphabetic: levels.alphabetic - shift,
+        ideographic: levels.ideographic - shift,
     }
 }
 
@@ -1084,7 +1073,32 @@ pub fn is_in_stroke(
     })
 }
 
+fn allow_sharing(id: u32) {
+    if let Some(canvas) = get(id)
+        && let Some(layer) = &mut canvas.borrow_mut().layer
+    {
+        layer.pixmap.allow_sharing();
+    }
+}
+
 fn snapshot(wanted: &Snapshot) -> Option<Pixmap> {
+    allow_sharing(wanted.source);
+    let is_whole = !wanted.flips
+        && wanted.part
+            == Rect {
+                x: 0.,
+                y: 0.,
+                width: wanted.size[0],
+                height: wanted.size[1],
+            };
+    let shared = images::with_first_frame(wanted.source, |content, _| match content {
+        Content::Pixels(it) if is_whole && [it.width(), it.height()] == wanted.to => it.shared(),
+        _ => None,
+    });
+    shared.flatten().or_else(|| draw_snapshot(wanted))
+}
+
+fn draw_snapshot(wanted: &Snapshot) -> Option<Pixmap> {
     let [width, height] = wanted.to.map(|it| i32::try_from(it).unwrap_or(0));
     let mut target = Layer::new(IntRect::new(0, 0, width, height))?;
     let (mut state, to) = (State::new(target.rect), target.rect.to_rect());
@@ -1098,36 +1112,46 @@ fn snapshot(wanted: &Snapshot) -> Option<Pixmap> {
     Some(target.pixmap)
 }
 
-/// Premultiplied colors are those on black.
-pub fn read(id: u32, area: Area, is_on_black: bool, rgba: &mut [u8]) {
+/// Premultiplied colors are those on black. False if it has not written everything.
+pub fn read(id: u32, area: Area, is_on_black: bool, rgba: &mut [MaybeUninit<Pixel>]) -> bool {
     let (canvas, wanted) = (get(id), pixels(area));
     let canvas = canvas.as_ref().map(|it| it.borrow());
     let layer = canvas.as_ref().and_then(|it| it.layer.as_ref());
     let shared = layer.map_or_else(IntRect::default, |it| it.rect.intersect(wanted));
-    if shared.is_empty() || shared != wanted {
-        rgba.fill(0);
-    }
     let Some(layer) = layer.filter(|_| !shared.is_empty()) else {
-        return;
+        return false;
     };
-    let rows = rgba
-        .as_chunks_mut::<4>()
-        .0
-        .chunks_mut(area[2] as usize)
-        .skip((shared.top - wanted.top) as usize);
-    for (row, y) in rows.zip(shared.top..shared.bottom) {
-        let (to, from) = (
-            &mut row[(shared.left - wanted.left) as usize..][..shared.width()],
-            layer.row(y, shared.left, shared.right),
-        );
-        match is_on_black || from.iter().fold(255, |all, pixel| all & pixel[3]) == 255 {
-            true => to.copy_from_slice(from),
-            false => to
-                .iter_mut()
-                .zip(from)
-                .for_each(|(to, from)| *to = demultiply(*from)),
-        }
+    if shared != wanted || wanted.area() != rgba.len() as i64 {
+        rgba.fill(MaybeUninit::new([0; 4]));
     }
+    let (width, above) = (area[2] as usize, (shared.top - wanted.top) as usize);
+    parallel::in_bands(
+        &mut rgba[above * width..][..shared.height() * width],
+        width,
+        shared.area(),
+        |first, band| {
+            for (row, y) in band
+                .chunks_exact_mut(width)
+                .zip(shared.top + first as i32..)
+            {
+                let (to, from) = (
+                    &mut row[(shared.left - wanted.left) as usize..][..shared.width()],
+                    layer.row(y, shared.left, shared.right),
+                );
+                let to = to.write_copy_of_slice(from);
+                if !is_on_black
+                    && from
+                        .iter()
+                        .fold(!0, |all, pixel| all & u32::from_le_bytes(*pixel))
+                        >> 24
+                        != 255
+                {
+                    to.iter_mut().for_each(|it| *it = demultiply(*it));
+                }
+            }
+        },
+    );
+    true
 }
 
 pub fn part_of(rgba: &[u8], area: Area, part: Area) -> Vec<u8> {

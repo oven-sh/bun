@@ -2,13 +2,15 @@
 
 use std::rc::Rc;
 
-use bun_web::host::{Activation, HistoryChange, HistoryEntries, HistoryEntry, Serialized};
+use bun_web::host::{
+    Activation, HistoryChange, HistoryEntries, HistoryEntry, Serialized, Traversal,
+};
 use bun_web::trust;
 use bun_web::url::Url;
 
 use super::load::{How, Navigation, Request};
 use super::page::Page;
-use super::{Contents, Numbers as _, with_id, without_hash};
+use super::{Contents, with_id, without_hash};
 use crate::contents::inspection::News;
 use crate::prelude::*;
 use crate::text::{origin_of, random_uuid};
@@ -79,6 +81,15 @@ impl Entry {
 
     pub(crate) fn url(&self) -> String {
         self.top.borrow().url.clone()
+    }
+
+    pub(crate) fn set_initiator(&self, origin: &str) {
+        Rc::make_mut(&mut self.top.borrow_mut().request).set_initiator(origin);
+    }
+
+    pub(crate) fn foreign_initiator(&self) -> Option<String> {
+        let shown = self.top.borrow();
+        shown.request.foreign_initiator(&shown.url)
     }
 
     pub(crate) fn title(&self) -> String {
@@ -259,7 +270,7 @@ impl Contents {
                 .iter()
                 .filter_map(|it| it.borrow().key())
                 .collect();
-            self.page().tell("keepEntries", &[js(keys)?])?;
+            self.page().tell(|it| it.keep_entries(keys))?;
         }
         self.children()?
             .try_for_each(|it| it.tell_of_pruning(except))
@@ -281,7 +292,7 @@ impl Contents {
             if without_hash(&shown.url) != without_hash(url) {
                 self.history().borrow_mut().last_sequence += 1;
                 shown.sequence = self.history().borrow().last_sequence;
-                (shown.state, shown.request) = Default::default();
+                (shown.state, shown.request) = (None, Rc::clone(&navigation.request));
             }
             if navigation.starts_over {
                 (shown.title, shown.request) = (String::new(), Rc::clone(&navigation.request));
@@ -375,12 +386,9 @@ impl Contents {
             |it| it.borrow().for_scripts(url, false),
         );
         let is_visible = next.origin_key() == self.page().origin_key() && !has_crossed_origins;
-        let to = super::or_undefined(is_visible.then_some(known))?;
-        next.inbound_transition.set(
-            self.page()
-                .ask("willSwap", &[js(how.name())?, to])?
-                .as_u32(),
-        );
+        let to = is_visible.then(|| Box::new(known));
+        (next.inbound_transition)
+            .set((self.page()).ask(|it, reply| it.will_swap(how.swap(), to, reply))?);
         Ok(())
     }
 
@@ -427,8 +435,11 @@ impl Contents {
     ) -> JsResult<()> {
         let has_url = |it: &Page| without_hash(&it.url()) == without_hash(&entry.url);
         let is_of_relative = || {
-            let (agent, mut pages) = (page.agent(), super::alive().map(Contents::page));
-            pages.any(|it| agent.as_ref().is_some_and(|agent| agent.has(it)) && has_url(it))
+            let mut pages =
+                super::alive().filter_map(|it| self.relative(it.id).map(Contents::page));
+            pages.any(|it| {
+                it.has_relatives.get() && it.origin_key() == page.origin_key() && has_url(it)
+            })
         };
         let is_of_origin = page.origin() != "null" && origin_of(&entry.url) == page.origin();
         if !is_of_origin && !has_url(page) && !is_of_relative() {
@@ -454,7 +465,11 @@ impl Contents {
         } else {
             How::Replace
         };
+        let goes_to_fragment = entry.state.is_none() && has_url(page);
         self.commit_entry(&url, how == How::Push, Some(entry), None)?;
+        if let Some(item) = self.item().filter(|_| !goes_to_fragment) {
+            Rc::make_mut(&mut item.borrow_mut().request).pass_to(page);
+        }
         self.navigated_in_page(&url, how)?;
         if Url::parse(url.as_bytes()).is_some_and(|it| trust::ends_trusted_document(&it)) {
             self.later(move |it| {
@@ -488,8 +503,7 @@ impl Contents {
 
     pub(super) fn pop_state(&self, url: &str, item: &Item) -> JsResult<()> {
         let key = item.borrow().key();
-        self.page()
-            .tell("popState", &[js(url)?, super::or_undefined(key)?])
+        self.page().tell(|it| it.pop_state(url.to_owned(), key))
     }
 
     pub(super) fn traverse_by(&self, delta: i32, page: &Page) {
@@ -509,7 +523,7 @@ impl Contents {
         history.aim = Some(Rc::clone(&aim));
         let page = Root::new(page);
         self.later(move |it| {
-            if it.ignores(Some(page.get()))? || !it.may_be_taken_to(&aim, page.get())? {
+            if it.ignores(Some(page.get())) || !it.may_be_taken_to(&aim, page.get())? {
                 it.forget_aim();
                 return Ok(());
             }
@@ -590,15 +604,14 @@ impl Contents {
 
     fn may_be_taken_to(&self, entry: &Entry, source: &Page) -> JsResult<bool> {
         for other in self.changing_for(entry)?.into_iter().filter_map(with_id) {
-            if !other.is_navigable_by(source)? {
+            if !other.is_navigable_by(source) {
                 return Ok(false);
             }
         }
         Ok(true)
     }
 
-    /// The name of the error, if it cannot.
-    pub(super) fn traverse_to(&self, key: &str) -> JsResult<Option<&'static str>> {
+    pub(super) fn traverse_to(&self, key: &str) -> JsResult<Traversal> {
         let (entries, index) = (
             self.history().borrow().entries.clone(),
             self.history().borrow().index,
@@ -608,7 +621,7 @@ impl Contents {
                 .is_some_and(|it| it.borrow().key().as_deref() == Some(key))
         };
         let Some(first) = entries.iter().position(has_key) else {
-            return Ok(Some("InvalidStateError"));
+            return Ok(Traversal::Impossible);
         };
         let nearest = if first > index {
             first
@@ -616,21 +629,18 @@ impl Contents {
             entries.iter().rposition(has_key).unwrap_or(first)
         };
         if !(self.owner()).may_be_taken_to(&entries[nearest], self.page())? {
-            return Ok(Some("SecurityError"));
+            return Ok(Traversal::Forbidden);
         }
-        let goes = self.owner().try_to_traverse(nearest, false)?;
-        Ok((!goes).then_some("AbortError"))
+        Ok(match self.owner().try_to_traverse(nearest, false)? {
+            true => Traversal::Begun,
+            false => Traversal::Aborted,
+        })
     }
 }
 
-/// With the last of `changing`.
-fn go_on(
-    mut changing: Vec<u32>,
-    entry: Rc<Entry>,
-    index: usize,
-    is_by_user: bool,
-) -> JsResult<bool> {
-    let Some(contents) = changing.pop().and_then(with_id) else {
+/// With the last of `rest`.
+fn go_on(mut rest: Vec<u32>, entry: Rc<Entry>, index: usize, is_by_user: bool) -> JsResult<bool> {
+    let Some(contents) = rest.pop().and_then(with_id) else {
         return Ok(true);
     };
     let (page, Some(target)) = (contents.page(), contents.item_in(&entry)) else {
@@ -639,11 +649,9 @@ fn go_on(
     if target.borrow().document != Document::Page(page.id) && !contents.may_unload(false)? {
         return Ok(false);
     }
-    let (key, rest) = (target.borrow().key(), Cell::new(Some(changing)));
-    let proceed = move |page: &'static Page, _: &[JSValue]| {
-        let (contents, Some(rest)) = (page.contents(), rest.take()) else {
-            return Ok(());
-        };
+    let key = target.borrow().key();
+    let proceed = move |page: &'static Page| {
+        let contents = page.contents();
         if page.is_disposed() || contents.history().borrow().position(&entry) != Some(index) {
             return Ok(());
         }
@@ -670,15 +678,10 @@ fn go_on(
                 false => contents.load_for_page(&url, navigation)?,
             }
         }
-        go_on(rest, Rc::clone(&entry), index, is_by_user).map(drop)
+        go_on(rest, entry, index, is_by_user).map(drop)
     };
     if !page.is_started() {
-        return proceed(page, &[]).map(|()| true);
+        return proceed(page).map(|()| true);
     }
-    let about = [
-        super::or_undefined(key)?,
-        is_by_user.into(),
-        listener(page, proceed)?,
-    ];
-    page.ask("willTraverse", &about).map(JSValue::to_boolean)
+    page.will_traverse(key.unwrap_or_default(), is_by_user, Box::new(proceed))
 }

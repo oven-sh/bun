@@ -53,6 +53,10 @@ void NapiRef::callFinalizerFromGC()
 
 void NapiEnv::drainOneRefFinalizer(napi_env env, void*, void*)
 {
+    if (Bun::isOnLentMainThread()) [[unlikely]] {
+        Bun::onJSThread([&] { return (drainOneRefFinalizer(env, nullptr, nullptr), true); });
+        return;
+    }
     if (env->m_pendingRefFinalizers.isEmpty()) {
         return;
     }

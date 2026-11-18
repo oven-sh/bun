@@ -12,6 +12,7 @@ use bun_jsc::bindgen::{self, JsHeap, JsInterface, JsLocal, JsScope};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::virtual_machine_exports::read_origin_timer_start;
 use bun_jsc::{JSObject, JSValue, Weak};
+use bun_web::client::Client;
 use bun_web::exec::with_js;
 use bun_web::timing::{NavigationType, ResourceTiming};
 
@@ -57,7 +58,7 @@ pub(crate) struct Performance {
     pub(crate) base: EventTarget,
     pub(crate) fields: js_DomPerformance::Fields,
     /// On the clock of the thread.
-    origin: f64,
+    origin: Cell<f64>,
     milestones: [Cell<f64>; MILESTONES.len()],
     events: RefCell<events::Timing>,
     painting: paint::Painting,
@@ -104,7 +105,9 @@ impl Performance {
         let made = Performance {
             base: Default::default(),
             fields: Default::default(),
-            origin: WindowTarget::of_realm(realm).map_or(0.0, WindowTarget::time_origin),
+            origin: WindowTarget::of_realm(realm)
+                .map_or(0.0, WindowTarget::time_origin)
+                .into(),
             milestones: Default::default(),
             events: Default::default(),
             painting: Default::default(),
@@ -148,15 +151,7 @@ impl Performance {
             return;
         };
         if heap.is_window() {
-            let (record, kind) = client.navigation_timing();
-            self.navigation_type.set(kind);
-            let entry = js_DomPerformanceNavigationTiming::create(
-                heap,
-                Resource::new(Type::Navigation, record, self.get_time_origin()),
-            );
-            entry.duration.set(self.milestone(b"loadEventEnd"));
-            self.buffer(heap, Type::Navigation)
-                .push(heap, entry.to_js());
+            self.add_navigation(heap, &client);
             let is_visible = WindowTarget::of_realm(heap)
                 .and_then(|it| it.downcast::<Window>())
                 .is_none_or(|it| it.environment().is_visible);
@@ -176,6 +171,25 @@ impl Performance {
                 }
             });
         }));
+    }
+
+    fn add_navigation<'a>(&'a self, heap: &JsHeap<'a>, client: &Client) {
+        let (record, kind) = client.navigation_timing();
+        self.navigation_type.set(kind);
+        for (milestone, time) in self.milestones.iter().zip(client.unload_of_previous()) {
+            milestone.set(if time == 0.0 {
+                0.0
+            } else {
+                on_clock_of_thread(time)
+            });
+        }
+        let entry = js_DomPerformanceNavigationTiming::create(
+            heap,
+            Resource::new(Type::Navigation, record, self.get_time_origin()),
+        );
+        entry.duration.set(self.milestone(b"loadEventEnd"));
+        self.buffer(heap, Type::Navigation)
+            .push(heap, entry.to_js());
     }
 
     fn started<'a>(realm: &JsHeap<'a>) -> &'a Performance {
@@ -198,7 +212,7 @@ impl Performance {
         if time == 0.0 {
             0.0
         } else {
-            coarse(time - self.origin)
+            coarse(time - self.origin.get())
         }
     }
 
@@ -378,11 +392,11 @@ impl Performance {
 
     #[inline]
     pub(crate) fn now(&self) -> f64 {
-        coarse(dom_events::now() - self.origin)
+        coarse(dom_events::now() - self.origin.get())
     }
 
     pub(crate) fn get_time_origin(&self) -> f64 {
-        read_origin_timer_start(VirtualMachine::get()) + self.origin
+        read_origin_timer_start(VirtualMachine::get()) + self.origin.get()
     }
 
     pub(crate) fn to_json<'a>(&'a self, cx: Cx<'_, 'a>) -> Result<'a, JsLocal<'a, JSObject>> {
@@ -538,7 +552,34 @@ impl crate::generated_bindgen::window::WindowOrWorkerGlobalScope {
     }
 }
 
-/// `time` is on the clock of the thread.
+fn on_clock_of_thread(since_epoch: f64) -> f64 {
+    since_epoch - read_origin_timer_start(VirtualMachine::get())
+}
+
+/// On the clock of the thread.
+pub(crate) fn navigation_start(realm: &JsHeap<'_>) -> f64 {
+    client_of(realm).map_or_else(dom_events::now, |it| {
+        on_clock_of_thread(it.navigation_start())
+    })
+}
+
+/// The window is getting another document.
+pub(crate) fn renewed<'a>(realm: &JsHeap<'a>, window: &'a Window) {
+    window.set_time_origin(navigation_start(realm));
+    let Some(performance) = Performance::of_realm(realm) else {
+        return;
+    };
+    performance.origin.set(window.time_origin());
+    performance.milestones.iter().for_each(|it| it.set(0.0));
+    performance.painting.start_over();
+    if let Some(client) = client_of(realm).filter(|_| performance.is_started.get()) {
+        [Type::Navigation, Type::Paint]
+            .into_iter()
+            .for_each(|it| performance.clear(realm, it, None));
+        performance.add_navigation(realm, &client);
+    }
+}
+
 pub(crate) fn response_has_ended<'a>(heap: &JsHeap<'a>, doc: &'a Doc) {
     let Some((realm, performance)) =
         Performance::of_doc(heap, doc).filter(|it| it.1.is_started.get())
@@ -555,11 +596,15 @@ pub(crate) fn response_has_ended<'a>(heap: &JsHeap<'a>, doc: &'a Doc) {
         .for_each(|(client, it)| it.has_ended_like(&client.navigation_timing().0));
 }
 
+/// `time` is on the clock of the thread.
 pub(crate) fn reached<'a>(heap: &JsHeap<'a>, doc: &'a Doc, milestone: &[u8], time: f64) {
     let Some((realm, performance)) = Performance::of_doc(heap, doc) else {
         return;
     };
     if let Some(at) = MILESTONES.iter().position(|it| it.as_bytes() == milestone) {
+        if performance.milestones[at].get() != 0.0 {
+            return;
+        }
         performance.milestones[at].set(time);
     }
     if performance.is_started.get() {

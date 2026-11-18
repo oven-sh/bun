@@ -12,6 +12,8 @@ use super::input::Input;
 use super::network::Watcher;
 use super::runtime::Runtime;
 use super::{Emit, Failure, Outcome, Reply, Session, done, seconds, target_id_of, unknown};
+use bun_web::input::Extent;
+
 use crate::contents::all_chosen;
 use crate::contents::inspection::{EmulatedMedia, News, Observer, Stage};
 use crate::prelude::*;
@@ -65,7 +67,7 @@ pub(super) struct PageSession {
     scripts: RefCell<Vec<(String, Value)>>,
     last_script: Cell<u32>,
     stages: RefCell<Vec<Stage>>,
-    real_size: RefCell<Option<Value>>,
+    real_size: Cell<Option<Extent>>,
     /// They are targets of their own.
     frames: Option<Rc<Frames>>,
 }
@@ -91,7 +93,7 @@ impl PageSession {
             scripts: RefCell::default(),
             last_script: Cell::default(),
             stages: stages.into(),
-            real_size: RefCell::default(),
+            real_size: Cell::default(),
             frames,
             contents,
             emit,
@@ -272,20 +274,19 @@ impl PageSession {
     }
 
     fn override_size(&self, params: &Value) -> JsResult<()> {
-        let known = self.real_size.take();
-        let real = known.map_or_else(|| self.contents.last_size(), Ok)?;
-        let or_real = |name: &str, real_name: &str| match &params[name] {
-            given if given.is_truthy() => given,
-            _ => &real[real_name],
+        let real = self.real_size.take().or_else(|| self.contents.size());
+        let or = |name: &str, real: Option<f64>| match &params[name] {
+            given if given.is_truthy() => given.number(),
+            _ => real.unwrap_or_default(),
         };
-        let event = real.clone().and(&record! {
-            "t": "resize",
-            "width": or_real("width", "width"),
-            "height": or_real("height", "height"),
-            "scale": or_real("deviceScaleFactor", "scale"),
-        });
-        self.real_size.replace(Some(real).filter(Value::is_truthy));
-        self.contents.simulate(&event)
+        self.real_size.set(real);
+        self.contents.simulate(resize(Extent {
+            size: [
+                or("width", real.map(|it| it.size[0])),
+                or("height", real.map(|it| it.size[1])),
+            ],
+            scale: or("deviceScaleFactor", real.map(|it| it.scale)),
+        }))
     }
 
     fn emulate_media(&self, params: &Value) -> JsResult<()> {
@@ -306,8 +307,8 @@ impl PageSession {
     fn emulate_focus(&self, is_enabled: bool) -> JsResult<()> {
         self.contents.emulate_focus(is_enabled)?;
         if is_enabled {
-            let event = object!({ "t": "focus", "s": self.contents.surface() });
-            self.contents.control("handleEvent", &[event])?;
+            let focus = bun_web::input::Input::Focus { direction: 0 };
+            self.contents.live_page()?.tell(|it| it.input(focus))?;
         }
         Ok(())
     }
@@ -460,7 +461,7 @@ impl PageSession {
                 done(contents.control("chooseFiles", &[input, files]).map(drop))
             }
             "Emulation.clearDeviceMetricsOverride" => {
-                done((self.real_size.take()).map_or(Ok(()), |it| contents.simulate(&it)))
+                done((self.real_size.take()).map_or(Ok(()), |it| contents.simulate(resize(it))))
             }
             "Emulation.setDeviceMetricsOverride" => done(self.override_size(&params)),
             "Emulation.setEmulatedMedia" => done(self.emulate_media(&params)),
@@ -552,4 +553,9 @@ impl Session for PageSession {
     fn close(&self) {
         task::report(self.end());
     }
+}
+
+fn resize(extent: Extent) -> bun_web::input::Input {
+    let is_quiet = false;
+    bun_web::input::Input::Resize { extent, is_quiet }
 }

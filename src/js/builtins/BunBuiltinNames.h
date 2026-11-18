@@ -94,6 +94,7 @@ using namespace JSC;
     macro(format) \
     macro(globScan) \
     macro(globScanSync) \
+    macro(globals) \
     macro(handleEvent) \
     macro(hasWaitingResponses) \
     macro(headers) \

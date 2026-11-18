@@ -4,8 +4,12 @@
 use std::rc::Rc;
 
 use bun_jsc::webcore_types::Blob as JsBlob;
+use bun_web::channel::{Endpoint, Message, Serialized, Transferred};
 use bun_web::convert::{blob_from_js, resolve_blob_url};
+use bun_web::host::{ToGuest, Whereabouts};
+use bun_web::input::Input;
 use bun_web::net::body::Blob;
+use bun_web::page::News;
 use bun_web::runtime::{create_blob, create_file};
 use bun_web::url::Url;
 
@@ -16,11 +20,10 @@ use super::view::{Painted, View};
 use super::{input, wire};
 
 use crate::generated_bindgen::webview::{
-    SurfaceEvent, js_WebEngineFrameControls as controls, js_WebEngineRemote as fields,
+    js_WebEngineFrameControls as controls, js_WebEngineRemote as fields,
 };
 use crate::ports::{self, Carrier};
 use crate::prelude::*;
-use crate::realm;
 use crate::session::Session;
 use crate::task::{Later, Sequence};
 use crate::text::{contains, encode_component, escape_html, origin_of, split, split_once};
@@ -29,6 +32,9 @@ use bun_ui::protocol::SHIFT;
 
 #[derive(Default)]
 pub(super) struct Embedded {
+    /// What the page calls it.
+    number: u32,
+    whereabouts: Cell<Whereabouts>,
     is_ready: Later<()>,
     outbox: Sequence,
     has_crashed: Cell<bool>,
@@ -156,7 +162,7 @@ fn to_blob(handle: &[Value]) -> JsResult<JSValue> {
     })
 }
 
-fn create(object: JSValue, element: JSValue, deliver: JSValue) -> JsResult<&'static Remote> {
+fn create(object: JSValue, number: u32, whereabouts: Whereabouts) -> JsResult<&'static Remote> {
     let page = embedder(object);
     let (contents, state) = (page.web_contents()?, page.holder());
     let (engine, session) = Session::of(contents)?.link()?;
@@ -164,7 +170,7 @@ fn create(object: JSValue, element: JSValue, deliver: JSValue) -> JsResult<&'sta
         &engine,
         holder(state).surface_of_window(),
         [300., 150.],
-        invoke(element, "scale", &[])?.to_number(global())?,
+        whereabouts.scale,
         true,
     )?;
     let remote = Remote::create(
@@ -172,11 +178,13 @@ fn create(object: JSValue, element: JSValue, deliver: JSValue) -> JsResult<&'sta
         state,
         view,
         session,
-        Role::Frame(Embedded::default()),
+        Role::Frame(Embedded {
+            number,
+            whereabouts: whereabouts.into(),
+            ..Default::default()
+        }),
     )?;
     fields::set_page(remote, object);
-    fields::set_element(remote, element);
-    fields::set_deliver(remote, deliver);
     fields::set_embedder(remote, page.frame()?);
     let (given, mut preferences) = (holder(state).preferences(), Value::empty());
     for name in [
@@ -238,16 +246,15 @@ fn create(object: JSValue, element: JSValue, deliver: JSValue) -> JsResult<&'sta
 impl Embedded {
     pub(super) fn painted(&self, remote: &Remote, painted: &Painted) -> JsResult<()> {
         if !self.has_painted.replace(true) {
-            return remote.tell_element("painted", &[js(remote.view.image)?]);
+            return remote.tell_element(News::Painted(remote.view.image));
         }
         if !remote.holder().is_mirrored() {
             return Ok(());
         }
         let changed = match painted.area {
             Some([x, y, width, height]) => {
-                let [left, top, across, down] = remote
-                    .numbers_of_element("box")?
-                    .map(|it| it * remote.view.zoom.get());
+                let [left, top, across, down] =
+                    (self.whereabouts.get().area).map(|it| it * remote.view.zoom.get());
                 let [by_x, by_y] = [across / painted.size[0], down / painted.size[1]];
                 object!({
                     "x": left + x * by_x - 1., "y": top + y * by_y - 1., "width": width * by_x + 2., "height": height * by_y + 2.,
@@ -255,7 +262,7 @@ impl Embedded {
             }
             None => object!({}),
         };
-        (remote.holder()).mirror(invoke(remote.element(), "scale", &[])?, changed)
+        (remote.holder()).mirror(self.whereabouts.get().scale, changed)
     }
 
     pub(super) fn emit(&self, remote: &Remote, mut emitted: Emitted) -> JsResult<bool> {
@@ -272,7 +279,7 @@ impl Embedded {
             "enter-html-full-screen" | "leave-html-full-screen" => {
                 remote.holder().allow_fullscreen();
                 return remote
-                    .tell_element("fullscreen", &[name.starts_with("enter").into()])
+                    .tell_element(News::Fullscreen(name.starts_with("enter")))
                     .map(|()| false);
             }
             _ => {}
@@ -312,7 +319,7 @@ impl Embedded {
     pub(super) fn crashed(&self, remote: &Remote) -> JsResult<()> {
         self.has_crashed.set(true);
         self.has_painted.set(false);
-        remote.tell_element("painted", &[0.into()])
+        remote.tell_element(News::Painted(0))
     }
 }
 
@@ -328,20 +335,18 @@ impl Remote {
         embedder(field(fields::page(self)))
     }
 
-    pub(crate) fn element(&self) -> JSValue {
-        field(fields::element(self))
+    /// The page that has the element, and the number.
+    pub(crate) fn place_of_element(&self) -> Option<[u32; 2]> {
+        self.embedded().map(|it| [self.page().id(), it.number])
     }
 
-    pub(super) fn tell_element(&self, method: &str, arguments: &[JSValue]) -> JsResult<()> {
-        match fields::element(self) {
-            Some(it) if get(it, method)?.is_callable() => invoke(it, method, arguments).map(drop),
-            _ => Ok(()),
-        }
+    pub(super) fn tell_element(&self, news: News) -> JsResult<()> {
+        (self.embedded()).map_or(Ok(()), |it| self.page().tell_element(it.number, news))
     }
 
-    pub(super) fn numbers_of_element<const N: usize>(&self, method: &str) -> JsResult<[f64; N]> {
-        let numbers = wire::data_from_js(invoke(self.element(), method, &[])?)?;
-        Ok(core::array::from_fn(|it| numbers[it].number()))
+    /// In the viewport at the top.
+    pub(super) fn origin_of_element(&self) -> [f64; 2] {
+        (self.embedded()).map_or([0.; 2], |it| it.whereabouts.get().origin)
     }
 
     /// Blobs are read asynchronously, and the messages stay in order.
@@ -386,19 +391,16 @@ impl Remote {
     }
 
     fn deliver(&self, data: JSValue, ports: JSValue) -> JsResult<()> {
-        let path: Vec<f64> = wire::data_from_js(get(data, "path")?)?
-            .items()
-            .iter()
-            .map(Value::number)
-            .collect();
-        let copy = self.page().clone_message(get(data, "message")?)?;
-        let origin = js(self.engine().from_engine(&text_of(get(data, "origin")?)?))?;
-        let ports: Vec<f64> = elements(ports)?.into_iter().map(ports::park).collect();
-        call(
-            field(fields::deliver(self)),
-            &[copy, origin, js(path)?, js(ports)?],
-        )
-        .map(drop)
+        let path = wire::data_from_js(get(data, "path")?)?;
+        let port = |it| Transferred::Port(Endpoint::unpark(ports::park(it)));
+        self.tell_element(News::Message {
+            path: (path.items().iter().map(|it| it.number() as u32)).collect(),
+            origin: self.engine().from_engine(&text_of(get(data, "origin")?)?),
+            message: Message {
+                transferred: elements(ports)?.into_iter().map(port).collect(),
+                ..Serialized::new(global(), get(data, "message")?, &[], &[])?.into()
+            },
+        })
     }
 
     /// From a process that may have been taken over.
@@ -420,9 +422,11 @@ impl Remote {
                 frame.is_ready.set(());
                 Ok(())
             }
-            "load" => self.tell_element("loaded", &[js(first)?]),
-            "scroll" => self.tell_element("scroll", &[js(first)?, js(second)?]),
-            "tab" => self.tell_element("tab", &[js(first)?]),
+            "load" => self.tell_element(News::Loaded(first as u32)),
+            "scroll" => self.tell_element(News::Scroll([first, second])),
+            "tab" => self.tell_element(News::Tab {
+                is_backward: first < 0.,
+            }),
             "entered" => self
                 .view
                 .press("Tab", if first < 0. { SHIFT } else { 0 })
@@ -487,24 +491,27 @@ fn change(set: Option<JSValue>, method: &str, member: JSValue) -> JsResult<()> {
     set.map_or(Ok(()), |it| invoke(it, method, &[member]).map(drop))
 }
 
-#[derive(Default)]
 pub(crate) struct Controls {
+    number: u32,
+    whereabouts: Cell<Whereabouts>,
     placement: RefCell<Option<Placement>>,
     is_disposed: Cell<bool>,
 }
 
 impl Controls {
     /// `page` is an [`Embedder`].
-    pub(crate) fn create(
-        page: JSValue,
-        element: JSValue,
-        deliver: JSValue,
-    ) -> JsResult<&'static Controls> {
-        let created = controls::create(heap(), Controls::default());
+    pub(crate) fn create(page: JSValue, number: u32, scale: f64) -> JsResult<&'static Controls> {
+        let state = Controls {
+            number,
+            whereabouts: Cell::new(Whereabouts {
+                scale,
+                ..Default::default()
+            }),
+            placement: None.into(),
+            is_disposed: false.into(),
+        };
+        let created = controls::create(heap(), state);
         controls::set_page(created, page);
-
-        controls::set_element(created, element);
-        controls::set_deliver(created, deliver);
         let dispose = listener(created, |it, _| it.end())?;
         controls::set_dispose(created, dispose);
         change(created.page().cleanups()?, "add", dispose)?;
@@ -518,8 +525,8 @@ impl Controls {
     fn add_frame(&self) -> JsResult<&Remote> {
         let frame = create(
             field(controls::page(self)),
-            field(controls::element(self)),
-            field(controls::deliver(self)),
+            self.number,
+            self.whereabouts.get(),
         )?;
         controls::set_frame(self, Some(frame));
         change(self.page().frames()?, "add", frame.to_js())?;
@@ -560,23 +567,18 @@ impl Controls {
         post(Priority::Visible, move || {
             match it.get().page().is_disposed() {
                 true => Ok(()),
-                false => {
-                    invoke(field(controls::element(it.get())), "loaded", &[0.into()]).map(drop)
-                }
+                false => (it.get().page()).tell_element(it.get().number, News::Loaded(0)),
             }
         });
         Ok(())
     }
 
-    pub(crate) fn navigate<'a>(
-        &self,
-        _: Cx<'a, '_>,
-        attributes: JsLocal<'a, JSObject>,
-    ) -> JsResult<()> {
+    fn navigate(&self, given: Vec<(String, String)>) -> JsResult<()> {
         if self.is_disposed.get() {
             return Ok(());
         }
-        let attributes = wire::data_from_js(attributes.to_js())?;
+        let mut attributes = Value::empty();
+        (given.into_iter()).for_each(|(name, value)| attributes.set(&name, value));
         if controls::frame(self)
             .and_then(Remote::embedded)
             .is_some_and(|it| it.has_crashed.get())
@@ -616,126 +618,89 @@ impl Controls {
         .map(drop)
     }
 
-    pub(crate) fn attribute(
-        &self,
-        _: Cx<'_, '_>,
-        name: &[u8],
-        value: Option<&[u8]>,
-    ) -> JsResult<()> {
-        let (Some(frame), value) = (controls::frame(self), value.map(string)) else {
-            return Ok(());
-        };
-        let value = match name {
-            b"allow" => Some(restrict(&value.unwrap_or_default(), self.page())),
-            b"sandbox" => confine(value.as_deref(), self.page()),
-            _ => value,
-        };
-        frame.send(list![
-            "attribute",
-            string(name),
-            value.map_or(Value::Null, Value::from)
-        ]);
-        Ok(())
-    }
-
-    pub(crate) fn location<'a>(
-        &self,
-        _: Cx<'a, '_>,
-        path: JsLocal<'a, JSObject>,
-        method: &[u8],
-        url: &[u8],
-    ) -> JsResult<()> {
-        let Some(frame) = controls::frame(self) else {
-            return Ok(());
-        };
-        let (path, url) = (
-            wire::data_from_js(path.to_js())?,
-            frame.engine().to_engine(&string(url)),
-        );
-        frame.send(list!["location", path, string(method), url]);
-        Ok(())
-    }
-
-    pub(crate) fn post<'a>(
-        &self,
-        _: Cx<'a, '_>,
-        path: JsLocal<'a, JSObject>,
-        envelope: JsLocal<'a, JSObject>,
-        target_origin: &[u8],
-    ) -> JsResult<()> {
-        let opened = bun_web::dom::open_envelope(realm::peek(envelope.to_js()));
-        let Some((frame, opened)) = controls::frame(self).zip(opened) else {
-            return Ok(());
-        };
-        let (message, ports) = opened.open(global())?;
-        let ports = ports::wrap_all(ports)?;
-        let target_origin = frame.engine().to_engine(&string(target_origin));
-        let data =
-            object!({ "path": path.to_js(), "message": message, "targetOrigin": target_origin });
-        fields::carrier(frame).map_or(Ok(()), |it| it.post(0, data, ports))
-    }
-
-    pub(crate) fn place(
-        &self,
-        _: Cx<'_, '_>,
-        width: f64,
-        height: f64,
-        is_visible: bool,
-        color_scheme: &[u8],
-        zoom: f64,
-    ) -> JsResult<()> {
-        let placement = Placement {
-            size: [width, height],
-            is_visible,
-            color_scheme: string(color_scheme),
-            zoom,
-        };
-        if let Some(it) = controls::frame(self) {
-            it.place(&placement);
+    fn move_to(&self, whereabouts: Whereabouts) {
+        self.whereabouts.set(whereabouts);
+        if let Some(it) = controls::frame(self).and_then(Remote::embedded) {
+            it.whereabouts.set(whereabouts);
         }
-        self.placement.replace(Some(placement));
-        Ok(())
     }
 
-    pub(crate) fn input<'a>(&self, _: Cx<'a, '_>, event: JsLocal<'a, JSObject>) -> JsResult<()> {
-        let Some(frame) = controls::frame(self) else {
-            return Ok(());
-        };
-        let files = get(event.to_js(), "paths")?;
-        if !files.is_undefined_or_null() {
-            let path_of = |it| self.page().path_of(it);
-            let paths = elements(files)?
-                .into_iter()
-                .map(path_of)
-                .collect::<JsResult<Vec<_>>>()?;
-            event.to_js().put(global(), b"paths", js(paths)?);
-        }
-        SurfaceEvent::from_js(global(), event.to_js(), |event| {
-            if *event.t == *b"focus" {
-                frame.send(list!["focus", event.direction]);
+    pub(crate) fn obey(&self, message: ToGuest) -> JsResult<()> {
+        let path_of = |it: Vec<u32>| it.into_iter().map(f64::from).collect::<Value>();
+        match (message, controls::frame(self)) {
+            (ToGuest::Navigate(attributes), _) => return self.navigate(attributes),
+            (ToGuest::Remove, _) => return self.end(),
+            (ToGuest::Moved(whereabouts), _) => self.move_to(whereabouts),
+            (
+                ToGuest::Place {
+                    size,
+                    is_visible,
+                    color_scheme,
+                    zoom,
+                    whereabouts,
+                },
+                frame,
+            ) => {
+                let placement = Placement {
+                    size,
+                    is_visible,
+                    color_scheme,
+                    zoom,
+                };
+                self.move_to(whereabouts);
+                frame.into_iter().for_each(|it| it.place(&placement));
+                self.placement.replace(Some(placement));
             }
-            input::from_script(&event, 1.)?.map_or(Ok(()), |it| frame.view.input(it))
-        })
-    }
-
-    pub(crate) fn exit_fullscreen(&self) {
-        if let Some(it) = controls::frame(self) {
-            it.send(list!["exitFullscreen"]);
+            (ToGuest::Focus | ToGuest::Close, _) | (_, None) => {}
+            (ToGuest::Attribute { name, value }, Some(frame)) => {
+                let value = match &*name {
+                    "allow" => Some(restrict(&value.unwrap_or_default(), self.page())),
+                    "sandbox" => confine(value.as_deref(), self.page()),
+                    _ => value,
+                };
+                let value = value.map_or(Value::Null, Value::from);
+                frame.send(list!["attribute", name, value]);
+            }
+            (
+                ToGuest::Location {
+                    path,
+                    url,
+                    replaces,
+                },
+                Some(frame),
+            ) => {
+                let method = if replaces { "replace" } else { "assign" };
+                let url = frame.engine().to_engine(&url);
+                frame.send(list!["location", path_of(path), method, url]);
+            }
+            (
+                ToGuest::Post {
+                    path,
+                    message,
+                    target_origin,
+                },
+                Some(frame),
+            ) => {
+                let (message, ports) = message.open(global())?;
+                let ports = ports::wrap_all(ports)?;
+                let target_origin = frame.engine().to_engine(&target_origin);
+                let data =
+                    object!({ "path": path, "message": message, "targetOrigin": target_origin });
+                return fields::carrier(frame).map_or(Ok(()), |it| it.post(0, data, ports));
+            }
+            (ToGuest::Input(input), Some(frame)) => {
+                if let Input::Focus { direction } = input {
+                    frame.send(list!["focus", direction]);
+                }
+                return input::for_engine(input, 1.).map_or(Ok(()), |it| frame.view.input(it));
+            }
+            (ToGuest::ExitFullscreen, Some(frame)) => frame.send(list!["exitFullscreen"]),
+            (ToGuest::Edit(command), Some(frame)) => frame.edit(&command),
         }
+        Ok(())
     }
 
-    pub(crate) fn edit(&self, command: &[u8]) -> bool {
-        if let Some(it) = controls::frame(self) {
-            it.edit(&string(command));
-        }
-        true
-    }
-
-    pub(crate) fn focused_frame(&self, _: Cx<'_, '_>) -> JsResult<JSValue> {
+    pub(crate) fn focused_frame(&self) -> JsResult<JSValue> {
         controls::frame(self).map_or(Ok(JSValue::UNDEFINED), Remote::focused_frame)
-    }
-
-    pub(crate) fn dispose(&self, _: Cx<'_, '_>) -> JsResult<()> {
-        self.end()
     }
 }

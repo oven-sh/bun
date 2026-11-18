@@ -30,8 +30,8 @@ pub struct Sprite {
     pub part: IntRect,
 }
 
-pub(super) const TILE_WIDTH: i32 = 64;
-pub(super) const TILE_HEIGHT: i32 = 16;
+pub const TILE_WIDTH: i32 = 64;
+pub const TILE_HEIGHT: i32 = 16;
 
 #[derive(Default)]
 pub(super) struct Texture {
@@ -639,6 +639,37 @@ impl<'a> Band<'a> {
                 false => blend_rows(rows, opacity),
             };
         }
+        let step = [
+            part.width() as f32 / bounds.width,
+            part.height() as f32 / bounds.height,
+        ];
+        let (rows, fixed) = (texels.len() / texture.width, |it: f32| (it * 65536.) as i32);
+        if !is_aligned
+            && !is_shaped
+            && step.iter().all(|it| (0.5..=2.).contains(it))
+            && texture.width.max(rows) < 1 << 15
+            && texture.width.min(rows) > 1
+        {
+            let at = |first: i32, pixel: i32, start: f32, step: f32| {
+                fixed(first as f32 + (pixel as f32 + 0.5 - start) * step - 0.5) + (1 << 9)
+            };
+            let left = at(part.left, area.left, bounds.x, step[0]);
+            let last = [texture.width, rows].map(|it| ((it as i32 - 1) << 16) - 1);
+            let rows = self
+                .rows(area)
+                .zip(area.top..)
+                .map(|(row, y)| (row, [left, at(part.top, y, bounds.y, step[1])]));
+            return draw_samples(
+                rows,
+                &Samples {
+                    texels,
+                    width: texture.width,
+                    step: [fixed(step[0]), 0],
+                    last,
+                },
+                opacity,
+            );
+        }
         let outline = is_shaped.then(|| Outline::of(primitive));
         self.columns.clear();
         if !is_aligned && (part.width() as i32) > 1 {
@@ -1049,6 +1080,15 @@ impl Grid {
     }
 }
 
+pub(super) fn tiles_in(grid: &Grid, area: IntRect) -> impl Iterator<Item = usize> {
+    let columns = grid.columns_of(area);
+    grid.rows_of(area).flat_map(move |row| {
+        columns
+            .clone()
+            .map(move |column| row as usize * grid.columns + column as usize)
+    })
+}
+
 #[derive(Clone, Copy, Default)]
 pub(super) struct Tile {
     pub hash: u64,
@@ -1410,14 +1450,14 @@ impl Compositor {
         self.shown = summaries;
     }
 
-    /// While `window` is that of `shown`.
-    pub(super) fn survey(&mut self, summaries: &[Summary], grid: &Grid) -> Vec<Tile> {
+    /// While `window` is that of `shown`. With the area outside of which the tiles are as they were.
+    pub(super) fn survey(&mut self, summaries: &[Summary], grid: &Grid) -> (Vec<Tile>, IntRect) {
         let mut tiles = std::mem::take(&mut self.tiles);
         if self.shown.is_empty()
             || self.window != grid.window
             || tiles.len() != grid.columns * grid.rows_of(grid.window).len()
         {
-            return survey(summaries, grid, 0, grid.window);
+            return (survey(summaries, grid, 0, grid.window), grid.window);
         }
         let (start, before, after) = differing(&self.shown, summaries);
         let cover = |all: IntRect, it: &Summary| all.union(it.area);
@@ -1444,7 +1484,7 @@ impl Compositor {
                 .union(grid.rect(rows.end - 1, columns));
             survey_again(&mut tiles, summaries, grid, 0, changed);
         }
-        tiles
+        (tiles, changed)
     }
 
     #[cfg(any(test, not(target_os = "macos")))]
@@ -1469,17 +1509,33 @@ impl Compositor {
             columns: width.div_ceil(TILE_WIDTH as usize),
         };
         let summaries = self.summarize();
-        let tiles = self.survey(&summaries, grid);
-        let mut hashes: Vec<_> = tiles.iter().map(|tile| tile.hash).collect();
-        let hidden = grid.columns_of(window).end as usize..;
-        hashes
-            .chunks_mut(grid.columns)
-            .for_each(|row| row[hidden.clone()].fill(UNKNOWN));
+        let (tiles, surveyed) = self.survey(&summaries, grid);
         let before = std::mem::replace(&mut self.window, window);
         if std::mem::replace(&mut self.capacity, (width, height)) != (width, height) {
             self.buffers.clear();
         }
         let known = self.buffers.iter().position(|(id, _)| *id == pixels.id);
+        let (mut hashes, mut found) = (Vec::new(), None);
+        if known == Some(0) && surveyed != window {
+            hashes = std::mem::take(&mut self.buffers[0].1);
+            let actions = found.insert(vec![Action::Keep; hashes.len()]);
+            for tile in tiles_in(grid, surveyed) {
+                if std::mem::replace(&mut hashes[tile], tiles[tile].hash) != tiles[tile].hash {
+                    actions[tile] = Action::Paint;
+                }
+            }
+        } else {
+            hashes.extend(tiles.iter().map(|tile| tile.hash));
+            let hidden = grid.columns_of(window).end as usize..;
+            hashes
+                .chunks_mut(grid.columns)
+                .for_each(|row| row[hidden.clone()].fill(UNKNOWN));
+        }
+        let rows = match (&found, grid.rows_of(surveyed)) {
+            (None, _) => 0..hashes.len(),
+            (Some(_), _) if surveyed.is_empty() => 0..0,
+            (Some(_), rows) => rows.start as usize * grid.columns..rows.end as usize * grid.columns,
+        };
         let compare = |buffer: Option<usize>| -> Vec<_> {
             let painted = buffer
                 .and_then(|index| self.buffers.get(index))
@@ -1506,8 +1562,13 @@ impl Compositor {
             }
             actions
         };
-        let mut actions = compare(known);
-        let count = |actions: &[Action]| actions.iter().filter(|it| **it == Action::Paint).count();
+        let mut actions = found.unwrap_or_else(|| compare(known));
+        let count = |actions: &[Action]| {
+            actions[rows.clone()]
+                .iter()
+                .filter(|it| **it == Action::Paint)
+                .count()
+        };
         let can_move = known == Some(0) && count(&actions) >= WORTH_MOVING;
         let down = can_move
             .then(|| movement(&self.shown, &summaries))
@@ -1557,9 +1618,10 @@ impl Compositor {
 
         let (atlas, primitives) = (self.atlas.0.borrow(), &self.primitives);
         let textures = &atlas.slots[..];
-        let has_changes = actions
-            .chunks(grid.columns)
-            .map(|row| row.contains(&Action::Paint))
+        let has_changes = (0..)
+            .step_by(grid.columns)
+            .zip(actions.chunks(grid.columns))
+            .map(|(first, row)| rows.contains(&first) && row.contains(&Action::Paint))
             .collect();
         let plan = &Plan {
             grid,
@@ -1589,17 +1651,11 @@ impl Compositor {
             paint_band(0, pixels.data);
         } else if threads > 1 {
             let rows = grid.rows_of(window).len().div_ceil(threads) * TILE_HEIGHT as usize;
-            let mut bands = (0..)
-                .step_by(rows)
-                .zip(pixels.data[..window.bottom as usize * width].chunks_mut(rows * width));
-            std::thread::scope(|scope| {
-                let first = bands.next();
-                for (top, pixels) in bands {
-                    scope.spawn(move || paint_band(top, pixels));
-                }
-                first
-                    .into_iter()
-                    .for_each(|(top, pixels)| paint_band(top, pixels));
+            let bands = pixels.data[..window.bottom as usize * width]
+                .chunks_mut(rows * width)
+                .enumerate();
+            crate::parallel::for_each(bands, |(index, pixels)| {
+                paint_band((index * rows) as i32, pixels)
             });
         }
 

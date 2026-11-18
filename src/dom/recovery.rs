@@ -89,6 +89,7 @@ impl Document {
         ] {
             boxes.clear();
         }
+        self.boxes_to_move.clear();
         self.ordinals.clear();
         self.anchor_index = None;
         self.queries = Default::default();

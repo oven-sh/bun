@@ -205,14 +205,13 @@ fn edits(key: &Key) -> bool {
 }
 
 fn type_into(surface: u32, inputs: impl IntoIterator<Item = Input>) -> JsResult<()> {
-    inputs.into_iter().try_for_each(|mut input| {
-        match &mut input {
+    inputs.into_iter().try_for_each(|input| {
+        match &input {
             Input::Key(key) if !edits(key) => return Ok(()),
             Input::Mouse(_) => return Ok(()),
-            Input::Text { range, .. } | Input::Compose { range, .. } => *range = Maybe::No,
             _ => {}
         }
-        surfaces::send(global(), surface, input)
+        surfaces::send(surface, input)
     })
 }
 
@@ -370,7 +369,6 @@ fn finish(replays: bool, mut keep: Vec<Rect>) -> JsResult<()> {
         })
     };
     surfaces::send(
-        global(),
         surface,
         there(Mouse {
             action: MouseAction::Move,
@@ -381,7 +379,7 @@ fn finish(replays: bool, mut keep: Vec<Rect>) -> JsResult<()> {
     )?;
     for input in &rest {
         if let Input::Mouse(it) = input {
-            surfaces::send(global(), surface, there(*it))?;
+            surfaces::send(surface, there(*it))?;
         }
     }
     type_when_focused(surface, rest, 20)

@@ -64,6 +64,7 @@ impl Focusable {
             Cause::Script,
             focus::Options {
                 prevents_scroll: options.prevent_scroll,
+                leaves_focused_alone: true,
                 is_visible: options.focus_visible,
             },
         );
@@ -297,7 +298,7 @@ impl DocumentUi {
                     cx,
                     self,
                     0,
-                    on.then_some(b":root{-webkit-user-modify:read-write}"),
+                    on.then_some((b":root{-webkit-user-modify:read-write}", false)),
                 );
             }
         }

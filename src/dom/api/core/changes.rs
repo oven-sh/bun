@@ -5,7 +5,7 @@ use core::cell::Cell;
 use smallvec::SmallVec;
 
 use super::arena::Arena;
-use super::{Atom, Node, NodeFlags as F, atom};
+use super::{Atom, Meaning, Node, NodeFlags as F, atom};
 
 const LEN: usize = 16;
 
@@ -85,6 +85,8 @@ pub(super) struct Changes {
     of_attributes: [Journal; 2],
     versions: [Cell<u64>; 3],
     collections: Cell<u32>,
+    /// No element has moved from the one version of the tree to the other.
+    same_elements: Cell<[u64; 2]>,
 }
 
 impl Changes {
@@ -94,6 +96,7 @@ impl Changes {
             of_attributes: [(); 2].map(|()| Journal::new(version)),
             versions: [(); 3].map(|()| Cell::new(version)),
             collections: Cell::new(0),
+            same_elements: Cell::new([version; 2]),
         }
     }
 }
@@ -115,13 +118,32 @@ impl Arena {
     /// After `version` has changed for it.
     #[inline(always)]
     pub(super) fn record_move(&self, node: &Node, parent: &Node, is_removal: bool, flags: F) {
+        let version = self.version.get();
         self.changes.of_tree.record(Entry {
-            version: self.version.get() as u32,
+            version: version as u32,
             is_removal,
             flags,
             node,
             parent,
         });
+        if !node.is_element() || node == parent {
+            self.changes.same_elements.update(|[first, last]| {
+                [
+                    if last + 1 == version {
+                        first
+                    } else {
+                        version - 1
+                    },
+                    version,
+                ]
+            });
+        }
+    }
+
+    #[inline]
+    pub(super) fn has_same_elements_as_at(&self, version: u64) -> bool {
+        let [first, last] = self.changes.same_elements.get();
+        last == self.version.get() && (first..=last).contains(&version)
     }
 
     /// Likewise, for text that has no object.
@@ -130,16 +152,11 @@ impl Arena {
         self.record_move(parent, parent, false, F::empty());
     }
 
-    #[inline]
+    #[inline(always)]
     pub(super) fn record_attribute(&self, element: &Node, name: &Atom) {
         let reads = match name.known() {
             atom!("class") => Reads::Classes,
-            atom!("id")
-            | atom!("name")
-            | atom!("for")
-            | atom!("form")
-            | atom!("type")
-            | atom!("href") => Reads::Ties,
+            name if name.meaning().contains(Meaning::TIE) => Reads::Ties,
             _ => return,
         };
         let version = &self.changes.versions[reads as usize];

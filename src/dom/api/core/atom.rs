@@ -1,17 +1,19 @@
 //! Names that are compared by identity.
 
-use core::cell::{Cell, RefCell};
+use core::cell::Cell;
 use core::mem::ManuallyDrop;
 use core::num::NonZeroUsize;
 use core::ptr::NonNull;
 use std::borrow::Cow;
+use std::sync::LazyLock;
 
 use bun_alloc::WTFStringImplStruct as Impl;
 use bun_jsc::JSString;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal};
 
 use super::atoms::{ALL, Known, TEXTS};
-use super::string::{DomString, impl_of, impl_to_js};
+use super::recent::Recent;
+use super::string::{DomString, impl_of, impl_to_js, known_to_js};
 use crate::name::Name;
 
 macro_rules! atoms {
@@ -35,6 +37,7 @@ unsafe extern "C" {
     /// These answer with a reference.
     safe fn Bun__DOM__atomize(string: &Impl) -> NonNull<Impl>;
     fn Bun__DOM__atomizeLatin1(characters: *const u8, length: u32) -> NonNull<Impl>;
+    fn Bun__DOM__hashOfLatin1(characters: *const u8, length: u32) -> u32;
 }
 
 const SLOTS: usize = (TEXTS.len() * 2).next_power_of_two();
@@ -61,6 +64,92 @@ static BY_NAME: [u16; SLOTS] = {
     slots
 };
 
+bitflags::bitflags! {
+    /// Of a name for an attribute of an HTML element, in no namespace.
+    #[derive(Clone, Copy)]
+    pub(crate) struct Meaning: u8 {
+        /// It has steps that all elements share.
+        const STEPS = 1;
+        /// `Reads::Ties`
+        const TIE = 1 << 1;
+        const HINT = 1 << 2;
+        /// `is_read_in_html`
+        const READ = 1 << 3;
+        /// There is more to it than this says.
+        const OTHER = 1 << 4;
+    }
+}
+
+static MEANINGS: [u8; TEXTS.len() + 1] = {
+    let (mut all, mut index) = ([Meaning::OTHER.bits(); TEXTS.len() + 1], 0);
+    while index < TEXTS.len() {
+        let (text, name) = (TEXTS[index].as_bytes(), NAMES[index]);
+        let (mut is_plain, mut at) = (
+            !matches!(
+                text,
+                [] | [b'd', b'a', b't', b'a', b'-', ..]
+                    | [b'a', b'r', b'i', b'a', b'-', ..]
+                    | b"role"
+            ),
+            0,
+        );
+        while at < text.len() {
+            is_plain &= matches!(text[at], b'a'..=b'z' | b'-');
+            at += 1;
+        }
+        let has_steps = matches!(
+            text,
+            b"name"
+                | b"slot"
+                | b"blocking"
+                | b"popover"
+                | b"interestfor"
+                | b"nonce"
+                | b"autofocus"
+                | b"elementtiming"
+                | [b'o', b'n', ..]
+        );
+        all[index] = if has_steps { Meaning::STEPS.bits() } else { 0 }
+            | if matches!(text, b"id" | b"name" | b"for" | b"form" | b"type" | b"href") {
+                Meaning::TIE.bits()
+            } else {
+                0
+            }
+            | if crate::hints::can_be_hint_in_html(name) {
+                Meaning::HINT.bits()
+            } else {
+                0
+            }
+            | if crate::hints::is_read_in_html(name) {
+                Meaning::READ.bits()
+            } else {
+                0
+            }
+            | if !is_plain || matches!(text, b"style" | b"form") {
+                Meaning::OTHER.bits()
+            } else {
+                0
+            };
+        index += 1;
+    }
+    all
+};
+
+/// That atoms come with.
+static BY_HASH: LazyLock<Box<[u16; SLOTS * 2]>> = LazyLock::new(|| {
+    let mut slots = Box::new([Known::Other as u16; SLOTS * 2]);
+    for (text, known) in TEXTS.iter().zip(ALL) {
+        // SAFETY: the pointer and the length are of one slice.
+        let mut slot = unsafe { Bun__DOM__hashOfLatin1(text.as_ptr(), text.len() as u32) } as usize
+            % slots.len();
+        while slots[slot] != Known::Other as u16 {
+            slot = (slot + 1) % slots.len();
+        }
+        slots[slot] = *known as u16;
+    }
+    slots
+});
+
 const fn slot_of(name: Name) -> usize {
     (name.bits() >> 32) as usize % SLOTS
 }
@@ -83,18 +172,46 @@ fn forget_impls() {
 }
 
 pub(super) fn forget_cases() {
-    LOWERCASED.borrow_mut().fill(None);
-    UPPERCASED.borrow_mut().fill(None);
+    LOWERCASED.forget();
+    UPPERCASED.forget();
+    NAMES_OF_UNKNOWN.forget();
 }
 
-/// Short strings that scripts have passed as names, with what `from_impl_lowercased` has made of them.
+/// Short strings that scripts have passed as names.
 #[thread_local]
-static LOWERCASED: ManuallyDrop<RefCell<[Option<(DomString, Atom)>; 64]>> =
-    ManuallyDrop::new(RefCell::new([const { None }; 64]));
+static LOWERCASED: Recent<Option<Lowercased>, 128> = Recent::new();
+
+struct Lowercased {
+    of: DomString,
+    atom: Atom,
+    /// If it is valid for an attribute that has a `key::value`.
+    keyed: Name,
+}
+
+impl Lowercased {
+    #[cold]
+    fn new(string: &Impl) -> Lowercased {
+        let atom = Atom::from_impl_lowercased(string);
+        let keyed = if crate::selector::key::has_values(atom.as_utf8().as_bytes())
+            && super::element::is_valid_attribute_name(&atom)
+        {
+            atom.name()
+        } else {
+            Name::NONE
+        };
+        Lowercased {
+            of: DomString::from_impl(string),
+            atom,
+            keyed,
+        }
+    }
+}
 
 #[thread_local]
-static UPPERCASED: ManuallyDrop<RefCell<[Option<(Atom, Atom)>; 64]>> =
-    ManuallyDrop::new(RefCell::new([const { None }; 64]));
+static UPPERCASED: Recent<Option<(Atom, Atom)>, 64> = Recent::new();
+
+#[thread_local]
+static NAMES_OF_UNKNOWN: Recent<Option<(Atom, Name)>, 64> = Recent::new();
 
 impl Known {
     #[inline]
@@ -116,6 +233,30 @@ impl Known {
         Known::find(Name::hash(text, false), |it| it == text)
     }
 
+    /// Of one that has 8-bit characters.
+    #[inline]
+    fn from_atom(atom: &Impl) -> Known {
+        const HASH_AND_FLAGS: usize = 4;
+        // SAFETY: `StringImpl::m_hashAndFlags` follows the count, the length and the pointer.
+        let (slots, mut slot) = (
+            &**BY_HASH,
+            unsafe {
+                core::ptr::from_ref(atom)
+                    .cast::<u32>()
+                    .add(HASH_AND_FLAGS)
+                    .read()
+            } as usize
+                >> 8,
+        );
+        loop {
+            let known = Known::from_index(slots[slot % slots.len()]);
+            if known == Known::Other || known.as_str().as_bytes() == atom.latin1_slice() {
+                return known;
+            }
+            slot += 1;
+        }
+    }
+
     /// Of `text` in lowercase.
     #[inline]
     pub(crate) fn from_latin1_lowercased(text: &[u8]) -> Known {
@@ -132,6 +273,11 @@ impl Known {
     pub(crate) fn from_index(index: u16) -> Known {
         // SAFETY: the discriminants are `0..=Other`.
         unsafe { core::mem::transmute(index.min(Known::Other as u16)) }
+    }
+
+    #[inline(always)]
+    pub(crate) fn meaning(self) -> Meaning {
+        Meaning::from_bits_retain(MEANINGS[self as usize])
     }
 
     /// Empty for `Other`.
@@ -268,10 +414,33 @@ impl Atom {
         if !string.is_8bit() {
             return Atom::from_wide(string);
         }
-        match Known::from_latin1(string.latin1_slice()) {
+        match if string.is_atom() {
+            Known::from_atom(string)
+        } else {
+            Known::from_latin1(string.latin1_slice())
+        } {
             Known::Other => Atom::from_unknown(string),
             known => known.into(),
         }
+    }
+
+    /// For looking something up.
+    #[inline]
+    pub(crate) fn with_impl<R>(string: &Impl, read: impl FnOnce(&Atom) -> R) -> R {
+        let (borrowed, owned);
+        read(match string.is_8bit() && string.is_atom() {
+            true => {
+                borrowed = ManuallyDrop::new(match Known::from_atom(string) {
+                    Known::Other => Atom(NonNull::from(string).expose_provenance()),
+                    known => known.into(),
+                });
+                &borrowed
+            }
+            false => {
+                owned = Atom::from_impl(string);
+                &owned
+            }
+        })
     }
 
     /// In ASCII lowercase.
@@ -337,25 +506,30 @@ impl Atom {
         string: JsLocal<'a, JSString>,
         run: impl FnOnce(&Atom) -> R,
     ) -> bindgen::Result<'a, R> {
+        Atom::with_lowercased_and_keyed(heap, string, |atom, _| run(atom))
+    }
+
+    /// `run` also gets `Lowercased::keyed`.
+    #[inline]
+    pub(super) fn with_lowercased_and_keyed<'a, R>(
+        heap: &JsHeap<'a>,
+        string: JsLocal<'a, JSString>,
+        run: impl FnOnce(&Atom, Name) -> R,
+    ) -> bindgen::Result<'a, R> {
         let string = impl_of(heap, string)?;
-        let address = core::ptr::from_ref(string).addr();
-        let slot = &mut LOWERCASED.borrow_mut()[(address >> 4 ^ address >> 10) % 64];
+        let slot = &mut LOWERCASED.borrow_mut()[((core::ptr::from_ref(string).addr() as u64)
+            .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+            >> 57) as usize];
         let long;
-        Ok(run(match slot {
-            Some((known, atom)) if core::ptr::eq(known.as_impl(), string) => atom,
+        let found = match slot {
+            Some(known) if core::ptr::eq(known.of.as_impl(), string) => known,
             _ if string.length() > 32 => {
-                long = Atom::from_impl_lowercased(string);
+                long = Lowercased::new(string);
                 &long
             }
-            _ => {
-                &slot
-                    .insert((
-                        DomString::from_impl(string),
-                        Atom::from_impl_lowercased(string),
-                    ))
-                    .1
-            }
-        }))
+            _ => slot.insert(Lowercased::new(string)),
+        };
+        Ok(run(&found.atom, found.keyed))
     }
 
     #[inline(always)]
@@ -381,7 +555,18 @@ impl Atom {
     pub(crate) fn name(&self) -> Name {
         match self.unknown() {
             None => NAMES[self.0.get() >> 1],
-            Some(_) => Name::new(self.as_utf8().as_bytes()),
+            Some(_) => self.name_of_unknown(),
+        }
+    }
+
+    fn name_of_unknown(&self) -> Name {
+        match &mut NAMES_OF_UNKNOWN.borrow_mut()[self.0.get().wrapping_mul(0x9e37_79b9) >> 16 & 63]
+        {
+            Some((atom, name)) if atom == self => *name,
+            slot => {
+                slot.insert((self.clone(), Name::new(self.as_utf8().as_bytes())))
+                    .1
+            }
         }
     }
 
@@ -405,8 +590,12 @@ impl Atom {
         DomString::from_impl(self.as_impl())
     }
 
+    #[inline]
     pub(crate) fn to_js<'a>(&self, heap: &JsHeap<'a>) -> JsLocal<'a, JSString> {
-        impl_to_js(heap, self.as_impl())
+        self.unknown().map_or_else(
+            || known_to_js(heap, self.known(), false),
+            |it| impl_to_js(heap, it),
+        )
     }
 
     pub(crate) fn to_ascii_lowercase(&self) -> Atom {

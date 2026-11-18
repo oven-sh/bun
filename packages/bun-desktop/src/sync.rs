@@ -62,7 +62,6 @@ impl Condvar {
     }
 
     #[cfg(not(target_os = "macos"))]
-    #[cfg(not(target_os = "macos"))]
     pub fn wait_while<T>(&self, guard: &mut MutexGuard<T>, mut waits: impl FnMut(&mut T) -> bool) {
         while waits(guard) {
             self.wait(guard);

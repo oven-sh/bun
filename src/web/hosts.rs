@@ -4,7 +4,8 @@ use core::cell::RefCell;
 use core::ffi::c_void;
 use core::mem::ManuallyDrop;
 
-use bun_collections::HashMap;
+use std::collections::BTreeMap;
+
 use bun_jsc::{JSGlobalObject, JSValue, Weak};
 
 use crate::exec;
@@ -12,7 +13,7 @@ use crate::net::embedder::ClientId;
 
 #[derive(Default)]
 struct OfThread {
-    hosts: HashMap<u32, Weak<()>>,
+    hosts: BTreeMap<u32, Weak<()>>,
     is_in_use: bool,
 }
 

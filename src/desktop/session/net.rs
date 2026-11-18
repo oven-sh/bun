@@ -393,6 +393,7 @@ impl ClientRequest {
                 origin,
                 bypasses_handlers,
                 client: Some(id),
+                is_page: false,
             },
             self,
             &self.controller,

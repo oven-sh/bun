@@ -10,7 +10,7 @@ use bun_web::url::Url;
 
 use super::*;
 use crate::api::fonts::{FontFaceSet, fonts_of_worker};
-use crate::api::interim;
+use crate::api::on_behalf;
 
 /// Nothing tells a worker when the display is drawn.
 const FRAME_INTERVAL: f64 = 16.0;
@@ -42,9 +42,9 @@ impl WorkerGlobalScope {
             frames: Default::default(),
             last_frame: 0.into(),
         });
-        Some(WindowTarget::with_host(
+        Some(WindowTarget::create(
             realm.global_this(),
-            [JSValue::UNDEFINED; 2],
+            JSValue::UNDEFINED,
             host,
             time_origin,
             false,
@@ -138,7 +138,10 @@ impl WorkerGlobalScope {
     }
 
     pub(crate) fn get_fonts<'a>(&self, cx: Cx<'_, 'a>) -> Result<'a, &'a FontFaceSet> {
-        let (doc, scope) = (seams::current_document(cx)?, interim::font_scope(&cx.heap));
+        let (doc, scope) = (
+            seams::current_document(cx)?,
+            on_behalf::font_scope(&cx.heap),
+        );
         Ok(fonts_of_worker(cx, doc, scope))
     }
 }

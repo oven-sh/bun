@@ -4,7 +4,7 @@ use bun_core::strings;
 use bun_markup::html::entities;
 
 use super::*;
-use crate::api::core::{Atom, DomString, Element, Node, Ns, QualName, append_detached};
+use crate::api::core::{Atom, DomString, Element, Node, QualName, append_detached};
 use crate::values::text;
 
 #[derive(Clone, Copy)]
@@ -450,14 +450,10 @@ pub(super) fn append_cue_text<'a>(
                 };
                 let element = document.create_plain(
                     &cx.heap,
-                    QualName {
-                        ns: if shown_on.is_some() {
-                            Ns::None
-                        } else {
-                            Ns::Html
-                        },
-                        prefix: None,
-                        local: Atom::new(local),
+                    if shown_on.is_some() {
+                        QualName::plain(Atom::new(local))
+                    } else {
+                        QualName::html(Atom::new(local))
                     },
                 );
                 let words = |all: DomString, ends: &[u8]| {

@@ -25,15 +25,14 @@
 
 #include "config.h"
 #include "JSDOMWrapper.h"
-#include <wtf/NeverDestroyed.h>
 #include "JSAbortSignal.h"
 #include "ScriptExecutionContext.h"
 
 namespace WebCore {
 
-bool JSAbortSignalOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, JSC::AbstractSlotVisitor& visitor, ASCIILiteral* reason)
+bool JSAbortSignal::isReachableFromOpaqueRoots(JSC::AbstractSlotVisitor& visitor, ASCIILiteral* reason) const
 {
-    auto& abortSignal = uncheckedDowncast<JSAbortSignal>(handle.slot()->asCell())->wrapped();
+    auto& abortSignal = wrapped();
     if (abortSignal.isFiringEventListeners()) {
         if (reason) [[unlikely]]
             *reason = "EventTarget firing event listeners"_s;

@@ -1375,6 +1375,7 @@ pub struct BundleOptions<'a> {
     pub(crate) load_package_json: bool,
 
     pub rewrite_jest_for_tests: bool,
+    pub is_desktop_app: bool,
     /// `bun test --globals=vitest`
     pub vitest_globals: bool,
     /// Same effect as `vitest_globals`, for everything loaded by a test file that imports "vitest".
@@ -1627,6 +1628,7 @@ impl<'a> BundleOptions<'a> {
             load_tsconfig_json: self.load_tsconfig_json,
             load_package_json: self.load_package_json,
             rewrite_jest_for_tests: self.rewrite_jest_for_tests,
+            is_desktop_app: self.is_desktop_app,
             vitest_globals: self.vitest_globals,
             test_file_imports_vitest: self.test_file_imports_vitest,
             own_test_globals: self.own_test_globals,
@@ -1889,6 +1891,7 @@ impl<'a> BundleOptions<'a> {
             load_tsconfig_json: true,
             load_package_json: true,
             rewrite_jest_for_tests: false,
+            is_desktop_app: false,
             vitest_globals: false,
             test_file_imports_vitest: false,
             own_test_globals: 0,

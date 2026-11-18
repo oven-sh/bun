@@ -649,7 +649,7 @@ impl DomBody {
     consumers! { array_buffer: ArrayBuffer, blob: Blob, bytes: Bytes, form_data: FormData, json: Json, text: Text, }
 
     pub(crate) fn get_headers<'a>(&self, heap: &JsHeap<'a>) -> &'a Headers {
-        js_DomHeaders::create(heap, Headers(Rc::clone(&self.headers)))
+        js_DomHeaders::create(heap, Headers::sharing(&self.headers))
     }
 
     pub(crate) fn get_body<'a>(

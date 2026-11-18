@@ -57,6 +57,6 @@ export const DesktopDialog = b.interface("DesktopDialog", {
     showMessageBox: { args, ...returnsPromise },
     showMessageBoxSync: { args, returns: b.i32, ...js },
     showErrorBox: { args: { title: text, content: text }, ...js },
-    showCertificateTrustDialog: returnsPromise,
+    showCertificateTrustDialog: { args, ...returnsPromise },
   },
 });

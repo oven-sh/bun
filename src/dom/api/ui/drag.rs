@@ -55,19 +55,9 @@ fn fire_drag<'a>(
     proceeds
 }
 
-fn begin(
-    ui: &Ui,
-    data: &DataTransfer,
-    source: Option<&Node>,
-    moves_selection: bool,
-    is_editable: bool,
-) {
+fn begin(ui: &Ui, data: &DataTransfer, source: Option<&Node>, drag: Drag) {
     let pointer = ui.pointer();
-    pointer.drag.set(Some(Drag {
-        effect: DropEffect::None,
-        moves_selection,
-        is_editable,
-    }));
+    pointer.drag.set(Some(drag));
     pointer.set_drag_data(Some(data));
     pointer.set_dragged(source);
 }
@@ -169,17 +159,24 @@ pub(super) fn start<'a>(cx: &mut Cx<'a>, ui: &'a Ui) {
         data.put(&cx.heap, "text/html", markup);
     }
     let is_editable = moves_selection && editing::edit_target(cx, ui).is_some();
-    begin(ui, data, Some(source), moves_selection, is_editable);
+    begin(
+        ui,
+        data,
+        Some(source),
+        Drag {
+            effect: DropEffect::None,
+            moves_selection,
+            is_editable,
+        },
+    );
     let at = pointer.at.replace(pointer.pressed_at.get());
     let starts = fire_drag(cx, ui, data, source, atom!("dragstart"), None);
     pointer.at.set(at);
     if !starts {
         return forget(ui);
     }
-    if IS_MAC {
-        let image = image_of(cx, ui, data, source, moves_selection);
-        host::begin_drag(ui, data, image.unwrap_or_default());
-    }
+    let image = image_of(cx, ui, data, source, moves_selection);
+    host::begin_drag(ui, data, image.unwrap_or_default());
     if let Some(under) = pointer.capture().or_else(|| pointer.hovered().first()) {
         pointer::fire_pointer(cx, ui, under, atom!("pointercancel"), None);
     }
@@ -339,7 +336,16 @@ pub(crate) fn files_over<'a>(
     if ui.pointer().drag.get().is_none() {
         let Some(data) = files(cx) else { return };
         data.set_effect_allowed(EffectAllowed::All);
-        begin(ui, data, None, false, false);
+        begin(
+            ui,
+            data,
+            None,
+            Drag {
+                effect: DropEffect::None,
+                moves_selection: false,
+                is_editable: false,
+            },
+        );
     }
     over(cx, ui);
     if drops {

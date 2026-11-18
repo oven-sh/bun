@@ -14,7 +14,7 @@ use super::flatten::{Kind, Primitive};
 use super::raster::{IntRect, Pixel};
 use super::software::{
     Action, Band, Compositor, Grid, Plan, Summary, TILE_HEIGHT, TILE_WIDTH, Texture, Tile, alpha,
-    bgra, is_shaped, last_to_hide, movement, survey,
+    bgra, is_shaped, last_to_hide, movement, survey, tiles_in,
 };
 use crate::diagnostics::{self, Incident};
 use crate::hash::FastMap;
@@ -45,7 +45,8 @@ pub trait Target {
     /// Valid until `unlock`.
     fn lock(surface: &Self::Surface, writes: bool) -> Locked;
     fn unlock(surface: &Self::Surface, wrote: bool);
-    fn can_draw(&mut self) -> bool;
+    /// With the time that the CPU has needed for the last frame.
+    fn can_draw(&mut self, painting_took: Duration) -> bool;
     /// Replaces what is on the surfaces, and returns when that is done.
     fn draw(&mut self, instances: &[Instance], passes: &[Pass<Self::Surface>]) -> bool;
     fn show(&mut self, position: Position, rect: IntRect, surface: &Self::Surface, is_opaque: bool);
@@ -417,6 +418,16 @@ impl Cell {
     }
 }
 
+fn in_whole_tiles(it: IntRect) -> IntRect {
+    let down = |at: i32, tile: i32| at.max(0) / tile * tile;
+    IntRect::new(
+        down(it.left, TILE_WIDTH),
+        down(it.top, TILE_HEIGHT),
+        round_up(it.right, TILE_WIDTH),
+        round_up(it.bottom, TILE_HEIGHT),
+    )
+}
+
 /// From `start` to `end`.
 fn steps(start: i32, end: i32, step: i32) -> impl Iterator<Item = (i32, i32)> + Clone {
     (start..end)
@@ -483,9 +494,21 @@ impl Division {
             let (part, is_large) = parts()
                 .find(|(part, _)| part.overlaps(column))
                 .unwrap_or_default();
-            column
-                .without(part)
-                .for_each(|it| add(it, [CELL_WIDTH, CELL_HEIGHT], false));
+            let is_low = |it: IntRect| !part.is_empty() && it.height() <= CELL_HEIGHT as usize / 2;
+            column.without(part).for_each(|it| {
+                add(
+                    it,
+                    [
+                        if is_low(it) {
+                            2 * CELL_WIDTH
+                        } else {
+                            CELL_WIDTH
+                        },
+                        CELL_HEIGHT,
+                    ],
+                    false,
+                )
+            });
             let part = part.intersect(column);
             let evenly = |length: usize, most: i32, tile: i32| {
                 round_up(
@@ -525,11 +548,15 @@ impl Division {
         self.cells.iter().filter(move |it| it.area.overlaps(area))
     }
 
+    fn is_worth_cells(&self, port: IntRect) -> bool {
+        port.area() >= i64::from(CELL_WIDTH * CELL_HEIGHT / 2)
+            && self.cells_in(port).nth(1).is_some()
+    }
+
     /// Returns whether that takes other cells. `changed` has the tiles that the scroll has changed so far.
-    fn begin_scroll(&mut self, rect: IntRect, changed: &[IntRect]) -> bool {
-        const WORTH_IT: i64 = CELL_WIDTH as i64 * CELL_HEIGHT as i64 / 2;
+    fn begin_scroll(&mut self, rect: IntRect, changed: &[IntRect], is_steady: bool) -> bool {
         if self.ports.iter().all(|it| it.rect != rect) {
-            if rect.area() < WORTH_IT || self.cells_in(rect).nth(1).is_none() {
+            if !self.is_worth_cells(rect) {
                 return false;
             }
             self.ports
@@ -548,8 +575,10 @@ impl Division {
         };
         changed.iter().for_each(|it| port.note(*it));
         let parts = port.find_parts();
-        let had_large_cells = std::mem::replace(&mut port.has_large_cells, true);
-        std::mem::replace(&mut port.parts, parts)[..] != port.parts[..] || !had_large_cells
+        let had_large_cells = port.has_large_cells;
+        port.has_large_cells |= is_steady;
+        std::mem::replace(&mut port.parts, parts)[..] != port.parts[..]
+            || had_large_cells != port.has_large_cells
     }
 }
 
@@ -571,15 +600,6 @@ fn within(window: IntRect, port: IntRect) -> IntRect {
         ..port
     }
     .intersect(window)
-}
-
-fn tiles_in(grid: &Grid, area: IntRect) -> impl Iterator<Item = usize> {
-    let columns = grid.columns_of(area);
-    grid.rows_of(area).flat_map(move |row| {
-        columns
-            .clone()
-            .map(move |column| row as usize * grid.columns + column as usize)
-    })
 }
 
 fn rect_of(grid: &Grid, tile: usize) -> IntRect {
@@ -639,7 +659,12 @@ pub struct Layers<T: Target> {
     apart: Range<i32>,
     /// The port of what is being scrolled, and whether the cells have been chosen for that.
     scrolled: Option<(IntRect, bool)>,
+    /// The port of what a script has last scrolled, when, and whether it has just done so again.
+    jumped: Option<(IntRect, Instant, bool)>,
+    resized_at: Instant,
+    resizing_lasts: Duration,
     frames_scrolled: u32,
+    painting_took: Duration,
     large_cells_last: Duration,
 }
 
@@ -657,16 +682,23 @@ impl<T: Target> Layers<T> {
         } else {
             0
         };
-        let down = |at: i32, tile: i32| at.max(0) / tile * tile;
-        let port = port.filter(|it| !it.is_empty()).map(|it| {
-            IntRect::new(
-                down(it.left, TILE_WIDTH),
-                down(it.top, TILE_HEIGHT),
-                round_up(it.right, TILE_WIDTH),
-                round_up(it.bottom, TILE_HEIGHT),
-            )
-        });
+        let port = port.filter(|it| !it.is_empty()).map(in_whole_tiles);
         self.scrolled = port.map(|port| (port, self.scrolled == Some((port, true))));
+    }
+
+    /// A script has scrolled what is seen in `port`.
+    pub fn note_jump(&mut self, port: IntRect) {
+        // The next size would take other cells, and the system is slow to give back what is released.
+        if self.resized_at.elapsed() < self.resizing_lasts {
+            return;
+        }
+        let port = in_whole_tiles(port);
+        self.jumped = Some((
+            port,
+            Instant::now(),
+            self.jumped
+                .is_some_and(|it| it.0 == port && it.1.elapsed() < Duration::from_secs(1)),
+        ));
     }
 
     #[cfg(target_os = "macos")]
@@ -683,7 +715,11 @@ impl<T: Target> Layers<T> {
             division: Division::default(),
             apart: 0..0,
             scrolled: None,
+            jumped: None,
+            resized_at: Instant::now(),
+            resizing_lasts: Duration::from_millis(500),
             frames_scrolled: 0,
+            painting_took: Duration::ZERO,
             large_cells_last: Duration::from_secs(1),
         }
     }
@@ -698,6 +734,7 @@ impl<T: Target> Layers<T> {
         let mut are_others =
             std::mem::replace(&mut division.apart, self.apart.clone()) != self.apart;
         if is_resized {
+            (self.jumped, self.resized_at) = (None, Instant::now());
             are_others |= !std::mem::take(&mut division.ports).is_empty();
             division.divide(grid);
             return are_others;
@@ -716,8 +753,13 @@ impl<T: Target> Layers<T> {
             let changed = changes_in(division, port);
             if changed.len() >= TO_KNOW {
                 *is_chosen = true;
-                are_others |= division.begin_scroll(port, &changed);
+                are_others |= division.begin_scroll(port, &changed, true);
             }
+        } else if let (None, Some((port, _, is_again @ true))) = (self.scrolled, &mut self.jumped) {
+            *is_again = false;
+            let port = within(grid.window, *port);
+            let changed = changes_in(division, port);
+            are_others |= changed.len() >= TO_KNOW && division.begin_scroll(port, &changed, false);
         }
         let now = Instant::now();
         for index in 0..division.ports.len() {
@@ -809,7 +851,7 @@ impl<T: Target> Layers<T> {
         const TILES_PER_THREAD: usize = 400;
         const MAX_THREADS: usize = 4;
         const MAX_SPARE_WINDOWS: i64 = 8;
-        let start = diagnostics::logs_frames().then(Instant::now);
+        let start = Instant::now();
         let window = IntRect::new(
             0,
             0,
@@ -821,7 +863,7 @@ impl<T: Target> Layers<T> {
             columns: (window.right / TILE_WIDTH) as usize,
         };
         let summaries = compositor.summarize();
-        let tiles = compositor.survey(&summaries, grid);
+        let (tiles, _) = compositor.survey(&summaries, grid);
         let before = std::mem::replace(&mut compositor.window, window);
 
         let has_new_cells = self.arrange(grid, &tiles);
@@ -901,7 +943,7 @@ impl<T: Target> Layers<T> {
         let (atlas, primitives) = (compositor.atlas.0.borrow(), &compositor.primitives);
         let textures = &atlas.slots[..];
         let work = changes.iter().map(|change| change.work).sum::<usize>();
-        if work >= WORTH_DRAWING && self.target.can_draw() {
+        if work >= WORTH_DRAWING && self.target.can_draw(self.painting_took) {
             self.instances.clear();
             let passes = changes
                 .iter()
@@ -1066,7 +1108,7 @@ impl<T: Target> Layers<T> {
             .iter()
             .for_each(|(_, surface, _)| T::unlock(surface, false));
 
-        if let Some(start) = start {
+        if diagnostics::logs_frames() {
             let (drawn, spare) = (
                 changes.iter().filter(|change| change.is_drawn).count(),
                 self.spare.len(),
@@ -1084,6 +1126,7 @@ impl<T: Target> Layers<T> {
             );
         }
         let now = Instant::now();
+        self.painting_took = now - start;
         for Change { buffer, area, .. } in changes {
             let (left, top) = buffer.position;
             let rect = IntRect::new(left, top, left + buffer.size.0, top + buffer.size.1);
@@ -1138,7 +1181,7 @@ mod tests {
         all: Vec<Rc<Memory>>,
         shown: FastMap<Position, (IntRect, Rc<Memory>)>,
         draws: bool,
-        pixels_created: i32,
+        pixels_created: i64,
         /// In the last frame.
         changed: Vec<IntRect>,
     }
@@ -1148,7 +1191,7 @@ mod tests {
 
         fn create(&mut self, width: i32, height: i32) -> Option<Rc<Memory>> {
             let pixels = UnsafeCell::new(vec![[1, 2, 3, 4]; (width * height) as usize]);
-            self.pixels_created += width * height;
+            self.pixels_created += i64::from(width * height);
             self.all.push(Rc::new(Memory {
                 pixels,
                 width: width as usize,
@@ -1172,7 +1215,7 @@ mod tests {
 
         fn unlock(_: &Rc<Memory>, _: bool) {}
 
-        fn can_draw(&mut self) -> bool {
+        fn can_draw(&mut self, _: Duration) -> bool {
             self.draws
         }
 
@@ -1321,7 +1364,7 @@ mod tests {
                 layers.target.next_frame(lag);
             }
             assert!(
-                layers.target.pixels_created < 2400 * 1540 * 2 * (lag as i32 + 2),
+                layers.target.pixels_created < 2400 * 1540 * 2 * (i64::from(lag) + 2),
                 "{lag}: {}",
                 layers.target.pixels_created
             );
@@ -1491,6 +1534,46 @@ mod tests {
     }
 
     #[test]
+    fn what_a_script_keeps_scrolling_has_cells_of_its_own() {
+        let mut chat = Chat::new((3400, 1600));
+        chat.layers.resizing_lasts = Duration::ZERO;
+        let mut jump = || {
+            chat.layers.note_jump(IntRect::new(576, 72, 3400, 1576));
+            chat.scrolled += 40;
+            chat.frame(None, 0)
+        };
+        let pixels = |cells: &[IntRect]| cells.iter().map(|it| it.area()).sum::<i64>();
+        let [first, _, third] = [jump(), jump(), jump()];
+        assert!(
+            pixels(&third) * 5 < pixels(&first) * 3,
+            "{first:?} {third:?}"
+        );
+        assert!(
+            third
+                .iter()
+                .all(|it| it.width() <= 1024 && it.height() <= 512),
+            "{third:?}"
+        );
+    }
+
+    #[test]
+    fn a_page_that_follows_its_end_is_not_cut_up_while_the_window_is_resized() {
+        let mut chat = Chat::new((2432, 1552));
+        for step in (0..120).chain((0..120).rev()) {
+            chat.size = (2432 - step * 5, 1552 - step * 3);
+            chat.frame(None, 0);
+            for _ in 0..2 {
+                chat.layers
+                    .note_jump(IntRect::new(576, 72, chat.size.0, chat.size.1 - 24));
+                chat.scrolled += 7;
+                chat.frame(None, 0);
+            }
+        }
+        let windows = chat.layers.target.pixels_created / (2432 * 1552);
+        assert!(windows < 12, "{windows}");
+    }
+
+    #[test]
     fn shows_what_a_single_buffer_does() {
         let (mut layers, mut compositor) = (Layers::new(Screen::default()), Compositor::default());
         let sizes = [
@@ -1518,7 +1601,9 @@ mod tests {
             ];
             layers
                 .set_scrolling((frame % 13 > 1 && frame % 7 != 3).then_some(ports[frame / 3 % 4]));
-            layers.large_cells_last = Duration::from_secs(frame as u64 % 2);
+            layers.note_jump(ports[frame / 5 % 4]);
+            (layers.large_cells_last, layers.resizing_lasts) =
+                (Duration::from_secs(frame as u64 % 2), Duration::ZERO);
             layers.paint(&mut compositor, size.0, size.1);
             layers.target.next_frame(frame as u32 % 3);
             if frame % 20 == 19 {

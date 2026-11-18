@@ -3,7 +3,7 @@ title: Electron apps
 description: Run an app that was written for Electron on bun:desktop
 ---
 
-<Warning>This is experimental. It has been run with a real app on Linux (X11) only.</Warning>
+<Warning>This is experimental. It has been run with a real app on macOS and Linux only.</Warning>
 
 `bun:desktop/electron` implements the API of Electron on [`bun:desktop`](/runtime/desktop). Once it is loaded, `electron`, `electron/main`, `electron/common`, `electron/renderer`, `electron/utility` and `original-fs` resolve to it.
 
@@ -25,8 +25,10 @@ The main script goes in the executable. Pages and preload scripts go in a direct
 ```
 
 ```sh terminal icon="terminal"
-bun build --compile --desktop --external electron --compile-exec-argv=--preload=bun:desktop/electron ./main.js
+bun compile --desktop ./main.js
 ```
+
+In an app that is built with `--desktop`, these modules are built in from the start, whether or not the `electron` package is installed. `bun build --compile --desktop` does the same without compiling ahead of time.
 
 ## One process
 
@@ -51,6 +53,7 @@ For that reason only these run in the process, in a window or a view:
 - `file:` URLs inside of `app.getAppPath()`
 - origins that the app has passed to `app.trustOrigins()`
 - `about:blank`
+- `blob:` URLs of a trusted page, unless they are HTML or XML
 
 ```ts main.ts icon="/icons/typescript.svg"
 import electron from "bun:desktop/electron";
@@ -76,15 +79,21 @@ See also [what the DOM lacks](/runtime/desktop#what-is-missing).
 
 These throw or reject:
 
-| Module        | What                                                                      |
-| ------------- | ------------------------------------------------------------------------- |
-| `app`         | `enableSandbox`                                                           |
-| `webContents` | `printToPDF`, `savePage`, `beginFrameSubscription` for a trusted page     |
-| Whole modules | `contentTracing`, `netLog`, and `desktopCapturer` with Chromium as engine |
-| Classes       | `ImageView`, `TouchBar`                                                   |
+| Module            | What                                          |
+| ----------------- | --------------------------------------------- |
+| `app`             | `enableSandbox`                               |
+| `webContents`     | `startDrag`, except on macOS                  |
+| `dialog`          | `showCertificateTrustDialog`, except on macOS |
+| `desktopCapturer` | All of it with Chromium as the web engine     |
 
-These do nothing: `crashReporter`, network and device emulation, the settings of the host resolver.
+`contentTracing` records the process of the app: the performance timelines of pages and workers, and samples of the stack of the main thread. See `getCategories()`. `netLog` has the requests of that process, with their status and response headers.
+
+These do nothing: `crashReporter`, network emulation, the settings of the host resolver, and the `webPreferences` `offscreen` and `nodeIntegrationInWorker` for a trusted page.
+
+`print()` and `printToPDF()` give a copy of a trusted page to the web engine, which lays it out. Videos, and frames that the engine renders, are empty in it.
 
 `autoUpdater` works on macOS, and reads the feeds of Squirrel.Mac. An update has to have the bundle identifier of the app, and to satisfy its designated requirement, which is checked after the download and again before the installation. An app with an ad hoc signature cannot be updated. Unlike in Electron, the whole archive is downloaded even if the feed has a delta, nothing is installed after the app was killed or while another instance of it runs, and only `quitAndInstall()` asks for the password of an administrator. It only asks if the user can change neither the bundle nor its executable, because that is what runs as root. As with Squirrel.Mac, whoever can rename what is in the folder of the app can put another executable in its place while the prompt is shown. The app installs the update itself while it exits, so it exits later, and writes the outcome to `~/Library/Caches/<bundle identifier>.ShipIt/ShipIt_stderr.log`.
 
-`.asar` archives are not read. Ship directories. Native addons have to use Node-API.
+`.asar` archives are not read at run time. Unpack them with `asar extract`, and compile or ship the directory. Native addons have to use Node-API.
+
+Trusted pages share the thread with the app. A script that does not return blocks the app, and there are no `unresponsive` and `responsive` events for it.

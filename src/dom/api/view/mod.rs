@@ -192,7 +192,7 @@ pub(crate) fn scroll_to_start_of<'a>(cx: &mut JsScope<'a>, element: &'a Element)
             cx,
             [Alignment::Nearest, Alignment::Start],
             ScrollBehavior::Auto,
-            false,
+            crate::scroll::Scrollers::All,
             false,
         );
     }
@@ -245,11 +245,11 @@ impl Element {
         cx: &mut JsScope<'a>,
         align: [Alignment; 2],
         behavior: ScrollBehavior,
-        only_nearest: bool,
+        scrollers: crate::scroll::Scrollers,
         is_awaited: bool,
     ) {
         let revealed = self.synced_engine(cx, |engine, id| {
-            engine.scroll_into_view_for_script(id, align, behavior as u8, only_nearest, is_awaited)
+            engine.scroll_into_view_for_script(id, align, behavior as u8, scrollers, is_awaited)
         });
         self.doc().invalidate(cx);
         crate::api::frames::reveal_around(cx, self.doc(), revealed);
@@ -265,7 +265,7 @@ impl Element {
                     Alignment::Nearest
                 }; 2],
                 ScrollBehavior::Auto,
-                false,
+                crate::scroll::Scrollers::All,
                 false,
             );
         }
@@ -322,7 +322,11 @@ impl ElementView {
             cx,
             [options.inline_position.get(), options.block.get()],
             options.behavior,
-            options.container == ScrollIntoViewContainer::Nearest,
+            if options.container == ScrollIntoViewContainer::Nearest {
+                crate::scroll::Scrollers::Nearest
+            } else {
+                crate::scroll::Scrollers::All
+            },
             true,
         );
         scroll_result(cx, self.doc())

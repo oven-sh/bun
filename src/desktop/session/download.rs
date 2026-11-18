@@ -7,11 +7,13 @@ use bun_web::exec::{blocking, never_at_once};
 use bun_web::headers::HeaderList;
 use bun_web::net::body::Body;
 use bun_web::net::fetch::{Controller, Observer};
+use bun_web::origin::Origin;
+use bun_web::request::{Credentials, Destination, Mode};
 use bun_web::time::wall_now;
 use bun_web::url::{Url, percent_decode};
 
 use super::Session;
-use super::load::{from_record, latin1, request_for};
+use super::load::{Sender, from_record, latin1, request_for};
 use crate::generated_bindgen::session::js_ElectronDownloadItem as fields;
 use crate::prelude::*;
 use crate::task::{self, Later, LocalFuture};
@@ -145,17 +147,23 @@ impl Observer for Redirects {
     }
 }
 
+/// Of a page in the web engine.
+pub(crate) struct Wish {
+    pub(crate) origin: String,
+    pub(crate) frame: JSValue,
+    pub(crate) is_in_main_frame: bool,
+    pub(crate) name: Option<String>,
+}
+
 impl Session {
     pub(crate) fn download_url<'a>(
         &self,
         _: Cx<'a, '_>,
         url: &[u8],
         options: JsLocal<'a>,
-        contents: JsLocal<'a>,
-        name: Option<&[u8]>,
     ) -> JsResult<()> {
         let headers = from_record(&wire::data_from_js(options.to_js())?["headers"]);
-        self.download(&string(url), headers, contents.to_js(), name.map(string));
+        self.download(&string(url), headers, JSValue::UNDEFINED, None);
         Ok(())
     }
 
@@ -164,12 +172,26 @@ impl Session {
         url: &str,
         headers: HeaderList,
         contents: JSValue,
-        name: Option<String>,
+        wish: Option<Wish>,
     ) {
         let Ok(mut request) = request_for(url) else {
             return;
         };
         request.headers = headers;
+        let origin = (wish.as_ref()).map(|it| Origin::from_serialized(it.origin.as_bytes()));
+        if let (Some(wish), Some(origin)) = (&wish, &origin) {
+            (request.mode, request.credentials) = (Mode::Navigate, Credentials::Include);
+            if wish.is_in_main_frame && !origin.is_origin_of(&request.url) {
+                request.destination = Destination::Document;
+            }
+        }
+        let sender = Sender {
+            is_page: origin.is_some(),
+            origin,
+            ..Default::default()
+        };
+        let frame = keep(wish.as_ref().map_or(JSValue::NULL, |it| it.frame));
+        let (origin, name) = wish.map(|it| (it.origin, it.name)).unwrap_or_default();
         let (session, contents) = (self.itself(), keep(contents));
         let redirects = Redirects {
             urls: vec![string(request.url.href())].into(),
@@ -177,12 +199,14 @@ impl Session {
         };
         let controller = Controller::default();
         task::spawn(async move {
-            let loaded = session.load(request, Default::default(), &redirects, &controller);
+            let loaded = session.load(request, sender, &redirects, &controller);
             if let Ok(loaded) = loaded.await {
-                let facts = facts_of(redirects.urls.take(), &loaded.head.headers, name.as_deref());
+                let facts = facts_of(redirects.urls.take(), &loaded.head.headers, name.as_deref())
+                    .with("getInitiatorOrigin", origin);
                 let item = DownloadItem::create(session, facts, controller);
                 let body = loaded.body.unwrap_or_default();
-                task::report(item.start(session, body, contents.get()).map(drop));
+                let of = [contents.get(), frame.get()];
+                task::report(item.start(session, body, of).map(drop));
             }
         });
     }
@@ -274,11 +298,11 @@ impl DownloadItem {
         session: &'static Session,
         facts: Value,
         body: Body,
-        contents: JSValue,
+        contents_and_frame: [JSValue; 2],
         controller: Controller,
     ) -> JsResult<()> {
         DownloadItem::create(session, facts, controller)
-            .start(session, body, contents)
+            .start(session, body, contents_and_frame)
             .map(drop)
     }
 
@@ -291,11 +315,12 @@ impl DownloadItem {
     ) -> JsResult<Later<()>> {
         let facts = (facts_of(vec![url], &Default::default(), Some(name)))
             .with("getMimeType", "application/pdf")
+            .with("getInitiatorOrigin", "null")
             .with("getTotalBytes", bytes.len() as f64);
         DownloadItem::create(session, facts, Controller::default()).start(
             session,
             bytes.into(),
-            contents,
+            [contents, JSValue::NULL],
         )
     }
 
@@ -385,15 +410,17 @@ impl DownloadItem {
         }))
     }
 
-    fn start(&self, session: &Session, body: Body, contents: JSValue) -> JsResult<Later<()>> {
-        let frame = if contents.is_object() {
-            get(contents, "mainFrame")?
+    fn start(
+        &self,
+        session: &Session,
+        body: Body,
+        [contents, frame]: [JSValue; 2],
+    ) -> JsResult<Later<()>> {
+        let frame = if frame.is_object() {
+            frame
         } else {
-            JSValue::UNDEFINED
+            JSValue::NULL
         };
-        if frame.is_object() {
-            self.set("getInitiatorOrigin", text_of(get(frame, "origin")?)?);
-        }
         if !dispatch(
             session.to_js(),
             "will-download",

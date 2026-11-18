@@ -87,6 +87,11 @@ impl RuntimeModules {
         self
     }
 
+    pub(crate) fn with_modules_of_electron(mut self, has_them: bool) -> RuntimeModules {
+        self.aliases.has_modules_of_electron = has_them;
+        self
+    }
+
     pub(crate) fn with_first_texts(mut self, takes_first_texts: bool) -> RuntimeModules {
         self.takes_first_texts = takes_first_texts;
         self

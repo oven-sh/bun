@@ -1,6 +1,8 @@
 //! `View`, and the classes that extend it.
 
-use bun_ui::protocol::SurfaceCommand as To;
+use std::rc::Rc;
+
+use bun_ui::protocol::{Bitmap, FramePixels, SurfaceCommand as To, WebViewCommand};
 use bun_ui::surfaces;
 
 use crate::contents::{Contents, Kind};
@@ -40,6 +42,8 @@ pub(crate) struct View {
     owns_surface: Cell<bool>,
     placed: Cell<Option<Placement>>,
     auto_resize: Cell<Option<AutoResize>>,
+    /// And where the library has it.
+    image: RefCell<Option<(Option<Rc<Bitmap>>, u32)>>,
 }
 
 impl Drop for View {
@@ -49,6 +53,10 @@ impl Drop for View {
                 id: self.surface.get(),
                 command: To::Destroy,
             });
+            if let Some((_, id)) = self.image.take() {
+                let command = WebViewCommand::Close;
+                (ui.tell)(Command::WebView { id, command });
+            }
         }
     }
 }
@@ -101,6 +109,10 @@ impl View {
 
     pub(crate) fn is_drawn(&self) -> bool {
         self.lineage().all(|it| !it.is_hidden.get())
+    }
+
+    pub(crate) fn has_area(&self) -> bool {
+        self.bounds.get().width > 0. && self.bounds.get().height > 0.
     }
 
     fn origin(&self) -> Point {
@@ -249,8 +261,36 @@ impl View {
             return Ok(());
         }
         self.place_tree()?;
+        self.center_image()?;
         self.children().try_for_each(|it| it?.follow(bounds))?;
         announce(self.to_js(), "bounds-changed", &[])
+    }
+
+    fn center_image(&self) -> JsResult<()> {
+        let Some((image, id)) = self.image.borrow().clone() else {
+            return Ok(());
+        };
+        let bounds = self.bounds.get();
+        let [width, height] = [bounds.width, bounds.height].map(|it| it.clamp(1., 16384.) as usize);
+        let mut pixels = vec![0; width * height * 4];
+        if let Some(image) = image {
+            let [its_width, its_height] = [image.width, image.height].map(|it| it as usize);
+            let (across, down) = (width.min(its_width), height.min(its_height));
+            for row in 0..down {
+                let from = ((its_height - down) / 2 + row) * its_width + (its_width - across) / 2;
+                let to = ((height - down) / 2 + row) * width + (width - across) / 2;
+                pixels[to * 4..][..across * 4]
+                    .copy_from_slice(&image.pixels[from * 4..][..across * 4]);
+            }
+        }
+        let whole = NativeImage::from_pixels(Bitmap {
+            width: width as u32,
+            height: height as u32,
+            pixels: pixels.into(),
+        });
+        let pixels = FramePixels::Encoded(whole.png(global())?.into());
+        let command = WebViewCommand::Frame { scale: 1., pixels };
+        tell(Command::WebView { id, command })
     }
 
     fn follow(&self, parent: Rect) -> JsResult<()> {
@@ -478,7 +518,15 @@ impl DesktopImageView {
         View::default()
     }
 
-    pub(crate) fn set_image<'a>(&self, _: Cx<'a, '_>, _: JsLocal<'a>) -> JsResult<()> {
-        Err(unsupported("ImageView"))
+    pub(crate) fn set_image<'a>(&self, _: Cx<'a, '_>, image: JsLocal<'a>) -> JsResult<()> {
+        let pixels = NativeImage::with(global(), image.to_js(), |it| it.pixels(global()))?;
+        let id = match self.image.take() {
+            Some((_, id)) => id,
+            None => answer((ui()?.open_web_view)(Maybe::No))?,
+        };
+        self.image.replace(Some((pixels, id)));
+        self.need_surface()?;
+        self.tell(To::Show(id))?;
+        self.center_image()
     }
 }

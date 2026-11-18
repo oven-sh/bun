@@ -44,6 +44,7 @@ import {
   type RustScope,
   Signature,
   snakeCase,
+  speculatedArgument,
   StringImplType,
   symbolDescription,
   Type,
@@ -814,7 +815,10 @@ export function cppHeader(file: SchemaFile): string {
   const headers = new Set<string>();
   for (const type of file.types) for (const dependency of type.dependencies) dependency.getHeaders(headers);
   if (file.types.some(type => type instanceof ClassType)) headers.add("Bindgen/JSWrapper.h");
-  if (file.types.some(type => type instanceof ClassType && type.web)) headers.add("GeneratedBindings+Interfaces.h");
+  if (file.types.some(type => type instanceof ClassType && type.web)) {
+    headers.add("GeneratedBindings+Interfaces.h");
+    headers.add("Bindgen/DOMJIT.h");
+  }
   if (isCold(file)) headers.add("Bindgen/SharedBodies.h");
   headers.delete(`Generated${file.origin.namespace}.h`);
   const propertyCallbacks = [
@@ -2847,13 +2851,130 @@ const cppReceiver = (type: ClassType, value: string) =>
 
 function cppMemberOfInterface(type: ClassType, owner: ClassType, member: ClassMember): string {
   const write = () =>
-    member instanceof FunctionDefinition
+    (member instanceof FunctionDefinition
       ? cppMethodOfInterface(type, owner, member)
       : member instanceof Getter || member instanceof InternalFieldAccessor
         ? cppAccessorOfInterface(type, owner, member)
-        : "";
+        : "") + (domJITOf(type, member)?.definition ?? "");
   if (isException(owner, member)) return forSpeedInCpp(write);
   return isCold(owner) && !isWritingForSize() ? forSizeInCpp(writingForSize(true, write)) : write();
+}
+
+/** Only what the conversion of the result makes sure of. */
+function speculatedResult(type: Type): string {
+  if (type instanceof OptionalType) return `${speculatedResult(type.inner)} | JSC::SpecOther`;
+  if (type instanceof ClassType && type.web) return "JSC::SpecObject";
+  if (!(type instanceof PrimitiveType)) return "JSC::SpecBytecodeTop";
+  if (type.rustName === "bool") return "JSC::SpecBoolean";
+  if (["i8", "u8", "i16", "u16", "i32"].includes(type.rustName)) return "JSC::SpecInt32Only";
+  return ["u32", "f32", "f64"].includes(type.rustName) ? "JSC::SpecBytecodeNumber" : "JSC::SpecBytecodeTop";
+}
+
+const membersByNumber = new Map<number, [ClassType, ClassMember][]>();
+
+/** No two members of an instance have the same. */
+function numberInChain(type: ClassType, member: ClassMember, index: number): number {
+  const number = chainOf(type).reduce((sum, it) => sum + (it === type ? index : membersOf(it).length), 0);
+  const others = membersByNumber.get(number) ?? [];
+  for (const [other, ofOther] of others)
+    assert(
+      other === type ? ofOther === member : !chainOf(type).includes(other) && !chainOf(other).includes(type),
+      `${type.name}.${member.name} and ${other.name}.${ofOther.name} have one number`,
+    );
+  membersByNumber.set(number, [...others, [type, member]]);
+  return number;
+}
+
+const offsetOfMemberSymbolName = (owner: ClassType, getter: Getter) => `${getterSymbolName(owner, getter)}__offset`;
+
+interface DOMJIT {
+  /** A `JSC::DOMJIT::GetterSetter` or `Signature`. */
+  object: string;
+  /** The functions that it points at. */
+  throwing: string[];
+  aborting: string[];
+  definition: string;
+}
+
+/** What the JIT compilers are told about a member of the prototype. */
+function domJITOf(type: ClassType, member: ClassMember): DOMJIT | null {
+  const members = membersOf(type);
+  const index = members.findIndex(it => it.member === member);
+  if (index < 0 || privateSymbol(member) || wellKnownSymbol(member.name)) return null;
+  if (hasGlobalInstances(type) || type.isBehindInstance) return null;
+  const { owner } = members[index];
+  const operation = (name: string, parameters: readonly string[], result: string) => {
+    const list = `(${["JSC::JSGlobalObject*", ...parameters].join(", ")})`;
+    return `JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(${name}, JSC::EncodedJSValue, ${list});
+JSC_DEFINE_JIT_OPERATION(${name}, JSC::EncodedJSValue, ${list})
+{
+    auto* globalObject = static_cast<JSC::JSObject*>(thisObject)->realm();
+    BINDGEN_OPERATION_PROLOGUE(globalObject);
+    OPERATION_RETURN(scope, ${result});
+}
+`;
+  };
+  if (member instanceof FunctionDefinition) {
+    const [method, ...overloads] = member.signatures as readonly Method[];
+    if (!method.web.onlyReads) return null;
+    assert(overloads.length === 0, `${type.name}.${member.name}: what only reads has no overloads`);
+    assert(member.length === method.args.length, `${type.name}.${member.name}: the length is the number of arguments`);
+    const host = methodHostFunctionName(type, member);
+    const args = method.args.map(arg => speculatedArgument(arg.type)!);
+    const symbol = methodSymbolName(owner, method);
+    const object = `${host}Signature`;
+    return {
+      object,
+      throwing: [],
+      aborting: [`${host}WithoutTypeCheck`],
+      definition: `${cppExtern(symbol, method, ["JSC::JSCell*"])}
+static ALWAYS_INLINE JSC::EncodedJSValue ${host}WithArguments(${["JSC::JSGlobalObject* globalObject", "JSC::JSCell* thisObject", ...args.map((_, i) => `JSC::JSValue parameter${i}`)].join(", ")})
+{
+${cppPrologue}
+${cppCallBody(method, symbol, ["thisObject"], undefined, { failure: "{}" })}
+}
+${operation(
+  `${host}WithoutTypeCheck`,
+  ["JSC::JSCell* thisObject", ...args.map((arg, i) => `${arg.cppType} argument${i}`)],
+  `${host}WithArguments(${["globalObject", "thisObject", ...args.map((arg, i) => `${arg.box}(argument${i})`)].join(", ")})`,
+)}static const JSC::DOMJIT::Signature ${object} { ${[`${host}WithoutTypeCheck`, `${type.cpp}::info()`, "Bun::Bindgen::DOMJIT::readsNativeState", speculatedResult(method.returns), ...args.map(arg => `JSC::${arg.speculation}`)].join(", ")} };
+`,
+    };
+  }
+  if (!(member instanceof Getter) || checksOwnReceiver(type, member) || member.family?.isByName) return null;
+  const { web, internalField } = member;
+  if (!web.onlyReads && !web.shortcut && isCold(owner) && !isException(owner, member)) return null;
+  const get = getterHostFunctionName(type, member);
+  const reads = `Bun::Bindgen::DOMJIT::readsAttribute<${numberInChain(type, member, index)}>`;
+  let [before, snippet, result] = ["", "", speculatedResult(member.type)];
+  if (internalField !== undefined) {
+    const holder = holderOfField(type, internalField);
+    const offset = `OBJECT_OFFSETOF(${holder.cpp}, m_${internalField})`;
+    if (member.writable || !holder.internalFieldInterfaces.has(internalField)) result = "JSC::SpecBytecodeTop";
+    else if (web.field) result = "JSC::SpecObject | JSC::SpecOther";
+    snippet =
+      web.field && !web.computedIfEmpty
+        ? `loadFieldOrNull(${offset}, ${reads})`
+        : `loadFieldOrCall(${offset}, ${get}, ${web.onlyReads ? reads : "Bun::Bindgen::DOMJIT::doesAnything"})`;
+  } else if (web.member !== undefined) {
+    const kind = cap((member.type as PrimitiveType).rustName);
+    snippet = `loadMember(${offsetOfMemberSymbolName(owner, member)}, Bun::Bindgen::DOMJIT::Member::${kind}, ${reads})`;
+  } else if (web.shortcut !== undefined) {
+    before = `namespace Bun::Bindgen::DOMJIT { Shortcut ${web.shortcut}; }\n`;
+    snippet = `tryOrCall(Bun::Bindgen::DOMJIT::${web.shortcut}, ${get}, ${web.onlyReads ? reads : "Bun::Bindgen::DOMJIT::doesAnything"})`;
+  } else if (web.onlyReads) {
+    const call = `${get}(globalObject, JSC::JSValue::encode(static_cast<JSC::JSObject*>(thisObject)), JSC::PropertyName())`;
+    before = operation(`${get}Operation`, ["void* thisObject"], call);
+    snippet = `call(${get}Operation, ${reads})`;
+  } else return null;
+  return {
+    object: `${get}DOMJIT`,
+    throwing: [get],
+    aborting: [`${get}Snippet`],
+    definition: `${web.member === undefined ? "" : `extern "C" const uint32_t ${offsetOfMemberSymbolName(owner, member)};\n`}${before}static Bun::Bindgen::DOMJIT::Snippet ${get}Snippet() { return Bun::Bindgen::DOMJIT::${snippet}; }
+static constexpr JSC::DOMJIT::GetterSetter ${get}DOMJIT { ${get}, ${get}Snippet, ${result} };
+`,
+  };
 }
 
 function cppMethodOfInterface(type: ClassType, owner: ClassType, fn: FunctionDefinition): string {
@@ -3419,21 +3540,38 @@ const tableRow = (name: string, attributes: string[], value: string) => ({
 /** As `MemberRow` in JSInterface.h: what goes in the text of the interface, and its entries. */
 function compactRow({ name, attributes, value }: ReturnType<typeof tableRow>): { text: string; entries: string[] } {
   const [kind, first, second] = value.split(", ");
-  const isAccessor = kind === "GetterSetterType";
-  const kinds = ["NativeFunctionType", "BuiltinGeneratorType", "ConstantType", "GetterSetterType"];
+  const isAccessor = kind === "GetterSetterType" || kind === "DOMJITAttributeType";
+  const kinds = [
+    "NativeFunctionType",
+    "BuiltinGeneratorType",
+    "ConstantType",
+    "GetterSetterType",
+    "DOMJITAttributeType",
+    "DOMJITFunctionType",
+  ];
   const flags = ["DontEnum", "DontDelete", "ReadOnly", "DOMAttribute"];
   const byte = flags.reduce((sum, it, i) => sum + (attributes.includes(it) ? 8 << i : 0), kinds.indexOf(kind) + 1);
   assert(!isAccessor || attributes.includes("ReadOnly") === (second === "0"));
   return {
-    text: `${octal(byte)}${isAccessor || kind === "ConstantType" ? "" : octal(+second)}${asciiLiteral(name).slice(1, -3)}${octal(0)}`,
-    entries: kind === "ConstantType" ? [`${first}ll`] : isAccessor && second !== "0" ? [first, second] : [first],
+    text: `${octal(byte)}${kind === "NativeFunctionType" || kind === "BuiltinGeneratorType" ? octal(+second) : ""}${asciiLiteral(name).slice(1, -3)}${octal(0)}`,
+    entries:
+      kind === "ConstantType"
+        ? [`${first}ll`]
+        : kind === "DOMJITFunctionType" || (isAccessor && second !== "0")
+          ? [first, second]
+          : [first],
   };
 }
 
 function rowsOfMember(
   type: ClassType,
   member: ClassMember,
-  { isStatic = false, isUnforgeable = false, pointer = (member: string, symbol: string) => symbol },
+  {
+    isStatic = false,
+    isUnforgeable = false,
+    pointer = (member: string, symbol: string) => symbol,
+    pointerToDOMJIT = (member: string, domJIT: DOMJIT) => `&${domJIT.object}`,
+  },
 ): ReturnType<typeof tableRow>[] {
   const row = (
     key: string,
@@ -3449,8 +3587,18 @@ function rowsOfMember(
       `NativeFunctionType, ${pointer(key, symbol)}, ${length}`,
     );
   if (privateSymbol(member) || wellKnownSymbol(member.name)) return [];
-  if (member instanceof FunctionDefinition)
-    return [functionRow(member.name, methodHostFunctionName(type, member), member.length)];
+  const domJIT = isStatic ? null : domJITOf(type, member);
+  if (member instanceof FunctionDefinition) {
+    const symbol = methodHostFunctionName(type, member);
+    if (!domJIT) return [functionRow(member.name, symbol, member.length)];
+    return [
+      row(
+        member.name,
+        ["Function", ...(isUnforgeable ? ["ReadOnly"] : [])],
+        `DOMJITFunctionType, ${pointer(member.name, symbol)}, ${pointerToDOMJIT(member.name, domJIT)}`,
+      ),
+    ];
+  }
   if (member instanceof Constant)
     return [
       row(member.name, ["ConstantInteger", "ReadOnly"], `ConstantType, ${member.value}`, { configurable: false }),
@@ -3469,7 +3617,7 @@ function rowsOfMember(
         "CustomAccessor",
         ...(isStatic || checksOwnReceiver(type, member) ? [] : ["DOMAttribute"]),
       ],
-      `GetterSetterType, ${pointer(member.name, get)}, ${assignable ? pointer(member.name, setterHostFunctionName(type, member)) : "0"}`,
+      `${domJIT ? `DOMJITAttributeType, ${pointerToDOMJIT(member.name, domJIT)}` : `GetterSetterType, ${pointer(member.name, get)}`}, ${assignable ? pointer(member.name, setterHostFunctionName(type, member)) : "0"}`,
       member instanceof Getter && member.enumerable !== undefined ? { enumerable: member.enumerable } : {},
     ),
     ...(member instanceof Getter && member.web.stringifier ? [functionRow("toString", stringifierName(type), 0)] : []),
@@ -3576,9 +3724,20 @@ function cppSourceForInterface(type: ClassType, guards: Guards): string {
       if (guard) records.push(tableEntryRecord(removableFeatures(), id, guard.feature, "Throw", symbol, guard.builtin));
       return symbol;
     };
+    const pointerToDOMJIT = (member: string, { object, throwing, aborting }: DOMJIT) => {
+      const guard = guardOfMember(isStatic, member);
+      if (guard)
+        records.push(
+          ...throwing.map(it =>
+            tableEntryRecord(removableFeatures(), object, guard.feature, "Throw", it, guard.builtin),
+          ),
+          ...aborting.map(it => tableEntryRecord(removableFeatures(), object, guard.feature, "Abort", it)),
+        );
+      return `&${object}`;
+    };
     const rows = [
       ...members.flatMap(member =>
-        rowsOfMember(type, member, { isStatic, isUnforgeable: kind === "unforgeable", pointer }),
+        rowsOfMember(type, member, { isStatic, isUnforgeable: kind === "unforgeable", pointer, pointerToDOMJIT }),
       ),
       ...(kind === "main" ? generatedMethodsOf(type) : []).map(({ name, symbol, length }) =>
         tableRow(name, ["Function"], `NativeFunctionType, ${pointer(name, symbol)}, ${length}`),
@@ -4162,7 +4321,17 @@ ${rustReturnKeepingStringsAlive(method, rustHoldResult(method.answersThis ? unit
 
   for (const getter of [...type.getters, ...type.staticGetters]) {
     if (getter.family) continue;
-    const get = `<${rustPath}>::${isFamily ? "get" : getter.rustName}(${[...leading(getter.receiver, getter.passThis, getter.capability), ...keyArgument].join(", ")})`;
+    const { member } = getter.web;
+    const get =
+      member === undefined
+        ? `<${rustPath}>::${isFamily ? "get" : getter.rustName}(${[...leading(getter.receiver, getter.passThis, getter.capability), ...keyArgument].join(", ")})`
+        : `core::cell::Cell::<${getter.type.rustType(scope)}>::get(&this.payload_ref().${member})`;
+    if (member !== undefined) {
+      assert(type.hasOwnStruct, `${type.name}.${getter.name}: a member of a struct of its own`);
+      thunks += `#[unsafe(no_mangle)]
+pub static ${offsetOfMemberSymbolName(type, getter)}: u32 = (${offsetOfPayload(type)} + core::mem::offset_of!(${rustPath}, ${member})) as u32;
+`;
+    }
     if (!getter.web.field || getter.web.computedIfEmpty)
       thunks += rustThunk(
         getterSymbolName(type, getter),
@@ -4514,18 +4683,19 @@ ${fieldsInStruct > 0 ? `    pub type Fields = bindgen::Fields<${fieldsInStruct}>
       const id = snakeCase(field);
       const offset = id.toUpperCase();
       const held = type.internalFieldInterfaces.get(field);
+      const isNullable = type.nullableInternalFields.has(field);
       const declared = type.getters.filter(getter => getter.internalField === field && checkedWordsOf(getter.type));
       return `    pub const ${offset}: usize = ${offsetOfField(type, index)};
     /// \`None\` if the field is empty.
     #[inline(always)]
     pub fn ${rustIdent(id)}(this: &${rustPath}) -> Option<${held ? `&${held.rustPath}` : "JSValue"}> {
         // SAFETY: the cell has this field${held ? ", and only instances are stored in it" : ""}.
-        unsafe { bindgen::${held ? "instance_in_field" : "value_in_field"}(this, ${offset}) }
+        unsafe { ${isNullable ? `bindgen::value_in_field(this, ${offset}).filter(|it| !it.is_null()).map(|it| bindgen::JsInterface::from_js_unchecked(it))` : `bindgen::${held ? "instance_in_field" : "value_in_field"}(this, ${offset})`} }
     }
     #[inline(always)]
     pub fn set_${id}(this: &${rustPath}, value: ${held ? `Option<&${held.rustPath}>` : "JSValue"}) {
 ${declared.map(getter => `        let value = bindgen::hold_cached_to_declared_type(value, ${rustDeclaredWords(checkedWordsOf(getter.type)!, { member: `${name}.${getter.name}` }, 8)});\n`).join("")}        // SAFETY: the cell has this field.
-        unsafe { bindgen::store_in_field(this, ${offset}, ${held ? "value.map_or(JSValue::ZERO, bindgen::JsInterface::to_js)" : "value"}) }
+        unsafe { bindgen::store_in_field(this, ${offset}, ${held ? `value.map_or(JSValue::${isNullable ? "NULL" : "ZERO"}, bindgen::JsInterface::to_js)` : "value"}) }
     }
 `;
     })

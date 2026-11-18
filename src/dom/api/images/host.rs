@@ -6,6 +6,7 @@ use bun_web::url::Url;
 
 use super::*;
 use crate::api::loading::{load_subresource, when_loaded};
+use crate::api::media::controls::add_part;
 use crate::tree::Replaced;
 
 pub(crate) use bun_web::request::Destination;
@@ -102,6 +103,14 @@ pub(crate) fn matches_media(element: &Element) -> bool {
 pub(crate) fn is_being_rendered<'a>(cx: Cx<'_, 'a>, element: &'a Element) -> bool {
     element.is_rendered()
         && element.synced_engine(cx, |engine, id| engine.updated_style_bits(id, 1) != 0)
+}
+
+/// Returns the parent for the text.
+#[optimize(size)]
+pub(crate) fn add_alt_text<'a>(cx: Cx<'_, 'a>, host: &'a Element, root: &'a Node) -> &'a Element {
+    let text = add_part(cx, host, root, atom!("span"), "-internal-alt-text");
+    add_part(cx, host, text, atom!("span"), "-internal-alt-icon");
+    text
 }
 
 pub(crate) fn show_replaced<'a>(cx: Cx<'_, 'a>, element: &'a Element, replaced: Option<Replaced>) {

@@ -3505,8 +3505,10 @@ export interface WebMemberOptions {
   exposed?: Exposure;
   /** `[SecureContext]`. */
   secure?: boolean;
+  /** Somebody has read the Rust function down to the last function it calls: it changes nothing that a script can observe, runs no JavaScript, makes no prototype or structure, throws only for lack of memory, uses the global object for its VM alone, and answers the same until something else is called. The JIT compilers move, merge and drop the call. */
+  onlyReads?: true;
 }
-const webMemberKeys = ["isCold", "ceReactions", "unforgeable", "unscopable", "exposed", "secure"] as const;
+const webMemberKeys = ["isCold", "ceReactions", "unforgeable", "unscopable", "exposed", "secure", "onlyReads"] as const;
 export type Exposure = readonly ("Window" | "Worker" | "DedicatedWorker" | "SharedWorker")[];
 
 export class Signature {
@@ -3959,6 +3961,10 @@ export interface GetterField extends SignatureColumns, EntryColumns, WebMemberOp
   field?: string;
   /** With `field`: while that is empty, the getter in Rust answers. */
   computedIfEmpty?: true;
+  /** Of an interface: it returns this member of the struct, a `Cell` of the getter's type, and there is no getter in Rust. */
+  member?: string;
+  /** Of an interface: a `Bun::Bindgen::DOMJIT::Shortcut`, which the JIT compilers try before they call the getter. */
+  shortcut?: string;
   /** Key the accessor by this private builtin name instead of a string. */
   privateSymbol?: string;
   /** `[PutForwards]`. */
@@ -4096,7 +4102,8 @@ export interface ClassOptions extends ClassTableColumns {
    * JS values the object holds, empty at first. The GC visits them; `js_Name` gets `x_get_cached` / `x_set_cached` / `x_take_cached` for each.
    * In a record each field names its type: `b.any` is what a list declares, and `b.cell("JSC::JSPromise", ..)` makes `m_x` a `WriteBarrier<JSC::JSPromise>` that only hand-written C++ uses.
    */
-  internalFields?: readonly string[] | Readonly<Record<string, AnyType | CellClass | ClassType | SelfType>>;
+  internalFields?:
+    readonly string[] | Readonly<Record<string, AnyType | CellClass | ClassType | SelfType | OptionalType>>;
   /** Properties of the prototype. */
   proto?: Record<string, Field>;
   /** Properties of the constructor. */
@@ -4140,6 +4147,17 @@ function refuseCppMemberFunctionNames(name: string, args: readonly { name: strin
 }
 /** Passed between C++ and Rust without conversion. */
 const isPassedAsIs = (type: Type) => type instanceof AnyType || type instanceof PrimitiveType;
+
+/** What the JIT compilers check an argument for, and what they pass. Converting it then runs no JavaScript and refuses nothing. */
+export function speculatedArgument(type: Type): { speculation: string; cppType: string; box: string } | undefined {
+  if (type.canRefuse || type instanceof RangeType) return undefined;
+  if (type instanceof LocalStringType && !type.idlType.includes("ByteString"))
+    return { speculation: "SpecString", cppType: "JSC::JSString*", box: "JSC::JSValue" };
+  if (type instanceof IntegerType && (type.valueKinds === "any" || type.rustName === "i32"))
+    return { speculation: "SpecInt32Only", cppType: "int32_t", box: "JSC::jsNumber" };
+  if (type instanceof BoolType) return { speculation: "SpecBoolean", cppType: "bool", box: "JSC::jsBoolean" };
+  return undefined;
+}
 
 export class Method extends Signature {
   readonly name: string;
@@ -4208,6 +4226,14 @@ export class Method extends Signature {
     assert(!(this.privateSymbol && wellKnownSymbol(name)), `${name}: an @@ key has no privateSymbol`);
     this.functionName = options.name;
     assert(this.functionName === undefined || wellKnownSymbol(name), `${name}: name is only for an @@ key`);
+    assert(
+      !options.onlyReads || (!isStatic && this.capability !== "js" && !options.ceReactions && !this.rejects),
+      `${name}: what only reads is not static, runs no JavaScript and rejects nothing`,
+    );
+    assert(
+      !options.onlyReads || (this.args.length <= 2 && this.args.every(arg => speculatedArgument(arg.type))),
+      `${name}: what only reads has at most two arguments, each a string, an integer or a boolean`,
+    );
   }
 }
 
@@ -4282,6 +4308,8 @@ export class Getter {
       "pure",
       "field",
       "computedIfEmpty",
+      "member",
+      "shortcut",
       "privateSymbol",
       "putForwards",
       "replaceable",
@@ -4337,7 +4365,24 @@ export class Getter {
     this.internalField = options.cache === true ? memberIdentifier(name) : (options.cache ?? options.field);
     this.declaresInternalField = options.cache === true;
     this.configurable = options.configurable;
-    this.isPure = options.pure ?? false;
+    this.isPure = options.pure ?? options.member !== undefined;
+    assert(
+      options.member === undefined ||
+        (!isStatic &&
+          !options.field &&
+          this.isPure &&
+          this.type instanceof PrimitiveType &&
+          ["bool", "u8", "u16", "i32"].includes(this.type.rustName)),
+      `${name}: a member is b.bool, b.u8, b.u16 or b.i32, and no field`,
+    );
+    assert(
+      !options.onlyReads || (!isStatic && this.capability !== "js" && !options.rejects),
+      `${name}: what only reads is not static, runs no JavaScript and rejects nothing`,
+    );
+    assert(
+      options.shortcut === undefined || (!isStatic && this.internalField === undefined && options.member === undefined),
+      `${name}: a field or a member needs no shortcut`,
+    );
     assert(
       !this.isPure || (this.capability === "none" && !this.throws && !options.cache && !this.passThis),
       `${name}: a pure getter has no capability, throws, cache or passThis`,
@@ -4476,6 +4521,8 @@ export class ClassType extends NamedType {
   classIndex = -1;
   /** The internal fields that hold an instance of an interface. */
   readonly internalFieldInterfaces = new Map<string, ClassType>();
+  /** Those of them that hold `null` for nothing. */
+  readonly nullableInternalFields = new Set<string>();
   /** What `b.interface`, `b.mixin` and `b.family` add. */
   web: WebInterface | undefined;
   /** Without `options` it is only named: `b.ref`. */
@@ -4688,9 +4735,11 @@ export class ClassType extends NamedType {
     const internalFieldClasses = new Map<string, CellClass>();
     if (!Array.isArray(declaredFields))
       for (const [field, type] of Object.entries(declaredFields)) {
-        const held = type instanceof Type ? own(type) : type;
+        const isNullable = type instanceof OptionalType && type.modifier === "nullable";
+        const held = type instanceof Type ? own(isNullable ? type.inner : type) : type;
         if (web && held instanceof ClassType && held.web) {
           this.internalFieldInterfaces.set(field, held);
+          if (isNullable) this.nullableInternalFields.add(field);
           continue;
         }
         assert(type instanceof AnyType || type instanceof CellClass, `${field}: an internal field is b.any or b.cell`);

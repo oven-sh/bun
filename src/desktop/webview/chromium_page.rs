@@ -7,11 +7,12 @@ use bun_web::net::NetError;
 use bun_web::url::{Url, percent_decode};
 
 use super::chromium::{Browser, Session, WORLD, from_engine, to_engine, unsupported};
-use super::engine::{Awaited, Failure, Reply};
+use super::engine::{self, Awaited, Failure, Reply};
 use super::notices;
 use super::remote::Emitted;
 use crate::files;
 use crate::prelude::*;
+use crate::session::download;
 use crate::task::{self, Later, Sequence};
 use crate::text::{before, from_base64, origin_of, split_once};
 use crate::value::{Value, quote};
@@ -63,6 +64,10 @@ pub(super) struct Page {
     is_reload: Cell<bool>,
     pub(super) request: RefCell<Value>,
     pub(super) opening: RefCell<Value>,
+    /// It has opened a window, or was opened by one.
+    pub(super) has_relatives: Cell<bool>,
+    /// Since the document has come.
+    has_had_frames: Cell<bool>,
     frames: RefCell<Vec<Rc<Frame>>>,
     state: RefCell<Value>,
     loading: RefCell<Option<Later<Result<(), Failure>>>>,
@@ -126,6 +131,8 @@ impl Page {
             is_reload: false.into(),
             request: Default::default(),
             opening: Default::default(),
+            has_relatives: false.into(),
+            has_had_frames: false.into(),
             frames: Default::default(),
             state: state.into(),
             loading: Default::default(),
@@ -308,19 +315,31 @@ impl Page {
         )
     }
 
+    /// The engine does not say. A page can withhold the referrer, but not make it up.
+    fn initiator(&self, key: &str, referrer: &str) -> Option<Rc<Frame>> {
+        if referrer.is_empty() {
+            let is_alone = !self.has_relatives.get() && !self.has_had_frames.get();
+            return self.frame(key).filter(|_| is_alone);
+        }
+        let origin = origin_of(&from_engine(referrer));
+        let mut frames = self.frame(key).into_iter().chain(self.frames());
+        frames.find(|it| origin != "null" && it.about.borrow()["origin"].is(&origin))
+    }
+
     pub(super) fn emit_navigation(
         &self,
         name: &str,
         key: &str,
         url: &str,
         is_same_document: bool,
+        referrer: &str,
     ) -> bool {
         let details = record! {
             "url": url,
             "isSameDocument": is_same_document,
             "isMainFrame": *self.target == *key,
             "frame": self.handle(key),
-            "initiator": (self.frames.borrow().len() == 1).then(|| self.handle(key)),
+            "initiator": self.initiator(key, referrer).map(|it| self.handle(&it.key)),
         };
         self.emit_for_frame(name, key, details, list![url, is_same_document])
     }
@@ -354,7 +373,9 @@ impl Page {
             .pages
             .borrow_mut()
             .insert(key.into(), Rc::clone(self));
+        self.browser.frame_added.take().set(());
         if !parent.is_empty() {
+            self.has_had_frames.set(true);
             self.emit(
                 "frame-created",
                 record! {},
@@ -453,17 +474,33 @@ impl Page {
         task::spawn(self.browser.clone().read_cookies(Rc::clone(&self.owner)));
     }
 
-    pub(super) fn download(&self, url: &str, name: &Value) -> JsResult<()> {
+    /// The engine does not say which frame it is from, only which one it is in.
+    pub(super) fn wish_in(&self, key: &str, name: Option<&str>) -> JsResult<download::Wish> {
+        let origin = |it: &Rc<Frame>| it.about.borrow()["origin"].display();
+        let known = (self.frame(key).as_ref().map(origin)).filter(|it| {
+            self.frames
+                .borrow()
+                .iter()
+                .all(|other| origin(other) == *it)
+        });
+        Ok(download::Wish {
+            frame: match known {
+                Some(_) => engine::to_js(&self.handle(key))?,
+                None => JSValue::NULL,
+            },
+            origin: known.unwrap_or_else(|| "null".to_owned()),
+            is_in_main_frame: *self.target == *key,
+            name: name.map(str::to_owned),
+        })
+    }
+
+    pub(super) fn download(&self, url: &str, wish: Option<download::Wish>) -> JsResult<()> {
         let Some(contents) = self.browser.0.view(self.id).map(|it| it.contents()) else {
             return Ok(());
         };
-        let arguments = [
-            js(from_engine(url))?,
-            JSValue::UNDEFINED,
-            contents,
-            js(name)?,
-        ];
-        invoke(get(contents, "session")?, "downloadURL", &arguments).map(drop)
+        let session = crate::session::Session::of(contents)?;
+        session.download(&from_engine(url), Default::default(), contents, wish);
+        Ok(())
     }
 
     async fn update_history(&self) {
@@ -608,13 +645,13 @@ impl Page {
         if *self.target == *key && !is_expected && !self.is_superseded() {
             self.abort("ERR_ABORTED", -3);
         }
-        self.emit_navigation("did-start-navigation", key, url, false);
+        self.emit_navigation("did-start-navigation", key, url, false, "");
         // The others are held up in `Browser::intercept`.
         let scheme = before(&to_engine(url), ":").to_owned();
         if !is_expected && !matches!(&*scheme, "http" | "https" | "file" | "about" | "data") {
             let names = ["will-frame-navigate", "will-navigate"];
             let mut names = names[..1 + usize::from(*self.target == *key)].iter();
-            if names.any(|name| self.emit_navigation(name, key, url, false)) {
+            if names.any(|name| self.emit_navigation(name, key, url, false, "")) {
                 self.tell("Page.stopLoading", record! {});
             }
         }
@@ -675,6 +712,7 @@ impl Page {
         if is_main {
             self.set("url", &*url);
             self.set("isCrashed", false);
+            self.has_had_frames.set(false);
             if self.stub.borrow().is_some() {
                 self.bypass_service_worker(false);
             }
@@ -723,7 +761,7 @@ impl Page {
             ("Page.frameNavigated", _) => self.navigated(&params["frame"], session).await,
             ("Page.navigatedWithinDocument", Some(frame)) => {
                 let (url, is_main) = (from_engine(params["url"].text()), frame.key == self.target);
-                self.emit_navigation("did-start-navigation", key, &url, true);
+                self.emit_navigation("did-start-navigation", key, &url, true, "");
                 frame.about.borrow_mut().set("url", &*url);
                 if is_main {
                     self.set("url", &*url);
@@ -1163,20 +1201,14 @@ impl Page {
                 ]));
             }
             "printToPDF" => {
-                let options = first.pick(&[
-                    "landscape",
-                    "printBackground",
-                    "scale",
-                    "pageRanges",
-                    "preferCSSPageSize",
-                ]);
+                let options = super::print::for_protocol(first).map_err(Failure::new)?;
                 return Ok(Value::buffer(&from_base64(
                     self.inspect("Page.printToPDF", options).await?["data"].text(),
                 )));
             }
             "downloadURL" => {
                 return Ok((
-                    task::report(self.download(first.text(), &Value::Undefined)),
+                    task::report(self.download(first.text(), None)),
                     Value::Undefined,
                 )
                     .1);

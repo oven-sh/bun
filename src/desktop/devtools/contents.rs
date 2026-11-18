@@ -8,7 +8,6 @@ use crate::contents::{self, inspection};
 use crate::prelude::*;
 use crate::realm;
 use crate::value::Value;
-use crate::webview::wire;
 
 pub(super) struct Contents(Root<contents::Contents>);
 
@@ -77,7 +76,7 @@ impl Contents {
     }
 
     pub(super) fn control(&self, method: &str, arguments: &[JSValue]) -> JsResult<JSValue> {
-        self.started_page()?.ask(method, arguments)
+        self.live_page()?.inspect(method, arguments)
     }
 
     pub(super) fn document(&self) -> JsResult<dom::Document> {
@@ -86,19 +85,14 @@ impl Contents {
     }
 
     pub(super) fn world(&self, id: u32) -> JsResult<World> {
-        self.started_page()?.world_with_id(id)
+        self.live_page()?.world_with_id(id)
     }
 
-    pub(super) fn simulate(&self, event: &Value) -> JsResult<()> {
+    pub(super) fn simulate(&self, input: bun_web::input::Input) -> JsResult<()> {
         if self.guest().is_none() {
-            self.started_page()?;
+            self.live_page()?;
         }
-        self.input(js(event)?)
-    }
-
-    /// The last `resize` event.
-    pub(super) fn last_size(&self) -> JsResult<Value> {
-        self.size().map_or(Ok(Value::Undefined), wire::data_from_js)
+        self.input(input)
     }
 
     pub(super) fn bring_to_front(&self) -> JsResult<()> {

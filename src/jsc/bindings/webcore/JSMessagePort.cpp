@@ -21,11 +21,7 @@
 #include "config.h"
 #include "JSMessagePort.h"
 
-#include "ActiveDOMObject.h"
-
 #include "EventNames.h"
-#include "ExtendedDOMClientIsoSubspaces.h"
-#include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"
 #include "JSDOMAttribute.h"
 #include "JSDOMBinding.h"
@@ -38,22 +34,12 @@
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMOperation.h"
-#include "JSDOMWrapperCache.h"
+#include "JSDOMPrototype.h"
 #include "JSEventListener.h"
 #include "JSStructuredSerializeOptions.h"
-#include "ScriptExecutionContext.h"
-#include "WebCoreJSClientData.h"
-// #include "WebCoreOpaqueRootInlines.h"
-#include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/IteratorOperations.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCInlines.h>
-#include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
-#include <JavaScriptCore/SlotVisitorMacros.h>
-#include <JavaScriptCore/SubspaceInlines.h>
-#include <wtf/GetPtr.h>
-#include <wtf/PointerPreparations.h>
-#include <wtf/URL.h>
 
 namespace WebCore {
 using namespace JSC;
@@ -69,62 +55,20 @@ static JSC_DECLARE_HOST_FUNCTION(jsMessagePortPrototypeFunction_hasRef);
 
 // Attributes
 
-static JSC_DECLARE_CUSTOM_GETTER(jsMessagePortConstructor);
 static JSC_DECLARE_CUSTOM_GETTER(jsMessagePort_onmessage);
 static JSC_DECLARE_CUSTOM_SETTER(setJSMessagePort_onmessage);
 static JSC_DECLARE_CUSTOM_GETTER(jsMessagePort_onmessageerror);
 static JSC_DECLARE_CUSTOM_SETTER(setJSMessagePort_onmessageerror);
 
-class JSMessagePortPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static JSMessagePortPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSMessagePortPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSMessagePortPrototype))) JSMessagePortPrototype(vm, globalObject, structure);
-        ptr->finishCreation(vm);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSMessagePortPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSMessagePortPrototype(JSC::VM& vm, JSC::JSGlobalObject*, JSC::Structure* structure)
-        : JSC::JSNonFinalObject(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&);
-};
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSMessagePortPrototype, JSMessagePortPrototype::Base);
-
+using JSMessagePortPrototype = JSDOMPrototype<JSMessagePort>;
 using JSMessagePortDOMConstructor = JSDOMConstructorNotConstructable<JSMessagePort, Bun::ErrorCode::ERR_CONSTRUCT_CALL_INVALID>;
 
 template<> const ClassInfo JSMessagePortDOMConstructor::s_info = { "MessagePort"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMessagePortDOMConstructor) };
 
-template<> JSValue JSMessagePortDOMConstructor::prototypeForStructure(JSC::VM& vm, const JSDOMGlobalObject& globalObject)
-{
-    return JSEventTarget::getConstructor(vm, &globalObject);
-}
-
-template<> void JSMessagePortDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
-{
-    initializeBaseProperties(vm, 0, "MessagePort"_s, JSMessagePort::prototype(vm, globalObject));
-}
-
 /* Hash table for prototype */
 
 static const HashTableValue JSMessagePortPrototypeTableValues[] = {
-    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsMessagePortConstructor, 0 } },
+    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, JSMessagePortPrototype::constructorGetter, 0 } },
     { "onmessage"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsMessagePort_onmessage, setJSMessagePort_onmessage } },
     { "onmessageerror"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsMessagePort_onmessageerror, setJSMessagePort_onmessageerror } },
     { "postMessage"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMessagePortPrototypeFunction_postMessage, 1 } },
@@ -135,9 +79,9 @@ static const HashTableValue JSMessagePortPrototypeTableValues[] = {
     { "hasRef"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMessagePortPrototypeFunction_hasRef, 0 } },
 };
 
-const ClassInfo JSMessagePortPrototype::s_info = { "MessagePort"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMessagePortPrototype) };
+template<> const ClassInfo JSMessagePortPrototype::s_info = { "MessagePort"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMessagePortPrototype) };
 
-void JSMessagePortPrototype::finishCreation(VM& vm)
+template<> void JSMessagePortPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSMessagePort::info(), JSMessagePortPrototypeTableValues, *this);
@@ -146,38 +90,14 @@ void JSMessagePortPrototype::finishCreation(VM& vm)
 
 const ClassInfo JSMessagePort::s_info = { "MessagePort"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMessagePort) };
 
-JSMessagePort::JSMessagePort(Structure* structure, JSDOMGlobalObject& globalObject, Ref<MessagePort>&& impl)
-    : JSEventTarget(structure, globalObject, WTF::move(impl))
-{
-}
-
-static_assert(std::is_base_of<ActiveDOMObject, MessagePort>::value, "Interface is marked as [ActiveDOMObject] but implementation class does not subclass ActiveDOMObject.");
-
 JSObject* JSMessagePort::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    auto* structure = JSMessagePortPrototype::createStructure(vm, &globalObject, JSEventTarget::prototype(vm, globalObject));
-    structure->setMayBePrototype(true);
-    return JSMessagePortPrototype::create(vm, &globalObject, structure);
-}
-
-JSObject* JSMessagePort::prototype(VM& vm, JSDOMGlobalObject& globalObject)
-{
-    return getDOMPrototype<JSMessagePort>(vm, globalObject);
+    return JSMessagePortPrototype::create(vm, globalObject, JSEventTarget::prototype(vm, globalObject));
 }
 
 JSValue JSMessagePort::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSMessagePortDOMConstructor, DOMConstructorID::MessagePort>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsMessagePortConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = dynamicDowncast<JSMessagePortPrototype>(JSValue::decode(thisValue));
-    if (!prototype) [[unlikely]]
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    return JSValue::encode(JSMessagePort::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
 
 static inline JSValue jsMessagePort_onmessageGetter(JSGlobalObject& lexicalGlobalObject, JSMessagePort& thisObject)
@@ -410,112 +330,18 @@ JSC_DEFINE_HOST_FUNCTION(jsMessagePortPrototypeFunction_hasRef, (JSGlobalObject 
     return IDLOperation<JSMessagePort>::call<jsMessagePortPrototypeFunction_hasRefBody>(*lexicalGlobalObject, *callFrame, "hasRef");
 }
 
-JSC::GCClient::IsoSubspace* JSMessagePort::subspaceForImpl(JSC::VM& vm)
+bool JSMessagePort::isReachableFromOpaqueRoots(JSC::AbstractSlotVisitor& visitor, ASCIILiteral* reason) const
 {
-    return WebCore::subspaceForImpl<JSMessagePort, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForMessagePort, m_subspaceForMessagePort));
-}
-
-template<typename Visitor>
-void JSMessagePort::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-{
-    auto* thisObject = uncheckedDowncast<JSMessagePort>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-    thisObject->visitAdditionalChildrenInGCThread(visitor);
-}
-
-DEFINE_VISIT_CHILDREN(JSMessagePort);
-
-template<typename Visitor>
-void JSMessagePort::visitOutputConstraints(JSCell* cell, Visitor& visitor)
-{
-    auto* thisObject = uncheckedDowncast<JSMessagePort>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitOutputConstraints(thisObject, visitor);
-    thisObject->visitAdditionalChildrenInGCThread(visitor);
-}
-
-template void JSMessagePort::visitOutputConstraints(JSCell*, AbstractSlotVisitor&);
-template void JSMessagePort::visitOutputConstraints(JSCell*, SlotVisitor&);
-void JSMessagePort::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
-{
-    auto* thisObject = uncheckedDowncast<JSMessagePort>(cell);
-    analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
-    if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
-    Base::analyzeHeap(cell, analyzer);
-}
-
-bool JSMessagePortOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
-{
-    auto* jsMessagePort = uncheckedDowncast<JSMessagePort>(handle.slot()->asCell());
-    auto& wrapped = jsMessagePort->wrapped();
-    if (!wrapped.isContextStopped() && wrapped.hasPendingActivity()) {
-        if (reason) [[unlikely]]
-            *reason = "ActiveDOMObject with pending activity"_s;
-        return true;
-    }
-    MessagePort* owner = &jsMessagePort->wrapped();
     if (reason) [[unlikely]]
         *reason = "Reachable from MessagePort"_s;
 
-    return visitor.containsOpaqueRoot(owner);
+    return visitor.containsOpaqueRoot(&wrapped());
 }
 
-JSC::WeakHandleOwner::FinalizeResult JSMessagePortOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
-{
-    auto* jsMessagePort = static_cast<JSMessagePort*>(handle.slot()->asCell());
-    auto& world = *static_cast<DOMWrapperWorld*>(context);
-    uncacheWrapper(world, &jsMessagePort->wrapped(), jsMessagePort);
-    return FinalizeResult::KeepImpl;
-}
-
-#if ENABLE(BINDING_INTEGRITY)
-#if PLATFORM(WIN)
-#pragma warning(disable : 4483)
-extern "C" {
-extern void (*const __identifier("??_7MessagePort@WebCore@@6B@")[])();
-}
-#else
-extern "C" {
-extern void* _ZTVN7WebCore11MessagePortE[];
-}
-#endif
-#endif
-
-JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<MessagePort>&& impl)
-{
-
-    if constexpr (std::is_polymorphic_v<MessagePort>) {
-#if ENABLE(BINDING_INTEGRITY)
-        // const void* actualVTablePointer = getVTablePointer(impl.ptr());
-#if PLATFORM(WIN)
-        void* expectedVTablePointer = __identifier("??_7MessagePort@WebCore@@6B@");
-#else
-        // void* expectedVTablePointer = &_ZTVN7WebCore11MessagePortE[2];
-#endif
-
-        // If you hit this assertion you either have a use after free bug, or
-        // MessagePort has subclasses. If MessagePort has subclasses that get passed
-        // to toJS() we currently require MessagePort you to opt out of binding hardening
-        // by adding the SkipVTableValidation attribute to the interface IDL definition
-        // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
-#endif
-    }
-    return createWrapper<MessagePort>(globalObject, WTF::move(impl));
-}
-
-NEVER_INLINE JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, MessagePort& impl)
+template<> NEVER_INLINE JSC::JSValue toJS<MessagePort>(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, MessagePort& impl)
 {
     BUN_REMOVABLE_DEFINITION(MessageChannel, static_cast<JSC::JSValue (*)(JSC::JSGlobalObject*, JSDOMGlobalObject*, MessagePort&)>(toJS));
     return wrap(lexicalGlobalObject, globalObject, impl);
-}
-
-MessagePort* JSMessagePort::toWrapped(JSC::VM&, JSC::JSValue value)
-{
-    if (auto* wrapper = dynamicDowncast<JSMessagePort>(value))
-        return &wrapper->wrapped();
-    return nullptr;
 }
 
 }

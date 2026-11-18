@@ -240,9 +240,14 @@ impl FontFace {
         characters.is_empty() || characters.chars().any(|it| coverage.has(it))
     }
 
-    /// Among faces that match as well, the one with the highest `order` wins. `None` if it is not a font.
-    pub(crate) fn register(&self, data: &Data, scope: u32, order: u32) -> Option<u32> {
-        let Some(ui) = ui() else { return Some(0) };
+    /// Among faces that match as well, the one with the highest `order` wins. Fails if it is not a font.
+    pub(crate) fn register(
+        &self,
+        data: &Data,
+        scope: u32,
+        order: u32,
+    ) -> Result<u32, protocol::Text> {
+        let Some(ui) = ui() else { return Ok(0) };
         let fraction = |it| {
             self.computed(it)
                 .strip_suffix(b"%")
@@ -290,7 +295,7 @@ impl FontFace {
             Data::Bytes(bytes) => protocol::FontSource::Bytes((**bytes).into()),
             Data::Local(name) => protocol::FontSource::Local((**name).into()),
         };
-        (ui.register_font)(face, source).get().ok()
+        (ui.register_font)(face, source).get()
     }
 }
 
@@ -318,7 +323,7 @@ impl Document {
                     may_be_local
                         && face
                             .register(&Data::Local(Rc::clone(name)), self.fonts.scope, 0)
-                            .is_some()
+                            .is_ok()
                 }
             };
             match face.sources.iter().find(is_it) {

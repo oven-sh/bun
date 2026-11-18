@@ -8,10 +8,10 @@ use super::source_set::{self, Descriptor};
 use super::*;
 use crate::api::canvas::Source;
 use crate::api::core::steps::{AttrChange, Steps};
-use crate::api::core::{Rooted, global_of, string_replace_all};
+use crate::api::core::{Observers, Rooted, global_of, insert, string_replace_all};
 use crate::api::graphics::Failure;
-use crate::api::interim::current_document;
 use crate::api::loading::may_reuse_image;
+use crate::api::on_behalf::current_document;
 use crate::api::ui::layout::laid_out;
 use crate::generated_bindgen::images::HTMLImageElement;
 use crate::hints::non_negative_integer;
@@ -300,14 +300,31 @@ fn show<'a>(cx: Cx<'_, 'a>, image: &'a Element) {
         return;
     }
     let (it, picture) = (state(image), state(image).picture());
-    let alt = image
-        .attr(atom!("alt"))
-        .filter(|alt| picture.is_none() && it.is_broken.get() && !alt.is_empty());
+    let is_missing = picture.is_none() && !it.is_queued.get() && !it.is_waiting();
+    let alt = is_missing.then(|| {
+        image
+            .attr(atom!("alt"))
+            .or_else(|| image.attr(atom!("title")))
+            .unwrap_or_default()
+    });
+    let alt = alt.filter(|alt| {
+        !alt.is_empty() || image.has_attr(atom!("src")) || !it.url.borrow().is_empty()
+    });
     if it.has_alt.replace(alt.is_some()) || alt.is_some() {
         let root = image
             .shadow_root()
             .unwrap_or_else(|| image.attach_ua_shadow(cx));
-        string_replace_all(cx, alt.clone().unwrap_or_default(), root);
+        string_replace_all(cx, DomString::default(), root);
+        if let Some(alt) = &alt {
+            let parent = add_alt_text(cx, image, root);
+            insert(
+                cx,
+                image.doc().create_text(&cx.heap, alt.clone()),
+                parent,
+                None,
+                Observers::Suppress,
+            );
+        }
     }
     let turned = picture
         .as_ref()
@@ -616,6 +633,9 @@ fn queue_update<'a>(cx: Cx<'_, 'a>, image: &'a Element) {
     if !it.is_queued.replace(true) {
         later(&cx.heap, image, update);
     }
+    if !it.has_picture() {
+        show(cx, image);
+    }
 }
 
 fn resume<'a>(cx: Cx<'_, 'a>, image: &'a Element) {
@@ -814,15 +834,7 @@ impl HTMLImageElement {
                 .flatten()
                 .unwrap_or_else(|| state(self).natural_size()[axis] as u32);
         }
-        let has_alt = state(self).has_alt.get();
-        laid_out(cx, self, |engine, id| {
-            if has_alt {
-                engine.bounding_rect(id).to_array()[2 + axis]
-            } else {
-                engine.box_sizes(id)[2 + axis]
-            }
-        })
-        .round() as u32
+        laid_out(cx, self, |engine, id| engine.box_sizes(id)[2 + axis]).round() as u32
     }
 
     fn set_dimension<'a>(&'a self, cx: Cx<'_, 'a>, attribute: Known, value: u32) {
@@ -959,7 +971,7 @@ fn attribute_changed<'a>(cx: Cx<'_, 'a>, image: &'a Element, change: &AttrChange
         }
         atom!("loading") => later(&cx.heap, image, reselect),
         atom!("width") if allows_auto_sizes(image) => queue_update(cx, image),
-        atom!("alt") => show(cx, image),
+        atom!("alt") | atom!("title") => show(cx, image),
         _ => {}
     }
 }

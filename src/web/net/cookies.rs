@@ -133,6 +133,39 @@ pub fn domain_for(url: &Url, given: &[u8]) -> Option<(Bytes, bool)> {
     ))
 }
 
+#[derive(Clone, Copy)]
+pub enum Invalid {
+    UnsupportedScheme,
+    ControlCharacters,
+    Domain,
+    SecureFromInsecureUrl,
+    SameSiteNoneInsecure,
+    PartitionedInsecure,
+    TooLong,
+    NoName,
+    Prefix,
+}
+
+impl core::fmt::Display for Invalid {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(match self {
+            Invalid::UnsupportedScheme => {
+                "Attempted to set a cookie from a scheme that does not support cookies."
+            }
+            Invalid::ControlCharacters => {
+                "The cookie contains ASCII control characters or semicolons."
+            }
+            Invalid::Domain => "The cookie was set with an invalid Domain attribute.",
+            Invalid::SecureFromInsecureUrl => "Secure cookies can only be set from secure URLs.",
+            Invalid::SameSiteNoneInsecure => "SameSite=None requires Secure.",
+            Invalid::PartitionedInsecure => "Partitioned requires Secure.",
+            Invalid::TooLong => "The name and the value are too long.",
+            Invalid::NoName => "The cookie has no name.",
+            Invalid::Prefix => "The cookie violated the requirements of its prefix.",
+        })
+    }
+}
+
 impl Cookie {
     pub fn parse(header: &[u8], url: &Url, top_level_site: &Site) -> Option<Cookie> {
         if has_control(header) {
@@ -200,7 +233,7 @@ impl Cookie {
     }
 
     /// What is wrong with it.
-    pub fn validate(&self, url: &Url) -> Result<(), &'static str> {
+    pub fn validate(&self, url: &Url) -> Result<(), Invalid> {
         let (name, value) = (&*self.name, &*self.value);
         let is_host = has_prefix(name, b"__host-");
         let is_http = has_prefix(name, b"__http-") || has_prefix(name, b"__host-http-");
@@ -208,33 +241,33 @@ impl Cookie {
             .iter()
             .any(|it| has_prefix(value, it));
         Err(if !has_cookies(url) {
-            "Attempted to set a cookie from a scheme that does not support cookies."
+            Invalid::UnsupportedScheme
         } else if [name, value]
             .iter()
             .any(|it| has_control(it) || strings::contains_char(it, b';'))
         {
-            "The cookie contains ASCII control characters or semicolons."
+            Invalid::ControlCharacters
         } else if !self.is_host_only
             && (!domain_matches(url.hostname(), &self.domain) || is_public_suffix(&self.domain))
         {
-            "The cookie was set with an invalid Domain attribute."
+            Invalid::Domain
         } else if self.is_secure && !is_potentially_trustworthy(url) {
-            "Secure cookies can only be set from secure URLs."
+            Invalid::SecureFromInsecureUrl
         } else if self.same_site == SameSite::None && !self.is_secure {
-            "SameSite=None requires Secure."
+            Invalid::SameSiteNoneInsecure
         } else if self.partition.is_some() && !self.is_secure {
-            "Partitioned requires Secure."
+            Invalid::PartitionedInsecure
         } else if name.len() + value.len() > 4096 {
-            "The name and the value are too long."
+            Invalid::TooLong
         } else if name.is_empty()
             && (value.is_empty() || looks_prefixed || strings::contains_char(value, b'='))
         {
-            "The cookie has no name."
+            Invalid::NoName
         } else if (is_http && !(self.is_secure && self.is_http_only))
             || ((is_host || has_prefix(name, b"__secure-")) && !self.is_secure)
             || (is_host && !(self.is_host_only && *self.path == *b"/"))
         {
-            "The cookie violated the requirements of its prefix."
+            Invalid::Prefix
         } else {
             return Ok(());
         })

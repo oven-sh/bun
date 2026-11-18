@@ -1,13 +1,13 @@
 //! Shadow roots, and <https://dom.spec.whatwg.org/#shadow-tree-slots>
 
 use core::cell::RefCell;
-use std::rc::Rc;
 
 use bun_jsc::JSValue;
 use bun_jsc::bindgen::{self, JsHeap, JsScope};
 
 use super::{NodeFlags as F, *};
 use crate::generated_bindgen::core::{ShadowRootInit, ShadowRootMode, SlotAssignmentMode};
+use crate::name::Map;
 use crate::order::Order as _;
 use crate::tree::NodeId;
 
@@ -297,6 +297,63 @@ fn slot_name_of(node: &Node) -> DomString {
         .unwrap_or_default()
 }
 
+fn name_of(slot: &Element) -> DomString {
+    slot.attr(atom!("name")).unwrap_or_default()
+}
+
+fn slot_named<'a>(shadow: &'a ShadowRoot, name: &DomString) -> Option<&'a Element> {
+    const FEW: usize = 8;
+    static SLOTS: Test = Test {
+        tags: &[atom!("slot")],
+        bare: Bare::None,
+        matches: |it| it.has(F::SLOT),
+        ..Test::ALL
+    };
+    let mut all = slots_in(shadow);
+    all.by_ref()
+        .take(FEW)
+        .find(|it| {
+            it.with_attr_string(atom!("name"), |it| it == name)
+                .unwrap_or_else(|| name.is_empty())
+        })
+        .or_else(|| {
+            all.next()?;
+            shadow
+                .unseen_collection(16, &SLOTS)
+                .all_named(&Atom::from_string(name), |it| [Some(name_of(it)), None])
+                .first()
+                .copied()
+        })
+}
+
+fn goes_by_names(shadow: &ShadowRoot) -> bool {
+    !shadow.is(ShadowFlags::MANUAL_SLOTS) && !shadow.is(ShadowFlags::OWN_SLOTTING)
+}
+
+/// Of a child of the host.
+pub(super) fn slot_attribute_changed<'a>(
+    cx: &mut JsScope<'a>,
+    shadow: &'a ShadowRoot,
+    child: &'a Element,
+) {
+    if !shadow.is(ShadowFlags::HAS_SLOTS) || !goes_by_names(shadow) {
+        return;
+    }
+    let (old, new) = (
+        child.assigned_slot(),
+        slot_named(shadow, &slot_name_of(child)),
+    );
+    if old == new {
+        return;
+    }
+    old.inspect(|it| it.restructure(|engine, slot| engine.remove_from_slot(slot, child.id())));
+    new.inspect(|it| it.restructure(|engine, slot| engine.add_to_slot(slot, child.id())));
+    old.into_iter().chain(new).for_each(|it| signal(cx, it));
+    if shadow.is_rendered() {
+        shadow.doc().invalidate(cx);
+    }
+}
+
 /// If `moved` has come or gone, and has not been assigned anew.
 fn other_children_stay(shadow: &ShadowRoot, moved: &Node) -> bool {
     if !shadow.is(ShadowFlags::OWN_SLOTTING) {
@@ -324,16 +381,10 @@ fn assign_a_slot<'a>(cx: &mut JsScope<'a>, shadow: &'a ShadowRoot, node: &'a Nod
     }
     let slot = match shadow.is(ShadowFlags::OWN_SLOTTING) {
         true => slots_in(shadow).nth(1),
-        false => {
-            let name = slot_name_of(node);
-            slots_in(shadow).find(|it| {
-                it.with_attr_string(atom!("name"), |it| *it == name)
-                    .unwrap_or_else(|| name.is_empty())
-            })
-        }
+        false => slot_named(shadow, &slot_name_of(node)),
     };
     if let Some(slot) = slot {
-        slot.restructure(|engine, id| engine.add_to_slot(id, node.id()));
+        slot.restructure(|engine, slot| engine.add_to_slot(slot, node.id()));
         signal(cx, slot);
     }
 }
@@ -348,12 +399,13 @@ fn find_slottables<'a>(
     shadow: &'a ShadowRoot,
 ) -> (Rooted<'a>, Vec<Vec<NodeId>>) {
     let slots = Rooted::from_nodes(heap, slots_in(shadow).map(|it| &**it));
-    let names: Vec<_> = slots
-        .iter()
-        .filter_map(Node::as_element)
-        .map(|it| it.attr(atom!("name")).unwrap_or_default())
-        .collect();
-    let mut assigned = vec![Vec::<NodeId>::new(); names.len()];
+    let mut names = Map::default();
+    for (index, slot) in slots.iter().filter_map(Node::as_element).enumerate() {
+        names
+            .entry(Atom::from_string(&name_of(slot)))
+            .or_insert(index);
+    }
+    let mut assigned = vec![Vec::<NodeId>::new(); slots.len() as usize];
     let first = shadow
         .is(ShadowFlags::OWN_SLOTTING)
         .then(|| seams::slotted_first(shadow.host_element()).map(|it| &**it));
@@ -369,8 +421,7 @@ fn find_slottables<'a>(
         } else if let Some(first) = first {
             Some(usize::from(first != Some(child)))
         } else {
-            let name = slot_name_of(child);
-            names.iter().position(|it| *it == name)
+            names.get(&Atom::from_string(&slot_name_of(child))).copied()
         };
         index
             .and_then(|it| assigned.get_mut(it))
@@ -437,7 +488,17 @@ pub(super) fn after_insert<'a>(cx: &mut JsScope<'a>, node: &'a Node, parent: &'a
     }
     if slots_in(node).next().is_some() {
         root.set_shadow_flags(ShadowFlags::HAS_SLOTS, true);
-        assign_slottables(cx, root);
+        let is_wanted = |slot: &Element| {
+            let name = name_of(slot);
+            root.host_element()
+                .children()
+                .any(|it| is_slottable(it) && slot_name_of(it) == name)
+                && slot_named(root, &name) == Some(slot)
+        };
+        if !goes_by_names(root) || slots_in(node).nth(1).is_some() || slots_in(node).any(is_wanted)
+        {
+            assign_slottables(cx, root);
+        }
     }
 }
 
@@ -472,7 +533,7 @@ pub(super) fn after_remove<'a>(
         if node.parent().is_some() || !other_children_stay(shadow, node) {
             assign(cx, shadow, slot);
         } else if let Some(slot) = slot {
-            let id = if Rc::ptr_eq(node.arena(), slot.arena()) {
+            let id = if node.is_in_arena_of(slot) {
                 node.id()
             } else {
                 0
@@ -495,6 +556,8 @@ pub(super) fn after_remove<'a>(
             .iter()
             .filter_map(Node::as_element)
             .for_each(|it| signal(cx, it));
-        assign_slottables(cx, root);
+        if !emptied.is_empty() || !goes_by_names(root) {
+            assign_slottables(cx, root);
+        }
     }
 }

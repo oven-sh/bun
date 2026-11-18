@@ -1,6 +1,7 @@
 //! `abi_graphics::Graphics`
 
 use std::ffi::c_void;
+use std::mem::MaybeUninit;
 use std::slice::{from_raw_parts, from_raw_parts_mut};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -90,12 +91,15 @@ unsafe extern "C" fn is_in_stroke(
 
 unsafe extern "C" fn read(id: u32, area: &Area, is_on_black: bool, rgba: *mut u8) {
     // SAFETY: the contract of `Graphics`. `ask` returns once the job is over.
-    let (area, rgba) = (*area, unsafe {
-        from_raw_parts_mut(rgba, byte_count(area[2] as u32, area[3] as u32))
+    let (area, pixels) = (*area, || unsafe {
+        from_raw_parts_mut(rgba.cast(), byte_count(area[2] as u32, area[3] as u32) / 4)
     });
-    guard("error", (), || {
-        thread::ask(move || canvas::read(id, area, is_on_black, rgba))
-    });
+    let to = pixels();
+    if !guard("error", false, || {
+        thread::ask(move || canvas::read(id, area, is_on_black, to))
+    }) {
+        pixels().fill(MaybeUninit::new([0; 4]));
+    }
 }
 
 unsafe extern "C" fn write(id: u32, area: &Area, dirty: &Area, rgba: *const u8) {

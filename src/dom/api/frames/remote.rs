@@ -43,10 +43,10 @@ impl Frame {
         );
     }
 
-    pub(super) fn remote_attribute_changed<'a>(&'a self, cx: &mut Cx<'a>, change: &AttrChange<'_>) {
+    pub(super) fn remote_attribute_changed<'a>(&'a self, _: &mut Cx<'a>, change: &AttrChange<'_>) {
         let name = change.name.local.to_dom_string();
         if is_copied(&name.to_utf8()) {
-            host::copy_attribute(cx, self, &name, change.new);
+            host::copy_attribute(self, &name, change.new);
         }
     }
 
@@ -56,26 +56,26 @@ impl Frame {
         host::place_remote(cx, self, size, is_visible);
         if self.is(Flags::FULLSCREEN) && !self.element().has_state(State::FULLSCREEN) {
             self.set(Flags::FULLSCREEN, false);
-            host::exit_fullscreen(cx, self);
+            host::tell_remote(self, bun_web::host::ToGuest::ExitFullscreen);
         }
     }
 
-    pub(crate) fn get_length(&self) -> u32 {
+    pub(crate) fn length(&self) -> u32 {
         self.length.get()
     }
 
-    pub(crate) fn loaded<'a>(&'a self, cx: &mut Cx<'a>, length: u32) {
+    pub(super) fn loaded<'a>(&'a self, cx: &mut Cx<'a>, length: u32) {
         self.length.set(length);
         fire(cx, self.element(), atom!("load"), PLAIN);
     }
 
-    pub(crate) fn painted<'a>(&'a self, cx: &mut Cx<'a>, image: u32) {
+    pub(super) fn painted<'a>(&'a self, cx: &mut Cx<'a>, image: u32) {
         self.image.set(image);
         self.show(cx);
     }
 
-    pub(crate) fn scroll<'a>(&'a self, cx: &mut Cx<'a>, x: f64, y: f64) {
-        mouse::scroll_around(cx, self.around(), self.element(), [x, y]);
+    pub(super) fn scroll<'a>(&'a self, cx: &mut Cx<'a>, delta: [f64; 2]) {
+        mouse::scroll_around(cx, self.around(), self.element(), delta);
     }
 
     pub(crate) fn focus_element<'a>(&'a self, cx: &mut Cx<'a>) {
@@ -90,13 +90,13 @@ impl Frame {
         );
     }
 
-    pub(crate) fn tab<'a>(&'a self, cx: &mut Cx<'a>, direction: f64) {
+    pub(super) fn tab<'a>(&'a self, cx: &mut Cx<'a>, is_backward: bool) {
         if focus::has_focus(self.element()) {
-            self.tab_out(cx, direction < 0.0);
+            self.tab_out(cx, is_backward);
         }
     }
 
-    pub(crate) fn tooltip<'a>(&'a self, cx: &mut Cx<'a>, text: Option<DomString>) {
-        entry::show_tooltip(cx, self.around(), &text.unwrap_or_default());
+    pub(super) fn tooltip<'a>(&'a self, cx: &mut Cx<'a>, text: &DomString) {
+        entry::show_tooltip(cx, self.around(), text);
     }
 }

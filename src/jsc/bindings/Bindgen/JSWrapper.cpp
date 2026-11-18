@@ -73,13 +73,23 @@ JSObject* createClassPrototype(VM& vm, JSGlobalObject* globalObject, JSObject* p
     return prototype;
 }
 
+JSValue requireNodeModule(Zig::GlobalObject* globalObject, ASCIILiteral name)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue functions = BUN_REQUIRE_INTERNAL_MODULE(globalObject, InternalDesktopRequires, "native:Bindgen:desktop_modules.bind.ts:modules");
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue function = functions.get(globalObject, Identifier::fromString(vm, name));
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, call(globalObject, function, getCallData(function), jsUndefined(), ArgList()));
+}
+
 JSObject* eventEmitterConstructor(JSGlobalObject* globalObject)
 {
     VM& vm = getVM(globalObject);
     ErrorHandlingScope reservedStack(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    auto* global = defaultGlobalObject(globalObject);
-    JSValue constructor = BUN_REQUIRE_INTERNAL_MODULE(global, NodeEvents, "bun:desktop/electron");
+    JSValue constructor = requireNodeModule(defaultGlobalObject(globalObject), "events"_s);
     scope.releaseAssertNoExceptionExceptTermination();
     return asObject(constructor);
 }
@@ -90,7 +100,7 @@ JSObject* eventEmitterPrototype(JSGlobalObject* globalObject)
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue prototype = eventEmitterConstructor(globalObject)->get(globalObject, vm.propertyNames->prototype);
     scope.releaseAssertNoExceptionExceptTermination();
-    return asObject(prototype);
+    return prototype.isObject() ? asObject(prototype) : globalObject->objectPrototype();
 }
 
 Structure* structureForClass(JSGlobalObject* globalObject, unsigned classIndex)

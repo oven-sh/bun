@@ -8,6 +8,7 @@
 #include "Bindgen/JSInterface.h"
 #include "JSDOMURL.h"
 #include "ZigGlobalObject.h"
+#include <JavaScriptCore/HeapObserver.h>
 #include <JavaScriptCore/IteratorOperations.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCInlines.h>
@@ -15,6 +16,7 @@
 #include <JavaScriptCore/JSStringInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/ObjectPrototype.h>
+#include <JavaScriptCore/Protect.h>
 
 using namespace JSC;
 
@@ -51,20 +53,56 @@ extern "C" StringImpl* Bun__DOM__sharedPrefix(StringImpl* of, uint32_t length)
 
 extern "C" EncodedJSValue Bun__DOM__stringToJS(JSGlobalObject* globalObject, StringImpl* string)
 {
-    // Until the next collection ends.
-    static thread_local struct {
-        HeapVersion version;
-        std::array<JSString*, 128> cells;
-    } recent;
-    auto& vm = globalObject->vm();
-    if (string->length() <= 1)
-        return JSValue::encode(jsStringWithCache(vm, *std::bit_cast<const String*>(&string)));
-    if (auto version = vm.heap.objectSpace().newlyAllocatedVersion(); recent.version != version) [[unlikely]]
-        recent = { version, {} };
-    auto& cell = recent.cells[(std::bit_cast<uintptr_t>(string) >> 4) % recent.cells.size()];
-    if (!cell || cell->tryGetValueImpl() != string)
-        cell = jsNontrivialString(vm, *std::bit_cast<const String*>(&string));
+    return JSValue::encode(jsString(globalObject->vm(), *std::bit_cast<const String*>(&string)));
+}
+
+extern "C" EncodedJSValue Bun__DOM__permanentString(JSGlobalObject* globalObject, StringImpl* string)
+{
+    JSValue cell = JSValue::decode(Bun__DOM__stringToJS(globalObject, string));
+    gcProtect(cell);
     return JSValue::encode(cell);
+}
+
+namespace {
+class Eraser final : public HeapObserver {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(Eraser);
+
+public:
+    explicit Eraser(std::span<EncodedJSValue> values)
+        : m_values(values)
+    {
+    }
+
+private:
+    void willGarbageCollect() final {}
+    void didGarbageCollect(CollectionScope) final { zeroSpan(m_values); }
+
+    std::span<EncodedJSValue> m_values;
+};
+}
+
+// They are emptied when the collector has found out what is dead, before the thread goes on.
+extern "C" void* Bun__DOM__createEraser(JSGlobalObject* globalObject, EncodedJSValue* values, size_t count)
+{
+    auto* eraser = new Eraser({ values, count });
+    globalObject->vm().heap.addObserver(eraser);
+    return eraser;
+}
+
+// The VM is gone.
+extern "C" void Bun__DOM__destroyEraser(void* eraser)
+{
+    delete static_cast<Eraser*>(eraser);
+}
+
+// More than `capacity` if nothing was copied.
+extern "C" size_t Bun__DOM__copyRope(EncodedJSValue rope, Latin1Character* room, size_t capacity)
+{
+    auto* string = asString(JSValue::decode(rope));
+    if (!string->is8Bit() || string->length() > capacity)
+        return capacity + 1;
+    string->resolveToBuffer(std::span { room, string->length() });
+    return string->length();
 }
 
 extern "C" EncodedJSValue Bun__DOM__resolveRope(JSGlobalObject* globalObject, EncodedJSValue string)
@@ -83,6 +121,12 @@ extern "C" StringImpl* Bun__DOM__atomize(StringImpl* string)
 extern "C" StringImpl* Bun__DOM__atomizeLatin1(const Latin1Character* characters, uint32_t length)
 {
     return length ? AtomStringImpl::add(std::span { characters, length }).leakRef() : StringImpl::empty();
+}
+
+extern "C" uint32_t Bun__DOM__hashOfLatin1(const Latin1Character* characters, uint32_t length)
+{
+    static_assert(StringHasher::flagCount == 8);
+    return StringHasher::computeHashAndMaskTop8Bits(std::span { characters, length });
 }
 
 extern "C" StringImpl* Bun__DOM__hrefOfURLObject(EncodedJSValue value)
@@ -193,6 +237,37 @@ extern "C" EncodedJSValue Bun__DOM__listFrom(JSGlobalObject* globalObject, uint3
     }
     return JSValue::encode(list);
 }
+
+extern "C" EncodedJSValue Bun__DOM__listCopyWithout(JSGlobalObject* globalObject, EncodedJSValue list, EncodedJSValue value)
+{
+    auto* array = uncheckedDowncast<JSArray>(JSValue::decode(list));
+    unsigned length = array->length();
+    auto* copy = createList(globalObject, length + 1);
+    auto *from = valuesOf(array), *to = valuesOf(copy);
+    unsigned kept = 0;
+    for (unsigned i = 0; i < length; i++) {
+        if (JSValue::encode(from[i].get()) != value)
+            to[kept++].setWithoutWriteBarrier(from[i].get());
+    }
+    copy->butterfly()->setPublicLength(kept);
+    globalObject->vm().writeBarrier(copy);
+    return JSValue::encode(copy);
+}
+
+extern "C" EncodedJSValue Bun__DOM__listOfCells(JSGlobalObject* globalObject, const uintptr_t* payloads, uint32_t length, uintptr_t offset)
+{
+    ObjectInitializationScope scope(globalObject->vm());
+    auto* list = JSArray::tryCreateUninitializedRestricted(scope, globalObject->originalArrayStructureForIndexingType(ArrayWithContiguous), length);
+    RELEASE_ASSERT(list);
+    auto* values = list->butterfly()->contiguous().data();
+    for (uint32_t i = 0; i < length; i++)
+        values[i].setWithoutWriteBarrier(std::bit_cast<JSCell*>(payloads[i] - offset));
+    return JSValue::encode(list);
+}
+
+// For `List::contiguous`.
+static_assert(JSCell::indexingTypeAndMiscOffset() == 4 && IndexingShapeMask == 0x0e && ContiguousShape == 0x08);
+static_assert(JSObject::butterflyOffset() == 8 && Butterfly::offsetOfPublicLength() == -8);
 
 extern "C" uint32_t Bun__DOM__listLength(EncodedJSValue list)
 {
@@ -360,19 +435,6 @@ extern "C" EncodedJSValue Bun__DOM__agentOfRealm(JSGlobalObject* globalObject)
 {
     auto& vm = globalObject->vm();
     return JSValue::encode(globalObject->getDirect(vm, WebCore::builtinNames(vm).documentPrivateName()));
-}
-
-// Of an object with nothing but data properties.
-extern "C" EncodedJSValue Bun__DOM__copyObject(JSGlobalObject* globalObject, EncodedJSValue encodedObject)
-{
-    auto& vm = globalObject->vm();
-    auto* object = asObject(JSValue::decode(encodedObject));
-    auto* copy = constructEmptyObject(globalObject);
-    object->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
-        copy->putDirect(vm, entry.key(), object->getDirect(entry.offset()));
-        return true;
-    });
-    return JSValue::encode(copy);
 }
 
 extern "C" EncodedJSValue Bun__DOM__memberOf(JSGlobalObject* globalObject, EncodedJSValue object, const Latin1Character* text, size_t length)

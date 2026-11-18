@@ -396,7 +396,7 @@ export const InterestEvent = b.interface("InterestEvent", {
   rustPath: "crate::api::uievents::InterestEvent",
   internalFields: ["source"],
   construct: construct(InterestEventInit),
-  proto: { source: field("source") },
+  proto: { source },
 });
 
 export const SubmitEventInit = dictionary(DesktopEventInit, { submitter: nullable("HTMLElement") });

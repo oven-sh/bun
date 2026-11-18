@@ -1,4 +1,5 @@
 use core::hash::{BuildHasher, BuildHasherDefault, Hash, Hasher};
+use core::sync::atomic::{AtomicBool, Ordering};
 use std::hash::RandomState;
 use std::sync::LazyLock;
 
@@ -51,8 +52,9 @@ static BY_HASH: [(u32, u16, u16); SLOTS] = {
 struct Interned {
     ranges: Map<Name, (u32, u32)>,
     texts: Vec<u8>,
-    has_collided: bool,
 }
+
+static HAS_COLLIDED: AtomicBool = AtomicBool::new(false);
 
 static INTERNED: LazyLock<Mutex<Interned>> = LazyLock::new(Default::default);
 static SECRET: LazyLock<RandomState> = LazyLock::new(RandomState::new);
@@ -121,15 +123,20 @@ fn product(words: [u64; 2], keys: &[u64; 2]) -> u128 {
 impl Interned {
     fn name(&mut self, text: &[u8], mut hash: u64) -> Name {
         loop {
-            let name = Name::permuted((hash % IS_KNOWN) | 1);
+            let name = Name::from_keyed_hash(hash);
             match self.ranges.get(&name) {
                 Some(&(start, end)) if self.texts[start as usize..end as usize] == *text => {
                     return name;
                 }
-                Some(_) => (self.has_collided, hash) = (true, keyed_hash(hash)),
+                Some(_) => {
+                    HAS_COLLIDED.store(true, Ordering::Relaxed);
+                    hash = keyed_hash(hash);
+                }
                 None => {
                     // A text that is forgotten gets the same name again.
-                    if self.texts.len() + text.len() > 8 << 20 && !self.has_collided {
+                    if self.texts.len() + text.len() > 8 << 20
+                        && !HAS_COLLIDED.load(Ordering::Relaxed)
+                    {
                         *self = Interned::default();
                     }
                     let start = self.texts.len() as u32;
@@ -179,6 +186,24 @@ impl Name {
         name
     }
 
+    /// `new`, for looking up what `new` has named.
+    #[inline]
+    pub(crate) fn sought(bytes: &[u8]) -> Name {
+        let name = Name::hash(bytes, false);
+        if bytes.len() <= MAX_SHORT || name.known_text() == Some(bytes) {
+            return name;
+        }
+        if HAS_COLLIDED.load(Ordering::Relaxed) {
+            Name::intern(bytes)
+        } else {
+            Name::from_keyed_hash(keyed_hash_of_bytes(0, bytes))
+        }
+    }
+
+    const fn from_keyed_hash(hash: u64) -> Name {
+        Name::permuted((hash % IS_KNOWN) | 1)
+    }
+
     fn intern(text: &[u8]) -> Name {
         let hash = keyed_hash_of_bytes(0, text);
         INTERNED.lock().name(text, hash)
@@ -203,10 +228,16 @@ impl Name {
             let word = u64::from_le_bytes(*word);
             (hash, rest) = (mix(hash, if lowercase { lower(word) } else { word }), after);
         }
-        let mut last = 0;
-        while let [byte, after @ ..] = rest {
-            (last, rest) = (last << 8 | *byte as u64, after);
-        }
+        let mut last = match (rest.first_chunk::<4>(), rest.last_chunk::<4>(), rest) {
+            (Some(start), Some(end), _) => {
+                (u32::from_be_bytes(*start) as u64) << (8 * (rest.len() - 4))
+                    | u32::from_be_bytes(*end) as u64
+            }
+            (.., [a, b, c]) => u32::from_be_bytes([0, *a, *b, *c]) as u64,
+            (.., [a, b]) => u16::from_be_bytes([*a, *b]) as u64,
+            (.., [a]) => *a as u64,
+            _ => 0,
+        };
         last = if lowercase { lower(last) } else { last };
         Name::permuted(match bytes.len() <= MAX_SHORT {
             true => IS_SHORT | (bytes.len() as u64) << 56 | last,
@@ -276,8 +307,8 @@ pub(crate) use name;
 
 macro_rules! is_name {
     ($name:expr, $($text:literal)|+) => {{
-        let name = $name;
-        $(name == $crate::name::name!($text))||+
+        let name = $crate::name::Name::bits($name);
+        $(name == $crate::name::name!($text).bits())||+
     }};
 }
 pub(crate) use is_name;
@@ -304,6 +335,43 @@ impl Hasher for FastHasher {
     fn write_u64(&mut self, value: u64) {
         self.0 = (self.0.wrapping_add(value)).wrapping_mul(0xf135_7aea_2e62_a9c5);
     }
+    fn write_usize(&mut self, value: usize) {
+        self.write_u64(value as u64);
+    }
+}
+
+/// For names that markup chooses, many of which could be made to share a slot otherwise.
+#[derive(Clone, Copy)]
+pub(crate) struct SecretHasher([u64; 2]);
+
+impl Default for SecretHasher {
+    fn default() -> SecretHasher {
+        SecretHasher([keyed_hash(0xfe_u8), keyed_hash(0xff_u8) | 1])
+    }
+}
+
+impl BuildHasher for SecretHasher {
+    type Hasher = SecretHasher;
+    #[inline(always)]
+    fn build_hasher(&self) -> SecretHasher {
+        *self
+    }
+}
+
+impl Hasher for SecretHasher {
+    #[inline(always)]
+    fn finish(&self) -> u64 {
+        self.0[0]
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        self.write_u64(keyed_hash(bytes));
+    }
+    #[inline(always)]
+    fn write_u64(&mut self, value: u64) {
+        let product = u128::from(self.0[0] ^ value) * u128::from(self.0[1]);
+        self.0[0] = product as u64 ^ (product >> 64) as u64;
+    }
+    #[inline(always)]
     fn write_usize(&mut self, value: usize) {
         self.write_u64(value as u64);
     }

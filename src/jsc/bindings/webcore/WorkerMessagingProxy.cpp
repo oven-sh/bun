@@ -483,17 +483,6 @@ bool WorkerMessagingProxy::postSerializedErrorToWorkerObject(Zig::GlobalObject& 
 
     auto serialized = SerializedScriptValue::create(workerGlobalObject, value, SerializationForStorage::No, SerializationErrorMode::NonThrowing);
     CLEAR_IF_EXCEPTION(scope);
-    if (auto* error = serialized ? nullptr : dynamicDowncast<JSC::ErrorInstance>(value)) {
-        unsigned attributes = 0;
-        JSC::JSValue cause = error->getDirect(vm, vm.propertyNames->cause, attributes);
-        if (cause && JSC::JSCell::deleteProperty(error, &workerGlobalObject, vm.propertyNames->cause)) {
-            serialized = SerializedScriptValue::create(workerGlobalObject, value, SerializationForStorage::No, SerializationErrorMode::NonThrowing);
-            CLEAR_IF_EXCEPTION(scope);
-            if (!(attributes & JSC::PropertyAttribute::AccessorOrCustomAccessorOrValue))
-                error->putDirect(vm, vm.propertyNames->cause, cause, attributes);
-        }
-        CLEAR_IF_EXCEPTION(scope);
-    }
     if (!serialized)
         return false;
 

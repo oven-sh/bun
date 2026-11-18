@@ -3048,7 +3048,9 @@ impl ThreadSafeFunction {
         };
         while let Some(item) = items.read_item() {
             // SAFETY: as in `deliver`.
-            unsafe { call_js(ptr::null_mut(), napi_value(0), self.ctx, item) };
+            lent_main_thread::enter(|| unsafe {
+                call_js(ptr::null_mut(), napi_value(0), self.ctx, item)
+            });
         }
     }
 

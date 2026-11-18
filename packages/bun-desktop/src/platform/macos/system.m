@@ -24,7 +24,7 @@ Class classIn(NSString* framework, NSString* name)
     return NSClassFromString(name);
 }
 
-static uint32_t rgba(NSColor* color)
+uint32_t rgba(NSColor* color)
 {
     color = [color colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
     uint32_t (^byte)(CGFloat) = ^(CGFloat channel) {
@@ -578,7 +578,8 @@ static void openAtLogin(bool isOn)
 static void execute(const BDSystemCommand* command)
 {
     switch (command->tag) {
-    case BDSystemCommandIdentity: break;
+    case BDSystemCommandIdentity:
+    case BDSystemCommandActivationToken: break;
     case BDSystemCommandActivate:
         [NSApp unhideWithoutActivation];
         [NSApp activateIgnoringOtherApps:command->activate.stealsFocus];
@@ -608,6 +609,7 @@ static void execute(const BDSystemCommand* command)
         isAlwaysSecure = command->secureInput;
         updateSecureInput();
         break;
+    case BDSystemCommandTouchBarItem: updateTouchBarItem(&command->touchBarItem); break;
     case BDSystemCommandPost:
         post(command->post.center, string(command->post.name), stringIfAny(command->post.object), objectOf(&command->post.info), command->post.isUrgent);
         break;
@@ -678,6 +680,7 @@ static void begin(const BDSystemRequest* request, uint32_t replyNumber)
         return [classIn(@"AVFoundation", @"AVCaptureDevice") requestAccessForMediaType:mediaType(request->askForAccess) completionHandler:^(BOOL isGranted) {
             reply(replyNumber, BDReplyAgreed, .agreed = isGranted);
         }];
+    case BDSystemRequestTrustCertificate: return trustCertificate(request, replyNumber), cancelQuit();
     case BDSystemRequestRegisterForPush:
         waitingForToken = waitingForToken ?: [NSMutableArray new];
         [waitingForToken addObject:@(replyNumber)];

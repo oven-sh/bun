@@ -71,6 +71,8 @@ pub(crate) enum Edge {
     CloseRequestSource,
     CustomControls,
     DialogWatcher,
+    InterestSource,
+    InterestTarget,
     Editor,
     Elements,
     Fiber,

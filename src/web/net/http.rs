@@ -1,7 +1,7 @@
 //! One exchange with a server, on the HTTP thread.
 
 use core::future::poll_fn;
-use core::sync::atomic::Ordering;
+use core::sync::atomic::{AtomicBool, Ordering};
 use core::task::{Context, Poll};
 use std::io::Write as _;
 use std::sync::Arc;
@@ -110,6 +110,7 @@ pub(super) struct Exchange {
     body: Option<SharedBytes>,
     tunnel: Option<Arc<Guarded<Tunnel>>>,
     handshake: Option<Arc<Handshake>>,
+    has_approved_certificate: AtomicBool,
     state: Guarded<State>,
 }
 
@@ -167,6 +168,10 @@ impl Browser for Exchange {
         self.tunnel
             .as_ref()
             .map_or(Negotiation::Failed, |it| it.lock().negotiate(received))
+    }
+
+    fn take_approval_of_certificate(&self) -> bool {
+        self.has_approved_certificate.swap(false, Ordering::Acquire)
     }
 
     fn informed(&self, _: &bun_http::Response) {}
@@ -456,6 +461,7 @@ pub(super) async fn send(
         body: bytes,
         tunnel: connection.tunnel,
         handshake: connection.handshake,
+        has_approved_certificate: AtomicBool::new(false),
         state: Guarded::default(),
     });
     let mut signals = Arc::get_mut(&mut exchange)
@@ -536,6 +542,7 @@ pub(super) async fn send(
 
     let download = Download(exchange);
     let head = loop {
+        let url = &download.0.url;
         let progress = poll_fn(|cx| {
             let mut state = download.0.state.lock();
             if let Some(certificate) = state.certificate.take() {
@@ -543,9 +550,13 @@ pub(super) async fn send(
             }
             match (state.head.take(), state.end) {
                 (Some(head), _) => Poll::Ready(Ok(Ok(head))),
-                (None, Some(end)) => {
-                    Poll::Ready(Err(end.err().unwrap_or(NetError::ConnectionClosed)))
-                }
+                (None, Some(end)) => Poll::Ready(Err(match end {
+                    Err(NetError::ConnectionClosed) if !url.starts_with(b"http:") => {
+                        NetError::ConnectionClosed
+                    }
+                    Ok(()) | Err(NetError::ConnectionClosed) => NetError::EmptyResponse,
+                    Err(error) => error,
+                })),
                 (None, None) => state.receiver.pending(cx),
             }
         });
@@ -553,6 +564,7 @@ pub(super) async fn send(
             Ok(head) => break head,
             Err(certificate) => {
                 connection.verify.ok_or(NetError::CertAuthorityInvalid)?(certificate).await?;
+                (download.0.has_approved_certificate).store(true, Ordering::Release);
                 HTTPThread::schedule_cert_check_resume(id);
             }
         }

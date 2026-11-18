@@ -1,29 +1,27 @@
 //! What hosts the documents of frames.
 
-use super::input::Event;
+use bun_web::host::{Owner, ToFrame, ToGuest, Whereabouts};
+use bun_web::input::{Action, Input, Mouse};
+
 use super::*;
-use crate::api::core::by_name::{call_directly, member};
+use crate::api::history::ForeignWindow;
+use crate::api::ui::surface;
 use crate::generated_bindgen::window::js_DomWindow;
 
-fn number(value: impl Into<f64>) -> JSValue {
-    JSValue::js_number(value.into())
+fn text(value: &DomString) -> String {
+    value.to_utf8().into_owned()
 }
 
-fn string(cx: &Cx<'_>, value: &DomString) -> JSValue {
-    value.to_js(&cx.heap).to_js()
+fn tell_local(frame: &Frame, message: ToFrame) {
+    if let Some(window) = frame.around().doc().last_window() {
+        window.host().tell_frame(frame.number, message);
+    }
 }
 
-pub(super) fn tell_peer<'a>(
-    cx: &mut Cx<'a>,
-    frame: &'a Frame,
-    method: &str,
-    arguments: &[JSValue],
-) -> JSValue {
-    js_Frame::peer(frame)
-        .filter(|it| it.is_object())
-        .map_or(JSValue::UNDEFINED, |it| {
-            call_directly(cx, it, method, arguments)
-        })
+pub(super) fn tell_remote(frame: &Frame, message: ToGuest) {
+    if let Some(window) = frame.around().doc().last_window() {
+        window.host().tell_guest(frame.number, message);
+    }
 }
 
 pub(super) fn is_local(ui: &Ui, url: &DomString) -> bool {
@@ -69,180 +67,240 @@ pub(super) fn place_again(ui: &Ui) {
         .for_each(Window::forget_layout);
 }
 
-fn open_empty<'a>(cx: &mut Cx<'a>, outer: &'a Window) -> JSValue {
-    let window = outer.open_empty_frame(cx);
-    let parsed = crate::api::loading::parse_html(cx, window.document(), &DomString::default());
-    bun_web::exec::report(cx, parsed);
-    crate::api::ui::controls::create_controls(&cx.heap, window).to_js()
+fn owner(frame: &Frame) -> Box<Owner> {
+    let attribute = |name| frame.element().attr(name).as_ref().map(text);
+    Box::new(Owner {
+        kind: text(&frame.element().local().to_dom_string()),
+        name: text(&frame.name()),
+        src: attribute(atom!("src")),
+        has_srcdoc: frame.element().has_attr(atom!("srcdoc")),
+        sandbox: attribute(atom!("sandbox")),
+        allow: attribute(atom!("allow")),
+        allows_fullscreen: frame.element().has_attr(atom!("allowfullscreen")),
+        csp: attribute(atom!("csp")),
+        is_indexed: frame.is_indexed(),
+    })
+}
+
+pub(super) fn owner_changed(frame: &Frame) {
+    tell_local(frame, ToFrame::OwnerChanged(owner(frame)));
 }
 
 pub(super) fn connect<'a>(cx: &mut Cx<'a>, frame: &'a Frame) {
-    let peer = match frame.kind {
-        Kind::Blank => frame
-            .around()
-            .doc()
-            .last_window()
-            .and_then(|it| it.downcast())
-            .map_or(JSValue::UNDEFINED, |it| open_empty(cx, it)),
-        Kind::Local => frame
-            .outer_window()
-            .and_then(|it| it.ask_host(cx, "createLocalFrame", &[frame.to_js()]))
-            .unwrap_or(JSValue::UNDEFINED),
-        Kind::Remote => {
-            let [window, peer] = frame.outer_window().map_or([JSValue::NULL; 2], |it| {
-                crate::api::history::ForeignWindow::of_frame(cx, it, frame)
-            });
-            js_Frame::set_window(frame, window);
-            return js_Frame::set_peer(frame, peer);
-        }
+    let Some(outer) = frame.outer_window() else {
+        return js_Frame::set_window(frame, JSValue::NULL);
     };
-    js_Frame::set_peer(frame, peer);
-    let get = |cx: &mut Cx<'a>, name: &'static str| member(cx.global(), peer, name);
     match frame.kind {
-        Kind::Local => frame
-            .image
-            .set(get(cx, "image").map_or(0, |it| it.as_number() as u32)),
-        _ => js_Frame::set_window(frame, get(cx, "window").unwrap_or(JSValue::NULL)),
+        Kind::Blank => {
+            let window = outer.open_empty_frame(cx);
+            let parsed =
+                crate::api::loading::parse_html(cx, window.document(), &DomString::default());
+            bun_web::exec::report(cx, parsed);
+            js_Frame::set_window(frame, window.window());
+            frame.set_inner(Ui::of(window.document()));
+            js_DomWindow::set_empty_frame(window, frame.element().to_js());
+        }
+        Kind::Local => {
+            let before = CONNECTING.replace(frame.to_js());
+            outer.host().create_frame(frame.number, owner(frame));
+            CONNECTING.set(before);
+        }
+        Kind::Remote => {
+            let window = ForeignWindow::of_frame(&cx.heap, outer, frame);
+            js_Frame::set_window(frame, window.get_itself());
+            js_Frame::set_peer(frame, window.to_js());
+            outer
+                .host()
+                .create_guest(frame.number, frame.surface_scale());
+        }
     }
-    if frame.kind == Kind::Blank {
-        let window = frame.window(cx);
-        let doc = WindowTarget::of(&cx.heap, window).and_then(WindowTarget::doc);
-        frame.set_inner(doc.and_then(Ui::of));
-        doc.and_then(Window::of)
+}
+
+pub(super) fn dispose(frame: &Frame) {
+    match frame.kind {
+        Kind::Blank => frame
+            .inner_window()
             .into_iter()
-            .for_each(|it| js_DomWindow::set_empty_frame(it, frame.element().to_js()));
+            .for_each(|it| it.enter(|cx, it| it.close_page(cx))),
+        Kind::Local => tell_local(frame, ToFrame::Remove),
+        Kind::Remote => tell_remote(frame, ToGuest::Remove),
     }
 }
 
-pub(super) fn dispose<'a>(cx: &mut Cx<'a>, frame: &'a Frame) {
-    tell_peer(cx, frame, "dispose", &[]);
-}
-
-pub(super) fn input<'a>(cx: &mut Cx<'a>, frame: &'a Frame, event: Event<'a>) {
-    tell_peer(cx, frame, "input", &[event.0.to_js()]);
+pub(super) fn input(frame: &Frame, input: Input) {
+    if frame.kind == Kind::Remote {
+        if let Input::Mouse(Mouse {
+            action: Action::Down,
+            ..
+        }) = input
+        {
+            tell_remote(frame, ToGuest::Moved(whereabouts(frame)));
+        }
+        return tell_remote(frame, ToGuest::Input(input));
+    }
+    match (frame.inner_window(), input) {
+        (Some(window), input) => {
+            window.enter_as_task(|cx, window, ui| surface::handle_input(cx, window, ui, input))
+        }
+        (None, Input::Key(key)) => {
+            if let Some(outer) = frame.outer_window().filter(|_| key.is_down) {
+                outer.host().unhandled_key(key);
+            }
+            crate::api::ui::host::key_handled();
+        }
+        _ => {}
+    }
 }
 
 // ───────────────────────────── in this process ─────────────────────────────
 
 pub(super) fn window<'a>(cx: &mut Cx<'a>, frame: &'a Frame) -> JSValue {
-    tell_peer(cx, frame, "window", &[])
+    let both = frame.context().zip(
+        frame
+            .around()
+            .doc()
+            .last_window()
+            .and_then(|it| it.downcast::<Window>()?.cluster()),
+    );
+    both.map_or(JSValue::NULL, |(context, cluster)| {
+        context.window_for(&cx.heap, cluster)
+    })
 }
 
-pub(super) fn document<'a>(cx: &mut Cx<'a>, frame: &'a Frame) -> Option<&'a Doc> {
-    Doc::from_value(tell_peer(cx, frame, "document", &[]))
+pub(super) fn document(frame: &Frame) -> Option<&Doc> {
+    let (context, outer) = (frame.context()?, frame.outer_window()?);
+    context
+        .has_origin(outer.cluster()?)
+        .then(|| Some(context.started_window(outer)?.document()))?
 }
 
-pub(super) fn name<'a>(cx: &mut Cx<'a>, frame: &'a Frame) -> DomString {
-    let name = tell_peer(cx, frame, "name", &[]);
-    JsLocal::new(&cx.heap, name)
-        .as_string()
-        .and_then(|it| DomString::from_js_string(&cx.heap, it).ok())
+pub(super) fn name(frame: &Frame) -> DomString {
+    frame
+        .context()
+        .map(|it| DomString::from_utf8(&it.name()))
         .unwrap_or_default()
 }
 
-pub(super) fn is_initial<'a>(cx: &mut Cx<'a>, frame: &'a Frame) -> bool {
-    tell_peer(cx, frame, "isInitial", &[]).to_boolean()
+pub(super) fn is_initial(frame: &Frame) -> bool {
+    frame.context().is_some_and(|it| {
+        it.window()
+            .map_or_else(|| it.is_initial(), |it| it.host().is_initial())
+    })
 }
 
-pub(super) fn set_initial_url<'a>(cx: &mut Cx<'a>, frame: &'a Frame, url: &DomString) {
-    let url = string(cx, url);
-    tell_peer(cx, frame, "setInitialUrl", &[url]);
+pub(super) fn set_initial_url(frame: &Frame, url: &DomString) {
+    tell_local(frame, ToFrame::SetInitialUrl(text(url)));
 }
 
-pub(super) fn navigate_local<'a>(cx: &mut Cx<'a>, frame: &'a Frame, navigation: &Navigation) {
-    let srcdoc = navigation
-        .srcdoc
-        .as_ref()
-        .map_or(JSValue::UNDEFINED, |it| string(cx, it));
-    let arguments = [
-        string(cx, &navigation.url),
-        srcdoc,
-        string(cx, &navigation.referrer_policy),
-    ];
-    tell_peer(cx, frame, "navigate", &arguments);
-}
-
-pub(super) fn place_local<'a>(
-    cx: &mut Cx<'a>,
-    frame: &'a Frame,
-    [width, height]: [f64; 2],
-    is_visible: bool,
-) {
-    tell_peer(
-        cx,
+pub(super) fn navigate_local(frame: &Frame, navigation: &Navigation) {
+    tell_local(
         frame,
-        "place",
-        &[
-            number(width),
-            number(height),
-            number(frame.surface_scale()),
-            is_visible.into(),
-        ],
+        ToFrame::Navigate {
+            url: text(&navigation.url),
+            srcdoc: navigation.srcdoc.as_ref().map(text),
+            referrer_policy: text(&navigation.referrer_policy),
+        },
     );
 }
 
-pub(super) fn may_be_unloaded<'a>(cx: &mut Cx<'a>, frame: &'a Frame) -> bool {
-    tell_peer(cx, frame, "beforeUnload", &[]).to_boolean()
+pub(super) fn place_local(frame: &Frame, size: [f64; 2], is_visible: bool) {
+    let (scale, is_news) = (frame.surface_scale(), |it| {
+        frame.placement.replace(it) != it
+    });
+    if is_news(Some((size, scale, is_visible))) {
+        tell_local(
+            frame,
+            ToFrame::Place {
+                size,
+                scale,
+                is_visible,
+            },
+        );
+        frame
+            .inner_window()
+            .into_iter()
+            .for_each(|it| frame.give_size_to(it));
+    }
 }
 
-pub(super) fn stop<'a>(cx: &mut Cx<'a>, frame: &'a Frame) {
-    tell_peer(cx, frame, "stop", &[]);
+pub(super) fn may_be_unloaded(frame: &Frame) -> bool {
+    frame
+        .inner_window()
+        .is_none_or(|it| it.enter(crate::api::history::entry::may_leave))
 }
 
-pub(super) fn environment_changed<'a>(cx: &mut Cx<'a>, frame: &'a Frame) {
-    tell_peer(cx, frame, "environmentChanged", &[]);
+pub(super) fn stop(frame: &Frame) {
+    match frame.inner_window() {
+        Some(window) => window.enter_as_task(|cx, window, _| window.stop(cx)),
+        None => tell_local(frame, ToFrame::Stop),
+    }
+}
+
+pub(super) fn environment_changed(frame: &Frame) {
+    frame
+        .inner_window()
+        .into_iter()
+        .for_each(|it| it.enter(|cx, it| it.environment_changed(cx)));
 }
 
 // ───────────────────────────── in the web engine ─────────────────────────────
 
-pub(super) fn navigate_remote<'a>(cx: &mut Cx<'a>, frame: &'a Frame, url: &DomString) {
-    let attributes = JSValue::create_empty_object(cx.global(), 4);
-    for (name, value) in frame.element().attrs() {
-        let name = name.local.to_dom_string();
-        if remote::is_copied(&name.to_utf8()) {
-            let value = string(cx, &value);
-            attributes.put(cx.global(), name.to_utf8().as_bytes(), value);
-        }
+fn whereabouts(frame: &Frame) -> Whereabouts {
+    Whereabouts {
+        area: frame.area(),
+        origin: frame.origin(),
+        scale: frame.surface_scale(),
     }
-    let value = string(cx, url);
-    attributes.put(cx.global(), b"src", value);
-    tell_peer(cx, frame, "navigate", &[attributes]);
 }
 
-pub(super) fn copy_attribute<'a>(
-    cx: &mut Cx<'a>,
-    frame: &'a Frame,
-    name: &DomString,
-    value: Option<&DomString>,
-) {
-    let arguments = [
-        string(cx, name),
-        value.map_or(JSValue::NULL, |it| string(cx, it)),
-    ];
-    tell_peer(cx, frame, "attribute", &arguments);
+pub(super) fn navigate_remote(frame: &Frame, url: &DomString) {
+    let all = frame
+        .element()
+        .attrs()
+        .into_iter()
+        .map(|(name, value)| (text(&name.local.to_dom_string()), value));
+    let copied = all
+        .filter(|it| remote::is_copied(&it.0))
+        .map(|(name, value)| (name, text(&value)));
+    tell_remote(
+        frame,
+        ToGuest::Navigate(copied.chain([("src".into(), text(url))]).collect()),
+    );
+}
+
+pub(super) fn copy_attribute(frame: &Frame, name: &DomString, value: Option<&DomString>) {
+    tell_remote(
+        frame,
+        ToGuest::Attribute {
+            name: text(name),
+            value: value.map(text),
+        },
+    );
 }
 
 pub(super) fn place_remote<'a>(
     cx: &mut Cx<'a>,
     frame: &'a Frame,
-    [width, height]: [f64; 2],
+    size: [f64; 2],
     is_visible: bool,
 ) {
-    let scheme = DomString::from_latin1(&layout::computed(cx, frame.element(), "color-scheme"));
+    let color_scheme = text(&DomString::from_latin1(&layout::computed(
+        cx,
+        frame.element(),
+        "color-scheme",
+    )));
     let is_visible = is_visible
         && frame
             .outer_window()
             .is_some_and(|it| it.environment().is_visible);
-    let arguments = [
-        number(width),
-        number(height),
-        is_visible.into(),
-        string(cx, &scheme),
-        number(layout::zoom(frame.around().doc())),
-    ];
-    tell_peer(cx, frame, "place", &arguments);
-}
-
-pub(super) fn exit_fullscreen<'a>(cx: &mut Cx<'a>, frame: &'a Frame) {
-    tell_peer(cx, frame, "exitFullscreen", &[]);
+    tell_remote(
+        frame,
+        ToGuest::Place {
+            size,
+            is_visible,
+            color_scheme,
+            zoom: layout::zoom(frame.around().doc()),
+            whereabouts: whereabouts(frame),
+        },
+    );
 }

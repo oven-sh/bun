@@ -192,7 +192,7 @@ fn default_key_down<'a>(
         }
         atom!("Escape") => {
             pointer::set_lock(cx, ui, None);
-            close_watcher::process(cx, ui)
+            super::interest::lose_all(cx, ui) | close_watcher::process(cx, ui)
         }
         name @ (atom!("ContextMenu") | atom!("F10"))
             if name == atom!("ContextMenu") || event.get_shift_key() && !IS_MAC =>
@@ -288,7 +288,9 @@ pub(crate) fn key_down<'a>(cx: &mut Cx<'a>, ui: &'a Ui, key: &Key) -> Outcome {
     if is_for_input_method {
         return Outcome::Pending;
     }
-    if key_target(ui).is_some_and(|it| default_key_down(cx, ui, it, event, key)) {
+    if editing::clipboard::offer_what_is_selected_by(cx, ui, |cx| {
+        key_target(ui).is_some_and(|it| default_key_down(cx, ui, it, event, key))
+    }) {
         return Outcome::Handled;
     }
     let is_text = name.encode_utf16().nth(2).is_none() && !key.modifiers.intersects(SHORTCUT);

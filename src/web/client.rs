@@ -200,7 +200,11 @@ pub struct Client {
     sent_reports: RefCell<HashMap<u64, ()>>,
     unread_timings: UnreadTimings,
     navigation_timing: RefCell<Option<(ResourceTiming, NavigationType)>>,
-    created: f64,
+    /// The time origin, in milliseconds since the epoch.
+    navigation_start: Cell<f64>,
+    /// When the `unload` event of this document has started and ended.
+    unload: Cell<[f64; 2]>,
+    unload_of_previous: Cell<[f64; 2]>,
     timing_watcher: RefCell<Option<Rc<dyn Fn(ResourceTiming)>>>,
     /// Of this document, and of the frames of the same origin in it.
     deferred_quota: RefCell<Vec<Deferred>>,
@@ -216,7 +220,7 @@ pub struct Client {
 }
 
 thread_local! {
-    static CLIENTS: RefCell<HashMap<u32, Weak<Client>>> = RefCell::default();
+    static CLIENTS: RefCell<Box<HashMap<u32, Weak<Client>>>> = RefCell::default();
 }
 
 fn next_id() -> u32 {
@@ -474,7 +478,9 @@ impl Client {
             sent_reports: RefCell::default(),
             unread_timings,
             navigation_timing: RefCell::default(),
-            created: monotonic_now(),
+            navigation_start: monotonic_now().into(),
+            unload: Cell::default(),
+            unload_of_previous: Cell::default(),
             timing_watcher: RefCell::default(),
             deferred_quota: RefCell::default(),
             deferred_requests: RefCell::default(),
@@ -1947,11 +1953,30 @@ impl Client {
 
     pub fn navigation_timing(&self) -> (ResourceTiming, NavigationType) {
         self.navigation_timing.borrow().clone().unwrap_or_else(|| {
-            let mut record =
-                ResourceTiming::of_failure(self.url().href(), InitiatorType::Other, self.created);
-            record.response_end = self.created;
+            let record = ResourceTiming::of_nothing(self.url().href(), self.navigation_start());
             (record, NavigationType::Navigate)
         })
+    }
+
+    pub fn navigation_start(&self) -> f64 {
+        self.navigation_start.get()
+    }
+
+    pub fn set_navigation_start(&self, time: f64) {
+        self.navigation_start.set(time);
+    }
+
+    pub fn has_unloaded(&self, start: f64) {
+        self.unload.set([start, monotonic_now()]);
+    }
+
+    /// `previous` has unloaded.
+    pub fn follow(&self, previous: &Client) {
+        self.unload_of_previous.set(previous.unload.get());
+    }
+
+    pub fn unload_of_previous(&self) -> [f64; 2] {
+        self.unload_of_previous.get()
     }
 
     fn cookie_context(&self, url: &Url, is_for_script: bool) -> cookies::Context {
@@ -2002,9 +2027,9 @@ impl Client {
             if change.cause != cookies::Cause::Overwrite && !change.cookie.is_http_only {
                 let change = change.clone();
                 thread.post(move || {
-                    if let Some(client) =
-                        Client::find(id).filter(|it| change.cookie.applies_to(&it.url()))
-                    {
+                    if let Some(client) = Client::find(id).filter(|it| {
+                        !it.origin().is_opaque() && change.cookie.applies_to(&it.url())
+                    }) {
                         watcher(&client, &change);
                     }
                 });

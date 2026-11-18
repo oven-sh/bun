@@ -3357,3 +3357,52 @@ test("a ShadowRealm in a worker can import node:worker_threads", async () => {
   expect(stdout).toBe("true\n");
   expect(exitCode).toBe(0);
 });
+
+describe("'error' event for an error with a cause that cannot be cloned", () => {
+  const thrownBy = async (source: string) => (await once(new Worker(source, { eval: true }), "error"))[0];
+
+  test.concurrent.each([
+    ["a function", "() => {}"],
+    ["a symbol", "Symbol()"],
+    ["a Response", "new Response()"],
+    ["an object with a method", "{ text: 'a', list: [{}], retry() {} }"],
+    ["an object with a getter that throws", "{ get a() { throw 1; } }"],
+  ])("%s, on a frozen error", async (_, cause) => {
+    const error = await thrownBy(
+      `throw Object.freeze(Object.assign(new TypeError("x", { cause: ${cause} }), { code: "E_X" }))`,
+    );
+    expect(error).toBeInstanceOf(TypeError);
+    expect([error.message, error.code, "cause" in error]).toEqual(["x", "E_X", false]);
+  });
+
+  test.concurrent("below the value that is thrown", async () => {
+    const thrown = await thrownBy(`throw { error: new RangeError("x", { cause: () => {} }), code: "E_X" }`);
+    expect(thrown.error).toBeInstanceOf(RangeError);
+    expect([thrown.error.message, thrown.code]).toEqual(["x", "E_X"]);
+  });
+
+  test.concurrent("keeps the causes above it", async () => {
+    const error = await thrownBy(
+      `throw new Error("a", { cause: new Error("b", { cause: new Error("c", { cause: () => {} }) }) })`,
+    );
+    expect([error.message, error.cause.message, error.cause.cause.message]).toEqual(["a", "b", "c"]);
+    expect("cause" in error.cause.cause).toBe(false);
+  });
+
+  test.concurrent("is tried once, however many errors lead to it", async () => {
+    const error = await thrownBy(
+      `let e = new Error("last");
+       const blames = (...causes) => new Error("x", { cause: [...causes, () => {}] });
+       for (let i = 0; i < 64; i++) e = blames(blames(e), blames(e));
+       throw e`,
+    );
+    expect([error.message, "cause" in error]).toEqual(["x", false]);
+  });
+
+  test.concurrent("a chain that is longer than the stack allows", async () => {
+    const error = await thrownBy(
+      `Error.stackTraceLimit = 0; let e; for (let i = 0; i < 20000; i++) e = new Error("" + i, { cause: e }); throw e`,
+    );
+    expect([error.message, error.cause.message]).toEqual(["19999", "19998"]);
+  });
+});

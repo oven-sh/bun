@@ -110,6 +110,8 @@ enum Layer {
     Inline(BoxId, usize),
     /// A block in inline elements that are stacking contexts.
     InInline(BoxId),
+    /// Overlay scrollbars and the resizer.
+    Controls(BoxId),
 }
 
 fn object_rect(style: &Style, image: crate::tree::Replaced, content: Rect) -> Rect {
@@ -281,7 +283,21 @@ impl RoundedRect {
     }
 
     /// Sharp corners stay sharp.
-    pub(crate) fn outset(&self, [top, right, bottom, left]: [f32; 4]) -> RoundedRect {
+    pub(crate) fn outset(&self, by: [f32; 4]) -> RoundedRect {
+        self.outset_with(
+            by,
+            self.radii.map(|[x, y]| {
+                2.0 * (x / self.rect.width.max(1e-6)).min(y / self.rect.height.max(1e-6))
+            }),
+        )
+    }
+
+    pub(crate) fn with_margin(&self, margin: [f32; 4]) -> RoundedRect {
+        self.outset_with(margin, [0.0; 4])
+    }
+
+    /// `coverage`: how much of half a side each corner takes.
+    fn outset_with(&self, [top, right, bottom, left]: [f32; 4], coverage: [f32; 4]) -> RoundedRect {
         let grow = |radius: f32, by: f32, coverage: f32| match radius / by {
             _ if by <= 0.0 => (radius + by).max(0.0),
             ratio if ratio < 1.0 && coverage < 1.0 => {
@@ -289,9 +305,6 @@ impl RoundedRect {
             }
             _ => radius + by,
         };
-        let coverage = self.radii.map(|[x, y]| {
-            2.0 * (x / self.rect.width.max(1e-6)).min(y / self.rect.height.max(1e-6))
-        });
         let by = [[left, top], [right, top], [right, bottom], [left, bottom]];
         let radii = [0, 1, 2, 3].map(|corner| {
             [0, 1].map(|axis| grow(self.radii[corner][axis], by[corner][axis], coverage[corner]))
@@ -400,7 +413,14 @@ impl Document {
             return ink;
         }
         let mut contents = self.extent(id);
-        if !it.scrolls() {
+        let clip = if !it.scrolls() && (it.overflow != [Overflow::Visible; 2] || !it.is_quiet()) {
+            self.overflow_clip(id)
+        } else {
+            None
+        };
+        if let Some(clip) = clip.filter(|it| it.union(&contents) == contents) {
+            contents = clip;
+        } else if !it.scrolls() {
             let mut add = |child: BoxId, is_in_flow: bool| {
                 let own = &self.boxes[child];
                 let ink = match own.is_quiet() {
@@ -431,7 +451,10 @@ impl Document {
                 };
                 contents = contents.union(&self.from_lines(id, fragment.rect()).grown(extent));
             }
-            if it.kind == Kind::Svg && it.overflow == [Overflow::Visible; 2] {
+            if it.kind == Kind::Svg
+                && it.overflow == [Overflow::Visible; 2]
+                && !(self.is_embedded && self.tree.is_root(it.node))
+            {
                 contents = contents.union(&self.svg_ink(it.node).unwrap_or_default());
             }
             if it.kind == Kind::Replaced
@@ -444,11 +467,7 @@ impl Document {
                     rect
                 });
             }
-            if it.overflow != [Overflow::Visible; 2] || !it.is_quiet() {
-                contents = self
-                    .overflow_clip(id)
-                    .map_or(contents, |clip| contents.intersection(&clip));
-            }
+            contents = clip.map_or(contents, |clip| contents.intersection(&clip));
         }
         if it.has_legend {
             let at = self.boxes[it.children[0]].layout.location;
@@ -475,24 +494,41 @@ impl Document {
     pub(crate) fn note_extents_of_lines(&self, id: BoxId, fragments: Option<Rect>) {
         let it = &self.boxes[id];
         let Some(inline) = &it.inline else { return };
-        let outset = inline.outset.get().unwrap_or_else(|| {
+        let (counted, mut outset) = inline.outset.get();
+        if let Some(items @ [_, ..]) = inline.items.get(counted as usize..) {
             let around = &self.boxes[it.parent].style;
-            let outset = |item: &crate::inline::Item| match item.kind {
-                ItemKind::Close(_) => 0.0,
-                ItemKind::Open(_) => {
-                    decoration_extent(self.current_style(item))
-                        + filter_extent(self.current_style(item))
+            let (mut opened, mut known) = (
+                None::<(&Rc<Style>, &Rc<Style>)>,
+                [core::ptr::null::<Style>(); 8],
+            );
+            for item in items
+                .iter()
+                .filter(|it| !matches!(it.kind, ItemKind::Close(_)))
+            {
+                let is_open = matches!(item.kind, ItemKind::Open(_));
+                let style = match opened
+                    .take()
+                    .filter(|it| item.kind == ItemKind::Text && Rc::ptr_eq(it.0, &item.style))
+                {
+                    Some(it) => it.1,
+                    None if !is_open && Rc::ptr_eq(&item.style, around) => around,
+                    None => self.current_style(item),
+                };
+                opened = is_open.then_some((&item.style, style));
+                if core::mem::replace(
+                    &mut known[(Rc::as_ptr(style).addr() >> 7) % 4 * 2 + usize::from(is_open)],
+                    Rc::as_ptr(style),
+                ) != Rc::as_ptr(style)
+                {
+                    outset = outset.max(if is_open {
+                        decoration_extent(style) + filter_extent(style)
+                    } else {
+                        self.extent_of_text(style)
+                    });
                 }
-                _ => self.extent_of_text(if Rc::ptr_eq(&item.style, around) {
-                    around
-                } else {
-                    self.current_style(item)
-                }),
-            };
-            let outset = inline.items.iter().map(outset).fold(0.0, f32::max);
-            inline.outset.set(Some(outset));
-            outset
-        });
+            }
+            inline.outset.set((inline.items.len() as u32, outset));
+        }
         let (whole, bounds) = (
             Rect::new([0.0, 0.0, it.layout.size.width, it.layout.size.height]),
             inline.lines.bounds,
@@ -782,6 +818,17 @@ impl Document {
         layers
     }
 
+    /// Whether overlay scrollbars or a resizer wait for the layers in the box.
+    fn has_controls_on_top(&self, id: BoxId) -> bool {
+        let it = &self.boxes[id];
+        it.scrolls()
+            && (it.scrollbar_size == 0.0 && it.scrollbars != [false; 2]
+                || self.resizer(id).is_some())
+            && self
+                .layers(id)
+                .intersects(Layers::HAS_LEVEL | Layers::HAS_RAISED)
+    }
+
     /// If the table paints the borders, and not its cells.
     fn lattice(&self, id: BoxId) -> Option<&crate::table::Lattice> {
         let it = &self.boxes[id];
@@ -814,6 +861,55 @@ impl Document {
             .into_iter()
             .flatten()
             .filter(|it| it.1.is_stacking_context(it.1.is_positioned()))
+    }
+
+    /// If none of the children starts above the one before it, how far they paint above and below where they start, at most.
+    fn column(&self, id: BoxId) -> Option<[f32; 2]> {
+        let it = &self.boxes[id];
+        if let Some(known) = self
+            .boxes
+            .columns
+            .borrow()
+            .get(&id)
+            .filter(|_| !it.painted.was_laid_out.get())
+        {
+            return *known;
+        }
+        it.painted.was_laid_out.set(false);
+        let mut last = f32::MIN;
+        let column = it.children.iter().enumerate().try_fold(
+            [0.0f32; 2],
+            |[above, below], (index, child)| {
+                it.children
+                    .get(index + 8)
+                    .into_iter()
+                    .for_each(|it| self.boxes.prefetch_extent(*it));
+                let (own, layers) = (&self.boxes[*child], self.layers(*child));
+                let is_in_place = !layers.contains(Layers::IS_LAYER)
+                    || own.anchored.is_none() && !layers.contains(Layers::IS_STICKY);
+                (own.container == id
+                    && own.kind != Kind::RowGroup
+                    && !own.is_in_inline
+                    && !own.cache.has_escapees()
+                    && is_in_place)
+                    .then_some(())?;
+                (core::mem::replace(&mut last, own.layout.location.y) <= last).then_some(())?;
+                let ink = if layers.contains(Layers::IS_LAYER) {
+                    self.outer_ink(*child)
+                } else {
+                    self.ink(*child)
+                };
+                Some([above.max(-ink.y), below.max(ink.bottom())])
+            },
+        );
+        let mut known = self.boxes.columns.borrow_mut();
+        if known.len() >= 256 {
+            known.retain(|id, _| {
+                !self.boxes[*id].painted.was_laid_out.get() && self.boxes[*id].children.len() >= 32
+            });
+        }
+        known.insert(id, column);
+        column
     }
 
     fn is_layer(&self, id: BoxId) -> bool {
@@ -904,7 +1000,8 @@ impl Document {
     }
 
     /// Only those that decide about dragging.
-    fn regions_in_tree_order(&self) -> Vec<abi::Region> {
+    fn regions_in_tree_order(&mut self) -> Vec<abi::Region> {
+        let mut order = core::mem::take(&mut self.pictures.order_of_regions);
         let Some(picture) = self.pictures.current() else {
             return Vec::new();
         };
@@ -916,20 +1013,42 @@ impl Document {
         };
         let drags: Vec<_> = picture.regions.iter().filter(|it| it.drag).collect();
         let all = picture.regions.iter().zip(&picture.region_nodes);
-        let mut found: Vec<_> = all
+        let found: Vec<_> = all
             .filter(|(region, _)| drags.iter().any(|it| overlap(&it.rect, &region.rect)))
             .collect();
-        found.order_by_cached_key(|(_, node)| {
-            let ancestors =
-                core::iter::successors(Some(**node), |it| Some(self.tree.parent_or_host(*it)))
-                    .take_while(|it| *it != 0 && self.tree.contains(*it));
-            let mut path: Vec<_> = ancestors
-                .map(|it| self.tree.previous_elements(it).count())
-                .collect();
-            path.reverse();
-            path
-        });
-        found.into_iter().map(|it| *it.0).collect()
+        let ancestors = |index: usize| {
+            let all = core::iter::successors(Some(*found[index].1), |it| {
+                Some(self.tree.parent_or_host(*it))
+            });
+            all.take_while(|it| *it != 0 && self.tree.contains(*it))
+                .collect::<smallvec::SmallVec<[NodeId; 64]>>()
+        };
+        let place = |it: &NodeId| self.tree.previous_elements(*it).count();
+        let is_in_order =
+            |(a, above_a): &(usize, smallvec::SmallVec<[NodeId; 64]>),
+             (b, above_b): &(usize, smallvec::SmallVec<[NodeId; 64]>)| match above_a
+                .iter()
+                .rev()
+                .zip(above_b.iter().rev())
+                .find(|(a, b)| a != b)
+            {
+                Some((a, b)) => place(a) < place(b),
+                None => (above_a.len(), a) < (above_b.len(), b),
+            };
+        if order.len() != found.len()
+            || !order
+                .iter()
+                .map(|it| (*it, ancestors(*it)))
+                .is_sorted_by(is_in_order)
+        {
+            order = (0..found.len()).collect();
+            order.order_by_cached_key(|it| {
+                ancestors(*it).iter().rev().map(place).collect::<Vec<_>>()
+            });
+        }
+        let regions = order.iter().map(|it| *found[*it].0).collect();
+        self.pictures.order_of_regions = order;
+        regions
     }
 
     /// Moves what can be hit to where the renderer shows it.
@@ -1792,7 +1911,30 @@ impl<'a> Painter<'a> {
             .outer_ink(id)
             .moved(space.origin)
             .touches(&space.visible)
-            && !self.document.boxes[id].cache.has_escapees()
+    }
+
+    /// And some that are not.
+    fn children_in_sight(&self, id: BoxId, contents: &Space) -> &'a [BoxId] {
+        let (document, it) = (self.document, &self.document.boxes[id]);
+        let is_long = it.children.len() >= 32
+            && id != VIEWPORT
+            && !it.has_legend
+            && !document.has_depth.get()
+            && document.boxes.pieces.is_empty();
+        let Some([above, below]) = is_long.then(|| document.column(id)).flatten() else {
+            return &it.children;
+        };
+        let origin = contents.origin[1]
+            - if it.scrolls() {
+                document.scroll_offset(it.node)[1]
+            } else {
+                0.0
+            };
+        let top = |it: &BoxId| origin + document.boxes[*it].layout.location.y;
+        let rest = &it.children[it
+            .children
+            .partition_point(|it| top(it) + below + 1.0 < contents.visible.y)..];
+        &rest[..rest.partition_point(|it| top(it) - above - 1.0 <= contents.visible.bottom())]
     }
 
     fn content_space(&mut self, id: BoxId, space: &Space) -> Space {
@@ -1928,8 +2070,8 @@ impl<'a> Painter<'a> {
             Some(inline) => {
                 self.collect_inline_layers(id, 0..inline.items.len(), &contents, wanted, out)
             }
-            None => it
-                .children
+            None => self
+                .children_in_sight(id, &contents)
                 .iter()
                 .for_each(|child| self.collect_layer(id, *child, [space, &contents], wanted, out)),
         }
@@ -1971,7 +2113,7 @@ impl<'a> Painter<'a> {
                 contents
             },
         );
-        if self.is_out_of_sight(child, &space) {
+        if self.is_out_of_sight(child, &space) && !document.boxes[child].cache.has_escapees() {
             return;
         }
         let own = &document.boxes[child];
@@ -1981,6 +2123,7 @@ impl<'a> Painter<'a> {
         if defers {
             inside.remove(Layers::HAS_LEVEL);
         }
+        let first = out.len();
         match (is_wanted, defers) {
             (true, _) if let Some(around) = document.split_stacking_contexts(child).last() => {
                 out.push((inline_z_index(around.1), Layer::InInline(child), space))
@@ -2000,6 +2143,18 @@ impl<'a> Painter<'a> {
             (false, false) => {}
         }
         self.collect_layers(child, &space, inside, out);
+        let is_left_to_list = if layers.contains(Layers::HAS_RAISED) {
+            inside.contains(Layers::HAS_RAISED)
+        } else {
+            inside.contains(Layers::HAS_LEVEL)
+        };
+        if is_left_to_list && document.has_controls_on_top(child) {
+            out.push((
+                out[first..].iter().fold(0, |all, it| all.max(it.0)),
+                Layer::Controls(child),
+                space,
+            ));
+        }
     }
 
     fn collect_inline_layers(
@@ -2060,12 +2215,12 @@ impl<'a> Painter<'a> {
         self.segment(id, kind, &space, |painter| match kind {
             Painted::StackingContext => painter.placed_stacking_context(id, space, false),
             Painted::Lines => painter.lines(id, 0, 0..0, &space),
-            Painted::Inside => painter.level_layers(id, &space),
+            Painted::Inside => painter.level_layers_and_controls(id, &space),
             Painted::Atomic | Painted::Positioned => {
                 painter.decorations(id, &space);
                 painter.flow(id, &space);
                 if kind == Painted::Positioned {
-                    painter.level_layers(id, &space);
+                    painter.level_layers_and_controls(id, &space);
                 }
             }
         });
@@ -2316,6 +2471,9 @@ impl<'a> Painter<'a> {
         below.iter().for_each(|it| self.layer(it.1, it.2));
         self.flow(id, &space);
         above.iter().for_each(|it| self.layer(it.1, it.2));
+        if document.has_controls_on_top(id) {
+            self.controls_on_top(id, &space);
+        }
         if is_scope {
             self.scoped_transition(id, &space);
         }
@@ -2360,6 +2518,7 @@ impl<'a> Painter<'a> {
             Layer::Atomic(id) => self.atomic(id, &space),
             Layer::Positioned(id) => self.paint_segment(id, Painted::Positioned, space),
             Layer::Inside(id) => self.paint_segment(id, Painted::Inside, space),
+            Layer::Controls(id) => self.controls_on_top(id, &space),
             Layer::Inline(id, item) => self.inline_layer(id, item, &space),
             Layer::InInline(id) => self.block_in_inline(
                 id,
@@ -2369,10 +2528,22 @@ impl<'a> Painter<'a> {
         }
     }
 
-    fn level_layers(&mut self, id: BoxId, space: &Space) {
+    fn level_layers_and_controls(&mut self, id: BoxId, space: &Space) {
         let mut layers = LayerList::new();
         self.collect_layers(id, space, Layers::HAS_LEVEL, &mut layers);
         layers.iter().for_each(|it| self.layer(it.1, it.2));
+        if self.document.has_controls_on_top(id)
+            && !self.document.layers(id).contains(Layers::HAS_RAISED)
+        {
+            self.controls_on_top(id, space);
+        }
+    }
+
+    fn controls_on_top(&mut self, id: BoxId, space: &Space) {
+        if self.document.boxes[id].scrollbar_size == 0.0 {
+            self.scrollbars(id, space);
+        }
+        self.resizer(id, space);
     }
 
     fn block_in_inline(
@@ -2608,7 +2779,7 @@ impl<'a> Painter<'a> {
         self.is_hidden = was_hidden;
     }
 
-    fn subject(&self, id: BoxId, space: &Space) -> Subject<'a, 'a> {
+    pub(crate) fn subject(&self, id: BoxId, space: &Space) -> Subject<'a, 'a> {
         let (it, margin) = (
             &self.document.boxes[id],
             self.document.boxes[id].layout.margin,
@@ -2666,8 +2837,13 @@ impl<'a> Painter<'a> {
                 Foreground::Math => self.math(*id, space),
             }
         }
-        self.scrollbars(id, space);
-        self.resizer(id, space);
+        let waits = self.document.has_controls_on_top(id);
+        if !waits || self.document.boxes[id].scrollbar_size > 0.0 {
+            self.scrollbars(id, space);
+        }
+        if !waits {
+            self.resizer(id, space);
+        }
         for (id, space) in phases.outlines.iter().chain([&(id, *space)]) {
             let style = &self.document.boxes[*id].style;
             if style.paints().contains(Paints::SHAPES)
@@ -2743,7 +2919,12 @@ impl<'a> Painter<'a> {
             [0.0; 2]
         };
         let is_simple = !it.has_legend && !document.has_depth.get();
-        for child in it.children.iter().copied() {
+        let children = self.children_in_sight(id, &contents);
+        for (index, child) in children.iter().copied().enumerate() {
+            children
+                .get(index + 8)
+                .into_iter()
+                .for_each(|it| document.boxes.prefetch_extent(*it));
             let own = &document.boxes[child];
             // What follows comes down to this for most of a long list.
             if is_simple && own.kind != Kind::RowGroup && !own.is_in_inline {
@@ -2754,9 +2935,7 @@ impl<'a> Painter<'a> {
                     contents.origin[0] + (own.layout.location.x - scroll[0]),
                     contents.origin[1] + (own.layout.location.y - scroll[1]),
                 ];
-                if own.container == id
-                    && !document.ink(child).moved(at).touches(&contents.visible)
-                    && !own.cache.has_escapees()
+                if own.container == id && !document.ink(child).moved(at).touches(&contents.visible)
                 {
                     continue;
                 }
@@ -3555,7 +3734,7 @@ impl<'a> Painter<'a> {
             Rect::new(document.content_box(id)).moved(space.origin),
         );
         if self.skips_what_is_not_selected() {
-            return if document.marks.is_selected(it.node) {
+            return if document.is_selected(it.node) {
                 self.paint_selected(it.node, content, space, |painter| {
                     painter.replaced_content(id, space)
                 })
@@ -3607,7 +3786,7 @@ impl<'a> Painter<'a> {
                 .get(&it.node)
                 .and_then(|it| document.ready(it, style))
             else {
-                return;
+                return self.missing_image(it.node, content, clip, space);
             };
             return self.draw(
                 &ready,
@@ -3620,7 +3799,8 @@ impl<'a> Painter<'a> {
                 space,
             );
         };
-        let rect = self.snap_rect(object_rect(style, image, content));
+        let exact = object_rect(style, image, content);
+        let rect = self.snap_rect(exact);
         if document.overflow_clip(id).is_none() {
             clip = square(rect);
         } else if style.effects.clip_margin != ClipMargin(BoxArea::ContentBox, 0.0) {
@@ -3652,16 +3832,22 @@ impl<'a> Painter<'a> {
             },
             &space,
         );
-        self.draw_image(
-            clip,
-            abi::Tile {
-                rect,
-                step: [0.0; 2],
-            },
-            image.image,
-            style,
-            space,
-        );
+        let tile = abi::Tile {
+            rect,
+            step: [0.0; 2],
+        };
+        match crate::embedded::is_vector(image.image) {
+            true => self.tiled(clip, tile, space, |painter, space| {
+                painter.vector_image(
+                    image.image,
+                    [exact, rect].map(|it| [it.width, it.height]),
+                    false,
+                    style,
+                    space,
+                )
+            }),
+            false => self.draw_image(clip, tile, image.image, style, space),
+        }
         if goes_under {
             self.border(style, &frame, space);
         }
@@ -3948,36 +4134,38 @@ impl<'a> Painter<'a> {
                 continue;
             }
             self.fill(square(rect), track_color, &space);
-            let Some(thumb) = thumb else { continue };
-            let color = emphasized(is_dragged || hovered == Some(Part::Thumb));
-            self.fill(
-                pill(
-                    self.snap_rect(thumb)
-                        .shrunk(across(self.snap(thickness / 5.0))),
-                ),
-                color,
-                &moving,
+            let (color, margin, scale) = (
+                emphasized(is_dragged || hovered == Some(Part::Thumb)),
+                self.snap(thickness / 5.0),
+                document.environment.scale,
             );
+            thumb.into_iter().for_each(|it| {
+                self.fill(
+                    pill(self.snap_rect(it).shrunk(across(margin))),
+                    color,
+                    &moving,
+                )
+            });
+            let side = ((thickness - margin * 2.0) * scale).round();
+            let base = ((bar.button * scale).floor() + side) / 2.0
+                - (side / 9.0).round()
+                - (((side / 2.0).floor() + 1.0) / 2.0).floor()
+                + axis as f32;
             for (part, direction) in [(Part::Back, -1.0), (Part::Forward, 1.0)]
                 .into_iter()
                 .filter(|_| bar.button > 0.0)
             {
                 let [start, end] = rect.span(axis);
                 let along = if direction < 0.0 {
-                    start + bar.button / 2.0
+                    start + base.floor() / scale
                 } else {
-                    end - bar.button / 2.0
+                    end - base.ceil() / scale
                 };
                 let (middle, half) = (
                     rect.span(1 - axis).iter().sum::<f32>() / 2.0,
-                    thickness * 0.3,
+                    (side + 1.0) / 2.0 / scale,
                 );
-                let points = [
-                    [-0.7 * direction, -1.0],
-                    [-0.7 * direction, 1.0],
-                    [0.7 * direction, 0.0],
-                ]
-                .map(|it| {
+                let points = [[0.0, -1.0], [0.0, 1.0], [direction, 0.0]].map(|it| {
                     let point = [along + it[0] * half, middle + it[1] * half];
                     if axis == 0 {
                         point
@@ -3985,7 +4173,17 @@ impl<'a> Painter<'a> {
                         [point[1], point[0]]
                     }
                 });
-                self.polygon(&points, emphasized(hovered == Some(part)), &space);
+                let outline = self.outline_of(&Path::polygon(points, true), FillRule::Nonzero);
+                self.emit(
+                    &Item::Path {
+                        outline: abi::Outline {
+                            crisp: true,
+                            ..outline
+                        },
+                        color: emphasized(hovered == Some(part)),
+                    },
+                    &space,
+                );
             }
         }
     }

@@ -173,7 +173,12 @@ impl<'a> TextLayout<'a> {
             .for_each(|it| (it.at[1], it.delta[1]) = (it.at[1].map(|it| -it), -it.delta[1]));
     }
 
-    fn extent(&self, it: &Placed) -> Rect {
+    /// The text node, and where it starts in that.
+    pub(crate) fn source(&self, it: &Placed) -> (NodeId, u32) {
+        self.characters[it.characters.start].source
+    }
+
+    pub(crate) fn extent(&self, it: &Placed) -> Rect {
         let run = &self.runs[it.run];
         Rect::new([
             0.0,
@@ -463,11 +468,11 @@ impl Document {
             node.id,
             to.layout.scale / node.style.zoom,
         );
-        let metrics = self.fonts.metrics(style.font_id, style.font.size.0 * scale);
+        let metrics = self.fonts.metrics(style.font_id, style.font.size.1 * scale);
         let [ascent, descent, x_height] =
             [metrics.ascent, metrics.descent, metrics.x_height].map(|it| it / to.layout.scale);
         let (size, above) = (
-            style.font.size.0 / style.zoom,
+            style.font.size.1 / style.zoom,
             parent.map(|it| &to.layout.runs[it]),
         );
         let raised = match &style.shape.baseline_shift {
@@ -569,7 +574,7 @@ impl Document {
             }
             let run = crate::inline::text_run(&style, to.text.len());
             let [size, letter_spacing, word_spacing] =
-                [run.size, run.letter_spacing, run.word_spacing].map(|it| it * scale);
+                [style.font.size.1, run.letter_spacing, run.word_spacing].map(|it| it * scale);
             let word_break = run.word_break
                 | if style.has_central_baseline() {
                     abi::RUN_VERTICAL

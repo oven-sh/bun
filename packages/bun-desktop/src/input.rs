@@ -3,6 +3,7 @@
 use std::cell::{Cell, RefCell};
 use std::ops::Range;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use crate::abi::Rect;
@@ -165,6 +166,7 @@ fn emit_key(
     };
     if down && state.cover.get().is_some() {
         cover::key_down(&key, bits);
+        with_ime(state, |ime, _| imagine_key(ime, &key, bits));
     }
     #[cfg(target_os = "macos")]
     crate::platform::macos::did_send_key();
@@ -185,8 +187,22 @@ fn emit_key(
     );
 }
 
+fn if_enabled(window: u32) -> Option<Rc<WindowState>> {
+    window::state(window)
+        .ok()
+        .filter(|it| !it.is_disabled.get())
+}
+
+pub fn set_enabled(state: &WindowState, is_enabled: bool) {
+    if state.is_disabled.replace(!is_enabled) == is_enabled {
+        release_pointer(state);
+        hover(state, Target::Nothing, Point::default(), 0);
+        act(state, |window| window.text_input_changed());
+    }
+}
+
 fn emit_raw_key(raw: RawKey) {
-    let Some(state) = ACTIVE_WINDOW.get().and_then(|id| window::state(id).ok()) else {
+    let Some(state) = ACTIVE_WINDOW.get().and_then(if_enabled) else {
         return;
     };
     let code = keys::dom_code(raw.scan_code);
@@ -252,6 +268,7 @@ impl Ime {
             selection,
             composing,
             caret,
+            ..
         }) = field
         else {
             return Ime::default();
@@ -311,8 +328,14 @@ fn with_ime<R>(state: &WindowState, f: impl FnOnce(&mut Ime, Rect) -> R) -> Opti
 pub fn ime_changed(state: &WindowState, before: &Ime, surface: u32) {
     let has_changed = surface::get(surface).is_some_and(|it| {
         let now = &it.borrow().ime;
+        // AppKit asks for the text.
+        let has_other_text = || {
+            !cfg!(target_os = "macos")
+                && (&before.selection, &before.text) != (&now.selection, &now.text)
+        };
+        let has_moved = (before.caret, &before.composing) != (now.caret, &now.composing);
         (before.is_enabled, before.is_secret) != (now.is_enabled, now.is_secret)
-            || now.is_enabled && (before.caret, &before.composing) != (now.caret, &now.composing)
+            || now.is_enabled && (has_moved || has_other_text())
     });
     if has_changed {
         act(state, |window| window.text_input_changed());
@@ -321,6 +344,37 @@ pub fn ime_changed(state: &WindowState, before: &Ime, surface: u32) {
 
 fn ends(range: Range<usize>) -> [u32; 2] {
     [range.start as u32, range.end as u32]
+}
+
+/// The field that gets what a cover holds may have more text.
+fn ends_for(state: &WindowState, ime: &Ime, range: Range<usize>) -> [u32; 2] {
+    let origin = if state.cover.get().is_some() {
+        ui::CARET - ime.selection.end as u32
+    } else {
+        0
+    };
+    ends(ime.clamp(range)).map(|it| origin + it)
+}
+
+/// No page says what a key does under a cover.
+fn imagine_key(ime: &mut Ime, key: &str, bits: u8) {
+    let is_plain =
+        |it: &u16| matches!(it, 0x20..=0x2FF | 0x370..=0x482 | 0x3040..=0x3098 | 0x30A0..=0xD7A3);
+    match key {
+        _ if ime.composing.is_some() => {}
+        "Backspace"
+            if bits & !1 == 0
+                && ime.selection.is_empty()
+                && ime.text[..ime.selection.end].last().is_some_and(is_plain) =>
+        {
+            ime.replace(Some(ime.selection.end - 1..ime.selection.end), "");
+        }
+        "Backspace" | "Delete" | "Enter" | "Home" | "End" => {
+            (ime.text, ime.selection) = Default::default()
+        }
+        _ if key.starts_with("Arrow") => (ime.text, ime.selection) = Default::default(),
+        _ => {}
+    }
 }
 
 fn emit_text_event(state: &WindowState, input: ui::Input) {
@@ -333,7 +387,7 @@ pub fn report_key_taken_by_ime() {
     let Some(raw) = RAW_KEY.take() else { return };
     let code = keys::dom_code(raw.scan_code);
     let key = keys::key_for_symbol(raw.symbol, code).filter(|key| key == "Dead");
-    if let Some(state) = ACTIVE_WINDOW.get().and_then(|id| window::state(id).ok()) {
+    if let Some(state) = ACTIVE_WINDOW.get().and_then(if_enabled) {
         emit_key(
             &state,
             raw.down,
@@ -355,24 +409,34 @@ fn insert_text(state: &WindowState, range: Option<Range<usize>>, text: &str) {
         return;
     }
     #[cfg(target_os = "macos")]
-    if is_typed && with_ime(state, |ime, _| ime.is_enabled) == Some(true) {
+    if is_typed
+        && !state.keeps_cursor.get()
+        && with_ime(state, |ime, _| ime.is_enabled) == Some(true)
+    {
         crate::platform::macos::hide_cursor_until_it_moves();
     }
     let range = with_ime(state, |ime, _| {
         let range = range.filter(|range| Some(range) != ime.composing.as_ref());
-        ime.replace(range.clone(), text);
+        let told = range.clone().map(|it| ends_for(state, ime, it));
+        ime.replace(range, text);
         ime.composing = None;
-        range
+        told
     });
+    let range = range.flatten();
     if state.cover.get().is_some() {
-        cover::typed(text, matches!(range, Some(None)));
+        cover::typed(
+            text,
+            range.map_or(Some(0), |[start, end]| {
+                (end == ui::CARET).then(|| end - start)
+            }),
+        );
     }
     emit_text_event(
         state,
         ui::Input::Text {
             text: text.into(),
             is_typed,
-            range: range.flatten().map(ends).into(),
+            range: range.into(),
         },
     );
     if was_composing {
@@ -386,7 +450,7 @@ pub struct TextInput(pub u32);
 
 impl TextInput {
     fn with<R>(self, f: impl FnOnce(&mut Ime, Rect) -> R) -> Option<R> {
-        with_ime(&*window::state(self.0).ok()?, f)
+        with_ime(&*if_enabled(self.0)?, f)
     }
 
     pub fn is_enabled(self) -> bool {
@@ -398,18 +462,15 @@ impl TextInput {
         self.with(|ime, _| ime.is_secret) == Some(true)
     }
 
-    #[cfg(target_os = "macos")]
     pub fn selection(self) -> Option<Range<usize>> {
         self.with(|ime, _| ime.selection.clone())
     }
 
-    #[cfg(target_os = "macos")]
     pub fn composing(self) -> Option<Range<usize>> {
         self.with(|ime, _| ime.composing.clone())?
     }
 
     /// With the range that it is really from.
-    #[cfg(target_os = "macos")]
     pub fn text(self, range: Range<usize>) -> Option<(Vec<u16>, Range<usize>)> {
         self.with(|ime, _| {
             (
@@ -429,7 +490,7 @@ impl TextInput {
     }
 
     pub fn insert(self, range: Option<Range<usize>>, text: &str) {
-        if let Ok(state) = window::state(self.0) {
+        if let Some(state) = if_enabled(self.0) {
             insert_text(&state, range, text);
         }
     }
@@ -456,12 +517,13 @@ impl TextInput {
         });
         let range = self.with(|ime, _| {
             let range = range.filter(|range| Some(range) != ime.composing.as_ref());
-            let marked = ime.replace(range.clone(), text);
+            let told = range.clone().map(|it| ends_for(&state, ime, it));
+            let marked = ime.replace(range, text);
             ime.selection = marked.start + selection.start..marked.start + selection.end;
             ime.composing = Some(marked);
-            range
+            told
         });
-        let (selection, range) = (ends(selection), range.flatten().map(ends).into());
+        let (selection, range) = (ends(selection), range.flatten().into());
         emit_text_event(
             &state,
             ui::Input::Compose {
@@ -473,7 +535,6 @@ impl TextInput {
     }
 
     /// What is being composed stays as it is.
-    #[cfg(target_os = "macos")]
     pub fn end_composition(self) {
         if let (Ok(state), Some(true)) = (
             window::state(self.0),
@@ -504,6 +565,11 @@ fn target_at(state: &WindowState, position: Point) -> Target {
         Some(surface) => Target::Surface(surface.id),
         None => Target::Nothing,
     }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn is_on_frame(window: u32, position: Point) -> bool {
+    window::state(window).is_ok_and(|state| matches!(target_at(&state, position), Target::Frame(_)))
 }
 
 #[cfg(target_os = "macos")]
@@ -626,6 +692,9 @@ fn mouse_down(state: &WindowState, position: Point, button: u8, clicks: u32, mod
     match (target, button) {
         (Target::Surface(id), button) => {
             cover::stop_echo();
+            if state.cover.get().is_some() {
+                with_ime(state, |ime, _| imagine_key(ime, "Home", 0));
+            }
             if let Some(kept) = state.kept_cover.get().filter(|kept| *kept != id) {
                 bridge::emit_input(kept, ui::Input::Outside);
             }
@@ -806,7 +875,7 @@ fn drag_files(state: &WindowState, position: Option<Point>, last: DragPhase) {
 }
 
 pub fn handle(window: u32, event: Input) {
-    let Ok(state) = window::state(window) else {
+    let Some(state) = if_enabled(window) else {
         return;
     };
     let state = &*state;
@@ -918,7 +987,11 @@ pub fn synthesize(state: &WindowState, modifiers: Modifiers, event: Synthetic) {
                 insert_text(state, None, text);
             }
         }
-        Synthetic::Text(text) => insert_text(state, None, &text),
+        Synthetic::Text { text, range } => insert_text(
+            state,
+            range.get().map(|[start, end]| start as usize..end as usize),
+            &text,
+        ),
         Synthetic::Drop { at, paths } => {
             handle(
                 state.id,

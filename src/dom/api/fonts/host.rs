@@ -11,8 +11,8 @@ use bun_web::request::Destination;
 
 use super::FontFace;
 use crate::api::core::Doc;
-use crate::api::interim::once;
 use crate::api::loading::{load_subresource, when_loaded};
+use crate::api::on_behalf::once;
 
 /// `promise` is not rejected.
 fn then<'a>(

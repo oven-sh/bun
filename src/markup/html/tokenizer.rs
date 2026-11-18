@@ -213,6 +213,8 @@ struct Run<'a, 'b, U: Unit, S: Sink> {
     at: usize,
     /// No input follows.
     is_last: bool,
+    /// A tag that starts there is incomplete.
+    after_last_tag: usize,
     counts_lines: bool,
     amp: Rare,
     nul: Rare,
@@ -252,10 +254,16 @@ impl Tokenizer {
         );
         let is_last = matches!(input, Input::Fragment | Input::RestOfDocument);
         let counts_lines = matches!(input, Input::PartOfDocument | Input::RestOfDocument);
+        let last_end = || {
+            strings::last_index_of_char_t(&units[*at..], U::from_u8(b'>'))
+                .map_or(0, |it| *at + it + 1)
+        };
+        let after_last_tag = if is_last { usize::MAX } else { last_end() };
         let mut run = Run {
             units,
             at: *at,
             is_last,
+            after_last_tag,
             counts_lines,
             amp,
             nul,
@@ -282,7 +290,7 @@ impl<'b, U: Unit, S: Sink> Run<'_, 'b, U, S> {
                 };
             }
             let step = match self.builder.state.content {
-                Content::Data => self.data(),
+                Content::Data => self.tokens(),
                 content => self.text_only(content),
             };
             if step.is_err() {
@@ -314,8 +322,33 @@ impl<'b, U: Unit, S: Sink> Run<'_, 'b, U, S> {
         }
     }
 
-    #[inline]
-    fn data(&mut self) -> Step {
+    /// Up to the first one that can have consequences.
+    #[inline(always)]
+    fn tokens(&mut self) -> Step {
+        loop {
+            let (units, start) = (self.units, self.at);
+            let after_bracket = match units.get(start..start + 2) {
+                Some([first, second]) if first.low() == b'<' => second.low(),
+                _ => 0,
+            };
+            if after_bracket == b'/'
+                && let Some(word) = U::word(units, start + 2)
+                && let Some(len) = self.builder.end_current(word)
+            {
+                self.at = start + 2 + len;
+            } else if after_bracket.is_ascii_alphabetic() && start + 1 < self.after_last_tag {
+                if !self.start_tag(start + 1)? {
+                    return Ok(());
+                }
+            } else if start >= units.len() || !self.data()? {
+                return Ok(());
+            }
+        }
+    }
+
+    /// Whether it was quiet.
+    #[inline(always)]
+    fn data(&mut self) -> Result<bool, NeedsInput> {
         let (units, start) = (self.units, self.at);
         let mut end = if units[start].low() == b'<' {
             start
@@ -335,9 +368,10 @@ impl<'b, U: Unit, S: Sink> Run<'_, 'b, U, S> {
             }
         }
         if end == start {
-            return self.markup(start + 1);
+            return self.markup(start + 1).map(|()| false);
         }
-        let mut may_continue = has_at(units, end, b"</>");
+        let mut may_continue =
+            byte_at(units, end + 2) == Some(b'>') && units[end + 1].low() == b'/';
         if !self.is_last && end + 2 >= units.len() {
             may_continue = true;
             if end == units.len() {
@@ -346,35 +380,31 @@ impl<'b, U: Unit, S: Sink> Run<'_, 'b, U, S> {
             }
         }
         self.at = end;
-        let has_nul = self.nul.is_in(units, start, end);
-        if self.amp.is_in(units, start, end) {
-            let scratch = &mut self.tokenizer.scratch;
-            scratch.clear();
-            entities::decode(&units[start..end], false, scratch);
-            self.builder.text(
-                scratch.chars(),
-                TextIs {
-                    has_nul,
-                    may_continue,
-                },
-            );
-        } else {
-            self.builder.text(
-                U::chars(&units[start..end]),
-                TextIs {
-                    has_nul,
-                    may_continue,
-                },
-            );
-        }
-        Ok(())
+        let is = TextIs {
+            has_nul: self.nul.is_in(units, start, end),
+            may_continue,
+        };
+        Ok(match self.amp.is_in(units, start, end) {
+            true => self.text_with_references(&units[start..end], is),
+            false => self
+                .builder
+                .text_between_tags(U::chars(&units[start..end]), is),
+        })
     }
 
-    /// After a `<`.
-    #[inline]
+    #[inline(never)]
+    fn text_with_references(&mut self, source: &[U], is: TextIs) -> bool {
+        let scratch = &mut self.tokenizer.scratch;
+        scratch.clear();
+        entities::decode(source, false, scratch);
+        self.builder.text_between_tags(scratch.chars(), is)
+    }
+
+    /// After a `<` that starts no start tag, or an incomplete one.
+    #[inline(never)]
     fn markup(&mut self, at: usize) -> Step {
         let units = self.units;
-        if !self.is_last && U::find(units, at, b'>') == units.len() {
+        if at >= self.after_last_tag {
             return Err(NeedsInput);
         }
         match units[at].low() {
@@ -387,8 +417,7 @@ impl<'b, U: Unit, S: Sink> Run<'_, 'b, U, S> {
                 _ => self.bogus_comment(at + 1),
             },
             b'!' => self.declaration(at + 1),
-            b'?' => self.instruction(at),
-            _ => self.start_tag(at),
+            _ => self.instruction(at),
         }
     }
 
@@ -440,8 +469,8 @@ impl<'b, U: Unit, S: Sink> Run<'_, 'b, U, S> {
         Ok(())
     }
 
-    #[inline]
-    fn start_tag(&mut self, start: usize) -> Step {
+    #[inline(always)]
+    fn start_tag(&mut self, start: usize) -> Result<bool, NeedsInput> {
         let scanned = self.scan_name(start, ENDS_TAG_NAME);
         let (name, builder) = self.name(start, scanned);
         let tag = scanned
@@ -449,45 +478,46 @@ impl<'b, U: Unit, S: Sink> Run<'_, 'b, U, S> {
             .map_or_else(|| Tag::from_name(name), Tag::from_short_name);
         let name = (tag == Tag::Other).then(|| builder.sink.name(name, scanned.short));
         self.builder.state.forget_attributes();
-        let takes_stencil =
-            byte_at(self.units, scanned.end) != Some(b'>') && self.builder.state.takes_stencil(tag);
-        let source = if takes_stencil {
-            tag_source(self.units, start)
+        let mut is_self_closing = false;
+        if byte_at(self.units, scanned.end) == Some(b'>') {
+            self.at = scanned.end + 1;
         } else {
-            None
-        };
-        if let Some(source) = source
-            && let Some(stencil) = self.builder.sink.recall(source)
-        {
-            self.at = start + source.chars.len() + 1;
-            self.builder.state.stencil = Some(stencil);
+            let source = if self.builder.state.takes_stencil(tag) {
+                tag_source(self.units, start)
+            } else {
+                None
+            };
+            if let Some(source) = source
+                && let Some(stencil) = self.builder.sink.recall(source)
+            {
+                self.at = start + source.chars.len() + 1;
+                self.builder.state.stencil = Some(stencil);
+            } else {
+                let Some(end) = self.attributes::<true>(scanned.end) else {
+                    return self.tag_cut_off().map(|()| false);
+                };
+                (self.at, is_self_closing) = end;
+                if let Some(source) = source.filter(|it| start + it.chars.len() + 1 == end.0) {
+                    self.builder.state.stencil =
+                        self.builder
+                            .sink
+                            .remember(source, tag, &mut self.builder.state.attributes);
+                }
+            }
+        }
+        if tag == Tag::Script && self.counts_lines {
+            self.tokenizer.lines.advance(self.units, self.at);
+            self.builder.state.position = self.tokenizer.lines.position();
+        }
+        let is_quiet = self.builder.start_quietly(tag);
+        if !is_quiet {
             self.builder.start_tag(StartTag {
                 tag,
                 name,
-                is_self_closing: false,
+                is_self_closing,
             });
-            return Ok(());
         }
-        let Some((after, is_self_closing)) = self.attributes::<true>(scanned.end) else {
-            return self.tag_cut_off();
-        };
-        self.at = after;
-        if let Some(source) = source.filter(|it| start + it.chars.len() + 1 == after) {
-            self.builder.state.stencil =
-                self.builder
-                    .sink
-                    .remember(source, tag, &mut self.builder.state.attributes);
-        }
-        if tag == Tag::Script && self.counts_lines {
-            self.tokenizer.lines.advance(self.units, after);
-            self.builder.state.position = self.tokenizer.lines.position();
-        }
-        self.builder.start_tag(StartTag {
-            tag,
-            name,
-            is_self_closing,
-        });
-        Ok(())
+        Ok(is_quiet)
     }
 
     #[inline]
@@ -508,7 +538,7 @@ impl<'b, U: Unit, S: Sink> Run<'_, 'b, U, S> {
     }
 
     /// Where the tag ends, and whether it does with `/>`.
-    #[inline]
+    #[inline(never)]
     fn attributes<const KEEPS: bool>(&mut self, mut at: usize) -> Option<(usize, bool)> {
         let units = self.units;
         loop {

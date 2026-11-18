@@ -5,11 +5,12 @@ use std::hash::{Hash, Hasher};
 use std::ops::Range;
 
 use super::breaks::{flags_in_ascii, is_letter};
-use super::fonts::Face;
+use super::fonts::{Face, is_default_ignorable};
+use super::pages::Pages;
 use super::reach::Reach;
 use super::shaper::{Buffer, Direction, Feature, Glyph, Plan, Shaper};
 use crate::abi::{Letter, NO_GLYPH};
-use crate::hash::{FastHasher, FastMap};
+use crate::hash::{FastHasher, FastMap, keyed, keyed_words};
 use crate::unicode::{Script, stands_alone};
 
 /// In steps.
@@ -90,31 +91,146 @@ impl Shaping<'_> {
         }));
     }
 
+    fn is_syllabic(&self) -> bool {
+        matches!(&self.script.0, b"Hani" | b"Hira" | b"Kana" | b"Hang")
+    }
+
+    fn goes_by_characters(&self, item: &str) -> bool {
+        self.is_syllabic()
+            && !self.is_rtl
+            && !self.is_vertical
+            && !self.capitalizes
+            && !item.is_ascii()
+    }
+
+    /// If words are shaped one by one.
+    fn reach(&self) -> Option<Reach> {
+        const MAX_REACH: usize = 12;
+        let joins = self.script.0 == *b"Arab";
+        let has_words = if self.is_rtl {
+            joins || self.script.0 == *b"Hebr"
+        } else {
+            self.is_syllabic() || matches!(&self.script.0, b"Latn" | b"Zyyy" | b"Cyrl" | b"Grek")
+        };
+        // The form of a letter depends on the next one, which a mark may be in front of.
+        let further = |it: usize| if joins && it > 0 { it + 2 } else { it };
+        let reach = has_words
+            .then(|| self.face.file.reach())
+            .flatten()
+            .map(|it| Reach {
+                before: further(it.before),
+                after: further(it.after),
+            });
+        reach.filter(|reach| reach.before + reach.after <= MAX_REACH)
+    }
+
+    /// Whether what is around an item makes no difference.
+    fn ignores_context(&self) -> bool {
+        matches!(
+            &self.script.0,
+            b"Latn"
+                | b"Zyyy"
+                | b"Cyrl"
+                | b"Grek"
+                | b"Hebr"
+                | b"Armn"
+                | b"Geor"
+                | b"Ethi"
+                | b"Thai"
+                | b"Laoo"
+                | b"Khmr"
+                | b"Mymr"
+                | b"Tibt"
+                | b"Sinh"
+        ) || matches!(
+            &self.script.0,
+            b"Deva" | b"Beng" | b"Guru" | b"Gujr" | b"Orya" | b"Taml" | b"Telu" | b"Knda" | b"Mlym"
+        ) || self.is_syllabic()
+    }
+
+    /// Whether `Words::shape` may start inside of the item.
+    pub fn is_local(&self, item: &str) -> bool {
+        self.goes_by_characters(item) || self.reach().is_some()
+    }
+
     fn identity(&self) -> u64 {
-        let mut hasher = FastHasher::default();
         let size = if self.face.file.has_tracking {
             self.size.to_bits()
         } else {
             0
         };
-        (
-            self.face.id,
-            self.script,
-            self.is_rtl,
+        let script = u64::from(u32::from_ne_bytes(self.script.0)) << 1 | u64::from(self.is_rtl);
+        keyed_words([
+            u64::from(self.face.id) << 32 | u64::from(size),
             self.features_hash,
-            size,
-        )
-            .hash(&mut hasher);
-        hasher.finish()
+            script,
+        ])
     }
 }
 
 const UNKNOWN: f32 = 0.;
-const COMPLEX: i32 = -1;
 const END: u8 = 0;
 
-/// Most ASCII text is glyphs whose advance depends on the next one.
-struct Pairs(Box<[[Pair; 128]; 128]>);
+/// In most text, the advance of a glyph depends on the next one.
+struct Pairs {
+    ascii: Box<[[Pair; 128]; 128]>,
+    others: Others<6>,
+}
+
+/// By so many low bits of the two, or empty. They have the advance, the high bits and the glyph.
+#[derive(Default)]
+struct Others<const BITS: u32>(Vec<u64>);
+
+impl<const BITS: u32> Others<BITS> {
+    const COMPLEX: u64 = (1 << 28) - 1;
+
+    #[inline(always)]
+    fn get(
+        &mut self,
+        shaping: &Shaping,
+        first: char,
+        second: Option<char>,
+        buffer: &mut Buffer,
+    ) -> Option<Pair> {
+        let ([a, b], low) = (
+            [
+                u64::from(first),
+                second.map_or(0, |it| u64::from(it).max(1)),
+            ],
+            (1 << BITS) - 1,
+        );
+        (a | b < 1 << 16).then_some(())?;
+        let (slot, high) = (
+            ((a & low) << BITS | b & low) as usize,
+            a >> BITS << 10 | b >> BITS,
+        );
+        let known = self
+            .0
+            .get(slot)
+            .copied()
+            .filter(|it| it >> 16 & 0xf_ffff == high && it >> 36 != 0);
+        let known = known.unwrap_or_else(|| {
+            let learned = Pairs::learn(
+                shaping,
+                &String::from_iter([first].into_iter().chain(second)),
+                buffer,
+            );
+            let (glyph, advance) = learned.map_or((0, Self::COMPLEX), |it| {
+                (it.0, (it.1 as u64).min(Self::COMPLEX))
+            });
+            if self.0.is_empty() {
+                self.0 = vec![0; 1 << (2 * BITS)];
+            }
+            self.0[slot] = advance << 36 | high << 16 | u64::from(glyph);
+            self.0[slot]
+        });
+        (known >> 36 != Self::COMPLEX).then_some(Pair {
+            advance: (known >> 36) as i32 as f32,
+            glyph: known as u16,
+            flags: [0; 2],
+        })
+    }
+}
 
 #[derive(Clone, Copy, Default)]
 #[repr(C)]
@@ -125,87 +241,157 @@ struct Pair {
     flags: [u8; 2],
 }
 
-/// One for each byte of the text. Those that are left to `Placed` stay `UNSPELLED`.
+/// One for each cluster of an item. Those that are left to `Placed` stay `UNSPELLED`. The flags of what is not ASCII, and of what follows it, are there.
 pub struct Spelling<'a> {
     pub letters: &'a mut [Letter],
+    /// How many have been dealt with, and how many of them were left.
+    pub done: usize,
+    pub left: usize,
+    /// Where characters go on with a cluster.
+    pub joined: &'a [u32],
     pub scale: f32,
+    pub spacing: f32,
     pub face: u8,
 }
 
 pub const UNSPELLED: Letter = Letter {
-    advance: -1.,
+    advance: f32::MIN,
     glyph: NO_GLYPH,
     flags: 0,
     face: 0,
 };
 
-impl Pairs {
-    #[cold]
-    fn learn(shaping: &Shaping, first: u8, second: u8, buffer: &mut Buffer) -> Pair {
-        let (text, mut placed) = ([first, second], Vec::new());
-        let flags = [
-            flags_in_ascii(&text, 0),
-            if second == END {
-                0
-            } else {
-                flags_in_ascii(&text, 1)
-            },
-        ];
-        let text = str::from_utf8(&text[..1 + usize::from(second != END)]).unwrap_or_default();
-        shaping.run(text, 0..text.len(), buffer, &mut placed);
-        let only_kerns = shaping.with_shaper(|it| {
-            let [first, next] = [0, 1].map(|at| it.font.glyph((*text.as_bytes().get(at)?).into()));
-            first.is_some_and(|first| {
-                next.is_some() == (second != END) && it.only_kerns(first, next)
-            })
-        });
-        let is_printable = text.bytes().all(|it| (b' '..0x7f).contains(&it));
-        let placed = placed.first().filter(|it| {
-            is_printable
-                && only_kerns
-                && (it.dx, it.dy) == (0, 0)
-                && it.advance > 0
-                && it.id != NO_GLYPH
-        });
-        placed.map_or(
-            Pair {
-                advance: -1.,
-                ..Pair::default()
-            },
-            |it| Pair {
-                advance: it.advance as f32,
-                glyph: it.id,
-                flags,
-            },
-        )
+impl Spelling<'_> {
+    pub fn count(&self, text: &str, range: Range<usize>) -> usize {
+        let before = |offset: usize| self.joined.partition_point(|it| (*it as usize) < offset);
+        text[range.clone()].chars().count() - (before(range.end) - before(range.start))
     }
 
-    /// Of the character at `at` and the next one.
+    fn leave(&mut self, count: usize) {
+        (self.done, self.left) = (self.done + count, self.left + count);
+    }
+
+    #[inline(always)]
+    fn put(&mut self, glyph: u16, advance: f32, flags: u8) {
+        let letter = &mut self.letters[self.done];
+        *letter = Letter {
+            advance: advance * self.scale + self.spacing,
+            glyph,
+            flags: letter.flags | flags,
+            face: self.face,
+        };
+        self.done += 1;
+    }
+
+    fn take_back(&mut self, count: usize) {
+        self.letters[self.done - count..self.done]
+            .iter_mut()
+            .for_each(|it| it.advance = UNSPELLED.advance);
+        self.done -= count;
+    }
+}
+
+/// Whether nothing but the tables of the font decides on what becomes of it.
+fn is_ordinary(character: char) -> bool {
+    matches!(character, ' '..='~')
+        || character >= '\u{a0}'
+            && character != '\u{2044}'
+            && stands_alone(character)
+            && !is_default_ignorable(character)
+}
+
+/// Where the text is so many characters before `at`, but not before `least`.
+fn back(text: &str, at: usize, count: usize, least: usize) -> usize {
+    let bytes = at.saturating_sub(count).max(least);
+    match text.as_bytes()[bytes..at].is_ascii() {
+        true => bytes,
+        false => {
+            at - text[least..at]
+                .chars()
+                .rev()
+                .take(count)
+                .map(char::len_utf8)
+                .sum::<usize>()
+        }
+    }
+}
+
+impl Pairs {
+    /// The glyph and the advance of the first character of one or two.
+    #[cold]
+    fn learn(shaping: &Shaping, text: &str, buffer: &mut Buffer) -> Option<(u16, i32)> {
+        let mut placed = Vec::new();
+        text.chars().all(is_ordinary).then_some(())?;
+        shaping.run(text, 0..text.len(), buffer, &mut placed);
+        let only_kerns = shaping.with_shaper(|it| {
+            let mut glyphs = text
+                .chars()
+                .map(|character| it.font.glyph(character.into()));
+            let (first, next) = (glyphs.next().flatten(), glyphs.next());
+            first.is_some_and(|first| next != Some(None) && it.only_kerns(first, next.flatten()))
+        });
+        placed
+            .first()
+            .filter(|it| {
+                only_kerns && (it.dx, it.dy) == (0, 0) && it.advance > 0 && it.id != NO_GLYPH
+            })
+            .map(|it| (it.id, it.advance))
+    }
+
+    /// Of the character at `at` and the next one. Also returns how long the first one is.
     fn get(
         &mut self,
         shaping: &Shaping,
-        text: &[u8],
+        text: &str,
         at: usize,
         buffer: &mut Buffer,
-    ) -> Option<Pair> {
+    ) -> Option<(Pair, usize)> {
+        let bytes = text.as_bytes();
         let (first, second) = (
-            text[at],
-            text.get(at + 1).map_or(END, |it| (*it).max(END + 1)),
+            bytes[at],
+            bytes.get(at + 1).map_or(END, |it| (*it).max(END + 1)),
         );
-        let pair = self
-            .0
-            .get_mut(usize::from(first))?
-            .get_mut(usize::from(second))?;
+        let Some(pair) = self
+            .ascii
+            .get_mut(usize::from(first))
+            .and_then(|it| it.get_mut(usize::from(second)))
+        else {
+            let mut characters = text[at..].chars();
+            let first = characters.next()?;
+            return Some((
+                self.others.get(shaping, first, characters.next(), buffer)?,
+                first.len_utf8(),
+            ));
+        };
         if pair.advance == UNKNOWN {
-            *pair = Pairs::learn(shaping, first, second, buffer);
+            let both = &text[at..text.len().min(at + 2)];
+            let flags = [
+                flags_in_ascii(both.as_bytes(), 0),
+                if second == END {
+                    0
+                } else {
+                    flags_in_ascii(both.as_bytes(), 1)
+                },
+            ];
+            *pair = Pairs::learn(shaping, both, buffer).map_or(
+                Pair {
+                    advance: -1.,
+                    ..Pair::default()
+                },
+                |(glyph, advance)| Pair {
+                    advance: advance as f32,
+                    glyph,
+                    flags,
+                },
+            );
         }
-        Some(*pair).filter(|it| it.advance > 0.)
+        Some((*pair, 1)).filter(|it| it.0.advance > 0.)
     }
 
     /// Returns how many characters it has done.
     #[inline(always)]
     fn follow(&self, text: &[u8], mut put: impl FnMut(usize, Pair)) -> usize {
-        let Some(mut row) = text.first().and_then(|it| self.0.get(usize::from(*it))) else {
+        let Some(mut row) = text.first().and_then(|it| self.ascii.get(usize::from(*it))) else {
             return 0;
         };
         for (index, second) in text[1..].iter().map(|it| usize::from(*it)).enumerate() {
@@ -213,14 +399,21 @@ impl Pairs {
                 Some(pair) if pair.advance > 0. && second != usize::from(END) => put(index, *pair),
                 _ => return index,
             }
-            row = &self.0[second];
+            row = &self.ascii[second];
         }
         text.len() - 1
     }
 
     #[inline(never)]
-    fn spell(&self, text: &[u8], letters: &mut [Letter], flags: u8, scale: f32, face: u8) -> usize {
-        let Some(mut row) = text.first().and_then(|it| self.0.get(usize::from(*it))) else {
+    fn spell(
+        &self,
+        text: &[u8],
+        letters: &mut [Letter],
+        flags: u8,
+        [scale, spacing]: [f32; 2],
+        face: u8,
+    ) -> usize {
+        let Some(mut row) = text.first().and_then(|it| self.ascii.get(usize::from(*it))) else {
             return 0;
         };
         let (face, mut carried) = (u32::from(face) << 24, u32::from(flags) << 16);
@@ -234,44 +427,84 @@ impl Pairs {
                 | u32::from(pair.flags[1]) << 24;
             let own = rest & 0xff_ffff | carried | face;
             *letter = Letter {
-                advance: pair.advance * scale,
+                advance: pair.advance * scale + spacing,
                 glyph: own as u16,
                 flags: (own >> 16) as u8,
                 face: (own >> 24) as u8,
             };
-            (carried, row) = (rest >> 8 & 0xff_0000, &self.0[usize::from(second & 0x7f)]);
+            (carried, row) = (
+                rest >> 8 & 0xff_0000,
+                &self.ascii[usize::from(second & 0x7f)],
+            );
         }
         text.len() - 1
+    }
+
+    /// While one of two is not ASCII. Returns where it has stopped.
+    #[inline(never)]
+    fn spell_others(
+        &mut self,
+        shaping: &Shaping,
+        text: &str,
+        mut at: usize,
+        buffer: &mut Buffer,
+        spelling: &mut Spelling,
+    ) -> usize {
+        let mut characters = text[at..].chars();
+        let Some(mut first) = characters.next() else {
+            return at;
+        };
+        for second in characters {
+            let Some(pair) = (!first.is_ascii() || !second.is_ascii())
+                .then(|| self.others.get(shaping, first, Some(second), buffer))
+                .flatten()
+            else {
+                break;
+            };
+            spelling.put(
+                pair.glyph,
+                pair.advance,
+                if first.is_ascii() {
+                    flags_in_ascii(text.as_bytes(), at)
+                } else {
+                    0
+                },
+            );
+            (at, first) = (at + first.len_utf8(), second);
+        }
+        at
     }
 
     /// Returns where the words end that it has shaped from `start` on.
     fn shape(
         &mut self,
         shaping: &Shaping,
-        whole: &[u8],
+        whole: &str,
         (start, item, reach): (usize, &Range<usize>, Reach),
         buffer: &mut Buffer,
-        spelling: &mut Option<Spelling>,
+        spelling: &mut Option<&mut Spelling>,
         to: &mut Vec<Placed>,
     ) -> usize {
-        let (text, len, mut at) = (
+        let (text, mut at) = (
             &whole[..item.end],
-            to.len(),
-            start.saturating_sub(reach.before + 1).max(item.start),
+            back(whole, start, reach.before + 1, item.start),
         );
+        let bytes = text.as_bytes();
         while at < text.len() {
-            let Some(pair) = self.get(shaping, text, at, buffer) else {
+            let Some((pair, len)) = self.get(shaping, text, at, buffer) else {
                 let unaffected =
-                    &text[start..(at + 1).saturating_sub(reach.after.max(1)).max(start)];
-                let words = unaffected
-                    .iter()
-                    .rposition(|it| *it == b' ')
-                    .map_or(0, |it| it + 1);
+                    &bytes[start..back(text, at.max(start), reach.after.max(1) - 1, start)];
+                let end = start
+                    + unaffected
+                        .iter()
+                        .rposition(|it| *it == b' ')
+                        .map_or(0, |it| it + 1);
+                let extra = text[end..at.max(end)].chars().count();
                 match spelling {
-                    Some(it) => it.letters[start + words..at.max(start + words)].fill(UNSPELLED),
-                    None => to.truncate(len + words),
+                    Some(it) => it.take_back(extra),
+                    None => to.truncate(to.len() - extra),
                 }
-                return start + words;
+                return end;
             };
             let mut place = |at: usize, it: Pair| {
                 to.push(Placed {
@@ -282,36 +515,109 @@ impl Pairs {
                     dy: 0,
                 })
             };
-            at += 1;
+            at += len;
             match spelling {
                 _ if at <= start => {}
-                Some(Spelling {
-                    letters,
-                    scale,
-                    face,
-                }) => {
-                    letters[at - 1] = Letter {
-                        advance: pair.advance * *scale,
-                        glyph: pair.glyph,
-                        flags: flags_in_ascii(text, at - 1),
-                        face: *face,
+                Some(it) => {
+                    it.put(pair.glyph, pair.advance, flags_in_ascii(bytes, at - len));
+                    if bytes.get(at - 1..at + 1).is_some_and(|it| !it.is_ascii()) {
+                        at = self.spell_others(shaping, text, at, buffer, it);
+                    }
+                    let Some(flags) = it
+                        .letters
+                        .get(it.done)
+                        .filter(|_| at < text.len())
+                        .map(|it| it.flags | flags_in_ascii(bytes, at))
+                    else {
+                        continue;
                     };
-                    at += self.spell(
-                        &text[at..],
-                        &mut letters[at..],
-                        pair.flags[1],
-                        *scale,
-                        *face,
+                    let count = self.spell(
+                        &bytes[at..],
+                        &mut it.letters[it.done..],
+                        flags,
+                        [it.scale, it.spacing],
+                        it.face,
                     );
+                    (at, it.done) = (at + count, it.done + count);
                 }
                 None => {
-                    place(at - 1, pair);
-                    at += self.follow(&text[at..], |index, it| place(at + index, it));
+                    place(at - len, pair);
+                    at += self.follow(&bytes[at..], |index, it| place(at + index, it));
                 }
             }
         }
         item.end
     }
+}
+
+/// The glyphs of characters that do not depend on their neighbors.
+#[derive(Default)]
+struct Singles {
+    /// The glyph, and an index into `advances` in the high half.
+    known: Pages<u32>,
+    /// In steps. The first two are taken.
+    advances: Vec<i32>,
+    /// For those that depend on the next one.
+    pairs: Others<7>,
+}
+
+impl Singles {
+    const COMPLEX: u32 = 1 << 16;
+
+    #[cold]
+    fn learn(&mut self, shaping: &Shaping, character: char, buffer: &mut Buffer) -> u32 {
+        let (mut bytes, mut placed) = ([0; 4], Vec::new());
+        if is_ordinary(character) {
+            shaping.run(
+                character.encode_utf8(&mut bytes),
+                0..character.len_utf8(),
+                buffer,
+                &mut placed,
+            );
+        }
+        let is_independent = |id: u16| {
+            shaping.with_shaper(|it| {
+                it.font.glyph(character.into()).is_some_and(|own| {
+                    it.is_independent(own) && (own == id.into() || it.is_independent(id.into()))
+                })
+            })
+        };
+        let learned = match placed[..] {
+            [
+                Placed {
+                    id,
+                    advance: advance @ 1..,
+                    dx: 0,
+                    dy: 0,
+                    ..
+                },
+            ] if id != NO_GLYPH && self.advances.len() < 256 && is_independent(id) => {
+                self.advances.resize(self.advances.len().max(2), 0);
+                let index = self
+                    .advances
+                    .iter()
+                    .position(|it| *it == advance)
+                    .unwrap_or(self.advances.len());
+                self.advances
+                    .extend((index == self.advances.len()).then_some(advance));
+                (index as u32) << 16 | u32::from(id)
+            }
+            _ => Singles::COMPLEX,
+        };
+        self.known.set(character, learned);
+        learned
+    }
+}
+
+/// What is known about a way of shaping.
+#[derive(Default)]
+struct Table {
+    identity: u64,
+    last_use: u64,
+    /// How much text there has been.
+    seen: usize,
+    pairs: Option<Pairs>,
+    singles: Singles,
 }
 
 /// A word and the space after it.
@@ -324,16 +630,19 @@ struct Word {
 
 #[derive(Default)]
 pub struct Words {
+    tables: Vec<Table>,
+    uses: u64,
+    memory: Memory,
+}
+
+#[derive(Default)]
+struct Memory {
     known: FastMap<u64, Word>,
     text: Vec<u8>,
     glyphs: Vec<Placed>,
     buffer: Buffer,
     unknown: Vec<Unknown>,
     scratch: Vec<Placed>,
-    /// The glyph and the advance of a character in a script without spaces.
-    characters: FastMap<(u64, char), (u16, i32)>,
-    /// With how much text there has been.
-    pairs: FastMap<u64, (usize, Option<Pairs>)>,
 }
 
 struct Unknown {
@@ -366,6 +675,49 @@ fn widen(text: &str, word: &Range<usize>, item: &Range<usize>, reach: Reach) -> 
 }
 
 impl Words {
+    /// `from` is where the item starts, or a word or an ideograph in it.
+    pub fn shape(
+        &mut self,
+        shaping: &Shaping,
+        text: &str,
+        item: Range<usize>,
+        from: usize,
+        spelling: Option<&mut Spelling>,
+        to: &mut Vec<Placed>,
+    ) {
+        const MAX_TABLES: usize = 24;
+        let identity = shaping.identity();
+        let index = self
+            .tables
+            .iter()
+            .position(|it| it.identity == identity)
+            .unwrap_or_else(|| {
+                let oldest = (0..self.tables.len())
+                    .min_by_key(|it| self.tables[*it].last_use)
+                    .filter(|_| self.tables.len() == MAX_TABLES);
+                oldest
+                    .into_iter()
+                    .for_each(|it| _ = self.tables.swap_remove(it));
+                self.tables.push(Table {
+                    identity,
+                    ..Table::default()
+                });
+                self.tables.len() - 1
+            });
+        self.uses += 1;
+        self.tables[index].last_use = self.uses;
+        self.memory.shape(
+            &mut self.tables[index],
+            shaping,
+            text,
+            (item, from),
+            spelling,
+            to,
+        );
+    }
+}
+
+impl Memory {
     /// Shapes the words that were not found, which follow each other.
     fn learn(&mut self, shaping: &Shaping, text: &str, to: &mut Vec<Placed>) {
         let (Some(first), Some(last)) = (self.unknown.first(), self.unknown.last()) else {
@@ -416,140 +768,148 @@ impl Words {
         }
     }
 
-    #[cold]
-    fn learn_character(&mut self, shaping: &Shaping, character: char) -> (u16, i32) {
-        let (mut bytes, placed) = ([0; 4], &mut self.scratch);
-        let text = character.encode_utf8(&mut bytes);
-        placed.clear();
-        shaping.run(text, 0..text.len(), &mut self.buffer, placed);
-        let is_independent = |id: u16| {
-            shaping.with_shaper(|it| {
-                it.font
-                    .glyph(character.into())
-                    .is_some_and(|own| it.is_independent(own) && it.is_independent(id.into()))
-            })
-        };
-        match placed[..] {
-            [
-                Placed {
-                    id,
-                    advance: advance @ 1..,
-                    dx: 0,
-                    dy: 0,
-                    ..
-                },
-            ] if character >= '\u{2e80}' && stands_alone(character) && is_independent(id) => {
-                (id, advance)
-            }
-            _ => (0, COMPLEX),
-        }
-    }
-
     /// Only shapes around what depends on its neighbors.
     fn shape_characters(
         &mut self,
+        singles: &mut Singles,
         shaping: &Shaping,
         text: &str,
-        item: Range<usize>,
+        (item, from): (Range<usize>, usize),
+        mut spelling: Option<&mut Spelling>,
         to: &mut Vec<Placed>,
     ) {
         const REACH: usize = 4;
-        let (identity, len, mut pending, mut calm) = (shaping.identity(), to.len(), None, 0);
-        if self.characters.len() > 1 << 15 {
-            self.characters.clear();
+        let (mut pending, mut calm, mut last, len) = (None, 0, None, to.len());
+        if spelling.is_none() {
+            to.reserve(item.len() / 3);
         }
-        to.reserve(item.len() / 3);
-        for (at, character) in text[item.clone()]
+        let mut characters = text[from..item.end]
             .char_indices()
-            .map(|it| (item.start + it.0, Some(it.1)))
+            .map(|it| (from + it.0, Some(it.1)))
             .chain([(item.end, None)])
-        {
-            let known = character.map(|it| match self.characters.get(&(identity, it)) {
-                Some(known) => *known,
-                None => {
-                    let learned = self.learn_character(shaping, it);
-                    self.characters.insert((identity, it), learned);
-                    learned
+            .peekable();
+        while let Some((at, character)) = characters.next() {
+            let known = character.map(|it| {
+                let known = match singles.known.get(it) {
+                    0 => singles.learn(shaping, it, &mut self.buffer),
+                    known => known,
+                };
+                match known {
+                    Singles::COMPLEX => singles
+                        .pairs
+                        .get(
+                            shaping,
+                            it,
+                            characters.peek().and_then(|it| it.1),
+                            &mut self.buffer,
+                        )
+                        .map(|it| (it.glyph, it.advance as i32)),
+                    known => Some((known as u16, singles.advances[(known >> 16) as usize])),
                 }
             });
-            if let Some((_, COMPLEX)) = known {
+            if known == Some(None) {
+                // The numbers of a fraction have any length.
+                if character == Some('\u{2044}') {
+                    if let Some(it) = spelling {
+                        it.take_back(it.done);
+                        (it.done, it.left) = (it.letters.len(), it.letters.len());
+                    }
+                    to.truncate(len);
+                    self.scratch.clear();
+                    shaping.run(text, item, &mut self.buffer, &mut self.scratch);
+                    return to.extend(self.scratch.iter().filter(|it| it.cluster as usize >= from));
+                }
                 // A mark goes on what is before it.
-                pending = pending.or_else(|| {
-                    Some(if to.len() > len {
-                        to.pop()?.cluster as usize
-                    } else {
-                        at
-                    })
-                });
-                calm = 0;
+                if pending.is_none() && last.is_some() {
+                    match &mut spelling {
+                        Some(it) => it.take_back(1),
+                        None => _ = to.pop(),
+                    }
+                }
+                (pending, calm) = (pending.or(last).or(Some(at)), 0);
             } else if pending.is_some() && known.is_some() && calm < REACH {
                 calm += 1;
             } else {
                 if let Some(start) = pending.take() {
-                    let before: usize = text[item.start..start]
-                        .chars()
-                        .rev()
-                        .take(REACH)
-                        .map(char::len_utf8)
-                        .sum();
                     self.scratch.clear();
                     shaping.run(
                         text,
-                        start - before..at,
+                        back(text, start, REACH, item.start)
+                            ..at + character.map_or(0, char::len_utf8),
                         &mut self.buffer,
                         &mut self.scratch,
                     );
                     to.extend(
                         self.scratch
                             .iter()
-                            .filter(|it| it.cluster as usize >= start),
+                            .filter(|it| (start..at).contains(&(it.cluster as usize))),
                     );
+                    spelling
+                        .iter_mut()
+                        .for_each(|it| it.leave(it.count(text, start..at)));
                 }
-                to.extend(known.map(|(id, advance)| Placed {
-                    cluster: at as u32,
-                    advance,
-                    id,
-                    dx: 0,
-                    dy: 0,
-                }));
+                let Some(Some((id, advance))) = known else {
+                    break;
+                };
+                match &mut spelling {
+                    Some(it) => it.put(
+                        id,
+                        advance as f32,
+                        if text.as_bytes()[at].is_ascii() {
+                            flags_in_ascii(text.as_bytes(), at)
+                        } else {
+                            0
+                        },
+                    ),
+                    None => to.push(Placed {
+                        cluster: at as u32,
+                        advance,
+                        id,
+                        dx: 0,
+                        dy: 0,
+                    }),
+                }
+                last = Some(at);
             }
         }
     }
 
-    pub fn shape(
+    fn shape(
         &mut self,
+        table: &mut Table,
         shaping: &Shaping,
         text: &str,
-        item: Range<usize>,
-        mut spelling: Option<Spelling>,
+        (item, from): (Range<usize>, usize),
+        mut spelling: Option<&mut Spelling>,
         to: &mut Vec<Placed>,
     ) {
         const MAX_GLYPHS: usize = 1 << 16;
-        const MAX_REACH: usize = 12;
-        const MAX_TABLES: usize = 24;
         const WORTH_A_TABLE: usize = 2000;
-        if matches!(&shaping.script.0, b"Hani" | b"Hira" | b"Kana")
-            && !shaping.is_rtl
-            && !shaping.is_vertical
-        {
-            return self.shape_characters(shaping, text, item, to);
+        if shaping.goes_by_characters(&text[item.clone()]) {
+            return self.shape_characters(
+                &mut table.singles,
+                shaping,
+                text,
+                (item, from),
+                spelling,
+                to,
+            );
         }
         let (joins, len) = (shaping.script.0 == *b"Arab", to.len());
-        let has_words = if shaping.is_rtl {
-            joins || shaping.script.0 == *b"Hebr"
-        } else {
-            matches!(&shaping.script.0, b"Latn" | b"Zyyy" | b"Cyrl" | b"Grek")
-        };
-        // The form of a letter depends on the next one, which a mark may be in front of.
-        let further = |it: usize| if joins && it > 0 { it + 2 } else { it };
-        let reach = has_words
-            .then(|| shaping.face.file.reach())
-            .flatten()
-            .map(|it| Reach {
-                before: further(it.before),
-                after: further(it.after),
-            });
-        let Some(reach) = reach.filter(|reach| reach.before + reach.after <= MAX_REACH) else {
+        let (reach, is_short) = (
+            shaping.reach(),
+            item.len() <= 96 && shaping.ignores_context(),
+        );
+        let (Some(reach), is_one_word) = (
+            reach.or(is_short.then_some(Reach {
+                before: 0,
+                after: 0,
+            })),
+            reach.is_none(),
+        ) else {
+            spelling
+                .iter_mut()
+                .for_each(|it| it.leave(it.letters.len()));
             return shaping.run(text, item, &mut self.buffer, to);
         };
         if self.glyphs.len() > MAX_GLYPHS {
@@ -557,36 +917,40 @@ impl Words {
             self.text.clear();
             self.glyphs.clear();
         }
-        let (identity, bytes, mut start) = (shaping.identity(), text.as_bytes(), item.start);
-        if self.pairs.len() > MAX_TABLES && !self.pairs.contains_key(&identity) {
-            self.pairs.clear();
+        let (identity, bytes, mut start) = (table.identity, text.as_bytes(), from);
+        table.seen += item.end - from;
+        if table.pairs.is_none()
+            && table.seen > WORTH_A_TABLE
+            && !is_one_word
+            && !shaping.capitalizes
+            && !shaping.is_vertical
+            && !shaping.is_rtl
+        {
+            table.pairs = vec![[Pair::default(); _]; 128]
+                .try_into()
+                .ok()
+                .map(|ascii| Pairs {
+                    ascii,
+                    others: Others::default(),
+                });
         }
-        let (seen, pairs) = self.pairs.entry(identity).or_default();
-        *seen += item.len();
-        let new = || vec![[Pair::default(); _]; 128].try_into().ok().map(Pairs);
-        let mut pairs = pairs.take().or_else(|| {
-            (*seen > WORTH_A_TABLE
-                && !shaping.capitalizes
-                && !shaping.is_vertical
-                && !shaping.is_rtl)
-                .then(new)?
-        });
-        let mut outside = FastHasher::default();
-        if joins {
-            (
+        let outside = if joins {
+            keyed((
                 &bytes[item.start.saturating_sub(20)..item.start],
                 &bytes[item.end..bytes.len().min(item.end + 20)],
-            )
-                .hash(&mut outside);
+            ))
+        } else {
+            0
+        };
+        if spelling.is_none() {
+            to.reserve(item.len());
         }
-        let outside = outside.finish();
-        to.reserve(item.len());
         while start < item.end {
-            if let Some(pairs) = &mut pairs {
+            if let Some(pairs) = &mut table.pairs {
                 let (before, from) = (to.len(), start);
                 start = pairs.shape(
                     shaping,
-                    bytes,
+                    text,
                     (start, &item, reach),
                     &mut self.buffer,
                     &mut spelling,
@@ -601,7 +965,9 @@ impl Words {
                     break;
                 }
             }
-            let space = bytes[start..item.end].iter().position(|byte| *byte == b' ');
+            let space = bytes[start..item.end]
+                .iter()
+                .position(|byte| *byte == b' ' && !is_one_word);
             let mut end = space.map_or(item.end, |space| start + space + 1);
             // A mark goes on the space before it.
             while end < item.end
@@ -612,6 +978,9 @@ impl Words {
                 end = space.map_or(item.end, |space| end + space + 1);
             }
             let word = start..end;
+            spelling
+                .iter_mut()
+                .for_each(|it| it.leave(it.count(text, word.clone())));
             let context = widen(text, &word, &item, reach);
             let identity =
                 identity ^ (start - context.start) as u64 ^ ((context.end - end) as u64) << 8;
@@ -655,7 +1024,6 @@ impl Words {
         if shaping.is_rtl {
             to[len..].reverse();
         }
-        self.pairs.entry(identity).or_default().1 = pairs;
     }
 }
 
@@ -675,7 +1043,20 @@ mod tests {
         let hebrew = "שלום עולם בְּרֵאשִׁית בָּרָא , (של) של את את ״ב״ עולם ";
         let (mut words, mut buffer) = (Words::default(), Buffer::default());
         let han = "日本語の文章、「テスト」です。漢字 12 か\u{3099}葛\u{e0100}城——……平成 (株) ぁーキャ。」中文标点,测试";
+        let korean = "이것은 한국어 문장입니다. 12\u{2044}34 (가) 가\u{11a8} \u{1100}\u{1161} 漢字, AV To ㄱㄴ 한\u{302e} ";
+        let russian =
+            "Гг. «Тест» — УД Ау, ёлка й и\u{306} То же: АТ ГА “да” 1\u{2044}2 fi é AV’s Ωμέγα ";
+        let (kana, hindi) = (
+            "これはコンポーネントを作成します、データが「テスト」。ぁーきゃか\u{3099}ト\u{309a}た㌔",
+            "यह हिन्दी क्षेत्र श्री \u{200d}क्\u{200d} ज्ञान",
+        );
         let texts = [
+            (kana, Script(*b"Hira")),
+            (kana, Script::HAN),
+            (hindi, Script(*b"Deva")),
+            (korean, Script(*b"Hang")),
+            (russian, Script(*b"Cyrl")),
+            (russian, Script::LATIN),
             (text, Script::LATIN),
             (arabic, Script(*b"Arab")),
             (hebrew, Script(*b"Hebr")),
@@ -706,10 +1087,10 @@ mod tests {
                 features: &[],
                 features_hash: 0,
             };
-            for (start, _) in text.char_indices().step_by(2) {
+            for (start, _) in text.char_indices().step_by(2).cycle().take(120) {
                 let (mut expected, mut actual) = (Vec::new(), Vec::new());
                 shaping.run(text, start..text.len(), &mut buffer, &mut expected);
-                words.shape(&shaping, text, start..text.len(), None, &mut actual);
+                words.shape(&shaping, text, start..text.len(), start, None, &mut actual);
                 let plain = |glyphs: Vec<Placed>| -> Vec<_> {
                     glyphs
                         .iter()

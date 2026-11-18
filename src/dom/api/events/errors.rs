@@ -8,6 +8,8 @@ use bun_web::url::Url;
 
 use super::page_events::PromiseRejectionEvent;
 use super::*;
+use crate::api::core::by_name::{call_directly, member};
+use crate::api::realm::is_program;
 use crate::api::realm::queue_task;
 
 unsafe extern "C" {
@@ -26,7 +28,6 @@ unsafe extern "C" {
         thrower: &mut bun_core::String,
         maker: &mut bun_core::String,
     );
-    safe fn Bun__isDesktopRealm(global: &JSGlobalObject) -> bool;
     safe fn Bun__IsolatedWorld__pageOrItself(realm: &JSGlobalObject) -> &JSGlobalObject;
     safe fn Bun__IsolatedWorld__hasThrown(page: &JSGlobalObject, value: JSValue) -> bool;
 }
@@ -166,26 +167,23 @@ impl WindowTarget {
         error: JSValue,
         is_rejection: bool,
     ) {
-        if !Bun__isDesktopRealm(global_of(self.realm(&cx.heap))) {
-            return pending::print_error(cx, error);
+        if is_program(global_of(self.realm(&cx.heap))) {
+            return print_error(cx, error);
         }
         let url = bstr::ByteSlice::to_str_lossy(&*at.url).into_owned();
         if self.host().console_audience() == bun_web::host::ConsoleAudience::Inspector {
-            let [text, place] =
-                [&message, &url].map(|it| DomString::from_utf8(it).to_js(&cx.heap).to_js());
+            let text = DomString::from_utf8(&message).to_js(&cx.heap).to_js();
             let is_of_world =
                 !core::ptr::eq(Bun__IsolatedWorld__pageOrItself(cx.global()), cx.global());
-            self.tell_inspector(
-                cx,
-                "exception",
-                &[
-                    text,
-                    place,
-                    at.line.into(),
-                    at.column.into(),
-                    if is_of_world { text } else { error },
-                ],
-            );
+            self.host()
+                .link()
+                .inspect(bun_web::host::Inspected::Exception {
+                    text: &message,
+                    url: &url,
+                    line: at.line,
+                    column: at.column,
+                    error: if is_of_world { text } else { error },
+                });
         }
         self.host().uncaught(
             message,
@@ -232,7 +230,7 @@ impl WindowTarget {
         script: &[u8],
     ) {
         let realm = self.realm(&cx.heap);
-        let target = Bun__isDesktopRealm(global_of(realm))
+        let target = (!is_program(global_of(realm)))
             .then(|| WindowTarget::of_realm(realm))
             .flatten()
             .unwrap_or(self);
@@ -410,4 +408,28 @@ extern "C" fn Bun__DOM__rejectionWasHandled(
             });
         },
     );
+}
+
+pub(super) fn report<'a>(cx: Cx<'_, 'a>, window: Option<&'a WindowTarget>, exception: JSValue) {
+    match window.or_else(|| WindowTarget::of_realm_or_program(&cx.heap)) {
+        Some(window) => window.report_exception(cx, exception, None, b""),
+        None => print_error(cx, exception),
+    }
+}
+
+/// With the console of a program, which hands its own functions to what it prints.
+pub(super) fn print_error(cx: Cx<'_, '_>, error: JSValue) {
+    unsafe extern "C" {
+        safe fn Bun__DesktopRealm__isOfPage(value: JSValue) -> bool;
+    }
+    let error = if Bun__DesktopRealm__isOfPage(error) {
+        DomString::from_utf8(&describe(cx.global(), error))
+            .to_js(&cx.heap)
+            .to_js()
+    } else {
+        error
+    };
+    let program = bun_ui::main_global();
+    member(program, program.to_js_value(), "console")
+        .map(|it| call_directly(cx, it, "error", &[error]));
 }

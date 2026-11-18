@@ -572,6 +572,8 @@ mod _impl {
         username: BunString,
         homedir: BunString,
         shell: BunString,
+        uid: libc::uid_t,
+        gid: libc::gid_t,
     }
 
     #[cfg(not(windows))]
@@ -585,7 +587,6 @@ mod _impl {
         let mut stack_string_bytes = [0u8; 4096];
         let mut heap_bytes: Vec<u8>;
         let mut string_bytes: &mut [u8] = &mut stack_string_bytes[..];
-        let mut using_heap = false;
 
         let mut pw: libc::passwd = bun_core::ffi::zeroed();
         let mut result: *mut libc::passwd = core::ptr::null_mut();
@@ -611,13 +612,11 @@ mod _impl {
                 let len = string_bytes.len();
                 heap_bytes = vec![0u8; len * 2];
                 string_bytes = &mut heap_bytes[..];
-                using_heap = true;
                 continue;
             }
 
             break ret;
         };
-        let _ = using_heap;
 
         if ret != 0 {
             // `ret` is a libc errno; a code outside the table is `EUNKNOWN`.
@@ -637,6 +636,8 @@ mod _impl {
             username: string(pw.pw_name),
             homedir: string(pw.pw_dir),
             shell: string(pw.pw_shell),
+            uid: pw.pw_uid,
+            gid: pw.pw_gid,
         }))
     }
 
@@ -1220,8 +1221,8 @@ mod _impl {
                 entry.username.into_js(global_this)?,
             );
             result.put(global_this, b"shell", entry.shell.into_js(global_this)?);
-            result.put(global_this, b"uid", JSValue::js_number(c::getuid() as f64));
-            result.put(global_this, b"gid", JSValue::js_number(c::getgid() as f64));
+            result.put(global_this, b"uid", JSValue::js_number(entry.uid.into()));
+            result.put(global_this, b"gid", JSValue::js_number(entry.gid.into()));
             return Ok(result);
         }
 

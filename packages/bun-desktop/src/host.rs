@@ -232,7 +232,7 @@ fn next_deadline() -> Option<Instant> {
         .into_iter()
         .chain(window::next_redraw());
     #[cfg(target_os = "macos")]
-    let deadlines = deadlines.chain(window::layers::next_release());
+    let deadlines = deadlines.chain(window::layers::next_chore());
     deadlines.min()
 }
 
@@ -240,7 +240,7 @@ fn run_what_is_due() {
     surface::begin_overdue_frames();
     window::redraw_what_is_due();
     #[cfg(target_os = "macos")]
-    window::layers::release_what_is_due();
+    window::layers::do_chores();
 }
 
 fn time_until_next_turn() -> Option<Duration> {

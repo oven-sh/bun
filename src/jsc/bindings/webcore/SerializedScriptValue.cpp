@@ -433,8 +433,11 @@ const uint8_t cryptoKeyOKPOpNameTagMaximumValue = 1;
  * Version 13. added support for ErrorInstance objects.
  * Version 14. Date, RegExp, Error, DOMException, CryptoKey, KeyObject, X509Certificate,
  * and Bun cloneable types are recorded in the object reference pool on both sides.
+ * Version 15. added the cause of an Error, platform objects and shared Blobs.
  */
-[[maybe_unused]] static constexpr unsigned CurrentVersion = 14;
+[[maybe_unused]] static constexpr unsigned CurrentVersion = 15;
+// What a payload without the tags of version 15 says, so that older readers still take it.
+static constexpr unsigned OldestWrittenVersion = 14;
 // Deserializers must not pool the version 14 terminal types for older payloads,
 // whose writers never counted them, or the pool indices stop matching the writer's.
 [[maybe_unused]] static constexpr unsigned FirstVersionWithPooledTerminals = 14;
@@ -767,7 +770,7 @@ public:
         Vector<std::unique_ptr<SerializedBlockList>>& serializedBlockLists,
         Vector<SerializedHistogram>& serializedHistograms,
         Vector<std::unique_ptr<SerializedBlob>>& serializedBlobs,
-        SerializationForStorage forStorage, SerializationForCrossProcessTransfer forTransfer, std::span<const EncodedJSValue> hostObjects = {})
+        SerializationForStorage forStorage, SerializationForCrossProcessTransfer forTransfer, SerializationErrorMode errorMode, std::span<const EncodedJSValue> hostObjects)
     {
         CloneSerializer serializer(lexicalGlobalObject, messagePorts, arrayBuffers,
 #if ENABLE(WEBASSEMBLY)
@@ -775,6 +778,7 @@ public:
             wasmMemoryHandles,
 #endif
             out, context, sharedBuffers, forStorage, forTransfer);
+        serializer.m_dropsUncloneableCauses = errorMode == SerializationErrorMode::NonThrowing || forTransfer == SerializationForCrossProcessTransfer::Yes;
         for (uint32_t i = 0; i < hostObjects.size(); ++i)
             serializer.m_hostObjects.add(asObject(JSValue::decode(hostObjects[i])), i);
         auto code = serializer.serialize(value);
@@ -805,7 +809,7 @@ private:
         , m_forStorage(forStorage)
         , m_forTransfer(forTransfer)
     {
-        write(CurrentVersion);
+        write(OldestWrittenVersion);
         fillTransferMap(messagePorts, m_transferredMessagePorts);
         fillTransferMap(arrayBuffers, m_transferredArrayBuffers);
     }
@@ -824,7 +828,23 @@ private:
         }
     }
 
-    SerializationReturnCode serialize(JSValue in);
+    SerializationReturnCode serialize(JSValue in, size_t maximumDepth = maximumFilterRecursion);
+    SerializationReturnCode serializeCauseOrNothing(JSValue cause, size_t maximumDepth);
+
+    void writeTagOfCurrentVersion(SerializationTag tag)
+    {
+        static_assert(CurrentVersion <= 0xFF);
+        m_buffer[0] = CurrentVersion;
+        write(tag);
+    }
+
+    JSValue causeOf(ErrorInstance* error)
+    {
+        VM& vm = m_lexicalGlobalObject->vm();
+        unsigned attributes = 0;
+        JSValue cause = error->getDirect(vm, vm.propertyNames->cause, attributes);
+        return attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue ? JSValue() : cause;
+    }
 
     bool isArray(JSValue value)
     {
@@ -1113,6 +1133,80 @@ private:
         code = SerializationReturnCode::DataCloneError;
     }
 
+    void dumpError(ErrorInstance* errorInstance)
+    {
+        auto& vm = m_lexicalGlobalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto errorTypeValue = errorInstance->get(m_lexicalGlobalObject, vm.propertyNames->name);
+        RETURN_IF_EXCEPTION(scope, );
+        auto errorTypeString = errorTypeValue.toWTFString(m_lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, );
+
+        // .message/.line/.column/.sourceURL: HTML spec + Node/WebKit read
+        // OWN data descriptors only (an inherited or accessor .message is
+        // NOT serialized). .stack: Node reads via [[Get]] to materialize
+        // V8's lazy accessor. Any getter/coercion/prepareStackTrace throw
+        // propagates out of postMessage/structuredClone (Node parity).
+        String message, sourceURL, stack;
+        unsigned line = 0, column = 0;
+        {
+            // .message is ToString'd rather than gated on isString (node clones
+            // `e.message = 42` as "42"). Reading it before .line also keeps a
+            // Symbol message from reaching ErrorInstance's lazy materialization.
+            JSC::PropertyDescriptor d;
+            bool found = errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->message, d);
+            RETURN_IF_EXCEPTION(scope, );
+            if (found && d.isDataDescriptor() && d.value()) {
+                message = d.value().toWTFString(m_lexicalGlobalObject);
+                RETURN_IF_EXCEPTION(scope, );
+            }
+        }
+        // Trigger ErrorInstance's lazy materialization up front so a throwing
+        // prepareStackTrace propagates here instead of tripping the exception
+        // assertion inside JSObject::getOwnPropertyDescriptor.
+        errorInstance->materializeErrorInfoIfNeeded(vm);
+        RETURN_IF_EXCEPTION(scope, );
+        {
+            JSC::PropertyDescriptor d;
+            bool found = errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->line, d);
+            RETURN_IF_EXCEPTION(scope, );
+            if (found && d.isDataDescriptor() && d.value().isNumber())
+                line = d.value().toNumber(m_lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, );
+        }
+        {
+            JSC::PropertyDescriptor d;
+            bool found = errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->column, d);
+            RETURN_IF_EXCEPTION(scope, );
+            if (found && d.isDataDescriptor() && d.value().isNumber())
+                column = d.value().toNumber(m_lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, );
+        }
+        {
+            JSC::PropertyDescriptor d;
+            bool found = errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->sourceURL, d);
+            RETURN_IF_EXCEPTION(scope, );
+            if (found && d.isDataDescriptor() && d.value().isString())
+                sourceURL = d.value().toWTFString(m_lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, );
+        }
+        {
+            JSValue v = errorInstance->get(m_lexicalGlobalObject, vm.propertyNames->stack);
+            RETURN_IF_EXCEPTION(scope, );
+            if (v.isString())
+                stack = v.toWTFString(m_lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, );
+        }
+
+        write(ErrorInstanceTag);
+        write(errorNameToSerializableErrorType(errorTypeString));
+        writeNullableString(message);
+        write(line);
+        write(column);
+        writeNullableString(sourceURL);
+        writeNullableString(stack);
+    }
+
     bool dumpIfTerminal(JSValue value, SerializationReturnCode& code)
     {
         if (!value.isCell()) {
@@ -1207,82 +1301,12 @@ private:
                 return true;
             }
             if (auto* errorInstance = dynamicDowncast<ErrorInstance>(obj)) {
-                auto& vm = m_lexicalGlobalObject->vm();
-                if (!std::exchange(m_causeFollows, false)) {
-                    unsigned attributes = 0;
-                    if (errorInstance->getDirect(vm, vm.propertyNames->cause, attributes) && !(attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
-                        return false;
-                }
+                if (causeOf(errorInstance))
+                    return false;
                 if (!startObjectInternal(errorInstance)) // handle duplicates
                     return true;
-                auto errorTypeValue = errorInstance->get(m_lexicalGlobalObject, vm.propertyNames->name);
+                dumpError(errorInstance);
                 RETURN_IF_EXCEPTION(scope, false);
-                auto errorTypeString = errorTypeValue.toWTFString(m_lexicalGlobalObject);
-                RETURN_IF_EXCEPTION(scope, false);
-
-                // .message/.line/.column/.sourceURL: HTML spec + Node/WebKit read
-                // OWN data descriptors only (an inherited or accessor .message is
-                // NOT serialized). .stack: Node reads via [[Get]] to materialize
-                // V8's lazy accessor. Any getter/coercion/prepareStackTrace throw
-                // propagates out of postMessage/structuredClone (Node parity).
-                String message, sourceURL, stack;
-                unsigned line = 0, column = 0;
-                {
-                    // .message is ToString'd rather than gated on isString (node clones
-                    // `e.message = 42` as "42"). Reading it before .line also keeps a
-                    // Symbol message from reaching ErrorInstance's lazy materialization.
-                    JSC::PropertyDescriptor d;
-                    bool found = errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->message, d);
-                    RETURN_IF_EXCEPTION(scope, false);
-                    if (found && d.isDataDescriptor() && d.value()) {
-                        message = d.value().toWTFString(m_lexicalGlobalObject);
-                        RETURN_IF_EXCEPTION(scope, false);
-                    }
-                }
-                // Trigger ErrorInstance's lazy materialization up front so a throwing
-                // prepareStackTrace propagates here instead of tripping the exception
-                // assertion inside JSObject::getOwnPropertyDescriptor.
-                errorInstance->materializeErrorInfoIfNeeded(vm);
-                RETURN_IF_EXCEPTION(scope, false);
-                {
-                    JSC::PropertyDescriptor d;
-                    bool found = errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->line, d);
-                    RETURN_IF_EXCEPTION(scope, false);
-                    if (found && d.isDataDescriptor() && d.value().isNumber())
-                        line = d.value().toNumber(m_lexicalGlobalObject);
-                    RETURN_IF_EXCEPTION(scope, false);
-                }
-                {
-                    JSC::PropertyDescriptor d;
-                    bool found = errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->column, d);
-                    RETURN_IF_EXCEPTION(scope, false);
-                    if (found && d.isDataDescriptor() && d.value().isNumber())
-                        column = d.value().toNumber(m_lexicalGlobalObject);
-                    RETURN_IF_EXCEPTION(scope, false);
-                }
-                {
-                    JSC::PropertyDescriptor d;
-                    bool found = errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->sourceURL, d);
-                    RETURN_IF_EXCEPTION(scope, false);
-                    if (found && d.isDataDescriptor() && d.value().isString())
-                        sourceURL = d.value().toWTFString(m_lexicalGlobalObject);
-                    RETURN_IF_EXCEPTION(scope, false);
-                }
-                {
-                    JSValue v = errorInstance->get(m_lexicalGlobalObject, vm.propertyNames->stack);
-                    RETURN_IF_EXCEPTION(scope, false);
-                    if (v.isString())
-                        stack = v.toWTFString(m_lexicalGlobalObject);
-                    RETURN_IF_EXCEPTION(scope, false);
-                }
-
-                write(ErrorInstanceTag);
-                write(errorNameToSerializableErrorType(errorTypeString));
-                writeNullableString(message);
-                write(line);
-                write(column);
-                writeNullableString(sourceURL);
-                writeNullableString(stack);
                 return true;
             }
             if (obj->inherits<JSMessagePort>()) {
@@ -1441,7 +1465,7 @@ private:
                 }
                 if ((m_isInDesktopRealm || Bun::isDesktopRealm(blob->realm())) && m_context == SerializationContext::WorkerPostMessage && m_forStorage == SerializationForStorage::No && Bun__Desktop__isBlobOfWeb(blob->wrapped())) {
                     m_serializedBlobs.append(makeUnique<SerializedBlob>(blob->wrapped()));
-                    write(Bun__SharedBlobTag);
+                    writeTagOfCurrentVersion(Bun__SharedBlobTag);
                     write(m_serializedBlobs.last()->id.data(), sizeof(SerializedBlob::id));
                     return true;
                 }
@@ -1673,6 +1697,8 @@ private:
             writeStringIndex(addResult.iterator->value);
             return;
         }
+        if (m_dropsUncloneableCauses)
+            m_constantsInOrder.append(ident.impl());
 
         unsigned length = str.length();
 
@@ -2007,13 +2033,16 @@ private:
     }
 #endif
     ObjectPool m_objectPool;
-    bool m_causeFollows { false };
+    bool m_dropsUncloneableCauses { false };
     ObjectPool m_hostObjects;
     bool m_isInDesktopRealm { Bun::isDesktopRealm(m_lexicalGlobalObject) };
     ObjectPool m_transferredMessagePorts;
     ObjectPool m_transferredArrayBuffers;
     typedef HashMap<RefPtr<UniquedStringImpl>, uint32_t, IdentifierRepHash> StringConstantPool;
     StringConstantPool m_constantPool;
+    Vector<UniquedStringImpl*> m_constantsInOrder;
+    HashSet<EncodedJSValue> m_droppedCauses;
+    MarkedArgumentBuffer m_droppedCauseRoots;
     Identifier m_emptyIdentifier;
     SerializationContext m_context;
     ArrayBufferContentsArray& m_sharedBuffers;
@@ -2033,7 +2062,42 @@ extern "C" void WebCore__CloneSerializer__write(CloneSerializer* serializer, con
     serializer->write(data, length);
 }
 
-SerializationReturnCode CloneSerializer::serialize(JSValue in)
+SerializationReturnCode CloneSerializer::serializeCauseOrNothing(JSValue cause, size_t maximumDepth)
+{
+    VM& vm = m_lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!vm.isSafeToRecurse() || m_droppedCauses.contains(JSValue::encode(cause)))
+        return SerializationReturnCode::SuccessfullyCompleted;
+
+    size_t bytes = m_buffer.size();
+    size_t objects = m_objectPool.size();
+    size_t roots = m_gcBuffer.size();
+    size_t constants = m_constantsInOrder.size();
+    write(vm.propertyNames->cause);
+    auto code = serialize(cause, maximumDepth);
+    if (scope.exception()) {
+        if (!scope.tryClearException())
+            return SerializationReturnCode::ExistingExceptionError;
+    } else if (code == SerializationReturnCode::SuccessfullyCompleted)
+        return code;
+    if (m_failed)
+        return SerializationReturnCode::UnspecifiedError;
+
+    m_droppedCauses.add(JSValue::encode(cause));
+    m_droppedCauseRoots.appendWithCrashOnOverflow(cause);
+    m_buffer.shrink(bytes);
+    while (m_constantsInOrder.size() > constants)
+        m_constantPool.remove(m_constantsInOrder.takeLast());
+    while (m_gcBuffer.size() > roots) {
+        if (auto* object = m_gcBuffer.takeLast().getObject()) {
+            if (auto found = m_objectPool.find(object); found != m_objectPool.end() && found->value >= objects)
+                m_objectPool.remove(found);
+        }
+    }
+    return SerializationReturnCode::SuccessfullyCompleted;
+}
+
+SerializationReturnCode CloneSerializer::serialize(JSValue in, size_t maximumDepth)
 {
     VM& vm = m_lexicalGlobalObject->vm();
     Vector<uint32_t, 16> indexStack;
@@ -2052,7 +2116,7 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
         arrayStartState:
         case ArrayStartState: {
             ASSERT(isArray(inValue));
-            if (inputObjectStack.size() > maximumFilterRecursion)
+            if (inputObjectStack.size() > maximumDepth)
                 return SerializationReturnCode::StackOverflowError;
 
             JSArray* inArray = asArray(inValue);
@@ -2113,7 +2177,7 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
         objectStartState:
         case ObjectStartState: {
             ASSERT(inValue.isObject());
-            if (inputObjectStack.size() > maximumFilterRecursion)
+            if (inputObjectStack.size() > maximumDepth)
                 return SerializationReturnCode::StackOverflowError;
             JSObject* inObject = asObject(inValue);
             if (auto index = m_hostObjects.getOptional(inObject)) [[unlikely]] {
@@ -2127,11 +2191,12 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
                 auto* serialized = Bun::desktopRealmSerialize(m_lexicalGlobalObject, inObject, m_forStorage == SerializationForStorage::Yes);
                 RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
                 recordObject(inObject);
-                write(serialized ? Bun__PlatformObjectTag : ObjectTag);
                 if (serialized) {
+                    writeTagOfCurrentVersion(Bun__PlatformObjectTag);
                     m_gcBuffer.appendWithCrashOnOverflow(serialized);
                     inObject = serialized;
-                }
+                } else
+                    write(ObjectTag);
             } else if (!startObject(inObject))
                 break;
             // All supported objects other than plain Object have been handled; throw
@@ -2190,7 +2255,7 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
         mapStartState:
             {
                 ASSERT(inValue.isObject());
-                if (inputObjectStack.size() > maximumFilterRecursion)
+                if (inputObjectStack.size() > maximumDepth)
                     return SerializationReturnCode::StackOverflowError;
                 JSMap* inMap = uncheckedDowncast<JSMap>(inValue);
                 if (!startMap(inMap))
@@ -2239,7 +2304,7 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
         setStartState:
             {
                 ASSERT(inValue.isObject());
-                if (inputObjectStack.size() > maximumFilterRecursion)
+                if (inputObjectStack.size() > maximumDepth)
                     return SerializationReturnCode::StackOverflowError;
                 JSSet* inSet = uncheckedDowncast<JSSet>(inValue);
                 if (!startSet(inSet))
@@ -2321,16 +2386,25 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
                 break;
             }
 
-            if (inValue.inherits<ErrorInstance>()) [[unlikely]] {
-                if (inputObjectStack.size() > maximumFilterRecursion)
+            if (auto* error = dynamicDowncast<ErrorInstance>(inValue)) [[unlikely]] {
+                if (inputObjectStack.size() >= maximumDepth)
                     return SerializationReturnCode::StackOverflowError;
-                if (checkForDuplicate(asObject(inValue)))
+                if (!startObjectInternal(error))
                     break;
-                write(Bun__ErrorWithCauseTag);
-                m_causeFollows = true;
-                dumpIfTerminal(inValue, terminalCode);
+                writeTagOfCurrentVersion(Bun__ErrorWithCauseTag);
+                dumpError(error);
                 RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
-                inputObjectStack.append(asObject(inValue));
+                if (m_dropsUncloneableCauses) {
+                    if (JSValue cause = causeOf(error)) {
+                        auto code = serializeCauseOrNothing(cause, maximumDepth - inputObjectStack.size() - 1);
+                        RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
+                        if (code != SerializationReturnCode::SuccessfullyCompleted)
+                            return code;
+                    }
+                    endObject();
+                    break;
+                }
+                inputObjectStack.append(error);
                 indexStack.append(0);
                 propertyStack.append(PropertyNameArrayBuilder(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude));
                 propertyStack.last().add(vm.propertyNames->cause);
@@ -3667,7 +3741,7 @@ private:
         if (!readStringData(name))
             return JSValue();
         auto exception = DOMException::create(message->string(), name->string());
-        JSValue wrapper = getJSValue(exception);
+        JSValue wrapper = getJSValue(exception.get());
         addTerminalToObjectPool(wrapper);
         return wrapper;
     }
@@ -4700,6 +4774,7 @@ public:
         : m_globalObject(globalObject)
         , m_vm(globalObject.vm())
         , m_deferGC(m_vm)
+        , m_knownShapes(knownShapes(m_vm))
     {
     }
 
@@ -4707,16 +4782,54 @@ public:
     {
         if (!value.isCell() || value.isString() || value.isHeapBigInt())
             return value;
-        if (!value.isObject() || depth == maximumDepth || !m_vm.isSafeToRecurse())
+        if (!value.isObject() || depth == maximumDepth || !m_vm.isSafeToRecurse() || m_vm.traps().needsOutOfMemoryError())
             return {};
         auto* object = asObject(value);
-        if (auto* known = m_copies.get(object))
+        if (auto* known = copyOf(object))
             return known;
-        return isJSArray(object) ? copyArray(asArray(object), depth + 1) : copyObject(object, depth + 1);
+        if (isJSArray(object))
+            return copyArray(asArray(object), depth + 1);
+        return object->type() == JSDateType ? copyDate(uncheckedDowncast<DateInstance>(object)) : copyObject(object, depth + 1);
     }
 
 private:
     static constexpr unsigned maximumDepth = 200;
+
+    struct KnownShape {
+        Structure* from;
+        Structure* to;
+    };
+    using KnownShapes = std::array<KnownShape, 128>;
+
+    // Nothing is freed before a collection has finished marking.
+    static KnownShapes& knownShapes(VM& vm)
+    {
+        using Cache = std::tuple<std::optional<VMIdentifier>, HeapVersion, KnownShapes>;
+        [[clang::always_destroy]] static thread_local auto cache = makeUniqueWithoutFastMallocCheck<Cache>();
+        auto& [owner, version, shapes] = *cache;
+        auto current = vm.heap.objectSpace().newlyAllocatedVersion();
+        if (std::exchange(owner, vm.identifier()) != vm.identifier() || version != current)
+            shapes = {};
+        version = current;
+        return shapes;
+    }
+
+    JSObject* copyOf(JSObject* object) const
+    {
+        for (auto [original, copied] : m_firstCopies) {
+            if (original == object)
+                return copied;
+        }
+        return m_copies.get(object);
+    }
+
+    void didCopy(JSObject* object, JSObject* copied)
+    {
+        if (m_firstCopies.size() < m_firstCopies.capacity())
+            m_firstCopies.unsafeAppendWithoutCapacityCheck(std::pair { object, copied });
+        else
+            m_copies.add(object, copied);
+    }
 
     JSValue copyArray(JSArray* array, unsigned depth)
     {
@@ -4729,13 +4842,13 @@ private:
             RETURN_IF_EXCEPTION(scope, {});
             if (!numbers)
                 return {};
-            m_copies.add(array, numbers);
+            didCopy(array, numbers);
             return numbers;
         }
         auto* result = JSArray::tryCreate(m_vm, m_globalObject.arrayStructureForIndexingTypeDuringAllocation(ArrayWithUndecided), 0, length);
         if (!result)
             return {};
-        m_copies.add(array, result);
+        didCopy(array, result);
         for (unsigned i = 0; i < length; i++) {
             JSValue element = array->canGetIndexQuickly(i) ? copy(array->getIndexQuickly(i), depth) : JSValue();
             RETURN_IF_EXCEPTION(scope, {});
@@ -4747,6 +4860,15 @@ private:
         return result;
     }
 
+    JSValue copyDate(DateInstance* date)
+    {
+        if (date->structure()->maxOffset() != invalidOffset)
+            return {};
+        auto* result = DateInstance::create(m_vm, m_globalObject.dateStructure(), date->internalNumber());
+        didCopy(date, result);
+        return result;
+    }
+
     JSValue copyObject(JSObject* object, unsigned depth)
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
@@ -4754,9 +4876,9 @@ private:
         auto* realm = structure->realm();
         if (!realm || structure->hasPolyProto() || structure->storedPrototype() != realm->objectPrototype())
             return {};
-        auto& known = m_knownShapes[(std::bit_cast<uintptr_t>(structure) >> 4) % m_knownShapes.size()];
-        if (known.first == structure)
-            RELEASE_AND_RETURN(scope, copySlots(object, known.second, depth));
+        auto& known = m_knownShapes[((std::bit_cast<uintptr_t>(structure) >> 4) + (std::bit_cast<uintptr_t>(&m_globalObject) >> 9)) % m_knownShapes.size()];
+        if (known.from == structure && known.to->realm() == &m_globalObject)
+            RELEASE_AND_RETURN(scope, copySlots(object, known.to, depth));
 
         Vector<std::pair<UniquedStringImpl*, JSValue>, 16> properties;
         bool isInOrder = false;
@@ -4777,7 +4899,7 @@ private:
         auto* result = properties.isEmpty()
             ? constructEmptyObject(&m_globalObject)
             : constructEmptyObject(&m_globalObject, m_globalObject.objectPrototype(), std::min<unsigned>(properties.size(), JSFinalObject::maxInlineCapacity));
-        m_copies.add(object, result);
+        didCopy(object, result);
         for (auto [name, value] : properties) {
             JSValue copied = copy(value, depth);
             RETURN_IF_EXCEPTION(scope, {});
@@ -4794,7 +4916,7 @@ private:
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         auto* result = constructEmptyObject(m_vm, to);
-        m_copies.add(object, result);
+        didCopy(object, result);
         unsigned capacity = object->structure()->inlineCapacity();
         for (unsigned i = 0, size = to->inlineSize(); i < size; i++) {
             JSValue copied = copy(object->getDirect(offsetForPropertyNumber(i, capacity)), depth);
@@ -4826,14 +4948,16 @@ private:
     JSGlobalObject& m_globalObject;
     VM& m_vm;
     DeferGC m_deferGC;
+    Vector<std::pair<JSObject*, JSObject*>, 12> m_firstCopies;
     UncheckedKeyHashMap<JSObject*, JSObject*> m_copies;
-    std::array<std::pair<Structure*, Structure*>, 32> m_knownShapes {};
+    KnownShapes& m_knownShapes;
 };
 
 JSValue SerializedScriptValue::tryCopyPlainData(JSGlobalObject& globalObject, JSValue value)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject.vm());
     JSValue result = PlainDataCopier(globalObject).copy(value);
+    // No script has run: it has run out of memory, which a collection may change.
     if (scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();
         return {};
@@ -5195,7 +5319,7 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
         wasmModules,
         wasmMemoryHandles,
 #endif
-        buffer, context, *sharedBuffers, serializedBlockLists, serializedHistograms, serializedBlobs, forStorage, forTransfer, hostObjects);
+        buffer, context, *sharedBuffers, serializedBlockLists, serializedHistograms, serializedBlobs, forStorage, forTransfer, throwExceptions, hostObjects);
 
     // Serialize may throw an exception. This code looks weird, but we'll rethrow it
     // in maybeThrowExceptionIfSerializationFailed (since that may also throw other

@@ -13,11 +13,12 @@ use bun_markup::{Chars, Text as Buffer};
 use smallvec::SmallVec;
 
 use super::parser::{DocumentParser, forbid_markup_insertion};
-use super::pending;
 use crate::api::core::steps::Has;
 use crate::api::core::{NodeFlags as F, *};
 use crate::api::loading::{self, ScriptFate};
-use crate::tree::{self, Data, NodeId};
+use crate::document::Above;
+use crate::selector::{filter, filter_of, key};
+use crate::tree::{self, Data, NodeId, State};
 
 pub(super) struct Cells;
 
@@ -62,35 +63,74 @@ pub(super) fn tag_of(element: &Element) -> Tag {
 
 const NAME_BITS: u32 = 7;
 const STRING_BITS: u32 = 8;
-const STENCIL_BITS: u32 = 12;
+const MOST_SHORT_BITS: u32 = 9;
+const STENCIL_BITS: core::ops::RangeInclusive<u32> = 8..=12;
 const LONGEST_SHARED: usize = 48;
+
+/// What has come twice.
+#[derive(Clone, Default)]
+struct Repeated<K> {
+    key: K,
+    hash: u32,
+    string: Option<DomString>,
+    /// Of the last other one.
+    other_hash: u32,
+}
+
+impl<K> Repeated<K> {
+    #[inline(always)]
+    fn miss(&mut self, key: K, hash: u32, bytes: &[u8]) -> DomString {
+        let string = DomString::from_latin1(bytes);
+        if core::mem::replace(&mut self.other_hash, hash) == hash {
+            (self.key, self.hash, self.string) = (key, hash, Some(string.clone()));
+        }
+        string
+    }
+}
 
 /// Markup repeats itself.
 pub(crate) struct Recent {
     tags: [Atom; Tag::ALL.len()],
     /// Whether an HTML element can be bare, once that was asked.
     are_plain: [Option<bool>; Tag::ALL.len()],
+    /// `Element::own_state` of such an element without attributes.
+    own_states: [Option<State>; Tag::ALL.len()],
+    /// By their first and last eight characters.
+    short: Box<[Repeated<[u64; 2]>]>,
     names: [Option<(ShortName, Atom)>; 1 << NAME_BITS],
-    strings: [Option<DomString>; 1 << STRING_BITS],
+    strings: [Repeated<()>; 1 << STRING_BITS],
     /// With the hash of the source of the tag that it is for, or of the last one that has come once.
     stencils: Box<[(u32, Option<Rc<Stencil>>)]>,
+    stencil_bits: u32,
 }
 
 impl Recent {
-    fn new() -> Box<Recent> {
+    pub(super) fn new() -> Box<Recent> {
         let tags = core::array::from_fn(|it| Atom::new(Tag::ALL[it].name()));
-        Box::new(Recent {
+        let (short, stencils) = Default::default();
+        let mut recent = Box::new(Recent {
             tags,
             are_plain: [None; _],
+            own_states: [None; _],
             names: [const { None }; _],
-            strings: [const { None }; _],
-            stencils: vec![(0, None); 1 << STENCIL_BITS].into(),
-        })
+            strings: core::array::from_fn(|_| Repeated::default()),
+            short,
+            stencils,
+            stencil_bits: 0,
+        });
+        recent.resize(*STENCIL_BITS.start());
+        recent
+    }
+
+    fn resize(&mut self, stencil_bits: u32) {
+        (self.stencil_bits, self.stencils) =
+            (stencil_bits, vec![(0, None); 1 << stencil_bits].into());
+        self.short = vec![Repeated::default(); 1 << (stencil_bits - 2).min(MOST_SHORT_BITS)].into();
     }
 
     #[inline(always)]
     fn stencil(&mut self, source: TagSource<'_>) -> &mut (u32, Option<Rc<Stencil>>) {
-        &mut self.stencils[(source.hash >> (64 - STENCIL_BITS)) as usize]
+        &mut self.stencils[(source.hash >> (64 - self.stencil_bits)) as usize]
     }
 
     #[inline]
@@ -99,6 +139,79 @@ impl Recent {
             Some((known, atom)) if *known == short => atom.clone(),
             slot => slot.insert((short, Atom::from_chars(chars))).1.clone(),
         }
+    }
+
+    fn wide_text(&mut self, units: &[u16]) -> StoredText {
+        let mut narrow = [0; LONGEST_SHARED];
+        if units.is_empty()
+            || units.len() > narrow.len()
+            || units.iter().fold(0, |all, it| all | it) > 0xff
+        {
+            return DomString::from_chars(Chars::Utf16(units)).into();
+        }
+        narrow
+            .iter_mut()
+            .zip(units)
+            .for_each(|(to, from)| *to = *from as u8);
+        self.narrow_text(&narrow[..units.len()])
+    }
+
+    #[inline(always)]
+    pub(super) fn text(&mut self, chars: Chars<'_>) -> StoredText {
+        match chars {
+            Chars::Latin1(bytes) => self.narrow_text(bytes),
+            Chars::Utf16(units) => self.wide_text(units),
+        }
+    }
+
+    #[inline(always)]
+    fn narrow_text(&mut self, bytes: &[u8]) -> StoredText {
+        let (Some(first), chars) = (bytes.first(), Chars::Latin1(bytes)) else {
+            return StoredText::default();
+        };
+        if bytes.len() > 16 {
+            return if first.is_ascii_whitespace() && chars.is_all_spaces() {
+                StoredText::Ascii(self.string(chars))
+            } else {
+                DomString::from_latin1(bytes).into()
+            };
+        }
+        let ends = match (
+            bytes.first_chunk(),
+            bytes.last_chunk(),
+            bytes.first_chunk(),
+            bytes.last_chunk(),
+        ) {
+            (Some(head), Some(tail), ..) => [u64::from_le_bytes(*head), u64::from_le_bytes(*tail)],
+            (.., Some(head), Some(tail)) => [
+                u32::from_le_bytes(*head).into(),
+                u32::from_le_bytes(*tail).into(),
+            ],
+            _ => [
+                u64::from(*first) | u64::from(bytes[bytes.len() / 2]) << 8,
+                bytes[bytes.len() - 1].into(),
+            ],
+        };
+        if (ends[0] | ends[1]) & u64::from_le_bytes([0x80; 8]) != 0 {
+            return DomString::from_latin1(bytes).into();
+        }
+        let hash = (ends[0] ^ ends[1].rotate_left(29))
+            .wrapping_add(bytes.len() as u64)
+            .wrapping_mul(0x9e37_79b9_7f4a_7c15);
+        let with_len = (hash >> 16) as u32 & !31 | bytes.len() as u32;
+        StoredText::Ascii(
+            match &mut self.short
+                [(hash >> (64 - MOST_SHORT_BITS)) as usize & (self.short.len() - 1)]
+            {
+                Repeated {
+                    key,
+                    hash,
+                    string: Some(string),
+                    ..
+                } if (*key, *hash) == (ends, with_len) => string.clone(),
+                slot => slot.miss(ends, with_len, bytes),
+            },
+        )
     }
 
     #[inline]
@@ -117,8 +230,12 @@ impl Recent {
         };
         let hash = (ends ^ (bytes.len() as u64) << 24).wrapping_mul(0x9e37_79b9_7f4a_7c15);
         match &mut self.strings[(hash >> (64 - STRING_BITS)) as usize] {
-            Some(known) if known.latin1() == Some(bytes) => known.clone(),
-            slot => slot.insert(DomString::from_latin1(bytes)).clone(),
+            Repeated {
+                hash: known,
+                string: Some(string),
+                ..
+            } if *known == (hash >> 16) as u32 && string.latin1() == Some(bytes) => string.clone(),
+            slot => slot.miss((), (hash >> 16) as u32, bytes),
         }
     }
 }
@@ -146,6 +263,8 @@ pub(super) struct Sink<'c, 'a> {
     growing_bare: Option<(NodeId, Buffer)>,
     /// What the bare nodes that the parser has are in, and how many it has got.
     owner: Option<&'a Node>,
+    /// `Node::above_bare`
+    above: [Above; 2],
     added: u32,
 }
 
@@ -154,6 +273,44 @@ impl Drop for Sink<'_, '_> {
         self.stop_growing();
         html::Sink::publish(self);
         self.doc.arena().recent_markup.set(self.recent.take());
+    }
+}
+
+const MUCH_MARKUP: usize = 1 << 15;
+
+/// Makes room for what is about to be parsed. `total` includes what the parser has got before.
+#[inline]
+pub(super) fn expect_markup(doc: &Doc, markup: Chars<'_>, total: usize) {
+    if total >= MUCH_MARKUP {
+        expect_much_markup(doc, markup, total);
+    }
+}
+
+#[cold]
+fn expect_much_markup(doc: &Doc, markup: Chars<'_>, total: usize) {
+    let tags = match markup {
+        Chars::Latin1(bytes) => bun_core::strings::count_char(bytes, b'<'),
+        Chars::Utf16(units) => units.iter().filter(|it| **it == u16::from(b'<')).count(),
+    };
+    doc.arena()
+        .write(|engine| engine.tree.expect((tags * 3 / 2).min(1 << 20)));
+    let (mut recent, bits) = (
+        doc.arena().recent_markup.take().unwrap_or_else(Recent::new),
+        (total.ilog2() - 6).min(*STENCIL_BITS.end()),
+    );
+    if recent.stencil_bits < bits {
+        recent.resize(bits);
+    }
+    doc.arena().recent_markup.set(Some(recent));
+}
+
+#[inline]
+pub(super) fn markup_was_parsed(doc: &Doc, total: usize) {
+    if total >= MUCH_MARKUP
+        && let Some(mut recent) = doc.arena().recent_markup.take()
+    {
+        recent.resize(*STENCIL_BITS.start());
+        doc.arena().recent_markup.set(Some(recent));
     }
 }
 
@@ -221,29 +378,164 @@ impl<'c, 'a> Sink<'c, 'a> {
             growing: None,
             growing_bare: None,
             owner: None,
+            above: [Above::Detached; 2],
             added: 0,
         }
     }
 
     /// With the owner, if what is appended to it can be bare.
     #[inline(always)]
-    fn bare_parent(&mut self, parent: JSValue) -> Option<(&'a Node, NodeId)> {
+    fn bare_parent(&mut self, parent: JSValue) -> Option<(&'a Node, NodeId, Above)> {
         if parent.is_int32() {
-            return Some((self.owner?, parent.as_int32() as NodeId));
+            return Some((self.owner?, parent.as_int32() as NodeId, self.above[1]));
         }
         let parent = self.node(parent);
         if self.owner != Some(parent) {
-            (parent.takes_bare() && Rc::ptr_eq(parent.arena(), self.doc.arena())).then_some(())?;
-            html::Sink::publish(self);
-            self.owner = Some(parent);
+            self.change_owner(parent)?;
         }
-        Some((parent, parent.id()))
+        Some((parent, parent.id(), self.above[0]))
+    }
+
+    fn change_owner(&mut self, owner: &'a Node) -> Option<()> {
+        (owner.takes_bare() && owner.is_in_arena_of(self.doc)).then_some(())?;
+        html::Sink::publish(self);
+        (self.owner, self.above) = (Some(owner), owner.above_bare());
+        Some(())
     }
 
     #[inline(always)]
-    fn appended(&mut self, owner: &Node) {
+    fn appended(&mut self, owner: &Node, parent: NodeId, child: Result<NodeId, NodeId>) -> NodeId {
         owner.set(F::HAS_BARE_CHILDREN);
         self.added += 1;
+        child.unwrap_or_else(|it| owner.finish_appending(parent, it))
+    }
+
+    fn append_with_attributes(
+        &mut self,
+        local: Atom,
+        namespace: Namespace,
+        attributes: &mut Vec<Attribute<Cells>>,
+        owner: &Node,
+        parent: NodeId,
+        above: Above,
+    ) -> Option<(Result<NodeId, NodeId>, bool)> {
+        let (doc, mut has_id) = (owner.doc(), false);
+        for it in attributes.iter() {
+            has_id |= it.name == atom!("id");
+            if it.namespace != AttributeNamespace::None
+                || bare::needs_object(&it.name)
+                || chooses_definition(it)
+                || it.name == atom!("style") && doc.is(DocFlags::CHECKS_STYLE_ATTRIBUTES)
+            {
+                return None;
+            }
+        }
+        let namespace = match namespace {
+            Namespace::Html => tree::Namespace::Html,
+            Namespace::Svg => tree::Namespace::Svg,
+            Namespace::MathMl => tree::Namespace::MathMl,
+        };
+        let appended = owner.arena().write(|engine| {
+            let element = engine.element_with(
+                local,
+                namespace,
+                attributes.drain(..).map(|it| (it.name, it.value.into())),
+                doc.quirks(),
+            );
+            let (keys, own) = (
+                filter_of(&element),
+                if above == Above::New {
+                    element.own_state()
+                } else {
+                    None
+                },
+            );
+            engine.append_bare_element(parent, above, element, keys, own)
+        });
+        Some((appended, has_id))
+    }
+
+    pub(super) fn append_stored_quietly(&mut self, text: &StoredText, parent: JSValue) -> bool {
+        let Some((owner, parent, above)) = self.bare_parent(parent) else {
+            return false;
+        };
+        let appended = owner
+            .arena()
+            .write(|engine| engine.append_bare_text(parent, above, text.clone()));
+        self.appended(owner, parent, appended);
+        true
+    }
+
+    /// With attributes in no namespace that mean nothing to an element without steps. `last` was written with the same name.
+    pub(super) fn append_named_quietly<'t>(
+        &mut self,
+        parent: JSValue,
+        name: QualName,
+        attributes: impl Iterator<Item = (&'t Atom, &'t StoredText)> + Clone,
+        count: usize,
+        last: &mut Option<tree::Likeness>,
+    ) -> Option<JSValue> {
+        let (kind, namespace) = match name.ns {
+            Ns::Html => (
+                Some(Kind::of_html(name.local.known())).filter(|it| *it != Kind::Unknown)?,
+                tree::Namespace::Html,
+            ),
+            Ns::Svg => (Kind::of_svg(name.local.known()), tree::Namespace::Svg),
+            Ns::MathMl => (Kind::MathMl, tree::Namespace::MathMl),
+            _ => (Kind::Element, tree::Namespace::Other),
+        };
+        self.doc.prepare_for_bare(kind).then_some(())?;
+        let (owner, parent, above) = self
+            .bare_parent(parent)
+            .filter(|it| !has_scoped_registries() && !it.0.has(F::SHADOW_ROOT))?;
+        let needs_space = name.prefix.is_some()
+            || matches!(name.ns, Ns::Other(_) | Ns::XLink | Ns::Xml | Ns::Xmlns);
+        last.take_if(|it| {
+            it.namespace != namespace
+                || it.space.as_ref().map(|it| &it.ns) != needs_space.then_some(&name.ns)
+        });
+        let is_same = |(a, b): (&tree::Attribute, (&Atom, &StoredText))| {
+            a.local == *b.0 && core::ptr::eq(a.value.string().as_impl(), b.1.string().as_impl())
+        };
+        let (appended, has_id) = owner.arena().write(|engine| {
+            let (element, keys) = match last {
+                Some(last)
+                    if last.attributes.len() == count
+                        && last.attributes.iter().zip(attributes.clone()).all(is_same) =>
+                {
+                    (engine.element_like(last), last.keys)
+                }
+                _ => {
+                    let space = last.take().map_or_else(
+                        || needs_space.then(|| tree::Space::new(name.ns, name.prefix)),
+                        |it| it.space,
+                    );
+                    let mut all = attributes.map(|it| (it.0.clone(), it.1.clone()));
+                    let mut element = engine.element_with(
+                        name.local,
+                        namespace,
+                        (0..count).map(|_| all.next().expect("as many")),
+                        owner.doc().quirks(),
+                    );
+                    space
+                        .into_iter()
+                        .for_each(|it| element.rare_mut().space = Some(it));
+                    let keys = filter_of(&element);
+                    *last = Some(tree::Likeness::of(&mut element, keys));
+                    (element, keys)
+                }
+            };
+            let has_id = element.id != crate::name::Name::NONE;
+            (
+                engine.append_bare_element(parent, above, element, keys, None),
+                has_id,
+            )
+        });
+        let id = self.appended(owner, parent, appended);
+        if has_id {
+            owner.note_id_of_bare(&self.cx.heap, id);
+        }
+        Some(JSValue::js_number_from_int32(id as i32))
     }
 
     #[cold]
@@ -280,6 +572,11 @@ impl<'c, 'a> Sink<'c, 'a> {
         let is_plain = self
             .doc
             .prepare_for_bare(Kind::of_html(self.recent().tags[tag as usize].known()));
+        self.recent().own_states[tag as usize] = tree::Element::new(
+            self.recent().tags[tag as usize].name(),
+            tree::Namespace::Html,
+        )
+        .own_state();
         *self.recent().are_plain[tag as usize].insert(is_plain)
     }
 
@@ -392,7 +689,7 @@ impl<'c, 'a> Sink<'c, 'a> {
             .filter(|_| may_be_custom && doc.is(DocFlags::HAS_PAGE));
         let forbidden = constructing.map(|_| forbid_markup_insertion(self.doc));
         if constructing.is_some() {
-            pending::before_constructing(self.cx, parent, &name.local, is.as_ref());
+            super::before_constructing(self.cx, parent, &name.local, is.as_ref());
         }
         let inherits_from = match self.client {
             Client::Fragment {
@@ -582,14 +879,16 @@ impl html::Sink for Sink<'_, '_> {
         )
     }
 
-    #[inline]
+    #[inline(always)]
     fn append_element_quietly(&mut self, element: NewElement<'_, Cells>) -> Option<JSValue> {
+        let mut own = None;
         let local = match (element.namespace, element.name) {
             (Namespace::Html, ElementName::Known(tag)) => {
                 let recent = self.recent();
                 recent.are_plain[tag as usize]
                     .unwrap_or_else(|| self.find_out_if_plain(tag))
                     .then_some(())?;
+                own = self.recent().own_states[tag as usize];
                 self.recent().tags[tag as usize].clone()
             }
             (Namespace::Html, _) => return None,
@@ -607,79 +906,75 @@ impl html::Sink for Sink<'_, '_> {
                     .then_some(local)?
             }
         };
-        let (owner, parent) = self.bare_parent(element.intended_parent)?;
+        let (owner, parent, above) = self.bare_parent(element.intended_parent)?;
         if has_scoped_registries() || owner.has(F::SHADOW_ROOT) && parent == owner.id() {
             return None;
         }
-        let (doc, mut has_id) = (owner.doc(), false);
-        let id = match element.stencil {
+        let (appended, has_id) = match element.stencil {
             Some(stencil) => {
-                (local == stencil.mould.local() && stencil.mould.fits(doc)).then_some(())?;
-                has_id = stencil.mould.has_id();
-                owner.append_bare(parent, |engine| stencil.mould.create_slot(engine))
+                (local == stencil.mould.local() && stencil.mould.fits(owner.doc())).then_some(())?;
+                (
+                    self.doc
+                        .arena()
+                        .write(|engine| stencil.mould.append_bare(engine, parent, above)),
+                    stencil.mould.has_id(),
+                )
             }
-            None => {
-                for it in element.attributes.iter() {
-                    has_id |= it.name == atom!("id");
-                    if it.namespace != AttributeNamespace::None
-                        || bare::needs_object(&it.name)
-                        || chooses_definition(it)
-                        || it.name == atom!("style") && doc.is(DocFlags::CHECKS_STYLE_ATTRIBUTES)
-                    {
-                        return None;
-                    }
-                }
-                let namespace = match element.namespace {
-                    Namespace::Html => tree::Namespace::Html,
-                    Namespace::Svg => tree::Namespace::Svg,
-                    Namespace::MathMl => tree::Namespace::MathMl,
-                };
-                owner.append_bare(parent, |engine| {
-                    engine.create_element_with(
-                        local,
-                        namespace,
-                        element
-                            .attributes
-                            .drain(..)
-                            .map(|it| (it.name, it.value.into())),
-                        doc.quirks(),
+            None if element.attributes.is_empty() && own.is_some() => {
+                let appended = self.doc.arena().write(|engine| {
+                    let tag = local.name();
+                    let element = engine
+                        .tree
+                        .new_element(tag, tree::Namespace::Html, |it| it.local = local);
+                    engine.append_bare_element(
+                        parent,
+                        above,
+                        element,
+                        filter(core::iter::once(key::tag(tag))),
+                        own,
                     )
-                })
+                });
+                (appended, false)
             }
+            None => self.append_with_attributes(
+                local,
+                element.namespace,
+                element.attributes,
+                owner,
+                parent,
+                above,
+            )?,
         };
+        let id = self.appended(owner, parent, appended);
         if has_id {
             owner.note_id_of_bare(&self.cx.heap, id);
         }
-        self.appended(owner);
         Some(JSValue::js_number_from_int32(id as i32))
     }
 
-    #[inline]
+    #[inline(always)]
     fn append_text_quietly(&mut self, text: Chars<'_>, parent: JSValue) -> bool {
-        let Some((owner, parent)) = self.bare_parent(parent) else {
+        let Some((owner, parent, above)) = self.bare_parent(parent) else {
             return false;
         };
-        if let Some(previous) = owner.read(|tree, _| tree.text_at_end_of(parent)) {
+        let arena = self.doc.arena();
+        if let Some(previous) = arena.read(|engine| engine.tree.text_at_end_of(parent)) {
             self.extend_bare(previous, text);
             return true;
         }
-        let data = if text.is_all_spaces() {
-            self.recent().string(text)
-        } else {
-            DomString::from_chars(text)
-        };
-        owner.append_bare(parent, |engine| engine.tree.create(Data::Text(data.into())));
-        self.appended(owner);
+        let data = self.recent().text(text);
+        let appended = arena.write(|engine| engine.append_bare_text(parent, above, data));
+        self.appended(owner, parent, appended);
         true
     }
 
     fn append_comment_quietly(&mut self, data: Chars<'_>, parent: JSValue) -> bool {
-        let Some((owner, parent)) = self.bare_parent(parent) else {
+        let Some((owner, parent, _)) = self.bare_parent(parent) else {
             return false;
         };
         self.doc.prepare_for_bare(Kind::Comment);
         owner.append_bare_comment(parent, DomString::from_chars(data));
-        self.appended(owner);
+        self.appended(owner, parent, Ok(0));
         true
     }
 
@@ -839,7 +1134,7 @@ impl html::Sink for Sink<'_, '_> {
 
     fn associate_with_form(&mut self, node: JSValue, form: JSValue, intended_parent: JSValue) {
         if self.node(form).root() == self.node(intended_parent).root() {
-            pending::associate_with_form(
+            crate::api::forms::associate_by_parser(
                 &self.cx.heap,
                 self.element(node),
                 self.element(form),

@@ -7,7 +7,7 @@ use bun_jsc::bindgen::{JsHeap, JsInterface, JsScope};
 use bun_markup::Text as Buffer;
 use bun_markup::html::{self, Sink as _, Stop};
 
-use super::sink::{Cells, Client, Sink};
+use super::sink::{Cells, Client, Sink, expect_markup, markup_was_parsed};
 use super::{DocumentOptions, FragmentOptions, parse_html_fragment, xml};
 use crate::api::core::{NodeFlags as F, *};
 use crate::api::loading;
@@ -42,7 +42,7 @@ pub(crate) fn throws_on_markup_insertion(doc: &Doc) -> bool {
 
 enum Source {
     Html(Box<html::Parser<Cells>>),
-    Xml(xml::Builder),
+    Xml(Box<xml::Builder>),
 }
 
 pub(crate) struct DocumentParser {
@@ -60,6 +60,7 @@ pub(crate) struct DocumentParser {
     is_from_script: Cell<bool>,
     is_inserting: Cell<bool>,
     kept: Cell<u32>,
+    fed: Cell<usize>,
     speculations: Cell<u32>,
     speculated_on: Cell<usize>,
 }
@@ -84,6 +85,7 @@ impl DocumentParser {
             is_from_script: Cell::new(false),
             is_inserting: Cell::new(false),
             kept: Cell::new(0),
+            fed: Cell::new(0),
             speculations: Cell::new(0),
             speculated_on: Cell::new(0),
         };
@@ -207,6 +209,9 @@ impl DocumentParser {
         while !self.is_paused.get() && !self.has_stopped.get() && !cx.global().has_exception() {
             let stop = self.step(cx);
             self.doc().report_bare(cx);
+            if matches!(stop, Stop::Finished) {
+                markup_was_parsed(self.doc(), self.fed.take());
+            }
             match stop {
                 Stop::NeedsInput => break,
                 Stop::Paused => {}
@@ -225,10 +230,16 @@ impl DocumentParser {
         }
     }
 
+    fn feed(&self, parser: &mut html::Parser<Cells>, text: &DomString) {
+        self.fed.set(self.fed.get() + text.len() as usize);
+        expect_markup(self.doc(), text.chars(), self.fed.get());
+        parser.write_shared(text);
+    }
+
     pub(crate) fn write(&self, text: &DomString) {
         match self.source.try_borrow_mut().as_deref_mut() {
             Ok(Source::Html(parser)) if self.written_meanwhile.borrow().is_empty() => {
-                parser.write(text.chars())
+                self.feed(parser, text)
             }
             _ => self.written_meanwhile.borrow_mut().push(text.chars()),
         }
@@ -241,14 +252,15 @@ impl DocumentParser {
                     && self.written_meanwhile.borrow().is_empty()
                     && self.received_meanwhile.borrow().is_empty() =>
             {
-                parser.write(text.chars())
+                self.feed(parser, text)
             }
             _ => self.received_meanwhile.borrow_mut().push(text.chars()),
         }
     }
 
     pub(crate) fn start_xml(&self, source: &DomString) {
-        *self.source.borrow_mut() = Source::Xml(xml::Builder::for_document(source, self.doc()));
+        *self.source.borrow_mut() =
+            Source::Xml(Box::new(xml::Builder::for_document(source, self.doc())));
     }
 
     /// There is no more input.
@@ -289,14 +301,16 @@ impl DocumentParser {
         cx: &mut JsScope<'a>,
         run: impl FnOnce(&mut JsScope<'a>),
     ) {
-        let (level, has_begun) = (
-            &self.script_nesting_level,
-            self.with_html(html::Parser::begin_script),
-        );
-        level.set(level.get() + 1);
+        let has_begun = self.with_html(html::Parser::begin_script).is_some();
+        self.script_nesting_level.update(|it| it + 1);
         run(cx);
+        self.leave_insertion_point(has_begun);
+    }
+
+    fn leave_insertion_point(&self, has_begun: bool) {
+        let level = &self.script_nesting_level;
         level.set(level.get() - 1);
-        if has_begun.is_some() {
+        if has_begun {
             self.with_html(html::Parser::end_script);
         }
         if level.get() == 0 && self.ends_after_script.get() {

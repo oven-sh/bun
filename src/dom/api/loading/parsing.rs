@@ -22,6 +22,7 @@ pub(super) fn start_parser<'a>(cx: Cx<'_, 'a>, doc: &'a Doc) -> &'a DocumentPars
     let parser = DocumentParser::for_loading(&cx.heap, doc);
     doc.set_edge(&cx.heap, Edge::Parser, parser.to_js());
     delay_load(doc);
+    reached(&cx.heap, doc, b"domLoading", now());
     set_ready_state(cx, doc, ReadyState::Loading);
     parser
 }
@@ -68,7 +69,7 @@ pub(crate) fn end_html<'a>(cx: Cx<'_, 'a>, doc: &'a Doc, is_complete: bool) {
         return doc
             .window()
             .into_iter()
-            .for_each(|it| it.host().loaded("load"));
+            .for_each(|it| it.host().loaded(bun_web::host::Stage::Loaded));
     }
     parser.end();
     if parser.script_nesting_level() == 0 {
@@ -190,7 +191,7 @@ fn content_has_loaded<'a>(cx: Cx<'_, 'a>, doc: &'a Doc, _: JSValue) {
     frames::fit_container(cx, doc);
     doc.window()
         .into_iter()
-        .for_each(|it| it.host().loaded("dom-ready"));
+        .for_each(|it| it.host().loaded(bun_web::host::Stage::Parsed));
     crate::api::window::take_requests(cx, doc);
     allow_load_now(cx, doc);
 }
@@ -253,5 +254,5 @@ pub(super) fn finish_loading<'a>(cx: Cx<'_, 'a>, doc: &'a Doc) {
     }
     history::loaded(cx, window);
     crate::api::fonts::document_loaded(cx, doc);
-    window.host().loaded("load");
+    window.host().loaded(bun_web::host::Stage::Loaded);
 }

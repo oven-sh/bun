@@ -361,6 +361,29 @@ fn pace(element: &Element) -> Pace {
 }
 
 impl Document {
+    pub(crate) fn restore_animated_attributes(&mut self, root: NodeId) {
+        if !self.smil.effects.bases.is_empty() {
+            let tree = &self.tree;
+            let up = |it: &NodeId| {
+                Some(if tree[*it].parent != 0 {
+                    tree[*it].parent
+                } else {
+                    tree.host_of(*it)
+                })
+                .filter(|it| *it != 0)
+            };
+            let over: Vec<_> = self
+                .smil
+                .effects
+                .bases
+                .extract_if(|key, _| core::iter::successors(Some(key.0), up).any(|it| it == root))
+                .collect();
+            over.into_iter().for_each(|((target, _), (name, base))| {
+                self.set_attribute(target, &name, base.as_deref())
+            });
+        }
+    }
+
     pub(crate) fn smil_target(&self, id: NodeId) -> Option<NodeId> {
         let target = match href(self.tree.element(id)?).filter(|it| !it.is_empty()) {
             Some(url) => self.svg_element_by_id(id, self.fragment_of(url)?)?,

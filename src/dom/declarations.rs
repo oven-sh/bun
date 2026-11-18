@@ -1,6 +1,6 @@
 //! <https://drafts.csswg.org/cssom/#css-declaration-blocks>
 
-use core::cell::{OnceCell, RefCell};
+use core::cell::{Cell, OnceCell, RefCell};
 use core::hash::{Hash, Hasher};
 use std::borrow::Cow;
 use std::rc::{Rc, Weak};
@@ -9,6 +9,7 @@ use std::sync::LazyLock;
 use smallvec::SmallVec;
 
 use crate::custom::{Text, remember, spelling};
+use crate::forecast::{prefetch, prefetch_shared};
 use crate::grammar::{Mode, definition};
 use crate::name::{FastHasher, Map};
 use crate::properties::{Id, Prop, logical_props};
@@ -56,11 +57,14 @@ impl Key {
     fn covers(self) -> impl Fn(&Entry) -> bool {
         let bit = |code: u32| 1u64 << ((code >> 2) % 64);
         let (code, is_all) = (self.code(), self == Key::Property(Prop::All));
-        let longhands = if is_all { &[] } else { self.longhands() };
-        let filter = longhands
-            .iter()
-            .fold(0, |all, it| all | bit(Key::Property(*it).code()));
-        move |entry| match entry.code == code || is_all || filter & bit(entry.code) != 0 {
+        let (longhands, filter) = match self {
+            Key::Property(Prop::Short(index)) => shorthand::get(index).longhands_with_filter(),
+            _ => (&[][..], 0),
+        };
+        #[inline(always)]
+        move |entry| match entry.code == code
+            || entry.code & 3 != 0 && (is_all || filter & bit(entry.code) != 0)
+        {
             true if is_all => {
                 matches!(entry.key(), Key::Property(Prop::Long(it) | Prop::Logical(it)) if it.is_in_all())
             }
@@ -177,7 +181,8 @@ pub(crate) struct Specified {
     /// The values of the longhands are only known once it applies to an element.
     is_pending: bool,
     parts: OnceCell<Box<[Part]>>,
-    hash: u64,
+    /// 0 until it is asked for.
+    hash: Cell<u64>,
 }
 
 fn is_system_font(key: Key, source: &[u8]) -> bool {
@@ -230,7 +235,7 @@ impl Specified {
                 sheet::descriptor(rule.name(), key.name().as_bytes(), source)?
             }
         };
-        let (hash, source) = (hash_of(key, important, source), Text::from(source));
+        let source = Text::from(source);
         let parts: Box<[Part]> = Box::new([Part {
             source: Rc::clone(&source),
             written: written.into(),
@@ -242,7 +247,7 @@ impl Specified {
             declaration: None,
             is_pending: false,
             parts: parts.into(),
-            hash,
+            hash: Cell::new(0),
         })
     }
 
@@ -262,8 +267,44 @@ impl Specified {
             declaration: Some(declaration),
             is_pending,
             parts: OnceCell::new(),
-            hash: hash_of(key, important, source),
+            hash: Cell::new(0),
         }
+    }
+
+    fn hash(&self) -> u64 {
+        if self.hash.get() == 0 {
+            self.hash
+                .set(hash_of(self.key, self.important, &self.source));
+        }
+        self.hash.get()
+    }
+
+    /// Gives another value that is valid to `declaration`, which is its own, if nothing else has that.
+    fn rewrite(&mut self, declaration: &mut Rc<Declaration>, source: &[u8]) -> bool {
+        if Rc::strong_count(declaration) != 2 {
+            return false;
+        }
+        self.declaration = None;
+        let is_unique = Rc::get_mut(declaration).map(|own| {
+            own.value = Declared::Wide(Wide::Unset);
+            match Rc::get_mut(&mut self.source).filter(|it| it.len() == source.len()) {
+                Some(room) => room.copy_from_slice(source),
+                None => self.source = source.into(),
+            }
+            (
+                own.value,
+                *own.cached.get_mut(),
+                self.parts,
+                *self.hash.get_mut(),
+            ) = (
+                Declared::Text(Rc::clone(&self.source)),
+                None,
+                OnceCell::new(),
+                0,
+            );
+        });
+        self.declaration = Some(Rc::clone(declaration));
+        is_unique.is_some()
     }
 
     /// Of the first longhand.
@@ -415,8 +456,41 @@ fn write_declaration(key: Key, value: &[u8], important: bool, out: &mut Out) {
 type Found = SmallVec<[usize; 8]>;
 
 /// Of longhands.
-#[derive(Clone, Default, PartialEq)]
-pub(crate) struct DeclarationList(Vec<Entry>);
+#[derive(Clone, Default)]
+pub(crate) struct DeclarationList(Vec<Entry>, Hints);
+
+#[derive(Clone, Default)]
+struct Hints {
+    /// A bit for each longhand that is in it, once it is long.
+    present: Option<Box<[u64; (Id::ALL.len() * 2).div_ceil(64)]>>,
+    /// After the one that was found last.
+    next: Cell<u32>,
+    may_have_logical: bool,
+}
+
+impl Hints {
+    const LONG: usize = 16;
+
+    fn flip(&mut self, code: u32) {
+        if let (Some(present), 1 | 2) = (&mut self.present, code & 3) {
+            present[code as usize >> 7] ^= 1 << (code >> 1 & 63);
+        }
+    }
+
+    #[inline]
+    fn has(&self, code: u32) -> Option<bool> {
+        self.present
+            .as_ref()
+            .filter(|_| matches!(code & 3, 1 | 2))
+            .map(|it| it[code as usize >> 7] >> (code >> 1 & 63) & 1 != 0)
+    }
+}
+
+impl PartialEq for DeclarationList {
+    fn eq(&self, other: &DeclarationList) -> bool {
+        self.0 == other.0
+    }
+}
 
 impl DeclarationList {
     pub(crate) fn parse(accepts: Accepts, source: &[u8]) -> DeclarationList {
@@ -446,17 +520,32 @@ impl DeclarationList {
 
     fn find(&self, key: Key) -> Option<usize> {
         let code = key.code();
-        self.0
-            .iter()
-            .rposition(|it| it.code == code && (code & 3 != 0 || it.of.key == key))
+        let Some(is_present) = self.1.has(code) else {
+            return self
+                .0
+                .iter()
+                .rposition(|it| it.code == code && (code & 3 != 0 || it.of.key == key));
+        };
+        let (next, is_at) = (self.1.next.get() as usize, |it: &usize| {
+            self.0.get(*it).is_some_and(|it| it.code == code)
+        });
+        let found = is_present.then(|| {
+            [next, next.wrapping_sub(1)]
+                .into_iter()
+                .find(is_at)
+                .or_else(|| self.0.iter().position(|it| it.code == code))
+        })??;
+        self.1.next.set(found as u32 + 1);
+        Some(found)
     }
 
     /// Whether setting it again moves it to the end.
     fn has_rival_after(&self, index: usize) -> bool {
         let entry = &self.0[index];
-        self.0[index + 1..]
-            .iter()
-            .any(|it| (it.code ^ entry.code) & 3 == 3 && entry.key().competes_with(it.key()))
+        self.1.may_have_logical
+            && self.0[index + 1..]
+                .iter()
+                .any(|it| (it.code ^ entry.code) & 3 == 3 && entry.key().competes_with(it.key()))
     }
 
     fn is_changed_by(&self, specified: &Rc<Specified>) -> bool {
@@ -590,19 +679,35 @@ impl DeclarationList {
                     self.0[index] = entry;
                     continue;
                 }
-                None => {}
+                None => self.1.flip(entry.code),
             }
+            self.1.may_have_logical |= entry.code & 3 == 2;
             self.0.push(entry);
             has_changed = true;
+        }
+        if self.0.len() > Hints::LONG && self.1.present.is_none() {
+            self.1.present = Some(Box::new([0; _]));
+            self.0.iter().for_each(|it| self.1.flip(it.code));
         }
         has_changed
     }
 
     /// Whether it was there.
     pub(crate) fn remove(&mut self, key: Key) -> bool {
-        let (before, covers) = (self.0.len(), key.covers());
-        self.0.retain(|it| !covers(it));
-        self.0.len() < before
+        if key.longhands().is_empty() {
+            return self
+                .find(key)
+                .map(|it| self.1.flip(self.0.remove(it).code))
+                .is_some();
+        }
+        let covers = key.covers();
+        let Some(first) = self.0.iter().position(&covers) else {
+            return false;
+        };
+        self.0
+            .extract_if(first.., |it| covers(it))
+            .for_each(|it| self.1.flip(it.code));
+        true
     }
 
     /// <https://drafts.csswg.org/cssom/#serialize-a-css-declaration-block>
@@ -684,7 +789,7 @@ impl DeclarationList {
         within.hash(&mut hasher);
         self.0
             .iter()
-            .for_each(|it| (it.of.hash, it.part).hash(&mut hasher));
+            .for_each(|it| (it.of.hash(), it.part).hash(&mut hasher));
         hasher.finish()
     }
 }
@@ -788,6 +893,67 @@ impl Block {
             && (Rc::ptr_eq(&self.base_url, base_url) || self.base_url == *base_url)
     }
 
+    /// Of a property whose value can be replaced without anything else noticing.
+    pub(crate) fn place_of(&self, property: Prop) -> Option<Place> {
+        let (key, list) = (
+            Key::Property(property),
+            &self.editable.get().filter(|_| self.has_source(b""))?.list,
+        );
+        let entry = list.find(key).filter(|it| {
+            list.0[*it].of.key == key && !list.0[*it].of.important && !list.has_rival_after(*it)
+        })?;
+        let old = list.0[entry]
+            .of
+            .declaration
+            .as_ref()
+            .filter(|it| matches!(it.value, Declared::Text(_)))?;
+        let declaration = self
+            .declarations()
+            .list
+            .iter()
+            .take(32)
+            .position(|it| Rc::ptr_eq(it, old))?;
+        Some(Place {
+            property,
+            entry,
+            declaration,
+        })
+    }
+
+    /// What `amend` is going to need. Each step relies on the one before it.
+    #[inline(always)]
+    pub(crate) fn prefetch(&self, step: usize) {
+        let Some((editable, parsed)) = self.editable.get().zip(self.parsed()) else {
+            return;
+        };
+        match step {
+            0 => (prefetch(&**editable), prefetch(&*parsed.list)).0,
+            1 => {
+                (
+                    prefetch(&*editable.list.0),
+                    parsed
+                        .list
+                        .iter()
+                        .take(3)
+                        .for_each(|it| prefetch_shared(it, 2)),
+                )
+                    .0
+            }
+            2 => editable
+                .list
+                .0
+                .iter()
+                .take(3)
+                .for_each(|it| prefetch_shared(&it.of, 2)),
+            _ => editable
+                .list
+                .0
+                .iter()
+                .take(3)
+                .for_each(|it| prefetch_shared(&it.of.source, 1)),
+        }
+    }
+
     pub(crate) fn editable(&self) -> &Editable {
         self.editable.get_or_init(|| {
             let mut list = DeclarationList::default();
@@ -802,11 +968,23 @@ impl Block {
     }
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct Place {
+    property: Prop,
+    entry: usize,
+    pub(crate) declaration: usize,
+}
+
 /// Equal inline styles share a block, and so their elements can share a style.
 #[derive(Default)]
 pub(crate) struct InlineBlocks {
     blocks: Map<u64, Rc<Block>>,
+    /// Those that were set more than once.
     specified: Map<u64, Rc<Specified>>,
+    /// The last value that was not valid, with its hash.
+    refused: (u64, Vec<u8>),
+    /// Some bits of the hashes of the last ones that were parsed.
+    seen: Vec<u16>,
 }
 
 impl InlineBlocks {
@@ -876,25 +1054,96 @@ impl InlineBlocks {
         {
             return false;
         }
+        self.specified(key, source, important, within)
+            .is_some_and(|(it, is_known)| self.edit(block, Edit::Set(it), is_known))
+    }
+
+    /// And whether another block may have it.
+    fn specified(
+        &mut self,
+        key: Key,
+        source: &[u8],
+        important: bool,
+        within: Within,
+    ) -> Option<(Rc<Specified>, bool)> {
         let hash = hash_of(key, important, source) ^ within as u64;
         if let Some(known) = self
             .specified
             .get(&hash)
             .filter(|it| it.is(key, source, important))
-            .cloned()
         {
-            return self.edit(block, Edit::Set(known), true);
+            return Some((Rc::clone(known), true));
+        }
+        if self.refused.0 == hash && self.refused.1 == source {
+            return None;
         }
         let Some(specified) =
             Specified::parse(Accepts::Properties(within), key, source, important).map(Rc::new)
         else {
-            return false;
+            self.refused = (hash, source[..source.len().min(64)].to_vec());
+            return None;
         };
-        if self.specified.len() >= Self::MAX_SPECIFIED {
-            self.specified.clear();
+        self.seen.resize(Self::MAX_SPECIFIED, 0);
+        let is_repeated = core::mem::replace(
+            &mut self.seen[hash as usize % Self::MAX_SPECIFIED],
+            (hash >> 32) as u16,
+        ) == (hash >> 32) as u16;
+        if is_repeated {
+            if self.specified.len() >= Self::MAX_SPECIFIED {
+                self.specified.clear();
+            }
+            self.specified.insert(hash, Rc::clone(&specified));
         }
-        self.specified.insert(hash, Rc::clone(&specified));
-        self.edit(block, Edit::Set(specified), false)
+        Some((specified, is_repeated))
+    }
+
+    /// Leaves all declarations where they are. Whether it changes anything, or `None` if it takes `set`.
+    pub(crate) fn amend(
+        &mut self,
+        block: &mut Rc<Block>,
+        place: Place,
+        source: &[u8],
+        is_plain: bool,
+    ) -> Option<bool> {
+        let source = scan::trim(source);
+        if block.editable().list.0[place.entry].source() == source {
+            return Some(false);
+        }
+        if (is_plain
+            || matches!(place.property, Prop::Custom(_)) && crate::custom::is_plain(source))
+            && let Some((editable, declaration)) =
+                Rc::get_mut(block).and_then(|it| it.editable_with(place.declaration))
+            && Rc::get_mut(&mut editable.list.0[place.entry].of)
+                .is_some_and(|it| it.rewrite(declaration, source))
+        {
+            (editable.text, editable.next) = Default::default();
+            return Some(true);
+        }
+        let key = Key::Property(place.property);
+        let Some((specified, _)) = self.specified(key, source, false, block.within()) else {
+            return Some(false);
+        };
+        let declaration = Rc::clone(
+            specified
+                .declaration
+                .as_ref()
+                .filter(|it| matches!(it.value, Declared::Text(_)))?,
+        );
+        let entry = Entry {
+            code: key.code(),
+            part: 0,
+            of: specified,
+        };
+        if block.editable().list.0[place.entry].is_same(&entry) {
+            return Some(false);
+        }
+        if Rc::get_mut(block).is_none() {
+            *block = Rc::new(block.copy());
+        }
+        let (editable, old) = Rc::get_mut(block)?.editable_with(place.declaration)?;
+        (editable.list.0[place.entry], *old) = (entry, declaration);
+        (editable.text, editable.next) = Default::default();
+        Some(true)
     }
 
     /// Whether it was there.
@@ -927,7 +1176,7 @@ impl InlineBlocks {
         }
         let mut list = block.editable().list.clone();
         edit.apply(&mut list);
-        *block = match may_be_known {
+        *block = match may_be_known && list.len() <= 24 {
             true => {
                 let edited = self.share(list, block.within(), &block.base_url);
                 block

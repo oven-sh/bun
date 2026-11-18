@@ -455,7 +455,7 @@ public:
         if (inGC() && (mustDeferFinalizers() || WTF::Thread::mayBeGCThread())) {
             Bun__napi_enqueue_finalizer(this, finalize_cb, data, finalize_hint);
         } else {
-            finalize_cb(this, data, finalize_hint);
+            Bun::onAddonThread([&] { return (finalize_cb(this, data, finalize_hint), true); });
             throwPendingException();
         }
     }
@@ -701,13 +701,13 @@ private:
 
             if (auto* sync = std::get_if<Napi::SyncCleanupHook>(&hook)) {
                 ASSERT(sync->function != nullptr);
-                sync->function(sync->data);
+                Bun::onAddonThread([&] { return (sync->function(sync->data), true); });
             } else {
                 auto& async = std::get<Napi::AsyncCleanupHook>(hook);
                 ASSERT(async.function != nullptr);
                 // The addon owns the handle and frees it via
                 // napi_remove_async_cleanup_hook, possibly after this returns (#37201).
-                async.function(async.handle, async.data);
+                Bun::onAddonThread([&] { return (async.function(async.handle, async.data), true); });
             }
             // Same invariant as the finalizer loop in cleanup(): a hook
             // that leaked an exception must not poison the next hook.

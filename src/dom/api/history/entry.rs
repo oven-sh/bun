@@ -1,8 +1,8 @@
 //! For the controls of a page.
 
-use bun_jsc::JSObject;
+use bun_web::host::Wish;
 
-use super::navigate::{Options, Post, Source};
+use super::navigate::{Options, Post};
 use super::*;
 use crate::values::text;
 
@@ -13,66 +13,49 @@ pub(crate) use super::lifecycle::{
 pub(crate) fn navigate_for<'a>(
     cx: &mut Cx<'a>,
     window: &'a Window,
-    url: &[u8],
-    it: &NavigateRequest<'a>,
-    initiator: JsLocal<'a, JSObject>,
-    origin: &[u8],
+    it: Wish,
+    is_by_other_origin: bool,
 ) {
+    let string = |it: Option<String>| it.map(|it| DomString::from_utf8(&it));
     let options = Options {
-        replace: it.replace,
-        replace_in: it.replace_in,
-        source: match it.source {
-            b"form" => Source::Form,
-            b"link" => Source::Link,
-            b"script" => Source::Script,
-            _ => Source::Other,
-        },
-        element: it.element,
+        replace: it.replaces,
+        source: it.source,
         is_by_user: it.is_by_user,
         has_text_activation: it.has_text_activation,
-        post: it.content_type.as_ref().map(|kind| Post {
-            form_data: it.form_data.to_js(),
-            body: it.body.to_js(),
-            content_type: text(kind).into(),
+        post: it.post.map(|sent| Post {
+            form_data: None,
+            sent,
         }),
-        download: it.download.clone(),
-        initiator: Some(initiator.to_js()),
-        is_by_other_origin: window
-            .host()
-            .origin()
-            .is_none_or(|it| it.as_bytes() != origin),
-        srcdoc: it.srcdoc.clone(),
-        no_document: Some(it.no_document.to_js()),
-        referrer_policy: it.referrer_policy.clone(),
+        download: string(it.download),
+        initiator: Some(it.initiator.and_then(Window::of_page).unwrap_or(window)),
+        is_by_other_origin,
+        srcdoc: string(it.srcdoc),
+        fires_load_otherwise: it.fires_load_otherwise,
+        referrer_policy: string(it.referrer_policy),
         ..Default::default()
     };
-    History::of(&cx.heap, window).navigate(cx, text(url), options, "");
+    History::of(&cx.heap, window).navigate(cx, &it.url, options, "");
 }
 
-pub(crate) fn pop_state<'a>(cx: &mut Cx<'a>, window: &'a Window, url: &[u8], key: Option<&[u8]>) {
-    History::of(&cx.heap, window).pop_state(cx, text(url), text(key.unwrap_or_default()));
+pub(crate) fn pop_state<'a>(cx: &mut Cx<'a>, window: &'a Window, url: &str, key: &str) {
+    History::of(&cx.heap, window).pop_state(cx, url, key);
 }
 
 pub(crate) fn will_traverse<'a>(
     cx: &mut Cx<'a>,
     window: &'a Window,
-    key: Option<&[u8]>,
+    key: &str,
     is_by_user: bool,
-    proceed: JSValue,
+    ticket: u32,
 ) -> bool {
-    History::of(&cx.heap, window).will_traverse(cx, key.unwrap_or_default(), is_by_user, proceed)
+    History::of(&cx.heap, window).will_traverse(cx, key, is_by_user, Traversal::ByHost(ticket))
 }
 
-pub(crate) fn keep_entries<'a>(
-    cx: &mut Cx<'a>,
-    window: &'a Window,
-    keys: &[bun_core::Utf8Bytes<'static>],
-) {
-    window.history_if_any().into_iter().for_each(|it| {
-        it.keep_entries(cx, &|key| {
-            keys.iter().any(|it| it.as_ref() == key.as_bytes())
-        })
-    });
+pub(crate) fn keep_entries<'a>(cx: &mut Cx<'a>, window: &'a Window, keys: &[String]) {
+    window
+        .history_if_any()
+        .into_iter()
+        .for_each(|it| it.keep_entries(cx, &|key| keys.iter().any(|it| it == key)));
 }
 
 pub(crate) fn abort_navigation<'a>(cx: &mut Cx<'a>, window: &'a Window) {
@@ -86,10 +69,8 @@ pub(crate) fn will_swap<'a>(
     cx: &mut Cx<'a>,
     window: &'a Window,
     kind: NavigationType,
-    to: JSValue,
+    to: Option<HistoryEntry>,
 ) -> u32 {
-    let to = JsLocal::new(&cx.heap, to);
-    let to = host::entry_from(cx, to);
     History::of(&cx.heap, window).will_swap(cx, kind, to)
 }
 

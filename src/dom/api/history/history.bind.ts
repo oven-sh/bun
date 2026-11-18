@@ -225,7 +225,7 @@ export const Navigation = b.interface("Navigation", {
   extends: DesktopEventTarget,
   rustPath: `${path}::Navigation`,
   exposed,
-  internalFields: ["history", "activation", "transition", "event", "ongoing", "upcoming", "traversals", "resume"],
+  internalFields: ["history", "activation", "transition", "event", "ongoing", "upcoming", "traversals"],
   proto: {
     entries: result,
     currentEntry: { getter: NavigationHistoryEntry.nullable, ...runs },
@@ -258,7 +258,7 @@ export const WindowMessaging = b.partial("WindowMessaging", {
 export const ForeignWindow = b.interface("ForeignWindow", {
   rustPath: `${path}::ForeignWindow`,
   noInterfaceObject: true,
-  internalFields: ["itself", "location", "outer", "peer", "frame", "engine", "known"],
+  internalFields: ["itself", "location", "outer", "context", "frame", "known"],
   proto: {
     ...each("window self frames", () => ({ getter: b.any, rustName: "itself" })),
     location: { getter: b.any, setter: { type: usv, ...js }, ...heap },
@@ -279,24 +279,11 @@ export const ForeignLocation = b.interface("ForeignLocation", {
   proto: { href: { getter: usv, setter: true, ...js }, replace: { args: { url: usv }, ...js } },
 });
 
-/** As it comes back from what hosts the page. */
-export const NavigateRequest = b.dictionary(
-  {
-    body: b.any.omittable,
-    contentType: utf8.optional,
-    download: string.optional,
-    element: DomElement.optional,
-    formData: b.any.omittable,
-    hasTextActivation: flag,
-    isByUser: flag,
-    noDocument: b.any.omittable,
-    referrerPolicy: string.optional,
-    replace: flag,
-    replaceIn: DomWindow.optional,
-    source: utf8.default(""),
-    srcdoc: string.optional,
-  },
-  { webidl: true, fromHost: true },
-);
+export const BrowsingContext = b.interface("BrowsingContext", {
+  rustPath: `${path}::Context`,
+  noInterfaceObject: true,
+  internalFields: ["parent", "opener", "frame", "windows"],
+  proto: {},
+});
 
 const window = DomWindow;

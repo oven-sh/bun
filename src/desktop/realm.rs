@@ -92,21 +92,7 @@ pub(crate) fn provide_module(
     Ok(())
 }
 
-/// An object of a class has no members on the other side of the bridge.
-pub(crate) fn methods_for_page(object: JSValue) -> JsResult<JSValue> {
-    let methods = object!({});
-    for name in texts_of(object.get_prototype(global())?.keys(global())?)? {
-        let method = name.clone();
-        methods.put(
-            global(),
-            name.as_bytes(),
-            function(object, move |it, given| invoke(it, &method, given))?,
-        );
-    }
-    Ok(methods)
-}
-
-/// The other way round. `handle` is among them.
+/// An object of a class has no members on the other side of the bridge. `handle` is among them.
 pub(crate) fn methods_of(handle: JSValue) -> JsResult<JSValue> {
     unsafe extern "C" {
         safe fn Bun__RealmBridge__methodsOf(global: &JSGlobalObject, handle: JSValue) -> JSValue;

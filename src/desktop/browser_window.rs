@@ -56,9 +56,21 @@ impl DesktopBrowserWindow {
             Ok(())
         })?;
         invoke(contents, "on", &[js("page-title-updated")?, title_changed])?;
-        let painted = listener(self, |window, _| match window.is_destroyed() {
-            true => Ok(()),
-            false => announce(window.to_js(), "ready-to-show", &[]),
+        let painted = listener(self, |window, _| {
+            let ready =
+                |window: &Self, _: &[JSValue]| announce(window.to_js(), "ready-to-show", &[]);
+            if window.is_destroyed() {
+                Ok(())
+            } else if window.paints() {
+                ready(window, &[])
+            } else {
+                invoke(
+                    window.to_js(),
+                    "once",
+                    &[js("show")?, listener(window, ready)?],
+                )
+                .map(drop)
+            }
         })?;
         invoke(contents, "once", &[js("ready-to-show")?, painted])?;
         invoke(

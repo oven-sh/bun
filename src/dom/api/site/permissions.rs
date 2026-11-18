@@ -292,8 +292,7 @@ fn emit<'a>(cx: Cx<'_, 'a>, notification: JsLocal<'a>, name: Known) {
     }
 }
 
-#[unsafe(no_mangle)]
-fn __bun_dom_fire_at_notification(id: u32, name: &str) {
+pub(crate) fn fire_at_notification(id: u32, name: &str) {
     let name = Atom::new(name).known();
     shown().queue_task(id, move |cx, it| emit(cx, it, name));
     if name == atom!("close") {

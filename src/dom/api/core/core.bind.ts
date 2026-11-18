@@ -14,7 +14,8 @@ const attr = b.ref("Attr");
 const string = b.DOMString;
 const offset = b.u32.wrap;
 const nodes = { nodes: b.rest(b.any) };
-const reflected = { getter: string, setter: true, ...ce } as const;
+const onlyReads = true;
+const reflected = { getter: string, setter: js, ceReactions: true, onlyReads, ...heap } as const;
 
 export const DesktopEventListenerOptions = b.dictionary({ capture: b.bool.loose.default(false) }, { webidl: true });
 export const DesktopAddEventListenerOptions = b.dictionary(
@@ -59,8 +60,16 @@ export const GetRootNodeOptions = b.dictionary({ composed: b.bool.loose.default(
 export const Node = b.interface("Node", {
   extends: DesktopEventTarget,
   rustPath: "crate::api::core::Node",
-  size: 88,
-  internalFields: { parent: node, first: node, last: node, previous: node, next: node, document: node, rare: b.any },
+  size: 80,
+  internalFields: {
+    first: node.nullable,
+    next: node.nullable,
+    parent: node.nullable,
+    last: node.nullable,
+    previous: node.nullable,
+    document: node,
+    rare: b.any,
+  },
   constants: {
     ELEMENT_NODE: 1,
     ATTRIBUTE_NODE: 2,
@@ -82,22 +91,22 @@ export const Node = b.interface("Node", {
     DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC: 32,
   },
   proto: {
-    nodeType: { getter: b.i32, pure: true },
-    nodeName: { getter: string, ...heap },
+    nodeType: { getter: b.u8, member: "head.node_type" },
+    nodeName: { getter: string, onlyReads, shortcut: "nodeName", ...heap },
     baseURI: { getter: string, rustName: "base_uri", ...heap },
-    isConnected: { getter: b.bool, pure: true },
-    ownerDocument: { getter: b.ref("Doc").nullable },
+    isConnected: { getter: b.bool, pure: true, onlyReads, shortcut: "isConnected" },
+    ownerDocument: { getter: b.ref("Doc").nullable, onlyReads, shortcut: "ownerDocument" },
     parentNode: { getter: node.nullable, field: "parent" },
-    parentElement: { getter: element.nullable },
-    childNodes: { getter: b.any, ...heap },
-    firstChild: { getter: node.nullable, field: "first", computedIfEmpty: true },
-    lastChild: { getter: node.nullable, field: "last", computedIfEmpty: true },
+    parentElement: { getter: element.nullable, onlyReads, shortcut: "parentElement" },
+    childNodes: { getter: b.any, shortcut: "childNodesEdge", ...heap },
+    firstChild: { getter: node.nullable, field: "first", computedIfEmpty: true, onlyReads },
+    lastChild: { getter: node.nullable, field: "last", computedIfEmpty: true, onlyReads },
     previousSibling: { getter: node.nullable, field: "previous" },
     nextSibling: { getter: node.nullable, field: "next" },
-    nodeValue: { getter: string.nullable, setter: true, ...ce },
-    textContent: { getter: string.nullable, setter: true, ...ce },
+    nodeValue: { getter: string.nullable, setter: js, ceReactions: true, onlyReads, ...heap },
+    textContent: { getter: string.nullable, setter: js, ceReactions: true, onlyReads, ...heap },
     getRootNode: { args: { options: GetRootNodeOptions.default({}) }, returns: node },
-    hasChildNodes: { returns: b.bool },
+    hasChildNodes: { returns: b.bool, onlyReads },
     normalize: { rustName: "js_normalize", ...ce },
     "@@inspectCustom": { returns: b.any, otherReceivers: "Bun::jsDesktopInspectOther", rustName: "inspect", ...js },
     cloneNode: { args: { subtree: b.bool.loose.default(false) }, returns: node, ...ce },
@@ -123,22 +132,17 @@ export const Node = b.interface("Node", {
 export const ParentNode = b.mixin("ParentNode", {
   on: Node,
   proto: {
-    children: { getter: b.any, ...heap },
-    firstElementChild: { getter: element.nullable },
-    lastElementChild: { getter: element.nullable },
+    children: { getter: b.any, shortcut: "childrenEdge", ...heap },
+    firstElementChild: { getter: element.nullable, onlyReads, shortcut: "firstElementChild" },
+    lastElementChild: { getter: element.nullable, onlyReads, shortcut: "lastElementChild" },
     childElementCount: { getter: b.u32, ...heap },
     prepend: { args: nodes, unscopable: true, ...ce },
     append: { args: nodes, unscopable: true, ...ce },
     replaceChildren: { args: nodes, unscopable: true, ...ce },
     moveBefore: { args: { node, child: node.nullable }, ...ce },
-    querySelector: {
-      args: { selectors: string.utf8 },
-      returns: element.nullable,
-      rustName: "js_query_selector",
-      ...js,
-    },
+    querySelector: { args: { selectors: string }, returns: element.nullable, rustName: "js_query_selector", ...js },
     querySelectorAll: {
-      args: { selectors: string.utf8 },
+      args: { selectors: string },
       returns: b.ref("NodeList"),
       rustName: "js_query_selector_all",
       ...js,
@@ -162,7 +166,7 @@ export const ElementLookups = b.mixin("ElementLookups", {
 
 export const NonElementParentNode = b.mixin("NonElementParentNode", {
   on: Node,
-  proto: { getElementById: { args: { elementId: string }, returns: element.nullable, ...allocates } },
+  proto: { getElementById: { args: { elementId: string }, returns: element.nullable, onlyReads, ...allocates } },
 });
 
 export const ChildNode = b.mixin("ChildNode", {
@@ -178,8 +182,8 @@ export const ChildNode = b.mixin("ChildNode", {
 export const NonDocumentTypeChildNode = b.mixin("NonDocumentTypeChildNode", {
   on: Node,
   proto: {
-    previousElementSibling: { getter: element.nullable },
-    nextElementSibling: { getter: element.nullable },
+    previousElementSibling: { getter: element.nullable, onlyReads, shortcut: "previousElementSibling" },
+    nextElementSibling: { getter: element.nullable, onlyReads, shortcut: "nextElementSibling" },
   },
 });
 
@@ -189,7 +193,7 @@ export const CharacterData = b.interface("CharacterData", {
   extends: Node,
   includes: [ChildNode, NonDocumentTypeChildNode],
   proto: {
-    data: { getter: string.nullToEmpty, setter: true, ...js },
+    data: { getter: string.nullToEmpty, setter: js, onlyReads, ...heap },
     length: { getter: b.u32 },
     substringData: { args: { offset, count: offset }, returns: string, ...allocates },
     appendData: { args: { data: string }, rustName: "js_append_data", ...js },
@@ -288,7 +292,7 @@ export const Attr = b.interface("Attr", {
     prefix: { getter: string.nullable, ...heap },
     localName: { getter: string, ...heap },
     name: { getter: string, ...heap },
-    value: reflected,
+    value: { getter: string, setter: true, ...ce },
     ownerElement: { getter: element.nullable },
     specified: { getter: b.bool },
   },
@@ -301,20 +305,20 @@ export const DomElement = b.interface("DomElement", {
   proto: {
     namespaceURI: { getter: string.nullable, rustName: "namespace_uri", ...heap },
     prefix: { getter: string.nullable, ...heap },
-    localName: { getter: string, ...heap },
-    tagName: { getter: string, ...heap },
+    localName: { getter: string, onlyReads, shortcut: "localName", ...heap },
+    tagName: { getter: string, onlyReads, shortcut: "tagName", ...heap },
     id: reflected,
     className: reflected,
-    classList: { getter: b.any, putForwards: "value", ...heap },
+    classList: { getter: b.any, putForwards: "value", shortcut: "classListEdge", ...heap },
     part: { getter: b.any, putForwards: "value", ...heap },
-    attributes: { getter: b.any, ...heap },
+    attributes: { getter: b.any, shortcut: "attributesEdge", ...heap },
     slot: { ...reflected, unscopable: true },
     shadowRoot: { getter: b.ref("ShadowRoot").nullable },
     attachShadow: { args: { init: ShadowRootInit }, returns: b.ref("ShadowRoot"), rustName: "js_attach_shadow", ...js },
     customElementRegistry,
     hasAttributes: { returns: b.bool },
     getAttributeNames: { returns: b.any.returning("Array"), ...heap },
-    getAttribute: { args: { qualifiedName: string }, returns: string.nullable, ...js },
+    getAttribute: { args: { qualifiedName: string }, returns: string.nullable, onlyReads, ...allocates },
     getAttributeNS: {
       args: { namespace: string.nullable, localName: string },
       returns: string.nullable,
@@ -334,7 +338,7 @@ export const DomElement = b.interface("DomElement", {
       ...ce,
     },
     toggleAttribute: { args: { qualifiedName: string, force: b.bool.loose.optional }, returns: b.bool, ...ce },
-    hasAttribute: { args: { qualifiedName: string }, returns: b.bool, ...allocates },
+    hasAttribute: { args: { qualifiedName: string }, returns: b.bool, onlyReads, ...allocates },
     hasAttributeNS: {
       args: { namespace: string.nullable, localName: string },
       returns: b.bool,
@@ -351,9 +355,9 @@ export const DomElement = b.interface("DomElement", {
     setAttributeNode: { args: { attr }, returns: attr.nullable, ...ce },
     setAttributeNodeNS: { args: { attr }, returns: attr.nullable, rustName: "set_attribute_node", ...ce },
     removeAttributeNode: { args: { attr }, returns: attr, ...ce },
-    matches: { args: { selectors: string.utf8 }, returns: b.bool, ...js },
-    webkitMatchesSelector: { args: { selectors: string.utf8 }, returns: b.bool, rustName: "matches", ...js },
-    closest: { args: { selectors: string.utf8 }, returns: element.nullable, rustName: "js_closest", ...js },
+    matches: { args: { selectors: string }, returns: b.bool, rustName: "js_matches", ...js },
+    webkitMatchesSelector: { args: { selectors: string }, returns: b.bool, rustName: "js_matches", ...js },
+    closest: { args: { selectors: string }, returns: element.nullable, rustName: "js_closest", ...js },
     insertAdjacentElement: { args: { position: string, element }, returns: element.nullable, ...ce },
     insertAdjacentText: { args: { position: string, data: string }, ...js },
     insertAdjacentHTML: { args: { position: string, string: b.any }, rustName: "insert_adjacent_html", ...ce },
@@ -386,9 +390,14 @@ export const Doc = b.interface("Doc", {
   named: { getter: b.any, overrideBuiltIns: true, announcesNames: true, ...runs },
   proto: {
     doctype: { getter: b.ref("DocumentType").nullable },
-    documentElement: { getter: element.nullable },
-    head: { getter: element.nullable },
-    body: { getter: element.nullable, setter: { type: b.ref("HTMLElement").nullable, ...js }, ceReactions: true },
+    documentElement: { getter: element.nullable, onlyReads, shortcut: "firstElementChild" },
+    head: { getter: element.nullable, onlyReads },
+    body: {
+      getter: element.nullable,
+      setter: { type: b.ref("HTMLElement").nullable, ...js },
+      ceReactions: true,
+      onlyReads,
+    },
     all: { getter: b.any, ...heap },
     anchors: { getter: b.any, ...heap },
     applets: { getter: b.any, ...heap },

@@ -47,7 +47,7 @@ pub(crate) fn post_connection<'a>(cx: Cx<'_, 'a>, nodes: &Rooted<'a>, is_move: b
     nodes
         .iter()
         .for_each(|it| it.set(NodeFlags::AWAITS_CONNECTION_STEPS));
-    let is_style = |it: &&Node| matches!(it.kind(), Kind::Style | Kind::SvgStyle);
+    let is_style = |it: &&Node| matches!(it.kind(), Kind::Style | Kind::SvgStyle | Kind::Link);
     for node in nodes
         .iter()
         .filter(is_style)

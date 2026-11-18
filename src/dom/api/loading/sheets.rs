@@ -252,11 +252,19 @@ fn blocks_rendering(heap: &JsHeap<'_>, node: &Node) -> bool {
 }
 
 /// The first frame and the scripts of the parser wait for it.
-#[optimize(size)]
 fn block_on<'a>(
     cx: Cx<'_, 'a>,
     node: &'a Node,
     loading: impl Future<Output = Option<()>> + 'static,
+) {
+    block_on_boxed(cx, node, Box::pin(loading));
+}
+
+#[optimize(size)]
+fn block_on_boxed<'a>(
+    cx: Cx<'_, 'a>,
+    node: &'a Node,
+    loading: bun_web::exec::LocalFuture<'static, Option<()>>,
 ) {
     let doc = node.doc();
     let blocking =

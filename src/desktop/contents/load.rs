@@ -22,13 +22,17 @@ use bun_web::referrer::ReferrerPolicy;
 use bun_web::request::{
     self, CacheMode, Credentials, Destination, InitiatorType, Mode, RequestBody,
 };
+use bun_web::time::monotonic_now;
 use bun_web::timing::{NavigationType, ResourceTiming};
 use bun_web::trust;
 use bun_web::url::Url;
 
+use bun_web::host::Wish;
+use bun_web::page::{self, Controls, News as ForElement, Swap};
+
 use super::history::Item;
 use super::page::{About, Creator, Page};
-use super::{Contents, Markup, fields, is_web, or_undefined, text_if_any, without_hash};
+use super::{Contents, Markup, fields, is_web, without_hash};
 use crate::contents::inspection::{News, Stage};
 use crate::prelude::*;
 use crate::session;
@@ -57,6 +61,23 @@ impl How {
             How::Traverse(_) => "traverse",
         }
     }
+
+    pub(super) fn swap(self) -> Swap {
+        match self {
+            How::Push => Swap::Push,
+            How::Replace => Swap::Replace,
+            How::Reload => Swap::Reload,
+            How::Traverse(_) => Swap::Traverse,
+        }
+    }
+
+    fn navigation_type(self) -> NavigationType {
+        match self {
+            How::Traverse(_) => NavigationType::BackForward,
+            How::Reload => NavigationType::Reload,
+            How::Push | How::Replace => NavigationType::Navigate,
+        }
+    }
 }
 
 /// What it takes to load a document again.
@@ -69,6 +90,29 @@ pub(crate) struct Request {
     srcdoc: Option<String>,
     /// What is left of the initiator.
     creator: Option<Creator>,
+    origin: Option<Origin>,
+}
+
+impl Request {
+    fn forget_body(&mut self) {
+        self.body = None;
+        self.headers.delete(b"content-type");
+    }
+
+    pub(super) fn set_initiator(&mut self, origin: &str) {
+        self.origin = Some(Origin::from_serialized(origin.as_bytes()));
+    }
+
+    pub(super) fn foreign_initiator(&self, url: &str) -> Option<String> {
+        let origin = string(self.origin.as_ref()?.as_bytes());
+        (origin != origin_of(url)).then_some(origin)
+    }
+
+    /// The document has given itself another URL.
+    pub(super) fn pass_to(&mut self, page: &Page) {
+        self.forget_body();
+        self.origin = self.origin.take().map(|_| page.client.origin());
+    }
 }
 
 #[derive(Clone)]
@@ -87,14 +131,9 @@ impl Initiator {
     }
 
     pub(super) fn of_guest(frame: JSValue) -> JsResult<Initiator> {
-        let origin = if frame.is_object() {
-            text_if_any(get(frame, "origin")?)?
-        } else {
-            None
-        };
         Ok(Initiator::Guest {
             frame: Rc::new(keep(frame)),
-            origin: origin.unwrap_or_else(|| "null".to_owned()),
+            origin: guest::origin_of_frame(frame)?,
         })
     }
 
@@ -144,6 +183,7 @@ pub(super) struct Navigation {
     pub(super) state: Option<Serialized>,
     /// What a `javascript:` URL has evaluated to.
     pub(super) markup: Option<String>,
+    pub(super) started: f64,
 }
 
 impl Navigation {
@@ -164,6 +204,7 @@ impl Navigation {
             blob: None,
             state: None,
             markup: None,
+            started: monotonic_now(),
         }
     }
 
@@ -176,11 +217,38 @@ impl Navigation {
     fn initiating_page(&self) -> Option<&'static Page> {
         self.initiator.as_ref()?.page()
     }
+
+    fn origin(&self) -> Option<Origin> {
+        let of = |it: &Initiator| match it.page() {
+            Some(page) => page.client.origin(),
+            None => Origin::from_serialized(it.origin().as_bytes()),
+        };
+        let (own, kept) = (self.initiator.as_ref().map(of), self.request.origin.clone());
+        match self.how {
+            How::Traverse(_) => kept.or(own),
+            _ => own.or(kept),
+        }
+    }
+
+    /// The request becomes the last one that was sent.
+    fn follow(&mut self, first: &str, pending: &Pending) {
+        let origin = self.origin();
+        let request = Rc::make_mut(&mut self.request);
+        request.origin = origin;
+        if pending.has_lost_body.get() {
+            request.forget_body();
+        }
+        if origin_of(first) != origin_of(&pending.url.borrow()) {
+            request.headers.delete(b"authorization");
+            request.headers.delete(b"cookie");
+        }
+    }
 }
 
 struct Pending {
     controller: Controller,
     url: RefCell<String>,
+    has_lost_body: Cell<bool>,
     is_traversal: bool,
     is_by_app: bool,
 }
@@ -269,6 +337,7 @@ pub(super) struct Loaded {
     pub(super) encoding: Cell<Option<Encoding>>,
     pub(super) essence: Option<String>,
     pub(super) required_csp: Option<String>,
+    pub(super) started: f64,
     pub(super) timing: Option<(ResourceTiming, NavigationType)>,
     pub(super) text_directives: Option<String>,
     pub(super) has_text_activation: bool,
@@ -337,27 +406,27 @@ fn plain_len(bytes: &[u8]) -> usize {
 }
 
 impl Rest {
-    fn decode(&mut self, page: &Page, more: &[u8], is_last: bool) -> JsResult<JSValue> {
+    fn decode(&mut self, page: &Page, more: &[u8], is_last: bool) -> JsResult<String> {
         let Some(Undecided { all, given, scan }) = &mut self.undecided else {
-            return js(self.decoder.decode(more, is_last));
+            return Ok(self.decoder.decode(more, is_last));
         };
         all.extend_from_slice(more);
         let new = &all[*given..];
         if !is_last && all.len() < MOST_AT_ONCE && !scan.is_settled_by(all) {
             let plain = &new[..plain_len(new)];
             *given += plain.len();
-            return js(self.decoder.decode(plain, false));
+            return Ok(self.decoder.decode(plain, false));
         }
         if let Some(declared) = Encoding::declared_in_html(all) {
             self.decoder = declared.decoder_of_rest();
             page.loaded()
                 .iter()
                 .for_each(|it| it.encoding.set(Some(declared)));
-            page.tell("setEncoding", &[js(declared.name().to_ascii_lowercase())?])?;
+            page.tell(|it| it.set_encoding(declared.name().to_ascii_lowercase()))?;
         }
-        let text = js(self.decoder.decode(new, is_last));
+        let text = self.decoder.decode(new, is_last);
         self.undecided = None;
-        text
+        Ok(text)
     }
 
     async fn give_to(mut self, page: Root<Page>) -> JsResult<()> {
@@ -367,7 +436,7 @@ impl Rest {
                 Ok(Some(more)) => {
                     self.size += more.len() as u64;
                     let text = self.decode(page.get(), &more, false)?;
-                    if !page.get().ask("appendHTML", &[text])?.to_boolean() {
+                    if !page.get().ask(|it, reply| it.append_html(text, reply))? {
                         return Ok(());
                     }
                 }
@@ -376,7 +445,7 @@ impl Rest {
             }
         };
         let page = page.get();
-        let last = keep(self.decode(page, &[], true)?);
+        let last = self.decode(page, &[], true)?;
         let url = self.head.url.href();
         page.client.set_navigation_timing(
             ResourceTiming::of_response(url, InitiatorType::Navigation, &self.head, self.size),
@@ -391,8 +460,8 @@ impl Rest {
             contents.announce_failure("did-fail-load", &url, error)?;
             promise.map_or(Ok(()), |it| it.fail(error))?;
         }
-        page.tell("appendHTML", &[last.get()])?;
-        page.tell("endHTML", &[failure.is_none().into()])
+        page.tell(|it| it.append_html(last, |_, _| {}))?;
+        page.tell(|it| it.end_html(failure.is_none()))
     }
 }
 
@@ -432,6 +501,8 @@ async fn read_start(
 enum Failure {
     Error(NetError),
     NeedsWebEngine,
+    /// Which does not know the URL, and gets this one.
+    NeedsWebEngineFor(String),
     /// The response is not something to show.
     NoDocument,
     Thrown(bun_jsc::JsError),
@@ -511,10 +582,11 @@ impl Observer for Watcher<'_> {
     fn follows<'a>(
         &'a self,
         _: u16,
-        _: &'a [u8],
+        method: &'a [u8],
         target: &'a Url,
         _: &'a HeaderList,
     ) -> LocalFuture<'a, bool> {
+        self.pending.has_lost_body.set(method == b"GET");
         let follows = Watcher::follows(self, &string(target.href())).unwrap_or_else(|refusal| {
             match refusal {
                 Failure::Thrown(error) => task::report(Err(error)),
@@ -578,25 +650,17 @@ fn can_be_shown(essence: &str) -> bool {
     kinds.iter().any(|it| essence.starts_with(it))
 }
 
-fn bytes_of(value: JSValue) -> Option<Arc<[u8]>> {
-    value
-        .as_array_buffer(global())
-        .map(|it| it.byte_slice().into())
-}
-
 impl Contents {
     /// What a page asks for.
     pub(super) fn wish(
         &self,
         page: &Page,
-        url: &str,
-        options: JSValue,
+        it: Wish,
         initiator: Initiator,
+        given_referrer: Option<String>,
     ) -> JsResult<()> {
-        let flag = |name| JsResult::Ok(get(options, name)?.to_boolean());
-        let text = |name| text_if_any(get(options, name)?);
-        let (markup, srcdoc) = (text("markup")?, text("srcdoc")?);
-        let (body, content_type) = (bytes_of(get(options, "body")?), text("contentType")?);
+        let (url, markup, srcdoc) = (&*it.url, it.markup, it.srcdoc);
+        let (body, content_type) = it.post.map(|it| (it.body, it.content_type)).unzip();
         let is_by = |holds: &dyn Fn(&Page) -> bool| initiator.page().is_some_and(holds);
         let may_write = || {
             without_hash(url) == without_hash(&page.url())
@@ -614,14 +678,12 @@ impl Contents {
         };
         if (markup.is_some() && !may_write())
             || (srcdoc.is_some() && !may_embed())
-            || !content_type
-                .as_deref()
-                .map_or_else(|| body.is_none(), is_of_form)
+            || !content_type.as_deref().is_none_or(is_of_form)
         {
             return Ok(());
         }
         let origin = initiator.origin();
-        let download = text("download")?.filter(|_| {
+        let download = it.download.filter(|_| {
             url.starts_with("blob:")
                 || url.starts_with("data:")
                 || (origin != "null" && origin_of(url) == origin)
@@ -644,51 +706,48 @@ impl Contents {
         let request = Request {
             body,
             headers,
-            referrer: text("referrer")?.or_else(referrer),
-            referrer_policy: text("referrerPolicy")?
+            referrer: given_referrer.or_else(referrer),
+            referrer_policy: (it.referrer_policy)
                 .and_then(|it| ReferrerPolicy::parse(it.as_bytes()))
                 .or_else(|| Some(initiator.page()?.client.policies().referrer_policy))
                 .unwrap_or_default(),
             srcdoc,
             creator: None,
+            origin: None,
         };
         let navigation = Navigation {
             request: request.into(),
-            may_unload: flag("mayUnload")? || markup.is_some(),
-            is_form: text("source")?.as_deref() == Some("form"),
-            is_by_user: flag("isByUser")? || flag("hasActivation")?,
-            has_text_activation: flag("hasTextActivation")?,
+            may_unload: it.may_unload || markup.is_some(),
+            is_form: it.source == bun_web::host::Source::Form,
+            is_by_user: it.is_by_user || it.has_activation,
+            has_text_activation: it.has_text_activation,
             blob: Url::parse(url.as_bytes())
                 .filter(|it| it.scheme() == b"blob")
                 .and_then(|it| resolve_blob_url(&it)),
-            state: bytes_of(get(options, "navigationState")?).map(Serialized),
+            state: it.navigation_state,
             markup,
             initiator: Some(initiator),
-            ..Navigation::new(if flag("replace")? {
-                How::Replace
-            } else {
-                How::Push
-            })
+            ..Navigation::new(if it.replaces { How::Replace } else { How::Push })
         };
         if let Some(name) = download {
             return self.download(page, url, navigation, name);
         }
         let (wish, page, url) = (self.loading.forget_wish(), Root::new(page), url.to_owned());
         self.loading.has_wish.set(true);
-        self.tell_element("navigating", &[])?;
-        self.tell_element("loading", &[])?;
+        self.tell_element(ForElement::Navigating)?;
+        self.tell_element(ForElement::Loading)?;
         self.later(move |it| {
             (it.loading.has_wish).update(|has| has && wish != it.loading.wishes.get());
             if !page.get().is_disposed()
                 && wish == it.loading.wishes.get()
                 && !it.loading.is_traversing()
-                && !it.ignores(navigation.initiating_page())?
+                && !it.ignores(navigation.initiating_page())
             {
                 it.grant(page.get(), &url, navigation)?;
             }
             match it.loading.is_on.get() || wish != it.loading.wishes.get() {
                 true => Ok(()),
-                false => it.tell_element("finished", &[JSValue::FALSE]),
+                false => it.tell_element(ForElement::Finished { fires_load: false }),
             }
         });
         Ok(())
@@ -738,9 +797,17 @@ impl Contents {
         controller: Controller,
     ) -> JsResult<()> {
         let facts = facts_of(urls, &loaded.head.headers, name)
-            .with("hasUserGesture", navigation.is_by_user);
+            .with("hasUserGesture", navigation.is_by_user)
+            .with(
+                "getInitiatorOrigin",
+                navigation.origin().map(|it| string(it.as_bytes())),
+            );
+        let frame = match navigation.initiating_page().is_some_and(Page::is_disposed) {
+            true => JSValue::NULL,
+            false => navigation.frame_of_initiator(),
+        };
         let (body, owner) = (loaded.body.unwrap_or_default(), self.owner().to_js());
-        DownloadItem::save_loaded(self.session, facts, body, owner, controller)
+        DownloadItem::save_loaded(self.session, facts, body, [owner, frame], controller)
     }
 
     fn grant(&self, page: &Page, url: &str, navigation: Navigation) -> JsResult<()> {
@@ -753,13 +820,13 @@ impl Contents {
                 .unwrap_or_default(),
         );
         if (scheme == "data" && !self.is_frame()) || (scheme == "file" && origin != "file://") {
-            page.tell("abortNavigation", &[])?;
+            page.tell(Controls::abort_navigation)?;
             return page.log_error(&format!(
                 "Not allowed to navigate top frame to {scheme} URL"
             ));
         }
         if scheme == "javascript" {
-            return page.tell("abortNavigation", &[]);
+            return page.tell(Controls::abort_navigation);
         }
         if navigation.markup.is_some() {
             return self.load(url, navigation, None);
@@ -790,7 +857,7 @@ impl Contents {
         self.while_beginning(
             &mut || match self.announce_start(url, &mut navigation, true)? {
                 true => self.open_external(page, url, &navigation),
-                false => page.tell("abortNavigation", &[]),
+                false => page.tell(Controls::abort_navigation),
             },
         )
     }
@@ -808,7 +875,7 @@ impl Contents {
                 return self.load(url, navigation, None);
             }
             self.forget_aim();
-            self.page().tell("abortNavigation", &[])
+            self.page().tell(Controls::abort_navigation)
         })
     }
 
@@ -844,17 +911,17 @@ impl Contents {
     }
 
     /// What the app loads comes before what a script asks for by itself.
-    pub(super) fn ignores(&self, initiator: Option<&Page>) -> JsResult<bool> {
+    pub(super) fn ignores(&self, initiator: Option<&Page>) -> bool {
         let is_by_app = (self.loading.pending.borrow().as_ref()).is_some_and(|it| it.is_by_app);
         match initiator.filter(|_| is_by_app) {
-            Some(page) => page.ask("isActive", &[]).map(|it| !it.to_boolean()),
-            None => Ok(is_by_app),
+            Some(page) => !page.has_activation(),
+            None => is_by_app,
         }
     }
 
     pub(super) fn cancel_navigation(&self) -> JsResult<()> {
         self.loading.forget_wish();
-        if self.loading.is_traversing() || self.ignores(Some(self.page()))? {
+        if self.loading.is_traversing() || self.ignores(Some(self.page())) {
             return Ok(());
         }
         if self.loading.is_pending() {
@@ -886,7 +953,7 @@ impl Contents {
     /// The next document and this one.
     pub(super) fn stop_everything(&self) -> JsResult<()> {
         match self.page().is_started() {
-            true => self.page().tell("stop", &[]),
+            true => self.page().tell(Controls::stop),
             false => self.stop_loading(),
         }
     }
@@ -901,6 +968,7 @@ impl Contents {
             let (request, client) = (Rc::make_mut(&mut request), &self.page().client);
             request.referrer = client.referrer_source().map(|it| string(it.href()));
             request.referrer_policy = client.policies().referrer_policy;
+            request.origin = Some(client.origin());
         }
         let navigation = Navigation {
             request,
@@ -916,12 +984,21 @@ impl Contents {
     }
 
     /// From the web engine. False if it is not for here.
-    pub(crate) fn take_over(&self, url: String, frame: JSValue, how: How) -> JsResult<bool> {
+    pub(crate) fn take_over(
+        &self,
+        url: String,
+        frame: JSValue,
+        origin: String,
+        how: How,
+    ) -> JsResult<bool> {
         if !self.has_shown_trusted.get() || !self.is_trusted(&url)? {
             return Ok(false);
         }
         let navigation = Navigation {
-            initiator: Some(Initiator::of_guest(frame)?),
+            initiator: Some(Initiator::Guest {
+                frame: Rc::new(keep(frame)),
+                origin,
+            }),
             ..Navigation::new(how)
         };
         let (this, guest, cookies) = (
@@ -950,8 +1027,8 @@ impl Contents {
         }
         let fires_load = self.loading.fires_load.take();
         match is_on {
-            true => self.tell_element("loading", &[]),
-            false => self.tell_element("finished", &[fires_load.into()]),
+            true => self.tell_element(ForElement::Loading),
+            false => self.tell_element(ForElement::Finished { fires_load }),
         }
     }
 
@@ -1032,8 +1109,8 @@ impl Contents {
         self.switch_loading(true)
     }
 
-    pub(super) fn reached(&self, page: &Page, stage: &'static str) -> JsResult<()> {
-        let is_only_parsed = stage == "dom-ready";
+    pub(super) fn reached(&self, page: &Page, stage: bun_web::host::Stage) -> JsResult<()> {
+        let is_only_parsed = stage == bun_web::host::Stage::Parsed;
         self.notify(News::Reached(match is_only_parsed {
             true => Stage::Interactive,
             false => Stage::Complete,
@@ -1050,7 +1127,7 @@ impl Contents {
                 return Ok(());
             }
             let (is_complete, is_news) = (
-                stage == "load",
+                stage == bun_web::host::Stage::Loaded,
                 it.loading.cause.get() != Cause::DocumentOpen,
             );
             it.loading.fires_load.set(is_complete);
@@ -1132,7 +1209,7 @@ impl Contents {
             self.refuse(url, NetError::Aborted, promise.map(|it| it.result));
             return Ok(false);
         }
-        navigation.may_unload = true;
+        (navigation.may_unload, navigation.started) = (true, monotonic_now());
         Ok(true)
     }
 
@@ -1161,6 +1238,10 @@ impl Contents {
         promise: Option<Deferred>,
     ) -> JsResult<()> {
         let Some(parsed) = Url::parse(url.as_bytes()) else {
+            let url = url
+                .strip_suffix("//")
+                .filter(|it| it.ends_with(':'))
+                .unwrap_or(url);
             self.refuse(url, NetError::InvalidUrl, promise);
             return Ok(());
         };
@@ -1183,7 +1264,10 @@ impl Contents {
             Promised { url, ..it }.fail(NetError::Aborted)?;
         }
         let (url, page) = (string(parsed.href()), self.page());
-        if self.is_for_guest(&url)? || (navigation.wants_web_engine && engine::is_available()?) {
+        if navigation.blob.is_none()
+            && (self.is_for_guest(&url)?
+                || (navigation.wants_web_engine && engine::is_available()?))
+        {
             self.has_shown_trusted
                 .update(|it| it || navigation.wants_web_engine || trust::is_excepted(&parsed));
             return self.load_in_guest(&url, navigation);
@@ -1222,6 +1306,7 @@ impl Contents {
         let pending = Rc::new(Pending {
             controller: Controller::default(),
             url: url.clone().into(),
+            has_lost_body: false.into(),
             is_traversal,
             is_by_app: is_by_app || is_traversal,
         });
@@ -1239,6 +1324,7 @@ impl Contents {
         let this = Root::new(self);
         task::spawn(async move {
             let fetched = never_at_once(fetch_document(&this, &pending, parsed, &navigation)).await;
+            navigation.follow(&url, &pending);
             let it = this.get();
             task::report(match fetched {
                 Err(Failure::Thrown(error)) => {
@@ -1267,7 +1353,7 @@ impl Contents {
         let url = pending.url.take();
         if matches!(failure, Failure::NeedsWebEngine) && engine::is_available()? {
             if self.is_frame() {
-                return self.tell_element("useWebEngine", &[js(url)?]);
+                return self.tell_element(ForElement::UseWebEngine(url));
             }
             self.has_shown_trusted.set(true);
             self.loading.is_on.set(false);
@@ -1276,7 +1362,14 @@ impl Contents {
                 .replace(without_hash(&url).to_owned());
             return self.load_in_guest(&url, navigation);
         }
-        if self.is_for_guest(&url)? {
+        if let Failure::NeedsWebEngineFor(url) = failure
+            && engine::is_available()?
+        {
+            self.has_shown_trusted.set(true);
+            self.loading.is_on.set(false);
+            return self.load_in_guest(url, navigation);
+        }
+        if navigation.blob.is_none() && self.is_for_guest(&url)? {
             self.has_shown_trusted
                 .update(|it| it || holds(&url, trust::is_excepted));
             self.loading.is_on.set(false);
@@ -1286,11 +1379,11 @@ impl Contents {
         }
         self.forget_aim();
         if !matches!(failure, Failure::NoDocument) {
-            self.page().tell("abortNavigation", &[])?;
+            self.page().tell(Controls::abort_navigation)?;
         }
         let error = match failure {
             Failure::Error(error) => *error,
-            Failure::NeedsWebEngine => NetError::BlockedByClient,
+            Failure::NeedsWebEngine | Failure::NeedsWebEngineFor(_) => NetError::BlockedByClient,
             Failure::NoDocument | Failure::Thrown(_) => NetError::Aborted,
         };
         if error == NetError::Aborted {
@@ -1324,7 +1417,8 @@ impl Contents {
             return Ok(false);
         }
         if url != "about:blank" {
-            return Ok(!self.is_trusted(url)? && engine::is_available()?);
+            let is_own_blob = holds(url, |it| resolve_blob_url(it).is_some());
+            return Ok(!is_own_blob && !self.is_trusted(url)? && engine::is_available()?);
         }
         if self.guest().is_some() {
             return Ok(true);
@@ -1370,17 +1464,21 @@ impl Contents {
         }
         let promise = self.loading.promise.take().map(|it| it.result);
         let is_traversal = matches!(navigation.how, How::Traverse(_));
-        let source = (navigation.initiator.as_ref())
-            .filter(|_| !is_traversal && (is_web(url) || self.session.handles(before(url, ":"))))
-            .map(|it| guest::Source {
-                origin: it.origin(),
+        let origin = match is_traversal {
+            true => navigation.request.foreign_initiator(url),
+            false => navigation.initiator.as_ref().map(Initiator::origin),
+        };
+        let source = origin
+            .filter(|_| is_web(url) || self.session.handles(before(url, ":")))
+            .map(|origin| guest::Source {
+                origin,
                 is_by_user: navigation.is_by_user,
-                replaces: navigation.how != How::Push,
-                is_announced: navigation.is_announced,
+                replaces: navigation.how != How::Push && !is_traversal,
+                is_announced: navigation.is_announced || is_traversal,
             });
         let is_fit = |it: &Remote| match &source {
-            Some(source) => it.shows_origin(&source.origin),
-            None => Ok(!is_traversal),
+            Some(source) if !is_traversal => it.shows_origin(&source.origin),
+            _ => Ok(!is_traversal),
         };
         let guest = match self.guest() {
             Some(guest) if is_fit(guest)? => guest,
@@ -1404,8 +1502,8 @@ impl Contents {
             base_of_data: navigation.base_of_data.as_deref(),
         };
         let loading: LocalFuture<'static, _> = match (navigation.how, source) {
-            (How::Traverse(index), _) => Box::pin(guest.traverse(&load, index)?),
             (_, Some(source)) => guest.load_for(&source, &load)?,
+            (How::Traverse(index), _) => Box::pin(guest.traverse(&load, index)?),
             (_, None) => Box::pin(guest.load(&load)),
         };
         let (this, guest) = (Root::new(self), Root::new(guest));
@@ -1479,12 +1577,6 @@ impl Contents {
             request.blob = it.blob.clone().or_else(|| resolve_blob_url(&request.url));
         }
         let source = it.initiating_page().map(|it| &*it.client);
-        let origin = source.map(Client::origin);
-        let origin = origin.or_else(|| {
-            Some(Origin::from_serialized(
-                it.initiator.as_ref()?.origin().as_bytes(),
-            ))
-        });
         let user_agent = it
             .user_agent
             .clone()
@@ -1492,7 +1584,7 @@ impl Contents {
         let languages = self.session.accept_language()?;
         let mut initiator = fetch::Initiator::new(
             Role::Page,
-            origin,
+            it.origin(),
             user_agent.as_bytes(),
             languages.as_bytes(),
         );
@@ -1534,6 +1626,15 @@ impl Contents {
         source: Option<Source>,
     ) -> JsResult<()> {
         self.take_fragment_directive(&mut loaded, &navigation);
+        let has_own_group = loaded.headers.contains(b"cross-origin-opener-policy");
+        loaded.started = match &loaded.timing {
+            Some((it, _)) if has_own_group && !it.allows_timing => it.timing.fetch_start,
+            _ => navigation.started,
+        };
+        loaded.timing.get_or_insert_with(|| {
+            let record = ResourceTiming::of_nothing(loaded.url.as_bytes(), navigation.started);
+            (record, navigation.how.navigation_type())
+        });
         let (old, loaded) = (self.page(), Rc::new(loaded));
         let inherited = navigation.request.creator.clone();
         let referrer = match &navigation.markup {
@@ -1568,7 +1669,7 @@ impl Contents {
         if let (Some(Creator::Page(creator)), "about" | "blob" | "data") =
             (creator, before(url, ":"))
         {
-            Rc::make_mut(&mut navigation.request).creator = Some(page.bequest(creator.get())?);
+            Rc::make_mut(&mut navigation.request).creator = Some(page.bequest(creator.get()));
         }
         let was_initial = old.is_initial();
         if !was_initial && old.is_started() && !old.is_loaded.get() {
@@ -1581,6 +1682,9 @@ impl Contents {
             page = self.page();
         } else {
             self.page().dispose()?;
+            if !loaded.has_crossed_origins && old.origin_key() == page.origin_key() {
+                page.client.follow(&old.client);
+            }
         }
         if self.is_destroyed.get() {
             return Ok(());
@@ -1589,7 +1693,7 @@ impl Contents {
         self.has_shown_trusted
             .update(|it| it || loaded.unreachable.is_none());
         self.loading.awaits_document.set(true);
-        self.show_from_now(page)?;
+        self.show_from_now(page);
         let is_first = self.item().is_none();
         self.commit_document(&page.url_in_history(), &navigation)?;
         self.announce_frame()?;
@@ -1606,7 +1710,7 @@ impl Contents {
         if !self.is_frame() && self.preferences.focuses_on_navigation && self.is_window_focused()? {
             self.take_focus()?;
         }
-        self.tell_element("measure", &[])?;
+        self.tell_element(ForElement::Measure)?;
         let source = source.unwrap_or_default();
         (page.streaming).replace(source.rest.as_ref().map(|it| it.controller.clone()));
         let markup = match (&source.xml_type, &source.rest) {
@@ -1683,8 +1787,11 @@ async fn fetch_document(
     url: Url,
     navigation: &Navigation,
 ) -> Result<(Loaded, Source), Failure> {
-    let (first, csp) = (string(url.href()), this.get().attribute("csp")?);
-    this.get().may_show(&first)?;
+    let (first, csp) = (string(url.href()), this.get().element().csp);
+    let is_blob_at_top = url.scheme() == b"blob" && !this.get().is_frame();
+    if !is_blob_at_top {
+        this.get().may_show(&first)?;
+    }
     if url.scheme() == b"about" || navigation.markup.is_some() {
         let is_markup = navigation.markup.is_some();
         if url.path() == b"srcdoc" && !is_markup && navigation.request.srcdoc.is_none() {
@@ -1714,6 +1821,9 @@ async fn fetch_document(
                 ..Source::default()
             },
         ));
+    }
+    if pending.is_traversal && navigation.request.body.is_some() && url.is_http() {
+        return Err(NetError::CacheMiss.into());
     }
     let (request, initiator) = this.get().prepare(url, navigation, csp.as_deref())?;
     let client = Rc::clone(&this.get().page().client);
@@ -1766,7 +1876,7 @@ async fn fetch_document(
         if !is_plugin
             && may_download
             && !it
-                .sandbox_of_next(&HeaderList::default())?
+                .sandbox_of_next(&HeaderList::default())
                 .forbids("allow-downloads")
         {
             let loaded = Response { head, body };
@@ -1780,8 +1890,23 @@ async fn fetch_document(
     let is_xml = mime::is_xml(essence.as_bytes());
     let is_image = !is_xml && essence.starts_with("image/");
     if is_image && is_plugin {
-        it.tell_element("showImage", &[js(url)?])?;
+        it.tell_element(ForElement::ShowImage(first))?;
         return Err(NetError::Aborted.into());
+    }
+    if is_blob_at_top
+        && (is_xml || essence == "text/html" || it.preferences.uses_web_engine)
+        && !is_trusted_in_frame(&url)?
+    {
+        let kind = head.headers.get(b"content-type").unwrap_or_default();
+        let bytes = match body {
+            Some(body) => body.read_to_end().await?.into_vec(),
+            None => Vec::new(),
+        };
+        return Err(Failure::NeedsWebEngineFor(format!(
+            "data:{};base64,{}",
+            string(&kind),
+            crate::text::base64(&bytes)
+        )));
     }
     let charset = (declared.as_ref()).and_then(|it| Encoding::for_label(it.parameter(b"charset")?));
     let mut scan = MetaScan::default();
@@ -1829,11 +1954,7 @@ async fn fetch_document(
             },
         });
     }
-    let how = match navigation.how {
-        How::Traverse(_) => NavigationType::BackForward,
-        How::Reload => NavigationType::Reload,
-        How::Push | How::Replace => NavigationType::Navigate,
-    };
+    let how = navigation.how.navigation_type();
     let mut rest = rest.map(|body| Rest {
         body,
         decoder: encoding.decoder(),
@@ -1868,6 +1989,11 @@ async fn fetch_document(
             escape_html(&decode())
         )
     };
+    let mut record =
+        ResourceTiming::of_response(url.as_bytes(), InitiatorType::Navigation, &head, size);
+    if rest.is_some() {
+        record.response_end = 0.0;
+    }
     let loaded = Loaded {
         status: head.status,
         status_text: head.status_text.iter().map(|it| char::from(*it)).collect(),
@@ -1880,10 +2006,7 @@ async fn fetch_document(
         has_crossed_origins: head.has_cross_origin_redirects,
         encoding: Some(encoding).into(),
         required_csp: csp,
-        timing: Some((
-            ResourceTiming::of_response(url.as_bytes(), InitiatorType::Navigation, &head, size),
-            how,
-        )),
+        timing: Some((record, how)),
         headers: head.headers,
         essence: Some(essence.clone()),
         ..Loaded::new(url)
@@ -1906,8 +2029,11 @@ impl Contents {
             .filter(|it| it.origin() == origin_of(url))
             .and_then(Page::encoding_of_frames);
         let is_legacy = is_web(url) && !crate::text::contains(essence, "json");
+        let usual = self.preferences.default_encoding;
         of_parent
-            .or_else(|| Encoding::for_label(b"windows-1252").filter(|_| is_legacy))
+            .or_else(|| {
+                (usual.or_else(|| Encoding::for_label(b"windows-1252"))).filter(|_| is_legacy)
+            })
             .unwrap_or_default()
     }
 }
@@ -1937,23 +2063,16 @@ impl Loaded {
         self.header("refresh")
     }
 
-    pub(super) fn describe(&self, into: JSValue) -> JsResult<()> {
-        let language = self
-            .header("content-language")
-            .map(|it| before(&it, ",").trim().to_owned());
-        for (name, value) in [
-            (
-                "encoding",
-                (self.encoding.get())
-                    .map(|it| it.name().to_ascii_lowercase())
-                    .as_deref(),
-            ),
-            ("contentType", self.essence.as_deref()),
-            ("lastModified", self.header("last-modified").as_deref()),
-            ("language", language.as_deref()),
-        ] {
-            into.put(global(), name.as_bytes(), or_undefined(value)?);
+    pub(super) fn describe(&self, url: String, base_url: Option<String>) -> page::About {
+        page::About {
+            url,
+            base_url,
+            encoding: (self.encoding.get()).map(|it| it.name().to_ascii_lowercase()),
+            content_type: self.essence.clone(),
+            last_modified: self.header("last-modified"),
+            language: (self.header("content-language"))
+                .map(|it| before(&it, ",").trim().to_owned()),
+            links: self.headers.get_or_empty(b"link").to_vec(),
         }
-        Ok(())
     }
 }

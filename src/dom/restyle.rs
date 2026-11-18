@@ -3,29 +3,31 @@
 use core::hint::{Locality, prefetch_read};
 use std::rc::Rc;
 
-use crate::boxes::Kind;
-use crate::cascade::RuleList;
+use crate::boxes::{BoxId, Kind};
+use crate::cascade::{Amendments, RuleList};
 use crate::custom::Changed;
 use crate::document::Document;
-use crate::name::{Map, Name, name};
+use crate::forecast::{prefetch_shared, prefetch_style};
+use crate::name::{Map, Name, Set, name};
 use crate::paint::shadow_extent;
-use crate::properties::{Id, Style};
+use crate::properties::{Id, Style, Value};
 use crate::rules::Classes;
 use crate::segments::Retouch;
 use crate::selector::{Bloom, Pseudo};
 use crate::svg_values::SvgPaint;
 use crate::theme::Look;
+use crate::transform::Transform;
 use crate::tree::{
     AFTER, BACKDROP, BEFORE, DOCUMENT, Data, Element, Flags, MARKER, Namespace, NodeId, State,
 };
 use crate::types::*;
-use crate::values::Deps;
+use crate::values::{Deps, Lp};
 
 const MAX_DEPTH: usize = 512;
 
 bitflags::bitflags! {
     /// What has changed above an element.
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, PartialEq)]
     pub(crate) struct Change: u8 {
         const REMATCH_ALL = 1;
         const RECASCADE_ALL = 1 << 1;
@@ -36,6 +38,13 @@ bitflags::bitflags! {
         /// The parent is about to get its first box, with what is in it.
         const IN_NEW_BOX = 1 << 6;
     }
+}
+
+/// What has become of their parent.
+#[derive(Clone, Copy)]
+struct Children {
+    is_new: bool,
+    rematches: bool,
 }
 
 struct Traversal {
@@ -49,6 +58,10 @@ struct Traversal {
     /// By `Looks::slot`, once there is one.
     firsts: Vec<Option<First>>,
     styles_first_lines: bool,
+    /// The one rule for them applies to all.
+    has_plain_markers: bool,
+    /// `Tree::marked`, and how many of them have been seen.
+    marked: (Vec<NodeId>, usize),
 }
 
 /// All that rules can tell of an element that has no attributes but `class`, unless they look at its siblings or descendants.
@@ -108,7 +121,7 @@ fn slot_of(old: &Rc<Style>, other: usize) -> usize {
 }
 
 /// Between two styles, whichever element has them.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 struct Difference {
     total: Damage,
     change: Change,
@@ -120,7 +133,7 @@ struct Difference {
 }
 
 bitflags::bitflags! {
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, PartialEq)]
     struct Damage: u16 {
         const PAINT = 1;
         const INK = 1 << 1;
@@ -289,6 +302,47 @@ impl Difference {
         }
     }
 
+    /// `None` if the values change what kind of box it is.
+    fn of_amending(old: &Style, values: &[Value]) -> Option<Difference> {
+        let mut it = Difference {
+            total: Damage::empty(),
+            change: Change::empty(),
+            moves: false,
+            repositions: false,
+            changes_container: false,
+            leaves_or_joins_flow: false,
+            resizes: false,
+        };
+        for value in values.iter().filter(|it| !old.has(it)) {
+            let (property, is_translucent) = (value.id(), |it: f32| it > 0.0 && it < 1.0);
+            let is_in =
+                |first: Id, last: Id| (first as u16..=last as u16).contains(&(property as u16));
+            it.total |= match value {
+                Value::Opacity(new)
+                    if is_translucent(old.effects.opacity.0) && is_translucent(new.0) =>
+                {
+                    Damage::OPACITY
+                }
+                Value::Transform(new)
+                    if !old.effects.transform.0.is_empty()
+                        && !new.0.is_empty()
+                        && old.effects.backface == Backface::Visible
+                        && !new.0.iter().any(Transform::projects) =>
+                {
+                    Damage::INK
+                }
+                Value::BackgroundColor(_) => Damage::BOX,
+                _ if is_in(Id::Width, Id::Left) => Damage::LAYOUT,
+                _ => return None,
+            };
+            it.change = Change::NOT_INHERITED;
+            it.moves |= property == Id::Transform;
+            it.repositions |= property == Id::Transform || is_in(Id::Width, Id::Left);
+            it.resizes |= matches!(property, Id::Width | Id::Height);
+        }
+        Some(it)
+    }
+
     fn between(old: &Style, new: &Style) -> Difference {
         let (mut total, mut change, mut moves, mut repositions) =
             (Damage::empty(), Change::empty(), false, false);
@@ -314,6 +368,13 @@ impl Difference {
                     if new.rare.shape_outside.0.0.is_some() =>
                 {
                     Damage::LAYOUT
+                }
+                Id::Visibility
+                    if [old, new]
+                        .iter()
+                        .any(|it| it.ink.visibility.0 == Visibility::Collapse) =>
+                {
+                    damage(property) | Damage::CONTENTS
                 }
                 Id::BoxShadow
                     if shadow_extent(&old.paint.box_shadow)
@@ -394,6 +455,17 @@ impl Difference {
 }
 
 impl Traversal {
+    /// From `id` on.
+    #[inline]
+    fn marked_from(&mut self, id: NodeId) -> &[NodeId] {
+        let (all, seen) = &mut self.marked;
+        let Some(skipped) = all[*seen..].iter().take(4).position(|it| *it == id) else {
+            return &[];
+        };
+        *seen += skipped + 1;
+        &all[*seen - 1..]
+    }
+
     fn difference(&mut self, old: &Rc<Style>, new: &Rc<Style>) -> Difference {
         if new.comparison_with(old).is_some() || Rc::strong_count(old) <= UNSHARED {
             return Difference::of(old, new);
@@ -523,6 +595,8 @@ impl Document {
                 differences: Default::default(),
                 firsts: Vec::new(),
                 styles_first_lines,
+                has_plain_markers: self.has_plain_markers(),
+                marked: (self.tree.marked.take(), 0),
             };
             let (root, initial) = (self.tree.root_element(), Rc::clone(&self.styles.initial));
             if root != 0 {
@@ -545,6 +619,7 @@ impl Document {
             self.scrolling.declarers.take();
             self.update_top_layer();
         }
+        self.styles.plain.clear();
         self.update_top_layer();
         if !self.marks.is_empty() {
             let count = self
@@ -602,7 +677,10 @@ impl Document {
         let (staying, left): (Vec<_>, Vec<_>) =
             self.leaving_top_layer.iter().copied().partition(stays);
         self.leaving_top_layer = staying;
-        self.top_layer.retain(|it| !left.contains(it));
+        if !left.is_empty() {
+            let left: Set<_> = left.iter().collect();
+            self.top_layer.retain(|it| !left.contains(it));
+        }
         let is_in = |id: &NodeId| !self.tree[*id].has(Flags::ANIMATED) || stays(id);
         let moving = self
             .top_layer
@@ -623,7 +701,9 @@ impl Document {
                 false => self.tree[*id].set(Flags::TOP_LAYER),
             }
             self.tree.mark_style(*id, Flags::REMATCH | Flags::RECASCADE);
-            self.mark_parent_rebuild(*id);
+            if self.was_displayed(*id) {
+                self.mark_parent_rebuild(*id);
+            }
         }
         if !moving.is_empty() {
             self.update_style();
@@ -639,13 +719,7 @@ impl Document {
             let customs = old
                 .customs
                 .reparented(&parent.customs, &self.styles.recent_customs);
-            (
-                Rc::clone(old),
-                Rc::new(Style {
-                    customs,
-                    ..Style::clone(old)
-                }),
-            )
+            (Rc::clone(old), Rc::new(old.with_customs(customs)))
         });
         Rc::clone(&known.1)
     }
@@ -683,15 +757,313 @@ impl Document {
                     id,
                     parent,
                     known,
-                    (flags, self.tree.dirty_child(id).get()),
+                    (flags, self.dirty_child(id, flags)),
                     change,
                     customs,
                     false,
                     traversal,
                 );
             }
+            if let Some(customs) = customs.filter(|_| {
+                Rc::strong_count(old) <= 12
+                    && (change.is_empty()
+                        || change == Change::NOT_INHERITED && !old.deps.contains(Deps::PARENT))
+            }) && self.inherit_customs(id, parent, flags, customs, traversal)
+            {
+                return;
+            }
+        }
+        if flags & (Flags::STYLE_DIRTY | Flags::ANIMATED) == Flags::REANIMATE {
+            self.anticipate_amendments(traversal.marked_from(id));
+            if change.is_empty()
+                && customs.is_none()
+                && self.amend_in_place(id, parent, flags, traversal)
+            {
+                return;
+            }
+        } else if flags.contains(Flags::REMATCH) {
+            self.anticipate_matches(traversal.marked_from(id));
         }
         self.restyle_anew(id, parent, change, customs, traversal);
+    }
+
+    /// For an element that has its style to itself. Whether that was possible.
+    fn amend_in_place(
+        &mut self,
+        id: NodeId,
+        parent: &Rc<Style>,
+        flags: Flags,
+        traversal: &mut Traversal,
+    ) -> bool {
+        let Some(own) = self.own_box(id) else {
+            return false;
+        };
+        let Some(Element {
+            style: Some(style),
+            base_style: Some(base),
+            rules: Some(rules),
+            inline_style: Some(block),
+            namespace: Namespace::Html,
+            generated_by_rules: Some(generated),
+            ..
+        }) = self.tree.element(id)
+        else {
+            return false;
+        };
+        if !(rules.has_amended(block)
+            && (Rc::strong_count(style), Rc::weak_count(style)) == (3, 0)
+            && Rc::ptr_eq(style, base)
+            && Rc::ptr_eq(style, &self.boxes[own].style)
+            && style.is_inert()
+            && !flags.intersects(Flags::QUERIES_CONTAINER | Flags::CATCHES_UP | Flags::LAGS)
+            && !(self.has_base_selects || traversal.styles_first_lines)
+            && self.anchored.is_empty()
+            && self.carousels.is_empty()
+            && self.marks.styles.borrow().is_empty())
+        {
+            return false;
+        }
+        let Some(mut it) = self
+            .amendments(id, rules, style, parent)
+            .filter(|it| it.customs.is_none() || *generated == 0)
+        else {
+            return false;
+        };
+        let Some(difference) = Difference::of_amending(style, &it.values) else {
+            return false;
+        };
+        rules.amended.set(0);
+        let customs = Changed::new(it.names.drain(..), None);
+        self.amend_style(
+            id,
+            Some(own),
+            parent,
+            flags,
+            it,
+            difference,
+            customs.as_ref(),
+            traversal,
+        );
+        true
+    }
+
+    /// For an element of which nothing else has changed. Whether that was possible.
+    fn inherit_customs(
+        &mut self,
+        id: NodeId,
+        parent: &Rc<Style>,
+        flags: Flags,
+        customs: &Changed,
+        traversal: &mut Traversal,
+    ) -> bool {
+        let Some(Element {
+            style: Some(style),
+            rules: Some(rules),
+            namespace,
+            ..
+        }) = self.tree.element(id)
+        else {
+            return false;
+        };
+        if !style.is_inert()
+            || style.display() == Display::None
+            || traversal.styles_first_lines
+            || !self.is_ordinary(id, flags, false)
+        {
+            return false;
+        }
+        let own = self.own_box(id);
+        let is_alone = (Rc::strong_count(style), Rc::weak_count(style))
+            == (2 + usize::from(own.is_some()), 0)
+            && own.is_none_or(|it| Rc::ptr_eq(style, &self.boxes[it].style));
+        let is_alone = is_alone && *namespace == Namespace::Html;
+        if rules.references_any(customs) {
+            let Some(it) = own
+                .filter(|_| is_alone)
+                .and_then(|_| self.inherited_amendments(id, rules, style, parent, customs))
+            else {
+                return false;
+            };
+            let Some(difference) = Difference::of_amending(style, &it.values) else {
+                return false;
+            };
+            self.amend_style(
+                id,
+                own,
+                parent,
+                flags,
+                it,
+                difference,
+                Some(customs),
+                traversal,
+            );
+            return true;
+        }
+        if is_alone {
+            let inherited = style
+                .customs
+                .reparented(&parent.customs, &self.styles.recent_customs);
+            let customs =
+                (!Rc::ptr_eq(&inherited.inherited, &style.customs.inherited)).then_some(customs);
+            let Some(new) = self.edit_style(id, own, parent, |it| it.customs = inherited) else {
+                return false;
+            };
+            self.tree[id].unset(Flags::DIRTY_DESCENDANTS);
+            self.restyle_children(
+                id,
+                &new,
+                (flags, self.dirty_child(id, flags)),
+                Change::empty(),
+                Change::empty(),
+                customs,
+                Children {
+                    is_new: false,
+                    rematches: false,
+                },
+                traversal,
+            );
+            return true;
+        }
+        let new = self.reparent(style, parent, traversal);
+        self.tree[id].unset(Flags::DIRTY_DESCENDANTS);
+        self.repaint_like_another(
+            id,
+            parent,
+            (new, Change::empty(), Damage::empty()),
+            (flags, self.dirty_child(id, flags)),
+            Change::empty(),
+            Some(customs),
+            false,
+            traversal,
+        );
+        true
+    }
+
+    /// Nothing but the element and `own` has it.
+    #[inline(always)]
+    fn edit_style(
+        &mut self,
+        id: NodeId,
+        own: Option<BoxId>,
+        parent: &Style,
+        edit: impl FnOnce(&mut Style),
+    ) -> Option<Rc<Style>> {
+        own.into_iter()
+            .for_each(|it| self.boxes[it].style = Rc::clone(&self.styles.initial));
+        let element = self.tree.element_to_style(id)?;
+        element.base_style = None;
+        let style = element.style.as_mut()?;
+        edit(Rc::make_mut(style));
+        let new = Rc::clone(style);
+        element.base_style = Some(Rc::clone(&new));
+        own.into_iter()
+            .for_each(|it| self.boxes[it].style = Rc::clone(&new));
+        debug_assert!(
+            self.tree
+                .element(id)
+                .and_then(|it| it.rules.as_ref())
+                .is_some_and(|it| {
+                    let computed = self.compute_animated_style(id, it, parent, &[], &[]);
+                    inherited_change(&new, &computed).is_empty()
+                        && new
+                            .customs
+                            .inherited_differences(&computed.customs)
+                            .is_empty()
+                        && new.customs.has_same_locals(&computed.customs)
+                })
+        );
+        Some(new)
+    }
+
+    fn amend_style(
+        &mut self,
+        id: NodeId,
+        own: Option<BoxId>,
+        parent: &Rc<Style>,
+        flags: Flags,
+        Amendments {
+            values,
+            deps,
+            customs,
+            ..
+        }: Amendments,
+        difference: Difference,
+        mut changed: Option<&Changed>,
+        traversal: &mut Traversal,
+    ) {
+        let old = self
+            .tree
+            .style(id)
+            .filter(|_| cfg!(debug_assertions))
+            .map(|it| Style::clone(it));
+        let new = self.edit_style(id, own, parent, |it| {
+            it.amend(&values, deps);
+            if let Some(customs) = customs {
+                changed =
+                    changed.filter(|_| !Rc::ptr_eq(&customs.inherited, &it.customs.inherited));
+                it.customs = customs;
+            }
+        });
+        let Some(new) = new else { return };
+        debug_assert!(
+            old.is_some_and(|old| difference == Difference::between(&old, &new)
+                && old.stacking() == new.stacking()
+                && new.is_inert())
+        );
+        let dirty_child = self.dirty_child(id, flags);
+        self.tree[id].unset(Flags::STYLE_DIRTY | Flags::DIRTY_DESCENDANTS);
+        if deps.contains(Deps::VIEWPORT) {
+            self.viewport_users.insert(id);
+        }
+        self.container_changed(id, false);
+        let is_position = |it: &Value| {
+            matches!(
+                it,
+                Value::Left(Inset::Length(Lp::Px(_))) | Value::Top(Inset::Length(Lp::Px(_)))
+            )
+        };
+        let only_moves = !difference.total.is_empty()
+            && values.iter().all(is_position)
+            && own.is_some_and(|it| self.new_location(it).is_some());
+        let below = match only_moves {
+            true => self.move_later(id, difference),
+            false => self.apply_difference(id, &new, &new, difference, false),
+        };
+        if flags.contains(Flags::REANIMATE) && new.scrolls() {
+            self.update_scrollbar_style(id);
+        }
+        self.restyle_children(
+            id,
+            &new,
+            (flags, dirty_child),
+            Change::empty(),
+            below,
+            changed,
+            Children {
+                is_new: false,
+                rematches: false,
+            },
+            traversal,
+        );
+    }
+
+    #[inline(always)]
+    fn dirty_child(&self, id: NodeId, flags: Flags) -> NodeId {
+        if flags.contains(Flags::DIRTY_DESCENDANTS) {
+            self.tree.dirty_child(id).get()
+        } else {
+            0
+        }
+    }
+
+    fn move_later(&mut self, id: NodeId, difference: Difference) -> Change {
+        if !self.scrolling.scrolled.is_empty() {
+            self.scrolling.repositioned.insert(id);
+        }
+        self.svg_changed(id);
+        self.boxes_to_move.push(id);
+        self.needs_layout = true;
+        difference.change
     }
 
     /// With what `Traversal::recall` has returned.
@@ -739,7 +1111,17 @@ impl Document {
         let customs =
             customs.filter(|_| !Rc::ptr_eq(&old.customs.inherited, &new.customs.inherited));
         self.restyle_children(
-            id, &new, dirt, change, below, customs, false, rematches, traversal,
+            id,
+            &new,
+            dirt,
+            change,
+            below,
+            customs,
+            Children {
+                is_new: false,
+                rematches,
+            },
+            traversal,
         );
     }
 
@@ -752,7 +1134,8 @@ impl Document {
         customs: Option<&Changed>,
         traversal: &mut Traversal,
     ) {
-        let (mut flags, dirty_child) = (self.tree[id].flags.get(), self.tree.dirty_child(id).get());
+        let mut flags = self.tree[id].flags.get();
+        let dirty_child = self.dirty_child(id, flags);
         let Some(element) = self.tree.element(id) else {
             return;
         };
@@ -782,8 +1165,10 @@ impl Document {
                 change,
                 Change::IN_NEW_BOX,
                 customs,
-                true,
-                true,
+                Children {
+                    is_new: true,
+                    rematches: true,
+                },
                 traversal,
             );
         }
@@ -805,11 +1190,10 @@ impl Document {
         let moved = old
             .as_ref()
             .filter(|_| flags.contains(Flags::REMATCH_SUBTREE | Flags::RECASCADE_SUBTREE));
-        let moved = moved.map(|it| Changed {
-            names: it.customs.inherited_differences(&parent.customs),
-            outer: customs,
+        let moved = moved.and_then(|it| {
+            Changed::new(it.customs.inherited_differences(&parent.customs), customs)
         });
-        let customs = moved.as_ref().filter(|it| !it.names.is_empty()).or(customs);
+        let customs = moved.as_ref().or(customs);
         let mut rematches = old_rules.is_none()
             || flags.contains(Flags::REMATCH)
             || change.contains(Change::REMATCH_ALL);
@@ -851,20 +1235,28 @@ impl Document {
             );
         }
         let mut amended = None;
+        let with_inline_style = || {
+            self.with_inline_style(id, &rules)
+                .or_else(|| (rules.amended.get() != 0).then(|| Rc::clone(&rules)))
+        };
         let has_new_inline_style = !rematches
             && flags.contains(Flags::REANIMATE)
-            && self.with_inline_style(id, &rules).is_some_and(|new| {
+            && with_inline_style().is_some_and(|new| {
                 let is_alone = change.is_empty()
                     && customs.is_none()
                     && !flags.intersects(Flags::RECASCADE | Flags::RECASCADE_SUBTREE);
                 amended = old_base.as_ref().filter(|_| is_alone).and_then(|old_base| {
                     if Rc::strong_count(old_base) <= UNSHARED {
-                        return self.amended_style(id, &rules, &new, old_base).map(Rc::new);
+                        return self
+                            .amended_style(id, &rules, &new, old_base, parent)
+                            .map(Rc::new);
                     }
                     let key = (Rc::as_ptr(old_base), Rc::as_ptr(&new));
                     let known = traversal.amended.get(&key).map(|it| Rc::clone(&it.0));
-                    let style = known
-                        .or_else(|| self.amended_style(id, &rules, &new, old_base).map(Rc::new))?;
+                    let style = known.or_else(|| {
+                        self.amended_style(id, &rules, &new, old_base, parent)
+                            .map(Rc::new)
+                    })?;
                     traversal.amended.entry(key).or_insert_with(|| {
                         (Rc::clone(&style), Rc::clone(old_base), Rc::clone(&new))
                     });
@@ -875,6 +1267,7 @@ impl Document {
             });
         if has_new_inline_style {
             flags |= Flags::RECASCADE;
+            rules.amended.set(0);
         }
         if !self.marks.styles.get_mut().is_empty() && self.marks.styles.get_mut().contains_key(&id)
         {
@@ -964,7 +1357,16 @@ impl Document {
         let is_inert = !flags.contains(Flags::ANIMATED)
             && base.is_inert()
             && old_base.as_ref().is_none_or(|it| it.is_inert());
-        if (base_changed
+        let is_like = |old: &Rc<Style>| {
+            inherited_change(old, &base).is_empty()
+                && old.customs.has_same_locals(&base.customs)
+                && old.customs.differences(&base.customs).is_empty()
+        };
+        let is_news = base_changed
+            && !(self.queries.are_settling
+                && customs.is_none()
+                && old_base.as_ref().is_some_and(is_like));
+        if (is_news
             || flags.contains(Flags::KEYFRAMES_CHANGED)
             || rematches && self.queries.are_settling)
             && !is_provisional
@@ -1054,14 +1456,8 @@ impl Document {
                 if Rc::ptr_eq(&old.customs.inherited, &new.customs.inherited) {
                     changed_customs = None;
                 } else {
-                    let names = old.customs.differences(&new.customs);
-                    if !names.is_empty() {
-                        own_customs = Changed {
-                            names: names.into_iter().collect(),
-                            outer: customs,
-                        };
-                        changed_customs = Some(&own_customs);
-                    }
+                    own_customs = Changed::new(old.customs.differences(&new.customs), customs);
+                    changed_customs = own_customs.as_ref().or(customs);
                 }
                 if change.contains(Change::BY_ANIMATION) || !base_changed {
                     below |= Change::BY_ANIMATION;
@@ -1137,8 +1533,7 @@ impl Document {
             change,
             below,
             changed_customs,
-            is_new,
-            rematches,
+            Children { is_new, rematches },
             traversal,
         );
     }
@@ -1292,8 +1687,10 @@ impl Document {
         change: Change,
         mut below: Change,
         changed_customs: Option<&Changed>,
-        mut is_new: bool,
-        rematches: bool,
+        Children {
+            mut is_new,
+            rematches,
+        }: Children,
         traversal: &mut Traversal,
     ) {
         if self.tree.has_only_text(id)
@@ -1314,8 +1711,9 @@ impl Document {
             };
             missed.change |=
                 below & (Change::REMATCH_ALL | Change::RECASCADE_ALL | Change::DISPLAY);
-            core::iter::successors(changed_customs, |it| it.outer)
-                .for_each(|it| missed.customs.extend(&it.names));
+            missed
+                .customs
+                .extend(changed_customs.into_iter().flat_map(Changed::names));
             if skips {
                 if rematches && has_parts {
                     missed.change |= Change::REMATCH_ALL;
@@ -1343,11 +1741,8 @@ impl Document {
                     let differs = |it: &Name| {
                         seen.customs.inherited.get(*it) != new.customs.inherited.get(*it)
                     };
-                    missed_customs = Changed {
-                        names: names.into_iter().filter(differs).collect(),
-                        outer: None,
-                    };
-                    changed_customs = (!missed_customs.names.is_empty()).then_some(&missed_customs);
+                    missed_customs = Changed::new(names.into_iter().filter(differs), None);
+                    changed_customs = missed_customs.as_ref();
                 }
                 None => is_new = true,
             }
@@ -1360,7 +1755,12 @@ impl Document {
             is_new || !(below - Change::BY_ANIMATION).is_empty() || changed_customs.is_some();
         let generated = self.tree.element(id).map_or([0; 4], |it| it.generated);
         for child in generated.into_iter().filter(|it| *it != 0) {
-            if rematches {
+            let is_plain = |it: &Element| {
+                it.pseudo == Pseudo::Marker && it.rules.as_ref().is_some_and(|it| it.len() == 1)
+            };
+            if rematches
+                && !(traversal.has_plain_markers && self.tree.element(child).is_some_and(is_plain))
+            {
                 self.tree[child].set(Flags::REMATCH);
             }
             let below = if rematches && self.is_transition_root(child) {
@@ -1463,14 +1863,16 @@ impl Document {
         traversal.bloom.push(id);
         children.iter().take(2).for_each(|it| self.prefetch(*it));
         for (index, child) in children.iter().copied().enumerate() {
-            children
-                .get(index + 2)
-                .into_iter()
-                .for_each(|it| self.prefetch(*it));
-            children
-                .get(index + 1)
-                .into_iter()
-                .for_each(|it| self.prefetch_below(*it));
+            if self.tree[child].flags.get() & Flags::STYLE_DIRTY != Flags::REANIMATE {
+                children
+                    .get(index + 2)
+                    .into_iter()
+                    .for_each(|it| self.prefetch(*it));
+                children
+                    .get(index + 1)
+                    .into_iter()
+                    .for_each(|it| self.prefetch_below(*it));
+            }
             let is_slotted = self.tree[child].slot != 0;
             let below = if is_slotted {
                 below - (Change::REMATCH_ALL - change)
@@ -1500,7 +1902,8 @@ impl Document {
     }
 
     fn rebuild_if_in_first_line(&mut self, id: NodeId) {
-        if self.own_box(id).is_none()
+        if self.boxes.has_pinned_styles
+            && self.own_box(id).is_none()
             && self.boxes[self.tree[id].layout_box]
                 .inline
                 .as_ref()
@@ -1531,18 +1934,8 @@ impl Document {
             &raw const self.boxes[self.tree[id + 4].layout_box].style,
             Locality::L1,
         );
-        element
-            .style
-            .iter()
-            .for_each(|it| prefetch_read(&raw const it.deps, Locality::L1));
-        element
-            .style
-            .iter()
-            .for_each(|it| prefetch_read(Rc::as_ptr(it), Locality::L1));
-        element
-            .rules
-            .iter()
-            .for_each(|it| prefetch_read(Rc::as_ptr(it), Locality::L1));
+        element.style.iter().for_each(prefetch_style);
+        element.rules.iter().for_each(|it| prefetch_shared(it, 2));
         element
             .classes
             .iter()
@@ -1558,18 +1951,8 @@ impl Document {
         let Some(element) = self.tree.element(id) else {
             return;
         };
-        element
-            .style
-            .iter()
-            .for_each(|it| prefetch_read(&raw const it.deps, Locality::L1));
-        element
-            .style
-            .iter()
-            .for_each(|it| prefetch_read(Rc::as_ptr(it), Locality::L1));
-        element
-            .rules
-            .iter()
-            .for_each(|it| prefetch_read(Rc::as_ptr(it), Locality::L1));
+        element.style.iter().for_each(prefetch_style);
+        element.rules.iter().for_each(|it| prefetch_shared(it, 2));
         element
             .classes
             .iter()
@@ -1615,8 +1998,10 @@ impl Document {
                 Change::empty(),
                 Change::empty(),
                 None,
-                false,
-                false,
+                Children {
+                    is_new: false,
+                    rematches: false,
+                },
                 traversal,
             );
         }
@@ -1974,6 +2359,19 @@ impl Document {
         traversal: &mut Traversal,
     ) -> Change {
         let difference = traversal.difference(old, new);
+        self.set_box_style(id, new);
+        self.apply_difference(id, old, new, difference, is_shown)
+    }
+
+    /// `old` is `new` if that was amended.
+    fn apply_difference(
+        &mut self,
+        id: NodeId,
+        old: &Rc<Style>,
+        new: &Rc<Style>,
+        difference: Difference,
+        is_shown: bool,
+    ) -> Change {
         let Difference {
             mut total,
             mut change,
@@ -1984,7 +2382,8 @@ impl Document {
             self.scrolling.repositioned.insert(id);
         }
         if difference.changes_container {
-            self.mark_in_container(id, true, true);
+            let (has_new_answers, is_resized) = (true, true);
+            self.mark_in_container(id, has_new_answers, is_resized);
         }
         if difference.leaves_or_joins_flow {
             self.suppress_scroll_anchoring_around(id);
@@ -1998,7 +2397,6 @@ impl Document {
             change |= Change::RECASCADE_ALL;
         }
         let own = self.own_box(id);
-        self.set_box_style(id, new);
         if total.is_empty() || is_shown {
             return change;
         }
@@ -2062,15 +2460,28 @@ impl Document {
                     .for_each(|it| self.boxes[*it].forget_extents());
                 self.boxes.mark_ink(block);
             }
-            if total.intersects(!(Damage::LOOKS | Damage::INK | Damage::COUNTERS))
+            if old.display() == Display::None
+                && self.tree[id].layout_box == 0
+                && self.tree[id].parent != DOCUMENT
+            {
+                if new.display() != Display::None {
+                    self.request_box(id, new.display());
+                }
+            } else if total.intersects(!(Damage::LOOKS | Damage::INK | Damage::COUNTERS))
                 || is_layer(old) != is_layer(new)
             {
                 self.mark_parent_rebuild(id);
+            } else if total.contains(Damage::INK) && !moves {
+                self.boxes.mark_ink_in_place(self.tree[id].layout_box);
             } else if total.contains(Damage::INK) {
                 self.boxes.mark_ink(self.tree[id].layout_box);
             }
             return change;
         };
+        if new.display() == Display::None {
+            self.note_hiding(id, old);
+            return change;
+        }
         let is_embedded = self.boxes[self.boxes[own].parent].kind == Kind::Lines;
         if total.contains(Damage::PARENT)
             || is_embedded && total.intersects(Damage::LAYOUT | Damage::CONTENTS)
@@ -2093,11 +2504,17 @@ impl Document {
             self.boxes.mark_layout(own);
             self.needs_layout = true;
         }
-        if total.contains(Damage::INK) {
+        if total == Damage::INK && Rc::ptr_eq(old, new) {
+            self.boxes.mark_moved(own);
+        } else if total.contains(Damage::INK) {
             if !Rc::ptr_eq(&old.ink, &new.ink) {
                 self.boxes.mark_ink_of_text(own);
             }
-            self.boxes.mark_ink(own);
+            if moves {
+                self.boxes.mark_ink(own)
+            } else {
+                self.boxes.mark_ink_in_place(own)
+            }
         }
         if total.contains(Damage::INK) && moves {
             self.layout_version += 1;

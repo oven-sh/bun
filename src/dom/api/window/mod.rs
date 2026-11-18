@@ -16,9 +16,9 @@ use crate::generated_bindgen::window::*;
 
 mod callbacks;
 mod console;
+mod container;
 mod navigator;
 pub(crate) mod page;
-mod pending;
 mod printing;
 mod rendering;
 mod screen;
@@ -50,6 +50,10 @@ pub(crate) struct Window {
     font_scope: Cell<u32>,
     pub(crate) name: RefCell<Option<String>>,
     pub(crate) phase: Cell<crate::api::history::Phase>,
+    /// What its host calls it, or 0.
+    pub(crate) page: u32,
+    pub(crate) cluster: core::cell::OnceCell<std::rc::Rc<crate::api::history::Cluster>>,
+    pub(crate) has_left: Cell<bool>,
 }
 
 impl WindowTarget {
@@ -167,7 +171,7 @@ impl WindowOrWorkerGlobalScope {
 }
 
 impl Window {
-    fn new(base: WindowTarget) -> Window {
+    fn new(base: WindowTarget, page: u32) -> Window {
         Window {
             base,
             fields: Default::default(),
@@ -179,6 +183,9 @@ impl Window {
             font_scope: 0.into(),
             name: Default::default(),
             phase: Default::default(),
+            page,
+            cluster: Default::default(),
+            has_left: false.into(),
         }
     }
 
@@ -300,7 +307,7 @@ impl Window {
         is_backward: bool,
         wraps: bool,
     ) -> bool {
-        !pending::is_container_inert(cx, self)
+        !container::is_container_inert(cx, self)
             && crate::api::find::find_and_select(
                 cx,
                 self.document(),

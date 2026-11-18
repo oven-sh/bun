@@ -20,6 +20,7 @@ use crate::generated_bindgen::window::{
 use crate::menu::{self, Menu, MenuItem};
 use crate::prelude::*;
 use crate::text::before;
+use crate::touch_bar::{self, TouchBar};
 use crate::view::View;
 use crate::{app, cover, paths, screen};
 
@@ -192,6 +193,7 @@ pub(crate) struct Plan<'a> {
     pub(crate) is_internal: bool,
     pub(crate) is_closable: bool,
     hides_menu_bar: bool,
+    paints_unshown: bool,
     max: Maybe<Size>,
     style: WindowStyle,
     is_transparent: bool,
@@ -218,6 +220,7 @@ impl<'a> Plan<'a> {
             is_internal: true,
             is_closable: true,
             hides_menu_bar: true,
+            paints_unshown: false,
             max: Maybe::No,
             style: WindowStyle {
                 zoomable: Maybe::Yes(false),
@@ -304,6 +307,7 @@ impl<'a> Plan<'a> {
             is_internal: false,
             is_closable: unless_false(it.closable),
             hides_menu_bar: it.auto_hide_menu_bar,
+            paints_unshown: unless_false(it.paint_when_initially_hidden),
             max: at_most(length(it.max_width, 0.), length(it.max_height, 0.)),
             style: WindowStyle {
                 shadow: Maybe::Yes(it.has_shadow.unwrap_or(!it.transparent)),
@@ -343,6 +347,7 @@ pub(crate) struct State {
     can_have_menu_bar: bool,
     is_destroyed: Cell<bool>,
     is_shown: Cell<bool>,
+    paints_unshown: Cell<bool>,
     was_minimized: Cell<bool>,
     is_occluded: Cell<bool>,
     is_being_resized: Cell<bool>,
@@ -468,6 +473,7 @@ impl Window {
             effect: plan.effect,
             can_have_menu_bar: !IS_MAC && options.frame && !options.hidden_title_bar && !is_modal,
             is_shown: is_shown.into(),
+            paints_unshown: (!is_shown && plan.paints_unshown).into(),
             limits: Limits {
                 min,
                 max: plan.max,
@@ -543,9 +549,12 @@ impl Window {
                 takes_focus: options.focus,
             })?;
         }
-        if let (true, Some(parent)) = (IS_MAC && is_shown, parent) {
-            window.join(parent)?;
+        match parent {
+            Some(parent) if !IS_MAC => window.tell(To::Parent(Maybe::Yes(parent.id)))?,
+            Some(parent) if is_shown => window.join(parent)?,
+            _ => {}
         }
+        window.update_modal_parent()?;
         window.update_menus()?;
         Ok(created)
     }
@@ -730,8 +739,7 @@ impl Window {
             return Ok(());
         }
         let page = fields::page(self).filter(|_| self.closable.get());
-        let stays =
-            page.map(|it| invoke(it, "beforeUnload", &[])).transpose()? == Some(JSValue::FALSE);
+        let stays = page.map(crate::page_host::wants_to_stay).transpose()? == Some(true);
         if !self.closable.get() || stays || !dispatch(self.to_js(), "close", &[])? {
             app::close_cancelled();
             return Ok(());
@@ -766,6 +774,9 @@ impl Window {
     }
 
     fn dispose(&self) -> JsResult<()> {
+        if let Some(view) = fields::content_view(self) {
+            view.set_root(None);
+        }
         if cover::is_shown_in(self.id) {
             self.postponed.replace(Some(Vec::new()));
             self.is_shown.set(true);
@@ -789,6 +800,7 @@ impl Window {
             .all
             .borrow_mut()
             .retain(|it| !same(it.get(), self));
+        self.update_modal_parent()?;
         bun_ui::release();
         menu::window_closed(self)?;
         self.emit("closed")?;
@@ -834,6 +846,7 @@ impl Window {
 
     pub(crate) fn appear(&self, takes_focus: bool) -> JsResult<()> {
         let was_shown = self.is_shown.replace(true);
+        self.paints_unshown.set(false);
         if was_shown || !self.is_sheet() {
             self.tell(To::Show { takes_focus })?;
         }
@@ -841,6 +854,7 @@ impl Window {
             return Ok(());
         }
         self.is_occluded.set(false);
+        self.update_modal_parent()?;
         if !IS_MAC {
             let settings = self.settings.borrow().clone();
             settings.into_iter().try_for_each(|it| self.tell(it))?;
@@ -848,6 +862,7 @@ impl Window {
             self.join(parent)?;
         }
         self.tell_page()?;
+        self.tell_views()?;
         self.draw_overlay()?;
         self.emit("show")
     }
@@ -871,6 +886,19 @@ impl Window {
 
     pub(crate) fn is_occluded(&self) -> bool {
         self.is_occluded.get()
+    }
+
+    pub(crate) fn is_out_of_sight(&self) -> bool {
+        self.is_occluded.get() || self.was_minimized.get()
+    }
+
+    /// Until it is shown or hidden.
+    pub(crate) fn paints_unshown(&self) -> bool {
+        self.paints_unshown.get()
+    }
+
+    pub(crate) fn paints(&self) -> bool {
+        self.is_shown.get() || self.paints_unshown.get()
     }
 
     pub(crate) fn has_background(&self) -> bool {
@@ -945,9 +973,11 @@ impl Window {
                 announce(app::object(), "new-window-for-tab", &[])
             }
             WindowEvent::Moving => announce(self.to_js(), "will-move", &[js(self.bounds()?)?]),
-            WindowEvent::Visibility(it) if IS_MAC => {
+            WindowEvent::Visibility(it) => {
                 if it {
                     self.minimized_changed(false)?;
+                } else if !IS_MAC {
+                    self.minimized_changed(self.is_shown.get() && self.is_in_dock()?)?;
                 }
                 let is_occluded = !it && self.is_shown.get();
                 if self.is_occluded.replace(is_occluded) == is_occluded {
@@ -956,9 +986,6 @@ impl Window {
                 self.tell_page()?;
                 self.tell_views()
             }
-            WindowEvent::Visibility(it) => self.minimized_changed(
-                !it && self.is_shown.get() && self.ask(ui()?.window_is_minimized)?,
-            ),
             WindowEvent::Minimized(it) => self.minimized_changed(it),
             WindowEvent::Bounds(it) => self.geometry_changed(it),
         }
@@ -1552,6 +1579,23 @@ impl Window {
         if_it_is::<Window>(id.and_then(|it| with_id(it as u32)))
     }
 
+    pub(crate) fn get_enabled(&self) -> bool {
+        let is_in_the_way = |it: &Window| it.is_modal && it.is_shown.get();
+        self.enabled.get() && !self.children().iter().any(|it| is_in_the_way(it.get()))
+    }
+
+    pub(crate) fn set_enabled(&self, _: Cx<'_, '_>, on: bool) -> JsResult<()> {
+        self.enabled.set(on);
+        self.tell(To::Enabled(self.get_enabled()))
+    }
+
+    fn update_modal_parent(&self) -> JsResult<()> {
+        match fields::parent(self).filter(|it| self.is_modal && !it.is_destroyed.get()) {
+            Some(parent) => parent.tell(To::Enabled(parent.get_enabled())),
+            None => Ok(()),
+        }
+    }
+
     fn zoom_button(&self) -> WindowStyle {
         let zoomable = self.limits.get().is_resizable
             && (self.full_screenable.get() || self.maximizable.get());
@@ -1578,7 +1622,6 @@ impl Window {
         };
         content_protected: get_content_protected, set_content_protected => |it, on| it.set(To::ContentProtection(on));
         document_edited: get_document_edited, set_document_edited => |it, on| it.set(To::Edited(on));
-        enabled: get_enabled, set_enabled => |it, on| it.check();
         excluded_from_shown_windows_menu: get_excluded_from_shown_windows_menu, set_excluded_from_shown_windows_menu =>
             |it, on| it.style(WindowStyle { is_in_window_menu: Maybe::Yes(!on), ..Default::default() });
         kiosk: get_kiosk, set_kiosk => |it, on| it.tell(To::Fullscreen(on));
@@ -1626,6 +1669,19 @@ impl Window {
         preview_file(path: &[u8], name: Option<&[u8]>) => |it| {
             it.tell(To::Preview { path: Text::lossy(path), name: Text::lossy(name.unwrap_or(path)) })
         };
+        set_touch_bar(bar: JsLocal<'_>) => |it| {
+            fields::set_touch_bar(it, Some(touch_bar::show(bar.to_js(), it)?));
+            Ok(())
+        };
+        set_icon(icon: JsLocal<'_>) => |it| {
+            let png = NativeImage::with(global(), icon.to_js(), |it| it.png(global()))?;
+            if png.is_empty() { it.check() } else { it.tell(To::Icon(png.into())) }
+        };
+        set_shape(parts: Vec<DesktopRectangle>) => |it| {
+            it.tell(To::Shape(parts.iter().map(|it| it.or(Rect::default())).collect()))
+        };
+        set_sheet_offset(y: f64, x: f64) => |it| it.tell(To::SheetOffset(Point { x: finite(x), y: finite(y) }));
+        set_auto_hide_cursor(on: bool) => |it| it.tell(To::AutoHideCursor(on));
         close_file_preview() => |it| it.tell(To::ClosePreview);
         minimize() => |it| it.tell(To::Minimize);
         restore() => |it| it.tell(To::Restore);
@@ -1706,7 +1762,7 @@ impl Window {
                 return Err(error(format_args!("Can not be called for modal window")));
             }
             fields::set_parent(it, parent);
-            if IS_MAC && it.is_shown.get() { it.tell(To::Parent(parent.map(|it| it.id).into())) } else { it.check() }
+            if !IS_MAC || it.is_shown.get() { it.tell(To::Parent(parent.map(|it| it.id).into())) } else { it.check() }
         };
         set_content_view(view: &View) => |it| it.show_view(view);
         set_menu(menu: Option<&Menu>) => |it| {
@@ -1721,13 +1777,14 @@ impl Window {
                 cover::end(false, Vec::new())?;
             }
             if !it.is_shown.get() {
-                return Ok(());
+                return if it.paints_unshown.take() { it.tell_views() } else { Ok(()) };
             }
             if IS_MAC {
                 it.leave_parent()?;
             }
             it.is_shown.set(false);
             it.tell(To::Hide)?;
+            it.update_modal_parent()?;
             if windows().focused.get() == Some(it.id) {
                 it.focus_changed(false)?;
             }
@@ -1785,6 +1842,10 @@ impl Window {
 
     pub(crate) fn get_device_pixel_ratio(&self) -> f64 {
         self.geometry.get().scale.into()
+    }
+
+    pub(crate) fn touch_bar(&self) -> Option<&TouchBar> {
+        fields::touch_bar(self)
     }
 
     pub(crate) fn get_tabbing_identifier(&self, _: Cx<'_, '_>) -> JsResult<JSValue> {
@@ -1929,7 +1990,12 @@ pub(crate) fn synthesize(window: u32, it: &InputInit) -> JsResult<()> {
                 text: typed.map(Text::from).or(text).into(),
             }
         }
-        b"char" => Synthetic::Text(text.ok_or_else(|| error(format_args!("the text is missing")))?),
+        b"char" => Synthetic::Text {
+            text: text.ok_or_else(|| error(format_args!("the text is missing")))?,
+            range: (it.replacement_start.zip(it.replacement_end))
+                .map(|(start, end)| [start as u32, end as u32])
+                .into(),
+        },
         b"drop" => Synthetic::Drop {
             at,
             paths: it

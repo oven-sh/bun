@@ -256,8 +256,8 @@ pub unsafe trait JsInterface: JsPayload {
     /// What allocates in the realm that the object was made in.
     #[inline]
     fn realm<'h, 'a>(&self, _: &'h JsHeap<'a>) -> &'h JsHeap<'a> {
-        // SAFETY: a `JsHeap` is the global object, which the reference holds while it is on the stack.
-        unsafe { &*Bun__Bindgen__realmOf(self.to_js()).cast() }
+        // SAFETY: the reference holds the global object while it is on the stack.
+        JsHeap::from_global(unsafe { &*Bun__Bindgen__realmOf(self.to_js()) })
     }
 }
 

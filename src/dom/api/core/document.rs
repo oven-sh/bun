@@ -1,6 +1,6 @@
 //! Documents, and how nodes are made.
 
-use core::cell::{Cell, RefCell};
+use core::cell::Cell;
 use core::ffi::c_void;
 use std::rc::Rc;
 
@@ -10,13 +10,14 @@ use smallvec::SmallVec;
 
 use super::arena::Arena;
 use super::gc::global_of;
+use super::named::Register;
 use super::node::Link;
 use super::steps::Has;
 use super::*;
 use crate::api::ui::entry as ui;
 use crate::api::window::Window;
 use crate::document::Quirks;
-use crate::name::Map;
+use crate::name::Name;
 use crate::tree::{DOCUMENT, Data, Flags, Inert, Namespace, NodeId, Space};
 
 unsafe extern "C" {
@@ -52,9 +53,14 @@ bitflags::bitflags! {
     }
 }
 
+/// With the strings that have a lone surrogate there.
+fn shares_name(text: &str) -> bool {
+    !text.is_ascii() && text.chars().any(|it| it == char::REPLACEMENT_CHARACTER)
+}
+
 /// The connected elements of a document or of a shadow root, by their ids.
 #[derive(Default)]
-pub(super) struct Ids(RefCell<Map<Atom, SmallVec<[NodeId; 1]>>>);
+struct Ids(Register<Name>);
 
 #[thread_local]
 static HAS_SCOPED_REGISTRIES: Cell<bool> = Cell::new(false);
@@ -98,65 +104,71 @@ pub(crate) fn is_valid_custom_element_name(name: &Atom) -> bool {
 }
 
 impl Node {
-    pub(super) fn add_id(&self, heap: &JsHeap<'_>, id: Atom, element: NodeId) {
-        super::named::announce_in_window(heap, Some(&id));
-        self.extra::<Ids>()
-            .0
-            .borrow_mut()
-            .entry(id)
-            .or_default()
-            .push(element);
+    #[inline]
+    fn ids(&self) -> &Register<Name> {
+        if self.id() == DOCUMENT {
+            &self.arena().ids
+        } else {
+            &self.extra::<Ids>().0
+        }
     }
 
-    pub(super) fn remove_id(&self, id: &Atom, element: NodeId) {
-        let mut ids = self.extra::<Ids>().0.borrow_mut();
-        if let Some(found) = ids.get_mut(id) {
-            found.retain(|it| *it != element);
-            if found.is_empty() {
-                ids.remove(id);
-            }
-        }
+    /// The element has it.
+    pub(super) fn add_id(&self, heap: &JsHeap<'_>, id: Name, element: NodeId) {
+        super::named::announce_id_in_window(heap, || {
+            self.read(|tree, _| bare::id_of(tree, element))
+        });
+        self.ids().add(id, element);
+    }
+
+    pub(super) fn remove_id(&self, id: Name, element: NodeId) {
+        self.ids().remove(&id, element);
     }
 
     /// Of a document or a fragment.
     pub(crate) fn element_by_id(&self, id: &Atom) -> Option<&Element> {
+        let text = id.as_utf8();
+        if !shares_name(&text) {
+            return self.element_by_id_text(text.as_bytes());
+        }
+        let found = self.read(|tree, root| {
+            tree.descendants(root)
+                .find(|it| bare::id_of(tree, *it).as_ref() == Some(id))
+        });
+        self.node(found?)?.as_element()
+    }
+
+    /// In UTF-8, for which `shares_name` does not hold.
+    #[inline]
+    pub(super) fn element_by_id_text(&self, id: &[u8]) -> Option<&Element> {
         if id.is_empty() {
             return None;
         }
+        let id = Name::sought(id);
+        let keys = || crate::selector::filter(core::iter::once(crate::selector::key::id(id)));
         if !self.is_connected() || self.parent().is_some() {
-            let keys =
-                crate::selector::filter(core::iter::once(crate::selector::key::id(id.name())));
             let found = self.read(|tree, root| {
-                tree.descendants_with(root, keys)
-                    .find(|it| bare::id_of(tree, *it).as_ref() == Some(id))
+                tree.descendants_with(root, keys())
+                    .find(|it| tree.element(*it).is_some_and(|it| it.id == id))
             });
             return self.node(found?)?.as_element();
         }
-        let ids = self.try_extra::<Ids>()?.0.borrow();
-        match **ids.get(id)? {
-            [only] => self.element_in_scope(only),
-            ref all => all
-                .iter()
-                .filter_map(|it| self.element_in_scope(*it))
-                .min_by(|a, b| a.compare_order(b)),
-        }
+        self.element_in_scope(self.ids().first(&id, self, keys)?)
     }
 
-    /// Of a document or a connected shadow root, in no order.
-    pub(crate) fn elements_by_id(&self, id: &Atom) -> impl Iterator<Item = &Element> {
-        let found = self
-            .try_extra::<Ids>()
-            .and_then(|it| it.0.borrow().get(id).cloned());
-        found
-            .into_iter()
-            .flatten()
-            .filter_map(|it| self.element_in_scope(it))
+    /// Of a document or a connected shadow root, no more than two.
+    pub(crate) fn some_elements_by_id(&self, id: &Atom) -> SmallVec<[&Element; 2]> {
+        let text = id.as_utf8();
+        let is_shared = shares_name(&text);
+        self.ids().some(&Name::sought(text.as_bytes()), self, |it| {
+            !is_shared || it.attr(atom!("id")) == Some(id.to_dom_string())
+        })
     }
 
+    #[inline]
     pub(super) fn element_in_scope(&self, element: NodeId) -> Option<&Element> {
-        self.node(element)
-            .filter(|_| self.read(|tree, id| tree[element].scope == tree[id].scope))?
-            .as_element()
+        self.read(|tree, id| tree[element].scope == tree[id].scope)
+            .then(|| self.node(element)?.as_element())?
     }
 }
 
@@ -170,6 +182,7 @@ impl Doc {
         agent: &'a Agent,
     ) -> &'a Doc {
         arena.agent.set(agent);
+        arena.document_created();
         let structures = other.map_or_else(
             || List::new(&cx.heap),
             |it| it.edge_list(&cx.heap, Edge::Structures),
@@ -226,7 +239,7 @@ impl Doc {
     }
 
     pub(crate) fn new_windowless<'a>(&'a self, cx: &mut JsScope<'a>, kind: Kind) -> &'a Doc {
-        Doc::create(cx, Rc::clone(self.arena()), Some(self), kind, self.agent())
+        Doc::create(cx, self.share_arena(), Some(self), kind, self.agent())
     }
 
     fn new_of_same_type<'a>(&'a self, cx: &mut JsScope<'a>, kind: Kind) -> &'a Doc {
@@ -439,7 +452,7 @@ impl Doc {
             heap,
             kind,
             structure,
-            Node::new(Rc::clone(arena), id, kind, flags),
+            Node::new(self.share_arena(), id, kind, flags),
         );
         node.set_link(Link::Document, Some(self));
         node
@@ -462,7 +475,7 @@ impl Doc {
         debug_assert!(!structure.is_null());
         // SAFETY: it was made for that class, by `prepare_for_bare`.
         let node = unsafe { class.structure_from_extern(structure, heap) }
-            .create(heap, Node::new(Rc::clone(self.arena()), id, kind, flags));
+            .create(heap, Node::new(self.share_arena(), id, kind, flags));
         tree.clothe(id, node);
         tree.dirty_child(id)
             .update(|it| if kind == Kind::Comment { 0 } else { it });
@@ -483,7 +496,7 @@ impl Doc {
         let id = self.arena().write(|engine| engine.tree.create(data));
         let wrapper = structure.create(
             heap,
-            Node::new(Rc::clone(self.arena()), id, kind, NodeFlags::empty()),
+            Node::new(self.share_arena(), id, kind, NodeFlags::empty()),
         );
         // SAFETY: the stack holds it.
         let node = unsafe { Node::from_cell(wrapper.to_js()) };
@@ -512,9 +525,13 @@ impl Doc {
 
     #[inline]
     pub(crate) fn create_html<'a>(&'a self, heap: &JsHeap<'a>, tag: Known) -> &'a Element {
-        self.create_of_kind(heap, Kind::of_html(tag), |engine| {
+        let element = self.create_of_kind(heap, Kind::of_html(tag), |engine| {
             engine.create_element(tag.into(), Namespace::Html, None)
-        })
+        });
+        element
+            .bits_of_kind()
+            .update(|it| it | super::element::bits_for(tag));
+        element
     }
 
     /// It is never a custom element.

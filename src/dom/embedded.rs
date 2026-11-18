@@ -13,10 +13,11 @@ use bun_parsers::xml;
 use crate::abi::{Item, Rect, RoundedRect, Tile};
 use crate::document::{Document, Environment, Request};
 use crate::geometry::translation;
-use crate::name::{Map, Name, name};
+use crate::name::{Map, Name, Set, name};
 use crate::paint::{Painter, Picture, Space, square};
 use crate::sheet::{Sheet, Source};
 use crate::svg::{Node, percent_decoded, scaling, view_box};
+use crate::svg_paint::Reads;
 use crate::tree::{DOCUMENT, Data, Namespace, NodeId, Replaced, State};
 use crate::types::*;
 use crate::values::{Ctx, Lp, Size, Str, text};
@@ -41,11 +42,44 @@ struct Vector {
     url: Box<[u8]>,
     font_scope: u32,
     images: Map<Str, Option<Replaced>>,
-    /// Until it has what it needs, or for as long as it is animated.
+    /// Until it has what it needs, or for as long as it is animated or resized.
     document: Option<Box<Document>>,
+    is_resized: bool,
+    /// Its pictures are the same for all scales.
+    ignores_scale: bool,
     is_animated: bool,
     start: Option<f64>,
     pictures: Vec<(Key, Rc<Picture>)>,
+}
+
+/// The images that were shown in more than one size just now.
+#[derive(Default)]
+pub(crate) struct Resized {
+    images: RefCell<Set<u32>>,
+    last: Cell<f64>,
+}
+
+impl Resized {
+    pub(crate) fn next_sweep(&self, now: f64) -> f64 {
+        if self.images.borrow().is_empty() {
+            f64::INFINITY
+        } else {
+            self.last.get() + 1000.0 - now
+        }
+    }
+
+    pub(crate) fn sweep(&mut self, now: f64) {
+        if self.next_sweep(now) <= 0.0 {
+            for id in self.images.take() {
+                with_vector(id, |vector| {
+                    vector.is_resized = false;
+                    vector
+                        .document
+                        .take_if(|_| !vector.is_animated && !vector.pictures.is_empty());
+                });
+            }
+        }
+    }
 }
 
 thread_local! {
@@ -263,9 +297,27 @@ impl Vector {
         Some(document)
     }
 
-    fn picture(&mut self, key: Key, environment: &Environment) -> Option<Rc<Picture>> {
-        if let Some(known) = self.pictures.iter().find(|it| it.0 == key) {
+    fn picture(&mut self, id: u32, mut key: Key, user: &Document) -> Option<Rc<Picture>> {
+        let environment = &user.environment;
+        if let Some(last) = self.pictures.first().filter(|_| self.ignores_scale) {
+            key.scale = last.0.scale;
+        }
+        if let Some(known) = self.pictures.iter().find(|it| {
+            Key {
+                scale: if self.ignores_scale {
+                    key.scale
+                } else {
+                    it.0.scale
+                },
+                ..it.0
+            } == key
+        }) {
             return Some(Rc::clone(&known.1));
+        }
+        self.is_resized |= self.document.is_none();
+        if self.is_resized {
+            user.resized_vectors.images.borrow_mut().insert(id);
+            user.resized_vectors.last.set(user.animations.now);
         }
         let mut document = self.document.take().or_else(|| self.open())?;
         let Environment {
@@ -294,7 +346,11 @@ impl Vector {
         document.update_picture();
         let picture = Rc::new(document.pictures.lend()?);
         self.is_animated = document.next_wake(false).is_finite();
-        self.document = self.is_animated.then_some(document);
+        self.ignores_scale = document.is_only_shapes()
+            && ![&b"media"[..], b"image-set"]
+                .into_iter()
+                .any(|it| strings::contains(&self.source, it));
+        self.document = (self.is_animated || self.is_resized).then_some(document);
         self.pictures.truncate(3);
         self.pictures.insert(0, (key, Rc::clone(&picture)));
         Some(picture)
@@ -310,6 +366,8 @@ pub(crate) fn create_vector(source: &[u8], url: &[u8], font_scope: u32) -> (u32,
         font_scope,
         images: Map::default(),
         document: None,
+        is_resized: false,
+        ignores_scale: false,
         is_animated: false,
         start: None,
         pictures: Vec::new(),
@@ -378,17 +436,14 @@ impl Document {
 
     /// An image of the library, or 0.
     pub(crate) fn record_vector(&self, id: u32, size: [f32; 2]) -> u32 {
-        let (key, environment) = (
-            Key {
-                size: size.map(|it| it.round().max(1.0)),
-                scale: 1.0,
-                is_dark: false,
-                stretches: false,
-            },
-            &self.environment,
-        );
-        let picture = with_vector(id, |it| it.picture(key, environment)).flatten();
-        crate::layout::set_scale_of_units(environment.scale);
+        let key = Key {
+            size: size.map(|it| it.round().max(1.0)),
+            scale: 1.0,
+            is_dark: false,
+            stretches: false,
+        };
+        let picture = with_vector(id, |it| it.picture(id, key, self)).flatten();
+        crate::layout::set_scale_of_units(self.environment.scale);
         let (Some(picture), Some(renderer)) = (picture, crate::platform::renderer()) else {
             return 0;
         };
@@ -410,7 +465,7 @@ impl Document {
             return Replaced::default();
         };
         let mut size = [&root.style.layout.width, &root.style.layout.height].map(|it| match it {
-            Size::Length(Lp::Px(length)) => Some(*length),
+            Size::Length(Lp::Px(length)) => Some((length * 64.0).round() / 64.0),
             _ => None,
         });
         let ratio = match size {
@@ -507,7 +562,7 @@ impl Document {
         let url = self.resolve_url(url);
         let (file, fragment) = strings::split_once_char(url.as_bytes(), b'#')
             .map_or((url.as_bytes(), None), |it| (it.0, Some(it.1)));
-        self.svg_references.set(true);
+        self.svg_has_read(Reads::REFERENCES | Reads::MATRIX);
         let Some(external) = self.externals.get(text(file)) else {
             if (!self.is_embedded || url.starts_with("data:"))
                 && self.wanted_externals.borrow_mut().insert(text(file).into())
@@ -591,17 +646,17 @@ impl Document {
 }
 
 impl Painter<'_> {
-    /// With its corner in the origin of the space.
+    /// With its corner in the origin of the space. It is laid out in `viewport`, which is stretched to `size`.
     pub(crate) fn vector_image(
         &mut self,
         image: u32,
-        size: [f32; 2],
+        [viewport, size]: [[f32; 2]; 2],
         stretches: bool,
         style: &crate::properties::Style,
         space: &Space,
     ) {
         let (document, mut inside) = (self.document, *space);
-        let rounded = size.map(|it| ((it / style.zoom * 64.0).round() / 64.0).max(1.0));
+        let rounded = viewport.map(|it| ((it / style.zoom * 64.0).round() / 64.0).max(1.0));
         if NESTING.get() >= MAX_NESTING
             || !self.vector(
                 scaling(size[0] / rounded[0], size[1] / rounded[1]),
@@ -610,6 +665,7 @@ impl Painter<'_> {
         {
             return;
         }
+        document.svg_has_read(Reads::MATRIX);
         let matrix = self.out.links[inside.link as usize].matrix;
         let key = Key {
             size: rounded,
@@ -619,7 +675,7 @@ impl Painter<'_> {
         };
         NESTING.set(NESTING.get() + 1);
         let painted = with_vector(image, |it| {
-            Some((it.picture(key, &document.environment)?, it.is_animated))
+            Some((it.picture(image, key, document)?, it.is_animated))
         })
         .flatten();
         NESTING.set(NESTING.get() - 1);
@@ -687,7 +743,7 @@ impl Painter<'_> {
             return self.tiled(clip, tile, space, |painter, space| {
                 painter.vector_image(
                     image,
-                    [tile.rect.width, tile.rect.height],
+                    [[tile.rect.width, tile.rect.height]; 2],
                     false,
                     style,
                     space,

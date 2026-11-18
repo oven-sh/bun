@@ -3,7 +3,7 @@
 use bun_jsc::JSString;
 
 use crate::generated_bindgen::electron::{
-    CrashReporterOptions, ElectronContentTracing, ElectronCrashReporter, ElectronInAppPurchase,
+    CrashReporterOptions, ElectronCrashReporter, ElectronInAppPurchase,
 };
 use crate::prelude::*;
 
@@ -71,30 +71,8 @@ impl ElectronCrashReporter {
     }
 }
 
-impl ElectronContentTracing {
-    pub(crate) fn get_categories(_: Cx<'_, '_>) -> JsResult<JSValue> {
-        resolved(array(&[])?)
-    }
-
-    pub(crate) fn get_trace_buffer_usage(_: Cx<'_, '_>) -> JsResult<JSValue> {
-        resolved(object!({ "value": 0, "percentage": 0 }))
-    }
-
-    pub(crate) fn refuse(_: Cx<'_, '_>) -> JsResult<JSValue> {
-        Err(unsupported("contentTracing"))
-    }
-}
-
 impl ElectronInAppPurchase {
     pub(crate) fn can_make_payments() -> bool {
         false
-    }
-}
-
-pub(crate) struct TouchBar;
-
-impl TouchBar {
-    pub(crate) fn constructor(_: Cx<'_, '_>) -> JsResult<Self> {
-        Err(unsupported("TouchBar"))
     }
 }

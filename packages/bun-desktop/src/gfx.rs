@@ -1,7 +1,9 @@
 //! Points, transforms, paths and pixels.
 
 use std::alloc::{Layout, alloc_zeroed};
+use std::mem::MaybeUninit;
 use std::ptr::NonNull;
+use std::sync::Arc;
 
 use std::ops::{Add, Mul, Neg, Sub};
 
@@ -326,11 +328,30 @@ impl<'a> From<Stroke<'a>> for Style<'a> {
 }
 
 /// Premultiplied RGBA. It is never empty.
-#[derive(Clone)]
 pub struct Pixmap {
     width: u32,
     height: u32,
-    data: Vec<u8>,
+    data: Data,
+}
+
+enum Data {
+    Own(Vec<u8>),
+    /// Until somebody writes.
+    Shared(Arc<Vec<u8>>),
+}
+
+/// `write` initializes the pixels that it gets, with the number of the first.
+fn written(len: usize, write: impl Fn(usize, &mut [MaybeUninit<u8>]) + Sync) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(len);
+    crate::parallel::in_bands(
+        &mut bytes.spare_capacity_mut()[..len],
+        4,
+        len as i64 / 4,
+        write,
+    );
+    // SAFETY: the bands are all of it.
+    unsafe { bytes.set_len(len) };
+    bytes
 }
 
 impl Pixmap {
@@ -348,7 +369,7 @@ impl Pixmap {
         Some(Pixmap {
             width,
             height,
-            data: unsafe { Vec::from_raw_parts(bytes.as_ptr(), len, len) },
+            data: Data::Own(unsafe { Vec::from_raw_parts(bytes.as_ptr(), len, len) }),
         })
     }
 
@@ -356,7 +377,7 @@ impl Pixmap {
         (Pixmap::len(width, height)? == data.len()).then_some(Pixmap {
             width,
             height,
-            data,
+            data: Data::Own(data),
         })
     }
 
@@ -368,12 +389,62 @@ impl Pixmap {
         self.height
     }
 
+    #[inline]
     pub fn data(&self) -> &[u8] {
-        &self.data
+        match &self.data {
+            Data::Own(data) => data,
+            Data::Shared(data) => data,
+        }
     }
 
+    #[inline]
     pub fn data_mut(&mut self) -> &mut [u8] {
-        &mut self.data
+        if let Data::Shared(_) = self.data {
+            self.stop_sharing();
+        }
+        match &mut self.data {
+            Data::Own(data) => data,
+            Data::Shared(_) => &mut [],
+        }
+    }
+
+    #[cold]
+    fn stop_sharing(&mut self) {
+        if let Data::Shared(data) = std::mem::replace(&mut self.data, Data::Own(Vec::new())) {
+            self.data = Data::Own(Arc::try_unwrap(data).unwrap_or_else(|it| {
+                written(it.len(), |first, to| {
+                    _ = to.write_copy_of_slice(&it[first * 4..][..to.len()])
+                })
+            }));
+        }
+    }
+
+    /// From now on, `shared` has an answer.
+    pub fn allow_sharing(&mut self) {
+        if let Data::Own(data) = &mut self.data {
+            self.data = Data::Shared(Arc::new(std::mem::take(data)));
+        }
+    }
+
+    pub fn shared(&self) -> Option<Pixmap> {
+        let Data::Shared(data) = &self.data else {
+            return None;
+        };
+        Some(Pixmap {
+            data: Data::Shared(data.clone()),
+            ..*self
+        })
+    }
+
+    /// False if that is no better than writing to the pixels.
+    pub fn fill_instead_of_copying(&mut self, pixel: [u8; 4]) -> bool {
+        let is_shared = matches!(&self.data, Data::Shared(data) if Arc::strong_count(data) > 1);
+        if is_shared {
+            self.data = Data::Own(written(self.data().len(), |_, to| {
+                to.as_chunks_mut().0.fill(pixel.map(MaybeUninit::new))
+            }));
+        }
+        is_shared
     }
 
     /// The part of the rectangle that is inside.
@@ -385,7 +456,7 @@ impl Pixmap {
         let (width, height) = (right.checked_sub(left)?, bottom.checked_sub(top)?);
         let mut data = Vec::with_capacity(width * height * 4);
         let rows = self
-            .data
+            .data()
             .chunks(self.width as usize * 4)
             .skip(top)
             .take(height);

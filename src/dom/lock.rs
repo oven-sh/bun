@@ -350,7 +350,7 @@ impl Document {
         self.tree[id].set(
             Flags::SKIPPED | Flags::HAS_MISSED | Flags::DIRTY_DESCENDANTS | Flags::REBUILD_BELOW,
         );
-        self.tree.forget_unskipped();
+        self.tree.ancestry.forget_all();
         self.tree.dirty_child(id).set(0);
         self.locks.missed.entry(id).or_insert(Missed {
             change: Change::empty(),

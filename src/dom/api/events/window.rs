@@ -1,39 +1,25 @@
 //! What stands behind a global object.
 
 use core::cell::OnceCell;
+use std::rc::{Rc, Weak};
 
-use bun_jsc::JSGlobalObject;
+use bun_jsc::{JSGlobalObject, Strong};
+use bun_web::held::Held;
 use bun_web::host::{Browser, Host};
+use bun_web::net::fetch::Controller;
 use bun_web::origin::Origin;
 use bun_web::url::Url;
 
 use super::errors::Errors;
 use super::*;
-use crate::api::core::by_name::member;
-use crate::api::core::{Agent, global_of_cell};
-use crate::api::realm::last_client_of;
+use crate::api::core::{Agent, global_of, global_of_cell};
+use crate::api::realm::{hold, last_client_of};
 use crate::generated_bindgen::events::js_WindowTarget;
 
 unsafe extern "C" {
     safe fn Bun__DOM__targetBehind(global: &JSGlobalObject, object: JSValue) -> JSValue;
     safe fn Bun__DOM__realmOfWindow(window: JSValue) -> *const JSGlobalObject;
     safe fn Bun__DOM__putBehind(window: JSValue, target: JSValue);
-    safe fn Bun__RealmBridge__hostBehind(global: &JSGlobalObject, link: JSValue) -> JSValue;
-    fn Bun__RealmBridge__callHost(
-        global: &JSGlobalObject,
-        host: JSValue,
-        name: &bun_core::String,
-        arguments: *const JSValue,
-        count: usize,
-    );
-    fn Bun__RealmBridge__askHost(
-        global: &JSGlobalObject,
-        host: JSValue,
-        name: *const u8,
-        length: usize,
-        arguments: *const JSValue,
-        count: usize,
-    ) -> JSValue;
     safe fn Bun__DOM__targetOfRealmOfCallback(
         global: &JSGlobalObject,
         callback: JSValue,
@@ -53,7 +39,7 @@ pub(super) fn has_frames() -> bool {
 pub(crate) struct WindowTarget {
     pub(crate) base: EventTarget,
     pub(crate) fields: js_WindowTarget::Fields,
-    time_origin: f64,
+    time_origin: Cell<f64>,
     is_frame: bool,
     is_disposed: Cell<bool>,
     outside: Box<Outside>,
@@ -66,57 +52,44 @@ struct Outside {
     errors: Errors,
     /// If it shares the realm, which goes on without it.
     timers: RefCell<Vec<i32>>,
+    fetches: RefCell<Vec<Controller>>,
+    held: RefCell<Vec<Weak<RefCell<Option<Strong>>>>>,
 }
 
 impl WindowTarget {
-    /// `extend` gets the realm of `window`.
-    pub(crate) fn create<'a, T: core::ops::Deref<Target = WindowTarget>>(
-        heap: &JsHeap<'a>,
-        window: JSValue,
-        [tools, link]: [JSValue; 2],
-        time_origin: f64,
-        is_frame: bool,
-        extend: impl FnOnce(&JsHeap<'a>, WindowTarget) -> &'a T,
-    ) -> &'a T {
-        let host = Bun__RealmBridge__hostBehind(global_of(heap), link);
-        // SAFETY: a field holds `host`.
-        WindowTarget::with_host(
-            window,
-            [tools, host],
-            unsafe { Host::of(host) },
-            time_origin,
-            is_frame,
-            extend,
-        )
-    }
-
-    pub(crate) fn with_host<'a, T: core::ops::Deref<Target = WindowTarget>>(
-        window: JSValue,
-        [tools, host]: [JSValue; 2],
-        link: Host,
-        time_origin: f64,
-        is_frame: bool,
-        extend: impl FnOnce(&JsHeap<'a>, WindowTarget) -> &'a T,
-    ) -> &'a T {
+    /// `extend` gets the realm of `window`. `host` is what `link` needs to be alive.
+    fn unattached(link: Host, time_origin: f64, is_frame: bool) -> WindowTarget {
         let outside = Outside {
             host: link,
             browser: OnceCell::new(),
             languages: vec!["en-US".into()].into(),
             errors: Errors::default(),
             timers: Default::default(),
+            fetches: Default::default(),
+            held: Default::default(),
         };
-        let made = WindowTarget {
+        WindowTarget {
             base: Default::default(),
             fields: Default::default(),
-            time_origin,
+            time_origin: time_origin.into(),
             is_frame,
             is_disposed: false.into(),
             outside: outside.into(),
-        };
-        // SAFETY: `window` holds its realm, and a heap is a global object.
-        let this = extend(unsafe { &*Bun__DOM__realmOfWindow(window).cast() }, made);
+        }
+    }
+
+    pub(crate) fn create<'a, T: core::ops::Deref<Target = WindowTarget>>(
+        window: JSValue,
+        host: JSValue,
+        link: Host,
+        time_origin: f64,
+        is_frame: bool,
+        extend: impl FnOnce(&JsHeap<'a>, WindowTarget) -> &'a T,
+    ) -> &'a T {
+        // SAFETY: `window` holds its realm.
+        let heap = JsHeap::from_global(unsafe { &*Bun__DOM__realmOfWindow(window) });
+        let this = extend(heap, WindowTarget::unattached(link, time_origin, is_frame));
         js_WindowTarget::set_window(this, window);
-        js_WindowTarget::set_tools(this, tools);
         js_WindowTarget::set_host(this, host);
         Bun__DOM__putBehind(window, this.to_js());
         HAS_FRAMES.set(has_frames() || is_frame);
@@ -164,15 +137,6 @@ impl WindowTarget {
         js_WindowTarget::document(self)
     }
 
-    /// What its host has handed over.
-    pub(crate) fn tools(&self) -> JSValue {
-        field(js_WindowTarget::tools(self))
-    }
-
-    pub(crate) fn tool(&self, name: &str) -> Option<JSValue> {
-        member(global_of_cell(self), self.tools(), name)
-    }
-
     /// <https://dom.spec.whatwg.org/#window-current-event>
     pub(crate) fn event(&self) -> JSValue {
         field(js_WindowTarget::event(self))
@@ -183,52 +147,24 @@ impl WindowTarget {
     }
 
     pub(crate) fn time_origin(&self) -> f64 {
-        self.time_origin
+        self.time_origin.get()
+    }
+
+    pub(crate) fn set_time_origin(&self, time: f64) {
+        self.time_origin.set(time);
     }
 
     /// <https://w3c.github.io/hr-time/#dfn-relative-high-resolution-coarse-time>
     pub(crate) fn coarse_time(&self, time: f64) -> f64 {
-        ((time - self.time_origin) * 10.0).floor() / 10.0
+        ((time - self.time_origin()) * 10.0).floor() / 10.0
     }
 
     pub(crate) fn host(&self) -> &Host {
         &self.outside.host
     }
 
-    /// For what has objects in it. `None` if the host does not listen.
-    pub(crate) fn ask_host(
-        &self,
-        _: Cx<'_, '_>,
-        question: &'static str,
-        values: &[JSValue],
-    ) -> Option<JSValue> {
-        let (realm, host) = (self.doc()?.global(), js_WindowTarget::host(self)?);
-        // SAFETY: slices
-        Some(unsafe {
-            Bun__RealmBridge__askHost(
-                realm,
-                host,
-                question.as_ptr(),
-                question.len(),
-                values.as_ptr(),
-                values.len(),
-            )
-        })
-        .filter(|it| !it.is_empty())
-    }
-
-    /// It gets handles for the objects among `values`.
-    pub(crate) fn tell_inspector(&self, cx: Cx<'_, '_>, message: &'static str, values: &[JSValue]) {
-        // SAFETY: a slice
-        unsafe {
-            Bun__RealmBridge__callHost(
-                cx.global(),
-                field(js_WindowTarget::host(self)),
-                &bun_core::String::static_(message),
-                values.as_ptr(),
-                values.len(),
-            )
-        }
+    pub(crate) fn what_host_needs(&self) -> JSValue {
+        field(js_WindowTarget::host(self))
     }
 
     pub(super) fn errors(&self) -> &Errors {
@@ -291,10 +227,50 @@ impl WindowTarget {
             .take()
             .into_iter()
             .for_each(|it| bun_web::timers::clear(global_of_cell(self), it));
+        self.outside
+            .fetches
+            .take()
+            .iter()
+            .for_each(Controller::abort);
+        self.outside
+            .held
+            .take()
+            .iter()
+            .filter_map(Weak::upgrade)
+            .for_each(|it| drop(it.take()));
+        bun_web::tasks::cancel_delayed_tasks_about(global_of_cell(self), self.to_js());
+    }
+
+    pub(crate) fn shares_realm(&self, heap: &JsHeap<'_>) -> bool {
+        !WindowTarget::of_realm(self.realm(heap)).is_some_and(|it| core::ptr::eq(it, self))
+    }
+
+    /// Until it is disposed of.
+    pub(super) fn hold(&self, heap: &JsHeap<'_>, value: JSValue) -> Held<Strong> {
+        let held = hold(heap, Strong::create(value, global_of(heap)));
+        if self.shares_realm(heap) {
+            let mut all = self.outside.held.borrow_mut();
+            if all.len() == all.capacity() {
+                all.retain(|it| it.strong_count() > 0);
+            }
+            all.push(Rc::downgrade(&held));
+        }
+        held
+    }
+
+    pub(crate) fn note_fetch(&self, controller: &Controller) {
+        if self.is_disposed() {
+            return controller.abort();
+        }
+        let mut all = self.outside.fetches.borrow_mut();
+        if all.len() == all.capacity() {
+            all.retain(Controller::is_in_use);
+        }
+        all.push(controller.clone());
     }
 
     pub(crate) fn note_timer(&self, heap: &JsHeap<'_>, id: i32) {
-        if WindowTarget::of_realm(self.realm(heap)).is_some_and(|it| core::ptr::eq(it, self)) {
+        if !self.shares_realm(heap) {
             return;
         }
         if self.is_disposed() {
@@ -333,5 +309,5 @@ pub(crate) fn is_fully_active(realm: &JsHeap<'_>) -> bool {
 
 pub(crate) fn report_exception(cx: Cx<'_, '_>, exception: JSValue) {
     let window = WindowTarget::of_realm(&cx.heap);
-    pending::report(cx, window, exception);
+    errors::report(cx, window, exception);
 }

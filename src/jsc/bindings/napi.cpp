@@ -2465,7 +2465,7 @@ private:
         auto* self = static_cast<NapiExternalBufferDestructor*>(hint);
         self->m_bound = nullptr;
         self->m_finalized = true;
-        self->m_cb(env, data, self->m_hint);
+        Bun::onAddonThread([&] { return (self->m_cb(env, data, self->m_hint), true); });
     }
 
     WTF::Ref<NapiEnv> m_env;

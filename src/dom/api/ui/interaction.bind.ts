@@ -35,7 +35,7 @@ export const Ui = internal(
   `document focused tabStart hintParent pressedPopover pressedDialog openPicker selectWithPopover container focusedFrame touchedFrame frameUnderMouse frames plugins clipboard currentPointer
     systemMouse pen compositionTarget compositionNode inputMethodNode spelling recordedStep overridesStart
     overridesEnd topLayer openDialogs autofocusCandidates closeWatchers fullscreenEvents changedSelections
-    dirtyControls fingers page`,
+    dirtyControls fingers interested page`,
 );
 export const Pointer = internal(
   "Pointer",
@@ -277,57 +277,3 @@ export const DocumentPoints = b.partial("DocumentPoints", {
 
 b.include(Doc, ScopeUi);
 b.include(ShadowRoot, ScopeUi);
-
-// ───────────────────────────── what the library reports ─────────────────────────────
-
-const number = b.f64.loose.default(0);
-const offsets = b.sequenceVec(b.u32.wrap).nullable.optional;
-export const NativePlace = b.dictionary(
-  { m: b.u32.wrap.default(0), sx: b.f64.loose.optional, sy: b.f64.loose.optional, x: b.f64.loose.optional, y: number },
-  { webidl: true, fromHost: true, fromJS: true },
-);
-export const NativePointerDetails = b.dictionary(
-  {
-    height: b.f64.loose.default(1),
-    pressure: b.f64.loose.optional,
-    tangentialPressure: number,
-    tiltX: b.i32.wrap.default(0),
-    tiltY: b.i32.wrap.default(0),
-    twist: b.i32.wrap.default(0),
-    width: b.f64.loose.default(1),
-  },
-  { webidl: true, fromHost: true },
-);
-const event = (members: Record<string, any>, base?: any) =>
-  b.dictionary(members, { webidl: true, fromHost: true, fromJS: true, ...(base && { extends: base }) });
-const id = b.u32.wrap.default(0);
-const word = b.DOMString.utf8.owned.optional;
-export const NativeKind = b.enumeration(
-  "a11y a11yAction blur compose composeEnd drag focus frame key mouse outside pen pinch resize scroll text touch wheel".split(
-    " ",
-  ),
-);
-export const NativeAction = b.enumeration("cancel down drop end enter leave move over start up".split(" "));
-const e = NativeAction;
-export const NativeMouse = event(
-  { b: b.i16.wrap.default(0), buttons: b.u16.wrap.default(0), e, n: b.i32.wrap.default(0) },
-  NativePlace,
-);
-export const NativePen = event({ details: NativePointerDetails.default({}) });
-export const NativeWheel = event(
-  { delta: number, dx: number, dy: number, isHandled: flag, precise: flag },
-  NativePlace,
-);
-export const NativeTouchPoint = b.dictionary(
-  { details: NativePointerDetails.default({}), id: b.i32.wrap.default(0) },
-  { webidl: true, fromHost: true, extends: NativePlace },
-);
-export const NativeTouch = event({ e, m: id, points: b.sequenceVec(NativeTouchPoint) });
-export const NativeScroll = event({ generation: id, hasEnded: flag, id, x: number, y: number });
-export const NativeKey = event({ code: word, composing: flag, e, key: word, location: id, m: id, repeat: flag });
-export const NativeText = event({ key: flag, range: offsets, selection: offsets, text: word });
-export const NativeSize = event({ height: number, isQuiet: flag, scale: number, width: number });
-export const NativeFocus = event({ direction: b.i32.wrap.default(0), leaves: flag });
-export const NativeDrag = event({ e });
-export const NativeAssistance = event({ action: b.u8, node: id, numbers: b.sequenceVec(b.u32.wrap), text: word });
-export const NativeFrame = event({ isUrgent: flag });

@@ -273,8 +273,11 @@ impl Table {
 
     /// Other than by moving `first`. Both are bases.
     pub fn may_act_on(&self, index: u16, first: u32, second: Option<u32>) -> bool {
-        let (Some(lookup), [context, chain, _]) = (self.lookup(index.into()), self.special_kinds())
-        else {
+        let (Some(lookup), [context, chain, _]) = (
+            self.lookup(index.into())
+                .filter(|it| it.digest.may_have(first)),
+            self.special_kinds(),
+        ) else {
             return false;
         };
         let continues = |wanted: Option<(u16, Matcher)>| {
@@ -321,8 +324,11 @@ impl Table {
 
     /// Whether what it does at `glyph` may depend on others.
     pub fn may_look_around(&self, index: u16, glyph: u32) -> bool {
-        let (Some(lookup), [context, chain, _]) = (self.lookup(index.into()), self.special_kinds())
-        else {
+        let (Some(lookup), [context, chain, _]) = (
+            self.lookup(index.into())
+                .filter(|it| it.digest.may_have(glyph)),
+            self.special_kinds(),
+        ) else {
             return false;
         };
         lookup
@@ -853,7 +859,7 @@ impl Apply<'_> {
         let Some(lookup) = self
             .table
             .lookup(index.into())
-            .filter(|it| it.digest.may_meet(&self.digest))
+            .filter(|it| self.buffer.glyphs.len() < 8 || it.digest.may_meet(&self.digest))
         else {
             return;
         };

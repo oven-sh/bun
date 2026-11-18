@@ -127,13 +127,13 @@ pub(crate) struct Remembered {
     /// The last two are for the accessibility tree.
     is_unchanged: [Cell<bool>; 4],
     has_sticky: Cell<bool>,
-    /// Only means something for the viewport.
+    /// Since `Document::column` has looked at it. For the viewport, since the last picture.
     pub(crate) was_laid_out: Cell<bool>,
     pub(crate) layers: Cell<Layers>,
 }
 
 impl Remembered {
-    fn forget(&self) {
+    pub(crate) fn forget(&self) {
         self.is_unchanged.iter().for_each(|it| it.set(false));
     }
 
@@ -373,6 +373,8 @@ pub(crate) struct Pictures {
     pub(crate) last_hit: Cell<Option<([f32; 2], usize)>>,
     kept: [Option<Kept>; 6],
     pub(crate) just_locked: Vec<NodeId>,
+    /// How the regions that were submitted last had to be arranged.
+    pub(crate) order_of_regions: Vec<usize>,
     current: Option<Picture>,
     outdated: Option<Picture>,
     spare: Picture,
@@ -963,7 +965,66 @@ impl Shift {
     }
 }
 
+/// The lengths of what is shown.
+#[derive(Clone, Copy, Default, PartialEq)]
+pub(crate) struct Shown([u32; 6]);
+
+impl Shown {
+    pub(crate) fn of(it: &Picture) -> Shown {
+        Shown(
+            [
+                it.items.len(),
+                it.glyphs.len(),
+                it.stops.len(),
+                it.filters.len(),
+                it.verbs.len(),
+                it.bytes.len(),
+            ]
+            .map(|it| it as u32),
+        )
+    }
+
+    pub(crate) fn items(&self) -> u32 {
+        self.0[0]
+    }
+
+    pub(crate) fn moved(&self, from: &Shown, to: &Shown) -> Shown {
+        Shown(core::array::from_fn(|it| {
+            self.0[it].wrapping_sub(from.0[it]).wrapping_add(to.0[it])
+        }))
+    }
+
+    fn lengths(&self) -> Lengths {
+        let [items, glyphs, stops, filters, verbs, bytes] = self.0;
+        Lengths {
+            items,
+            glyphs,
+            stops,
+            filters,
+            verbs,
+            bytes,
+            ..Lengths::default()
+        }
+    }
+}
+
 impl Picture {
+    pub(crate) fn reserve_like(&mut self, other: &Picture) {
+        self.items.reserve(other.items.len() + 16);
+        self.verbs.reserve(other.verbs.len() + 64);
+    }
+
+    /// In a `PushVector`.
+    pub(crate) fn append_part(&mut self, other: &Picture, start: &Shown, end: &Shown) {
+        let (first, start) = (Lengths::of(self), start.lengths());
+        start.copy(&end.lengths(), other, self);
+        Shift {
+            tables: first.minus(&start),
+            by: [0.0; 2],
+        }
+        .relocate_all(self, &first);
+    }
+
     /// In a `PushVector`. Only what is shown.
     pub(crate) fn append(&mut self, other: &Picture) {
         let first = Lengths::of(self);
@@ -1092,7 +1153,27 @@ impl Painter<'_> {
             vec![segments.new],
         );
         picture.is_submitted = false;
-        for (id, what) in retouched.iter().copied().filter(|it| boxes.is_alive(it.0)) {
+        for (index, (id, what)) in retouched
+            .iter()
+            .copied()
+            .enumerate()
+            .filter(|it| boxes.is_alive(it.1.0))
+        {
+            if let [_, _, near, _, middle, _, _, _, far, ..] = retouched[index..] {
+                boxes.prefetch_extent(far.0);
+                boxes[middle.0]
+                    .children
+                    .first()
+                    .into_iter()
+                    .for_each(|it| boxes.prefetch_extent(*it));
+                crate::forecast::prefetch_shared(&boxes[middle.0].style, 3);
+                boxes[near.0]
+                    .children
+                    .first()
+                    .and_then(|it| boxes[*it].inline.as_ref())
+                    .into_iter()
+                    .for_each(|it| crate::forecast::prefetch(&it.has_layers));
+            }
             let mut locate = |id: BoxId| {
                 let (painted, index) = (&boxes[id].painted, boxes[id].painted.segments[0].get());
                 let segment = segments.all.get(index as usize).filter(|it| {

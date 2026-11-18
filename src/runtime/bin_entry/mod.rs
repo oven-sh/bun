@@ -182,18 +182,6 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     //    for the entire process.
     unsafe { bun_core::init_argv(argc, argv) };
 
-    #[cfg(unix)]
-    bun_removable_features::call_removable_or!(
-        Desktop,
-        ReturnDefault,
-        {},
-        crate::desktop::main_thread::lend_if_needed,
-        run
-    );
-    run()
-}
-
-fn run() -> ! {
     // Everything below calls into simdutf, including the crash handler.
     if !bun_simdutf_sys::simdutf::has_any_implementation() {
         unsafe extern "C" {
@@ -240,6 +228,18 @@ fn run() -> ! {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pregrow_fd_table();
 
+    #[cfg(unix)]
+    bun_removable_features::call_removable_or!(
+        Desktop,
+        ReturnDefault,
+        {},
+        crate::desktop::main_thread::lend_if_needed,
+        run
+    );
+    run()
+}
+
+fn run() -> ! {
     // 5. Per-thread stack-limit cache for the JS recursion guard.
     StackCheck::configure_thread();
     bun_io::ParentDeathWatchdog::install();

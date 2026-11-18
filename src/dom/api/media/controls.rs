@@ -20,7 +20,7 @@ const VOLUME: &str = "-webkit-media-controls-volume-slider";
 const MUTE: &str = "-webkit-media-controls-mute-button";
 const FULLSCREEN: &str = "-webkit-media-controls-fullscreen-button";
 
-pub(super) fn add_part<'a>(
+pub(crate) fn add_part<'a>(
     cx: Cx<'_, 'a>,
     media: &'a Element,
     parent: &'a Node,

@@ -254,6 +254,17 @@ pub const META: u8 = 8;
 pub const ALT_GRAPH: u8 = 16;
 pub const CAPS_LOCK: u8 = 32;
 
+/// What stands for the caret in the ranges that a launch cover gets.
+pub const CARET: u32 = 1 << 31;
+
+/// With offsets that may be counted from [`CARET`].
+pub fn from_start(range: [u32; 2], caret: u32) -> [u32; 2] {
+    range.map(|it| match it {
+        ..0x4000_0000 => it,
+        _ => caret.saturating_add_signed(it.wrapping_sub(CARET).cast_signed()),
+    })
+}
+
 /// A keyboard shortcut. `key` is a character, or a name in lower case such as `enter` or `f1`.
 #[repr(C)]
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -467,6 +478,23 @@ pub enum WindowCommand {
         name: Text,
     },
     ClosePreview,
+    /// Whether it gets the input of the user.
+    Enabled(bool),
+    AutoHideCursor(bool),
+    /// An encoded image.
+    Icon(List<u8>),
+    /// None for all of it.
+    Shape(List<Rect>),
+    SheetOffset(Point),
+    DragFiles {
+        paths: List<Text>,
+        icon: Icon,
+    },
+    TouchBar {
+        items: List<TouchBarItem>,
+        /// One or none.
+        escape: List<TouchBarItem>,
+    },
     Beep,
     CharacterPalette,
     LookUp(Text),
@@ -528,7 +556,10 @@ pub enum Synthetic {
         code: Maybe<Text>,
         text: Maybe<Text>,
     },
-    Text(Text),
+    Text {
+        text: Text,
+        range: Maybe<[u32; 2]>,
+    },
     Drop {
         at: Point,
         paths: List<Text>,
@@ -573,6 +604,8 @@ pub struct InputField {
     pub selection: [u32; 2],
     pub composing: Maybe<[u32; 2]>,
     pub caret: Rect,
+    /// The page has not seen all edits that were taken from the library.
+    pub is_out_of_date: bool,
 }
 
 #[repr(C)]
@@ -1029,6 +1062,43 @@ pub struct Shared {
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TouchBarKind {
+    Button,
+    ColorPicker,
+    Group,
+    Label,
+    OtherItems,
+    Popover,
+    Scrubber,
+    SegmentedControl,
+    Slider,
+    Spacer,
+}
+
+#[repr(C)]
+#[derive(Clone, Debug)]
+pub struct TouchBarItem {
+    pub id: u32,
+    pub kind: TouchBarKind,
+    pub label: Text,
+    pub accessibility_label: Text,
+    pub icon: Maybe<Icon>,
+    pub color: Maybe<u32>,
+    pub colors: List<u32>,
+    pub style: Text,
+    pub overlay_style: Text,
+    pub mode: Text,
+    pub minimum: f32,
+    pub maximum: f32,
+    pub value: f32,
+    pub is_enabled: bool,
+    pub shows_buttons: bool,
+    pub is_continuous: bool,
+    pub children: List<TouchBarItem>,
+}
+
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Media {
     Microphone,
     Camera,
@@ -1119,6 +1189,8 @@ pub enum SystemCommand {
     InvalidateActivity,
     UnregisterForPush,
     SecureInput(bool),
+    /// It has changed.
+    TouchBarItem(TouchBarItem),
     Post {
         center: NotificationCenter,
         name: Text,
@@ -1167,6 +1239,8 @@ pub enum SystemCommand {
         id: u32,
         command: TrayCommand,
     },
+    /// With which Wayland lets the next window that asks for it come to the front.
+    ActivationToken(Text),
 }
 
 #[repr(C)]
@@ -1258,6 +1332,12 @@ pub enum SystemRequest {
     Authenticate(Text),
     AskForAccess(Media),
     RegisterForPush,
+    TrustCertificate {
+        window: Maybe<u32>,
+        message: Text,
+        /// In the PEM format.
+        chain: List<u8>,
+    },
     Print(PrintJob),
 }
 
@@ -1325,6 +1405,11 @@ pub enum SystemEvent {
         info: PreferenceValue,
     },
     Pushed(PreferenceValue),
+    TouchBar {
+        item: u32,
+        value: f64,
+        is_selected: bool,
+    },
     Activity {
         step: ActivityStep,
         kind: Text,

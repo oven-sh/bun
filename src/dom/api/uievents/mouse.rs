@@ -228,7 +228,6 @@ impl MouseEvent {
         self.end(false)
     }
 
-    #[expect(clippy::too_many_arguments, clippy::fn_params_excessive_bools)]
     pub(crate) fn init_mouse_event<'a>(
         &self,
         heap: &JsHeap<'a>,
@@ -358,7 +357,6 @@ pub(crate) struct PointerEvent {
 slots!(PointerEvent = js_PointerEvent {} [coalesced: PointerEvent, predicted: PointerEvent,]);
 
 impl PointerEvent {
-    #[expect(clippy::too_many_arguments)]
     pub(crate) fn new<'a>(
         heap: &JsHeap<'a>,
         doc: &Doc,

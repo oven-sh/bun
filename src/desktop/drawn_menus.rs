@@ -161,7 +161,7 @@ impl DrawnMenus {
             })?;
             menus.document()?.listen(event, handler)?;
         }
-        surfaces::listen_with_script(global(), surface, page);
+        crate::page_host::send_input_to(page, surface)?;
         let dismiss = listener(menus, |menus, _| menus.close())?;
         for event in ["blur", "resize"] {
             invoke(window.to_js(), "on", &[js(event)?, dismiss])?;

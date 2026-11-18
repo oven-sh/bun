@@ -12,7 +12,7 @@ use crate::api::core::{
 };
 use crate::api::events::{Event, EventInit, Trusted, dispatch};
 use crate::api::images::{self, Destination};
-use crate::api::interim::resolve;
+use crate::api::on_behalf::resolve;
 use crate::order::Order as _;
 
 #[derive(Clone, Copy, PartialEq)]

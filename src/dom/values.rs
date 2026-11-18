@@ -80,6 +80,14 @@ pub(crate) fn attempt<'b, R>(
     result
 }
 
+/// For what only looks at a block. What `visit` leaves of it is skipped.
+pub(crate) fn visit_nested<'b>(p: &mut P<'_, 'b>, visit: impl FnOnce(&mut P<'_, 'b>)) {
+    let _ = p.parse_nested_block(|p| {
+        visit(p);
+        Ok(())
+    });
+}
+
 pub(crate) fn nested<'b, R>(
     p: &mut P<'_, 'b>,
     parse: impl FnOnce(&mut P<'_, 'b>) -> Option<R>,
@@ -324,6 +332,8 @@ bitflags::bitflags! {
         const MATH_FONT_SIZE = 1 << 10;
         /// While colors are forced.
         const SYSTEM_COLOR = 1 << 14;
+        /// What was substituted in a declaration has made it give way to another.
+        const REVERTED = 1 << 15;
 
         /// The same for all elements.
         const OF_DOCUMENT = Self::ROOT.bits() | Self::VIEWPORT.bits() | Self::ABSOLUTE_FONT_SIZE.bits()

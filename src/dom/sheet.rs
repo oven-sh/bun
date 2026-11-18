@@ -162,7 +162,7 @@ impl Shape {
 
 impl Declared {
     pub(crate) fn parse(prop: Prop, source: &[u8]) -> Option<Declared> {
-        if matches!(prop, Prop::Long(id) if id != Id::Transform && id.parse_simple(source, &Ctx::dummy()).is_some())
+        if matches!(prop, Prop::Long(id) if id.is_plain(source) || id != Id::Transform && id.parse_simple(source, &Ctx::dummy()).is_some())
         {
             return Some(Declared::Text(source.into()));
         }
@@ -196,7 +196,7 @@ impl Declared {
         Declared::parse(prop, source).or_else(|| {
             Declared::parse(
                 prop,
-                &without_quirks(prop.name(), source).filter(|_| within == Within::Quirks)?,
+                &(within == Within::Quirks).then(|| without_quirks(prop.name(), source))??,
             )
         })
     }
@@ -243,15 +243,12 @@ fn without_quirks(name: &str, source: &[u8]) -> Option<Out> {
                 }
                 (Token::Function(name), _) if eq(name, "rect") => {
                     out.extend_from_slice(b"rect(");
-                    nested(p, |p| {
-                        visit(p, source, is_color, out);
-                        Some(())
-                    });
+                    crate::values::visit_nested(p, |p| visit(p, source, is_color, out));
                     out.push(b')');
                 }
                 _ => {
                     if let Token::Function(_) = token {
-                        nested(p, |p| Raw::parse(p, &Ctx::dummy()));
+                        crate::values::visit_nested(p, |p| _ = Raw::parse(p, &Ctx::dummy()));
                     }
                     out.extend_from_slice(&source[start..p.position()]);
                 }
@@ -275,6 +272,7 @@ pub(crate) fn supports_declaration(name: &[u8], value: &[u8]) -> bool {
     Prop::from_name(name).is_some_and(|prop| Declared::parse(prop, scan::trim(value)).is_some())
 }
 
+#[derive(Clone)]
 pub(crate) struct Declarations {
     pub(crate) list: Box<[Rc<Declaration>]>,
     pub(crate) has_important: bool,
@@ -292,6 +290,7 @@ pub(crate) enum Within {
     Style,
     /// A style rule or attribute in a document that is in quirks mode.
     Quirks,
+    UserAgent,
     /// What attributes mean.
     Hints,
     Keyframe,
@@ -302,7 +301,7 @@ impl Within {
     pub(crate) fn allows(self, prop: Prop, important: bool) -> bool {
         let name = prop.name();
         match self {
-            Within::Style | Within::Quirks | Within::Hints => true,
+            Within::Style | Within::Quirks | Within::UserAgent | Within::Hints => true,
             Within::Keyframe => {
                 !important
                     && (!name.starts_with("animation")
@@ -451,6 +450,25 @@ impl Block {
         (self.source, self.range, self.parsed) = (Source::default(), 0..0, OnceCell::new());
     }
 
+    /// With the declarations in the same places.
+    pub(crate) fn copy(&self) -> Block {
+        Block {
+            parsed: self.declarations().clone().into(),
+            ..Block::edited(self.editable().list.clone(), self.within, &self.base_url)
+        }
+    }
+
+    /// To change both alike. The declaration has to remain of the same kind.
+    pub(crate) fn editable_with(
+        &mut self,
+        index: usize,
+    ) -> Option<(&mut Editable, &mut Rc<Declaration>)> {
+        Some((
+            self.editable.get_mut()?,
+            &mut self.parsed.get_mut()?.list[index],
+        ))
+    }
+
     pub(crate) fn of_declarations(list: Vec<Rc<Declaration>>, base_url: &Rc<[u8]>) -> Block {
         Block {
             parsed: Declarations::new(list).into(),
@@ -464,6 +482,10 @@ impl Block {
 
     pub(crate) fn has_source(&self, source: &[u8]) -> bool {
         slice(&self.source, &self.range) == source
+    }
+
+    pub(crate) fn parsed(&self) -> Option<&Declarations> {
+        self.parsed.get()
     }
 
     pub(crate) fn declarations(&self) -> &Declarations {
@@ -976,7 +998,7 @@ impl Prepared {
 
 impl Drop for Prepared {
     fn drop(&mut self) {
-        self.join();
+        drop(self.thread.take().map(std::thread::JoinHandle::join));
     }
 }
 
@@ -1010,7 +1032,7 @@ impl Compiling {
 }
 
 thread_local! {
-    static SHARED: RefCell<Map<u64, Weak<Sheet>>> = RefCell::default();
+    static SHARED: RefCell<Box<Map<u64, Weak<Sheet>>>> = RefCell::default();
 }
 
 impl Sheet {
@@ -1129,6 +1151,7 @@ impl Sheet {
         let parser = Parser {
             namespaces: &self.namespaces,
             is_quirky: self.within == Within::Quirks,
+            is_user_agent: self.within == Within::UserAgent,
             ..Parser::default()
         };
         let list = || parser.parse(slice(&self.source, &(raw.start..raw.brace)));
@@ -1611,6 +1634,7 @@ impl Builder {
             namespaces: &self.sheet.namespaces,
             is_strict: false,
             is_quirky: self.sheet.within == Within::Quirks,
+            is_user_agent: self.sheet.within == Within::UserAgent,
         };
         Some(match name {
             b"media" => {
@@ -1798,6 +1822,7 @@ impl Builder {
                 namespaces: &self.sheet.namespaces,
                 is_strict: false,
                 is_quirky: self.sheet.within == Within::Quirks,
+                is_user_agent: self.sheet.within == Within::UserAgent,
             };
             if let Some(selectors) = parser
                 .parse(prelude)

@@ -2,7 +2,7 @@
 
 use core::cell::RefCell;
 
-use bun_core::WTFStringImplStruct as Impl;
+use bun_core::{WTFStringImplStruct as Impl, strings};
 use bun_jsc::bindgen::{self, JsHeap, JsInterface, JsLocal, JsScope, JsStringImpl, PropertyNames};
 use bun_jsc::{JSString, JSValue};
 use smallvec::SmallVec;
@@ -126,6 +126,50 @@ impl DOMTokenList {
         self.element().set_attr(cx, self.attribute, value.finish());
     }
 
+    /// Whether that was possible without taking the value apart.
+    fn put_in_class<'a>(&'a self, cx: Cx<'_, 'a>, token: &DomString, wanted: bool) -> bool {
+        let (element, space) = (self.element(), b" ".as_slice());
+        let is_tidy = |value: &DomString| {
+            element.with(|it| {
+                it.classes
+                    .as_ref()
+                    .is_some_and(|it| it.source.string() == value && it.is_tidy())
+            })
+        };
+        let (value, Some(token)) = (self.value(), token.latin1()) else {
+            return false;
+        };
+        let Some(all) = value
+            .latin1()
+            .filter(|_| self.attribute == atom!("class") && is_tidy(&value))
+        else {
+            return false;
+        };
+        let mut end = 0;
+        let has = strings::split(all, space).any(|it| {
+            end += it.len() + 1;
+            it == token
+        });
+        let new = match (has, wanted) {
+            (false, true) => DomString::from_latin1_parts([all, space, token].into_iter()),
+            (true, false) if end > all.len() => {
+                DomString::from_latin1(&all[..(all.len() - token.len()).saturating_sub(1)])
+            }
+            (true, false) => DomString::from_latin1_parts(
+                [&all[..end - 1 - token.len()], &all[end..]].into_iter(),
+            ),
+            _ => value.clone(),
+        };
+        element.set_attr(cx, self.attribute, new.clone());
+        element.with(|it| {
+            it.classes
+                .iter()
+                .filter(|it| !new.is_empty() && *it.source.string() == new)
+                .for_each(|it| it.note_tidiness())
+        });
+        true
+    }
+
     pub(crate) fn contains(&self, token: &DomString) -> bool {
         self.element()
             .with_attr_string(self.attribute, |it| it.has_token(token, false))
@@ -156,13 +200,17 @@ impl DOMTokenList {
 
     pub(crate) fn add<'a>(&'a self, cx: Cx<'_, 'a>, tokens: &[JsLocal<'a>]) -> Result<'a> {
         let tokens = convert(cx, tokens)?;
-        self.update(cx, self.value().tokens().chain(tokens));
+        if !matches!(&*tokens, [only] if self.put_in_class(cx, only, true)) {
+            self.update(cx, self.value().tokens().chain(tokens));
+        }
         Ok(())
     }
 
     pub(crate) fn remove<'a>(&'a self, cx: Cx<'_, 'a>, tokens: &[JsLocal<'a>]) -> Result<'a> {
         let tokens = convert(cx, tokens)?;
-        self.update(cx, self.value().tokens().filter(|it| !tokens.contains(it)));
+        if !matches!(&*tokens, [only] if self.put_in_class(cx, only, false)) {
+            self.update(cx, self.value().tokens().filter(|it| !tokens.contains(it)));
+        }
         Ok(())
     }
 
@@ -176,7 +224,7 @@ impl DOMTokenList {
         validate(&cx.heap, &token)?;
         let has = self.contains(&token);
         let wanted = force.unwrap_or(!has);
-        if wanted != has {
+        if wanted != has && !self.put_in_class(cx, &token, wanted) {
             self.update(
                 cx,
                 self.value()
@@ -238,14 +286,7 @@ impl NamedNodeMap {
     }
 
     pub(crate) fn indexed_get<'a>(&'a self, heap: &JsHeap<'a>, index: u32) -> Option<&'a Attr> {
-        let (mut at, mut name) = (0, None);
-        self.element().for_each_attr(|it, _| {
-            if at == index {
-                name = Some(it.qual_name());
-            }
-            at += 1;
-        });
-        Some(self.element().attr_node(heap, name?))
+        self.element().attr_node_at(heap, index)
     }
 
     pub(crate) fn named_get<'a>(&'a self, heap: &JsHeap<'a>, name: &Impl) -> Option<&'a Attr> {
@@ -321,8 +362,38 @@ fn is_upper(unit: u16) -> bool {
     matches!(unit, 0x41..=0x5a)
 }
 
+/// Short properties, with their attributes.
+#[thread_local]
+static DATA_ATTRIBUTES: Recent<Option<(DomString, Atom)>, 32> = Recent::new();
+
+pub(super) fn forget_data_attributes() {
+    DATA_ATTRIBUTES.forget();
+}
+
 /// `None` if no attribute has that property.
+#[inline]
 fn data_attribute(property: &Impl) -> Option<Atom> {
+    match &mut DATA_ATTRIBUTES.borrow_mut()[((core::ptr::from_ref(property).addr() as u64)
+        .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+        >> 59) as usize]
+    {
+        Some((known, attribute)) if core::ptr::eq(known.as_impl(), property) => {
+            Some(attribute.clone())
+        }
+        _ if property.length() > 32 => spell_data_attribute(property),
+        slot => Some(
+            slot.insert((
+                DomString::from_impl(property),
+                spell_data_attribute(property)?,
+            ))
+            .1
+            .clone(),
+        ),
+    }
+}
+
+#[cold]
+fn spell_data_attribute(property: &Impl) -> Option<Atom> {
     let property = DomString::from_impl(property);
     if property
         .units()

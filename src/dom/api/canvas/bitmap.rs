@@ -238,13 +238,18 @@ impl Bitmap {
     pub(super) fn read(&self, area: Area, is_on_black: bool) -> Option<Box<[u8]>> {
         let pixels =
             Some(area_of([area[2] as u32, area[3] as u32])).filter(|it| *it <= MAX_AREA)?;
-        let mut rgba = bun_jsc::bindgen::try_zeroed_bytes(pixels as usize * 4)?;
+        let Some(graphics) = graphics() else {
+            return bun_jsc::bindgen::try_zeroed_bytes(pixels as usize * 4);
+        };
+        let mut rgba = Vec::new();
+        rgba.try_reserve_exact(pixels as usize * 4).ok()?;
         self.recorder().flush();
-        if let Some(graphics) = graphics() {
-            // SAFETY: there is room for the area.
-            unsafe { (graphics.read)(self.id(), &area, is_on_black, rgba.as_mut_ptr()) };
+        // SAFETY: there is room for the area, all of which is written.
+        unsafe {
+            (graphics.read)(self.id(), &area, is_on_black, rgba.as_mut_ptr());
+            rgba.set_len(pixels as usize * 4);
         }
-        Some(rgba)
+        Some(rgba.into_boxed_slice())
     }
 
     /// `dirty` is relative to the pixels, inside of them and not empty.

@@ -43,6 +43,7 @@ export const WindowInit = b.dictionary(
     useContentSize: flag,
     center: unlessFalse,
     show: unlessFalse,
+    paintWhenInitiallyHidden: unlessFalse,
     focus: unlessFalse,
     focusable: unlessFalse,
     frame: unlessFalse,
@@ -102,6 +103,8 @@ export const InputInit = b.dictionary({
   keyCode: ownedTextIfAny,
   repeat: flag,
   text: ownedTextIfAny,
+  replacementStart: numberIfAny,
+  replacementEnd: numberIfAny,
   files: ownedTexts.nullable,
 });
 
@@ -142,6 +145,7 @@ export const DesktopBaseWindow = b.interface("DesktopBaseWindow", {
     contents: b.any,
     contentsView: view,
     browserViews: b.any,
+    touchBar: b.ref("ElectronTouchBar"),
   },
   construct,
   static: { ...statics, clearLaunchCover: js },
@@ -269,6 +273,11 @@ export const DesktopBaseWindow = b.interface("DesktopBaseWindow", {
 
     previewFile: { args: { path: text, displayName: textIfAny }, ...js },
     closeFilePreview: js,
+    setIcon: { args: { icon: b.any }, ...js },
+    setShape: { args: { rects: b.sequenceVec(DesktopRectangle) }, ...js },
+    setSheetOffset: { args: { offsetY: number, offsetX: number.default(0) }, ...js },
+    setAutoHideCursor: switchTo,
+    setTouchBar: { args: { touchBar: b.any }, ...js },
     setAspectRatio: { args: { aspectRatio: number, extraSize: DesktopRectangle.nullable.optional }, ...js },
     setProgressBar: { args: { progress: number }, ...js },
     invalidateShadow: js,
@@ -281,8 +290,8 @@ export const DesktopBaseWindow = b.interface("DesktopBaseWindow", {
     toggleTabBar: js,
     ...sharing(
       "nothing",
-      "hookWindowMessage setAccentColor setAppDetails setAutoHideCursor setIcon setOverlayIcon setShape " +
-        "setSheetOffset setThumbnailClip setThumbnailToolTip setTouchBar unhookAllWindowMessages unhookWindowMessage",
+      "hookWindowMessage setAccentColor setAppDetails setOverlayIcon " +
+        "setThumbnailClip setThumbnailToolTip unhookAllWindowMessages unhookWindowMessage",
     ),
     ...sharing("no", "getAccentColor isSnapped isTabletMode isWindowMessageHooked setThumbarButtons", {
       returns: b.bool,

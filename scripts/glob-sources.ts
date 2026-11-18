@@ -31,6 +31,8 @@ interface SourcePattern {
  * To add a new source list: add an entry here. The `Sources` type and
  * `globAllSources()` pick it up automatically.
  */
+const importedByBindgenInput = ["src/desktop/schema.ts", "src/dom/api/core/reflect.ts"];
+
 const patterns = {
   /** `packages/bun-error/*` — error overlay page */
   bunError: {
@@ -50,7 +52,7 @@ const patterns = {
   },
   /** the generator of the table of built-ins, with Bun's own declarations and data files */
   builtinsTableCodegen: {
-    paths: ["src/codegen/builtins/**/*.{ts,txt}"],
+    paths: ["src/codegen/builtins/**/*.{ts,txt}", ...importedByBindgenInput],
   },
   /** built-ins the AoT compiler implements in TypeScript, read by that generator */
   aotPrelude: {
@@ -96,7 +98,7 @@ const patterns = {
   },
   /** bindgen generator code */
   bindgenCodegen: {
-    paths: ["src/codegen/bindgen*.ts", "src/codegen/helpers.ts"],
+    paths: ["src/codegen/bindgen*.ts", "src/codegen/helpers.ts", ...importedByBindgenInput],
   },
   /**
    * all `*.rs` + workspace manifests — implicit inputs to the cargo step.

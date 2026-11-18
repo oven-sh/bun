@@ -457,7 +457,6 @@ impl Syntax {
                 .map(Data::Transform)
                 .collect(),
             Syntax::Tokens => source.tokens().map(Data::Text).collect(),
-            Syntax::Languages if text.trim_ascii().is_empty() => Vec::new(),
             Syntax::Languages => split(text, ",")
                 .map(|it| Data::Text(it.trim_ascii().into()))
                 .collect(),

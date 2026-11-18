@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/tty.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 0bf6ae0d70e614a184f8f35fcaa70857262258ac80e13b4f4334ba9856d6e271.
+// Written against that file with the SHA-256 c39eeb5fbc19d61ddda0f9817ea1324540b61c3b38ca0742e4fb2cea473a0576.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 // Hardcoded module "node:tty"
 
@@ -28,6 +28,7 @@ const { validateInteger } = require("internal/validators");
 const kRawModeState = Symbol("rawModeState");
 const kReader = Symbol("reader");
 const kBlocks = Symbol("blocks");
+const kUnrefed = Symbol("unrefed");
 
 type Environment = Record<string, string | undefined>;
 type DoneCallback = (error?: Error | null) => void;
@@ -42,6 +43,7 @@ declare global {
       $start(): void;
       [kRawModeState]?: Uint8Array;
       [kBlocks]?: boolean;
+      [kUnrefed]?: boolean;
       [kReader]?: any;
       ref(): this;
       unref(): this;
@@ -81,6 +83,39 @@ function setUpReadStream() {
   return ReadStream;
 }
 
+async function readPolled(stream: $Node.TTYReadStream, size: number) {
+  let value: Uint8Array | undefined;
+  try {
+    let reader = stream[kReader];
+    if (!reader) {
+      const native = Bun.file(stream.fd!).stream();
+      stream.$bunNativePtr = native.$bunNativePtr as any;
+      reader = stream[kReader] = native.getReader();
+      if (stream[kUnrefed]) stream.$bunNativePtr!.updateRef(false);
+    }
+    ({ value } = await reader.read());
+  } catch (error: any) {
+    if (stream.destroyed) return;
+    // It cannot be polled: it blocks (ESPIPE, on macOS ENXIO), or kqueue refuses /dev/tty (EINVAL).
+    const code = error?.code;
+    if (code !== "ESPIPE" && code !== "ENXIO" && code !== "EINVAL") return stream.destroy(error);
+    stream[kBlocks] = true;
+    stream[kReader] = stream.$bunNativePtr = undefined;
+    return stream._read(size);
+  }
+  if (stream.destroyed) return;
+  try {
+    if (value) stream.bytesRead += value.length;
+    stream.push(value ?? null);
+  } catch (error) {
+    process.nextTick(rethrow, error);
+  }
+}
+
+function rethrow(error: unknown) {
+  throw error;
+}
+
 const prototypeOfReadStream = {
   get() {
     const Prototype = Object.create(require("internal/fs/streams").ReadStream.prototype);
@@ -88,6 +123,7 @@ const prototypeOfReadStream = {
     // Add ref/unref methods to make tty.ReadStream behave like Node.js
     // where TTY streams have socket-like behavior
     Prototype.ref = function (this: $Node.TTYReadStream) {
+      this[kUnrefed] = false;
       // Get the underlying native stream source if available
       const source = this.$bunNativePtr;
       if (source?.updateRef) {
@@ -97,6 +133,7 @@ const prototypeOfReadStream = {
     };
 
     Prototype.unref = function (this: $Node.TTYReadStream) {
+      this[kUnrefed] = true;
       // Get the underlying native stream source if available
       const source = this.$bunNativePtr;
       if (source?.updateRef) {
@@ -155,28 +192,11 @@ const prototypeOfReadStream = {
     };
 
     if (process.platform !== "win32") {
-      // The descriptor may be non-blocking, as the master of a pty from node-pty is, so it has to be polled.
-      // One that blocks is taken for a file by the stream, which fails before it has read anything:
-      // with ESPIPE, or ENXIO on macOS. kqueue refuses /dev/tty with EINVAL.
+      // A non-blocking descriptor, as the master of a pty from node-pty, has to be polled.
       Prototype._read = function (this: $Node.TTYReadStream, size: number) {
         if (!this.isTTY || this[kBlocks])
           return require("internal/fs/streams").ReadStream.prototype._read.$call(this, size);
-        let reader = this[kReader];
-        if (!reader) {
-          const native = Bun.file(this.fd!).stream();
-          this.$bunNativePtr = native.$bunNativePtr as any;
-          reader = this[kReader] = native.getReader();
-        }
-        reader.read().then(
-          ({ value }) => this.push(value ?? null),
-          error => {
-            const code = error?.code;
-            if (code !== "ESPIPE" && code !== "ENXIO" && code !== "EINVAL") return this.destroy(error);
-            this[kBlocks] = true;
-            this[kReader] = this.$bunNativePtr = undefined;
-            this._read(size);
-          },
-        );
+        readPolled(this, size);
       };
     }
 

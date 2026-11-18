@@ -1448,14 +1448,7 @@ impl CanvasDrawing {
             return Ok(());
         };
         if font.is_relative {
-            let inherited = host::inherited(cx, self)?;
-            font = Font::parse(
-                value,
-                inherited.font_size,
-                inherited.line_height,
-                inherited.root_font_size,
-            )
-            .map_or(font, Rc::new);
+            font = Font::parse(value, Some(&host::inherited(cx, self)?)).map_or(font, Rc::new);
         }
         self.with_state(|state| {
             (state.stretch, state.caps, state.font) = (font.stretch, font.caps, Some(font))

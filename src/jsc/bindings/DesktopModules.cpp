@@ -1,11 +1,11 @@
 // What src/desktop needs from C++.
 #include "root.h"
+#include "Bindgen/JSWrapper.h"
 #include "BunClientData.h"
 #include "BunProcess.h"
 #include "EventNames.h"
 #include "EventTargetConcrete.h"
 #include "GeneratedBlob.h"
-#include "InternalModuleRegistry.h"
 #include "JSDOMException.h"
 #include "JSDOMWrapperCache.h"
 #include "JSEvent.h"
@@ -189,23 +189,23 @@ extern "C" EncodedJSValue Bun__Desktop__require(Zig::GlobalObject* globalObject,
 {
     switch (module) {
     case 0:
-        return JSValue::encode(BUN_REQUIRE_INTERNAL_MODULE(globalObject, NodeChildProcess, "native:Bindgen:desktop_modules.bind.ts:modules"));
+        return JSValue::encode(Bun::Bindgen::requireNodeModule(globalObject, "childProcess"_s));
     case 1:
-        return JSValue::encode(BUN_REQUIRE_INTERNAL_MODULE(globalObject, NodeEvents, "bun:desktop/electron"));
+        return JSValue::encode(Bun::Bindgen::requireNodeModule(globalObject, "events"_s));
     case 2:
         return JSValue::encode(globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject));
     case 3:
-        return JSValue::encode(BUN_REQUIRE_INTERNAL_MODULE(globalObject, NodeUrl, "bun:desktop/electron"));
+        return JSValue::encode(Bun::Bindgen::requireNodeModule(globalObject, "url"_s));
     case 4:
-        return JSValue::encode(BUN_REQUIRE_INTERNAL_MODULE(globalObject, NodeDNS, "bun:desktop/electron"));
+        return JSValue::encode(Bun::Bindgen::requireNodeModule(globalObject, "dns"_s));
     case 5:
-        return JSValue::encode(BUN_REQUIRE_INTERNAL_MODULE(globalObject, NodeFS, "native:Bindgen:desktop_modules.bind.ts:modules"));
+        return JSValue::encode(Bun::Bindgen::requireNodeModule(globalObject, "fs"_s));
     case 6:
-        return JSValue::encode(BUN_REQUIRE_INTERNAL_MODULE(globalObject, NodeOS, "native:Bindgen:desktop_modules.bind.ts:modules"));
+        return JSValue::encode(Bun::Bindgen::requireNodeModule(globalObject, "os"_s));
     case 7:
-        return JSValue::encode(BUN_REQUIRE_INTERNAL_MODULE(globalObject, NodeStream, "bun:desktop/electron"));
+        return JSValue::encode(Bun::Bindgen::requireNodeModule(globalObject, "stream"_s));
     default:
-        return JSValue::encode(BUN_REQUIRE_INTERNAL_MODULE(globalObject, NodeTLS, "native:Bindgen:desktop_modules.bind.ts:modules"));
+        return JSValue::encode(Bun::Bindgen::requireNodeModule(globalObject, "tls"_s));
     }
 }
 

@@ -1,85 +1,81 @@
-//! The input that scripts pass on.
+//! The input that is passed on to the web engine.
 
 use bun_ui::protocol::{DragPhase, Input, Key, Located, Mouse, MouseAction, Wheel};
+use bun_web::input::{self, Action, Drag};
 
-use crate::generated_bindgen::webview::SurfaceEvent;
 use crate::prelude::*;
 
-fn text(it: Option<&[u8]>) -> Text {
-    Text::lossy(it.unwrap_or_default())
-}
-
-fn range(it: Option<&[f64]>) -> Option<[u32; 2]> {
-    it?.first_chunk::<2>().map(|it| it.map(|it| it as u32))
-}
-
 /// With the lengths divided by `zoom`.
-pub(super) fn from_script(it: &SurfaceEvent<'_>, zoom: f64) -> JsResult<Option<Input>> {
+pub(super) fn for_engine(it: input::Input, zoom: f64) -> Option<Input> {
+    let place = it.place().unwrap_or_default();
     let at = Located {
-        x: finite(it.x / zoom),
-        y: finite(it.y / zoom),
-        modifiers: it.m as u8,
+        x: finite(place.window[0] / zoom),
+        y: finite(place.window[1] / zoom),
+        modifiers: place.modifiers as u8,
         ..Default::default()
     };
-    Ok(Some(match (&*it.t, it.e.as_deref()) {
-        (b"mouse", action) => Input::Mouse(Mouse {
+    Some(match it {
+        input::Input::Mouse(it) => Input::Mouse(Mouse {
             at,
-            action: match action {
-                Some(b"down") => MouseAction::Down,
-                Some(b"up") => MouseAction::Up,
-                Some(b"leave") => MouseAction::Leave,
-                _ => MouseAction::Move,
+            action: match it.action {
+                Action::Down => MouseAction::Down,
+                Action::Up => MouseAction::Up,
+                Action::Leave => MouseAction::Leave,
+                Action::Move => MouseAction::Move,
             },
-            button: it.b as u8,
+            button: it.button as u8,
             buttons: it.buttons as u8,
-            clicks: it.n,
+            clicks: it.clicks as u32,
         }),
-        (b"wheel", _) => Input::Wheel(Wheel {
+        input::Input::Wheel { delta, .. } => Input::Wheel(Wheel {
             at,
-            delta: [it.dx, it.dy],
+            delta,
             is_precise: false,
         }),
-        (b"pinch", _) => Input::Pinch {
+        input::Input::Pinch { delta, .. } => Input::Pinch {
             at,
-            delta: finite(it.delta),
+            delta: finite(delta),
         },
-        (b"drag", phase) => Input::Drag {
+        input::Input::Drag { phase, files, .. } => Input::Drag {
             phase: match phase {
-                Some(b"enter") => DragPhase::Enter,
-                Some(b"leave") => DragPhase::Leave,
-                Some(b"drop") => DragPhase::Drop,
-                _ => DragPhase::Over,
+                Drag::Enter => DragPhase::Enter,
+                Drag::Leave => DragPhase::Leave,
+                Drag::Drop => DragPhase::Drop,
+                Drag::Over => DragPhase::Over,
             },
             at,
-            paths: it
-                .paths
-                .iter()
-                .flatten()
-                .map(|it| Text::lossy(it))
-                .collect(),
+            paths: files.into_iter().map(|it| it.0.into()).collect(),
         },
-        (b"key", phase) => Input::Key(Key {
-            key: text_of(it.key.to_js())?.into(),
-            code: text(it.code.as_deref()),
+        input::Input::Key(it) => Input::Key(Key {
+            key: it.key.into(),
+            code: it.code.into(),
             location: it.location as u8,
-            modifiers: at.modifiers,
-            is_down: phase == Some(b"down"),
-            is_repeat: it.repeat,
-            is_composing: it.composing,
+            modifiers: it.modifiers as u8,
+            is_down: it.is_down,
+            is_repeat: it.repeats,
+            is_composing: it.is_composing,
         }),
-        (b"text", _) => Input::Text {
-            text: text(it.text.as_deref()),
-            is_typed: it.key.to_js().to_boolean(),
-            range: range(it.range.as_deref()).into(),
+        input::Input::Text {
+            text,
+            is_typed,
+            range,
+        } => Input::Text {
+            text: text.into(),
+            is_typed,
+            range: range.into(),
         },
-        (b"compose", _) => Input::Compose {
-            text: text(it.text.as_deref()),
-            selection: range(it.selection.as_deref()).unwrap_or_default(),
-            range: range(it.range.as_deref()).into(),
+        input::Input::Compose {
+            text,
+            selection,
+            range,
+        } => Input::Compose {
+            text: text.into(),
+            selection: selection.unwrap_or_default(),
+            range: range.into(),
         },
-        (b"composeEnd", _) => Input::EndComposition,
-        (b"focus", _) => Input::Focus,
-        (b"blur", _) => Input::Blur,
-        _ => return Ok(None),
-    }))
+        input::Input::EndComposition => Input::EndComposition,
+        input::Input::Focus { .. } => Input::Focus,
+        input::Input::Blur { .. } => Input::Blur,
+        _ => return None,
+    })
 }

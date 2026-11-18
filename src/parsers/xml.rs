@@ -195,6 +195,8 @@ type PResult<T> = Result<T, PErr>;
 /// so the work an attacker can force is capped lower.)
 const AMPLIFICATION_THRESHOLD: u64 = 1024 * 1024;
 const MAX_AMPLIFICATION: u64 = 100;
+/// What an attribute takes besides its name and value.
+const ATTRIBUTE_COST: usize = 32;
 /// Entity references open at any one time (the depth of the reference chain).
 const MAX_ENTITY_DEPTH: usize = 256;
 
@@ -1145,6 +1147,13 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
 
     // ── input frames and entities ──────────────────────────────────────────
 
+    fn may_produce(&mut self, bytes: usize) -> bool {
+        self.expanded_bytes += bytes as u64;
+        let produced = self.document_len + self.expanded_bytes;
+        produced <= AMPLIFICATION_THRESHOLD
+            || produced <= MAX_AMPLIFICATION * self.document_len.max(1)
+    }
+
     fn push_frame(
         &mut self,
         text: &'a [U],
@@ -1161,11 +1170,7 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
         {
             return Err(self.err_named(ref_pos, "Entity", entity.0, " refers to itself"));
         }
-        self.expanded_bytes += text.len() as u64;
-        let produced = self.document_len + self.expanded_bytes;
-        if produced > AMPLIFICATION_THRESHOLD
-            && produced > MAX_AMPLIFICATION * self.document_len.max(1)
-        {
+        if !self.may_produce(text.len()) {
             return Err(self.err(ref_pos, "Entity expansion exceeds the amplification limit"));
         }
         let report_pos = if self.in_document() {
@@ -3236,6 +3241,8 @@ struct AttDef<'a, U: Unit> {
 struct AttList<'a, U: Unit> {
     defs: Vec<AttDef<'a, U>>,
     by_name: HashMap<&'a [U], u32>,
+    /// What each element of the type counts towards the amplification limit.
+    cost: usize,
 }
 
 impl<'a, U: Unit> AttList<'a, U> {
@@ -3246,6 +3253,7 @@ impl<'a, U: Unit> AttList<'a, U> {
     fn declare(&mut self, def: AttDef<'a, U>) {
         if !self.by_name.contains_key(def.name) {
             self.by_name.insert(def.name, self.defs.len() as u32);
+            self.cost += (def.default).map_or(1, |it| ATTRIBUTE_COST + def.name.len() + it.len());
             self.defs.push(def);
         }
     }
@@ -4388,6 +4396,10 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
         if let Some(defs) = defs {
             // SAFETY: see `defs`.
             let defs = unsafe { &*defs };
+            if !self.scanner.may_produce(defs.cost) {
+                let message = "Default attributes exceed the amplification limit";
+                return Err(self.scanner.err(self.scanner.tok.pos, message));
+            }
             for def in &defs.defs {
                 if let Some(value) = def.default
                     && !self.has_attribute(def.name)

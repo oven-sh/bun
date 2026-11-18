@@ -82,13 +82,22 @@ impl<'a> Transferable<'a> {
 pub(crate) fn serialize<'a>(
     cx: Cx<'_, 'a>,
     value: JSValue,
-    transfer: impl ExactSizeIterator<Item = JSValue>,
+    transfer: impl Iterator<Item = JSValue>,
 ) -> Result<'a, Message> {
-    if transfer.len() == 0 {
-        return Ok(Serialized::new(cx.global(), value, &[], &[])?.into());
-    }
     let (buffers, objects): (Vec<_>, Vec<_>) =
         transfer.partition(|it| it.js_type() == JSType::ArrayBuffer);
+    serialize_with(cx, value, &buffers, &objects)
+}
+
+fn serialize_with<'a>(
+    cx: Cx<'_, 'a>,
+    value: JSValue,
+    buffers: &[JSValue],
+    objects: &[JSValue],
+) -> Result<'a, Message> {
+    if objects.is_empty() {
+        return Ok(Serialized::new(cx.global(), value, buffers, &[])?.into());
+    }
     let mut sorted: Vec<_> = objects.iter().map(|it| it.encoded()).collect();
     sorted.order_by(Ord::cmp);
     if !sorted.is_sorted_by(|a, b| a < b) {
@@ -100,7 +109,7 @@ pub(crate) fn serialize<'a>(
     objects
         .iter()
         .try_for_each(|it| Transferable::of(cx, *it).map(drop))?;
-    let value = Serialized::new(cx.global(), value, &buffers, &objects)?;
+    let value = Serialized::new(cx.global(), value, buffers, objects)?;
     let transferred = objects
         .iter()
         .map(|it| Transferable::of(cx, *it)?.transfer(cx))

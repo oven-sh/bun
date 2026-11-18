@@ -20,6 +20,8 @@ JSC::JSValue desktopRealmOriginOf(JSC::JSGlobalObject*, const String& href);
 bool isDesktopRealm(JSC::JSGlobalObject*);
 // What the prototype of WebCore's class inherits from: in a window or a worker, that of the interface with the same name.
 JSC::JSObject* desktopRealmPrototypeAbove(JSC::JSGlobalObject*, ASCIILiteral name);
+// Its constructor. Null in other realms.
+JSC::JSObject* desktopRealmInterface(JSC::JSGlobalObject*, ASCIILiteral name);
 // Empty unless it is an event of a document, or if it has thrown.
 JSC::JSValue desktopRealmDispatch(JSC::JSGlobalObject*, WebCore::EventTarget&, JSC::JSValue event);
 JSC::EncodedJSValue desktopRealmCreateObjectURL(JSC::JSGlobalObject*, JSC::JSValue blob);

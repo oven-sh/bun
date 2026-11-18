@@ -322,10 +322,6 @@ impl FetchSession {
             }
         }
 
-        this.pool.offers_h2 = options
-            .get_boolean_strict(global, "http2")?
-            .unwrap_or(false);
-
         if let Some(unix) = options.get(global, "unix")? {
             if let Some(path) = super::parse_unix(vm, global, unix)? {
                 this.unix = path;

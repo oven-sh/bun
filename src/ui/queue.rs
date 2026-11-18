@@ -320,6 +320,18 @@ pub fn is_input_pending(includes_continuous: bool) -> bool {
     })
 }
 
+/// Whether an input method has done something that the page has not seen.
+pub fn are_edits_waiting() -> bool {
+    let is_edit = |input: &Input| {
+        matches!(
+            input,
+            Input::Text { .. } | Input::Compose { .. } | Input::EndComposition
+        )
+    };
+    (queue().events.borrow().iter().flatten())
+        .any(|event| matches!(event, Event::Surface { input, .. } if is_edit(input)))
+}
+
 /// In milliseconds.
 pub fn frame_interval() -> f64 {
     queue().frame_interval.get()

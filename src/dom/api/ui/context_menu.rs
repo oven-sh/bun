@@ -1,6 +1,6 @@
 //! What a context menu needs to know.
 
-use bun_web::host::{ContextMenu, EditFlags};
+use bun_web::host::{ContextMenu, EditFlags, MediaType};
 
 use super::pointer;
 use super::prelude::*;
@@ -65,15 +65,17 @@ pub(crate) fn describe_point<'a>(cx: &mut Cx<'a>, ui: &'a Ui, point: [f64; 2]) -
         link_text: owned(link.map(|it| it.descendant_text_content())),
         src_url,
         media_type: match target.map(Element::tag) {
-            Some(atom!("img")) => "image",
-            Some(tag @ (atom!("video") | atom!("audio") | atom!("canvas"))) => tag.as_str(),
-            _ => "none",
+            Some(atom!("img")) => MediaType::Image,
+            Some(atom!("video")) => MediaType::Video,
+            Some(atom!("audio")) => MediaType::Audio,
+            Some(atom!("canvas")) => MediaType::Canvas,
+            _ => MediaType::None,
         },
         alt_text: owned(attribute(atom!("alt"))),
         title_text: owned(attribute(atom!("title"))),
         selection_text: owned(Some(editing::selection::text(cx, ui))),
         is_editable,
-        input_field_type: field.unwrap_or("none"),
+        input_field_type: field.unwrap_or("none").into(),
         form_control_type: target.map_or_else(|| "none".into(), control_type),
         edit_flags: EditFlags {
             can_undo,

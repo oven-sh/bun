@@ -13,8 +13,8 @@ use super::*;
 use crate::api::core::Doc;
 use crate::api::core::Known;
 use crate::api::events::call_back;
-use crate::api::interim::queue_task;
 use crate::api::media::{MediaStream, performance_now};
+use crate::api::on_behalf::queue_task;
 use crate::generated_bindgen::audio::AudioContextState as State;
 
 type Outcome<T> = core::result::Result<T, Failure>;

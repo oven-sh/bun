@@ -112,6 +112,8 @@ pub enum Kerning {
 pub struct Plan {
     pub script: Script,
     pub direction: Direction,
+    /// Unless the script is written either way.
+    pub(super) is_leftwards: Option<bool>,
     pub(super) rules: Rules,
     /// In `GSUB`.
     pub chosen_script: Option<Tag>,
@@ -344,6 +346,7 @@ impl Plan {
         Plan {
             script,
             direction,
+            is_leftwards: super::is_written_leftwards(script),
             rules,
             chosen_script: chosen[0].map(|it| it.0),
             global_mask,

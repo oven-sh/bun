@@ -148,7 +148,7 @@ pub(crate) fn user_scroll<'a>(
 
 pub(crate) fn scroll_into_view<'a>(cx: &mut Cx<'a>, node: &'a Element, align: Alignment) {
     ask(cx, node, |engine, id| {
-        engine.scroll_into_view_for_script(id, [align; 2], 0, false, false)
+        engine.scroll_into_view_for_script(id, [align; 2], 0, crate::scroll::Scrollers::All, false)
     });
     node.doc().invalidate(cx);
 }
@@ -299,7 +299,13 @@ pub(crate) fn reveal_caret<'a>(cx: &mut Cx<'a>, caret: Caret<'a>) {
     let (node, offset) = range::to_engine(caret.point);
     laid_out(cx, caret.point.node, |engine, _| {
         if let Some((at, rect)) = engine.caret_rect(engine.point(node, offset), caret.is_upstream) {
-            engine.reveal(at, rect, [Alignment::Nearest; 2], 1, false);
+            engine.reveal(
+                at,
+                rect,
+                [Alignment::Nearest; 2],
+                1,
+                crate::scroll::Scrollers::All,
+            );
         }
     });
 }
@@ -322,7 +328,7 @@ pub(crate) fn reveal_in_frame<'a>(
                 .moved([x, y]),
             align,
             behavior,
-            false,
+            crate::scroll::Scrollers::All,
         )
     });
     frame.doc().invalidate(cx);
@@ -349,7 +355,13 @@ pub(crate) fn styled<'a, R: Default>(
 
 pub(crate) fn reveal_in_nearest_scroller<'a>(cx: &mut Cx<'a>, node: &'a Element) {
     ask(cx, node, |engine, id| {
-        engine.scroll_into_view_for_script(id, [Alignment::Nearest; 2], 1, true, false)
+        engine.scroll_into_view_for_script(
+            id,
+            [Alignment::Nearest; 2],
+            1,
+            crate::scroll::Scrollers::Nearest,
+            false,
+        )
     });
     node.doc().invalidate(cx);
 }

@@ -39,6 +39,7 @@ pub(super) struct Cbs(pub(super) *const u8, pub(super) usize);
 
 unsafe extern "C" {
     safe fn X509_STORE_new() -> Option<OwnedX509Store>;
+    safe fn us_x509_store_ignore_expired_trust_anchors(store: &X509_STORE);
     safe fn X509_STORE_CTX_new() -> Handle;
     fn X509_STORE_CTX_init(
         context: Handle,
@@ -159,6 +160,7 @@ fn store() -> Option<&'static X509_STORE> {
     let authorities = authorities()?;
     let make = || {
         let store = X509_STORE_new()?;
+        us_x509_store_ignore_expired_trust_anchors(&store);
         for file in authorities.iter().filter_map(|it| MemBio::new(it)) {
             while let Some(authority) = file.read_x509() {
                 X509_STORE_add_cert(&store, &authority);

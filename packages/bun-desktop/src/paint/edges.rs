@@ -287,9 +287,14 @@ impl<'a> Edges<'a> {
 }
 
 /// Adds what is right of a line that goes from `from` to `to` and `height` down, as differences between neighbors.
-fn accumulate(row: &mut [f32], from: f32, to: f32, height: f32) {
-    let limit = (row.len() - 2) as f32;
-    let (left, right) = (from.min(to).clamp(0., limit), from.max(to).clamp(0., limit));
+fn accumulate(row: &mut [f32], from: f32, to: f32, mut height: f32) {
+    let (limit, low, high) = ((row.len() - 2) as f32, from.min(to), from.max(to));
+    let (left, right) = (low.clamp(0., limit), high.clamp(0., limit));
+    if left < right && (low, high) != (left, right) {
+        let slope = height / (high - low);
+        row[0] += slope * (left - low);
+        height = slope * (right - left);
+    }
     let (first, last) = (left as usize, right as usize);
     if first == last {
         let middle = (left + right) / 2. - first as f32;

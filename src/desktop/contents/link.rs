@@ -2,15 +2,18 @@
 
 use bun_web::host::{
     Answer, Browser, Connection, ConsoleAudience, DialogAnswer, DialogKind, Display, Environment,
-    FileChoice, Keystroke, Notice, Permission, Question, Rect as Area, Reply,
+    FileChoice, Inspected, Keystroke, Notice, Permission, Question, Rect as Area, Reply, Verdict,
 };
 use bun_web::js_link::{Native, NativeHost};
 use bun_web::referrer::ReferrerPolicy;
 use bun_web::trust;
 use bun_web::url::Url;
 
+use super::inspection::News;
 use super::page::Page;
-use super::{Kind, fields, hooks, load, logs_to_stderr, object_in, or_undefined};
+use super::{
+    Contents, Kind, fields, frame, hooks, load, logs_to_stderr, object_in, or_undefined, worlds,
+};
 
 use crate::generated_bindgen::electron::DesktopProcess;
 use crate::generated_bindgen::system::js_DesktopNotification;
@@ -55,8 +58,16 @@ fn environment(page: &Page) -> JsResult<Environment> {
         .unwrap_or_default();
     let (display, emulated) = (screen::display_matching(bounds)?, it.emulated_media());
     let seems_focused = it.inspection.seems_focused.get();
-    let is_occluded =
-        it.preferences.throttles_background && window.is_some_and(|it| it.is_occluded());
+    let (owner, seems_shown) = (page.owner(), seems_focused || it.seems_shown()?);
+    let on_device = |real: Area| match owner.device.get().map(|it| it.screen) {
+        Some([width, height]) if width * height > 0. => Area {
+            x: 0.,
+            y: 0.,
+            width,
+            height,
+        },
+        _ => real,
+    };
     let otherwise = Environment::default();
     Ok(Environment {
         is_dark: emulated.is_dark.map_or_else(theme::is_dark, Ok)?,
@@ -69,13 +80,14 @@ fn environment(page: &Page) -> JsResult<Environment> {
         light_highlight: (settings.highlight.get()).map_or(otherwise.light_highlight, |it| it[0]),
         dark_highlight: (settings.highlight.get()).map_or(otherwise.dark_highlight, |it| it[1]),
         display: Some(Display {
-            bounds: area(display.bounds),
-            work_area: area(display.work_area),
+            bounds: on_device(area(display.bounds)),
+            work_area: on_device(area(display.work_area)),
             color_depth: 24,
         }),
         zoom: page.owner().zoom_factor(),
         is_active: seems_focused || it.is_window_focused()?,
-        is_visible: seems_focused || (it.is_visible()? && !is_occluded),
+        is_visible: seems_shown || !owner.throttles_background.get(),
+        is_drawn: seems_shown && (seems_focused || window.is_some()),
         is_fullscreen: window.map(|it| it.fills_screen()).transpose()? == Some(true),
         is_transparent: it.kind.get() != Kind::Window || it.preferences.is_transparent,
         overlays_scrollbars: settings
@@ -89,6 +101,10 @@ fn environment(page: &Page) -> JsResult<Environment> {
             .map(area),
         window_bounds: Some(area(bounds)),
         languages: languages(page)?,
+        fonts: it.preferences.fonts.clone(),
+        fixes_text_areas: it.preferences.fixes_text_areas,
+        reports_paints: fields::subscriber(it).is_some_and(JSValue::is_callable),
+        reports_preferred_size: it.preferences.reports_preferred_size && !it.is_frame(),
     })
 }
 
@@ -123,6 +139,9 @@ fn show_dialog(page: &Page, kind: DialogKind, message: String) -> JsResult<Dialo
 }
 
 fn move_window(page: &Page, bounds: Area) -> JsResult<()> {
+    let now = (page.contents().window().map(|it| it.bounds())).transpose()?;
+    let display = screen::display_matching(now.unwrap_or_default())?;
+    let bounds = bounds.moved_into(area(display.work_area));
     if dispatch(
         page.owner().to_js(),
         "content-bounds-updated",
@@ -142,7 +161,7 @@ fn show_notification(page: &'static Page, id: u32, options: JSValue) -> JsResult
     let notification = realm::instantiate(class, &[options])?;
     for kind in ["click", "show", "close"] {
         let pass_on = listener(page, move |page, _| {
-            bun_web::dom::fire_at_notification(id, kind);
+            page.tell(|it| it.fire_at_notification(id, kind.to_owned()))?;
             if kind == "close" {
                 page.notifications()?.remove(global(), js(id)?)?;
             }
@@ -167,7 +186,9 @@ fn set_fullscreen(page: &Page, is_on: bool) -> JsResult<()> {
     let Some(window) = page.contents().window().map(JsInterface::to_js) else {
         return Ok(());
     };
-    invoke(window, "setFullScreen", &[is_on.into()])?;
+    if !page.contents().preferences.keeps_window_size {
+        invoke(window, "setFullScreen", &[is_on.into()])?;
+    }
     emit(window, name, &[])
 }
 
@@ -208,7 +229,7 @@ fn pick_files(page: &Page, choice: &FileChoice) -> JsResult<JSValue> {
 
 /// Whether the windows that the page opens, and the one that has opened it, share objects with it.
 pub(super) fn knows_other_windows(page: &Page) -> bool {
-    page.agent().is_some() && trust::trusts_all_frames()
+    page.has_relatives.get() && trust::trusts_all_frames()
 }
 
 fn may_ask_for(page: &Page, permission: &str) -> bool {
@@ -289,7 +310,31 @@ fn obey(page: &'static Page, question: Question) -> JsResult<Option<Answer>> {
     let it = page.contents();
     match question {
         question if page.is_disposed() => return OfTab.answer(page.to_js(), question),
-        Question::AddSecurityPolicy { policy } => page.add_policy(&policy)?,
+        Question::Activated {} => page.activated(),
+        Question::ActivationConsumed {} => page.consume_activation()?,
+        Question::BaseUrlChanged { url } => page.base_url_changed(url),
+        Question::CloseWindow { context } => {
+            (it.relative(context).into_iter()).for_each(|it| it.close_for(page))
+        }
+        Question::CreateFrame { frame, owner } if page.has_relatives.get() => {
+            frame::create(page, frame, &owner)?
+        }
+        Question::CreateGuest { frame, scale } => hooks::create_guest(page, frame, scale)?,
+        Question::Disown {} if knows_other_windows(page) => it.set_opened_by(None),
+        Question::FocusOther { context } => {
+            let may_focus = |it: &&Contents| {
+                !it.is_frame()
+                    && (page.has_activation() || it.opener_page().is_some_and(|it| same(it, page)))
+            };
+            (it.relative(context).filter(may_focus)).map_or(Ok(()), |it| it.focus_window())?
+        }
+        Question::Frame { frame, message } => frame::obey(page, frame, message)?,
+        Question::Guest { frame, message } => hooks::tell_guest(page, frame, message)?,
+        Question::Navigate { wish } => hooks::navigate(page, *wish)?,
+        Question::Proceed { ticket } => page.proceed(ticket)?,
+        Question::StartWindow { context } => {
+            (it.relative(context).map(|it| it.started_page())).transpose()?;
+        }
         Question::CancelNavigation {} => it.cancel_navigation()?,
         Question::Close {} if knows_other_windows(page) => it.close_for_script(),
         Question::Close {} if !it.is_frame() => it.close_soon(),
@@ -301,7 +346,7 @@ fn obey(page: &'static Page, question: Question) -> JsResult<Option<Answer>> {
         }
         Question::Reload {} => page.later(|it| it.contents().reload_page(true)),
         Question::Loaded { stage } => it.reached(page, stage)?,
-        Question::PaintedInFrame { scale } => it.painted(js(scale)?, JSValue::UNDEFINED)?,
+        Question::PaintedInFrame { scale } => it.painted(scale, JSValue::UNDEFINED)?,
         Question::SetFullscreen { is_on } => set_fullscreen(page, is_on)?,
         Question::UnhandledKey { key } => handle_shortcut(page, &key)?,
         Question::SetName { name } => page.rename(name),
@@ -344,12 +389,33 @@ impl Native for OfWindow {
             Notice::IconsChanged { urls } if page.is_at_top() => {
                 return announce(page.owner().to_js(), "page-favicon-updated", &[js(urls)?]);
             }
-            Notice::ThemeColorChanged { color } if page.is_at_top() => {
+            Notice::ThemeColorChanged { color }
+                if page.is_at_top() && page.owner().theme_color.replace(color) != color =>
+            {
+                let color = color.map(|it| format!("#{:06X}", it >> 8));
                 return announce(
                     page.owner().to_js(),
                     "did-change-theme-color",
-                    &[js(Some(color).filter(|it| !it.is_empty()))?],
+                    &[js(color)?],
                 );
+            }
+            Notice::CursorChanged { cursor }
+                if !page.is_disposed()
+                    && has_listeners(page.owner().to_js(), "cursor-changed")? =>
+            {
+                let name = match &*cursor {
+                    "default" => "pointer",
+                    "pointer" => "hand",
+                    "no-drop" => "nodrop",
+                    "all-scroll" => "move",
+                    name => name,
+                };
+                return announce(page.owner().to_js(), "cursor-changed", &[js(name)?]);
+            }
+            Notice::Painted {} if page.is_at_top() => return page.owner().deliver_frame(),
+            Notice::PreferredSizeChanged { width, height } if page.is_at_top() => {
+                let size = object!({ "width": width, "height": height });
+                return announce(page.owner().to_js(), "preferred-size-changed", &[size]);
             }
             Notice::ContextMenu { menu } if !page.is_disposed() => {
                 return hooks::show_context_menu(page, js(menu)?);
@@ -398,7 +464,7 @@ impl Native for OfWindow {
 
     fn answer(&self, owner: JSValue, question: Question) -> JsResult<Option<Answer>> {
         let page = page_in(owner);
-        let (it, has_relatives) = (page.contents(), page.agent().is_some());
+        let (it, has_relatives) = (page.contents(), page.has_relatives.get());
         Ok(Some(match question {
             Question::Activation {} => {
                 Answer::Activation(it.activation.borrow().clone().map(Box::new))
@@ -406,7 +472,26 @@ impl Native for OfWindow {
             Question::AllowsFeature { feature } => {
                 Answer::AllowsFeature(Some(page.has_feature(feature.as_bytes())))
             }
-            Question::BeforeInput { key } => Answer::BeforeInput(it.before_input(&key)?),
+            Question::ChooseWindow {
+                target,
+                wish,
+                becomes_opener,
+            } => Answer::ChooseWindow(hooks::choose_window(
+                page,
+                &target,
+                wish.map(|it| *it),
+                becomes_opener,
+            )?),
+            Question::NavigateWindow { context, wish } => Answer::NavigateWindow(
+                (it.relative(context))
+                    .map_or(Ok(Verdict::Refused), |it| it.judge(page, *wish, None))?,
+            ),
+            Question::Open {
+                wish,
+                target,
+                features,
+                popup,
+            } => Answer::Open(hooks::open(page, &wish, &target, &features, popup)?),
             Question::ChecksSpelling {} => {
                 Answer::ChecksSpelling(it.session.get_spell_checker_enabled())
             }
@@ -501,7 +586,43 @@ impl Native for OfWindow {
         }))
     }
 
+    fn inspect(&self, owner: JSValue, it: Inspected<'_>) -> JsResult<()> {
+        let contents = page_in(owner).contents();
+        match it {
+            Inspected::Console { method, values } => {
+                let handles = array(&[])?;
+                (values.iter())
+                    .try_for_each(|it| handles.push(global(), worlds::handle_of(*it)))?;
+                with_elements(handles, |all| contents.notify(News::Console(method, all)))
+            }
+            Inspected::Exception {
+                text,
+                url,
+                line,
+                column,
+                error,
+            } => contents.notify(News::Exception {
+                text,
+                url,
+                line,
+                column,
+                error: worlds::handle_of(error),
+            }),
+        }
+    }
+
+    fn for_blank_frames(&self) -> Option<&'static dyn Native> {
+        Some(&OfTab)
+    }
+
     fn request(&self, owner: JSValue, question: Question, reply: Reply<Option<Answer>>) {
+        if let Question::TraverseTo { key } = question {
+            return page_in(owner).later(move |it| {
+                let outcome = it.contents().traverse_to(&key)?;
+                reply(global(), Some(Answer::TraverseTo(outcome)));
+                Ok(())
+            });
+        }
         if !page_in(owner).is_active() {
             return reply(global(), None);
         }
@@ -510,15 +631,18 @@ impl Native for OfWindow {
             return task::spawn(async {
                 let paths = shown.await.map_err(|it| task::throw(&it));
                 let paths = paths.and_then(|it| texts_of(get(it.get(), "filePaths")?));
-                let paths = paths.map_err(|it| task::report(Err(it))).ok();
+                let paths = task::or_warning(paths);
                 reply(global(), Some(Answer::PickFiles(paths)));
             });
         }
-        if let Question::Print { base_url, markup } = &question {
+        if let Question::Print {
+            markup_of_empty_frame: markup,
+        } = &question
+        {
             if page_in(owner).forbids("allow-modals") {
                 return reply(global(), None);
             }
-            let printed = task::outcome(print::print(page_in(owner), base_url, markup));
+            let printed = task::outcome(print::print(page_in(owner), markup.clone()));
             return task::spawn(async {
                 _ = printed.await;
                 reply(global(), None);
@@ -545,8 +669,4 @@ impl Native for OfWindow {
 
 pub(super) fn of_window(page: &Page) -> JSValue {
     NativeHost::create(heap(), &OfWindow, page.to_js())
-}
-
-pub(super) fn of_blank_frames(page: &Page) -> JSValue {
-    NativeHost::create(heap(), &OfTab, page.to_js())
 }

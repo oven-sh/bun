@@ -11,9 +11,9 @@ use crate::contents::page::Page;
 use crate::generated_bindgen::electron::DesktopProcess;
 use crate::generated_bindgen::renderer::{
     ExecutionScript, RendererContextBridge, RendererCrashReporter, RendererElectron, RendererIpc,
-    RendererProcess, RendererWebFrame, RendererWebUtils, WebSource, js_RendererContextBridge,
+    RendererProcess, RendererWebUtils, WebSource, js_RendererContextBridge,
     js_RendererCrashReporter, js_RendererElectron, js_RendererIpc, js_RendererPreload as fields,
-    js_RendererProcess, js_RendererWebFrame, js_RendererWebUtils,
+    js_RendererProcess, js_RendererWebFrame as frames, js_RendererWebUtils,
 };
 use crate::generated_bindgen::system::js_DesktopShell;
 use crate::ipc::Sender;
@@ -457,36 +457,6 @@ impl Preload {
         let world = realm::of(self.ask("window", &[js(world)?])?);
         Ok((Link::new(self.realm(), world), world))
     }
-
-    fn execute(
-        &self,
-        world: u32,
-        code: JSValue,
-        is_by_user: bool,
-        callback: JSValue,
-    ) -> JsResult<JSValue> {
-        let realm = self.realm();
-        let arguments = [js(world)?, code, is_by_user.into()];
-        let promise = realm::adopt(realm, self.ask("executeJavaScript", &arguments)?)?;
-        if callback.is_callable() {
-            let tell = |arrange: fn(JSValue) -> [JSValue; 2]| {
-                function_in(realm, callback, move |callback, it| {
-                    callback.call(
-                        realm::of(callback),
-                        JSValue::UNDEFINED,
-                        &arrange(argument(it, 0)),
-                    )
-                })
-            };
-            react(
-                realm,
-                promise,
-                tell(|it| [it, JSValue::UNDEFINED]),
-                tell(|it| [JSValue::UNDEFINED, it]),
-            )?;
-        }
-        Ok(promise)
-    }
 }
 
 fn message(
@@ -636,64 +606,155 @@ fn zoom(realm: &Realm, method: &str, arguments: &[JSValue]) -> JsResult<JSValue>
     )
 }
 
-impl RendererWebFrame {
-    pub(crate) fn nothing() {}
+#[derive(Default)]
+pub(crate) struct WebFrame(#[expect(dead_code)] HasFields);
 
-    pub(crate) fn get_nobody(_: &JsHeap<'_>) -> JSValue {
-        JSValue::NULL
+macro_rules! relatives {
+    ($($method:ident: $kind:literal),*) => {$(
+        pub(crate) fn $method(&self, cx: Cx<'_, '_>) -> JsResult<JSValue> {
+            self.relative(cx.global(), $kind, JSValue::UNDEFINED)
+        }
+    )*};
+}
+
+macro_rules! finders {
+    ($($method:ident: $kind:literal),*) => {$(
+        pub(crate) fn $method<'a>(&self, cx: Cx<'a, '_>, text: JsLocal<'a, JSString>) -> JsResult<JSValue> {
+            self.relative(cx.global(), $kind, text.to_js())
+        }
+    )*};
+}
+
+impl WebFrame {
+    fn create(realm: &Realm, host: JSValue) -> JSValue {
+        let frame = frames::create(JsHeap::from_global(realm), WebFrame::default());
+        frames::set_host(frame, host);
+        frame.to_js()
     }
 
-    pub(crate) fn get_routing_id(cx: Cx<'_, '_>) -> u32 {
-        Preload::of(cx.global()).map_or(0, |it| it.frame_id)
+    fn ask(&self, realm: &Realm, method: &str, arguments: &[JSValue]) -> JsResult<JSValue> {
+        Preload::of_or_throw(realm)?;
+        answer_to(realm, invoke(field(frames::host(self)), method, arguments))
     }
 
-    pub(crate) fn get_frame_token(cx: Cx<'_, '_>) -> JsResult<JSValue> {
-        get(
-            Preload::of_or_throw(cx.global())?.sender().frame,
-            "frameToken",
-        )
+    fn relative(&self, realm: &Realm, kind: &str, more: JSValue) -> JsResult<JSValue> {
+        let host = self.ask(realm, "relative", &[js(kind)?, more])?;
+        Ok(if host.is_object() {
+            WebFrame::create(realm, host)
+        } else {
+            JSValue::NULL
+        })
     }
 
-    pub(crate) fn get_top(heap: &JsHeap<'_>) -> JSValue {
-        js_RendererWebFrame::CLASS.constructor(heap)
+    fn execute(
+        &self,
+        realm: &Realm,
+        world: u32,
+        code: JSValue,
+        is_by_user: bool,
+        callback: JSValue,
+    ) -> JsResult<JSValue> {
+        let arguments = [js(world)?, code, is_by_user.into()];
+        let promise = realm::adopt(realm, self.ask(realm, "executeJavaScript", &arguments)?)?;
+        if callback.is_callable() {
+            let tell = |arrange: fn(JSValue) -> [JSValue; 2]| {
+                function_in(realm, callback, move |callback, it| {
+                    callback.call(
+                        realm::of(callback),
+                        JSValue::UNDEFINED,
+                        &arrange(argument(it, 0)),
+                    )
+                })
+            };
+            react(
+                realm,
+                promise,
+                tell(|it| [it, JSValue::UNDEFINED]),
+                tell(|it| [JSValue::UNDEFINED, it]),
+            )?;
+        }
+        Ok(promise)
     }
 
-    pub(crate) fn get_zoom_factor(cx: Cx<'_, '_>) -> JsResult<f64> {
+    pub(crate) fn nothing(&self) {}
+
+    pub(crate) fn get_routing_id(&self, cx: Cx<'_, '_>) -> JsResult<JSValue> {
+        self.ask(cx.global(), "routingId", &[])
+    }
+
+    pub(crate) fn get_frame_token(&self, cx: Cx<'_, '_>) -> JsResult<JSValue> {
+        self.ask(cx.global(), "frameToken", &[])
+    }
+
+    relatives!(
+        get_top: "top",
+        get_parent: "parent",
+        get_opener: "opener",
+        get_first_child: "firstChild",
+        get_next_sibling: "nextSibling"
+    );
+
+    finders!(
+        find_frame_by_token: "token",
+        find_frame_by_name: "name",
+        get_frame_for_selector: "selector"
+    );
+
+    pub(crate) fn find_frame_by_routing_id(&self, cx: Cx<'_, '_>, id: f64) -> JsResult<JSValue> {
+        self.relative(cx.global(), "routingId", js(id)?)
+    }
+
+    pub(crate) fn get_zoom_factor(&self, cx: Cx<'_, '_>) -> JsResult<f64> {
         zoom(cx.global(), "getZoomFactor", &[]).map(JSValue::as_number)
     }
 
-    pub(crate) fn set_zoom_factor(cx: Cx<'_, '_>, factor: f64) -> JsResult<()> {
+    pub(crate) fn set_zoom_factor(&self, cx: Cx<'_, '_>, factor: f64) -> JsResult<()> {
         zoom(cx.global(), "setZoomFactor", &[js(factor)?]).map(drop)
     }
 
-    pub(crate) fn get_zoom_level(cx: Cx<'_, '_>) -> JsResult<f64> {
+    pub(crate) fn get_zoom_level(&self, cx: Cx<'_, '_>) -> JsResult<f64> {
         zoom(cx.global(), "getZoomLevel", &[]).map(JSValue::as_number)
     }
 
-    pub(crate) fn set_zoom_level(cx: Cx<'_, '_>, level: f64) -> JsResult<()> {
+    pub(crate) fn set_zoom_level(&self, cx: Cx<'_, '_>, level: f64) -> JsResult<()> {
         zoom(cx.global(), "setZoomLevel", &[js(level)?]).map(drop)
     }
 
-    pub(crate) fn insert_css<'a>(cx: Cx<'a, '_>, css: JsLocal<'a, JSString>) -> JsResult<JSValue> {
-        Preload::of_or_throw(cx.global())?.ask("insertCSS", &[css.to_js()])
+    pub(crate) fn insert_css<'a>(
+        &self,
+        cx: Cx<'a, '_>,
+        css: JsLocal<'a, JSString>,
+        options: JsLocal<'a>,
+    ) -> JsResult<JSValue> {
+        let origin = match options.to_js().is_object() {
+            true => options.to_js().get(cx.global(), "cssOrigin")?,
+            false => None,
+        };
+        let origin = origin.map(|it| it.to_utf8(cx.global())).transpose()?;
+        let is_of_user = origin.is_some_and(|it| *it == *b"user");
+        self.ask(cx.global(), "insertCSS", &[css.to_js(), is_of_user.into()])
     }
 
     pub(crate) fn remove_inserted_css<'a>(
+        &self,
         cx: Cx<'a, '_>,
         key: JsLocal<'a, JSString>,
     ) -> JsResult<()> {
-        Preload::of_or_throw(cx.global())?
-            .ask("removeInsertedCSS", &[key.to_js()])
+        self.ask(cx.global(), "removeInsertedCSS", &[key.to_js()])
             .map(drop)
     }
 
-    pub(crate) fn insert_text<'a>(cx: Cx<'a, '_>, text: JsLocal<'a, JSString>) -> JsResult<()> {
-        Preload::of_or_throw(cx.global())?
-            .ask("insertText", &[text.to_js()])
+    pub(crate) fn insert_text<'a>(
+        &self,
+        cx: Cx<'a, '_>,
+        text: JsLocal<'a, JSString>,
+    ) -> JsResult<()> {
+        self.ask(cx.global(), "insertText", &[text.to_js()])
             .map(drop)
     }
 
     pub(crate) fn execute_java_script<'a>(
+        &self,
         cx: Cx<'a, '_>,
         code: JsLocal<'a, JSString>,
         gesture: JsLocal<'a>,
@@ -703,10 +764,11 @@ impl RendererWebFrame {
             true => (false, gesture),
             false => (gesture.to_js().to_boolean(), callback),
         };
-        Preload::of_or_throw(cx.global())?.execute(0, code.to_js(), is_by_user, callback.to_js())
+        self.execute(cx.global(), 0, code.to_js(), is_by_user, callback.to_js())
     }
 
     pub(crate) fn execute_java_script_in_isolated_world<'a>(
+        &self,
         cx: Cx<'a, '_>,
         world: u32,
         scripts: Vec<WebSource>,
@@ -718,35 +780,36 @@ impl RendererWebFrame {
             .map(|it| string(&it.code))
             .collect::<Vec<_>>()
             .join(";\n");
-        Preload::of_or_throw(cx.global())?.execute(world, js(code)?, is_by_user, callback.to_js())
+        self.execute(cx.global(), world, js(code)?, is_by_user, callback.to_js())
     }
 
-    pub(crate) fn get_resource_usage(cx: Cx<'_, '_>) -> JsResult<JSValue> {
-        Ok(JSValue::create_empty_object(cx.global(), 0))
-    }
-
-    pub(crate) fn find_frame_by_routing_id(cx: Cx<'_, '_>, id: f64) -> JSValue {
-        if id == f64::from(Self::get_routing_id(cx)) {
-            Self::get_top(&cx.heap)
-        } else {
-            JSValue::NULL
+    pub(crate) fn get_resource_usage(&self, cx: Cx<'_, '_>) -> JsResult<JSValue> {
+        let realm = cx.global();
+        let all = JSValue::create_empty_object(realm, 0);
+        for kind in [
+            "images",
+            "scripts",
+            "cssStyleSheets",
+            "xslStyleSheets",
+            "fonts",
+            "other",
+        ] {
+            let usage = bun_ui::object!(realm, { "count": 0, "size": 0, "liveSize": 0 });
+            all.put(realm, kind.as_bytes(), usage);
         }
+        Ok(all)
     }
 
-    pub(crate) fn find_frame_by_token<'a>(cx: Cx<'a, '_>, token: JsLocal<'a>) -> JsResult<JSValue> {
-        let is_own = Self::get_frame_token(cx)?.is_strict_equal(token.to_js(), cx.global())?;
-        Ok(if is_own {
-            Self::get_top(&cx.heap)
-        } else {
-            JSValue::NULL
-        })
+    pub(crate) fn get_isolated_worlds(&self, cx: Cx<'_, '_>) -> JsResult<JSValue> {
+        let ids = self.ask(cx.global(), "isolatedWorlds", &[])?;
+        realm::clone(global(), cx.global(), ids)
     }
 
-    pub(crate) fn is_word_misspelled() -> bool {
+    pub(crate) fn is_word_misspelled(&self) -> bool {
         false
     }
 
-    pub(crate) fn get_word_suggestions(cx: Cx<'_, '_>) -> JsResult<JSValue> {
+    pub(crate) fn get_word_suggestions(&self, cx: Cx<'_, '_>) -> JsResult<JSValue> {
         JSValue::create_empty_array(cx.global(), 0)
     }
 }
@@ -787,8 +850,16 @@ impl RendererElectron {
         get_context_bridge: js_RendererContextBridge;
         get_crash_reporter: js_RendererCrashReporter;
         get_ipc_renderer: js_RendererIpc;
-        get_web_frame: js_RendererWebFrame;
         get_web_utils: js_RendererWebUtils;
+    }
+
+    pub(crate) fn get_web_frame(cx: Cx<'_, '_>) -> JsResult<JSValue> {
+        let preload = Preload::of_or_throw(cx.global())?;
+        if fields::frame(preload).is_none() {
+            let frame = WebFrame::create(cx.global(), field(fields::host(preload)));
+            fields::set_frame(preload, frame);
+        }
+        Ok(field(fields::frame(preload)))
     }
 
     pub(crate) fn get_native_image(heap: &JsHeap<'_>) -> JSValue {

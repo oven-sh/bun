@@ -3,7 +3,6 @@
 #import <objc/runtime.h>
 #import <QuartzCore/QuartzCore.h>
 #import <Quartz/Quartz.h>
-#import <objc/message.h>
 
 @interface BunDesktopWindow : NSWindow
 @end
@@ -73,10 +72,24 @@ static NSRange fromRange(BDRange range)
 
 static NSString* plain(id string) { return [string isKindOfClass:NSAttributedString.class] ? [string string] : string; }
 
-static NSCursor* unlisted(NSString* name)
+static NSCursor* diagonal(bool falls)
 {
-    SEL selector = NSSelectorFromString(name);
-    return [NSCursor respondsToSelector:selector] ? ((id (*)(id, SEL))objc_msgSend)(NSCursor.class, selector) : NSCursor.arrowCursor;
+    if ([NSCursor respondsToSelector:@selector(frameResizeCursorFromPosition:inDirections:)])
+        return [NSCursor frameResizeCursorFromPosition:falls ? NSCursorFrameResizePositionBottomRight : NSCursorFrameResizePositionBottomLeft
+                                          inDirections:NSCursorFrameResizeDirectionsAll];
+    NSImage* image = [NSImage imageWithSize:NSMakeSize(18, 18) flipped:falls drawingHandler:^BOOL(NSRect rect) {
+        static const NSPoint corners[] = { { 3, 3 }, { 9, 3 }, { 6.8, 5.2 }, { 12.8, 11.2 }, { 15, 9 }, { 15, 15 }, { 9, 15 }, { 11.2, 12.8 }, { 5.2, 6.8 }, { 3, 9 } };
+        NSBezierPath* arrows = [NSBezierPath bezierPath];
+        [arrows appendBezierPathWithPoints:(NSPointArray)corners count:10];
+        [arrows closePath];
+        arrows.lineWidth = 2;
+        [NSColor.whiteColor setStroke];
+        [arrows stroke];
+        [NSColor.blackColor setFill];
+        [arrows fill];
+        return YES;
+    }];
+    return [[NSCursor alloc] initWithImage:image hotSpot:NSMakePoint(9, 9)];
 }
 
 /// In the order of `platform::Cursor`.
@@ -87,7 +100,7 @@ static NSCursor* cursorAt(uint8_t index)
         NSCursor.arrowCursor, NSCursor.IBeamCursor, NSCursor.IBeamCursorForVerticalLayout, NSCursor.crosshairCursor,
         NSCursor.openHandCursor, NSCursor.closedHandCursor, NSCursor.pointingHandCursor, NSCursor.resizeLeftCursor,
         NSCursor.resizeRightCursor, NSCursor.resizeLeftRightCursor, NSCursor.resizeUpCursor, NSCursor.resizeDownCursor,
-        NSCursor.resizeUpDownCursor, unlisted(@"_windowResizeNorthWestSouthEastCursor"), unlisted(@"_windowResizeNorthEastSouthWestCursor"),
+        NSCursor.resizeUpDownCursor, diagonal(true), diagonal(false),
         NSCursor.resizeLeftRightCursor, NSCursor.resizeUpDownCursor, NSCursor.operationNotAllowedCursor, NSCursor.dragLinkCursor,
         NSCursor.dragCopyCursor, NSCursor.contextualMenuCursor,
         [[NSCursor alloc] initWithImage:[[NSImage alloc] initWithSize:NSMakeSize(1, 1)] hotSpot:NSZeroPoint],
@@ -104,6 +117,18 @@ void giveFocusBack(NSWindow* window)
     };
     focus();
     whenIdle(focus);
+}
+
+/// AppKit only passes the focus on while its own loop runs.
+static void orderOut(NSWindow* window)
+{
+    bool wasKey = window.isKeyWindow;
+    [window orderOut:nil];
+    if (!wasKey)
+        return;
+    for (NSWindow* next in NSApp.orderedWindows)
+        if (next.isVisible && next.isOnActiveSpace && next.canBecomeKeyWindow)
+            return giveFocusBack(next);
 }
 
 static void endSheet(NSWindow* sheet)
@@ -170,10 +195,10 @@ static CVReturn displayIsReady(CVDisplayLinkRef link, const CVTimeStamp* now, co
     return kCVReturnSuccess;
 }
 
-static void tickAll(void* clock)
+static void tickAll(void* context)
 {
     @autoreleasepool {
-        for (BunDesktopView* view in ((__bridge BunDesktopClock*)clock)->listeners.allObjects)
+        for (BunDesktopView* view in ((__bridge BunDesktopClock*)context)->listeners.allObjects)
             [view tick:nil];
     }
 }
@@ -236,7 +261,7 @@ static void tickAll(void* clock)
     BDMaybeu32 backgroundColor;
     /// What the window had when a background was asked for. An addon may have changed it since, to put a color behind glass.
     NSColor* claimedColor;
-    BDMaybePoint trafficLights;
+    BDMaybePoint trafficLights, sheetOffset;
     bool ownsTitleBar, opensFullscreen, isClosing, isFullscreenable, isVisibleOnFullscreen;
     bool isChangingSpace, hadHiddenButtons;
     void (^afterChangingSpace)(void);
@@ -344,13 +369,14 @@ static void tickAll(void* clock)
     views[@(_number)] = nil;
     NSWindow* window = owned;
     owned = nil;
-    _isFocusable = false;
     endSheet(window);
     if (window.attachedSheet)
         [window endSheet:window.attachedSheet];
     // AppKit may be in the middle of telling it something.
     if (!isFullscreen(window) && !isChangingSpace)
-        [window orderOut:nil];
+        orderOut(window);
+    // One that cannot have the focus does not pass it on.
+    _isFocusable = _isFocusable && window.isVisible;
     if (styleBeforeSimpleFullscreen)
         NSApp.presentationOptions = 0;
     whenIdle(^{
@@ -757,6 +783,13 @@ static void findReach(CALayer* layer, CALayer* root, double* edges)
 
 - (void)windowDidBecomeMain:(NSNotification*)notification { [self placeTrafficLights]; }
 - (void)windowDidResignMain:(NSNotification*)notification { [self placeTrafficLights]; }
+- (NSRect)window:(NSWindow*)window willPositionSheet:(NSWindow*)sheet usingRect:(NSRect)rect
+{
+    if (sheetOffset.has)
+        rect.origin = NSMakePoint(sheetOffset.value.x, window.contentView.frame.size.height - sheetOffset.value.y);
+    return rect;
+}
+
 - (void)windowDidEndSheet:(NSNotification*)notification { [self placeTrafficLights]; }
 
 - (BOOL)windowShouldClose:(NSWindow*)sender
@@ -856,7 +889,7 @@ static void findReach(CALayer* layer, CALayer* root, double* edges)
         wasSeen = false;
         if (owned.attachedSheet)
             [owned endSheet:owned.attachedSheet];
-        [owned orderOut:nil];
+        orderOut(owned);
     } else if (takesFocus) {
         activateFor(owned, true);
         [owned makeKeyAndOrderFront:nil];
@@ -948,7 +981,13 @@ static void findReach(CALayer* layer, CALayer* root, double* edges)
     case BDWindowCommandDestroy:
     case BDWindowCommandShow:
     case BDWindowCommandHide:
+    case BDWindowCommandEnabled:
+    case BDWindowCommandAutoHideCursor:
+    case BDWindowCommandIcon:
+    case BDWindowCommandShape:
     case BDWindowCommandSkipTaskbar: break;
+    case BDWindowCommandSheetOffset: sheetOffset = (BDMaybePoint) { true, command->sheetOffset }; break;
+    case BDWindowCommandDragFiles: [self dragFiles:strings(command->dragFiles.paths) icon:imageOf(command->dragFiles.icon)]; break;
     case BDWindowCommandTitle: window.title = string(command->title); break;
     case BDWindowCommandBackground:
         background = command->background;
@@ -1052,6 +1091,7 @@ static void findReach(CALayer* layer, CALayer* root, double* edges)
         [panel reloadData];
         break;
     }
+    case BDWindowCommandTouchBar: window.touchBar = touchBar(command->touchBar.items, command->touchBar.escape); break;
     case BDWindowCommandClosePreview:
         if ([NSClassFromString(@"QLPreviewPanel") sharedPreviewPanelExists])
             [[NSClassFromString(@"QLPreviewPanel") sharedPreviewPanel] close];
@@ -1251,14 +1291,30 @@ static void findReach(CALayer* layer, CALayer* root, double* edges)
     if (dragged->url.bytes.length)
         [contents setString:string(dragged->url) forType:NSPasteboardTypeURL];
     NSDragOperation allowed = (dragged->copies ? NSDragOperationCopy : 0) | (dragged->links ? NSDragOperationLink : 0);
-    BDRect area = dragged->area;
+    [self drag:@[ contents ] image:image area:dragged->area allowed:allowed];
+}
+
+- (void)dragFiles:(NSArray<NSString*>*)paths icon:(NSImage*)icon
+{
+    NSMutableArray* files = [NSMutableArray new];
+    for (NSString* path in paths)
+        [files addObject:[NSURL fileURLWithPath:path]];
+    [self drag:files image:icon area:(BDRect) { 0, 0, icon.size.width, icon.size.height } allowed:NSDragOperationCopy];
+}
+
+- (void)drag:(NSArray*)contents image:(NSImage*)image area:(BDRect)area allowed:(NSDragOperation)allowed
+{
     soon(^{
         // It may be over, or not be done with the mouse.
         if (self->isClosing || !self->isPressed || !(NSEvent.pressedMouseButtons & 1))
             return;
         NSPoint inWindow = self->owned.mouseLocationOutsideOfEventStream, at = [self convertPoint:inWindow fromView:nil];
-        NSDraggingItem* item = [[NSDraggingItem alloc] initWithPasteboardWriter:contents];
-        [item setDraggingFrame:NSMakeRect(at.x + area.x, at.y - area.y - area.height, MAX(area.width, 1), MAX(area.height, 1)) contents:image];
+        NSMutableArray* items = [NSMutableArray new];
+        for (id<NSPasteboardWriting> it in contents) {
+            NSDraggingItem* item = [[NSDraggingItem alloc] initWithPasteboardWriter:it];
+            [item setDraggingFrame:NSMakeRect(at.x + area.x, at.y - area.y - area.height, MAX(area.width, 1), MAX(area.height, 1)) contents:image];
+            [items addObject:item];
+        }
         NSEvent* event = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDragged location:inWindow modifierFlags:0
                                            timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:self->owned.windowNumber
                                              context:nil eventNumber:0 clickCount:1 pressure:1];
@@ -1266,7 +1322,7 @@ static void findReach(CALayer* layer, CALayer* root, double* edges)
         self->isDragging = true;
         self->isDragInside = NSPointInRect(at, self.bounds);
         self->allowedElsewhere = allowed;
-        [self beginDraggingSessionWithItems:@[ item ] event:event source:self];
+        [self beginDraggingSessionWithItems:items event:event source:self];
     });
 }
 

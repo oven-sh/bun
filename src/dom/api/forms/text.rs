@@ -184,8 +184,6 @@ impl<'a> TextControl<'a> {
     }
 
     pub(super) fn build_editor(self, cx: &mut Cx<'a>, parent: &'a Node) {
-        let placeholder = div(cx, self.element, parent, "placeholder");
-        text_in(cx, placeholder, "");
         let editor = div(cx, self.element, parent, "-internal-editor");
         text_in(cx, editor, "");
         self.element
@@ -203,17 +201,31 @@ impl<'a> TextControl<'a> {
             placeholder.is_some() && text.is_empty(),
         );
         let Some(editor) = self.editor() else { return };
-        let placeholder = placeholder.unwrap_or_default();
-        let placeholder = if element.is_html(atom!("input")) {
-            without_newlines(&placeholder)
-        } else {
-            normalize_newlines(&placeholder)
-        };
-        set_text(
-            cx,
-            editor.previous_sibling().and_then(Node::first_child),
-            &placeholder,
-        );
+        if let Some((placeholder, parent)) = placeholder.zip(editor.parent()) {
+            let shown = editor
+                .previous_sibling()
+                .and_then(Node::first_child)
+                .unwrap_or_else(|| {
+                    let part = part_before(
+                        cx,
+                        element,
+                        parent,
+                        "placeholder",
+                        atom!("div"),
+                        Some(editor),
+                    );
+                    text_in(cx, part, "")
+                });
+            set_text(
+                cx,
+                Some(shown),
+                &if element.is_html(atom!("input")) {
+                    without_newlines(&placeholder)
+                } else {
+                    normalize_newlines(&placeholder)
+                },
+            );
+        }
         let Some(shown) = editor.first_child().filter(|it| it.text() != text) else {
             return;
         };
@@ -341,10 +353,10 @@ impl<'a> TextControl<'a> {
     }
 
     pub(super) fn set_default(self, cx: &mut Cx<'a>, text: DomString) {
-        let [start, end] = self.selection();
+        let ([start, end], changes) = (self.selection(), text != *self.state.text.borrow());
         self.set_from_script(cx, text);
         self.state.is_dirty.set(false);
-        if !focus::has_focus(self.element) {
+        if changes && !focus::has_focus(self.element) {
             self.put_selection(start, end);
         }
     }

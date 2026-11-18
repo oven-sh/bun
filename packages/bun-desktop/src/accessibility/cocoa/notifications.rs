@@ -79,6 +79,25 @@ impl Poster<'_> {
             self.post("AXUIElementDestroyed", id);
             return self.post(FOCUS, id);
         }
+        let is_used = || {
+            let focus = forest
+                .place_of(id.tree)
+                .and_then(|it| forest.real_focus(it.0));
+            focus.is_some_and(|it| {
+                forest.contains(container, it)
+                    || forest
+                        .related(it, Relation::Controls)
+                        .any(|it| it == container)
+            })
+        };
+        if !has_rows
+            && forest
+                .members(container, |it| it.has(abi::SELECTED))
+                .is_empty()
+            && !is_used()
+        {
+            return;
+        }
         self.post(
             if has_rows {
                 "AXSelectedRowsChanged"
@@ -283,6 +302,9 @@ impl Poster<'_> {
                     *id,
                 );
             }
+            // VoiceOver would name the color instead of what is adjusted in the pop-up.
+            Event::ValueChanged(id)
+                if forest.get(*id)?.role == Role::ColorWell && !forest.is_focused(*id) => {}
             Event::ValueChanged(id) => self.post("AXValueChanged", *id),
             Event::StatesChanged(id, changed) => {
                 self.states_changed(*id, forest.get(*id)?, *changed)

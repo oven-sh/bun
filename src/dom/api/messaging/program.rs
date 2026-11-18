@@ -203,17 +203,17 @@ pub(crate) fn unseal<'a>(
     message_event(cx, sealed.get(1), origin, source, ports.to_js())
 }
 
-pub(crate) fn event_with_parked_ports<'a>(
+pub(crate) fn event_of<'a>(
     cx: Cx<'_, 'a>,
-    data: JSValue,
-    origin: JSValue,
+    message: Message,
+    origin: &DomString,
     source: JSValue,
-    parked: List<'a>,
 ) -> Result<'a, &'a Event> {
-    let ports = List::new(&cx.heap);
-    parked
-        .values()
-        .for_each(|it| ports.push(&cx.heap, bridge::unpark(&cx.heap, it.as_number()).to_js()));
+    let ((data, endpoints), ports) = (message.open(cx.global())?, List::new(&cx.heap));
+    endpoints
+        .into_iter()
+        .for_each(|it| ports.push(&cx.heap, MessagePort::new(&cx.heap, it).to_js()));
     let ports = all_to_program(cx, ports)?;
+    let origin = origin.to_js(&cx.heap).to_js();
     message_event(cx, data, origin, source, ports)
 }

@@ -1,112 +1,28 @@
 //! Which frame gets the mouse, the keys and the focus.
 
+use bun_web::input::{Action, Drag, Input, Phase, Place};
+
 use super::*;
-use crate::api::core::by_name::member;
 use crate::api::editing::input_method;
 use crate::api::ui::{entry as page, mouse, pointer, surface, tabbing};
-use crate::generated_bindgen::interaction::{NativeKey, NativeKind, NativePlace};
-
-/// Of a surface.
-#[derive(Clone, Copy)]
-pub(super) struct Event<'a>(pub(super) JsLocal<'a>);
-
-impl<'a> Event<'a> {
-    fn get(self, cx: &mut Cx<'a>, name: &'static str) -> Option<JSValue> {
-        member(cx.global(), self.0.to_js(), name)
-    }
-
-    fn number(self, cx: &mut Cx<'a>, name: &'static str) -> f64 {
-        self.get(cx, name)
-            .and_then(JSValue::get_number)
-            .unwrap_or(0.0)
-    }
-
-    fn word(self, cx: &mut Cx<'a>, name: &'static str) -> DomString {
-        let value = self.get(cx, name).unwrap_or(JSValue::UNDEFINED);
-        JsLocal::new(&cx.heap, value)
-            .as_string()
-            .and_then(|it| DomString::from_js_string(&cx.heap, it).ok())
-            .unwrap_or_default()
-    }
-
-    fn points(self, cx: &mut Cx<'a>) -> Vec<Event<'a>> {
-        let Some(all) = self.get(cx, "points").filter(|it| it.is_object()) else {
-            return Vec::new();
-        };
-        let count = all.get_length(cx.global()).unwrap_or(0) as u32;
-        (0..count)
-            .filter_map(|it| {
-                all.get_index(cx.global(), it)
-                    .ok()
-                    .map(|it| Event(JsLocal::new(&cx.heap, it)))
-            })
-            .collect()
-    }
-
-    fn with(self, cx: &mut Cx<'a>, changes: &[(&'static str, JSValue)]) -> Event<'a> {
-        unsafe extern "C" {
-            safe fn Bun__DOM__copyObject(
-                global: &bun_jsc::JSGlobalObject,
-                object: JSValue,
-            ) -> JSValue;
-        }
-        let copy = Bun__DOM__copyObject(cx.global(), self.0.to_js());
-        changes
-            .iter()
-            .for_each(|(name, value)| copy.put(cx.global(), name.as_bytes(), *value));
-        Event(JsLocal::new(&cx.heap, copy))
-    }
-
-    fn new(cx: &mut Cx<'a>, kind: &str, name: &'static str, value: JSValue) -> Event<'a> {
-        let (event, kind) = (
-            JSValue::create_empty_object_with_null_prototype(cx.global()),
-            DomString::from(kind).to_js(&cx.heap).to_js(),
-        );
-        event.put(cx.global(), b"t", kind);
-        event.put(cx.global(), name.as_bytes(), value);
-        Event(JsLocal::new(&cx.heap, event))
-    }
-}
 
 impl Frame {
-    fn moved<'a>(&'a self, cx: &mut Cx<'a>, event: Event<'a>) -> Event<'a> {
-        let (zoom, [left, top, ..]) = (layout::zoom(self.around().doc()), self.area.get());
-        let unit = self.scale.get() * if self.kind == Kind::Remote { zoom } else { 1.0 };
-        let [x, y] = [("x", left), ("y", top)].map(|(axis, origin)| {
-            (
-                axis,
-                JSValue::js_number((event.number(cx, axis) - origin * zoom) / unit),
-            )
-        });
-        event.with(cx, &[x, y])
-    }
-
-    fn send<'a>(&'a self, cx: &mut Cx<'a>, event: Event<'a>) {
+    fn send(&self, mut input: Input) {
         if self.is(Flags::CLOSED) {
             return;
         }
-        let points = event.points(cx);
-        let event = if !points.is_empty() {
-            let moved = JSValue::create_empty_array(cx.global(), 0).unwrap_or(JSValue::UNDEFINED);
-            for point in points {
-                let point = self.moved(cx, point);
-                _ = moved.push(cx.global(), point.0.to_js());
-            }
-            event.with(cx, &[("points", moved)])
-        } else if event.get(cx, "x").is_some() {
-            self.moved(cx, event)
-        } else {
-            event
-        };
-        host::input(cx, self, event);
+        let (zoom, [left, top, ..]) = (layout::zoom(self.around().doc()), self.area.get());
+        let unit = self.scale.get() * if self.kind == Kind::Remote { zoom } else { 1.0 };
+        input.move_places(|[x, y]| [(x - left * zoom) / unit, (y - top * zoom) / unit]);
+        host::input(self, input);
     }
 }
 
-fn frame_at<'a>(cx: &mut Cx<'a>, ui: &'a Ui, event: Event<'a>) -> Option<&'a Frame> {
+fn frame_at<'a>(cx: &mut Cx<'a>, ui: &'a Ui, place: Place) -> Option<&'a Frame> {
     if mouse::is_held(ui) {
         return None;
     }
-    let point = ["x", "y"].map(|it| event.number(cx, it) / layout::zoom(ui.doc()));
+    let point = place.window.map(|it| it / layout::zoom(ui.doc()));
     let found = Frame::shown_by(pointer::element_at(cx, ui, point)?)?;
     if ui.doc().arena().is_scheduled.get() {
         place_all(cx, ui);
@@ -114,39 +30,56 @@ fn frame_at<'a>(cx: &mut Cx<'a>, ui: &'a Ui, event: Event<'a>) -> Option<&'a Fra
     found.contains(point).then_some(found)
 }
 
-fn route_pointer<'a>(cx: &mut Cx<'a>, ui: &'a Ui, event: Event<'a>, kind: NativeKind) -> bool {
-    let (old, action) = (ui.frame_under_mouse(), event.word(cx, "e"));
+fn leaving(mut input: Input) -> Input {
+    match &mut input {
+        Input::Mouse(mouse) | Input::Pen { mouse, .. } => mouse.action = Action::Leave,
+        Input::Drag { phase, .. } => *phase = Drag::Leave,
+        _ => {}
+    }
+    input
+}
+
+fn route_pointer<'a>(cx: &mut Cx<'a>, ui: &'a Ui, input: &Input, place: Place) -> bool {
+    let old = ui.frame_under_mouse();
     let held = old.filter(|_| ui.framing.hold_pointer.get());
-    if kind == NativeKind::Wheel && held.is_none() && mouse::is_scrolling_page(ui) {
+    if matches!(input, Input::Wheel { .. }) && held.is_none() && mouse::is_scrolling_page(ui) {
         return false;
     }
+    let mouse = if let Input::Mouse(mouse) | Input::Pen { mouse, .. } = input {
+        Some(mouse)
+    } else {
+        None
+    };
+    let leaves = mouse.is_some_and(|it| it.action == Action::Leave)
+        || matches!(
+            input,
+            Input::Drag {
+                phase: Drag::Leave,
+                ..
+            }
+        );
     let found = held.or_else(|| {
-        if action.eq_str("leave") {
+        if leaves {
             None
         } else {
-            frame_at(cx, ui, event)
+            frame_at(cx, ui, place)
         }
     });
-    if !matches!(kind, NativeKind::Wheel | NativeKind::Pinch) {
+    if !matches!(input, Input::Wheel { .. } | Input::Pinch { .. }) {
         if let Some(old) = old.filter(|it| found.map(Handle::value) != Some(it.value())) {
-            let leave = DomString::from("leave").to_js(&cx.heap).to_js();
-            let event = event.with(cx, &[("e", leave)]);
-            old.send(cx, event);
+            old.send(leaving(input.clone()));
         }
         ui.set_frame_under_mouse(found);
     }
     let Some(frame) = found else { return false };
-    if matches!(kind, NativeKind::Mouse | NativeKind::Pen) {
-        let buttons = event.number(cx, "buttons") as u16;
+    if let Some(mouse) = mouse {
         ui.framing
             .hold_pointer
-            .set(buttons != 0 && (held.is_some() || action.eq_str("down")));
-        if held.is_none()
-            && let Ok(place) = NativePlace::from_js(cx.global(), event.0.to_js())
-        {
-            mouse::enter_frame(cx, ui, place.place(), frame.element(), buttons);
+            .set(mouse.buttons != 0 && (held.is_some() || mouse.action == Action::Down));
+        if held.is_none() {
+            mouse::enter_frame(cx, ui, place, frame.element(), mouse.buttons);
         }
-        if action.eq_str("down") {
+        if mouse.action == Action::Down {
             if frame.kind == Kind::Remote {
                 ui.note_user_activation(true);
             }
@@ -158,61 +91,55 @@ fn route_pointer<'a>(cx: &mut Cx<'a>, ui: &'a Ui, event: Event<'a>, kind: Native
                 .for_each(|it| it.render_now(cx));
         }
     }
-    frame.send(cx, event);
+    frame.send(input.clone());
     true
 }
 
 /// All fingers go where the first one went.
-fn route_touch<'a>(cx: &mut Cx<'a>, ui: &'a Ui, event: Event<'a>) -> bool {
-    let (action, points, down) = (
-        event.word(cx, "e"),
-        event.points(cx),
-        &ui.framing.fingers_down,
-    );
-    if action.eq_str("start") {
+fn route_touch<'a>(cx: &mut Cx<'a>, ui: &'a Ui, input: &Input) -> bool {
+    let (Input::Touch { phase, fingers, .. }, down) = (input, &ui.framing.fingers_down) else {
+        return false;
+    };
+    if *phase == Phase::Start {
         if down.get() == 0 {
-            let touched = points.first().and_then(|it| frame_at(cx, ui, *it));
+            let touched = fingers.first().and_then(|it| frame_at(cx, ui, it.place));
             ui.set_touched_frame(touched);
         }
-        down.update(|it| it + points.len() as u32);
-    } else if !action.eq_str("move") {
-        down.update(|it| it.saturating_sub(points.len() as u32));
+        down.update(|it| it + fingers.len() as u32);
+    } else if *phase != Phase::Move {
+        down.update(|it| it.saturating_sub(fingers.len() as u32));
     }
-    ui.touched_frame().map(|it| it.send(cx, event)).is_some()
+    ui.touched_frame()
+        .map(|it| it.send(input.clone()))
+        .is_some()
 }
 
-/// True if the event is not for the document.
-pub(crate) fn route<'a>(cx: &mut Cx<'a>, ui: &'a Ui, kind: NativeKind, event: JSValue) -> bool {
-    use NativeKind::*;
+/// True if it is not for the document.
+pub(crate) fn route<'a>(cx: &mut Cx<'a>, ui: &'a Ui, input: &Input) -> bool {
     if !ui.framing.are_shown.get() {
         return false;
     }
-    let (event, focused) = (Event(JsLocal::new(&cx.heap, event)), ui.focused_frame());
-    match kind {
-        Touch => route_touch(cx, ui, event),
-        Mouse | Pen | Wheel | Pinch | Drag => route_pointer(cx, ui, event, kind),
-        Key => {
+    if let Some(place) = input.place() {
+        return route_pointer(cx, ui, input, place);
+    }
+    let focused = ui.focused_frame();
+    match input {
+        Input::Touch { .. } => route_touch(cx, ui, input),
+        Input::Key(stroke) => {
             let Some(focused) = focused else { return false };
-            let Ok(stroke) = NativeKey::from_js(cx.global(), event.0.to_js()).map(|it| it.stroke())
-            else {
-                return false;
-            };
             let leaves = stroke.is_down && stroke.key == "Escape";
-            if ui
-                .doc()
-                .window()
-                .is_some_and(|it| it.host().before_input(stroke))
-                || leaves && fullscreen::exit_fully(cx, ui)
-            {
+            if leaves && fullscreen::exit_fully(cx, ui) {
                 crate::api::ui::host::key_handled();
             } else {
-                focused.send(cx, event);
+                focused.send(input.clone());
             }
             true
         }
-        Text | Compose | ComposeEnd => focused.map(|it| it.send(cx, event)).is_some(),
-        Focus | Blur => {
-            focused.into_iter().for_each(|it| it.send(cx, event));
+        Input::Text { .. } | Input::Compose { .. } | Input::EndComposition => {
+            focused.map(|it| it.send(input.clone())).is_some()
+        }
+        Input::Focus { .. } | Input::Blur { .. } => {
+            focused.into_iter().for_each(|it| it.send(input.clone()));
             false
         }
         _ => false,
@@ -243,8 +170,9 @@ fn follow_focus<'a>(cx: &mut Cx<'a>, ui: &'a Ui) {
         return;
     }
     if let Some(new) = new {
-        let event = Event::new(cx, "focus", "direction", tabbing::direction(ui).into());
-        new.send(cx, event);
+        new.send(Input::Focus {
+            direction: tabbing::direction(ui),
+        });
     }
     if old.is_none() || new.is_none() {
         focus::fire_at_window(cx, ui, new.is_none());
@@ -270,10 +198,9 @@ pub(super) fn frame_replaced(ui: &Ui, frame: &Frame) {
     }
 }
 
-pub(crate) fn blur_focused_frame<'a>(cx: &mut Cx<'a>, ui: &'a Ui) {
+pub(crate) fn blur_focused_frame(ui: &Ui) {
     if let Some(frame) = ui.focused_frame() {
-        let event = Event::new(cx, "blur", "leaves", JSValue::TRUE);
-        frame.send(cx, event);
+        frame.send(Input::Blur { leaves: true });
     }
 }
 

@@ -6,10 +6,10 @@
 //! called from inside of any method here.
 
 mod headless;
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+mod linux;
 #[cfg(target_os = "macos")]
 pub mod macos;
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
-mod x11;
 #[cfg(target_os = "windows")]
 compile_error!("there is no backend for Windows yet");
 
@@ -33,7 +33,7 @@ use crate::protocol::{Maybe, PreferenceCommand, PreferenceValue, Text};
 use crate::window::Options;
 
 #[cfg(not(target_os = "macos"))]
-pub use x11::keysym_to_char;
+pub use linux::keysym_to_char;
 
 pub fn start(is_headless: bool, is_accessory: bool) -> Result<Box<dyn Platform>> {
     if is_headless {
@@ -42,7 +42,7 @@ pub fn start(is_headless: bool, is_accessory: bool) -> Result<Box<dyn Platform>>
     #[cfg(target_os = "macos")]
     return macos::start(is_accessory);
     #[cfg(not(target_os = "macos"))]
-    x11::start(is_accessory)
+    linux::start(is_accessory)
 }
 
 #[cfg(target_os = "macos")]
@@ -77,6 +77,10 @@ pub trait Platform {
     }
     /// It is not shown, whatever the options say.
     fn open_window(&self, options: &Options, icon: Option<&Icon>) -> Result<Rc<dyn Window>>;
+    /// Whether windows are where the app wants them.
+    fn places_windows(&self) -> bool {
+        true
+    }
     /// The primary one is first.
     fn displays(&self) -> Vec<Display>;
     /// What the system's settings say.
@@ -140,6 +144,10 @@ pub trait Platform {
 
 pub trait Window {
     fn geometry(&self) -> Geometry;
+    /// With what was asked for, if the answer is still to come.
+    fn geometry_soon(&self) -> Geometry {
+        self.geometry()
+    }
     fn is_active(&self) -> bool;
     /// The window system has it on the screen, or is about to.
     fn is_visible(&self) -> bool;
@@ -189,7 +197,11 @@ pub trait Window {
     fn imitate_backdrop(&self, _parts: &[BackdropPart]) {}
     /// The next background replaces what addons have set until now, and not what they set later.
     fn claim_background(&self) {}
-    /// `NSView*` or the XID.
+    #[cfg(not(target_os = "macos"))]
+    fn name_for_portals(&self) -> String {
+        String::new()
+    }
+    /// `NSView*`, the XID or the id of the `wl_surface`.
     fn handle(&self) -> u64;
 }
 

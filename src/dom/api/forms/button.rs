@@ -113,23 +113,43 @@ impl HTMLFieldSetElement {
     }
 }
 
+fn disabled_controls_changed<'a>(cx: &mut Cx<'a>, fieldset: &'a Element) {
+    for control in fieldset.elements_with_objects().filter(|it| is_listed(it)) {
+        if is_form_associated_custom(control) {
+            internals::reassociate(cx, control)
+        } else {
+            dirty(cx, control)
+        }
+    }
+}
+
+pub(crate) static LEGEND_STEPS: Steps = Steps {
+    parent_changed: Some(|cx, legend, left| {
+        let fieldset = left
+            .or_else(|| legend.parent())
+            .filter(|it| it.is_html(atom!("fieldset")))
+            .and_then(Node::as_element);
+        if let Some(fieldset) = fieldset.filter(|it| it.has_attr(atom!("disabled"))) {
+            if fieldset.is_rendered() {
+                fieldset.engine(|engine, id| engine.update_derived_state(id, true));
+                fieldset.doc().invalidate(cx);
+            }
+            disabled_controls_changed(cx, fieldset);
+        }
+    }),
+    ..Steps::NONE
+};
+
 pub(crate) static FIELDSET_STEPS: Steps = Steps {
     post_connection: Some(inserted),
     attribute_changed: Some(|cx, fieldset, change| {
-        if !change.is(atom!("disabled")) {
-            return;
-        }
-        if let Some(focused) =
-            focus::focused(fieldset.doc()).filter(|it| fieldset.contains(it) && is_disabled(it))
-        {
-            focus::blur(cx, focused);
-        }
-        for control in fieldset.elements_with_objects().filter(|it| is_listed(it)) {
-            if is_form_associated_custom(control) {
-                internals::reassociate(cx, control)
-            } else {
-                dirty(cx, control)
+        if change.is(atom!("disabled")) {
+            if let Some(focused) =
+                focus::focused(fieldset.doc()).filter(|it| fieldset.contains(it) && is_disabled(it))
+            {
+                focus::blur(cx, focused);
             }
+            disabled_controls_changed(cx, fieldset);
         }
     }),
     ..Steps::NONE

@@ -14,7 +14,7 @@ use crate::api::audio::AudioNode;
 use crate::api::canvas::{Owned, decode};
 use crate::api::core::{DomString, Edge, Element, Known, Node};
 use crate::api::images::{self, Destination, Resource, Used};
-use crate::api::interim::{allow_load, delay_load, in_realm_of};
+use crate::api::on_behalf::{allow_load, delay_load, in_realm_of};
 use crate::api::ui::assistive;
 use crate::tree::Replaced;
 
@@ -53,6 +53,7 @@ enum AfterPicture {
 }
 
 pub(super) const SRC_NOT_SUPPORTED: u16 = 4;
+const FRAME_MILLISECONDS: f64 = 16.0;
 
 pub(crate) struct Player {
     remote: Remote,
@@ -90,6 +91,10 @@ pub(crate) struct Player {
     /// The current one, and the one that may still be on the screen.
     frames: RefCell<[Option<Owned>; 2]>,
     presented_frames: Cell<u32>,
+    /// Of the current frame, in the media.
+    frame_time: Cell<f64>,
+    /// The numbers of the last picture that has arrived and of the one that is shown.
+    pictures: Cell<[u32; 2]>,
     pub(super) last_frame_callback: Cell<u32>,
     /// It changes when what is under way is no longer wanted.
     pub(super) serial: Cell<u32>,
@@ -274,6 +279,8 @@ impl Player {
                 poster: RefCell::default(),
                 frames: RefCell::default(),
                 presented_frames: Cell::new(0),
+                frame_time: Cell::new(0.0),
+                pictures: Cell::default(),
                 last_frame_callback: Cell::new(0),
                 serial: Cell::new(0),
                 transfer: Cell::new(Transfer::NotStarted),
@@ -752,22 +759,57 @@ impl Player {
 
     #[optimize(size)]
     fn request_picture<'a>(&'a self, cx: Cx<'_, 'a>, after: AfterPicture) {
-        let (arguments, serial) = (
-            [self.remote.object(), Arg::Number(self.wanted_width(cx))],
-            self.serial.get(),
-        );
+        let arguments = [
+            self.remote.object(),
+            Arg::Number(self.wanted_width(cx)),
+            Arg::Flag(matches!(after, AfterPicture::Repaint { .. })),
+        ];
+        let (serial, start) = (self.serial.get(), Instant::now());
         let asked = self.remote.link.ask(
             &cx.heap,
             "picture",
             &arguments,
             self.to_js(),
             move |cx, this, reply| {
-                let this = Strong::create(this, cx.global());
-                Job::<DecodeFrame>::schedule(
-                    &cx.js_thread(),
-                    DecodeFrame(reply.bytes(0), Decoded::default()),
-                    (this, Waiting(serial, after)),
-                );
+                let Some(player) =
+                    Player::from_js(&cx.heap, this).filter(|it| it.serial.get() == serial)
+                else {
+                    return Ok(JSValue::UNDEFINED);
+                };
+                let (bytes, [arrived, shown], mut after) =
+                    (reply.bytes(0), player.pictures.get(), Some(after));
+                // The next one is on its way while this one is decoded.
+                if after
+                    .take_if(|it| {
+                        matches!(it, AfterPicture::Repaint { is_last: false })
+                            && (arrived == shown || bytes.is_empty())
+                    })
+                    .is_some()
+                {
+                    player.repaint_after(
+                        cx,
+                        FRAME_MILLISECONDS - start.elapsed().as_secs_f64() * 1000.0,
+                    );
+                }
+                if bytes.is_empty() {
+                    after
+                        .into_iter()
+                        .for_each(|it| player.after_picture(cx, it));
+                } else {
+                    let waiting = Waiting {
+                        serial,
+                        number: arrived.wrapping_add(1),
+                        time: reply.number(1),
+                        after,
+                    };
+                    player.pictures.set([waiting.number, shown]);
+                    let this = Strong::create(this, cx.global());
+                    Job::<DecodeFrame>::schedule(
+                        &cx.js_thread(),
+                        DecodeFrame(bytes, Decoded::default()),
+                        (this, waiting),
+                    );
+                }
                 Ok(JSValue::UNDEFINED)
             },
         );
@@ -811,19 +853,25 @@ impl Player {
         if !self.remote.is_copied() || self.is_repainting.replace(true) {
             return;
         }
-        let (is_last, serial) = (self.is_paused.get(), self.serial.get());
+        let is_last = self.is_paused.get();
         if is_last || self.is_seen(cx) {
             return self.request_picture(cx, AfterPicture::Repaint { is_last });
         }
+        self.repaint_after(cx, 250.0);
+    }
+
+    #[optimize(size)]
+    fn repaint_after<'a>(&'a self, cx: Cx<'_, 'a>, milliseconds: f64) {
+        let serial = self.serial.get();
         queue_task_after(
             self.home(&cx.heap),
-            250.0,
+            milliseconds.max(0.0),
             &[self.to_js()],
             move |cx, this| {
                 let this =
                     Player::from_js(&cx.heap, this[0]).filter(|it| it.serial.get() == serial);
                 this.into_iter()
-                    .for_each(|it| it.after_picture(cx, AfterPicture::Repaint { is_last }));
+                    .for_each(|it| it.after_picture(cx, AfterPicture::Repaint { is_last: false }));
                 Ok(())
             },
         );
@@ -908,7 +956,7 @@ fn run_frame_callbacks<'a>(
         let metadata = VideoFrameCallbackMetadata {
             expected_display_time: now.as_number(),
             height,
-            media_time: player.time(),
+            media_time: player.frame_time.get(),
             presentation_time: now.as_number(),
             presented_frames: player.presented_frames.get(),
             width,
@@ -925,7 +973,12 @@ fn run_frame_callbacks<'a>(
     Ok(JSValue::UNDEFINED)
 }
 
-struct Waiting(u32, AfterPicture);
+struct Waiting {
+    serial: u32,
+    number: u32,
+    time: f64,
+    after: Option<AfterPicture>,
+}
 
 // SAFETY: plain data.
 unsafe impl JsAffine for Waiting {}
@@ -944,20 +997,34 @@ impl JobContext for DecodeFrame {
     #[optimize(size)]
     fn then(
         mut job: DecodeFrame,
-        (player, Waiting(serial, after)): Self::Js,
+        (
+            player,
+            Waiting {
+                serial,
+                number,
+                time,
+                after,
+            },
+        ): Self::Js,
         thread: &JsThread<'_>,
     ) -> JsResult<()> {
         let frame = Owned::adopt(core::mem::take(&mut job.1).id);
         let present = |cx: Cx<'_, '_>| {
-            let Some(player) =
-                Player::from_js(&cx.heap, player.get()).filter(|it| it.serial.get() == serial)
-            else {
+            let Some(player) = Player::from_js(&cx.heap, player.get()) else {
                 return;
             };
-            if frame.id() != 0 {
+            let [arrived, shown] = player.pictures.get();
+            player.pictures.set([arrived, shown.max(number)]);
+            if player.serial.get() != serial {
+                return;
+            }
+            if frame.id() != 0 && number > shown {
+                player.frame_time.set(time);
                 player.present(cx, frame);
             }
-            player.after_picture(cx, after);
+            after
+                .into_iter()
+                .for_each(|it| player.after_picture(cx, it));
         };
         in_realm_of(thread, Some(player.get()), present);
         Ok(())

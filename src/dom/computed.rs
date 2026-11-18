@@ -264,7 +264,7 @@ impl Document {
         pseudo: Pseudo,
     ) -> Option<(NodeId, Rc<Style>)> {
         if pseudo == Pseudo::None {
-            return Some((id, self.style_on_demand(id)?));
+            return Some((id, self.animated_on_demand(id)?));
         }
         let is_highlight =
             |name| crate::name::is_name!(name, "spelling-error" | "grammar-error" | "search-text");
@@ -492,7 +492,11 @@ impl Document {
                 out.extend(b"0px");
             }
             Id::Content
-                if style.rare.content == Content::Normal && self.tree.element(node).is_none() =>
+                if style.rare.content == Content::Normal
+                    && self
+                        .tree
+                        .element(node)
+                        .is_none_or(|it| matches!(it.pseudo, Pseudo::Before | Pseudo::After)) =>
             {
                 out.extend(b"none")
             }
@@ -580,7 +584,7 @@ impl Document {
         let needs_no_layout = self.containers.is_empty() && self.anchored.is_empty()
             || !self.needs_layout && self.moved_boxes.is_empty();
         (pseudo == Pseudo::None && needs_no_layout && self.has_current_styles()).then_some(())?;
-        let style = self.style_on_demand(node)?;
+        let style = self.animated_on_demand(node)?;
         prop.id(style.flow())
             .filter(|it| follows_from_style(&style, *it))
             .map(|it| (style, it))
@@ -615,13 +619,26 @@ impl Document {
             .filter(|it| *it != 0)
             .chain([node])
             .for_each(|it| self.stop_lagging(it));
+        let forced = generated
+            .into_iter()
+            .find(|it| self.tree.element(*it).is_some_and(|it| it.pseudo == pseudo))
+            .unwrap_or(node);
         match is_pseudo {
             false if self.is_in_skipped_contents(node) => {
                 self.update_skipped_values(node, prop.longhands(crate::values::Flow::DEFAULT))
             }
             false => self.update_style_of(node),
-            true => self.force(node, Document::update_style),
+            true => self.force(forced, Document::update_style),
         }
+        let forced = if self
+            .tree
+            .element(node)
+            .is_some_and(|it| it.generated.contains(&forced))
+        {
+            forced
+        } else {
+            node
+        };
         let is_used = |style: &Rc<Style>| {
             prop.longhands(style.flow())
                 .iter()
@@ -631,7 +648,7 @@ impl Document {
             || self.anchored.contains_key(&node)
             || self.tree.style(node).is_some_and(is_used)
         {
-            self.force(node, Document::update_forced_layout);
+            self.force(forced, Document::update_forced_layout);
         }
         self.style_of_pseudo(node, pseudo)
     }
@@ -680,6 +697,11 @@ impl Document {
         let Some((node, style)) = self.updated_style_for(node, pseudo, prop) else {
             return DomString::default();
         };
+        if (pseudo, prop) == (Pseudo::Marker, Prop::Long(Id::Content))
+            && style.rare.content == Content::Normal
+        {
+            return DomString::from_utf8("normal");
+        }
         match prop
             .id(style.flow())
             .filter(|it| follows_from_style(&style, *it))
@@ -691,13 +713,23 @@ impl Document {
 
     /// If there is nothing to work out.
     #[inline]
-    pub(crate) fn known_resolved_value(&self, node: NodeId, prop: Prop) -> Option<&DomString> {
-        let style = self.tree.style(node).filter(|_| self.is_at_rest())?;
-        self.resolved.find(
-            style,
-            prop.id(style.flow())
-                .filter(|it| is_usual(style, *it) && follows_from_style(style, *it))?,
-        )
+    pub(crate) fn known_resolved_value(&self, node: NodeId, prop: Prop) -> Option<DomString> {
+        self.anticipate_reads(node);
+        (self.is_at_rest() && self.offset_when_displayed.is_none()).then_some(())?;
+        let find = |style: &Style| {
+            self.resolved
+                .find(
+                    style,
+                    prop.id(style.flow())
+                        .filter(|it| is_usual(style, *it) && follows_from_style(style, *it))?,
+                )
+                .cloned()
+        };
+        match self.tree.style(node) {
+            Some(style) => find(style),
+            None if self.tree[node].has(Flags::ANIMATED) => None,
+            None => self.recall_hidden(node, |it| find(&it.style))?,
+        }
     }
 
     fn resolved_by_style(&mut self, node: NodeId, style: &Rc<Style>, id: Id) -> DomString {

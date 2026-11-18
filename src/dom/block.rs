@@ -131,9 +131,6 @@ impl Floats {
         is_line: bool,
     ) -> Slot {
         let ([x, top], mut next) = (self.origin, None::<f32>);
-        let above = self
-            .all
-            .partition_point(|it| it.lowest[0].max(it.lowest[1]) - top <= y);
         let (is_in_order, starts_above) = (
             self.all.last().is_some_and(|it| it.is_in_order),
             |it: &Exclusion| it.top - top <= y || it.top - top < y + height,
@@ -150,9 +147,17 @@ impl Floats {
                 Some(bottom - top),
             );
         }
-        for it in self.all[..row.map_or(self.all.len(), |it| it.0)]
+        let (others, are_above) = (
+            &self.all[..row.map_or(self.all.len(), |it| it.0)],
+            |it: &Exclusion| it.lowest[0].max(it.lowest[1]) - top <= y,
+        );
+        let above = if others.last().is_none_or(are_above) {
+            others.len()
+        } else {
+            others.partition_point(are_above)
+        };
+        for it in others[above..]
             .iter()
-            .skip(above)
             .take_while(|it| !is_in_order || starts_above(it))
             .filter(|it| it.bottom - top > y && starts_above(it))
         {
@@ -347,7 +352,25 @@ impl Document {
         (margin, input.width, self.lay_out(id, input, None))
     }
 
+    #[inline]
     pub(crate) fn shrunk_input(&mut self, id: BoxId, basis: (f32, Option<f32>)) -> (Edges, Input) {
+        match self.boxes[id]
+            .fixed_sizes()
+            .and_then(|it| Some((it.width?, it)))
+        {
+            Some((width, fixed)) => (
+                fixed.margin,
+                Input {
+                    width: clamp(width, fixed.limits[0]),
+                    basis,
+                    ..Input::default()
+                },
+            ),
+            None => self.input_by_contents(id, basis),
+        }
+    }
+
+    fn input_by_contents(&mut self, id: BoxId, basis: (f32, Option<f32>)) -> (Edges, Input) {
         let margin = margin(&self.boxes[id].style, basis.0);
         let [horizontal, vertical] = margin.sums();
         let available = [
@@ -408,7 +431,8 @@ impl Document {
         } else {
             Align::safe(align.0)
         };
-        match align.resolved(1, false, false, free) {
+        let (rtl, starts_far) = (false, false);
+        match align.resolved(1, rtl, starts_far, free) {
             AlignName::SpaceAround | AlignName::SpaceEvenly => {
                 distribute(AlignName::Center, free.max(0.0), 1).0
             }
@@ -606,7 +630,15 @@ impl Document {
         );
         let (mut y, mut strut, mut at_top) =
             (inset.top, Strut::default(), joins && inset.top == 0.0);
-        let (mut output, count) = (Output::default(), it.children.len());
+        let (mut output, count) = (
+            Output {
+                ignores_floats: joins
+                    && it.outside_marker == 0
+                    && it.style.layout.clear == Clear::None,
+                ..Output::default()
+            },
+            it.children.len(),
+        );
         let (mut contents, mut gathers) = (
             crate::scroll::Contents::default(),
             count > 8 && it.outside_marker == 0,
@@ -642,7 +674,8 @@ impl Document {
                         Some(floats),
                     );
                 } else if it.style.is_out_of_flow() {
-                    (output.escapes, gathers) = (output.escapes | it.out_of_flow(), false);
+                    (output.escapes, output.ignores_floats, gathers) =
+                        (output.escapes | it.out_of_flow(), false, false);
                     let next = if at_top { y } else { y + strut.sum() };
                     self.pass_out_of_flow(
                         id,
@@ -727,6 +760,7 @@ impl Document {
                 }
                 self.place_child(child, [inset.left + x, top], margin, basis);
                 gathers = gathers && contents.add(&self.boxes[child]);
+                output.ignores_floats &= own.ignores_floats;
                 self.absorb(child, &own, &mut output);
                 self.boxes[child].pass_baselines(top, margin.bottom, &own, &mut output);
             }
@@ -811,6 +845,14 @@ impl Document {
         );
         let (has_auto_height, splits_layers) =
             (it.used_height(input, None).is_none(), it.splits_layers);
+        for index in 0..if splits_layers { it.children.len() } else { 0 } {
+            let child = self.boxes[id].children[index];
+            let it = &mut self.boxes[child];
+            // What is out of flow in them is claimed anew.
+            if it.kind == Kind::Lines && it.cache.has_escapees() {
+                it.cache.forget_layout();
+            }
+        }
         let (mut own_floats, mut output) = (Floats::default(), Output::default());
         let floats = floats.unwrap_or(&mut own_floats);
         let range = [inset.left, inset.left + basis.0];
@@ -861,6 +903,18 @@ impl Document {
             style.text.align,
             style.layout.justify_items,
         );
+        let it = &self.boxes[id];
+        output.ignores_floats =
+            is_simple && joins && it.outside_marker == 0 && style.layout.clear == Clear::None;
+        let mut gathers = is_simple
+            && it.children.len() > 8
+            && it.outside_marker == 0
+            && !splits_layers
+            && !trims_last_margin
+            && style.fixed().traits.contains(Traits::IS_PLAIN_INSIDE)
+            && it.is_ordinary
+            && !it.is_cell();
+        let mut contents = crate::scroll::Contents::default();
         while let Some(child) = self.boxes[id].children.get(upcoming).copied() {
             let (index, it) = (upcoming, &self.boxes[child]);
             upcoming += 1;
@@ -890,7 +944,8 @@ impl Document {
             if it.style.is_out_of_flow() {
                 flow.iter_mut()
                     .for_each(|it| it.note_static_position(child));
-                output.escapes |= it.out_of_flow();
+                (output.escapes, output.ignores_floats, gathers) =
+                    (output.escapes | it.out_of_flow(), false, false);
                 self.pass_out_of_flow(
                     id,
                     index,
@@ -901,9 +956,35 @@ impl Document {
                 continue;
             }
             if it.style.is_floating() {
+                output.ignores_floats = false;
+                if is_simple && let Some((_, margin, own)) = self.settled(child, setting) {
+                    let size = [
+                        self.boxes[child].layout.size.width + margin.sums()[0],
+                        own.height + margin.sums()[1],
+                    ];
+                    let at = floats.place(
+                        &self.boxes[child].style,
+                        range,
+                        next,
+                        size,
+                        self.float_area(child, margin, size, basis.0),
+                    );
+                    self.place_child(
+                        child,
+                        [at[0] + margin.left, at[1] + margin.top],
+                        margin,
+                        basis,
+                    );
+                    gathers = gathers && contents.add(&self.boxes[child]);
+                    self.absorb(child, &own, &mut output);
+                    continue;
+                }
                 let (margin, own_input) = self.shrunk_input(child, basis);
                 let (mut own, [horizontal, vertical]) =
                     (self.lay_out(child, own_input, None), margin.sums());
+                if is_simple {
+                    self.note_settled(child, setting, 0.0);
+                }
                 let size = [own_input.width + horizontal, own.height + vertical];
                 let mut at = floats.place(
                     &self.boxes[child].style,
@@ -943,17 +1024,29 @@ impl Document {
                         self.boxes[child].layout.location.y - at[1] - margin.top,
                     )
                 });
+                gathers = gathers && contents.add(&self.boxes[child]);
                 self.absorb(child, &own, &mut output);
                 continue;
             }
             let adds_floats = it.has_floats && it.joins_formatting_context;
+            let clearance = if floats.len() == 0 {
+                None
+            } else {
+                floats.clearance(clears(&it.style))
+            };
             let settled = if is_simple && !adds_floats {
                 self.settled(child, setting)
             } else {
                 None
             };
             let settled = settled.filter(|it| {
-                !floats.reach_below(y.min(y + strut.with(it.1.top).and(it.2.margins[0]).sum()))
+                let natural = y + strut.with(it.1.top).and(it.2.margins[0]).sum();
+                it.2.ignores_floats
+                    || !floats.reach_below(
+                        clearance
+                            .filter(|it| *it > y.max(natural))
+                            .unwrap_or_else(|| y.min(natural)),
+                    )
             });
             let it = &self.boxes[child];
             let (mut margin, child_joins) = (
@@ -999,11 +1092,6 @@ impl Document {
                 room.height =
                     Some(it.height_limits(&room, it.border_and_padding(basis.0).sums(), None)[0]);
             }
-            let clearance = if floats.len() == 0 {
-                None
-            } else {
-                floats.clearance(clears(&it.style))
-            };
             let above = strut.with(margin.top);
             let position = |margins: Strut| {
                 let natural = if at_top || discards_margin {
@@ -1140,7 +1228,11 @@ impl Document {
                     }
                 }
             }
-            if is_simple && settled.is_none() && !floats.reach_below(y.min(top)) {
+            if is_simple
+                && settled.is_none()
+                && (own.ignores_floats
+                    || !floats.reach_below(if is_cleared { top } else { y.min(top) }))
+            {
                 self.note_settled(child, setting, x - inset.left);
             }
             if let (Some(flow), Some(tally)) = (&mut flow, &tally) {
@@ -1212,6 +1304,8 @@ impl Document {
             }
             flow.iter_mut()
                 .for_each(|it| it.shift(child, self.boxes[child].layout.location.y - top));
+            gathers = gathers && contents.add(&self.boxes[child]);
+            output.ignores_floats &= own.ignores_floats;
             self.absorb(child, &own, &mut output);
             let it = &self.boxes[child];
             trim[0] &= it.inline.as_ref().is_some_and(|it| it.is_passed_over());
@@ -1263,12 +1357,15 @@ impl Document {
             .0
             .map(|it| it.0)
             .filter(|_| self.boxes[id].is_clamped())
-            && let Some(bottom) = self.clamp_lines(id, lines.max(1) as usize)
+            && let Some([baseline, bottom]) = self.clamp_lines(id, lines.max(1) as usize)
         {
-            output.intrinsic = bottom + inset.bottom;
+            (output.intrinsic, output.last_baseline) = (bottom + inset.bottom, Some(baseline));
         }
         if at_top || at_bottom {
             output.margins[usize::from(!at_top)] = strut;
+        }
+        if gathers {
+            self.gathered.set(Some((id, contents)));
         }
         self.finish_block(id, input, inset, at_top, output, flow)
     }
@@ -1360,8 +1457,8 @@ impl Document {
         it.static_position = [(edge.of([left, right]), edge), (y, vertical)];
     }
 
-    /// Returns where the last line ends, if there are more.
-    fn clamp_lines(&mut self, id: BoxId, count: usize) -> Option<f32> {
+    /// Returns the baseline and the end of the last line, if there are more.
+    fn clamp_lines(&mut self, id: BoxId, count: usize) -> Option<[f32; 2]> {
         let mut all = Vec::new();
         self.collect_lines(id, 0.0, &mut all);
         let total: usize = all.iter().map(|it| it.2).sum();
@@ -1392,7 +1489,7 @@ impl Document {
                     }
                     (top, at) = (top - it.layout.location.y, it.parent);
                 }
-                bottom = Some(end);
+                bottom = Some([y + last.baseline, end]);
                 let truncation = self.truncate(
                     &inline.lines,
                     &inline.clusters,

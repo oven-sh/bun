@@ -7,7 +7,6 @@ use super::prelude::*;
 use super::{details, fullscreen, selecting, tabbing, top_layer};
 use crate::api::editing::selection;
 use crate::api::forms;
-use crate::api::frames::Frame;
 use crate::api::uievents::TextEvent;
 use crate::generated_bindgen::interaction::*;
 
@@ -29,10 +28,9 @@ forward! {
 
 /// `old`: that of the document that the window had before.
 pub(crate) fn attach_ui<'a>(cx: &mut Cx<'a>, doc: &'a Doc, old: Option<&'a Ui>) -> &'a Ui {
-    let container = doc
-        .window()
-        .and_then(|it| it.ask_host(cx, "container", &[]))
-        .and_then(Frame::from_value);
+    let container = crate::api::window::Window::of(doc)
+        .filter(|it| it.cluster().is_some())
+        .and_then(|it| it.context()?.container());
     let (activation, is_focused) = old
         .map(|it| (it.activation.clone(), it.is_focused.clone()))
         .unwrap_or_default();

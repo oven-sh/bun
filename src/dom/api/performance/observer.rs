@@ -218,6 +218,14 @@ impl Performance {
     }
 
     pub(super) fn notify<'a>(&'a self, heap: &JsHeap<'a>, entry: &'a Entry) {
+        if bun_web::trace::is_on() {
+            bun_web::trace::add(
+                entry.kind.name(),
+                entry.name.to_utf8().into_owned(),
+                self.get_time_origin() + entry.start,
+                entry.duration.get(),
+            );
+        }
         for observer in self
             .observers()
             .values()

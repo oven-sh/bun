@@ -29,14 +29,19 @@ pub(super) fn is_host(node: &Node) -> bool {
     }
 }
 
+/// It is in the host of its parent, if that has one.
+pub(super) fn inherits_host(node: &Node) -> bool {
+    !is_host(node)
+        && match node.as_element().map(|it| (it.ns(), it.tag())) {
+            None => node.parent().is_some_and(Node::is_html_element),
+            Some((Ns::Html, _)) => editability(node) != Some(atom!("false")),
+            Some(other) => matches!(other, (Ns::Svg, atom!("svg")) | (Ns::MathMl, atom!("math"))),
+        }
+}
+
 pub(super) fn host_of(node: &Node) -> Maybe<'_> {
-    let inherits = |it: &Node| match it.as_element().map(|it| (it.ns(), it.tag())) {
-        None => it.parent().is_some_and(Node::is_html_element),
-        Some((Ns::Html, _)) => editability(it) != Some(atom!("false")),
-        Some(other) => matches!(other, (Ns::Svg, atom!("svg")) | (Ns::MathMl, atom!("math"))),
-    };
     node.inclusive_ancestors()
-        .find(|it| is_host(it) || !inherits(it))
+        .find(|it| !inherits_host(it))
         .filter(|it| is_host(it))
 }
 
@@ -100,6 +105,7 @@ pub(super) fn sibling(node: &Node, is_forward: bool) -> Maybe<'_> {
 
 impl<'a> Editor<'_, 'a> {
     pub(super) fn style<R>(&self, node: &'a Node, read: impl FnOnce(&Style) -> R) -> Option<R> {
+        self.go_on().ok()?;
         self.with(|cx| layout::style(cx, node.as_element()?, read))
     }
 
@@ -180,8 +186,16 @@ impl<'a> Editor<'_, 'a> {
     }
 
     pub(super) fn is_hidden(&self, node: &'a Node) -> bool {
-        node.inclusive_ancestors()
-            .any(|it| it.is_element() && self.display(it).is_none_or(|it| it == Display::None))
+        let hides =
+            |it: &'a Node| it.is_element() && self.display(it).is_none_or(|it| it == Display::None);
+        let is_hidden = node
+            .inclusive_ancestors()
+            .take_while(|it| Some(*it) != self.shown.get())
+            .any(hides);
+        if !is_hidden {
+            self.shown.set(node.parent());
+        }
+        is_hidden
     }
 
     fn beside_text(&self, text: &'a Node, is_forward: bool) -> Beside {
@@ -440,29 +454,38 @@ impl<'a> Editor<'_, 'a> {
         )
     }
 
-    pub(super) fn follows_break(&self, node: &'a Node) -> bool {
+    /// On the same line.
+    pub(super) fn shown_before(&self, node: &'a Node) -> Maybe<'a> {
         let mut point = at(node, 0);
         while !self.is_block_boundary(point) {
             match child_before(point) {
                 Some(it) if self.is_visible(it) => {
-                    return ends_with_newline(it) && self.keeps_breaks(it);
+                    return Some(it).filter(|it| !(ends_with_newline(it) && self.keeps_breaks(it)));
                 }
                 Some(_) => point.offset -= 1,
                 None => point = before(point.node).unwrap_or(point),
             }
         }
-        true
+        None
     }
 
-    pub(super) fn precedes_break(&self, node: &'a Node) -> bool {
+    pub(super) fn shown_after(&self, node: &'a Node) -> Maybe<'a> {
         let mut point = end_of(node);
         while !self.is_block_boundary(point) {
             match child_after(point) {
-                Some(it) if self.is_visible(it) => return false,
+                Some(it) if self.is_visible(it) => return Some(it),
                 Some(_) => point.offset += 1,
                 None => point = after(point.node).unwrap_or(point),
             }
         }
-        true
+        None
+    }
+
+    pub(super) fn follows_break(&self, node: &'a Node) -> bool {
+        self.shown_before(node).is_none()
+    }
+
+    pub(super) fn precedes_break(&self, node: &'a Node) -> bool {
+        self.shown_after(node).is_none()
     }
 }

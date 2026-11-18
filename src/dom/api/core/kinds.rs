@@ -165,7 +165,7 @@ kinds! {
     Input ["input"] [] js_HTMLInputElement, crate::api::forms::input::STEPS;
     LI ["li"] [] js_HTMLLIElement, Steps::NONE;
     Label ["label"] [] js_HTMLLabelElement, crate::api::forms::button::LABEL_STEPS;
-    Legend ["legend"] [] js_HTMLLegendElement, Steps::NONE;
+    Legend ["legend"] [] js_HTMLLegendElement, crate::api::forms::button::LEGEND_STEPS;
     Link ["link"] [] js_HTMLLinkElement, crate::api::loading::LINK_STEPS;
     Map ["map"] [] js_HTMLMapElement, Steps::NONE;
     Marquee ["marquee"] [] js_HTMLMarqueeElement, Steps::NONE;

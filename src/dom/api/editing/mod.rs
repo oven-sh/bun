@@ -10,7 +10,7 @@ mod rich;
 pub(crate) mod selection;
 pub(crate) mod spelling;
 
-use core::cell::Cell;
+use core::cell::{Cell, RefCell};
 
 pub(crate) use command::Command;
 pub(crate) use keys::handle_key;
@@ -24,11 +24,14 @@ use crate::api::ui::layout::{By as Reach, Direction};
 use crate::api::ui::prelude::*;
 use crate::api::uievents::{InputDetails, InputEvent};
 use crate::generated_bindgen::interaction::EditingCommands;
+use crate::name::Set;
 
 #[derive(Default)]
 pub(crate) struct Editing {
     selection_serial: Cell<u32>,
     pub(crate) is_selection_unsent: Cell<bool>,
+    /// What is in `Ui::changed_selections`.
+    changed_selections: RefCell<Set<*const Node>>,
     is_executing_command: Cell<bool>,
     settings: rich::Settings,
     input_method: input_method::InputMethod,
@@ -629,8 +632,10 @@ impl EditingCommands {
         cx: &mut Cx<'a>,
         name: &DomString,
     ) -> bindgen::Result<'a, bool> {
-        self.command(&cx.heap, name)
-            .map(|_| Command::from_name(name).is_some())
+        self.command(&cx.heap, name).map(|_| {
+            Command::from_name(name)
+                .is_some_and(|it| !matches!(it, Command::Paste | Command::PasteAndMatchStyle))
+        })
     }
 
     pub(crate) fn query_command_enabled<'a>(

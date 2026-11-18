@@ -1,7 +1,8 @@
 //! A hash that is quick for small keys, and that does not resist an attacker.
 
 use std::collections::{HashMap, HashSet};
-use std::hash::{BuildHasherDefault, Hasher};
+use std::hash::{BuildHasher, BuildHasherDefault, Hash, Hasher, RandomState};
+use std::sync::LazyLock;
 
 pub type FastMap<K, V> = HashMap<K, V, BuildHasherDefault<FastHasher>>;
 pub type FastSet<T> = HashSet<T, BuildHasherDefault<FastHasher>>;
@@ -14,6 +15,20 @@ const ODD: u64 = 0x9e37_79b9_7f4a_7c15;
 fn fold(a: u64, b: u64) -> u64 {
     let product = u128::from(a) * u128::from(b);
     product as u64 ^ (product >> 64) as u64
+}
+
+/// For what stands in for its input, which a page must not be able to make collide.
+pub fn keyed(value: impl Hash) -> u64 {
+    static SECRET: LazyLock<RandomState> = LazyLock::new(RandomState::new);
+    SECRET.hash_one(value)
+}
+
+pub static SECRETS: LazyLock<[u64; 4]> = LazyLock::new(|| std::array::from_fn(keyed));
+
+/// Likewise, but faster.
+pub fn keyed_words([a, b, c]: [u64; 3]) -> u64 {
+    let keys = &*SECRETS;
+    fold(fold(a ^ keys[0], b ^ keys[1]) ^ keys[2], c ^ keys[3])
 }
 
 impl Hasher for FastHasher {

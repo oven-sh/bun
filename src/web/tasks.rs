@@ -1,5 +1,6 @@
 //! The tasks of the pages and of what hosts them, and the frames in between. One [`Tasks`] for each thread.
 
+use core::any::Any;
 use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
 use std::collections::VecDeque;
@@ -40,18 +41,6 @@ pub struct TaskId {
 
 impl TaskId {
     const GENERATIONS: u32 = 1 << 21;
-
-    pub(crate) fn to_number(self) -> f64 {
-        (u64::from(self.generation) << 32 | u64::from(self.index)) as f64
-    }
-
-    pub(crate) fn from_number(number: f64) -> TaskId {
-        let bits = number as u64;
-        TaskId {
-            index: bits as u32,
-            generation: (bits >> 32) as u32,
-        }
-    }
 }
 
 type Steps = dyn FnOnce(&JSGlobalObject, &[JSValue]) -> JsResult<()>;
@@ -401,10 +390,8 @@ fn now(vm: &VirtualMachine) -> f64 {
     vm.origin_timer.elapsed().as_secs_f64() * 1000.0
 }
 
-fn report<T>(realm: &JSGlobalObject, result: JsResult<T>) -> Option<T> {
-    result
-        .map_err(|error| bun_jsc::task::report_error_or_terminate(realm, error))
-        .ok()
+fn report(realm: &JSGlobalObject, result: JsResult<()>) -> Result<(), bun_jsc::Stopped> {
+    result.or_else(|error| bun_jsc::task::report_error_or_terminate(realm, error))
 }
 
 fn queue_pump(state: &mut State, vm: &VirtualMachine) {
@@ -447,6 +434,22 @@ fn add_timer(state: &mut State, vm: &VirtualMachine, index: u32, delay: f64) {
 fn with_state<R>(global: &JSGlobalObject, f: impl FnOnce(&mut State, &VirtualMachine) -> R) -> R {
     let vm = global.bun_vm();
     f(&mut tasks_of(vm).0.borrow_mut(), vm)
+}
+
+thread_local! {
+    /// While tasks are running.
+    static DISCARDED: RefCell<Option<Vec<Box<dyn Any>>>> = const { RefCell::new(None) };
+}
+
+/// Drops what takes long to drop, once that holds up no task.
+pub fn discard(it: Box<dyn Any>) {
+    let mut it = Some(it);
+    // It is gone by the time the heap of a thread that ends is swept.
+    let _ = DISCARDED.try_with(|later| {
+        if let Some(later) = &mut *later.borrow_mut() {
+            later.extend(it.take());
+        }
+    });
 }
 
 pub fn post(realm: &JSGlobalObject, priority: Priority, work: Work, values: &[JSValue]) -> TaskId {
@@ -514,6 +517,18 @@ pub(crate) fn cancel_tasks_of(realm: &JSGlobalObject) {
                 canceled.push(state.cancel(index as u32));
             }
         }
+        stop_alarm_if_idle(state);
+        canceled
+    });
+}
+
+/// Those that have `subject` for their first value.
+pub fn cancel_delayed_tasks_about(realm: &JSGlobalObject, subject: JSValue) {
+    with_state(realm, |state, _| {
+        let is_about = |it: &Task| it.roots.get(1).is_some_and(|it| it.value == subject);
+        let mut found = state.timers.clone();
+        found.retain(|it| is_about(&state.tasks[*it as usize]));
+        let canceled: Vec<Work> = found.into_iter().map(|it| state.cancel(it)).collect();
         stop_alarm_if_idle(state);
         canceled
     });
@@ -629,7 +644,10 @@ pub fn finish_checkpoint(global: &JSGlobalObject) {
     for callback in with_state(global, |state, _| {
         core::mem::take(&mut state.after_microtasks)
     }) {
-        report(global, callback.get().call(global, JSValue::UNDEFINED, &[]));
+        let result = callback.get().call(global, JSValue::UNDEFINED, &[]);
+        if report(global, result.map(drop)).is_err() {
+            break;
+        }
     }
 }
 
@@ -673,7 +691,7 @@ impl Tasks {
             Work::Once(steps) => (steps(realm, &values), Work::Call),
             Work::Function(function, word) => (function(realm, word, &values), work),
         };
-        report(realm, result);
+        let _ = report(realm, result);
 
         let state = &mut *self.0.borrow_mut();
         let task = &mut state.tasks[index as usize];
@@ -690,8 +708,10 @@ impl Tasks {
         let global = vm.global();
         let _entered = vm.event_loop().enter_scope();
         let context = Bun__exchangeAsyncContext(global, JSValue::UNDEFINED);
+        let outer = DISCARDED.replace(Some(Vec::new()));
         self.run_slice(vm);
         Bun__exchangeAsyncContext(global, context);
+        drop(DISCARDED.replace(outer));
         let state = &mut *self.0.borrow_mut();
         let has_waited = !state.is_pump_queued || now(vm) - state.stale_since >= SLICE;
         if state.has_to_ask_display && has_waited {
@@ -759,63 +779,5 @@ impl Tasks {
             }
         }
         self.pump(vm);
-    }
-}
-
-pub(crate) mod bindings {
-    use bun_jsc::bindgen::{JsLocal, JsScope};
-
-    use super::{Priority, TaskId, Work};
-
-    macro_rules! post {
-        ($($name:ident: $priority:ident;)*) => {$(
-            pub(crate) fn $name<'a>(cx: &mut JsScope<'a>, call: &[JsLocal<'a>]) {
-                super::post(cx.global(), Priority::$priority, Work::Call, JsLocal::to_js_slice(call));
-            }
-        )*};
-    }
-
-    post! {
-        post_blocking: Blocking;
-        post: Visible;
-        post_for_host: Host;
-        post_in_background: Background;
-    }
-
-    pub(crate) fn post_delayed<'a>(cx: &mut JsScope<'a>, delay: f64, call: &[JsLocal<'a>]) -> f64 {
-        let call = JsLocal::to_js_slice(call);
-        super::post_delayed(cx.global(), delay, false, Work::Call, call).to_number()
-    }
-
-    pub(crate) fn cancel(cx: &mut JsScope<'_>, task: f64) {
-        super::cancel(cx.global(), TaskId::from_number(task));
-    }
-
-    pub(crate) fn after_microtasks<'a>(cx: &mut JsScope<'a>, run: JsLocal<'a>) {
-        super::after_microtasks(cx.global(), run.to_js());
-    }
-
-    pub(crate) fn stop_realm(cx: &mut JsScope<'_>) {
-        if let Some(realm) = crate::realm::Realm::of(cx.global()) {
-            realm.stop();
-        }
-    }
-
-    macro_rules! forward {
-        ($($name:ident($($argument:ident: $Argument:ty)?) $(-> $Result:ty)?;)*) => {$(
-            pub(crate) fn $name(cx: &mut JsScope<'_>, $($argument: $Argument)?) $(-> $Result)? {
-                super::$name(cx.global(), $($argument)?)
-            }
-        )*};
-    }
-
-    forward! {
-        scrolls();
-        render();
-        hurry(is_input: bool);
-        idle_time() -> f64;
-        set_suspended(is_suspended: bool);
-        is_suspended() -> bool;
-        finish_checkpoint();
     }
 }

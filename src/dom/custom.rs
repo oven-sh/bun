@@ -8,6 +8,7 @@ use std::rc::Rc;
 
 use bun_css::Token;
 use bun_css::css_parser::Delimiters;
+use smallvec::SmallVec;
 
 use crate::calc::{Kind, Node, Options, Unit};
 use crate::condition::{self, Actual, Condition, Feature, Subject};
@@ -23,10 +24,11 @@ use crate::values::*;
 
 pub(crate) type Text = Rc<[u8]>;
 /// Sorted. `None` is the guaranteed-invalid value.
-pub(crate) type Entries = Vec<(Name, Option<Text>)>;
+pub(crate) type Entries = Vec<Entry>;
+type Entry = (Name, Option<Text>);
 
 thread_local! {
-    static SPELLINGS: RefCell<Map<Name, Str>> = RefCell::default();
+    static SPELLINGS: RefCell<Box<Map<Name, Str>>> = RefCell::default();
 }
 
 pub(crate) fn remember(source: &[u8]) -> Name {
@@ -40,7 +42,7 @@ pub(crate) fn spelling(name: Name) -> Str {
     SPELLINGS.with_borrow(|it| it.get(&name).cloned().unwrap_or_default())
 }
 
-fn find(entries: &Entries, name: Name) -> Option<&Option<Text>> {
+fn find(entries: &[Entry], name: Name) -> Option<&Option<Text>> {
     // The names are hashes, so they are spread evenly.
     let mut index = ((u128::from(name.bits()) * entries.len() as u128) >> 64) as usize;
     let mut range = 0..entries.len();
@@ -69,11 +71,13 @@ fn find(entries: &Entries, name: Name) -> Option<&Option<Text>> {
 
 #[derive(Default)]
 pub(crate) struct Inherited {
-    entries: Entries,
+    entries: Rc<[Entry]>,
     parent: Option<Rc<Inherited>>,
     depth: u8,
     /// A bit for each of the names.
     filter: [u64; 2],
+    /// Of the parent and some of the entries.
+    hash: u64,
 }
 
 fn filter_bit(name: Name) -> (usize, u64) {
@@ -95,24 +99,50 @@ impl Inherited {
             .find_map(|layer| find(&layer.entries, name))
     }
 
-    fn extend(parent: &Rc<Inherited>, own: &Entries, recent: &Recent<Inherited>) -> Rc<Inherited> {
-        let differs =
-            |(name, value): &&(Name, Option<Text>)| parent.get(*name).unwrap_or(&None) != value;
-        let mut entries: Entries = own.iter().filter(differs).cloned().collect();
-        if entries.is_empty() {
+    fn extend(
+        parent: &Rc<Inherited>,
+        own: &Rc<[Entry]>,
+        recent: &Recent<Inherited>,
+    ) -> Rc<Inherited> {
+        let differs = |(name, value): &Entry| parent.get(*name).unwrap_or(&None) != value;
+        let Some(first) = own.iter().position(differs) else {
             return Rc::clone(parent);
-        }
+        };
+        let same = if first == 0 {
+            own.iter()
+                .skip(1)
+                .position(|it| !differs(it))
+                .map(|it| it + 1)
+        } else {
+            Some(0)
+        };
+        let mut entries = match same {
+            Some(same) => own[..same]
+                .iter()
+                .chain(own[first.max(same + 1)..].iter().filter(|it| differs(it)))
+                .cloned()
+                .collect(),
+            None => Rc::clone(own),
+        };
         let mut parent = Some(parent);
         if parent.is_some_and(|parent| parent.depth >= 8) {
+            let mut all = entries.to_vec();
             while let Some(layer) = parent.filter(|it| it.entries.len() < 128 || it.depth > 4) {
-                entries.extend(layer.entries.iter().cloned());
+                all.extend(layer.entries.iter().cloned());
                 parent = layer.parent.as_ref();
             }
-            entries.order_by_key(|entry| entry.0);
-            entries.dedup_by_key(|entry| entry.0);
+            all.order_by_key(|entry| entry.0);
+            all.dedup_by_key(|entry| entry.0);
+            entries = all.into();
         }
+        let hash = bun_wyhash::hash_with_seed(
+            parent.map_or(0, |it| Rc::as_ptr(it).addr()) as u64 ^ entries[0].0.bits(),
+            entries[0].1.as_deref().unwrap_or_default(),
+        );
         let is_same = |it: &Inherited| {
-            it.parent.as_ref().map(Rc::as_ptr) == parent.map(Rc::as_ptr) && it.entries == entries
+            it.hash == hash
+                && it.parent.as_ref().map(Rc::as_ptr) == parent.map(Rc::as_ptr)
+                && it.entries == entries
         };
         if let Some(found) = recent.find(is_same) {
             return found;
@@ -128,6 +158,7 @@ impl Inherited {
             depth,
             parent: parent.cloned(),
             filter,
+            hash,
         }))
     }
 }
@@ -164,12 +195,13 @@ impl<T> Recent<T> {
 }
 
 #[derive(Clone, Default)]
+#[repr(C)]
 pub(crate) struct Customs {
     pub(crate) inherited: Rc<Inherited>,
     /// What this element sets of `inherited`.
-    own: Option<Rc<Entries>>,
+    own: Option<Rc<[Entry]>>,
     /// The registered properties that are not inherited.
-    local: Option<Rc<Entries>>,
+    local: Option<Rc<[Entry]>>,
 }
 
 impl Customs {
@@ -186,7 +218,7 @@ impl Customs {
         let lists = self
             .inherited
             .layers()
-            .map(|it| &it.entries)
+            .map(|it| &*it.entries)
             .chain(self.local.as_deref());
         lists.flatten().map(|it| it.0).collect()
     }
@@ -206,11 +238,13 @@ impl Customs {
         local: Entries,
         recent: &Recent<Inherited>,
     ) -> Customs {
+        let [own, local] = [own, local].map(|it| (!it.is_empty()).then(|| it.into()));
         Customs {
-            inherited: Inherited::extend(&parent.inherited, &own, recent),
-            own: (!own.is_empty()).then(|| Rc::new(own)),
-            local: (!local.is_empty()).then(|| Rc::new(local)),
+            inherited: Rc::clone(&parent.inherited),
+            own,
+            local,
         }
+        .reparented(parent, recent)
     }
 
     pub(crate) fn share_with(&mut self, other: &Customs) {
@@ -227,14 +261,42 @@ impl Customs {
 
     /// The same declarations, under another parent.
     pub(crate) fn reparented(&self, parent: &Customs, recent: &Recent<Inherited>) -> Customs {
-        let extend = |own: &Rc<Entries>| Inherited::extend(&parent.inherited, own, recent);
+        let extend = |own: &Rc<[Entry]>| Inherited::extend(&parent.inherited, own, recent);
         Customs {
             inherited: self
                 .own
                 .as_ref()
                 .map_or_else(|| Rc::clone(&parent.inherited), extend),
-            ..self.clone()
+            own: self.own.clone(),
+            local: self.local.clone(),
         }
+    }
+
+    /// With other values for some of those that it sets and that are inherited.
+    pub(crate) fn amended(
+        &self,
+        parent: &Customs,
+        values: &[(Name, Text)],
+        recent: &Recent<Inherited>,
+    ) -> Option<Customs> {
+        let own = self
+            .own
+            .as_ref()
+            .filter(|own| values.iter().all(|it| find(own, it.0).is_some()))?;
+        let own: Rc<[Entry]> = own
+            .iter()
+            .map(|it| {
+                values
+                    .iter()
+                    .find(|new| new.0 == it.0)
+                    .map_or_else(|| it.clone(), |new| (it.0, Some(Rc::clone(&new.1))))
+            })
+            .collect();
+        Some(Customs {
+            inherited: Inherited::extend(&parent.inherited, &own, recent),
+            own: Some(own),
+            local: self.local.clone(),
+        })
     }
 
     pub(crate) fn inherited_differences(&self, other: &Customs) -> Set<Name> {
@@ -243,7 +305,7 @@ impl Customs {
             .layers()
             .chain(b.layers())
             .take_while(|_| !Rc::ptr_eq(a, b))
-            .flat_map(|it| &it.entries);
+            .flat_map(|it| it.entries.iter());
         names
             .map(|it| it.0)
             .filter(|it| a.get(*it).unwrap_or(&None) != b.get(*it).unwrap_or(&None))
@@ -253,8 +315,8 @@ impl Customs {
     /// The names that either of them sets, and whose values differ.
     pub(crate) fn differences(&self, other: &Customs) -> Vec<Name> {
         let (mut a, mut b) = (
-            self.own.as_deref().map_or(&[][..], |it| it),
-            other.own.as_deref().map_or(&[][..], |it| it),
+            self.own.as_deref().unwrap_or_default(),
+            other.own.as_deref().unwrap_or_default(),
         );
         let mut names = Vec::new();
         if core::ptr::eq(a, b) {
@@ -283,14 +345,63 @@ impl Customs {
 
 /// The names of the inherited values that may have changed.
 pub(crate) struct Changed<'a> {
-    pub(crate) names: Set<Name>,
-    pub(crate) outer: Option<&'a Changed<'a>>,
+    few: SmallVec<[Name; 4]>,
+    many: Set<Name>,
+    outer: Option<&'a Changed<'a>>,
+    /// The `mark` of each.
+    pub(crate) marks: u64,
 }
 
-impl Changed<'_> {
-    pub(crate) fn contains(&self, name: Name) -> bool {
-        core::iter::successors(Some(self), |it| it.outer).any(|it| it.names.contains(&name))
+pub(crate) fn mark(name: Name) -> u64 {
+    1 << (name.bits() >> 5 & 63)
+}
+
+impl<'a> Changed<'a> {
+    /// `None` if that adds nothing to `outer`.
+    pub(crate) fn new(
+        names: impl IntoIterator<Item = Name>,
+        outer: Option<&'a Changed<'a>>,
+    ) -> Option<Changed<'a>> {
+        let mut names = names.into_iter();
+        let (few, many): (SmallVec<_>, Set<_>) =
+            (names.by_ref().take(4).collect(), names.collect());
+        let marks = few
+            .iter()
+            .chain(&many)
+            .fold(outer.map_or(0, |it| it.marks), |all, it| all | mark(*it));
+        (!few.is_empty()).then_some(Changed {
+            few,
+            many,
+            outer,
+            marks,
+        })
     }
+
+    fn all(&self) -> impl Iterator<Item = &Changed<'a>> {
+        core::iter::successors(Some(self), |it| it.outer)
+    }
+
+    pub(crate) fn names(&self) -> impl Iterator<Item = Name> {
+        self.all()
+            .flat_map(|it| it.few.iter().chain(&it.many))
+            .copied()
+    }
+
+    pub(crate) fn contains(&self, name: Name) -> bool {
+        self.marks & mark(name) != 0
+            && self
+                .all()
+                .any(|it| it.few.contains(&name) || it.many.contains(&name))
+    }
+}
+
+/// Whether it is valid, and stands for itself.
+pub(crate) fn is_plain(source: &[u8]) -> bool {
+    matches!(source, [b'0'..=b'9' | b'.' | b'#' | b'-' | b'+', ..])
+        && source.iter().all(|it| {
+            it.is_ascii_alphanumeric()
+                || matches!(it, b'.' | b'#' | b'-' | b'+' | b'%' | b',' | b' ')
+        })
 }
 
 // ───────────────────────────── registered properties ─────────────────────────────

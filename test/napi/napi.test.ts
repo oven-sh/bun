@@ -2362,6 +2362,24 @@ describe.skipIf(!canBuildNodeAddons() || isWindows || !desktopLibrary)("with the
     });
     expect(exitCode).toBe(0);
   });
+
+  it("so do their finalizers and cleanup hooks", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `globalThis.kept = require(${JSON.stringify(join(__dirname, "napi-app/build/Debug/lent_main_thread.node"))}).dispose();`,
+      ],
+      env: { ...bunEnv, BUN_DESKTOP_THREADS: "main", BUN_DESKTOP_HEADLESS: "1", BUN_DESKTOP_LIBRARY: desktopLibrary },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim().split("\n")).toEqual(
+      ["string", "aborted call", "async hook", "hook", "buffer", "wrap", "instance data"].map(it => it + ": main"),
+    );
+    expect(exitCode).toBe(0);
+  });
 });
 
 async function checkSameOutput(test: string, args: any[] | string, envArgs: Record<string, string> = {}) {

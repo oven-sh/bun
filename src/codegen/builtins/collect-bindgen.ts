@@ -2,6 +2,7 @@ import { AssertionError } from "node:assert";
 import { relative, sep } from "node:path";
 import {
   checkedWordsOf,
+  checksOwnReceiver,
   cppConstructorSymbol,
   cppExtern,
   cppFunctionSymbol,
@@ -65,7 +66,7 @@ import {
   type SignatureDeclaration,
   type SourcedDeclaration,
 } from "./declarations.ts";
-import { desktopFeatures } from "./host/external-values.ts";
+import { desktopFeatures, undescribedPrototype } from "./host/external-values.ts";
 import * as b from "./lib.ts";
 import { compareBytes, joinPath, parsePath, pathOfClassMember, pathOfNativeBinding } from "./paths.ts";
 import {
@@ -847,6 +848,10 @@ function collectAccessor(
     (isRead && !(type.web && getter.capability === "js")) ||
     cachedField !== null ||
     (getter !== null && getter.capability !== "js");
+  // A read that has found the getter of the table at run time has found out that it was not redefined.
+  const fieldOfGetter =
+    cachedField ??
+    (type.web && hasInstanceReceiver(type) && !checksOwnReceiver(type, accessor) ? accessor.internalField : undefined);
   const symbolColumns = symbolColumnsOfAccessor(type, accessor, owner);
   if (!runsNoJavaScript && Object.keys(columns).length === 0) {
     return [createStructureMember(path, "Accessor", null, symbolColumns)];
@@ -878,9 +883,9 @@ function collectAccessor(
     reads: columns.reads ?? externalState,
     writes: columns.writes ?? (isPure ? [] : externalState),
     implementation:
-      cachedField === null
+      fieldOfGetter === undefined
         ? columns.implementation
-        : { how: "CachedGetter", cppClass: type.holderOfField(cachedField)!.cpp, member: `m_${cachedField}` },
+        : { how: "CachedGetter", cppClass: type.holderOfField(fieldOfGetter)!.cpp, member: `m_${fieldOfGetter}` },
   });
 }
 
@@ -955,7 +960,7 @@ function foreignBaseOf(type: ClassType): ClassType["prototypeBase"] {
 function collectInheritance(type: ClassType, path: BuiltinPath): Declaration[] {
   const prototype = joinPath([path, "prototype"]);
   if (type.forBind || type.callInstance) return b.inherits(prototype, "Function.prototype");
-  if (type.web?.options.namedPropertiesObject) return b.inheritsFromUnknown(prototype);
+  if (type.web?.options.namedPropertiesObject) return b.inherits(prototype, undescribedPrototype);
   switch (foreignBaseOf(type)) {
     case undefined:
     case "DOMException":
@@ -964,10 +969,10 @@ function collectInheritance(type: ClassType, path: BuiltinPath): Declaration[] {
       return b.inherits(prototype, "Error.prototype");
     case "Iterator":
     case "AsyncIterator":
-      return b.inheritsFromUnknown(prototype);
+      return b.inherits(prototype, undescribedPrototype);
     default:
       if (!type.web) return [];
-      return [...b.inheritsFromUnknown(prototype), ...(type.construct ? b.inheritsFromUnknown(path) : [])];
+      return [...b.inherits(prototype, undescribedPrototype), ...(type.construct ? b.inheritsFromUnknown(path) : [])];
   }
 }
 

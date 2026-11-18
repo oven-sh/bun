@@ -157,26 +157,21 @@ fn is_written_leftwards(script: Script) -> Option<bool> {
     const LEFTWARDS: &str = "Arab Hebr Syrc Thaa Cprt Khar Phnx Nkoo Lydi Avst Armi Phli Prti Sarb Orkh Samr Mand Merc Mero Mani Mend Nbat \
         Narb Palm Phlp Hatr Adlm Rohg Sogo Sogd Elym Chrs Yezi Ougr Gara Sidt";
     let is_open = matches!(&script.0, b"Hung" | b"Ital" | b"Runr" | b"Tfng");
-    (!is_open).then(|| {
-        !matches!(&script.0, b"Latn" | b"Zyyy" | b"Hani")
-            && LEFTWARDS.split(' ').any(|it| it.as_bytes() == script.0)
-    })
+    (!is_open).then(|| LEFTWARDS.split(' ').any(|it| it.as_bytes() == script.0))
 }
 
 fn form_clusters(buffer: &mut Buffer) {
     let is_flag = |glyph: &Glyph| (0x1F1E6..=0x1F1FF).contains(&glyph.character);
     let mut start = 0;
     for index in 0..buffer.glyphs.len() {
-        let (before, glyph) = (
-            index.checked_sub(1).map(|it| buffer.glyphs[it]),
-            &mut buffer.glyphs[index],
-        );
+        let (before, rest) = buffer.glyphs.split_at_mut(index);
+        let (before, glyph) = (before.last(), &mut rest[0]);
         glyph.set_character(glyph.character);
         let continues = match glyph.character {
             ..0xA9 => false,
             0x200D | 0xFF9E..=0xFF9F | 0x1F3FB..=0x1F3FF | 0xE0020..=0xE007F => true,
             _ if is_flag(glyph) => {
-                before.is_some_and(|it| is_flag(&it) && it.flags & buffer::CONTINUES == 0)
+                before.is_some_and(|it| is_flag(it) && it.flags & buffer::CONTINUES == 0)
             }
             character => {
                 before.is_some_and(|it| it.character == 0x200D)
@@ -194,10 +189,15 @@ fn form_clusters(buffer: &mut Buffer) {
 }
 
 /// Fonts expect text in the direction of its script.
-fn turn_to_native(buffer: &mut Buffer, script: Script, direction: Direction) -> Direction {
-    let Some(mut is_leftwards) =
-        is_written_leftwards(script).filter(|_| direction != Direction::Down)
-    else {
+fn turn_to_native(
+    buffer: &mut Buffer,
+    &Plan {
+        is_leftwards,
+        direction,
+        ..
+    }: &Plan,
+) -> Direction {
+    let Some(mut is_leftwards) = is_leftwards.filter(|_| direction != Direction::Down) else {
         return direction;
     };
     if is_leftwards && direction == Direction::Right {
@@ -305,6 +305,9 @@ impl Shaper<'_> {
     }
 
     fn set_fraction_masks(&self, glyphs: &mut [Glyph], direction: Direction) {
+        if glyphs.iter().all(|it| it.character != 0x2044) {
+            return;
+        }
         let [fraction, upper, lower] = [b"frac", b"numr", b"dnom"].map(|it| self.plan.bit(it));
         let (before, after) = if direction == Direction::Left {
             (lower, upper)
@@ -493,7 +496,7 @@ impl Shaper<'_> {
         let is_base = |it: u32| {
             definitions.classes.is_none() || matches!(definitions.class(it), 0 | buffer::BASE)
         };
-        plan.rules == Rules::Default
+        matches!(plan.rules, Rules::Default | Rules::Hangul)
             && plan.morx_flags.is_none()
             && matches!(plan.kerning, Kerning::None)
             && glyphs.into_iter().flatten().all(is_base)
@@ -529,7 +532,7 @@ impl Shaper<'_> {
             .iter_mut()
             .for_each(|it| it.mask = plan.global_mask);
         form_clusters(buffer);
-        let direction = turn_to_native(buffer, plan.script, plan.direction);
+        let direction = turn_to_native(buffer, plan);
         match plan.rules {
             Rules::Hangul => scripts::compose_hangul(self, buffer),
             Rules::Thai => {

@@ -353,13 +353,13 @@ fn halves([a, b, c, d]: [Point; 4]) -> [[Point; 4]; 2] {
     ]
 }
 
-fn extent<const N: usize>(points: &[Point; N], axis: usize) -> (f32, f32) {
+fn extent(points: &[Point], axis: usize) -> (f32, f32) {
     points.iter().fold((f32::MAX, f32::MIN), |(low, high), it| {
         (low.min(it[axis]), high.max(it[axis]))
     })
 }
 
-fn may_be_near<const N: usize>(points: &[Point; N], point: Point, reach: f32) -> bool {
+fn may_be_near(points: &[Point], point: Point, reach: f32) -> bool {
     let (x, y) = (extent(points, 0), extent(points, 1));
     point[0] >= x.0 - reach
         && point[0] <= x.1 + reach
@@ -766,8 +766,14 @@ impl Path {
             )
         };
         let draws = self.verbs.iter().any(|it| !matches!(it, PathVerb::Move(_)));
+        let moved_on = if draws {
+            0
+        } else {
+            self.verbs.len().saturating_sub(1)
+        };
         for (from, verb, to) in self
             .steps()
+            .skip(moved_on)
             .filter(|it| !draws || !matches!(it.1, PathVerb::Move(_)))
         {
             add(if draws { from } else { to });
@@ -775,7 +781,9 @@ impl Path {
             let PathVerb::Cubic(b, c, _) = verb else {
                 continue;
             };
-            for axis in 0..2 {
+            let is_between =
+                |axis: usize, it: Point| (it[axis] - from[axis]) * (it[axis] - to[axis]) <= 0.0;
+            for axis in (0..2).filter(|it| !is_between(*it, b) || !is_between(*it, c)) {
                 let [p, q, r] = [b[axis] - from[axis], c[axis] - b[axis], to[axis] - c[axis]];
                 let (a, b2) = (p - 2.0 * q + r, q - p);
                 let root = (b2 * b2 - a * p).sqrt();

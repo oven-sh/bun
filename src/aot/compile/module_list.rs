@@ -35,7 +35,7 @@ pub(super) fn collect_module_list(
     loaded: &LoadedBuild<'_, '_>,
     bound: &BoundBuild,
     modules: &[ProgramModule],
-    runs_tests: bool,
+    aliases: Cfg,
 ) -> ListedModules {
     let application = loaded.project(ProjectId::Application);
     let files = application.loaded.files();
@@ -72,9 +72,7 @@ pub(super) fn collect_module_list(
         sources,
         graph: &bound.projects.application.graph,
         atoms: &loaded.atoms,
-        aliases: Cfg {
-            rewrite_jest_for_tests: runs_tests,
-        },
+        aliases,
         input_of_file,
     };
     let mut entry_points = sources.entry_points().iter();
@@ -242,6 +240,7 @@ impl Collector<'_, '_> {
     }
 
     fn builtin_path(&self, specifier: &[u8]) -> Vec<u8> {
+        let specifier = Alias::as_builtin(specifier, self.aliases);
         let alias = Alias::get(specifier, Target::Bun, self.aliases);
         match specifier.strip_prefix(b"node:") {
             Some(bare) if !alias.is_some_and(|alias| alias.node_only_prefix) => bare.to_vec(),

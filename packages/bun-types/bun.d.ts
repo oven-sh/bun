@@ -5440,7 +5440,7 @@ declare module "bun" {
        * With `rejectUnauthorized: false` it still runs when the certificate
        * chain verified, but its result is not enforced.
        * @param hostname - The name the certificate is verified against: `serverName` if set, else the URL host
-       * @param cert - The leaf certificate of the server. Unlike in `fetch()` and `tls.connect()`, it has no `issuerCertificate`
+       * @param cert - The leaf certificate of the server, as in `fetch()`. Unlike in `tls.connect()`, it has no `issuerCertificate`
        * @returns An error if the server is unauthorized, otherwise undefined
        */
       checkServerIdentity?: NonNullable<import("node:tls").ConnectionOptions["checkServerIdentity"]>;
@@ -9521,16 +9521,6 @@ declare module "bun" {
      * option. On a request, `fetch()` ignores such a value.
      */
     proxy?: FetchProxyOption | undefined;
-    /**
-     * Use HTTP/2 with the `https` servers that support it. The requests to
-     * such a server share a connection, so `tls.checkServerIdentity` is
-     * called once for all of them. Requests through a proxy, or with `tls`
-     * options of their own, use HTTP/1.1.
-     *
-     * @default false
-     * @experimental
-     */
-    http2?: boolean | undefined;
     /**
      * Connection reuse. `false` closes every connection after its response.
      * The limits do not apply to HTTP/3 connections.

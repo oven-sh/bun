@@ -22,7 +22,7 @@ use crate::window::Window;
 use crate::{app, dialog};
 
 pub(super) enum Role {
-    Guest(Guest),
+    Guest(Box<Guest>),
     Frame(Embedded),
 }
 
@@ -212,11 +212,7 @@ impl Remote {
 
     /// From CSS pixels of the page to pixels of the surface.
     pub(super) fn to_surface(&self, [x, y]: [f64; 2]) -> JsResult<[f64; 2]> {
-        let [left, top] = if self.embedder().is_some() {
-            self.numbers_of_element("origin")?
-        } else {
-            [0.; 2]
-        };
+        let [left, top] = self.origin_of_element();
         Ok([x + left, y + top].map(|it| it * self.view.zoom.get()))
     }
 
@@ -237,11 +233,11 @@ impl Remote {
     }
 
     pub(super) fn show_tooltip(&self, text: &str) -> JsResult<()> {
-        self.tell_element("tooltip", &[js(text)?])
+        self.tell_element(bun_web::page::News::Tooltip(text.to_owned()))
     }
 
     pub(super) fn take_focus(&self) -> JsResult<()> {
-        self.tell_element("focus", &[])
+        self.tell_element(bun_web::page::News::Focus)
     }
 
     pub(super) fn apply_settings(&self, apply: &dyn Fn(&str, Value)) -> JsResult<()> {

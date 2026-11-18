@@ -3,7 +3,6 @@
 mod contents;
 pub(crate) mod live;
 mod members;
-mod pending;
 mod selection;
 
 use core::cell::{Cell, OnceCell};
@@ -99,13 +98,7 @@ fn compare_in_tree(a: (&Node, Option<u32>), b: (&Node, Option<u32>)) -> Ordering
         .inclusive_ancestors()
         .find(|it| it.parent() == Some(a.0))
     {
-        Some(child)
-            if a.1.is_some_and(|it| {
-                it > 0 && child.previous_siblings().nth(it as usize - 1).is_none()
-            }) =>
-        {
-            Ordering::Greater
-        }
+        Some(child) if a.1.is_some_and(|it| child.is_index_below(it)) => Ordering::Greater,
         _ => Ordering::Less,
     }
 }

@@ -3,9 +3,6 @@
 use super::*;
 use crate::generated_bindgen::forms::{HTMLDataListElement, HTMLOptionElement};
 
-const IS_DIRTY: u16 = 1;
-const HAS_LEGEND: u16 = 1;
-
 pub(super) fn is_option(element: &Element) -> bool {
     element.is_html(atom!("option"))
 }
@@ -24,13 +21,11 @@ pub(super) fn set_selected<'a>(cx: &mut Cx<'a>, option: &'a Element, is_selected
 }
 
 pub(super) fn is_dirty(option: &Element) -> bool {
-    option.bits_of_kind().get() == IS_DIRTY
+    option.own_bit()
 }
 
 pub(super) fn set_dirty(option: &Element, is_dirty: bool) {
-    option
-        .bits_of_kind()
-        .set(if is_dirty { IS_DIRTY } else { 0 });
+    option.set_own_bit(is_dirty);
 }
 
 fn text(option: &Element) -> DomString {
@@ -313,11 +308,8 @@ pub(crate) static GROUP_STEPS: Steps = Steps {
             .element_children()
             .next()
             .is_some_and(|it| it.is_html(atom!("legend")));
-        if group
-            .bits_of_kind()
-            .replace(if has_legend { HAS_LEGEND } else { 0 })
-            != group.bits_of_kind().get()
-        {
+        if group.own_bit() != has_legend {
+            group.set_own_bit(has_legend);
             group.set_custom_state(cx, ":legend", has_legend);
         }
     }),

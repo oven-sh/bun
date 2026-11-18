@@ -4,7 +4,7 @@ use bun_web::exec::report;
 use bun_web::locks::{Answer, LockInfo, LockMode, LockRequest, Priority};
 
 use super::*;
-use crate::api::interim::once;
+use crate::api::on_behalf::once;
 use crate::api::realm::{promise_for, spawn};
 
 #[repr(C)]

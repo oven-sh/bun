@@ -90,39 +90,51 @@ static void wasWoken(CFFileDescriptorRef descriptor, CFOptionFlags flags, void* 
     CFFileDescriptorEnableCallBacks(descriptor, kCFFileDescriptorReadCallBack);
 }
 
-/// Until it is readable. `select` on a kqueue waits for whoever is reading it with the lock of the descriptor table held, which
-/// the reader needs to drop a one-shot event: neither returns, nor can the process be killed. Another kqueue only looks at the count.
-static void watchSource(int descriptor)
+static void timeIsUp(void* context)
+{
+    firesAt = never;
+    report(BDTimeIsUp);
+}
+
+static CFRunLoopSourceRef sourceFor(void (*perform)(void*))
+{
+    CFRunLoopSourceContext context = { .perform = perform };
+    CFRunLoopSourceRef source = CFRunLoopSourceCreate(NULL, 0, &context);
+    CFRunLoopAddSource(CFRunLoopGetMain(), source, kCFRunLoopCommonModes);
+    return source;
+}
+
+static void watch(struct kevent change)
 {
     static int watcher = -1;
     if (watcher < 0) {
         watcher = kqueue();
-        CFRunLoopSourceContext context = { .perform = sourceIsReady };
-        CFRunLoopSourceRef ready = CFRunLoopSourceCreate(NULL, 0, &context);
-        CFRunLoopAddSource(CFRunLoopGetMain(), ready, kCFRunLoopCommonModes);
+        CFRunLoopSourceRef ready = sourceFor(sourceIsReady), due = sourceFor(timeIsUp);
         NSThread* thread = [[NSThread alloc] initWithBlock:^{
-            struct kevent event;
-            while (kevent(watcher, NULL, 0, &event, 1, NULL) >= 0 || errno == EINTR) {
-                CFRunLoopSourceSignal(ready);
+            for (struct kevent event = {}; kevent(watcher, NULL, 0, &event, 1, NULL) >= 0 || errno == EINTR;) {
+                CFRunLoopSourceSignal(event.filter == EVFILT_TIMER ? due : ready);
                 CFRunLoopWakeUp(CFRunLoopGetMain());
             }
         }];
         thread.qualityOfService = NSQualityOfServiceUserInteractive;
         [thread start];
     }
+    kevent(watcher, &change, 1, NULL, 0, NULL);
+}
+
+/// Until it is readable. `select` on a kqueue waits for whoever is reading it with the lock of the descriptor table held, which
+/// the reader needs to drop a one-shot event: neither returns, nor can the process be killed. Another kqueue only looks at the count.
+static void watchSource(int descriptor)
+{
     if (!isWatchingSource) {
         isWatchingSource = true;
-        struct kevent once;
-        EV_SET(&once, descriptor, EVFILT_READ, EV_ADD | EV_ENABLE | EV_DISPATCH, 0, 0, NULL);
-        kevent(watcher, &once, 1, NULL, 0, NULL);
+        watch((struct kevent) { .ident = descriptor, .filter = EVFILT_READ, .flags = EV_ADD | EV_ENABLE | EV_DISPATCH });
     }
 }
 
 void bd_loop_init(void)
 {
-    CFRunLoopSourceContext context = { .perform = hasJobs };
-    jobs = CFRunLoopSourceCreate(NULL, 0, &context);
-    CFRunLoopAddSource(CFRunLoopGetMain(), jobs, kCFRunLoopCommonModes);
+    jobs = sourceFor(hasJobs);
 }
 
 /// From any thread.
@@ -140,8 +152,7 @@ void bd_loop_observe(int wakeDescriptor)
         CFFileDescriptorEnableCallBacks(pipe, kCFFileDescriptorReadCallBack);
     }
     timer = CFRunLoopTimerCreateWithHandler(NULL, never, never, 0, 0, ^(CFRunLoopTimerRef unused) {
-        firesAt = never;
-        report(BDTimeIsUp);
+        timeIsUp(NULL);
     });
     CFRunLoopAddTimer(CFRunLoopGetMain(), timer, kCFRunLoopCommonModes);
     CFRunLoopObserverRef observer = CFRunLoopObserverCreateWithHandler(NULL, kCFRunLoopBeforeWaiting, true, 0,
@@ -157,8 +168,17 @@ void bd_loop_arm(int descriptor, double seconds)
     if (descriptor >= 0)
         watchSource(descriptor);
     CFAbsoluteTime date = seconds < 0 ? never : CFAbsoluteTimeGetCurrent() + seconds;
-    if (fabs(date - firesAt) > 1e-4)
-        CFRunLoopTimerSetNextFireDate(timer, firesAt = date);
+    if (fabs(date - firesAt) <= 1e-4)
+        return;
+    firesAt = date;
+    // The system puts off the timer of the run loop to save energy, and a frame cannot wait.
+    static bool wasPunctual;
+    bool isPunctual = seconds > 0 && seconds < 0.05;
+    if (isPunctual || wasPunctual)
+        watch((struct kevent) { .filter = EVFILT_TIMER, .flags = isPunctual ? EV_ADD | EV_ONESHOT : EV_DELETE, .fflags = NOTE_USECONDS | NOTE_CRITICAL, .data = ceil(seconds * 1e6) });
+    if (!isPunctual || !wasPunctual)
+        CFRunLoopTimerSetNextFireDate(timer, isPunctual ? never : date);
+    wasPunctual = isPunctual;
 }
 
 void bd_loop_run(void) { [NSApp run]; }

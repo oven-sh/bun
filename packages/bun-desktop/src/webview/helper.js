@@ -156,6 +156,7 @@ const preventable = new Set([
   "select-serial-port",
   "select-usb-device",
   "select-webauthn-account",
+  "select-webauthn-authenticator",
   "will-attach-webview",
   "will-download",
   "will-frame-navigate",

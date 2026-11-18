@@ -215,6 +215,7 @@ pub(super) fn before_remove<'a>(heap: &JsHeap<'a>, removed: &'a Node) {
             is_before.set(next.is_some());
             next.or_else(|| removed.preceding(None))
         };
+        all.0.borrow_mut().retain(|it| it.get().is_some());
         for it in all
             .0
             .borrow()

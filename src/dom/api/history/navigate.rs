@@ -1,24 +1,17 @@
 //! <https://html.spec.whatwg.org/#navigate>
 
 use super::*;
-use crate::api::interim::{allow_load, delay_load};
+use crate::api::frames::Frame;
+use crate::api::on_behalf::{allow_load, delay_load};
 use crate::api::trusted;
 use crate::api::uievents::{Modifiers, MouseEvent};
 
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
-pub(super) enum Source {
-    #[default]
-    Other,
-    Form,
-    Link,
-    Script,
-}
+pub(super) use bun_web::host::Source;
 
 #[derive(Clone)]
 pub(super) struct Post {
-    pub(super) form_data: JSValue,
-    pub(super) body: JSValue,
-    pub(super) content_type: String,
+    pub(super) form_data: Option<JSValue>,
+    pub(super) sent: bun_web::host::Post,
 }
 
 /// The caller keeps the values alive.
@@ -37,12 +30,12 @@ pub(super) struct Options<'a> {
     pub(super) post: Option<Post>,
     pub(super) download: Option<DomString>,
     pub(super) navigation_state: Option<Serialized>,
-    /// What hosts the page has for another document.
-    pub(super) initiator: Option<JSValue>,
+    /// If it is another window.
+    pub(super) initiator: Option<&'a Window>,
     pub(super) is_by_other_origin: bool,
     pub(super) srcdoc: Option<DomString>,
-    /// For a `javascript:` URL.
-    pub(super) no_document: Option<JSValue>,
+    /// What the element of the frame hears if a `javascript:` URL comes to nothing.
+    pub(super) fires_load_otherwise: Option<bool>,
     pub(super) noopener: Option<bool>,
     pub(super) referrer_policy: Option<DomString>,
 }
@@ -56,6 +49,48 @@ pub(super) fn is_above(target: &str) -> bool {
 }
 
 impl<'a> Options<'a> {
+    pub(super) fn in_other_scope<'b>(self) -> Options<'b> {
+        let [replace_in, initiator] =
+            [self.replace_in, self.initiator].map(|it| Window::from_value(it?.to_js()));
+        let Options {
+            replace,
+            push,
+            source,
+            is_by_user,
+            has_activation,
+            has_text_activation,
+            post,
+            download,
+            navigation_state,
+            is_by_other_origin,
+            srcdoc,
+            fires_load_otherwise,
+            noopener,
+            referrer_policy,
+            ..
+        } = self;
+        let element = self.element.and_then(|it| Element::from_value(it.to_js()));
+        Options {
+            replace,
+            replace_in,
+            push,
+            source,
+            element,
+            is_by_user,
+            has_activation,
+            has_text_activation,
+            post,
+            download,
+            navigation_state,
+            initiator,
+            is_by_other_origin,
+            srcdoc,
+            fires_load_otherwise,
+            noopener,
+            referrer_policy,
+        }
+    }
+
     pub(super) fn follow_rel(&mut self, element: &'a Element) {
         let rel = element.attr(atom!("rel")).unwrap_or_default();
         let has = |keyword: &str| rel.tokens().any(|it| it.eq_ignore_ascii_case(keyword));
@@ -86,13 +121,13 @@ impl History {
         }
         if !is_self(target) && options.download.is_none() {
             let found = host::navigate_other(cx, window, target, Some(url), &options, false);
-            if found.is_some_and(JSValue::to_boolean) {
+            if let host::Target::Window(_) = found {
                 return;
             }
             if !is_above(target) {
-                let is_detached = options
-                    .noopener
-                    .unwrap_or_else(|| found.is_none() || target.eq_ignore_ascii_case("_blank"));
+                let is_detached = options.noopener.unwrap_or_else(|| {
+                    matches!(found, host::Target::Unknown) || target.eq_ignore_ascii_case("_blank")
+                });
                 window.consume_activation(cx);
                 host::open(
                     cx,
@@ -141,7 +176,7 @@ impl History {
             let intent = Intent {
                 state: state.clone(),
                 is_by_user: options.is_by_user,
-                form_data: options.post.as_ref().map(|it| it.form_data),
+                form_data: options.post.as_ref().and_then(|it| it.form_data),
                 download: options.download.clone(),
                 element: options.element,
                 ..Intent::new(
@@ -181,7 +216,7 @@ impl History {
         if options.download.is_none() && self.window().host().may_unload() == Some(false) {
             self.abort_navigation(cx);
         } else if self.is_active() {
-            host::navigate(cx, self.window(), url, options, None);
+            host::navigate(self.window(), url, options, None);
         }
     }
 
@@ -197,18 +232,31 @@ impl History {
             DomString::from_utf8(&lossy(&bun_web::url::percent_decode(escaped.as_bytes())));
         let (serial, opens) = (self.navigations.get(), self.opens.get());
         delay_load(cx, self.window().document());
-        let values =
-            [options.initiator, options.no_document].map(|it| it.unwrap_or(JSValue::UNDEFINED));
+        let fires_load_otherwise = options.fires_load_otherwise;
         queue_task(
             self.window(),
-            values,
-            move |cx, window, [initiator, no_document]| {
+            [options
+                .initiator
+                .map_or(JSValue::UNDEFINED, |it| it.to_js())],
+            move |cx, window, [initiator]| {
+                let (initiator, container) = (
+                    Window::from_value(initiator),
+                    window.context().and_then(Context::container),
+                );
+                let give_up = |cx: &mut Cx<'_>| {
+                    container
+                        .map(|it| it.to_js())
+                        .and_then(Frame::from_value)
+                        .zip(fires_load_otherwise)
+                        .into_iter()
+                        .for_each(|(it, fires)| it.finished(cx, fires))
+                };
                 allow_load(cx, window.document());
                 if serial != History::of(&cx.heap, window).navigations.get() {
                     return;
                 }
                 if opens != History::of(&cx.heap, window).opens.get() {
-                    return host::run(cx, no_document);
+                    return give_up(cx);
                 }
                 let was_navigating = window.host().is_being_left();
                 let source = trusted::source_of_javascript_url(cx, window.document(), source);
@@ -219,14 +267,21 @@ impl History {
                     && !window.is_in(Phase::ABOUT_TO_SUBMIT)
                     && (was_navigating || !window.host().is_being_left())
                 {
-                    let options = Options {
-                        replace: true,
-                        initiator: Some(initiator).filter(|it| it.is_object()),
-                        ..Default::default()
-                    };
-                    host::navigate(cx, window, &window.url(), &options, Some(result));
+                    let markup = DomString::from_js(cx, JsLocal::new(&cx.heap, result))
+                        .map_err(|it| cx.catch(it))
+                        .unwrap_or_default();
+                    host::navigate(
+                        window,
+                        &window.url(),
+                        &Options {
+                            replace: true,
+                            initiator,
+                            ..Default::default()
+                        },
+                        Some(markup.to_utf8().into_owned()),
+                    );
                 } else {
-                    host::run(cx, no_document);
+                    give_up(cx);
                 }
             },
         );

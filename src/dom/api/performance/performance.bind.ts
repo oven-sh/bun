@@ -81,6 +81,12 @@ export const DomPerformanceResourceTiming = entry("PerformanceResourceTiming", {
   },
 });
 
+export const PerformanceTimingConfidence = b.interface("PerformanceTimingConfidence", {
+  exposed,
+  defaultToJSON: true,
+  proto: { randomizedTriggerRate: time, value: text },
+});
+
 export const Milestone = b.family("Milestone", { on: DomPerformanceEntry, ...time, ...heap });
 export const DomPerformanceNavigationTiming = entry("PerformanceNavigationTiming", {
   extends: DomPerformanceResourceTiming,
@@ -96,6 +102,7 @@ export const DomPerformanceNavigationTiming = entry("PerformanceNavigationTiming
     activationStart: ResourceNumber.of(),
     criticalCHRestart: ResourceNumber.of(),
     notRestoredReasons: { getter: b.object.nullable },
+    confidence: { getter: PerformanceTimingConfidence, ...heap },
   },
 });
 

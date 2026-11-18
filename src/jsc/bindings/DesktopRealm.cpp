@@ -6,6 +6,7 @@
 #include "BunClientData.h"
 #include "BunCompiledModules.h"
 #include "ErrorStackTrace.h"
+#include "ExtendedDOMIsoSubspaces.h"
 #include "GeneratedBlob.h"
 #include "InternalModuleRegistry.h"
 #include "JSDOMExceptionHandling.h"
@@ -235,7 +236,7 @@ extern "C" bool Bun__DesktopRealm__hasStackLeft(JSGlobalObject* realm)
 
 bool desktopRealmHandlesUncaughtException(JSGlobalObject* globalObject, JSValue error)
 {
-    if (isFeatureRemoved(Feature::Desktop))
+    if (!WebCore::clientData(globalObject->vm())->heapData().subspaces().m_subspaceForWebGlobalObject) [[likely]]
         return false;
     BUN_BEGIN_REMOVABLE_ENTRY_POINT(Desktop, Abort, bool)
     auto* exception = dynamicDowncast<JSC::Exception>(error);
@@ -416,7 +417,10 @@ static JSPromise* fetchModule(JSGlobalObject* realm, JSModuleLoader*, JSValue ke
         String path = key.toWTFString(realm);
         if (scope.exception()) [[unlikely]]
             return JSPromise::rejectedPromiseWithCaughtException(realm, scope);
-        if (auto* compiled = compiledModuleSource(uncheckedDowncast<Zig::GlobalObject>(realm), path, nullptr))
+        auto* compiled = compiledModuleSource(uncheckedDowncast<Zig::GlobalObject>(realm), path, nullptr);
+        if (scope.exception()) [[unlikely]]
+            return JSPromise::rejectedPromiseWithCaughtException(realm, scope);
+        if (compiled)
             return compiled;
     }
     String type = emptyString();
@@ -503,14 +507,20 @@ static JSValue nativeResponseFor(JSGlobalObject* realm, JSPromise* promise, JSVa
 
 static void compileStreaming(JSGlobalObject* realm, JSPromise* promise, JSValue source, std::optional<WebAssemblyCompileOptions>&& options)
 {
-    if (JSValue response = nativeResponseFor(realm, promise, source))
-        Zig::GlobalObject::compileStreaming(realm, promise, response, WTF::move(options));
+    auto scope = DECLARE_THROW_SCOPE(realm->vm());
+    JSValue response = nativeResponseFor(realm, promise, source);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (response)
+        RELEASE_AND_RETURN(scope, Zig::GlobalObject::compileStreaming(realm, promise, response, WTF::move(options)));
 }
 
 static void instantiateStreaming(JSGlobalObject* realm, JSPromise* promise, JSValue source, JSObject* imports, std::optional<WebAssemblyCompileOptions>&& options)
 {
-    if (JSValue response = nativeResponseFor(realm, promise, source))
-        Zig::GlobalObject::instantiateStreaming(realm, promise, response, imports, WTF::move(options));
+    auto scope = DECLARE_THROW_SCOPE(realm->vm());
+    JSValue response = nativeResponseFor(realm, promise, source);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (response)
+        RELEASE_AND_RETURN(scope, Zig::GlobalObject::instantiateStreaming(realm, promise, response, imports, WTF::move(options)));
 }
 #endif
 
@@ -581,8 +591,6 @@ static void setUpMembers(WebGlobalObject* realm)
     realm->setMembers(vm, constructEmptyObject(vm, realm->nullPrototypeObjectStructure()));
 }
 
-extern "C" EncodedJSValue Bun__DOM__createPage(JSGlobalObject*, EncodedJSValue host, EncodedJSValue global, EncodedJSValue baseURL, EncodedJSValue agent);
-
 extern "C" void Bun__WebRealm__adoptClient(void*, uint32_t client);
 
 // `page` is for an isolated world, `window` the handle of the object to take over. Null if it throws.
@@ -605,16 +613,14 @@ extern "C" JSGlobalObject* Bun__DesktopRealm__createWindow(JSGlobalObject* globa
     return realm;
 }
 
-extern "C" EncodedJSValue Bun__DesktopRealm__setUpPage(JSGlobalObject* globalObject, WebGlobalObject* realm, EncodedJSValue host, EncodedJSValue baseURL, EncodedJSValue agent)
+extern "C" void Bun__DesktopRealm__setUpMembers(WebGlobalObject* realm)
 {
-    auto scope = DECLARE_THROW_SCOPE(realm->vm());
-    JSValue ownHost = RealmBridge::cross(realm, JSValue::decode(host));
-    RETURN_IF_EXCEPTION(scope, {});
     setUpMembers(realm);
-    JSValue page = JSValue::decode(Bun__DOM__createPage(realm, JSValue::encode(ownHost), JSValue::encode(realm->globalThis()), baseURL, JSValue::encode(RealmBridge::peek(JSValue::decode(agent)))));
-    RETURN_IF_EXCEPTION(scope, {});
+}
+
+extern "C" void Bun__DesktopRealm__run(WebGlobalObject* realm)
+{
     realm->setRunning(true);
-    RELEASE_AND_RETURN(scope, JSValue::encode(RealmBridge::cross(globalObject, page)));
 }
 
 // What a preload script finds on the global object comes from there.
@@ -681,12 +687,14 @@ extern "C" void Bun__DesktopWorker__terminate(WebCore::Worker* worker)
     adoptRef(*worker)->terminate();
 }
 
-extern "C" EncodedJSValue Bun__Desktop__createPage(Zig::GlobalObject* realm, EncodedJSValue host, bool mayHaveGlobalObject)
+// Empty unless the global object of the program can be a window.
+extern "C" EncodedJSValue Bun__Desktop__becomeWindow(Zig::GlobalObject* realm)
 {
-    auto* window = mayHaveGlobalObject ? dynamicDowncast<WebGlobalObject>(realm) : nullptr;
-    if (window)
-        setUpMembers(window);
-    return Bun__DOM__createPage(realm, host, JSValue::encode(window ? window->globalThis() : jsUndefined()), encodedJSUndefined(), encodedJSUndefined());
+    auto* window = dynamicDowncast<WebGlobalObject>(realm);
+    if (!window)
+        return {};
+    setUpMembers(window);
+    return JSValue::encode(window->globalThis());
 }
 
 extern "C" void Bun__DesktopRealm__documentChanged(WebGlobalObject* realm)

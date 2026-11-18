@@ -154,9 +154,13 @@ impl Guarded {
     }
 }
 
-pub(crate) struct Headers(pub(super) Rc<Guarded>);
+pub(crate) struct Headers(Rc<Guarded>);
 
 impl Headers {
+    pub(super) fn sharing(headers: &Rc<Guarded>) -> Headers {
+        Headers(Rc::clone(headers))
+    }
+
     pub(crate) fn constructor<'a>(
         heap: &JsHeap<'a>,
         init: Option<HeadersInit<'a>>,

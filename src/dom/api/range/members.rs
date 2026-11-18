@@ -82,7 +82,7 @@ impl AbstractRange {
         let Some(opaque) = self.downcast::<OpaqueRange>() else {
             return Some([self.start(), self.end()]);
         };
-        let text = pending::rendered_text_of_control(cx, opaque.control()?)?;
+        let text = crate::api::ui::seams::rendered_text_of_control(cx, opaque.control()?)?;
         Some([
             Point::new(text, self.start_offset.get()),
             Point::new(text, self.end_offset.get()),
@@ -97,7 +97,7 @@ impl OpaqueRange {
 
     pub(crate) fn disconnect<'a>(&'a self, cx: Cx<'_, 'a>) {
         if let Some(control) = self.control() {
-            pending::invalidate_control(cx, control);
+            crate::api::ui::seams::invalidate_control(cx, control);
         }
         js::set_owner(self, JSValue::ZERO);
         self.start_offset.set(0);
@@ -364,7 +364,7 @@ impl Range {
     }
 
     pub(crate) fn expand<'a>(&'a self, cx: Cx<'_, 'a>, unit: JsLocal<'a, JSString>) {
-        pending::expand_range(cx, self, unit);
+        crate::api::ui::seams::expand_range(cx, self, unit);
     }
 
     pub(crate) fn stringify<'a>(&'a self, heap: &JsHeap<'a>) -> JsLocal<'a, JSString> {

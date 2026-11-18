@@ -201,26 +201,28 @@ impl Window<'_> {
         })
     }
 
-    /// The contour without the segments that do not show.
+    /// The contour without the segments that do not show, and are not joined to one that does.
     fn parts(&self, contour: &Contour, mut take: impl FnMut(&Contour)) {
-        let Some(far) = contour
-            .segments
-            .iter()
-            .position(|it| !self.may_touch(it.points()))
-        else {
+        let (all, count) = (&contour.segments, contour.segments.len());
+        let shows = |index: usize| {
+            (contour.is_closed || (count..count * 2).contains(&index))
+                && self.may_touch(all[index % count].points())
+        };
+        let is_needed = |index: usize| {
+            shows(index + count) || shows(index + count - 1) || shows(index + count + 1)
+        };
+        let Some(far) = (0..count).find(|it| !is_needed(*it)) else {
             return take(contour);
         };
-        let (before, after) = contour
-            .segments
-            .split_at(if contour.is_closed { far } else { 0 });
+        let first = if contour.is_closed { far } else { 0 };
         let mut part = Contour {
             start: contour.start,
             segments: Vec::new(),
             is_closed: false,
         };
-        for segment in after.iter().chain(before).map(Some).chain([None]) {
-            match segment.filter(|it| self.may_touch(it.points())) {
-                Some(segment) => part.segments.push(*segment),
+        for index in (first..count).chain(0..first).map(Some).chain([None]) {
+            match index.filter(|it| is_needed(*it)) {
+                Some(index) => part.segments.push(all[index]),
                 None if part.segments.is_empty() => {}
                 None => {
                     part.start = part.segments[0].points()[0];

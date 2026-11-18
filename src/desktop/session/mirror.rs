@@ -187,7 +187,9 @@ fn to_net_error(Failure { error, .. }: Failure) -> NetError {
 /// A response that the app makes for the engine.
 enum Serving {
     /// It is dropped to give up.
-    Pending(#[expect(dead_code)] Sender<()>),
+    Pending {
+        _give_up: Sender<()>,
+    },
     Body(Body),
 }
 
@@ -199,7 +201,7 @@ async fn unless_aborted<T>(response: i32, work: impl Future<Output = T>) -> Opti
     let (sender, aborted) = task::oneshot();
     responses()
         .borrow_mut()
-        .insert(response, Serving::Pending(sender));
+        .insert(response, Serving::Pending { _give_up: sender });
     let Either::First(result) = race(work, aborted).await else {
         return None;
     };

@@ -18,7 +18,7 @@ use bun_web::held::Held;
 pub(crate) use errors::{DerivedException, QuotaExceededError, quota_exceeded};
 pub(crate) use locks::Lock;
 pub(crate) use origin::DomOrigin;
-pub(crate) use permissions::{Notification, PermissionStatus};
+pub(crate) use permissions::{Notification, PermissionStatus, fire_at_notification};
 pub(crate) use reporting::{ReportingObserver, SecurityPolicyViolationEvent};
 
 use crate::api::core::url::Url;

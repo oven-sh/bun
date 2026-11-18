@@ -618,6 +618,7 @@ impl View {
             text: text.into(),
             selection,
             caret,
+            is_out_of_date: bun_ui::queue::are_edits_waiting(),
         });
         self.tell_surface(SurfaceCommand::Field(field.into()));
     }

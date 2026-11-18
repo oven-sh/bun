@@ -677,6 +677,89 @@ describe.skipIf(!hasLibrary)("bun:desktop", () => {
       expect([wasOpen, it.$("input").matches(":open")]).toEqual([true, false]);
     });
 
+    test("the picker of a customizable select has no room for scrollbars that it does not need", () => {
+      using it =
+        open(`<style>select, ::picker(select) { appearance: base-select } option { width: 100px; height: 30px }</style>
+        <select><option>a<option>b</select>`);
+      it.click("select");
+      const { right, bottom } = it.$("option:last-child").getBoundingClientRect();
+      const isPicker = (x: number, y: number) => !!it.window.document.elementFromPoint(x, y).closest("select");
+      expect([
+        isPicker(right - 5, bottom - 5),
+        isPicker(right + 5, bottom - 5),
+        isPicker(right - 5, bottom + 5),
+      ]).toEqual([true, false, false]);
+    });
+
+    describe("interestfor", () => {
+      const openWith = (target = "popover") => {
+        const it =
+          open(`<style>button { position: fixed; inset: 0 auto auto 0; width: 50px; height: 50px; interest-delay: 0s } #b { left: 100px }
+          p { position: fixed; inset: 100px auto auto 0; margin: 0 }</style><button id=a interestfor=t></button><button id=b interestfor=t></button><p id=t ${target}>t</p>`);
+        const states = () =>
+          ["#a:interest-source", "#b:interest-source", ":interest-target", ":popover-open"]
+            .map(state => +!!it.$(state))
+            .join("");
+        const log = record(it.$("p"), "interest loseinterest", event =>
+          [event.type, event.source.id, event.cancelable, states()].join(),
+        );
+        // What follows from the event is done after its listeners, in the same task.
+        const next = (type: string) =>
+          new Promise(resolve => it.$("p").addEventListener(type, () => setImmediate(resolve), { once: true }));
+        return Object.assign(it, { states, log, next });
+      };
+
+      test("comes and goes with the mouse, and from one source to another", async () => {
+        using it = openWith();
+        const seen = [];
+        for (const [x, y, type] of [
+          [10, 10, "interest"],
+          [110, 10, "interest"],
+          [300, 250, "loseinterest"],
+        ] as const) {
+          const event = it.next(type);
+          it.mouse("mouseMove", { x, y });
+          await event;
+          seen.push(it.states());
+        }
+        expect(seen).toEqual(["1011", "0111", "0000"]);
+        expect(it.log).toEqual([
+          "interest,a,true,0000",
+          "loseinterest,a,true,1011",
+          "interest,b,true,0000",
+          "loseinterest,b,true,0111",
+        ]);
+      });
+
+      test("comes with the focus, and goes with Escape, the popover, the attribute, the id or the source", async () => {
+        const ends = [
+          (it: any) => it.press("Escape"),
+          (it: any) => it.$("p").hidePopover(),
+          (it: any) => it.$("#a").removeAttribute("interestfor"),
+          (it: any) => it.$("#a").remove(),
+          (it: any) => (it.$("p").id = "other"),
+          (it: any) => (it.$("#a").disabled = true),
+        ];
+        const seen = [];
+        for (const end of ends) {
+          using it = openWith();
+          const event = it.next("interest");
+          it.$("#a").focus();
+          await event;
+          end(it);
+          seen.push([it.states(), ...it.log.slice(1)]);
+        }
+        expect(seen).toEqual([
+          ["0000", "loseinterest,a,false,1011"],
+          ["0000", "loseinterest,a,true,1011"],
+          ["0001"],
+          ["0001"],
+          ["0001"],
+          ["0001"],
+        ]);
+      });
+    });
+
     describe("<input type=color>", () => {
       test("the mouse picks, and `change` follows when it closes", () => {
         using it = open("<input type=color id=c value=#ff0000 style='position:fixed;inset:0 auto auto 0'>");
@@ -814,6 +897,26 @@ describe.skipIf(!hasLibrary)("bun:desktop", () => {
       expect(log).toEqual(["insertText", "insertLineBreak", "insertText", "insertText", "deleteContentBackward"]);
       it.press(shortcut + "+Z");
       expect(it.$("#t").value).toBe("a\nbc");
+    });
+
+    test("a field is invalid for the user who has typed and taken it back", () => {
+      using it = open("<input required><input required>");
+      it.$("input").focus();
+      it.press("a", "Backspace", "Tab", "Tab");
+      expect([...it.window.document.querySelectorAll("input")].map(it => it.matches(":user-invalid"))).toEqual([
+        true,
+        false,
+      ]);
+    });
+
+    test("focus() goes to the first field of a date", () => {
+      using it = open("<input type=time value=01:02><input>");
+      it.$("input").focus();
+      it.press("Tab");
+      it.$("input").blur();
+      it.$("input").focus();
+      it.press("Up");
+      expect(it.$("input").value).toBe("02:02");
     });
 
     test("editing contenteditable", () => {
@@ -1243,6 +1346,33 @@ describe.skipIf(!hasLibrary).concurrent("the document of a program", () => {
       stdout: "true true true\ntrue true 0 4\nDataCloneError\nDataCloneError\nearly 2\nclose\n",
       exitCode: 0,
     });
+  });
+
+  test("makes requests with XMLHttpRequest, EventSource and sendBeacon", async () => {
+    const main = `
+      import { app, Window } from "bun:desktop";
+      const { window } = new Window(), beacon = Promise.withResolvers();
+      using server = Bun.serve({
+        port: 0,
+        routes: {
+          "/text": new Response("text"),
+          "/never": () => new Promise(() => {}),
+          "/events": new Response("data: event\\n\\n", { headers: { "content-type": "text/event-stream" } }),
+          "/beacon": async request => (beacon.resolve(await request.text()), new Response()),
+        },
+      });
+      const ask = (path, timeout) => new Promise(done => {
+        const request = Object.assign(new window.XMLHttpRequest(), { timeout });
+        request.onload = request.onerror = request.ontimeout = event => done(event.type + " " + request.responseText);
+        request.open("GET", server.url + path);
+        request.send();
+      });
+      console.log(await ask("text", 60_000), await ask("never", 1));
+      const events = new window.EventSource(server.url + "events");
+      console.log((await new Promise(done => (events.onmessage = events.onerror = done))).data);
+      console.log(window.navigator.sendBeacon(server.url + "beacon", "sent"), await beacon.promise);
+      app.exit(0);`;
+    expect(await run({ "main.js": main })).toEqual({ stdout: "load text timeout \nevent\ntrue sent\n", exitCode: 0 });
   });
 
   test.each([

@@ -10,10 +10,10 @@ use super::engine::EngineSession;
 use super::{Emit, Failure, Session, random_id, target_id_of};
 use crate::contents::inspection;
 use crate::prelude::*;
+use crate::task;
 use crate::value::Value;
 use crate::webview::remote::Remote;
 use crate::webview::remote::field;
-use crate::{realm, task};
 
 struct Attached {
     target: Rc<str>,
@@ -27,13 +27,13 @@ struct Frame {
 }
 
 impl Frame {
-    fn element(&self) -> JsResult<JSValue> {
+    fn element(&self) -> JSValue {
         let object = self.object.get();
-        match inspection::around(object) {
-            Some(contents) => contents.ask_element("self", &[]),
-            None => invoke(field(cast(object).map(Remote::element)), "self", &[]),
-        }
-        .map(realm::peek)
+        let place = match inspection::around(object) {
+            Some(contents) => contents.place_of_element(),
+            None => cast(object).and_then(Remote::place_of_element),
+        };
+        field(place.map(|[page, frame]| bun_web::dom::element_of_frame(page, frame)))
     }
 }
 
@@ -199,7 +199,7 @@ impl Frames {
     pub(super) fn id_of(&self, element: JSValue) -> JsResult<Option<Rc<str>>> {
         let all = self.all.borrow().clone();
         for frame in all {
-            if frame.element()? == element {
+            if frame.element() == element {
                 let attached = frame.attached.borrow();
                 return Ok(attached.as_ref().map(|it| Rc::clone(&it.target)));
             }
@@ -212,7 +212,7 @@ impl Frames {
             (it.attached.borrow().as_ref()).is_some_and(|it| *it.target == *target)
         };
         let found = self.all.borrow().iter().find(is_it).cloned();
-        found.map(|it| it.element()).transpose()
+        Ok(found.map(|it| it.element()))
     }
 
     pub(super) fn close(&self) {

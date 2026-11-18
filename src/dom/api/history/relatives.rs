@@ -25,23 +25,31 @@ impl Window {
     }
 
     pub(crate) fn get_parent<'a>(&'a self, cx: &mut Cx<'a>) -> JSValue {
-        self.ask_host(cx, "parent", &[])
+        self.relative(&cx.heap, |it| Some(it.parent_or_itself()))
             .unwrap_or_else(|| self.window_around().unwrap_or(self).get_itself(&cx.heap))
     }
 
     pub(crate) fn get_top<'a>(&'a self, cx: &mut Cx<'a>) -> JSValue {
-        self.ask_host(cx, "top", &[]).unwrap_or_else(|| {
-            core::iter::successors(Some(self), |it| it.window_around())
-                .last()
-                .unwrap_or(self)
-                .get_itself(&cx.heap)
-        })
+        self.relative(&cx.heap, |it| Some(it.top()))
+            .unwrap_or_else(|| {
+                core::iter::successors(Some(self), |it| it.window_around())
+                    .last()
+                    .unwrap_or(self)
+                    .get_itself(&cx.heap)
+            })
     }
 
-    pub(crate) fn get_frame_element<'a>(&'a self, cx: &mut Cx<'a>) -> Option<&'a Element> {
+    pub(crate) fn get_frame_element<'a>(&'a self, _: &mut Cx<'a>) -> Option<&'a Element> {
+        let of_context = || {
+            let (own, element) = (self.cluster()?, self.context()?.container()?.element());
+            Window::of(self.context()?.container()?.around().doc())?
+                .cluster()
+                .filter(|it| it.origin() == own.origin())
+                .map(|_| element)
+        };
         js_DomWindow::empty_frame(self)
-            .or_else(|| self.ask_host(cx, "frameElement", &[]))
             .and_then(Element::from_value)
+            .or_else(of_context)
             .filter(|_| !self.is_disposed())
     }
 
@@ -50,9 +58,23 @@ impl Window {
     }
 
     pub(crate) fn get_opener<'a>(&'a self, cx: &mut Cx<'a>) -> JSValue {
-        self.ask_host(cx, "getOpener", &[])
-            .filter(|it| it.is_object())
+        let related = self
+            .context()
+            .and_then(Context::opened_by)
+            .filter(|_| self.knows_other_windows());
+        let beside = || {
+            self.opened_beside()
+                .filter(|it| !it.is_disposed())
+                .map(|it| it.window())
+        };
+        related
+            .map_or_else(beside, |it| self.relative(&cx.heap, |_| Some(it)))
             .unwrap_or(JSValue::NULL)
+    }
+
+    /// The window whose realm it has.
+    pub(super) fn opened_beside(&self) -> Option<&Window> {
+        Window::from_value(js_DomWindow::opened_beside(self)?)
     }
 
     pub(crate) fn set_opener<'a>(&'a self, cx: &mut Cx<'a>, value: JsLocal<'a>) -> Result<'a> {
@@ -63,7 +85,8 @@ impl Window {
                 value: JSValue,
             );
         }
-        if value.to_js().is_null() && self.ask_host(cx, "disown", &[]).is_some() {
+        if value.to_js().is_null() && self.knows_other_windows() {
+            self.host().disown();
             return Ok(());
         }
         let (window, global) = (self.get_itself(&cx.heap), cx.global());
@@ -89,8 +112,13 @@ impl Window {
     }
 
     pub(crate) fn set_name(&self, _: &mut Cx<'_>, name: &DomString) {
-        self.name.replace(Some(name.to_utf8().into_owned()));
-        self.host().set_name(name.to_utf8().into_owned());
+        let name = name.to_utf8();
+        if self.name.borrow().as_deref() != Some(&*name)
+            || !self.context().is_some_and(|it| it.has_name(&name))
+        {
+            self.name.replace(Some(name.to_string()));
+            self.host().set_name(name.into_owned());
+        }
     }
 
     /// <https://html.spec.whatwg.org/#window-open-steps>
@@ -148,7 +176,7 @@ impl Window {
             &options,
             !noopener && !is_keyword,
         );
-        if let Some(found) = found.filter(|it| it.to_boolean()) {
+        if let host::Target::Window(found) = found {
             return Ok(if noopener && !is_keyword {
                 JSValue::NULL
             } else {
@@ -186,7 +214,7 @@ impl Window {
         }
         crate::api::frames::stop(cx, self.document());
         if crate::api::loading::stop(cx, self.document()) {
-            self.host().loaded("stopped");
+            self.host().loaded(bun_web::host::Stage::Stopped);
         }
         self.host().stop();
     }
@@ -211,7 +239,7 @@ impl Window {
         let of_realm = WindowTarget::of_realm(self.realm(&cx.heap))
             .and_then(|it| it.downcast())
             .unwrap_or(self);
-        let entry = if host::owner(cx, self).is_some() {
+        let entry = if self.cluster().is_some() {
             host::entry(cx, self)
         } else {
             of_realm

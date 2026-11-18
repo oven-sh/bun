@@ -1,4 +1,6 @@
 #import "bridge.h"
+#import <Security/Security.h>
+#import <SecurityInterface/SFCertificateTrustPanel.h>
 #import <PDFKit/PDFKit.h>
 
 static NSMutableDictionary<NSNumber*, NSAlert*>* alerts;
@@ -110,6 +112,36 @@ void closeMessage(uint32_t identifier)
     CFRelease(itself);
 }
 @end
+
+void trustCertificate(const BDSystemRequest* request, uint32_t replyNumber)
+{
+    CFArrayRef chain = NULL;
+    SecTrustRef trust = NULL;
+    SecExternalFormat format = kSecFormatPEMSequence;
+    SecExternalItemType type = kSecItemTypeAggregate;
+    SecItemImport((__bridge CFDataRef)dataIfAny(request->trustCertificate.chain), NULL, &format, &type, 0, NULL, NULL, &chain);
+    NSArray* certificates = CFBridgingRelease(chain);
+    id policy = CFBridgingRelease(SecPolicyCreateSSL(true, NULL));
+    if (!certificates.count || SecTrustCreateWithCertificates(chain, (__bridge CFTypeRef)policy, &trust))
+        fail(@"the certificate is not valid");
+    id kept = CFBridgingRelease(trust);
+    SFCertificateTrustPanel* panel = [classIn(@"SecurityInterface", @"SFCertificateTrustPanel") new];
+    NSString* message = string(request->trustCertificate.message);
+    NSWindow *parent = visibleWindow(request->trustCertificate.window), *focused = parent ?: NSApp.keyWindow;
+    BunDesktopPrinting* waiting = [BunDesktopPrinting new];
+    waiting.done = ^(BOOL success) {
+        (void)kept, (void)panel;
+        giveFocusBack(focused);
+        reply(replyNumber, BDReplyDone);
+    };
+    whenIdle(^{
+        if (parent)
+            [panel beginSheetForWindow:parent modalDelegate:waiting didEndSelector:@selector(operation:didRun:itself:)
+                           contextInfo:(void*)CFBridgingRetain(waiting) trust:trust message:message];
+        else
+            waiting.done([panel runModalForTrust:trust message:message]);
+    });
+}
 
 void print(const BDPrintJob* job, uint32_t replyNumber)
 {

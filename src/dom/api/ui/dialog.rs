@@ -82,7 +82,7 @@ pub(crate) fn focus_dialog<'a>(cx: &mut Cx<'a>, ui: &'a Ui, dialog: &'a Element)
 
 fn set_up(heap: &JsHeap<'_>, dialog: &Element) {
     if let Some(ui) = Ui::of(dialog.doc()).filter(|_| watcher(dialog).is_none()) {
-        ui.set_open_dialogs(ui.open_dialogs().with(heap, dialog));
+        ui.set_open_dialogs(ui.open_dialogs().followed_by(heap, dialog));
         dialog.set_edge(
             heap,
             Edge::DialogWatcher,

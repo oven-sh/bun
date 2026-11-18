@@ -1,6 +1,6 @@
 import * as b from "../../../codegen/bindgen-lib.ts";
 import { DomElement } from "./core.bind.ts";
-import { htmlConstructor, reflect, tokenList } from "./reflect.ts";
+import { htmlConstructor, reference, reflect, tokenList } from "./reflect.ts";
 
 export default b.module({
   rustPath: "crate::api::core::html",
@@ -19,12 +19,13 @@ const string = b.DOMString.impl.as("crate::api::core::DomString");
 const usvString = b.USVString.impl.as("crate::api::core::DomString");
 const nullToEmpty = b.DOMString.nullToEmpty.impl.as("crate::api::core::DomString");
 const collection = { getter: b.any.returning("HTMLCollection"), ...heap } as const;
+const parts = { ...collection, shortcut: "rowsEdge" } as const;
 const index = b.i32.wrap;
 
 export const HTMLOrSVGElement = b.mixin("HTMLOrSVGElement", {
   on: DomElement,
   proto: {
-    dataset: { getter: b.any.returning("DOMStringMap"), ...heap },
+    dataset: { getter: b.any.returning("DOMStringMap"), shortcut: "datasetEdge", ...heap },
     nonce: { getter: string, setter: true },
   },
 });
@@ -205,13 +206,13 @@ const relList = tokenList("rel", "noreferrer noopener opener");
 export const HTMLAnchorElement = element(
   "HTMLAnchorElement",
   "target download ping$ rel hreflang type referrerPolicy coords charset name rev shape",
-  { relList, text: { getter: string, setter: runs, ceReactions: true } },
+  { relList, interestForElement: reference("interestfor"), text: { getter: string, setter: runs, ceReactions: true } },
   link,
 );
 export const HTMLAreaElement = element(
   "HTMLAreaElement",
   "alt coords shape target download ping$ rel referrerPolicy noHref?",
-  { relList },
+  { relList, interestForElement: reference("interestfor") },
   link,
 );
 
@@ -228,12 +229,12 @@ const deletes = { args: { index }, ...ce } as const;
 export const HTMLTableRowElement = element("HTMLTableRowElement", `bgColor ${cellAlignment}`, {
   rowIndex: { getter: b.i32, ...heap },
   sectionRowIndex: { getter: b.i32, ...heap },
-  cells: collection,
+  cells: parts,
   insertCell: inserts,
   deleteCell: deletes,
 });
 export const HTMLTableSectionElement = element("HTMLTableSectionElement", cellAlignment, {
-  rows: collection,
+  rows: parts,
   insertRow: inserts,
   deleteRow: deletes,
 });
@@ -255,7 +256,7 @@ export const HTMLTableElement = element(
     deleteTFoot: { ...reacts, rustName: "delete_tfoot" },
     tBodies: { ...collection, rustName: "tbodies" },
     createTBody: { ...creates, rustName: "create_tbody" },
-    rows: collection,
+    rows: parts,
     insertRow: inserts,
     deleteRow: deletes,
   },

@@ -5,6 +5,8 @@
 ${attribute}
 ${name.slice(2)}
 -internal-active-match
+-internal-alt-icon
+-internal-alt-text
 -internal-cue-node
 -internal-default-summary
 -internal-editor
@@ -745,8 +747,10 @@ integrity
 interactive
 interactivity
 intercept
+interest
 interest-delay-end
 interest-delay-start
+interestfor
 interpolate-size
 introduction
 isolation
@@ -807,6 +811,7 @@ location
 locationbar
 longdesc
 loop
+loseinterest
 lostpointercapture
 ltr
 malignmark

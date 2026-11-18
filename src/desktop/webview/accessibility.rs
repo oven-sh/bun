@@ -100,7 +100,7 @@ struct Update<'a> {
     strings: Vec<String>,
     numbers: Vec<f64>,
     places: BTreeMap<u32, Rc<Place>>,
-    elements: BTreeMap<(*const Target, i32), u32>,
+    elements: BTreeMap<(usize, i32), u32>,
     focus: u32,
     last_block: (u32, i32),
     /// The name of the date or the time whose parts are being added.
@@ -524,7 +524,7 @@ impl Update<'_> {
             self.places.insert(id, Rc::new(place));
             if let Some(element) = element.as_number() {
                 self.elements
-                    .insert((Rc::as_ptr(of.target), element as i32), id);
+                    .insert((Rc::as_ptr(of.target).addr(), element as i32), id);
             }
             id
         })
@@ -600,7 +600,7 @@ impl Tree {
         let [anchor, end, from, to] = selection(view, &with_focus).await;
         let ends = [anchor, end].map(|it| {
             elements
-                .get(&(Rc::as_ptr(&with_focus), it as i32))
+                .get(&(Rc::as_ptr(&with_focus).addr(), it as i32))
                 .copied()
                 .unwrap_or(0)
         });

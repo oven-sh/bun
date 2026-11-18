@@ -15,6 +15,7 @@ struct Simple {
     current: RefCell<Option<Used>>,
     serial: Cell<u32>,
     is_queued: Cell<bool>,
+    is_loading: Cell<bool>,
 }
 
 impl Simple {
@@ -188,13 +189,16 @@ fn wait_for_decoding<'a>(
 #[optimize(size)]
 pub(crate) fn show_button_image<'a>(cx: Cx<'_, 'a>, input: &'a Element) {
     if let Some(it) = input.try_extra::<Simple>() {
+        let blank = (it.is_queued.get() || it.is_loading.get())
+            .then(|| crate::tree::Replaced::new(0, 0.0, 0.0, f64::NAN));
         show_replaced(
             cx,
             input,
             it.picture()
                 .as_ref()
                 .and_then(|it| it.contents())
-                .map(|it| it.replaced(1.0)),
+                .map(|it| it.replaced(1.0))
+                .or(blank),
         );
     }
 }
@@ -221,10 +225,13 @@ pub(crate) fn update_button_image<'a>(cx: Cx<'_, 'a>, input: &'a Element) {
             .as_ref()
             .filter(|it| !it.is_empty())
             .and_then(|it| resolve(cx, input.doc(), it));
+        it.is_loading.set(url.is_some());
         if let Some(used) = url.map(|it| Pictures::request(cx, input.doc(), it, Some(input))) {
+            show_button_image(cx, input);
             delay_load_for(cx, input, &used.picture(), move |cx, input| {
                 let (it, event) = (input.extra::<Simple>(), outcome(&used));
                 if it.serial.get() == serial {
+                    it.is_loading.set(false);
                     drop(it.current.replace(Some(used)));
                     show_button_image(cx, input);
                     fire_later(cx, input, event);

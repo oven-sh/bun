@@ -122,6 +122,10 @@ id accessibleAt(uint32_t window, uint64_t within, NSPoint onScreen);
 /// For a framework that few apps need. Linking it would slow down every launch.
 Class classIn(NSString* framework, NSString* name);
 NSImage* imageOf(BDIcon icon);
+uint32_t rgba(NSColor* color);
+NSTouchBar* touchBar(BDListTouchBarItem items, BDListTouchBarItem escape);
+void updateTouchBarItem(const BDTouchBarItem* from);
+void trustCertificate(const BDSystemRequest* request, uint32_t replyNumber);
 /// Other processes do not get to see what is typed into a password field.
 void updateSecureInput(void);
 void menuCommand(const BDSystemCommand* command);

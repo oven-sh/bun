@@ -25,6 +25,9 @@ export const sameObject = `caches clientInformation customElements document fram
 /** Bun's object, whose answers depend on the realm. */
 export const dependsOnRealm = "URL";
 
+/** In src/js `process` is `@globals.process`: `@natives` in a realm of the web, which has none or its own, and the global object elsewhere. */
+export const keptAside = "Bun SharedArrayBuffer atob btoa process structuredClone";
+
 /** A program that starts in a window has Bun's names, except for these. */
 export const replacesBun = `CustomEvent ErrorEvent Event EventTarget alert confirm navigator onerror onmessage
   postMessage prompt reportError self`;

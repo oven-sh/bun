@@ -128,6 +128,27 @@ pub(crate) fn name_of_default_application(kind: &str) -> JsResult<Option<String>
     Ok(file.and_then(|it| read_key(&it, "Desktop Entry", "Name")))
 }
 
+/// The name and the executable.
+pub(crate) fn handler_of(scheme: &str) -> JsResult<Option<[String; 2]>> {
+    let entry = default_application(&format!("x-scheme-handler/{scheme}"))?;
+    let (applications, search) = (applications()?, process::variable("PATH")?);
+    let find = || {
+        let file = find_entry(&applications, &entry?)?;
+        let command = read_key(&file, "Desktop Entry", "Exec")?;
+        let program = match command.strip_prefix('"') {
+            Some(quoted) => text::before(quoted, "\""),
+            None => text::before(&command, " "),
+        };
+        let mut found = bun_paths::path_buffer_pool::get();
+        let path = bun_which::which(&mut found, search?.as_bytes(), b"", program.as_bytes())?;
+        Some([
+            read_key(&file, "Desktop Entry", "Name")?,
+            string(path.as_bytes()),
+        ])
+    };
+    Ok(find())
+}
+
 pub(crate) fn set_default_application(entry: &str, kind: &str) -> JsResult<bool> {
     process::run(&["xdg-mime", "default", entry, kind])
 }

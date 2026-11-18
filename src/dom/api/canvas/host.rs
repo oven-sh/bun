@@ -12,7 +12,7 @@ use super::offscreen::OffscreenCanvas;
 use super::recorder::Recorder;
 use super::text::{Font, Inherited};
 use crate::api::core::{Doc, Element, Node, atom};
-use crate::api::{images, interim};
+use crate::api::{images, on_behalf};
 pub(super) use crate::generated_bindgen::canvas::CanvasRenderingContext2DSettings as Settings;
 use crate::generated_bindgen::canvas::{
     CanvasColorType, CanvasImageSource, ImageBitmapRenderingContext, PredefinedColorSpace,
@@ -119,7 +119,7 @@ fn document_for<'a>(cx: Cx<'_, 'a>, element: Option<&'a Element>) -> Result<'a, 
     element
         .map(|it| it.doc())
         .filter(|it| it.has_page())
-        .map_or_else(|| interim::shown_document(cx), |it| Ok(Some(it)))
+        .map_or_else(|| on_behalf::shown_document(cx), |it| Ok(Some(it)))
 }
 
 #[optimize(size)]
@@ -135,13 +135,17 @@ pub(super) fn inherited_from<'a>(
         font_size: 10.0,
         root_font_size: 16.0,
         line_height: 12.0,
+        medium_sizes: document.map_or([16.0, 13.0], |it| {
+            it.arena().read(|it| it.fonts.medium_sizes())
+        }),
+        has_quirks: document.is_some_and(|it| it.quirks()),
         is_right_to_left: from
             .and_then(|it| it.with_attr(atom!("dir"), |it| it.eq_ignore_ascii_case("rtl")))
             == Some(true),
         color: 0xff,
         language: language.unwrap_or_default(),
         font_scope: document.map_or_else(
-            || interim::font_scope(&cx.heap),
+            || on_behalf::font_scope(&cx.heap),
             |it| it.arena().read(|it| it.fonts.scope),
         ),
     };
@@ -150,7 +154,7 @@ pub(super) fn inherited_from<'a>(
             engine.update_style_of(id);
             let (_, style) = engine.style_of_pseudo(id, Pseudo::None)?;
             Some((
-                style.font.size.0 / style.zoom,
+                style.font.size.1 / style.zoom,
                 style.line_height() / style.zoom,
                 engine.environment.root_font.size,
                 style.is_rtl(),
@@ -211,7 +215,7 @@ pub(super) fn use_font<'a>(cx: Cx<'_, 'a>, context: &Context, font: &Font) -> Re
                 )
             })
         });
-        interim::take_requests(cx, document);
+        on_behalf::take_requests(cx, document);
     }
     Ok(())
 }

@@ -7,6 +7,7 @@ mod embedder;
 pub(crate) mod load;
 mod mirror;
 pub(crate) mod net;
+mod net_log;
 pub(crate) mod online;
 pub(crate) mod parts;
 pub(crate) mod protocol;
@@ -170,7 +171,14 @@ pub(crate) fn default() -> JsResult<&'static Session> {
 
 pub(crate) fn report_answers() {
     state().reports_answers.set(true);
-    all().into_iter().for_each(Session::configure);
+    update_reports();
+}
+
+fn update_reports() {
+    let is_wanted = state().reports_answers.get() || net_log::is_on();
+    for session in all() {
+        session.network.settings.write().reports_answers = is_wanted;
+    }
 }
 
 impl ElectronSessions {
@@ -307,7 +315,7 @@ impl Session {
         settings.ignores_certificate_errors =
             command_line::switch("ignore-certificate-errors").is_some();
         settings.disables_http2 = command_line::switch("disable-http2").is_some();
-        settings.reports_answers = state().reports_answers.get();
+        settings.reports_answers = state().reports_answers.get() || net_log::is_on();
         settings.trusted_servers = trusted
             .unwrap_or_else(|| either(["auth-server-allowlist", "auth-server-whitelist"]))
             .as_bytes()

@@ -1075,6 +1075,8 @@ impl Document {
         let kept = successful.flatten();
         let kept_style = style_for(self, kept).unwrap_or_else(|| Style::clone(&base));
         let (mut chosen, mut is_fresh) = (None, !is_settled);
+        let are_settling = core::mem::take(&mut self.queries.are_settling);
+        self.queries.with_new_scrollbars.remove(&id);
         if successful.is_some() || options.is_empty() {
             let (resolved, fits) = self.try_position(id, &kept_style, is_fresh);
             chosen = (fits || options.is_empty()).then_some((kept, resolved, fits));
@@ -1110,6 +1112,7 @@ impl Document {
             );
             chosen = Some((option, self.try_position(id, &style, is_fresh).0, fits));
         }
+        self.queries.are_settling = are_settling;
         let Some((option, resolved, fits)) = chosen else {
             return;
         };

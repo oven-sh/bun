@@ -75,6 +75,10 @@ fn link(node: &Node, parent: &Node, before: Option<&Node>) {
     }
     parent.written();
     if node.has(F::USER_AGENT) != parent.has(F::USER_AGENT) {
+        parent
+            .arena()
+            .version
+            .update(|it| it + u64::from(node.has(F::USER_AGENT)));
         node.objects()
             .for_each(|it| it.toggle(F::USER_AGENT, parent.has(F::USER_AGENT)));
     }
@@ -117,15 +121,83 @@ impl Node {
     /// Whether nothing would notice `append_detached`.
     #[inline]
     pub(crate) fn takes_plain_append(&self, node: &Node) -> bool {
-        !self.has(F::CONNECTED | F::RENDERED | F::USER_AGENT | F::HOST | F::SLOT | F::IN_SELECT)
+        self.ignores_children()
             && !node.is_rendered()
-            && !self.steps().contains(Has::CHILDREN_CHANGED)
             && !node.steps().contains(Has::PARENT_CHANGED)
-            && !(self.arena().has_slots.get() && self.is_in_shadow_tree())
             && node.parent().is_none()
             && node.doc() == self.doc()
             && node.as_fragment().is_none()
     }
+
+    /// No steps run when they change.
+    #[inline(always)]
+    fn ignores_children(&self) -> bool {
+        !self.has(F::CONNECTED | F::RENDERED | F::USER_AGENT | F::HOST | F::SLOT | F::IN_SELECT)
+            && !self.steps().contains(Has::CHILDREN_CHANGED)
+            && !(self.arena().has_slots.get() && self.is_in_shadow_tree())
+    }
+
+    /// Whether nothing would notice `remove_detached`.
+    #[inline(always)]
+    fn allows_plain_removal(&self, child: &Node) -> bool {
+        const WATCH: DocFlags = DocFlags::HAS_RANGES
+            .union(DocFlags::HAS_ITERATORS)
+            .union(DocFlags::OBSERVES_CHILDREN)
+            .union(DocFlags::OBSERVES_ATTRIBUTES)
+            .union(DocFlags::OBSERVES_DATA)
+            .union(DocFlags::RECORDS_EDITS);
+        self.ignores_children()
+            && !child.steps().contains(Has::PARENT_CHANGED)
+            && !self.doc().is(WATCH)
+    }
+}
+
+#[inline]
+fn remove_detached(parent: &Node, node: &Node) {
+    unlink(node, parent);
+    if node.kind().is_linked() {
+        parent.arena().write(|engine| {
+            engine.tree.unlink_unknown(node.id());
+            engine.tree.set_scope(node.id(), 0);
+        });
+    }
+}
+
+/// `pre_insert`, if that is valid and only links change.
+#[inline]
+fn insert_detached(node: &Node, parent: &Node, child: Option<&Node>) -> bool {
+    let old = node.parent();
+    if !parent.ignores_children()
+        || !(parent.is_element() || parent.kind() == Kind::Fragment)
+        || !(node.is_element() || node.kind() == Kind::Text)
+        || node.has(F::RENDERED | F::USER_AGENT)
+        || node.steps().contains(Has::PARENT_CHANGED)
+        || node.doc() != parent.doc()
+        || child.is_some_and(|it| it.parent() != Some(parent) || parent.has(F::HAS_RANGES))
+        || old.map_or_else(
+            || parent.has_observed_children(),
+            |it| !it.allows_plain_removal(node),
+        )
+    {
+        return false;
+    }
+    if old == Some(parent) && (child == Some(node) || child == node.next_sibling()) {
+        return true;
+    }
+    if is_host_including_inclusive_ancestor(node, parent) {
+        return false;
+    }
+    old.into_iter().for_each(|it| unlink(node, it));
+    link(node, parent, child);
+    let (id, before) = (node.id(), linked_from(child));
+    parent.arena().write(|engine| {
+        if old.is_some() {
+            engine.tree.unlink_unknown(id);
+        }
+        engine.tree.link(parent.id(), id, before);
+        engine.tree.set_scope(id, engine.tree[parent.id()].scope);
+    });
+    true
 }
 
 /// No observer is told.
@@ -166,6 +238,39 @@ fn make_objects_with_ids(root: &Node) {
     }
 }
 
+const RARE_TO_CONNECT: F = F::NAMED
+    .union(F::HAS_NONCE)
+    .union(F::AUTOFOCUS)
+    .union(F::CUSTOM)
+    .union(F::UNDEFINED)
+    .union(F::ANIMATED)
+    .union(F::WATCHED)
+    .union(F::BLOCKS_WHEEL)
+    .union(F::SHADOW_ROOT);
+const RARE_TO_DISCONNECT: F = F::NAMED
+    .union(F::SHADOW_ROOT)
+    .union(F::CUSTOM)
+    .union(F::ANIMATED)
+    .union(F::SHOWS_AS_POPOVER);
+const CONNECTION_STEPS: Has = Has::UA_SHADOW
+    .union(Has::INSERTED)
+    .union(Has::POST_CONNECTION)
+    .union(Has::RENDERED);
+
+/// Whether nothing is to be done when it leaves its scope and enters it again, and no script runs meanwhile.
+fn can_stay_connected(root: &Node, parent: &Node) -> bool {
+    !parent.has(F::HOST | F::SLOT | F::IN_SELECT)
+        && !parent.steps().contains(Has::CHILDREN_CHANGED)
+        && !root.steps().contains(Has::PARENT_CHANGED)
+        && !root.doc().is(DocFlags::WATCHES_IDS)
+        && !(parent.arena().has_slots.get() && parent.is_in_shadow_tree())
+        && root.shadow_including_objects().all(|it| {
+            it.prefetch_after();
+            !it.has(RARE_TO_CONNECT | RARE_TO_DISCONNECT)
+                && !it.steps().intersects(CONNECTION_STEPS | Has::REMOVED)
+        })
+}
+
 fn connect<'a>(
     cx: &mut JsScope<'a>,
     root: &'a Node,
@@ -174,26 +279,13 @@ fn connect<'a>(
     was_kept: bool,
     after: &mut Rooted<'a>,
 ) {
-    const RARE: F = F::HAS_ID
-        .union(F::NAMED)
-        .union(F::HAS_NONCE)
-        .union(F::AUTOFOCUS)
-        .union(F::CUSTOM)
-        .union(F::UNDEFINED)
-        .union(F::ANIMATED)
-        .union(F::WATCHED)
-        .union(F::BLOCKS_WHEEL);
     let inherited = scope.flags() & F::RENDERED | F::CONNECTED;
     make_objects_with_ids(root);
     let (mut next, mut told) = (Some(root), Rooted::default());
     while let Some(at) = next {
         at.prefetch_after();
         at.set(inherited);
-        if at.has(RARE | F::SHADOW_ROOT)
-            || at
-                .steps()
-                .intersects(Has::UA_SHADOW | Has::INSERTED | Has::POST_CONNECTION | Has::RENDERED)
-        {
+        if at.has(RARE_TO_CONNECT | F::HAS_ID) || at.steps().intersects(CONNECTION_STEPS) {
             connect_rare(cx, at, scope, is_move, after, &mut told);
         }
         if at.has(F::HAS_BARE_CHILDREN) {
@@ -229,7 +321,7 @@ fn connect_rare<'a>(
         return;
     };
     if at.has(F::HAS_ID) {
-        scope_within(at, scope).add_id(&cx.heap, id_of(element), element.id());
+        scope_within(at, scope).add_id(&cx.heap, element.with(|it| it.id), element.id());
     }
     if at.has(F::NAMED) {
         named::changed(&cx.heap, element);
@@ -290,12 +382,6 @@ fn disconnect<'a>(
     is_move: bool,
     removed: &mut Rooted<'a>,
 ) -> Rooted<'a> {
-    const RARE: F = F::HAS_ID
-        .union(F::NAMED)
-        .union(F::SHADOW_ROOT)
-        .union(F::CUSTOM)
-        .union(F::ANIMATED)
-        .union(F::SHOWS_AS_POPOVER);
     let lost = if next_step == Next::Gone {
         F::CONNECTED | F::RENDERED
     } else {
@@ -306,12 +392,12 @@ fn disconnect<'a>(
     while let Some(at) = next {
         at.prefetch_after();
         at.unset(lost);
-        if at.has(RARE) || at.steps().contains(Has::REMOVED) {
+        if at.has(RARE_TO_DISCONNECT | F::HAS_ID) || at.steps().contains(Has::REMOVED) {
             disconnect_rare(cx, at, scope, is_move, removed, &mut told);
         }
         if at.has(F::HAS_BARE_CHILDREN) {
             bare::for_each_id(at, |id, element| {
-                scope_within(at, scope).remove_id(&id, element)
+                scope_within(at, scope).remove_id(id, element)
             });
         }
         next = at.shadow_including_following(root, Node::first_object);
@@ -342,7 +428,7 @@ fn disconnect_rare<'a>(
         return;
     };
     if at.has(F::HAS_ID) {
-        scope_within(at, scope).remove_id(&id_of(element), element.id());
+        scope_within(at, scope).remove_id(element.with(|it| it.id), element.id());
     }
     if at.has(F::NAMED) {
         named::changed(&cx.heap, element);
@@ -396,6 +482,16 @@ pub(super) fn let_go_before_changing<'a>(cx: &mut JsScope<'a>, node: &'a Node) {
 #[cold]
 fn let_go<'a>(cx: &mut JsScope<'a>, kept: &'a Node) {
     KEPT.set(core::ptr::null());
+    if let Some(scope) = kept.scope() {
+        disconnect(
+            cx,
+            kept,
+            scope,
+            Next::Reinserted,
+            false,
+            &mut Rooted::default(),
+        );
+    }
     let has_events = detach(kept);
     let version = &kept.arena().version;
     version.set(version.get() + 1);
@@ -448,11 +544,13 @@ fn forget_interaction(root: &Node) {
     }
 }
 
+#[inline]
 fn is_host_including_inclusive_ancestor(node: &Node, of: &Node) -> bool {
     (node == of
         || node.first_object().is_some()
         || node.has(F::HOST)
         || node.kind() == Kind::Template)
+        && (node.is_connected() || !of.is_connected())
         && core::iter::successors(Some(of), |it| {
             it.parent()
                 .or_else(|| it.as_fragment()?.edge_node(Edge::Host))
@@ -469,6 +567,13 @@ fn insert_one<'a>(
     is_move: bool,
     after: &mut Rooted<'a>,
 ) {
+    if core::ptr::eq(KEPT.get(), node)
+        && (!parent.is_rendered()
+            || node.kind().is_linked()
+                && node.read(|tree, id| tree[id].scope != tree[parent.id()].scope))
+    {
+        let_go(cx, node);
+    }
     if node.parent().is_some()
         || before.is_some_and(|it| it.parent() != Some(parent))
         || node.doc() != parent.doc()
@@ -491,7 +596,9 @@ fn insert_one<'a>(
             }
         });
     }
-    if let Some(scope) = parent.scope() {
+    if !node.is_connected()
+        && let Some(scope) = parent.scope()
+    {
         connect(cx, node, scope, is_move, was_kept, after);
     }
     if parent.is_rendered() {
@@ -628,6 +735,9 @@ fn remove_for<'a>(
 ) {
     let_go_before_changing(cx, node);
     let Some(parent) = node.parent() else { return };
+    if parent.allows_plain_removal(node) {
+        return remove_detached(parent, node);
+    }
     node.prefetch_first_below();
     if node.doc().is(DocFlags::HAS_RANGES) {
         seams::ranges_before_remove(cx, node, parent);
@@ -660,7 +770,12 @@ fn remove_for<'a>(
     };
     let mut removed = Rooted::default();
     if let Some(scope) = scope {
-        let told = disconnect(cx, node, scope, next_step, is_move, &mut removed);
+        let told =
+            if next_step != Next::Gone && node.is_rendered() && can_stay_connected(node, parent) {
+                Rooted::default()
+            } else {
+                disconnect(cx, node, scope, next_step, is_move, &mut removed)
+            };
         if node.is_rendered() {
             KEPT.set(node);
         }
@@ -730,7 +845,7 @@ fn remove_for<'a>(
 
 /// Gives the nodes slots in the arena of `doc`.
 fn move_to_arena(root: &Node, doc: &Doc) {
-    let (old, new) = (Rc::clone(root.arena()), doc.arena());
+    let (old, new) = (root.share_arena(), doc.share_arena());
     let extras = |it: &'_ Node| {
         it.try_edge_list(Edge::AttributeNodes)
             .into_iter()
@@ -744,14 +859,14 @@ fn move_to_arena(root: &Node, doc: &Doc) {
         // SAFETY: nothing allocates here.
         let extras = extras(node).into_iter().map(|it| unsafe { &*it });
         for node in extras.chain([node]) {
-            debug_assert!(Rc::ptr_eq(node.arena(), &old));
+            debug_assert!(core::ptr::eq(node.arena(), &raw const *old));
             let slot = old.write(|engine| engine.tree.take(node.id()));
             let id = new.write(|engine| engine.tree.put(slot));
             ids.insert(node.id(), id);
-            node.move_to(Rc::clone(new), id);
+            node.move_to(Rc::clone(&new), id);
         }
     }
-    [&old, new]
+    [&old, &new]
         .into_iter()
         .for_each(|it| it.version.update(|it| it + 1));
     new.has_slots
@@ -831,7 +946,7 @@ pub(crate) fn adopt<'a>(cx: &mut JsScope<'a>, node: &'a Node, doc: &'a Doc) {
         if old.is(DocFlags::HAS_ITERATORS) {
             doc.set_doc_flags(DocFlags::HAS_ITERATORS, true);
         }
-        if !Rc::ptr_eq(old.arena(), doc.arena()) {
+        if !old.is_in_arena_of(doc) {
             move_to_arena(node, doc);
         }
         adopt_tree(cx, node, doc, old);
@@ -926,9 +1041,11 @@ pub(crate) fn pre_insert<'a>(
     parent: &'a Node,
     child: Option<&'a Node>,
 ) -> Result<'a> {
+    if insert_detached(node, parent, child) {
+        return Ok(());
+    }
     ensure_pre_insert_validity(&cx.heap, node, parent, child, Validity::Inserting)?;
-    const OBSERVED: DocFlags = DocFlags::OBSERVES_CHILDREN.union(DocFlags::RECORDS_EDITS);
-    if child.is_none() && parent.takes_plain_append(node) && !parent.doc().is(OBSERVED) {
+    if child.is_none() && parent.takes_plain_append(node) && !parent.has_observed_children() {
         append_detached(parent, node);
         return Ok(());
     }
@@ -1020,9 +1137,7 @@ pub(crate) fn replace<'a>(
 
 pub(crate) fn replace_all<'a>(cx: &mut JsScope<'a>, node: Option<&'a Node>, parent: &'a Node) {
     bare::drop_children(cx, parent);
-    let is_observed = parent
-        .doc()
-        .is(DocFlags::OBSERVES_CHILDREN | DocFlags::RECORDS_EDITS);
+    let is_observed = parent.has_observed_children();
     let removed = Rooted::from_nodes(&cx.heap, parent.children().take_while(|_| is_observed));
     let added = node
         .filter(|_| is_observed)
@@ -1114,7 +1229,7 @@ fn clone_single<'a>(
             && !element.may_be_custom()
             && element.is_value().is_none();
         let copy = match is_plain {
-            true if Rc::ptr_eq(node.arena(), doc.arena())
+            true if node.is_in_arena_of(doc)
                 && element.has_only_passive_attributes()
                 && doc.quirks() == node.doc().quirks()
                 && !doc.is(DocFlags::CHECKS_STYLE_ATTRIBUTES) =>

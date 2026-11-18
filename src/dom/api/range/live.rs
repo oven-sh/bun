@@ -107,7 +107,7 @@ fn move_points<'a>(cx: Cx<'_, 'a>, node: &'a Node, to: impl Fn(u32) -> Option<Po
             point
         }
     };
-    for handle in handles {
+    for handle in handles.into_iter().rev() {
         if let Some(range) = handle.get().and_then(|it| Range::from_js(&cx.heap, it)) {
             range.put(cx, moved(range.start()), moved(range.end()));
         }

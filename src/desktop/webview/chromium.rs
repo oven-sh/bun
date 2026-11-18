@@ -128,6 +128,7 @@ pub(super) struct Backend {
     pub(super) media: RefCell<Value>,
     /// By the ids of their frames.
     pub(super) pages: RefCell<BTreeMap<Box<str>, Rc<Page>>>,
+    pub(super) frame_added: RefCell<Later<()>>,
     last_id: Cell<i32>,
     sessions: RefCell<BTreeMap<i32, Rc<Session>>>,
     views: RefCell<BTreeMap<i32, Rc<Page>>>,
@@ -248,8 +249,10 @@ impl Browser {
             }
             "Target.targetDestroyed" => self.destroyed(params["targetId"].text()),
             "Browser.downloadWillBegin" => {
-                self.page(params["frameId"].text()).map_or(Ok(()), |page| {
-                    page.download(params["url"].text(), &params["suggestedFilename"])
+                let frame = params["frameId"].text();
+                self.page(frame).map_or(Ok(()), |page| {
+                    let name = params["suggestedFilename"].as_text();
+                    page.download(params["url"].text(), Some(page.wish_in(frame, name)?))
                 })
             }
             _ => Ok(()),
@@ -267,6 +270,15 @@ impl Browser {
 
     fn page(&self, frame: &str) -> Option<Rc<Page>> {
         self.pages.borrow().get(frame).cloned()
+    }
+
+    /// A request of a frame can overtake the news that there is such a frame.
+    async fn page_that_gets(&self, frame: &str) -> Option<Rc<Page>> {
+        while self.page(frame).is_none() && !frame.is_empty() && self.sessions.borrow().len() > 1 {
+            let added = self.frame_added.borrow().clone();
+            task::within(5000, added).await?;
+        }
+        self.page(frame)
     }
 
     fn view(&self, id: i32) -> Option<Rc<Page>> {
@@ -359,7 +371,11 @@ impl Browser {
         if matches!(href.strip_suffix('/'), Some(CLIPBOARD | MEDIA)) {
             return paused.fulfill_with_html("").await;
         }
-        let (page, is_document) = (self.page(frame), kind == "Document");
+        let is_document = kind == "Document";
+        let page = match is_document {
+            true => self.page_that_gets(frame).await,
+            false => self.page(frame),
+        };
         if let Some(page) = page.as_ref().filter(|_| is_document) {
             page.news.finished().await;
         }
@@ -456,14 +472,15 @@ impl Browser {
                 _ => &["will-frame-navigate"],
             };
             let whole = format!("{url}{}", request["urlFragment"].text());
+            let referrer = request["headers"]["Referer"].text();
             if names
                 .iter()
-                .any(|name| page.emit_navigation(name, frame, &whole, false))
+                .any(|name| page.emit_navigation(name, frame, &whole, false, referrer))
             {
                 return paused.refuse("Aborted").await;
             }
             if is_redirect {
-                page.emit_navigation("did-redirect-navigation", frame, &whole, false);
+                page.emit_navigation("did-redirect-navigation", frame, &whole, false, referrer);
             }
         }
         let before = self
@@ -553,6 +570,7 @@ impl Browser {
         options: &Value,
         target: &str,
         session: Rc<str>,
+        has_opener: bool,
     ) -> Result<Rc<Page>, Failure> {
         let page = Page::new(
             self.clone(),
@@ -562,6 +580,7 @@ impl Browser {
             self.session(options["session"].int())?,
         );
         self.views.borrow_mut().insert(page.id, Rc::clone(&page));
+        page.has_relatives.set(has_opener);
         page.add_frame(target, &session, "");
         let frame = record! { "frame": page.handle(target) };
         page.emit("frame-created", record! {}, vec![frame]);
@@ -634,11 +653,12 @@ impl Browser {
             ],
         );
         if options.is_truthy() {
+            opener.has_relatives.set(true);
             let (browser, target, session) =
                 (self.clone(), target["targetId"].display(), session.into());
-            return task::spawn(
-                async move { drop(browser.adopt(&options, &target, session).await) },
-            );
+            return task::spawn(async move {
+                drop(browser.adopt(&options, &target, session, true).await)
+            });
         }
         self.0
             .command("Target.closeTarget", target.pick(&["targetId"]), "");
@@ -1093,9 +1113,8 @@ impl Browser {
                     .inspect("Target.createTarget", place)
                     .await?
                     .take("targetId");
-                let page = self
-                    .adopt(&options, target.text(), self.0.attach(target.text()).await?)
-                    .await?;
+                let session = self.0.attach(target.text()).await?;
+                let page = self.adopt(&options, target.text(), session, false).await?;
                 let preload = &options["preferences"]["preload"];
                 if preload.is_truthy() {
                     page.emit(

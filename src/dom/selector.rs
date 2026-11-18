@@ -6,8 +6,12 @@ use std::rc::Rc;
 use bun_core::strings;
 use smallvec::SmallVec;
 
+use crate::api::core::Atom;
+use crate::bindings::Of;
 use crate::name::{Map, Name, name};
 use crate::order::Order as _;
+use crate::rules::Classes;
+use crate::sequence::{ANY, Row, Wanted};
 use crate::tree::{Data, Element, Flags, Namespace, Node, NodeId, State, Tree};
 use crate::values::{Str, eq};
 
@@ -222,12 +226,15 @@ pub(crate) mod key {
     }
     /// `Name::NONE` unless the attribute is of the kind that selectors tend to compare as a whole.
     pub(crate) fn value(name: Name, spelled: &[u8], value: &[u8]) -> Name {
-        let has_keys =
-            spelled.starts_with(b"data-") || spelled.starts_with(b"aria-") || spelled == b"role";
-        has_keys
+        has_values(spelled)
             .then(|| short_value(name, value))
             .flatten()
             .unwrap_or(Name::NONE)
+    }
+
+    #[inline]
+    pub(crate) fn has_values(spelled: &[u8]) -> bool {
+        spelled.starts_with(b"data-") || spelled.starts_with(b"aria-") || spelled == b"role"
     }
 
     /// `value`, for a name that is known to have keys.
@@ -422,47 +429,40 @@ pub(crate) struct Selector {
 }
 
 /// A compound of a selector that has no other combinators than those for children and descendants.
-pub(crate) struct Step<'a> {
-    /// `filter` of keys that are all required.
-    pub(crate) keys: u64,
+pub(crate) struct Step {
+    /// `filter` and `second_filter` of keys that are all required.
+    filters: [u64; 2],
     tag: Name,
     class: Name,
-    /// If there is more to it.
-    compound: Option<&'a Compound>,
+    has_more: bool,
     is_child: bool,
 }
 
-impl Step<'_> {
-    pub(crate) fn all_of<'a>(
-        list: &'a [Selector],
-        matcher: &Matcher<'_>,
-    ) -> Option<SmallVec<[Step<'a>; 4]>> {
-        let [selector] = list else { return None };
-        (selector.pseudo == Pseudo::None && matcher.cut_at == 0 && matcher.host == 0)
-            .then_some(())?;
-        let step = |compound: &'a Compound| {
+impl Step {
+    fn all_of(selector: &Selector) -> Option<Box<[Step]>> {
+        let step = |compound: &Compound| {
+            let keys = || {
+                compound
+                    .simples
+                    .iter()
+                    .filter_map(|it| best_key(core::iter::once(it)))
+            };
+            let is_child = compound.combinator == Combinator::Child;
             let mut step = Step {
-                keys: 0,
+                filters: [filter(keys()), second_filter(keys())],
                 tag: Name::NONE,
                 class: Name::NONE,
-                compound: None,
-                is_child: compound.combinator == Combinator::Child,
+                has_more: false,
+                is_child,
             };
             for simple in &compound.simples {
                 match simple {
-                    Simple::Tag(name, lower) if name == lower => {
-                        step.keys |= filter([key::tag(*name)].into_iter());
-                        step.tag = *name;
+                    Simple::Tag(name, lower) if name == lower && step.tag == Name::NONE => {
+                        step.tag = *name
                     }
-                    Simple::Class(class) => {
-                        step.keys |= filter([key::class(*class)].into_iter());
-                        step.compound = step
-                            .compound
-                            .or_else(|| (step.class != Name::NONE).then_some(compound));
-                        step.class = *class;
-                    }
+                    Simple::Class(class) if step.class == Name::NONE => step.class = *class,
                     Simple::Scope => return None,
-                    _ => step.compound = Some(compound),
+                    _ => step.has_more = true,
                 }
             }
             matches!(
@@ -471,35 +471,50 @@ impl Step<'_> {
             )
             .then_some(step)
         };
-        selector.compounds.iter().map(step).collect()
+        selector
+            .compounds
+            .iter()
+            .map(step)
+            .collect::<Option<_>>()
+            .filter(|_| selector.pseudo == Pseudo::None)
     }
 
     #[inline(always)]
-    fn fits(&self, matcher: &Matcher<'_>, id: NodeId) -> bool {
-        let node = &matcher.tree[id];
-        node.keys & self.keys == self.keys
-            && node.element().is_some_and(|it| {
-                (self.tag == Name::NONE || it.tag == self.tag)
-                    && (self.class == Name::NONE || it.classes().contains(&self.class))
-            })
-            && self.compound.is_none_or(|it| matcher.compound(it, id))
+    fn lead_to(
+        steps: &[Step],
+        selector: &Selector,
+        matcher: &Matcher<'_>,
+        places: impl Places,
+        from: u32,
+    ) -> bool {
+        let [first, ..] = steps else { return false };
+        places.fits(first, from)
+            && (!first.has_more || matcher.compound(&selector.compounds[0], places.node(from)))
+            && Step::lead_above(steps, selector, matcher, places, from)
     }
 
-    #[inline]
-    pub(crate) fn lead_to(steps: &[Step<'_>], matcher: &Matcher<'_>, id: NodeId) -> bool {
+    /// All but the first.
+    #[inline(always)]
+    fn lead_above(
+        steps: &[Step],
+        selector: &Selector,
+        matcher: &Matcher<'_>,
+        places: impl Places,
+        from: u32,
+    ) -> bool {
+        let has_the_rest = |step: &Step, index: usize, at: u32| {
+            !step.has_more || matcher.compound(&selector.compounds[index], places.node(at))
+        };
         let [first, rest @ ..] = steps else {
             return false;
         };
-        if !first.fits(matcher, id) {
-            return false;
-        }
-        let (mut index, mut at, mut is_child, mut retry) = (0, id, first.is_child, (0, 0));
+        let (mut index, mut at, mut is_child, mut retry) = (0, from, first.is_child, (0, 0));
         while let Some(step) = rest.get(index) {
-            at = matcher.tree[at].parent;
+            at = places.parent(at);
             if at == 0 {
                 return false;
             }
-            if step.fits(matcher, at) {
+            if places.fits(step, at) && has_the_rest(step, index + 1, at) {
                 retry = if is_child { retry } else { (index, at) };
                 (index, is_child) = (index + 1, step.is_child);
             } else if is_child {
@@ -511,9 +526,239 @@ impl Step<'_> {
         }
         true
     }
+
+    #[inline(always)]
+    fn is_named(&self, tag: Name, classes: Option<&Classes>) -> bool {
+        (self.tag == Name::NONE || tag == self.tag)
+            && (self.class == Name::NONE || classes.is_some_and(|it| it.contains(&self.class)))
+    }
 }
 
-pub(crate) fn tests_state(list: &[Selector]) -> bool {
+/// Of elements. 0 is above all others.
+pub(crate) trait Places: Copy {
+    fn node(self, at: u32) -> NodeId;
+    fn parent(self, at: u32) -> u32;
+    fn fits(self, step: &Step, at: u32) -> bool;
+}
+
+impl Places for &Tree {
+    #[inline(always)]
+    fn node(self, at: u32) -> NodeId {
+        at
+    }
+
+    #[inline(always)]
+    fn parent(self, at: u32) -> u32 {
+        self[at].parent
+    }
+
+    #[inline(always)]
+    fn fits(self, step: &Step, at: u32) -> bool {
+        self[at].keys & step.filters[0] == step.filters[0]
+            && self[at]
+                .element()
+                .is_some_and(|it| step.is_named(it.tag, it.classes.as_deref()))
+    }
+}
+
+impl Places for &[Row] {
+    #[inline(always)]
+    fn node(self, at: u32) -> NodeId {
+        self[at as usize].id
+    }
+
+    #[inline(always)]
+    fn parent(self, at: u32) -> u32 {
+        self[at as usize].parent
+    }
+
+    #[inline(always)]
+    fn fits(self, step: &Step, at: u32) -> bool {
+        let row = &self[at as usize];
+        (!row.filters[0] & step.filters[0]) | (!row.filters[1] & step.filters[1]) == 0
+            && (step.class == row.first_class && (step.tag == Name::NONE || step.tag == row.tag)
+                || step.is_named(row.tag, row.classes.as_deref()))
+    }
+}
+
+/// What a script looks for.
+pub(crate) struct Sought {
+    pub(crate) list: List,
+    /// Stands for the source in such a document.
+    pub(crate) key: u64,
+    /// The match, with `Found::number` and the root.
+    first: Cell<(u64, NodeId, crate::bindings::Cell)>,
+    /// Of all matches.
+    pub(crate) last_count: Cell<usize>,
+    /// It has only names, and looks at nothing but ancestors.
+    pub(crate) is_plain: bool,
+    pub(crate) is_xml: bool,
+    pub(crate) tests_state: bool,
+    /// What matches `#a`, `#a.b` or `#a > b c` is the element with that id or in it.
+    pub(crate) within: Option<Atom>,
+    /// A match has one of them. Only elements have any.
+    pub(crate) keys: u64,
+    /// And all of these.
+    pub(crate) required: u64,
+    pub(crate) wanted: SmallVec<[Wanted; 2]>,
+    /// For each selector.
+    steps: Box<[Option<Box<[Step]>>]>,
+    /// A match has all that are in one of them.
+    pub(crate) attributes: Option<Box<[SmallVec<[Name; 1]>]>>,
+}
+
+impl Sought {
+    pub(crate) fn new(list: List, source: &[u8], key: u64, of: Of) -> Sought {
+        let is_in_name = |it: &u8| it.is_ascii_alphanumeric() || matches!(it, b'-' | b'_');
+        let after_hash = source.strip_prefix(b"#").filter(|it| {
+            !of.is_quirky && it.iter().all(|it| is_in_name(it) || b" >.#*".contains(it))
+        });
+        let within = after_hash
+            .map(|it| Atom::from_latin1(&it[..it.iter().take_while(|it| is_in_name(it)).count()]));
+        let keys = list.iter().fold(0, |all, it| {
+            all | Some(it.compounds[0].filter)
+                .filter(|it| *it != 0)
+                .unwrap_or(u64::MAX)
+        });
+        let steps: Box<[_]> = list.iter().map(Step::all_of).collect();
+        let counted = |it: &Selector| {
+            it.compounds[0]
+                .attribute_keys()
+                .filter(|it| *it != key::attribute(name!("class")))
+                .collect()
+        };
+        let attributes = list
+            .iter()
+            .map(|it| Some(counted(it)).filter(|it: &SmallVec<_>| !it.is_empty()))
+            .collect();
+        let required = (if let [Some(only)] = &steps[..] {
+            only[0].filters[0]
+        } else {
+            0
+        }) | if keys.is_power_of_two() { keys } else { 0 };
+        let bits = |key: Name| {
+            [
+                filter(core::iter::once(key)).trailing_zeros() as u8,
+                64 + second_filter(core::iter::once(key)).trailing_zeros() as u8,
+            ]
+        };
+        let mut wanted = SmallVec::new();
+        for compound in list.iter().map(|it| &it.compounds[0]) {
+            let Some(keys) = compound.keys() else {
+                wanted.push([ANY; 4]);
+                continue;
+            };
+            let other = compound
+                .simples
+                .iter()
+                .filter_map(|it| best_key(core::iter::once(it)))
+                .find(|it| !keys.contains(it))
+                .map_or([ANY; 2], bits);
+            wanted.extend(
+                keys.into_iter()
+                    .map(bits)
+                    .map(|it| [it[0], it[1], other[0], other[1]]),
+            );
+        }
+        let is_name = |it: &Simple| {
+            matches!(it, Simple::Class(_) | Simple::Id(_))
+                || matches!(it, Simple::Tag(name, lower) if name == lower)
+        };
+        let is_plain = steps.iter().all(Option::is_some)
+            && list
+                .iter()
+                .flat_map(|it| &it.compounds)
+                .all(|it| it.simples.iter().all(is_name));
+        Sought {
+            is_plain,
+            tests_state: tests_state(&list),
+            list,
+            key,
+            first: Cell::default(),
+            last_count: Cell::new(0),
+            is_xml: of.is_xml,
+            within,
+            keys,
+            required,
+            wanted,
+            steps,
+            attributes,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn matches(&self, matcher: &Matcher<'_>, places: impl Places, at: u32) -> bool {
+        match (&self.steps[..], &self.list[..]) {
+            ([Some(steps)], [only]) if matcher.host == 0 => {
+                Step::lead_to(steps, only, matcher, places, at)
+            }
+            _ => self.any_matches(matcher, places, at),
+        }
+    }
+
+    /// In the place of `batch`, which has rows of `Tree::sequence`.
+    pub(crate) fn nodes_of_matches<'a>(
+        &self,
+        matcher: &Matcher<'_>,
+        mut batch: &'a mut [u32],
+    ) -> &'a [NodeId] {
+        #[inline(always)]
+        fn retain(batch: &mut [u32], keeps: impl Fn(&[u32]) -> bool) -> &mut [u32] {
+            let mut count = 0;
+            for index in 0..batch.len() {
+                let is_kept = keeps(&batch[index..]);
+                batch[count] = batch[index];
+                count += usize::from(is_kept);
+            }
+            &mut batch[..count]
+        }
+        let (tree, rows) = (matcher.tree, &matcher.tree.sequence.rows[..]);
+        let simple =
+            if let ([Some(steps)], [only], 0) = (&self.steps[..], &self.list[..], matcher.host) {
+                Some((steps, only))
+            } else {
+                None
+            };
+        if let Some((steps, only)) = simple {
+            batch = retain(batch, |it| rows.fits(&steps[0], it[0]));
+            if steps.len() > 1 {
+                batch = retain(batch, |it| {
+                    Step::lead_above(steps, only, matcher, rows, it[0])
+                });
+            }
+        }
+        for it in batch.iter_mut() {
+            *it = rows[*it as usize].id;
+            tree.prefetch_cell(*it);
+        }
+        if simple.is_some_and(|it| !it.0[0].has_more) {
+            return batch;
+        }
+        batch.iter().take(12).for_each(|it| tree.prefetch_node(*it));
+        retain(batch, |it| {
+            tree.prefetch_in(it);
+            match simple {
+                Some((_, only)) => matcher.compound(&only.compounds[0], it[0]),
+                None => self.any_matches(matcher, tree, it[0]),
+            }
+        })
+    }
+
+    #[inline(never)]
+    fn any_matches(&self, matcher: &Matcher<'_>, places: impl Places, at: u32) -> bool {
+        self.steps
+            .iter()
+            .zip(self.list.iter())
+            .any(|(steps, selector)| match steps {
+                Some(steps) if matcher.host == 0 => {
+                    Step::lead_to(steps, selector, matcher, places, at)
+                }
+                _ => matcher.any(core::slice::from_ref(selector), places.node(at)),
+            })
+    }
+}
+
+fn tests_state(list: &[Selector]) -> bool {
     list.iter()
         .flat_map(|it| &it.compounds)
         .flat_map(|it| &it.simples)
@@ -524,7 +769,10 @@ pub(crate) fn tests_state(list: &[Selector]) -> bool {
             | Simple::Host(Some(list))
             | Simple::HostContext(list) => tests_state(list),
             Simple::Has(has) => tests_state(&has.relatives),
-            _ => matches!(simple, Simple::State(_) | Simple::NotState(_)),
+            _ => matches!(
+                simple,
+                Simple::State(_) | Simple::NotState(_) | Simple::CustomState(_)
+            ),
         })
 }
 
@@ -679,8 +927,13 @@ impl Selector {
         while index < self.compounds.len() {
             let is_last = index + 1 == self.compounds.len();
             let compound = &mut self.compounds[index];
+            let has_namespace = compound
+                .simples
+                .iter()
+                .any(|it| matches!(it, Simple::Namespace(_)));
             let found = compound.simples.iter().position(|simple| {
                 matches!(simple, Simple::Is(list) if list.len() == 1
+                    && !(has_namespace && simple.is_about_host())
                     && list[0].pseudo == Pseudo::None
                     && (is_last || list[0].compounds.len() == 1))
             });
@@ -846,7 +1099,7 @@ impl Selector {
         }
     }
 
-    /// Those left of a combinator in a nested selector.
+    /// Those left of a combinator in a nested selector, and what is inherited.
     pub(crate) fn outer_features(&self, report: &mut dyn FnMut(Name, Relation, Name)) {
         for simple in self.compounds.iter().flat_map(|compound| &compound.simples) {
             let (list, relation) = match simple {
@@ -855,6 +1108,13 @@ impl Selector {
                 }
                 Simple::Host(Some(list)) | Simple::HostContext(list) => {
                     (list, Relation::DESCENDANT)
+                }
+                Simple::Lang(_) => {
+                    LANGUAGES
+                        .map(key::attribute)
+                        .into_iter()
+                        .for_each(|it| report(it, Relation::DESCENDANT, Name::NONE));
+                    continue;
                 }
                 _ => continue,
             };
@@ -949,6 +1209,16 @@ pub(crate) fn filter_of(element: &Element) -> u64 {
     element.attributes.iter().fold(own, |all, it| {
         all | bit(key::attribute(it.name)) | bit(it.key)
     })
+}
+
+pub(crate) fn second_filter_of(element: &Element) -> u64 {
+    element.classes.as_ref().map_or(0, |it| it.second_filter)
+        | second_filter(key::besides_classes(element))
+}
+
+/// Keys that share a bit in `filter` seldom share one here.
+pub(crate) fn second_filter(keys: impl Iterator<Item = Name>) -> u64 {
+    keys.fold(0, |all, key| all | filter_bit(Bloom::hash(key) >> 6))
 }
 
 /// A bit for each key.
@@ -1218,12 +1488,11 @@ pub(crate) struct Found {
     /// An element, and how many are before it.
     last_child: Cell<(NodeId, usize)>,
     pub(crate) selections: RefCell<Vec<crate::bindings::Selected>>,
-    /// The first match, by `Of::key` and the root, as of `cleared`.
-    firsts: [Cell<(u64, NodeId, u32, crate::bindings::Cell)>; 32],
-    cleared: Cell<u32>,
+    /// No other has had it.
+    number: Cell<u64>,
     /// Of elements that have no style, as of `rules::last_version`.
     pub(crate) rules: RefCell<Map<NodeId, (u32, Rc<crate::cascade::RuleList>)>>,
-    pub(crate) hidden: RefCell<Map<NodeId, crate::cascade::Hidden>>,
+    pub(crate) hidden: RefCell<crate::cascade::HiddenStyles>,
 }
 
 impl Found {
@@ -1232,26 +1501,24 @@ impl Found {
         self.last_child.take();
         self.selections.take();
         self.rules.take();
-        self.hidden.take();
-        self.cleared.update(|it| it.wrapping_add(1));
-        if self.cleared.get() == 0 {
-            self.firsts.iter().for_each(|it| _ = it.take());
-        }
+        self.hidden.borrow_mut().clear();
+        self.number.set(0);
     }
 
     #[inline]
-    pub(crate) fn first(&self, key: u64, root: NodeId) -> Option<crate::bindings::Cell> {
-        let known = self.firsts[(key ^ u64::from(root)) as usize % 32].get();
-        ((known.0, known.1, known.2) == (key, root, self.cleared.get())).then_some(known.3)
+    pub(crate) fn first(&self, sought: &Sought, root: NodeId) -> Option<crate::bindings::Cell> {
+        let known = sought.first.get();
+        (known.0 != 0 && (known.0, known.1) == (self.number.get(), root)).then_some(known.2)
     }
 
-    pub(crate) fn note_first(&self, key: u64, root: NodeId, first: crate::bindings::Cell) {
-        self.firsts[(key ^ u64::from(root)) as usize % 32].set((
-            key,
-            root,
-            self.cleared.get(),
-            first,
-        ));
+    pub(crate) fn note_first(&self, sought: &Sought, root: NodeId, first: crate::bindings::Cell) {
+        #[thread_local]
+        static LAST_NUMBER: Cell<u64> = Cell::new(0);
+        if self.number.get() == 0 {
+            LAST_NUMBER.update(|it| it + 1);
+            self.number.set(LAST_NUMBER.get());
+        }
+        sought.first.set((self.number.get(), root, first));
     }
 }
 
@@ -1662,6 +1929,7 @@ impl<'a> Matcher<'a> {
                 ranges
                     .iter()
                     .any(|range| dash_match(language.as_bytes(), range, true))
+                    && strings::split(language.as_bytes(), b"-").all(|it| it.len() <= 8)
             }
             Simple::Nth(data, of) => self.nth(*data, of.as_ref(), element, id),
             Simple::Part(_) => element.has(name!("part")),
@@ -1718,6 +1986,15 @@ impl<'a> Matcher<'a> {
                     .all(|compound| compound.combinator == combinator)
             };
             let matches = |candidate| inner.matches(relative, candidate);
+            let has_below = |root| {
+                tree.descendants_with(
+                    root,
+                    Some(chain[0].filter)
+                        .filter(|it| *it != 0)
+                        .unwrap_or(u64::MAX),
+                )
+                .any(matches)
+            };
             match chain[chain.len() - 1].combinator {
                 Combinator::Child if chain.len() == 1 => tree.element_children(parent).any(matches),
                 Combinator::Next | Combinator::Later if id == self.host => false,
@@ -1730,11 +2007,11 @@ impl<'a> Matcher<'a> {
                         matches!(it.combinator, Combinator::Child | Combinator::Descendant)
                     });
                     tree.next_elements(id).any(|sibling| match descends {
-                        true => tree.descendants(sibling).any(matches),
+                        true => has_below(sibling),
                         false => matches(sibling),
                     })
                 }
-                _ => tree.descendants(parent).any(matches),
+                _ => has_below(parent),
             }
         })
     }
@@ -1782,6 +2059,26 @@ impl<'a> Matcher<'a> {
                 usize::MAX
             },
         );
+        let among_few = |step: fn(&Node) -> NodeId| {
+            let (mut at, mut found) = (step(&self.tree[id]), 0);
+            for _ in 0..12 {
+                if at == 0 || found == limit {
+                    return Some(found);
+                }
+                found += usize::from(self.tree[at].element().is_some_and(|it| {
+                    !of_type || (it.tag, it.namespace) == (element.tag, element.namespace)
+                }));
+                at = step(&self.tree[at]);
+            }
+            None
+        };
+        let near = match data.kind {
+            _ if of.is_some() || element.namespace == Namespace::Other => None,
+            NthKind::Child if self.tree.found().last_child.get().0 != 0 => None,
+            NthKind::Child | NthKind::OfType => among_few(|it| it.previous),
+            NthKind::LastChild | NthKind::LastOfType => among_few(|it| it.next),
+            NthKind::OnlyChild | NthKind::OnlyOfType => None,
+        };
         let indices = |makes: bool| {
             let what = of.map_or_else(
                 || {
@@ -1862,6 +2159,7 @@ impl<'a> Matcher<'a> {
             })
         };
         let index = 1 + match data.kind {
+            _ if let Some(near) = near => near,
             NthKind::Child | NthKind::OfType => before(),
             NthKind::LastChild | NthKind::LastOfType => after(),
             NthKind::OnlyChild | NthKind::OnlyOfType => before() + after(),

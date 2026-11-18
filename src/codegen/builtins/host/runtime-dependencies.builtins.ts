@@ -1,6 +1,7 @@
 import * as b from "bun-builtins-table";
 import lightStreams from "../../../js/ahead-of-time/internal/streams/load_all.ts";
 import { pathOfNativeFunction } from "../paths.ts";
+import { undescribedPrototype } from "./external-values.ts";
 import {
   asyncContextCell,
   callbacksOfFsCell,
@@ -835,6 +836,7 @@ export default b.declarations(
   b.namespace(warningsOfRejections, {}, { listsAllMembers: true }),
   // No text can name it: the build does for a program whose global object is a window.
   b.namespace("%WindowOfProgram%", {}, { listsAllMembers: true }),
+  b.namespace(undescribedPrototype, {}, { hasUndeclaredMembers: true }),
   b.namespace(interpretedFiles, {}, { callsFunctions: functionsOfInterpreter }),
   b.namespace(interpretedAsyncFiles, {}, { callsFunctions: asyncFunctionsOfInterpreter }),
   ...nativeCalls,

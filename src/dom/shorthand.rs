@@ -35,6 +35,7 @@ pub(crate) struct Shorthand {
     longhands: Vec<Longhand>,
     props: Box<[Prop]>,
     ids: [Box<[Id]>; Flow::COUNT],
+    filter: u64,
 }
 
 static ALL: LazyLock<Vec<&'static Definition>> = LazyLock::new(|| {
@@ -120,11 +121,16 @@ impl Shorthand {
                 .filter_map(|it| it.prop.id(Flow(flow as u8)))
                 .collect()
         });
+        let filter = longhands
+            .iter()
+            .filter_map(|it| it.prop.id(Flow::DEFAULT))
+            .fold(0, |all, it| all | 1 << (it as u32 % 64));
         Shorthand {
             definition,
             props: longhands.iter().map(|it| it.prop).collect(),
             longhands,
             ids,
+            filter,
         }
     }
 
@@ -134,6 +140,11 @@ impl Shorthand {
 
     pub(crate) fn longhands(&self) -> &[Prop] {
         &self.props
+    }
+
+    /// That has a bit for each `Id`, modulo 64.
+    pub(crate) fn longhands_with_filter(&self) -> (&[Prop], u64) {
+        (&self.props, self.filter)
     }
 
     fn index(&self, prop: Prop) -> Option<usize> {
@@ -338,7 +349,7 @@ impl Shorthand {
     /// Empty if it cannot stand for these values. `initial` is `None` if they are as they are specified.
     pub(crate) fn join(&self, values: &[&[u8]], initial: Option<&dyn Fn(Id) -> Out>) -> Out {
         thread_local! {
-            static JOINED: RefCell<Map<Out, Out>> = RefCell::default();
+            static JOINED: RefCell<Box<Map<Out, Out>>> = RefCell::default();
         }
         if initial.is_some() || values.iter().any(|it| it.len() > 64) {
             return self.try_join(values, initial).unwrap_or_default();
@@ -422,6 +433,9 @@ impl Shorthand {
                 if !is_computed && values.iter().zip(&initials).all(|it| **it.0 == **it.1) =>
             {
                 return None;
+            }
+            ("place-content", _) if values[0].ends_with(b"baseline") => {
+                return Some(values.join(&b' '));
             }
             ("grid", _) if is_computed => return Some(slashes(values)),
             ("grid", _) => return join_grid(values),

@@ -4,10 +4,10 @@
 #include "Bindgen/JSGlobalStandIn.h"
 #include "Bindgen/SharedBodies.h"
 #include "GeneratedBindings+InterfaceInfos.h"
-#include "InternalModuleRegistry.h"
 #include "JSAbortSignal.h"
 #include "JSAbortController.h"
 #include "JSEventTarget.h"
+#include "RemovableFeatures.h"
 #include "webcore/streams/JSWritableStream.h"
 #include <JavaScriptCore/AsyncIteratorPrototype.h>
 #include <JavaScriptCore/BuiltinNames.h>
@@ -16,6 +16,7 @@
 #include <JavaScriptCore/GetterSetter.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSCInlines.h>
+#include <JavaScriptCore/JSCellButterfly.h>
 #include <JavaScriptCore/JSGlobalProxyInlines.h>
 #include <JavaScriptCore/JSIteratorPrototype.h>
 #include <JavaScriptCore/JSMapInlines.h>
@@ -143,6 +144,14 @@ NEVER_INLINE GCClient::IsoSubspace* createSubspaceForInterface(VM& vm, unsigned 
         WebCore::customHeapCellType<InterfaceWithInlineStorageCellType>);
 }
 
+// What the prototypes of an interface have in common in all realms: a structure, the exposure, then the values in the order of their offsets, with executables for functions.
+struct Patterns {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Patterns);
+    static constexpr unsigned structure = 0, exposure = 1, firstValue = 2;
+    // For contexts that are not secure, and for those that are.
+    std::array<WriteBarrier<JSCellButterfly>, 2 * Generated::numberOfInterfaces> all;
+};
+
 struct Interfaces {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Interfaces);
     std::array<LazyClassStructure, Generated::numberOfInterfaces> classes;
@@ -152,6 +161,9 @@ struct Interfaces {
     JSValue inlineUnforgeables[Generated::numberOfClassesWithUnforgeables + 1][2];
     WriteBarrier<Structure> observableArrayStructure;
     std::array<WriteBarrier<JSObject>, Generated::numberOfInterfaces> instancesOfRealm;
+    // In the first realm, for the others.
+    WTF::BitSet<Generated::numberOfInterfaces> wereSetUp;
+    std::unique_ptr<Patterns> patterns;
 };
 static_assert(!OBJECT_OFFSETOF(Interfaces, classes));
 
@@ -186,6 +198,8 @@ void AdditionsToGlobalObject::visitInterfaces(Visitor& visitor)
         visitor.append(holder);
     visitor.append(interfaces->observableArrayStructure);
     visitor.append(interfaces->instancesOfRealm.begin(), interfaces->instancesOfRealm.end());
+    if (auto* patterns = interfaces->patterns.get())
+        visitor.append(patterns->all.begin(), patterns->all.end());
 }
 template void AdditionsToGlobalObject::visitInterfaces(AbstractSlotVisitor&);
 template void AdditionsToGlobalObject::visitInterfaces(SlotVisitor&);
@@ -317,10 +331,11 @@ class InterfaceText {
 public:
     using Table = Vector<HashTableValue>;
 
-    explicit InterfaceText(const InterfaceDescription& description)
+    InterfaceText(const InterfaceDescription& description, bool withPrototype)
         : m_text(description.text)
         , m_entries(description.entries)
-        , conditionalTables(description.numberOfConditions, [&](size_t) { return table(); })
+        , prototypeTable(table(withPrototype))
+        , conditionalTables(description.numberOfConditions, [&](size_t i) { return table(withPrototype || description.conditions[i].isStatic); })
     {
     }
 
@@ -332,7 +347,7 @@ private:
         return result;
     }
 
-    Table table()
+    Table table(bool isNeeded = true)
     {
         Table result;
         while (uint8_t row = *m_text++) {
@@ -342,7 +357,11 @@ private:
             add(MemberRow::DontDelete, PropertyAttribute::DontDelete);
             add(MemberRow::ReadOnly, PropertyAttribute::ReadOnly);
             add(MemberRow::DOMAttribute, PropertyAttribute::DOMAttribute);
-            auto append = [&](PropertyAttribute kind, HashTableValue::ValueStorage value) { result.append({ literal(), attributes | kind, NoIntrinsic, value }); };
+            auto append = [&](PropertyAttribute kind, HashTableValue::ValueStorage value) {
+                auto name = literal();
+                if (isNeeded)
+                    result.append({ name, attributes | kind, NoIntrinsic, value });
+            };
             auto& entry = *m_entries++;
             switch (row & MemberRow::KindMask) {
             case MemberRow::Function:
@@ -357,6 +376,26 @@ private:
             case MemberRow::Accessor:
                 append(PropertyAttribute::CustomAccessor, { HashTableValue::GetterSetterType, entry.getter, row & MemberRow::ReadOnly ? nullptr : (m_entries++)->setter });
                 break;
+            case MemberRow::DOMJITAccessor: {
+                auto setter = row & MemberRow::ReadOnly ? nullptr : (m_entries++)->setter;
+                if (removedFeatureAt(std::bit_cast<const void*>(entry.domJIT->getter()))) [[unlikely]] {
+                    append(PropertyAttribute::CustomAccessor, { HashTableValue::GetterSetterType, entry.domJIT->getter(), setter });
+                    break;
+                }
+                attributes |= PropertyAttribute::DOMJITAttribute;
+                append(PropertyAttribute::CustomAccessor, { HashTableValue::DOMJITAttributeType, entry.domJIT, setter });
+                break;
+            }
+            case MemberRow::DOMJITFunction: {
+                auto* signature = (m_entries++)->signature;
+                if (removedFeatureAt(std::bit_cast<const void*>(entry.function))) [[unlikely]] {
+                    append(PropertyAttribute::Function, { HashTableValue::NativeFunctionType, entry.function, static_cast<int>(signature->argumentCount) });
+                    break;
+                }
+                attributes |= PropertyAttribute::DOMJITFunction;
+                append(PropertyAttribute::Function, { HashTableValue::DOMJITFunctionType, entry.function, signature });
+                break;
+            }
             }
         }
         return result;
@@ -369,18 +408,98 @@ public:
     // Names, separated by spaces. These are pairs: the new name, and the one that the function has.
     const ASCIILiteral sameFunctions { literal() };
     const ASCIILiteral unscopables { literal() };
-    const Table prototypeTable { table() };
+    const Table prototypeTable;
     const Table constructorTable { table() };
     const Table unforgeableTable { table() };
     const Vector<Table> conditionalTables;
 };
 
+class HostFunction final : public JSFunction {
+public:
+    static JSFunction* create(VM& vm, JSGlobalObject* globalObject, NativeExecutable* executable)
+    {
+        auto* function = new (NotNull, allocateCell<JSFunction>(vm)) HostFunction(vm, executable, globalObject, globalObject->hostFunctionStructure());
+        function->finishCreation(vm);
+        return function;
+    }
+
+private:
+    using JSFunction::JSFunction;
+};
+static_assert(sizeof(HostFunction) == sizeof(JSFunction));
+
+static Structure* copyStructure(VM& vm, Structure* structure, JSGlobalObject* realm, JSValue prototype)
+{
+    ASSERT(structure->isDictionary());
+    DeferredStructureTransitionWatchpointFire deferred(vm, structure);
+    Structure* copy = Structure::changePrototypeTransition(vm, structure, prototype, deferred);
+    copy->setRealm(vm, realm);
+    return copy;
+}
+
+static JSObject* createFromPattern(VM& vm, JSGlobalObject* globalObject, JSCellButterfly* pattern, JSObject* base)
+{
+    DeferGC deferGC(vm);
+    base->didBecomePrototype(vm);
+    Structure* structure = copyStructure(vm, uncheckedDowncast<Structure>(pattern->get(Patterns::structure)), globalObject, base);
+    unsigned capacity = structure->outOfLineCapacity();
+    JSObject* prototype = JSFinalObject::createWithButterfly(vm, structure, capacity ? Butterfly::create(vm, nullptr, 0, capacity, false, IndexingHeader(), 0) : nullptr);
+    for (unsigned i = Patterns::firstValue; i < pattern->length(); ++i) {
+        JSValue value = pattern->get(i);
+        if (auto* executable = dynamicDowncast<NativeExecutable>(value))
+            value = HostFunction::create(vm, globalObject, executable);
+        prototype->putDirectOffset(vm, offsetForPropertyNumber(i - Patterns::firstValue, structure->inlineCapacity()), value);
+    }
+    return prototype;
+}
+
+static JSCellButterfly* createPattern(VM& vm, JSGlobalObject* owner, JSObject* prototype, unsigned exposure)
+{
+    DeferGC deferGC(vm);
+    Structure* structure = prototype->structure();
+    unsigned count = numberOfSlotsForMaxOffset(structure->maxOffset(), structure->inlineCapacity());
+    auto* pattern = JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, Patterns::firstValue + count);
+    for (unsigned i = 0; i < count; ++i) {
+        JSValue value = prototype->getDirect(offsetForPropertyNumber(i, structure->inlineCapacity()));
+        if (auto* function = dynamicDowncast<JSFunction>(value); function && function->isHostFunction())
+            value = function->executable();
+        else if (value.isObject())
+            return nullptr;
+        pattern->setIndex(vm, Patterns::firstValue + i, value);
+    }
+    Structure* copy = copyStructure(vm, structure, owner, jsNull());
+    pattern->setIndex(vm, Patterns::structure, copy);
+    // No inline cache can rely on a structure that another was made from.
+    prototype->setStructure(vm, copyStructure(vm, copy, structure->realm(), structure->storedPrototype()));
+    pattern->setIndex(vm, Patterns::exposure, jsNumber(exposure));
+    return pattern;
+}
+
+// For the realms of the Web, from the second on that needs the interface.
+static WriteBarrier<JSCellButterfly>* placeOfPattern(Zig::GlobalObject* owner, unsigned exposure, unsigned number)
+{
+    auto* interfaces = exposure == owner->m_bindgenAdditions.m_exposure ? nullptr : interfacesOf(owner->m_bindgenAdditions);
+    if (!interfaces || !interfaces->wereSetUp.testAndSet(number))
+        return nullptr;
+    if (!interfaces->patterns) {
+        auto patterns = makeUnique<Patterns>();
+        WTF::storeStoreFence();
+        interfaces->patterns = WTF::move(patterns);
+    }
+    auto& place = interfaces->patterns->all[2 * number + !!(exposure & Exposure::SecureContext)];
+    return !place || place->get(Patterns::exposure) == jsNumber(exposure) ? &place : nullptr;
+}
+
 void setupInterface(LazyClassStructure::Initializer& init, const InterfaceDescription& description, NativeFunction call, NativeFunction construct, FinishPrototype finishPrototype)
 {
     VM& vm = init.vm;
     const ClassInfo* info = &Generated::InterfaceInfos::all[description.number].info;
-    InterfaceText text(description);
     JSGlobalObject* globalObject = init.global;
+    auto* ownerOfPatterns = defaultGlobalObject(vm);
+    unsigned realm = uncheckedDowncast<Zig::GlobalObject>(globalObject)->m_bindgenAdditions.m_exposure;
+    auto* place = placeOfPattern(ownerOfPatterns, realm, description.number);
+    JSCellButterfly* pattern = place ? place->get() : nullptr;
+    InterfaceText text(description, !pattern);
     JSObject* prototypeBase = nullptr;
     JSObject* constructorBase = nullptr;
     if (description.base >= 0) {
@@ -392,14 +511,14 @@ void setupInterface(LazyClassStructure::Initializer& init, const InterfaceDescri
     } else if (description.prototypeBase == PrototypeBase::Readable || description.prototypeBase == PrototypeBase::Writable) {
         ErrorHandlingScope reservedStack(vm);
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        JSValue stream = BUN_REQUIRE_INTERNAL_MODULE(defaultGlobalObject(globalObject), NodeStream, "bun:desktop/electron");
+        JSValue constructor = requireNodeModule(defaultGlobalObject(globalObject), description.prototypeBase == PrototypeBase::Readable ? "readable"_s : "writable"_s);
         scope.releaseAssertNoExceptionExceptTermination();
-        constructorBase = asObject(stream.get(globalObject, Identifier::fromString(vm, description.prototypeBase == PrototypeBase::Readable ? "Readable"_s : "Writable"_s)));
+        constructorBase = asObject(constructor);
+        JSValue prototype = constructorBase->get(globalObject, vm.propertyNames->prototype);
         scope.releaseAssertNoExceptionExceptTermination();
-        prototypeBase = asObject(constructorBase->get(globalObject, vm.propertyNames->prototype));
-        scope.releaseAssertNoExceptionExceptTermination();
+        prototypeBase = prototype.isObject() ? asObject(prototype) : globalObject->objectPrototype();
     } else if (description.prototypeBase == PrototypeBase::DOMException) {
-        ASSERT(WebCore::JSDOMException::offsetOfWrapped() == sizeof(JSInterfaceObject<0>));
+        static_assert(sizeof(WebCore::JSDOMException) == sizeof(JSInterfaceObject<0>) + sizeof(void*));
         prototypeBase = WebCore::JSDOMException::prototype(vm, *uncheckedDowncast<Zig::GlobalObject>(globalObject));
         constructorBase = asObject(WebCore::JSDOMException::getConstructor(vm, globalObject));
     } else if (description.prototypeBase == PrototypeBase::WritableStream) {
@@ -423,7 +542,6 @@ void setupInterface(LazyClassStructure::Initializer& init, const InterfaceDescri
     else
         prototypeBase = globalObject->objectPrototype();
     auto reifyWhatIsExposed = [&](JSObject& object, bool isStatic) {
-        unsigned realm = uncheckedDowncast<Zig::GlobalObject>(globalObject)->m_bindgenAdditions.m_exposure;
         for (unsigned i = 0; i < description.numberOfConditions; ++i) {
             auto& condition = description.conditions[i];
             unsigned globals = condition.exposure & ~Exposure::SecureContext;
@@ -432,12 +550,19 @@ void setupInterface(LazyClassStructure::Initializer& init, const InterfaceDescri
         }
     };
 
-    constexpr unsigned ordinary = JSFinalObject::StructureFlags;
-    auto* prototypeStructure = Structure::create(vm, globalObject, prototypeBase, TypeInfo(FinalObjectType, description.isAboveGlobalObject ? ordinary | IsImmutablePrototypeExoticObject : ordinary), JSFinalObject::info());
-    prototypeStructure->setMayBePrototype(true);
-    JSObject* prototype = JSFinalObject::create(vm, prototypeStructure);
-    Bun::reifyStaticPropertyTable(vm, info, text.prototypeTable.span(), *prototype);
-    reifyWhatIsExposed(*prototype, false);
+    JSObject* prototype;
+    if (pattern)
+        prototype = createFromPattern(vm, globalObject, pattern, prototypeBase);
+    else {
+        constexpr unsigned ordinary = JSFinalObject::StructureFlags;
+        auto* prototypeStructure = Structure::create(vm, globalObject, prototypeBase, TypeInfo(FinalObjectType, description.isAboveGlobalObject ? ordinary | IsImmutablePrototypeExoticObject : ordinary), JSFinalObject::info());
+        prototypeStructure->setMayBePrototype(true);
+        prototype = JSFinalObject::create(vm, prototypeStructure);
+        Bun::reifyStaticPropertyTable(vm, info, text.prototypeTable.span(), *prototype);
+        reifyWhatIsExposed(*prototype, false);
+        if (place)
+            place->setMayBeNull(vm, ownerOfPatterns, createPattern(vm, ownerOfPatterns, prototype, realm));
+    }
     if (description.arrayFunctions != ArrayFunctions::None)
         prototype->putDirect(vm, vm.propertyNames->iteratorSymbol, globalObject->arrayProtoValuesFunction(), static_cast<unsigned>(PropertyAttribute::DontEnum));
     if (description.arrayFunctions == ArrayFunctions::All) {

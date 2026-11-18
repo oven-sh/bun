@@ -14,8 +14,8 @@ use super::param::{ParamKind, Range};
 use super::*;
 use crate::api::core::{DomError, DomString, dom_error};
 use crate::api::events::ErrorEvent;
-use crate::api::interim::resolve;
 use crate::api::messaging::{MessagePort, listen};
+use crate::api::on_behalf::resolve;
 use crate::api::realm::hold;
 
 struct Descriptor {

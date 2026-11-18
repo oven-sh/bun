@@ -13,7 +13,7 @@ use crate::calc::scope_random;
 use crate::condition::{Actual, Condition, Feature, Subject};
 use crate::custom::{
     Changed, Customs, Entries, Function, Inherited, Lookup, Recent, Registry, Stack, Syntax, Text,
-    guarded, has_tainted_url, style_query, untainted,
+    guarded, has_tainted_url, mark, style_query, untainted,
 };
 use crate::declarations::InlineBlocks;
 use crate::document::{Document, Environment, Quirks};
@@ -36,6 +36,8 @@ use crate::values::*;
 struct Shared {
     parent: Rc<Style>,
     adjust: Adjust,
+    /// Of `style`
+    deps: Deps,
     generation: u32,
     style: Rc<Style>,
 }
@@ -44,30 +46,152 @@ struct Shared {
 pub(crate) struct Hidden {
     versions: [u32; 3],
     by: (NodeId, Rc<Style>),
-    style: Rc<Style>,
+    pub(crate) style: Rc<Style>,
+}
+
+#[derive(Default)]
+pub(crate) struct HiddenStyles {
+    all: Vec<(NodeId, Hidden)>,
+    /// The index by the node, if that entry agrees.
+    places: Vec<u32>,
+}
+
+impl HiddenStyles {
+    #[inline]
+    pub(crate) fn get(&self, id: NodeId) -> Option<&Hidden> {
+        self.all
+            .get(*self.places.get(id as usize)? as usize)
+            .filter(|it| it.0 == id)
+            .map(|it| &it.1)
+    }
+
+    fn insert(&mut self, id: NodeId, it: Hidden) {
+        self.places
+            .resize(self.places.len().max(id as usize + 1), 0);
+        match self
+            .all
+            .get_mut(self.places[id as usize] as usize)
+            .filter(|it| it.0 == id)
+        {
+            Some(known) => known.1 = it,
+            None => {
+                self.places[id as usize] = self.all.len() as u32;
+                self.all.push((id, it));
+            }
+        }
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.all = Vec::new();
+    }
 }
 
 /// The same object for all elements that match the same rules.
+#[repr(C)]
 pub(crate) struct RuleList {
     matched: Box<[Matched]>,
+    /// In `Stylist::lists`, or 0.
+    key: u64,
+    /// The address of the last block, once that has been amended.
+    amended_block: usize,
+    /// The declarations of the `style` attribute that have another value than the style was computed with, as bits.
+    pub(crate) amended: Cell<u32>,
+    /// `Plain::epoch`, and how many values there were after the last one that is for this.
+    plain: (u32, u32),
+    has_important: OnceCell<bool>,
+    may_have_shared: Cell<bool>,
     /// The `epoch` of the `Stylist` when an element last matched it.
     epoch: Cell<u32>,
-    has_important: OnceCell<bool>,
     shared: RefCell<SmallVec<[Shared; 1]>>,
     /// Of the declarations of custom properties that win.
     customs: OnceCell<u64>,
+    /// `custom::mark` of what any of the blocks references.
+    marks: OnceCell<u64>,
+    readers: OnceCell<Box<Readers>>,
     plan: OnceCell<Box<Plan>>,
     other_plans: OnceCell<Box<[OnceCell<Box<Plan>>; Flow::COUNT - 1]>>,
+}
+
+#[derive(Clone, Copy)]
+enum Reader {
+    /// It gives it a value.
+    Sets,
+    Custom,
+    /// A range in `Plan::longhands`
+    Longhands(u16, u16),
+}
+
+/// What the declarations that win in `Flow::DEFAULT` do with custom properties.
+struct Readers {
+    named: Vec<(Name, Reader)>,
+    reads_any: bool,
+}
+
+/// The values that `RuleList::amended` refers to, as they were parsed without a zoom. They are kept until styles are next updated.
+#[derive(Default)]
+pub(crate) struct Plain {
+    epoch: u32,
+    /// With the bit, and `RuleList::plain` as it was.
+    values: Vec<(Cell<Option<Value>>, Id, u32, u32)>,
+}
+
+impl Plain {
+    pub(crate) fn clear(&mut self) {
+        self.epoch += 1;
+        self.values.clear();
+        self.values.shrink_to(256);
+    }
+
+    fn of(&self, rules: &RuleList) -> impl Iterator<Item = &(Cell<Option<Value>>, Id, u32, u32)> {
+        let at = |count: u32| self.values.get((count as usize).wrapping_sub(1));
+        core::iter::successors(
+            at(rules.plain.1).filter(|_| rules.plain.0 == self.epoch),
+            move |it| at(it.3),
+        )
+    }
+
+    pub(crate) fn last_of(&self, rules: &RuleList) -> Option<Id> {
+        self.of(rules).next().map(|it| it.1)
+    }
+
+    /// `None` unless it has all of them.
+    fn take(&self, rules: &RuleList) -> Option<SmallVec<[Value; 2]>> {
+        let (mut values, mut seen) = (SmallVec::new(), 0);
+        for (value, _, bit, _) in self.of(rules) {
+            if seen & bit == 0 {
+                values.push(value.take()?);
+                seen |= bit;
+            }
+        }
+        (seen == rules.amended.get()).then_some(values)
+    }
+}
+
+/// What is different about a style.
+#[derive(Default)]
+pub(crate) struct Amendments {
+    pub(crate) values: SmallVec<[Value; 2]>,
+    pub(crate) deps: Deps,
+    pub(crate) customs: Option<Customs>,
+    /// The custom properties that it gives other values.
+    pub(crate) names: SmallVec<[Name; 2]>,
 }
 
 impl RuleList {
     fn new(matched: Box<[Matched]>, epoch: u32) -> RuleList {
         RuleList {
             matched,
+            amended: Cell::new(0),
+            key: 0,
+            amended_block: 0,
+            plain: (0, 0),
+            may_have_shared: Cell::new(false),
             epoch: Cell::new(epoch),
             has_important: OnceCell::new(),
             shared: RefCell::default(),
             customs: OnceCell::new(),
+            marks: OnceCell::new(),
+            readers: OnceCell::new(),
             plan: OnceCell::new(),
             other_plans: OnceCell::new(),
         }
@@ -102,7 +226,72 @@ impl RuleList {
         }
     }
 
+    pub(crate) fn last_style(&self) -> Option<Rc<Style>> {
+        Some(Rc::clone(&self.shared.borrow().first()?.style))
+    }
+
+    pub(crate) fn prefetch_styles(&self) {
+        self.shared
+            .borrow()
+            .iter()
+            .take(2)
+            .for_each(|it| crate::forecast::prefetch_style(&it.style));
+    }
+
+    pub(crate) fn prefetch_last(&self) {
+        self.matched
+            .last()
+            .into_iter()
+            .for_each(crate::forecast::prefetch);
+    }
+
+    fn readers(&self) -> &Readers {
+        self.readers.get_or_init(|| {
+            let (plan, mut names, mut end) = (self.plan(Flow::DEFAULT), Vec::new(), 0);
+            let mut it = Readers {
+                named: plan.customs.iter().map(|it| (it.0, Reader::Sets)).collect(),
+                reads_any: false,
+            };
+            let longhands = plan.longhands.chunk_by(|a, b| a.1 == b.1).map(|won| {
+                end += won.len() as u16;
+                (won[0].1, Reader::Longhands(end - won.len() as u16, end))
+            });
+            for (at, reader) in plan
+                .customs
+                .iter()
+                .map(|it| (it.1, Reader::Custom))
+                .chain(longhands)
+            {
+                if let Declared::Template(template) = &self.declaration(at).0.value {
+                    it.reads_any |= template.references(&mut names);
+                    it.named.extend(names.drain(..).map(|it| (it, reader)));
+                }
+            }
+            Box::new(it)
+        })
+    }
+
+    #[inline]
     pub(crate) fn references_any(&self, changed: &Changed) -> bool {
+        let marks = |it: &Matched| {
+            if it.block.declarations().reads_any {
+                !0
+            } else {
+                it.block
+                    .declarations()
+                    .references
+                    .iter()
+                    .fold(0, |all, it| all | mark(*it))
+            }
+        };
+        self.marks
+            .get_or_init(|| self.matched.iter().map(marks).fold(0, |a, b| a | b))
+            & changed.marks
+            != 0
+            && self.has_references_to(changed)
+    }
+
+    fn has_references_to(&self, changed: &Changed) -> bool {
         self.matched.iter().any(|it| {
             it.block.declarations().reads_any
                 || it
@@ -127,6 +316,14 @@ impl RuleList {
         (&block.declarations().list[usize::from(at.1)], block)
     }
 
+    pub(crate) fn has_amended(&self, block: &Rc<Block>) -> bool {
+        self.amended.get() != 0 && self.amended_block == Rc::as_ptr(block).addr()
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.matched.len()
+    }
+
     pub(crate) fn has_author_rules(&self) -> bool {
         self.matched
             .iter()
@@ -135,7 +332,9 @@ impl RuleList {
 }
 
 pub(crate) struct Stylist {
+    /// And of the user.
     pub(crate) user_agent: RefCell<RuleSet>,
+    pub(crate) user_sheets: Vec<Rc<Sheet>>,
     pub(crate) scopes: Map<NodeId, Rc<RefCell<RuleSet>>>,
     pub(crate) registry: Registry,
     pub(crate) dependencies: RefCell<Dependencies>,
@@ -151,6 +350,9 @@ pub(crate) struct Stylist {
     epoch: (u32, usize),
     pub(crate) bloom: Option<Bloom>,
     pub(crate) recent_customs: Recent<Inherited>,
+    pub(crate) plain: Plain,
+    /// The `mark` of each name that `attr()` has been given.
+    pub(crate) attributes_read: Cell<u64>,
     recent_groups: (Recent<Font>, Recent<TextGroup>, Recent<Ink>),
     /// By `RuleList::customs` and what is inherited, both of which the value keeps alive, if they depend on nothing else.
     customs: RefCell<Map<(u64, *const Inherited), (Customs, Rc<Inherited>, Box<[Matched]>)>>,
@@ -176,21 +378,40 @@ impl Stylist {
     }
 }
 
+static USER_AGENT_SOURCE: &[u8] = include_bytes!("user_agent.css");
+
+/// The source of the SVG image, if it is one of the user agent's.
+pub(crate) fn image_of_user_agent(url: &str) -> Option<&str> {
+    let source = url
+        .strip_prefix("data:image/svg+xml,")
+        .filter(|it| it.starts_with("<svg ") && it.ends_with("</svg>"))?;
+    bun_core::strings::contains(USER_AGENT_SOURCE, url.as_bytes()).then_some(source)
+}
+
 thread_local! {
-    static USER_AGENT: Rc<Sheet> = Rc::new(Sheet::parse(include_bytes!("user_agent.css"), b"", Default::default()));
-    static QUIRKS: Rc<Sheet> = Rc::new(Sheet::parse(include_bytes!("quirks.css"), b"", Default::default()));
-    static FORCED_COLORS: Rc<Sheet> = Rc::new(Sheet::parse(include_bytes!("forced_colors.css"), b"", Default::default()));
-    static MATH: Rc<Sheet> = Rc::new(Sheet::parse(include_bytes!("math.css"), b"", Default::default()));
-    static MEDIA: Rc<Sheet> = Rc::new(Sheet::parse(include_bytes!("media.css"), b"", Default::default()));
+    static FIXED_TEXT_AREAS: Rc<Sheet> = Rc::new(Sheet::parse(b"textarea{resize:none}", b"", Default::default()));
+    static USER_AGENT: Rc<Sheet> = Rc::new(Sheet::parse(USER_AGENT_SOURCE, b"", crate::sheet::Within::UserAgent));
+    static QUIRKS: Rc<Sheet> = Rc::new(Sheet::parse(include_bytes!("quirks.css"), b"", crate::sheet::Within::UserAgent));
+    static FORCED_COLORS: Rc<Sheet> = Rc::new(Sheet::parse(include_bytes!("forced_colors.css"), b"", crate::sheet::Within::UserAgent));
+    static MATH: Rc<Sheet> = Rc::new(Sheet::parse(include_bytes!("math.css"), b"", crate::sheet::Within::UserAgent));
+    static MEDIA: Rc<Sheet> = Rc::new(Sheet::parse(include_bytes!("media.css"), b"", crate::sheet::Within::UserAgent));
+    static HAS_STYLIST: Cell<bool> = const { Cell::new(false) };
+    static FIRST_RULES: Box<(RuleSet, Dependencies)> = Box::new(USER_AGENT.with(RuleSet::of_user_agent));
 }
 
 impl Stylist {
     pub(crate) fn new(environment: &Environment, initial: Style) -> Stylist {
+        let (rules, dependencies) = if HAS_STYLIST.replace(true) {
+            FIRST_RULES.with(|it| (**it).clone())
+        } else {
+            USER_AGENT.with(RuleSet::of_user_agent)
+        };
         let mut stylist = Stylist {
-            user_agent: RefCell::default(),
+            user_agent: RefCell::new(rules),
+            user_sheets: Vec::new(),
             scopes: Map::default(),
             registry: Registry::default(),
-            dependencies: RefCell::default(),
+            dependencies: RefCell::new(dependencies),
             has_results: HasResults::default(),
             answers: Default::default(),
             anonymous_block: Rc::new(crate::properties::Layout {
@@ -209,12 +430,13 @@ impl Stylist {
             epoch: (0, 0),
             bloom: None,
             recent_customs: Recent::default(),
+            plain: Plain::default(),
+            attributes_read: Cell::new(0),
             recent_groups: Default::default(),
             customs: RefCell::default(),
             blocks: InlineBlocks::default(),
             substituted: RefCell::default(),
         };
-        stylist.user_agent.get_mut().is_of_user_agent = true;
         stylist.set_user_agent_sheets(environment);
         stylist
     }
@@ -226,15 +448,18 @@ impl Stylist {
             (&MATH, environment.has_math),
             (&MEDIA, environment.has_media),
             (&FORCED_COLORS, environment.forces_colors),
+            (&FIXED_TEXT_AREAS, environment.fixes_text_areas),
         ];
-        let sheets: Vec<_> = needed
+        let mut sheets: Vec<_> = needed
             .into_iter()
             .filter(|it| it.1)
             .map(|it| it.0.with(Rc::clone))
             .collect();
-        self.user_agent
-            .get_mut()
-            .set_sheets(&sheets, environment, self.dependencies.get_mut());
+        let rules = self.user_agent.get_mut();
+        rules.is_of_user_agent = self.user_sheets.is_empty();
+        rules.first_of_user = (!rules.is_of_user_agent).then_some(sheets.len() as u16);
+        sheets.extend(self.user_sheets.iter().cloned());
+        rules.set_sheets(&sheets, environment, self.dependencies.get_mut());
     }
 
     pub(crate) fn block(
@@ -275,6 +500,18 @@ impl Stylist {
         self.customs.get_mut().clear();
     }
 
+    /// If no other element has it.
+    fn take_over<'a>(&mut self, list: &'a mut Rc<RuleList>) -> Option<&'a mut RuleList> {
+        if let Some(key) = Some(list.key).filter(|it| *it != 0 && Rc::strong_count(list) == 2) {
+            let lists = self.lists.get_mut();
+            lists.get(&key).filter(|it| Rc::ptr_eq(it, list))?;
+            lists.remove(&key);
+        }
+        let own = Rc::get_mut(list)?;
+        own.key = 0;
+        Some(own)
+    }
+
     fn intern(&self, found: &Found) -> Rc<RuleList> {
         self.intern_all(found.iter().map(|it| &it.1))
     }
@@ -296,7 +533,10 @@ impl Stylist {
             list.epoch.set(self.epoch.0);
             return Rc::clone(list);
         }
-        let list = Rc::new(RuleList::new(found.cloned().collect(), self.epoch.0));
+        let list = Rc::new(RuleList {
+            key: hasher.finish(),
+            ..RuleList::new(found.cloned().collect(), self.epoch.0)
+        });
         lists.insert(hasher.finish(), Rc::clone(&list));
         list
     }
@@ -372,11 +612,42 @@ impl Subject for Environment {
     }
 }
 
-fn default_font_size(style: &Style) -> f32 {
-    if *style.font.family.0 == *b"\x01monospace\0" {
-        13.0
-    } else {
-        16.0
+impl Document {
+    fn default_font_size(&self, style: &Style) -> f32 {
+        self.fonts.medium_sizes()[usize::from(style.font.family.is_monospace())]
+    }
+
+    fn size_of_keyword(&self, style: &Style, keyword: u8) -> FontSize {
+        FontSize::of_keyword(
+            keyword,
+            self.default_font_size(style),
+            self.environment.quirks == Quirks::All,
+            style.zoom,
+        )
+    }
+
+    fn apply_minimum_font_size(&self, style: &mut Style) {
+        const LOGICAL: f32 = 6.0;
+        let FontSize(_, size, keyword) = style.font.size;
+        let logical = if style.has_absolute_font_size {
+            0.0
+        } else {
+            LOGICAL
+        };
+        let least = logical.max(
+            self.fonts
+                .settings
+                .as_ref()
+                .map_or(0.0, |it| it.minimum_size),
+        ) * style.zoom;
+        let used = FontSize(
+            if size == 0.0 { size } else { size.max(least) },
+            size,
+            keyword,
+        );
+        if used != style.font.size {
+            style.groups.set(&Value::FontSize(used));
+        }
     }
 }
 
@@ -443,7 +714,7 @@ impl Subject for Container<'_> {
 bitflags::bitflags! {
     /// What the computed style depends on besides the rules and the parent's style.
     #[derive(Clone, Copy, PartialEq, Eq)]
-    struct Adjust: u16 {
+    struct Adjust: u32 {
         const BLOCKIFY = 1;
         const ROOT = 1 << 1;
         const TOP_LAYER = 1 << 2;
@@ -460,6 +731,14 @@ bitflags::bitflags! {
         const MARKER_GROUP = 1 << 13;
         /// An SVG element without a box.
         const IN_USER_SPACE = 1 << 14;
+        /// The root in a frame without a box.
+        const UNDISPLAYED = 1 << 15;
+        const SHOWS_ALT_TEXT = 1 << 20;
+        const ALT_TEXT = 1 << 16;
+        const ALT_ICON = 1 << 17;
+        /// So it takes the room of the image, if that is known.
+        const LACKS_ALT = 1 << 18;
+        const REPRESENTS_NOTHING = 1 << 19;
     }
 }
 
@@ -678,13 +957,16 @@ impl Lookup for Resolver<'_> {
     fn attr(&self, name: &[u8]) -> Option<Str> {
         self.cx.uses(Deps::ATTRIBUTES);
         let element = self.document.tree.element(self.id)?;
-        element
-            .attribute(if element.namespace == Namespace::Html {
-                Name::lowercase(name)
-            } else {
-                Name::new(name)
-            })
-            .map(Str::from)
+        let name = if element.namespace == Namespace::Html {
+            Name::lowercase(name)
+        } else {
+            Name::new(name)
+        };
+        self.document
+            .styles
+            .attributes_read
+            .update(|it| it | mark(name));
+        element.attribute(name).map(Str::from)
     }
 
     fn stack(&mut self) -> &mut Stack {
@@ -951,7 +1233,7 @@ impl<K: PartialEq> Reverted<K> {
         self.0.iter().any(|(it, wide, level, layer, rule)| {
             it == key
                 && match wide {
-                    Wide::Revert => matched.level != Level::UserAgent || *level == Level::UserAgent,
+                    Wide::Revert => matched.level >= Level::Hints.min(*level),
                     Wide::RevertRule => *rule == index,
                     _ => (matched.level, matched.layer) >= (*level, *layer),
                 }
@@ -1760,24 +2042,255 @@ impl Document {
             level: Level::Own,
             layer: INLINE,
         });
-        Some(
-            self.styles.intern_all(
-                before
-                    .iter()
-                    .chain(&inline)
-                    .chain(&after[usize::from(known.is_some())..]),
-            ),
-        )
+        let all = before
+            .iter()
+            .chain(&inline)
+            .chain(&after[usize::from(known.is_some())..]);
+        Some(match block.is_some_and(|it| Rc::strong_count(it) == 2) {
+            true => Rc::new(RuleList::new(all.cloned().collect(), 0)),
+            false => self.styles.intern_all(all),
+        })
     }
 
-    /// If all that `with_inline_style` has done is to give values to properties that nothing depends on.
+    /// Gives another value to a property in the `style` attribute of an element that shares its rules with no other. Whether that changes anything.
+    pub(crate) fn amend_inline_style(
+        &mut self,
+        id: NodeId,
+        property: Prop,
+        source: &[u8],
+    ) -> Option<bool> {
+        let is_amendable = if let Prop::Long(it) = property {
+            it.stands_alone()
+        } else {
+            matches!(property, Prop::Custom(_))
+        };
+        let element = self
+            .tree
+            .element_to_style(id)
+            .filter(|it| !it.is_unprepared && is_amendable)?;
+        let (block, rules) = element.inline_style.as_ref().zip(element.rules.as_mut())?;
+        rules
+            .matched
+            .last()
+            .filter(|it| Rc::ptr_eq(&it.block, block) && it.is_inline())?;
+        let place = block.place_of(property)?;
+        let rules = self.styles.take_over(rules)?;
+        let block = &mut rules.matched.last_mut()?.block;
+        element.inline_style = None;
+        let value = if let Prop::Long(property) = property {
+            property.parse_plain(crate::scan::trim(source), 1.0)
+        } else {
+            None
+        };
+        let has_changed = self
+            .styles
+            .blocks
+            .amend(block, place, source, value.is_some());
+        rules.amended_block = Rc::as_ptr(block).addr();
+        element.inline_style = Some(Rc::clone(block));
+        if has_changed == Some(true) {
+            let (plain, bit) = (&mut self.styles.plain, 1 << place.declaration);
+            rules.plain = match value.filter(|_| plain.values.len() < 1 << 16) {
+                Some(value) => {
+                    let (id, before) = (
+                        value.id(),
+                        if rules.amended.get() != 0 && rules.plain.0 == plain.epoch {
+                            rules.plain.1
+                        } else {
+                            0
+                        },
+                    );
+                    plain.values.push((Cell::new(Some(value)), id, bit, before));
+                    (plain.epoch, plain.values.len() as u32)
+                }
+                None => (0, 0),
+            };
+            rules.amended.update(|it| it | bit);
+            if rules.may_have_shared.take() {
+                rules.shared.get_mut().clear();
+            }
+            if let Prop::Custom(_) = property {
+                rules.customs.take();
+            }
+        }
+        has_changed
+    }
+
+    fn can_be_amended(&self, id: NodeId, style: &Style) -> bool {
+        !(style.layout.appearance != Appearance::None
+            || style.deps.contains(Deps::ANCHOR)
+            || !self.anchored.is_empty() && self.anchored.contains_key(&id)
+            || self.tree.is_root(id)
+            || self.environment.forces_colors
+            || self
+                .tree
+                .element(id)
+                .is_none_or(|it| it.pseudo != Pseudo::None || self.shows_alt_text(it)))
+    }
+
+    /// What follows from the declarations that `RuleList::amended` names, if there is nothing else to them.
+    pub(crate) fn amendments(
+        &self,
+        id: NodeId,
+        rules: &RuleList,
+        style: &Style,
+        parent: &Style,
+    ) -> Option<Amendments> {
+        (!rules.has_important()).then_some(())?;
+        if let Some(values) = (style.zoom == 1.0)
+            .then(|| self.styles.plain.take(rules))
+            .flatten()
+        {
+            return self.if_amendable(
+                id,
+                style,
+                Amendments {
+                    values,
+                    ..Amendments::default()
+                },
+            );
+        }
+        let block = &rules.matched.last().filter(|it| it.is_inline())?.block;
+        let amended = block
+            .declarations()
+            .list
+            .iter()
+            .take(32)
+            .enumerate()
+            .filter(|it| rules.amended.get() >> it.0 & 1 != 0);
+        let (mut it, mut customs) = (Amendments::default(), SmallVec::<[_; 2]>::new());
+        for (_, declaration) in amended {
+            let (source, property) = match (&declaration.value, declaration.prop) {
+                (Declared::Text(source), Prop::Long(property)) => (source, property),
+                (Declared::Text(source), Prop::Custom(name))
+                    if !self.styles.registry.contains_key(&name) =>
+                {
+                    customs.push((name, Rc::clone(source)));
+                    continue;
+                }
+                _ => return None,
+            };
+            match property.parse_plain(source, style.zoom) {
+                Some(plain) => it.values.push(plain),
+                None => {
+                    it.deps |= self.with_context(id, style, style, |cx| {
+                        let Outcome::Values(resolved) = self
+                            .resolver(id, &style.customs, cx)
+                            .resolve(declaration, block)
+                        else {
+                            return None;
+                        };
+                        it.values.extend(resolved.iter().cloned());
+                        Some(cx.deps.get())
+                    })?
+                }
+            }
+        }
+        if let Some(changed) = Changed::new(customs.iter().map(|it| it.0), None) {
+            (!style.deps.contains(Deps::ANCHOR) && !self.anchored.contains_key(&id))
+                .then_some(())?;
+            let new =
+                style
+                    .customs
+                    .amended(&parent.customs, &customs, &self.styles.recent_customs)?;
+            self.substitute_anew(id, rules, style, &new, &changed, true, &mut it)?;
+            (it.customs, it.names) = (Some(new), changed.names().collect());
+        }
+        self.if_amendable(id, style, it)
+    }
+
+    /// What follows from the custom properties that it inherits, if there is nothing else to them.
+    pub(crate) fn inherited_amendments(
+        &self,
+        id: NodeId,
+        rules: &RuleList,
+        style: &Style,
+        parent: &Style,
+        changed: &Changed,
+    ) -> Option<Amendments> {
+        let (mut it, new) = (
+            Amendments::default(),
+            style
+                .customs
+                .reparented(&parent.customs, &self.styles.recent_customs),
+        );
+        self.substitute_anew(id, rules, style, &new, changed, false, &mut it)?;
+        it.customs = Some(new);
+        self.if_amendable(id, style, it)
+    }
+
+    fn if_amendable(&self, id: NodeId, style: &Style, it: Amendments) -> Option<Amendments> {
+        (it.values.is_empty()
+            || self.can_be_amended(id, style)
+                && !it
+                    .deps
+                    .intersects(Deps::ATTRIBUTES | Deps::SIBLINGS | Deps::CONTAINER | Deps::ANCHOR))
+        .then_some(it)
+    }
+
+    fn substitute_anew(
+        &self,
+        id: NodeId,
+        rules: &RuleList,
+        style: &Style,
+        customs: &Customs,
+        changed: &Changed,
+        sets_them: bool,
+        out: &mut Amendments,
+    ) -> Option<()> {
+        let readers = rules.readers();
+        (!readers.reads_any
+            && !style.deps.contains(Deps::REVERTED)
+            && style.flow() == Flow::DEFAULT
+            && !self.environment.forces_colors)
+            .then_some(())?;
+        for (_, reader) in readers.named.iter().filter(|it| changed.contains(it.0)) {
+            let won = match *reader {
+                Reader::Sets if sets_them => continue,
+                Reader::Longhands(start, end) => {
+                    &rules.plan(Flow::DEFAULT).longhands[start.into()..end.into()]
+                }
+                _ => return None,
+            };
+            let (declaration, block) = won
+                .iter()
+                .all(|it| it.0.stands_alone())
+                .then(|| rules.declaration(won[0].1))?;
+            out.deps |= self.with_context(id, style, style, |cx| {
+                let Outcome::Values(resolved) =
+                    self.resolver(id, customs, cx).resolve(declaration, block)
+                else {
+                    return None;
+                };
+                out.values.extend(
+                    resolved
+                        .iter()
+                        .filter(|it| won.iter().any(|won| won.0 == it.id()))
+                        .cloned(),
+                );
+                Some(cx.deps.get())
+            })?;
+        }
+        Some(())
+    }
+
+    /// If all that has happened to the `style` attribute is that properties that nothing depends on were given values.
     pub(crate) fn amended_style(
         &self,
         id: NodeId,
         old: &RuleList,
         new: &RuleList,
         style: &Style,
+        parent: &Style,
     ) -> Option<Style> {
+        if core::ptr::eq(old, new) {
+            let (it, mut amended) = (self.amendments(id, new, style, parent)?, style.clone());
+            it.values.iter().for_each(|it| amended.groups.set(it));
+            (amended.deps, amended.customs) =
+                (style.deps | it.deps, it.customs.unwrap_or(amended.customs));
+            amended.keep_findings_of(style);
+            return Some(amended);
+        }
         let block = &new.matched.last().filter(|it| it.is_inline())?.block;
         let before = old
             .matched
@@ -1786,14 +2299,9 @@ impl Document {
             .map_or(&[][..], |it| &it.block.declarations().list);
         let after = &block.declarations().list;
         if after.len() < before.len()
-            || old.has_important()
             || block.declarations().has_important
-            || style.layout.appearance != Appearance::None
-            || style.deps.contains(Deps::ANCHOR)
-            || self.anchored.contains_key(&id)
-            || self.tree.is_root(id)
-            || self.environment.forces_colors
-            || self.tree.element(id)?.pseudo != Pseudo::None
+            || old.has_important()
+            || !self.can_be_amended(id, style)
         {
             return None;
         }
@@ -1802,6 +2310,14 @@ impl Document {
         amended.deps |= self.with_context(id, style, style, |cx| {
             let mut resolver = self.resolver(id, &style.customs, cx);
             for (index, declaration) in after.iter().enumerate() {
+                let is_applied = old.amended.get().checked_shr(index as u32).unwrap_or(0) & 1 == 0;
+                if is_applied
+                    && before
+                        .get(index)
+                        .is_some_and(|it| Rc::ptr_eq(it, declaration))
+                {
+                    continue;
+                }
                 let (Declared::Text(text), Prop::Long(property)) =
                     (&declaration.value, declaration.prop)
                 else {
@@ -1809,7 +2325,7 @@ impl Document {
                 };
                 match before.get(index).map(|it| (it.prop, &it.value)) {
                     Some((Prop::Long(other), Declared::Text(same)))
-                        if other == property && same == text =>
+                        if other == property && same == text && is_applied =>
                     {
                         continue;
                     }
@@ -1819,7 +2335,7 @@ impl Document {
                 }
                 let is_repeated = after[index + 1..]
                     .iter()
-                    .any(|it| matches!(it.prop, Prop::Long(it) if it == property));
+                    .any(|it| it.longhands(cx.flow).contains(&property));
                 let Outcome::Values(values) = resolver.resolve(declaration, block) else {
                     return None;
                 };
@@ -2024,6 +2540,10 @@ impl Document {
             .any(|it| it.borrow().has_rules_for(pseudo))
     }
 
+    pub(crate) fn has_plain_markers(&self) -> bool {
+        self.styles.user_sheets.is_empty() && !self.has_rules_for(Pseudo::Marker)
+    }
+
     /// As if `parent` were the style of the parent.
     pub(crate) fn style_under(&self, id: NodeId, parent: &Rc<Style>) -> Rc<Style> {
         let rules = self.tree.element(id).and_then(|it| it.rules.as_ref());
@@ -2082,7 +2602,8 @@ impl Document {
             above = self.tree.flat_parent(above);
         }
         let is_math = element.namespace == Namespace::MathMl;
-        if let Some(it) = self.tree.style(above) {
+        let of_root = self.style_of_undisplayed(above);
+        if let Some(it) = of_root.as_ref().or_else(|| self.tree.style(above)) {
             adjust.set(
                 Adjust::BLOCKIFY,
                 it.display().blockifies_children()
@@ -2098,6 +2619,10 @@ impl Document {
             );
         }
         adjust.set(Adjust::ROOT, self.tree.is_root(id));
+        adjust.set(
+            Adjust::UNDISPLAYED,
+            adjust.contains(Adjust::ROOT) && self.offset_when_displayed.is_some(),
+        );
         adjust.set(Adjust::TOP_LAYER, self.tree[id].has(Flags::TOP_LAYER));
         match element.pseudo {
             Pseudo::Part(part) if part == name!("-webkit-textfield-decoration-container") => {
@@ -2123,6 +2648,12 @@ impl Document {
                     Adjust::NORMAL_LINES,
                     self.tree.style(element.originator).is_some_and(clips),
                 );
+            }
+            Pseudo::Part(part) if part == name!("-internal-alt-text") => {
+                adjust |= Adjust::ALT_TEXT | self.alt_of(element.originator)
+            }
+            Pseudo::Part(part) if part == name!("-internal-alt-icon") => {
+                adjust |= Adjust::ALT_ICON | self.alt_of(element.originator)
             }
             Pseudo::Scroll(ScrollPart::Group) => adjust |= Adjust::MARKER_GROUP,
             Pseudo::Backdrop => adjust |= Adjust::TOP_LAYER,
@@ -2161,6 +2692,9 @@ impl Document {
                             | "wbr"
                     ),
                 );
+                if adjust.contains(Adjust::ATOMIC) && self.shows_alt_text(element) {
+                    adjust |= Adjust::SHOWS_ALT_TEXT | self.alt_of(id);
+                }
             }
             Namespace::Svg
                 if self
@@ -2184,6 +2718,99 @@ impl Document {
             element.namespace == Namespace::Svg && !is_outer_svg,
         );
         adjust
+    }
+
+    pub(crate) fn shows_alt_text(&self, element: &Element) -> bool {
+        let first = || {
+            self.tree
+                .element(self.tree[element.shadow_root].first_child)
+        };
+        element.shadow_root != 0
+            && element.replaced.is_none()
+            && first().is_some_and(|it| it.pseudo == Pseudo::Part(name!("-internal-alt-text")))
+    }
+
+    #[cold]
+    fn alt_of(&self, id: NodeId) -> Adjust {
+        let (Some(element), mut adjust) = (self.tree.element(id), Adjust::empty()) else {
+            return Adjust::empty();
+        };
+        let [alt, title, value] =
+            [name!("alt"), name!("title"), name!("value")].map(|it| element.attribute(it));
+        adjust.set(
+            Adjust::LACKS_ALT,
+            alt.is_none_or(str::is_empty) || self.environment.quirks == Quirks::All,
+        );
+        adjust.set(
+            Adjust::REPRESENTS_NOTHING,
+            match (alt.or(title), element.tag == name!("input")) {
+                (Some(text), _) => text.is_empty(),
+                (None, true) => value == Some(""),
+                (None, false) => element.attribute(name!("src")).is_none_or(str::is_empty),
+            },
+        );
+        adjust
+    }
+
+    #[cold]
+    fn adjust_alt_text(&self, style: &mut Style, parent: &Style, adjust: Adjust) {
+        let has_room = |it: &Style| {
+            let [width, height] = [&it.layout.width, &it.layout.height].map(|it| *it != Size::Auto);
+            adjust.contains(Adjust::LACKS_ALT)
+                && (width && height || it.layout.aspect_ratio.ratio.is_some() && (width || height))
+        };
+        let initial = &self.styles.initial.groups;
+        if adjust.contains(Adjust::SHOWS_ALT_TEXT) {
+            match (style.layout.width.clone(), style.layout.height.clone()) {
+                _ if self.environment.quirks != Quirks::All => {}
+                (width, Size::Auto) => style.groups.set(&Value::Height(width)),
+                (Size::Auto, height) => style.groups.set(&Value::Width(height)),
+                _ => {}
+            }
+            if !has_room(style) && style.display() == Display::Inline {
+                [Id::Width, Id::Height, Id::AspectRatio]
+                    .into_iter()
+                    .for_each(|id| style.groups.set(&initial.get(id)));
+            }
+            return;
+        }
+        style.deps |= Deps::PARENT;
+        if adjust.contains(Adjust::ALT_ICON) {
+            if if parent.display() == Display::Inline {
+                adjust.contains(Adjust::REPRESENTS_NOTHING)
+            } else {
+                parent.layout.border_top.0 == 0.0
+            } {
+                style
+                    .groups
+                    .set(&Value::Display(DisplayValue(Display::None)));
+            }
+            return;
+        }
+        let is_small = |it: &Size| matches!(it, Size::Length(Lp::Px(size)) if *size < 18.0);
+        if !has_room(parent) {
+            style
+                .groups
+                .set(&Value::Display(DisplayValue(Display::Inline)));
+        }
+        if !has_room(parent) || is_small(&parent.layout.width) || is_small(&parent.layout.height) {
+            [
+                Id::PaddingTop,
+                Id::PaddingRight,
+                Id::PaddingBottom,
+                Id::PaddingLeft,
+            ]
+            .into_iter()
+            .for_each(|id| style.groups.set(&initial.get(id)));
+            [
+                Value::BorderTopWidth,
+                Value::BorderRightWidth,
+                Value::BorderBottomWidth,
+                Value::BorderLeftWidth,
+            ]
+            .into_iter()
+            .for_each(|it| style.groups.set(&it(BorderWidth(0.0))));
+        }
     }
 
     pub(crate) fn compute_style(
@@ -2293,17 +2920,16 @@ impl Document {
         let generations = self.environment.generations();
         let shared = rules.shared.borrow();
         let found = shared.iter().find(|it| {
-            (it.adjust, it.generation) == (adjust, generations(it.style.deps))
+            (it.adjust, it.generation) == (adjust, generations(it.deps))
                 && (Rc::ptr_eq(&it.parent, parent)
-                    || !it.style.deps.contains(Deps::PARENT)
-                        && it.parent.inherits_the_same_as(parent))
+                    || !it.deps.contains(Deps::PARENT) && it.parent.inherits_the_same_as(parent))
         });
         if let Some(found) = found {
             return Rc::clone(&found.style);
         }
         let similar = shared.first().filter(|it| {
-            (it.adjust, it.generation) == (adjust, generations(it.style.deps))
-                && !it.style.deps.intersects(Deps::PARENT | Deps::INK)
+            (it.adjust, it.generation) == (adjust, generations(it.deps))
+                && !it.deps.intersects(Deps::PARENT | Deps::INK)
                 && it.style.zoom == it.parent.zoom
                 && it.parent.inherits_the_same_but_ink(parent)
         });
@@ -2345,6 +2971,7 @@ impl Document {
             .deps
             .intersects(Deps::ATTRIBUTES | Deps::SIBLINGS | Deps::CONTAINER)
         {
+            rules.may_have_shared.set(true);
             shared.truncate(5);
             let (parent, generation, style) = (
                 Rc::clone(parent),
@@ -2356,6 +2983,7 @@ impl Document {
                 Shared {
                     parent,
                     adjust,
+                    deps: style.deps,
                     generation,
                     style,
                 },
@@ -2515,7 +3143,7 @@ impl Document {
                         cx.deps.get(),
                     );
                 }
-                cx.uses(Deps::PARENT);
+                cx.uses(Deps::PARENT | Deps::REVERTED);
                 substituted.extend(resolver.reverting.iter().filter_map(|(name, wide)| {
                     Some((winners.iter().find(|it| it.0 == *name)?.1, *wide))
                 }));
@@ -2615,6 +3243,7 @@ impl Document {
                 style.groups = groups;
                 return;
             }
+            style.deps |= Deps::REVERTED;
             winners = again
                 .insert(Plan::new(&rules.matched, flow, &substituted))
                 .phase(phase);
@@ -2666,6 +3295,7 @@ impl Document {
             computed_sides: (Float::None, Clear::None),
             look: Look::None,
             plainness: Default::default(),
+            measures: Default::default(),
             animates: Default::default(),
             ..*parent
         };
@@ -2704,25 +3334,24 @@ impl Document {
             let fonts_from = zoomed.as_ref().unwrap_or(parent);
             self.cascade_phase(id, rules, Phase::Font, parent, &mut style, Some(fonts_from));
             if style.deps.contains(Deps::MATH_FONT_SIZE) {
-                style.groups.set(&Value::FontSize(FontSize(
-                    style.font.size.0 * self.script_scale(&style, parent),
+                style.groups.set(&Value::FontSize(FontSize::new(
+                    style.font.size.1 * self.script_scale(&style, parent),
                 )));
             }
-            let is_keyword = style.deps.contains(Deps::FONT_SIZE_KEYWORD);
+            let FontSize(_, size, keyword) = style.font.size;
             style.has_absolute_font_size = style.deps.contains(Deps::ABSOLUTE_FONT_SIZE)
-                || parent.has_absolute_font_size && !is_keyword;
-            let scale = default_font_size(&style)
-                / if is_keyword {
-                    16.0
-                } else {
-                    default_font_size(parent)
-                };
-            if scale != 1.0 && !style.has_absolute_font_size {
-                style
-                    .groups
-                    .set(&Value::FontSize(FontSize(style.font.size.0 * scale)));
+                || parent.has_absolute_font_size && keyword.is_none();
+            let scaled = match keyword {
+                Some(keyword) => self.size_of_keyword(&style, keyword),
+                None => FontSize::new(
+                    size * (self.default_font_size(&style) / self.default_font_size(parent)),
+                ),
+            };
+            if scaled.1 != size && !style.has_absolute_font_size {
+                style.groups.set(&Value::FontSize(scaled));
             }
             animate(&mut style, Phase::Font);
+            self.apply_minimum_font_size(&mut style);
             if rules
                 .plan(style.flow())
                 .phase(Phase::LineHeight)
@@ -2836,6 +3465,9 @@ impl Document {
         if let Some(height) = height {
             set(Value::Height(Size::Length(Lp::Px(height))));
         }
+        if matches!(style.look, Look::MenuList | Look::MenuListButton) {
+            set(Value::LineHeight(LineHeight::Normal));
+        }
         if style.look.is_checkable() {
             let is_reset = |id: &&Id| {
                 id.name().starts_with("padding-")
@@ -2906,6 +3538,9 @@ impl Document {
         }
         if display == Display::Inline && has_own_writing_mode && !adjust.contains(Adjust::IN_SVG) {
             display = Display::InlineBlock;
+        }
+        if adjust.contains(Adjust::UNDISPLAYED) {
+            display = Display::None;
         }
         set(Value::Display(DisplayValue(display)));
         set(Value::Position(position));
@@ -2999,6 +3634,9 @@ impl Document {
                 style.groups.set(&Value::LineHeight(LineHeight::Normal));
             }
         }
+        if adjust.intersects(Adjust::SHOWS_ALT_TEXT | Adjust::ALT_TEXT | Adjust::ALT_ICON) {
+            self.adjust_alt_text(style, parent, adjust);
+        }
         style.was_inline = was_inline;
         style.is_atomic = adjust.intersects(Adjust::ATOMIC | Adjust::OUTER_SVG);
         style.computed_sides = (
@@ -3077,8 +3715,6 @@ impl Document {
                         };
                 }
                 let (start, outcome) = (values.len(), resolver.resolve(declaration, block));
-                let is_keyword = cx.deps.get().contains(Deps::FONT_SIZE_KEYWORD)
-                    || matches!(outcome, Outcome::Wide(Wide::Initial));
                 match outcome {
                     Outcome::Values(resolved) => {
                         values.extend(resolved.iter().filter(|it| ids.contains(&it.id())).cloned())
@@ -3095,12 +3731,12 @@ impl Document {
                         _ => style.computed(*id),
                     })),
                 }
-                if is_keyword
-                    && let Some(Value::FontSize(size)) = values[start..]
-                        .iter_mut()
-                        .find(|it| it.id() == Id::FontSize)
+                if let Some(Value::FontSize(size)) = values[start..]
+                    .iter_mut()
+                    .find(|it| it.id() == Id::FontSize)
+                    && let Some(keyword) = size.2
                 {
-                    size.0 *= default_font_size(style) / 16.0;
+                    *size = self.size_of_keyword(style, keyword);
                 }
                 cx.deps.get()
                     | if matches!(declaration.value, Declared::Text(_)) {
@@ -3123,6 +3759,7 @@ impl Document {
             computed_sides: (Float::None, Clear::None),
             look: Look::None,
             plainness: Default::default(),
+            measures: Default::default(),
             animates: Default::default(),
             ..*parent
         };
@@ -3136,38 +3773,84 @@ impl Document {
     /// Also for an element that is not rendered.
     #[inline]
     pub(crate) fn style_on_demand(&self, id: NodeId) -> Option<Rc<Style>> {
-        Some(
-            self.tree
-                .element(id)?
-                .style
-                .clone()
-                .unwrap_or_else(|| self.style_of_unstyled(id)),
-        )
+        let style = self
+            .style_of_undisplayed(id)
+            .or_else(|| self.tree.style(id).cloned());
+        self.tree
+            .element(id)
+            .map(|_| style.unwrap_or_else(|| self.style_of_unstyled(id)))
     }
 
-    fn style_of_unstyled(&self, id: NodeId) -> Rc<Style> {
-        let versions = || {
-            [
-                last_version(),
-                self.environment.generation,
-                self.environment.viewport_generation,
-            ]
-        };
-        let recall = |it: NodeId| {
-            let hidden = self.tree.found().hidden.borrow();
-            let known = hidden.get(&it).filter(|it| {
-                it.versions == versions()
+    /// And with its own animations.
+    pub(crate) fn animated_on_demand(&mut self, id: NodeId) -> Option<Rc<Style>> {
+        let base = self.style_on_demand(id)?;
+        if self.tree.style(id).is_some() || !self.tree[id].has(Flags::ANIMATED) {
+            return Some(base);
+        }
+        let parent = self
+            .style_on_demand(self.tree.flat_parent(id))
+            .unwrap_or_else(|| Rc::clone(&self.styles.initial));
+        Some(self.animate(id, &self.rules_on_demand(id), &parent, &base))
+    }
+
+    /// What the root would have.
+    #[inline]
+    fn style_of_undisplayed(&self, id: NodeId) -> Option<Rc<Style>> {
+        let rules = self
+            .tree
+            .element(
+                self.offset_when_displayed
+                    .map(|_| id)
+                    .filter(|it| self.tree.is_root(*it))?,
+            )?
+            .rules
+            .as_ref()?;
+        Some(self.shared_style(
+            id,
+            rules,
+            &self.styles.initial,
+            self.adjustments(id) - Adjust::UNDISPLAYED,
+        ))
+    }
+
+    fn versions_of_hidden(&self) -> [u32; 3] {
+        [
+            last_version(),
+            self.environment.generation,
+            self.environment.viewport_generation,
+        ]
+    }
+
+    #[inline]
+    pub(crate) fn recall_hidden<R>(
+        &self,
+        id: NodeId,
+        read: impl FnOnce(&Hidden) -> R,
+    ) -> Option<R> {
+        let hidden = self.tree.found().hidden.borrow();
+        hidden
+            .get(id)
+            .filter(|it| {
+                it.versions == self.versions_of_hidden()
                     && self
                         .tree
                         .style(it.by.0)
                         .is_some_and(|by| Rc::ptr_eq(by, &it.by.1))
-            })?;
-            Some((Rc::clone(&known.style), Some(known.by.clone())))
+            })
+            .map(read)
+    }
+
+    fn style_of_unstyled(&self, id: NodeId) -> Rc<Style> {
+        let recall = |it: NodeId| {
+            self.recall_hidden(it, |known| {
+                (Rc::clone(&known.style), Some(known.by.clone()))
+            })
         };
         let styled = |it: NodeId| {
             self.tree.style(it).map(|style| {
                 (
-                    Rc::clone(style),
+                    self.style_of_undisplayed(it)
+                        .unwrap_or_else(|| Rc::clone(style)),
                     (style.display() == Display::None).then(|| (it, Rc::clone(style))),
                 )
             })
@@ -3194,7 +3877,7 @@ impl Document {
                 self.tree.found().hidden.borrow_mut().insert(
                     it,
                     Hidden {
-                        versions: versions(),
+                        versions: self.versions_of_hidden(),
                         by,
                         style: Rc::clone(&style),
                     },

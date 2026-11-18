@@ -15,7 +15,7 @@ use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope, Result};
 
 use crate::api::core::{Doc, DomString, Edge, Element, Known, Node, atom};
 use crate::api::events::{fire, now};
-use crate::api::interim::*;
+use crate::api::on_behalf::*;
 pub(crate) use host::*;
 use img::settle_decoding;
 pub(crate) use img::{

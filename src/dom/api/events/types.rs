@@ -1,19 +1,19 @@
 //! The names of events, as numbers.
 
-use core::cell::{Cell, RefCell};
+use core::cell::RefCell;
+use core::sync::atomic::{AtomicU64, Ordering::Relaxed};
 
 use crate::api::core::{Atom, Known, atom};
 use crate::name::Map;
 
 const KNOWN: usize = Known::Other as usize;
 
-/// A bit for each known type that has ever had a listener.
-#[thread_local]
-static LISTENED: [Cell<u64>; KNOWN / 64 + 1] = [const { Cell::new(0) }; KNOWN / 64 + 1];
+/// A bit for each known type that has ever had a listener, on any thread.
+static LISTENED: [AtomicU64; KNOWN / 64 + 1] = [const { AtomicU64::new(0) }; KNOWN / 64 + 1];
 
 thread_local! {
     /// The others that have.
-    static MADE_UP: RefCell<Map<Atom, u32>> = RefCell::default();
+    static MADE_UP: RefCell<Box<Map<Atom, u32>>> = RefCell::default();
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -27,7 +27,7 @@ impl From<Known> for EventType {
 }
 
 fn has_had_listener(name: Known) -> bool {
-    LISTENED[name as usize / 64].get() >> (name as usize % 64) & 1 != 0
+    LISTENED[name as usize / 64].load(Relaxed) >> (name as usize % 64) & 1 != 0
 }
 
 /// What an event is called for a target that only listens to that.
@@ -57,7 +57,9 @@ impl EventType {
                 EventType(*all.entry(name.clone()).or_insert(next))
             }),
             known => {
-                LISTENED[known as usize / 64].update(|it| it | 1 << (known as usize % 64));
+                if !has_had_listener(known) {
+                    LISTENED[known as usize / 64].fetch_or(1 << (known as usize % 64), Relaxed);
+                }
                 known.into()
             }
         }

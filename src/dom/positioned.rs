@@ -11,6 +11,7 @@ use crate::layout::{
     AutoSize, Claims, Output, Point, Room, Setting, auto_margins, margin, resolve, unit,
 };
 use crate::types::*;
+use crate::values::Size;
 
 /// The part of a box that is at its static position.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -202,6 +203,65 @@ impl Document {
             && self.boxes.pieces.is_empty()
     }
 
+    pub(crate) fn move_boxes(&mut self) {
+        let mut last = None;
+        for node in core::mem::take(&mut self.boxes_to_move) {
+            let Some(id) = self
+                .tree
+                .contains(node)
+                .then(|| self.own_box(node))
+                .flatten()
+            else {
+                continue;
+            };
+            let Some(location) = self.new_location(id) else {
+                if self.boxes[self.boxes[id].parent].kind == Kind::Lines {
+                    self.mark_parent_rebuild(node);
+                }
+                self.repaint(node);
+                self.relayout(node);
+                continue;
+            };
+            let it = &mut self.boxes[id];
+            it.layout.location = location;
+            let (parent, container, position) = (it.parent, it.container, it.style.layout.position);
+            if last.replace((parent, position)) != Some((parent, position)) {
+                self.boxes.mark_moved(id);
+                self.boxes.note_change(container);
+                self.moved_boxes_in_scrollers.push(id);
+            }
+        }
+    }
+
+    /// If nothing else depends on `left` and `top`.
+    pub(crate) fn new_location(&self, id: BoxId) -> Option<Point> {
+        let it = &self.boxes[id];
+        let (l, ([width, height], start)) = (&it.style.layout, it.cache.settled_in()?);
+        let (Inset::Length(left), Inset::Length(top), Inset::Auto, Inset::Auto, Size::Length(_)) =
+            (&l.left, &l.top, &l.right, &l.bottom, &l.width)
+        else {
+            return None;
+        };
+        ([
+            &l.height,
+            &l.min_width,
+            &l.min_height,
+            &l.max_width.0,
+            &l.max_height.0,
+        ]
+        .iter()
+        .all(|it| matches!(it, Size::Auto | Size::Length(_)))
+            && it.style.is_out_of_flow()
+            && matches!(it.kind, Kind::Block | Kind::Flex | Kind::Grid)
+            && !it.cache.has_escapees()
+            && !self.boxes.is_parked(id)
+            && self.is_simply_positioned(id, it.container))
+        .then(|| Point {
+            x: start + resolve(left, width) + it.layout.margin.left,
+            y: start + resolve(top, height) + it.layout.margin.top,
+        })
+    }
+
     /// Without its container. Returns what escapes from it.
     pub(crate) fn refresh_out_of_flow(&mut self, id: BoxId) -> Option<Claims> {
         let it = &self.boxes[id];
@@ -211,19 +271,61 @@ impl Document {
             && self.boxes[VIEWPORT].size() == self.environment.viewport
             && self.boxes[container].cache.is_current()
             && self.is_simply_positioned(id, container)
-            && self.boxes[container].hoisted.contains(&id))
+            && (self.boxes[container].hoisted.binary_search(&id).is_ok()
+                || self.boxes[container].hoisted.contains(&id)))
         .then_some(())?;
-        let (area, rtl) = (
+        let (area, rtl, before) = (
             self.client_box(container),
             self.boxes[container].style.is_rtl(),
+            it.cache.has_kept_style().then(|| it.cover()),
         );
         let escapes = self
             .lay_out_out_of_flow(id, container, area, rtl, None)
             .escapes;
+        if let Some(before) = before.filter(|it| it.frame == self.boxes[id].cover().frame) {
+            self.note_new_contents(id, &before);
+            return Some(escapes);
+        }
         self.boxes.mark_ink(id);
         self.boxes.note_change(container);
         self.moved_boxes_in_scrollers.push(id);
         Some(escapes)
+    }
+
+    /// Whether those that have their containing blocks outside of `id`, which stays as it is, could be laid out without those.
+    pub(crate) fn refresh_escapees(&mut self, id: BoxId) -> bool {
+        let mut found = Vec::new();
+        self.collect_escapees(id, Claims::all(), &mut found);
+        let is_known = |it: &BoxId| {
+            self.boxes[self.boxes[*it].container].depth < self.boxes[id].depth
+                && self.is_simply_positioned(*it, self.boxes[*it].container)
+        };
+        if self.boxes.has_lost_out_of_flow || !found.iter().all(is_known) {
+            return false;
+        }
+        for it in found {
+            let (container, before) = (self.boxes[it].container, self.boxes[it].cover().frame);
+            if !self.boxes[container].cache.is_current() {
+                continue;
+            }
+            let (area, rtl) = (
+                self.client_box(container),
+                self.boxes[container].style.is_rtl(),
+            );
+            if !self
+                .lay_out_out_of_flow(it, container, area, rtl, None)
+                .escapes
+                .is_empty()
+            {
+                return false;
+            }
+            if before != self.boxes[it].cover().frame {
+                self.boxes.mark_ink(it);
+                self.boxes.note_change(container);
+                self.moved_boxes_in_scrollers.push(it);
+            }
+        }
+        true
     }
 
     fn lay_out_out_of_flow(
@@ -276,7 +378,8 @@ impl Document {
                 });
             }
         }
-        self.boxes[id].container = container;
+        let old = core::mem::replace(&mut self.boxes[id].container, container);
+        self.boxes.has_lost_out_of_flow |= old != container && old != self.boxes[id].parent;
         let is_fixed = self.is_fixed_to_viewport(id);
         let (it, block, none) = (&self.boxes[id], &self.boxes[container], Anchored::default());
         let anchored = it.anchored.as_deref().unwrap_or(&none);
@@ -438,6 +541,7 @@ impl Document {
             room.height = Some(self.clamp_height(id, height, width, &room));
         }
         let mut input = self.input_for(id, width, &room);
+        input.has_definite_width = auto_width != AutoSize::Fit && self.boxes[id].is_orthogonal();
         if self.boxes[id].kind == Kind::Table {
             input.stretch = room.height.or(input.stretch);
         }

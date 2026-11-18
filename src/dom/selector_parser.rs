@@ -34,6 +34,7 @@ pub(crate) struct Parser<'a> {
     /// For `@supports`.
     pub(crate) is_strict: bool,
     pub(crate) is_quirky: bool,
+    pub(crate) is_user_agent: bool,
 }
 
 /// What can follow a pseudo-element.
@@ -679,11 +680,9 @@ impl Reader<'_> {
                     );
                     is_element |=
                         !is_function && is_in("before after first-line first-letter", &name);
-                    self.text(&[
-                        if is_element { b"::" } else { b":" },
-                        &name,
-                        if is_function { b"(" } else { b"" },
-                    ]);
+                    self.text(&[if is_element { b"::" } else { b":" }]);
+                    self.write(|out| write_ident(&name, out));
+                    self.text(&[if is_function { b"(" } else { b"" }]);
                     (within.depth < 32).then_some(())?;
                     let inner = Within {
                         depth: within.depth + 1,
@@ -772,7 +771,12 @@ impl Reader<'_> {
                             self.functional_class(&name, p, Within { after, ..inner })
                         })?,
                         false if within.is_cue && name == b"root" => (CLASS, Simple::RootOfCue),
-                        false => (CLASS, pseudo_class(&name)?),
+                        false => (
+                            CLASS,
+                            pseudo_class(&name).filter(|_| {
+                                self.parser.is_user_agent || !name.starts_with(b"-internal-")
+                            })?,
+                        ),
                     };
                     self.text(&[if is_function { b")" } else { b"" }]);
                     found
@@ -819,8 +823,9 @@ impl Reader<'_> {
             search-text select-listbox selection spelling-error target-text view-transition";
         let is_prefixed =
             name.starts_with(b"-webkit-") && !(self.parser.is_strict && !is_known_prefixed(name));
-        (is_in(KNOWN, name) || is_prefixed || name.starts_with(b"-internal-"))
-            .then(|| Pseudo::from_name(name))
+        let is_internal = self.parser.is_user_agent && name.starts_with(b"-internal-")
+            || name == b"-internal-media-controls-overlay-cast-button";
+        (is_in(KNOWN, name) || is_prefixed || is_internal).then(|| Pseudo::from_name(name))
     }
 
     /// `Err` if it is an element in another tree.

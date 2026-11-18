@@ -800,6 +800,10 @@ impl Families {
     pub(crate) fn names(&self) -> impl Iterator<Item = &[u8]> {
         bun_core::strings::tokenize(&self.0, b"\0")
     }
+
+    pub(crate) fn is_monospace(&self) -> bool {
+        *self.0 == *b"\x01monospace\0"
+    }
 }
 
 impl Css for Families {
@@ -845,7 +849,57 @@ impl Css for Families {
 }
 
 #[derive(Clone, Copy, PartialEq)]
-pub(crate) struct FontSize(pub(crate) f32);
+pub(crate) struct FontSize(
+    pub(crate) f32,
+    /** Without the minimum. */ pub(crate) f32,
+    /** The index of the keyword that it comes from. */ pub(crate) Option<u8>,
+);
+
+impl FontSize {
+    const OF_KEYWORDS: [[u8; 8]; 8] = [
+        [9, 9, 9, 9, 11, 14, 18, 27],
+        [9, 9, 9, 10, 12, 15, 20, 30],
+        [9, 9, 10, 11, 13, 17, 22, 33],
+        [9, 9, 10, 12, 14, 18, 24, 36],
+        [9, 10, 12, 13, 16, 20, 26, 39],
+        [9, 10, 12, 14, 17, 21, 28, 42],
+        [9, 10, 13, 15, 18, 23, 30, 45],
+        [9, 10, 13, 16, 18, 24, 32, 48],
+    ];
+    const OF_KEYWORDS_WITH_QUIRKS: [[u8; 8]; 8] = [
+        [9, 9, 9, 9, 11, 14, 18, 28],
+        [9, 9, 9, 10, 12, 15, 20, 31],
+        [9, 9, 9, 11, 13, 17, 22, 34],
+        [9, 9, 10, 12, 14, 18, 24, 37],
+        [9, 9, 10, 13, 16, 20, 26, 40],
+        [9, 9, 11, 14, 17, 21, 28, 42],
+        [9, 10, 12, 15, 17, 23, 30, 45],
+        [9, 10, 13, 16, 18, 24, 32, 48],
+    ];
+
+    pub(crate) const fn new(size: f32) -> FontSize {
+        FontSize(size, size, None)
+    }
+
+    pub(crate) const fn medium(size: f32) -> FontSize {
+        FontSize(size, size, Some(3))
+    }
+
+    pub(crate) fn of_keyword(index: u8, medium: f32, has_quirks: bool, zoom: f32) -> FontSize {
+        let row = (if has_quirks {
+            &Self::OF_KEYWORDS_WITH_QUIRKS
+        } else {
+            &Self::OF_KEYWORDS
+        })
+        .get((medium as usize).wrapping_sub(9));
+        let size = zoom
+            * row.map_or_else(
+                || [0.6, 0.75, 0.89, 1.0, 1.2, 1.5, 2.0, 3.0][usize::from(index)] * medium,
+                |it| it[usize::from(index)].into(),
+            );
+        FontSize(size, size, Some(index))
+    }
+}
 
 impl Css for FontSize {
     fn parse(p: &mut P, cx: &Ctx) -> Option<FontSize> {
@@ -855,7 +909,7 @@ impl Css for FontSize {
         };
         if keyword(p, "math") {
             cx.uses(Deps::MATH_FONT_SIZE);
-            return Some(FontSize(parent()));
+            return Some(FontSize::new(parent()));
         }
         if let Some(name) = ident(p) {
             const NAMES: [&str; 9] = [
@@ -869,29 +923,35 @@ impl Css for FontSize {
                 "xxx-large",
                 "-webkit-xxx-large",
             ];
-            return Some(FontSize(match NAMES.iter().position(|it| eq(name, it)) {
+            return Some(match NAMES.iter().position(|it| eq(name, it)) {
                 Some(index) => {
                     cx.uses(Deps::FONT_SIZE_KEYWORD);
-                    cx.zoom * [9.0, 10.0, 13.0, 16.0, 18.0, 24.0, 32.0, 48.0, 48.0][index]
+                    FontSize::of_keyword(index.min(7) as u8, 16.0, false, cx.zoom)
                 }
-                None if eq(name, "smaller") => parent() / 1.2,
-                None => eq(name, "larger").then(|| parent() * 1.2)?,
-            }));
+                None if eq(name, "smaller") => FontSize::new((f64::from(parent()) / 1.2) as f32),
+                None => FontSize::new(eq(name, "larger").then(|| parent() * 1.2)?),
+            });
         }
-        Some(FontSize(match Lp::positive(p, cx)? {
-            Lp::Px(px) if cx.deps.get().contains(Deps::INHERITED) => px,
-            Lp::Px(px) => {
-                cx.uses(Deps::ABSOLUTE_FONT_SIZE);
-                px
-            }
-            relative => relative.resolve(parent()).max(0.0),
+        let start = p.state();
+        let is_calculated = function(p).is_some();
+        p.reset(&start);
+        let size = Lp::positive(p, cx)?;
+        if !matches!(size, Lp::Fraction(_))
+            && (is_calculated || !cx.deps.get().contains(Deps::INHERITED))
+        {
+            cx.uses(Deps::ABSOLUTE_FONT_SIZE);
+        }
+        Some(FontSize::new(if let Lp::Px(px) = size {
+            px
+        } else {
+            size.resolve(parent()).max(0.0)
         }))
     }
     fn write(&self, out: &mut Out) {
-        write_px(self.0, out);
+        write_px(self.1, out);
     }
     fn lerp(&self, to: &Self, t: Mixing) -> Option<Self> {
-        Some(FontSize(t.of(self.0, to.0).max(0.0)))
+        Some(FontSize::new(t.of(self.1, to.1).max(0.0)))
     }
 }
 
@@ -2715,7 +2775,7 @@ impl Css for GridLine {
             } else if index.is_none()
                 && let Some(value) = integer(p, cx)
             {
-                index = Some(value.clamp(-1000, 1000) as i16);
+                index = Some(value.clamp(-10_000, 10_000) as i16);
             } else if name.is_none()
                 && let Some(value) = custom_ident(p)
             {
@@ -3197,7 +3257,7 @@ impl Css for AnimationName {
     fn write(&self, out: &mut Out) {
         match &self.0 {
             Some(name)
-                if &**name == "none"
+                if name.eq_ignore_ascii_case("none")
                     || name.is_empty()
                     || crate::grammar::is_reserved(name.as_bytes()) =>
             {

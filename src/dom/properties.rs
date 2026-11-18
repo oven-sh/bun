@@ -69,9 +69,6 @@ macro_rules! longhands {
             }
         )+
 
-        #[derive(Clone, Default)]
-        pub(crate) struct Groups { $(pub(crate) $group: Rc<$Group>,)+ }
-
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
         #[repr(u16)]
         pub(crate) enum Id { $($($Id,)+)+ $($Inherited,)* $($Reset,)* }
@@ -150,6 +147,13 @@ macro_rules! longhands {
                 match self.texts(id).get(id) {
                     Some(text) => Value::Spelled(Rc::new((value, Rc::clone(text)))),
                     None => value,
+                }
+            }
+
+            pub(crate) fn prefetch_group_of(&self, id: Id) {
+                match id {
+                    $($(Id::$Id)|+ => crate::forecast::prefetch_shared(&self.$group, size_of::<$Group>() / 64 + 1),)+
+                    _ => {}
                 }
             }
 
@@ -454,7 +458,7 @@ const SQUARE: Corner = Pair(NO_PADDING, NO_PADDING);
 longhands! {
     font: Font, inherited = true {
         FontFamily "font-family" family: Families = Families((if cfg!(target_os = "macos") { &b"Times\0"[..] } else { b"Times New Roman\0" }).into());
-        FontSize "font-size" size: FontSize = FontSize(16.0);
+        FontSize "font-size" size: FontSize = FontSize::medium(16.0);
         FontWeight "font-weight" weight: FontWeight = FontWeight(400.0);
         FontStyle "font-style" style: FontStyle = FontStyle::Normal;
         FontStretch "font-stretch" stretch: FontStretch = FontStretch(100.0);
@@ -1137,8 +1141,8 @@ impl Id {
 
     /// As it is computed.
     pub(crate) fn initial_text(self) -> &'static str {
-        static TEXTS: [OnceLock<Box<[u8]>>; Id::ALL.len()] =
-            [const { OnceLock::new() }; Id::ALL.len()];
+        static TEXTS: LazyLock<Vec<OnceLock<Box<[u8]>>>> =
+            LazyLock::new(|| Id::ALL.iter().map(|_| OnceLock::new()).collect());
         text(TEXTS[self as usize].get_or_init(|| {
             let mut out = Out::new();
             let write = || match self.syntax().note("i=").filter(|_| !self.has_type()) {
@@ -1249,7 +1253,7 @@ impl Id {
 }
 
 thread_local! {
-    static INITIAL: Groups = Groups::default();
+    static INITIAL: Box<Groups> = Box::default();
     static LONGHANDS: Vec<&'static Definition> = Id::ALL.iter().filter_map(|id| definition(id.name())).collect();
 }
 
@@ -1338,7 +1342,7 @@ fn aliases() -> impl Iterator<Item = (Out, Out)> {
 }
 
 pub(crate) fn initial_groups() -> Groups {
-    INITIAL.with(Groups::clone)
+    INITIAL.with(|initial| Groups::clone(initial))
 }
 
 fn initial(id: Id) -> Value {
@@ -1404,8 +1408,15 @@ impl Prop {
     /// A value for each of the longhands.
     pub(crate) fn parse(self, source: &[u8], cx: &Ctx, is_valid: bool) -> Option<Rc<[Value]>> {
         let Prop::Short(index) = self else {
+            let id = self.id(cx.flow)?;
+            if let Some(plain) = id.parse_plain(source, cx.zoom) {
+                debug_assert!(
+                    self.accepts(source) && id.parse(source, cx).as_ref() == Some(&plain)
+                );
+                return Some(Rc::new([plain]));
+            }
             (is_valid || self.accepts(source)).then_some(())?;
-            return Some(Rc::new([self.id(cx.flow)?.parse(source, cx)?]));
+            return Some(Rc::new([id.parse(source, cx)?]));
         };
         let value = |(id, part): (&Id, Option<Part>)| {
             Some(
@@ -1437,41 +1448,73 @@ pub(crate) fn property_names() -> Vec<Out> {
 
 // ───────────────────────────── the computed style ─────────────────────────────
 
+/// The ones that are used most first.
+#[derive(Clone, Default)]
+#[repr(C)]
+pub(crate) struct Groups {
+    pub(crate) layout: Rc<Layout>,
+    pub(crate) ink: Rc<Ink>,
+    pub(crate) text: Rc<Text>,
+    pub(crate) font: Rc<Font>,
+    pub(crate) svg: Rc<Svg>,
+    pub(crate) effects: Rc<Effects>,
+    pub(crate) paint: Rc<Paint>,
+    pub(crate) background: Rc<Background>,
+    pub(crate) rare: Rc<Rare>,
+    pub(crate) mask: Rc<Mask>,
+    pub(crate) transition: Rc<Transition>,
+    pub(crate) animation: Rc<Animation>,
+    pub(crate) scroll: Rc<Scroll>,
+    pub(crate) grid: Rc<Grid>,
+    pub(crate) shape: Rc<SvgShape>,
+}
+
+/// What nearly everything looks at is in the cache line of the counts.
 #[derive(Clone)]
+#[repr(C)]
 pub(crate) struct Style {
-    pub(crate) groups: Groups,
-    pub(crate) customs: Customs,
-    pub(crate) deps: Deps,
     /// From `font_describe`.
     pub(crate) font_id: u32,
-    pub(crate) metrics: FontMetrics,
     /// The product of the `zoom`s up to the root.
     pub(crate) zoom: f32,
-    pub(crate) dark: bool,
     /// What the animations that are in effect count as.
     pub(crate) animates: WillChange,
+    pub(crate) deps: Deps,
+    pub(crate) dark: bool,
+    /// It has a box of its own, even with `display: inline`.
+    pub(crate) is_atomic: bool,
+    pub(crate) look: crate::theme::Look,
+    pub(crate) plainness: Plainness,
+    pub(crate) groups: Groups,
+    pub(crate) customs: Customs,
+    pub(crate) metrics: FontMetrics,
     /// Whether the font size does not derive from the default one, which is smaller for `monospace`.
     pub(crate) has_absolute_font_size: bool,
     /// Whether `display` was inline-level before it was blockified.
     pub(crate) was_inline: bool,
-    /// It has a box of its own, even with `display: inline`.
-    pub(crate) is_atomic: bool,
     /// Before they are resolved for layout.
     pub(crate) computed_sides: (Float, Clear),
-    pub(crate) look: crate::theme::Look,
-    pub(crate) plainness: Plainness,
+    pub(crate) measures: Measures,
 }
 
-/// What `Style::is_plain`, `is_bare`, `is_inert`, `stacking`, `fixed`, `paints` and `Document::strut` have found. A copy is made to be changed.
+const _: () =
+    assert!(size_of::<Style>() + 16 <= 384 && core::mem::offset_of!(Style, groups) + 16 + 24 <= 64);
+
+/// What `Style::is_plain`, `is_bare`, `is_inert`, `stacking` and `paints` have found. A copy is made to be changed.
 #[derive(Default)]
 pub(crate) struct Plainness(
     core::cell::Cell<Option<bool>>,
     core::cell::Cell<Option<bool>>,
     core::cell::Cell<Option<bool>>,
     core::cell::Cell<Option<[bool; 2]>>,
+    core::cell::Cell<Paints>,
+);
+
+/// Likewise, `Style::fixed`, `Document::strut` and `Style::comparison_with`.
+#[derive(Default)]
+pub(crate) struct Measures(
     pub(crate) core::cell::Cell<crate::layout::Fixed>,
     pub(crate) core::cell::Cell<(f32, [f32; 2])>,
-    core::cell::Cell<Paints>,
     Compared,
 );
 
@@ -1500,6 +1543,12 @@ bitflags::bitflags! {
 impl Clone for Plainness {
     fn clone(&self) -> Plainness {
         Plainness::default()
+    }
+}
+
+impl Clone for Measures {
+    fn clone(&self) -> Measures {
+        Measures::default()
     }
 }
 
@@ -1572,7 +1621,7 @@ impl Style {
 
     pub(crate) fn font_units(&self) -> FontUnits {
         FontUnits {
-            size: self.font.size.0,
+            size: self.font.size.1,
             weight: self.font.weight.0,
             line_height: self.line_height(),
         }
@@ -1586,7 +1635,7 @@ impl Style {
             self.metrics.ideograph_advance,
         ];
         RootUnits {
-            size: self.font.size.0 / self.zoom,
+            size: self.font.size.1 / self.zoom,
             line_height: self.line_height() / self.zoom,
             metrics: metrics.map(|it| it / self.zoom),
         }
@@ -1705,11 +1754,50 @@ impl Style {
     /// `old` differs in nothing but properties that stand alone.
     pub(crate) fn keep_findings_of(&self, old: &Style) {
         let (to, from) = (&self.plainness, &old.plainness);
-        to.5.set(from.5.get());
+        self.measures.1.set(old.measures.1.get());
         if Rc::ptr_eq(&self.effects, &old.effects) {
             to.0.set(from.0.get());
             to.2.set(from.2.get());
             to.3.set(from.3.get());
+        }
+    }
+
+    pub(crate) fn with_customs(&self, customs: Customs) -> Style {
+        let it = &self.plainness;
+        let plainness = Plainness(
+            it.0.clone(),
+            it.1.clone(),
+            it.2.clone(),
+            it.3.clone(),
+            it.4.clone(),
+        );
+        let measures = Measures(
+            self.measures.0.clone(),
+            self.measures.1.clone(),
+            Compared::default(),
+        );
+        Style {
+            groups: self.groups.clone(),
+            customs,
+            plainness,
+            measures,
+            ..*self
+        }
+    }
+
+    /// With values that leave `is_plain`, `is_inert` and `stacking` as they are.
+    pub(crate) fn amend(&mut self, values: &[Value], deps: Deps) {
+        values.iter().for_each(|it| self.groups.set(it));
+        self.deps |= deps;
+        self.measures.2 = Compared::default();
+        if values
+            .iter()
+            .any(|it| (Id::Width as u16..=Id::PaddingLeft as u16).contains(&(it.id() as u16)))
+        {
+            self.measures.0 = Default::default();
+        }
+        if values.iter().any(|it| it.id() == Id::BackgroundColor) {
+            self.plainness.1 = Default::default();
         }
     }
 
@@ -1737,25 +1825,25 @@ impl Style {
     /// What `note_comparison` was given for the same one.
     #[inline]
     pub(crate) fn comparison_with(&self, old: &Style) -> Option<u32> {
-        let (known, number) = (self.plainness.7.1.get(), old.plainness.7.0.get());
+        let (known, number) = (self.measures.2.1.get(), old.measures.2.0.get());
         (number != 0 && known >> Style::FOUND_BITS == number)
             .then_some(known as u32 & ((1 << Style::FOUND_BITS) - 1))
     }
 
     pub(crate) fn note_comparison(&self, old: &Style, found: u32) {
-        if old.plainness.7.0.get() == 0 {
+        if old.measures.2.0.get() == 0 {
             LAST_NUMBER.update(|it| it + 1);
-            old.plainness.7.0.set(LAST_NUMBER.get());
+            old.measures.2.0.set(LAST_NUMBER.get());
         }
-        self.plainness
-            .7
+        self.measures
+            .2
             .1
-            .set(old.plainness.7.0.get() << Style::FOUND_BITS | u64::from(found));
+            .set(old.measures.2.0.get() << Style::FOUND_BITS | u64::from(found));
     }
 
     #[inline]
     pub(crate) fn paints(&self) -> Paints {
-        Some(self.plainness.6.get())
+        Some(self.plainness.4.get())
             .filter(|it| !it.is_empty())
             .unwrap_or_else(|| self.find_paints())
     }
@@ -1799,7 +1887,7 @@ impl Style {
             !self.ink.text_shadow.0.0.is_empty()
                 || is_set(&[Id::WebkitTextStrokeWidth, Id::TextEmphasisStyle]),
         );
-        self.plainness.6.set(paints);
+        self.plainness.4.set(paints);
         paints
     }
 
@@ -1951,6 +2039,11 @@ impl Style {
     /// From the coordinates of a box of this size, whose top left corner is the origin.
     pub(crate) fn transform(&self, width: f32, height: f32) -> crate::abi::Matrix {
         let e = &self.effects;
+        if let ([only @ Transform::Translate(..)], None, None, None) =
+            (&e.transform.0[..], &e.translate.0, &e.rotate.0, &e.scale.0)
+        {
+            return only.matrix(width, height);
+        }
         if self.is_3d() {
             let matrix = self.transform_3d(
                 crate::abi::Rect {

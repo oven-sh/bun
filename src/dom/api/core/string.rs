@@ -1,6 +1,7 @@
 //! The strings of the DOM are those of JavaScript.
 
-use core::cell::OnceCell;
+use core::cell::{Cell, OnceCell};
+use core::ffi::c_void;
 use core::ptr::NonNull;
 use std::borrow::Cow;
 use std::rc::Rc;
@@ -11,6 +12,9 @@ use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope};
 use bun_jsc::{JSGlobalObject, JSString, JSValue};
 use bun_web::net::body::SharedBytes;
 
+use super::atom::Atom;
+use super::atoms::Known;
+
 unsafe extern "C" {
     safe fn Bun__DOM__emptyString() -> NonNull<Impl>;
     safe fn Bun__DOM__createLatin1(length: u32, characters: &mut *mut u8) -> NonNull<Impl>;
@@ -18,6 +22,34 @@ unsafe extern "C" {
     safe fn Bun__DOM__substring(of: &Impl, start: u32, length: u32) -> NonNull<Impl>;
     safe fn Bun__DOM__sharedPrefix(of: &Impl, length: u32) -> NonNull<Impl>;
     safe fn Bun__DOM__stringToJS(global: &JSGlobalObject, string: &Impl) -> JSValue;
+    safe fn Bun__DOM__permanentString(global: &JSGlobalObject, string: &Impl) -> JSValue;
+    fn Bun__DOM__copyRope(rope: JSValue, room: *mut u8, capacity: usize) -> usize;
+    fn Bun__DOM__createEraser(
+        global: &JSGlobalObject,
+        values: *mut JSValue,
+        count: usize,
+    ) -> *mut c_void;
+    fn Bun__DOM__destroyEraser(eraser: *mut c_void);
+}
+
+#[inline(always)]
+pub(super) fn is_ascii(text: &[u8]) -> bool {
+    let bits = match (
+        text.first_chunk(),
+        text.last_chunk(),
+        text.first_chunk(),
+        text.last_chunk(),
+    ) {
+        _ if text.len() > 16 => return text.is_ascii(),
+        (Some(start), Some(end), ..) => u64::from_ne_bytes(*start) | u64::from_ne_bytes(*end),
+        (.., Some(start), Some(end)) => {
+            u64::from(u32::from_ne_bytes(*start) | u32::from_ne_bytes(*end))
+        }
+        _ => text.first().map_or(0, |it| {
+            u64::from(it | text[text.len() / 2] | text[text.len() - 1])
+        }),
+    };
+    bits & 0x8080_8080_8080_8080 == 0
 }
 
 /// A `WTF::String` that is not null.
@@ -71,9 +103,25 @@ pub(super) fn length_of<T>(text: &[T]) -> u32 {
 
 impl DomString {
     #[inline]
+    pub(crate) fn has_newline(&self) -> bool {
+        self.latin1().map_or_else(
+            || self.units().any(|it| matches!(it, 10 | 13)),
+            |it| strings::index_of_any(it, b"\r\n").is_some(),
+        )
+    }
+
+    #[inline]
     pub(crate) fn from_impl(string: &Impl) -> DomString {
         string.r#ref();
         DomString(NonNull::from(string))
+    }
+
+    /// Without counting the reference.
+    #[inline(always)]
+    pub(crate) fn with_impl<R>(string: &Impl, read: impl FnOnce(&DomString) -> R) -> R {
+        read(&core::mem::ManuallyDrop::new(DomString(NonNull::from(
+            string,
+        ))))
     }
 
     #[inline(always)]
@@ -199,11 +247,17 @@ impl DomString {
     }
 
     /// If it is stored as such.
-    #[inline]
+    /// Not just equal.
+    #[inline(always)]
+    pub(crate) fn is_same(&self, other: &DomString) -> bool {
+        self.0 == other.0
+    }
+
+    #[inline(always)]
     pub(crate) fn ascii(&self) -> Option<&str> {
         // SAFETY: ASCII is UTF-8.
         self.latin1()
-            .filter(|it| it.is_ascii())
+            .filter(|it| is_ascii(it))
             .map(|it| unsafe { core::str::from_utf8_unchecked(it) })
     }
 
@@ -261,10 +315,32 @@ impl DomString {
         self.substring(0, end)
     }
 
+    pub(crate) fn from_latin1_parts<'p>(
+        parts: impl Iterator<Item = &'p [u8]> + Clone,
+    ) -> DomString {
+        let (length, mut at) = (
+            i32::try_from(parts.clone().map(<[u8]>::len).sum::<usize>())
+                .expect("a string is not that long"),
+            core::ptr::null_mut(),
+        );
+        let all = DomString(Bun__DOM__createLatin1(length as u32, &mut at));
+        for part in parts {
+            // SAFETY: there is room for all of them.
+            unsafe {
+                core::ptr::copy_nonoverlapping(part.as_ptr(), at, part.len());
+                at = at.add(part.len());
+            }
+        }
+        all
+    }
+
     pub(crate) fn concat(parts: &[&DomString]) -> DomString {
         let mut filled = parts.iter().filter(|it| !it.is_empty());
         if let (first, None) = (filled.next(), filled.next()) {
             return first.map_or_else(DomString::default, |it| (*it).clone());
+        }
+        if parts.iter().all(|it| it.latin1().is_some()) {
+            return DomString::from_latin1_parts(parts.iter().filter_map(|it| it.latin1()));
         }
         let mut builder = StringBuilder::default();
         parts.iter().for_each(|it| builder.push(it));
@@ -368,12 +444,13 @@ pub(crate) fn is_ascii_whitespace(unit: u16) -> bool {
     matches!(unit, 9 | 10 | 12 | 13 | 32)
 }
 
+const IS_ROPE: usize = 1;
+
 #[inline]
-pub(super) fn impl_of<'a>(
+pub(crate) fn impl_of<'a>(
     heap: &JsHeap<'a>,
     string: JsLocal<'a, JSString>,
 ) -> bindgen::Result<'a, &'a Impl> {
-    const IS_ROPE: usize = 1;
     // SAFETY: `JSString::m_fiber` follows the header of the cell.
     let fiber = || unsafe { (string.to_js().encoded() as *const usize).add(1).read() };
     if fiber() & IS_ROPE != 0 {
@@ -395,10 +472,145 @@ fn resolve<'a>(heap: &JsHeap<'a>, string: JsLocal<'a, JSString>) -> bindgen::Res
     Ok(())
 }
 
-#[inline]
+const RECENT: usize = 2048;
+
+/// The strings that scripts were given.
+struct Cells {
+    /// Since the last collection, by the address of the `StringImpl`.
+    recent: [Cell<JSValue>; RECENT],
+    /// Of each `Known`, as it is and in uppercase, after its number. They stay. The first and the last are empty.
+    known: [[Cell<JSValue>; 2]; Known::Other as usize + 2],
+    eraser: Cell<*mut c_void>,
+}
+
+#[thread_local]
+static CELLS: Cell<Option<&'static Cells>> = Cell::new(None);
+
+impl Cells {
+    #[cold]
+    fn new(heap: &JsHeap<'_>) -> &'static Cells {
+        bun_ui::at_end_of_worker(|| {
+            let Some(cells) = CELLS.take() else { return };
+            // SAFETY: what is made below. The VM is gone.
+            unsafe {
+                Bun__DOM__destroyEraser(cells.eraser.get());
+                bun_core::heap::destroy(core::ptr::from_ref(cells).cast_mut());
+            }
+        });
+        // SAFETY: empty values, and a null pointer.
+        let cells: &Cells = bun_core::heap::release(unsafe { Box::new_zeroed().assume_init() });
+        // SAFETY: they outlive the VM, whose collector writes them while this thread is stopped.
+        cells.eraser.set(unsafe {
+            Bun__DOM__createEraser(
+                heap.global(),
+                cells.recent.as_ptr().cast_mut().cast(),
+                RECENT,
+            )
+        });
+        CELLS.set(Some(cells));
+        cells
+    }
+
+    #[inline(always)]
+    fn place_of(&self, string: &Impl) -> &Cell<JSValue> {
+        &self.recent[(core::ptr::from_ref(string).addr() >> 4) % RECENT]
+    }
+}
+
+#[inline(always)]
 pub(super) fn impl_to_js<'a>(heap: &JsHeap<'a>, string: &Impl) -> JsLocal<'a, JSString> {
-    // SAFETY: it only allocates, and answers with a string.
-    unsafe { JsLocal::from_extern(Bun__DOM__stringToJS(heap.global(), string), heap) }
+    let recent = CELLS
+        .get()
+        .map_or(JSValue::ZERO, |it| it.place_of(string).get());
+    // SAFETY: a string that was not swept. `JSString::m_fiber` follows its header.
+    let is_it = !recent.is_empty()
+        && unsafe { (recent.encoded() as *const *const Impl).add(1).read() } == string;
+    // SAFETY: a string.
+    unsafe {
+        JsLocal::from_extern(
+            if is_it {
+                recent
+            } else {
+                new_cell(heap, string)
+            },
+            heap,
+        )
+    }
+}
+
+#[inline(never)]
+fn new_cell(heap: &JsHeap<'_>, string: &Impl) -> JSValue {
+    // SAFETY: it only allocates.
+    let cell = Bun__DOM__stringToJS(unsafe { heap.global() }, string);
+    CELLS
+        .get()
+        .unwrap_or_else(|| Cells::new(heap))
+        .place_of(string)
+        .set(cell);
+    cell
+}
+
+#[inline(always)]
+pub(super) fn known_to_js<'a>(
+    heap: &JsHeap<'a>,
+    known: Known,
+    is_uppercase: bool,
+) -> JsLocal<'a, JSString> {
+    let cell = CELLS.get().map_or(JSValue::ZERO, |it| {
+        it.known[known as usize + 1][usize::from(is_uppercase)].get()
+    });
+    // SAFETY: a string.
+    unsafe {
+        JsLocal::from_extern(
+            if cell.is_empty() {
+                new_known_cell(heap, known, is_uppercase)
+            } else {
+                cell
+            },
+            heap,
+        )
+    }
+}
+
+/// `Cells::known`
+pub(super) fn cells_of_names(global: &JSGlobalObject) -> *const c_void {
+    CELLS
+        .get()
+        .unwrap_or_else(|| Cells::new(JsHeap::from_global(global)))
+        .known
+        .as_ptr()
+        .cast()
+}
+
+#[cold]
+#[inline(never)]
+fn new_known_cell(heap: &JsHeap<'_>, known: Known, is_uppercase: bool) -> JSValue {
+    let atom = if is_uppercase {
+        Atom::of(known).to_ascii_uppercase()
+    } else {
+        Atom::of(known)
+    };
+    // SAFETY: it only allocates.
+    let cell = Bun__DOM__permanentString(unsafe { heap.global() }, atom.as_impl());
+    CELLS.get().unwrap_or_else(|| Cells::new(heap)).known[known as usize + 1]
+        [usize::from(is_uppercase)]
+    .set(cell);
+    cell
+}
+
+/// The characters of a rope, which stays one, if they have 8 bits and there is room.
+#[inline]
+pub(super) fn short_rope<'r>(
+    string: JsLocal<'_, JSString>,
+    room: &'r mut [u8],
+) -> Option<&'r [u8]> {
+    // SAFETY: as in `impl_of`.
+    let is_rope =
+        unsafe { (string.to_js().encoded() as *const usize).add(1).read() } & IS_ROPE != 0;
+    // SAFETY: the pointer and the length are of one slice.
+    let length = is_rope
+        .then(|| unsafe { Bun__DOM__copyRope(string.to_js(), room.as_mut_ptr(), room.len()) })?;
+    room.get(..length)
 }
 
 /// It has 8 bits per character for as long as it can.
@@ -574,6 +786,17 @@ impl Growing {
     }
 }
 
+/// How much UTF-16 the characters take that start in a little UTF-8.
+#[inline]
+fn units_in(bytes: &[u8]) -> usize {
+    bytes
+        .iter()
+        .fold(0u8, |all, it| {
+            all + u8::from(*it as i8 >= -0x40) + u8::from(*it >= 0xf0)
+        })
+        .into()
+}
+
 impl Default for StoredText {
     #[inline]
     fn default() -> StoredText {
@@ -593,6 +816,38 @@ impl StoredText {
             StoredText::Ascii(string) => string,
             StoredText::Other(both) => &both.0,
             StoredText::Growing(it) => &it.string,
+        }
+    }
+
+    /// From UTF-16. The second half of a pair is where the first one is.
+    pub(crate) fn offset_in_utf8(&self, offset: u32) -> u32 {
+        let (text, mut left, mut at) = (&**self, offset as usize, 0);
+        if text.len() == self.string().len() as usize {
+            return offset.min(text.len() as u32);
+        }
+        for chunk in text.as_bytes().as_chunks::<64>().0 {
+            let units = units_in(chunk);
+            if units >= left {
+                break;
+            }
+            (left, at) = (left - units, at + 64);
+        }
+        let at = text.ceil_char_boundary(at);
+        let found = text[at..].char_indices().find(|it| {
+            let is_it = it.1.len_utf16() > left;
+            left = left.saturating_sub(it.1.len_utf16());
+            is_it
+        });
+        found.map_or(text.len(), |it| at + it.0) as u32
+    }
+
+    pub(crate) fn offset_in_utf16(&self, offset: u32) -> u32 {
+        let text = self.as_bytes();
+        let before = &text[..text.len().min(offset as usize)];
+        if text.len() == self.string().len() as usize {
+            before.len() as u32
+        } else {
+            before.chunks(64).map(units_in).sum::<usize>() as u32
         }
     }
 

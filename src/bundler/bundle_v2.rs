@@ -5783,6 +5783,7 @@ pub mod bv2_impl {
                         Target::Bun,
                         bun_resolve_builtins::HardcodedModule::Cfg {
                             rewrite_jest_for_tests: self.transpiler.options.rewrite_jest_for_tests,
+                            has_modules_of_electron: self.transpiler.options.is_desktop_app,
                         },
                     ) {
                         // When bundling node builtins, remove the "node:" prefix.

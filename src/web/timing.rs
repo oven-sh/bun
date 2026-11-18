@@ -130,6 +130,14 @@ impl ResourceTiming {
         }
     }
 
+    /// Of a document that was not fetched.
+    pub fn of_nothing(name: &[u8], start: f64) -> ResourceTiming {
+        ResourceTiming {
+            response_end: start,
+            ..ResourceTiming::of_failure(name, InitiatorType::Navigation, start)
+        }
+    }
+
     pub fn of_response(
         name: &[u8],
         initiator_type: InitiatorType,

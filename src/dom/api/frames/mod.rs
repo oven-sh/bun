@@ -9,7 +9,8 @@ mod remote;
 
 use core::cell::{Cell, RefCell};
 
-use crate::api::interim::{allow_load, delay_load, resolve};
+use crate::api::history::Context;
+use crate::api::on_behalf::{allow_load, delay_load, resolve};
 use crate::api::ui::prelude::*;
 use crate::api::ui::{focus, fullscreen};
 use crate::api::view;
@@ -38,6 +39,7 @@ bitflags::bitflags! {
         const MEASURING = 1 << 2;
         const FULLSCREEN = 1 << 3;
         const HAS_FIRED_LOAD = 1 << 4;
+        const WAS_DISPLAYED = 1 << 5;
     }
 }
 
@@ -47,14 +49,31 @@ struct Navigation {
     referrer_policy: DomString,
 }
 
+#[thread_local]
+static LAST_NUMBER: Cell<u32> = Cell::new(0);
+/// It is not among the frames of its document yet.
+#[thread_local]
+static CONNECTING: Cell<JSValue> = Cell::new(JSValue::ZERO);
+
+/// What a page and its host call a frame or a popup.
+pub(crate) fn next_number() -> u32 {
+    LAST_NUMBER.update(|it| it + 1);
+    LAST_NUMBER.get()
+}
+
 pub(crate) struct Frame {
     kind: Kind,
+    number: u32,
+    /// What the host knows: the size of the viewport, the scale, and whether it is visible.
+    placement: Cell<Option<([f64; 2], f64, bool)>>,
     flags: Cell<Flags>,
     /// Where its content is in the viewport, and by how much a transform scales it.
     area: Cell<[f64; 4]>,
     scale: Cell<f64>,
     image: Cell<u32>,
     natural_size: Cell<[f64; 2]>,
+    /// Of the viewport in it.
+    size: Cell<[f64; 2]>,
     color_scheme: Cell<u32>,
     /// Of frames in a remote one.
     length: Cell<u32>,
@@ -88,6 +107,39 @@ impl Frame {
     /// One that gets input.
     pub(crate) fn shown_by(element: &Element) -> Option<&Frame> {
         Frame::of(element).filter(|it| it.kind != Kind::Blank)
+    }
+
+    pub(crate) fn with_number(outer: &Window, number: u32) -> Option<&Frame> {
+        Ui::of(outer.document())?
+            .frames()
+            .iter()
+            .chain(Frame::from_value(CONNECTING.get()))
+            .find(|it| it.number == number)
+    }
+
+    pub(crate) fn number(&self) -> u32 {
+        self.number
+    }
+
+    fn context(&self) -> Option<&Context> {
+        Context::from_value(js_Frame::peer(self)?)
+    }
+
+    pub(crate) fn show_context(&self, context: &Context, image: u32) {
+        js_Frame::set_peer(self, context.to_js());
+        self.image.set(image);
+    }
+
+    /// If it has a document in this process.
+    fn inner_window(&self) -> Option<&Window> {
+        match self.kind {
+            Kind::Local => self.context()?.window(),
+            _ => Window::of(self.inner()?.doc()),
+        }
+    }
+
+    fn is_indexed(&self) -> bool {
+        self.element().root() == &**self.around().doc()
     }
 
     pub(crate) fn element(&self) -> &Element {
@@ -126,10 +178,10 @@ impl Frame {
     }
 
     /// If it has the same origin.
-    fn document<'a>(&'a self, cx: &mut Cx<'a>) -> Option<&'a Doc> {
+    fn document<'a>(&'a self, _: &mut Cx<'a>) -> Option<&'a Doc> {
         match self.kind {
             Kind::Blank => self.inner().map(Ui::doc),
-            Kind::Local => host::document(cx, self),
+            Kind::Local => host::document(self),
             Kind::Remote => None,
         }
     }
@@ -142,7 +194,7 @@ impl Frame {
                 .and_then(|it| Window::of(it.doc()))
                 .map_or(given, |it| it.get_name(cx));
         }
-        let name = host::name(cx, self);
+        let name = host::name(self);
         if name == given || self.document(cx).is_some() {
             name
         } else {
@@ -230,12 +282,10 @@ impl Frame {
         }
     }
 
-    fn stop_deferring<'a>(&'a self, cx: &mut Cx<'a>) {
+    fn stop_deferring<'a>(&'a self, _: &mut Cx<'a>) {
         match self.deferred.take() {
-            Some(navigation) if self.kind == Kind::Local => {
-                host::navigate_local(cx, self, &navigation)
-            }
-            Some(navigation) => host::navigate_remote(cx, self, &navigation.url),
+            Some(navigation) if self.kind == Kind::Local => host::navigate_local(self, &navigation),
+            Some(navigation) => host::navigate_remote(self, &navigation.url),
             None => {}
         }
     }
@@ -248,24 +298,12 @@ impl Frame {
         }
     }
 
-    pub(crate) fn kind(&self) -> DomString {
-        self.element().local().to_dom_string()
-    }
-
-    pub(crate) fn name(&self) -> DomString {
+    fn name(&self) -> DomString {
         self.element().attr(atom!("name")).unwrap_or_default()
     }
 
-    pub(crate) fn get_is_closed(&self) -> bool {
+    pub(crate) fn is_closed(&self) -> bool {
         self.is(Flags::CLOSED)
-    }
-
-    pub(crate) fn attribute(&self, name: &Atom) -> Option<DomString> {
-        self.element().attr(name)
-    }
-
-    pub(crate) fn resolve<'a>(&'a self, cx: &mut Cx<'a>, url: &DomString) -> Option<DomString> {
-        resolve(cx, self.element().doc(), url)
     }
 
     pub(crate) fn focus<'a>(&'a self, cx: &mut Cx<'a>) {
@@ -307,7 +345,7 @@ impl Frame {
     }
 
     /// In the viewport at the top.
-    pub(crate) fn origin(&self) -> [f64; 2] {
+    fn origin(&self) -> [f64; 2] {
         let ([x, y, ..], [left, top]) = (self.area.get(), offset_in_top(self.around()));
         [x + left, y + top]
     }
@@ -316,7 +354,7 @@ impl Frame {
         self.area.get()
     }
 
-    pub(crate) fn surface_scale(&self) -> f64 {
+    fn surface_scale(&self) -> f64 {
         self.outer_window().map_or(1.0, |it| it.scale() / it.zoom())
     }
 }
@@ -394,9 +432,7 @@ pub(crate) fn report_moves(doc: &Doc) {
 
 /// Those that `window[index]` has.
 fn indexed(ui: &Ui) -> impl Iterator<Item = &Frame> {
-    ui.frames()
-        .iter()
-        .filter(|it| it.element().root() == &**ui.doc())
+    ui.frames().iter().filter(|it| it.is_indexed())
 }
 
 pub(crate) fn window_named<'a>(cx: &mut Cx<'a>, ui: &'a Ui, name: &DomString) -> Option<JSValue> {
@@ -407,12 +443,12 @@ pub(crate) fn window_named<'a>(cx: &mut Cx<'a>, ui: &'a Ui, name: &DomString) ->
     )
 }
 
-pub(crate) fn may_be_unloaded<'a>(cx: &mut Cx<'a>, doc: &'a Doc) -> bool {
+pub(crate) fn may_be_unloaded<'a>(_: &mut Cx<'a>, doc: &'a Doc) -> bool {
     Ui::of(doc).is_none_or(|ui| {
         ui.frames()
             .iter()
             .filter(|it| it.kind == Kind::Local)
-            .all(|it| host::may_be_unloaded(cx, it))
+            .all(host::may_be_unloaded)
     })
 }
 
@@ -422,7 +458,7 @@ pub(crate) fn stop<'a>(cx: &mut Cx<'a>, doc: &'a Doc) {
         .flat_map(|it| it.frames().iter())
         .filter(|it| it.kind == Kind::Local)
     {
-        host::stop(cx, frame);
+        host::stop(frame);
         frame.delay_load(cx, false);
     }
 }
@@ -475,14 +511,17 @@ fn create<'a>(cx: &mut Cx<'a>, ui: &'a Ui, element: &'a Element, kind: Kind) -> 
     if !host::take_room(ui) {
         return None;
     }
-    let (flags, area, image, color_scheme, length, deferred) = Default::default();
+    let (placement, flags, area, image, color_scheme, length, deferred) = Default::default();
     let state = Frame {
         kind,
+        number: next_number(),
+        placement,
         flags,
         area,
         scale: 1.0.into(),
         image,
         natural_size: DEFAULT_SIZE.into(),
+        size: Cell::default(),
         color_scheme,
         length,
         deferred,
@@ -492,7 +531,7 @@ fn create<'a>(cx: &mut Cx<'a>, ui: &'a Ui, element: &'a Element, kind: Kind) -> 
     frame.set_outer(Some(ui));
     host::connect(cx, frame);
     element.set_edge(&cx.heap, Edge::Frame, frame.to_js());
-    ui.set_frames(ui.frames().with(&cx.heap, frame));
+    ui.set_frames(ui.frames().followed_by(&cx.heap, frame));
     crate::api::core::named::announce_in_window(&cx.heap, None);
     input::frame_replaced(ui, frame);
     if kind != Kind::Blank {
@@ -547,7 +586,7 @@ fn close<'a>(cx: &mut Cx<'a>, element: &'a Element) {
         ui.set_frames(ui.frames().without(&cx.heap, frame));
         host::give_room_back(ui);
         input::forget(ui, frame);
-        host::dispose(cx, frame);
+        host::dispose(frame);
         frame.delay_load(cx, false);
     }
     if frame.is_current() {
@@ -567,6 +606,8 @@ pub(crate) static STEPS: Steps = Steps {
     post_connection: Some(|cx, element, is_move| {
         if !is_move {
             open(cx, element);
+        } else if let Some(frame) = Frame::of(element).filter(|it| it.kind == Kind::Local) {
+            host::owner_changed(frame);
         }
     }),
     removed: Some(|cx, element, _, is_move| {
@@ -575,6 +616,20 @@ pub(crate) static STEPS: Steps = Steps {
         }
     }),
     attribute_changed: Some(|cx, element, change| {
+        if let Some(frame) = Frame::of(element).filter(|it| it.kind == Kind::Local)
+            && [
+                atom!("src"),
+                atom!("srcdoc"),
+                atom!("sandbox"),
+                atom!("allow"),
+                atom!("allowfullscreen"),
+                atom!("csp"),
+            ]
+            .into_iter()
+            .any(|it| change.is(it))
+        {
+            host::owner_changed(frame);
+        }
         if change.is(atom!("src")) || change.is(atom!("srcdoc")) {
             return open(cx, element);
         }

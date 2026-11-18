@@ -7,7 +7,7 @@ use crate::api::forms::restoration;
 use crate::api::realm::client_of;
 use crate::api::transition::{hand_over_transition, start_outbound_transition};
 use crate::api::window::Is;
-use crate::api::{frames, interim};
+use crate::api::{frames, on_behalf};
 
 #[derive(Clone)]
 pub(super) struct Refresh {
@@ -91,7 +91,7 @@ impl History {
         else {
             return;
         };
-        interim::queue_task_after(doc, seconds * 1000.0, &[doc.to_js()], move |cx, values| {
+        on_behalf::queue_task_after(doc, seconds * 1000.0, &[doc.to_js()], move |cx, values| {
             let Some(window) = Doc::from_value(values[0]).and_then(Window::of) else {
                 return Ok(());
             };
@@ -243,7 +243,7 @@ pub(crate) fn unload<'a>(cx: &mut Cx<'a>, window: &'a Window) {
     let is_closed = || {
         Ui::of(window.document())
             .and_then(Ui::container)
-            .is_some_and(|it| it.get_is_closed())
+            .is_some_and(|it| it.is_closed())
             || window.host().is_closed()
     };
     if let Some(navigation) = window.navigation().filter(|_| is_closed()) {

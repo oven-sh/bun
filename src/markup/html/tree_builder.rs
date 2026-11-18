@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use super::tags::{svg_attribute_name, svg_tag_name};
 use super::{
     Attribute, AttributeNamespace, Dom, ElementName, Kind, NameOf, Namespace, NewElement, NodeOf,
-    Options, Patch, Place, Position, Quirks, Sink, Stop, Tag, find_attribute, quirks,
+    Options, Patch, Place, Position, Quirks, ShortName, Sink, Stop, Tag, find_attribute, quirks,
 };
 use crate::{Chars, Text};
 
@@ -397,6 +397,23 @@ impl<D: Dom> State<D> {
             .map(|(index, it)| (index, it.serial))
     }
 
+    /// There is nothing to reconstruct.
+    #[inline(always)]
+    fn is_formatting_open(&self) -> bool {
+        !matches!(self.active.last(), Some(Some(last)) if self.index_of(last.serial).is_none())
+    }
+
+    #[inline(always)]
+    fn copy_attributes(&mut self) -> Vec<Attribute<D>> {
+        if self.attributes.is_empty() {
+            return Vec::new();
+        }
+        let mut attributes = self.spare_attributes.pop().unwrap_or_default();
+        attributes.extend_from_slice(&self.attributes);
+        attributes
+    }
+
+    #[inline(always)]
     fn recycle(&mut self, entry: Option<Formatting<D>>) {
         if let Some(Formatting { mut attributes, .. }) = entry
             && attributes.capacity() > 0
@@ -440,7 +457,9 @@ impl<D: Dom> State<D> {
 
     #[inline]
     pub(super) fn forget_attributes(&mut self) {
-        self.attributes.clear();
+        if !self.attributes.is_empty() {
+            self.attributes.clear();
+        }
         self.stencil = None;
         self.had_duplicate_attributes = false;
     }
@@ -465,6 +484,74 @@ impl<D: Dom> State<D> {
             .is_some_and(|it| it.is_ignoring_case(b"hidden"))
     }
 }
+
+/// In the body.
+#[derive(Clone, Copy, PartialEq)]
+enum Starts {
+    Block,
+    Formatting,
+    Phrase,
+    Item,
+    Otherwise,
+}
+
+const fn for_each_tag<T: Copy, const N: usize>(
+    mut all: [T; Tag::ALL.len()],
+    value: T,
+    tags: [Tag; N],
+) -> [T; Tag::ALL.len()] {
+    let mut index = 0;
+    while index < N {
+        all[tags[index] as usize] = value;
+        index += 1;
+    }
+    all
+}
+
+static STARTS: [Starts; Tag::ALL.len()] = {
+    use Tag::*;
+    let all = for_each_tag(
+        [Starts::Otherwise; _],
+        Starts::Block,
+        [
+            Address, Article, Aside, Blockquote, Div, Dl, Figcaption, Figure, Footer, Header, Main,
+            Nav, Ol, P, Section, Ul,
+        ],
+    );
+    let all = for_each_tag(
+        all,
+        Starts::Formatting,
+        [
+            A, B, Big, Code, Em, Font, I, S, Small, Strike, Strong, Tt, U,
+        ],
+    );
+    let all = for_each_tag(all, Starts::Item, [Dd, Dt, Li]);
+    for_each_tag(
+        all,
+        Starts::Phrase,
+        [
+            Abbr, Cite, Del, Dfn, Ins, Kbd, Label, Mark, Q, Samp, Span, Sub, Sup, Time, Var,
+        ],
+    )
+};
+
+/// The name and `>`, the first character in the lowest byte.
+static SIMPLE_ENDS: [u64; Tag::ALL.len()] = {
+    use Tag::*;
+    let (mut all, others, mut index) = (
+        [0; _],
+        for_each_tag([false; _], true, [H1, H2, H3, H4, H5, H6, Pre]),
+        0,
+    );
+    while index < all.len() {
+        let name = Tag::ALL[index].name().as_bytes();
+        if name.len() < 8 && (others[index] || !matches!(STARTS[index], Starts::Otherwise)) {
+            all[index] = ShortName::of_ascii(name).0 | (b'>' as u64) << (8 * name.len());
+        }
+        index += 1;
+    }
+    all
+};
 
 const DEFAULT_SCOPE: Kind = Kind::SCOPE;
 const LIST_ITEM_SCOPE: Kind = Kind::SCOPE.union(Kind::LIST_SCOPE);
@@ -558,7 +645,6 @@ impl<S: Sink> Builder<'_, S> {
             && (!is_pinned(place.parent) || self.state.current_node().is_none_or(is_pinned))
     }
 
-    #[inline]
     fn append_quietly(
         &mut self,
         name: ElementName<'_, S::Dom>,
@@ -921,9 +1007,7 @@ impl<S: Sink> Builder<'_, S> {
 
     #[inline]
     fn reconstruct_formatting(&mut self) {
-        if let Some(Some(last)) = self.state.active.last()
-            && self.state.index_of(last.serial).is_none()
-        {
+        if !self.state.is_formatting_open() {
             self.reopen_formatting();
         }
     }
@@ -953,11 +1037,7 @@ impl<S: Sink> Builder<'_, S> {
 
     fn push_formatting(&mut self, tag: Start<S>) {
         let state = &mut *self.state;
-        let mut attributes = Vec::new();
-        if !state.attributes.is_empty() {
-            attributes = state.spare_attributes.pop().unwrap_or_default();
-            attributes.extend_from_slice(&state.attributes);
-        }
+        let attributes = state.copy_attributes();
         let entry = Formatting {
             serial: state.next_serial,
             tag: tag.tag,
@@ -1199,7 +1279,20 @@ impl<S: Sink> Builder<'_, S> {
         }
     }
 
-    #[inline]
+    /// It is not empty. Returns whether it was appended quietly.
+    #[inline(always)]
+    pub(super) fn text_between_tags(&mut self, text: Chars<'_>, is: TextIs) -> bool {
+        if !(is.has_nul || self.state.skips_newline || self.state.is_frameset_ok)
+            && let Some(parent) = self.quiet_parent()
+            && self.state.is_formatting_open()
+            && self.sink.append_text_quietly(text, parent)
+        {
+            return true;
+        }
+        self.text(text, is);
+        false
+    }
+
     pub(super) fn text(
         &mut self,
         mut text: Chars<'_>,
@@ -1346,6 +1439,91 @@ impl<S: Sink> Builder<'_, S> {
     }
 
     // Start tags
+
+    /// The most common ones, below an element that nothing has seen.
+    #[inline(always)]
+    pub(super) fn start_quietly(&mut self, tag: Tag) -> bool {
+        let Some(parent) = self
+            .quiet_parent()
+            .filter(|_| self.state.open.len() <= MAX_DEPTH)
+        else {
+            return false;
+        };
+        let state = &*self.state;
+        let start = STARTS[tag as usize];
+        let is_simple = match start {
+            Starts::Otherwise => false,
+            Starts::Block => !state.has_open(Tag::P),
+            Starts::Item => {
+                !(state.is_frameset_ok || state.has_open(Tag::P))
+                    && matches!(
+                        state.open[state.open.len() - 1].tag,
+                        Tag::Ul | Tag::Ol | Tag::Dl
+                    )
+            }
+            Starts::Phrase => state.is_formatting_open(),
+            Starts::Formatting => {
+                state.is_formatting_open()
+                    && state.active.len() < 3
+                    && (tag != Tag::A || state.find_formatting(tag).is_none())
+            }
+        };
+        if !is_simple {
+            return false;
+        }
+        let attributes = if start == Starts::Formatting {
+            self.state.copy_attributes()
+        } else {
+            Vec::new()
+        };
+        let state = &mut *self.state;
+        let (name, stencil, position) = (
+            ElementName::Known(tag),
+            state.stencil.as_ref(),
+            state.position,
+        );
+        let element = NewElement {
+            name,
+            namespace: Namespace::Html,
+            attributes: &mut state.attributes,
+            stencil,
+            intended_parent: parent,
+            position,
+            had_duplicate_attributes: false,
+        };
+        let Some(node) = self.sink.append_element_quietly(element) else {
+            return false;
+        };
+        state.skips_newline = false;
+        let serial = state.push(
+            node,
+            StartTag::known(tag),
+            Namespace::Html,
+            tag.kind() - Kind::MATH_TEXT,
+        );
+        if start == Starts::Formatting {
+            state.active.push(Some(Formatting {
+                serial,
+                tag,
+                attributes,
+                stencil: state.stencil.take(),
+            }));
+        }
+        true
+    }
+
+    /// The current node, if it is such an element and the rules for the body apply.
+    #[inline(always)]
+    fn quiet_parent(&self) -> Option<NodeOf<S>> {
+        let current = self.state.open.last()?;
+        (matches!(
+            self.state.mode,
+            Mode::InBody | Mode::InCell | Mode::InCaption
+        ) && !self.sink.is_pinned(current.node)
+            && current.namespace == Namespace::Html
+            && self.state.deferred.is_none())
+        .then_some(current.node)
+    }
 
     #[inline]
     pub(super) fn start_tag(&mut self, tag: Start<S>) {
@@ -1969,6 +2147,34 @@ impl<S: Sink> Builder<'_, S> {
     }
 
     // End tags
+
+    /// If the eight characters after `</` start with a tag that only closes the current node. Returns how many it has.
+    #[inline(always)]
+    pub(super) fn end_current(&mut self, word: u64) -> Option<usize> {
+        let state = &mut *self.state;
+        let current = state.open.last()?;
+        let end = SIMPLE_ENDS[current.tag as usize];
+        let unused = end.leading_zeros() & !7;
+        if (word ^ end) << (unused & 63) != 0
+            || end == 0
+            || current.namespace != Namespace::Html
+            || !matches!(state.mode, Mode::InBody | Mode::InCell | Mode::InCaption)
+        {
+            return None;
+        }
+        if current.has(Kind::FORMATTING) {
+            if !matches!(state.active.last(), Some(Some(last)) if last.serial == current.serial) {
+                return None;
+            }
+            let entry = state.active.pop().flatten();
+            state.recycle(entry);
+        }
+        state.skips_newline = false;
+        if let Some(entry) = state.open.pop() {
+            state.open_counts[entry.tag as usize] -= 1;
+        }
+        Some(8 - unused as usize / 8)
+    }
 
     #[inline]
     pub(super) fn end_tag(&mut self, tag: Tag, name: Chars<'_>) {

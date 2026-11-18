@@ -482,6 +482,10 @@ foreignObject {
 svg:not(:root) {
   overflow-clip-margin: content-box;
 }
+svg:root {
+  width: 100%;
+  height: 100%;
+}
 
 fieldset {
   margin-inline: 2px;
@@ -776,6 +780,22 @@ input:is([type="file" i], [type="image" i], [type="hidden" i]),
 }
 input[type="image" i] {
   cursor: pointer;
+}
+:is(img, input)::-internal-alt-text {
+  display: flow-root;
+  box-sizing: border-box;
+  width: inherit;
+  height: inherit;
+  max-width: inherit;
+  max-height: inherit;
+  overflow: hidden;
+  border: 1px solid silver;
+  padding: 1px;
+}
+:is(img, input)::-internal-alt-icon {
+  float: inline-start;
+  width: 16px;
+  height: 16px;
 }
 input[type="file" i] {
   color: inherit;
@@ -1177,9 +1197,6 @@ select::-internal-select-button,
 select::-internal-select-texts,
 select::-internal-select-sizer {
   field-sizing: inherit;
-}
-select:-internal-native:not([multiple]:not([size="1"]), [size]:not([size="0"], [size="1"])) {
-  line-height: normal !important;
 }
 option:not(:-internal-in-base) br {
   display: none;

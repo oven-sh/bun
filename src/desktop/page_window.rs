@@ -93,11 +93,10 @@ impl DesktopWindow {
         let page = page_host::page_for(self, may_be_global)?;
         fields::set_page(self, page);
         fields::set_default_style(self, invoke(page, "insertCSS", &[js(DEFAULT_STYLE)?])?);
-        surfaces::listen_with_script(global(), id, page);
-        Ok(())
+        page_host::send_input_to(page, id)
     }
 
-    fn page(&self) -> JSValue {
+    pub(crate) fn page(&self) -> JSValue {
         fields::page(self).unwrap_or(JSValue::UNDEFINED)
     }
 
@@ -250,8 +249,7 @@ impl DesktopWindow {
         part: Option<&DesktopRectangle>,
     ) -> JsResult<JSValue> {
         invoke(self.page(), "flushCanvases", &[])?;
-        let frame = object!({ "t": "frame", "isUrgent": true });
-        invoke(self.page(), "handleEvent", &[frame])?;
+        page_host::render_now(self.page())?;
         let part = part.and_then(DesktopRectangle::if_complete);
         let pixels = answer((ui()?.capture)(self.surface.get(), part.into()))?;
         Ok(NativeImage::from_pixels(pixels).to_js(global()))

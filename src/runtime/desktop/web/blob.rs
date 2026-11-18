@@ -131,11 +131,13 @@ pub(crate) fn read(
     file: &Blob,
     convert: fn(&Blob, &JsThread<'_>, Lifetime) -> JsResult<JSValue>,
 ) -> JSValue {
+    let mime = file.content_type.get().clone();
     let promise = promise_for(cx, data_of(file).open().read_to_end(), move |cx, read| {
         let blob = Blob::init(
             read.map_err(|it| unreadable(&cx.heap, it))?.into_vec(),
             cx.global(),
         );
+        blob.content_type.set(mime);
         let converted = convert(&blob, &cx.js_thread(), Lifetime::Transfer)?;
         Ok(JsLocal::new(&cx.heap, converted))
     });

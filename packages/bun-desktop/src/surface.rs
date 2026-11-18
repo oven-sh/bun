@@ -220,7 +220,7 @@ impl Surface {
         let backing = self.backing();
         self.scene.replace(&backing, scene);
         std::mem::swap(&mut self.motion.tables, tables);
-        self.motion.adopt(&self.scene, backing.len());
+        self.motion.adopt(&mut self.scene, backing.len());
         self.motion
             .advance(self.id, &mut self.scene, milliseconds(self.last_tick));
         if self.scene.caret != caret {
@@ -268,21 +268,33 @@ impl Surface {
     /// In the window.
     #[cfg(target_os = "macos")]
     pub fn scrolled_port(&mut self) -> Option<Rect> {
-        let (
-            Rect {
-                x,
-                y,
-                width,
-                height,
-            },
-            zoom,
-        ) = (self.motion.port(&self.scene)?, self.scene.zoom);
-        Some(Rect {
+        self.motion.port(&self.scene).map(|it| self.in_window(it))
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn take_jump(&mut self) -> Option<Rect> {
+        self.motion
+            .take_jump(&self.scene)
+            .map(|it| self.in_window(it))
+    }
+
+    #[cfg(target_os = "macos")]
+    fn in_window(
+        &self,
+        Rect {
+            x,
+            y,
+            width,
+            height,
+        }: Rect,
+    ) -> Rect {
+        let zoom = self.scene.zoom;
+        Rect {
             x: self.rect.x + x * zoom,
             y: self.rect.y + y * zoom,
             width: width * zoom,
             height: height * zoom,
-        })
+        }
     }
 
     pub fn next_motion(&self) -> Option<Instant> {
@@ -356,7 +368,6 @@ impl Surface {
             let painter = Painter {
                 scene: &self.scene,
                 frame: &frame,
-                limit: usize::MAX,
                 left_out: &[],
             };
             let matrix = Transform::from_row(
@@ -403,7 +414,6 @@ impl Surface {
         let painter = Painter {
             scene: &self.scene,
             frame: &frame,
-            limit: usize::MAX,
             left_out: &[],
         };
         let (matrix, items) = (
@@ -820,8 +830,18 @@ pub fn command(id: u32, command: SurfaceCommand, edits: u32) -> Result<()> {
         SurfaceCommand::RequestFrame => shared.borrow_mut().request_frame(),
         SurfaceCommand::Cursor(cursor) => set_cursor(&shared, cursor),
         SurfaceCommand::BeginDrag(dragged) => {
-            let [width, height] = [dragged.area.width, dragged.area.height]
-                .map(|it| (it * shared.borrow().scale).round() as i32);
+            const LONGEST: f32 = 8192.;
+            const PIXELS: f32 = 1500. * 1500.;
+            let Rect { width, height, .. } = dragged.area;
+            let scale = if width.max(height) > LONGEST {
+                0.
+            } else {
+                shared
+                    .borrow()
+                    .scale
+                    .min((PIXELS / (width * height)).sqrt())
+            };
+            let [width, height] = [width, height].map(|it| (it * scale).round() as i32);
             let image = images::take_recording(dragged.image, width, height);
             let window = state.and_then(|it| window::platform_window(it.id));
             window
@@ -829,8 +849,10 @@ pub fn command(id: u32, command: SurfaceCommand, edits: u32) -> Result<()> {
                 .for_each(|it| it.begin_drag(&dragged, image.as_ref()));
         }
         SurfaceCommand::Field(field) => {
+            let is_out_of_date =
+                edits != bridge::edits() || field.as_ref().is_some_and(|it| it.is_out_of_date);
             let before = std::mem::replace(&mut shared.borrow_mut().ime, Ime::new(field));
-            if edits != bridge::edits() {
+            if is_out_of_date {
                 shared.borrow_mut().ime.keep_text_of(&before);
             }
             state

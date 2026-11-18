@@ -62,7 +62,7 @@ macro_rules! slots {
 }
 pub(crate) use slots;
 
-/// A list that keeps what is in it alive. One that is in a field is replaced, not changed, so it can be walked while script runs.
+/// A list that keeps what is in it alive. One that is in a field is replaced or appended to, so it can be walked while script runs.
 pub(crate) struct Refs<'a, T>(Option<List<'a>>, PhantomData<&'a T>);
 
 impl<T> Clone for Refs<'_, T> {
@@ -137,11 +137,21 @@ impl<'a, T: Handle + 'a> Refs<'a, T> {
     }
 
     pub(crate) fn without<'b>(self, heap: &JsHeap<'b>, item: &T) -> Refs<'b, T> {
-        Refs::collect(heap, self.iter().filter(|it| it.value() != item.value()))
+        Refs(
+            self.0.map(|it| it.copy_without(heap, item.value())),
+            PhantomData,
+        )
     }
 
     pub(crate) fn with<'b>(self, heap: &JsHeap<'b>, item: &T) -> Refs<'b, T> {
         let mut list = self.without(heap, item);
+        list.push(heap, item);
+        list
+    }
+
+    /// In place.
+    pub(crate) fn followed_by<'b>(self, heap: &JsHeap<'b>, item: &T) -> Refs<'b, T> {
+        let mut list = Refs(self.0.map(|it| List::from_value(it.to_js())), PhantomData);
         list.push(heap, item);
         list
     }

@@ -128,4 +128,4 @@ b.include(DomWindow, CloningScope);
 b.include(WorkerGlobalScope, CloningScope);
 
 /** A message that has been sent. */
-export const Envelope = b.interface("Envelope", { rustPath: rust("bridge::Envelope"), noInterfaceObject: true });
+export const Envelope = b.interface("Envelope", { rustPath: rust("for_host::Envelope"), noInterfaceObject: true });

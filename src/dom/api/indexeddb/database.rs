@@ -2,7 +2,6 @@
 
 use core::mem::ManuallyDrop;
 
-use bun_collections::HashMap;
 use bun_jsc::{Strong, Weak};
 use bun_web::exec::{Thread, with_js};
 use bun_web::storage::indexed::Notice;
@@ -24,7 +23,7 @@ pub(crate) struct IDBDatabase {
 }
 
 thread_local! {
-    static OPEN: ManuallyDrop<RefCell<HashMap<u32, Weak<()>>>> = bun_ui::lasting(|| drop(OPEN.with(|it| it.take())));
+    static OPEN: ManuallyDrop<RefCell<std::collections::BTreeMap<u32, Weak<()>>>> = bun_ui::lasting(|| drop(OPEN.with(|it| it.take())));
     static LAST_ID: Cell<u32> = const { Cell::new(0) };
 }
 

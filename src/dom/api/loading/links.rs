@@ -52,6 +52,10 @@ fn update_expectation<'a>(cx: Cx<'_, 'a>, link: &'a Node) {
 
 #[optimize(size)]
 fn announce(link: &Node, has_arrived: impl Future<Output = bool> + 'static) {
+    announce_boxed(link, Box::pin(has_arrived));
+}
+
+fn announce_boxed(link: &Node, has_arrived: bun_web::exec::LocalFuture<'static, bool>) {
     let (anchor, hint) = (
         Anchor::new(link.doc(), link.to_js()),
         Owner::of(link).hint.borrow().clone(),

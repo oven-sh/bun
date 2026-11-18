@@ -1,14 +1,18 @@
 //! What a page of the app's own realm gets from outside.
 
-use bun_jsc::{JSGlobalObject, Strong, from_js_host_call};
-use bun_web::host::{self, Answer, DialogKind, Environment, FileChoice, Notice, Question, Reply};
+use bun_jsc::{JSGlobalObject, Strong, from_js_host_call, from_js_host_call_generic};
+use bun_web::dom::{self, Opening};
+use bun_web::host::{
+    self, Answer, DialogKind, Environment, FileChoice, Host, Notice, Opened, Question, Reply,
+    ToGuest,
+};
 use bun_web::js_link::{Native, NativeHost};
+use bun_web::page::{self, News};
 
 use crate::generated_bindgen::script::js_DesktopPageHost as fields;
 use crate::generated_bindgen::window::{DesktopWindow, InputInit, WindowInit, js_DesktopWindow};
 use crate::page_window::is_of_app;
 use crate::prelude::*;
-use crate::realm::methods_for_page;
 use crate::session::{self, Session};
 use crate::webview::embedded::Controls;
 use crate::webview::embedder::{Embedder, Holder};
@@ -17,7 +21,9 @@ use crate::window::Window;
 use crate::{app, dialog, paths, screen, shell, task, text, theme};
 
 pub(crate) struct PageHost {
+    page: u32,
     surface: Cell<u32>,
+    guests: RefCell<Vec<(u32, Root<Controls>)>>,
     /// It is above the content of a window, and not the content.
     is_overlay: bool,
 }
@@ -35,6 +41,7 @@ fn widen(it: Rect) -> host::Rect {
 fn environment_of(window: &DesktopWindow) -> JsResult<Environment> {
     let (bounds, settings) = (window.bounds()?, theme::settings()?);
     let (display, default) = (screen::display_matching(bounds)?, Environment::default());
+    let is_visible = window.is_on_screen()? && !window.is_in_dock()? && !window.is_occluded();
     Ok(Environment {
         is_dark: theme::is_dark()?,
         reduces_motion: answer((ui()?.system_state)())?.reduces_motion,
@@ -50,7 +57,8 @@ fn environment_of(window: &DesktopWindow) -> JsResult<Environment> {
         }),
         zoom: window.get_zoom_factor(),
         is_active: window.has_focus()?,
-        is_visible: window.is_on_screen()? && !window.is_in_dock()? && !window.is_occluded(),
+        is_visible,
+        is_drawn: is_visible,
         is_fullscreen: window.fills_screen()?,
         is_transparent: window.has_background(),
         overlays_scrollbars: (settings.overlay_scrollbars.get())
@@ -74,6 +82,8 @@ impl PageHost {
         fields::create(
             heap(),
             PageHost {
+                page: page::next_id(),
+                guests: Default::default(),
                 surface,
                 is_overlay,
             },
@@ -99,9 +109,9 @@ impl PageHost {
         })
     }
 
-    fn open(&self, url: &str, features: &str) -> JsResult<JSValue> {
+    fn open(&self, url: &str, features: &str) -> JsResult<Opened> {
         if url != "about:blank" || fields::window(self).is_none() {
-            return self.leave_for(url.as_bytes()).map(|()| JSValue::UNDEFINED);
+            return self.leave_for(url.as_bytes()).map(|()| Opened::Nothing);
         }
         let [width, height, x, y] =
             ["width", "height", "left", "top"].map(|it| feature(features, it));
@@ -113,7 +123,8 @@ impl PageHost {
             ..WindowInit::default()
         };
         let structure = js_DesktopWindow::CLASS.structure(heap());
-        DesktopWindow::open_as_asked(heap(), structure, &options)?.global_object()
+        let window = DesktopWindow::open_as_asked(heap(), structure, &options)?;
+        Ok(Opened::Page(id_of(window.page())?))
     }
 
     fn pick_files(&self, it: &FileChoice) -> JsResult<JSValue> {
@@ -125,22 +136,45 @@ impl PageHost {
         dialog::pick_files(window, it.is_directory, it.is_multiple, &extensions)
     }
 
-    fn link(&self) -> JsResult<JSValue> {
-        let link = NativeHost::create(heap(), &OfProgram, self.to_js());
-        let navigate = listener(self, |it, given| {
-            it.leave_for(text_of(argument(given, 0))?.as_bytes())
-        })?;
-        let open = function(self.to_js(), |it, given| {
-            host_in(it).open(&text_of(argument(given, 0))?, &text_of(argument(given, 2))?)
-        })?;
-        let create_remote_frame = function(self.to_js(), |it, given| {
-            methods_for_page(Controls::create(it, argument(given, 0), argument(given, 1))?.to_js())
-        })?;
-        link.put(global(), b"navigate", navigate);
-        link.put(global(), b"open", open);
-        link.put(global(), b"createRemoteFrame", create_remote_frame);
-        Ok(link)
+    fn tell_guest(&self, number: u32, message: ToGuest) -> JsResult<()> {
+        let mut all = self.guests.borrow_mut();
+        let found = all.iter().find(|it| it.0 == number).map(|it| it.1.get());
+        if let ToGuest::Remove = message {
+            all.retain(|it| it.0 != number);
+        }
+        drop(all);
+        found.map_or(Ok(()), |it| it.obey(message))
     }
+}
+
+fn id_of(page: JSValue) -> JsResult<u32> {
+    Ok(get(page, "id")?.as_number() as u32)
+}
+
+fn tell_page(id: u32, order: impl FnOnce(&page::Controls)) -> JsResult<()> {
+    from_js_host_call_generic(global(), || order(&page::Controls::new(page::here(), id)))
+}
+
+pub(crate) fn send_input_to(page: JSValue, surface: u32) -> JsResult<()> {
+    let id = id_of(page)?;
+    bun_ui::surfaces::listen_with(surface, move |it| {
+        tell_page(id, |page| page.input(it.into()))
+    });
+    Ok(())
+}
+
+pub(crate) fn wants_to_stay(page: JSValue) -> JsResult<bool> {
+    let stays = std::rc::Rc::new(Cell::new(false));
+    let slot = std::rc::Rc::clone(&stays);
+    tell_page(id_of(page)?, |it| {
+        it.before_unload(move |_, it| slot.set(it))
+    })?;
+    Ok(stays.get())
+}
+
+pub(crate) fn render_now(page: JSValue) -> JsResult<()> {
+    let frame = bun_web::input::Input::Frame { is_urgent: true };
+    tell_page(id_of(page)?, |it| it.input(frame))
 }
 
 fn host_in(owner: JSValue) -> &'static PageHost {
@@ -150,7 +184,7 @@ fn host_in(owner: JSValue) -> &'static PageHost {
 fn obey(window: &DesktopWindow, question: Question) -> JsResult<Option<Answer>> {
     match question {
         Question::Loaded { stage } => match stage {
-            "load" => emit(window.to_js(), "did-finish-load", &[])?,
+            bun_web::host::Stage::Loaded => emit(window.to_js(), "did-finish-load", &[])?,
             _ => emit(window.to_js(), "dom-ready", &[])?,
         },
         Question::SetFullscreen { is_on } => {
@@ -184,6 +218,20 @@ impl Native for OfProgram {
     fn answer(&self, owner: JSValue, question: Question) -> JsResult<Option<Answer>> {
         let host = host_in(owner);
         Ok(Some(match (question, fields::window(host)) {
+            (Question::Navigate { wish }, _) => {
+                return host.leave_for(wish.url.as_bytes()).map(|()| None);
+            }
+            (Question::Open { wish, features, .. }, _) => {
+                Answer::Open(host.open(&wish.url, &features)?)
+            }
+            (Question::CreateGuest { frame, scale }, _) => {
+                let guest = Root::new(Controls::create(owner, frame, scale)?);
+                host.guests.borrow_mut().push((frame, guest));
+                return Ok(None);
+            }
+            (Question::Guest { frame, message }, _) => {
+                return host.tell_guest(frame, message).map(|()| None);
+            }
             (Question::IsOfApp { url }, _) => Answer::IsOfApp(is_of_app(url.as_bytes())?),
             (Question::Permission { .. }, _) => Answer::Permission("granted".into()),
             (Question::Environment {}, None) if host.is_overlay => {
@@ -233,7 +281,7 @@ impl Native for OfProgram {
         task::spawn(async {
             let paths = shown.await.map_err(|it| task::throw(&it));
             let paths = paths.and_then(|it| texts_of(it.get()));
-            let paths = paths.map_err(|it| task::report(Err(it))).ok();
+            let paths = task::or_warning(paths);
             reply(global(), Some(Answer::PickFiles(paths)));
         });
     }
@@ -317,29 +365,33 @@ impl Embedder for PageHost {
         warn(message)
     }
 
-    fn path_of(&self, file: JSValue) -> JsResult<String> {
-        text_of(file)
+    fn id(&self) -> u32 {
+        self.page
+    }
+
+    fn tell_element(&self, number: u32, news: News) -> JsResult<()> {
+        tell_page(self.page, |it| it.tell_frame(number, news))
     }
 }
 
 unsafe extern "C" {
-    safe fn Bun__Desktop__createPage(
-        global: &JSGlobalObject,
-        host: JSValue,
-        may_have_global_object: bool,
-    ) -> JSValue;
+    safe fn Bun__Desktop__becomeWindow(global: &JSGlobalObject) -> JSValue;
 }
 
 impl PageHost {
     pub(crate) fn create_page(&self, is_first: bool, markup: &str) -> JsResult<JSValue> {
         let surface = self.surface.get();
-        let host = object!({
-            "link": self.link()?,
-            "surface": surface,
-            "fontScope": if is_first { i32::MAX as u32 } else { surface },
-        });
+        let host = NativeHost::create(heap(), &OfProgram, self.to_js());
+        let opening = Opening {
+            page: self.page,
+            surface,
+            font_scope: is_first.then_some(i32::MAX as u32),
+            // SAFETY: the window holds it.
+            ..Opening::new(unsafe { Host::of(host) }, host)
+        };
         let page = from_js_host_call(global(), || {
-            Bun__Desktop__createPage(global(), host, is_first)
+            let window = is_first.then(|| Bun__Desktop__becomeWindow(global()));
+            dom::open_page(global(), opening, window.filter(|it| !it.is_empty()))
         })?;
         invoke(page, "parseHTML", &[js(markup)?]).map(|_| page)
     }

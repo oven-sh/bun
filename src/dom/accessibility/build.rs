@@ -678,31 +678,32 @@ impl<'a> Builder<'a> {
             .inline
             .as_deref()
             .filter(|it| it.items.len() > 64 && document.tree.html_tag(id) != Name::NONE)?;
-        let rects = self.inline_rects.entry(lines).or_insert_with(|| {
-            let mut all: Map<_, _> = inline
-                .items
-                .iter()
-                .filter(|it| it.kind == ItemKind::Close(false))
-                .map(|it| (it.node, None))
-                .collect();
-            for it in inline.lines.fragments.iter().filter(|it| {
-                !matches!(it.kind, FragmentKind::Text { .. } | FragmentKind::Hyphen(_))
-            }) {
-                let rect = document.from_lines(lines, it.rect());
-                if let Some(whole) = all
-                    .entry(inline.items[it.item as usize].node)
-                    .or_insert(Some(rect))
-                    && !rect.is_empty()
-                {
-                    *whole = if whole.is_empty() {
-                        rect
-                    } else {
-                        whole.union(&rect)
-                    };
+        let rects =
+            self.inline_rects.entry(lines).or_insert_with(|| {
+                let mut all: Map<_, _> = inline
+                    .items
+                    .iter()
+                    .filter(|it| it.kind == ItemKind::Close(false))
+                    .map(|it| (it.node, None))
+                    .collect();
+                for it in inline.lines.fragments.iter().filter(|it| {
+                    !matches!(it.kind, FragmentKind::Text { .. } | FragmentKind::Hyphen)
+                }) {
+                    let rect = document.from_lines(lines, it.rect());
+                    if let Some(whole) = all
+                        .entry(inline.items[it.item as usize].node)
+                        .or_insert(Some(rect))
+                        && !rect.is_empty()
+                    {
+                        *whole = if whole.is_empty() {
+                            rect
+                        } else {
+                            whole.union(&rect)
+                        };
+                    }
                 }
-            }
-            all
-        });
+                all
+            });
         match rects.get(&id).copied() {
             Some(rect) => Some(self.map(lines, rect?)),
             None => Some(self.nowhere(context)),
@@ -1020,9 +1021,7 @@ impl<'a> Builder<'a> {
         let is_misspelled = |it: &&(_, Mark)| it.1 == Mark::Highlight(name!("::spelling-error"));
         let misspelled: SmallVec<[[u32; 2]; 1]> = self
             .document
-            .marks
-            .of(id)
-            .iter()
+            .marks_of(id)
             .filter(is_misspelled)
             .map(|it| [it.0.start, it.0.end].map(|it| rendered_offset(&items, it)))
             .collect();

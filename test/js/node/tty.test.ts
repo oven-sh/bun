@@ -566,7 +566,7 @@ test.skipIf(isWindows).each(["O_NONBLOCK", "O_RDWR"])(
         const fd = fs.openSync(name, fs.constants.O_RDWR | fs.constants.${flag});
         const stream = new (require("tty").ReadStream)(fd);
         stream.on("error", error => { console.log("error:" + error.code); process.exit(1); });
-        stream.on("data", data => { console.log("got:" + String(data).trim()); stream.destroy(); });
+        stream.on("data", data => { console.log("got:" + String(data).trim() + ":" + stream.bytesRead); stream.destroy(); });
         fs.stat(".", () => fs.stat(".", () => console.log("reading")));
       `,
       ],
@@ -581,6 +581,17 @@ test.skipIf(isWindows).each(["O_NONBLOCK", "O_RDWR"])(
     });
     const exitCode = await proc.exited;
     expect(output).not.toContain("error:");
+    expect(output).toContain("got:hello:6");
     expect(exitCode).toBe(0);
   },
 );
+
+test.skipIf(isWindows)("ReadStream that is unref()ed before it reads does not keep the process alive", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `new (require("tty").ReadStream)(0).unref().on("data", () => {});`],
+    env: bunEnv,
+    terminal: {},
+  });
+  expect(await proc.exited).toBe(0);
+  expect(proc.signalCode).toBeNull();
+});

@@ -2,10 +2,7 @@
 
 use core::cell::Cell;
 
-use bun_jsc::JSGlobalObject;
-
 use super::prelude::*;
-use crate::api::events::WindowTarget;
 use crate::api::uievents::{Modifiers, Mouse, PointerData, PointerEvent};
 
 const TRANSIENT_DURATION: f64 = 5000.0;
@@ -36,6 +33,10 @@ impl Default for Activation {
 impl Ui {
     pub(crate) fn activate(&self) {
         let it = &self.activation;
+        self.doc()
+            .window()
+            .into_iter()
+            .for_each(|it| it.host().activated());
         it.last.set(host::now());
         it.has_been_active.set(true);
         it.has_history_action.set(true);
@@ -57,21 +58,16 @@ impl Ui {
     pub(crate) fn consume_activation<'a>(&'a self, cx: &mut Cx<'a>) -> bool {
         let was_active = self.has_transient_activation();
         if was_active {
+            self.doc()
+                .window()
+                .into_iter()
+                .for_each(|it| it.host().activation_consumed());
             crate::api::frames::tree(&cx.heap, self)
                 .iter()
                 .for_each(|it| it.activation.last.set(f64::NEG_INFINITY));
         }
         was_active
     }
-}
-
-#[unsafe(no_mangle)]
-fn __bun_dom_activate(realm: &JSGlobalObject, window: JSValue) {
-    let window = WindowTarget::of(JsHeap::from_global(realm), window);
-    window
-        .and_then(|it| Ui::of(it.doc()?))
-        .into_iter()
-        .for_each(|it| it.note_user_activation(false));
 }
 
 #[derive(Default)]
@@ -95,6 +91,13 @@ impl Click {
             ..Default::default()
         }
     }
+}
+
+pub(crate) fn is_clicked_without_pointer(event: &Event) -> bool {
+    event
+        .target_node()
+        .and_then(Node::try_extra::<ClickInProgress>)
+        .is_some_and(|it| it.0.get())
 }
 
 /// https://html.spec.whatwg.org/#fire-a-synthetic-pointer-event

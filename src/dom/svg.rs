@@ -10,6 +10,7 @@ use crate::geometry::translation;
 use crate::name::{Map, Name, Set, is_name, name};
 use crate::path::{Numbers, Path, at_distance, distance};
 use crate::properties::{Id, Style};
+use crate::svg_paint::Reads;
 use crate::svg_values::*;
 use crate::tree::{Element, Namespace, NodeId, Tree};
 use crate::types::*;
@@ -166,7 +167,7 @@ pub(crate) fn href(element: &Element) -> Option<&str> {
         .or_else(|| element.attribute(name!("href http://www.w3.org/1999/xlink")))
 }
 
-fn is_graphic(element: &Element) -> bool {
+pub(crate) fn is_graphic(element: &Element) -> bool {
     element.namespace == Namespace::Svg
         && is_name!(
             element.tag,
@@ -234,6 +235,13 @@ pub(crate) struct Node<'a> {
 }
 
 impl Node<'_> {
+    pub(crate) fn with_style(&self, style: Style) -> Self {
+        Node {
+            style: Rc::new(style),
+            ..self.clone()
+        }
+    }
+
     /// Tells it from those of other documents.
     pub(crate) fn key(&self) -> (*const Document, NodeId) {
         (self.document, self.id)
@@ -387,11 +395,25 @@ impl Document {
         Some(id)
     }
 
+    #[inline]
     pub(crate) fn svg_changed(&mut self, id: NodeId) {
+        if self
+            .tree
+            .element(id)
+            .is_some_and(|it| it.namespace == Namespace::Svg)
+        {
+            self.svg_or_reference_changed(id, true);
+        }
+    }
+
+    fn svg_or_reference_changed(&mut self, id: NodeId, is_itself: bool) {
         let Some(outer) = self.outer_svg(id) else {
             return;
         };
         self.svg_changes = self.svg_changes.wrapping_add(1);
+        if !self.path_bounds.get_mut().is_empty() {
+            self.path_bounds.get_mut().remove(&id);
+        }
         if self.tree.style(outer).is_some() {
             self.repaint(outer);
         }
@@ -405,7 +427,7 @@ impl Document {
                     continue;
                 }
                 match self.outer_svg(user) {
-                    Some(_) => self.svg_changed(user),
+                    Some(_) => self.svg_or_reference_changed(user, false),
                     None => {
                         self.repaint_subtree(user);
                         self.boxes.mark_ink(self.nearest_box(user));
@@ -414,8 +436,13 @@ impl Document {
             }
         }
         if let Some(own) = self.own_box(outer) {
-            if !self.boxes.recordings.get_mut().is_empty() {
-                self.boxes.recordings.get_mut().remove(&own);
+            let recordings = self.boxes.recordings.get_mut();
+            if !recordings.is_empty()
+                && recordings
+                    .get_mut(&own)
+                    .is_some_and(|it| !it.note_change(&self.tree, id, outer, is_itself))
+            {
+                recordings.remove(&own);
             }
             if self.boxes[own].overflow.contains(&Overflow::Visible)
                 || self.blends_in_svg.get()
@@ -460,7 +487,7 @@ impl Document {
 
     pub(crate) fn svg_element_by_id(&self, from: NodeId, id: Name) -> Option<NodeId> {
         let own = self.tree[from].scope;
-        self.svg_references.set(true);
+        self.svg_has_read(Reads::REFERENCES);
         let found = self.svg_ids.borrow_mut().look_up(&self.tree, own, id);
         let user = self.outer_svg(from).unwrap_or(from);
         self.referenced_svgs
@@ -583,7 +610,7 @@ impl Document {
         let is_viewport = |it: &NodeId| {
             self.tree
                 .element(*it)
-                .is_some_and(|it| is_name!(it.tag, "svg" | "symbol"))
+                .is_some_and(|it| it.tag == name!("svg"))
         };
         let around = self
             .tree
@@ -709,16 +736,20 @@ impl Document {
         }
     }
 
+    pub(crate) fn viewport_in(&self, node: &Node) -> [f32; 2] {
+        if node.establishes_viewport() {
+            self.inner_viewport(node)
+        } else {
+            node.viewport
+        }
+    }
+
     /// Those that are rendered.
     pub(crate) fn svg_children<'a>(&'a self, node: &Node<'a>) -> Vec<Node<'a>> {
         if node.tag == name!("use") {
             return self.use_target(node).into_iter().collect();
         }
-        let viewport = if node.establishes_viewport() {
-            self.inner_viewport(node)
-        } else {
-            node.viewport
-        };
+        let viewport = self.viewport_in(node);
         let is_rendered = |it: &Element| {
             is_graphic(it)
                 && passes_tests(it)
@@ -863,6 +894,12 @@ impl Document {
         let style = &node.style;
         let metrics = || style.metrics;
         let viewport = self.environment.viewport;
+        if value
+            .bytes()
+            .any(|it| matches!(it | 0x20, b'v' | b'r' | b'q'))
+        {
+            self.svg_has_read(Reads::ANYTHING);
+        }
         let cx = Ctx {
             font: style.font_units(),
             root: self.environment.root_font,
@@ -1014,6 +1051,27 @@ impl Document {
             .then_some(path)
     }
 
+    /// If they only depend on the element.
+    fn bounds_of_points(&self, node: &Node) -> Option<Option<Rect>> {
+        (is_name!(node.tag, "path" | "polyline" | "polygon")
+            && node.uses.is_none()
+            && node
+                .element
+                .style
+                .as_ref()
+                .is_some_and(|it| Rc::ptr_eq(it, &node.style)))
+        .then_some(())?;
+        let known = self.path_bounds.borrow().get(&node.id).copied();
+        Some(known.unwrap_or_else(|| {
+            let bounds = self
+                .svg_path(node)
+                .filter(|it| !it.verbs.is_empty())
+                .map(|it| it.bounds().unwrap_or_default());
+            self.path_bounds.borrow_mut().insert(node.id, bounds);
+            bounds
+        }))
+    }
+
     /// How far the stroke can be from the path.
     pub(crate) fn stroke_reach(node: &Node, is_exact: bool) -> f32 {
         let svg = &node.style.svg;
@@ -1051,8 +1109,11 @@ impl Document {
             };
             return shown.filter_map(of_child).reduce(unite);
         }
-        let fill = match self.svg_path(node) {
-            Some(path) => path.bounds().unwrap_or_default(),
+        let fill = match self
+            .bounds_of_points(node)
+            .or_else(|| Some(self.svg_path(node)?.bounds()))
+        {
+            Some(bounds) => bounds.unwrap_or_default(),
             None if is_name!(node.tag, "image" | "foreignObject") => {
                 return Some(self.svg_rect(node));
             }
@@ -1136,9 +1197,13 @@ impl Document {
     pub(crate) fn has_geometry(&self, node: &Node) -> bool {
         match is_name!(node.tag, "image" | "foreignObject") {
             true => !self.svg_rect(node).is_empty(),
-            false => self
-                .rendered_path(node)
-                .is_some_and(|it| !it.verbs.is_empty()),
+            false => self.bounds_of_points(node).map_or_else(
+                || {
+                    self.rendered_path(node)
+                        .is_some_and(|it| !it.verbs.is_empty())
+                },
+                |it| it.is_some(),
+            ),
         }
     }
 
@@ -1335,6 +1400,7 @@ impl Document {
 
     /// From the user space of the element to the border box of the outermost `svg`, or to the viewport of `until`.
     fn svg_matrix_to(&self, id: NodeId, until: Option<NodeId>) -> Matrix {
+        self.svg_has_read(Reads::MATRIX);
         let (outer, mut matrix) = (self.outer_svg(id), IDENTITY);
         for node in core::iter::once(id)
             .chain(self.tree.flat_ancestors(id))
@@ -1388,17 +1454,27 @@ impl Document {
     }
 
     pub(crate) fn rendered_node(&self, id: NodeId) -> Option<Node<'_>> {
+        self.displayed_node(id, false)
+    }
+
+    fn displayed_node(&self, id: NodeId, ignores_groups: bool) -> Option<Node<'_>> {
         let outer = self
             .outer_svg(id)
             .filter(|it| self.own_box(*it).is_some())?;
         let mut path = core::iter::once(id)
             .chain(self.tree.flat_ancestors(id))
             .take_while(|it| *it != outer);
+        let is_displayed = |it: NodeId, element: &Element| match self.tree.style(it) {
+            _ if ignores_groups && it != id && element.tag == name!("g") => true,
+            None if ignores_groups => self
+                .style_on_demand(it)
+                .is_some_and(|it| it.display() != Display::None),
+            style => style.is_some_and(|it| it.display() != Display::None),
+        };
         path.all(|it| {
             self.tree
-                .style(it)
-                .is_some_and(|it| it.display() != Display::None)
-                && self.tree.element(it).is_some_and(passes_tests)
+                .element(it)
+                .is_some_and(|element| is_displayed(it, element) && passes_tests(element))
         })
         .then_some(())?;
         self.svg_node(id)
@@ -1407,7 +1483,7 @@ impl Document {
     /// `getBBox`
     pub(crate) fn svg_bounding_box(&self, id: NodeId, kind: Bounds) -> Option<Rect> {
         let node = self
-            .rendered_node(id)
+            .displayed_node(id, true)
             .filter(|it| it.tag != name!("defs"))?;
         self.reset_svg_budget();
         Some(

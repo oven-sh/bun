@@ -120,6 +120,7 @@
 #include "JSDOMGuardedObject.h"
 #include "JSDOMFile.h"
 #include "JSDOMFormData.h"
+#include "JSDOMOperation.h"
 #include "JSDOMURL.h"
 #include "JSEnvironmentVariableMap.h"
 #include "JSErrorEvent.h"
@@ -3620,6 +3621,8 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     staticGlobals.append(GlobalPropertyInfo(builtinNames.requireMapPrivateName(), this->requireMap(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0));
     m_natives.set(vm, this, NativeGlobals::create(vm, this));
     staticGlobals.append(GlobalPropertyInfo(builtinNames.nativesPrivateName(), m_natives.get(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
+    bool isOfTheWeb = inherits<Bun::WebGlobalObject>();
+    staticGlobals.append(GlobalPropertyInfo(builtinNames.globalsPrivateName(), isOfTheWeb ? m_natives.get() : this, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
     addStaticGlobals(staticGlobals.mutableSpan());
 
     // TODO: most/all of these private properties can be made as static globals.
@@ -3680,7 +3683,6 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 
     // ----- Public Properties -----
 
-    bool isOfTheWeb = inherits<Bun::WebGlobalObject>();
     if (!isOfTheWeb) [[likely]] {
         // a direct accessor (uses js functions for get and set) cannot be on the lookup table. i think.
         putDirectAccessor(

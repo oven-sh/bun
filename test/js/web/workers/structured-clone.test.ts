@@ -1341,3 +1341,36 @@ test("the cause of an error is cloned", () => {
   }
   expect("cause" in structuredClone(new Error("none"))).toBe(false);
 });
+
+test("an error with a cause that cannot be cloned cannot be cloned", () => {
+  const { port1 } = new MessageChannel();
+  try {
+    for (const clone of [structuredClone, serialize, (value: unknown) => port1.postMessage(value)]) {
+      expect(() => clone(new Error("a", { cause: () => {} }))).toThrow(
+        expect.objectContaining({ name: "DataCloneError" }),
+      );
+    }
+  } finally {
+    port1.close();
+  }
+});
+
+test("only a payload that older versions cannot read has the new version", () => {
+  const versionOf = (value: unknown) => new DataView(serialize(value)).getUint32(0, true);
+  expect([{ a: [new Error("a")] }, { a: [new Error("a", { cause: 1 })] }].map(versionOf)).toEqual([14, 15]);
+});
+
+test("objects of a shape that was cloned before", () => {
+  for (let round = 0; round < 60; round++) {
+    const make = (value: number) => ({ ["a" + round]: value, nested: { ["b" + (round % 3)]: [value] }, last: "x" });
+    for (let value = 0; value < 3; value++) {
+      const [original, expected] = [make(value), make(value)];
+      if (value === 2) for (const it of [original, expected]) delete (it as any).last;
+      expect(Object.entries(structuredClone(original))).toEqual(Object.entries(expected));
+    }
+    if (round % 4 === 0) Bun.gc(round % 8 === 0);
+  }
+  const shared = Array.from({ length: 40 }, (_, id) => ({ id }));
+  const [first, second] = structuredClone([shared, shared.toReversed()]);
+  expect(first.map((it, index) => it === second[39 - index])).toEqual(shared.map(() => true));
+});

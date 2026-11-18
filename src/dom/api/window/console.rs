@@ -95,7 +95,7 @@ fn write<'a>(cx: Cx<'_, 'a>, level: Level, method: &str, first: Option<&str>, da
         return;
     }
     let text = |it: &str| DomString::from_utf8(it).to_js(&cx.heap).to_js();
-    let (method, first) = (text(method), first.map(text));
+    let (name, method, first) = (method, text(method), first.map(text));
     let all: Vec<JSValue> = [method]
         .into_iter()
         .chain(first)
@@ -106,7 +106,13 @@ fn write<'a>(cx: Cx<'_, 'a>, level: Level, method: &str, first: Option<&str>, da
         format(cx.global(), &all[1..]),
     );
     if audience == ConsoleAudience::Inspector {
-        window.tell_inspector(cx, "consoleCalled", &all);
+        window
+            .host()
+            .link()
+            .inspect(bun_web::host::Inspected::Console {
+                method: name,
+                values: &all[1..],
+            });
     }
     method.ensure_still_alive();
     first.into_iter().for_each(JSValue::ensure_still_alive);

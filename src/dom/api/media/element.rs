@@ -110,7 +110,7 @@ fn url_of<'a>(cx: Cx<'_, 'a>, holder: &'a Element) -> DomString {
     holder
         .attr(atom!("src"))
         .filter(|it| !it.is_empty())
-        .and_then(|it| crate::api::interim::resolve(cx, holder.doc(), &it))
+        .and_then(|it| crate::api::on_behalf::resolve(cx, holder.doc(), &it))
         .unwrap_or_default()
 }
 
@@ -698,14 +698,14 @@ fn poster_changed<'a>(cx: Cx<'_, 'a>, player: &'a Player) {
     let value = element
         .attr(atom!("poster"))
         .filter(|it| !it.is_empty() && document.has_page());
-    let url = value.and_then(|it| crate::api::interim::resolve(cx, document, &it));
+    let url = value.and_then(|it| crate::api::on_behalf::resolve(cx, document, &it));
     let poster = url.map(|it| Pictures::request(cx, document, it, None));
     let picture = poster.as_ref().map(|it| it.picture());
     drop(player.poster.replace(poster));
     let Some(picture) = picture else {
         return player.show(cx);
     };
-    crate::api::interim::delay_load(cx, document);
+    crate::api::on_behalf::delay_load(cx, document);
     let document = Strong::create(document.to_js(), cx.global());
     picture.when_settled(cx, player.to_js(), move |cx, player| {
         Player::from_js(&cx.heap, player)
@@ -714,7 +714,7 @@ fn poster_changed<'a>(cx: Cx<'_, 'a>, player: &'a Player) {
         Node::from_js(&cx.heap, document.get())
             .and_then(Node::as_doc)
             .into_iter()
-            .for_each(|it| crate::api::interim::allow_load(cx, it));
+            .for_each(|it| crate::api::on_behalf::allow_load(cx, it));
     });
 }
 

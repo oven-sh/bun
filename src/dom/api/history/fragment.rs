@@ -2,16 +2,24 @@
 
 use super::*;
 use crate::api::ui::{entry as page, focus, tabbing};
+use crate::name::name;
+use crate::selector::{filter, key};
 
 /// <https://html.spec.whatwg.org/#select-the-indicated-part>
 pub(crate) fn indicated_element<'a>(doc: &'a Doc, fragment: &str) -> Option<&'a Element> {
     let find = |name: &str| {
-        let name = DomString::from_utf8(name);
-        let is_named = |it: &&Element| {
-            it.is_html(atom!("a")) && it.attr(atom!("name")).is_some_and(|it| it == name)
+        let is_named = |it: &crate::tree::Element| {
+            it.html_tag() == name!("a") && it.attribute(name!("name")) == Some(name)
         };
-        doc.element_by_id(&Atom::from_string(&name))
-            .or_else(|| doc.descendant_elements().find(is_named))
+        let keys = filter(core::iter::once(key::attribute(name!("name"))));
+        let anchor = || {
+            doc.read(|tree, root| {
+                tree.descendants_with(root, keys)
+                    .find(|it| tree.element(*it).is_some_and(is_named))
+            })
+        };
+        doc.element_by_id(&Atom::new(name))
+            .or_else(|| doc.node(anchor()?)?.as_element())
     };
     find(fragment).or_else(|| find(&lossy(&bun_web::url::percent_decode(fragment.as_bytes()))))
 }

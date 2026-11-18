@@ -123,7 +123,11 @@ export const ElectronNetLog = b.interface("ElectronNetLog", {
   ofModule: true,
   name: "NetLog",
   namespace: true,
-  static: { currentlyLogging: { getter: b.bool }, startLogging: returnsPromise, stopLogging: returnsPromise },
+  static: {
+    currentlyLogging: { getter: b.bool },
+    startLogging: { args: { path: b.string.utf8, options: anything }, ...returnsObject },
+    stopLogging: returnsPromise,
+  },
 });
 
 export const ElectronDownloadItem = b.interface("ElectronDownloadItem", {
@@ -204,7 +208,7 @@ export const ElectronSession = b.interface("ElectronSession", {
     setPreloads: { args: { preloads: ownedTexts }, ...js },
     getPreloads: returnsObject,
     downloadURL: {
-      args: { url: text, options: anything, webContents: anything, fileName: textIfAny },
+      args: { url: text, options: anything },
       rustName: "download_url",
       ...js,
     },

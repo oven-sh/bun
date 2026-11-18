@@ -50,15 +50,15 @@ fn abort<'a>(
 }
 
 #[optimize(size)]
-pub(crate) fn send<'a>(
+fn send<'a>(
     cx: Cx<'_, 'a>,
+    scope: &'a WindowTarget,
     Parts {
         options,
         headers,
         body,
         signal,
     }: Parts<'a>,
-    initiator: InitiatorType,
 ) -> Result<'a, JSValue> {
     if let Some(signal) = signal.filter(|it| it.is_aborted()) {
         let reason = signal.reason(&cx.heap);
@@ -68,10 +68,14 @@ pub(crate) fn send<'a>(
     let client = client_of(&cx.heap)
         .filter(|it| !options.keepalive || it.may_keep_alive(body.length().unwrap_or(0)))
         .ok_or_else(|| failure(cx, None))?;
-    let mut request = options.into_request(&client, headers.list().clone(), initiator);
+    let mut request = options.into_request(&client, headers.list().clone(), InitiatorType::Fetch);
     let upload;
     (request.body, upload) = body.into_upload(cx)?;
     let controller = Controller::default();
+    let guest = (!request.keepalive && scope.shares_realm(&cx.heap)).then(|| {
+        scope.note_fetch(&controller);
+        Strong::create(scope.to_js(), cx.global())
+    });
     let pending = signal.map(|signal| {
         let pending = js_PendingFetch::create(
             &cx.heap,
@@ -100,6 +104,12 @@ pub(crate) fn send<'a>(
                 .zip(held.map(|it| it.1))
                 .map(|it| Following(Strong::create(it.0, cx.global()), it.1))
                 .map(|it| hold(&cx.heap, it));
+            if guest
+                .and_then(|it| WindowTarget::from_js(&cx.heap, it.get()))
+                .is_some_and(WindowTarget::is_disposed)
+            {
+                return Ok(JsLocal::new(&cx.heap, cx.heap.create_promise().to_js()));
+            }
             let fetched = fetched.map_err(|_| failure(cx, signal))?;
             let incoming = fetched.body.map(Incoming::new);
             if let Some(incoming) = &incoming {
@@ -144,13 +154,13 @@ impl Drop for Following {
 
 impl FetchingScope {
     pub(crate) fn fetch<'a>(
-        &self,
+        &'a self,
         cx: Cx<'_, 'a>,
         input: DomRequestInfo<'a>,
         init: &DomRequestInit<'a>,
     ) -> Result<'a, JSValue> {
         let parts = Parts::new(cx, &input, init)?;
-        send(cx, parts, InitiatorType::Fetch)
+        send(cx, self, parts)
     }
 }
 
@@ -297,8 +307,9 @@ impl NavigatorBeacon {
         } else {
             Body::extract(cx, data, true)?
         };
-        let Some(client) =
-            last_client_of(&cx.heap).filter(|it| it.may_keep_alive(body.length().unwrap_or(0)))
+        let Some(client) = last_client_of(&cx.heap)
+            .or_else(|| client_or_program(&cx.heap))
+            .filter(|it| it.may_keep_alive(body.length().unwrap_or(0)))
         else {
             return Ok(false);
         };

@@ -1,10 +1,10 @@
 //! Transforms that have depth.
 
-use crate::abi::{Item, Matrix, Outline, Rect};
+use crate::abi::{Item, Matrix, Outline, Rect, Span};
 use crate::boxes::{BoxId, VIEWPORT};
 use crate::document::Document;
 use crate::order::Order as _;
-use crate::paint::{Painter, Space};
+use crate::paint::{Painter, Space, blend_mode, square};
 use crate::path::Path;
 use crate::properties::{Id, Style, WillChange};
 use crate::svg_values::TransformBox;
@@ -179,16 +179,9 @@ impl Style {
 
     /// It has more than an affine transform in the plane of its parent can do.
     pub(crate) fn has_depth(&self) -> bool {
-        let projects = |it: &Transform| {
-            let matrix = it.is_3d().then(|| it.matrix_3d(1.0, 1.0));
-            matrix.is_some_and(|it| {
-                [3, 7, 11, 15].iter().any(|at| it[*at] != IDENTITY_3D[*at])
-                    || invert_3d(&it).is_none()
-            })
-        };
         self.wants_3d()
             || self.effects.backface == Backface::Hidden && self.is_3d()
-            || self.transforms().any(projects)
+            || self.transforms().any(Transform::projects)
     }
 
     /// `motion` is from `offset-path`.
@@ -425,6 +418,41 @@ impl Document {
 }
 
 impl Painter<'_> {
+    #[cold]
+    fn projected_backdrop(&mut self, id: BoxId, m: &Matrix3d, mut space: Space) {
+        let (subject, style) = (self.subject(id, &space), &self.document.boxes[id].style);
+        let corners = Path::rounded_rect(&subject.area(BoxArea::BorderBox))
+            .pieces()
+            .into_iter()
+            .map(|it| it.from.map(f64::from));
+        let [seen, _] = split(
+            &corners
+                .map(|[x, y]| [0, 1, 2, 3].map(|row| m[row] * x + m[4 + row] * y + m[12 + row]))
+                .collect::<Vec<_>>(),
+            |it| it[3] - 1e-5,
+        );
+        let outline = self.outline_of(
+            &Path::polygon(
+                seen.iter()
+                    .map(|[x, y, _, w]| [x / w, y / w].map(|it| it.clamp(-1e7, 1e7) as f32)),
+                true,
+            ),
+            FillRule::Nonzero,
+        );
+        if style.is_visible() && !self.is_hidden && style.effects.opacity.0 > 0.0 {
+            let filters = self.filters(&style.effects.backdrop_filter, &subject).0;
+            self.link(&Item::PushClipOutline(outline), &mut space);
+            self.emit(
+                &Item::Backdrop {
+                    shape: square(outline.bounds),
+                    filters,
+                    opacity: style.effects.opacity.0,
+                },
+                &space,
+            );
+        }
+    }
+
     /// Paints the stacking context, and those that share its depth.
     pub(crate) fn in_depth(&mut self, id: BoxId, space: &Space) {
         let document = self.document;
@@ -479,6 +507,7 @@ impl Painter<'_> {
                 );
             }
             (inside.origin, inside.visible) = (*origin, document.ink(*id).moved(*origin));
+            let (e, mut blended) = (&document.boxes[*id].style.effects, None);
             match affine(matrix) {
                 Some(matrix) => {
                     let Some(inverse) = invert(&matrix) else {
@@ -487,14 +516,29 @@ impl Painter<'_> {
                     inside.visible = space.visible.transformed(&inverse);
                     self.link(&Item::PushTransform(matrix), &mut inside);
                 }
-                None => self.link(
-                    &Item::PushProjection(
-                        [0, 4, 12, 1, 5, 13, 3, 7, 15].map(|it| matrix[it] as f32),
-                    ),
-                    &mut inside,
-                ),
+                None => {
+                    if !e.backdrop_filter.0.is_empty() {
+                        self.projected_backdrop(*id, matrix, inside);
+                    }
+                    if e.blend != Blend::Normal {
+                        blended = Some(self.begin_group(
+                            space.visible,
+                            1.0,
+                            blend_mode(e.blend),
+                            Span::default(),
+                            &inside,
+                        ));
+                    }
+                    self.link(
+                        &Item::PushProjection(
+                            [0, 4, 12, 1, 5, 13, 3, 7, 15].map(|it| matrix[it] as f32),
+                        ),
+                        &mut inside,
+                    );
+                }
             }
             self.placed_stacking_context(*id, inside, true);
+            blended.into_iter().for_each(|it| self.end_group(it));
             if !piece.is_whole {
                 self.contents.retain(|_, it| it.link < links);
             }

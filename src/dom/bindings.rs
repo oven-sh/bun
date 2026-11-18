@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use bun_jsc::bindgen::JsScope;
 
-use smallvec::smallvec;
+use smallvec::{SmallVec, smallvec};
 
 use crate::abi::Rect;
 use crate::api::core::Doc;
@@ -14,11 +14,11 @@ use crate::editing::{Mark, Point, Range};
 use crate::name::{Name, name};
 use crate::order::Order as _;
 use crate::scroll::Alignment;
-use crate::selector::{List, Matcher, Step, key};
+use crate::selector::{Matcher, Sought, key};
 use crate::svg::Bounds;
 use crate::tree::{DOCUMENT, Flags, NodeId, Replaced, State};
 use crate::types::*;
-use crate::values::{Color, Css, Ctx, parse_all, text};
+use crate::values::{Color, Css, Ctx, parse_all};
 
 fn number(value: f64) -> Option<f32> {
     (!value.is_nan()).then_some(value as f32)
@@ -43,20 +43,11 @@ impl Document {
 
     pub(crate) fn point(&self, node: NodeId, offset: u32) -> Point {
         let node = self.node(node);
-        let Some(data) = self.tree[node].text() else {
-            return Point {
-                node,
-                offset: self.node(offset),
-            };
-        };
-        let mut units = 0;
-        let found = text(data).char_indices().find(|(_, character)| {
-            units += character.len_utf16() as u32;
-            units > offset
-        });
         Point {
             node,
-            offset: found.map_or(data.len(), |it| it.0) as u32,
+            offset: self.tree[node]
+                .stored_text()
+                .map_or_else(|| self.node(offset), |it| it.offset_in_utf8(offset)),
         }
     }
 
@@ -95,20 +86,23 @@ impl Document {
     pub(crate) fn reveal_caret(&mut self, point: Point, upstream: bool, vertically: Alignment) {
         self.update_layout_for(point.node);
         if let Some((at, rect)) = self.caret_rect(point, upstream) {
-            self.reveal(at, rect, [Alignment::Nearest, vertically], 1, false);
+            self.reveal(
+                at,
+                rect,
+                [Alignment::Nearest, vertically],
+                1,
+                crate::scroll::Scrollers::All,
+            );
         }
     }
 
     pub(crate) fn for_script(&self, point: Point) -> [u32; 2] {
-        match self.tree[point.node].text() {
-            Some(data) => [
-                point.node,
-                text(data.get(..point.offset as usize).unwrap_or(data))
-                    .encode_utf16()
-                    .count() as u32,
-            ],
-            None => [point.node, point.offset],
-        }
+        [
+            point.node,
+            self.tree[point.node]
+                .stored_text()
+                .map_or(point.offset, |it| it.offset_in_utf16(point.offset)),
+        ]
     }
 
     fn laid_out_range(&mut self, ends: [u32; 4]) -> Range {
@@ -140,7 +134,12 @@ impl Document {
         id
     }
 
-    fn selector(&mut self, source: &[u8], of: Of, key: u64) -> Option<List> {
+    /// `None` if it is invalid.
+    pub(crate) fn selector(&mut self, source: &[u8], of: Of) -> Option<Rc<Sought>> {
+        let key = crate::name::keyed_hash_of_bytes(
+            u64::from(of.is_xml) << 1 | u64::from(of.is_quirky),
+            source,
+        ) | 1 << 63;
         if self.selectors.len() > 1024 {
             self.selectors.clear();
         }
@@ -150,13 +149,9 @@ impl Document {
                 ..Default::default()
             }
             .parse(source)
+            .map(|it| Rc::new(Sought::new(it, source, key, of)))
         };
         self.selectors.entry(key).or_insert_with(parse).clone()
-    }
-
-    pub(crate) fn tests_state(&mut self, source: &[u8], of: Of) -> bool {
-        self.selector(source, of, of.key(source))
-            .is_some_and(|it| crate::selector::tests_state(&it))
     }
 
     pub(crate) fn derive_state_of_unrendered(&mut self, root: NodeId) {
@@ -173,10 +168,10 @@ impl Document {
 
     /// What `Selection::first_below` has returned, if it still would.
     #[inline]
-    pub(crate) fn known_first(&self, root: NodeId, key: u64) -> Option<Cell> {
+    pub(crate) fn known_first(&self, root: NodeId, sought: &Sought) -> Option<Cell> {
         self.tree
             .found()
-            .first(key, root)
+            .first(sought, root)
             .filter(|_| self.stale_directions.is_empty())
     }
 
@@ -189,24 +184,47 @@ impl Document {
             .map(|it| Rc::clone(&it.cells))
     }
 
-    /// `None` if the selector is invalid.
     pub(crate) fn select<R>(
         &mut self,
         scope: NodeId,
-        source: &[u8],
-        of: Of,
-        key: u64,
+        sought: &Sought,
+        is_rendered: bool,
         find: impl FnOnce(&Selection<'_>) -> R,
-    ) -> Option<R> {
-        let list = self.selector(source, of, key)?;
+    ) -> R {
         self.update_directions();
-        let was_xml = core::mem::replace(&mut self.tree.is_xml, of.is_xml);
-        let found = find(&self.selection(scope, &list, of, key));
+        self.tree.prepare_to_search(scope);
+        let was_xml = core::mem::replace(&mut self.tree.is_xml, sought.is_xml);
+        let found = find(&self.selection(scope, sought, is_rendered));
         self.tree.is_xml = was_xml;
-        Some(found)
+        found
     }
 
-    fn selection<'a>(&'a self, scope: NodeId, list: &'a List, of: Of, key: u64) -> Selection<'a> {
+    /// If nothing has to be prepared.
+    #[inline]
+    pub(crate) fn plain_selection<'a>(
+        &'a self,
+        scope: NodeId,
+        sought: &'a Sought,
+    ) -> Option<Selection<'a>> {
+        (sought.is_plain && !self.tree.has_searched_enough()).then(|| Selection {
+            matcher: Matcher::new(
+                &self.tree,
+                self.tree.host_of(self.tree[scope].scope),
+                NodeId::MAX,
+                None,
+            ),
+            sought,
+            limit: usize::MAX,
+        })
+    }
+
+    #[inline]
+    fn selection<'a>(
+        &'a self,
+        scope: NodeId,
+        sought: &'a Sought,
+        is_rendered: bool,
+    ) -> Selection<'a> {
         let host = self.tree.host_of(self.tree[scope].scope);
         let scope = match self.tree.element(scope) {
             None if scope == DOCUMENT || self.tree[scope].has(Flags::OTHER_DOCUMENT) => self
@@ -218,36 +236,21 @@ impl Document {
             Some(_) => scope,
         };
         let matcher = Matcher::new(&self.tree, host, scope, None);
-        let keys = list.iter().fold(0, |all, it| {
-            all | Some(it.compounds[0].filter)
-                .filter(|it| *it != 0)
-                .unwrap_or(u64::MAX)
-        });
-        let having = |key| {
-            if key == key::attribute(name!("class")) {
-                usize::MAX
-            } else {
-                self.attribute_keys.at_most(key)
-            }
+        debug_assert_eq!(self.tree.cut_at.get(), 0);
+        let having = |all: &SmallVec<_>| {
+            all.iter()
+                .map(|it| self.attribute_keys.at_most(*it))
+                .min()
+                .unwrap_or(0)
         };
-        let limit = match of.is_rendered {
-            true => list
-                .iter()
-                .map(|it| {
-                    it.compounds[0]
-                        .attribute_keys()
-                        .map(having)
-                        .min()
-                        .unwrap_or(usize::MAX)
-                })
-                .fold(0, usize::saturating_add),
-            false => usize::MAX,
-        };
+        let limit = sought
+            .attributes
+            .as_ref()
+            .filter(|_| is_rendered)
+            .map_or(usize::MAX, |it| it.iter().map(having).sum());
         Selection {
             matcher,
-            list,
-            key,
-            keys,
+            sought,
             limit,
         }
     }
@@ -358,22 +361,10 @@ impl Document {
 }
 
 /// The document that has the nodes.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub(crate) struct Of {
     pub(crate) is_xml: bool,
     pub(crate) is_quirky: bool,
-    pub(crate) is_rendered: bool,
-}
-
-impl Of {
-    /// Stands for the selector in such a document.
-    #[inline]
-    pub(crate) fn key(self, source: &[u8]) -> u64 {
-        crate::name::keyed_hash_of_bytes(
-            u64::from(self.is_xml) << 1 | u64::from(self.is_quirky),
-            source,
-        ) | 1 << 63
-    }
 }
 
 /// Where the matches are known to be.
@@ -397,17 +388,15 @@ pub(crate) struct Selected {
 
 pub(crate) struct Selection<'a> {
     matcher: Matcher<'a>,
-    list: &'a List,
-    key: u64,
-    /// A match has one of them. Only elements have any.
-    keys: u64,
+    sought: &'a Sought,
     /// How many can match at most.
     limit: usize,
 }
 
 impl Selection<'_> {
     pub(crate) fn has(&self, id: NodeId) -> bool {
-        self.matcher.tree[id].keys & self.keys != 0 && self.matcher.any(self.list, id)
+        self.matcher.tree[id].keys & self.sought.keys != 0
+            && self.sought.matches(&self.matcher, self.matcher.tree, id)
     }
 
     pub(crate) fn closest(&self, id: NodeId) -> Option<NodeId> {
@@ -419,15 +408,20 @@ impl Selection<'_> {
     /// Without those that only the engine has.
     pub(crate) fn below(&self, root: NodeId) -> impl Iterator<Item = Cell> + '_ {
         let tree = self.matcher.tree;
-        tree.descendants_with(root, self.keys)
-            .filter(|it| self.matcher.any(self.list, *it))
+        tree.descendants_with(root, self.sought.keys)
+            .filter(|it| self.matcher.any(&self.sought.list, *it))
             .take(self.limit)
             .map(|it| tree.cell(it))
             .filter(|it| !it.is_null())
     }
 
     /// The same, until `found` returns false. It looks no further than it has to at first.
-    fn each_below(&self, root: NodeId, within: Within, mut found: impl FnMut(Cell) -> bool) {
+    fn each_below<const N: usize>(
+        &self,
+        root: NodeId,
+        within: Within,
+        mut found: impl FnMut(Cell) -> bool,
+    ) {
         let tree = self.matcher.tree;
         let start = match within {
             Within::Root => root,
@@ -435,44 +429,52 @@ impl Selection<'_> {
             Within::Subtree(id) if self.has(id) && !found(tree.cell(id)) => return,
             Within::Subtree(id) => id,
         };
-        let (steps, mut pending, mut batch) = (
-            Step::all_of(self.list, &self.matcher),
-            smallvec![tree.first_child_with(start, self.keys)],
+        let (sought, mut left) = (self.sought, self.limit);
+        let mut goes_on = |id: NodeId| {
+            let cell = tree.cell(id);
+            left = left.saturating_sub(1);
+            (cell.is_null() || found(cell)) && left > 0
+        };
+        if self.limit == 0 {
+            return;
+        }
+        if let Some(below) = tree.sequence.below(tree, start) {
+            let rows = &tree.sequence.rows[..];
+            return tree
+                .sequence
+                .visit::<N>(below, &sought.wanted, |batch| match N {
+                    64 => batch.iter().all(|it| {
+                        !sought.matches(&self.matcher, rows, *it) || goes_on(rows[*it as usize].id)
+                    }),
+                    _ => sought
+                        .nodes_of_matches(&self.matcher, batch)
+                        .iter()
+                        .all(|it| goes_on(*it)),
+                });
+        }
+        let (mut pending, mut batch, mut size) = (
+            smallvec![tree.first_child_with(start, sought.keys)],
             [0; 32],
+            1,
         );
-        let steps = steps.as_deref();
-        let required = steps.map_or(0, |it| it[0].keys)
-            | if self.keys.is_power_of_two() {
-                self.keys
-            } else {
-                0
-            };
-        let (mut left, mut size) = (self.limit, 1);
-        while !pending.is_empty() && left > 0 {
-            let count = match required {
+        while !pending.is_empty() {
+            let count = match sought.required {
                 0 => tree.next_with(
                     &mut pending,
-                    |keys| keys & self.keys != 0,
+                    |keys| keys & sought.keys != 0,
                     &mut batch[..size],
                 ),
-                _ => tree.next_with(
+                required => tree.next_with(
                     &mut pending,
                     |keys| keys & required == required,
                     &mut batch[..size],
                 ),
             };
-            let matches = |id: &&NodeId| {
-                steps.map_or_else(
-                    || self.matcher.any(self.list, **id),
-                    |it| Step::lead_to(it, &self.matcher, **id),
-                )
-            };
-            for id in batch[..count].iter().filter(matches) {
-                let cell = tree.cell(*id);
-                if !cell.is_null() && !found(cell) {
-                    return;
-                }
-                left = left.saturating_sub(1);
+            if !batch[..count]
+                .iter()
+                .all(|it| !sought.matches(&self.matcher, tree, *it) || goes_on(*it))
+            {
+                return;
             }
             size = batch.len().min(size * 2);
         }
@@ -480,20 +482,24 @@ impl Selection<'_> {
 
     pub(crate) fn first_below(&self, root: NodeId, within: Within) -> Cell {
         let mut first = core::ptr::null();
-        self.each_below(root, within, |it| {
+        self.each_below::<64>(root, within, |it| {
             first = it;
             false
         });
-        self.matcher.tree.found().note_first(self.key, root, first);
+        self.matcher
+            .tree
+            .found()
+            .note_first(self.sought, root, first);
         first
     }
 
     pub(crate) fn all_below(&self, root: NodeId, within: Within) -> Cells {
-        let mut cells = Vec::new();
-        self.each_below(root, within, |it| {
+        let mut cells = Vec::with_capacity(self.sought.last_count.get());
+        self.each_below::<256>(root, within, |it| {
             cells.push(it);
             true
         });
+        self.sought.last_count.set(cells.len());
         let cells = Rc::new(cells);
         let mut selections = self.matcher.tree.found().selections.borrow_mut();
         if selections.len() == 64
@@ -502,7 +508,7 @@ impl Selection<'_> {
             selections.clear();
         }
         selections.push(Selected {
-            key: self.key,
+            key: self.sought.key,
             root,
             cells: Rc::clone(&cells),
         });
@@ -676,12 +682,29 @@ pub(crate) fn parse_rgba(source: &[u8], current: u32) -> Option<u32> {
     parse_all(source, |p| Color::parse(p, &Ctx::dummy())).map(|it| it.resolve(current))
 }
 
+pub(crate) fn count_engines() -> u32 {
+    crate::document::Counted::count()
+}
+
 pub(crate) fn panic_in_engine(doc: &Doc) {
     doc.engine(|_, _| panic!("for testing"))
 }
 
 pub(crate) fn dump_display_list<'a>(cx: &mut JsScope<'a>, doc: &'a Doc) -> String {
     doc.synced_engine(cx, |engine, _| engine.update_picture().dump())
+}
+
+pub(crate) fn decodes_message<'a>(
+    heap: &bun_jsc::bindgen::JsHeap<'a>,
+    family: &[u8],
+    bytes: bun_jsc::bindgen::JsLocal<'a, bun_jsc::bindgen::BufferSource>,
+) -> bool {
+    use bun_web::{host, wire::decode};
+    bytes.with_bytes(heap, |it| match family {
+        b"notice" => decode::<host::Notice>(it).is_ok(),
+        b"question" => decode::<host::Question>(it).is_ok(),
+        _ => decode::<host::Answer>(it).is_ok(),
+    })
 }
 
 pub(crate) fn ask_as_assistive_technology(question: &[u8]) -> Vec<u8> {

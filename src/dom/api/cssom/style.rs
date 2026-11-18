@@ -1,6 +1,5 @@
 //! <https://drafts.csswg.org/cssom/#css-declaration-blocks>
 
-use core::cell::RefCell;
 use std::rc::Rc;
 use std::sync::LazyLock;
 
@@ -12,8 +11,8 @@ use super::CSSRule;
 use crate::api::core::custom;
 use crate::api::core::steps::AttrChange;
 use crate::api::core::{
-    DocFlags, DomError, DomString, Edge, Element, NodeFlags, QualName, Record, atom, dom_error,
-    queue_mutation_record,
+    DocFlags, DomError, DomString, Edge, Element, NodeFlags, QualName, Recent, Record, atom,
+    dom_error, impl_of, queue_mutation_record,
 };
 use crate::api::events::WindowTarget;
 use crate::declarations::{Accepts, DeclarationList, InlineBlocks, Key, Specified};
@@ -44,26 +43,29 @@ enum Owner<'a> {
 
 const PROPERTIES: Accepts = Accepts::Properties(Within::Style);
 
-fn computed_properties() -> &'static [Prop] {
-    static ALL: LazyLock<Vec<Prop>> = LazyLock::new(|| {
-        let is_listed = |it: &Prop| {
-            ![
-                "page",
-                "size",
-                "-webkit-perspective-origin-",
-                "-webkit-transform-origin-",
-            ]
-            .iter()
-            .any(|start| it.name().starts_with(start))
-        };
-        let mut all: Vec<_> = Id::ALL
+/// Some are listed by another name, too.
+fn computed_properties() -> &'static [(&'static str, Prop)] {
+    static ALL: LazyLock<Vec<(&str, Prop)>> = LazyLock::new(|| {
+        const HIDDEN: [&str; 5] = [
+            "page",
+            "size",
+            "background-position-",
+            "-webkit-perspective-origin-",
+            "-webkit-transform-origin-",
+        ];
+        const OTHERS: &str = "background-position contain-intrinsic-size font-variant mask-position text-decoration -webkit-box-decoration-break -webkit-line-break \
+            -webkit-mask-box-image -webkit-text-orientation -webkit-writing-mode";
+        let longhands = Id::ALL
             .iter()
             .map(|it| Prop::Long(*it))
             .chain(logical_props())
-            .filter(is_listed)
-            .collect();
+            .filter(|it| !HIDDEN.iter().any(|start| it.name().starts_with(start)));
+        let others = OTHERS
+            .split_ascii_whitespace()
+            .filter_map(|it| Some((it, Prop::from_name(it.as_bytes())?)));
+        let mut all: Vec<_> = longhands.map(|it| (it.name(), it)).chain(others).collect();
         bun_collections::index_sort::sort_slice_by_key(&mut all, |it| {
-            (it.name().starts_with('-'), it.name())
+            (it.0.starts_with('-'), it.0)
         });
         all
     });
@@ -96,25 +98,47 @@ fn edit_inline<'a>(
     element: &'a Element,
     edit: impl FnOnce(&mut InlineBlocks, &mut Rc<Block>) -> bool,
 ) {
-    if !element.doc().has_page()
-        && let Some(shown) = WindowTarget::of_realm(&cx.heap)
-            .and_then(WindowTarget::doc)
-            .filter(|it| it.is(DocFlags::CHECKS_STYLE_ATTRIBUTES))
+    change_inline(cx, element, |engine, id| engine.edit_inline_style(id, edit));
+}
+
+#[inline]
+fn change_inline<'a>(
+    cx: &mut JsScope<'a>,
+    element: &'a Element,
+    change: impl FnOnce(&mut Document, NodeId) -> bool,
+) {
+    if !element.doc().has_page() {
+        check_against_shown_document(cx, element);
+    }
+    let observed = is_observed(element).then(|| {
+        needs_old_value(&cx.heap, element)
+            .then(|| style_attribute(element))
+            .flatten()
+    });
+    if element.change(change) {
+        inline_style_changed(cx, element, observed.as_ref().map(Option::as_ref));
+    }
+}
+
+fn check_against_shown_document<'a>(cx: &mut JsScope<'a>, element: &'a Element) {
+    if let Some(shown) = WindowTarget::of_realm(&cx.heap)
+        .and_then(WindowTarget::doc)
+        .filter(|it| it.is(DocFlags::CHECKS_STYLE_ATTRIBUTES))
     {
         crate::api::core::page::check_style_attribute(cx, element, shown);
-    }
-    let observed = is_observed(element).then(|| style_attribute(element));
-    if element.change(|engine, id| engine.edit_inline_style(id, edit)) {
-        inline_style_changed(cx, element, observed.as_ref().map(Option::as_ref));
     }
 }
 
 fn is_observed(element: &Element) -> bool {
     element.has(NodeFlags::CUSTOM)
         || element.doc().is(DocFlags::OBSERVES_ATTRIBUTES)
-            && element
-                .inclusive_ancestors()
-                .any(|it| it.has(NodeFlags::OBSERVED))
+            && element.has_observed_attribute(&atom!("style").into())
+}
+
+fn needs_old_value<'a>(heap: &JsHeap<'a>, element: &'a Element) -> bool {
+    element.has(NodeFlags::CUSTOM)
+        || element.doc().is(DocFlags::RECORDS_EDITS)
+        || element.has_observed_old_value(heap, &atom!("style").into())
 }
 
 /// `observed` has what the attribute was.
@@ -232,7 +256,6 @@ impl CSSStyleDeclaration {
                     engine
                         .known_resolved_value(id, prop)
                         .filter(|_| pseudo == Pseudo::None)
-                        .cloned()
                 });
                 known
                     .unwrap_or_else(|| {
@@ -242,6 +265,7 @@ impl CSSStyleDeclaration {
                     })
                     .to_js(&cx.heap)
             }
+            (_, None) => DomString::default().to_js(&cx.heap),
             (_, key) => key
                 .and_then(|key| self.read(|it| DomString::from_utf8(text(&it.get(key)))))
                 .unwrap_or_default()
@@ -259,8 +283,8 @@ impl CSSStyleDeclaration {
         match (self.owner(), key) {
             _ if value.is_empty() => self.remove(cx, key),
             (Owner::Inline(element), Key::Property(prop)) => {
-                edit_inline(cx, element, |blocks, it| {
-                    blocks.set(it, prop, value, is_important)
+                change_inline(cx, element, |engine, id| {
+                    engine.set_inline_property(id, prop, value, is_important)
                 })
             }
             (Owner::Rule(rule), _) => {
@@ -349,7 +373,9 @@ impl CSSStyleDeclaration {
     pub(crate) fn key_at<'a>(&'a self, cx: &mut JsScope<'a>, index: u32) -> Option<Key> {
         let (index, listed) = (index as usize, computed_properties());
         match self.owner() {
-            Owner::Computed(Some(_)) if index < listed.len() => Some(Key::Property(listed[index])),
+            Owner::Computed(Some(_)) if index < listed.len() => {
+                Some(Key::Property(listed[index].1))
+            }
             Owner::Computed(_) => Some(Key::Property(Prop::Custom(
                 *self.computed_customs(cx)?.get(index - listed.len())?,
             ))),
@@ -358,7 +384,13 @@ impl CSSStyleDeclaration {
     }
 
     pub(crate) fn indexed_get<'a>(&'a self, cx: &mut JsScope<'a>, index: u32) -> Option<Out> {
-        Some(self.key_at(cx, index)?.name().into_owned().into())
+        let (key, listed) = (
+            self.key_at(cx, index)?,
+            computed_properties()
+                .get(index as usize)
+                .filter(|_| matches!(self.0, Source::Computed(_))),
+        );
+        Some(listed.map_or_else(|| key.name().into_owned().into(), |it| it.0.into()))
     }
 
     pub(crate) fn item<'a>(&'a self, cx: &mut JsScope<'a>, index: u32) -> Out {
@@ -385,6 +417,37 @@ impl CSSStyleDeclaration {
         }
     }
 
+    #[inline]
+    fn key_of<'a>(
+        &self,
+        heap: &JsHeap<'a>,
+        name: JsLocal<'a, JSString>,
+    ) -> Result<'a, Option<Key>> {
+        let (name, accepts) = (impl_of(heap, name)?, self.accepts());
+        let Accepts::Properties(_) = accepts else {
+            return Ok(accepts.key(DomString::from_impl(name).to_utf8().as_bytes()));
+        };
+        let known = &mut RECENT_NAMES.borrow_mut()[slot_of(name)];
+        if known
+            .as_ref()
+            .is_none_or(|it| !core::ptr::eq(it.0.as_impl(), name))
+        {
+            let name = DomString::from_impl(name);
+            let key = accepts.key(name.to_utf8().as_bytes());
+            *known = key.map(|it| (name, it));
+        }
+        Ok(known.as_ref().map(|it| it.1))
+    }
+
+    pub(crate) fn js_get_property_value<'a>(
+        &'a self,
+        cx: &mut JsScope<'a>,
+        property: JsLocal<'a, JSString>,
+    ) -> Result<'a, JsLocal<'a, JSString>> {
+        let key = self.key_of(&cx.heap, property)?;
+        Ok(self.get(cx, key))
+    }
+
     pub(crate) fn set_property<'a>(
         &'a self,
         cx: &mut JsScope<'a>,
@@ -392,11 +455,30 @@ impl CSSStyleDeclaration {
         value: &[u8],
         priority: &[u8],
     ) -> Result<'a, ()> {
+        self.set_with_priority(cx, self.accepts().key(property), value, priority)
+    }
+
+    pub(crate) fn js_set_property<'a>(
+        &'a self,
+        cx: &mut JsScope<'a>,
+        property: JsLocal<'a, JSString>,
+        value: &[u8],
+        priority: &[u8],
+    ) -> Result<'a, ()> {
+        let key = self.key_of(&cx.heap, property)?;
+        self.set_with_priority(cx, key, value, priority)
+    }
+
+    fn set_with_priority<'a>(
+        &'a self,
+        cx: &mut JsScope<'a>,
+        key: Option<Key>,
+        value: &[u8],
+        priority: &[u8],
+    ) -> Result<'a, ()> {
         self.check_writable(&cx.heap)?;
-        if let Some(key) = self
-            .accepts()
-            .key(property)
-            .filter(|_| value.is_empty() || priority.is_empty() || eq(priority, "important"))
+        if let Some(key) =
+            key.filter(|_| value.is_empty() || priority.is_empty() || eq(priority, "important"))
         {
             self.set(cx, key, value, !priority.is_empty());
         }
@@ -406,15 +488,17 @@ impl CSSStyleDeclaration {
     pub(crate) fn remove_property<'a>(
         &'a self,
         cx: &mut JsScope<'a>,
-        property: &[u8],
+        property: JsLocal<'a, JSString>,
     ) -> Result<'a, JsLocal<'a, JSString>> {
         self.check_writable(&cx.heap)?;
         let key = self
-            .accepts()
-            .key(property)
+            .key_of(&cx.heap, property)?
             .filter(|key| self.read(|it| it.has_some_of(*key)) == Some(true));
-        let old = self.get(cx, key);
-        key.into_iter().for_each(|it| self.remove(cx, it));
+        let Some(key) = key else {
+            return Ok(DomString::default().to_js(&cx.heap));
+        };
+        let old = self.get(cx, Some(key));
+        self.remove(cx, key);
         Ok(old)
     }
 
@@ -472,24 +556,45 @@ pub(crate) fn property_of_attribute(name: &[u8]) -> Option<Prop> {
 }
 
 #[thread_local]
-static RECENT: RefCell<[Option<(DomString, Prop)>; 64]> = RefCell::new([const { None }; 64]);
+static RECENT: Recent<[Option<(DomString, Prop)>; 2], 128> = Recent::new();
+
+#[thread_local]
+static RECENT_NAMES: Recent<Option<(DomString, Key)>, 128> = Recent::new();
+
+fn slot_of(name: &WTFStringImplStruct) -> usize {
+    core::ptr::from_ref(name)
+        .addr()
+        .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+        >> 57
+}
 
 pub(crate) fn forget_attributes() {
-    RECENT.borrow_mut().fill(None);
+    RECENT.forget();
+    RECENT_NAMES.forget();
 }
 
 /// `name` is an atom.
 #[inline]
 fn key_of_attribute(name: &WTFStringImplStruct) -> Option<Key> {
-    let known = &mut RECENT.borrow_mut()[(core::ptr::from_ref(name) as usize >> 4) % 64];
-    if known
-        .as_ref()
-        .is_none_or(|it| !core::ptr::eq(it.0.as_impl(), name))
-    {
-        *known =
-            property_of_attribute(name.latin1_slice()).map(|it| (DomString::from_impl(name), it));
-    }
-    known.as_ref().map(|it| Key::Property(it.1))
+    let known = &mut RECENT.borrow_mut()[slot_of(name)];
+    let found = known
+        .iter()
+        .flatten()
+        .find(|it| core::ptr::eq(it.0.as_impl(), name))
+        .map(|it| it.1);
+    found
+        .or_else(|| remember_attribute(known, name))
+        .map(Key::Property)
+}
+
+#[cold]
+fn remember_attribute(
+    [newer, older]: &mut [Option<(DomString, Prop)>; 2],
+    name: &WTFStringImplStruct,
+) -> Option<Prop> {
+    let prop = property_of_attribute(name.latin1_slice())?;
+    *older = newer.replace((DomString::from_impl(name), prop));
+    Some(prop)
 }
 
 fn descriptor_of_attribute(all: &'static str, name: &WTFStringImplStruct) -> Option<Key> {

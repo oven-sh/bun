@@ -64,10 +64,9 @@ function member(property: string, type: string, rest: string) {
   if (type === "$") return families.ReflectUsvString.of(name);
   if (type !== "") {
     const min = type === "+" ? 0 : type === ">" ? 1 : "i32::MIN";
-    const throwsBelow =
-      type === "+" && rest === "-1" ? "Some(0)" : property === "size" && type === ">" ? "Some(1)" : "None";
-    const max = property in limits ? `Some(${limits[property]})` : "None";
-    const key = `crate::api::core::reflect::Integer { name: ${name}, default: ${rest}, min: ${min}, max: ${max}, throws_below: ${throwsBelow} }`;
+    const throwsBelow = (type === "+" && rest === "-1") || (property === "size" && type === ">");
+    const limit = throwsBelow ? `ThrowsBelow(${min})` : property in limits ? `AtMost(${limits[property]})` : "None";
+    const key = `crate::api::core::reflect::Integer { name: ${name}, default: ${rest}, min: ${min}, limit: crate::api::core::reflect::Limit::${limit} }`;
     return (type === "=" || rest === "-1" ? families.ReflectLong : families.ReflectUnsigned).of(key);
   }
   if (Object.hasOwn(enumerations, property)) {

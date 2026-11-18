@@ -47,6 +47,26 @@ if (step === "uncovered") {
   field.onkeydown = event => log.push(event.key);
 }
 if (step !== "unfocused") field.focus();
+if (step === "replace") {
+  field.value = "draft ";
+  const replace = (text: string, replacementStart: number, replacementEnd: number) =>
+    desktopInternals.sendInputEvent(1, { type: "char", text, replacementStart, replacementEnd });
+  type("x");
+  type("Backspace");
+  type("e");
+  replace("é", 0, 1);
+  for (const [text, at, replaced] of [
+    ["ㅎ", 1, 0],
+    ["하", 1, 1],
+    ["한", 1, 1],
+    ["ㄱ", 2, 0],
+    ["그", 2, 1],
+    ["글", 2, 1],
+  ] as const)
+    replace(text, at, at + replaced);
+  type("Left");
+  replace("!", 0, 3);
+}
 if (step === "type" || step === "unfocused" || step === "keep") type("b");
 if (step === "click" || step === "changed") click(50, 120);
 await new Promise(resolve => window.window.requestAnimationFrame(() => setImmediate(resolve)));

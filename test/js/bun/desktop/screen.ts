@@ -1,5 +1,6 @@
 import { isLinux, tempDir } from "harness";
 import { join } from "node:path";
+import { hasWayland, openCompositor } from "./compositor";
 import { hasLibrary } from "./library";
 
 export const hasScreen = hasLibrary && isLinux && !!Bun.which("Xvfb");
@@ -37,6 +38,14 @@ export async function openScreen() {
       dir[Symbol.dispose]();
     },
   };
+}
+
+export const screens = [...(hasScreen ? ["X11"] : []), ...(hasWayland ? ["Wayland"] : [])];
+
+export async function openOn(where: string) {
+  if (where !== "Wayland") return where === "X11" ? openScreen() : null;
+  const compositor = openCompositor();
+  return { env: compositor.env, [Symbol.asyncDispose]: async () => compositor[Symbol.dispose]() };
 }
 
 /** For that app: `grab({ x, y, width, height })` returns the BGRX pixels of the display, `colorAt(x, y)` one as `rrggbb`. */

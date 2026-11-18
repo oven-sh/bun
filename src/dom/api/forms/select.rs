@@ -146,6 +146,10 @@ impl<'a> Select<'a> {
         self.state()
             .chosen
             .update(|it| if is_chosen { it + 1 } else { it - 1 });
+        self.element
+            .edge(Edge::SelectedOptions)
+            .and_then(HTMLCollection::from_value)
+            .inspect(|it| it.outdate());
         if is_chosen {
             self.element
                 .set_edge(heap, Edge::ChosenOption, option.value());
@@ -641,11 +645,19 @@ impl HTMLSelectElement {
     }
 
     pub(crate) fn get_selected_options<'a>(&'a self, heap: &JsHeap<'a>) -> JSValue {
-        let selected = Filter::uncached(|it, add| {
-            it.as_element()
-                .into_iter()
-                .flat_map(|it| Select::new(it).selected())
-                .for_each(add)
+        let selected = Filter::listed(|it, add| {
+            let Some(select) = it.as_element().map(Select::new) else {
+                return;
+            };
+            match select.state().chosen.get() {
+                0 | 1 => select.selected().for_each(add),
+                count => select
+                    .list()
+                    .elements()
+                    .filter(|it| is_selected(it))
+                    .take(count as usize)
+                    .for_each(add),
+            }
         });
         self.same_object(heap, Edge::SelectedOptions, || {
             HTMLCollection::new(heap, self, selected).to_js()

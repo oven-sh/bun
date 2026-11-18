@@ -15,6 +15,7 @@ use crate::generated_bindgen::window::DesktopWindow;
 use crate::menu::without_mnemonic;
 use crate::prelude::*;
 use crate::text::{self, escape_html};
+use crate::webview::wire;
 use crate::window::{self, Plan, Window};
 use crate::{app, files, paths, screen};
 
@@ -571,7 +572,28 @@ impl DesktopDialog {
         show_error(string(title), string(content))
     }
 
-    pub(crate) fn show_certificate_trust_dialog(_: Cx<'_, '_>) -> JsResult<JSValue> {
-        Err(unsupported("showCertificateTrustDialog"))
+    pub(crate) fn show_certificate_trust_dialog<'a>(
+        _: Cx<'a, '_>,
+        window: JsLocal<'a>,
+        options: JsLocal<'a>,
+    ) -> JsResult<JSValue> {
+        if !IS_MAC {
+            return Err(unsupported("showCertificateTrustDialog"));
+        }
+        let (window, options) = parameters(window, options)?;
+        let options = wire::data_from_js(options)?;
+        let chain = core::iter::successors(Some(&options["certificate"]), |it| {
+            Some(&it["issuerCert"]).filter(|it| it.is_object())
+        });
+        let request = SystemRequest::TrustCertificate {
+            window: window.map(Window::get_id).into(),
+            message: options["message"].text().into(),
+            chain: chain
+                .flat_map(|it| it["data"].text().bytes().chain(*b"\n"))
+                .collect(),
+        };
+        queue::promise_of(global(), Request::System(request), |_, _| {
+            Ok(JSValue::UNDEFINED)
+        })
     }
 }

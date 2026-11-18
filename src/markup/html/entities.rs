@@ -30,7 +30,7 @@ const RECENT_BITS: u32 = 6;
 
 thread_local! {
     /// Names of up to seven letters, as words, with their only code points.
-    static RECENT: [Cell<(u64, u32)>; 1 << RECENT_BITS] = const { [const { Cell::new((0, 0)) }; _] };
+    static RECENT: Box<[Cell<(u64, u32)>; 1 << RECENT_BITS]> = Box::new([const { Cell::new((0, 0)) }; _]);
 }
 
 /// With its length, if it has a semicolon.

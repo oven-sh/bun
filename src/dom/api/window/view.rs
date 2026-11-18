@@ -35,6 +35,7 @@ pub(crate) struct FromContainer {
     pub(crate) is_dark: Option<bool>,
     pub(crate) looks_dark: bool,
     pub(crate) cannot_scroll: bool,
+    pub(crate) is_object: bool,
 }
 
 impl Window {
@@ -100,8 +101,11 @@ impl Window {
                 is_active: it.is_active,
                 reduced_transparency: it.reduces_transparency,
                 cannot_scroll: container.cannot_scroll,
+                is_object: container.is_object,
+                fixes_text_areas: it.fixes_text_areas,
                 ..engine.environment.clone()
             });
+            engine.set_font_settings(&it.fonts);
         });
     }
 
@@ -130,6 +134,10 @@ impl Window {
     /// Scripts see the new bounds until the host says otherwise.
     fn set_bounds(&self, bounds: Rect) {
         if !self.is_disposed() && !self.document().is(DocFlags::IN_FRAME) {
+            let bounds = self
+                .environment()
+                .display
+                .map_or(bounds, |it| bounds.moved_into(it.work_area));
             self.view.environment.borrow_mut().window_bounds = Some(bounds);
             self.host().move_window(bounds);
         }
@@ -148,7 +156,7 @@ impl Window {
     }
 
     fn measured_viewport<'a>(&'a self, cx: Cx<'_, 'a>) -> [f64; 2] {
-        pending::measure_container(cx, self);
+        container::measure_container(cx, self);
         self.viewport_size()
     }
 

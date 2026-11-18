@@ -8,15 +8,18 @@ use crate::order::Order as _;
 use crate::properties::Style;
 use crate::scroll::RESIZER;
 use crate::selector::Pseudo;
-use crate::tree::{DOCUMENT, Data, Namespace, NodeId};
+use crate::tree::{DOCUMENT, Data, Flags, Namespace, NodeId};
 use crate::types::*;
 
 impl Document {
     pub(crate) fn current_style_bits(&mut self, node: NodeId, wanted: u32) -> u32 {
-        const OF_BOXES: u32 = 1 | 1 << 5;
-        if wanted & OF_BOXES == 0 && !self.is_in_skipped_contents(node) {
+        const RENDERED: u32 = 1;
+        const SCROLLS: u32 = 1 << 5;
+        if wanted & SCROLLS == 0 && !self.is_in_skipped_contents(node) {
             self.update_style_of(node);
-            return self.style_bits(node, wanted) & wanted;
+            if wanted & RENDERED == 0 || self.is_settled_whether_it_has_a_box(node) {
+                return self.style_bits(node, wanted) & wanted;
+            }
         }
         self.update_layout();
         if !self.auto_visible.is_empty()
@@ -26,6 +29,25 @@ impl Document {
             self.force_leaves(node);
         }
         self.style_bits(node, wanted) & wanted
+    }
+
+    /// For a node whose style is up to date.
+    fn is_settled_whether_it_has_a_box(&self, node: NodeId) -> bool {
+        let Some(element) = self
+            .tree
+            .element(node)
+            .filter(|_| !self.is_in_skipped_contents(node))
+        else {
+            return false;
+        };
+        element
+            .style
+            .as_ref()
+            .is_none_or(|it| it.display() == Display::None)
+            || self.tree[node].layout_box != 0
+                && !core::iter::once(node)
+                    .chain(self.tree.flat_ancestors(node))
+                    .any(|it| self.tree[it].has(Flags::REBUILD))
     }
 
     pub(crate) fn with_computed_style<R>(
@@ -93,6 +115,12 @@ impl Document {
             CursorName::Auto => "default",
             cursor => cursor.name(),
         }
+    }
+
+    pub(crate) fn cursor_asked_for_by(&self, node: NodeId) -> &'static str {
+        self.tree
+            .style(node)
+            .map_or("", |it| it.ink.cursor.0.name())
     }
 
     /// What positions in an inline box are told from.

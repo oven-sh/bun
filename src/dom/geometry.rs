@@ -4,10 +4,10 @@ use crate::abi::{Matrix, Rect};
 use crate::boxes::{BoxId, Kind, VIEWPORT};
 use crate::document::Document;
 use crate::engine_event::ForNode;
-use crate::inline::{Inline, ItemKind};
+use crate::inline::Inline;
 use crate::layout::margin;
 use crate::layout::{at_least, at_most};
-use crate::lines::{Fragment, FragmentKind};
+use crate::lines::Fragment;
 use crate::name::{is_name, name};
 use crate::properties::Id;
 use crate::svg_values::TransformBox;
@@ -312,7 +312,7 @@ impl Document {
                 [[&l.left, &l.right], [&l.top, &l.bottom]][axis].map(inset);
             if let (Some(first), Some(last)) = (&mut before, &mut after) {
                 let missing = (end - start - (far - near - *first - *last)).max(0.0);
-                *(if self.boxes[scroller].starts_far(axis) {
+                *(if self.boxes[it.container].starts_far(axis) {
                     first
                 } else {
                     last
@@ -421,12 +421,10 @@ impl Document {
     /// The boxes whose lines have the text or the inline element.
     pub(crate) fn lines_with(&self, node: NodeId) -> impl Iterator<Item = (BoxId, &Inline)> + '_ {
         let first = self.tree[node].layout_box;
-        let is_split = self.boxes[first].inline.as_ref().is_some_and(|inline| {
-            inline
-                .items
-                .iter()
-                .any(|it| it.node == node && it.kind == ItemKind::Close(false))
-        });
+        let is_split = self.boxes[first]
+            .inline
+            .as_ref()
+            .is_some_and(|it| it.is_cut_off(node));
         let siblings = if is_split {
             &self.boxes[self.boxes[first].parent].children[..]
         } else {
@@ -536,16 +534,9 @@ impl Document {
         }
         let mut rects = Vec::new();
         for (id, inline) in self.lines_with(node) {
-            let is_own = |it: &&Fragment| {
-                inline.items[it.item as usize].node == node
-                    && !matches!(it.kind, FragmentKind::Hyphen(_))
-            };
             rects.extend(
                 inline
-                    .lines
-                    .fragments
-                    .iter()
-                    .filter(is_own)
+                    .fragments_of_node(node)
                     .map(|it| (id, self.from_lines(id, it.rect()))),
             );
         }

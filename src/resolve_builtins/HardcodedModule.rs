@@ -954,6 +954,8 @@ fn lookup(
 #[derive(Copy, Clone, Default)]
 pub struct Cfg {
     pub rewrite_jest_for_tests: bool,
+    /// `--desktop`
+    pub has_modules_of_electron: bool,
 }
 
 impl Alias {
@@ -970,6 +972,7 @@ impl Alias {
             return None;
         }
         if target.is_bun() {
+            let name = Self::as_builtin(name, cfg);
             if cfg.rewrite_jest_for_tests {
                 return lookup(&BUN_TEST_ALIAS_MAP, name);
             } else {
@@ -979,6 +982,17 @@ impl Alias {
             return lookup(&NODE_ALIAS_MAP, name);
         }
         None
+    }
+
+    /// The module of Bun's that a name of Electron's stands for, or else `name`.
+    pub fn as_builtin(name: &[u8], cfg: Cfg) -> &[u8] {
+        match name {
+            _ if !cfg.has_modules_of_electron => name,
+            b"electron" | b"electron/main" | b"electron/common" | b"electron/renderer"
+            | b"electron/utility" => b"bun:desktop/electron",
+            b"original-fs" | b"node:original-fs" => b"node:fs",
+            _ => name,
+        }
     }
 
     /// Programs import `bun:fs` (#16883), so `bun:` + a bare Node builtin name means that builtin.

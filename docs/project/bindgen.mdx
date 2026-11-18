@@ -1118,6 +1118,23 @@ The struct of an interface that extends none, and has fields or is extended, nee
 `inlineCapacity: 2` on an interface that extends none keeps the first two own properties of an instance in its cell. Unforgeable members that fit there are
 part of the structure of the class, so an instance costs one store for each.
 
+### What the JIT compilers inline
+
+A getter that has a `field` or a `cache` becomes a load from the cell, with a call while the field is empty. An internal field whose type is `.nullable` holds `null`
+for nothing, and is empty only if Rust has made it so. `member: "a.b"` on a getter names a `Cell<bool>`, `Cell<u8>`, `Cell<u16>` or `Cell<i32>` in the struct, which is
+loaded too. There is no getter in Rust then.
+
+`onlyReads: true` on a getter, or on a method with up to two arguments that are strings, integers or booleans, lets the compilers call it without a frame, move it
+out of a loop, merge it with the same call and drop it if nothing uses the result. It is a promise about the Rust function and all that it calls, and breaking it is a
+memory bug:
+
+- It changes nothing that a script can observe, and answers the same until something else has run.
+- It runs no JavaScript, and makes no prototype, constructor or structure. It may allocate.
+- It throws only for lack of memory.
+- It uses the global object for its VM only.
+
+`shortcut: "name"` on a getter names a `Bun::Bindgen::DOMJIT::Shortcut`, written by hand, that emits code for the usual case. The getter is called for the others.
+
 ### Global objects
 
 An interface that says `exposed` is a property of the global objects of those scopes, and so is one that `interfaces` lists in a table of

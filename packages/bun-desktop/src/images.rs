@@ -47,7 +47,6 @@ impl Svg {
         let painter = Painter {
             scene: &self.scene,
             frame: &Frame::new(1., false),
-            limit: usize::MAX,
             left_out: &[],
         };
         painter.paint(
@@ -129,7 +128,8 @@ pub fn next_id() -> u32 {
 }
 
 impl Bitmap {
-    fn new(frames: Frames, encoded: Option<Vec<u8>>) -> Bitmap {
+    fn new(mut frames: Frames, encoded: Option<Vec<u8>>) -> Bitmap {
+        frames[0].0.allow_sharing();
         Bitmap {
             size: (frames[0].0.width(), frames[0].0.height()),
             ends: frames.iter().map(|(_, end)| *end).collect(),

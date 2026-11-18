@@ -10,7 +10,7 @@ use crate::document::Document;
 use crate::name::name;
 use crate::order::Order as _;
 use crate::properties::Style;
-use crate::tree::{DOCUMENT, Data, Element, MARKER, Namespace, NodeId, Replaced};
+use crate::tree::{DOCUMENT, Data, Element, Flags, MARKER, Namespace, NodeId, Replaced};
 use crate::types::*;
 use crate::values::Str;
 
@@ -73,6 +73,9 @@ struct Counters {
     /// Those before this are outside of the nearest style containment.
     contained_from: usize,
     quote_depth: usize,
+    /// Only what has `Flags::VISITED` matters.
+    are_unseen: bool,
+    shows_items: bool,
 }
 
 impl Counters {
@@ -488,8 +491,40 @@ impl Document {
 
     pub(crate) fn update_counters(&mut self) {
         if core::mem::take(&mut self.counters_are_stale) && !self.counter_users.is_empty() {
-            let mut texts = Vec::new();
-            self.count(DOCUMENT, &mut Counters::default(), &mut texts);
+            let shown = self.counter_users.keys().filter_map(|it| {
+                if let Content::Items(items, alt) = &self.tree.style(*it)?.rare.content {
+                    Some(items.iter().chain(alt.iter().flat_map(|it| it.iter())))
+                } else {
+                    None
+                }
+            });
+            let mut shown = shown
+                .flatten()
+                .filter_map(|it| {
+                    if let ContentItem::Counter(name, ..) = it {
+                        Some(name)
+                    } else {
+                        None
+                    }
+                })
+                .peekable();
+            let are_unseen = shown.peek().is_none() && self.carousels.is_empty();
+            let mut counters = Counters {
+                are_unseen,
+                shows_items: shown.any(|it| &**it == "list-item"),
+                ..Counters::default()
+            };
+            let (mut texts, mut paths) = (Vec::new(), Vec::new());
+            for user in self.counter_users.keys().copied().filter(|_| are_unseen) {
+                let path = core::iter::once(user)
+                    .chain(self.tree.flat_ancestors(user))
+                    .take_while(|it| !self.tree[*it].has(Flags::VISITED));
+                paths.extend(path.inspect(|it| self.tree[*it].set(Flags::VISITED)));
+            }
+            self.count(DOCUMENT, &mut counters, &mut texts);
+            paths
+                .into_iter()
+                .for_each(|it| self.tree[it].unset(Flags::VISITED));
             for (id, text) in texts {
                 match self.counter_users.get_mut(&id) {
                     Some(alt) => *alt = text,
@@ -502,14 +537,12 @@ impl Document {
     fn apply_counters(&self, id: NodeId, style: &Style, parent: NodeId, counters: &mut Counters) {
         let (rare, list_item) = (&style.rare, || Str::from("list-item"));
         let mentions_items = |all: &[Counter]| all.iter().any(|it| &*it.0 == "list-item");
-        let number = |name| {
-            self.tree
-                .element(id)
-                .and_then(|it| it.number(name))
-                .map(|it| it as i32)
+        let tag = if counters.shows_items {
+            self.tree.html_tag(id)
+        } else {
+            name!("")
         };
-        if crate::name::is_name!(self.tree.html_tag(id), "ol" | "ul" | "menu")
-            && !mentions_items(&rare.counter_reset)
+        if crate::name::is_name!(tag, "ol" | "ul" | "menu") && !mentions_items(&rare.counter_reset)
         {
             let (start, step) = self.list_start(id);
             counters.reset(&list_item(), start.saturating_sub(step), parent);
@@ -517,7 +550,10 @@ impl Document {
         rare.counter_reset
             .iter()
             .for_each(|it| counters.reset(&it.0, it.1.unwrap_or(0), parent));
-        if style.display().is_list_item() && !mentions_items(&rare.counter_increment) {
+        if counters.shows_items
+            && style.display().is_list_item()
+            && !mentions_items(&rare.counter_increment)
+        {
             let step = self.list_step(self.list_of(id));
             counters.change(&list_item(), parent, |value| value.saturating_add(step));
         }
@@ -526,10 +562,13 @@ impl Document {
                 value.checked_add(it.1.unwrap_or(1)).unwrap_or(value)
             });
         }
-        if let Some(value) = number(name!("value"))
-            .filter(|_| self.tree.html_tag(id) == name!("li") && !mentions_items(&rare.counter_set))
+        if let Some(value) = self
+            .tree
+            .element(id)
+            .filter(|_| tag == name!("li") && !mentions_items(&rare.counter_set))
+            .and_then(|it| it.number(name!("value")))
         {
-            counters.change(&list_item(), parent, |_| value);
+            counters.change(&list_item(), parent, |_| value as i32);
         }
         rare.counter_set
             .iter()
@@ -608,6 +647,9 @@ impl Document {
             .into_iter()
             .chain(self.rendered_children(of))
         {
+            if counters.are_unseen && !self.tree[id].has(Flags::VISITED) {
+                continue;
+            }
             let Some(style) = self
                 .tree
                 .style(id)
@@ -620,7 +662,7 @@ impl Document {
                 self.count_children(id, parent, outer, counters, texts);
                 continue;
             }
-            if style.display() != Display::Contents {
+            if style.display() != Display::Contents && !counters.are_unseen {
                 self.apply_counters(id, style, parent, counters);
             }
             let is_contained =

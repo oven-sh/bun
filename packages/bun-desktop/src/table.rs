@@ -190,7 +190,7 @@ static UI: Ui = Ui {
 
     window_geometry: function!(|window: u32| -> Outcome<Geometry> {
         ask_once(&GEOMETRIES, window, true, move || {
-            Ok(app::open_window(window)?.geometry())
+            Ok(app::open_window(window)?.geometry_soon())
         })
     }),
     window_is_focused: function!(|window: u32| -> Outcome<bool> {

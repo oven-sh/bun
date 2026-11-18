@@ -1,6 +1,6 @@
 //! <https://html.spec.whatwg.org/#web-messaging>
 
-pub(crate) mod bridge;
+pub(crate) mod for_host;
 pub(crate) mod program;
 mod transfer;
 
@@ -13,7 +13,7 @@ use bun_web::channel::{Arrival, Broadcast, Endpoint, Message, Serialized};
 use bun_web::exec;
 use bun_web::held::Held;
 
-pub(crate) use self::bridge::sender_of;
+pub(crate) use self::for_host::sender_of;
 pub(crate) use self::transfer::{StreamEnd, receive, serialize};
 use crate::api::core::*;
 use crate::api::events::{Event, EventInit, Trusted, WindowTarget, dispatch, fire};
@@ -40,7 +40,7 @@ fn check_source<'a>(cx: Cx<'_, 'a>, source: Option<JsLocal<'a, JSObject>>) -> Re
     };
     if MessagePort::is(source)
         || WindowTarget::of(&cx.heap, source).is_some()
-        || source.get(cx.global(), "window")? == Some(source)
+        || source.js_type() == bun_jsc::JSType::GlobalProxy
     {
         Ok(source)
     } else {
@@ -98,32 +98,6 @@ impl MessageEvent {
         );
         js_DomMessageEvent::set_data(this, data);
         this
-    }
-
-    pub(crate) fn with_parked_ports<'a>(
-        heap: &JsHeap<'a>,
-        data: JsLocal<'a>,
-        origin: DomString,
-        source: JSValue,
-        parked: impl ExactSizeIterator<Item = f64>,
-    ) -> Result<'a, &'a MessageEvent> {
-        let this = MessageEvent::new(
-            heap,
-            atom!("message").into(),
-            if data.is_undefined() {
-                JSValue::NULL
-            } else {
-                data.to_js()
-            },
-            origin,
-            DomString::default(),
-        );
-        this.set_source(source);
-        js_DomMessageEvent::set_ports(
-            this,
-            frozen(heap, parked.map(|it| bridge::unpark(heap, it).to_js()))?,
-        );
-        Ok(this)
     }
 
     /// `message`, or `messageerror`.
@@ -248,7 +222,6 @@ impl MessageEvent {
         Ok(ports)
     }
 
-    #[expect(clippy::too_many_arguments)]
     pub(crate) fn init_message_event<'a>(
         &self,
         cx: Cx<'_, 'a>,

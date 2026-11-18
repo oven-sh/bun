@@ -194,6 +194,7 @@ pub(super) struct Sender {
     pub(super) origin: Option<Origin>,
     pub(super) bypasses_handlers: bool,
     pub(super) client: Option<ClientId>,
+    pub(super) is_page: bool,
 }
 
 impl Session {
@@ -208,8 +209,11 @@ impl Session {
             or_failure(self.user_agent())?,
             or_failure(self.accept_language())?,
         );
-        let role = Role::App {
-            bypasses_handlers: sender.bypasses_handlers,
+        let role = match sender.is_page {
+            true => Role::Page,
+            false => Role::App {
+                bypasses_handlers: sender.bypasses_handlers,
+            },
         };
         let mut initiator = Initiator::new(
             role,

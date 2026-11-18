@@ -98,6 +98,9 @@ export const DomWindow = b.interface("DomWindow", {
   exposed: inWindows,
   includes: [ImageBitmapFactories, WindowOrWorkerGlobalScope],
   internalFields: {
+    context: b.any,
+    openedBeside: b.any,
+    popups: b.any,
     emptyFrame: b.any,
     frameCallbacks: b.any,
     idleCallbacks: b.any,
@@ -398,7 +401,7 @@ export const WorkerLocation = b.interface("WorkerLocation", {
 export const WorkerGlobalScope = b.interface("WorkerGlobalScope", {
   extends: WindowTarget,
   rustPath: `${path}::WorkerGlobalScope`,
-  size: 112,
+  size: 104,
   exposed: ["Worker"],
   internalFields: { port: b.any },
   includes: [ImageBitmapFactories, WindowOrWorkerGlobalScope],

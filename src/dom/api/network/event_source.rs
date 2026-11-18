@@ -296,7 +296,7 @@ impl EventSource {
                 controller: controller.clone(),
             },
         );
-        if let Some(client) = client_of(&cx.heap) {
+        if let Some(client) = client_or_program(&cx.heap) {
             let running = Running(Kept::new(cx, this.to_js()));
             spawn(&cx.heap, async move {
                 running.run(client, options, controller).await;

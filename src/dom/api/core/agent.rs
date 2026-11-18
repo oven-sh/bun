@@ -42,7 +42,9 @@ impl Agent {
         thread_local! {
             static FORGETS: () = bun_ui::at_end_of_worker(|| {
                 super::atom::forget_cases();
+                super::tokens::forget_data_attributes();
                 super::custom::forget_queue();
+                super::selectors::forget_recent();
                 crate::api::cssom::forget_attributes();
             });
         }

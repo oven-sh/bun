@@ -184,7 +184,6 @@ private:
     JSC::EncodedJSValue m_values[count];
 };
 
-// `b.rest`: the arguments of a call from `first` on. They stay in the frame of the caller unless one is converted.
 // The JS value that stands for a converted value: `bindgen::Element` in Rust. Generated code adds unions.
 inline JSC::JSValue asElement(JSC::VM&, JSC::JSValue value) { return value ? value : JSC::jsNull(); }
 inline JSC::JSValue asElement(JSC::VM&, JSC::JSCell* cell) { return cell ? JSC::JSValue(cell) : JSC::jsNull(); }
@@ -241,6 +240,7 @@ void forEachInIterable(JSC::JSGlobalObject&, JSC::JSObject*, JSC::JSValue method
 WTF::String describeInstanceOf(WTF::ASCIILiteral className);
 JSC::JSCellButterfly* listFromRecord(JSC::JSGlobalObject&, JSC::JSObject*, ConvertElement key, ConvertElement value);
 
+// `b.rest`: the arguments of a call from `first` on. They stay in the frame of the caller unless one is converted.
 class RestArguments {
     WTF_FORBID_HEAP_ALLOCATION;
     WTF_MAKE_NONCOPYABLE(RestArguments);

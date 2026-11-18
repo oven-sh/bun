@@ -1,7 +1,7 @@
 //! What happens to the surface that shows a page.
 
-use bun_jsc::JsResult;
 use bun_web::host::Keystroke;
+use bun_web::input::{self, Details, Drag, Finger, Input, Mouse, Phase};
 use bun_web::tasks;
 
 use super::keyboard::{self, Key, Outcome};
@@ -15,105 +15,71 @@ use crate::api::events::HandlingInput;
 use crate::api::uievents::{Modifiers, PointerData};
 use crate::api::window::Window;
 use crate::api::{frames, performance};
-use crate::generated_bindgen::interaction::*;
 
-macro_rules! place {
-    ($it:expr) => {{
-        let window = [$it.x.unwrap_or_default(), $it.y];
-        Place {
-            window,
-            screen: [$it.sx.unwrap_or(window[0]), $it.sy.unwrap_or(window[1])],
-            modifiers: $it.m,
-        }
-    }};
-}
-
-fn word<'t>(given: &'t Option<bun_core::Utf8Bytes<'static>>) -> &'t str {
-    given.as_ref().map_or("", |it| crate::values::text(it))
-}
-
-impl NativePlace {
-    pub(crate) fn place(&self) -> Place {
-        place!(self)
-    }
-}
-
-impl NativeKey {
-    pub(crate) fn stroke(&self) -> Keystroke {
-        let [key, code] = [&self.key, &self.code].map(|it| word(it).into());
-        Keystroke {
-            is_down: self.e == NativeAction::Down,
-            key,
-            code,
-            location: self.location,
-            modifiers: self.m,
-            repeats: self.repeat,
-            is_composing: self.composing,
-        }
-    }
-}
-
-fn handle_mouse<'a>(cx: &mut Cx<'a>, ui: &'a Ui, event: &NativeMouse) {
-    if event.e == NativeAction::Down {
+fn handle_mouse<'a>(cx: &mut Cx<'a>, ui: &'a Ui, event: &Mouse) {
+    if event.action == input::Action::Down {
         performance::note_input(&cx.heap, ui.doc());
     }
-    let action = match event.e {
-        NativeAction::Leave => return mouse::leave(cx, ui, event.x.map(|_| place!(event))),
-        NativeAction::Down => Action::Down {
-            button: event.b,
-            clicks: event.n,
+    let action = match event.action {
+        input::Action::Leave => {
+            return mouse::leave(
+                cx,
+                ui,
+                Some(event.place).filter(|it| !it.window[0].is_nan()),
+            );
+        }
+        input::Action::Down => Action::Down {
+            button: event.button,
+            clicks: event.clicks,
         },
-        NativeAction::Up => Action::Up { button: event.b },
-        _ => Action::Move,
+        input::Action::Up => Action::Up {
+            button: event.button,
+        },
+        input::Action::Move => Action::Move,
     };
-    mouse::handle(cx, ui, action, place!(event), event.buttons);
+    mouse::handle(cx, ui, action, event.place, event.buttons);
 }
 
-fn pointer_data(details: &NativePointerDetails, pressure: f64) -> PointerData {
+fn pointer_data(details: &Details, pressure: f64) -> PointerData {
     let data = PointerData {
-        size: [details.width, details.height],
+        size: details.size,
         pressure: details.pressure.unwrap_or(pressure) as f32,
         tangential_pressure: details.tangential_pressure as f32,
         twist: details.twist,
         ..Default::default()
     };
-    data.with_orientation([Some(details.tilt_x), Some(details.tilt_y)], [None; 2])
+    data.with_orientation(details.tilt.map(Some), [None; 2])
 }
 
-fn handle_touch<'a>(cx: &mut Cx<'a>, ui: &'a Ui, event: &NativeTouch) {
-    let contact = |it: &NativeTouchPoint| Contact {
+fn handle_touch<'a>(cx: &mut Cx<'a>, ui: &'a Ui, phase: Phase, fingers: &[Finger], modifiers: u32) {
+    let contact = |it: &Finger| Contact {
         id: it.id,
         place: Place {
-            modifiers: event.m,
-            ..place!(it)
+            modifiers,
+            ..it.place
         },
         details: pointer_data(&it.details, 1.0),
     };
     let (contacts, modifiers): (Vec<_>, _) = (
-        event.points.iter().map(contact).collect(),
-        Modifiers::from_bits_truncate(event.m),
+        fingers.iter().map(contact).collect(),
+        Modifiers::from_bits_truncate(modifiers),
     );
-    match event.e {
-        NativeAction::Start => touch::start(cx, ui, &contacts, modifiers),
-        NativeAction::Move => touch::move_to(cx, ui, &contacts, modifiers),
-        action => touch::end(cx, ui, &contacts, modifiers, action != NativeAction::End),
+    match phase {
+        Phase::Start => touch::start(cx, ui, &contacts, modifiers),
+        Phase::Move => touch::move_to(cx, ui, &contacts, modifiers),
+        phase => touch::end(cx, ui, &contacts, modifiers, phase != Phase::End),
     }
 }
 
-fn handle_key<'a>(cx: &mut Cx<'a>, window: &'a Window, ui: &'a Ui, event: &NativeKey) {
-    let stroke = event.stroke();
-    if window.host().before_input(stroke.clone()) {
-        ui.pressed_key.take();
-        return host::key_handled();
-    }
+fn handle_key<'a>(cx: &mut Cx<'a>, window: &'a Window, ui: &'a Ui, stroke: Keystroke) {
     let atom_of = |it: &str| Atom::from_string(&DomString::from_utf8(it));
     let key = Key {
         key: atom_of(&stroke.key),
         code: atom_of(&stroke.code),
-        location: event.location,
-        repeat: event.repeat,
-        modifiers: Modifiers::from_bits_truncate(event.m),
-        is_composing: event.composing,
+        location: stroke.location,
+        repeat: stroke.repeats,
+        modifiers: Modifiers::from_bits_truncate(stroke.modifiers),
+        is_composing: stroke.is_composing,
     };
     if !stroke.is_down {
         return keyboard::key_up(cx, ui, &key);
@@ -123,10 +89,6 @@ fn handle_key<'a>(cx: &mut Cx<'a>, window: &'a Window, ui: &'a Ui, event: &Nativ
         Outcome::Pending => {}
         Outcome::Unhandled => window.host().unhandled_key(stroke),
     }
-}
-
-fn offsets(list: Option<Vec<u32>>) -> Option<[u32; 2]> {
-    list?.try_into().ok()
 }
 
 pub(crate) fn set_focused<'a>(cx: &mut Cx<'a>, ui: &'a Ui, is_focused: bool) {
@@ -146,189 +108,189 @@ pub(crate) fn set_focused<'a>(cx: &mut Cx<'a>, ui: &'a Ui, is_focused: bool) {
 }
 
 /// Whether what it has changed does not wait for the display.
-fn handle<'a>(
-    cx: &mut Cx<'a>,
-    window: &'a Window,
-    ui: &'a Ui,
-    kind: NativeKind,
-    event: JSValue,
-) -> JsResult<bool> {
+fn handle<'a>(cx: &mut Cx<'a>, window: &'a Window, ui: &'a Ui, input: Input) -> bool {
     if matches!(
-        kind,
-        NativeKind::Touch | NativeKind::Wheel | NativeKind::Pinch | NativeKind::Key
+        input,
+        Input::Touch { .. } | Input::Wheel { .. } | Input::Pinch { .. } | Input::Key(_)
     ) {
         performance::note_input(&cx.heap, ui.doc());
     }
+    if matches!(
+        input,
+        Input::Text { .. } | Input::Compose { .. } | Input::EndComposition
+    ) {
+        input_method::expect_edit(cx, ui);
+    }
     let _input = matches!(
-        kind,
-        NativeKind::Mouse | NativeKind::Pen | NativeKind::Touch | NativeKind::Key
+        input,
+        Input::Mouse(_) | Input::Pen { .. } | Input::Touch { .. } | Input::Key(_)
     )
     .then(HandlingInput::begin);
-    Ok(match kind {
-        NativeKind::Mouse => {
-            let event = NativeMouse::from_js(cx.global(), event)?;
-            if event.e == NativeAction::Move {
-                handle_mouse(cx, ui, &event);
-                return Ok(false);
-            }
+    match input {
+        Input::Mouse(event) if event.action == input::Action::Move => {
+            handle_mouse(cx, ui, &event);
+            false
+        }
+        Input::Mouse(event) => {
             window.got_input();
             handle_mouse(cx, ui, &event);
             tasks::hurry(cx.global(), true);
             true
         }
-        NativeKind::Pen => {
-            let (details, event) = (
-                NativePen::from_js(cx.global(), event)?.details,
-                NativeMouse::from_js(cx.global(), event)?,
-            );
+        Input::Pen { mouse, details } => {
             touch::with_pen(cx, ui, &pointer_data(&details, 0.0), |cx| {
-                handle_mouse(cx, ui, &event)
+                handle_mouse(cx, ui, &mouse)
             });
             true
         }
-        NativeKind::Touch => {
-            let event = NativeTouch::from_js(cx.global(), event)?;
-            handle_touch(cx, ui, &event);
+        Input::Touch {
+            phase,
+            fingers,
+            modifiers,
+        } => {
+            handle_touch(cx, ui, phase, &fingers, modifiers);
             true
         }
-        NativeKind::Wheel | NativeKind::Pinch => {
-            let event = NativeWheel::from_js(cx.global(), event)?;
-            let wheel = match kind {
-                NativeKind::Pinch => Wheel::Pinch(event.delta),
-                _ => Wheel::Turn {
-                    delta: [event.dx, event.dy],
-                    is_precise: event.precise,
-                    is_handled: event.is_handled,
-                },
-            };
+        Input::Wheel {
+            place,
+            delta,
+            is_precise,
+            is_handled,
+        } => {
             tasks::scrolls(cx.global());
-            mouse::handle_wheel(cx, ui, place!(event), wheel);
+            mouse::handle_wheel(
+                cx,
+                ui,
+                place,
+                Wheel::Turn {
+                    delta,
+                    is_precise,
+                    is_handled,
+                },
+            );
             false
         }
-        NativeKind::Scroll => {
-            let event = NativeScroll::from_js(cx.global(), event)?;
+        Input::Pinch { place, delta } => {
+            tasks::scrolls(cx.global());
+            mouse::handle_wheel(cx, ui, place, Wheel::Pinch(delta));
+            false
+        }
+        Input::Scroll {
+            node,
+            generation,
+            total,
+            has_ended,
+        } => {
             tasks::scrolls(cx.global());
             ui.mouse().scrolled_at.set(host::now());
             ui.doc().engine(|engine, _| {
-                engine.scrolled_by_compositor(
-                    event.id,
-                    [event.x, event.y],
-                    event.has_ended,
-                    event.generation,
-                )
+                engine.scrolled_by_compositor(node, total, has_ended, generation)
             });
             ui.doc().invalidate(cx);
             false
         }
-        NativeKind::Key => {
-            let event = NativeKey::from_js(cx.global(), event)?;
+        Input::Key(stroke) => {
             window.got_input();
-            handle_key(cx, window, ui, &event);
+            handle_key(cx, window, ui, stroke);
             tasks::hurry(cx.global(), true);
             ui.pressed_key.borrow().is_none()
         }
-        NativeKind::Text => {
-            let event = NativeText::from_js(cx.global(), event)?;
-            keyboard::handle_text(
-                cx,
-                ui,
-                &DomString::from_utf8(word(&event.text)),
-                event.key,
-                offsets(event.range),
-            );
+        Input::KeyTaken => {
+            ui.pressed_key.take();
+            false
+        }
+        Input::Text {
+            text,
+            is_typed,
+            range,
+        } => {
+            keyboard::handle_text(cx, ui, &DomString::from_utf8(&text), is_typed, range);
             true
         }
-        NativeKind::Compose => {
-            let event = NativeText::from_js(cx.global(), event)?;
-            input_method::compose(
-                cx,
-                ui,
-                &DomString::from_utf8(word(&event.text)),
-                offsets(event.selection),
-                offsets(event.range),
-            );
+        Input::Compose {
+            text,
+            selection,
+            range,
+        } => {
+            input_method::compose(cx, ui, &DomString::from_utf8(&text), selection, range);
             true
         }
-        NativeKind::ComposeEnd => {
+        Input::EndComposition => {
             input_method::end_composition(cx, ui);
             true
         }
-        NativeKind::Resize => {
-            let event = NativeSize::from_js(cx.global(), event)?;
-            let shows =
-                window.resize(cx, [event.width, event.height], event.scale) && !event.is_quiet;
+        Input::Resize { extent, is_quiet } => {
+            let shows = window.resize(cx, extent.size, extent.scale) && !is_quiet;
             if shows {
                 tasks::hurry(cx.global(), false);
             }
             shows
         }
-        NativeKind::Focus | NativeKind::Blur => {
-            let event = NativeFocus::from_js(cx.global(), event)?;
-            if event.leaves {
+        Input::Focus { direction } => {
+            set_focused(cx, ui, true);
+            if direction != 0 {
+                entry::tab_into_frame(cx, ui, direction < 0);
+            }
+            false
+        }
+        Input::Blur { leaves } => {
+            if leaves {
                 frames::input::leave_window(cx, ui);
             } else {
-                set_focused(cx, ui, kind == NativeKind::Focus);
-            }
-            if event.direction != 0 {
-                entry::tab_into_frame(cx, ui, event.direction < 0);
+                set_focused(cx, ui, false);
             }
             false
         }
-        NativeKind::Drag => {
-            let (action, place) = (
-                NativeDrag::from_js(cx.global(), event)?.e,
-                NativePlace::from_js(cx.global(), event)?.place(),
-            );
-            if action == NativeAction::Leave {
-                drag::end(cx, ui, false);
-            } else {
-                drag::files_over(cx, ui, place, action == NativeAction::Drop, |cx| {
-                    crate::api::transfer::of_chosen_files(cx, ui.doc(), event)
-                });
-            }
+        Input::Drag {
+            phase: Drag::Leave, ..
+        } => {
+            drag::end(cx, ui, false);
             false
         }
-        NativeKind::A11y => {
+        Input::Drag {
+            phase,
+            place,
+            files,
+        } => {
+            drag::files_over(cx, ui, place, phase == Drag::Drop, |cx| {
+                crate::api::transfer::of_chosen_files(cx, ui.doc(), &files)
+            });
+            false
+        }
+        Input::AccessibilityChanged => {
             assistive::note_technology(cx, ui, false);
             assistive::update_accessibility(cx, ui);
             false
         }
-        NativeKind::A11yAction => {
-            let event = NativeAssistance::from_js(cx.global(), event)?;
+        Input::Perform {
+            node,
+            action,
+            numbers,
+            text,
+        } => {
             assistive::perform_accessibility_action(
                 cx,
                 ui,
-                event.node,
-                event.action,
-                &event.numbers,
-                &DomString::from_utf8(word(&event.text)),
+                node,
+                action,
+                &numbers,
+                &DomString::from_utf8(&text),
             );
             window.render_now(cx);
             assistive::update_accessibility(cx, ui);
             false
         }
-        NativeKind::Outside => false,
-        NativeKind::Frame => {
-            let is_urgent = NativeFrame::from_js(cx.global(), event)?.is_urgent;
+        Input::Outside => false,
+        Input::Frame { is_urgent } => {
             window.display_wants_frame(cx, is_urgent);
             false
         }
-    })
+    }
 }
 
-pub(super) fn handle_event<'a>(
-    cx: &mut Cx<'a>,
-    window: &'a Window,
-    ui: &'a Ui,
-    kind: NativeKind,
-    event: JSValue,
-) {
-    if !frames::input::route(cx, ui, kind, event) {
-        match handle(cx, window, ui, kind, event) {
-            Ok(true) => window.render_now(cx),
-            Ok(false) => {}
-            Err(error) => bun_web::exec::report(cx, Err(error.into())),
-        }
+pub(crate) fn handle_input<'a>(cx: &mut Cx<'a>, window: &'a Window, ui: &'a Ui, input: Input) {
+    if !frames::input::route(cx, ui, &input) && handle(cx, window, ui, input) {
+        window.render_now(cx);
     }
     if !ui.doc().arena().is_scheduled.get() {
         performance::present_events(&cx.heap, ui.doc());

@@ -158,13 +158,15 @@ enum class PrototypeBase : uint8_t {
     Writable,
 };
 
-// The first byte of a row. The `length` of a function follows, then the name and a zero. A zero ends a table.
+// The first byte of a row. The `length` of a function without a signature follows, then the name and a zero. A zero ends a table.
 namespace MemberRow {
 enum : uint8_t {
     Function = 1,
     Builtin,
     Constant,
     Accessor,
+    DOMJITAccessor,
+    DOMJITFunction,
     KindMask = 7,
     DontEnum = 1 << 3,
     DontDelete = 1 << 4,
@@ -173,7 +175,7 @@ enum : uint8_t {
 };
 }
 
-// One for each row, and another for a setter.
+// One for each row, and another for a setter or a signature.
 union MemberEntry {
     constexpr MemberEntry(JSC::NativeFunction::Ptr function)
         : function(function)
@@ -195,12 +197,22 @@ union MemberEntry {
         : setter(setter)
     {
     }
+    constexpr MemberEntry(const JSC::DOMJIT::GetterSetter* domJIT)
+        : domJIT(domJIT)
+    {
+    }
+    constexpr MemberEntry(const JSC::DOMJIT::Signature* signature)
+        : signature(signature)
+    {
+    }
 
     JSC::NativeFunction::Ptr function;
     JSC::BuiltinGenerator generator;
     long long constant;
     JSC::GetValueFunc::Ptr getter;
     JSC::PutValueFunc::Ptr setter;
+    const JSC::DOMJIT::GetterSetter* domJIT;
+    const JSC::DOMJIT::Signature* signature;
 };
 
 struct Condition {

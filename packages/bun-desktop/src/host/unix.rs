@@ -49,47 +49,59 @@ pub fn wake() {
     WAKE.write();
 }
 
-/// Returns whether `source` is readable.
+/// Returns whether `source` is readable. The system puts off the end of a `select` or a `poll` by up to 75 ms to save energy.
 #[cfg(target_os = "macos")]
 pub fn poll(pipe: &Pipe, source: Option<isize>, timeout: Option<Duration>) -> bool {
-    let (source, wake) = (source.map(|source| source as i32), pipe.fd());
-    let timeout = timeout.map(|it| it + Duration::from_nanos(999));
-    let mut timeout = timeout.map(|it| libc::timeval {
-        tv_sec: it.as_secs() as _,
-        tv_usec: it.subsec_micros() as _,
-    });
-    let (timeout, none) = (
-        timeout
-            .as_mut()
-            .map_or(std::ptr::null_mut(), std::ptr::from_mut),
-        std::ptr::null_mut(),
-    );
-    unsafe extern "C" {
-        /// For any number of descriptors.
-        #[link_name = "select$DARWIN_EXTSN"]
-        fn select(
-            count: i32,
-            read: *mut u32,
-            write: *mut u32,
-            error: *mut u32,
-            timeout: *mut libc::timeval,
-        ) -> i32;
+    use std::cell::Cell;
+    let change = |fd: isize, flags| libc::kevent {
+        ident: fd as usize,
+        filter: libc::EVFILT_READ,
+        flags,
+        fflags: 0,
+        data: 0,
+        udata: std::ptr::null_mut(),
+    };
+    thread_local! {
+        /// And what it watches.
+        static QUEUE: Cell<(i32, Option<isize>)> = const { Cell::new((-1, None)) };
     }
-    let count = source.unwrap_or(0).max(wake) + 1;
-    let mut set: crate::small_vec::SmallVec<u32, 8> =
-        std::iter::repeat_n(0, count as usize / 32 + 1).collect();
-    source
-        .into_iter()
-        .chain([wake])
-        .for_each(|fd| set[fd as usize / 32] |= 1 << (fd % 32));
-    // SAFETY: a bit for each.
-    let result = unsafe { select(count, set.as_mut_ptr(), none, none, timeout) };
-    let is_set = |fd: i32| set[fd as usize / 32] & 1 << (fd % 32) != 0;
-    if result > 0 && is_set(wake) {
+    let (mut queue, watched) = QUEUE.get();
+    let timeout = timeout.map(|it| libc::timespec {
+        tv_sec: it.as_secs() as _,
+        tv_nsec: it.subsec_nanos() as _,
+    });
+    let mut ready = [change(-1, 0); 2];
+    // SAFETY: arrays with their lengths.
+    let count = unsafe {
+        let apply = |queue, change| {
+            libc::kevent(queue, &change, 1, std::ptr::null_mut(), 0, std::ptr::null())
+        };
+        if queue < 0 {
+            queue = libc::kqueue();
+            apply(queue, change(pipe.fd() as isize, libc::EV_ADD));
+        }
+        if watched != source {
+            watched.map(|it| apply(queue, change(it, libc::EV_DELETE)));
+            source.map(|it| apply(queue, change(it, libc::EV_ADD)));
+        }
+        QUEUE.set((queue, source));
+        libc::kevent(
+            queue,
+            std::ptr::null(),
+            0,
+            ready.as_mut_ptr(),
+            2,
+            timeout
+                .as_ref()
+                .map_or(std::ptr::null(), std::ptr::from_ref),
+        )
+    };
+    let is_ready = |fd: isize| ready.iter().any(|it| it.ident == fd as usize);
+    if is_ready(pipe.fd() as isize) {
         pipe.clear();
     }
     // A signal is for the event loop to look at.
-    result < 0 || source.is_some_and(is_set)
+    count < 0 || source.is_some_and(is_ready)
 }
 
 /// Returns whether `source` is readable, and keeps the `others` that are.

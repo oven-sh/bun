@@ -96,18 +96,30 @@ pub(super) fn set_custom_error<'a>(cx: &mut Cx<'a>, element: &'a Element, messag
     dirty(cx, element);
 }
 
+fn is_invalid(element: &Element) -> bool {
+    !errors(element).is_empty() && will_validate(element)
+}
+
+/// Whether it matches `:valid`, and what has changed since that was found is valid.
+pub(super) fn is_still_valid(form: &Element) -> bool {
+    let changed = Ui::of(form.doc())
+        .filter(|_| {
+            form.is_connected() && form.has_state(State::VALID) && !may_have_remote_owners(form)
+        })
+        .map(Ui::dirty_controls);
+    changed.is_some_and(|it| {
+        !it.iter()
+            .any(|it| it == form || !is_group(it) && is_listed(it) && is_invalid(it))
+    })
+}
+
 /// https://html.spec.whatwg.org/#interactively-validate-the-constraints, or statically
 pub(super) fn validate<'a, 'e>(
     cx: &mut Cx<'a>,
     candidates: impl IntoIterator<Item = &'e Element>,
     reports: bool,
 ) -> bool {
-    let invalid = Refs::collect(
-        &cx.heap,
-        candidates
-            .into_iter()
-            .filter(|it| will_validate(it) && !errors(it).is_empty()),
-    );
+    let invalid = Refs::collect(&cx.heap, candidates.into_iter().filter(|it| is_invalid(it)));
     let mut unhandled = Refs::default();
     for element in invalid.iter() {
         if fire(cx, element, atom!("invalid"), CANCELABLE) && reports {
@@ -131,14 +143,20 @@ pub(super) fn validate<'a, 'e>(
 }
 
 fn set_states<'a>(cx: &mut Cx<'a>, element: &'a Element, is_valid: Option<bool>, was_edited: bool) {
-    element.set_state(cx, State::VALID, is_valid == Some(true));
-    element.set_state(cx, State::INVALID, is_valid == Some(false));
-    element.set_state(cx, State::USER_VALID, was_edited && is_valid == Some(true));
-    element.set_state(
-        cx,
-        State::USER_INVALID,
-        was_edited && is_valid == Some(false),
+    let (valid, invalid) = (
+        State::VALID | State::USER_VALID,
+        State::INVALID | State::USER_INVALID,
     );
+    let seen = if was_edited {
+        State::all()
+    } else {
+        State::VALID | State::INVALID
+    };
+    let wanted = is_valid.map_or(State::empty(), |it| seen & if it { valid } else { invalid });
+    if element.state() & (valid | invalid) != wanted {
+        element.set_state(cx, (valid | invalid) - wanted, false);
+        element.set_state(cx, wanted, true);
+    }
 }
 
 /// Whether it matches `:invalid`.

@@ -448,15 +448,21 @@ static JSValue prototypeOfInterface(JSGlobalObject* realm, ASCIILiteral name)
     return asObject(Bindgen::interfaceObjectNamed(realm, *Identifier::fromString(vm, name).impl()))->getDirect(vm, vm.propertyNames->prototype);
 }
 
-JSObject* desktopRealmPrototypeAbove(JSGlobalObject* realm, ASCIILiteral name)
+JSObject* desktopRealmInterface(JSGlobalObject* realm, ASCIILiteral name)
 {
     if (!isDesktopRealm(realm) && !realm->classInfo()->isSubClassOf(&WebGlobalObject::s_infoWithBunGlobals)) [[likely]]
-        return realm->objectPrototype();
+        return nullptr;
     BUN_BEGIN_REMOVABLE_ENTRY_POINT(Desktop, Abort, JSObject*)
     if (realm->classInfo()->isSubClassOf(&IsolatedWorldGlobalObject::plain))
-        return realm->objectPrototype();
-    return asObject(prototypeOfInterface(realm, name));
+        return nullptr;
+    return asObject(Bindgen::interfaceObjectNamed(realm, *Identifier::fromString(realm->vm(), name).impl()));
     BUN_END_REMOVABLE_ENTRY_POINT
+}
+
+JSObject* desktopRealmPrototypeAbove(JSGlobalObject* realm, ASCIILiteral name)
+{
+    auto* interface = desktopRealmInterface(realm, name);
+    return interface ? asObject(interface->getDirect(realm->vm(), realm->vm().propertyNames->prototype)) : realm->objectPrototype();
 }
 
 void WebGlobalObject::adoptPrototype(VM& vm, ASCIILiteral interface)

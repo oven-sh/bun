@@ -205,7 +205,7 @@ tags! {
 pub struct ShortName(pub(crate) u64);
 
 impl ShortName {
-    const fn of_ascii(name: &[u8]) -> ShortName {
+    pub(super) const fn of_ascii(name: &[u8]) -> ShortName {
         let (mut packed, mut at) = (0, name.len());
         while at > 0 {
             at -= 1;
@@ -300,24 +300,40 @@ impl Tag {
     }
 }
 
-fn with_capitals(sorted: &'static [&'static str], lowercase: Chars<'_>) -> Option<&'static str> {
+/// By the first letter, as bits.
+const fn lengths_of(names: &[&str]) -> [u32; 26] {
+    let (mut lengths, mut at) = ([0; 26], 0);
+    while at < names.len() {
+        lengths[(names[at].as_bytes()[0] - b'a') as usize] |= 1 << names[at].len();
+        at += 1;
+    }
+    lengths
+}
+
+fn with_capitals(
+    sorted: &'static [&'static str],
+    lengths: &[u32; 26],
+    lowercase: Chars<'_>,
+) -> Option<&'static str> {
+    let first = lowercase.units().next()?.wrapping_sub(b'a'.into());
+    if lowercase.len() > 31 || lengths.get(usize::from(first))? >> lowercase.len() & 1 == 0 {
+        return None;
+    }
     let lower = |name: &'static str| name.bytes().map(|it| u16::from(it.to_ascii_lowercase()));
     let found = sorted.binary_search_by(|it| lower(it).cmp(lowercase.units()));
     found.ok().map(|index| sorted[index])
 }
 
 pub(crate) fn svg_tag_name(lowercase: Chars<'_>) -> Option<&'static str> {
-    if lowercase.len() < 6 {
-        return None;
-    }
-    with_capitals(SVG_TAGS, lowercase)
+    with_capitals(SVG_TAGS, &const { lengths_of(SVG_TAGS) }, lowercase)
 }
 
 pub(crate) fn svg_attribute_name(lowercase: Chars<'_>) -> Option<&'static str> {
-    if lowercase.len() < 4 {
-        return None;
-    }
-    with_capitals(SVG_ATTRIBUTES, lowercase)
+    with_capitals(
+        SVG_ATTRIBUTES,
+        &const { lengths_of(SVG_ATTRIBUTES) },
+        lowercase,
+    )
 }
 
 #[rustfmt::skip]

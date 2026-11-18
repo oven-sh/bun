@@ -126,7 +126,7 @@ impl Doc {
                 .element_children()
                 .find(|it| it.kind() == Kind::SvgTitle),
             None => self
-                .elements_with_objects()
+                .objects_with_tag(atom!("title"))
                 .find(|it| it.kind() == Kind::Title),
         }
     }

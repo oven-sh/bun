@@ -72,6 +72,208 @@ describe("tree", () => {
     ).toEqual([1, 1, 0, 0, 0]);
   });
 
+  test.each([1, 2, 3])("the first element with an id or a name is found among many (seed %d)", seed => {
+    using page = open("<div></div><div></div><div></div>");
+    const { document } = page;
+    const random = (below: number) => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) % below;
+    const made = Array.from({ length: 40 }, () => document.createElement("img"));
+    for (let step = 0; step < 3000; step++) {
+      const [it, other, name] = [made[random(40)], made[random(40)], "ab"[random(2)]];
+      const changes = [
+        () => document.body.children[random(3)].append(it),
+        () => document.body.children[random(3)].prepend(it),
+        () => other.before(it),
+        () => it.remove(),
+        () => (it.id = name),
+        () => (it.name = name),
+        () => it.removeAttribute("id"),
+        () => it.removeAttribute("name"),
+        () => document.body.prepend(document.body.children[random(3)]),
+      ];
+      changes[random(changes.length)]();
+      if (random(3)) continue;
+      const all = [...document.body.children].flatMap(it => [...it.children]);
+      const named = all.filter(it => it.name === name || (it.id === name && it.name));
+      const found = document[name];
+      expect(document.getElementById(name) === (all.find(it => it.id === name) ?? null)).toBe(true);
+      expect(document.querySelector("#" + name) === document.getElementById(name)).toBe(true);
+      expect(document.querySelectorAll("#" + name).length).toBe(all.filter(it => it.id === name).length);
+      expect((found?.nodeType ? [found] : [...(found ?? [])]).map(it => made.indexOf(it))).toEqual(
+        named.map(it => made.indexOf(it)),
+      );
+    }
+  });
+
+  test("an attribute that is set to what it is still counts as changed", () => {
+    using page = open("<p id=a class=b title=c onclick=d></p><x-a title=c></x-a>");
+    const [it, log] = [page.$("p"), [] as string[]];
+    const again = (it: any) =>
+      it.getAttributeNames().forEach((name: string) => it.setAttribute(name, it.getAttribute(name)));
+    again(it);
+    expect([page.document.getElementById("a") === it, it.outerHTML]).toEqual([
+      true,
+      '<p id="a" class="b" title="c" onclick="d"></p>',
+    ]);
+    page.window.customElements.define(
+      "x-a",
+      class extends page.window.HTMLElement {
+        static observedAttributes = ["title"];
+        attributeChangedCallback(...given: string[]) {
+          log.push(given.slice(0, 3).join());
+        }
+      },
+    );
+    again(page.$("x-a"));
+    const observer = new page.window.MutationObserver(() => {});
+    observer.observe(it, { attributeOldValue: true });
+    again(it);
+    expect(log).toEqual(["title,,c", "title,c,c"]);
+    expect(observer.takeRecords().map((it: any) => it.oldValue)).toEqual(["a", "b", "c", "d"]);
+  });
+
+  test("an attribute node keeps the value that was removed", () => {
+    using page = open("<p title=a></p>");
+    const node = page.$("p").getAttributeNode("title");
+    page.$("p").title = "b";
+    page.$("p").removeAttribute("title");
+    expect([node.value, node.ownerElement]).toEqual(["b", null]);
+  });
+
+  test("classList tidies the attribute up", () => {
+    using page = open("<p>");
+    const it = page.$("p");
+    const after = (value: string, change: (list: any) => void) => (
+      (it.className = value),
+      change(it.classList),
+      it.className
+    );
+    const values = ["", "a", "a b", "b a", "a b c", "ab a", " a", "a ", "a  b", "a\tb", "a b a", "é a", "\u{1f600} a"];
+    expect(values.map(value => after(value, list => list.add("a")))).toEqual([
+      "a",
+      "a",
+      "a b",
+      "b a",
+      "a b c",
+      "ab a",
+      "a",
+      "a",
+      "a b",
+      "a b",
+      "a b",
+      "é a",
+      "\u{1f600} a",
+    ]);
+    expect(values.map(value => after(value, list => list.remove("a")))).toEqual([
+      "",
+      "",
+      "b",
+      "b",
+      "b c",
+      "ab",
+      "",
+      "",
+      "b",
+      "b",
+      "b",
+      "é",
+      "\u{1f600}",
+    ]);
+    expect(values.map(value => after(value, list => list.toggle("b")))).toEqual([
+      "b",
+      "a b",
+      "a",
+      "a",
+      "a c",
+      "ab a b",
+      "a b",
+      "a b",
+      "a",
+      "a",
+      "a",
+      "é a b",
+      "\u{1f600} a b",
+    ]);
+    expect(
+      after(
+        "a",
+        list => (
+          list.add("b"),
+          list.add("c"),
+          list.remove("b"),
+          list.add("a"),
+          list.remove("c"),
+          list.remove("a"),
+          list.add("d")
+        ),
+      ),
+    ).toBe("d");
+  });
+
+  test("the places of many children are known while they change", () => {
+    using page = open("<div></div>");
+    const [parent, range] = [page.$("div"), page.document.createRange()];
+    const all = Array.from({ length: 100 }, () => parent.appendChild(page.document.createElement("p")));
+    for (let step = 0; step < 300; step++) {
+      const [moved] = all.splice((step * 37) % all.length, 1);
+      const to = (step * 11) % all.length;
+      parent.insertBefore(moved, all[to]);
+      all.splice(to, 0, moved);
+      const [a, b] = [(step * 7) % all.length, (step * 13) % all.length];
+      range.setStartBefore(all[a]);
+      range.setEndAfter(parent.lastChild);
+      expect([range.startOffset, range.endOffset, all[a].compareDocumentPosition(all[b])]).toEqual([
+        a,
+        100,
+        a === b ? 0 : a < b ? 4 : 2,
+      ]);
+    }
+  });
+
+  test.each([
+    ["elements with the same id", (it: any) => (it.id = "a"), (it: any) => it.ownerDocument.getElementById("a")],
+    ["places of children", () => {}, (it: any, range: any) => range.selectNode(it)],
+    ["the order of children", () => {}, (it: any, range: any) => range.comparePoint(it, 0)],
+  ])("asking for %s takes time in proportion to their number", (_, prepare, ask) => {
+    using page = open();
+    const all = Array.from({ length: 100_000 }, () => page.document.body.appendChild(page.document.createElement("p")));
+    const range = page.document.createRange();
+    range.selectNodeContents(all[50_000]);
+    all.forEach(prepare);
+    for (const it of all) ask(it, range);
+    for (const it of all.reverse()) (ask(it, range), it.remove());
+    expect(page.document.body.childNodes.length).toBe(0);
+  });
+
+  test.each([
+    ["beforetoggle", "<button popovertarget=it></button><p id=it popover></p>"],
+    ["command", "<button command=--a commandfor=it></button><p id=it></p>"],
+    ["submit", "<form id=it onsubmit='return false'><button></button></form>"],
+  ])("%s stays in the shadow tree that has its source", (type, html) => {
+    using page = open("<div></div>");
+    const [root, seen] = [page.$("div").attachShadow({ mode: "open" }), [] as unknown[]];
+    root.innerHTML = html;
+    for (const it of [page.$("div"), root])
+      it.addEventListener(
+        type,
+        (event: any) => seen.push([it === root, event.composed, event.composedPath().length]),
+        true,
+      );
+    root.querySelector("button").click();
+    expect(seen).toEqual([[true, true, 2]]);
+  });
+
+  test("listeners are removed one by one", () => {
+    using page = open("<p>");
+    const [target, log] = [page.$("p"), [] as number[]];
+    const all = Array.from({ length: 12 }, (_, i) => ["ab"[i % 2], () => log.push(i), i % 3 === 0] as const);
+    for (const it of all) target.addEventListener(...it);
+    for (const i of [7, 0, 11, 4, 3]) target.removeEventListener(...all[i]);
+    target.removeEventListener("a", all[1][1]);
+    target.addEventListener(...all[0]);
+    for (const type of "ab") target.dispatchEvent(new page.window.Event(type));
+    expect(log).toEqual([6, 0, 2, 8, 10, 9, 1, 5]);
+  });
+
   test("objects with named properties only take indices like other names", () => {
     using page = open();
     page.document[0] = "a";
@@ -465,6 +667,208 @@ describe("forms", () => {
     expect(page.$("select").offsetWidth).toBeGreaterThan(before);
   });
 
+  test("only the first legend is exempt from a disabled fieldset", () => {
+    using page = open("<form><fieldset disabled><legend><input required></legend><input required></fieldset></form>");
+    const [first, other] = [page.$("legend"), page.document.createElement("legend")];
+    const show = () =>
+      Array.from(
+        page.$("form").elements,
+        (it: any) => [":disabled", ":invalid"].map(state => +it.matches(state)).join("") + +it.willValidate,
+      ).join();
+    const steps: [() => void, string][] = [
+      [() => {}, "110,011,100"],
+      [() => first.before(other), "100,100,100"],
+      [() => other.remove(), "110,011,100"],
+      [() => first.after(other), "110,011,100"],
+      [() => other.after(first), "100,100,100"],
+      [() => (page.$("fieldset").disabled = false), "011,011,011".replace("011", "010")],
+    ];
+    expect(steps.map(([step]) => (step(), show()))).toEqual(steps.map(it => it[1]));
+  });
+
+  test("a big disabled fieldset takes time in proportion to its size", () => {
+    using page = open(`<form><fieldset>${"<output></output>".repeat(30_000)}<button></button></fieldset></form>`);
+    page.$("fieldset").insertAdjacentHTML("beforeend", "<fieldset></fieldset>".repeat(10_000));
+    page.$("fieldset").disabled = true;
+    expect(page.document.querySelectorAll(":disabled").length).toBe(10_002);
+  });
+
+  test("selecting in many controls takes time in proportion to their number", async () => {
+    using page = open("<textarea hidden>ab</textarea>".repeat(25_000));
+    const [all, seen] = [page.document.querySelectorAll("textarea"), Promise.withResolvers<number>()];
+    let count = 0;
+    page.document.addEventListener(
+      "select",
+      (event: any) => (count++, event.target === all[all.length - 1] && seen.resolve(count)),
+    );
+    for (const it of all) (it.setSelectionRange(0, 1), it.setSelectionRange(0, 2));
+    expect(await seen.promise).toBe(25_000);
+  });
+
+  test("hiding and showing one of many blocks takes no time in proportion to their number", () => {
+    using page = open(
+      `<div style="height: 100px; overflow: hidden; display: flex">${"<p hidden>a</p>".repeat(30_000)}</div>`,
+    );
+    let width = 0;
+    for (const it of page.$("div").children) {
+      it.style.color = "red";
+      width += page.$("div").offsetHeight;
+    }
+    for (const it of Array.from<any>(page.$("div").children)) {
+      it.remove();
+      width -= page.$("div").offsetHeight;
+    }
+    expect(width).toBe(0);
+  });
+
+  test("selectedOptions is live, and is read in time in proportion to its length", () => {
+    using page = open(`<select multiple>${"<option selected>a".repeat(40_000)}</select>`);
+    const { selectedOptions, options } = page.$("select");
+    expect(Array.from(selectedOptions).length).toBe(40_000);
+    const steps = [
+      () => (options[1].selected = false),
+      () => options[0].remove(),
+      () => (options[0].selected = true),
+      () => (page.$("select").multiple = false),
+      () => (page.$("select").selectedIndex = -1),
+    ];
+    expect(steps.map(step => (step(), [selectedOptions.length, selectedOptions[0]?.index]))).toEqual([
+      [39_999, 0],
+      [39_998, 1],
+      [39_999, 0],
+      [1, 0],
+      [0, undefined],
+    ]);
+  });
+
+  test.each([
+    ["<input>", (form: any) => (form[0].required = true)],
+    ["<input>", (form: any) => form[0].setCustomValidity("a")],
+    ["<input type=radio name=r><input type=radio name=r checked required>", (form: any) => (form[1].checked = false)],
+    [
+      "<input type=radio name=r><input type=radio name=r checked required>",
+      (form: any) => ((form[0].required = true), form[1].remove()),
+    ],
+    ["<fieldset disabled><input required></fieldset>", (form: any) => (form[0].disabled = false)],
+    ["<datalist><input required></datalist>", (form: any) => form.append(form.querySelector("input"))],
+    ["<select required><option>a</select>", (form: any) => (form[0].selectedIndex = -1)],
+    ["<select required><option>a</select>", (form: any) => (form[0][0].value = "")],
+    ["</form><input required>", (form: any) => form.append(form.nextSibling)],
+    ["</form><input required form=b>", (form: any) => (form.id = "b")],
+    ["</form><input required form=b><form id=b>", (form: any) => form.nextSibling.setAttribute("form", "a")],
+    ["</form><input required form=a>", (form: any) => form.previousSibling.remove(), "<form id=a></form>"],
+  ])("a valid form becomes invalid: %s", (html, spoil, before = "") => {
+    for (const ask of [(it: any) => it.checkValidity(), (it: any) => it.matches(":valid")]) {
+      using page = open(`${before}<form id=a class=it>${html}</form>`);
+      const form = page.$(".it");
+      expect([form.matches(":valid"), form.checkValidity()]).toEqual([true, true]);
+      spoil(form);
+      expect(ask(form)).toBe(false);
+    }
+  });
+
+  test("showing many popovers takes no time in proportion to the cube of their number", () => {
+    using page = open("<p popover=manual></p>".repeat(3_000));
+    for (const it of page.document.body.children) it.showPopover();
+    expect(page.document.querySelectorAll(":popover-open").length).toBe(3_000);
+  });
+
+  test("slots by name", async () => {
+    using page = open("<div><a slot=x></a><b></b><i slot=x></i><u slot=y></u></div>");
+    const [host, log] = [page.$("div"), [] as string[]];
+    const shadow = host.attachShadow({ mode: "open" });
+    shadow.innerHTML =
+      "<slot name=z></slot>".repeat(9) + "<slot id=x name=x></slot><slot id=none></slot><slot id=other name=x></slot>";
+    shadow.addEventListener("slotchange", (event: any) => log.push(event.target.id));
+    const slot = (id: string, name: string) => Object.assign(page.document.createElement("slot"), { id, name });
+    const steps: [() => void, string, string][] = [
+      [() => {}, "x,none,x,", "x,none"],
+      [() => (page.$("b").slot = "x"), "x,x,x,", "none,x"],
+      [() => (page.$("a").slot = "q"), ",x,x,", "x"],
+      [() => (page.$("a").slot = "x"), "x,x,x,", "x"],
+      [() => shadow.append(slot("late", "x")), "x,x,x,", ""],
+      [() => shadow.prepend(slot("early", "x")), "early,early,early,", "early,x"],
+      [() => shadow.getElementById("x").remove(), "early,early,early,", ""],
+      [() => shadow.getElementById("early").remove(), "other,other,other,", "other"],
+      [() => (shadow.getElementById("late").name = "y"), "other,other,other,late", "late"],
+      [() => page.$("u").removeAttribute("slot"), "other,other,other,none", "late,none"],
+    ];
+    for (const [step, assigned, changed] of steps) {
+      step();
+      await Promise.resolve();
+      expect([Array.from(host.children, (it: any) => it.assignedSlot?.id).join(), log.splice(0).join()]).toEqual([
+        assigned,
+        changed,
+      ]);
+    }
+    expect(
+      shadow
+        .getElementById("other")
+        .assignedNodes()
+        .map((it: any) => it.localName),
+    ).toEqual(["a", "b", "i"]);
+  });
+
+  test("many slots take time in proportion to their number", () => {
+    using page = open("<div></div>");
+    const host = page.$("div");
+    host.attachShadow({ mode: "open" }).innerHTML = Array.from(
+      { length: 5_000 },
+      (_, i) => `<slot name=${i}></slot>`,
+    ).join("");
+    for (let i = 0; i < 5_000; i++) host.appendChild(page.document.createElement("i")).slot = i;
+    expect(host.lastChild.assignedSlot.name).toBe("4999");
+  });
+
+  test("a placeholder comes and goes", () => {
+    using page = open("<style>* { field-sizing: content }</style><input><textarea></textarea>");
+    for (const it of [page.$("input"), page.$("textarea")]) {
+      const [empty, widths] = [it.offsetWidth, [] as number[]];
+      for (const step of [
+        () => (it.placeholder = "a long hint"),
+        () => (it.value = "a"),
+        () => (it.value = ""),
+        () => it.removeAttribute("placeholder"),
+        () => (it.placeholder = "a much longer hint"),
+      ]) {
+        step();
+        widths.push(it.offsetWidth - empty);
+      }
+      expect([widths[0] > 40, widths[1] < 20, widths[2] === widths[0], widths[3], widths[4] > widths[0]]).toEqual([
+        true,
+        true,
+        true,
+        0,
+        true,
+      ]);
+    }
+  });
+
+  test("reset() brings back the defaults", () => {
+    using page = open(
+      "<form><input value=a required><input type=checkbox checked required><input type=number value=x><input type=date value=2020-01-02></form>",
+    );
+    const [text, box, number, date] = page.$("form").elements;
+    const show = () => [text.value, text.matches(":invalid"), box.matches(":checked"), number.value, date.value];
+    [text.value, box.checked, number.type, date.value] = ["", false, "text", ""];
+    expect(show()).toEqual(["", true, false, "x", ""]);
+    page.$("form").reset();
+    expect(show()).toEqual(["a", false, true, "x", "2020-01-02"]);
+    text.setSelectionRange(1, 1);
+    page.$("form").reset();
+    text.defaultValue = "bc";
+    expect([text.value, text.selectionStart]).toEqual(["bc", 1]);
+  });
+
+  test("a select that drops down has no line-height", () => {
+    using page = open(
+      "<style>select { line-height: 100px }</style><select></select><select style='color: red; border: 0'></select><select size=2></select><select style='appearance: none'></select>",
+    );
+    expect(
+      Array.from(page.document.querySelectorAll("select"), it => page.window.getComputedStyle(it).lineHeight),
+    ).toEqual(["normal", "normal", "100px", "100px"]);
+  });
+
   test("a fieldset and an object can belong to a form that they are not in", () => {
     using page = open("<form id=f></form><fieldset form=f></fieldset><object form=f></object>");
     expect((page.$("form") as any).length).toBe(2);
@@ -677,6 +1081,7 @@ describe("forms", () => {
     ["a select", () => {}, "select", "option", (it: any) => it.length + it.selectedIndex],
     ["a form", () => {}, "form", "output", (it: any) => it.length],
     ["a table", () => {}, "table", "tr", (it: any) => it.rows.length],
+    ["a table with a head", (it: any) => it.createTHead().remove(), "table", "tr", (it: any) => it.rows.length],
   ])("filling and emptying %s takes time in proportion to its size", (_, prepare, tag, child, count) => {
     using page = open(`<${tag}></${tag}>`);
     const parent = page.$(tag) as any;
@@ -685,6 +1090,34 @@ describe("forms", () => {
     for (let i = 0; i < 30_000; i++) (parent.appendChild(page.document.createElement(child)), (sum += count(parent)));
     while (parent.lastChild) (parent.lastChild.remove(), (sum -= count(parent) + 1));
     expect(Math.abs(sum)).toBeLessThan(2);
+  });
+
+  test("the rows of a table are in the order of its parts, wherever those move", () => {
+    using page = open(
+      `<table><thead><tr id=h></thead><tbody>${"<tr>".repeat(10)}</tbody><tfoot><tr id=f></tfoot></table>`,
+    );
+    const table = page.$("table") as any;
+    const { tHead, tFoot } = table;
+    const row = (id: string) => Object.assign(page.document.createElement("tr"), { id });
+    const steps = [
+      () => {},
+      () => table.append(row("a")),
+      () => table.append(tFoot),
+      () => table.prepend(row("b")),
+      () => table.prepend(tHead),
+      () => table.prepend(tFoot),
+      () => (table.append(tFoot), table.append(tHead), tHead.after(row("c"))),
+    ];
+    const ids = () => [...table.rows].map(it => it.id || ".").join("");
+    expect(steps.map(step => (step(), ids()))).toEqual([
+      "h..........f",
+      "h..........af",
+      "h..........af",
+      "hb..........af",
+      "hb..........af",
+      "hb..........af",
+      "hb..........acf",
+    ]);
   });
 
   test("what controls have been given outlives a collection", () => {
@@ -818,6 +1251,62 @@ describe("top layer", () => {
     expect([page.document.activeElement.id, page.$("dialog").returnValue]).toEqual(["a", "done"]);
   });
 
+  test("what has the focus is not scrolled into view again, unless it is invalid", () => {
+    using page = open(
+      `<input id=a required><label id=b for=a></label><div id=c tabindex=0></div><div style="height: 5000px"></div>`,
+    );
+    page.resize(200, 100, 1);
+    const after = (first: string, action: () => void) => {
+      page.$(first).focus();
+      page.window.scrollTo(0, 2000);
+      action();
+      return page.window.scrollY;
+    };
+    expect(after("#a", () => page.$("#a").focus())).toBe(2000);
+    expect(after("#a", () => page.$("#b").focus())).toBe(2000);
+    expect(after("#c", () => page.$("#c").focus())).toBe(2000);
+    expect(after("#c", () => page.$("#a").focus())).toBe(0);
+    expect(after("#a", () => page.$("#a").reportValidity())).toBe(0);
+  });
+
+  test.each([
+    ["display: none", false],
+    ["display: table-column", false],
+    ["display: table-column-group", false],
+    ["content-visibility: hidden", false],
+    ["visibility: hidden", false],
+    ["content: url(data:,)", false],
+    ["display: contents", true],
+    ["display: inline", true],
+    ["float: left", true],
+  ])("what is in an element that has just been given %s takes the focus: %p", (declarations, expected) => {
+    using page = open("<div><p><button></button></p></div>");
+    page.$("button").getBoundingClientRect();
+    page.$("div").style.cssText = declarations;
+    page.$("button").focus();
+    expect(page.document.activeElement === page.$("button")).toBe(expected);
+    page.$("button").blur();
+    page.$("div").style.cssText = "";
+    page.$("button").focus();
+    expect(page.document.activeElement).toBe(page.$("button"));
+  });
+
+  test("selectors see the state of controls at once", () => {
+    using page = open("<form><input required placeholder=a></form>");
+    const seen = () => [":invalid", ":placeholder-shown", "form:has(:valid) *"].map(it => page.$("input").matches(it));
+    expect(seen()).toEqual([true, true, false]);
+    page.$("input").value = "a";
+    expect(page.$("input").matches("input")).toBe(true);
+    expect(seen()).toEqual([false, false, true]);
+  });
+
+  test("an image button is as wide as its style has just become", () => {
+    using page = open('<input type=image style="width: 10px">');
+    expect(page.$("input").width).toBe(10);
+    page.$("input").style.width = "20px";
+    expect(page.$("input").width).toBe(20);
+  });
+
   test("only one of the details of a name is open", () => {
     using page = open("<details name=n open id=a></details><details name=n id=b><summary></summary></details>");
     page.$("summary").click();
@@ -915,6 +1404,11 @@ describe("editing", () => {
 
   test("text that is nested deeply is replaced", () => {
     expect(edit("<b>".repeat(400) + "[a]", "insertText", "c").replaceAll(/<.*?>/g, "")).toBe("c");
+  });
+
+  test("text is deleted that has many empty elements on both sides", () => {
+    const empty = "<i></i>".repeat(3000);
+    expect(edit(`${"<b>".repeat(400)}a${empty}[b]${empty}c`, "delete").replaceAll(/<.*?>/g, "")).toBe("ac");
   });
 
   test("spaces are spaces where they are preserved", () => {
@@ -1039,6 +1533,140 @@ describe("markup that repeats", () => {
   });
 });
 
+describe("markup that is parsed in bulk", () => {
+  test.each(["write", "innerHTML"])("has the states and hints that depend on what is around it: %s", how => {
+    using page = open();
+    const { document, window } = page;
+    const markup = `<div><div dir=rtl><p><a href=a>1</a><a>2</a></p></div><div contenteditable><b title=t>3</b></div>
+      <table><tr><td id=plain>4</table><table border=1 cellpadding=7><tr><td id=styled>5<table><tr><td id=inner>6</table></table></div>`;
+    if (how === "write") (document.open(), document.write(markup), document.close());
+    else document.body.innerHTML = markup;
+    const count = (selector: string) => document.querySelectorAll(selector).length;
+    const cell = (id: string) =>
+      (it => [it.paddingTop, it.borderTopWidth])(window.getComputedStyle(document.getElementById(id)));
+    expect([count(":any-link"), count(":dir(rtl)"), count(":read-write"), count("[title]")]).toEqual([1, 4, 2, 1]);
+    expect(["plain", "styled", "inner"].map(cell)).toEqual([
+      ["1px", "0px"],
+      ["7px", "1px"],
+      ["1px", "0px"],
+    ]);
+  });
+
+  test("goes on where a long piece ends", () => {
+    using page = open();
+    const { document } = page;
+    const rows = Buffer.alloc(9 * 1000, "<p>ab</p>").toString();
+    document.open();
+    for (const piece of [rows + "<i cla", "ss=c>x</i>" + rows + "&am", "p;" + rows + "\r", "\n" + rows + "</", "body>"])
+      document.write(piece);
+    document.close();
+    expect(document.body.innerHTML).toBe(`${rows}<i class="c">x</i>${rows}&amp;${rows}\n${rows}`);
+  });
+
+  test("is found by searches that follow other searches", () => {
+    using page = open();
+    const { document } = page;
+    document.open();
+    document.write(Buffer.alloc(14 * 300, "<p><u></u></p>").toString() + "<div><span>");
+    for (let i = 0; i < 20; i++) expect(document.querySelectorAll(`p > u:not(.a${i})`).length).toBe(300);
+    document.write("<b><u></u></b>");
+    expect(document.querySelectorAll("b > u").length).toBe(1);
+  });
+
+  test("XML elements that look alike do not share changes or namespaces", () => {
+    using page = open();
+    const source = `<r xmlns:x="urn:1"><a b="1"/><a b="1"/><a b="2"/><x:a/><s xmlns:x="urn:2" xmlns="urn:3"><x:a/><a b="2">t<![CDATA[u]]>v</a></s><a b="2"/></r>`;
+    const xml = new page.window.DOMParser().parseFromString(source, "text/xml");
+    const all = [...xml.getElementsByTagNameNS("*", "a")];
+    expect(all.map(it => it.namespaceURI)).toEqual([null, null, null, "urn:1", "urn:2", "urn:3", null]);
+    all[0].setAttribute("b", "3");
+    expect(new page.window.XMLSerializer().serializeToString(xml)).toBe(source.replace('b="1"', 'b="3"'));
+  });
+
+  test("an XML element has a limited number of attributes", () => {
+    using page = open();
+    const parse = (count: number, prefix: string) => {
+      const source = `<r xmlns:x="urn:1"><a ${Array.from({ length: count }, (_, i) => `${prefix}a${i}=""`).join(" ")}/></r>`;
+      return new page.window.DOMParser().parseFromString(source, "text/xml").querySelector("a, parsererror").localName;
+    };
+    expect([parse(4096, ""), parse(4096, "x:"), parse(4097, ""), parse(4097, "x:")]).toEqual([
+      "a",
+      "a",
+      "parsererror",
+      "parsererror",
+    ]);
+  });
+});
+
+test("a page that is gone is freed before the last of its nodes is swept", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { createPage, countEngines } = require("bun:internal-for-testing").desktopInternals;
+      const open = fontScope => {
+        const page = createPage({ native: null, surface: 0, fontScope });
+        page.parseHTML("<!doctype html>");
+        return page;
+      };
+      const other = open(1);
+      (() => {
+        const page = open(2);
+        for (let i = 0; i < 50_000; i++) page.document.createElement("p");
+        page.dispose();
+      })();
+      console.log(countEngines());
+      require("bun:jsc").fullGC();
+      // A block is swept when the room in it is needed. Documents have blocks of their own.
+      const kept = [];
+      while (countEngines() > 1 && kept.length < 5_000) kept.push(new other.window.Document());
+      console.log(countEngines());`,
+    ],
+    // A compilation that is under way holds the variables of its loop.
+    env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
+    stderr: "inherit",
+  });
+  expect(await proc.stdout.text()).toBe("2\n1\n");
+  expect(await proc.exited).toBe(0);
+});
+
+test("a node keeps what it needs of a page that is gone", () => {
+  const kept = (() => {
+    using page = open();
+    page.document.body.innerHTML = "<p><b>1</b></p><template><i>2</i></template>";
+    const parsed = new page.window.DOMParser().parseFromString("<u>3</u>", "text/html");
+    return [page.document.querySelector("b"), page.document.querySelector("template").content.firstChild, parsed.body];
+  })();
+  const seen = [];
+  while (kept.length) {
+    Bun.gc(true);
+    const node = kept.shift();
+    node.append(node.ownerDocument.createElement("s"));
+    seen.push(node.outerHTML);
+  }
+  expect(seen).toEqual(["<b>1<s></s></b>", "<i>2<s></s></i>", "<body><u>3</u><s></s></body>"]);
+});
+
+test.each(["&", "<", ">", '"', "\u00a0", "\n"])("%j is escaped wherever it is", special => {
+  using page = open();
+  const element = page.document.createElement("p");
+  const escape = (text: string, set: RegExp) =>
+    text.replace(
+      set,
+      it => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "\u00a0": "&nbsp;", "\n": "&#10;" })[it]!,
+    );
+  for (let length = 1; length < 70; length++) {
+    for (let at = 0; at < length; at++) {
+      const text = Buffer.alloc(at, "=").toString() + special + Buffer.alloc(length - at - 1, "'").toString();
+      element.title = element.textContent = text;
+      expect(element.outerHTML).toBe(`<p title="${escape(text, /[&<>"\u00a0]/g)}">${escape(text, /[&<>\u00a0]/g)}</p>`);
+      expect(new page.window.XMLSerializer().serializeToString(element)).toEndWith(
+        ` title="${escape(text, /[&<>"\n]/g)}">${escape(text, /[&<>]/g)}</p>`,
+      );
+    }
+  }
+});
+
 describe("nodes that no script has asked for", () => {
   const source = `<!--a-->t<p id=x class=c>1<!--b--><!--c--><b>2</b><!--d--></p><svg><g><title>3</title></g></svg><table>4<tr><td id=y>5</table><i>6<u>7</i>8</u>`;
   const shape = (node: any): unknown => {
@@ -1066,6 +1694,16 @@ describe("nodes that no script has asked for", () => {
     [
       "cloneNode",
       (page, markup) => Object.assign(page.document.createElement("p"), { innerHTML: markup }).cloneNode(true),
+    ],
+    [
+      "XML",
+      (page, markup) => {
+        const xml = new page.window.DOMParser().parseFromString(
+          `<p xmlns="http://www.w3.org/1999/xhtml">${markup}</p>`,
+          "application/xhtml+xml",
+        );
+        return page.document.adoptNode(xml.documentElement);
+      },
     ],
   ])("have no object: %s", (_, make) => {
     using page = open();
@@ -1217,6 +1855,51 @@ test("window.find ignores case, accents and what is hidden, and stops at blocks"
   using page = open("<p>Cr\xe8me <b>br\xfb</b>l\xe9e</p><p hidden>secret</p><p>a</p><p>b</p>");
   const found = ["creme  brulee", "secret", "ab"].map(it => page.window.find(it) && `${page.window.getSelection()}`);
   expect(found).toEqual(["Cr\xe8me br\xfbl\xe9e", false, false]);
+});
+
+describe("messages between a page and its host", () => {
+  const { decodesMessage } = desktopInternals;
+  const u32 = (value: number) => [...new Uint8Array(new Uint32Array([value]).buffer)];
+  const text = (value: string) => [...u32(value.length), ...Buffer.from(value)];
+  const kindsOf = (family: string, rest: number[]) =>
+    Array.from({ length: 300 }, (_, kind) => kind).filter(kind =>
+      decodesMessage(family, new Uint8Array([kind & 255, kind >> 8, ...rest])),
+    );
+  const console = (level: number, message: number[], more: number[] = []) =>
+    decodesMessage("notice", new Uint8Array([0, 0, level, ...message, ...u32(1), ...text("u"), ...more]));
+
+  test("only what is well formed is decoded", () => {
+    expect({
+      whole: console(3, text("m")),
+      keyword: console(4, text("m")),
+      utf8: console(3, [...u32(1), 0xff]),
+      length: console(3, [...u32(0xffffffff), 109]),
+      trailing: console(3, text("m"), [0]),
+      empty: decodesMessage("notice", new Uint8Array()),
+      kind: decodesMessage("notice", new Uint8Array([255, 255])),
+    }).toEqual({ whole: true, keyword: false, utf8: false, length: false, trailing: false, empty: false, kind: false });
+    const [zero, one, two] = [0, 1, 2].map(byte => kindsOf("answer", [byte]));
+    expect(one.filter(kind => zero.includes(kind) && !two.includes(kind)).length).toBeGreaterThan(5);
+  });
+
+  test("lengths are limited", () => {
+    const one = kindsOf("notice", text("ab"));
+    const lists = kindsOf("notice", [...u32(1), ...text("a")]).filter(kind => !one.includes(kind));
+    const sized = (kind: number, count: number, size: number) => {
+      const bytes = new Uint8Array(6 + size);
+      bytes.set([kind, 0, ...u32(count)]);
+      return decodesMessage("notice", bytes);
+    };
+    expect([one.length > 0, lists.length > 0]).toEqual([true, true]);
+    for (const kind of one)
+      expect([sized(kind, 1 << 21, 1 << 21), sized(kind, 1 << 22, 1 << 22)]).toEqual([true, false]);
+    expect([sized(lists[0], 1000, 4000), sized(lists[0], 0xffffffff, 4000)]).toEqual([true, false]);
+  });
+
+  test("every prefix of a message is refused", () => {
+    const whole = [0, 0, 1, ...text("message"), ...u32(7), ...text("url")];
+    expect(whole.map((_, end) => decodesMessage("notice", new Uint8Array(whole.slice(0, end))))).not.toContain(true);
+  });
 });
 
 describe("images", () => {
@@ -1927,4 +2610,651 @@ test("querySelector follows changes, also if the selector starts with an id", ()
   `);
   expect(() => document.querySelector("#none > > i")).toThrow("not a valid selector");
   expect(() => document.querySelector("#1")).toThrow("not a valid selector");
+});
+
+describe("changes that few can notice", () => {
+  test("ids are found by their text, whatever kind of string has it", () => {
+    using page = open();
+    const { document } = page;
+    const ids = [
+      "a",
+      "abcdefg",
+      "abcdefgh",
+      "class",
+      "aria-describedby",
+      Buffer.alloc(200, "x").toString(),
+      "é",
+      "日本語",
+      "\ud800",
+      "\udc00",
+      "\ufffd",
+    ];
+    const elements = ids.map(id => document.body.appendChild(Object.assign(document.createElement("p"), { id })));
+    const wide = (it: string) => (it + "日").slice(0, -1);
+    const rope = (it: string) => [it.slice(0, 1), it.slice(1)].reduce((a, b) => a + b);
+    for (const spell of [String, wide, rope]) {
+      expect(ids.map(it => elements.indexOf(document.getElementById(spell(it))))).toEqual(ids.map((_, i) => i));
+      expect(ids.map(it => document.getElementById(spell(it + "-")))).toEqual(ids.map(() => null));
+    }
+    const fragment = document.createDocumentFragment();
+    fragment.append(...elements);
+    expect(ids.map(it => document.getElementById(it))).toEqual(ids.map(() => null));
+    expect(ids.map(it => elements.indexOf(fragment.getElementById(it)))).toEqual(ids.map((_, i) => i));
+  });
+
+  test.each([2, 3, 8, 9, 12])("the first of %d elements with an id is found wherever they move", count => {
+    using page = open(
+      Array.from(
+        { length: count },
+        (_, i) => `<div>${i % 3 ? "<b><i id=x></i></b>" : "<i id=x><u id=x></u></i>"}</div>`,
+      ).join(""),
+    );
+    const { body } = page.document;
+    for (let i = 0; i < 40; i++) {
+      const moved = body.children[(i * 7) % count];
+      const target = body.children[(i * 5 + 1) % count];
+      if (i % 4 === 3 && !moved.contains(target))
+        (target.prepend(moved), body.append(page.document.createElement("div")));
+      else body.insertBefore(moved, target);
+      expect(page.document.getElementById("x")).toBe([...body.getElementsByTagName("*")].find(it => it.id === "x"));
+    }
+    body.textContent = "";
+    expect(page.document.getElementById("x")).toBe(null);
+  });
+
+  test("what is set outside of the document counts once it is inside", () => {
+    using page = open(
+      "<style>#b { color: rgb(1, 0, 0) } .d { width: 2px } [title=f] { height: 3px } [lang=h] { order: 4 }</style>",
+    );
+    const { document } = page;
+    const element = document.createElement("div");
+    for (const [name, values] of Object.entries({
+      id: "ab",
+      className: "cd",
+      title: "ef",
+      lang: "gh",
+      dir: ["ltr", "rtl"],
+      align: ["left", "right"],
+    }))
+      for (const value of values) element[name] = value;
+    const parent = document.createElement("p");
+    parent.append(element);
+    expect(["#a", "#b", ".c", ".d", "[title=e]", "[title=f]"].map(it => parent.querySelector(it) === element)).toEqual([
+      false,
+      true,
+      false,
+      true,
+      false,
+      true,
+    ]);
+    document.body.append(parent);
+    const { color, width, height, order, direction, textAlign } = page.window.getComputedStyle(element);
+    expect([color, width, height, order, direction, textAlign]).toEqual([
+      "rgb(1, 0, 0)",
+      "2px",
+      "3px",
+      "4",
+      "rtl",
+      "-webkit-right",
+    ]);
+    expect([document.getElementById("a"), document.getElementById("b")]).toEqual([null, element]);
+    parent.remove();
+    element.id = "";
+    document.body.append(parent);
+    expect([document.getElementById("b"), element.outerHTML]).toEqual([
+      null,
+      '<div id="" class="d" title="f" lang="h" dir="rtl" align="right"></div>',
+    ]);
+  });
+
+  test("elements that share a class do not share its change", () => {
+    using page = open();
+    const [a, b] = [0, 0].map(() => Object.assign(page.document.createElement("i"), { className: "x" }));
+    const copy = a.cloneNode();
+    const list = page.document.body.getElementsByClassName("y");
+    a.className = "y";
+    b.title = "t";
+    b.className = "z  y";
+    page.document.body.append(a, b, copy);
+    expect([page.document.body.innerHTML, list.length]).toEqual([
+      '<i class="y"></i><i class="z  y" title="t"></i><i class="x"></i>',
+      2,
+    ]);
+    b.className = "z y";
+    a.className = "y";
+    expect([b.getAttribute("class"), list.length]).toEqual(["z y", 2]);
+  });
+
+  test("a value that a selector or attr() reads restyles", () => {
+    using page = open(
+      "<style>[rel=b] { order: 1 } i::after { content: attr(title) }</style><b rel=a title=a></b><i title=a></i>",
+    );
+    const style = (selector: string, pseudo?: string) => page.window.getComputedStyle(page.$(selector), pseudo);
+    expect([style("b").order, style("i", "::after").content]).toEqual(["0", '"a"']);
+    page.$("b").title = "b";
+    page.$("b").setAttribute("rel", "b");
+    page.$("i").title = "b";
+    expect([style("b").order, style("i", "::after").content, page.$("b").title]).toEqual(["1", '"b"', "b"]);
+  });
+
+  test("moves between parents outside of the document", () => {
+    using page = open();
+    const make = (name: string) => page.document.createElement(name);
+    const [from, to, a, b, c] = ["div", "div", "a", "b", "i"].map(make);
+    const lists = [from.childNodes, to.children, to.getElementsByTagName("b")];
+    const state = () => [from.innerHTML, to.innerHTML, ...lists.map(it => it.length), to.querySelector("b") === b];
+    from.append(a, "t", b, new page.window.Comment("c"), c);
+    to.appendChild(b);
+    expect(state()).toEqual(["<a></a>t<!--c--><i></i>", "<b></b>", 4, 1, 1, true]);
+    to.insertBefore(c, b);
+    to.insertBefore(b, b);
+    to.appendChild(b);
+    to.insertBefore(c, b);
+    from.insertBefore(a, from.lastChild);
+    expect(state()).toEqual(["t<a></a><!--c-->", "<i></i><b></b>", 3, 2, 1, true]);
+    expect(() => b.appendChild(to)).toThrow(expect.objectContaining({ name: "HierarchyRequestError" }));
+    expect(() => b.appendChild(b)).toThrow(expect.objectContaining({ name: "HierarchyRequestError" }));
+    expect(() => to.insertBefore(a, a)).toThrow(expect.objectContaining({ name: "NotFoundError" }));
+    to.removeChild(b);
+    expect(state()).toEqual(["t<a></a><!--c-->", "<i></i>", 3, 1, 0, false]);
+  });
+
+  test("observers, ranges and iterators see a node that is put where it was", () => {
+    using page = open();
+    const parent = page.document.createElement("div");
+    parent.innerHTML = "<a></a><b>t</b>";
+    const observer = new page.window.MutationObserver(() => {});
+    observer.observe(parent, { childList: true });
+    parent.appendChild(parent.lastChild);
+    expect(observer.takeRecords().map((it: any) => [it.removedNodes.length, it.addedNodes.length])).toEqual([
+      [1, 0],
+      [0, 1],
+    ]);
+    observer.disconnect();
+    const range = page.document.createRange();
+    range.selectNodeContents(parent.lastChild);
+    const iterator = page.document.createNodeIterator(parent);
+    for (let i = 0; i < 3; i++) iterator.nextNode();
+    parent.appendChild(parent.lastChild);
+    expect([range.startContainer === parent, range.startOffset, iterator.referenceNode.localName]).toEqual([
+      true,
+      1,
+      "a",
+    ]);
+  });
+
+  test("what moves within the document keeps its ids, and takes the state of its new place", () => {
+    using page = open(
+      "<div dir=rtl></div><fieldset disabled><legend id=first><b id=b></b></legend><legend><input></legend></fieldset><p id=p><i id=i></i></p>",
+    );
+    const { document } = page;
+    const [div, p, fieldset] = ["div", "p", "fieldset"].map(page.$);
+    div.append(p);
+    expect([
+      document.getElementById("p") === p,
+      document.getElementById("i").matches(":dir(rtl)"),
+      p.isConnected,
+    ]).toEqual([true, true, true]);
+    document.body.append(p);
+    expect(document.getElementById("i").matches(":dir(rtl)")).toBe(false);
+    expect(page.$("input").matches(":disabled")).toBe(true);
+    fieldset.prepend(fieldset.lastChild);
+    expect(page.$("input").matches(":disabled")).toBe(false);
+    p.remove();
+    expect([document.getElementById("p"), document.getElementById("i")]).toEqual([null, null]);
+  });
+
+  test.each(["removes the parent", "removes the next sibling"])(
+    "a frame that goes %s of what is being moved",
+    action => {
+      using page = open("<p id=moved><b id=inner>x</b><iframe></iframe></p><div><i></i></div>");
+      const [moved, parent, next] = ["p", "div", "i"].map(page.$);
+      moved.lastChild.contentWindow.addEventListener("pagehide", () =>
+        (action === "removes the parent" ? parent : next).remove(),
+      );
+      parent.insertBefore(moved, next);
+      expect([
+        moved.isConnected,
+        moved.firstChild.isConnected,
+        page.document.getElementById("moved"),
+        page.document.getElementById("inner"),
+      ]).toEqual([false, false, null, null]);
+      page.document.body.append(moved);
+      expect([
+        page.document.getElementById("inner") === moved.firstChild,
+        moved.getBoundingClientRect().width > 0,
+      ]).toEqual([true, true]);
+    },
+  );
+
+  test("a list of elements outlasts changes of text, and not those of elements between them", () => {
+    using page = open("<table><tr><td>a<tr><td>b</table>");
+    const [{ rows }, cell] = [page.$("table"), page.$("td")];
+    expect(rows.length).toBe(2);
+    cell.removeChild(cell.firstChild);
+    cell.append("c");
+    expect(rows.length).toBe(2);
+    cell.append("d");
+    page.$("tbody").insertAdjacentHTML("beforeend", "<tr>");
+    cell.append("e");
+    expect(rows.length).toBe(3);
+    cell.append("f");
+    page.$("tbody").innerHTML = "<tr>";
+    page.document.body.append("g");
+    expect(rows.length).toBe(1);
+  });
+
+  test("a deep copy is searched like the original", () => {
+    using page = open(
+      '<div><p><b id=x class=y data-z=1 style="width: 1px"></b><svg><a:b/><foreignObject/></svg></p></div>',
+    );
+    page.$("b").style.width = "2px";
+    const copy = page.$("div").cloneNode(true);
+    expect(["#x", ".y", "[data-z='1']", "p > b"].map(it => copy.querySelector(it)?.tagName)).toEqual([
+      "B",
+      "B",
+      "B",
+      "B",
+    ]);
+    expect([...copy.querySelector("svg").children].map(it => it.tagName + it.constructor.name)).toEqual([
+      "a:bSVGElement",
+      "foreignObjectSVGForeignObjectElement",
+    ]);
+    page.$("div").replaceWith(copy);
+    expect([
+      page.document.getElementById("x") === copy.querySelector("b"),
+      page.window.getComputedStyle(page.$("b")).width,
+    ]).toEqual([true, "2px"]);
+  });
+});
+
+describe.concurrent("optimized code", () => {
+  async function run(body: string, env = {}) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--preload=bun:desktop/dom",
+        "-e",
+        `const { noInline, numberOfDFGCompiles } = require("bun:jsc");
+        const same = (actual, expected) => { if (actual !== expected) throw new Error(actual + " is not " + expected); };
+        const make = html => Object.assign(document.createElement("div"), { innerHTML: html });
+        const hot = (run, rounds = 2000) => { noInline(run); for (let i = 0; i < rounds; i++) run(i); console.log(numberOfDFGCompiles(run) > 0); };
+        ${body}`,
+      ],
+      env: {
+        ...bunEnv,
+        BUN_JSC_useConcurrentJIT: "0",
+        BUN_JSC_thresholdForJITAfterWarmUp: "10",
+        BUN_JSC_thresholdForOptimizeAfterWarmUp: "50",
+        BUN_JSC_thresholdForFTLOptimizeAfterWarmUp: "500",
+        BUN_JSC_validateDFGClobberize: "1",
+        BUN_JSC_scribbleFreeCells: "1",
+        ...env,
+      },
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("true\n");
+    expect(exitCode).toBe(0);
+  }
+
+  test("reads links again after each change", () =>
+    run(`const [parent, a, b] = [make(""), make(""), make("")];
+      const names = (...nodes) => nodes.map(it => (it === a ? "a" : it === b ? "b" : it === parent ? "p" : it)).join();
+      hot(() => {
+        same(names(parent.firstChild, parent.lastChild, a.parentNode, a.nextSibling, parent.hasChildNodes()), ",,,,false");
+        parent.appendChild(a);
+        same(names(parent.firstChild, parent.lastChild, a.parentNode, a.nextSibling, parent.hasChildNodes()), "a,a,p,,true");
+        parent.append(b);
+        same(names(parent.lastChild, a.nextSibling, b.previousSibling, a.nextElementSibling, parent.lastElementChild), "b,b,a,b,b");
+        a.remove();
+        same(names(parent.firstChild, b.previousSibling, a.parentElement, parent.firstElementChild), "b,,,b");
+        parent.textContent = "";
+      });`));
+
+  test("makes the objects of nodes that it is the first to ask for", () =>
+    run(
+      `hot(i => {
+        const parent = make("a<b id=x>" + i + "</b><!--c-->");
+        const [first, last] = i & 1 ? [parent.firstChild, parent.lastChild] : [parent.lastChild, parent.firstChild].reverse();
+        same([first.nodeType, first.nextSibling.nodeType, last.nodeType, parent.nodeType].join(), "3,1,8,1");
+        same(first.nextSibling.firstChild.data, "" + i);
+        same(first.nextSibling.firstChild, last.previousSibling.lastChild);
+        same(first.parentNode, parent);
+      });`,
+      { BUN_JSC_gcMaxHeapSize: "100000", BUN_JSC_sweepSynchronously: "1" },
+    ));
+
+  test("reads attributes and names again after each change", () =>
+    run(
+      `const element = document.body.appendChild(make(""));
+      const xml = document.implementation.createDocument(null, "x");
+      hot(i => {
+        const id = "i" + i;
+        same(document.getElementById(id), null);
+        element.id = id;
+        same(element.id + element.getAttribute("id") + element.hasAttribute("title"), id + id + false);
+        same(document.getElementById(id), element);
+        element.setAttribute("title", id);
+        element.className = id;
+        element.style.width = i + "px";
+        same(element.getAttribute("TITLE") + element.className + element.getAttribute("style"), id + id + "width: " + i + "px;");
+        element.removeAttribute("title");
+        same(element.getAttribute("title"), null);
+        same(element.tagName + element.localName + element.isConnected, "DIVdivtrue");
+        xml.adoptNode(element);
+        same(element.tagName + element.nodeName + element.isConnected + (element.ownerDocument === xml), "divdivfalsetrue");
+        document.body.appendChild(element);
+      });`,
+      { BUN_JSC_gcMaxHeapSize: "100000", BUN_JSC_sweepSynchronously: "1" },
+    ));
+
+  test("finds elements among siblings, and names in the case of the document", () =>
+    run(`const xml = document.implementation.createDocument(null, "x");
+      hot(i => {
+        const parent = make("a<!--b--><p></p>c<svg></svg><x-y></x-y>d");
+        const names = (...nodes) => nodes.map(it => it && it.nodeName + " " + it.localName).join();
+        const [p, last] = [parent.firstElementChild, parent.lastElementChild];
+        same(names(p, p.nextElementSibling, last, last.previousElementSibling, parent.firstChild), "P p,svg svg,X-Y x-y,svg svg,#text undefined");
+        same(names(p.previousElementSibling, last.nextElementSibling, parent.firstChild.nextElementSibling, p.firstElementChild), ",,P p,");
+        same(names(p.parentElement, parent.parentElement, document.documentElement, document.documentElement.parentElement), "DIV div,,HTML html,");
+        same(names(document.ownerDocument, p.ownerDocument, parent.firstChild.nextSibling), ",#document undefined,#comment undefined");
+        (i & 1 ? xml.documentElement : document.body).append(parent);
+        same(p.tagName + last.tagName + p.isConnected, i & 1 ? "px-ytrue" : "PX-Ytrue");
+        parent.remove();
+      });`));
+
+  test("answers with the same object, however many others the node has", () =>
+    run(
+      `const names = ["childNodes", "children", "classList", "attributes", "style", "dataset", "cells"];
+      const read = row => [row.childNodes, row.children, row.classList, row.attributes, row.style, row.dataset, row.cells];
+      const types = "NodeList,HTMLCollection,DOMTokenList,NamedNodeMap,CSSStyleProperties,DOMStringMap,HTMLCollection";
+      const { implementation } = document;
+      hot(i => {
+        const row = document.createElement("tr");
+        const first = names.map((_, k) => names[(i + k) % names.length]).slice(0, i % 4).map(it => [it, row[it]]);
+        for (const [name, object] of first) same(row[name], object);
+        const all = read(row);
+        for (const [name, object] of first) same(all[names.indexOf(name)], object);
+        same(all.map(it => it.constructor.name).join(), types);
+        same(all[1] === all[6], false);
+        read(row).forEach((it, k) => same(it, all[k]));
+        same(document.implementation, implementation);
+      });`,
+      { BUN_JSC_gcMaxHeapSize: "100000", BUN_JSC_sweepSynchronously: "1" },
+    ));
+
+  test("reads text again after each change", () =>
+    run(`const parent = make("a");
+      hot(i => {
+        parent.textContent = i;
+        same(parent.textContent + parent.firstChild.data + parent.firstChild.nodeValue + parent.nodeValue, "" + i + i + i + null);
+        parent.firstChild.data = "b";
+        same(parent.textContent + parent.firstChild.data + parent.firstChild.nodeValue, "bbb");
+        parent.append(make("c"), new Comment("d"));
+        same(parent.textContent + parent.lastChild.textContent + parent.lastChild.data + document.textContent, "bcddnull");
+      });`));
+
+  test("converts arguments of other types, and refuses other receivers", () =>
+    run(`const element = make("<b></b>");
+      element.setAttribute("1", "one");
+      const { getAttribute } = element;
+      hot(i => {
+        let calls = 0;
+        same(element.getAttribute(i < 1500 ? "1" : i & 1 ? 1 : { toString: () => (calls++, "1") }), "one");
+        same(calls, +(i >= 1500 && !(i & 1)));
+        let error;
+        try { getAttribute.call(i < 1800 ? element : document, "1"); } catch (it) { error = it; }
+        same(error instanceof TypeError, i >= 1800);
+        const below = i < 1900 ? element : Object.create(element);
+        try { error = below.firstChild; } catch (it) { error = it; }
+        same(error instanceof TypeError, i >= 1900);
+      });`));
+
+  test("sees a member that is replaced", () =>
+    run(`const element = make("<b></b>");
+      hot(i => {
+        if (i === 1500) Object.defineProperty(Node.prototype, "firstChild", { get: () => "other" });
+        if (i === 1600) Element.prototype.getAttribute = () => "other";
+        if (i === 1700) Object.defineProperty(element, "nodeType", { value: "other" });
+        same(element.firstChild === "other", i >= 1500);
+        same(element.getAttribute("a") === "other", i >= 1600);
+        same(element.nodeType === "other", i >= 1700);
+      });`));
+
+  test("walks a tree of many kinds of nodes while it is collected", () =>
+    run(
+      `const html = "<p>a<b>b</b><i>c</i></p><ul><li><a>d</a><li><span>e</span></ul><!--f--><svg><g/></svg>";
+      const walk = node => { let text = node.nodeName; for (let it = node.firstChild; it; it = it.nextSibling) text += walk(it); return text; };
+      hot(() => same(walk(make(html).cloneNode(true)), "DIVP#textB#textI#textULLIA#textLISPAN#text#commentsvgg"), 600);`,
+      { BUN_JSC_collectContinuously: "1" },
+    ));
+});
+
+test.each([1, 2, 3])("a target with many listeners calls those that are left, in order (seed %d)", seed => {
+  using page = open("<p></p>");
+  const { AbortController, Event } = page.window;
+  const target = page.$("p");
+  const random = (below: number) => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) >> 8) % below;
+  let calls: string[] = [];
+  const callbacks = Array.from({ length: 60 }, (_, index) => () => void calls.push("" + index));
+  let controllers = Array.from({ length: 4 }, () => new AbortController());
+  let model: { type: string; capture: boolean; index: number | string; once?: boolean; signal?: AbortSignal }[] = [];
+  for (let step = 0; step < 4000; step++) {
+    const [type, capture, index] = [
+      ["click", "custom"][random(2)],
+      random(2) === 1,
+      random(step % 1000 < 100 ? 6 : 60),
+    ];
+    const isIt = (it: (typeof model)[0]) => it.type === type && it.capture === capture && it.index === index;
+    const action = random(40);
+    if (action < 22) {
+      const [once, signal] = [random(6) === 0, random(3) === 0 ? controllers[random(4)].signal : undefined];
+      target.addEventListener(type, callbacks[index], { capture, once, signal });
+      if (!model.some(isIt)) model.push({ type, capture, index, once, signal });
+    } else if (action < 34) {
+      target.removeEventListener(type, callbacks[index], capture);
+      model = model.filter(it => !isIt(it));
+    } else if (action < 35) {
+      const which = random(4);
+      controllers[which].abort();
+      model = model.filter(it => it.signal !== controllers[which].signal);
+      controllers[which] = new AbortController();
+    } else if (action < 36) {
+      target.onclick = target.onclick ? null : callbacks[0];
+      if (target.onclick) model.push({ type: "click", capture: false, index: "0" });
+      else model = model.filter(it => it.index !== "0");
+    } else {
+      calls = [];
+      target.dispatchEvent(new Event(type));
+      const called = [true, false].flatMap(capture => model.filter(it => it.type === type && it.capture === capture));
+      expect(calls.join()).toBe(called.map(it => it.index).join());
+      model = model.filter(it => it.type !== type || !it.once);
+    }
+  }
+});
+
+test("listeners that are changed by one of many others", () => {
+  using page = open("<p></p>");
+  const target = page.$("p");
+  const calls: number[] = [];
+  const callbacks = Array.from({ length: 40 }, (_, index) => () => {
+    calls.push(index);
+    if (index !== 3) return;
+    target.removeEventListener("a", callbacks[3]);
+    target.removeEventListener("a", callbacks[20]);
+    target.removeEventListener("a", callbacks[21]);
+    target.addEventListener("a", callbacks[21]);
+    target.addEventListener("a", callbacks[39]);
+  });
+  callbacks.slice(0, 30).forEach(it => target.addEventListener("a", it));
+  target.dispatchEvent(new page.window.Event("a"));
+  target.dispatchEvent(new page.window.Event("a"));
+  const upTo = (end: number, ...unless: number[]) =>
+    Array.from({ length: end }, (_, it) => it).filter(it => !unless.includes(it));
+  expect(calls).toEqual([...upTo(30, 20, 21), ...upTo(30, 3, 20, 21), 21, 39]);
+});
+
+test("observers see what they have asked for, in and out of the document", () => {
+  using page = open(
+    "<main><section><p data-a=1 data-b=1 style=color:red>text</p></section></main><nav><i data-a=1></i></nav>",
+  );
+  const { document } = page;
+  const [main, section, p, i] = ["main", "section", "p", "i"].map(page.$);
+  const observe = (target: any, options: object) => {
+    const observer = new page.window.MutationObserver(() => {});
+    observer.observe(target, options);
+    return observer;
+  };
+  const take = (observer: any) =>
+    observer
+      .takeRecords()
+      .map((it: any) => [it.target.nodeName, it.attributeName ?? it.type, it.oldValue].join(" "))
+      .join();
+  const change = (value: string) => {
+    for (const it of [p, i]) {
+      it.setAttribute("data-a", value);
+      it.setAttribute("data-b", value);
+      it.setAttribute("aria-label", value);
+      it.style.width = value + "px";
+    }
+  };
+
+  const filtered = observe(main, { subtree: true, attributeFilter: ["data-b"], attributeOldValue: true });
+  const own = observe(i, { attributes: true });
+  const ofStyle = observe(section, { subtree: true, attributeFilter: ["style"] });
+  change("2");
+  expect([filtered, own, ofStyle].map(take)).toEqual([
+    "P data-b 1",
+    "I data-a ,I data-b ,I aria-label ,I style ",
+    "P style ",
+  ]);
+
+  const ofOldStyle = observe(p, { attributeFilter: ["style"], attributeOldValue: true });
+  change("3");
+  expect([ofStyle, ofOldStyle].map(take)).toEqual(["P style ", "P style color: red; width: 2px;"]);
+  [filtered, own, ofStyle, ofOldStyle].forEach(it => it.disconnect());
+
+  const all = observe(main, {
+    subtree: true,
+    attributes: true,
+    childList: true,
+    characterData: true,
+    characterDataOldValue: true,
+  });
+  const children = observe(main, { subtree: true, childList: true });
+  const text = p.firstChild;
+  section.remove();
+  text.remove();
+  text.data = "other";
+  change("4");
+  p.appendChild(document.createElement("b"));
+  p.textContent = "";
+  expect(take(all)).toBe(
+    "MAIN childList ,P childList ,#text characterData text,P data-a ,P data-b ,P aria-label ,P style ,P childList ,P childList ",
+  );
+  expect(take(children)).toBe("MAIN childList ,P childList ,P childList ,P childList ");
+  [all, children].forEach(it => it.disconnect());
+
+  const detached = observe(section, { subtree: true, attributes: true, childList: true });
+  p.setAttribute("data-new", "");
+  p.appendChild(document.createElement("b"));
+  document.createElement("b").appendChild(document.createElement("b")).setAttribute("data-new", "");
+  expect(take(detached)).toBe("P data-new ,P childList ");
+});
+
+test("data, aria and role attributes of an element that is not rendered yet", () => {
+  using page = open(
+    `<style>[data-a="1"] { width: 1px } [data-b] { height: 2px } [role=tab] { top: 3px } [aria-label="é"] { left: 4px }</style>`,
+  );
+  const { document } = page;
+  const original = document.createElement("button");
+  original.className = "x";
+  original.setAttribute("DATA-A", "0");
+  const copy = original.cloneNode();
+  for (const [name, value] of [
+    ["data-a", "1"],
+    ["data-b", "long ".repeat(30)],
+    ["role", "tab"],
+    ["aria-label", "é"],
+    ["data-é", ""],
+  ]) {
+    copy.setAttribute(name, value);
+  }
+  expect(() => copy.setAttribute("data-a=", "")).toThrow(expect.objectContaining({ name: "InvalidCharacterError" }));
+  expect(original.outerHTML).toBe(`<button class="x" data-a="0"></button>`);
+  expect(copy.getAttributeNames()).toEqual(["class", "data-a", "data-b", "role", "aria-label", "data-é"]);
+  const parent = document.createElement("div");
+  parent.append(original, copy);
+  const selectors = ['[data-a="0"]', '[data-a="1"]', "[data-b]", "[role=tab]", ".x[data-a]", "[data-c]"];
+  const count = () => selectors.map(it => parent.querySelectorAll(it).length);
+  expect(count()).toEqual([1, 1, 1, 1, 2, 0]);
+  document.body.append(parent);
+  expect(count()).toEqual([1, 1, 1, 1, 2, 0]);
+  const { width, height, top, left } = page.window.getComputedStyle(Object.assign(copy, { hidden: true }));
+  expect([width, height, top, left]).toEqual(["1px", "2px", "3px", "4px"]);
+  copy.dataset.camelCase = copy.dataset.a + copy.dataset.a;
+  expect([copy.getAttribute("data-camel-case"), "camel-case" in copy.dataset, copy.dataset.camelCase]).toEqual([
+    "11",
+    false,
+    "11",
+  ]);
+});
+
+test("a node cannot be put into what is below it, connected or not", () => {
+  using page = open("<main><p></p></main>");
+  const [main, p] = ["main", "p"].map(page.$);
+  const inner = p.attachShadow({ mode: "open" }).appendChild(page.document.createElement("b"));
+  const template = page.document.createElement("template");
+  const error = expect.objectContaining({ name: "HierarchyRequestError" });
+  for (const prepare of [() => {}, () => main.remove()]) {
+    prepare();
+    expect(() => p.appendChild(main)).toThrow(error);
+    expect(() => inner.appendChild(main)).toThrow(error);
+  }
+  page.document.body.append(template);
+  expect(() => template.content.appendChild(page.document.createElement("b")).appendChild(template)).toThrow(error);
+  expect(() => template.content.firstChild.appendChild(page.document.body)).toThrow(error);
+});
+
+test.each([1, 2, 3])("directions and skipped contents follow nodes that move (seed %d)", seed => {
+  using page = open("<div></div><div dir=auto></div><div style=content-visibility:hidden></div><div></div>");
+  const { document } = page;
+  const random = (below: number) => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) >> 8) % below;
+  const make = () => {
+    const made = document.createElement("section");
+    made.append("1");
+    return made;
+  };
+  page.$("div:last-child").attachShadow({ mode: "open" }).innerHTML =
+    "<p dir=auto><slot name=a></slot></p><p style=content-visibility:hidden><slot name=b></slot></p><slot></slot>";
+  const made = Array.from({ length: 12 }, make);
+  const read = (roots: any[]) =>
+    roots
+      .flatMap(root => [root, ...root.querySelectorAll("*"), ...(root.shadowRoot?.children ?? [])])
+      .map(it => +it.matches(":dir(rtl)") + "" + +it.checkVisibility())
+      .join();
+  for (let step = 0; step < 400; step++) {
+    const index = random(12);
+    const [it, other, root] = [made[index], made[random(12)], document.body.children[random(4)]];
+    const changes = [
+      () => root.append(it),
+      () => root.prepend(it),
+      () => it.contains(other) || other.prepend(it),
+      () => it.remove(),
+      () => (it.remove(), (made[index] = make()), root.append(made[index])),
+      () => (it.lastChild.data = ["1", "a", "א"][random(3)]),
+      () => (it.lastChild.data = ["1", "a", "א"][random(3)]),
+      () => it.lastChild.replaceWith(["1", "a", "א"][random(3)]),
+      () => (it.dir = ["auto", "ltr", "rtl", ""][random(4)]),
+      () => (it.slot = ["a", "b", ""][random(3)]),
+      () => (it.style.contentVisibility = ["hidden", "visible"][random(2)]),
+      () => root.replaceChildren(),
+    ];
+    changes[random(changes.length)]();
+    if (step % 4) continue;
+    using fresh = open();
+    fresh.document.body.setHTMLUnsafe(document.body.getHTML({ shadowRoots: [document.body.lastChild.shadowRoot] }));
+    expect(read([...document.body.children])).toBe(read([...fresh.document.body.children]));
+  }
 });

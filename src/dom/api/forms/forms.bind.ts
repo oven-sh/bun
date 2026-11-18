@@ -157,6 +157,7 @@ export const HTMLButtonElement = element(
   {
     ...reflect("disabled? formEnctype formMethod formNoValidate? formTarget name value popoverTargetAction"),
     commandForElement: reference("commandfor"),
+    interestForElement: reference("interestfor"),
     popoverTargetElement: reference("popovertarget"),
     command: attribute(string),
     type: attribute(string),

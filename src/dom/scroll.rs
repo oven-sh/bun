@@ -4,7 +4,7 @@ use core::cell::RefCell;
 use std::rc::Rc;
 
 use crate::abi::{Matrix, Rect};
-use crate::boxes::{BoxId, Kind, LayoutBox, VIEWPORT};
+use crate::boxes::{BoxId, Cover, Kind, LayoutBox, VIEWPORT};
 use crate::document::Document;
 use crate::engine_event::{EngineEvent, ForNode};
 use crate::inline::{Item, ItemKind};
@@ -43,7 +43,7 @@ pub(crate) enum Part {
 
 #[derive(Default)]
 pub(crate) struct Scrolling {
-    viewport: [f32; 2],
+    pub(crate) viewport: [f32; 2],
     smooth: Vec<Smooth>,
     /// What a script is asking for, or 0.
     request: u32,
@@ -51,7 +51,7 @@ pub(crate) struct Scrolling {
     /// Those that scripts wait for, each with how many scrollers have not arrived.
     awaited: Vec<(u32, usize)>,
     /// Those that are not at the origin.
-    scrolled: Set<NodeId>,
+    pub(crate) scrolled: Set<NodeId>,
     /// Something gets `display: none`, which offsets outlast.
     pub(crate) is_hiding: bool,
     /// The ancestors of those that had an offset then.
@@ -111,11 +111,11 @@ impl Scrolling {
     }
 
     pub(crate) fn forget(&mut self, gone: &Gone) {
-        self.smooth.retain(|it| !gone.has(it.node));
-        self.moved.retain(|it| !gone.has(*it));
-        self.ended.retain(|it| !gone.has(*it));
-        self.shown.retain(|it| !gone.has(it.0));
-        self.snap_events.retain(|it| !gone.has(it.0));
+        gone.leave_list(&mut self.smooth, |it| it.node);
+        gone.leave_list(&mut self.moved, |it| *it);
+        gone.leave_list(&mut self.ended, |it| *it);
+        gone.leave_list(&mut self.shown, |it| it.0);
+        gone.leave_list(&mut self.snap_events, |it| it.0);
         for set in [
             &mut self.scrolled,
             &mut self.around_hidden,
@@ -178,6 +178,13 @@ pub(crate) enum Alignment {
     End,
     Nearest,
     CenterIfNeeded,
+}
+
+/// Those that scroll to reveal something.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum Scrollers {
+    All,
+    Nearest,
 }
 
 /// What is left for the document around a frame.
@@ -303,6 +310,27 @@ impl Document {
         rect.moved([it.layout.location.x, it.layout.location.y])
     }
 
+    /// Only what is in the box has changed.
+    pub(crate) fn note_new_contents(&mut self, id: BoxId, before: &Cover) {
+        let it = &self.boxes[id];
+        let keeps_reach = it.scrolls()
+            || it.style.contain().contains(Contain::LAYOUT)
+            || before
+                .reach
+                .is_some_and(|it| it == self.scrollable_overflow(id));
+        if keeps_reach
+            && before.layers.contains(Layers::KNOWN)
+            && before.ink.is_some_and(|it| it == self.ink(id))
+            && before.layers == self.layers(id)
+        {
+            return self.repaint_eventually(id);
+        }
+        self.boxes.mark_ink_around(id, !keeps_reach);
+        if !keeps_reach {
+            self.moved_boxes_in_scrollers.push(id);
+        }
+    }
+
     /// While the boxes in it are at hand.
     #[inline]
     pub(crate) fn note_extents(&self, id: BoxId) {
@@ -389,6 +417,22 @@ impl Document {
         })
     }
 
+    /// As narrow as it can be, and as high as it is.
+    pub(crate) fn preferred_size(&mut self) -> [f32; 2] {
+        let Some(root) = self.own_box(self.tree.root_element()) else {
+            return [0.0; 2];
+        };
+        let ([_, right, _, left], client) = (self.gutters(VIEWPORT), self.client_box(root));
+        let height = client
+            .height
+            .max(self.scrollable_overflow(root).bottom() - client.y);
+        [
+            self.contribution(root, None, None).sizes[0] + left + right,
+            height,
+        ]
+        .map(|it| (it * self.environment.zoom).round())
+    }
+
     /// With the margins, and without a relative offset.
     fn space_in_flow(&self, id: BoxId, [width, height]: [f32; 2]) -> Rect {
         let (it, offset) = (
@@ -409,7 +453,7 @@ impl Document {
             .shrunk(margin.map(|it| -it))
     }
 
-    fn scrollable_overflow(&self, id: BoxId) -> Rect {
+    pub(crate) fn scrollable_overflow(&self, id: BoxId) -> Rect {
         let it = &self.boxes[id];
         if let Some(known) = it.reach.get() {
             return known;
@@ -472,12 +516,6 @@ impl Document {
     /// What is in flow, with the paddings around it.
     fn padded_flow(&self, id: BoxId) -> Rect {
         let (it, [x, y, width, height]) = (&self.boxes[id], self.content_box(id));
-        let extent = |tracks: &[[f32; 2]]| {
-            tracks
-                .iter()
-                .copied()
-                .reduce(|a, b| [a[0].min(b[0]), a[1].max(b[1])])
-        };
         let to_physical = it.mode.to_physical(if it.turned.is_vertical() {
             it.size()
         } else {
@@ -486,7 +524,7 @@ impl Document {
         let flow = match &it.grid {
             Some(info)
                 if let [Some([left, right]), Some([top, bottom])] =
-                    info.tracks.each_ref().map(|it| extent(it)) =>
+                    [info.extent(0), info.extent(1)] =>
             {
                 Rect::from_edges(left, top, right, bottom).transformed(&to_physical)
             }
@@ -1036,7 +1074,7 @@ impl Document {
         rect: Rect,
         align: [Alignment; 2],
         behavior: u8,
-        only_nearest: bool,
+        scrollers: Scrollers,
     ) -> Option<Revealed> {
         let mut rect = rect.transformed(&self.to_viewport(at));
         let mut at = at;
@@ -1075,7 +1113,7 @@ impl Document {
             rect = moved
                 .intersection(&self.client_box(at))
                 .transformed(&matrix);
-            if only_nearest {
+            if scrollers == Scrollers::Nearest {
                 return None;
             }
         }
@@ -1091,7 +1129,7 @@ impl Document {
         node: NodeId,
         align: [Alignment; 2],
         behavior: u8,
-        only_nearest: bool,
+        scrollers: Scrollers,
         is_awaited: bool,
     ) -> Option<Revealed> {
         self.update_style();
@@ -1102,7 +1140,7 @@ impl Document {
         self.update_layout_for(node);
         let mut revealed = None;
         self.scroll_for_script(is_awaited, |it| {
-            revealed = it.scroll_into_view(node, align, behavior, only_nearest)
+            revealed = it.scroll_into_view(node, align, behavior, scrollers)
         });
         if !self.carousels.is_empty() {
             self.pin_marker_around(node);
@@ -1116,7 +1154,7 @@ impl Document {
         node: NodeId,
         align: [Alignment; 2],
         behavior: u8,
-        only_nearest: bool,
+        scrollers: Scrollers,
     ) -> Option<Revealed> {
         let rects = self.local_rects(node);
         let (at, _) = rects.first()?;
@@ -1127,7 +1165,7 @@ impl Document {
             .reduce(|a, b| a.union(&b))
             .unwrap_or_default();
         let Some(style) = self.tree.style(node) else {
-            return self.reveal(*at, rect, align, behavior, only_nearest);
+            return self.reveal(*at, rect, align, behavior, scrollers);
         };
         let align = style.text.writing_mode.turn_axes([0, 1].map(|axis| {
             match (align[axis], style.runs_back(axis)) {
@@ -1141,7 +1179,7 @@ impl Document {
             rect.shrunk(scroll_margin(style).map(|it| -it)),
             align,
             behavior,
-            only_nearest,
+            scrollers,
         )
     }
 
@@ -1423,9 +1461,28 @@ impl Document {
             .or(Some(focused))
     }
 
+    /// If that is its top.
+    fn first_line_of_text(&self, node: NodeId, scroller: BoxId) -> Option<(BoxId, Rect)> {
+        let lines = self.tree[node].text().map(|_| self.tree[node].layout_box)?;
+        let (inline, [_, b, c, d, ..]) = (
+            self.boxes[lines].inline.as_deref()?,
+            self.to_scroller(lines, scroller)?,
+        );
+        let is_upright = (b, c) == (0.0, 0.0)
+            && d > 0.0
+            && self.boxes[scroller].mode == WritingMode::HorizontalTb
+            && self.line_matrix(lines).is_none()
+            && self.boxes.is_unbroken(lines);
+        inline
+            .clusters_of(node)
+            .filter(|_| is_upright && inline.first_line.is_none())?;
+        Some((lines, inline.fragments_of_node(node).next()?.rect()))
+    }
+
     fn anchor_position(&self, node: NodeId, scroller: BoxId) -> Option<f32> {
         let (at, rect) = match self.own_box(node) {
             Some(own) => (own, self.bounds_as_anchor(own)),
+            None if let Some(first) = self.first_line_of_text(node, scroller) => first,
             None => self
                 .local_rects(node)
                 .into_iter()
@@ -1699,7 +1756,12 @@ impl Document {
         let length = (available * visible / (visible + max - min))
             .round()
             .max(shortest);
-        let thumb = (max > min && length <= available).then(|| {
+        let length = if cfg!(target_os = "macos") {
+            length
+        } else {
+            length.min(available)
+        };
+        let thumb = (max > min && length > 0.0 && length <= available).then(|| {
             let at = track[0]
                 + (available - length) * (self.scroll_offset(it.node)[axis] - min) / (max - min);
             match axis {

@@ -90,7 +90,7 @@ pub(crate) fn microtask_checkpoint(cx: Cx<'_, '_>) {
 pub(crate) fn report<'a>(cx: Cx<'_, 'a>, window: Option<&'a WindowTarget>, error: JsError) {
     let exception = cx.global().take_error(error);
     if !exception.is_termination_exception() {
-        pending::report(cx, window, exception);
+        errors::report(cx, window, exception);
     }
 }
 
@@ -247,9 +247,9 @@ pub(crate) fn queue_task_after(
     values: &[JSValue],
     steps: Box<Steps>,
 ) {
-    if doc.window().is_none() {
+    let Some(window) = doc.window().filter(|it| !it.is_disposed()) else {
         return;
-    }
+    };
     let heap = JsHeap::from_global(doc.global());
     let kept = List::from_fn(heap, values.len() as u32 + 1, |at| {
         if at == 0 {
@@ -258,7 +258,7 @@ pub(crate) fn queue_task_after(
             values[at as usize - 1]
         }
     });
-    let kept = crate::api::realm::hold(heap, Strong::create(kept.to_js(), doc.global()));
+    let kept = window.hold(heap, kept.to_js());
     let queue = move |_: &JSGlobalObject| {
         let Some(kept) = kept.take() else {
             return Ok(());

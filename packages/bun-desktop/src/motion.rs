@@ -188,10 +188,13 @@ pub struct Motion {
     /// By the id of the scroller, until the scroll is over.
     #[cfg(target_os = "macos")]
     port: Option<(u32, Rect)>,
+    /// The ids of the scrollers, with their offsets in the last picture.
+    #[cfg(target_os = "macos")]
+    pictured: Vec<(u32, [f32; 2])>,
 }
 
-/// Calls `f` with each item, and the matrix and the clip around it.
-fn walk(scene: &Scene, mut f: impl FnMut(usize, &Transform, Rect)) {
+/// Calls `f` with each item, and the matrix and the clip around it. With `only_driven`, it leaves out groups in which nothing is.
+fn walk(scene: &Scene, only_driven: bool, mut f: impl FnMut(usize, &Transform, Rect)) {
     const EVERYTHING: Rect = Rect {
         x: -1e9,
         y: -1e9,
@@ -199,7 +202,14 @@ fn walk(scene: &Scene, mut f: impl FnMut(usize, &Transform, Rect)) {
         height: 2e9,
     };
     let (mut stack, mut matrix, mut clip) = (Vec::new(), Transform::identity(), EVERYTHING);
-    for (index, item) in scene.items.iter().enumerate() {
+    let mut next = 0;
+    while let Some(item) = scene.items.get(next) {
+        let index = next;
+        next += 1;
+        if only_driven && !scene.changes(index) && !matches!(item, Item::Pop) {
+            next = scene.end(index);
+            continue;
+        }
         f(index, &matrix, clip);
         match *item {
             Item::PushClip(shape) => {
@@ -289,7 +299,13 @@ impl Motion {
     }
 
     /// After `scene` and `tables` were replaced.
-    pub fn adopt(&mut self, scene: &Scene, first_item: usize) {
+    pub fn adopt(&mut self, scene: &mut Scene, first_item: usize) {
+        scene.set_driven(
+            self.tables
+                .drivers
+                .iter()
+                .map(|it| first_item + it.item as usize),
+        );
         self.first_item = first_item;
         self.lifted.clear();
         if self.is_scrolling() {
@@ -566,7 +582,7 @@ impl Motion {
         }
         scene.index_around(moved);
         if !moving.is_empty() {
-            walk(scene, |index, matrix, clip| {
+            walk(scene, true, |index, matrix, clip| {
                 let Some((reach, next, differs)) = moving.get(&index) else {
                     return;
                 };
@@ -616,19 +632,67 @@ impl Motion {
             .chain(self.latch.and_then(|it| it.id));
         let id = held.chain(self.scrolled.keys().copied()).find(is_scrolling);
         self.port = id.map(|id| {
-            self.port.filter(|it| it.0 == id).unwrap_or_else(|| {
-                let follows = |it: &&Driver| matches!(it.source, Source::Scroll { scroller } if self.tables.scrollers.get(scroller as usize).is_some_and(|it| it.id == id));
-                let items: Vec<_> = self.tables.drivers.iter().filter(follows).map(|it| self.first_item + it.item as usize).collect();
-                let mut port = Rect::default();
-                walk(scene, |index, _, clip| {
-                    if items.contains(&index) {
-                        port = union(port, clip);
-                    }
-                });
-                (id, port)
-            })
+            self.port
+                .filter(|it| it.0 == id)
+                .unwrap_or_else(|| (id, self.port_of(id, scene)))
         });
         self.port.map(|it| it.1)
+    }
+
+    /// The same for what a script has scrolled since the last call.
+    #[cfg(target_os = "macos")]
+    pub fn take_jump(&mut self, scene: &Scene) -> Option<Rect> {
+        let offset = |(index, it): (u32, &Scroller)| {
+            (
+                it.id,
+                [0, 1].map(|axis| it.offset[axis] + self.moved(index)[axis]),
+            )
+        };
+        let now = (0..).zip(&self.tables.scrollers).map(offset).collect();
+        let before = std::mem::replace(&mut self.pictured, now);
+        let jumped = self
+            .pictured
+            .iter()
+            .find(|it| before.iter().any(|old| old.0 == it.0 && old.1 != it.1))?;
+        (!self.is_scrolling()).then(|| self.port_of(jumped.0, scene))
+    }
+
+    #[cfg(target_os = "macos")]
+    fn port_of(&self, id: u32, scene: &Scene) -> Rect {
+        let follows = |it: &&Driver| matches!(it.source, Source::Scroll { scroller } if self.tables.scrollers.get(scroller as usize).is_some_and(|it| it.id == id));
+        let items: Vec<_> = self
+            .tables
+            .drivers
+            .iter()
+            .filter(follows)
+            .map(|it| self.first_item + it.item as usize)
+            .collect();
+        let mut port = Rect::default();
+        let after = items
+            .iter()
+            .map(|it| scene.end(*it))
+            .max()
+            .unwrap_or(usize::MAX);
+        walk(scene, false, |index, matrix, clip| {
+            match scene.items[index] {
+                _ if items.contains(&index) => port = union(port, clip),
+                // What stays in front of its lower end.
+                Item::Fill { shape, color }
+                    if index >= after && color & 0xFF == 0xFF && shape.radii == [[0.; 2]; 4] =>
+                {
+                    let covered = intersect(port, intersect(clip, map_rect(matrix, shape.rect)));
+                    let is_at_end = covered.y + covered.height >= port.y + port.height - 1.;
+                    if is_at_end
+                        && covered.width >= port.width * 0.75
+                        && covered.height <= port.height / 2.
+                    {
+                        port.height = covered.y - port.y;
+                    }
+                }
+                _ => {}
+            }
+        });
+        port
     }
 
     /// What goes on for a while, and is not moved twice.
@@ -690,7 +754,7 @@ impl Motion {
 
     fn hit(&self, scene: &Scene, [x, y]: [f32; 2]) -> Option<Hit> {
         let (mut hits, mut found) = (self.tables.hits.iter().peekable(), None);
-        walk(scene, |index, matrix, clip| {
+        walk(scene, false, |index, matrix, clip| {
             while let Some(hit) = hits.next_if(|hit| self.first_item + hit.item as usize <= index) {
                 let mut point = Point::new(x, y);
                 if let Some(inverse) = matrix.invert().filter(|_| contains(clip, x, y)) {

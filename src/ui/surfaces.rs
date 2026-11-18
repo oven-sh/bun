@@ -11,8 +11,6 @@ use crate::protocol::{Command, Input, Key};
 enum Listener {
     Native(fn(Input) -> JsResult<()>),
     Closure(Rc<dyn Fn(News) -> JsResult<()>>),
-    /// A function, or an object that has `handleEvent`.
-    Script(Rc<Strong>),
 }
 
 pub enum News {
@@ -21,24 +19,12 @@ pub enum News {
 }
 
 impl Listener {
-    fn tell(&self, global: &JSGlobalObject, id: u32, input: Input) -> JsResult<()> {
+    fn tell(&self, input: Input) -> JsResult<()> {
         match self {
             Listener::Native(function) => function(input),
             Listener::Closure(function) => function(News::Input(input)),
-            Listener::Script(function) => {
-                let event = crate::script::event_of(global, id, input)?;
-                call(global, function.get(), event)
-            }
         }
     }
-}
-
-fn call(global: &JSGlobalObject, listener: JSValue, event: JSValue) -> JsResult<()> {
-    let function = match listener.is_callable() {
-        true => listener,
-        false => (listener.get(global, "handleEvent")?).unwrap_or(JSValue::UNDEFINED),
-    };
-    function.call(global, listener, &[event]).map(drop)
 }
 
 /// What is shown as an image has an accessibility tree of its own, from this id on.
@@ -69,10 +55,6 @@ pub fn next_id() -> u32 {
     surfaces().last_id.get()
 }
 
-fn script(global: &JSGlobalObject, function: JSValue) -> Listener {
-    Listener::Script(Rc::new(Strong::create(function, global)))
-}
-
 fn add(id: u32, listener: Listener) {
     ignore(id);
     surfaces().listeners.borrow_mut().push((id, listener));
@@ -84,10 +66,6 @@ pub fn listen(id: u32, function: fn(Input) -> JsResult<()>) {
 
 pub fn listen_with(id: u32, function: impl Fn(News) -> JsResult<()> + 'static) {
     add(id, Listener::Closure(Rc::new(function)));
-}
-
-pub fn listen_with_script(global: &JSGlobalObject, id: u32, function: JSValue) {
-    add(id, script(global, function));
 }
 
 pub fn send_frames_to(global: &JSGlobalObject, id: u32, page: JSValue, function: OnFrame) {
@@ -146,32 +124,24 @@ pub fn has_screen_reader() -> bool {
     surfaces().has_screen_reader.get()
 }
 
-pub fn accessibility_changed(
-    global: &JSGlobalObject,
-    is_active: bool,
-    has_screen_reader: bool,
-) -> JsResult<()> {
+pub fn accessibility_changed(is_active: bool, has_screen_reader: bool) -> JsResult<()> {
     surfaces().is_accessibility_active.set(is_active);
     surfaces().has_screen_reader.set(has_screen_reader);
     let listeners = surfaces().listeners.borrow().clone();
-    for (id, listener) in listeners {
+    for (_, listener) in listeners {
         match listener {
             Listener::Native(_) => {}
             Listener::Closure(function) => function(News::AccessibilityChanged)?,
-            Listener::Script(function) => {
-                let event = object!(global, { "t": "a11y", "s": id, "active": is_active });
-                call(global, function.get(), event)?;
-            }
         }
     }
     Ok(())
 }
 
 /// Past the trap and the filter.
-pub fn send(global: &JSGlobalObject, id: u32, input: Input) -> JsResult<()> {
+pub fn send(id: u32, input: Input) -> JsResult<()> {
     let listener =
         (surfaces().listeners.borrow().iter()).find_map(|it| (it.0 == id).then(|| it.1.clone()));
-    listener.map_or(Ok(()), |it| it.tell(global, id, input))
+    listener.map_or(Ok(()), |it| it.tell(input))
 }
 
 pub(crate) fn deliver(global: &JSGlobalObject, id: u32, input: Input) -> JsResult<()> {
@@ -198,5 +168,5 @@ pub(crate) fn deliver(global: &JSGlobalObject, id: u32, input: Input) -> JsResul
             return Ok(());
         }
     }
-    send(global, id, input)
+    send(id, input)
 }

@@ -47,6 +47,8 @@ mod single_instance;
 mod task;
 mod text;
 mod theme;
+mod touch_bar;
+mod tracing;
 mod tray;
 mod unsupported;
 #[cfg_attr(not(unix), path = "no_updater.rs")]

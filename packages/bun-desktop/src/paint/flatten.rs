@@ -1,15 +1,17 @@
 use std::ops::Range;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::gfx::{Pixmap, Transform};
 use crate::hash::FastMap;
 use crate::small_vec::SmallVec;
 
-use super::blur::MAX_SIGMA_OF_SHADOWS;
+use super::blur::{MAX_SIGMA, MAX_SIGMA_OF_SHADOWS};
 use super::cpu::{self, GlyphKey, GlyphPlacer, Painter, gradient_axis};
-use super::digest::{self, Digest};
+use super::digest::{self, Cells, Digest};
+use super::memo::{Memo, Recall};
 use super::raster::{
-    Clip, IntRect, Layer, Paint, average_scale, has_radii, map_rect, multiply, premultiply,
+    Clip, Coverage, IntRect, Layer, average_scale, has_radii, map_point, map_rect, multiply,
     swap_red_and_blue,
 };
 use super::scene::{Frame, Scene, cross_fades, tile_bounds};
@@ -18,8 +20,9 @@ use super::stretch::{STRETCHED, Stretch};
 use crate::abi::{BlendMode, Filter, Glyph, Item, LineStyle, Rect, RoundedRect};
 use crate::images::{self, Content};
 use crate::motion::sample;
+use crate::sync::Mutex;
 use crate::text::{self, GlyphPixels};
-use crate::webview;
+use crate::{parallel, webview};
 
 /// What is rasterized in one piece, visible or not, so that scrolling finds it in the atlas.
 const WHOLE_AREA: i64 = 512 * 512;
@@ -27,6 +30,9 @@ const WHOLE_AREA: i64 = 512 * 512;
 const BUDGET: i64 = 3 << 20;
 const MAX_SIDE: i32 = 2048;
 const GLYPHS_PER_MASK: usize = 24;
+/// The GPU may still be reading what the last frames used.
+const IN_FLIGHT: u64 = 3;
+const MANY_ITEMS: usize = 64;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Kind {
@@ -103,6 +109,7 @@ struct Raster {
 /// What a window has in its atlas.
 #[derive(Default)]
 pub struct Cache {
+    id: u64,
     draw: u64,
     glyphs: FastMap<GlyphKey, (Option<Sprite>, u64)>,
     rasters: FastMap<u128, Raster>,
@@ -260,7 +267,10 @@ fn bgra(layer: &Layer, rect: IntRect) -> Vec<u8> {
 }
 
 fn painted_rect(layer: &Layer) -> IntRect {
-    let rect = layer.rect;
+    painted_part(layer, layer.rect)
+}
+
+fn painted_part(layer: &Layer, rect: IntRect) -> IntRect {
     let is_painted = |y: &i32| {
         layer
             .row(*y, rect.left, rect.right)
@@ -323,6 +333,10 @@ impl Cache {
     }
 
     pub fn begin(&mut self) {
+        static LAST: AtomicU64 = AtomicU64::new(0);
+        if self.draw == 0 {
+            self.id = LAST.fetch_add(1, Ordering::Relaxed) + 1;
+        }
         self.draw += 1;
         self.primitives.clear();
         self.lifted.clear();
@@ -357,15 +371,17 @@ impl Cache {
         )
     }
 
+    fn evicts(&self) -> bool {
+        self.draw.is_multiple_of(4)
+    }
+
     fn evict(&mut self, atlas: &Atlas) {
-        // The GPU may still be reading what the last frames used.
-        const IN_FLIGHT: u64 = 3;
         const KEPT: u64 = 600;
         const MAX_BYTES: i64 = 32 << 20;
         const MAX_GLYPHS: usize = 8192;
         let draw = self.draw;
         self.waiting.retain(|_, (_, last_seen)| *last_seen == draw);
-        if !draw.is_multiple_of(4) {
+        if !self.evicts() {
             return;
         }
         self.opaque_parts
@@ -450,6 +466,21 @@ fn map_shape(matrix: &Transform, shape: &RoundedRect) -> RoundedRect {
             false => [0., 0.],
         }),
     }
+}
+
+/// Whether its edge follows that of the border, in the outer half.
+fn ends_in_border(background: &Primitive, rect: Rect, radii: [f32; 4], width: f32) -> bool {
+    let (inner, near) = (background.bounds, |a: f32, b: f32| (a - b).abs() < 0.01);
+    let by = inner.x - rect.x;
+    (0. ..=width / 2. + 0.01).contains(&by)
+        && near(inner.y - rect.y, by)
+        && near(rect.width - inner.width, by * 2.)
+        && near(rect.height - inner.height, by * 2.)
+        && background
+            .radii
+            .iter()
+            .zip(radii)
+            .all(|(inner, outer)| near(*inner, (outer - by).max(0.)))
 }
 
 /// `None` for radii that are not circular.
@@ -537,16 +568,14 @@ pub struct Placement<'a> {
     pub in_motion: &'a [usize],
     pub origin: (i32, i32),
     pub clip: IntRect,
-    /// What is behind the scene.
-    pub background: u32,
 }
 
 struct Flattener<'a> {
     painter: Painter<'a>,
     placement: &'a Placement<'a>,
-    root: Transform,
     atlas: &'a Atlas,
     cache: &'a mut Cache,
+    memo: Option<&'a mut Memo>,
     budget: i64,
     /// The first of the primitives of the layer that is being flattened, if it is not the root.
     layer_start: Option<usize>,
@@ -620,22 +649,32 @@ pub fn paint(
 ) {
     let (x, y) = placement.origin;
     let root = Transform::from_row(frame.scale, 0., 0., frame.scale, x as f32, y as f32);
+    let mut memo = scene.memo.as_ref().map(|it| it.lock());
+    memo.iter_mut()
+        .for_each(|it| it.begin((cache.id, cache.draw), scene.items.len()));
     let mut flattener = Flattener {
         painter: Painter {
             scene,
             frame,
-            limit: usize::MAX,
             left_out: &[],
         },
         placement,
-        root,
         atlas,
         cache,
+        memo: memo.as_deref_mut(),
         budget: BUDGET,
         layer_start: None,
         flattened: IntRect::new(i32::MIN, i32::MIN, i32::MAX, i32::MAX),
     };
     flattener.range(0..scene.items.len(), &root, placement.clip);
+    if let Some(memo) = memo.as_mut().filter(|_| cache.evicts()) {
+        memo.tidy(cache.draw - IN_FLIGHT, |key, last_used| {
+            if let Some(raster) = cache.rasters.get_mut(&key) {
+                raster.was_reused |= raster.last_used < last_used;
+                raster.last_used = raster.last_used.max(last_used);
+            }
+        });
+    }
     images::expect_all(
         scene
             .new_images
@@ -656,6 +695,10 @@ impl Flattener<'_> {
         self.cache.primitives.len() as u32 + 1
     }
 
+    fn is_provisional(&mut self) {
+        self.memo.iter_mut().for_each(|it| it.is_provisional());
+    }
+
     fn can_afford(&self, key: u128, area: IntRect) -> bool {
         area.area() <= self.budget || self.cache.rasters.contains_key(&key)
     }
@@ -669,6 +712,7 @@ impl Flattener<'_> {
         render: impl FnOnce(&Painter) -> Option<Layer>,
     ) -> Option<Sprite> {
         let draw = self.cache.draw;
+        self.memo.iter_mut().for_each(|it| it.needs(key));
         if let Some(raster) = self.cache.rasters.get_mut(&key) {
             raster.was_reused |= raster.last_used != draw;
             raster.last_used = draw;
@@ -746,6 +790,7 @@ impl Flattener<'_> {
             );
         }
         let (key, draw, atlas) = (digest.finish(), self.cache.draw, self.atlas);
+        self.memo.iter_mut().for_each(|it| it.needs(key));
         let raster = self.cache.rasters.entry(key).or_insert_with(|| {
             let images = placed().filter_map(|(key, x, y)| Some((cpu::cached_glyph(key)?, x, y)));
             let images: SmallVec<_, GLYPHS_PER_MASK> = images.collect();
@@ -812,6 +857,136 @@ impl Flattener<'_> {
         }
     }
 
+    /// So that a change or a move does not take all of it to be painted again.
+    fn rasterize_cells(
+        &mut self,
+        index: usize,
+        [x, y]: [f32; 2],
+        matrix: &Transform,
+        clip: IntRect,
+    ) {
+        let (
+            Painter {
+                scene,
+                frame,
+                left_out,
+            },
+            bounds,
+        ) = (self.painter, self.device_bounds(index, matrix));
+        let (range, (x, y)) = (index..scene.end(index), map_point(matrix, x, y));
+        let origin = IntRect::nearest(Rect {
+            x,
+            y,
+            width: 0.,
+            height: 0.,
+        });
+        let mut cells = Cells::new([origin.left, origin.top], bounds.intersect(clip), matrix);
+        cells.range(&self.painter, range.clone(), matrix);
+        let shown = cells.shown;
+        let row = |row| {
+            (shown.left..shown.right)
+                .filter_map(|column| cells.at(column, row, bounds))
+                .collect::<Vec<_>>()
+        };
+        let rows: Vec<_> = (shown.top..shown.bottom).map(row).collect();
+        let missing = rows.iter().map(|row| {
+            row.iter()
+                .filter(|it| !self.cache.rasters.contains_key(&it.0))
+                .copied()
+                .collect::<Vec<_>>()
+        });
+        let mut bands: Vec<_> = missing.filter(|it| !it.is_empty()).collect();
+        let around = |band: &[(u128, IntRect)]| {
+            band.iter()
+                .fold(IntRect::default(), |all, it| all.union(it.1))
+        };
+        let area: i64 = bands.iter().flatten().map(|it| it.1.area()).sum();
+        let needs_this_thread = |item: &Item| {
+            matches!(
+                item,
+                Item::Image { .. } | Item::ImagePart { .. } | Item::Caret { .. }
+            )
+        };
+        let is_shared = area >= WHOLE_AREA / 2
+            && parallel::threads() > 1
+            && !scene.items[range.clone()].iter().any(needs_this_thread);
+        if !is_shared {
+            bands.dedup_by(|next, band| {
+                let (all, more) = (around(band), around(next));
+                let joins = (all.left, all.right, all.bottom) == (more.left, more.right, more.top)
+                    && all.height() < MAX_SIDE as usize;
+                band.extend(next.iter().filter(|_| joins));
+                joins
+            });
+        }
+        let paint = |frame: &Frame, band: &[(u128, IntRect)]| {
+            let layer = crate::guard("error", None, || {
+                let mut layer = Layer::new(around(band))?;
+                Painter {
+                    scene,
+                    frame,
+                    left_out,
+                }
+                .paint(range.clone(), &mut layer, matrix, &Clip::new(around(band)));
+                Some(layer)
+            });
+            let cut = |&(key, cell): &(u128, IntRect)| {
+                let part = layer
+                    .as_ref()
+                    .map(|it| (it, painted_part(it, cell)))
+                    .filter(|it| !it.1.is_empty());
+                (
+                    key,
+                    part.map(|(layer, rect)| {
+                        (rect.offset(-cell.left, -cell.top), bgra(layer, rect))
+                    }),
+                )
+            };
+            band.iter().map(cut).collect::<Vec<_>>()
+        };
+        let mut painted = Mutex::new(Vec::new());
+        match is_shared {
+            true => {
+                let jobs: Vec<_> = bands
+                    .iter()
+                    .map(|band| (frame.rescaled(1.), band))
+                    .collect();
+                parallel::for_each(jobs.into_iter(), |(frame, band)| {
+                    let cells = paint(&frame, band);
+                    painted.lock().extend(cells);
+                });
+            }
+            false => bands
+                .iter()
+                .for_each(|band| painted.get_mut().extend(paint(frame, band))),
+        }
+        self.budget -= area;
+        for (key, part) in painted.get_mut().drain(..) {
+            let sprite = part.map(|(rect, bytes)| Sprite {
+                tile: self.atlas.insert(true, rect.width(), rect.height(), &bytes),
+                rect,
+            });
+            self.cache.rasters.insert(
+                key,
+                Raster {
+                    sprite,
+                    last_used: self.cache.draw,
+                    was_reused: false,
+                },
+            );
+        }
+        let run = self.next_run();
+        for (key, cell) in rows.into_iter().flatten() {
+            if let Some(sprite) = self.raster(key, cell, false, |_| None) {
+                let bounds = sprite.rect.offset(cell.left, cell.top).to_rect();
+                self.push(Primitive {
+                    run,
+                    ..Primitive::new(bounds, clip, Kind::Image(sprite.tile))
+                });
+            }
+        }
+    }
+
     fn area_to_rasterize(&self, index: usize, matrix: &Transform, clip: IntRect) -> IntRect {
         let bounds = self.device_bounds(index, matrix);
         let is_small =
@@ -824,12 +999,40 @@ impl Flattener<'_> {
     }
 
     fn rasterize_all(&mut self, index: usize, matrix: &Transform, clip: IntRect) {
-        self.rasterize(
-            index,
-            matrix,
-            self.area_to_rasterize(index, matrix, clip),
-            clip,
-        );
+        if !(self.painter.scene.reads_backdrop(index) && self.paint_over_scene(index, matrix, clip))
+        {
+            self.rasterize(
+                index,
+                matrix,
+                self.area_to_rasterize(index, matrix, clip),
+                clip,
+            );
+        }
+    }
+
+    /// What the primitives from `first` on draw in `area`, inside of `shape`.
+    fn cut_out(&mut self, first: usize, shape: &RoundedRect, area: IntRect) -> Option<Sprite> {
+        let (mut digest, render) = self.snapshot(first, area, 1);
+        digest.shape(&Transform::identity(), shape);
+        let key = digest.finish();
+        let rendered = (!self.cache.rasters.contains_key(&key))
+            .then(render)
+            .flatten();
+        self.raster(key, area, true, |_| {
+            let (mut inside, all) = (
+                Layer::new(area)?,
+                Layer {
+                    rect: area,
+                    ..rendered?
+                },
+            );
+            inside.draw(
+                &all,
+                Some(&Coverage::of_shape(shape, &Transform::identity(), area)),
+                &Clip::new(area),
+            );
+            Some(inside)
+        })
     }
 
     /// Replaces what the primitives from `first` on draw in `holes` with what the CPU paints there.
@@ -837,6 +1040,7 @@ impl Flattener<'_> {
         &mut self,
         first: usize,
         holes: &[IntRect],
+        shape: &RoundedRect,
         index: usize,
         matrix: &Transform,
         clip: IntRect,
@@ -844,6 +1048,12 @@ impl Flattener<'_> {
         if holes.is_empty() {
             return;
         }
+        let reads_backdrop = self.painter.scene.reads_backdrop(index);
+        let cut: SmallVec<_, 4> = holes
+            .iter()
+            .filter(|_| reads_backdrop)
+            .filter_map(|hole| Some((self.cut_out(first, shape, *hole)?, hole)))
+            .collect();
         for primitive in self.cache.primitives.split_off(first) {
             let visible = primitive.visible();
             let mut pieces: SmallVec<IntRect, 4> = SmallVec::from_iter([visible]);
@@ -859,7 +1069,14 @@ impl Flattener<'_> {
                     .map(|clip| Primitive { clip, ..primitive }),
             );
         }
-        for hole in holes {
+        for (sprite, hole) in cut {
+            self.push(Primitive::new(
+                sprite.rect.offset(hole.left, hole.top).to_rect(),
+                clip,
+                Kind::Image(sprite.tile),
+            ));
+        }
+        for hole in holes.iter().filter(|_| !reads_backdrop) {
             self.rasterize(index, matrix, *hole, clip);
         }
     }
@@ -924,14 +1141,46 @@ impl Flattener<'_> {
             }
             holes.extend(pieces);
         }
-        self.patch(first, &holes, index, matrix, clip);
+        self.patch(first, &holes, shape, index, matrix, clip);
     }
 
     fn range(&mut self, range: Range<usize>, matrix: &Transform, clip: IntRect) {
         for index in self.painter.scene.children(range) {
-            if self.device_bounds(index, matrix).overlaps(clip) {
-                self.item(index, matrix, clip);
+            let bounds = self.device_bounds(index, matrix);
+            if bounds.overlaps(clip) {
+                self.item_or_memo(index, matrix, clip, clip.contains(bounds));
             }
+        }
+    }
+
+    fn item_or_memo(&mut self, index: usize, matrix: &Transform, clip: IntRect, is_inside: bool) {
+        let (scene, first) = (self.painter.scene, self.cache.primitives.len());
+        // A border may be merged with the fill before it.
+        let is_worth_it = !scene.changes(index)
+            && !matches!(
+                scene.items[index],
+                Item::Fill { .. } | Item::Border { .. } | Item::Line { .. }
+            );
+        let records = match self.memo.as_mut().filter(|_| is_worth_it) {
+            Some(memo) => {
+                match memo.recall(index, matrix, clip, is_inside, &mut self.cache.primitives) {
+                    Recall::Done => return,
+                    Recall::Moves => false,
+                    Recall::Unknown => memo.start_recording(),
+                }
+            }
+            None => false,
+        };
+        self.item(index, matrix, clip);
+        if let Some(memo) = self.memo.as_mut().filter(|_| records) {
+            memo.finish_recording(
+                index..scene.end(index),
+                matrix,
+                clip,
+                is_inside,
+                &self.cache.primitives,
+                first,
+            );
         }
     }
 
@@ -1076,11 +1325,13 @@ impl Flattener<'_> {
         const MAX_STEP: f32 = 4.;
         let Painter { scene, frame, .. } = self.painter;
         let next = self.placement.in_motion.binary_search(&index).ok()? + 1;
-        self.placement
+        (self
+            .placement
             .in_motion
             .get(next)
             .is_none_or(|it| *it >= scene.end(index))
-            .then_some(())?;
+            && !scene.reads_backdrop(index))
+        .then_some(())?;
         let (x, y) = matrix.get_scale();
         let scale = frame.scale * (x.max(y) / frame.scale / 1.1).log2().ceil().exp2();
         let upright = Transform::from_scale(scale, scale);
@@ -1152,8 +1403,14 @@ impl Flattener<'_> {
                 opacity,
             } => {
                 let shape = map_shape(matrix, &frame.snap_shape(&shape));
-                self.backdrop(index, &shape, scene.filters(filters), matrix, clip);
+                self.backdrop(&shape, scene.filters(filters), matrix, clip);
                 self.fade(first, opacity);
+                if self.cache.primitives[first..]
+                    .iter()
+                    .all(|it| it.radii == [0.; 4])
+                {
+                    self.round(first, &shape, index, matrix, clip);
+                }
             }
             Item::Fill { shape, color } => {
                 let shape = map_shape(matrix, &frame.snap_shape(&shape));
@@ -1200,6 +1457,7 @@ impl Flattener<'_> {
                         self.glyph_mask(&placer, piece, (color, run), clip, reach)
                     });
                 }
+                self.is_provisional();
                 for (key, x, y) in scene.glyphs(glyphs).iter().map(|glyph| placer.place(glyph)) {
                     if !(clip.left - reach..clip.right + reach).contains(&x) {
                         continue;
@@ -1239,6 +1497,22 @@ impl Flattener<'_> {
                         ..Primitive::new(map_rect(matrix, frame.snap(rect)), clip, solid(color))
                     });
                 }
+            }
+            Item::PushVector([.., x, y])
+                if self.device_bounds(index, matrix).area()
+                    > WHOLE_AREA
+                        / if scene.end(index) - index > MANY_ITEMS {
+                            4
+                        } else {
+                            1
+                        }
+                    && self
+                        .painter
+                        .reach_of_backdrops(index..scene.end(index), matrix)
+                        == 0
+                    && !scene.reads_backdrop(index) =>
+            {
+                self.rasterize_cells(index, [x, y], matrix, clip)
             }
             Item::PushClipPath { .. }
             | Item::PushClipOutline(_)
@@ -1313,13 +1587,19 @@ impl Flattener<'_> {
                     scene.items[index.saturating_sub(1)],
                     self.cache.primitives.last_mut(),
                 ) && matches!(last.kind, Kind::Quad { color, border: [0., 0., 0., 0.], .. } if color == fill && fill & 0xFF != 0)
-                    && (last.bounds, last.radii, last.clip) == (rect, radii, clip)
+                    && last.clip == clip
+                    && ((last.bounds, last.radii) == (rect, radii)
+                        || color & 0xFF == 0xFF && ends_in_border(last, rect, radii, top))
                 {
-                    last.kind = Kind::Quad {
-                        color: fill,
-                        border_color: color,
-                        border,
-                    };
+                    (last.bounds, last.radii, last.kind) = (
+                        rect,
+                        radii,
+                        Kind::Quad {
+                            color: fill,
+                            border_color: color,
+                            border,
+                        },
+                    );
                     return;
                 }
                 let kind = Kind::Quad {
@@ -1593,6 +1873,14 @@ impl Flattener<'_> {
         self.cache.primitives[first..]
             .iter_mut()
             .for_each(|primitive| primitive.opacity *= opacity);
+        if software::alpha(opacity) == 0 {
+            let inside = self.cache.primitives.split_off(first);
+            self.cache.primitives.extend(
+                inside
+                    .into_iter()
+                    .filter(|it| it.run == CARET || is_marker(it)),
+            );
+        }
     }
 
     fn overlap(&self, first: usize) -> bool {
@@ -1658,6 +1946,7 @@ impl Flattener<'_> {
         );
         let key = digest.finish();
         if !self.can_afford(key, area) || area.width().max(area.height()) > MAX_SIDE as usize * 2 {
+            self.is_provisional();
             return false;
         }
         if is_optional && area.area() > SMALL && !self.cache.rasters.contains_key(&key) {
@@ -1669,6 +1958,7 @@ impl Flattener<'_> {
             *draw = self.cache.draw;
             if frame.now < *since + SETTLED_AFTER {
                 frame.changes_at(*since + SETTLED_AFTER);
+                self.is_provisional();
                 return false;
             }
         }
@@ -1686,7 +1976,7 @@ impl Flattener<'_> {
         if opacity <= 0. {
             return;
         }
-        if blend != BlendMode::Normal && self.replace_with_scene(index, matrix, clip) {
+        if blend != BlendMode::Normal && self.paint_over_scene(index, matrix, clip) {
             return;
         }
         let first = self.cache.primitives.len();
@@ -1836,64 +2126,29 @@ impl Flattener<'_> {
         (part.area() * 2 > area.area()).then_some(part)
     }
 
-    /// Everything before the item, at `1 / reduction` of the resolution.
-    fn scene_before(
+    /// The primitives from `first` on, at `1 / reduction` of the resolution.
+    fn snapshot(
         &self,
         first: usize,
-        limit: usize,
         area: IntRect,
         reduction: i32,
     ) -> (Digest, impl FnOnce() -> Option<Layer> + use<'_>) {
-        let painter = Painter {
-            limit,
-            ..self.painter
-        };
         let mut digest = Digest::new(area);
         let (atlas, primitives) = (self.atlas, &self.cache.primitives[first..]);
         digest.value((reduction, software::hash_of_snapshot(primitives, area)));
-        let (factor, background) = (1. / reduction as f32, self.placement.background);
-        let matrix = self
-            .root
-            .post_translate(-area.left as f32, -area.top as f32)
-            .post_scale(factor, factor);
         (digest, move || {
-            if let Some(layer) = atlas.snapshot(primitives, area, reduction as usize) {
-                return Some(layer);
-            }
-            let frame = painter.frame.rescaled(factor);
-            let side = |length: usize| length.div_ceil(reduction as usize) as i32;
-            let mut layer =
-                Layer::new(IntRect::new(0, 0, side(area.width()), side(area.height())))?;
-            let clip = Clip::new(layer.rect);
-            layer.fill(
-                clip.rect,
-                None,
-                &clip,
-                &Paint::Solid(premultiply(background)),
-            );
-            Painter {
-                frame: &frame,
-                ..painter
-            }
-            .paint(0..painter.scene.items.len(), &mut layer, &matrix, &clip);
-            Some(layer)
+            atlas.snapshot(primitives, area, reduction as usize)
         })
     }
 
     /// For what blends with the pixels under it, which only the CPU can read.
-    fn replace_with_scene(&mut self, index: usize, matrix: &Transform, clip: IntRect) -> bool {
+    fn paint_over_scene(&mut self, index: usize, matrix: &Transform, clip: IntRect) -> bool {
         let (mut area, end) = (
             self.device_bounds(index, matrix).intersect(clip),
             self.painter.scene.end(index),
         );
         if area.area() <= WHOLE_AREA
-            && !matches!(
-                self.painter.scene.items[index],
-                Item::PushLayer {
-                    blend: BlendMode::FromBackdrop,
-                    ..
-                }
-            )
+            && matches!(self.painter.scene.items[index], Item::PushLayer { blend, .. } if blend != BlendMode::FromBackdrop)
         {
             let mut digest = Digest::new(area);
             digest.matrix(matrix);
@@ -1904,24 +2159,34 @@ impl Flattener<'_> {
             let Some(painted) = painted else { return true };
             area = painted.rect.offset(area.left, area.top);
         }
-        let (mut digest, render) = self.scene_before(0, index, area, 1);
+        let needed = area
+            .outset(self.painter.reach_of_backdrops(index..end, matrix))
+            .intersect(self.placement.clip);
+        let (mut digest, render) = self.snapshot(self.layer_start.unwrap_or(0), needed, 1);
+        digest.value(area);
         digest.matrix(matrix);
         digest.range(&self.painter, index..end, matrix, area);
         let key = digest.finish();
-        if !self.can_afford(key, area) || area.width().max(area.height()) > MAX_SIDE as usize * 2 {
+        if !self.can_afford(key, needed)
+            || needed.width().max(needed.height()) > MAX_SIDE as usize * 2
+        {
             return false;
         }
-        let mut rendered = (!self.cache.rasters.contains_key(&key))
+        let rendered = (!self.cache.rasters.contains_key(&key))
             .then(render)
             .flatten();
-        if let Some(layer) = &mut rendered {
-            let (matrix, clip) = (
-                matrix.post_translate(-area.left as f32, -area.top as f32),
-                Clip::new(layer.rect),
-            );
-            self.painter.paint(index..end, layer, &matrix, &clip);
-        }
-        if let Some(sprite) = self.raster(key, IntRect::default(), false, |_| rendered) {
+        let sprite = self.raster(key, area, false, |painter| {
+            let mut all = Layer {
+                rect: needed,
+                ..rendered?
+            };
+            let behind = all.copy(area)?;
+            painter.paint(index..end, &mut all, matrix, &Clip::new(area));
+            let mut painted = if needed == area { all } else { all.copy(area)? };
+            painted.take_out(&behind);
+            Some(painted)
+        });
+        if let Some(sprite) = sprite {
             self.push(Primitive::new(
                 area.to_rect(),
                 clip,
@@ -1933,7 +2198,6 @@ impl Flattener<'_> {
 
     fn backdrop(
         &mut self,
-        index: usize,
         shape: &RoundedRect,
         filters: &[Filter],
         matrix: &Transform,
@@ -1951,9 +2215,20 @@ impl Flattener<'_> {
                 0.
             }
         };
-        let reduction = ((filters.iter().map(blur).fold(0., f32::max) / 2.) as i32).clamp(1, 8);
-        let shown = IntRect::nearest(shape.rect).intersect(self.placement.clip);
-        let (mut digest, render) = self.scene_before(first, index, shown, reduction);
+        let (sigma, shown) = (
+            filters.iter().map(blur).fold(0., f32::max),
+            IntRect::nearest(shape.rect).intersect(self.placement.clip),
+        );
+        let sides = [shown.width(), shown.height()];
+        // What is left of a row or a column would weigh too much in an average.
+        let fits = |by: &i32| {
+            sides.iter().any(|it| *it as f32 > sigma.min(MAX_SIGMA))
+                || sides.iter().all(|it| it % *by as usize == 0)
+        };
+        let reduction = (1..=((sigma / 2.) as i32).clamp(1, 8))
+            .rfind(fits)
+            .unwrap_or(1);
+        let (mut digest, render) = self.snapshot(first, shown, reduction);
         digest.filters(self.painter.scene, matrix, filters);
         let key = digest.finish();
         let reduced = |length: usize| length.div_ceil(reduction as usize) as i32;
@@ -1991,5 +2266,274 @@ impl Flattener<'_> {
             radii: radii.unwrap_or_default(),
             ..primitive
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::abi::{Outline, PathVerb, Span, Stroke};
+
+    fn shape(x: f32, y: f32, width: f32, height: f32, radius: f32) -> RoundedRect {
+        RoundedRect {
+            rect: Rect {
+                x,
+                y,
+                width,
+                height,
+            },
+            radii: [[radius; 2]; 4],
+        }
+    }
+
+    fn layer(opacity: f32) -> Item {
+        Item::PushLayer {
+            bounds: shape(0., 0., 400., 4000., 0.).rect,
+            opacity,
+            blend: BlendMode::Normal,
+            filters: Span::default(),
+        }
+    }
+
+    fn flatten(scene: &Scene, cache: &mut Cache, compositor: &mut Compositor) -> Vec<Primitive> {
+        let placement = Placement {
+            movers: &[],
+            in_motion: &[],
+            origin: (3, 5),
+            clip: IntRect::new(0, 0, 800, 600),
+        };
+        cache.begin();
+        paint(
+            scene,
+            &Frame::new(2., true),
+            &placement,
+            &compositor.atlas,
+            cache,
+        );
+        cache.finish(compositor);
+        compositor.primitives.clone()
+    }
+
+    #[test]
+    fn leaves_out_what_cannot_be_seen() {
+        let mut scene = Scene::default();
+        for opacity in [0.001, 0.01] {
+            scene.items.extend([
+                layer(opacity),
+                Item::Fill {
+                    shape: shape(0., 0., 20., 20., 0.),
+                    color: 0xFF,
+                },
+                Item::Pop,
+            ]);
+        }
+        scene.index();
+        let shown = flatten(&scene, &mut Cache::default(), &mut Compositor::default());
+        assert_eq!(
+            shown.iter().map(|it| it.opacity).collect::<Vec<_>>(),
+            [0.01]
+        );
+    }
+
+    /// A header, rows that scroll, of which one fades, and a footer. With the indices of what scrolls and of what fades.
+    fn page(rows: &[u32]) -> (Vec<Item>, Vec<PathVerb>, [usize; 2]) {
+        let (mut items, mut verbs, mut fading) = (Vec::new(), Vec::new(), 0);
+        let mut row = |items: &mut Vec<Item>, y: f32, it: u32| {
+            let (card, color, start) = (
+                shape(10., y, 200., 30., (it % 3 * 4) as f32),
+                it << 8 | 0xFF,
+                verbs.len() as u32,
+            );
+            verbs.extend([
+                PathVerb::Move([12., y + 2.]),
+                PathVerb::Line([30., y + 2.]),
+                PathVerb::Line([12., y + (it % 20) as f32 + 5.]),
+                PathVerb::Close,
+            ]);
+            let outline = Outline {
+                verbs: Span {
+                    start,
+                    end: verbs.len() as u32,
+                },
+                bounds: shape(10., y, 22., 30., 0.).rect,
+                ..Outline::default()
+            };
+            items.push(Item::Shadow {
+                shape: card,
+                shadow: card,
+                blur: 4.,
+                color,
+                inset: false,
+                covered: false,
+            });
+            items.extend([
+                Item::PushClip(card),
+                Item::Fill {
+                    shape: shape(0., y - 5., 300., 20., 0.),
+                    color,
+                },
+                Item::Path { outline, color },
+                Item::Pop,
+            ]);
+        };
+        row(&mut items, 4., 1);
+        items.extend([
+            Item::PushClip(shape(0., 40., 400., 200., 0.)),
+            Item::PushTransform([1., 0., 0., 1., 0., 0.]),
+        ]);
+        let scrolling = items.len() - 1;
+        items.push(Item::PushClip(shape(0., 0., 400., 4000., 0.)));
+        for (index, it) in rows.iter().enumerate().skip(1) {
+            row(&mut items, 40. + index as f32 * 36., *it);
+        }
+        items.push(Item::Pop);
+        fading += items.len();
+        items.push(layer(1.));
+        row(&mut items, 40., rows[0]);
+        items.extend([Item::Pop; 3]);
+        row(&mut items, 250., 2);
+        (items, verbs, [scrolling, fading])
+    }
+
+    #[test]
+    fn remembers_what_it_would_flatten_again() {
+        let (mut scene, mut spare, mut cache, mut compositor) = (
+            Scene::default(),
+            Scene::default(),
+            Cache::default(),
+            Compositor::default(),
+        );
+        let (mut rows, mut state, mut driven, mut scrolled) = (vec![7; 12], 1u32, [0; 2], 0.);
+        for step in 0..400 {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let pick = state >> 16;
+            if step == 0 || pick % 4 == 0 {
+                match pick / 4 % 3 {
+                    0 => rows.push(pick),
+                    1 if rows.len() > 8 => drop(rows.remove(pick as usize % rows.len())),
+                    _ => rows[pick as usize % 8] = pick,
+                }
+                let (items, verbs, indices) = page(&rows);
+                spare.set_list(items, verbs);
+                scene.replace(&[Item::PushClip(shape(0., 0., 400., 300., 0.))], &mut spare);
+                driven = indices.map(|it| it + 1);
+                scene.set_driven(driven.into_iter());
+            }
+            scrolled = [
+                scrolled,
+                scrolled,
+                scrolled - 7.5,
+                (pick % 200) as f32 * -0.25,
+            ][(pick / 16 % 4) as usize];
+            scene.items[driven[0]] = Item::PushTransform([1., 0., 0., 1., 0., scrolled]);
+            scene.items[driven[1]] = layer([1., 0.5, 0.001][(pick / 64 % 3) as usize]);
+            scene.index_around(vec![driven[0]]);
+            let remembered = flatten(&scene, &mut cache, &mut compositor);
+            let area = IntRect::new(0, 0, 500, 600);
+            let shown = compositor.atlas.snapshot(&remembered, area, 1).unwrap();
+            let (memo, mut other) = (scene.memo.take(), Compositor::default());
+            let fresh = flatten(&scene, &mut Cache::default(), &mut other);
+            scene.memo = memo;
+            let outline = |all: &[Primitive]| {
+                all.iter()
+                    .map(|it| (it.bounds, it.clip, it.run, it.radii, it.opacity))
+                    .collect::<Vec<_>>()
+            };
+            assert!(outline(&remembered) == outline(&fresh), "step {step}");
+            assert!(
+                shown.pixels() == other.atlas.snapshot(&fresh, area, 1).unwrap().pixels(),
+                "step {step}"
+            );
+        }
+    }
+
+    fn triangles(moved: usize) -> Scene {
+        let mut scene = Scene::default();
+        scene
+            .items
+            .push(Item::PushVector([1., 0., 0., 1., 7., -40.]));
+        for index in 0..200 {
+            let (x, y) = (
+                (index * 37 % 800) as f32 + if index == moved { 9.5 } else { 0.25 },
+                (index * 53 % 600) as f32,
+            );
+            let start = scene.verbs.len() as u32;
+            scene.verbs.extend([
+                PathVerb::Move([x, y]),
+                PathVerb::Line([x + 60., y + 20.5]),
+                PathVerb::Line([x + 10., y + 90.]),
+                PathVerb::Close,
+            ]);
+            let stroke = Stroke {
+                width: (index % 2 * 3) as f32,
+                miter_limit: 4.,
+                ..Stroke::default()
+            };
+            let bounds = Rect {
+                x: x - 6.,
+                y: y - 6.,
+                width: 72.,
+                height: 102.,
+            };
+            let outline = Outline {
+                verbs: Span {
+                    start,
+                    end: start + 4,
+                },
+                bounds,
+                stroke,
+                ..Outline::default()
+            };
+            scene.items.push(Item::Path {
+                outline,
+                color: (index as u32).wrapping_mul(0x9E37_79B9) | 0x80,
+            });
+        }
+        scene.index();
+        scene
+    }
+
+    #[test]
+    fn a_large_drawing_is_painted_again_where_it_changes() {
+        let (atlas, mut cache, frame, clip) = (
+            Atlas::default(),
+            Cache::default(),
+            Frame::new(1., false),
+            IntRect::new(0, 0, 800, 600),
+        );
+        let placement = Placement {
+            movers: &[],
+            in_motion: &[],
+            origin: (0, 0),
+            clip,
+        };
+        let mut counts = Vec::new();
+        for moved in [usize::MAX, 77] {
+            let (scene, mut whole) = (triangles(moved), Layer::new(clip).unwrap());
+            cache.begin();
+            paint(&scene, &frame, &placement, &atlas, &mut cache);
+            Painter {
+                scene: &scene,
+                frame: &frame,
+                left_out: &[],
+            }
+            .paint(
+                0..scene.items.len(),
+                &mut whole,
+                &Transform::identity(),
+                &Clip::new(clip),
+            );
+            let shown = atlas.snapshot(&cache.primitives, clip, 1).unwrap();
+            assert!(
+                shown
+                    .pixmap
+                    .data()
+                    .iter()
+                    .zip(whole.pixmap.data())
+                    .all(|(a, b)| a.abs_diff(*b) <= 2)
+            );
+            counts.push(cache.rasters.len());
+        }
+        assert!(counts[0] > 16 && (1..=4).contains(&(counts[1] - counts[0])));
     }
 }

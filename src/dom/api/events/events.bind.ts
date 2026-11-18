@@ -92,9 +92,9 @@ export const BeforeUnloadEvent = b.interface("BeforeUnloadEvent", {
 export const WindowTarget = b.interface("WindowTarget", {
   extends: DesktopEventTarget,
   rustPath: "crate::api::events::WindowTarget",
-  size: 64,
+  size: 56,
   abstract: true,
-  internalFields: { window: b.any, document: b.ref("Doc"), tools: b.any, host: b.any, event: b.any },
+  internalFields: { window: b.any, document: b.ref("Doc"), host: b.any, event: b.any },
 });
 
 export const Listeners = b.interface("Listeners", {

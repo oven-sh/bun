@@ -1,6 +1,7 @@
 //! Pixels: coverage masks, premultiplied RGBA layers, and what blends them.
 
 use std::iter::once;
+use std::ops::Range;
 use std::rc::Rc;
 
 use super::blur::blur;
@@ -8,6 +9,7 @@ use super::{blend, edges};
 use crate::abi::{Matrix, Rect, RoundedRect};
 pub use crate::gfx::Path;
 use crate::gfx::{Command, Fill, PathBuilder as _, Pixmap, Point, Style, Transform};
+use crate::parallel;
 use crate::small_vec::SmallVec;
 
 /// Premultiplied.
@@ -772,6 +774,20 @@ pub enum Rows<'a> {
     Of(&'a Pixmap, [i32; 2], u8),
 }
 
+struct RowsMut<'a> {
+    rows: std::slice::ChunksExactMut<'a, Pixel>,
+    columns: Range<usize>,
+}
+
+impl<'a> Iterator for RowsMut<'a> {
+    type Item = &'a mut [Pixel];
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        self.rows.next().map(|it| &mut it[self.columns.clone()])
+    }
+}
+
 pub struct Layer {
     pub rect: IntRect,
     pub pixmap: Pixmap,
@@ -890,6 +906,32 @@ impl Layer {
             .map(move |it| &mut it[start..start + area.width()])
     }
 
+    /// `work` gets some of the rows, and where the first is.
+    fn in_bands(&mut self, area: IntRect, work: impl Fn(i32, RowsMut) + Sync) {
+        if area.is_empty() {
+            return;
+        }
+        let (width, start, above) = (
+            self.rect.width(),
+            (area.left - self.rect.left) as usize,
+            (area.top - self.rect.top) as usize,
+        );
+        parallel::in_bands(
+            &mut self.pixels_mut()[above * width..][..area.height() * width],
+            width,
+            area.area(),
+            |first, band| {
+                work(
+                    area.top + first as i32,
+                    RowsMut {
+                        rows: band.chunks_exact_mut(width),
+                        columns: start..start + area.width(),
+                    },
+                );
+            },
+        );
+    }
+
     /// Source-over. Its edges need not be between pixels.
     pub fn fill_rect(&mut self, rect: Rect, color: Pixel, clip: IntRect) {
         let [left, top, right, bottom] =
@@ -949,17 +991,26 @@ impl Layer {
                 scale(color, ((256 * down - 1) >> 8) as u8),
             );
             let [before, after] = [start, end].map(|it| usize::from(it != middle));
-            let inside = self.rows_mut(band).map(|row| {
-                let (last, length) = (row.len() - 1, row.len());
-                if before > 0 {
-                    row[0] = over(row[0], start);
-                }
-                if after > 0 && last >= before {
-                    row[last] = over(row[last], end);
-                }
-                &mut row[before..(length - after).max(before)]
+            if band == self.rect
+                && before + after == 0
+                && middle[3] == 255
+                && self.pixmap.fill_instead_of_copying(middle)
+            {
+                return;
+            }
+            self.in_bands(band, |_, rows| {
+                let inside = rows.map(|row| {
+                    let (last, length) = (row.len() - 1, row.len());
+                    if before > 0 {
+                        row[0] = over(row[0], start);
+                    }
+                    if after > 0 && last >= before {
+                        row[last] = over(row[last], end);
+                    }
+                    &mut row[before..(length - after).max(before)]
+                });
+                fill_rows(inside, middle);
             });
-            fill_rows(inside, middle);
         }
     }
 
@@ -991,6 +1042,37 @@ impl Layer {
     }
 
     /// Multiplies with the alpha or the luminance of `mask`, and clears what is outside of it.
+    /// Becomes what looks like this when it is drawn over `behind`, which has the same size.
+    pub fn take_out(&mut self, behind: &Layer) {
+        for (pixel, behind) in self
+            .pixels_mut()
+            .iter_mut()
+            .zip(behind.pixels())
+            .filter(|it| it.1[3] != 0 && it.0[3] != 255)
+        {
+            let needed = |is: u8, was: u8| match is < was {
+                true => (u32::from(was - is) * 255).div_ceil(was.into()),
+                false => {
+                    (u32::from(is - was) * 255 + u32::from(255 - was) / 2)
+                        / u32::from(255 - was).max(1)
+                }
+            };
+            let alpha = pixel
+                .iter()
+                .zip(behind)
+                .map(|(is, was)| needed(*is, *was))
+                .fold(0, u32::max) as u8;
+            let left = scale(*behind, 255 - alpha);
+            *pixel = std::array::from_fn(|it| {
+                if it == 3 {
+                    alpha
+                } else {
+                    pixel[it].saturating_sub(left[it]).min(alpha)
+                }
+            });
+        }
+    }
+
     pub fn keep(&mut self, mask: &Layer, luminance: bool) {
         for piece in self.rect.without(mask.rect) {
             (piece.top..piece.bottom)
@@ -1068,68 +1150,77 @@ impl Layer {
     }
 
     fn combine_within(&mut self, area: IntRect, source: &Rows, mode: blend::Mode, clip: &Clip) {
-        let (
-            IntRect {
-                left,
-                top,
-                right,
-                bottom,
-            },
-            mask,
-        ) = (
-            area,
-            clip.mask.as_ref().filter(|_| !clip.open.contains(area)),
+        let (left, mask) = (
+            area.left,
+            clip.mask.as_deref().filter(|_| !clip.open.contains(area)),
         );
-        let (mut colors, mut blended) = (Vec::new(), Vec::new());
-        if let Rows::Same(color) = *source {
-            if mode == blend::Mode::Source && mask.is_none() {
-                return set_rows(self.rows_mut(area), color);
-            }
-            colors.resize(area.width(), color);
-        }
-        if let (&Rows::Of(pixmap, [x, y], by), blend::Mode::SourceOver, None) = (source, mode, mask)
-        {
-            let pixels = pixmap
-                .data()
-                .as_chunks()
-                .0
-                .chunks_exact(pixmap.width() as usize)
-                .skip((top - y) as usize);
-            return blend_rows(
-                self.rows_mut(area)
-                    .zip(pixels.map(|it| &it[(left - x) as usize..])),
-                by,
-            );
-        }
-        for y in top..bottom {
-            let row = self.row_mut(y, left, right);
-            let mut above = &colors[..];
-            if let Rows::Of(pixmap, [x0, y0], by) = *source {
-                let pixels = &pixmap.data().as_chunks().0
-                    [(y - y0) as usize * pixmap.width() as usize + (left - x0) as usize..]
-                    [..row.len()];
-                above = pixels;
-                if by != 255 {
-                    colors.clear();
-                    colors.extend(pixels.iter().map(|it| scale(*it, by)));
-                    above = &colors;
+        if (mode, area, mask.is_none()) == (blend::Mode::Source, self.rect, true) {
+            match *source {
+                Rows::Of(pixmap, [x, y], 255)
+                    if IntRect::new(
+                        x,
+                        y,
+                        x + pixmap.width() as i32,
+                        y + pixmap.height() as i32,
+                    ) == area
+                        && let Some(shared) = pixmap.shared() =>
+                {
+                    return self.pixmap = shared;
                 }
+                Rows::Same(color) if self.pixmap.fill_instead_of_copying(color) => return,
+                _ => {}
             }
-            let Some(mask) = mask else {
-                blend::blend(row, above, mode);
-                continue;
-            };
-            row.clone_into(&mut blended);
-            blend::blend(&mut blended, above, mode);
-            for ((pixel, from), coverage) in
-                row.iter_mut().zip(&blended).zip(mask.row(y, left, right))
+        }
+        self.in_bands(area, |top, rows| {
+            let (mut colors, mut blended) = (Vec::new(), Vec::new());
+            if let Rows::Same(color) = *source {
+                if mode == blend::Mode::Source && mask.is_none() {
+                    return set_rows(rows, color);
+                }
+                colors.resize(area.width(), color);
+            }
+            if let (&Rows::Of(pixmap, [x, y], by), blend::Mode::SourceOver, None) =
+                (source, mode, mask)
             {
-                for (channel, from) in pixel.iter_mut().zip(from) {
-                    *channel = multiply(*from, *coverage)
-                        .saturating_add(multiply(*channel, 255 - coverage));
+                let pixels = pixmap
+                    .data()
+                    .as_chunks()
+                    .0
+                    .chunks_exact(pixmap.width() as usize)
+                    .skip((top - y) as usize);
+                return blend_rows(rows.zip(pixels.map(|it| &it[(left - x) as usize..])), by);
+            }
+            for (y, row) in (top..).zip(rows) {
+                let mut above = &colors[..];
+                if let Rows::Of(pixmap, [x0, y0], by) = *source {
+                    let pixels = &pixmap.data().as_chunks().0
+                        [(y - y0) as usize * pixmap.width() as usize + (left - x0) as usize..]
+                        [..row.len()];
+                    above = pixels;
+                    if by != 255 {
+                        colors.clear();
+                        colors.extend(pixels.iter().map(|it| scale(*it, by)));
+                        above = &colors;
+                    }
+                }
+                let Some(mask) = mask else {
+                    blend::blend(row, above, mode);
+                    continue;
+                };
+                row.clone_into(&mut blended);
+                blend::blend(&mut blended, above, mode);
+                for ((pixel, from), coverage) in row
+                    .iter_mut()
+                    .zip(&blended)
+                    .zip(mask.row(y, left, area.right))
+                {
+                    for (channel, from) in pixel.iter_mut().zip(from) {
+                        *channel = multiply(*from, *coverage)
+                            .saturating_add(multiply(*channel, 255 - coverage));
+                    }
                 }
             }
-        }
+        });
     }
 
     /// Interpolates towards `source` by the clip's coverage.

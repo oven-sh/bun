@@ -1,6 +1,6 @@
 use std::sync::OnceLock;
 
-use crate::builtins::table;
+use crate::builtins::{BuiltinId, table};
 
 include!(concat!(env!("BUN_CODEGEN_DIR"), "/web_globals.rs"));
 
@@ -19,12 +19,18 @@ pub(crate) fn absent_or_different() -> &'static [u32] {
     GLOBALS.get_or_init(|| find_globals(ABSENT_OR_DIFFERENT))
 }
 
-pub(crate) fn is_absent_or_different(name: &[u8]) -> bool {
-    (ABSENT_OR_DIFFERENT.iter()).any(|listed| listed.as_bytes() == name)
+pub(crate) fn is_absent_or_different(global: BuiltinId) -> bool {
+    absent_or_different()
+        .binary_search(&(global as u32))
+        .is_ok()
 }
 
 pub(crate) fn depending_on_realm() -> Vec<u32> {
     find_globals(DEPENDS_ON_REALM)
+}
+
+pub(crate) fn kept_aside() -> Vec<u32> {
+    find_globals(KEPT_ASIDE)
 }
 
 #[cfg(test)]
@@ -35,7 +41,8 @@ mod tests {
     fn every_name_is_a_built_in() {
         assert_eq!(absent_or_different().len(), ABSENT_OR_DIFFERENT.len());
         assert_eq!(depending_on_realm().len(), DEPENDS_ON_REALM.len());
-        assert!(is_absent_or_different(b"process"));
-        assert!(!is_absent_or_different(b"Blob"));
+        assert_eq!(kept_aside().len(), KEPT_ASIDE.len());
+        assert!(is_absent_or_different(BuiltinId::Process));
+        assert!(!is_absent_or_different(BuiltinId::URL));
     }
 }

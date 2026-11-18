@@ -5,7 +5,7 @@ use super::webvtt::{self, CueSettings};
 use super::*;
 use crate::abi::Rect;
 use crate::api::core::{
-    Atom, DomString, Element, Node, Ns, Observers, QualName, Rooted, insert, remove,
+    Atom, DomString, Element, Node, Observers, QualName, Rooted, insert, remove,
 };
 
 impl CueSettings {
@@ -255,14 +255,9 @@ impl Player {
         if track.is_some_and(|it| !it.style_sheets.borrow().is_empty()) {
             let scope = add_part(cx, video, display, atom!("div"), "-internal-cue-styles")
                 .attach_ua_shadow(cx);
-            let originator = video.doc().create_plain(
-                &cx.heap,
-                QualName {
-                    ns: Ns::None,
-                    prefix: None,
-                    local: Atom::new(""),
-                },
-            );
+            let originator = video
+                .doc()
+                .create_plain(&cx.heap, QualName::plain(Atom::new("")));
             insert(cx, originator, scope, None, Observers::Suppress);
         }
         js_TextTrackCue::set_display(cue, Some(display));

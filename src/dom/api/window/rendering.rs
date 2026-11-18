@@ -21,6 +21,7 @@ bitflags::bitflags! {
         const VISIBLE = 1;
         const RENDERING = 1 << 1;
         const PAINTED = 1 << 2;
+        const DRAWN = 1 << 3;
         const REVEALED = 1 << 4;
         const RESIZED = 1 << 5;
         const IN_NEW_ENVIRONMENT = 1 << 6;
@@ -28,6 +29,7 @@ bitflags::bitflags! {
         const WANTING_ANOTHER_FRAME = 1 << 8;
         /// Its scripts have run with those of the page around it.
         const HALF_RENDERED = 1 << 9;
+        const AWARE_OF_ENVIRONMENT = 1 << 10;
     }
 }
 
@@ -46,6 +48,7 @@ pub(super) struct Rendering {
     early_paints_left: Cell<u8>,
     layout_version: Cell<Option<u32>>,
     background: Cell<Option<u32>>,
+    preferred_size: Cell<[f32; 2]>,
     frame_timer: Cell<Option<FrameTimer>>,
     wake_timer: Cell<Option<Timer>>,
 }
@@ -53,13 +56,14 @@ pub(super) struct Rendering {
 impl Default for Rendering {
     fn default() -> Rendering {
         Rendering {
-            is: Is::VISIBLE.into(),
+            is: (Is::VISIBLE | Is::DRAWN).into(),
             frame_time: now().into(),
             resize_time: 0.0.into(),
             input_time: 0.0.into(),
             unpainted_since: 0.0.into(),
             early_paints_left: 0.into(),
             layout_version: None.into(),
+            preferred_size: Cell::default(),
             background: None.into(),
             frame_timer: None.into(),
             wake_timer: None.into(),
@@ -271,7 +275,7 @@ impl Window {
     }
 
     pub(crate) fn schedule<'a>(&'a self, cx: Cx<'_, 'a>, keeps_process_alive: bool) {
-        if self.is_disposed() || !self.is(Is::VISIBLE) && self.is(Is::PAINTED) {
+        if self.is_disposed() || !self.is(Is::DRAWN) && self.is(Is::PAINTED) {
             return;
         }
         if self.is_in_container() {
@@ -293,7 +297,7 @@ impl Window {
     pub(super) fn schedule_early_callbacks<'a>(&'a self, cx: Cx<'_, 'a>) {
         match self.surface() != 0
             && !self.is_in_container()
-            && self.is(Is::VISIBLE)
+            && self.is(Is::DRAWN)
             && self.is(Is::PAINTED)
         {
             true => tasks::wants_frame(cx.global(), self.to_js(), &CANVAS),
@@ -354,7 +358,7 @@ impl Window {
 
     pub(crate) fn environment_changed<'a>(&'a self, cx: Cx<'_, 'a>) {
         let (doc, old_zoom) = (self.document(), self.zoom());
-        self.read_environment(pending::from_container(cx, self));
+        self.read_environment(container::from_container(cx, self));
         self.toggle(
             if old_zoom == self.zoom() {
                 Is::IN_NEW_ENVIRONMENT
@@ -363,23 +367,29 @@ impl Window {
             },
             true,
         );
-        let is_visible = self.environment().is_visible;
-        if self.is(Is::VISIBLE) != is_visible {
-            self.toggle(Is::VISIBLE, is_visible);
-            performance::reached(
-                &cx.heap,
-                self.document(),
-                if is_visible { b"visible" } else { b"hidden" },
-                now(),
-            );
+        let [is_visible, is_drawn] = [self.environment().is_visible, self.environment().is_drawn];
+        if self.is(Is::DRAWN) != is_drawn {
+            self.toggle(Is::DRAWN, is_drawn);
             self.forget_layout();
             observers::observe_again(&cx.heap, doc);
             doc.arena().is_scheduled.set(false);
-            if !is_visible {
+            if !is_drawn {
                 transition::skip_view_transitions(cx, doc);
             }
-            self.post(&cx.heap, fire_visibility_change);
         }
+        if self.is(Is::VISIBLE) != is_visible {
+            self.toggle(Is::VISIBLE, is_visible);
+            if self.is(Is::AWARE_OF_ENVIRONMENT) {
+                performance::reached(
+                    &cx.heap,
+                    self.document(),
+                    if is_visible { b"visible" } else { b"hidden" },
+                    now(),
+                );
+                self.post(&cx.heap, fire_visibility_change);
+            }
+        }
+        self.toggle(Is::AWARE_OF_ENVIRONMENT, true);
         doc.invalidate(cx);
     }
 
@@ -567,7 +577,7 @@ impl Window {
                 .is_some_and(|it| it.dark && it.display() != crate::types::Display::None)
         });
         let background = match self.is_in_container() {
-            true if is_dark == pending::from_container(cx, self).looks_dark => 0,
+            true if is_dark == container::from_container(cx, self).looks_dark => 0,
             _ if self.environment().forces_colors => crate::color::forced(b"canvas", is_dark),
             _ if is_dark => DARK_CANVAS,
             true => WHITE,
@@ -771,6 +781,8 @@ impl Window {
             take_requests(cx, doc);
             if self.is_in_container() {
                 self.host().painted_in_frame(self.surface_scale());
+            } else if self.environment().reports_paints {
+                self.host().painted();
             }
             if doc.is(DocFlags::IS_ACCESSIBLE) {
                 ui::update_accessibility_soon(cx, ui);
@@ -784,7 +796,15 @@ impl Window {
         if !self.is(Is::PAINTED) && doc.body().is_some() {
             self.toggle(Is::PAINTED, true);
             performance::reached(&cx.heap, doc, b"first-paint", now());
+            crate::api::core::metadata::tell_theme_color(doc);
             self.host().first_paint();
+        }
+        if has_moved && self.environment().reports_preferred_size {
+            let size = doc.synced_engine(cx, |engine, _| engine.preferred_size());
+            if it.preferred_size.replace(size) != size {
+                self.host()
+                    .preferred_size_changed(size[0].into(), size[1].into());
+            }
         }
         if self.is(Is::PAINTED) {
             performance::report_paint(&cx.heap, doc, has_moved);

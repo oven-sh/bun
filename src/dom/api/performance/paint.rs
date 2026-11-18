@@ -27,6 +27,15 @@ pub(super) struct Painting {
     reported: RefCell<Vec<WeakNode>>,
 }
 
+impl Painting {
+    pub(super) fn start_over(&self) {
+        [&self.has_painted_content, &self.had_input]
+            .into_iter()
+            .for_each(|it| it.set(false));
+        self.largest.set(0);
+    }
+}
+
 /// The images, or `TEXT`.
 #[derive(Default)]
 struct Seen(RefCell<SmallVec<[u32; 2]>>);

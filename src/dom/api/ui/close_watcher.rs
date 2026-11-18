@@ -43,10 +43,11 @@ impl Watcher {
         closes: Closes,
         subject: &EventTarget,
     ) -> &'a Watcher {
+        let allowed = ui.activation.allowed_watcher_groups.get();
         let last = ui
             .close_watchers()
             .last()
-            .filter(|_| group_count(ui) >= ui.activation.allowed_watcher_groups.get());
+            .filter(|_| allowed == 1 || group_count(ui) >= allowed);
         let group = last.map_or_else(|| ui.layers.last_watcher_group.get() + 1, |it| it.group);
         ui.layers.last_watcher_group.set(group);
         let watcher = js_Watcher::create(
@@ -59,7 +60,7 @@ impl Watcher {
         );
         watcher.set_manager(Some(ui));
         watcher.set_subject(Some(subject));
-        ui.set_close_watchers(ui.close_watchers().with(heap, watcher));
+        ui.set_close_watchers(ui.close_watchers().followed_by(heap, watcher));
         ui.activation.allows_another_group.set(true);
         watcher
     }

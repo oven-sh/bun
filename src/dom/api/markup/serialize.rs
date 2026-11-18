@@ -1,13 +1,18 @@
 //! <https://html.spec.whatwg.org/#serialising-html-fragments>
 
-use bun_jsc::bindgen::JsScope;
+use bun_core::strings;
+use bun_jsc::JSValue;
+use bun_jsc::bindgen::{self, JsHeap, JsInterface, JsLocal, JsScope};
 use bun_markup::Text as Buffer;
 use bun_markup::escape::{Escape, push_escaped};
 use smallvec::SmallVec;
 
 use super::with_buffer;
 use crate::api::core::{NodeFlags as F, *};
+use crate::api::cssom;
 use crate::document::Document;
+use crate::generated_bindgen::canvas::HTMLCanvasElement;
+use crate::generated_bindgen::forms::{HTMLInputElement, HTMLOptionElement, HTMLTextAreaElement};
 use crate::generated_bindgen::markup::GetHTMLOptions;
 use crate::tree::{self, Data, Namespace, NodeId, Step, Walk};
 
@@ -35,7 +40,7 @@ pub(super) fn is_void(tag: Known) -> bool {
     )
 }
 
-fn has_raw_text(of_doc: &Node, html_tag: Known) -> bool {
+pub(super) fn has_raw_text(of_doc: &Node, html_tag: Known) -> bool {
     match html_tag {
         atom!("style")
         | atom!("script")
@@ -50,7 +55,7 @@ fn has_raw_text(of_doc: &Node, html_tag: Known) -> bool {
 }
 
 #[inline]
-fn push_tag_name(out: &mut Buffer, element: &tree::Element) {
+pub(super) fn push_tag_name(out: &mut Buffer, element: &tree::Element) {
     if element.namespace == Namespace::Other
         && let Some(prefix) = element.space.as_ref().and_then(|it| it.prefix.as_ref())
     {
@@ -76,14 +81,14 @@ fn push_attribute_prefix(out: &mut Buffer, space: &tree::Space, local: &Atom) {
 }
 
 #[inline]
-fn push_value(out: &mut Buffer, value: &DomString) {
+pub(super) fn push_value(out: &mut Buffer, value: &DomString) {
     out.push_str("=\"");
     push_escaped(out, value.chars(), Escape::HtmlAttribute);
     out.push_byte(b'"');
 }
 
 #[inline]
-fn push_attribute(out: &mut Buffer, attribute: &tree::Attribute, value: &DomString) {
+pub(super) fn push_attribute(out: &mut Buffer, attribute: &tree::Attribute, value: &DomString) {
     out.push_byte(b' ');
     if let Some(space) = &attribute.space {
         push_attribute_prefix(out, space, &attribute.local);
@@ -93,7 +98,7 @@ fn push_attribute(out: &mut Buffer, attribute: &tree::Attribute, value: &DomStri
 }
 
 #[inline(always)]
-fn push_text(out: &mut Buffer, text: &DomString, is_raw: bool) {
+pub(super) fn push_text(out: &mut Buffer, text: &DomString, is_raw: bool) {
     if is_raw {
         out.push(text.chars())
     } else {
@@ -101,7 +106,7 @@ fn push_text(out: &mut Buffer, text: &DomString, is_raw: bool) {
     }
 }
 
-fn push_comment(out: &mut Buffer, data: &DomString) {
+pub(super) fn push_comment(out: &mut Buffer, data: &DomString) {
     ["<!--".into(), data.chars(), "-->".into()]
         .into_iter()
         .for_each(|it| out.push(it));
@@ -229,7 +234,7 @@ impl<'c, 'r, 'a> Writer<'c, 'r, 'a> {
     }
 
     /// `is`: the value that no attribute has.
-    #[inline]
+    #[inline(always)]
     fn start_tag_of(
         &mut self,
         engine: &Document,
@@ -258,8 +263,22 @@ impl<'c, 'r, 'a> Writer<'c, 'r, 'a> {
                 let written = *written;
                 self.out
                     .repeat(written.start as usize..(written.start + written.len) as usize);
-                return written;
+                written
             }
+            _ => self.write_and_note(engine, id, element, of_doc, shared, slot),
+        }
+    }
+
+    fn write_and_note(
+        &mut self,
+        engine: &Document,
+        id: NodeId,
+        element: &tree::Element,
+        of_doc: &Node,
+        shared: (usize, usize),
+        slot: usize,
+    ) -> Written {
+        match self.recent.get(slot) {
             Some(_) => {}
             None if self.elements < ELEMENTS_BEFORE_RECALLING => self.elements += 1,
             None => self.recent.resize(1 << RECENT_BITS, Default::default()),
@@ -271,17 +290,15 @@ impl<'c, 'r, 'a> Writer<'c, 'r, 'a> {
         written
     }
 
-    #[inline]
+    #[inline(always)]
     fn end_tag(
         &mut self,
         Written {
             start, name_len, ..
         }: Written,
     ) {
-        self.out.push_str("</");
         self.out
-            .repeat(start as usize + 1..(start + 1 + name_len) as usize);
-        self.out.push_byte(b'>');
+            .push_end_tag(start as usize + 1..(start + 1 + name_len) as usize);
     }
 
     fn serialized_shadow_root(&self, host: &'a Node) -> Option<&'a ShadowRoot> {
@@ -373,10 +390,21 @@ impl<'c, 'r, 'a> Writer<'c, 'r, 'a> {
                     let written = self.start_tag_of(engine, id, top, None);
                     if written.content == Content::Void {
                         walk.skip(tree);
-                    } else {
+                        continue;
+                    }
+                    if let Some(Data::Text(only)) = tree.only_text_in(id).map(|it| &tree[it].data) {
+                        push_text(
+                            &mut self.out,
+                            only.string(),
+                            written.content == Content::RawText,
+                        );
+                    } else if tree.has_children(id) {
                         open.push(written);
                         is_raw = written.content == Content::RawText;
+                        continue;
                     }
+                    walk.skip(tree);
+                    self.end_tag(written);
                 }
                 Step::Leave => {
                     open.pop().into_iter().for_each(|it| self.end_tag(it));
@@ -431,6 +459,226 @@ impl<'c, 'r, 'a> Writer<'c, 'r, 'a> {
                 .map_or(is_top_raw, |it| it.content == Content::RawText);
         }
     }
+}
+
+enum OnPaper<'a> {
+    Write(&'a Node),
+    End(Written),
+    EndScope(&'a Node),
+}
+
+fn push_rules(out: &mut Buffer, rules: &[u8]) {
+    out.push(
+        DomString::from_utf8(&bun_ui::protocol::Text::lossy(
+            &strings::split(rules, b"</")
+                .collect::<Vec<_>>()
+                .join(&b"<\\/"[..]),
+        ))
+        .chars(),
+    );
+}
+
+impl<'a> Writer<'_, '_, 'a> {
+    /// Returns what is to be between the tags, if it is not the children.
+    fn start_tag_on_paper(
+        &mut self,
+        element: &'a Element,
+        of_frames: Sources<'_>,
+    ) -> bindgen::Result<'a, (Written, Option<DomString>)> {
+        let (value, heap, mut state) = (
+            element.to_js(),
+            JsHeap::from_global(element.doc().global()),
+            Vec::new(),
+        );
+        let (mut written, mut text) = (
+            Written {
+                start: self.out.len() as u32,
+                ..Default::default()
+            },
+            None,
+        );
+        if let Some(canvas) = HTMLCanvasElement::from_js(heap, value) {
+            let picture = canvas.to_data_url(
+                self.cx,
+                b"image/png",
+                JsLocal::new(heap, JSValue::UNDEFINED),
+            );
+            let picture = picture.or_else(|error| self.cx.catch(error).map(|_| Vec::new()))?;
+            state.push((atom!("src"), Some(DomString::from_latin1(&picture))));
+            self.out.push_str("<img");
+            written.content = Content::Void;
+        } else {
+            self.out.push_byte(b'<');
+            match element.html_tag() {
+                atom!("plaintext") | atom!("xmp") => self.out.push_str("pre"),
+                _ => element.with(|it| push_tag_name(&mut self.out, it)),
+            }
+            written.name_len = self.out.len() as u32 - written.start - 1;
+            written.content = if is_void(element.html_tag()) {
+                Content::Void
+            } else {
+                Content::Markup
+            };
+        }
+        let flag = |is_on: bool| is_on.then(DomString::default);
+        if let Some(input) = HTMLInputElement::from_js(heap, value) {
+            let shown = match input.get_type() {
+                atom!("password") => {
+                    DomString::from_latin1(&vec![b'*'; input.get_value().len() as usize])
+                }
+                _ => input.get_value(),
+            };
+            state.extend([
+                (atom!("checked"), flag(input.get_checked())),
+                (
+                    atom!("value"),
+                    (element.has_attr(atom!("value")) || !input.get_value().is_empty())
+                        .then_some(shown),
+                ),
+            ]);
+        } else if let Some(option) = HTMLOptionElement::from_js(heap, value) {
+            state.push((atom!("selected"), flag(option.get_selected())));
+        } else if let Some(area) = HTMLTextAreaElement::from_js(heap, value) {
+            text = Some(area.get_value());
+        } else if element.html_tag() == atom!("iframe") {
+            let [url, markup] = of_frames.map(|all| {
+                all.iter()
+                    .find(|it| it.0 == element.id())
+                    .map(|it| it.1.clone())
+            });
+            state.extend([
+                (atom!("src"), url),
+                (atom!("srcdoc"), markup),
+                (atom!("sandbox"), None),
+                (atom!("csp"), None),
+            ]);
+            text = Some(DomString::default());
+        }
+        // The referrer says which document a request is for.
+        state.push((atom!("referrerpolicy"), None));
+        element.flush_style(self.cx);
+        let (out, is_refused) = (&mut self.out, element.with(|it| it.is_style_refused));
+        element.for_each_attr(|attribute, value| {
+            let is_style = attribute.local.chars().is_ignoring_case(b"style");
+            if !(is_style
+                && (is_refused || attribute.space.is_some() || attribute.local != atom!("style")))
+                && !state.iter().any(|it| attribute.local == it.0)
+            {
+                push_attribute(out, attribute, value);
+            }
+        });
+        for (name, value) in state.iter().filter_map(|it| Some((it.0, it.1.as_ref()?))) {
+            out.push_byte(b' ');
+            out.push(Atom::from(name).chars());
+            push_value(out, value);
+        }
+        out.push_byte(b'>');
+        Ok((written, text))
+    }
+
+    fn for_paper(&mut self, doc: &'a Doc, of_frames: Sources<'_>) -> bindgen::Result<'a, ()> {
+        let (heap, mut steps) = (
+            JsHeap::from_global(doc.global()),
+            vec![OnPaper::EndScope(doc)],
+        );
+        steps.extend(doc.document_element().map(|it| OnPaper::Write(it)));
+        while let Some(step) = steps.pop() {
+            let node = match step {
+                OnPaper::Write(node) => node,
+                OnPaper::End(written) => {
+                    self.end_tag(written);
+                    continue;
+                }
+                OnPaper::EndScope(scope) => {
+                    self.out.push_str("<style>");
+                    push_rules(&mut self.out, &cssom::rules_without_markup(heap, scope));
+                    self.out.push_str(if scope.has(F::SHADOW_ROOT) {
+                        "</style></template>"
+                    } else {
+                        "</style>"
+                    });
+                    continue;
+                }
+            };
+            steps.extend(
+                node.next_sibling()
+                    .filter(|_| node.parent() != Some(doc))
+                    .map(OnPaper::Write),
+            );
+            let Some(element) = node.as_element() else {
+                node.as_text()
+                    .into_iter()
+                    .for_each(|_| self.data(node, false));
+                continue;
+            };
+            // Whatever the namespace is, as the parser may come to another one.
+            let is_named = |names: &[&[u8]]| {
+                element.with(|it| {
+                    names
+                        .iter()
+                        .any(|name| it.local.chars().is_ignoring_case(name))
+                })
+            };
+            let is_style = is_named(&[b"style"]);
+            if is_named(&[
+                b"base",
+                b"meta",
+                b"noembed",
+                b"noframes",
+                b"noscript",
+                b"script",
+                b"template",
+            ]) || (is_style
+                && cssom::sheet_of(heap, element).is_none_or(|it| it.get_disabled(self.cx)))
+            {
+                continue;
+            }
+            let (written, text) = self.start_tag_on_paper(element, of_frames)?;
+            if written.content == Content::Void {
+                continue;
+            }
+            steps.push(OnPaper::End(written));
+            match text {
+                Some(text) => {
+                    self.out.push_byte(b'\n');
+                    push_escaped(&mut self.out, text.chars(), Escape::HtmlText);
+                }
+                None if element.html_tag() == atom!("style") => push_rules(
+                    &mut self.out,
+                    element.child_text_content().to_utf8().as_bytes(),
+                ),
+                None => steps.extend(element.first_child().map(OnPaper::Write)),
+            }
+            if let Some(root) = element.shadow_root().filter(|it| !it.has(F::USER_AGENT)) {
+                self.out.push_str("<template shadowrootmode=open>");
+                steps.push(OnPaper::EndScope(root));
+                steps.extend(root.first_child().map(OnPaper::Write));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// `src` and `srcdoc` of frames.
+type Sources<'s> = [&'s [(NodeId, DomString)]; 2];
+
+/// What is shown, for a browser that runs no scripts and refuses no styles.
+#[cold]
+pub(super) fn for_paper<'a>(
+    cx: &mut JsScope<'a>,
+    doc: &'a Doc,
+    of_frames: Sources<'_>,
+) -> bindgen::Result<'a, DomString> {
+    let mut writer = Writer::new(cx, None, Buffer::with_capacity(0));
+    writer.out.push_str(if doc.quirks() {
+        "<meta charset=utf-8><base href"
+    } else {
+        "<!DOCTYPE html><meta charset=utf-8><base href"
+    });
+    push_value(&mut writer.out, &doc.base_url());
+    writer.out.push_byte(b'>');
+    writer.for_paper(doc, of_frames)?;
+    Ok(DomString::from_chars(writer.out.chars()))
 }
 
 pub(super) fn inner_html<'a>(

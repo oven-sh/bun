@@ -6,7 +6,7 @@ use super::history::{Document, Entry};
 use super::page::Page;
 use super::{
     Contents, Kind, Methods, NOTHING, Numbers as _, Values, bind, field, focused, nothing, of_app,
-    or_undefined, with_id,
+    or_undefined, with_id, worlds,
 };
 use crate::generated_bindgen::contents::{
     ElectronWebContentsModule, ElectronWebFrameMainModule, js_ElectronWebFrameMain as frames,
@@ -14,6 +14,7 @@ use crate::generated_bindgen::contents::{
 use crate::ipc::IpcMain;
 use crate::prelude::*;
 use crate::webview::remote::Remote;
+use crate::webview::{print, wire};
 use crate::{devtools, ports, process};
 
 pub(crate) struct WebFrameMain {
@@ -76,13 +77,26 @@ impl WebFrameMain {
         !self.is_known.replace(true)
     }
 
-    fn page(&self) -> &Page {
+    pub(super) fn page(&self) -> &Page {
         frames::page(self).expect("it was made with one")
     }
 
+    fn live(&self) -> JsResult<&Page> {
+        match self.is_destroyed() {
+            true => Err(worlds::disposed()),
+            false => Ok(self.page()),
+        }
+    }
+
+    pub(crate) fn is_destroyed(&self) -> bool {
+        self.page().is_forgotten.get()
+    }
+
+    pub(crate) fn nothing(&self) {}
+
     pub(super) fn with_descendants(&self) -> JsResult<JSValue> {
         let all = array(&[self.to_js()])?;
-        with_elements(self.page().frames_if_any()?, |frames| {
+        with_elements(self.live()?.frames_if_any()?, |frames| {
             let add = |below: &[JSValue]| below.iter().try_for_each(|it| all.push(global(), *it));
             frames
                 .iter()
@@ -102,31 +116,34 @@ impl WebFrameMain {
         })
     }
 
-    pub(crate) fn get_name(&self) -> String {
-        self.name.borrow().clone()
+    pub(crate) fn get_name(&self, _: Cx<'_, '_>) -> JsResult<String> {
+        self.live().map(|_| self.name.borrow().clone())
     }
 
-    pub(crate) fn get_url(&self) -> String {
-        match self.page().contents().crashed_at.borrow().is_some() {
+    pub(crate) fn get_url(&self, _: Cx<'_, '_>) -> JsResult<String> {
+        Ok(match self.live()?.contents().has_crashed() {
             true => String::new(),
             false => visible_url(self.page()),
-        }
+        })
     }
 
-    pub(crate) fn get_origin(&self) -> String {
-        self.page().origin()
+    pub(crate) fn get_origin(&self, _: Cx<'_, '_>) -> JsResult<String> {
+        Ok(match self.live()?.contents().has_crashed() {
+            true => String::new(),
+            false => self.page().origin(),
+        })
     }
 
-    pub(crate) fn get_parent(&self) -> JSValue {
-        self.page().parent().map_or(JSValue::NULL, Page::handle)
+    pub(crate) fn get_parent(&self, _: Cx<'_, '_>) -> JsResult<JSValue> {
+        Ok(self.live()?.parent().map_or(JSValue::NULL, Page::handle))
     }
 
-    pub(crate) fn get_top(&self) -> JSValue {
-        field(
-            core::iter::successors(Some(self.page()), |it| it.parent())
+    pub(crate) fn get_top(&self, _: Cx<'_, '_>) -> JsResult<JSValue> {
+        Ok(field(
+            core::iter::successors(Some(self.live()?), |it| it.parent())
                 .last()
                 .map(Page::handle),
-        )
+        ))
     }
 
     pub(crate) fn get_frames(&self, _: Cx<'_, '_>) -> JsResult<JSValue> {
@@ -151,20 +168,23 @@ impl WebFrameMain {
         self.page().is_disposed()
     }
 
-    pub(crate) fn get_os_process_id(&self) -> u32 {
-        process::id()
+    pub(crate) fn get_os_process_id(&self, _: Cx<'_, '_>) -> JsResult<u32> {
+        Ok(match self.live()?.contents().has_crashed() {
+            true => 0,
+            false => process::id(),
+        })
     }
 
-    pub(crate) fn get_process_id(&self) -> u32 {
-        self.page().owner().id
+    pub(crate) fn get_process_id(&self, _: Cx<'_, '_>) -> JsResult<u32> {
+        Ok(self.live()?.owner().id)
     }
 
-    pub(crate) fn get_routing_id(&self) -> u32 {
-        self.page().id
+    pub(crate) fn get_routing_id(&self, _: Cx<'_, '_>) -> JsResult<u32> {
+        Ok(self.live()?.id)
     }
 
-    pub(crate) fn get_frame_token(&self) -> &[u8] {
-        self.page().token()
+    pub(crate) fn get_frame_token(&self, _: Cx<'_, '_>) -> JsResult<&[u8]> {
+        Ok(self.live()?.token())
     }
 
     pub(crate) fn get_frame_tree_node_id(&self) -> u32 {
@@ -172,7 +192,7 @@ impl WebFrameMain {
     }
 
     pub(crate) fn get_visibility_state(&self, _: Cx<'_, '_>) -> JsResult<&'static str> {
-        Ok(if self.page().contents().is_visible()? {
+        Ok(if self.live()?.contents().seems_shown()? {
             "visible"
         } else {
             "hidden"
@@ -186,7 +206,7 @@ impl WebFrameMain {
         is_by_user: bool,
     ) -> JsResult<JSValue> {
         let code = code.to_js().to_js_string(global())?.to_js();
-        Ok(self.page().execute(0, code, is_by_user))
+        Ok(self.live()?.execute(0, code, is_by_user))
     }
 
     pub(crate) fn send<'a>(
@@ -214,7 +234,7 @@ impl WebFrameMain {
         message: JsLocal<'a>,
         transfer: JsLocal<'a>,
     ) -> JsResult<()> {
-        self.page().send(
+        self.live()?.send(
             channel.to_js(),
             array(&[message.to_js()])?,
             ports::move_all(transfer.to_js())?,
@@ -222,7 +242,7 @@ impl WebFrameMain {
     }
 
     pub(crate) fn reload(&self, _: Cx<'_, '_>) -> JsResult<bool> {
-        if self.page().is_disposed() {
+        if self.live()?.is_disposed() {
             Ok(false)
         } else {
             self.page()
@@ -233,11 +253,17 @@ impl WebFrameMain {
     }
 
     pub(crate) fn collect_java_script_call_stack(&self, _: Cx<'_, '_>) -> JsResult<JSValue> {
+        self.live()?;
         resolved("")
     }
 
-    pub(crate) fn print_to_pdf(&self, _: Cx<'_, '_>) -> JsResult<JSValue> {
-        Err(unsupported("printToPDF"))
+    pub(crate) fn print_to_pdf<'a>(
+        &self,
+        _: Cx<'a, '_>,
+        options: JsLocal<'a>,
+    ) -> JsResult<JSValue> {
+        let page = self.live()?.contents().live_page()?;
+        print::print_to_pdf(page, wire::data_from_js(options.to_js())?)
     }
 }
 

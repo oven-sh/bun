@@ -5,7 +5,7 @@ use bun_jsc::bindgen::JsStringImpl;
 
 use bun_jsc::JSGlobalObject;
 use bun_web::exec;
-use bun_web::reporting::{Members, ReportType};
+use bun_web::reporting::{Member, Members, ReportType};
 
 use super::*;
 use crate::api::events::swap_top_level;
@@ -62,7 +62,7 @@ impl SecurityPolicyViolationEvent {
         )
     }
 
-    fn of_report<'a>(cx: Cx<'_, 'a>, body: JSValue) -> Result<'a, &'a Self> {
+    fn of_report<'a>(heap: &JsHeap<'a>, body: &Members) -> &'a Self {
         let names = [
             "documentURL",
             "referrer",
@@ -74,26 +74,25 @@ impl SecurityPolicyViolationEvent {
             "sample",
             "disposition",
         ];
-        let mut texts = names.map(|_| DomString::default());
-        for (text, name) in texts.iter_mut().zip(names) {
-            if let Some(given) = body
-                .get(cx.global(), name)?
-                .and_then(|it| JsLocal::new(&cx.heap, it).as_string())
-            {
-                *text = DomString::from_js_string(&cx.heap, given)?;
+        let member = |name| body.iter().find(|it| it.0 == name).map(|it| &it.1);
+        let texts = names.map(|it| {
+            if let Some(Member::Text(text)) = member(it) {
+                DomString::from_utf8(&bstr::ByteSlice::to_str_lossy(&**text))
+            } else {
+                DomString::default()
             }
-        }
-        let mut number = |name: &str| {
-            Ok::<_, bindgen::Error<'a>>(
-                body.get(cx.global(), name)?
-                    .and_then(JSValue::get_number)
-                    .unwrap_or(0.0) as u32,
-            )
+        });
+        let number = |name| {
+            if let Some(Member::Number(number)) = member(name) {
+                *number
+            } else {
+                0
+            }
         };
         let (line_number, column_number, status_code) = (
-            number("lineNumber")?,
-            number("columnNumber")?,
-            number("statusCode")? as u16,
+            number("lineNumber"),
+            number("columnNumber"),
+            number("statusCode") as u16,
         );
         let [texts @ .., disposition] = texts;
         let disposition = if disposition.eq_str("report") {
@@ -110,8 +109,8 @@ impl SecurityPolicyViolationEvent {
             },
             Trusted::Yes,
         );
-        Ok(js_SecurityPolicyViolationEvent::create(
-            &cx.heap,
+        js_SecurityPolicyViolationEvent::create(
+            heap,
             SecurityPolicyViolationEvent {
                 base,
                 texts,
@@ -120,7 +119,7 @@ impl SecurityPolicyViolationEvent {
                 status_code,
                 disposition,
             },
-        ))
+        )
     }
 
     pub(crate) fn get_disposition(&self) -> SecurityPolicyViolationEventDisposition {
@@ -305,10 +304,7 @@ fn deliver_report<'a>(
     body: Members,
     element: JsLocal<'a>,
 ) -> Result<'a> {
-    let (kind, body) = (
-        DomString::from_latin1(kind.as_bytes()),
-        bun_web::reporting::members_to_js(&cx.heap, body)?,
-    );
+    let kind = DomString::from_latin1(kind.as_bytes());
     let (Some(client), Some(global)) = (client_of(&cx.heap), WindowTarget::of_realm(&cx.heap))
     else {
         return Ok(());
@@ -317,9 +313,10 @@ fn deliver_report<'a>(
         let node = Node::from_js(&cx.heap, element.to_js())
             .filter(|it| it.is_connected())
             .or_else(|| global.doc().map(|it| &**it));
-        let event = SecurityPolicyViolationEvent::of_report(cx, body.to_js())?;
+        let event = SecurityPolicyViolationEvent::of_report(&cx.heap, &body);
         dispatch(cx, node.map_or(&**global, |it| &**it), event);
     }
+    let body = bun_web::reporting::members_to_js(&cx.heap, body)?;
     let body = with_to_json(cx, |cx| crate::api::performance::clone_detail(cx, body))?;
     let (kind, url) = (
         kind.to_js(&cx.heap).to_js(),

@@ -1,6 +1,7 @@
 //! Windows that pages open.
 
 use bun_ui::Rect;
+use bun_web::host::Wish;
 use bun_web::trust;
 use bun_web::window_features::WindowFeatures;
 
@@ -40,11 +41,11 @@ impl Contents {
     pub(super) fn open(
         &self,
         opener: &Page,
-        url: &str,
+        wish: &Wish,
         name: &str,
         features: &str,
-        [create_page, options]: [JSValue; 2],
     ) -> JsResult<Option<&'static Contents>> {
+        let url = &*wish.url;
         if opener.forbids("allow-popups")
             || (url.starts_with("javascript:") && opener.forbids("allow-scripts"))
         {
@@ -75,11 +76,9 @@ impl Contents {
             "referrer": object!({ "url": opener.url(), "policy": "strict-origin-when-cross-origin" }),
         });
         let create = |preferences| {
-            let create_page =
-                Some(create_page).filter(|it| is_blank && !is_shared && it.is_callable());
             let start = Start::Opened {
                 opener,
-                create_page,
+                borrows_realm: is_blank && !is_shared,
                 is_related: is_shared && !noopener,
             };
             let opened = Contents::start(preferences, Kind::Window, &start)?;
@@ -99,7 +98,11 @@ impl Contents {
                 opened.show(opened.page(), "", Markup::Html)?;
                 opened.page().set_initial_url(url)?;
                 return if is_script && is_shared {
-                    opened.page().navigate_for(opener, url, object!({}))
+                    let wish = Wish {
+                        url: url.to_owned(),
+                        ..Default::default()
+                    };
+                    opened.page().navigate_for(opener, wish)
                 } else {
                     Ok(())
                 };
@@ -107,20 +110,18 @@ impl Contents {
             if !noopener && same(opened.session, self.session) && opened.is_for_guest(url)? {
                 return opened.show_guest(true).map(drop);
             }
-            let options = spread(object!({}), options)?;
-            options.put(global(), b"replace", JSValue::TRUE);
-            options.put(
-                global(),
-                b"referrer",
-                js(if noreferrer {
-                    String::new()
-                } else {
-                    opener.url()
-                })?,
-            );
+            let wish = Wish {
+                replaces: true,
+                ..wish.clone()
+            };
+            let referrer = Some(if noreferrer {
+                String::new()
+            } else {
+                opener.url()
+            });
             match is_shared {
-                true => opened.navigate(opener, url, options).map(drop),
-                false => opened.wish(opened.page(), url, options, Initiator::of(opener)),
+                true => opened.navigate(opener, wish, referrer),
+                false => opened.wish(opened.page(), wish, Initiator::of(opener), referrer),
             }
         };
         let opened = self
@@ -178,12 +179,14 @@ impl Contents {
             height: height as f32,
         })?
         .work_area;
+        let (width, height) = (width.min(area.width as i32), height.min(area.height as i32));
+        let inside = |at: i32, start: f32, last: f32| at.min(last as i32).max(start as i32);
         let options = object!({
             "show": true,
             "width": width,
             "height": height,
-            "x": or_undefined(left.map(|it| it.max(area.x as i32)))?,
-            "y": or_undefined(top.map(|it| it.max(area.y as i32)))?,
+            "x": or_undefined(left.map(|it| inside(it, area.x, area.x + area.width - width as f32)))?,
+            "y": or_undefined(top.map(|it| inside(it, area.y, area.y + area.height - height as f32)))?,
         });
         features::add_options(options, &features)?;
         spread(options, overrides)?;

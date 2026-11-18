@@ -70,7 +70,9 @@ pub(crate) fn fire_events<'a>(cx: &mut Cx<'a>, ui: &'a Ui) {
 }
 
 pub(crate) fn is_enabled(doc: &Doc) -> bool {
-    Ui::of(doc).is_some_and(|it| host::allows_feature(it, "fullscreen"))
+    Ui::of(doc).is_some_and(|it| {
+        host::allows_feature(it, bun_web::permissions_policy::Feature::Fullscreen)
+    })
 }
 
 fn is_ready(element: &Element) -> bool {

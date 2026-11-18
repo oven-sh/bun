@@ -3,7 +3,7 @@ title: Desktop apps
 description: Open windows that show a DOM document, with menus, dialogs, notifications and the rest of what a desktop app needs
 ---
 
-`bun:desktop` opens native windows on macOS and Linux (X11, and Xwayland on Wayland desktops). Windows is not supported yet. A window shows a DOM document. Bun has its own implementation of the DOM, CSS, layout and painting. There is no browser process and no IPC: your components, `node:fs` and the layout of the window run on one thread.
+`bun:desktop` opens native windows on macOS and Linux (X11 and Wayland). Windows is not supported yet. A window shows a DOM document. Bun has its own implementation of the DOM, CSS, layout, text and painting. There is no browser process and no IPC: your components, `node:fs` and the layout of the window run on one thread.
 
 <Warning>
   `bun:desktop` is experimental. It implements much of the web platform, not all of it. See [what is
@@ -132,6 +132,12 @@ With `bun --hot`, pass a `key` to get the open window back when the module runs 
 ```tsx
 new Window({ key: "main" }).render(<App />);
 ```
+
+### Wayland
+
+Bun uses Wayland if `WAYLAND_DISPLAY` is set and `libxkbcommon` is installed, and otherwise X11. `BUN_DESKTOP_BACKEND=x11` or `--ozone-platform=x11` chooses X11 in any case.
+
+On Wayland the compositor places windows. The position of a window is that of its display, `setPosition()`, `center()`, `setAlwaysOnTop()`, `setSkipTaskbar()` and `setVisibleOnAllWorkspaces()` do nothing, and `screen.getCursorScreenPoint()` is where the pointer was last seen in a window of the app. `focus()` only raises a window after the user has asked for it, with a click, a key, a shortcut, a notification or a second launch. `globalShortcut` needs the desktop portal for global shortcuts, which may ask the user.
 
 ### Launch cover
 
@@ -289,7 +295,7 @@ To keep modules that are rarely needed out of the executable, pass `source`. It 
 app.setCompiledScripts(roots, { exclusive: true, source: url => rarelyNeeded.get(url) });
 ```
 
-Compiled scripts are part of your program: `process`, `Bun`, `require` and `globalThis.process` are the real ones in them, though `window` does not have them. Replace these names with `self.process` and so on when you bundle code that was written for browsers.
+Compiled scripts are part of your program. They do not find the globals of Bun, but they can import its modules, such as `node:fs`.
 
 ## Troubleshooting
 
@@ -331,7 +337,7 @@ test("counts", () => {
 
 ## What is missing
 
-- `<video>` and `<audio>` do not play. There is no WebGL, WebGPU, WebRTC or Web Audio.
+- `<video>`, `<audio>`, Web Audio, `MediaRecorder` and the microphone need the web engine. A file plays once all of it has been fetched. There is no camera, `MediaSource`, WebCodecs, WebGL, WebGPU or WebRTC.
 - In an `<iframe>`, drags do not cross the border.
 - There are no touch or pen events, no image maps, and no pickers for the date and time types of `<input>`, which are text fields.
 - `form[0]` and `style[0]` are there once `length` has been read. `document.name` does not find forms and images by name.

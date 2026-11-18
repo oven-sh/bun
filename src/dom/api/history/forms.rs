@@ -105,7 +105,7 @@ pub(crate) fn plan_form_navigation<'a>(cx: &mut Cx<'a>, form: &'a Element, it: S
     else {
         return;
     };
-    let (mut body, mut content_type) = (JSValue::UNDEFINED, None);
+    let mut sent = None;
     if !url.part(Part::Protocol).eq_str("javascript:") {
         let (bytes, kind) = encode(
             &form_data::fields(it.data),
@@ -121,8 +121,11 @@ pub(crate) fn plan_form_navigation<'a>(cx: &mut Cx<'a>, form: &'a Element, it: S
                 Part::Search,
                 &DomString::concat(&[&"?".into(), &DomString::from_latin1(&bytes)]),
             );
-        } else if let Ok(bytes) = cx.heap.create_buffer(&bytes) {
-            (body, content_type) = (bytes.to_js(), Some(kind));
+        } else {
+            sent = Some(bun_web::host::Post {
+                content_type: kind,
+                body: bytes.into(),
+            });
         }
     }
     let (planned, is_by_user, replaces) = (
@@ -146,8 +149,8 @@ pub(crate) fn plan_form_navigation<'a>(cx: &mut Cx<'a>, form: &'a Element, it: S
     }
     queue_task(
         window,
-        [form.to_js(), it.submitter.to_js(), it.data, body],
-        move |cx, window, [form, submitter, form_data, body]| {
+        [form.to_js(), it.submitter.to_js(), it.data],
+        move |cx, window, [form, submitter, form_data]| {
             window.set_phase(Phase::ABOUT_TO_SUBMIT, false);
             let history = History::of(&cx.heap, window);
             if history
@@ -160,10 +163,9 @@ pub(crate) fn plan_form_navigation<'a>(cx: &mut Cx<'a>, form: &'a Element, it: S
             {
                 return;
             }
-            let post = content_type.map(|content_type| Post {
-                form_data,
-                body,
-                content_type,
+            let post = sent.map(|sent| Post {
+                form_data: Some(form_data),
+                sent,
             });
             let mut options = Options {
                 source: Source::Form,

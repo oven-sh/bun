@@ -4,6 +4,7 @@ use core::any::{Any, TypeId};
 use core::cell::{Cell, OnceCell, UnsafeCell};
 use core::cmp::Ordering;
 use core::iter::successors;
+use core::marker::PhantomData;
 use std::rc::Rc;
 
 use bun_jsc::JSValue;
@@ -66,17 +67,20 @@ bitflags::bitflags! {
     }
 }
 
-/// In the order of `internalFields`.
+/// In the order of `internalFields`. `null` stands for no node. `First` and `Last` are empty while the children are bare.
 #[derive(Clone, Copy)]
 pub(super) enum Link {
-    Parent,
     First,
+    Next,
+    Parent,
     Last,
     Previous,
-    Next,
     Document,
     Rare,
 }
+
+/// More are looked up in a list.
+const FEW_CHILDREN: usize = 16;
 
 struct Extra {
     /// That of `value`, which would answer through its vtable.
@@ -94,22 +98,171 @@ impl Extra {
     }
 }
 
+/// Two bytes, and an address in the six that it needs, as in `WTF::PackedPtr`.
+#[repr(C, align(8))]
+pub(crate) struct Packed<Low, T> {
+    pub(crate) low: Low,
+    address: UnsafeCell<[u16; 3]>,
+    pointee: PhantomData<*const T>,
+}
+
+impl<Low, T> Packed<Low, T> {
+    #[inline(always)]
+    fn new(low: Low, pointer: *const T) -> Self {
+        const {
+            assert!(
+                size_of::<Low>() == 2 && size_of::<Self>() == 8 && cfg!(target_endian = "little")
+            )
+        };
+        let address = pointer.expose_provenance();
+        Packed {
+            low,
+            address: UnsafeCell::new([
+                address as u16,
+                (address >> 16) as u16,
+                (address >> 32) as u16,
+            ]),
+            pointee: PhantomData,
+        }
+    }
+
+    #[inline(always)]
+    fn get(&self) -> *const T {
+        // SAFETY: eight aligned bytes without padding.
+        core::ptr::with_exposed_provenance(
+            unsafe { core::ptr::from_ref(self).cast::<usize>().read() } >> 16,
+        )
+    }
+
+    #[inline(always)]
+    fn set(&self, pointer: *const T) {
+        let address = pointer.expose_provenance();
+        assert!(address >> 48 == 0);
+        // SAFETY: there is no reference to it.
+        unsafe {
+            *self.address.get() = [
+                address as u16,
+                (address >> 16) as u16,
+                (address >> 32) as u16,
+            ]
+        };
+    }
+}
+
+/// The address of the arena, which is an `Rc`, takes five bytes.
+#[repr(C, align(8))]
+pub(crate) struct Head {
+    kind: Cell<Kind>,
+    pub(crate) node_type: Cell<u8>,
+    /// What `rare` has: `NO_EDGE`, `MANY_EDGES`, or else the value of the edge before that number.
+    edge: Cell<u8>,
+    arena: UnsafeCell<[u8; 5]>,
+}
+
+const NO_EDGE: u8 = 0;
+/// Their numbers and their values are in a list.
+const MANY_EDGES: u8 = u8::MAX;
+
+impl Head {
+    #[inline(always)]
+    fn bytes_of(arena: *const Arena) -> [u8; 5] {
+        const {
+            assert!(
+                align_of::<Arena>() == 256
+                    && size_of::<Head>() == 8
+                    && cfg!(target_endian = "little")
+            )
+        };
+        let [_, address @ .., _, _] = arena.expose_provenance().to_le_bytes();
+        address
+    }
+
+    #[inline(always)]
+    fn arena(&self) -> *const Arena {
+        // SAFETY: eight aligned bytes without padding.
+        core::ptr::with_exposed_provenance(
+            unsafe { core::ptr::from_ref(self).cast::<usize>().read() } >> 24 << 8,
+        )
+    }
+}
+
+/// `NodeLayout` in DesktopDOMJIT.cpp
+#[repr(C)]
+struct Layout {
+    in_cell: [u32; 6],
+    in_arena: [u32; 2],
+    constants: [u32; 5],
+    edges: [u32; 8],
+}
+
+#[unsafe(no_mangle)]
+static Bun__DOM__nodeLayout: Layout = {
+    macro_rules! numbers {
+        ($($it:expr),*) => { [$(($it) as u32),*] };
+    }
+    macro_rules! in_cell {
+        ($($($member:ident).+),*) => { numbers![$(Node::PAYLOAD_OFFSET + core::mem::offset_of!(Node, $($member).+)),*] };
+    }
+    assert!((Edge::Structures as usize) < 128 && super::DocFlags::IS_XML.bits() <= u16::MAX as _);
+    Layout {
+        in_cell: in_cell![
+            head,
+            head.kind,
+            head.node_type,
+            head.edge,
+            extras.low,
+            flags
+        ],
+        in_arena: numbers![
+            core::mem::offset_of!(Arena, places_of_edges),
+            core::mem::offset_of!(Arena, names)
+        ],
+        constants: numbers![
+            NodeFlags::CONNECTED.bits(),
+            super::DocFlags::IS_XML.bits(),
+            super::element::OWN_BITS,
+            Kind::HtmlElement,
+            MANY_EDGES
+        ],
+        edges: numbers![
+            Edge::ChildNodes,
+            Edge::Children,
+            Edge::ClassList,
+            Edge::Attributes,
+            Edge::Style,
+            Edge::Dataset,
+            Edge::Rows,
+            Edge::Implementation
+        ],
+    }
+};
+
+/// With the header it fills two cache lines. The first has all that a walk down the tree reads.
 #[repr(C)]
 pub(crate) struct Node {
     pub(crate) base: EventTarget,
     pub(crate) fields: js_Node::Fields,
-    arena: UnsafeCell<Rc<Arena>>,
-    extras: OnceCell<Box<Extra>>,
+    pub(crate) head: Head,
+    /// A `Box`, or null.
+    extras: Packed<Cell<u16>, Extra>,
     id: Cell<NodeId>,
     flags: Cell<NodeFlags>,
-    kind: Cell<Kind>,
-    bits_of_kind: Cell<u16>,
 }
 
 impl Drop for Node {
     fn drop(&mut self) {
         self.arena()
             .collected(self.id.get(), self.has(NodeFlags::HAS_BARE_CHILDREN));
+        if self.kind().is_document() {
+            self.arena().document_collected();
+        }
+        // SAFETY: it owns both.
+        unsafe {
+            if !self.extras.get().is_null() {
+                drop(Box::from_raw(self.extras.get().cast_mut()));
+            }
+            drop(Rc::from_raw(self.head.arena()));
+        }
     }
 }
 
@@ -153,22 +306,33 @@ pub(crate) use node_interface;
 
 impl Node {
     pub(super) fn new(arena: Rc<Arena>, id: NodeId, kind: Kind, flags: NodeFlags) -> Node {
-        let (arena, id, flags, kind) = (
-            UnsafeCell::new(arena),
-            Cell::new(id),
-            Cell::new(flags),
-            Cell::new(kind),
-        );
-        Node {
+        let head = Head {
+            kind: Cell::new(kind),
+            node_type: Cell::new(kind.node_type() as u8),
+            edge: Cell::new(NO_EDGE),
+            arena: UnsafeCell::new(Head::bytes_of(Rc::into_raw(arena))),
+        };
+        let extras = Packed::new(Cell::new(0), core::ptr::null());
+        let node = Node {
             base: Default::default(),
             fields: Default::default(),
-            arena,
-            extras: OnceCell::new(),
-            id,
-            flags,
-            kind,
-            bits_of_kind: Cell::new(0),
-        }
+            head,
+            extras,
+            id: Cell::new(id),
+            flags: Cell::new(flags),
+        };
+        let child = if flags.contains(NodeFlags::HAS_BARE_CHILDREN) {
+            JSValue::ZERO
+        } else {
+            JSValue::NULL
+        };
+        [Link::First, Link::Last]
+            .into_iter()
+            .for_each(|it| node.slot(it).set(child));
+        [Link::Next, Link::Parent, Link::Previous]
+            .into_iter()
+            .for_each(|it| node.set_link(it, None));
+        node
     }
 
     /// # Safety
@@ -210,13 +374,14 @@ impl Node {
     fn link(&self, link: Link) -> Option<&Node> {
         let value = self.slot(link).get();
         // SAFETY: it is alive, and the stack holds it from now on.
-        (!value.is_empty()).then(|| unsafe { Node::from_cell(value) })
+        (value.encoded() as usize > JSValue::NULL.encoded() as usize)
+            .then(|| unsafe { Node::from_cell(value) })
     }
 
     /// The caller tells the collector, with `written`.
     #[inline(always)]
     pub(super) fn set_link(&self, link: Link, to: Option<&Node>) {
-        self.slot(link).set(to.map_or(JSValue::ZERO, Node::to_js));
+        self.slot(link).set(to.map_or(JSValue::NULL, Node::to_js));
     }
 
     #[inline(always)]
@@ -225,15 +390,33 @@ impl Node {
     }
 
     #[inline(always)]
-    pub(crate) fn arena(&self) -> &Rc<Arena> {
+    pub(crate) fn arena(&self) -> &Arena {
         // SAFETY: only `move_to` writes it, and the document that the node has left holds the old one.
-        unsafe { &*self.arena.get() }
+        unsafe { &*self.head.arena() }
+    }
+
+    #[inline(always)]
+    pub(super) fn share_arena(&self) -> Rc<Arena> {
+        // SAFETY: it is from `Rc::into_raw`, and this node has a share.
+        unsafe {
+            Rc::increment_strong_count(self.head.arena());
+            Rc::from_raw(self.head.arena())
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn is_in_arena_of(&self, other: &Node) -> bool {
+        self.head.arena() == other.head.arena()
     }
 
     pub(super) fn move_to(&self, arena: Rc<Arena>, id: NodeId) {
-        // SAFETY: as above.
-        unsafe { *self.arena.get() = arena };
+        let old = self.head.arena();
         self.id.set(id);
+        // SAFETY: there is no reference to the bytes, and `old` is the share that it had.
+        unsafe {
+            *self.head.arena.get() = Head::bytes_of(Rc::into_raw(arena));
+            drop(Rc::from_raw(old));
+        }
     }
 
     #[inline(always)]
@@ -243,18 +426,19 @@ impl Node {
 
     #[inline(always)]
     pub(crate) fn kind(&self) -> Kind {
-        self.kind.get()
+        self.head.kind.get()
     }
 
     /// `DocFlags` or `ShadowFlags`. The steps of an element may use them.
     #[inline(always)]
     pub(crate) fn bits_of_kind(&self) -> &Cell<u16> {
-        &self.bits_of_kind
+        &self.extras.low
     }
 
     /// The prototype stays.
     pub(crate) fn set_kind(&self, kind: Kind) {
-        self.kind.set(kind);
+        debug_assert!(kind.node_type() == self.node_type());
+        self.head.kind.set(kind);
     }
 
     #[inline(always)]
@@ -280,16 +464,28 @@ impl Node {
 
     #[inline(always)]
     pub(crate) fn set(&self, flags: NodeFlags) {
+        if flags.contains(NodeFlags::HAS_BARE_CHILDREN) {
+            assert!(self.first_object().is_none());
+            [Link::First, Link::Last]
+                .into_iter()
+                .for_each(|it| self.slot(it).set(JSValue::ZERO));
+        }
         self.flags.set(self.flags.get() | flags);
     }
 
     #[inline(always)]
     pub(crate) fn unset(&self, flags: NodeFlags) {
+        if flags.contains(NodeFlags::HAS_BARE_CHILDREN) && self.has(NodeFlags::HAS_BARE_CHILDREN) {
+            [Link::First, Link::Last]
+                .into_iter()
+                .for_each(|it| self.set_link(it, None));
+        }
         self.flags.set(self.flags.get() - flags);
     }
 
     #[inline(always)]
     pub(crate) fn toggle(&self, flags: NodeFlags, on: bool) {
+        debug_assert!(!flags.contains(NodeFlags::HAS_BARE_CHILDREN));
         self.flags.set(if on {
             self.flags.get() | flags
         } else {
@@ -323,7 +519,7 @@ impl Node {
 
     /// What `prefetch_after` comes too late for.
     pub(crate) fn prefetch_first_below(&self) {
-        if let Some(first) = self.first_child() {
+        if let Some(first) = self.first_object() {
             (0..16).for_each(|it| {
                 core::hint::prefetch_read(
                     core::ptr::from_ref(first)
@@ -342,7 +538,9 @@ impl Node {
 
     #[inline(always)]
     fn made(&self, link: Link) -> Option<&Node> {
-        self.has(NodeFlags::HAS_BARE_CHILDREN)
+        self.slot(link)
+            .get()
+            .is_empty()
             .then(|| self.make_children())?;
         self.link(link)
     }
@@ -528,27 +726,33 @@ impl Node {
     // ───────────────────────────── state ─────────────────────────────
 
     pub(crate) fn try_extra<T: 'static>(&self) -> Option<&T> {
-        successors(self.extras.get(), |it| it.next.get()).find_map(|it| it.get())
+        successors(self.first_extra(), |it| it.next.get().map(|it| &**it)).find_map(|it| it.get())
+    }
+
+    #[inline(always)]
+    fn first_extra(&self) -> Option<&Extra> {
+        // SAFETY: once it is there it stays.
+        unsafe { self.extras.get().as_ref() }
     }
 
     /// If it has none yet.
     pub(crate) fn extra_with<T: 'static>(&self, make: impl FnOnce() -> T) -> &T {
-        let mut slot = &self.extras;
-        while let Some(extra) = slot.get() {
-            match extra.get() {
-                Some(found) => return found,
-                None => slot = &extra.next,
-            }
+        if let Some(found) = self.try_extra() {
+            return found;
         }
-        slot.get_or_init(|| {
-            Box::new(Extra {
-                kind: TypeId::of::<T>(),
-                value: Box::new(make()),
-                next: OnceCell::new(),
-            })
-        })
-        .get()
-        .expect("it was made")
+        let made = Box::new(Extra {
+            kind: TypeId::of::<T>(),
+            value: Box::new(make()),
+            next: OnceCell::new(),
+        });
+        let made = match successors(self.first_extra(), |it| it.next.get().map(|it| &**it)).last() {
+            Some(last) => last.next.get_or_init(|| made),
+            None => {
+                self.extras.set(Box::into_raw(made));
+                self.first_extra().expect("it was made")
+            }
+        };
+        made.get().expect("it was made")
     }
 
     pub(crate) fn extra<T: Default + 'static>(&self) -> &T {
@@ -556,16 +760,32 @@ impl Node {
     }
 
     #[inline]
-    fn rare(&self) -> Option<List<'_>> {
-        Some(self.slot(Link::Rare).get())
-            .filter(|it| !it.is_empty())
-            .map(List::from_value)
+    pub(crate) fn edge(&self, edge: Edge) -> Option<JSValue> {
+        match self.head.edge.get() {
+            MANY_EDGES => self.edge_among_many(edge),
+            only => Some(self.slot(Link::Rare).get())
+                .filter(|it| only == edge as u8 + 1 && !it.is_empty()),
+        }
     }
 
-    #[inline]
-    pub(crate) fn edge(&self, edge: Edge) -> Option<JSValue> {
-        self.rare()?
-            .value_of_key(JSValue::js_number_from_int32(edge as i32))
+    fn edge_among_many(&self, edge: Edge) -> Option<JSValue> {
+        let (rare, key) = (
+            List::from_value(self.slot(Link::Rare).get()),
+            JSValue::js_number_from_int32(edge as i32),
+        );
+        let Some(pairs) = rare.contiguous().map(|it| it.as_chunks::<2>().0) else {
+            return rare.value_of_key(key);
+        };
+        let place = &self.arena().places_of_edges[edge as usize % 128];
+        let [_, value] = pairs
+            .get(usize::from(place.get()))
+            .filter(|it| it[0] == key)
+            .or_else(|| {
+                let found = pairs.iter().position(|it| it[0] == key)?;
+                place.set(found as u8);
+                pairs.get(found)
+            })?;
+        Some(*value).filter(|it| !it.is_empty())
     }
 
     /// Of an edge to a node.
@@ -576,24 +796,44 @@ impl Node {
     }
 
     pub(crate) fn set_edge(&self, heap: &JsHeap<'_>, edge: Edge, value: JSValue) {
-        let key = JSValue::js_number_from_int32(edge as i32);
-        let rare = self.rare().unwrap_or_else(|| {
-            let rare = List::with_capacity(heap, 4);
-            self.slot(Link::Rare).set(rare.to_js());
-            self.written();
-            List::from_value(rare.to_js())
-        });
-        match rare.position_of_key(key) {
-            Some(index) => rare.set(heap, index + 1, value),
-            None => [key, value].into_iter().for_each(|it| rare.push(heap, it)),
+        let (key, only, slot) = (
+            JSValue::js_number_from_int32(edge as i32),
+            self.head.edge.get(),
+            self.slot(Link::Rare),
+        );
+        if only == MANY_EDGES {
+            let rare = List::from_value(slot.get());
+            return match rare.position_of_key(key) {
+                Some(index) => rare.set(heap, index + 1, value),
+                None => [key, value].into_iter().for_each(|it| rare.push(heap, it)),
+            };
         }
+        if only == NO_EDGE || only == edge as u8 + 1 {
+            slot.set(value);
+            self.head.edge.set(edge as u8 + 1);
+        } else {
+            let both = [
+                JSValue::js_number_from_int32(i32::from(only) - 1),
+                slot.get(),
+                key,
+                value,
+            ];
+            slot.set(List::from_fn(heap, 4, |it| both[it as usize]).to_js());
+            self.head.edge.set(MANY_EDGES);
+        }
+        self.written();
     }
 
     pub(crate) fn clear_edge(&self, heap: &JsHeap<'_>, edge: Edge) {
-        if let Some(rare) = self.rare()
-            && let Some(index) = rare.position_of_key(JSValue::js_number_from_int32(edge as i32))
+        let (only, slot) = (self.head.edge.get(), self.slot(Link::Rare));
+        if only == edge as u8 + 1 {
+            slot.set(JSValue::ZERO);
+            self.head.edge.set(NO_EDGE);
+        } else if only == MANY_EDGES
+            && let Some(index) = List::from_value(slot.get())
+                .position_of_key(JSValue::js_number_from_int32(edge as i32))
         {
-            rare.remove_range(heap, index, 2);
+            List::from_value(slot.get()).remove_range(heap, index, 2);
         }
     }
 
@@ -881,19 +1121,42 @@ impl Node {
     }
 
     pub(crate) fn index(&self) -> u32 {
-        self.previous_siblings().count() as u32
+        match self.previous_siblings().take(FEW_CHILDREN).count() {
+            FEW_CHILDREN => self
+                .parent()
+                .and_then(|it| it.list_of_children().index_of(self))
+                .unwrap_or_default(),
+            count => count as u32,
+        }
+    }
+
+    pub(crate) fn is_index_below(&self, limit: u32) -> bool {
+        if limit as usize > FEW_CHILDREN {
+            self.index() < limit
+        } else {
+            self.previous_siblings().take(limit as usize).count() < limit as usize
+        }
     }
 
     /// <https://dom.spec.whatwg.org/#concept-node-length>
     pub(crate) fn length(&self) -> u32 {
-        self.as_character_data().map_or_else(
-            || self.children().count() as u32,
-            CharacterData::data_length,
-        )
+        self.as_character_data()
+            .map_or_else(|| self.count_children(), CharacterData::data_length)
     }
 
     pub(crate) fn child_at(&self, index: u32) -> Option<&Node> {
-        self.children().nth(index as usize)
+        if index as usize <= FEW_CHILDREN {
+            self.children().nth(index as usize)
+        } else {
+            self.list_of_children().node(index)
+        }
+    }
+
+    fn count_children(&self) -> u32 {
+        match self.children().take(FEW_CHILDREN).count() {
+            FEW_CHILDREN => self.list_of_children().len(),
+            count => count as u32,
+        }
     }
 
     /// Itself too.
@@ -922,7 +1185,7 @@ impl Node {
             return Ordering::Equal;
         }
         let (mut forward, mut backward) = (x.next_sibling(), x.previous_sibling());
-        loop {
+        for _ in 0..FEW_CHILDREN {
             match (forward, backward) {
                 (_, None) => return Ordering::Less,
                 (Some(it), _) if it == y => return Ordering::Less,
@@ -933,6 +1196,7 @@ impl Node {
                 }
             }
         }
+        x.index().cmp(&y.index())
     }
 
     fn text_of(tree: &Tree, nodes: impl Iterator<Item = NodeId>) -> DomString {

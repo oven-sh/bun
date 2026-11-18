@@ -100,7 +100,7 @@ pub(crate) enum Transform {
     Deferred(Rc<(Transforms, Transforms, Mixing)>),
 }
 
-const Z_AXIS: [f32; 3] = [0.0, 0.0, 1.0];
+pub(crate) const Z_AXIS: [f32; 3] = [0.0, 0.0, 1.0];
 
 fn sin_cos(degrees: f64) -> (f64, f64) {
     match degrees.rem_euclid(360.0) {
@@ -399,6 +399,15 @@ impl Transform {
         }
     }
 
+    /// Whether it is more than an affine transform that can be undone.
+    pub(crate) fn projects(&self) -> bool {
+        let matrix = (!matches!(self, Transform::Translate(..)) && self.is_3d())
+            .then(|| self.matrix_3d(1.0, 1.0));
+        matrix.is_some_and(|it| {
+            [3, 7, 11, 15].iter().any(|at| it[*at] != IDENTITY_3D[*at]) || invert_3d(&it).is_none()
+        })
+    }
+
     pub(crate) fn is_3d(&self) -> bool {
         match self {
             Transform::Translate(name, ..)
@@ -543,11 +552,9 @@ impl Css for Transform {
                 common(m, n, Name::Scale, Name::Scale3d),
                 [0, 1, 2].map(|i| t.of_factors(a[i], b[i])),
             ),
-            (T::Skew(m, a, b), T::Skew(n, c, d)) => T::Skew(
-                common(m, n, Name::Skew, Name::Skew),
-                t.of(*a, *c),
-                t.of(*b, *d),
-            ),
+            (T::Skew(m, a, b), T::Skew(n, c, d)) if m == n => {
+                T::Skew(*m, t.of(*a, *c), t.of(*b, *d))
+            }
             (T::Rotate(m, a, from), T::Rotate(n, b, to)) => {
                 let name = common(m, n, Name::Rotate, Name::Rotate3d);
                 let [from, to] = [(a, from), (b, to)].map(|it| {
@@ -570,8 +577,14 @@ impl Css for Transform {
                     ));
                 }
                 let [x, y, z, w] = blend_quaternions(quaternion(*a, from), quaternion(*b, to), t);
-                let axis = unit([x, y, z].map(|it| f64::from(it as f32)))
-                    .map_or(Z_AXIS, |it| it.map(|it| it as f32));
+                let axis = unit([x, y, z].map(|it| {
+                    if it.abs() < 1e-6 {
+                        0.0
+                    } else {
+                        f64::from(it as f32)
+                    }
+                }))
+                .map_or(Z_AXIS, |it| it.map(|it| it as f32));
                 T::Rotate(
                     name,
                     axis,

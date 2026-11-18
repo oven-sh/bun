@@ -81,7 +81,7 @@ impl Animated {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 struct Stop {
     offset: f32,
     value: Animated,
@@ -91,7 +91,7 @@ struct Stop {
     frame: usize,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 struct Track {
     target: Target,
     stops: Vec<Stop>,
@@ -99,6 +99,15 @@ struct Track {
     easing: Easing,
     /// It stays at what the style has anyway.
     is_idle: bool,
+}
+
+/// What the compositor was last given for an element that only fades.
+struct LastFade {
+    timing: Timing,
+    rate: f64,
+    tracks: Vec<Track>,
+    under: f32,
+    opacities: Vec<(f32, [f32; 1])>,
 }
 
 /// What `Document::animate` has last made of a style with a single animation.
@@ -557,6 +566,7 @@ pub(crate) struct Animations {
     /// The nodes that may have `Flags::LAGS`.
     pub(crate) lagging: Vec<NodeId>,
     last_sampled: Option<LastAnimated>,
+    last_fade: core::cell::RefCell<Option<LastFade>>,
     pub(crate) watched: Set<BoxId>,
 }
 
@@ -2052,6 +2062,7 @@ impl Document {
         if !self.animated_vectors.get_mut().is_empty() {
             self.advance_vectors(now);
         }
+        self.resized_vectors.sweep(now);
         self.smil.set_time(now);
     }
 
@@ -2324,7 +2335,10 @@ impl Document {
             .map(|it| it.next_wake(now, for_iterations))
             .chain(scrollbars)
             .fold(
-                self.smil.next_wake().min(self.boxes.next_sweep(now)),
+                self.smil
+                    .next_wake()
+                    .min(self.boxes.next_sweep(now))
+                    .min(self.resized_vectors.next_sweep(now)),
                 f64::min,
             )
             .max(0.0)
@@ -2425,6 +2439,9 @@ impl Document {
             }
         }
 
+        let base = self.tree.element(node)?.base_style.as_ref()?;
+        let only_fades =
+            targets == WillChange::OPACITY && ids.len() == 1 && !first.follows_scroll();
         let (timeline, mut positions): (_, Vec<f32>);
         let time_at: Box<dyn Fn(&Animation, f32) -> f64>;
         if let Clock::Progress(_, snapshot) = &first.clock {
@@ -2477,6 +2494,20 @@ impl Document {
                 cycle: length,
                 cycles,
             };
+            let is_same = |it: &&LastFade| {
+                only_fades
+                    && (it.rate, it.under) == (first.rate, base.effects.opacity.0)
+                    && it.timing == first.timing
+                    && it.tracks == first.tracks
+            };
+            if let Some(known) = self.animations.last_fade.borrow().as_ref().filter(is_same) {
+                return Some(Sampled {
+                    timeline,
+                    size,
+                    transforms: Vec::new(),
+                    opacities: known.opacities.clone(),
+                });
+            }
             let is_straight =
                 targets == WillChange::OPACITY && ids.len() == 1 && first.is_straight();
             let count = if is_straight {
@@ -2508,7 +2539,6 @@ impl Document {
             });
         }
 
-        let base = self.tree.element(node)?.base_style.as_ref()?;
         let (mut style, mut transforms, mut opacities) =
             (Style::clone(base), Vec::new(), Vec::new());
         for same in positions.chunk_by(|a, b| a == b) {
@@ -2553,11 +2583,22 @@ impl Document {
         }
         let linear = 0.05 / size[0].max(size[1]).max(1.0);
         let transforms = simplify(&transforms, [linear, linear, linear, linear, 0.05, 0.05]);
+        let opacities = simplify(&opacities, [0.002]);
+        if only_fades {
+            let (timing, tracks) = (first.timing.clone(), first.tracks.clone());
+            self.animations.last_fade.replace(Some(LastFade {
+                timing,
+                rate: first.rate,
+                tracks,
+                under: base.effects.opacity.0,
+                opacities: opacities.clone(),
+            }));
+        }
         Some(Sampled {
             timeline,
             size,
             transforms,
-            opacities: simplify(&opacities, [0.002]),
+            opacities,
         })
     }
 

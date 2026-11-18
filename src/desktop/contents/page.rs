@@ -2,35 +2,33 @@
 
 use std::rc::Rc;
 
+use bun_jsc::from_js_host_call_generic;
 use bun_web::client::{
     Client, Commit, Container, Purpose, Resource, Sandboxing, ScriptLocation, Scripts,
     potential_cors_request,
 };
-use bun_web::dom::{self, Sender};
-
-use bun_web::compiled;
-use bun_web::csp::{Delivery, Inline};
 use bun_web::encoding::Encoding;
 use bun_web::headers::HeaderList;
+use bun_web::host::{Reply, Wish};
 use bun_web::hosts::{self, host_of};
 use bun_web::net::embedder::ClientId;
 use bun_web::net::fetch::Controller;
 use bun_web::origin::Origin;
+use bun_web::page::{self, Controls, Purpose as OfSnapshot, Snapshot};
 use bun_web::permissions_policy::Feature;
 use bun_web::request::Destination;
-use bun_web::trust;
+use bun_web::time::monotonic_now;
 use bun_web::url::Url;
 
-use super::context::Agent;
 use super::load::Loaded;
 use super::parts::WebFrameMain;
 use super::sandbox::Sandbox;
-use super::{Contents, lazily, logs_to_stderr, object_in, text_at};
+use super::{Contents, lazily, logs_to_stderr, object_in};
 use crate::generated_bindgen::contents::js_ElectronPage as fields;
 use crate::prelude::*;
 use crate::text::{before, origin_of};
 use crate::webview::wire;
-use crate::{app, realm, task};
+use crate::{app, task};
 
 /// What an `about:` document inherits from.
 #[derive(Clone)]
@@ -70,6 +68,8 @@ impl About {
     }
 }
 
+pub(super) type Proceed = Box<dyn FnOnce(&'static Page) -> JsResult<()>>;
+
 pub(crate) struct State {
     pub(super) id: u32,
     pub(super) client: Rc<Client>,
@@ -78,13 +78,23 @@ pub(crate) struct State {
     about: RefCell<Rc<About>>,
     sandbox: RefCell<Sandbox>,
     base_url: RefCell<Option<String>>,
-    agent: RefCell<Option<Rc<Agent>>>,
+    /// If it is not the URL.
+    base_url_now: RefCell<Option<String>>,
+    controls: Controls,
+    /// It shares objects with the documents of its origin.
+    pub(super) has_relatives: Cell<bool>,
+    activated_at: Cell<f64>,
+    pub(super) has_been_active: Cell<bool>,
+    /// What goes on when the page gives the ticket back.
+    traversal: RefCell<Option<(u32, Proceed)>>,
     /// What the client has been told.
     sent_as: RefCell<(String, String)>,
     is_initial: Cell<bool>,
     /// The fetch of the document itself.
     pub(super) streaming: RefCell<Option<Controller>>,
     is_disposed: Cell<bool>,
+    /// The app has heard what it has said last.
+    pub(super) is_forgotten: Cell<bool>,
     pub(super) is_loaded: Cell<bool>,
     pub(super) restores_scroll: Cell<bool>,
     /// What the previous document has captured, or 0.
@@ -129,6 +139,10 @@ impl Scripts for InPage {
     }
 }
 
+fn is_recent(time: f64) -> bool {
+    monotonic_now() - time < 5000.
+}
+
 fn post_unless_disposed(
     page: &Page,
     priority: Priority,
@@ -146,8 +160,7 @@ fn post_unless_disposed(
 
 impl Page {
     pub(super) fn create(contents: &Contents, url: &str, about: About) -> JsResult<&'static Page> {
-        state!(fn last_id() -> Cell<u32>);
-        last_id().update(|it| it + 1);
+        let id = page::next_id();
         let parent = contents.parent().map(Contents::page);
         let parsed =
             Url::parse(url.as_bytes()).ok_or_else(|| type_error(format_args!("Invalid URL")))?;
@@ -156,7 +169,7 @@ impl Page {
             parent.map(|it| Rc::clone(&it.client)),
         );
         let state = State {
-            id: last_id().get(),
+            id,
             client: Client::new(
                 session,
                 above,
@@ -168,11 +181,17 @@ impl Page {
             about: Default::default(),
             sandbox: Default::default(),
             base_url: None.into(),
-            agent: None.into(),
+            base_url_now: None.into(),
+            controls: Controls::new(Rc::clone(&contents.link), id),
+            has_relatives: false.into(),
+            activated_at: f64::NEG_INFINITY.into(),
+            has_been_active: false.into(),
+            traversal: None.into(),
             sent_as: Default::default(),
             is_initial: false.into(),
             streaming: None.into(),
             is_disposed: false.into(),
+            is_forgotten: false.into(),
             is_loaded: false.into(),
             restores_scroll: false.into(),
             inbound_transition: 0.into(),
@@ -195,19 +214,6 @@ impl Page {
         Ok(page)
     }
 
-    /// One that a page has been given.
-    pub(super) fn given(arguments: &[JSValue], index: usize) -> JsResult<&'static Page> {
-        cast(argument(arguments, index))
-            .ok_or_else(|| type_error(format_args!("Illegal invocation")))
-    }
-
-    pub(super) fn relative_given(&self, given: &[JSValue]) -> JsResult<&'static Page> {
-        let agent = self
-            .agent()
-            .ok_or_else(|| type_error(format_args!("Illegal invocation")))?;
-        agent.member(given)
-    }
-
     fn configure(&self, about: Rc<About>) -> JsResult<()> {
         let (url, contents) = (self.url(), self.contents());
         let inherits_origin = matches!(before(&url, ":"), "about" | "javascript");
@@ -217,16 +223,11 @@ impl Page {
             .as_ref()
             .and_then(|it| it.required_csp.as_ref())
             .map(String::as_bytes);
-        let allow = contents.attribute("allow")?.unwrap_or_default();
-        let allows_fullscreen = contents.attribute("allowfullscreen")?.is_some();
-        let source = contents
-            .attribute("srcdoc")?
-            .is_none()
-            .then(|| contents.attribute("src"))
-            .transpose()?;
+        let element = contents.element();
+        let source = (!element.has_srcdoc).then_some(element.src);
         let container = self.parent().map(|parent| Container {
-            allow: allow.as_bytes(),
-            allows_fullscreen,
+            allow: element.allow.as_deref().unwrap_or_default().as_bytes(),
+            allows_fullscreen: element.allows_fullscreen,
             has_started_navigation: matches!(&about.creator, Some(Creator::Page(it)) if same(it.get(), parent)),
             csp,
             src: source.and_then(|it| parent.client.url().join(it.unwrap_or_default().as_bytes())),
@@ -251,6 +252,9 @@ impl Page {
             },
             container,
         });
+        if let Some(loaded) = &about.loaded {
+            self.client.set_navigation_start(loaded.started);
+        }
         if let Some((record, kind)) = about.loaded.as_ref().and_then(|it| it.timing.clone()) {
             self.client.set_navigation_timing(record, kind);
         }
@@ -265,10 +269,11 @@ impl Page {
         self.is_initial.set(about.is_initial);
         self.base_url
             .replace(match about.creator.as_ref().filter(|_| inherits_origin) {
-                Some(Creator::Page(page)) => page.get().base_url()?,
+                Some(Creator::Page(page)) => page.get().base_url(),
                 Some(Creator::Bequest { base_url, .. }) => base_url.clone(),
                 None => None,
             });
+        self.base_url_now.replace(self.inherited_base_url());
         self.about.replace(about);
         Ok(())
     }
@@ -283,7 +288,7 @@ impl Page {
     /// The first document of a window leaves its global object to the next one of the same origin.
     pub(super) fn renew(&self, next: &Page) -> JsResult<bool> {
         let is_heir = self.is_initial()
-            && self.agent().is_some()
+            && self.has_relatives.get()
             && self.is_started()
             && next.origin_key() == self.origin_key();
         if is_heir {
@@ -297,9 +302,8 @@ impl Page {
     }
 
     /// Makes this the empty document of a window that `opener` has opened.
-    pub(super) fn adopt(&self, opener: &Page, create_page: JSValue) {
+    pub(super) fn adopt(&self, opener: &Page) {
         fields::set_opener(self, Some(opener));
-        fields::set_create_page(self, create_page);
         self.client.commit(Commit {
             url: self.client.url(),
             headers: &HeaderList::default(),
@@ -314,11 +318,11 @@ impl Page {
         self.is_initial.set(false);
     }
 
-    pub(super) fn bequest(&self, creator: &Page) -> JsResult<Creator> {
-        Ok(Creator::Bequest {
+    pub(super) fn bequest(&self, creator: &Page) -> Creator {
+        Creator::Bequest {
             client: self.client.bequest(&creator.client),
-            base_url: creator.base_url()?,
-        })
+            base_url: creator.base_url(),
+        }
     }
 
     fn itself(&self) -> &'static Page {
@@ -384,7 +388,7 @@ impl Page {
         fields::handle(self)
             .into_iter()
             .for_each(|it| it.rename(&name));
-        self.contents().context.name.replace(name);
+        self.contents().rename(name);
     }
 
     pub(crate) fn url(&self) -> String {
@@ -395,7 +399,8 @@ impl Page {
         Url::parse(url.as_bytes())
             .into_iter()
             .for_each(|it| self.client.set_url(it));
-        self.url.replace(url.to_owned());
+        let old = self.url.replace(url.to_owned());
+        (self.base_url_now.borrow_mut()).take_if(|it| *it == old);
     }
 
     pub(super) fn set_initial_url(&self, url: &str) -> JsResult<()> {
@@ -403,7 +408,8 @@ impl Page {
             return Ok(());
         }
         self.set_url(url);
-        self.tell("setUrl", &[js(url)?])
+        self.base_url_now.take();
+        self.tell(|it| it.set_url(url.to_owned()))
     }
 
     pub(super) fn title(&self) -> String {
@@ -412,6 +418,10 @@ impl Page {
 
     pub(super) fn set_title(&self, title: String) {
         self.title.replace(title);
+    }
+
+    pub(crate) fn id(&self) -> u32 {
+        self.id
     }
 
     pub(crate) fn token(&self) -> &[u8] {
@@ -442,8 +452,13 @@ impl Page {
         self.base_url.borrow().clone()
     }
 
-    fn base_url(&self) -> JsResult<Option<String>> {
-        super::text_if_any(self.ask("baseUrl", &[])?)
+    fn base_url(&self) -> Option<String> {
+        let now = || self.base_url_now.borrow().clone();
+        (self.is_started()).then(|| now().unwrap_or_else(|| self.url()))
+    }
+
+    pub(super) fn base_url_changed(&self, url: String) {
+        self.base_url_now.replace(Some(url));
     }
 
     pub(super) fn encoding_of_frames(&self) -> Option<Encoding> {
@@ -461,12 +476,22 @@ impl Page {
         self.sandbox.borrow().forbids(flag)
     }
 
-    pub(super) fn agent(&self) -> Option<Rc<Agent>> {
-        self.agent.borrow().clone()
+    /// It counts if the user has just done something in the window.
+    pub(super) fn activated(&self) {
+        if is_recent(self.owner().context.last_input.get()) {
+            self.activated_at.set(monotonic_now());
+            self.has_been_active.set(true);
+        }
     }
 
-    pub(super) fn set_agent(&self, agent: &Rc<Agent>) {
-        self.agent.replace(Some(Rc::clone(agent)));
+    pub(super) fn consume_activation(&self) -> JsResult<()> {
+        (self.owner().page().with_descendants()?.iter())
+            .for_each(|it| it.get().activated_at.set(f64::NEG_INFINITY));
+        Ok(())
+    }
+
+    pub(super) fn has_activation(&self) -> bool {
+        self.is_started() && is_recent(self.activated_at.get())
     }
 
     pub(crate) fn is_initial(&self) -> bool {
@@ -509,18 +534,22 @@ impl Page {
         }
     }
 
-    /// `undefined` if there is no document to ask.
-    pub(crate) fn ask(&self, method: &str, arguments: &[JSValue]) -> JsResult<JSValue> {
-        object_in(fields::controller(self))
-            .map_or(Ok(JSValue::UNDEFINED), |it| invoke(it, method, arguments))
+    pub(crate) fn tell(&self, order: impl FnOnce(&Controls)) -> JsResult<()> {
+        match self.is_started() {
+            true => from_js_host_call_generic(global(), || order(&self.controls)),
+            false => Ok(()),
+        }
     }
 
-    pub(super) fn tell(&self, method: &str, arguments: &[JSValue]) -> JsResult<()> {
-        self.ask(method, arguments).map(drop)
-    }
-
-    pub(super) fn window(&self) -> JsResult<JSValue> {
-        object_in(fields::controller(self)).map_or(Ok(JSValue::UNDEFINED), |it| get(it, "window"))
+    /// The default if there is no document to ask.
+    pub(crate) fn ask<T: Default + 'static>(
+        &self,
+        query: impl FnOnce(&Controls, Reply<T>),
+    ) -> JsResult<T> {
+        let outcome = Rc::new(Cell::new(None));
+        let slot = Rc::clone(&outcome);
+        self.tell(|it| query(it, Box::new(move |_, it| slot.set(Some(it)))))?;
+        Ok(outcome.take().unwrap_or_default())
     }
 
     /// Unless it is gone by then.
@@ -529,14 +558,45 @@ impl Page {
     }
 
     pub(super) fn may_be_unloaded(&self) -> JsResult<bool> {
-        Ok(self.ask("beforeUnload", &[])? != JSValue::FALSE)
+        Ok(!self.ask(Controls::before_unload)?)
     }
 
-    pub(super) fn navigate_for(&self, source: &Page, url: &str, options: JSValue) -> JsResult<()> {
-        self.tell(
-            "navigate",
-            &[js(url)?, options, source.to_js(), js(source.origin())?],
-        )
+    pub(super) fn navigate_for(&self, source: &Page, wish: Wish) -> JsResult<()> {
+        let initiator = Some(source.id);
+        let wish = Box::new(Wish { initiator, ..wish });
+        self.tell(|it| it.navigate(wish, self.origin() != source.origin()))
+    }
+
+    /// False if the page stays where it is.
+    pub(super) fn will_traverse(
+        &self,
+        key: String,
+        is_by_user: bool,
+        proceed: Proceed,
+    ) -> JsResult<bool> {
+        state!(fn last_ticket() -> Cell<u32>);
+        last_ticket().update(|it| it + 1);
+        let ticket = last_ticket().get();
+        self.traversal.replace(Some((ticket, proceed)));
+        self.ask(|it, reply| it.will_traverse(key, is_by_user, ticket, reply))
+    }
+
+    pub(super) fn proceed(&self, ticket: u32) -> JsResult<()> {
+        let found = self.traversal.borrow_mut().take_if(|it| it.0 == ticket);
+        found.map_or(Ok(()), |it| (it.1)(self.itself()))
+    }
+
+    /// What it has frames and popups by the numbers of.
+    pub(super) fn numbered(&self) -> JsResult<&'static mut bun_jsc::JSMap> {
+        let create = || Ok(bun_jsc::JSMap::create(global()));
+        lazily(fields::numbered(self), create, |it| {
+            fields::set_numbered(self, it)
+        })
+        .map(map_in)
+    }
+
+    pub(super) fn with_number<T: JsInterface>(&self, number: u32) -> JsResult<Option<&'static T>> {
+        Ok(cast(self.numbered()?.get(global(), js(number)?)?))
     }
 
     pub(super) fn frames(&self) -> JsResult<JSValue> {
@@ -547,6 +607,27 @@ impl Page {
 
     pub(crate) fn frames_if_any(&self) -> JsResult<JSValue> {
         object_in(fields::frames(self)).map_or_else(|| array(&[]), wire::items_of)
+    }
+
+    /// Those that are not in the web engine.
+    pub(crate) fn with_descendants(&self) -> JsResult<Vec<Root<Page>>> {
+        let (mut all, mut next) = (vec![Root::new(self)], 0);
+        while let Some(page) = all.get(next).map(Root::get) {
+            next += 1;
+            let frames = elements(page.frames_if_any()?)?;
+            all.extend(
+                (frames.into_iter().filter_map(cast::<Contents>)).map(|it| Root::new(it.page())),
+            );
+        }
+        Ok(all)
+    }
+
+    pub(crate) fn snapshot(&self, purpose: OfSnapshot) -> JsResult<Snapshot> {
+        self.ask(|it, reply| it.snapshot(purpose, reply))
+    }
+
+    pub(crate) fn origin_of_base(&self) -> String {
+        origin_of(&self.base_url().unwrap_or_else(|| self.url()))
     }
 
     pub(super) fn cleanups(&self) -> JsResult<JSValue> {
@@ -598,39 +679,6 @@ impl Page {
             || self.parent().is_none(),
             |it| self.client.permissions_policy().allows(it),
         )
-    }
-
-    /// `given` is the source, the sealed message and the target origin.
-    pub(super) fn post_message(&self, source: &Page, given: &[JSValue]) -> JsResult<()> {
-        let target = text_at(given, 2)?;
-        let wanted = match &*target {
-            "*" => None,
-            "/" => Some(source.origin_key()),
-            url => Some(origin_of(url)),
-        };
-        let Some(message) = dom::open_envelope(realm::peek(argument(given, 1))) else {
-            return Ok(());
-        };
-        let source = Root::new(source);
-        post_unless_disposed(self, Priority::Visible, move |it| {
-            let (source, Some(agent)) = (source.get(), it.agent()) else {
-                return Ok(());
-            };
-            if wanted.is_some_and(|wanted| wanted != it.origin_key()) {
-                return Ok(());
-            }
-            let Some(realm) = it.known_realm(0)? else {
-                return Ok(());
-            };
-            let sender = Sender {
-                origin: &source.origin().into_bytes(),
-                token: &source.client.token,
-                window: realm::peek(source.contents().window_for(&agent)?),
-            };
-            dom::deliver_message(realm, realm::peek(it.window()?), message, sender);
-            Ok(())
-        });
-        Ok(())
     }
 
     pub(super) fn log_error(&self, message: &str) -> JsResult<()> {
@@ -721,50 +769,6 @@ impl Page {
         .to_boolean())
     }
 
-    pub(super) fn policy_allows_javascript_url(
-        &self,
-        source: JSValue,
-        frame: JSValue,
-    ) -> JsResult<bool> {
-        let (text, csp) = (source.to_utf8(global())?, &self.client.policies().csp);
-        let verdict = csp.check_inline(Inline::Navigation, &text, b"", true);
-        Ok(self.client.enforce(verdict, frame))
-    }
-
-    pub(super) fn allows_javascript_url(&self, source: JSValue, frame: JSValue) -> JsResult<bool> {
-        if self.forbids("allow-scripts") || !self.policy_allows_javascript_url(source, frame)? {
-            return Ok(false);
-        }
-        // Without a policy: what the document came with, and nothing that was put into it since.
-        let is_up_to_page = !compiled::is_exclusive()
-            && (self.client.policies().csp.restricts_scripts() || trust::trusts_injected_scripts());
-        if is_up_to_page || self.came_with(source)? {
-            return Ok(true);
-        }
-        self.log_error("Refused to run an inline script that is not in the source of the document")
-            .map(|()| false)
-    }
-
-    fn came_with(&self, script: JSValue) -> JsResult<bool> {
-        match self.opener() {
-            Some(opener) => opener.came_with(script),
-            None => Ok(self.ask("cameWith", &[script])? == JSValue::TRUE),
-        }
-    }
-
-    pub(super) fn add_policy(&self, text: &str) -> JsResult<()> {
-        let is_own = self.came_with(js(format!("\0{text}"))?)?;
-        self.client.add_csp(
-            text.as_bytes(),
-            if is_own {
-                Delivery::Meta
-            } else {
-                Delivery::InjectedMeta
-            },
-        );
-        self.apply_policy(false)
-    }
-
     pub(super) fn stop_streaming(&self) {
         self.streaming.take().iter().for_each(Controller::abort);
     }
@@ -774,10 +778,15 @@ impl Page {
         if self.is_disposed() {
             return Ok(());
         }
-        self.tell("dispose", &[])?;
+        self.ask(Controls::dispose)?;
         if self.is_disposed.replace(true) {
             return Ok(());
         }
+        let this = Root::new(self);
+        post(Priority::Host, move || {
+            this.get().is_forgotten.set(true);
+            Ok(())
+        });
         fields::preload(self)
             .into_iter()
             .for_each(|it| it.dispose());
@@ -792,7 +801,8 @@ impl Page {
         self.dispose_worlds()?;
         self.about.take();
         fields::set_preload(self, None);
-        for clear in [fields::set_controller, fields::set_create_page] {
+        self.traversal.take();
+        for clear in [fields::set_controller, fields::set_inspected] {
             clear(self, JSValue::UNDEFINED);
         }
         Ok(())

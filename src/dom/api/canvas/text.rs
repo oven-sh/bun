@@ -14,7 +14,7 @@ use crate::generated_bindgen::canvas::{
 use crate::name::{Map, Name};
 use crate::platform::renderer;
 use crate::properties::{Prop, Value};
-use crate::types::{Families, FontCaps, FontStyle};
+use crate::types::{Families, FontCaps, FontSize, FontStyle};
 use crate::values::{
     Css as _, Ctx, Deps, FontUnits, Out, RootUnits, Str, parse_all, write_number, write_px,
 };
@@ -25,6 +25,8 @@ pub(crate) struct Inherited {
     pub(crate) font_size: f32,
     pub(crate) root_font_size: f32,
     pub(crate) line_height: f32,
+    pub(crate) medium_sizes: [f32; 2],
+    pub(crate) has_quirks: bool,
     pub(crate) is_right_to_left: bool,
     pub(crate) color: u32,
     pub(crate) language: Str,
@@ -98,12 +100,10 @@ thread_local! {
 }
 
 impl Font {
-    pub(super) fn parse(
-        source: &[u8],
-        size: f32,
-        line_height: f32,
-        root_size: f32,
-    ) -> Option<Font> {
+    pub(super) fn parse(source: &[u8], inherited: Option<&Inherited>) -> Option<Font> {
+        let (size, line_height, root_size) = inherited.map_or((10.0, 12.0, 16.0), |it| {
+            (it.font_size, it.line_height, it.root_font_size)
+        });
         let (values, deps) = with_units(size, root_size, |cx| {
             let cx = Ctx {
                 font: FontUnits {
@@ -126,12 +126,13 @@ impl Font {
             families: Families(Rc::default()),
             stretch: CanvasFontStretch::Normal,
             caps: CanvasFontVariantCaps::Normal,
-            is_relative: deps.intersects(Deps::INHERITED | Deps::ROOT),
+            is_relative: deps.intersects(Deps::INHERITED | Deps::ROOT | Deps::FONT_SIZE_KEYWORD),
             described: Cell::new(None),
         };
+        let mut keyword = None;
         for value in values.iter() {
             match value.typed() {
-                Value::FontSize(it) => font.size = it.0,
+                Value::FontSize(it) => (font.size, keyword) = (it.0, it.2),
                 Value::FontWeight(it) => font.weight = it.0,
                 Value::FontStyle(it) => font.style = *it,
                 Value::FontFamily(it) => font.families = it.clone(),
@@ -143,6 +144,15 @@ impl Font {
                 }
                 _ => {}
             }
+        }
+        if let Some((keyword, it)) = keyword.zip(inherited) {
+            font.size = FontSize::of_keyword(
+                keyword,
+                it.medium_sizes[usize::from(font.families.is_monospace())],
+                it.has_quirks,
+                1.0,
+            )
+            .0;
         }
         let out = &mut font.serialized;
         if font.style != FontStyle::Normal {
@@ -171,7 +181,7 @@ impl Font {
         if let Some(known) = ABSOLUTE.with(|known| known.get().get(source).cloned()) {
             return Some(known);
         }
-        let font = Rc::new(Font::parse(source, 10.0, 12.0, 16.0)?);
+        let font = Rc::new(Font::parse(source, None)?);
         ABSOLUTE.with(|known| {
             known.with_mut(|known| {
                 if known.len() >= MAX_KNOWN {

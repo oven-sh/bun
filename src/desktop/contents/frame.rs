@@ -4,25 +4,28 @@ use std::rc::Rc;
 
 use bun_ui::protocol::{SurfaceCommand, WebViewCommand};
 use bun_ui::surfaces;
+use bun_web::host::{Owner, ToFrame, Wish};
+use bun_web::page::News as ForElement;
 
 use super::load::Initiator;
 use super::page::Page;
-use super::{
-    Contents, Kind, Methods, Start, bind, fields, nothing, object_in, text_at, text_if_any,
-};
+use super::{Contents, Kind, Start, fields};
 use crate::contents::inspection::News;
 use crate::prelude::*;
 
 pub(super) struct Embedded {
+    /// What the page that has the element calls it.
+    pub(super) number: u32,
     pub(super) kind: String,
+    element: RefCell<Owner>,
     /// Where it is in the tree.
     pub(super) place: Rc<str>,
-    image: u32,
+    pub(super) image: u32,
     placement: Cell<Option<([f64; 3], bool)>>,
 }
 
 impl Embedded {
-    pub(super) fn new(parent: &Page, element: JSValue) -> JsResult<Embedded> {
+    pub(super) fn new(parent: &Page, number: u32, element: &Owner) -> JsResult<Embedded> {
         let above = parent.contents();
         let sequence = above.item().map_or(0, |it| it.borrow().sequence);
         let (place, index) = (
@@ -31,7 +34,9 @@ impl Embedded {
         );
         parent.frames_created.set(index + 1);
         Ok(Embedded {
-            kind: text_of(invoke(element, "kind", &[])?)?,
+            number,
+            kind: element.kind.clone(),
+            element: element.clone().into(),
             place: format!("{place}/{sequence}:{index}").into(),
             image: answer((ui()?.open_web_view)(None.into()))?,
             placement: None.into(),
@@ -39,75 +44,64 @@ impl Embedded {
     }
 }
 
-const FOR_ELEMENT: Methods<Contents> = &[
-    ("beforeUnload", |it, _| js(it.page().may_be_unloaded()?)),
-    ("dispose", |it, _| nothing(it.remove())),
-    ("document", |it, _| match it.has_origin_of_embedder() {
-        true => it.started_page()?.ask("currentDocument", &[]),
-        false => Ok(JSValue::NULL),
-    }),
-    ("edit", |it, given| it.page().ask("edit", given)),
-    ("environmentChanged", |it, _| {
-        nothing(it.environment_changed())
-    }),
-    ("focusedFrame", |it, _| {
-        Ok(object_in(Some(it.page().ask("focusedFrame", &[])?))
-            .unwrap_or_else(|| it.page().handle()))
-    }),
-    ("input", |it, given| nothing(it.input(argument(given, 0)))),
-    ("isInitial", |it, _| js(it.page().is_initial())),
-    ("name", |it, _| js(&**it.context.name.borrow())),
-    ("navigate", |it, given| {
-        nothing(it.navigate_for_element(
-            &text_at(given, 0)?,
-            argument(given, 1),
-            argument(given, 2),
-        ))
-    }),
-    ("place", |it, given| {
-        let size = [0, 1, 2].map(|at| argument(given, at).get_number().unwrap_or_default());
-        nothing(it.place(size, argument(given, 3).to_boolean()))
-    }),
-    ("setInitialUrl", |it, given| {
-        nothing(it.page().set_initial_url(&text_at(given, 0)?))
-    }),
-    ("stop", |it, _| nothing(it.stop_everything())),
-    ("window", |it, _| {
-        it.embedder()
-            .agent()
-            .map_or(Ok(JSValue::NULL), |agent| it.window_for(&agent))
-    }),
-];
-
-/// What the element gets.
-pub(super) fn create(parent: &Page, element: JSValue) -> JsResult<JSValue> {
+pub(super) fn create(parent: &Page, number: u32, element: &Owner) -> JsResult<()> {
+    if parent.numbered()?.get(global(), js(number)?)?.is_object() {
+        return Ok(());
+    }
     let frame = Contents::start(
         parent.contents().preferences(),
         Kind::Frame,
-        &Start::Framed(parent, element),
+        &Start::Framed(parent, number, element),
     )?;
-    let receive = listener(frame, |it, given| it.input(argument(given, 0)))?;
-    surfaces::listen_with_script(global(), surfaces::tree_of_image(frame.image()), receive);
+    frame.listen_to(surfaces::tree_of_image(frame.image()));
+    (parent.numbered()?).set(global(), js(number)?, frame.to_js())?;
     invoke(parent.frames()?, "add", &[frame.to_js()])?;
     parent.contents().notify(News::FramesChanged)?;
     frame.later(Contents::announce_creation);
-    bind(
-        object!({ "context": frame.to_js(), "image": frame.image() }),
-        frame,
-        FOR_ELEMENT,
-    )
+    Ok(())
+}
+
+pub(super) fn obey(parent: &Page, number: u32, message: ToFrame) -> JsResult<()> {
+    let Some(it) = parent.with_number::<Contents>(number)? else {
+        return Ok(());
+    };
+    match message {
+        ToFrame::OwnerChanged(element) => {
+            if let Some(it) = &it.embedded {
+                let kind = it.kind.clone();
+                it.element.replace(Owner { kind, ..*element });
+            }
+            Ok(())
+        }
+        ToFrame::SetInitialUrl(url) => it.page().set_initial_url(&url),
+        ToFrame::Navigate {
+            url,
+            srcdoc,
+            referrer_policy,
+        } => it.navigate_for_element(Wish {
+            url,
+            srcdoc,
+            referrer_policy: Some(referrer_policy),
+            ..Default::default()
+        }),
+        ToFrame::Place {
+            size: [width, height],
+            scale,
+            is_visible,
+        } => it.place([width, height, scale], is_visible),
+        ToFrame::Stop => it.stop_loading(),
+        ToFrame::Remove => {
+            parent.numbered()?.remove(global(), js(number)?)?;
+            it.remove()
+        }
+    }
 }
 
 impl Contents {
-    pub(super) fn embed(&self, parent: &Page, element: JSValue) -> JsResult<()> {
+    pub(super) fn embed(&self, parent: &Page) {
         fields::set_owner(self, Some(parent.owner()));
         fields::set_parent(self, Some(parent.contents()));
         fields::set_embedder(self, Some(parent));
-        fields::set_element(self, element);
-        self.context
-            .name
-            .replace(text_of(invoke(element, "name", &[])?)?);
-        Ok(())
     }
 
     fn image(&self) -> u32 {
@@ -122,21 +116,24 @@ impl Contents {
         self.page().origin_key() == self.embedder().origin_key()
     }
 
-    pub(crate) fn ask_element(&self, method: &str, arguments: &[JSValue]) -> JsResult<JSValue> {
-        object_in(fields::element(self))
-            .map_or(Ok(JSValue::UNDEFINED), |it| invoke(it, method, arguments))
+    pub(super) fn tell_element(&self, news: ForElement) -> JsResult<()> {
+        (self.embedded.as_ref()).map_or(Ok(()), |it| {
+            (self.embedder()).tell(|page| page.tell_frame(it.number, news))
+        })
     }
 
-    pub(super) fn tell_element(&self, method: &str, arguments: &[JSValue]) -> JsResult<()> {
-        self.ask_element(method, arguments).map(drop)
+    pub(super) fn element(&self) -> Owner {
+        let element = self.embedded.as_ref();
+        element.map_or_else(Owner::default, |it| it.element.borrow().clone())
     }
 
-    pub(super) fn attribute(&self, name: &str) -> JsResult<Option<String>> {
-        if self.is_frame() {
-            text_if_any(self.ask_element("attribute", &[js(name)?])?)
-        } else {
-            Ok(None)
-        }
+    pub(super) fn is_indexed(&self) -> bool {
+        (self.embedded.as_ref()).is_some_and(|it| it.element.borrow().is_indexed)
+    }
+
+    /// The page that has the element, and the number.
+    pub(crate) fn place_of_element(&self) -> Option<[u32; 2]> {
+        (self.embedded.as_ref()).map(|it| [self.embedder().id, it.number])
     }
 
     fn announce_creation(&self) -> JsResult<()> {
@@ -144,52 +141,41 @@ impl Contents {
             return Ok(());
         }
         self.announce_frame()?;
-        let source = self.attribute("src")?.unwrap_or_default();
+        let element = self.element();
+        let source = element.src.unwrap_or_default();
         if (source.is_empty() || source.starts_with("about:blank"))
-            && self
-                .embedded
-                .as_ref()
-                .is_some_and(|it| it.kind.ends_with("frame"))
-            && self.attribute("srcdoc")?.is_none()
+            && element.kind.ends_with("frame")
+            && !element.has_srcdoc
         {
             self.announce_empty_document()?;
         }
         Ok(())
     }
 
-    /// What the document gets.
-    fn navigate_for_element(
-        &self,
-        url: &str,
-        srcdoc: JSValue,
-        referrer_policy: JSValue,
-    ) -> JsResult<()> {
+    fn navigate_for_element(&self, wish: Wish) -> JsResult<()> {
         let (page, parent) = (self.page(), self.embedder());
         let is_initial = page.is_initial();
-        if url.starts_with("javascript:") {
+        if wish.url.starts_with("javascript:") {
             if !self.has_origin_of_embedder() {
                 return if is_initial {
-                    self.tell_element("finished", &[JSValue::TRUE])
+                    self.tell_element(ForElement::Finished { fires_load: true })
                 } else {
                     Ok(())
                 };
             }
-            self.tell_element("loading", &[])?;
-            let finish = listener(self, move |it, _| {
-                it.tell_element("finished", &[is_initial.into()])
-            })?;
-            return self.started_page()?.navigate_for(
-                parent,
-                url,
-                object!({ "noDocument": finish }),
-            );
+            self.tell_element(ForElement::Loading)?;
+            let wish = Wish {
+                url: wish.url,
+                fires_load_otherwise: Some(is_initial),
+                ..Default::default()
+            };
+            return self.started_page()?.navigate_for(parent, wish);
         }
         let replaces = is_initial || !page.is_loaded.get();
-        let options =
-            object!({ "replace": replaces, "srcdoc": srcdoc, "referrerPolicy": referrer_policy });
+        let wish = Wish { replaces, ..wish };
         match is_initial {
-            true => self.wish(page, url, options, Initiator::of(parent)),
-            false => self.navigate(parent, url, options).map(drop),
+            true => self.wish(page, wish, Initiator::of(parent), None),
+            false => self.navigate(parent, wish, None),
         }
     }
 
@@ -209,12 +195,15 @@ impl Contents {
             width: finite(width),
             height: finite(height),
         };
-        self.tell_surface(SurfaceCommand::Bounds(Some(bounds).into()))?;
-        self.handle(object!({ "s": self.surface, "t": "resize", "width": width, "height": height, "scale": scale, "isQuiet": true }))
+        self.size.set(Some(bun_web::input::Extent {
+            size: [width, height],
+            scale,
+        }));
+        self.tell_surface(SurfaceCommand::Bounds(Some(bounds).into()))
     }
 
     /// `area` is what a frame in it has changed, outside of a rendering of the page.
-    pub(super) fn painted(&self, scale: JSValue, area: JSValue) -> JsResult<()> {
+    pub(super) fn painted(&self, scale: f64, area: JSValue) -> JsResult<()> {
         if self
             .embedded
             .as_ref()
@@ -225,7 +214,7 @@ impl Contents {
         }
         let command = WebViewCommand::Mirror {
             surface: self.surface,
-            scale: finite(scale.get_number().unwrap_or(1.)),
+            scale: finite(scale),
             area: super::api::rectangle(area)?.into(),
         };
         tell(Command::WebView {

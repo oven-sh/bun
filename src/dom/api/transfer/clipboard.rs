@@ -393,20 +393,24 @@ impl Clipboard {
         Ui::of(self.window()?.doc()?)
     }
 
-    /// `then` runs with the result of `prepare`, once it is allowed.
-    fn with_access<'a, T: 'static>(
+    /// Whether it is granted, and the document that asks.
+    fn ask_for<'a>(
         &'a self,
         cx: &mut Cx<'a>,
         access: Access,
-        prepare: impl Future<Output = Result<T, Failure>> + 'static,
-        then: impl for<'b> FnOnce(&mut Cx<'b>, &'b Doc, T) -> bindgen::Result<'b, JSValue> + 'static,
-    ) -> bindgen::Result<'a, JSValue> {
+    ) -> bindgen::Result<'a, Option<(exec::Receiver<bool>, Strong)>> {
         let (Some(ui), Some(window)) = (self.ui(), self.window()) else {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(None);
         };
         let (feature, permission) = match access {
-            Access::Read => ("clipboard-read", "clipboard-read"),
-            Access::Write => ("clipboard-write", "clipboard-sanitized-write"),
+            Access::Read => (
+                bun_web::permissions_policy::Feature::ClipboardRead,
+                "clipboard-read",
+            ),
+            Access::Write => (
+                bun_web::permissions_policy::Feature::ClipboardWrite,
+                "clipboard-sanitized-write",
+            ),
         };
         if !host::allows_feature(ui, feature) {
             return Err(dom_error(
@@ -415,15 +419,36 @@ impl Clipboard {
                 "The permissions policy does not allow it.",
             ));
         }
+        if !ui.is_focused.get() {
+            return Err(dom_error(
+                &cx.heap,
+                DomError::NotAllowedError,
+                "Document is not focused.",
+            ));
+        }
         let ((sender, answer), doc) = (oneshot(), Strong::create(ui.doc().to_js(), cx.global()));
         window
             .host()
-            .permission(permission.into(), |_, it| sender.send(it));
+            .permission(permission.into(), |_, it| sender.send(it == "granted"));
+        Ok(Some((answer, doc)))
+    }
+
+    /// `then` runs with the result of `prepare`, once it is allowed.
+    fn with_access<'a, T: 'static>(
+        &'a self,
+        cx: &mut Cx<'a>,
+        access: Access,
+        prepare: impl Future<Output = Result<T, Failure>> + 'static,
+        then: impl for<'b> FnOnce(&mut Cx<'b>, &'b Doc, T) -> bindgen::Result<'b, JSValue> + 'static,
+    ) -> bindgen::Result<'a, JSValue> {
+        let Some((is_granted, doc)) = self.ask_for(cx, access)? else {
+            return Ok(JSValue::UNDEFINED);
+        };
         let steps = async {
-            if answer.await.is_none_or(|it| it != "granted") {
-                Err(DENIED)
-            } else {
+            if is_granted.await == Some(true) {
                 prepare.await
+            } else {
+                Err(DENIED)
             }
         };
         Ok(promise_for(cx, steps, move |cx, result| match result {
@@ -478,7 +503,10 @@ impl Clipboard {
             }
         };
         self.with_access(cx, Access::Read, async { Ok(()) }, move |cx, doc, ()| {
-            let mut contents = read_system(cx.global(), Which::General);
+            let mut contents = Contents {
+                paths: Default::default(),
+                ..read_system(cx.global(), Which::General)
+            };
             let (mut types, values) = (Vec::new(), List::new(&cx.heap));
             for (kind, text) in &contents.texts {
                 let text = DomString::from_utf8(text);

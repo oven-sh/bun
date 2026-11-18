@@ -3,17 +3,17 @@
 //! Text, comments and elements without steps can be bare. The closest ancestor that has an object owns them.
 
 use core::ffi::c_void;
-use std::rc::Rc;
 
 use bun_jsc::JSGlobalObject;
 use bun_jsc::bindgen::{JsHeap, JsScope};
 use smallvec::SmallVec;
 
+use super::element::bits_for;
 use super::mutation::{children_changed, let_go_before_changing};
 use super::node::Link;
 use super::steps::Has;
 use super::{NodeFlags as F, *};
-use crate::document::Document;
+use crate::document::{Above, Document};
 use crate::name::{Name, name};
 use crate::selector::{filter, key};
 use crate::tree::{Data, Inert, Namespace, NodeId, Step, Tree, Walk};
@@ -29,38 +29,83 @@ unsafe extern "C" {
 const BYTES_PER_NODE: usize = 192;
 const MOST_UNREPORTED: u32 = 1 << 13;
 
-fn kind_of(data: &Data) -> Kind {
-    match data {
-        Data::Element(it) => match it.namespace {
-            Namespace::Html => Kind::of_html(it.local.known()),
-            Namespace::Svg => Kind::of_svg(it.local.known()),
+/// What a bare node has in the place of its object, which can be made without a look at the element.
+#[derive(Clone, Copy)]
+pub(crate) struct Sketch(usize);
+
+impl Sketch {
+    const IS_ONE: usize = 1;
+    const HAS_ID: usize = 2;
+
+    #[inline(always)]
+    pub(crate) fn of(data: &Data) -> Sketch {
+        let Data::Element(it) = data else {
+            return Sketch(
+                Sketch::IS_ONE
+                    | (Kind::Text as usize) << 8
+                    | usize::from(bits_for(atom!("#text"))) << 16,
+            );
+        };
+        let tag = it.local.known();
+        let kind = match it.namespace {
+            Namespace::Html => Kind::of_html(tag),
+            Namespace::Svg => Kind::of_svg(tag),
             Namespace::MathMl => Kind::MathMl,
             Namespace::Other => Kind::Element,
-        },
-        Data::Text(_) => Kind::Text,
-        _ => Kind::Comment,
+        };
+        let bits = if it.space.is_none() { bits_for(tag) } else { 0 };
+        Sketch(
+            Sketch::IS_ONE
+                | if it.id == Name::NONE {
+                    0
+                } else {
+                    Sketch::HAS_ID
+                }
+                | (kind as usize) << 8
+                | usize::from(bits) << 16,
+        )
+    }
+
+    #[inline(always)]
+    pub(crate) fn from_cell(cell: *const Node) -> Option<Sketch> {
+        (cell.addr() & Sketch::IS_ONE != 0).then(|| Sketch(cell.addr()))
+    }
+
+    #[inline(always)]
+    pub(crate) fn to_cell(self) -> *const Node {
+        core::ptr::without_provenance(self.0)
     }
 }
 
 unsafe extern "C" fn make_children(context: *mut c_void) {
     // SAFETY: what `Node::make_children_in` passes.
-    let (parent, tree) = unsafe { *context.cast::<(&Node, &Tree)>() };
+    let (parent, tree, global) = unsafe { *context.cast::<(&Node, &Tree, &JSGlobalObject)>() };
     let (doc, inherited) = (
         parent.doc(),
         parent.flags() & (F::CONNECTED | F::RENDERED | F::USER_AGENT | F::IN_SELECT),
     );
-    let heap = JsHeap::from_global(doc.global());
+    let heap = JsHeap::from_global(global);
     let (mut comments, mut last) = (tree.take_comments(parent.id()), None::<&Node>);
     let mut make = |id: NodeId| {
-        let has_id = tree.element(id).is_some_and(|it| it.id != Name::NONE);
-        let flags = inherited
-            | if has_id { F::HAS_ID } else { F::empty() }
-            | if tree.has_children(id) {
-                F::HAS_BARE_CHILDREN
+        let Sketch(sketch) = tree
+            .sketch(id)
+            .unwrap_or(Sketch((Kind::Comment as usize) << 8));
+        debug_assert!(
+            (sketch & Sketch::HAS_ID != 0)
+                == tree.element(id).is_some_and(|it| it.id != Name::NONE)
+        );
+        let mut flags = inherited
+            | if sketch & Sketch::HAS_ID != 0 {
+                F::HAS_ID
             } else {
                 F::empty()
             };
-        let node = doc.object_for(heap, tree, id, kind_of(&tree[id].data), flags);
+        if tree.has_children(id) {
+            flags |= F::HAS_BARE_CHILDREN;
+            tree.prefetch_children(id);
+        }
+        let node = doc.object_for(heap, tree, id, Kind::ALL[sketch >> 8 & 0xff], flags);
+        node.bits_of_kind().set((sketch >> 16) as u16);
         node.set_link(Link::Parent, Some(parent));
         node.set_link(Link::Previous, last);
         node.written();
@@ -104,15 +149,10 @@ impl Node {
     fn make_children_in(&self, tree: &Tree) {
         debug_assert!(self.has(F::HAS_BARE_CHILDREN));
         self.unset(F::HAS_BARE_CHILDREN);
-        let mut context = (self, tree);
+        let global = self.doc().global();
+        let mut context = (self, tree, global);
         // SAFETY: `context` outlives the call.
-        unsafe {
-            Bun__DOM__withoutCollecting(
-                self.doc().global(),
-                (&raw mut context).cast(),
-                make_children,
-            )
-        };
+        unsafe { Bun__DOM__withoutCollecting(global, (&raw mut context).cast(), make_children) };
     }
 
     #[cold]
@@ -152,31 +192,28 @@ impl Node {
     pub(crate) fn bare_changed<'a>(&'a self, cx: &mut JsScope<'a>, added: u32) {
         children_changed(self);
         if self.is_rendered() {
+            self.arena().write(Document::new_nodes_appended);
             self.doc().invalidate(cx);
         }
         let unreported = &self.arena().unreported;
         unreported.set(unreported.get() + added);
     }
 
-    /// `child` is new. `parent` is this one, or one of its bare descendants.
+    /// What it is to its children, and what its descendants are to theirs until `bare_changed`.
     #[inline]
-    pub(crate) fn append_bare(
-        &self,
-        parent: NodeId,
-        create: impl FnOnce(&mut Document) -> NodeId,
-    ) -> NodeId {
-        let is_rendered = self.is_rendered();
-        let child = self.arena().write(|engine| {
-            let child = create(engine);
-            engine.tree.make_bare(child);
-            if !is_rendered {
-                engine.tree.append(parent, child);
+    pub(crate) fn above_bare(&self) -> [Above; 2] {
+        match self.is_rendered() {
+            false => [Above::Detached; 2],
+            true if self.arena().write(Document::overlooks_new_nodes) => {
+                [Above::Rendered, Above::New]
             }
-            child
-        });
-        if is_rendered {
-            self.restructure(|engine, _| engine.append_new(parent, child));
+            true => [Above::Rendered; 2],
         }
+    }
+
+    /// `parent` is this one, or one of its bare descendants.
+    pub(crate) fn finish_appending(&self, parent: NodeId, child: NodeId) -> NodeId {
+        self.restructure(|engine, _| engine.append_new(parent, child));
         child
     }
 
@@ -195,7 +232,9 @@ impl Node {
     /// Of a bare descendant that was appended.
     pub(crate) fn note_id_of_bare(&self, heap: &JsHeap<'_>, element: NodeId) {
         if let Some(scope) = self.scope()
-            && let Some(id) = self.read(|tree, _| id_of(tree, element))
+            && let Some(id) = self
+                .read(|tree, _| Some(tree.element(element)?.id))
+                .filter(|it| *it != Name::NONE)
         {
             scope.add_id(heap, id, element);
         }
@@ -242,11 +281,15 @@ pub(super) fn id_of(tree: &Tree, element: NodeId) -> Option<Atom> {
 }
 
 /// Of the descendants, which are bare.
-pub(super) fn for_each_id(parent: &Node, mut visit: impl FnMut(Atom, NodeId)) {
+pub(super) fn for_each_id(parent: &Node, mut visit: impl FnMut(Name, NodeId)) {
     let keys = filter(core::iter::once(key::attribute(name!("id"))));
     parent.read(|tree, parent| {
-        tree.descendants_with(parent, keys)
-            .for_each(|it| id_of(tree, it).into_iter().for_each(|id| visit(id, it)))
+        tree.descendants_with(parent, keys).for_each(|it| {
+            tree.element(it)
+                .filter(|it| it.id != Name::NONE)
+                .into_iter()
+                .for_each(|element| visit(element.id, it))
+        })
     });
 }
 
@@ -266,7 +309,7 @@ pub(super) fn drop_children<'a>(cx: &mut JsScope<'a>, parent: &'a Node) {
         return;
     }
     if let Some(scope) = parent.scope() {
-        for_each_id(parent, |id, element| scope.remove_id(&id, element));
+        for_each_id(parent, |id, element| scope.remove_id(id, element));
     }
     parent.unset(F::HAS_BARE_CHILDREN);
     children_changed(parent);
@@ -290,7 +333,7 @@ pub(super) fn drop_children<'a>(cx: &mut JsScope<'a>, parent: &'a Node) {
 #[inline]
 pub(super) fn are_alike(from: &Doc, to: &Doc) -> bool {
     from == to
-        || Rc::ptr_eq(from.arena(), to.arena())
+        || from.is_in_arena_of(to)
             && from.quirks() == to.quirks()
             && !to.is(DocFlags::CHECKS_STYLE_ATTRIBUTES)
             && !has_scoped_registries()
@@ -349,10 +392,16 @@ pub(super) fn replace_with_text<'a>(
     }
     if !text.is_empty() {
         parent.doc().prepare_for_bare(Kind::Text);
-        parent.append_bare(parent.id(), |engine| {
+        let above = if parent.is_rendered() {
+            Above::Rendered
+        } else {
+            Above::Detached
+        };
+        let appended = parent.arena().write(|engine| {
             parent.arena().free_dead(engine);
-            engine.tree.create(Data::Text(text.into()))
+            engine.append_bare_text(parent.id(), above, text.into())
         });
+        appended.unwrap_or_else(|it| parent.finish_appending(parent.id(), it));
         parent.set(F::HAS_BARE_CHILDREN);
         parent.bare_changed(cx, 0);
         parent.arena().record_bare_text(parent);
@@ -394,22 +443,25 @@ impl Document {
     /// Without the descendants. 0 for a comment.
     #[inline]
     pub(super) fn append_bare_copy(&mut self, of: NodeId, parent: NodeId) -> NodeId {
-        let copy = match &self.tree[of].data {
+        match &self.tree[of].data {
             Data::Text(text) => {
                 let text = Data::Text(text.clone());
-                self.tree.create(text)
+                self.tree.append_bare(parent, text, 0)
             }
             Data::Inert(comment) => {
                 let comment = Data::Inert(comment.clone());
                 let copy = self.tree.create(comment);
                 self.tree.append_comment(parent, copy);
-                return 0;
+                0
             }
-            _ => self.copy_element(of),
-        };
-        self.tree.make_bare(copy);
-        self.tree.append(parent, copy);
-        copy
+            _ => {
+                let copy = self.tree.append_bare_like(of, parent);
+                if self.has_edited_style(of) {
+                    self.count_style_as_edited(copy);
+                }
+                copy
+            }
+        }
     }
 
     /// Of a node whose children are bare, to one that is not connected. Returns how many they are.

@@ -24,6 +24,8 @@ pub trait Browser {
     fn tunnels(&self) -> bool;
     /// `received` is `None` on a new connection.
     fn negotiate(&self, received: Option<&[u8]>) -> Negotiation;
+    /// What wakes the request up may be something else.
+    fn take_approval_of_certificate(&self) -> bool;
     /// Of a response that is not the final one.
     fn informed(&self, response: &Response);
 }

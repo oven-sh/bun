@@ -8,6 +8,7 @@ use super::script::{calling_scripts, drain_microtasks, is_at_top_level, report, 
 use super::window::has_frames;
 use super::{EventFlags as F, *};
 use crate::api::core::steps::Has;
+use crate::api::uievents::source_of;
 
 const INLINE: usize = 32;
 
@@ -395,7 +396,9 @@ fn build_path<'a>(
             && node.steps().contains(Has::ACTIVATE)
             && (node == target || event.has(F::BUBBLES))
         {
-            activation = node.as_element().filter(|it| pending::can_activate(it));
+            activation = node
+                .as_element()
+                .filter(|it| crate::api::forms::can_activate(it));
         }
         if !node.has(NodeFlags::USER_AGENT) {
             if has_views {
@@ -428,7 +431,9 @@ fn build_path<'a>(
         {
             if slots_entered == 0
                 && (!event.has(F::COMPOSED) && node == origin.root()
-                    || related.is_some_and(|it| it.retarget(Some(host)) == host))
+                    || related
+                        .or_else(|| Some(source_of(event)?))
+                        .is_some_and(|it| it.retarget(Some(host)) == host))
             {
                 break;
             }
@@ -472,7 +477,7 @@ fn dispatch_to_node<'a>(
     }
     let saved = activation
         .filter(|it| it.steps().contains(Has::PRE_ACTIVATE))
-        .map_or(JSValue::UNDEFINED, |it| pending::pre_activate(cx, it));
+        .map_or(JSValue::UNDEFINED, |it| pre_activate(cx, it));
     let last_target = path.target_index(path.len - 1);
     let mut clears_targets = path
         .views
@@ -493,9 +498,9 @@ fn dispatch_to_node<'a>(
     }
     let proceeds = finish(event);
     match activation {
-        Some(element) if proceeds => pending::activate(cx, element, event, origin, saved),
+        Some(element) if proceeds => activate(cx, element, event, origin, saved),
         Some(element) if element.steps().contains(Has::CANCEL_ACTIVATE) => {
-            pending::cancel_activate(cx, element, saved)
+            cancel_activate(cx, element, saved)
         }
         _ => {}
     }
@@ -760,5 +765,31 @@ impl Event {
                 bindgen::to_js::any,
             )?
             .to_js())
+    }
+}
+
+fn pre_activate<'a>(cx: Cx<'_, 'a>, element: &'a Element) -> JSValue {
+    element
+        .kind()
+        .steps()
+        .pre_activate
+        .map_or(JSValue::UNDEFINED, |step| step(cx, element))
+}
+
+fn activate<'a>(
+    cx: Cx<'_, 'a>,
+    element: &'a Element,
+    event: &'a Event,
+    origin: &'a Node,
+    saved: JSValue,
+) {
+    if let Some(step) = element.kind().steps().activate {
+        step(cx, element, event, origin, saved);
+    }
+}
+
+fn cancel_activate<'a>(cx: Cx<'_, 'a>, element: &'a Element, saved: JSValue) {
+    if let Some(step) = element.kind().steps().cancel_activate {
+        step(cx, element, saved);
     }
 }

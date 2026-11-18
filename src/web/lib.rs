@@ -25,6 +25,17 @@ macro_rules! keywords {
                 }
             }
         }
+
+        impl $crate::wire::Wire for $name {
+            fn write(self, to: &mut $crate::wire::Writer) {
+                to.put(&[self as u8]);
+            }
+
+            fn read(from: &mut $crate::wire::Reader<'_>) -> $crate::wire::Result<Self> {
+                let [index] = from.take()?;
+                $name::ALL.get(usize::from(index)).copied().ok_or($crate::wire::Malformed)
+            }
+        }
     };
 }
 
@@ -43,6 +54,7 @@ pub mod held;
 pub mod host;
 pub mod hosts;
 pub mod import_map;
+pub mod input;
 pub mod integrity;
 pub mod js_embedder;
 pub mod js_link;
@@ -53,6 +65,7 @@ pub mod media;
 pub mod mime;
 pub mod net;
 pub mod origin;
+pub mod page;
 pub mod pattern;
 pub mod permissions_policy;
 pub mod policy_container;
@@ -71,9 +84,11 @@ pub mod tasks;
 pub mod time;
 pub mod timers;
 pub mod timing;
+pub mod trace;
 pub mod trust;
 pub mod url;
 pub mod window_features;
+pub mod wire;
 
 type Bytes = Box<[u8]>;
 

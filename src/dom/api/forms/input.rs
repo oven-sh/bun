@@ -233,21 +233,19 @@ impl<'a> Input<'a> {
             self.element.attr(atom!("name")).filter(|it| !it.is_empty()),
             form_owner(self.element),
         );
-        let root: &Node = if name.is_some() {
-            self.element.root()
-        } else {
-            self.element
+        let named = match (&name, self.element.scope()) {
+            (None, _) => smallvec::smallvec![self.element],
+            (Some(name), Some(scope)) => scope.descendants_named(&Atom::from_string(name)),
+            (Some(_), None) => self
+                .element
+                .root()
+                .objects()
+                .filter_map(Node::as_element)
+                .filter(|it| it.attr(atom!("name")) == name)
+                .collect(),
         };
-        let inputs = root
-            .objects()
-            .filter_map(Node::as_element)
-            .filter_map(Input::of);
-        inputs.filter(move |it| {
-            it.element == self.element
-                || name.is_some()
-                    && it.kind() == Radio
-                    && it.element.attr(atom!("name")) == name
-                    && form_owner(it.element) == form
+        named.into_iter().filter_map(Input::of).filter(move |it| {
+            it.element == self.element || it.kind() == Radio && form_owner(it.element) == form
         })
     }
 
@@ -259,7 +257,7 @@ impl<'a> Input<'a> {
             ))
         };
         let (mut known, root) = (GROUPS.borrow_mut(), self.element.root());
-        let (Some(known), Some(key)) = (known.as_mut(), key_of(self)) else {
+        let (Some(known), Some(key)) = (known.as_deref_mut(), key_of(self)) else {
             return self.group().fold(Default::default(), GroupFacts::with);
         };
         if known.0 != root.to_js() {
@@ -279,7 +277,7 @@ impl<'a> Input<'a> {
         known.1.get(&key).copied().unwrap_or_default()
     }
 
-    /// There is no more than one.
+    /// If it is near. There is no more than one.
     fn other_checked_in_group(self) -> Option<Input<'a>> {
         let (name, form, root) = (
             self.element
@@ -295,7 +293,8 @@ impl<'a> Input<'a> {
             it.following(Some(root))
         });
         let mut inputs = before
-            .chain(after)
+            .take(16)
+            .chain(after.take(16))
             .filter_map(Node::as_element)
             .filter_map(Input::of);
         inputs.find(|it| {
@@ -376,6 +375,16 @@ impl<'a> Input<'a> {
             );
             return errors;
         }
+        if matches!(kind, Text | Search | Tel | Password)
+            && !self.element.has_any_attr(&[
+                atom!("required"),
+                atom!("pattern"),
+                atom!("maxlength"),
+                atom!("minlength"),
+            ])
+        {
+            return errors;
+        }
         let value = self.value();
         if value.is_empty() {
             errors.set(
@@ -436,7 +445,15 @@ impl<'a> Input<'a> {
     }
 
     pub(super) fn reset(self, cx: &mut Cx<'a>) {
-        self.set_files(cx, None);
+        if self.files().is_some() {
+            self.set_files(cx, None);
+        }
+        if self.text.state.control.was_edited.take()
+            || self.text.state.last_edit_was_by_user.get()
+            || self.kind().has_date_fields()
+        {
+            dirty(cx, self.element);
+        }
         self.set_checked(cx, self.has(atom!("checked")));
         if self.is_value_mode() {
             self.text
@@ -493,6 +510,10 @@ impl<'a> Input<'a> {
                 Some(text_in(cx, name, ""))
             }
             Checkbox | Radio => None,
+            Image => {
+                let parent = crate::api::images::add_alt_text(cx, element, root);
+                Some(text_in(cx, parent, ""))
+            }
             _ => Some(text_in(cx, root, "")),
         };
         if let Some(look) = look {
@@ -591,11 +612,14 @@ impl<'a> Input<'a> {
                 },
             ),
             _ => {
-                let label = element.attr(if kind == Image {
-                    atom!("alt")
-                } else {
-                    atom!("value")
-                });
+                let alt = (kind == Image)
+                    .then(|| {
+                        element
+                            .attr(atom!("alt"))
+                            .or_else(|| element.attr(atom!("title")))
+                    })
+                    .flatten();
+                let label = alt.or_else(|| element.attr(atom!("value")));
                 set_text(
                     cx,
                     Some(look),
@@ -744,7 +768,9 @@ impl HTMLInputElement {
         if self.input().kind() != Image {
             0
         } else if looks_like(cx, self, Looks::RENDERED) {
-            self.engine(|engine, id| engine.box_sizes(id)[2 + axis].round() as u32)
+            crate::api::ui::layout::laid_out(cx, self, |engine, id| {
+                engine.box_sizes(id)[2 + axis].round() as u32
+            })
         } else {
             self.integer(name)
                 .and_then(|it| it.try_into().ok())
@@ -957,12 +983,12 @@ type Groups = (
 );
 
 #[thread_local]
-static GROUPS: core::mem::ManuallyDrop<core::cell::RefCell<Option<Groups>>> =
+static GROUPS: core::mem::ManuallyDrop<core::cell::RefCell<Option<Box<Groups>>>> =
     core::mem::ManuallyDrop::new(core::cell::RefCell::new(None));
 
 /// `steps` change no radio button.
 pub(super) fn remembering_groups(steps: impl FnOnce()) {
-    let outer = GROUPS.replace(Some((JSValue::ZERO, Default::default())));
+    let outer = GROUPS.replace(Some(Box::new((JSValue::ZERO, Default::default()))));
     steps();
     GROUPS.replace(outer);
 }
@@ -998,6 +1024,10 @@ fn input_attribute_changed<'a>(cx: &mut Cx<'a>, element: &'a Element, change: &A
         }
         (atom!("name"), Radio) => input.uncheck_others(cx),
         (atom!("src"), Image) => input.update_image(cx),
+        (atom!("alt") | atom!("title") | atom!("value"), Image) => {
+            input.rebuild(cx);
+            crate::api::images::show_button_image(cx, element);
+        }
         _ => {}
     }
     attribute_changed(cx, element, change);
@@ -1066,9 +1096,10 @@ fn activate<'a>(
         }
         kind if kind.is_button() => {
             if kind == Image {
-                let click = event
-                    .downcast::<MouseEvent>()
-                    .filter(|it| it.is_trusted() && it.get_detail() > 0);
+                let click = event.downcast::<MouseEvent>().filter(|it| {
+                    it.get_detail() > 0
+                        || !crate::api::ui::activation::is_clicked_without_pointer(it)
+                });
                 input
                     .state
                     .coordinate
@@ -1085,9 +1116,9 @@ pub(crate) static STEPS: Steps = Steps {
         let root = element.attach_ua_shadow(cx);
         Input::new(element).build(cx, root);
     }),
-    post_connection: Some(|cx, element, _| {
+    post_connection: Some(|cx, element, is_move| {
         Input::new(element).uncheck_others(cx);
-        dirty(cx, element);
+        inserted(cx, element, is_move);
     }),
     removed: Some(text::removed),
     rendered: Some(|cx, element| {

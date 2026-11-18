@@ -176,6 +176,15 @@ impl Forest {
         }
     }
 
+    /// Full Keyboard Access asks for what is beside a group when it is through with it.
+    fn is_left(&self, search: &Search) -> bool {
+        let focus = |start: Id| self.real_focus(self.place_of(start.tree)?.0);
+        search.keys == ["AXKeyboardFocusableSearchKey"]
+            && search.start.is_some_and(|it| {
+                focus(it).is_some_and(|focus| focus != it && self.contains(it, focus))
+            })
+    }
+
     pub fn search(&self, within: Id, search: &Search) -> Vec<Id> {
         let mut all = Vec::new();
         let mut pending: Vec<Id> = self.exposed_children(within).into_iter().rev().collect();
@@ -220,20 +229,30 @@ impl Forest {
                 && (wanted.is_empty() || has_text())
                 && !(search.only_visible && self.is_offscreen(*id))
         };
-        match search.is_backwards {
-            true => candidates
-                .iter()
-                .rev()
-                .copied()
-                .filter(matches)
-                .take(search.limit)
-                .collect(),
-            false => candidates
-                .iter()
-                .copied()
-                .filter(matches)
-                .take(search.limit)
-                .collect(),
+        let among = |candidates: &[Id], left: Option<Id>| -> Vec<Id> {
+            let matches = |id: &Id| !left.is_some_and(|it| self.contains(it, *id)) && matches(id);
+            match search.is_backwards {
+                true => candidates
+                    .iter()
+                    .rev()
+                    .copied()
+                    .filter(matches)
+                    .take(search.limit)
+                    .collect(),
+                false => candidates
+                    .iter()
+                    .copied()
+                    .filter(matches)
+                    .take(search.limit)
+                    .collect(),
+            }
+        };
+        let is_left = self.is_left(search);
+        let found = among(candidates, search.start.filter(|_| is_left));
+        if found.is_empty() && is_left && self.parent(within).is_none() {
+            among(&all, None)
+        } else {
+            found
         }
     }
 }

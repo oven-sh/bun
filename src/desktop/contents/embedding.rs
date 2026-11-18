@@ -2,6 +2,8 @@
 
 use bun_ui::protocol::Point;
 use bun_web::csp::Metadata;
+use bun_web::host::Wish;
+use bun_web::page::News as ForElement;
 use bun_web::request::Destination;
 use bun_web::url::Url;
 
@@ -47,12 +49,11 @@ impl Holder for Contents {
 
     fn navigate_from(&self, url: &str, frame: JSValue) -> JsResult<()> {
         let top = self.owner();
-        top.wish(
-            top.page(),
-            url,
-            JSValue::UNDEFINED,
-            Initiator::of_guest(frame)?,
-        )
+        let wish = Wish {
+            url: url.to_owned(),
+            ..Default::default()
+        };
+        top.wish(top.page(), wish, Initiator::of_guest(frame)?, None)
     }
 
     fn ignores_menu_shortcuts(&self) -> bool {
@@ -67,7 +68,7 @@ impl Holder for Contents {
         self.is_frame()
     }
 
-    fn mirror(&self, scale: JSValue, area: JSValue) -> JsResult<()> {
+    fn mirror(&self, scale: f64, area: JSValue) -> JsResult<()> {
         self.painted(scale, area)
     }
 
@@ -101,8 +102,12 @@ impl Embedder for Page {
         Page::log_error(self, message)
     }
 
-    fn path_of(&self, file: JSValue) -> JsResult<String> {
-        text_of(bun_web::convert::path_of_file(global(), file))
+    fn id(&self) -> u32 {
+        self.id
+    }
+
+    fn tell_element(&self, number: u32, news: ForElement) -> JsResult<()> {
+        self.tell(|it| it.tell_frame(number, news))
     }
 
     fn is_disposed(&self) -> bool {
@@ -138,10 +143,6 @@ impl Embedder for Page {
 
     fn referrer_policy(&self) -> &'static [u8] {
         self.client.policies().referrer_policy.as_bytes()
-    }
-
-    fn clone_message(&self, message: JSValue) -> JsResult<JSValue> {
-        self.clone_to_main_world(message)
     }
 
     fn frames(&self) -> JsResult<Option<JSValue>> {

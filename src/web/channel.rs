@@ -8,11 +8,11 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use bun_collections::HashMap;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, from_js_host_call, from_js_host_call_generic};
 use bun_threading::Guarded;
 
 use crate::exec::Thread;
+use crate::wire;
 
 bun_opaque::opaque_ffi! { struct SerializedScriptValue; }
 
@@ -143,6 +143,20 @@ impl Message {
     }
 }
 
+thread_local! {
+    static IN_TRANSIT: ManuallyDrop<RefCell<Vec<Message>>> = ManuallyDrop::default();
+}
+
+impl wire::Wire for Message {
+    fn write(self, _: &mut wire::Writer) {
+        IN_TRANSIT.with(|it| it.borrow_mut().push(self));
+    }
+
+    fn read(_: &mut wire::Reader<'_>) -> wire::Result<Message> {
+        IN_TRANSIT.with(|it| it.borrow_mut().pop().ok_or(wire::Malformed))
+    }
+}
+
 impl From<Serialized> for Message {
     fn from(value: Serialized) -> Message {
         Message {
@@ -168,7 +182,7 @@ struct Side {
 type Listener = Rc<dyn Fn()>;
 
 thread_local! {
-    static LISTENERS: ManuallyDrop<RefCell<HashMap<u64, Listener>>> = bun_ui::lasting(|| drop(LISTENERS.with(|it| it.take())));
+    static LISTENERS: ManuallyDrop<RefCell<std::collections::BTreeMap<u64, Listener>>> = bun_ui::lasting(|| drop(LISTENERS.with(|it| it.take())));
 }
 
 fn tell(id: u64) {

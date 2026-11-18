@@ -8,6 +8,7 @@ use core::pin::{Pin, pin};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use core::task::{Context, Poll, Waker};
 use core::time::Duration;
+use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::task::Wake;
@@ -153,7 +154,7 @@ struct Reaction {
 #[derive(Default)]
 struct Executor {
     tasks: HashMap<u64, Slot>,
-    reactions: HashMap<u64, Rc<Reaction>>,
+    reactions: BTreeMap<u64, Rc<Reaction>>,
     last_id: u64,
 }
 
@@ -315,13 +316,6 @@ pub fn block_pages<T: 'static>(
     crate::realm::set_paused(was_suspended);
     tasks::set_suspended(global, was_suspended);
     result.take()
-}
-
-pub(crate) fn block<'a>(cx: &mut JsScope<'a>, promise: JsLocal<'a>) -> JSValue {
-    let settled = settled(cx, promise);
-    block_pages(cx.global(), settled)
-        .and_then(Result::ok)
-        .map_or(JSValue::UNDEFINED, |it| it.get())
 }
 
 pub enum Either<A, B> {

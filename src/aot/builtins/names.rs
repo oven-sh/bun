@@ -1,7 +1,7 @@
 use super::runtime_uses::{
     ENTRIES_LEADING_TO_HOOK_OF_INSTANCEOF, is_name_of_language_member_with_code,
 };
-use super::table::{self, BuiltinKind, BuiltinName, Intrinsic, IntrinsicPosition};
+use super::table::{self, BuiltinId, BuiltinKind, BuiltinName, Intrinsic, IntrinsicPosition};
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::util::FxHashMap;
 use std::sync::OnceLock;
@@ -21,6 +21,7 @@ pub struct BuiltinNames {
     names_leading_to_hook_of_instanceof: Box<[Atom]>,
     names_of_methods_that_hand_out_global_object: Box<[Atom]>,
     atoms: Box<[Option<Atom>]>,
+    globals_kept_aside: Vec<u32>,
 }
 
 fn all_names() -> impl Iterator<Item = BuiltinName> {
@@ -81,7 +82,17 @@ impl BuiltinNames {
                 .map(|&name| atoms.intern(table::text_of_name(name)))
                 .collect(),
             atoms: name_atoms,
+            globals_kept_aside: Vec::new(),
         }
+    }
+
+    /// In a program with realms of the web, these names mean in Bun's own code what Bun began with.
+    pub fn keep_globals_aside(&mut self, globals: Vec<u32>) {
+        self.globals_kept_aside = globals;
+    }
+
+    pub fn is_kept_aside(&self, global: BuiltinId) -> bool {
+        self.globals_kept_aside.contains(&(global as u32))
     }
 
     #[inline]

@@ -35,7 +35,7 @@ pub(crate) fn environment(except: &str) -> JsResult<CStringList> {
     let (all, mut entries) = (get(object(), "env")?, Vec::new());
     for name in texts_of(all.keys(global())?)? {
         if name != except {
-            let value = text_of(get(all, &name)?)?;
+            let value = text_of(get_by_value(global(), all, js(&*name)?)?)?;
             entries.push([name, value]);
         }
     }

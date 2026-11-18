@@ -1,7 +1,7 @@
 import * as b from "../../../codegen/bindgen-lib.ts";
 import { DomElement as Element } from "../core/core.bind.ts";
 import { HTMLOrSVGElement } from "../core/html.bind.ts";
-import { reflect as asInHtml, tokenList } from "../core/reflect.ts";
+import { reflect as asInHtml, reference, tokenList } from "../core/reflect.ts";
 import { DOMMatrix2DInit, DOMPointInit } from "../geometry/geometry.bind.ts";
 
 export default b.module({
@@ -358,6 +358,7 @@ export const SVGAElement = b.interface(
     ...strings("href target"),
     ...asInHtml("download ping rel hreflang type referrerPolicy"),
     relList: tokenList("rel", "noreferrer noopener opener"),
+    interestForElement: reference("interestfor"),
   }),
 );
 export const SVGForeignObjectElement = b.interface("SVGForeignObjectElement", graphics(box));
@@ -471,7 +472,14 @@ export const SVGMarkerElement = b.interface("SVGMarkerElement", {
     setOrientToAngle: { args: { angle: SVGAngle }, ...runs },
   },
 });
-export const SVGScriptElement = b.interface("SVGScriptElement", plain({ ...href, ...asInHtml("type crossOrigin") }));
+export const SVGScriptElement = b.interface(
+  "SVGScriptElement",
+  plain({
+    ...href,
+    ...asInHtml("type crossOrigin"),
+    async: { getter: b.bool, setter: { type: b.bool.loose, ...runs }, ceReactions: true, rustName: "is_async" },
+  }),
+);
 export const SVGStyleElement = b.interface("SVGStyleElement", plain(asInHtml("media type title")));
 export const SVGDescElement = b.interface("SVGDescElement", plain());
 export const SVGMetadataElement = b.interface("SVGMetadataElement", plain());

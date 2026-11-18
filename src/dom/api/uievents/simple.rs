@@ -42,11 +42,27 @@ macro_rules! fired {
 }
 fired! {
     ClipboardEvent, js_ClipboardEvent, set_clipboard_data: DataTransfer;
+    InterestEvent, js_InterestEvent, set_source: Element;
     SubmitEvent, js_SubmitEvent, set_submitter: Element;
 }
 
 fn retargeted<'a>(source: Option<&'a Element>, event: &Event) -> Option<&'a Node> {
     Some(source?.retarget(event.current_node()))
+}
+
+/// What has caused it. The event stays in the shadow tree that has both.
+pub(crate) fn source_of(event: &Event) -> Option<&Element> {
+    let field = (event.downcast().map(js_ToggleEvent::source))
+        .or_else(|| event.downcast().map(js_CommandEvent::source))
+        .or_else(|| event.downcast().map(js_InterestEvent::source))
+        .or_else(|| event.downcast().map(js_SubmitEvent::submitter));
+    Element::from_value(field??)
+}
+
+impl InterestEvent {
+    pub(crate) fn get_source(&self) -> Option<&Node> {
+        retargeted(source_of(self), self)
+    }
 }
 
 #[repr(C)]
@@ -68,7 +84,14 @@ impl ToggleEvent {
         [old, new]: [Known; 2],
         source: Option<&Element>,
     ) -> &'a Event {
-        let base = Event::base(name, init, Trusted::Yes);
+        let base = Event::base(
+            name,
+            EventInit {
+                composed: source.is_some(),
+                ..init
+            },
+            Trusted::Yes,
+        );
         let this = js_ToggleEvent::create(
             doc.heap(heap),
             ToggleEvent {

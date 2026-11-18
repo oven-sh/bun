@@ -34,6 +34,11 @@ describe("v8 serialize/deserialize Buffer identity", () => {
     expect(out.deep.list[0].length).toBe(3);
   });
 
+  test("a Buffer in the cause of an error", () => {
+    const out = v8.deserialize(v8.serialize(new Error("a", { cause: { data: Buffer.from("hi") } })));
+    expect(Buffer.isBuffer(out.cause.data)).toBe(true);
+  });
+
   test("Buffers as Map keys and values", () => {
     const m = new Map([[Buffer.from("k"), { v: Buffer.from("v") }]]);
     const out = v8.deserialize(v8.serialize(m)) as Map<any, any>;

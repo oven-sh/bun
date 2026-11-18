@@ -775,11 +775,110 @@ test("document.fonts follows the rules", async () => {
   ]);
 });
 
+test("a value that one property refuses is taken by another", () => {
+  using page = open("<p>");
+  const { style } = page.$("p");
+  style.display = style.display = "5px";
+  style.width = "5px";
+  style.setProperty("height", "auto !important");
+  style.setProperty("height", "auto", "important");
+  expect(style.cssText).toBe("width: 5px; height: auto !important;");
+});
+
+test("items are stretched to the height that a flex container has by its ratio", () => {
+  using page = open(
+    `<div style="display: flex; aspect-ratio: 1; width: 30px"><p style="margin: 0"><i style="display: block; height: 100px"></i></p></div>`,
+  );
+  expect([page.$("div").offsetHeight, page.$("p").offsetHeight]).toEqual([30, 30]);
+});
+
+test("the scrollbars of the page take nothing from the lines of an orthogonal box", () => {
+  using page = open(`<div style="width: 9000px; padding-top: 1px"></div>`);
+  page.$("div").offsetHeight;
+  page.$("div").innerHTML = `<p style="writing-mode: vertical-rl; margin: 0; min-height: 100%"></p>`;
+  expect(page.$("p").offsetHeight).toBe(page.window.innerHeight);
+});
+
+test.each([
+  [
+    "a field with a percentage for a width shrinks in a flex container",
+    "<div style='display: flex; width: 90px'><i style='flex: 0 0 60px'></i><input id=a style='width: 100%; box-sizing: border-box'></div>",
+    [30],
+  ],
+  [
+    "tracks repeat up to a percentage",
+    "<div style='width: 100px'><div id=a style='display: inline-grid; min-width: 60%; grid-template-columns: repeat(auto-fill, 50px)'></div></div>",
+    [100],
+  ],
+  [
+    "tracks repeat up to a percentage of the height",
+    "<div style='height: 100px'><div id=a style='display: inline-grid; min-height: 60%; aspect-ratio: 1; grid: 100px / repeat(auto-fill, 50px)'></div></div>",
+    [100],
+  ],
+  [
+    "columns of flex items wrap at a percentage",
+    "<div id=a style='width: max-content; height: 20px'><div style='display: flex; flex-flow: column wrap; max-height: 100%'><i style='width: 5px; height: 20px'></i><i style='width: 5px; height: 20px'></i></div></div>",
+    [10],
+  ],
+  [
+    "an orthogonal box between insets has a definite width",
+    "<div style='position: relative; width: 50px'><div id=a style='writing-mode: vertical-lr; position: absolute; left: 0; right: 10px'><canvas width=1 height=1 style='display: block; width: 100%'></canvas></div></div>",
+    [40, 40],
+  ],
+  [
+    "min-content is a basis for an orthogonal item",
+    "<div style='display: flex; flex-flow: column; height: 75px'><div id=a style='writing-mode: vertical-rl; flex: 0 0 min-content; width: 9px'><i style='float: left; height: 50px'></i><i style='float: left; height: 50px'></i></div></div>",
+    [9, 50],
+  ],
+  [
+    "grid lines go up to 10000",
+    "<div id=a style='display: inline-grid; grid-auto-columns: 1px'><i style='grid-column-end: 10000'></i></div>",
+    [9999],
+  ],
+])("%s", (_, html, expected) => {
+  using page = open(html);
+  expect([page.$("#a").offsetWidth, page.$("#a").offsetHeight].slice(0, expected.length)).toEqual(expected);
+});
+
+test.each([
+  [
+    "the last baseline of clamped lines",
+    "<div style='display: flex; align-items: last baseline; font: 10px/10px a'><p id=a style='margin: 0'>a</p><p style='margin: 0; padding-bottom: 5px; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden'>a<br>a<br>a</p></div>",
+    [0, 10],
+  ],
+  [
+    "align-content of columns with size containment",
+    "<div style='columns: 2; height: 90px; contain: size; align-content: end'><p id=a style='margin: 0; height: 10px; break-inside: avoid'></p></div>",
+    [0, 80],
+  ],
+  [
+    "a sticky box without room keeps to the start of its containing block",
+    "<div style='width: 100px; overflow: hidden'><div style='display: flex; width: 600px; margin-left: -300px; direction: rtl'><p id=a style='position: sticky; left: 0; right: 0; width: 200px; margin: 0'></p></div></div>",
+    [-100, 0],
+  ],
+])("%s", (_, html, expected) => {
+  using page = open(`<body style="margin: 0">${html}`);
+  expect([page.$("#a").offsetLeft, page.$("#a").offsetTop]).toEqual(expected);
+});
+
+test("place-content spells out what a baseline leaves open, and flex-basis has no anchor", () => {
+  using page = open("<p style='place-content: baseline; flex-basis: anchor-size(--a width)'>");
+  expect([page.$("p").style.placeContent, page.$("p").style.flexBasis]).toEqual(["baseline start", ""]);
+});
+
 describe("a change gives what a new page gives", () => {
   const set = (selector: string, name: string, value: string) => (page: any) =>
     page.$(selector).setAttribute(name, value);
   const rules = (text: string) => (page: any) => (page.$("#rules").textContent = text);
   const items = "<li>a</li>".repeat(9);
+  const [grid, fill] = [
+    "display: grid; grid-template-columns: auto 1fr auto",
+    "display: grid; grid-template-columns: repeat(auto-fill, 50px)",
+  ];
+  const other = "<b style='position: absolute'>a</b>";
+  const held = (html: string) =>
+    `<div style='position: relative; overflow: auto; width: 100px; height: 99px'><div style='overflow: clip; overflow-clip-margin: 0; height: 50px'>${html}</div></div>`;
+  const [cells, floats] = ["<p>a</p>".repeat(9), "<i style='float: left; width: 9px; height: 9px'></i>".repeat(9)];
   test.each([
     ["::first-line by a class", "<style>.on::first-line { font-size: 40px }</style><p>a</p>", set("p", "class", "on")],
     [
@@ -813,9 +912,140 @@ describe("a change gives what a new page gives", () => {
       set("p", "style", "position: absolute; left: 10%; top: 90px"),
     ],
     [
+      "an absolute box after a block that grows",
+      held("<p>a</p><i style='position: absolute'>b</i>"),
+      set("p", "style", "height: 40px"),
+    ],
+    [
+      "an absolute box that goes",
+      held(`<i style='position: absolute; top: 200px'>b</i>${other}`),
+      (page: any) => page.$("i").remove(),
+    ],
+    [
+      "an absolute box that comes",
+      held(`<p></p>${other}`),
+      (page: any) => (page.$("p").innerHTML = "<i style='position: absolute; top: 200px'>b</i>"),
+    ],
+    [
+      "an absolute box that becomes fixed",
+      held(`<i style='position: absolute; right: 0'>b</i>${other}<u style='position: fixed'>c</u>`),
+      set("i", "style", "position: fixed; right: 0"),
+    ],
+    [
+      "a fixed box that becomes absolute",
+      held(`<i style='position: fixed; right: 0'>b</i>${other}<u style='position: fixed'>c</u>`),
+      set("i", "style", "position: absolute; right: 0"),
+    ],
+    [
+      "an absolute box that gets a nearer container",
+      held(`<p style='width: 20px'><i style='position: absolute; left: 150px'>b</i></p>${other}`),
+      set("p", "style", "width: 20px; position: relative; overflow: hidden"),
+    ],
+    [
+      "an absolute box that loses its container",
+      held(`<p style='width: 20px; position: relative'><i style='position: absolute; right: 0'>b</i></p>${other}`),
+      set("p", "style", "width: 20px"),
+    ],
+    [
+      "a transform in a scroller while another box is resized",
+      "<div style='overflow: auto; width: 50px; height: 50px'><p style='margin: 0; height: 9px; translate: 0 1px'></p></div><nav style='height: 9px'><p></p></nav>",
+      (page: any) => ((page.$("p").style.translate = "0 90px"), (page.$("nav p").style.height = "5px")),
+    ],
+    [
+      "what overflows a box that keeps its size",
+      "<div style='overflow: auto; width: 50px; height: 50px'><nav style='position: relative; z-index: 0; height: 9px'><p style='margin: 0'></p></nav></div>",
+      set("p", "style", "margin: 0; height: 90px"),
+    ],
+    [
+      "what overflows an absolute box that keeps its size",
+      "<div style='position: relative; overflow: auto; width: 50px; height: 50px'><nav style='position: absolute; inset: 0 0 auto; height: 9px'><p style='margin: 0'></p></nav></div>",
+      set("p", "style", "margin: 0; height: 90px"),
+    ],
+    [
+      "an absolute box in a relative inline element with a block that grows",
+      "<div><b style='position: relative'><p style='height: 9px'></p><i style='position: absolute; display: block'>a</i></b></div>",
+      set("p", "style", "height: 20px"),
+    ],
+    [
+      "a subgrid that gets containment",
+      "<div style='display: grid; width: max-content'><p style='display: grid; grid-template-columns: subgrid'>a</p></div>",
+      (page: any) => (page.$("p").style.cssText += "contain: paint; margin: 0"),
+    ],
+    [
+      "a box that was measured for another width before",
+      "<div style='display: grid'><div style='justify-self: baseline; display: grid'><div style='display: grid; grid-auto-flow: column'><p style='margin: 0'>a</p>a a a a a a a a</div></div></div>",
+      (page: any) => {
+        page.$("div").style.width = "30px";
+        page.$("div").offsetHeight;
+        page.$("p").append(page.document.createElement("br"), "a");
+        page.$("div").style.width = "400px";
+      },
+    ],
+    [
       "an item that gets another number",
       `<ol style='list-style-position: inside'>${items}<li><b>a</b></li></ol>`,
       (page: any) => page.$("li").remove(),
+    ],
+    [
+      "text-indent of text that gets a block before it",
+      "<div style='text-indent: 9px'><b>a</b><p></p></div>",
+      (page: any) => page.$("div").prepend(page.document.createElement("p")),
+    ],
+    [
+      "text-indent of text that loses the block before it",
+      "<div style='text-indent: 9px'><p style='margin: 0'></p><b>a</b></div>",
+      (page: any) => page.$("p").remove(),
+    ],
+    [
+      "a grid that is resized",
+      `<div style='${grid}; width: 300px'>${cells}</div>`,
+      set("div", "style", `${grid}; width: 200px`),
+    ],
+    ["a grid item that moves", `<div style='${grid}'>${cells}</div>`, set("p", "style", "grid-column: 3")],
+    [
+      "a grid item that is aligned differently",
+      `<div style='${grid}'>${cells}</div>`,
+      set("p", "style", "justify-self: end; width: 5px"),
+    ],
+    [
+      "a grid item that grows",
+      `<div style='${grid}'>${cells}</div>`,
+      (page: any) => (page.$("p").textContent = "aaa aaa"),
+    ],
+    [
+      "a grid item that becomes a subgrid",
+      `<div style='${grid}'><p style='display: grid; grid-column: span 2'><i>a</i><i>bb</i></p>${cells}</div>`,
+      (page: any) => (page.$("p").style.gridTemplateColumns = "subgrid"),
+    ],
+    [
+      "an item of a subgrid that moves",
+      `<div style='${grid}'><p style='display: grid; grid: auto / subgrid; grid-column: span 3'><i>aaaa</i></p>${cells}</div>`,
+      set("i", "style", "grid-column: 3"),
+    ],
+    [
+      "tracks that repeat automatically",
+      `<div style='${fill}; width: 300px'>${cells}</div>`,
+      set("div", "style", `${fill}; width: 100px`),
+    ],
+    [
+      "a float that grows",
+      `<div>${floats}<p style='clear: left'></p>${floats}</div>`,
+      set("i", "style", "float: left; width: 9px; height: 30px"),
+    ],
+    [
+      "an empty block beside floats that gets text",
+      `<div>${floats}<p><b></b></p></div>`,
+      (page: any) => (page.$("b").textContent = "a"),
+    ],
+    [
+      "an empty block beside floats that starts to clear",
+      `<div>${floats}<nav><p></p></nav></div>`,
+      set("p", "style", "clear: left"),
+    ],
+    [
+      "visibility: collapse that an anonymous row inherits",
+      "<div style='display: table'>a</div>",
+      set("div", "style", "display: table; visibility: collapse"),
     ],
     [
       "inline blocks that wrap",
@@ -832,6 +1062,89 @@ describe("a change gives what a new page gives", () => {
     expect(measure(page)).toEqual(measure(fresh));
     expect(measure(page)).not.toEqual(before);
   });
+});
+
+test.each([
+  ["a word that is too long", "overflow-wrap: break-word", "aa <b>bbbbbbb</b> c", "0,0,20 0,10,50 0,20,20 20,20,20"],
+  ["line-break: anywhere", "line-break: anywhere", "aaa bbbb cc", "0,0,50 0,10,50 0,20,10"],
+  ["a soft hyphen", "", "aa bb&shy;cccc", "0,0,20 0,10,20 0,20,40"],
+  ["text without a width", "", "aaaa&#x200b;bbbb", "0,0,40 0,10,40"],
+  ["justification", "text-align: justify", "a b ccc d", "0,0,50 0,10,50"],
+  ["text-indent", "text-indent: 20px", "aa bb cc", "20,0,20 0,10,50"],
+  [
+    "from right to left",
+    "direction: rtl",
+    "aa <b style='padding-left: 10px'>b</b> cccc",
+    "20,0,10 30,0,20 10,0,10 10,10,40",
+  ],
+  ["tabs", "white-space: pre-wrap; tab-size: 2", "a\tb\tcc\td", "0,0,40 0,10,50"],
+  ["break-spaces", "white-space: break-spaces", "aa    bbb", "0,0,50 0,10,40"],
+  [
+    "elements that are moved",
+    "",
+    "a <b style='vertical-align: 5px'>b</b> <i style='position: relative; left: 3px; top: 2px'>c dd</i>",
+    "0,5,20 20,0,10 30,5,10 43,7,10 3,17,20",
+  ],
+  ["text-wrap: balance", "text-wrap: balance", "a b c d", "0,0,30 0,10,30"],
+  ["text-wrap: pretty", "text-wrap: pretty", "a b c d e f g", "0,0,50 0,10,30 0,20,30"],
+])("lines: %s", (_, style, html, expected) => {
+  using page = open(
+    `<body style="margin: 0"><p style="margin: 0; font: 10px/10px a; width: 90px; ${style}">${html}</p>`,
+  );
+  const texts = page.document.createTreeWalker(page.$("p"), 4);
+  const range = page.document.createRange();
+  for (const width of ["50px", "70px", "50px"]) {
+    page.$("p").style.width = width;
+    page.$("p").offsetHeight;
+  }
+  const rects: string[] = [];
+  while (texts.nextNode()) {
+    range.selectNodeContents(texts.currentNode);
+    for (const it of range.getClientRects()) if (it.width > 0) rects.push([it.x, it.y, it.width].join());
+  }
+  expect(rects.join(" ")).toBe(expected);
+});
+
+test("a break is forced once before a box that a float pushes down", () => {
+  using page = open(
+    `<div style="width: 60px; columns: 2"><i style="float: left; width: 40px; height: 10px"></i><p style="columns: 2; break-before: column"></p></div>`,
+  );
+  expect(page.$("div").scrollWidth).toBeLessThan(200);
+});
+
+test("offsets in text count UTF-16", () => {
+  using page = open(
+    `<body style="margin: 0; font: 10px/10px a; white-space: pre"><p style="margin: 0">${"é😀a".repeat(40)}</p>`,
+  );
+  const range = page.document.createRange();
+  const left = (offset: number) => (
+    range.setStart(page.$("p").firstChild, offset),
+    range.setEnd(page.$("p").firstChild, 160),
+    range.getBoundingClientRect().x
+  );
+  expect([0, 1, 2, 3, 36, 37, 38, 39, 157, 158, 159].map(left)).toEqual([
+    0, 10, 10, 20, 270, 280, 280, 290, 1180, 1180, 1190,
+  ]);
+});
+
+test("many inline elements on a line take time that is linear in their number", () => {
+  using page = open(
+    `<p style="white-space: nowrap; direction: rtl">${"<i>a</i>".repeat(30_000)}</p><p>${"<output></output>".repeat(30_000)}<ruby>a<rt>b</ruby></p>`,
+  );
+  expect([...page.document.querySelectorAll("i")].at(-1).getClientRects().length).toBe(1);
+});
+
+test("lines go around a float before their block", () => {
+  using page = open(
+    `<body style="margin: 0; font: 10px/10px a; width: 50px"><i style="float: left; width: 20px; height: 15px"></i><p style="margin: 0">aa bb cc dd</p>`,
+  );
+  const range = page.document.createRange();
+  range.selectNodeContents(page.$("p").firstChild);
+  expect([...range.getClientRects()].map(it => [it.x, it.y, it.width].join())).toEqual([
+    "20,0,20",
+    "20,10,20",
+    "0,20,50",
+  ]);
 });
 
 test("a fixed box is laid out next to an absolute one with vertical text", () => {
@@ -905,4 +1218,469 @@ test("the last element in the scope of a name has the timeline", () => {
     () => page.$("section").append(page.$("#a")),
   ];
   expect(changes.map(change => (change(), sources()))).toEqual(["bc-e", "ac-e", "cc-e", "cce-", "aae-"]);
+});
+
+describe("selectors", () => {
+  test("a language with a subtag that is too long is none", () => {
+    using page = open(`<p lang="fr-standard"></p><p lang="fr-ninechars"></p>`);
+    expect([...page.document.querySelectorAll(":lang(fr)")].map(it => it.lang)).toEqual(["fr-standard"]);
+  });
+
+  test(":has() notices that the language has changed further up", () => {
+    using page = open(
+      `<style>div:has(:lang(en)) { width: 1px }</style><section lang="fr"><div><i></i></div></section>`,
+    );
+    expect(page.computed("div", "width")).not.toBe("1px");
+    page.$("section").lang = "en";
+    expect(page.computed("div", "width")).toBe("1px");
+  });
+
+  test.each([
+    [":host", "1"],
+    [":is(:host)", ""],
+    [":where(:host)", ""],
+  ])("%s with a default namespace", (selector, expected) => {
+    using page = open("<p></p>");
+    page.$("p").attachShadow({ mode: "open" }).innerHTML =
+      `<style>@namespace url(http://www.w3.org/1999/xhtml); ${selector} { --a: 1 }</style>`;
+    expect(page.computed("p", "--a")).toBe(expected);
+  });
+
+  test.each([":-internal-html", ":-internal-native", "::-internal-editor"])("%s is not for pages", selector => {
+    using page = open(`<style>${selector}, p { width: 1px }</style><p></p>`);
+    expect(() => page.document.querySelector(selector)).toThrow();
+    expect(page.computed("p", "width")).not.toBe("1px");
+  });
+
+  test("the name of an unknown pseudo-element is escaped", () => {
+    using page = open(`<style>::-webkit-\\ a {}</style>`);
+    expect(page.$("style").sheet.cssRules[0].selectorText).toBe("::-webkit-\\ a");
+  });
+
+  test.each([3, 11, 12, 13, 40])("count among %d siblings", count => {
+    using page = open(`<div>${"<p></p><i></i>".repeat(count)}</div>`);
+    const all = [...page.$("div").children];
+    const found = (selector: string) => all.flatMap((it, index) => (it.matches(selector) ? [index] : []));
+    const where = (test: (index: number) => boolean) => [...all.keys()].filter(test);
+    expect(found(":nth-child(3n + 1)")).toEqual(where(it => it % 3 == 0));
+    expect(found(":nth-last-child(3n + 1)")).toEqual(where(it => (all.length - 1 - it) % 3 == 0));
+    expect(found("p:nth-of-type(2n)")).toEqual(where(it => it % 4 == 2));
+    expect(found("i:nth-last-of-type(-n + 2)")).toEqual(where(it => it % 2 == 1 && it >= all.length - 3));
+  });
+});
+
+test("markers follow the rules that come and go", () => {
+  using page = open(`<style>.a li { color: red }</style><ul><li></li></ul>`);
+  const color = () => page.computed("li", "color", "::marker");
+  page.$("ul").className = "a";
+  expect(color()).toBe("rgb(255, 0, 0)");
+  const style = page.document.head.appendChild(page.document.createElement("style"));
+  style.textContent = ".b ::marker { color: blue }";
+  page.$("ul").className = "a b";
+  expect(color()).toBe("rgb(0, 0, 255)");
+  style.remove();
+  expect(color()).toBe("rgb(255, 0, 0)");
+  page.$("ul").className = "";
+  expect(color()).toBe("rgb(0, 0, 0)");
+});
+
+test("computed styles list some shorthands and aliases", () => {
+  using page = open("<p></p>");
+  const names = [...page.window.getComputedStyle(page.$("p"))];
+  expect(names).toContainValues(["background-position", "font-variant", "text-decoration", "-webkit-writing-mode"]);
+  expect(names).not.toContain("background-position-x");
+  expect([...page.$("p").computedStyleMap().keys()]).toEqual(names);
+});
+
+test("style sheets are in tree order wherever they are inserted", () => {
+  using page = open("<div></div>");
+  for (const at of [0, 0, 1, 3, 2, 0, 5, 3, 8]) {
+    const style = page.document.createElement("style");
+    page.$("div").insertBefore(style, page.$("div").children[at] ?? null);
+    expect([...page.document.styleSheets].map(it => it.ownerNode)).toEqual([
+      ...page.document.querySelectorAll("style"),
+    ]);
+  }
+});
+
+test.each(["class", "style", "data-a", "title"])("attr(%s) follows the attribute", name => {
+  using page = open(`<style>p::before { content: attr(${name}) }</style><p></p>`);
+  for (const value of ["top: 1px;", "top: 2px;"]) {
+    page.$("p").setAttribute(name, value);
+    expect(page.computed("p", "content", "::before")).toBe(`"${value}"`);
+  }
+  page.$("p").style.top = "3px";
+  if (name == "style") expect(page.computed("p", "content", "::before")).toBe('"top: 3px;"');
+});
+
+describe("values that scripts keep writing", () => {
+  const sheet = `<style>.a { top: 1px; width: 5px } .b { width: 9px !important } p { position: relative; margin: 0 } p::before, i { content: ""; display: block; width: inherit; left: inherit; opacity: inherit; height: 3px }</style>`;
+  const properties = [
+    "left",
+    "top",
+    "width",
+    "height",
+    "opacity",
+    "transform",
+    "margin-left",
+    "background-color",
+    "inline-size",
+    "z-index",
+  ];
+  const measure = (page: any) =>
+    [...page.document.querySelectorAll("p, i")].map(it => [
+      it.getAttribute("style"),
+      it.getBoundingClientRect().toJSON(),
+      properties.map(name => [page.computed(it, name), page.computed(it, name, "::before")]),
+    ]);
+
+  test.each<[string, (p: any, round: number, page: any) => void]>([
+    ["new lengths", (p, i) => Object.assign(p.style, { left: i + "px", width: i * 1.5 + "px" })],
+    [
+      "the same property twice",
+      (p, i) => (Object.assign(p.style, { left: "1px" }), Object.assign(p.style, { left: -i + "%" })),
+    ],
+    [
+      "another property afterwards",
+      (p, i) => Object.assign(p.style, { left: i + "px", [i % 2 ? "zIndex" : "color"]: i % 2 ? i : "red" }),
+    ],
+    [
+      "a removal afterwards",
+      (p, i) => (Object.assign(p.style, { left: i + "px", top: i + "px" }), i % 2 && p.style.removeProperty("left")),
+    ],
+    [
+      "a class in between",
+      (p, i) => ((p.style.left = i + "px"), p.classList.toggle(i % 3 ? "a" : "b"), (p.style.width = i + "px")),
+    ],
+    [
+      "the attribute afterwards",
+      (p, i) => ((p.style.left = i + "px"), i % 2 && p.setAttribute("style", p.getAttribute("style") + " top: 4px")),
+    ],
+    ["a clone", (p, i) => ((p.style.left = i + "px"), p.after(p.cloneNode(true)), (p.style.left = i + 0.5 + "px"))],
+    ["a move", (p, i) => ((p.style.width = i + "px"), p.parentNode.append(p), (p.style.height = i + "px"))],
+    ["the parent changes", (p, i) => ((p.style.width = i + "em"), (p.parentNode.style.fontSize = 10 + i + "px"))],
+    ["a logical rival", (p, i) => Object.assign(p.style, { [i % 2 ? "width" : "inlineSize"]: i + "px" })],
+    ["a shorthand", (p, i) => Object.assign(p.style, { [i % 2 ? "marginLeft" : "margin"]: i + "px" })],
+    [
+      "keywords and variables",
+      (p, i) => (p.style.width = ["1px", "inherit", "2px", "var(--w, 7px)", "auto", "calc(1px + 2%)"][i % 6]),
+    ],
+    [
+      "invalid values",
+      (p, i) => (p.style.width = ["1px", "-1px", "2.px", "3", "4px ", "0", "-0px", ".5px", "1e1px"][i % 9]),
+    ],
+    ["opacity", (p, i) => (p.style.opacity = [0.5, 0.25, 1, 0.75, 0, 2, "50%"][i % 7])],
+    [
+      "transforms",
+      (p, i) =>
+        (p.style.transform = [
+          `translate(${i}px, 2%)`,
+          `scale(${i}) rotate(${i}deg)`,
+          "none",
+          `translate3d(0, ${i}px, 1px)`,
+          "perspective(9px)",
+          `translateX(${i}px)`,
+        ][i % 6]),
+    ],
+    ["colors", (p, i) => (p.style.backgroundColor = `rgb(${i}, 0, 0)`)],
+    ["without a box", (p, i) => ((p.style.left = i + "px"), (p.parentNode.style.display = i % 3 ? "" : "none"))],
+    ["zoom", (p, i) => ((p.style.width = i + "px"), i == 3 && (p.parentNode.style.zoom = 2))],
+  ])("%s", (_, change) => {
+    using page = open(
+      `${sheet}<div><p style="left: 0; width: 20px; opacity: 0.5; --x: 1"><i></i></p><p style="left: 0; width: 20px; opacity: 0.5; --x: 1"><i></i></p></div>`,
+    );
+    for (let round = 1; round <= 12; round++) {
+      change(page.$("p"), round, page);
+      page.document.body.offsetWidth;
+      if (round % 4) continue;
+      using fresh = open(sheet + page.document.body.innerHTML);
+      expect(measure(page)).toEqual(measure(fresh));
+    }
+  });
+
+  test.each([
+    "width: var(--w, 12px)",
+    "width: calc(var(--w) + var(--v))",
+    "margin: var(--w) 1px; margin-left: 2px",
+    "inline-size: var(--w)",
+    "writing-mode: vertical-rl; inline-size: var(--w); height: 4px; block-size: var(--w)",
+    "position: absolute; top: 0; left: var(--w); width: 5px",
+    "transform: translateX(var(--w))",
+    "font-size: var(--w); width: 1em",
+    "border: var(--w) solid",
+    "--w: 3px; width: var(--w)",
+    "--w: inherit; width: var(--w)",
+    "--v: calc(var(--w) * 2); width: var(--v)",
+    "--u: 1px; width: var(--w)",
+    "width: var(--back)",
+    "width: if(style(--w: 3px): 8px; else: 9px)",
+    "width: var(--w) !important",
+    "display: none",
+    "display: contents",
+    "display: inline; padding-left: var(--w)",
+    "display: list-item",
+    "content-visibility: hidden",
+    "zoom: 2; width: var(--w)",
+    "animation: a 1s -0.5s paused linear",
+    "container-name: c",
+  ])("reach what has %s", declarations => {
+    const sheet = `<style>
+      @property --g { syntax: "<length>"; inherits: true; initial-value: 0px }
+      @keyframes a { to { width: var(--w) } }
+      @layer low { p { width: var(--w) } }
+      @container c style(--w: 3px) { i { height: 9px } }
+      body { --w: 3px; --v: 1px; --back: revert-layer }
+      p { ${declarations} }
+      i, .g::before { display: block; width: inherit; padding-top: var(--w); margin-left: var(--g) }
+      .g::before, ::marker { content: var(--t) }
+      rect { width: var(--w) }
+    </style>`;
+    const names = [
+      "--w",
+      "--v",
+      "--g",
+      "width",
+      "height",
+      "left",
+      "margin-top",
+      "margin-left",
+      "padding-top",
+      "padding-left",
+      "transform",
+      "font-size",
+      "content",
+    ];
+    const measure = (page: any) =>
+      [...page.document.body.querySelectorAll("*")].map(it => [
+        it.getBoundingClientRect().toJSON(),
+        names.map(name => [page.computed(it, name), page.computed(it, name, "::before")]),
+      ]);
+    const inside = `<p>a<i></i><i></i><b>b</b></p><p class="g">c<svg><rect height="1" /></svg></p>`;
+    for (const own of ["", declarations]) {
+      const given: Record<string, string> = { "--w": "0px", "--g": "0px", "--t": "none" };
+      const source = () =>
+        `${sheet}<div style="${own}; ${Object.entries(given)
+          .map(it => it.join(":"))
+          .join(";")}">${inside}</div><div>${inside}</div>`;
+      using page = open(source());
+      const values = [
+        "1px",
+        "2px",
+        "3px",
+        "4.5px",
+        "-1px",
+        "5px",
+        "50%",
+        "initial",
+        "6px",
+        "7px",
+        "var(--v)",
+        "8px",
+        "9px",
+        "1em",
+        "#000",
+        "10px",
+      ];
+      for (const [round, value] of values.entries()) {
+        const set = (name: string, value: string) => page.$("div").style.setProperty(name, (given[name] = value));
+        set("--w", value);
+        if (round % 5 == 4) set("--v", round + "px");
+        if (round % 6 == 5) set("--g", round + "em");
+        if (round % 7 == 6) set("--t", `'${round}'`);
+        page.document.body.offsetWidth;
+        if (round % 4 == 0) continue;
+        using fresh = open(source());
+        // Nothing is generated in skipped contents until something else in them is asked for.
+        for (const it of [page, fresh])
+          for (const svg of it.document.querySelectorAll("svg")) svg.getBoundingClientRect();
+        expect(measure(page)).toEqual(measure(fresh));
+      }
+    }
+  });
+
+  test("reach what is generated in skipped contents", () => {
+    using page = open(
+      `<style>p { content-visibility: hidden } p::before { content: ""; display: block; width: var(--w) }</style><p style="--w: 1px"><i></i></p>`,
+    );
+    page.$("i").getBoundingClientRect();
+    page.$("p").style.setProperty("--w", "2px");
+    page.document.body.offsetWidth;
+    expect(page.computed("p", "width", "::before")).toBe("2px");
+    page.$("p").style.setProperty("--content", "1");
+    page.$("style").textContent += "p::before { content: normal }";
+    expect(page.computed("p", "content", "::before")).toBe("none");
+  });
+
+  test("start discrete transitions of custom properties further down", () => {
+    using page = open(`<div style="--w: 0"><p><i style="transition: --w 9s allow-discrete"></i></p></div>`);
+    for (const value of ["1", "2", "3"]) {
+      page.computed(page.$("i"), "--w");
+      page.$("div").style.setProperty("--w", value);
+      expect(
+        page
+          .$("i")
+          .getAnimations()
+          .map((it: any) => it.transitionProperty),
+      ).toEqual(["--w"]);
+      page.$("i").getAnimations()[0].finish();
+      expect(page.computed(page.$("i"), "--w")).toBe(value);
+    }
+  });
+
+  test("reach the document from its root", () => {
+    using page = open(
+      `<style>:root { --a: var(--b); padding-left: var(--c) } p { width: var(--a); height: var(--w); margin-left: var(--c) }</style><p></p>`,
+    );
+    const { style } = page.document.documentElement;
+    for (let round = 1; round <= 9; round++) {
+      style.setProperty(["--w", "--b", "--c"][round % 3], round + "px");
+      style.setProperty("--w", round + "px");
+      const { left, width, height } = page.$("p").getBoundingClientRect();
+      expect([left, height]).toEqual([8 + (round < 2 ? 0 : 2 * (round - ((round + 1) % 3))), round]);
+      expect(width).toBe(round - ((round + 2) % 3));
+    }
+  });
+
+  test.each([
+    "position: absolute; width: 20px",
+    "position: absolute; width: 50%; margin: 3px auto 0 4%",
+    "position: absolute; width: fit-content",
+    "position: absolute; width: 20px; height: stretch",
+    "position: absolute; width: 20px; max-width: stretch; right: 0",
+    "position: absolute; width: 20px; direction: rtl; overflow: hidden",
+    "position: fixed; width: 20px",
+    "position: relative; width: 20px",
+  ])("move a box with %s", declarations => {
+    const measure = (page: any) =>
+      [...page.document.body.querySelectorAll("*")].map(it => [
+        it.getBoundingClientRect().toJSON(),
+        it.scrollWidth,
+        it.scrollHeight,
+        it.clientWidth,
+      ]);
+    for (const around of [
+      "position: relative; border: 2px solid",
+      "position: relative; overflow: auto",
+      "display: flex; transform: scale(2)",
+      "display: grid; position: relative",
+      "",
+    ]) {
+      const box = `<p style="left: 0; top: 0; ${declarations}">a b c <b style="position: absolute; top: 1px">d</b></p>`;
+      using page = open(`<div style="width: 100px; height: 100px; ${around}">${box}<span>e ${box}</span>${box}</div>`);
+      for (let round = 1; round <= 6; round++) {
+        for (const { style } of page.document.querySelectorAll("p"))
+          Object.assign(style, { left: round * 23.3 + "px", top: round ** 3 - 9 + "px" });
+        if (round == 3) page.$("div").style.width = "150px";
+        if (round == 4) page.$("p").append("f");
+        using fresh = open(page.document.body.innerHTML);
+        expect(measure(page)).toEqual(measure(fresh));
+      }
+    }
+  });
+
+  test("start transitions", () => {
+    using page = open(`<p style="width: 1px; transition: width 9s">`);
+    const widths = [2, 3].map(
+      it => (
+        page.document.body.offsetWidth,
+        (page.$("p").style.width = it + "px"),
+        page.$("p").getAnimations()[0].effect.getKeyframes()[1].width
+      ),
+    );
+    expect(widths).toEqual(["2px", "3px"]);
+  });
+
+  test("are read like any other", () => {
+    using page = open("<p></p><i></i>");
+    for (const number of [
+      "0.1",
+      "123456789.123456",
+      "0.000000000000001",
+      "1234567890123456789",
+      "-.5",
+      "00.50",
+      "33.333333333333336",
+    ]) {
+      page.$("p").style.cssText =
+        `display: none; margin-left: ${number}px; transform: translate(${number}px) scale(${number})`;
+      page.$("i").style.cssText =
+        `display: none; margin-left: ${number}PX; transform: Translate(${number}px) Scale(${number})`;
+      for (const property of ["margin-left", "transform"])
+        expect(page.computed("p", property)).toBe(page.computed("i", property));
+    }
+  });
+});
+
+test("searches that follow each other see the new ancestors of a tree", () => {
+  using page = open("<section></section>");
+  const root = page.document.createElement("div");
+  root.innerHTML = "<p></p>".repeat(50);
+  for (let i = 0; i < 40; i++) root.querySelectorAll(`:not(.a${i})`);
+  page.$("section").append(root);
+  expect(root.querySelectorAll("section p").length).toBe(50);
+});
+
+test("searches that follow each other see what changes in between", () => {
+  const item = (i: number) =>
+    `<li class="a n${i % 7}">t<b id=b${i} title=${i % 3}>x</b><i class=c><svg><foreignObject><b class=a></b></foreignObject></svg></i></li>`;
+  const items = Array.from({ length: 40 }, (_, i) => item(i)).join("");
+  using page = open(`<ul>${items}</ul>text<ol>${items}</ol><div></div><template>${items}</template>`);
+  const { document } = page;
+  const [shadow, detached] = [page.$("div").attachShadow({ mode: "open" }), page.$("ul").cloneNode(true)];
+  shadow.innerHTML = items;
+  const roots = [
+    document,
+    page.$("ul"),
+    page.$("ol li:last-child"),
+    page.$("i"),
+    page.$("div"),
+    shadow,
+    detached,
+    detached.lastChild,
+    page.$("template").content,
+  ];
+  const selectors = [
+    "b",
+    ".a",
+    ".on",
+    "li.n3 > b",
+    "ul .c b",
+    "[title='1']",
+    "[data-on]",
+    "#b5",
+    ".n1 b, .on, i",
+    ":is(.on, .n2) > *",
+    "*",
+    "b:first-child",
+    "li + li.n0",
+    "foreignObject",
+    ":not(.a)",
+  ];
+  const below = (root: any): any[] => [...root.children].flatMap(it => [it, ...below(it)]);
+  const changes = [
+    (it: any) => it.classList.toggle("on"),
+    (it: any) => it.toggleAttribute("data-on"),
+    (it: any) => it.setAttribute("title", "1"),
+    (it: any) => (it.id = "b5"),
+    (it: any) => it.removeAttribute("class"),
+    (it: any) => it.append("text"),
+    (it: any) => it.append(document.createElement("b")),
+    (it: any) => it.parentNode.prepend(it),
+    (it: any) => (it.innerHTML = item(3)),
+    (it: any) => (it.textContent = ""),
+    (it: any) => it.remove(),
+  ];
+  for (const root of roots) {
+    for (const [index, change] of changes.entries()) {
+      for (let round = 0; round < 40; round++) (document.head.toggleAttribute("x"), root.querySelectorAll("*"));
+      const before = below(root);
+      if (before.length) change(before[(index * 5) % before.length]);
+      const all = below(root);
+      for (const selector of selectors) {
+        const expected = all.filter(it => it.matches(selector)).map(it => all.indexOf(it));
+        expect([...root.querySelectorAll(selector)].map(it => all.indexOf(it))).toEqual(expected);
+        expect(all.indexOf(root.querySelector(selector))).toBe(expected[0] ?? -1);
+      }
+    }
+  }
 });

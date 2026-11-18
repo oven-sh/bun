@@ -47,7 +47,7 @@ pub fn from_js(global: &JSGlobalObject, value: JSValue, depth: u8) -> JsResult<P
     let (mut all, mut keys) = (Vec::new(), value.keys(global)?.array_iterator(global)?);
     while let Some(key) = keys.next()? {
         let key = key.to_utf8(global)?;
-        if let Some(item) = value.get(global, &*key)? {
+        if let Some(item) = value.get_own_truthy(global, &*key)? {
             all.push(Preference {
                 key: Text::lossy(&key),
                 value: from_js(global, item, depth + 1)?,

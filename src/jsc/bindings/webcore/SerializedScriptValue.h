@@ -163,11 +163,11 @@ public:
 
     static RefPtr<SerializedScriptValue> convert(JSC::JSGlobalObject& globalObject, JSC::JSValue value) { return create(globalObject, value, SerializationForStorage::Yes); }
 
-    // Fast path for postMessage with pure strings
-    // For this thread, so it shares the strings. Empty unless `value` only has primitives, dense arrays and object literals
+    // For this thread, so it shares the strings. Empty unless `value` only has primitives, dates, dense arrays and object literals
     // without accessors. Runs no script and does not throw.
     static JSC::JSValue tryCopyPlainData(JSC::JSGlobalObject&, JSC::JSValue);
 
+    // Fast path for postMessage with pure strings
     static Ref<SerializedScriptValue> createStringFastPath(const String& string);
 
     // Fast path for postMessage with simple objects

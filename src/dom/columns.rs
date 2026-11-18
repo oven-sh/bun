@@ -233,7 +233,7 @@ impl Document {
                     .0;
                 (output.escapes, output.uses_height) = (own.escapes | output.escapes, true);
                 breaks.note(first, start);
-                breaks.tally.reach.len() - first
+                breaks.tally.reach[0].len() - first
             };
             let (mut fills, mut balances) = (rare.column_fill == ColumnFill::Auto, false);
             let (mut height, mut columns) = (constrain(specified.unwrap_or(f32::INFINITY)), 0);
@@ -249,7 +249,7 @@ impl Document {
                 (fills, balances) = (fills && breaks.found_spanner.is_none(), true);
                 pass(self, &mut breaks, f32::INFINITY);
                 fills &= breaks.found_spanner.is_none() && outer.is_none();
-                let (tallest, runs) = (breaks.tallest_unbreakable, &breaks.tally.reach[first..]);
+                let (tallest, runs) = (breaks.tallest_unbreakable, &breaks.tally.reach[0][first..]);
                 let runs = &runs[..runs.len().min(if wraps { count } else { usize::MAX })];
                 outer
                     .iter_mut()
@@ -275,7 +275,7 @@ impl Document {
                     height = constrain(taller);
                 }
             }
-            let reach = &breaks.tally.reach[first..];
+            let reach = &breaks.tally.reach[0][first..];
             let is_empty = columns == 1 && reach[0] == 0.0 && !breaks.tally.has_new_box;
             let goes_on = (resumes || wraps) && columns > count && first < MAX_COLUMNS;
             if let (Some(outer), Some(space)) = (&mut outer, outer_space) {
@@ -296,7 +296,7 @@ impl Document {
                 }
             }
             if !is_empty || breaks.found_spanner.is_none() {
-                let in_flow = breaks.tally.reach_in_flow.get(first..).unwrap_or_default();
+                let in_flow = breaks.tally.reach[1].get(first..).unwrap_or_default();
                 let shrinks = !balances && specified.is_none() && in_flow.len() <= 1;
                 let height = specified
                     .filter(|_| rare.column_height.0.is_some() && breaks.found_spanner.is_none())
@@ -433,12 +433,13 @@ impl Document {
         output.intrinsic = end_of_flow
             .unwrap_or_else(|| outer.as_ref().map_or(y, |it| it.consumed(y)))
             + inset.bottom;
+        let filled = output.intrinsic;
         self.finish_height(id, input, inset, &mut output);
         if end_of_flow.is_some() {
             output.intrinsic = f32::INFINITY;
         }
         let offset = if outer.is_none() {
-            self.content_offset(id, output.height - output.intrinsic)
+            self.content_offset(id, output.height - filled)
         } else {
             0.0
         };

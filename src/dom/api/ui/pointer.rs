@@ -45,13 +45,7 @@ pub(crate) enum Tracking {
 }
 
 /// Where the library says that it is.
-#[derive(Clone, Copy)]
-pub(crate) struct Place {
-    /// In the window, without the zoom of the page.
-    pub(crate) window: [f64; 2],
-    pub(crate) screen: [f64; 2],
-    pub(crate) modifiers: u32,
-}
+pub(crate) use bun_web::input::Place;
 
 /// A mouse, a pen or a finger.
 #[derive(Default)]
@@ -84,6 +78,8 @@ pub(crate) struct Pointer {
     pub(super) cursor: Cell<&'static str>,
     /// The frame that is coming knows what it has to be.
     is_cursor_stale: Cell<bool>,
+    /// By the style of what is hovered.
+    cursor_asked_for: Cell<&'static str>,
     pub(super) wheel_time: Cell<f64>,
     pub(crate) scrolled_at: Cell<f64>,
     waits_to_hover: Cell<bool>,
@@ -473,6 +469,13 @@ pub(super) fn hover<'a>(cx: &mut Cx<'a>, ui: &'a Ui, target: Option<&'a Element>
             .take(count)
             .enumerate()
             .for_each(|(index, it)| it.set_state(cx, State::HOVER, index < reach));
+        old.iter()
+            .take(left)
+            .for_each(|it| super::interest::hover_changed(cx, ui, it, false));
+        chain
+            .iter()
+            .take(entered.min(reach))
+            .for_each(|it| super::interest::hover_changed(cx, ui, it, true));
     }
     let is_same = !has_lost_target
         && previous
@@ -643,7 +646,10 @@ pub(crate) fn after_paint<'a>(cx: &mut Cx<'a>, ui: &'a Ui, has_moved: bool) {
     if !pointer.is_inside.get() {
         return;
     }
-    if pointer.is_cursor_stale.take() {
+    let asked_for = pointer.hovered().first().map_or("", |it| {
+        it.engine(|engine, id| engine.cursor_asked_for_by(id))
+    });
+    if pointer.is_cursor_stale.take() | (pointer.cursor_asked_for.replace(asked_for) != asked_for) {
         show_cursor(cx, ui);
     }
     if has_moved && !pointer.waits_to_hover.get() {

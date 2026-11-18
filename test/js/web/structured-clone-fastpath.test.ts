@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { isASAN, rss } from "harness";
+import { runInNewContext } from "node:vm";
+import { markAsUncloneable } from "node:worker_threads";
 
 describe("Structured Clone Fast Path", () => {
   test("structuredClone should work with empty object", () => {
@@ -924,4 +926,20 @@ test("objects of one shape are cloned with their own values", () => {
     Bun.gc(round % 2 === 0);
   }
   expect(() => structuredClone([{ a: 1 }, { a: () => {} }])).toThrow();
+});
+
+test("dates among plain data", () => {
+  class Later extends Date {}
+  const date = new Date(5);
+  const clone = structuredClone({
+    same: [date, date],
+    others: [new Date(NaN), new Later(6), Object.assign(new Date(7), { a: 1 }), runInNewContext("new Date(8)")],
+  });
+  expect(clone.same[0]).toBe(clone.same[1]);
+  expect(clone.same[0]).not.toBe(date);
+  expect(clone.others.map(it => [Object.getPrototypeOf(it) === Date.prototype, +it, Object.keys(it)])).toEqual(
+    [NaN, 6, 7, 8].map(time => [true, time, []]),
+  );
+  markAsUncloneable(date);
+  expect(() => structuredClone({ date })).toThrow(expect.objectContaining({ name: "DataCloneError" }));
 });

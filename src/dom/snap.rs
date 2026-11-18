@@ -716,7 +716,9 @@ impl Document {
                 SnapAlign::End => Alignment::End,
                 _ => Alignment::Start,
             });
-            self.scroll_into_view(node, align, 1, true);
+            let has_moved_on = self.scrolling.has_moved_on;
+            self.scroll_into_view(node, align, 1, crate::scroll::Scrollers::Nearest);
+            self.scrolling.has_moved_on = has_moved_on;
             self.scrolling.touched.remove(&self.boxes[id].node);
         }
     }

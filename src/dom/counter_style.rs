@@ -32,7 +32,7 @@ pub(crate) struct CounterStyle {
 const MAX_LENGTH: usize = 120;
 
 thread_local! {
-    static PREDEFINED: Sheet = Sheet::parse(include_bytes!("counter_styles.css"), b"", Default::default());
+    static PREDEFINED: Box<Sheet> = Box::new(Sheet::parse(include_bytes!("counter_styles.css"), b"", Default::default()));
 }
 
 fn symbol(p: &mut P) -> Option<Str> {

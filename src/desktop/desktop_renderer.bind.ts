@@ -28,7 +28,7 @@ export const RendererPreload = b.interface("RendererPreload", {
   ofModule: true,
   rustPath: "crate::preload::Preload",
   noInterfaceObject: true,
-  internalFields: ["global", "host", "page", "contents", "process"],
+  internalFields: ["global", "host", "page", "contents", "process", "frame"],
   proto: {},
 });
 
@@ -60,18 +60,23 @@ export const RendererContextBridge = b.interface("RendererContextBridge", {
 export const WebSource = b.dictionary({ code: b.string.loose.utf8.owned });
 
 export const RendererWebFrame = b.interface("RendererWebFrame", {
+  ofModule: true,
   name: "WebFrame",
-  ...emitter,
-  static: {
-    routingId: { getter: b.u32, capability: "js" },
-    frameToken: { getter: b.any, ...js },
-    top: value,
-    ...sharing("nobody", "parent opener firstChild nextSibling", value),
+  rustPath: "crate::preload::WebFrame",
+  noInterfaceObject: true,
+  prototypeBase: "EventEmitter",
+  internalFields: ["host"],
+  proto: {
+    ...Object.fromEntries(
+      "routingId frameToken top parent opener firstChild nextSibling"
+        .split(" ")
+        .map(it => [it, { getter: b.any, ...js }]),
+    ),
     getZoomFactor: { returns: b.f64, ...js },
     setZoomFactor: { args: { factor: number }, ...js },
     getZoomLevel: { returns: b.f64, ...js },
     setZoomLevel: { args: { level: number }, ...js },
-    insertCSS: { args: { css: b.DOMString }, rustName: "insert_css", ...returnsObject },
+    insertCSS: { args: { css: b.DOMString, options: anything }, rustName: "insert_css", ...returnsObject },
     removeInsertedCSS: { args: { key: b.DOMString }, rustName: "remove_inserted_css", ...js },
     insertText: { args: { text: b.DOMString }, ...js },
     executeJavaScript: { args: { code: b.DOMString, userGesture: anything, callback: anything }, ...returnsPromise },
@@ -80,11 +85,13 @@ export const RendererWebFrame = b.interface("RendererWebFrame", {
       ...returnsPromise,
     },
     getResourceUsage: returnsObject,
-    findFrameByRoutingId: { args: { routingId: number }, returns: b.any, capability: "js" },
-    findFrameByToken: { args: { frameToken: b.any }, ...returnsObject },
+    getIsolatedWorlds: returnsObject,
+    findFrameByRoutingId: { args: { routingId: number }, ...returnsObject },
+    findFrameByToken: { args: { frameToken: b.DOMString }, ...returnsObject },
+    findFrameByName: { args: { name: b.DOMString }, ...returnsObject },
+    getFrameForSelector: { args: { selector: b.DOMString }, ...returnsObject },
     isWordMisspelled: { returns: b.bool },
     getWordSuggestions: returnsObject,
-    ...sharing("get_nobody", "findFrameByName getFrameForSelector", { returns: b.any, capability: "heap" }),
     ...sharing("nothing", "clearCache setIsolatedWorldInfo setSpellCheckProvider setVisualZoomLevelLimits"),
   },
 });
@@ -114,7 +121,7 @@ export const RendererElectron = b.interface("RendererElectron", {
     ipcRenderer: value,
     nativeImage: value,
     shell: { getter: b.any, capability: "js" },
-    webFrame: value,
+    webFrame: { getter: b.any, ...js },
     webUtils: value,
   },
 });

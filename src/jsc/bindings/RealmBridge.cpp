@@ -55,10 +55,10 @@ public:
         return &vm.plainObjectSpace();
     }
 
-    static Structure* createStructure(JSGlobalObject* realm, const ClassInfo* info)
+    static Structure* createStructure(JSGlobalObject* realm)
     {
         VM& vm = realm->vm();
-        return sealedWith(vm, Structure::create(vm, realm, jsNull(), TypeInfo(ObjectType, StructureFlags), info), { targetName(vm) });
+        return sealedWith(vm, Structure::create(vm, realm, jsNull(), TypeInfo(ObjectType, StructureFlags), info()), { targetName(vm) });
     }
 
     static Handle* create(VM& vm, Structure* structure, JSObject* target)
@@ -70,10 +70,6 @@ public:
         return handle;
     }
 
-    // It opens on neither side.
-    static const ClassInfo s_infoOfLink;
-    bool isLink() const { return classInfo() == &s_infoOfLink; }
-
     JSObject* target() const { return asObject(getDirect(targetOffset)); }
 
 private:
@@ -83,7 +79,6 @@ private:
     }
 };
 const ClassInfo Handle::s_info = { "Object"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(Handle) };
-const ClassInfo Handle::s_infoOfLink = { "Object"_s, &s_info, nullptr, nullptr, CREATE_METHOD_TABLE(Handle) };
 
 static JSC_DECLARE_HOST_FUNCTION(callAcross);
 
@@ -129,7 +124,6 @@ enum class Slot : uint8_t {
     Reject,
     // In the main realm.
     HandleStructure,
-    LinkStructure,
     Handles,
     Count,
 };
@@ -156,7 +150,7 @@ static Cell* lazily(JSGlobalObject* realm, Slot slot, NOESCAPE const auto& creat
 static Handle* createHandle(VM& vm, JSObject* object)
 {
     auto* main = defaultGlobalObject(vm);
-    return Handle::create(vm, lazily<Structure>(main, Slot::HandleStructure, [&] { return Handle::createStructure(main, Handle::info()); }), object);
+    return Handle::create(vm, lazily<Structure>(main, Slot::HandleStructure, [&] { return Handle::createStructure(main); }), object);
 }
 
 // The same one each time.
@@ -211,30 +205,6 @@ extern "C" EncodedJSValue Bun__RealmBridge__pathOfFile(JSGlobalObject* realm, En
 }
 
 extern "C" EncodedJSValue Bun__RealmBridge__cross(JSGlobalObject* to, EncodedJSValue value) { return JSValue::encode(cross(to, JSValue::decode(value))); }
-
-// What bun_web::js_link::JsLink calls.
-extern "C" EncodedJSValue Bun__RealmBridge__hostBehind(JSGlobalObject* realm, EncodedJSValue link)
-{
-    if (auto* handle = dynamicDowncast<Handle>(JSValue::decode(link)); handle && handle->isLink())
-        return JSValue::encode(handle->target());
-    return isDesktopRealm(realm) ? JSValue::encode(constructEmptyObject(defaultGlobalObject(realm->vm()))) : link;
-}
-
-// With handles for the objects among the arguments.
-extern "C" void Bun__RealmBridge__callHost(JSGlobalObject* realm, EncodedJSValue host, const BunString* name, const EncodedJSValue* values, size_t count)
-{
-    VM& vm = realm->vm();
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    JSValue function = asObject(JSValue::decode(host))->getDirect(vm, Identifier::fromString(vm, name->toWTFString()));
-    if (!function)
-        return;
-    MarkedArgumentBuffer arguments;
-    for (JSValue value : std::span(reinterpret_cast<const JSValue*>(values), count))
-        arguments.append(value.isObject() ? keep(vm, asObject(value)) : value);
-    if (!arguments.hasOverflowed())
-        call(defaultGlobalObject(vm), function, getCallData(function), jsUndefined(), arguments);
-    scope.clearExceptionExceptTermination();
-}
 
 static bool isOfPages(JSObject* object)
 {
@@ -440,7 +410,7 @@ private:
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         if (auto* handle = dynamicDowncast<Handle>(object))
-            return !handle->isLink() && isHome(handle->target()) ? handle->target() : handle;
+            return isHome(handle->target()) ? handle->target() : handle;
         if (isHome(object))
             return object;
         if (auto* known = m_copies.get(object))
@@ -675,20 +645,6 @@ JSC_DEFINE_HOST_FUNCTION(callAcross, (JSGlobalObject * here, CallFrame* callFram
     return callFrom(here, port->target(), port->receiver(), ArgList(callFrame));
 }
 
-// For the messages that have objects in them. Empty if `host` does not listen.
-extern "C" EncodedJSValue Bun__RealmBridge__askHost(JSGlobalObject* here, EncodedJSValue host, const Latin1Character* name, size_t length, EncodedJSValue* arguments, size_t count)
-{
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(here->vm());
-    if (scope.exception())
-        return encodedJSUndefined();
-    JSValue listener = JSValue::decode(host).get(defaultGlobalObject(here->vm()), Identifier::fromString(here->vm(), std::span { name, length }));
-    EncodedJSValue result = !scope.exception() && listener.isCallable() ? callFrom(here, asObject(listener), JSValue::decode(host), ArgList(arguments, count)) : EncodedJSValue {};
-    if (!scope.exception())
-        return result;
-    scope.clearExceptionExceptTermination();
-    return encodedJSUndefined();
-}
-
 JSValue cross(JSGlobalObject* to, JSValue value)
 {
     auto scope = DECLARE_THROW_SCOPE(to->vm());
@@ -722,14 +678,6 @@ extern "C" EncodedJSValue Bun__RealmBridge__methodsOf(JSGlobalObject* globalObje
         return crossing.rethrow(scope);
     methods->putDirect(globalObject->vm(), Identifier::fromString(globalObject->vm(), "handle"_s), handle);
     return JSValue::encode(methods);
-}
-
-extern "C" EncodedJSValue Bun__RealmBridge__link(EncodedJSValue target)
-{
-    JSObject* object = asObject(JSValue::decode(target));
-    auto* globalObject = defaultGlobalObject(object->vm());
-    auto* structure = lazily<Structure>(globalObject, Slot::LinkStructure, [&] { return Handle::createStructure(globalObject, &Handle::s_infoOfLink); });
-    return JSValue::encode(Handle::create(globalObject->vm(), structure, object));
 }
 
 extern "C" EncodedJSValue Bun__RealmBridge__keep(EncodedJSValue object) { return JSValue::encode(keep(asObject(JSValue::decode(object))->vm(), asObject(JSValue::decode(object)))); }

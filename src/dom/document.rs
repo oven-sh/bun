@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use smallvec::SmallVec;
 
-use crate::api::core::{Atom, DomString, Ns, StoredText, atom};
+use crate::api::core::{Atom, DomString, Known, Meaning, Ns, StoredText, atom};
 use crate::tree::Space;
 
 use crate::abi;
@@ -19,11 +19,11 @@ use crate::engine_event::{EngineEvent, ForNode};
 use crate::font_face::{Coverage, FontFace};
 use crate::name::{Map, Name, Set, is_name, keyed_hash, name};
 use crate::platform::{Fonts, Shaped, Wanted};
-use crate::properties::{Id, Style, initial_groups};
+use crate::properties::{Id, Prop, Style, initial_groups};
 use crate::rules::{Classes, RuleSet};
 use crate::scroll::Scrolling;
 use crate::segments::Pictures;
-use crate::selector::{List, Pseudo, filter, key};
+use crate::selector::{Pseudo, Sought, filter, key};
 use crate::sheet::{
     AtKind, Block, Compiling, Defined, Parameters, Prepared, Sheet, Source, Within,
 };
@@ -48,6 +48,8 @@ pub(crate) struct Environment {
     pub(crate) reduced_transparency: bool,
     /// In a frame with `scrolling=no`.
     pub(crate) cannot_scroll: bool,
+    /// In an `embed` or an `object`.
+    pub(crate) is_object: bool,
     pub(crate) more_contrast: bool,
     pub(crate) forces_colors: bool,
     pub(crate) fullscreen: bool,
@@ -57,6 +59,7 @@ pub(crate) struct Environment {
     pub(crate) has_math: bool,
     /// With controls or captions.
     pub(crate) has_media: bool,
+    pub(crate) fixes_text_areas: bool,
     /// What the user of macOS has chosen for selected text, light and dark.
     pub(crate) highlight: [u32; 2],
     pub(crate) titlebar_area: Option<[f32; 4]>,
@@ -130,7 +133,30 @@ pub(crate) enum Request {
     Release(u32),
 }
 
+/// How many a thread has.
+pub(crate) struct Counted;
+
+thread_local!(static COUNT: Cell<u32> = const { Cell::new(0) });
+
+impl Counted {
+    fn new() -> Counted {
+        COUNT.set(COUNT.get() + 1);
+        Counted
+    }
+
+    pub(crate) fn count() -> u32 {
+        COUNT.get()
+    }
+}
+
+impl Drop for Counted {
+    fn drop(&mut self) {
+        COUNT.set(COUNT.get() - 1);
+    }
+}
+
 pub(crate) struct Document {
+    _counted: Counted,
     pub(crate) tree: Tree,
     pub(crate) environment: Environment,
     pub(crate) styles: Stylist,
@@ -144,14 +170,17 @@ pub(crate) struct Document {
     pub(crate) pictures: Pictures,
     pub(crate) base_url: Rc<[u8]>,
 
-    class_lists: Map<Name, Rc<Classes>>,
+    class_lists: ClassLists,
+    spare_strings: SpareStrings,
     prepared: Vec<Prepared>,
     /// With the base URL, the media, the owner and the hash.
     shared_rules: Map<u64, Rc<RefCell<RuleSet>>>,
     registered_by_script: crate::custom::Registry,
-    pub(crate) selectors: Map<u64, Option<List>>,
+    pub(crate) selectors: Map<u64, Option<Rc<Sought>>>,
     /// How many elements have each `key::attribute` and `key::value`.
     pub(crate) attribute_keys: Counts,
+    /// Of the viewport, while it is in a frame without a box.
+    pub(crate) offset_when_displayed: Option<[f32; 2]>,
     pub(crate) media_queries: Map<u64, crate::condition::Condition>,
     pub(crate) resolved: crate::computed::Resolved,
     requested_fonts: Vec<Rc<FontFace>>,
@@ -198,9 +227,11 @@ pub(crate) struct Document {
     pub(crate) environment_changes: u32,
     /// By their data.
     pub(crate) paths: RefCell<Map<Box<str>, crate::path::Path>>,
+    /// `None` for those that are empty.
+    pub(crate) path_bounds: RefCell<Map<NodeId, Option<crate::abi::Rect>>>,
     pub(crate) last_track: RefCell<Option<crate::svg_text::LastTrack>>,
     /// Something outside of an `svg` has been looked for.
-    pub(crate) svg_references: Cell<bool>,
+    pub(crate) svg_reads: Cell<crate::svg_paint::Reads>,
     pub(crate) svg_changes: u32,
     pub(crate) has_foreign_objects: bool,
     pub(crate) svg_targets: RefCell<Rc<crate::svg::Targets>>,
@@ -222,6 +253,7 @@ pub(crate) struct Document {
     pub(crate) foreign_frames: Set<NodeId>,
     pub(crate) view_transitions: Vec<crate::view_transition::ViewTransition>,
     pub(crate) animated_vectors: RefCell<Set<(u32, NodeId)>>,
+    pub(crate) resized_vectors: crate::embedded::Resized,
     /// A transform may depend on a stroke that depends on the transform.
     pub(crate) is_measuring_stroke: Cell<bool>,
     pub(crate) is_measuring_text: Cell<bool>,
@@ -252,6 +284,8 @@ pub(crate) struct Document {
     pub(crate) is_burying: bool,
     /// While a node is detached, the generated elements that `forget_subtree` has to free.
     pub(crate) left_behind: Option<Vec<NodeId>>,
+    /// Empty, for `forget_subtree`.
+    room_for_ids: Vec<NodeId>,
     pub(crate) ordinals: Vec<(NodeId, i32)>,
     /// Lists with items that are not their children.
     pub(crate) deep_lists: Set<NodeId>,
@@ -262,16 +296,33 @@ pub(crate) struct Document {
     /// Boxes that lay out their children more than once can be nested. Without fuel a pass keeps what it has.
     pub(crate) layout_fuel: usize,
     pub(crate) moved_boxes_in_scrollers: Vec<BoxId>,
+    /// They are out of flow, and only their `left` or `top` has changed.
+    pub(crate) boxes_to_move: Vec<NodeId>,
+    pub(crate) edits: crate::forecast::Forecast,
+    pub(crate) reads: crate::forecast::Forecast,
     /// For the `note_extents` that follows.
     pub(crate) gathered: Cell<Option<(BoxId, crate::scroll::Contents)>>,
     pub(crate) changed_scrollbars: Vec<BoxId>,
+    pub(crate) basis_for_widths: (BoxId, [Option<f32>; 2]),
     pub(crate) resized_scrollers: Vec<NodeId>,
     /// The elements whose transforms have changed.
     pub(crate) moved_boxes: Vec<NodeId>,
 }
 
 fn initial_style(fonts: &Fonts) -> Style {
-    let groups = initial_groups();
+    let mut groups = initial_groups();
+    if let Some(it) = &fonts.settings {
+        groups.set(&crate::properties::Value::FontSize(crate::types::FontSize(
+            it.size.max(it.minimum_size),
+            it.size,
+            Some(3),
+        )));
+        it.standard.iter().for_each(|it| {
+            groups.set(&crate::properties::Value::FontFamily(
+                crate::types::Families([it.as_bytes(), b"\0"].concat().into()),
+            ))
+        });
+    }
     let font_id = fonts.describe(&groups, &Default::default());
     Style {
         metrics: fonts.metrics(font_id, groups.font.size.0),
@@ -287,11 +338,21 @@ fn initial_style(fonts: &Fonts) -> Style {
         computed_sides: (crate::types::Float::None, crate::types::Clear::None),
         look: crate::theme::Look::None,
         plainness: Default::default(),
+        measures: Default::default(),
         animates: Default::default(),
     }
 }
 
 /// Keys may share a count.
+/// What a bare node is appended to.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum Above {
+    Detached,
+    /// It is rendered, and neither a script nor a selector has seen it.
+    New,
+    Rendered,
+}
+
 pub(crate) struct Counts(Box<[u16; 2048]>);
 
 impl Counts {
@@ -311,27 +372,123 @@ impl Counts {
         *count = count.saturating_add((key != Name::NONE).into());
     }
 
+    #[inline]
+    fn add_all(&mut self, element: &Element) {
+        for it in element.attributes_besides_class() {
+            self.add(key::attribute(it.name));
+            self.add(it.key);
+        }
+    }
+
+    #[inline]
+    fn remove_all(&mut self, element: &Element) {
+        for it in element.attributes_besides_class() {
+            self.remove(key::attribute(it.name));
+            self.remove(it.key);
+        }
+    }
+
     fn remove(&mut self, key: Name) {
         let count = &mut self.0[Counts::place(key)];
         *count -= u16::from(key != Name::NONE && !matches!(*count, 0 | u16::MAX));
     }
 }
 
-#[inline]
-fn class_list(
-    known: &mut Map<Name, Rc<Classes>>,
-    text: &str,
-    source: impl Fn() -> StoredText,
-    ignores_case: bool,
-) -> Rc<Classes> {
-    let new = || Rc::new(Classes::new(&source(), ignores_case));
-    let known = known
-        .entry(Name::hash(text.as_bytes(), false).salted(ignores_case.into()))
-        .or_insert_with(new);
-    if *known.source == *text {
-        Rc::clone(known)
-    } else {
-        new()
+#[inline(always)]
+fn is_styled_by_table(tag: Name) -> bool {
+    is_name!(tag, "td" | "th" | "colgroup" | "thead" | "tbody" | "tfoot")
+}
+
+/// References to the literals that attributes had last, which they tend to get again. Counting them is atomic.
+#[derive(Default)]
+struct SpareStrings([Option<DomString>; 16]);
+
+impl SpareStrings {
+    #[inline(always)]
+    fn slot(&mut self, string: &DomString) -> &mut Option<DomString> {
+        &mut self.0[(core::ptr::from_ref(string.as_impl()).addr() >> 4) % 16]
+    }
+
+    #[inline(always)]
+    fn share(&mut self, string: &DomString) -> DomString {
+        self.slot(string)
+            .take_if(|it| it.is_same(string))
+            .unwrap_or_else(|| string.clone())
+    }
+
+    #[inline(always)]
+    fn give_back(&mut self, text: StoredText) {
+        if let StoredText::Ascii(string) = text
+            && string.as_impl().is_atom()
+        {
+            let slot = self.slot(&string);
+            *slot = Some(string);
+        }
+    }
+}
+
+struct ClassLists {
+    all: Map<Name, Rc<Classes>>,
+    /// By the address of the literal that a script has set, and whether case is ignored.
+    of_literals: Box<[Option<(DomString, bool, Rc<Classes>)>; 128]>,
+}
+
+impl ClassLists {
+    #[inline]
+    fn find(
+        &mut self,
+        text: &str,
+        source: impl Fn() -> StoredText,
+        ignores_case: bool,
+    ) -> Rc<Classes> {
+        let new = || Rc::new(Classes::new(&source(), ignores_case));
+        let known = self
+            .all
+            .entry(Name::hash(text.as_bytes(), false).salted(ignores_case.into()))
+            .or_insert_with(new);
+        if *known.source == *text {
+            Rc::clone(known)
+        } else {
+            new()
+        }
+    }
+
+    /// If it is ASCII.
+    #[inline(always)]
+    fn of(&mut self, value: &DomString, ignores_case: bool) -> Option<Rc<Classes>> {
+        let slot = ((core::ptr::from_ref(value.as_impl()).addr() as u64)
+            .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+            >> 57) as usize;
+        match &self.of_literals[slot] {
+            Some((literal, ignored_case, classes))
+                if literal.is_same(value) && *ignored_case == ignores_case =>
+            {
+                Some(Rc::clone(classes))
+            }
+            _ => self.find_and_remember(value, ignores_case, slot),
+        }
+    }
+
+    fn find_and_remember(
+        &mut self,
+        value: &DomString,
+        ignores_case: bool,
+        slot: usize,
+    ) -> Option<Rc<Classes>> {
+        let classes = self.find(
+            value.ascii()?,
+            || StoredText::Ascii(value.clone()),
+            ignores_case,
+        );
+        if value.as_impl().is_atom() {
+            self.of_literals[slot] = Some((value.clone(), ignores_case, Rc::clone(&classes)));
+        }
+        Some(classes)
+    }
+
+    fn clear(&mut self) {
+        self.of_literals.fill(None);
+        self.all.clear();
     }
 }
 
@@ -349,9 +506,11 @@ impl Document {
             quirks: Quirks::None,
             has_math: false,
             has_media: false,
+            fixes_text_areas: false,
             reduced_motion: false,
             reduced_transparency: false,
             cannot_scroll: false,
+            is_object: false,
             more_contrast: false,
             forces_colors: false,
             fullscreen: false,
@@ -368,6 +527,7 @@ impl Document {
         let mut tree = Tree::new();
         tree[DOCUMENT].layout_box = VIEWPORT;
         Document {
+            _counted: Counted::new(),
             boxes: Boxes::new(&styles.initial),
             tree,
             environment,
@@ -380,11 +540,16 @@ impl Document {
             marks: Default::default(),
             pictures: Pictures::default(),
             base_url: base_url.into(),
-            class_lists: Default::default(),
+            spare_strings: SpareStrings::default(),
+            class_lists: ClassLists {
+                all: Map::default(),
+                of_literals: Box::new([const { None }; 128]),
+            },
             prepared: Vec::new(),
             shared_rules: Default::default(),
             registered_by_script: Default::default(),
             selectors: Default::default(),
+            offset_when_displayed: None,
             attribute_keys: Counts(Box::new([0; 2048])),
             media_queries: Default::default(),
             resolved: Default::default(),
@@ -419,8 +584,9 @@ impl Document {
             svg_generation: 0,
             environment_changes: 0,
             paths: Default::default(),
+            path_bounds: Default::default(),
             last_track: RefCell::default(),
-            svg_references: Cell::new(false),
+            svg_reads: Cell::default(),
             svg_changes: 0,
             has_foreign_objects: false,
             svg_targets: RefCell::default(),
@@ -437,6 +603,7 @@ impl Document {
             foreign_frames: Default::default(),
             view_transitions: Vec::new(),
             animated_vectors: Default::default(),
+            resized_vectors: Default::default(),
             is_measuring_stroke: Cell::new(false),
             is_measuring_text: Cell::new(false),
             svg_size_in_layout: Cell::new(None),
@@ -459,6 +626,7 @@ impl Document {
             doomed: Vec::new(),
             is_burying: false,
             left_behind: None,
+            room_for_ids: Vec::new(),
             ordinals: Vec::new(),
             deep_lists: Set::default(),
             stale_lists: Vec::new(),
@@ -466,8 +634,12 @@ impl Document {
             layout_pass: 0,
             layout_fuel: usize::MAX,
             moved_boxes_in_scrollers: Vec::new(),
+            boxes_to_move: Vec::new(),
+            edits: Default::default(),
+            reads: Default::default(),
             gathered: Cell::new(None),
             changed_scrollbars: Vec::new(),
+            basis_for_widths: Default::default(),
             resized_scrollers: Vec::new(),
             moved_boxes: Vec::new(),
         }
@@ -519,7 +691,7 @@ impl Document {
             element.rare_mut().shadow_root = root;
         }
         self.tree[host].set(Flags::REDIRECTS_CHILDREN);
-        self.tree.forget_unskipped();
+        self.tree.ancestry.forget_all();
         self.mark_parent_rebuild(host);
         self.mark_rebuild(host);
         root
@@ -674,11 +846,26 @@ impl Document {
 
     fn unlink(&mut self, id: NodeId) {
         self.stop_rendering(id);
+        self.unlink_unstyled(id);
+    }
+
+    /// Whether `stop_rendering` has more to do than to reset flags.
+    fn has_been_rendered(&self, id: NodeId) -> bool {
+        let node = &self.tree[id];
+        node.layout_box != 0
+            || node.has(Flags::HAS_MISSED)
+            || !self.scrolling.around_hidden.is_empty()
+            || node.element().is_some_and(|it| {
+                it.style.is_some() || it.rules.is_some() || it.base_style.is_some() || it.has_rare()
+            })
+    }
+
+    fn unlink_unstyled(&mut self, id: NodeId) {
         if self.tree[id].parent != 0 {
             self.children_changed(id);
         }
         self.unassign(id);
-        self.tree.unlink(id);
+        self.tree.unlink_unknown(id);
     }
 
     pub(crate) fn unassign_all(&mut self, slot: NodeId) {
@@ -745,9 +932,10 @@ impl Document {
     }
 
     pub(crate) fn insert(&mut self, parent: NodeId, child: NodeId, before: NodeId) {
-        let was_rendered = self.tree.is_rendered(child);
-        if self.tree[child].parent != 0 {
+        let (was_rendered, old_parent) = (self.tree.is_rendered(child), self.tree[child].parent);
+        if old_parent != 0 {
             self.unlink(child);
+            self.tree.ancestry.forget_all();
         }
         self.tree.link(parent, child, before);
         self.svg_ids.get_mut().tree_changed();
@@ -763,7 +951,10 @@ impl Document {
                 self.tree
                     .visit_subtree(child, |id| accessibility.element_added(id));
             }
-            self.update_derived_state(child, true);
+            self.update_derived_state(
+                child,
+                old_parent != parent || self.tree.html_tag(parent) == name!("fieldset"),
+            );
         } else {
             let mut ids = SmallVec::<[NodeId; 32]>::new();
             self.tree.visit_subtree(child, |id| ids.push(id));
@@ -783,13 +974,29 @@ impl Document {
     pub(crate) fn children_appended(&mut self, parent: NodeId, first: NodeId) {
         let (scope, is_rendered) = (self.tree[parent].scope, self.tree.is_rendered(parent));
         self.svg_ids.get_mut().tree_changed();
+        const INHERITED: State = State::READ_WRITE.union(State::RTL);
+        let mut inherit_nothing = self.accessibility.is_none()
+            && self
+                .tree
+                .element(parent)
+                .is_some_and(|it| !it.state.intersects(INHERITED));
         let mut at = if scope == 0 { 0 } else { first };
         while at != 0 {
             self.tree.prefetch_after(at);
-            self.tree[at].scope = scope;
-            if is_rendered && !self.prepare_quickly(at) {
+            let node = &mut self.tree[at];
+            node.scope = scope;
+            let is_ready = node.element().is_none_or(|it| {
+                inherit_nothing
+                    && it.is_ready()
+                    && !node.has(Flags::AUTO_DIRECTION | Flags::REDIRECTS_CHILDREN)
+            });
+            if is_rendered && !is_ready && !self.prepare_quickly(at) {
                 self.prepare(at, true);
                 self.derive_state(at, true);
+                inherit_nothing &= self
+                    .tree
+                    .element(at)
+                    .is_some_and(|it| !it.state.intersects(INHERITED));
             }
             at = self.tree.following(at, parent);
         }
@@ -861,8 +1068,14 @@ impl Document {
                 child = self.tree[child].next;
             }
             self.children_replaced(parent);
-            self.forget_nodes(self.tree.descendants(parent).collect());
-            self.tree.forget_unskipped();
+            let mut ids = self.tree.descendants(parent).collect();
+            self.forget_nodes(&mut ids, true);
+            return self.tree.free_these_below(parent, &ids, |id, element| {
+                if element.namespace == Namespace::Svg {
+                    self.smil.forget(id);
+                }
+                self.attribute_keys.remove_all(element);
+            });
         }
         self.svg_ids.get_mut().tree_changed();
         self.tree.free_below(parent)
@@ -878,38 +1091,104 @@ impl Document {
         let Some(parent) = self.tree.element(node.parent) else {
             return false;
         };
-        if !element.has_only_classes()
-            || element.is_unprepared
-            || !element.state.is_empty()
+        if !element.state.is_empty()
             || node.has(Flags::AUTO_DIRECTION | Flags::REDIRECTS_CHILDREN)
             || self.accessibility.is_some()
-            || !is_name!(
-                element.html_tag(),
-                "div"
-                    | "span"
-                    | "p"
-                    | "li"
-                    | "ul"
-                    | "b"
-                    | "i"
-                    | "code"
-                    | "strong"
-                    | "em"
-                    | "section"
-                    | "header"
-                    | "tr"
-            )
         {
             return false;
         }
-        let inherited = parent.state & (State::READ_WRITE | State::RTL);
-        if !inherited.is_empty() {
+        let Some(own) = element.own_state() else {
+            return false;
+        };
+        if element.may_be_special() && is_styled_by_table(element.tag) {
+            let mut above =
+                core::iter::successors(Some(node.parent), |it| Some(self.tree[*it].parent)).take(3);
+            if self.has_table_that_styles()
+                || !above.any(|it| self.tree.html_tag(it) == name!("table"))
+            {
+                return false;
+            }
+        }
+        self.attribute_keys.add_all(element);
+        let state = own | parent.state & (State::READ_WRITE | State::RTL);
+        if !state.is_empty() {
             self.tree
                 .element_mut(id)
                 .into_iter()
-                .for_each(|it| it.state = inherited);
+                .for_each(|it| it.state = state);
         }
         true
+    }
+
+    #[inline(always)]
+    fn has_table_that_styles(&self) -> bool {
+        [name!("border"), name!("rules"), name!("cellpadding")]
+            .into_iter()
+            .any(|it| self.attribute_keys.at_most(key::attribute(it)) != 0)
+    }
+
+    /// Whether `Above::New` is an option.
+    pub(crate) fn overlooks_new_nodes(&mut self) -> bool {
+        self.accessibility.is_none() && !self.styles.dependencies.get_mut().looks_for_descendants()
+    }
+
+    #[inline(always)]
+    fn inherited_from_new(&self, parent: NodeId) -> Option<State> {
+        let parent = self
+            .tree
+            .element(parent)
+            .filter(|it| it.namespace == Namespace::Html && !self.has_auto_direction)?;
+        Some(parent.state & (State::READ_WRITE | State::RTL))
+    }
+
+    /// `Err` is for `append_new`.
+    #[inline(always)]
+    pub(crate) fn append_bare_text(
+        &mut self,
+        parent: NodeId,
+        above: Above,
+        text: StoredText,
+    ) -> Result<NodeId, NodeId> {
+        match above == Above::Detached
+            || above == Above::New && self.inherited_from_new(parent).is_some()
+        {
+            true => Ok(self.tree.append_bare(parent, Data::Text(text), 0)),
+            false => Err(self.tree.create_bare(Data::Text(text), 0)),
+        }
+    }
+
+    /// Likewise. `own` is `Element::own_state`.
+    #[inline(always)]
+    pub(crate) fn append_bare_element(
+        &mut self,
+        parent: NodeId,
+        above: Above,
+        mut element: Box<Element>,
+        keys: u64,
+        own: Option<State>,
+    ) -> Result<NodeId, NodeId> {
+        if above != Above::Detached {
+            let inherited = if above == Above::New
+                && !(self.has_table_that_styles() && is_styled_by_table(element.tag))
+            {
+                self.inherited_from_new(parent)
+            } else {
+                None
+            };
+            let Some((own, inherited)) = own.zip(inherited) else {
+                return Err(self.tree.create_bare(Data::Element(element), keys));
+            };
+            element.state = own | inherited;
+            self.attribute_keys.add_all(&element);
+        }
+        self.tree.sequence.shape_changed(parent);
+        Ok(self.tree.append_bare(parent, Data::Element(element), keys))
+    }
+
+    /// After what `Above::New` has got.
+    pub(crate) fn new_nodes_appended(&mut self) {
+        self.svg_ids.get_mut().tree_changed();
+        (self.counters_are_stale, self.marks.are_stale) = (true, true);
     }
 
     /// For an element that was not rendered. `counts`: it is from now on.
@@ -920,16 +1199,12 @@ impl Document {
         if let Some(accessibility) = &mut self.accessibility {
             accessibility.element_added(id);
         }
-        for it in element.attributes_besides_class().filter(|_| counts) {
-            self.attribute_keys.add(key::attribute(it.name));
-            self.attribute_keys.add(it.key);
+        if counts {
+            self.attribute_keys.add_all(element);
         }
         self.has_foreign_objects |= element.tag == name!("foreignObject");
         let is_unprepared = core::mem::take(&mut element.is_unprepared);
-        let has_context = is_name!(
-            element.tag,
-            "td" | "th" | "colgroup" | "thead" | "tbody" | "tfoot" | "svg"
-        );
+        let has_context = is_styled_by_table(element.tag) || element.tag == name!("svg");
         if counts && crate::smil::is_animation(element) {
             self.smil.changed(id);
         }
@@ -992,6 +1267,27 @@ impl Document {
         has_changed && self.inline_style_edited(id)
     }
 
+    /// Whether it changes anything.
+    pub(crate) fn set_inline_property(
+        &mut self,
+        id: NodeId,
+        prop: Prop,
+        value: &[u8],
+        is_important: bool,
+    ) -> bool {
+        self.anticipate_edits(id);
+        match if is_important {
+            None
+        } else {
+            self.amend_inline_style(id, prop, value)
+        } {
+            Some(has_changed) => has_changed && self.inline_style_edited(id),
+            None => {
+                self.edit_inline_style(id, |blocks, it| blocks.set(it, prop, value, is_important))
+            }
+        }
+    }
+
     fn inline_style_edited(&mut self, id: NodeId) -> bool {
         let Some(element) = self.tree.element_mut(id) else {
             return false;
@@ -1014,10 +1310,17 @@ impl Document {
         };
         (element.style_source, element.is_style_refused) = (StyleSource::Edited, false);
         if self.tree.is_rendered(id) {
-            self.tree.visit(id).set(0);
             self.tree.mark_style(id, Flags::REANIMATE);
-            self.feature_changed(id, key::attribute(name!("style")));
-            self.recascade_readers_of_attributes(id);
+            if self
+                .styles
+                .dependencies
+                .get_mut()
+                .may_mention(key::attribute(name!("style")))
+            {
+                self.tree.visit(id).set(0);
+                self.feature_changed(id, key::attribute(name!("style")));
+            }
+            self.recascade_readers_of_attribute(id, name!("style"));
         }
         true
     }
@@ -1041,8 +1344,12 @@ impl Document {
         element.style_source = StyleSource::Serialized;
     }
 
-    fn recascade_readers_of_attributes(&self, id: NodeId) {
-        let Some(element) = self.tree.element(id) else {
+    fn recascade_readers_of_attribute(&self, id: NodeId, name: Name) {
+        let Some(element) = self
+            .tree
+            .element(id)
+            .filter(|_| self.styles.attributes_read.get() & crate::custom::mark(name) != 0)
+        else {
             return;
         };
         for it in element
@@ -1137,57 +1444,69 @@ impl Document {
     }
 
     pub(crate) fn free_subtree(&mut self, root: NodeId) {
-        self.forget_subtree(root)
-            .into_iter()
-            .for_each(|id| self.tree.free(id));
+        self.forget_style(root);
+        self.forget_subtree(root, Tree::free);
     }
 
     /// Takes it out of the tree. It stays for as long as scripts can reach it.
     pub(crate) fn detach(&mut self, root: NodeId) {
         if !self.tree.is_rendered(root) {
             self.unassign(root);
-            self.tree.unlink(root);
+            self.tree.unlink_unknown(root);
             return self.tree.set_scope(root, 0);
         }
         self.tree.prefetch_first_below(root);
+        self.restore_animated_attributes(root);
         self.left_behind = Some(Vec::new());
-        self.unlink(root);
-        for id in self.forget_subtree(root) {
-            self.tree.visit(id).set(0);
-            let node = &mut self.tree[id];
+        if self.has_been_rendered(root) {
+            self.stop_rendering(root);
+        }
+        self.unlink_unstyled(root);
+        self.forget_subtree(root, |tree, id| {
+            tree.visit(id).set(0);
+            let node = &mut tree[id];
             node.flags.set(node.flags.get() & Flags::REDIRECTS_CHILDREN);
             if !matches!(node.data, Data::ShadowRoot { .. }) && node.scope == DOCUMENT {
                 node.scope = 0;
             }
-        }
+        });
         self.tree.set_scope(root, 0);
     }
 
-    /// All that refers to the nodes from outside of the tree.
-    /// The caller resets their flags.
-    fn forget_subtree(&mut self, root: NodeId) -> SmallVec<[NodeId; 32]> {
-        self.forget_style(root);
-        let mut ids = SmallVec::new();
+    /// All that refers to the nodes, which have no styles, from outside of the tree. `finish` resets their flags.
+    fn forget_subtree(&mut self, root: NodeId, finish: impl Fn(&mut Tree, NodeId)) {
+        const KEPT_ROOM: usize = 256;
+        let mut ids = core::mem::take(&mut self.room_for_ids);
         self.tree.visit_subtree(root, |id| ids.push(id));
-        self.forget_nodes(ids)
+        self.forget_nodes(&mut ids, false);
+        ids.drain(..).for_each(|id| finish(&mut self.tree, id));
+        ids.shrink_to(KEPT_ROOM);
+        self.room_for_ids = ids;
     }
 
-    /// They have no styles.
-    fn forget_nodes(&mut self, mut ids: SmallVec<[NodeId; 32]>) -> SmallVec<[NodeId; 32]> {
+    /// `are_doomed`: what only their elements tell is left to the caller.
+    fn forget_nodes(&mut self, ids: &mut Vec<NodeId>, are_doomed: bool) {
         let kept = ids.len();
         self.left_behind
             .take()
             .into_iter()
             .flatten()
             .for_each(|it| self.tree.visit_subtree(it, |id| ids.push(id)));
-        ids.iter().for_each(|it| self.tree[*it].set(Flags::VISITED));
-        self.nodes_removed(&ids);
+        let flags = ids.iter().fold(Flags::empty(), |all, id| {
+            self.tree.ancestry.forget(*id);
+            self.tree[*id].set(Flags::VISITED);
+            all | self.tree[*id].flags.get()
+        });
+        self.nodes_removed(ids);
         if let Some(accessibility) = &mut self.accessibility {
-            accessibility.nodes_freed(&self.tree, &ids);
+            accessibility.nodes_freed(&self.tree, ids);
         }
         Tree::count_freed(ids.len());
-        for (index, id) in ids.iter().copied().enumerate() {
-            self.tree.prefetch_in(&ids[index..]);
+        let has_more = flags
+            .intersects(Flags::HAS_ANCHOR | Flags::ANIMATED | Flags::WATCHED_BY_TIMELINE)
+            || !self.view_transitions.is_empty()
+            || !self.replacements.is_empty();
+        for id in ids.iter().copied().take_while(|_| has_more) {
             let flags = self.tree[id].flags.get();
             if flags.contains(Flags::HAS_ANCHOR) {
                 self.styles.has_results.get_mut().remove(&id);
@@ -1202,6 +1521,14 @@ impl Document {
                 self.generated_images.remove(&id);
                 self.drawn_images.remove(&id);
             }
+        }
+        for (index, id) in ids
+            .iter()
+            .copied()
+            .enumerate()
+            .skip(if are_doomed { kept } else { 0 })
+        {
+            self.tree.prefetch_in(&ids[index..]);
             match &self.tree[id].data {
                 Data::ShadowRoot { .. } => _ = self.styles.scopes.remove(&id),
                 Data::Element(element) if element.is_generated() => {
@@ -1219,10 +1546,7 @@ impl Document {
             let Some(element) = self.tree.element_mut(id) else {
                 continue;
             };
-            for it in element.attributes_besides_class() {
-                self.attribute_keys.remove(key::attribute(it.name));
-                self.attribute_keys.remove(it.key);
-            }
+            self.attribute_keys.remove_all(element);
             element.generated_by_rules = None;
             element
                 .rare_if_any()
@@ -1231,10 +1555,10 @@ impl Document {
         }
         let gone = &Gone {
             tree: &self.tree,
-            ids: &ids,
+            ids,
         };
-        self.top_layer.retain(|it| !gone.has(*it));
-        self.leaving_top_layer.retain(|it| !gone.has(*it));
+        gone.leave_list(&mut self.top_layer, |it| *it);
+        gone.leave_list(&mut self.leaving_top_layer, |it| *it);
         gone.leave_map(&mut self.implicit_anchors);
         gone.leave_set(&mut self.deep_lists);
         gone.leave_set(self.boxes.styled_first.get_mut());
@@ -1245,7 +1569,6 @@ impl Document {
         self.compositor.forget(gone);
         self.marks.forget(gone);
         ids.drain(kept..).for_each(|id| self.tree.free(id));
-        ids
     }
 
     pub(crate) fn set_text(&mut self, id: NodeId, text: StoredText) {
@@ -1325,42 +1648,33 @@ impl Document {
         &mut self,
         id: NodeId,
         local: &Atom,
-        value: crate::api::core::DomString,
+        value: &crate::api::core::DomString,
     ) -> bool {
-        let (is_rendered, keys) = (self.tree.is_rendered(id), self.tree[id].keys);
         let Some(element) = self.tree.element(id) else {
             return false;
         };
-        let Some(index) = element.attributes.iter().position(|it| it.local == *local) else {
+        let Some(index) = element
+            .attributes
+            .iter()
+            .position(|it| it.key != Name::NONE && it.local == *local)
+        else {
             return false;
         };
+        let is_rendered = self.tree.is_rendered(id);
         let (name, old) = (
             element.attributes[index].name,
             element.attributes[index].key,
         );
         let Some(new) = value
             .ascii()
-            .filter(|_| old != Name::NONE)
             .and_then(|it| key::short_value(name, it.as_bytes()))
         else {
             return false;
         };
-        let reads = |it: NodeId| {
-            self.tree
-                .style(it)
-                .is_some_and(|it| it.deps.contains(Deps::ATTRIBUTES))
-        };
-        if self
-            .styles
-            .dependencies
-            .get_mut()
-            .may_mention(key::attribute(name))
-            || key::is_in_selectors(old)
+        if key::is_in_selectors(old)
             || key::is_in_selectors(new)
-            || self.accessibility.is_some()
             || !self.smil.effects.bases.is_empty()
-            || reads(id)
-            || element.generated != [0; 4] && element.generated.into_iter().any(reads)
+            || self.may_notice(id, element, name)
         {
             return false;
         }
@@ -1368,16 +1682,203 @@ impl Document {
             return false;
         };
         let attribute = &mut element.attributes.to_mut()[index];
-        (attribute.value, attribute.key) = (StoredText::Ascii(value), new);
-        let keys = Some(keys | filter(core::iter::once(new)))
-            .filter(|it| it.count_ones() < 12)
-            .unwrap_or_else(|| crate::selector::filter_of(element));
-        self.tree.set_keys(id, keys);
+        (attribute.value, attribute.key) = (StoredText::Ascii(value.clone()), new);
+        self.tree.add_keys(id, filter(core::iter::once(new)));
         if is_rendered {
             self.attribute_keys.add(new);
             self.attribute_keys.remove(old);
         }
         true
+    }
+
+    /// One with a `key::value`, of an HTML element that is not rendered and has none in a namespace.
+    pub(crate) fn set_keyed_attribute(
+        &mut self,
+        id: NodeId,
+        local: &Atom,
+        name: Name,
+        value: &crate::api::core::DomString,
+    ) -> bool {
+        let Some(text) = value.ascii().filter(|_| self.smil.effects.bases.is_empty()) else {
+            return false;
+        };
+        let (key, keys) = (
+            key::short_value(name, text.as_bytes()).unwrap_or(Name::NONE),
+            self.tree[id].keys,
+        );
+        let Some(element) = self.tree.element_mut(id) else {
+            return false;
+        };
+        let (attributes, value) = (
+            element.attributes.to_mut_for_more(),
+            StoredText::Ascii(value.clone()),
+        );
+        let keys = match attributes.iter_mut().find(|it| it.name == name) {
+            Some(attribute) => {
+                (attribute.value, attribute.key) = (value, key);
+                crate::selector::filter_of(element)
+            }
+            None => {
+                attributes.push(Attribute {
+                    name,
+                    local: local.clone(),
+                    space: None,
+                    value,
+                    key,
+                });
+                keys | filter(
+                    [key::attribute(name), key]
+                        .into_iter()
+                        .filter(|it| *it != Name::NONE),
+                )
+            }
+        };
+        self.tree.set_keys(id, keys);
+        true
+    }
+
+    /// One of an HTML element, in no namespace, without `Meaning::OTHER`. Whether it has changed, or `None` if that is up to `change_attribute`.
+    #[inline(always)]
+    pub(crate) fn store_attribute(
+        &mut self,
+        id: NodeId,
+        name: Known,
+        value: &DomString,
+        is_rendered: bool,
+        may_change: bool,
+        ignores_case: bool,
+    ) -> Option<bool> {
+        let element = self
+            .tree
+            .element(id)
+            .filter(|_| self.smil.effects.bases.is_empty())?;
+        if name == atom!("class") {
+            let classes = self.class_lists.of(value, ignores_case)?;
+            if element
+                .classes
+                .as_ref()
+                .is_some_and(|it| Rc::ptr_eq(it, &classes))
+            {
+                return Some(false);
+            }
+            return (!is_rendered).then(|| self.store_classes(id, classes));
+        }
+        let Some(index) = element
+            .attributes
+            .iter()
+            .position(|it| it.local == name && it.space.is_none())
+        else {
+            return (may_change && !is_rendered).then(|| self.add_attribute(id, name, value))?;
+        };
+        let old = element.attributes[index].value.string();
+        if old.is_same(value) {
+            return Some(false);
+        }
+        let text = value.ascii()?;
+        let has_changed = old.as_impl().is_atom() && value.as_impl().is_atom() || old != value;
+        if has_changed
+            && (!may_change
+                || is_rendered
+                    && (name.meaning().contains(Meaning::READ)
+                        || self.may_notice(id, element, element.attributes[index].name)))
+        {
+            return None;
+        }
+        let element = self.tree.element_mut(id)?;
+        let old = core::mem::replace(
+            &mut element.attributes.to_mut()[index].value,
+            StoredText::Ascii(self.spare_strings.share(value)),
+        );
+        self.spare_strings.give_back(old);
+        element.is_unprepared |= has_changed && name.meaning().contains(Meaning::HINT);
+        if name == atom!("id") && has_changed {
+            element.id = if text.is_empty() {
+                Name::NONE
+            } else {
+                Name::new(text.as_bytes())
+            };
+            let keys = filter(core::iter::once(key::id(element.id)));
+            self.tree.add_keys(id, keys);
+        }
+        Some(has_changed)
+    }
+
+    /// As `store_attribute`, for an element that is not rendered.
+    fn add_attribute(&mut self, id: NodeId, local: Known, value: &DomString) -> Option<bool> {
+        let (text, name, element) = (
+            value.ascii()?,
+            Atom::of(local).name(),
+            self.tree.element_mut(id)?,
+        );
+        element.attributes.to_mut_for_more().push(Attribute {
+            name,
+            local: local.into(),
+            space: None,
+            value: StoredText::Ascii(value.clone()),
+            key: Name::NONE,
+        });
+        element.is_unprepared |= local.meaning().contains(Meaning::HINT);
+        let mut keys = filter(core::iter::once(key::attribute(name)));
+        if local == atom!("id") && !text.is_empty() {
+            element.id = Name::new(text.as_bytes());
+            keys |= filter(core::iter::once(key::id(element.id)));
+        }
+        self.tree.set_keys(id, self.tree[id].keys | keys);
+        Some(true)
+    }
+
+    /// Of an element that is not rendered.
+    #[inline(always)]
+    fn store_classes(&mut self, id: NodeId, classes: Rc<Classes>) -> bool {
+        const KEY: Name = key::attribute(name!("class"));
+        let Some(element) = self.tree.element_mut(id) else {
+            return false;
+        };
+        let attribute = || Attribute {
+            name: name!("class"),
+            local: atom!("class").into(),
+            space: None,
+            value: classes.source.clone(),
+            key: Name::NONE,
+        };
+        if element.attributes.len() == usize::from(element.classes.is_some()) {
+            element.attributes = crate::tree::Attributes::Shared(Rc::clone(
+                classes.attributes.get_or_init(|| Rc::new([attribute()])),
+            ));
+        } else {
+            let all = if element.classes.is_some() {
+                element.attributes.to_mut()
+            } else {
+                element.attributes.to_mut_for_more()
+            };
+            match all.iter_mut().find(|it| it.name == name!("class")) {
+                Some(old) => old.value = classes.source.clone(),
+                None => all.push(attribute()),
+            }
+        }
+        let keys = classes.filter | filter(core::iter::once(KEY));
+        element.classes = Some(classes);
+        self.tree.add_keys(id, keys);
+        true
+    }
+
+    /// That an attribute which is not `is_read_in_html` has another value.
+    #[inline]
+    fn may_notice(&self, id: NodeId, element: &Element, name: Name) -> bool {
+        let reads = |it: NodeId| {
+            self.styles.attributes_read.get() & crate::custom::mark(name) != 0
+                && self
+                    .tree
+                    .style(it)
+                    .is_some_and(|it| it.deps.contains(Deps::ATTRIBUTES))
+        };
+        self.styles
+            .dependencies
+            .borrow()
+            .may_mention(key::attribute(name))
+            || self.accessibility.is_some()
+            || reads(id)
+            || element.generated != [0; 4] && element.generated.into_iter().any(reads)
     }
 
     /// Does nothing if the element is rendered or has attributes.
@@ -1387,37 +1888,17 @@ impl Document {
         value: &crate::api::core::DomString,
         ignores_case: bool,
     ) -> bool {
-        let Some(text) = value.ascii().filter(|_| !self.tree.is_rendered(id)) else {
+        if self.tree.is_rendered(id)
+            || self
+                .tree
+                .element(id)
+                .is_none_or(|it| !it.attributes.is_empty())
+        {
             return false;
-        };
-        let Some(element) = self
-            .tree
-            .element_mut(id)
-            .filter(|it| it.attributes.is_empty())
-        else {
-            return false;
-        };
-        let classes = class_list(
-            &mut self.class_lists,
-            text,
-            || StoredText::Ascii(value.clone()),
-            ignores_case,
-        );
-        let only = || {
-            Rc::new([Attribute {
-                name: name!("class"),
-                local: atom!("class").into(),
-                space: None,
-                value: classes.source.clone(),
-                key: Name::NONE,
-            }]) as _
-        };
-        element.attributes =
-            crate::tree::Attributes::Shared(Rc::clone(classes.attributes.get_or_init(only)));
-        element.classes = Some(classes);
-        let keys = crate::selector::filter_of(element);
-        self.tree.set_keys(id, keys);
-        true
+        }
+        self.class_lists
+            .of(value, ignores_case)
+            .is_some_and(|it| self.store_classes(id, it))
     }
 
     pub(crate) fn change_attribute(
@@ -1428,6 +1909,9 @@ impl Document {
         ignores_case: bool,
     ) {
         let is_rendered = self.tree.is_rendered(id);
+        if is_rendered {
+            self.anticipate_attributes(id);
+        }
         let Some(element) = self.tree.element_mut(id) else {
             return;
         };
@@ -1445,9 +1929,7 @@ impl Document {
                 if added.space.is_some() {
                     added.name = Name::new(added.qualified().as_bytes());
                 }
-                let attributes = element.attributes.to_mut();
-                attributes.reserve_exact(1);
-                attributes.push(added);
+                element.attributes.to_mut_for_more().push(added);
                 (element.attributes.len() - 1, true)
             }
         };
@@ -1467,13 +1949,15 @@ impl Document {
             Name::lowercase(qualified.as_bytes())
         };
         let is_only_for_selectors = element.namespace == Namespace::Html
-            && (name == name!("class") || (old_key, new_key) != (Name::NONE, Name::NONE));
+            && (name == name!("class")
+                || (old_key, new_key) != (Name::NONE, Name::NONE)
+                || !crate::hints::is_read_in_html(name));
         let can_be_hint = !is_only_for_selectors && crate::hints::can_be_hint(element, name);
         let attribute = &mut element.attributes.to_mut()[index];
         let classes = value
             .as_ref()
             .filter(|_| name == name!("class"))
-            .map(|value| class_list(&mut self.class_lists, value, || value.clone(), ignores_case));
+            .map(|value| self.class_lists.find(value, || value.clone(), ignores_case));
         let (old_id, mut new_id, has_value) = (element.id, element.id, value.is_some());
         if name == name!("id") {
             new_id = value
@@ -1560,7 +2044,7 @@ impl Document {
                 .into_iter()
                 .for_each(|it| self.feature_changed(id, key::attribute(it)));
         }
-        self.recascade_readers_of_attributes(id);
+        self.recascade_readers_of_attribute(id, name);
         let Some(element) = self.tree.element(id).filter(|_| !is_only_for_selectors) else {
             return;
         };
@@ -1572,6 +2056,9 @@ impl Document {
             self.math_changed(id);
         }
         if crate::hints::can_change_state(name) {
+            if name == name!("dir") {
+                self.tree.ancestry.forget_all();
+            }
             self.update_derived_state(id, is_name!(tag, "fieldset" | "optgroup" | "select"));
         }
         if name == name!("dir") {
@@ -1640,6 +2127,7 @@ impl Document {
                 it.children
                     .clone()
                     .into_iter()
+                    .chain([own])
                     .for_each(|it| self.boxes[it].cache.clear());
             }
             self.boxes.mark_layout(own);
@@ -1692,9 +2180,14 @@ impl Document {
     }
 
     fn assigned_changed(&mut self, slot: NodeId, new: impl IntoIterator<Item = NodeId>) {
-        self.tree.forget_unskipped();
+        self.tree.ancestry.forget_all();
         self.slot_changed(slot);
         new.into_iter().for_each(|it| self.start_rendering(it));
+        self.start_rendering_fallback(slot);
+        self.mark_rebuild(slot);
+    }
+
+    fn start_rendering_fallback(&mut self, slot: NodeId) {
         if self
             .tree
             .element(slot)
@@ -1706,7 +2199,6 @@ impl Document {
                 child = self.tree[child].next;
             }
         }
-        self.mark_rebuild(slot);
     }
 
     /// `id` has no slot. They are in the order of the tree.
@@ -1721,15 +2213,27 @@ impl Document {
         {
             return self.assign_slot(slot, vec![id]);
         }
-        let next = core::iter::successors(Some(self.tree[id].next), |it| Some(self.tree[*it].next))
-            .find(|it| *it == 0 || self.tree[*it].slot == slot);
+        let (mut previous, mut next) = (self.tree[id].previous, self.tree[id].next);
+        let is_end = |it: NodeId| it == 0 || self.tree[it].slot == slot;
+        while !is_end(next) && !is_end(previous) {
+            (previous, next) = (self.tree[previous].previous, self.tree[next].next);
+        }
+        let is_by_next = is_end(next);
         self.tree[id].slot = slot;
         if let Some(element) = self.tree.element_mut(slot) {
             let assigned = &mut element.rare_mut().assigned;
-            let index = next
-                .filter(|it| *it != 0)
-                .and_then(|next| assigned.iter().position(|it| *it == next));
-            assigned.insert(index.unwrap_or(assigned.len()), id);
+            let index = match is_by_next {
+                true => assigned
+                    .iter()
+                    .take_while(|_| next != 0)
+                    .position(|it| *it == next)
+                    .unwrap_or(assigned.len()),
+                false => assigned
+                    .iter()
+                    .rposition(|it| *it == previous)
+                    .map_or(0, |it| it + 1),
+            };
+            assigned.insert(index, id);
         }
         self.assigned_changed(slot, [id]);
     }
@@ -1748,6 +2252,9 @@ impl Document {
             return;
         };
         let old = core::mem::replace(&mut element.rare_mut().replaced, replaced);
+        if element.shadow_root != 0 && (old.is_none() || replaced.is_none()) {
+            self.tree.mark_style(id, Flags::RECASCADE);
+        }
         self.repaint(id);
         match (old, replaced) {
             (Some(old), Some(new)) if (old.size, old.ratio) == (new.size, new.ratio) => {}
@@ -1759,32 +2266,41 @@ impl Document {
         }
     }
 
+    /// As of the last time that it was styled.
+    pub(crate) fn was_displayed(&self, id: NodeId) -> bool {
+        self.tree
+            .style(id)
+            .is_some_and(|it| it.display() != crate::types::Display::None)
+    }
+
     pub(crate) fn set_top_layer(&mut self, mut nodes: Vec<NodeId>) {
         nodes.retain(|it| *it != self.tree.root_element());
+        let [old, new] = [&self.top_layer, &nodes].map(|it| it.iter().copied().collect::<Set<_>>());
         self.leaving_top_layer = self
             .top_layer
             .iter()
             .copied()
-            .filter(|it| !nodes.contains(it))
+            .filter(|it| !new.contains(it))
             .collect();
         for id in &nodes {
-            if !self.top_layer.contains(id) {
-                self.mark_parent_rebuild(*id);
+            if !old.contains(id) {
+                if self.was_displayed(*id) {
+                    self.mark_parent_rebuild(*id);
+                }
                 self.detach_box(*id);
                 self.tree[*id].set(Flags::TOP_LAYER);
                 self.tree.mark_style(*id, Flags::REMATCH | Flags::RECASCADE);
             }
         }
         let mut nodes = nodes.into_iter();
-        let is_leaving = |it: &NodeId| self.leaving_top_layer.contains(it);
         let kept: Vec<_> = self
             .top_layer
             .iter()
             .filter_map(|it| {
-                if is_leaving(it) {
-                    Some(*it)
-                } else {
+                if new.contains(it) {
                     nodes.next()
+                } else {
+                    Some(*it)
                 }
             })
             .collect();
@@ -2229,6 +2745,29 @@ impl Document {
             .mark_style(self.tree.root_element(), Flags::RECASCADE_SUBTREE);
     }
 
+    /// Returns whether that is news.
+    pub(crate) fn set_displayed(&mut self, is_displayed: bool) -> bool {
+        if is_displayed == self.offset_when_displayed.is_none() {
+            return false;
+        }
+        match self.offset_when_displayed.take() {
+            Some(offset) => {
+                self.scrolling.viewport = offset;
+                self.resized_scrollers.push(DOCUMENT);
+            }
+            None => {
+                self.offset_when_displayed = Some(core::mem::take(&mut self.scrolling.viewport))
+            }
+        }
+        let root = self.tree.root_element();
+        if root != 0 {
+            self.tree
+                .mark_style(root, Flags::REMATCH | Flags::RECASCADE);
+        }
+        self.needs_layout = true;
+        true
+    }
+
     pub(crate) fn set_environment(&mut self, new: Environment) {
         let old = core::mem::replace(&mut self.environment, new);
         if old == self.environment {
@@ -2270,12 +2809,22 @@ impl Document {
         {
             rules.borrow_mut().evaluate_media(new, &mut affected);
         }
-        if (old.quirks, old.has_math, old.has_media, old.forces_colors)
-            != (new.quirks, new.has_math, new.has_media, new.forces_colors)
-        {
+        if (
+            old.quirks,
+            old.has_math,
+            old.has_media,
+            old.forces_colors,
+            old.fixes_text_areas,
+        ) != (
+            new.quirks,
+            new.has_math,
+            new.has_media,
+            new.forces_colors,
+            new.fixes_text_areas,
+        ) {
             self.styles.set_user_agent_sheets(new);
-            affected.is_everything |=
-                (old.quirks, old.forces_colors) != (new.quirks, new.forces_colors);
+            affected.is_everything |= (old.quirks, old.forces_colors, old.fixes_text_areas)
+                != (new.quirks, new.forces_colors, new.fixes_text_areas);
             self.class_lists.clear();
         }
         let root = self.tree.root_element();
@@ -2289,9 +2838,19 @@ impl Document {
         if old.scale != new.scale {
             self.fonts.device_scale = new.scale;
             self.fonts_changed();
-        } else if (old.dark, old.highlight, old.color_scheme, old.forces_colors)
-            != (new.dark, new.highlight, new.color_scheme, new.forces_colors)
-        {
+        } else if (
+            old.dark,
+            old.highlight,
+            old.color_scheme,
+            old.forces_colors,
+            old.quirks,
+        ) != (
+            new.dark,
+            new.highlight,
+            new.color_scheme,
+            new.forces_colors,
+            new.quirks,
+        ) {
             self.recascade_everything();
         } else if (old.viewport, old.titlebar_area) != (new.viewport, new.titlebar_area) {
             self.environment.viewport_generation = new_generation();
@@ -2324,11 +2883,13 @@ impl Document {
             old.overlay_scrollbars,
             old.quirks,
             old.cannot_scroll,
+            old.is_object,
         ) != (
             new.zoom,
             new.overlay_scrollbars,
             new.quirks,
             new.cannot_scroll,
+            new.is_object,
         ) {
             self.rebuild_everything();
         }
@@ -2343,6 +2904,37 @@ impl Document {
             .chain([self.tree.root_element()])
         {
             self.detach_box(id);
+        }
+    }
+
+    pub(crate) fn set_user_sheets(&mut self, sheets: Vec<Rc<Sheet>>) {
+        if !sheets
+            .iter()
+            .map(Rc::as_ptr)
+            .eq(self.styles.user_sheets.iter().map(Rc::as_ptr))
+        {
+            self.styles.user_sheets = sheets;
+            self.styles.set_user_agent_sheets(&self.environment);
+            self.forget_highlights();
+            self.tree
+                .mark_style(self.tree.root_element(), Flags::REMATCH_SUBTREE);
+            self.definitions_changed(DOCUMENT, &|_| true);
+        }
+    }
+
+    pub(crate) fn set_font_settings(
+        &mut self,
+        settings: &Option<std::sync::Arc<bun_web::host::FontSettings>>,
+    ) {
+        if self.fonts.settings != *settings {
+            self.fonts.settings.clone_from(settings);
+            self.fonts_changed();
+            let units = self.styles.initial.root_units();
+            self.set_environment(Environment {
+                initial_font: units,
+                root_font: units,
+                ..self.environment.clone()
+            });
         }
     }
 
@@ -2434,15 +3026,14 @@ impl Document {
         }
         let (known, unnoticed) = (self.deferred_fonts.len(), OnceCell::<Set<char>>::new());
         let shaped = (changed || self.fonts.has_written.get()).then_some(self.shaped.get_mut());
-        let unnoticed = || {
-            unnoticed.get_or_init(|| {
-                shaped
-                    .iter()
-                    .flat_map(|it| it.values())
-                    .flat_map(|it| it.text.chars())
-                    .collect()
+        let texts = || {
+            shaped.iter().flat_map(|it| {
+                it.values()
+                    .map(|it| &*it.text)
+                    .chain(self.boxes.edited_texts())
             })
         };
+        let unnoticed = || unnoticed.get_or_init(|| texts().flat_map(str::chars).collect());
         let used = if changed {
             self.fonts.used.get_mut().iter().copied().collect()
         } else {
@@ -2493,7 +3084,7 @@ impl Document {
 
     /// Asks for it the first time.
     pub(crate) fn image(&self, url: &Str) -> Option<Replaced> {
-        self.svg_references.set(true);
+        self.svg_has_read(crate::svg_paint::Reads::REFERENCES);
         *self
             .images
             .borrow_mut()
@@ -2586,16 +3177,19 @@ impl Document {
             if !self.carousels.is_empty() {
                 self.assign_markers();
             }
-            self.moved_boxes.clear();
             self.update_counters();
             let anchors = self.select_scroll_anchors();
             self.scrolling.repositioned.clear();
+            self.move_boxes();
             self.number_stale_lists();
             self.rebuild_boxes();
             if !self.stale_lists.is_empty() {
                 self.number_stale_lists();
                 self.rebuild_boxes();
                 self.stale_lists.clear();
+            }
+            for node in core::mem::take(&mut self.moved_boxes) {
+                self.moved_boxes_in_scrollers.extend(self.own_box(node));
             }
             self.lay_out_viewport();
             self.position_anchored_boxes();
@@ -2712,14 +3306,19 @@ impl Document {
 
     pub(crate) fn collect_garbage(&mut self) {
         let nodes = self.tree.len();
+        self.tree.sequence.frame_ended();
+        self.edits.frame_ended();
+        self.reads.frame_ended();
         self.boxes.sweep(self.animations.now, &self.styles.initial);
         self.styles.collect_garbage(nodes);
         let shaped = self.shaped.get_mut();
         if shaped.len() > nodes + 2048 {
             shaped.retain(|_, it| Rc::strong_count(it) > 1);
         }
-        if self.class_lists.len() > nodes + 4096 {
-            self.class_lists.retain(|_, it| Rc::strong_count(it) > 1);
+        if self.class_lists.all.len() > nodes + 4096 {
+            self.class_lists
+                .all
+                .retain(|_, it| Rc::strong_count(it) > 1);
         }
         if self.shared_rules.len() > 8 {
             self.shared_rules
@@ -2729,20 +3328,27 @@ impl Document {
         crate::values::release_parser_memory();
     }
 
-    pub(crate) fn create_element(
-        &mut self,
-        local: Atom,
-        namespace: Namespace,
-        space: Option<Rc<Space>>,
-    ) -> NodeId {
+    fn expect_foreign(&mut self, tag: Name, namespace: Namespace) {
         if namespace == Namespace::MathMl && !self.environment.has_math {
             self.set_environment(Environment {
                 has_math: true,
                 ..self.environment.clone()
             });
         }
-        let tag = local.name();
         self.has_foreign_objects |= tag == name!("foreignObject");
+    }
+
+    #[inline]
+    pub(crate) fn create_element(
+        &mut self,
+        local: Atom,
+        namespace: Namespace,
+        space: Option<Rc<Space>>,
+    ) -> NodeId {
+        let tag = local.name();
+        if namespace != Namespace::Html {
+            self.expect_foreign(tag, namespace);
+        }
         let id = self.tree.create_element(tag, namespace, |element| {
             element.local = local;
             space
@@ -2753,46 +3359,58 @@ impl Document {
         id
     }
 
-    /// The names differ, and are in no namespace.
+    /// The names of the attributes differ, and are in no namespace.
     #[inline]
-    pub(crate) fn create_element_with(
+    pub(crate) fn element_with(
         &mut self,
         local: Atom,
         namespace: Namespace,
         attributes: impl ExactSizeIterator<Item = (Atom, StoredText)>,
         ignores_case: bool,
-    ) -> NodeId {
-        let id = self.create_element(local, namespace, None);
-        if attributes.len() != 0 {
-            self.tree
-                .element_mut(id)
-                .into_iter()
-                .for_each(|it| it.attributes.to_mut().reserve_exact(attributes.len()));
-            attributes.for_each(|(name, value)| {
-                self.change_attribute(id, Err((name, None)), Some(value), ignores_case)
+    ) -> Box<Element> {
+        let tag = local.name();
+        if namespace != Namespace::Html {
+            self.expect_foreign(tag, namespace);
+        }
+        let mut element = self.tree.new_element(tag, namespace, |it| it.local = local);
+        let mut all = Vec::with_capacity(attributes.len());
+        for (local, mut value) in attributes {
+            let name = local.name();
+            let key = key::value(name, local.as_utf8().as_bytes(), value.as_bytes());
+            if name == name!("class") {
+                let classes = element.classes.insert(self.class_lists.find(
+                    &value,
+                    || value.clone(),
+                    ignores_case,
+                ));
+                value = if classes.source.is_ascii() {
+                    classes.source.clone()
+                } else {
+                    value
+                };
+            } else if name == name!("id") && !value.is_empty() {
+                element.id = Name::new(value.as_bytes());
+            }
+            let is_only_for_selectors =
+                namespace == Namespace::Html && (name == name!("class") || key != Name::NONE);
+            element.is_unprepared |= name == name!("style")
+                || !is_only_for_selectors && crate::hints::can_be_hint(&element, name);
+            all.push(Attribute {
+                name,
+                local,
+                space: None,
+                value,
+                key,
             });
         }
-        id
+        element.attributes = crate::tree::Attributes::Own(all);
+        element
     }
 
     #[inline(always)]
     pub(crate) fn likeness_of(&mut self, id: NodeId) -> Option<Likeness> {
         let keys = self.tree[id].keys;
-        let it = self.tree.element_mut(id)?;
-        Some(Likeness {
-            tag: it.tag,
-            namespace: it.namespace,
-            local: it.local.clone(),
-            space: it.space.clone(),
-            is_unprepared: it.is_unprepared
-                || it.inline_style.is_some()
-                || it.hints.is_some()
-                || it.is_style_refused,
-            id: it.id,
-            classes: it.classes.clone(),
-            attributes: it.attributes.share(),
-            keys,
-        })
+        Some(Likeness::of(self.tree.element_mut(id)?, keys))
     }
 
     #[inline(always)]
@@ -2824,6 +3442,28 @@ impl Document {
         });
         self.tree[id].keys = keys;
         id
+    }
+
+    #[inline(always)]
+    pub(crate) fn element_like(&mut self, it: &Likeness) -> Box<Element> {
+        self.tree.new_element(it.tag, it.namespace, |element| {
+            (
+                element.local,
+                element.is_unprepared,
+                element.id,
+                element.classes,
+                element.attributes,
+            ) = (
+                it.local.clone(),
+                it.is_unprepared,
+                it.id,
+                it.classes.clone(),
+                it.attributes.clone(),
+            );
+            it.space
+                .iter()
+                .for_each(|it| element.rare_mut().space = Some(Rc::clone(it)));
+        })
     }
 
     /// With its attributes.

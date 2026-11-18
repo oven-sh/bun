@@ -174,13 +174,13 @@ impl FontFace {
             return face
                 .register(&data, NOWHERE, 0)
                 .map(font_face::unregister)
-                .is_some();
+                .is_ok();
         }
         self.each_set()
             .enumerate()
             .filter(|it| it.1.is_in_use())
             .all(|(index, set)| {
-                let Some(id) = face.register(&data, set.scope(), self.order.get()) else {
+                let Ok(id) = face.register(&data, set.scope(), self.order.get()) else {
                     return false;
                 };
                 self.registered.borrow_mut()[index]

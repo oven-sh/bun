@@ -37,6 +37,9 @@ export const externalValueFeatures: readonly FeatureName[] = [
   ...arrayBufferViewFeatures,
 ];
 
+/** Stands for what native code lays above the prototype of an interface. A prototype that `inheritsFromUnknown` is one that node:events links anew. */
+export const undescribedPrototype = "%UndescribedPrototype%";
+
 /** Any entry of a page can come to a load, a report, a message or a worker. */
 export const desktopFeatures: readonly FeatureName[] = [
   "Desktop",

@@ -19,6 +19,7 @@ unsafe extern "C" {
         name: &Impl,
         value: JSValue,
     );
+    safe fn Bun__DOM__appendTextToFormData(data: JSValue, name: &Impl, value: &Impl);
     /// Empty behind the last one.
     safe fn Bun__DOM__entryOfFormData(
         data: JSValue,
@@ -56,8 +57,8 @@ pub(super) fn append(heap: &JsHeap<'_>, data: JSValue, name: &DomString, value: 
     }
 }
 
-pub(super) fn append_text(heap: &JsHeap<'_>, data: JSValue, name: &DomString, value: &DomString) {
-    append(heap, data, name, value.to_js(heap).to_js());
+pub(super) fn append_text(data: JSValue, name: &DomString, value: &DomString) {
+    Bun__DOM__appendTextToFormData(data, name.as_impl(), value.as_impl());
 }
 
 /// `(File or USVString or FormData)?`

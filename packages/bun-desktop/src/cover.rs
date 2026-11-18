@@ -564,16 +564,19 @@ pub fn key_down(key: &str, modifiers: u8) {
     }
 }
 
-pub fn typed(text: &str, is_at_caret: bool) {
+/// In place of so many characters before the caret, if that is where it goes.
+pub fn typed(text: &str, replaced: Option<u32>) {
     SENT.set(SENT.get() + 1);
     // Backspace removes one of these, and they run from the left.
-    match is_at_caret
-        && text
-            .chars()
+    match replaced.filter(|_| {
+        text.chars()
             .all(|it| matches!(it, ' '..='\u{2FF}' | '\u{370}'..='\u{482}'))
-    {
-        true => edit_echo(|all| all.push_str(text)),
-        false => stop_echo(),
+    }) {
+        Some(count) => edit_echo(|all| {
+            (0..count).for_each(|_| _ = all.pop());
+            all.push_str(text);
+        }),
+        None => stop_echo(),
     }
 }
 
@@ -844,7 +847,9 @@ pub fn adopt(wanted: &Options) -> bool {
     };
     let fits = state.is_some_and(|state| {
         let saved = state.options.borrow();
-        shape(&saved) == shape(wanted) && is_at(wanted.x, saved.x) && is_at(wanted.y, saved.y)
+        let is_anywhere = crate::host::platform().is_ok_and(|it| !it.places_windows());
+        shape(&saved) == shape(wanted)
+            && (is_anywhere || is_at(wanted.x, saved.x) && is_at(wanted.y, saved.y))
     });
     if !fits {
         discard();

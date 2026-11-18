@@ -63,9 +63,7 @@ fn append_entries<'a>(
 ) {
     let name = control.attr(atom!("name")).unwrap_or_default();
     let (kind, is_submitter) = (input_type(control), Some(control) == submitter);
-    let append = |cx: &mut Cx<'a>, name: &DomString, value: &DomString| {
-        form_data::append_text(&cx.heap, data, name, value)
-    };
+    let append = |name: &DomString, value: &DomString| form_data::append_text(data, name, value);
     if kind == Some(InputType::Image) {
         for (axis, value) in ["x", "y"]
             .into_iter()
@@ -74,7 +72,6 @@ fn append_entries<'a>(
         {
             let dot = if name.is_empty() { "" } else { "." };
             append(
-                cx,
                 &DomString::concat(&[&name, &dot.into(), &axis.into()]),
                 &value.to_string().as_str().into(),
             );
@@ -110,19 +107,19 @@ fn append_entries<'a>(
             files.for_each(|it| form_data::append(&cx.heap, data, &name, it));
         }
         (_, Some(InputType::Hidden)) if name.eq_ignore_ascii_case("_charset_") => {
-            append(cx, &name, &encoding.into())
+            append(&name, &encoding.into())
         }
-        (_, Some(_)) => append(cx, &name, &Input::new(control).value()),
+        (_, Some(_)) => append(&name, &Input::new(control).value()),
         (atom!("button"), _) if is_submitter => {
-            append(cx, &name, &control.attr(atom!("value")).unwrap_or_default())
+            append(&name, &control.attr(atom!("value")).unwrap_or_default())
         }
         (atom!("select"), _) => Select::new(control)
             .selected()
             .filter(|it| !is_disabled(it))
-            .for_each(|it| append(cx, &name, &option::value(it))),
+            .for_each(|it| append(&name, &option::value(it))),
         (atom!("textarea"), _) => {
             let value = textarea::submitted_value(cx, control);
-            append(cx, &name, &value);
+            append(&name, &value);
         }
         _ => {}
     }
@@ -134,12 +131,15 @@ fn append_entries<'a>(
         .attr(atom!("dirname"))
         .filter(|it| has_directionality && !it.is_empty())
     {
-        let direction = if control.matches(cx, b":dir(rtl)").unwrap_or(false) {
+        let direction = if control
+            .matches(cx, DomString::from_utf8(":dir(rtl)").to_js(&cx.heap))
+            .unwrap_or(false)
+        {
             "rtl"
         } else {
             "ltr"
         };
-        append(cx, &dirname, &direction.into());
+        append(&dirname, &direction.into());
     }
 }
 
@@ -166,9 +166,7 @@ pub(crate) fn construct_entry_list<'a>(
     }
     let submittable = controls_of(form)
         .filter(|it| !is_disabled(it) && it.closest_html(atom!("datalist")).is_none());
-    Refs::collect(&cx.heap, submittable)
-        .iter()
-        .for_each(|it| append_entries(cx, data, it, submitter, encoding));
+    submittable.for_each(|it| append_entries(cx, data, it, submitter, encoding));
     let event = FormDataEvent::new(&cx.heap, form.doc(), data);
     dispatch(cx, form, event);
     is_constructing.set(false);
@@ -192,8 +190,9 @@ fn fire_submission_events<'a>(
             form.doc(),
             atom!("submit"),
             EventInit {
+                bubbles: true,
                 cancelable: true,
-                ..BUBBLES
+                composed: button.is_some(),
             },
             button,
         );
@@ -335,15 +334,25 @@ impl HTMLFormElement {
     }
 
     pub(crate) fn check_validity<'a>(&'a self, cx: &mut Cx<'a>) -> bool {
-        validity::validate(cx, controls_of(self), false)
+        validity::is_still_valid(self) || validity::validate(cx, controls_of(self), false)
     }
 
     pub(crate) fn report_validity<'a>(&'a self, cx: &mut Cx<'a>) -> bool {
-        validity::validate(cx, controls_of(self), true)
+        validity::is_still_valid(self) || validity::validate(cx, controls_of(self), true)
     }
 }
 
+fn moved<'a>(cx: &mut Cx<'a>, form: &'a Element, scope: &'a Node) {
+    form.attr(atom!("id"))
+        .filter(|_| may_have_remote_owners(form))
+        .inspect(|it| id_changed(cx, scope, it));
+}
+
 pub(crate) static STEPS: Steps = Steps {
-    post_connection: Some(inserted),
+    post_connection: Some(|cx, form, is_move| {
+        inserted(cx, form, is_move);
+        moved(cx, form, form.root());
+    }),
+    removed: Some(|cx, form, scope, _| moved(cx, form, scope)),
     ..Steps::NONE
 };

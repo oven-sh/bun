@@ -50,43 +50,58 @@ impl Escape {
         }
     }
 
-    /// It may also be so for a control character.
+    /// The high bit of a byte is set if so. It may also be so for a control character.
     #[inline(always)]
-    fn is_needed_in<const N: usize>(self, chunk: &[u8; N]) -> bool {
+    fn is_needed_in(self, word: u64) -> u64 {
+        let each = |byte: u8| u64::from_le_bytes([byte; 8]);
+        let below = |word: u64, limit: u8| word.wrapping_sub(each(limit)) & !word;
         let quote = if matches!(self, Escape::HtmlAttribute | Escape::XmlAttribute) {
             b'&' ^ b'"'
         } else {
             0
         };
-        let controls = if matches!(self, Escape::XmlAttribute) {
-            14
+        let other = if matches!(self, Escape::XmlAttribute) {
+            below(word, 14)
         } else {
-            0
+            below(word ^ each(0xa0), 1)
         };
-        chunk.iter().fold(false, |any, it| {
-            any | (it | 2 == b'>') | (it | quote == b'&') | (*it == 0xa0) | (*it < controls)
-        })
-    }
-
-    #[inline(always)]
-    fn is_needed_at_ends<const N: usize>(self, bytes: &[u8]) -> bool {
-        [bytes.first_chunk::<N>(), bytes.last_chunk()]
-            .into_iter()
-            .flatten()
-            .fold(false, |any, it| any | self.is_needed_in(it))
+        below((word | each(2)) ^ each(b'>'), 1)
+            | below((word | each(quote)) ^ each(b'&'), 1)
+            | other
     }
 
     #[inline(always)]
     fn may_be_needed(self, bytes: &[u8]) -> bool {
-        match bytes.len() {
-            65.. => true,
-            32.. => self.is_needed_at_ends::<32>(bytes),
-            16.. => self.is_needed_at_ends::<16>(bytes),
-            8.. => self.is_needed_at_ends::<8>(bytes),
-            4.. => self.is_needed_at_ends::<4>(bytes),
-            2.. => self.is_needed_at_ends::<2>(bytes),
-            _ => self.is_needed_at_ends::<1>(bytes),
-        }
+        let found = match (
+            bytes.last_chunk(),
+            bytes.first_chunk(),
+            bytes.last_chunk(),
+            bytes,
+        ) {
+            _ if bytes.len() > 48 => return true,
+            (Some(last), ..) => bytes
+                .as_chunks()
+                .0
+                .iter()
+                .fold(self.is_needed_in(u64::from_le_bytes(*last)), |any, it| {
+                    any | self.is_needed_in(u64::from_le_bytes(*it))
+                }),
+            (_, Some(first), Some(last), _) => self.is_needed_in(
+                u64::from(u32::from_le_bytes(*first)) << 32 | u64::from(u32::from_le_bytes(*last)),
+            ),
+            (.., [first, ..]) => self.is_needed_in(u64::from_le_bytes([
+                *first,
+                bytes[bytes.len() / 2],
+                bytes[bytes.len() - 1],
+                b' ',
+                b' ',
+                b' ',
+                b' ',
+                b' ',
+            ])),
+            _ => 0,
+        };
+        found & u64::from_le_bytes([0x80; 8]) != 0
     }
 
     #[inline]

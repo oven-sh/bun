@@ -2,7 +2,8 @@ use std::cell::Cell;
 use std::ops::Range;
 use std::time::Instant;
 
-use super::raster::{Path, map_rect};
+use super::memo::Memo;
+use super::raster::{Path, has_radii, map_rect};
 use super::warp::Projection;
 use crate::abi::{
     self, Filter, Glyph, GradientStop, Item, LineStyle, PathVerb, Rect, Region, RoundedRect, Span,
@@ -19,6 +20,8 @@ struct Extent {
     end: u32,
     /// The index of a layer's `Mask`, or 0. For a `Pop`, the index after the `Push*` of the group around the group.
     mask: u32,
+    /// From one draw to the next, or with the last list.
+    changes: bool,
 }
 
 pub struct Scene {
@@ -38,6 +41,10 @@ pub struct Scene {
     extents: Vec<Extent>,
     /// The items as they were before `Motion` changed them.
     submitted: Vec<Item>,
+    /// The items that `Motion` changes.
+    driven: Vec<usize>,
+    /// Only for lists that replace each other.
+    pub(super) memo: Option<Mutex<Memo>>,
 }
 
 impl Default for Scene {
@@ -57,6 +64,8 @@ impl Default for Scene {
             new_images: Mutex::default(),
             extents: Vec::new(),
             submitted: Vec::new(),
+            driven: Vec::new(),
+            memo: None,
         }
     }
 }
@@ -339,7 +348,125 @@ impl Scene {
         self.items.clear();
         self.items.extend_from_slice(first_items);
         self.items.extend_from_slice(&self.submitted);
-        self.index();
+        self.driven.clear();
+        let is_same = |(new, old): &(&Item, &Item)| self.is_same_item(new, list, old);
+        let before = self
+            .submitted
+            .iter()
+            .zip(&list.submitted)
+            .take_while(is_same)
+            .count();
+        let after = self.submitted[before..]
+            .iter()
+            .rev()
+            .zip(list.submitted[before..].iter().rev())
+            .take_while(is_same)
+            .count();
+        let (first, [old, new]) = (
+            first_items.len(),
+            [&list.submitted, &self.submitted].map(|it| first_items.len() + it.len()),
+        );
+        self.index_with_changes([first + before, new - after]);
+        let mut memo = list.memo.take().unwrap_or_default();
+        match (self.zoom, self.has_cross_fades) == (list.zoom, list.has_cross_fades) {
+            true => memo.get_mut().splice(
+                first..old,
+                first + before..old - after,
+                new - after - first - before,
+                self.items.len(),
+            ),
+            false => memo.get_mut().clear(),
+        }
+        self.memo = Some(memo);
+    }
+
+    fn is_same_item(&self, item: &Item, other: &Scene, its: &Item) -> bool {
+        let (mut a, mut b, take) = (*item, *its, std::mem::take::<Span>);
+        let dashes = |a: &mut abi::Stroke, b: &mut abi::Stroke| {
+            self.bytes(take(&mut a.dashes)) == other.bytes(take(&mut b.dashes))
+        };
+        let has_same_parts = match (&mut a, &mut b) {
+            (Item::Text { glyphs: a, .. }, Item::Text { glyphs: b, .. }) => {
+                self.glyphs(take(a)) == other.glyphs(take(b))
+            }
+            (
+                Item::TextStroke {
+                    glyphs: a,
+                    stroke: c,
+                    ..
+                },
+                Item::TextStroke {
+                    glyphs: b,
+                    stroke: d,
+                    ..
+                },
+            ) => self.glyphs(take(a)) == other.glyphs(take(b)) && dashes(c, d),
+            (Item::Path { outline: a, .. }, Item::Path { outline: b, .. })
+            | (Item::PushClipOutline(a), Item::PushClipOutline(b)) => {
+                self.verbs(take(&mut a.verbs)) == other.verbs(take(&mut b.verbs))
+                    && dashes(&mut a.stroke, &mut b.stroke)
+            }
+            (Item::PushClipPath { verbs: a, .. }, Item::PushClipPath { verbs: b, .. }) => {
+                self.verbs(take(a)) == other.verbs(take(b))
+            }
+            (Item::PushLayer { filters: a, .. }, Item::PushLayer { filters: b, .. })
+            | (Item::Backdrop { filters: a, .. }, Item::Backdrop { filters: b, .. }) => {
+                let filters = self.filters(take(a));
+                filters == other.filters(take(b)) && !has_graph(filters)
+            }
+            (Item::Gradient { stops: a, .. }, Item::Gradient { stops: b, .. })
+            | (Item::Shade { stops: a, .. }, Item::Shade { stops: b, .. }) => {
+                self.stops(take(a)) == other.stops(take(b))
+            }
+            (Item::Svg { source: a, .. }, Item::Svg { source: b, .. }) => {
+                self.bytes(take(a)) == other.bytes(take(b))
+            }
+            _ => true,
+        };
+        has_same_parts && a == b
+    }
+
+    pub fn set_driven(&mut self, items: impl Iterator<Item = usize>) {
+        self.driven.clear();
+        self.driven.extend(items);
+        self.mark_driven();
+    }
+
+    fn mark_driven(&mut self) {
+        for &index in &self.driven {
+            let mut push = index;
+            while let Some(it) = self.extents.get_mut(push).filter(|it| !it.changes) {
+                it.changes = true;
+                let pop = it.end as usize - 1;
+                push = if pop == push {
+                    usize::MAX
+                } else {
+                    (self.extents[pop].mask as usize).wrapping_sub(1)
+                };
+            }
+        }
+    }
+
+    /// Whether it or something in it may look different although the list is the same.
+    pub fn changes(&self, index: usize) -> bool {
+        self.extents[index].changes
+    }
+
+    /// Whether what it paints depends on what is behind it.
+    pub fn reads_backdrop(&self, index: usize) -> bool {
+        match self.items[index] {
+            _ if !self.changes(index) => false,
+            Item::Backdrop { .. } => true,
+            Item::PushLayer { blend, .. } => blend != abi::BlendMode::Normal,
+            Item::PushClip(_)
+            | Item::PushClipPath { .. }
+            | Item::PushClipOutline(_)
+            | Item::PushTransform(_)
+            | Item::PushVector(_) => self
+                .children(self.content(index))
+                .any(|it| self.reads_backdrop(it)),
+            _ => false,
+        }
     }
 
     pub fn is_same_list(&self, other: &Scene) -> bool {
@@ -371,8 +498,19 @@ impl Scene {
         }
     }
 
+    #[cfg(test)]
+    pub(super) fn set_list(&mut self, items: Vec<Item>, verbs: Vec<PathVerb>) {
+        (self.submitted, self.verbs) = (items, verbs);
+    }
+
     /// After a change to `items`.
     pub fn index(&mut self) {
+        self.memo.iter_mut().for_each(|it| it.get_mut().clear());
+        self.index_with_changes([usize::MAX; 2]);
+    }
+
+    /// With the ends of what is new.
+    fn index_with_changes(&mut self, ends: [usize; 2]) {
         self.caret = None;
         self.has_backdrops = false;
         self.has_cross_fades = self.items.iter().any(cross_fades);
@@ -388,7 +526,18 @@ impl Scene {
                 bounds: leaf_bounds(&self.items[index]),
                 end: index as u32 + 1,
                 mask: 0,
+                changes: match self.items[index] {
+                    Item::PushLayer { blend, .. } => blend != abi::BlendMode::Normal,
+                    Item::Backdrop { .. }
+                    | Item::Caret { .. }
+                    | Item::Image { .. }
+                    | Item::ImagePart { .. } => true,
+                    _ => false,
+                },
             };
+            if extent.changes || ends.contains(&index) {
+                open.iter().for_each(|it| self.extents[*it].changes = true);
+            }
             let mut finished = extent.bounds;
             match self.items[index] {
                 Item::Backdrop { .. } => self.has_backdrops = true,
@@ -444,6 +593,7 @@ impl Scene {
             }
             index += 1;
         }
+        self.mark_driven();
     }
 
     /// After a change to nothing but the matrices of these `PushTransform`s.
@@ -495,6 +645,7 @@ impl Scene {
             Item::PushProjection(matrix) if !is_empty(content) => {
                 Projection(matrix).map_rect(content)
             }
+            Item::PushLayer { bounds, .. } if erases(&self.items[push]) => outset(bounds, 1.),
             Item::PushLayer {
                 bounds, filters, ..
             } => {
@@ -514,6 +665,28 @@ impl Scene {
 
     pub fn bounds(&self, index: usize) -> Rect {
         self.extents[index].bounds
+    }
+
+    /// The widths of the border that hides the curved edge of a fill.
+    pub fn border_over(&self, index: usize) -> Option<[f32; 4]> {
+        let [
+            Item::Fill { shape: filled, .. },
+            Item::Border {
+                shape,
+                widths,
+                colors,
+                styles,
+            },
+        ] = self.items.get(index..)?.first_chunk()?
+        else {
+            return None;
+        };
+        (filled == shape
+            && has_radii(shape)
+            && !widths.contains(&0.)
+            && colors.iter().all(|it| it & 0xFF == 0xFF)
+            && *styles == [LineStyle::Solid; 4])
+            .then_some(*widths)
     }
 
     pub fn end(&self, index: usize) -> usize {

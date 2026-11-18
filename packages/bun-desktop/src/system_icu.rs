@@ -1,6 +1,7 @@
-//! For what runs without Bun: properties of characters from the ICU of the system, and nothing else.
+//! For what runs without Bun: properties of characters and breaks from the ICU of the system, and nothing else.
 
-use std::ffi::{CString, c_void};
+use std::cell::OnceCell;
+use std::ffi::{CStr, CString, c_char, c_void};
 use std::mem::transmute;
 use std::sync::LazyLock;
 
@@ -77,6 +78,58 @@ extern "C" fn compose(first: u32, second: u32) -> u32 {
     (ICU.compose)(ICU.normalizer, first, second).max(0) as u32
 }
 
+type Open = extern "C" fn(i32, *const c_char, *const u16, i32, &mut i32) -> usize;
+
+unsafe extern "C" fn find_breaks(
+    kind: u8,
+    text: *const u8,
+    len: usize,
+    offsets: *mut u32,
+) -> usize {
+    const KINDS: [(i32, &CStr); 7] = [
+        (0, c"en"),
+        (2, c"en@lb=normal"),
+        (2, c"en@lb=loose"),
+        (2, c"en@lb=strict"),
+        (2, c"zh@lb=normal"),
+        (2, c"zh@lb=loose"),
+        (2, c"zh@lb=strict"),
+    ];
+    thread_local! {
+        static ITERATORS: [OnceCell<usize>; 7] = Default::default();
+    }
+    // SAFETY: these are their signatures, and the caller keeps to the contract of `Host`.
+    unsafe {
+        let text = str::from_utf8_unchecked(std::slice::from_raw_parts(text, len));
+        let (units, (of, locale)) = (
+            text.encode_utf16().collect::<Vec<_>>(),
+            KINDS[usize::from(kind)],
+        );
+        let open = || {
+            transmute::<*mut c_void, Open>(symbol("ubrk_open"))(
+                of,
+                locale.as_ptr(),
+                std::ptr::null(),
+                0,
+                &mut 0,
+            )
+        };
+        let iterator = ITERATORS.with(|it| *it[usize::from(kind)].get_or_init(open));
+        transmute::<*mut c_void, extern "C" fn(usize, *const u16, i32, &mut i32)>(symbol(
+            "ubrk_setText",
+        ))(iterator, units.as_ptr(), units.len() as i32, &mut 0);
+        let next = transmute::<*mut c_void, extern "C" fn(usize) -> i32>(symbol("ubrk_next"));
+        let ends: Vec<_> = text
+            .char_indices()
+            .flat_map(|(at, it)| std::iter::repeat_n(at + it.len_utf8(), it.len_utf16()))
+            .collect();
+        let found = std::iter::from_fn(|| usize::try_from(next(iterator)).ok()).enumerate();
+        found
+            .map(|(index, it)| offsets.add(index).write(ends[it - 1] as u32))
+            .count()
+    }
+}
+
 extern "C" fn missing() {
     std::process::abort();
 }
@@ -95,6 +148,7 @@ static HOST: LazyLock<Host> = LazyLock::new(|| {
             script_of,
             decompose,
             compose,
+            find_breaks,
             ..nothing
         }
     }

@@ -216,7 +216,7 @@ fn __bun_dom_is_node(it: dom::Node) -> bool {
 fn __bun_dom_describe(it: dom::Node) -> Description {
     let description = with_node(it.0, |cx, it| {
         Some(Description {
-            kind: it.get_node_type(),
+            kind: it.node_type() as i32,
             name: DomString::from_js_string(&cx.heap, it.get_node_name(&cx.heap))
                 .ok()?
                 .to_utf8()
@@ -226,7 +226,7 @@ fn __bun_dom_describe(it: dom::Node) -> Description {
                 .map(|it| it.local().as_utf8().into_owned())
                 .unwrap_or_default(),
             value: it
-                .node_value(cx)
+                .node_value()
                 .map(|it| it.to_utf8().into_owned())
                 .unwrap_or_default(),
             is_root: it

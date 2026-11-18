@@ -51,10 +51,8 @@ pub(crate) struct Row {
 /// What a layout that is abandoned must not leave behind.
 #[derive(Clone, Default)]
 pub(crate) struct Tally {
-    /// How far the contents of each column go from its start.
-    pub(crate) reach: Vec<f32>,
-    /// Without out-of-flow boxes.
-    pub(crate) reach_in_flow: Vec<f32>,
+    /// How far the contents of each column go from its start, with and without out-of-flow boxes.
+    pub(crate) reach: [Vec<f32>; 2],
     /// The last columns that the box being laid out has something in, with and without out-of-flow boxes.
     furthest: [usize; 2],
     /// A box starts in the last row.
@@ -183,6 +181,8 @@ pub(crate) struct Flow<'a> {
     outcome: Outcome,
     pub(crate) is_separated: bool,
     is_pinned: bool,
+    /// What a break has last been forced before.
+    forced: Option<(BoxId, Option<usize>)>,
     is_known_to_fit: bool,
     /// Up to what height.
     grows: Option<f32>,
@@ -348,9 +348,7 @@ impl Breaks {
 
     pub(crate) fn note(&mut self, column: usize, bottom: f32) {
         let (used, tally) = (bottom - self.start(column), &mut self.tally);
-        let both = [&mut tally.reach, &mut tally.reach_in_flow]
-            .into_iter()
-            .zip(&mut tally.furthest);
+        let both = tally.reach.iter_mut().zip(&mut tally.furthest);
         for (reach, furthest) in both.take(if self.is_out_of_flow { 1 } else { 2 }) {
             reach.resize(reach.len().max(column + 1), 0.0);
             (reach[column], *furthest) = (reach[column].max(used), column.max(*furthest));
@@ -555,6 +553,7 @@ impl Flow<'_> {
             && is_separated
             && between == BreakBetween::Column
             && self.breaks.open.is_none_or(|it| self.column < it)
+            && self.forced.replace((id, line)) != Some((id, line))
         {
             return Decision::Move(Appeal::Perfect, true);
         }
@@ -1091,6 +1090,7 @@ impl Document {
         let it = &self.boxes[id];
         it.is_replaced()
             || it.is_foreign()
+            || it.kind == Kind::Math
             || it.overflow[1].scrolls()
             || it.is_skipped
             || it.is_clamped()
@@ -1147,6 +1147,7 @@ impl Document {
             cuts: Vec::new(),
             outcome: Outcome::default(),
             is_separated: false,
+            forced: None,
             is_known_to_fit,
             grows: grows.then(|| {
                 it.height_limits(
@@ -1249,10 +1250,7 @@ impl Document {
         breaks.open = open;
         let last = breaks.outcome.last;
         if clips {
-            for (reach, before) in [
-                (&mut breaks.tally.reach, &tally.reach),
-                (&mut breaks.tally.reach_in_flow, &tally.reach_in_flow),
-            ] {
+            for (reach, before) in breaks.tally.reach.iter_mut().zip(&tally.reach) {
                 reach
                     .iter_mut()
                     .skip(last)
@@ -1767,7 +1765,7 @@ impl Document {
         root: &mut Root,
     ) {
         let breaks = mapping.breaks;
-        let columns = (0..breaks.tally.reach.len().max(1)).map(|column| {
+        let columns = (0..breaks.tally.reach[0].len().max(1)).map(|column| {
             let [x, y] = mapping.locate(column, [0.0, breaks.start(column)]);
             let (row, origin) = (breaks.row(column), origin.map(|it| -it));
             let fills = mapping.outer.is_none() && breaks.is_in_last_row(column);

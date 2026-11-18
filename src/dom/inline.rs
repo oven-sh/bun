@@ -1,7 +1,6 @@
 //! Inline-level content: white space processing and shaping. `lines.rs` breaks it into lines.
 
 use core::cell::RefCell;
-use core::hash::Hasher;
 use core::ops::Range;
 use std::borrow::Cow;
 use std::rc::Rc;
@@ -12,8 +11,8 @@ use crate::abi::{self, Cluster, Letter, TextRun};
 use crate::boxes::BoxId;
 use crate::characters::*;
 use crate::document::Document;
-use crate::lines::{Line, Lines, edge};
-use crate::name::{Map, keyed_hasher};
+use crate::lines::{Kept, Line, Lines, edge};
+use crate::name::{Map, keyed_hash_of_words};
 use crate::platform::{self, Shaped, glyph_extent, has_positioning_feature};
 use crate::properties::Style;
 use crate::tree::NodeId;
@@ -78,12 +77,16 @@ pub(crate) struct Item {
     pub(crate) has_own_style: bool,
     /// Its clusters have the same face, direction and orientation.
     pub(crate) is_uniform: bool,
+    /// It comes after a letter.
+    is_in_word: bool,
     pub(crate) node: NodeId,
     /// For text, of the parent.
     pub(crate) style: Rc<Style>,
     /// In `text`.
     pub(crate) start: u32,
     pub(crate) end: u32,
+    /// Of the text that its first character is shaped with.
+    run_start: u32,
     pub(crate) clusters: Range<u32>,
     pub(crate) segments: Range<u32>,
     /// The `Open` item that it is in, plus one. 0 is the root.
@@ -92,6 +95,8 @@ pub(crate) struct Item {
 
 pub(crate) struct Paragraph {
     pub(crate) first_cluster: u32,
+    /// In the whole text.
+    start: u32,
     pub(crate) shaped: Rc<Shaped>,
 }
 
@@ -100,8 +105,26 @@ pub(crate) struct Clusters {
     pub(crate) paragraphs: SmallVec<[Paragraph; 1]>,
     joined: core::cell::OnceCell<Vec<Cluster>>,
     count: u32,
-    /// The letters of the paragraphs say all.
-    are_letters: bool,
+    /// `joined` differs from what has been shaped.
+    are_adjusted: bool,
+    /// The letters of all paragraphs, if they differ from what has been shaped.
+    adjusted_letters: Vec<Letter>,
+    /// What `Document::shape` has got.
+    direction: u8,
+    /// Some may be gone.
+    found: Found,
+}
+
+/// Among the characters.
+#[derive(Clone, Copy, Default)]
+struct Found {
+    spaces: bool,
+    ideographs: bool,
+    quotes: bool,
+    punctuation: bool,
+    /// What has come of it.
+    adjusts: bool,
+    trims: bool,
 }
 
 impl Clusters {
@@ -120,53 +143,169 @@ impl Clusters {
 
     #[cold]
     fn join(&self) -> Vec<Cluster> {
-        let (mut joined, mut start) = (Vec::with_capacity(self.len()), 0);
-        for Paragraph { shaped, .. } in &self.paragraphs {
+        let mut joined = Vec::with_capacity(self.len());
+        for Paragraph { shaped, start, .. } in &self.paragraphs {
             joined.extend(shaped.clusters().iter().map(|cluster| Cluster {
                 start: cluster.start + start,
                 ..*cluster
             }));
-            start += shaped.text.len() as u32;
         }
+        joined
+            .iter_mut()
+            .zip(&self.adjusted_letters)
+            .for_each(|(it, letter)| (it.advance, it.flags) = (letter.advance, letter.flags));
         joined
     }
 
     /// `range` is in one paragraph.
     pub(crate) fn letters(&self, range: &Range<u32>) -> Option<&[Letter]> {
-        let paragraph = self.are_letters.then(|| self.paragraph_of(range.start))?;
-        paragraph.shaped.letters.get(
-            (range.start - paragraph.first_cluster) as usize
-                ..(range.end - paragraph.first_cluster) as usize,
-        )
+        if !self.adjusted_letters.is_empty() {
+            return self
+                .adjusted_letters
+                .get(range.start as usize..range.end as usize);
+        }
+        let paragraph =
+            (!self.are_adjusted && self.count > 0).then(|| self.paragraph_of(range.start))?;
+        paragraph
+            .shaped
+            .letters
+            .get(
+                (range.start - paragraph.first_cluster) as usize
+                    ..(range.end - paragraph.first_cluster) as usize,
+            )
+            .filter(|_| !paragraph.shaped.letters.is_empty())
+    }
+
+    /// `range` is in one paragraph. Their starts are of no use.
+    pub(crate) fn part(&self, range: &Range<u32>) -> &[Cluster] {
+        match self.joined.get() {
+            Some(joined) => &joined[range.start as usize..range.end as usize],
+            None if range.is_empty() => &[],
+            None if !self.adjusted_letters.is_empty() => {
+                &self[range.start as usize..range.end as usize]
+            }
+            None => {
+                let paragraph = self.paragraph_of(range.start);
+                &paragraph.shaped.clusters()[(range.start - paragraph.first_cluster) as usize
+                    ..(range.end - paragraph.first_cluster) as usize]
+            }
+        }
+    }
+
+    /// The glyph may be missing.
+    #[inline]
+    pub(crate) fn letter(&self, at: u32) -> Letter {
+        self.letters(&(at..at + 1))
+            .map_or_else(|| abbreviated(&self.part(&(at..at + 1))[0]), |it| it[0])
     }
 
     /// The glyphs may be missing.
-    pub(crate) fn as_letters(&self) -> Option<Cow<'_, [Letter]>> {
-        let letter = |it: &Cluster| {
-            Some(Letter {
-                advance: it.advance,
-                glyph: abi::NO_GLYPH,
-                flags: it.flags,
-                face: it.face.try_into().ok()?,
-            })
-        };
-        match &self.paragraphs[..] {
-            _ if !self.are_letters => self.iter().map(letter).collect(),
-            [only] => Some(Cow::Borrowed(&only.shaped.letters)),
-            all => {
-                let mut joined = Vec::with_capacity(self.len());
-                all.iter()
-                    .for_each(|it| joined.extend_from_slice(&it.shaped.letters));
-                Some(joined.into())
+    pub(crate) fn as_letters(&self, range: Range<u32>) -> Option<Cow<'_, [Letter]>> {
+        if let Some(letters) = self.letters(&range) {
+            return Some(letters.into());
+        }
+        let mut joined = Vec::with_capacity(range.len());
+        for (shaped, inside) in self.split(range.clone()) {
+            (shaped.faces.len() <= 256).then_some(())?;
+            match shaped.letters.get(inside.clone()) {
+                _ if self.are_adjusted => {}
+                Some(letters) => joined.extend_from_slice(letters),
+                None => joined.extend(shaped.clusters()[inside].iter().map(abbreviated)),
             }
         }
+        if self.are_adjusted {
+            joined.extend(
+                self[range.start as usize..range.end as usize]
+                    .iter()
+                    .map(abbreviated),
+            );
+        }
+        Some(joined.into())
+    }
+
+    pub(crate) fn paragraphs_after(&self, cluster: u32) -> &[Paragraph] {
+        &self.paragraphs[self
+            .paragraphs
+            .partition_point(|it| it.first_cluster <= cluster)..]
     }
 
     pub(crate) fn label(&self) -> Option<crate::lines::Label> {
         let [only] = &self.paragraphs[..] else {
             return None;
         };
-        only.shaped.label.filter(|_| self.are_letters)
+        only.shaped.label.filter(|_| self.are_as_shaped())
+    }
+
+    fn are_as_shaped(&self) -> bool {
+        !self.are_adjusted && self.adjusted_letters.is_empty()
+    }
+
+    /// The advance and the flags.
+    fn adjust(&mut self, at: u32) -> (&mut f32, &mut u8) {
+        if self.are_as_shaped()
+            && self.joined.get().is_none()
+            && self
+                .paragraphs
+                .iter()
+                .all(|it| !it.shaped.letters.is_empty())
+        {
+            self.adjusted_letters = self
+                .as_letters(0..self.count)
+                .map_or(Vec::new(), Cow::into_owned);
+        }
+        if self.adjusted_letters.is_empty() || self.joined.get().is_some() {
+            let it = &mut self[at as usize];
+            return (&mut it.advance, &mut it.flags);
+        }
+        let it = &mut self.adjusted_letters[at as usize];
+        (&mut it.advance, &mut it.flags)
+    }
+
+    /// In the whole text.
+    pub(crate) fn start_of(&self, cluster: u32) -> u32 {
+        if let Some(joined) = self.joined.get() {
+            return joined[cluster as usize].start;
+        }
+        let Paragraph {
+            first_cluster,
+            start,
+            shaped,
+        } = self.paragraph_of(cluster);
+        start
+            + if shaped.letters.len() == shaped.text.len() {
+                cluster - first_cluster
+            } else {
+                shaped.clusters()[(cluster - first_cluster) as usize].start
+            }
+    }
+
+    /// The paragraphs that have some of the clusters, each with the range in it.
+    fn split(&self, range: Range<u32>) -> impl Iterator<Item = (&Shaped, Range<usize>)> {
+        let first = self
+            .paragraphs
+            .partition_point(|it| it.first_cluster <= range.start)
+            .saturating_sub(1);
+        let some = self.paragraphs[first..]
+            .iter()
+            .take_while(move |it| it.first_cluster < range.end);
+        some.map(move |it| {
+            (
+                &*it.shaped,
+                range.start.saturating_sub(it.first_cluster) as usize
+                    ..it.shaped
+                        .count()
+                        .min((range.end - it.first_cluster) as usize),
+            )
+        })
+    }
+}
+
+fn abbreviated(it: &Cluster) -> Letter {
+    Letter {
+        advance: it.advance,
+        glyph: abi::NO_GLYPH,
+        flags: it.flags,
+        face: it.face as u8,
     }
 }
 
@@ -176,7 +315,7 @@ impl core::ops::Deref for Clusters {
     fn deref(&self) -> &[Cluster] {
         match (self.joined.get(), &self.paragraphs[..]) {
             (Some(joined), _) => joined,
-            (_, [only]) => only.shaped.clusters(),
+            (_, [only]) if self.adjusted_letters.is_empty() => only.shaped.clusters(),
             _ => self.joined.get_or_init(|| self.join()),
         }
     }
@@ -185,13 +324,13 @@ impl core::ops::Deref for Clusters {
 impl core::ops::DerefMut for Clusters {
     fn deref_mut(&mut self) -> &mut [Cluster] {
         self.joined.get_or_init(|| self.join());
-        self.are_letters = false;
+        (self.are_adjusted, self.adjusted_letters) = (true, Vec::new());
         self.joined.get_mut().map_or(&mut [], |it| it)
     }
 }
 
 pub(crate) enum Text {
-    Own(Box<str>),
+    Own(String),
     /// That of the only paragraph.
     Shared(Rc<Shaped>),
 }
@@ -214,16 +353,24 @@ pub(crate) struct Inline {
     pub(crate) clusters: Clusters,
     pub(crate) has_bidi: bool,
     pub(crate) has_layers: bool,
+    /// None of the items before it is one.
+    first_layer: u32,
     pub(crate) has_ruby: bool,
     pub(crate) force_line: bool,
+    pub(crate) has_split_text: bool,
+    /// See `Document::plain_lines`.
+    pub(crate) is_plain: core::cell::OnceCell<bool>,
     /// If that is all there is.
     pub(crate) label: Option<crate::lines::Label>,
     /// The same items and clusters in the style of `::first-line`, which comes with them.
     pub(crate) first_line: Option<Box<(Inline, Rc<Style>)>>,
     pub(crate) lines: Lines,
-    /// How far an item may paint outside of its fragments.
-    pub(crate) outset: core::cell::Cell<Option<f32>>,
+    /// How far one of so many items may paint outside of its fragments.
+    pub(crate) outset: core::cell::Cell<(u32, f32)>,
     pub(crate) prose: core::cell::OnceCell<Option<crate::lines::Prose>>,
+    firsts: core::cell::OnceCell<Box<Map<NodeId, u32>>>,
+    /// Until there are new ones.
+    pub(crate) former_lines: Option<Box<(Lines, Kept)>>,
 }
 
 impl Inline {
@@ -239,7 +386,11 @@ impl Inline {
     }
 
     pub(crate) fn nodes(&self) -> impl Iterator<Item = NodeId> + '_ {
-        (self.items.iter())
+        self.nodes_from(0)
+    }
+
+    pub(crate) fn nodes_from(&self, item: usize) -> impl Iterator<Item = NodeId> + '_ {
+        (self.items[item..].iter())
             .filter(|item| {
                 matches!(
                     item.kind,
@@ -251,7 +402,8 @@ impl Inline {
     }
 
     pub(crate) fn has_positioned_elements(&self) -> bool {
-        (self.items.iter())
+        self.items[self.first_layer as usize..]
+            .iter()
             .any(|item| matches!(item.kind, ItemKind::Open(_)) && item.style.is_positioned())
     }
 
@@ -260,7 +412,9 @@ impl Inline {
     }
 
     pub(crate) fn is_newline(&self, cluster: u32) -> bool {
-        self.text.as_bytes()[self.clusters[cluster as usize].start as usize] == b'\n'
+        let (paragraph, next) = (self.paragraph_of(cluster), cluster + 1);
+        (next - paragraph.first_cluster) as usize == paragraph.shaped.count()
+            && paragraph.shaped.text.ends_with('\n')
     }
 
     /// In the search for the first or the last formatted line.
@@ -280,7 +434,7 @@ impl Inline {
     }
 
     pub(crate) fn character(&self, cluster: u32) -> char {
-        self.text[self.clusters[cluster as usize].start as usize..]
+        self.text[self.clusters.start_of(cluster) as usize..]
             .chars()
             .next()
             .unwrap_or_default()
@@ -325,8 +479,111 @@ impl Inline {
 
     /// The first cluster that starts at `offset` or later.
     pub(crate) fn cluster_at(&self, offset: u32) -> u32 {
-        self.clusters
-            .partition_point(|cluster| cluster.start < offset) as u32
+        let paragraphs = &self.clusters.paragraphs;
+        let Some(it) = paragraphs[..paragraphs.partition_point(|it| it.start <= offset)].last()
+        else {
+            return 0;
+        };
+        let (inside, shaped) = (
+            ((offset - it.start) as usize).min(it.shaped.text.len()),
+            &it.shaped,
+        );
+        let is_short = shaped.letters.len() == shaped.text.len() || inside < 256;
+        it.first_cluster
+            + if is_short {
+                shaped.count_in(0..inside)
+            } else {
+                shaped
+                    .clusters()
+                    .partition_point(|it| (it.start as usize) < inside)
+            } as u32
+    }
+
+    /// From a UTF-8 offset in the item's node.
+    pub(crate) fn cluster_in(&self, item: &Item, offset: u32) -> u32 {
+        match self.text_offset(item, offset) {
+            offset if offset == item.end => item.clusters.end,
+            offset
+                if offset == item.start
+                    || (item.start..item.end).contains(&offset)
+                        && item.clusters.len() as u32 == item.end - item.start =>
+            {
+                item.clusters.start + offset - item.start
+            }
+            offset => self.cluster_at(offset),
+        }
+    }
+
+    fn first_of(&self, node: NodeId) -> Option<usize> {
+        let is_first = |it: &(usize, &Item)| {
+            matches!(
+                it.1.kind,
+                ItemKind::Text | ItemKind::Break | ItemKind::Atomic(_) | ItemKind::Open(_)
+            )
+        };
+        let all = || self.items.iter().enumerate();
+        match self.items.len() {
+            ..24 => all()
+                .filter(is_first)
+                .find(|it| it.1.node == node)
+                .map(|it| it.0),
+            _ if !self.has_split_text
+                && self.firsts.get().is_none()
+                && let Some(found) = all()
+                    .rev()
+                    .take(16)
+                    .filter(is_first)
+                    .find(|it| it.1.node == node) =>
+            {
+                Some(found.0)
+            }
+            _ => self
+                .firsts
+                .get_or_init(|| {
+                    Box::new(
+                        all()
+                            .rev()
+                            .filter(is_first)
+                            .map(|it| (it.1.node, it.0 as u32))
+                            .collect(),
+                    )
+                })
+                .get(&node)
+                .map(|it| *it as usize),
+        }
+    }
+
+    /// The first one that is text, a line break or an atomic inline.
+    pub(crate) fn leaf(&self, node: NodeId) -> Option<&Item> {
+        Some(&self.items[self.first_of(node)?]).filter(|it| !matches!(it.kind, ItemKind::Open(_)))
+    }
+
+    /// If it is worth finding out.
+    pub(crate) fn clusters_of(&self, node: NodeId) -> Option<Range<u32>> {
+        let first = (self.lines.lines.len() > 4
+            && self.clusters.count > 0
+            && !self.has_split_text
+            && !self.has_ruby)
+            .then(|| self.first_of(node))
+            .flatten()?;
+        let it = &self.items[first];
+        Some(if let ItemKind::Open(_) = it.kind {
+            it.clusters.start
+                ..self
+                    .items
+                    .get(self.inside(first).end)
+                    .map_or(self.clusters.count, |it| it.clusters.end)
+        } else {
+            it.clusters.clone()
+        })
+    }
+
+    pub(crate) fn is_cut_off(&self, node: NodeId) -> bool {
+        self.items
+            .iter()
+            .rev()
+            .take_while(|it| matches!(it.kind, ItemKind::Close(false) | ItemKind::Control))
+            .any(|it| it.node == node)
     }
 }
 
@@ -429,6 +686,53 @@ impl Builder {
         builder
     }
 
+    /// Goes on with what `inline` has before that item, whose text starts with what is not a space.
+    pub(crate) fn resume(
+        &mut self,
+        mut inline: Box<Inline>,
+        root: Rc<Style>,
+        item: usize,
+    ) -> Former {
+        let Item {
+            start,
+            parent,
+            segments: Range { start: segment, .. },
+            ..
+        } = inline.items[item];
+        let rest = inline.items.drain(item..).collect();
+        (self.items, self.segments) = (
+            core::mem::replace(&mut inline.items, rest),
+            core::mem::take(&mut inline.segments),
+        );
+        self.segments.truncate(segment as usize);
+        match &mut inline.text {
+            Text::Own(all) => {
+                let rest = all.split_off(start as usize);
+                self.text = core::mem::replace(all, rest);
+            }
+            Text::Shared(it) => self.text.push_str(&it.text[..start as usize]),
+        }
+        let (around, outside) = (
+            core::iter::successors(parent.checked_sub(1), |it| {
+                self.items[*it as usize].parent.checked_sub(1)
+            }),
+            self.contexts.len(),
+        );
+        self.contexts.extend(
+            around
+                .map(|it| bidi_controls(&self.items[it as usize].style).0)
+                .filter(|it| !it.is_empty()),
+        );
+        self.contexts[outside..].reverse();
+        (self.parent, self.in_word, self.are_contexts_closed) =
+            (parent, inline.items[0].is_in_word, false);
+        Former {
+            inline,
+            root,
+            passed_on: [item, start as usize],
+        }
+    }
+
     pub(crate) fn has_content(&self) -> bool {
         !self.text.is_empty()
     }
@@ -444,6 +748,8 @@ impl Builder {
             kind,
             has_own_style: false,
             is_uniform: false,
+            is_in_word: self.in_word,
+            run_start: 0,
             node,
             style: Rc::clone(style),
             start,
@@ -530,7 +836,7 @@ impl Builder {
     }
 
     /// The part of a text that `::first-letter` applies to.
-    pub(crate) fn first_letter(&mut self, node: NodeId, data: &[u8], style: &Rc<Style>) {
+    pub(crate) fn first_letter(&mut self, node: NodeId, data: &str, style: &Rc<Style>) {
         let first = self.items.len();
         self.open(0, style, true);
         self.text_from(node, data, 0, style);
@@ -610,33 +916,34 @@ impl Builder {
         }
     }
 
-    pub(crate) fn text(&mut self, node: NodeId, data: &[u8], style: &Rc<Style>) {
+    pub(crate) fn text(&mut self, node: NodeId, data: &str, style: &Rc<Style>) {
         self.text_from(node, data, 0, style);
     }
 
     /// `data` starts at `base` in the node.
-    pub(crate) fn text_from(&mut self, node: NodeId, data: &[u8], base: usize, style: &Rc<Style>) {
+    pub(crate) fn text_from(&mut self, node: NodeId, data: &str, base: usize, style: &Rc<Style>) {
         if !self.contexts.is_empty()
             && style.text.collapse != WhiteSpaceCollapse::Collapse
-            && let Some(end) = bun_core::strings::index_of_char_usize(data, b'\n').map(|it| it + 1)
+            && let Some(end) =
+                bun_core::strings::index_of_char_usize(data.as_bytes(), b'\n').map(|it| it + 1)
         {
             let (mut rest, mut end) = (data, Some(end));
             while let Some(len) = end {
                 self.text_run(node, &rest[..len], base + data.len() - rest.len(), style);
                 (rest, self.are_contexts_closed, self.has_split_text) = (&rest[len..], true, true);
                 end = Some(
-                    bun_core::strings::index_of_char_usize(rest, b'\n')
+                    bun_core::strings::index_of_char_usize(rest.as_bytes(), b'\n')
                         .map_or(rest.len(), |it| it + 1),
                 )
                 .filter(|it| *it > 0);
             }
-            self.are_contexts_closed = data.ends_with(b"\n");
+            self.are_contexts_closed = data.ends_with('\n');
             return;
         }
         self.text_run(node, data, base, style);
     }
 
-    fn text_run(&mut self, node: NodeId, data: &[u8], base: usize, style: &Rc<Style>) {
+    fn text_run(&mut self, node: NodeId, data: &str, base: usize, style: &Rc<Style>) {
         let (collapse, transform) = (style.text.collapse, style.text.transform);
         let mask = match style.text.security {
             TextSecurity::None => None,
@@ -644,12 +951,11 @@ impl Builder {
             TextSecurity::Circle => Some('◦'),
             TextSecurity::Square => Some('▪'),
         };
-        if self.are_contexts_closed && !crate::boxes::is_collapsible_space(data, style) {
+        if self.are_contexts_closed && !crate::boxes::is_collapsible_space(data.as_bytes(), style) {
             self.reopen_contexts(style);
         }
         self.push(ItemKind::Text, node, style, "");
         let (index, first) = (self.items.len() - 1, self.segments.len());
-        let data = crate::values::text(data);
         self.text.reserve(data.len());
         if collapse.preserves_spaces()
             && transform == TextTransform::None
@@ -734,11 +1040,12 @@ impl Builder {
         item.segments = first as u32..self.segments.len() as u32;
     }
 
-    /// `first_line` is the style of `::first-line`, if it applies.
+    /// `first_line` is the style of `::first-line`, if it applies. `former` is what it replaces, with the style of its box.
     pub(crate) fn finish(
         &mut self,
         document: &mut Document,
         first_line: Option<Rc<Style>>,
+        former: Option<Former>,
     ) -> Box<Inline> {
         self.remove_trailing_space();
         if self.has_split_text {
@@ -772,14 +1079,32 @@ impl Builder {
             }
             (items, root)
         });
+        let former = former.filter(|it| {
+            first_line.is_none()
+                && it.inline.force_line == self.force_line
+                && writes_like(&it.root, &self.root)
+        });
+        let outset = former.as_ref().map_or((0, 0.0), |it| {
+            (
+                it.inline.outset.get().0.min(it.passed_on[0] as u32),
+                it.inline.outset.get().1,
+            )
+        });
         let mut inline = shape_items(
             document,
-            &self.text,
-            core::mem::take(&mut self.items),
+            &mut self.text,
+            take_out(&mut self.items),
             &self.root,
+            former,
         );
-        (inline.segments, inline.force_line) =
-            (core::mem::take(&mut self.segments), self.force_line);
+        (inline.segments, inline.force_line, inline.has_split_text) = (
+            take_out(&mut self.segments),
+            self.force_line,
+            self.has_split_text,
+        );
+        inline
+            .outset
+            .set(if outset.0 > 0 { outset } else { (0, 0.0) });
         inline.first_line = first_line.map(|(items, root)| {
             let (mut text, mut moved, mut in_word) = (String::new(), items.clone(), false);
             for (item, normal) in moved.iter_mut().zip(&inline.items) {
@@ -796,14 +1121,14 @@ impl Builder {
                 }
                 item.end = text.len() as u32;
             }
-            let mut restyled = shape_items(document, &text, moved, &root);
+            let mut restyled = shape_items(document, &mut text, moved, &root, None);
             if restyled
                 .items
                 .iter()
                 .zip(&inline.items)
                 .any(|(a, b)| a.clusters != b.clusters)
             {
-                restyled = shape_items(document, &inline.text, items, &root);
+                restyled = shape_items(document, &mut inline.text.to_string(), items, &root, None);
             }
             (restyled.segments, restyled.force_line) = (inline.segments.clone(), inline.force_line);
             Box::new((
@@ -890,6 +1215,13 @@ fn interrupts_shaping(item: &Item) -> bool {
     else {
         return false;
     };
+    if style
+        .fixed()
+        .traits
+        .contains(crate::layout::Traits::IS_PLAIN_IN_LINES)
+    {
+        return false;
+    }
     let is_left = matches!(item.kind, ItemKind::Open(_)) != style.is_rtl();
     let takes_room = |basis: f32| edge(style, is_left, basis) != (0.0, 0.0);
     !matches!(
@@ -910,6 +1242,13 @@ fn without_collapsing(text: &[u8]) -> usize {
     {
         done += 32;
     }
+    if text.len() - done < 33 {
+        let mut last = [b'a'; 33];
+        last[..text.len() - done].copy_from_slice(&text[done..]);
+        if last.array_windows().fold(true, |all, it| all & stays(it)) {
+            return text.len();
+        }
+    }
     done + text[done..]
         .array_windows()
         .take_while(|it| stays(it))
@@ -917,240 +1256,728 @@ fn without_collapsing(text: &[u8]) -> usize {
         + 1
 }
 
+/// Leaves the memory behind unless there is much of it.
+fn take_out<T>(all: &mut SmallVec<[T; 1]>) -> SmallVec<[T; 1]> {
+    if all.len() > 128 {
+        return core::mem::take(all);
+    }
+    let mut taken = SmallVec::with_capacity(all.len());
+    taken.append(all);
+    taken
+}
+
+fn beyond_ascii(text: &str) -> impl Iterator<Item = (usize, char)> {
+    let mut at = 0;
+    core::iter::from_fn(move || {
+        if text.as_bytes().get(at)?.is_ascii() {
+            at += bun_core::strings::first_non_ascii(&text.as_bytes()[at..])? as usize;
+        }
+        let found = (at, text[at..].chars().next()?);
+        at += found.1.len_utf8();
+        Some(found)
+    })
+}
+
+fn writes_like(a: &Style, b: &Style) -> bool {
+    core::ptr::eq(a, b)
+        || Rc::ptr_eq(&a.font, &b.font)
+            && Rc::ptr_eq(&a.text, &b.text)
+            && (a.font_id, a.zoom, a.metrics) == (b.font_id, b.zoom, b.metrics)
+}
+
+fn common_start(a: &[u8], b: &[u8]) -> usize {
+    let whole = a
+        .as_chunks::<64>()
+        .0
+        .iter()
+        .zip(b.as_chunks().0)
+        .take_while(|it| it.0 == it.1)
+        .count()
+        * 64;
+    whole
+        + a[whole..]
+            .iter()
+            .zip(&b[whole..])
+            .take_while(|it| it.0 == it.1)
+            .count()
+}
+
+fn common_end(a: &[u8], b: &[u8]) -> usize {
+    let whole = a
+        .as_rchunks::<64>()
+        .1
+        .iter()
+        .rev()
+        .zip(b.as_rchunks().1.iter().rev())
+        .take_while(|it| it.0 == it.1)
+        .count()
+        * 64;
+    whole
+        + a[..a.len() - whole]
+            .iter()
+            .rev()
+            .zip(b[..b.len() - whole].iter().rev())
+            .take_while(|it| it.0 == it.1)
+            .count()
+}
+
+impl Inline {
+    pub(crate) fn is_worth_keeping(&self) -> bool {
+        (self.clusters.count >= 160 || self.items.len() >= 24)
+            && !(self.clusters.are_adjusted
+                || self.has_bidi
+                || self.has_ruby
+                || self.first_line.is_some()
+                || self.clusters.paragraphs.is_empty())
+    }
+}
+
+impl Inline {
+    pub(crate) fn can_be_resumed(&self) -> bool {
+        self.items.len() >= 8 && !self.has_split_text && self.is_worth_keeping()
+    }
+}
+
+/// What is being replaced.
+pub(crate) struct Former {
+    pub(crate) inline: Box<Inline>,
+    pub(crate) root: Rc<Style>,
+    /// How many of the items are gone, because they start the new ones, and where their text ends.
+    pub(crate) passed_on: [usize; 2],
+}
+
+struct Change {
+    /// How many items, and how much of the text, are the same at the start.
+    items: usize,
+    bytes: usize,
+    /// Those that are not the same.
+    paragraphs: Range<usize>,
+    former_len: usize,
+}
+
+impl Former {
+    /// Copies what is known about the items that are alike.
+    fn compare(&self, text: &str, items: &mut [Item]) -> Change {
+        let (inline, [count, base]) = (&*self.inline, self.passed_on);
+        let is_like = |a: &Item, b: &Item| {
+            (a.kind, a.parent) == (b.kind, b.parent)
+                && (Rc::ptr_eq(&a.style, &b.style)
+                    || matches!(a.kind, ItemKind::Text | ItemKind::Control)
+                        && writes_like(&a.style, &b.style))
+                && (a.node == b.node || !inline.has_layers || !matches!(a.kind, ItemKind::Open(_)))
+        };
+        let copy = |(a, b): (&Item, &mut Item)| {
+            (b.clusters, b.is_uniform, b.run_start) = (
+                a.clusters.clone(),
+                a.is_uniform,
+                b.start.saturating_sub(a.start.saturating_sub(a.run_start)),
+            )
+        };
+        let old = if let Text::Own(rest) = &inline.text {
+            rest.as_bytes()
+        } else {
+            &inline.text.as_bytes()[base..]
+        };
+        let (new, olds, news, paragraphs, former_len) = (
+            &text.as_bytes()[base..],
+            &inline.items[..],
+            &mut items[count..],
+            &inline.clusters.paragraphs,
+            base + old.len(),
+        );
+        let same = olds
+            .iter()
+            .zip(&*news)
+            .take_while(|(a, b)| a.end == b.end && is_like(a, b))
+            .count();
+        let (limit, from) = match (olds.get(same), news.get(same)) {
+            (Some(a), Some(b)) if is_like(a, b) => {
+                (a.end.min(b.end) as usize - base, a.start as usize - base)
+            }
+            (None, None) => (old.len(), 0),
+            (a, b) => (a.or(b).map_or(0, |it| it.start as usize - base), usize::MAX),
+        };
+        let start = common_start(&old[..limit], &new[..limit]);
+        let head = paragraphs[1..].partition_point(|it| (it.start as usize) < base + start);
+        let is_moved = |(a, b): (&Item, &Item)| {
+            former_len - a.end as usize == text.len() - b.end as usize && is_like(a, b)
+        };
+        let mut tail = paragraphs.len();
+        if from != usize::MAX
+            && head + 1 < tail
+            && olds.len() == news.len()
+            && olds[same..].iter().zip(&news[same..]).all(is_moved)
+        {
+            let end = common_end(&old[start.max(from)..], &new[start.max(from)..]);
+            tail = paragraphs
+                .partition_point(|it| it.start as usize <= former_len - end)
+                .max(head + 1);
+        }
+        let alike = if tail < paragraphs.len() {
+            olds.len()
+        } else {
+            same + usize::from(from != usize::MAX)
+        };
+        olds.iter().zip(news).take(alike).for_each(copy);
+        Change {
+            items: count + same,
+            bytes: base + start,
+            paragraphs: head..tail,
+            former_len,
+        }
+    }
+}
+
+/// For the paragraph, from the run on that starts at `from` and has the first of `items`.
+fn find_runs(
+    text: &str,
+    Range { start, end }: Range<usize>,
+    from: usize,
+    items: &mut [Item],
+    runs: &mut SmallVec<[TextRun; 16]>,
+) {
+    runs.clear();
+    let (mut is_apart, mut known) = (false, None::<([usize; 2], u32, TextRun)>);
+    for item in items
+        .iter_mut()
+        .take_while(|item| (item.start as usize) < end)
+    {
+        if item.start == item.end {
+            is_apart |= interrupts_shaping(item);
+            continue;
+        }
+        if let (ItemKind::Atomic(_), Some(last)) = (item.kind, runs.last_mut()) {
+            last.end = item.end - start as u32;
+            continue;
+        }
+        let (font, text_style) = (
+            Rc::as_ptr(&item.style.font).addr(),
+            Rc::as_ptr(&item.style.text).addr(),
+        );
+        let like = known
+            .filter(|it| (it.0, it.1) == ([font, text_style], item.style.font_id))
+            .unwrap_or_else(|| {
+                *known.insert((
+                    [font, text_style],
+                    item.style.font_id,
+                    text_run(&item.style, 0),
+                ))
+            });
+        let run = TextRun {
+            end: ((item.end as usize).min(end) - start) as u32,
+            ..like.2
+        };
+        let mut add = |run: TextRun| match runs.last_mut() {
+            Some(last)
+                if !core::mem::take(&mut is_apart)
+                    && TextRun {
+                        end: run.end,
+                        ..*last
+                    } == run =>
+            {
+                last.end = run.end
+            }
+            _ => runs.push(run),
+        };
+        if item.kind != ItemKind::Text
+            || !item.style.has_central_baseline()
+            || item.style.text.combine == TextCombine::All
+        {
+            add(run);
+            if item.start as usize >= start {
+                item.run_start = runs
+                    .iter()
+                    .nth_back(1)
+                    .map_or(from as u32, |it| start as u32 + it.end);
+            }
+            continue;
+        }
+        let (first, mut flag) = ((item.start as usize).max(start) - start, 0);
+        for (offset, character) in text[start + first..start + run.end as usize].char_indices() {
+            if offset == 0 || !extends_cluster(character) {
+                flag = if stands_upright(&item.style, character) {
+                    abi::RUN_UPRIGHT
+                } else {
+                    0
+                };
+            }
+            add(TextRun {
+                end: (first + offset + character.len_utf8()) as u32,
+                word_break: run.word_break | flag,
+                ..run
+            });
+        }
+    }
+}
+
 fn shape_items(
     document: &Document,
-    text: &str,
+    whole: &mut String,
     mut items: SmallVec<[Item; 1]>,
     root: &Style,
+    former: Option<Former>,
 ) -> Box<Inline> {
+    let text = &**whole;
     let direction = match (root.layout.unicode_bidi, root.is_rtl()) {
         (UnicodeBidi::Plaintext, _) => abi::DIRECTION_AUTO,
         (_, true) => abi::DIRECTION_RTL,
         (_, false) => abi::DIRECTION_LTR,
     };
+    let is_anywhere = |it: &Item| match it.kind {
+        ItemKind::Text => {
+            it.style.text.line_break == LineBreak::Anywhere
+                && it.style.text.collapse != WhiteSpaceCollapse::BreakSpaces
+                && it.style.text.wrap == TextWrapMode::Wrap
+        }
+        kind => matches!(kind, ItemKind::Open(_) | ItemKind::Close(_)),
+    };
+    let anywhere = if items.iter().all(is_anywhere) {
+        platform::BREAKS_ANYWHERE
+    } else {
+        0
+    };
     let mut clusters = Clusters {
         paragraphs: SmallVec::new(),
         joined: Default::default(),
         count: 0,
-        are_letters: !text.is_empty(),
+        are_adjusted: false,
+        adjusted_letters: Vec::new(),
+        direction: direction | anywhere,
+        found: Found::default(),
     };
-    let (mut start, mut first_item, mut runs) = (0, 0, SmallVec::<[TextRun; 4]>::new());
-    while start < text.len() {
-        let rest = &text.as_bytes()[start..];
+    let (mut changed, mut tail, mut runs, mut replaced, mut same_items) =
+        (0..text.len(), Vec::new(), SmallVec::new(), None, 0);
+    let mut former = former.filter(|it| {
+        it.inline.clusters.direction == clusters.direction
+            && root.text.writing_mode == WritingMode::HorizontalTb
+    });
+    if let Some(former) = &mut former {
+        let change = former.compare(text, &mut items);
+        former.inline.text = Text::Own(String::new());
+        clusters.paragraphs = core::mem::take(&mut former.inline.clusters.paragraphs);
+        tail.extend(
+            clusters
+                .paragraphs
+                .drain(change.paragraphs.end..)
+                .map(|it| Paragraph {
+                    start: (it.start as usize + text.len() - change.former_len) as u32,
+                    ..it
+                }),
+        );
+        if let Some(first) = clusters.paragraphs.drain(change.paragraphs.start..).next() {
+            changed = first.start as usize..tail.first().map_or(text.len(), |it| it.start as usize);
+            (clusters.count, clusters.found, same_items) = (
+                first.first_cluster,
+                former.inline.clusters.found,
+                change.items,
+            );
+            replaced = Some((first.shaped, change.bytes - changed.start));
+        }
+    }
+    let (mut start, first_changed) = (changed.start, clusters.count);
+    // Up to where the clusters have the same numbers as before, and the same letters.
+    let (mut settled, mut valid) = ((start as u32, first_changed), first_changed);
+    let mut first_item = if start > 0 {
+        items.partition_point(|it| it.end as usize <= start)
+    } else {
+        0
+    };
+    while start < changed.end {
+        let known = replaced.as_ref().map_or(0, |it| it.1.saturating_sub(1));
+        let rest = &text.as_bytes()[start + known..];
         let end = start
+            + known
             + bun_core::strings::index_of_char_usize(rest, b'\n').map_or(rest.len(), |it| it + 1);
-        runs.clear();
-        let mut is_apart = false;
         while items[first_item].end as usize <= start {
             first_item += 1;
         }
-        for item in items[first_item..]
-            .iter()
-            .take_while(|item| (item.start as usize) < end)
-        {
-            if item.start == item.end {
-                is_apart |= interrupts_shaping(item);
-                continue;
-            }
-            if let (ItemKind::Atomic(_), Some(last)) = (item.kind, runs.last_mut()) {
-                last.end = item.end - start as u32;
-                continue;
-            }
-            let run = text_run(&item.style, (item.end as usize).min(end) - start);
-            let mut add = |run: TextRun| match runs.last_mut() {
-                Some(last)
-                    if !core::mem::take(&mut is_apart)
-                        && TextRun {
-                            end: run.end,
-                            ..*last
-                        } == run =>
-                {
-                    last.end = run.end
-                }
-                _ => runs.push(run),
-            };
-            if item.kind != ItemKind::Text
-                || !item.style.has_central_baseline()
-                || item.style.text.combine == TextCombine::All
-            {
-                add(run);
-                continue;
-            }
-            let (first, mut flag) = ((item.start as usize).max(start) - start, 0);
-            for (offset, character) in text[start + first..start + run.end as usize].char_indices()
-            {
-                if offset == 0 || !extends_cluster(character) {
-                    flag = if stands_upright(&item.style, character) {
-                        abi::RUN_UPRIGHT
+        let shape = |items: &mut [Item], runs: &mut _| {
+            find_runs(text, start..end, start, items, runs);
+            document.shape(&text[start..end], runs, clusters.direction)
+        };
+        let shaped = match replaced.take() {
+            None => shape(&mut items[first_item..], &mut runs),
+            Some((old, known)) => {
+                let (shaped, skipped, same) = if known == old.text.len() && known == end - start {
+                    let count = old.count();
+                    (old, known, count)
+                } else {
+                    let near = items[..items.len().min(same_items + 1)]
+                        .partition_point(|it| it.start as usize + 96 <= start + known);
+                    let near = items[first_item..near.max(first_item)]
+                        .iter()
+                        .rposition(|it| it.kind == ItemKind::Text && it.start < it.end)
+                        .map_or(first_item, |it| first_item + it);
+                    let from = start.max(items[near].run_start as usize);
+                    let rest = if known < 64 {
+                        Err(old)
                     } else {
-                        0
+                        find_runs(text, start..end, from, &mut items[near..], &mut runs);
+                        document.shape_rest(
+                            old,
+                            known,
+                            &text[start..end],
+                            (&runs, from - start),
+                            clusters.direction,
+                        )
                     };
-                }
-                add(TextRun {
-                    end: (first + offset + character.len_utf8()) as u32,
-                    word_break: run.word_break | flag,
-                    ..run
-                });
+                    rest.unwrap_or_else(|old| {
+                        let shaped = shape(&mut items[first_item..], &mut runs);
+                        let same = shaped.letters_in_common(&old);
+                        (shaped, 0, same)
+                    })
+                };
+                settled = (
+                    (start + skipped) as u32,
+                    first_changed
+                        + if skipped > 0 {
+                            shaped.count_before(skipped) as u32
+                        } else {
+                            0
+                        },
+                );
+                valid += same.min(shaped.count_before(known)).saturating_sub(2) as u32;
+                shaped
             }
-        }
-        let shaped = document.shape(&text[start..end], &runs, direction);
+        };
         let first_cluster = clusters.count;
-        (clusters.count, clusters.are_letters) = (
-            first_cluster + shaped.count() as u32,
-            clusters.are_letters && !shaped.letters.is_empty(),
-        );
+        clusters.count += shaped.count() as u32;
         clusters.paragraphs.push(Paragraph {
             first_cluster,
+            start: start as u32,
             shaped,
         });
         start = end;
     }
-    let kept = match &clusters.paragraphs[..] {
-        [only] => Text::Shared(Rc::clone(&only.shaped)),
-        _ => Text::Own(text.into()),
-    };
-    let mut next = 0;
-    for item in &mut items {
-        let first = next;
-        next = match clusters.len() == text.len() {
-            true => item.end as usize,
-            false if clusters.are_letters => {
-                first + text[item.start as usize..item.end as usize].chars().count()
-            }
-            false => {
-                first
-                    + clusters[first..]
-                        .iter()
-                        .take_while(|it| it.start < item.end)
-                        .count()
-            }
-        };
-        item.clusters = first as u32..next as u32;
+    let (fresh, kept_tail) = (
+        first_changed..clusters.count,
+        tail.first().map(|it| [it.first_cluster, clusters.count]),
+    );
+    if let (Some([old, new]), Some(former)) = (kept_tail, &former) {
+        clusters
+            .paragraphs
+            .extend(tail.into_iter().map(|it| Paragraph {
+                first_cluster: it.first_cluster - old + new,
+                ..it
+            }));
+        clusters.count = former.inline.clusters.count - old + new;
     }
-    let (mode, is_ascii) = (root.text.writing_mode.of_lines(), text.is_ascii());
+    let unsettled = items[..same_items].partition_point(|it| it.end <= settled.0);
+    let (mut next, mut paragraphs) = (
+        items[..unsettled].last().map_or(0, |it| it.clusters.end),
+        &clusters.paragraphs[..],
+    );
+    for item in &mut items[unsettled..] {
+        let first = next;
+        if clusters.len() == text.len() {
+            next = item.end;
+        } else if item.start < item.end {
+            let mut from = item.start;
+            if paragraphs.get(1).is_some_and(|it| it.start <= item.end) {
+                paragraphs =
+                    &paragraphs[paragraphs.partition_point(|it| it.start <= item.end) - 1..];
+                (from, next) = (from, next).max((paragraphs[0].start, paragraphs[0].first_cluster));
+            }
+            if settled.0 <= item.end {
+                (from, next) = (from, next).max(settled);
+            }
+            next += paragraphs[0].shaped.count_in(
+                (from - paragraphs[0].start) as usize..(item.end - paragraphs[0].start) as usize,
+            ) as u32;
+        }
+        item.clusters = first..next;
+    }
+    let is_open_layer = |it: &Item| matches!(it.kind, ItemKind::Open(_)) && is_layer(&it.style);
+    let first_layer = former
+        .as_ref()
+        .map(|it| it.inline.first_layer as usize)
+        .filter(|it| *it < same_items);
+    let first_layer = first_layer.unwrap_or_else(|| {
+        same_items
+            + items[same_items..]
+                .iter()
+                .take_while(|it| !is_open_layer(it))
+                .count()
+    });
+    let (mode, is_ascii) = (
+        root.text.writing_mode.of_lines(),
+        clusters.len() == text.len() || text.is_ascii(),
+    );
     let mut inline = Box::new(Inline {
         has_bidi: (direction == abi::DIRECTION_RTL || !is_ascii)
-            && !clusters.are_letters
-            && clusters.iter().any(|cluster| cluster.bidi_level > 0),
-        has_layers: items
-            .iter()
-            .any(|it| matches!(it.kind, ItemKind::Open(_)) && is_layer(&it.style)),
-        has_ruby: items
+            && clusters.split(fresh.clone()).any(|it| {
+                it.0.letters.is_empty() && it.0.clusters().iter().any(|it| it.bidi_level > 0)
+            }),
+        has_layers: first_layer < items.len(),
+        first_layer: first_layer as u32,
+        has_ruby: items[same_items..]
             .iter()
             .any(|it| matches!(it.kind, ItemKind::Annotation(..))),
-        text: kept,
+        text: Text::Own(String::new()),
         items,
         segments: SmallVec::new(),
         clusters,
         force_line: false,
+        has_split_text: false,
+        is_plain: Default::default(),
         label: None,
         first_line: None,
         lines: Lines::default(),
         outset: Default::default(),
         prose: Default::default(),
+        firsts: Default::default(),
+        former_lines: None,
     });
-    let minds_ideographs = || {
-        text.chars().any(|it| matches!(it, '‘' | '’' | '“' | '”'))
-            || inline
-                .items
-                .iter()
-                .any(|it| it.style.text.autospace == TextAutospace::Normal)
-    };
-    let (has_ruby, is_ascii) = (
-        inline.has_ruby && !is_ascii,
-        is_ascii || text.chars().all(|it| it.is_ascii() || it == '\u{fffc}'),
+    let (before, unknown) = (inline.clusters.found, settled.0 as usize..changed.end);
+    let mut found = if is_ascii { Found::default() } else { before };
+    let (mut trailing_bytes, counts) = (
+        0,
+        !is_ascii
+            && inline
+                .clusters
+                .split(fresh.clone())
+                .all(|it| it.0.has_a_letter_per_character()),
     );
-    let adjusts = !is_ascii
-        && (text.chars().any(|it| {
-            matches!(
-                it,
-                '\u{1680}' | '\u{2000}'..='\u{200a}' | '\u{205f}' | '\u{3000}'
+    let is_tight = core::cell::OnceCell::new();
+    for (at, it) in beyond_ascii(if is_ascii { "" } else { &text[unknown.clone()] }) {
+        let cluster = settled.1 + (at - trailing_bytes) as u32;
+        trailing_bytes += it.len_utf8() - 1;
+        match it {
+            ..'\u{1680}' | '\u{2066}'..='\u{2069}' | '\u{fffc}' => {}
+            '\u{4e00}'..='\u{9fff}' => found.ideographs = true,
+            '\u{ac00}'..='\u{d7a3}' => {}
+            '‘' | '’' | '“' | '”' => {
+                let is_narrow = |it: Letter| {
+                    it.advance
+                        < inline.paragraph_of(cluster).shaped.faces[usize::from(it.face)].size
+                            * 0.65
+                };
+                found.quotes = true;
+                found.punctuation = found.punctuation
+                    || !counts
+                    || !is_narrow(inline.clusters.letter(cluster))
+                    || *is_tight.get_or_init(|| {
+                        inline.items[unsettled..]
+                            .iter()
+                            .any(|it| it.style.letter_spacing() < 0.0)
+                    });
+            }
+            '\u{1680}' | '\u{2000}'..='\u{200a}' | '\u{205f}' | '\u{3000}' => found.spaces = true,
+            _ => {
+                found.ideographs |= it >= '\u{2e80}' && is_ideograph(it);
+                found.punctuation |= match spacing_class(it) {
+                    None => text[unknown.start + at + it.len_utf8()..]
+                        .chars()
+                        .next()
+                        .map(spacing_class)
+                        .is_some_and(|it| it != Some(Punctuation::Other)),
+                    Some(class) => matches!(class, Punctuation::Opening | Punctuation::Closing),
+                };
+            }
+        }
+    }
+    found.adjusts = found.adjusts
+        || found.spaces
+        || found.ideographs
+            && (found.quotes
+                || inline
+                    .items
+                    .iter()
+                    .any(|it| it.style.text.autospace == TextAutospace::Normal));
+    found.trims = found.punctuation && text.bytes().any(|it| it >= 0xe3);
+    let has_ruby =
+        inline.has_ruby && !is_ascii && text.chars().any(|it| !it.is_ascii() && it != '\u{fffc}');
+    inline.clusters.found = found;
+    inline.text = match &inline.clusters.paragraphs[..] {
+        [only] => Text::Shared(Rc::clone(&only.shaped)),
+        all if all.len() < 8 => Text::Own(whole.clone()),
+        _ => Text::Own(core::mem::take(whole)),
+    };
+    let has_letters = |it: &Former| {
+        it.inline.clusters.adjusted_letters.is_empty()
+            || inline
+                .clusters
+                .split(fresh.clone())
+                .all(|it| !it.0.letters.is_empty() && it.0.faces.len() <= 256)
+    };
+    let still_holds = !(before.punctuation && before.trims != found.trims
+        || anywhere != 0 && before.adjusts != found.adjusts);
+    let mut former = former
+        .filter(|it| still_holds && inline.is_worth_keeping() && has_letters(it))
+        .map(|it| {
+            (
+                Kept {
+                    head: it.inline.place_to_resume(first_changed, valid),
+                    tail: kept_tail,
+                },
+                it.inline,
             )
-        }) || text.chars().any(|it| it >= '\u{2e80}' && is_ideograph(it))
-            && minds_ideographs());
-    for index in 0..inline.items.len() {
+        });
+    let (mut to_adjust, mut final_letters) = (0..u32::MAX, SmallVec::<[Letter; 3]>::new());
+    if let Some((kept, former)) = &mut former {
+        let [old_end, end] = kept
+            .tail
+            .unwrap_or([former.clusters.count, inline.clusters.count]);
+        to_adjust = kept.head.saturating_sub(2)..end;
+        let mut letters = core::mem::take(&mut former.clusters.adjusted_letters);
+        if !letters.is_empty() {
+            final_letters.extend_from_slice(
+                &letters[kept.head.saturating_sub(3) as usize..kept.head as usize],
+            );
+            letters.splice(
+                to_adjust.start as usize..old_end as usize,
+                inline
+                    .clusters
+                    .split(to_adjust.clone())
+                    .flat_map(|it| &it.0.letters[it.1])
+                    .copied(),
+            );
+            inline.clusters.adjusted_letters = letters;
+        }
+    }
+    let first_to_adjust = if to_adjust.start > 0 {
+        inline
+            .items
+            .partition_point(|it| it.clusters.end <= to_adjust.start)
+    } else {
+        0
+    };
+    for index in first_to_adjust..inline.items.len() {
         if mode.is_vertical() {
             inline.items[index].style = document.turned_style(&inline.items[index].style, mode);
         }
         let item = &inline.items[index];
-        if adjusts
+        if item.clusters.start >= to_adjust.end {
+            break;
+        }
+        if found.adjusts
             || has_ruby
             || mode.is_vertical()
-            || item.style.text.line_break == LineBreak::Anywhere
+            || item.style.text.line_break == LineBreak::Anywhere && anywhere == 0
             || matches!(item.kind, ItemKind::Atomic(_))
         {
-            inline.adjust_clusters(index);
+            inline.adjust_clusters(index, &to_adjust);
         }
     }
-    let may_trim = |(it, next): (char, char)| match spacing_class(it) {
-        None => {
-            matches!(it, '‘' | '’' | '“' | '”') || spacing_class(next) != Some(Punctuation::Other)
-        }
-        Some(class) => matches!(class, Punctuation::Opening | Punctuation::Closing),
-    };
-    if !is_ascii
-        && text.bytes().any(|it| it >= 0xe3)
-        && text
-            .chars()
-            .zip(text.chars().skip(1).chain([' ']))
-            .any(may_trim)
+    if found.trims {
+        inline.trim_punctuation(first_to_adjust, &to_adjust);
+    }
+    for (letter, at) in final_letters
+        .iter()
+        .zip(former.as_ref().map_or(0, |it| it.0.head.saturating_sub(3))..)
     {
-        inline.trim_punctuation();
+        let (advance, flags) = inline.clusters.adjust(at);
+        (*advance, *flags) = (letter.advance, letter.flags);
     }
     let kind = |it: &Cluster| (it.face, it.bidi_level, it.flags & (UPRIGHT | COMBINED));
-    let are_uniform = !inline.has_bidi
-        && !mode.is_vertical()
-        && inline
-            .clusters
-            .paragraphs
-            .iter()
-            .all(|it| it.shaped.faces.len() == 1);
     let Inline {
         items, clusters, ..
     } = &mut *inline;
-    let letters = (!are_uniform && clusters.are_letters)
-        .then(|| clusters.as_letters())
-        .flatten();
-    for item in items {
-        let range = item.clusters.start as usize..item.clusters.end as usize;
-        item.is_uniform = are_uniform
-            || match &letters {
-                Some(letters) => letters[range]
-                    .array_windows()
-                    .fold(true, |all, [a, b]| all & (a.face == b.face)),
-                None => clusters[range]
-                    .array_windows()
-                    .fold(true, |all, [a, b]| all & (kind(a) == kind(b))),
-            };
+    let are_alike = |clusters: &[Cluster]| {
+        clusters
+            .array_windows()
+            .fold(true, |all, [a, b]| all & (kind(a) == kind(b)))
+    };
+    for item in items[unsettled..]
+        .iter_mut()
+        .take_while(|it| it.clusters.start <= fresh.end)
+    {
+        let inside =
+            item.clusters.start.max(settled.1.saturating_sub(1))..item.clusters.end.min(fresh.end);
+        item.is_uniform = (inside == item.clusters || item.is_uniform)
+            && (inside.len() < 2
+                || match clusters.are_adjusted {
+                    true => are_alike(&clusters[inside.start as usize..inside.end as usize]),
+                    false => clusters.split(inside).all(|(shaped, range)| {
+                        match shaped.letters.get(range.clone()) {
+                            Some(letters) => {
+                                shaped.faces.len() == 1
+                                    || letters
+                                        .array_windows()
+                                        .fold(true, |all, [a, b]| all & (a.face == b.face))
+                            }
+                            None => are_alike(&shaped.clusters()[range]),
+                        }
+                    }),
+                });
+    }
+    if let Some((kept, former)) = former.filter(|_| inline.is_worth_keeping()) {
+        inline.take_over(*former, root, kept);
     }
     inline
 }
 
 thread_local! {
-    static SPACING: RefCell<Map<(u32, u32, bool), (Punctuation, bool)>> = RefCell::default();
+    static SPACING: RefCell<Box<Map<(u32, u32, bool), (Punctuation, bool)>>> = RefCell::default();
 }
 
 impl Inline {
     fn first_glyph(&self, cluster: u32) -> Option<(abi::Face, abi::Glyph)> {
-        let (it, shaped) = (
-            &self.clusters[cluster as usize],
-            &self.paragraph_of(cluster).shaped,
-        );
+        let (range, shaped) = (cluster..cluster + 1, &self.paragraph_of(cluster).shaped);
+        if let Some([it]) = self.clusters.letters(&range) {
+            return (it.glyph != abi::NO_GLYPH).then(|| {
+                (
+                    shaped.faces[usize::from(it.face)],
+                    abi::Glyph {
+                        id: it.glyph.into(),
+                        x: 0.0,
+                        y: 0.0,
+                    },
+                )
+            });
+        }
+        let it = &self.clusters.part(&range)[0];
         Some((
             shaped.faces[usize::from(it.face)],
             *shaped.glyphs()[it.glyphs.range()].first()?,
         ))
     }
 
+    /// The first one of each of the clusters, which are in the item.
+    fn characters<'a>(
+        &'a self,
+        item: &Item,
+        clusters: Range<u32>,
+    ) -> impl Iterator<Item = char> + 'a {
+        let are_all = !clusters.is_empty()
+            && self
+                .clusters
+                .split(clusters.clone())
+                .all(|it| it.0.has_a_letter_per_character());
+        let start = || {
+            let it = self.paragraph_of(clusters.start);
+            it.start as usize
+                + it.shaped
+                    .start_of((clusters.start - it.first_cluster) as usize)
+        };
+        let all = if are_all {
+            &self.text[if clusters.start == item.clusters.start {
+                item.start as usize
+            } else {
+                start()
+            }..]
+        } else {
+            ""
+        };
+        all.chars()
+            .take(clusters.len())
+            .chain(if are_all { 0..0 } else { clusters }.map(|it| self.character(it)))
+    }
+
     /// And whether it has a half that can be trimmed.
-    pub(crate) fn spacing_of(&self, cluster: u32, style: &Style) -> (Punctuation, bool) {
-        let (character, it) = (self.character(cluster), &self.clusters[cluster as usize]);
+    pub(crate) fn spacing_of(
+        &self,
+        cluster: u32,
+        character: char,
+        style: &Style,
+    ) -> (Punctuation, bool) {
         let class = spacing_class(character);
         if let Some(class) =
             class.filter(|it| !matches!(it, Punctuation::Opening | Punctuation::Closing))
         {
             return (class, false);
         }
+        let it = self.clusters.letter(cluster);
         let (Some((face, glyph)), stands) = (self.first_glyph(cluster), it.flags & UPRIGHT != 0)
         else {
             return (Punctuation::Other, false);
@@ -1197,7 +2024,7 @@ impl Inline {
 
     /// What `text-spacing-trim` takes off its start.
     pub(crate) fn trimmed_start(&self, cluster: u32, style: &Style, starts_line: bool) -> f32 {
-        let it = &self.clusters[cluster as usize];
+        let it = self.clusters.letter(cluster);
         let trims = match style.text.spacing_trim {
             _ if !starts_line => it.flags & TRIMS != 0,
             TextSpacingTrim::SpaceFirst => cluster > 0 && !self.is_newline(cluster - 1),
@@ -1211,18 +2038,29 @@ impl Inline {
     }
 
     pub(crate) fn autospace_after(&self, cluster: u32) -> f32 {
-        let it = &self.clusters[cluster as usize];
+        let it = self.clusters.letter(cluster);
         if it.flags & (AUTOSPACED | abi::CLUSTER_SPACE) != AUTOSPACED {
             return 0.0;
         }
-        let paragraph = self.paragraph_of(cluster);
+        let Paragraph {
+            first_cluster,
+            shaped,
+            ..
+        } = self.paragraph_of(cluster);
+        let at = (cluster - first_cluster) as usize;
         it.advance
-            - paragraph.shaped.clusters()[(cluster - paragraph.first_cluster) as usize].advance
+            - shaped
+                .letters
+                .get(at)
+                .map_or_else(|| shaped.clusters()[at].advance, |it| it.advance)
     }
 
     /// The cluster that is shown to the left of where `at` meets the text before it.
     fn left_of_boundary(&self, at: u32) -> usize {
         let at = at as usize;
+        if !self.has_bidi {
+            return at - 1;
+        }
         let [before, own] = [at - 1, at].map(|it| self.clusters[it].bidi_level);
         match (before & 1, own & 1) {
             (1, 0) if own < before => {
@@ -1244,11 +2082,21 @@ impl Inline {
         }
     }
 
-    fn trim_punctuation(&mut self) {
-        let mut before = (Punctuation::Other, false);
-        for item in &self.items {
-            for at in item.clusters.clone() {
-                let own = self.spacing_of(at, &item.style);
+    fn trim_punctuation(&mut self, first: usize, range: &Range<u32>) {
+        let (mut before, mut halved, mut marked) =
+            ((Punctuation::Other, false), Vec::new(), Vec::new());
+        for item in self.items[first..]
+            .iter()
+            .take_while(|it| it.clusters.start < range.end)
+        {
+            let inside = item.clusters.start.max(range.start)..item.clusters.end.min(range.end);
+            for (at, character) in inside.clone().zip(self.characters(item, inside)) {
+                if matches!(character, 'a'..='z' | ' ' | '\u{3041}'..='\u{30fa}' | '\u{4e00}'..='\u{d7a3}')
+                {
+                    before = (Punctuation::Other, false);
+                    continue;
+                }
+                let own = self.spacing_of(at, character, &item.style);
                 let own = (
                     own.0,
                     own.1 && item.style.text.spacing_trim != TextSpacingTrim::SpaceAll,
@@ -1259,11 +2107,7 @@ impl Inline {
                         Punctuation::Closing | Punctuation::Middle | Punctuation::NarrowClosing
                     )
                 {
-                    let it = &mut self.clusters[at as usize - 1];
-                    (it.advance, it.flags) = (
-                        (it.advance + item.style.letter_spacing()) / 2.0,
-                        it.flags & !TRIMS,
-                    );
+                    halved.push((at - 1, item.style.letter_spacing()));
                 }
                 let flags = match (own, before.0) {
                     (
@@ -1272,27 +2116,29 @@ impl Inline {
                     ) => OPENING,
                     ((Punctuation::Opening, true), _) => OPENING | TRIMS,
                     ((Punctuation::Closing, true), _)
-                        if !matches!(
-                            self.character(at),
-                            '、' | '。' | '，' | '．' | '：' | '；'
-                        ) =>
+                        if !matches!(character, '、' | '。' | '，' | '．' | '：' | '；') =>
                     {
                         TRIMS
                     }
                     _ => 0,
                 };
-                if flags != 0 {
-                    self.clusters[at as usize].flags |= flags;
-                }
+                marked.extend((flags != 0).then_some((at, flags)));
                 before = own;
             }
             if let ItemKind::RubyBase | ItemKind::Annotation(..) = item.kind {
                 before = (Punctuation::Other, false);
             }
         }
+        marked
+            .into_iter()
+            .for_each(|(at, flags)| *self.clusters.adjust(at).1 |= flags);
+        for (at, spacing) in halved {
+            let (advance, flags) = self.clusters.adjust(at);
+            (*advance, *flags) = ((*advance + spacing) / 2.0, *flags & !TRIMS);
+        }
     }
 
-    fn adjust_clusters(&mut self, index: usize) {
+    fn adjust_clusters(&mut self, index: usize, range: &Range<u32>) {
         let (item, count) = (&self.items[index], self.clusters.len() as u32);
         let (clusters, text, is_vertical) = (
             item.clusters.clone(),
@@ -1301,7 +2147,11 @@ impl Inline {
         );
         match item.kind {
             ItemKind::Atomic(_) => {
-                let [before, after] = match self.clusters.are_letters {
+                let [before, after] = match self
+                    .clusters
+                    .split(clusters.start.saturating_sub(1)..clusters.end + 1)
+                    .all(|it| it.0.has_a_letter_per_character())
+                {
                     true => [
                         self.text[..item.start as usize].chars().next_back(),
                         self.text[item.end as usize..].chars().next(),
@@ -1321,7 +2171,7 @@ impl Inline {
                 ] {
                     let is_right = |other| matches!(self.clusters.letters(&(at..at + 1)), Some([it]) if other == '\n' || (it.flags & abi::CLUSTER_BREAK_BEFORE == 0) == glues(other));
                     if let Some(other) = other.filter(|it| !is_right(*it)) {
-                        let flags = &mut self.clusters[at as usize].flags;
+                        let flags = self.clusters.adjust(at).1;
                         *flags = if glues(other) {
                             *flags & !abi::CLUSTER_BREAK_BEFORE
                         } else {
@@ -1332,7 +2182,7 @@ impl Inline {
             }
             ItemKind::Annotation(_, base) => {
                 let base = self.items[base as usize].clusters.start + 1..clusters.start;
-                base.for_each(|at| self.clusters[at as usize].flags &= !abi::CLUSTER_BREAK_BEFORE);
+                base.for_each(|at| *self.clusters.adjust(at).1 &= !abi::CLUSTER_BREAK_BEFORE);
             }
             ItemKind::Text
                 if text.combine == TextCombine::All
@@ -1364,13 +2214,42 @@ impl Inline {
                 }
             }
             ItemKind::Text => {
-                for at in clusters {
-                    let character = self.character(at);
+                let clusters = clusters.start.max(range.start)..clusters.end.min(range.end);
+                let next = |item: &Item| {
+                    if item.clusters.end == clusters.end {
+                        self.text[item.end as usize..].chars().next()
+                    } else {
+                        None
+                    }
+                };
+                let characters: Vec<_> = self
+                    .characters(item, clusters.clone())
+                    .chain(next(item))
+                    .collect();
+                let mut before = match clusters
+                    .start
+                    .checked_sub(1)
+                    .filter(|it| !clusters.is_empty() && *it >= range.start)
+                {
+                    Some(it) if self.paragraph_of(it).shaped.has_a_letter_per_character() => self
+                        .text[..item.start as usize]
+                        .chars()
+                        .next_back()
+                        .unwrap_or_default(),
+                    it => it.map_or('\0', |it| self.character(it)),
+                };
+                for (at, index) in clusters.zip(0..) {
+                    let character = characters[index];
+                    let before = core::mem::replace(&mut before, character);
+                    let flags_before = || {
+                        at.checked_sub(1)
+                            .map_or(0, |it| self.clusters.letter(it).flags)
+                    };
                     let after_combined =
-                        at > 0 && self.clusters[at as usize - 1].flags & COMBINED != 0;
+                        self.clusters.are_adjusted && flags_before() & COMBINED != 0;
                     if text.autospace == TextAutospace::Normal
                         && at > 0
-                        && (is_ideograph(character) || is_ideograph(self.character(at - 1)))
+                        && (is_ideograph(character) || is_ideograph(before))
                     {
                         let is_chinese = speaks(&item.style, "zh");
                         let is_letter = |it: char| {
@@ -1394,57 +2273,58 @@ impl Inline {
                                             | '¿'
                                     )
                         };
-                        let (before, stood) = (
-                            self.character(at - 1),
-                            self.clusters[at as usize - 1].flags & (UPRIGHT | COMBINED) != 0,
+                        let (stood, stands) = (
+                            flags_before() & (UPRIGHT | COMBINED) != 0,
+                            is_vertical && stands_upright(&item.style, character),
                         );
-                        let stands = is_vertical && stands_upright(&item.style, character);
                         if is_ideograph(before) && is_letter(character) && !stands
                             || is_letter(before) && !stood && is_ideograph(character)
                         {
-                            let left = self.left_of_boundary(at);
-                            let left = &mut self.clusters[left];
-                            left.advance += item.style.metrics.ideograph_advance / 8.0;
-                            left.flags |= AUTOSPACED;
+                            let (advance, flags) =
+                                self.clusters.adjust(self.left_of_boundary(at) as u32);
+                            (*advance, *flags) = (
+                                *advance + item.style.metrics.ideograph_advance / 8.0,
+                                *flags | AUTOSPACED,
+                            );
                         }
                     }
-                    if matches!(character, '“' | '”' | '‘' | '’')
-                        && at > 0
-                        && is_ideograph(self.character(at - 1))
-                    {
+                    if matches!(character, '“' | '”' | '‘' | '’') && is_ideograph(before) {
                         let is_bracket =
                             matches!(character, '“' | '”') && speaks(&item.style, "zh");
-                        let before_wide = at + 1 < count && is_ideograph(self.character(at + 1));
+                        let before_wide = characters
+                            .get(index + 1)
+                            .is_some_and(|it| is_ideograph(*it));
                         match character {
                             '“' | '‘' if is_bracket || before_wide => {
-                                self.clusters[at as usize].flags |= abi::CLUSTER_BREAK_BEFORE
+                                *self.clusters.adjust(at).1 |= abi::CLUSTER_BREAK_BEFORE
                             }
                             '”' | '’' if before_wide => {
-                                self.clusters[at as usize + 1].flags |= abi::CLUSTER_BREAK_BEFORE
+                                *self.clusters.adjust(at + 1).1 |= abi::CLUSTER_BREAK_BEFORE
                             }
                             _ => {}
                         }
                     }
-                    let cluster = &mut self.clusters[at as usize];
                     match character {
-                        ' ' | '\t' => {}
                         '\u{3000}' if text.word_break == WordBreak::BreakAll => {
-                            cluster.flags =
-                                cluster.flags & !abi::CLUSTER_BREAK_BEFORE | IDEOGRAPHIC_SPACE
+                            let flags = self.clusters.adjust(at).1;
+                            *flags = *flags & !abi::CLUSTER_BREAK_BEFORE | IDEOGRAPHIC_SPACE;
                         }
-                        '\u{3000}' => cluster.flags |= IDEOGRAPHIC_SPACE,
-                        _ => cluster.flags &= !abi::CLUSTER_SPACE,
+                        '\u{3000}' => *self.clusters.adjust(at).1 |= IDEOGRAPHIC_SPACE,
+                        '\u{1680}' | '\u{2000}'..='\u{200a}' | '\u{205f}' => {
+                            *self.clusters.adjust(at).1 &= !abi::CLUSTER_SPACE
+                        }
+                        _ => {}
                     }
                     if text.line_break == LineBreak::Anywhere
                         || after_combined && character.is_alphanumeric()
                     {
-                        cluster.flags |= abi::CLUSTER_BREAK_BEFORE;
+                        *self.clusters.adjust(at).1 |= abi::CLUSTER_BREAK_BEFORE;
                     }
                     if is_vertical
-                        && cluster.glyphs.start < cluster.glyphs.end
                         && stands_upright(&item.style, character)
+                        && self.first_glyph(at).is_some()
                     {
-                        cluster.flags |= UPRIGHT;
+                        self.clusters[at as usize].flags |= UPRIGHT;
                     }
                 }
             }
@@ -1495,27 +2375,50 @@ pub(crate) fn text_run(style: &Style, end: usize) -> TextRun {
 
 impl Document {
     pub(crate) fn shape(&self, text: &str, runs: &[TextRun], direction: u8) -> Rc<Shaped> {
-        let mut hasher = keyed_hasher();
-        for run in runs {
+        let words = runs.iter().flat_map(|run| {
             let [size, letters, words] =
                 [run.size, run.letter_spacing, run.word_spacing].map(|it| u64::from(it.to_bits()));
-            hasher.write_u64((u64::from(run.end) << 32) | u64::from(run.font));
-            hasher.write_u64((size << 32) | letters);
-            hasher
-                .write_u64((words << 32) | (u64::from(run.word_break) << 8) | u64::from(direction));
-        }
-        hasher.write(text.as_bytes());
+            [
+                (u64::from(run.end) << 32) | u64::from(run.font),
+                (size << 32) | letters,
+                (words << 32) | (u64::from(run.word_break) << 8) | u64::from(direction),
+            ]
+        });
+        let how = keyed_hash_of_words(&words.collect::<SmallVec<[u64; 24]>>());
         let mut cache = self.shaped.borrow_mut();
         if self.newly_shaped_bytes.get() > 1 << 15 {
             self.newly_shaped_bytes.set(0);
             cache.retain(|_, it| it.text.len() < 256 || Rc::strong_count(it) > 1);
         }
-        Rc::clone(cache.entry(hasher.finish()).or_insert_with(|| {
+        let new = || {
             self.newly_shaped_bytes
                 .update(|it| it + if text.len() < 256 { 0 } else { text.len() });
-            self.fonts.note_written(text, runs);
-            Rc::new(platform::shape(text, runs, direction))
-        }))
+            self.fonts.note_written(text, 0, runs);
+            let mut shaped = platform::shape(text, runs, direction);
+            shaped.how = how;
+            Rc::new(shaped)
+        };
+        let known = cache
+            .entry(bun_wyhash::hash_with_seed(how, text.as_bytes()))
+            .or_insert_with(new);
+        if known.how == how && *known.text == *text {
+            Rc::clone(known)
+        } else {
+            new()
+        }
+    }
+
+    fn shape_rest(
+        &self,
+        former: Rc<Shaped>,
+        known: usize,
+        text: &str,
+        runs: (&[TextRun], usize),
+        direction: u8,
+    ) -> Result<(Rc<Shaped>, usize, usize), Rc<Shaped>> {
+        let (shaped, skipped, same) = platform::shape_rest(former, known, text, runs, direction)?;
+        self.fonts.note_written(text, skipped, runs.0);
+        Ok((Rc::new(shaped), skipped, same))
     }
 
     /// And whether it is below the line.

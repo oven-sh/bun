@@ -1,0 +1,23 @@
+[package]
+name = "bun_engine_platform"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_alloc.workspace = true
+bun_core.workspace = true
+bun_sys.workspace = true
+bun_threading.workspace = true
+libc.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+bun_windows_sys.workspace = true
+
+[dev-dependencies]
+bun_engine_standalone.workspace = true

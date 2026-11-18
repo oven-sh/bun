@@ -1,0 +1,28 @@
+Report U_MEMORY_ALLOCATION_ERROR from DecNum's setters, as its copy constructor does.
+
+--- a/source/i18n/number_utils.cpp
++++ b/source/i18n/number_utils.cpp
+@@ -162,7 +162,10 @@
+ 
+ void DecNum::_setTo(const char* str, int32_t maxDigits, UErrorCode& status) {
+     if (maxDigits > kDefaultDigits) {
+-        fData.resize(maxDigits, 0);
++        if (fData.resize(maxDigits, 0) == nullptr) {
++            status = U_MEMORY_ALLOCATION_ERROR;
++            return;
++        }
+         fContext.digits = maxDigits;
+     } else {
+         fContext.digits = kDefaultDigits;
+@@ -185,7 +188,10 @@
+ void
+ DecNum::setTo(const uint8_t* bcd, int32_t length, int32_t scale, bool isNegative, UErrorCode& status) {
+     if (length > kDefaultDigits) {
+-        fData.resize(length, 0);
++        if (fData.resize(length, 0) == nullptr) {
++            status = U_MEMORY_ALLOCATION_ERROR;
++            return;
++        }
+         fContext.digits = length;
+     } else {
+         fContext.digits = kDefaultDigits;

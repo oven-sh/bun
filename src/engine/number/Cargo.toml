@@ -1,0 +1,17 @@
+[package]
+name = "bun_engine_number"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_engine_text.workspace = true
+bun_engine_unicode.workspace = true
+
+[dev-dependencies]
+bun_engine_standalone.workspace = true

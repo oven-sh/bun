@@ -1,0 +1,26 @@
+Open a calendar for a locale that names its region and no script without looking up likely subtags.
+
+--- a/source/i18n/calendar.cpp
++++ b/source/i18n/calendar.cpp
+@@ -4101,7 +4101,9 @@
+     UErrorCode myStatus = U_ZERO_ERROR;
+ 
+     Locale min(desiredLocale);
+-    min.minimizeSubtags(myStatus);
++    if (uprv_strlen(desiredLocale.getScript()) > 0) {
++        min.minimizeSubtags(myStatus);
++    }
+     Locale useLocale;
+     if ( uprv_strlen(desiredLocale.getCountry()) == 0 ||
+          (uprv_strlen(desiredLocale.getScript()) > 0 && uprv_strlen(min.getScript()) == 0) ) {
+--- a/source/i18n/gregoimp.h
++++ b/source/i18n/gregoimp.h
+@@ -371,7 +371,7 @@
+   static void U_CALLCONV \
+   initializeSystemDefaultCentury() { \
+       UErrorCode status = U_ZERO_ERROR; \
+-      T calendar(U, status); \
++      T calendar("en_US" U, status); \
+       /* initialize systemDefaultCentury and systemDefaultCenturyYear based */ \
+       /* on the current time.  They'll be set to 80 years before */ \
+       /* the current time. */ \

@@ -1,0 +1,21 @@
+[package]
+name = "bun_engine_regexp"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_engine_text.workspace = true
+bun_engine_unicode.workspace = true
+bun_highway.workspace = true
+bun_pod.workspace = true
+bitflags.workspace = true
+smallvec.workspace = true
+
+[dev-dependencies]
+bun_engine_standalone.workspace = true

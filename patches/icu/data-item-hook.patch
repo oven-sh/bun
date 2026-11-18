@@ -1,0 +1,22 @@
+Hand each item found in a data package to Bun, which inflates the compressed ones.
+
+--- a/source/common/udata.cpp
++++ b/source/common/udata.cpp
+@@ -42,6 +42,9 @@
+ #include "umapfile.h"
+ #include "umutex.h"
+ 
++// Bun: returns the item as ICU reads it, and updates its length.
++extern "C" const void *bun_icu_maybe_decompress(const void *item, int32_t *length);
++
+ /***********************************************************************
+ *
+ *   Notes on the organization of the ICU data implementation
+@@ -1068,6 +1071,7 @@
+ #endif
+ 
+             if(pHeader!=nullptr) {
++                pHeader = static_cast<const DataHeader *>(bun_icu_maybe_decompress(pHeader, &length));
+                 pEntryData = checkDataItem(pHeader, isAcceptable, context, type, name, subErrorCode, pErrorCode);
+ #ifdef UDATA_DEBUG
+                 fprintf(stderr, "pEntryData=%p\n", (void*) pEntryData);

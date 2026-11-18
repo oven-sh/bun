@@ -1,0 +1,63 @@
+Put the new moons and solar terms that are minutes from midnight on the days that the published calendars give them (China 1900-2100, Korea 1900-2050).
+
+--- a/source/i18n/chnsecal.cpp
++++ b/source/i18n/chnsecal.cpp
+@@ -530,6 +530,38 @@
+ 
+ namespace {
+ /**
++ * What to add to the start of a day so that a new moon or a solar term that is
++ * minutes from midnight falls on the day that the published calendar gives it.
++ */
++double midnightShift(const TimeZone* timeZone, double days) {
++    constexpr double kShift = 2 * kOneHour;
++    if (days < -20000 || days > 40000) {
++        return 0;
++    }
++    if (timeZone == getAstronomerTimeZone()) {
++        switch (static_cast<int32_t>(days)) {
++        case -19248: return -kShift; // 1917-04-21
++        case -17328: return -kShift; // 1922-07-24
++        case -5810: return kShift; // 1954-02-04
++        case -5426: return kShift; // 1955-02-23
++        case 6444: return -kShift; // 1987-08-24
++        case 10609: return kShift; // 1999-01-18
++        case 15570: return kShift; // 2012-08-18
++        case 17843: return -kShift; // 2018-11-08
++        case 20856: return kShift; // 2027-02-07
++        case 21948: return -kShift; // 2030-02-03
++        case 32048: return kShift; // 2057-09-29
++        case 36596: return kShift; // 2070-03-13
++        }
++    } else {
++        switch (static_cast<int32_t>(days)) {
++        case 17224: return kShift; // 2017-02-27
++        }
++    }
++    return 0;
++}
++
++/**
+  * Convert local days to UTC epoch milliseconds.
+  * This is not an accurate conversion in that getTimezoneOffset
+  * takes the milliseconds in GMT (not local time). In theory, more
+@@ -553,7 +585,7 @@
+         if (U_FAILURE(status)) {
+             return 0;
+         }
+-        return millis - static_cast<double>(rawOffset + dstOffset);
++        return millis - static_cast<double>(rawOffset + dstOffset) + midnightShift(timeZone, days);
+     }
+     return millis - static_cast<double>(CHINA_OFFSET);
+ }
+@@ -574,7 +606,9 @@
+         if (U_FAILURE(status)) {
+             return 0;
+         }
+-        return ClockMath::floorDivide(millis + static_cast<double>(rawOffset + dstOffset), kOneDay);
++        double local = millis + static_cast<double>(rawOffset + dstOffset);
++        double nearestMidnight = ClockMath::floorDivide(local + kOneDay / 2, kOneDay);
++        return ClockMath::floorDivide(local - midnightShift(timeZone, nearestMidnight), kOneDay);
+     }
+     return ClockMath::floorDivide(millis + static_cast<double>(CHINA_OFFSET), kOneDay);
+ }

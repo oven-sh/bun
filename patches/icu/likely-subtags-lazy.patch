@@ -1,0 +1,204 @@
+Decode an entry of the table of likely subtags when it is looked up, in place of all of them at the first lookup (2 ms, 1.4 MB).
+
+--- a/source/common/loclikelysubtags.cpp
++++ b/source/common/loclikelysubtags.cpp
+@@ -57,8 +57,10 @@
+     CharStringMap languageAliases;
+     CharStringMap regionAliases;
+     const uint8_t *trieBytes = nullptr;
+-    LSR *lsrs = nullptr;
++    const int32_t *lsrs = nullptr;
+     int32_t lsrsLength = 0;
++    LocalMemory<int32_t> m49Indexes;
++    int32_t m49Length = 0;
+ 
+     LocaleDistanceData distanceData;
+ 
+@@ -66,7 +68,6 @@
+ 
+     ~LikelySubtagsData() {
+         ures_close(langInfoBundle);
+-        delete[] lsrs;
+     }
+ 
+     void load(UErrorCode &errorCode) {
+@@ -81,8 +82,8 @@
+         if (U_FAILURE(errorCode)) { return; }
+ 
+         // Read all strings in the resource bundle and convert them to invariant char *.
+-        LocalMemory<int32_t> languageIndexes, regionIndexes, lsrSubtagIndexes;
+-        int32_t languagesLength = 0, regionsLength = 0, lsrSubtagsLength = 0;
++        LocalMemory<int32_t> languageIndexes, regionIndexes;
++        int32_t languagesLength = 0, regionsLength = 0;
+         ResourceArray m49Array;
+         if (likelyTable.findValue("m49", value)) {
+             m49Array = value.getArray(errorCode);
+@@ -94,17 +95,20 @@
+                          languageIndexes, languagesLength, errorCode) ||
+                 !readStrings(likelyTable, "regionAliases", value,
+                              regionIndexes, regionsLength, errorCode) ||
+-                !readLSREncodedStrings(likelyTable, "lsrnum", value, m49Array,
+-                             lsrSubtagIndexes,lsrSubtagsLength, errorCode)) {
++                !readStrings(likelyTable, "m49", value,
++                             m49Indexes, m49Length, errorCode)) {
+             return;
+         }
++        if (likelyTable.findValue("lsrnum", value)) {
++            lsrs = value.getIntVector(lsrsLength, errorCode);
++            if (U_FAILURE(errorCode)) { return; }
++        }
+         if ((languagesLength & 1) != 0 ||
+-                (regionsLength & 1) != 0 ||
+-                (lsrSubtagsLength % 3) != 0) {
++                (regionsLength & 1) != 0) {
+             errorCode = U_INVALID_FORMAT_ERROR;
+             return;
+         }
+-        if (lsrSubtagsLength == 0) {
++        if (lsrsLength == 0) {
+             errorCode = U_MISSING_RESOURCE_ERROR;
+             return;
+         }
+@@ -186,19 +190,6 @@
+         }
+         if (U_FAILURE(errorCode)) { return; }
+ 
+-        lsrsLength = lsrSubtagsLength / 3;
+-        lsrs = new LSR[lsrsLength];
+-        if (lsrs == nullptr) {
+-            errorCode = U_MEMORY_ALLOCATION_ERROR;
+-            return;
+-        }
+-        for (int32_t i = 0, j = 0; i < lsrSubtagsLength; i += 3, ++j) {
+-            lsrs[j] = LSR(strings.get(lsrSubtagIndexes[i]),
+-                          strings.get(lsrSubtagIndexes[i + 1]),
+-                          strings.get(lsrSubtagIndexes[i + 2]),
+-                          LSR::IMPLICIT_LSR);
+-        }
+-
+         if (partitionsLength > 0) {
+             distanceData.partitions = static_cast<const char **>(
+                 uprv_malloc(partitionsLength * sizeof(const char *)));
+@@ -489,7 +480,13 @@
+ #endif // U_DEBUG
+         distanceData(std::move(data.distanceData)) {
+     data.langInfoBundle = nullptr;
+-    data.lsrs = nullptr;
++    for (int32_t i = 0; i < UPRV_LENGTHOF(scripts); ++i) {
++        const char *name = uscript_getShortName(static_cast<UScriptCode>(i));
++        scripts[i] = name != nullptr ? name : "";
++    }
++    for (int32_t i = 0; i < UPRV_LENGTHOF(m49); ++i) {
++        m49[i] = i < data.m49Length ? strings->data() + data.m49Indexes[i] : "";
++    }
+ 
+     // Cache the result of looking up language="und" encoded as "*", and "und-Zzzz" ("**").
+     UStringTrieResult result = trie.next(u'*');
+@@ -515,9 +512,43 @@
+ LikelySubtags::~LikelySubtags() {
+     ures_close(langInfoBundle);
+     delete strings;
+-    delete[] lsrs;
+ }
+ 
++// Same as LikelySubtagsData::toLanguage(), toScript() and toRegion().
++struct LikelySubtags::Likely {
++    Likely(const LikelySubtags &data, int32_t index) {
++        int32_t encoded = data.lsrs[index];
++        if (encoded == 0) { return; }
++        if (encoded == 1) {
++            language = "skip";
++            script = "script";
++            return;
++        }
++        script = data.scripts[(encoded >> 24) & 0xff];
++        encoded &= 0xffffff;
++        language = decode(encoded % (27 * 27 * 27), 'a', languageChars);
++        encoded = encoded / (27 * 27 * 27) % (27 * 27);
++        region = encoded < 27 ? data.m49[encoded] : decode(encoded, 'A', regionChars);
++    }
++    Likely(const Likely &other) = delete;
++
++    const char *language = "";
++    const char *script = "";
++    const char *region = "";
++
++private:
++    static const char *decode(int32_t letters, char first, char (&chars)[4]) {
++        chars[0] = first + (letters % 27 - 1);
++        chars[1] = first + (letters / 27 % 27 - 1);
++        chars[2] = letters < 27 * 27 ? 0 : first + (letters / (27 * 27) - 1);
++        chars[3] = 0;
++        return chars;
++    }
++
++    char languageChars[4];
++    char regionChars[4];
++};
++
+ LSR LikelySubtags::makeMaximizedLsrFrom(const Locale &locale,
+                                          bool returnInputIfUnmatch,
+                                          UErrorCode &errorCode) const {
+@@ -746,24 +777,19 @@
+         language = StringPiece("und");
+     }
+ 
+-    if (!(retainLanguage || retainScript || retainRegion)) {
+-        U_ASSERT(value >= 0);
+-        // Quickly return a copy of the lookup-result LSR
+-        // without new allocation of the subtags.
+-        const LSR &matched = lsrs[value];
+-        return LSR(matched.language, matched.script, matched.region, matched.flags);
+-    }
++    // Not read if all three subtags are retained, the only case without a value.
++    const Likely matched(*this, value < 0 ? 0 : value);
+     if (!retainLanguage) {
+         U_ASSERT(value >= 0);
+-        language = lsrs[value].language;
++        language = matched.language;
+     }
+     if (!retainScript) {
+         U_ASSERT(value >= 0);
+-        script = lsrs[value].script;
++        script = matched.script;
+     }
+     if (!retainRegion) {
+         U_ASSERT(value >= 0);
+-        region = lsrs[value].region;
++        region = matched.region;
+     }
+     int32_t retainMask = (retainLanguage ? 4 : 0) + (retainScript ? 2 : 0) + (retainRegion ? 1 : 0);
+     // retainOldMask flags = LSR explicit-subtag flags
+@@ -786,7 +812,7 @@
+             index = getLikelyIndex(lsr.language, "");
+             likelyInfo = index << 2;
+         }
+-        const LSR &likely = lsrs[index];
++        const Likely likely(*this, index);
+         if (uprv_strcmp(lsr.script, likely.script) == 0) {
+             return likelyInfo | 1;
+         } else {
+@@ -801,7 +827,7 @@
+             index = getLikelyIndex(lsr.language, lsr.region);
+             likelyInfo = (index << 2) | 2;
+         }
+-        const LSR &likely = lsrs[index];
++        const Likely likely(*this, index);
+         if (uprv_strcmp(lsr.region, likely.region) == 0) {
+             return likelyInfo | 1;
+         } else {
+--- a/source/common/loclikelysubtags.h
++++ b/source/common/loclikelysubtags.h
+@@ -114,7 +114,11 @@
+     uint64_t trieUndZzzzState;
+     int32_t defaultLsrIndex;
+     uint64_t trieFirstLetterStates[26];
+-    const LSR *lsrs;
++    // Bun: encoded as in the resource bundle, and decoded by Likely.
++    struct Likely;
++    const int32_t *lsrs;
++    const char *scripts[256];
++    const char *m49[27];
+ #if U_DEBUG
+     int32_t lsrsLength;
+ #endif

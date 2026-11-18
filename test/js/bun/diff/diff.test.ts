@@ -336,6 +336,19 @@ describe("large inputs, on which diff is quadratic", () => {
     expect(diff.lines(a, b, { maxEditLength: expectedEdits - 1 })).toBeUndefined();
   });
 
+  // Each edit is alone, and the inputs drift apart by as much as the edits allow: nothing is left over for an estimate
+  // of the number of edits to be too high by.
+  test.each(["removed first", "added first"])("maxEditLength is exact with lines %s", order => {
+    const next = random(6);
+    const line = () => `${next(100_000) % 50}\n`;
+    const shared = Array.from({ length: 2000 }, () => Array.from({ length: 10 }, line).join(""));
+    const extra = (from: number) =>
+      shared.map((lines, i) => (i >= from && i < from + 1000 ? "x\n" : "") + lines).join("");
+    const [a, b] = order === "removed first" ? [extra(0), extra(1000)] : [extra(1000), extra(0)];
+    expect(edits(diff.lines(a, b, { maxEditLength: 2000 })!)).toBe(2000);
+    expect(diff.lines(a, b, { maxEditLength: 1999 })).toBeUndefined();
+  });
+
   test("past the limit of the search, the diff is still correct", () => {
     const next = random(4);
     const [a, b] = [0, 1].map(() =>

@@ -223,6 +223,8 @@ pub fn diff_ids(a: &[u32], b: &[u32], distinct: usize, max_edits: usize) -> Opti
 /// Enough for Myers' search to find 8,192 insertions and as many deletions, and for 70,000 rows of 70,000 bits.
 const WORK: usize = 80_000_000;
 const WORK_PER_TOKEN: usize = 32;
+/// About what it takes to find out what else there is to try.
+const FIRST_WORK_PER_TOKEN: usize = 8;
 
 /// Myers' search is fast if the sequences are close, which only running it tells. What rows of bits cost is known before.
 fn mark(
@@ -233,36 +235,144 @@ fn mark(
     changed_a: &mut [bool],
     changed_b: &mut [bool],
 ) {
-    let linear = WORK_PER_TOKEN * (a.len() + b.len());
-    let mut found = search(a, b, max_edits, linear);
-    if let Search::OutOfWork = found {
+    let all = WORK + WORK_PER_TOKEN * (a.len() + b.len());
+    let first = FIRST_WORK_PER_TOKEN * (a.len() + b.len());
+    let mut rows = None;
+    let mut is_too_far = false;
+    let mut more = || {
         let matches = Matches::new(b, distinct);
         let cost = matches.cost(a);
-        let is_affordable = cost <= WORK + linear;
-        let work = if is_affordable {
-            cost / 2
+        let more = if cost <= all {
+            rows = Some((matches, cost));
+            (cost / 2).saturating_sub(first)
         } else {
-            WORK + linear
+            all - first
         };
-        if work > linear {
-            found = search(a, b, max_edits, work);
+        let reach = edits_within(a.len().abs_diff(b.len()), first + more).min(max_edits);
+        if more > 0 && is_further_than(a, b, reach) {
+            is_too_far = reach == max_edits;
+            return 0;
         }
-        if let Search::OutOfWork = found
-            && is_affordable
-        {
-            return matches.mark(a, cost, changed_a, changed_b);
+        more
+    };
+    let work = Work {
+        left: first as isize,
+        more: Some(&mut more),
+    };
+    match (search(a, b, max_edits, work), rows) {
+        (Search::Found(script), _) => script.mark(a, b, changed_a, changed_b),
+        (Search::OutOfWork, Some((matches, cost))) if !is_too_far => {
+            matches.mark(a, cost, changed_a, changed_b);
         }
-    }
-    match found {
-        Search::Found(script) => script.mark(a, b, changed_a, changed_b),
-        Search::OutOfWork if a.len().max(b.len()) < MAX_LEN => {
+        (Search::OutOfWork, None) if !is_too_far && a.len().max(b.len()) < MAX_LEN => {
             search_bounded(a, b, changed_a, changed_b);
         }
-        Search::OutOfWork | Search::TooFar => {
+        (Search::OutOfWork | Search::TooFar, _) => {
             changed_a.fill(true);
             changed_b.fill(true);
         }
     }
+}
+
+struct Work<'a> {
+    left: isize,
+    /// Asked once, when none is left.
+    more: Option<&'a mut dyn FnMut() -> usize>,
+}
+
+impl Work<'_> {
+    /// False if that was too much.
+    #[inline]
+    fn spend(&mut self, steps: isize) -> bool {
+        self.left -= steps;
+        self.left >= 0 || self.refill()
+    }
+
+    #[cold]
+    fn refill(&mut self) -> bool {
+        self.left += self.more.take().map_or(0, |more| more()) as isize;
+        self.left >= 0
+    }
+}
+
+/// [`search`] finds no longer script in `work` steps: it visits each count of insertions and deletions below its own.
+fn edits_within(difference: usize, work: usize) -> usize {
+    let pairs = ((difference * difference + 4 * work).isqrt() - difference) / 2;
+    difference + 2 * pairs
+}
+
+const GRAMS: [usize; 5] = [2, 4, 6, 8, 16];
+const MAX_SLOTS: usize = 1 << 20;
+
+/// The hashes of the last few tokens of a sequence.
+struct Grams {
+    /// Of all tokens up to each of the last places.
+    prefixes: [u64; 32],
+    end: usize,
+}
+
+impl Grams {
+    const BASE: u64 = 0x9E37_79B9_7F4A_7C15;
+
+    fn new() -> Self {
+        let prefixes = [0; 32];
+        Self { prefixes, end: 0 }
+    }
+
+    fn push(&mut self, token: u32) {
+        let shifted = self.prefixes[self.end % 32].wrapping_mul(Self::BASE);
+        self.end += 1;
+        self.prefixes[self.end % 32] = shifted.wrapping_add(u64::from(token) + 1);
+    }
+
+    /// The top bits are the best. `shift` is `BASE` to the power of `length`.
+    fn last(&self, length: usize, shift: u64) -> u64 {
+        let before = self.prefixes[self.end.wrapping_sub(length) % 32];
+        let gram = self.prefixes[self.end % 32].wrapping_sub(before.wrapping_mul(shift));
+        gram.wrapping_mul(Self::BASE)
+    }
+}
+
+/// True only if every script has more than `edits` edits, which are at least the difference of the lengths.
+///
+/// Consecutive tokens of `a` that `b` does not have within `edits` of the same place have an edit among them
+/// (Ukkonen, "Approximate string-matching with q-grams and maximal matches", 1992).
+fn is_further_than(a: &[u32], b: &[u32], edits: usize) -> bool {
+    if a.len() / GRAMS[0] <= edits {
+        return false;
+    }
+    let max_deleted = (edits + a.len() - b.len()) / 2;
+    let max_inserted = edits - max_deleted;
+    let shifts = GRAMS.map(|length| Grams::BASE.wrapping_pow(length as u32));
+    // By hash: the last place in `b` where such a gram ends. Sharing a slot only hides an edit.
+    let slots = (4 * GRAMS.len() * (edits + 1))
+        .next_power_of_two()
+        .min(MAX_SLOTS);
+    let slot = |hash: u64| (hash >> (64 - slots.trailing_zeros())) as usize;
+    let mut last_end = vec![0u32; slots];
+    let (mut in_a, mut in_b) = (Grams::new(), Grams::new());
+    let (mut found, mut since_found) = (0, 0);
+    for &token in a {
+        in_a.push(token);
+        since_found += 1;
+        for &token in &b[in_b.end..b.len().min(in_a.end + max_inserted)] {
+            in_b.push(token);
+            for (length, shift) in GRAMS.into_iter().zip(shifts) {
+                last_end[slot(in_b.last(length, shift))] = in_b.end as u32;
+            }
+        }
+        let Some(longest) = GRAMS.iter().rposition(|&length| length <= since_found) else {
+            continue;
+        };
+        let end = last_end[slot(in_a.last(GRAMS[longest], shifts[longest]))] as usize;
+        if end == 0 || end + max_deleted < in_a.end {
+            (found, since_found) = (found + 1, 0);
+            if found > edits {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 enum Search {
@@ -293,12 +403,11 @@ impl Script {
 
 /// A script has as many edits as the lengths differ by, and some pairs of an insertion and a deletion. Looking for one
 /// with at most `pairs` of those takes (`pairs` + 1) × (`pairs` + difference + 1) steps.
-fn search(a: &[u32], b: &[u32], max_edits: usize, work: usize) -> Search {
+fn search(a: &[u32], b: &[u32], max_edits: usize, mut work: Work<'_>) -> Search {
     let Some(spare) = max_edits.checked_sub(a.len().abs_diff(b.len())) else {
         return Search::TooFar;
     };
     let max_pairs = (spare / 2).min(a.len()).min(b.len());
-    let mut work = work as isize;
     let mut pairs = 2;
     loop {
         match search_within(a, b, pairs.min(max_pairs), &mut work) {
@@ -308,7 +417,7 @@ fn search(a: &[u32], b: &[u32], max_edits: usize, work: usize) -> Search {
     }
 }
 
-fn search_within(a: &[u32], b: &[u32], pairs: usize, work: &mut isize) -> Search {
+fn search_within(a: &[u32], b: &[u32], pairs: usize, work: &mut Work<'_>) -> Search {
     let (n, m) = (a.len() as isize, b.len() as isize);
     let goal = n - m;
     let max_edits = goal.abs() + 2 * pairs as isize;
@@ -332,45 +441,47 @@ fn search_within(a: &[u32], b: &[u32], pairs: usize, work: &mut isize) -> Search
         let lo = (-d).max(goal - (max_edits - d)).max(lowest);
         let hi = d.min(goal + (max_edits - d)).min(highest);
         rounds.push((lo, bits.len()));
-        let (mut word, mut bit) = (0u64, 1u64);
-        let mut below = furthest[(origin + lo - 1) as usize];
+        let steps = (hi - lo) as usize / 2 + 1;
+        let (before, from_lo) = furthest.split_at_mut((origin + lo) as usize);
+        let mut below = before[before.len() - 1];
         let mut k = lo;
-        while k <= hi {
-            let above = furthest[(origin + k + 1) as usize];
-            let is_insertion = below < above;
-            let mut x = if is_insertion { above - 1 } else { below } as usize;
-            let mut y = (x as isize - k) as usize;
-            if x < a.len() && y < b.len() && a[x] == b[y] {
-                let matches = 1 + u32::common_prefix(&a[x + 1..], &b[y + 1..]);
-                (x, y) = (x + matches, y + matches);
-                *work -= matches as isize;
-                if *work < 0 {
-                    return Search::OutOfWork;
+        'round: for diagonals in from_lo.as_chunks_mut::<2>().0[..steps].chunks_mut(64) {
+            let mut word = 0u64;
+            for (bit, [here, above]) in diagonals.iter_mut().enumerate() {
+                let is_insertion = below < *above;
+                word |= u64::from(is_insertion) << bit;
+                let mut x = if is_insertion { *above - 1 } else { below } as usize;
+                let mut y = (x as isize - k) as usize;
+                below = *above;
+                if let (Some(in_a), Some(in_b)) = (a.get(x), b.get(y)) {
+                    if in_a != in_b {
+                        *here = x as u32 + 1;
+                        k += 2;
+                        continue;
+                    }
+                    let matches = 1 + u32::common_prefix(&a[x + 1..], &b[y + 1..]);
+                    (x, y) = (x + matches, y + matches);
+                    if !work.spend(matches as isize) {
+                        return Search::OutOfWork;
+                    }
                 }
-            }
-            furthest[(origin + k) as usize] = x as u32 + 1;
-            word |= if is_insertion { bit } else { 0 };
-            bit = bit.rotate_left(1);
-            if bit == 1 {
-                bits.push(core::mem::take(&mut word));
-            }
-            if x == a.len() {
-                if y == b.len() {
+                *here = x as u32 + 1;
+                if x == a.len() {
                     bits.push(word);
-                    return Search::Found(backtrack(&rounds, &bits, k));
+                    if y == b.len() {
+                        return Search::Found(backtrack(&rounds, &bits, k));
+                    }
+                    highest = k - 1;
+                    break 'round;
                 }
-                highest = k - 1;
-                break;
+                if y == b.len() {
+                    lowest = k + 1;
+                }
+                k += 2;
             }
-            if y == b.len() {
-                lowest = k + 1;
-            }
-            below = above;
-            k += 2;
+            bits.push(word);
         }
-        bits.push(word);
-        *work -= (k - lo) / 2 + 1;
-        if *work < 0 {
+        if !work.spend((k - lo) / 2 + 1) {
             return Search::OutOfWork;
         }
     }

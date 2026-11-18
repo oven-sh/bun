@@ -7,37 +7,6 @@
 #include <unicode/utext.h>
 #include <unicode/utf16.h>
 #include <unicode/utf8.h>
-#include <zlib.h>
-
-extern "C" void* Bun__DesktopHost__inflateBegin()
-{
-    auto stream = std::make_unique<z_stream>();
-    if (inflateInit(stream.get()) != Z_OK)
-        return nullptr;
-    inflateValidate(stream.get(), 0);
-    return stream.release();
-}
-
-extern "C" int32_t Bun__DesktopHost__inflate(void* state, const uint8_t* input, size_t* inputLength, uint8_t* output, size_t* outputLength)
-{
-    auto* stream = static_cast<z_stream*>(state);
-    const uInt availableIn = std::min<size_t>(*inputLength, UINT_MAX), availableOut = std::min<size_t>(*outputLength, UINT_MAX);
-    stream->next_in = const_cast<uint8_t*>(input);
-    stream->avail_in = availableIn;
-    stream->next_out = output;
-    stream->avail_out = availableOut;
-    const int result = inflate(stream, Z_NO_FLUSH);
-    *inputLength = availableIn - stream->avail_in;
-    *outputLength = availableOut - stream->avail_out;
-    return result == Z_STREAM_END ? 1 : result == Z_OK || result == Z_BUF_ERROR ? 0
-                                                                                : -1;
-}
-
-extern "C" void Bun__DesktopHost__inflateEnd(void* state)
-{
-    std::unique_ptr<z_stream> stream(static_cast<z_stream*>(state));
-    inflateEnd(stream.get());
-}
 
 extern "C" int32_t Bun__DesktopHost__characterProperty(uint32_t character, uint32_t property)
 {

@@ -474,7 +474,7 @@ describe("layOut", () => {
         namedBytes: () => undefined,
         orderOf: (_, partition) => ({
           retainedFirst: [],
-          groups: partition.groups.map(({ set }) => ({ set, names: [], afterRetained: [] })),
+          groups: partition.groups.map(({ set }) => ({ set, names: [], afterRetained: [], afterGroups: [] })),
           groupsOutsidePrograms: partition.groupsOutsidePrograms,
           nodes: [],
           unnamed: new Map(),

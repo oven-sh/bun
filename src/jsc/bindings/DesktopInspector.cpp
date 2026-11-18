@@ -165,7 +165,7 @@ extern "C" EncodedJSValue Bun__Inspector__peek(JSGlobalObject* realm, EncodedJSV
 {
     bool isFound;
     JSValue holder = JSValue::decode(base) ? JSValue::decode(base) : realm->globalLexicalEnvironment();
-    JSValue value = peek(realm, holder, Identifier::fromString(realm->vm(), key->toWTFString()), isFound);
+    JSValue value = peek(realm, holder, Identifier::fromString(realm->vm(), key->toWTFString(BunString::NonNull)), isFound);
     return JSValue::encode(isFound || !mustExist ? value : JSValue());
 }
 
@@ -173,8 +173,8 @@ extern "C" bool Bun__Inspector__matches(const BunString* pattern, const BunStrin
 {
     if (isFeatureRemoved(RemovableFeature::RegExp))
         return false;
-    Yarr::RegularExpression expression(pattern->toWTFString(), isExact ? OptionSet<Yarr::Flags>() : OptionSet { Yarr::Flags::IgnoreCase });
-    return expression.isValid() && expression.match(text->toWTFString()) >= 0;
+    Yarr::RegularExpression expression(pattern->toWTFString(BunString::NonNull), isExact ? OptionSet<Yarr::Flags>() : OptionSet { Yarr::Flags::IgnoreCase });
+    return expression.isValid() && expression.match(text->toWTFString(BunString::NonNull)) >= 0;
 }
 
 extern "C" bool Bun__Inspector__isNative(EncodedJSValue value, const BunString* name)
@@ -515,7 +515,7 @@ static String syntaxErrorIn(VM& vm, const String& source, uint32_t* line)
 
 extern "C" BunString Bun__Inspector__syntaxError(JSGlobalObject* realm, const BunString* source, uint32_t* line)
 {
-    return Bun::toStringRef(syntaxErrorIn(realm->vm(), source->toWTFString(), line)).leak();
+    return Bun::toStringRef(syntaxErrorIn(realm->vm(), source->toWTFString(BunString::NonNull), line)).leak();
 }
 
 // What is evaluated until this is called without `helpers` finds them, and may declare what has been declared.

@@ -380,9 +380,6 @@ impl RuntimeTranspilerStore {
 // TranspilerJob
 // ──────────────────────────────────────────────────────────────────────────
 
-// Note: bun.heap_breakdown.enabled gate on inline capacity — the Rust
-// `bun_alloc::heap_breakdown` is a no-op outside macOS Instruments builds, so
-// the 64-slot hive is unconditional here.
 const TRANSPILER_JOB_HIVE_CAP: usize = 64;
 
 /// Must match the parser's error text for a macro call under `no_macros`.

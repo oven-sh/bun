@@ -4,7 +4,7 @@ use core::array::from_fn;
 
 use bun_highway::brotli::find_switches;
 
-use super::cluster::{BATCH, Clusters, Combiner, renumber};
+use super::cluster::{BATCH, Clusters, Combiner, max_at_once, renumber};
 use super::histogram::{DISTANCE_SYMBOLS, Indexed, count_symbols};
 use super::log2::fast_log2;
 use crate::format::{COMMAND_SYMBOLS, LITERAL_SYMBOLS, MAX_BLOCK_TYPES};
@@ -267,13 +267,14 @@ fn indexed<'a>(symbols: &[u16], counts: &'a mut [u32]) -> Indexed<'a> {
     Indexed::new(counts, symbols.len())
 }
 
-fn cluster_blocks(
+/// Returns what is left for the last pass. `counts` is room for a histogram.
+fn cluster_in_batches(
     data: &[u16],
     blocks: &[Block],
-    alphabet_size: usize,
+    counts: &mut [u32],
     combiner: &mut Combiner,
-) -> Result<BlockSplit> {
-    let counts = &mut [0; COMMAND_SYMBOLS][..alphabet_size];
+) -> Result<Clusters> {
+    let alphabet_size = counts.len();
     let (mut clusters, mut batch) = (Clusters::new(alphabet_size), Clusters::new(alphabet_size));
     batch.try_reserve(blocks.len().min(BATCH))?;
     let mut waiting = with_symbols(blocks, data);
@@ -285,11 +286,26 @@ fn cluster_blocks(
         let live = &mut from_fn::<_, BATCH, _>(|i| i as u32)[..batch.len()];
         let left = combiner.combine_new(&mut batch, live, BATCH)?;
         clusters.add_from(&batch, &live[..left])?;
+        if clusters.len() > max_at_once(data.len()) {
+            let mut kept = memory::collected(0..clusters.len() as u32)?;
+            combiner.halve(&mut clusters, &mut kept)?;
+            let all = core::mem::replace(&mut clusters, Clusters::new(alphabet_size));
+            clusters.add_from(&all, &kept)?;
+        }
     }
-    drop(batch);
+    Ok(clusters)
+}
 
+fn cluster_blocks(
+    data: &[u16],
+    blocks: &[Block],
+    alphabet_size: usize,
+    combiner: &mut Combiner,
+) -> Result<BlockSplit> {
+    let counts = &mut [0; COMMAND_SYMBOLS][..alphabet_size];
+    let mut clusters = cluster_in_batches(data, blocks, counts, combiner)?;
     let mut live = memory::collected(0..clusters.len() as u32)?;
-    let left = combiner.combine(&mut clusters, &mut live, MAX_BLOCK_TYPES)?;
+    let left = combiner.combine(&mut clusters, &mut live, 1..=MAX_BLOCK_TYPES)?;
     live.truncate(left);
     let mut previous = 0;
     let mut assignments = memory::collected(with_symbols(blocks, data).map(|(_, symbols)| {
@@ -298,4 +314,89 @@ fn cluster_blocks(
     }))?;
     let type_count = renumber(&mut assignments, clusters.len())?;
     BlockSplit::joined(type_count, &assignments, blocks)
+}
+
+#[cfg(test)]
+mod tests {
+    use bun_sema_standalone as _;
+
+    use super::super::histogram::Estimator;
+    use super::*;
+
+    const LENGTH: u32 = 6;
+    const BLOCK: Block = Block {
+        kind: 0,
+        length: LENGTH,
+    };
+
+    /// Kinds have no more than one symbol in common, so two of them take more bits together than apart.
+    fn symbols_of(kind: usize) -> [u16; LENGTH as usize] {
+        from_fn(|i| (i / 2 * 200 + (kind + i / 2 * (kind / 200)) % 200) as u16)
+    }
+
+    fn blocks_of<const COUNT: usize>(kind_of: impl Fn(usize) -> usize) -> Result<Vec<u16>> {
+        let mut data = memory::empty(COUNT * LENGTH as usize)?;
+        data.extend((0..COUNT).flat_map(|block| symbols_of(kind_of(block))));
+        Ok(data)
+    }
+
+    #[test]
+    fn combines_more_at_once_with_more_symbols() {
+        let symbols = [0, 128 * 128, 129 * 129, 1023 * 1023, 1 << 20, 1 << 24];
+        let expected = [1024, 1024, 1032, 8184, 8192, 8192];
+        assert_eq!(symbols.map(max_at_once), expected);
+    }
+
+    #[test]
+    fn halves_what_is_more_than_that() -> Result<()> {
+        const COUNT: usize = 1664;
+        let mut data = blocks_of::<COUNT>(|block| block % BATCH + block / 256 % 3 * BATCH)?;
+        let (blocks, counts) = ([BLOCK; COUNT], &mut [0; COMMAND_SYMBOLS]);
+        let combiner = &mut Combiner::new(Estimator::new(data.len())?);
+        for (count, left) in [(1024, 1024), (1025, 513), (1536, 1024), (COUNT, 640)] {
+            let clusters = cluster_in_batches(&data, &blocks[..count], counts, combiner)?;
+            assert_eq!(clusters.len(), left, "of {count}");
+        }
+        memory::try_reserve_total(&mut data, 130 * 130)?;
+        memory::resize(&mut data, 130 * 130, 0);
+        for (count, left) in [(1040, 1040), (1041, 529)] {
+            let clusters = cluster_in_batches(&data, &blocks[..count], counts, combiner)?;
+            assert_eq!(clusters.len(), left, "of {count}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn many_blocks_get_the_type_of_their_kind() -> Result<()> {
+        const COUNT: usize = 1280;
+        // Some kinds are only at the start, or only right after the first large batch. The last batch has pairs.
+        let kind_of = |block| match block / BATCH {
+            ..8 => block % BATCH,
+            16 => block % BATCH + 2 * BATCH,
+            19 => block % BATCH / 2,
+            _ => block % BATCH + BATCH,
+        };
+        let data = blocks_of::<COUNT>(kind_of)?;
+        let combiner = &mut Combiner::new(Estimator::new(data.len())?);
+        let split = cluster_blocks(&data, &[BLOCK; COUNT], COMMAND_SYMBOLS, combiner)?;
+        assert_eq!(split.type_count, 3 * BATCH);
+        assert_eq!(split.blocks.len(), COUNT - BATCH / 2);
+        let mut at = 0;
+        for block in &split.blocks {
+            assert_eq!(usize::from(block.kind), kind_of(at), "of block {at}");
+            at += (block.length / LENGTH) as usize;
+        }
+        assert_eq!(at, COUNT);
+        Ok(())
+    }
+
+    #[test]
+    fn many_kinds_make_do_with_the_types_there_are() -> Result<()> {
+        const COUNT: usize = 1088;
+        let data = blocks_of::<COUNT>(|block| block % 320)?;
+        let combiner = &mut Combiner::new(Estimator::new(data.len())?);
+        let split = cluster_blocks(&data, &[BLOCK; COUNT], COMMAND_SYMBOLS, combiner)?;
+        assert_eq!(split.type_count, MAX_BLOCK_TYPES);
+        Ok(())
+    }
 }

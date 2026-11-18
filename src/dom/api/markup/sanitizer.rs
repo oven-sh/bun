@@ -501,6 +501,10 @@ impl Config {
         true
     }
 
+    pub(super) fn remove_html(&mut self, name: impl Into<Atom>) {
+        self.remove_element(Key::new(name, Ns::Html));
+    }
+
     fn remove_unsafe(&mut self) -> bool {
         let mut is_modified = core::mem::take(&mut self.javascript_urls);
         for name in [

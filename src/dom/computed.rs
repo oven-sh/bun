@@ -807,11 +807,18 @@ impl Document {
     }
 
     /// In the order of their spellings.
-    pub(crate) fn custom_property_names(&mut self, node: NodeId, pseudo: Pseudo) -> Vec<Name> {
+    pub(crate) fn custom_property_names(&mut self, node: NodeId, pseudo: Pseudo) -> Rc<[Name]> {
         self.update_layout();
         let Some((_, style)) = self.style_of_pseudo(node, pseudo) else {
-            return Vec::new();
+            return Rc::default();
         };
+        if let Some((_, names)) = self
+            .listed_customs
+            .as_ref()
+            .filter(|it| it.0.is_same(&style.customs))
+        {
+            return Rc::clone(names);
+        }
         let all = style
             .customs
             .names()
@@ -826,7 +833,12 @@ impl Document {
                 .collect::<Vec<_>>()
         });
         names.dedup();
-        names
+        Rc::clone(
+            &self
+                .listed_customs
+                .insert((style.customs.clone(), names.into()))
+                .1,
+        )
     }
 
     pub(crate) fn has_box(&self, node: NodeId) -> bool {

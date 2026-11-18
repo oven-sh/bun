@@ -26,7 +26,7 @@ import { builtinModulesSection, CoffObject, IMAGE_SYM_CLASS_EXTERNAL } from "./c
 import type { SectionGraph } from "./graph.ts";
 import { createSectionOrder, findCompiledObjects, groupOfNode, writeTableIntoSection } from "./linker-common.ts";
 import type { Link, Linker, LinkerFormat, SectionOrder } from "./linker.ts";
-import type { Partition } from "./partition.ts";
+import { smallestGroupBytes, type Partition } from "./partition.ts";
 
 const trimTableSection = ".buntrim";
 const orderFlag = "/order:@";
@@ -118,12 +118,21 @@ function weakExternals(aliases: Map<string, string>): string {
 
 const isMovable = (output: string) => output === ".text" || output === ".rdata" || output === builtinModulesSection;
 
-function orderOf(graph: SectionGraph, partition: Partition): SectionOrder {
+function orderOf(graph: SectionGraph, partition: Partition, listed: ReadonlySet<string>): SectionOrder {
   const groupOf = (node: number) => groupOfNode(graph, partition, isMovable, node);
   const groupOfName = new Map<string, number>();
   graph.names.forEach((names, node) => {
     const group = groupOf(node);
     for (const name of names) groupOfName.set(name, (groupOfName.get(name) ?? group) === group ? group : -1);
+  });
+  // What lies in one place of a group. A small one that stays would part two holes, and a PE file has room for few.
+  const pieceOf = (node: number) =>
+    `${groupOf(node)} ${graph.output[node]} ${graph.names[node]!.some(name => listed.has(name))}`;
+  const bytesOfPiece = new Map<string, number>();
+  graph.names.forEach((_, node) => {
+    if (groupOf(node) < partition.groupsOutsidePrograms) return;
+    const piece = pieceOf(node);
+    bytesOfPiece.set(piece, (bytesOfPiece.get(piece) ?? 0) + graph.size[node]!);
   });
   const order = createSectionOrder(partition);
   graph.names.forEach((all, node) => {
@@ -131,7 +140,8 @@ function orderOf(graph: SectionGraph, partition: Partition): SectionOrder {
     const names = all.filter(name => groupOfName.get(name) === group);
     if (group < 0 || names.length === 0) return;
     // One unwind record may serve a hundred thousand functions, and has a name for each.
-    for (const name of names) order.groups[group]!.names.push(name);
+    const isSmall = group >= partition.groupsOutsidePrograms && bytesOfPiece.get(pieceOf(node))! < smallestGroupBytes;
+    for (const name of names) order.groups[group]![isSmall ? "afterGroups" : "names"].push(name);
     order.nodes.push(node);
   });
   return order;
@@ -147,6 +157,8 @@ export function coff(linker: Linker): LinkerFormat {
   const finalSymbolMap = command[symbolMapAt]!.slice(symbolMapFlag.length);
   const firstSymbolMap = join(work, "first.symbols.map");
   const commandOrder = orderAt >= 0 ? readFileSync(command[orderAt]!.slice(orderFlag.length), "latin1") : "";
+  const commandNames = commandOrder.split(/\r?\n/).filter(name => name !== "");
+  const listed = new Set(commandNames);
   const orderFile = join(work, "order.txt");
   const machine = getFlagValues("/machine:")[0];
   if (machine === undefined) throw new BuildError("the link command names no /machine");
@@ -264,10 +276,11 @@ export function coff(linker: Linker): LinkerFormat {
     secondLinkArguments(order) {
       // What the command's file lists stays where it lay, behind the features. Of that, what belongs to a feature comes first, so
       // it can be cut with the rest of the features. lld-link places a name by the last line that has it: each name gets one line.
-      const names = order.groups.flatMap(group => group.names);
+      const names = [
+        ...order.groups.flatMap(group => group.names),
+        ...order.groups.flatMap(group => group.afterGroups),
+      ];
       const grouped = new Set(names);
-      const commandNames = commandOrder.split(/\r?\n/).filter(name => name !== "");
-      const listed = new Set(commandNames);
       const lines = [
         ...names.filter(name => !listed.has(name)),
         ...names.filter(name => listed.has(name)),
@@ -287,7 +300,7 @@ export function coff(linker: Linker): LinkerFormat {
         alternateNames,
       }),
     namedBytes: link => namedBytesOfPe(link.executable, symbolMapOf(link)),
-    orderOf,
+    orderOf: (graph, partition) => orderOf(graph, partition, listed),
     nameUnnamedSections: () => new Map(),
     writeTable(table) {
       const path = resolve(output);

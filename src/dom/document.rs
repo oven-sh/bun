@@ -178,6 +178,8 @@ pub(crate) struct Document {
     /// With the base URL, the media, the owner and the hash.
     shared_rules: Map<u64, Rc<RefCell<RuleSet>>>,
     registered_by_script: crate::custom::Registry,
+    /// The answer that `custom_property_names` gave last.
+    pub(crate) listed_customs: Option<(crate::custom::Customs, Rc<[Name]>)>,
     pub(crate) selectors: Map<u64, Option<Rc<Sought>>>,
     /// How many elements have each `key::attribute` and `key::value`.
     pub(crate) attribute_keys: Counts,
@@ -574,6 +576,7 @@ impl Document {
             prepared: Vec::new(),
             shared_rules: Default::default(),
             registered_by_script: Default::default(),
+            listed_customs: None,
             selectors: Default::default(),
             offset_when_displayed: None,
             attribute_keys: Counts(Box::new([0; 2048])),
@@ -2836,6 +2839,7 @@ impl Document {
             .collect();
         drop(rules);
         if core::mem::replace(&mut self.styles.registry, registry) != self.styles.registry {
+            self.listed_customs = None;
             self.recascade_everything();
         }
     }

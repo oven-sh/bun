@@ -463,7 +463,7 @@ extern "C" NEVER_INLINE EncodedJSValue Bun__Debugger__evaluate(DesktopDebugger* 
     if (index >= frames.size())
         return JSValue::encode(jsUndefined());
     NakedPtr<JSC::Exception> exception;
-    JSValue result = frames[index]->evaluateWithScopeExtension(realm->vm(), source->toWTFString(), JSValue::decode(helpers).getObject(), exception);
+    JSValue result = frames[index]->evaluateWithScopeExtension(realm->vm(), source->toWTFString(BunString::NonNull), JSValue::decode(helpers).getObject(), exception);
     if (exception) {
         throwException(realm, scope, exception.get());
         return {};

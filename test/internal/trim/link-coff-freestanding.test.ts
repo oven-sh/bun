@@ -449,6 +449,34 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
     );
   });
 
+  testLink.each([[[]], [["/order:@mine.txt"]]])(
+    "puts the little that a feature has in a section behind the others, which it would part (%j)",
+    async linkFlags => {
+      const shared = Array.from({ length: 200 }, (_, index) => `shared_${index}`);
+      const own = shared.map(name => name.replace("shared", "feature_code"));
+      using dir = tempDir("trim-coff-freestanding", {
+        ...freestandingSources(500),
+        "entry.c": entryCalling("shared"),
+        "other.c": `
+          ${manyFunctions("shared_", 500).replaceAll("^", "|")}
+          __attribute__((noinline)) int shared(int x) { ${callAll("shared_", 500)} return x; }
+          const char table_of_other[1 << 20] = {1};
+          __attribute__((noinline)) int entry_of_other(int x) { return shared(x) + table_of_other[x & 0xfffff]; }
+        `,
+        "main.c": mainGuardingBoth,
+        "mine.txt": [...shared, ...own, "entry_of_other", "main", ""].join("\n"),
+      });
+      const { addressOf, featuresOf } = await linked(
+        String(dir),
+        optionsWith({ objects: twoFeatureObjects, linkFlags }),
+      );
+      expect(
+        ["feature_code_1", "shared_1", "entry_of_other", "table_of_other"].map(it => featuresOf(it)?.length),
+      ).toEqual([1, 2, 1, 1]);
+      expect(addressOf("entry_of_other")).toBeGreaterThan(Math.max(...[...shared, ...own].map(addressOf)));
+    },
+  );
+
   testLink(
     "puts what the command's order file lists of the features between the features and the rest of the list",
     async () => {

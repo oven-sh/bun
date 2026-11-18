@@ -296,7 +296,7 @@ impl Markup {
     }
 }
 
-/// What is left may mean something else when it is parsed again.
+/// What is left may mean something else when it is parsed again. A `noscript` does where scripts run.
 pub(crate) fn without_scripts<'a>(
     cx: Cx<'_, 'a>,
     doc: &'a Doc,
@@ -308,10 +308,13 @@ pub(crate) fn without_scripts<'a>(
             .create_html(&cx.heap, atom!("body")),
         cx.heap.create_empty_object().as_value(),
     );
-    let (sanitizer, mut markup) = (
+    let (mut sanitizer, mut markup) = (
         sanitizer::from_option(cx, everything, Safety::Safe)?,
         markup.clone(),
     );
+    sanitizer
+        .iter_mut()
+        .for_each(|it| it.remove_html(atom!("noscript")));
     for _ in 0..MAX_PASSES {
         let fragment = parse_html_fragment(
             cx,

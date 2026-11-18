@@ -936,7 +936,9 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
             if (status === 0x90312) return ["401 No", "WWW-Authenticate: ${scheme} " + reply.toString("base64", 0, Number(made[0] % 2n ** 32n)) + "\\r\\n", "again"];
             if (status) return ["403 No", "", status.toString(16)];
             security.QueryContextAttributesW(state.context, 1, name);
-            const user = toBuffer(Number(name[0]), 0, 600).toString("utf16le").split("\\0")[0].split("\\\\").pop();
+            let length = 0;
+            while (read.u16(Number(name[0]), length)) length += 2;
+            const user = toBuffer(Number(name[0]), 0, length).toString("utf16le").split("\\\\").pop();
             return ["200 OK", "", String(user.toLowerCase() === require("os").userInfo().username.toLowerCase())];
           });
           print(await Promise.all(["localhost", "localhost.b.test", "intranet"].map(host => text(session.defaultSession, "http://" + host + ":" + port))));`,
@@ -7691,6 +7693,27 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
     ).toEqual([["DataError", "before"], ["image/png"], [{ width: 2, height: 2 }, false]]);
   });
 
+  test.each([
+    "<noscript><style></noscript><img src=x onerror=f()></style></noscript>",
+    "<noscript><p title='</noscript><img src=x onerror=f()>'></noscript>",
+    "<template><noscript><style></noscript></template><img src=x onerror=f()></style></noscript></template>",
+    "<svg><foreignObject><noscript><style></noscript><img src=x onerror=f()></style></noscript>",
+    "<form><math><mtext></form><form><mglyph><style></math><img src=x onerror=f()>",
+  ])("what navigator.clipboard.read() has sanitized stays harmless in the page: %s", async html => {
+    expect(
+      await run(`
+        serve({ "/": "" });
+        const page = await open();
+        page.debugger.attach();
+        await page.debugger.sendCommand("Emulation.setFocusEmulationEnabled", { enabled: true });
+        await electron.clipboard.write([new electron.ClipboardItem({ "text/html": "<b>a</b>" + ${JSON.stringify(html)} })]);
+        print(await page.executeJavaScript(\`navigator.clipboard.read().then(async ([it]) => {
+          document.body.innerHTML = await (await it.getType("text/html")).text();
+          return [document.body.firstChild.localName, document.querySelectorAll("[onerror]").length];
+        })\`, true));`),
+    ).toEqual([["b", 0]]);
+  });
+
   test("copyImageAt() copies pixels, and nothing if there are none", async () => {
     expect(
       await run(`
@@ -10066,6 +10089,23 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
            print((await send("Runtime.callFunctionOn", { objectId, functionDeclaration: "function () { return this instanceof RangeError }" })).result.value);`,
         ),
       ).toEqual([true]);
+    });
+
+    test("commands that lack a parameter are answered", async () => {
+      expect(
+        await inspect(
+          { "/": "<input type=file>" },
+          `const outcome = (method, params) => send(method, params).then(() => "done", () => "refused");
+           print(await outcome("DOM.setFileInputFiles", { nodeId: await find("input") }));
+           await send("Debugger.enable");
+           page.executeJavaScript("(() => { let a; debugger; })()");
+           const [{ callFrameId }] = (await next("Debugger.paused")).callFrames;
+           print(await outcome("Debugger.setVariableValue", { callFrameId, scopeNumber: 0, newValue: { value: 1 } }));
+           print(await outcome("Debugger.evaluateOnCallFrame", { callFrameId }));
+           print(await outcome("Debugger.setBlackboxPatterns", { patterns: [""] }));
+           await send("Debugger.resume");`,
+        ),
+      ).toEqual([expect.any(String), "refused", "done", "done"]);
     });
 
     test("what Node.js gives a page is an object", async () => {

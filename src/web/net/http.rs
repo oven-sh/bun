@@ -178,7 +178,7 @@ pub(super) fn error_of(error: bun_http::Error, connect_errno: i32) -> NetError {
         | HTTP2FlowControlError
         | HTTP2CompressionError
         | HTTP2StreamReset => NetError::Http2ProtocolError,
-        Zlib(_) | Brotli(_) | Zstd(_) => NetError::ContentDecodingFailed,
+        Zlib | Brotli(_) | Zstd(_) => NetError::ContentDecodingFailed,
         Sys(errno) => NetError::of_errno(errno),
         _ => NetError::Failed,
     }

@@ -1349,7 +1349,10 @@ describe.skipIf(!hasLibrary).concurrent.each(["memory", ...screens, ...ownScreen
         const it = new OffscreenCanvas(size, size).getContext("2d", { alpha, willReadFrequently: true });
         (it.fillStyle = "#f008"), it.fillRect(0, 0, size, size - 1);
         const all = new Uint32Array(it.getImageData(-1, -1, ${side}, ${side}).data.buffer), counts = {};
-        for (const pixel of all) counts[pixel.toString(16)] = -~counts[pixel.toString(16)];
+        for (let at = 0, end = 0; at < all.length; at = end) {
+          while (all[end] === all[at]) end++;
+          counts[all[at].toString(16)] = ~~counts[all[at].toString(16)] + end - at;
+        }
         return [counts, all[${side + 1}].toString(16)];
       }));`;
       const edge = side * 2 - 1;
@@ -3181,7 +3184,7 @@ test.skipIf(!hasLibrary || isWindows).concurrent("the log waits for a reader tha
     lazy: true,
   });
   await proc.stdout.getReader().read();
-  expect(await proc.stderr.text()).toMatch(/-\[desktop .* <- CreateWindow/);
+  expect(await proc.stderr.text()).toMatch(/-\[desktop [^]* <- CreateWindow/);
   expect(await proc.exited).toBe(0);
 });
 

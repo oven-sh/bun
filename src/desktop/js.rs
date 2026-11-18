@@ -165,9 +165,16 @@ pub(crate) fn map_in(value: JSValue) -> &'static mut JSMap {
     JSMap::opaque_mut(JSMap::from_js(value).expect("it is one").as_ptr())
 }
 
+fn realm_of_array(array: JSValue) -> JsResult<&'static crate::realm::Realm> {
+    match array.is_object() {
+        true => Ok(crate::realm::of(array)),
+        false => Err(type_error(format_args!("Expected an array"))),
+    }
+}
+
 /// They are alive as long as the array has them.
 pub(crate) fn elements(array: JSValue) -> JsResult<Vec<JSValue>> {
-    let realm = crate::realm::of(array);
+    let realm = realm_of_array(array)?;
     (0..array.get_length(realm)? as u32)
         .map(|index| array.get_index(realm, index))
         .collect()
@@ -180,7 +187,7 @@ pub(crate) fn with_elements_after<T>(
     then: impl FnOnce(&mut [JSValue]) -> JsResult<T>,
 ) -> JsResult<T> {
     const MOST_ARGUMENTS: u64 = 1 << 20;
-    let realm = crate::realm::of(array);
+    let realm = realm_of_array(array)?;
     let length = array.get_length(realm)?;
     if length > MOST_ARGUMENTS {
         return Err(realm.throw_stack_overflow());

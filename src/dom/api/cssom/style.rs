@@ -323,7 +323,7 @@ impl CSSStyleDeclaration {
     }
 
     /// What is computed besides `computed_properties`. `None` if nothing is.
-    fn computed_customs<'a>(&'a self, cx: &mut JsScope<'a>) -> Option<Vec<Name>> {
+    fn computed_customs<'a>(&'a self, cx: &mut JsScope<'a>) -> Option<Rc<[Name]>> {
         let Owner::Computed(Some((element, pseudo))) = self.owner() else {
             return None;
         };

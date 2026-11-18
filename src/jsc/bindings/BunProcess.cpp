@@ -15,6 +15,7 @@
 // Include the CMake-generated dependency versions header
 #include "bun_dependency_versions.h"
 #include <node_version.h>
+#include <node/zlib.h>
 #include <wtf/Scope.h>
 #include <JavaScriptCore/AOTBuiltinModules.h>
 #include <JavaScriptCore/ExceptionHelpers.h>
@@ -305,8 +306,8 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
         { "uwebsockets", BUN_VERSION_UWS },
         { "webkit", BUN_VERSION_WEBKIT },
         { "zig", BUN_VERSION_ZIG },
-        // Use commit hash for zlib to match test expectations
-        { "zlib", BUN_VERSION_ZLIB_HASH },
+        // Not linked: src/zlib stands in for the one that Node.js has.
+        { "zlib", ZLIB_VERSION },
         { "tinycc", BUN_VERSION_TINYCC },
         { "lolhtml", BUN_VERSION_LOLHTML },
         { "ares", BUN_VERSION_C_ARES },

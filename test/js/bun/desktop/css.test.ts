@@ -2173,6 +2173,19 @@ test("many inline elements on a line take time that is linear in their number", 
   expect([...page.document.querySelectorAll("i")].at(-1).getClientRects().length).toBe(1);
 });
 
+test("the custom properties of a computed style are listed in linear time, and follow changes", () => {
+  const names = Array.from({ length: 20_000 }, (_, i) => "--" + String(i).padStart(5, "0"));
+  using page = open(`<style>html { ${names.map(it => it + ": 1").join(";")} } i { --a: 1 }</style><p></p><i></i>`);
+  const customs = (selector: string) =>
+    [...page.window.getComputedStyle(page.$(selector))].filter(it => it.startsWith("--"));
+  expect(customs("p")).toEqual(names);
+  page.window.CSS.registerProperty({ name: "--b", syntax: "<number>", inherits: false, initialValue: "1" });
+  expect(customs("p").slice(-2)).toEqual([names.at(-1), "--b"]);
+  expect(customs("i").slice(-2)).toEqual(["--a", "--b"]);
+  page.$("i").style.setProperty("--a", "initial");
+  expect(customs("i").slice(-2)).toEqual([names.at(-1), "--b"]);
+});
+
 test("lines go around a float before their block", () => {
   using page = open(
     `<body style="margin: 0; font: 10px/10px a; width: 50px"><i style="float: left; width: 20px; height: 15px"></i><p style="margin: 0">aa bb cc dd</p>`,

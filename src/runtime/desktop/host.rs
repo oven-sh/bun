@@ -1,19 +1,12 @@
 use core::ffi::c_void;
 use core::slice::from_raw_parts;
 
+use bun_zlib::{Inflater, inflate::Container, inflate::Status};
+
 use super::host_abi::{self, Host, Sink};
 use crate::image::codecs;
 
 unsafe extern "C" {
-    safe fn Bun__DesktopHost__inflateBegin() -> *mut c_void;
-    fn Bun__DesktopHost__inflate(
-        state: *mut c_void,
-        input: *const u8,
-        input_len: *mut usize,
-        output: *mut u8,
-        output_len: *mut usize,
-    ) -> i32;
-    fn Bun__DesktopHost__inflateEnd(state: *mut c_void);
     safe fn Bun__DesktopHost__characterProperty(character: u32, property: u32) -> i32;
     safe fn Bun__DesktopHost__scriptOf(character: u32) -> u32;
     safe fn Bun__DesktopHost__mirror(character: u32) -> u32;
@@ -34,9 +27,9 @@ unsafe extern "C" {
 }
 
 pub(super) static HOST: Host = Host {
-    inflate_begin: Bun__DesktopHost__inflateBegin,
-    inflate: Bun__DesktopHost__inflate,
-    inflate_end: Bun__DesktopHost__inflateEnd,
+    inflate_begin,
+    inflate,
+    inflate_end,
     decode_brotli,
     crc32,
     image_size,
@@ -116,6 +109,45 @@ unsafe fn pixels<'a>(rgba: *const u8, [width, height]: [u32; 2]) -> &'a [u8] {
     unsafe { from_raw_parts(rgba, width as usize * height as usize * 4) }
 }
 
+extern "C" fn inflate_begin() -> *mut c_void {
+    let mut inflater = Box::new(Inflater::new(Container::Zlib));
+    inflater.ignore_adler32();
+    bun_core::heap::into_raw(inflater).cast()
+}
+
+unsafe extern "C" fn inflate(
+    state: *mut c_void,
+    input: *const u8,
+    input_len: *mut usize,
+    output: *mut u8,
+    output_len: *mut usize,
+) -> i32 {
+    // SAFETY: `state` came from `inflate_begin`, and the library passes the parts of two slices.
+    let (inflater, mut rest, output, input_len, output_len) = unsafe {
+        (
+            &mut *state.cast::<Inflater>(),
+            from_raw_parts(input, *input_len),
+            core::slice::from_raw_parts_mut(output, *output_len),
+            &mut *input_len,
+            &mut *output_len,
+        )
+    };
+    let mut output = bun_core::vec::BorrowedBuf::from(output);
+    let status = inflater.inflate(&mut rest, output.unfilled());
+    *input_len -= rest.len();
+    *output_len = output.len();
+    match status {
+        Ok(Status::StreamEnd) => 1,
+        Ok(Status::NeedsInput | Status::NeedsOutput) => 0,
+        _ => -1,
+    }
+}
+
+unsafe extern "C" fn inflate_end(state: *mut c_void) {
+    // SAFETY: it came from `inflate_begin`, and the library uses it no more.
+    unsafe { bun_core::heap::destroy(state.cast::<Inflater>()) };
+}
+
 unsafe extern "C" fn decode_brotli(
     input: *const u8,
     input_len: usize,
@@ -141,7 +173,7 @@ unsafe extern "C" fn decode_brotli(
 
 unsafe extern "C" fn crc32(bytes: *const u8, len: usize) -> u32 {
     // SAFETY: the library passes the parts of a slice.
-    bun_zlib::crc32_bytes(0, unsafe { from_raw_parts(bytes, len) })
+    bun_highway::crc32(0, unsafe { from_raw_parts(bytes, len) })
 }
 
 unsafe extern "C" fn image_size(bytes: *const u8, len: usize, size: &mut [u32; 2]) -> bool {

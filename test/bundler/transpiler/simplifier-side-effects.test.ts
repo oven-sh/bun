@@ -106,3 +106,18 @@ test.concurrent("computed key of an unused object literal is converted as a prop
   ]);
   expect(exitCode).toBe(0);
 });
+
+test.concurrent("accessor with a computed key beside a spread in an unused object literal", async () => {
+  const { stdout, stderr, exitCode } = await run(`
+    const log = [];
+    const key = name => ({ toString() { log.push(name); return name; } });
+    const rest = { z: 1 };
+    ({ get [key("getter")]() { return 1; }, ...rest });
+    ({ set [key("setter")](v) {}, ...rest });
+    ({ [key("method")]() {}, ...rest });
+    ({ async *[key("generator")]() {}, ...rest });
+    console.log(log.join(", "));
+  `);
+  expect({ stdout, stderr }).toEqual({ stdout: ["getter, setter, method, generator"], stderr: "" });
+  expect(exitCode).toBe(0);
+});

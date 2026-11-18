@@ -6147,6 +6147,16 @@ describe("computed keys of an unused object literal", () => {
     expect(print("new ({ ['a']: 1 } ? a?.b : 2)();")).toBe('new ({ ["a"]: 0 }, a?.b);');
     expect(print("x = ({ ['a']: 1 } ? function () {} : 2);")).toBe('x = ({ ["a"]: 0 }, function() {});');
   });
+
+  it("an accessor beside a spread becomes a plain property", () => {
+    expect(print("({ get [k]() { return 1; }, ...z });")).toBe("({ [k]: 0, ...z });");
+    expect(print("({ set [k](v) {}, ...z });")).toBe("({ [k]: 0, ...z });");
+    expect(print("({ [k]() {}, ...z });")).toBe("({ [k]: 0, ...z });");
+    expect(print("({ async *[k]() {}, ...z });")).toBe("({ [k]: 0, ...z });");
+    expect(print("({ [k]: f(), ...z });")).toBe("({ [k]: f(), ...z });");
+    expect(print("({ a: { [k]: 1 }, ...z });")).toBe("({ a: { [k]: 0 }, ...z });");
+    expect(print("({ a: { get [k]() { return 1; }, ...y }, ...z });")).toBe("({ a: { [k]: 0, ...y }, ...z });");
+  });
 });
 
 describe("arrow function parsing after const declaration (scope mismatch bug)", () => {

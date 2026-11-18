@@ -385,7 +385,11 @@ impl SideEffects {
                                 continue;
                             } else {
                                 let zero = p.new_expr(E::Number::new(0.0), prev_value.loc);
-                                e_object.properties.mut_(j).value = Some(zero);
+                                let property = e_object.properties.mut_(j);
+                                property.value = Some(zero);
+                                // `get [k]: 0` does not parse.
+                                property.kind = G::PropertyKind::Normal;
+                                property.flags.remove(bun_ast::flags::Property::IsMethod);
                             }
                         }
 

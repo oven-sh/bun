@@ -152,6 +152,18 @@ fn a_byte_after_a_part_does_not_allocate_a_part() {
 }
 
 #[test]
+fn a_later_part_is_allocated_early_unless_the_writes_divide_it() {
+    for (chunk, first, later) in [(40, 80, 500), (50, 100, 100)] {
+        let mut upload = with_part_size(500);
+        write_in_chunks(&mut upload, &vec![0; 2 * chunk], chunk, false);
+        assert_eq!(upload.memory_cost(), first, "{chunk}");
+        let _part = sending(&mut upload, &vec![0; 500 - 2 * chunk]);
+        write_in_chunks(&mut upload, &vec![0; 2 * chunk], chunk, false);
+        assert_eq!(upload.memory_cost(), later, "{chunk}");
+    }
+}
+
+#[test]
 fn a_part_allocates_no_more_than_the_part_size() {
     for chunk in [1, 64, 99, 300, 500, 501, 1500] {
         for encoded in [false, true] {

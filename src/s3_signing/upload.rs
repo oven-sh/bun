@@ -162,17 +162,21 @@ impl Upload {
         matches!(self.phase, Phase::Buffering) && self.waiting.is_empty()
     }
 
-    /// `tail` has to grow, and twice its capacity is more than a part.
+    /// `tail` has to grow. It doubles up to half of a part, or to a sixteenth where writes cross the ends of parts.
     #[inline]
-    fn would_outgrow_a_part(&self, additional: usize) -> bool {
+    fn grows_to_a_part(&self, additional: usize) -> bool {
         let capacity = self.tail.capacity();
-        additional > capacity - self.tail.len() && capacity > self.part_size / 2
+        let crosses = || !self.fits_one_put() && !self.part_size.is_multiple_of(additional);
+        additional > capacity - self.tail.len()
+            && capacity > self.part_size / if crosses() { 16 } else { 2 }
     }
 
     #[inline]
     fn extend_tail(&mut self, bytes: &[u8]) {
-        if self.would_outgrow_a_part(bytes.len()) {
-            self.tail.reserve_exact(self.part_size - self.tail.len());
+        if self.grows_to_a_part(bytes.len()) {
+            let _ = self
+                .tail
+                .try_reserve_exact(self.part_size - self.tail.len());
         }
         self.tail.extend_from_slice(bytes);
     }
@@ -224,7 +228,7 @@ impl Upload {
     fn write_encoded(&mut self, max_len: usize, append: impl FnOnce(&mut Vec<u8>)) -> bool {
         debug_assert!(!self.ended);
         let before = self.tail.len();
-        if max_len >= self.part_size - before || self.would_outgrow_a_part(max_len) {
+        if max_len >= self.part_size - before || self.grows_to_a_part(max_len) {
             let mut bytes = Vec::new();
             append(&mut bytes);
             return self.write(&bytes);

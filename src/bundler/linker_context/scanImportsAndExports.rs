@@ -1332,13 +1332,30 @@ pub(crate) fn scan_imports_and_exports(
     // Checking final links; pinned export names cannot satisfy JSX component-name rules.
     for (id, imports) in this.graph.ast.items_named_imports().iter().enumerate() {
         for (&ref_, import) in imports.keys().iter().zip(imports.values()) {
-            let invalid = is_invalid_jsx_component_name(&mut this.graph.symbols, ref_);
-            if invalid {
-                log.add_error(
-                    Some(&input_files[id]),
-                    import.alias_loc,
-                    b"Cannot preserve JSX tag because its linked binding requires an invalid JSX name",
-                );
+            let members = this.graph.import_member_bindings.get(&ref_);
+            let refs = core::iter::once(ref_).chain(
+                members
+                    .into_iter()
+                    .flat_map(|members| members.values().copied()),
+            );
+            for ref_ in refs {
+                let invalid = is_invalid_jsx_component_name(&mut this.graph.symbols, ref_);
+                if invalid {
+                    let loc = if import.alias_loc.is_empty() {
+                        this.graph.ast.items_import_records()[id].as_slice()
+                            [import.import_record_index as usize]
+                            .range
+                            .loc
+                    } else {
+                        import.alias_loc
+                    };
+                    log.add_error(
+                        Some(&input_files[id]),
+                        loc,
+                        b"Cannot preserve JSX tag because its linked binding requires an invalid JSX name",
+                    );
+                    break;
+                }
             }
         }
     }

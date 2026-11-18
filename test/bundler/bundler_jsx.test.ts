@@ -225,6 +225,64 @@ describe("bundler", () => {
       }
     }
 
+    for (const backend of ["cli", "api"] as const) {
+      for (const minify of [false, true]) {
+        for (const dynamic of [false, true]) {
+          itBundled(`jsx/PreserveNamespaceMemberBinding-${backend}-${minify}-${dynamic}`, {
+            files: {
+              "/in.jsx": `
+                ${dynamic ? 'const ns = await import("./component");' : 'import ns from "./bridge";'}
+                console.log(<ns.Component />, <ns.Component></ns.Component>, <ns.Nested.Child />);
+              `,
+              "/bridge.js": 'export * as default from "./component";',
+              "/component.js": `
+                function component() { return "component"; }
+                export { component as Component };
+                export const Nested = { Child: () => "child" };
+              `,
+            },
+            backend,
+            format: "esm",
+            jsx: { runtime: "preserve" },
+            minifyIdentifiers: minify,
+            minifySyntax: minify,
+            minifyWhitespace: minify,
+            onAfterBundle(api) {
+              const out = api.readFile("/out.js");
+              const { code } = transformSync(out, { loader: "jsx", jsxFactory: "globalThis.__jsxPreserveFactory" });
+              api.writeFile("/out.js", `globalThis.__jsxPreserveFactory = type => type();\n${code}`);
+            },
+            run: { stdout: "component component child" },
+          });
+
+          itBundled(`jsx/PreservePinnedNamespaceMember-${backend}-${minify}-${dynamic}`, {
+            files: {
+              "/in.jsx": `
+                ${dynamic ? 'const ns = await import("./component");' : 'import ns from "./bridge";'}
+                console.log(<ns.Component />);
+              `,
+              "/bridge.js": 'export * as default from "./component";',
+              "/component.js": `
+                class component { static getSelf() { return eval("component"); } }
+                export { component as Component };
+              `,
+            },
+            backend,
+            format: "esm",
+            // Bun reports bindings whose fixed names cannot retain their JSX meaning.
+            skipOnEsbuild: true,
+            jsx: { runtime: "preserve" },
+            minifyIdentifiers: minify,
+            minifySyntax: minify,
+            minifyWhitespace: minify,
+            bundleErrors: {
+              "/in.jsx": ["Cannot preserve JSX tag because its linked binding requires an invalid JSX name"],
+            },
+          });
+        }
+      }
+    }
+
     describe.each(["cli", "api", "bunfig"] as const)("tsconfig preserve precedence (%s)", source => {
       describe.each(["react", "react-jsx", "react-jsxdev"])("tsconfig jsx=%s", jsx => {
         itBundled(`jsx/PreserveOverridesTsconfig-${source}-${jsx}`, {

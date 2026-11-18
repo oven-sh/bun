@@ -2883,6 +2883,7 @@ struct PropertyAccess {
     name: bun_ast::StoreStr,
     count: u32,
     is_call_target: bool,
+    is_jsx_tag: bool,
 }
 
 /// What following an import to its export needs.
@@ -3728,6 +3729,7 @@ impl<'m, 'a> ImportMatcher<'m, 'a> {
                         name,
                         count: prop_use.count_estimate,
                         is_call_target: prop_use.is_call_target,
+                        is_jsx_tag: prop_use.is_jsx_tag,
                     });
                 }
             }
@@ -4157,6 +4159,14 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
                 else {
                     continue;
                 };
+
+                if access.is_jsx_tag {
+                    self.graph
+                        .symbols
+                        .get_mut(resolved.r#ref)
+                        .unwrap()
+                        .set_must_start_with_capital_letter_for_jsx(true);
+                }
 
                 if !bound_bases.contains(&base) {
                     // First bound member of `base` in this part: depend on this

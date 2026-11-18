@@ -2568,6 +2568,13 @@ pub(crate) mod __gated_printer {
                     self.print_jsx_name_string(str_);
                 }
                 ExprData::EDot(dot) => {
+                    if dot.optional_chain.is_none()
+                        && dot.is_import_property_use
+                        && let Some(binding) = self.import_member_binding(dot.target, &dot.name)
+                    {
+                        self.print_jsx_tag(binding);
+                        return;
+                    }
                     self.print_jsx_tag(dot.target);
                     self.print(b".");
                     self.add_source_mapping(dot.name_loc);

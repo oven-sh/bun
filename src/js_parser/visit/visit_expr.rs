@@ -603,6 +603,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 tag_initializer = Some(initializer);
                                 tag_binding = binding;
                             } else {
+                                if let Data::EDot(dot) = tag.data
+                                    && dot.is_import_property_use
+                                {
+                                    let base = match dot.target.data {
+                                        Data::EIdentifier(id) => Some(id.ref_),
+                                        Data::EImportIdentifier(id) => Some(id.ref_),
+                                        _ => None,
+                                    };
+                                    if let Some(base) = base
+                                        && let Some(properties) =
+                                            p.import_symbol_property_uses.get_ptr_mut(&base)
+                                        && let Some(use_) = properties.get_mut(dot.name.slice())
+                                    {
+                                        use_.is_jsx_tag = true;
+                                    }
+                                }
                                 let ref_ = match tag.data {
                                     Data::EIdentifier(id) => Some(id.ref_),
                                     Data::EImportIdentifier(id) => Some(id.ref_),

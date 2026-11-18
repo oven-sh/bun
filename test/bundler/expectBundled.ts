@@ -1479,6 +1479,7 @@ for (const [key, blob] of build.outputs) {
       } else {
         await esbuild.build({
           bundle: true,
+          format,
           entryPoints: [...entryPaths, ...(entryPointsRaw ?? [])],
           external,
           ...(useOutFile ? { outfile: outfile! } : { outdir: outdir! }),

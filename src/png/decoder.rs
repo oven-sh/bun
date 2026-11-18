@@ -1,6 +1,6 @@
 //! PNG to 8-bit RGBA. No checksum is looked at: not a chunk's CRC, not a zlib stream's Adler-32.
 
-use bun_core::strings::index_of_char_usize;
+use bun_highway::index_of_char_raw;
 use bun_zlib::{InflateDecoder, ReturnCode};
 
 use crate::chunk::{self, ChunkType, Reader};
@@ -149,7 +149,8 @@ impl<'a> Chunks<'a> {
         }
         self.seen_iccp = true;
         // A name of 1 to 79 bytes, which is for people, its terminator, compression method 0.
-        if let Some(name_len @ 1..) = index_of_char_usize(data.get(..80).unwrap_or(data), 0)
+        // Another thread can still write the file, and `index_of_char` asserts that the byte it found is still there.
+        if let Some(name_len @ 1..) = index_of_char_raw(data.get(..80).unwrap_or(data), 0)
             && let Some([0, 0, compressed @ ..]) = data.get(name_len..)
         {
             self.icc_profile = inflate_icc_profile(compressed)?;

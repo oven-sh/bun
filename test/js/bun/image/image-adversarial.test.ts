@@ -1345,6 +1345,16 @@ describe("concurrent terminals on one Image", () => {
     }
     console.log(settled);
   `;
+  const settlesEveryPipeline = async (_: string, setup: string) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", raceFixture(setup)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr: stderr.slice(-3000), exitCode }).toEqual({ stdout: "256\n", stderr: "", exitCode: 0 });
+  };
   test.concurrent.each([
     [
       // The size of the output has to be the size that was reported.
@@ -1385,16 +1395,36 @@ describe("concurrent terminals on one Image", () => {
       const rewrite = () => { input.set(JUNK, at); input.set(ICCP, at); };
       `,
     ],
-  ])("doesn't crash when the %s of a WebP input is rewritten while a pipeline is pending", async (_, setup) => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", raceFixture(setup)],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr: stderr.slice(-3000), exitCode }).toEqual({ stdout: "256\n", stderr: "", exitCode: 0 });
-  });
+  ])("doesn't crash when the %s of a WebP input is rewritten while a pipeline is pending", settlesEveryPipeline);
+  // Not concurrent: a fixture keeps every core busy, and beside others its write seldom lands inside a search.
+  test.each([
+    [
+      // The orientation is read by a search for the next marker. Both values of the byte are stray bytes, which the
+      // decoder steps over.
+      "stray byte of a JPEG",
+      `
+      const jpeg = Buffer.from(await new Bun.Image(bmp(16, 16, 9)).jpeg().bytes());
+      const end = 4 + jpeg.readUInt16BE(4);
+      const input = new Uint8Array(2048);
+      input.set(Buffer.concat([jpeg.subarray(0, end), Buffer.alloc(32), jpeg.subarray(end)]));
+      const at = end + 16;
+      const rewrite = () => { for (let i = 0; i < 64; i++) { input[at] = 0xff; input[at] = 0; } };
+      `,
+    ],
+    [
+      // The decoder searches for the zero byte that ends the name of the profile.
+      "profile name of a PNG",
+      `
+      const png = Buffer.from(await new Bun.Image(bmp(16, 16, 9)).png().bytes());
+      const name = Buffer.alloc(40, "A");
+      const iccp = Buffer.concat([Buffer.from([0, 0, 0, name.length + 2]), Buffer.from("iCCP"), name, Buffer.alloc(6)]);
+      const input = new Uint8Array(2048);
+      input.set(Buffer.concat([png.subarray(0, 33), iccp, png.subarray(33)]));
+      const at = 33 + 8 + name.length;
+      const rewrite = () => { for (let i = 0; i < 64; i++) { input[at] = 0x41; input[at] = 0; } };
+      `,
+    ],
+  ])("doesn't crash when the %s input is rewritten while a pipeline is pending", settlesEveryPipeline);
 });
 
 // ─── 10. random-byte fuzz (cheap, bounded) ───────────────────────────────────

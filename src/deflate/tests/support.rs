@@ -49,7 +49,11 @@ unsafe extern "C" fn highway_adler32(bytes: *const u8, len: usize) -> u32 {
 unsafe extern "C" fn highway_index_of_char(bytes: *const u8, len: usize, byte: u8) -> usize {
     // SAFETY: the caller passes a slice, as a pointer and a length.
     let bytes = unsafe { core::slice::from_raw_parts(bytes, len) };
-    bytes.iter().take_while(|&&other| other != byte).count()
+    let found = bytes.iter().take_while(|&&other| other != byte).count();
+    match OVERWRITTEN.get() && (1..len).contains(&found) {
+        true => found - 1,
+        false => found,
+    }
 }
 
 thread_local! {
@@ -57,6 +61,7 @@ thread_local! {
     static BYTES: Cell<usize> = const { Cell::new(0) };
     static FAILING: Cell<[usize; 2]> = const { Cell::new([0; 2]) };
     static FAILED_SIZE: Cell<usize> = const { Cell::new(0) };
+    static OVERWRITTEN: Cell<bool> = const { Cell::new(false) };
 }
 
 struct Allocator;
@@ -105,6 +110,14 @@ pub(crate) fn with_failing<R>(failing: Range<usize>, body: impl FnOnce() -> R) -
     FAILING.set([0; 2]);
     FAILED_SIZE.set(0);
     (result, ALLOCATIONS.get())
+}
+
+/// Runs `body`, in which a search for a byte returns where another byte is, as it does if another thread writes the text meanwhile.
+pub(crate) fn with_text_overwritten<R>(body: impl FnOnce() -> R) -> R {
+    OVERWRITTEN.set(true);
+    let result = body();
+    OVERWRITTEN.set(false);
+    result
 }
 
 pub(crate) fn bytes_allocated_by(body: impl FnOnce()) -> usize {

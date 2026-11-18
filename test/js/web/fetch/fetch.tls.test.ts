@@ -1772,10 +1772,16 @@ describe.concurrent("fetch-tls", () => {
       };
     }
 
-    // Both timers count on the same 4 s sweep. The handshake timeout fires on the fourth sweep, a
-    // `timeout: 20_000` on the sixth, and the 5 minute idle timeout, which used to cover the
-    // handshake, long after both.
-    it("fails a handshake that gets no answer, before a request with a longer timeout of its own", async () => {
+    // Every timer counts on the same 4 s sweep: the handshake timeout fires on the fourth one, a
+    // `timeout: 20_000` on the sixth, a `BUN_CONFIG_HTTP_IDLE_TIMEOUT=28` on the eighth. The 5 minute
+    // idle timeout, which used to cover the handshake, fires long after all of them.
+    const stalled = (url: string, request: string, init?: RequestInit) =>
+      fetch(url, { keepalive: false, proxy: false, ...init }).then(
+        () => ({ request, outcome: "resolved" }),
+        e => ({ request, outcome: e.name }),
+      );
+
+    it("fails a handshake that gets no answer, unless the request has a timeout of its own", async () => {
       using silent = await silentListener();
       const release = Promise.withResolvers<void>();
       using server = Bun.serve({
@@ -1788,19 +1794,21 @@ describe.concurrent("fetch-tls", () => {
         },
       });
       const abort = new AbortController();
-      const stalled = (request: string, init?: RequestInit) =>
-        fetch(silent.url, { keepalive: false, proxy: false, signal: abort.signal, ...init }).then(
-          () => ({ request, outcome: "resolved" }),
-          e => ({ request, outcome: e.name }),
-        );
       // A handshake that completes leaves its timeout behind: this response takes longer than that.
       const answered = fetch(server.url, { keepalive: false, proxy: false, tls: { ca: validTls.cert } }).then(
         response => response.text(),
         e => e.name,
       );
+      const byDefault = stalled(silent.url, "default", { signal: abort.signal });
+      const longer = stalled(silent.url, "timeout: 20_000", { signal: abort.signal, timeout: 20_000 });
+      const disabled = stalled(silent.url, "timeout: false", { signal: abort.signal, timeout: false });
       try {
-        expect(await Promise.race([stalled("default"), stalled("timeout: 20_000", { timeout: 20_000 })])).toEqual({
+        expect(await Promise.race([byDefault, longer, disabled])).toEqual({
           request: "default",
+          outcome: "TimeoutError",
+        });
+        expect(await Promise.race([longer, disabled])).toEqual({
+          request: "timeout: 20_000",
           outcome: "TimeoutError",
         });
       } finally {
@@ -1808,6 +1816,32 @@ describe.concurrent("fetch-tls", () => {
       }
       release.resolve();
       expect(await answered).toBe("answered");
+    }, 60_000);
+
+    it("leaves the handshake to a BUN_CONFIG_HTTP_IDLE_TIMEOUT that the user set", async () => {
+      using silent = await silentListener();
+      const script = `
+        const stalled = (request, init) =>
+          fetch(process.env.SILENT, { keepalive: false, proxy: false, ...init }).then(
+            () => ({ request, outcome: "resolved" }),
+            e => ({ request, outcome: e.name }),
+          );
+        const first = await Promise.race([stalled("default"), stalled("timeout: 20_000", { timeout: 20_000 })]);
+        console.log(JSON.stringify(first));
+        process.exit(0);
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: { ...bunEnv, SILENT: silent.url, BUN_CONFIG_HTTP_IDLE_TIMEOUT: "28" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout && JSON.parse(stdout), stderr }).toEqual({
+        stdout: { request: "timeout: 20_000", outcome: "TimeoutError" },
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
     }, 60_000);
 
     // The connection is parked after its handshake until the JS thread returns from
@@ -1826,15 +1860,23 @@ describe.concurrent("fetch-tls", () => {
         cmd: [bunExe(), join(import.meta.dir, "fetch.tls.slow-check-server-identity.fixture.ts")],
         env: {
           ...bunEnv,
+          // The default, whatever the harness sets.
+          BUN_CONFIG_HTTP_IDLE_TIMEOUT: undefined,
           SILENT: silent.url,
           SERVER: `https://127.0.0.1:${(server.address() as net.AddressInfo).port}/`,
           CA: validTls.cert,
         },
         stdout: "pipe",
         stderr: "pipe",
+        // Without a handshake timeout the fixture waits for 5 minutes.
+        timeout: 40_000,
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout, stderr }).toEqual({ stdout: "answered\n", stderr: "" });
+      expect({ stdout, stderr, signalCode: proc.signalCode }).toEqual({
+        stdout: "TimeoutError\nanswered\n",
+        stderr: "",
+        signalCode: null,
+      });
       expect(exitCode).toBe(0);
     }, 60_000);
   });

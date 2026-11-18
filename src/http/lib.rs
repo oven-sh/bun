@@ -303,18 +303,19 @@ pub static OVERRIDDEN_DEFAULT_USER_AGENT: std::sync::OnceLock<&'static [u8]> =
 /// Idle timeout for HTTP client sockets, in seconds. The timer is armed in
 /// `on_open` and re-armed on writes and on body-phase reads; response-header
 /// reads do not re-arm it, so it is an absolute deadline for the header block
-/// to complete (undici `headersTimeout` semantics). A TLS handshake runs on
-/// [`HTTPClient::handshake_timeout_seconds`] instead. 0 disables the timer
+/// to complete (undici `headersTimeout` semantics). 0 disables the timer
 /// (matching `disable_timeout = true`).
 /// Overridable via `BUN_CONFIG_HTTP_IDLE_TIMEOUT`. Default is 5 minutes.
 /// `HTTPThread::on_start` stores it padded for the timer-wheel sweep (see
 /// [`normalize_idle_timeout_seconds`]).
 pub(crate) static IDLE_TIMEOUT_SECONDS: AtomicU32 = AtomicU32::new(300);
 
-/// The longest a TLS handshake may take when the request has no timeout of
-/// its own, in seconds: undici's `connect.timeout` and Go's
-/// `TLSHandshakeTimeout` default. See [`HTTPClient::handshake_timeout_seconds`].
-const TLS_HANDSHAKE_TIMEOUT_SECONDS: u64 = 10;
+/// What a TLS handshake gets in place of [`IDLE_TIMEOUT_SECONDS`], in seconds:
+/// Go's `TLSHandshakeTimeout` default. undici's `connect.timeout` has the same
+/// value and also covers the TCP connect, which has no timer here.
+/// `HTTPThread::on_start` stores it padded, or stores the idle timeout when
+/// `BUN_CONFIG_HTTP_IDLE_TIMEOUT` is set: only the default is this short.
+pub(crate) static TLS_HANDSHAKE_TIMEOUT_SECONDS: AtomicU32 = AtomicU32::new(10);
 
 /// Safe accessor for [`IDLE_TIMEOUT_SECONDS`].
 #[inline]
@@ -3369,6 +3370,8 @@ impl<'a> HTTPClient<'a> {
         start_payload: &[u8],
     ) -> ControlFlow<NextStep> {
         bun_core::scoped_log!(fetch, "startProxyHandshake");
+        // `ProxyTunnel`'s `on_handshake` puts the idle timeout back.
+        socket.set_timeout(self.handshake_timeout_seconds());
         // if we have options we pass them (ca, reject_unauthorized, etc) otherwise use the default
         let ssl_options = self.tls_props.clone();
         ProxyTunnel::start::<IS_SSL>(self, socket, ssl_options.as_deref(), start_payload)
@@ -3427,9 +3430,7 @@ impl<'a> HTTPClient<'a> {
             }
         };
         if should_continue != ShouldContinue::Finished && self.is_reading_connect_reply() {
-            // The origin's TLS handshake comes next, inside the tunnel;
-            // `ProxyTunnel`'s `on_handshake` puts the idle timeout back.
-            socket.set_timeout(self.handshake_timeout_seconds());
+            // Arms the timeout of the origin's TLS handshake.
             return self.start_proxy_handshake::<IS_SSL>(socket, to_read);
         }
         // Headers complete: start the body-idle window fresh (see [`IDLE_TIMEOUT_SECONDS`]).
@@ -3659,18 +3660,15 @@ impl<'a> HTTPClient<'a> {
     }
 
     /// What to arm while a TLS handshake is pending, in seconds (0 =
-    /// disabled). Only the default is capped, at
-    /// [`TLS_HANDSHAKE_TIMEOUT_SECONDS`]: a request that set its own idle
-    /// timeout, or turned the timer off, waits that long for the handshake too.
+    /// disabled): [`Self::effective_idle_timeout_seconds`], with
+    /// [`TLS_HANDSHAKE_TIMEOUT_SECONDS`] as the default.
+    #[inline]
     pub(crate) fn handshake_timeout_seconds(&self) -> c_uint {
-        let idle = self.effective_idle_timeout_seconds();
-        if self.idle_timeout_seconds.is_some() {
-            return idle;
+        if self.flags.disable_timeout {
+            return 0;
         }
-        // `min` keeps 0 (disabled) and a shorter `BUN_CONFIG_HTTP_IDLE_TIMEOUT`.
-        idle.min(normalize_idle_timeout_seconds(
-            TLS_HANDSHAKE_TIMEOUT_SECONDS,
-        ))
+        self.idle_timeout_seconds
+            .unwrap_or_else(|| TLS_HANDSHAKE_TIMEOUT_SECONDS.load(Ordering::Relaxed))
     }
 
     pub(crate) fn set_timeout<S: SocketTimeout>(&self, socket: &S) {

@@ -210,17 +210,26 @@ test.concurrent(
       });
       await using proc = Bun.spawn({
         cmd: [bunExe(), "install"],
-        env: bunEnv,
+        // The default, whatever the harness sets.
+        env: { ...bunEnv, BUN_CONFIG_HTTP_IDLE_TIMEOUT: undefined },
         cwd: String(dir),
         stdout: "pipe",
         stderr: "pipe",
+        // Well under the idle timeout, which a handshake waited for before.
+        timeout: 40_000,
       });
       const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-      expect(stderr.split("\n").filter(line => /^(warn|error):/.test(line))).toEqual([
-        "warn: registry requests failed, retrying",
-      ]);
-      expect(connects).toBe(2);
-      expect(exitCode).toBe(0);
+      expect({
+        messages: stderr.split("\n").filter(line => /^(warn|error):/.test(line)),
+        connects,
+        exitCode,
+        signalCode: proc.signalCode,
+      }).toEqual({
+        messages: ["warn: registry requests failed, retrying"],
+        connects: 2,
+        exitCode: 0,
+        signalCode: null,
+      });
     } finally {
       for (const s of sockets) s.destroy();
       await new Promise<void>(resolve => front.close(() => resolve()));

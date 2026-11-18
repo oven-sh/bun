@@ -2431,7 +2431,7 @@ describe.concurrent("a CONNECT tunnel", () => {
   // Both timers count on the same 4 s sweep. The handshake timeout fires on the fourth sweep, a
   // `timeout: 20_000` on the sixth, and the 5 minute idle timeout, which used to cover the
   // handshake, long after both.
-  test("fails an origin handshake that gets no answer, before a request with a longer timeout of its own", async () => {
+  test("fails an origin handshake that gets no answer, unless the request has a timeout of its own", async () => {
     // Accepts the bytes the proxy relays and never answers the ClientHello.
     const silentSockets = new Set<net.Socket>();
     const silent = net.createServer(socket => {
@@ -2497,7 +2497,12 @@ describe.concurrent("a CONNECT tunnel", () => {
   // The tunnel is parked after the origin's handshake until the JS thread returns from
   // `checkServerIdentity`, so the handshake timeout must be gone by then.
   test("does not apply the handshake timeout to the wait for a JS checkServerIdentity", async () => {
-    const silent = net.createServer(socket => void socket.on("error", () => {}));
+    const silentSockets = new Set<net.Socket>();
+    const silent = net.createServer(socket => {
+      silentSockets.add(socket);
+      socket.on("error", () => {});
+      socket.on("close", () => silentSockets.delete(socket));
+    });
     await once(silent.listen(0, "127.0.0.1"), "listening");
     // Not `Bun.serve`: it closes a connection that sends no request for 10 seconds.
     const origin = tls.createServer(tlsCert, socket => {
@@ -2513,6 +2518,8 @@ describe.concurrent("a CONNECT tunnel", () => {
         env: {
           ...bunEnv,
           ...proxyFreeEnv,
+          // The default, whatever the harness sets.
+          BUN_CONFIG_HTTP_IDLE_TIMEOUT: undefined,
           SILENT: `https://127.0.0.1:${(silent.address() as net.AddressInfo).port}/`,
           SERVER: `https://127.0.0.1:${originPort}/`,
           PROXY: proxy.url,
@@ -2520,12 +2527,19 @@ describe.concurrent("a CONNECT tunnel", () => {
         },
         stdout: "pipe",
         stderr: "pipe",
+        // Without a handshake timeout the fixture waits for 5 minutes.
+        timeout: 40_000,
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout, stderr }).toEqual({ stdout: "answered\n", stderr: "" });
+      expect({ stdout, stderr, signalCode: proc.signalCode }).toEqual({
+        stdout: "TimeoutError\nanswered\n",
+        stderr: "",
+        signalCode: null,
+      });
       expect(proxy.connects).toEqual([`CONNECT 127.0.0.1:${originPort} HTTP/1.1`]);
       expect(exitCode).toBe(0);
     } finally {
+      for (const socket of silentSockets) socket.destroy();
       silent.close();
       origin.close();
     }

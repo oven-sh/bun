@@ -1017,12 +1017,16 @@ mod _event_loop_draft {
         // the h1 (`HTTPClient::set_timeout`) and h2
         // (`ClientSession::rearm_timeout`) paths identical without duplicating
         // the math at each call site.
+        //
+        // A value the user set covers the TLS handshake as well: only the
+        // default gives the handshake a shorter timeout of its own.
+        let configured = bun_core::env_var::BUN_CONFIG_HTTP_IDLE_TIMEOUT.get();
         crate::IDLE_TIMEOUT_SECONDS.store(
-            crate::normalize_idle_timeout_seconds(
-                bun_core::env_var::BUN_CONFIG_HTTP_IDLE_TIMEOUT
-                    .get()
-                    .unwrap_or(300),
-            ),
+            crate::normalize_idle_timeout_seconds(configured.unwrap_or(300)),
+            core::sync::atomic::Ordering::Relaxed,
+        );
+        crate::TLS_HANDSHAKE_TIMEOUT_SECONDS.store(
+            crate::normalize_idle_timeout_seconds(configured.unwrap_or(10)),
             core::sync::atomic::Ordering::Relaxed,
         );
 

@@ -1,7 +1,11 @@
 // Direct `extern "C"` re-exports of the Google Highway SIMD C++ helpers.
 // Per crate map: `bun.highway.*` → `bun_highway::*` (same C++ backing).
+#![feature(core_io_borrowed_buf, hint_prefetch)]
 
+pub mod brotli;
+pub mod checksums;
 pub mod webp;
+pub mod zlib;
 
 unsafe extern "C" {
     fn highway_index_of_char(haystack: *const u8, haystack_len: usize, needle: u8) -> usize;
@@ -271,10 +275,6 @@ unsafe extern "C" {
         masks: *mut u64,
         bit_planes: bool,
     );
-
-    fn highway_crc32(crc: u32, bytes: *const u8, len: usize) -> u32;
-
-    fn highway_adler32(bytes: *const u8, len: usize) -> u32;
 }
 
 // NOTE: every public wrapper below is `#[inline(always)]`. They are thin
@@ -1725,12 +1725,7 @@ pub unsafe fn parse_mappings(
     }
 }
 
-/// Continues gzip's CRC-32 over `bytes`. It starts as 0.
-#[inline(always)]
-pub fn crc32(crc: u32, bytes: &[u8]) -> u32 {
-    // SAFETY: the kernel reads `bytes.len()` bytes.
-    unsafe { highway_crc32(crc, bytes.as_ptr(), bytes.len()) }
-}
+pub use checksums::crc32;
 
 /// zlib's Adler-32 of `bytes`.
 #[inline(always)]
@@ -1745,31 +1740,45 @@ pub fn adler32(bytes: &[u8]) -> u32 {
         }
         return (high << 16) | low;
     }
-    // SAFETY: the kernel reads `bytes.len()` bytes.
-    unsafe { highway_adler32(bytes.as_ptr(), bytes.len()) }
+    checksums::adler32(1, bytes)
 }
 
 /// Compiles a function, and what is inlined into it, a second time for CPUs that have BMI2.
+///
+/// `|has_bmi2|` before the body names a `bool` that is constant in each of the two.
 #[macro_export]
 macro_rules! with_bmi2 {
-    ($(#[$meta:meta])* fn $name:ident($($arg:ident: $type:ty),* $(,)?) -> $result:ty $body:block) => {
+    (
+        $(#[$meta:meta])*
+        fn $name:ident$(<$lifetime:lifetime>)?($($arg:ident: $type:ty),* $(,)?) $(-> $result:ty)? $body:block
+    ) => {
+        $crate::with_bmi2! {
+            $(#[$meta])*
+            fn $name$(<$lifetime>)?($($arg: $type),*) $(-> $result)? |_has_bmi2| $body
+        }
+    };
+    (
+        $(#[$meta:meta])*
+        fn $name:ident$(<$lifetime:lifetime>)?($($arg:ident: $type:ty),* $(,)?) $(-> $result:ty)?
+        |$has_bmi2:ident| $body:block
+    ) => {
         $(#[$meta])*
         #[inline(always)]
-        fn $name($($arg: $type),*) -> $result {
+        fn $name$(<$lifetime>)?($($arg: $type),*) $(-> $result)? {
             #[inline(always)]
-            fn body($($arg: $type),*) -> $result $body
+            fn body$(<$lifetime>)?($has_bmi2: bool, $($arg: $type),*) $(-> $result)? $body
 
             #[inline(never)]
-            fn baseline($($arg: $type),*) -> $result {
-                body($($arg),*)
+            fn baseline$(<$lifetime>)?($($arg: $type),*) $(-> $result)? {
+                body(false, $($arg),*)
             }
 
             #[cfg(all(target_arch = "x86_64", not(miri)))]
             if ::std::is_x86_feature_detected!("bmi2") {
                 #[target_feature(enable = "bmi2")]
                 #[inline(never)]
-                fn bmi2($($arg: $type),*) -> $result {
-                    body($($arg),*)
+                fn bmi2$(<$lifetime>)?($($arg: $type),*) $(-> $result)? {
+                    body(true, $($arg),*)
                 }
                 // SAFETY: the CPU has BMI2.
                 return unsafe { bmi2($($arg),*) };

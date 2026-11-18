@@ -78,6 +78,7 @@ private:
         return m_url;
     }
     void setFullURL(const URL& fullURL) final { setHref(fullURL.string()); }
+    void adoptFullURL(URL&&) final;
     void flushPendingSearchParamsUpdate() const;
 
     URL m_url;

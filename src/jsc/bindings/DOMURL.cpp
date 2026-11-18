@@ -28,6 +28,7 @@
 
 #include "NodeURLHelpers.h"
 #include "URLSearchParams.h"
+#include <wtf/URLParser.h>
 #include <wtf/text/StringCommon.h>
 
 namespace WebCore {
@@ -167,6 +168,14 @@ ExceptionOr<void> DOMURL::setHref(const String& url)
     if (m_searchParams)
         return m_searchParams->updateFromAssociatedURL();
     return {};
+}
+
+void DOMURL::adoptFullURL(URL&& url)
+{
+    ASSERT(url.isValid() && hasValidParsedHost(url, url.string()) && WTF::URLParser::allValuesEqual(url, URL { url.string() }));
+    // The query is unchanged, so m_searchParams is current.
+    ASSERT(!m_searchParamsDirty && url.query() == m_url.query());
+    m_url = WTF::move(url);
 }
 
 // The update steps invoked on URLSearchParams::{append,set,delete,sort} set

@@ -163,6 +163,47 @@ describe("URLPattern", () => {
     });
   });
 
+  // "Canonicalize a hostname" parses the value alone, from the hostname state of the URL Standard
+  // (https://urlpattern.spec.whatwg.org/#canonicalize-a-hostname). Node.js v26.3.0 gives the same results.
+  describe("hostname canonicalization", () => {
+    const group = (hostname: string) =>
+      new URLPattern({ hostname: ":h" }).exec({ hostname })?.hostname.groups.h ?? null;
+
+    test("a port after the host fails", () => {
+      expect(group("[::1]")).toBe("[::1]");
+      expect(group("[::1]:81")).toBeNull();
+      expect(group("a:81")).toBeNull();
+    });
+
+    // The host parser refuses "09": it ends in a number and is not an IPv4 address. Node.js keeps "09".
+    test("a host that the host parser refuses fails", () => {
+      expect(group("09")).toBeNull();
+      expect(group("a b")).toBeNull();
+      expect(group("EX%41mple")).toBe("example");
+      expect(group("[0:0::1]")).toBe("[::1]");
+    });
+
+    test("tab and newline are removed first", () => {
+      expect(group("a\tb")).toBe("ab");
+      expect(group("\t[::1]")).toBe("[::1]");
+    });
+
+    // IDNA maps U+FF20, U+FF0F and U+2100 to text with '@' and '/'.
+    test("code points that IDNA maps to a delimiter do not become URL structure", () => {
+      const trusted = new URLPattern({ hostname: "*.trusted.example" });
+      expect(trusted.test({ hostname: "a.trusted.example" })).toBe(true);
+      expect(trusted.test({ hostname: "evil.example\uFF20a.trusted.example" })).toBe(false);
+      expect(trusted.test({ hostname: "a.trusted.example\uFF0Fevil.example" })).toBe(false);
+      expect(group("a\uFF0Fb")).toBeNull();
+      expect(() => new URLPattern({ hostname: "a\uFF20b" })).toThrow(TypeError);
+      expect(() => new URLPattern({ hostname: "bad.c\u2100.good.com" })).toThrow(TypeError);
+    });
+
+    test("percent-decoding comes before domain to ASCII", () => {
+      expect(new URLPattern({ hostname: "\u00DF%41.de" }).hostname).toBe("xn--a-pfa.de");
+    });
+  });
+
   describe("hasRegExpGroups", () => {
     test("match-everything pattern", () => {
       expect(new URLPattern({}).hasRegExpGroups).toBe(false);

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunRun } from "harness";
+import { pathToFileURL } from "node:url";
 import path from "path";
 
 test.concurrent(
@@ -33,4 +34,17 @@ test("pathToFileURL escapes special characters", () => {
   for (const [input, expected] of cases) {
     expect(Bun.pathToFileURL(`${input}`).toString()).toInclude(expected);
   }
+});
+
+// The server name goes to the hostname setter, which parses it alone. Node.js v26.3.0 gives the same hrefs.
+test("pathToFileURL with { windows: true } takes a UNC server name as a host", () => {
+  const href = (server: string) => pathToFileURL(`\\\\${server}\\share\\f`, { windows: true }).href;
+  expect(["srv", "[::1]", "\t[::1]", "a\tb", "b\u00FCcher", "localhost"].map(href)).toEqual([
+    "file://srv/share/f",
+    "file://[::1]/share/f",
+    "file://[::1]/share/f",
+    "file://ab/share/f",
+    "file://xn--bcher-kva/share/f",
+    "file:///share/f",
+  ]);
 });

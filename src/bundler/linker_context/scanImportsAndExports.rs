@@ -1332,22 +1332,7 @@ pub(crate) fn scan_imports_and_exports(
     // Checking final links; pinned export names cannot satisfy JSX component-name rules.
     for (id, imports) in this.graph.ast.items_named_imports().iter().enumerate() {
         for (&ref_, import) in imports.keys().iter().zip(imports.values()) {
-            let original = this.graph.symbols.get_const(ref_).unwrap();
-            if !original.must_start_with_capital_letter_for_jsx() {
-                continue;
-            }
-            let linked = this.graph.symbols.follow(ref_);
-            let symbol = this.graph.symbols.get_const(linked).unwrap();
-            let invalid = match &symbol.namespace_alias {
-                Some(alias) => !bun_core::identifier::is_identifier(alias.alias.slice()),
-                None => {
-                    symbol.must_not_be_renamed()
-                        && symbol
-                            .original_name
-                            .first()
-                            .is_some_and(u8::is_ascii_lowercase)
-                }
-            };
+            let invalid = is_invalid_jsx_component_name(&mut this.graph.symbols, ref_);
             if invalid {
                 log.add_error(
                     Some(&input_files[id]),
@@ -1361,6 +1346,30 @@ pub(crate) fn scan_imports_and_exports(
         return Err(ScanImportsAndExportsError::ImportResolutionFailed);
     }
     Ok(())
+}
+
+/// Validate the binding printed as a complete JSX tag and retain its capitalization requirement.
+fn is_invalid_jsx_component_name(symbols: &mut symbol::Map, ref_: Ref) -> bool {
+    let original = symbols.get_const(ref_).unwrap();
+    if !original.must_start_with_capital_letter_for_jsx() {
+        return false;
+    }
+    let linked = symbols.follow(ref_);
+    let symbol = symbols.get_const(linked).unwrap();
+    let linked = match &symbol.namespace_alias {
+        Some(alias) if !alias.alias.is_empty() => {
+            return !bun_core::identifier::is_identifier(alias.alias.slice());
+        }
+        Some(alias) => symbols.follow(alias.namespace_ref),
+        None => linked,
+    };
+    let symbol = symbols.get_mut(linked).unwrap();
+    symbol.set_must_start_with_capital_letter_for_jsx(true);
+    symbol.must_not_be_renamed()
+        && symbol
+            .original_name
+            .first()
+            .is_some_and(u8::is_ascii_lowercase)
 }
 
 #[inline]

@@ -202,6 +202,29 @@ describe("bundler", () => {
   });
 
   describe("jsx preserve", () => {
+    for (const backend of ["cli", "api"] as const) {
+      for (const minify of [false, true]) {
+        itBundled(`jsx/PreserveEmptyNamespaceAlias-${backend}-${minify}`, {
+          files: {
+            "/in.jsx": 'import * as Component from "./bridge"; console.log(<Component />.marker);',
+            "/bridge.js": 'module.exports = require("./component");',
+            "/component.js": 'exports.marker = "namespace";',
+          },
+          backend,
+          jsx: { runtime: "preserve" },
+          minifyIdentifiers: minify,
+          minifySyntax: minify,
+          minifyWhitespace: minify,
+          onAfterBundle(api) {
+            const out = api.readFile("/out.js");
+            const { code } = transformSync(out, { loader: "jsx", jsxFactory: "globalThis.__jsxPreserveFactory" });
+            api.writeFile("/out.js", `globalThis.__jsxPreserveFactory = type => type;\n${code}`);
+          },
+          run: { stdout: "namespace" },
+        });
+      }
+    }
+
     describe.each(["cli", "api", "bunfig"] as const)("tsconfig preserve precedence (%s)", source => {
       describe.each(["react", "react-jsx", "react-jsxdev"])("tsconfig jsx=%s", jsx => {
         itBundled(`jsx/PreserveOverridesTsconfig-${source}-${jsx}`, {

@@ -4466,7 +4466,7 @@ pub(crate) mod __gated_printer {
                                 }
                                 self.print_space_before_identifier();
                                 self.add_source_mapping(expr.loc);
-                                self.print_namespace_alias(import_record, namespace);
+                                self.print_namespace_alias(namespace);
 
                                 if wrap {
                                     self.print(b")");
@@ -4506,18 +4506,7 @@ pub(crate) mod __gated_printer {
 
                             self.print_space_before_identifier();
                             self.add_source_mapping(expr.loc);
-                            self.print_symbol(namespace.namespace_ref);
-                            let alias = namespace.alias.slice();
-                            if lexer::is_identifier(alias) {
-                                self.print(b".");
-                                // TODO: addSourceMappingForName
-                                self.print_identifier(alias);
-                            } else {
-                                self.print(b"[");
-                                // TODO: addSourceMappingForName
-                                self.print_string_literal_utf8(alias, false);
-                                self.print(b"]");
-                            }
+                            self.print_namespace_alias(namespace);
 
                             if wrap {
                                 self.print(b")");
@@ -4875,11 +4864,7 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        pub(crate) fn print_namespace_alias(
-            &mut self,
-            _import_record: &ImportRecord,
-            namespace: &G::NamespaceAlias,
-        ) {
+        pub(crate) fn print_namespace_alias(&mut self, namespace: &G::NamespaceAlias) {
             self.print_symbol(namespace.namespace_ref);
 
             // In the case of code like this:
@@ -5949,13 +5934,10 @@ pub(crate) mod __gated_printer {
                                 if let Some(symbol) = symbol {
                                     if let Some(namespace) = &symbol.namespace_alias {
                                         if namespace.was_originally_property_access {
-                                            let import_record = self.import_record(
-                                                namespace.import_record_index as usize,
-                                            );
                                             self.print(b"var ");
                                             self.print_symbol(item.name.ref_);
                                             self.print_equals();
-                                            self.print_namespace_alias(import_record, namespace);
+                                            self.print_namespace_alias(namespace);
                                             self.print_semicolon_after_statement();
                                             array.swap_remove(i);
 

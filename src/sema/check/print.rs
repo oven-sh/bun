@@ -6,6 +6,8 @@
 
 use super::enclosing_declaration::Enclosing;
 use super::errors_declaration_emit::{EndOfChain, Meaning};
+use super::symbols::PropSymbol;
+use crate::program::Transient;
 use crate::util::SharedSort;
 
 use super::*;
@@ -2199,7 +2201,18 @@ impl<'p, 's> Printer<'_, 'p, 's> {
     /// `getNameOfSymbolAsWritten`. `is_initial` is `FlagsInInitialEntityName`.
     fn name_of_symbol_as_written(&mut self, symbol: Sym, is_initial: bool) -> Vec<u8> {
         let files = self.c.files();
-        let decls = files.decls_of(symbol);
+        let mut decls = files.decls_of(symbol);
+        // `combineValueAndTypeSymbols`: the declarations of the value symbol come first.
+        if let Some(Transient::Combined { alias, .. }) = files.transient(symbol) {
+            let of_value = match self.c.value_of_combined_symbol(alias) {
+                Some(PropSymbol::Declared(value)) => files.decls_of(value).into_vec(),
+                Some(PropSymbol::InLiteral(file, property)) => {
+                    vec![(file, Decl::Property(property))]
+                }
+                Some(PropSymbol::PrototypeOf(_)) | None => Vec::new(),
+            };
+            decls = List::Own([of_value, decls.into_vec()].concat());
+        }
         let name = files.symbol(symbol).name;
         let is_in_other_binding_context = |&(file, decl): &(FileId, Decl)| {
             self.enclosing_declaration.is_some_and(|at| {

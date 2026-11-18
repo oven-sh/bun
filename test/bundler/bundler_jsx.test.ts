@@ -1129,6 +1129,34 @@ describe("bundler", () => {
       run: { stdout: "<div/>" },
     });
 
+    itBundled("jsx/AotSideEffectsKeepsProductionDefine", {
+      files: {
+        "/in.tsx": `
+          declare namespace JSX {
+            interface IntrinsicElements { div: {} }
+            type Element = string;
+          }
+          console.log(<div />);
+        `,
+        "/tsconfig.json": JSON.stringify({ compilerOptions: {} }),
+        "/node_modules/react/package.json": JSON.stringify({
+          name: "react",
+          exports: { "./jsx-runtime": "./jsx-runtime.ts", "./jsx-dev-runtime": "./jsx-dev-runtime.ts" },
+        }),
+        "/node_modules/react/jsx-runtime.ts":
+          'export const jsx = (type: string) => "prod:" + type; export const jsxs = jsx;',
+        "/node_modules/react/jsx-dev-runtime.ts": 'export const jsxDEV = (type: string) => "dev:" + type;',
+      },
+      backend: "cli",
+      target: "bun",
+      compile: { aot: true },
+      env: { NODE_ENV: undefined, BUN_ENV: undefined },
+      define: { "process.env.NODE_ENV": JSON.stringify("production") },
+      jsx: { sideEffects: true },
+      skipOnEsbuild: true,
+      run: { stdout: "prod:div" },
+    });
+
     itBundled("jsx/PreserveAotClassicPragmaOverridesOption", {
       files: {
         "/in.jsx": "/** @jsxRuntime classic */ const React = { createElement: type => type }; console.log(<div/>);",

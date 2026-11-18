@@ -1333,6 +1333,7 @@ impl Options {
 }
 
 /// A setting in bunfig.toml, .npmrc or the environment that keeps `bun install` from saving bun.lock.
+#[derive(Clone, Copy)]
 pub(crate) enum LockfileSavingOff {
     Env,
     Save,

@@ -985,6 +985,7 @@ static ROOT_PACKAGE_JSON_PATH_BUF: bun_core::RacyCell<PathBuffer> =
     bun_core::RacyCell::new(PathBuffer::ZEROED);
 
 /// The note below the `error:` line of a command that has no lockfile it can use.
+#[derive(Clone, Copy)]
 pub(crate) enum LockfileNote {
     RunInstall,
     NothingToLock,

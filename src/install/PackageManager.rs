@@ -964,17 +964,6 @@ mod holder {
     // pointer-sized, so `.store()` is a safe Release write.
     pub(super) static ENV_LOADER: bun_core::AtomicCell<*mut dot_env::Loader> =
         bun_core::AtomicCell::new(core::ptr::null_mut());
-
-    /// Process-lifetime storage for `http::http_thread::InitOpts.abs_ca_file_name`.
-    /// `OnceLock` per PORTING.md §Forbidden — never `Box::leak` to mint `&'static`.
-    pub(super) static ABS_CA_FILE_NAME: std::sync::OnceLock<bun_core::ZBox> =
-        std::sync::OnceLock::new();
-
-    /// Process-lifetime storage for `http::http_thread::InitOpts.ca` C-strings
-    /// (never freed). The HTTP thread
-    /// reads these asynchronously after `init()` returns, so they must outlive
-    /// the local that builds them.
-    pub(super) static CA: std::sync::OnceLock<Vec<bun_core::ZBox>> = std::sync::OnceLock::new();
 }
 
 // PORTING.md §Global mutable state: single-thread (main) scratch buffers →
@@ -1358,23 +1347,25 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
     Ok(())
 }
 
-fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::InitOpts) -> ! {
-    let abs_ca_z: &ZStr = opts.abs_ca_file_name;
+/// Reports a `ca` / `cafile` that does not load and ends the process.
+#[cold]
+fn exit_with_ca_error(err: http::InitError, abs_ca_file_name: &ZStr) -> ! {
     match err {
         http::InitError::LoadCAFile => {
             let mut normalizer = PosixToWinNormalizer::default();
-            let normalized = normalizer.resolve_z(FileSystem::get().top_level_dir(), abs_ca_z);
+            let normalized =
+                normalizer.resolve_z(FileSystem::get().top_level_dir(), abs_ca_file_name);
             if !bun_sys::exists_z(normalized) {
                 Output::err(
                     "HTTPThread",
                     "could not find CA file: '{s}'",
-                    &[&bstr::BStr::new(abs_ca_z.as_bytes())],
+                    &[&bstr::BStr::new(abs_ca_file_name.as_bytes())],
                 );
             } else {
                 Output::err(
                     "HTTPThread",
                     "invalid CA file: '{s}'",
-                    &[&bstr::BStr::new(abs_ca_z.as_bytes())],
+                    &[&bstr::BStr::new(abs_ca_file_name.as_bytes())],
                 );
             }
         }
@@ -1382,7 +1373,7 @@ fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::Ini
             Output::err(
                 "HTTPThread",
                 "invalid CA file: '{s}'",
-                &[&bstr::BStr::new(abs_ca_z.as_bytes())],
+                &[&bstr::BStr::new(abs_ca_file_name.as_bytes())],
             );
         }
         http::InitError::InvalidCA => {
@@ -2642,35 +2633,13 @@ pub fn init(
         Global::crash();
     }
 
-    // `InitOpts.ca: Vec<*const c_void>` (erased `[*:0]const u8`). The HTTP
-    // thread reads these asynchronously after `init` returns, so park the
-    // owning `ZBox`es in `holder::CA` for process lifetime (never freed)
-    // and project the pointers from there.
-    let ca_ptrs: Vec<*const c_void> = if ca.is_empty() {
-        Vec::new()
-    } else {
-        let _ = holder::CA.set(ca);
-        holder::CA
-            .get()
-            .map(|v| v.iter().map(|z| z.as_ptr().cast::<c_void>()).collect())
-            .unwrap_or_default()
+    // A CA that does not load ends the command here, on the main thread, before the HTTP thread
+    // starts.
+    let http_thread_opts = match http::http_thread::InitOpts::with_ca(&ca, &abs_ca_file_name) {
+        Ok(opts) => opts,
+        Err(err) => exit_with_ca_error(err, &abs_ca_file_name),
     };
-    // `InitOpts.abs_ca_file_name: &'static ZStr` — process-lifetime config
-    // string. Park it in
-    // `holder::ABS_CA_FILE_NAME: OnceLock<ZBox>` per PORTING.md §Forbidden
-    // (never `Box::leak` to mint `&'static`). If it is already set
-    // (hot-reload re-entry), the existing CA path stays.
-    let abs_ca_file_name_static: &'static ZStr = if abs_ca_file_name.is_empty() {
-        ZStr::EMPTY
-    } else {
-        holder::ABS_CA_FILE_NAME.get_or_init(|| abs_ca_file_name)
-    };
-    http::http_thread::init(&http::http_thread::InitOpts {
-        ca: ca_ptrs,
-        abs_ca_file_name: abs_ca_file_name_static,
-        on_init_error: http_thread_on_init_error,
-        ..Default::default()
-    });
+    http::http_thread::init(http_thread_opts);
 
     let timestamp_for_manifest_cache_control: u32 = 'brk: {
         if cfg!(debug_assertions) {

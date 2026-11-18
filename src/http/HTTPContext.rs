@@ -1,16 +1,15 @@
 use core::cell::Cell;
-use core::ffi::{c_int, c_void};
+use core::ffi::{c_char, c_int, c_void};
 use core::ops::ControlFlow::{self, Break, Continue};
 use core::ptr::NonNull;
 
-use crate::http_thread::InitOpts as HTTPThreadInitOpts;
 use crate::ssl_config::{self, SSLConfig};
 use crate::{
     self as http, AlpnOffer, AsyncHTTP, HTTPCertError, HTTPClient, InFlightRequest, InitError,
     NextStep, ProxyTunnel, get_cert_error_from_no, h2,
 };
 use bun_boringssl::ssl_ctx_setup;
-use bun_boringssl_sys::OwnedSslCtx;
+use bun_boringssl_sys::{OwnedSslCtx, UniqueSslCtx};
 use bun_collections::{HiveArray, TaggedPtrUnion};
 use bun_core::strings;
 use bun_ptr::{AliasableBox, RefPtr};
@@ -286,6 +285,50 @@ struct ExistingSocket<const SSL: bool> {
     verification: PeerVerification,
 }
 
+/// Any thread can build the `SSL_CTX`: [`HTTPContext::init_with_ssl_ctx`] is the step that needs
+/// the HTTP thread.
+fn build_ssl_ctx(
+    opts: &uws::SocketContext::BunSocketContextOptions,
+) -> Result<UniqueSslCtx, InitError> {
+    let mut err = uws::create_bun_socket_error_t::none;
+    match opts.create_unique_ssl_context(&mut err) {
+        Some(ctx) => Ok(ctx),
+        None => Err(match err {
+            uws::create_bun_socket_error_t::load_ca_file => InitError::LoadCAFile,
+            uws::create_bun_socket_error_t::invalid_ca_file => InitError::InvalidCAFile,
+            uws::create_bun_socket_error_t::invalid_ca => InitError::InvalidCA,
+            uws::create_bun_socket_error_t::invalid_crl => InitError::InvalidCRL,
+            uws::create_bun_socket_error_t::none
+            | uws::create_bun_socket_error_t::invalid_ciphers
+            | uws::create_bun_socket_error_t::invalid_ecdh_curve => InitError::FailedToOpenSocket,
+        }),
+    }
+}
+
+/// The `SSL_CTX` of the default HTTPS context. `ca_file_name`, or else `ca`, replaces bun's
+/// default trust store.
+pub(crate) fn build_default_ssl_ctx(
+    ca: &[bun_core::ZBox],
+    ca_file_name: &bun_core::ZStr,
+) -> Result<UniqueSslCtx, InitError> {
+    let ca: Vec<*const c_char> = ca.iter().map(bun_core::ZBox::as_ptr).collect();
+    build_ssl_ctx(&uws::SocketContext::BunSocketContextOptions {
+        ca: if ca.is_empty() {
+            core::ptr::null()
+        } else {
+            ca.as_ptr()
+        },
+        ca_count: u32::try_from(ca.len()).expect("int cast"),
+        ca_file_name: if ca_file_name.is_empty() {
+            core::ptr::null()
+        } else {
+            ca_file_name.as_ptr()
+        },
+        request_cert: 1,
+        ..Default::default()
+    })
+}
+
 #[inline(never)]
 fn need_socket_handlers() {
     core::hint::black_box(uws::SocketKind::HttpClient);
@@ -542,51 +585,16 @@ impl<const SSL: bool> HTTPContext<SSL> {
         &mut self,
         opts: &uws::SocketContext::BunSocketContextOptions,
     ) -> Result<(), InitError> {
-        debug_assert!(SSL, "ssl only");
-        let mut err = uws::create_bun_socket_error_t::none;
-        let ctx = match opts.create_ssl_context(&mut err) {
-            Some(ctx) => ctx,
-            None => {
-                return Err(match err {
-                    uws::create_bun_socket_error_t::load_ca_file => InitError::LoadCAFile,
-                    uws::create_bun_socket_error_t::invalid_ca_file => InitError::InvalidCAFile,
-                    uws::create_bun_socket_error_t::invalid_ca => InitError::InvalidCA,
-                    uws::create_bun_socket_error_t::invalid_crl => InitError::InvalidCRL,
-                    uws::create_bun_socket_error_t::none
-                    | uws::create_bun_socket_error_t::invalid_ciphers
-                    | uws::create_bun_socket_error_t::invalid_ecdh_curve => {
-                        InitError::FailedToOpenSocket
-                    }
-                });
-            }
-        };
-        ssl_ctx_setup(self.secure.insert(ctx));
-        let owner_ptr = std::ptr::from_mut::<Self>(self).cast::<c_void>();
-        self.group.init(uws::Loop::get(), None, owner_ptr);
+        self.init_with_ssl_ctx(build_ssl_ctx(opts)?);
         Ok(())
     }
 
-    pub(crate) fn init_with_thread_opts(
-        &mut self,
-        init_opts: &HTTPThreadInitOpts,
-    ) -> Result<(), InitError> {
+    /// HTTP thread only: `ctx` gets that thread's buffer pool, and the group joins its loop.
+    pub(crate) fn init_with_ssl_ctx(&mut self, ctx: UniqueSslCtx) {
         debug_assert!(SSL, "ssl only");
-        let opts = uws::SocketContext::BunSocketContextOptions {
-            ca: if !init_opts.ca.is_empty() {
-                init_opts.ca.as_ptr().cast()
-            } else {
-                core::ptr::null()
-            },
-            ca_count: u32::try_from(init_opts.ca.len()).expect("int cast"),
-            ca_file_name: if !init_opts.abs_ca_file_name.is_empty() {
-                init_opts.abs_ca_file_name.as_ptr()
-            } else {
-                core::ptr::null()
-            },
-            request_cert: 1,
-            ..Default::default()
-        };
-        self.init_with_opts(&opts)
+        ssl_ctx_setup(self.secure.insert(ctx.into_shared()));
+        let owner_ptr = std::ptr::from_mut::<Self>(self).cast::<c_void>();
+        self.group.init(uws::Loop::get(), None, owner_ptr);
     }
 
     pub(crate) fn init(&mut self) {

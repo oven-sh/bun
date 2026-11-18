@@ -303,7 +303,7 @@ impl CreateCommand {
             long_running: false,
             ..Default::default()
         });
-        HTTP::http_thread::init(&Default::default());
+        HTTP::http_thread::init(Default::default());
 
         let mut create_options = CreateOptions::parse()?;
         let positionals = &create_options.positionals;

@@ -6,7 +6,7 @@
 use core::ffi::{c_char, c_long};
 use core::ptr;
 
-use bun_boringssl_sys::{OwnedSslCtx, SSL_CTX};
+use bun_boringssl_sys::{OwnedSslCtx, SSL_CTX, UniqueSslCtx};
 
 use crate::create_bun_socket_error_t;
 
@@ -159,9 +159,18 @@ impl BunSocketContextOptions {
     /// Build a BoringSSL `SSL_CTX` from these options. The verify mode follows
     /// `request_cert`/`reject_unauthorized` only; see `us_ssl_ctx_from_options`.
     pub fn create_ssl_context(self, err: &mut create_bun_socket_error_t) -> Option<OwnedSslCtx> {
+        self.create_unique_ssl_context(err)
+            .map(UniqueSslCtx::into_shared)
+    }
+
+    /// [`Self::create_ssl_context`], as the type that can move to the thread that will use it.
+    pub fn create_unique_ssl_context(
+        self,
+        err: &mut create_bun_socket_error_t,
+    ) -> Option<UniqueSslCtx> {
         // SAFETY: FFI call; `self` is `#[repr(C)]` and passed by value, `err` is a valid out-param.
-        // A non-null return carries the +1 from `SSL_CTX_new`.
-        unsafe { OwnedSslCtx::from_raw(c::us_ssl_ctx_from_options(self, err)) }
+        // A non-null return carries the +1 from `SSL_CTX_new`, and nothing else has the context yet.
+        unsafe { UniqueSslCtx::from_raw(c::us_ssl_ctx_from_options(self, err)) }
     }
 
     /// Sets `digest` (this struct's `digest()`) as the session id context: see `us_ssl_apply_selected_ctx`.

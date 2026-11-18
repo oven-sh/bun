@@ -533,7 +533,7 @@ impl UpgradeCommand {
     }
 
     fn _exec(ctx: Command::Context) -> crate::Result<()> {
-        HTTP::http_thread::init(&Default::default());
+        HTTP::http_thread::init(Default::default());
 
         fs::FileSystem::init(None)?;
         let filesystem = fs::FileSystem::get();

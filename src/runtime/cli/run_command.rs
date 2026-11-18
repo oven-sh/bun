@@ -857,7 +857,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         }
         // `--fetch-preconnect` is refused at start where `--trim` removed `fetch`.
         bun_removable_features::removable_body!(Fetch, Abort, {
-            bun_http::http_thread::init(&Default::default());
+            bun_http::http_thread::init(Default::default());
 
             for &url_str in preconnect {
                 let url = bun_url::URL::parse(url_str);

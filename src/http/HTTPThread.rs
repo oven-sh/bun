@@ -1,11 +1,10 @@
-use core::ffi::c_void;
 use core::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use std::time::Instant;
 
-use bun_boringssl_sys::OwnedSslCtx;
+use bun_boringssl_sys::{OwnedSslCtx, UniqueSslCtx};
 use bun_collections::ArrayHashMap;
-use bun_core::{self, Output};
+use bun_core::{self, Output, ZBox, ZStr};
 use bun_errno::SystemErrno;
 use bun_ptr::RefPtr;
 use bun_threading::{Guarded, UnboundedQueue};
@@ -92,18 +91,6 @@ static INBOX: Inbox = Inbox {
 pub struct HttpThread {
     pub(crate) http_context: NewHttpContext<false>,
     pub(crate) https_context: NewHttpContext<true>,
-    /// Stashed `InitOpts` for the default HTTPS context. When the user passed
-    /// no explicit CA config, `on_start` defers
-    /// `https_context.init_with_thread_opts` (which calls
-    /// `us_ssl_ctx_from_options` → `us_get_default_ca_store`) until the first
-    /// use, in [`HttpThread::ensure_https_context_init`]. A
-    /// fully-cached `bun install` never makes one, so the cost is skipped
-    /// entirely. If `--cafile` / `--ca` *was* passed, `on_start` still runs
-    /// init eagerly so a bad CA file crashes at thread start (the long-standing
-    /// test contract) and this stays `None`. HTTP-thread-only after `on_start`;
-    /// `Option::take` is the once-guard (no atomics needed — `connect` is never
-    /// reentrant).
-    lazy_https_init: Option<InitOpts>,
 
     /// Tasks popped from `INBOX.tasks` that couldn't start because
     /// `active_requests_count >= max_simultaneous_requests`. Kept in FIFO order
@@ -156,7 +143,6 @@ impl HttpThread {
                 pending_h2_connects: Vec::new(),
                 session_cache: crate::session_cache::SessionCache::new(),
             },
-            lazy_https_init: None,
             deferred_tasks: Vec::new(),
             has_pending_queued_abort: false,
             dead_ssl_contexts: Vec::new(),
@@ -211,69 +197,27 @@ pub struct LibdeflateState {
 
 pub(crate) type Queue = UnboundedQueue<AsyncHttp<'static>>;
 
-// Clone: bitwise OK for the `*const c_void` CA-string pointers — they borrow
-// caller-owned config, not heap we free. The `Vec` itself
-// deep-clones its slot list.
-#[derive(Clone)]
+/// What the HTTP thread starts with.
+#[derive(Default)]
 pub struct InitOpts {
-    // NUL-terminated C strings borrowed from caller config; the pointers are
-    // copied into the spawned thread and only read there (see the Send SAFETY note).
-    pub ca: Vec<*const c_void>, // *const [*:0]const u8
-    pub abs_ca_file_name: &'static bun_core::ZStr,
-
-    pub on_init_error: fn(err: InitError, opts: &InitOpts) -> !,
+    /// `None` is bun's default trust store, which the HTTP thread builds on its first HTTPS use.
+    default_ssl_ctx: Option<UniqueSslCtx>,
 }
 
-// SAFETY: `ca` holds borrowed NUL-terminated C-string pointers from caller
-// config. They are copied into the spawned HTTP thread and
-// only read there; no shared mutable state crosses the thread boundary.
-unsafe impl Send for InitOpts {}
-
-impl Default for InitOpts {
-    fn default() -> Self {
-        Self {
-            ca: Vec::new(),
-            abs_ca_file_name: bun_core::ZStr::EMPTY,
-            on_init_error: on_init_error_noop,
+impl InitOpts {
+    /// Builds the default HTTPS context on the calling thread, which is the one that reports a
+    /// `ca` / `ca_file_name` that does not load.
+    pub fn with_ca(ca: &[ZBox], ca_file_name: &ZStr) -> Result<Self, InitError> {
+        if ca.is_empty() && ca_file_name.is_empty() {
+            return Ok(Self::default());
         }
+        Ok(Self {
+            default_ssl_ctx: Some(crate::http_context::build_default_ssl_ctx(
+                ca,
+                ca_file_name,
+            )?),
+        })
     }
-}
-
-fn on_init_error_noop(err: InitError, opts: &InitOpts) -> ! {
-    match err {
-        InitError::LoadCAFile => {
-            if !bun_sys::exists_z(opts.abs_ca_file_name) {
-                Output::err(
-                    "HTTPThread",
-                    "failed to find CA file: '{}'",
-                    (bstr::BStr::new(opts.abs_ca_file_name),),
-                );
-            } else {
-                Output::err(
-                    "HTTPThread",
-                    "failed to load CA file: '{}'",
-                    (bstr::BStr::new(opts.abs_ca_file_name),),
-                );
-            }
-        }
-        InitError::InvalidCAFile => {
-            Output::err(
-                "HTTPThread",
-                "the CA file is invalid: '{}'",
-                (bstr::BStr::new(opts.abs_ca_file_name),),
-            );
-        }
-        InitError::InvalidCA => {
-            Output::err("HTTPThread", "the provided CA is invalid", ());
-        }
-        InitError::InvalidCRL => {
-            Output::err("HTTPThread", "the provided CRL is invalid", ());
-        }
-        InitError::FailedToOpenSocket => {
-            bun_core::err_generic!("failed to start HTTP client thread");
-        }
-    }
-    bun_core::Global::crash();
 }
 
 impl HttpThread {
@@ -305,22 +249,23 @@ impl HttpThread {
         }
     }
 
-    /// One-shot lazy init of the default HTTPS context. See
-    /// [`HttpThread::lazy_https_init`] for rationale. Called on the HTTP
-    /// thread by `connect::<true>` and `default_ssl_ctx`; the `Option::take`
-    /// is the once-guard. On failure, `on_init_error` diverges.
+    /// With no context from [`InitOpts`], the default HTTPS context is built at its first use:
+    /// bun's trust store costs ~0.7 ms / ~400 KB to parse, and a cached `bun install` makes no
+    /// HTTPS request.
     #[inline]
     fn ensure_https_context_init(&mut self) {
-        if let Some(opts) = self.lazy_https_init.take() {
-            self.init_https_context_cold(&opts);
+        if self.https_context.secure.is_none() {
+            self.init_https_context_cold();
         }
     }
 
     #[cold]
-    fn init_https_context_cold(&mut self, opts: &InitOpts) {
-        if let Err(err) = self.https_context.init_with_thread_opts(opts) {
-            (opts.on_init_error)(err, opts);
-        }
+    fn init_https_context_cold(&mut self) {
+        // No caller input goes into this build, so only a failed allocation fails it.
+        let Ok(ctx) = crate::http_context::build_default_ssl_ctx(&[], ZStr::EMPTY) else {
+            bun_core::out_of_memory();
+        };
+        self.https_context.init_with_ssl_ctx(ctx);
     }
 
     /// A new reference to the default HTTPS context's `SSL_CTX`, which holds the CA options of [`InitOpts`].
@@ -329,7 +274,7 @@ impl HttpThread {
         self.https_context
             .secure
             .clone()
-            .expect("init_with_thread_opts sets `secure` or diverges")
+            .expect("ensure_https_context_init sets `secure` or diverges")
     }
 
     pub(crate) fn connect<const IS_SSL: bool>(&mut self, mut client: InFlightRequest) {
@@ -964,11 +909,23 @@ mod _event_loop_draft {
     static HTTP_THREAD_HANDLE: std::sync::OnceLock<std::thread::JoinHandle<()>> =
         std::sync::OnceLock::new();
 
-    pub(super) fn init(opts: &InitOpts) {
-        INIT_ONCE.call_once(|| init_once(opts));
+    pub(super) fn init(opts: InitOpts) {
+        INIT_ONCE.call_once(move || init_once(opts));
     }
 
-    fn init_once(opts: &InitOpts) {
+    fn init_once(opts: InitOpts) {
+        // Checked on the calling thread: an exit from the HTTP thread races the caller's own.
+        #[cfg(windows)]
+        {
+            if bun_sys::windows::getenv_w(bun_core::wstr!("SystemRoot")).is_none() {
+                Output::err_generic(
+                    "The %SystemRoot% environment variable is not set. Bun needs this set in order for network requests to work.",
+                    (),
+                );
+                bun_core::Global::crash();
+            }
+        }
+
         // Initialize the global (with timer
         // started on the calling thread) BEFORE spawning, so `on_start`'s
         // `crate::http_thread()` finds it initialized and can fill in the contexts.
@@ -978,10 +935,9 @@ mod _event_loop_draft {
             (*crate::HTTP_THREAD.get()).write(HttpThread::new());
         }
         crate::HTTP_THREAD_INIT.store(true, core::sync::atomic::Ordering::Release);
-        let opts_copy = opts.clone();
         let thread = std::thread::Builder::new()
             .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
-            .spawn(move || on_start(opts_copy));
+            .spawn(move || on_start(opts));
         match thread {
             // detach — see HTTP_THREAD_HANDLE note above re: LSAN reachability
             Ok(t) => {
@@ -1034,42 +990,11 @@ mod _event_loop_draft {
         // the process — `bun install` SIGABRT on the first uncached lookup.
         let loop_ = mini_event_loop::init_global(None);
 
-        #[cfg(windows)]
-        {
-            if bun_sys::windows::getenv_w(bun_core::wstr!("SystemRoot")).is_none() {
-                Output::err_generic(
-                    "The %SystemRoot% environment variable is not set. Bun needs this set in order for network requests to work.",
-                    (),
-                );
-                bun_core::Global::crash();
-            }
-        }
-
         crate::HTTP_THREAD.claim();
         let thread = crate::http_thread();
         thread.http_context.init();
-        // `https_context.init_with_thread_opts` eagerly builds the BoringSSL
-        // `SSL_CTX` and the default root-CA store (`us_get_default_ca_store`),
-        // which reads the OpenSSL default cert file/dir where present, whether
-        // or not an HTTPS request ever happens. When there is no user-supplied
-        // CA config we stash `opts` and let the first use of the context
-        // run it (see `HttpThread::lazy_https_init`) — a fully-cached
-        // `bun install` (which makes zero network requests) then skips the
-        // cost entirely.
-        if !opts.abs_ca_file_name.is_empty() || !opts.ca.is_empty() {
-            // User passed --cafile / --ca: validate now so a bad CA file fails
-            // the process at thread start (test contract:
-            // bun-install-registry.test.ts "non-existent --cafile" /
-            // "invalid cafile"), even if the registry is plain HTTP and no SSL
-            // connect would ever happen.
-            if let Err(err) = thread.https_context.init_with_thread_opts(&opts) {
-                (opts.on_init_error)(err, &opts);
-            }
-        } else {
-            // No CA config — safe to defer the ~0.7 ms / ~400 KB root-cert
-            // parse to the first SSL connect (warm-cache `bun install` makes
-            // none).
-            thread.lazy_https_init = Some(opts);
+        if let Some(ctx) = opts.default_ssl_ctx {
+            thread.https_context.init_with_ssl_ctx(ctx);
         }
         let uws_loop = core::ptr::from_ref(loop_.loop_).cast_mut();
         INBOX.uws_loop.store(uws_loop, Ordering::Release);
@@ -1183,6 +1108,6 @@ pub fn shutdown_for_exit() -> bool {
 /// `_event_loop_draft` below (depends on `bun_event_loop::MiniEventLoop`,
 /// which is outside this crate's dep set). Call sites in AsyncHTTP.rs hit
 /// this until that tier boundary is resolved.
-pub fn init(opts: &InitOpts) {
+pub fn init(opts: InitOpts) {
     _event_loop_draft::init(opts)
 }

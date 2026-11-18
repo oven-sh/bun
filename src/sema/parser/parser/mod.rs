@@ -859,15 +859,15 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             if is_in_prologue {
                 is_in_prologue = self.take_directive(statement);
             }
-            if !has_module_declaration && self.is_module_declaration(statement) {
-                has_module_declaration = true;
-                self.note_module_proof(statement);
-            }
+            has_module_declaration =
+                has_module_declaration || self.is_module_declaration(statement);
             self.take_stray_decorators(0);
             if is_an_external_module_indicator(&self.f, statement) {
                 self.f.has_module_syntax = true;
                 self.module_statements.1 += 1;
-                self.note_module_proof(statement);
+                if self.options.compiles && !self.f.is_proved_module {
+                    self.f.is_proved_module = self.f.proves_module_to_bun_run(statement);
+                }
             }
             if self.reads_jsdoc() {
                 self.statement_jsdoc(statement);
@@ -879,6 +879,11 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             self.end_of_file_jsdoc(reparsed);
         }
         self.f.body = self.take_ids(base);
+        // Every module declaration has an `export`, or is an import of JavaScript: each proves a module to the parser of `bun run`. `export as
+        // namespace` is one that the loop above does not see.
+        if has_module_declaration && self.options.compiles {
+            self.f.is_proved_module = true;
+        }
         self.set_file_strictness(has_module_declaration);
         // A statement that was parsed twice is counted twice, so the flag only means "maybe".
         if self.module_statements.0 > self.module_statements.1 {
@@ -1047,15 +1052,6 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         match self.is_ecmascript {
             true => ctx::DISALLOW_IN,
             false => 0,
-        }
-    }
-
-    /// For a text that is compiled, at a top-level statement that TypeScript or the run-time reads as a module declaration: notes whether it makes the
-    /// file a module for the parser of `bun run`. See `FileIn::is_proved_module`.
-    #[inline]
-    fn note_module_proof(&mut self, statement: StmtId) {
-        if self.options.compiles && !self.f.is_proved_module {
-            self.f.is_proved_module = self.f.proves_module_to_bun_run(statement);
         }
     }
 

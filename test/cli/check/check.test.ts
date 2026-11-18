@@ -12701,8 +12701,9 @@ export = obj;
         });
       });
 
-      // `getTargetOfImportSpecifier` does not resolve what the module exports. The symbol combined from an alias is an
-      // alias, and its declared type is that of the interface, which has a parent of its own.
+      // `getTargetOfAliasDeclaration` does not resolve what the module exports, for an import or an export specifier. The
+      // symbol combined from an alias is an alias, and its declared type is that of the interface, which has a parent of
+      // its own.
       test("the module exports the type through an alias: the type is the one the alias names", async () => {
         const exportsType = (declared: string, exported: string) =>
           `import make = require("./make");\ndeclare const foo: foo.Static;\ndeclare namespace foo {\n  interface Static { Test: string; make: typeof make }\n}\ninterface ${declared} { x: number }\nexport type { ${exported} };\nexport = foo;\n`;
@@ -12711,10 +12712,30 @@ export = obj;
         using ofNamespace = imports(
           `import make = require("./make");\ninterface Hidden { Test: string; make: typeof make }\ndeclare const foo: Hidden;\ninterface Inner { x: number }\ndeclare namespace foo { export { Inner as Test } }\nexport = foo;\n`,
         );
-        const of = await Promise.all([checked(sameName), checked(renamed), checked(ofNamespace)]);
+        // The name comes to `a.mts` through `export { Test } from` in another file.
+        using exportedFrom = imports(
+          `interface Hidden { Test: string }\ndeclare const foo: Hidden;\ninterface Inner { x: number }\ndeclare namespace foo { export { Inner as Test } }\nexport = foo;\n`,
+          {
+            "src/through.mts": `export { Test } from "foo";\n`,
+            "src/a.mts": `import { Test } from "./through.mjs";\nconst value: never = Test;\nconst type: never = null! as Test;\nexport {};\n`,
+          },
+        );
+        const of = await Promise.all([
+          checked(sameName),
+          checked(renamed),
+          checked(ofNamespace),
+          checked(exportedFrom),
+        ]);
         expect(of[0]).toEqual(named(`export declare const made: import("foo").Test;\n`));
         expect(of[1]).toEqual(named(`export declare const made: import("foo").Test;\n`));
         expect(of[2]).toEqual(namedThroughFoo("foo.Test"));
+        expect(of[3]).toEqual({
+          errors: [
+            `src/a.mts(2,7): error TS2322: Type 'string' is not assignable to type 'never'.`,
+            `src/a.mts(3,7): error TS2322: Type 'Inner' is not assignable to type 'never'.`,
+          ],
+          exitCode: 1,
+        });
       });
 
       test("the shape of `@types/supertest`, with a return type in a file that does not import the package", async () => {

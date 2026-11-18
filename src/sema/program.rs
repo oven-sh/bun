@@ -11337,9 +11337,9 @@ impl<'s> Files<'s> {
     }
 
     /// The type symbol of `symbol`, which `combineValueAndTypeSymbols` created, if `symbolFromModule` was an alias of
-    /// it. `getTargetOfImportSpecifier` doesn't resolve that alias, unlike `getTargetOfExportSpecifier`, so the result
-    /// is an alias and not a class or an interface (`valueSymbol.Flags|typeSymbol.Flags`): it has the declared type of
-    /// its target.
+    /// it. `getTargetOfAliasDeclaration` doesn't resolve that alias, for an import or an export specifier, so the
+    /// result is an alias and not a class or an interface (`valueSymbol.Flags|typeSymbol.Flags`): it has the declared
+    /// type of its target.
     pub fn aliased_type_of_combined_symbol(&self, symbol: Sym) -> Option<Sym> {
         let created = self.transient_symbol(symbol)?;
         if !created.is_combined {
@@ -11350,9 +11350,6 @@ impl<'s> Files<'s> {
             id: created.alias,
         };
         let (file, decl) = self.declaration_of_alias_symbol(alias)?;
-        if matches!(decl, Decl::ExportSpec(_)) {
-            return None;
-        }
         let (spec, mode, name) = self.external_module_member_of(file, decl)?;
         let module = self.module_of_specifier_as(file, spec, mode)?;
         let from_module = self.module_export(module, name)?;

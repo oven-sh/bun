@@ -79,7 +79,7 @@ impl<'a> Dictionary<'a> {
         self.id
     }
 
-    /// What is in front of a frame's content.
+    /// What is in front of a frame's content. All of it: `zstd --patch-from` takes a trained dictionary for raw content.
     pub(crate) fn history(&self) -> &[u8] {
         &self.bytes
     }

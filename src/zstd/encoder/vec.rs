@@ -12,7 +12,7 @@ pub(crate) fn with_room<T>(capacity: usize) -> Result<Vec<T>> {
 }
 
 pub(crate) fn zeroed<T: Zeroable>(len: usize) -> Result<Vec<T>> {
-    bun_pod::try_zeroed_vec(len).ok_or(Error::MemoryAllocation)
+    bun_core::vec::try_zeroed(len).map_err(|_| Error::MemoryAllocation)
 }
 
 /// Replaces what is at `position`, and appends the rest, for which there is room.

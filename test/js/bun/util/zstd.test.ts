@@ -604,6 +604,16 @@ describe.skipIf(!isASAN)("a failed allocation is an error, not a crash", () => {
   });
 });
 
+it("zlib.constants has the numbers that the errors of src/zstd have", () => {
+  const source = readFileSync(path.join(__dirname, "../../../../src/zstd/decoder/error.rs"), "utf8");
+  const errors = Array.from(
+    source.matchAll(/ = (\d+), c"(\w+)"/g),
+    ([, errno, code]) => [code, Number(errno)] as const,
+  );
+  expect(errors.length).toBeGreaterThan(10);
+  expect(errors.map(([code]) => [code, zlib.constants[code]])).toEqual(errors);
+});
+
 describe("sync compression argument handling", () => {
   it("zstdCompressSync evaluates the options object before capturing the input", () => {
     const input = new Uint8Array(64).fill(97);

@@ -654,8 +654,12 @@ fn allowlist_key(symbol: &str, allowlist: &Allowlist) -> String {
         return canon;
     }
     let generic = allowlist.keys().find(|key| {
-        key.strip_suffix("<generic-args>")
-            .is_some_and(|function| canon.starts_with(function))
+        let args = key.strip_suffix("<generic-args>");
+        let args = args.and_then(|function| canon.strip_prefix(function));
+        // A mangled name follows its length.
+        args.is_some_and(|args| {
+            key.starts_with("_R") || args.trim_start_matches("::").starts_with('<')
+        })
     });
     generic.cloned().unwrap_or(canon)
 }
@@ -1266,11 +1270,16 @@ mod tests {
     #[test]
     fn generic_args_stand_for_the_instances_of_one_function() {
         let generic = "_RINvNv<rust-hash>3foo4gate4fast<generic-args>";
-        let allowlist = Allowlist::from([(generic.into(), None), ("plain".into(), None)]);
+        let keys = [generic, "foo::gate::fast<generic-args>", "plain"];
+        let allowlist = Allowlist::from(keys.map(|key| (key.into(), None)));
         let is_listed = |symbol| allowlist.contains_key(&allowlist_key(symbol, &allowlist));
         assert!(is_listed(
             "_RINvNvCs1a_3foo4gate4fastmNCNvCs2b_3bar3run0EB4_"
         ));
+        assert!(is_listed("foo::gate::fast<u32>"));
+        assert!(is_listed("foo::gate::fast::<u32>"));
+        assert!(!is_listed("foo::gate::faster<u32>"));
+        assert!(!is_listed("foo::gate::fast::inner<u32>"));
         assert!(is_listed("plain"));
         assert!(!is_listed(
             "_RINvNvCs1a_3foo4gate8baselinemNCNvCs2b_3bar3run0EB4_"

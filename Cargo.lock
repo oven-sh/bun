@@ -2302,6 +2302,7 @@ dependencies = [
 name = "bun_zstd_encoder"
 version = "0.0.0"
 dependencies = [
+ "bun_core",
  "bun_highway",
  "bun_pod",
  "bun_removable_features",

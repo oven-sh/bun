@@ -118,6 +118,7 @@ feature BrotliEncoder "Brotli compression"
   minimum 300000
 
 feature ZstdCompressor "zstd compression"
+  minimum 150000
 
 feature NativeAddons "native addons, process.dlopen and N-API"
   exports

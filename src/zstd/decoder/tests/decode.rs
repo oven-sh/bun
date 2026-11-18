@@ -861,6 +861,18 @@ fn raw_dictionaries_are_history() -> Result<()> {
 }
 
 #[test]
+fn all_of_a_trained_dictionary_is_history() -> Result<()> {
+    let patch = hex("28b52ffd 640007 7d0000 204e455721 02001d4045d90de08740 e3faf1c7");
+    let mut out = Vec::with_capacity(DICTIONARY.len());
+    let dictionary = Dictionary::new(DICTIONARY)?;
+    let mut spare = Output::spare_capacity(&mut out, DICTIONARY.len());
+    decompress(&patch, &mut spare, Some(&dictionary))?;
+    drop(spare);
+    assert!(out == [&DICTIONARY[..1500], b"NEW!", &DICTIONARY[1504..]].concat());
+    Ok(())
+}
+
+#[test]
 fn damaged_dictionaries_are_refused() {
     for len in 8..120 {
         let result = Dictionary::new(&DICTIONARY[..len]).err();

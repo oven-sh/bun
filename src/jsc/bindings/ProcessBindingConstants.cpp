@@ -1158,6 +1158,7 @@ static JSValue processBindingConstantsGetZlib(VM& vm, JSObject* bindingObject)
         { "BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_2", static_cast<double>(-27) },
         { "BROTLI_DECODER_ERROR_ALLOC_BLOCK_TYPE_TREES", static_cast<double>(-30) },
         { "BROTLI_DECODER_ERROR_UNREACHABLE", static_cast<double>(-31) },
+        // zstd.h and zstd_errors.h of 1.5.7, like src/zstd/encoder/parameters.rs and src/zstd/decoder/error.rs.
         { "ZSTD_e_continue", static_cast<double>(0) },
         { "ZSTD_e_flush", static_cast<double>(1) },
         { "ZSTD_e_end", static_cast<double>(2) },

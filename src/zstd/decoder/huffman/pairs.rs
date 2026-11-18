@@ -232,7 +232,7 @@ impl PairTable {
     };
 
     #[inline(always)]
-    pub(super) fn fill(&mut self, tree: &HuffmanWeights, ranks: &Ranks) -> Result<()> {
+    pub(super) fn fill(&mut self, tree: &HuffmanWeights, ranks: &Ranks<'_>) -> Result<()> {
         for (length, weight) in self.lengths_by_symbol.iter_mut().zip(&tree.weights) {
             *length = (tree.table_log as u8 + 1).wrapping_sub(*weight);
         }

@@ -60,7 +60,7 @@ fn repeated(byte: u8, count: usize) -> Literals {
     }
 }
 
-/// `lengths` are those of the codes of the first symbols.
+/// `lengths` are those of the codes of the first symbols. 0 is for none.
 fn huffman(lengths: &[u32], streams: usize, decoded: Vec<u8>) -> Literals {
     let longest = *lengths.iter().max().unwrap();
     let (mut codes, mut next) = (vec![0; lengths.len()], 0);
@@ -71,7 +71,8 @@ fn huffman(lengths: &[u32], streams: usize, decoded: Vec<u8>) -> Literals {
         }
     }
     assert_eq!(next, 1 << longest);
-    let weights: Vec<_> = lengths.iter().map(|it| (longest + 1 - it) as u8).collect();
+    let weight = |length| (longest + 1 - length) % (longest + 1);
+    let weights: Vec<_> = lengths.iter().map(|it| weight(it) as u8).collect();
     let mut content = vec![126 + weights.len() as u8];
     let listed = weights[..weights.len() - 1].chunks(2);
     content.extend(listed.map(|it| it[0] << 4 | it.get(1).unwrap_or(&0)));
@@ -299,6 +300,22 @@ fn literals_of_all_sizes() -> Result<()> {
             frame.compressed(&literals, &[sequence]);
         }
         frame.compressed(&huffman(&lengths, 4, vec![0; BLOCK]), &[]);
+        frame.check()?;
+    }
+    Ok(())
+}
+
+#[test]
+fn many_codes_of_one_length() -> Result<()> {
+    for length in 2..8 {
+        let shorter = if length == 7 { 5 } else { 1 };
+        let mut lengths = vec![length; (1 << length) - 1 - 2 * shorter];
+        lengths.extend(vec![length - 1; shorter]);
+        lengths.push(0);
+        lengths.extend((length + 1..=12).chain([12]));
+        let symbols = (0..).zip(&lengths).filter(|it| *it.1 != 0).map(|it| it.0);
+        let mut frame = Frame::new(17, Vec::new());
+        frame.compressed(&huffman(&lengths, 4, symbols.collect()), &[]);
         frame.check()?;
     }
     Ok(())

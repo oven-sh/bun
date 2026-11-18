@@ -575,8 +575,14 @@ fn the_default_limit_is_128_mib() -> Result<()> {
 fn huffman_codes_have_at_most_12_bits() {
     let table_log = |weights| read_huffman_weights(&hex(weights)).map(|it| it.table_log);
     assert_eq!(table_log("8b cba987654321"), Ok(12));
-    let result = table_log("8d cccba987654321");
-    assert_eq!(result, Err(Error::CorruptionDetected));
+    // The last two are compressed: 13 in the place of 12, and 16 in front of 1.
+    for weights in [
+        "8d cccba987654321",
+        "0e 608e8c88909ce4df974838b34d52",
+        "06 10f0fb6f3b05",
+    ] {
+        assert_eq!(table_log(weights), Err(Error::CorruptionDetected));
+    }
 }
 
 #[test]

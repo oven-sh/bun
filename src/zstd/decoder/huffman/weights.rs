@@ -22,8 +22,34 @@ pub struct HuffmanWeights {
     pub table_log: u32,
     /// Of the description, in bytes.
     pub len: usize,
-    /// `rank_counts` for each run of [`Self::quarter_len`] symbols.
-    pub(super) counts_by_quarter: [[u8; 16]; 4],
+    by_weight: Buckets,
+}
+
+struct Buckets {
+    symbols: [u8; 2048],
+    ends: [u16; 16],
+}
+
+impl Buckets {
+    /// With room for as many as a valid description can have. Of more than that, only the number is right.
+    #[expect(clippy::indexing_slicing, reason = "evaluated by the compiler")]
+    const STARTS: [u16; 16] = {
+        let (mut starts, mut weight) = ([0; _], 0);
+        while weight < HUFFMAN_TABLE_LOG_MAX as usize {
+            let most = 2 << HUFFMAN_TABLE_LOG_MAX >> weight;
+            starts[weight + 1] = starts[weight] + if most < 256 { most } else { 256 };
+            weight += 1;
+        }
+        assert!(starts[weight] + 256 <= 2048);
+        starts
+    };
+
+    #[inline(always)]
+    fn add(&mut self, symbol: usize, weight: u8) {
+        let end = self.ends.at_mut(weight.into());
+        *self.symbols.at_mut((*end).into()) = symbol as u8;
+        *end += 1;
+    }
 }
 
 /// Reads the description at the start of `src`.
@@ -40,7 +66,10 @@ impl HuffmanWeights {
         symbol_count: 0,
         table_log: 0,
         len: 0,
-        counts_by_quarter: [[0; _]; _],
+        by_weight: Buckets {
+            symbols: [0; _],
+            ends: Buckets::STARTS,
+        },
     };
 
     /// To be called on [`Self::EMPTY`].
@@ -54,26 +83,23 @@ impl HuffmanWeights {
                 for (to, pair) in self.weights.as_chunks_mut().0.iter_mut().zip(pairs) {
                     *to = [pair >> 4, pair & 15];
                 }
-                *self.weights.at_mut(listed.into()) = 0;
+                for (symbol, &weight) in self.weights.iter().enumerate().take(listed.into()) {
+                    self.by_weight.add(symbol, weight);
+                }
                 (listed.into(), len)
             }
             _ => {
                 let len = header.into();
                 let compressed = rest.get(..len).ok_or(Error::CorruptionDetected)?;
-                (decompress(compressed, &mut self.weights)?, len)
+                let listed = decompress(compressed, &mut self.weights, &mut self.by_weight)?;
+                (listed, len)
             }
         };
         (self.symbol_count, self.len) = (listed + 1, len + 1);
 
-        let mut counts = [[0; 16]; 4];
-        self.for_each_in_quarters(
-            #[inline(always)]
-            |quarter, _, weight| *counts.at_mut(quarter).at_mut(weight) += 1,
-        );
-        for quarter in &counts {
-            for (sum, &count) in self.rank_counts.iter_mut().zip(quarter) {
-                *sum += u32::from(count);
-            }
+        let buckets = Buckets::STARTS.iter().zip(&self.by_weight.ends);
+        for (count, (start, end)) in self.rank_counts.iter_mut().zip(buckets) {
+            *count = (end - start).into();
         }
         let ranks = self.rank_counts.iter().skip(1).zip(0..);
         let total: u32 = ranks.map(|(count, shorter_by)| count << shorter_by).sum();
@@ -88,13 +114,7 @@ impl HuffmanWeights {
         let last_weight = missing.bit_width() as usize;
         *self.weights.at_mut(listed) = last_weight as u8;
         *self.rank_counts.at_mut(last_weight) += 1;
-        self.rank_counts[0] -= (4 * self.quarter_len() - listed) as u32;
-        let quarter = (1..4)
-            .filter(|quarter| quarter * self.quarter_len() <= listed)
-            .count();
-        counts.at_mut(quarter)[0] -= 1;
-        *counts.at_mut(quarter).at_mut(last_weight) += 1;
-        self.counts_by_quarter = counts;
+        self.by_weight.add(listed, last_weight as u8);
         // Their number is even, as the total is.
         if self.rank_counts[1] == 0 {
             return Err(Error::CorruptionDetected);
@@ -103,20 +123,15 @@ impl HuffmanWeights {
     }
 
     #[inline(always)]
-    pub(super) fn quarter_len(&self) -> usize {
-        self.symbol_count.div_ceil(4)
+    pub(super) fn count_of(&self, length: u32) -> u32 {
+        *self.rank_counts.at((self.table_log + 1 - length) as usize)
     }
 
-    /// `visit` gets a quarter, a symbol and its weight. Neighbors, which tend to be equal, would wait for each other.
+    /// The symbols with codes of `length` bits, and other bytes behind them.
     #[inline(always)]
-    pub(super) fn for_each_in_quarters(&self, mut visit: impl FnMut(usize, u8, usize)) {
-        let len = self.quarter_len();
-        for index in 0..len {
-            for quarter in 0..4 {
-                let symbol = quarter * len + index;
-                visit(quarter, symbol as u8, (*self.weights.at(symbol)).into());
-            }
-        }
+    pub(super) fn padded_symbols_of(&self, length: u32) -> &[u8] {
+        let start = *Buckets::STARTS.at((self.table_log + 1 - length) as usize);
+        (self.by_weight.symbols.get(start.into()..)).unwrap_or_default()
     }
 }
 
@@ -128,9 +143,9 @@ struct Row {
     baseline: u8,
 }
 
-/// Returns how many weights there are: at most 255.
+/// Returns how many weights there are: at most 255. Sorting takes no time while each one waits for the one before.
 #[inline(always)]
-fn decompress(src: &[u8], weights: &mut [u8; 256]) -> Result<usize> {
+fn decompress(src: &[u8], weights: &mut [u8; 256], by_weight: &mut Buckets) -> Result<usize> {
     const BATCH: usize = 8;
     const { assert!(BATCH as u32 * TABLE_LOG_MAX <= BackwardBits::IN_REFILL) };
 
@@ -181,19 +196,23 @@ fn decompress(src: &[u8], weights: &mut [u8; 256]) -> Result<usize> {
         }
         for pair in batch.as_chunks_mut().0 {
             *pair = [current.weight, other.weight];
+            by_weight.add(count, current.weight);
+            by_weight.add(count + 1, other.weight);
+            count += 2;
             current = after(current, &mut bits);
             other = after(other, &mut bits);
         }
         bits.refill();
-        count += BATCH;
     }
     // Either the bits or the weights that are left are too few to need a refill.
     while count < 254 {
         *weights.at_mut(count) = current.weight;
+        by_weight.add(count, current.weight);
         (current, other) = (other, after(current, &mut bits));
         count += 1;
         if bits.left() < 0 {
             *weights.at_mut(count) = current.weight;
+            by_weight.add(count, current.weight);
             return Ok(count + 1);
         }
     }

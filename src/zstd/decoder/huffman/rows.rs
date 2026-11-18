@@ -2,6 +2,7 @@
 
 use core::hint::black_box;
 
+use crate::array::At;
 use crate::error::{Error, Result};
 
 /// In bytes.
@@ -45,6 +46,26 @@ pub(super) fn repeat_each<T: Copy, const N: usize>(
             fill_rows::<_, N>(rows, 0, repeats, map(symbol))?;
             rows = rows.get_mut(repeats..).ok_or(Error::Internal)?;
         }
+    }
+    Ok(())
+}
+
+/// The same for the first `count` of `symbols` as they are, `N` at a time, which take [`FILL`] rows.
+#[inline(always)]
+pub(super) fn repeat_few_times<const N: usize>(
+    rows: &mut [u8],
+    start: usize,
+    symbols: &[u8],
+    count: usize,
+) -> Result<()> {
+    let chunks = count.div_ceil(N);
+    let rows = rows.get_mut(start..).ok_or(Error::Internal)?;
+    let rows = rows.as_chunks_mut::<FILL>().0.get_mut(..chunks);
+    let symbols = symbols.as_chunks::<N>().0.get(..chunks);
+    let (rows, symbols) = rows.zip(symbols).ok_or(Error::Internal)?;
+    for (to, from) in rows.iter_mut().zip(symbols) {
+        *to = core::array::from_fn(|row| *from.at(row / (FILL / N)));
+        black_box(());
     }
     Ok(())
 }

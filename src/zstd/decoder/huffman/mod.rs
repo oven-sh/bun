@@ -14,7 +14,7 @@ use crate::bits::bits_below_mark;
 use crate::error::{Error, Result};
 use pairs::PairTable;
 use ranks::Ranks;
-use rows::{FILL, fill_rows, repeat_each};
+use rows::{FILL, fill_rows, repeat_each, repeat_few_times};
 use singles::SingleTable;
 use streams::{Lane, Stream, Windows};
 
@@ -55,8 +55,7 @@ impl HuffmanTable {
     #[inline(always)]
     fn fill(&mut self, tree: &HuffmanWeights, literals: usize) -> Result<()> {
         self.log = tree.table_log;
-        let mut ranks = Ranks::EMPTY;
-        ranks.sort(tree);
+        let ranks = Ranks::new(tree);
         self.has_pairs = self.log <= QUICK_LOG && ranks.are_pairs_quicker(literals);
         if self.has_pairs {
             return get_or_allocate(&mut self.pairs, || PairTable::EMPTY)?.fill(tree, &ranks);
@@ -72,9 +71,16 @@ impl HuffmanTable {
         }
         row = half_len;
         for (length, symbols) in ranks.up_to(self.log) {
-            let rows = 1 << (self.log - length);
-            repeat_each::<_, FILL>(&mut self.singles, row, symbols, rows, |symbol| symbol)?;
-            row += symbols.len() * rows;
+            let (rows, count) = (1 << (self.log - length), symbols.len());
+            let (singles, padded) = (&mut self.singles, tree.padded_symbols_of(length));
+            match rows {
+                1 => repeat_few_times::<16>(singles, row, padded, count),
+                2 => repeat_few_times::<8>(singles, row, padded, count),
+                4 => repeat_few_times::<4>(singles, row, padded, count),
+                8 => repeat_few_times::<2>(singles, row, padded, count),
+                _ => repeat_each::<_, FILL>(singles, row, symbols, rows, |symbol| symbol),
+            }?;
+            row += count * rows;
         }
         Ok(())
     }

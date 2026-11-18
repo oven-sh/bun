@@ -3,7 +3,7 @@
 //! Runs on the HTTP thread inside `HTTPClient::compress_body_for_send()` so it can reuse
 //! [`LibdeflateState`]'s 512 KiB scratch buffer and cached compressor
 //! (the same struct that backs the response-decompression fast path).
-//! gzip/deflate go through `bun_deflate`; brotli/zstd use their one-shot
+//! gzip/deflate go through `bun_deflate`; brotli/zstd take one call of their
 //! encoders. Only buffered bodies reach this — streams and sendfile are
 //! filtered out on the JS thread.
 
@@ -166,31 +166,30 @@ fn compress_zlib_streaming(
 
 fn compress_brotli(
     state: &mut LibdeflateState,
-    input: &[u8],
+    mut input: &[u8],
     level: Option<i32>,
     spill: &mut Vec<u8>,
 ) -> crate::Result<CompressOutput> {
-    use bun_brotli::c;
-    let quality = level.unwrap_or(DEFAULT_BROTLI_QUALITY);
-    let window = c::BROTLI_DEFAULT_WINDOW;
-    let mode = c::BrotliEncoderMode::generic;
-
-    let bound = bun_brotli::encode_bound(input.len());
-    if bound.is_some_and(|bound| bound <= state.shared_buffer.len()) {
-        if let Some(n) =
-            bun_brotli::encode(quality, window, mode, input, &mut state.shared_buffer[..])
-        {
-            return Ok(CompressOutput::Shared(n));
-        }
-    }
-
-    let cap = bound.unwrap_or(input.len() + 1024);
-    spill
-        .try_reserve_exact(cap)
-        .map_err(|_| bun_alloc::AllocError)?;
-    match bun_brotli::encode_append(quality, window, mode, input, spill) {
-        Some(_) => Ok(CompressOutput::Spilled),
-        None => Err(crate::Error::CompressionFailed),
+    use bun_brotli::{EncodeError, EncodeStatus, Encoder, Operation};
+    use bun_core::vec::{BorrowedBuf, BorrowedCursor, append_with};
+    let bound = bun_brotli::max_compressed_size(input.len());
+    let mut encoder = Encoder::with_quality(level.unwrap_or(DEFAULT_BROTLI_QUALITY));
+    let mut compress =
+        |output: BorrowedCursor<'_, u8>| encoder.compress(Operation::Finish, &mut input, output);
+    let (result, output) = if bound <= state.shared_buffer.len() {
+        let mut shared = BorrowedBuf::from(&mut state.shared_buffer[..]);
+        let result = compress(shared.unfilled());
+        (result, CompressOutput::Shared(shared.len()))
+    } else {
+        spill
+            .try_reserve_exact(bound)
+            .map_err(|_| bun_alloc::AllocError)?;
+        (append_with(spill, bound, compress), CompressOutput::Spilled)
+    };
+    match result {
+        Ok(EncodeStatus::Done) => Ok(output),
+        Err(EncodeError::OutOfMemory) => Err(bun_alloc::AllocError.into()),
+        _ => Err(crate::Error::CompressionFailed),
     }
 }
 

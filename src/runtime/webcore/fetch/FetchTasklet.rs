@@ -164,6 +164,8 @@ pub struct FetchTasklet {
     pub(crate) request_body_len_written: u64,
     /// The count missed and `WriteMessageType::LengthMismatch` was sent.
     pub(crate) request_body_mismatched: bool,
+    /// There was no memory for a part of the response body. HTTP thread only.
+    response_body_incomplete: bool,
     pub(crate) promise: jsc::JSPromiseStrong,
     pub(crate) concurrent_task: ConcurrentTask,
     pub poll_ref: KeepAlive,
@@ -1778,6 +1780,7 @@ impl FetchTasklet {
             declared_request_body_len: None,
             request_body_len_written: 0,
             request_body_mismatched: false,
+            response_body_incomplete: false,
             promise,
             concurrent_task: ConcurrentTask::default(),
             poll_ref: KeepAlive::default(),
@@ -2325,7 +2328,7 @@ impl FetchTasklet {
             if success && task_ref.result.has_more {
                 return;
             }
-        } else if success {
+        } else if success && !task_ref.response_body_incomplete {
             let scheduled = &mut task_ref.scheduled_response_buffer;
             if body.is_empty() && !body_owned.is_empty() && scheduled.list.is_empty() {
                 scheduled.list = body_owned;
@@ -2348,8 +2351,15 @@ impl FetchTasklet {
                 } else {
                     body
                 };
-                if !chunk.is_empty() {
-                    bun_core::handle_oom(scheduled.write(chunk));
+                if scheduled.grow_if_needed(chunk.len()).is_ok() {
+                    scheduled.list.extend_from_slice(chunk);
+                } else {
+                    *scheduled = MutableString::default();
+                    task_ref.response_body_incomplete = true;
+                    // Not `abort_transport()`: a reader that comes before the failure would get an empty body.
+                    if let Some(id) = task_ref.async_http_id {
+                        http::HTTPThread::schedule_shutdown(id);
+                    }
                 }
             }
             if task_ref.result.has_more
@@ -2357,6 +2367,9 @@ impl FetchTasklet {
             {
                 task_ref.signal_store.pause_receive();
             }
+        }
+        if task_ref.response_body_incomplete && !task_ref.result.has_more {
+            task_ref.result.fail = Some(bun_alloc::AllocError.into());
         }
 
         if let Err(has_schedule_callback) = task_ref.has_schedule_callback.compare_exchange(

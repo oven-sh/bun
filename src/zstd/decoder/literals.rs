@@ -5,7 +5,7 @@ use crate::error::{Error, Result};
 use crate::format::{Encoding, MIN_LITERALS_FOR_4_STREAMS};
 use crate::huffman::HuffmanTable;
 
-/// How many bytes behind the literals can be read too.
+/// How many bytes behind its literals a quick copy may read.
 pub(crate) const LITERALS_PADDING: usize = 32;
 
 #[derive(Clone, Copy)]
@@ -96,10 +96,12 @@ impl LiteralsHeader {
         Ok(self.header_len + table.read(content.ok_or(Error::Internal)?, self.count)?)
     }
 
-    /// The literals and the padding, if they are in `block` as they are.
-    pub(crate) fn in_place<'a>(&self, block: &'a [u8]) -> Option<&'a [u8]> {
-        let padded = block.get(self.header_len..self.section_len + LITERALS_PADDING);
-        padded.filter(|_| self.encoding == Encoding::Basic)
+    /// The literals and the padding, if they are in `block` as they are. Less padding will do if they are more than `few` with it.
+    pub(crate) fn in_place<'a>(&self, block: &'a [u8], few: usize) -> Option<&'a [u8]> {
+        let padded_end = self.section_len + LITERALS_PADDING;
+        let is_usable = padded_end <= block.len() || self.count + LITERALS_PADDING > few;
+        let literals = block.get(self.header_len..padded_end.min(block.len()));
+        literals.filter(|_| is_usable && self.encoding == Encoding::Basic)
     }
 
     /// `room` is enough for `count`. `start` is from [`Self::read_tree`]. `next` may get prefetched meanwhile.

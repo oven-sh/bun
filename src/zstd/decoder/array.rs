@@ -66,3 +66,12 @@ pub fn get_or_allocate<T>(slot: &mut Option<Box<T>>, empty: impl FnOnce() -> T) 
         None => slot.insert(allocate(empty)?),
     })
 }
+
+#[test]
+fn resizing_goes_both_ways() {
+    let mut vec = vec![1, 2];
+    resize(&mut vec, 3, 7);
+    assert_eq!(vec, [1, 2, 7]);
+    resize(&mut vec, 1, 7);
+    assert_eq!(vec, [1]);
+}

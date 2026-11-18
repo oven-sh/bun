@@ -199,6 +199,20 @@ fn refused_memory_is_an_error() {
 }
 
 #[test]
+fn raw_literals_take_no_memory() {
+    let frame = [
+        hex("28b52ffd 0000 200000 61626364 9d0900 c412"),
+        vec![7; 300],
+        hex("01 00 000002"),
+    ];
+    let (frame, mut out) = (frame.concat(), [0; 307]);
+    GRANTS.set(Some(0));
+    let result = decompress(&frame, &mut Output::slice(&mut out), None);
+    GRANTS.set(None);
+    assert_eq!((result, &out[..8]), (Ok(()), &b"abcdabc\x07"[..]));
+}
+
+#[test]
 fn refused_memory_is_an_error_for_a_growing_output() {
     let [_, fixture, ..] = FIXTURES;
     for step in [fixture.frames.len(), fixture.frames.len() - 1] {
@@ -706,10 +720,17 @@ fn what_is_lent_counts_once_it_is_committed() {
 #[cfg_attr(miri, ignore = "takes megabytes")]
 fn only_large_outputs_touch_pages_ahead() {
     const GROUP: usize = 128 << 10;
-    for (len, is_ring, touched) in [(0, false, 0), (1 << 20, true, 0), (1 << 20, false, 31)] {
+    // `early` is how far ahead of a group the 3 bytes start.
+    for (len, early, is_ring, touched) in [
+        (0, 0, false, 0),
+        (1 << 20, 0, true, 0),
+        (1 << 20, 0, false, 31),
+        ((1 << 20) + GROUP, 2, false, 31),
+        ((1 << 20) + GROUP, 3, false, 0),
+    ] {
         for lends in [false, true] {
             let mut vec = vec![0xAA; 2 << 20];
-            let start = len + vec.as_ptr().addr().wrapping_neg() % GROUP;
+            let start = len + vec.as_ptr().addr().wrapping_neg() % GROUP - early;
             vec.truncate(start);
             let mut out = if is_ring {
                 Output::resume_ring(&mut vec, start, usize::MAX)

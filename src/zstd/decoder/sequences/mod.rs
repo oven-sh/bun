@@ -45,6 +45,8 @@ struct Queue<'a> {
     start: usize,
     /// Read and yet to run.
     pending: usize,
+    /// Less than the padding may follow them.
+    literal_count: usize,
 }
 
 /// Reads a sequence and runs the one `AHEAD` before it, which hides wrong guesses and far loads, until either needs care.
@@ -150,12 +152,13 @@ impl Queue<'_> {
     fn reset(
         &mut self,
         repeat_offsets: [u32; REPEATS],
+        literal_count: usize,
         destination: &Destination<'_, '_>,
     ) -> Result<()> {
         let [third, second, first, next] = self.slots.first_chunk_mut().ok_or(Error::Internal)?;
         [first.offset, second.offset, third.offset] = repeat_offsets;
         (next.position, next.literal_position) = (destination.position() as u32, 0);
-        (self.start, self.pending) = (0, 0);
+        (self.start, self.pending, self.literal_count) = (0, 0, literal_count);
         Ok(())
     }
 
@@ -267,7 +270,7 @@ impl Queue<'_> {
         let (start, literal_start) = (current.position as usize, current.literal_position as usize);
         let end = start + literal_len + match_len;
         destination.check_block_len(end - destination.position())?;
-        if literal_start + literal_len + LITERALS_PADDING > literals.len() {
+        if literal_start + literal_len > self.literal_count {
             return Err(Error::CorruptionDetected);
         }
         current.offset = match sequence.offset as i32 {
@@ -282,6 +285,19 @@ impl Queue<'_> {
         following.literal_position = (literal_start + literal_len) as u32;
         self.start += 1;
         Ok(())
+    }
+
+    /// Returns whether `literals` lack padding, and the last as many are all that is left. They count from 0 then.
+    fn move_to_last_literals(&mut self, literals: &[u8]) -> Result<bool> {
+        let lacks_padding = literals.len() < self.literal_count + LITERALS_PADDING;
+        let before = self.literal_count.wrapping_sub(LITERALS_PADDING) as u32;
+        let next = (self.slots.get_mut(self.start + REPEATS)).ok_or(Error::Internal)?;
+        let can_move = lacks_padding && next.literal_position >= before;
+        if can_move {
+            next.literal_position -= before;
+            self.literal_count = LITERALS_PADDING;
+        }
+        Ok(can_move)
     }
 
     /// For when the output cannot take the overshoot any more.
@@ -327,7 +343,7 @@ impl Queue<'_> {
     fn run_all<const AHEAD: usize>(
         &mut self,
         reader: &mut Reader<'_>,
-        literals: &[u8],
+        [mut literals, last_literals]: [&[u8]; 2],
         destination: &mut Destination<'_, '_>,
     ) -> Result<()> {
         /// For as much, `memcpy()` is quicker, and needs no room that was cleared.
@@ -358,9 +374,18 @@ impl Queue<'_> {
             let next = self.next()?;
             let next_len = usize::from(next.literal_len) + usize::from(next.match_len);
             let len = next.position as usize - position + next_len;
+            let literal_end = next.literal_position as usize + usize::from(next.literal_len);
             if next_len >= LONG_LEN {
                 self.run_pending_carefully(literals, destination)?;
                 long_end = len;
+                continue;
+            }
+            if literal_end + LITERALS_PADDING > literals.len() {
+                if self.move_to_last_literals(literals)? {
+                    literals = last_literals;
+                } else {
+                    self.run_pending_carefully(literals, destination)?;
+                }
                 continue;
             }
             let Loan { detached, out } =
@@ -397,7 +422,7 @@ pub(crate) fn run_sequences(
     src: &[u8],
     start: usize,
     count: usize,
-    literals: &[u8],
+    (literals, literal_count): (&[u8], usize),
     state: &mut SequenceState,
     destination: &mut Destination<'_, '_>,
 ) -> Result<(usize, usize)> {
@@ -420,21 +445,30 @@ pub(crate) fn run_sequences(
         batch,
         start: 0,
         pending: 0,
+        literal_count: 0,
     };
-    queue.reset(state.repeat_offsets, destination)?;
+    queue.reset(state.repeat_offsets, literal_count, destination)?;
+
+    debug_assert!(literals.len() <= literal_count + LITERALS_PADDING);
+    let mut last_literals = [[0; LITERALS_PADDING]; 2];
+    if literals.len() < literal_count + LITERALS_PADDING {
+        let last = literals.get(..literal_count).and_then(<[u8]>::last_chunk);
+        last_literals[0] = *last.ok_or(Error::Internal)?;
+    }
+    let both = [literals, last_literals.as_flattened()];
 
     let result =
         if count > BATCH && destination.reach() > CACHED_LEN && tables[1].has_many_far_offsets() {
-            queue.run_all::<AHEAD_MAX>(&mut reader, literals, destination)
+            queue.run_all::<AHEAD_MAX>(&mut reader, both, destination)
         } else {
-            queue.run_all::<1>(&mut reader, literals, destination)
+            queue.run_all::<1>(&mut reader, both, destination)
         };
     match result {
         Ok(()) if reader.bits.left() == 0 => {}
         Ok(()) if reader.bits.left() > 0 => return Err(Error::CorruptionDetected),
         Ok(()) | Err(Error::CorruptionDetected | Error::DstSizeTooSmall) => {
             let stream = src.get(start..).ok_or(Error::Internal)?;
-            queue.reset(state.repeat_offsets, destination)?;
+            queue.reset(state.repeat_offsets, literal_count, destination)?;
             queue.find_first_error(tables, stream, count, literals, destination)?;
             return Err(Error::CorruptionDetected);
         }
@@ -448,6 +482,76 @@ pub(crate) fn run_sequences(
     state.repeat_offsets = [first.offset, second.offset, third.offset];
     Ok((
         next.position as usize - destination.position(),
-        next.literal_position as usize,
+        next.literal_position as usize + (literal_count - queue.literal_count),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::frame::Header;
+    use crate::output::Output;
+
+    #[test]
+    fn an_offset_is_repeated_once_however_often_it_is_tried() -> Result<()> {
+        let Header::Frame(frame) = Header::read(b"\x28\xb5\x2f\xfd\x00\x00")? else {
+            return Err(Error::Internal);
+        };
+        let mut room = [0; 64];
+        for first in [100, i32::MAX as u32, 1 << 31, u32::MAX - 3] {
+            let slot = |offset| Slot {
+                offset,
+                literal_len: 1,
+                match_len: 3,
+                ..Slot::default()
+            };
+            let mut slots = [7, first, 5, -1i32 as u32, 0].map(slot);
+            let mut queue = Queue {
+                slots: &mut slots,
+                batch: 2,
+                start: 0,
+                pending: 1,
+                literal_count: 1,
+            };
+            for _ in 0..2 {
+                assert!(!queue.run_pending_quickly(0, &[0; 33], &[], &mut room));
+            }
+            let mut out = Output::slice(&mut room);
+            let mut destination = Destination::new(&mut out, &frame, 0, &[], 64);
+            let result = queue.run_pending_carefully(&[0; 33], &mut destination);
+            assert_eq!(result, Err(Error::CorruptionDetected));
+            assert_eq!(slots.map(|it| it.offset), [7, 7, 5, first, 0]);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn the_last_literals_get_padding() -> Result<()> {
+        let Header::Frame(frame) = Header::read(b"\x28\xb5\x2f\xfd\x00\x00")? else {
+            return Err(Error::Internal);
+        };
+        let mut room = [0; 64];
+        let mut out = Output::resume_slice(&mut room, 8);
+        let mut destination = Destination::new(&mut out, &frame, 8, &[], 56);
+        let mut slots = [Slot::default(); 8];
+        let mut queue = Queue {
+            slots: &mut slots,
+            batch: 3,
+            start: 0,
+            pending: 0,
+            literal_count: 0,
+        };
+        queue.reset([1, 4, 8], 300, &destination)?;
+        (queue.slots.iter_mut()).for_each(|it| it.literal_position = 290);
+        // Two that take no literals.
+        let (bits, mut padded_start) = (BackwardBits::new(&[0, 0, 0, 0, 1], 0)?, [0; _]);
+        bits.pad_start(&mut padded_start);
+        let mut reader = Reader::new([&PREDEFINED_TABLES; 3], bits, &padded_start, 2);
+        queue.run_all::<1>(&mut reader, [&[0; 301], &[0; 64]], &mut destination)?;
+        assert_eq!(
+            (queue.literal_count, queue.next()?.literal_position),
+            (32, 22)
+        );
+        Ok(())
+    }
 }

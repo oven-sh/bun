@@ -60,6 +60,97 @@ fn repeated(byte: u8, count: usize) -> Literals {
     }
 }
 
+/// An FSE table.
+struct Table {
+    description: Vec<u8>,
+    log: u32,
+    /// The symbol, and the number of bits and the base for the next state.
+    rows: Vec<(u8, u32, u32)>,
+}
+
+impl Table {
+    fn repeated(symbol: u8) -> Self {
+        Self {
+            description: vec![symbol],
+            log: 0,
+            rows: vec![(symbol, 0, 0)],
+        }
+    }
+
+    /// With 32 states. The most common symbol gets those that the others can spare.
+    fn compressed(symbols: &[u8]) -> Self {
+        let count_of = |symbol| symbols.iter().filter(|it| **it == symbol).count();
+        let max = *symbols.iter().max().unwrap().max(&1);
+        let common = (0..=max).max_by_key(|it| count_of(*it)).unwrap();
+        let has_state = |it| u32::from(count_of(it) != 0 || it == u8::from(common == 0));
+        let mut counts: Vec<_> = (0..=max).map(has_state).collect();
+        counts[usize::from(common)] += 32 - counts.iter().sum::<u32>();
+
+        let (mut description, mut remaining) = (Bits::default(), 33u32);
+        description.add(0, 4);
+        for run in counts.chunk_by(|a, b| a + b == 0) {
+            let (threshold, value) = (1 << remaining.ilog2(), run[0] + 1);
+            let short_values = 2 * threshold - 1 - remaining;
+            let value = value + if value < threshold { 0 } else { short_values };
+            let width = remaining.ilog2() + u32::from(value >= short_values);
+            description.add(value.into(), width);
+            remaining -= run[0];
+            if run[0] == 0 {
+                let more = run.len() as u64 - 1;
+                (0..more / 3).for_each(|_| description.add(3, 2));
+                description.add(more % 3, 2);
+            }
+        }
+
+        let (mut spread, mut state) = ([0; 32], 0);
+        for (symbol, &count) in (0..).zip(&counts) {
+            for _ in 0..count {
+                spread[state] = symbol;
+                state = (state + 23) % 32;
+            }
+        }
+        let rows = spread.map(|symbol| {
+            let rank = &mut counts[usize::from(symbol)];
+            let bits = 5 - rank.ilog2();
+            *rank += 1;
+            (symbol, bits, ((*rank - 1) << bits) - 32)
+        });
+        Self {
+            description: description.bytes,
+            log: 5,
+            rows: rows.to_vec(),
+        }
+    }
+
+    /// The state for `symbol` from which what it adds to `bits` leads to `next`. The way on from the last takes bits.
+    fn state_before(&self, next: Option<u32>, symbol: u8, bits: &mut Bits) -> u32 {
+        let fits = |&(its_symbol, width, base): &(u8, u32, u32)| {
+            let leads_to = |next| (base..base + (1 << width)).contains(&next);
+            its_symbol == symbol && next.map_or(width != 0 || self.log == 0, leads_to)
+        };
+        let state = self.rows.iter().position(fits).unwrap();
+        if let Some(next) = next {
+            bits.add((next - self.rows[state].2).into(), self.rows[state].1);
+        }
+        state as u32
+    }
+}
+
+fn compressed_weights(weights: &[u8]) -> Vec<u8> {
+    let table = Table::compressed(weights);
+    // Two states take turns.
+    let (mut bits, mut next) = (Bits::default(), [None; 2]);
+    for &weight in weights.iter().rev() {
+        next = [
+            Some(table.state_before(next[1], weight, &mut bits)),
+            next[0],
+        ];
+    }
+    bits.add(next[1].unwrap().into(), table.log);
+    bits.add(next[0].unwrap().into(), table.log);
+    [table.description, bits.end()].concat()
+}
+
 /// `lengths` are those of the codes of the first symbols. 0 is for none.
 fn huffman(lengths: &[u32], streams: usize, decoded: Vec<u8>) -> Literals {
     let longest = *lengths.iter().max().unwrap();
@@ -73,9 +164,17 @@ fn huffman(lengths: &[u32], streams: usize, decoded: Vec<u8>) -> Literals {
     assert_eq!(next, 1 << longest);
     let weight = |length| (longest + 1 - length) % (longest + 1);
     let weights: Vec<_> = lengths.iter().map(|it| weight(it) as u8).collect();
-    let mut content = vec![126 + weights.len() as u8];
-    let listed = weights[..weights.len() - 1].chunks(2);
-    content.extend(listed.map(|it| it[0] << 4 | it.get(1).unwrap_or(&0)));
+    let listed = &weights[..weights.len() - 1];
+    let mut content = if listed.len() > 128 {
+        let compressed = compressed_weights(listed);
+        [vec![compressed.len() as u8], compressed].concat()
+    } else {
+        let pairs = (listed.chunks(2)).map(|it| it[0] << 4 | it.get(1).unwrap_or(&0));
+        [127 + listed.len() as u8]
+            .into_iter()
+            .chain(pairs)
+            .collect()
+    };
 
     let encode = |symbols: &[u8]| {
         let mut bits = Bits::default();
@@ -122,6 +221,8 @@ fn length_code(value: usize, mut base: usize, extra_bits: &[u8]) -> (u8, u64, u3
 
 struct Frame {
     bytes: Vec<u8>,
+    /// How many bytes of the last compressed block are behind its literals.
+    tail: usize,
     dictionary: Vec<u8>,
     /// Behind the dictionary.
     history: Vec<u8>,
@@ -132,6 +233,7 @@ impl Frame {
     fn new(window_log: u8, dictionary: Vec<u8>) -> Self {
         Self {
             bytes: vec![0x28, 0xB5, 0x2F, 0xFD, 0, (window_log - 10) << 3],
+            tail: 0,
             history: dictionary.clone(),
             dictionary,
             repeat_offsets: [1, 4, 8],
@@ -154,7 +256,6 @@ impl Frame {
         self.history.resize(self.history.len() + count, byte);
     }
 
-    /// All `sequences` have the same codes.
     fn compressed(&mut self, literals: &Literals, sequences: &[Sequence]) {
         let mut content = literals.section.clone();
         match sequences.len() {
@@ -162,22 +263,42 @@ impl Frame {
             count @ ..0x7F00 => content.extend((count as u16 + 0x8000).to_be_bytes()),
             count => content.extend([0xFF, count as u8, ((count - 0x7F00) >> 8) as u8]),
         }
-        let (mut bits, mut codes) = (Bits::default(), None);
-        for sequence in sequences.iter().rev() {
-            let literal = length_code(sequence.literal_len, 0, &LITERAL_LENGTH_BITS);
-            let matched = length_code(sequence.match_len, 3, &MATCH_LENGTH_BITS);
-            let offset_code = sequence.offset_value.ilog2();
-            bits.add(literal.1, literal.2);
-            bits.add(matched.1, matched.2);
-            bits.add(sequence.offset_value as u64, offset_code);
-            let these = [literal.0, offset_code as u8, matched.0];
-            assert_eq!(*codes.get_or_insert(these), these);
-        }
-        if let Some(codes) = codes {
-            content.push(0b0101_0100);
-            content.extend(codes);
+        let codes = |it: &Sequence| {
+            let offset_code = it.offset_value.ilog2();
+            [
+                length_code(it.literal_len, 0, &LITERAL_LENGTH_BITS),
+                (offset_code as u8, it.offset_value as u64, offset_code),
+                length_code(it.match_len, 3, &MATCH_LENGTH_BITS),
+            ]
+        };
+        if let Some(first) = sequences.first() {
+            let tables = [0, 1, 2].map(|kind| {
+                let all: Vec<_> = sequences.iter().map(|it| codes(it)[kind].0).collect();
+                if all.iter().all(|it| *it == codes(first)[kind].0) {
+                    Table::repeated(all[0])
+                } else {
+                    Table::compressed(&all)
+                }
+            });
+            let (mut bits, mut states) = (Bits::default(), [None; 3]);
+            for codes in sequences.iter().rev().map(codes) {
+                for kind in [1, 2, 0] {
+                    let state = tables[kind].state_before(states[kind], codes[kind].0, &mut bits);
+                    states[kind] = Some(state);
+                }
+                for kind in [0, 2, 1] {
+                    bits.add(codes[kind].1, codes[kind].2);
+                }
+            }
+            for kind in [2, 1, 0] {
+                bits.add(states[kind].unwrap().into(), tables[kind].log);
+            }
+            let mode = |modes: u8, table: &Table| modes << 2 | if table.log == 0 { 1 } else { 2 };
+            content.push(tables.iter().fold(0, mode) << 2);
+            content.extend(tables.iter().flat_map(|it| &it.description));
             content.extend(bits.end());
         }
+        self.tail = content.len() - literals.section.len();
         self.block(2, content.len(), &content);
 
         let mut literals = &literals.decoded[..];
@@ -300,6 +421,182 @@ fn literals_of_all_sizes() -> Result<()> {
             frame.compressed(&literals, &[sequence]);
         }
         frame.compressed(&huffman(&lengths, 4, vec![0; BLOCK]), &[]);
+        frame.check()?;
+    }
+    Ok(())
+}
+
+#[test]
+fn as_many_codes_of_one_weight_as_can_be() -> Result<()> {
+    let mut tables = vec![[vec![1], vec![0; 254], vec![1]].concat()];
+    for (weight, has_next) in (1..=12).flat_map(|it| [(it, false), (it, it != 12)]) {
+        let longest = 12.min(weight + 7);
+        let length = longest + 1 - weight;
+        // One code of that length is split up into longer ones, and some are merged if there are too many.
+        let mut lengths: Vec<u32> = (length + 1..=longest).chain([longest]).collect();
+        let mut count = (1 << length) - 1;
+        if has_next {
+            lengths.push(length - 1);
+            count -= 2;
+        }
+        while let too_many @ 1.. = (lengths.len() + count).saturating_sub(256) {
+            let shorter_by = (too_many + 1).ilog2();
+            lengths.push(length - shorter_by);
+            count -= 1 << shorter_by;
+        }
+        lengths.extend(vec![length; count]);
+        lengths.splice(1..1, vec![0; 256 - lengths.len()]);
+        tables.push(lengths);
+    }
+    for mut lengths in tables {
+        for turn in [0, 255, 100] {
+            lengths.rotate_left(turn);
+            let lengths = &lengths[..=lengths.iter().rposition(|it| *it != 0).unwrap()];
+            let symbols = (0..=255)
+                .zip(lengths)
+                .filter(|it| *it.1 != 0)
+                .map(|it| it.0);
+            let mut frame = Frame::new(17, Vec::new());
+            // One at a time, and two where that is quicker.
+            for count in [600, 40_000] {
+                let literals = symbols.clone().cycle().take(count).collect();
+                frame.compressed(&huffman(lengths, 4, literals), &[]);
+            }
+            frame.check()?;
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn raw_literals_with_little_behind_them() -> Result<()> {
+    // More than 224 literals with less than the padding of 32 bytes behind them are taken as they are.
+    let (mut noise, mut unpadded) = (Noise(10), 0);
+    let mut count_unpadded = |frame: &Frame, literals: &Literals| {
+        unpadded += usize::from(frame.tail < 32 && literals.decoded.len() > 224);
+    };
+    for (literal_len, count) in [
+        (0, 0),
+        (0, 3),
+        (1, 230),
+        (16, 14),
+        (16, 15),
+        (500, 1),
+        (3000, 2),
+    ] {
+        for left in (0..40).chain([224, 225]) {
+            // These offsets take no bits, or up to 200 in all.
+            for offset_value in [1, 1 << (200 / count.max(20))] {
+                let sequence = Sequence {
+                    literal_len,
+                    offset_value,
+                    match_len: 3,
+                };
+                let mut frame = Frame::new(17, Vec::new());
+                frame.raw(&noise.bytes(1 << 10));
+                let literals = raw(noise.bytes(count * literal_len + left));
+                frame.compressed(&literals, &vec![sequence; count]);
+                count_unpadded(&frame, &literals);
+                frame.check()?;
+            }
+        }
+    }
+    // From 25 to 38 bytes behind many literals, and behind few.
+    for count in (150..260).step_by(8) {
+        for (literal_len, left) in [(1, 100), (2, 0), (0, 0), (0, 5)] {
+            let sequence = Sequence {
+                literal_len,
+                offset_value: 2,
+                match_len: 3,
+            };
+            let mut frame = Frame::new(17, Vec::new());
+            frame.raw(&noise.bytes(8));
+            let literals = raw(noise.bytes(count * literal_len + left));
+            frame.compressed(&literals, &vec![sequence; count]);
+            count_unpadded(&frame, &literals);
+            frame.check()?;
+        }
+    }
+    assert_eq!(unpadded, 436);
+    for (literal_len, count, offset_value) in [(300, 1, 1), (16, 15, 1), (1, 100, 1), (1, 130, 4)] {
+        let sequence = Sequence {
+            literal_len,
+            offset_value,
+            match_len: 3,
+        };
+        let mut frame = Frame::new(17, Vec::new());
+        let literals = raw(noise.bytes(count * literal_len));
+        frame.compressed(&literals, &vec![sequence; count]);
+        frame.bytes.extend([1, 0, 0]);
+        let mut room = vec![0; frame.history.len() - 1];
+        let result = decompress(&frame.bytes, &mut Output::slice(&mut room), None);
+        assert_eq!(result, Err(Error::DstSizeTooSmall));
+
+        // What follows them does not make up for one that is missing.
+        let fewer = raw(literals.decoded[1..].to_vec()).section;
+        let block_len = frame.bytes.len() - 6 - 3 - 3 - 1;
+        let header = (2 << 1 | (block_len as u32) << 3).to_le_bytes();
+        frame
+            .bytes
+            .splice(6..10 + fewer.len(), [&header[..3], &fewer].concat());
+        let result = decompress(&frame.bytes, &mut Output::slice(&mut [0; 600]), None);
+        assert_eq!(result, Err(Error::CorruptionDetected));
+    }
+    Ok(())
+}
+
+#[test]
+fn long_matches_among_the_last_raw_literals() -> Result<()> {
+    let mut noise = Noise(11);
+    let new = |(literal_len, match_len)| Sequence {
+        literal_len,
+        offset_value: 1,
+        match_len,
+    };
+    for match_len in [4, 2500, 70_000] {
+        let mut frame = Frame::new(17, Vec::new());
+        let lens = [(290, 3), (1, 3), (1, match_len), (1, 3), (1, 3)];
+        frame.compressed(&raw(noise.bytes(296)), &lens.map(new));
+
+        // Too much to move for the sake of the overshoot.
+        let (before, mut out) = (2 << 20, Vec::new());
+        out.reserve_exact(before + frame.history.len());
+        out.resize(before, 0);
+        let bytes = [&frame.bytes[..], &[1, 0, 0]].concat();
+        Decoder::new()
+            .step_growing(&bytes, &mut out, usize::MAX)
+            .1?;
+        assert!(out[before..] == frame.history);
+        frame.check()?;
+    }
+    Ok(())
+}
+
+#[test]
+fn a_large_sequence_does_not_fit_behind_the_last_that_does() {
+    let new = |match_len| Sequence {
+        literal_len: 1,
+        offset_value: 1,
+        match_len,
+    };
+    let mut frame = Frame::new(17, Vec::new());
+    frame.compressed(&raw(vec![1, 2]), &[3, 70_000].map(new));
+    frame.bytes.extend([1, 0, 0]);
+    let result = decompress(&frame.bytes, &mut Output::slice(&mut [0; 20]), None);
+    assert_eq!(result, Err(Error::DstSizeTooSmall));
+}
+
+#[test]
+fn all_codes_of_one_length() -> Result<()> {
+    for length in 1..8 {
+        let mut frame = Frame::new(17, Vec::new());
+        for count in [300, 40_000] {
+            let symbols = (0..count).map(|it: u32| (it * 7 % (1 << length)) as u8);
+            frame.compressed(
+                &huffman(&vec![length; 1 << length], 4, symbols.collect()),
+                &[],
+            );
+        }
         frame.check()?;
     }
     Ok(())
@@ -526,6 +823,14 @@ fn far_matches() -> Result<()> {
             let sequences: Vec<_> = (0..count).map(new).collect();
             frame.compressed(&repeated(9, count * literal_len), &sequences);
         }
+        // One is enough for the table to have them, and leaves raw literals without padding.
+        let new = |index| Sequence {
+            literal_len: 4,
+            offset_value: if index == 0 { 3 << 22 } else { 1 },
+            match_len: 5,
+        };
+        let sequences: Vec<_> = (0..70).map(new).collect();
+        frame.compressed(&raw(noise.bytes(280)), &sequences);
     }
     let near = Sequence {
         literal_len: 1,
@@ -533,40 +838,72 @@ fn far_matches() -> Result<()> {
         match_len: 20,
     };
     frame.compressed(&repeated(9, 65), &[near; 65]);
+    // Some of them long, up to the end of the output.
+    let far = |index| Sequence {
+        literal_len: 1,
+        offset_value: (1 << 23) + noise.below(1 << 23),
+        match_len: if index % 9 == 0 { 2050 } else { 1027 },
+    };
+    let sequences: Vec<_> = (1..80).map(far).collect();
+    frame.compressed(&repeated(9, 79), &sequences);
+    // One that no slot can hold, among many that it can: first a match, then the literals.
+    for (literal_len, match_len) in [(1, 70_000), (66_000, 3)] {
+        let large = |index: usize| Sequence {
+            literal_len: if index == 3 { literal_len } else { 1 },
+            offset_value: (1 << 23) + noise.below(1 << 23),
+            match_len: if index == 7 { match_len } else { 3 },
+        };
+        let sequences: Vec<_> = (0..70).map(large).collect();
+        frame.compressed(&repeated(9, 69 + literal_len as usize), &sequences);
+    }
     frame.check()
 }
 
 #[test]
 fn what_does_not_add_up_is_refused() {
-    let sequence = Sequence {
-        literal_len: 1,
-        offset_value: 9,
-        match_len: 3,
-    };
-    let mut frame = Frame::new(17, Vec::new());
-    frame.raw(b"12345678");
-    let start = frame.bytes.len();
-    frame.compressed(&repeated(0, 900), &[sequence; 900]);
-    let decode = |block: &[u8], room| {
-        let header = (block.len() as u32) << 3 | 2 << 1 | 1;
-        let bytes = [&frame.bytes[..start], &header.to_le_bytes()[..3], block].concat();
-        decompress(&bytes, &mut Output::slice(&mut vec![0; room]), None)
-    };
-    let block = &frame.bytes[start + 3..];
-    assert_eq!(decode(block, 3608), Ok(()));
-    for room in [8, 900, 908, 2000, 3607] {
-        assert_eq!(decode(block, room), Err(Error::DstSizeTooSmall));
+    // Far offsets have a loop of their own.
+    for (blocks_before, offset_value) in [(0, 9), (130, 1 << 24)] {
+        let sequence = Sequence {
+            literal_len: 1,
+            offset_value,
+            match_len: 3,
+        };
+        let mut frame = Frame::new(25, Vec::new());
+        (0..blocks_before).for_each(|_| frame.rle(1, BLOCK));
+        frame.raw(b"12345678");
+        let (start, before) = (frame.bytes.len(), frame.history.len());
+        frame.compressed(&repeated(0, 900), &[sequence; 900]);
+        let decode = |block: &[u8], room| {
+            let header = (block.len() as u32) << 3 | 2 << 1 | 1;
+            let bytes = [&frame.bytes[..start], &header.to_le_bytes()[..3], block].concat();
+            let mut out = Vec::with_capacity(before + room);
+            let mut out = Output::spare_capacity(&mut out, before + room);
+            let result = decompress(&bytes, &mut out, None);
+            let mut out = vec![0; before + room];
+            assert_eq!(
+                decompress(&bytes, &mut Output::slice(&mut out), None),
+                result
+            );
+            result
+        };
+        let block = &frame.bytes[start + 3..];
+        assert_eq!(decode(block, 3600), Ok(()));
+        for room in [0, 892, 900, 1992, 3599] {
+            assert_eq!(decode(block, room), Err(Error::DstSizeTooSmall));
+        }
+        // Too few bits, too many bits, too few literals.
+        let (headers, stream) = block.split_at(10);
+        for stream in [&stream[1..], &stream[200..], &[&[0], stream].concat()] {
+            assert_eq!(
+                decode(&[headers, stream].concat(), 3600),
+                Err(Error::CorruptionDetected)
+            );
+        }
+        for count in [500, 899] {
+            let fewer = [&repeated(0, count).section, &block[4..]].concat();
+            assert_eq!(decode(&fewer, 3600), Err(Error::CorruptionDetected));
+        }
     }
-    // Too few bits, too many bits, too few literals.
-    let (headers, stream) = block.split_at(10);
-    for stream in [&stream[1..], &stream[200..], &[&[0], stream].concat()] {
-        assert_eq!(
-            decode(&[headers, stream].concat(), 3608),
-            Err(Error::CorruptionDetected)
-        );
-    }
-    let fewer = [&repeated(0, 899).section, &block[4..]].concat();
-    assert_eq!(decode(&fewer, 3608), Err(Error::CorruptionDetected));
 }
 
 #[test]
@@ -586,5 +923,55 @@ fn a_stream_of_literals_has_as_many_as_it_says() {
             let expected = (count != 600).then_some(Error::CorruptionDetected);
             assert_eq!(result.err(), expected);
         }
+    }
+}
+
+#[test]
+fn pairs_are_built_from_the_shortest_code_up() -> Result<()> {
+    // A tree of 15 symbols: one code of 3 bits and fourteen of 4.
+    let lengths: Vec<u32> = [3].into_iter().chain([4; 14]).collect();
+    let mut noise = Noise(7);
+    let decoded: Vec<u8> = (0..20_000)
+        .map(|_| noise.below(lengths.len()) as u8)
+        .collect();
+    let mut frame = Frame::new(20, Vec::new());
+    frame.compressed(&huffman(&lengths, 4, decoded), &[]);
+    frame.check()
+}
+
+/// A table of one code is a byte, which has to be there and to be a code of that kind.
+#[test]
+fn a_table_of_one_code_holds_a_code_that_exists() {
+    let mut frame = Frame::new(20, Vec::new());
+    frame.raw(b"12345678");
+    let start = frame.bytes.len();
+    let literals = raw(b"abcd".to_vec());
+    let sequence = Sequence {
+        literal_len: 2,
+        offset_value: 4,
+        match_len: 3,
+    };
+    frame.compressed(&literals, &[sequence]);
+    let block = frame.bytes[start + 3..].to_vec();
+    let decode = |block: &[u8]| {
+        let header = (block.len() as u32) << 3 | 2 << 1 | 1;
+        let bytes = [&frame.bytes[..start], &header.to_le_bytes()[..3], block].concat();
+        let mut out = Vec::with_capacity(1 << 12);
+        decompress(&bytes, &mut Output::spare_capacity(&mut out, 1 << 12), None)
+    };
+    assert_eq!(decode(&block), Ok(()));
+    // The counts and the modes come first, then one byte for each of the three tables.
+    let at = literals.section.len() + 2;
+    for (kind, highest) in [(0, 35), (1, 31), (2, 52)] {
+        let mut damaged = block.clone();
+        damaged[at + kind] = highest + 1;
+        assert_eq!(decode(&damaged), Err(Error::CorruptionDetected), "{kind}");
+    }
+    for len in 0..3 {
+        assert_eq!(
+            decode(&block[..at + len]),
+            Err(Error::CorruptionDetected),
+            "{len}"
+        );
     }
 }

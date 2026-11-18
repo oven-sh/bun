@@ -25,6 +25,8 @@ enum Source {
 
 /// With the padding. They are not worth an allocation.
 const FEW_LITERALS: usize = 256;
+/// More of them are as long as the padding that they may lack.
+const _: () = assert!(FEW_LITERALS >= 2 * LITERALS_PADDING);
 
 /// Asks for memory when a block takes it.
 #[derive(Default)]
@@ -104,7 +106,7 @@ impl BlockDecoder {
         let has_only_literals = section == [0];
 
         let mut few_literals;
-        let literals = match header.in_place(block) {
+        let literals = match header.in_place(block, FEW_LITERALS) {
             Some(literals) => literals,
             None => {
                 let start = header.read_tree(block, &mut self.huffman)?;
@@ -159,6 +161,7 @@ impl BlockDecoder {
             }
             let start = padded.len() - stream.len();
             let state = &mut self.sequence_state;
+            let literals = (literals, header.count);
             (len, used_literals) = destination.with_overshoot(|destination| {
                 run_sequences(tables, padded, start, count, literals, state, destination)
             })?;

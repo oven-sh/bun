@@ -367,12 +367,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         );
     }
     #[inline]
-    fn jsx_property_is_key(property: &G::Property) -> bool {
-        property.key.is_some_and(|key| {
-            key.data
-                .e_string()
-                .is_some_and(|key| key.eql_comptime(b"key"))
-        })
+    pub(crate) fn jsx_property_is_key_name(key: Expr) -> bool {
+        key.data
+            .e_string()
+            .is_some_and(|name| name.eql_comptime(b"key"))
     }
 
     /// Create a JSX member tag, its initializer, and an optional parameter binding for a per-call scope.
@@ -500,7 +498,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             for i in 0..properties.len() {
                 let property = properties[i];
                 if property.flags.contains(Flags::Property::WasShorthand)
-                    && Self::jsx_property_is_key(&property)
+                    && property.key.is_some_and(Self::jsx_property_is_key_name)
                 {
                     let key = property.key.expect("infallible: key prop has key");
                     p.log().add_warning(
@@ -663,6 +661,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     if let Some(v) = property.initializer.as_mut() {
                         p.visit_expr(v);
+                    }
+
+                    if property.flags.contains(Flags::Property::IsJsxShorthandKey) {
+                        property.flags.remove(Flags::Property::IsJsxShorthandKey);
+                        if runtime == options::JSX::Runtime::Preserve {
+                            // Re-emitting the shorthand as `key={...}` would reserve it as a JSX key.
+                            let loc = property.key.expect("infallible: shorthand has key").loc;
+                            let mut props = E::Object::default();
+                            props.properties.push(*property);
+                            let value = p.new_expr(props, loc);
+                            *property = G::Property {
+                                kind: G::PropertyKind::Spread,
+                                value: Some(value),
+                                ..Default::default()
+                            };
+                        }
                     }
                 }
 

@@ -1840,6 +1840,37 @@ describe("bundler", () => {
       },
     });
 
+    itBundled("jsx/PreserveShorthandKeyProp", {
+      files: {
+        "/in.jsx": `
+          const obj = { key: "value" }, key = "identifier", View = () => null;
+          console.log(JSON.stringify([
+            <View {obj.key} />, <View {key} />, <View {"key"} />, <View key="explicit" />,
+          ]));
+        `,
+        "/node_modules/fixture/jsx-runtime.js": "export const jsx = (_, props, key) => ({ props, key });",
+      },
+      target: "bun",
+      jsx: { runtime: "preserve" },
+      skipOnEsbuild: true,
+      onAfterBundle(api) {
+        const { code } = transformSync(api.readFile("/out.js"), {
+          loader: "jsx",
+          jsx: "automatic",
+          jsxImportSource: "fixture",
+        });
+        api.writeFile("/out.js", code);
+      },
+      run: {
+        stdout: JSON.stringify([
+          { props: { key: "value" } },
+          { props: { key: "identifier" } },
+          { props: { key: "key" } },
+          { props: {}, key: "explicit" },
+        ]),
+      },
+    });
+
     itBundled("jsx/PreserveDownstreamTransform", {
       files: {
         "/in.tsx": `

@@ -171,7 +171,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 props.push(G::Property {
                                     value: Some(expr),
                                     key: Some(key),
-                                    kind: G::PropertyKind::Normal,
+                                    flags: if Self::jsx_property_is_key_name(key) {
+                                        flags::Property::IsJsxShorthandKey.into()
+                                    } else {
+                                        flags::PROPERTY_NONE
+                                    },
                                     ..Default::default()
                                 });
                             }
@@ -189,7 +193,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 props.push(G::Property {
                                     value: Some(key),
                                     key: Some(key),
-                                    kind: G::PropertyKind::Normal,
+                                    flags: if Self::jsx_property_is_key_name(key) {
+                                        flags::Property::IsJsxShorthandKey.into()
+                                    } else {
+                                        flags::PROPERTY_NONE
+                                    },
                                     ..Default::default()
                                 });
                             }

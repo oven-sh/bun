@@ -702,9 +702,9 @@ pub enum OutputStreamDescriptor {
     Terminal,
 }
 
-pub static ENABLE_ANSI_COLORS_STDERR: AtomicBool = AtomicBool::new(Environment::IS_NATIVE);
-pub static ENABLE_ANSI_COLORS_STDOUT: AtomicBool = AtomicBool::new(Environment::IS_NATIVE);
-static ENABLE_BUFFERING: AtomicBool = AtomicBool::new(Environment::IS_NATIVE);
+pub static ENABLE_ANSI_COLORS_STDERR: AtomicBool = AtomicBool::new(true);
+pub static ENABLE_ANSI_COLORS_STDOUT: AtomicBool = AtomicBool::new(true);
+static ENABLE_BUFFERING: AtomicBool = AtomicBool::new(true);
 static IS_VERBOSE: AtomicBool = AtomicBool::new(false);
 pub static IS_GITHUB_ACTION: AtomicBool = AtomicBool::new(false);
 
@@ -792,9 +792,7 @@ pub fn is_verbose() -> bool {
 }
 
 pub fn enable_buffering() {
-    if Environment::IS_NATIVE {
-        ENABLE_BUFFERING.store(true, Ordering::Relaxed);
-    }
+    ENABLE_BUFFERING.store(true, Ordering::Relaxed);
 }
 
 pub struct EnableBufferingScope {
@@ -822,9 +820,7 @@ pub fn enable_buffering_scope() -> EnableBufferingScope {
 
 pub fn disable_buffering() {
     flush();
-    if Environment::IS_NATIVE {
-        ENABLE_BUFFERING.store(false, Ordering::Relaxed);
-    }
+    ENABLE_BUFFERING.store(false, Ordering::Relaxed);
 }
 
 /// RAII: `disable_buffering()` now, `enable_buffering()` on drop. Used
@@ -920,7 +916,7 @@ pub fn reset_terminal_all() {
 /// Bun automatically calls this function in Global.exit().
 #[inline(never)]
 pub fn flush() {
-    if Environment::IS_NATIVE && SOURCE_SET.get() {
+    if SOURCE_SET.get() {
         let _ = writer_buffered().flush();
         let _ = error_writer_buffered().flush();
     }

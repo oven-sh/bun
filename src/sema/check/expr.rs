@@ -3640,8 +3640,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.object_literal_with_shape(lazy_type, shape)
     }
 
-    /// `checkObjectLiteral` when `has_unstored_member_type_since`: the properties get the types
-    /// just computed. `lazy_type` resolves its members later, without the pushed contextual type.
+    /// `checkObjectLiteral` with the member types just computed: `has_unstored_member_type_since`.
     fn object_literal_in_flow_loop(
         &mut self,
         file: FileId,
@@ -4263,7 +4262,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `createObjectLiteralType` where its result is the type of the literal `e`. The members are
-    /// the non-spread entries of `props`. For `reads`, see `has_unstored_member_type_since`.
+    /// the non-spread entries of `props`. `reads`: `(taints, any_signature_reads)` before them.
     fn create_object_literal_type(
         &mut self,
         file: FileId,
@@ -4329,11 +4328,9 @@ impl<'p, 's> Checker<'p, 's> {
         object_flags
     }
 
-    /// True if a member type of the object literal `e` being checked isn't stored, so the literal's
-    /// type has to hold it. `reads` is `(taints, any_signature_reads)` before the first member.
+    /// True if the type of the literal `e` has to hold the member types that were just computed.
     fn has_unstored_member_type_since(&self, file: FileId, e: ExprId, reads: (u64, u32)) -> bool {
-        // A member read a loop's incomplete type, or `push_frame` gave the members' frames that
-        // mark because `e` is below a node with a pushed contextual type.
+        // A member read a loop's incomplete type, or its frame has that mark under a pushed type.
         let is_in_flow_loop = (self.frames.last()).is_some_and(|frame| frame.incomplete_flow)
             && (self.taints != reads.0 || self.get_inference_context(file, e).is_some());
         // Or a member is `any` because it read `anySignature`. A type resolution in progress stores
@@ -4539,8 +4536,7 @@ impl<'p, 's> Checker<'p, 's> {
                 Ok(stored) => Some(stored),
                 Err(open) => {
                     let left_frame = self.left_frame;
-                    // A loop's mark that only `push_frame` gave: no read of that loop's incomplete
-                    // type reached this frame. tsgo stores such a return type.
+                    // No read of a loop's incomplete type reached this frame. tsgo stores it.
                     let is_marked_by_push_alone = left_frame
                         .is_some_and(|it| self.lowest_taint_since(it.serial) > self.frames.len());
                     let is_stored_in_flow_loop = (is_check_final || !is_context_sensitive)

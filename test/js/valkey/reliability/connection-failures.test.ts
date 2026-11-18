@@ -2104,6 +2104,36 @@ describe("Valkey: Recovering After fail()", () => {
     });
   });
 
+  test.concurrent("connect() on a --redis-preconnect that is connected makes the client script's", async () => {
+    const fake = helloServer({ HELLO: connection => (connection === 1 ? "+OK\r\n" : "-WRONGPASS\r\n") });
+    const port = await fake.listen();
+    try {
+      const first = once(fake.server, "connection");
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "--redis-preconnect",
+          "-e",
+          `while (!Bun.redis.connected) await new Promise(setImmediate);
+           await Bun.redis.connect();
+           console.error("connected");
+           await new Promise(resolve => (Bun.redis.onclose = resolve, setInterval(() => {}, 1000)));
+           console.log(await Bun.redis.ping().catch(err => err.message));
+           process.exit(0);`,
+        ],
+        env: { ...bunEnv, REDIS_URL: `redis://127.0.0.1:${port}` },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      await proc.stderr.getReader().read();
+      (await first)[0].destroy();
+      expect(await proc.stdout.text()).toBe("Connection has failed\n");
+      expect(await proc.exited).toBe(0);
+    } finally {
+      fake.server.close();
+    }
+  });
+
   test.concurrent.each([
     { refused: "HELLO once", path: "", first: "-ERR max clients\r\n", second: "+OK\r\n", ping: "PONG" },
     { refused: "HELLO twice", path: "", first: "-WRONGPASS\r\n", second: "-WRONGPASS\r\n", ping: "WRONGPASS" },
@@ -2688,6 +2718,23 @@ describe.concurrent("Valkey: Handshake", () => {
   });
 
   test.each([
+    { reply: "-NOPERM no", ping: "OK", second: ["HELLO 3", "SELECT 5", "SELECT 2", "PING"] },
+    { reply: "-ERR range", ping: "ERR_REDIS_INVALID_COMMAND: ERR range", second: ["HELLO 3", "SELECT 5"] },
+  ])("a reconnect that gets $reply to the SELECT it repeats ends in $ping", async ({ reply, ping, second }) => {
+    using fake = await commandServer(([name, db], connection) =>
+      connection === 2 && name === "SELECT" && db === "5" ? reply : undefined,
+    );
+    const client = new RedisClient(`redis://${fake.host}/2`);
+    try {
+      await client.select(5);
+      await drop(client);
+      expect({ ping: await outcome(client.ping()), second: fake.seen[1] }).toEqual({ ping, second });
+    } finally {
+      client.close();
+    }
+  });
+
+  test.each([
     { refused: "HELLO", reply: "-ERR max number of clients reached", ping: "OK", connections: 3 },
     { refused: "SELECT", reply: "-BUSY Redis is busy running a script", ping: "OK", connections: 3 },
     { refused: "HELLO", reply: null, ping: "OK", connections: 3 },
@@ -2806,7 +2853,8 @@ describe.concurrent("Valkey: Handshake", () => {
       client.get("key").catch(() => {});
       client.close();
     `;
-    await run(program, { BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING: flag });
+    const result = await run(program, { BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING: flag });
+    expect(result).toEqual({ stdout: "", stderr: "", exitCode: 0 });
     await closed;
     expect(fake.seen).toEqual([seen]);
   });

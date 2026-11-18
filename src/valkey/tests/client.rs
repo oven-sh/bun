@@ -630,6 +630,14 @@ mod lifecycle {
         it.dial();
         assert!(!it.client.abandon_handshake(), "a forgotten preconnect");
 
+        let mut it = Driver::new(Config::default());
+        it.attempt = it.client.preconnect();
+        it.start();
+        it.read(HELLO);
+        it.lost();
+        it.attempt = it.client.redial();
+        assert!(!it.client.abandon_handshake(), "an unused preconnect");
+
         let mut it = reach(Ready);
         it.lost();
         it.client.connect();
@@ -879,10 +887,6 @@ mod handshake {
             (&[("SELECT 5", "-ERR")], "write HELLO 3 SELECT 1"),
             (&[("ECHO 5", "+OK")], "write HELLO 3 SELECT 1"),
             (
-                &[("AUTH u p", "+OK"), ("SELECT 5", "+OK")],
-                "write HELLO 3 SELECT 5",
-            ),
-            (
                 &[("SELECT 5", "+OK"), ("SELECT 5", "+QUEUED")],
                 "write HELLO 3 SELECT 5",
             ),
@@ -934,15 +938,14 @@ mod handshake {
     }
 
     #[test]
-    fn a_refused_repeat_falls_back_if_script_authenticates() {
-        for (url, command, reply, expected) in [
-            (0, "auth u p", "-NOPERM", "connected OK"),
-            (0, "HELLO 3 AUTH u p", "-NOAUTH", "connected OK"),
-            (1, "AUTH u p", "-NOPERM", "write SELECT 1"),
-            (1, "AUTH u p", "-NOPERM\r\n+OK", "connected OK"),
-            (1, "AUTH u p", "-NOPERM\r\n-NOPERM", "closed [] Final"),
-            (0, "AUTH u p", "-BUSY x", "retry in 100 []"),
-            (0, "HELLO 3", "-NOPERM", "closed [] Final"),
+    fn a_repeat_that_the_handshake_has_no_right_to_falls_back() {
+        for (url, reply, expected) in [
+            (0, "-NOPERM x", "connected OK"),
+            (1, "-NOPERM x", "write SELECT 1"),
+            (1, "-NOPERM x\r\n+OK", "connected OK"),
+            (1, "-NOPERM x\r\n-NOPERM x", "closed [] Final"),
+            (0, "-BUSY x", "retry in 100 []"),
+            (0, "-ERR DB index is out of range", "closed [] Final"),
         ] {
             let mut it = Driver::new(database(url));
             it.dial();
@@ -952,17 +955,14 @@ mod handshake {
             } else {
                 "+OK\r\n+OK\r\n"
             });
-            for command in [command, "SELECT 5"] {
-                it.send(command);
-                it.checkpoint();
-                it.read("+OK\r\n");
-            }
+            it.send("SELECT 5");
+            it.read("+OK\r\n");
             it.lost();
             it.dial();
             it.start();
             it.read(&format!("+OK\r\n{reply}\r\n"));
             it.log.retain(|line| line != "ignored");
-            assert_eq!(it.log.last().unwrap(), expected, "{command} {reply}");
+            assert_eq!(it.log.last().unwrap(), expected, "{url} {reply}");
         }
     }
 

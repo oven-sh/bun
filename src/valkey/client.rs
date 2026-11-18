@@ -44,19 +44,42 @@ impl Default for Config {
 enum State {
     /// Never dialed, or only by a [`Client::preconnect`] that failed.
     Idle,
+    /// An event is still to come.
+    Active(Active),
+    /// Until [`Client::connect`].
+    Closed,
+}
+
+struct Active {
+    phase: Phase,
+    purpose: Purpose,
+    retries: u32,
+    /// For the next handshake: the URL's, or what script selected since.
+    database: u32,
+}
+
+#[derive(Copy, Clone)]
+enum Purpose {
+    /// Script has not used the client, so nobody would hear why it gave up.
+    Preconnect,
+    /// Script sent a command, connected or closed.
+    Asked,
+    /// Replaces a connection that script had.
+    Reconnect,
+}
+
+enum Phase {
     /// The socket is connecting, or in its TLS handshake.
     Dialing,
     /// HELLO is written, and SELECT behind it if there is a database.
     Hello,
-    /// HELLO was accepted with this; the reply to SELECT is due. Boxed to keep the state's tag a plain byte.
+    /// HELLO was accepted with this; the reply to SELECT is due. Boxed to keep the state small.
     Select(Box<RESPValue>),
     Ready,
     /// The socket is closing, or the dial gave none: [`Client::lost`] is due.
     Ending(End),
     /// A dial is due, from the retry timer or from `connect()`.
     Backoff,
-    /// Until [`Client::connect`].
-    Closed,
 }
 
 #[derive(Copy, Clone)]
@@ -164,15 +187,6 @@ struct Queued<P> {
 pub struct Client<P> {
     config: Config,
     state: State,
-    retries: u32,
-    /// The dials that follow replace a lost connection, and script did not ask for them.
-    was_ready: bool,
-    /// For the next handshake. What script selected holds only while the client reconnects by itself.
-    database: u32,
-    /// The handshake can have fewer rights than the session in which script selected.
-    script_authenticates: bool,
-    /// Script sent a command, connected or closed. Until then nobody would hear why the client gave up.
-    is_used: bool,
     mode: Mode,
     listeners: Listeners,
     tail: Tail,
@@ -301,16 +315,20 @@ fn refused<P>(message: &[u8], error: RedisError) -> Event<P> {
     }
 }
 
+fn write_select(database: u32, out: &mut Vec<u8>) {
+    let mut digits = bun_core::fmt::ItoaBuf::new();
+    command::encode(
+        b"SELECT",
+        &[bun_core::fmt::itoa(&mut digits, database)],
+        out,
+    );
+}
+
 impl<P> Client<P> {
     pub fn new(config: Config) -> Self {
         Self {
-            database: config.database,
             config,
             state: State::Idle,
-            retries: 0,
-            was_ready: false,
-            script_authenticates: false,
-            is_used: false,
             mode: Mode::Fresh,
             listeners: Listeners::default(),
             tail: Tail::None,
@@ -326,29 +344,37 @@ impl<P> Client<P> {
         &self.config
     }
 
+    fn phase(&self) -> Option<&Phase> {
+        match &self.state {
+            State::Active(active) => Some(&active.phase),
+            State::Idle | State::Closed => None,
+        }
+    }
+
     pub fn is_connected(&self) -> bool {
-        matches!(self.state, State::Ready)
+        matches!(self.phase(), Some(Phase::Ready))
     }
 
     pub fn is_dialing(&self) -> bool {
-        matches!(self.state, State::Dialing)
+        matches!(self.phase(), Some(Phase::Dialing))
     }
 
-    pub fn is_used(&self) -> bool {
-        self.is_used
+    pub fn is_preconnect(&self) -> bool {
+        matches!(&self.state, State::Active(active) if matches!(active.purpose, Purpose::Preconnect))
     }
 
     pub fn is_ending(&self) -> bool {
-        matches!(self.state, State::Ending(_))
+        matches!(self.phase(), Some(Phase::Ending(_)))
     }
 
     /// An event is still to come.
     pub fn is_active(&self) -> bool {
-        !matches!(self.state, State::Idle | State::Closed)
+        matches!(self.state, State::Active(_))
     }
 
     fn has_failed(&self) -> bool {
-        matches!(self.state, State::Ending(End::Failed) | State::Closed)
+        matches!(self.state, State::Closed)
+            || matches!(self.phase(), Some(Phase::Ending(End::Failed)))
     }
 
     pub fn is_subscriber(&self) -> bool {
@@ -412,70 +438,107 @@ impl<P> Client<P> {
 
     /// An explicit `connect()`, ahead of [`Self::first_dial`] and [`Self::redial`].
     pub fn connect(&mut self) {
-        self.was_ready = self.is_connected();
-        match self.state {
-            State::Backoff | State::Closed => {
-                self.retries = 0;
-                self.state = State::Backoff;
-            }
+        let active = match &mut self.state {
+            State::Idle => return,
+            State::Closed => return self.begin(Phase::Backoff, Purpose::Asked),
+            State::Active(active) => active,
+        };
+        active.purpose = Purpose::Asked;
+        match active.phase {
+            Phase::Backoff => active.retries = 0,
             // The close of a dial without a TLS context is still due, and no retry can build one.
-            State::Ending(End::Failed) => self.state = State::Ending(End::Final),
-            State::Ending(End::Requested) => self.state = State::Ending(End::Policy),
-            State::Idle
-            | State::Dialing
-            | State::Hello
-            | State::Select(_)
-            | State::Ready
-            | State::Ending(End::Policy | End::Final) => {}
+            Phase::Ending(End::Failed) => active.phase = Phase::Ending(End::Final),
+            Phase::Ending(End::Requested) => active.phase = Phase::Ending(End::Policy),
+            Phase::Dialing
+            | Phase::Hello
+            | Phase::Select(_)
+            | Phase::Ready
+            | Phase::Ending(End::Policy | End::Final) => {}
         }
     }
 
     pub fn close(&mut self) -> Close {
-        self.is_used = true;
-        self.was_ready = false;
-        self.database = self.config.database;
-        let close = match self.state {
-            State::Idle | State::Closed | State::Ending(End::Final | End::Failed) => {
-                return Close::Nothing;
-            }
-            State::Ending(End::Policy | End::Requested) => Close::Nothing,
-            State::Dialing | State::Hello | State::Select(_) | State::Ready => Close::Socket,
-            State::Backoff => Close::Retry(Attempt(())),
+        let State::Active(active) = &mut self.state else {
+            return Close::Nothing;
         };
-        self.state = State::Ending(End::Requested);
+        active.purpose = Purpose::Asked;
+        active.database = self.config.database;
+        let close = match active.phase {
+            Phase::Ending(End::Final | End::Failed) => return Close::Nothing,
+            Phase::Ending(End::Policy | End::Requested) => Close::Nothing,
+            Phase::Dialing | Phase::Hello | Phase::Select(_) | Phase::Ready => Close::Socket,
+            Phase::Backoff => Close::Retry(Attempt(())),
+        };
+        active.phase = Phase::Ending(End::Requested);
         close
     }
 
     pub fn first_dial(&mut self) -> Option<Attempt> {
-        self.is_used = true;
-        self.preconnect()
+        if let State::Active(Active {
+            purpose: purpose @ Purpose::Preconnect,
+            ..
+        }) = &mut self.state
+        {
+            *purpose = Purpose::Asked;
+        }
+        self.leave_idle(Purpose::Asked)
     }
 
     /// A dial that script did not ask for. If it fails for good, the first command dials again.
     pub fn preconnect(&mut self) -> Option<Attempt> {
-        matches!(self.state, State::Idle).then(|| self.dial())
+        self.leave_idle(Purpose::Preconnect)
+    }
+
+    fn leave_idle(&mut self, purpose: Purpose) -> Option<Attempt> {
+        matches!(self.state, State::Idle).then(|| {
+            self.begin(Phase::Dialing, purpose);
+            Attempt(())
+        })
+    }
+
+    fn begin(&mut self, phase: Phase, purpose: Purpose) {
+        self.state = State::Active(Active {
+            phase,
+            purpose,
+            retries: 0,
+            database: self.config.database,
+        });
     }
 
     pub fn redial(&mut self) -> Option<Attempt> {
-        matches!(self.state, State::Backoff).then(|| self.dial())
-    }
-
-    fn dial(&mut self) -> Attempt {
-        self.state = State::Dialing;
-        Attempt(())
+        let State::Active(Active {
+            phase: phase @ Phase::Backoff,
+            ..
+        }) = &mut self.state
+        else {
+            return None;
+        };
+        *phase = Phase::Dialing;
+        Some(Attempt(()))
     }
 
     /// The dial gave no socket.
     pub fn dial_failed(&mut self) {
-        if let State::Dialing = self.state {
-            self.state = State::Ending(End::Policy);
+        if let State::Active(Active {
+            phase: phase @ Phase::Dialing,
+            ..
+        }) = &mut self.state
+        {
+            *phase = Phase::Ending(End::Policy);
         }
     }
 
     /// The transport is up. A TLS renegotiation says so again.
     pub fn start(&mut self) {
-        let State::Dialing = self.state else { return };
-        self.state = State::Hello;
+        let State::Active(Active {
+            phase: phase @ Phase::Dialing,
+            database,
+            ..
+        }) = &mut self.state
+        else {
+            return;
+        };
+        *phase = Phase::Hello;
         let Config {
             username, password, ..
         } = &self.config;
@@ -488,28 +551,25 @@ impl<P> Client<P> {
         let anonymous = username.is_empty() && password.is_empty();
         let out = &mut self.output.byte_list;
         command::encode(b"HELLO", &hello[..if anonymous { 1 } else { 4 }], out);
-        if self.database > 0 {
-            self.write_select();
+        if *database > 0 {
+            write_select(*database, out);
         }
-    }
-
-    fn write_select(&mut self) {
-        let mut digits = bun_core::fmt::ItoaBuf::new();
-        let database = bun_core::fmt::itoa(&mut digits, self.database);
-        command::encode(b"SELECT", &[database], &mut self.output.byte_list);
     }
 
     /// Gives up the attempt, if there is one, without a retry: the caller rejects these and closes the socket.
     #[must_use]
     pub fn fail(&mut self) -> Option<Vec<P>> {
-        match self.state {
-            State::Idle | State::Backoff | State::Ending(End::Failed) | State::Closed => None,
-            State::Dialing
-            | State::Hello
-            | State::Select(_)
-            | State::Ready
-            | State::Ending(End::Policy | End::Requested | End::Final) => {
-                self.state = State::Ending(End::Failed);
+        let State::Active(active) = &mut self.state else {
+            return None;
+        };
+        match active.phase {
+            Phase::Backoff | Phase::Ending(End::Failed) => None,
+            Phase::Dialing
+            | Phase::Hello
+            | Phase::Select(_)
+            | Phase::Ready
+            | Phase::Ending(End::Policy | End::Requested | End::Final) => {
+                active.phase = Phase::Ending(End::Failed);
                 Some(self.take_pending())
             }
         }
@@ -518,18 +578,22 @@ impl<P> Client<P> {
     /// For a reason that passes. Whether that costs only this attempt: the caller closes the socket, else it fails.
     #[must_use]
     pub fn abandon_handshake(&mut self) -> bool {
-        let retries = self.was_ready
-            && matches!(self.state, State::Dialing | State::Hello | State::Select(_));
-        if retries {
-            self.state = State::Ending(End::Policy);
-        }
-        retries
+        let State::Active(Active {
+            phase: phase @ (Phase::Dialing | Phase::Hello | Phase::Select(_)),
+            purpose: Purpose::Reconnect,
+            ..
+        }) = &mut self.state
+        else {
+            return false;
+        };
+        *phase = Phase::Ending(End::Policy);
+        true
     }
 
     /// The TLS session broke. `Some` if that counts as a lost connection and not as a failed handshake.
     #[must_use]
     pub fn session_broke(&mut self) -> Option<Vec<P>> {
-        let said_hello = matches!(self.state, State::Select(_) | State::Ready);
+        let said_hello = matches!(self.phase(), Some(Phase::Select(_) | Phase::Ready));
         (said_hello && self.config.enable_auto_reconnect).then(|| self.take_in_flight())
     }
 
@@ -540,31 +604,33 @@ impl<P> Client<P> {
         self.scanner.reset();
         self.tail = Tail::None;
 
-        let is_final = matches!(self.state, State::Ending(End::Final | End::Failed));
-        let reason = if let State::Ending(End::Requested) = self.state {
-            Reason::Requested
-        } else if is_final || owner_is_gone || !self.config.enable_auto_reconnect {
-            Reason::Final
-        } else {
-            self.retries += 1;
-            if self.retries <= self.config.max_retries {
-                self.state = State::Backoff;
-                return Lost::Retry {
-                    delay_ms: (FIRST_DELAY_MS << (self.retries.min(10) - 1)).min(MAX_DELAY_MS),
-                    in_flight: self.take_in_flight(),
-                    undo: self.undo_unanswered(),
-                };
-            }
-            Reason::RetriesUsedUp
+        let reason = match &mut self.state {
+            State::Idle | State::Closed => Reason::Final,
+            State::Active(active) => match active.phase {
+                Phase::Ending(End::Requested) => Reason::Requested,
+                Phase::Ending(End::Final | End::Failed) => Reason::Final,
+                _ if owner_is_gone || !self.config.enable_auto_reconnect => Reason::Final,
+                _ if active.retries >= self.config.max_retries => Reason::RetriesUsedUp,
+                _ => {
+                    if let (Phase::Ready, Purpose::Asked) = (&active.phase, active.purpose) {
+                        active.purpose = Purpose::Reconnect;
+                    }
+                    active.phase = Phase::Backoff;
+                    active.retries += 1;
+                    let doublings = active.retries.min(10) - 1;
+                    return Lost::Retry {
+                        delay_ms: (FIRST_DELAY_MS << doublings).min(MAX_DELAY_MS),
+                        in_flight: self.take_in_flight(),
+                        undo: self.undo_unanswered(),
+                    };
+                }
+            },
         };
-        self.database = self.config.database;
-        if self.is_used {
-            self.state = State::Closed;
+        self.state = if self.is_preconnect() {
+            State::Idle
         } else {
-            self.state = State::Idle;
-            self.retries = 0;
-            self.was_ready = false;
-        }
+            State::Closed
+        };
         Lost::ForGood {
             reason,
             pending: self.take_pending(),
@@ -586,10 +652,10 @@ impl<P> Client<P> {
     fn take_in_flight(&mut self) -> Vec<P> {
         let in_flight = core::mem::take(&mut self.in_flight);
         // Script was leaving the database that it selected before.
-        if (in_flight.iter()).any(
-            |it| matches!(it, InFlight::Plain(Expect::Database(to), _) if *to != self.database),
-        ) {
-            self.database = self.config.database;
+        if let State::Active(active) = &mut self.state
+            && (in_flight.iter()).any(|it| matches!(it, InFlight::Plain(Expect::Database(to), _) if *to != active.database))
+        {
+            active.database = self.config.database;
         }
         (in_flight.into_iter().filter_map(InFlight::into_promise)).collect()
     }
@@ -624,7 +690,7 @@ impl<P> Client<P> {
             Some(&kind) => return self.send_for_ack(name, args, kind, None, promise),
             None if matches!(
                 (name.len(), name.first().map(u8::to_ascii_lowercase)),
-                (4, Some(b'a')) | (5, Some(b'h' | b'r')) | (6, Some(b's'))
+                (5, Some(b'r')) | (6, Some(b's'))
             ) =>
             {
                 (self.database_after(name, args)).map_or(Expect::Reply(reply), Expect::Database)
@@ -694,10 +760,7 @@ impl<P> Client<P> {
 
     /// RESET forgets the choice, as it does the rest of the session.
     #[inline(never)]
-    fn database_after<A: AsRef<[u8]>>(&mut self, name: &[u8], args: &[A]) -> Option<u32> {
-        let is_auth = |it: &[u8]| it.eq_ignore_ascii_case(b"AUTH");
-        self.script_authenticates |= is_auth(name)
-            || (name.eq_ignore_ascii_case(b"HELLO") && args.iter().any(|it| is_auth(it.as_ref())));
+    fn database_after<A: AsRef<[u8]>>(&self, name: &[u8], args: &[A]) -> Option<u32> {
         match args {
             [database] if name.eq_ignore_ascii_case(b"SELECT") => Some(
                 bun_core::fmt::parse_int(database.as_ref(), 10).unwrap_or(self.config.database),
@@ -807,20 +870,39 @@ impl<P> Client<P> {
     }
 
     fn route(&mut self, value: RESPValue) -> Event<P> {
-        match self.state {
-            State::Ready => self.on_reply(value),
-            State::Hello => self.on_hello(value),
-            State::Select(ref mut hello) => {
+        let State::Active(active) = &mut self.state else {
+            return Event::Ignored;
+        };
+        let out = &mut self.output.byte_list;
+        let event = match &mut active.phase {
+            Phase::Ready => return self.on_reply(value),
+            Phase::Hello => Self::on_hello(active, value),
+            Phase::Select(hello) => {
                 let hello = core::mem::replace(&mut **hello, RESPValue::Null);
-                self.on_select(value, hello)
+                Self::on_select(active, value, hello, self.config.database, out)
             }
-            State::Idle | State::Dialing | State::Ending(_) | State::Backoff | State::Closed => {
-                Event::Ignored
+            Phase::Dialing | Phase::Ending(_) | Phase::Backoff => Event::Ignored,
+        };
+        if let Event::Connected(_) = event {
+            active.phase = Phase::Ready;
+            let mut unanswered = 0;
+            for channel in self.listeners.confirmed_channels() {
+                // `encode` alone grows it by no more than one command.
+                out.reserve(channel.len() + 64);
+                command::encode(b"SUBSCRIBE", &[channel], out);
+                unanswered += 1;
+            }
+            if unanswered > 0 {
+                // A peer that drops the connection on these uses up the retries.
+                self.in_flight.push_back(InFlight::Restore(unanswered));
+            } else {
+                active.retries = 0;
             }
         }
+        event
     }
 
-    fn on_hello(&mut self, value: RESPValue) -> Event<P> {
+    fn on_hello(active: &mut Active, value: RESPValue) -> Event<P> {
         use RedisError::{AuthenticationFailed, UnsupportedProtocol};
         match value {
             RESPValue::Error(message) => {
@@ -844,11 +926,11 @@ impl<P> Client<P> {
             {
                 broken(b"Server does not support RESP3", UnsupportedProtocol)
             }
-            RESPValue::SimpleString(_) | RESPValue::Map(_) if self.database > 0 => {
-                self.state = State::Select(Box::new(value));
+            RESPValue::SimpleString(_) | RESPValue::Map(_) if active.database > 0 => {
+                active.phase = Phase::Select(Box::new(value));
                 Event::Ignored
             }
-            RESPValue::SimpleString(_) | RESPValue::Map(_) => self.selected(value),
+            RESPValue::SimpleString(_) | RESPValue::Map(_) => Event::Connected(value),
             _ => broken(
                 b"Authentication failed with unexpected response",
                 AuthenticationFailed,
@@ -856,24 +938,28 @@ impl<P> Client<P> {
         }
     }
 
-    fn on_select(&mut self, value: RESPValue, hello: RESPValue) -> Event<P> {
+    fn on_select(
+        active: &mut Active,
+        value: RESPValue,
+        hello: RESPValue,
+        url_database: u32,
+        out: &mut Vec<u8>,
+    ) -> Event<P> {
         match value {
-            RESPValue::SimpleString(text) if *text == *b"OK" => self.selected(hello),
-            RESPValue::Error(message) => match refused(&message, RedisError::InvalidCommand) {
-                // `onconnect` has to run for it to select again.
-                Event::Broken { .. }
-                    if self.script_authenticates && self.database != self.config.database =>
-                {
-                    self.database = self.config.database;
-                    if self.database == 0 {
-                        return self.selected(hello);
-                    }
-                    self.write_select();
-                    self.state = State::Select(Box::new(hello));
-                    Event::Ignored
+            RESPValue::SimpleString(text) if *text == *b"OK" => Event::Connected(hello),
+            // Script selected with rights that it gets in `onconnect`, which has to run.
+            RESPValue::Error(message)
+                if active.database != url_database && message.starts_with(b"NOPERM ") =>
+            {
+                active.database = url_database;
+                if url_database == 0 {
+                    return Event::Connected(hello);
                 }
-                refusal => refusal,
-            },
+                write_select(url_database, out);
+                active.phase = Phase::Select(Box::new(hello));
+                Event::Ignored
+            }
+            RESPValue::Error(message) => refused(&message, RedisError::InvalidCommand),
             RESPValue::SimpleString(_) => broken(
                 b"SELECT command failed with non-OK response",
                 RedisError::InvalidResponse,
@@ -883,27 +969,6 @@ impl<P> Client<P> {
                 RedisError::InvalidResponse,
             ),
         }
-    }
-
-    /// The session is on its database.
-    fn selected(&mut self, hello: RESPValue) -> Event<P> {
-        let out = &mut self.output.byte_list;
-        let mut unanswered = 0;
-        for channel in self.listeners.confirmed_channels() {
-            // `encode` alone grows it by no more than one command.
-            out.reserve(channel.len() + 64);
-            command::encode(b"SUBSCRIBE", &[channel], out);
-            unanswered += 1;
-        }
-        if unanswered > 0 {
-            // A peer that drops the connection on these uses up the retries.
-            self.in_flight.push_back(InFlight::Restore(unanswered));
-        } else {
-            self.retries = 0;
-        }
-        self.state = State::Ready;
-        self.was_ready = true;
-        Event::Connected(hello)
     }
 
     fn on_reply(&mut self, value: RESPValue) -> Event<P> {
@@ -940,8 +1005,8 @@ impl<P> Client<P> {
             Some(InFlight::Restore(unanswered)) => {
                 if unanswered > 1 {
                     self.in_flight.push_front(InFlight::Restore(unanswered - 1));
-                } else {
-                    self.retries = 0;
+                } else if let State::Active(active) = &mut self.state {
+                    active.retries = 0;
                 }
                 return Event::Ignored;
             }
@@ -960,11 +1025,13 @@ impl<P> Client<P> {
             },
             (RESPValue::SimpleString(text), Expect::Database(database)) => {
                 // QUEUED: whether EXEC runs it is not tracked.
-                self.database = match &*text {
-                    b"OK" | b"RESET" => database,
-                    _ if database == self.database => database,
-                    _ => self.config.database,
-                };
+                if let State::Active(active) = &mut self.state {
+                    active.database = match &*text {
+                        b"OK" | b"RESET" => database,
+                        _ if database == active.database => database,
+                        _ => self.config.database,
+                    };
+                }
                 Event::Resolved {
                     promise,
                     value: RESPValue::SimpleString(text),

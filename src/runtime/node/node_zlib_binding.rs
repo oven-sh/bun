@@ -14,15 +14,61 @@ use bun_jsc::{
 
 // ─── type defs ────────────────────────────────────────────────────────────
 
+#[derive(Clone, Copy)]
 pub(crate) struct Error {
-    pub(crate) msg: &'static CStr,
+    pub(crate) msg: &'static [u8],
     pub(crate) err: c_int,
     pub(crate) code: &'static CStr,
 }
 
 impl Error {
     pub(crate) const fn init(msg: &'static CStr, err: c_int, code: &'static CStr) -> Error {
-        Error { msg, err, code }
+        Error {
+            msg: msg.to_bytes(),
+            err,
+            code,
+        }
+    }
+}
+
+pub(crate) const Z_BUF_ERROR: c_int = -5;
+
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[allow(non_camel_case_types)] // names mirror Node.js zlib mode constants
+pub(crate) enum NodeMode {
+    NONE = 0,
+    DEFLATE = 1,
+    INFLATE = 2,
+    GZIP = 3,
+    GUNZIP = 4,
+    DEFLATERAW = 5,
+    INFLATERAW = 6,
+    UNZIP = 7,
+    BROTLI_DECODE = 8,
+    BROTLI_ENCODE = 9,
+    ZSTD_COMPRESS = 10,
+    ZSTD_DECOMPRESS = 11,
+}
+
+impl NodeMode {
+    /// The `NativeZlib`/`NativeBrotli`/`NativeZstd` constructors have validated the range.
+    #[inline]
+    pub(crate) const fn from_int(n: u8) -> Self {
+        match n {
+            1 => Self::DEFLATE,
+            2 => Self::INFLATE,
+            3 => Self::GZIP,
+            4 => Self::GUNZIP,
+            5 => Self::DEFLATERAW,
+            6 => Self::INFLATERAW,
+            7 => Self::UNZIP,
+            8 => Self::BROTLI_DECODE,
+            9 => Self::BROTLI_ENCODE,
+            10 => Self::ZSTD_COMPRESS,
+            11 => Self::ZSTD_DECOMPRESS,
+            _ => Self::NONE,
+        }
     }
 }
 
@@ -36,7 +82,7 @@ fn jsv_to_u32(v: JSValue) -> u32 {
 }
 
 pub(crate) fn crc32(data: &[u8], value: u32) -> u32 {
-    bun_zlib::crc32_bytes(value, data)
+    bun_highway::crc32(value, data)
 }
 
 // ─── CompressionStream mixin trait ────────────────────────────────────────
@@ -610,8 +656,7 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
 
     /// The callback can re-enter any member, so the stream has to be back in its cell.
     fn emit_error(&self, global_this: &JSGlobalObject, this_value: JSValue, err_: &Error) {
-        let Ok(msg_value) = bun_string_jsc::create_utf8_for_js(global_this, err_.msg.to_bytes())
-        else {
+        let Ok(msg_value) = bun_string_jsc::create_utf8_for_js(global_this, err_.msg) else {
             return;
         };
         let err_value: JSValue = JSValue::js_number(f64::from(err_.err));

@@ -640,6 +640,7 @@ impl JSValkeyClient {
         let this_value = object.to_js();
 
         if self.get_connected() {
+            self.client.with_mut(Client::connect);
             return JSPromise::resolved_promise_value(
                 global_object,
                 js::hello_get_cached(this_value).unwrap_or(JSValue::UNDEFINED),
@@ -1204,8 +1205,7 @@ impl JSValkeyClient {
         let is_idle = client.is_connected()
             && !client.has_pending_commands()
             && object.subscription_count() == 0;
-        // Until then nobody waits for `--redis-preconnect`.
-        let is_awaited = || client.is_used() || object.has_handler();
+        let is_awaited = || !client.is_preconnect() || object.has_handler();
         if client.is_active() && !is_idle && is_awaited() {
             self.poll_ref.ref_(bun_io::js_vm_ctx());
         } else {

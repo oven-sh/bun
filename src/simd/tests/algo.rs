@@ -562,6 +562,12 @@ mod simd {
         let mut bytes = Vec::from_iter(0..4 * N as u8);
         let four = Vector::<u8, N>::load4(shared(&mut bytes).as_chunks().0.as_array().unwrap());
         assert_eq!(four.map(Vector::to_array).as_flattened(), bytes);
+        let mut seven = Vec::from_iter(0..7 * N as u8);
+        for (at, &want) in seven.clone().as_chunks::<N>().0.iter().enumerate() {
+            let got = Vector::load_at(shared(&mut seven).as_chunks().0, at);
+            assert_eq!(got.to_array(), want);
+            assert_eq!(Vector::load_at(seven.as_chunks().0, at).to_array(), want);
+        }
         four[1].store_shared(shared_out(&mut bytes).first_chunk().unwrap());
         assert_eq!(bytes[..2 * N], four[1].to_array().repeat(2));
     }

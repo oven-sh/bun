@@ -28,8 +28,9 @@ mod width;
 mod words;
 pub mod xml;
 mod xxhash;
+pub mod zlib;
 
-use bun_simd::Source;
+use bun_simd::{Out, Source, Writer};
 
 pub use byte_set::ByteSet;
 pub use {adler32::*, crc32::*, xxhash::*};
@@ -38,16 +39,59 @@ pub use {memmem::*, paths::*, scanner::*, search::*, width::*};
 
 trait Byte = Source<Lane = u8>;
 
+/// What gets the bytes that a checksum loads.
+trait Copies {
+    /// Then loads have to be `opaque`: LLVM may repeat them, and a script may be writing to the input.
+    const KEEPS: bool;
+
+    /// Keeps the first `count`.
+    fn put<const N: usize>(&mut self, bytes: [u8; N], count: usize);
+    fn put_each<T, const N: usize>(&mut self, from: &[T], load: impl FnMut(&T) -> [u8; N]);
+}
+
+impl Copies for () {
+    const KEEPS: bool = false;
+
+    #[inline(always)]
+    fn put<const N: usize>(&mut self, _: [u8; N], _: usize) {}
+
+    #[inline(always)]
+    fn put_each<T, const N: usize>(&mut self, from: &[T], mut load: impl FnMut(&T) -> [u8; N]) {
+        for it in from {
+            load(it);
+        }
+    }
+}
+
+impl Copies for Writer<'_, u8> {
+    const KEEPS: bool = true;
+
+    #[inline(always)]
+    fn put<const N: usize>(&mut self, bytes: [u8; N], count: usize) {
+        self.push_first(bytes, count);
+    }
+
+    #[inline(always)]
+    fn put_each<T, const N: usize>(&mut self, from: &[T], mut load: impl FnMut(&T) -> [u8; N]) {
+        self.extend_with(from, |it| Some(load(it)));
+    }
+}
+
+/// The checksum is that of the copy.
+#[inline(always)]
+fn copy_then<'a>(
+    sum: &mut u32,
+    from: &[u8],
+    to: Out<'a, u8>,
+    update: impl Fn(u32, &[u8]) -> u32,
+) -> &'a mut [u8] {
+    let mut to = to.into_writer();
+    to.extend_from_slice(from);
+    let copy = to.finish();
+    *sum = update(*sum, copy);
+    copy
+}
+
 /// Starts a cache line.
 #[repr(align(64))]
 struct Aligned<T>(T);
-
-/// In a long input, it is worth a call to have no load cross a cache line.
-#[inline(always)]
-fn in_aligned_parts<B>(mut state: u32, mut bytes: &[B], update: impl Fn(u32, &[B]) -> u32) -> u32 {
-    if bytes.len() > 65536 {
-        let (head, rest) = bytes.split_at(bytes.as_ptr().addr().wrapping_neg() % 64);
-        (state, bytes) = (update(state, head), rest);
-    }
-    update(state, bytes)
-}

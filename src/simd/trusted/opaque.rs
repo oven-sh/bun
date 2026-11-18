@@ -25,19 +25,42 @@ cfg_select! {
             v
         }
 
-        /// Counts as a use of all lanes.
-        #[cfg(target_arch = "aarch64")]
-        #[inline(always)]
-        pub fn keep16(v: u8x16) {
+        #[cfg(target_arch = "x86_64")]
+        #[inline]
+        #[target_feature(enable = "avx")]
+        pub fn opaque32(mut v: core::simd::u8x32) -> core::simd::u8x32 {
             // SAFETY: there is no instruction.
-            unsafe { asm!("/* {0:q} */", in(vreg) v, options(nomem, nostack, preserves_flags)) };
+            unsafe {
+                asm!("/* {0} */", inout(ymm_reg) v, options(pure, nomem, nostack, preserves_flags))
+            };
+            v
         }
 
         #[cfg(target_arch = "x86_64")]
-        pub use core::mem::drop as keep16;
+        #[inline]
+        #[target_feature(enable = "avx512f")]
+        pub fn opaque64(mut v: core::simd::u8x64) -> core::simd::u8x64 {
+            // SAFETY: there is no instruction.
+            unsafe {
+                asm!("/* {0} */", inout(zmm_reg) v, options(pure, nomem, nostack, preserves_flags))
+            };
+            v
+        }
+
+        /// Counts as a use of all lanes.
+        #[inline(always)]
+        pub fn keep16(v: u8x16) {
+            // SAFETY: there is no instruction.
+            unsafe {
+                #[cfg(target_arch = "x86_64")]
+                asm!("/* {0} */", in(xmm_reg) v, options(nomem, nostack, preserves_flags));
+                #[cfg(target_arch = "aarch64")]
+                asm!("/* {0:q} */", in(vreg) v, options(nomem, nostack, preserves_flags));
+            }
+        }
     }
     _ => {
-        pub use core::convert::identity as opaque16;
+        pub use core::convert::{identity as opaque16, identity as opaque32, identity as opaque64};
         pub use core::mem::drop as keep16;
 
         #[inline(always)]

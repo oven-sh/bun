@@ -10,7 +10,6 @@ path = "lib.rs"
 workspace = true
 
 [dependencies]
-bun_opaque.workspace = true
 libc.workspace = true
 bun_mimalloc_sys.workspace = true
 bun_wyhash.workspace = true

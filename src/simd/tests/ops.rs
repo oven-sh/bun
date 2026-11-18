@@ -247,6 +247,11 @@ mod simd {
 
         pub fn all_inputs() {
             let distinct: [u8; N] = from_fn(|i| 100 + i as u8);
+            for by in 0..N {
+                let want = from_fn(|i| i.checked_sub(by).map_or(0, |i| distinct[i]));
+                let got = U8::load(&distinct).slide_up(black_box(by));
+                assert_eq!(got.to_array(), want);
+            }
             for index in (0..16).chain(128..=255) {
                 for lane in 0..N {
                     let indices = from_fn(|i| if i == lane { index } else { 3 });
@@ -523,6 +528,11 @@ mod simd {
     }
 
     #[export]
+    pub fn slide_out() {
+        U8::zero().slide_up(U8::LEN);
+    }
+
+    #[export]
     pub fn random_inputs(rounds: usize) {
         let random = &mut Random(88172645463325252);
         for _ in 0..rounds {
@@ -537,6 +547,8 @@ mod simd {
             let (word, lanes) = (random.next(), from_fn(|_| random.next() as i16));
             assert_eq!(bun_simd::opaque(word), word);
             assert_eq!(isa::x128::I16::load(&lanes).opaque().to_array(), lanes);
+            assert_eq!(U8::iota().opaque().to_array(), U8::iota().to_array());
+            isa::x128::I16::load(&lanes).keep();
             let (a, b) = (random.lanes::<u8, 16>(), random.lanes::<u8, 16>());
             let b = from_fn(|i| if i & 4 == 0 { b[i] } else { a[i] });
             let sum = |i: usize| {
@@ -603,6 +615,12 @@ fn all_inputs() {
 #[test]
 fn random_inputs() {
     on_each_target(|| simd::random_inputs(300));
+}
+
+#[test]
+#[should_panic = "by < N"]
+fn slide_out() {
+    simd::slide_out();
 }
 
 #[test]
@@ -711,8 +729,19 @@ mod dot_simd {
     }
 }
 
+#[bun_simd::foreach_target(sse4, neon + "crc", portable)]
+mod crc_simd {
+    #[export]
+    pub fn states() {
+        let step = |crc, word: &[u8; 8]| isa::crc32_u64(crc, u64::from_le_bytes(*word));
+        let words = black_box([b"The quic", b"k brown ", b"fox jump"]);
+        assert_eq!(!words.into_iter().fold(!0, step), 0x8E59_80B4);
+    }
+}
+
 #[test]
 fn ops_with_further_features() {
+    on_each_target(crc_simd::states);
     on_each_target(carryless_simd::products);
     on_each_target(dot_simd::sums);
 }

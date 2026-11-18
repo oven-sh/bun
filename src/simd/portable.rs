@@ -266,6 +266,13 @@ pub fn prefix_xor(mut bits: u64) -> u64 {
     bits
 }
 
+/// Adds the bytes of `word`, the lowest first, to the CRC-32 of gzip. Only Arm has an instruction.
+#[inline(always)]
+pub fn crc32_u64(crc: u32, word: u64) -> u32 {
+    let step = |bits: u64, _| (bits >> 1) ^ ((bits & 1) * 0xEDB8_8320);
+    (0..64).fold(word ^ u64::from(crc), step) as u32
+}
+
 /// The indices of the bits that are set.
 #[inline(always)]
 pub fn bit_indices(bits: u64) -> BitIndices {
@@ -329,20 +336,22 @@ pub(crate) fn store_shared<const N: usize, const K: usize, const AT: usize>(
     store_shared_masked::<false>(v.resize(0), &to[AT * N..][..N]);
 }
 
+pub(crate) use core::convert::identity as opaque_lanes;
+
 crate::isa::vector_types!(Portable<16>, 16);
 
 #[cfg(any(feature = "test_support", not(target_arch = "x86_64")))]
 pub mod portable32 {
-    pub use super::{bit_indices, prefix_xor};
-    pub(crate) use super::{load_shared, masked::*, store_shared};
+    pub use super::{bit_indices, crc32_u64, prefix_xor};
+    pub(crate) use super::{load_shared, masked::*, opaque_lanes, store_shared};
 
     crate::isa::vector_types!(super::Portable<32>, 32);
 }
 
 #[cfg(any(feature = "test_support", not(target_arch = "x86_64")))]
 pub mod portable64 {
-    pub use super::prefix_xor;
-    pub(crate) use super::{load_shared, masked::*, store_shared};
+    pub use super::{crc32_u64, prefix_xor};
+    pub(crate) use super::{load_shared, masked::*, opaque_lanes, store_shared};
 
     crate::isa::vector_types!(super::Portable<64>, 64);
 

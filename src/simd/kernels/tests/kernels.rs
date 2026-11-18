@@ -1,11 +1,15 @@
 //! Every kernel on every target, against a plain loop or the portable target.
 #![forbid(unsafe_code)]
 mod common;
-use bun_simd::{Out, SharedOutU8, SharedU8, Target, limit_to, limit_to_with};
+use bun_simd::{Appender, Out, SharedOutU8, SharedU8, Target};
+use bun_simd::{extend_vec, limit_to, limit_to_with};
 use bun_simd_kernels::image::{self, Filter};
 use bun_simd_kernels::sourcemap::{self, Columns, MappingsState};
+use bun_simd_kernels::zlib::{MATCH_SPAN, copy_match, push_match, subtract_saturating};
 use bun_simd_kernels::{self as kernels, json, png, websocket, xml};
 use common::{check, check_against_portable, random, sample, targets};
+use core::array::from_fn;
+use core::cell::Cell;
 use core::f64::consts::PI;
 use core::fmt::Debug;
 use core::sync::atomic::{AtomicU8, Ordering::Relaxed};
@@ -1509,8 +1513,8 @@ fn crc32_by_bits(crc: u32, bytes: &[u8]) -> u32 {
     !(bytes.iter()).fold(!crc, |crc, &byte| (0..8).fold(crc ^ u32::from(byte), step))
 }
 
-fn adler32_by_bytes(bytes: &[u8]) -> u32 {
-    let (mut low, mut high) = (1, 0);
+fn adler32_by_bytes(adler: u32, bytes: &[u8]) -> u32 {
+    let (mut low, mut high) = (adler & 0xFFFF, adler >> 16);
     for &byte in bytes {
         low = (low + u32::from(byte)) % 65521;
         high = (high + low) % 65521;
@@ -1518,50 +1522,207 @@ fn adler32_by_bytes(bytes: &[u8]) -> u32 {
     high << 16 | low
 }
 
+type CopyAndSum = for<'a> fn(&mut u32, &[u8], Out<'a, u8>) -> &'a mut [u8];
+
 #[test]
 fn checksums() {
     #[track_caller]
     fn check(len: usize, want: u32, kernel: impl Fn() -> u32) {
-        let more = ["pclmulqdq", "vpclmulqdq", "crc", "aes+sha3+dotprod"];
+        let more = "pclmulqdq avx512vl vpclmulqdq crc crc+aes crc+aes+sha3 dotprod";
         for target in targets() {
             assert_eq!(kernel(), want, "{len} {target:?}");
-            for more in more.iter().filter(|_| target.arch().is_some()) {
+            for more in more.split(' ').filter(|_| target.arch().is_some()) {
                 limit_to_with(target, more.split('+'));
                 assert_eq!(kernel(), want, "{len} {target:?}+{more}");
             }
         }
     }
+    fn copied(mut sum: u32, bytes: &[u8], spare: usize, kernel: CopyAndSum) -> u32 {
+        let mut copy = Vec::with_capacity(bytes.len() + spare);
+        extend_vec(&mut copy, bytes.len() + spare, |to| {
+            kernel(&mut sum, bytes, to)
+        });
+        assert!(copy == bytes);
+        sum
+    }
     assert_eq!(crc32_by_bits(0, b"123456789"), 0xCBF4_3926);
-    assert_eq!(adler32_by_bytes(b"Wikipedia"), 0x11E6_0398);
+    assert_eq!(adler32_by_bytes(1, b"Wikipedia"), 0x11E6_0398);
     let lengths: Vec<usize> = match cfg!(miri) {
-        true => vec![3, 40, 956],
-        false => (0..2400)
+        true => vec![3, 40, 700],
+        false => (0..2600)
             // At 4097 and 4112, the last correction of the upper sum crosses 2^31.
-            .chain([4095, 4096, 4097, 4112, 5375, 5376, 5377, 5503, 5504, 5505])
-            .chain([5552, 11_100, 65_536, 65_600, 70_001, 140_001])
+            .chain([4096, 4097, 4112, 5503, 5504, 5505, 5552, 5553, 5900, 11_100])
+            .chain([65_535, 65_536, 65_537, 65_600, 70_001, 131_072, 140_001])
             .collect(),
     };
     let mut below = random();
     for len in lengths {
         let any = (0..len + 63).map(|_| below(256) as u8).collect();
-        for all in [any, vec![255; len + 63]] {
+        for all in sample([any, vec![255; len + 63]], 2) {
             let start = below(64);
             from_shared(&all, |shared| {
-                // From each place in a cache line.
-                for at in start..start + if len == 65_600 { 64 } else { 1 } {
-                    let part = at..start + len;
-                    let (bytes, shared, len) =
-                        (&all[part.clone()], &shared[part.clone()], part.len());
+                // Up to each place in a cache line.
+                for end in start + len - if len == 65_600 { 63 } else { 0 }..=start + len {
+                    let (bytes, shared) = (&all[start..end], &shared[start..end]);
+                    let (len, spare) = (bytes.len(), below(2) * below(300));
                     let crc = [0, below(1 << 31) as u32 * 2 + 1][len % 2];
-                    let adler = adler32_by_bytes(bytes);
-                    check(len, crc32_by_bits(crc, bytes), || {
-                        kernels::crc32(crc, bytes)
+                    let want = crc32_by_bits(crc, bytes);
+                    check(len, want, || kernels::crc32(crc, bytes));
+                    check(len, want, || kernels::crc32_shared(crc, shared));
+                    check(len, want, || {
+                        copied(crc, bytes, spare, kernels::copy_and_crc32)
                     });
-                    check(len, adler, || kernels::adler32(bytes));
-                    check(len, adler, || kernels::adler32_shared(shared));
+                    for adler in sample([0xFFF0_FFF0, 1], 2) {
+                        let want = adler32_by_bytes(adler, bytes);
+                        check(len, want, || kernels::adler32(adler, bytes));
+                        check(len, want, || kernels::adler32_shared(adler, shared));
+                        check(len, want, || {
+                            copied(adler, bytes, spare, kernels::copy_and_adler32)
+                        });
+                    }
                 }
             });
         }
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "slow")]
+fn adler32_with_weights_of_one_sign() {
+    for (run, first) in [16, 32, 64, 128]
+        .into_iter()
+        .flat_map(|it| [(it, 0), (it, 255)])
+    {
+        let bytes: Vec<u8> = (0..65536).map(|i| [first, !first][i / run % 2]).collect();
+        check(adler32_by_bytes(1, &bytes), || kernels::adler32(1, &bytes));
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "slow")]
+fn checksums_of_copies_without_room() {
+    let kernels: [CopyAndSum; 2] = [kernels::copy_and_crc32, kernels::copy_and_adler32];
+    for len in [1, 5, 16, 100, 128, 256, 400, 3000, 70_000] {
+        for (target, kernel) in targets().flat_map(|target| kernels.map(|it| (target, it))) {
+            limit_to_with(target, ["pclmulqdq", "vpclmulqdq", "crc", "aes", "dotprod"]);
+            let copy = || _ = kernel(&mut 1, &vec![0; len], vec![0; len - 1][..].as_mut().into());
+            assert!(std::panic::catch_unwind(copy).is_err(), "{len} {target:?}");
+        }
+    }
+}
+
+const LONGEST_MATCH: usize = MATCH_SPAN - 31;
+
+fn lengths_of_matches() -> impl Iterator<Item = usize> {
+    (0..=MATCH_SPAN).chain([usize::MAX])
+}
+
+/// Its spare capacity is not initialized.
+fn history(len: usize, room: usize) -> Vec<u8> {
+    let mut vec = Vec::with_capacity(len + room);
+    vec.extend((0..len).map(|at| (at * at % 251) as u8));
+    vec
+}
+
+#[test]
+fn any_match_is_copied_with_little_too_much() {
+    let cases = (0..=65).flat_map(|distance| lengths_of_matches().map(move |len| (distance, len)));
+    for (distance, len) in sample(cases, 2003) {
+        let mut bytes: [u8; 65 + MATCH_SPAN] = from_fn(|at| (at % 251) as u8);
+        let before = bytes;
+        let cells = Cell::from_mut(&mut bytes[..]).as_slice_of_cells();
+        let span = |at: usize| cells[at..].first_chunk().unwrap();
+        copy_match(
+            span(65 - distance),
+            span(65),
+            distance,
+            len,
+            Some(!distance),
+        );
+        let end = 65 + len.min(LONGEST_MATCH);
+        // Without a distance, the first byte is repeated.
+        assert!((66..end).all(|at| bytes[at] == bytes[at - distance.max(1)]));
+        let untouched = (end + 32).min(bytes.len());
+        assert!(bytes[..65] == before[..65] && bytes[untouched..] == before[untouched..]);
+        assert!(len == 0 || bytes[65] == before[65 - distance]);
+    }
+}
+
+#[test]
+fn a_match_from_elsewhere() {
+    for (distance, len) in [(300, 258), (32, 32), (5, 5), (1, 1)] {
+        let (from, to) = (from_fn(|at| Cell::new(at as u8)), from_fn(|_| Cell::new(0)));
+        copy_match(&from, &to, distance, len, None);
+        assert_eq!(from[..len], to[..len]);
+    }
+}
+
+#[test]
+fn matches_repeat_what_is_there() {
+    let cases = (1..=65).flat_map(|distance| lengths_of_matches().map(move |len| (distance, len)));
+    for (distance, len) in sample(cases, 2003) {
+        let mut vec = history(65, MATCH_SPAN);
+        let mut want = vec.clone();
+        assert!(push_match(
+            &mut Appender::new(&mut vec, 65, usize::MAX),
+            distance,
+            len
+        ));
+        for _ in 0..len.min(LONGEST_MATCH) {
+            want.push(want[want.len() - distance]);
+        }
+        assert_eq!(vec, want, "{distance} {len}");
+    }
+}
+
+#[test]
+fn no_match_is_added_that_is_out_of_range() {
+    let mut vec = history(40, 999);
+    for (seen, reach) in [(0, 0), (9, 9), (usize::MAX, 40)] {
+        for distance in [0, reach + 1, 1 << 16, u32::MAX as usize, usize::MAX] {
+            for len in [0, 9, 258] {
+                let to = &mut Appender::new(&mut vec, seen, usize::MAX);
+                assert!(!push_match(to, distance, len));
+            }
+        }
+    }
+    for distance in [1, 40] {
+        assert!(!push_match(
+            &mut Appender::new(&mut vec, 40, MATCH_SPAN - 1),
+            distance,
+            9
+        ));
+    }
+    assert_eq!(vec, history(40, 0));
+}
+
+#[test]
+fn what_follows_a_match_replaces_its_surplus() {
+    let mut vec = history(5, 999);
+    let mut to = Appender::new(&mut vec, 2, 700);
+    to.push([1, 1, 2, 3, 4, 1, 2, 3, 4, 5], 9);
+    for (distance, len) in [(9, 2), (3, 7), (20, 1)] {
+        assert!(push_match(&mut to, distance, len));
+    }
+    assert_eq!((to.position(), to.room()), (21, 681));
+    drop(to);
+    let added = [1, 1, 2, 3, 4, 1, 2, 3, 4, 1, 1, 4, 1, 1, 4, 1, 1, 4, 9];
+    assert_eq!(vec[5..], added);
+}
+
+#[test]
+fn hash_table_entries_are_lowered() {
+    let values: [[u16; 64]; 3] = from_fn(|i| from_fn(|k| ((64 * i + k) * 343) as u16));
+    for (groups, amount) in [(0, 1), (1, 0), (2, 343), (3, 32768), (3, u16::MAX)] {
+        let mut want = values;
+        for value in want[..groups].as_flattened_mut() {
+            *value = value.saturating_sub(amount);
+        }
+        check(want, || {
+            let mut got = values;
+            subtract_saturating(&mut got[..groups], amount);
+            got
+        });
     }
 }
 

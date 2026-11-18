@@ -19,12 +19,11 @@ pub(crate) fn wyhash(data: &[u8], seed: JsLocal<'_>) -> u64 {
 }
 
 pub(crate) fn adler32(data: &[SharedU8]) -> u32 {
-    bun_simd_kernels::adler32_shared(data)
+    bun_simd_kernels::adler32_shared(1, data)
 }
 
-/// Hardware-accelerated, from zlib.
-pub(crate) fn crc32(data: &[u8], seed: JsLocal<'_>) -> u32 {
-    bun_zlib::crc32_bytes(seed_of(seed) as u32, data)
+pub(crate) fn crc32(data: &[SharedU8], seed: JsLocal<'_>) -> u32 {
+    bun_simd_kernels::crc32_shared(seed_of(seed) as u32, data)
 }
 
 pub(crate) fn city_hash32(data: &[u8]) -> u32 {

@@ -2,7 +2,7 @@
 use crate::swizzle::{As, DeinterleaveInBlocks, InterleaveInBlocks, Repeat, ShiftRight};
 use crate::swizzle::{Shuffle, SwapPairs};
 use crate::{Isa, Mask};
-use bun_simd_trusted::{from_array, opaque16, windows};
+use bun_simd_trusted::{from_array, keep16, windows};
 use core::array;
 use core::marker::PhantomData;
 use core::ops::{
@@ -144,13 +144,13 @@ impl<T: Lane, const N: usize, I: Isa> Vector<T, N, I> {
         })
     }
 
-    /// Keeps LLVM from merging the ops before it with those after it.
+    /// Keeps LLVM from putting off the ops before it until after the next call or shared load.
     #[inline(always)]
-    pub fn opaque(self) -> Self
+    pub fn keep(self)
     where
         Simd<T, N>: ToBytes<Bytes = u8x16>,
     {
-        Self::new(Simd::from_ne_bytes(opaque16(self.0.to_ne_bytes())))
+        keep16(self.0.to_ne_bytes());
     }
 
     /// The even lanes of both vectors, and the odd lanes of both.

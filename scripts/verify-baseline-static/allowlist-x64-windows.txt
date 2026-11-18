@@ -705,59 +705,6 @@ _RINvYNtNt<rust-hash>9hashbrown6hasher18DefaultHashBuilderNtNt<rust-hash>4core4h
 
 
 # ----------------------------------------------------------------------------
-# zlib-ng. Gate: init_functable() — cpu_check_features() CPUID at first call,
-# results cached in `functable` (vendor/zlib/functable.c, arch/x86/x86_features.c).
-# chunkcopy_safe is a static-inline in inflate_p.h that may outline from any of
-# the per-ISA inffast_tpl.h instantiations; the outlined copy is local to that
-# TU and only reachable from the gated inflate_fast_* of the same tier.
-# CHUNKCOPY_SAFE is its per-ISA twin in chunkset_tpl.h (the name is literal, not
-# a macro): same reachability, outlined by clang 23 where clang 21 inlined it.
-# (33 symbols)
-# ----------------------------------------------------------------------------
-# has_pclmulqdq
-crc32_pclmulqdq             [PCLMULQDQ]
-crc32_fold_pclmulqdq        [PCLMULQDQ]
-crc32_fold_pclmulqdq_copy   [PCLMULQDQ]
-crc32_fold_pclmulqdq_final  [PCLMULQDQ]
-crc32_fold_pclmulqdq_reset  [PCLMULQDQ]
-# has_avx2 && has_bmi2
-adler32_avx2                [AVX, AVX2, BMI2]
-adler32_fold_copy_avx2      [AVX, AVX2, BMI2]
-chunkmemset_avx2            [AVX, AVX2, BMI2]
-chunkmemset_safe_avx2       [AVX, AVX2, BMI2]
-compare256_avx2             [AVX, AVX2, BMI2]
-inflate_fast_avx2           [AVX, AVX2, BMI2]
-longest_match_avx2          [AVX, AVX2, BMI2]
-longest_match_slow_avx2     [AVX, AVX2, BMI2]
-slide_hash_avx2             [AVX, AVX2, BMI2]
-# Static helpers from chunkset_tpl.h / compare256: only called from the
-# functable-dispatched *_avx2/*_avx512 kernels above, but the cross-compiled
-# PDB gives them their own records instead of folding them into the callers.
-GET_CHUNK_MAG               [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]
-gen_half_mask               [BMI2]
-# has_avx512_common (F+DQ+BW+VL+BMI2)
-adler32_avx512              [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
-adler32_fold_copy_avx512    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
-chunkmemset_avx512          [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
-chunkmemset_safe_avx512     [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
-compare256_avx512           [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
-inflate_fast_avx512         [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
-longest_match_avx512        [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
-longest_match_slow_avx512   [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
-chunkcopy_safe              [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
-CHUNKCOPY_SAFE              [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
-# has_avx512vnni
-adler32_avx512_vnni            [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VNNI, BMI2]
-adler32_fold_copy_avx512_vnni  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VNNI, BMI2]
-# has_pclmulqdq && has_avx512_common && has_vpclmulqdq
-crc32_vpclmulqdq             [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2, PCLMULQDQ, VPCLMULQDQ]
-crc32_fold_vpclmulqdq        [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2, PCLMULQDQ, VPCLMULQDQ]
-crc32_fold_vpclmulqdq_copy   [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2, PCLMULQDQ, VPCLMULQDQ]
-crc32_fold_vpclmulqdq_final  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2, PCLMULQDQ, VPCLMULQDQ]
-crc32_fold_vpclmulqdq_reset  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2, PCLMULQDQ, VPCLMULQDQ]
-
-
-# ----------------------------------------------------------------------------
 # The ahead-of-time compiler's search of an array for a value. Gate: findBox() asks
 # CPUFeatureSet::host() for AVX2 (CPUID and XGETBV).
 # (1 symbols)
@@ -783,16 +730,18 @@ JSC::AOT::findStringWithAVX2  [AVX, AVX2]
 _R*4simd4avx2*          [AVX, AVX2, BMI1, BMI2, F16C, FMA, LZCNT, PCLMULQDQ]
 _R*4simd10avx512_skx*   [AVX, AVX2, AVX512BW, AVX512CD, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2, F16C, FMA, LZCNT, PCLMULQDQ]
 _R*4simd10avx512_icl*   [AVX, AVX2, AVX512BW, AVX512CD, AVX512DQ, AVX512F, AVX512VL, AVX512_BITALG, AVX512_VBMI, AVX512_VBMI2, AVX512_VNNI, AVX512_VPOPCNTDQ, BMI1, BMI2, F16C, FMA, GFNI, LZCNT, PCLMULQDQ, VPCLMULQDQ]
-*::folding_simd::avx512_icl::*          [AVX, AVX2, AVX512BW, AVX512CD, AVX512DQ, AVX512F, AVX512VL, AVX512_BITALG, AVX512_VBMI, AVX512_VBMI2, AVX512_VNNI, AVX512_VPOPCNTDQ, BMI1, BMI2, F16C, FMA, GFNI, LZCNT, PCLMULQDQ, VPCLMULQDQ]
-*::folding_simd::avx2_vpclmulqdq::*     [AVX, AVX2, BMI1, BMI2, F16C, FMA, LZCNT, PCLMULQDQ, VPCLMULQDQ]
-*::folding_simd::sse4_pclmulqdq_avx::*  [AVX, PCLMULQDQ]
-*::folding_simd::sse4_pclmulqdq::*      [PCLMULQDQ]
-*::simd::sse4_bmi2::*                   [BMI2]
-_R*12folding_simd10avx512_icl*          [AVX, AVX2, AVX512BW, AVX512CD, AVX512DQ, AVX512F, AVX512VL, AVX512_BITALG, AVX512_VBMI, AVX512_VBMI2, AVX512_VNNI, AVX512_VPOPCNTDQ, BMI1, BMI2, F16C, FMA, GFNI, LZCNT, PCLMULQDQ, VPCLMULQDQ]
-_R*12folding_simd15avx2_vpclmulqdq*     [AVX, AVX2, BMI1, BMI2, F16C, FMA, LZCNT, PCLMULQDQ, VPCLMULQDQ]
-_R*12folding_simd18sse4_pclmulqdq_avx*  [AVX, PCLMULQDQ]
-_R*12folding_simd14sse4_pclmulqdq*      [PCLMULQDQ]
-_R*4simd9sse4_bmi2*                     [BMI2]
+*::folding_simd::avx512_icl::*               [AVX, AVX2, AVX512BW, AVX512CD, AVX512DQ, AVX512F, AVX512VL, AVX512_BITALG, AVX512_VBMI, AVX512_VBMI2, AVX512_VNNI, AVX512_VPOPCNTDQ, BMI1, BMI2, F16C, FMA, GFNI, LZCNT, PCLMULQDQ, VPCLMULQDQ]
+*::folding_simd::avx2_vpclmulqdq::*          [AVX, AVX2, BMI1, BMI2, F16C, FMA, LZCNT, PCLMULQDQ, VPCLMULQDQ]
+*::folding_simd::avx2_pclmulqdq_avx512vl::*  [AVX, AVX2, AVX512F, AVX512VL, BMI1, BMI2, F16C, FMA, LZCNT, PCLMULQDQ]
+*::folding_simd::avx2_pclmulqdq::*           [AVX, AVX2, BMI1, BMI2, F16C, FMA, LZCNT, PCLMULQDQ]
+*::folding_simd::sse4_pclmulqdq::*           [PCLMULQDQ]
+*::simd::sse4_bmi2::*                        [BMI2]
+_R*12folding_simd10avx512_icl*               [AVX, AVX2, AVX512BW, AVX512CD, AVX512DQ, AVX512F, AVX512VL, AVX512_BITALG, AVX512_VBMI, AVX512_VBMI2, AVX512_VNNI, AVX512_VPOPCNTDQ, BMI1, BMI2, F16C, FMA, GFNI, LZCNT, PCLMULQDQ, VPCLMULQDQ]
+_R*12folding_simd15avx2_vpclmulqdq*          [AVX, AVX2, BMI1, BMI2, F16C, FMA, LZCNT, PCLMULQDQ, VPCLMULQDQ]
+_R*12folding_simd23avx2_pclmulqdq_avx512vl*  [AVX, AVX2, AVX512F, AVX512VL, BMI1, BMI2, F16C, FMA, LZCNT, PCLMULQDQ]
+_R*12folding_simd14avx2_pclmulqdq*           [AVX, AVX2, BMI1, BMI2, F16C, FMA, LZCNT, PCLMULQDQ]
+_R*12folding_simd14sse4_pclmulqdq*           [PCLMULQDQ]
+_R*4simd9sse4_bmi2*                          [BMI2]
 
 # ----------------------------------------------------------------------------
 # src/simd/conformance/probe.rs: one instruction of each feature. Gate: bun_simd::detected().

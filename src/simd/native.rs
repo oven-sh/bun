@@ -1,7 +1,7 @@
 //! Shared by x86-64 and AArch64.
-use crate::{SharedOutU8, SharedU8, portable, vector::to_array};
-use bun_simd_trusted::from_array;
+use crate::{Int, Isa, SharedOutU8, SharedU8, Vector, portable, vector::to_array};
 use bun_simd_trusted::shared::{load4, load8, load16, store4, store8, store16};
+use bun_simd_trusted::{from_array, opaque16};
 use core::simd::{Simd, u8x64};
 
 /// Panics unless `bytes` has `K * N` bytes.
@@ -35,6 +35,14 @@ pub(crate) fn store_shared<const N: usize, const K: usize, const AT: usize>(
         4 => store4::<K, AT>(u32::from_ne_bytes(to_array(v.resize(0))), as_group(to)),
         _ => portable::store_shared::<N, K, AT>(v, to),
     }
+}
+
+#[inline(always)]
+pub(crate) fn opaque_lanes<T: Int<N>, const N: usize, I: Isa>(
+    v: Vector<T, N, I>,
+) -> Vector<T, N, I> {
+    assert!(size_of_val(&v) == 16);
+    Vector::from_first_bytes(opaque16(v.first_bytes()))
 }
 
 #[repr(align(32))]

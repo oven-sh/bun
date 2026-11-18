@@ -138,7 +138,6 @@ name = "bun_alloc"
 version = "0.0.0"
 dependencies = [
  "bun_mimalloc_sys",
- "bun_opaque",
  "bun_wyhash",
  "libc",
 ]
@@ -2125,6 +2124,8 @@ version = "0.0.0"
 dependencies = [
  "bun_alloc",
  "bun_core",
+ "bun_deflate",
+ "bun_simd_kernels",
  "bun_zlib",
  "itoa",
  "thiserror",
@@ -2300,15 +2301,10 @@ version = "0.0.0"
 dependencies = [
  "bun_alloc",
  "bun_core",
- "bun_zlib_sys",
- "strum",
-]
-
-[[package]]
-name = "bun_zlib_sys"
-version = "0.0.0"
-dependencies = [
- "bun_core",
+ "bun_deflate",
+ "bun_simd",
+ "bun_simd_kernels",
+ "thiserror",
 ]
 
 [[package]]

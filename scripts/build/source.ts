@@ -239,18 +239,6 @@ export interface ExeStep {
 
 export type DirectStep = GenStep | ExeStep;
 
-/** A header derived from a template in the source tree. */
-export interface HeaderSubst {
-  /** Template path relative to srcDir (e.g. "zlib.h.in"). */
-  from: string;
-  /**
-   * Literal replacements applied via `String.split(from).join(to)` — no
-   * regex. cmake's `configure_file(@ONLY)` is exactly this: each `@VAR@`
-   * token swaps for a fixed string. Order is as given.
-   */
-  replace?: Array<[from: string, to: string]>;
-}
-
 /**
  * Compile sources directly into our ninja graph — no cmake/cargo sub-process.
  *
@@ -295,19 +283,12 @@ export interface DirectBuild {
   /** Include dirs relative to srcDir (no -I prefix). "." for the root. */
   includes?: string[];
   /**
-   * Headers written to buildDir/deps/<name>/. Key is the output filename;
-   * buildDir is added to -I so sources find them. Two value forms:
-   *
-   *   string       Literal contents written at configure time. For
-   *                autotools-style `#include "config.h"` where we
-   *                hand-write the answers instead of probing.
-   *
-   *   HeaderSubst  Derived from a template in srcDir at build time
-   *                (ninja edge). For *.h.in files where the upstream
-   *                header is too large to inline but the substitution
-   *                is trivial.
+   * Headers written to buildDir/deps/<name>/ at configure time, from filename
+   * to contents; buildDir is added to -I so sources find them. For
+   * autotools-style `#include "config.h"` where we hand-write the answers
+   * instead of probing.
    */
-  headers?: Record<string, string | HeaderSubst>;
+  headers?: Record<string, string>;
   /**
    * Build-time host tool that generates headers the library sources
    * include. Compiled WITHOUT sanitizers — it runs once on the build
@@ -462,7 +443,6 @@ export type DepName =
   | "rust-argon2"
   | "sqlite"
   | "tinycc"
-  | "zlib"
   | "zstd";
 
 /**
@@ -482,8 +462,8 @@ export interface Dependency {
   patches?: string[];
 
   /**
-   * Other deps whose headers this dep's sources include — e.g. a dep that
-   * needs zlib's `zlib.h`, which zlib's build generates.
+   * Other deps whose headers this dep's sources include — e.g. lsquic,
+   * which needs BoringSSL's `ssl.h`.
    *
    * Resolves to the named dep's `outputs` (generated headers + source stamp),
    * order-only inputs of this dep's compiles. Does NOT link the other dep.
@@ -671,17 +651,6 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
     restat: true,
   });
 
-  // DirectBuild header substitution: literal string replacement on a
-  // template file (cmake's configure_file(@ONLY) without the cmake).
-  // restat is what makes this cheap — if the output text is unchanged
-  // (unmodified template, same replacements), downstream .o files are
-  // pruned via their depfile entries.
-  n.rule("dep_subst", {
-    command: `${cfg.jsRuntime} ${fetchCli} subst $in $out $pairs`,
-    description: "subst $out",
-    restat: true,
-  });
-
   // DirectBuild.forbidUndefined: llvm-nm over the dep's objects, listed in a
   // response file like the ar rule's (boringssl alone has ~330 of them).
   // The stamp is only written when nothing is referenced, and (restat) left
@@ -799,8 +768,8 @@ export function resolveDep(
 
   // DirectBuild sources are compiled in our ninja graph, so they are declared
   // as implicit outputs of fetch: ninja then knows where they come from.
-  // Include the codegen tool source, its input, and any HeaderSubst
-  // templates — all read at build time from the fetched tree.
+  // Include the codegen tool source and its input — both read at build time
+  // from the fetched tree.
   const directSources: string[] = [];
   if (buildSpec.kind === "direct") {
     assert(
@@ -809,9 +778,6 @@ export function resolveDep(
     );
     for (const s of buildSpec.sources) {
       directSources.push(resolve(srcDir, typeof s === "string" ? s : s.path));
-    }
-    for (const h of Object.values(buildSpec.headers ?? {})) {
-      if (typeof h !== "string") directSources.push(resolve(srcDir, h.from));
     }
     if (buildSpec.codegen !== undefined) {
       directSources.push(resolve(srcDir, buildSpec.codegen.tool));
@@ -856,8 +822,8 @@ export function resolveDep(
   }
 
   // ─── Resolve fetchDeps → order-only inputs of this dep's compiles ───
-  // Deps whose headers this one includes (a dep → zlib's generated
-  // zlib.h): they must exist first; the depfiles track their content.
+  // Deps whose headers this one includes (lsquic → BoringSSL's
+  // ssl.h): they must exist first; the depfiles track their content.
   const fetchDepStamps = (dep.fetchDeps ?? []).flatMap(d => {
     const r = resolved.get(d);
     assert(r, `${dep.name}: fetchDeps references '${d}' but it wasn't resolved first — fix allDeps ordering`);
@@ -1296,31 +1262,14 @@ function emitDirect(
   const orderOnly = [...(sourceStamp === undefined ? [] : [sourceStamp]), ...fetchDepStamps];
 
   // ─── Generated headers (optional) ───
-  // Literal-string headers are written at configure time via writeIfChanged
-  // (mtime only moves when contents change). HeaderSubst headers become
-  // ninja edges — their template lives in srcDir, which doesn't exist
-  // until fetch runs. Either way buildDir goes on -I and the outputs are
-  // implicit inputs to every cc edge.
+  // Written at configure time via writeIfChanged (mtime only moves when
+  // contents change).
   const headers = Object.entries(spec.headers ?? {});
   const needsBuildDirInc = headers.length > 0 || spec.codegen !== undefined;
-  const generated: string[] = [];
   if (headers.length > 0) {
     mkdirSync(buildDir, { recursive: true });
     for (const [h, body] of headers) {
-      const out = resolve(buildDir, h);
-      if (typeof body === "string") {
-        writeIfChanged(out, body === "" ? "/* stub — generated at configure */\n" : body);
-      } else {
-        n.build({
-          outputs: [out],
-          rule: "dep_subst",
-          inputs: [resolve(srcDir, body.from)],
-          implicitInputs: [fetchCliPath],
-          orderOnlyInputs: orderOnly,
-          vars: { pairs: quoteArgs((body.replace ?? []).flat(), hostWin) },
-        });
-        generated.push(out);
-      }
+      writeIfChanged(resolve(buildDir, h), body === "" ? "/* stub — generated at configure */\n" : body);
     }
   }
 
@@ -1371,11 +1320,10 @@ function emitDirect(
   }
 
   // ─── Compile + archive ───
-  // Generated headers (codegen + subst) are implicit inputs to every .o —
-  // library sources include them. buildDir goes on -I so #include "foo.h"
-  // finds literal, subst, and codegen headers alike.
-  if (generatedHeader !== undefined) generated.push(generatedHeader);
-  const implicit = generated;
+  // The codegen header is an implicit input to every .o — library sources
+  // include it. buildDir goes on -I so #include "foo.h" finds literal and
+  // codegen headers alike.
+  const implicit = generatedHeader === undefined ? [] : [generatedHeader];
   const genInc = needsBuildDirInc ? [`-I${q(buildDir)}`] : [];
 
   const objects = spec.sources.map(s => {
@@ -1518,12 +1466,12 @@ function emitDirect(
   }
   n.phony(name, [...objects, ...checks]);
   // headerOutputs: what downstream needs to wait on for HEADERS to be
-  // ready. For no-archive direct deps that's the generated header set
-  // (subst/literal/codegen) plus the fetch stamp — not the .o files.
+  // ready. For no-archive direct deps that's the codegen header
+  // plus the fetch stamp — not the .o files.
   return {
     libs: spec.libs ?? [],
     objects,
-    headerOutputs: sourceStamp === undefined ? generated : [...generated, sourceStamp],
+    headerOutputs: sourceStamp === undefined ? implicit : [...implicit, sourceStamp],
     checks,
   };
 }

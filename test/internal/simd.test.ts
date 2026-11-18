@@ -27,7 +27,9 @@ const baseline = isArm64 ? "neon" : "sse4";
 // A program that is compiled for a better target has no portable copies.
 const targets = probe?.values("target").filter(target => !target.startsWith("portable")) ?? [];
 // The checksums have copies for these.
-const further = isArm64 ? ["neon+dotprod", "neon+aes+sha3"] : ["sse4+pclmulqdq", "avx2+vpclmulqdq"];
+const further = isArm64
+  ? ["neon+dotprod", "neon+crc+aes", "neon+crc+aes+sha3"]
+  : ["sse4+pclmulqdq", "avx2+avx512vl", "avx2+vpclmulqdq"];
 const canRun = (limit: string) => {
   const [target, ...features] = limit.split("+");
   return targets.includes(target) && features.every(it => probe!.values("feature").includes(it));

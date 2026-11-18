@@ -62,6 +62,7 @@ An op has the name that `core::simd` gives it, where there is one.
 | `matches.rs`           | The indices that `matches_near` and `matches_in` have found                            |
 | `bit_indices.rs`       | From a bitmask to a list of positions                                                  |
 | `trusted/output.rs`    | `Out` and `Writer`, for output to memory that may be uninitialized                     |
+| `trusted/appender.rs`  | `Appender`, for output that repeats earlier output                                     |
 | `partial.rs`           | Loads and stores for a slice that is shorter than a vector                             |
 | `source.rs`            | `load`, from plain or from shared memory                                               |
 | `sink.rs`              | Output of bytes, to plain or to shared memory                                          |
@@ -91,7 +92,7 @@ fn main() {
 }
 ```
 
-`extend_vec` reserves the room. `spare_capacity` does not allocate, and can fill several vectors at once. A kernel that writes to shared memory returns only a count. With `Out::into_shared`, it can write to plain memory too, but the count does not prove that anything is initialized.
+`extend_vec` reserves the room. `spare_capacity` does not allocate, and can fill several vectors at once. `extend_cursor` fills a `BorrowedBuf`. A kernel that writes to shared memory returns only a count. With `Out::into_shared`, it can write to plain memory too, but the count does not prove that anything is initialized.
 
 Call ops in `for` loops and in the closures that you pass to `algo.rs`. LLVM may not inline a closure that goes through an adapter of `core`, such as `array::map`. Compile a crate with kernels at `opt-level` 2 or 3. With `-Zshare-generics`, it needs LTO.
 
@@ -99,7 +100,7 @@ Make a table with `const`. At run time, `from_fn` can stay a loop.
 
 Hardened, debug and ASan builds check preconditions. There, `copy_from_slice`, `extend_from_slice` and the conversions of `Simd` from and to memory keep a vector on the stack. Assign arrays, and convert with `Vector`.
 
-How LLVM unrolls a loop depends on the CPU that the build is tuned for. `#[rustc_unroll(never)]` and `#[rustc_unroll(4)]` settle it. If each turn of a loop waits for the one before, `opaque` keeps LLVM from reordering the sum or from moving it to vectors.
+How LLVM unrolls a loop depends on the CPU that the build is tuned for. `#[rustc_unroll(never)]` and `#[rustc_unroll(4)]` settle it. If each turn of a loop waits for the one before, `opaque` keeps LLVM from reordering the sum or from moving it to vectors. If an unrolled loop has several chains of ops, `keep` makes them take turns as in the source.
 
 ## Ops of your own
 
@@ -218,7 +219,8 @@ What you have to trust:
 - **`if_supported!` and `AtomicFn`**, which stores the chosen pointer.
 - **`opaque` and `keep16`**, which are `asm!` without an instruction.
 - **`from_array`, `load_or_default` and `windows`.** The first takes the lanes of an array as a vector of the same size. The second enables only the lanes that the slice has. The third clamps indices before it uses them. Miri runs all three.
-- **`Out`, `Writer` and `spare_capacity`.** They write only initialized values, and count them. Miri runs their tests, but for `fill_from_last`, which needs AVX-512.
+- **`Out`, `Writer`, `spare_capacity` and `extend_cursor`.** They write only initialized values, and count them. Miri runs their tests, but for `fill_from_last`, which needs AVX-512.
+- **`Appender`.** It can copy bytes that are not initialized, but it does not count them. Miri runs its tests.
 - **Access to shared memory.** A `SharedArrayBuffer` can change while a kernel reads it, so it is never a `&[u8]`. It is a `&[SharedU8]` for input and a `&[SharedOutU8]` for output, which may be uninitialized too. Rust has no vector access that may race. `trusted/shared.rs` has an `asm!` load and store for each width, which stand for a relaxed access to each byte. This relies on the CPU not to tear a byte. A masked access that skips what is before a slice is `asm!` for plain memory too, since LLVM takes its own to start in the object. `copy_from_shared` and `copy_to_shared` jump to `memmove` where LLVM does not see it, and rely on it to stay in bounds and to store each byte, whatever it reads. Miri runs loops over bytes in place of all this. The loops do not depend on two reads giving the same value.
 
 ## What the ops avoid
@@ -248,7 +250,7 @@ LLVM can still pick such an instruction for plain code in a kernel. Read the dis
 | And with `BUN_SIMD_BENCHMARK_AGAINST=/path/to/bun`       | Prints the times of the kernels in that build too, and the ratio                               |
 | `bun scripts/verify-baseline.ts --simd-cpus`             | The checks on emulated CPUs, and the instructions of each copy against its target              |
 
-`conformance/digests.txt` has a hash of the results of each kernel in each part of `check.rs`, after 3, 1200 and 10000 rounds. It was recorded on x86-64 from the C++ kernels that came before, through adapters that are not in the repository. Where the interfaces differ, the adapter decided. `modulate` is compared with its formula instead, `lone_match` with the place of the match, and some kernels with a twin. `bun bd test --run-simd-tests check 1200` prints the lines to add and to remove for that number. Before you replace one, show with `rust:test` that the new results are right. A new part adds lines and changes none. With the name of a kernel at the end, the command prints the results that it hashes too, for a diff between two targets or builds. `check-only webp 1200` runs the parts whose names start with that, `check-only j..m 1200` those that sort from `j` to below `m`.
+`conformance/digests.txt` has a hash of the results of each kernel in each part of `check.rs`, after 3, 1200 and 10000 rounds. It was recorded on x86-64 from the C++ kernels that came before, through adapters that are not in the repository. Where the interfaces differ, the adapter decided. `modulate` is compared with its formula instead, `lone_match` with the place of the match, `zlib` with plain loops, and some kernels with a twin. `bun bd test --run-simd-tests check 1200` prints the lines to add and to remove for that number. Before you replace one, show with `rust:test` that the new results are right. A new part adds lines and changes none. With the name of a kernel at the end, the command prints the results that it hashes too, for a diff between two targets or builds. `check-only webp 1200` runs the parts whose names start with that, `check-only j..m 1200` those that sort from `j` to below `m`.
 
 `BUN_SIMD_BENCHMARK_FILTER=memmem` with `-t "kernels on"` times only the rows that have this in their name. The time of a short call depends on the address of the code: between two builds of the same kernels, some rows differ by more than 10%.
 

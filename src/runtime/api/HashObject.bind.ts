@@ -15,7 +15,7 @@ export const hash = b.namespace(
   {
     wyhash: seeded64,
     adler32: { ...unseeded32, args: { data: atomicData } },
-    crc32: seeded32,
+    crc32: { ...seeded32, args: { data: atomicData, seed } },
     cityHash32: unseeded32,
     cityHash64: seeded64,
     xxHash32: { ...seeded32, args: { data: atomicData, seed } },

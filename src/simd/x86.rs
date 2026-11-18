@@ -1,6 +1,6 @@
 use crate::native::{self, Aligned, as_group, kept_part};
 use crate::{BitIndices, Int, Isa, Mask, Out, Vector};
-use bun_simd_trusted::{SharedOutU8, SharedU8, shared};
+use bun_simd_trusted::{SharedOutU8, SharedU8, opaque32, opaque64, shared};
 use core::arch::x86_64::*;
 use core::array::from_fn;
 use core::simd::ToBytes;
@@ -91,7 +91,7 @@ impl Xmm for Avx512Skx {}
 impl Xmm for Avx512Icl {}
 
 /// Has the 256-bit ops.
-pub trait Ymm: Isa {}
+pub trait Ymm: Xmm {}
 impl Ymm for Avx2 {}
 impl Ymm for Avx512Skx {}
 impl Ymm for Avx512Icl {}
@@ -340,22 +340,19 @@ impl<I: Ymm> Vector<u64, 4, I> {
         Self::new(_mm256_sad_epu8(bytes.0.into(), _mm256_setzero_si256()))
     }
 
+    /// With `vpclmulqdq`, LLVM makes one instruction of it.
     #[inline]
-    #[target_feature(enable = "vpclmulqdq")]
+    #[target_feature(enable = "pclmulqdq")]
     pub fn carryless_mul_lower(self, other: Self) -> Self {
-        Self::new(_mm256_clmulepi64_epi128::<0x00>(
-            self.0.into(),
-            other.0.into(),
-        ))
+        let ([a, b], [c, d]) = (self.halves(), other.halves());
+        Self::from_halves([a.carryless_mul_lower(c), b.carryless_mul_lower(d)])
     }
 
     #[inline]
-    #[target_feature(enable = "vpclmulqdq")]
+    #[target_feature(enable = "pclmulqdq")]
     pub fn carryless_mul_upper(self, other: Self) -> Self {
-        Self::new(_mm256_clmulepi64_epi128::<0x11>(
-            self.0.into(),
-            other.0.into(),
-        ))
+        let ([a, b], [c, d]) = (self.halves(), other.halves());
+        Self::from_halves([a.carryless_mul_upper(c), b.carryless_mul_upper(d)])
     }
 
     #[inline]
@@ -523,9 +520,9 @@ impl<I: Zmm> Vector<f32, 16, I> {
 }
 
 pub mod sse4 {
-    pub(crate) use crate::native::{load_shared, store_shared};
+    pub(crate) use crate::native::{load_shared, opaque_lanes, store_shared};
     pub(crate) use crate::portable::masked::*;
-    pub use crate::portable::{bit_indices, prefix_xor};
+    pub use crate::portable::{bit_indices, crc32_u64, prefix_xor};
 
     crate::isa::vector_types!(super::Sse4, 16);
     crate::native::x256_in_halves!("ssse3");
@@ -546,8 +543,8 @@ pub mod sse4 {
 
 pub mod avx2 {
     use super::*;
-    pub use crate::portable::bit_indices;
     pub(crate) use crate::portable::masked::*;
+    pub use crate::portable::{bit_indices, crc32_u64};
 
     crate::isa::vector_types!(Avx2, 32);
 
@@ -578,6 +575,17 @@ pub mod avx2 {
             32 => shared::store32::<K, AT>(v.resize(0), as_group(to)),
             16 => shared::store16_vex::<K, AT>(v.resize(0), as_group(to)),
             _ => native::store_shared::<N, K, AT>(v, to),
+        }
+    }
+
+    #[inline]
+    #[target_feature(enable = "avx")]
+    pub(crate) fn opaque_lanes<T: Int<N>, const N: usize, I: crate::Isa>(
+        v: crate::Vector<T, N, I>,
+    ) -> crate::Vector<T, N, I> {
+        match size_of_val(&v) {
+            32 => crate::Vector::from_first_bytes(opaque32(v.first_bytes())),
+            _ => native::opaque_lanes(v),
         }
     }
 }
@@ -619,10 +627,21 @@ mod avx512 {
             _ => avx2::store_shared::<N, K, AT>(v, to),
         }
     }
+
+    #[inline]
+    #[target_feature(enable = "avx512f")]
+    pub(crate) fn opaque_lanes<T: Int<N>, const N: usize, I: Isa>(
+        v: Vector<T, N, I>,
+    ) -> Vector<T, N, I> {
+        match size_of_val(&v) {
+            64 => Vector::from_first_bytes(opaque64(v.first_bytes())),
+            _ => avx2::opaque_lanes(v),
+        }
+    }
 }
 
 pub mod avx512_skx {
-    pub use super::avx2::prefix_xor;
+    pub use super::avx2::{crc32_u64, prefix_xor};
     pub(crate) use super::avx512::*;
     use super::*;
     pub use crate::portable::bit_indices;
@@ -640,7 +659,7 @@ pub mod avx512_skx {
 }
 
 pub mod avx512_icl {
-    pub use super::avx2::prefix_xor;
+    pub use super::avx2::{crc32_u64, prefix_xor};
     pub(crate) use super::avx512::*;
     use super::*;
 

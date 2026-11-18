@@ -1,8 +1,10 @@
 //! Each allocation has its exact size and is not initialized, for Miri.
-#![feature(portable_simd)]
+#![feature(core_io, core_io_borrowed_buf, portable_simd)]
 #![forbid(unsafe_code)]
-use bun_simd_trusted::{Out, SharedOutU8, SharedU8, extend_vec, quarters, spare_capacity};
+use bun_simd_trusted::{Out, SharedOutU8, SharedU8, quarters};
 use bun_simd_trusted::{copy_from_shared, copy_to_shared, from_array, load_or_default, windows};
+use bun_simd_trusted::{extend_cursor, extend_vec, spare_capacity};
+use core::io::BorrowedBuf;
 use core::simd::{Simd, num::SimdUint};
 use core::sync::atomic::{AtomicPtr, AtomicU8, Ordering::Relaxed};
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
@@ -198,6 +200,19 @@ fn extend_vec_keeps_the_start() {
     extend_vec(&mut vec, 40, |out| pushed(out.take(2), [2, 3]));
     extend_vec(&mut vec, 1, |out| out.fill_masked(Simd::from_array([4, 5])));
     assert_eq!(vec, [1, 2, 3, 4]);
+}
+
+#[test]
+fn extend_cursor_by_what_is_filled() {
+    let mut room = Box::new_uninit_slice(4);
+    let mut buf = BorrowedBuf::from(&mut *room);
+    extend_cursor(buf.unfilled(), |out| &mut pushed(out, [1, 2, 9])[..2]);
+    extend_cursor(buf.unfilled(), |_| &mut []);
+    let elsewhere = || extend_cursor(buf.unfilled(), |out| &mut pushed(out, [8, 9])[1..]);
+    assert!(catch_unwind(AssertUnwindSafe(elsewhere)).is_err());
+    extend_cursor(buf.unfilled(), |out| pushed(out, [3, 4]));
+    extend_cursor(buf.unfilled(), |out| pushed(out, []));
+    assert_eq!(buf.filled(), [1, 2, 3, 4]);
 }
 
 #[test]

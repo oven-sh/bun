@@ -10,7 +10,7 @@ pub(crate) fn on_each_target(test: impl Fn() + Sync) {
             let test = &test;
             let thread = std::thread::Builder::new().name(target.name().into());
             let run = move || {
-                limit_to_with(target, ["pclmulqdq", "vpclmulqdq", "aes", "dotprod"]);
+                limit_to_with(target, ["pclmulqdq", "vpclmulqdq", "aes", "crc", "dotprod"]);
                 test();
             };
             thread.spawn_scoped(scope, run).unwrap();

@@ -1,5 +1,4 @@
-//! XxHash32 / XxHash64, from `bun_simd_kernels`. `test/js/bun/util/hash.test.js` pins the output
-//! to the xxHash reference. The seed comes first, unlike in Murmur/CityHash.
+//! XxHash32 / XxHash64, from `bun_simd_kernels`. The seed comes first, unlike in Murmur/CityHash.
 
 pub struct XxHash32;
 

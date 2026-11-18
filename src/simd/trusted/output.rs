@@ -2,6 +2,7 @@
 use crate::{SharedOutU8, SharedU8, copy_to_shared, loads::lanes_before};
 use alloc::vec::Vec;
 use core::cell::Cell;
+use core::io::BorrowedCursor;
 use core::mem::MaybeUninit;
 use core::simd::{Simd, SimdElement};
 use core::slice;
@@ -303,4 +304,18 @@ impl<'a, T: Copy> Append<'a, T> {
         // SAFETY: that many elements of the spare capacity are initialized.
         unsafe { self.0.set_len(len + filled.len()) };
     }
+}
+
+/// Panics if `fill` returns a slice that starts elsewhere.
+#[inline(always)]
+pub fn extend_cursor<T: Copy>(
+    mut cursor: BorrowedCursor<'_, T>,
+    fill: impl for<'b> FnOnce(Out<'b, T>) -> &'b mut [T],
+) {
+    // SAFETY: an `Out` writes only initialized values.
+    let mut writer = Out(unsafe { cursor.as_mut() }).into_writer();
+    writer.append(fill);
+    let filled = writer.len;
+    // SAFETY: that many elements are initialized.
+    unsafe { cursor.advance(filled) };
 }

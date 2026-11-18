@@ -4,9 +4,10 @@ use crate::room::Room;
 use crate::webp_encoder::Case;
 use crate::{Random, columns, shared, shared_out, write_line};
 use bun_core::{NoUninit, strings};
-use bun_simd::Out;
+use bun_simd::{Appender, Out};
 use bun_simd_kernels::*;
 use core::array::from_fn;
+use core::cell::Cell;
 use core::iter::repeat_n;
 use core::sync::atomic::AtomicU8;
 use std::collections::BTreeMap;
@@ -441,17 +442,65 @@ impl Round<'_> {
         let round = digests.round as usize;
         let len = seams[round % seams.len()] - 40 + round / seams.len() % 121;
         let some = random.one_of(&[b"", &b"\xFF"[..], b"\xFE\xFF"]);
+        let [from, to, ..] = &mut *self.rooms;
         for (alphabet, offset) in [(some, self.offset.min(random.below(64))), (b"", usize::MAX)] {
             let long = random.bytes(257, alphabet).repeat(len.div_ceil(257));
             for text in [self.text, &long[..400 + round % 1201], &long[..len]] {
-                let (text, crc) = (self.rooms[0].copy_of(text, offset), random.next() as u32);
-                let (start, end) = text.split_at(random.below(text.len()));
+                let (text, crc) = (from.copy_of(text, offset), random.next() as u32);
+                let at = random.below(text.len());
+                let (start, end) = text.split_at(at);
                 digests.add("crc32", crc32(crc, text).into());
                 digests.same("crc32 in parts", crc32(crc32(crc, start), end).into());
-                digests.add("adler32", adler32(text).into());
-                digests.same("adler32_shared", adler32_shared(shared(text)).into());
+                digests.same("crc32_shared", crc32_shared(crc, shared(text)).into());
+                let (mut sum, room) = (crc, to.uninit(text.len(), offset));
+                let copy = copy_and_crc32(&mut sum, text, room.into());
+                digests.fails_unless(copy == text, "copy_and_crc32");
+                digests.same("copy_and_crc32", sum.into());
+                let (start, end) = text.split_at(at);
+                digests.add("adler32", adler32(1, text).into());
+                digests.same("adler32 in parts", adler32(adler32(1, start), end).into());
+                digests.same("adler32_shared", adler32_shared(1, shared(text)).into());
+                let (mut sum, room) = (1, to.uninit(text.len(), offset));
+                let copy = copy_and_adler32(&mut sum, text, room.into());
+                digests.fails_unless(copy == text, "copy_and_adler32");
+                digests.same("copy_and_adler32", sum.into());
             }
         }
+    }
+
+    #[optimize(size)]
+    fn zlib(&mut self) {
+        let [a, b, ..] = &mut *self.rooms;
+        let amount = self.random.next() as u16;
+        let values: Vec<_> = (0..self.text.len() % 9)
+            .map(|_| from_fn(|_| self.random.next() as u16))
+            .collect();
+        let got = a.copy_of(&values, self.offset);
+        zlib::subtract_saturating(got, amount);
+        let want = values.as_flattened().iter();
+        let is_ok =
+            (want.map(|it| it.saturating_sub(amount))).eq(got.as_flattened().iter().copied());
+        self.digests
+            .fails_unless(is_ok, "zlib::subtract_saturating");
+
+        let (distance, len) = (
+            1 + self.digests.round as usize / 3 % 70,
+            self.random.below(259),
+        );
+        let mut want = self.random.bytes(distance, b"");
+        let mut vec = Vec::with_capacity(distance + zlib::MATCH_SPAN);
+        vec.extend(&want);
+        let all = b.copy_of(&[&want[..], &[0; zlib::MATCH_SPAN]].concat(), self.offset);
+        (0..len).for_each(|at| want.push(want[at]));
+        let cells = Cell::from_mut(&mut *all).as_slice_of_cells();
+        if let (Some(from), Some(to)) = (cells.first_chunk(), cells.last_chunk()) {
+            zlib::copy_match(from, to, distance, len, Some(zlib::NEXT_MATCH_OFFSET));
+        }
+        self.digests
+            .fails_unless(all.starts_with(&want), "zlib::copy_match");
+        let is_done = zlib::push_match(&mut Appender::new(&mut vec, distance, 999), distance, len);
+        self.digests
+            .fails_unless(is_done && vec == want, "zlib::push_match");
     }
 
     #[optimize(size)]
@@ -1460,6 +1509,7 @@ pub(crate) fn run(rounds: u64, only: &[u8], traced: Vec<u8>) -> bool {
             ("brotli_costs", Round::brotli_costs),
             ("brotli_matches", Round::brotli_matches),
             ("brotli_steps", Round::brotli_steps),
+            ("zlib", Round::zlib),
         ];
         for (name, part) in parts.into_iter().filter(|it| is_chosen(it.0.as_bytes())) {
             round.random = Random(hash(&[number, hash(name.as_bytes())]) | 1);

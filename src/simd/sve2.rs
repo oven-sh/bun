@@ -1,4 +1,4 @@
-pub(crate) use crate::native::{load_shared, store_shared};
+pub(crate) use crate::native::{load_shared, opaque_lanes, store_shared};
 use crate::portable;
 pub(crate) use crate::portable::masked::*;
 pub use crate::portable::{bit_indices, prefix_xor};

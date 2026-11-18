@@ -157,7 +157,7 @@ mod simd {
     use crate::portable as shared;
     #[cfg(not(miri))]
     use isa as shared;
-    use isa::{Vector, rotate_bytes, x128};
+    use isa::{Vector, rotate_bytes, x128, x256};
 
     #[inline(always)]
     fn slide(bytes: x128::U8, at: usize) -> Option<x128::U8> {
@@ -382,6 +382,35 @@ mod simd {
                 shared::fill_from_last::<T, N>(last, to)
             } else {
                 to.fill_masked(self.0)
+            }
+        }
+    }
+
+    impl<const N: usize> Vector<u8, N>
+    where
+        u8: Int<N>,
+    {
+        /// Moves lane `i` to `i + by`, after zeros. Panics if none is left.
+        pub fn slide_up(self, by: usize) -> Self {
+            static RAMP: [u8; 80] =
+                from_fn(const |i| if i / 16 == 3 { i as u8 % 16 } else { 0x80 });
+            assert!(by < N);
+            match N {
+                16 => {
+                    let indices = x128::U8::from_slice(&RAMP[48 - by..]);
+                    Self::from_first_bytes(x128::U8::new(self.first_bytes()).lookup(indices).0)
+                }
+                32 => {
+                    let [near, far] = [32, 48].map(|at| x256::U8::from_slice(&RAMP[at - by..]));
+                    let [first, _] = self.blocks();
+                    let [both, first] = [self, Self::with_blocks(first, first)]
+                        .map(|it| x256::U8::new(it.first_bytes()));
+                    Self::from_first_bytes((both.lookup(near) | first.lookup(far)).0)
+                }
+                _ => {
+                    let rotated = Self::from_first_bytes(rotate_bytes(self.to_64_bytes(), by));
+                    rotated & Self::iota().simd_ge(by as u8).to_vector()
+                }
             }
         }
     }

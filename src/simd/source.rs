@@ -1,5 +1,5 @@
 //! What vectors are loaded from.
-use crate::{Lane, SharedOutU8, SharedU8};
+use crate::{Int, Lane, SharedOutU8, SharedU8};
 use core::array;
 
 /// A lane in memory: a plain value, or bytes that other threads may write concurrently.
@@ -89,6 +89,17 @@ mod simd {
             ]
         }
 
+        /// `from[at]`, for a loop that is unrolled: four need only one address too.
+        pub fn load_at<S: Source<Lane = T>>(from: &[[S; N]], at: usize) -> Self {
+            let four = from.as_chunks().0.get(at / 4).filter(|_| S::IS_SHARED);
+            match (four, at % 4) {
+                (Some(four), 1) => Self::load_nth::<S, 4, 1>(four),
+                (Some(four), 2) => Self::load_nth::<S, 4, 2>(four),
+                (Some(four), 3) => Self::load_nth::<S, 4, 3>(four),
+                _ => Self::load(&from[at]),
+            }
+        }
+
         /// The first one, two or four chunks. The last one repeats.
         #[inline(always)]
         pub(crate) fn load_chunks<S: Source<Lane = T>>(from: &[S], k: usize) -> Option<[Self; 4]> {
@@ -133,6 +144,13 @@ mod simd {
                     Self::from_first_bytes(shared::load_shared::<[S; N], K, AT>(bytes))
                 }
             }
+        }
+    }
+
+    impl<T: Int<N>, const N: usize> Vector<T, N> {
+        /// Keeps LLVM from merging the ops before it with those after it. For a whole register.
+        pub fn opaque(self) -> Self {
+            isa::opaque_lanes(self)
         }
     }
 

@@ -1,5 +1,5 @@
 use crate::isa::{bitmask_of, nearest_set};
-pub(crate) use crate::native::{load_shared, store_shared};
+pub(crate) use crate::native::{load_shared, opaque_lanes, store_shared};
 pub(crate) use crate::portable::masked::*;
 pub use crate::portable::{bit_indices, prefix_xor};
 use crate::vector::{from_slice, to_array};
@@ -22,12 +22,6 @@ crate::native::x256_in_halves!("neon");
 type Lanes<T, const N: usize, const S: bool> = crate::Vector<T, N, Neon<S>>;
 
 /// A step of the CRC-32 of gzip, without the inversions.
-#[inline]
-#[target_feature(enable = "crc")]
-pub fn crc32_u8(crc: u32, byte: u8) -> u32 {
-    __crc32b(crc, byte)
-}
-
 #[inline]
 #[target_feature(enable = "crc")]
 pub fn crc32_u64(crc: u32, word: u64) -> u32 {

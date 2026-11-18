@@ -718,16 +718,6 @@ extern "C" fn getPeakRSS(peak: &mut usize) -> c_int {
 extern "C" fn is_executable_file(_path: *const c_char) -> bool {
     false
 }
-#[unsafe(no_mangle)]
-extern "C" fn compress2(
-    _d: *mut u8,
-    _dl: *mut usize,
-    _s: *const u8,
-    _sl: usize,
-    _level: c_int,
-) -> c_int {
-    -2
-}
 
 /// Returns the mantissa digits of `text`, starting at the first nonzero digit.
 fn mantissa_digits(text: &[u8]) -> impl Iterator<Item = u8> {

@@ -603,12 +603,15 @@ fn whole_files(js: &[u8], json: &[u8], map: &[u8]) {
     time!("line_starts 1 MB", line_starts(opaque(js)));
     let one_line = &vec![b'a'; js.len()];
     time!("line_starts miss 1 MB", line_starts(opaque(one_line)));
+    let mut copy = vec![0; js.len()];
     for n in [
         3, 16, 30, 64, 100, 300, 500, 1000, 4096, 20000, 65536, 1_000_000,
     ] {
         time! {
             "crc32 {n}", crc32(opaque(0), opaque(&js[..n]));
-            "adler32 {n}", adler32(opaque(&js[..n]));
+            "adler32 {n}", adler32(opaque(1), opaque(&js[..n]));
+            "copy: crc32 {n}", copy_and_crc32(&mut opaque(0), opaque(&js[..n]), (&mut copy[..n]).into()).len();
+            "copy: adler32 {n}", copy_and_adler32(&mut opaque(1), opaque(&js[..n]), (&mut copy[..n]).into()).len();
         }
     }
     for n in [3, 7, 12, 30, 100, 200, 300, 65536] {
@@ -1083,7 +1086,8 @@ fn from_shared(js: &[u8]) {
             }
         }
         time! {
-            "shared: adler32 {n}", adler32_shared(shared(opaque(t)));
+            "shared: crc32 {n}", crc32_shared(opaque(0), shared(opaque(t)));
+            "shared: adler32 {n}", adler32_shared(opaque(1), shared(opaque(t)));
             "shared: xxhash32 {n}", xxhash32_shared(opaque(0), shared(opaque(t)));
             "shared: xxhash64 {n}", xxhash64_shared(opaque(0), shared(opaque(t)));
         }

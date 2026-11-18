@@ -1583,6 +1583,7 @@ test.concurrent.each([
   using dir = tempDir("parallel-jsx-runtime", {
     "a.test.jsx": fixture,
     "b.test.jsx": fixture,
+    ...(flag === "--jsx-runtime=react-jsxdev" ? { "bunfig.toml": 'jsx = "react-jsx"' } : {}),
     "node_modules/react/jsx-dev-runtime.js": 'export const jsxDEV = (_, { count }) => (count?.(), "dev");',
     "node_modules/react/jsx-runtime.js": 'export const jsx = (_, { count }) => (count?.(), "prod");',
   });

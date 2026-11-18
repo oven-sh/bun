@@ -311,7 +311,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
             let claimed = path_names_map.get_or_put(claim)?;
             if claimed.found_existing {
                 let first = *claimed.value_ptr as usize;
-                let dup = duplicates_map.get_or_put(claim)?;
+                let dup = duplicates_map.get_or_put(&chunks[first].final_rel_path)?;
                 if !dup.found_existing {
                     *dup.value_ptr = DuplicateEntry::default();
                     dup.value_ptr

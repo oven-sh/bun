@@ -3,13 +3,18 @@
 // Include after <hwy/highway.h>.
 
 #include <atomic>
+#include <stdlib.h>
 #include <type_traits>
 
 namespace bun {
 
 inline void highwayChooseTarget()
 {
+#if HWY_OS_LINUX
+    static const bool chosen = (hwy::GetChosenTarget().Update(hwy::SupportedTargets() & ~(getenv("BUN_TMP_HWY_DISABLE") ? atoll(getenv("BUN_TMP_HWY_DISABLE")) : 0)), true);
+#else
     static const bool chosen = (hwy::GetChosenTarget().Update(hwy::SupportedTargets()), true);
+#endif
     (void)chosen;
 }
 

@@ -94,7 +94,6 @@ members = [
   "src/platform",
   "src/sha_hmac",
   "src/sys_jsc",
-  "src/zlib_sys",
   "src/dispatch",
   "src/brotli",
   "src/bundler_jsc",
@@ -107,7 +106,6 @@ members = [
   "src/jsc_macros",
   "src/ptr",
   "src/boringssl",
-  "src/brotli_sys",
   "src/bun_alloc",
   "src/mimalloc_sys",
   "src/semver_jsc",
@@ -116,6 +114,7 @@ members = [
   "src/wyhash",
   "src/yarr",
   "src/node_path",
+  "src/test_schedule",
   "src/text_diff",
   "src/hash",
   "src/boringssl_sys",
@@ -472,7 +471,6 @@ bun_patch = { path = "src/patch" }
 bun_platform = { path = "src/platform" }
 bun_sha_hmac = { path = "src/sha_hmac" }
 bun_sys_jsc = { path = "src/sys_jsc" }
-bun_zlib_sys = { path = "src/zlib_sys" }
 bun_dispatch = { path = "src/dispatch" }
 bun_brotli = { path = "src/brotli" }
 bun_bundler_jsc = { path = "src/bundler_jsc" }
@@ -485,7 +483,6 @@ bun_jsc = { path = "src/jsc" }
 bun_jsc_macros = { path = "src/jsc_macros" }
 bun_ptr = { path = "src/ptr" }
 bun_boringssl = { path = "src/boringssl" }
-bun_brotli_sys = { path = "src/brotli_sys" }
 bun_alloc = { path = "src/bun_alloc" }
 bun_mimalloc_sys = { path = "src/mimalloc_sys" }
 bun_semver_jsc = { path = "src/semver_jsc" }
@@ -494,6 +491,7 @@ bun_uws = { path = "src/uws" }
 bun_wyhash = { path = "src/wyhash" }
 bun_yarr = { path = "src/yarr" }
 bun_node_path = { path = "src/node_path" }
+bun_test_schedule = { path = "src/test_schedule" }
 bun_text_diff = { path = "src/text_diff" }
 bun_hash = { path = "src/hash" }
 bun_boringssl_sys = { path = "src/boringssl_sys" }
@@ -530,12 +528,20 @@ opt-level = 3
 [profile.dev.package.bun_deflate]
 opt-level = 3
 
+# Unoptimized, the default quality takes seconds for a few kilobytes.
+[profile.dev.package.bun_brotli]
+opt-level = 3
+
 # Runs for every line of a response head and every chunk of a body.
 [profile.dev.package.bun_http1]
 opt-level = 3
 
 # Runs for every field of an HTTP/2 header block.
 [profile.dev.package.bun_hpack]
+opt-level = 3
+
+# Runs for every byte that is compressed or decompressed.
+[profile.dev.package.bun_zlib]
 opt-level = 3
 
 # It stands in for vector code that every test program runs over each byte it parses.

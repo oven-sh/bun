@@ -41,7 +41,7 @@
 namespace WebCore {
 using namespace JSC;
 
-JSValue toJSNewlyCreated(JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<PerformanceEntry>&& entry)
+template<> JSValue toJSNewlyCreated<PerformanceEntry>(JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<PerformanceEntry>&& entry)
 {
     switch (entry->performanceEntryType()) {
     case PerformanceEntry::Type::Mark:
@@ -54,11 +54,6 @@ JSValue toJSNewlyCreated(JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<P
 
     ASSERT_NOT_REACHED();
     return createWrapper<PerformanceEntry>(globalObject, WTF::move(entry));
-}
-
-JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, PerformanceEntry& entry)
-{
-    return wrap(lexicalGlobalObject, globalObject, entry);
 }
 
 } // namespace WebCore

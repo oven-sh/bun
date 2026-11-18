@@ -313,6 +313,15 @@ test("MessageEvent", () => {
   expect(called).toBe(true);
 });
 
+test.each([Event, CustomEvent, ErrorEvent, CloseEvent, MessageEvent].map(C => [C.name, C]))(
+  "new %s() without a type throws ERR_MISSING_ARGS",
+  (_, C) => {
+    expect(() => new C()).toThrow(
+      expect.objectContaining({ name: "TypeError", code: "ERR_MISSING_ARGS", message: "Not enough arguments" }),
+    );
+  },
+);
+
 it("crypto.getRandomValues", () => {
   var foo = new Uint8Array(32);
 

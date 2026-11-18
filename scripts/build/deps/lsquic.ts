@@ -11,7 +11,7 @@
  */
 
 import type { Dependency, DirectBuild } from "../source.ts";
-import { depBuildDir, depSourceDir } from "../source.ts";
+import { depSourceDir } from "../source.ts";
 import { lsxpackDefines } from "./lsqpack.ts";
 
 const LSQUIC_COMMIT = "f812ceb9529e26717df78c6064a2ff648b949f3e";
@@ -157,13 +157,11 @@ export const lsquic: Dependency = {
     "patches/lsquic/http1x-lsxpack-include.patch",
   ],
 
-  fetchDeps: ["zlib", "lsqpack", "boringssl"],
+  fetchDeps: ["lsqpack", "boringssl"],
 
   build: cfg => {
     const boringssl = depSourceDir(cfg, "boringssl");
     const lsqpackSrc = depSourceDir(cfg, "lsqpack");
-    const zlibBuild = depBuildDir(cfg, "zlib");
-    const zlibSrc = depSourceDir(cfg, "zlib");
     const spec: DirectBuild = {
       kind: "direct",
       sources: [
@@ -180,8 +178,6 @@ export const lsquic: Dependency = {
         ...(cfg.windows ? ["wincompat"] : []),
         // Holds only <sys/queue.h>, which ships with glibc and BSD libc but not musl or win32.
         ...(cfg.windows || cfg.abi === "musl" ? [lsqpackSrc + "/wincompat"] : []),
-        zlibBuild,
-        zlibSrc,
       ],
       defines: {
         ...lsxpackDefines,

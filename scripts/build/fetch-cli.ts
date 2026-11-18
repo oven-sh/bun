@@ -55,27 +55,6 @@ async function main(): Promise<void> {
       return fetchDep(name, repo, commit, dest, cache, patches);
     }
 
-    case "subst": {
-      // fetch-cli.ts subst <in> <out> [<from> <to>]...
-      // Replaces every literal occurrence of <from> with <to>. Used by
-      // DirectBuild deps to materialize *.h.in templates without running
-      // the upstream configure (e.g. zlib-ng's zlib.h.in → zlib.h, where
-      // the only substitution is `@ZLIB_SYMBOL_PREFIX@` → ``).
-      const [inPath, outPath, ...pairs] = args;
-      assert(inPath !== undefined && outPath !== undefined, "subst: missing in/out");
-      assert(pairs.length % 2 === 0, "subst: replacements must be <from> <to> pairs");
-      let text = await readFile(inPath, "utf8");
-      for (let i = 0; i + 1 < pairs.length; i += 2) {
-        assert(pairs[i]!.length > 0, `subst: empty <from> at index ${i}`);
-        text = text.split(pairs[i]!).join(pairs[i + 1]!);
-      }
-      // dep_subst is restat=1 — preserve mtime when the rendered text is
-      // unchanged so depfile-tracked .o files (lsquic ← zlib.h) don't
-      // recompile after a no-op re-fetch.
-      writeIfChanged(outPath, text);
-      return;
-    }
-
     case "check-undefined": {
       // fetch-cli.ts check-undefined <name> <nm> <rspfile> <stamp> <symbols>
       // <rspfile> is the edge's response file (one object per line);
@@ -141,7 +120,6 @@ Usage: bun fetch-cli.ts <kind> <args...>
 Kinds:
   dep             <name> <repo> <commit> <dest> <cache> [...patches]
   prebuilt        <name> <url> <dest> <identity> [...rm_paths]
-  subst           <in> <out> [<from> <to>]...
   check-undefined <name> <nm> <rspfile> <stamp> <symbol,...>
 
 This is invoked by ninja build rules. You shouldn't need to call it

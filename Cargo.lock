@@ -138,7 +138,6 @@ name = "bun_alloc"
 version = "0.0.0"
 dependencies = [
  "bun_mimalloc_sys",
- "bun_opaque",
  "bun_wyhash",
  "libc",
 ]
@@ -310,16 +309,11 @@ name = "bun_brotli"
 version = "0.0.0"
 dependencies = [
  "bun_alloc",
- "bun_brotli_sys",
  "bun_core",
+ "bun_highway",
+ "bun_removable_features",
+ "bun_sema_standalone",
  "thiserror",
-]
-
-[[package]]
-name = "bun_brotli_sys"
-version = "0.0.0"
-dependencies = [
- "bun_opaque",
 ]
 
 [[package]]
@@ -1699,6 +1693,7 @@ dependencies = [
  "bun_sys",
  "bun_sys_jsc",
  "bun_tcc_sys",
+ "bun_test_schedule",
  "bun_text_diff",
  "bun_threading",
  "bun_trim",
@@ -1977,9 +1972,12 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
+ "bun_alloc",
+ "bun_base64",
  "bun_boringssl",
  "bun_collections",
  "bun_core",
+ "bun_ptr",
  "bun_sha_hmac",
  "bun_sys",
  "strum",
@@ -1992,9 +1990,7 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bun_alloc",
  "bun_analytics",
- "bun_base64",
  "bun_boringssl",
  "bun_boringssl_sys",
  "bun_collections",
@@ -2004,12 +2000,9 @@ dependencies = [
  "bun_io",
  "bun_jsc",
  "bun_ptr",
- "bun_sha_hmac",
  "bun_sql",
  "bun_uws",
  "scopeguard",
- "strum",
- "thiserror",
 ]
 
 [[package]]
@@ -2087,6 +2080,8 @@ version = "0.0.0"
 dependencies = [
  "bun_alloc",
  "bun_core",
+ "bun_deflate",
+ "bun_highway",
  "bun_zlib",
  "itoa",
  "thiserror",
@@ -2103,6 +2098,10 @@ dependencies = [
  "strum",
  "thiserror",
 ]
+
+[[package]]
+name = "bun_test_schedule"
+version = "0.0.0"
 
 [[package]]
 name = "bun_text_diff"
@@ -2258,15 +2257,9 @@ version = "0.0.0"
 dependencies = [
  "bun_alloc",
  "bun_core",
- "bun_zlib_sys",
- "strum",
-]
-
-[[package]]
-name = "bun_zlib_sys"
-version = "0.0.0"
-dependencies = [
- "bun_core",
+ "bun_deflate",
+ "bun_highway",
+ "thiserror",
 ]
 
 [[package]]

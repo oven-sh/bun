@@ -3,6 +3,7 @@
 use std::collections::VecDeque;
 
 use bun_collections::OffsetByteList;
+use bun_core::strings;
 
 use crate::command::{self, ACKS, Ack, Reply};
 use crate::valkey_protocol::{Push, RESPValue, RedisError, ReplyScanner, ScanResult, ValkeyReader};
@@ -42,6 +43,27 @@ impl Default for Config {
 enum State {
     /// Never dialed, or only by a [`Client::preconnect`] that failed.
     Idle,
+    /// An event is still to come.
+    Active(Active),
+    /// Until [`Client::connect`].
+    Closed,
+}
+
+struct Active {
+    phase: Phase,
+    purpose: Purpose,
+    retries: u32,
+}
+
+#[derive(Copy, Clone)]
+enum Purpose {
+    /// Script has not used the client, so nobody would hear why it gave up.
+    Preconnect,
+    /// Script sent a command, connected or closed.
+    Asked,
+}
+
+enum Phase {
     /// The socket is connecting, or in its TLS handshake.
     Dialing,
     /// HELLO is written, and SELECT behind it if there is a database.
@@ -53,14 +75,14 @@ enum State {
     Ending(End),
     /// A dial is due, from the retry timer or from `connect()`.
     Backoff,
-    /// Until [`Client::connect`].
-    Closed,
 }
 
 #[derive(Copy, Clone)]
 enum End {
     /// The retry policy decides.
     Policy,
+    /// By [`Client::close`]; as [`End::Final`], until [`Client::connect`] takes it back.
+    Requested,
     /// No retry; what is queued until then is rejected.
     Final,
     /// No retry; everything is rejected already, and new commands are refused.
@@ -89,9 +111,6 @@ struct Queued<P> {
 pub struct Client<P> {
     config: Config,
     state: State,
-    retries: u32,
-    /// Script sent a command, connected or closed. Until then nobody would hear why the client gave up.
-    is_used: bool,
     is_subscriber: bool,
     output: OffsetByteList,
     input: OffsetByteList,
@@ -165,14 +184,17 @@ pub enum Close {
 
 #[must_use]
 pub enum Lost<P> {
-    ForGood {
-        reason: &'static str,
-        pending: Vec<P>,
-    },
-    Retry {
-        delay_ms: u32,
-        in_flight: Vec<P>,
-    },
+    ForGood { reason: Reason, pending: Vec<P> },
+    Retry { delay_ms: u32, in_flight: Vec<P> },
+}
+
+/// Why no retry follows.
+#[derive(Debug)]
+pub enum Reason {
+    Requested,
+    /// The attempt failed for good, or retries are off.
+    Final,
+    RetriesUsedUp,
 }
 
 fn broken<P>(message: &[u8], error: RedisError) -> Event<P> {
@@ -182,13 +204,27 @@ fn broken<P>(message: &[u8], error: RedisError) -> Event<P> {
     }
 }
 
+/// An error reply to the handshake. One that passes is not `error`: script can try again.
+fn refused<P>(message: &[u8], error: RedisError) -> Event<P> {
+    const PASSING: [&[u8]; 5] = [
+        b"LOADING ",
+        b"BUSY ",
+        b"MASTERDOWN ",
+        b"TRYAGAIN ",
+        b"ERR max number of clients",
+    ];
+    if PASSING.iter().any(|prefix| message.starts_with(prefix)) {
+        broken(message, RedisError::ConnectionClosed)
+    } else {
+        broken(message, error)
+    }
+}
+
 impl<P> Client<P> {
     pub fn new(config: Config) -> Self {
         Self {
             config,
             state: State::Idle,
-            retries: 0,
-            is_used: false,
             is_subscriber: false,
             output: OffsetByteList::default(),
             input: OffsetByteList::default(),
@@ -202,25 +238,37 @@ impl<P> Client<P> {
         &self.config
     }
 
+    fn phase(&self) -> Option<&Phase> {
+        match &self.state {
+            State::Active(active) => Some(&active.phase),
+            State::Idle | State::Closed => None,
+        }
+    }
+
     pub fn is_connected(&self) -> bool {
-        matches!(self.state, State::Select | State::Ready)
+        matches!(self.phase(), Some(Phase::Select | Phase::Ready))
     }
 
     fn is_ready(&self) -> bool {
-        matches!(self.state, State::Ready)
+        matches!(self.phase(), Some(Phase::Ready))
+    }
+
+    fn is_preconnect(&self) -> bool {
+        matches!(&self.state, State::Active(active) if matches!(active.purpose, Purpose::Preconnect))
     }
 
     pub fn is_ending(&self) -> bool {
-        matches!(self.state, State::Ending(_))
+        matches!(self.phase(), Some(Phase::Ending(_)))
     }
 
     /// An event is still to come.
     pub fn is_active(&self) -> bool {
-        !matches!(self.state, State::Idle | State::Closed)
+        matches!(self.state, State::Active(_))
     }
 
     fn has_failed(&self) -> bool {
-        matches!(self.state, State::Ending(End::Failed) | State::Closed)
+        matches!(self.state, State::Closed)
+            || matches!(self.phase(), Some(Phase::Ending(End::Failed)))
     }
 
     pub fn is_subscriber(&self) -> bool {
@@ -260,65 +308,104 @@ impl<P> Client<P> {
 
     /// An explicit `connect()`, ahead of [`Self::first_dial`] and [`Self::redial`].
     pub fn connect(&mut self) {
-        match self.state {
-            State::Backoff | State::Closed => {
-                self.retries = 0;
-                self.state = State::Backoff;
-            }
+        let active = match &mut self.state {
+            State::Idle => return,
+            State::Closed => return self.begin(Phase::Backoff, Purpose::Asked),
+            State::Active(active) => active,
+        };
+        active.purpose = Purpose::Asked;
+        match active.phase {
+            Phase::Backoff => active.retries = 0,
             // The close of a dial without a TLS context is still due, and no retry can build one.
-            State::Ending(End::Failed) => self.state = State::Ending(End::Final),
-            State::Ending(End::Final) => self.state = State::Ending(End::Policy),
-            State::Idle
-            | State::Dialing
-            | State::Hello
-            | State::Select
-            | State::Ready
-            | State::Ending(End::Policy) => {}
+            Phase::Ending(End::Failed) => active.phase = Phase::Ending(End::Final),
+            Phase::Ending(End::Requested) => active.phase = Phase::Ending(End::Policy),
+            Phase::Dialing
+            | Phase::Hello
+            | Phase::Select
+            | Phase::Ready
+            | Phase::Ending(End::Policy | End::Final) => {}
         }
     }
 
     pub fn close(&mut self) -> Close {
-        self.is_used = true;
-        let close = match self.state {
-            State::Idle | State::Closed | State::Ending(End::Failed) => return Close::Nothing,
-            State::Ending(End::Policy | End::Final) => Close::Nothing,
-            State::Dialing | State::Hello | State::Select | State::Ready => Close::Socket,
-            State::Backoff => Close::Retry(Attempt(())),
+        let State::Active(active) = &mut self.state else {
+            return Close::Nothing;
         };
-        self.state = State::Ending(End::Final);
+        active.purpose = Purpose::Asked;
+        let close = match active.phase {
+            Phase::Ending(End::Final | End::Failed) => return Close::Nothing,
+            Phase::Ending(End::Policy | End::Requested) => Close::Nothing,
+            Phase::Dialing | Phase::Hello | Phase::Select | Phase::Ready => Close::Socket,
+            Phase::Backoff => Close::Retry(Attempt(())),
+        };
+        active.phase = Phase::Ending(End::Requested);
         close
     }
 
     pub fn first_dial(&mut self) -> Option<Attempt> {
-        self.is_used = true;
-        self.preconnect()
+        if let State::Active(Active {
+            purpose: purpose @ Purpose::Preconnect,
+            ..
+        }) = &mut self.state
+        {
+            *purpose = Purpose::Asked;
+        }
+        self.leave_idle(Purpose::Asked)
     }
 
     /// A dial that script did not ask for. If it fails for good, the first command dials again.
     pub fn preconnect(&mut self) -> Option<Attempt> {
-        matches!(self.state, State::Idle).then(|| self.dial())
+        self.leave_idle(Purpose::Preconnect)
+    }
+
+    fn leave_idle(&mut self, purpose: Purpose) -> Option<Attempt> {
+        matches!(self.state, State::Idle).then(|| {
+            self.begin(Phase::Dialing, purpose);
+            Attempt(())
+        })
+    }
+
+    fn begin(&mut self, phase: Phase, purpose: Purpose) {
+        self.state = State::Active(Active {
+            phase,
+            purpose,
+            retries: 0,
+        });
     }
 
     pub fn redial(&mut self) -> Option<Attempt> {
-        matches!(self.state, State::Backoff).then(|| self.dial())
-    }
-
-    fn dial(&mut self) -> Attempt {
-        self.state = State::Dialing;
-        Attempt(())
+        let State::Active(Active {
+            phase: phase @ Phase::Backoff,
+            ..
+        }) = &mut self.state
+        else {
+            return None;
+        };
+        *phase = Phase::Dialing;
+        Some(Attempt(()))
     }
 
     /// The dial gave no socket.
     pub fn dial_failed(&mut self) {
-        if let State::Dialing = self.state {
-            self.state = State::Ending(End::Policy);
+        if let State::Active(Active {
+            phase: phase @ Phase::Dialing,
+            ..
+        }) = &mut self.state
+        {
+            *phase = Phase::Ending(End::Policy);
         }
     }
 
     /// The transport is up. A TLS renegotiation says so again.
     pub fn start(&mut self) {
-        let State::Dialing = self.state else { return };
-        self.state = State::Hello;
+        let State::Active(Active {
+            phase: phase @ Phase::Dialing,
+            ..
+        }) = &mut self.state
+        else {
+            return;
+        };
+        *phase = Phase::Hello;
         let Config {
             username,
             password,
@@ -344,14 +431,17 @@ impl<P> Client<P> {
     /// Gives up the attempt, if there is one, without a retry: the caller rejects these and closes the socket.
     #[must_use]
     pub fn fail(&mut self) -> Option<Vec<P>> {
-        match self.state {
-            State::Idle | State::Backoff | State::Ending(End::Failed) | State::Closed => None,
-            State::Dialing
-            | State::Hello
-            | State::Select
-            | State::Ready
-            | State::Ending(End::Policy | End::Final) => {
-                self.state = State::Ending(End::Failed);
+        let State::Active(active) = &mut self.state else {
+            return None;
+        };
+        match active.phase {
+            Phase::Backoff | Phase::Ending(End::Failed) => None,
+            Phase::Dialing
+            | Phase::Hello
+            | Phase::Select
+            | Phase::Ready
+            | Phase::Ending(End::Policy | End::Requested | End::Final) => {
+                active.phase = Phase::Ending(End::Failed);
                 Some(self.take_pending())
             }
         }
@@ -369,26 +459,29 @@ impl<P> Client<P> {
         self.input.clear_and_free();
         self.scanner.reset();
 
-        let is_final = matches!(self.state, State::Ending(End::Final | End::Failed));
-        let reason = if is_final || owner_is_gone || !self.config.enable_auto_reconnect {
-            "Connection closed"
-        } else {
-            self.retries += 1;
-            if self.retries <= self.config.max_retries {
-                self.state = State::Backoff;
-                return Lost::Retry {
-                    delay_ms: (FIRST_DELAY_MS << (self.retries.min(10) - 1)).min(MAX_DELAY_MS),
-                    in_flight: self.take_in_flight(),
-                };
-            }
-            "Max reconnection attempts reached"
+        let reason = match &mut self.state {
+            State::Idle | State::Closed => Reason::Final,
+            State::Active(active) => match active.phase {
+                Phase::Ending(End::Requested) => Reason::Requested,
+                Phase::Ending(End::Final | End::Failed) => Reason::Final,
+                _ if owner_is_gone || !self.config.enable_auto_reconnect => Reason::Final,
+                _ if active.retries >= self.config.max_retries => Reason::RetriesUsedUp,
+                _ => {
+                    active.phase = Phase::Backoff;
+                    active.retries += 1;
+                    let doublings = active.retries.min(10) - 1;
+                    return Lost::Retry {
+                        delay_ms: (FIRST_DELAY_MS << doublings).min(MAX_DELAY_MS),
+                        in_flight: self.take_in_flight(),
+                    };
+                }
+            },
         };
-        if self.is_used {
-            self.state = State::Closed;
+        self.state = if self.is_preconnect() {
+            State::Idle
         } else {
-            self.state = State::Idle;
-            self.retries = 0;
-        }
+            State::Closed
+        };
         Lost::ForGood {
             reason,
             pending: self.take_pending(),
@@ -561,23 +654,26 @@ impl<P> Client<P> {
     }
 
     fn route(&mut self, value: RESPValue) -> Event<P> {
-        match self.state {
-            State::Ready => self.on_reply(value),
-            State::Hello => self.on_hello(value),
-            State::Select => self.on_select(value),
-            State::Idle | State::Dialing | State::Ending(_) | State::Backoff | State::Closed => {
-                Event::Ignored
-            }
+        let State::Active(active) = &mut self.state else {
+            return Event::Ignored;
+        };
+        match active.phase {
+            Phase::Ready => self.on_reply(value),
+            Phase::Hello => Self::on_hello(active, value, self.config.database),
+            Phase::Select => Self::on_select(active, value),
+            Phase::Dialing | Phase::Ending(_) | Phase::Backoff => Event::Ignored,
         }
     }
 
-    fn on_hello(&mut self, value: RESPValue) -> Event<P> {
+    fn on_hello(active: &mut Active, value: RESPValue, database: u32) -> Event<P> {
         use RedisError::{AuthenticationFailed, UnsupportedProtocol};
         match value {
-            RESPValue::Error(message) => Event::Broken {
-                message,
-                error: AuthenticationFailed,
-            },
+            RESPValue::Error(message) => {
+                // Redis 5 has no HELLO. It echoes the arguments, and the password is one.
+                let echo = strings::split_once(&message, b", with args beginning with");
+                let message = echo.map_or(&*message, |(message, _)| message);
+                refused(message, AuthenticationFailed)
+            }
             RESPValue::SimpleString(ref text) if **text != *b"OK" => broken(
                 b"Authentication failed (unexpected response)",
                 AuthenticationFailed,
@@ -593,7 +689,15 @@ impl<P> Client<P> {
             {
                 broken(b"Server does not support RESP3", UnsupportedProtocol)
             }
-            RESPValue::SimpleString(_) | RESPValue::Map(_) => self.connected(value),
+            RESPValue::SimpleString(_) | RESPValue::Map(_) => {
+                active.phase = if database > 0 {
+                    Phase::Select
+                } else {
+                    Phase::Ready
+                };
+                active.retries = 0;
+                Event::Connected(value)
+            }
             _ => broken(
                 b"Authentication failed with unexpected response",
                 AuthenticationFailed,
@@ -601,16 +705,13 @@ impl<P> Client<P> {
         }
     }
 
-    fn on_select(&mut self, value: RESPValue) -> Event<P> {
+    fn on_select(active: &mut Active, value: RESPValue) -> Event<P> {
         match value {
             RESPValue::SimpleString(text) if *text == *b"OK" => {
-                self.state = State::Ready;
+                active.phase = Phase::Ready;
                 Event::Ignored
             }
-            RESPValue::Error(message) => Event::Broken {
-                message,
-                error: RedisError::InvalidCommand,
-            },
+            RESPValue::Error(message) => refused(&message, RedisError::InvalidCommand),
             RESPValue::SimpleString(_) => broken(
                 b"SELECT command failed with non-OK response",
                 RedisError::InvalidResponse,
@@ -620,16 +721,6 @@ impl<P> Client<P> {
                 RedisError::InvalidResponse,
             ),
         }
-    }
-
-    fn connected(&mut self, hello: RESPValue) -> Event<P> {
-        self.state = if self.config.database > 0 {
-            State::Select
-        } else {
-            State::Ready
-        };
-        self.retries = 0;
-        Event::Connected(hello)
     }
 
     fn on_reply(&mut self, value: RESPValue) -> Event<P> {

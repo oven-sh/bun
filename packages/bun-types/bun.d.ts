@@ -9107,7 +9107,7 @@ declare module "bun" {
      * - **Windows headless/CI:** registration fails if the current user's SID can't be
      *   resolved (typical under service accounts). Run as a regular user or create the
      *   task manually with `schtasks /create /ru SYSTEM`.
-     * - **macOS:** stdout/stderr are written to `~/Library/Logs/bun/cron/bun.cron.<title>.{stdout,stderr}.log`.
+     * - **macOS:** stdout/stderr are written to `$TMPDIR/bun.cron.<title>.{stdout,stderr}.log`.
      *
      * ### Idempotency & removal
      *

@@ -287,6 +287,16 @@ fn missing_entry_point_fails_at_load() {
 }
 
 #[test]
+fn explicit_jsx_preserve_rejects_jsx_in_test_projects() {
+    let mut settings = default_settings();
+    settings.jsx.runtime = bun_sema::resolve::JsxRuntime::Preserve;
+    let project = TestProject::new(&[("a.tsx", "export const element = <div />;")], &settings);
+    let (result, log) = link_project(&project, &WithoutServices);
+    expect_failure(result);
+    assert!(has_code(&log, Kind::Err, Code::UnsupportedOption.number()));
+}
+
+#[test]
 fn unresolved_import_fails_at_bind_modules() {
     let (result, log) = link_files(&[("a.ts", "import \"./nope\";")]);
     let failed = expect_failure(result);

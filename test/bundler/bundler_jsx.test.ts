@@ -1141,28 +1141,42 @@ describe("bundler", () => {
       run: { stdout: "div" },
     });
 
+    const aotDependencyFiles = {
+      "/in.ts": 'import { element } from "dep"; console.log(element);',
+      "/node_modules/dep/package.json": JSON.stringify({
+        name: "dep",
+        exports: { ".": { aot: "./index.aot.tsx", default: "./index.js" } },
+        compilerOptions: { jsx: "react", jsxFactory: "h" },
+      }),
+      "/node_modules/dep/index.aot.tsx": `
+        declare namespace JSX { interface IntrinsicElements { div: {} } type Element = string; }
+        function h(type: string) { return type; }
+        export const element = <div />;
+      `,
+      "/node_modules/dep/index.js": 'export const element = "fallback";',
+    };
+
     for (const backend of ["cli", "api"] as const) {
       itBundled(`jsx/PreserveAotDependencyOptionRejected-${backend}`, {
-        files: {
-          "/in.ts": 'import { element } from "dep"; console.log(element);',
-          "/node_modules/dep/package.json": JSON.stringify({
-            name: "dep",
-            exports: { ".": { aot: "./index.aot.tsx", default: "./index.js" } },
-            compilerOptions: { jsx: "react", jsxFactory: "h" },
-          }),
-          "/node_modules/dep/index.aot.tsx": `
-            declare namespace JSX { interface IntrinsicElements { div: {} } type Element = string; }
-            function h(type: string) { return type; }
-            export const element = <div />;
-          `,
-          "/node_modules/dep/index.js": 'export const element = "fallback";',
-        },
+        files: aotDependencyFiles,
         backend,
         target: "bun",
         compile: { aot: true },
         skipOnEsbuild: true,
         jsx: { runtime: "preserve" },
         bundleErrors: { "/node_modules/dep/index.aot.tsx": ["--aot does not support preserved JSX"] },
+      });
+
+      itBundled(`jsx/PreserveAotDependencyBundle-${backend}`, {
+        files: aotDependencyFiles,
+        backend,
+        target: "bun",
+        conditions: ["aot"],
+        skipOnEsbuild: true,
+        jsx: { runtime: "preserve" },
+        onAfterBundle(api) {
+          expect(api.readFile("/out.js")).toContain("<div />");
+        },
       });
     }
 

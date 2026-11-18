@@ -304,6 +304,21 @@ impl TSConfigJSON {
         out
     }
 
+    /// Apply the AOT package's JSX settings while honoring explicit preserve mode.
+    pub fn merge_aot_package_jsx(&self, current: &options::jsx::Pragma) -> options::jsx::Pragma {
+        use options::jsx::{Pragma, Runtime};
+
+        let runtime = match current.runtime {
+            Runtime::Preserve => Runtime::Preserve,
+            _ => Runtime::default(),
+        };
+        self.merge_jsx(Pragma {
+            development: current.development,
+            runtime,
+            ..Default::default()
+        })
+    }
+
     /// Support ${configDir}, but avoid allocating when possible.
     ///
     /// https://github.com/microsoft/TypeScript/issues/57485

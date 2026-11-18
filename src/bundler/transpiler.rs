@@ -742,12 +742,9 @@ impl<'a> ParseResult<'a> {
 
 /// Per-file inputs to the transpiler's parse step.
 impl ParseOptions<'_, '_> {
-    /// What a package with the "aot" condition says about JSX, decorators and class fields, in place of what the program says.
+    /// Apply the AOT package's JSX, decorator, and class field settings.
     pub fn apply_aot_package_config(&mut self, own: &TSConfigJSON) {
-        self.jsx = own.merge_jsx(crate::options_impl::jsx::Pragma {
-            development: self.jsx.development,
-            ..Default::default()
-        });
+        self.jsx = own.merge_aot_package_jsx(&self.jsx);
         self.emit_decorator_metadata = own.emit_decorator_metadata;
         self.experimental_decorators = own.experimental_decorators;
         self.use_define_for_class_fields = own.use_define_for_class_fields != Some(false);

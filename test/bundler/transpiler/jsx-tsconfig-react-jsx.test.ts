@@ -90,6 +90,42 @@ describe("tsconfig compilerOptions.jsx", () => {
     expect(exitCode).toBe(1);
   });
 
+  test.concurrent.each([
+    ["static import", 'import { element } from "dep";'],
+    ["dynamic import", 'const { element } = await import("dep");'],
+  ])("bun run keeps explicit preserve in an AOT dependency (%s)", async (_, importStatement) => {
+    using dir = tempDir("jsx-run-preserve-aot-package", {
+      "entry.ts": `${importStatement}\nconsole.log(element);`,
+      "node_modules/dep/package.json": JSON.stringify({
+        name: "dep",
+        exports: { ".": { aot: "./index.aot.tsx", default: "./index.js" } },
+        compilerOptions: { jsx: "react", jsxFactory: "h" },
+      }),
+      "node_modules/dep/index.aot.tsx": "function h(tag: string) { return tag; }\nexport const element = <div />;",
+      "node_modules/dep/index.js": 'export const element = "fallback";',
+    });
+
+    async function run(...flags: string[]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "--conditions=aot", ...flags, "entry.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    const classic = await run();
+    expect(classic).toMatchObject({ stdout: "div\n", exitCode: 0 });
+
+    const preserved = await run("--jsx-runtime=preserve");
+    expect(preserved).toMatchObject({ stdout: "", exitCode: 1 });
+    expect(preserved.stderr).toContain("Cannot preserve JSX in a file that Bun runs");
+    expect(preserved.stderr.replaceAll("\\", "/")).toContain("node_modules/dep/index.aot.tsx:2:24");
+  });
+
   test.concurrent.each(["bunfig", "pragma", "flag"])(
     "bun run allows plain JavaScript with preserve from %s",
     async source => {

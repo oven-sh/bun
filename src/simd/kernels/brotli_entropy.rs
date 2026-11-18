@@ -315,21 +315,16 @@ pub(crate) mod simd {
     /// Four pairs take fewer instructions as they are if they fit into a register.
     const PAIRS_FIT: bool = I8::LEN > 16;
 
-    #[inline(always)]
-    fn firsts_and_seconds(pairs: U64) -> (x128::U32, x128::U32) {
-        let [low, high] = pairs.bitcast::<x256::U32>().halves();
-        low.deinterleave(high)
-    }
-
     /// A bit for each that has neither.
     #[inline(always)]
     fn without(pairs: U64, [a, b]: [u32; 2]) -> u64 {
+        let ids: x256::U32 = pairs.bitcast();
         if PAIRS_FIT {
-            let ids: x256::U32 = pairs.bitcast();
             let has_one: U64 = (ids.simd_eq(a) | ids.simd_eq(b)).to_vector().bitcast();
             return has_one.simd_eq(0).to_bitmask();
         }
-        let (first, second) = firsts_and_seconds(pairs);
+        let [low, high] = ids.halves();
+        let (first, second) = low.deinterleave(high);
         let have = |id: u32| first.simd_eq(id) | second.simd_eq(id);
         (have(a) | have(b)).to_bitmask() ^ 15
     }
@@ -340,7 +335,8 @@ pub(crate) mod simd {
         if PAIRS_FIT {
             return (pairs - (pairs << 32)).bitcast();
         }
-        let (first, second) = firsts_and_seconds(pairs);
+        let [low, high] = pairs.bitcast::<x256::U32>().halves();
+        let (first, second) = low.deinterleave(high);
         I64::from_halves([(second - first).bitcast(); 2])
     }
 

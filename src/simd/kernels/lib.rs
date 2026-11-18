@@ -3,7 +3,7 @@
 #![feature(const_array, const_closures, const_trait_impl)]
 #![forbid(unsafe_code)]
 // For `#[inline(always)]` in the copies.
-#![recursion_limit = "512"]
+#![recursion_limit = "1024"]
 // The copies for the targets look alike.
 #![cfg_attr(mordant, allow(reimplemented_helper))]
 

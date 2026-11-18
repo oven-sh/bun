@@ -1423,6 +1423,8 @@ describe("bundler", () => {
     });
 
     itBundled("jsx/PreserveMultilineChildren", {
+      // esbuild formats child expressions differently and self-closes empty elements.
+      skipOnEsbuild: true,
       files: {
         "/in.tsx": `
           export const a = <div>&amp;</div>;
@@ -1471,6 +1473,8 @@ describe("bundler", () => {
     });
 
     itBundled("jsx/PreserveMinifiedChildBoundaries", {
+      // esbuild merges adjacent text children and drops empty strings when minifying whitespace.
+      skipOnEsbuild: true,
       files: {
         "/in.tsx": `
           export const adjacent = <div>{"a"}{"b"}</div>;
@@ -1720,9 +1724,15 @@ describe("bundler", () => {
             {
               type: "div",
               props: { title: "\"'`&" },
-              children: ["first second <&>", "third", "fourth", { type: "span", props: null, children: [] }, "last"],
+              // esbuild 0.18's whitespace minifier merges adjacent text and removes empty strings.
+              children: [
+                "first second <&>",
+                ...(ESBUILD ? ["thirdfourth"] : ["third", "fourth"]),
+                { type: "span", props: null, children: [] },
+                "last",
+              ],
             },
-            { type: "div", props: null, children: ["", " "] },
+            { type: "div", props: null, children: ESBUILD ? [" "] : ["", " "] },
             { type: "div", props: { title: "\uD800A" }, children: ["\uD800A"] },
             { type: "div", props: { title: "ropevalue" }, children: ["ropechild"] },
           ],

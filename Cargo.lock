@@ -138,7 +138,6 @@ name = "bun_alloc"
 version = "0.0.0"
 dependencies = [
  "bun_mimalloc_sys",
- "bun_opaque",
  "bun_wyhash",
  "libc",
 ]
@@ -310,16 +309,11 @@ name = "bun_brotli"
 version = "0.0.0"
 dependencies = [
  "bun_alloc",
- "bun_brotli_sys",
  "bun_core",
+ "bun_highway",
+ "bun_removable_features",
+ "bun_sema_standalone",
  "thiserror",
-]
-
-[[package]]
-name = "bun_brotli_sys"
-version = "0.0.0"
-dependencies = [
- "bun_opaque",
 ]
 
 [[package]]
@@ -2086,6 +2080,8 @@ version = "0.0.0"
 dependencies = [
  "bun_alloc",
  "bun_core",
+ "bun_deflate",
+ "bun_highway",
  "bun_zlib",
  "itoa",
  "thiserror",
@@ -2261,15 +2257,9 @@ version = "0.0.0"
 dependencies = [
  "bun_alloc",
  "bun_core",
- "bun_zlib_sys",
- "strum",
-]
-
-[[package]]
-name = "bun_zlib_sys"
-version = "0.0.0"
-dependencies = [
- "bun_core",
+ "bun_deflate",
+ "bun_highway",
+ "thiserror",
 ]
 
 [[package]]

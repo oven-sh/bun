@@ -345,6 +345,12 @@ describe("strict mode code and sloppy mode code start under bun run and in a bui
       `import { d } from "./dep";\nif (true) function f() {}\nglobalThis.d = d;`,
     ],
     [
+      "a function as the body of if in a namespace with a directive",
+      "ts",
+      `namespace N { "use strict"; if (true) function f() {} }`,
+    ],
+    ["a function as the body of if in a namespace", "ts", `namespace N { if (true) function f() {} }`],
+    [
       "two functions of one name behind export as namespace",
       "ts",
       `// @ts-nocheck\n${startMark}\nexport as namespace NS;\nfunction f() {} function f() {}`,

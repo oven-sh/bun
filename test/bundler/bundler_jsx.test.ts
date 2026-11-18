@@ -161,7 +161,7 @@ describe("bundler", () => {
           itBundled("jsx/WarningsWithErrors", {
             files: ${JSON.stringify({
               "/in.jsx":
-                'import { missing } from "./dep"; export const element = <div {...props} key="k" />; console.log(missing);',
+                'import { /* warn: an excerpt */ missing } from "./dep"; export const element = <div {...props} key="k" />; console.log(missing);',
               "/dep.js": "export const present = 1;",
             })},
             backend: ${JSON.stringify(backend)},

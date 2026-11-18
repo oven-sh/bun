@@ -79,38 +79,43 @@ export function decodeSourceMappingsLine(line: string) {
 
 let currentFile: string | undefined;
 
-function errorOrWarnParser(isError = true) {
-  const prefix = isError ? "error: " : "warn: ";
-  return function (text: string) {
-    var i = 0;
-    var list: [message: string, fileLine: string][] = [];
-    while (i < text.length) {
-      let errorLineI = text.indexOf(prefix, i);
-      if (errorLineI === -1) {
-        return list;
-      }
-      const message = text.slice(errorLineI + prefix.length, text.indexOf("\n", errorLineI + 1));
-      i = errorLineI + 1;
-      const fileLineI = text.indexOf(" at ", errorLineI + message.length);
-
-      let fileLine = "";
-      if (fileLineI !== -1) {
-        const fileLineEnd = text.indexOf("\n", fileLineI + 1);
-        fileLine = text.slice(fileLineI + "\n    at ".length, fileLineEnd);
-        i = fileLineEnd;
-      }
-      list.push([message, fileLine]);
-
-      if (i === -1) {
-        break;
-      }
+function errorParser(text: string) {
+  const prefix = "error: ";
+  var i = 0;
+  var list: [message: string, fileLine: string][] = [];
+  while (i < text.length) {
+    let errorLineI = text.indexOf(prefix, i);
+    if (errorLineI === -1) {
+      return list;
     }
-    return list;
-  };
+    const message = text.slice(errorLineI + prefix.length, text.indexOf("\n", errorLineI + 1));
+    i = errorLineI + 1;
+    const fileLineI = text.indexOf(" at ", errorLineI + message.length);
+
+    let fileLine = "";
+    if (fileLineI !== -1) {
+      const fileLineEnd = text.indexOf("\n", fileLineI + 1);
+      fileLine = text.slice(fileLineI + "\n    at ".length, fileLineEnd);
+      i = fileLineEnd;
+    }
+    list.push([message, fileLine]);
+
+    if (i === -1) {
+      break;
+    }
+  }
+  return list;
 }
 
-const errorParser = errorOrWarnParser(true);
-const warnParser = errorOrWarnParser(false);
+function warnParser(text: string): [message: string, fileLine: string][] {
+  const diagnostics = text.split(/^(?=(?:error|warn|note|debug|verbose): )/m);
+  return diagnostics.flatMap(diagnostic => {
+    const header = /^warn: (.*)/.exec(diagnostic);
+    if (!header) return [];
+    const location = /^ {3}at (.+:\d+:\d+)$/m.exec(diagnostic);
+    return location ? [[header[1], location[1]]] : [];
+  });
+}
 
 type BunTestExports = typeof import("bun:test");
 export function testForFile(file: string): BunTestExports {
@@ -1119,15 +1124,14 @@ function expectBundled(
       const success = exitCode === 0;
       const checkCliWarnings = () => {
         if (ESBUILD) return;
-        const warningText = stderr!.toUnixString();
-        const allWarnings = warnParser(warningText)
-          .map(([error, source]) => {
-            if (!source) return;
-            const [_str2, fullFilename, line, col] = source.match(/bun-build-tests[\/\\](.*):(\d+):(\d+)/)!;
-            const file = fullFilename.slice(id.length + path.basename(tempDirectory).length + 1).replaceAll("\\", "/");
-            return { error, file, line, col };
-          })
-          .filter(Boolean) as ErrorMeta[];
+        const warningText = Bun.stripANSI(stderr.toUnixString());
+        const allWarnings = warnParser(warningText).flatMap(([error, source]) => {
+          const location = source.match(/bun-build-tests[\/\\](.*):(\d+):(\d+)/);
+          if (!location) return [];
+          const [, fullFilename, line, col] = location;
+          const file = fullFilename.slice(id.length + path.basename(tempDirectory).length + 1).replaceAll("\\", "/");
+          return [{ error, file, line, col }];
+        });
         checkWarnings(allWarnings);
       };
       if (buildProc.signalCode) {

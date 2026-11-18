@@ -1,0 +1,1088 @@
+# Sums and differences
+(add i0 5)
+    add w0, w0, #5
+    lea eax, [rdi + 5]
+(add l0 -5)
+    sub x0, x0, #5
+    lea rax, [rdi - 5]
+(add l0 0x5000)
+    add x0, x0, #5, lsl #12
+    lea rax, [rdi + 20480]
+(sub i0 4095)
+    sub w0, w0, #4095
+    mov eax, edi; sub eax, 4095
+(add l0 0x123456)
+    add x0, x0, #291, lsl #12; add x0, x0, #1110
+    lea rax, [rdi + 1193046]
+(add l0 0x1234)
+    mov w1, #4660; add x0, x0, x1
+    lea rax, [rdi + 4660]
+(add l0 0x12345678)
+    mov w1, #22136; movk w1, #4660, lsl #16; add x0, x0, x1
+    lea rax, [rdi + 305419896]
+(sub 7 i0)
+    mov w1, #7; sub w0, w1, w0
+    mov eax, 7; sub eax, edi
+(add l0 (shl l1 3))
+    add x0, x0, x1, lsl #3
+    lea rax, [rdi + 8*rsi]
+(add (shr i0 3) i1)
+    add w0, w1, w0, lsr #3
+    mov eax, edi; shr eax, 3; add eax, esi
+(sub l0 (sar l1 63))
+    sub x0, x0, x1, asr #63
+    sar rsi, 63; mov rax, rdi; sub rax, rsi
+(add l0 (mul l1 8))
+    add x0, x0, x1, lsl #3
+    lea rax, [rdi + 8*rsi]
+(add l0 (zx i1))
+    add x0, x0, w1, uxtw
+    mov eax, esi; add rax, rdi
+(add l0 (sx i1))
+    add x0, x0, w1, sxtw
+    movsxd rsi, esi; lea rax, [rdi + rsi]
+(add l0 (shl (sx i1) 3))
+    add x0, x0, w1, sxtw #3
+    movsxd rsi, esi; lea rax, [rdi + 8*rsi]
+(add l0 (shl (zx i1) 7))
+    mov w1, w1; add x0, x0, x1, lsl #7
+    mov eax, esi; shl rax, 7; add rax, rdi
+(sub i0 (and i1 0xff))
+    sub w0, w0, w1, uxtb
+    movzx esi, sil; mov eax, edi; sub eax, esi
+(add i0 (sext16 i1))
+    add w0, w0, w1, sxth
+    movsx esi, si; lea eax, [rdi + rsi]
+(add l0 (zx (add i1 i2)))
+    add w1, w1, w2; add x0, x0, x1
+    add esi, edx; lea rax, [rdi + rsi]
+(neg (shl i0 2))
+    neg w0, w0, lsl #2
+    mov eax, edi; shl eax, 2; neg eax
+(add slot 24)
+    sub x0, x29, #40
+    lea rax, [rbp - 40]
+(add i0 (lt i1 i2))
+    cmp w1, w2; cinc w0, w0, lt
+    xor eax, eax; cmp esi, edx; setl al; add eax, edi
+(add l0 (zx (eq i1 0)))
+    cmp w1, #0; cinc x0, x0, eq
+    xor eax, eax; test esi, esi; sete al; add rax, rdi
+(neg (below l0 l1))
+    cmp x0, x1; csetm w0, lo
+    xor eax, eax; cmp rdi, rsi; setb al; neg eax
+# Products and quotients
+(mul i0 i1)
+    mul w0, w0, w1
+    mov eax, edi; imul eax, esi
+(add (mul i0 i1) i2)
+    madd w0, w0, w1, w2
+    mov eax, edi; imul eax, esi; add eax, edx
+(sub l0 (mul l1 l2))
+    msub x0, x1, x2, x0
+    imul rsi, rdx; mov rax, rdi; sub rax, rsi
+(neg (mul i0 i1))
+    mneg w0, w0, w1
+    mov eax, edi; imul eax, esi; neg eax
+(mul (neg l0) l1)
+    mneg x0, x1, x0
+    mov rax, rdi; neg rax; imul rax, rsi
+(mul (sx i0) (sx i1))
+    smull x0, w0, w1
+    movsxd rax, edi; movsxd rsi, esi; imul rax, rsi
+(mul (zx i0) (zx i1))
+    umull x0, w0, w1
+    mov eax, edi; mov ecx, esi; imul rax, rcx
+(mul (zx i0) 1000)
+    mov w1, #1000; umull x0, w0, w1
+    mov eax, edi; imul rax, rax, 1000
+(add l2 (mul (sx i0) (sx i1)))
+    smaddl x0, w0, w1, x2
+    movsxd rdi, edi; movsxd rsi, esi; imul rdi, rsi; lea rax, [rdx + rdi]
+(add l2 (mul (zx i0) (zx i1)))
+    umaddl x0, w0, w1, x2
+    mov eax, edi; mov ecx, esi; imul rax, rcx; add rax, rdx
+(sub l2 (mul (sx i0) (sx i1)))
+    smsubl x0, w0, w1, x2
+    movsxd rdi, edi; movsxd rsi, esi; imul rdi, rsi; mov rax, rdx; sub rax, rdi
+(mul i0 8)
+    lsl w0, w0, #3
+    imul eax, edi, 8
+(mul i0 9)
+    add w0, w0, w0, lsl #3
+    lea eax, [rdi + 8*rdi]
+(mul l0 -8)
+    neg x0, x0, lsl #3
+    imul rax, rdi, -8
+(mul l0 -7)
+    sub x0, x0, x0, lsl #3
+    imul rax, rdi, -7
+(mul i0 7)
+    mov w1, #7; mul w0, w0, w1
+    imul eax, edi, 7
+(mul i0 10)
+    mov w1, #10; mul w0, w0, w1
+    imul eax, edi, 10
+(mulh i0 i1)
+    smull x0, w0, w1; lsr x0, x0, #32
+    mov rax, rdi; imul esi; mov eax, edx
+(umulh l0 l1)
+    umulh x0, x0, x1
+    mov rax, rdi; mul rsi; mov rax, rdx
+(shr (umulh i0 0xaaaaaaab) 1)
+    mov w1, #43691; movk w1, #43690, lsl #16; umull x0, w0, w1; lsr x0, x0, #33
+    mov rax, rdi; mov ecx, 2863311531; mul ecx; mov eax, edx; shr eax
+(sar (mulh i0 0x55555556) 1)
+    mov w1, #21846; movk w1, #21845, lsl #16; smull x0, w0, w1; asr x0, x0, #33; mov w0, w0
+    mov rax, rdi; mov ecx, 1431655766; imul ecx; mov eax, edx; sar eax
+(div i0 i1)
+    sdiv w0, w0, w1
+    mov rax, rdi; cdq; idiv esi
+(urem l0 l1)
+    udiv x16, x0, x1; msub x0, x16, x1, x0
+    mov rax, rdi; xor edx, edx; div rsi; mov rax, rdx
+(tdiv i0 i1)
+    sdiv w0, w0, w1
+    lea eax, [rsi + 1]; cmp eax, 1; jbe 8; mov rax, rdi; cdq; idiv esi; mov eax, edi; imul eax, esi; jmp -9
+(trem i0 i1)
+    sdiv w16, w0, w1; msub w16, w16, w1, w0; cmp w1, #0; csel w0, w16, wzr, ne
+    lea eax, [rsi + 1]; cmp eax, 1; jbe 10; mov rax, rdi; cdq; idiv esi; mov eax, edx; xor edx, edx; jmp -8
+(trem i0 7)
+    mov w1, #7; sdiv w16, w0, w1; msub w0, w16, w1, w0
+    mov rax, rdi; mov ecx, 7; cdq; idiv ecx; mov eax, edx
+(let w (wadd l0 l1 l2 l3)) (xor (low w) (high w))
+    adds x0, x0, x2; adc x1, x1, x3; eor x0, x0, x1
+    mov rax, rdi; add rax, rdx; adc rcx, rsi; xor rax, rcx
+(let w (wmul l0 l1)) (xor (low w) (high w))
+    mul x2, x0, x1; umulh x0, x0, x1; eor x0, x2, x0
+    mov rax, rdi; mul rsi; xor rax, rdx
+(high (wmul l0 l1))
+    umulh x0, x0, x1
+    mov rax, rdi; mul rsi; mov rax, rdx
+# Bits
+(and i0 0xff00)
+    and w0, w0, #0xff00
+    mov eax, edi; and eax, 65280
+(and l0 0xff00ff00ff00ff00)
+    and x0, x0, #0xff00ff00ff00ff00
+    movabs rax, -71777214294589696; and rax, rdi
+(and l0 0xf00f)
+    mov w1, #61455; and x0, x0, x1
+    mov eax, edi; and eax, 61455
+(and l0 0xf000000f)
+    and w0, w0, #0xf000000f
+    mov eax, edi; and eax, 4026531855
+(or i0 0x10)
+    orr w0, w0, #0x10
+    mov eax, edi; or eax, 16
+(xor l0 0x8000000000000000)
+    eor x0, x0, #0x8000000000000000
+    movabs rax, -9223372036854775808; xor rax, rdi
+(or l0 0x12345)
+    mov w1, #9029; movk w1, #1, lsl #16; orr x0, x0, x1
+    mov rax, rdi; or rax, 74565
+(and l0 (not l1))
+    bic x0, x0, x1
+    andn rax, rsi, rdi
+(or (not i0) i1)
+    orn w0, w1, w0
+    mov eax, edi; not eax; or eax, esi
+(xor i0 (not i1))
+    eon w0, w0, w1
+    not esi; mov eax, edi; xor eax, esi
+(not (xor i0 i1))
+    eon w0, w0, w1
+    mov eax, edi; xor eax, esi; not eax
+(and l0 (not (shl l1 4)))
+    bic x0, x0, x1, lsl #4
+    shl rsi, 4; andn rax, rsi, rdi
+(xor i0 (rotr i1 7))
+    eor w0, w0, w1, ror #7
+    ror esi, 7; mov eax, edi; xor eax, esi
+(xor i0 (rotl i1 7))
+    eor w0, w0, w1, ror #25
+    rol esi, 7; mov eax, edi; xor eax, esi
+(or i0 (shr i1 4))
+    orr w0, w0, w1, lsr #4
+    shr esi, 4; mov eax, edi; or eax, esi
+(not (shl i0 4))
+    mvn w0, w0, lsl #4
+    mov eax, edi; shl eax, 4; not eax
+(or (zx i0) tag)
+    mov w0, w0; orr x0, x0, x22
+    mov eax, edi; or rax, r14
+(and (shr i0 4) 0xff)
+    ubfx w0, w0, #4, #8
+    mov eax, edi; shr eax, 4; movzx eax, al
+(and (sar l0 40) 0xffff)
+    ubfx x0, x0, #40, #16
+    mov rax, rdi; sar rax, 40; movzx eax, ax
+(shr (shl i0 8) 24)
+    ubfx w0, w0, #16, #8
+    mov eax, edi; shl eax, 8; shr eax, 24
+(sar (shl i0 24) 24)
+    sxtb w0, w0
+    mov eax, edi; shl eax, 24; sar eax, 24
+(sar (shl l0 16) 40)
+    sbfx x0, x0, #24, #24
+    mov rax, rdi; shl rax, 16; sar rax, 40
+(shr (and i0 0xff00) 8)
+    ubfx w0, w0, #8, #8
+    mov eax, edi; and eax, 65280; shr eax, 8
+(shl (and i0 0xff) 4)
+    ubfiz w0, w0, #4, #8
+    movzx eax, dil; shl eax, 4
+(and (shl i0 4) 0xff0)
+    ubfiz w0, w0, #4, #8
+    mov eax, edi; shl eax, 4; and eax, 4080
+(shl (sx i0) 3)
+    sbfiz x0, x0, #3, #32
+    movsxd rax, edi; shl rax, 3
+(shl (zx i0) 3)
+    ubfiz x0, x0, #3, #32
+    mov eax, edi; shl rax, 3
+(sx (sext8 i0))
+    sxtb x0, w0
+    movsx rax, dil
+(wrap (shr l0 32))
+    lsr x0, x0, #32
+    mov rax, rdi; shr rax, 32
+(zx (wrap (shr l0 8)))
+    ubfx x0, x0, #8, #32
+    shr rdi, 8; mov eax, edi
+(wrap (sar l0 40))
+    asr x0, x0, #40; mov w0, w0
+    sar rdi, 40; mov eax, edi
+(or (and i0 0xffff00ff) (shl (and i1 0xff) 8))
+    bfi w0, w1, #8, #8
+    mov eax, edi; and eax, 4294902015; movzx esi, sil; shl esi, 8; or eax, esi
+(or (and l0 -256) (and (shr l1 16) 0xff))
+    bfxil x0, x1, #16, #8
+    mov rax, rdi; and rax, -256; shr rsi, 16; movzx esi, sil; or rax, rsi
+(or (and i0 0xffff0000) (and i1 0xffff))
+    bfxil w0, w1, #0, #16
+    mov eax, edi; and eax, 4294901760; movzx esi, si; or eax, esi
+(or (and l0 0xffffffff) (shl l1 32))
+    bfi x0, x1, #32, #32
+    mov eax, edi; shl rsi, 32; or rax, rsi
+(or (shl (zx i0) 32) (zx i1))
+    bfi x1, x0, #32, #32; mov x0, x1
+    mov eax, edi; shl rax, 32; mov ecx, esi; or rax, rcx
+(or (shl i0 8) (shr i1 24))
+    extr w0, w0, w1, #24
+    mov eax, edi; shl eax, 8; shr esi, 24; or eax, esi
+(or (shl l0 8) (shr l0 56))
+    ror x0, x0, #56
+    mov rax, rdi; shl rax, 8; shr rdi, 56; or rax, rdi
+(rotr i0 i1)
+    ror w0, w0, w1
+    mov rcx, rsi; mov eax, edi; ror eax, cl
+(rotl i0 i1)
+    neg w16, w1; ror w0, w0, w16
+    mov rcx, rsi; mov eax, edi; rol eax, cl
+(rotl l0 13)
+    ror x0, x0, #51
+    rorx rax, rdi, 51
+(rotl i0 (sub 32 i1))
+    ror w0, w0, w1
+    mov eax, 32; mov ecx, eax; sub ecx, esi; mov eax, edi; rol eax, cl
+(shl i0 (and i1 31))
+    lsl w0, w0, w1
+    shlx eax, edi, esi
+(shr l0 (sub 64 i1))
+    neg w16, w1; lsr x0, x0, x16
+    mov eax, 64; sub eax, esi; shrx rax, rdi, rax
+(ctz i0)
+    rbit w0, w0; clz w0, w0
+    tzcnt eax, edi
+(clz l0)
+    clz x0, x0
+    lzcnt rax, rdi
+(popcnt i0)
+    fmov s31, w0; cnt v31.8b, v31.8b; addv b31, v31.8b; fmov w0, s31
+    xor eax, eax; popcnt eax, edi
+(bswap16 i0)
+    rev w0, w0; lsr w0, w0, #16
+    movzx eax, di; rol ax, 8
+[basic] (ctz i0)
+    rbit w0, w0; clz w0, w0
+    mov eax, 32; bsf edi, edi; cmove edi, eax; mov eax, edi
+[basic] (shl i0 i1)
+    lsl w0, w0, w1
+    mov rcx, rsi; mov eax, edi; shl eax, cl
+(and l0 (zx (not i1)))
+    bic w0, w0, w1
+    not esi; mov rax, rdi; and rax, rsi
+(and i0 (rotl -2 i1))
+    mov w2, #1; lsl w1, w2, w1; bic w0, w0, w1
+    mov rcx, rsi; mov eax, 4294967294; rol eax, cl; and eax, edi
+(or (zx (wrap l0)) (shl l1 32))
+    bfi x0, x1, #32, #32
+    mov eax, edi; shl rsi, 32; or rax, rsi
+(mul (shr l0 32) (and l1 0xffffffff))
+    lsr x0, x0, #32; umull x0, w0, w1
+    mov rax, rdi; shr rax, 32; mov esi, esi; imul rax, rsi
+(let s (shl l0 3)) (xor (add l1 s) (add l2 s))
+    add x1, x1, x0, lsl #3; add x0, x2, x0, lsl #3; eor x0, x1, x0
+    lea rax, [rsi + 8*rdi]; lea rdx, [rdx + 8*rdi]; xor rax, rdx
+(bswap16 (load16u l0 0))
+    ldrh w0, [x0]; rev16 w0, w0
+    movzx eax, word ptr [rdi]; movzx eax, ax; rol ax, 8
+(dtoi (floor d0))
+    fcvtms w0, d0
+    vroundsd xmm0, xmm0, xmm0, 9; vcvttsd2si eax, xmm0
+(loop (below (and (add (loadi l0 0) -97) 0xff) 26))
+    mov w1, #26; ldr w2, [x0]; sub w2, w2, #97; cmp w1, w2, uxtb; b.hi #-12
+    mov eax, dword ptr [rdi]; add eax, -97; movzx eax, al; cmp eax, 26; jb -13
+(loop (let p (add vm (zx (and (shr i0 3) 0x1ffffffc)))) (store! (or (loadi! p 0x100910) i1) p 0x100910) i2)
+    add x3, x21, #256, lsl #12; add x3, x3, #2320; lsr w4, w0, #5; ldr w5, [x3, x4, lsl #2]; orr w5, w5, w1; str w5, [x3, x4, lsl #2]; cbnz w2, #-16
+    mov eax, edi; shr eax, 3; and eax, 536870908; or dword ptr [r13 + rax + 1050896], esi; test edx, edx; jne -22
+# Addresses
+(loadl l0 8)
+    ldr x0, [x0, #8]
+    mov rax, qword ptr [rdi + 8]
+(loadl l0 32760)
+    ldr x0, [x0, #32760]
+    mov rax, qword ptr [rdi + 32760]
+(loadl l0 -8)
+    ldur x0, [x0, #-8]
+    mov rax, qword ptr [rdi - 8]
+(loadi l0 3)
+    ldur w0, [x0, #3]
+    mov eax, dword ptr [rdi + 3]
+(loadl l0 32768)
+    mov w17, #32768; ldr x0, [x0, x17]
+    mov rax, qword ptr [rdi + 32768]
+(loadl l0 0x12340)
+    add x17, x0, #18, lsl #12; ldr x0, [x17, #832]
+    mov rax, qword ptr [rdi + 74560]
+(loadl l0 0x7654321)
+    mov w1, #17185; movk w1, #1893, lsl #16; ldr x0, [x1, x0]
+    mov rax, qword ptr [rdi + 124076833]
+(loadl (add l0 16) 8)
+    ldr x0, [x0, #24]
+    mov rax, qword ptr [rdi + 24]
+(loadl (add l0 l1) 0)
+    ldr x0, [x0, x1]
+    mov rax, qword ptr [rdi + rsi]
+(loadl (add l0 (shl l1 3)) 0)
+    ldr x0, [x0, x1, lsl #3]
+    mov rax, qword ptr [rdi + 8*rsi]
+(loadi (add l0 (shl l1 3)) 0)
+    lsl x1, x1, #3; ldr w0, [x0, x1]
+    mov eax, dword ptr [rdi + 8*rsi]
+(loadi (add l0 (shl (zx i1) 2)) 0)
+    ldr w0, [x0, w1, uxtw #2]
+    mov eax, esi; mov eax, dword ptr [rdi + 4*rax]
+(loadi (add l0 (shl (sx i1) 2)) 0)
+    ldr w0, [x0, w1, sxtw #2]
+    movsxd rsi, esi; mov eax, dword ptr [rdi + 4*rsi]
+(load8u (add vm (zx i1)) 0)
+    ldrb w0, [x21, w0, uxtw]
+    mov eax, edi; movzx eax, byte ptr [r13 + rax]
+(load16u (add vm (zx (shl i1 1))) 0)
+    lsl w0, w0, #1; ldrh w0, [x21, x0]
+    add edi, edi; movzx eax, word ptr [r13 + rdi]
+(loadi (add vm (zx i1)) 16)
+    add x0, x21, w0, uxtw; ldr w0, [x0, #16]
+    mov eax, edi; mov eax, dword ptr [r13 + rax + 16]
+(let p (add vm (zx i1))) (add (loadi! p 16) (loadi! p 24))
+    add x0, x21, w0, uxtw; ldr w1, [x0, #16]; ldr w0, [x0, #24]; add w0, w1, w0
+    mov eax, edi; mov ecx, dword ptr [r13 + rax + 16]; add ecx, dword ptr [r13 + rax + 24]; mov eax, ecx
+(let p (add vm (zx i1))) (add (loadi! p 0) (loadi! p 24))
+    add x0, x21, w0, uxtw; ldr w1, [x0]; ldr w0, [x0, #24]; add w0, w1, w0
+    mov eax, edi; mov ecx, dword ptr [r13 + rax]; add ecx, dword ptr [r13 + rax + 24]; mov eax, ecx
+(loadl (add l0 (shl l1 3)) 16)
+    add x0, x0, x1, lsl #3; ldr x0, [x0, #16]
+    mov rax, qword ptr [rdi + 8*rsi + 16]
+(loadl (add (shl l0 3) 0x123456789000) 8)
+    mov x1, #36872; movk x1, #22136, lsl #16; movk x1, #4660, lsl #32; ldr x0, [x1, x0, lsl #3]
+    movabs rax, 20015621341184; mov rax, qword ptr [rax + 8*rdi + 376999944]
+(loadl slot 8)
+    ldur x0, [x29, #-56]
+    mov rax, qword ptr [rbp - 56]
+(loadi (add slot (shl (zx i0) 2)) 0)
+    sub x1, x29, #64; ldr w0, [x1, w0, uxtw #2]
+    mov eax, edi; mov eax, dword ptr [rbp + 4*rax - 64]
+(loadl 0x123456789ab8l 0)
+    mov x0, #36864; movk x0, #22136, lsl #16; movk x0, #4660, lsl #32; ldr x0, [x0, #2744]
+    movabs rax, 20015621341184; mov rax, qword ptr [rax + 377002680]
+(add (loadl! 0x123456789ab8l 0) (loadl! 0x123456789ac8l 0))
+    mov x0, #36864; movk x0, #22136, lsl #16; movk x0, #4660, lsl #32; ldr x1, [x0, #2744]; ldr x0, [x0, #2760]; add x0, x1, x0
+    movabs rax, 20015621341184; mov rcx, qword ptr [rax + 377002680]; add rcx, qword ptr [rax + 377002696]; mov rax, rcx
+(add (load8u 0x123456789ab8l 0) (loadi 0x123456789ac8l 0))
+    mov x0, #36864; movk x0, #22136, lsl #16; movk x0, #4660, lsl #32; ldrb w1, [x0, #2744]; ldr w0, [x0, #2760]; add w0, w1, w0
+    movabs rax, 20015621341184; movzx ecx, byte ptr [rax + 377002680]; add ecx, dword ptr [rax + 377002696]; mov eax, ecx
+(loop (loadi! l0 0x12340))
+    mov w1, #9024; movk w1, #1, lsl #16; ldr w2, [x1, x0]; cbnz w2, #-4
+    cmp dword ptr [rdi + 74560], 0; jne -9
+(loop (loadi! (add vm (zx i0)) 0x12340))
+    add x1, x21, #18, lsl #12; add x1, x1, #832; ldr w2, [x1, w0, uxtw]; cbnz w2, #-4
+    mov eax, edi; cmp dword ptr [r13 + rax + 74560], 0; jne -13
+(loop (loadi! (add vm (zx i0)) 16))
+    add x1, x21, #16; ldr w2, [x1, w0, uxtw]; cbnz w2, #-4
+    mov eax, edi; cmp dword ptr [r13 + rax + 16], 0; jne -10
+(loadi (add vm (zx i0)) 0x100000)
+    add x1, x21, #256, lsl #12; ldr w0, [x1, w0, uxtw]
+    mov eax, edi; mov eax, dword ptr [r13 + rax + 1048576]
+(loadi (add vm (zx i0)) 0x123454)
+    add x1, x21, #291, lsl #12; add x1, x1, #1108; ldr w0, [x1, w0, uxtw]
+    mov eax, edi; mov eax, dword ptr [r13 + rax + 1193044]
+(loadi (add vm (zx (and (shr i0 18) 0x3ffc))) 0)
+    lsr w0, w0, #20; ldr w0, [x21, x0, lsl #2]
+    shr edi, 18; and edi, 16380; mov eax, dword ptr [r13 + rdi]
+(loop (loadi! (add vm (shl (zx (and i0 0xff)) 2)) 0x100000))
+    add x1, x21, #256, lsl #12; uxtb w2, w0; ldr w2, [x1, x2, lsl #2]; cbnz w2, #-8
+    movzx eax, dil; cmp dword ptr [r13 + 4*rax + 1048576], 0; jne -15
+(let p (add vm (zx i0))) (add (load8u! p 0x46be32) (load16u! p 0x46be34))
+    add x1, x21, #1131, lsl #12; add x0, x1, w0, uxtw; ldrb w1, [x0, #3634]; ldrh w0, [x0, #3636]; add w0, w1, w0
+    mov eax, edi; movzx ecx, byte ptr [r13 + rax + 4636210]; movzx eax, word ptr [r13 + rax + 4636212]; add eax, ecx
+(add (loadi! l0 0x12340) (loadi! l0 0x12348))
+    add x0, x0, #18, lsl #12; ldr w1, [x0, #832]; ldr w0, [x0, #840]; add w0, w1, w0
+    mov eax, dword ptr [rdi + 74560]; add eax, dword ptr [rdi + 74568]
+(add (loadi! vm 0x100004) (loadi! vm 0x100008))
+    add x0, x21, #256, lsl #12; ldr w1, [x0, #4]; ldr w0, [x0, #8]; add w0, w1, w0
+    mov eax, dword ptr [r13 + 1048580]; add eax, dword ptr [r13 + 1048584]
+(loadi (add slot (shl (zx i0) 2)) 8)
+    sub x1, x29, #56; ldr w0, [x1, w0, uxtw #2]
+    mov eax, edi; mov eax, dword ptr [rbp + 4*rax - 56]
+# Loads and stores
+(load8s l0 0)
+    ldrsb w0, [x0]
+    movsx eax, byte ptr [rdi]
+(sx (loadi l0 4))
+    ldrsw x0, [x0, #4]
+    movsxd rax, dword ptr [rdi + 4]
+(sx (load8s l0 4))
+    ldrsb x0, [x0, #4]
+    movsx rax, byte ptr [rdi + 4]
+(sx (load16u l0 4))
+    ldrh w0, [x0, #4]
+    movzx eax, word ptr [rdi + 4]; movsxd rax, eax
+(sext8 (load8u l0 4))
+    ldrsb w0, [x0, #4]
+    movzx eax, byte ptr [rdi + 4]; movsx eax, al
+(and (loadi l0 4) 0xff)
+    ldrb w0, [x0, #4]
+    mov eax, dword ptr [rdi + 4]; movzx eax, al
+(and (loadi! l0 4) 0xff)
+    ldr w0, [x0, #4]; uxtb w0, w0
+    mov eax, dword ptr [rdi + 4]; movzx eax, al
+(wrap (shr (loadl l0 0) 32))
+    ldr w0, [x0, #4]
+    mov rax, qword ptr [rdi]; shr rax, 32
+(add l1 (sx (loadi l0 0)))
+    ldrsw x0, [x0]; add x0, x1, x0
+    movsxd rax, dword ptr [rdi]; add rax, rsi
+(bitcast (loadl l0 0))
+    ldr d0, [x0]
+    mov rax, qword ptr [rdi]; vmovq xmm0, rax
+(store (bitcast d0) l0 0)
+    str d0, [x0]
+    vmovq rax, xmm0; mov qword ptr [rdi], rax
+(store 0 l0 4)
+    str wzr, [x0, #4]
+    mov dword ptr [rdi + 4], 0
+(store 0.0d l0 8)
+    str xzr, [x0, #8]
+    mov qword ptr [rdi + 8], 0
+(store8 (and i1 0xff) l0 0)
+    strb w1, [x0]
+    movzx esi, sil; mov byte ptr [rdi], sil
+(store16 0x10000 l0 0)
+    strh wzr, [x0]
+    mov word ptr [rdi], 0
+(store32 l1 l0 0)
+    str w1, [x0]
+    mov dword ptr [rdi], esi
+(store (add (loadi l0 0) 1) l0 0)
+    ldr w1, [x0]; add w1, w1, #1; str w1, [x0]
+    add dword ptr [rdi], 1
+(loadv l0 16)
+    ldr q0, [x0, #16]
+    vmovups xmm0, xmmword ptr [rdi + 16]
+(loadv (add l0 (shl l1 4)) 0)
+    ldr q0, [x0, x1, lsl #4]
+    shl rsi, 4; vmovups xmm0, xmmword ptr [rdi + rsi]
+(splat32 l0 0)
+    ld1r { v0.4s }, [x0]
+    vbroadcastss xmm0, dword ptr [rdi]
+# Pairs
+(add (loadl l0 8) (loadl l0 16))
+    ldp x0, x1, [x0, #8]; add x0, x0, x1
+    mov rax, qword ptr [rdi + 8]; add rax, qword ptr [rdi + 16]
+(add (loadi l0 8) (loadi l0 4))
+    ldp w0, w1, [x0, #4]; add w0, w1, w0
+    mov eax, dword ptr [rdi + 8]; add eax, dword ptr [rdi + 4]
+(add (loadd l0 8) (loadd l0 16))
+    ldp d0, d1, [x0, #8]; fadd d0, d0, d1
+    vmovsd xmm0, qword ptr [rdi + 8]; vaddsd xmm0, xmm0, qword ptr [rdi + 16]
+(add (loadl! l0 8) (loadl! l0 16))
+    ldr x1, [x0, #8]; ldr x0, [x0, #16]; add x0, x1, x0
+    mov rax, qword ptr [rdi + 8]; add rax, qword ptr [rdi + 16]
+(store l1 l0 8) (store l2 l0 16)
+    stp x1, x2, [x0, #8]
+    mov qword ptr [rdi + 8], rsi; mov qword ptr [rdi + 16], rdx
+(store 0l l0 8) (store 0l l0 16)
+    stp xzr, xzr, [x0, #8]
+    mov qword ptr [rdi + 8], 0; mov qword ptr [rdi + 16], 0
+(store 5l l0 8) (store 6l l0 16)
+    mov w1, #5; mov w2, #6; stp x1, x2, [x0, #8]
+    mov qword ptr [rdi + 8], 5; mov qword ptr [rdi + 16], 6
+(store l1 l0 8) (store (add l1 l2) l0 16)
+    add x2, x1, x2; stp x1, x2, [x0, #8]
+    mov qword ptr [rdi + 8], rsi; add rsi, rdx; mov qword ptr [rdi + 16], rsi
+(store v0 l0 16) (store v1 l0 32)
+    stp q0, q1, [x0, #16]
+    vmovups xmmword ptr [rdi + 16], xmm0; vmovups xmmword ptr [rdi + 32], xmm1
+(store l1 slot 8) (store l2 slot 0)
+    stp x1, x0, [x29, #-64]
+    mov qword ptr [rbp - 56], rdi; mov qword ptr [rbp - 64], rsi
+(store l1 l0 504) (store l2 l0 512)
+    stp x1, x2, [x0, #504]
+    mov qword ptr [rdi + 504], rsi; mov qword ptr [rdi + 512], rdx
+(store l1 l0 512) (store l2 l0 520)
+    str x1, [x0, #512]; str x2, [x0, #520]
+    mov qword ptr [rdi + 512], rsi; mov qword ptr [rdi + 520], rdx
+(store 5l l0 8) (check l1) (store 6l l0 16)
+    mov w2, #5; str x2, [x0, #8]; cbnz x1, #20; mov w1, #6; str x1, [x0, #16]; nop
+    mov qword ptr [rdi + 8], 5; test rsi, rsi; jne 10; mov qword ptr [rdi + 16], 6; nop
+(store 5l l0 8) (store l2 l1 0) (store 6l l0 16)
+    mov w3, #5; str x3, [x0, #8]; str x2, [x1]; mov w1, #6; str x1, [x0, #16]
+    mov qword ptr [rdi + 8], 5; mov qword ptr [rsi], rdx; mov qword ptr [rdi + 16], 6
+(store 5l l0 8) (store 7 l0 24) (store 6l l0 16)
+    mov w1, #7; str w1, [x0, #24]; mov w1, #5; mov w2, #6; stp x1, x2, [x0, #8]
+    mov qword ptr [rdi + 8], 5; mov dword ptr [rdi + 24], 7; mov qword ptr [rdi + 16], 6
+(add (mul (loadl l0 8) l1) (mul (loadl l0 16) l2))
+    ldp x0, x3, [x0, #8]; mul x0, x0, x1; madd x0, x3, x2, x0
+    mov rax, rsi; imul rax, qword ptr [rdi + 8]; imul rdx, qword ptr [rdi + 16]; add rax, rdx
+(let a (loadl l0 8)) (check a) (add a (loadl l0 16))
+    ldr x1, [x0, #8]; cbnz x1, #20; ldr x0, [x0, #16]; add x0, x1, x0; nop
+    mov rax, qword ptr [rdi + 8]; test rax, rax; jne 6; add rax, qword ptr [rdi + 16]; nop
+(let a (loadl l0 8)) (store a l1 0) (add a (loadl l0 16))
+    ldr x2, [x0, #8]; str x2, [x1]; ldr x0, [x0, #16]; add x0, x2, x0
+    mov rax, qword ptr [rdi + 8]; mov qword ptr [rsi], rax; add rax, qword ptr [rdi + 16]
+(let p (add l0 (shl l1 4))) (add (loadl p 0) (loadl p 8))
+    add x0, x0, x1, lsl #4; ldp x0, x1, [x0]; add x0, x0, x1
+    shl rsi, 4; mov rax, qword ptr [rdi + rsi]; add rax, qword ptr [rdi + rsi + 8]
+(add (sx (loadi l0 0)) (sx (loadi l0 4)))
+    ldrsw x1, [x0]; ldrsw x0, [x0, #4]; add x0, x1, x0
+    movsxd rax, dword ptr [rdi]; movsxd rcx, dword ptr [rdi + 4]; add rax, rcx
+(store 0.0d l0 0) (store l1 l0 8)
+    stp xzr, x1, [x0]
+    mov qword ptr [rdi], 0; mov qword ptr [rdi + 8], rsi
+# Atomics
+(loadi^ l0 0)
+    ldar w0, [x0]
+    mov eax, dword ptr [rdi]
+(load8s^ l0 4)
+    add x17, x0, #4; ldarb w0, [x17]; sxtb w0, w0
+    movsx eax, byte ptr [rdi + 4]
+(store^ i1 l0 0)
+    stlr w1, [x0]
+    mov eax, esi; xchg dword ptr [rdi], eax
+(store^ 0 l0 0)
+    stlr wzr, [x0]
+    mov eax, 0; xchg dword ptr [rdi], eax
+(add^ i1 l0)
+    ldaddal w1, w0, [x0]
+    mov eax, esi; lock; xadd dword ptr [rdi], eax
+(sub^ i1 l0)
+    neg w16, w1; ldaddal w16, w0, [x0]
+    mov eax, esi; neg eax; lock; xadd dword ptr [rdi], eax
+(sub^ 1 l0)
+    mov w1, #-1; ldaddal w1, w0, [x0]
+    mov eax, 1; neg eax; lock; xadd dword ptr [rdi], eax
+(and^ l1 l0)
+    mvn x16, x1; ldclral x16, x0, [x0]
+    mov rax, qword ptr [rdi]; mov rcx, rax; and rcx, rsi; lock; cmpxchg qword ptr [rdi], rcx; jne -13
+(exchange^ l1 l0)
+    swpal x1, x0, [x0]
+    mov rax, rsi; xchg qword ptr [rdi], rax
+(cas^ i1 i2 l0)
+    casal w1, w2, [x0]; mov x0, x1
+    mov rax, rsi; lock; cmpxchg dword ptr [rdi], edx; mov eax, eax
+[basic] (add^ i1 l0)
+    ldaxr w2, [x0]; add w17, w2, w1; stlxr w16, w17, [x0]; cbnz w16, #-12; mov x0, x2
+    mov eax, esi; lock; xadd dword ptr [rdi], eax
+[basic] (cas^ i1 i2 l0)
+    ldaxr w3, [x0]; cmp w3, w1, uxtw; b.ne #12; stlxr w16, w2, [x0]; cbnz w16, #-16; mov x0, x3
+    mov rax, rsi; lock; cmpxchg dword ptr [rdi], edx; mov eax, eax
+(fence)
+    dmb ish
+    lock; or dword ptr [rsp], 0
+(storefence)
+    dmb ishst
+    
+(loadfence)
+    dmb ishld
+    
+# Branches
+(branch i0)
+    cbnz w0, #12; brk #0x1
+    test edi, edi; jne 2; ud2
+(branch (eq l0 0))
+    cbz x0, #12; brk #0x1
+    test rdi, rdi; je 2; ud2
+(branch (lt i0 0))
+    tbnz w0, #31, #12; brk #0x1
+    test edi, edi; js 2; ud2
+(branch (ge l0 0))
+    tbz x0, #63, #12; brk #0x1
+    test rdi, rdi; jns 2; ud2
+(branch (gt i0 -1))
+    tbz w0, #31, #12; brk #0x1
+    test edi, edi; jns 2; ud2
+(branch (and i0 16))
+    tbnz w0, #4, #12; brk #0x1
+    test dil, 16; jne 2; ud2
+(branch (eq (and l0 0x100000000) 0))
+    tbz x0, #32, #12; brk #0x1
+    bt rdi, 32; jae 2; ud2
+(branch (and (shr i0 5) 1))
+    tbnz w0, #5, #12; brk #0x1
+    shr edi, 5; test dil, 1; jne 2; ud2
+(branch (and (not i0) 4))
+    tbz w0, #2, #12; brk #0x1
+    not edi; test dil, 4; jne 2; ud2
+(branch (eq (and i0 8) 8))
+    tbnz w0, #3, #12; brk #0x1
+    and edi, 8; cmp edi, 8; je 2; ud2
+(branch (and i0 0xf0))
+    tst w0, #0xf0; b.ne #12; brk #0x1
+    test dil, -16; jne 2; ud2
+(branch (and l0 tag))
+    tst x0, x22; b.ne #12; brk #0x1
+    test rdi, r14; jne 2; ud2
+(branch (and i0 (shl 1 i1)))
+    lsr w16, w0, w1; tbnz w16, #0, #12; brk #0x1
+    bt edi, esi; jb 2; ud2
+(branch (and (shr i0 i1) 1))
+    lsr w0, w0, w1; tbnz w0, #0, #12; brk #0x1
+    bt edi, esi; jb 2; ud2
+(branch (and i0 (not i1)))
+    bics wzr, w0, w1; b.ne #12; brk #0x1
+    not esi; test edi, esi; jne 2; ud2
+(branch (wrap l0))
+    cbnz w0, #12; brk #0x1
+    test edi, edi; jne 2; ud2
+(branch (lt (sext8 i0) 0))
+    tbnz w0, #7, #12; brk #0x1
+    movsx edi, dil; test edi, edi; js 2; ud2
+(branch (lt i0 100))
+    cmp w0, #100; b.lt #12; brk #0x1
+    cmp edi, 100; jl 2; ud2
+(branch (eq i0 -100))
+    cmn w0, #100; b.eq #12; brk #0x1
+    cmp edi, -100; je 2; ud2
+(branch (lt i0 4097))
+    cmp w0, #1, lsl #12; b.le #12; brk #0x1
+    cmp edi, 4097; jl 2; ud2
+(branch (below l0 0x10000))
+    cmp x0, #16, lsl #12; b.lo #12; brk #0x1
+    cmp rdi, 65536; jb 2; ud2
+(branch (eq l0 0x12345))
+    mov w1, #9029; movk w1, #1, lsl #16; cmp x0, x1; b.eq #12; brk #0x1
+    cmp rdi, 74565; je 2; ud2
+(branch (lt i0 (shl i1 2)))
+    cmp w0, w1, lsl #2; b.lt #12; brk #0x1
+    shl esi, 2; cmp edi, esi; jl 2; ud2
+(branch (lt (shl i0 2) i1))
+    cmp w1, w0, lsl #2; b.gt #12; brk #0x1
+    shl edi, 2; cmp edi, esi; jl 2; ud2
+(branch (ne l0 (sx (wrap l0))))
+    cmp x0, w0, sxtw; b.ne #12; brk #0x1
+    movsxd rax, edi; cmp rdi, rax; jne 2; ud2
+(branch (below (zx i0) l1))
+    cmp x1, w0, uxtw; b.hi #12; brk #0x1
+    mov eax, edi; cmp rax, rsi; jb 2; ud2
+(branch (eq i0 (neg i1)))
+    cmn w0, w1; b.eq #12; brk #0x1
+    neg esi; cmp edi, esi; je 2; ud2
+(branch (eq (add i0 i1) 0))
+    cmn w0, w1; b.eq #12; brk #0x1
+    add edi, esi; je 2; ud2
+(branch (xor i0 i1))
+    cmp w0, w1; b.ne #12; brk #0x1
+    xor edi, esi; jne 2; ud2
+(branch (eq (load8u l0 5) 3))
+    ldrb w0, [x0, #5]; cmp w0, #3; b.eq #12; brk #0x1
+    cmp byte ptr [rdi + 5], 3; je 2; ud2
+(branch (flt d0 d1))
+    fcmp d0, d1; b.mi #12; brk #0x1
+    vucomisd xmm1, xmm0; ja 2; ud2
+(branch (fgt d0 0.0))
+    fcmp d0, #0.0; b.gt #12; brk #0x1
+    vucomisd xmm0, qword ptr [rip + 8]; ja 2; ud2
+(branch (fne d0 0.0))
+    fcmp d0, #0.0; b.mi #16; b.gt #12; brk #0x1
+    vucomisd xmm0, qword ptr [rip + 8]; jne 2; ud2
+(branch (feqorunordered d0 d1))
+    fcmp d0, d1; b.eq #16; b.vs #12; brk #0x1
+    vucomisd xmm0, xmm1; je 2; ud2
+(branch (funordered d0 d0))
+    fcmp d0, d0; b.vs #12; brk #0x1
+    vucomisd xmm0, xmm0; jp 2; ud2
+(branch (anytrue v0))
+    umaxp v31.4s, v0.4s, v0.4s; fmov x16, d31; cbnz x16, #12; brk #0x1
+    vptest xmm0, xmm0; jne 2; ud2
+(let c (lt i0 i1)) (branch c) (select c i2 i3)
+    cmp w0, w1; b.lt #16; csel w0, w2, w3, lt; brk #0x1
+    cmp edi, esi; jl 7; mov eax, ecx; cmovl eax, edx; ud2
+# Several comparisons
+(branch (and (lt i0 i1) (eq i2 3)))
+    cmp w0, w1; ccmp w2, #3, #0, lt; b.eq #12; brk #0x1
+    xor eax, eax; cmp edi, esi; setl al; xor ecx, ecx; cmp edx, 3; sete cl; test eax, ecx; jne 2; ud2
+(branch (or (lt i0 i1) (eq i2 300)))
+    cmp w2, #300; ccmp w0, w1, #8, ne; b.lt #12; brk #0x1
+    xor eax, eax; cmp edi, esi; setl al; xor ecx, ecx; cmp edx, 300; sete cl; or eax, ecx; jne 2; ud2
+(branch (or (eq i0 1) (or (eq i0 5) (eq i0 -9))))
+    cmp w0, #1; ccmp w0, #5, #4, ne; ccmn w0, #9, #4, ne; b.eq #12; brk #0x1
+    xor eax, eax; cmp edi, 1; sete al; xor ecx, ecx; cmp edi, 5; sete cl; xor edx, edx; cmp edi, -9; sete dl; or ecx, edx; or eax, ecx; jne 2; ud2
+(branch (and (or (eq i0 1) (eq i1 2)) (ne i2 i3)))
+    cmp w0, #1; ccmp w1, #2, #4, ne; ccmp w2, w3, #4, eq; b.ne #12; brk #0x1
+    xor eax, eax; cmp edi, 1; sete al; cmp esi, 2; sete sil; movzx esi, sil; or eax, esi; cmp edx, ecx; setne cl; movzx ecx, cl; test eax, ecx; jne 2; ud2
+(branch (eq (and (lt i0 i1) (below l2 l3)) 0))
+    cmp w0, w1; ccmp x2, x3, #2, lt; b.hs #12; brk #0x1
+    xor eax, eax; cmp edi, esi; setl al; cmp rdx, rcx; setb cl; movzx ecx, cl; test eax, ecx; je 2; ud2
+(branch (and (flt d0 d1) (fge d0 d2)))
+    fcmp d0, d1; fccmp d0, d2, #8, mi; b.ge #12; brk #0x1
+    xor eax, eax; vucomisd xmm1, xmm0; seta al; xor ecx, ecx; vucomisd xmm0, xmm2; setae cl; test eax, ecx; jne 2; ud2
+(branch (or (xor l0 l1) (xor l2 l3)))
+    cmp x0, x1; ccmp x2, x3, #0, eq; b.ne #12; brk #0x1
+    xor rdi, rsi; xor rdx, rcx; or rdi, rdx; jne 2; ud2
+(branch (or i0 i1))
+    orr w0, w0, w1; cbnz w0, #12; brk #0x1
+    or edi, esi; jne 2; ud2
+(branch (and (ne (and i0 0xf0) 0) (eq i1 i2)))
+    tst w0, #0xf0; ccmp w1, w2, #0, ne; b.eq #12; brk #0x1
+    xor eax, eax; test dil, -16; setne al; xor ecx, ecx; cmp esi, edx; sete cl; test eax, ecx; jne 2; ud2
+(and (ge i0 0) (lt i0 i1))
+    cmp w0, #0; ccmp w0, w1, #0, ge; cset w0, lt
+    xor eax, eax; test edi, edi; setns al; xor ecx, ecx; cmp edi, esi; setl cl; and eax, ecx
+(eq (or (xor l0 l1) (xor l2 l3)) 0)
+    cmp x0, x1; ccmp x2, x3, #0, eq; cset w0, eq
+    xor rdi, rsi; xor rdx, rcx; or rdi, rdx; sete al; movzx eax, al
+(select (or (eq i0 0) (eq i1 0)) i2 i3)
+    cmp w0, #0; ccmp w1, #0, #4, ne; csel w0, w2, w3, eq
+    xor eax, eax; test edi, edi; sete al; test esi, esi; sete sil; movzx esi, sil; or eax, esi; mov eax, ecx; cmovne eax, edx
+# Booleans and selections
+(lt i0 i1)
+    cmp w0, w1; cset w0, lt
+    xor eax, eax; cmp edi, esi; setl al
+(eq l0 0)
+    cmp x0, #0; cset w0, eq
+    xor eax, eax; test rdi, rdi; sete al
+(lt i0 0)
+    lsr w0, w0, #31
+    xor eax, eax; test edi, edi; sets al
+(ne (and i0 32) 0)
+    ubfx w0, w0, #5, #1
+    xor eax, eax; test dil, 32; setne al
+(xor (lt i0 i1) 1)
+    cmp w0, w1; cset w0, ge
+    xor eax, eax; cmp edi, esi; setl al; xor eax, 1
+(fne d0 d1)
+    fcmp d0, d1; cset w0, mi; csinc w0, w0, wzr, le
+    xor eax, eax; vucomisd xmm0, xmm1; setne al
+(feq d0 d1)
+    fcmp d0, d1; cset w0, eq
+    xor eax, eax; vucomisd xmm0, xmm1; sete al; jnp 3; setnp al
+(select i0 l1 l2)
+    cmp w0, #0; csel x0, x1, x2, ne
+    test edi, edi; mov rax, rdx; cmovne rax, rsi
+(select (lt i0 i1) i0 i1)
+    cmp w0, w1; csel w0, w0, w1, lt
+    cmp edi, esi; mov eax, esi; cmovl eax, edi
+(select (lt i0 i1) i2 0)
+    cmp w0, w1; csel w0, w2, wzr, lt
+    cmp edi, esi; mov eax, 0; cmovl eax, edx
+(select (lt i0 i1) 1 0)
+    cmp w0, w1; cset w0, lt
+    mov eax, 1; cmp edi, esi; mov ecx, 0; cmovl ecx, eax; mov eax, ecx
+(select (lt i0 i1) -1 0)
+    cmp w0, w1; csetm w0, lt
+    mov eax, 4294967295; cmp edi, esi; mov ecx, 0; cmovl ecx, eax; mov eax, ecx
+(select (lt i0 i1) i2 1)
+    cmp w0, w1; csinc w0, w2, wzr, lt
+    cmp edi, esi; mov eax, 1; cmovl eax, edx
+(select (lt i0 i1) 7 6)
+    cmp w0, w1; mov w0, #6; cinc w0, w0, lt
+    mov eax, 7; cmp edi, esi; mov ecx, 6; cmovl ecx, eax; mov eax, ecx
+(select (lt i0 i1) (add i2 1) i2)
+    cmp w0, w1; cinc w0, w2, lt
+    lea eax, [rdx + 1]; cmp edi, esi; cmovge eax, edx
+(select (lt i0 0) (neg i0) i0)
+    cmp w0, #0; cneg w0, w0, lt
+    mov eax, edi; neg eax; test edi, edi; cmovns eax, edi
+(select (eq i0 i1) i2 (not i3))
+    cmp w0, w1; csinv w0, w2, w3, eq
+    mov eax, ecx; not eax; cmp edi, esi; cmove eax, edx
+(select (flt d0 d1) d0 d1)
+    fcmp d0, d1; fcsel d0, d1, d0, pl
+    vucomisd xmm1, xmm0; ja 4; vmovaps xmm0, xmm1
+(select (fne d0 d1) i0 i1)
+    fcmp d0, d1; csel w0, w1, w0, eq; csel w0, w1, w0, vs
+    vucomisd xmm0, xmm1; mov eax, esi; cmovne eax, edi
+(select i0 v0 v1)
+    cmp w0, #0; csetm x16, ne; dup v31.2d, x16; bif v0.16b, v1.16b, v31.16b
+    test edi, edi; jne 4; vmovaps xmm0, xmm1
+# Checked arithmetic
+(cadd i0 1 i0)
+    adds w0, w0, #1; b.vs #12; subs w0, w0, #1; nop
+    mov eax, edi; add eax, 1; jo 2; nop
+(cadd i0 i1 i0 i1)
+    adds w0, w0, w1; b.vs #12; subs w0, w0, w1; nop
+    mov eax, edi; add eax, esi; jo 2; nop
+(csub l0 l1 l0)
+    subs x0, x0, x1; b.vs #12; adds x0, x0, x1; nop
+    mov rax, rdi; sub rax, rsi; jo 2; nop
+(csub 0 i0 i0)
+    negs w0, w0; b.vs #12; neg w0, w0; nop
+    xor eax, eax; sub eax, edi; jo 2; nop
+(cadd i0 i0 i0)
+    adds w1, w0, w0; b.vs #16; mov x0, x1; nop
+    mov eax, edi; add eax, edi; jo 2; nop
+(cmul i0 i1 i0 i1)
+    smull x2, w0, w1; cmp x2, w2, sxtw; b.ne #16; mov w0, w2; nop
+    mov eax, edi; imul eax, esi; jo 2; nop
+(cmul i0 8 i0)
+    sbfiz x1, x0, #3, #32; cmp x1, w1, sxtw; b.ne #16; mov w0, w1; nop
+    imul eax, edi, 8; jo 2; nop
+(cmul l0 l1)
+    smulh x16, x0, x1; mul x0, x0, x1; cmp x16, x0, asr #63; b.ne #12; nop
+    mov rax, rdi; imul rax, rsi; jo 2; nop
+(zx (cmul i0 i1))
+    smull x0, w0, w1; cmp x0, w0, sxtw; b.ne #16; mov w0, w0; nop
+    mov eax, edi; imul eax, esi; jo 2; nop
+(add (cmul i0 i1) i2)
+    smull x0, w0, w1; cmp x0, w0, sxtw; b.ne #16; add w0, w0, w2; nop
+    mov eax, edi; imul eax, esi; jo 4; add eax, edx; nop
+(check (aboveeq i0 (loadi l1 -8)) i0)
+    ldur w1, [x1, #-8]; cmp w0, w1; b.hs #12; nop
+    cmp dword ptr [rsi - 8], edi; jbe 2; nop
+# Floats
+(add (mul d0 d1) d2)
+    fmul d0, d0, d1; fadd d0, d0, d2
+    vmulsd xmm0, xmm0, xmm1; vaddsd xmm0, xmm0, xmm2
+(neg (mul d0 d1))
+    fnmul d0, d0, d1
+    vmulsd xmm0, xmm0, xmm1; vxorps xmm0, xmm0, xmmword ptr [rip + 4]
+(mul (neg f0) f1)
+    fnmul s0, s1, s0
+    vxorps xmm0, xmm0, xmmword ptr [rip + 8]; vmulss xmm0, xmm0, xmm1
+(add d0 1.0)
+    fmov d1, #1.00000000; fadd d0, d0, d1
+    vaddsd xmm0, xmm0, qword ptr [rip + 8]
+(add d0 0.1)
+    ldr d1, #16; fadd d0, d0, d1
+    vaddsd xmm0, xmm0, qword ptr [rip + 8]
+(min d0 d1)
+    fmin d0, d0, d1
+    vucomisd xmm0, xmm1; jne 14; jp 6; vorps xmm0, xmm0, xmm1; jmp 10; vaddsd xmm0, xmm0, xmm1; jmp 4; vminsd xmm0, xmm0, xmm1
+(floor d0)
+    frintm d0, d0
+    vroundsd xmm0, xmm0, xmm0, 9
+(abs d0)
+    fabs d0, d0
+    vandps xmm0, xmm0, xmmword ptr [rip + 8]
+(and d0 0x7fffffffffffffff)
+    fabs d0, d0
+    vmovsd xmm1, qword ptr [rip + 8]; vandps xmm0, xmm0, xmm1
+(copysign d0 d1)
+    movi v31.2d, #0000000000000000; fneg d31, d31; bit v0.16b, v1.16b, v31.16b
+    vandps xmm15, xmm1, xmmword ptr [rip + 24]; vandps xmm0, xmm0, xmmword ptr [rip + 32]; vorps xmm0, xmm0, xmm15
+(itod i0)
+    scvtf d0, w0
+    vxorps xmm0, xmm0, xmm0; vcvtsi2sd xmm0, xmm0, edi
+(itod (zx i0))
+    ucvtf d0, w0
+    mov eax, edi; vxorps xmm0, xmm0, xmm0; vcvtsi2sd xmm0, xmm0, rax
+(utod i0)
+    ucvtf d0, w0
+    mov eax, edi; vxorps xmm0, xmm0, xmm0; vcvtsi2sd xmm0, xmm0, rax
+(itod (loadi l0 0))
+    ldr w0, [x0]; scvtf d0, w0
+    vxorps xmm0, xmm0, xmm0; vcvtsi2sd xmm0, xmm0, dword ptr [rdi]
+(dtoi d0)
+    fcvtzs w0, d0
+    vcvttsd2si eax, xmm0
+(canon d0)
+    fcmp d0, d0; mov x17, #9221120237041090560; fmov d1, x17; fcsel d0, d1, d0, vs
+    vucomisd xmm0, xmm0; jnp 8; vmovsd xmm0, qword ptr [rip + 2]
+(sub (bitcast d0) tag)
+    fmov x0, d0; sub x0, x0, x22
+    vmovq rax, xmm0; sub rax, r14
+# Loops
+(var k 0) (var s 0) (loop (check (aboveeq k (loadi l0 -8)) k s) (set s (cadd s (loadi (add l0 (shl (zx k) 3)) 0) k s)) (set k (cadd k 1 k s)) (lt k i1)) (or (zx s) tag)
+    mov w2, #0; mov w3, #0; ldur w4, [x0, #-8]; cmp w2, w4; b.hs #48; ubfiz x4, x2, #3, #32; ldr w4, [x0, x4]; adds w3, w3, w4; b.vs #36; adds w2, w2, #1; b.vs #36; cmp w2, w1; b.lt #-40; orr x0, x3, x22; nop; subs w3, w3, w4; nop; subs w2, w2, #1; nop
+    xor eax, eax; xor ecx, ecx; cmp dword ptr [rdi - 8], eax; jbe 24; mov edx, dword ptr [rdi + 8*rax]; add ecx, edx; jo 18; add eax, 1; jo 16; cmp eax, esi; jl -21; mov rax, rcx; or rax, r14; nop; sub ecx, edx; nop; sub eax, 1; nop
+(var k 0) (var s 0.0d) (loop (set s (add s (mul (loadd (add l0 (shl (zx k) 3)) 0) (loadd (add l1 (shl (zx k) 3)) 0)))) (set k (add k 1)) (lt k i2)) s
+    mov w3, #0; movi v0.2d, #0000000000000000; ldr d1, [x0, x3, lsl #3]; ldr d2, [x1, x3, lsl #3]; fmul d1, d1, d2; fadd d0, d0, d1; add w3, w3, #1; cmp w3, w2; b.lt #-24
+    xor eax, eax; vxorps xmm0, xmm0, xmm0; vmovsd xmm1, qword ptr [rdi + 8*rax]; vmulsd xmm1, xmm1, qword ptr [rsi + 8*rax]; vaddsd xmm0, xmm0, xmm1; add eax, 1; cmp eax, edx; jl -21
+(var p i0) (var q i1) (loop (store! (loadi! (add vm (zx p)) 0) (add vm (zx q)) 0) (set p (add p 4)) (set q (add q 4)) (ne p i2))
+    mov w0, w0; mov w1, w1; ldr w3, [x21, x0]; str w3, [x21, x1]; add w0, w0, #4; add w1, w1, #4; cmp w0, w2; b.ne #-20
+    mov eax, edi; mov ecx, esi; mov esi, dword ptr [r13 + rax]; mov dword ptr [r13 + rcx], esi; add eax, 4; add ecx, 4; cmp eax, edx; jne -20
+(var k 0) (var s 0) (loop (set s (add s (loadi! (add vm (zx (shl k 2))) 1024))) (set k (add k 1)) (ne k i0)) s
+    add x3, x21, #1024; mov w1, #0; mov w2, #0; lsl w4, w1, #2; ldr w4, [x3, x4]; add w2, w2, w4; add w1, w1, #1; cmp w1, w0; b.ne #-20; mov x0, x2
+    xor eax, eax; xor ecx, ecx; mov edx, eax; shl edx, 2; add ecx, dword ptr [r13 + rdx + 1024]; add eax, 1; cmp eax, edi; jne -20; mov eax, ecx
+(var k 0) (loop (store8! (load8u! (add vm (zx k)) 4096) (add vm (zx k)) 8192) (set k (add k 1)) (ne k i0))
+    add x2, x21, #1, lsl #12; add x3, x21, #2, lsl #12; mov w1, #0; ldrb w4, [x2, x1]; strb w4, [x3, x1]; add w1, w1, #1; cmp w1, w0; b.ne #-16
+    xor eax, eax; movzx ecx, byte ptr [r13 + rax + 4096]; mov byte ptr [r13 + rax + 8192], cl; add eax, 1; cmp eax, edi; jne -24
+(var p l0) (var s 0l) (loop (set s (add s (loadl p 0))) (set p (add p 8)) (ne p l1)) s
+    mov w2, #0; ldr x3, [x0]; add x2, x2, x3; add x0, x0, #8; cmp x0, x1; b.ne #-16; mov x0, x2
+    xor eax, eax; add rax, qword ptr [rdi]; add rdi, 8; cmp rdi, rsi; jne -12
+(var p l0) (loop (store l2 p 0) (set p (add p 8)) (below p l1))
+    str x2, [x0]; add x0, x0, #8; cmp x0, x1; b.lo #-12
+    mov qword ptr [rdi], rdx; add rdi, 8; cmp rdi, rsi; jb -12
+(var n i0) (loop (store 0 l1 0) (set n (add n -1)) (gt n 0))
+    mov w0, w0; str wzr, [x1]; sub w0, w0, #1; cmp w0, #0; b.gt #-12
+    mov eax, edi; mov dword ptr [rsi], 0; add eax, -1; test eax, eax; jg -13
+(var h 0x811c9dc5) (var k 0l) (loop (set h (mul (xor h (load8u (add l0 k) 0)) 0x1000193)) (set k (add k 1)) (below k l1)) h
+    mov w4, #403; movk w4, #256, lsl #16; mov w3, #40389; movk w3, #33052, lsl #16; mov w2, #0; ldrb w5, [x0, x2]; eor w5, w3, w5; mul w3, w5, w4; add x2, x2, #1; cmp x2, x1; b.lo #-20; mov x0, x3
+    mov ecx, 2166136261; xor eax, eax; movzx edx, byte ptr [rdi + rax]; xor ecx, edx; imul ecx, ecx, 16777619; add rax, 1; cmp rax, rsi; jb -21; mov eax, ecx
+(var k 0) (var s 0) (loop (set s (add s (loadi (add l0 (shl (zx k) 2)) 32))) (set k (add k 1)) (lt k i1)) s
+    add x0, x0, #32; mov w2, #0; mov w3, #0; ldr w4, [x0, x2, lsl #2]; add w3, w3, w4; add w2, w2, #1; cmp w2, w1; b.lt #-16; mov x0, x3
+    xor eax, eax; xor ecx, ecx; add ecx, dword ptr [rdi + 4*rax + 32]; add eax, 1; cmp eax, esi; jl -11; mov eax, ecx
+(var k 0) (var s 0) (loop (set s (add s (loadi (add l0 (shl (sx k) 2)) 32))) (set k (add k 1)) (lt k i1)) s
+    mov w2, #0; mov w3, #0; add x4, x0, w2, sxtw #2; ldr w4, [x4, #32]; add w3, w3, w4; add w2, w2, #1; cmp w2, w1; b.lt #-20; mov x0, x3
+    xor eax, eax; xor ecx, ecx; movsxd rdx, eax; add ecx, dword ptr [rdi + 4*rdx + 32]; add eax, 1; cmp eax, esi; jl -14; mov eax, ecx
+(var k 0) (var s 0) (loop (set s (add s (loadi! (add (add vm (zx k)) 0x1000l) 0x7ffffff0))) (set k (add k 1)) (ne k i0)) s
+    mov w3, #4080; movk w3, #32768, lsl #16; mov w1, #0; mov w2, #0; add x4, x21, x1; ldr w4, [x3, x4]; add w2, w2, w4; add w1, w1, #1; cmp w1, w0; b.ne #-20; mov x0, x2
+    mov edx, 2147483648; xor eax, eax; xor ecx, ecx; lea rsi, [rax + r13]; add ecx, dword ptr [rdx + rsi + 4080]; add eax, 1; cmp eax, edi; jne -18; mov eax, ecx
+# Calls
+(let r (call l1 l0)) (add r (add l0 l1))
+    mov x19, x0; mov x20, x1; mov x16, x0; mov x0, x1; mov x1, x16; bl #0; add x1, x19, x20; add x0, x0, x1
+    mov rbx, rsi; mov r12, rdi; xchg rdi, rsi; call 0; add r12, rbx; add rax, r12
+(let r (enter l0 l1 l2 10)) (add (add r l0) (add l1 l2))
+    stp x1, x0, [x29, #-16]; stur x2, [x29, #-24]; stp x0, x1, [x29, #-64]; mov w16, #10; stp x2, x16, [x29, #-48]; bl #0; ldur x1, [x29, #-8]; add x0, x0, x1; ldp x2, x1, [x29, #-24]; add x1, x1, x2; add x0, x0, x1
+    mov qword ptr [rbp - 8], rdi; mov qword ptr [rbp - 16], rsi; mov qword ptr [rbp - 24], rdx; mov qword ptr [rsp], rdi; mov qword ptr [rsp + 8], rsi; mov qword ptr [rsp + 16], rdx; mov qword ptr [rsp + 24], 10; call 0; add rax, qword ptr [rbp - 8]; mov rsi, qword ptr [rbp - 16]; add rsi, qword ptr [rbp - 24]; add rax, rsi
+(enter 1 2 3 4)
+    mov w16, #1; mov w17, #2; stp x16, x17, [x29, #-32]; mov w16, #3; mov w17, #4; stp x16, x17, [x29, #-16]; bl #0
+    mov qword ptr [rsp], 1; mov qword ptr [rsp + 8], 2; mov qword ptr [rsp + 16], 3; mov qword ptr [rsp + 24], 4; call 0
+(let a (loadl l0 0)) (let b (loadl l0 8)) (enter) (enter a b)
+    ldp x1, x2, [x0]; stp x2, x1, [x29, #-16]; bl #0; ldp x17, x16, [x29, #-16]; stp x16, x17, [x29, #-32]; bl #0
+    mov rcx, qword ptr [rdi]; mov qword ptr [rbp - 8], rcx; mov rdx, qword ptr [rdi + 8]; mov qword ptr [rbp - 16], rdx; call 0; mov rcx, qword ptr [rbp - 8]; mov qword ptr [rsp], rcx; mov rdx, qword ptr [rbp - 16]; mov qword ptr [rsp + 8], rdx; call 0
+(let r (enter)) (add (add d0 d1) (add d2 d3))
+    stp d1, d0, [x29, #-16]; stp d3, d2, [x29, #-32]; bl #0; ldp d1, d0, [x29, #-16]; fadd d0, d0, d1; ldp d3, d2, [x29, #-32]; fadd d1, d2, d3; fadd d0, d0, d1
+    vmovsd qword ptr [rbp - 8], xmm0; vmovsd qword ptr [rbp - 16], xmm1; vmovsd qword ptr [rbp - 24], xmm2; vmovsd qword ptr [rbp - 32], xmm3; call 0; vmovsd xmm0, qword ptr [rbp - 8]; vaddsd xmm0, xmm0, qword ptr [rbp - 16]; vmovsd xmm2, qword ptr [rbp - 24]; vaddsd xmm2, xmm2, qword ptr [rbp - 32]; vaddsd xmm0, xmm0, xmm2
+# Flags that are still good
+(when (eq i0 50) (store 0 l1 0)) (when (lt i0 50) (store 0 l1 4))
+    cmp w0, #50; b.ne #8; str wzr, [x1]; cmp w0, #50; b.ge #8; str wzr, [x1, #4]
+    cmp edi, 50; jne 6; mov dword ptr [rsi], 0; cmp edi, 50; jge 7; mov dword ptr [rsi + 4], 0
+(branch (eq i0 i1)) (branch (lt i0 i1))
+    cmp w0, w1; b.eq #16; b.lt #16; brk #0x1; brk #0x1
+    cmp edi, esi; je 4; jl 4; ud2; ud2
+(add (select (lt i0 i1) i2 i3) (select (lt i0 i1) i3 5))
+    cmp w0, w1; csel w2, w2, w3, lt; mov w0, #5; csel w0, w3, w0, lt; add w0, w2, w0
+    cmp edi, esi; mov eax, ecx; cmovl eax, edx; mov edx, 5; cmovl edx, ecx; add eax, edx
+(let s (cadd i0 i1)) (branch (gt s 0)) s
+    adds w0, w0, w1; b.vs #20; b.gt #12; brk #0x1; nop
+    mov eax, edi; add eax, esi; jo 8; test eax, eax; jg 2; ud2; nop
+(let m (and i0 0xf0)) (select m m i1)
+    and w0, w0, #0xf0; cmp w0, #0; csel w0, w0, w1, ne
+    mov eax, edi; and eax, 240; test dil, -16; cmove eax, esi
+(var k 0) (var s 0) (loop (set s (cadd (load8u (add l0 (zx k)) 0) s k s)) (set k (add k 1)) (lt k i1)) s
+    mov w2, #0; mov w3, #0; ldrb w4, [x0, x2]; adds w3, w3, w4; b.vs #28; add w2, w2, #1; cmp w2, w1; b.lt #-20; mov x0, x3; subs w3, w3, w4; nop
+    xor eax, eax; xor ecx, ecx; movzx edx, byte ptr [rdi + rax]; add ecx, edx; jo 11; add eax, 1; cmp eax, esi; jl -15; mov eax, ecx; sub ecx, edx; nop
+(let c (ge i0 0)) (add (select c i1 i2) (mul c i3))
+    cmp w0, #0; cset w0, ge; csel w1, w1, w2, ge; madd w0, w0, w3, w1
+    xor eax, eax; test edi, edi; setns al; cmovns edx, esi; imul eax, ecx; add eax, edx
+(let c (and (eq i0 i1) (eq i2 0))) (add (select c i1 i2) (select c i3 i0))
+    cmp w0, w1; ccmp w2, #0, #0, eq; cset w4, eq; csel w1, w1, w2, eq; csel w0, w3, w0, eq; add w0, w1, w0
+    xor eax, eax; cmp edi, esi; sete al; xor r8d, r8d; test edx, edx; sete r8b; test eax, r8d; cmovne edx, esi; test eax, r8d; cmovne edi, ecx; lea eax, [rdx + rdi]
+# Constants from pinned registers
+(branch (and l0 0xfffe000000000002))
+    tst x0, x23; b.ne #12; brk #0x1
+    test rdi, r15; jne 2; ud2
+(branch (below l0 0xfffe000000000000))
+    cmp x0, x22; b.lo #12; brk #0x1
+    cmp rdi, r14; jb 2; ud2
+(store 0xfffe000000000005l l0 0)
+    add x1, x23, #3; str x1, [x0]
+    lea rax, [r15 + 3]; mov qword ptr [rdi], rax
+(enter 0xfffe000000000001 0xfffe000000000000)
+    mov x16, #-562949953421311; stp x16, x22, [x29, #-16]; bl #0
+    lea rax, [r14 + 1]; mov qword ptr [rsp], rax; mov qword ptr [rsp + 8], r14; call 0
+(loadl 0x700012340040l 0)
+    ldr x0, [x21, #64]
+    lea rax, [r13 - 305397760]; mov rax, qword ptr [rax + 305397824]
+(loadl 0x700012358008l 0)
+    add x17, x21, #24, lsl #12; ldr x0, [x17, #8]
+    lea rax, [r13 - 305397760]; mov rax, qword ptr [rax + 305496072]
+(call 0x700012345678)
+    mov w0, #22136; add x0, x21, x0; bl #0
+    lea rdi, [r13 + 22136]; call 0
+(add (zx i0) 0xfffe000000000000)
+    add x0, x22, w0, uxtw
+    mov eax, edi; add rax, r14
+(branch (below (and i0 0xffff) 0xd801))
+    mov w1, #55297; cmp w1, w0, uxth; b.hi #12; brk #0x1
+    movzx edi, di; cmp edi, 55297; jb 2; ud2
+(add (shl l0 2) 0x123456789)
+    mov x1, #26505; movk x1, #9029, lsl #16; movk x1, #1, lsl #32; add x0, x1, x0, lsl #2
+    movabs rax, 4294967296; lea rax, [rax + 4*rdi + 591751049]
+# Vectors
+(@I32x4Add v0 (@I32x4Mul v1 v2))
+    mla v0.4s, v1.4s, v2.4s
+    vpmulld xmm1, xmm1, xmm2; vpaddd xmm0, xmm0, xmm1
+(@I16x8Sub v0 (@I16x8Mul v1 v2))
+    mls v0.8h, v1.8h, v2.8h
+    vpmullw xmm1, xmm1, xmm2; vpsubw xmm0, xmm0, xmm1
+(@I32x4Add (@I32x4ExtMulHighI16x8S v1 v2) v0)
+    smlal2 v0.4s, v1.8h, v2.8h
+    vpmulhw xmm15, xmm1, xmm2; vpmullw xmm1, xmm1, xmm2; vpunpckhwd xmm1, xmm1, xmm15; vpaddd xmm0, xmm1, xmm0
+(@I64x2Sub v0 (@I64x2ExtMulLowI32x4U v1 v2))
+    umlsl v0.2d, v1.2s, v2.2s
+    vpshufd xmm15, xmm1, 80; vpshufd xmm1, xmm2, 80; vpmuludq xmm1, xmm15, xmm1; vpsubq xmm0, xmm0, xmm1
+(@I32x4Add v0 (@I32x4Add (@I32x4ExtMulLowI16x8S v1 v2) (@I32x4ExtMulHighI16x8S v1 v2)))
+    smlal v0.4s, v1.4h, v2.4h; smlal2 v0.4s, v1.8h, v2.8h
+    vpmulhw xmm15, xmm1, xmm2; vpmullw xmm3, xmm1, xmm2; vpunpcklwd xmm3, xmm3, xmm15; vpmulhw xmm15, xmm1, xmm2; vpmullw xmm1, xmm1, xmm2; vpunpckhwd xmm1, xmm1, xmm15; vpaddd xmm3, xmm3, xmm1; vpaddd xmm0, xmm0, xmm3
+(@I32x4Add (@I32x4DotI16x8S v0 v1) (@I32x4DotI16x8S v2 v3))
+    smull v4.4s, v2.4h, v3.4h; smlal v4.4s, v0.4h, v1.4h; smull2 v2.4s, v2.8h, v3.8h; smlal2 v2.4s, v0.8h, v1.8h; addp v0.4s, v4.4s, v2.4s
+    vpmaddwd xmm0, xmm0, xmm1; vpmaddwd xmm2, xmm2, xmm3; vpaddd xmm0, xmm0, xmm2
+(@I32x4Add (@I32x4Add v0 (@I32x4DotI16x8S v1 v2)) (@I32x4DotI16x8S v3 v4))
+    smull v5.4s, v3.4h, v4.4h; smlal v5.4s, v1.4h, v2.4h; smull2 v3.4s, v3.8h, v4.8h; smlal2 v3.4s, v1.8h, v2.8h; addp v31.4s, v5.4s, v3.4s; add v0.4s, v31.4s, v0.4s
+    vpmaddwd xmm1, xmm1, xmm2; vpaddd xmm0, xmm0, xmm1; vpmaddwd xmm3, xmm3, xmm4; vpaddd xmm0, xmm0, xmm3
+(@I16x8Add v0 (@I16x8ExtAddPairwiseI8x16U v1))
+    uadalp v0.8h, v1.16b
+    vpmaddubsw xmm1, xmm1, xmmword ptr [rip + 7]; vpaddw xmm0, xmm0, xmm1
+(@I32x4Add v0 (@I32x4ShrU v1 3))
+    usra v0.4s, v1.4s, #3
+    vpsrld xmm1, xmm1, 3; vpaddd xmm0, xmm0, xmm1
+(@I16x8Add v0 (@I16x8ExtendLowI8x16U v1))
+    uaddw v0.8h, v0.8h, v1.8b
+    vpmovzxbw xmm1, xmm1; vpaddw xmm0, xmm0, xmm1
+(@I32x4Sub (@I32x4ExtendHighI16x8S v0) (@I32x4ExtendHighI16x8S v1))
+    ssubl2 v0.4s, v0.8h, v1.8h
+    vpunpckhwd xmm0, xmm0, xmm0; vpsrad xmm0, xmm0, 16; vpunpckhwd xmm1, xmm1, xmm1; vpsrad xmm1, xmm1, 16; vpsubd xmm0, xmm0, xmm1
+(@I8x16Sub (@I8x16MaxU v0 v1) (@I8x16MinU v0 v1))
+    uabd v0.16b, v0.16b, v1.16b
+    vpmaxub xmm2, xmm0, xmm1; vpminub xmm0, xmm0, xmm1; vpsubb xmm0, xmm2, xmm0
+(@F32x4Mul v0 (splat f1))
+    fmul v0.4s, v0.4s, v1.s[0]
+    vshufps xmm1, xmm1, xmm1, 0; vmulps xmm0, xmm0, xmm1
+(@Or v0 (@Not v1))
+    orn v0.16b, v0.16b, v1.16b
+    vpcmpeqd xmm15, xmm0, xmm0; vpxor xmm1, xmm15, xmm1; vpor xmm0, xmm0, xmm1
+(@Or (@I32x4Shl v0 7) (@I32x4ShrU v0 25))
+    shl v1.4s, v0.4s, #7; sri v1.4s, v0.4s, #25; mov v0.16b, v1.16b
+    vpslld xmm1, xmm0, 7; vpsrld xmm0, xmm0, 25; vpor xmm0, xmm1, xmm0
+(let x (@Xor v0 v1)) (@Or (@I64x2Shl x 40) (@I64x2ShrU x 24))
+    xar v0.2d, v0.2d, v1.2d, #24
+    vpxor xmm0, xmm0, xmm1; vpsllq xmm1, xmm0, 40; vpsrlq xmm0, xmm0, 24; vpor xmm0, xmm1, xmm0
+[basic] (let x (@Xor v0 v1)) (@Or (@I64x2Shl x 40) (@I64x2ShrU x 24))
+    eor v0.16b, v0.16b, v1.16b; shl v1.2d, v0.2d, #40; sri v1.2d, v0.2d, #24; mov v0.16b, v1.16b
+    pxor xmm0, xmm1; movaps xmm1, xmm0; psllq xmm1, 40; psrlq xmm0, 24; por xmm0, xmm1
+(@Xor (@Xor v0 v1) v2)
+    eor3 v0.16b, v2.16b, v0.16b, v1.16b
+    vpxor xmm0, xmm0, xmm1; vpxor xmm0, xmm0, xmm2
+(@Xor v0 (@AndNot v1 v2))
+    bcax v0.16b, v0.16b, v1.16b, v2.16b
+    vpandn xmm2, xmm2, xmm1; vpxor xmm0, xmm0, xmm2
+(@I8x16Eq v0 0)
+    cmeq v0.16b, v0.16b, #0
+    vpcmpeqb xmm0, xmm0, xmmword ptr [rip + 8]
+(@F64x2Lt 0 v0)
+    fcmgt v0.2d, v0.2d, #0.0
+    vxorps xmm1, xmm0, xmm0; vcmpltpd xmm0, xmm1, xmm0

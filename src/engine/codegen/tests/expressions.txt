@@ -1,0 +1,273 @@
+# What is given => what becomes of it. A line without an arrow stays as it is.
+# x, y, z are I32; X, Y, Z are I64; f, g are F32; d, e are F64; u, v, w are V128.
+
+# Sums, differences and products
+[Add [Add x 1] 2] => [Add x 3]
+[Add 5 x] => [Add x 5]
+[Sub x 5] => [Add x -5]
+[Sub 0 x] => [Neg x]
+[Add x x] => [Shl x 1]
+[Add [Add X 16] Y]
+[Add [Add X 16] [Widen(Unsigned) y]] => [Add [Add X [Widen(Unsigned) y]] 16]
+[Add [Add X 16] [Widen(Signed) y]]
+[Add [Add [Widen(Unsigned) y] 16] X] => [Add [Add X [Widen(Unsigned) y]] 16]
+[Add [Add [Widen(Unsigned) y] -16] X]
+[Add [Sub 16 [Widen(Unsigned) y]] X]
+[Sub [Add X 16] [Widen(Unsigned) y]]
+[Sub [Add X -16] [Widen(Unsigned) y]] => [Add [Sub X [Widen(Unsigned) y]] -16]
+[Add [Sub x y] y] => x
+[Sub [Add x y] x] => y
+[Sub x [Add x y]] => [Neg y]
+[Add x [Neg y]] => [Sub x y]
+[Add [Xor x -1] 1] => [Neg x]
+[Add [Neg x] -1] => [Xor x -1]
+[Add [Mul x y] [Mul x z]] => [Mul x [Add y z]]
+[Add [Mul x 3] x] => [Shl x 2]
+[Add [Shl x 2] x]
+[Sub x [And x 7]] => [And x -8]
+[Sub 31 [And x 15]] => [Xor [And x 15] 31]
+[Sub [Xor [And x 255] 128] 128] => [SignExtend(S8) x]
+[Sub [Xor [And x 4095] 2048] 2048] => [Sar [Shl x 20] 20]
+[Sub x [Mul [Div x y] y]] => [Rem x y]
+[Neg [Sub x y]] => [Sub y x]
+[Neg [Mul x 3]] => [Mul x -3]
+[Mul x 8] => [Shl x 3]
+[Mul x -8] => [Neg [Shl x 3]]
+[Mul [Add x 1] 12] => [Add [Mul x 12] 12]
+[Mul x [Shl 1 y]] => [Shl x y]
+[Mul [Neg x] [Neg y]] => [Mul x y]
+[MulHigh(Unsigned) X 256] => [Shr X 56]
+
+# Division
+[Div x 4] => [Sar [Add x [Shr [Sar x 31] 30]] 2]
+[Div x 2] => [Sar [Add x [Shr x 31]] 1]
+[Div [And x 255] 4] => [And [Shr x 2] 63]
+[Div x 7] => [Add [Wrap [Sar [Mul [Widen(Signed) x] 0x92492493] 34]] [Shr x 31]]
+[Div x -1] => [Neg x]
+[Rem x 8] => [Sub x [And [Add x [Shr [Sar x 31] 29]] -8]]
+[Rem [Shr x 1] 8] => [And [Shr x 1] 7]
+[UnsignedDiv x 16] => [Shr x 4]
+[UnsignedDiv x 10] => [Wrap [Shr [Mul [Widen(Unsigned) x] 0xcccccccd] 35]]
+[UnsignedDiv x 7] => [Wrap [MulHigh(Unsigned) [Widen(Unsigned) x] 0x24924924a0000000]]
+[UnsignedDiv x 14] => [Wrap [Shr [Mul [Widen(Unsigned) [Shr x 1]] 0x92492493] 34]]
+[UnsignedDiv X 10] => [Shr [MulHigh(Unsigned) X 0xcccccccccccccccd] 3]
+[UnsignedDiv x 0x80000001] => [AboveEq x 0x80000001]
+[UnsignedRem x 16] => [And x 15]
+[UnsignedRem x [Shl 1 y]] => [And x [Add [Shl 1 y] -1]]
+[UnsignedDiv [Widen(Unsigned) x] [Widen(Unsigned) y]] => [Widen(Unsigned) [UnsignedDiv x y]]
+[TotalDiv x 0] => 0
+[TotalRem x -1] => 0
+[TotalDiv x [Or [And y 255] 1]] => [Div x [Or [And y 255] 1]]
+[TotalDiv x y]
+
+# Bits
+[And [And x 255] 15] => [And x 15]
+[And [Shr x 24] 255] => [Shr x 24]
+[And [Shl x 4] 4080] => [Shl [And x 255] 4]
+[And X 0xffffffff] => [Widen(Unsigned) [Wrap X]]
+[And [SignExtend(S8) x] 255] => [And x 255]
+[And [Widen(Signed) x] 255] => [Widen(Unsigned) [And x 255]]
+[And [Or x 256] 255] => [And x 255]
+[And [Or [Shl x 8] y] 255] => [And y 255]
+[And [Xor x -1] [Xor y -1]] => [Xor [Or x y] -1]
+[And [Xor x -1] y]
+[And x [Xor x -1]] => 0
+[Or [And x y] [And x z]] => [And x [Or y z]]
+[Or x [And x y]] => x
+[Xor [Xor x y] y] => x
+[Xor [Lt x y] 1] => [Ge x y]
+[Xor [Shr x 3] [Shr y 3]] => [Shr [Xor x y] 3]
+[Or [Shl x 8] [Shr x 24]] => [RotateRight x 24]
+[Or [Shl x y] [Shr x [Sub 32 y]]] => [RotateLeft x y]
+[Xor [Shl x y] [Shr x [Sub 32 y]]]
+
+# Shifts
+[Shl x 33] => [Shl x 1]
+[Shl x [And y 31]] => [Shl x y]
+[Shl x [And y 15]]
+[Shl [Shr x 4] 4] => [And x -16]
+[Shr [Shl x 4] 4] => [And x 0xfffffff]
+[Shr [Shl x 4] 8] => [And [Shr x 4] 0xffffff]
+[Shr [And x 4080] 4] => [And [Shr x 4] 255]
+[Shl [Add x 1] 3] => [Add [Shl x 3] 8]
+[Sar [Shl x 24] 24] => [SignExtend(S8) x]
+[Sar [Shl X 32] 32] => [Widen(Signed) [Wrap X]]
+[Sar [Shr x 1] 3] => [Shr x 4]
+[Sar [Mul [SignExtend(S8) x] 24] 3] => [Mul [SignExtend(S8) x] 3]
+[Shr [CountLeadingZeros x] 5] => [Eq x 0]
+[RotateLeft x 8] => [RotateRight x 24]
+
+# Widths
+[Wrap [Widen(Signed) x]] => x
+[Wrap [Add [Widen(Signed) x] [Widen(Signed) y]]] => [Add x y]
+[Wrap [Or [Widen(Unsigned) x] 0xfffe000000000000]] => x
+[Wrap [Sar [Shl [Widen(Signed) x] 12] 12]] => x
+[Wrap [Sar [Add [Shl [Widen(Signed) x] 12] [Shl [Widen(Signed) y] 12]] 12]] => [Add x y]
+[Wrap [Sar [Add X 4096] 12]] => [Add [Wrap [Shr X 12]] 1]
+[Widen(Signed) [And x 255]] => [Widen(Unsigned) [And x 255]]
+[Widen(Unsigned) [Wrap [Shr X 40]]] => [Shr X 40]
+[Widen(Unsigned) [Add [And x 255] 4]] => [Add [Widen(Unsigned) [And x 255]] 4]
+[Widen(Unsigned) [Add x 4]]
+[Widen(Unsigned) [Shl [And x 255] 2]] => [Shl [Widen(Unsigned) [And x 255]] 2]
+[SignExtend(S8) [SignExtend(S16) x]] => [SignExtend(S8) x]
+[SignExtend(S16) [SignExtend(S8) x]] => [SignExtend(S8) x]
+[SignExtend(S8) [And x 15]] => [And x 15]
+[SignExtend(S8) [Widen(Unsigned) x]] => [Widen(Signed) [SignExtend(S8) x]]
+[SwapBytes(S32) [SwapBytes(S32) x]] => x
+[Opaque [Opaque x]] => [Opaque x]
+[Add [Opaque 1] 1]
+[FitsIn(8) [And x 255]] => [And x 255]
+[FitsIn(8) [And x 511]]
+[And [FitsIn(8) x] 255] => [FitsIn(8) x]
+[Widen(Signed) [FitsIn(8) x]] => [Widen(Unsigned) [FitsIn(8) x]]
+
+# Comparisons
+[Lt 5 x] => [Gt x 5]
+[Below x 1] => [Eq x 0]
+[Above x 0] => [Ne x 0]
+[Lt x 1] => [Le x 0]
+[Below x 0x80000000] => [Ge x 0]
+[Below [And x 7] 8] => 1
+[Eq [Or x 1] 0] => 0
+[Eq [Lt x y] 0] => [Ge x y]
+[Ne [And x 1] 0] => [And x 1]
+[Eq [Add x 3] 5] => [Eq x 2]
+[Eq [Sub x y] 0] => [Eq x y]
+[Eq [And x 8] 8] => [Ne [And x 8] 0]
+[Ne [And [Shr x 5] 3] 0] => [Ne [And x 96] 0]
+[Eq [Mul x 3] 9] => [Eq x 3]
+[Lt [Widen(Signed) x] [Widen(Signed) y]] => [Lt x y]
+[Lt [Widen(Unsigned) x] [Widen(Unsigned) y]] => [Below x y]
+[Lt [And x 255] [And y 255]] => [Below [And x 255] [And y 255]]
+[Below [Shr x 4] 3] => [Below x 48]
+[Above [Sar x 2] 3] => [Above x 15]
+[Below [UnsignedRem x y] y] => 1
+[Eq [Select x 3 4] 3] => [Ne x 0]
+[Or [Lt x y] [Eq x y]] => [Le x y]
+[And [Ge x 48] [Le x 57]] => [BelowEq [Add x -48] 9]
+[Or [Lt x 48] [Gt x 57]] => [Above [Add x -48] 9]
+[And [Ge x 0] [Lt x 10]] => [Below x 10]
+[And [Ge x 0] [Lt x [Shr y 1]]] => [Below x [Shr y 1]]
+[And [Eq x 0] [Eq y 0]] => [Eq [Or x y] 0]
+[Ne [Lt x 0] [Lt y 0]] => [Lt [Xor x y] 0]
+
+# Choices
+[Select [Eq x 0] y z] => [Select x z y]
+[Select [Ne x 0] y z] => [Select x y z]
+[Select x y y] => y
+[Select [Lt x y] 1 0] => [Lt x y]
+[Select [Lt x 0] -1 0] => [Sar x 31]
+[Select [Lt x y] 8 7] => [Add [Lt x y] 7]
+[Select [Eq x y] x y] => y
+[Select x [Select x y 5] z] => [Select x y z]
+[Select [Lt x y] [Lt y z] 0] => [And [Lt x y] [Lt y z]]
+[Add [Select x 3 9] 1] => [Select x 4 10]
+[And [Select [Below x 8] x 7] 7] => [Select [Below x 8] x 7]
+
+# Overflow
+[CheckedAdd x 0] => x
+[CheckedAdd [And x 255] [And y 255]] => [Add [And x 255] [And y 255]]
+[CheckedMul [SignExtend(S16) x] [SignExtend(S16) y]] => [Mul [SignExtend(S16) x] [SignExtend(S16) y]]
+[CheckedSub x 3] => [CheckedAdd x -3]
+[CheckedMul x 2] => [CheckedAdd x x]
+[CheckedAdd x y]
+[Sub [CheckedAdd x y] [Add x y]] => 0
+
+# Floats
+[Add d -0.0] => d if not quieting
+[Add d -0.0] if quieting
+[Add [Mul d e] -0.0] => [Mul d e]
+[Add d 0.0]
+[Mul d 1.0] => d if not quieting
+[Mul d 2.0] => [Add d d]
+[Mul d -1.0] => [Neg d] if not quieting
+[Mul d -1.0] => [Sub -0.0 d] if quieting
+[Mul d 0.0]
+[Div d 4.0] => [Mul d 0.25]
+[Div d 3.0]
+[Sub d d]
+[Add d [Neg e]] => [Sub d e]
+[Neg [Sub d e]]
+[Abs [Neg d]] => [Abs d]
+[Abs [Bitcast X]] => [Bitcast [And X 0x7fffffffffffffff]]
+[Bitcast [And [Bitcast d] 0x7fffffffffffffff]] => [Abs d]
+[CopySign d 1.0] => [Abs d]
+[Round(Down) [Round(TowardZero) d]] => [Round(TowardZero) d]
+[Demote [Promote f]] => f if not quieting
+[Demote [Promote f]] if quieting
+[Promote [Demote d]]
+[Demote [Add [Promote f] [Promote g]]] => [Add f g]
+[Demote [Mul [Promote f] 1.5]] => [Mul f 1.5]
+[Demote [Mul [Promote f] 0.1]]
+[Demote [Sqrt [Promote f]]] => [Sqrt f]
+[Lt [Promote f] [Promote g]] => [Lt f g]
+[Lt [IntToFloat(Signed):F64 x] [IntToFloat(Signed):F64 y]] => [Lt x y]
+[Lt [IntToFloat(Signed):F64 x] 2.5] => [Lt x 3]
+[Lt [IntToFloat(Signed):F32 x] [IntToFloat(Signed):F32 y]]
+[FloatToInt(Signed):I32 [IntToFloat(Signed):F64 x]] => x
+[FloatToInt32Modular [Add [IntToFloat(Signed):F64 x] [IntToFloat(Signed):F64 y]]] => [Add x y]
+[CanonicalizeNan [IntToFloat(Signed):F64 x]] => [IntToFloat(Signed):F64 x]
+[Select [Eq d d] d NaN] => [CanonicalizeNan d]
+[Eq d d] => [Ordered d d]
+[Lt d d] => 0
+[Or [Lt d e] [Eq d e]] => [Le d e]
+
+# Memory
+[Full:I32:4 [Add X 8]] => [Full:I32:12 X]
+[Full:I32:4 [Add X 0x7fffffff]]
+[Full:I32:4 [Or [Shl X 4] 8]] => [Full:I32:12 [Shl X 4]]
+[Full:I32:4 4096] => [Full:I32 4100]
+[And [Full:I32 X] 255] => [Narrow(S8,Unsigned):I32 X]
+[And [Full:I32 X traps] 255]
+[SignExtend(S8) [Narrow(S8,Unsigned):I32 X traps]] => [Narrow(S8,Signed):I32 X traps]
+[Wrap [Shr [Full:I64 X] 32]] => [Full:I32:4 X]
+[Bitcast [Full:I64 X]] => [Full:F64 X]
+[Sub [Full:I32 X] [Full:I32 X]] => 0
+
+# Vectors
+[I32x4Add [VectorOr [VectorXor u u] 1] 2] => 3
+[F32x4RelaxedMin [VectorOr [VectorXor u u] 1] 2] => [F32x4RelaxedMin 1 2]
+[VectorXor u -1] => [Not u]
+[VectorAnd u [Not v]] => [AndNot u v]
+[VectorOr [Not u] [Not v]] => [Not [VectorAnd u v]]
+[VectorOr [VectorAnd u w] [AndNot v w]] => [Bitselect u v w]
+[Not [I32x4GeS u v]] => [I32x4LtS u v]
+[Not [F32x4Ge u v]]
+[I32x4Sub u u] => 0
+[F32x4Sub u u]
+[I32x4Shl u 1] => [I32x4Add u u]
+[I32x4Shl u 34] => [I32x4Shl u 2]
+[I16x8ShrS [Shuffle:0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7 u u] 8] => [I16x8ExtendLowI8x16S u]
+[Shuffle:0,8,1,9,2,10,3,11 u 0] => [I32x4ExtendLowI16x8U u]
+[I32x4DotI16x8S u 0x00010001000100010001000100010001] => [I32x4ExtAddPairwiseI16x8S u]
+[I64x2Mul [I64x2ExtendLowI32x4U u] [I64x2ExtendLowI32x4U v]] => [I64x2ExtMulLowI32x4U u v]
+[VectorOr [I32x4Shl u 16] [I32x4ShrU u 16]] => [Shuffle:1,0,3,2,5,4,7,6 u u]
+[I8x16Swizzle u 0x0f0e0d0c0b0a09080706050403020100] => u
+[Shuffle:0,1,2,3 u v] => u
+[Shuffle:4,5,6,7 u v] => v
+[Shuffle:2,0 u u] => [Shuffle:0,0 u u]
+[Shuffle:1,0 [Shuffle:1,0 u u] v] => u
+[Shuffle:1,3 u [Shuffle:0,0 v v]] => [Shuffle:1,2 u v]
+[Splat:Int(S32) [ExtractLane:Int(S32):2 u]] => [Shuffle:2,2,2,2 u u]
+[Splat:Int(S32) [Full:I32 X]] => [VectorSplat(S32):V128 X]
+[ExtractLane:Int(S32):1 [ReplaceLane:Int(S32):1 u x]] => x
+[ExtractLane:Int(S32):1 [ReplaceLane:Int(S32):2 u x]] => [ExtractLane:Int(S32):1 u]
+[ExtractLane:Int(S8):3 [Splat:Int(S8) x]] => [And x 255]
+[I32x4ExtendLowI16x8S [VectorZero(S64):V128 X]] => [VectorExtend(S16,Signed):V128 X]
+[Ne [I8x16Bitmask [I8x16Eq u v]] 0] => [AnyTrue [I8x16Eq u v]] if arm64
+[Ne [I8x16Bitmask [I8x16Eq u v]] 0] if x64
+
+# Trees
+[Xor [Xor [Xor [Shr x 7] [Shr x 3]] y] [Shl x 25]] => [Xor [Xor [Shr x 3] y] [RotateRight x 7]] if regrouped
+[Sub [Add [Add x y] z] [Add y [Mul z 3]]] => [Sub x [Shl z 1]] if regrouped
+[Xor [Xor [Xor x y] z] [Xor y x]] => z if regrouped
+[And [And [And x y] z] [Xor x -1]] => 0 if regrouped
+[Add [Add [Add x y] z] [Wrap X]] => [Add [Add x y] [Add z [Wrap X]]] if regrouped
+
+# Bytes
+[Or [Or [Shl x 24] [Shl [And x 0xff00] 8]] [Or [And [Shr x 8] 0xff00] [Shr x 24]]] => [SwapBytes(S32) x]
+[Or [RotateRight [And x 0xff00ff] 8] [And [RotateLeft x 8] 0xff00ff]] => [SwapBytes(S32) x]
+[Or [Shl [And x 255] 8] [And [Shr x 8] 255]] => [SwapBytes(S16) x]
+[Or [Shl [And x 255] 8] [And [Shr y 8] 255]]
+[Or [Shl [SwapBytes(S32) X] 32] [SwapBytes(S32) [Shr X 32]]] => [SwapBytes(S64) X]
+[Wrap [Add [Mul [Widen(Signed) x] [Widen(Signed) y]] [Mul [Widen(Signed) z] [Widen(Signed) z]]]] => [Add [Mul x y] [Mul z z]]

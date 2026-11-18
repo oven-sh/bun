@@ -1,0 +1,17 @@
+[package]
+name = "bun_engine_asm"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bitflags.workspace = true
+
+[dev-dependencies]
+bun_engine_exec_memory.workspace = true
+libc.workspace = true

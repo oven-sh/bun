@@ -2035,6 +2035,7 @@ dependencies = [
  "bun_threading",
  "bun_trim",
  "bun_url",
+ "bun_wyhash",
  "bun_zlib",
  "bun_zstd",
  "const_format",

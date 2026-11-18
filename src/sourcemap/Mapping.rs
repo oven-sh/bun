@@ -82,19 +82,18 @@ impl List {
 
     /// By the generated position. Ties keep their order.
     pub(crate) fn sort(&mut self) {
-        fn reorder<T: Copy>(column: &mut Vec<T>, order: &[u32]) {
-            *column = order.iter().map(|&i| column[i as usize]).collect();
-        }
         let mut order = index_sort::identity(self.len());
         index_sort::sort_indices(&mut order, &mut |a, b| {
             self.generated[a as usize].cmp(&self.generated[b as usize])
         });
-        reorder(&mut self.generated, &order);
-        reorder(&mut self.original, &order);
-        reorder(&mut self.source_index, &order);
-        if let Some(name_index) = &mut self.name_index {
-            reorder(name_index, &order);
-        }
+        index_sort::apply_permutation_by_swaps(&mut order, |a, b| {
+            self.generated.swap(a, b);
+            self.original.swap(a, b);
+            self.source_index.swap(a, b);
+            if let Some(name_index) = &mut self.name_index {
+                name_index.swap(a, b);
+            }
+        });
     }
 
     pub(crate) fn append(&mut self, mapping: &Mapping) {

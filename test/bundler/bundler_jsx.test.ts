@@ -1168,7 +1168,10 @@ describe("bundler", () => {
         expect(out).toContain(`title='"'`);
         expect(out).toContain(`title="'"`);
         expect(out).toContain('title="`"');
-        expect(out).toContain(`title={"'\\""}`);
+        // esbuild prints an attribute containing both quotes as a template literal.
+        if (!ESBUILD) {
+          expect(out).toContain(`title={"'\\""}`);
+        }
         expect(out).toContain(`title={"&"}`);
         expect(out).toContain(`title={"\\uD800"}>{"\\uD800"}</div>`);
         expect(out).toContain(`title={"\\u2028"}>{"\\u2028"}</div>`);
@@ -1355,7 +1358,10 @@ describe("bundler", () => {
       jsx: { runtime: "preserve" },
       onAfterBundle(api) {
         const out = api.readFile("/out.js");
-        expect(out).toContain('<x-étiquette résumé="😺">');
+        // esbuild's default ASCII output escapes non-ASCII string values.
+        if (!ESBUILD) {
+          expect(out).toContain('<x-étiquette résumé="😺">');
+        }
         expect(out).toContain("</x-étiquette>");
         const { code } = transformSync(out, { loader: "jsx", charset: "utf8" });
         expect(code).toContain('"x-étiquette"');
@@ -1377,9 +1383,12 @@ describe("bundler", () => {
       jsx: { runtime: "preserve" },
       onAfterBundle(api) {
         const out = api.readFile("/out.js");
-        expect(out).toContain('<div title="ĦĢħļľŻŽ😦😢😧😼😾🙻🙽">ĦĢħļľŻŽ😦😢😧😼😾🙻🙽</div>');
-        expect(out).toContain(`<div title='"Ģħ'>ĦļľŻŽ</div>`);
-        expect(out).toContain(`<div title="'Ģħ">😦😼😾🙻🙽</div>`);
+        // esbuild's default ASCII output escapes non-ASCII string values.
+        if (!ESBUILD) {
+          expect(out).toContain('<div title="ĦĢħļľŻŽ😦😢😧😼😾🙻🙽">ĦĢħļľŻŽ😦😢😧😼😾🙻🙽</div>');
+          expect(out).toContain(`<div title='"Ģħ'>ĦļľŻŽ</div>`);
+          expect(out).toContain(`<div title="'Ģħ">😦😼😾🙻🙽</div>`);
+        }
         const { code } = transformSync(out, { loader: "jsx", jsxFactory: "h", charset: "utf8" });
         api.writeFile("/out.js", `const h = (type, props, ...children) => ({ type, props, children });\n${code}`);
       },

@@ -403,10 +403,12 @@ impl Queue<'_> {
             if self.pending > kept && !self.run_pending_quickly(kept, literals, detached, out) {
                 self.run_pending_carefully(literals, destination)?;
             } else if is_quick {
+                let left = reader.left;
                 with_bmi2(
                     #[inline(always)]
                     || read_and_run::<AHEAD>(reader, self, literals, detached, out),
                 )?;
+                debug_assert!(reader.left < left);
                 if reader.left == 1 {
                     self.read(reader, &mut large)?;
                     self.run_pending_quickly(0, literals, detached, out);

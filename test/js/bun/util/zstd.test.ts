@@ -722,6 +722,23 @@ describe("literals compress to what zstd 1.5.7 makes of them", () => {
     expect(summary(frames)).toBe("dfdb0f99");
   });
 
+  it("three of them, from where a match of 3 bytes is too far back", () => {
+    const some = generate(4000, below => below(16));
+    const rare = generate(2000, below => 128 + below(128));
+    const frames = [256 * 1024 - 1, 256 * 1024].map(far => {
+      const bytes = new Uint8Array(far + 2000);
+      bytes.set(some.subarray(0, 2000));
+      bytes.set(some.subarray(2000), far);
+      // What is around them differs, so that only the table for 3 bytes has them, which this level is the first to use.
+      for (let at = 50; at < 2000; at += 50) {
+        bytes.set([100, ...rare.subarray(at, at + 3), 101], at);
+        bytes.set([102, ...rare.subarray(at, at + 3), 103], far + at);
+      }
+      return zstdCompressSync(bytes, { level: 18 });
+    });
+    expect([...frames.map(it => it.length), summary(frames)]).toEqual([2418, 2497, "436ff6b2"]);
+  });
+
   it("a whole block", () => {
     const bytes = generate(128 * 1024, below => below(1 + below(64)));
     expect(summary([0, 1, 200].map(less => zstdCompressSync(bytes.subarray(less), { level: 1 })))).toBe("8c0ed0aa");

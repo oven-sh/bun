@@ -587,6 +587,28 @@ fn a_large_sequence_does_not_fit_behind_the_last_that_does() {
 }
 
 #[test]
+fn a_sequence_takes_all_bits_that_are_loaded() -> Result<()> {
+    let mut noise = Noise(12);
+    let new = |&(literal_len, offset_value, match_len): &(usize, usize, usize)| Sequence {
+        literal_len,
+        offset_value,
+        match_len,
+    };
+    // 14, 17 and 14 bits, and 5 for each state. How many are loaded depends on those that the last one takes.
+    let (short, large) = ((1, 1, 3), (30_000, 250_000, 30_000));
+    for (before, offset_bits) in (1..4).flat_map(|it| (2..10).map(move |bits| (it, bits))) {
+        let last = (1, 1 << offset_bits, 3);
+        let all = [vec![short; before], vec![large, short, short, short, last]].concat();
+        let mut frame = Frame::new(19, Vec::new());
+        (0..2).for_each(|_| frame.raw(&noise.bytes(BLOCK)));
+        let literals = repeated(2, all.iter().map(|it| it.0).sum());
+        frame.compressed(&literals, &all.iter().map(new).collect::<Vec<_>>());
+        frame.check()?;
+    }
+    Ok(())
+}
+
+#[test]
 fn all_codes_of_one_length() -> Result<()> {
     for length in 1..8 {
         let mut frame = Frame::new(17, Vec::new());

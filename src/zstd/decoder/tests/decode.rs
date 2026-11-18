@@ -199,6 +199,12 @@ fn refused_memory_is_an_error() {
 }
 
 #[test]
+fn a_byte_that_is_repeated_0_times_takes_no_room() {
+    let out = at_once(&hex("28b52ffd 0000 030000 61"), 0);
+    assert_eq!(out.map(|it| it.capacity()), Ok(0));
+}
+
+#[test]
 fn raw_literals_take_no_memory() {
     let frame = [
         hex("28b52ffd 0000 200000 61626364 9d0900 c412"),

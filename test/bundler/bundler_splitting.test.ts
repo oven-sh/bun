@@ -886,6 +886,39 @@ describe("bundler", () => {
     ],
   });
 
+  // a.js reads the class names, and b.js has an import that reads nothing. An import with a binding gives the
+  // module of the class names the entry bit of b.js, as for a JSON file, so the module is in a chunk of its own.
+  // A bare import does not, and neither does an import from a package that has no side effects. b.js prints no
+  // class names in any of them.
+  for (const [name, other, shared, js] of [
+    ["UnusedDefaultImportNextToReaderOfCSSModule", `import styles from './shared.module.css';`, "./shared.module.css", 3],
+    ["UnusedDefaultImportNextToReaderOfJSON", `import styles from './shared.json';`, "./shared.json", 3],
+    ["BareImportNextToReaderOfCSSModule", `import './shared.module.css';`, "./shared.module.css", 2],
+    ["UnusedDefaultImportNextToReaderOfCSSModuleWithoutSideEffects", `import styles from 'lib/x.module.css';`, "lib/x.module.css", 2],
+  ] as const) {
+    itBundled(`splitting/${name}`, {
+      files: {
+        "/a.js": `import styles from '${shared}'; console.log('a', typeof styles.foo);`,
+        "/b.js": `${other} console.log('b');`,
+        "/shared.module.css": `.foo { color: red; }`,
+        "/shared.json": `{ "foo": "json" }`,
+        "/node_modules/lib/package.json": `{ "name": "lib", "sideEffects": false }`,
+        "/node_modules/lib/x.module.css": `.foo { color: red; }`,
+      },
+      entryPoints: ["/a.js", "/b.js"],
+      splitting: true,
+      outdir: "/out",
+      onAfterBundle(api) {
+        expect(jsOutputsOf(api)).toEqual(js === 3 ? [hashedChunk("a"), "a.js", "b.js"] : ["a.js", "b.js"]);
+        expect(api.readFile("/out/b.js")).toBe(`// b.js\nconsole.log("b");\n`);
+      },
+      run: [
+        { file: "/out/a.js", stdout: "a string" },
+        { file: "/out/b.js", stdout: "b" },
+      ],
+    });
+  }
+
   // A chunk that two entry points share takes its name from the first entry point. With a chunk name that has no
   // [hash], the chunk of the class names has the path of that entry point, as the chunk of a shared JSON file has.
   // The command line gives the entry point the path `./sub/a.js` and the chunk the path `sub/a.js`: one file.

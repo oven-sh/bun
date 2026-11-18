@@ -632,48 +632,6 @@ pub mod parse_worker {
     // `(*transpiler).resolver`; materializing `&mut Transpiler` here would assert
     // exclusive access to the whole struct and invalidate that sibling pointer.
     // We only touch the disjoint `options.define` field.
-    /// The parser options that the options of a target decide: for a `ParseTask`, and for the JS stub of a stylesheet.
-    pub(crate) fn set_bundle_parser_options(
-        opts: &mut ParserOptions<'_>,
-        topts: &options::BundleOptions,
-        target: options::Target,
-        is_runtime: bool,
-    ) {
-        let output_format = topts.output_format;
-        opts.bundle = true;
-        opts.warn_about_unbundled_modules = false;
-        opts.features.allow_runtime = !is_runtime;
-        opts.features.unwrap_commonjs_to_esm =
-            output_format == options::Format::Esm && FeatureFlags::UNWRAP_COMMONJS_TO_ESM;
-        opts.features.top_level_await = output_format == options::Format::Esm
-            || output_format == options::Format::InternalBakeDev;
-        opts.features.inlining = topts.minify_syntax;
-        // `bun_options_types::Format` and `bun_js_parser::options::Format` are distinct enums; map explicitly.
-        opts.output_format = match output_format {
-            options::Format::Esm => js_parser::options::Format::Esm,
-            options::Format::Cjs => js_parser::options::Format::Cjs,
-            options::Format::Iife => js_parser::options::Format::Iife,
-            options::Format::InternalBakeDev => js_parser::options::Format::InternalBakeDev,
-        };
-        opts.features.minify_syntax = topts.minify_syntax;
-        opts.features.is_library = topts.is_library;
-        opts.features.minify_identifiers = topts.minify_identifiers;
-        opts.features.minify_keep_names = topts.keep_names;
-        opts.features.minify_whitespace = topts.minify_whitespace;
-        opts.features.unwrap_commonjs_packages = topts.unwrap_commonjs_packages;
-        opts.features.no_macros = topts.no_macros;
-        // JavaScriptCore implements `using` / `await using` natively, so a Bun target does not lower them.
-        opts.features.lower_using = !target.is_bun();
-        opts.features.ascii_only = target.is_bun();
-        opts.features.hot_module_reloading =
-            output_format == options::Format::InternalBakeDev && !is_runtime;
-        opts.features.auto_polyfill_require =
-            output_format == options::Format::Esm && !opts.features.hot_module_reloading;
-        opts.ignore_dce_annotations = topts.ignore_dce_annotations && !is_runtime;
-        opts.tree_shaking = is_runtime || topts.tree_shaking;
-        opts.code_splitting = topts.code_splitting;
-    }
-
     fn get_empty_css_ast(
         log: &mut Log,
         transpiler: *mut Transpiler,
@@ -2175,6 +2133,48 @@ pub mod parse_worker {
     // ───────────────────────────────────────────────────────────────────────────
     // runWithSourceCode
     // ───────────────────────────────────────────────────────────────────────────
+
+    /// The parser options that the options of a target decide: for a `ParseTask`, and for the JS stub of a stylesheet.
+    pub(crate) fn set_bundle_parser_options(
+        opts: &mut ParserOptions<'_>,
+        topts: &options::BundleOptions,
+        target: options::Target,
+        is_runtime: bool,
+    ) {
+        let output_format = topts.output_format;
+        opts.bundle = true;
+        opts.warn_about_unbundled_modules = false;
+        opts.features.allow_runtime = !is_runtime;
+        opts.features.unwrap_commonjs_to_esm =
+            output_format == options::Format::Esm && FeatureFlags::UNWRAP_COMMONJS_TO_ESM;
+        opts.features.top_level_await = output_format == options::Format::Esm
+            || output_format == options::Format::InternalBakeDev;
+        opts.features.inlining = topts.minify_syntax;
+        // `bun_options_types::Format` and `bun_js_parser::options::Format` are distinct enums; map explicitly.
+        opts.output_format = match output_format {
+            options::Format::Esm => js_parser::options::Format::Esm,
+            options::Format::Cjs => js_parser::options::Format::Cjs,
+            options::Format::Iife => js_parser::options::Format::Iife,
+            options::Format::InternalBakeDev => js_parser::options::Format::InternalBakeDev,
+        };
+        opts.features.minify_syntax = topts.minify_syntax;
+        opts.features.is_library = topts.is_library;
+        opts.features.minify_identifiers = topts.minify_identifiers;
+        opts.features.minify_keep_names = topts.keep_names;
+        opts.features.minify_whitespace = topts.minify_whitespace;
+        opts.features.unwrap_commonjs_packages = topts.unwrap_commonjs_packages;
+        opts.features.no_macros = topts.no_macros;
+        // JavaScriptCore implements `using` / `await using` natively, so a Bun target does not lower them.
+        opts.features.lower_using = !target.is_bun();
+        opts.features.ascii_only = target.is_bun();
+        opts.features.hot_module_reloading =
+            output_format == options::Format::InternalBakeDev && !is_runtime;
+        opts.features.auto_polyfill_require =
+            output_format == options::Format::Esm && !opts.features.hot_module_reloading;
+        opts.ignore_dce_annotations = topts.ignore_dce_annotations && !is_runtime;
+        opts.tree_shaking = is_runtime || topts.tree_shaking;
+        opts.code_splitting = topts.code_splitting;
+    }
 
     pub(crate) fn run_with_source_code(
         task: &mut ParseTask<'static>,

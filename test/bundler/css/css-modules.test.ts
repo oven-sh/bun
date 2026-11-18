@@ -379,8 +379,8 @@ describe("css", () => {
       },
       run: { "entry.js": '{"foo":"foo_e7Ht-A"} foo_e7Ht-A' },
     },
-    // The class names run where the first import of the stylesheet is, also when that import reads no
-    // value. m.js reads them before b.js has run its own import of the stylesheet.
+    // m.js reads the class names before b.js has run its own import of the stylesheet. The class names exist
+    // before any file runs, so the bare import in entry.js has nothing to run.
     BareImportAheadOfValueImportInACycle: {
       files: {
         "/entry.js": `
@@ -546,11 +546,11 @@ describe("css", () => {
     ],
   });
 
-  // The class names print where the first import of the stylesheet is, also when that import is a bare one.
-  itBundled("css-module/BareImportPlacesTheClassNames", {
+  // The class names run nothing. They print ahead of every file of the chunk, like a namespace object: a.js is
+  // imported before the stylesheet is.
+  itBundled("css-module/ClassNamesPrintAheadOfEveryFile", {
     files: {
       "/entry.js": `
-        import "./x.module.css";
         import { a } from "./a.js";
         import { b } from "./b.js";
         console.log(a, b);

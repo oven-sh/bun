@@ -294,7 +294,7 @@ const client = new RedisClient("redis://localhost:6379", {
 
 ### Raw Commands
 
-Use the `send` method to run any Redis command, including ones without a dedicated method. The first argument is the command name. The second is an array of strings, numbers, buffers or in-memory `Blob`s.
+Use the `send` method to run any Redis command, including ones without a dedicated method. The first argument is the command name. The second is an array of strings, numbers, buffers or in-memory `Blob`s. `Bun.file()` and `S3File` throw here and in every other method: pass `await file.bytes()`.
 
 ```ts redis.ts icon="/icons/typescript.svg"
 // Run any Redis command
@@ -313,6 +313,8 @@ const list = await redis.send("LRANGE", ["mylist", "0", "-1"]);
 await redis.hset("images", "logo", new Uint8Array([0xff, 0xd8]));
 const logo = await redis.sendBuffer("HGET", ["images", "logo"]);
 ```
+
+A `null` or `undefined` argument throws where it would shift or drop another one, as in `mget(a, undefined, c)` or `set(key, value, undefined, "NX")`. After `MULTI`, catch such errors and send `DISCARD`, or later commands stay queued.
 
 ### Connection Events
 

@@ -872,17 +872,21 @@ function expectBundled(
       }
       if (!expectedWarnings) return;
 
-      const warningsLeft = [...expectedWarnings];
-      let unexpectedWarnings: ErrorMeta[] = [];
-
-      for (const error of allWarnings) {
-        const i = warningsLeft.findIndex(item => error.file === item.file && error.error.includes(item.error));
-        if (i === -1) {
-          unexpectedWarnings.push(error);
-        } else {
-          warningsLeft.splice(i, 1);
+      const matches = new Map<number, ErrorMeta>();
+      // Reassign an earlier warning when only it also matches a narrower expectation.
+      const matchWarning = (warning: ErrorMeta, seen: Set<number>): boolean => {
+        for (const [i, expected] of expectedWarnings.entries()) {
+          if (seen.has(i) || warning.file !== expected.file || !warning.error.includes(expected.error)) continue;
+          seen.add(i);
+          const previous = matches.get(i);
+          if (previous && !matchWarning(previous, seen)) continue;
+          matches.set(i, warning);
+          return true;
         }
-      }
+        return false;
+      };
+      const unexpectedWarnings = allWarnings.filter(warning => !matchWarning(warning, new Set()));
+      const warningsLeft = expectedWarnings.filter((_, i) => !matches.has(i));
 
       if (unexpectedWarnings.length) {
         throw new Error(

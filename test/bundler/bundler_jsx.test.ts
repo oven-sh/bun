@@ -154,14 +154,19 @@ describe("bundler", () => {
       ["matching", "automatic", [warning], null],
       ["missing", "classic", [warning], "Warnings were expected while bundling"],
       ["unexpected", "automatic", [], "Unexpected warnings reported while bundling"],
-    ] as const)("checks %s warnings", async (_, runtime, warnings, diagnostic) => {
+      ["overlapping", "automatic", ["key", warning], null],
+    ] as const)("checks %s warnings", async (variant, runtime, warnings, diagnostic) => {
       using dir = tempDir("jsx-warnings-with-errors", {
         "test/bundler/warnings.test.ts": `
           import { itBundled } from ${JSON.stringify(join(import.meta.dir, "expectBundled.ts"))};
           itBundled("jsx/WarningsWithErrors", {
             files: ${JSON.stringify({
-              "/in.jsx":
-                'import { /* warn: an excerpt */ missing } from "./dep"; export const element = <div {...props} key="k" />; console.log(missing);',
+              "/in.jsx": [
+                'import { /* warn: an excerpt */ missing } from "./dep";',
+                'export const element = <div {...props} key="k" />;',
+                ...(variant === "overlapping" ? ["export const bare = <div key />;"] : []),
+                "console.log(missing);",
+              ].join("\n"),
               "/dep.js": "export const present = 1;",
             })},
             backend: ${JSON.stringify(backend)},

@@ -201,16 +201,20 @@ fn find_cells_refused_by_build(cells: &[Cell], folder: &str) -> Vec<usize> {
         let mut log = Log::init();
         core::mem::replace(&mut build.diagnostics, Diagnostics::new()).write_to(&mut log);
         let errors = log.msgs.iter().filter(|it| it.kind == Kind::Err);
+        let files_of_cells = cells
+            .iter()
+            .map(|it| strings::basename_posix(it.name.as_bytes()));
+        let mut indexes: Vec<(&[u8], usize)> = files_of_cells.zip(0..).collect();
+        indexes.sort_unstable();
         let mut refused: Vec<usize> = errors
             .map(|it| {
                 let location = it.data.location.as_ref().expect("an error is in a file");
-                let name = strings::basename_posix(&location.file);
-                let digits = name.strip_prefix(b"c").unwrap_or_default();
-                let dot = strings::index_of_char_usize(digits, b'.').unwrap_or(digits.len());
-                let index = core::str::from_utf8(&digits[..dot]).ok();
-                let index = index.and_then(|it| it.parse().ok());
+                let file = strings::basename_posix(&location.file);
+                let found = indexes.binary_search_by_key(&file, |it| it.0);
                 let text = bstr::BStr::new(&it.data.text);
-                index.unwrap_or_else(|| panic!("an error outside of the cells: {text}"))
+                let found =
+                    found.unwrap_or_else(|_| panic!("an error outside of the cells: {text}"));
+                indexes[found].1
             })
             .collect();
         refused.sort_unstable();

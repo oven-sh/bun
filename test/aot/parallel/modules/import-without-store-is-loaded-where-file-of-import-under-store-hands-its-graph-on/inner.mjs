@@ -1,0 +1,2 @@
+see("require: inner");
+export {};

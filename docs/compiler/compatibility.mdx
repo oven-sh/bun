@@ -171,6 +171,7 @@ The build compiles every file it can reach from your entry point. Where a path i
 - `require("./notes.txt")` returns the text itself, as in `bun build --compile`. `bun run` returns an object with the text as its `default`.
 - An `import()` at the top level of an ES module that a `require()` loads, or of a CommonJS file that this module imports, runs its module after that `require()` returns, as in Node.js and `bun build --compile`. Under `bun run`, it runs during the `require()`.
 - In a cycle of `require()` and `import`, a CommonJS file can be imported before it has finished, and again later. In the executable, every importer then sees the exports of the later import. Under `bun run` and with `--no-aot`, the first importer keeps what the file exported at that point.
+- An `import()` that is called outside every `AsyncLocalStorage` store keeps no store, so its modules read the store that is current where they run. In the executable the text of a file is there at once, so such a module can run inside a `drainMicrotasks()` of `bun:jsc` that code under a store calls, and then it reads that store. Under `bun run`, the text comes in a later turn and the module reads no store.
 - A query, as in `import("./a.ts?v=2")`, loads one more copy of the file, as in `bun run`. `?worker` works too. `?raw`, `?url`, a query on a data file and a query in a `require()` stop the build (`TS100159`).
 
 ### A file that isn't in the executable

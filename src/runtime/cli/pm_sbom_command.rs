@@ -34,6 +34,14 @@ impl PmSbomCommand {
         PackageManagerCommand::handle_load_lockfile_errors_for(&load_lockfile, log_level, "list");
 
         let root = pm.root_package_id.get(&pm.lockfile, pm.workspace_name_hash);
+        // The lookup answers with the root package for a workspace that the lockfile does not have.
+        if root == 0 && pm.workspace_name_hash.is_some() {
+            if log_level != LogLevel::Silent {
+                Output::err_generic("this workspace is not in the lockfile, nothing to list", ());
+                bun_core::note!("run 'bun install' first");
+            }
+            Global::exit(1);
+        }
         let plan = Sbom::Plan::new(&pm.lockfile, root, pm.options.local_package_features);
         let manifests: Vec<Option<Sbom::Manifest>> = (plan.project_paths())
             .map(|path| manifest(pm, path))
@@ -79,7 +87,9 @@ fn manifest(pm: &mut PackageManager, path: &[u8]) -> Option<Sbom::Manifest> {
             Output::err_generic("the path of workspace {} is too long", (BStr::new(path),));
             Global::exit(1);
         };
-        if !bun_sys::exists(abs_package_json_path.as_bytes()) {
+        if let Err(err) = bun_sys::stat(abs_package_json_path)
+            && err.get_errno() == bun_sys::E::ENOENT
+        {
             return None;
         }
         package_json_entry(pm, abs_package_json_path).root

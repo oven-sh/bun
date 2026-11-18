@@ -1082,6 +1082,20 @@ test.concurrent("a workspace that is not in the checkout has the version that bu
   expect(spdx.exitCode).toBe(0);
 });
 
+test.concurrent("a workspace package.json that is there and cannot be read is an error", async () => {
+  // A directory in the place of the file: the path exists, and reading it fails.
+  const { "examples/b/package.json": _, ...checkout } = examples;
+  using dir = tempDir("sbom-unreadable", { ...checkout, "examples/b/package.json/placeholder": "" });
+  const [cyclonedx, spdx] = await bothFormats(String(dir));
+
+  for (const run of [cyclonedx, spdx]) {
+    expect(run.stdout).toBe("");
+    expect(run.stderr).toContain("failed to read package.json");
+    expect(run.stderr).toContain(join("examples", "b", "package.json"));
+    expect(run.exitCode).toBe(1);
+  }
+});
+
 test.concurrent("a root package.json without a version gives a root without a version or a package URL", async () => {
   const dependencies = { a: "1.0.0" };
   using versioned = tempDir("sbom-root", project({ name: "root", version: "1.2.3", dependencies }, leaves("a")));
@@ -1306,6 +1320,39 @@ test.concurrent("a token in the URL of a git package is *** in its version and i
   expect(spdx.exitCode).toBe(0);
 });
 
+// The repository that the root asks for, and the version of the package in a document. bun.lock has the `host:path` of
+// the second one as `ssh://git@host:path`.
+test.concurrent.each([
+  ["an ssh URL", "git+ssh://git@github.com/acme/repo.git", "git+ssh://git@github.com/acme/repo.git"],
+  ["a host:path", "git+ssh://git@gitlab.com:acme/repo.git", "git+ssh://git@gitlab.com:acme/repo.git"],
+  ["another login", "git+ssh://deploy@git.example/acme/repo.git", "git+ssh://git.example/acme/repo.git"],
+  ["a password", "git+ssh://git:secret@git.example/acme/repo.git", "git+ssh://git.example/acme/repo.git"],
+  ["https", "git+https://git@git.example/acme/repo.git", "git+https://git.example/acme/repo.git"],
+])("a git package over ssh keeps the git login: %s", async (_, repository, printed) => {
+  using dir = tempDir(
+    "sbom-git-login",
+    project(
+      { name: "root", version: "1.0.0", dependencies: { "git-dep": repository } },
+      { "git-dep": [`git-dep@${repository}#${COMMIT}`, {}, COMMIT] },
+    ),
+  );
+  const [cyclonedx, spdx] = await bothFormats(String(dir));
+
+  expect(readCycloneDx(cyclonedx).components["git-dep"]).toEqual({
+    type: "library",
+    "bom-ref": `git-dep@${printed}#${COMMIT}`,
+    name: "git-dep",
+    version: `${printed}#${COMMIT}`,
+    scope: "required",
+  });
+  expect(readSpdx(spdx).packages["git-dep"]).toMatchObject({ versionInfo: `${printed}#${COMMIT}` });
+  expect(cyclonedx.stdout).not.toContain("secret");
+  expect(spdx.stdout).not.toContain("secret");
+
+  expect(cyclonedx.exitCode).toBe(0);
+  expect(spdx.exitCode).toBe(0);
+});
+
 test.concurrent("a folder, a link and a local tarball have their path in the bom-ref, and no version", async () => {
   using dir = tempDir(
     "sbom-paths",
@@ -1453,7 +1500,7 @@ test.concurrent("the optional packages of every platform are listed", async () =
 });
 
 // `inside` is in the tarball of `host`, and `shared` is a package of its own.
-test.concurrent("a bundled dependency is not listed, and its dependent has no edge to it", async () => {
+test.concurrent("a bundled dependency is listed with the version of bun.lock, and CycloneDX marks it", async () => {
   using dir = tempDir(
     "sbom-bundled",
     project(
@@ -1466,16 +1513,27 @@ test.concurrent("a bundled dependency is not listed, and its dependent has no ed
     ),
   );
   const [cyclonedx, spdx] = await bothFormats(String(dir));
+  const dependsOn = { root: ["host"], host: ["inside", "shared"] };
 
   const bom = readCycloneDx(cyclonedx);
-  expect(bom.scopes).toEqual({ host: "required", shared: "required" });
-  expect(bom.dependsOn).toEqual({ root: ["host"], host: ["shared"] });
-  expect(cyclonedx.stdout).not.toContain("inside");
+  expect(bom.components.inside).toEqual({
+    type: "library",
+    "bom-ref": "inside@1.0.0",
+    name: "inside",
+    version: "1.0.0",
+    scope: "required",
+    purl: "pkg:npm/inside@1.0.0",
+    hashes: [{ alg: "SHA-512", content: hexOf(sri("inside@1.0.0")) }],
+    properties: [{ name: "cdx:npm:package:bundled", value: "true" }],
+  });
+  // A package with a tarball of its own has no such property.
+  expect(bom.components.host).not.toHaveProperty("properties");
+  expect(bom.components.shared).not.toHaveProperty("properties");
+  expect(bom.dependsOn).toEqual(dependsOn);
 
   const doc = readSpdx(spdx);
-  expect(Object.keys(doc.packages)).toEqual(["host", "shared"]);
-  expect(doc.relationships).toEqual(relationshipsOf("root", { root: ["host"], host: ["shared"] }));
-  expect(spdx.stdout).not.toContain("inside");
+  expect(Object.keys(doc.packages)).toEqual(["host", "inside", "shared"]);
+  expect(doc.relationships).toEqual(relationshipsOf("root", dependsOn));
 
   expect(cyclonedx.exitCode).toBe(0);
   expect(spdx.exitCode).toBe(0);
@@ -1645,37 +1703,12 @@ test.concurrent.each([
 // bun.lock is what the last install wrote: the root package, and its dependency `o`.
 const lastInstall = project({ name: "root", version: "1.0.0", dependencies: { o: "1.0.0" } }, leaves("o"));
 
-// What has changed in each project since that install, and the directory of the run.
-test.concurrent.each<[string, Record<string, string>, string]>([
-  [
-    "a dependency added to package.json since then is not listed, and a removed one still is",
-    {
-      ...lastInstall,
-      "package.json": JSON.stringify({ name: "root", version: "1.0.0", dependencies: { "brand-new": "1.0.0" } }),
-    },
-    ".",
-  ],
-  [
-    "a workspace added since then is not in it, so a run in that workspace describes the root package",
-    {
-      ...lastInstall,
-      "package.json": JSON.stringify({
-        name: "root",
-        version: "1.0.0",
-        workspaces: ["packages/*"],
-        dependencies: { o: "1.0.0" },
-      }),
-      "packages/newbie/package.json": JSON.stringify({
-        name: "newbie",
-        version: "0.1.0",
-        dependencies: { "brand-new": "1.0.0" },
-      }),
-    },
-    "packages/newbie",
-  ],
-])("the document reflects the lockfile of the last install: %s", async (_, files, from) => {
-  using dir = tempDir("sbom-last-install", files);
-  const [cyclonedx, spdx] = await bothFormats(join(String(dir), from));
+test.concurrent("the document reflects the lockfile of the last install, not a package.json edited since", async () => {
+  using dir = tempDir("sbom-last-install", {
+    ...lastInstall,
+    "package.json": JSON.stringify({ name: "root", version: "1.0.0", dependencies: { "brand-new": "1.0.0" } }),
+  });
+  const [cyclonedx, spdx] = await bothFormats(String(dir));
 
   const bom = readCycloneDx(cyclonedx);
   expect(bom.root).toMatchObject({ "bom-ref": "root@1.0.0", name: "root", version: "1.0.0" });
@@ -1689,6 +1722,31 @@ test.concurrent.each<[string, Record<string, string>, string]>([
 
   expect(cyclonedx.exitCode).toBe(0);
   expect(spdx.exitCode).toBe(0);
+});
+
+test.concurrent("a workspace added since the last install has no document until it is in the lockfile", async () => {
+  using dir = tempDir("sbom-new-workspace", {
+    ...lastInstall,
+    "package.json": JSON.stringify({
+      name: "root",
+      version: "1.0.0",
+      workspaces: ["packages/*"],
+      dependencies: { o: "1.0.0" },
+    }),
+    "packages/newbie/package.json": JSON.stringify({
+      name: "newbie",
+      version: "0.1.0",
+      dependencies: { "brand-new": "1.0.0" },
+    }),
+  });
+  const notListed = {
+    stdout: "",
+    stderr: "error: this workspace is not in the lockfile, nothing to list\nnote: run 'bun install' first\n",
+    exitCode: 1,
+  };
+  expect(await bothFormats(join(String(dir), "packages", "newbie"))).toEqual([notListed, notListed]);
+  // The project root is in the lockfile, so it still has its document.
+  expect(readCycloneDx((await bothFormats(String(dir)))[0]).dependsOn).toEqual({ root: ["o"] });
 });
 
 // Each run describes the package `sbom-root-only`, which depends on nothing in that run. A row has the files of the
@@ -1912,7 +1970,7 @@ describe("after bun install from a registry", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
   });

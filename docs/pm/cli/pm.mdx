@@ -324,7 +324,7 @@ Every run has a new serial number and the current time as its timestamp. In SPDX
 
 The [`install.production`](/runtime/bunfig#install-production), `install.dev`, `install.optional` and `install.peer` settings in `bunfig.toml` apply too.
 
-The document is rooted at the current workspace. From the project root, it describes the root package and lists every workspace and its dependencies. From inside a workspace package, it describes that package and lists only what that package depends on. The lockfile must have that workspace package, so run `bun install` after you add or rename a workspace package. Until then, the document is that of the project root. The described package is `metadata.component` in CycloneDX and the target of the `DESCRIBES` relationship in SPDX.
+The document is rooted at the current workspace. From the project root, it describes the root package and lists every workspace and its dependencies. From inside a workspace package, it describes that package and lists only what that package depends on. The lockfile must have that workspace package, so run `bun install` after you add or rename a workspace package. Until then, `bun pm sbom` exits with an error in that directory. The described package is `metadata.component` in CycloneDX and the target of the `DESCRIBES` relationship in SPDX.
 
 `bun pm scan` covers the whole project from any directory, and so does [`bun audit`](/pm/cli/audit) when it skips no dependency type. To get the SBOM of the whole project from inside a workspace package, pass the project root with `--cwd`, for example `bun pm sbom --cwd ../.. --sbom-format spdx`.
 
@@ -334,9 +334,10 @@ What the document has about a package depends on the kind of package:
 - A package of the project (the root package or a workspace package) has the name and version from its `package.json`, and a package URL when it has a version and a valid npm package name. It has no hash. A root package without a name has the name of its directory. A workspace package whose `package.json` is not in the checkout has the version in the lockfile.
 - A `git` or GitHub dependency has its lockfile specifier as its version, for example `github:owner/repo#abc1234`. It has no package URL. A GitHub dependency also has its integrity hash.
 - A tarball URL dependency has the URL as its download location (`externalReferences` in CycloneDX, `downloadLocation` in SPDX) and its integrity hash. It has no version and no package URL.
+- A package that another package ships inside its own tarball (`bundleDependencies`) has the version in the lockfile, which can differ from the copy in that tarball. CycloneDX marks it with the property `cdx:npm:package:bundled`.
 - A folder or `link:` dependency has its name only. A local tarball dependency has its name and its integrity hash. Their lockfile specifier is only in their identifier (`bom-ref` or `SPDXID`).
 
-Bun removes the `user:password@` part and the query string from a git or tarball URL of the lockfile. In the rest of the URL, it replaces a UUID-shaped or `npm_` token with `***`. In a download location, it also percent-encodes the characters that a URL cannot contain.
+Bun removes the `user:password@` part and the query string from a git or tarball URL of the lockfile. It keeps the `git@` login of an ssh URL. In the rest of the URL, it replaces a UUID-shaped or `npm_` token with `***`. In a download location, it also percent-encodes the characters that a URL cannot contain.
 
 The document also records which package depends on which. CycloneDX has this in `dependencies`. SPDX has one `DEPENDS_ON` relationship from a package to each package that it depends on. CycloneDX also gives each package a `scope`:
 
@@ -352,7 +353,6 @@ The document does not contain:
 
 - **Licenses, authors and suppliers.** The lockfile does not record them. [`bun pm licenses --json`](#licenses) reads licenses from `node_modules`. In SPDX, the license fields are `NOASSERTION`.
 - **Registry tarball URLs.** For a package from the default registry, `bun.lock` stores no download URL. The document identifies a registry package by its package URL and hash. In SPDX, its `downloadLocation` is `NOASSERTION`.
-- **Bundled dependencies.** Bun does not list a package that another package ships inside its own tarball (`bundleDependencies`), because the lockfile does not record the version in that tarball.
 - **Packages that no dependency path reaches.** Inside a workspace package, the document leaves out what only the rest of the project needs. With `--prod` or `--omit`, it leaves out what only the skipped dependency types need.
 
 Vulnerability scanners match the npm registry packages against advisories. They do not match git, GitHub, tarball or folder dependencies, which have no package URL.

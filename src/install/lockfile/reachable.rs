@@ -187,21 +187,21 @@ pub(crate) fn required_without(
     required
 }
 
-// Calls `each(parent, target)` for every edge the walk follows between packages in `reached`.
+// Calls `each(parent, target, behavior)` for every edge the walk follows between packages in `reached`.
 pub(crate) fn followed_edges(
     lockfile: &Lockfile,
     resolutions: &[PackageID],
     follow_workspace_edges: bool,
     options: Options,
     reached: &DynamicBitSet,
-    mut each: impl FnMut(PackageID, PackageID),
+    mut each: impl FnMut(PackageID, PackageID, Behavior),
 ) {
     let walk = Walk::new(lockfile, resolutions, follow_workspace_edges, options);
     let mut parents = reached.iterator::<true, true>();
     while let Some(parent) = parents.next() {
-        for (target, _) in walk.edges(parent as PackageID) {
+        for (target, behavior) in walk.edges(parent as PackageID) {
             if reached.is_set_allow_out_of_bound(target as usize, false) {
-                each(parent as PackageID, target);
+                each(parent as PackageID, target, behavior);
             }
         }
     }

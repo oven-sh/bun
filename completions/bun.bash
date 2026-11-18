@@ -110,7 +110,7 @@ _bun_completions() {
     PACKAGE_OPTIONS[AUDIT_OPTIONS_LONG]="--json --audit-level --ignore --prod --production --omit --dry-run --latest --cwd --help";
     PACKAGE_OPTIONS[AUDIT_OPTIONS_SHORT]="-L";
 
-    PM_OPTIONS[LONG_OPTIONS]="--config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --no-progress --no-summary --no-verify --ignore-scripts --global --cwd --backend --json --sbom-format --help"
+    PM_OPTIONS[LONG_OPTIONS]="--config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --no-progress --no-summary --no-verify --ignore-scripts --global --cwd --backend --json --help"
     PM_OPTIONS[SHORT_OPTIONS]="-c -y -p -f -g"
 
     local cur_word="${COMP_WORDS[${COMP_CWORD}]}";
@@ -230,8 +230,10 @@ _bun_completions() {
             _read_scripts_in_package_json;
             return;;
         pm)
+            local pm_long_options="${PM_OPTIONS[LONG_OPTIONS]}";
+            [[ " ${COMP_WORDS[*]} " == *" sbom "* ]] && pm_long_options+=" --sbom-format";
             _long_short_completion \
-                "${PM_OPTIONS[LONG_OPTIONS]} ${PM_OPTIONS[SHORT_OPTIONS]}";
+                "${pm_long_options} ${PM_OPTIONS[SHORT_OPTIONS]}";
             COMPREPLY+=( $(compgen -W "bin ls licenses sbom cache hash hash-print hash-string" -- "${cur_word}") );
             return;;
         *)

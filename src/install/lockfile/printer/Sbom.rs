@@ -50,14 +50,14 @@ impl Plan {
         use crate::lockfile::package::PackageColumns as _;
         use crate::resolution::Tag;
 
-        // On every platform. A bundled package is in the tarball of another one, and the lockfile does not have the version in there.
+        // On every platform, and with what a package has in its own tarball, as `bun audit` has it.
         let options = crate::lockfile_real::reachable::Options {
             root,
             dev: features.dev_dependencies,
             optional: features.optional_dependencies,
             peer: features.peer_dependencies,
             optional_peer: features.peer_dependencies,
-            bundled: false,
+            bundled: true,
             platform: None,
         };
         // Only the root package has the rows that make a workspace a part of the project. A workspace that depends on the root package does not depend on the other workspaces.
@@ -101,6 +101,8 @@ struct Component {
     locator: Vec<u8>,
     integrity: Integrity,
     scope: Scope,
+    // Whether the package is only in the tarball of the packages that depend on it. The lockfile has the version that their ranges resolve to, and the tarball can have another one.
+    bundled: bool,
     // Indices into `Document::components`, sorted, each once.
     edges: Vec<u32>,
 }
@@ -145,19 +147,25 @@ pub fn print(
             )?);
         }
     }
+    // Whether an edge that is not a bundled one leads to the component, so that the package is installed from a tarball of its own.
+    let mut installed = vec![false; components.len()];
     crate::lockfile_real::reachable::followed_edges(
         lockfile,
         lockfile.buffers.resolutions.as_slice(),
         plan.follow_workspace_edges,
         plan.options,
         &plan.listed,
-        |parent, target| {
+        |parent, target, behavior| {
             let edge = index_of[target as usize];
             components[index_of[parent as usize] as usize]
                 .edges
                 .push(edge);
+            installed[edge as usize] |= !behavior.is_bundled();
         },
     );
+    for (component, installed) in components.iter_mut().zip(&installed).skip(1) {
+        component.bundled = !installed;
+    }
     sort_components(&mut components);
     dedupe_identifiers(&mut components)?;
 
@@ -299,6 +307,7 @@ fn component(
             _ => packages.items_meta()[id as usize].integrity,
         },
         scope,
+        bundled: false,
         edges: Vec::new(),
     })
 }
@@ -324,15 +333,24 @@ fn npm_purl(name: &[u8], version: &[u8]) -> Vec<u8> {
     purl
 }
 
-// A URL of the lockfile without its userinfo and query string, and with `***` for a token that `bun pm ls` also hides in what is left.
+// A URL of the lockfile without its userinfo and query string, and with `***` for a token that `bun pm ls` also hides in what is left. The `git@` of an ssh URL stays: it is the login of every git host, and no credential.
 fn without_secrets(url: &[u8]) -> Result<Vec<u8>, crate::Error> {
-    if !bun_core::strings::contains(url, b"://") {
+    use bun_core::strings;
+
+    if !strings::contains(url, b"://") {
         return Ok(url.to_vec());
     }
     let mut stripped: Vec<u8> = Vec::with_capacity(url.len());
     crate::resolution::append_without_url_credentials(&mut stripped, url);
     let mut masked: Vec<u8> = Vec::with_capacity(stripped.len());
     write!(masked, "{}", bun_core::fmt::redacted_npm_url(&stripped))?;
+    if let Some(colon) = strings::index_of_char_usize(url, b':')
+        && url[..colon].ends_with(b"ssh")
+        && url[colon + 1..].starts_with(b"//git@")
+    {
+        let authority = colon + b"://".len();
+        masked.splice(authority..authority, *b"git@");
+    }
     Ok(masked)
 }
 
@@ -517,6 +535,12 @@ fn write_cyclonedx_component(component: &Component, out: &mut Vec<u8>) -> Result
             ",\n      \"hashes\": [{{ \"alg\": \"SHA-{bits}\", \"content\": \"{}\" }}]",
             bun_core::fmt::hex_lower(component.integrity.slice()),
         )?;
+    }
+    // The name that `npm sbom` has for it.
+    if component.bundled {
+        out.extend_from_slice(
+            b",\n      \"properties\": [{ \"name\": \"cdx:npm:package:bundled\", \"value\": \"true\" }]",
+        );
     }
     out.extend_from_slice(b"\n    }");
     Ok(())

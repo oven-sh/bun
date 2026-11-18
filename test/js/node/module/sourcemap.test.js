@@ -191,6 +191,12 @@ test.each([1, 40])("SourceMap sorts columns that go back, and ties keep their or
   }
 });
 
+test("SourceMap sorts columns that each belong where another one is", () => {
+  // Columns 2, 3, 1, 5, 4, from lines 0 to 4.
+  const map = new SourceMap({ version: 3, sources: ["a"], names: [], mappings: "EAAA,CACA,FACA,IACA,DACA" });
+  expect([1, 2, 3, 4, 5].map(column => map.findEntry(0, column).originalLine)).toEqual([2, 0, 1, 4, 3]);
+});
+
 test("SourceMap handles mappings with truncated VLQ segments without crashing", async () => {
   await using proc = Bun.spawn({
     cmd: [

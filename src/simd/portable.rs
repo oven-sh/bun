@@ -228,6 +228,35 @@ impl<const N: usize, const B: usize> Lanes<f32, N, B> {
     }
 }
 
+impl<const N: usize, const B: usize> Lanes<f64, N, B> {
+    /// For an even number of lanes without NaN. The sign of a zero is unspecified.
+    #[inline]
+    pub fn min(self, other: Self) -> Self {
+        const { assert!(N.is_multiple_of(2)) };
+        debug_assert!(!(self.0.is_nan() | other.0.is_nan()).any());
+        self.simd_lt(other).select(self, other)
+    }
+}
+
+impl<const B: usize> Lanes<f64, 4, B> {
+    /// The same for these.
+    #[inline]
+    pub fn to_i32(self) -> Lanes<i32, 4, B> {
+        debug_assert!(self.0.abs().simd_lt(Simd::splat(2147483648.0)).all());
+        Lanes::new(self.0.cast())
+    }
+}
+
+impl<const B: usize> Lanes<u64, 4, B> {
+    /// The lanes with a bit in `bits`, which must be below 16, come first. The others are unspecified.
+    #[inline]
+    pub fn compress(self, bits: usize) -> Self {
+        debug_assert!(bits < 16);
+        let mut kept = (0..4).filter(|i| bits >> i & 1 != 0);
+        Self::from_array(array::from_fn(|_| kept.next().map_or(!0, |i| self[i])))
+    }
+}
+
 /// Bit `i` of the result is the parity of bits `0..=i`.
 #[inline(always)]
 pub fn prefix_xor(mut bits: u64) -> u64 {

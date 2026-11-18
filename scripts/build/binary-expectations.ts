@@ -123,6 +123,7 @@ export interface BinaryExpectations {
    *
    * A match means that something reachable calls it: find the caller. In the
    * engine it belongs under `#if ASSERT_ENABLED`, in Rust behind the feature.
+   * It also has what has to be inlined: see `inlinedSymbols()`.
    */
   forbiddenSymbols?: string[];
   elf?: {
@@ -405,6 +406,11 @@ function testOnlySymbols(cfg: Config): string[] | undefined {
   ];
 }
 
+/** One instruction in an inner loop. It has `#[target_feature]`, so rustc takes no more than `#[inline]` for it. */
+function inlinedSymbols(cfg: Config): string[] {
+  return cfg.hardened ? [] : ["*6brotli7matches4simd*6lookup*"];
+}
+
 /**
  * The Windows `.bin/` shim (src/install/windows-shim): `bun install` writes a copy of it next to every package
  * binary, and it runs on every `bun run` of one. It is freestanding: no CRT, no allocator, no formatting machinery,
@@ -487,7 +493,7 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
     ...(cfg.abi === "android" ? ["liblog.so"] : []),
   ];
   const staticInitializers = cfg.asan ? undefined : runtimeInitializers(cfg);
-  const forbiddenSymbols = testOnlySymbols(cfg);
+  const forbiddenSymbols = testOnlySymbols(cfg)?.concat(inlinedSymbols(cfg));
 
   switch (format) {
     case "elf": {

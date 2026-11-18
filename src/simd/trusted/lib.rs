@@ -15,7 +15,7 @@ mod atomic_fn;
 pub mod features;
 mod gate;
 #[allow(unsafe_code)]
-mod lanes;
+mod loads;
 #[allow(unsafe_code)]
 mod opaque;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -34,7 +34,7 @@ pub mod x86_64;
 #[cfg(target_arch = "aarch64")]
 pub use aarch64::Features;
 pub use atomic_fn::AtomicFn;
-pub use lanes::{from_array, load_or_default};
+pub use loads::{from_array, load_or_default, windows};
 pub use opaque::{keep16, opaque, opaque16};
 pub use output::{Append, Out, UNROLL, Writer};
 pub use output::{copy_from_shared, extend_vec, quarters, spare_capacity};

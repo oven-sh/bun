@@ -37,6 +37,18 @@ pub(crate) fn store_shared<const N: usize, const K: usize, const AT: usize>(
     }
 }
 
+#[repr(align(32))]
+pub(crate) struct Aligned<T>(pub(crate) T);
+
+/// For `compress`: where part `i` of a vector comes from, with `parts` in each lane.
+pub(crate) const fn kept_part(mut bits: usize, i: usize, parts: usize) -> usize {
+    let mut lane = 0;
+    while lane < i / parts {
+        (bits, lane) = (bits & bits.wrapping_sub(1), lane + 1);
+    }
+    bits.trailing_zeros() as usize % 4 * parts + i % parts
+}
+
 /// The 256-bit ops of a target with 128-bit registers.
 macro_rules! x256_in_halves {
     ($feature:literal) => {
@@ -56,6 +68,19 @@ macro_rules! x256_in_halves {
             U64::sums_of_8(bytes: U8) -> U64
             F32::to_i32(self: F32) -> I32
             F32::mul_add(self: F32, a: F32, b: F32) -> F32
+        }
+
+        impl x256::U64 {
+            #[inline]
+            #[target_feature(enable = $feature)]
+            pub fn compress(self, bits: usize) -> Self {
+                use {crate::native::{Aligned, kept_part}, core::array::from_fn};
+                static BYTES: Aligned<[[u8; 32]; 16]> =
+                    Aligned(from_fn(const |bits| from_fn(const |i| kept_part(bits, i, 8) as u8)));
+                let [first, second] = self.bitcast::<x256::U8>().halves();
+                let [a, b] = x256::U8::from_array(BYTES.0[bits % 16]).halves();
+                x256::U8::from_halves([first.lookup2(second, a), first.lookup2(second, b)]).bitcast()
+            }
         }
 
         impl x256::U8 {

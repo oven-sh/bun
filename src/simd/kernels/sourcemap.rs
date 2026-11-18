@@ -2,6 +2,8 @@
 use crate::ByteSet;
 use bun_simd::{Out, Writer};
 
+pub use simd::{count_delimiters, parse_mappings};
+
 const NOT_BASE64: ByteSet = ByteSet {
     rows: [
         0x10, 0x10, 0x01, 0x02, 0x04, 0x08, 0x04, 0x08, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10,
@@ -185,7 +187,7 @@ fn decode_vlq(digits: &Digits, at: &mut usize, end: usize) -> i32 {
 }
 
 #[bun_simd::foreach_target]
-pub(crate) mod simd {
+mod simd {
     use crate::byte_set::simd::this_target::class;
     use isa::{I8, I32, U8, Vector, x128};
 
@@ -345,7 +347,7 @@ pub(crate) mod simd {
     }
 
     #[export]
-    pub fn count_mapping_delims(bytes: &[u8]) -> usize {
+    pub fn count_delimiters(bytes: &[u8]) -> usize {
         U8::count(bytes, |v| v.simd_eq(b',') | v.simd_eq(b';'))
     }
 

@@ -266,7 +266,8 @@ unsafe extern "C" fn Bun__encoding__toString(
     let string = if encoding == Encoding::Hex {
         // SAFETY: forwarded from this fn's contract. `SharedU8` has the layout of `u8`.
         let input = unsafe { bun_core::ffi::slice(input.cast::<SharedU8>(), len) };
-        hex_string(len, |out| kernels::encode_hex_lower_shared(input, out)).into_js(global_object)
+        hex_string(len, |out| kernels::encode_hex_lower_from_shared(input, out))
+            .into_js(global_object)
     } else {
         // SAFETY: forwarded from this fn's contract.
         let input = unsafe { bun_core::ffi::slice(input, len) };

@@ -26,7 +26,6 @@ use bun_jsc::{
     ThreadIsolatedArg,
 };
 
-use bun_brotli::c as brotli;
 use bun_zlib as zlib;
 use bun_zstd::c as zstd;
 
@@ -108,8 +107,8 @@ enum Progress {
 enum Backend {
     Deflate(zlib::DeflateEncoder),
     Inflate(zlib::InflateDecoder),
-    BrotliEncode(bun_brotli::OwnedEncoder),
-    BrotliDecode(bun_brotli::OwnedDecoder),
+    BrotliEncode(Box<bun_brotli::Encoder>),
+    BrotliDecode(Box<bun_brotli::Decoder>),
     ZstdEncode(bun_zstd::OwnedCCtx),
     ZstdDecode(bun_zstd::OwnedDCtx),
 }
@@ -142,9 +141,8 @@ enum CodecError {
     /// The output buffer or the codec's own state could not be allocated.
     OutOfMemory,
     Message(&'static str),
-    /// Brotli decoder error; `BrotliDecoderErrorString` (static C string).
-    /// Surfaced as TypeError with `.code = "ERR_" + <this>` for node:zlib compat.
-    Brotli(&'static str),
+    /// Surfaced as TypeError with the `.code` that node:zlib has for it.
+    Brotli(bun_brotli::DecodeError),
 }
 
 impl CompressionStreamCoder {
@@ -178,14 +176,8 @@ impl CompressionStreamCoder {
                         "Brotli compression isn't in this executable",
                     ));
                 }
-                let mut p = bun_brotli::OwnedEncoder::new(bun_brotli::Allocator::Libc)
-                    .ok_or(CodecError::Message("failed to initialize brotli encoder"))?;
-                if let Some(quality) = level {
-                    if !p.set_parameter(brotli::BROTLI_PARAM_QUALITY, quality as u32) {
-                        return Err(CodecError::Message("failed to set brotli quality"));
-                    }
-                }
-                Backend::BrotliEncode(p)
+                let quality = level.unwrap_or(bun_brotli::MAX_QUALITY);
+                Backend::BrotliEncode(Box::new(bun_brotli::Encoder::with_quality(quality)))
             }
             (Format::Brotli, true) => {
                 if bun_removable_features::is_removed(
@@ -195,9 +187,7 @@ impl CompressionStreamCoder {
                         "Brotli decompression isn't in this executable",
                     ));
                 }
-                let p = bun_brotli::OwnedDecoder::new(bun_brotli::Allocator::Libc)
-                    .ok_or(CodecError::Message("failed to initialize brotli decoder"))?;
-                Backend::BrotliDecode(p)
+                Backend::BrotliDecode(Box::default())
             }
             (Format::Zstd, false) => {
                 let mut p = bun_zstd::OwnedCCtx::new()
@@ -404,11 +394,11 @@ impl CompressionStreamCoder {
                     }
                 }
             }
-            Backend::BrotliEncode(p) => {
-                let op = if finish {
-                    brotli::BrotliEncoderOperation::finish
+            Backend::BrotliEncode(encoder) => {
+                let operation = if finish {
+                    bun_brotli::Operation::Finish
                 } else {
-                    brotli::BrotliEncoderOperation::process
+                    bun_brotli::Operation::Process
                 };
                 let mut remaining = input;
                 loop {
@@ -417,19 +407,21 @@ impl CompressionStreamCoder {
                             consumed: input.len() - remaining.len(),
                         });
                     }
-                    let (consumed, ok) =
-                        append_step(out, cap, |spare| p.step(remaining, spare, op))?;
-                    remaining = &remaining[consumed..];
-                    if !ok {
-                        return Err(CodecError::Message("brotli encode failed"));
-                    }
-                    let has_room = out.len() < cap.min(out.capacity());
-                    if remaining.is_empty() && has_room {
-                        return Ok(Progress::Done);
+                    match append_step(out, cap, |spare| {
+                        encoder.compress(operation, &mut remaining, spare)
+                    })? {
+                        Ok(bun_brotli::EncodeStatus::Done) => return Ok(Progress::Done),
+                        Ok(bun_brotli::EncodeStatus::NeedsOutput) => {}
+                        Err(bun_brotli::EncodeError::OutOfMemory) => {
+                            return Err(CodecError::OutOfMemory);
+                        }
+                        Err(bun_brotli::EncodeError::InvalidOperation) => {
+                            return Err(CodecError::Message("brotli encode failed"));
+                        }
                     }
                 }
             }
-            Backend::BrotliDecode(p) => {
+            Backend::BrotliDecode(decoder) => {
                 if self.ended {
                     if !input.is_empty() {
                         return Err(CodecError::TrailingJunk);
@@ -438,43 +430,30 @@ impl CompressionStreamCoder {
                 }
                 let mut remaining = input;
                 loop {
-                    let len_before = out.len();
-                    if len_before >= cap {
+                    if out.len() >= cap {
                         return Ok(Progress::More {
                             consumed: input.len() - remaining.len(),
                         });
                     }
-                    let (consumed, result) =
-                        append_step(out, cap, |spare| p.step(remaining, spare))?;
-                    remaining = &remaining[consumed..];
-                    match result {
-                        brotli::BrotliDecoderResult::success => {
+                    match append_step(out, cap, |spare| decoder.decompress(&mut remaining, spare))?
+                    {
+                        Ok(bun_brotli::DecodeStatus::Finished) => {
                             self.ended = true;
                             if !remaining.is_empty() {
                                 return Err(CodecError::TrailingJunk);
                             }
                             return Ok(Progress::Done);
                         }
-                        brotli::BrotliDecoderResult::needs_more_input => {
-                            // Brotli reports `needs_more_input` even with output left in its ring buffer.
-                            if out.len() > len_before && p.has_more_output() {
-                                continue;
-                            }
-                            if finish {
-                                return Err(CodecError::Message("unexpected end of file"));
-                            }
-                            return Ok(Progress::Done);
+                        Ok(bun_brotli::DecodeStatus::NeedsOutput) => {}
+                        Ok(bun_brotli::DecodeStatus::NeedsInput) if decoder.has_more_output() => {}
+                        Ok(bun_brotli::DecodeStatus::NeedsInput) if finish => {
+                            return Err(CodecError::Message("unexpected end of file"));
                         }
-                        brotli::BrotliDecoderResult::needs_more_output => {}
-                        brotli::BrotliDecoderResult::err => {
-                            let ec = p.error_code();
-                            if ec.is_alloc_failure() {
-                                return Err(CodecError::OutOfMemory);
-                            }
-                            return Err(CodecError::Brotli(
-                                ec.name().to_str().unwrap_or("brotli decode failed"),
-                            ));
+                        Ok(bun_brotli::DecodeStatus::NeedsInput) => return Ok(Progress::Done),
+                        Err(error) if error.is_out_of_memory() => {
+                            return Err(CodecError::OutOfMemory);
                         }
+                        Err(error) => return Err(CodecError::Brotli(error)),
                     }
                 }
             }
@@ -662,10 +641,11 @@ fn codec_error_to_js(global: &JSGlobalObject, e: &CodecError) -> JSValue {
             .to_js(),
         CodecError::OutOfMemory => global.create_out_of_memory_error(),
         CodecError::Message(msg) => global.create_type_error_instance(format_args!("{msg}")),
-        CodecError::Brotli(detail) => {
-            let code = format!("ERR_{detail}");
+        CodecError::Brotli(error) => {
+            let code = error.code().to_bytes();
+            let detail = bstr::BStr::new(code.strip_prefix(b"ERR_").unwrap_or(code));
             let err = global.create_type_error_instance(format_args!("brotli decode failed"));
-            let code_js = EncodedSlice::latin1(code.as_bytes()).to_js(global);
+            let code_js = EncodedSlice::latin1(code).to_js(global);
             err.put(global, b"code", code_js);
             let cause = global.create_error_instance(format_args!("{detail}"));
             cause.put(global, b"code", code_js);

@@ -3,6 +3,11 @@ use bun_simd::{Int, Isa, Lane, Out, Shuffle, Vector};
 use core::array::from_fn;
 use core::slice::{from_mut, from_ref};
 
+pub use simd::{
+    filter_normally, filter_simply, inverse_dct, reconstruct_subblocks, undo_cross_color,
+    undo_prediction, upsample,
+};
+
 type Rgba = [u8; 4];
 type Bytes<const N: usize, I> = Vector<u8, N, I>;
 
@@ -70,7 +75,7 @@ impl<const H: usize> Rows<'_, H> {
 
 /// With the index of the vector above that of the lane in 16 bytes, rotates the bits of both `times`.
 #[inline(always)]
-pub(crate) fn rotate<T: Lane, const N: usize, I: Isa, const K: usize>(
+pub(super) fn rotate<T: Lane, const N: usize, I: Isa, const K: usize>(
     v: &mut [Vector<T, N, I>; K],
     times: usize,
 ) {
@@ -204,8 +209,8 @@ static SOURCES: [[u8; 16]; 10] = [
     [19, 2, 18, 1, 18, 1, 17, 0, 17, 0, 16, 16, 16, 16, 16, 16],
 ];
 
-#[bun_simd::foreach_target]
-pub(crate) mod simd {
+#[bun_simd::foreach_target(avx2, sse4, neon, portable)]
+mod simd {
     use isa::x128::{I16, I32, U8, U32, U64};
     use isa::x256;
 
@@ -564,7 +569,7 @@ pub(crate) mod simd {
     }
 
     /// For 6 times 4 blocks side by side. 4 with no bit in `non_zero` stay. Others with none are zero.
-    #[export(up_to = avx2, up_to = neon)]
+    #[export]
     pub fn inverse_dct(coefficients: &mut [[i16; 64]; 6], non_zero: u32) {
         match IS_NARROW {
             true => width::x128::inverse_dct(coefficients, non_zero),
@@ -603,7 +608,7 @@ pub(crate) mod simd {
     }
 
     /// `left` has the sample in the corner, the 16 below it and 3 more. `modes` are those of libwebp.
-    #[export(up_to = avx2, up_to = neon)]
+    #[export]
     pub fn reconstruct_subblocks(
         above: &[u8; 16],
         above_right: [u8; 4],
@@ -638,7 +643,7 @@ pub(crate) mod simd {
     }
 
     /// For a macroblock of each strength. Unless `has_above`, the first row is that of the picture.
-    #[export(up_to = avx2, up_to = neon)]
+    #[export]
     #[must_use]
     #[allow(
         clippy::large_unopt_stack_frames,
@@ -669,7 +674,7 @@ pub(crate) mod simd {
     }
 
     /// The same for luma alone, which needs 2 rows above and not 4.
-    #[export(up_to = avx2, up_to = neon)]
+    #[export]
     #[must_use]
     pub fn filter_simply(
         y: Plane<'_>,
@@ -686,7 +691,7 @@ pub(crate) mod simd {
     }
 
     /// From two rows to both halves of `to`: two samples for each of `count` pairs, in whole steps.
-    #[export(up_to = avx2, up_to = neon)]
+    #[export]
     #[must_use]
     pub fn upsample(from: &[u8], distance: usize, to: &mut [u8], count: usize) -> Option<()> {
         match IS_NARROW {
@@ -696,7 +701,7 @@ pub(crate) mod simd {
     }
 
     /// Finishes the last step if there is room for it.
-    #[export(up_to = avx2, up_to = neon)]
+    #[export]
     pub fn yuv_to_rgba<'a>(yuva: &[&[u8]; 4], to: Out<'a, Rgba>, width: usize) -> &'a mut [Rgba] {
         match IS_NARROW {
             true => width::x128::yuv_to_rgba(yuva, to, width),
@@ -886,7 +891,7 @@ pub(crate) mod simd {
     }
 
     /// For a row below the first. The second byte of a tile is the mode for `1 << tile_bits` pixels.
-    #[export(up_to = avx2, up_to = neon)]
+    #[export]
     #[must_use]
     pub fn undo_prediction(
         row: &mut [Rgba],
@@ -923,7 +928,7 @@ pub(crate) mod simd {
     }
 
     /// A tile has the factors red to blue, green to blue and green to red for `1 << tile_bits` pixels.
-    #[export(up_to = avx2, up_to = neon)]
+    #[export]
     #[must_use]
     pub fn undo_cross_color(mut row: &mut [Rgba], tiles: &[Rgba], tile_bits: u32) -> Option<()> {
         let size = 1usize.checked_shl(tile_bits)?;

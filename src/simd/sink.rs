@@ -82,8 +82,8 @@ mod simd {
     {
         /// Like `Out::fill_chunks`, from half a vector on. `f` may mix only the lanes of a half.
         pub fn append_chunks<A: Copy>(
-            to: &mut impl Sink,
             from: &[A],
+            to: &mut impl Sink,
             f: impl Fn(&[A; N]) -> Option<Self>,
         ) {
             const {
@@ -96,7 +96,7 @@ mod simd {
             if len >= N {
                 to.append_either(
                     |to| to.fill_chunks(from, |_, chunk| Some(f(chunk)?.to_array())),
-                    |to| Self::fill_chunks_shared(&to[..len], &from[..len], &f),
+                    |to| Self::fill_chunks_shared(&from[..len], &to[..len], &f),
                 );
             } else if len >= N / 2 {
                 let mut halves = [from[0]; N];
@@ -117,8 +117,8 @@ mod simd {
 
         #[inline(always)]
         fn fill_chunks_shared<A>(
-            to: &[SharedOutU8],
             from: &[A],
+            to: &[SharedOutU8],
             f: &impl Fn(&[A; N]) -> Option<Self>,
         ) -> usize {
             let (len, mut filled) = (from.len(), 0);
@@ -127,9 +127,9 @@ mod simd {
                 let (chunks, rest) = from[..len - 1].as_chunks().0.as_chunks::<UNROLL>();
                 let (to, to_rest) = to[..len - 1].as_chunks().0.as_chunks::<UNROLL>();
                 for (from, to) in chunks.iter().zip(to) {
-                    Self::fill_each_shared(to, from, &mut filled, f)?;
+                    Self::fill_each_shared(from, to, &mut filled, f)?;
                 }
-                Self::fill_each_shared(to_rest, rest, &mut filled, f)?;
+                Self::fill_each_shared(rest, to_rest, &mut filled, f)?;
                 f(last)?.store_shared(to_last);
                 filled = len;
             };
@@ -138,8 +138,8 @@ mod simd {
 
         #[inline(always)]
         fn fill_each_shared<A>(
-            to: &[[SharedOutU8; N]],
             from: &[[A; N]],
+            to: &[[SharedOutU8; N]],
             filled: &mut usize,
             f: &impl Fn(&[A; N]) -> Option<Self>,
         ) -> Option<()> {

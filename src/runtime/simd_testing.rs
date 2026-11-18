@@ -28,7 +28,7 @@ pub(crate) fn search(kernel: SimdSearch, haystack: &[u8], needle: &[u8]) -> f64 
         }
         SimdSearch::LastIndexOfSlash => kernels::last_index_of_slash(haystack),
         SimdSearch::LastIndexOfSlashOrDot => kernels::last_index_of_slash_or_dot(haystack),
-        SimdSearch::CommonPrefixLength => Some(kernels::common_prefix_length(haystack, needle)),
+        SimdSearch::CommonPrefixLength => Some(kernels::common_prefix_len(haystack, needle)),
         SimdSearch::CountSlashes => Some(kernels::count_slashes(haystack)),
         SimdSearch::Memmem => kernels::memmem(haystack, needle),
         SimdSearch::Memrmem => kernels::memrmem(haystack, needle),

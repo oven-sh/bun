@@ -2,7 +2,7 @@
 use crate::swizzle::{As, DeinterleaveInBlocks, InterleaveInBlocks, Repeat, ShiftRight};
 use crate::swizzle::{Shuffle, SwapPairs};
 use crate::{Isa, Mask};
-use bun_simd_trusted::{from_array, opaque16};
+use bun_simd_trusted::{from_array, opaque16, windows};
 use core::array;
 use core::marker::PhantomData;
 use core::ops::{
@@ -41,7 +41,7 @@ macro_rules! impl_lane {
     )*};
 }
 
-impl_lane!(u8 i8 u16 i16 u32 i32 u64 i64 f32);
+impl_lane!(u8 i8 u16 i16 u32 i32 u64 i64 f32 f64);
 
 /// An integer lane of a vector with `N` lanes: the bound for code that is generic over lanes.
 pub trait Int<const N: usize> = Lane
@@ -232,36 +232,18 @@ macro_rules! impl_halves {
 
 impl_halves!(64 32, 32 16, 16 8, 8 4, 4 2, 2 1);
 
-impl<T: Int<N>, const N: usize, I: Isa> Vector<T, N, I> {
-    /// Fills every `K` lanes with `lanes`.
+impl<I: Isa> Vector<u32, 4, I> {
+    /// For each lane, the `K` items from that index on, or else the last `K`. `None` if there are fewer.
     #[inline(always)]
-    pub fn repeat<const K: usize>(lanes: [T; K]) -> Self
-    where
-        T: Int<K>,
-    {
-        const { assert!(K <= N && matches!(size_of::<[T; K]>(), 2 | 4 | 8 | 16)) };
-        // LLVM does not merge a `splat` of wider lanes with the shuffles after it.
-        let lanes = Vector::<T, K, I>::from_array(lanes);
-        Self::from_first_bytes(match size_of_val(&lanes) {
-            2 => u16x32::splat(u16::from_le_bytes(to_array(lanes.first_bytes()))).to_le_bytes(),
-            4 => u32x16::splat(u32::from_le_bytes(to_array(lanes.first_bytes()))).to_le_bytes(),
-            8 => u64x8::splat(u64::from_le_bytes(to_array(lanes.first_bytes()))).to_le_bytes(),
-            _ => Repeat::<16>::swizzle(lanes.first_bytes::<16>()),
-        })
+    pub fn windows<T, const K: usize>(self, from: &[T]) -> Option<[&[T; K]; 4]> {
+        windows(from, self.0)
     }
+}
 
-    /// Panics if the vector has fewer than `BYTES` bytes.
-    #[inline(always)]
-    pub(crate) fn first_bytes<const BYTES: usize>(self) -> Simd<u8, BYTES> {
-        from_slice(self.0.to_le_bytes().as_ref())
-    }
-
-    /// `a0 b0 a1 b1 ..`, split into two halves.
-    #[inline(always)]
-    pub fn interleave(self, other: Self) -> (Self, Self) {
-        I::interleave(self, other)
-    }
-
+impl<T: Lane, const N: usize, I: Isa> Vector<T, N, I>
+where
+    Simd<T, N>: SimdPartialOrd<Mask = simd::Mask<T::Mask, N>>,
+{
     #[inline(always)]
     pub fn simd_eq(self, other: impl Into<Self>) -> Mask<T, N, I> {
         Mask::new(self.0.simd_eq(other.into().0))
@@ -290,6 +272,37 @@ impl<T: Int<N>, const N: usize, I: Isa> Vector<T, N, I> {
     #[inline(always)]
     pub fn simd_ge(self, other: impl Into<Self>) -> Mask<T, N, I> {
         Mask::new(self.0.simd_ge(other.into().0))
+    }
+}
+
+impl<T: Int<N>, const N: usize, I: Isa> Vector<T, N, I> {
+    /// Fills every `K` lanes with `lanes`.
+    #[inline(always)]
+    pub fn repeat<const K: usize>(lanes: [T; K]) -> Self
+    where
+        T: Int<K>,
+    {
+        const { assert!(K <= N && matches!(size_of::<[T; K]>(), 2 | 4 | 8 | 16)) };
+        // LLVM does not merge a `splat` of wider lanes with the shuffles after it.
+        let lanes = Vector::<T, K, I>::from_array(lanes);
+        Self::from_first_bytes(match size_of_val(&lanes) {
+            2 => u16x32::splat(u16::from_le_bytes(to_array(lanes.first_bytes()))).to_le_bytes(),
+            4 => u32x16::splat(u32::from_le_bytes(to_array(lanes.first_bytes()))).to_le_bytes(),
+            8 => u64x8::splat(u64::from_le_bytes(to_array(lanes.first_bytes()))).to_le_bytes(),
+            _ => Repeat::<16>::swizzle(lanes.first_bytes::<16>()),
+        })
+    }
+
+    /// Panics if the vector has fewer than `BYTES` bytes.
+    #[inline(always)]
+    pub(crate) fn first_bytes<const BYTES: usize>(self) -> Simd<u8, BYTES> {
+        from_slice(self.0.to_le_bytes().as_ref())
+    }
+
+    /// `a0 b0 a1 b1 ..`, split into two halves.
+    #[inline(always)]
+    pub fn interleave(self, other: Self) -> (Self, Self) {
+        I::interleave(self, other)
     }
 
     #[inline(always)]
@@ -559,7 +572,17 @@ impl<T: Int<N>, const N: usize, I: Isa> Shr<u32> for Vector<T, N, I> {
     }
 }
 
-impl<T: Lane, const N: usize, I: Isa, R: Into<Self>> Mul<R> for Vector<T, N, I>
+/// The others are slow to multiply on most targets.
+pub trait Factor: Lane {}
+
+impl Factor for u16 {}
+impl Factor for i16 {}
+impl Factor for u32 {}
+impl Factor for i32 {}
+impl Factor for f32 {}
+impl Factor for f64 {}
+
+impl<T: Factor, const N: usize, I: Isa, R: Into<Self>> Mul<R> for Vector<T, N, I>
 where
     Simd<T, N>: Mul<Output = Simd<T, N>>,
 {
@@ -567,7 +590,6 @@ where
 
     #[inline(always)]
     fn mul(self, rhs: R) -> Self {
-        const { assert!(matches!(size_of::<T>(), 2 | 4), "slow on most targets") };
         Self::new(self.0 * rhs.into().0)
     }
 }

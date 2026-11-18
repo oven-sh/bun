@@ -3,6 +3,8 @@ use crate::ByteSet;
 use bun_simd::{Out, blocks};
 use class::{STRUCTURAL, WHITESPACE};
 
+pub use simd::index_chunk;
+
 const CLASSES: ByteSet = ByteSet {
     rows: [
         0x48, 0x40, 0x32, 0x04, 0x00, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -22,27 +24,39 @@ pub mod class {
 const ODDITY: u8 = 0x20;
 /// Below 0x20
 const CONTROL: u8 = 0x40;
-/// The scalar indexer has to take over: there is an oddity, or no more room.
-const GIVES_UP: u32 = 1 << 3;
+
+pub const HAS_BACKSLASH_IN_STRING: u32 = 1 << 0;
+pub const HAS_CONTROL_IN_STRING: u32 = 1 << 1;
+
+/// How the chunk before ended.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub struct State {
+    pub is_escaped: bool,
+    pub is_in_string: bool,
+    pub is_in_scalar: bool,
+}
 
 #[bun_simd::foreach_target]
-pub(crate) mod simd {
+mod simd {
     use crate::byte_set::simd::this_target::class;
     use isa::U8;
 
+    /// `None` if the scalar indexer has to take over: there is an oddity, or no more room.
     #[export(up_to = neon)]
     pub fn index_chunk<'a>(
-        input: &[u8],
+        text: &[u8],
         base_offset: usize,
         out: Out<'a, u32>,
         dirty_out: &mut [u64],
-        state: &mut [u64; 3],
-    ) -> (&'a mut [u32], u32) {
-        let [mut prev_escaped, mut prev_in_string, mut prev_scalar] = *state;
+        state: &mut State,
+    ) -> Option<(&'a mut [u32], u32)> {
+        let mut prev_escaped = u64::from(state.is_escaped);
+        let mut prev_in_string = u64::from(state.is_in_string).wrapping_neg();
+        let mut prev_scalar = u64::from(state.is_in_scalar);
         let (mut bs_in_str, mut ctrl_in_str, mut dirty_acc) = (0u64, 0u64, 0u64);
         let mut out = out.into_writer();
 
-        for (block, bytes) in blocks(input, &mut [b' '; 64]).enumerate() {
+        for (block, bytes) in blocks(text, &mut [b' '; 64]).enumerate() {
             let [bs, quote, op, opws, odd, ctrl] = U8::bitmasks(bytes, |v| {
                 let class = class(v, &CLASSES);
                 let lacks = |bits: u8| (class & bits).simd_eq(0);
@@ -76,13 +90,10 @@ pub(crate) mod simd {
             ctrl_in_str |= ctrl & in_str;
             dirty_acc |= u64::from((bs | ctrl) & in_str != 0) << (block & 63);
             if block & 63 == 63 {
-                let Some(dirty) = dirty_out.get_mut(block >> 6) else {
-                    return (&mut [], GIVES_UP);
-                };
-                *dirty = core::mem::take(&mut dirty_acc);
+                *dirty_out.get_mut(block >> 6)? = core::mem::take(&mut dirty_acc);
             }
             if odd & !in_str != 0 || out.remaining() < 64 {
-                return (&mut [], GIVES_UP);
+                return None;
             }
 
             let scalar = !opws & !in_str & !real_quote;
@@ -93,17 +104,17 @@ pub(crate) mod simd {
             isa::bit_indices(emit).push_to(&mut out, (base_offset + 64 * block) as u32);
         }
 
-        let count = input.len().div_ceil(64);
+        let count = text.len().div_ceil(64);
         if count & 63 != 0 {
-            let Some(dirty) = dirty_out.get_mut(count >> 6) else {
-                return (&mut [], GIVES_UP);
-            };
-            *dirty = dirty_acc;
+            *dirty_out.get_mut(count >> 6)? = dirty_acc;
         }
-        *state = [prev_escaped, prev_in_string, prev_scalar];
-        (
-            out.finish(),
-            u32::from(bs_in_str != 0) | u32::from(ctrl_in_str != 0) << 1,
-        )
+        *state = State {
+            is_escaped: prev_escaped != 0,
+            is_in_string: prev_in_string != 0,
+            is_in_scalar: prev_scalar != 0,
+        };
+        let backslash = u32::from(bs_in_str != 0) * HAS_BACKSLASH_IN_STRING;
+        let control = u32::from(ctrl_in_str != 0) * HAS_CONTROL_IN_STRING;
+        Some((out.finish(), backslash | control))
     }
 }

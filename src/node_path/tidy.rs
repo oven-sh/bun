@@ -299,7 +299,7 @@ pub fn relative_posix_latin1(from: &[u8], to: &[u8]) -> RelativePosixLatin1 {
     debug_assert!(is_resolved_ascii_posix(from) && is_resolved_ascii_posix(to));
     // Where the names of `from` start that are not in `to`, if there are any, and `rest`.
     let (left_from, rest) = 'found: {
-        let common = bun_simd_kernels::common_prefix_length(from, to);
+        let common = bun_simd_kernels::common_prefix_len(from, to);
         if common == from.len() {
             if common == to.len() {
                 break 'found (None, common);

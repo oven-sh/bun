@@ -3,7 +3,7 @@
 //! `\n` `"` `'` `=` between a `<` and the next `>` — produced by the SIMD kernel or, off
 //! native targets, the scalar indexer.
 
-use bun_simd_kernels::xml_class as class;
+use bun_simd_kernels::xml::{self as kernels, class};
 
 pub(crate) const SENTINELS: usize = 2;
 
@@ -20,7 +20,7 @@ pub struct StructuralIndex<'c, U: crate::xml::Unit = u8> {
     base: usize,
     done: bool,
     src_off: usize,
-    kernel_state: [u64; 3],
+    kernel_state: kernels::State,
     use_scalar: bool,
     s_in_tag: bool,
     /// Scalar producer, UTF-16: the last unit seen was a lead surrogate.
@@ -42,7 +42,7 @@ impl<'c, U: crate::xml::Unit> StructuralIndex<'c, U> {
             base: 0,
             done: false,
             src_off: 0,
-            kernel_state: [0; 3],
+            kernel_state: kernels::State::default(),
             use_scalar,
             s_in_tag: false,
             s_pending_lead: false,
@@ -128,7 +128,7 @@ impl<'c, U: crate::xml::Unit> StructuralIndex<'c, U> {
     fn finish(&mut self) {
         let len = self.contents.len() as u32;
         // A lead surrogate as the very last unit never got its verdict.
-        if U::WIDE && (self.kernel_state[1] & 1 != 0 || self.s_pending_lead) {
+        if U::WIDE && (self.kernel_state.ends_with_lead_surrogate || self.s_pending_lead) {
             self.win.push(len - 1);
         }
         self.win.push(len);

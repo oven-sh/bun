@@ -116,6 +116,7 @@ const GUIDANCE: Record<CheckName, string[]> = {
     "This code is there for tests and debugging and must not ship: the linker kept it because",
     "something reachable refers to it. Find the caller (llvm-nm -A --undefined-only over the link",
     "inputs) and compile the call out of this flavour, as binary-expectations.ts says for the list.",
+    "One of inlinedSymbols() was not inlined: -Cremark=inline or -mllvm -pass-remarks-missed=inline says why.",
   ],
   hardening: [
     "These bits are process-wide exploit mitigations / layout guarantees (non-executable",

@@ -195,9 +195,9 @@ impl Round<'_> {
         digests.of_bytes(text);
         digests.add("line_starts", hash(&line_starts(text)));
         digests.add("index_of_not_char", index_of_not_char(text, byte).number());
-        digests.add("common_prefix_length", common_prefix_length(text, other).number());
-        digests.same("common_prefix_length", common_prefix_length(other, text).number());
-        digests.add("common_prefix_length", common_prefix_length(text, text).number());
+        digests.add("common_prefix_len", common_prefix_len(text, other).number());
+        digests.same("common_prefix_len", common_prefix_len(other, text).number());
+        digests.add("common_prefix_len", common_prefix_len(text, text).number());
         // A short load is padded with 0.
         for (byte, unit, chars) in [(byte, unit, chars), (0, 0, rare)] {
             let chars = b.copy_of(&chars, at);
@@ -572,15 +572,15 @@ impl Round<'_> {
                 (add, "lower_ascii", self.from_to(text, room, |from, to| lower_ascii(from, to))),
                 (add, "lower_ascii16", self.from_to(&ascii, room, |from, to| lower_ascii16(from, to))),
                 (add, "encode_hex_lower", self.from_to(text, twice, |from, to| encode_hex_lower(from, to))),
-                (same, "encode_hex_lower_shared", self.from_to(text, twice, |from, to| encode_hex_lower_shared(shared(from), to))),
-                (add, "fill_with_mask", self.from_to(text, room, |from, to| fill_with_mask(mask, to, from))),
-                (same, "fill_with_mask_from_shared", self.from_to(text, room, |from, to| fill_with_mask_from_shared(mask, to, shared(from)))),
+                (same, "encode_hex_lower_from_shared", self.from_to(text, twice, |from, to| encode_hex_lower_from_shared(shared(from), to))),
+                (add, "websocket::mask", self.from_to(text, room, |from, to| websocket::mask(mask, from, to))),
+                (same, "websocket::mask_from_shared", self.from_to(text, room, |from, to| websocket::mask_from_shared(mask, shared(from), to))),
             ] {
                 how(self.digests, name, result);
             }
         }
-        let masked = self.in_place(&|bytes| mask_in_place(mask, bytes));
-        self.digests.add("mask_in_place", masked);
+        let masked = self.in_place(&|bytes| websocket::mask_in_place(mask, bytes));
+        self.digests.add("websocket::mask_in_place", masked);
         for (name, kernel) in lists::SWAPS {
             let swapped = self.in_place(&|bytes| kernel(AtomicU8::from_mut_slice(bytes)));
             self.digests.add(name, swapped);
@@ -596,8 +596,8 @@ impl Round<'_> {
         };
         let before = self.text.as_chunks().0;
         let after = self.rooms[0].copy_of(before, self.offset);
-        modulate(after, brightness, saturation);
-        self.digests.trace("modulate", hash(after));
+        image::modulate(after, brightness, saturation);
+        self.digests.trace("image::modulate", hash(after));
         let is_rounded = |(before, after): (&[u8; 4], &mut [u8; 4])| {
             let [r, g, b, alpha] = before.map(f32::from);
             let y = 0.299 * r + 0.587 * g + 0.114 * b;
@@ -608,7 +608,7 @@ impl Round<'_> {
             pairs.all(|(exact, got)| (exact - f32::from(got)).abs() < 0.501)
         };
         let is_ok = before.iter().zip(after).all(is_rounded);
-        self.digests.fails_unless(is_ok, "modulate");
+        self.digests.fails_unless(is_ok, "image::modulate");
     }
 
     #[optimize(size)]
@@ -641,33 +641,39 @@ impl Round<'_> {
 
     #[optimize(size)]
     fn json(&mut self) {
+        const GIVES_UP: u32 = 8;
         for len in [self.text.len(), self.text.len() & !63] {
             let alphabet = self.random.one_of(&[JSON, JSON, b"{}[]:,"]);
             let mut text = self.random.bytes(len, alphabet);
             self.random.scatter(&mut text, &[0, 8, 8, 30]);
-            let [escaped, in_string, scalar] = [(); 3].map(|()| self.random.next() & 1);
-            let [mut state, mut again] = [[escaped, in_string.wrapping_neg(), scalar]; 2];
+            let [is_escaped, is_in_string, is_in_scalar] =
+                [(); 3].map(|()| self.random.next() & 1 != 0);
+            let [mut state, mut again] = [json::State {
+                is_escaped,
+                is_in_string,
+                is_in_scalar,
+            }; 2];
             let [a, b, c, d, ..] = &mut *self.rooms;
             let (text, into) = (
                 a.copy_of(&text, self.offset),
                 b.uninit(len + 66, self.offset),
             );
             let dirty = c.copy_of(&vec![0xA5; len.div_ceil(4096)], self.offset);
-            let (index, flags) =
-                json_structural_index_chunk(text, 4096, into.into(), dirty, &mut state);
+            let found = json::index_chunk(text, 4096, into.into(), dirty, &mut state);
+            let (index, flags) = found.unwrap_or((&mut [], GIVES_UP));
+            let [x, y, z] = [state.is_escaped, state.is_in_string, state.is_in_scalar];
             // The last word depends on the padding, after which nothing follows.
+            let state = &[x.into(), u64::from(y).wrapping_neg(), z.into()];
             let state = &state[..2 + usize::from(len.is_multiple_of(64))];
             let all = [flags.into(), hash(index), hash(dirty), hash(state)];
-            let has_given_up = flags & 8 != 0;
-            let all = &all[..if has_given_up { 1 } else { 4 }];
-            self.digests.add("json_structural_index_chunk", hash(all));
+            let all = &all[..if flags == GIVES_UP { 1 } else { 4 }];
+            self.digests.add("json::index_chunk", hash(all));
 
             let less = (index.len() + self.random.below(132)).saturating_sub(66);
             let less = d.uninit(less, self.offset);
-            let short = json_structural_index_chunk(text, 4096, less.into(), dirty, &mut again);
-            let is_ok = short.1 & 8 != 0 || short == (index, flags);
-            self.digests
-                .fails_unless(is_ok, "json_structural_index_chunk");
+            let short = json::index_chunk(text, 4096, less.into(), dirty, &mut again);
+            let is_ok = short.is_none_or(|short| short == (index, flags));
+            self.digests.fails_unless(is_ok, "json::index_chunk");
         }
     }
 
@@ -677,18 +683,26 @@ impl Round<'_> {
         let [is_open, ef, bf] = [(); 3].map(|()| self.random.next());
         let ([a, b, ..], at) = (&mut *self.rooms, self.offset);
 
-        let (mut state, into) = ([is_open & 1, ef, bf], b.uninit(room, at).into());
-        let index = xml_structural_index_chunk(a.copy_of(self.text, at), 64, into, &mut state);
-        let both = [hash(index), hash(&state)];
-        self.digests.add("xml_structural_index_chunk", hash(&both));
+        let before = xml::State {
+            is_open: is_open & 1 != 0,
+            ef_and_bf: [ef, bf],
+            ends_with_lead_surrogate: ef & 1 != 0,
+        };
+
+        let (mut state, into) = (before, b.uninit(room, at).into());
+        let index = xml::index_chunk(a.copy_of(self.text, at), 64, into, &mut state);
+        let [ef, bf] = state.ef_and_bf;
+        let both = [hash(index), hash(&[state.is_open.into(), ef, bf])];
+        self.digests.add("xml::index_chunk", hash(&both));
 
         // A lead surrogate that the chunk before left open takes the place of one in this chunk.
         let wide = a.copy_of(wide.get(1..).unwrap_or_default(), at);
-        let (mut state, into) = ([is_open & 1, ef & 1, 0], b.uninit(room, at).into());
-        let index = xml_structural_index16_chunk(wide, 64, into, &mut state);
-        let both = [hash(index), hash(&state)];
-        self.digests
-            .add("xml_structural_index16_chunk", hash(&both));
+        let (mut state, into) = (before, b.uninit(room, at).into());
+        let index = xml::index_chunk16(wide, 64, into, &mut state);
+        let has_changed = state.ef_and_bf != before.ef_and_bf;
+        let state = [state.is_open, state.ends_with_lead_surrogate, has_changed];
+        let both = [hash(index), hash(&state.map(u64::from))];
+        self.digests.add("xml::index_chunk16", hash(&both));
     }
 
     #[optimize(size)]
@@ -696,8 +710,9 @@ impl Round<'_> {
         let pixels = self.text.as_chunks().0;
         let color = [(); 4].map(|()| self.some_byte());
         let palette = self.rooms[0].copy_of(pixels, self.offset);
-        let nearest = nearest_in_palette(palette, color);
-        self.digests.add("nearest_in_palette", nearest.into());
+        let nearest = image::nearest_in_palette(palette, color);
+        self.digests
+            .add("image::nearest_in_palette", nearest.into());
 
         let longest = self.random.one_of(&[10, 10, 10, 70]);
         let (a, b) = (self.text.len() % 200, self.random.below(longest));
@@ -726,8 +741,8 @@ impl Round<'_> {
             let len = len - len % bytes_per_pixel;
             for filter_type in 1..=4 {
                 let (row, above) = (a.copy_of(&row[..len], at), b.copy_of(&above[..len], at));
-                png_unfilter(filter_type, bytes_per_pixel, row, above);
-                self.digests.add("png_unfilter", hash(row));
+                png::unfilter(filter_type, bytes_per_pixel, row, above);
+                self.digests.add("png::unfilter", hash(row));
             }
         }
 
@@ -738,9 +753,9 @@ impl Round<'_> {
         );
         let mut filtered = others.each_mut().map(|room| room.copy_of(&junk, at));
         let into = filtered.each_mut().map(|row| &mut row[..]);
-        let sums = png_filter_rgba(a.copy_of(row, at), b.copy_of(above, at), into);
+        let sums = png::filter_rgba(a.copy_of(row, at), b.copy_of(above, at), into);
         let both = [hash(&sums), hash(&filtered.map(|row| hash(row)))];
-        self.digests.add("png_filter_rgba", hash(&both));
+        self.digests.add("png::filter_rgba", hash(&both));
     }
 
     #[optimize(size)]
@@ -749,7 +764,7 @@ impl Round<'_> {
         let (count, gap) = (random.below(9), random.below(9));
         let (one_in, shift) = (random.one_of(&[1, 5, 60, 600]), random.below(15));
         let mut block = |one_in, shift: usize, bits| {
-            JpegBlock(from_fn(|i| match random.below(one_in) * i {
+            jpeg::Block(from_fn(|i| match random.below(one_in) * i {
                 0 => random.next() as i16 >> shift & bits,
                 _ => 0,
             }))
@@ -762,36 +777,36 @@ impl Round<'_> {
             block.0[random.below(64)] |= random.below(2) as i16;
         }
         for size in [2, 3, 4, 5, 6, 7, 8, 10, 12, 14] {
-            let stride = count * size + JPEG_ROW_SLACK + gap;
+            let stride = count * size + jpeg::ROW_SLACK + gap;
             let rows = b.copy_of(&vec![7; size * stride - gap], at);
-            let fits = jpeg_inverse_transform(blocks, &quant, size, rows, stride).is_some();
+            let fits = jpeg::inverse_transform(blocks, &quant, size, rows, stride).is_some();
             for row in rows.chunks_mut(stride) {
-                row[count * size..][..JPEG_ROW_SLACK].fill(0);
+                row[count * size..][..jpeg::ROW_SLACK].fill(0);
             }
-            self.digests.fails_unless(fits, "jpeg_inverse_transform");
-            self.digests.add("jpeg_inverse_transform", hash(rows));
+            self.digests.fails_unless(fits, "jpeg::inverse_transform");
+            self.digests.add("jpeg::inverse_transform", hash(rows));
         }
 
         let alphabet = random.one_of(&[b"", &b"\0\xFF"[..], b"xyz"]);
         let stride = 8 * count + gap;
         let rows = b.copy_of(&random.bytes(8 * stride - gap, alphabet), at);
-        let (junk, steps) = (vec![JpegBlock([7; 64]); count], &[x, y]);
-        let hash_of = |blocks: &[JpegBlock]| hash(&Vec::from_iter(blocks.iter().map(|it| it.0)));
+        let (junk, steps) = (vec![jpeg::Block([7; 64]); count], &[x, y]);
+        let hash_of = |blocks: &[jpeg::Block]| hash(&Vec::from_iter(blocks.iter().map(|it| it.0)));
         let (blocks, masks) = (a.copy_of(&junk, at), c.copy_of(&vec![[7; 1]; count], at));
-        let fits = jpeg_forward_transform(rows, stride, steps, blocks, masks).is_some();
+        let fits = jpeg::forward_transform(rows, stride, steps, blocks, masks).is_some();
         let first = [hash_of(blocks), hash(masks)];
         let (blocks, planes) = (a.copy_of(&junk, at), d.copy_of(&vec![[7; 4]; count], at));
-        let fits = fits & jpeg_forward_transform(rows, stride, steps, blocks, planes).is_some();
+        let fits = fits & jpeg::forward_transform(rows, stride, steps, blocks, planes).is_some();
         let both = [first, [hash_of(blocks), hash(planes)]];
-        self.digests.fails_unless(fits, "jpeg_forward_transform");
-        self.digests.add("jpeg_forward_transform", hash(&both));
+        self.digests.fails_unless(fits, "jpeg::forward_transform");
+        self.digests.add("jpeg::forward_transform", hash(&both));
     }
 
     #[optimize(size)]
     fn jpeg_colors(&mut self) {
         let (random, [a, b, c, d, e, f], at) = (&mut self.random, &mut *self.rooms, self.offset);
         let (width, alphabet) = (random.below(200), random.one_of(&[b"", &b"\0\x80\xFF"[..]]));
-        let padded = width.next_multiple_of(JPEG_PIXEL_GROUP);
+        let padded = width.next_multiple_of(jpeg::PIXEL_GROUP);
         let y = f.copy_of(&random.bytes(padded, alphabet), at);
         for kind in 0..3 {
             let len = if kind == 0 { padded } else { padded / 2 + 4 };
@@ -800,17 +815,17 @@ impl Round<'_> {
                 &*room.copy_of(&random.bytes(len, alphabet), at)
             });
             let chroma = match kind {
-                0 => JpegChroma::Full { cb, cr },
-                1 => JpegChroma::HalfWidth { cb, cr },
-                _ => JpegChroma::HalfSize {
+                0 => jpeg::Chroma::Full { cb, cr },
+                1 => jpeg::Chroma::HalfWidth { cb, cr },
+                _ => jpeg::Chroma::HalfSize {
                     cb: [cb, far_cb],
                     cr: [cr, far_cr],
                 },
             };
             let mut pixels = Vec::with_capacity(padded);
-            let fits = jpeg_ycc_to_rgba(y, chroma, width, &mut pixels).is_some();
-            self.digests.fails_unless(fits, "jpeg_ycc_to_rgba");
-            self.digests.add("jpeg_ycc_to_rgba", hash(&pixels));
+            let fits = jpeg::ycc_to_rgba(y, chroma, width, &mut pixels).is_some();
+            self.digests.fails_unless(fits, "jpeg::ycc_to_rgba");
+            self.digests.add("jpeg::ycc_to_rgba", hash(&pixels));
         }
 
         let (pairs, gap) = (1 + random.below(3), random.below(5));
@@ -825,10 +840,10 @@ impl Round<'_> {
         .map(|(room, len)| room.copy_of(&vec![7; len], at));
         let into = planes.each_mut().map(|plane| &mut plane[..]);
         let pixels = e.copy_of(pixels.as_chunks().0, at);
-        let fits = jpeg_rgba_to_ycc420(pixels, from, padded, pairs, into, to).is_some();
+        let fits = jpeg::rgba_to_ycc420(pixels, from, padded, pairs, into, to).is_some();
         let planes = planes.map(|plane| hash(plane));
-        self.digests.fails_unless(fits, "jpeg_rgba_to_ycc420");
-        self.digests.add("jpeg_rgba_to_ycc420", hash(&planes));
+        self.digests.fails_unless(fits, "jpeg::rgba_to_ycc420");
+        self.digests.add("jpeg::rgba_to_ycc420", hash(&planes));
     }
 
     /// Each color is in one of the first 8192 rounds.
@@ -847,18 +862,121 @@ impl Round<'_> {
         let [y, cb, cr] = [(a, 0), (b, 1), (c, 2)]
             .map(|(room, i)| room.copy_of(&Vec::from_iter(colors.iter().map(|it| it[i])), at));
         let mut pixels = Vec::with_capacity(COUNT);
-        let fits = jpeg_ycc_to_rgba(y, JpegChroma::Full { cb, cr }, COUNT, &mut pixels).is_some();
-        self.digests.fails_unless(fits, "jpeg_ycc_to_rgba");
-        self.digests.add("jpeg_ycc_to_rgba", hash(&pixels));
+        let fits =
+            jpeg::ycc_to_rgba(y, jpeg::Chroma::Full { cb, cr }, COUNT, &mut pixels).is_some();
+        self.digests.fails_unless(fits, "jpeg::ycc_to_rgba");
+        self.digests.add("jpeg::ycc_to_rgba", hash(&pixels));
 
         // The four pixels that are averaged have the same color.
         let row = d.copy_of(&Vec::from_iter(colors.iter().flat_map(|&it| [it; 2])), at);
         let y = e.copy_of(&vec![7; 4 * COUNT], at);
         let into = [&mut *y, &mut *cb, &mut *cr];
-        let fits = jpeg_rgba_to_ycc420(row, 0, 2 * COUNT, 1, into, COUNT).is_some();
+        let fits = jpeg::rgba_to_ycc420(row, 0, 2 * COUNT, 1, into, COUNT).is_some();
         let planes = [hash(y), hash(cb), hash(cr)];
-        self.digests.fails_unless(fits, "jpeg_rgba_to_ycc420");
-        self.digests.add("jpeg_rgba_to_ycc420", hash(&planes));
+        self.digests.fails_unless(fits, "jpeg::rgba_to_ycc420");
+        self.digests.add("jpeg::rgba_to_ycc420", hash(&planes));
+    }
+
+    #[optimize(size)]
+    #[rustfmt::skip]
+    fn brotli_blocks(&mut self) {
+        let (random, [a, b, c, d, e, _], at) = (&mut self.random, &mut *self.rooms, self.offset);
+        let (groups, alphabet, step) = (1 + random.below(16), 1 + random.below(20), random.one_of(&[1.0, 0.37]));
+        let len = if random.below(99) == 0 { 2100 } else { self.text.len() % 70 };
+        let symbols = a.copy_of(&Vec::from_iter((0..len).map(|_| random.below(alphabet) as u16)), at);
+        let mut costs = |count| Vec::from_iter((0..count).map(|_| from_fn(|_| random.below(9) as f64 * step)));
+        let (added, sums) = (b.copy_of(&costs(alphabet * groups), at), c.copy_of(&costs(groups), at));
+        let (switches, cheapest) = (d.copy_of(&vec![7; len * groups], at), e.copy_of(&vec![7; len], at));
+        brotli::find_switches(symbols, added, 13.5, sums, switches, cheapest);
+        self.digests.add("brotli::find_switches", hash(&[hash(sums), hash(switches), hash(cheapest)]));
+
+        let (count, ids, kinds) = (4 + self.text.len() % 50 * 4, 2 + random.below(20), random.one_of(&[2, 5, 999]));
+        let costs = a.copy_of(&Vec::from_iter((0..count).map(|_| random.below(kinds) as f64 * 0.3 - 1.0)), at);
+        let mut pair = |_| [random.below(ids) as u32, (ids + random.below(ids)) as u32];
+        let (pairs, merged) = (b.copy_of(&Vec::from_iter((0..count).map(&mut pair)), at), pair(0));
+        let kept = brotli::remove_pairs(costs, pairs, merged);
+        self.digests.add("brotli::remove_pairs", hash(&[kept.number(), hash(&costs[..kept.max(1)]), hash(&pairs[..kept.max(1)])]));
+
+        let (count, kinds) = (self.text.len() % random.one_of(&[60, 300, 706]), random.one_of(&[2, 60, 32767, 40000]));
+        let leaves = Vec::from_iter((0..count + brotli::LEAF_SLACK).map(|i| (random.below(kinds) << 32 | i) as u64));
+        for like_shell_sort in [false, true] {
+            let sorted = b.copy_of(&vec![7; leaves.len()], at);
+            let did = brotli::sort_leaves(a.copy_of(&leaves, at), count, like_shell_sort, sorted);
+            self.digests.add("brotli::sort_leaves", hash(&[did.number(), hash(&sorted[..count])]));
+        }
+    }
+
+    /// What is not in the table is a power of two, whose logarithm is the same in each C library.
+    #[optimize(size)]
+    #[rustfmt::skip]
+    fn brotli_costs(&mut self) {
+        const KNOWN: u32 = 1024;
+        let (random, [a, b, c, d, e, f], at) = (&mut self.random, &mut *self.rooms, self.offset);
+        let size = random.one_of(&[64, 256, 544, 704, 64 + self.text.len() % 81 * 8]);
+        let (mut used, mut totals, mut gaps) = ([0; 11], [0; 4], [[0; 4]; 2]);
+        let mut sums: [_; 4] = from_fn(|lane| {
+            let (mut counts, one_in) = (vec![0; size], random.one_of(&[1, 2, 5, 30, 999]));
+            let (bits, mut zeros) = (random.below(21), 0);
+            (0..5).for_each(|i| counts[size / 5 * i + random.below(size / 5)] = 1);
+            for (i, count) in counts.iter_mut().enumerate() {
+                if random.below(one_in) == 0 {
+                    let power = 1 << random.below(bits + 1);
+                    *count = power + if power < KNOWN { random.below(power as usize) as u32 } else { 0 };
+                }
+                if *count == 0 {
+                    zeros += 1;
+                    continue;
+                }
+                gaps[usize::from(zeros > 2)][lane] += if zeros > 2 { 1 } else { zeros };
+                (used[i / 64], totals[lane], zeros) = (used[i / 64] | 1 << (i % 64), totals[lane] + *count, 0);
+            }
+            counts
+        });
+        let common = Vec::from_iter((0..size).map(|i| sums.iter().fold(9, |least, sum| sum[i].min(least))));
+        sums.iter_mut().for_each(|sum| sum.iter_mut().zip(&common).for_each(|(sum, common)| *sum -= common));
+        let totals = totals.map(|it| if it < KNOWN { it } else { it.next_power_of_two() });
+        let entry = |n: u32| [f64::from(n.ilog2()) + 1.01 * (f64::from(n) / f64::from(1 << n.ilog2()) - 1.0), n.into()];
+        let table = Vec::from_iter([[1e6, 0.0]].into_iter().chain((1..KNOWN + brotli::SPARE_LOGARITHMS as u32).map(entry)));
+        let others = [&*b.copy_of(&sums[0], at), c.copy_of(&sums[1], at), d.copy_of(&sums[2], at), e.copy_of(&sums[3], at)];
+        let costs = brotli::estimate_costs(a.copy_of(&common, at), others, &used, &totals, &gaps, f.copy_of(&table, at));
+        self.digests.add("brotli::estimate_costs", hash(&costs));
+    }
+
+    #[optimize(size)]
+    #[rustfmt::skip]
+    fn brotli_matches(&mut self) {
+        let (random, [a, b, c, ..], at) = (&mut self.random, &mut *self.rooms, self.offset);
+        let place = brotli::Place {
+            ring: a.copy_of(&random.bytes(self.text.len() % 150, b"ab"), at),
+            ring_mask: random.one_of(&[63, 127, 255]),
+            position: random.below(999) as u32,
+            pair: from_fn(|_| random.one_of(b"ab")),
+        };
+        let some: [[i32; 4]; 3] = from_fn(|_| from_fn(|_| random.below(200) as i32));
+        let distances = from_fn(|_| random.one_of(&some));
+        let ranked = from_fn(|_| u64::from(random.one_of(&[-3f32, -2.0, -1.0, 1e38]).to_bits()) << 32 | random.next() >> 32);
+        self.digests.add("brotli::short_codes", brotli::short_codes(place, &some[0]).into());
+        let (best, others) = brotli::short_codes_of_five(place, &distances, &ranked, -2.0);
+        self.digests.add("brotli::short_codes_of_five", hash(&[best.into(), others]));
+
+        let (mut longest, count, offset) = (from_fn::<_, 4, _>(|_| random.below(70)), 1 + random.below(4), random.below(9));
+        longest[..count].sort_unstable();
+        let (lengths, step) = (random.below(40)..longest[count - 1] + 1, random.one_of(&[0.5, 0.37]));
+        let matches = longest.map(|it| (it as u64) << brotli::LENGTH_SHIFT | (1 + (random.next() >> (34 + random.below(30)))));
+        let mut cost = |below| random.below(below) as f32 * step;
+        let (tables, distance_costs): ([_; 3], _) = (from_fn(|_| from_fn(|_| cost(8))), from_fn(|_| cost(8)));
+        let starts = [1, 2].map(|i| brotli::Start { cost: cost(40) - 15.0, symbol_costs: &tables[i], insert: i as u32 });
+        let known = Vec::from_iter((0..offset + lengths.end + 3).map(|_| cost(60)));
+        for name in ["brotli::try_lengths", "brotli::try_lengths_at_cost", "brotli::try_matches"] {
+            let (costs, nodes) = (b.copy_of(&known, at), c.copy_of(&vec![7; 3 * known.len()], at));
+            let (ways, lengths, mut taken) = (brotli::Ways { costs, nodes, offset: offset as u32 }, lengths.clone(), 0);
+            match name {
+                "brotli::try_lengths" => brotli::try_lengths(ways, lengths, &tables[0], starts[0], 5),
+                "brotli::try_matches" => brotli::try_matches(ways, lengths, &tables[0], starts, &matches, count, &distance_costs),
+                _ => taken = brotli::try_lengths_at_cost(ways, lengths, 9.0, 5, 6),
+            }
+            self.digests.add(name, hash(&[taken.number(), hash(costs), hash(nodes)]));
+        }
     }
 
     #[optimize(size)]
@@ -1114,7 +1232,7 @@ impl Round<'_> {
         let sources = self.random.one_of(&[2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 0]);
         let [gen_col, orig_line, orig_col, name_idx] =
             [(); 4].map(|()| self.random.one_of(&[0, 1 << 20, 1 << 20, i32::MAX - 999]));
-        let mut state = MappingsState {
+        let mut state = sourcemap::MappingsState {
             gen_col,
             orig_line,
             orig_col,
@@ -1128,7 +1246,8 @@ impl Round<'_> {
             let pairs = &mut [b.uninit(cap + more[0], at), c.uninit(cap + more[1], at)];
             let indices = &mut [d.uninit(cap + more[2], at), e.uninit(cap + more[3], at)];
             let into = columns(pairs, indices, has_names);
-            let (got, used) = parse_mappings(a.copy_of(text, at), into, sources, &mut state);
+            let (got, used) =
+                sourcemap::parse_mappings(a.copy_of(text, at), into, sources, &mut state);
             for (i, &source) in got.src_idx.iter().enumerate() {
                 let name = got.name_idx.as_ref().map_or(i32::MIN, |names| names[i]);
                 rows.push([got.generated[i], got.original[i], [source, name]]);
@@ -1143,7 +1262,8 @@ impl Round<'_> {
             done = stop;
             for segment in text[stop..].split_inclusive(|byte| b",;".contains(byte)) {
                 let is_near = done - stop < 64 || cap - filled < 16;
-                self.digests.fails_unless(is_near, "parse_mappings");
+                self.digests
+                    .fails_unless(is_near, "sourcemap::parse_mappings");
                 // Segments that change nothing and have no row fill the vector.
                 let (used, _) = parse(&[segment, &b"A,".repeat(32)].concat(), 16);
                 done += segment.len();
@@ -1162,7 +1282,7 @@ impl Round<'_> {
         let flags = [state.needs_sort, state.has_names].map(i32::from);
         let state = [&lines[..], &[state.src_idx, state.name_idx], &flags].concat();
         let all = [hash(&rows), hash(&state), hash(&refused)];
-        self.digests.add("parse_mappings", hash(&all));
+        self.digests.add("sourcemap::parse_mappings", hash(&all));
     }
 
     #[optimize(size)]
@@ -1178,11 +1298,11 @@ impl Round<'_> {
             1 + self.random.below(longest)
         });
         let src = self.random.bytes(4 * src_w * src_h, b"");
-        for filter in Filter::ALL {
+        for filter in image::Filter::ALL {
             let resized = self.from_to(src.as_chunks().0, dst_w * dst_h, |from, to| {
-                resize(filter, from, src_w, to, dst_w).unwrap()
+                image::resize(filter, from, src_w, to, dst_w).unwrap()
             });
-            self.digests.add("resize", resized);
+            self.digests.add("image::resize", resized);
         }
     }
 
@@ -1195,12 +1315,12 @@ impl Round<'_> {
             round if round % 48 == 2 => (800 + self.random.below(500), 9 + self.text.len() % 20),
             _ => return,
         };
-        let filter = self.random.one_of(&Filter::ALL);
+        let filter = self.random.one_of(&image::Filter::ALL);
         let src = self.random.bytes(4 * src_w * src_h, b"");
         let resized = self.from_to(src.as_chunks().0, dst_w * dst_h, |from, to| {
-            resize(filter, from, src_w, to, dst_w).unwrap()
+            image::resize(filter, from, src_w, to, dst_w).unwrap()
         });
-        self.digests.add("resize", resized);
+        self.digests.add("image::resize", resized);
     }
 }
 
@@ -1277,6 +1397,9 @@ pub(crate) fn run(rounds: u64, only: &[u8], traced: Vec<u8>) -> bool {
             ("uniform", Round::uniform),
             ("resize_rows", Round::resize_rows),
             ("jpeg_many_colors", Round::jpeg_many_colors),
+            ("brotli_blocks", Round::brotli_blocks),
+            ("brotli_costs", Round::brotli_costs),
+            ("brotli_matches", Round::brotli_matches),
         ];
         for (name, part) in parts.into_iter().filter(|it| is_chosen(it.0.as_bytes())) {
             round.random = Random(hash(&[number, hash(name.as_bytes())]) | 1);

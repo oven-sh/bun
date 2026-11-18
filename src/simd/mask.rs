@@ -8,18 +8,34 @@ use core::simd::{self, Select};
 #[repr(transparent)]
 pub struct Mask<T: Lane, const N: usize, I>(pub(crate) simd::Mask<T::Mask, N>, PhantomData<I>);
 
-impl<T: Int<N>, const N: usize, I: Isa> Mask<T, N, I> {
+impl<T: Lane, const N: usize, I: Isa> Mask<T, N, I> {
     #[inline(always)]
     pub(crate) fn new(mask: simd::Mask<T::Mask, N>) -> Self {
         Self(mask, PhantomData)
     }
 
-    /// To another lane type of the same size.
     #[inline(always)]
-    pub fn cast<U: Int<N, Mask = T::Mask>>(self) -> Mask<U, N, I> {
-        Mask::new(self.0)
+    pub fn cast<U: Lane>(self) -> Mask<U, N, I> {
+        Mask::new(self.0.cast())
     }
 
+    /// One bit per lane.
+    #[inline(always)]
+    pub fn to_bitmask(self) -> u64 {
+        I::to_bitmask(self)
+    }
+
+    #[inline(always)]
+    pub fn select(
+        self,
+        if_set: impl Into<Vector<T, N, I>>,
+        if_unset: impl Into<Vector<T, N, I>>,
+    ) -> Vector<T, N, I> {
+        Vector::new(self.0.select(if_set.into().0, if_unset.into().0))
+    }
+}
+
+impl<T: Int<N>, const N: usize, I: Isa> Mask<T, N, I> {
     #[inline(always)]
     pub fn any(self) -> bool {
         I::any(self)
@@ -54,29 +70,14 @@ impl<T: Int<N>, const N: usize, I: Isa> Mask<T, N, I> {
         I::count_before(self, lane.min(N))
     }
 
-    /// One bit per lane.
-    #[inline(always)]
-    pub fn to_bitmask(self) -> u64 {
-        self.0.to_bitmask()
-    }
-
     /// Each lane is all ones or all zeros.
     #[inline(always)]
     pub fn to_vector(self) -> Vector<T, N, I> {
         self.select(!Vector::zero(), Vector::zero())
     }
-
-    #[inline(always)]
-    pub fn select(
-        self,
-        if_set: impl Into<Vector<T, N, I>>,
-        if_unset: impl Into<Vector<T, N, I>>,
-    ) -> Vector<T, N, I> {
-        Vector::new(self.0.select(if_set.into().0, if_unset.into().0))
-    }
 }
 
-impl<T: Int<N>, const N: usize, I: Isa> BitAnd for Mask<T, N, I> {
+impl<T: Lane, const N: usize, I: Isa> BitAnd for Mask<T, N, I> {
     type Output = Self;
 
     #[inline(always)]
@@ -85,7 +86,7 @@ impl<T: Int<N>, const N: usize, I: Isa> BitAnd for Mask<T, N, I> {
     }
 }
 
-impl<T: Int<N>, const N: usize, I: Isa> BitOr for Mask<T, N, I> {
+impl<T: Lane, const N: usize, I: Isa> BitOr for Mask<T, N, I> {
     type Output = Self;
 
     #[inline(always)]
@@ -94,7 +95,7 @@ impl<T: Int<N>, const N: usize, I: Isa> BitOr for Mask<T, N, I> {
     }
 }
 
-impl<T: Int<N>, const N: usize, I: Isa> BitXor for Mask<T, N, I> {
+impl<T: Lane, const N: usize, I: Isa> BitXor for Mask<T, N, I> {
     type Output = Self;
 
     #[inline(always)]
@@ -103,7 +104,7 @@ impl<T: Int<N>, const N: usize, I: Isa> BitXor for Mask<T, N, I> {
     }
 }
 
-impl<T: Int<N>, const N: usize, I: Isa> Not for Mask<T, N, I> {
+impl<T: Lane, const N: usize, I: Isa> Not for Mask<T, N, I> {
     type Output = Self;
 
     #[inline(always)]

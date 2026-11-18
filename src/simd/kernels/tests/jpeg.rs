@@ -2,8 +2,8 @@
 #![forbid(unsafe_code)]
 mod common;
 use bun_simd::{Target, limit_to};
-use bun_simd_kernels::JpegChroma::{self, Full, HalfSize, HalfWidth};
-use bun_simd_kernels::{self as kernels, JPEG_ROW_SLACK as SLACK, JpegBlock};
+use bun_simd_kernels::jpeg::Chroma::{self, Full, HalfSize, HalfWidth};
+use bun_simd_kernels::jpeg::{self, Block, ROW_SLACK as SLACK};
 use common::{check, check_against_portable, random, sample};
 use core::array::from_fn;
 use core::f64::consts::{PI, SQRT_2};
@@ -20,7 +20,7 @@ fn digest(bytes: impl IntoIterator<Item = u8>, so_far: u32) -> u32 {
 }
 
 const SIZES: [usize; 10] = [2, 3, 4, 5, 6, 7, 8, 10, 12, 14];
-const ZERO: JpegBlock = JpegBlock([0; 64]);
+const ZERO: Block = Block([0; 64]);
 
 fn place(row: usize, column: usize) -> usize {
     [0, 32, 16, 33, 1, 48, 17, 49][row] + [0, 8, 2, 10, 4, 12, 6, 14][column]
@@ -47,10 +47,10 @@ fn basis(size: usize) -> Vec<[f64; 8]> {
     (0..size).map(row).collect()
 }
 
-fn inverse(blocks: &[JpegBlock], quant: &JpegBlock, size: usize) -> Vec<Vec<u8>> {
+fn inverse(blocks: &[Block], quant: &Block, size: usize) -> Vec<Vec<u8>> {
     let (len, stride) = (blocks.len() * size, blocks.len() * size + SLACK + 3);
     let mut out = vec![7; size * stride - 3];
-    kernels::jpeg_inverse_transform(blocks, quant, size, &mut out, stride).unwrap();
+    jpeg::inverse_transform(blocks, quant, size, &mut out, stride).unwrap();
     let is_untouched = |row: &[u8]| row[len + SLACK..].iter().all(|&it| it == 7);
     assert!(out.chunks(stride).all(is_untouched));
     out.chunks(stride).map(|row| row[..len].to_vec()).collect()
@@ -61,12 +61,12 @@ fn inverse(blocks: &[JpegBlock], quant: &JpegBlock, size: usize) -> Vec<Vec<u8>>
 fn inverse_transform_is_close_to_the_exact_one() {
     let mut next = bits();
     for (round, size) in (0..40).flat_map(|round| SIZES.map(|size| (round, size))) {
-        let quant = JpegBlock(from_fn(|_| 1 + next() as i16 % 2 * 2));
+        let quant = Block(from_fn(|_| 1 + next() as i16 % 2 * 2));
         let mut coefficient = |i| match next() % (1 + round * 3) * i as u32 {
             0 => next() as i8 as i16 / 2,
             _ => 0,
         };
-        let blocks: [_; 3] = from_fn(|_| JpegBlock(from_fn(&mut coefficient)));
+        let blocks: [_; 3] = from_fn(|_| Block(from_fn(&mut coefficient)));
         let basis = basis(size);
         let exact = |y: usize, x: usize| {
             let term = |i: usize| {
@@ -90,8 +90,8 @@ fn inverse_transform_is_close_to_the_exact_one() {
 fn inverse_transform_of_any_coefficients() {
     let (mut next, mut all) = (bits(), 0);
     for (round, size) in (0..200).flat_map(|round| SIZES.map(|size| (round, size))) {
-        let quant = JpegBlock(from_fn(|_| next() as i16 >> (round % 16)));
-        let blocks: [_; 2] = from_fn(|_| JpegBlock(from_fn(|_| next() as i16 >> (round / 16))));
+        let quant = Block(from_fn(|_| next() as i16 >> (round % 16)));
+        let blocks: [_; 2] = from_fn(|_| Block(from_fn(|_| next() as i16 >> (round / 16))));
         check_against_portable(|| inverse(&blocks, &quant, size));
         all = digest(inverse(&blocks, &quant, size).concat(), all);
     }
@@ -109,7 +109,7 @@ fn flat_blocks() {
         let mean = (((i32::from(dc.wrapping_mul(step)) + 4) >> 3) + 128).clamp(0, 255) as u8;
         for size in [5, 8, 14] {
             check(vec![vec![mean; size]; size], || {
-                inverse(&[block], &JpegBlock([step; 64]), size)
+                inverse(&[block], &Block([step; 64]), size)
             });
         }
     }
@@ -119,7 +119,7 @@ fn flat_blocks() {
             block.0[first..=last].fill(between);
             (block.0[first], block.0[last]) = (a, b);
             check(true, || {
-                inverse(&[block], &JpegBlock([100; 64]), 8) != [[128; 8]; 8]
+                inverse(&[block], &Block([100; 64]), 8) != [[128; 8]; 8]
             });
         }
     }
@@ -127,10 +127,10 @@ fn flat_blocks() {
 
 fn forward<const MASKS: usize>(
     samples: &[u8],
-    divisors: &[JpegBlock; 2],
+    divisors: &[Block; 2],
 ) -> Vec<([i16; 64], [u64; MASKS])> {
-    let (mut blocks, mut masks) = ([JpegBlock([-1; 64]); 2], [[!0; MASKS]; 2]);
-    kernels::jpeg_forward_transform(samples, 19, divisors, &mut blocks, &mut masks).unwrap();
+    let (mut blocks, mut masks) = ([Block([-1; 64]); 2], [[!0; MASKS]; 2]);
+    jpeg::forward_transform(samples, 19, divisors, &mut blocks, &mut masks).unwrap();
     blocks.map(|it| it.0).into_iter().zip(masks).collect()
 }
 
@@ -151,7 +151,7 @@ fn forward_transform() {
             steps.map(|it| (1u32 << (15 + it.ilog2())).div_ceil(it).min(0x7FFF) as i16),
             steps.map(|it| 1 << (14 - it.ilog2())),
         ]
-        .map(JpegBlock);
+        .map(Block);
 
         limit_to(Target::Portable);
         let want = forward::<4>(&samples, &divisors);
@@ -200,10 +200,10 @@ fn rgba(y: u8, cb: u8, cr: u8) -> [u8; 4] {
     [plus(91881 * cr), plus(green), plus(116130 * cb), 255]
 }
 
-fn converted(y: &[u8], chroma: JpegChroma<'_>, width: usize, room: usize) -> Option<Vec<[u8; 4]>> {
+fn converted(y: &[u8], chroma: Chroma<'_>, width: usize, room: usize) -> Option<Vec<[u8; 4]>> {
     let mut out = Vec::with_capacity(1 + room);
     out.push([9; 4]);
-    let fits = kernels::jpeg_ycc_to_rgba(y, chroma, width, &mut out);
+    let fits = jpeg::ycc_to_rgba(y, chroma, width, &mut out);
     assert_eq!(out.len(), 1 + fits.map_or(0, |()| width));
     fits.map(|()| out.split_off(1))
 }
@@ -289,7 +289,7 @@ fn check_split(pixels: &[[u8; 4]], width: usize) {
     check(want, || {
         let mut planes = [1, 4, 4].map(|it| vec![0; pixels.len() / it]);
         let into = planes.each_mut().map(|it| &mut it[..]);
-        kernels::jpeg_rgba_to_ycc420(pixels, width, width, height / 2, into, width / 2).unwrap();
+        jpeg::rgba_to_ycc420(pixels, width, width, height / 2, into, width / 2).unwrap();
         planes
     });
 }
@@ -326,7 +326,7 @@ const HUGE: usize = 1 << (usize::BITS - 1);
 #[cfg_attr(miri, ignore = "slow")]
 fn blocks_that_do_not_fit() {
     let fits = |size, len, stride| {
-        kernels::jpeg_inverse_transform(&[ZERO; 2], &ZERO, size, &mut vec![0; len], stride)
+        jpeg::inverse_transform(&[ZERO; 2], &ZERO, size, &mut vec![0; len], stride)
     };
     for size in [0, 1, 9, 11, 13, 15, 16] {
         check(None, || fits(size, 4096, 64));
@@ -341,7 +341,7 @@ fn blocks_that_do_not_fit() {
 
     let fits = |[len, stride, masks]: [usize; 3]| {
         let (samples, mut masks) = (vec![0; len], vec![[0; 4]; masks]);
-        kernels::jpeg_forward_transform(&samples, stride, &[ZERO; 2], &mut [ZERO; 2], &mut masks)
+        jpeg::forward_transform(&samples, stride, &[ZERO; 2], &mut [ZERO; 2], &mut masks)
     };
     let (len, overflows) = (7 * 20 + 16, usize::MAX / 7 + 1);
     check(Some(()), || fits([len, 20, 2]));
@@ -384,7 +384,7 @@ fn planes_that_do_not_fit() {
         let rgba = vec![[0; 4]; lens[0]];
         let [_, mut y, mut cb, mut cr] = lens.map(|len| vec![0; len]);
         let ycc = [&mut *y, &mut *cb, &mut *cr];
-        kernels::jpeg_rgba_to_ycc420(&rgba, rgba_stride, width, row_pairs, ycc, chroma_stride)
+        jpeg::rgba_to_ycc420(&rgba, rgba_stride, width, row_pairs, ycc, chroma_stride)
     };
     let lens = [5 * 70 + 32, 5 * 40 + 32, 2 * 20 + 16, 2 * 20 + 16];
     for it in [

@@ -3,6 +3,8 @@ use bun_simd::{Isa, Shuffle, opaque};
 use core::array::from_fn;
 use core::iter::zip;
 
+pub use simd::inverse_transform;
+
 /// Rows 0 and 4 interleaved, then 2 and 6, 1 and 3, 5 and 7. Columns go 0 2 4 6 1 3 5 7.
 #[derive(Clone, Copy)]
 #[repr(C, align(64))]
@@ -177,8 +179,8 @@ fn small(stride: usize) -> Option<usize> {
     (stride <= usize::MAX / 16).then_some(stride)
 }
 
-#[bun_simd::foreach_target]
-pub(crate) mod simd {
+#[bun_simd::foreach_target(avx2, sse4, neon, portable)]
+mod simd {
     use isa::x256::{I8, I16, I32, U8};
     use isa::{Vector, x128};
 
@@ -459,7 +461,7 @@ pub(crate) mod simd {
     }
 
     /// `size` by `size` samples for each block, until one does not fit. 2 to 8, 10, 12 or 14.
-    #[export(up_to = avx2, up_to = neon)]
+    #[export]
     #[must_use]
     pub fn inverse_transform(
         blocks: &[Block],
@@ -616,7 +618,7 @@ pub(crate) mod simd {
         Some(())
     }
 
-    #[export(up_to = avx2, up_to = neon)]
+    #[export]
     pub fn forward_transform(
         samples: &[u8],
         stride: usize,

@@ -22,7 +22,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject};
 use bun_ptr::{BackRef, JsCell, RefPtr, ThisPtr};
 use bun_simd::{Out, SharedU8};
-use bun_simd_kernels as kernels;
+use bun_simd_kernels::websocket as kernels;
 use bun_uws::{self as uws, NewSocketHandler, us_bun_verify_error_t};
 use bun_uws_sys::us_socket_t;
 
@@ -123,7 +123,7 @@ struct Unmask {
 
 impl Unmask {
     fn copy(&mut self, output: &mut [u8], input: &[u8]) {
-        kernels::fill_with_mask(self.key, (&mut output[..input.len()]).into(), input);
+        kernels::mask(self.key, input, (&mut output[..input.len()]).into());
         self.key.rotate_left(input.len() % 4);
     }
 }
@@ -2512,7 +2512,7 @@ impl Copy<'_> {
             Copy::Bytes(bytes) => {
                 assert_eq!(parts.payload.len(), bytes.len());
                 match mask {
-                    Some(mask) => _ = kernels::fill_with_mask(mask, parts.payload.into(), bytes),
+                    Some(mask) => _ = kernels::mask(mask, bytes, parts.payload.into()),
                     None => parts.payload.copy_from_slice(bytes),
                 }
                 return;
@@ -2521,7 +2521,7 @@ impl Copy<'_> {
                 assert_eq!(parts.payload.len(), bytes.len());
                 let payload = parts.payload.into();
                 match mask {
-                    Some(mask) => kernels::fill_with_mask_from_shared(mask, payload, bytes),
+                    Some(mask) => kernels::mask_from_shared(mask, bytes, payload),
                     None => bun_simd::copy_from_shared(bytes, payload),
                 };
                 return;

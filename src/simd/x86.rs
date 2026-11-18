@@ -1,7 +1,8 @@
-use crate::native::{self, as_group};
+use crate::native::{self, Aligned, as_group, kept_part};
 use crate::{BitIndices, Int, Isa, Mask, Out, Vector};
 use bun_simd_trusted::{SharedOutU8, SharedU8, shared};
 use core::arch::x86_64::*;
+use core::array::from_fn;
 use core::simd::ToBytes;
 use core::simd::prelude::{Simd, SimdPartialOrd, SimdUint, simd_swizzle, u8x64, u64x8};
 
@@ -235,6 +236,13 @@ impl<I: Xmm> Vector<f32, 4, I> {
     }
 }
 
+impl<const N: usize, I: Xmm> Vector<f64, N, I> {
+    #[inline(always)]
+    pub fn min(self, other: Self) -> Self {
+        self.simd_lt(other).select(self, other)
+    }
+}
+
 impl<I: Ymm> Vector<u8, 32, I> {
     #[inline]
     #[target_feature(enable = "avx2")]
@@ -348,6 +356,24 @@ impl<I: Ymm> Vector<u64, 4, I> {
             self.0.into(),
             other.0.into(),
         ))
+    }
+
+    #[inline]
+    #[target_feature(enable = "avx2")]
+    pub fn compress(self, bits: usize) -> Self {
+        static WORDS: Aligned<[[u32; 8]; 16]> = Aligned(from_fn(const |bits| {
+            from_fn(const |i| kept_part(bits, i, 2) as u32)
+        }));
+        let words = Vector::<u32, 8, I>::from_array(WORDS.0[bits % 16]);
+        Self::new(_mm256_permutevar8x32_epi32(self.0.into(), words.0.into()))
+    }
+}
+
+impl<I: Ymm> Vector<f64, 4, I> {
+    #[inline]
+    #[target_feature(enable = "avx")]
+    pub fn to_i32(self) -> Vector<i32, 4, I> {
+        Vector::new(_mm256_cvttpd_epi32(self.0.into()))
     }
 }
 
@@ -503,6 +529,19 @@ pub mod sse4 {
 
     crate::isa::vector_types!(super::Sse4, 16);
     crate::native::x256_in_halves!("ssse3");
+
+    impl x256::F64 {
+        #[inline]
+        #[target_feature(enable = "sse2")]
+        pub fn to_i32(self) -> I32 {
+            use core::arch::x86_64::{_mm_cvttpd_epi32, _mm_unpacklo_epi64};
+            let [first, second] = self.halves();
+            I32::new(_mm_unpacklo_epi64(
+                _mm_cvttpd_epi32(first.0.into()),
+                _mm_cvttpd_epi32(second.0.into()),
+            ))
+        }
+    }
 }
 
 pub mod avx2 {

@@ -1,6 +1,6 @@
 //! Loads after which a vector stays in its register, even if the build checks preconditions.
 use core::mem::transmute_neo;
-use core::simd::{Mask, Simd, SimdElement, cmp::SimdPartialOrd, num::SimdUint};
+use core::simd::{SimdElement, ToBytes, prelude::*};
 
 #[inline(always)]
 pub const fn from_array<T: SimdElement, const N: usize>(lanes: [T; N]) -> Simd<T, N> {
@@ -26,4 +26,16 @@ pub fn load_or_default<T: SimdElement + Default, const N: usize>(from: &[T]) -> 
     let (enable, or) = (lanes_before::<T, N>(from.len()), Simd::splat(T::default()));
     // SAFETY: `from` has all the lanes that are enabled.
     unsafe { Simd::load_select_ptr(from.as_ptr(), enable, or) }
+}
+
+#[inline(always)]
+pub fn windows<T, const K: usize>(from: &[T], starts: u32x4) -> Option<[&[T; K]; 4]> {
+    let last = u32::try_from(from.len().checked_sub(K)?).unwrap_or(u32::MAX);
+    let starts = starts.simd_min(Simd::splat(last));
+    // Two lanes at a time get out of a vector with fewer instructions.
+    let pairs = u64x2::from_le_bytes(starts.to_le_bytes());
+    let low = |pair: u64| pair & 0xFFFF_FFFF;
+    let starts = [low(pairs[0]), pairs[0] >> 32, low(pairs[1]), pairs[1] >> 32];
+    // SAFETY: after the unsigned minimum, no lane is above `last`, and `from` has `K` items from there on.
+    Some(starts.map(|at| unsafe { &*from.as_ptr().add(at as usize).cast::<[T; K]>() }))
 }

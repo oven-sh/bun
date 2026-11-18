@@ -7,7 +7,7 @@ use bun_core::{self, Utf8Bytes};
 use bun_core::{declare_scope, scoped_log};
 use bun_semver::String as SemverString;
 use bun_simd::spare_capacity;
-use bun_simd_kernels::{Columns, MappingsState};
+use bun_simd_kernels::sourcemap::{Columns, MappingsState, count_delimiters, parse_mappings};
 
 use crate::vlq::decode as decode_vlq;
 use crate::{LineColumnOffset, Ordinal, ParseFail, ParseResult, ParsedSourceMap};
@@ -82,19 +82,18 @@ impl List {
 
     /// By the generated position. Ties keep their order.
     pub(crate) fn sort(&mut self) {
-        fn reorder<T: Copy>(column: &mut Vec<T>, order: &[u32]) {
-            *column = order.iter().map(|&i| column[i as usize]).collect();
-        }
         let mut order = index_sort::identity(self.len());
         index_sort::sort_indices(&mut order, &mut |a, b| {
             self.generated[a as usize].cmp(&self.generated[b as usize])
         });
-        reorder(&mut self.generated, &order);
-        reorder(&mut self.original, &order);
-        reorder(&mut self.source_index, &order);
-        if let Some(name_index) = &mut self.name_index {
-            reorder(name_index, &order);
-        }
+        index_sort::apply_permutation_by_swaps(&mut order, |a, b| {
+            self.generated.swap(a, b);
+            self.original.swap(a, b);
+            self.source_index.swap(a, b);
+            if let Some(name_index) = &mut self.name_index {
+                name_index.swap(a, b);
+            }
+        });
     }
 
     pub(crate) fn append(&mut self, mapping: &Mapping) {
@@ -592,7 +591,7 @@ fn parse_simd(
         mapping.ensure_with_names()?;
     }
     // A comma or a semicolon follows each segment but the last.
-    mapping.reserve(bun_simd_kernels::count_mapping_delims(bytes) + 1)?;
+    mapping.reserve(count_delimiters(bytes) + 1)?;
 
     let (generated, to_generated) = spare_capacity(&mut mapping.generated);
     let (original, to_original) = spare_capacity(&mut mapping.original);
@@ -605,7 +604,7 @@ fn parse_simd(
         name_idx,
     };
     let mut state = MappingsState::default();
-    let (rows, resume_at) = bun_simd_kernels::parse_mappings(bytes, out, sources_count, &mut state);
+    let (rows, resume_at) = parse_mappings(bytes, out, sources_count, &mut state);
     to_generated.append(rows.generated);
     to_original.append(rows.original);
     to_src_idx.append(rows.src_idx);

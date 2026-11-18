@@ -2,6 +2,8 @@
 use bun_simd::{Isa, Out, Shuffle, opaque};
 use core::array::from_fn;
 
+pub use simd::rgba_to_ycc420;
+
 type Rgba = [u8; 4];
 
 /// The kernels read and write whole groups of this many pixels.
@@ -45,8 +47,8 @@ impl<const N: usize> Shuffle<N> for Transposed {
     const FROM: [usize; N] = from_fn(const |i| i % (N / 4) * 4 + i / (N / 4));
 }
 
-#[bun_simd::foreach_target]
-pub(crate) mod simd {
+#[bun_simd::foreach_target(avx2, sse4, neon, portable)]
+mod simd {
     use isa::{Vector, x128, x256};
 
     const HAS_PLANES: bool = isa::Isa::HAS_INTERLEAVED_MEMORY;
@@ -288,13 +290,13 @@ pub(crate) mod simd {
         (at <= last).then(|| row[at..].first_chunk().unwrap())
     }
 
-    #[export(up_to = avx2, up_to = neon)]
+    #[export]
     pub fn ycc_to_rgba<'a>(y: &[u8], cb: &[u8], cr: &[u8], to: Out<'a, Rgba>) -> &'a mut [Rgba] {
         let (cb, cr) = (cb.as_chunks().0, cr.as_chunks().0);
         convert!(y, to, center, |i| { [cb.get(i)?, cr.get(i)?] })
     }
 
-    #[export(up_to = avx2, up_to = neon)]
+    #[export]
     pub fn ycc422_to_rgba<'a>(y: &[u8], cb: &[u8], cr: &[u8], to: Out<'a, Rgba>) -> &'a mut [Rgba] {
         let len = cb.len().min(cr.len());
         convert!(y, to, upsample, |i| {
@@ -302,7 +304,7 @@ pub(crate) mod simd {
         })
     }
 
-    #[export(up_to = avx2, up_to = neon)]
+    #[export]
     pub fn ycc420_to_rgba<'a>(
         y: &[u8],
         chroma: &[[&[u8]; 2]; 2],
@@ -340,7 +342,7 @@ pub(crate) mod simd {
     }
 
     /// For whole groups, until a row does not fit. Those of `y` are twice `chroma_stride` apart.
-    #[export(up_to = avx2, up_to = neon)]
+    #[export]
     #[must_use]
     pub fn rgba_to_ycc420(
         rgba: &[Rgba],

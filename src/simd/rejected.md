@@ -801,7 +801,7 @@ Halves of chunks that can end inside of a vector:
 mod simd {
     #[export]
     pub fn f(from: &[u8], to: bun_simd::Out<'_, u8>) {
-        isa::U8::append_chunks(&mut to.into_writer(), from, |it| Some(isa::U8::load(it)));
+        isa::U8::append_chunks(from, &mut to.into_writer(), |it| Some(isa::U8::load(it)));
     }
 }
 simd::f(b"", [0; 0][..].as_mut().into());

@@ -1,5 +1,5 @@
 //! Output to memory that may be uninitialized.
-use crate::{SharedOutU8, SharedU8, copy_to_shared, lanes::lanes_before};
+use crate::{SharedOutU8, SharedU8, copy_to_shared, loads::lanes_before};
 use alloc::vec::Vec;
 use core::cell::Cell;
 use core::mem::MaybeUninit;

@@ -1,8 +1,12 @@
 //! The arithmetic is that of libwebp (LICENSE.md): <https://github.com/webmproject/libwebp/tree/4fa21912338357f89e4fd51cf2368325b59e9bd9/src>
 #![allow(clippy::large_types_passed_by_value)] // vectors live in registers
-use crate::webp_decoder::rotate;
+use super::decoder::rotate;
 use bun_simd::{Isa, Shuffle};
 use core::array::from_fn;
+
+pub use simd::{
+    analyze, convert, try_chroma_modes, try_diagonal_modes, try_luma_modes, try_straight_modes,
+};
 
 /// 4x4 samples, by column and row.
 pub type Block = [[u8; 4]; 4];
@@ -263,8 +267,8 @@ fn room<T, const K: usize, const M: usize>(pairs: &mut [[T; K]], group: usize) -
     &mut pairs.as_flattened_mut().as_chunks_mut().0[group]
 }
 
-#[bun_simd::foreach_target]
-pub(crate) mod simd {
+#[bun_simd::foreach_target(avx2, sse4, neon, portable)]
+mod simd {
     use isa::{Vector, x128};
 
     /// 4 or 6 modes at a time do not fill 64 bytes.
@@ -678,7 +682,7 @@ pub(crate) mod simd {
     }
 
     /// `PickBestIntra16`: DC, TrueMotion, vertical, horizontal. Fills `source`. Around: above, left.
-    #[export(up_to = avx2, up_to = neon)]
+    #[export]
     pub fn try_luma_modes(
         samples: &Macroblock,
         edges: &Edges,
@@ -754,7 +758,7 @@ pub(crate) mod simd {
     }
 
     /// Around: above, left. Errors: by block and plane, twice. True if a level reaches `MAX_SYMBOL`.
-    #[export(up_to = avx2, up_to = neon)]
+    #[export]
     pub fn try_chroma_modes(
         samples: &Macroblock,
         edges: &Edges,
@@ -905,7 +909,7 @@ pub(crate) mod simd {
     }
 
     /// The first 4 modes. `edge`, from the lowest byte: 4 up the left, the corner, 8 to the right.
-    #[export(up_to = avx2, up_to = neon)]
+    #[export]
     pub fn try_straight_modes(
         edge: u128,
         context: Context,
@@ -919,7 +923,7 @@ pub(crate) mod simd {
     }
 
     /// The same for the other 6 modes. What `out` has for the first 4 stays.
-    #[export(up_to = avx2, up_to = neon)]
+    #[export]
     pub fn try_diagonal_modes(
         edge: u128,
         context: Context,
@@ -973,7 +977,7 @@ pub(crate) mod simd {
     }
 
     /// Luma from the rows of `pixels`, and chroma from `colors`. yuv.h of libwebp.
-    #[export(up_to = avx2, up_to = neon)]
+    #[export]
     pub fn convert(
         pixels: &[&[[u8; 4]; 16]; 16],
         colors: &LinearColors,
@@ -1046,7 +1050,7 @@ pub(crate) mod simd {
     }
 
     /// For luma and chroma.
-    #[export(up_to = avx2, up_to = neon)]
+    #[export]
     pub fn analyze(samples: &Macroblock, luma: &Edges, chroma: &Edges) -> [Histograms; 2] {
         [
             histograms::<false, { 16 / PAIRS }>(&samples.luma, luma),

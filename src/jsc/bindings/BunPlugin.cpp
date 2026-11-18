@@ -6145,8 +6145,6 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     // The loader fetched the key for an earlier test file, and the compiled module has been loaded since.
     if (loaded.compiledModule && loadedByTestFile && !previous && !loaded.esmNamespace && !loaded.commonJSModule && JSC::AOT::hasInstances(globalObject, *loaded.compiledModule) && JSC::AOT::evaluatedBy(globalObject, *loaded.compiledModule) == JSC::AOT::LoadedBy::ThisTestFile)
         loadedByTestFile = globalObject->onLoadPlugins.testFile;
-    if (loaded.compiledModule && loadedByTestFile && previous && previous->isFromPreload && JSC::AOT::hasActiveMock(globalObject, *loaded.compiledModule) && previous->firstLoadTestFile == globalObject->onLoadPlugins.testFile)
-        loadedByTestFile = globalObject->onLoadPlugins.testFile;
     // The end of an earlier test file may have emptied the key. The first request after that reloaded the mock.
     if (previous && loaded.compiledModule && !loadedByTestFile) {
         if (!previous->firstLoadTestFile)

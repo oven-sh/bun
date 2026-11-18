@@ -1,4 +1,4 @@
-// The digests are of what google/brotli 1.2 writes, so they are never to be updated.
+// Unless a comment says otherwise, the digests are of what google/brotli 1.2 writes, so they are never to be updated.
 import { describe, expect, it } from "bun:test";
 import { createCipheriv } from "node:crypto";
 import { totalmem } from "node:os";
@@ -1400,6 +1400,23 @@ it("makes do with 256 prefix codes for literals", () => {
     return starts[range] + ((part * share + choice) % sizes[range]);
   });
   expect(roundTrip(input, { [QUALITY]: 10 })).toBe("27436 24356973");
+});
+
+it.each([
+  ["all at once", 500, "33828 7f91fc2f"],
+  // This digest is Bun's own.
+  ["in larger batches first", 300, "22722 4e1d4ef7"],
+])("combines the prefix codes for literals %s, for parts of %d bytes", (_, size, expected) => {
+  let context = 0;
+  // In each part, the last two bytes narrow the next one down to four.
+  const input = bytesOf(100 * size, i => {
+    const part = Math.floor(i / size);
+    const range = noise[65535 - i] & 3;
+    const choice = noise[(part * 16 + context) * 4 + range] % 12;
+    context = range * 4 + (context >> 2);
+    return [16, 64, 128, 192][range] + ((noise[60000 + part * 4 + range] + choice) % 48);
+  });
+  expect(roundTrip(input, { [QUALITY]: 10 })).toBe(expected);
 });
 
 it.each([

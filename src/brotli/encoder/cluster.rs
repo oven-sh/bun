@@ -7,6 +7,12 @@ use super::log2::fast_log2;
 use crate::memory::{self, Result};
 
 pub(super) const BATCH: usize = 64;
+const LARGE_BATCH: usize = 512;
+
+/// How many clusters with so many symbols in all get combined at once.
+pub(super) fn max_at_once(symbols: usize) -> usize {
+    (8 * symbols.isqrt()).clamp(2 * LARGE_BATCH, 16 * LARGE_BATCH)
+}
 
 #[derive(Clone, Copy)]
 struct Summary {
@@ -197,6 +203,7 @@ impl Combiner {
     fn combine_all_new(
         &mut self,
         clusters: &mut Clusters,
+        symbols: usize,
         max_clusters: usize,
     ) -> Result<Vec<u32>> {
         let mut live = memory::empty(clusters.len())?;
@@ -206,9 +213,25 @@ impl Combiner {
             let left = self.combine_new(clusters, &mut live[start..], max_clusters)?;
             live.truncate(start + left);
         }
+        while live.len() > max_at_once(symbols) {
+            self.halve(clusters, &mut live)?;
+        }
         let left = self.combine(clusters, &mut live, max_clusters)?;
         live.truncate(left);
         Ok(live)
+    }
+
+    /// Leaves no more than half of each full [`LARGE_BATCH`]. The first one stays.
+    pub(super) fn halve(&mut self, clusters: &mut Clusters, live: &mut Vec<u32>) -> Result<()> {
+        let mut kept = 0;
+        for start in (0..live.len()).step_by(LARGE_BATCH) {
+            let end = live.len().min(start + LARGE_BATCH);
+            let left = self.combine(clusters, &mut live[start..end], LARGE_BATCH / 2)?;
+            live.copy_within(start..start + left, kept);
+            kept += left;
+        }
+        live.truncate(kept);
+        Ok(())
     }
 
     /// Merges while that saves bits or there are too many. Returns how many are left at the start of `live`. The first one stays.
@@ -335,7 +358,8 @@ pub(super) fn cluster_histograms<const N: usize>(
     let mut clusters = Clusters::new(N);
     clusters.try_reserve(histograms.len())?;
     indexed().for_each(|histogram| clusters.push_new(&histogram));
-    let live = combiner.combine_all_new(&mut clusters, max_clusters)?;
+    let symbols = histograms.iter().map(|each| each.total).sum();
+    let live = combiner.combine_all_new(&mut clusters, symbols, max_clusters)?;
     let mut previous = 0;
     let mut assignments = memory::collected(indexed().map(|histogram| {
         previous = combiner.closest(&histogram, &clusters, &live, previous);

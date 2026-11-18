@@ -4,7 +4,7 @@ use core::array::from_fn;
 
 use bun_highway::brotli::find_switches;
 
-use super::cluster::{BATCH, Clusters, Combiner, renumber};
+use super::cluster::{BATCH, Clusters, Combiner, max_at_once, renumber};
 use super::histogram::{DISTANCE_SYMBOLS, Indexed, count_symbols};
 use super::log2::fast_log2;
 use crate::format::{COMMAND_SYMBOLS, LITERAL_SYMBOLS, MAX_BLOCK_TYPES};
@@ -285,6 +285,12 @@ fn cluster_blocks(
         let live = &mut from_fn::<_, BATCH, _>(|i| i as u32)[..batch.len()];
         let left = combiner.combine_new(&mut batch, live, BATCH)?;
         clusters.add_from(&batch, &live[..left])?;
+        if clusters.len() > max_at_once(data.len()) {
+            let mut kept = memory::collected(0..clusters.len() as u32)?;
+            combiner.halve(&mut clusters, &mut kept)?;
+            let all = core::mem::replace(&mut clusters, Clusters::new(alphabet_size));
+            clusters.add_from(&all, &kept)?;
+        }
     }
     drop(batch);
 

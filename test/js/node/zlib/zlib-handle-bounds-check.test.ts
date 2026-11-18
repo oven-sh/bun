@@ -227,13 +227,15 @@ describe.concurrent("zlib native handle driven outside the zlib.ts lifecycle", (
        catch (e) { console.log("threw " + e.code + ": " + e.message); }`,
       CLOSED,
     ],
-    // writeSync() before init(): brotli/zstd were handed a null state
-    // pointer, which their C APIs dereference unconditionally.
+    // writeSync() before init(): there is no state to work on yet.
     [
-      "brotli: writeSync() before init() does not dereference a null encoder",
+      "brotli: writeSync() before init() does without a decoder or an encoder",
       `const C = zlib.createBrotliCompress()._handle.constructor;
-       new C(8).writeSync(0, null, 0, 0, new Uint8Array(64), 0, 64); console.log("handled");`,
-      "handled",
+       for (const h of [new C(8), new C(9)]) {
+         h.onerror = (...error) => console.log(...error);
+         for (const flush of [0, 2]) h.writeSync(flush, null, 0, 0, new Uint8Array(64), 0, 64);
+       }`,
+      Array(2).fill("Compression failed -1 ERR_BROTLI_COMPRESSION_FAILED").join("\n"),
     ],
     [
       "zstd: writeSync() before init() does not dereference a null CCtx",
@@ -493,20 +495,43 @@ describe.concurrent("zlib native handle driven outside the zlib.ts lifecycle", (
     ).toEqual({ stdout: "ZSTD_error_checksum_wrong\nZSTD_error_checksum_wrong\nhello", exitCode: 0 });
   });
 
-  test.concurrent.skipIf(Math.min(totalmem(), process.constrainedMemory() || Infinity) < 10 * 1024 ** 3)(
-    "brotli: refuses a dictionary above 2**30 bytes",
-    async () => {
-      expect(
-        await run(
-          `const usesBuiltInWords = zlib.brotliCompressSync("information about the government of the international development");
+  const isShortOfMemory = Math.min(totalmem(), process.constrainedMemory() || Infinity) < 10 * 1024 ** 3;
+
+  test.concurrent.skipIf(isShortOfMemory)("brotli: refuses a dictionary above 2**30 bytes", async () => {
+    expect(
+      await run(
+        `const usesBuiltInWords = zlib.brotliCompressSync("information about the government of the international development");
            const bytes = new Uint8Array(2 ** 31);
            for (const method of ["brotliDecompressSync", "brotliCompressSync"])
              for (const dictionary of [bytes, bytes.subarray(0, 2 ** 30 + 1)]) {
                try { zlib[method](usesBuiltInWords, { dictionary }); console.log("handled"); }
                catch (e) { console.log(e.code); }
              }`,
+      ),
+    ).toEqual({ stdout: Array(4).fill("ERR_ZLIB_INITIALIZATION_FAILED").join("\n"), exitCode: 0 });
+  });
+
+  test.concurrent.skipIf(isShortOfMemory)(
+    "brotli: an init() that refuses its dictionary says why, and leaves no decoder or encoder",
+    async () => {
+      expect(
+        await run(
+          `const C = zlib.createBrotliCompress()._handle.constructor;
+           const tooLarge = new Uint8Array(2 ** 30 + 1);
+           for (const h of [new C(8), new C(9)]) {
+             h.onerror = (...error) => console.log(...error);
+             for (const dictionary of [undefined, tooLarge]) h.init(new Uint32Array(0), new Uint32Array(2), () => {}, dictionary);
+             h.writeSync(2, null, 0, 0, new Uint8Array(64), 0, 64);
+           }`,
         ),
-      ).toEqual({ stdout: Array(4).fill("ERR_ZLIB_INITIALIZATION_FAILED").join("\n"), exitCode: 0 });
+      ).toEqual({
+        stdout: [
+          "Failed to attach brotli dictionary -1 ERR_ZLIB_DICTIONARY_LOAD_FAILED",
+          "Failed to prepare brotli dictionary -1 ERR_ZLIB_DICTIONARY_LOAD_FAILED",
+          "Compression failed -1 ERR_BROTLI_COMPRESSION_FAILED",
+        ].join("\n"),
+        exitCode: 0,
+      });
     },
   );
 });

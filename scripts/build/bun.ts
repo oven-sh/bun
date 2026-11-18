@@ -315,6 +315,8 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_webp_encoder.cpp"));
     noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_checksums.cpp"));
   }
+  // Nor can one with other CPU features, which this one has in some release builds.
+  noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_brotli.cpp"));
 
   // Windows-only cpp sources (rescle — PE resource editor for --compile).
   if (cfg.windows) {

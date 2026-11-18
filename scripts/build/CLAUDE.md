@@ -48,7 +48,7 @@ rule cc
   depfile = $out.d
   deps = gcc
 
-build obj/src/foo.c.o: cc ../../src/foo.c | deps/brotli/libbrotli.a || codegen/generated.h
+build obj/src/foo.c.o: cc ../../src/foo.c | deps/cares/libcares.a || codegen/generated.h
   cflags = -O2 -I...
 ```
 
@@ -60,9 +60,9 @@ rule dep_fetch
   restat = 1
   pool = dep
 
-build ../../vendor/brotli/.ref: dep_fetch | ../../scripts/build/fetch-cli.ts
-  name = brotli
-  repo = google/brotli
+build ../../vendor/cares/.ref: dep_fetch | ../../scripts/build/fetch-cli.ts
+  name = cares
+  repo = c-ares/c-ares
   commit = abc123...
 ```
 

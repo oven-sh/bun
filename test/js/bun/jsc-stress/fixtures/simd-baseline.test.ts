@@ -6,7 +6,15 @@
 // to catch both SIGILL and miscompilation from wrong instruction lowering.
 
 import { describe, expect, test } from "bun:test";
-import { crc32, deflateSync, gzipSync, inflateSync } from "node:zlib";
+import {
+  brotliCompressSync,
+  brotliDecompressSync,
+  constants,
+  crc32,
+  deflateSync,
+  gzipSync,
+  inflateSync,
+} from "node:zlib";
 import { decodeDifferences, encodeDifferences, inParts, loadCases } from "../../image/webp-golden/observe";
 import * as zstdGolden from "../../util/zstd-golden/observe";
 
@@ -246,6 +254,103 @@ function linesOf(file: Uint8Array): Buffer {
   }
   return inflateSync(Buffer.concat(idat));
 }
+
+describe("Brotli: Highway runtime dispatch", () => {
+  // src/jsc/bindings/highway_brotli.cpp is compiled for SSSE3 and for AVX2 on x64, and has separate code for arm64. All
+  // three have to lead to the same bytes. These checksums are from google/brotli. The loops in src/brotli that read and
+  // write bits are compiled with BMI2 and without.
+  // Text takes turns with bytes of few, of many, and of scattered values, and some of it comes again with changes.
+  const words = ["the ", "The ", "time ", "information ", "of ", "<div>", "</div>\n", "é", "working ", "1024, "];
+  const input = Buffer.alloc(24000);
+  let state = 1;
+  const random = () => (state = (Math.imul(state, 1664525) + 1013904223) >>> 0) >>> 16;
+  for (let at = 0, part = 0; at < input.length; part++) {
+    const end = Math.min(input.length, at + 300 + (random() % 900));
+    while (at < end) {
+      if (part % 5 === 0) {
+        at += input.write(words[random() % words.length], at);
+      } else if (part % 5 === 4 && random() % 16) {
+        input[at] = input[at - 1100 - (part % 3)];
+        at++;
+      } else {
+        input[at++] = random() & [0, 0x07, 0x7f, 0xc9, 0xff][part % 5];
+      }
+    }
+  }
+
+  test.each([
+    { quality: 5, expected: [0xa8b039ed, 0x3df1b1bd] },
+    { quality: 9, expected: [0x869eb61c, 0xfbea90a9] },
+    { quality: 10, expected: [0xf294e22b, 0x51cb00fb] },
+    { quality: 11, expected: [0x089c7811, 0x89fdfe52] },
+  ])("quality $quality", ({ quality, expected }) => {
+    const params = { [constants.BROTLI_PARAM_QUALITY]: quality };
+    const streams = [input.subarray(0, 1500), input].map(bytes => brotliCompressSync(bytes, { params }));
+    expect(streams.map(stream => Bun.hash.crc32(stream))).toEqual(expected);
+    expect(brotliDecompressSync(streams[1]).equals(input)).toBe(true);
+  });
+
+  test.each([0, 1, 2, 5])("many literals and long copies at quality %d", quality => {
+    state = 1;
+    const literals = Buffer.alloc(9000).map(() => random() & random());
+    const bytes = Buffer.concat([input, Buffer.alloc(200_000, "far"), literals, input]);
+    const params = { [constants.BROTLI_PARAM_QUALITY]: quality };
+    expect(brotliDecompressSync(brotliCompressSync(bytes, { params })).equals(bytes)).toBe(true);
+  });
+
+  // These depend on how bytes that are equally frequent get sorted.
+  test.each([
+    { quality: 0, expected: 0xf3f68ec3 },
+    { quality: 3, expected: 0x3b33ad84 },
+  ])("each number of distinct bytes at quality $quality", ({ quality, expected }) => {
+    const bytes = Array.from({ length: 700 }, (_, i) => Math.imul(i * i + 1, 0x9e3779b1) >>> 24);
+    const streams = Array.from({ length: 256 }, (_, last) =>
+      brotliCompressSync(Buffer.concat([Buffer.alloc(300), Buffer.from(bytes.map(byte => byte % (last + 1)))]), {
+        params: { [constants.BROTLI_PARAM_QUALITY]: quality },
+      }),
+    );
+    expect(Bun.hash.crc32(Buffer.concat(streams))).toBe(expected);
+  });
+
+  test("counts that are far from their place or too large to sort", () => {
+    const sumsOf = (gaps: number[]) => {
+      const isSum = [true];
+      for (let i = 1; i < 240; i++) isSum[i] = gaps.some(gap => isSum[i - gap]);
+      return [...Array(15).fill(5), ...isSum.map(is => (is ? 20 : 5))];
+    };
+    const large = [16400, 32744, 32745].map(count => Array(21).fill(1).with(10, count));
+    const streams = [sumsOf([4, 10, 23]), sumsOf([10, 23, 57, 132]), ...large].map(counts =>
+      brotliCompressSync(Buffer.concat(counts.map((count, i) => Buffer.alloc(count, 255 - i))), {
+        params: { [constants.BROTLI_PARAM_QUALITY]: 0 },
+      }),
+    );
+    expect(Bun.hash.crc32(Buffer.concat(streams))).toBe(0x38d935b8);
+  });
+
+  // Pairs of contexts cost the same to join, so their order decides.
+  test("short inputs", () => {
+    const starts = [100, 3936, 6308, 6336, 6772, 6836, 11384, 11688, 13124, 15672];
+    const streams = starts.map(start => brotliCompressSync(input.subarray(start, start + 150)));
+    expect(Bun.hash.crc32(Buffer.concat(streams))).toBe(0x0b9294f1);
+  });
+
+  // Each part takes its bytes from values that start `step` after those of the previous one.
+  test.each([
+    { seed: 7, parts: 10, size: 300, masks: [0xff, 0x0f], step: 0, expected: 0xeef0b62d },
+    { seed: 6, parts: 20, size: 300, masks: [0xff, 0x7f, 0x83, 0x87], step: 0, expected: 0xbebb1aef },
+    { seed: 15, parts: 30, size: 400, masks: [0x83, 0x87, 0x8f, 0x81], step: 0, expected: 0x79bd566c },
+    { seed: 1, parts: 72, size: 540, masks: [0x3f], step: 16, expected: 0x7355a11b },
+  ])("$parts parts with values of their own", ({ seed, parts, size, masks, step, expected }) => {
+    state = seed;
+    const values = Buffer.alloc(step * parts + 256).map((_, i) => (step ? random() >> 8 : i));
+    const bytes = Buffer.alloc(parts * size).map((_, i) => {
+      const part = Math.floor(i / size);
+      return values[step * part + ((random() >> 8) & masks[part % masks.length])];
+    });
+    const params = { [constants.BROTLI_PARAM_QUALITY]: 10 };
+    expect(Bun.hash.crc32(brotliCompressSync(bytes, { params }))).toBe(expected);
+  });
+});
 
 describe("JPEG codec: Highway runtime dispatch", () => {
   // src/jsc/bindings/highway_jpeg.cpp is compiled for SSSE3 and for AVX2 on x64, and has separate code for arm64. All

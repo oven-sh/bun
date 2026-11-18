@@ -802,10 +802,10 @@ describe("DirectBuild groups and steps", () => {
     });
     const root = String(dir);
     const buildDir = join(root, "build");
-    const cfg = linux({ buildDir, asan: false, localDeps: `brotli=${join(root, "src")}` });
-    const out = join(buildDir, "deps", "brotli");
+    const cfg = linux({ buildDir, asan: false, localDeps: `cares=${join(root, "src")}` });
+    const out = join(buildDir, "deps", "cares");
     const dep: Dependency = {
-      name: "brotli",
+      name: "cares",
       source: () => ({ kind: "github-archive", repo: "x/y", commit: "0" }),
       build: () => ({
         kind: "direct",
@@ -845,9 +845,9 @@ describe("DirectBuild groups and steps", () => {
     const rel = (p: string) => relative(buildDir, p);
 
     // The tool's object is not bun's; the generated header is order-only for consumers.
-    expect(resolved.objects.map(rel)).toEqual(["obj/vendor/brotli/a.cpp.o", "obj/vendor/brotli/b.c.o"]);
+    expect(resolved.objects.map(rel)).toEqual(["obj/vendor/cares/a.cpp.o", "obj/vendor/cares/b.c.o"]);
     expect(resolved.libs).toEqual(["/outside/libicu.a"]);
-    expect(resolved.generatedHeaders.map(rel)).toEqual(["deps/brotli/gen.h"]);
+    expect(resolved.generatedHeaders.map(rel)).toEqual(["deps/cares/gen.h"]);
     expect(resolved.outputs).toEqual([]);
 
     const lines = n
@@ -861,19 +861,19 @@ describe("DirectBuild groups and steps", () => {
       for (let i = at + 1; lines[i]?.startsWith("  "); i++) vars.push(lines[i]!.trim());
       return { line: lines[at]!.replace(/ \| \S+(?=: )/, ""), vars: vars.join("\n") };
     };
-    expect(edge("deps/brotli/gen.h").line).toBe("build deps/brotli/gen.h: dep_gen deps/brotli/bin/tool");
-    expect(edge("deps/brotli/gen.h").vars).toContain(`opts = --cwd=${out} --env=K=V --stdout=${join(out, "gen.h")}`);
-    expect(edge("deps/brotli/gen.h").vars).toContain("cmd = ruby gen.rb");
-    expect(edge("deps/brotli/bin/tool").line).toStartWith(
-      "build deps/brotli/bin/tool: link obj/vendor/brotli/tool.cpp.o |",
+    expect(edge("deps/cares/gen.h").line).toBe("build deps/cares/gen.h: dep_gen deps/cares/bin/tool");
+    expect(edge("deps/cares/gen.h").vars).toContain(`opts = --cwd=${out} --env=K=V --stdout=${join(out, "gen.h")}`);
+    expect(edge("deps/cares/gen.h").vars).toContain("cmd = ruby gen.rb");
+    expect(edge("deps/cares/bin/tool").line).toStartWith(
+      "build deps/cares/bin/tool: link obj/vendor/cares/tool.cpp.o |",
     );
-    expect(edge("deps/brotli/.lib-ready").line).toBe("build deps/brotli/.lib-ready: phony deps/brotli/gen.h");
-    expect(edge("pch/prefix.h.hxx.pch").line).toEndWith("|| pch/.dir deps/brotli/.lib-ready");
-    expect(edge("obj/vendor/brotli/a.cpp.o").line).toContain(": cxx_pch ");
-    expect(edge("obj/vendor/brotli/a.cpp.o").line).toEndWith("|| obj/.dir deps/brotli/.lib-ready");
-    expect(edge("obj/vendor/brotli/a.cpp.o").vars).toContain("-DLIB -std=c++23");
-    expect(edge("obj/vendor/brotli/b.c.o").vars).toStartWith("cflags = -x c++ ");
-    expect(edge("lib").line).toBe("build lib: phony obj/vendor/brotli/a.cpp.o obj/vendor/brotli/b.c.o");
+    expect(edge("deps/cares/.lib-ready").line).toBe("build deps/cares/.lib-ready: phony deps/cares/gen.h");
+    expect(edge("pch/prefix.h.hxx.pch").line).toEndWith("|| pch/.dir deps/cares/.lib-ready");
+    expect(edge("obj/vendor/cares/a.cpp.o").line).toContain(": cxx_pch ");
+    expect(edge("obj/vendor/cares/a.cpp.o").line).toEndWith("|| obj/.dir deps/cares/.lib-ready");
+    expect(edge("obj/vendor/cares/a.cpp.o").vars).toContain("-DLIB -std=c++23");
+    expect(edge("obj/vendor/cares/b.c.o").vars).toStartWith("cflags = -x c++ ");
+    expect(edge("lib").line).toBe("build lib: phony obj/vendor/cares/a.cpp.o obj/vendor/cares/b.c.o");
   });
 });
 
@@ -901,13 +901,13 @@ describe("Provides.files", () => {
   test("are only for a prebuilt source", () => {
     using g = graph();
     const dep: Dependency = {
-      name: "brotli",
+      name: "cares",
       source: () => ({ kind: "github-archive", repo: "x/y", commit: "0" }),
       build: () => ({ kind: "direct", sources: [] }),
       provides: () => ({ libs: [], includes: [], files: ["COPYING"] }),
     };
     expect(() => resolveDep(g.n, g.cfg, dep, new Map<DepName, ResolvedDep>())).toThrow(
-      "brotli: Provides.files is for a prebuilt source",
+      "cares: Provides.files is for a prebuilt source",
     );
   });
 });

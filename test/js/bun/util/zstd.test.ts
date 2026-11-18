@@ -574,6 +574,34 @@ describe.skipIf(!isASAN)("a failed allocation is an error, not a crash", () => {
       afterwards: 12 * MiB,
     });
   });
+
+  it.concurrent("zlib.brotliDecompressSync()", async () => {
+    const results = await runCapped(
+      {
+        compressed: zlib.brotliCompressSync(Buffer.alloc(12 * MiB), {
+          params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 2, [zlib.constants.BROTLI_PARAM_LGWIN]: 24 },
+        }),
+        // A window of 24 bits, and the header of 16 MiB that are stored as they are.
+        stored: Buffer.from("cfffffff", "hex"),
+        afterwards: zlib.brotliCompressSync("still works"),
+      },
+      /* js */ `
+        import { brotliDecompressSync } from "node:zlib";
+        for (const [name, bytes] of Object.entries(inputs)) {
+          try {
+            results[name] = brotliDecompressSync(bytes).toString();
+          } catch ({ code, errno }) {
+            results[name] = { code, errno };
+          }
+        }
+      `,
+    );
+    expect(results).toEqual({
+      compressed: { code: "ERR__ERROR_ALLOC_RING_BUFFER_2", errno: -27 },
+      stored: { code: "ERR__ERROR_ALLOC_RING_BUFFER_1", errno: -26 },
+      afterwards: "still works",
+    });
+  });
 });
 
 describe("sync compression argument handling", () => {

@@ -109,7 +109,6 @@ members = [
   "src/jsc_macros",
   "src/ptr",
   "src/boringssl",
-  "src/brotli_sys",
   "src/bun_alloc",
   "src/mimalloc_sys",
   "src/semver_jsc",
@@ -490,7 +489,6 @@ bun_jsc = { path = "src/jsc" }
 bun_jsc_macros = { path = "src/jsc_macros" }
 bun_ptr = { path = "src/ptr" }
 bun_boringssl = { path = "src/boringssl" }
-bun_brotli_sys = { path = "src/brotli_sys" }
 bun_alloc = { path = "src/bun_alloc" }
 bun_mimalloc_sys = { path = "src/mimalloc_sys" }
 bun_semver_jsc = { path = "src/semver_jsc" }
@@ -542,6 +540,10 @@ opt-level = 3
 [profile.dev.package.bun_zstd_decoder]
 opt-level = 3
 [profile.dev.package.bun_zstd_encoder]
+opt-level = 3
+
+# Unoptimized, the default quality takes seconds for a few kilobytes.
+[profile.dev.package.bun_brotli]
 opt-level = 3
 
 # Runs for every line of a response head and every chunk of a body.

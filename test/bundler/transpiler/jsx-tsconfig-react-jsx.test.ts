@@ -261,8 +261,7 @@ describe("tsconfig compilerOptions.jsx", () => {
       tsconfig: { compilerOptions: { jsx: "react-jsx", jsxImportSource: "solid-js" } },
     });
     const out = transpiler.transformSync(`export default <div>hi</div>;`);
-    expect(out).toMatch(/^import \{ jsx(DEV)? as \w+ \} from "solid-js\/jsx(-dev)?-runtime";\n/);
-    expect(out).toMatch(/\nexport default jsx(DEV)?_\w+\("div"/);
+    expect(out).toMatch(/^import \{ jsx as (\w+) \} from "solid-js\/jsx-runtime";\nexport default \1\("div"/);
     expect(out).not.toContain("React.createElement");
   });
 

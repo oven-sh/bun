@@ -1510,13 +1510,14 @@ fn adler32_by_bytes(bytes: &[u8]) -> u32 {
 
 #[test]
 fn checksums() {
-    fn check(want: u32, kernel: impl Fn() -> u32) {
+    #[track_caller]
+    fn check(len: usize, want: u32, kernel: impl Fn() -> u32) {
         let more = ["pclmulqdq", "vpclmulqdq", "crc", "aes+sha3+dotprod"];
         for target in targets() {
-            assert_eq!(kernel(), want, "{target:?}");
+            assert_eq!(kernel(), want, "{len} {target:?}");
             for more in more.iter().filter(|_| target.arch().is_some()) {
                 limit_to_with(target, more.split('+'));
-                assert_eq!(kernel(), want, "{target:?}+{more}");
+                assert_eq!(kernel(), want, "{len} {target:?}+{more}");
             }
         }
     }
@@ -1525,20 +1526,27 @@ fn checksums() {
     let lengths: Vec<usize> = match cfg!(miri) {
         true => vec![3, 40, 956],
         false => (0..2400)
-            .chain([4095, 4096, 4097, 5375, 5376, 5377, 5503, 5504, 5505])
-            .chain([5552, 11_100, 65_536, 65_537, 70_001])
+            // At 4097 and 4112, the last correction of the upper sum crosses 2^31.
+            .chain([4095, 4096, 4097, 4112, 5375, 5376, 5377, 5503, 5504, 5505])
+            .chain([5552, 11_100, 65_536, 65_600, 70_001, 140_001])
             .collect(),
     };
     let mut below = random();
     for len in lengths {
         let any = (0..len).map(|_| below(256) as u8).collect();
-        for bytes in [any, vec![255; len]] {
-            let bytes = &bytes[below(64).min(len / 4096)..];
-            let crc = [0, below(1 << 31) as u32 * 2 + 1][len % 2];
-            check(crc32_by_bits(crc, bytes), || kernels::crc32(crc, bytes));
-            check(adler32_by_bytes(bytes), || kernels::adler32(bytes));
-            from_shared(bytes, |t| {
-                check(adler32_by_bytes(bytes), || kernels::adler32_shared(t));
+        for all in [any, vec![255; len]] {
+            from_shared(&all, |shared| {
+                // From each place in a cache line.
+                for at in 0..if len == 65_600 { 64 } else { 1 } {
+                    let (bytes, shared, len) = (&all[at..], &shared[at..], len - at);
+                    let crc = [0, below(1 << 31) as u32 * 2 + 1][len % 2];
+                    let adler = adler32_by_bytes(bytes);
+                    check(len, crc32_by_bits(crc, bytes), || {
+                        kernels::crc32(crc, bytes)
+                    });
+                    check(len, adler, || kernels::adler32(bytes));
+                    check(len, adler, || kernels::adler32_shared(shared));
+                }
             });
         }
     }

@@ -1312,6 +1312,7 @@ describe("bundler", () => {
       target: "bun",
       backend: "cli",
       external: ["solid-js*"],
+      env: { NODE_ENV: "development", BUN_ENV: undefined },
       onAfterBundle(api) {
         const out = api.readFile("/out.js");
         expect(out).toContain('"solid-js/jsx-dev-runtime"');

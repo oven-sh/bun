@@ -130,6 +130,15 @@ describe("strict mode code and sloppy mode code start under bun run and in a bui
     ["delete of a name in sloppy code", "cjs", `var x = 1; value = delete x;`],
     ["a legacy HTML comment in sloppy code", "cjs", `value = 1 <!-- c\n;`],
     ["a closing legacy HTML comment in sloppy code", "cjs", `value = 1;\n--> c\n`],
+    // A legacy HTML comment between two tokens hides no error of the tokens, and makes none.
+    ["a legacy HTML comment behind a rest parameter that is not the last", "cjs", `function f(... <!-- c\na, b) {}`],
+    ["a closing legacy HTML comment behind a rest parameter with a comma", "cjs", `function f(...a\n--> c\n,) {}`],
+    [
+      "a legacy HTML comment between for and await outside an async function",
+      "cjs",
+      `function f() { for <!-- c\nawait (const a of []) {} }`,
+    ],
+    ["a legacy HTML comment that ends in <> in front of parameters", "cjs", `function f <!-- <>\n() {} value = f();`],
     gap("the build reports TS1487, and bun run writes the character", [
       "a legacy octal escape in an untagged template in sloppy code",
       "cjs",
@@ -330,6 +339,16 @@ describe("strict mode code and sloppy mode code start under bun run and in a bui
     // The parser of bun run reads TypeScript by the same rules.
     ["a function as the body of if in a TypeScript module", "ts", `if (true) function f() {}\nexport {};`],
     ["a function as the body of if in a .mts file with no import or export", "mts", `if (true) function f() {}`],
+    [
+      "a function as the body of if behind an import of a value in TypeScript",
+      "ts",
+      `import { d } from "./dep";\nif (true) function f() {}\nglobalThis.d = d;`,
+    ],
+    [
+      "two functions of one name behind export as namespace",
+      "ts",
+      `// @ts-nocheck\n${startMark}\nexport as namespace NS;\nfunction f() {} function f() {}`,
+    ],
   ] as const;
 
   // One process loads every file, and one reads them all for a build.
@@ -339,6 +358,7 @@ describe("strict mode code and sloppy mode code start under bun run and in a bui
     const files: Record<string, string> = {
       "module/package.json": JSON.stringify({ type: "module" }),
       "commonjs/package.json": JSON.stringify({ type: "commonjs" }),
+      "dep.ts": `export const d = 1;\n`,
     };
     const names = rows.map(([, where, code], index) => {
       const name = where.replace(/\w+$/, extension => `row${index}.${extension}`);
@@ -384,6 +404,35 @@ describe("strict mode code and sloppy mode code start under bun run and in a bui
 
 // The file that holds a legacy HTML comment is judged, by its own name, however it is loaded. Each program prints under bun run what
 // it prints compiled, or stops under both.
+// bun run erases a signature, so it is the body of nothing.
+test("a TypeScript signature without a body as the body of if starts under bun run and in a build", async () => {
+  using dir = tempDir("aot-early-errors", {
+    "main.ts": `export {};\nif (1) function f(a: string): void;\nfunction f(a: any) {}\nconsole.log("ran");\n`,
+  });
+  const cwd = String(dir);
+  for (const args of [
+    ["run", "./main.ts"],
+    ["run", "--debug-aot", "./main.ts"],
+  ]) {
+    const { stdout, exitCode } = await run(cwd, ...args);
+    expect({ args, stdout, exitCode }).toEqual({ args, stdout: "ran\n", exitCode: 0 });
+  }
+});
+
+// Bun's parser takes this import for one of a value, so the file is a module to it. The build reads an import of the type `as`, which proves
+// nothing, and starts the program.
+test.failing("a function as the body of if behind import { type as } stops bun run and a build alike", async () => {
+  using dir = tempDir("aot-early-errors", {
+    "main.ts": `import { type as } from "./dep";\nif (1) function f() {}\nconsole.log("ran");\n`,
+    "dep.ts": `export interface as {}\n`,
+  });
+  const cwd = String(dir);
+  const plain = await run(cwd, "run", "./main.ts");
+  const compiled = await run(cwd, "run", "--debug-aot", "./main.ts");
+  expect({ stdout: plain.stdout, exitCode: plain.exitCode }).toEqual({ stdout: "", exitCode: 1 });
+  expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: "", exitCode: 1 });
+});
+
 describe.concurrent("a legacy HTML comment in a file that another file loads", () => {
   test("is an error in a .mjs file that is only imported", async () => {
     using dir = tempDir("aot-early-errors", {
@@ -479,8 +528,8 @@ describe.concurrent("a legacy HTML comment in a file that another file loads", (
   });
 
   // A file with no extension is read as TypeScript, where `<!--` is three operators: the program would print "false 4". The build
-  // reports that reading and compiles nothing.
-  test("stops the build in a file with no extension, where bun run reads a comment", async () => {
+  // reports that reading for the types of this text, and compiles nothing. With operands of type any it compiles that reading.
+  test("is three operators to the build in a file with no extension, where bun run reads a comment", async () => {
     using dir = tempDir("aot-early-errors", {
       "tool": `var c = 5; var value = 1 <!-- c\n;\nconsole.log(value, c);\n`,
     });

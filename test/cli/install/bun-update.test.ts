@@ -1962,7 +1962,8 @@ describe("bun update <name> semantics", () => {
 
     // Before Bun 1.2.19, the dependencies of a workspace could have the workspace bit too. Bun 1.2.18 wrote
     // fixtures/bun.lockb.v1.2.18-workspaces: foo depends on one-range-dep, whose no-deps ^1.0.0 is at 1.0.0, the
-    // version that bar pins. The update saves it as bun.lock.
+    // version that bar pins. The root's one-dep pins no-deps 1.0.1, so the moved row shares that copy, as it does
+    // with a bun.lock, and the lockfile gets no 1.1.0. The update saves the lockfile as bun.lock.
     it.concurrent(
       "bun update no-deps from a workspace moves the row it reaches in a bun.lockb from Bun 1.2.18",
       async () => {
@@ -1993,6 +1994,7 @@ describe("bun update <name> semantics", () => {
           "one-range-dep": "1.0.1",
           "bar": "1.0.0",
         });
+        expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0", "1.0.1"]);
         expect(exitCode).toBe(0);
       },
     );

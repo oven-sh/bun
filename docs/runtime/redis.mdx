@@ -257,8 +257,6 @@ await client.publish(channelName, message);
 await client.publish(channelName, new Uint8Array([0xff, 0xfe]));
 ```
 
-A `subscribe()` listener receives the message as a string, so bytes that are not valid UTF-8 are replaced.
-
 ### Subscriptions
 
 Subscribe to channels with the `.subscribe()` method:
@@ -296,14 +294,7 @@ const client = new RedisClient("redis://localhost:6379", {
 
 ### Raw Commands
 
-Use the `send` method to run any Redis command, including ones without a dedicated method. The first argument is the command name. The second is an array of arguments. Bun sends each element as one argument:
-
-- a string as UTF-8
-- a number as the string that `String(value)` returns
-- a typed array, a `DataView`, an `ArrayBuffer`, or a `SharedArrayBuffer` as its bytes
-- an in-memory `Blob` as its bytes
-
-`Bun.file()` and an `S3File` throw, here and in every other method. To send the content, pass `await file.bytes()`.
+Use the `send` method to run any Redis command, including ones without a dedicated method. The first argument is the command name. The second is an array of strings, numbers, buffers or in-memory `Blob`s.
 
 ```ts redis.ts icon="/icons/typescript.svg"
 // Run any Redis command
@@ -314,43 +305,14 @@ await redis.send("LPUSH", ["mylist", "value1", "value2"]);
 
 // Get list range
 const list = await redis.send("LRANGE", ["mylist", "0", "-1"]);
-
-// Pass a number. Bun sends it as the string "60".
-await redis.send("EXPIRE", ["mylist", 60]);
-
-// Pass a Uint8Array or a Buffer. Bun sends its bytes.
-await redis.send("SET", ["mykey", new Uint8Array([0xff, 0xfe])]);
-
-// Redis 8.0 or later: pass a Float32Array and a number to the vector set commands.
-const vector = new Float32Array([0.1, 0.2, 0.3]);
-await redis.send("VADD", ["docs", "FP32", vector, "doc:1"]);
-const nearest = await redis.send("VSIM", ["docs", "FP32", vector, "COUNT", 5]);
 ```
 
-Bun converts the reply as [Type Conversion](#type-conversion) describes, so a bulk string reply becomes a string. To read a value as bytes, use `getBuffer`.
-
-`sendBuffer` takes the same arguments as `send` and returns each string of the reply as a `Buffer`. The keys of a map stay strings, so keys that are not valid UTF-8 can collide.
+`sendBuffer` returns the strings of the reply as `Buffer`s.
 
 ```ts redis.ts icon="/icons/typescript.svg"
 await redis.hset("images", "logo", new Uint8Array([0xff, 0xd8]));
 const logo = await redis.sendBuffer("HGET", ["images", "logo"]);
-
-// The payload of DUMP is binary
-const payload = await redis.sendBuffer("DUMP", ["images"]);
-await redis.send("RESTORE", ["images:copy", 0, payload]);
 ```
-
-### Missing Arguments
-
-The types refuse most `null` and `undefined` arguments. What one does at runtime depends on the method:
-
-- `mget`, `hmget` and `zmscore` reply with one element per argument. They throw for it ahead of another argument and leave it out at the end.
-- `set` sends the options ahead of it. It throws if that would drop an option such as `NX` or `EX`.
-- `del`, `sadd`, `lpush`, `hscan`, `lpop` and similar methods skip it after the first argument.
-- `getex`, `scan`, `zrange` and `send` throw for it in any position.
-- `hset` and `hmset` throw for it as key or field. As value they store `"null"` or `"undefined"`.
-
-These errors are thrown before anything is sent. After `MULTI`, catch them and send `DISCARD`, or the transaction stays open.
 
 ### Connection Events
 
@@ -534,6 +496,9 @@ Common error codes:
 - `ERR_REDIS_AUTHENTICATION_FAILED` - Failed to authenticate with the server
 - `ERR_REDIS_INVALID_RESPONSE` - Received an invalid response from the server
 - `ERR_REDIS_SERVER_ERROR` - The server sent an error reply, either rejecting one command or, in subscriber mode, closing the connection
+- `ERR_REDIS_CONNECTION_TIMEOUT`, `ERR_REDIS_IDLE_TIMEOUT` - `connectionTimeout` or `idleTimeout` expired
+
+When a connection fails, `connect()`, queued commands and `onclose` get the same error. After the last retry, `error.cause` is the error of the last attempt.
 
 ---
 

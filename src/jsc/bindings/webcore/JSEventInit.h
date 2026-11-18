@@ -21,10 +21,26 @@
 #pragma once
 
 #include "EventInit.h"
+#include "JSDOMConvertBoolean.h"
 #include "JSDOMConvertDictionary.h"
 
 namespace WebCore {
 
-template<> EventInit convertDictionary<EventInit>(JSC::JSGlobalObject&, JSC::JSValue);
+template<> ALWAYS_INLINE EventInit convertDictionary<EventInit>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+{
+    auto& vm = JSC::getVM(&lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    EventInit result;
+    auto* object = dictionaryObject(lexicalGlobalObject, throwScope, value);
+    if (!object)
+        return result;
+    convertDictionaryMember<IDLBoolean>(lexicalGlobalObject, *object, JSC::Identifier::fromString(vm, "bubbles"_s), result.bubbles);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    convertDictionaryMember<IDLBoolean>(lexicalGlobalObject, *object, JSC::Identifier::fromString(vm, "cancelable"_s), result.cancelable);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    convertDictionaryMember<IDLBoolean>(lexicalGlobalObject, *object, JSC::Identifier::fromString(vm, "composed"_s), result.composed);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    return result;
+}
 
 } // namespace WebCore

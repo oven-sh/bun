@@ -21,8 +21,6 @@
 #include "config.h"
 #include "JSCloseEvent.h"
 
-#include "ExtendedDOMClientIsoSubspaces.h"
-#include "ExtendedDOMIsoSubspaces.h"
 #include "JSDOMAttribute.h"
 #include "JSDOMBinding.h"
 #include "JSDOMConstructor.h"
@@ -32,17 +30,10 @@
 #include "JSDOMConvertStrings.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObjectInlines.h"
-#include "JSDOMWrapperCache.h"
-#include "ScriptExecutionContext.h"
-#include "WebCoreJSClientData.h"
-#include <JavaScriptCore/HeapAnalyzer.h>
+#include "JSDOMOperation.h"
+#include "JSDOMPrototype.h"
+#include "JSEventInit.h"
 #include <JavaScriptCore/JSCInlines.h>
-#include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
-#include <JavaScriptCore/SlotVisitorMacros.h>
-#include <JavaScriptCore/SubspaceInlines.h>
-#include <wtf/GetPtr.h>
-#include <wtf/PointerPreparations.h>
-#include <wtf/URL.h>
 
 namespace WebCore {
 using namespace JSC;
@@ -51,127 +42,28 @@ template<> CloseEvent::Init convertDictionary<CloseEvent::Init>(JSGlobalObject& 
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    bool isNullOrUndefined = value.isUndefinedOrNull();
-    auto* object = isNullOrUndefined ? nullptr : value.getObject();
-    if (!isNullOrUndefined && !object) [[unlikely]] {
-        throwTypeError(&lexicalGlobalObject, throwScope);
-        return {};
-    }
-    CloseEvent::Init result;
-    JSValue bubblesValue;
-    if (isNullOrUndefined)
-        bubblesValue = jsUndefined();
-    else {
-        bubblesValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "bubbles"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!bubblesValue.isUndefined()) {
-        result.bubbles = convert<IDLBoolean>(lexicalGlobalObject, bubblesValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    } else
-        result.bubbles = false;
-    JSValue cancelableValue;
-    if (isNullOrUndefined)
-        cancelableValue = jsUndefined();
-    else {
-        cancelableValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "cancelable"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!cancelableValue.isUndefined()) {
-        result.cancelable = convert<IDLBoolean>(lexicalGlobalObject, cancelableValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    } else
-        result.cancelable = false;
-    JSValue composedValue;
-    if (isNullOrUndefined)
-        composedValue = jsUndefined();
-    else {
-        composedValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "composed"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!composedValue.isUndefined()) {
-        result.composed = convert<IDLBoolean>(lexicalGlobalObject, composedValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    } else
-        result.composed = false;
-    JSValue codeValue;
-    if (isNullOrUndefined)
-        codeValue = jsUndefined();
-    else {
-        codeValue = object->get(&lexicalGlobalObject, WebCore::builtinNames(vm).codePublicName());
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!codeValue.isUndefined()) {
-        result.code = convert<IDLUnsignedShort>(lexicalGlobalObject, codeValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    } else
-        result.code = 0;
-    JSValue reasonValue;
-    if (isNullOrUndefined)
-        reasonValue = jsUndefined();
-    else {
-        reasonValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "reason"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!reasonValue.isUndefined()) {
-        result.reason = convert<IDLUSVString>(lexicalGlobalObject, reasonValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    } else
-        result.reason = emptyString();
-    JSValue wasCleanValue;
-    if (isNullOrUndefined)
-        wasCleanValue = jsUndefined();
-    else {
-        wasCleanValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "wasClean"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!wasCleanValue.isUndefined()) {
-        result.wasClean = convert<IDLBoolean>(lexicalGlobalObject, wasCleanValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    } else
-        result.wasClean = false;
+    CloseEvent::Init result { convertDictionary<EventInit>(lexicalGlobalObject, value) };
+    RETURN_IF_EXCEPTION(throwScope, {});
+    result.reason = emptyString();
+    auto* object = value.getObject();
+    if (!object)
+        return result;
+    convertDictionaryMember<IDLUnsignedShort>(lexicalGlobalObject, *object, WebCore::builtinNames(vm).codePublicName(), result.code);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    convertDictionaryMember<IDLUSVString>(lexicalGlobalObject, *object, Identifier::fromString(vm, "reason"_s), result.reason);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    convertDictionaryMember<IDLBoolean>(lexicalGlobalObject, *object, Identifier::fromString(vm, "wasClean"_s), result.wasClean);
+    RETURN_IF_EXCEPTION(throwScope, {});
     return result;
 }
 
 // Attributes
 
-static JSC_DECLARE_CUSTOM_GETTER(jsCloseEventConstructor);
 static JSC_DECLARE_CUSTOM_GETTER(jsCloseEvent_wasClean);
 static JSC_DECLARE_CUSTOM_GETTER(jsCloseEvent_code);
 static JSC_DECLARE_CUSTOM_GETTER(jsCloseEvent_reason);
 
-class JSCloseEventPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static JSCloseEventPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSCloseEventPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSCloseEventPrototype))) JSCloseEventPrototype(vm, globalObject, structure);
-        ptr->finishCreation(vm);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSCloseEventPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSCloseEventPrototype(JSC::VM& vm, JSC::JSGlobalObject*, JSC::Structure* structure)
-        : JSC::JSNonFinalObject(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&);
-};
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSCloseEventPrototype, JSCloseEventPrototype::Base);
-
+using JSCloseEventPrototype = JSDOMPrototype<JSCloseEvent>;
 using JSCloseEventDOMConstructor = JSDOMConstructor<JSCloseEvent>;
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCloseEventDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
@@ -204,11 +96,6 @@ JSC_ANNOTATE_HOST_FUNCTION(JSCloseEventDOMConstructorConstruct, JSCloseEventDOMC
 
 template<> const ClassInfo JSCloseEventDOMConstructor::s_info = { "CloseEvent"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCloseEventDOMConstructor) };
 
-template<> JSValue JSCloseEventDOMConstructor::prototypeForStructure(JSC::VM& vm, const JSDOMGlobalObject& globalObject)
-{
-    return JSEvent::getConstructor(vm, &globalObject);
-}
-
 template<> void JSCloseEventDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
     initializeBaseProperties(vm, 1, "CloseEvent"_s, JSCloseEvent::prototype(vm, globalObject));
@@ -217,15 +104,15 @@ template<> void JSCloseEventDOMConstructor::initializeProperties(VM& vm, JSDOMGl
 /* Hash table for prototype */
 
 static const HashTableValue JSCloseEventPrototypeTableValues[] = {
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsCloseEventConstructor, 0 } },
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, JSCloseEventPrototype::constructorGetter, 0 } },
     { "wasClean"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsCloseEvent_wasClean, 0 } },
     { "code"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsCloseEvent_code, 0 } },
     { "reason"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsCloseEvent_reason, 0 } },
 };
 
-const ClassInfo JSCloseEventPrototype::s_info = { "CloseEvent"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCloseEventPrototype) };
+template<> const ClassInfo JSCloseEventPrototype::s_info = { "CloseEvent"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCloseEventPrototype) };
 
-void JSCloseEventPrototype::finishCreation(VM& vm)
+template<> void JSCloseEventPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSCloseEvent::info(), JSCloseEventPrototypeTableValues, *this);
@@ -234,42 +121,14 @@ void JSCloseEventPrototype::finishCreation(VM& vm)
 
 const ClassInfo JSCloseEvent::s_info = { "CloseEvent"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCloseEvent) };
 
-JSCloseEvent::JSCloseEvent(Structure* structure, JSDOMGlobalObject& globalObject, Ref<CloseEvent>&& impl)
-    : JSEvent(structure, globalObject, WTF::move(impl))
-{
-}
-
-void JSCloseEvent::finishCreation(VM& vm)
-{
-    Base::finishCreation(vm);
-    ASSERT(inherits(info()));
-
-    // static_assert(!std::is_base_of<ActiveDOMObject, CloseEvent>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
-}
-
 JSObject* JSCloseEvent::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    return JSCloseEventPrototype::create(vm, &globalObject, JSCloseEventPrototype::createStructure(vm, &globalObject, JSEvent::prototype(vm, globalObject)));
-}
-
-JSObject* JSCloseEvent::prototype(VM& vm, JSDOMGlobalObject& globalObject)
-{
-    return getDOMPrototype<JSCloseEvent>(vm, globalObject);
+    return JSCloseEventPrototype::create(vm, globalObject, JSEvent::prototype(vm, globalObject));
 }
 
 JSValue JSCloseEvent::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSCloseEventDOMConstructor, DOMConstructorID::CloseEvent>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsCloseEventConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = dynamicDowncast<JSCloseEventPrototype>(JSValue::decode(thisValue));
-    if (!prototype) [[unlikely]]
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    return JSValue::encode(JSCloseEvent::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
 
 static inline JSValue jsCloseEvent_wasCleanGetter(JSGlobalObject& lexicalGlobalObject, JSCloseEvent& thisObject)
@@ -309,60 +168,6 @@ static inline JSValue jsCloseEvent_reasonGetter(JSGlobalObject& lexicalGlobalObj
 JSC_DEFINE_CUSTOM_GETTER(jsCloseEvent_reason, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSCloseEvent>::get<jsCloseEvent_reasonGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
-}
-
-JSC::GCClient::IsoSubspace* JSCloseEvent::subspaceForImpl(JSC::VM& vm)
-{
-    return WebCore::subspaceForImpl<JSCloseEvent, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForCloseEvent, m_subspaceForCloseEvent));
-}
-
-void JSCloseEvent::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
-{
-    auto* thisObject = uncheckedDowncast<JSCloseEvent>(cell);
-    analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
-    if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
-    Base::analyzeHeap(cell, analyzer);
-}
-
-#if ENABLE(BINDING_INTEGRITY)
-#if PLATFORM(WIN)
-#pragma warning(disable : 4483)
-extern "C" {
-extern void (*const __identifier("??_7CloseEvent@WebCore@@6B@")[])();
-}
-#else
-extern "C" {
-extern void* _ZTVN7WebCore10CloseEventE[];
-}
-#endif
-#endif
-
-JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<CloseEvent>&& impl)
-{
-
-    if constexpr (std::is_polymorphic_v<CloseEvent>) {
-#if ENABLE(BINDING_INTEGRITY)
-        // const void* actualVTablePointer = getVTablePointer(impl.ptr());
-#if PLATFORM(WIN)
-        void* expectedVTablePointer = __identifier("??_7CloseEvent@WebCore@@6B@");
-#else
-        // void* expectedVTablePointer = &_ZTVN7WebCore10CloseEventE[2];
-#endif
-
-        // If you hit this assertion you either have a use after free bug, or
-        // CloseEvent has subclasses. If CloseEvent has subclasses that get passed
-        // to toJS() we currently require CloseEvent you to opt out of binding hardening
-        // by adding the SkipVTableValidation attribute to the interface IDL definition
-        // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
-#endif
-    }
-    return createWrapper<CloseEvent>(globalObject, WTF::move(impl));
-}
-
-JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, CloseEvent& impl)
-{
-    return wrap(lexicalGlobalObject, globalObject, impl);
 }
 
 }

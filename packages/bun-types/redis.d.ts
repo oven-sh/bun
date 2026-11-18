@@ -90,14 +90,16 @@ declare module "bun" {
     /**
      * Callback fired when the client disconnects from the Redis server
      *
-     * @param error The error that caused the disconnection
+     * @param error The error that caused the disconnection. A pending
+     * `connect()` and the queued commands reject with the same object.
      */
     onclose: ((this: RedisClient, error: Error) => void) | null;
 
     /**
      * Connect to the Redis server
      *
-     * @returns A promise that resolves when connected
+     * @returns A promise that resolves when connected, or rejects with the
+     * reason the connection failed
      */
     connect(): Promise<void>;
 

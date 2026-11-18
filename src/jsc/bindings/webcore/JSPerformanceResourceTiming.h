@@ -20,56 +20,25 @@
 
 #pragma once
 
-#include "JSDOMWrapper.h"
+#include "JSDOMInterface.h"
 #include "JSPerformanceEntry.h"
 #include "PerformanceResourceTiming.h"
 
 namespace WebCore {
 
-class JSPerformanceResourceTiming : public JSPerformanceEntry {
+class JSPerformanceResourceTiming final : public JSDOMInterface<JSPerformanceResourceTiming, PerformanceResourceTiming, JSPerformanceEntry> {
 public:
-    using Base = JSPerformanceEntry;
-    static JSPerformanceResourceTiming* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<PerformanceResourceTiming>&& impl)
-    {
-        auto& vm = JSC::getVM(globalObject);
-        JSPerformanceResourceTiming* ptr = new (NotNull, JSC::allocateCell<JSPerformanceResourceTiming>(vm)) JSPerformanceResourceTiming(structure, *globalObject, WTF::move(impl));
-        ptr->finishCreation(vm);
-        return ptr;
-    }
-
-    static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
-    static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
+    using JSDOMInterface::JSDOMInterface;
 
     DECLARE_INFO;
+    static constexpr auto subspaceSlots = BUN_SUBSPACE_SLOTS(m_clientSubspaceForPerformanceResourceTiming, m_subspaceForPerformanceResourceTiming);
 
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
-    }
-
+    static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
-    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-        return subspaceForImpl(vm);
-    }
-    static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
-    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
-    PerformanceResourceTiming& wrapped() const
-    {
-        return static_cast<PerformanceResourceTiming&>(Base::wrapped());
-    }
-
-protected:
-    JSPerformanceResourceTiming(JSC::Structure*, JSDOMGlobalObject&, Ref<PerformanceResourceTiming>&&);
-
-    DECLARE_DEFAULT_FINISH_CREATION;
 };
 
 template<> struct JSDOMWrapperConverterTraits<PerformanceResourceTiming> {
     using WrapperClass = JSPerformanceResourceTiming;
-    using ToWrappedReturnType = PerformanceResourceTiming*;
 };
 
 } // namespace WebCore

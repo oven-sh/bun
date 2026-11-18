@@ -13,4 +13,9 @@ workspace = true
 thiserror.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true
-bun_brotli_sys.workspace = true
+bun_highway.workspace = true
+bun_removable_features.workspace = true
+
+[dev-dependencies]
+# The native symbols that Bun's C and C++ side provides.
+bun_sema_standalone = { path = "../sema/standalone" }

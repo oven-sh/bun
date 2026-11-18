@@ -64,6 +64,8 @@ const jsFixtures = [
   // FTL - RegExp
   "ftl-regexp-exec.js",
   "ftl-regexp-test.js",
+  // Yarr JIT
+  "regexp-unicode-surrogate-mask.js",
   // FTL - Arguments
   "ftl-getmyargumentslength.js",
   "ftl-getmyargumentslength-inline.js",

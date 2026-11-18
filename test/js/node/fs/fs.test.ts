@@ -14,6 +14,7 @@ import {
   isMacOS,
   isPosix,
   isWindows,
+  MAX_PATH_BYTES,
   tempDir,
   tempDirWithFiles,
   tmpdirSync,
@@ -1641,6 +1642,37 @@ it("mkdtempSync() non-exist dir #2568", () => {
     expect(mkdtempSync(path)).toBeFalsy();
   } catch (err: any) {
     expect(err?.errno).toBe(process.binding("uv").UV_ENOENT);
+  }
+});
+
+it("only mkdtempSync() names the template in its error where libc has changed it", async () => {
+  using dir = tempDir("mkdtemp-error-path", {});
+  const prefix = join(String(dir), "missing", "a-");
+  expect(() => mkdtempSync(prefix)).toThrow(
+    expect.objectContaining({
+      code: "ENOENT",
+      path: prefix + "XXXXXX",
+      message: `ENOENT: no such file or directory, mkdtemp '${prefix}XXXXXX'`,
+    }),
+  );
+  for (const mkdtempAsync of [promisify(mkdtemp), promises.mkdtemp]) {
+    const { code, syscall, path } = await mkdtempAsync(prefix).catch(e => e);
+    expect({ code, syscall, prefix: path.slice(0, -6) }).toEqual({ code: "ENOENT", syscall: "mkdtemp", prefix });
+    if (isGlibc) expect(path).not.toEndWith("XXXXXX");
+  }
+});
+
+// Windows refuses a path long before it has that many bytes.
+it.skipIf(isWindows)("mkdtemp does not cut a prefix that is too long", async () => {
+  using dir = tempDir("mkdtemp-long-prefix", {});
+  const base = String(dir) + "/";
+  const prefixOf = (bytes: number) => base + Buffer.alloc(bytes - Buffer.byteLength(base), "a/").toString();
+  const longest = MAX_PATH_BYTES - "XXXXXX\0".length;
+  expect(() => mkdtempSync(prefixOf(longest))).toThrow(expect.objectContaining({ code: "ENOENT" }));
+  for (const prefix of [prefixOf(longest + 1), prefixOf(MAX_PATH_BYTES - 1)]) {
+    const tooLong = { code: "ENAMETOOLONG", syscall: "mkdtemp" };
+    expect(() => mkdtempSync(prefix)).toThrow(expect.objectContaining({ ...tooLong, path: prefix + "XXXXXX" }));
+    await expect(promises.mkdtemp(prefix)).rejects.toMatchObject(tooLong);
   }
 });
 
@@ -6668,7 +6700,6 @@ it.skipIf(!isGlibc || !cc)("calls that change files are made again after EINTR",
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <errno.h>
-#include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -6694,12 +6725,7 @@ INTERRUPT(truncate, path, (const char *path, off_t length), (path, length))
 INTERRUPT(link, to, (const char *from, const char *to), (from, to))
 INTERRUPT(unlink, path, (const char *path), (path))
 INTERRUPT(rmdir, path, (const char *path), (path))
-
-int unlinkat(int folder, const char *path, int flags) {
-  static int calls;
-  if (is_interrupted(flags & AT_REMOVEDIR ? "rmdir" : "unlink", path, &calls)) return -1;
-  return ((int (*)(int, const char *, int)) dlsym(RTLD_NEXT, "unlinkat"))(folder, path, flags);
-}
+INTERRUPT(unlinkat, path, (int folder, const char *path, int flags), (folder, path, flags))
 
 char *mkdtemp(char *name) {
   static int calls;
@@ -6736,8 +6762,9 @@ for (const [flavor, functionNamed] of Object.entries(flavors)) {
   await call("rmdir", "eintr-folder-" + flavor);
   const made = await call("mkdtemp", "eintr-temp-");
   console.log(flavor, fs.statSync(made).isDirectory(), fs.readFileSync("eintr-link-" + flavor, "utf8"));
+  await call("rm", "eintr-link-" + flavor, { recursive: true });
 }
-console.log(fs.readdirSync(".").filter(name => /^eintr-(file|folder)/.test(name)));
+console.log(fs.readdirSync(".").filter(name => /^eintr-(file|folder|link)/.test(name)));
 `,
   });
 
@@ -6758,7 +6785,7 @@ console.log(fs.readdirSync(".").filter(name => /^eintr-(file|folder)/.test(name)
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  const interrupted = "fsync\nfdatasync\ntruncate\nlink\nunlink\nrmdir\nmkdtemp\n";
+  const interrupted = "fsync\nfdatasync\ntruncate\nlink\nunlink\nrmdir\nmkdtemp\nunlinkat\n";
   expect({ stdout, stderr, exitCode }).toEqual({
     stdout: "sync true he\ncallback true he\npromises true he\n[]\n",
     stderr: interrupted + interrupted + interrupted,

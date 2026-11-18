@@ -20,78 +20,29 @@
 
 #pragma once
 
-#include "JSDOMWrapper.h"
+#include "JSDOMInterface.h"
 #include "JSEventTarget.h"
 #include "MessagePort.h"
-#include <wtf/NeverDestroyed.h>
 
 namespace WebCore {
 
-class WEBCORE_EXPORT JSMessagePort : public JSEventTarget {
+class JSMessagePort final : public JSDOMInterfaceWithAdditionalChildren<JSMessagePort, MessagePort, JSEventTarget> {
 public:
-    using Base = JSEventTarget;
-    static JSMessagePort* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<MessagePort>&& impl)
-    {
-        JSMessagePort* ptr = new (NotNull, JSC::allocateCell<JSMessagePort>(globalObject->vm())) JSMessagePort(structure, *globalObject, WTF::move(impl));
-        ptr->finishCreation(globalObject->vm());
-        return ptr;
-    }
-
-    static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
-    static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
-    static MessagePort* toWrapped(JSC::VM&, JSC::JSValue);
+    using JSDOMInterfaceWithAdditionalChildren::JSDOMInterfaceWithAdditionalChildren;
 
     DECLARE_INFO;
+    static constexpr auto subspaceSlots = BUN_SUBSPACE_SLOTS(m_clientSubspaceForMessagePort, m_subspaceForMessagePort);
 
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
-    }
-
+    static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
-    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-        return subspaceForImpl(vm);
-    }
-    static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
-    DECLARE_VISIT_CHILDREN;
+
     template<typename Visitor> void visitAdditionalChildrenInGCThread(Visitor&);
-
-    template<typename Visitor> static void visitOutputConstraints(JSCell*, Visitor&);
-    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
-    MessagePort& wrapped() const
-    {
-        return static_cast<MessagePort&>(Base::wrapped());
-    }
-
-protected:
-    JSMessagePort(JSC::Structure*, JSDOMGlobalObject&, Ref<MessagePort>&&);
-
-    DECLARE_DEFAULT_FINISH_CREATION;
+    bool isReachableFromOpaqueRoots(JSC::AbstractSlotVisitor&, ASCIILiteral*) const;
 };
-
-class WEBCORE_EXPORT JSMessagePortOwner final : public JSC::WeakHandleOwner {
-public:
-    bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, JSC::AbstractSlotVisitor&, ASCIILiteral*) final;
-    FinalizeResult finalize(JSC::Handle<JSC::Unknown>, void* context) final;
-};
-
-inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, MessagePort*)
-{
-    static NeverDestroyed<JSMessagePortOwner> owner;
-    return &owner.get();
-}
-
-WEBCORE_EXPORT JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, MessagePort&);
-inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, MessagePort* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }
-JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<MessagePort>&&);
-inline JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, RefPtr<MessagePort>&& impl) { return impl ? toJSNewlyCreated(lexicalGlobalObject, globalObject, impl.releaseNonNull()) : JSC::jsNull(); }
 
 template<> struct JSDOMWrapperConverterTraits<MessagePort> {
     using WrapperClass = JSMessagePort;
-    using ToWrappedReturnType = MessagePort*;
 };
+template<> JSC::JSValue toJS<MessagePort>(JSC::JSGlobalObject*, JSDOMGlobalObject*, MessagePort&);
 
 } // namespace WebCore

@@ -77,7 +77,6 @@ use bun_sys::{self as sys, Fd};
 use bun_zlib as zlib;
 
 use crate::node;
-use crate::valkey_jsc::js_valkey::{SubscriptionCtx, js as js_RedisClient};
 use bun_collections::index_sort;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::{StringJsc as _, bun_string_jsc};
@@ -1376,20 +1375,7 @@ fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
         }
     };
 
-    let valkey = js_RedisClient::wrap(valkey, global_this);
-    let as_js = valkey.to_js();
-    valkey.this_value.set(jsc::JsRef::init_weak(as_js));
-    match SubscriptionCtx::init(&valkey) {
-        Ok(ctx) => valkey._subscription_ctx.set(ctx),
-        Err(jsc::JsError::Thrown) => return JSValue::ZERO,
-        Err(err) => {
-            let _ =
-                global_this.throw_error(crate::Error::from(err), "Failed to create Redis client");
-            return JSValue::ZERO;
-        }
-    }
-
-    as_js
+    crate::valkey_jsc::js_valkey::js::to_js(valkey, global_this)
 }
 
 fn get_is_standalone_executable(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
@@ -1587,20 +1573,9 @@ extern "C" fn Bun__reportError(global_object: &JSGlobalObject, err: JSValue) {
 #[allow(non_snake_case)]
 pub(crate) mod JSZlib {
     use super::*;
-    use bun_libdeflate_sys::libdeflate as bun_libdeflate;
+    use bun_deflate::{Error, Format, Level, Output};
 
     type BufferResult<'a> = bindgen::Result<'a, JsLocal<'a, BufferSource>>;
-
-    /// Local shim: libdeflate's `Status` has no `Into<&str>` upstream.
-    #[inline]
-    fn libdeflate_status_str(s: bun_libdeflate::Status) -> &'static str {
-        match s {
-            bun_libdeflate::Status::Success => "success",
-            bun_libdeflate::Status::BadData => "bad data",
-            bun_libdeflate::Status::ShortOutput => "short output",
-            bun_libdeflate::Status::InsufficientSpace => "insufficient space",
-        }
-    }
 
     enum Library {
         Zlib,
@@ -1728,34 +1703,24 @@ pub(crate) mod JSZlib {
                 heap.create_uint8_array_from_box(list.into_boxed_slice())
             }
             Library::Libdeflate => {
-                let Some(decompressor) = bun_libdeflate::OwnedDecompressor::new() else {
-                    return Err(bun_alloc::AllocError.into());
-                };
-                let encoding = if is_gzip {
-                    bun_libdeflate::Encoding::Gzip
+                let decompress = if is_gzip {
+                    bun_deflate::gunzip
                 } else {
-                    bun_libdeflate::Encoding::Deflate
+                    bun_deflate::inflate
                 };
-                let max_output = ArrayBuffer::MAX_SIZE as usize;
-                let result = decompressor
-                    .decompress_to_vec_grow(compressed, &mut list, encoding, max_output)
-                    .map_err(|_| bun_alloc::AllocError)?;
-                match result.status {
-                    bun_libdeflate::Status::Success if list.len() <= max_output => {}
-                    bun_libdeflate::Status::Success | bun_libdeflate::Status::InsufficientSpace => {
-                        return Err(heap.error_with_code(
-                            jsc::ErrorCode::BUFFER_TOO_LARGE,
-                            format_args!("Cannot create a Buffer larger than {max_output} bytes"),
-                        ));
-                    }
-                    _ => {
-                        return Err(heap.error(format_args!(
-                            "libdeflate returned an error: {}",
-                            libdeflate_status_str(result.status),
-                        )));
+                let limit = ArrayBuffer::MAX_SIZE as usize;
+                let vec = &mut list;
+                match decompress(compressed, Output::Vec { vec, limit }) {
+                    Ok(_) => heap.create_uint8_array_from_box(list.into_boxed_slice()),
+                    Err(Error::Alloc(err)) => Err(err.into()),
+                    Err(Error::InsufficientSpace) => Err(heap.error_with_code(
+                        jsc::ErrorCode::BUFFER_TOO_LARGE,
+                        format_args!("Cannot create a Buffer larger than {limit} bytes"),
+                    )),
+                    Err(err) => {
+                        Err(heap.error(format_args!("libdeflate returned an error: {err}")))
                     }
                 }
-                heap.create_uint8_array_from_box(list.into_boxed_slice())
             }
         }
     }
@@ -1793,35 +1758,18 @@ pub(crate) mod JSZlib {
                 heap.create_uint8_array_from_box(list.into_boxed_slice())
             }
             Library::Libdeflate => {
-                if !(bun_libdeflate::MIN_COMPRESSION_LEVEL..=bun_libdeflate::MAX_COMPRESSION_LEVEL)
-                    .contains(&level)
-                {
+                let Some(level) = Level::new(level) else {
                     return Err(heap.invalid_arguments(format_args!(
-                        "Compression level must be between {} and {} for libdeflate",
-                        bun_libdeflate::MIN_COMPRESSION_LEVEL,
-                        bun_libdeflate::MAX_COMPRESSION_LEVEL,
+                        "Compression level must be between 0 and {} for libdeflate",
+                        Level::MAX,
                     )));
-                }
-                let Some(mut compressor) = bun_libdeflate::OwnedCompressor::new(level) else {
-                    return Err(bun_alloc::AllocError.into());
                 };
-                let encoding = if is_gzip {
-                    bun_libdeflate::Encoding::Gzip
-                } else {
-                    bun_libdeflate::Encoding::Deflate
-                };
-
-                let mut list: Vec<u8> = Vec::new();
-                let result = compressor
-                    .compress_to_vec(data, &mut list, encoding)
-                    .map_err(|_| bun_alloc::AllocError)?;
-                if result.status != bun_libdeflate::Status::Success {
-                    return Err(heap.error(format_args!(
-                        "libdeflate error: {}",
-                        libdeflate_status_str(result.status),
-                    )));
+                let format = if is_gzip { Format::Gzip } else { Format::Raw };
+                match bun_deflate::compress_to_vec(data, format, level) {
+                    Ok(list) => heap.create_uint8_array_from_box(list.into_boxed_slice()),
+                    Err(Error::Alloc(err)) => Err(err.into()),
+                    Err(err) => Err(heap.error(format_args!("libdeflate error: {err}"))),
                 }
-                heap.create_uint8_array_from_box(list.into_boxed_slice())
             }
         }
     }

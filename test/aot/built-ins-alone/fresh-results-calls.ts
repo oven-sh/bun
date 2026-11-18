@@ -430,6 +430,7 @@ export const calls: Record<string, string[]> = {
   "Bun.Archive": ['new Bun.Archive({ "a.txt": "a" })'],
   "Bun.CryptoHasher": ['new Bun.CryptoHasher("sha256")', 'new Bun.CryptoHasher("sha256", "key")'],
   "Bun.FileSystemRouter": [`${temporary}\nnew Bun.FileSystemRouter({ style: "nextjs", dir: folder })`],
+  "Bun.RedisClient": ["new Bun.RedisClient()", 'new Bun.RedisClient("redis://127.0.0.1:1", { autoReconnect: false })'],
   "Bun.S3Client": ["new Bun.S3Client({})"],
   "Bun.Transpiler": ["new Bun.Transpiler()"],
   "Bun.Transpiler.prototype.scan": ['new Bun.Transpiler().scan(`import a from "b"; export const c = a;`)'],

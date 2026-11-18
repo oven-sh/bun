@@ -12,10 +12,8 @@
 
 import type { Dependency } from "../source.ts";
 import { boringssl } from "./boringssl.ts";
-import { brotli } from "./brotli.ts";
 import { cares } from "./cares.ts";
 import { highway } from "./highway.ts";
-import { libdeflate } from "./libdeflate.ts";
 import { libuv } from "./libuv.ts";
 import { lolhtml } from "./lolhtml.ts";
 import { lsqpack } from "./lsqpack.ts";
@@ -33,7 +31,6 @@ import { zstd } from "./zstd.ts";
  * All deps in dependency-resolution + link order.
  *
  * zlib FIRST — lsquic's fetchDeps reference it.
- * brotli libs in internal dep order (common last on link line).
  * boringssl near the end — many things depend on crypto/ssl symbols.
  */
 export const allDeps: readonly Dependency[] = [
@@ -42,8 +39,6 @@ export const allDeps: readonly Dependency[] = [
 
   zlib,
   zstd,
-  brotli,
-  libdeflate,
   cares,
   highway,
   libuv,
@@ -66,10 +61,8 @@ export const allDeps: readonly Dependency[] = [
 // Re-export individuals for direct import when needed.
 export {
   boringssl,
-  brotli,
   cares,
   highway,
-  libdeflate,
   libuv,
   lolhtml,
   lsqpack,

@@ -1425,12 +1425,10 @@ impl Run<'_> {
                     let Some(redis) = bun_object.get(global, "redis")? else {
                         return Ok(());
                     };
-                    let Some(client) =
-                        redis.as_class_ref::<crate::valkey_jsc::js_valkey::JSValkeyClient>()
-                    else {
+                    let Some(client) = crate::valkey_jsc::js_valkey::js::from_js(&redis) else {
                         return Ok(());
                     };
-                    client.do_connect(global, redis)?;
+                    client.do_connect(global, (&client).into());
                     Ok(())
                 })
             };

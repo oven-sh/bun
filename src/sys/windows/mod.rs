@@ -10,7 +10,8 @@ use core::ffi::{c_int, c_void};
 use core::mem::{MaybeUninit, size_of};
 use core::ptr;
 use std::os::windows::io::{
-    AsRawHandle as _, FromRawHandle as _, HandleOrInvalid, HandleOrNull, OwnedHandle,
+    AsRawHandle as _, FromRawHandle as _, HandleOrInvalid, HandleOrNull, IntoRawHandle as _,
+    OwnedHandle,
 };
 
 use bun_core::WStr;
@@ -790,7 +791,7 @@ pub fn call_when_signaled(
             externs::WT_EXECUTEONLYONCE,
         )
     })?;
-    core::mem::forget(object);
+    let _ = object.into_raw_handle();
     Ok(())
 }
 

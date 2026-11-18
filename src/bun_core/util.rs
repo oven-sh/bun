@@ -453,7 +453,7 @@ macro_rules! null_device {
 ///
 /// Thin re-export of [`bun_opaque::opaque_ffi!`] under the legacy name. The
 /// canonical macro lives in the zero-dep `bun_opaque` crate so tier-0 `*_sys`
-/// leaves (`mimalloc_sys`, `brotli_sys`, …) can reach it without pulling
+/// leaves (`mimalloc_sys`, …) can reach it without pulling
 /// `bun_core` into their build graph; this alias just keeps existing
 /// `bun_core::opaque_extern!(...)` callers compiling.
 #[macro_export]
@@ -2864,12 +2864,6 @@ pub struct StringPointer {
     pub length: u32,
 }
 impl_any_bit_pattern!(StringPointer);
-impl StringPointer {
-    #[inline]
-    pub fn slice<'a>(self, buf: &'a [u8]) -> &'a [u8] {
-        &buf[self.offset as usize..(self.offset + self.length) as usize]
-    }
-}
 
 // ── ZStr trait sugar (downstream ergonomics) ──────────────────────────────
 impl AsRef<ZStr> for ZStr {

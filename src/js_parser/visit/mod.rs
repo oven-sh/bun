@@ -1531,6 +1531,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Save the current control-flow liveness. This represents if we are
             // currently inside an "if (false) { ... }" block.
             let old_is_control_flow_dead = p.is_control_flow_dead;
+            let first_preserved_jsx = p.first_preserved_jsx;
             // Restored manually at block end. The error
             // path (`?`) skips restore; acceptable because callers `.expect()` or
             // propagate fatally (parse abort) — no resumption after error.
@@ -1782,6 +1783,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             stmts.extend_from_slice(&before);
             stmts.extend_from_slice(&visited[..visited_count]);
             stmts.extend_from_slice(&after);
+            if stmts.is_empty() {
+                p.first_preserved_jsx = first_preserved_jsx;
+            }
 
             // manual restore for the block-level `defer`s
             p.nearest_stmt_list = prev_nearest_stmt_list;

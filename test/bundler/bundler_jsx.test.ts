@@ -1031,13 +1031,26 @@ describe("bundler", () => {
       });
     });
 
-    test("runs with preserve when conditional and logical expressions discard all JSX", async () => {
-      using dir = tempDir("jsx-discarded-expressions", {
-        "in.jsx": `
+    test.each([
+      [
+        "folded conditional and logical operands",
+        `
           console.log(false ? <Unused /> : 0, true ? 1 : <Unused />);
           console.log(false && <Unused />, true || <Unused />, 2 ?? <Unused />);
         `,
-      });
+        "0 1\nfalse true 2\n",
+      ],
+      [
+        "pruned conditional statements",
+        `
+          if (false) console.log(<Unused />);
+          if (true) console.log(1);
+          else { console.log(<Unused />); }
+        `,
+        "1\n",
+      ],
+    ])("runs with preserve after removing JSX in %s", async (_, source, expected) => {
+      using dir = tempDir("jsx-discarded-code", { "in.jsx": source });
       await using proc = Bun.spawn({
         cmd: [bunExe(), "run", "--jsx-runtime=preserve", "in.jsx"],
         cwd: String(dir),
@@ -1046,7 +1059,7 @@ describe("bundler", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout, exitCode }, stderr).toEqual({ stdout: "0 1\nfalse true 2\n", exitCode: 0 });
+      expect({ stdout, exitCode }, stderr).toEqual({ stdout: expected, exitCode: 0 });
     });
 
     describe.each([

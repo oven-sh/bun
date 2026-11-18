@@ -1583,6 +1583,7 @@ declare module "bun" {
    * - `ansi()` — render to an ANSI-colored string for terminals
    * - `render()` — render with custom callbacks for each element
    * - `react()` — parse to React-compatible JSX elements
+   * - `htmlStream()`, `ansiStream()`, `renderStream()`, `reactStream()` — the same for a document that arrives in chunks
    *
    * Supports GFM extensions (tables, strikethrough, task lists, autolinks) and
    * component overrides to replace default HTML tags with custom components.
@@ -2071,6 +2072,111 @@ declare module "bun" {
       components?: ComponentOverrides,
       options?: ReactOptions,
     ): import("./jsx.d.ts").JSX.Element;
+
+    /**
+     * Renders a markdown document that arrives in chunks.
+     *
+     * Bun renders a top-level block (a paragraph, a whole list, a whole code block) once the line that ends it is
+     * complete, and then releases its text. A chunk can end anywhere, including inside a UTF-8 sequence or a surrogate
+     * pair. The output does not depend on where chunks end.
+     *
+     * The joined output of `write()` and `end()` is what the non-streaming function returns for the whole document,
+     * except for reference links: `[text][label]` stays plain text if its definition (`[label]: url`) is in a later
+     * top-level block.
+     *
+     * Either call `write()` and `end()`, or use `readable` and `writable`. `preview()` works with both.
+     */
+    interface MarkdownStream<Output> {
+      /**
+       * Add a chunk of the document.
+       *
+       * If a render callback throws, the stream ends.
+       *
+       * @returns The blocks that this chunk finished. Empty if there are none.
+       * @throws `ERR_INVALID_STATE` if the stream has ended, if `readable` or `writable` is locked, or when called from
+       * one of the stream's callbacks
+       */
+      write(chunk: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike): Output;
+      /**
+       * Render the text that is still buffered as if the document ended here, without changing the stream. The next
+       * chunk can change this output, so replace the previous preview with it instead of appending.
+       *
+       * Each call takes time proportional to the size of the unfinished block. Empty after the stream has ended.
+       *
+       * @throws `ERR_INVALID_STATE` when called from one of the stream's callbacks
+       */
+      preview(): Output;
+      /**
+       * End the document, after adding `chunk` if there is one.
+       *
+       * @returns All the blocks that `write()` has not returned
+       * @throws `ERR_INVALID_STATE` if the stream has ended, if `readable` or `writable` is locked, or when called from
+       * one of the stream's callbacks
+       */
+      end(chunk?: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike | null): Output;
+      /** The non-empty results of the chunks written to `writable`. Errors when you call `write()` or `end()`. */
+      readonly readable: ReadableStream<Output>;
+      /** Takes the chunks. Closing it ends the document. Errors when you call `write()` or `end()`. */
+      readonly writable: WritableStream<string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike>;
+    }
+
+    /**
+     * Like {@link html}, for a document that arrives in chunks. Each result is made of whole top-level blocks.
+     *
+     * @example
+     * ```ts
+     * const md = Bun.markdown.htmlStream();
+     * md.write("# Hel"); // ""
+     * md.preview(); // "<h1>Hel</h1>\n"
+     * md.write("lo\n\nworld"); // "<h1>Hello</h1>\n"
+     * md.end(); // "<p>world</p>\n"
+     *
+     * // As a TransformStream
+     * new Response(Bun.file("README.md").stream().pipeThrough(Bun.markdown.htmlStream()));
+     * ```
+     */
+    export function htmlStream(options?: Options): MarkdownStream<string>;
+
+    /**
+     * Like {@link ansi}, for a document that arrives in chunks.
+     *
+     * @example
+     * ```ts
+     * for await (const text of Bun.stdin.stream().pipeThrough(Bun.markdown.ansiStream())) {
+     *   process.stdout.write(text);
+     * }
+     * ```
+     */
+    export function ansiStream(theme?: AnsiTheme): MarkdownStream<string>;
+
+    /**
+     * Like {@link render}, for a document that arrives in chunks.
+     *
+     * Bun reads `callbacks` once, when it creates the stream. `preview()` calls them too, so they can run several
+     * times for the same text.
+     */
+    export function renderStream(callbacks?: RenderCallbacks, options?: Options): MarkdownStream<string>;
+
+    /**
+     * Like {@link react}, for a document that arrives in chunks. Each result is an array with one element per
+     * top-level block instead of a Fragment.
+     *
+     * @example
+     * ```tsx
+     * const md = Bun.markdown.reactStream();
+     * const finished = [];
+     * for await (const token of tokens) {
+     *   finished.push(...md.write(token));
+     *   root.render(<>{[...finished, ...md.preview()]}</>);
+     * }
+     * finished.push(...md.end());
+     * root.render(<>{finished}</>);
+     * ```
+     */
+    export function reactStream(
+      components?: ComponentOverrides,
+      options?: ReactOptions,
+    ): MarkdownStream<import("./jsx.d.ts").JSX.Element[]>;
   }
 
   /**

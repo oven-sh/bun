@@ -13,6 +13,8 @@ Bun includes a fast, built-in Markdown parser written in Rust. It supports GitHu
 - `Bun.markdown.render()` — render Markdown with custom callbacks for each element
 - `Bun.markdown.react()` — render Markdown to React JSX elements
 
+To render a document that arrives in chunks, see [Streaming](#streaming).
+
 ---
 
 ## `Bun.markdown.html()`
@@ -379,3 +381,86 @@ const el = Bun.markdown.react("## Hello World", undefined, {
   autolinks: true,
 });
 ```
+
+---
+
+## Streaming
+
+Use a stream to render a document that arrives in chunks, such as the response of a language model or a large file. Each function takes the arguments of its non-streaming counterpart, without the input.
+
+| Function                                          | Counterpart | Output          |
+| ------------------------------------------------- | ----------- | --------------- |
+| `Bun.markdown.htmlStream(options?)`               | `html()`    | `string`        |
+| `Bun.markdown.ansiStream(theme?)`                 | `ansi()`    | `string`        |
+| `Bun.markdown.renderStream(callbacks?, options?)` | `render()`  | `string`        |
+| `Bun.markdown.reactStream(components?, options?)` | `react()`   | `JSX.Element[]` |
+
+```ts
+const md = Bun.markdown.htmlStream();
+
+md.write("# Hel"); // ""
+md.preview(); // "<h1>Hel</h1>\n"
+md.write("lo\n\nworld"); // "<h1>Hello</h1>\n"
+md.end(); // "<p>world</p>\n"
+```
+
+| Method         | Returns                                                                  |
+| -------------- | ------------------------------------------------------------------------ |
+| `write(chunk)` | The blocks that the chunk finished. They never change.                   |
+| `preview()`    | The buffered text, rendered as if the document ended here.               |
+| `end(chunk?)`  | The remaining blocks. `write()` and `end()` throw after the stream ends. |
+
+A chunk is a string or a buffer of UTF-8. It can end anywhere, including in the middle of a character. The output does not depend on where chunks end.
+
+Bun renders a top-level block once the line that ends it is complete, and then releases its text. A list, a block quote, a table and a code block are each one block.
+
+### Show unfinished text
+
+Append the output of `write()`. Replace the previous preview with the output of `preview()`.
+
+```tsx
+const md = Bun.markdown.reactStream();
+const finished = [];
+
+for await (const token of tokens) {
+  finished.push(...md.write(token));
+  root.render(<>{[...finished, ...md.preview()]}</>);
+}
+
+finished.push(...md.end());
+root.render(<>{finished}</>);
+```
+
+`preview()` renders the whole unfinished block on each call. With `renderStream()`, it also calls your callbacks.
+
+### Pipe a `ReadableStream`
+
+A stream has `readable` and `writable` properties, so you can pass it to `pipeThrough()`. Use these properties or `write()` and `end()`, not both. `preview()` works with either.
+
+```ts
+Bun.serve({
+  fetch() {
+    const html = Bun.file("README.md").stream().pipeThrough(Bun.markdown.htmlStream());
+    return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+  },
+});
+```
+
+```ts
+for await (const text of Bun.stdin.stream().pipeThrough(Bun.markdown.ansiStream())) {
+  process.stdout.write(text);
+}
+```
+
+### Reference links
+
+The joined output matches the non-streaming function, except for reference links. A reference link resolves only if its definition is in the same top-level block or an earlier one.
+
+```ts
+const md = Bun.markdown.htmlStream();
+md.write("[docs]\n\n"); // "<p>[docs]</p>\n"
+md.write("[docs]: https://bun.com\n\n"); // ""
+md.end("[docs]"); // '<p><a href="https://bun.com">docs</a></p>\n'
+```
+
+If your documents put definitions at the end, render the complete text with the non-streaming function.

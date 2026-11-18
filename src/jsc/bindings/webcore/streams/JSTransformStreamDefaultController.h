@@ -54,7 +54,7 @@ public:
 
     // Which arm runs transform/flush/cancel.
     TransformerKind m_transformerKind { TransformerKind::Identity };
-    // JavaScript kind only: the user transformer object (the call `this`).
+    // JavaScript kind: the user transformer object (the call `this`). Markdown kind: the JSMarkdownStream cell.
     JSC::WriteBarrier<JSC::Unknown> m_transformer;
     // JavaScript kind only: converted `transform` method; null ⇒ the identity algorithm.
     JSC::WriteBarrier<JSC::JSObject> m_transformMethod;

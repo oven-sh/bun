@@ -1,9 +1,10 @@
 use bun_alloc::AllocError;
+use bun_collections::smallvec::SmallVec;
 
 use crate::autolinks::is_list_bullet;
 use crate::compat;
 use crate::parser::{self, BlockHeader, Parser};
-use crate::types::{self, BlockType, Container, ContainerEnds, OFF};
+use crate::types::{self, BlockType, Container, ContainerEnds, OFF, VerbatimLine};
 
 impl Parser<'_> {
     pub(crate) fn keeps_quotes(&self) -> bool {
@@ -104,6 +105,8 @@ impl Parser<'_> {
                 self.containers[idx].mark_indent,
             );
 
+            self.containers[idx].opener_index = u32::try_from(self.blocks.len()).expect("int cast");
+
             // Emit container opener blocks
             if ch == b'>' {
                 self.push_container_block(
@@ -131,9 +134,6 @@ impl Parser<'_> {
                     mark,
                 )?;
             } else if ch == b'-' || ch == b'+' || ch == b'*' {
-                // Save opener position for later loose-list patching
-                self.containers[idx].opener_index =
-                    u32::try_from(self.blocks.len()).expect("int cast");
                 // Unordered list + list item
                 self.push_container_block(BlockType::Ul, 0, types::BLOCK_CONTAINER_OPENER, mark)?;
                 self.push_container_block(
@@ -147,9 +147,6 @@ impl Parser<'_> {
                     mark,
                 )?;
             } else if ch == b'.' || ch == b')' {
-                // Save opener position for later loose-list patching
-                self.containers[idx].opener_index =
-                    u32::try_from(self.blocks.len()).expect("int cast");
                 // Ordered list + list item
                 self.push_container_block(
                     BlockType::Ol,
@@ -258,14 +255,13 @@ impl Parser<'_> {
         false
     }
 
-    pub(crate) fn process_all_blocks(&mut self) -> Result<(), parser::Error> {
-        let blocks = core::mem::take(&mut self.blocks);
-        let lines = core::mem::take(&mut self.block_lines);
-        let mut lines = lines.as_slice();
-
-        // Reuse containers array for tight/loose tracking (same approach as md4c).
-        // The containers are no longer needed for line analysis at this point.
-        self.n_containers = 0;
+    pub(crate) fn process_blocks(
+        &mut self,
+        blocks: &[BlockHeader],
+        mut lines: &[VerbatimLine],
+    ) -> Result<(), parser::Error> {
+        // One for each list and block quote that the block is in
+        let mut is_loose = SmallVec::<[bool; 32]>::new();
         let mut next_container_source: usize = 0;
 
         for &BlockHeader {
@@ -273,7 +269,7 @@ impl Parser<'_> {
             flags,
             data,
             n_lines,
-        } in &blocks
+        } in blocks
         {
             let block_lines;
             (block_lines, lines) = lines.split_at(n_lines as usize);
@@ -293,18 +289,11 @@ impl Parser<'_> {
                 self.enter_block(block_type, data, flags)?;
                 // Track tight/loose state per container level (md4c approach)
                 if block_type == BlockType::Ul || block_type == BlockType::Ol {
-                    if (self.n_containers as usize) < self.containers.len() {
-                        self.containers[self.n_containers as usize].is_loose =
-                            flags & types::BLOCK_LOOSE_LIST != 0;
-                        self.n_containers += 1;
-                    }
+                    is_loose.push(flags & types::BLOCK_LOOSE_LIST != 0);
                 } else if block_type == BlockType::Quote {
                     // Blockquotes always act as "loose" — content inside blockquotes
                     // always gets <p> tags even when nested inside tight lists
-                    if (self.n_containers as usize) < self.containers.len() {
-                        self.containers[self.n_containers as usize].is_loose = true;
-                        self.n_containers += 1;
-                    }
+                    is_loose.push(true);
                 }
                 continue;
             }
@@ -313,9 +302,7 @@ impl Parser<'_> {
                     || block_type == BlockType::Ol
                     || block_type == BlockType::Quote
                 {
-                    if self.n_containers > 0 {
-                        self.n_containers -= 1;
-                    }
+                    is_loose.pop();
                 }
                 self.leave_block(block_type, data)?;
                 continue;
@@ -327,9 +314,7 @@ impl Parser<'_> {
             }
 
             // Determine if we're in a tight list (md4c approach: check innermost container)
-            let is_in_tight_list = !self.track
-                && self.n_containers > 0
-                && !self.containers[(self.n_containers - 1) as usize].is_loose;
+            let is_in_tight_list = !self.track && is_loose.last() == Some(&false);
             let is_read_by_consumer =
                 self.track && self.renderer.ptr.leaf_source(block_type, block_lines);
 

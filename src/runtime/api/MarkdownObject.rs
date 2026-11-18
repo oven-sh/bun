@@ -131,6 +131,57 @@ macro_rules! parser_options {
     }};
 }
 
+#[path = "MarkdownStream.rs"]
+pub(crate) mod stream;
+
+/// A struct with a `JSValue` for each member of a dictionary, empty for one that is absent.
+macro_rules! overrides {
+    ($(#[$meta:meta])* struct $name:ident of $dictionary:ident { $($member:ident),* $(,)? }) => {
+        $(#[$meta])*
+        #[derive(Default)]
+        struct $name {
+            $($member: JSValue,)*
+        }
+
+        impl $name {
+            fn new(given: Option<&$dictionary<'_>>) -> Self {
+                let Some(given) = given else {
+                    return Self::default();
+                };
+                Self {
+                    $($member: given
+                        .$member
+                        .map(JsLocal::to_js)
+                        .filter(|value| !value.is_boolean())
+                        .unwrap_or_default(),)*
+                }
+            }
+
+            fn values(&self) -> impl ExactSizeIterator<Item = JSValue> {
+                [$(self.$member),*].into_iter()
+            }
+
+            fn to_array(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+                JSValue::create_array_from_iter(global, self.values(), |value| {
+                    Ok(if value.is_empty() { JSValue::UNDEFINED } else { value })
+                })
+            }
+
+            /// `array` is what keeps the values alive.
+            fn from_array(global: &JSGlobalObject, array: JSValue) -> JsResult<Self> {
+                let mut this = Self::default();
+                for (index, member) in (0..).zip([$(&mut this.$member),*]) {
+                    let value = array.get_direct_index(global, index)?;
+                    if !value.is_undefined() {
+                        *member = value;
+                    }
+                }
+                Ok(this)
+            }
+        }
+    };
+}
+
 /// Pins a buffer input for the render, which can re-enter JS; `None` for a string.
 fn pin(global: &JSGlobalObject, input: &StringOrBuffer) -> JsResult<Option<PinnedArrayBuffer>> {
     let StringOrBuffer::Buffer(buffer) = input else {
@@ -157,16 +208,7 @@ pub(crate) fn ansi<'a>(
     input: JsBytes<'a>,
     theme: &AnsiTheme,
 ) -> JsResult<Box<[u8]>> {
-    let theme = md::AnsiTheme {
-        colors: theme.colors.unwrap_or(true),
-        hyperlinks: theme.hyperlinks.unwrap_or(false),
-        kitty_graphics: theme.kitty_graphics.unwrap_or(false),
-        light: theme.light.unwrap_or_else(md::detect_light_background),
-        columns: theme.columns.map_or(80, |columns| columns as u16),
-        remote_image_paths: None,
-        image_base_dir: None,
-    };
-
+    let theme = ansi_theme(theme);
     let input = input.get(&cx.heap);
     let input_len = input.len();
     match md::render_to_ansi(input, md::Options::TERMINAL, theme) {
@@ -178,6 +220,18 @@ pub(crate) fn ansi<'a>(
             Err(cx.global().throw_out_of_memory())
         }
         Err(err) => Err(parser_err_to_js(cx.global(), err, input_len)),
+    }
+}
+
+fn ansi_theme(theme: &AnsiTheme) -> md::AnsiTheme<'static> {
+    md::AnsiTheme {
+        colors: theme.colors.unwrap_or(true),
+        hyperlinks: theme.hyperlinks.unwrap_or(false),
+        kitty_graphics: theme.kitty_graphics.unwrap_or(false),
+        light: theme.light.unwrap_or_else(md::detect_light_background),
+        columns: theme.columns.map_or(80, |columns| columns as u16),
+        remote_image_paths: None,
+        image_base_dir: None,
     }
 }
 
@@ -230,9 +284,7 @@ pub(crate) fn render<'a>(
         Err(_) => return Err(global_this.throw_out_of_memory()),
     };
 
-    if let Some(callbacks) = callbacks {
-        js_renderer.extract_callbacks(callbacks);
-    }
+    js_renderer.callbacks = Callbacks::new(callbacks);
 
     // Run parser with the JS callback renderer
     if let Err(err) = md::render_with_renderer(input, options, js_renderer.renderer()) {
@@ -253,12 +305,7 @@ pub(crate) fn react<'a>(
     options: Option<&ReactOptions>,
 ) -> JsResult<JSValue> {
     let global_this = cx.global();
-    let react_version: u8 = match options.and_then(|options| options.react_version) {
-        // react.element (React 18 and older)
-        Some(version) if version as i32 <= 18 => 0,
-        // react.transitional.element (React 19+)
-        _ => 1,
-    };
+    let react_version = react_version(options);
     MarkedArgumentBuffer::new(|marked_args| {
         let children = render_ast(
             global_this,
@@ -272,6 +319,15 @@ pub(crate) fn react<'a>(
         marked_args.append(fragment);
         Ok(fragment)
     })
+}
+
+fn react_version(options: Option<&ReactOptions>) -> u8 {
+    match options.and_then(|options| options.react_version) {
+        // react.element (React 18 and older)
+        Some(version) if version as i32 <= 18 => 0,
+        // react.transitional.element (React 19+)
+        _ => 1,
+    }
 }
 
 unsafe extern "C" {
@@ -317,8 +373,9 @@ fn render_ast(
         Err(_) => return Err(global_this.throw_out_of_memory()),
     };
 
-    if let Some(components) = components {
-        renderer.extract_components(components);
+    renderer.components = Components::new(components);
+    for component in renderer.components.values().filter(|it| !it.is_empty()) {
+        renderer.marked_args.append(component);
     }
 
     if let Err(err) = md::render_with_renderer(input, options, renderer.renderer()) {
@@ -360,41 +417,14 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
-/// Component overrides keyed by HTML tag name.
-/// When set, the value replaces the string tag name in the `type` field.
-#[derive(Default)]
-struct Components {
-    h1: JSValue,
-    h2: JSValue,
-    h3: JSValue,
-    h4: JSValue,
-    h5: JSValue,
-    h6: JSValue,
-    p: JSValue,
-    blockquote: JSValue,
-    ul: JSValue,
-    ol: JSValue,
-    li: JSValue,
-    pre: JSValue,
-    hr: JSValue,
-    html: JSValue,
-    table: JSValue,
-    thead: JSValue,
-    tbody: JSValue,
-    tr: JSValue,
-    th: JSValue,
-    td: JSValue,
-    em: JSValue,
-    strong: JSValue,
-    a: JSValue,
-    img: JSValue,
-    code: JSValue,
-    del: JSValue,
-    math: JSValue,
-    u: JSValue,
-    br: JSValue,
+overrides! {
+    /// Component overrides keyed by HTML tag name.
+    /// Any non-boolean value (function, class, string, etc.) replaces the string tag name in the `type` field.
+    struct Components of ComponentOverrides {
+        h1, h2, h3, h4, h5, h6, p, blockquote, ul, ol, li, pre, hr, html, table, thead, tbody, tr,
+        th, td, em, strong, a, img, code, del, math, u, br,
+    }
 }
-// Note: `Default` for JSValue must be `JSValue::ZERO` (encoded 0).
 
 struct ParseStackEntry {
     children: JSValue,
@@ -449,6 +479,9 @@ impl<'a> md::types::RendererImpl for ParseRenderer<'a> {
     fn text(&mut self, text_type: md::TextType, content: &[u8]) -> md::types::JsResult<()> {
         self.text_impl(text_type, content).map_err(js_to_parser_err)
     }
+    fn heading_ids(&mut self) -> Option<&mut md::helpers::HeadingIdTracker> {
+        Some(&mut self.heading_tracker)
+    }
 }
 
 impl<'a> ParseRenderer<'a> {
@@ -481,25 +514,6 @@ impl<'a> ParseRenderer<'a> {
     }
 
     // Note: deinit() dropped — Vec<ParseStackEntry> and HeadingIdTracker free via Drop.
-
-    /// Any non-boolean value (function, class, string, etc.) keyed by an HTML tag name is stored
-    /// and used as the `type` field instead of the default string tag name.
-    fn extract_components(&mut self, components: &ComponentOverrides<'_>) {
-        macro_rules! extract {
-            ($($name:ident),* $(,)?) => {$(
-                if let Some(val) = components.$name.map(JsLocal::to_js) {
-                    if !val.is_boolean() {
-                        self.components.$name = val;
-                        self.marked_args.append(val);
-                    }
-                }
-            )*};
-        }
-        extract!(
-            h1, h2, h3, h4, h5, h6, p, blockquote, ul, ol, li, pre, hr, html, table, thead, tbody,
-            tr, th, td, em, strong, a, img, code, del, math, u, br,
-        );
-    }
 
     fn get_block_component(&self, block_type: md::BlockType, data: u32) -> JSValue {
         match block_type {
@@ -950,31 +964,12 @@ struct JsCallbackRenderer<'a> {
     stack_check: StackCheck,
 }
 
-#[derive(Default)]
-struct Callbacks {
-    heading: JSValue,
-    paragraph: JSValue,
-    blockquote: JSValue,
-    code: JSValue,
-    list: JSValue,
-    list_item: JSValue,
-    hr: JSValue,
-    table: JSValue,
-    thead: JSValue,
-    tbody: JSValue,
-    tr: JSValue,
-    th: JSValue,
-    td: JSValue,
-    html: JSValue,
-    strong: JSValue,
-    emphasis: JSValue,
-    link: JSValue,
-    image: JSValue,
-    codespan: JSValue,
-    strikethrough: JSValue,
-    text: JSValue,
+overrides! {
+    struct Callbacks of RenderCallbacks {
+        heading, paragraph, blockquote, code, list, list_item, hr, table, thead, tbody, tr, th, td,
+        html, strong, emphasis, link, image, codespan, strikethrough, text,
+    }
 }
-// Note: `Default` for JSValue must be `JSValue::ZERO`.
 
 struct CallbackStackEntry {
     buffer: Vec<u8>,
@@ -1032,6 +1027,9 @@ impl<'a> md::types::RendererImpl for JsCallbackRenderer<'a> {
     fn text(&mut self, text_type: md::TextType, content: &[u8]) -> md::types::JsResult<()> {
         self.text_impl(text_type, content).map_err(js_to_parser_err)
     }
+    fn heading_ids(&mut self) -> Option<&mut md::helpers::HeadingIdTracker> {
+        Some(&mut self.heading_tracker)
+    }
 }
 
 impl<'a> JsCallbackRenderer<'a> {
@@ -1052,39 +1050,6 @@ impl<'a> JsCallbackRenderer<'a> {
         };
         self_.push_entry(CallbackStackEntry::default(), true);
         Ok(self_)
-    }
-
-    fn extract_callbacks(&mut self, callbacks: &RenderCallbacks<'_>) {
-        macro_rules! extract {
-            ($($field:ident),* $(,)?) => {$(
-                if let Some(callback) = callbacks.$field {
-                    self.callbacks.$field = callback.to_js();
-                }
-            )*};
-        }
-        extract!(
-            heading,
-            paragraph,
-            blockquote,
-            code,
-            list,
-            list_item,
-            hr,
-            table,
-            thead,
-            tbody,
-            tr,
-            th,
-            td,
-            html,
-            strong,
-            emphasis,
-            link,
-            image,
-            codespan,
-            strikethrough,
-            text,
-        );
     }
 
     // Note: deinit() dropped — Vec<CallbackStackEntry> (with Vec<u8> buffers) and HeadingIdTracker free via Drop.

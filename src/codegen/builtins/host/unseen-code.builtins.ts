@@ -164,6 +164,7 @@ const prototypesWithoutConstructor = [
   "%HTTPSServer%.prototype",
   "%HTTPServer%.prototype",
   "%Listener%.prototype",
+  "%MarkdownStream%.prototype",
   "%MatchedRoute%.prototype",
   "%MySQLConnection%.prototype",
   "%MySQLQuery%.prototype",

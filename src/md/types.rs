@@ -84,6 +84,11 @@ pub trait RendererImpl {
     fn leave_span(&mut self, span_type: SpanType) -> JsResult<()>;
     fn text(&mut self, text_type: TextType, content: &[u8]) -> JsResult<()>;
 
+    /// Where a `Stream` puts the ids that earlier parts of the document have used up.
+    fn heading_ids(&mut self) -> Option<&mut crate::helpers::HeadingIdTracker> {
+        None
+    }
+
     /// Whether this consumer wants to know where things are written in the
     /// document. Asked once, before parsing. None of the methods below is
     /// called, and nothing is recorded for them, unless it does. It is then
@@ -276,7 +281,7 @@ pub struct Container {
     pub(crate) start: u32,
     pub(crate) mark_indent: u32,
     pub(crate) contents_indent: u32,
-    /// Index in `Parser.blocks` of a list's opener.
+    /// Index in `Parser.blocks` of its opener.
     pub(crate) opener_index: u32,
     /// Where the marker of the container (of the current item of a list) is.
     pub(crate) mark_beg: OFF,

@@ -2172,3 +2172,22 @@ test("a line does not look through the block quotes and list items that are open
   expect(Number(stdout)).toBeLessThan(15);
   expect(exitCode).toBe(0);
 }, 90_000);
+
+describe("permissive autolinks over emphasis markers", () => {
+  test.each([
+    ["*a www.b.com/c*d e", "<p><em>a www.b.com/c</em>d e</p>\n"],
+    ["www.b.com/c*d e*", "<p>www.b.com/c<em>d e</em></p>\n"],
+    ["www.b.com/c*d*e", '<p><a href="http://www.b.com/c*d*e">www.b.com/c*d*e</a></p>\n'],
+    ["www.b.com/c*d", '<p><a href="http://www.b.com/c*d">www.b.com/c*d</a></p>\n'],
+  ])("%s", (input, expected) => {
+    expect(Bun.markdown.html(input, { autolinks: true })).toBe(expected);
+  });
+});
+
+test("the language of fenced code behind a byte order mark", () => {
+  const input = "\ufeff```js\nx\n```\n";
+  expect(Bun.markdown.html(input)).toBe('<pre><code class="language-js">x\n</code></pre>\n');
+  expect(Bun.markdown.render(input, { code: (_, meta) => meta!.language! })).toBe("js");
+  expect(Bun.markdown.react(input).props.children[0].props.language).toBe("js");
+  expect(Bun.markdown.ansi(input)).toBe(Bun.markdown.ansi(input.slice(1)));
+});

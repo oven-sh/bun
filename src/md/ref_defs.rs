@@ -1,9 +1,7 @@
-use bun_alloc::AllocError;
-
 use crate::compat;
 use crate::helpers;
 use crate::links::{ParsedDest, scan_link_destination};
-use crate::parser::Parser;
+use crate::parser::{BlockHeader, Parser};
 use crate::types;
 use crate::unicode;
 
@@ -294,12 +292,12 @@ impl Parser<'_> {
         Some(ParsedTitle { title, end_pos: p })
     }
 
-    pub(crate) fn build_ref_def_hashtable(&mut self) -> Result<(), AllocError> {
-        let mut blocks = core::mem::take(&mut self.blocks);
-        let mut block_lines = core::mem::take(&mut self.block_lines);
-        let mut rest = block_lines.as_mut_slice();
-
-        for hdr in &mut blocks {
+    pub(crate) fn build_ref_def_hashtable(
+        &mut self,
+        blocks: &mut [BlockHeader],
+        mut rest: &mut [types::VerbatimLine],
+    ) {
+        for hdr in blocks {
             let lines;
             (lines, rest) = rest.split_at_mut(hdr.n_lines as usize);
 
@@ -405,9 +403,5 @@ impl Parser<'_> {
                 }
             }
         }
-
-        self.blocks = blocks;
-        self.block_lines = block_lines;
-        Ok(())
     }
 }

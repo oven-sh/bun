@@ -155,6 +155,18 @@ fn all_match_sizes(delims: &[EmphDelim], d: &EmphDelim, is_open: bool) -> Vec<u8
     parts.concat()
 }
 
+/// Whether those of `delims` that are in `beg..end` are only matched with each other: `*a www.b.c/d*e`.
+fn are_matched_within(delims: &[EmphDelim], beg: usize, end: usize) -> bool {
+    let mut open: usize = 0;
+    for d in delims.iter().take_while(|d| (beg..end).contains(&d.pos)) {
+        let Some(left) = open.checked_sub(d.close_count) else {
+            return false;
+        };
+        open = left + d.open_count;
+    }
+    open == 0
+}
+
 /// Closing-delimiter kinds tracked by `HtmlScanMemo`.
 #[derive(Clone, Copy)]
 enum HtmlScanKind {
@@ -351,6 +363,7 @@ impl Parser<'_> {
         let mut i: usize = 0;
         let mut text_start: usize = 0;
         let mut delim_cursor: usize = 0;
+        let mut no_autolink_before: usize = 0;
 
         // Enter the label of a just-parsed link/image/wikilink: snapshot the
         // current walk state and restart the walk on the label slice.
@@ -626,6 +639,7 @@ impl Parser<'_> {
                 // Permissive autolinks: detect URL, email, and WWW autolinks
                 // Suppress inside explicit links to avoid double-wrapping (md4c issue #152)
                 if self.link_nesting_level == 0
+                    && base + i >= no_autolink_before
                     && ((c == b':' && self.flags.permissive_url_autolinks)
                         || (c == b'@' && self.flags.permissive_email_autolinks)
                         || (c == b'.' && self.flags.permissive_www_autolinks))
@@ -638,6 +652,15 @@ impl Parser<'_> {
                             if !is_emph_boundary_resolved(content, a, &resolved) {
                                 al = None;
                             }
+                        }
+                    }
+                    if let Some(a) = al {
+                        while delim_cursor < resolved.len() && resolved[delim_cursor].pos < i {
+                            delim_cursor += 1;
+                        }
+                        if !are_matched_within(&resolved[delim_cursor..], i, a.end) {
+                            no_autolink_before = base + a.end;
+                            al = None;
                         }
                     }
                     if let Some(a) = al {

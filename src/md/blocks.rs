@@ -6,41 +6,85 @@ use crate::types::{self, BlockType, Container, Line, OFF, VerbatimLine};
 
 type BlockHeader = parser::BlockHeader;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReadUntil {
+    End,
+    FinishedBlock,
+}
+
 impl Parser<'_> {
     pub(crate) fn process_doc(&mut self) -> Result<(), parser::Error> {
-        let dummy_blank = Line {
-            r#type: LineType::Blank,
-            ..Line::default()
-        };
-        let mut pivot_line = dummy_blank;
-        let mut line_buf: [Line; 2] = [Line::default(), Line::default()];
-        let mut line_idx: usize = 0;
-        let mut off: OFF = 0;
+        let mut pivot_line = Line::default();
+        let mut off = self.first_line_beg();
 
         self.enter_block(BlockType::Doc, 0, 0)?;
 
-        while off < self.size {
-            let line = &mut line_buf[line_idx];
-
-            self.analyze_line(off, &mut off, &pivot_line, line)?;
-            // Pass the whole buf + idx so process_line can swap lines.
-            self.process_line(&mut pivot_line, line_idx, &mut line_buf, &mut line_idx)?;
-        }
-
-        self.end_current_block()?;
+        self.read_lines(&mut off, &mut pivot_line, ReadUntil::End)?;
+        self.close_blocks()?;
         if self.track {
             self.renderer.ptr.line_starts(&self.line_starts);
         }
-
-        // Build ref def hashtable
-        self.build_ref_def_hashtable()?;
-
-        // Process all blocks
-        self.line_beg = OFF::MAX;
-        self.leave_child_containers(0)?;
-        self.process_all_blocks()?;
+        self.render_blocks(self.blocks.len(), self.block_lines.len())?;
 
         self.leave_block(BlockType::Doc, 0)?;
+        Ok(())
+    }
+
+    pub(crate) fn first_line_beg(&self) -> OFF {
+        match self.track {
+            true => 0,
+            false => self.size - helpers::skip_utf8_bom(self.text).len() as OFF,
+        }
+    }
+
+    /// Adds the lines from `off` on to the blocks, and moves `off` behind them.
+    pub(crate) fn read_lines(
+        &mut self,
+        off: &mut OFF,
+        pivot_line: &mut Line,
+        until: ReadUntil,
+    ) -> Result<(), parser::Error> {
+        while *off < self.size {
+            let mut line = Line::default();
+            self.analyze_line(*off, off, pivot_line, &mut line)?;
+            self.process_line(pivot_line, &line)?;
+            if until == ReadUntil::FinishedBlock && self.n_finished_blocks() > 0 {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    /// How many of `blocks` are before the outermost open container.
+    pub(crate) fn n_finished_blocks(&self) -> usize {
+        match self.n_containers {
+            0 => self.blocks.len(),
+            _ => self.containers[0].opener_index as usize,
+        }
+    }
+
+    /// The end of the document ends everything that is open.
+    pub(crate) fn close_blocks(&mut self) -> Result<(), parser::Error> {
+        self.end_current_block()?;
+        self.line_beg = OFF::MAX;
+        self.leave_child_containers(0)
+    }
+
+    /// Renders the first `n_blocks` of `blocks`, whose lines are the first `n_lines` of `block_lines`, and removes
+    /// both. No container may be open behind them.
+    pub(crate) fn render_blocks(
+        &mut self,
+        n_blocks: usize,
+        n_lines: usize,
+    ) -> Result<(), parser::Error> {
+        let mut blocks = core::mem::take(&mut self.blocks);
+        let mut lines = core::mem::take(&mut self.block_lines);
+        self.build_ref_def_hashtable(&mut blocks[..n_blocks], &mut lines[..n_lines]);
+        self.process_blocks(&blocks[..n_blocks], &lines[..n_lines])?;
+        blocks.drain(..n_blocks);
+        lines.drain(..n_lines);
+        self.blocks = blocks;
+        self.block_lines = lines;
         Ok(())
     }
 
@@ -69,9 +113,6 @@ impl Parser<'_> {
         let follows_task_mark = core::mem::take(&mut self.last_line_is_only_a_task_mark);
         // Nothing is on the line but the markers of containers that were open before it.
         let mut is_empty = false;
-
-        *line = Line::default();
-        line.enforce_new_block = false;
 
         // Eat indentation and match containers
         let indent_result = helpers::line_indentation(self.text, total_indent, off);
@@ -858,14 +899,8 @@ impl Parser<'_> {
     pub(crate) fn process_line(
         &mut self,
         pivot_line: &mut Line,
-        cur_line_idx: usize,
-        line_buf: &mut [Line; 2],
-        line_idx: &mut usize,
+        line: &Line,
     ) -> Result<(), parser::Error> {
-        // Index into line_buf via cur_line_idx instead of taking a `&mut Line`
-        // parameter, which would alias line_buf.
-        let line = &mut line_buf[cur_line_idx];
-
         // Blank line ends current leaf block.
         // Note: blank lines inside fenced code blocks are typed .fencedcode by analyzeLine,
         // and blank lines inside HTML blocks type 1-5 are typed .html by analyzeLine.
@@ -981,8 +1016,11 @@ impl Parser<'_> {
         // Add line to current block
         self.add_line_to_current_block(line);
 
-        // Ensure we alternate line buffers to avoid aliasing
-        *line_idx ^= 1;
+        // The line has what ends the block in it
+        if line.r#type == LineType::Html && self.html_block_type == 0 {
+            self.end_current_block()?;
+            *pivot_line = Line::default();
+        }
         Ok(())
     }
 

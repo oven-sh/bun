@@ -352,7 +352,7 @@ describe.concurrent("Bun REPL", () => {
     using dir = tempDir("repl-preserve-object-literal", { "bunfig.toml": 'jsx = "preserve"' });
     const { stdout, exitCode } = await runRepl(["{ node: <div /> }", ".exit"], { cwd: String(dir) });
     expect(stdout).toContain("1 | { node: <div /> }");
-    expect(stdout).toContain("[repl]:1:9");
+    expect(stdout).toMatch(/Cannot preserve JSX in a file that Bun runs\r?\n +at \[repl\]:1:9/);
     expect(exitCode).toBe(0);
   });
 

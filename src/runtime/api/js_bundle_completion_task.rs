@@ -49,6 +49,7 @@ mod compile_ahead_of_time;
 /// Goes to the bundle thread and comes back with the result.
 pub(crate) struct JSBundleCompletionTask {
     config: JSBundlerConfig,
+    compile_mode: options::CompileMode,
     /// The context whose script called `Bun.build`. The build cannot be cancelled in a live VM
     /// (see `arm_owner` below), so one for a `Bun.ModuleGraph` that stopped meanwhile runs to
     /// its end and its result is dropped.
@@ -151,6 +152,13 @@ impl JSBundleCompletionTask {
         owner: BuildOwner,
     ) {
         let vm = global_this.bun_vm();
+        let compile_mode = match &owner {
+            BuildOwner::Route { .. } => options::CompileMode::HtmlRoute,
+            BuildOwner::Promise { .. } if config.compile.is_some() => {
+                options::CompileMode::Executable
+            }
+            BuildOwner::Promise { .. } => options::CompileMode::None,
+        };
         let plugins = match &owner {
             BuildOwner::Promise { plugins, .. } => plugins.as_ref().map(OwnedPlugin::as_non_null),
             BuildOwner::Route { plugins, .. } => *plugins,
@@ -183,6 +191,7 @@ impl JSBundleCompletionTask {
 
         let task = Box::new(JSBundleCompletionTask {
             config,
+            compile_mode,
             context,
             // Copy on the JS thread because only the JS thread writes to the VM's loader.
             env: bun_core::handle_oom(vm.env_loader().clone_loaded()),
@@ -863,6 +872,7 @@ impl JSBundleCompletionTask {
         config: &'a mut JSBundlerConfig,
         declarations: &mut Option<DeclarationOutputs>,
         transpiler: &mut Transpiler<'a>,
+        compile_mode: options::CompileMode,
     ) -> bun_bundler::Result<&'a JSBundlerConfig> {
         transpiler.options.env.behavior = config.env_behavior;
         transpiler.options.env.prefix = Box::from(config.env_prefix.list.as_slice());
@@ -946,11 +956,7 @@ impl JSBundleCompletionTask {
                 .bytecode_order
                 .clone_from(&compile.bytecode_order);
         }
-        transpiler.options.compile_mode = if config.compile.is_some() {
-            options::CompileMode::Executable
-        } else {
-            options::CompileMode::None
-        };
+        transpiler.options.compile_mode = compile_mode;
         transpiler.options.inline_entrypoint_import_meta_main = config.compile.is_some();
 
         // For compile mode, set the public_path to the target-specific base path
@@ -1205,7 +1211,12 @@ impl JSBundleCompletionTask {
         let opts = Self::transform_options(&self.config);
         let env = Some(&raw mut self.env);
         let transpiler = transpiler.insert(Transpiler::init(heap, &raw mut *log, opts, env)?);
-        let config = Self::configure_bundler(&mut self.config, &mut self.declarations, transpiler)?;
+        let config = Self::configure_bundler(
+            &mut self.config,
+            &mut self.declarations,
+            transpiler,
+            self.compile_mode,
+        )?;
         transpiler.resolver.generation = generation;
 
         // Declared before `bv2` so it outlives the BACKREF in `BundleV2.loop`.

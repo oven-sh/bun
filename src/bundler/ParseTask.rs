@@ -832,6 +832,9 @@ pub mod parse_worker {
                                     options::CompileMode::StandaloneHtml => {
                                         Some(b"Cannot preserve JSX when compiling standalone HTML")
                                     }
+                                    options::CompileMode::HtmlRoute => {
+                                        Some(b"Cannot preserve JSX in a served HTML route")
+                                    }
                                     options::CompileMode::None if topts.bytecode => {
                                         Some(b"Cannot preserve JSX when generating bytecode")
                                     }

@@ -451,11 +451,26 @@ impl Doc {
             arena.free_dead(engine);
             slot(engine)
         });
+        // SAFETY: it is the one of that kind.
+        unsafe { self.create_object(heap, structure, id, kind, flags) }
+    }
+
+    /// # Safety
+    /// `structure` is the one of `kind`.
+    #[inline]
+    unsafe fn create_object<'a>(
+        &'a self,
+        heap: &JsHeap<'a>,
+        structure: *mut c_void,
+        id: NodeId,
+        kind: Kind,
+        flags: NodeFlags,
+    ) -> &'a Node {
         let class: Class<Node> = kind.interface().class;
         // SAFETY: it was made for that class.
-        let node = unsafe { class.structure_from_extern(structure, heap) }
-            .create(heap, Node::new(self.share_arena(), id, kind, flags));
-        arena.read(|engine| engine.tree.clothe(id, node));
+        let structure = unsafe { class.structure_from_extern(structure, heap) };
+        let node = structure.create(heap, Node::new(self.share_arena(), id, kind, flags));
+        self.arena().read(|engine| engine.tree.clothe(id, node));
         node.set_link(Link::Document, Some(self));
         node
     }

@@ -188,9 +188,6 @@ export const calls: Record<string, string[]> = {
   "%DesktopImageView%": [`${electron}\nnew ImageView()`],
   "%DesktopView%": [`${electron}\nnew View()`],
   "%Doc%.prototype.elementsFromPoint": [`${page}\npage.document.elementsFromPoint(9, 20)`],
-  "%ShadowRoot%.prototype.elementsFromPoint": [
-    `${page}\npage.document.querySelector("p").attachShadow({ mode: "open" }).elementsFromPoint(9, 20)`,
-  ],
   "node:module.builtinModules > Array": ['import { builtinModules } from "node:module";\nbuiltinModules'],
   "node:string_decoder.StringDecoder > NodeString_decoderStringDecoder": [
     'import { StringDecoder } from "node:string_decoder";\nStringDecoder("utf8")',

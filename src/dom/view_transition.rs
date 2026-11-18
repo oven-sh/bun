@@ -1,5 +1,6 @@
 //! <https://drafts.csswg.org/css-view-transitions-2/>
 
+use bun_ui::BoxedLocal as _;
 use core::cell::RefCell;
 use std::rc::Rc;
 
@@ -73,7 +74,7 @@ pub(crate) struct ViewTransition {
 
 thread_local! {
     /// What documents have captured for the ones that replace them.
-    static OUTBOUND: RefCell<Vec<(u32, ViewTransition)>> = const { RefCell::new(Vec::new()) };
+    static OUTBOUND: Box<RefCell<Vec<(u32, ViewTransition)>>> = Box::default();
 }
 
 struct Named {

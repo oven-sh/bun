@@ -57,7 +57,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionStructuredClone, (JSC::JSGlobalObject * globa
     auto serializeOptions = convertDictionary<StructuredSerializeOptions>(*globalObject, options);
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    if (serializeOptions.transfer.isEmpty()) {
+    if (serializeOptions.transfer.isEmpty() && !value.inherits<JSArrayBufferView>()) {
         JSValue copy = SerializedScriptValue::tryCopyPlainData(*globalObject, value);
         RETURN_IF_EXCEPTION(throwScope, {});
         if (copy)

@@ -317,7 +317,7 @@ impl Turn {
                 .has_looked_for_unused_values
                 .swap(true, Ordering::Relaxed)
             {
-                database.storage.remove_unused_large_values(sql);
+                let _ = database.storage.remove_unused_large_values(sql);
             }
             let read = |it: &sql::Row<'_>| {
                 Some(Schema {
@@ -428,7 +428,7 @@ impl Database {
         let database = Arc::clone(self);
         self.storage.write(move |sql| {
             sql.atomically(|sql| erase(sql, &database.bucket, &database.name))?;
-            database.storage.remove_unused_large_values(sql);
+            let _ = database.storage.remove_unused_large_values(sql);
             Ok(())
         })
     }
@@ -1241,7 +1241,7 @@ impl Transaction {
             let result = super::durably(sql, is_strict, |sql| sql.atomically(store));
             if result.is_err() {
                 if !files.1.is_empty() || matches!(result, Err(Failure::Sql(SqlError::FULL))) {
-                    storage.remove_unused_large_values(sql);
+                    let _ = storage.remove_unused_large_values(sql);
                 }
                 return Ok((result, self.abort()));
             }

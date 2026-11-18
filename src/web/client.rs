@@ -12,6 +12,7 @@ use bun_collections::HashMap;
 use bun_core::strings;
 use bun_jsc::{JSGlobalObject, JSValue};
 use bun_threading::Guarded;
+use bun_ui::BoxedLocal as _;
 
 use crate::csp::embedded::RequiredCsp;
 use crate::csp::{Delivery, Directive, Inline, Metadata, Verdict, Violation, strip_for_report};
@@ -273,7 +274,7 @@ pub struct Client {
 thread_local! {
     static CLIENTS: RefCell<Box<HashMap<u32, Weak<Client>>>> = RefCell::default();
     /// In a page process, for the documents that follow.
-    static UNLOADED: RefCell<VecDeque<(ClientId, [f64; 2])>> = RefCell::default();
+    static UNLOADED: Box<RefCell<VecDeque<(ClientId, [f64; 2])>>> = Box::default();
 }
 
 fn next_id() -> u32 {

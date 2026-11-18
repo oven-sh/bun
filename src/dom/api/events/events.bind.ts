@@ -68,6 +68,7 @@ export const DesktopErrorEventInit = init({
   message: string.default(""),
 });
 export const DesktopErrorEvent = b.interface("DesktopErrorEvent", {
+  membersInTable: false,
   name: "ErrorEvent",
   extends: DesktopEvent,
   internalFields: ["error"],
@@ -83,6 +84,7 @@ export const DesktopErrorEvent = b.interface("DesktopErrorEvent", {
 });
 
 export const BeforeUnloadEvent = b.interface("BeforeUnloadEvent", {
+  membersInTable: false,
   extends: DesktopEvent,
   rustPath: "crate::api::events::BeforeUnloadEvent",
   proto: { returnValue: { getter: string, setter: true, rustName: "message", ...heap } },

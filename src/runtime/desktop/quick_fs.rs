@@ -33,7 +33,7 @@ struct Mounts {
 thread_local! {
     static LEFT: Cell<u8> = const { Cell::new(0) };
     static LAST_PAUSE: Cell<Option<(Instant, Duration)>> = const { Cell::new(None) };
-    static MOUNTS: RefCell<Option<Mounts>> = const { RefCell::new(None) };
+    static MOUNTS: Box<RefCell<Option<Mounts>>> = Box::default();
 }
 
 pub(super) fn begin_turn() {
@@ -84,7 +84,8 @@ fn is_local(path: &[u8], now: Instant) -> bool {
     {
         return false;
     }
-    MOUNTS.with_borrow_mut(|mounts| {
+    MOUNTS.with(|mounts| {
+        let mut mounts = mounts.borrow_mut();
         mounts.take_if(|it| now - it.read_at > MOUNTS_LAST);
         let mounts = mounts.get_or_insert_with(|| Mounts {
             read_at: now,

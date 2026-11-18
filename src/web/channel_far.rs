@@ -2,6 +2,7 @@
 
 use core::sync::atomic::AtomicU32;
 
+use bun_ui::BoxedLocal as _;
 use bun_ui::protocol::Lane;
 
 use super::*;
@@ -41,7 +42,7 @@ impl Drop for Leaving {
 }
 
 thread_local! {
-    static TO_CARRY: RefCell<Option<VecDeque<Leaving>>> = const { RefCell::new(None) };
+    static TO_CARRY: Box<RefCell<Option<VecDeque<Leaving>>>> = Box::default();
 }
 
 pub(super) fn pass_on((peer, id): (Peer, u32), arrival: Arrival) {

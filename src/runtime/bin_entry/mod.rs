@@ -192,9 +192,6 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
 
     // 1. Crash handler first so anything below gets a usable trace.
     bun_crash_handler::init();
-    if bun_standalone_graph::Graph::is_desktop_program() {
-        bun_crash_handler::never_report();
-    }
 
     use_mimalloc_in_dependencies();
 
@@ -227,6 +224,10 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     //    wires stdout/stderr `Source`s.
     output::stdio::init();
     let _flush = output::flush_guard();
+    // After stdio::init: a truncated executable is reported from here.
+    if bun_standalone_graph::Graph::is_desktop_program() {
+        bun_crash_handler::never_report();
+    }
     // After stdio::init (fd 0 is open even if we were exec'd with it closed), before any thread.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pregrow_fd_table();

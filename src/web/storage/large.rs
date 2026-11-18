@@ -87,15 +87,26 @@ impl Storage {
         read().ok_or(SqlError::IO)
     }
 
+    fn open_large_values(&self) -> sql::Result<Option<Dir>> {
+        match self.directory_of_large_values().map(|it| Dir::open(&it)) {
+            Some(Err(error)) if error.get_errno() == E::ENOENT => Ok(None),
+            opened => Ok(opened.transpose()?),
+        }
+    }
+
     /// Once it is on the disk that nothing refers to them.
-    fn remove_large_values(&self, sql: &mut Connection, names: &[Bytes]) -> Option<()> {
-        (!names.is_empty()).then_some(())?;
-        let directory = Dir::open(&self.directory_of_large_values()?).ok()?;
-        sql.execute(c"PRAGMA wal_checkpoint(PASSIVE)").ok()?;
+    fn remove_large_values(&self, sql: &mut Connection, names: &[Bytes]) -> sql::Result {
+        if names.is_empty() {
+            return Ok(());
+        }
+        let Some(directory) = self.open_large_values()? else {
+            return Ok(());
+        };
+        sql.execute(c"PRAGMA wal_checkpoint(PASSIVE)")?;
         for name in names.iter().filter(|it| length_of(it).is_some()) {
             let _ = bun_sys::unlinkat(directory.fd(), &ZBox::from_bytes(name));
         }
-        Some(())
+        Ok(())
     }
 
     /// After a commit.
@@ -107,12 +118,14 @@ impl Storage {
         blocking(move || {
             let _ = this.sync_large_values(&new);
             let storage = Arc::clone(&this);
-            drop(storage.write(move |sql| sql::Result::Ok(this.remove_large_values(sql, &old))));
+            drop(storage.write(move |sql| this.remove_large_values(sql, &old)));
         });
     }
 
-    pub(super) fn remove_unused_large_values(&self, sql: &mut Connection) -> Option<()> {
-        let directory = Dir::open(&self.directory_of_large_values()?).ok()?;
+    pub(super) fn remove_unused_large_values(&self, sql: &mut Connection) -> sql::Result {
+        let Some(directory) = self.open_large_values()? else {
+            return Ok(());
+        };
         // No other program is about to refer to one meanwhile.
         let unused = sql.atomically(|sql| {
             let mut used = bun_collections::StringSet::new();
@@ -130,6 +143,6 @@ impl Storage {
             }
             sql::Result::Ok(unused)
         });
-        self.remove_large_values(sql, &unused.ok()?)
+        self.remove_large_values(sql, &unused?)
     }
 }

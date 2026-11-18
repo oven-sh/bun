@@ -505,7 +505,7 @@ impl Storage {
             ],
         );
         let this = Arc::clone(self);
-        let removed = self.write(move |sql| Ok(_ = this.remove_unused_large_values(sql)));
+        let removed = self.write(move |sql| this.remove_unused_large_values(sql));
         Box::pin(async { cleared.await.and(removed.await) })
     }
 

@@ -247,8 +247,7 @@ fn insert_connected<'a>(
             cx,
             node,
             scope,
-            false,
-            false,
+            Arrival::default(),
             after.insert(Rooted::default()),
         );
     }
@@ -344,12 +343,17 @@ fn can_stay_connected(root: &Node, parent: &Node) -> bool {
         })
 }
 
+#[derive(Default)]
+struct Arrival {
+    is_move: bool,
+    was_kept: bool,
+}
+
 fn connect<'a>(
     cx: &mut JsScope<'a>,
     root: &'a Node,
     scope: &'a Node,
-    is_move: bool,
-    was_kept: bool,
+    Arrival { is_move, was_kept }: Arrival,
     after: &mut Rooted<'a>,
 ) {
     let inherited = scope.flags() & F::RENDERED | F::CONNECTED;
@@ -673,7 +677,7 @@ fn insert_one<'a>(
     if !node.is_connected()
         && let Some(scope) = parent.scope()
     {
-        connect(cx, node, scope, is_move, was_kept, after);
+        connect(cx, node, scope, Arrival { is_move, was_kept }, after);
     }
     if parent.is_rendered() {
         parent.doc().invalidate(cx);

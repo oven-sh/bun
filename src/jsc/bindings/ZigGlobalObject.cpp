@@ -3623,7 +3623,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     staticGlobals.append(GlobalPropertyInfo(builtinNames.requireMapPrivateName(), this->requireMap(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0));
     m_natives.set(vm, this, NativeGlobals::create(vm, this));
     staticGlobals.append(GlobalPropertyInfo(builtinNames.nativesPrivateName(), m_natives.get(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
-    bool isOfTheWeb = inherits<Bun::WebGlobalObject>();
+    bool isOfTheWeb = Bun::WebGlobalObject::is(this);
     staticGlobals.append(GlobalPropertyInfo(builtinNames.globalsPrivateName(), isOfTheWeb ? m_natives.get() : this, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
     addStaticGlobals(staticGlobals.mutableSpan());
 

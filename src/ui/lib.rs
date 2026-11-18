@@ -63,6 +63,22 @@ pub fn at_end_of_worker(step: fn()) {
     }
 }
 
+/// For a thread-local that is on the heap, because every thread pays for its size.
+pub trait BoxedLocal<T> {
+    fn with_borrow<R>(&'static self, steps: impl FnOnce(&T) -> R) -> R;
+    fn with_borrow_mut<R>(&'static self, steps: impl FnOnce(&mut T) -> R) -> R;
+}
+
+impl<T> BoxedLocal<T> for LocalKey<Box<RefCell<T>>> {
+    fn with_borrow<R>(&'static self, steps: impl FnOnce(&T) -> R) -> R {
+        self.with(|it| steps(&it.borrow()))
+    }
+
+    fn with_borrow_mut<R>(&'static self, steps: impl FnOnce(&mut T) -> R) -> R {
+        self.with(|it| steps(&mut it.borrow_mut()))
+    }
+}
+
 /// For a thread-local that destructors use, so that it cannot have one.
 pub fn lasting<T: Default>(free: fn()) -> ManuallyDrop<T> {
     at_end_of_worker(free);

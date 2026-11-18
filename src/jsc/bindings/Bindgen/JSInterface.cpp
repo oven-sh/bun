@@ -1443,11 +1443,6 @@ extern "C" void Bun__Bindgen__setGlobalReceiver(JSC::JSGlobalObject* globalObjec
     uncheckedDowncast<Zig::GlobalObject>(globalObject)->m_bindgenAdditions.m_globalReceiver.set(JSC::getVM(globalObject), globalObject, receiver);
 }
 
-extern "C" JSC::JSObject* Bun__Bindgen__globalReceiver(JSC::JSGlobalObject* globalObject)
-{
-    return defaultGlobalObject(globalObject)->m_bindgenAdditions.m_globalReceiver.get();
-}
-
 extern "C" JSC::EncodedJSValue Bun__Bindgen__stringFromImpl(JSC::JSGlobalObject* globalObject, WTF::StringImpl* impl)
 {
     return JSC::JSValue::encode(JSC::jsStringWithCache(JSC::getVM(globalObject), *reinterpret_cast<const WTF::String*>(&impl)));

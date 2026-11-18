@@ -76,7 +76,7 @@ pub(super) enum Parsed {
 }
 
 thread_local! {
-    static KNOWN: JsCell<Map<Box<[u8]>, Color>> = JsCell::default();
+    static KNOWN: Box<JsCell<Map<Box<[u8]>, Color>>> = Box::default();
 }
 
 impl Color {

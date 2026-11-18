@@ -155,10 +155,10 @@ extern "C" EncodedJSValue Bun__DOM__twinOfNativeEvent(JSGlobalObject* globalObje
     PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
     members->methodTable()->getOwnPropertyNames(members, globalObject, names, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(scope, {});
-    auto bind = [&](JSValue it) -> JSValue {
-        return it.isCallable() && !scope.exception() ? JSBoundFunction::create(vm, globalObject, asObject(it), twin, ArgList(), 0, nullptr, SourceTaintedOrigin::Untainted) : it;
-    };
     for (const auto& name : names) {
+        auto bind = [&](JSValue it) -> JSValue {
+            return it.isCallable() && !scope.exception() ? JSBoundFunction::create(vm, globalObject, asObject(it), twin, ArgList(), 0, jsString(vm, name.string()), SourceTaintedOrigin::Untainted) : it;
+        };
         if (name == vm.propertyNames->type || name == "initEvent"_s)
             continue;
         PropertyDescriptor member;

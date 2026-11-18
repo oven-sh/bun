@@ -52,6 +52,8 @@ public:
 #endif
     ~WebGlobalObject();
     static void destroy(JSC::JSCell*);
+    // Code that every executable keeps asks this: naming info() would keep the whole class.
+    static bool is(JSC::JSGlobalObject* realm) { return realm->methodTable()->destroy == &destroy; }
 
     static bool getOwnPropertySlot(JSC::JSObject*, JSC::JSGlobalObject*, JSC::PropertyName, JSC::PropertySlot&);
     static bool put(JSC::JSCell*, JSC::JSGlobalObject*, JSC::PropertyName, JSC::JSValue, JSC::PutPropertySlot&);

@@ -19,9 +19,10 @@ const nullToEmpty = b.DOMString.nullToEmpty.impl.as("crate::api::core::DomString
 const atom = b.DOMString.atom.as("crate::api::core::Atom");
 
 export const HTMLDocument = b.interface("HTMLDocument", { extends: Doc });
-export const XMLDocument = b.interface("XMLDocument", { extends: Doc });
+export const XMLDocument = b.interface("XMLDocument", { membersInTable: false, extends: Doc });
 
 export const DOMImplementation = b.interface("DOMImplementation", {
+  membersInTable: false,
   internalFields: { document: Doc },
   proto: {
     createDocumentType: { args: { name: atom, publicId: string, systemId: string }, returns: Node, ...allocates },
@@ -39,7 +40,7 @@ export const DOMImplementation = b.interface("DOMImplementation", {
   },
 });
 
-export const FragmentDirective = b.interface("FragmentDirective", {});
+export const FragmentDirective = b.interface("FragmentDirective", { membersInTable: false });
 
 export const BodyColor = b.family("BodyColor", {
   on: Doc,
@@ -61,7 +62,7 @@ const writes = { args: { text: b.rest(b.any) }, ...ce } as const;
 export const DocumentMembers = b.partial("DocumentMembers", {
   on: Doc,
   proto: {
-    implementation: { getter: b.any.returning("DOMImplementation"), shortcut: "implementationEdge", ...heap },
+    implementation: { getter: b.any.returning("object"), shortcut: "implementationEdge", ...heap },
     URL: { getter: usvString, rustName: "url" },
     documentURI: { getter: usvString, rustName: "url" },
     compatMode: { getter: atom },
@@ -102,7 +103,7 @@ export const DocumentMembers = b.partial("DocumentMembers", {
     visibilityState: { getter: atom },
     wasDiscarded: { getter: b.bool, rustName: "never" },
     prerendering: { getter: b.bool, rustName: "never" },
-    fragmentDirective: { getter: b.any.returning("FragmentDirective"), ...heap },
+    fragmentDirective: { getter: b.any.returning("object"), ...heap },
     rootElement: { getter: DomElement.nullable },
 
     fgColor: color("text"),

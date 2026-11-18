@@ -78,7 +78,6 @@ unsafe extern "C" {
     ) -> *mut c_void;
     fn Bun__Bindgen__realmOf(object: JSValue) -> *const JSGlobalObject;
     fn Bun__Bindgen__setGlobalReceiver(global: &JSGlobalObject, receiver: JSValue);
-    safe fn Bun__Bindgen__globalReceiver(global: &JSGlobalObject) -> JSValue;
     fn Bun__Bindgen__stringFromImpl(
         global: &JSGlobalObject,
         string: *const WTFStringImplStruct,
@@ -183,13 +182,6 @@ pub unsafe trait JsInterface: JsPayload {
         let value = JSValue::from_cell(cell_of(self));
         debug_assert!(Self::Root::is(value));
         value
-    }
-
-    #[inline(always)]
-    fn wrapper(&self) -> JsWrapper<'_, Self> {
-        // SAFETY: a cell is not at null.
-        let cell = unsafe { NonNull::new_unchecked(cell_of(self).cast_mut().cast()) };
-        JsWrapper(cell, PhantomData, PhantomData)
     }
 
     /// Not for an interface that is abstract.
@@ -620,16 +612,13 @@ impl Clone for Interior {
     }
 }
 
+/// `A` cannot be inferred for a struct without one.
 #[doc(hidden)]
-pub struct IsFreeze<T>(PhantomData<T>);
-impl<T: core::marker::Freeze> IsFreeze<T> {
-    pub const YES: bool = true;
+pub trait NeedsAFieldOfTheTypeInterior<A> {
+    const CHECKED: () = ();
 }
-#[doc(hidden)]
-pub trait IsNotFreeze {
-    const YES: bool = false;
-}
-impl<T> IsNotFreeze for IsFreeze<T> {}
+impl<T> NeedsAFieldOfTheTypeInterior<()> for T {}
+impl<T: core::marker::Freeze> NeedsAFieldOfTheTypeInterior<Interior> for T {}
 
 /// The struct of an abstract interface with `prototypeBase: "DOMException"`.
 #[repr(C)]
@@ -654,10 +643,6 @@ impl Drop for DomException {
 pub fn set_global_receiver<T: JsInterface>(heap: &JsHeap<'_>, receiver: &T) {
     // SAFETY: an object.
     unsafe { Bun__Bindgen__setGlobalReceiver(heap.global_object(), receiver.to_js()) }
-}
-
-pub fn global_receiver<'a, T: JsInterface>(heap: &JsHeap<'a>) -> Option<&'a T> {
-    T::from_js(heap, Bun__Bindgen__globalReceiver(heap.global_object()))
 }
 
 /// Runs `leave` with no exception pending, and ends with `returned`, which is empty if one was.
@@ -1203,12 +1188,6 @@ impl<'a, T: bun_core::AnyBitPattern> JsLocal<'a, TypedArray<T>> {
     #[inline(always)]
     pub fn as_buffer_source(self) -> JsLocal<'a, BufferSource> {
         JsLocal::from_raw(self.0)
-    }
-
-    /// `value` is what [`JsHeap`] or [`ArrayBuffer`] has just made, of the kind that the schema names.
-    #[inline(always)]
-    pub fn from_buffer_source(value: JsLocal<'a, BufferSource>) -> Self {
-        JsLocal::from_raw(value.0)
     }
 
     /// The elements as they are now. A detached or out-of-bounds view is empty.

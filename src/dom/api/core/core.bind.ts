@@ -221,7 +221,7 @@ export const Text = b.interface("Text", {
   },
 });
 
-export const CDATASection = b.interface("CDATASection", { extends: Text, proto: {} });
+export const CDATASection = b.interface("CDATASection", { membersInTable: false, extends: Text, proto: {} });
 
 export const DomComment = b.interface("DomComment", {
   name: "Comment",
@@ -231,6 +231,7 @@ export const DomComment = b.interface("DomComment", {
 });
 
 export const ProcessingInstruction = b.interface("ProcessingInstruction", {
+  membersInTable: false,
   extends: CharacterData,
   proto: {
     target: { getter: string, ...heap },
@@ -245,6 +246,7 @@ export const ProcessingInstruction = b.interface("ProcessingInstruction", {
 });
 
 export const DocumentType = b.interface("DocumentType", {
+  membersInTable: false,
   extends: Node,
   includes: [ChildNode],
   proto: {
@@ -279,6 +281,7 @@ export const ShadowRootInit = b.dictionary(
 const customElementRegistry = { getter: b.ref("CustomElementRegistry").nullable } as const;
 
 export const ShadowRoot = b.interface("ShadowRoot", {
+  membersInTable: false,
   extends: DocumentFragment,
   proto: {
     mode: { getter: string, ...heap },
@@ -294,6 +297,7 @@ export const ShadowRoot = b.interface("ShadowRoot", {
 });
 
 export const Attr = b.interface("Attr", {
+  membersInTable: false,
   extends: Node,
   proto: {
     namespaceURI: { getter: string.nullable, rustName: "namespace_uri", ...heap },

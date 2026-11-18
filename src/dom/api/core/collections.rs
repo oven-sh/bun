@@ -1113,21 +1113,24 @@ impl Node {
                 all.push(heap, made);
             }
         }
-        let (Keys(keys, last), all, sought) = (
+        #[inline]
+        fn find(Keys(keys, last): &Keys, sought: (u8, usize)) -> Option<u32> {
+            if let Some((_, index)) = last.get().filter(|it| it.0 == sought) {
+                return Some(index);
+            }
+            let index = keys.borrow().get(&sought)?.0;
+            last.set(Some((sought, index)));
+            Some(index)
+        }
+        let (keys, all) = (
             self.extra::<Keys>(),
             self.edge_list(heap, Edge::Collections),
-            (kind, key.identity()),
         );
-        if let Some((_, index)) = last.get().filter(|it| it.0 == sought) {
+        if let Some(index) = find(keys, (kind, key.identity())) {
             return all.get(index);
         }
-        let mut keys = keys.borrow_mut();
-        if let Some((index, _)) = keys.get(&sought) {
-            last.set(Some((sought, *index)));
-            return all.get(*index);
-        }
         let made = make(key);
-        remember(heap, &mut keys, all, kind, key, made);
+        remember(heap, &mut keys.0.borrow_mut(), all, kind, key, made);
         made
     }
 

@@ -373,7 +373,7 @@ extern "C" void Bun__WebRealm__destroy(void*);
 
 extern "C" void* Bun__WebGlobalObject__realm(JSGlobalObject* globalObject)
 {
-    if (globalObject->methodTable()->destroy != &WebGlobalObject::destroy)
+    if (!WebGlobalObject::is(globalObject))
         return nullptr;
     return static_cast<WebGlobalObject*>(globalObject)->realm();
 }
@@ -450,7 +450,7 @@ static JSValue prototypeOfInterface(JSGlobalObject* realm, ASCIILiteral name)
 
 JSObject* desktopRealmInterface(JSGlobalObject* realm, ASCIILiteral name)
 {
-    if (!isDesktopRealm(realm) && !realm->classInfo()->isSubClassOf(&WebGlobalObject::s_infoWithBunGlobals)) [[likely]]
+    if (!WebGlobalObject::is(realm)) [[likely]]
         return nullptr;
     BUN_BEGIN_REMOVABLE_ENTRY_POINT(Desktop, Abort, JSObject*)
     if (realm->classInfo()->isSubClassOf(&IsolatedWorldGlobalObject::plain))

@@ -103,12 +103,15 @@ impl Output<'_> {
     }
 
     /// Of as many as there is room for. `kind` stands between the name and the value of an object.
-    fn add_annotations<'a>(
+    fn add_annotations(
         &mut self,
         location: usize,
         kind: &[u32],
-        all: impl Iterator<Item = (&'a [u8], &'a [u8])> + Clone,
+        first: Option<(&[u8], &[u8])>,
+        rest: &[(String, String)],
     ) {
+        let rest = rest.iter().map(|it| (it.0.as_bytes(), it.1.as_bytes()));
+        let all = first.into_iter().chain(rest);
         let size = 8 + 4 * kind.len();
         let Some(table) = self.reserve(4 + size * all.clone().count()) else {
             return;
@@ -135,10 +138,6 @@ impl core::fmt::Write for Output<'_> {
         self.length += text.len();
         Ok(())
     }
-}
-
-fn pairs(all: &[(String, String)]) -> impl Iterator<Item = (&[u8], &[u8])> + Clone {
-    all.iter().map(|it| (it.0.as_bytes(), it.1.as_bytes()))
 }
 
 pub(super) struct About<'a> {
@@ -194,7 +193,7 @@ pub(super) fn prepare(about: About<'_>) {
     out.put_words(CRASHPAD, &[1]);
     out.put(CRASHPAD + 4, &about.report);
     out.put(CRASHPAD + 20, &about.client);
-    out.add_annotations(CRASHPAD + 36, &[], pairs(about.annotations));
+    out.add_annotations(CRASHPAD + 36, &[], None, about.annotations);
     out.put_words(CRASHPAD + 44, &[16, LINKS as u32]);
     out.put_words(LINKS, &[1, 0, 28, LINKED as u32]);
     out.put_words(LINKED, &[1]);
@@ -373,9 +372,11 @@ fn record(
     };
     let _ = write!(message, "{reason}");
     let message = without_quotations(&message.bytes[..message.length]);
-    let fatal = [(&b"LOG_FATAL"[..], message)];
-    let parameters = pairs(parameters.map_or(&[], |it| it));
-    out.add_annotations(LINKED + 20, &[1], fatal.into_iter().chain(parameters));
+    let (fatal, parameters) = (
+        (&b"LOG_FATAL"[..], message),
+        parameters.map_or(&[][..], |it| it),
+    );
+    out.add_annotations(LINKED + 20, &[1], Some(fatal), parameters);
 
     let table = Output {
         bytes: &mut buffers.modules,

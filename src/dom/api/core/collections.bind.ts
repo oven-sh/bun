@@ -77,6 +77,7 @@ export const DOMTokenList = b.interface("DOMTokenList", {
 });
 
 export const NamedNodeMap = b.interface("NamedNodeMap", {
+  membersInTable: false,
   internalFields: { element: b.ref("DomElement") },
   indexed: { getter: attr, ...heap },
   named: { getter: attr, unenumerable: true, ...heap },

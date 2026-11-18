@@ -3,7 +3,6 @@
 #include <wtf/DateMath.h>
 
 #include "DesktopICU.h"
-#include <brotli/decode.h>
 #include <unicode/uchar.h>
 #include <unicode/utext.h>
 #include <unicode/utf16.h>
@@ -38,17 +37,6 @@ extern "C" void Bun__DesktopHost__inflateEnd(void* state)
 {
     std::unique_ptr<z_stream> stream(static_cast<z_stream*>(state));
     inflateEnd(stream.get());
-}
-
-extern "C" size_t Bun__DesktopHost__decodeBrotli(const uint8_t* input, size_t inputLength, uint8_t* output, size_t outputLength)
-{
-    auto* decoder = BrotliDecoderCreateInstance(nullptr, nullptr, nullptr);
-    if (!decoder)
-        return 0;
-    size_t left = outputLength;
-    BrotliDecoderDecompressStream(decoder, &inputLength, &input, &left, &output, nullptr);
-    BrotliDecoderDestroyInstance(decoder);
-    return outputLength - left;
 }
 
 extern "C" int32_t Bun__DesktopHost__characterProperty(uint32_t character, uint32_t property)
@@ -110,11 +98,13 @@ extern "C" size_t Bun__DesktopHost__findBreaks(uint8_t kind, const uint8_t* text
         { UBRK_WORD, "en" },
     } };
     using Iterator = std::unique_ptr<UBreakIterator, decltype([](UBreakIterator* iterator) { ubrk_close(iterator); })>;
-    [[clang::always_destroy]] static thread_local std::array<Iterator, kinds.size()> iterators;
+    [[clang::always_destroy]] static thread_local std::unique_ptr<std::array<Iterator, kinds.size()>> iterators;
     if (kind >= kinds.size() || length > INT32_MAX)
         return 0;
     UErrorCode status = U_ZERO_ERROR;
-    auto& iterator = iterators[kind];
+    if (!iterators)
+        iterators = std::make_unique<std::array<Iterator, kinds.size()>>();
+    auto& iterator = (*iterators)[kind];
     if (!iterator)
         iterator.reset(ubrk_open(kinds[kind].first, kinds[kind].second, nullptr, 0, &status));
     UText source = UTEXT_INITIALIZER;

@@ -307,15 +307,15 @@ fn __bun_desktop_find_chrome() -> Option<Vec<u8>> {
 }
 
 thread_local! {
-    static MAPPED: RefCell<Vec<(Box<[u8]>, &'static [u8])>> = const { RefCell::new(Vec::new()) };
+    static MAPPED: Box<RefCell<Vec<(Box<[u8]>, &'static [u8])>>> = Box::default();
 }
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__Desktop__mappedResource(bytes: *const u8, len: usize) -> *const u8 {
     // SAFETY: the caller passes a live slice.
     let bytes = unsafe { core::slice::from_raw_parts(bytes, len) };
-    MAPPED.with_borrow(|all| {
-        all.iter()
+    MAPPED.with(|all| {
+        (all.borrow().iter())
             .find(|it| it.1 == bytes)
             .map_or(core::ptr::null(), |it| it.1.as_ptr())
     })
@@ -330,7 +330,7 @@ fn map_resource(path: &[u8]) -> Option<&'static [u8]> {
         })
     });
     ships.then_some(())?;
-    let known = MAPPED.with_borrow(|all| Some(all.iter().find(|it| *it.0 == *path)?.1));
+    let known = MAPPED.with(|all| Some(all.borrow().iter().find(|it| *it.0 == *path)?.1));
     if known.is_some() {
         return known;
     }
@@ -342,7 +342,7 @@ fn map_resource(path: &[u8]) -> Option<&'static [u8]> {
     let start = start.ok()?;
     // SAFETY: never unmapped, and an installed program's files are replaced, not written to.
     let bytes = unsafe { core::slice::from_raw_parts(start.cast_const(), len) };
-    MAPPED.with_borrow_mut(|all| all.push((path.into(), bytes)));
+    MAPPED.with(|all| all.borrow_mut().push((path.into(), bytes)));
     Some(bytes)
 }
 

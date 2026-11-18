@@ -96,7 +96,7 @@ const STRETCHES: [(CanvasFontStretch, f32); 9] = [
 ];
 
 thread_local! {
-    static ABSOLUTE: JsCell<Map<Box<[u8]>, Rc<Font>>> = JsCell::default();
+    static ABSOLUTE: Box<JsCell<Map<Box<[u8]>, Rc<Font>>>> = Box::default();
 }
 
 impl Font {

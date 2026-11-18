@@ -828,6 +828,21 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
     ).toEqual([[7, true, true, true, false, true, true, "TypeError", true, true, 1, true]]);
   });
 
+  test("an event of the runtime gets what a page has added to Event.prototype", async () => {
+    expect(
+      await run(`
+        serve({ "/": "" });
+        const page = await open();
+        print(await page.executeJavaScript(\`(async () => {
+          Object.assign(Event.prototype, { proxy: new Proxy(() => typeof new Error().stack, {}), constructs: Map });
+          const controller = new AbortController();
+          const theirs = await new Promise(resolve => (controller.signal.onabort = resolve, controller.abort()));
+          document.body.dispatchEvent(theirs);
+          return [theirs.proxy(), theirs.proxy.name, theirs.constructs.name, theirs.preventDefault.name];
+        })()\`));`),
+    ).toEqual([["string", "bound proxy", "bound constructs", "bound preventDefault"]]);
+  });
+
   test("a window of another origin", async () => {
     expect(
       await run(`

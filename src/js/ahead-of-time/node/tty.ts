@@ -44,7 +44,7 @@ declare global {
       [kRawModeState]?: Uint8Array;
       [kBlocks]?: boolean;
       [kUnrefed]?: boolean;
-      [kReader]?: import("node:stream/web").ReadableStreamDefaultReader<Uint8Array>;
+      [kReader]?: any;
       ref(): this;
       unref(): this;
       setRawMode(flag: boolean): this;

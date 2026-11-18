@@ -14,12 +14,6 @@ unsafe extern "C" {
         output_len: *mut usize,
     ) -> i32;
     fn Bun__DesktopHost__inflateEnd(state: *mut c_void);
-    fn Bun__DesktopHost__decodeBrotli(
-        input: *const u8,
-        input_len: usize,
-        output: *mut u8,
-        output_len: usize,
-    ) -> usize;
     safe fn Bun__DesktopHost__characterProperty(character: u32, property: u32) -> i32;
     safe fn Bun__DesktopHost__scriptOf(character: u32) -> u32;
     safe fn Bun__DesktopHost__mirror(character: u32) -> u32;
@@ -43,7 +37,7 @@ pub(super) static HOST: Host = Host {
     inflate_begin: Bun__DesktopHost__inflateBegin,
     inflate: Bun__DesktopHost__inflate,
     inflate_end: Bun__DesktopHost__inflateEnd,
-    decode_brotli: Bun__DesktopHost__decodeBrotli,
+    decode_brotli,
     crc32,
     image_size,
     decode_image,
@@ -120,6 +114,26 @@ pub(super) static ALLOCATOR: host_abi::Allocator = {
 unsafe fn pixels<'a>(rgba: *const u8, [width, height]: [u32; 2]) -> &'a [u8] {
     // SAFETY: the caller's contract.
     unsafe { from_raw_parts(rgba, width as usize * height as usize * 4) }
+}
+
+unsafe extern "C" fn decode_brotli(
+    input: *const u8,
+    input_len: usize,
+    output: *mut u8,
+    output_len: usize,
+) -> usize {
+    // SAFETY: the library passes the parts of two slices.
+    let (mut input, output) = unsafe {
+        (
+            from_raw_parts(input, input_len),
+            core::slice::from_raw_parts_mut(output, output_len),
+        )
+    };
+    let mut output = bun_core::vec::BorrowedBuf::from(output);
+    match bun_brotli::Decoder::default().decompress(&mut input, output.unfilled()) {
+        Ok(_) => output.len(),
+        Err(_) => 0,
+    }
 }
 
 unsafe extern "C" fn crc32(bytes: *const u8, len: usize) -> u32 {

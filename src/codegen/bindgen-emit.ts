@@ -4657,11 +4657,7 @@ pub extern "C" fn ${symbolName(type, key)}(this: &${rustPath}) -> usize {
     )
     .join("")}${
     !base && (type.internalFields.length > 0 || type.web!.span > 1)
-      ? `const _: () = {
-    #[allow(unused_imports)]
-    use bindgen::IsNotFreeze as _;
-    assert!(!bindgen::IsFreeze::<${rustPath}>::YES, "${rustPath} needs a field of the type bindgen::Interior");
-};
+      ? `const _: () = <${rustPath} as bindgen::NeedsAFieldOfTheTypeInterior<_>>::CHECKED;
 `
       : ""
   }// SAFETY: the offset is \`static_assert\`ed against the C++ cell.

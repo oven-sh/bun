@@ -31,7 +31,7 @@ struct Guest {
 }
 
 thread_local! {
-    static GUESTS: ManuallyDrop<RefCell<HashMap<Peer, Guest>>> = ManuallyDrop::default();
+    static GUESTS: ManuallyDrop<Box<RefCell<HashMap<Peer, Guest>>>> = ManuallyDrop::default();
 }
 
 fn with_guest<R>(peer: Peer, steps: impl FnOnce(&mut Guest) -> R) -> R {

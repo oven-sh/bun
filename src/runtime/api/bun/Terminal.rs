@@ -671,8 +671,6 @@ fn create_pty(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
     {
         return create_pty_windows(cols, rows);
     }
-    #[cfg(not(any(unix, windows)))]
-    Err(CreatePtyError::NotSupported)
 }
 
 // OpenPtyTermios is required for the openpty() extern signature even though we pass null.

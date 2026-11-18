@@ -225,11 +225,6 @@ pub fn getenv_z(key: &ZStr) -> Option<&'static [u8]> {
     if is_never_read(key.as_bytes()) {
         return None;
     }
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = key;
-        return None;
-    }
     #[cfg(unix)]
     unsafe {
         // SAFETY: key is NUL-terminated by ZStr invariant; getenv reads until NUL.
@@ -310,11 +305,6 @@ pub fn getenv_z_any_case(key: &ZStr) -> Option<&'static [u8]> {
                 return Some(&line[(key_end + 1).min(line.len())..]);
             }
         }
-        None
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = key;
         None
     }
 }
@@ -3879,11 +3869,6 @@ pub fn getcwd(buf: &mut PathBuffer) -> crate::CrateResult<&ZStr> {
         }
         Ok(ZStr::nul_terminate(out, bi))
     }
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = buf;
-        Err(crate::CrateError::Unexpected)
-    }
 }
 
 // ── which ─────────────────────────────────────────────────────────────────
@@ -4555,11 +4540,6 @@ fn spawn_sync_inherit_impl(
         })?;
         let code = status.code().unwrap_or(-1);
         Ok(SpawnStatus { code })
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = (argv, stdin);
-        Err(crate::CrateError::Unexpected)
     }
 }
 

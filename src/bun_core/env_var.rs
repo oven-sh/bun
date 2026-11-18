@@ -791,8 +791,6 @@ macro_rules! platform_specific_new {
                 { return $crate::env_var::__key_opt!($posix); }
                 #[cfg(windows)]
                 { return $crate::env_var::__key_opt!($windows); }
-                #[allow(unreachable_code)]
-                None
             }
 
             // `get_not_empty` only makes sense for string-kind vars (it calls `.len`). The

@@ -1751,6 +1751,93 @@ describe.concurrent("fetch-tls", () => {
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
+
+  // https://github.com/oven-sh/bun/issues/49261
+  describe("the TLS handshake timeout", () => {
+    // Accepts the TCP connection and never answers the ClientHello.
+    async function silentListener() {
+      const sockets = new Set<net.Socket>();
+      const server = net.createServer(socket => {
+        sockets.add(socket);
+        socket.on("error", () => {});
+        socket.on("close", () => sockets.delete(socket));
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      return {
+        url: `https://127.0.0.1:${(server.address() as net.AddressInfo).port}/`,
+        [Symbol.dispose]() {
+          for (const socket of sockets) socket.destroy();
+          server.close();
+        },
+      };
+    }
+
+    // Both timers count on the same 4 s sweep. The handshake timeout fires on the fourth sweep, a
+    // `timeout: 20_000` on the sixth, and the 5 minute idle timeout, which used to cover the
+    // handshake, long after both.
+    it("fails a handshake that gets no answer, before a request with a longer timeout of its own", async () => {
+      using silent = await silentListener();
+      const release = Promise.withResolvers<void>();
+      using server = Bun.serve({
+        port: 0,
+        tls: validTls,
+        idleTimeout: 0,
+        async fetch() {
+          await release.promise;
+          return new Response("answered");
+        },
+      });
+      const abort = new AbortController();
+      const stalled = (request: string, init?: RequestInit) =>
+        fetch(silent.url, { keepalive: false, proxy: false, signal: abort.signal, ...init }).then(
+          () => ({ request, outcome: "resolved" }),
+          e => ({ request, outcome: e.name }),
+        );
+      // A handshake that completes leaves its timeout behind: this response takes longer than that.
+      const answered = fetch(server.url, { keepalive: false, proxy: false, tls: { ca: validTls.cert } }).then(
+        response => response.text(),
+        e => e.name,
+      );
+      try {
+        expect(await Promise.race([stalled("default"), stalled("timeout: 20_000", { timeout: 20_000 })])).toEqual({
+          request: "default",
+          outcome: "TimeoutError",
+        });
+      } finally {
+        abort.abort();
+      }
+      release.resolve();
+      expect(await answered).toBe("answered");
+    }, 60_000);
+
+    // The connection is parked after its handshake until the JS thread returns from
+    // `checkServerIdentity`, so the handshake timeout must be gone by then.
+    it("does not cover the wait for a JS checkServerIdentity", async () => {
+      using silent = await silentListener();
+      // Not `Bun.serve`: it closes a connection that sends no request for 10 seconds.
+      await using server = tls
+        .createServer(validTls, socket => {
+          socket.on("error", () => {});
+          socket.once("data", () => socket.end("HTTP/1.1 200 OK\r\nContent-Length: 8\r\n\r\nanswered"));
+        })
+        .listen(0, "127.0.0.1");
+      await once(server, "listening");
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(import.meta.dir, "fetch.tls.slow-check-server-identity.fixture.ts")],
+        env: {
+          ...bunEnv,
+          SILENT: silent.url,
+          SERVER: `https://127.0.0.1:${(server.address() as net.AddressInfo).port}/`,
+          CA: validTls.cert,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: "answered\n", stderr: "" });
+      expect(exitCode).toBe(0);
+    }, 60_000);
+  });
 });
 
 it("a server that ends the TLS handshake with close_notify and stays connected fails the request as a disconnect", async () => {

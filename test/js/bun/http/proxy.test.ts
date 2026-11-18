@@ -2427,6 +2427,110 @@ describe.concurrent("a CONNECT tunnel", () => {
     }).toEqual({ name: "Error", code: "ERR_PROXY_TUNNEL", status: 403, statusText: "Forbidden", headers: "policy" });
   });
 
+  // https://github.com/oven-sh/bun/issues/49261
+  // Both timers count on the same 4 s sweep. The handshake timeout fires on the fourth sweep, a
+  // `timeout: 20_000` on the sixth, and the 5 minute idle timeout, which used to cover the
+  // handshake, long after both.
+  test("fails an origin handshake that gets no answer, before a request with a longer timeout of its own", async () => {
+    // Accepts the bytes the proxy relays and never answers the ClientHello.
+    const silentSockets = new Set<net.Socket>();
+    const silent = net.createServer(socket => {
+      silentSockets.add(socket);
+      socket.on("error", () => {});
+      socket.on("close", () => silentSockets.delete(socket));
+    });
+    await once(silent.listen(0, "127.0.0.1"), "listening");
+    using _ = {
+      [Symbol.dispose]() {
+        for (const socket of silentSockets) socket.destroy();
+        silent.close();
+      },
+    };
+    const silentPort = (silent.address() as net.AddressInfo).port;
+    using silentProxy = await tunnelingProxy(silentPort);
+
+    const release = Promise.withResolvers<void>();
+    using origin = Bun.serve({
+      port: 0,
+      tls: tlsCert,
+      idleTimeout: 0,
+      async fetch() {
+        await release.promise;
+        return new Response("answered");
+      },
+    });
+    using proxy = await tunnelingProxy(origin.port!);
+
+    const abort = new AbortController();
+    const stalled = (request: string, init?: RequestInit) =>
+      fetch(`https://localhost:${silentPort}/`, {
+        proxy: silentProxy.url,
+        keepalive: false,
+        signal: abort.signal,
+        ...init,
+      }).then(
+        () => ({ request, outcome: "resolved" }),
+        e => ({ request, outcome: e.name }),
+      );
+    // A handshake that completes leaves its timeout behind: this response takes longer than that.
+    const answered = fetch(`https://localhost:${origin.port}/`, {
+      proxy: proxy.url,
+      keepalive: false,
+      tls: { ca: tlsCert.cert },
+    }).then(
+      response => response.text(),
+      e => e.name,
+    );
+    try {
+      expect(await Promise.race([stalled("default"), stalled("timeout: 20_000", { timeout: 20_000 })])).toEqual({
+        request: "default",
+        outcome: "TimeoutError",
+      });
+    } finally {
+      abort.abort();
+    }
+    release.resolve();
+    expect(await answered).toBe("answered");
+    expect(silentProxy.connects).toEqual(Array(2).fill(`CONNECT localhost:${silentPort} HTTP/1.1`));
+  }, 60_000);
+
+  // The tunnel is parked after the origin's handshake until the JS thread returns from
+  // `checkServerIdentity`, so the handshake timeout must be gone by then.
+  test("does not apply the handshake timeout to the wait for a JS checkServerIdentity", async () => {
+    const silent = net.createServer(socket => void socket.on("error", () => {}));
+    await once(silent.listen(0, "127.0.0.1"), "listening");
+    // Not `Bun.serve`: it closes a connection that sends no request for 10 seconds.
+    const origin = tls.createServer(tlsCert, socket => {
+      socket.on("error", () => {});
+      socket.once("data", () => socket.end("HTTP/1.1 200 OK\r\nContent-Length: 8\r\n\r\nanswered"));
+    });
+    await once(origin.listen(0, "127.0.0.1"), "listening");
+    const originPort = (origin.address() as net.AddressInfo).port;
+    using proxy = await tunnelingProxy(originPort);
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(import.meta.dir, "../../web/fetch/fetch.tls.slow-check-server-identity.fixture.ts")],
+        env: {
+          ...bunEnv,
+          ...proxyFreeEnv,
+          SILENT: `https://127.0.0.1:${(silent.address() as net.AddressInfo).port}/`,
+          SERVER: `https://127.0.0.1:${originPort}/`,
+          PROXY: proxy.url,
+          CA: tlsCert.cert,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: "answered\n", stderr: "" });
+      expect(proxy.connects).toEqual([`CONNECT 127.0.0.1:${originPort} HTTP/1.1`]);
+      expect(exitCode).toBe(0);
+    } finally {
+      silent.close();
+      origin.close();
+    }
+  }, 60_000);
+
   test("is pooled per fetch session", async () => {
     using origin = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("through") });
     await using proxy = await createAdversarialProxy();

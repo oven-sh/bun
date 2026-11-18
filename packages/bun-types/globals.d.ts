@@ -2249,6 +2249,10 @@ interface BunFetchRequestInit extends RequestInit {
    *   request.
    * - `true` or an omitted value uses the default.
    *
+   * The default is shorter for a TLS handshake: without a `timeout` of its
+   * own, a request fails with a timeout error when the handshake takes longer
+   * than about 10 seconds.
+   *
    * This is not a whole-request deadline; use `AbortSignal.timeout(ms)` for
    * that. Not part of the Fetch API specification.
    *

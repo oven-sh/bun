@@ -1,0 +1,39 @@
+[package]
+name = "bun_engine_vm"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_engine_macros.workspace = true
+bun_engine_text.workspace = true
+bun_engine_unicode.workspace = true
+bun_engine_number.workspace = true
+bun_engine_bigint.workspace = true
+bun_engine_date.workspace = true
+bun_engine_regexp.workspace = true
+bun_engine_regexp_jit.workspace = true
+bun_engine_asm.workspace = true
+bun_engine_syntax.workspace = true
+bun_engine_bytecode.workspace = true
+bun_engine_exec_memory.workspace = true
+bun_engine_platform.workspace = true
+bun_alloc.workspace = true
+bun_highway.workspace = true
+bun_pod.workspace = true
+bun_threading.workspace = true
+bitflags.workspace = true
+getrandom.workspace = true
+libc.workspace = true
+smallvec.workspace = true
+hashbrown.workspace = true
+# Only for its `nightly` feature: see the hashbrown comment in the workspace `Cargo.toml`.
+allocator-api2.workspace = true
+
+[dev-dependencies]
+bun_engine_standalone.workspace = true

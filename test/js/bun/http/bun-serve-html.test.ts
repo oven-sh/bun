@@ -21,46 +21,52 @@ function extractHash(html: string, file_kind: "css" | "js") {
 }
 
 test.concurrent.each([true, false])("a served HTML module must be executable (development=%s)", async development => {
+  const jsx = "console.log(<div />);\n";
   using dir = tempDir("html-route-preserved-jsx", {
     "plain.html": '<script type="module" src="./plain.tsx"></script>',
     "plain.tsx": "/** @jsxRuntime preserve */\nconsole.log('plain');\n",
-    "compiled.html": '<script type="module" src="./compiled.tsx"></script>',
-    "compiled.tsx": "console.log(<div />);",
-    "broken.html": '<script type="module" src="./broken.tsx"></script>',
-    "broken.tsx": "/** @jsxRuntime preserve */\nconsole.log(<div />);\n",
+    "jsx.html": '<script type="module" src="./jsx.tsx"></script>',
+    "jsx.tsx": jsx,
     "node_modules/react/jsx-runtime.js": "export const jsx = () => null;",
     "node_modules/react/jsx-dev-runtime.js": "export const jsxDEV = () => null;",
     "server.ts": `
       import plain from "./plain.html";
-      import compiled from "./compiled.html";
-      import broken from "./broken.html";
+      import jsx from "./jsx.html";
       using server = Bun.serve({
         port: 0,
         hostname: "127.0.0.1",
         development: ${development},
-        routes: { "/": plain, "/compiled": compiled, "/broken": broken },
+        routes: { "/": plain, "/jsx": jsx },
       });
-      for (const path of ["/", "/compiled", "/broken", "/broken"]) {
+      for (const path of ["/", "/jsx", "/jsx"]) {
         const response = await fetch(new URL(path, server.url));
         console.log(response.status);
         await response.text();
       }
     `,
   });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "server.ts"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout.trim().split(/\r?\n/)).toEqual(["200", "200", "500", "500"]);
-  if (development) {
-    expect(stderr).toContain("Cannot preserve JSX");
-    expect(stderr).toContain("broken.tsx:2:13");
+  async function runServer() {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "server.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { statuses: stdout.trim().split(/\r?\n/), stderr, exitCode };
   }
-  expect(exitCode).toBe(0);
+
+  const compiled = await runServer();
+  expect(compiled).toMatchObject({ statuses: ["200", "200", "200"], exitCode: 0 });
+
+  await Bun.write(join(String(dir), "jsx.tsx"), "/** @jsxRuntime preserve */\n" + jsx);
+  const preserved = await runServer();
+  expect(preserved).toMatchObject({ statuses: ["200", "500", "500"], exitCode: 0 });
+  if (development) {
+    expect(preserved.stderr).toContain("Cannot preserve JSX");
+    expect(preserved.stderr).toContain("jsx.tsx:2:13");
+  }
 });
 
 test("serve html", async () => {

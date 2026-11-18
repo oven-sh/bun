@@ -284,6 +284,9 @@ impl<'a> Options<'a> {
         hasher.update(&[u8::from(
             self.jsx.runtime == options::JSX::Runtime::Preserve,
         )]);
+        if self.jsx.parse && self.jsx.side_effects {
+            hasher.update(b"jsx_side_effects");
+        }
 
         if did_use_jsx {
             if self.jsx.parse {

@@ -89,7 +89,7 @@ bun_core::declare_scope!(cache, visible);
 /// Version 51: A `bun:` specifier that names no builtin is printed as it is written.
 /// Version 52: Every directive is printed: a `"use strict"` in a function body too, and the
 /// prologue of the file first.
-/// Version 53: The `preserve` JSX runtime keeps JSX syntax in transpiled output.
+/// Version 53: Hash the JSX preserve mode and side-effect override.
 const EXPECTED_VERSION: u32 = 53;
 
 /// Source files smaller than this are not written to / read from the on-disk

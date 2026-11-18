@@ -121,6 +121,26 @@ describe("transpiler cache", () => {
     }
   });
 
+  test.each([false, true])("keeps JSX side effects distinct (cache warmed with flag: %s)", async initial => {
+    const entry = join(temp_dir, "entry.jsx");
+    writeFileSync(
+      entry,
+      'const React = { createElement: () => console.log("jsx ran") };\n<div />;\nconsole.log("done");\n//' +
+        "x".repeat(5 * 1024),
+    );
+
+    async function run(sideEffects: boolean) {
+      const flags = sideEffects ? ["--jsx-side-effects"] : [];
+      const result = await bunRun(["--jsx-runtime=classic", ...flags, entry], env);
+      expect(result).toSpawn(sideEffects ? "jsx ran\ndone" : "done");
+    }
+
+    await run(initial);
+    expect(newCacheCount()).toBe(1);
+    await run(!initial);
+    await run(initial);
+  });
+
   test("works", async () => {
     writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "1", "a"));
     expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("a");

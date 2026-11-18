@@ -913,6 +913,14 @@ describe.concurrent("Bun REPL", () => {
       return { stdout: stripAnsi(stdout), stderr: stripAnsi(stderr), exitCode };
     }
 
+    test.each(["-e", "-p"])("%s reports preserved JSX in the eval source", async flag => {
+      const { stdout, stderr, exitCode } = await runReplWith([flag, "/** @jsxRuntime preserve */\n<div />"]);
+      expect(stdout).toBe("");
+      expect(stderr).toContain("Cannot preserve JSX in a file that Bun runs");
+      expect(stderr).toContain("[eval]:2:1");
+      expect(exitCode).toBe(1);
+    });
+
     test("-e evaluates and exits without a welcome message or the result", async () => {
       const { stdout, stderr, exitCode } = await runReplWith(["-e", "1 + 1"]);
       expect(stdout).toBe("");

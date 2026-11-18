@@ -1609,7 +1609,7 @@ impl<'a> Repl<'a> {
         };
 
         // Transform the code using REPL mode (hoists declarations, wraps result in { value: expr })
-        let transformed_code = match self.transform_for_repl(code) {
+        let transformed_code = match self.transform_for_repl(code, b"[repl]") {
             Err(log) => {
                 self.report_transform_error(global, &log);
                 return;
@@ -1765,9 +1765,10 @@ impl<'a> Repl<'a> {
             return false;
         }
 
-        let transformed_code = match self.transform_for_repl(code) {
+        let source_name = b"[eval]";
+        let transformed_code = match self.transform_for_repl(code, source_name) {
             Err(log) => {
-                let _ = log.print(Output::error_writer());
+                let _ = log.print_with_colors(Output::error_writer(), stderr_colors);
                 return true;
             }
             Ok(None) => {
@@ -1780,8 +1781,8 @@ impl<'a> Repl<'a> {
                         global,
                         code.as_ptr(),
                         code.len(),
-                        b"[eval]".as_ptr(),
-                        b"[eval]".len(),
+                        source_name.as_ptr(),
+                        source_name.len(),
                         &raw mut exception,
                     );
                 }
@@ -1801,8 +1802,8 @@ impl<'a> Repl<'a> {
                 global,
                 transformed_code.as_ptr(),
                 transformed_code.len(),
-                b"[eval]".as_ptr(),
-                b"[eval]".len(),
+                source_name.as_ptr(),
+                source_name.len(),
                 &raw mut exception,
             )
         };
@@ -1926,7 +1927,7 @@ impl<'a> Repl<'a> {
             return;
         };
 
-        let transformed_code = match self.transform_for_repl(code) {
+        let transformed_code = match self.transform_for_repl(code, b"[repl]") {
             Err(log) => {
                 self.report_transform_error(global, &log);
                 return;
@@ -2119,7 +2120,11 @@ impl<'a> Repl<'a> {
     }
 
     /// Transform code using the REPL parser (hoists declarations, wraps expressions)
-    fn transform_for_repl(&self, code: &[u8]) -> Result<Option<Box<[u8]>>, Box<bun_ast::Log>> {
+    fn transform_for_repl(
+        &self,
+        code: &[u8],
+        source_name: &[u8],
+    ) -> Result<Option<Box<[u8]>>, Box<bun_ast::Log>> {
         let Some(vm) = self.vm else {
             return Ok(None);
         };
@@ -2181,7 +2186,7 @@ impl<'a> Repl<'a> {
         let mut log = bun_ast::Log::init();
 
         // Create source
-        let source = bun_ast::Source::init_path_string(b"[repl]", processed_code);
+        let source = bun_ast::Source::init_path_string(source_name, processed_code);
 
         // Parse with REPL transforms
         let parser = match bun_js_parser::Parser::init(opts, &mut log, &source, define, &arena) {
@@ -2205,7 +2210,7 @@ impl<'a> Repl<'a> {
         if let Some(loc) = &mut ast.first_preserved_jsx {
             // Removing the synthetic opening parenthesis from the source offset.
             loc.start -= i32::from(is_object_literal);
-            let original_source = bun_ast::Source::init_path_string(b"[repl]", code);
+            let original_source = bun_ast::Source::init_path_string(source_name, code);
             let runnable =
                 bun_bundler::transpiler::require_runnable_js(&ast, &original_source, &mut log);
             if runnable.is_err() {

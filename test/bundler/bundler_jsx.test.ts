@@ -2027,6 +2027,27 @@ describe("bundler", () => {
     },
   });
 
+  for (const runtime of ["default", "react-jsxdev"]) {
+    itBundled(`jsx/SideEffectsKeepsProductionDefine-${runtime}`, {
+      files: {
+        "/in.jsx": "export const element = <div />;",
+        "/tsconfig.json": JSON.stringify({ compilerOptions: runtime === "default" ? {} : { jsx: runtime } }),
+      },
+      target: "bun",
+      backend: "cli",
+      env: { NODE_ENV: undefined, BUN_ENV: undefined },
+      define: { "process.env.NODE_ENV": JSON.stringify("production") },
+      external: ["react"],
+      jsx: { sideEffects: true },
+      skipOnEsbuild: true,
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toContain('from "react/jsx-runtime"');
+        expect(out).not.toContain("@__PURE__");
+      },
+    });
+  }
+
   describe.each(["cli", "api"] as const)("key after spread (%s)", backend => {
     itBundled(`jsx/BareKeyKeepsShorthandProp-${backend}`, {
       files: {

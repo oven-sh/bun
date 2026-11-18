@@ -434,10 +434,19 @@ impl MinifyRenamer {
             sorted.sort_unstable_by(|a, b| SlotAndCount::less_than(*a, *b));
 
             let mut next_name: isize = 0;
+            let mut skipped_lowercase = std::collections::VecDeque::new();
 
             for data in sorted.iter() {
-                name_minifier.number_to_minified_name(&mut name_buf, next_name)?;
-                next_name += 1;
+                let needs_capital = slots[data.slot as usize].needs_capital_for_jsx;
+                let mut name_index =
+                    if !needs_capital && let Some(index) = skipped_lowercase.pop_front() {
+                        index
+                    } else {
+                        let index = next_name;
+                        next_name += 1;
+                        index
+                    };
+                name_minifier.number_to_minified_name(&mut name_buf, name_index)?;
 
                 // Make sure we never generate a reserved name. We only have to worry
                 // about collisions with reserved identifiers for normal symbols, and we
@@ -445,15 +454,17 @@ impl MinifyRenamer {
                 // not have to worry about either for private names because they start
                 // with a "#" character.
                 match ns {
-                    symbol::SlotNamespace::Default => {
-                        let needs_capital = slots[data.slot as usize].needs_capital_for_jsx;
-                        while self.reserved_names.contains_key(name_buf.as_slice())
-                            || (needs_capital && name_buf[0].is_ascii_lowercase())
-                        {
-                            name_minifier.number_to_minified_name(&mut name_buf, next_name)?;
-                            next_name += 1;
+                    symbol::SlotNamespace::Default => loop {
+                        if !self.reserved_names.contains_key(name_buf.as_slice()) {
+                            if !needs_capital || !name_buf[0].is_ascii_lowercase() {
+                                break;
+                            }
+                            skipped_lowercase.push_back(name_index);
                         }
-                    }
+                        name_index = next_name;
+                        next_name += 1;
+                        name_minifier.number_to_minified_name(&mut name_buf, name_index)?;
+                    },
                     symbol::SlotNamespace::Label => {
                         while js_lexer::keyword(name_buf.as_slice()).is_some() {
                             name_minifier.number_to_minified_name(&mut name_buf, next_name)?;

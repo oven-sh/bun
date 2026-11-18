@@ -7,6 +7,8 @@
 #else
 #define HWY_DISABLED_TARGETS (HWY_ALL_SVE | HWY_NEON | HWY_AVX3 | (HWY_AVX3_DL - 1))
 #endif
+// Without this, hn::CLMulLower and hn::CLMulUpper are emulated.
+#undef HWY_DISABLE_PCLMUL_AES
 #ifndef __OPTIMIZE__
 #error "Unless hwy::ChosenTarget::GetIndex() is inlined, the linker may keep that of a file with other targets."
 #endif
@@ -413,6 +415,8 @@ static uint32_t Adler32(uint32_t adler, const uint8_t* HWY_RESTRICT bytes, size_
     return high << 16 | low;
 }
 
+static int64_t Target() { return HWY_TARGET; }
+
 // NOLINTNEXTLINE(google-readability-namespace-comments)
 } // namespace HWY_NAMESPACE
 } // namespace bun
@@ -422,6 +426,17 @@ HWY_AFTER_NAMESPACE();
 namespace bun {
 HWY_EXPORT(Crc32);
 HWY_EXPORT(Adler32);
+HWY_EXPORT(Target);
+
+static auto ChooseCrc32()
+{
+#if HWY_ARCH_X86
+    unsigned eax, ebx, ecx, edx;
+    if (!__get_cpuid(1, &eax, &ebx, &ecx, &edx) || !(ecx & bit_PCLMUL))
+        return &N_SSSE3::Crc32;
+#endif
+    return HWY_DYNAMIC_POINTER(Crc32);
+}
 
 static HWY_INLINE uint32_t UpdateAligned(auto update, uint32_t state, const uint8_t* bytes, size_t len)
 {
@@ -435,12 +450,18 @@ static HWY_INLINE uint32_t UpdateAligned(auto update, uint32_t state, const uint
 
 extern "C" uint32_t highway_crc32(uint32_t crc, const uint8_t* bytes, size_t len)
 {
-    return ~UpdateAligned(BUN_HWY_DISPATCH(Crc32), ~crc, bytes, len);
+    return ~UpdateAligned(BUN_HWY_DISPATCH_TO(ChooseCrc32()), ~crc, bytes, len);
 }
 
 extern "C" uint32_t highway_adler32(const uint8_t* bytes, size_t len)
 {
     return UpdateAligned(BUN_HWY_DISPATCH(Adler32), 1, bytes, len);
+}
+
+// For bun:internal-for-testing
+extern "C" int64_t highway_checksums_target()
+{
+    return BUN_HWY_DISPATCH(Target)();
 }
 } // namespace bun
 #endif

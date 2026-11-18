@@ -17,8 +17,12 @@ const HIGHWAY_COMMIT = "2607d3b5b0113992fe84d3848859eae13b3b52c1";
 // The scalable SVE/SVE2 targets and SVE_256, which Highway starts building at clang >= 22, stay
 // off: bun's movemask-style kernels (highway_json/xml/sourcemap.cpp) use BitsFromMask, which only
 // fixed-width targets have. SVE2_128 (Neoverse V2/N2) is fixed-width and stays on, as before.
-// highway_{png,jpeg,checksums,brotli}.cpp and highway_webp_*.cpp put a longer list in the place of this one.
-const disabledTargets = "HWY_DISABLED_TARGETS=HWY_ALL_SVE-HWY_SVE2_128";
+// AVX3 is what Skylake-X and Cascade Lake would take, which lower their clock after a 512-bit instruction.
+// highway_{png,jpeg,checksums,brotli,byte_set}.cpp and highway_webp_*.cpp put a longer list in the place of this one.
+const disabledTargets = "HWY_DISABLED_TARGETS=HWY_ALL_SVE-HWY_SVE2_128+HWY_AVX3";
+
+// Lets CPUs and VMs without AES or PCLMULQDQ have AVX2. highway_checksums.cpp checks for the latter itself.
+const sharedDefines = [disabledTargets, "HWY_DISABLE_PCLMUL_AES"];
 
 export const highway: Dependency = {
   name: "highway",
@@ -53,7 +57,7 @@ export const highway: Dependency = {
       // "unknown argument ignored"). globalFlags supplies /EHs-c- and /GR-
       // on Windows; upstream's MSVC branch additionally sets the STL macro.
       cflags: [
-        `-D${disabledTargets}`,
+        ...sharedDefines.map(define => `-D${define}`),
         ...(cfg.windows ? ["-D_HAS_EXCEPTIONS=0"] : ["-fno-exceptions", "-fmath-errno"]),
       ],
     };
@@ -64,6 +68,9 @@ export const highway: Dependency = {
     // support NEON here — it's a clang-cl frontend quirk.
     if (cfg.windows && cfg.arm64) spec.cflags!.push("-D__ARM_NEON=1");
 
+    // The headers of the glibc sysroot are those of Linux 5.4. The bit is from 5.6 (arch/arm64/include/uapi/asm/hwcap.h).
+    if (cfg.arm64 && cfg.abi === "gnu") spec.cflags!.push("-DHWCAP2_BF16=0x4000");
+
     return spec;
   },
 
@@ -72,6 +79,6 @@ export const highway: Dependency = {
     // Highway's public header is <hwy/highway.h> but it includes siblings
     // via "" paths — need both the root and the hwy/ subdir in -I.
     includes: [".", "hwy"],
-    defines: [disabledTargets],
+    defines: sharedDefines,
   }),
 };

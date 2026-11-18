@@ -81,6 +81,14 @@ export const highwayStringsForTesting: (
   arg: number | Uint8Array,
 ) => number = $newCppFunction("highway_strings_testing.cpp", "Bun__highwayStringsForTesting", 3);
 
+// `highway`: what this CPU supports of the default list of targets (scripts/build/deps/highway.ts), best first.
+// `checksums`: the target of highway_checksums.cpp, which has a list of its own.
+export const cpuDispatch: () => { highway: string[]; checksums: string; zlibHasArmCrc32?: boolean } = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_cpuDispatch",
+  0,
+);
+
 export const SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
 export const setSQLiteColumnNameTransform = (
   statement: InstanceType<$BunModules["bun:sqlite"]["Statement"]>,

@@ -34,10 +34,6 @@ const CORE = [
   "functable", "infback", "inflate", "inftrees",
   "insert_string", "insert_string_roll", "trees", "uncompr", "zutil",
   "cpu_features", "gzlib", "gzread", "gzwrite",
-  // Generic Chorba CRC: included on every arch even with SIMD enabled — the
-  // PCLMUL/NEON paths don't subsume it, functable falls back here on CPUs
-  // without carryless multiply.
-  "arch/generic/crc32_chorba_c",
 ];
 
 // Portable kernel implementations. functable.c needs at least one symbol per
@@ -132,6 +128,7 @@ export const zlib: Dependency = {
     // clang-cl defines _MSC_VER but needs clang's <arm_neon.h>/<arm_acle.h>,
     // not MSVC's <arm64_neon.h>/<intrin.h>. Upstream gates on _MSC_VER alone.
     "patches/zlib/clang-cl-arm64.patch",
+    "patches/zlib/chorba-in-parts.patch",
   ],
 
   build: cfg => {
@@ -149,6 +146,8 @@ export const zlib: Dependency = {
       // lib could read adjacent heap on a malicious raw-deflate stream with
       // windowBits<15. Hardens at zero perf cost to inflate() proper.
       INFLATE_STRICT: true,
+      // crc32_chorba_c.c has a table of 128 KiB on the stack, which is all that the deepest JS frame of a Worker leaves.
+      WITHOUT_CHORBA: true,
       // clang has all of these on every target we ship; cmake's
       // check_c_source_compiles probes are pure overhead for us.
       HAVE_ATTRIBUTE_ALIGNED: true,
@@ -198,7 +197,7 @@ export const zlib: Dependency = {
         defines._ARM_WINAPI_PARTITION_DESKTOP_SDK_AVAILABLE = true;
       }
       if (cfg.linux) {
-        defines.ARM_AUXV_HAS_NEON = true;
+        defines.ARM_AUXV_HAS_CRC32 = true;
         defines.HAVE_LINUX_AUXVEC_H = true;
       }
       sources.push(...GENERIC.map(s => `arch/generic/${s}.c`));

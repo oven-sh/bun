@@ -6,6 +6,8 @@
 // to catch both SIGILL and miscompilation from wrong instruction lowering.
 
 import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
+import { Worker } from "node:worker_threads";
 import {
   brotliCompressSync,
   brotliDecompressSync,
@@ -610,6 +612,31 @@ describe("DEFLATE: Highway runtime dispatch", () => {
     const inputs = parts(bytes);
     const trailers = inputs.map(input => Buffer.from(Bun.gzipSync(input, { library, level: 0 })).subarray(-8));
     expect(trailers.map(trailer => trailer.readUInt32LE())).toEqual(inputs.map(input => crc32(input)));
+  });
+
+  // Without PCLMULQDQ the test above compares zlib with itself. It takes 32 KiB at a time, and then what is left.
+  test.each([0, 5])("CRC-32 of zlib, %i bytes into the buffer", offset => {
+    const table = Array.from({ length: 256 }, (_, crc) => {
+      for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+      return crc;
+    });
+    const rests = [0, 1, 11, 12, 72, 73, 83, 84, 8192, 8193, 8203, 8204, 32_767];
+    const ends = [0, 1, 2, 3].flatMap(whole => rests.map(rest => offset + whole * 32_768 + rest));
+    let [at, crc] = [offset, -1];
+    const expected = ends.map(end => {
+      while (at < end) crc = table[(crc ^ bytes[at++]) & 255] ^ (crc >>> 8);
+      return ~crc >>> 0;
+    });
+    expect(ends.map(end => crc32(bytes.subarray(offset, end)))).toEqual(expected);
+  });
+
+  // Not in a child process, which would run outside the emulator.
+  test("CRC-32 from the deepest frame of a Worker", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    await using worker = new Worker(join(import.meta.dir, "../../../node/zlib/crc32-deepest-frame-fixture.ts"));
+    worker.on("message", resolve).on("error", reject).on("exit", reject);
+    const sums = [2920771703, 1167601884, 1605982112, 997318536, 2262181103];
+    expect(await promise).toEqual({ crc32: sums, hash: sums, gzip: sums, libdeflate: sums, gunzip: sums });
   });
 
   test("Adler-32", () => {

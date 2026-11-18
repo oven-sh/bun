@@ -3,8 +3,10 @@
 // directly, sweeping haystack lengths across vector-width boundaries and
 // misaligned base pointers, and checks each against a scalar reference.
 
-import { highwayStringsForTesting as hw } from "bun:internal-for-testing";
+import { cpuDispatch, highwayStringsForTesting as hw } from "bun:internal-for-testing";
 import { afterEach, describe, expect, it } from "bun:test";
+import { isArm64, isLinux } from "harness";
+import { readFileSync } from "node:fs";
 
 // Lengths that straddle 16/32/64-byte lanes and the scalar tails on either side.
 const LENGTHS = [0, 1, 2, 3, 8, 15, 16, 17, 31, 32, 33, 48, 63, 64, 65, 127, 128, 129, 255, 256, 257, 1024, 1029];
@@ -684,5 +686,23 @@ describe("byteSetPrefixLength", () => {
   it("rejects a text or a set that is too short", () => {
     expect(() => hw("byteSetPrefixLength", new Uint8Array(15), set)).toThrow(RangeError);
     expect(() => hw("byteSetPrefixLength", new Uint8Array(16), set.subarray(1))).toThrow(RangeError);
+  });
+});
+
+describe("targets", () => {
+  it.skipIf(isArm64)("x64 starts at SSE4, with or without AES and PCLMULQDQ", () => {
+    expect(cpuDispatch().highway.at(-1)).toBe("SSE4");
+  });
+
+  it.skipIf(isArm64)("x64 has no 512-bit vectors before Ice Lake", () => {
+    expect(cpuDispatch().highway).not.toContain("AVX3");
+  });
+
+  it.skipIf(!isArm64 || !isLinux)("the checksums use what Linux reports on arm64", () => {
+    const features = readFileSync("/proc/cpuinfo", "utf8")
+      .match(/^Features\s*:(.*)$/m)![1]
+      .split(" ");
+    const hasAll = ["aes", "asimdhp", "asimddp", "bf16"].every(feature => features.includes(feature));
+    expect(cpuDispatch().checksums).toBe(hasAll ? "NEON_BF16" : "NEON_WITHOUT_AES");
   });
 });

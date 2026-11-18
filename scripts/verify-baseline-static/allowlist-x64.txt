@@ -463,7 +463,7 @@ ctiMasmProbeTrampolineAVX  [AVX]
 
 # ----------------------------------------------------------------------------
 # Bun's Highway SIMD. Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets.
-# (292 symbols)
+# (244 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun10N_AVX3_SPR10MemMemImplEPKhmS2_m                                       [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 _ZN3bun10N_AVX3_SPR11MemRMemImplEPKhmS2_m                                      [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
@@ -600,51 +600,6 @@ _ZN3bun6N_AVX246IndexOfInterestingCharacterInStringLiteralImplEPKhmh           [
 _ZN3bun6N_AVX246IndexOfNeedsEscapeForJavaScriptStringImplQuoteEPKhmh           [AVX, AVX2]
 _ZN3bun6N_AVX249IndexOfInterestingCharacterInMultilineCommentImplEPKhm         [AVX, AVX2]
 _ZN3bun6N_AVX249IndexOfNeedsEscapeForJavaScriptStringImplBacktickEPKhmh        [AVX, AVX2]
-_ZN3bun6N_AVX310MemMemImplEPKhmS2_m                                            [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
-_ZN3bun6N_AVX311MemRMemImplEPKhmS2_m                                           [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
-_ZN3bun6N_AVX312MemMem16ImplEPKtmS2_m                                          [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
-_ZN3bun6N_AVX313MemRMem16ImplEPKtmS2_m                                         [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
-_ZN3bun6N_AVX313JsonIndexImplEPKhmmPjPmS4_S3_                                  [AVX, AVX512BW, AVX512F, BMI1, BMI2]
-_ZN3bun6N_AVX312XmlIndexImplEPKhmmPjPm                                        [AVX, AVX512BW, AVX512F, AVX512VL, BMI1, BMI2]
-_ZN3bun6N_AVX314XmlIndex16ImplEPKtmmPjPm                                      [AVX, AVX512BW, AVX512F, AVX512VL, BMI1, BMI2]
-_ZN3bun6N_AVX314DecodeHex8ImplEPKhPhm                                          [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]
-_ZN3bun6N_AVX314LowerAsciiImplEPKhmPh                                         [AVX, AVX512BW, AVX512F, AVX512VL]
-_ZN3bun6N_AVX315CopyU16ToU8ImplEPKtmPh                                         [AVX, AVX512BW, AVX512F, AVX512VL]
-_ZN3bun6N_AVX315DecodeHex16ImplEPKtPhm                                         [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
-_ZN3bun6N_AVX315IndexOfCharImplEPKhmh                                          [AVX, AVX512BW, BMI2]
-_ZN3bun6N_AVX313CountCharImplEPKhmh                                            [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
-_ZN3bun6N_AVX318IndexOfNotCharImplEPKhmh                                       [AVX, AVX512BW]
-_ZN3bun6N_AVX319LastIndexOfCharImplEPKhmh                                      [AVX, AVX512BW]
-_ZN3bun6N_AVX322LastIndexOfAnyCharImplEPKhmS2_m                                [AVX, AVX512BW, AVX512F]
-_ZN3bun6N_AVX322IndexOfUntidySlashImplEPKhm                                    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1]
-_ZN3bun6N_AVX332IndexOfUntidySlashOrNonAsciiImplEPKhm                          [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1]
-_ZN3bun6N_AVX316LowerAscii16ImplEPKtmPt                                       [AVX, AVX512BW, AVX512F, AVX512VL]
-_ZN3bun6N_AVX318EncodeHexLowerImplEPKhmPh                                      [AVX, AVX2, AVX512BW, AVX512F]
-_ZN3bun6N_AVX318FirstNonAscii8ImplEPKhm                                        [AVX, AVX512BW]
-_ZN3bun6N_AVX318IndexOfAnyCharImplEPKhmS2_m                                    [AVX, AVX512BW, AVX512F, AVX512VL]
-_ZN3bun6N_AVX319CopyAsciiPrefixImplEPKhmPh                                     [AVX, AVX512BW, AVX512F]
-_ZN3bun6N_AVX319FirstNonAscii16ImplEPKtm                                       [AVX, AVX512BW, AVX512F]
-_ZN3bun6N_AVX320FillWithSkipMaskImplEPKhmPhS2_mb                               [AVX, AVX512DQ, AVX512F]
-_ZN3bun6N_AVX321VisibleUTF16WidthImplEPKtmPm                                   [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
-_ZN3bun6N_AVX322IndexOfEscapeChar8ImplEPKhm                                    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
-_ZN3bun6N_AVX322VisibleLatin1WidthImplEPKhm                                    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
-_ZN3bun6N_AVX323HtmlEscapeExtraLen8ImplEPKhm                                   [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
-_ZN3bun6N_AVX323IndexOfEscapeChar16ImplEPKtm                                   [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
-_ZN3bun6N_AVX324HtmlEscapeExtraLen16ImplEPKtm                                  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
-_ZN3bun6N_AVX325CountPrintableAscii16ImplEPKtm                                 [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
-_ZN3bun6N_AVX326IndexOfFirstAsciiUpperImplEPKhm                               [AVX, AVX512BW, AVX512F]
-_ZN3bun6N_AVX326IndexOfHTMLEscapeChar8ImplEPKhm                                [AVX, AVX512BW, AVX512F]
-_ZN3bun6N_AVX327IndexOfHTMLEscapeChar16ImplEPKtm                               [AVX, AVX512BW, AVX512F]
-_ZN3bun6N_AVX328IndexOfFirstAsciiUpper16ImplEPKtm                             [AVX, AVX512BW, AVX512F]
-_ZN3bun6N_AVX328IndexOfNewlineOrNonASCIIImplEPKhm                              [AVX, AVX512BW, AVX512F]
-_ZN3bun6N_AVX333VisibleLatin1WidthExcludeANSIImplEPKhm                         [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
-_ZN3bun6N_AVX335IndexOfSpaceOrNewlineOrNonASCIIImplEPKhm                       [AVX, AVX512BW, AVX512F]
-_ZN3bun6N_AVX336ContainsNewlineOrNonASCIIOrQuoteImplEPKhm                      [AVX, AVX512BW, AVX512F]
-_ZN3bun6N_AVX338IndexOfNewlineOrNonASCIIOrHashOrAtImplEPKhm                    [AVX, AVX512BW, AVX512F]
-_ZN3bun6N_AVX346IndexOfInterestingCharacterInStringLiteralImplEPKhmh           [AVX, AVX512BW, AVX512F]
-_ZN3bun6N_AVX346IndexOfNeedsEscapeForJavaScriptStringImplQuoteEPKhmh           [AVX, AVX512BW, AVX512F]
-_ZN3bun6N_AVX349IndexOfInterestingCharacterInMultilineCommentImplEPKhm         [AVX, AVX512BW, AVX512F]
-_ZN3bun6N_AVX349IndexOfNeedsEscapeForJavaScriptStringImplBacktickEPKhmh        [AVX, AVX512BW, AVX512F]
 _ZN3bun9N_AVX10_210MemMemImplEPKhmS2_m                                         [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 _ZN3bun9N_AVX10_214DecodeHex8ImplEPKhPhm                                       [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, GFNI]
 _ZN3bun9N_AVX10_214LowerAsciiImplEPKhmPh                                      [AVX, AVX512BW, AVX512F, AVX512VL]
@@ -749,11 +704,8 @@ _ZN3bun6N_AVX211BSwap32ImplEPhm                                                [
 _ZN3bun6N_AVX211BSwap64ImplEPhm                                                [AVX, AVX2]
 _ZN3bun6N_AVX2L12MemMemSearchILb0EtEEmPKT0_mS4_mmmPm                           [AVX, AVX2, BMI2]
 _ZN3bun6N_AVX2L12MemMemSearchILb1EtEEmPKT0_mS4_mmmPm                           [AVX, AVX2, BMI2]
-_ZN3bun6N_AVX311BSwap16ImplEPhm                                                [AVX, AVX2, AVX512BW, AVX512F]
-_ZN3bun6N_AVX311BSwap32ImplEPhm                                                [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]
-_ZN3bun6N_AVX311BSwap64ImplEPhm                                                [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]
-_ZN3bun6N_AVX3L12MemMemSearchILb0EtEEmPKT0_mS4_mmmPm                           [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
-_ZN3bun6N_AVX3L12MemMemSearchILb1EtEEmPKT0_mS4_mmmPm                           [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
+_ZN3bun9N_AVX3_DLL12MemMemSearchILb0EtEEmPKT0_mS4_mmmPm                        [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
+_ZN3bun9N_AVX3_DLL12MemMemSearchILb1EtEEmPKT0_mS4_mmmPm                        [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 _ZN3bun9N_AVX3_DL11BSwap16ImplEPhm                                             [AVX, AVX2, AVX512BW, AVX512F]
 _ZN3bun9N_AVX3_DL11BSwap32ImplEPhm                                             [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]
 _ZN3bun9N_AVX3_DL11BSwap64ImplEPhm                                             [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]
@@ -761,12 +713,10 @@ _ZN3bun9N_AVX3_DL11BSwap64ImplEPhm                                             [
 
 # ----------------------------------------------------------------------------
 # Bun's packing of words (src/jsc/bindings/highway_strings.cpp).
-# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (12 symbols)
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (10 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun6N_AVX213PackWordsImplEPKjmPhS3_                                        [AVX, AVX2]
 _ZN3bun6N_AVX215UnpackWordsImplEPKhmS2_mPjPm                                   [AVX, AVX2]
-_ZN3bun6N_AVX313PackWordsImplEPKjmPhS3_                                        [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
-_ZN3bun6N_AVX315UnpackWordsImplEPKhmS2_mPjPm                                   [AVX, AVX2]
 _ZN3bun9N_AVX3_DL13PackWordsImplEPKjmPhS3_                                     [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
 _ZN3bun9N_AVX3_DL15UnpackWordsImplEPKhmS2_mPjPm                                [AVX, AVX2]
 _ZN3bun10N_AVX3_SPR13PackWordsImplEPKjmPhS3_                                   [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
@@ -779,12 +729,10 @@ _ZN3bun9N_AVX10_215UnpackWordsImplEPKhmS2_mPjPm                                [
 
 # ----------------------------------------------------------------------------
 # Bun source-map VLQ decoder (src/jsc/bindings/highway_sourcemap.cpp).
-# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (12 symbols)
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (10 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun6N_AVX215CountDelimsImplEPKhm                                           [AVX, AVX2]
 _ZN3bun6N_AVX217ParseMappingsImplEPKhmPiS3_S3_S3_miS3_Pm                       [AVX, AVX2, BMI1, BMI2]
-_ZN3bun6N_AVX315CountDelimsImplEPKhm                                           [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
-_ZN3bun6N_AVX317ParseMappingsImplEPKhmPiS3_S3_S3_miS3_Pm                       [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 _ZN3bun9N_AVX10_215CountDelimsImplEPKhm                                        [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 _ZN3bun9N_AVX10_217ParseMappingsImplEPKhmPiS3_S3_S3_miS3_Pm                    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
 _ZN3bun9N_AVX3_DL15CountDelimsImplEPKhm                                        [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
@@ -829,7 +777,7 @@ _ZN3bun6N_AVX2L10UnfilterUpEPhPKhm                                             [
 
 # ----------------------------------------------------------------------------
 # Bun CRC-32 and Adler-32 (src/jsc/bindings/highway_checksums.cpp).
-# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets,
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets, CPUID in ChooseCrc32 for PCLMULQDQ,
 # and CPUID in N_AVX2::Crc32 for Crc32Vpclmulqdq. (6 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun6N_SSE4L5Crc32EjPKhm             [PCLMULQDQ]
@@ -891,10 +839,9 @@ _ZN3bun6N_AVX224WebpReconstructSubblocksEPKhS2_S2_S2_PKsPh                     [
 
 
 # ----------------------------------------------------------------------------
-# Bun xxHash3 (src/jsc/bindings/xxhash3.cpp). Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (6 symbols)
+# Bun xxHash3 (src/jsc/bindings/xxhash3.cpp). Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (5 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun4xxh36N_AVX28HashLongEPKhmS3_                                          [AVX, AVX2, BMI2]
-_ZN3bun4xxh36N_AVX38HashLongEPKhmS3_                                          [AVX, AVX2, AVX512DQ, AVX512F, BMI2]
 _ZN3bun4xxh39N_AVX3_DL8HashLongEPKhmS3_                                       [AVX, AVX2, AVX512DQ, AVX512F, BMI2]
 _ZN3bun4xxh310N_AVX3_SPR8HashLongEPKhmS3_                                     [AVX, AVX2, AVX512DQ, AVX512F, BMI2]
 _ZN3bun4xxh311N_AVX3_ZEN48HashLongEPKhmS3_                                    [AVX, AVX2, AVX512DQ, AVX512F, BMI2]
@@ -1134,7 +1081,7 @@ _RNvNt<rust-hash>12blake2b_simd4avx214compress1_loop  [AVX, AVX2]
 # ----------------------------------------------------------------------------
 # Bun.Image highway kernels (image_resize.cpp). Gate: BUN_HWY_DISPATCH ->
 # hwy::SupportedTargets() via CPUID. Same gate as the highway_strings block.
-# (46 symbols; union of glibc + musl LTO outcomes)
+# (38 symbols; union of glibc + musl LTO outcomes)
 # ----------------------------------------------------------------------------
 _ZN9bun_image10N_AVX3_SPRL12ModulateImplEPhmff  [AVX, AVX512F]
 _ZN9bun_image10N_AVX3_SPRL12Rotate90ImplEPKhmmPh  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
@@ -1160,14 +1107,6 @@ _ZN9bun_image6N_AVX2L18NearestPaletteImplEPKhjiiii  [AVX]
 _ZN9bun_image6N_AVX2L8VertPassEPKhmmPhmPKNS_4SpanEPKsm  [AVX, AVX2, BMI1, FMA]
 _ZN9bun_image6N_AVX2L9FlipHImplEPKhmmPh  [AVX, AVX2]
 _ZN9bun_image6N_AVX2L9HorizPassEPKhmmPhmPKNS_4SpanEPKsm  [AVX, AVX2, BMI1, FMA]
-_ZN9bun_image6N_AVX3L12ModulateImplEPhmff  [AVX, AVX512F]
-_ZN9bun_image6N_AVX3L12Rotate90ImplEPKhmmPh  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
-_ZN9bun_image6N_AVX3L13Rotate180ImplEPKhmmPh  [AVX, AVX2, AVX512F]
-_ZN9bun_image6N_AVX3L13Rotate270ImplEPKhmmPh  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
-_ZN9bun_image6N_AVX3L18NearestPaletteImplEPKhjiiii  [AVX]
-_ZN9bun_image6N_AVX3L8VertPassEPKhmmPhmPKNS_4SpanEPKsm  [AVX, AVX512BW, AVX512F, AVX512VL, BMI1, FMA]
-_ZN9bun_image6N_AVX3L9FlipHImplEPKhmmPh  [AVX, AVX2, AVX512F]
-_ZN9bun_image6N_AVX3L9HorizPassEPKhmmPhmPKNS_4SpanEPKsm  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
 _ZN9bun_image9N_AVX3_DLL12ModulateImplEPhmff  [AVX, AVX512F]
 _ZN9bun_image9N_AVX3_DLL12Rotate90ImplEPKhmmPh  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
 _ZN9bun_image9N_AVX3_DLL13Rotate180ImplEPKhmmPh  [AVX, AVX2, AVX512F]
@@ -1186,14 +1125,11 @@ _ZN9bun_image9N_AVX10_2L9HorizPassEPKhmmPhmPKNS_4SpanEPKsm  [AVX, AVX2, AVX512VL
 
 # ----------------------------------------------------------------------------
 # Bun's Highway kernels for the scanner of `bun check`, `bun lint` and `bun fmt`. Gate: hwy::SupportedTargets via CPUID.
-# (18 symbols)
+# (15 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun6N_AVX219ScannerRunStopsImplEPKhmPhm        [AVX, AVX2, BMI1, BMI2]
 _ZN3bun6N_AVX214LineStartsImplEPKhmPj              [AVX, AVX2, BMI1, BMI2]
 _ZN3bun6N_AVX213OddBlocksImplEPKhmPm               [AVX, AVX2, BMI1, BMI2]
-_ZN3bun6N_AVX319ScannerRunStopsImplEPKhmPhm        [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
-_ZN3bun6N_AVX314LineStartsImplEPKhmPj              [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
-_ZN3bun6N_AVX313OddBlocksImplEPKhmPm               [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 _ZN3bun9N_AVX10_219ScannerRunStopsImplEPKhmPhm     [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
 _ZN3bun9N_AVX10_214LineStartsImplEPKhmPj           [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
 _ZN3bun9N_AVX10_213OddBlocksImplEPKhmPm            [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]

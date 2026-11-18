@@ -4,6 +4,7 @@ import { memoryUsage as jscMemoryUsage } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isRoot, isWindows, tempDir, tmpdirSync } from "harness";
+import { constants as zlibConstants } from "node:zlib";
 import { basename, join, resolve } from "path";
 import { getHeapStatistics } from "v8";
 
@@ -791,7 +792,7 @@ it("process.versions", async () => {
   }
 
   // One hexadecimal digit for each part of the version.
-  const { ZLIB_VERNUM } = require("node:zlib").constants;
+  const { ZLIB_VERNUM } = zlibConstants;
   expect(process.versions.zlib).toStartWith([...ZLIB_VERNUM.toString(16)].slice(0, 3).join("."));
 
   expect(process.versions).toHaveProperty("usockets");

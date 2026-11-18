@@ -19,6 +19,9 @@ pub const MATCH_SPAN: usize = 320;
 const CHUNK: usize = 32;
 const MAX_LEN: usize = MATCH_SPAN - (CHUNK - 1);
 
+/// About where the one behind a long match is written.
+pub const NEXT_MATCH_OFFSET: usize = 256;
+
 /// A match is read from one and written to another, and they may overlap.
 pub type Span<T = u8> = [Cell<T>; MATCH_SPAN];
 
@@ -32,8 +35,8 @@ fn prefetch<T>(span: &Span<T>, offset: usize) {
     }
 }
 
-/// Initializes the first `len` bytes of `to`, up to `MAX_LEN`, if the first `distance` of `from` are: the kernel repeats those,
-/// or `len` is no more than that, or each chunk ends in front of the one that it is written to.
+/// If `to` starts `distance` bytes behind the start of `from` and those are initialized, so are the first `len` of `to`
+/// afterwards, up to `MAX_LEN`: the kernel repeats them, or `len` is no more, or each chunk ends in front of its copy.
 #[inline(always)]
 fn copy_cells<T: Copy>(
     from: &Span<T>,
@@ -138,7 +141,6 @@ impl<'a> Appender<'a> {
     /// `false` if `distance` is out of range, or there is no room for a `Span`.
     #[inline(always)]
     pub fn copy(&mut self, distance: usize, len: usize) -> bool {
-        const PREFETCHED_AHEAD: usize = 256;
         let Some(to) = self.rest.first_chunk() else {
             return false;
         };
@@ -148,7 +150,7 @@ impl<'a> Appender<'a> {
         // SAFETY: it starts within `all` and in front of `to`, so it ends in front of the end of `to`.
         let from = unsafe { &*self.all.as_ptr().add(self.position() - distance).cast() };
         let zero = MaybeUninit::new(0);
-        copy_cells(from, to, distance, len, Some(PREFETCHED_AHEAD), Some(zero));
+        copy_cells(from, to, distance, len, Some(NEXT_MATCH_OFFSET), Some(zero));
         self.rest = self.rest.split_at(len.min(MAX_LEN)).1;
         true
     }

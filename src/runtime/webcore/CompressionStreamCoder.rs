@@ -56,16 +56,22 @@ impl Format {
 /// Growth granularity of a step's output buffer.
 const CHUNK: usize = 16 * 1024;
 
-/// One codec call: reserves up to [`CHUNK`] in `out`, and lends `step` the spare capacity up to `cap`.
+/// Reserves up to [`CHUNK`] in `out`, and returns how much it may grow by.
+fn reserve_step(out: &mut Vec<u8>, cap: usize) -> Result<usize, CodecError> {
+    debug_assert!(out.len() < cap);
+    let budget = cap - out.len();
+    out.try_reserve(budget.min(CHUNK))
+        .map_err(|_| CodecError::OutOfMemory)?;
+    Ok(budget)
+}
+
+/// One codec call: lends `step` the spare capacity up to `cap`.
 fn append_step<R>(
     out: &mut Vec<u8>,
     cap: usize,
     step: impl FnOnce(BorrowedCursor<'_, u8>) -> R,
 ) -> Result<R, CodecError> {
-    debug_assert!(out.len() < cap);
-    let budget = cap - out.len();
-    out.try_reserve(budget.min(CHUNK))
-        .map_err(|_| CodecError::OutOfMemory)?;
+    let budget = reserve_step(out, cap)?;
     Ok(append_with(out, budget, step))
 }
 
@@ -328,7 +334,9 @@ impl CompressionStreamCoder {
                             consumed: input.len() - remaining.len(),
                         });
                     }
-                    let status = append_step(out, cap, |out| s.inflate(&mut remaining, out))?
+                    let budget = reserve_step(out, cap)?;
+                    let status = s
+                        .inflate_to_vec(&mut remaining, out, budget)
                         .map_err(|error| zlib_error(error, "inflate failed"))?;
                     match status {
                         inflate::Status::NeedsOutput | inflate::Status::BlockEnd => {}

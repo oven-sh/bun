@@ -10,10 +10,9 @@ mod window;
 use core::cell::Cell;
 
 use bun_core::strings;
-use bun_core::vec::{BorrowedCursor, append_behind};
+use bun_core::vec::BorrowedCursor;
 use bun_deflate::format::{DYNAMIC, MAX_MATCH_LEN, STATIC, STORED};
 use bun_deflate::gzip;
-use bun_highway::zlib::Appender;
 use bun_highway::{adler32, crc32};
 
 use crate::checksum::Checksum;
@@ -130,54 +129,21 @@ fn last_periods_len(bytes: &[u8], period: usize) -> Option<usize> {
         .then(|| last.len() - last.len() % period)
 }
 
-/// Adds `len` bytes, for which there is capacity, to the whole periods that the last `periods_len` are.
+/// Adds `len` bytes, for which there is room, to the whole periods that the last `periods_len` are.
 fn append_periods(
-    vec: &mut Vec<u8>,
+    target: &mut impl Target,
     period: usize,
     mut periods_len: usize,
-    len: usize,
+    mut len: usize,
     checksum: &mut Checksum,
 ) {
     /// And as much again that is being written.
     const CACHED_LEN: usize = 8 * 1024;
-    let end = vec.len() + len;
-    while let left @ 1.. = end - vec.len() {
-        append_behind(vec, left, |bytes, out| {
-            let periods = bytes.split_at(bytes.len() - periods_len).1;
-            checksum.copy(periods.get(..left).unwrap_or(periods), out);
-        });
+    while len != 0 {
+        target.append_again(periods_len, len, checksum);
+        len -= periods_len.min(len);
         periods_len = whole_periods_len(period, CACHED_LEN).min(2 * periods_len);
     }
-}
-
-/// `None` if the room is used up.
-#[inline(always)]
-fn decode_step(
-    tables: &Tables,
-    bits: &mut BitReader<'_>,
-    vec: &mut Vec<u8>,
-    room: usize,
-    reach: Reach,
-    last_distance: &Cell<usize>,
-) -> Result<Option<Status>> {
-    let start = vec.len();
-    if bits.rest.len() >= FAST_INPUT
-        && let Stop::EndOfBlock =
-            codes::decode_to_vec(tables, bits, vec, room, reach, last_distance)?
-    {
-        return Ok(Some(Status::BlockEnd));
-    }
-    let decoded = vec.len() - start;
-    let mut tape = Appender::new(vec, reach.from + decoded, room - decoded);
-    while tape.room() >= SLACK {
-        match codes::decode_one(tables, bits, &mut tape, reach)? {
-            Step::NeedsInput => return Ok(Some(Status::NeedsInput)),
-            Step::EndOfBlock => return Ok(Some(Status::BlockEnd)),
-            Step::Literal | Step::Match(_) => {}
-            Step::OutOfReach => return Err(Damage::DistanceTooFarBack.into()),
-        }
-    }
-    Ok(None)
 }
 
 /// Up to 23.
@@ -289,6 +255,7 @@ impl Inflater {
     }
 
     /// Goes as far as it can, and advances `input` past what it has consumed. After an error only `reset()` helps.
+    /// `out` is zeroed first unless it is initialized, and what is left of it afterwards may have been written to.
     pub fn inflate(&mut self, input: &mut &[u8], out: BorrowedCursor<'_, u8>) -> Result<Status> {
         self.inflate_to_cursor(input, out, false)
     }
@@ -308,6 +275,7 @@ impl Inflater {
         mut out: BorrowedCursor<'_, u8>,
         stops_at_block: bool,
     ) -> Result<Status> {
+        out.ensure_init();
         out.with_unfilled_buf(|buf| self.step(input, buf, stops_at_block))
     }
 
@@ -410,13 +378,13 @@ impl Inflater {
 
     #[inline(always)]
     fn hand_out(&mut self, out: &mut Output<impl Target>) {
-        out.check(&mut self.checksum);
-        if self.window.pending() != 0 {
+        if self.window.pending() | out.unchecked != 0 {
             self.hand_out_pending(out);
         }
     }
 
     fn hand_out_pending(&mut self, out: &mut Output<impl Target>) {
+        out.check(&mut self.checksum);
         let bytes = self.window.hand_out(out.room());
         out.target.append(bytes, &mut self.checksum);
     }
@@ -654,6 +622,8 @@ impl Inflater {
     fn read_block_header(&mut self, bits: &mut BitReader<'_>) -> Result<Option<State>> {
         const TYPE_END: u32 = 3;
         const COUNTS_END: u32 = TYPE_END + Counts::BITS;
+        /// Of a fixed block that has nothing but its end, which is 7 zeros.
+        const EMPTY_END: u32 = TYPE_END + 7;
         if !bits.has(TYPE_END) {
             return Ok(None);
         }
@@ -671,6 +641,10 @@ impl Inflater {
                     return Err(Damage::StoredLengths.into());
                 }
                 State::Stored(len)
+            }
+            STATIC if bits.has(EMPTY_END) && bits.peek(EMPTY_END) >> TYPE_END == 0 => {
+                bits.skip(EMPTY_END);
+                State::BlockBoundary
             }
             STATIC => {
                 bits.skip(TYPE_END);
@@ -764,7 +738,14 @@ impl Inflater {
         false
     }
 
-    /// Leaves the window out, if all that a match may copy from is in the output. `None` if it takes the window to go on.
+    /// Whether all that a match may copy from is in the output, or about to be.
+    #[inline(always)]
+    fn is_all_in_output(&self, out: &Output<impl Target>) -> bool {
+        self.history == 0 || out.len() + self.window.pending() >= self.max_distance
+    }
+
+    /// Leaves the window out. `None` if it takes the window to go on.
+    #[inline(always)]
     fn decode_to_output(
         &mut self,
         bits: &mut BitReader<'_>,
@@ -774,11 +755,6 @@ impl Inflater {
         /// So that the checksum finds it in the cache.
         const STEP: usize = 16 * 1024;
         let pending = self.window.pending();
-        if out.target.vec().is_none()
-            || (self.history != 0 && out.len() + pending < self.max_distance)
-        {
-            return Ok(None);
-        }
         if out.room() < pending + SLACK {
             out.target.grow_early(bits.rest.len());
         }
@@ -796,34 +772,34 @@ impl Inflater {
         let tables = current_tables(&self.dynamic, fixed).ok_or(Error::Internal)?;
         // Not before a step has brought the checksum up to date, nor behind periods that have ended, as many are short.
         let mut looks_for_periods = false;
-        while let (room @ SLACK.., written) = (out.room(), out.len())
-            && let Some(vec) = out.target.vec()
-        {
-            let (start, history) = (vec.len(), written.min(self.max_distance));
+        while let (room @ SLACK.., start) = (out.room(), out.len()) {
             let result = if looks_for_periods
                 && let Some(repeated) = LongestMatch::peek(tables, bits)
                 && repeated.distance <= self.max_distance
-                && let Some(periods_len) =
-                    last_periods_len(vec.split_at(start - written).1, repeated.distance)
+                && let Some(periods_len) = last_periods_len(out.target.filled(), repeated.distance)
             {
                 debug_assert_eq!(out.unchecked, 0);
                 let len = repeated.take_all(bits, 0, room - MAX_MATCH_LEN);
-                append_periods(vec, repeated.distance, periods_len, len, &mut self.checksum);
+                let (target, checksum) = (&mut out.target, &mut self.checksum);
+                append_periods(target, repeated.distance, periods_len, len, checksum);
                 looks_for_periods = len > room - MAX_MATCH_LEN;
                 Ok(None)
             } else {
+                let history = start.min(self.max_distance);
                 let reach = Reach {
                     max: self.max_distance,
                     available: history,
                     from: history,
                 };
                 let distance = Cell::from_mut(&mut self.pending_distance);
-                let result = decode_step(tables, bits, vec, room.min(STEP), reach, distance);
-                out.unchecked += vec.len() - start;
+                let result = out
+                    .target
+                    .decode(tables, bits, room.min(STEP), reach, distance);
+                out.unchecked += out.len() - start;
                 looks_for_periods = true;
                 result
             };
-            out.unrecorded += vec.len() - start;
+            out.unrecorded += out.len() - start;
             let status = result?;
             if status.is_none() || out.unchecked >= STEP / 2 {
                 out.check(&mut self.checksum);
@@ -852,7 +828,9 @@ impl Inflater {
             {
                 return Ok(Status::NeedsOutput);
             }
-            if let Some(status) = self.decode_to_output(bits, out, fixed)? {
+            if self.is_all_in_output(out)
+                && let Some(status) = self.decode_to_output(bits, out, fixed)?
+            {
                 return Ok(status);
             }
             if out.unrecorded != 0 {
@@ -880,14 +858,15 @@ impl Inflater {
                 let filled = out.target.filled().as_ptr_range().end.addr();
                 let offset = filled.wrapping_sub(window.pending_address());
                 let distance = Cell::from_mut(&mut self.pending_distance);
-                let stop = codes::decode_to_window(
-                    tables, bits, window, fast_limit, offset, reach, distance,
+                let slice = window.bytes_and_end();
+                let stop = codes::decode_to_slice(
+                    tables, bits, slice, fast_limit, offset, reach, distance,
                 )?;
                 if let Stop::EndOfBlock = stop {
                     return Ok(Status::BlockEnd);
                 }
             }
-            let mut lap = Lap::new(window, limit, None)?;
+            let mut lap = Lap::new(window.bytes_and_end(), limit, None)?;
             while lap.position() <= full && lap.room() >= SLACK {
                 self.pending_distance = match codes::decode_one(tables, bits, &mut lap, reach)? {
                     Step::NeedsInput => return Ok(Status::NeedsInput),

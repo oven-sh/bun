@@ -460,10 +460,11 @@ fn refused_memory_is_an_error_where_a_small_window_needs_more() {
         let expected = [&bytes[..len], &bytes[..9]].concat();
         refuse_each_allocation(|| {
             let mut room = [0; 3200];
-            let mut out = BorrowedBuf::from(&mut room[..]);
             let mut inflater = Inflater::with_window_bits(Container::Raw, 9)?;
-            let status = inflater.inflate(&mut &stream[..], out.unfilled())?;
-            assert!(status == Status::StreamEnd && out.filled() == expected);
+            let (mut input, (first, rest)) = (&stream[..], room.split_at_mut(1));
+            inflater.inflate(&mut input, BorrowedBuf::from(first).unfilled())?;
+            let status = inflater.inflate(&mut input, BorrowedBuf::from(rest).unfilled())?;
+            assert!(status == Status::StreamEnd && room.starts_with(&expected));
             Ok(())
         });
     }

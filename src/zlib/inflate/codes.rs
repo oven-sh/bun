@@ -7,9 +7,10 @@ use bun_deflate::format::MAX_MATCH_LEN;
 use bun_highway::with_bmi2;
 use bun_highway::zlib::{Appender, Span, copy_match};
 
+use super::Status;
 use super::bits::{BitReader, REFILLED_BITS};
 use super::tables::{DISTANCE_BITS, Entry, LITERAL_LENGTH_BITS, Special, Tables};
-use super::window::{LAP, SLACK, Window};
+use super::window::{LAP, SLACK};
 use crate::error::{Damage, Error, Result};
 
 /// How far back a match may start.
@@ -73,13 +74,13 @@ impl Tape for Appender<'_> {
     }
 }
 
-/// The window, whose end moves once this is dropped.
+/// The window, or something that has all that is within reach in front of its end, which moves once this is dropped.
 pub(super) struct Lap<'a> {
     all: &'a [Cell<u8>],
     rest: &'a [Cell<u8>],
     rest_end: usize,
     end: &'a mut usize,
-    /// From an address in the window to where that byte will be handed out.
+    /// From an address to one that will be written to soon.
     output_offset: Option<usize>,
 }
 
@@ -87,17 +88,17 @@ impl<'a> Lap<'a> {
     /// Nothing starts at or behind `limit`.
     #[inline(always)]
     pub(super) fn new(
-        window: &'a mut Window,
+        (bytes, end): (&'a mut [u8], &'a mut usize),
         limit: usize,
         output_offset: Option<usize>,
     ) -> Result<Self> {
-        let all = Cell::from_mut(window.bytes.as_mut_slice()).as_slice_of_cells();
+        let all = Cell::from_mut(bytes).as_slice_of_cells();
         let rest_end = limit + SLACK - 1;
         Ok(Self {
             all,
-            rest: all.get(window.end..rest_end).ok_or(Error::Internal)?,
+            rest: all.get(*end..rest_end).ok_or(Error::Internal)?,
             rest_end,
-            end: &mut window.end,
+            end,
             output_offset,
         })
     }
@@ -202,8 +203,8 @@ macro_rules! fast_decoder {
 
 fast_decoder! {
     /// The arguments of `Lap::new()`.
-    decode_to_window(window: &mut Window, limit: usize, output_offset: usize; reach)
-        => Lap::new(window, limit, Some(output_offset))?
+    decode_to_slice(slice: (&mut [u8], &mut usize), limit: usize, output_offset: usize; reach)
+        => Lap::new(slice, limit, Some(output_offset))?
 }
 
 fast_decoder! {
@@ -468,6 +469,25 @@ pub(super) fn decode_one(
         Symbol::Match { len, distance } if tape.copy(distance, len) => Ok(Step::Match(distance)),
         Symbol::Match { .. } => Err(Error::Internal),
     }
+}
+
+/// Where there is room for all that starts. `None` if that is used up.
+#[inline(always)]
+pub(super) fn decode_slowly(
+    tables: &Tables,
+    bits: &mut BitReader<'_>,
+    mut tape: impl Tape,
+    reach: Reach,
+) -> Result<Option<Status>> {
+    while tape.room() >= SLACK {
+        match decode_one(tables, bits, &mut tape, reach)? {
+            Step::NeedsInput => return Ok(Some(Status::NeedsInput)),
+            Step::EndOfBlock => return Ok(Some(Status::BlockEnd)),
+            Step::Literal | Step::Match(_) => {}
+            Step::OutOfReach => return Err(Damage::DistanceTooFarBack.into()),
+        }
+    }
+    Ok(None)
 }
 
 pub(super) enum NoMatch {

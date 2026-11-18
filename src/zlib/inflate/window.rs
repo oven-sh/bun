@@ -76,6 +76,11 @@ impl Window {
         self.bytes.get(start..self.handed_out).unwrap_or_default()
     }
 
+    #[inline]
+    pub(super) fn bytes_and_end(&mut self) -> (&mut [u8], &mut usize) {
+        (&mut self.bytes, &mut self.end)
+    }
+
     /// Up to where `end` may be when something is written.
     #[inline]
     pub(super) fn limit(&self) -> usize {

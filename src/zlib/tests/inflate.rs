@@ -1,4 +1,4 @@
-use bun_core::vec::BorrowedBuf;
+use bun_core::vec::{BorrowedBuf, append_with};
 use bun_zlib::inflate::{Container, SPARE_CAPACITY, Status, has_zlib_header};
 use bun_zlib::{Damage, Error, Inflater, Result};
 
@@ -23,14 +23,15 @@ fn step(
         status = inflater.inflate_to_vec(input, &mut bytes, room);
         assert!(bytes.drain(..3).eq(*b"old"));
     } else {
-        bytes = vec![0; room];
-        let mut out = BorrowedBuf::from(&mut bytes[..]);
+        bytes = vec![0xa5; 40 + room + 40];
+        let mut out = BorrowedBuf::from(&mut bytes[40..][..room]);
         status = match by_blocks {
             true => inflater.inflate_block(input, out.unfilled()),
             false => inflater.inflate(input, out.unfilled()),
         };
         let written = out.len();
-        bytes.truncate(written);
+        assert!(bytes[..40] == [0xa5; 40] && bytes[40 + room..] == [0xa5; 40]);
+        bytes = bytes[40..][..written].to_vec();
     }
     match status {
         Ok(Status::NeedsInput) => assert!(input.is_empty()),
@@ -60,8 +61,16 @@ fn run(
         let (len, room) = sizes();
         let mut piece = &input[read..input.len().min(read + len)];
         let len = piece.len();
-        let (written, status) = step(inflater, &mut piece, room, by_blocks);
+        // What follows an earlier call's output is put together in the window.
+        let is_split = read == 0 && module_path!().ends_with("window");
+        let first_room = if is_split { room.min(1) } else { room };
+        let (written, mut status) = step(inflater, &mut piece, first_room, by_blocks);
         bytes.extend(&written);
+        if first_room < room && status == Ok(Status::NeedsOutput) {
+            let written;
+            (written, status) = step(inflater, &mut piece, room - first_room, by_blocks);
+            bytes.extend(&written);
+        }
         let end = match status {
             Err(Error::Damaged(damage)) => Some(End::Damaged(damage)),
             _ => {
@@ -633,13 +642,34 @@ fn nothing_is_left_after_reset() {
             (&whole, &input, End::Stream(whole.len())),
         ] {
             inflater.reset();
-            step(&mut inflater, &mut &first[..cut], room, false)
-                .1
-                .unwrap();
+            let mut input = &first[..cut];
+            for room in [room / 2, room - room / 2] {
+                step(&mut inflater, &mut input, room, false).1.unwrap();
+            }
             inflater.reset();
             let after = run(&mut inflater, next, false, || (999, 999));
             assert_eq!((&after.bytes[..], after.end), (bytes, end), "{cut}");
         }
+    }
+}
+
+#[test]
+fn a_period_does_not_go_on_after_reset() {
+    let mut start = Writer::default();
+    start.fixed(true).literals(&[7]);
+    (0..129).for_each(|_| _ = start.copy(257, 1));
+    let mut next = Writer::default();
+    next.fixed(true).literals(&[7; 40]).copy(258, 41);
+    let next = next.end_block().finish();
+    // The two are about as long as it takes for the output to start over in the window.
+    for more in 200..330 {
+        let first = start.clone().literals(&vec![7; more]).end_block().finish();
+        let mut inflater = Inflater::new(Container::Raw);
+        run(&mut inflater, &first, false, || (99, 999));
+        inflater.reset();
+        let after = run(&mut inflater, &next, false, || (99, 300));
+        assert_eq!(after.end, End::Damaged(Damage::DistanceTooFarBack));
+        assert_eq!(after.bytes, [7; 40]);
     }
 }
 
@@ -741,7 +771,7 @@ fn a_zlib_stream_keeps_to_the_window_in_its_header() {
             let plain = vec![7; 300 + 258 * (matches + 1) + trailing];
             let stream = [&[0x08, 0x1d], &in_zlib(&raw, &plain, None)[2..]].concat();
             let result = run(&mut Inflater::new(Container::Zlib), &stream, false, || {
-                (999, 99_999)
+                (999, 60_000)
             });
             let expected = match is_within {
                 true => (plain.len(), End::Stream(stream.len())),
@@ -1509,5 +1539,48 @@ fn what_comes_before_the_last_period_may_differ_anywhere() {
             assert_eq!(status, Ok(Status::StreamEnd));
             assert!(out == plain::inflate(&stream, &[]).bytes, "{period} {odd}");
         }
+    }
+}
+
+#[test]
+fn a_fixed_block_may_be_empty() {
+    for (empty, len) in (0..9).flat_map(|empty| [3, 4, 10, 11, 258].map(|len| (empty, len))) {
+        let mut stream = Writer::default();
+        (0..empty).for_each(|_| _ = stream.fixed(false).end_block());
+        stream.fixed(false).copy(len, 2).end_block();
+        stream.fixed(true).end_block().fixed(true).literals(b"more");
+        check(&stream.finish(), b"ab", &mut Random::new(len as u64));
+    }
+}
+
+#[test]
+fn the_output_need_not_be_initialized() {
+    let plain = Random::new(22).mixed(9000, 512);
+    let stream = crate::deflate::raw(&plain, 6, 8);
+    let mut out = Vec::with_capacity(9999);
+    out.extend(b"old");
+    let status = append_with(&mut out, usize::MAX, |out| {
+        raw_with(&[]).inflate(&mut &stream[..], out)
+    });
+    assert!(status == Ok(Status::StreamEnd) && out[..3] == *b"old" && out[3..] == plain);
+}
+
+#[test]
+fn a_period_is_no_longer_than_the_header_allows() {
+    for (period, expected) in [
+        (256, Ok(Status::StreamEnd)),
+        (257, Err(Damage::DistanceTooFarBack.into())),
+    ] {
+        let start: Vec<u8> = (0..600).map(|at| (at % period % 251) as u8).collect();
+        let mut raw = Writer::default();
+        raw.fixed(true).literals(&start).copy(258, period);
+        let raw = raw.end_block().finish();
+        let plain = plain::inflate(&raw, &[]).bytes;
+        let stream = [&[0x08, 0x1d], &in_zlib(&raw, &plain, None)[2..]].concat();
+        // So that a step ends in front of the match.
+        let mut out = Vec::with_capacity(start.len() + SPARE_CAPACITY - 1);
+        let mut inflater = Inflater::new(Container::Zlib);
+        let status = inflater.inflate_to_vec(&mut &stream[..], &mut out, usize::MAX);
+        assert_eq!(status, expected);
     }
 }

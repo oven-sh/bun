@@ -1,7 +1,15 @@
 //! Where one call puts its output.
 
-use bun_core::vec::{BorrowedBuf, append_with};
+use core::cell::Cell;
 
+use bun_core::vec::{BorrowedBuf, append_behind, append_with};
+use bun_highway::zlib::{Appender, NEXT_MATCH_OFFSET};
+
+use super::Status;
+use super::bits::BitReader;
+use super::codes::{self, FAST_INPUT, Lap, Reach, Stop};
+use super::tables::Tables;
+use super::window::SLACK;
 use crate::checksum::Checksum;
 use crate::error::Result;
 
@@ -13,8 +21,28 @@ pub(super) trait Target {
     fn grow(&mut self) -> Result<bool>;
     /// When it is nearly full: if that is cheap, or what `input_len` bytes stand for is unlikely to fit.
     fn grow_early(&mut self, input_len: usize);
-    /// One that ends with `filled()`, and that nobody else writes to or looks behind the end of.
-    fn vec(&mut self) -> Option<&mut Vec<u8>>;
+    /// The last `back` bytes, or the first `max` of them.
+    fn append_again(&mut self, back: usize, max: usize, checksum: &mut Checksum);
+    /// Touches no more than `room` bytes, and the `reach.from` in front of them. `None` if they are all but used up.
+    fn decode(
+        &mut self,
+        tables: &Tables,
+        bits: &mut BitReader<'_>,
+        room: usize,
+        reach: Reach,
+        last_distance: &Cell<usize>,
+    ) -> Result<Option<Status>>;
+}
+
+/// Lends `fill` all of `buf`, which is initialized, and its length.
+#[inline(always)]
+fn with_all<R>(buf: &mut BorrowedBuf<'_, u8>, fill: impl FnOnce(&mut [u8], &mut usize) -> R) -> R {
+    debug_assert!(buf.is_init());
+    let mut len = buf.len();
+    let mut all = buf.clear().unfilled();
+    let result = fill(all.ensure_init(), &mut len);
+    all.advance_checked(len);
+    result
 }
 
 impl Target for &mut BorrowedBuf<'_, u8> {
@@ -41,10 +69,53 @@ impl Target for &mut BorrowedBuf<'_, u8> {
     #[inline]
     fn grow_early(&mut self, _: usize) {}
 
-    #[inline]
-    fn vec(&mut self) -> Option<&mut Vec<u8>> {
-        None
+    fn append_again(&mut self, back: usize, max: usize, checksum: &mut Checksum) {
+        with_all(self, |all, len| {
+            let (filled, rest) = all.split_at_mut(*len);
+            let last = filled.split_at(*len - back).1;
+            let bytes = last.get(..max).unwrap_or(last);
+            checksum.copy(bytes, BorrowedBuf::from(rest).unfilled());
+            *len += bytes.len();
+        });
     }
+
+    #[inline(always)]
+    fn decode(
+        &mut self,
+        tables: &Tables,
+        bits: &mut BitReader<'_>,
+        room: usize,
+        reach: Reach,
+        last_distance: &Cell<usize>,
+    ) -> Result<Option<Status>> {
+        with_all(self, |all, len| {
+            let start = *len - reach.from;
+            let bytes = all.get_mut(start..*len + room).unwrap_or_default();
+            let mut end = reach.from;
+            let result = decode_in_place(tables, bits, (bytes, &mut end), reach, last_distance);
+            *len = start + end;
+            result
+        })
+    }
+}
+
+#[inline(always)]
+fn decode_in_place(
+    tables: &Tables,
+    bits: &mut BitReader<'_>,
+    (bytes, end): (&mut [u8], &mut usize),
+    reach: Reach,
+    last_distance: &Cell<usize>,
+) -> Result<Option<Status>> {
+    let (limit, ahead) = (bytes.len() - (SLACK - 1), NEXT_MATCH_OFFSET);
+    if bits.rest.len() >= FAST_INPUT
+        && let slice = (&mut *bytes, &mut *end)
+        && let Stop::EndOfBlock =
+            codes::decode_to_slice(tables, bits, slice, limit, ahead, reach, last_distance)?
+    {
+        return Ok(Some(Status::BlockEnd));
+    }
+    codes::decode_slowly(tables, bits, Lap::new((bytes, end), limit, None)?, reach)
 }
 
 const MIN_GROWTH: usize = 4096;
@@ -103,9 +174,32 @@ impl Target for Growing<'_> {
         }
     }
 
-    #[inline]
-    fn vec(&mut self) -> Option<&mut Vec<u8>> {
-        Some(self.vec)
+    fn append_again(&mut self, back: usize, max: usize, checksum: &mut Checksum) {
+        append_behind(self.vec, max, |bytes, out| {
+            let last = bytes.split_at(bytes.len() - back).1;
+            checksum.copy(last.get(..max).unwrap_or(last), out);
+        });
+    }
+
+    #[inline(always)]
+    fn decode(
+        &mut self,
+        tables: &Tables,
+        bits: &mut BitReader<'_>,
+        room: usize,
+        reach: Reach,
+        last_distance: &Cell<usize>,
+    ) -> Result<Option<Status>> {
+        let start = self.vec.len();
+        if bits.rest.len() >= FAST_INPUT
+            && let Stop::EndOfBlock =
+                codes::decode_to_vec(tables, bits, self.vec, room, reach, last_distance)?
+        {
+            return Ok(Some(Status::BlockEnd));
+        }
+        let decoded = self.vec.len() - start;
+        let tape = Appender::new(self.vec, reach.from + decoded, room - decoded);
+        codes::decode_slowly(tables, bits, tape, reach)
     }
 }
 
@@ -130,10 +224,14 @@ impl<T: Target> Output<T> {
 
     #[inline(always)]
     pub(super) fn check(&mut self, checksum: &mut Checksum) {
-        if let Some(vec) = self.target.vec()
-            && let len @ 1.. = core::mem::take(&mut self.unchecked)
-        {
-            checksum.add(vec.split_at(vec.len() - len).1);
+        if self.unchecked != 0 {
+            self.check_now(checksum);
         }
+    }
+
+    #[inline(never)]
+    fn check_now(&mut self, checksum: &mut Checksum) {
+        let start = self.len() - core::mem::take(&mut self.unchecked);
+        checksum.add(self.target.filled().split_at(start).1);
     }
 }

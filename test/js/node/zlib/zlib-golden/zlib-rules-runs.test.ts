@@ -73,3 +73,19 @@ test("that is cut short, or interrupted by reset()", () => {
   engine.write(other.data, Z_FINISH);
   expect([engine.error, engine.output.equals(other.expected)]).toEqual([undefined, true]);
 });
+
+test.each([1, 7, 31, 32, 300])("stays in the range that it is given, at distance %d", distance => {
+  const { data, expected } = run(distance, 300, 32768);
+  const wrong: number[] = [];
+  for (const room of [383, 384, 385, 700, 20000, expected.length - 1, expected.length, expected.length + 400]) {
+    const stream: any = zlib.createInflateRaw();
+    const out = Buffer.alloc(64 + room + 64, 0xa5);
+    stream._handle.writeSync(Z_SYNC_FLUSH, data, 0, data.length, out, 64, room);
+    const written = room - stream._writeState[0];
+    stream.close();
+    const around = Buffer.concat([out.subarray(0, 64), out.subarray(64 + room)]);
+    const isRight = out.subarray(64, 64 + written).equals(expected.subarray(0, room));
+    if (!isRight || !around.equals(Buffer.alloc(128, 0xa5))) wrong.push(room);
+  }
+  expect(wrong).toEqual([]);
+});

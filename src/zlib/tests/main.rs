@@ -5,6 +5,9 @@
 mod checksums;
 mod deflate;
 mod inflate;
+#[expect(clippy::duplicate_mod, reason = "`run()` goes by the name")]
+#[path = "inflate.rs"]
+mod inflate_through_window;
 #[expect(clippy::duplicate_mod, reason = "`step()` goes by the name")]
 #[path = "inflate.rs"]
 mod inflate_to_vec;

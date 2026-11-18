@@ -92,6 +92,7 @@ pub(crate) fn compute_chunks<'a>(
 
     let entry_source_indices = this.graph.entry_points.items_source_index();
     let css_asts = &parse_graph.css_asts;
+    let css_js_stubs = &parse_graph.css_js_stubs;
     let mut html_chunks: ArrayHashMap<&[u8], Chunk> = ArrayHashMap::new();
     let loaders = parse_graph.input_files.items_loader();
     let sources = parse_graph.input_files.items_source();
@@ -239,11 +240,26 @@ pub(crate) fn compute_chunks<'a>(
                     hasher.final_()
                 };
 
-                let css_chunk_entry = css_chunks.get_or_put(css_chunk_key(
-                    &css_chunks,
-                    hash_to_use,
-                    order.slice(),
-                ))?;
+                let mut key = css_chunk_key(&css_chunks, hash_to_use, order.slice());
+                // The stylesheet of an `import()` can be an entry point too. Its JS stub takes the CSS chunk of that entry point.
+                if !this.options.css_chunking
+                    && let Some(stylesheet) = css_js_stubs.stylesheet_of(source_index)
+                    && let Some(entry_id) = entry_source_indices
+                        .iter()
+                        .position(|&entry| entry == stylesheet)
+                {
+                    let mut own_bit = AutoBitSet::init_empty(this.graph.entry_points.len())?;
+                    own_bit.set(entry_id);
+                    let own = css_chunk_key(
+                        &css_chunks,
+                        bun_wyhash::hash(own_bit.bytes(this.graph.entry_points.len())),
+                        order.slice(),
+                    );
+                    if css_chunks.contains(&own) {
+                        key = own;
+                    }
+                }
+                let css_chunk_entry = css_chunks.get_or_put(key)?;
 
                 if let chunk::Content::Javascript(js) = &mut js_chunk_entry.value_ptr.content {
                     js.css_chunks = Box::<[u32]>::from(
@@ -362,6 +378,16 @@ pub(crate) fn compute_chunks<'a>(
                                 .value_ptr
                                 .flags
                                 .insert(chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD);
+                        }
+
+                        // The first file of a chunk stands for it (its name, its loader). The JS stub of a stylesheet does so only when the chunk has no other file.
+                        let first = js_chunk_entry.value_ptr.entry_point;
+                        if !first.is_entry_point()
+                            && css_js_stubs.stylesheet_of(first.source_index()).is_some()
+                            && css_js_stubs.stylesheet_of(source_index.get()).is_none()
+                        {
+                            js_chunk_entry.value_ptr.entry_point =
+                                chunk::EntryPoint::non_entry_point(source_index.get(), 0);
                         }
 
                         let entry = js_chunk_entry

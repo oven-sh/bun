@@ -580,6 +580,53 @@ export default function () {
     },
   );
 
+  // With a separate SSR graph, three graphs share the row of the stylesheet. The server graph and the SSR graph
+  // each write a chunk for their own import() of it.
+  test.concurrent("a route and a client component import() one CSS module with a separate SSR graph", async () => {
+    using dir = tempDir("bake-production-css-module-ssr", {
+      "server.ts": `
+        export async function prerender(meta) {
+          return { files: { "index.html": "<body>page=" + (await meta.pageModule.default()) + "</body>" } };
+        }
+      `,
+      "app.ts": `
+        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", clientEntryPoint: "./client.ts" };
+        const serverComponents = {
+          separateSSRGraph: true,
+          serverRuntimeImportSource: "./rsc.ts",
+          serverRegisterClientReferenceExport: "registerClientReference",
+        };
+        const plugins = [{ name: "declines", setup(build) { build.onResolve({ filter: /\\.css$/ }, () => undefined); } }];
+        export default { app: { framework: { fileSystemRouterTypes: [fsr], serverComponents }, plugins } };
+      `,
+      "rsc.ts": `export function registerClientReference(value, file, uid) { return { value, file, uid }; }`,
+      "client.ts": `console.log("client");`,
+      "x.module.css": `.foo{color:red}`,
+      "routes/index.ts": `
+        import { Button } from "../components/Button";
+        export default async () => JSON.stringify(await import("../x.module.css")) + " " + Button.uid;
+      `,
+      "components/Button.ts": `
+        "use client";
+        export async function Button() { return JSON.stringify(await import("../x.module.css")); }
+      `,
+    });
+
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--app", "./app.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    const html = await Bun.file(path.join(String(dir), "dist", "index.html"))
+      .text()
+      .catch(() => stderr);
+    expect(html).toBe(`<body>page=${namespace} Button</body>`);
+    expect(exitCode).toBe(0);
+  });
+
   test("fails the build for a route file with an invalid name", async () => {
     using dir = tempDir("bake-production-invalid-route", {
       "app.ts": `export default { app: { framework: ${JSON.stringify(minimalFramework)} } };`,

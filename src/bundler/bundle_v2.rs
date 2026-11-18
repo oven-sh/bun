@@ -2462,8 +2462,13 @@ pub mod bv2_impl {
             target: options::Target,
         ) -> Result<(crate::Graph::InputFile<'a>, JSAst<'a>), Error> {
             let heap = self.graph.heap;
+            // One stylesheet row can have a stub in each graph of `bun build --app`. The path names the graph, as for the other rows.
+            let path = self.path_with_pretty_initialized(
+                &self.graph.input_files.items_source()[stylesheet as usize].path,
+                target,
+            )?;
             let source: &'a bun_ast::Source<'a> = heap.alloc(bun_ast::Source {
-                path: self.graph.input_files.items_source()[stylesheet as usize].path,
+                path,
                 index: bun_ast::Index(source_index),
                 ..Default::default()
             });

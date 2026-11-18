@@ -410,6 +410,11 @@ describe("css", () => {
     bun: { target: "bun" },
     cli: { backend: "cli" },
   } as const;
+  // A file that another file loads is in a wrapper. The class names are the same there.
+  const valueLoaders = {
+    required: (file: string) => `require(".${file}"); export {};`,
+    imported: (file: string) => `import(".${file}");`,
+  };
   for (const [shape, { files, entryPoints = ["/entry.js"], run, skipModes = [] }] of Object.entries(valueShapes)) {
     for (const [mode, options] of Object.entries(valueModes)) {
       if (skipModes.includes(mode)) continue;
@@ -419,6 +424,22 @@ describe("css", () => {
         outdir: "/out",
         ...options,
         run: Object.entries(run).map(([file, stdout]) => ({ file: "/out/" + file, stdout })),
+      });
+    }
+    for (const [mode, load] of Object.entries(valueLoaders)) {
+      if (skipModes.includes(mode)) continue;
+      const loaded = entryPoints
+        .map(file => ({ file, name: file.slice(1).replace(/\.\w+$/, ".js") }))
+        .filter(({ name }) => name in run);
+      itBundled(`css-module/${shape}/${mode}`, {
+        files: {
+          ...stylesheets,
+          ...files,
+          ...Object.fromEntries(loaded.map(({ file, name }) => ["/load-" + name, load(file)])),
+        },
+        entryPoints: loaded.map(({ name }) => "/load-" + name),
+        outdir: "/out",
+        run: loaded.map(({ name }) => ({ file: "/out/load-" + name, stdout: run[name] })),
       });
     }
   }
@@ -464,13 +485,13 @@ describe("css", () => {
           };
         });
 
-        // image.png
-        var image_default = "./image-mphfvab5.png";
-
         // base.module.css
         var base_module_default = {
           base: "base_1Cz41w"
         };
+
+        // image.png
+        var image_default = "./image-mphfvab5.png";
 
         // entry.js
         var styles = require_styles_module();

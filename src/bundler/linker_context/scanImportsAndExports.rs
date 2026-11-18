@@ -56,6 +56,7 @@ pub(crate) fn scan_imports_and_exports(
 
     {
         let css_asts = &this.parse_graph().css_asts;
+        let css_js_stubs = &this.parse_graph().css_js_stubs;
         let ast = this.graph.ast.split_mut();
         let meta = this.graph.meta.split_mut();
         let dyn_ref_aliases = meta.dynamic_import_referenced_aliases;
@@ -99,6 +100,11 @@ pub(crate) fn scan_imports_and_exports(
                 meta.flags[id].did_wrap_dependencies = true;
 
                 continue;
+            }
+
+            // The JS stub of a stylesheet runs nothing: a wrapped importer does not wrap it. It prints ahead of every file.
+            if css_js_stubs.stylesheet_of(id as u32).is_some() {
+                meta.flags[id].did_wrap_dependencies = true;
             }
 
             // Named static imports contribute exactly their aliases to the

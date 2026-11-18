@@ -677,6 +677,30 @@ describe("bundler", () => {
       });
     }
 
+    // The chunk of shared.ts is a TypeScript chunk: PathLike is a type, so the module record of the chunk has no
+    // export of that name. The class names that shared.ts imports do not make it a JavaScript chunk.
+    itBundled("compile/splitting/SharedTypeScriptChunkThatImportsCSSModule", {
+      compile: true,
+      splitting: true,
+      bytecode: true,
+      format: "esm",
+      backend: "cli",
+      files: {
+        "/a.ts": `import { cls, PathLike } from "./shared"; export { PathLike }; console.log("a", cls);`,
+        "/b.ts": `import { cls } from "./shared"; console.log("b", cls);`,
+        "/shared.ts": /* js */ `
+          import styles from "./x.module.css";
+          import { PathLike, existsSync } from "node:fs";
+          export { PathLike };
+          export const cls: string = typeof styles.foo + existsSync("/");
+        `,
+        "/x.module.css": `.foo { color: red }`,
+      },
+      entryPointsRaw: ["./a.ts", "./b.ts"],
+      outfile: "dist/out",
+      run: { file: "dist/out", stdout: "a stringtrue" },
+    });
+
     // A chunk that is only linked statically has no module namespace object.
     itBundled("compile/splitting/NamespaceObjectsOnlyForImportedChunks", {
       compile: true,

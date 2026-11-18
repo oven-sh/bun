@@ -3,7 +3,7 @@ use bun_ast::{ImportKind, ImportRecord, StmtData, StmtOrExpr};
 use bun_collections::{AutoBitSet, StringHashMap, VecExt};
 
 use crate::linker_context::merge_small_chunks::part_has_no_side_effects;
-use crate::options::Loader;
+use crate::options::{Loader, OutputFormat};
 use crate::{Chunk, EntryPoint, Index, IndexInt, LinkerContext, PartRange, chunk, js_meta::Wrap};
 use bun_core::perf;
 
@@ -155,7 +155,16 @@ pub(crate) fn find_imported_parts_in_js_order(
         Vec::with_capacity(parts_prefix.len() + namespace_objects.len() + part_ranges.len());
     parts_in_chunk_order.extend_from_slice(&parts_prefix);
     parts_in_chunk_order.extend_from_slice(&namespace_objects);
-    parts_in_chunk_order.extend_from_slice(&part_ranges);
+    // The class names of a stylesheet exist before any file runs, like a namespace object. The dev server format takes one range per file.
+    let css_js_stubs = &this.parse_graph().css_js_stubs;
+    if css_js_stubs.len() > 0 && this.options.output_format != OutputFormat::InternalBakeDev {
+        let is_stub =
+            |range: &&PartRange| css_js_stubs.stylesheet_of(range.source_index.get()).is_some();
+        parts_in_chunk_order.extend(part_ranges.iter().filter(is_stub).copied());
+        parts_in_chunk_order.extend(part_ranges.iter().filter(|range| !is_stub(range)).copied());
+    } else {
+        parts_in_chunk_order.extend_from_slice(&part_ranges);
+    }
 
     let reached_chunks = if this.graph.code_splitting {
         reached_chunks_in_order(this, chunk, chunk_index, chunk_of_file, order, chunks_len)?
@@ -414,6 +423,7 @@ impl LoadTimeReads {
     fn new(c: &LinkerContext) -> LoadTimeReads {
         let all_parts = c.graph.ast.items_parts();
         let flags = c.graph.meta.items_flags();
+        let css_js_stubs = &c.parse_graph().css_js_stubs;
         let mut first_part_id: Vec<u32> = Vec::with_capacity(all_parts.len());
         let mut file_of_part: Vec<IndexInt> = Vec::new();
         for (file, parts) in all_parts.iter().enumerate() {
@@ -439,10 +449,11 @@ impl LoadTimeReads {
         let mut effects = vec![LoadEffect::Hoisted; parts_len];
         let mut dependents_start: Vec<u32> = vec![0; parts_len + 2];
         for_each_live_part(&mut |file, id, part| {
-            // A wrapped file runs when it is called, and a namespace object prints ahead of every file.
+            // A wrapped file runs when it is called. A namespace object and the class names of a stylesheet print ahead of every file.
             if flags[file].wrap == Wrap::None
                 && file as u32 != Index::RUNTIME.value()
                 && id - first_part_id[file] != bun_ast::NAMESPACE_EXPORT_PART_INDEX
+                && css_js_stubs.stylesheet_of(file as u32).is_none()
             {
                 effects[id as usize] = LoadEffect::of(part);
             }
@@ -602,7 +613,6 @@ enum Edge {
 
 /// The files that a file leads to, in evaluation order, with the part that leads there. `runs`: the load evaluates the file.
 /// A file runs where it is imported, not where its bindings are used: `part.dependencies` does not order what runs.
-/// The JS stub of a stylesheet runs nothing. It goes ahead of the first part that names its class names.
 fn for_each_edge(
     c: &LinkerContext,
     source_index: IndexInt,
@@ -610,8 +620,6 @@ fn for_each_edge(
     mut each: impl FnMut(u32, Edge),
 ) {
     let records = c.graph.ast.items_import_records()[source_index as usize].as_slice();
-    let css_js_stubs = &c.parse_graph().css_js_stubs;
-    let has_css_js_stubs = css_js_stubs.len() > 0;
     if c.parse_graph().css_asts[source_index as usize].is_some()
         || c.parse_graph().input_files.items_loader()[source_index as usize] == Loader::Html
     {
@@ -649,15 +657,6 @@ fn for_each_edge(
                     Edge::LoadLater(other)
                 },
             );
-        }
-        // The part can name the class names through a file that imports the stylesheet later, in an import cycle.
-        if runs_here && has_css_js_stubs {
-            for dependency in part.dependencies.iter() {
-                let other = dependency.source_index.get();
-                if css_js_stubs.stylesheet_of(other).is_some() {
-                    each(part_index, Edge::Import(other));
-                }
-            }
         }
     }
 }
@@ -824,8 +823,6 @@ impl EntryWalk {
         let entry_bits = c.graph.files.items_entry_bits();
         let flags = c.graph.meta.items_flags();
         let css = &c.parse_graph().css_asts;
-        let css_js_stubs = &c.parse_graph().css_js_stubs;
-        let targets = c.graph.ast.items_target();
         let loads = |source_index: IndexInt, loader: u32| {
             files_live.is_set(source_index as usize)
                 && entry_bits[source_index as usize].is_set(loader as usize)
@@ -885,15 +882,10 @@ impl EntryWalk {
                 if other == Index::RUNTIME.value() {
                     return;
                 }
-                // A stylesheet is in no JS chunk. Its JS stub goes where the first `import` of the stylesheet is, also a bare one.
-                let other = if css[other as usize].is_some() {
-                    match css_js_stubs.stub_of(other, targets[source_index as usize]) {
-                        Some(stub) => stub,
-                        None => return,
-                    }
-                } else {
-                    other
-                };
+                // A stylesheet is in no JS chunk.
+                if css[other as usize].is_some() {
+                    return;
+                }
                 if seen.is_set(other as usize) {
                     if !left.is_set(other as usize)
                         && let Some(slot) = slot_of(other)

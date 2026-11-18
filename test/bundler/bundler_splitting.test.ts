@@ -693,6 +693,37 @@ describe("bundler", () => {
     });
   }
 
+  // The entry point that makes the import() has CSS of its own. The CSS of the stylesheet is written once, under
+  // the name of the stylesheet, also when that name has a hash.
+  for (const [naming, entryNaming] of Object.entries({ Default: undefined, WithHash: "[name]-[hash].[ext]" })) {
+    itBundled(`splitting/DynamicImportOfUserSpecifiedCSSEntryPointNextToOtherCSS${naming}`, {
+      files: {
+        "/entry.js": `
+          import './base.css';
+          const mod = await import('./styles.module.css');
+          console.log(Object.keys(mod).join(','), mod.foo);
+        `,
+        "/base.css": `.base { color: blue; }`,
+        "/styles.module.css": `.foo { color: red; }`,
+      },
+      entryPoints: ["/entry.js", "/styles.module.css"],
+      splitting: true,
+      entryNaming,
+      outdir: "/out",
+      onAfterBundle(api) {
+        const outputs = readdirSync(api.outdir)
+          .map(file => file.replace(/-[a-z0-9]{8}\./, "-[hash]."))
+          .sort();
+        expect(outputs).toEqual(
+          entryNaming
+            ? ["entry-[hash].css", "entry-[hash].js", "styles.module-[hash].css", "styles.module-[hash].js"]
+            : ["entry.css", "entry.js", "styles.module-[hash].js", "styles.module.css"],
+        );
+      },
+      run: entryNaming ? undefined : { file: "/out/entry.js", env, stdout: "default,foo foo_-MSaAA" },
+    });
+  }
+
   // With --css-chunking the stylesheet shares a CSS output with the entry point that imports it.
   // The import() used to name that output, or the importing chunk itself.
   test.concurrent.each([
@@ -4750,6 +4781,33 @@ describe("bundler", () => {
         `,
         "helper.ts": `export const helper = { name: "helper" }`,
       },
+    },
+    // The chunk that makes the call holds the class names of a stylesheet, and leaf.ts reads them in the middle of it.
+    "the caller holds the class names of a stylesheet": {
+      files: {
+        "main.ts": `import './barrel.ts'`,
+        "barrel.ts": `
+          import './reader.ts'
+          export { default as styles } from './x.module.css'
+        `,
+        "reader.ts": `
+          import { styles } from './barrel.ts'
+          console.log("loaded", require('./loaded.ts').got)
+          console.log("reader", typeof styles.foo)
+        `,
+        "loaded.ts": `
+          import { load } from './load.ts'
+          export const got = load()
+        `,
+        "load.ts": `export function load() { return require('./leaf.ts').got }`,
+        "leaf.ts": `
+          import styles from './x.module.css'
+          import './barrel.ts'
+          export const got = typeof styles.foo
+        `,
+        "x.module.css": `.foo { color: red }`,
+      },
+      folding: true,
     },
   };
   for (const [name, { files, todo, folding }] of Object.entries(requireCycleGraphs)) {

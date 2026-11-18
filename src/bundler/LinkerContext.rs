@@ -678,9 +678,10 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
             }
         }
 
-        // A stylesheet has no JS parts and no wrapper. What JavaScript reads of it is in its JS stub.
+        // A stylesheet has no JS parts and no wrapper. Its JS stub has no `__esm` wrapper: its class names exist before any file runs.
         if cfg!(debug_assertions) {
             let flags = self.graph.meta.items_flags();
+            let css_js_stubs = &self.parse_graph().css_js_stubs;
             for (source_index, stylesheet) in self.parse_graph().css_asts.iter().enumerate() {
                 debug_assert!(
                     stylesheet.is_none()
@@ -688,6 +689,10 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
                             .find_first_set()
                             .is_none()
                             && flags[source_index].wrap == WrapKind::None)
+                );
+                debug_assert!(
+                    css_js_stubs.stylesheet_of(source_index as u32).is_none()
+                        || flags[source_index].wrap != WrapKind::Esm
                 );
             }
         }

@@ -277,7 +277,7 @@ describe("tsconfig compilerOptions.jsx", () => {
 
     const preserved = transpiler.transformSync(`/* @jsxRuntime preserve */\nexport default <div>hi</div>;`);
     expect(preserved).toContain(`export default <div>hi</div>;`);
-    expect(preserved).not.toContain("jsx-runtime");
+    expect(preserved).not.toMatch(/\/jsx(?:-dev)?-runtime\b/);
     expect(transpiler.scanImports(`/* @jsxRuntime preserve */\nexport default <div>hi</div>;`)).toEqual([]);
     const afterPragma = transpiler.transformSync(`export default <div>hi</div>;`);
     expect(afterPragma).toMatch(/^import \{ jsx(DEV)? as \w+ \} from "solid-js\/jsx(-dev)?-runtime";\n/);

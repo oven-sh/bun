@@ -2910,10 +2910,15 @@ console.log(<div {...obj} key="after" />);`),
       ["automatic", `import { obj } from "./obj";\n${jsx}`],
       ["classic pragma", `/** @jsxRuntime classic */\nimport { obj } from "./obj";\n${jsx}`],
       ["preserve pragma", `${jsx}\nimport { obj } from "./obj";\n/** @jsxRuntime preserve */`],
-    ])("scanImports does not warn with %s", (_, input) => {
+    ])("scanImports does not warn with %s", (runtime, input) => {
       const transpiler = new Bun.Transpiler({ loader: "jsx" });
       const imports = transpiler.scanImports(input);
-      expect(imports).toContainEqual({ kind: "import-statement", path: "./obj" });
+      const sourceImport = { kind: "import-statement", path: "./obj" };
+      if (runtime === "preserve pragma") {
+        expect(imports).toEqual([sourceImport]);
+      } else {
+        expect(imports).toContainEqual(sourceImport);
+      }
     });
   });
 

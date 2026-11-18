@@ -21,7 +21,7 @@ Bun statically links these libraries:
 | Library | License |
 |---------|---------|
 | [`boringssl`](https://boringssl.googlesource.com/boringssl/) | [several licenses](https://boringssl.googlesource.com/boringssl/+/refs/heads/master/LICENSE) |
-| [`brotli`](https://github.com/google/brotli) | MIT |
+| [`brotli`](https://github.com/google/brotli) (not linked: the Brotli codec is derived from parts of it) | MIT |
 | [`libarchive`](https://github.com/libarchive/libarchive) (not linked: `src/tar` is derived from parts of it) | [several licenses](https://github.com/libarchive/libarchive/blob/master/COPYING) |
 | [`llhttp`](https://github.com/nodejs/llhttp) (not linked: `src/http1` is derived from parts of it) | MIT |
 | [`lol-html`](https://github.com/cloudflare/lol-html/tree/master/c-api) | BSD 3-Clause |
@@ -34,7 +34,7 @@ Bun statically links these libraries:
 | [`simdutf`](https://github.com/simdutf/simdutf) | Apache 2.0 |
 | [`tinycc`](https://github.com/tinycc/tinycc) | LGPL v2.1 |
 | [`uSockets`](https://github.com/uNetworking/uSockets) | Apache 2.0 |
-| [`zlib-ng`](https://github.com/zlib-ng/zlib-ng) | zlib |
+| [`zlib-ng`](https://github.com/zlib-ng/zlib-ng) (not linked: `src/zlib` is derived from parts of it) | zlib |
 | [`c-ares`](https://github.com/c-ares/c-ares) | MIT licensed |
 | [`libicu`](https://github.com/unicode-org/icu) 78 | [license here](https://github.com/unicode-org/icu/blob/main/icu4c/LICENSE) |
 | [`libbase64`](https://github.com/aklomp/base64/blob/master/LICENSE) | BSD 2-Clause |

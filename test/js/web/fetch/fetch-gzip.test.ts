@@ -1017,6 +1017,9 @@ describe("Content-Encoding: deflate, zlib-wrapped or raw", () => {
     wb9: deflateSync(plain, { windowBits: 9 }),
     wb15: deflateSync(plain),
     twoReadings, // fetch() must return the zlib reading
+    // Only gzip has members. Behind the others, one is stray bytes like any.
+    rawThenMember: Buffer.concat([deflateRawSync(plain), gzipSync("more")]),
+    wb15ThenMember: Buffer.concat([deflateSync(plain), gzipSync("more")]),
   };
   const fails: Record<string, Buffer> = {
     rawPassing1950: rawStartingWith(0x78, 769), // 78 01: raw deflate that starts with a valid zlib header

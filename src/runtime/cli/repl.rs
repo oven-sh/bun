@@ -1611,7 +1611,7 @@ impl<'a> Repl<'a> {
         // Transform the code using REPL mode (hoists declarations, wraps result in { value: expr })
         let transformed_code = match self.transform_for_repl(code) {
             Err(log) => {
-                let _ = log.print(Output::writer());
+                self.report_transform_error(global, &log);
                 return;
             }
             Ok(None) => {
@@ -1928,7 +1928,7 @@ impl<'a> Repl<'a> {
 
         let transformed_code = match self.transform_for_repl(code) {
             Err(log) => {
-                let _ = log.print(Output::writer());
+                self.report_transform_error(global, &log);
                 return;
             }
             Ok(None) => {
@@ -2202,9 +2202,15 @@ impl<'a> Repl<'a> {
         if log.errors > 0 {
             return Ok(None);
         }
-        let runnable = bun_bundler::transpiler::require_runnable_js(&ast, &source, &mut log);
-        if runnable.is_err() {
-            return Err(Box::new(log));
+        if let Some(loc) = &mut ast.first_preserved_jsx {
+            // Removing the synthetic opening parenthesis from the source offset.
+            loc.start -= i32::from(is_object_literal);
+            let original_source = bun_ast::Source::init_path_string(b"[repl]", code);
+            let runnable =
+                bun_bundler::transpiler::require_runnable_js(&ast, &original_source, &mut log);
+            if runnable.is_err() {
+                return Err(Box::new(log));
+            }
         }
         // Print the transformed AST back to JavaScript
         let buffer_writer = bun_js_printer::BufferWriter::init();
@@ -2242,6 +2248,21 @@ impl<'a> Repl<'a> {
         // Get the written buffer
         let written = buffer_printer.ctx.get_written();
         Ok(Some(Box::<[u8]>::from(written)))
+    }
+
+    fn report_transform_error(&mut self, global: &JSGlobalObject, log: &bun_ast::Log) {
+        if let Some(message) = log
+            .msgs
+            .iter()
+            .find(|message| message.kind == bun_ast::Kind::Err)
+        {
+            let error = jsc::BuildMessage::create(global, message.clone());
+            if let Ok(error) = error {
+                self.set_last_error(error);
+                global.to_js_value().put(global, b"_error", error);
+            }
+        }
+        let _ = log.print_with_colors(Output::writer(), self.use_colors);
     }
 
     fn print_js_error(&self, error_value: JSValue) {

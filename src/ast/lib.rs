@@ -1841,8 +1841,13 @@ impl Log {
         )
     }
 
-    pub fn print(&self, mut to: impl fmt::Write) -> fmt::Result {
-        if Output::ENABLE_ANSI_COLORS_STDERR.load(core::sync::atomic::Ordering::Relaxed) {
+    pub fn print(&self, to: impl fmt::Write) -> fmt::Result {
+        let colors = Output::ENABLE_ANSI_COLORS_STDERR.load(core::sync::atomic::Ordering::Relaxed);
+        self.print_with_colors(to, colors)
+    }
+
+    pub fn print_with_colors(&self, mut to: impl fmt::Write, colors: bool) -> fmt::Result {
+        if colors {
             self.print_with_enable_ansi_colors::<true>(&mut to)
         } else {
             self.print_with_enable_ansi_colors::<false>(&mut to)

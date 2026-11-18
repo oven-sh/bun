@@ -115,7 +115,7 @@ impl Readable {
     pub(crate) fn close(this: &JsCell<Self>) {
         match this.get() {
             Readable::Fd(_) => this.set(Readable::Closed),
-            Readable::Pipe(pipe) => PipeReader::close(&pipe.clone()),
+            Readable::Pipe(pipe) => pipe.clone().close(),
             _ => {}
         }
     }

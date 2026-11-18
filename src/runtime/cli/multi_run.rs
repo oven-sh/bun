@@ -269,20 +269,20 @@ impl<'a> ProcessHandle<'a> {
         });
         let self_ptr = std::ptr::from_mut::<Self>(self);
         // Not a borrow of the slot, which the exit handler borrows again.
-        let process = self.process.as_ref().unwrap().process.this_ptr();
+        let process = bun_ptr::RefPtr::clone(&self.process.as_ref().unwrap().process);
         // SAFETY: `self` is the live `ProcessHandle` slot in `State.handles`;
         // it lives for the whole event loop and outlives `process`.
         process.set_exit_handler(unsafe {
             bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::MultiRunHandle, self_ptr)
         });
 
-        match spawn::Process::watch_or_reap(process) {
+        match process.watch_or_reap() {
             Ok(_) => {}
             Err(err) => {
                 if !process.has_exited() {
                     // SAFETY: all-zero is a valid Rusage (POD C struct)
                     let rusage = bun_core::ffi::zeroed::<Rusage>();
-                    spawn::Process::on_exit(process, Status::Err(err), &rusage);
+                    process.on_exit(Status::Err(err), &rusage);
                 }
             }
         }

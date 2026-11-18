@@ -15,7 +15,7 @@ use bun_core::ffi::FfiSlice;
 use bun_http1::Response;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{ContextId, JSGlobalObject, JSValue, JsResult, VirtualMachineRef};
-use bun_ptr::{RefPtr, ThisPtr};
+use bun_ptr::RefPtr;
 use bun_uws_sys::Socket;
 
 use super::websocket_deflate;
@@ -104,7 +104,7 @@ unsafe extern "C" {
     #[allow(improper_ctypes)]
     safe fn WebSocket__didConnectWithTunnel(
         websocket_context: &CppWebSocket,
-        tunnel: ThisPtr<WebSocketProxyTunnel>,
+        tunnel: RefPtr<WebSocketProxyTunnel>,
         buffered_data: Option<Box<InitialData>>,
         deflate_params: Option<&websocket_deflate::Params>,
     ) -> *mut core::ffi::c_void;
@@ -413,11 +413,11 @@ impl CppWebSocket {
             let _scope = VirtualMachine::get().enter_event_loop_scope();
             core::ptr::NonNull::new(connect().cast::<WebSocket<SSL>>()).map(|client| {
                 // SAFETY: C++ holds a ref on the client it returns.
-                RefPtr::from_this(unsafe { ThisPtr::new(client.as_ptr()) })
+                unsafe { RefPtr::init_ref(client.as_ptr()) }
             })
         };
         if let Some(client) = client {
-            WebSocket::<SSL>::deliver_initial_data(client.this_ptr());
+            client.deliver_initial_data();
         }
     }
 
@@ -442,10 +442,10 @@ impl CppWebSocket {
         });
     }
 
-    /// `buffered_data` is handed on to the connected client.
+    /// `tunnel` and `buffered_data` are handed on to the connected client.
     pub(crate) fn did_connect_with_tunnel(
         &self,
-        tunnel: ThisPtr<WebSocketProxyTunnel>,
+        tunnel: RefPtr<WebSocketProxyTunnel>,
         buffered_data: Option<Box<InitialData>>,
         deflate_params: Option<&websocket_deflate::Params>,
     ) {

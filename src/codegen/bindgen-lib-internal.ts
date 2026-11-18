@@ -479,6 +479,10 @@ export abstract class Type {
   get borrowsCell(): boolean {
     return this.dependencies.some(type => type.borrowsCell);
   }
+  /** `rustFromExtern` borrows `expr`, a copy of the ref that a cell holds, for the call. */
+  get borrowsExtern(): boolean {
+    return this.dependencies.some(type => type.borrowsExtern);
+  }
   /** Points into the C++ host function's frame: only usable for the duration of a host call. */
   get borrowsFrame(): boolean {
     return this.dependencies.some(type => type.borrowsFrame);
@@ -3928,6 +3932,9 @@ export class ClassType extends NamedType {
   get borrowsCell(): boolean {
     return true;
   }
+  get borrowsExtern(): boolean {
+    return this.refCounted;
+  }
   get tryConvertThrows(): boolean {
     return false;
   }
@@ -3949,10 +3956,10 @@ export class ClassType extends NamedType {
     return "*mut core::ffi::c_void";
   }
   rustType(): string {
-    return `&'a ${this.rustPath}`;
+    return this.refCounted ? `&'a bun_ptr::RefPtr<${this.rustPath}>` : `&'a ${this.rustPath}`;
   }
   rustFromExtern(expr: string): string {
-    if (this.refCounted) return `bindgen::class_ref_from_extern::<${this.rustPath}>(${expr}, heap)`;
+    if (this.refCounted) return `bindgen::class_ref_from_extern::<${this.rustPath}>(&${expr}, heap)`;
     return `bindgen::JsWrapper::<${this.rustPath}>::from_extern(core::ptr::NonNull::new_unchecked(${expr}), heap).payload_ref()`;
   }
   rustToJS(value: string): string {

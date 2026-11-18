@@ -5,6 +5,7 @@
 #![deny(improper_ctypes, improper_ctypes_definitions)]
 #![feature(thread_local)]
 #![feature(adt_const_params)]
+#![feature(arbitrary_self_types)]
 #![feature(core_io_borrowed_buf)]
 #![feature(vec_fallible_shrink)]
 // For `__rust_no_alloc_shim_is_unstable_v2` in bin_entry.

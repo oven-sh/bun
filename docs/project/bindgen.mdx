@@ -273,7 +273,7 @@ any other: nothing looks at how many there are, except `.ifPassed`, `requiredArg
 | `b.enumeration(values)`                          | a generated `enum`               | one of the strings                                            |
 | `b.dictionary(members)`                          | `&` a generated `struct`         | an object that is not an array                                |
 | `b.union(alternatives)`                          | a generated `enum`               | see [Unions and kinds](#unions-and-kinds)                     |
-| `b.class(options)`                               | `&'a T`                          | an instance                                                   |
+| `b.class(options)`                               | `&'a T`, `&'a RefPtr<T>`         | an instance; the second if the class is `refCounted`          |
 
 One JS type has one name; a modifier picks the Rust form. The last four are named
 types: each is called what it is exported as, and has to be exported. It is used by
@@ -914,7 +914,10 @@ impl FetchSession {
 
 - The struct is intrusively refcounted: `bun_ptr::CellRefCounted`, `RefCounted` or `ThreadSafeRefCounted`.
 - `mutates: true` is an error.
-- `construct` returns a `RefPtr<Self>`, which the object takes over.
+- `construct` returns a `RefPtr<Self>`, which the object takes over. With `passStructure`, `structure.wrap(heap, value)`
+  also returns a `WrapperGuard`, to go on using the struct.
+- A member is lent the object's ref. It takes `&self`, or `self: &RefPtr<Self>` if it keeps a `clone()`. An argument is
+  a `&RefPtr<T>` too.
 - The pointer in the object never changes and is never null. A class with a closed or detached state tracks it in a
   field of its own.
 - `finalize` runs before the object's ref is dropped. `Drop` runs when the last ref is dropped, which can be much later.

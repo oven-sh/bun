@@ -144,21 +144,20 @@ function ptrify(ty: string): { cTy: string; deref: (n: string) => string; extraL
   if (/^&[^\[]*\[/.test(ty) || /^&\s*str\b/.test(ty)) {
     throw new Error(`slice/str param \`${ty}\` is not FFI-safe; use \`&[T]\` (const) or (ptr, len)`);
   }
+  // `&RefPtr<T>` — the call may release the ref that C++ holds on the `T*`, so the thunk holds one of its own.
+  const lent = /^&(?:(?:::)?bun_ptr::)?RefPtr\s*<\s*(.+)\s*>$/.exec(ty);
+  if (lent) {
+    return {
+      cTy: `*mut ${lent[1].trim()}`,
+      deref: n =>
+        `&{\n        // SAFETY: the C++ caller holds a ref on \`${n}\`.\n        unsafe { ::bun_ptr::RefPtr::init_ref(${n}) }\n    }`,
+    };
+  }
   // `&mut T` / `&T` — keep as a reference in the thunk signature. `&T` and
   // `*const T` (resp. `&mut T`/`*mut T`) are ABI-identical for `extern "C"`
   // when the C++ caller guarantees non-null (it does), so the thunk param can
   // be the safe reference type directly and the body needs no `unsafe` deref.
   if (/^&/.test(ty)) return { cTy: ty, deref: n => n };
-  // `ThisPtr<T>` — C++ hands us the intrusively-refcounted `T*` it holds a
-  // ref on; wrap it once here so the impl never sees a raw pointer.
-  const thisPtr = /^(?:(?:::)?bun_ptr::)?ThisPtr\s*<\s*(.+)\s*>$/.exec(ty);
-  if (thisPtr) {
-    return {
-      cTy: `*mut ${thisPtr[1].trim()}`,
-      deref: n =>
-        `{\n        // SAFETY: C++ caller holds a ref on \`${n}\` for the duration of the call.\n        unsafe { ::bun_ptr::ThisPtr::new(${n}) }\n    }`,
-    };
-  }
   // Already a raw pointer / scalar / `Option<…>` / `JSValue` — pass through.
   return { cTy: ty, deref: n => n };
 }

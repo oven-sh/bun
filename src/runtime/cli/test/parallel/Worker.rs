@@ -12,7 +12,7 @@ use crate::api::bun::process::PosixStdio as Stdio;
 use crate::api::bun::process::SpawnResultExt as _;
 #[cfg(not(unix))]
 use crate::api::bun::process::WindowsStdio as Stdio;
-use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status};
+use crate::api::bun::process::{self as spawn, Rusage, SpawnOptions, Status};
 use bun_core::{self, Output};
 use bun_io::max_buf::Kind;
 use bun_io::{BufferedReader, IoEvent, Owner, PollTag};
@@ -226,7 +226,7 @@ impl Worker {
             }
         }
 
-        let process = this.process.as_ref().expect("set above").this_ptr();
+        let process = bun_ptr::RefPtr::clone(this.process.as_ref().expect("set above"));
         #[cfg(windows)]
         {
             if let Some(job) = coord.windows_job {
@@ -244,7 +244,7 @@ impl Worker {
                 &raw mut **this,
             )
         });
-        match Process::watch_or_reap(process) {
+        match process.watch_or_reap() {
             Ok(_) => {}
             Err(e) => {
                 // Resource cleanup is handled by the function-scope errdefer.

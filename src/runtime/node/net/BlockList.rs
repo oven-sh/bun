@@ -4,7 +4,7 @@ use core::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 use bun_core::{String as BunString, ZStr};
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{CloneSerializer, JSGlobalObject, JSValue, JsResult, StringJsc as _};
-use bun_ptr::{RefPtr, ThisPtr};
+use bun_ptr::RefPtr;
 use bun_threading::Guarded;
 
 /// The `BlockList` instances, by `serialize_nonce`, currently embedded in
@@ -329,16 +329,20 @@ impl BlockList {
 }
 
 /// Adds the entry that [`BlockList__onStructuredCloneDestroy`] removes.
+///
+/// # Safety
+/// `this` is what a live wrapper holds a ref on.
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn BlockList__onStructuredCloneSerialize(
-    this: ThisPtr<BlockList>,
+pub(crate) unsafe extern "C" fn BlockList__onStructuredCloneSerialize(
+    this: *mut BlockList,
     serializer: &mut CloneSerializer,
 ) {
     use bun_io::Write as _;
-    SERIALIZED_REFS
-        .lock()
-        .push((this.serialize_nonce, RefPtr::from_this(this)));
-    _ = serializer.write_int_le(this.serialize_nonce);
+    // SAFETY: fn contract.
+    let this = unsafe { RefPtr::init_ref(this) };
+    let nonce = this.serialize_nonce;
+    SERIALIZED_REFS.lock().push((nonce, this));
+    _ = serializer.write_int_le(nonce);
 }
 
 /// `JSValue::ZERO`: the bytes are not a valid record (the deserializer reports its usual error).

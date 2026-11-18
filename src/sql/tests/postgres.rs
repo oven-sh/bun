@@ -366,7 +366,7 @@ mod requests {
                 Parameters => pipeline.on_parameter_description([25].into()),
                 Columns => pipeline.on_row_description(),
                 NoData | BindComplete => pipeline.on_bind_complete(),
-                CommandComplete => pipeline.on_result(),
+                CommandComplete => pipeline.on_result().map(drop),
             }
             .unwrap();
         }
@@ -533,7 +533,7 @@ mod requests {
                 cancelled,
                 Some(OnCancel::InFlight { may_run: true })
             ));
-            assert!(pipeline.reject(request) && !pipeline.reject(request));
+            assert!(pipeline.reject(request).is_some() && pipeline.reject(request).is_none());
         }
         let [_, d] = ['c', 'd'].map(|name| push(&mut pipeline, name, &statement));
         assert!(matches!(pipeline.cancel(&d), Some(OnCancel::Unqueued(_))));

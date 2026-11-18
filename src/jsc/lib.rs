@@ -16,6 +16,7 @@
 // `Tag` is a fieldless enum, so this is the structural-match subset of the
 // feature.
 #![feature(adt_const_params)]
+#![feature(arbitrary_self_types)]
 #![feature(core_io_borrowed_buf)]
 // `#[thread_local]` for the per-JS-thread VM holder and adjacent hot
 // per-callback statics — bare `__thread`/`.tbss` instead of the
@@ -950,11 +951,6 @@ impl<'a, T> WrapperGuard<'a, T> {
     /// The pointer that the wrapper holds. After [`map`](Self::map), and for the `Blob` of a `BuildArtifact`, the address of the part.
     pub fn as_ptr(&self) -> *mut T {
         self.native.as_ptr()
-    }
-
-    /// Shadows [`bun_ptr::AsCtxPtr::as_ctx_ptr`], which is the address of `self`.
-    pub fn as_ctx_ptr(&self) -> *mut T {
-        self.as_ptr()
     }
 }
 impl<T> core::ops::Deref for WrapperGuard<'_, T> {

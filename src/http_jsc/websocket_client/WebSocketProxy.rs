@@ -1,4 +1,4 @@
-use bun_ptr::{RefPtr, ThisPtr};
+use bun_ptr::RefPtr;
 
 use super::WebSocketProxyTunnel;
 
@@ -45,8 +45,8 @@ impl WebSocketProxy {
     }
 
     /// Get the TLS tunnel for wss:// through HTTP proxy
-    pub(crate) fn get_tunnel(&self) -> Option<ThisPtr<WebSocketProxyTunnel>> {
-        self.tunnel.as_ref().map(RefPtr::this_ptr)
+    pub(crate) fn get_tunnel(&self) -> Option<RefPtr<WebSocketProxyTunnel>> {
+        self.tunnel.clone()
     }
 
     /// Store the TLS tunnel, taking over the caller's ref.
@@ -67,7 +67,7 @@ impl Drop for WebSocketProxy {
     fn drop(&mut self) {
         // target_host / websocket_request_buf: Box<[u8]> drops automatically.
         if let Some(tunnel) = self.tunnel.take() {
-            WebSocketProxyTunnel::shutdown(&tunnel);
+            tunnel.shutdown();
         }
     }
 }

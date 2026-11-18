@@ -14,7 +14,7 @@ use bun_uws as uws;
 use crate::async_http::{ACTIVE_REQUESTS_COUNT, MAX_SIMULTANEOUS_REQUESTS};
 use crate::http_context::ActiveSocketExt;
 use crate::ssl_config::{self, SSLConfig};
-use crate::{AsyncHttp, HTTPContext, InFlightRequest, InitError, NewHttpContext, h2, h3};
+use crate::{AsyncHttp, HTTPContext, InFlightRequest, InitError, NewHttpContext, h3};
 
 // The scope registry keys on name, so the two visibilities (.hidden +
 // .visible) are split into two scope names.
@@ -486,7 +486,7 @@ impl HttpThread {
                                 HTTPContext::enter_client(socket, |c| c.close_and_abort(socket));
                             let Some(tagged) = tagged else { continue };
                             if let Some(session) = tagged.session() {
-                                h2::ClientSession::abort_by_http_id(session, http.async_http_id);
+                                session.abort_by_http_id(http.async_http_id);
                                 continue;
                             }
                             socket.close(uws::CloseKind::Failure);
@@ -496,7 +496,7 @@ impl HttpThread {
                                 HTTPContext::enter_client(socket, |c| c.close_and_abort(socket));
                             let Some(tagged) = tagged else { continue };
                             if let Some(session) = tagged.session() {
-                                h2::ClientSession::abort_by_http_id(session, http.async_http_id);
+                                session.abort_by_http_id(http.async_http_id);
                                 continue;
                             }
                             socket.close(uws::CloseKind::Failure);
@@ -548,11 +548,7 @@ impl HttpThread {
                                 client.on_request_stream_message::<true>(message, socket)
                             });
                             if let Some(session) = tagged.and_then(ActiveSocketExt::session) {
-                                h2::ClientSession::stream_body_by_http_id(
-                                    session,
-                                    write.async_http_id,
-                                    message,
-                                );
+                                session.stream_body_by_http_id(write.async_http_id, message);
                             }
                         }
                         uws::AnySocket::SocketTcp(socket) => {
@@ -563,11 +559,7 @@ impl HttpThread {
                                 client.on_request_stream_message::<false>(message, socket)
                             });
                             if let Some(session) = tagged.and_then(ActiveSocketExt::session) {
-                                h2::ClientSession::stream_body_by_http_id(
-                                    session,
-                                    write.async_http_id,
-                                    message,
-                                );
+                                session.stream_body_by_http_id(write.async_http_id, message);
                             }
                         }
                     }
@@ -654,12 +646,8 @@ impl HttpThread {
                                 client.drain_response_body::<true>(socket)
                             });
                             if let Some(session) = tagged.and_then(ActiveSocketExt::session) {
-                                // The resume may tear the session down and
-                                // release its last ref; hold one across
-                                // the second call.
-                                let _guard = RefPtr::from_this(session);
-                                h2::ClientSession::resume_receive_by_http_id(session, id);
-                                h2::ClientSession::drain_response_body_by_http_id(session, id);
+                                session.clone().resume_receive_by_http_id(id);
+                                session.drain_response_body_by_http_id(id);
                             }
                         }
                         uws::AnySocket::SocketTcp(socket) => {
@@ -668,10 +656,8 @@ impl HttpThread {
                                 client.drain_response_body::<false>(socket)
                             });
                             if let Some(session) = tagged.and_then(ActiveSocketExt::session) {
-                                // See the Tls arm.
-                                let _guard = RefPtr::from_this(session);
-                                h2::ClientSession::resume_receive_by_http_id(session, id);
-                                h2::ClientSession::drain_response_body_by_http_id(session, id);
+                                session.clone().resume_receive_by_http_id(id);
+                                session.drain_response_body_by_http_id(id);
                             }
                         }
                     }

@@ -375,19 +375,17 @@ impl<R: Deref, E, C> Pipeline<R, E, C> {
         self.queue.remove(self.written + position)
     }
 
-    /// `true`: the host rejects it now. It keeps its place until its ReadyForQuery.
-    pub fn reject(&mut self, request: &R::Target) -> bool {
-        let Some(entry) = self.queue.iter_mut().find(|entry| entry.is(request)) else {
-            return false;
-        };
+    /// `Some`: the host rejects it now. It keeps its place until its ReadyForQuery.
+    pub fn reject(&mut self, request: &R::Target) -> Option<&R> {
+        let entry = self.queue.iter_mut().find(|entry| entry.is(request))?;
         entry.reply = match entry.reply {
             Reply::Deliver | Reply::Cancelling => Reply::Skip,
             Reply::OwesCancel { rejected: false } => Reply::OwesCancel { rejected: true },
             Reply::OwesCancel { rejected: true } | Reply::FailAtReady | Reply::Skip => {
-                return false;
+                return None;
             }
         };
-        true
+        Some(&entry.request)
     }
 
     /// The request that a result belongs to. `None`: nobody waits for it.
@@ -399,9 +397,10 @@ impl<R: Deref, E, C> Pipeline<R, E, C> {
         Ok((!head.is_rejected()).then_some(head))
     }
 
-    pub fn on_result(&mut self) -> Result<(), AnyPostgresError> {
-        self.head_mut()?.stage = Stage::Answered;
-        Ok(())
+    pub fn on_result(&mut self) -> Result<&R, AnyPostgresError> {
+        let head = self.head_mut()?;
+        head.stage = Stage::Answered;
+        Ok(&head.request)
     }
 
     pub fn on_parse_complete(&mut self) -> Result<(), AnyPostgresError> {

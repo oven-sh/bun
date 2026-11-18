@@ -752,15 +752,15 @@ impl<'a> JsLocal<'a, BufferSource> {
 }
 
 /// # Safety
-/// `wrapped` is the `T` that a cell wraps, and something holds that cell for the call `heap` belongs to.
+/// `wrapped` is the ref that a cell holds, or a copy of it, and something holds that cell for the call `heap` belongs to.
 #[doc(hidden)]
 #[inline(always)]
-pub unsafe fn class_ref_from_extern<'a, T: crate::JsClass>(
-    wrapped: *mut c_void,
+pub unsafe fn class_ref_from_extern<'a, T: bun_ptr::AnyRefCounted>(
+    wrapped: &'a *mut c_void,
     _: &JsHeap<'a>,
-) -> &'a T {
-    // SAFETY: forwarded.
-    unsafe { &*wrapped.cast::<T>() }
+) -> &'a bun_ptr::RefPtr<T> {
+    // SAFETY: forwarded. `RefPtr` is a transparent pointer.
+    unsafe { &*core::ptr::from_ref(wrapped).cast() }
 }
 
 /// `b.bytes` with `held: "handle"`, for a function that can run JavaScript, which can detach, resize or free a buffer.
@@ -1024,6 +1024,22 @@ impl<'a, T: JsCreateWithStructure> JsStructure<'a, T> {
     pub fn create(self, heap: &JsHeap<'a>, wrapped: T::Wrapped) -> JsWrapper<'a, T> {
         // SAFETY: `from_extern`'s contract.
         unsafe { T::create_with_structure(heap, self.0, wrapped) }
+    }
+
+    /// As `create`, for code that goes on to use the struct.
+    pub fn wrap(
+        self,
+        heap: &JsHeap<'a>,
+        wrapped: bun_ptr::RefPtr<T>,
+    ) -> (JsWrapper<'a, T>, WrapperGuard<'a, T>)
+    where
+        T: JsCreateWithStructure<Wrapped = bun_ptr::RefPtr<T>> + bun_ptr::AnyRefCounted,
+    {
+        let native = wrapped.as_non_null();
+        let wrapper = self.create(heap, wrapped);
+        // SAFETY: `wrapper` holds the ref.
+        let guard = unsafe { WrapperGuard::from_parts(wrapper.to_js(), native) };
+        (wrapper, guard)
     }
 }
 

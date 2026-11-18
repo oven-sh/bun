@@ -1734,7 +1734,7 @@ impl FetchTasklet {
             self.poll_ref.unref(bun_io::js_vm_ctx());
         }
         let global_this = self.global_this;
-        let response_js = Response::to_js(response.clone(), &global_this);
+        let response_js = response.clone().to_js(&global_this);
         response_js.ensure_still_alive();
         self.response = jsc::Weak::<FetchTasklet>::create(
             response_js,

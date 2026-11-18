@@ -347,10 +347,9 @@ impl ShellSubprocess {
                 }
             }
             // Nothing reports its exit from here on, so nothing would reap it either.
-            let _ = Process::kill_and_reap(
-                subproc.proc().this_ptr(),
-                &mut bun_core::ffi::zeroed::<bun_spawn::Rusage>(),
-            );
+            let _ = subproc
+                .proc()
+                .kill_and_reap(&mut bun_core::ffi::zeroed::<bun_spawn::Rusage>());
             subproc.proc().set_exit_handler_default();
             // Dropping `subproc` runs `ShellSubprocess::drop` → `finalize_sync`.
         }

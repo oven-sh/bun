@@ -17,8 +17,7 @@ use bun_core::{CStrList, CStrRef, CStringList, ZStr};
 #[cfg(unix)]
 use bun_spawn::SpawnResultExt as _;
 use bun_spawn::{
-    Process, ProcessExit, ProcessExitKind, ProcessHandle, Rusage, SpawnOptions, SpawnProcessResult,
-    Status,
+    ProcessExit, ProcessExitKind, ProcessHandle, Rusage, SpawnOptions, SpawnProcessResult, Status,
 };
 #[cfg(unix)]
 use bun_sys::Fd;
@@ -745,20 +744,14 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             (*this).start_readers(&mut spawned);
 
             let event_loop = (*this).event_loop();
-            let process = (*this)
-                .process
-                .insert(spawned.to_process_handle(event_loop))
-                .this_ptr();
+            let process = spawned.to_process_handle(event_loop);
+            let process = bun_ptr::RefPtr::clone((*this).process.insert(process));
             process.set_exit_handler(ProcessExit::new(ProcessExitKind::LifecycleScript, this));
 
-            if let Err(err) = Process::watch_or_reap(process) {
+            if let Err(err) = process.watch_or_reap() {
                 if !process.has_exited() {
                     // SAFETY: all-zero is a valid Rusage (#[repr(C)] POD).
-                    Process::on_exit(
-                        process,
-                        Status::Err(err),
-                        &bun_core::ffi::zeroed::<Rusage>(),
-                    );
+                    process.on_exit(Status::Err(err), &bun_core::ffi::zeroed::<Rusage>());
                 }
             }
         }

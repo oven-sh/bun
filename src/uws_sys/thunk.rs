@@ -160,4 +160,13 @@ impl<T> ExtSlot<T> {
             None => None,
         }
     }
+
+    /// A ref of the caller's own, for an event that can release the one that the slot stands for.
+    pub fn owner(&self) -> Option<bun_ptr::RefPtr<T>>
+    where
+        T: bun_ptr::AnyRefCounted,
+    {
+        // SAFETY: as in `owner_ref`.
+        Some(unsafe { bun_ptr::RefPtr::init_ref(self.0?.as_ptr()) })
+    }
 }

@@ -24,8 +24,8 @@ use bun_io::{BufferedReader, IoEvent, Owner, PollTag, ReadResult};
 use bun_spawn::SpawnResultExt as _;
 use bun_spawn::subprocess::{PipeState, StaticPipeWriter, StdioResult};
 use bun_spawn::{
-    self as spawn, Exited, Process, ProcessExit, ProcessExitKind, ProcessHandle, Rusage,
-    SpawnOptions, Status, Stdio,
+    self as spawn, Exited, ProcessExit, ProcessExitKind, ProcessHandle, Rusage, SpawnOptions,
+    Status, Stdio,
 };
 use bun_sys::{self, Fd, File};
 
@@ -946,7 +946,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         // `&mut self` on Windows); take ownership of the result and let the
         // moved-from `*spawned` drop empty (`extra_pipes` already read).
         let process = std::mem::take(spawned).to_process_handle(event_loop);
-        let process = self.process.insert(process).this_ptr();
+        let process = bun_ptr::RefPtr::clone(self.process.insert(process));
 
         let owner = Owner::new(
             PollTag::SecurityScanWriter,
@@ -971,7 +971,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         process.set_exit_handler(handler);
 
         // May re-enter `on_process_exit` synchronously (already-exited child).
-        if Process::watch_or_reap(process).is_err() {
+        if process.watch_or_reap().is_err() {
             return Err(crate::Error::ProcessWatchFailed);
         }
 

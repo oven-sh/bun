@@ -275,8 +275,7 @@ impl FetchSession {
         let check_server_identity = Self::parse_options(&mut this, cx.global(), init.to_js())?;
 
         let session = RefPtr::from(this);
-        let this = session.this_ptr();
-        let this_value = structure.create(&cx.heap, session);
+        let (this_value, this) = structure.wrap(&cx.heap, session);
         this.this_value.set(JsRef::init_weak(this_value.to_js()));
         if let Some(callback) = check_server_identity {
             js::check_server_identity_set_cached(this_value.to_js(), cx.global(), callback);

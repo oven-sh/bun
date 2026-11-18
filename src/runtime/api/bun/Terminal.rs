@@ -29,6 +29,7 @@ use bun_jsc::{
     self as jsc, EventLoopHandle, JSGlobalObject, JSValue, JsCell, JsRef, JsResult,
     MarkedArrayBuffer, SysErrorJsc,
 };
+use bun_ptr::OptionCellExt as _;
 use bun_sys::{self as sys, Fd, File};
 
 #[cfg(windows)]
@@ -80,13 +81,13 @@ pub(crate) struct Terminal {
     reader: BufferedReader,
 
     /// Held until the writer closes.
-    writer_ref: JsCell<Option<bun_ptr::RefPtr<Terminal>>>,
+    writer_ref: Cell<Option<bun_ptr::RefPtr<Terminal>>>,
     /// Held while a write is in flight.
     #[cfg(windows)]
     inflight_write_ref: Cell<Option<bun_ptr::RefPtr<Terminal>>>,
 
     /// Held until the reader is done.
-    reader_ref: JsCell<Option<bun_ptr::RefPtr<Terminal>>>,
+    reader_ref: Cell<Option<bun_ptr::RefPtr<Terminal>>>,
 
     /// The JS wrapper, which roots the callbacks in its cached slots. Strong
     /// until no callback can fire, then weak (`maybe_downgrade_after_eof`).
@@ -284,11 +285,11 @@ impl Terminal {
     // ─────────────────────────────────────────────────────────────────────────
 
     fn is_reader_done(&self) -> bool {
-        self.reader_ref.get().is_none()
+        self.reader_ref.is_none()
     }
 
     fn is_writer_done(&self) -> bool {
-        self.writer_ref.get().is_none()
+        self.writer_ref.is_none()
     }
 
     /// Hold a ref on `self` for the guard's lifetime (across re-entrant JS).
@@ -328,10 +329,10 @@ impl Terminal {
             global_this: bun_ptr::BackRef::new(global_object),
             writer: StreamingWriter::default(),
             reader: BufferedReader::init(),
-            writer_ref: JsCell::new(None),
+            writer_ref: Cell::new(None),
             #[cfg(windows)]
             inflight_write_ref: Cell::new(None),
-            reader_ref: JsCell::new(None),
+            reader_ref: Cell::new(None),
             this_value: JsCell::new(JsRef::empty()),
             flags: Cell::new(Flags::empty()),
             writer_has_buffered: Cell::new(false),
@@ -467,8 +468,7 @@ impl Terminal {
                 global_object.throw(format_args!("Failed to start terminal reader"))
             }
         })?;
-        let this = terminal.this_ptr();
-        let this_value = structure.create(&cx.heap, terminal);
+        let (this_value, this) = structure.wrap(&cx.heap, terminal);
         let global_object = cx.global();
         let context = global_object.bun_vm().context_of_caller();
         this.attach(global_object, context, &options, this_value.to_js());

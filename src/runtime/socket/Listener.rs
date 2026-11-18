@@ -619,7 +619,7 @@ impl Listener {
             buffered_data_for_node_net: Default::default(),
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
-            twin: JsCell::new(None),
+            twin: Cell::new(None),
             verify_error: JsCell::new(None),
             latest_session: JsCell::new(None),
         });
@@ -640,7 +640,7 @@ impl Listener {
     pub(crate) fn on_create<const SSL: bool>(
         listener: &Listener,
         accepted: *mut uws_sys::us_socket_t,
-    ) -> bun_ptr::ThisPtr<NewSocket<SSL>> {
+    ) -> RefPtr<NewSocket<SSL>> {
         jsc::mark_binding!();
         log!("onCreate");
 
@@ -665,11 +665,11 @@ impl Listener {
             buffered_data_for_node_net: Default::default(),
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
-            twin: JsCell::new(None),
+            twin: Cell::new(None),
             verify_error: JsCell::new(None),
             latest_session: JsCell::new(None),
         });
-        let s = this_socket.this_ptr();
+        let s = this_socket.clone();
         // Each accepted socket holds the event loop on its own (same as a
         // client socket after `connect_finish`), so `conn.unref()` works and
         // `server.unref()`/`server.close()` don't tear out live connections'
@@ -881,8 +881,8 @@ impl Listener {
     /// `Bun.connect`, and node:net's dial (which hands in the socket it already made).
     pub(crate) fn connect_inner(
         cx: &bun_jsc::JsThread<'_>,
-        prev_maybe_tcp: Option<&TCPSocket>,
-        prev_maybe_tls: Option<&TLSSocket>,
+        prev_maybe_tcp: Option<&RefPtr<TCPSocket>>,
+        prev_maybe_tls: Option<&RefPtr<TLSSocket>>,
         opts: JSValue,
     ) -> JsResult<JSValue> {
         // What script of a disposed `Bun.ModuleGraph` opens is closed at once and reports nothing.
@@ -1022,7 +1022,7 @@ impl Listener {
 
                 if ssl_enabled {
                     let tls = if let Some(prev) = prev_maybe_tls {
-                        let prev = prev.ref_guard();
+                        let prev = prev.clone();
                         debug_assert!(!prev.this_value.get().is_empty());
                         prev.set_handlers(cx.global(), Some(Rc::clone(&handlers)));
                         debug_assert!(matches!(
@@ -1060,12 +1060,12 @@ impl Listener {
                             buffered_data_for_node_net: Default::default(),
                             bytes_written: Cell::new(0),
                             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
-                            twin: JsCell::new(None),
+                            twin: Cell::new(None),
                             verify_error: JsCell::new(None),
                             latest_session: JsCell::new(None),
                         })
                     };
-                    let tls_ref = tls.this_ptr();
+                    let tls_ref = tls.clone();
                     tls_ref.reset_client_tls_flags(crate::socket::resolve_reject_unauthorized(
                         vm,
                         ssl_taken.as_ref(),
@@ -1113,7 +1113,7 @@ impl Listener {
                     }
                 } else {
                     let tcp = if let Some(prev) = prev_maybe_tcp {
-                        let prev = prev.ref_guard();
+                        let prev = prev.clone();
                         debug_assert!(!prev.this_value.get().is_empty());
                         prev.set_handlers(cx.global(), Some(Rc::clone(&handlers)));
                         debug_assert!(matches!(
@@ -1146,12 +1146,12 @@ impl Listener {
                             buffered_data_for_node_net: Default::default(),
                             bytes_written: Cell::new(0),
                             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
-                            twin: JsCell::new(None),
+                            twin: Cell::new(None),
                             verify_error: JsCell::new(None),
                             latest_session: JsCell::new(None),
                         })
                     };
-                    let tcp_ref = tcp.this_ptr();
+                    let tcp_ref = tcp.clone();
                     tcp_ref.update_flags(|f| {
                         f.set(
                             SocketFlags::PAUSE_ON_CONNECT,
@@ -1349,7 +1349,7 @@ impl Drop for Listener {
 // Note: hoisted from the body of connect_inner; dispatched via const generic.
 fn connect_finish<const IS_SSL: bool>(
     cx: &bun_jsc::JsThread<'_>,
-    maybe_previous: Option<&NewSocket<IS_SSL>>,
+    maybe_previous: Option<&RefPtr<NewSocket<IS_SSL>>>,
     handlers: Rc<Handlers>,
     connection: UnixOrHost,
     local_binding: Option<(Box<[u8]>, u16)>,
@@ -1364,7 +1364,7 @@ fn connect_finish<const IS_SSL: bool>(
     let vm = handlers.vm;
     // Either the caller's JS-owned socket (reconnect) or a fresh one.
     let socket_ref = if let Some(prev) = maybe_previous {
-        let prev = prev.ref_guard();
+        let prev = prev.clone();
         debug_assert!(prev.this_value.get().is_not_empty());
         // `node:net` allows `socket.connect()` on an already-connected /
         // still-connecting socket. Close the previous native socket before
@@ -1405,7 +1405,7 @@ fn connect_finish<const IS_SSL: bool>(
             buffered_data_for_node_net: Default::default(),
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
-            twin: JsCell::new(None),
+            twin: Cell::new(None),
             verify_error: JsCell::new(None),
             latest_session: JsCell::new(None),
         })
@@ -1426,7 +1426,7 @@ fn connect_finish<const IS_SSL: bool>(
     socket_ref.poll_ref.ref_(bun_io::js_vm_ctx());
     // An already-open fd socket runs `on_open` synchronously; what settling
     // the connect promise there left pending is not a connect failure.
-    let opened_err = match NewSocket::do_connect(&socket_ref, cx.context()) {
+    let opened_err = match socket_ref.do_connect(cx.context()) {
         Ok(()) => None,
         Err(crate::Error::Js(err)) => Some(err),
         Err(_) => {
@@ -1478,7 +1478,7 @@ fn connect_finish<const IS_SSL: bool>(
                 }
             };
             // What `connectError` throws on this synchronous failure throws from `connect()`.
-            NewSocket::handle_connect_error(socket_ref, errno, 0)?;
+            socket_ref.handle_connect_error(errno, 0)?;
             return Ok(promise_value);
         }
     };

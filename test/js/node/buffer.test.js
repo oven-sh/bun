@@ -1161,7 +1161,7 @@ for (let withOverridenBufferWrite of [false, true]) {
         });
 
         // 75 pairs: on every target the input spans whole vector blocks (pairs
-        // 0-63), the 128-bit mop-up blocks of wide targets (64-71) and the
+        // 0-63), the narrower mop-up block (64-71) and the
         // scalar tail (72-74). The positions below put the two-byte unit in
         // each of those regions and on the block boundaries between them.
         const wideUnitPairs = 75;

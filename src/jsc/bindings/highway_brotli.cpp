@@ -1,6 +1,6 @@
 // The data-parallel parts of the encoder in src/brotli, in the arithmetic of google/brotli (LICENSE.md). All targets give the same results.
 
-// Besides the list in scripts/build/deps/highway.ts: SVE, all above AVX2, and what would compile to the same as the baseline.
+// Besides the list in scripts/build/deps/highway.ts: all above AVX2, and what would compile to the same as the baseline.
 #undef HWY_DISABLED_TARGETS
 #define HWY_DISABLED_TARGETS (HWY_ALL_SVE | HWY_NEON | HWY_NEON_BF16 | HWY_SSE4 | (HWY_AVX2 - 1))
 #ifndef __OPTIMIZE__

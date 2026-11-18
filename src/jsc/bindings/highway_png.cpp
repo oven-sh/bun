@@ -7,7 +7,7 @@
 
 // Undoing Average and Paeth is one long chain, each pixel waiting for the one before it, and a comparison that goes
 // through a mask register makes the chain half as long again. Nothing here gains much from more than 256 bits.
-// So this is the list in scripts/build/deps/highway.ts and more: the rest of SVE, and whatever is newer than AVX2.
+// So this is the list in scripts/build/deps/highway.ts and more: whatever is newer than AVX2.
 #undef HWY_DISABLED_TARGETS
 #define HWY_DISABLED_TARGETS (HWY_ALL_SVE | (HWY_AVX2 - 1))
 #ifndef __OPTIMIZE__

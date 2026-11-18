@@ -129,6 +129,20 @@ describe("highway byte-search kernels", () => {
     }
   });
 
+  // Less than a vector is two halves that overlap, or a load that pads with zeros. From six vectors on, four go at a time.
+  it.each([0, 0x2c])("indexOfChar: %i at every position", needle => {
+    const short = Array.from({ length: 70 }, (_, len) => len);
+    for (const len of [...short, 95, 96, 97, 111, 191, 192, 193, 250, 383, 384, 385, 500, 641]) {
+      const h = filler(len, 5);
+      compare("indexOfChar", hw("indexOfChar", h, needle), len, `len=${len}`);
+      for (let pos = len - 1; pos >= 0; pos--) {
+        h[pos] = needle;
+        compare("indexOfChar", hw("indexOfChar", h, needle), pos, () => `len=${len} pos=${pos}`);
+        if (pos % 2) h[pos] = 0x80;
+      }
+    }
+  });
+
   it("indexOfChar / lastIndexOfChar / countChar: two needles pick first / last", () => {
     for (const len of LENGTHS) {
       const ps = positions(len);
@@ -699,12 +713,20 @@ describe("targets", () => {
     expect(cpuDispatch().highway).not.toContain("AVX3");
   });
 
-  it.skipIf(!isArm64 || !isLinux)("the checksums use what Linux reports on arm64", () => {
+  it.skipIf(!isArm64)("zlib uses the CRC instructions of arm64", () => {
+    expect(cpuDispatch().zlibHasArmCrc32).toBe(true);
+  });
+
+  it.skipIf(!isArm64 || !isLinux)("arm64 uses what Linux reports, but for SVE", () => {
     const features = readFileSync("/proc/cpuinfo", "utf8")
       .match(/^Features\s*:(.*)$/m)![1]
       .split(" ");
-    const hasAll = ["aes", "asimdhp", "asimddp", "bf16"].every(feature => features.includes(feature));
-    expect(cpuDispatch().checksums).toBe(hasAll ? "NEON_BF16" : "NEON_WITHOUT_AES");
+    const has = (...wanted: string[]) => wanted.every(feature => features.includes(feature));
+    const best = has("aes", "asimdhp", "asimddp", "bf16") ? ["NEON_BF16"] : [];
+    expect(cpuDispatch()).toMatchObject({
+      highway: [...best, ...(has("aes") ? ["NEON"] : []), "NEON_WITHOUT_AES"],
+      checksums: best[0] ?? "NEON_WITHOUT_AES",
+    });
   });
 
   // Windows reports BF16 from 11 24H2 on.

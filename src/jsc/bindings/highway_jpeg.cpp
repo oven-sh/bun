@@ -2,7 +2,7 @@
 
 // A block has the rows 0 and 4 interleaved, then 2 and 6, 1 and 3, 5 and 7, with their columns in the order 0 2 4 6 1 3 5 7.
 
-// Besides the list in scripts/build/deps/highway.ts: SVE, all above AVX2, and what would compile to the same as the baseline.
+// Besides the list in scripts/build/deps/highway.ts: all above AVX2, and what would compile to the same as the baseline.
 #undef HWY_DISABLED_TARGETS
 #define HWY_DISABLED_TARGETS (HWY_ALL_SVE | HWY_NEON | HWY_NEON_BF16 | HWY_SSE4 | (HWY_AVX2 - 1))
 #ifndef __OPTIMIZE__

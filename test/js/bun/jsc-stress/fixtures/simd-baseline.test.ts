@@ -81,6 +81,27 @@ describe("Buffer hex encoding — @Vector(16, u8) gated by enableSIMD", () => {
   });
 });
 
+describe("Buffer hex decoding — Highway runtime dispatch", () => {
+  const units = Array.from({ length: 256 }, (_, unit) => unit);
+  // In a whole vector, in the narrower ones after it, and in what is left.
+  const places = [40, 41, 130, 161, 176, 177];
+  const zeros = Buffer.alloc(180, "0").toString();
+
+  test.each([0, 0x3000])("every lower byte, plus %i", upper => {
+    const decoded = (unit: number, at: number) => {
+      const bytes = Buffer.from(zeros.slice(0, at) + String.fromCharCode(upper + unit) + zeros.slice(at + 1), "hex");
+      return [bytes.length, bytes[at >> 1]];
+    };
+    const expected = (unit: number, at: number) => {
+      const digit = "0123456789abcdef".indexOf(String.fromCharCode(unit < 128 ? unit : 0).toLowerCase());
+      return digit < 0 ? [at >> 1, undefined] : [90, at % 2 ? digit : digit * 16];
+    };
+    expect(places.map(at => units.map(unit => decoded(unit, at)))).toEqual(
+      places.map(at => units.map(unit => expected(unit, at))),
+    );
+  });
+});
+
 describe("base64 — simdutf runtime dispatch", () => {
   test("ascii roundtrip", () => {
     const encoded = btoa(ascii1k);
@@ -207,6 +228,13 @@ describe("Latin-1 to UTF-8 — @Vector(16, u8) ungated", () => {
 });
 
 describe("String search — Highway memMem/indexOfChar", () => {
+  test("a byte at every position", () => {
+    const lengths = Array.from({ length: 130 }, (_, length) => length + 1);
+    const everywhere = (length: number) => Array.from({ length }, (_, at) => at);
+    const found = lengths.map(length => everywhere(length).map(at => Buffer.alloc(length, 1).fill(0, at).indexOf(0)));
+    expect(found).toEqual(lengths.map(everywhere));
+  });
+
   test("indexOf long string", () => {
     const haystack = Buffer.alloc(1000, "a").toString() + "needle" + Buffer.alloc(1000, "b").toString();
     expect(haystack.indexOf("needle")).toBe(1000);

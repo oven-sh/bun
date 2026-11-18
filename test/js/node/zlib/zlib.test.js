@@ -1,6 +1,6 @@
 import { deflateSync, gunzipSync, gzipSync, inflateSync } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isArm64, isASAN, isDebug, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir, tmpdirSync } from "harness";
 import * as buffer from "node:buffer";
 import { randomFillSync } from "node:crypto";
 import * as fs from "node:fs";
@@ -1409,10 +1409,6 @@ describe("crc32", () => {
         message: `The "data" argument must be of type string or an instance of Buffer, TypedArray, or DataView. Received ${received}`,
       }),
     );
-  });
-
-  it.skipIf(!isArm64)("uses the CRC instructions of arm64", () => {
-    expect(require("bun:internal-for-testing").cpuDispatch().zlibHasArmCrc32).toBe(true);
   });
 
   it("fits in the stack that the deepest frame of a Worker leaves", async () => {

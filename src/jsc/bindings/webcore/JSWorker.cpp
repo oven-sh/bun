@@ -701,7 +701,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(
 
     // The promise is registered in a parent-side map keyed by reqId; only the id
     // crosses threads, so the worker thread never touches the parent VM's
-    // HandleSet. workerGlobalScopeDestroyedInternal rejects any entries still in
+    // handles. workerGlobalScopeDestroyedInternal rejects any entries still in
     // the map (worker terminated mid-round-trip), so the promise always settles.
     uint64_t reqId = worker.contextProxy().registerCrossVMRequest(vm, promise);
     auto parentId = globalObject->scriptExecutionContext()->identifier();

@@ -645,15 +645,15 @@ fn number_method<'a>(name: &[u8], n: f64, args: Args<'_, 'a>) -> Eval<StaticValu
     let text = match name {
         b"toExponential" if !n.is_finite() => text::number_to_string(n),
         b"toExponential" if (0.0..=100.0).contains(&digits) => {
-            FormatDouble::to_exponential(&mut [0; 124], n, is_given.then_some(digits as u32))
+            FormatDouble::to_exponential(&mut [0; 128], n, is_given.then_some(digits as u32))
                 .to_vec()
         }
         b"toFixed" if (0.0..=100.0).contains(&digits) => {
-            FormatDouble::to_fixed(&mut [0; 124], n, digits as u32).to_vec()
+            FormatDouble::to_fixed(&mut [0; 128], n, digits as u32).to_vec()
         }
         b"toPrecision" if !is_given || !n.is_finite() => text::number_to_string(n),
         b"toPrecision" if (1.0..=100.0).contains(&digits) => {
-            FormatDouble::to_precision(&mut [0; 124], n, digits as u32).to_vec()
+            FormatDouble::to_precision(&mut [0; 128], n, digits as u32).to_vec()
         }
         b"toString" if !is_given => text::number_to_string(n),
         b"toString" if (2.0..=36.0).contains(&digits) => to_radix_string(n, digits as u32),

@@ -2,7 +2,6 @@
 #include "JSCompressionStream.h"
 
 #include "DOMClientIsoSubspaces.h"
-#include "DOMIsoSubspaces.h"
 #include "ErrorCode.h"
 #include "JSCompressionStreamShared.h"
 #include "JSDOMExceptionHandling.h"

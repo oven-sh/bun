@@ -19,7 +19,6 @@
 #include "JavaScriptCore/ExceptionScope.h"
 
 #include "ExtendedDOMClientIsoSubspaces.h"
-#include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"
 // #include "JSBlob.h"
 #include "JSDOMAttribute.h"
@@ -70,7 +69,6 @@
 #include <windows.h>
 #endif
 
-#include <JavaScriptCore/DOMJITAbstractHeap.h>
 #include <JavaScriptCore/DFGAbstractHeap.h>
 
 // #include <JavaScriptCore/JSTypedArrayViewPrototype.h>
@@ -136,8 +134,8 @@ JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64BE);
 JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64LE);
 JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64BE);
 
-// Fixed-width readers / writers. Each is registered as a JSC "buffer accessor" (BufferAccessorIntrinsic +
-// runtime/BufferAccessorRegistry.h) so DFG/FTL compile call sites into bounds-checked loads / stores.
+// Fixed-width readers / writers. Each is registered as a "buffer accessor" (BufferAccessorIntrinsic +
+// registerBufferAccessor) so the JIT compiles call sites into bounds-checked loads / stores.
 JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_readInt8);
 JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_readUInt8);
 JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_readInt16LE);
@@ -441,9 +439,7 @@ JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalO
         if (Bun::rejectBytesNoCopyAboveArrayBufferLimit(lexicalGlobalObject, scope, ptr, length, bytesDeallocator, ctx)) [[unlikely]]
             return {};
 
-        auto buffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(ptr), length }, createSharedTask<void(void*)>([=](void* p) {
-            bytesDeallocator(p, ctx);
-        }));
+        auto buffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(ptr), length }, bytesDeallocator, ctx);
 
         uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTF::move(buffer), 0, length);
     } else {
@@ -2283,7 +2279,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_sliceBody(JSC::JSGlobalObje
         return {};
     }
 
-    RefPtr<ArrayBuffer> buffer = castedThis->possiblySharedBuffer();
+    auto* buffer = castedThis->possiblySharedBuffer();
     if (!buffer) {
         throwOutOfMemoryError(globalObject, throwScope);
         return {};
@@ -2291,7 +2287,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_sliceBody(JSC::JSGlobalObje
 
     if (castedThis->isResizableOrGrowableShared()) {
         auto* subclassStructure = globalObject->JSResizableOrGrowableSharedBufferSubclassStructure();
-        auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTF::move(buffer), byteOffset + startOffset, newLength);
+        auto* uint8Array = JSC::JSUint8Array::createOn(lexicalGlobalObject, subclassStructure, *buffer, byteOffset + startOffset, newLength);
         RETURN_IF_EXCEPTION(throwScope, {});
         if (!uint8Array) [[unlikely]] {
             throwOutOfMemoryError(globalObject, throwScope);
@@ -2301,7 +2297,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_sliceBody(JSC::JSGlobalObje
     }
 
     auto* subclassStructure = globalObject->JSBufferSubclassStructure();
-    auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTF::move(buffer), byteOffset + startOffset, newLength);
+    auto* uint8Array = JSC::JSUint8Array::createOn(lexicalGlobalObject, subclassStructure, *buffer, byteOffset + startOffset, newLength);
     RETURN_IF_EXCEPTION(throwScope, {});
     if (!uint8Array) [[unlikely]] {
         throwOutOfMemoryError(globalObject, throwScope);
@@ -2676,9 +2672,7 @@ extern "C" JSC::EncodedJSValue JSBuffer__fromMmap(Zig::GlobalObject* globalObjec
 
     auto* structure = globalObject->JSBufferSubclassStructure();
 
-    auto buffer = ArrayBuffer::createFromBytes({ static_cast<const uint8_t*>(ptr), length }, createSharedTask<void(void*)>([lengthAsContext](void* p) {
-        unmapBufferBytes(p, lengthAsContext);
-    }));
+    auto buffer = ArrayBuffer::createFromBytes({ static_cast<const uint8_t*>(ptr), length }, unmapBufferBytes, lengthAsContext);
 
     auto* view = JSC::JSUint8Array::create(globalObject, structure, WTF::move(buffer), 0, length);
     RETURN_IF_EXCEPTION(scope, {});
@@ -3674,18 +3668,12 @@ static const HashTableValue JSBufferPrototypeTableValues[]
         this->putDirect(vm, alias_ident, original, PropertyAttribute::Builtin | 0);              \
     } while (false);
 
-// The accessor descriptor JSC's DFG needs, derived from the same template arguments the host
+// The accessor descriptor the JIT needs, derived from the same template arguments the host
 // function is instantiated with so the two cannot disagree.
 template<typename T, bool isLittleEndian, bool isWrite>
 static void registerBufferAccessor(JSC::NativeFunction function)
 {
-    JSC::DFG::DataViewData data {};
-    data.byteSize = sizeof(T);
-    data.isSigned = std::is_signed_v<T> && !std::is_floating_point_v<T>;
-    data.isFloatingPoint = std::is_floating_point_v<T>;
-    data.isResizable = false;
-    data.isLittleEndian = triState(isLittleEndian);
-    JSC::registerBufferAccessor(JSC::toTagged(function), { data, isWrite });
+    JSC::registerBufferAccessor(function, { sizeof(T), std::is_signed_v<T> && !std::is_floating_point_v<T>, std::is_floating_point_v<T>, isLittleEndian, isWrite });
 }
 
 // read(U)Int{LE,BE} / write(U)Int{LE,BE}: the width comes from the byteLength argument, so the JIT
@@ -3693,13 +3681,7 @@ static void registerBufferAccessor(JSC::NativeFunction function)
 template<bool isSigned, bool isLittleEndian, bool isWrite>
 static void registerBufferVarWidthAccessor(JSC::NativeFunction function)
 {
-    JSC::DFG::DataViewData data {};
-    data.byteSize = 0;
-    data.isSigned = isSigned;
-    data.isFloatingPoint = false;
-    data.isResizable = false;
-    data.isLittleEndian = triState(isLittleEndian);
-    JSC::registerBufferAccessor(JSC::toTagged(function), { data, isWrite, /* byteLengthFromArgument */ true });
+    JSC::registerBufferAccessor(function, { 0, isSigned, false, isLittleEndian, isWrite });
 }
 
 // Process-global (the descriptor belongs to the function pointer): once, before the functions are
@@ -3861,7 +3843,7 @@ EncodedJSValue constructBufferFromArrayBuffer(JSC::ThrowScope& throwScope, JSGlo
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
     auto* jsBuffer = uncheckedDowncast<JSC::JSArrayBuffer>(arrayBufferValue.asCell());
-    RefPtr<ArrayBuffer> buffer = jsBuffer->impl();
+    auto* buffer = jsBuffer->impl();
     if (buffer->isDetached()) {
         return throwVMTypeError(globalObject, throwScope, "Buffer is detached"_s);
     }
@@ -3903,7 +3885,7 @@ EncodedJSValue constructBufferFromArrayBuffer(JSC::ThrowScope& throwScope, JSGlo
         // Node only returns a length-tracking Buffer when no explicit length is given.
         std::optional<size_t> viewLength;
         if (!lengthValue.isUndefined()) viewLength = length;
-        auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTF::move(buffer), offset, viewLength);
+        auto* uint8Array = JSC::JSUint8Array::createOn(lexicalGlobalObject, subclassStructure, *buffer, offset, viewLength);
         RETURN_IF_EXCEPTION(throwScope, {});
         if (!uint8Array) [[unlikely]] {
             throwOutOfMemoryError(globalObject, throwScope);
@@ -3912,7 +3894,7 @@ EncodedJSValue constructBufferFromArrayBuffer(JSC::ThrowScope& throwScope, JSGlo
         RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));
     }
     auto* subclassStructure = globalObject->JSBufferSubclassStructure();
-    auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTF::move(buffer), offset, length);
+    auto* uint8Array = JSC::JSUint8Array::createOn(lexicalGlobalObject, subclassStructure, *buffer, offset, length);
     RETURN_IF_EXCEPTION(throwScope, {});
     if (!uint8Array) [[unlikely]] {
         throwOutOfMemoryError(globalObject, throwScope);

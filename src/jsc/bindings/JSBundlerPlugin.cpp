@@ -22,11 +22,9 @@
 #include <JavaScriptCore/JSPromise.h>
 #include "BunClientData.h"
 #include "ModuleLoader.h"
-#include <JavaScriptCore/YarrInterpreter.h>
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
-#include <JavaScriptCore/YarrMatchingContextHolder.h>
 #include "ErrorCode.h"
 #include "napi_external.h"
 #include "WebCoreJSBuiltins.h"
@@ -91,7 +89,7 @@ static bool anyMatchesForNamespace(JSC::VM& vm, BundlerPlugin::NamespaceList& li
     auto& filters = *group;
 
     for (auto& filter : filters) {
-        if (filter.match(vm, pathString)) {
+        if (filter.match(pathString)) {
             return true;
         }
     }
@@ -303,19 +301,6 @@ void BundlerPlugin::NativePluginList::append(JSC::VM& vm, JSC::RegExp* filter, S
     }
 }
 
-bool BundlerPlugin::FilterRegExp::match(JSC::VM& vm, const String& path)
-{
-    if (!m_bytecode || path.isNull())
-        return false;
-    WTF::Locker locker { lock };
-    Yarr::MatchingContextHolder regExpContext(vm, nullptr, Yarr::MatchFrom::CompilerThread);
-    Vector<unsigned, 32> offsets;
-    offsets.grow(m_bytecode->m_offsetsSize);
-    for (unsigned i = 0; i < m_bytecode->m_body->m_numSubpatterns + 1; ++i)
-        offsets[i * 2] = Yarr::offsetNoMatch;
-    return Yarr::interpret(m_bytecode.get(), path, 0, offsets.mutableSpan().data()) != Yarr::offsetNoMatch;
-}
-
 int BundlerPlugin::NativePluginList::call(JSC::VM& vm, BundlerPlugin* plugin, int* shouldContinue, void* bunContextPtr, const BunString* namespaceStr, const BunString* pathString, OnBeforeParseArguments* onBeforeParseArgs, OnBeforeParseResult* onBeforeParseResult)
 {
     unsigned index = 0;
@@ -339,7 +324,7 @@ int BundlerPlugin::NativePluginList::call(JSC::VM& vm, BundlerPlugin* plugin, in
             OnBeforeParseResult__reset(onBeforeParseResult);
         }
 
-        if (filters[i].match(vm, path)) {
+        if (filters[i].match(path)) {
             Bun::NapiExternal* external = callbacks[i].external;
             ASSERT(onBeforeParseArgs != nullptr);
             if (external) {
@@ -376,16 +361,12 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
-    // Clone the regexp so we don't have to worry about it being used concurrently with the JS thread.
-    // TODO: Should we have a regexp object for every thread in the thread pool? Then we could avoid using
-    // a mutex to synchronize access to the same regexp from multiple threads.
     auto* jsRegexp = dynamicDowncast<JSC::RegExpObject>(callFrame->argument(0));
     if (!jsRegexp) [[unlikely]] {
         Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "Expected filter (1st argument) to be a RegExp"_s);
         return {};
     }
-    RegExp* reggie = jsRegexp->regExp();
-    RegExp* newRegexp = RegExp::create(vm, reggie->pattern(), reggie->flags());
+    RegExp* filter = jsRegexp->regExp();
 
     WTF::String namespaceStr = callFrame->argument(1).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
@@ -450,7 +431,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
     if (externalPtr)
         thisObject->plugin.onBeforeParseExternals.append(vm, thisObject, externalPtr);
 
-    thisObject->plugin.onBeforeParse.append(vm, newRegexp, namespaceStr, callback, native_plugin_name ? *native_plugin_name : nullptr, externalPtr);
+    thisObject->plugin.onBeforeParse.append(vm, filter, namespaceStr, callback, native_plugin_name ? *native_plugin_name : nullptr, externalPtr);
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }

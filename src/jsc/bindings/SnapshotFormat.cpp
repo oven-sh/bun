@@ -151,7 +151,7 @@ extern "C" void SnapshotFormat__forEachProperty(JSGlobalObject* globalObject, En
     object->methodTable()->getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(scope, );
 
-    auto keys = properties.data()->propertyNameVector();
+    auto keys = properties.releaseData()->propertyNameVector();
     // Own properties in Jest and Vitest, prototype getters in Bun.
     Identifier lastCall;
     if (isStateOfMockFunction(globalObject, object)) {
@@ -311,8 +311,8 @@ extern "C" EncodedJSValue SnapshotFormat__toRegExp(JSGlobalObject* globalObject,
         return encodedPattern;
     auto string = asString(pattern)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    RegExp* regExp = RegExp::create(vm, string, {});
-    if (!regExp->isValid())
+    RegExp* regExp = RegExp::tryCreate(vm, string, {});
+    if (!regExp)
         return encodedPattern;
     return JSValue::encode(RegExpObject::create(vm, globalObject->regExpStructure(), regExp));
 }

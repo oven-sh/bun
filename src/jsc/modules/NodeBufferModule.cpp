@@ -217,8 +217,7 @@ BUN_DEFINE_HOST_FUNCTION(jsBufferTranscode,
         const size_t expected = simdutf::utf16_length_from_utf8(data, length);
         result = WebCore::createUninitializedBuffer(globalObject, expected * 2);
         RETURN_IF_EXCEPTION(scope, {});
-        const size_t actual = simdutf::convert_utf8_to_utf16le(data, length, reinterpret_cast<char16_t*>(result->typedVector()));
-        if (actual == 0 || actual != expected) {
+        if (!WTF::StringImpl::tryConvertUTF8ToUTF16(byteCast<char8_t>(input), { reinterpret_cast<char16_t*>(result->typedVector()), expected })) {
             errorCode = U_INVALID_CHAR_FOUND_ERRNO;
             errorName = "U_INVALID_CHAR_FOUND"_s;
         }

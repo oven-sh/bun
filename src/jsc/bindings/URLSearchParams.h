@@ -26,6 +26,7 @@
 #include "root.h"
 
 #include "ExceptionOr.h"
+#include <wtf/URL.h>
 #include <wtf/Vector.h>
 #include <wtf/WeakPtr.h>
 #include <wtf/text/WTFString.h>
@@ -43,7 +44,7 @@ public:
     static ExceptionOr<Ref<URLSearchParams>> create(std::variant<Vector<Vector<String>>, Vector<KeyValuePair<String, String>>, String>&&);
     static ExceptionOr<Ref<URLSearchParams>> create(const String& string, DOMURL* associatedURL);
 
-    // Use this instead of WTF::URLParser::parseURLEncodedForm, which aborts if a name, a value or the list of pairs is too big for a Vector.
+    // Fails if a name, a value or the list of pairs is too big for a Vector.
     static ExceptionOr<Vector<KeyValuePair<String, String>>> parseURLEncodedForm(StringView);
 
     ExceptionOr<void> append(const String& name, const String& value);
@@ -53,6 +54,7 @@ public:
     bool has(const StringView name, const String& value = {}) const;
     ExceptionOr<void> set(const String& name, const String& value);
     String toString() const;
+    std::optional<String> tryToString() const { return WTF::URLParser::trySerialize(m_pairs); }
     ExceptionOr<void> updateFromAssociatedURL();
     void sort();
     size_t size() const { return m_pairs.size(); }

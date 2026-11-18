@@ -167,11 +167,7 @@ fn drop_source_maps(outdir: &[u8], output_files: &mut Vec<OutputFile>) {
         })
         .collect();
     for file in output_files.iter_mut() {
-        for index in [
-            &mut file.source_map_index,
-            &mut file.bytecode_index,
-            &mut file.module_info_index,
-        ] {
+        for index in [&mut file.source_map_index, &mut file.bytecode_index] {
             *index = moved.get(*index as usize).copied().unwrap_or(u32::MAX);
         }
     }

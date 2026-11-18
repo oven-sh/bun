@@ -49,7 +49,6 @@
 #include "ImportMetaObject.h"
 #include "JavaScriptCore/ScriptCallStackFactory.h"
 #include "JavaScriptCore/ConsoleMessage.h"
-#include "JavaScriptCore/InspectorConsoleAgent.h"
 #include "JavaScriptCore/JSGlobalObjectDebuggable.h"
 #include <JavaScriptCore/StackFrame.h>
 #include <sys/stat.h>
@@ -119,13 +118,8 @@ typedef int mode_t;
 #endif
 #endif
 
-#if ASSERT_ENABLED
-#include <JavaScriptCore/IntegrityInlines.h>
-#endif
-
-#if OS(DARWIN)
+#include <unicode/uchar.h>
 #include <unicode/uversion.h>
-#endif
 
 #pragma mark - Node.js Process
 
@@ -184,10 +178,6 @@ NEVER_INLINE void putDirectNamed(JSC::VM& vm, JSC::JSObject* object, ASCIILitera
 }
 
 using namespace JSC;
-
-#if !defined(BUN_WEBKIT_VERSION)
-#define BUN_WEBKIT_VERSION "unknown"
-#endif
 
 using JSGlobalObject = JSC::JSGlobalObject;
 using JSValue = JSC::JSValue;
@@ -302,7 +292,7 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
         { "llhttp", "9.4.2" },
         { "mimalloc", BUN_VERSION_MIMALLOC },
         { "uwebsockets", BUN_VERSION_UWS },
-        { "webkit", BUN_VERSION_WEBKIT },
+        { "webkit", BUN_VERSION_ENGINE },
         { "zig", BUN_VERSION_ZIG },
         // Use commit hash for zlib to match test expectations
         { "zlib", BUN_VERSION_ZLIB_HASH },
@@ -832,7 +822,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
 #elif OS(WINDOWS)
         const char** pointer_to_plugin_name = (const char**)GetProcAddress(handle, "BUN_PLUGIN_NAME");
 #endif
-        if (pointer_to_plugin_name) {
+        if (pointer_to_plugin_name && resultObject->canHaveProperties()) {
             Bun::NapiExternal* napi_external = Bun::NapiExternal::create(vm, globalObject->NapiExternalStructure(), handle, nullptr, nullptr, env.ptr());
             bool success = resultObject->putDirect(vm, WebCore::builtinNames(vm).napiDlopenHandlePrivateName(), napi_external, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
             ASSERT(success);
@@ -1675,7 +1665,7 @@ static int listenerCountForSignal(EventEmitter& eventEmitter, const Identifier& 
 static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventName, bool isAdded)
 {
     if (Bun__isMainThreadVM()) {
-        if (eventName == "memoryPressure") {
+        if (eventName == "memoryPressure"_s) {
             auto* global = eventEmitter.scriptExecutionContext()->jsGlobalObject();
             if (isAdded) {
                 if (eventEmitter.listenerCount(eventName) == 1) {
@@ -1688,7 +1678,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
         }
 
         // IPC handlers
-        if (eventName == "message" || eventName == "disconnect") {
+        if (eventName == "message"_s || eventName == "disconnect"_s) {
             auto* global = uncheckedDowncast<GlobalObject>(eventEmitter.scriptExecutionContext()->jsGlobalObject());
             auto& vm = JSC::getVM(global);
             auto messageListenerCount = eventEmitter.listenerCount(vm.propertyNames->message);
@@ -1920,7 +1910,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteWarning, (JSC::JSGlobalObject * le
             return JSValue::encode(jsUndefined());
     }
     Identifier stderrName = Identifier::fromString(vm, "stderr"_s);
-    bool holdsEveryModule = !Bun::hasCompiledModules() && !JSC::Bun__removableFeatureState.isTrimmed;
+    bool holdsEveryModule = !Bun::hasCompiledModules();
     unsigned stderrAttributes = 0;
     JSValue stderrProperty = process->getDirect(vm, stderrName, stderrAttributes);
     bool isStderrPlaceholder = stderrProperty && stderrAttributes & PropertyAttribute::CustomValue;
@@ -2892,7 +2882,7 @@ __attribute__((minsize)) static JSValue constructReportObjectComplete(VM& vm, Zi
         // TODO: allow errors as an argument
         {
             WTF::Vector<JSC::StackFrame> stackFrames;
-            vm.interpreter.getStackTrace(javascriptStack, stackFrames, 1);
+            vm.interpreter.getStackTrace(stackFrames, 1);
             String name = "Error"_s;
             String message = "JavaScript Callstack"_s;
             OrdinalNumber line = OrdinalNumber::beforeFirst();
@@ -4494,7 +4484,7 @@ static JSValue maybe_gid_by_name(JSC::ThrowScope& throwScope, JSGlobalObject* gl
 }
 
 // glibc/musl set*id() broadcast a realtime signal to every thread and block on a
-// barrier; a thread JSC/libpas has signal-suspended can't ack it and wedges the
+// barrier; a thread that the profiler has suspended can't ack it and wedges the
 // process. Holding the thread-suspend lock guarantees no thread is suspended here.
 template<typename Function>
 static ALWAYS_INLINE int callWithoutThreadSuspension(Function&& function)

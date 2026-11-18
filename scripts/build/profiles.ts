@@ -9,12 +9,12 @@
  *
  * ## Naming convention
  *
- * `<buildtype>[-<webkit-mode>][-<feature>]`
+ * `<buildtype>[-<feature>]`
  *
- *   debug              → Debug build, prebuilt WebKit (the default)
- *   debug-local        → Debug build, local WebKit (you cloned vendor/WebKit/)
- *   release            → Release build, prebuilt WebKit (LTO, as CI ships)
- *   release-local      → Release build, local WebKit
+ *   debug              → Debug build (the default)
+ *   debug-local        → Debug build, linked with the host's ICU
+ *   release            → Release build (LTO, as CI ships)
+ *   release-local      → Release build without LTO, linked with the host's ICU
  *   release-assertions → Release + runtime assertions enabled
  *   release-asan       → Release + address sanitizer
  *   ci-build           → what CI runs: the full build, linked from an object archive
@@ -28,22 +28,20 @@ import { BuildError } from "./error.ts";
 export type ProfileName = keyof typeof profiles;
 
 export const profiles = {
-  /** Default local dev: debug + prebuilt WebKit. ASAN defaults on for supported platforms. */
+  /** Default local dev. ASAN defaults on for supported platforms. */
   debug: {
     buildType: "Debug",
-    webkit: "prebuilt",
   },
 
-  /** Debug with local WebKit (user clones vendor/WebKit/). */
+  /** Debug, linked with the host's ICU. */
   "debug-local": {
     buildType: "Debug",
-    webkit: "local",
+    icu: "system",
   },
 
   /** Debug without ASAN — faster builds, less safety. */
   "debug-no-asan": {
     buildType: "Debug",
-    webkit: "prebuilt",
     asan: false,
   },
 
@@ -56,7 +54,6 @@ export const profiles = {
     os: "linux",
     arch: "aarch64",
     abi: "android",
-    webkit: "prebuilt",
   },
 
   "android-release": {
@@ -64,7 +61,6 @@ export const profiles = {
     os: "linux",
     arch: "aarch64",
     abi: "android",
-    webkit: "prebuilt",
   },
 
   /**
@@ -75,21 +71,18 @@ export const profiles = {
     buildType: "Debug",
     os: "freebsd",
     arch: "x64",
-    webkit: "prebuilt",
   },
 
   "freebsd-arm64": {
     buildType: "Debug",
     os: "freebsd",
     arch: "aarch64",
-    webkit: "prebuilt",
   },
 
   "freebsd-release": {
     buildType: "Release",
     os: "freebsd",
     arch: "x64",
-    webkit: "prebuilt",
   },
 
   /**
@@ -102,44 +95,39 @@ export const profiles = {
     buildType: "Debug",
     os: "windows",
     arch: "x64",
-    webkit: "prebuilt",
   },
 
   "windows-arm64": {
     buildType: "Debug",
     os: "windows",
     arch: "aarch64",
-    webkit: "prebuilt",
   },
 
   "windows-x64-release": {
     buildType: "Release",
     os: "windows",
     arch: "x64",
-    webkit: "prebuilt",
   },
 
   "windows-arm64-release": {
     buildType: "Release",
     os: "windows",
     arch: "aarch64",
-    webkit: "prebuilt",
   },
 
   /**
-   * Release build: the codegen CI ships (ThinLTO across bun, the `-lto`
-   * WebKit prebuilt's bitcode and Rust; no PGO or symbol ordering — those are
-   * CI post-steps). `--lto=off` trades that for fast relinks while iterating.
+   * Release build: the codegen CI ships (ThinLTO across the C/C++ and Rust; no
+   * PGO or symbol ordering — those are CI post-steps). `--lto=off` trades that
+   * for fast relinks while iterating.
    */
   release: {
     buildType: "Release",
-    webkit: "prebuilt",
   },
 
-  /** Release with local WebKit. */
+  /** Release, linked with the host's ICU. */
   "release-local": {
     buildType: "Release",
-    webkit: "local",
+    icu: "system",
     lto: false,
   },
 
@@ -150,7 +138,6 @@ export const profiles = {
    */
   "release-assertions": {
     buildType: "RelWithDebInfo",
-    webkit: "prebuilt",
     assertions: true,
     logs: true,
   },
@@ -163,7 +150,6 @@ export const profiles = {
    */
   "release-asan": {
     buildType: "Release",
-    webkit: "prebuilt",
     asan: true,
     assertions: true,
   },
@@ -173,8 +159,6 @@ export const profiles = {
     buildType: "Release",
     ci: true,
     buildkite: true,
-    webkit: "prebuilt",
-    trimmable: true,
   },
 } as const satisfies Record<string, PartialConfig>;
 

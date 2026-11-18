@@ -2,7 +2,6 @@
 #include "JSTextEncoderStream.h"
 
 #include "DOMClientIsoSubspaces.h"
-#include "DOMIsoSubspaces.h"
 #include "ErrorCode.h"
 #include "GeneratedSink.h"
 #include "JSDOMExceptionHandling.h"

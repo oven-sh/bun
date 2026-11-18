@@ -1,15 +1,11 @@
 #pragma once
-#include <JavaScriptCore/InjectedScriptHost.h>
 
-namespace Bun {
+#include "root.h"
 
-class BunInjectedScriptHost final : public Inspector::InjectedScriptHost {
-public:
-    static Ref<BunInjectedScriptHost> create() { return adoptRef(*new BunInjectedScriptHost); }
+// What the inspector shows of Bun's own objects.
+namespace Bun::InjectedScriptHost {
 
-    JSC::JSValue subtype(JSC::JSGlobalObject*, JSC::JSValue) override;
-    JSC::JSValue getInternalProperties(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue) override;
-    bool isHTMLAllCollection(JSC::VM&, JSC::JSValue) override { return false; }
-};
+JSC::JSValue subtype(JSC::JSGlobalObject*, JSC::JSValue);
+JSC::JSValue getInternalProperties(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue);
 
 }

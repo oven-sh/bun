@@ -2,7 +2,6 @@
 #include "JSPullIntoDescriptor.h"
 
 #include "DOMClientIsoSubspaces.h"
-#include "DOMIsoSubspaces.h"
 #include "JSDOMBinding.h"
 #include "JSDOMGlobalObject.h"
 #include <JavaScriptCore/JSArrayBuffer.h>

@@ -51,7 +51,7 @@ BunBuiltinNames::BunBuiltinNames(JSC::VM& vm)
         m_privateNames[i] = JSC::Identifier::fromUid(*builtinPrivateNames[i]);
     }
     for (size_t i = 0; i < count; ++i)
-        m_vm.propertyNames->appendExternalName(m_publicNames[i], m_privateNames[i]);
+        m_vm.registerPrivateName(m_publicNames[i], m_privateNames[i]);
 }
 
 BunBuiltinNames::~BunBuiltinNames() = default;

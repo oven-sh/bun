@@ -141,7 +141,7 @@ Local<Data> Object::SlowGetInternalField(int index)
 {
     auto* fields = getInternalFieldsContainer(this);
     JSObject* js_object = localToObjectPointer<JSObject>();
-    auto* globalObject = dynamicDowncast<Zig::GlobalObject>(js_object->globalObject());
+    auto* globalObject = defaultGlobalObject(js_object->realmMayBeNull());
     auto* handleScope = globalObject->V8GlobalInternals()->currentHandleScope();
     if (fields && index >= 0 && index < fields->size()) {
         auto& field = fields->at(index);

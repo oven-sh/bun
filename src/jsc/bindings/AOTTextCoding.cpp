@@ -111,129 +111,18 @@ static bool hasFixedUnsharedBytes(JSC::JSUint8Array* view)
     return !view->hasArrayBuffer() || (!view->isShared() && !view->isDetached() && !view->isResizableOrGrowableShared());
 }
 
-static ALWAYS_INLINE bool isContinuation(uint8_t byte)
-{
-    return static_cast<int8_t>(byte) < -0x40;
-}
-
-// https://encoding.spec.whatwg.org/#utf-8-decoder: the number of bytes of a sequence that is invalid or ends early.
-static NEVER_INLINE size_t invalidSequenceLength(std::span<const uint8_t> bytes)
-{
-    uint8_t lead = bytes[0];
-    size_t needed = lead < 0xc2 || lead > 0xf4 ? 0 : lead < 0xe0 ? 1
-        : lead < 0xf0                                            ? 2
-                                                                 : 3;
-    uint8_t least = lead == 0xe0 ? 0xa0 : lead == 0xf0 ? 0x90
-                                                       : 0x80;
-    uint8_t greatest = lead == 0xed ? 0x9f : lead == 0xf4 ? 0x8f
-                                                          : 0xbf;
-    size_t length = 1;
-    for (; length <= needed && length < bytes.size() && bytes[length] >= least && bytes[length] <= greatest; ++length) {
-        least = 0x80;
-        greatest = 0xbf;
-    }
-    return length;
-}
-
-static size_t decodeWithReplacement(std::span<const uint8_t> bytes, std::span<char16_t> output, bool& hasInvalidByte)
-{
-    RELEASE_ASSERT(output.size() >= bytes.size());
-    constexpr size_t minVectorizedBytes = 16;
-    constexpr unsigned maxVectorizedPrefixes = 2;
-    char16_t* unit = output.data();
-    const uint8_t* byte = bytes.data();
-    const uint8_t* end = byte + bytes.size();
-    unsigned vectorizedPrefixes = 0;
-    auto decodeValidPrefix = [&] {
-        size_t left = end - byte;
-        if (left < minVectorizedBytes || vectorizedPrefixes++ >= maxVectorizedPrefixes)
-            return;
-        auto* characters = reinterpret_cast<const char*>(byte);
-        auto result = simdutf::convert_utf8_to_utf16le_with_errors(characters, left, unit);
-        bool isValid = result.error == simdutf::SUCCESS;
-        unit += isValid ? result.count : simdutf::utf16_length_from_utf8(characters, result.count);
-        byte = isValid ? end : byte + result.count;
-    };
-    decodeValidPrefix();
-    while (byte < end) {
-        uint32_t lead = *byte;
-        size_t left = end - byte;
-        if (lead < 0x80) {
-            *unit++ = static_cast<char16_t>(lead);
-            ++byte;
-            continue;
-        }
-        if (lead < 0xe0) {
-            if (lead >= 0xc2 && left > 1 && isContinuation(byte[1])) [[likely]] {
-                *unit++ = static_cast<char16_t>((lead & 0x1f) << 6 | (byte[1] & 0x3f));
-                byte += 2;
-                continue;
-            }
-        } else if (lead < 0xf0) {
-            if (left > 2 && isContinuation(byte[1]) && isContinuation(byte[2])) [[likely]] {
-                uint32_t character = (lead & 0xf) << 12 | (byte[1] & 0x3f) << 6 | (byte[2] & 0x3f);
-                if (character >= 0x800 && (character & 0xf800) != 0xd800) [[likely]] {
-                    *unit++ = static_cast<char16_t>(character);
-                    byte += 3;
-                    continue;
-                }
-            }
-        } else if (left > 3 && isContinuation(byte[1]) && isContinuation(byte[2]) && isContinuation(byte[3])) {
-            uint32_t character = (lead - 0xf0) << 18 | (byte[1] & 0x3f) << 12 | (byte[2] & 0x3f) << 6 | (byte[3] & 0x3f);
-            if (character - 0x10000 < 0x100000) [[likely]] {
-                *unit++ = U16_LEAD(character);
-                *unit++ = U16_TRAIL(character);
-                byte += 4;
-                continue;
-            }
-        }
-        hasInvalidByte = true;
-        *unit++ = 0xfffd;
-        byte += invalidSequenceLength({ byte, left });
-        for (; byte < end && isContinuation(*byte); ++byte)
-            *unit++ = 0xfffd;
-        decodeValidPrefix();
-    }
-    return unit - output.data();
-}
-
-template<typename CharacterType>
-static JSC::JSString* tryCreateString(JSC::VM& vm, std::span<const CharacterType> characters)
-{
-    std::span<CharacterType> copy;
-    RefPtr<StringImpl> impl = StringImpl::tryCreateUninitialized(characters.size(), copy);
-    if (!impl) [[unlikely]]
-        return nullptr;
-    memcpy(copy.data(), characters.data(), characters.size_bytes());
-    return JSC::jsString(vm, String(impl.releaseNonNull()));
-}
-
 static JSC::JSString* tryDecodeUTF8(JSC::VM& vm, std::span<const uint8_t> bytes, bool replacesInvalidBytes)
 {
-    constexpr size_t maxStackDecodedBytes = 256;
     if (bytes.empty())
         return JSC::jsEmptyString(vm);
-    if (bytes.size() > String::MaxLength)
-        return nullptr;
-    if (WTF::charactersAreAllASCII(byteCast<Latin1Character>(bytes)))
-        return tryCreateString(vm, byteCast<Latin1Character>(bytes));
-    if (bytes.size() <= maxStackDecodedBytes) {
-        std::array<char16_t, maxStackDecodedBytes> output;
-        bool hasInvalidByte = false;
-        size_t length = decodeWithReplacement(bytes, output, hasInvalidByte);
-        if (hasInvalidByte && !replacesInvalidBytes)
-            return nullptr;
-        return tryCreateString(vm, std::span<const char16_t> { output }.first(length));
+    if (replacesInvalidBytes || WTF::charactersAreAllASCII(byteCast<Latin1Character>(bytes))) {
+        String text = String::tryFromUTF8ReplacingInvalidSequences(byteCast<char8_t>(bytes));
+        return text.isNull() ? nullptr : JSC::jsString(vm, WTF::move(text));
     }
-    auto* characters = reinterpret_cast<const char*>(bytes.data());
-    if (!simdutf::validate_utf8(characters, bytes.size()))
-        return nullptr;
     std::span<char16_t> units;
-    RefPtr<StringImpl> impl = StringImpl::tryCreateUninitialized(simdutf::utf16_length_from_utf8(characters, bytes.size()), units);
-    if (!impl) [[unlikely]]
+    RefPtr<StringImpl> impl = StringImpl::tryCreateUninitialized(simdutf::utf16_length_from_utf8(reinterpret_cast<const char*>(bytes.data()), bytes.size()), units);
+    if (!impl || !StringImpl::tryConvertUTF8ToUTF16(byteCast<char8_t>(bytes), units))
         return nullptr;
-    size_t written = simdutf::convert_valid_utf8_to_utf16le(characters, bytes.size(), units.data());
-    RELEASE_ASSERT(written == units.size());
     return JSC::jsString(vm, String(impl.releaseNonNull()));
 }
 

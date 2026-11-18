@@ -29,7 +29,7 @@ extern "C" int8_t JSC__JSBigInt__orderDouble(JSBigInt* bigInt, double num)
     case JSBigInt::ComparisonResult::LessThan:
         return -1;
     case JSBigInt::ComparisonResult::Undefined:
-        UNREACHABLE();
+        RELEASE_ASSERT_NOT_REACHED();
     }
 }
 
@@ -45,7 +45,7 @@ extern "C" int8_t JSC__JSBigInt__orderUint64(JSBigInt* bigInt, uint64_t num)
     case JSBigInt::ComparisonResult::LessThan:
         return -1;
     case JSBigInt::ComparisonResult::Undefined:
-        UNREACHABLE();
+        RELEASE_ASSERT_NOT_REACHED();
     }
 }
 
@@ -61,7 +61,7 @@ extern "C" int8_t JSC__JSBigInt__orderInt64(JSBigInt* bigInt, int64_t num)
     case JSBigInt::ComparisonResult::LessThan:
         return -1;
     case JSBigInt::ComparisonResult::Undefined:
-        UNREACHABLE();
+        RELEASE_ASSERT_NOT_REACHED();
     }
 }
 

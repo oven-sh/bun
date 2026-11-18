@@ -183,7 +183,7 @@ impl FdExt for Fd {
                         return_address,
                         bun_core::DumpStackTraceOptions {
                             frame_count: 4,
-                            stop_at_jsc_llint: true,
+                            stop_at_interpreter: true,
                             ..Default::default()
                         },
                     );

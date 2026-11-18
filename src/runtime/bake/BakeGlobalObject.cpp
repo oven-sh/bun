@@ -249,7 +249,6 @@ extern "C" GlobalObject* BakeCreateProdGlobal()
     vmPtr->refSuppressingSaferCPPChecking();
     JSC::VM& vm = *vmPtr;
 
-    vm.heap.acquireAccess();
     JSC::JSLockHolder locker(vm);
     BunVirtualMachine* bunVM = Bun__getVM();
     WebCore::JSVMClientData::create(&vm, bunVM, /* worker */ nullptr);
@@ -265,8 +264,6 @@ extern "C" GlobalObject* BakeCreateProdGlobal()
     JSC::gcProtect(global);
 
     global->isThreadLocalDefaultGlobalObject = true;
-
-    vm.heap.disableStopIfNecessaryTimer();
 
     return global;
 }

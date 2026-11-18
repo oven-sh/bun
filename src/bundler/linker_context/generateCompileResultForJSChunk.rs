@@ -4,7 +4,6 @@ use core::sync::atomic::Ordering;
 use bun_ast::Scope;
 use bun_js_printer::{self as js_printer, PrintResult};
 
-use crate::analyze_transpiled_module::ModuleInfo;
 use crate::linker_context_mod::LinkerContext;
 use crate::options::OutputFormat;
 use crate::thread_pool::Worker;
@@ -68,13 +67,6 @@ pub(crate) fn generate_compile_result_for_js_chunk(
         )
     };
 
-    // Collects what the printer emits for this part range; `post_process_js_chunk`
-    // appends it to the chunk's ModuleInfo, which is the one that gets finalized,
-    // so the `is_typescript` flag of this accumulator is never read.
-    let mut module_info: Option<Box<ModuleInfo>> = c
-        .options
-        .generates_module_info()
-        .then(|| ModuleInfo::create(false));
     let result = generate_code_for_file_in_chunk_js(
         c,
         &mut buffer_writer,
@@ -87,7 +79,6 @@ pub(crate) fn generate_compile_result_for_js_chunk(
         stmt_list,
         worker_alloc,
         &**arena,
-        module_info.as_deref_mut(),
     );
 
     // Update bytesInOutput for this source in the chunk (for metafile)
@@ -112,6 +103,5 @@ pub(crate) fn generate_compile_result_for_js_chunk(
     CompileResult::Javascript {
         source_index: part_range.source_index.get(),
         result,
-        module_info,
     }
 }

@@ -880,7 +880,7 @@ export const aotBuiltinMismatches: () => string[] = $newCppFunction(
   0,
 );
 /** The compiler's table of built-ins as plain objects. */
-export const aotBuiltinEntries: () => import("../codegen/builtins/dump.ts").TableDump = $newCppFunction(
+export const aotBuiltinEntries: () => any = $newCppFunction(
   "InternalForTesting.cpp",
   "jsFunction_aotBuiltinEntries",
   0,

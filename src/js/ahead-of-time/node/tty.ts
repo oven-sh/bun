@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/tty.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 f7af17dd0e7cee3f8edd8045bf340969d085a3cea980ae78313995a3ad3cbb7f.
+// Written against that file with the SHA-256 ab3378b638567ff46d2cdf7472b1e53a764535db3351a08d28a75a3ecacc2376.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 // Hardcoded module "node:tty"
 
@@ -78,6 +78,7 @@ function setUpReadStream() {
 }
 
 const prototypeOfReadStream = {
+  __proto__: null,
   get() {
     const Prototype = Object.create(require("internal/fs/streams").ReadStream.prototype);
 
@@ -182,6 +183,7 @@ function WriteStream(this: Self, fd: number): void {
 }
 
 Object.defineProperty(WriteStream, "prototype", {
+  __proto__: null,
   get() {
     const Prototype = Object.create(require("internal/fs/streams").WriteStream.prototype);
     Object.defineProperty(WriteStream, "prototype", { value: Prototype });

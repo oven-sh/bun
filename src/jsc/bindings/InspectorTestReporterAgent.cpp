@@ -1,12 +1,7 @@
 #include "InspectorTestReporterAgent.h"
 
-#include <JavaScriptCore/InspectorFrontendRouter.h>
-#include <JavaScriptCore/InspectorBackendDispatcher.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <wtf/text/WTFString.h>
-#include <JavaScriptCore/ScriptCallStack.h>
-#include <JavaScriptCore/JSGlobalObjectDebuggable.h>
-#include <JavaScriptCore/JSGlobalObjectInspectorController.h>
 #include "ErrorStackTrace.h"
 #include "ZigGlobalObject.h"
 
@@ -20,59 +15,14 @@ namespace Inspector {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(InspectorTestReporterAgent);
 
-// Rust bindings implementation
-extern "C" {
-
-void Bun__TestReporterAgentEnable(Inspector::InspectorTestReporterAgent* agent);
-void Bun__TestReporterAgentDisable(Inspector::InspectorTestReporterAgent* agent);
-
 enum class BunTestType : uint8_t {
     Test,
     Describe,
 };
 
-void Bun__TestReporterAgentReportTestFound(Inspector::InspectorTestReporterAgent* agent, int testId, const BunString* name, BunTestType item_type, int parentId)
+static ASCIILiteral protocolName(BunTestType type)
 {
-    auto str = name->toWTFString(BunString::ZeroCopy);
-
-    Protocol::TestReporter::TestType type;
-    switch (item_type) {
-    case BunTestType::Test:
-        type = Protocol::TestReporter::TestType::Test;
-        break;
-    case BunTestType::Describe:
-        type = Protocol::TestReporter::TestType::Describe;
-        break;
-    default:
-        ASSERT_NOT_REACHED();
-    }
-
-    agent->reportTestFound(testId, str, type, parentId);
-}
-
-void Bun__TestReporterAgentReportTestFoundWithLocation(Inspector::InspectorTestReporterAgent* agent, int testId, const BunString* name, BunTestType item_type, int parentId, const BunString* sourceURL, int line)
-{
-    auto str = name->toWTFString(BunString::ZeroCopy);
-    auto sourceURLStr = sourceURL->toWTFString(BunString::ZeroCopy);
-
-    Protocol::TestReporter::TestType type;
-    switch (item_type) {
-    case BunTestType::Test:
-        type = Protocol::TestReporter::TestType::Test;
-        break;
-    case BunTestType::Describe:
-        type = Protocol::TestReporter::TestType::Describe;
-        break;
-    default:
-        ASSERT_NOT_REACHED();
-    }
-
-    agent->reportTestFoundWithLocation(testId, str, type, parentId, sourceURLStr, line);
-}
-
-void Bun__TestReporterAgentReportTestStart(Inspector::InspectorTestReporterAgent* agent, int testId)
-{
-    agent->reportTestStart(testId);
+    return type == BunTestType::Test ? "test"_s : "describe"_s;
 }
 
 enum class BunTestStatus : uint8_t {
@@ -85,90 +35,78 @@ enum class BunTestStatus : uint8_t {
     SkippedBecauseLabel,
 };
 
+static ASCIILiteral protocolName(BunTestStatus status)
+{
+    switch (status) {
+    case BunTestStatus::Pass:
+        return "pass"_s;
+    case BunTestStatus::Fail:
+        return "fail"_s;
+    case BunTestStatus::Timeout:
+        return "timeout"_s;
+    case BunTestStatus::Skip:
+        return "skip"_s;
+    case BunTestStatus::Todo:
+        return "todo"_s;
+    case BunTestStatus::SkippedBecauseLabel:
+        return "skipped_because_label"_s;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+// Rust bindings implementation
+extern "C" {
+
+void Bun__TestReporterAgentEnable(Inspector::InspectorTestReporterAgent* agent);
+void Bun__TestReporterAgentDisable(Inspector::InspectorTestReporterAgent* agent);
+
+void Bun__TestReporterAgentReportTestFound(Inspector::InspectorTestReporterAgent* agent, int testId, const BunString* name, BunTestType item_type, int parentId)
+{
+    agent->reportTestFound(testId, name->toWTFString(BunString::ZeroCopy), protocolName(item_type), parentId);
+}
+
+void Bun__TestReporterAgentReportTestFoundWithLocation(Inspector::InspectorTestReporterAgent* agent, int testId, const BunString* name, BunTestType item_type, int parentId, const BunString* sourceURL, int line)
+{
+    // The script is not known of a test that is reported in retrospect.
+    agent->reportTestFoundWithLocation(testId, name->toWTFString(BunString::ZeroCopy), protocolName(item_type), parentId, String(), sourceURL->toWTFString(BunString::ZeroCopy), line);
+}
+
+void Bun__TestReporterAgentReportTestStart(Inspector::InspectorTestReporterAgent* agent, int testId)
+{
+    agent->reportTestStart(testId);
+}
+
 void Bun__TestReporterAgentReportTestEnd(Inspector::InspectorTestReporterAgent* agent, int testId, BunTestStatus bunTestStatus, double elapsed)
 {
-    Protocol::TestReporter::TestStatus status;
-    switch (bunTestStatus) {
-    case BunTestStatus::Pass:
-        status = Protocol::TestReporter::TestStatus::Pass;
-        break;
-    case BunTestStatus::Fail:
-        status = Protocol::TestReporter::TestStatus::Fail;
-        break;
-    case BunTestStatus::Timeout:
-        status = Protocol::TestReporter::TestStatus::Timeout;
-        break;
-    case BunTestStatus::Skip:
-        status = Protocol::TestReporter::TestStatus::Skip;
-        break;
-    case BunTestStatus::Todo:
-        status = Protocol::TestReporter::TestStatus::Todo;
-        break;
-    case BunTestStatus::SkippedBecauseLabel:
-        status = Protocol::TestReporter::TestStatus::Skipped_because_label;
-        break;
-    default:
-        ASSERT_NOT_REACHED();
-    }
-
-    agent->reportTestEnd(testId, status, elapsed);
+    agent->reportTestEnd(testId, protocolName(bunTestStatus), elapsed);
 }
 }
 
 InspectorTestReporterAgent::InspectorTestReporterAgent(JSC::JSGlobalObject& globalObject)
-    : InspectorAgentBase("TestReporter"_s)
-    , m_globalObject(globalObject)
-    , m_backendDispatcher(TestReporterBackendDispatcher::create(m_globalObject.inspectorController().backendDispatcher(), this))
-    , m_frontendDispatcher(makeUnique<TestReporterFrontendDispatcher>(const_cast<FrontendRouter&>(m_globalObject.inspectorController().frontendRouter())))
+    : InspectorAgentBase(globalObject, "TestReporter"_s)
 {
 }
 
-InspectorTestReporterAgent::~InspectorTestReporterAgent()
+void InspectorTestReporterAgent::didEnable()
 {
-    if (m_enabled) {
-        Bun__TestReporterAgentDisable(this);
-    }
-}
-
-void InspectorTestReporterAgent::didCreateFrontendAndBackend()
-{
-}
-
-void InspectorTestReporterAgent::willDestroyFrontendAndBackend(DisconnectReason)
-{
-    (void)disable();
-}
-
-Protocol::ErrorStringOr<void> InspectorTestReporterAgent::enable()
-{
-    if (m_enabled)
-        return {};
-
-    m_enabled = true;
     Bun__TestReporterAgentEnable(this);
-    return {};
 }
 
-Protocol::ErrorStringOr<void> InspectorTestReporterAgent::disable()
+void InspectorTestReporterAgent::didDisable()
 {
-    if (!m_enabled)
-        return {};
-
-    m_enabled = false;
     Bun__TestReporterAgentDisable(this);
-    return {};
 }
 
-void InspectorTestReporterAgent::reportTestFound(int testId, const String& name, Protocol::TestReporter::TestType type, int parentId)
+void InspectorTestReporterAgent::reportTestFound(int testId, const String& name, ASCIILiteral type, int parentId)
 {
-    if (!m_enabled)
+    if (!isEnabled())
         return;
 
     JSC::LineColumn lineColumn;
     JSC::SourceID sourceID = 0;
     String sourceURL;
 
-    auto* globalObject = &m_globalObject;
+    auto* globalObject = &this->globalObject();
     auto& vm = JSC::getVM(globalObject);
 
     JSC::StackVisitor::visit(vm.topCallFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
@@ -216,45 +154,49 @@ void InspectorTestReporterAgent::reportTestFound(int testId, const String& name,
         lineColumn.column = OrdinalNumber::fromZeroBasedInt(remappedFrame.position.column_zero_based).oneBasedInt();
     }
 
-    m_frontendDispatcher->found(
-        testId,
-        sourceID > 0 ? String::number(sourceID) : String(),
-        sourceURL,
-        lineColumn.line,
-        name,
-        type,
-        parentId > 0 ? parentId : std::optional<int>());
+    reportTestFoundWithLocation(testId, name, type, parentId, sourceID > 0 ? String::number(sourceID) : String(), sourceURL, lineColumn.line);
 }
 
-void InspectorTestReporterAgent::reportTestFoundWithLocation(int testId, const String& name, Protocol::TestReporter::TestType type, int parentId, const String& sourceURL, int line)
+void InspectorTestReporterAgent::reportTestFoundWithLocation(int testId, const String& name, ASCIILiteral type, int parentId, const String& scriptId, const String& sourceURL, int line)
 {
-    if (!m_enabled)
+    if (!isEnabled())
         return;
 
-    m_frontendDispatcher->found(
-        testId,
-        String(), // sourceID - not available for retroactively reported tests
-        sourceURL,
-        line,
-        name,
-        type,
-        parentId > 0 ? parentId : std::optional<int>());
+    auto parameters = JSON::Object::create();
+    parameters->setInteger("id"_s, testId);
+    if (!scriptId.isNull())
+        parameters->setString("scriptId"_s, scriptId);
+    if (!sourceURL.isNull())
+        parameters->setString("url"_s, sourceURL);
+    parameters->setInteger("line"_s, line);
+    if (!name.isNull())
+        parameters->setString("name"_s, name);
+    parameters->setString("type"_s, type);
+    if (parentId > 0)
+        parameters->setInteger("parentId"_s, parentId);
+    sendEvent("found"_s, WTF::move(parameters));
 }
 
 void InspectorTestReporterAgent::reportTestStart(int testId)
 {
-    if (!m_enabled || !m_frontendDispatcher)
+    if (!isEnabled())
         return;
 
-    m_frontendDispatcher->start(testId);
+    auto parameters = JSON::Object::create();
+    parameters->setInteger("id"_s, testId);
+    sendEvent("start"_s, WTF::move(parameters));
 }
 
-void InspectorTestReporterAgent::reportTestEnd(int testId, Protocol::TestReporter::TestStatus status, double elapsed)
+void InspectorTestReporterAgent::reportTestEnd(int testId, ASCIILiteral status, double elapsed)
 {
-    if (!m_enabled || !m_frontendDispatcher)
+    if (!isEnabled())
         return;
 
-    m_frontendDispatcher->end(testId, status, elapsed);
+    auto parameters = JSON::Object::create();
+    parameters->setInteger("id"_s, testId);
+    parameters->setString("status"_s, status);
+    parameters->setInteger("elapsed"_s, clampTo<int>(elapsed));
+    sendEvent("end"_s, WTF::move(parameters));
 }
 
 } // namespace Inspector

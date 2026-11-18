@@ -1,6 +1,6 @@
 # jsc-exception-lint
 
-A static checker for JavaScriptCore exception discipline in Bun's C++ code.
+A static checker for exception discipline in Bun's C++ code.
 It finds the same class of bug that `BUN_JSC_validateExceptionChecks=1`
 finds at run time, without needing a test to execute the path.
 
@@ -17,15 +17,11 @@ It needs a configured debug build (`build/debug/compile_commands.json` and
 the generated headers) and the LLVM 23 development package (`libclang-cpp`,
 `clang/` headers). Set `LLVM_DIR` if it is not under `/usr/lib/llvm-23`.
 
-The first run also parses the JavaScriptCore sources under `vendor/WebKit`
-to learn which JSC functions can throw. That takes about ten minutes and is
-cached in `build/debug/jsc-exception-lint/` per WebKit version.
-
 ## What it checks
 
-JSC's validator works like this. Every function that can throw declares a
+The validator works like this. Every function that can throw declares a
 `ThrowScope`. When a callee's scope is destroyed it sets
-`VM::m_needExceptionCheck`. The next `ThrowScope` constructor, and the next
+`VM::m_needsExceptionCheck`. The next `ThrowScope` constructor, and the next
 non-released `ThrowScope` destructor, assert that the bit is clear. Only
 `exception()` (which `RETURN_IF_EXCEPTION` expands to), `clearException()`
 and the `assertNoException` family clear it.
@@ -71,9 +67,11 @@ Kinds of finding:
    "transparent": its callers see the exit states of its body. A body that
    checks everything before it returns leaves no pending bit, like the
    validator.
-4. A body seen by the summary passes (JavaScriptCore sources, then Bun's
-   sources) is classified from the recorded summary.
-5. Otherwise the JSC convention applies: a parameter of type
+4. A body seen by the summary pass over Bun's sources is classified from
+   the recorded summary.
+5. A function that the engine exports can throw if its wrapper in
+   `EngineExports.h` declares an `Engine::MayThrow`.
+6. Otherwise the convention applies: a parameter of type
    `JSGlobalObject*` (or a subclass) or `ThrowScope&` means it can throw.
    Calls through function pointers use the signature the same way.
 

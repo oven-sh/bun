@@ -10,6 +10,11 @@ path = "lib.rs"
 workspace = true
 
 [dependencies]
+bun_engine_number.workspace = true
+bun_engine_platform.workspace = true
+bun_engine_bytecode.workspace = true
+bun_engine_text.workspace = true
+bun_yarr.workspace = true
 bun_opaque.workspace = true
 bun_jsc_macros.workspace = true
 thiserror.workspace = true
@@ -49,7 +54,6 @@ bun_resolve_builtins.workspace = true
 bun_resolver.workspace = true
 bun_s3_signing.workspace = true
 bun_sha_hmac.workspace = true
-bun_simdutf_sys.workspace = true
 bun_sourcemap.workspace = true
 bun_spawn.workspace = true
 bun_sys.workspace = true

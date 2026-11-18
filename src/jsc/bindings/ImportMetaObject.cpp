@@ -5,7 +5,6 @@
 #include "ImportMetaObject.h"
 #include "ZigGlobalObject.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
-#include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"
 // #include "JSBlob.h"
 #include "JSDOMAttribute.h"

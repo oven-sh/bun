@@ -1,41 +1,17 @@
 #pragma once
 
 #include "root.h"
-#include <JavaScriptCore/AlternateDispatchableAgent.h>
-#include <JavaScriptCore/InspectorAgentBase.h>
-#include <JavaScriptCore/InspectorBackendDispatchers.h>
-#include <JavaScriptCore/InspectorFrontendDispatchers.h>
-#include <JavaScriptCore/JSGlobalObject.h>
-#include <wtf/Forward.h>
-#include <wtf/Noncopyable.h>
 #include "headers-handwritten.h"
+#include <JavaScriptCore/InspectorAgentBase.h>
 
 namespace Inspector {
 
-class FrontendRouter;
-class BackendDispatcher;
-class BunFrontendDevServerFrontendDispatcher;
-
-class InspectorBunFrontendDevServerAgent final : public InspectorAgentBase, public Inspector::BunFrontendDevServerBackendDispatcherHandler, public CanMakeThreadSafeCheckedPtr<InspectorBunFrontendDevServerAgent> {
-    WTF_MAKE_NONCOPYABLE(InspectorBunFrontendDevServerAgent);
+class InspectorBunFrontendDevServerAgent final : public InspectorAgentBase {
     WTF_MAKE_TZONE_ALLOCATED(InspectorBunFrontendDevServerAgent);
-    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(InspectorBunFrontendDevServerAgent);
 
 public:
-    OVERRIDE_ABSTRACT_CAN_MAKE_CHECKEDPTR(CanMakeThreadSafeCheckedPtr);
+    explicit InspectorBunFrontendDevServerAgent(JSC::JSGlobalObject&);
 
-    InspectorBunFrontendDevServerAgent(JSC::JSGlobalObject&);
-    virtual ~InspectorBunFrontendDevServerAgent() final;
-
-    // InspectorAgentBase
-    virtual void didCreateFrontendAndBackend() final;
-    virtual void willDestroyFrontendAndBackend(DisconnectReason) final;
-
-    // BunFrontendDevServerBackendDispatcherHandler
-    virtual Protocol::ErrorStringOr<void> enable() final;
-    virtual Protocol::ErrorStringOr<void> disable() final;
-
-    // Public API for events
     void clientConnected(int devServerId, int connectionId);
     void clientDisconnected(int devServerId, int connectionId);
     void bundleStart(int devServerId, Ref<JSON::ArrayOf<String>>&& triggerFiles);
@@ -45,9 +21,8 @@ public:
     void consoleLog(int devServerId, char kind, const String& data);
 
 private:
-    std::unique_ptr<BunFrontendDevServerFrontendDispatcher> m_frontendDispatcher;
-    Ref<BunFrontendDevServerBackendDispatcher> m_backendDispatcher;
-    bool m_enabled { false };
+    void didEnable() final;
+    void didDisable() final;
 };
 
 } // namespace Inspector

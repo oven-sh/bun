@@ -14,24 +14,27 @@
 
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
-import { webkitVersionName, type Config } from "./config.ts";
+import type { Config } from "./config.ts";
 import { allDeps } from "./deps/index.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { Source } from "./source.ts";
 
 /**
  * Pull a version identifier from a Source. The shape depends on the kind:
- * github-archive → commit hash, prebuilt → identity string. Local/in-tree
+ * github-archive → commit hash, prebuilt → identity string. The others
  * don't have a pinned identifier.
  */
 function sourceIdentifier(source: Source): string | undefined {
   switch (source.kind) {
     case "github-archive":
       return source.commit;
+    case "tarball":
+      return source.sha256;
     case "prebuilt":
       return source.identity;
     case "local":
     case "in-tree":
+    case "system":
       // User-managed / in-tree — no pinned identifier independent of the
       // bun commit. Callers that need a value use cfg.revision.
       return undefined;
@@ -49,21 +52,14 @@ function computeVersions(cfg: Config): [string, string][] {
   // Single source of truth — bumping deps/<name>.ts updates this.
   for (const dep of allDeps) {
     if (dep.versionMacro === undefined) continue;
-    const source = dep.source(cfg);
-    const id = sourceIdentifier(source);
-    // WebKit special case: prebuilt.identity carries the artifact suffix, but
-    // process.versions wants the version.
-    if (dep.name === "WebKit") {
-      versions.push([dep.versionMacro, webkitVersionName(cfg.webkitVersion)]);
-    } else if (id !== undefined) {
-      versions.push([dep.versionMacro, id]);
-    }
+    const id = sourceIdentifier(dep.source(cfg));
+    if (id !== undefined) versions.push([dep.versionMacro, id]);
     // local/in-tree with no identifier: omit (consumer does #ifdef)
   }
 
   // ─── Non-dep versions ───
-  // UWS/USOCKETS are vendored at packages/bun-usockets — the bun commit
-  // IS their version.
+  // These are in this repository — the bun commit IS their version.
+  versions.push(["ENGINE", cfg.revision]);
   versions.push(["UWS", cfg.revision]);
   versions.push(["USOCKETS", cfg.revision]);
   // The runtime was ported from Zig; `process.versions.zig` records the

@@ -65,7 +65,7 @@ fp +  0        caller's fp
 fp -  8(n+1)   local n
 ```
 
-The caller builds the callee's header and arguments at the bottom of its own frame, in an even number of words that all belong to the callee, and restores the stack pointer after the call. It takes the code block and the entry from the `Executable` of the callee and passes that executable in `rcx` / `x9`; no code is patched. A site of the lower tiers with one callee may go through its code block, which starts like an executable and forwards calls once it is replaced. A callee entered with fewer arguments than parameters moves the frame down and pads it, unless the caller has done so: the call site of a new frame is `CallFrame::IS_PADDED` then, and otherwise zero. No register survives a call between JavaScript functions except the pinned ones, so unwinding restores none:
+The caller builds the callee's header and arguments at the bottom of its own frame, in an even number of words that all belong to the callee, and restores the stack pointer after the call. It takes the code block and the entry from the `Executable` of the callee and passes that executable in `rcx` / `x9`; nothing links call sites to their targets. A callee entered with fewer arguments than parameters moves the frame down and pads it. No register survives a call between JavaScript functions except the pinned ones, so unwinding restores none:
 
 | Pinned         | x86-64 | AArch64 |
 | -------------- | ------ | ------- |
@@ -76,13 +76,7 @@ The caller builds the callee's header and arguments at the bottom of its own fra
 
 Native functions and run-time operations use the C calling convention (System V on Windows too).
 
-Whoever moves the stack pointer by an amount that a script picks first compares what would be left with the limit, as signed numbers. A request to interrupt raises the limit above every address, so entries and heads of loops notice it with that same comparison. A count of zero arguments resumes a coroutine, whose code has no parameter but `this`.
-
 A profiler stops the thread at any instruction. A function of the engine that runs with the frame pointer at such a frame is `#[in_call_frame]`, generated code that makes frames as C does has `Owner::NATIVE`, and routines that generated code calls make theirs through `NativeFrames`.
-
-## The lower tiers
-
-The interpreter and baseline code have the same frame and the same metadata, so either takes a frame over at any instruction. Baseline code is made from the profiles of one code block and serves all that have the same `Code`: **a profile decides what is quick, never what is right**, and the only addresses in a template are those of names and instructions of the `Code` and of routines of the process. Blocks that have never run are left to the interpreter, which hands the frame back at the head of a loop. What the code was not made for counts as a surprise, and after enough of them it is made again, three times at most. A quick path that takes the place of a slow path records what that records.
 
 ## The heap
 
@@ -90,7 +84,7 @@ Cells do not move. The collector is generational mark and sweep, finds roots by 
 
 | For                                   | Use                                                                         |
 | ------------------------------------- | --------------------------------------------------------------------------- |
-| a list or map in a local              | `ValueVec`, `RootStack`, `RootVec`, `RootMap`, `RootSet`, `RootDeque`, `RootBox` |
+| a list or map in a local              | `ValueVec`, `RootVec`, `RootMap`, `RootSet`, `RootDeque`, `RootBox`         |
 | a field that changes                  | `Field<T>`, `FieldArray<T, N>`, `WeakField<T>`                              |
 | a field that never changes            | the plain `Gc<T>` or `Value`                                                |
 | a collection that a cell owns         | `TracedVec`, `TracedMap`, or `GcCell<T>` for any `T: Trace`                 |
@@ -110,19 +104,8 @@ What a function may do is in its signature:
 
 Memory that a cell owns outside itself is borrowed through a guard that keeps the cell alive (`StringView`, `ResolvedString`, `PropertyKey`, `GcRef`) or, if a script or an allocation can replace it, under `NoGc` (`elements`, `try_text`). What a plain accessor lends is held across an allocation only through an anchor: `symbol.anchor().name()`, `anchor!(self).info()`. A loop that calls out reads lengths and elements again on each turn.
 
-## Inline caches
-
-They are data in the metadata of a code block (`vm/ic`), which the interpreter, baseline code (`baseline/ic`) and the optimizer all read. A slow path does the access, `plan` makes an `AccessCase` of what the slot reports, and the site keeps it inline, in a list of eight, or from then on asks the tables of the `Vm` (`vm/caches`).
-
-- A case is for one shape. What it needs of the prototypes is a `PrototypeLookup`, which is watched. What has been copied from one holds while `Vm::lookup_epoch` is the one recorded with it, and `reconcile` renews or drops each record, because the count starts over with a full collection.
-- An entry of the tables holds for one `Vm::prototype_chain_epoch`. Whatever changes an object that may be a prototype calls `did_change_as_prototype`, also if the shape stays. A collection steps it too, so entries keep nothing alive.
-- Scripts may have run during the access: `plan` checks again what it relies on. Whoever calls out of a case does not look at it afterwards.
-- A dictionary changes in place: `prepare` says what may be cached. So do `reports_stores`, `stores_ordinarily` and `is_ordinary_name` for classes with internal methods of their own. A class of the engine disables caching in the slot where the shape does not tell.
-- Code that replaces a value without `did_replace_property` calls `did_cache_property_replacement` when it is made.
-- Cases keep their lookups alive, and neither shapes nor keys. Storing one runs the barrier of the code block, which is visited only while no script runs.
-
 ## Cells and built-ins
 
 `#[cell(..)]` declares a type of cell (see `CellKind`), `#[object_ops]` the internal methods that it overrides (see `ClassOps`; `Inherited` calls those of the base). An object that owns something with a destructor extends `JsDestructibleObject`. A type whose layout a tier or the embedder reads is in `vm` and has `OFFSET_OF_*` constants; the others are in the crate that uses them. Objects with internal fields that built-ins written in JavaScript read have a `FieldArray` right after the `JsObject`.
 
-A native function is `#[native_abi] fn(&mut Cx, &CallFrame) -> JsResult<Value>`. Prototypes, constructors and namespaces list their properties in a `static_table!`, in the order in which they enumerate, and nothing is made before it is used: `builtins/fundamental/symbol.rs` has the pattern. What a realm has one of is a `RealmSlot`, and what a fast path assumes of the library is a `RealmWatchpoint`. A built-in with an `Intrinsic` can have typed forms in `vm/direct`, which run no script and declare what they read, write and need: the optimizer calls them in its place, and makes the ordinary call if one throws. A function that calls back for each element is written in JavaScript (`builtins/js`), where the compilers can inline the callback. Names are constants: add a line to `text/names.txt` and use `names::x`, `symbols::x` or `private_names::x`.
+A native function is `#[native_abi] fn(&mut Cx, &CallFrame) -> JsResult<Value>`. Prototypes, constructors and namespaces list their properties in a `static_table!`, in the order in which they enumerate, and nothing is made before it is used: `builtins/fundamental/symbol.rs` has the pattern. What a realm has one of is a `RealmSlot`, and what a fast path assumes of the library is a `RealmWatchpoint`. A function that calls back for each element is written in JavaScript (`builtins/js`), where the compilers can inline the callback. Names are constants: add a line to `text/names.txt` and use `names::x`, `symbols::x` or `private_names::x`.

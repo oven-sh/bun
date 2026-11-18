@@ -147,7 +147,7 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, Bun::O
     if (!code)
         return;
 
-    auto* provider = code->source().provider();
+    auto* provider = code->sourceProvider();
     if (!provider) [[unlikely]]
         return;
     // Make sure the range is valid:
@@ -548,8 +548,6 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
     if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
         return;
     }
-
-    except.runtime_type = err->runtimeTypeForCause();
 
     const auto& names = builtinNames(vm);
     if (except.type != SYNTAX_ERROR_CODE) {

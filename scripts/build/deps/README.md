@@ -10,15 +10,12 @@ libraries/headers it provides.
 2. Fill in `name`, `repo`, `commit`, `sources`, `includes`, `provides.includes`
 3. Add `import { <name> } from "./<name>.ts"` + entry in `allDeps` array in `index.ts`
 4. Add the name to `DepName` in `../source.ts`
-5. `bun run scripts/build/phase3-test.ts` to verify it builds
+5. `bun run build --target=<name>` to verify it builds
 
-That's it. For most deps you're done. A dep with several libraries, its own
-generators or helper executables adds `groups` and `steps` to the same
-`direct` spec — see `webkit.ts`.
+That's it. For most deps you're done. A dep with generators of its own adds
+`steps` to the same `direct` spec.
 
-**`name` must match the directory on disk** (`vendor/<name>/`). If your repo
-is `oven-sh/WebKit`, name it `"WebKit"` — that's what `git clone` creates.
-Case-sensitive filesystems enforce this.
+**`name` is the directory on disk** (`vendor/<name>/`) and the ninja target.
 
 **Ordering in `allDeps` matters:**
 
@@ -58,7 +55,7 @@ git clone https://github.com/oven-sh/mimalloc ~/code/mimalloc
 bun bd --local-deps=mimalloc=~/code/mimalloc test foo.test.ts
 ```
 
-Any `github-archive` dep the graph compiles or includes can be redirected
+Any fetched dep the graph compiles or includes can be redirected
 (so not lolhtml or rust-argon2, which cargo reads from `vendor/` via the workspace
 `Cargo.toml` — point that path at your checkout instead); several at once
 with `name=path,name=path`. Cross-dep references (`depSourceDir()`, e.g.
@@ -73,10 +70,29 @@ build banner shows `local:<name>` while this is on. Don't edit
 `vendor/<name>/` in place instead — it is wiped whenever the pin or patches
 change.
 
-WebKit is prebuilt unless redirected: `--webkit=local` (the `-local`
-profiles, `bun run build:local`) is `--local-deps=WebKit=$BUN_WEBKIT_PATH`,
-or `vendor/WebKit` when that is unset, and `--local-deps=WebKit=<path>` on any
-profile means the same for one build.
+## ICU
+
+`--icu=bundled`, the default but for macOS, compiles the release tarball that
+`icu.ts` pins by checksum. The tarball, unlike ICU's repository, holds the data
+as one ready package, which `../icu/data.ts` filters and compresses
+(`../icu/items.ts` has the lists), so none of ICU's own tools is built.
+
+`--icu=system` links the host's ICU (74 or later on Linux), or the static build
+whose `include/` and `lib/` are in `$BUN_ICU_ROOT`.
+
+`--local-deps=icu=<dir>` takes a directory laid out like the tarball. From a
+clone of unicode-org/icu that is `icu4c/`, with the package and then the
+patches (ICU's own tools do not link once they are applied):
+
+```sh
+mkdir icu/build && cd icu/build
+../icu4c/source/configure --with-data-packaging=archive && make -j
+cp data/out/icudt*l.dat ../icu4c/source/data/in/
+for patch in $BUN/patches/icu/*.patch; do patch -d ../icu4c -p1 < $patch; done
+```
+
+To update: change `ICU_VERSION` and `ICU_SHA256`, compare the source lists with
+`source/{common,i18n}/sources.txt`, and drop the patches the release has.
 
 ## Common fields
 
@@ -87,9 +103,11 @@ export const mydep: Dependency = {
   // Source tarball. Fetched from GitHub's archive endpoint (no git history,
   // just the files at `commit`). Most deps use this.
   //
-  // Other kinds: `prebuilt` (download pre-compiled .a, e.g. WebKit default),
-  // `local` (user-managed checkout: what a github-archive dep becomes via
-  // `--local-deps`, see above), `in-tree` (source in src/).
+  // Other kinds: `tarball` (a source release, checked against its sha256),
+  // `prebuilt` (download a release tarball, e.g. the Node.js headers),
+  // `local` (user-managed checkout: what a fetched dep becomes via
+  // `--local-deps`, see above), `in-tree` (source in src/), `system`
+  // (already on the machine).
   source: () => ({ kind: "github-archive", repo: "owner/repo", commit: "..." }),
 
   // Optional: macro name for bun_dependency_versions.h (process.versions).
@@ -106,7 +124,7 @@ export const mydep: Dependency = {
   // How to build. `direct` lists sources explicitly; emitDirect compiles
   // each as a first-class cc/cxx edge and the resulting .o's go straight
   // into bun's link line. See `DirectBuild` in ../source.ts for all
-  // optional fields (lang/pic/defines/headers/codegen/groups/steps/forbidUndefined).
+  // optional fields (lang/pic/defines/headers/codegen/steps/libs/forbidUndefined).
   build: cfg => ({
     kind: "direct",
     sources: ["src/foo.c", "src/bar.c"],
@@ -123,6 +141,7 @@ export const mydep: Dependency = {
     libs: [],
     includes: ["include"],
     // defines: ["MY_DEP_STATIC=1"],  // Preprocessor defines for bun's compile.
+    // linkFlags: ["-lmydep"],        // Libraries the linker finds by name.
   }),
 
   // Optional: skip this dep on some platforms.
@@ -137,7 +156,7 @@ export const mydep: Dependency = {
   LTO sees across the dep boundary into bun's call sites. See `DirectBuild` in
   `../source.ts`.
 - **`cargo`**: Rust deps (currently lolhtml and rust-argon2). See `CargoBuild` in `../source.ts`.
-- **`none`**: Header-only or prebuilt. No build step; `.ref` stamp is the output.
+- **`none`**: Header-only, prebuilt or the system's. No build step; the fetch stamp, if any, is the output.
 
 ## Worked examples
 
@@ -150,10 +169,7 @@ export const mydep: Dependency = {
 - **sqlite.ts** — direct build, in-tree source (lives in `src/`, not `vendor/`)
 - **libuv.ts** — `enabled: cfg => cfg.windows` for a platform-only dep
 - **lolhtml.ts** — cargo build with rustflags
-- **webkit.ts** — `prebuilt`, and for a local checkout a direct build with
-  source `groups` (bmalloc, WTF, JavaScriptCore), generator and executable
-  `steps`, a per-group PCH, and file lists read from the checkout's own CMake
-  files at configure (`../cmake.ts`)
+- **icu.ts** — `tarball` source, with a host tool and a step whose output one source embeds; or `system` source: nothing fetched or built, libraries named for the link
 
 ## How a dep builds
 

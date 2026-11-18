@@ -61,10 +61,9 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
 
   // Windows: re-exec inside the VS dev shell if not already there.
-  // The shell provides PATH (mt.exe, rc.exe, cl.exe), INCLUDE, LIB,
-  // WindowsSdkDir — things clang-cl can mostly self-detect but msbuild
-  // (local WebKit's ICU) can't. Cheap: VSINSTALLDIR check short-circuits on
-  // subsequent runs in the same terminal.
+  // The shell provides PATH (mt.exe, rc.exe, cl.exe), INCLUDE, LIB and
+  // WindowsSdkDir. Cheap: VSINSTALLDIR check short-circuits on subsequent
+  // runs in the same terminal.
   if (process.platform === "win32" && !process.env.VSINSTALLDIR) {
     const vsShell = join(import.meta.dirname, "vs-shell.ps1");
     const result = spawnSync(
@@ -436,9 +435,6 @@ const configFlags: { [K in keyof Required<PartialConfig>]: ConfigFlagKind<NonNul
   buildType: "string",
   mode: "string",
   lto: "boolean",
-  trimmable: "boolean",
-  jit: "boolean",
-  aot: "boolean",
   relr: "boolean",
   pgoGenerate: "string",
   pgoUse: "string",
@@ -452,7 +448,6 @@ const configFlags: { [K in keyof Required<PartialConfig>]: ConfigFlagKind<NonNul
   tinycc: "boolean",
   valgrind: "boolean",
   fuzzilli: "boolean",
-  fuzzilliCompilerOnly: "boolean",
   hardened: "boolean",
   requireMdwe: "boolean",
   lockEnvironment: "boolean",
@@ -473,7 +468,7 @@ const configFlags: { [K in keyof Required<PartialConfig>]: ConfigFlagKind<NonNul
   linkerMap: "boolean",
   ci: "boolean",
   buildkite: "boolean",
-  webkit: "string",
+  icu: "string",
   localDeps: "string",
   packageManager: "string",
   buildDir: "string",
@@ -489,7 +484,6 @@ const configFlags: { [K in keyof Required<PartialConfig>]: ConfigFlagKind<NonNul
   nodejsVersion: "string",
   nodejsAbiVersion: "string",
   nodejsV8Version: "string",
-  webkitVersion: "string",
 };
 
 /** `ninja -d list` */
@@ -673,7 +667,7 @@ Options:
                                   canary, valgrind, hardened, requireMdwe,
                                   lockEnvironment, guardedPages,
                                   executeOnlyStart,
-                                  webkit (prebuilt|local),
+                                  icu (system|bundled),
                                   local-deps (name=path[,name=path] — build a
                                   vendored dep from a local checkout),
                                   package-manager (bun|npm, installs the

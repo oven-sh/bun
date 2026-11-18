@@ -55,7 +55,7 @@ use bun_alloc::AllocError;
 use bun_core::StringBuilder;
 use bun_core::strings;
 use bun_url::PercentEncoding;
-use bun_url::whatwg::{Parsed, URL};
+use bun_url::whatwg::URL;
 use enum_map::{Enum, EnumMap};
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -331,7 +331,7 @@ impl HostedGitInfo {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct ParsedUrl<'a> {
-    pub url: Parsed,
+    pub url: URL,
     pub(crate) proto: UrlProtocol<'a>,
 }
 
@@ -648,7 +648,7 @@ impl<'a> UrlProtocolPair<'a> {
     }
 
     /// Given a protocol pair, create a jsc.URL if possible. May allocate, but owns its memory.
-    fn to_url(&self) -> Option<Parsed> {
+    fn to_url(&self) -> Option<URL> {
         let mut protocol_buf: StringWithColonBuffer =
             [0u8; WellDefinedProtocol::MAX_PROTOCOL_LENGTH + 1];
 
@@ -670,12 +670,12 @@ impl<'a> UrlProtocolPair<'a> {
         }
     }
 
-    fn concat_parts_to_url(parts: &[&[u8]]) -> Option<Parsed> {
+    fn concat_parts_to_url(parts: &[&[u8]]) -> Option<URL> {
         // TODO(markovejnovic): There is a sad unnecessary allocation here that I don't know how to
         // get rid of -- in theory, the URL layer could allocate once.
         let new_str = strings::concat(parts);
         // Drop handles `defer allocator.free(new_str)`.
-        Parsed::from_utf8(&new_str)
+        URL::from_utf8(&new_str)
     }
 }
 

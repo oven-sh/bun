@@ -173,7 +173,7 @@ JSC::JSValue KeyObject::exportJwkEdKey(JSC::JSGlobalObject* lexicalGlobalObject,
         case EVP_PKEY_X448:
             return "X448"_s;
         default:
-            UNREACHABLE();
+            RELEASE_ASSERT_NOT_REACHED();
         }
     })();
 
@@ -1497,7 +1497,7 @@ __attribute__((minsize)) KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobal
     }
     }
 
-    UNREACHABLE();
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 static bool isUnavailablePqcKeyType(const WTF::String& type)

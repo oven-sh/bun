@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/streams/writable.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 c4f69041e727ea49f8d66fa3f8f67afdeb35bed13010cbc51b1284fa631e851b.
+// Written against that file with the SHA-256 202ed860d56917c49ae9b3c0c4551d5cc3f6c82c27fa7850a81a03d2973db4cb.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // A bit simpler than readable streams.

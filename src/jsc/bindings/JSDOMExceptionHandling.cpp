@@ -82,7 +82,7 @@ void reportException(JSGlobalObject* lexicalGlobalObject, JSValue exceptionValue
     auto* exception = dynamicDowncast<JSC::Exception>(exceptionValue);
     if (!exception) {
         exception = vm.lastException();
-        if (!exception)
+        if (!exception || exception->value() != exceptionValue)
             exception = JSC::Exception::create(lexicalGlobalObject->vm(), exceptionValue, JSC::Exception::StackCaptureAction::DoNotCaptureStack);
     }
 
@@ -116,7 +116,7 @@ JSValue createDOMExceptionObject(JSGlobalObject* lexicalGlobalObject, ExceptionC
     JSValue errorObject = toJSNewlyCreated(lexicalGlobalObject, globalObject, DOMException::create(ec, message));
 
     ASSERT(errorObject);
-    addErrorInfo(lexicalGlobalObject, asObject(errorObject), true);
+    addErrorInfo(lexicalGlobalObject, asObject(errorObject));
     return errorObject;
 }
 
@@ -205,7 +205,7 @@ template<typename... StringTypes> static String makeArgumentTypeErrorMessage(uns
 {
     return makeString(
         "Argument "_s, argumentIndex + 1, " ('"_s, argumentName, "') to "_s,
-        functionName ? std::make_tuple(interfaceName, "."_s, functionName) : std::make_tuple("the "_s, interfaceName, " constructor"_s),
+        functionName ? ""_s : "the "_s, interfaceName, functionName ? "."_s : ""_s, functionName ? functionName : " constructor"_s,
         " must be "_s, strings...);
 }
 

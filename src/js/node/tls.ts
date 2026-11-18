@@ -748,6 +748,7 @@ $toClass(TLSSocket, "TLSSocket", NetSocket);
 
 const kSSLShim = Symbol("kSSLShim");
 Object.defineProperty(TLSSocket.prototype, "ssl", {
+  __proto__: null,
   configurable: true,
   enumerable: false,
   get() {
@@ -1755,7 +1756,7 @@ const tlsExports = {
   },
   getCACertificates,
 };
-Object.defineProperty(tlsExports, "rootCertificates", { configurable: false });
+Object.defineProperty(tlsExports, "rootCertificates", { __proto__: null, configurable: false });
 
 export default tlsExports as any as typeof import("node:tls") & {
   SecureContext: typeof SecureContext;

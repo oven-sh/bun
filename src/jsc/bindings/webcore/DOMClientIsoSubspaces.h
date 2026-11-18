@@ -15,7 +15,6 @@ class DOMClientIsoSubspaces {
 
 public:
     DOMClientIsoSubspaces() = default;
-    ~DOMClientIsoSubspaces();
 
     /* --- bun --- */
     GCClient::IsoSubspace* m_clientSubspaceForFFIFunction { nullptr };

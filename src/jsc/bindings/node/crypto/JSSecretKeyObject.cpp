@@ -1,7 +1,6 @@
 #include "JSSecretKeyObject.h"
 #include "JSSecretKeyObjectPrototype.h"
 #include "JSSecretKeyObjectConstructor.h"
-#include "DOMIsoSubspaces.h"
 #include "ZigGlobalObject.h"
 #include "ErrorCode.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>

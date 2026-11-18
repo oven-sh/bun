@@ -108,14 +108,11 @@ const GUIDANCE: Record<CheckName, string[]> = {
   "static initializers": [
     "A static initializer runs before main() on every start of every bun process, in",
     "unspecified order relative to the others, and its page is dirtied even if the feature",
-    "is never used. bun, JSC and WTF have none by policy: use a function-local static,",
+    "is never used. bun has none by policy: use a function-local static,",
     "WTF::LazyNeverDestroyed / NeverDestroyed, or constinit. The symbol name says which",
     "translation unit added it (_GLOBAL__sub_I_<file>).",
   ],
   symbols: [
-    "This code is there for tests and debugging and must not ship: the linker kept it because",
-    "something reachable refers to it. Find the caller (llvm-nm -A --undefined-only over the link",
-    "inputs) and compile the call out of this flavour, as binary-expectations.ts says for the list.",
     "A highway_* function means that LTO does not inline C++ into Rust: -mllvm -pass-remarks-missed=inline says why.",
   ],
   hardening: [

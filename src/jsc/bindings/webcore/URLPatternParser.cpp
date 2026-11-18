@@ -31,6 +31,7 @@
 #include "URLPatternCanonical.h"
 #include "URLPatternTokenizer.h"
 #include <ranges>
+#include <unicode/uchar.h>
 #include <wtf/text/MakeString.h>
 
 namespace WebCore {

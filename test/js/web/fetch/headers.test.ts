@@ -29,6 +29,23 @@ describe("Headers", () => {
       expect(headers.get("content-type")).toBe("text/plain");
     });
 
+    test("private members of the object are not headers", () => {
+      class Same {
+        constructor(object: object) {
+          return object;
+        }
+      }
+      class WithField extends Same {
+        #field = "1";
+      }
+      class WithMethod extends Same {
+        #method() {}
+      }
+      for (const Class of [WithField, WithMethod]) {
+        expect([...new Headers(new Class({ a: "b" }) as HeadersInit)]).toEqual([["a", "b"]]);
+      }
+    });
+
     test("deleted key in header constructor is not kept", () => {
       const record = {
         "content-type": "text/plain",

@@ -10,6 +10,7 @@ path = "lib.rs"
 workspace = true
 
 [dependencies]
+bun_engine_text.workspace = true
 thiserror.workspace = true
 bun_errno.workspace = true
 bun_opaque.workspace = true

@@ -5,9 +5,6 @@
   // - FORCE_COLOR=1 forces colors in the terminal
   // - "${workspaceFolder}/test" is the cwd for `bun test` so it matches CI, we should fix this later
   // - "cppvsdbg" is used instead of "lldb" on Windows, because "lldb" is too slow
-  // - Seeing WebKit files requires `vendor/WebKit` to exist and have code from the right commit.
-  //   Run `bun sync-webkit-source` to ensure that folder is at the right commit. If you haven't
-  //   cloned it at all, that script will suggest how.
   "version": "0.2.0",
   "configurations": [
     // bun test [file]
@@ -30,28 +27,12 @@
         // "LSAN_OPTIONS": "malloc_context_size=100:print_suppressions=1:suppressions=${workspaceFolder}/test/leaksan.supp",
       },
       "console": "internalConsole",
-      "sourceMap": {
-        // macOS
-        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
-        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
-        // linux
-        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
-        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
-      },
     },
     {
       "type": "lldb",
       "name": "Attach",
       "request": "attach",
       "pid": "${command:pickMyProcess}",
-      "sourceMap": {
-        // macOS
-        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
-        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
-        // linux
-        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
-        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
-      },
     },
     // bun run [file]
     {
@@ -73,14 +54,6 @@
         // "LSAN_OPTIONS": "malloc_context_size=100:print_suppressions=1:suppressions=${workspaceFolder}/test/leaksan.supp",
       },
       "console": "internalConsole",
-      "sourceMap": {
-        // macOS
-        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
-        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
-        // linux
-        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
-        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
-      },
     },
     // bun test [...]
     {
@@ -96,14 +69,6 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
-      "sourceMap": {
-        // macOS
-        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
-        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
-        // linux
-        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
-        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
-      },
     },
     // bun exec [...]
     {
@@ -118,14 +83,6 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
-      "sourceMap": {
-        // macOS
-        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
-        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
-        // linux
-        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
-        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
-      },
     },
     // bun test [*]
     {
@@ -140,14 +97,6 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
-      "sourceMap": {
-        // macOS
-        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
-        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
-        // linux
-        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
-        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
-      },
     },
     {
       "type": "lldb",
@@ -161,21 +110,10 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
-      "sourceMap": {
-        // macOS
-        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
-        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
-        // linux
-        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
-        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
-      },
     },
     // Windows: bun test [file]
     {
       "type": "cppvsdbg",
-      "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
-      },
       "request": "launch",
       "name": "Windows: bun test [file]",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
@@ -199,9 +137,6 @@
     // Windows: bun run [file]
     {
       "type": "cppvsdbg",
-      "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
-      },
       "request": "launch",
       "name": "Windows: bun run [file]",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
@@ -224,9 +159,6 @@
     },
     {
       "type": "cppvsdbg",
-      "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
-      },
       "request": "launch",
       "name": "Windows: bun install",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
@@ -246,9 +178,6 @@
     // Windows: bun test [...]
     {
       "type": "cppvsdbg",
-      "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
-      },
       "request": "launch",
       "name": "Windows: bun test [...]",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
@@ -272,9 +201,6 @@
     // Windows: bun exec [...]
     {
       "type": "cppvsdbg",
-      "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
-      },
       "request": "launch",
       "name": "Windows: bun exec [...]",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
@@ -294,9 +220,6 @@
     // Windows: bun test [*]
     {
       "type": "cppvsdbg",
-      "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
-      },
       "request": "launch",
       "name": "Windows: bun test [*]",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
@@ -342,8 +265,6 @@
       "trace": "Off",
       "setupCommands": [
         "handle SIGPWR nostop noprint pass",
-        "set substitute-path /webkitbuild/vendor/WebKit ${workspaceFolder}/vendor/WebKit",
-        "set substitute-path /webkitbuild/.WTF/Headers ${workspaceFolder}/vendor/WebKit/Source/WTF",
         // uncomment if you like
         // "set disassembly-flavor intel",
         "set print asm-demangle",

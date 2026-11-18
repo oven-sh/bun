@@ -37,7 +37,6 @@ public:
     V(Structure, mockImplementationStructure)                     \
     V(Structure, mockObjectStructure)                             \
     V(Structure, mockModuleStructure)                             \
-    V(Structure, activeSpySetStructure)                           \
     V(JSFunction, withImplementationCleanupFunction)              \
     V(JSC::Structure, mockWithImplementationCleanupDataStructure) \
     V(JSCell, lazyPrototype)                                      \
@@ -51,7 +50,7 @@ public:
 
     static JSMockModule create(JSC::JSGlobalObject*);
 
-    // Weak sets (ActiveSpySet), created on first use.
+    // JSWeakSets, created on first use.
     JSC::WriteBarrier<JSC::Unknown> activeSpies;
     // Mocks that were called, or had `.mock` read, since they were last cleared.
     JSC::WriteBarrier<JSC::Unknown> calledMocks;

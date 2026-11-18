@@ -1,31 +1,21 @@
 // Per-item zstd decompression hook for ICU common data.
 //
-// oven-sh/WebKit's ICU build (icu/udata-decompress-hook.patch) inserts a weak
-// call to bun_icu_maybe_decompress between TOC lookup and checkDataItem.
+// patches/icu/data-item-hook.patch inserts a call to
+// bun_icu_maybe_decompress between TOC lookup and checkDataItem.
 // Display-name items (curr/ lang/ region/ unit/ zone/, non-en) are stored as
 // raw zstd frames; everything else keeps its 0xda27 header and passes through
 // after one u32 compare. Decompressed buffers are cached for the process
 // lifetime, keyed by their .rodata address.
 //
-// The dict symbols are emitted by the repacked libicudata.a; declaring them
-// weak here lets this file link against a prebuilt that predates the repack
-// (the hook is then never called, since no item is compressed).
+// The dict symbols are in scripts/build/icu/data.S. They are weak for a build that
+// links the ICU of the system, which never calls the hook.
 
 #include "root.h"
 
-// The repacked ICU data archive (and the patched udata.cpp that calls this
-// hook) are produced by oven-sh/WebKit's Dockerfile / Dockerfile.musl /
-// Dockerfile.windows / Dockerfile.freebsd / Dockerfile.android. On macOS ICU is the unmodified system one, so there is
-// nothing to decompress and the weak externs below would have no definer —
-// gate the implementation to the platforms whose prebuilts carry compressed
-// items.
+// On macOS ICU is always that of the system.
 //
-// Windows note: COFF has no true weak-undefined symbols — clang lowers each
-// declaration to a per-TU weak external with an absolute-0 default, which is
-// fine here because this is the only TU referencing the dict symbols and the
-// repacked sicudt.lib defines them anyway (an unresolved weak external only
-// becomes a problem when two TUs reference it, see the WTFTimer__* notes in
-// oven-sh/WebKit).
+// COFF has no weak undefined symbols: clang gives each unit a default of zero, which
+// works because this is the only unit that refers to them.
 #if OS(LINUX) || OS(WINDOWS) || OS(FREEBSD)
 
 #include "MimallocWTFMalloc.h"

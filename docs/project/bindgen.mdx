@@ -7,7 +7,7 @@ description: Bindgen for Bun
 
 The bindings generator reads every `*.bind.ts` file under `src/` and generates
 the glue between JavaScript and Rust: the C++ that checks and converts
-arguments with JavaScriptCore's own API, the Rust that receives them already
+arguments with the engine's own API, the Rust that receives them already
 converted, and the TypeScript types `src/js` sees.
 
 A binding's Rust code never sees a `CallFrame`, never converts a value by hand,
@@ -576,7 +576,7 @@ than `.nullable` of `"asIs"`.
 ## Values and lifetimes
 
 A JS value in Rust is a `JsLocal<'a>`: a `JSValue` tied to the host call it belongs
-to. It is `Copy`, one register, and not rooted, because JavaScriptCore scans the
+to. It is `Copy`, one register, and not rooted, because the collector scans the
 stack. The lifetime is what stops it from being stored in a struct, captured by a
 task or sent to a thread. `JsLocal<'a, T>` is one known to be a `JSString`,
 `JSObject`, `Callable` or `BufferSource`. `value.to_js()` gives the `JSValue`;

@@ -2,6 +2,11 @@
 // Per crate map: `bun.highway.*` → `bun_highway::*` (same C++ backing).
 
 pub mod brotli;
+pub mod elements;
+pub mod json_text;
+pub mod text;
+pub mod url;
+pub mod utf8;
 pub mod webp;
 
 unsafe extern "C" {
@@ -643,7 +648,7 @@ pub fn index_of_interesting_character_in_multiline_comment(slice: &[u8]) -> Opti
     Some(result)
 }
 
-/// A set of bytes, to be built at compile time.
+/// A set of bytes.
 #[repr(C)]
 pub struct ByteSet {
     /// For the kernel: byte `b` is a member if `rows[b >> 4] & columns[b & 15]` isn't zero.
@@ -656,16 +661,25 @@ pub struct ByteSet {
 impl ByteSet {
     /// Panics if the 16 rows of 16 bytes have more than 8 patterns of members.
     pub const fn new(ranges: &[core::ops::RangeInclusive<u8>]) -> Self {
-        let (mut members, mut is_member) = ([0u16; 16], [false; 256]);
+        let mut is_member = [false; 256];
         let mut rest = ranges;
         while let [range, tail @ ..] = rest {
             let mut byte = *range.start() as usize;
             while byte <= *range.end() as usize {
-                members[byte >> 4] |= 1 << (byte & 15);
                 is_member[byte] = true;
                 byte += 1;
             }
             rest = tail;
+        }
+        Self::try_new(&is_member).unwrap()
+    }
+
+    /// `None` where `new` panics.
+    pub const fn try_new(is_member: &[bool; 256]) -> Option<Self> {
+        let (mut members, mut byte) = ([0u16; 16], 0);
+        while byte < 256 {
+            members[byte >> 4] |= (is_member[byte] as u16) << (byte & 15);
+            byte += 1;
         }
 
         let (mut rows, mut columns) = ([0; 16], [0; 16]);
@@ -678,7 +692,9 @@ impl ByteSet {
             if same < row {
                 rows[row] = rows[same];
             } else if members[row] != 0 {
-                assert!(bits < 8);
+                if bits == 8 {
+                    return None;
+                }
                 rows[row] = 1 << bits;
                 let mut column = 0;
                 while column < 16 {
@@ -689,11 +705,11 @@ impl ByteSet {
             }
             row += 1;
         }
-        Self {
+        Some(Self {
             rows,
             columns,
-            is_member,
-        }
+            is_member: *is_member,
+        })
     }
 
     #[inline(always)]
@@ -800,6 +816,51 @@ impl ScannerStopsBuffer {
             after_name: Stops(after_name),
             after_blanks: Stops(after_blanks),
             in_string: Stops(&rest[..plane_len]),
+        }
+    }
+}
+
+/// The [`ScannerStops`] of a part of a text, for a scanner that skips much of what it is given.
+pub struct ScannerWindow([[u8; ScannerWindow::PLANE_LEN]; 3]);
+
+impl Default for ScannerWindow {
+    #[inline]
+    fn default() -> Self {
+        Self([[0xFF; Self::PLANE_LEN]; 3])
+    }
+}
+
+impl ScannerWindow {
+    const CAPACITY: usize = 1024;
+    const PLANE_LEN: usize = Self::CAPACITY / 8 + 8;
+    /// [`Stops::run`] is right for the positions below this.
+    pub const REACH: usize = Self::CAPACITY - 64;
+
+    /// The window starts where `text` starts.
+    #[inline]
+    pub fn fill(&mut self, text: &[u8]) {
+        let text = &text[..text.len().min(Self::CAPACITY)];
+        let written = text.len().div_ceil(64) * 8;
+        for plane in &mut self.0 {
+            plane[written..written + 8].fill(0xFF);
+        }
+        // SAFETY: `text` is readable, and the kernel writes `written` bytes to each of the three planes.
+        unsafe {
+            highway_scanner_run_stops(
+                text.as_ptr(),
+                text.len(),
+                self.0.as_flattened_mut().as_mut_ptr(),
+                Self::PLANE_LEN,
+            );
+        }
+    }
+
+    #[inline(always)]
+    pub fn stops(&self) -> ScannerStops<'_> {
+        ScannerStops {
+            after_name: Stops(&self.0[0]),
+            after_blanks: Stops(&self.0[1]),
+            in_string: Stops(&self.0[2]),
         }
     }
 }
@@ -1110,7 +1171,6 @@ pub fn copy_ascii_prefix(src: &[u8], dst: &mut [u8]) -> usize {
     let copied = unsafe { highway_copy_ascii_prefix(src.as_ptr(), len, dst.as_mut_ptr()) };
 
     debug_assert!(copied <= len);
-    debug_assert!(copied == len || src[copied] >= 0x80);
 
     copied
 }

@@ -467,7 +467,7 @@ function wrapTimerFunction<T extends (...args: any[]) => any>(original: T, isInt
   for (const key of Reflect.ownKeys(original)) {
     if (key === "prototype") continue;
     const desc = Object.getOwnPropertyDescriptor(original, key);
-    if (desc) Object.defineProperty(wrapped, key, desc);
+    if (desc) Object.defineProperty(wrapped, key, { __proto__: null, ...desc });
   }
   return wrapped as T;
 }
@@ -486,7 +486,7 @@ function wrapClearFunction(original: (timer: any) => void) {
   for (const key of Reflect.ownKeys(original)) {
     if (key === "prototype") continue;
     const desc = Object.getOwnPropertyDescriptor(original, key);
-    if (desc) Object.defineProperty(wrapped, key, desc);
+    if (desc) Object.defineProperty(wrapped, key, { __proto__: null, ...desc });
   }
   return wrapped;
 }

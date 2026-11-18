@@ -1,4 +1,4 @@
-#include "wtf/SIMDUTF.h"
+#include <simdutf.h>
 
 typedef struct SIMDUTFResult {
     int error;
@@ -10,12 +10,6 @@ extern "C" {
 bool simdutf__validate_utf8(const char* buf, size_t len)
 {
     return simdutf::validate_utf8(buf, len);
-}
-
-SIMDUTFResult simdutf__validate_utf8_with_errors(const char* buf, size_t len)
-{
-    auto res = simdutf::validate_utf8_with_errors(buf, len);
-    return { res.error, res.count };
 }
 
 bool simdutf__validate_ascii(const char* buf, size_t len)
@@ -32,14 +26,6 @@ SIMDUTFResult simdutf__validate_ascii_with_errors(const char* buf, size_t len)
 bool simdutf__validate_utf16le(const char16_t* buf, size_t len)
 {
     return simdutf::validate_utf16le(buf, len);
-}
-
-SIMDUTFResult
-simdutf__convert_utf8_to_utf16le_with_errors(const char* buf, size_t len,
-    char16_t* utf16_output)
-{
-    auto res = simdutf::convert_utf8_to_utf16le_with_errors(buf, len, utf16_output);
-    return { res.error, res.count };
 }
 
 SIMDUTFResult simdutf__convert_utf16le_to_utf8_with_errors(const char16_t* buf,
@@ -78,6 +64,22 @@ size_t simdutf__convert_latin1_to_utf8(const char* input, size_t length, char* u
     return simdutf::convert_latin1_to_utf8(input, length, utf8_buffer);
 }
 
+size_t simdutf__latin1_length_from_utf8(const char* input, size_t length)
+{
+    return simdutf::latin1_length_from_utf8(input, length);
+}
+
+SIMDUTFResult simdutf__validate_utf16le_with_errors(const char16_t* buf, size_t len)
+{
+    auto res = simdutf::validate_utf16le_with_errors(buf, len);
+    return { res.error, res.count };
+}
+
+void simdutf__to_well_formed_utf16le(const char16_t* input, size_t length, char16_t* output)
+{
+    simdutf::to_well_formed_utf16le(input, length, output);
+}
+
 size_t simdutf__base64_encode(const char* input, size_t length, char* output, int is_urlsafe)
 {
     return simdutf::binary_to_base64(input, length, output, is_urlsafe ? simdutf::base64_url : simdutf::base64_default);
@@ -98,6 +100,21 @@ SIMDUTFResult simdutf__base64_decode_from_binary(const char* input, size_t lengt
     }
 
     return { .error = res.error, .count = res.count };
+}
+
+// `count` is the number of characters read. `output` has room for 3 bytes for every 4 characters, whole or not.
+SIMDUTFResult simdutf__base64_decode_whole_chunks(const char* input, size_t length, char* output, size_t* written, int is_urlsafe)
+{
+    auto res = simdutf::base64_to_binary_details(input, length, output, is_urlsafe ? simdutf::base64_url : simdutf::base64_default, simdutf::last_chunk_handling_options::only_full_chunks);
+    *written = res.output_count;
+    return { res.error, res.input_count };
+}
+
+SIMDUTFResult simdutf__base64_decode_whole_chunks16(const char16_t* input, size_t length, char* output, size_t* written, int is_urlsafe)
+{
+    auto res = simdutf::base64_to_binary_details(input, length, output, is_urlsafe ? simdutf::base64_url : simdutf::base64_default, simdutf::last_chunk_handling_options::only_full_chunks);
+    *written = res.output_count;
+    return { res.error, res.input_count };
 }
 
 // Lenient base64 decoding for Node.js Buffer semantics ("base64" and

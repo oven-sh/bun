@@ -22,7 +22,6 @@ class String;
 }
 
 namespace JSC {
-class CachedBytecode;
 class SourceProvider;
 }
 
@@ -115,8 +114,6 @@ typedef struct BunString {
     // Dead or OutOfMemory: no string at all. Empty is a string.
     bool isDead() const { return tag == BunStringTag::Dead || tag == BunStringTag::OutOfMemory; }
 
-    void appendToBuilder(WTF::StringBuilder& builder) const;
-
 } BunString;
 
 namespace Bun {
@@ -196,28 +193,24 @@ using ErrorableString = Errorable<Bun::OwnedString>;
 static_assert(sizeof(ErrorableString) == 32 && alignof(ErrorableString) == 8, "ErrorableString layout is mirrored in src/jsc/Errorable.rs");
 BUN_DECLARE_FFI_DELETER(bun_ModuleInfoDeserialized, zig__ModuleInfoDeserialized__deinit);
 extern "C" void ResolvedSource__freeBytecode(uint8_t* bytecode);
-class ResolvedSourceBytecode {
+struct ResolvedSourceBytecode {
     WTF_MAKE_NONCOPYABLE(ResolvedSourceBytecode);
 
 public:
     ResolvedSourceBytecode() = default;
     ~ResolvedSourceBytecode()
     {
-        if (m_owned && m_bytes)
-            ResolvedSource__freeBytecode(m_bytes);
+        if (owned && bytes)
+            ResolvedSource__freeBytecode(bytes);
     }
 
-    RefPtr<JSC::CachedBytecode> take();
-
-private:
-    uint8_t* m_bytes { nullptr };
-    size_t m_size { 0 };
-    // Otherwise borrowed from the standalone module graph / compile cache.
-    bool m_owned { false };
-    // The bytes outlive every VM (executable section / retired compile-cache blob): JSC may alias them.
-    bool m_persistent { false };
-    // Where this module's cache entry starts (non-zero: one payload shared by every module, JSC::BytecodeLinkEncoder).
-    uint32_t m_entryOffset { 0 };
+    uint8_t* bytes { nullptr };
+    size_t size { 0 };
+    // Otherwise they outlive every VM (executable section / retired compile-cache blob).
+    bool owned { false };
+    bool isEmbedded { false };
+    // Where this module's cache entry starts (non-zero: one payload shared by every module).
+    uint32_t entryOffset { 0 };
 };
 typedef struct ResolvedSource {
     Bun::OwnedString source_code;
@@ -229,24 +222,37 @@ typedef struct ResolvedSource {
     JSC::EncodedJSValue jsvalue_for_export;
     uint32_t tag;
     bool already_bundled;
-    // An ES module of the executable's pre-resolved module graph: no module_info, its record comes from the graph
-    // (Zig::SourceProvider still gets SourceProviderSourceType::BunTranspiledModule).
-    bool is_prelinked_module;
     // source_code depends on more than the file's text (macros, `import.meta.glob`), so IsolatedModuleCache must not cache it.
     bool depends_on_more_than_source;
     // JSC::SourceProvenance::Static: source_code comes from where the program is stored or from Bun itself, not from a JavaScript value.
     bool is_static;
+    bool may_reexport_types;
     ResolvedSourceBytecode bytecode_cache;
     std::unique_ptr<bun_ModuleInfoDeserialized> module_info;
     // File path whose file:// URL is the source origin (what import() resolves against, what a bytecode cache is
     // validated against). If empty, origin is derived from source_url.
     Bun::OwnedString origin_path;
 } ResolvedSource;
-static_assert(sizeof(ResolvedSource) == 136 && OBJECT_OFFSETOF(ResolvedSource, is_prelinked_module) == 77 && OBJECT_OFFSETOF(ResolvedSource, depends_on_more_than_source) == 78 && OBJECT_OFFSETOF(ResolvedSource, is_static) == 79 && OBJECT_OFFSETOF(ResolvedSource, bytecode_cache) == 80 && sizeof(ResolvedSourceBytecode) == 24 && OBJECT_OFFSETOF(ResolvedSource, module_info) == 104, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
+static_assert(sizeof(ResolvedSource) == 136 && OBJECT_OFFSETOF(ResolvedSource, depends_on_more_than_source) == 77 && OBJECT_OFFSETOF(ResolvedSource, is_static) == 78 && OBJECT_OFFSETOF(ResolvedSource, may_reexport_types) == 79 && OBJECT_OFFSETOF(ResolvedSource, bytecode_cache) == 80 && sizeof(ResolvedSourceBytecode) == 24 && OBJECT_OFFSETOF(ResolvedSource, module_info) == 104, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
 inline constexpr uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 using ErrorableResolvedSource = Errorable<ResolvedSource>;
 static_assert(sizeof(ErrorableResolvedSource) == 144 && alignof(ErrorableResolvedSource) == 8, "ErrorableResolvedSource layout is mirrored in src/jsc/Errorable.rs");
-static_assert(JSC::CompiledEnvironmentType == 33 && JSC::ObjectType == 34 && JSC::JSFunctionType == 37 && JSC::CompiledClosureType == 38 && JSC::InternalFunctionType == 39 && JSC::Int8ArrayType == 51 && JSC::DataViewType == 63 && JSC::WebAssemblyGCObjectType == 96 && JSC::CompiledObjectType == 97 && JSC::SlimClosureType == 98 && JSC::SlimClosureWithPropertiesType == 99 && JSC::StringObjectType == 100 && JSC::DerivedStringObjectType == 101, "JSType numbers are mirrored in src/jsc/JSType.rs");
+// src/jsc/JSType.rs
+static_assert(JSC::CellType == 0 && JSC::StringType == 2 && JSC::HeapBigIntType == 3 && JSC::SymbolType == 4 && JSC::GetterSetterType == 5 && JSC::CustomGetterSetterType == 6);
+static_assert(JSC::FunctionExecutableType == 12 && JSC::ObjectType == 34 && JSC::FinalObjectType == 35 && JSC::JSCalleeType == 36 && JSC::JSFunctionType == 37 && JSC::InternalFunctionType == 39);
+static_assert(JSC::BooleanObjectType == 41 && JSC::NumberObjectType == 42 && JSC::ErrorInstanceType == 43 && JSC::GlobalProxyType == 44 && JSC::DirectArgumentsType == 45 && JSC::ScopedArgumentsType == 46);
+static_assert(JSC::ClonedArgumentsType == 47 && JSC::ArrayType == 48 && JSC::DerivedArrayType == 49 && JSC::ArrayBufferType == 50 && JSC::Int8ArrayType == 51 && JSC::Uint8ArrayType == 52);
+static_assert(JSC::Uint8ClampedArrayType == 53 && JSC::Int16ArrayType == 54 && JSC::Uint16ArrayType == 55 && JSC::Int32ArrayType == 56 && JSC::Uint32ArrayType == 57 && JSC::Float16ArrayType == 58);
+static_assert(JSC::Float32ArrayType == 59 && JSC::Float64ArrayType == 60 && JSC::BigInt64ArrayType == 61 && JSC::BigUint64ArrayType == 62 && JSC::DataViewType == 63 && JSC::GlobalObjectType == 64);
+static_assert(JSC::ModuleNamespaceObjectType == 72 && Engine::CellType::ShadowRealm == 73 && JSC::RegExpObjectType == 74 && JSC::JSDateType == 75 && JSC::ProxyObjectType == 76 && JSC::JSGeneratorType == 77);
+static_assert(JSC::JSAsyncGeneratorType == 79 && JSC::JSArrayIteratorType == 80 && Engine::CellType::Iterator == 81 && Engine::CellType::IteratorHelper == 82 && JSC::JSMapIteratorType == 83 && JSC::JSSetIteratorType == 84);
+static_assert(Engine::CellType::StringIterator == 85 && Engine::CellType::WrapForValidIterator == 86 && Engine::CellType::RegExpStringIterator == 87 && JSC::JSPromiseType == 89 && JSC::JSMapType == 90 && JSC::JSSetType == 91);
+static_assert(JSC::JSWeakMapType == 92 && JSC::JSWeakSetType == 93 && JSC::WebAssemblyModuleType == 94 && JSC::WebAssemblyInstanceType == 95 && JSC::WebAssemblyGCObjectType == 96 && JSC::StringObjectType == 100);
+static_assert(JSC::DerivedStringObjectType == 101);
+// src/jsc/ConsoleObject.rs, JSPromise.rs and JSValue.rs
+static_assert(Engine::MessageType::Table == 3 && Engine::MessageType::Assert == 9 && Engine::MessageType::Image == 13 && Engine::MessageLevel::Error == 2 && Engine::MessageLevel::Info == 4);
+static_assert(Engine::PromiseStatus::Fulfilled == 1 && Engine::PromiseStatus::Rejected == 2 && Engine::Layout::proxyTargetField == 0 && Engine::Layout::proxyHandlerField == 1);
+static_assert(Engine::TemporalType::Instant == 1 && Engine::TemporalType::PlainTime == 4 && Engine::TemporalType::ZonedDateTime == 5 && Engine::TemporalType::Duration == 8);
 
 typedef struct SystemError {
     int errno_;
@@ -404,7 +410,6 @@ typedef struct JSC::JSUint8Array JSC::JSUint8Array;
 
 #ifdef __cplusplus
 
-extern "C" void Bun__WTFStringImpl__destroy(WTF::StringImpl* impl);
 extern "C" bool BunString__fromJS(JSC::JSGlobalObject*, JSC::EncodedJSValue, BunString*);
 extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject*, const BunString*);
 

@@ -261,6 +261,23 @@ describe.if(isLinux && !isASAN)("operator new that fails to allocate", () => {
   });
 });
 
+test.concurrent.each([
+  ["whole", 10, 10],
+  ["cut between characters", 5000, 498],
+])("the message of a Rust panic is printed %s", async (_, padding, printed) => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `require("bun:internal-for-testing").crash_handler.rustPanic(${padding})`],
+    env: noReportEnv,
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(stderr.split(/\r?\n/)).toContain(
+    "panic: invoked rustPanic() handler" + Buffer.alloc(printed * 2, "é").toString(),
+  );
+  expect(exitCode).not.toBe(0);
+});
+
 // The report header names the CPU features the crash handler detected. On
 // x86_64 that detection uses cpuid directly (CPUFeatures.cpp). Every supported
 // x64 CPU has SSE4.2 and POPCNT, since the baseline build targets Nehalem.

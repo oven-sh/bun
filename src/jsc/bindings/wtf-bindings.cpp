@@ -2,17 +2,10 @@
 #include "wtf-bindings.h"
 #include "helpers.h"
 #include "BunTTYState.h"
-#include <wtf/StackBounds.h>
-#include <wtf/StackCheck.h>
 #include <wtf/StackTrace.h>
-#include <wtf/dtoa.h>
 #include <wtf/DateMath.h>
-#include <wtf/NumberOfCores.h>
-#include <JavaScriptCore/JSDateMath-v8.h>
 #include <atomic>
 #include <cassert>
-
-static_assert(WTF::maxECMAScriptTime == 8.64e15, "bun_jsc::wtf::MAX_ECMASCRIPT_TIME in WTF.rs must match");
 
 #include "wtf/SIMDUTF.h"
 #if OS(WINDOWS)
@@ -226,26 +219,6 @@ extern "C" int Bun__ttySetMode(int fd, int mode, void* rawState, int drain)
 #endif
 }
 
-extern "C" double WTF__parseDouble(const Latin1Character* string, size_t length, size_t* position)
-{
-    return WTF::parseDouble({ string, length }, *position);
-}
-
-extern "C" size_t WTF__base64URLEncode(const char* __restrict inputDataBuffer, size_t inputDataBufferSize,
-    char* __restrict destinationDataBuffer,
-    size_t destinationDataBufferSize)
-{
-    UNUSED_PARAM(destinationDataBufferSize);
-    return simdutf::binary_to_base64(inputDataBuffer, inputDataBufferSize, destinationDataBuffer, simdutf::base64_url);
-}
-
-// JS `Date.parse` with no VM, except that a date-time with no time zone reads as UTC.
-extern "C" double Bun__parseDateTimeString(const Latin1Character* string, size_t length)
-{
-    bool isLocalTime = false;
-    return v8::TimeClip(v8::ParseDateTimeString(byteCast<uint8_t>(string), length, isLocalTime));
-}
-
 namespace Bun {
 String base64URLEncodeToString(const Vector<uint8_t>& data)
 {
@@ -261,7 +234,7 @@ String base64URLEncodeToString(const Vector<uint8_t>& data)
     std::span<Latin1Character> ptr;
     auto result = String::createUninitialized(encodedLength, ptr);
 
-    encodedLength = WTF__base64URLEncode(reinterpret_cast<const char*>(data.begin()), data.size(), reinterpret_cast<char*>(ptr.data()), encodedLength);
+    encodedLength = simdutf::binary_to_base64(reinterpret_cast<const char*>(data.begin()), data.size(), reinterpret_cast<char*>(ptr.data()), simdutf::base64_url);
     if (result.length() != encodedLength) {
         return result.substringSharingImpl(0, encodedLength);
     }
@@ -299,29 +272,9 @@ size_t toISOString(JSC::VM& vm, double date, char in[64])
     return charactersWritten;
 }
 
-static thread_local WTF::StackBounds stackBoundsForCurrentThread = WTF::StackBounds::emptyBounds();
-
-extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__StackCheck__initialize()
-{
-    // A thread's bounds are fixed. On Windows they are the reserved range, and the stack grows inside it.
-    if (!stackBoundsForCurrentThread.isEmpty())
-        return;
-    stackBoundsForCurrentThread = WTF::StackBounds::currentThreadStackBoundsForEmbedder();
-}
-
-extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((__always_inline__)) void* Bun__StackCheck__getMaxStack()
-{
-    return stackBoundsForCurrentThread.end();
-}
-
 extern "C" void WTF__DumpStackTrace(void** stack, size_t stack_count)
 {
     WTFPrintBacktrace({ stack, stack_count });
-}
-
-extern "C" int WTF__numberOfProcessorCores()
-{
-    return WTF::numberOfProcessorCores();
 }
 
 }

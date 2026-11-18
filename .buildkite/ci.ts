@@ -168,8 +168,6 @@ type Platform = Target & {
   distro?: Distro;
   release: string;
   tier?: Tier;
-  /** What a test platform runs in place of every test, in one shard. */
-  tests?: string[];
 };
 
 type AzureVmTier = "build" | "test";
@@ -233,7 +231,7 @@ const buildPlatforms: Platform[] = [
   // only runs tests, signing, and baseline verification, against these
   // artifacts (see testPlatforms), and these are the Windows artifacts the
   // release ships. x64 uses ThinLTO + cross-language LTO by default; arm64
-  // stays non-LTO (no windows-arm64-lto WebKit prebuilt, see config.ts).
+  // stays non-LTO (see config.ts).
   { os: "windows", arch: "x64", crossCompile: true, distro: "debian", release: "13" },
   { os: "windows", arch: "aarch64", crossCompile: true, distro: "debian", release: "13" },
 ];
@@ -258,25 +256,6 @@ const testPlatforms: Platform[] = [
   { os: "linux", arch: "aarch64", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "x64", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "x64", profile: "asan", distro: "debian", release: "13", tier: "latest" },
-  // A Bun built with --hardened=on never reads the environment variables that tests steer Bun with, so it runs the tests
-  // that are written for it. On any other build they skip themselves. The last never does.
-  {
-    os: "linux",
-    arch: "x64",
-    profile: "hardened",
-    distro: "debian",
-    release: "13",
-    tier: "latest",
-    tests: [
-      "aot/hardened",
-      "aot/a-hardened-build",
-      "aot/an-executable-that-cannot-read-its-own-file",
-      "aot/compiled-code-mapping",
-      "aot/executable-memory-filter",
-      "aot/texts-that-tell-builds-apart",
-      "aot/the-build-under-test",
-    ],
-  },
   { os: "linux", arch: "aarch64", distro: "ubuntu", release: "25.04", tier: "latest" },
   { os: "linux", arch: "x64", distro: "ubuntu", release: "25.04", tier: "latest" },
   { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.23", tier: "latest" },
@@ -674,16 +653,6 @@ function getEmulatorBinary(platform: Platform): string {
   return `./${PINNED_QEMU[arch].binary}`;
 }
 
-function hasWebKitChanges(options: PipelineOptions): boolean {
-  const { changedFiles = [] } = options;
-  // Kept pointing at the removed SetupWebKit.cmake (always false) until
-  // verify-baseline.ts's --jit-stress path is fixed: it runs wasm fixtures
-  // without BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING / parsed //@ flags, so
-  // fixtures using wasm-GC types (bbq-osr-with-exceptions,
-  // omg-tail-call-clobber-scratch-register) fail to parse under it.
-  return changedFiles.some(file => file.includes("SetupWebKit.cmake"));
-}
-
 /**
  * Host platform the verify-baseline step runs on — per-TARGET-arch, not the
  * shared arm64 build host. Reuses test-fleet images (debian-13 / win-2019) so
@@ -696,12 +665,11 @@ function getVerifyBaselineHost(platform: Platform): Platform {
   return { os: "linux", arch, distro: "debian", release: "13" };
 }
 
-function getVerifyBaselineStep(platform: Platform, options: PipelineOptions): CommandStep {
+function getVerifyBaselineStep(platform: Platform): CommandStep {
   const { os, abi } = platform;
   const targetKey = getTargetKey(platform);
   const triplet = getTargetTriplet(platform);
   const emulator = getEmulatorBinary(platform);
-  const jitStressFlag = hasWebKitChanges(options) ? " --jit-stress" : "";
   // Android binaries need /system/bin/linker64 + a bionic sysroot, neither of which exist on the
   // build host, so qemu-user cannot load them; only the static instruction scan is meaningful.
   const skipEmulationFlag = abi === "android" ? " --skip-emulation" : "";
@@ -757,11 +725,11 @@ function getVerifyBaselineStep(platform: Platform, options: PipelineOptions): Co
     agents,
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    timeout_in_minutes: hasWebKitChanges(options) ? 30 : 10,
+    timeout_in_minutes: 10,
     command: [
       ...setupCommands,
       `cargo build --release --manifest-path scripts/verify-baseline-static/Cargo.toml${os === "windows" ? " || exit /b 1" : ""}`,
-      `bun scripts/verify-baseline.ts --binary ${profileDir}/${profileExe} --arch ${platform.arch} --emulator ${emulator}${skipEmulationFlag}${jitStressFlag}`,
+      `bun scripts/verify-baseline.ts --binary ${profileDir}/${profileExe} --arch ${platform.arch} --emulator ${emulator}${skipEmulationFlag}`,
     ],
   };
 }
@@ -844,32 +812,16 @@ function getTraceOrderStep(target: Target, tracePlatform: Platform, options: Pip
 /** Where `cargo test` runs. An entry of `testPlatforms`, so the step runs on an image that exists. */
 const cargoTestPlatform: Platform = { os: "linux", arch: "x64", distro: "debian", release: "13" };
 
-/**
- * The unit tests of the Rust crates that link without JavaScriptCore and Bun's C++ (scripts/rust-test.ts). Some hand what the
- * front end writes to the engine, which is `testaot` of the build.
- */
-function getCargoTestStep(buildId: string | undefined): CommandStep {
-  const buildStep = `${getTargetKey(cargoTestPlatform)}-build-bun`;
-  const triplet = getTargetTriplet(cargoTestPlatform);
-  const profileDir = `${triplet}-profile`;
-  const from = `--step ${buildStep}${buildId ? ` --build ${buildId}` : ""}`;
+/** The unit tests of the Rust crates that link without Bun's C++ (scripts/rust-test.ts). */
+function getCargoTestStep(): CommandStep {
   return {
     key: `${getPlatformKey(cargoTestPlatform)}-cargo-test`,
     label: `${getPlatformLabel(cargoTestPlatform)} - cargo-test`,
-    depends_on: buildId ? [] : [buildStep],
     agents: getEc2Agent(cargoTestPlatform, { instanceType: "c7i.4xlarge" }),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     timeout_in_minutes: 30,
-    command: [
-      `buildkite-agent artifact download '${profileDir}.zip' . ${from}`,
-      `buildkite-agent artifact download 'test-tools-${triplet}.zip' . ${from}`,
-      `unzip -o '${profileDir}.zip' '${profileDir}/bun-profile'`,
-      `unzip -o 'test-tools-${triplet}.zip' '${profileDir}/testaot'`,
-      `chmod +x ${profileDir}/testaot ${profileDir}/bun-profile`,
-      // ($$ is a literal $ after pipeline-upload interpolation.)
-      `TESTAOT="$$PWD/${profileDir}/testaot" BUN_UNDER_TEST="$$PWD/${profileDir}/bun-profile" bun run rust:test`,
-    ],
+    command: "bun run rust:test",
   };
 }
 
@@ -878,7 +830,16 @@ interface TestOptions {
   testFiles?: string[] | undefined;
 }
 
-function getTestBunStep(platform: Platform, options: PipelineOptions, testOptions: TestOptions = {}): CommandStep {
+/** No build has the ahead-of-time compiler or its table of built-ins. The other tests of them skip themselves. */
+const testsThatNeedTheCompiler = [
+  "aot/",
+  "internal/builtins-table/",
+  "bundler/bundler_compile_aot.",
+  "bundler/compile-trim-capabilities.",
+  "bundler/compile-trim-removed-features-throw.",
+];
+
+function getTestBunStep(platform: Platform, testOptions: TestOptions = {}): CommandStep {
   const { os, profile } = platform;
   const { buildId, testFiles } = testOptions;
 
@@ -889,14 +850,13 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
 
   if (testFiles?.length) {
     args.push(...testFiles.map(testFile => `--include=${testFile}`));
-  } else if (platform.tests) {
-    args.push(...platform.tests.map(test => `--include=${test}`), "--vendor=false");
   } else {
     // platform-independent tsc check; runs in .github/workflows/bun-types.yml instead
     args.push("--exclude=integration/bun-types");
     // source-tree lints and build-script unit tests that never touch the built
     // binary; run in .github/workflows/source-lints.yml instead
     args.push("--exclude=internal/source-lints");
+    args.push(...testsThatNeedTheCompiler.map(test => `--exclude=${test}`));
   }
 
   const depends: string[] = [];
@@ -921,7 +881,7 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
     // connected at upload but drops off during the build wait, so the
     // step sits `scheduled` with nobody to take it. That holds only this
     // PR's own build, and a cancel clears it.
-    parallelism: platform.tier === "beta" || platform.tests ? 1 : os === "darwin" ? 4 : os === "windows" ? 8 : 20,
+    parallelism: platform.tier === "beta" ? 1 : os === "darwin" ? 4 : os === "windows" ? 8 : 20,
     ...(platform.tier === "beta" ? { soft_fail: true } : {}),
     // The beta lane runs the whole suite as one shard on one box (~35 min).
     timeout_in_minutes:
@@ -942,10 +902,6 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
       (platform.os === "darwin" && platform.arch === "aarch64" && platform.tier === "latest")
         ? { EXPECTED_PLATFORM_RELEASE: platform.release }
         : {}),
-      // The build, which test/aot/the-build-under-test-is-the-one-its-step-names.test.ts asks the Bun about. Whether the
-      // build behind `buildId` is a canary is not known here.
-      ...(profile ? { EXPECTED_PLATFORM_PROFILE: profile } : {}),
-      ...(options.canary && !buildId ? { EXPECTED_PLATFORM_CANARY: "1" } : {}),
     },
     command:
       os === "windows"
@@ -1776,11 +1732,7 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
           const verifyHost = getVerifyBaselineHost(target);
           const verifyDeps = getImageDependsOn(verifyHost, baking);
           steps.push(
-            ...placeBinaryCheck(
-              target,
-              verifyHost,
-              getStepWithDependsOn(getVerifyBaselineStep(target, options), ...verifyDeps),
-            ),
+            ...placeBinaryCheck(target, verifyHost, getStepWithDependsOn(getVerifyBaselineStep(target), ...verifyDeps)),
           );
         }
 
@@ -1809,8 +1761,8 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
   }
 
   // Tests run on main too so the canary release step below can gate on them.
-  // The asan and hardened profiles are PR-only (see includeEveryProfile above),
-  // so their test lanes are dropped on main along with their builds.
+  // The asan profile is PR-only (see includeEveryProfile above), so its test
+  // lane is dropped on main along with its build.
   // Untiered: any arm64 mac agent, whatever macOS it runs, can take it.
   const prDarwinTestPlatforms: Platform[] = [
     { os: "darwin", arch: "aarch64", release: "any" },
@@ -1833,8 +1785,6 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
       : [];
   const relevantTestPlatforms = (includeEveryProfile ? testPlatforms : testPlatforms.filter(isInRelease))
     .filter(({ os }) => os !== "darwin" || darwinTestsEnabled)
-    // The files that a manual build asks for are not written for a platform that names its own.
-    .filter(({ tests }) => !tests || !options.testFiles?.length)
     .concat(darwinTestsEnabled ? [] : prDarwinTestPlatforms)
     .concat(darwinTestsEnabled ? [] : betaDarwinTestPlatforms);
   {
@@ -1842,7 +1792,7 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
     if (!skipTests) {
       steps.push(
         ...relevantTestPlatforms.map(target => {
-          const step = getTestBunStep(target, options, { testFiles, buildId });
+          const step = getTestBunStep(target, { testFiles, buildId });
           // Test shards run on their native platform image; when this build
           // bakes it, they wait for it.
           const dependsOn = getImageDependsOn(target, baking);
@@ -1857,7 +1807,7 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
         }),
       );
       if (!testFiles?.length) {
-        const step = getCargoTestStep(buildId);
+        const step = getCargoTestStep();
         steps.push(
           getStepWithDependsOn(
             { key: getPlatformKey(cargoTestPlatform), group: getPlatformLabel(cargoTestPlatform), steps: [step] },

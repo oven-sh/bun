@@ -75,6 +75,7 @@ function setUpReadStream() {
 }
 
 const prototypeOfReadStream = {
+  __proto__: null,
   get() {
     const Prototype = Object.create(require("internal/fs/streams").ReadStream.prototype);
 
@@ -179,6 +180,7 @@ function WriteStream(this: Self, fd: number): void {
 }
 
 Object.defineProperty(WriteStream, "prototype", {
+  __proto__: null,
   get() {
     const Prototype = Object.create(require("internal/fs/streams").WriteStream.prototype);
     Object.defineProperty(WriteStream, "prototype", { value: Prototype });

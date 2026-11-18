@@ -8,7 +8,6 @@
 #include "headers.h"
 #include "helpers.h"
 #include "ZigGlobalObject.h"
-#include "NodeAsyncHooks.h"
 
 #include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/FrameTracers.h>
@@ -37,7 +36,6 @@
 #include <JavaScriptCore/SourceOrigin.h>
 #include <JavaScriptCore/Structure.h>
 #include <JavaScriptCore/SubspaceInlines.h>
-#include <JavaScriptCore/SymbolTableInlines.h>
 #include <JavaScriptCore/SyntheticModuleRecord.h>
 #include <wtf/SetForScope.h>
 #include <wtf/text/StringToIntegerConversion.h>
@@ -936,7 +934,6 @@ static bool isBuiltinModuleKey(const String& key)
 struct ExportVariable {
     JSC::AbstractModuleRecord* record { nullptr };
     JSC::Identifier localName;
-    JSC::ScopeOffset offset;
 };
 
 static ExportVariable findExportVariable(JSC::JSGlobalObject* globalObject, JSC::JSModuleNamespaceObject* moduleNamespace, const JSC::Identifier& name)
@@ -948,12 +945,9 @@ static ExportVariable findExportVariable(JSC::JSGlobalObject* globalObject, JSC:
     if (resolution.type != JSC::AbstractModuleRecord::Resolution::Type::Resolved)
         return {};
     auto* environment = resolution.moduleRecord->moduleEnvironmentMayBeNull();
-    if (!environment)
+    if (!environment || !environment->hasBinding(resolution.localName))
         return {};
-    JSC::SymbolTableEntry::Fast entry = environment->symbolTable()->get(resolution.localName.impl());
-    if (entry.isNull())
-        return {};
-    return { resolution.moduleRecord, resolution.localName, entry.scopeOffset() };
+    return { resolution.moduleRecord, resolution.localName };
 }
 
 static JSC::JSPromise* importModuleKey(Zig::GlobalObject* globalObject, const String& key)
@@ -1290,7 +1284,7 @@ static bool anyUnevaluatedImport(JSC::AbstractModuleRecord* start, const Functor
     UncheckedKeyHashSet<JSC::AbstractModuleRecord*> seen;
     Vector<JSC::AbstractModuleRecord*> work { start };
     while (!work.isEmpty()) {
-        for (auto& loaded : work.takeLast()->loadedModules().values()) {
+        for (auto& loaded : work.takeLast()->loadedModules()) {
             auto* imported = dynamicDowncast<JSC::CyclicModuleRecord>(loaded.m_module.get());
             if (!imported || imported->isSCCEvaluated() || !seen.add(imported).isNewEntry)
                 continue;
@@ -2058,7 +2052,7 @@ __attribute__((minsize)) JSValue JSModuleMock::callFactory(Zig::GlobalObject* gl
         arguments.append(JSC::JSBoundFunction::create(vm, globalObject, importOriginal, this, ArgList(), 0, nullptr, makeSource("importOriginal"_s, JSC::SourceOrigin(), JSC::SourceTaintedOrigin::Untainted)));
         RETURN_IF_EXCEPTION(scope, {});
         // The context survives the factory's awaits, so an import() it makes later can still be traced back to it.
-        Bun::beginTrackingAsyncContexts(globalObject);
+        globalObject->setAsyncContextTrackingEnabled(true);
         RETURN_IF_EXCEPTION(scope, {});
         auto* asyncContext = globalObject->m_asyncContextData.get();
         JSValue previous = asyncContext->getInternalField(0);
@@ -2657,12 +2651,11 @@ __attribute__((noinline, minsize)) static void rankWaitingModuleMocks(Zig::Globa
         auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(entry->record());
         return cyclic && !cyclic->isSCCEvaluated() ? cyclic : nullptr;
     };
-    auto importOf = [&](JSC::AbstractModuleRecord* record, const JSC::AbstractModuleRecord::ModuleRequest& request) -> UniquedStringImpl* {
-        JSC::ModuleMapKey key { request.m_specifier.impl(), request.type() };
-        if (auto* resolved = record->resolvedRequests().get(key))
+    auto importOf = [&](JSC::AbstractModuleRecord* record, JSC::ModuleMapKey request) -> UniquedStringImpl* {
+        if (auto* resolved = record->resolvedRequest(request))
             return resolved;
-        auto loaded = record->loadedModules().find(key);
-        return loaded == record->loadedModules().end() ? nullptr : loaded->value.m_module->moduleKey().impl();
+        auto* loaded = record->loadedModule(request);
+        return loaded ? loaded->moduleKey().impl() : nullptr;
     };
 
     // What a running factory has requested for comes first, the latest first: the mocks it leads to are called in its order, as in Vitest.
@@ -2763,7 +2756,7 @@ __attribute__((noinline, minsize)) static void rankWaitingModuleMocks(Zig::Globa
                 if (!seen.contains(key.first))
                     loads.append(key.first);
                 for (auto& request : record->requestedModules()) {
-                    if (auto* import = importOf(record, request))
+                    if (auto* import = importOf(record, request.key()))
                         imported.add(import);
                 }
             }
@@ -2799,12 +2792,12 @@ __attribute__((noinline, minsize)) static void rankWaitingModuleMocks(Zig::Globa
         enter(loads[load]);
         while (!stack.isEmpty()) {
             auto [record, next] = stack.last();
-            if (next == record->requestedModules().size()) {
+            if (next == record->requestedModuleCount()) {
                 stack.removeLast();
                 continue;
             }
             stack.last().second++;
-            if (auto* import = importOf(record, record->requestedModules()[next]))
+            if (auto* import = importOf(record, record->requestedModuleKey(next)))
                 enter(import);
             // The loader requests a module's imports in a microtask that is already queued. If the load has failed, it never will.
             else if (plugins.modulesGivenTimeToRequestImports.add(record->moduleKey().string()).isNewEntry)
@@ -3243,7 +3236,7 @@ __attribute__((minsize)) static void overrideLoadedModuleExports(Zig::GlobalObje
 #endif
                 if (!variable.record)
                     continue;
-                JSValue original = variable.record->moduleEnvironment()->readVariable(vm, variable.offset);
+                JSValue original = variable.record->moduleEnvironment()->readBinding(vm, variable.localName);
                 overwritten->putDirectMayBeIndex(globalObject, name, original ? original : JSValue(overwritten));
                 RETURN_IF_EXCEPTION(scope, );
             }
@@ -3427,11 +3420,11 @@ static bool isGivenToPendingLoad(Zig::GlobalObject* globalObject, const String& 
         auto* record = work.takeLast();
         if (!seen.add(record).isNewEntry)
             continue;
-        for (auto& resolved : record->resolvedRequests().values()) {
+        for (auto& resolved : record->resolvedRequests()) {
             if (String { resolved.get() } == key)
                 return true;
         }
-        for (auto& loaded : record->loadedModules().values()) {
+        for (auto& loaded : record->loadedModules()) {
             auto* imported = loaded.m_module.get();
             if (imported == entry->record())
                 return true;
@@ -3655,9 +3648,9 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
             continue;
         if (String mocked = specifierOfUnwaitedModuleMockKey(key); !mocked.isNull())
             addImporter(importersOf, key, mocked);
-        for (auto& resolved : record->resolvedRequests().values())
+        for (auto& resolved : record->resolvedRequests())
             addImporter(importersOf, key, String { resolved.get() });
-        for (auto& loaded : record->loadedModules().values()) {
+        for (auto& loaded : record->loadedModules()) {
             auto* imported = loaded.m_module.get();
 #if ENABLE(AOT)
             if (vm.hasCompiledCode() && !registeredKeys.contains(imported) && JSC::AOT::isCompiledModuleRecord(imported))
@@ -3673,9 +3666,9 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
     // A pending load also pins what it has requested: the module's imports, and transitively those of imports still at Status::New.
     for (size_t i = 0; i < asking.size(); ++i) {
         auto [record, pendingLoad] = asking[i];
-        for (auto& resolved : record->resolvedRequests().values())
+        for (auto& resolved : record->resolvedRequests())
             loading.add(String { resolved.get() }, pendingLoad);
-        for (auto& loaded : record->loadedModules().values()) {
+        for (auto& loaded : record->loadedModules()) {
             auto* imported = dynamicDowncast<JSC::CyclicModuleRecord>(loaded.m_module.get());
             if (imported && imported->status() == JSC::CyclicModuleRecord::Status::New && asks.add(imported).isNewEntry)
                 asking.append({ imported, pendingLoad });
@@ -4426,6 +4419,7 @@ __attribute__((minsize)) static bool resolveModuleMockSpecifier(Zig::GlobalObjec
         if (specifierStr->length() > 0) {
             specifierString = specifierStr;
             specifier = specifierString->value(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
             exists = true;
         }
         return false;
@@ -4616,7 +4610,7 @@ __attribute__((minsize)) static bool hasUnevaluatedImporter(Zig::GlobalObject* g
         String key(mapKey.first);
         if (key == running || isExternalizedByVitest(globalObject, key))
             continue;
-        for (auto& loaded : importer->loadedModules().values()) {
+        for (auto& loaded : importer->loadedModules()) {
             if (loaded.m_module.get() == record)
                 return true;
         }
@@ -4651,7 +4645,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionPatchedModuleDidRun, __attrib
                 continue;
             ExportVariable variable = findExportVariable(globalObject, loaded.esmNamespace, name);
             RETURN_IF_EXCEPTION(scope, {});
-            JSValue original = variable.record ? variable.record->moduleEnvironment()->readVariable(vm, variable.offset) : JSValue();
+            JSValue original = variable.record ? variable.record->moduleEnvironment()->readBinding(vm, variable.localName) : JSValue();
             if (!original)
                 continue;
             overwritten->putDirectMayBeIndex(globalObject, name, original);
@@ -4869,13 +4863,13 @@ JSC::JSPromise* evaluateCompiledOriginalBeforeFactory(Zig::GlobalObject* globalO
         return underWay;
     String key = dependencyKeyOfModuleMock(globalObject, mock);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    JSC::VM::SynchronousModuleQueue queue;
-    queue.prev = vm.m_synchronousModuleQueue;
-    vm.m_synchronousModuleQueue = &queue;
-    JSC::JSPromise* evaluation = importModuleKey(globalObject, key);
-    if (!scope.exception())
-        JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
-    vm.m_synchronousModuleQueue = queue.prev;
+    JSC::JSPromise* evaluation = nullptr;
+    {
+        JSC::VM::SynchronousModuleQueueScope queue(vm);
+        evaluation = importModuleKey(globalObject, key);
+        if (!scope.exception())
+            JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
+    }
     RETURN_IF_EXCEPTION(scope, nullptr);
     mock->earlyOriginalLoad.setMayBeNull(vm, mock, evaluation);
     mock->wouldBeInRegistry = true;
@@ -6070,7 +6064,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
             auto* importer = entry->record();
             if (!mocked || !importer || hasRun(importer) || !JSC::AOT::isCompiledModuleRecord(importer))
                 continue;
-            for (auto& imported : importer->loadedModules().values()) {
+            for (auto& imported : importer->loadedModules()) {
                 if (JSC::AOT::compiledModuleForRecord(globalObject, imported.m_module.get()) == mocked && hasRun(imported.m_module.get()))
                     linkedAhead.append({ specifier, String(mapKey.first) });
             }
@@ -8141,12 +8135,12 @@ __attribute__((minsize)) static bool isWaitingForModule(Zig::GlobalObject* globa
         if (!record)
             continue;
         // An import only shows up in loadedModules() once its own imports have loaded, so walk resolvedRequests() too.
-        for (auto& resolved : record->resolvedRequests().values()) {
+        for (auto& resolved : record->resolvedRequests()) {
             String key { resolved.get() };
             addImporter(importersOf, importer, key);
             add(key);
         }
-        for (auto& loaded : record->loadedModules().values()) {
+        for (auto& loaded : record->loadedModules()) {
             const String& key = loaded.m_module->moduleKey().string();
             addImporter(importersOf, importer, key);
             add(key);
@@ -8834,7 +8828,7 @@ bool isModuleMockInUse(Zig::GlobalObject* globalObject, JSC::JSObject* moduleMoc
 
 void evictModulesThatHaveLoaded(Zig::GlobalObject* globalObject)
 {
-    if (globalObject->onLoadPlugins.modulesToEvictOnceLoaded.isEmpty() || globalObject->vm().m_synchronousModuleQueue) [[likely]]
+    if (globalObject->onLoadPlugins.modulesToEvictOnceLoaded.isEmpty() || globalObject->vm().synchronousModuleQueue()) [[likely]]
         return;
     Zig::ModulesToEvict evict;
     evict.hasLoadSettled = true;
@@ -8869,18 +8863,8 @@ static bool hasUncalledAsyncFactory(Zig::JSModuleMock* mock)
     if (!factory || factory->isHostOrBuiltinFunction())
         return false;
     auto* executable = factory->jsExecutable();
-    if (!JSC::isAsyncFunctionParseMode(executable->parseMode()))
-        return false;
-    // The parser says so once the body is compiled. Without an `await` of its own it settles during the call, so require() gets the mock.
-    auto& vm = mock->vm();
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    JSC::CodeBlock* codeBlock = nullptr;
-    executable->prepareForExecution<JSC::FunctionExecutable>(vm, factory, factory->scope(), JSC::CodeSpecializationKind::CodeForCall, codeBlock);
-    if (scope.exception()) [[unlikely]] {
-        (void)scope.tryClearException();
-        return false;
-    }
-    return !(executable->features() & JSC::AsyncFunctionWithoutAwaitFeature);
+    // Without an `await` of its own it settles during the call, so require() gets the mock.
+    return executable->isAsyncFunction() && executable->canSuspend();
 }
 
 bool hasModuleMockUnsettledAsyncFactory(JSC::JSObject* moduleMock)
@@ -9082,7 +9066,7 @@ __attribute__((minsize)) static bool haveUnfinishedImporterInCommon(Zig::GlobalO
         auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(entry->record());
         if (!cyclic || cyclic->isSCCEvaluated())
             continue;
-        for (auto& resolved : cyclic->resolvedRequests().values()) {
+        for (auto& resolved : cyclic->resolvedRequests()) {
             Zig::addImporter(importersOf, String(mapKey.first), String { resolved.get() });
 #if ENABLE(AOT)
             auto file = earlierFile || laterFile ? compiledModuleForPath(String { resolved.get() }) : std::nullopt;

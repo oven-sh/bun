@@ -96,9 +96,12 @@ pub(crate) fn panic() {
 }
 
 /// Through the hook of `std::panic`, as a failed `unwrap()` goes.
-pub(crate) fn rust_panic() {
+pub(crate) fn rust_panic(padding: u32) {
     crash_handler::suppress_core_dumps_if_necessary();
-    panic!("invoked rustPanic() handler");
+    panic!(
+        "invoked rustPanic() handler{}",
+        "é".repeat(padding as usize)
+    );
 }
 
 /// Native code that calls itself until it meets the guard page below the stack of its thread.

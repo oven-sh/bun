@@ -1,330 +1,197 @@
-//! JavaScriptCore's regular expressions for crates below `bun_jsc`: Yarr's bytecode interpreter, which runs without a
-//! VM and on any thread. The C++ side is src/jsc/bindings/RegularExpression.cpp.
+//! JavaScript's regular expressions for code that has no VM: they are interpreted, on any thread.
 
-use core::ffi::c_void;
-use core::ptr::{NonNull, null_mut};
-use core::sync::atomic::{AtomicPtr, Ordering};
+#![forbid(unsafe_code)]
+
+use core::cell::{Cell, RefCell};
 use std::sync::OnceLock;
 
-/// `JSC::Yarr::Flags`
+use bun_core::StackCheck;
+use bun_engine_regexp::{Context, Flags, Form, Mode, Options, Outcome, Patient, Pattern, Width};
+use bun_engine_text::MAX_LENGTH;
+pub use bun_engine_text::Text;
+
 pub mod flags {
-    pub const HAS_INDICES: u16 = 1 << 0;
-    pub const GLOBAL: u16 = 1 << 1;
-    pub const IGNORE_CASE: u16 = 1 << 2;
-    pub const MULTILINE: u16 = 1 << 3;
-    pub const DOT_ALL: u16 = 1 << 4;
-    pub const UNICODE: u16 = 1 << 5;
-    pub const UNICODE_SETS: u16 = 1 << 6;
-    pub const STICKY: u16 = 1 << 7;
+    use bun_engine_regexp::Flags;
+
+    pub const HAS_INDICES: u16 = Flags::HAS_INDICES.bits() as u16;
+    pub const GLOBAL: u16 = Flags::GLOBAL.bits() as u16;
+    pub const IGNORE_CASE: u16 = Flags::IGNORE_CASE.bits() as u16;
+    pub const MULTILINE: u16 = Flags::MULTILINE.bits() as u16;
+    pub const DOT_ALL: u16 = Flags::DOT_ALL.bits() as u16;
+    pub const UNICODE: u16 = Flags::UNICODE.bits() as u16;
+    pub const UNICODE_SETS: u16 = Flags::UNICODE_SETS.bits() as u16;
+    pub const STICKY: u16 = Flags::STICKY.bits() as u16;
 }
 
-/// `JSC::Yarr::offsetNoMatch`: where a group starts that took no part in the match.
+/// Where a group starts and ends that took no part in the match.
 pub const NO_MATCH: u32 = u32::MAX;
 
-/// `WTF::String::MaxLength`
-const MAX_LENGTH: usize = i32::MAX as usize;
-
-/// A string as JavaScriptCore has it.
-#[derive(Copy, Clone)]
-pub enum Text<'a> {
-    /// ASCII is Latin-1.
-    Latin1(&'a [u8]),
-    Utf16(&'a [u16]),
-}
-
-impl Text<'_> {
-    /// The characters, how many there are, and whether each is 8 bits. `None`: more than a string can have.
-    fn parts(self) -> Option<(*const c_void, u32, bool)> {
-        let (characters, length, is_8_bit) = match self {
-            Text::Latin1(it) => (it.as_ptr().cast::<c_void>(), it.len(), true),
-            Text::Utf16(it) => (it.as_ptr().cast::<c_void>(), it.len(), false),
-        };
-        (length <= MAX_LENGTH).then_some((characters, length as u32, is_8_bit))
-    }
-}
-
-/// Why Yarr refuses a pattern. Mirrors `Refusal` in src/jsc/bindings/RegularExpression.cpp.
+/// Why a pattern is refused.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Error {
-    /// The pattern, a quantifier, the number of groups, or what a match would have to remember.
+    /// The pattern, a quantifier, the number of groups or their depth.
     TooLarge,
-    /// A `\p{..}` that its data of Unicode does not have.
+    /// A `\p{..}` that the data of Unicode does not have.
     UnknownProperty,
     Syntax,
 }
 
-unsafe extern "C" {
-    fn Yarr__RegularExpression__compile(
-        characters: *const c_void,
-        length: u32,
-        is_8_bit: bool,
-        flags: u16,
-        offsets_size: &mut u32,
-        refusal: &mut u8,
-    ) -> *mut c_void;
-    fn Yarr__RegularExpression__exec(
-        this: *mut c_void,
-        characters: *const c_void,
-        length: u32,
-        is_8_bit: bool,
-        start: u32,
-        offsets: *mut u32,
-    ) -> bool;
-    fn Yarr__RegularExpression__deinit(this: *mut c_void);
-}
-
-unsafe extern "Rust" {
-    /// Starts JavaScriptCore if nothing has: a match reads its options. Defined in `bun_jsc`, which is above this crate.
-    safe fn __bun_yarr_initialize();
-}
-
-/// The C++ object: the bytecode of a pattern, and what a match of it can go back to. So one match at a time.
-struct Instance(NonNull<c_void>);
-
-impl Instance {
-    /// With how long the `offsets` of a match have to be.
-    fn new(pattern: Text<'_>, bits: u16) -> Result<(Instance, u32), Error> {
-        let Some((characters, length, is_8_bit)) = pattern.parts() else {
-            return Err(Error::TooLarge);
-        };
-        let (mut offsets_len, mut refusal) = (0, 0);
-        // SAFETY: `characters` is a slice of `length` characters, which C++ does not keep a pointer to.
-        let handle = unsafe {
-            Yarr__RegularExpression__compile(
-                characters,
-                length,
-                is_8_bit,
-                bits,
-                &mut offsets_len,
-                &mut refusal,
-            )
-        };
-        match (NonNull::new(handle), refusal) {
-            (Some(handle), _) => Ok((Instance(handle), offsets_len)),
-            (None, 1) => Err(Error::TooLarge),
-            (None, 2) => Err(Error::UnknownProperty),
-            (None, _) => Err(Error::Syntax),
+impl From<bun_engine_regexp::Error> for Error {
+    fn from(error: bun_engine_regexp::Error) -> Error {
+        use bun_engine_regexp::Error as Reason;
+        match error {
+            Reason::PatternTooLarge
+            | Reason::QuantifierTooLarge
+            | Reason::MinimumLengthTooLarge
+            | Reason::TooManyCaptures
+            | Reason::TooDeeplyNested
+            | Reason::OutOfMemory => Error::TooLarge,
+            Reason::InvalidProperty => Error::UnknownProperty,
+            _ => Error::Syntax,
         }
     }
-
-    /// For a [`Place`].
-    fn into_raw(self) -> *mut c_void {
-        core::mem::ManuallyDrop::new(self).0.as_ptr()
-    }
 }
 
-impl Drop for Instance {
-    fn drop(&mut self) {
-        // SAFETY: made by `Yarr__RegularExpression__compile`, and nothing uses it after this.
-        unsafe { Yarr__RegularExpression__deinit(self.0.as_ptr()) }
-    }
+/// A few seconds of searching.
+const MAX_POLLS: u32 = 1 << 18;
+
+thread_local! {
+    static POLLS: Cell<u32> = const { Cell::new(0) };
+    static CONTEXT: RefCell<Context> = {
+        let mut context = Context::new();
+        context.set_poll(Box::new(|| POLLS.replace(POLLS.get() + 1) >= MAX_POLLS));
+        RefCell::new(context)
+    };
 }
 
-/// Where an [`Instance`] that nobody is using waits, or null.
-#[derive(Debug, Default)]
-struct Place(AtomicPtr<c_void>);
-
-impl Place {
-    /// Whichever thread put it there: nothing in the C++ object belongs to the thread that made it or ran it last.
-    #[inline]
-    fn take(&self) -> Option<Instance> {
-        if self.0.load(Ordering::Relaxed).is_null() {
-            return None;
-        }
-        NonNull::new(self.0.swap(null_mut(), Ordering::Acquire)).map(Instance)
-    }
-
-    /// Gives it back if the place is taken.
-    #[inline]
-    fn put(&self, instance: Instance) -> Option<Instance> {
-        if !self.0.load(Ordering::Relaxed).is_null() {
-            return Some(instance);
-        }
-        let raw = instance.into_raw();
-        let put = (self.0).compare_exchange(null_mut(), raw, Ordering::Release, Ordering::Relaxed);
-        put.err().and_then(|_| NonNull::new(raw)).map(Instance)
-    }
-}
-
-impl Drop for Place {
-    fn drop(&mut self) {
-        drop(self.take());
-    }
-}
-
-/// Cache lines of its own: threads write to their places all the time.
-#[derive(Debug, Default)]
-#[repr(align(128))]
-struct Apart(Place);
-
-/// How often a thread looks for an [`Instance`] that has come back, if it cannot make one: for four seconds, as long as Yarr itself tries.
-const PATIENCE: u32 = 4096;
-
-/// The characters of a pattern.
-#[derive(Debug)]
-enum Pattern {
-    Latin1(Box<[u8]>),
-    Utf16(Box<[u16]>),
-}
-
-/// A pattern that is compiled. It does not change, and threads can share it: each that searches has an [`Instance`] to itself meanwhile.
-#[derive(Debug)]
-pub struct Compiled {
+struct Programs {
     pattern: Pattern,
-    bits: u16,
-    offsets_len: u32,
-    /// All that there is until two threads search at the same time. From then on it stays empty, and no thread writes to it.
-    first: Place,
-    /// At least as many as threads search at a time, or those that find no place compile for every search.
-    more: OnceLock<Box<[Apart]>>,
+    latin1: Patient,
+    utf16: OnceLock<Patient>,
+}
+
+impl Programs {
+    #[inline]
+    fn get(&self, text: Text<'_>) -> Option<&Patient> {
+        match text {
+            Text::Latin1(_) => Some(&self.latin1),
+            Text::Utf16(_) => self.utf16.get().or_else(|| {
+                let program = compile(&self.pattern, Width::Utf16).ok()?;
+                Some(self.utf16.get_or_init(|| program))
+            }),
+        }
+    }
+
+    fn exec(&self, text: Text<'_>, start: u32, captures: &mut [u32]) -> Option<(u32, u32)> {
+        let program = self.get(text)?;
+        POLLS.set(0);
+        let outcome = CONTEXT.with_borrow_mut(|context| {
+            let tree = self.pattern.tree();
+            let outcome = program.exec(tree, stack_limit, text, start, captures, context);
+            context.trim();
+            outcome
+        });
+        match outcome {
+            Outcome::Match { start, end } => Some((start, end)),
+            _ => None,
+        }
+    }
+}
+
+enum Matcher {
+    Form(Box<Form>),
+    Programs(Box<Programs>),
+}
+
+/// A pattern that is compiled. Threads can share it.
+pub struct Compiled {
+    matcher: Matcher,
+    group_count: u16,
+}
+
+impl core::fmt::Debug for Compiled {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.debug_struct("Compiled").finish_non_exhaustive()
+    }
+}
+
+fn stack_limit() -> usize {
+    let here = 0u8;
+    let address = (&raw const here).addr();
+    address.saturating_sub(StackCheck::init().remaining())
+}
+
+fn compile(pattern: &Pattern, width: Width) -> Result<Patient, bun_engine_regexp::Error> {
+    let options = Options {
+        width,
+        mode: Mode::Captures,
+        sample: Text::EMPTY,
+        stack_limit: stack_limit(),
+    };
+    Patient::new(pattern.tree(), &options)
 }
 
 impl Compiled {
     /// `bits`: of [`flags`].
     pub fn new(pattern: Text<'_>, bits: u16) -> Result<Compiled, Error> {
-        static START: std::sync::Once = std::sync::Once::new();
-        START.call_once(__bun_yarr_initialize);
-        let both = flags::UNICODE | flags::UNICODE_SETS;
-        if bits >> 8 != 0 || bits & both == both {
+        let flags = u8::try_from(bits).map_err(|_| Error::Syntax)?;
+        let flags = Flags::from_bits_retain(flags);
+        if flags.contains(Flags::UNICODE | Flags::UNICODE_SETS) {
             return Err(Error::Syntax);
         }
-        let (instance, offsets_len) = Instance::new(pattern, bits)?;
+        let pattern = Pattern::new(pattern, flags)?;
+        let group_count = pattern.group_count();
+        let matcher = match pattern.form().map_err(|_| Error::TooLarge)? {
+            Some(form) => Matcher::Form(Box::new(form)),
+            None => Matcher::Programs(Box::new(Programs {
+                latin1: compile(&pattern, Width::Latin1)?,
+                utf16: OnceLock::new(),
+                pattern,
+            })),
+        };
         Ok(Compiled {
-            pattern: match pattern {
-                Text::Latin1(it) => Pattern::Latin1(it.into()),
-                Text::Utf16(it) => Pattern::Utf16(it.into()),
-            },
-            bits,
-            offsets_len,
-            first: Place(AtomicPtr::new(instance.into_raw())),
-            more: OnceLock::new(),
+            matcher,
+            group_count,
         })
     }
 
-    /// How long the `offsets` of [`Compiled::exec`] have to be: two for the match, two for each group, and some for Yarr.
+    /// How long the `offsets` of [`Compiled::exec`] have to be: two for the match and two for each group.
     #[inline]
     pub fn offsets_len(&self) -> usize {
-        self.offsets_len as usize
+        (usize::from(self.group_count) + 1) * 2
     }
 
-    /// The places of `more`, from the one that this thread is likely to have used last. The address of its stack is only a hint at which thread it is.
-    #[inline]
-    fn from_home(more: &[Apart]) -> impl Iterator<Item = &Place> {
-        let on_the_stack = 0u8;
-        let thread = (core::ptr::from_ref(&on_the_stack).addr() >> 18) as u64;
-        let hash = (thread.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 40) as usize;
-        // Their number is a power of two.
-        let home = hash & more.len().wrapping_sub(1);
-        let (before, from) = more.split_at_checked(home).unwrap_or((more, &[]));
-        from.iter().chain(before).map(|it| &it.0)
-    }
-
-    /// `None`: all have been in use for seconds, and one more cannot be made.
-    #[inline]
-    fn take(&self) -> Option<Taken<'_>> {
-        match self.first.take() {
-            Some(instance) => Some(Taken::new(self, instance)),
-            None => self.take_of_more(),
-        }
-    }
-
-    fn take_of_more(&self) -> Option<Taken<'_>> {
-        let more = self.more.get_or_init(|| {
-            let cores = std::thread::available_parallelism().map_or(0, usize::from);
-            core::iter::repeat_with(Apart::default)
-                .take(cores.max(64).next_power_of_two())
-                .collect()
-        });
-        for round in 0..PATIENCE {
-            let mut waiting = Self::from_home(more).chain([&self.first]);
-            if let Some(instance) = waiting.find_map(Place::take) {
-                return Some(Taken::new(self, instance));
-            }
-            let pattern = match &self.pattern {
-                Pattern::Latin1(it) => Text::Latin1(it),
-                Pattern::Utf16(it) => Text::Utf16(it),
-            };
-            // It can fail where the first did not: with less of the stack left. One is only freed when it finds no place, so another comes back.
-            match Instance::new(pattern, self.bits) {
-                Ok((instance, offsets_len)) => {
-                    debug_assert_eq!(offsets_len, self.offsets_len);
-                    return Some(Taken::new(self, instance));
-                }
-                Err(_) if round < 64 => std::thread::yield_now(),
-                Err(_) => std::thread::sleep(core::time::Duration::from_millis(1)),
-            }
-        }
-        None
-    }
-
-    /// One that finds no place is freed.
-    #[inline]
-    fn put(&self, instance: Instance) {
-        match self.more.get() {
-            None => {
-                // Only the first instance is ever there: the others are made, and put back, by threads that see `more`. This thread has it.
-                let back = self.first.put(instance);
-                debug_assert!(back.is_none());
-            }
-            Some(more) => Self::put_in(more, instance),
-        }
-    }
-
-    fn put_in(more: &[Apart], instance: Instance) {
-        let mut instance = Some(instance);
-        for place in Self::from_home(more) {
-            let Some(it) = instance.take() else { break };
-            instance = place.put(it);
-        }
-    }
-
-    /// Whether there is a match that starts at the index `start` or after it: only at `start` with the `y` flag. `false` as
-    /// well if Yarr gives the search up, which takes it seconds, if for as long there is no instance to be had, or if `offsets` is too short.
+    /// Whether there is a match that starts at the index `start` or after it: only at `start` with the `y` flag. With
+    /// `u` or `v` an index inside a surrogate pair stands for the start of the pair. `false` as well if the search is
+    /// given up, after seconds or for lack of memory, or if `offsets` is too short.
     ///
-    /// After a match `offsets` has the start and the end of the match and of each group, as indices in `text`. The start of
-    /// a group that took no part is [`NO_MATCH`], and its end can be anything.
-    #[inline]
+    /// After a match `offsets` has the start and the end of the match and of each group, as indices in `text`.
     pub fn exec(&self, text: Text<'_>, start: u32, offsets: &mut [u32]) -> bool {
-        let Some((characters, length, is_8_bit)) = text.parts() else {
+        let Some([match_start, match_end, captures @ ..]) = offsets.get_mut(..self.offsets_len())
+        else {
             return false;
         };
-        if start > length || offsets.len() < self.offsets_len() {
+        if text.len() > MAX_LENGTH {
             return false;
         }
-        let Some(taken) = self.take() else {
-            return false;
+        let found = match &self.matcher {
+            Matcher::Form(form) => form
+                .find(text, start as usize)
+                .map(|found| (found.start as u32, found.end as u32)),
+            Matcher::Programs(programs) => programs.exec(text, start, captures),
         };
-        // SAFETY: nobody else has the instance, `characters` is a slice of `length` characters, and `offsets` has the room that Yarr writes to.
-        unsafe {
-            Yarr__RegularExpression__exec(
-                taken.handle.as_ptr(),
-                characters,
-                length,
-                is_8_bit,
-                start,
-                offsets.as_mut_ptr(),
-            )
+        if let Some(found) = found {
+            (*match_start, *match_end) = found;
         }
+        found.is_some()
     }
-}
 
-/// An [`Instance`] that a thread has to itself. It goes back when this is dropped.
-struct Taken<'a> {
-    of: &'a Compiled,
-    handle: NonNull<c_void>,
-}
-
-impl<'a> Taken<'a> {
-    #[inline]
-    fn new(of: &'a Compiled, instance: Instance) -> Self {
-        let handle = core::mem::ManuallyDrop::new(instance).0;
-        Taken { of, handle }
-    }
-}
-
-impl Drop for Taken<'_> {
-    #[inline]
-    fn drop(&mut self) {
-        self.of.put(Instance(self.handle));
+    /// Whether there is a match anywhere: only at the start with the `y` flag.
+    pub fn is_match(&self, text: Text<'_>) -> bool {
+        let mut few = [NO_MATCH; 32];
+        match few.get_mut(..self.offsets_len()) {
+            Some(offsets) => self.exec(text, 0, offsets),
+            None => self.exec(text, 0, &mut vec![NO_MATCH; self.offsets_len()]),
+        }
     }
 }

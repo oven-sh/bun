@@ -7,10 +7,6 @@
 //   --build-dir <dir>    cmake build dir with compile_commands.json (default build/debug)
 //   --jobs <n>           parallel processes (default: cpu count)
 //   --json <file>        also write the findings as JSON
-//   --webkit             recompute the JavaScriptCore callee summaries
-//   --webkit-only        stop after the JavaScriptCore summaries
-//   --webkit-rounds <n>  summary passes over JavaScriptCore (default 3). Each pass
-//                        resolves one more level of cross-file calls.
 //   --no-summaries       skip the whole-project summary passes (faster, more false positives)
 //   --reuse-summaries    skip the Bun summary pass and import the one from the previous run
 //   --kind <k>[,<k>]     only print these kinds (pending-call, thrown-call, unchecked-exit,
@@ -24,24 +20,14 @@
 // --prefix llvm`.
 //
 // Summaries: functions defined in another translation unit cannot be analyzed
-// from their call site. Two export passes (JavaScriptCore sources, then Bun's
-// bindings) record each function's effect on the exception state in a .tsv,
-// which the final pass imports. The JavaScriptCore summaries are cached in the
-// build dir keyed by the WebKit version and only recomputed with --webkit.
+// from their call site. An export pass over Bun's bindings records each
+// function's effect on the exception state in a .tsv, which the final pass
+// imports.
 
 import { spawn } from "bun";
-import {
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { cpus } from "node:os";
-import { basename, join, relative, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 
 const repo = resolve(import.meta.dirname, "../..");
 const toolDir = import.meta.dirname;
@@ -91,9 +77,6 @@ if (args.includes("--help") || args.includes("-h")) {
 const buildDir = resolve(repo, opt("--build-dir", "build/debug")!);
 const jobs = intOpt("--jobs", cpus().length);
 const jsonOut = opt("--json");
-const recomputeWebKit = flag("--webkit");
-const webkitOnly = flag("--webkit-only");
-const webkitRounds = intOpt("--webkit-rounds", 3);
 const noSummaries = flag("--no-summaries");
 const reuseSummaries = flag("--reuse-summaries");
 const kinds = opt("--kind")?.split(",");
@@ -225,141 +208,14 @@ function freshDir(d: string) {
   mkdirSync(d, { recursive: true });
 }
 
-// JavaScriptCore is consumed as a prebuilt library, so there is no compile
-// database for its sources. Build one: copy each .cpp next to nothing (so its
-// quoted includes resolve through -I), and assemble one flat header directory
-// from the prebuilt include dir (which has the derived headers) plus the
-// source headers missing from it.
-function webkitCompileDb(bindingsEntry: Entry): string {
-  const wkDir = join(outDir, "webkit");
-  const jsc = join(repo, "vendor/WebKit/Source/JavaScriptCore");
-  const baseArgs = bindingsEntry.arguments!;
-  const prebuilt = baseArgs
-    .find(a => a.startsWith("-I") && /webkit-[0-9a-f]+/.test(a) && a.endsWith("/include"))
-    ?.slice(2);
-  if (!prebuilt) throw new Error("prebuilt WebKit include dir not found in compile command");
-
-  freshDir(wkDir);
-  const fwd = join(wkDir, "fwd/JavaScriptCore");
-  mkdirSync(fwd, { recursive: true });
-  for (const f of readdirSync(join(prebuilt, "JavaScriptCore")))
-    copyFileSync(join(prebuilt, "JavaScriptCore", f), join(fwd, f));
-  const walk = (d: string, cb: (p: string) => void) => {
-    for (const e of readdirSync(d, { withFileTypes: true })) {
-      const p = join(d, e.name);
-      if (e.isDirectory()) walk(p, cb);
-      else cb(p);
-    }
-  };
-  walk(jsc, p => {
-    if (p.endsWith(".h") && !existsSync(join(fwd, basename(p)))) copyFileSync(p, join(fwd, basename(p)));
-  });
-
-  const srcDir = join(wkDir, "src");
-  mkdirSync(srcDir);
-  const keep: string[] = [];
-  let skip = 0;
-  for (const a of baseArgs) {
-    if (skip) {
-      skip--;
-      continue;
-    }
-    if (a === "-include-pch" || a === "-o" || a === "-c") {
-      skip = 1;
-      continue;
-    }
-    if (a.startsWith("-I") && (a.includes("/src/jsc/bindings") || a.includes("/codegen"))) continue;
-    if (a.startsWith("-DREPORTED_") || a.startsWith("-DBUN_DYNAMIC")) continue;
-    keep.push(a);
-  }
-  const firstInclude = keep.findIndex(a => a.startsWith("-I"));
-  keep.splice(firstInclude === -1 ? keep.length : firstInclude, 0, `-I${join(wkDir, "fwd")}`, `-I${fwd}`);
-  keep.push(
-    "-DBUILDING_JavaScriptCore",
-    "-DSTATICALLY_LINKED_WITH_WTF",
-    "-DUSE_BUN_JSC_ADDITIONS=1",
-    "-DUSE_BUN_EVENT_LOOP=1",
-  );
-
-  const entries: Entry[] = [];
-  const dirs = [
-    "runtime",
-    "API",
-    "interpreter",
-    "heap",
-    "parser",
-    "bytecompiler",
-    "bytecode",
-    "profiler",
-    "debugger",
-    "inspector",
-    "tools",
-    "domjit",
-    "yarr",
-    "wasm/js",
-    "jit",
-    "dfg",
-    "llint",
-  ];
-  for (const d of dirs) {
-    const p = join(jsc, d);
-    if (!existsSync(p)) continue;
-    for (const f of readdirSync(p)) {
-      if (!f.endsWith(".cpp")) continue;
-      const dst = join(srcDir, `${d.replace("/", "__")}__${f}`);
-      copyFileSync(join(p, f), dst);
-      entries.push({ directory: bindingsEntry.directory, arguments: [...keep, "-c", dst], file: dst });
-    }
-  }
-  writeFileSync(join(wkDir, "compile_commands.json"), JSON.stringify(entries));
-  return wkDir;
-}
-
 async function main() {
   const bin = await buildTool();
   const entries = loadCompileCommands(buildDir);
   const allBindings = bunSourceFiles(entries);
-  const bindingsEntry = entries.find(e => e.file.endsWith("/src/jsc/bindings/bindings.cpp"))!;
   const nothrow = join(toolDir, "nothrow.txt");
   const imports: string[] = [];
 
   if (!noSummaries) {
-    // JavaScriptCore summaries, cached per WebKit version.
-    const wkVersion =
-      bindingsEntry.arguments!.find(a => /webkit-[0-9a-f]+/.test(a))?.match(/webkit-([0-9a-f]+)/)?.[1] ?? "unknown";
-    const wkSummaries = join(outDir, `webkit-summaries-${wkVersion}.tsv`);
-    if (recomputeWebKit || !existsSync(wkSummaries)) {
-      const wkDir = webkitCompileDb(bindingsEntry);
-      const wkFiles = loadCompileCommands(wkDir).map(e => e.file);
-      // Each round resolves one more level of cross-file calls: a function
-      // whose callee lives in another file is classified from that callee's
-      // summary of the previous round.
-      let previous: string | undefined;
-      for (let round = 1; round <= webkitRounds; round++) {
-        const tmp = join(wkDir, `round${round}`);
-        freshDir(tmp);
-        const importArgs = previous ? [`--import-summaries=${previous}`] : [];
-        await shardRun(
-          bin,
-          wkDir,
-          wkFiles,
-          [
-            "--only-under=NEVER",
-            `--export-under=${join(wkDir, "src")}`,
-            `--nothrow=${nothrow}`,
-            ...importArgs,
-            `--export-summaries=${tmp}/{shard}.tsv`,
-          ],
-          `webkit round ${round}`,
-        );
-        const merged = round === webkitRounds ? wkSummaries : join(wkDir, `round${round}.tsv`);
-        mergeTsv(tmp, merged, `webkit round ${round}`);
-        previous = merged;
-      }
-    }
-    imports.push(wkSummaries);
-    if (webkitOnly) return;
-
     // Bun summaries (always recomputed: the bindings are what changes). The
     // analysis pass below exports a second round, so a helper defined in
     // another translation unit is seen with the summaries of its own callees.
@@ -382,7 +238,6 @@ async function main() {
           "--only-under=NEVER",
           ...exportUnder,
           `--nothrow=${nothrow}`,
-          ...imports.map(i => `--import-summaries=${i}`),
           ...seed,
           `--export-summaries=${bunTmp}/{shard}.tsv`,
         ],

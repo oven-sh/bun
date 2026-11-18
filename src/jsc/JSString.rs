@@ -1,5 +1,3 @@
-use core::ffi::c_void;
-
 use crate::{JSGlobalObject, JSValue, JsResult};
 use bun_core::StringView;
 use bun_core::Utf8Bytes;
@@ -15,7 +13,7 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         owner: &mut *const JSString,
     ) -> StringView<'a>;
-    fn JSC__JSString__iterator(this: &JSString, global_object: &JSGlobalObject, iter: *mut c_void);
+    fn JSC__JSString__copyIfASCII(this: &JSString, characters: *mut u8, length: usize) -> bool;
     safe fn JSC__JSString__length(this: &JSString) -> usize;
     safe fn JSC__JSString__is8Bit(this: &JSString) -> bool;
     fn JSC__JSString__substringOfResolved(
@@ -89,10 +87,10 @@ impl JSString {
         })
     }
 
-    pub fn iterator(&self, global_object: &JSGlobalObject, iter: &mut Iterator) {
-        // SAFETY: `self`/`global_object` are valid opaque GC-cell handles; `iter`
-        // is a caller-owned `Iterator` (extern struct) passed through to C++.
-        unsafe { JSC__JSString__iterator(self, global_object, core::ptr::from_mut(iter).cast()) }
+    /// False, with `buffer` written in part, unless the string is ASCII and as long as it. A rope stays one.
+    pub fn copy_if_ascii(&self, buffer: &mut [u8]) -> bool {
+        // SAFETY: writes no more than that many bytes.
+        unsafe { JSC__JSString__copyIfASCII(self, buffer.as_mut_ptr(), buffer.len()) }
     }
 
     pub fn length(&self) -> usize {
@@ -126,7 +124,7 @@ impl JSString {
         // SAFETY: an 8-bit StringImpl has that many Latin-1 characters there, and the pointer is not null, which spares
         // the caller of an inlined `Option<&[u8]>` the test for it.
         Some(unsafe {
-            let characters = text.m_ptr.latin1;
+            let characters = text.string().characters().cast::<u8>();
             core::hint::assert_unchecked(!characters.is_null());
             core::slice::from_raw_parts(characters, text.length() as usize)
         })
@@ -299,43 +297,5 @@ impl Drop for JSStringView<'_> {
     fn drop(&mut self) {
         self.cell.ensure_still_alive();
         self.owner.ensure_still_alive();
-    }
-}
-
-pub(crate) type JStringIteratorAppend8Callback =
-    unsafe extern "C" fn(*mut Iterator, *const u8, u32);
-pub(crate) type JStringIteratorAppend16Callback =
-    unsafe extern "C" fn(*mut Iterator, *const u16, u32);
-pub(crate) type JStringIteratorWrite8Callback =
-    unsafe extern "C" fn(*mut Iterator, *const u8, u32, u32);
-pub(crate) type JStringIteratorWrite16Callback =
-    unsafe extern "C" fn(*mut Iterator, *const u16, u32, u32);
-
-#[repr(C)]
-pub struct Iterator {
-    pub data: *mut c_void,
-    pub stop: u8,
-    pub append8: Option<JStringIteratorAppend8Callback>,
-    pub append16: Option<JStringIteratorAppend16Callback>,
-    pub write8: Option<JStringIteratorWrite8Callback>,
-    pub write16: Option<JStringIteratorWrite16Callback>,
-}
-
-impl Iterator {
-    /// Raw type-erased user-data pointer.
-    ///
-    /// This is the sole accessor for the `data` field. A `&T`-returning
-    /// accessor is intentionally **not** provided: `data` is an opaque
-    /// `*mut c_void` whose concrete pointee type is known only to the caller
-    /// that constructed the `Iterator`, and that pointee is mutated by the
-    /// append/write callbacks while C++ holds `*mut Iterator` re-entrantly.
-    /// Callers must cast and dereference under their own `unsafe` block.
-    ///
-    /// Invariant: may be null. When set by
-    /// `iter()`-style constructors it points to a stack-local context struct
-    /// that outlives the `JSC__JSString__iterator` call.
-    #[inline]
-    pub fn data_ptr(&self) -> *mut c_void {
-        self.data
     }
 }

@@ -1,20 +1,12 @@
-// Regenerates src/protocol/jsc/{protocol.json,index.d.ts} from the inspector
-// protocol of the WebKit build Bun links against.
+// Regenerates src/protocol/jsc/{protocol.json,index.d.ts} from a description of
+// the inspector protocol's domains.
 //
-//   bun scripts/generate-protocol.ts [path/to/CombinedDomains.json] [--v8]
-//
-// CombinedDomains.json is what JavaScriptCore's build produces from
-// Source/JavaScriptCore/inspector/protocol/*.json. The bun-webkit prebuilt
-// tarball ships it at its top level, so after `bun bd` it can be found in the
-// build cache for the WEBKIT_VERSION pinned in scripts/build/deps/webkit.ts;
-// that is what is used when no path is given. A local WebKit build writes it
-// to <build>/JavaScriptCore/Scripts/CombinedDomains.json.
+//   bun scripts/generate-protocol.ts path/to/CombinedDomains.json [--v8]
 //
 // Pass --v8 to also refresh src/protocol/v8 from the Chrome DevTools protocol
 // repository (requires network access).
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { Domain, Property, Protocol } from "../src/protocol/schema";
 
@@ -172,31 +164,6 @@ function toComment(description?: string): string {
 
 const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
 
-/** The CombinedDomains.json of the prebuilt WebKit pinned by scripts/build/deps/webkit.ts, if it has been downloaded. */
-function findPinnedCombinedDomains(): string | undefined {
-  const webkitTs = readFileSync(path.join(repoRoot, "scripts", "build", "deps", "webkit.ts"), "utf-8");
-  const version = /^export const WEBKIT_VERSION = "([^"]+)";/m.exec(webkitTs)?.[1];
-  if (!version) {
-    throw new Error("Could not find WEBKIT_VERSION in scripts/build/deps/webkit.ts");
-  }
-  // Mirrors prebuiltDestDir() in scripts/build/deps/webkit.ts:
-  // <cache>/webkit-<version>[-<os>][-<arch>][-debug|-lto][-asan]/
-  const dirVersion = version.startsWith("autobuild-") ? version.slice("autobuild-".length) : version.slice(0, 16);
-  // The build cache, as sharedCacheDir() in scripts/build/config.ts resolves it.
-  const bunInstall = process.env.BUN_INSTALL
-    ? path.resolve(repoRoot, process.env.BUN_INSTALL)
-    : path.join(homedir(), ".bun");
-  const cacheDir = process.env.BUN_BUILD_CACHE_DIR
-    ? path.resolve(repoRoot, process.env.BUN_BUILD_CACHE_DIR)
-    : path.join(bunInstall, "build-cache");
-  if (!existsSync(cacheDir)) {
-    return undefined;
-  }
-  const glob = new Bun.Glob(`webkit-${dirVersion}*/CombinedDomains.json`);
-  const [match] = [...glob.scanSync({ cwd: cacheDir })].sort();
-  return match && path.join(cacheDir, match);
-}
-
 /**
  * Domains that Bun's WebKit fork declares as debuggable from JavaScript, but that bun registers no
  * agent for (see src/jsc/bindings/BunDebugger.cpp): bun answers every command in them with
@@ -207,12 +174,9 @@ const domainsWithoutAgent = new Set(["File", "Process"]);
 
 const args = process.argv.slice(2);
 const includeV8 = args.includes("--v8");
-const combinedDomainsPath = args.find(arg => !arg.startsWith("--")) ?? findPinnedCombinedDomains();
+const combinedDomainsPath = args.find(arg => !arg.startsWith("--"));
 if (!combinedDomainsPath) {
-  console.error(
-    "Could not find CombinedDomains.json for the pinned WebKit version. " +
-      "Run `bun bd` first or pass the path to a WebKit build's CombinedDomains.json.",
-  );
+  console.error("usage: bun scripts/generate-protocol.ts path/to/CombinedDomains.json [--v8]");
   process.exit(1);
 }
 console.log(`Reading ${combinedDomainsPath}`);

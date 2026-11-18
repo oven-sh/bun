@@ -128,7 +128,7 @@ private:
             Vector<JSC::Identifier, 8> identifiers;
             Vector<JSC::PropertyOffset, 8> offsets;
             structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
-                if (entry.attributes() & PropertyAttribute::DontEnum) {
+                if (entry.attributes() & PropertyAttribute::DontEnum || PropertyName(entry.key()).isPrivateName()) {
                     return true;
                 }
 

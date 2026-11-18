@@ -16,13 +16,10 @@ pub enum ImplementationVisibility {
     PrivateRecursive = 2,
 }
 
-/// In WebKit: Intrinsic.h
-//
-// Non-exhaustive — any u8 is a valid bit pattern, so a Rust `#[repr(u8)]`
-// enum would be UB for unknown values. Use a newtype.
+/// `JSC::Intrinsic`, of which only one value is named here.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub struct Intrinsic(u8);
+pub struct Intrinsic(u16);
 
 impl Intrinsic {
     const NONE: Intrinsic = Intrinsic(0);

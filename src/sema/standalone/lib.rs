@@ -8,6 +8,7 @@ use bun_crash_handler as _;
 
 pub mod native;
 pub mod native_libraries;
+mod native_text;
 #[cfg(any(test, feature = "test_support"))]
 #[path = "../../runtime/cli/typescript_libs.rs"]
 mod typescript_libs;

@@ -72,10 +72,7 @@ pub(crate) fn compile_to_executable(
             where_this_thread_stopped: Bun__AOT__describeWhereThisThreadStopped,
             what_threads_are_compiling: Bun__AOT__describeWhatThreadsAreCompiling,
         });
-    bun_jsc::initialize(bun_jsc::InitializeOptions {
-        is_compiler: true,
-        ..Default::default()
-    });
+    bun_jsc::initialize(bun_jsc::InitializeOptions::default());
 
     let options = request.options;
     let module_prefix: &[u8] = if options.runs_in_place {

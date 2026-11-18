@@ -13,7 +13,6 @@
 #include "JSFetchHeaders.h"
 #include "JSURLSearchParams.h"
 #include "JSDOMFormData.h"
-#include <JavaScriptCore/JSCallbackObject.h>
 #include "JSCookie.h"
 #include "JSCookieMap.h"
 
@@ -22,7 +21,7 @@ namespace Bun {
 using namespace JSC;
 using namespace WebCore;
 
-JSValue BunInjectedScriptHost::subtype(JSGlobalObject* exec, JSValue value)
+JSValue InjectedScriptHost::subtype(JSGlobalObject* exec, JSValue value)
 {
     VM& vm = exec->vm();
 
@@ -120,7 +119,7 @@ static JSValue constructDataProperties(VM& vm, JSGlobalObject* exec, JSArray* ar
     RELEASE_AND_RETURN(scope, array);
 }
 
-JSValue BunInjectedScriptHost::getInternalProperties(VM& vm, JSGlobalObject* exec, JSC::JSValue value)
+JSValue InjectedScriptHost::getInternalProperties(VM& vm, JSGlobalObject* exec, JSC::JSValue value)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 

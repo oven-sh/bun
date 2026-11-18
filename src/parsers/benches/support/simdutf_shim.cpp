@@ -13,11 +13,6 @@ bool simdutf__validate_utf8(const char* buf, size_t len) {
   return simdutf::validate_utf8(buf, len);
 }
 
-SIMDUTFResult simdutf__validate_utf8_with_errors(const char* buf, size_t len) {
-  auto r = simdutf::validate_utf8_with_errors(buf, len);
-  return {r.error, r.count};
-}
-
 bool simdutf__validate_ascii(const char* buf, size_t len) {
   return simdutf::validate_ascii(buf, len);
 }
@@ -46,12 +41,6 @@ size_t simdutf__utf16_length_from_utf8(const char* input, size_t length) {
 SIMDUTFResult simdutf__convert_utf16le_to_utf8_with_errors(const char16_t* input, size_t length,
                                                            char* output) {
   auto r = simdutf::convert_utf16le_to_utf8_with_errors(input, length, output);
-  return {r.error, r.count};
-}
-
-SIMDUTFResult simdutf__convert_utf8_to_utf16le_with_errors(const char* input, size_t length,
-                                                           char16_t* output) {
-  auto r = simdutf::convert_utf8_to_utf16le_with_errors(input, length, output);
   return {r.error, r.count};
 }
 

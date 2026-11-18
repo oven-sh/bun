@@ -12,8 +12,7 @@ namespace Bun {
 
 // One fixed-size page of strong GC roots backing bun_jsc::Strong. Each live
 // StrongRef (see StrongRef.cpp) occupies one WriteBarrier slot in one of these
-// cells instead of a HandleSet strong handle, so the "Sh" strong-handle
-// marking constraint does not become O(N Strongs) on every eden collection. A
+// cells instead of a JSC::Strong, all of which every eden collection visits. A
 // barriered slot store dirties only the owning block; blocks untouched since
 // the last full GC stay old-gen-marked and are skipped on eden.
 //
@@ -25,8 +24,8 @@ class StrongRootBlock final : public JSC::JSCell {
 public:
     using Base = JSC::JSCell;
 
-    // Sized so the cell fits under MarkedSpace::largeCutoff (half a 16 KB
-    // MarkedBlock payload) and the IsoSubspace can allocate it from a block.
+    // Sized so the cell fits under MarkedSpace::largeCutoff (half the
+    // payload of a block) and the IsoSubspace can allocate it from a block.
     static constexpr unsigned capacity = 960;
 
     static StrongRootBlock* create(JSC::VM& vm, JSC::Structure* structure);

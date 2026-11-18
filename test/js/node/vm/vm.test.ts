@@ -3946,6 +3946,42 @@ test.concurrent("Atomics.notify does not wake the Atomics.waitAsync of a context
   });
 });
 
+test("an object has one context, however it got it", () => {
+  const script = new Script("Object");
+
+  const created = createContext({});
+  expect(script.runInNewContext(created)).toBe(script.runInContext(created));
+  expect(runInNewContext("Object", created)).toBe(script.runInContext(created));
+
+  const fresh = {};
+  const first = script.runInNewContext(fresh);
+  expect(isContext(fresh)).toBe(true);
+  expect(script.runInNewContext(fresh)).toBe(first);
+  expect(script.runInContext(fresh)).toBe(first);
+
+  const once = {};
+  expect(runInNewContext("let kept = 1; Object", once)).toBe(script.runInContext(once));
+  expect(runInContext("kept", once)).toBe(1);
+});
+
+test.concurrent("WebAssembly.compile and instantiate settle in a context that nothing else refers to", async () => {
+  const fixture = /* js */ `
+    const vm = require("node:vm");
+    let settled = 0;
+    (function start() {
+      for (let i = 0; i < 20; i++) {
+        const sandbox = { how: i % 2 ? "compile" : "instantiate", done: () => settled++ };
+        vm.runInNewContext("WebAssembly[how](new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0])).then(done)", sandbox);
+      }
+    })();
+    Bun.gc(true);
+    process.on("exit", () => console.log(settled));
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "20\n", stderr: "", exitCode: 0 });
+});
+
 test.concurrent("unreferenced contexts are garbage collected, including the last one created", async () => {
   const fixture = /* js */ `
     const vm = require("node:vm");

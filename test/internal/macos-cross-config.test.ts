@@ -13,7 +13,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
-import { webkit } from "../../scripts/build/deps/webkit.ts";
+import { icu } from "../../scripts/build/deps/icu.ts";
 import { parsePackedFeaturesList } from "../../scripts/build/features-json.ts";
 import { computeFlags, DARWIN_STACK_SIZE } from "../../scripts/build/flags.ts";
 import { MACOS_SDK_VERSION, macosSdkCachePath, resolveMacosSdkPath } from "../../scripts/build/macos-sdk.ts";
@@ -192,21 +192,10 @@ describe.skipIf(isMacOS)("macOS cross-compile config (non-darwin host)", () => {
     expect(rustTarget(resolveDarwin({ arch: "x64" }))).toBe("x86_64-apple-darwin");
   });
 
-  test("WebKit prebuilt resolves to the macOS tarball with a macos-keyed cache dir", () => {
-    const cfg = resolveDarwin({ lto: false, aot: false });
-    const source = webkit.source(cfg);
-    if (source.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${source.kind}`);
-    expect(source.url).toContain("bun-webkit-macos-arm64.tar.gz");
-    expect(source.destDir).toContain("-macos-arm64");
-
-    const x64 = webkit.source(resolveDarwin({ arch: "x64", lto: false, aot: false }));
-    if (x64.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${x64.kind}`);
-    expect(x64.url).toContain("bun-webkit-macos-amd64.tar.gz");
-
-    // Release defaults to LTO, which selects the bitcode (-lto) tarball.
-    const lto = webkit.source(resolveDarwin({ aot: false }));
-    if (lto.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${lto.kind}`);
-    expect(lto.url).toContain("bun-webkit-macos-arm64-lto.tar.gz");
+  test("ICU is the SDK's libicucore, whose symbols carry no version", () => {
+    const cfg = resolveDarwin();
+    expect(icu.provides(cfg)).toEqual({ libs: [], includes: [], linkFlags: ["-licucore"] });
+    expect(computeFlags(cfg).defines).toContain("U_DISABLE_RENAMING=1");
   });
 
   test("ELF links compress debug sections at link time, with and without LTO", () => {

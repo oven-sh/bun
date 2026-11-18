@@ -1871,7 +1871,7 @@ impl ThreadLock {
                     stored.trace(),
                     crate::DumpStackTraceOptions {
                         frame_count: 10,
-                        stop_at_jsc_llint: true,
+                        stop_at_interpreter: true,
                         ..Default::default()
                     },
                 );
@@ -1996,9 +1996,8 @@ impl StackCheck {
     pub fn update(&mut self) {
         self.cached_stack_end = Bun__StackCheck__getMaxStack() as usize;
     }
-    /// Stack reserved for the work a frame does before the next check. One
-    /// `WTF::StringBuilder` growth reallocates through libpas, a ~35 frame
-    /// path that measures ~160 KB under a sanitizer and a few KB without one.
+    /// Stack reserved for the work a frame does before the next check. Frames
+    /// are many times larger under a sanitizer.
     const THRESHOLD: usize = if cfg!(windows) {
         256 * 1024
     } else {
@@ -2013,6 +2012,12 @@ impl StackCheck {
         // positive and incorrectly return true.
         let remaining = Self::frame_address().saturating_sub(self.cached_stack_end);
         remaining > Self::THRESHOLD
+    }
+
+    /// The address below which `is_safe_to_recurse` says no.
+    #[inline]
+    pub fn limit(self) -> usize {
+        self.cached_stack_end + Self::THRESHOLD
     }
 
     /// How many bytes of stack this thread has left before `is_safe_to_recurse` says no.

@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/events.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 ec57f462a3251842b8948c7c81180212fbd3299bdd2d6b5a7f02421825271e8c.
+// Written against that file with the SHA-256 522a99dd780456b41ab6158e5fe6b99631d52a7a23d38d354c4b0765a60ca5ff.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Reimplementation of https://nodejs.org/api/events.html
@@ -1347,6 +1347,7 @@ class EventEmitterAsyncResource extends (EventEmitter as $Node.EventEmitterConst
 
 Object.defineProperties(EventEmitter, {
   captureRejections: {
+    __proto__: null,
     get() {
       return EventEmitterPrototype[kCapture];
     },
@@ -1358,6 +1359,7 @@ Object.defineProperties(EventEmitter, {
     enumerable: true,
   },
   defaultMaxListeners: {
+    __proto__: null,
     enumerable: true,
     get: () => {
       return defaultMaxListeners;

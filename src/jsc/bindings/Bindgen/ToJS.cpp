@@ -49,9 +49,7 @@ public:
 
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject)
     {
-        Structure* structure = Bun::createClassStructure(vm, globalObject, globalObject->functionPrototype(), TypeInfo(JSFunctionType, StructureFlags), info());
-        ImmutablePropertyNames* names = globalObject->hostFunctionStructure()->listedImmutablePropertyNames();
-        return names ? Structure::makeListedPropertiesImmutableTransition(vm, structure, *names) : structure;
+        return Bun::createClassStructure(vm, globalObject, globalObject->functionPrototype(), TypeInfo(JSFunctionType, StructureFlags), info());
     }
 
     static bool customHasInstance(JSObject*, JSGlobalObject* globalObject, JSValue value)
@@ -75,7 +73,7 @@ EncodedJSValue createBoundFunctionReplacement(JSGlobalObject* globalObject, unsi
     auto& cached = uncheckedDowncast<Zig::GlobalObject>(globalObject)->m_bindgenAdditions.m_boundFunctionReplacementStructure;
     if (!cached)
         cached.set(vm, globalObject, BoundFunctionReplacement::createStructure(vm, globalObject));
-    NativeExecutable* executable = vm.getHostFunction(function, ImplementationVisibility::Public, NoIntrinsic, callHostFunctionAsConstructor, nullptr, length, name);
+    NativeExecutable* executable = vm.getHostFunction(function, ImplementationVisibility::Public, NoIntrinsic, callHostFunctionAsConstructor, length, name);
     return JSValue::encode(BoundFunctionReplacement::create(vm, globalObject, cached.get(), executable));
 }
 

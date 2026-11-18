@@ -134,7 +134,7 @@ impl StoredTrace {
 #[derive(Copy, Clone, Debug)]
 pub struct DumpStackTraceOptions {
     pub frame_count: usize,
-    pub stop_at_jsc_llint: bool,
+    pub stop_at_interpreter: bool,
     pub skip_stdlib: bool,
     pub skip_file_patterns: &'static [&'static [u8]],
     pub skip_function_patterns: &'static [&'static [u8]],
@@ -143,7 +143,7 @@ impl Default for DumpStackTraceOptions {
     fn default() -> Self {
         Self {
             frame_count: usize::MAX,
-            stop_at_jsc_llint: false,
+            stop_at_interpreter: false,
             skip_stdlib: false,
             skip_file_patterns: &[],
             skip_function_patterns: &[],
@@ -160,7 +160,7 @@ impl Default for DumpStackTraceOptions {
 /// llvm-symbolizer / pdb-addr2line call `bun_crash_handler::dump_stack_trace`
 /// directly — that crate sits above us so it owns the rich impl without a hook.
 ///
-/// `limits.stop_at_jsc_llint` / `skip_stdlib` / `skip_*_patterns` are accepted
+/// `limits.stop_at_interpreter` / `skip_stdlib` / `skip_*_patterns` are accepted
 /// for signature parity but **ignored** here (they require symbol names to
 /// match against). Only `frame_count` is honoured.
 pub fn dump_stack_trace(trace: &[usize], limits: DumpStackTraceOptions) {

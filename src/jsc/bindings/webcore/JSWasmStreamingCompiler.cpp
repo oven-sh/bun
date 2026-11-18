@@ -51,18 +51,10 @@ static inline EncodedJSValue jsWasmStreamingCompilerPrototypeFunction_addBytesBo
 
     auto chunkValue = callFrame->uncheckedArgument(0);
 
-    // See getWasmBufferFromValue in JSC's JSWebAssemblyHelpers.h
     if (auto arrayBufferView = dynamicDowncast<JSArrayBufferView>(chunkValue)) {
-        if (isTypedArrayType(arrayBufferView->type())) {
-            validateTypedArray(lexicalGlobalObject, arrayBufferView);
-            RETURN_IF_EXCEPTION(throwScope, {});
-        } else {
-            // DataView
-            IdempotentArrayBufferByteLengthGetter<std::memory_order_relaxed> getter;
-            if (!uncheckedDowncast<JSDataView>(arrayBufferView)->viewByteLength(getter)) [[unlikely]] {
-                throwTypeError(lexicalGlobalObject, throwScope, typedArrayBufferHasBeenDetachedErrorMessage);
-                return {};
-            }
+        if (arrayBufferView->isOutOfBounds()) [[unlikely]] {
+            throwTypeError(lexicalGlobalObject, throwScope, typedArrayBufferHasBeenDetachedErrorMessage);
+            return {};
         }
 
         impl.addBytes(arrayBufferView->span());

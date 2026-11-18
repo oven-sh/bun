@@ -1,8 +1,8 @@
 /**
  * Download + archive extraction helpers.
  *
- * Used by the fetch CLIs in source.ts (dep tarballs) and webkit.ts
- * (prebuilt tarball). Extracted because the retry + temp-then-rename
+ * Used by fetch-cli.ts (dep and prebuilt tarballs) and by what configure
+ * fetches itself. Extracted because the retry + temp-then-rename
  * logic was copy-pasted several times and the platform-specific
  * extraction quirks (tar vs unzip, -m for mtime) were starting to drift.
  *
@@ -17,8 +17,7 @@
  * release assets both 302 from there), and every dep whose pin moved after
  * the CI images were baked misses the prefetch cache below, so each build
  * makes on the order of a hundred live github.com downloads (several deps at
- * any given time, plus WebKit, which is bumped more often than the images
- * are rebaked). The outages CI actually hits are agent-wide: every
+ * any given time). The outages CI actually hits are agent-wide: every
  * github.com connection from one agent failing for 30s to over two minutes
  * while the rest of the build is fine. The previous 5 attempts / ~30s gave
  * up inside those and took a random build lane with them.
@@ -41,7 +40,7 @@
  * `arrayBuffer()` on multi-MB responses intermittently fastfails the
  * process (0xC0000409) — no exception, just gone. Streaming avoids the
  * large native allocation and keeps peak memory flat regardless of
- * tarball size (WebKit is ~200MB).
+ * tarball size.
  */
 
 import { spawnSync } from "node:child_process";
@@ -232,8 +231,8 @@ export async function downloadWithRetry(
   }
 
   // 4xx: throw the status error directly — wrapping it in "after N attempts"
-  // is misleading (we only made one), and callers (prefetch-deps.ts) need to
-  // distinguish 404 from transient failures by message.
+  // is misleading (we only made one), and prebuiltDownloadError() tells a 404
+  // from transient failures by message.
   if (permanent) throw lastError;
 
   throw new BuildError(`Failed to download after ${maxAttempts} attempts: ${url}`, {
@@ -262,8 +261,8 @@ export function checkSha256(file: string, expected: string): void {
  * so any .o built BEFORE this extraction is correctly stale.
  *
  * @param stripComponents How many top-level dirs to strip. 1 for github
- *   archives. 0 for tarballs that are already flat (e.g. prebuilt WebKit
- *   has `bun-webkit/` that the caller wants to keep for a rename step).
+ *   archives. 0 where the caller wants to keep the top-level dir for a
+ *   rename step.
  */
 export async function extractTarGz(tarball: string, dest: string, stripComponents = 1): Promise<void> {
   const args = ["-xzmf", tarball, "-C", dest];
@@ -321,28 +320,11 @@ export async function extractZip(zipPath: string, dest: string): Promise<void> {
   );
 }
 
-/**
- * A missing prebuilt tarball is a bad pin, not a network blip. The
- * `autobuild-preview-pr-*` WebKit tags are the sharp edge: GitHub deletes the
- * preview release when the PR merges or closes, so every build 404s at once.
- * Say so, and say which line to edit.
- */
-function prebuiltDownloadError(name: string, url: string, cause: unknown): Error {
+/** A missing prebuilt tarball is a bad pin, not a network blip. */
+function prebuiltDownloadError(name: string, cause: unknown): Error {
   const message = cause instanceof Error ? cause.message : String(cause);
-  // 404 only: a 403/429 is GitHub rate-limiting us, not a deleted release.
-  const missing = message.includes("HTTP 404");
-  if (name === "WebKit" && missing && url.includes("/autobuild-preview-pr-")) {
-    return new BuildError(`WebKit preview release is gone: ${message}`, {
-      cause,
-      file: "scripts/build/deps/webkit.ts",
-      hint:
-        "WEBKIT_VERSION points at an `autobuild-preview-pr-*` tag. Those releases only exist " +
-        "while the WebKit PR is open — this one has merged, closed, or been re-tagged. Set " +
-        "WEBKIT_VERSION in scripts/build/deps/webkit.ts to the merged main sha (see " +
-        "https://github.com/oven-sh/WebKit/releases).",
-    });
-  }
-  if (missing) {
+  // 404 only: a 403/429 is the server rate-limiting us, not a deleted release.
+  if (message.includes("HTTP 404")) {
     return new BuildError(`Prebuilt ${name} is not published at that URL: ${message}`, {
       cause,
       hint: `Check the version pin for '${name}' in scripts/build/deps/.`,
@@ -359,14 +341,13 @@ function prebuiltDownloadError(name: string, url: string, cause: unknown): Error
  * stamp. On next fetch, if stamp matches, skip download (restat prunes).
  *
  * Tarball layout assumption: single top-level directory. We extract to a
- * staging dir, hoist the single child into `dest/`. Matches GitHub release
- * asset conventions (WebKit's `bun-webkit/`, future deps' similar layouts).
+ * staging dir, hoist the single child into `dest/`.
  * If a tarball has multiple top-level entries, the whole staging dir becomes
  * `dest/` (no hoist).
  *
  * @param identity Written to `dest/.identity`. Changing it triggers re-download.
  * @param rmPaths Paths (relative to `dest/`) to delete after extraction.
- *   Used to remove conflicting headers (WebKit's unicode/, nodejs's openssl/).
+ *   Used to remove conflicting headers (nodejs's openssl/).
  *   Deleted via fs.rm — no shell, cross-platform.
  */
 export async function fetchPrebuilt(
@@ -405,13 +386,13 @@ export async function fetchPrebuilt(
   try {
     await downloadWithRetry(url, tarballPath, name);
   } catch (err) {
-    throw prebuiltDownloadError(name, url, err);
+    throw prebuiltDownloadError(name, err);
   }
 
   // ─── Extract ───
   // Extract to a private staging dir, then hoist. We don't extract directly
   // into dest/ because the tarball's top-level dir name is unpredictable
-  // (e.g. `bun-webkit/` vs `libfoo-1.2.3/`).
+  // (e.g. `node-v26.0.0/` vs `libfoo-1.2.3/`).
   const stagingDir = `${dest}${suffix}.staging`;
   await mkdir(stagingDir, { recursive: true });
 

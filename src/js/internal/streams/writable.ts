@@ -69,6 +69,7 @@ const kEnded = 1 << 30;
 // TODO(benjamingr) it is likely slower to do it this way than with free functions
 function makeBitMapDescriptor(bit) {
   return {
+    __proto__: null,
     enumerable: false,
     get() {
       return (this[kState] & bit) !== 0;

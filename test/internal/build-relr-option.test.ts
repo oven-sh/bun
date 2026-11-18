@@ -53,7 +53,6 @@ function config(partial: PartialConfig, buildDir: string): Config {
       arch: "x64",
       abi: "gnu",
       buildType: "Release",
-      webkit: "local",
       buildDir,
       linuxSysroot: buildDir,
       ...partial,

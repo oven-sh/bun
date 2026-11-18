@@ -1,5 +1,4 @@
 use crate::LinkerContext;
-use crate::analyze_transpiled_module::ModuleInfo;
 use crate::bundle_v2::bake_types::{HmrRuntimeSide, get_hmr_runtime};
 use crate::linker_context_mod::{GenerateChunkCtx, LinkerOptionsMode};
 use crate::mal_prelude::*;
@@ -146,17 +145,6 @@ pub(crate) fn post_process_js_chunk(
         )
     };
 
-    // The chunk's module record, assembled in output order: the printer records
-    // the cross-chunk prefix imports below, then the per-part-range results
-    // (printed in parallel into their own ModuleInfo) are appended, then the
-    // cross-chunk suffix and entry point tail exports are printed into it.
-    // Stored on chunk.content.javascript.module_info — owned `Box<ModuleInfo>`.
-    let mut module_info: Option<Box<ModuleInfo>> = c.options.generates_module_info().then(|| {
-        let loader =
-            c.parse_graph().input_files.items_loader()[chunk.entry_point.source_index() as usize];
-        ModuleInfo::create(loader.is_type_script())
-    });
-
     let worker_arena: &Arena = worker.arena();
 
     // An ESM entry point already ends in an `export { }` clause
@@ -182,10 +170,6 @@ pub(crate) fn post_process_js_chunk(
     let exports_join_entry_tail = joined_cross_chunk_exports.is_some();
 
     {
-        // `Options` is not `Copy` (holds `&mut ModuleInfo`), and a closure
-        // taking `&mut ModuleInfo` can't express "output lifetime = input
-        // lifetime" — so build a base with `module_info: None` and override it
-        // via FRU at each call site.
         let make_print_options = || js_printer::Options {
             bundling: true,
             indent: Default::default(),
@@ -198,7 +182,6 @@ pub(crate) fn post_process_js_chunk(
             target: c.options.target,
             print_dce_annotations: c.options.emit_dce_annotations,
             mangled_props: Some(&c.mangled_props),
-            module_info: None,
             // .const_values = c.graph.const_values,
             ..Default::default()
         };
@@ -250,10 +233,7 @@ pub(crate) fn post_process_js_chunk(
             target,
             &ast_view,
             source,
-            js_printer::Options {
-                module_info: module_info.as_deref_mut(),
-                ..make_print_options()
-            },
+            make_print_options(),
             cross_chunk_import_records.as_slice(),
             &[Part {
                 stmts: prefix_stmts,
@@ -261,27 +241,12 @@ pub(crate) fn post_process_js_chunk(
             }],
             c.renamer_for_chunk(chunk),
         );
-        if let Some(mi) = module_info.as_deref_mut() {
-            // One result per entry of `parts_in_chunk_in_order`, in that order.
-            for compile_result in chunk.compile_results_for_chunk.iter() {
-                if let CompileResult::Javascript {
-                    module_info: Some(part_module_info),
-                    ..
-                } = compile_result
-                {
-                    mi.append(part_module_info);
-                }
-            }
-        }
         cross_chunk_suffix = js_printer::print::<false>(
             worker_arena,
             target,
             &ast_view,
             source,
-            js_printer::Options {
-                module_info: module_info.as_deref_mut(),
-                ..make_print_options()
-            },
+            make_print_options(),
             &[],
             &[Part {
                 stmts: suffix_stmts,
@@ -291,34 +256,7 @@ pub(crate) fn post_process_js_chunk(
         );
     }
 
-    // The printer does not know about top-level await, so derive that flag from
-    // the AST. The JSC module loader decides sync vs async evaluation from
-    // JSModuleRecord::hasTLA(), which is set from this bit when the record is
-    // constructed from module_info (BunAnalyzeTranspiledModule). Without it, a
-    // bytecode-compiled module that contains TLA gets evaluated on the sync path
-    // and the suspended generator is dropped — the entry promise resolves
-    // immediately and the process exits before the awaited value lands.
-    if let Some(mi) = module_info.as_deref_mut() {
-        let tla_keywords = c.parse_graph().ast.items_top_level_await_keyword();
-        let wraps = c.graph.meta.items_flags();
-        for part_range in chunk.content.javascript().parts_in_chunk_in_order.iter() {
-            let idx = part_range.source_index.get() as usize;
-            if idx >= tla_keywords.len() {
-                continue;
-            }
-            if wraps[idx].wrap != crate::WrapKind::None {
-                continue;
-            }
-            if !tla_keywords[idx].is_empty() {
-                mi.flags.has_tla = true;
-                break;
-            }
-        }
-    }
-
     // Generate the exports for the entry point, if there are any.
-    // This must happen before module_info serialization so the printer
-    // can populate export entries in module_info.
     let entry_point_tail = 'brk: {
         if chunk.is_entry_point() {
             let cross_chunk_exports: &[bun_ast::ClauseItem] = match &joined_cross_chunk_exports {
@@ -333,7 +271,6 @@ pub(crate) fn post_process_js_chunk(
                 worker_arena,
                 &arena,
                 c.renamer_for_chunk(chunk),
-                module_info.as_deref_mut(),
                 cross_chunk_exports,
             );
         }
@@ -344,17 +281,8 @@ pub(crate) fn post_process_js_chunk(
                 code: Box::default(),
                 source_map: None,
             }),
-            module_info: None,
         };
     };
-
-    // Store unserialized ModuleInfo on the chunk. Serialization is deferred to
-    // generateChunksInParallel after final chunk paths are computed, so that
-    // cross-chunk import specifiers (which use unique_key placeholders during
-    // printing) can be resolved to actual paths.
-    if let Some(mi) = module_info {
-        chunk.content.javascript_mut().module_info = Some(mi);
-    }
 
     let mut j = StringJoiner::default();
     j.watcher = Watcher {
@@ -813,7 +741,6 @@ pub(crate) fn generate_entry_point_tail_js(
     arena: &Arena,
     temp_arena: &Arena,
     r: js_printer::renamer::Renamer,
-    module_info: Option<&mut ModuleInfo>,
     cross_chunk_exports: &[bun_ast::ClauseItem],
 ) -> CompileResult {
     let flags: crate::js_meta::Flags = c.graph.meta.items_flags()[source_index as usize];
@@ -1237,7 +1164,6 @@ pub(crate) fn generate_entry_point_tail_js(
                 code: Box::default(),
                 source_map: None,
             }),
-            module_info: None,
         };
     }
 
@@ -1254,7 +1180,6 @@ pub(crate) fn generate_entry_point_tail_js(
         print_dce_annotations: c.options.emit_dce_annotations,
         minify_syntax: c.options.minify_syntax,
         mangled_props: Some(&c.mangled_props),
-        module_info,
         // .const_values = c.graph.const_values,
         ..Default::default()
     };
@@ -1274,7 +1199,5 @@ pub(crate) fn generate_entry_point_tail_js(
             r,
         ),
         source_index,
-        // The exports were recorded straight into the chunk's ModuleInfo above.
-        module_info: None,
     }
 }

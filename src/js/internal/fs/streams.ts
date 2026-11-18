@@ -245,6 +245,7 @@ $toClass(ReadStream, "ReadStream", Readable);
 const readStreamPrototype = ReadStream.prototype;
 
 Object.defineProperty(readStreamPrototype, "autoClose", {
+  __proto__: null,
   get() {
     return this._readableState.autoDestroy;
   },
@@ -369,6 +370,7 @@ readStreamPrototype.close = function (cb) {
 };
 
 Object.defineProperty(readStreamPrototype, "pending", {
+  __proto__: null,
   get() {
     return this.fd == null;
   },
@@ -845,6 +847,7 @@ writeStreamPrototype.close = function (this: FSStream, cb) {
 writeStreamPrototype.destroySoon = writeStreamPrototype.end;
 
 Object.defineProperty(writeStreamPrototype, "autoClose", {
+  __proto__: null,
   get() {
     return this._writableState.autoDestroy;
   },
@@ -854,6 +857,7 @@ Object.defineProperty(writeStreamPrototype, "autoClose", {
 });
 
 Object.defineProperty(writeStreamPrototype, "pending", {
+  __proto__: null,
   get() {
     return this.fd === null;
   },

@@ -6,7 +6,6 @@
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/LazyClassStructure.h>
-#include <JavaScriptCore/SymbolTable.h>
 #include <JavaScriptCore/WeakGCMap.h>
 #include <JavaScriptCore/WriteBarrier.h>
 #include "ScriptExecutionContext.h"
@@ -46,8 +45,6 @@ public:
     JSC::JSModuleLoader* loader() const { return m_loader.get(); }
     JSC::JSLexicalEnvironment* overlay() const;
     // Which shape the overlay has: one number per `globals` name set, never 0 and never reused.
-    // Code compiled under one shape must not be shared with another, or with the host
-    // (see commonJSSourceForGraph).
     unsigned overlayShape() const { return m_overlayShape; }
     JSC::JSMap* requireMap() const { return m_requireMap.get(); }
     JSC::JSObject* onError() const { return m_onError.get(); } // null if the host gave none
@@ -66,8 +63,8 @@ public:
 
     // The linked wrapper function of a CommonJS module this graph evaluated (ModuleGraphState::commonJSWrappers).
     void keepCommonJSWrapper(JSC::VM&, JSC::CodeBlock*);
-    // Keeps an ES module's executable alive, along with the key JSC looks it up by. A finished record doesn't hold it.
-    void keepModuleExecutable(JSC::VM&, JSC::ModuleProgramExecutable*, WTF::UniquedStringImpl* key);
+    // Keeps an ES module's executable alive for the graphs that come later.
+    void keepModuleExecutable(JSC::VM&, JSC::ModuleProgramExecutable*);
 
     JSC::JSPromise* import(Zig::GlobalObject*, JSC::JSValue specifier, bool mayBecomeMain = true);
     void dispose(Zig::GlobalObject*);
@@ -84,7 +81,7 @@ private:
     JSC::WriteBarrier<JSModuleGraph> m_maker;
     JSC::WriteBarrier<JSC::JSString> m_mainPath;
     WTF::UncheckedKeyHashSet<JSC::CodeBlock*> m_commonJSWrappers; // cellLock()
-    WTF::Vector<std::pair<JSC::ModuleProgramExecutable*, RefPtr<WTF::UniquedStringImpl>>> m_moduleExecutables; // cellLock()
+    WTF::Vector<JSC::ModuleProgramExecutable*> m_moduleExecutables; // cellLock()
     unsigned m_overlayShape { 0 };
 };
 
@@ -98,14 +95,14 @@ struct ModuleGraphState {
 
 public:
     explicit ModuleGraphState(JSC::VM& vm)
-        : overlaySymbolTables(vm)
+        : overlayTemplates(vm)
         , commonJSWrappers(vm)
     {
     }
-    // Sorted `globals` names -> the SymbolTable the overlays of the graphs made with that name
-    // set share, which is what JSC keys shared module executables on. Weak: alive while an
+    // Sorted `globals` names -> the ScopeTemplate the overlays of the graphs made with that name
+    // set share, which is what shared module executables are keyed on. Weak: alive while an
     // overlay uses it.
-    JSC::WeakGCMap<WTF::String, JSC::SymbolTable> overlaySymbolTables;
+    JSC::WeakGCMap<WTF::String, JSC::ScopeTemplate> overlayTemplates;
     // The same keys -> JSModuleGraph::overlayShape(). Never forgets, so a number is never reused
     // for another name set while code compiled under the first may still be cached.
     WTF::HashMap<WTF::String, unsigned> overlayShapes;

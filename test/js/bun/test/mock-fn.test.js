@@ -2137,6 +2137,15 @@ describe("spyOn", () => {
         expect(Object.getOwnPropertyDescriptor(exports, "method")).toEqual(original);
       });
 
+      test("lastIndex of a RegExp stays a data property", () => {
+        const regexp = /a/g;
+        const fn = spyOn(regexp, "lastIndex");
+        expect("aa".replace(regexp, "b")).toBe("bb");
+        regexp.exec("aa");
+        fn.mockRestore();
+        expect(Object.getOwnPropertyDescriptor(regexp, "lastIndex").value).toBe(1);
+      });
+
       test("properties that can't be redefined, like an array's length, throw", () => {
         for (const [obj, key] of [
           [[1, 2], "length"],

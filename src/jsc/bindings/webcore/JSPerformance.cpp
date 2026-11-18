@@ -55,9 +55,6 @@
 #include <variant>
 #include <wtf/GetPtr.h>
 
-#include <JavaScriptCore/DOMJITAbstractHeap.h>
-#include <JavaScriptCore/FrameTracers.h>
-
 namespace WebCore {
 using namespace JSC;
 
@@ -85,41 +82,18 @@ static JSC_DECLARE_CUSTOM_SETTER(setJSPerformance_onresourcetimingbufferfull);
 
 // -- copied --
 
-extern "C" {
-
 static JSC_DECLARE_HOST_FUNCTION(functionPerformanceNow);
-static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(functionPerformanceNowWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject*, JSPerformance*));
-}
-
-static inline JSC::EncodedJSValue functionPerformanceNowBody(VM& vm)
-{
-    // nanoseconds to seconds
-    double time = static_cast<double>(Bun__readOriginTimer(Bun::vm(vm)));
-    double result = time / 1000000.0;
-
-    // https://github.com/oven-sh/bun/issues/5604
-    // Must be EncodeAsDouble because the DOMJIT signature has SpecDoubleReal.
-    return JSValue::encode(jsDoubleNumber(result));
-}
 
 JSC_DEFINE_HOST_FUNCTION(functionPerformanceNow, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    return functionPerformanceNowBody(globalObject->vm());
+    // nanoseconds to milliseconds
+    double time = static_cast<double>(Bun__readOriginTimer(Bun::vm(globalObject->vm())));
+    return JSValue::encode(jsDoubleNumber(time / 1000000.0));
 }
 
 extern "C" SYSV_ABI double AOT__performanceNow(JSC::JSGlobalObject* globalObject)
 {
     return static_cast<double>(Bun__readOriginTimer(bunVM(globalObject->vm()))) / 1000000.0;
-}
-
-JSC_DEFINE_JIT_OPERATION(functionPerformanceNowWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSPerformance* castedThis))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    IGNORE_WARNINGS_BEGIN("frame-address")
-    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-    IGNORE_WARNINGS_END
-    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    return { functionPerformanceNowBody(vm) };
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsPerformancePrototypeFunction_markResourceTiming, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -179,20 +153,7 @@ size_t JSPerformance::estimatedSize(JSCell* cell, VM& vm)
 void JSPerformance::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    static const JSC::DOMJIT::Signature DOMJITSignatureForPerformanceNow(
-        functionPerformanceNowWithoutTypeCheck,
-        JSPerformance::info(),
-        JSC::DOMJIT::Effect::forWriteKinds(DFG::AbstractHeapKind::SideState),
-        SpecDoubleReal);
-
-    JSFunction* now = JSFunction::create(
-        vm,
-        globalObject(),
-        0,
-        String("now"_s),
-        functionPerformanceNow, ImplementationVisibility::Public, NoIntrinsic, callHostFunctionAsConstructor,
-        &DOMJITSignatureForPerformanceNow);
-    Bun::putDirectNamed(vm, this, "now"_s, now);
+    Bun::putDirectNamed(vm, this, "now"_s, JSFunction::create(vm, globalObject(), 0, String("now"_s), functionPerformanceNow, ImplementationVisibility::Public, ClockIntrinsic));
 }
 
 JSObject* JSPerformance::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)

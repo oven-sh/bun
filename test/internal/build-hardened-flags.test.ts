@@ -1,12 +1,8 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { tempDir } from "harness";
 
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
 import { mimalloc } from "../../scripts/build/deps/mimalloc.ts";
-import { webkit } from "../../scripts/build/deps/webkit.ts";
-import { fetchCliPath } from "../../scripts/build/fetch-cli.ts";
 import {
   computeDepFlags,
   computeFlags,
@@ -61,7 +57,6 @@ function linuxConfig(partial: PartialConfig, buildDir: string, toolchain = mockT
       arch: "x64",
       abi: "gnu",
       buildType: "Release",
-      webkit: "local",
       buildDir,
       linuxSysroot: buildDir,
       ...partial,
@@ -99,8 +94,6 @@ const compilerFlags = [
   "-fsanitize-trap=array-bounds",
   "-D_GLIBCXX_ASSERTIONS=1",
   "-fPIE",
-  "-DBUN_HARDENED=1",
-  "-DENABLE_AOT_POSITION_INDEPENDENT_IMAGE=1",
 ];
 const namesAllocatorReads = (cfg: Config) =>
   everyFlagOf(cfg)
@@ -192,76 +185,25 @@ test("only --lock-environment=off lets tests steer a hardened build by the envir
   );
 });
 
-test("--guarded-pages is on with --hardened=on, and either can be had without the other where WebKit is compiled too", () => {
+test("--guarded-pages is on with --hardened=on, and either can be had without the other", () => {
   using dir = tempDir("build-hardened-flags-guarded-pages", {});
-  const define = "-DENABLE_AOT_GUARDED_PAGES=1";
-  for (const partial of [{ hardened: true }, { guardedPages: true }] as PartialConfig[]) {
-    const flags = everyFlagOf(linuxConfig(partial, String(dir)));
-    for (const list of [flags.c, flags.cxx, flags.dependencyC, flags.dependencyCxx]) expect(list).toContain(define);
-  }
+  const define = "ENABLE_AOT_GUARDED_PAGES=1";
+  for (const partial of [{ hardened: true }, { guardedPages: true }] as PartialConfig[])
+    expect(computeFlags(linuxConfig(partial, String(dir))).defines).toContain(define);
   for (const partial of [{}, { hardened: true, guardedPages: false }] as PartialConfig[])
-    expect(Object.values(everyFlagOf(linuxConfig(partial, String(dir)))).flat()).not.toContain(define);
-  expect(everyFlagOf(linuxConfig({ hardened: true, webkit: "prebuilt" }, String(dir))).cxx).toContain(define);
-  for (const partial of [{ guardedPages: true }, { hardened: true, guardedPages: false }] as PartialConfig[])
-    expect(() => linuxConfig({ ...partial, webkit: "prebuilt" }, String(dir))).toThrow("requires webkit=local");
+    expect(computeFlags(linuxConfig(partial, String(dir))).defines).not.toContain(define);
 });
 
-test("--execute-only-start is off with --hardened=on, and either can be had without the other where WebKit is compiled too", () => {
+test("--execute-only-start is off with --hardened=on, and either can be had without the other", () => {
   using dir = tempDir("build-hardened-flags-execute-only", {});
-  const [define, word] = ["-DBUN_REFUSES_EXECUTE_ONLY_START=1", "--cfg=bun_refuses_execute_only_start"];
-  for (const partial of [{ hardened: true }, { executeOnlyStart: false }] as PartialConfig[]) {
-    const flags = everyFlagOf(linuxConfig(partial, String(dir)));
-    for (const list of [flags.c, flags.cxx, flags.dependencyC, flags.dependencyCxx]) expect(list).toContain(define);
-    expect(flags.rust).toContain(word);
-  }
-  for (const partial of [{}, { hardened: true, executeOnlyStart: true }] as PartialConfig[]) {
-    const all = Object.values(everyFlagOf(linuxConfig(partial, String(dir)))).flat();
-    expect(all).not.toContain(define);
-    expect(all).not.toContain(word);
-  }
-  const withPrebuilt = everyFlagOf(linuxConfig({ hardened: true, webkit: "prebuilt" }, String(dir)));
-  expect(withPrebuilt.cxx).toContain(define);
-  expect(withPrebuilt.rust).toContain(word);
-  expect(() => linuxConfig({ executeOnlyStart: false, webkit: "prebuilt" }, String(dir))).toThrow(
-    "executeOnlyStart=false with hardened=false requires webkit=local",
-  );
-  expect(() => linuxConfig({ hardened: true, executeOnlyStart: true, webkit: "prebuilt" }, String(dir))).toThrow(
-    "executeOnlyStart=true with hardened=true requires webkit=local",
-  );
+  const word = "--cfg=bun_refuses_execute_only_start";
+  for (const partial of [{ hardened: true }, { executeOnlyStart: false }] as PartialConfig[])
+    expect(everyFlagOf(linuxConfig(partial, String(dir))).rust).toContain(word);
+  for (const partial of [{}, { hardened: true, executeOnlyStart: true }] as PartialConfig[])
+    expect(everyFlagOf(linuxConfig(partial, String(dir))).rust).not.toContain(word);
   expect(() => linuxConfig({ executeOnlyStart: false, abi: "android", arch: "aarch64" }, String(dir))).toThrow(
     "executeOnlyStart=false requires os=linux and abi=gnu or musl",
   );
-});
-
-test("a hardened build fails by a sentence where the prebuilt WebKit was compiled with an older list of flags", async () => {
-  using dir = tempDir("build-hardened-flags-older-prebuilt", {
-    "newer.a": "!<arch>\nJSC__AOT__mapsGuardedPages\0JSC__AOT__startsOnlyWhereItsFileCanBeRead\0",
-    "older.a": "!<arch>\nJSC__AOT__mapsGuardedPages\0",
-  });
-  const asked = (partial: PartialConfig) =>
-    webkit.provides(linuxConfig({ webkit: "prebuilt", ...partial }, String(dir))).requireDefined;
-  const symbols = ["JSC__AOT__mapsGuardedPages", "JSC__AOT__startsOnlyWhereItsFileCanBeRead"];
-  expect(asked({ hardened: true, aot: true })).toEqual({ lib: "lib/libJavaScriptCore.a", symbols });
-  expect(asked({ hardened: true, aot: false, lto: true })).toBeUndefined();
-  expect(asked({ aot: true })).toBeUndefined();
-
-  async function check(lib: string) {
-    const stamp = join(String(dir), lib + ".stamp");
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), fetchCliPath, "check-defined", "WebKit", join(String(dir), lib), stamp, symbols.join(",")],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { output: stdout + stderr, stamped: existsSync(stamp), exitCode };
-  }
-  expect(await check("newer.a")).toEqual({ output: "", stamped: true, exitCode: 0 });
-  const older = await check("older.a");
-  expect(older.output).toContain(
-    "older.a was not compiled with what this build asks of it. It does not define JSC__AOT__startsOnlyWhereItsFileCanBeRead",
-  );
-  expect({ stamped: older.stamped, exitCode: older.exitCode }).toEqual({ stamped: false, exitCode: 1 });
 });
 
 test("_FORTIFY_SOURCE is left out where nothing is optimized or ASan checks the same calls", () => {
@@ -274,7 +216,7 @@ test("_FORTIFY_SOURCE is left out where nothing is optimized or ASan checks the 
   }
 });
 
-// -mtune keeps the fortified wrappers out of line: it is left out where the build is hardened. WebKit's .github/scripts/lanes.mjs does the same.
+// -mtune keeps the fortified wrappers out of line: it is left out where the build is hardened.
 test("a hardened build for arm64 names no processor to tune for", () => {
   using dir = tempDir("build-hardened-flags-tune", {});
   const tunes = (cfg: Config) =>
@@ -318,7 +260,7 @@ test("the libraries that never call back into JavaScript keep their arrays on a 
     expect(safeStackFlags(on, name)).toEqual(["-fsanitize=safe-stack"]);
     expect(safeStackFlags(off, name)).toEqual([]);
   }
-  for (const name of [...librariesThatCallBackIntoJavaScript, "mimalloc", "WebKit"] as const)
+  for (const name of [...librariesThatCallBackIntoJavaScript, "mimalloc"] as const)
     expect(safeStackFlags(on, name)).toEqual([]);
   expect(everyFlagOf(on).cxx).toContain("-DBUN_SAFE_STACK=1");
   expect(everyFlagOf(on).dependencyC).not.toContain("-fsanitize=safe-stack");

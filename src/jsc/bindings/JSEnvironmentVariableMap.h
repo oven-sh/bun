@@ -61,15 +61,6 @@ private:
 // Returns null with an exception pending if it throws. On Windows, JS finishes building the map.
 JSC::JSObject* createEnvironmentVariablesMap(Zig::GlobalObject* globalObject);
 
-// Setting TZ must make *existing* Date instances recompute local time. JSC's DateCache
-// reset only clears shared slots; live DateInstances keep their own cached fields
-// that still match, so walk the heap and invalidate those.
-void invalidateLiveDateInstanceCaches(JSC::VM&);
-
-// The shared DateCache reset and invalidateLiveDateInstanceCaches() must travel
-// together; every caller that changes the time zone override uses this instead.
-void resetDateCachesAfterTimeZoneChange(JSC::VM&);
-
 // worker_threads SHARE_ENV: a `process.env` whose reads/writes/enumeration go
 // through the SharedEnvStore of the tree its global belongs to.
 JSC::JSValue createSharedEnvironmentVariablesMap(Zig::GlobalObject* globalObject);

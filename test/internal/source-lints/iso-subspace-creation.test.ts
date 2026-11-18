@@ -3,24 +3,19 @@ import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-// Every JS class with C++ fields has a subspaceFor<T>() that JSC calls on each
-// allocation of T. Creating the IsoSubspace behind it (lock the heap, build it,
-// register it, build the per-VM GCClient::IsoSubspace, fill both slots) is about
-// 640 bytes of code that runs once per type. Until #39770 that creation path
-// lived in the ALWAYS_INLINE WebCore::subspaceForImpl template, so the binary
-// carried one copy of it per class; taking them out of line saved about 160 KB
-// of the stripped linux-x64 binary.
+// Every JS class with C++ fields has a subspaceFor<T>() that is called on each
+// allocation of T. Most classes share a space with others of their size. One
+// that needs a space of its own creates it once per VM, and a space is never
+// freed before its heap.
 //
-// It now lives in exactly one out-of-line function, subspaceForImplSlow in
-// BunClientData.cpp (the file that also constructs the two subspaces JSHeapData
-// owns eagerly). subspaceForImpl<T> passes it a per-type constant table and the
-// two slot offsets from BUN_SUBSPACE_SLOTS. A new class needs a slot in
-// DOMIsoSubspaces.h and DOMClientIsoSubspaces.h and a subspaceFor that calls
-// WebCore::subspaceForImpl; it never constructs an IsoSubspace itself.
+// That happens in exactly one out-of-line function, subspaceForImplSlow in
+// BunClientData.cpp, so that the ALWAYS_INLINE WebCore::subspaceForImpl template
+// does not carry a copy per class. A new class needs a slot in
+// DOMClientIsoSubspaces.h and a subspaceFor that calls WebCore::subspaceForImpl;
+// it never creates an IsoSubspace itself.
 const creationSite = "src/jsc/bindings/BunClientData.cpp";
 
-const constructsIsoSubspace =
-  /\bISO_SUBSPACE_INIT(?:_WITH_NAME)?\b|\b(?:makeUnique|makeUniqueWithoutFastMallocCheck|make_unique)\s*<\s*(?:JSC::)?(?:GCClient::)?IsoSubspace\s*>|\bnew\s+(?:JSC::)?(?:GCClient::)?IsoSubspace\b/;
+const constructsIsoSubspace = /\bcreateIsoSubspace\b|\bheap_create_iso_space\b/;
 
 function linesConstructingIsoSubspace(source: string): number[] {
   if (!constructsIsoSubspace.test(source)) return [];
@@ -46,6 +41,7 @@ test("IsoSubspaces are only constructed in BunClientData.cpp", async () => {
 
   for (const glob of globs) {
     for await (const rel of glob.scan({ cwd: src })) {
+      if (rel.replaceAll("\\", "/").startsWith("engine/")) continue;
       scanned++;
       const relFromRepo = path.join("src", rel).replaceAll("\\", "/");
       const lines = linesConstructingIsoSubspace(readFileSync(path.join(src, rel), "utf8"));

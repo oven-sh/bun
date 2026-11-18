@@ -16,24 +16,23 @@ import { dirname, relative, resolve, sep } from "node:path";
 import type { Sources } from "../glob-sources.ts";
 import { binaryExpectations, exportList, shimExpectations, strippedExpectations } from "./binary-expectations.ts";
 import { emitCodegen, type CodegenOutputs } from "./codegen.ts";
-import { cc, cxx, link, pch, type PrecompiledHeader } from "./compile.ts";
+import { cc, cxx, link, pch } from "./compile.ts";
 import { bunExeName, shouldStrip, type Config } from "./config.ts";
 import { generateDepVersionsHeader } from "./depVersionsHeader.ts";
 import { allDeps } from "./deps/index.ts";
 import { lolhtml } from "./deps/lolhtml.ts";
 import { rustArgon2 } from "./deps/rust-argon2.ts";
-import { jscPrograms, linuxIcuRoot, webkitEngineSources } from "./deps/webkit.ts";
 import { assert } from "./error.ts";
 import {
   bunIncludes,
   computeFlags,
-  computeTargetLinkFlags,
   exportListPath,
   extraFlagsFor,
   linkDepends,
   linkerMapOutputs,
   versionScriptPaths,
 } from "./flags.ts";
+import { generateForwardingHeaders } from "./forwarding-headers.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
 import { emitRust, windowsShimPath } from "./rust.ts";
@@ -74,18 +73,11 @@ function systemLibs(cfg: Config): string[] {
         libs.push("-latomic");
       }
     }
-    // Linux local WebKit: link system ICU (prebuilt bundles its own).
-    // Assumes system ICU is in default lib paths — true on most distros.
-    // Android: no system ICU; the local WebKit build must bundle it.
-    if (cfg.webkit === "local" && cfg.abi !== "android" && linuxIcuRoot(cfg) === undefined) {
-      libs.push("-licudata", "-licui18n", "-licuuc");
-    }
   }
 
   if (cfg.darwin) {
-    // icucore: system ICU framework.
     // resolv: DNS resolution (getaddrinfo et al).
-    libs.push("-licucore", "-lresolv");
+    libs.push("-lresolv");
   }
 
   if (cfg.freebsd) {
@@ -159,7 +151,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
 
   // ─── Step 1: codegen + rust ───
   // Emitted before the deps: ninja breaks scheduling ties by emission order, and the Rust crate chain is the critical path (see the compile pool in compile.ts).
-  const codegen = emitCodegen(n, cfg, sources, webkitEngineSources(cfg));
+  const codegen = emitCodegen(n, cfg, sources);
   const depsByName = new Map<DepName, ResolvedDep>();
 
   // Each Rust crate produces an rlib the link takes beside the C/C++
@@ -200,6 +192,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
 
   // Collect all dep lib paths, include dirs and output stamps.
   const depLibs: string[] = [];
+  const depLinkFlags: string[] = [];
   const depObjects: string[] = [];
   const depIncludes: string[] = [];
   const depDefines: string[] = [];
@@ -210,16 +203,13 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // no-op rebuild (ar has no restat) would otherwise cascade to a full PCH+cxx
   // rebuild. Link still gets every dep via depLibs/depObjects.
   const depHeaderSignal: string[] = [];
-  // Generated headers a dep declares as outputs of its steps (local WebKit's
-  // DerivedSources): order-only, so regenerating one recompiles its includers
-  // (depfiles) rather than the PCH and everything behind it.
-  const depGeneratedHeaders: string[] = [];
   // forbidUndefined stamps (source.ts): validations of whatever the dep
   // objects go into next, the archive or the link — a dep that regrows a
   // forbidden reference fails that build without delaying the link.
   const depChecks: string[] = [];
   for (const d of deps) {
     depLibs.push(...d.libs);
+    depLinkFlags.push(...d.linkFlags);
     depObjects.push(...d.objects);
     depChecks.push(...d.checks);
     depIncludes.push(...d.includes);
@@ -228,20 +218,26 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     // .a/stamp (headers are undeclared side-effects), for direct deps it's
     // the generated-header set + source stamp.
     if (d.includes.length > 0) depHeaderSignal.push(...d.outputs);
-    depGeneratedHeaders.push(...d.generatedHeaders);
   }
 
-  // ─── Step 3: configure-time generated header + assemble flags ───
+  // ─── Step 3: configure-time generated headers + assemble flags ───
   // bun_dependency_versions.h — written at configure time, not a ninja rule.
   // BunProcess.cpp includes it for process.versions. writeIfNotChanged
   // semantics so bumping an unrelated dep doesn't recompile everything.
   generateDepVersionsHeader(cfg);
+  const forwardingHeaders = generateForwardingHeaders(cfg, [
+    ...sources.cxx,
+    ...sources.c,
+    ...sources.headers,
+    ...sources.jsCodegen,
+    ...sources.bindgen,
+  ]);
 
   const flags = computeFlags(cfg);
 
   // Full include / define set: bun's own + what deps provide + buildDir (for
   // the generated versions header).
-  const allIncludes = [...bunIncludes(cfg), cfg.buildDir, ...depIncludes];
+  const allIncludes = [...bunIncludes(cfg), forwardingHeaders, cfg.buildDir, ...depIncludes];
   const includeFlags = allIncludes.map(inc => `-I${inc}`);
   const defineFlags = [...flags.defines, ...depDefines].map(d => `-D${d}`);
 
@@ -253,7 +249,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // edge names one order-only input instead of repeating the list (the ninja
   // idiom: order-only inputs never dirty an edge; depfiles track the reads).
   const codegenReady = resolve(cfg.buildDir, "obj", ".codegen-ready");
-  n.phony(codegenReady, [...codegen.cppAll, ...depGeneratedHeaders]);
+  n.phony(codegenReady, codegen.cppAll);
 
   // ─── Step 4: PCH ───
   n.comment("─── PCH ───");
@@ -292,11 +288,11 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
 
   // Sources that must NOT use the PCH. Anything that needs to set defines
   // before <Windows.h> (UNICODE, WIN32_LEAN_AND_MEAN opt-outs, etc.) goes
-  // here — root-pch.h transitively includes Windows.h via WTF, so the
+  // here — root-pch.h transitively includes Windows.h, so the
   // force-include would lock those in before the source can speak.
   const noPchSources = new Set<string>();
 
-  // bsd.cpp defines __APPLE_USE_RFC_3542 before <netinet/in.h>. None of these use WTF.
+  // bsd.cpp defines __APPLE_USE_RFC_3542 before <netinet/in.h>. None of these use the engine.
   for (const src of cxxSources) {
     if (dirname(src) === resolve(cfg.cwd, "packages/bun-usockets/src")) noPchSources.add(src);
   }
@@ -314,6 +310,10 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_webp_decoder.cpp"));
     noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_webp_encoder.cpp"));
     noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_checksums.cpp"));
+    noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_elements.cpp"));
+    noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_text.cpp"));
+    noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_utf8.cpp"));
+    noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_json_text.cpp"));
   }
   // Nor can one with other CPU features, which this one has in some release builds.
   noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_brotli.cpp"));
@@ -362,7 +362,6 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   }
 
   const cxxObjects: string[] = [];
-  const builtinTableObjects: string[] = [];
   for (const src of cxxSources) {
     const relSrc = relative(cfg.cwd, src);
     const extraFlags = extraFlagsFor(cfg, relSrc);
@@ -379,13 +378,8 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
       opts.implicitInputs = depHeaderSignal;
       opts.orderOnlyInputs = codegenOrderOnly;
     }
-    const object = cxx(n, cfg, src, opts);
-    cxxObjects.push(object);
-    if (codegen.builtinTableSources.includes(src)) builtinTableObjects.push(object);
+    cxxObjects.push(cxx(n, cfg, src, opts));
   }
-  const aotNativeTestObjects = sources.aotNativeTests.map(src =>
-    cxx(n, cfg, src, { flags: cxxFlagsFull, pch: pchOut.pch, pchHeader: pchOut.wrapperHeader }),
-  );
 
   // Compile all .c files. No PCH — dep signal applied directly.
   const cObjects = cSources.map(src =>
@@ -404,14 +398,6 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
       implicitInputs: [codegen.internalModulesBin],
     }),
   );
-  if (codegen.builtinSourcesArchive !== undefined) {
-    cObjects.push(
-      cc(n, cfg, resolve(cfg.cwd, "src", "builtin_sources", "archive.S"), {
-        flags: cFlagsFull,
-        implicitInputs: [codegen.builtinSourcesArchive],
-      }),
-    );
-  }
 
   // Dep objects (when !cfg.archiveDeps) are linked alongside bun's own
   // objects, in the same response file. With cfg.archiveDeps they live in
@@ -429,13 +415,12 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // The Rust crates' rlibs go into `$in` between bun's own objects and the
   // dependency archives. An rlib is an archive: a member is linked when
   // something needs a symbol it defines. C++ objects create the `Bun__*`
-  // undefined refs, the rlibs satisfy them (and `main`, via crt1.o) and in
-  // turn reference JSC/WTF, depLibs satisfies those. Every `#[no_mangle]`
-  // export the C++ side touches is reached from those roots.
+  // undefined refs, the rlibs satisfy them (and `main`, via crt1.o). Every
+  // `#[no_mangle]` export the C++ side touches is reached from those roots.
   const shimInputs = emitShims(n, cfg);
   const depLink = lazyDepObjects(cfg, depObjects);
   const linkObjects = [...cxxObjects, ...cObjects, ...depLink.eager, ...rustObjects, ...windowsRes];
-  const ldflags = [...flags.ldflags, ...systemLibs(cfg)];
+  const ldflags = [...flags.ldflags, ...depLinkFlags, ...systemLibs(cfg)];
   const exe = link(n, cfg, exeName, linkObjects, {
     libs: depLibs,
     lazyObjects: depLink.lazy,
@@ -450,8 +435,6 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     validations: [...depChecks, ...postLinkChecks(cfg, exeName)],
   });
 
-  emitJscPrograms(n, cfg, depsByName, codegenReady, builtinTableObjects, aotNativeTestObjects);
-
   // ─── Step 7: post-link (strip, dsymutil, smoke test) ───
   const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags, [
     ...linkObjects,
@@ -460,69 +443,6 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   ]);
 
   return { exe, strippedExe, dsym, deps, codegen, objects: allObjects };
-}
-
-/**
- * WebKit's own executables beside bun (deps/webkit.ts jscPrograms says which,
- * and how JSC compiles them): their sources, or with the prebuilt WebKit their
- * objects out of the tarball, linked with the WebKit and mimalloc bun links and
- * with bun's table of built-ins, which JavaScriptCore leaves to whoever links
- * it; `testaot` also with the native tests that ask that table
- * (test/aot/native). On request (`--target=jsc`). `engine-test-programs` is
- * what test/aot runs, `jsc` and `testaot`: a default target in CI, which packs
- * them beside bun. With a tarball that has only the linked programs it is the
- * fetch.
- */
-function emitJscPrograms(
-  n: Ninja,
-  cfg: Config,
-  deps: ReadonlyMap<DepName, ResolvedDep>,
-  headersReady: string,
-  builtinTableObjects: readonly string[],
-  aotNativeTestObjects: readonly string[],
-): void {
-  const testPrograms: string[] = [];
-  for (const program of jscPrograms(cfg)) {
-    n.comment(`─── ${program.name} (JSC standalone program) ───`);
-    const orderOnlyInputs = [headersReady, ...(program.sourcesFrom ?? []).flatMap(name => deps.get(name)!.outputs)];
-    const prefixes: Array<{ prefix: PrecompiledHeader; files: RegExp | undefined }> = [];
-    for (const { header, files } of program.pch ?? []) {
-      const base = prefixes[0]?.prefix;
-      const prefix = pch(n, cfg, header, {
-        flags: program.cxxflags,
-        orderOnlyInputs,
-        ...(base !== undefined && { base }),
-      });
-      prefixes.unshift({ prefix, files });
-    }
-    const objects = program.sources.map(src => {
-      const prefix = prefixes.find(({ files }) => files === undefined || files.test(slash(src)))?.prefix;
-      return cxx(n, cfg, src, {
-        flags: program.cxxflags,
-        orderOnlyInputs,
-        ...(prefix !== undefined && { pch: prefix.pch, pchHeader: prefix.wrapperHeader, pchBases: prefix.bases }),
-      });
-    });
-    objects.push(
-      ...(program.cSources ?? []).map(src => cc(n, cfg, src, { flags: program.cflags ?? [], orderOnlyInputs })),
-    );
-    const from = (["WebKit", "mimalloc"] as const).map(name => deps.get(name)!);
-    const depLink = lazyDepObjects(
-      cfg,
-      from.flatMap(d => d.objects),
-    );
-    if (program.name === "testaot") objects.push(...aotNativeTestObjects);
-    const exe = link(n, cfg, program.name, [...objects, ...builtinTableObjects, ...depLink.eager], {
-      lazyObjects: depLink.lazy,
-      libs: [...(program.libs ?? []), ...from.flatMap(d => d.libs)],
-      flags: [...computeTargetLinkFlags(cfg), ...program.ldflags, ...systemLibs(cfg)],
-    });
-    // The file is `<name>[.exe]` at the build root, so `ninja <name>` already
-    // names it on unix; Windows gets the suffix-less alias.
-    if (cfg.windows) n.phony(program.name, [exe]);
-    if (program.name === "jsc" || program.name === "testaot") testPrograms.push(exe);
-  }
-  n.phony("engine-test-programs", testPrograms.length > 0 ? testPrograms : deps.get("WebKit")!.outputs);
 }
 
 /**

@@ -10,6 +10,7 @@ path = "lib.rs"
 workspace = true
 
 [dependencies]
+bun_url_whatwg.workspace = true
 thiserror.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true

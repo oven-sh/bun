@@ -144,7 +144,6 @@ pub(crate) mod js_bundler {
         pub(crate) format: options::Format,
         pub(crate) bytecode: bool,
         pub(crate) bytecode_depth: u32,
-        pub(crate) optimize_bytecode: bool,
         pub(crate) banner: OwnedString,
         pub(crate) footer: OwnedString,
         /// Path to write JSON metafile (if specified via metafile object) - TEST: moved here
@@ -219,7 +218,6 @@ pub(crate) mod js_bundler {
                 format: options::Format::Esm,
                 bytecode: false,
                 bytecode_depth: u32::MAX,
-                optimize_bytecode: true,
                 banner: OwnedString::default(),
                 footer: OwnedString::default(),
                 metafile_json_path: OwnedString::default(),
@@ -1048,9 +1046,8 @@ pub(crate) mod js_bundler {
                         "Expected optimize to be an object"
                     )));
                 }
-                if let Some(bytecode) = optimize.get_boolean_loose(global_this, "bytecode")? {
-                    this.optimize_bytecode = bytecode;
-                }
+                // There is one form of bytecode.
+                optimize.get_boolean_loose(global_this, "bytecode")?;
             }
 
             if let Some(react_fast_refresh) =
@@ -1809,9 +1806,6 @@ pub(crate) mod js_bundler {
                     .throw_invalid_arguments(format_args!("dts cannot be used with compile")));
             }
 
-            // ESM bytecode requires compile because module_info (import/export metadata)
-            // is only available in compiled binaries. Without it, JSC must parse the file
-            // twice (once for module analysis, once for bytecode), which is a deopt.
             if this.bytecode && this.format == options::Format::Esm && this.compile.is_none() {
                 return Err(global_this.throw_invalid_arguments(format_args!("ESM bytecode requires compile: true. Use format: 'cjs' for bytecode without compile.")));
             }

@@ -136,7 +136,7 @@ struct PendingBuffers {
 unsafe impl ThreadIsolatedArg for PendingBuffers {}
 
 impl PendingBuffers {
-    /// Materializing a FastTypedArray's backing store can fail on OOM.
+    /// Materializing a small typed array's backing store can fail on OOM.
     fn pin(
         global: &JSGlobalObject,
         in_js: JSValue,

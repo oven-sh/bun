@@ -11,7 +11,6 @@
 #include <JavaScriptCore/Structure.h>
 #include <JavaScriptCore/JSInternalFieldObjectImplInlines.h>
 #include "ExtendedDOMClientIsoSubspaces.h"
-#include "ExtendedDOMIsoSubspaces.h"
 #include "BunClientData.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/TopExceptionScope.h>

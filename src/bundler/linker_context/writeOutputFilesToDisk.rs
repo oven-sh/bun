@@ -24,6 +24,7 @@ use bun_sys::{
     write_file_with_path_buffer,
 };
 
+use crate::bytecode::{Generator, Source};
 use crate::bytecode_sidecar::EXTENSION as BYTECODE_EXTENSION;
 
 pub(crate) fn write_output_files_to_disk(
@@ -67,6 +68,7 @@ pub(crate) fn write_output_files_to_disk(
     };
 
     let mut pathbuf = bun_paths::path_buffer_pool::get();
+    let mut bytecode_generator = c.options.generate_bytecode_cache.then(Generator::default);
 
     // `code()`/`code_standalone()` take both `chunk` (an element of `chunks`)
     // and `chunks` as
@@ -148,7 +150,6 @@ pub(crate) fn write_output_files_to_disk(
                             hash: None,
                             source_map_index: None,
                             bytecode_index: None,
-                            module_info_index: None,
                             display_size: 0,
                             referenced_css_chunks: Box::default(),
                             source_index: IndexOptional::NONE,
@@ -172,7 +173,6 @@ pub(crate) fn write_output_files_to_disk(
                 is_executable: false,
                 source_map_index,
                 bytecode_index: None,
-                module_info_index: None,
                 side: Some(options::Side::Client),
                 entry_point_index: None,
                 referenced_css_chunks: Box::default(),
@@ -330,7 +330,6 @@ pub(crate) fn write_output_files_to_disk(
                     hash: None,
                     source_map_index: None,
                     bytecode_index: None,
-                    module_info_index: None,
                     display_size: 0,
                     referenced_css_chunks: Box::default(),
                     source_index: IndexOptional::NONE,
@@ -360,7 +359,7 @@ pub(crate) fn write_output_files_to_disk(
         }
 
         let bytecode_output_file: Option<OutputFile> = 'brk: {
-            if c.options.generate_bytecode_cache {
+            if let Some(generator) = &mut bytecode_generator {
                 if c.chunk_gets_bytecode(chunk) {
                     let mut fdpath = bun_paths::path_buffer_pool::get();
                     let source_provider_url = BunString::create_format(format_args!(
@@ -369,14 +368,11 @@ pub(crate) fn write_output_files_to_disk(
                         BYTECODE_EXTENSION,
                     ));
 
-                    if let Some(bytecode) = crate::bundle_v2::dispatch::generate_cached_bytecode(
-                        c.options.output_format,
-                        &code_result.buffer,
-                        &source_provider_url,
-                        c.options.bytecode_depth,
-                        c.options.optimize_bytecode,
-                        None,
-                    ) {
+                    if let Some(bytecode) =
+                        Source::chunk(c.options.output_format, &code_result.buffer).and_then(
+                            |source| generator.generate(source, c.options.bytecode_depth, None),
+                        )
+                    {
                         let bytecode = crate::bytecode_sidecar::frame(bytecode);
                         let source_provider_url_str = source_provider_url.to_utf8();
                         debug!(
@@ -452,7 +448,6 @@ pub(crate) fn write_output_files_to_disk(
                             is_executable: false,
                             source_map_index: None,
                             bytecode_index: None,
-                            module_info_index: None,
                             referenced_css_chunks: Box::default(),
                             source_index: IndexOptional::NONE,
                             bake_extra: BakeExtra::default(),
@@ -518,7 +513,6 @@ pub(crate) fn write_output_files_to_disk(
             loader: chunk.content.loader(),
             source_map_index,
             bytecode_index,
-            module_info_index: None,
             size: Some(code_result.buffer.len()),
             display_size: display_size as u32,
             is_executable: chunk.flags.contains(ChunkFlags::IS_EXECUTABLE),

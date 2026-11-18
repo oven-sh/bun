@@ -56,7 +56,7 @@ bool isAllowedToMutateExtensions(JSC::JSGlobalObject* globalObject)
 {
     JSC::VM& vm = globalObject->vm();
     WTF::Vector<JSC::StackFrame> stackFrames;
-    vm.interpreter.getStackTrace(globalObject, stackFrames, 0, 1);
+    vm.interpreter.getStackTrace(stackFrames, 0, 1);
     if (stackFrames.size() == 0) return true;
     JSC::StackFrame& frame = stackFrames[0];
 

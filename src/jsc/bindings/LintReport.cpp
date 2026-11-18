@@ -362,13 +362,12 @@ __attribute__((minsize)) Fix mergeFixes(JSGlobalObject* globalObject, LintHost* 
         return {};
     }
 
-    // `fixes.sort((a, b) => a.range[0] - b.range[0] || a.range[1] - b.range[1])`, with the sort that JavaScript has.
-    Vector<Edit, 8> workingSet(count);
-    std::span<Edit> sorted = arrayStableSort<MergeStrategy::Simple>(vm, edits.mutableSpan(), workingSet.mutableSpan(), [](const Edit& left, const Edit& right) {
+    // `fixes.sort((a, b) => a.range[0] - b.range[0] || a.range[1] - b.range[1])`
+    std::span<Edit> sorted = edits.mutableSpan();
+    std::stable_sort(sorted.begin(), sorted.end(), [](const Edit& left, const Edit& right) {
         double byStart = left.start - right.start;
         return (byStart && !std::isnan(byStart) ? byStart : left.end - right.end) < 0;
     });
-    RETURN_IF_EXCEPTION(scope, {});
 
     String original = host->textString();
     double start = sorted.front().start, end = sorted.back().end;

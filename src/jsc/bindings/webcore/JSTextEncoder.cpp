@@ -28,7 +28,6 @@
 
 #include <JavaScriptCore/ObjectConstructor.h>
 
-#include "GCDefferalContext.h"
 #include "JSDOMAttribute.h"
 #include "JSDOMConstructor.h"
 #include "JSDOMConvertBufferSource.h"

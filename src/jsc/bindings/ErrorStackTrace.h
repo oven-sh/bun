@@ -9,7 +9,6 @@
 #include <JavaScriptCore/AOTHost.h>
 #include <JavaScriptCore/StackVisitor.h>
 #include <JavaScriptCore/CodeBlock.h>
-#include <JavaScriptCore/WasmIndexOrName.h>
 
 #include "ZigGlobalObject.h"
 
@@ -59,8 +58,6 @@ private:
     WTF::String m_sourceURL;
     WTF::String m_functionName;
 
-    // m_wasmFunctionIndexOrName has meaning only when m_isWasmFrame is set
-    JSC::Wasm::IndexOrName m_wasmFunctionIndexOrName;
     bool m_isWasmFrame = false;
 
     bool m_isFunctionOrEval = false;
@@ -110,39 +107,13 @@ public:
     {
         if (m_isAOTCompiled)
             return m_stackFrame->codeType() == JSC::EvalCode;
-        if (m_codeBlock) {
-            if (m_codeBlock->codeType() == JSC::EvalCode) {
-                return true;
-            }
-            auto* executable = m_codeBlock->ownerExecutable();
-            if (!executable) {
-                return false;
-            }
-
-            switch (executable->evalContextType()) {
-            case JSC::EvalContextType::None: {
-                return false;
-            }
-            case JSC::EvalContextType::FunctionEvalContext:
-            case JSC::EvalContextType::InstanceFieldEvalContext:
-                return true;
-            }
-        }
-
-        if (m_callee && m_callee->inherits<JSC::JSFunction>()) {
-            auto* function = uncheckedDowncast<JSC::JSFunction>(m_callee);
-            if (function->isHostFunction()) {
-                return false;
-            }
-        }
-
-        return false;
+        return m_codeBlock && m_codeBlock->codeType() == JSC::EvalCode;
     }
     bool isConstructor() const
     {
         if (m_isAOTCompiled)
             return m_stackFrame->isConstructor() && !m_stackFrame->isBuiltinFunction();
-        return m_codeBlock && (JSC::CodeSpecializationKind::CodeForConstruct == m_codeBlock->specializationKind());
+        return m_codeBlock && m_codeBlock->isConstructor();
     }
 
 private:
@@ -188,7 +159,7 @@ public:
     // Drops private-visibility frames (present when Options::showPrivateScriptsInStackTraces() is on), so the result does not index like existingFrames.
     static JSCStackTrace fromExisting(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& existingFrames);
 
-    static void getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, JSC::JSCell* owner, JSC::JSValue caller, WTF::Vector<JSC::StackFrame>& stackTrace, size_t stackTraceLimit);
+    static void getFramesForCaller(JSC::VM& vm, JSC::JSValue caller, WTF::Vector<JSC::StackFrame>& stackTrace, size_t stackTraceLimit);
 
 private:
     JSCStackTrace(WTF::Vector<JSCStackFrame>& frames)

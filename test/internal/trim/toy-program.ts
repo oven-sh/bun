@@ -3,8 +3,6 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, extname, join } from "node:path";
-import { sharedCacheDir } from "../../../scripts/build/config.ts";
-import { prebuiltDirPrefix, WEBKIT_VERSION } from "../../../scripts/build/deps/webkit.ts";
 import { serializeBuiltinUses } from "../../../scripts/build/trim/builtin-uses.ts";
 import {
   featureNamed,
@@ -42,49 +40,10 @@ export interface GuardHeader {
   includes: string[];
 }
 
-function findGuardHeader(): GuardHeader | undefined {
-  const checkouts = [process.env.BUN_WEBKIT_PATH, join(repositoryRoot, "vendor", "WebKit")];
-  for (const checkout of checkouts) {
-    if (checkout === undefined) continue;
-    const engine = join(checkout, "Source", "JavaScriptCore", "aot");
-    // A build writes what the generators make into a folder of its own: scripts/build/aot-paths.ts prints which.
-    const generated = process.env.AOT_BUILTINS_GENERATED ?? join(engine, "builtins", "generated");
-    const folders = [join(engine, "runtime"), join(engine, "builtins"), generated, join(engine, "support")];
-    const path = join(folders[0]!, "AOTRemovableFeature.h");
-    const featureListPath = join(folders[2]!, "AOTBuiltinFeatures.h");
-    if (existsSync(path) && existsSync(featureListPath)) {
-      return {
-        path,
-        featureListPath,
-        includes: [...folders, join(checkout, "Source", "WTF")].map(folder => `-I${folder}`),
-      };
-    }
-  }
-  const buildFolder = join(repositoryRoot, "build");
-  const caches = [
-    sharedCacheDir(repositoryRoot),
-    ...childrenOf(buildFolder).map(profile => join(buildFolder, profile, "cache")),
-  ];
-  const prefix = prebuiltDirPrefix(WEBKIT_VERSION);
-  for (const cache of caches) {
-    for (const name of childrenOf(cache)) {
-      if (!name.startsWith(prefix)) continue;
-      const include = join(cache, name, "include");
-      const folder = join(include, "JavaScriptCore");
-      const path = join(folder, "AOTRemovableFeature.h");
-      const featureListPath = join(folder, "AOTBuiltinFeatures.h");
-      if (existsSync(path) && existsSync(featureListPath))
-        return { path, featureListPath, includes: [`-I${folder}`, `-I${include}`] };
-    }
-  }
-  return undefined;
-}
-
-export const guardHeader: GuardHeader | undefined = findGuardHeader();
+/** No header declares the C++ guards yet: the tests run the ones written out in C (`plainGuards`). */
+export const guardHeader = undefined as GuardHeader | undefined;
 export const guardHeaderSkipReason: string | undefined =
-  guardHeader === undefined
-    ? "there is no AOTRemovableFeature.h: not under $BUN_WEBKIT_PATH, vendor/WebKit or a build's cache of the prebuilt WebKit"
-    : undefined;
+  guardHeader === undefined ? "there is no AOTRemovableFeature.h" : undefined;
 
 function findBuiltinUses(): string | undefined {
   const buildFolder = join(repositoryRoot, "build");
@@ -123,7 +82,6 @@ export const cxxFlags: string[] = [
   "-std=c++23",
   "-fno-exceptions",
   "-fno-rtti",
-  "-DBUILDING_JSCONLY__=1",
   ...(guardHeader?.includes ?? []),
 ];
 

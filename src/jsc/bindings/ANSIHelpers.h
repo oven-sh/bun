@@ -1,7 +1,7 @@
 #pragma once
 
 #include "root.h"
-#include <wtf/SIMDHelpers.h>
+#include "StaticSIMD.h"
 #include <span>
 #include <unicode/utf16.h>
 
@@ -39,7 +39,7 @@ static inline bool isEscapeCharacter(Char c)
 // (C1 ST — a terminator, not an introducer) so callers tokenizing ANSI by
 // skipping to the next interesting byte will stop at standalone ST too.
 template<typename SIMDType>
-static auto exactEscapeMatch(std::conditional_t<sizeof(SIMDType) == 1, simde_uint8x16_t, simde_uint16x8_t> chunk)
+static auto exactEscapeMatch(SIMD::Vector<SIMDType> chunk)
 {
     if constexpr (sizeof(SIMDType) == 1)
         return SIMD::equal<0x1b, 0x90, 0x98, 0x9b, 0x9c, 0x9d, 0x9e, 0x9f>(chunk);
@@ -50,7 +50,7 @@ static auto exactEscapeMatch(std::conditional_t<sizeof(SIMDType) == 1, simde_uin
 // A long no-escape scan delegates to the runtime-dispatched Highway kernel so
 // it uses the widest SIMD the CPU supports at runtime rather than the build's
 // static -march=nehalem (the 16 KB no-ANSI stripANSI regression). The inlined
-// WTF SIMD scan below stays the path for everything else.
+// SIMD scan below stays the path for everything else.
 static constexpr size_t kEscapeDispatchThreshold = 1024;
 
 // Find the first escape character in a string. An "escape character" is 0x1B,
@@ -68,8 +68,8 @@ static const Char* findEscapeCharacter(const Char* start, const Char* end)
     constexpr size_t stride4 = 4 * stride;
     // Matches 0x10-0x1f and 0x90-0x9f. These characters have a high
     // probability of being escape characters.
-    constexpr auto escMask = SIMD::splat<SIMDType>(static_cast<SIMDType>(~0b10001111U));
-    constexpr auto escVector = SIMD::splat<SIMDType>(0b00010000);
+    const auto escMask = SIMD::splat<SIMDType>(static_cast<SIMDType>(~0b10001111U));
+    const auto escVector = SIMD::splat<SIMDType>(0b00010000);
 
     auto it = start;
     const size_t len = static_cast<size_t>(end - start);
@@ -168,8 +168,8 @@ ALWAYS_INLINE static const Char* scanForByteInRange(const Char* start, const Cha
     static_assert(sizeof(Char) == 1 || sizeof(Char) == 2);
     using SIMDType = std::conditional_t<sizeof(Char) == 1, uint8_t, uint16_t>;
     constexpr size_t stride = SIMD::stride<SIMDType>;
-    constexpr auto vlo = SIMD::splat<SIMDType>(static_cast<SIMDType>(Lo));
-    constexpr auto vrange = SIMD::splat<SIMDType>(static_cast<SIMDType>(Hi - Lo));
+    const auto vlo = SIMD::splat<SIMDType>(static_cast<SIMDType>(Lo));
+    const auto vrange = SIMD::splat<SIMDType>(static_cast<SIMDType>(Hi - Lo));
 
     auto it = start;
     for (; end - it >= static_cast<ptrdiff_t>(stride); it += stride) {

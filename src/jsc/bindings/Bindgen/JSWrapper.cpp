@@ -13,14 +13,7 @@ static_assert(Counts::maxCellSize <= MarkedSpace::largeCutoff);
 
 NEVER_INLINE GCClient::IsoSubspace* createSubspaceForClass(VM& vm, unsigned classIndex, size_t cellSize)
 {
-    return WebCore::subspaceForImplSlow(
-        vm,
-        WebCore::SubspaceForInit { static_cast<unsigned>(cellSize), JSDestructibleObject::numberOfLowerTierPreciseCells, WebCore::SubspaceForInit::CellType::Destructible, false },
-        WebCore::SubspaceSlots {
-            OBJECT_OFFSETOF(WebCore::ExtendedDOMClientIsoSubspaces, m_clientSubspaceForBindgenClass) + classIndex * sizeof(GCClient::IsoSubspace*),
-            OBJECT_OFFSETOF(WebCore::ExtendedDOMIsoSubspaces, m_subspaceForBindgenClass) + classIndex * sizeof(IsoSubspace*),
-        },
-        nullptr);
+    return WebCore::clientData(vm)->clientSubspaces().m_clientSubspaceForBindgenClass[classIndex] = &vm.destructibleObjectSpace().allocatorFor(cellSize);
 }
 
 void analyzeInternalField(JSCell* cell, HeapAnalyzer& analyzer, JSValue field, ASCIILiteral name)

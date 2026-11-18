@@ -18,7 +18,6 @@ pub struct OutputFile {
     pub is_executable: bool,
     pub source_map_index: u32,
     pub bytecode_index: u32,
-    pub module_info_index: u32,
     pub output_kind: OutputKind,
     /// Relative
     pub dest_path: Box<[u8]>,
@@ -35,9 +34,8 @@ pub struct OutputFile {
     /// The chunk is in the entry point's static import closure, i.e. it loads
     /// before the first `import()`.
     pub loads_at_startup: bool,
-    /// This chunk's module index in the `OutputKind::PrelinkedModuleGraph` blob (see
-    /// `prelinked_module_graph::build`); `u32::MAX` when it is not an ES module of that graph.
-    pub prelinked_module_index: u32,
+    /// The file that the chunk was made for is TypeScript.
+    pub starts_from_typescript: bool,
     /// Of a `Bytecode` or `BuiltinBytecode` file of a link with an order file, which has no bytes of its own: where its
     /// cache entry starts in the `BytecodePayload`.
     pub bytecode_entry_offset: u32,
@@ -57,7 +55,6 @@ impl OutputFile {
             is_executable: false,
             source_map_index: u32::MAX,
             bytecode_index: u32::MAX,
-            module_info_index: u32::MAX,
             output_kind: OutputKind::Chunk,
             dest_path: Box::default(),
             side: None,
@@ -67,7 +64,7 @@ impl OutputFile {
             bake_extra: BakeExtra::default(),
             load_order: u32::MAX,
             loads_at_startup: false,
-            prelinked_module_index: u32::MAX,
+            starts_from_typescript: false,
             bytecode_entry_offset: 0,
         }
     }
@@ -138,7 +135,6 @@ pub struct Options {
     pub(crate) hash: Option<bun_core::fmt::ContentHash>,
     pub(crate) source_map_index: Option<u32>,
     pub(crate) bytecode_index: Option<u32>,
-    pub(crate) module_info_index: Option<u32>,
     pub(crate) output_path: Box<[u8]>,
     pub(crate) source_index: IndexOptional,
     pub(crate) size: Option<usize>,
@@ -170,7 +166,6 @@ impl OutputFile {
             hash: options.hash.unwrap_or(bun_core::fmt::ContentHash::short(0)),
             output_kind: options.output_kind,
             bytecode_index: options.bytecode_index.unwrap_or(u32::MAX),
-            module_info_index: options.module_info_index.unwrap_or(u32::MAX),
             source_map_index: options.source_map_index.unwrap_or(u32::MAX),
             is_executable: options.is_executable,
             value: match options.data {
@@ -183,7 +178,7 @@ impl OutputFile {
             bake_extra: options.bake_extra,
             load_order: u32::MAX,
             loads_at_startup: false,
-            prelinked_module_index: u32::MAX,
+            starts_from_typescript: false,
             bytecode_entry_offset: 0,
         }
     }

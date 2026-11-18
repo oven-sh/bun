@@ -530,13 +530,12 @@ impl Stringifier {
         // SAFETY: `buf` is a live stack buffer for the duration of the call.
         let len = unsafe {
             jsc::cpp::Bun__Temporal__toTOMLDateTime(
-                global,
                 value,
                 temporal_type,
                 buf.as_mut_ptr(),
                 buf.len(),
             )
-        }?;
+        };
         if len < 0 {
             return Err(global
                 .throw(format_args!(

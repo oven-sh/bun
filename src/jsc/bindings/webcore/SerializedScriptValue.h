@@ -40,16 +40,6 @@
 #include <wtf/text/WTFString.h>
 #include "JavaScriptCore/WasmModule.h"
 
-namespace JSC {
-class JSObject;
-class VM;
-#if ENABLE(WEBASSEMBLY)
-namespace Wasm {
-class Module;
-}
-#endif
-}
-
 // The entry that `BlockList__onStructuredCloneSerialize` adds.
 BUN_DECLARE_FFI_DELETER(SerializedBlockList, BlockList__onStructuredCloneDestroy);
 
@@ -127,8 +117,8 @@ enum class SerializationForCrossProcessTransfer : bool { No,
 
 using ArrayBufferContentsArray = Vector<JSC::ArrayBufferContents>;
 #if ENABLE(WEBASSEMBLY)
-using WasmModuleArray = Vector<RefPtr<JSC::Wasm::Module>>;
-using WasmMemoryHandleArray = Vector<RefPtr<JSC::SharedArrayBufferContents>>;
+using WasmModuleArray = Vector<Ref<JSC::Wasm::Module>>;
+using WasmMemoryHandleArray = Vector<Ref<JSC::Wasm::SharedMemory>>;
 #endif
 
 // worker_threads.markAsUncloneable() / markAsUntransferable(): create() rejects a tagged object.

@@ -289,7 +289,7 @@ impl RepositoryExt for Repository {
 /// that parses is a real URL instead: its colon comes before a port.
 fn scp_like_path(url: &[u8]) -> Option<&[u8]> {
     let path = match url.strip_prefix(b"ssh://") {
-        Some(_) if bun_url::whatwg::Parsed::from_utf8(url).is_some() => return None,
+        Some(_) if bun_url::whatwg::URL::from_utf8(url).is_some() => return None,
         Some(path) => path,
         None => url,
     };

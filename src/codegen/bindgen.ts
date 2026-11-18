@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// Usage: bindgen.ts --sources=<crate>=<a.bind.ts>,.. --types-only=<b.bind.ts>,.. --codegen-path=<dir> --types-path=<dir> [--engine-directory=<Source/JavaScriptCore/aot> --builtin-uses=<builtin-uses.json>] (emitBindgen in scripts/build/codegen.ts)
+// Usage: bindgen.ts --sources=<crate>=<a.bind.ts>,.. --types-only=<b.bind.ts>,.. --codegen-path=<dir> --types-path=<dir> [--builtin-uses=<builtin-uses.json>] (emitBindgen in scripts/build/codegen.ts)
 
 import assert from "node:assert";
 import path from "node:path";
@@ -19,14 +19,14 @@ import { loadSchemaFile, sortTypes } from "./bindgen-load.ts";
 import { Guards } from "./builtins/guards.ts";
 import { argParse, writeIfNotChanged } from "./helpers.ts";
 
-const args = argParse(["sources", "types-only", "codegen-path", "types-path", "engine-directory", "builtin-uses"]);
+const args = argParse(["sources", "types-only", "codegen-path", "types-path", "builtin-uses"]);
 const codegenPath: string = args["codegen-path"];
 const sources = (args.sources as string)
   .split(",")
   .filter(source => source.length > 0)
   .sort();
 const builtinUses: string | undefined = args["builtin-uses"];
-/** Without the table of built-ins nothing is guarded, and nothing compiles the C++. */
+/** Without the table of built-ins nothing is guarded. */
 const guards = new Guards(builtinUses ? readBuiltinUses(builtinUses) : { entries: [] });
 
 const allFiles: SchemaFile[] = [];

@@ -219,7 +219,7 @@ _ZN3hwy3armL26DetectAdditionalSveTargetsEl  [SVE]
 # __aarch64_have_lse_atomics (= AT_HWCAP & HWCAP_ATOMICS) picks at runtime.
 # The whole family is here: {cas,ldadd,ldclr,ldeor,ldset,swp} x {1,2,4,8} and
 # cas16, each x {acq,acq_rel,rel,relax}. Which of them a build links changes
-# with the compiler and with WebKit. One that is not linked shows as STALE.
+# with the compiler. One that is not linked shows as STALE.
 # (100 symbols)
 # ----------------------------------------------------------------------------
 __aarch64_cas1_acq        [LSE]

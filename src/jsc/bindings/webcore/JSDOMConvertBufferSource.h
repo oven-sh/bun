@@ -40,11 +40,7 @@ struct IDLUint8Array : IDLTypedArray<JSC::Uint8Array> {
 
 inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSGlobalObject*, JSC::ArrayBuffer& buffer)
 {
-    if (auto* result = buffer.m_wrapper.get())
-        return result;
-
-    // The JSArrayBuffer::create function will register the wrapper in finishCreation.
-    return JSC::JSArrayBuffer::create(JSC::getVM(lexicalGlobalObject), lexicalGlobalObject->arrayBufferStructure(buffer.sharingMode()), &buffer);
+    return JSC::JSArrayBuffer::wrap(lexicalGlobalObject, buffer);
 }
 
 inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSGlobalObject* globalObject, JSC::ArrayBufferView& view)

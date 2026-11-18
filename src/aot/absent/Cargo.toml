@@ -2,6 +2,8 @@
 name = "bun_aot_absent"
 version.workspace = true
 edition.workspace = true
+# Named, so that cargo started here does not read ../Cargo.toml, which is no member.
+workspace = "../../.."
 
 [lib]
 path = "lib.rs"

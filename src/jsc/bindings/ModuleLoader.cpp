@@ -815,12 +815,11 @@ static JSValue requireFromIsolatedModuleCache(Zig::GlobalObject* globalObject, J
         RETURN_IF_EXCEPTION(scope, {});
         return target;
     }
-    JSC::VM::SynchronousModuleQueue queue;
-    queue.prev = vm.m_synchronousModuleQueue;
-    vm.m_synchronousModuleQueue = &queue;
-    loader->provideFetch(globalObject, JSC::Identifier::fromString(vm, key), JSC::ScriptFetchParameters::Type::JavaScript, JSC::SourceCode(Ref(*cached)));
-    if (!scope.exception()) JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
-    vm.m_synchronousModuleQueue = queue.prev;
+    {
+        JSC::VM::SynchronousModuleQueueScope queue(vm);
+        loader->provideFetch(globalObject, JSC::Identifier::fromString(vm, key), JSC::ScriptFetchParameters::Type::JavaScript, JSC::SourceCode(Ref(*cached)));
+        if (!scope.exception()) JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
+    }
     RETURN_IF_EXCEPTION(scope, {});
     return jsNumber(-1);
 }
@@ -869,12 +868,11 @@ static JSValue requireVirtualModule(
         auto* jsSourceCode = dynamicDowncast<JSSourceCode>(promise->result());
         if (!jsSourceCode) [[unlikely]]
             break;
-        JSC::VM::SynchronousModuleQueue queue;
-        queue.prev = vm.m_synchronousModuleQueue;
-        vm.m_synchronousModuleQueue = &queue;
-        loader->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, jsSourceCode);
-        if (!scope.exception()) JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
-        vm.m_synchronousModuleQueue = queue.prev;
+        {
+            JSC::VM::SynchronousModuleQueueScope queue(vm);
+            loader->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, jsSourceCode);
+            if (!scope.exception()) JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
+        }
         RETURN_IF_EXCEPTION(scope, {});
         RELEASE_AND_RETURN(scope, jsNumber(-1));
     }
@@ -1063,13 +1061,12 @@ JSValue fetchCommonJSModuleNonBuiltin(
     if (res->result.value.tag == SyntheticModuleType::ExportDefaultOnly) {
         JSC::JSValue value = JSC::JSValue::decode(res->result.value.jsvalue_for_export);
         auto* source = createJSValueExportDefaultOnlySourceCode(globalObject, value, String(specifierWtfString));
-        JSC::VM::SynchronousModuleQueue queue;
-        queue.prev = vm.m_synchronousModuleQueue;
-        vm.m_synchronousModuleQueue = &queue;
-        loader->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, source);
-        if (!scope.exception())
-            JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
-        vm.m_synchronousModuleQueue = queue.prev;
+        {
+            JSC::VM::SynchronousModuleQueueScope queue(vm);
+            loader->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, source);
+            if (!scope.exception())
+                JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
+        }
         RETURN_IF_EXCEPTION(scope, {});
         RELEASE_AND_RETURN(scope, jsNumber(-1));
     }
@@ -1083,12 +1080,9 @@ JSValue fetchCommonJSModuleNonBuiltin(
     // private queue instead of leaving them on the user microtask queue we're
     // currently inside of.
     {
-        JSC::VM::SynchronousModuleQueue queue;
-        queue.prev = vm.m_synchronousModuleQueue;
-        vm.m_synchronousModuleQueue = &queue;
+        JSC::VM::SynchronousModuleQueueScope queue(vm);
         loader->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, JSC::SourceCode(provider));
         if (!scope.exception()) JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
-        vm.m_synchronousModuleQueue = queue.prev;
     }
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, jsNumber(-1));

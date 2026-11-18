@@ -59,7 +59,6 @@ jobs:
           toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
           components: clippy
           ninja-targets: codegen clone-lolhtml clone-rust-argon2
-          webkit-generators-only: "1"
 
       - name: cargo clippy
         env:
@@ -92,7 +91,6 @@ jobs:
           toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
           components: miri rust-src
           ninja-targets: codegen clone-lolhtml clone-rust-argon2
-          webkit-generators-only: "1"
 
       - name: cargo miri test
         env:
@@ -157,7 +155,6 @@ jobs:
           # What building against rustc's own crates (`rustc_private`) needs.
           components: rustc-dev llvm-tools-preview
           ninja-targets: codegen clone-lolhtml clone-rust-argon2
-          webkit-generators-only: "1"
 
       - name: Restore the mordant binaries
         # cargo-mordant and mordant-driver are a pure function of the pinned

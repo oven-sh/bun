@@ -6,7 +6,6 @@
 #include "BunObject.h"
 #include "BunStandaloneTextSink.h"
 #include "DOMClientIsoSubspaces.h"
-#include "DOMIsoSubspaces.h"
 #include "ErrorCode.h"
 #include "GeneratedBlob.h"
 #include "GeneratedSink.h"

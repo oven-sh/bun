@@ -5,6 +5,7 @@
 #if OS(WINDOWS)
 #include <uv.h>
 #elif OS(DARWIN)
+#include <mach/mach_init.h>
 #include <mach/task.h>
 #include <mach/semaphore.h>
 #else

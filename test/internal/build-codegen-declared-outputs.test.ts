@@ -91,10 +91,8 @@ function configure(buildDir: string): Configured {
     cppSources: [],
     cppHeaders: [],
     cppAll: [],
-    builtinTableSources: [],
     internalModulesAsm: resolve(cfg.codegenDir, "InternalModuleRegistryConstants.S"),
     internalModulesBin: resolve(cfg.codegenDir, "InternalModuleRegistryConstants.bin"),
-    bundledHelpers: resolve(cfg.codegenDir, "runtime.out.js"),
     rootInstall: resolve(buildDir, "stamps", "install.stamp"),
   };
   return { cfg, n, o, dirStamp: resolve(cfg.codegenDir, ".dir") };

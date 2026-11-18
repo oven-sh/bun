@@ -1,58 +1,24 @@
 #pragma once
 
 #include "root.h"
-#include <JavaScriptCore/AlternateDispatchableAgent.h>
-#include <JavaScriptCore/InspectorAgentBase.h>
-#include <JavaScriptCore/InspectorBackendDispatchers.h>
-#include <JavaScriptCore/InspectorFrontendDispatchers.h>
-#include <JavaScriptCore/JSGlobalObject.h>
-#include <wtf/Forward.h>
-#include <wtf/Noncopyable.h>
 #include "headers-handwritten.h"
+#include <JavaScriptCore/InspectorAgentBase.h>
 
 namespace Inspector {
 
-class FrontendRouter;
-class BackendDispatcher;
-class HTTPServerFrontendDispatcher;
-enum class DisconnectReason;
-
-using AnyServerPtr = void*;
-
-class InspectorHTTPServerAgent final : public InspectorAgentBase, public Inspector::HTTPServerBackendDispatcherHandler, public CanMakeThreadSafeCheckedPtr<InspectorHTTPServerAgent> {
-    WTF_MAKE_NONCOPYABLE(InspectorHTTPServerAgent);
+class InspectorHTTPServerAgent final : public InspectorAgentBase {
     WTF_MAKE_TZONE_ALLOCATED(InspectorHTTPServerAgent);
-    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(InspectorHTTPServerAgent);
 
 public:
-    OVERRIDE_ABSTRACT_CAN_MAKE_CHECKEDPTR(CanMakeThreadSafeCheckedPtr);
+    explicit InspectorHTTPServerAgent(JSC::JSGlobalObject&);
 
-    InspectorHTTPServerAgent(JSC::JSGlobalObject&);
-    virtual ~InspectorHTTPServerAgent();
-
-    // InspectorAgentBase
-    virtual void didCreateFrontendAndBackend() final;
-    virtual void willDestroyFrontendAndBackend(DisconnectReason) final;
-
-    // HTTPServerBackendDispatcherHandler
-    virtual Inspector::CommandResult<void> enable() final;
-    virtual Inspector::CommandResult<void> disable() final;
-
-    // Events API
-    void serverStarted(int serverId, const String& url, double startTime, AnyServerPtr serverInstance);
+    void serverStarted(int serverId, const String& url, double startTime);
     void serverStopped(int serverId, double timestamp);
-    void serverRoutesUpdated(int serverId, int hotReloadId, Ref<JSON::ArrayOf<Protocol::HTTPServer::Route>>&& routes);
-    void requestWillBeSent(Ref<Protocol::HTTPServer::Request>&& request);
-    void responseReceived(Ref<Protocol::HTTPServer::Response>&& response);
-    void bodyChunkReceived(Ref<Protocol::HTTPServer::BodyChunk>&& chunk);
-    void requestFinished(int requestId, int serverId, double timestamp, std::optional<double>&& opt_duration);
-    void requestHandlerException(Ref<Protocol::HTTPServer::RequestHandlerError>&& error);
+    void serverRoutesUpdated(int serverId, int hotReloadId, Ref<JSON::Array>&& routes);
 
 private:
-    WTF::HashMap<int, AnyServerPtr> m_serverIdToServerInstance;
-    std::unique_ptr<HTTPServerFrontendDispatcher> m_frontendDispatcher;
-    Ref<HTTPServerBackendDispatcher> m_backendDispatcher;
-    bool m_enabled { false };
+    void didEnable() final;
+    void didDisable() final;
 };
 
 } // namespace Inspector

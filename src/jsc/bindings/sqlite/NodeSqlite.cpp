@@ -49,7 +49,6 @@ static constexpr bool lazy_sqlite3_has_session = true;
 #include "BunString.h"
 #include "JSDOMBinding.h"
 #include "JSDOMGlobalObjectInlines.h"
-#include "DOMIsoSubspaces.h"
 #include "DOMClientIsoSubspaces.h"
 #include "BunClientData.h"
 
@@ -151,8 +150,7 @@ static JSC::JSUint8Array* adoptSqliteBuffer(JSGlobalObject* globalObject, Sqlite
     auto* structure = globalObject->typedArrayStructureWithTypedArrayType<JSC::TypeUint8>();
     if (!data || !len)
         return JSC::JSUint8Array::create(globalObject, structure, 0);
-    auto buffer = ArrayBuffer::createFromBytes({ static_cast<uint8_t*>(data.release()), len },
-        createSharedTask<void(void*)>([](void* p) { sqlite3_free(p); }));
+    auto buffer = ArrayBuffer::createFromBytes({ static_cast<uint8_t*>(data.release()), len }, [](void* p, void*) { sqlite3_free(p); }, nullptr);
     return JSC::JSUint8Array::create(globalObject, structure, WTF::move(buffer), 0, len);
 }
 

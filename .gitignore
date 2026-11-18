@@ -55,10 +55,8 @@ Library/Caches
 **/*.vcxproj*
 **/package-lock.json
 /.cache
-/.webkit-cache
 /build-*/
 /test/build/
-/bun-webkit
 /kcov-out
 /test-report.json
 /test-report.md
@@ -155,14 +153,12 @@ codegen-for-zig-team.tar.gz
 
 # Dependencies (before CMake)
 # These can be removed in the far future
-/src/bun.js/WebKit
 /src/deps/boringssl
 /src/deps/c*ares
 /src/deps/libuv
 /src/deps/lol*html
 /src/deps/mimalloc
 /src/deps/tinycc
-/src/deps/WebKit
 /src/deps/zig
 /src/deps/zlib
 /src/deps/zstd

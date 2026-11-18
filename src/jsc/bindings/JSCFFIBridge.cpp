@@ -74,13 +74,8 @@ extern "C" JSC::EncodedJSValue Bun__CreateJSCFFIFunction(
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    Vector<JSC::FFI::Type, 8> arguments;
-    arguments.reserveInitialCapacity(argCount);
-    for (unsigned i = 0; i < argCount; ++i)
-        arguments.append(static_cast<JSC::FFI::Type>(argTypes[i]));
-
-    RefPtr<JSC::FFI::Signature> signature = JSC::FFI::Signature::tryCreate(arguments.span(), static_cast<JSC::FFI::Type>(returnType));
-    if (!signature) {
+    JSC::FFI::Signature signature { { argTypes, argCount }, returnType };
+    if (!signature.isSupported()) {
         JSC::throwTypeError(globalObject, scope, "bun:ffi: unsupported signature"_s);
         RELEASE_AND_RETURN(scope, {});
     }
@@ -88,19 +83,14 @@ extern "C" JSC::EncodedJSValue Bun__CreateJSCFFIFunction(
     JSC::JSObject* owner = JSC::JSValue::decode(ownerValue).getObject();
 
     WTF::String name = symbolName ? Zig::toStringCopy(*symbolName) : WTF::String();
-    JSC::JSFFIFunction* function = JSC::JSFFIFunction::create(vm, globalObject, globalObject->ffiFunctionStructure(), signature.releaseNonNull(), target, name, owner, nullptr);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (!function)
-        RELEASE_AND_RETURN(scope, {});
-
-    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(function));
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::FFI::createFunction(globalObject, signature, target, name, owner)));
 }
 
-static void Bun__jscFFIThreadsafeDispatch(JSC::FFI::ThreadsafeInvocation& invocation)
+static void Bun__jscFFIThreadsafeDispatch(JSC::FFI::ThreadsafeInvocation* invocation, void* embedderContext)
 {
     static_assert(sizeof(WebCore::ScriptExecutionContextIdentifier) <= sizeof(void*));
-    auto contextId = static_cast<WebCore::ScriptExecutionContextIdentifier>(reinterpret_cast<uintptr_t>(invocation.embedderContext()));
-    WebCore::ScriptExecutionContext::postTaskTo(contextId, BunLoopKind::Regular, [protectedInvocation = Ref { invocation }](WebCore::ScriptExecutionContext&) mutable { JSC::FFI::runThreadsafeInvocation(protectedInvocation.get()); });
+    auto contextId = static_cast<WebCore::ScriptExecutionContextIdentifier>(reinterpret_cast<uintptr_t>(embedderContext));
+    WebCore::ScriptExecutionContext::postTaskTo(contextId, BunLoopKind::Regular, [invocation = std::unique_ptr<JSC::FFI::ThreadsafeInvocation>(invocation)](WebCore::ScriptExecutionContext&) { invocation->run(); });
 }
 
 extern "C" JSC::EncodedJSValue Bun__CreateJSCFFICallback(
@@ -114,26 +104,14 @@ extern "C" JSC::EncodedJSValue Bun__CreateJSCFFICallback(
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (threadsafe) {
-        static std::once_flag registerDispatch;
-        std::call_once(registerDispatch, [] {
-            JSC::FFI::FFIContext::setThreadsafeDispatch(Bun__jscFFIThreadsafeDispatch);
-        });
-    }
-
     JSC::JSObject* callable = JSC::JSValue::decode(callableValue).getObject();
     if (!callable || !callable->isCallable()) [[unlikely]] {
         JSC::throwTypeError(globalObject, scope, "bun:ffi: JSCallback requires a function"_s);
         RELEASE_AND_RETURN(scope, {});
     }
 
-    Vector<JSC::FFI::Type, 8> arguments;
-    arguments.reserveInitialCapacity(argCount);
-    for (unsigned i = 0; i < argCount; ++i)
-        arguments.append(static_cast<JSC::FFI::Type>(argTypes[i]));
-
-    RefPtr<JSC::FFI::Signature> signature = JSC::FFI::Signature::tryCreate(arguments.span(), static_cast<JSC::FFI::Type>(returnType));
-    if (!signature) {
+    JSC::FFI::Signature signature { { argTypes, argCount }, returnType };
+    if (!signature.isSupported()) {
         JSC::throwTypeError(globalObject, scope, "bun:ffi: unsupported callback signature"_s);
         RELEASE_AND_RETURN(scope, {});
     }
@@ -147,12 +125,7 @@ extern "C" JSC::EncodedJSValue Bun__CreateJSCFFICallback(
         }
         embedderContext = reinterpret_cast<void*>(static_cast<uintptr_t>(scriptExecutionContext->identifier()));
     }
-    JSC::JSFFICallback* callback = JSC::FFI::createCallback(globalObject, signature.releaseNonNull(), callable, threadsafe, embedderContext);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (!callback)
-        RELEASE_AND_RETURN(scope, {});
-
-    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(callback));
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::JSFFICallback::create(globalObject, signature, callable, threadsafe ? Bun__jscFFIThreadsafeDispatch : nullptr, embedderContext)));
 }
 
 extern "C" void Bun__JSCFFICallbackClose(JSC::EncodedJSValue callbackValue)
@@ -170,7 +143,7 @@ extern "C" uint64_t Bun__FFI__jsValueToSlotSlow(JSC::JSGlobalObject* globalObjec
     JSC::JSValue value = JSC::JSValue::decode(encodedValue);
 
     // The wrapper already holds raw pointers into the buffers of earlier arguments, and JS could free those buffers.
-    // writeSlotFromJSValue only runs JS to get `ptr` from an object, so read it here without running a getter.
+    // slotFromJSValue only runs JS to get `ptr` from an object, so read it here without running a getter.
     bool isPointer = type == JSC::FFI::Type::Pointer || type == JSC::FFI::Type::CString || type == JSC::FFI::Type::Function;
     if (auto* object = value.getObject(); isPointer && object && !object->inherits<JSC::JSArrayBuffer>() && !object->inherits<JSC::JSFFICallback>()) {
         value = object->getDirect(vm, JSC::Identifier::fromString(vm, "ptr"_s));
@@ -181,9 +154,7 @@ extern "C" uint64_t Bun__FFI__jsValueToSlotSlow(JSC::JSGlobalObject* globalObjec
         }
     }
 
-    uint64_t slot = 0;
-    // Nothing could free a transcoded `cstring` after the call, so pass a null arena, which makes a JS string throw.
-    JSC::FFI::writeSlotFromJSValue(globalObject, globalObject->ffiContext(), type, value, slot, nullptr);
+    uint64_t slot = JSC::FFI::slotFromJSValue(globalObject, type, value);
     if (scope.exception()) [[unlikely]] {
         *threw = true;
         return 0;

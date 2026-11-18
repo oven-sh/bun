@@ -1,5 +1,6 @@
 // when we don't want to use @cInclude, we can just stick wrapper functions here
 #include "root.h"
+#include <cstdarg>
 #include "OwnedFd.h"
 #include <cstdio>
 #include <cstdlib>
@@ -911,11 +912,6 @@ static NEVER_INLINE void openDevNullIfStdioIsClosed(int fd)
 
 extern "C" void bun_initialize_process()
 {
-#if OS(DARWIN)
-    if (JSC::Bun__removableFeatureState.isTrimmed || JSC::Bun__removableFeatureState.removedRangeCount) [[unlikely]]
-        Bun__prepareTrimmedExecutable();
-#endif
-
     // Disable printf() buffering. We buffer it ourselves.
     setvbuf(stdout, nullptr, _IONBF, 0);
     setvbuf(stderr, nullptr, _IONBF, 0);

@@ -307,6 +307,7 @@ $toClass(ZlibBase, "ZlibBase", Transform);
 ZlibBase.prototype[kFlushBound] = FLUSH_BOUND[FLUSH_BOUND_IDX_NORMAL];
 
 ObjectDefineProperty(ZlibBase.prototype, "_closed", {
+  __proto__: null,
   configurable: true,
   enumerable: true,
   get(this: $Node.ZlibBase) {
@@ -319,6 +320,7 @@ ObjectDefineProperty(ZlibBase.prototype, "_closed", {
 // that have this concept, where it stands for the number of bytes read
 // *from* the stream (that is, net.Socket/tls.Socket & file system streams).
 ObjectDefineProperty(ZlibBase.prototype, "bytesRead", {
+  __proto__: null,
   configurable: true,
   get: function (this: $Node.ZlibBase) {
     return this.bytesWritten;

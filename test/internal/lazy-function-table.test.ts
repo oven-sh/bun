@@ -11,6 +11,9 @@ const lazyFunctionsOf = (body: string) => {
     functions: (table?.functions ?? []).map(fn => source.slice(fn.parametersStart, fn.closeBrace + 1)),
     parameterCounts: (table?.functions ?? []).map(fn => fn.parameterCount),
     capturedNames: (table?.capturedNames ?? []).map(({ start, length }) => source.slice(start, start + length)),
+    assignedNames: (table?.capturedNames ?? [])
+      .filter(name => name.mayBeAssigned)
+      .map(({ start, length }) => source.slice(start, start + length)),
   };
 };
 
@@ -75,6 +78,18 @@ function reader() { return used + destructured + new Class().unused + other() + 
 function other() { return 1000000000000; }
 return unused`);
   expect(capturedNames.sort()).toEqual(["Class", "destructured", "other", "used"]);
+});
+
+test("variables a lazy function may assign to are marked", () => {
+  const { assignedNames } = lazyFunctionsOf(`
+var a, b, c, d, e, f, g, h, i, j, k, l, m, read, key, object, shadowed;
+function writer() {
+  a = 1; b ??= 1; c++; --d; [e] = read; ({ f, x: [g] } = read); for (h in read); for ([i] of read);
+  if (read) [j] = read; else [k] = read; (l) = 1; return [m] = read;
+}
+function reader() { object[key] = read; object.a = read; if (key in object) { let shadowed = read == key; } }
+return 1`);
+  expect(assignedNames.join("")).toBe("abcdefghijklm");
 });
 
 test("an encoded table is empty for a module without lazy functions", () => {

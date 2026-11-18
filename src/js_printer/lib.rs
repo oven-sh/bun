@@ -277,11 +277,11 @@ pub mod analyze_transpiled_module {
                 })
                 .collect();
             serialize_string_table(w, strings.into_iter())?;
-            self.serialize_body(w, self.strings_lens.len() as u32, |id| id)
+            self.serialize_body(w, self.strings_lens.len() as u32)
         }
 
         /// Body wire format (little-endian), ids index a string table
-        /// of `table_count` strings through `table_id`:
+        /// of `table_count` strings:
         ///
         /// ```text
         /// u8   flags
@@ -302,11 +302,10 @@ pub mod analyze_transpiled_module {
         /// local name when it equals the import name.
         /// `bun_bundler::analyze_transpiled_module` (`Body` / `IdCursor`) reads
         /// this in place when building the `JSModuleRecord`.
-        pub fn serialize_body<W: std::io::Write>(
+        fn serialize_body<W: std::io::Write>(
             &self,
             w: &mut W,
             table_count: u32,
-            table_id: impl Fn(u32) -> u32,
         ) -> std::io::Result<()> {
             let id_width = int_width(table_count + 1);
             let id = |w: &mut W, s: StringID| {
@@ -316,7 +315,7 @@ pub mod analyze_transpiled_module {
                     match s {
                         StringID::STAR_NAMESPACE => table_count,
                         StringID::STAR_DEFAULT => table_count + 1,
-                        s => table_id(s.0),
+                        s => s.0,
                     },
                 )
             };
@@ -624,50 +623,6 @@ pub mod analyze_transpiled_module {
             self.exported_names.insert(name, ()).is_some()
         }
 
-        /// The interned string table, `(buf, lens)`; usable before `finalize()`.
-        pub fn strings(&self) -> (&[u8], &[u32]) {
-            (&self.strings_buf, &self.strings_lens)
-        }
-
-        /// Rewrites interned strings in place (`None` keeps one); ids, and so every record, stay valid.
-        pub fn rewrite_strings<'r>(&mut self, mut replace: impl FnMut(&[u8]) -> Option<&'r [u8]>) {
-            debug_assert!(!self.finalized);
-            let mut buf: Vec<u8> = Vec::new();
-            let mut rewritten: Vec<(u32, &'r [u8])> = Vec::new();
-            let mut offset = 0usize;
-            for (index, len) in self.strings_lens.iter_mut().enumerate() {
-                let start = offset;
-                offset += *len as usize;
-                let old = &self.strings_buf[start..offset];
-                let Some(new) = replace(old) else {
-                    if !rewritten.is_empty() {
-                        buf.extend_from_slice(old);
-                    }
-                    continue;
-                };
-                if rewritten.is_empty() {
-                    buf.reserve(self.strings_buf.len() + new.len());
-                    buf.extend_from_slice(&self.strings_buf[..start]);
-                }
-                self.strings_map.remove(old);
-                rewritten.push((index as u32, new));
-                buf.extend_from_slice(new);
-                *len = u32::try_from(new.len()).unwrap();
-            }
-            if rewritten.is_empty() {
-                return;
-            }
-            self.strings_buf = buf;
-            for (index, new) in rewritten {
-                let previous = self.strings_map.insert(new.to_vec(), index);
-                debug_assert!(
-                    previous.is_none(),
-                    "rewrite_strings: two ids now hold {:?}",
-                    bstr::BStr::new(new)
-                );
-            }
-        }
-
         pub fn str(&mut self, value: &[u8]) -> StringID {
             if let Some(&idx) = self.strings_map.get(value) {
                 return StringID(idx);
@@ -702,67 +657,6 @@ pub mod analyze_transpiled_module {
         ) {
             self.requested_modules
                 .insert_if_absent(import_record_path, fetch_parameters, phase);
-        }
-
-        /// Appends `other`'s requested modules and import/export records to
-        /// `self`, re-interning its strings. The bundler prints the part ranges
-        /// of a chunk in parallel, each into its own `ModuleInfo`, then appends
-        /// them to the chunk's `ModuleInfo` in output order, so the chunk's
-        /// record lists its dependencies in the order JSC's parser would derive
-        /// from the printed source. `is_typescript` describes the destination
-        /// module and is left alone.
-        pub fn append(&mut self, other: &ModuleInfo) {
-            debug_assert!(!self.finalized);
-            debug_assert!(!other.finalized);
-
-            let mut ids: Vec<StringID> = Vec::with_capacity(other.strings_lens.len());
-            let mut offset = 0usize;
-            for &len in other.strings_lens.iter() {
-                let len = len as usize;
-                ids.push(self.str(&other.strings_buf[offset..offset + len]));
-                offset += len;
-            }
-            // Record slots also hold `STAR_DEFAULT` / `STAR_NAMESPACE`, the
-            // `ExportInfoLocal` padding word, and bitcast `FetchParameters`
-            // (a string ID for host-defined loaders, otherwise a sentinel);
-            // everything that is not an index into `other`'s string table is
-            // copied through unchanged.
-            let map = |raw: u32| -> u32 { ids.get(raw as usize).map_or(raw, |id| id.0) };
-
-            let (keys, values, phases) = (
-                other.requested_modules.keys(),
-                other.requested_modules.values(),
-                other.requested_modules.phases(),
-            );
-            for ((&key, &value), &phase) in keys.iter().zip(values).zip(phases) {
-                self.requested_modules.insert_if_absent(
-                    StringID(map(key.0)),
-                    FetchParameters(map(value.0)),
-                    phase,
-                );
-            }
-
-            let mut i = 0usize;
-            for &kind in other.record_kinds.iter() {
-                let data = &other.buffer[i..i + kind.len()];
-                i += kind.len();
-                // Same first-declaration-wins rule as `add_export_info_*`.
-                if matches!(
-                    kind,
-                    RecordKind::ExportInfoIndirect
-                        | RecordKind::ExportInfoLocal
-                        | RecordKind::ExportInfoNamespace
-                ) && self.has_or_add_exported_name(StringID(map(data[0].0)))
-                {
-                    continue;
-                }
-                self.record_kinds.push(kind);
-                self.buffer
-                    .extend(data.iter().map(|slot| StringID(map(slot.0))));
-            }
-
-            self.flags.contains_import_meta |= other.flags.contains_import_meta;
-            self.flags.has_tla |= other.flags.has_tla;
         }
 
         /// find any exports marked as 'local' that are actually 'indirect' and fix them
@@ -7991,20 +7885,4 @@ pub fn serialize_module_info(
         return None;
     }
     Some(buf.into_boxed_slice())
-}
-
-/// Serializes only ModuleInfo's body, with its strings referenced through
-/// `table_ids` (from `ModuleInfoSlotTableBuilder::intern_all`) into a table of
-/// `table_count` strings that is stored once for many modules.
-pub fn serialize_module_info_body(
-    mi: &analyze_transpiled_module::ModuleInfo,
-    table_count: u32,
-    table_ids: &[u32],
-) -> Box<[u8]> {
-    debug_assert!(mi.finalized);
-    let mut buf: Vec<u8> = Vec::new();
-    mi.as_deserialized()
-        .serialize_body(&mut buf, table_count, |id| table_ids[id as usize])
-        .expect("Vec<u8> write");
-    buf.into_boxed_slice()
 }

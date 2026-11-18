@@ -5,14 +5,13 @@ This directory contains LLDB pretty printers for various Bun data structures to 
 ## Files
 
 - `bun_pretty_printer.py` - Pretty printers for Bun-specific types (bun.String, WTFStringImpl, ZigString, BabyList, etc.)
-- `lldb_webkit.py` - Pretty printers for WebKit/JavaScriptCore types
 - `init.lldb` - LLDB initialization commands
 
 ## Supported Types
 
 ### bun.String Types
 - `bun.String` (or just `String`) - The main Bun string type
-- `WTFStringImpl` - WebKit string implementation (Latin1/UTF16)
+- `WTFStringImpl` - The string of the engine (Latin1/UTF16)
 - `ZigString` - Tagged string type used at the FFI boundary (UTF8/Latin1/UTF16 with pointer tagging)
 
 ### Display Format
@@ -28,7 +27,7 @@ The pretty printers show string content directly, with additional metadata:
 <dead>                            # Dead/invalid string
 
 # WTFStringImpl examples:
-"WebKit String"                   # Shows the actual string content
+"Engine string"                   # Shows the actual string content
 
 # ZigString examples:
 "Some text" [utf16 global]        # UTF16 globally allocated
@@ -91,7 +90,7 @@ WTFStringImpl uses flags in `m_hashAndFlags`:
 ### bun.String Tag Union
 bun.String is a tagged union with these variants:
 - Dead (0): Invalid/freed string
-- WTFStringImpl (1): WebKit string
+- WTFStringImpl (1): String of the engine
 - ZigString (2): Regular ZigString
 - StaticZigString (3): Static/immortal string
 - Empty (4): Empty string ""

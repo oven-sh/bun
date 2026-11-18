@@ -9,7 +9,7 @@ pub use crate::compiled_program::{
 };
 use crate::resolver::Resolver;
 
-/// How many regions a bytecode payload laid out by an order file has (`JSC::BytecodeLinkRegions`): heads of evaluated
+/// How many regions a bytecode payload laid out by an order file has: heads of evaluated
 /// modules, the function bodies the recorded run decoded, the ones its build did not have, heads of modules known not
 /// to be evaluated, all other bodies, expression info.
 pub const LINKED_BYTECODE_REGION_COUNT: usize = 6;
@@ -21,7 +21,7 @@ pub struct BytecodeModule {
     pub origin_path: &'static [u8],
     pub is_esm: bool,
     /// The payload the module's cache entry is in, and where in it.
-    pub bytecode: *mut [u8],
+    pub bytecode: &'static [u8],
     pub bytecode_entry_offset: u32,
 }
 
@@ -35,23 +35,9 @@ pub trait StandaloneModuleGraph: Send + Sync {
     /// Look up `name` (already known to be under the standalone virtual root)
     /// and return the embedded file's canonical name slice if present.
     fn find_assume_standalone_path(&self, name: &[u8]) -> Option<&'static [u8]>;
-    /// Whether the embedded file at `name` is an ES module whose record the loader can build without parsing: it carries
-    /// a serialized `module_info` body or is a module of the pre-resolved graph.
-    fn has_module_info(&self, _name: &[u8]) -> bool {
+    /// Whether the embedded file at `name` is an ES module whose record the loader can get without parsing.
+    fn is_module_with_bytecode(&self, _name: &[u8]) -> bool {
         false
-    }
-    /// The pre-resolved ES module graph (`JSC::PrelinkedModuleGraph` blob) and the module-info slot table its names index
-    /// (`ModuleInfoSlotTable` bytes: `u32` count, then the slots); both empty when the executable has no graph.
-    fn prelinked_module_graph(&self) -> (&'static [u8], &'static [u8]) {
-        (&[], &[])
-    }
-    /// The graph module index of the embedded file at `name`, or `u32::MAX`.
-    fn prelinked_module_index(&self, _name: &[u8]) -> u32 {
-        u32::MAX
-    }
-    /// The canonical embedded name (module key) of graph module `index`.
-    fn prelinked_module_name(&self, _index: u32) -> Option<&'static [u8]> {
-        None
     }
     /// The embedded module `specifier` names when imported from `source_dir`: an absolute embedded path (in either
     /// path syntax), or a `./` / `../` specifier joined onto `source_dir`, looked up as spelled and then -- since every
@@ -274,26 +260,25 @@ pub trait StandaloneModuleGraph: Send + Sync {
     /// trait object) can read it without downcasting to the concrete graph.
     fn compile_exec_argv(&self) -> &[u8];
     /// Ahead-of-time bytecode for InternalModuleRegistry module `id` embedded by `bun build --compile`, if any.
-    /// A raw pointer because JSC reads (and may patch) it in place; the bytes live for the process.
     /// The payload internal module `id`'s ahead-of-time bytecode is in, and where in it its cache entry starts.
-    fn builtin_module_bytecode(&self, _id: u32) -> Option<(*mut [u8], u32)> {
+    fn builtin_module_bytecode(&self, _id: u32) -> Option<(&'static [u8], u32)> {
         None
     }
     /// Every internal module that has bytecode: `(id, payload, entry offset)`.
-    fn for_each_builtin_bytecode(&self, _each: &mut dyn FnMut(u32, *mut [u8], u32)) {}
-    /// The one shared bytecode string table (`JSC::EncoderStringTable::serialize`) every chunk's payload references by ordinal; empty when the executable has none.
+    fn for_each_builtin_bytecode(&self, _each: &mut dyn FnMut(u32, &'static [u8], u32)) {}
+    /// The one shared bytecode string table every chunk's payload references by ordinal; empty when the executable has none.
     fn bytecode_string_table(&self) -> &'static [u8] {
         &[]
     }
-    /// Bytes the VM reads to load the module graph: each module's bytecode (or its source when it has none), module
-    /// records, builtin bytecode and the shared string table — not source maps or embedded assets.
+    /// Bytes the VM reads to load the module graph: each module's bytecode (or its source when it has none),
+    /// builtin bytecode and the shared string table — not source maps or embedded assets.
     fn module_graph_load_bytes(&self) -> usize {
         0
     }
     /// The bytecode payload an order file laid out (`--bytecode-order`), and where each of its regions ends.
     fn linked_bytecode_payload(
         &self,
-    ) -> Option<(*const [u8], [u32; LINKED_BYTECODE_REGION_COUNT])> {
+    ) -> Option<(&'static [u8], [u32; LINKED_BYTECODE_REGION_COUNT])> {
         None
     }
     /// The path of every file, and the path every module's bytecode is keyed on.

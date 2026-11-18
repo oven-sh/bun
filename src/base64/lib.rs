@@ -76,20 +76,6 @@ pub fn decode_lenient(destination: &mut [u8], source: &[u8], is_urlsafe: bool) -
         return strict.count;
     }
 
-    // simdutf only honors the accept-garbage stop-at-'=' rule when the
-    // destination can hold the worst-case decode; with a smaller destination
-    // (e.g. `buf.write` into a short buffer) it switches to a chunked strategy
-    // that keeps decoding past the '='. Apply the rule up front in that case
-    // so both strategies agree.
-    let source = if destination.len() < decode_lenient_len(source.len()) {
-        match bun_core::strings::index_of_char_usize(source, b'=') {
-            Some(index) => &source[..index],
-            None => source,
-        }
-    } else {
-        source
-    };
-
     let result = simdutf::base64::decode_lenient(source, destination);
     if result.is_successful() {
         return result.count;

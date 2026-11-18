@@ -1,11 +1,7 @@
 use bun_core::String;
-pub use bun_url::whatwg::{Parsed, URL};
+pub use bun_url::whatwg::URL;
 
 use crate::{JSGlobalObject, JSValue, JsResult};
-
-unsafe extern "C" {
-    safe fn URL__getHrefFromJS(value: JSValue, global: &JSGlobalObject) -> String;
-}
 
 /// JS-value entry points for [`URL`]; the rest of the API lives on
 /// `bun_url::whatwg::URL`.
@@ -14,7 +10,7 @@ pub trait URLJsc {
     /// result. If it fails, the tag is marked Dead.
     #[track_caller]
     fn href_from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<String> {
-        crate::call_check_slow(global, || URL__getHrefFromJS(value, global))
+        Ok(bun_url::href_from_string(&value.to_bun_string(global)?))
     }
 }
 

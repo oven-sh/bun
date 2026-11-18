@@ -1,10 +1,10 @@
-// jsc-exception-lint: a clang LibTooling checker for JavaScriptCore exception
-// discipline in Bun's C++ bindings.
+// jsc-exception-lint: a clang LibTooling checker for exception discipline in
+// Bun's C++ bindings.
 //
-// JSC's debug-only validator (BUN_JSC_validateExceptionChecks=1) works like
+// The debug-only validator (BUN_JSC_validateExceptionChecks=1) works like
 // this: every function that can throw declares a ThrowScope. When a callee's
 // ThrowScope is destroyed it "simulates a throw" by setting
-// VM::m_needExceptionCheck. The next ThrowScope constructor, and the next
+// VM::m_needsExceptionCheck. The next ThrowScope constructor, and the next
 // non-released ThrowScope destructor, assert that the bit is clear. The bit is
 // cleared by ExceptionScope::exception() (RETURN_IF_EXCEPTION and friends
 // expand to that), VM::clearException(), and the assertNoException family.
@@ -51,6 +51,7 @@
 #include "clang/Tooling/CommonOptionsParser.h"
 #include "clang/Tooling/Tooling.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <fstream>
@@ -312,6 +313,13 @@ static void loadSummaries(const std::string &path) {
   }
 }
 
+// A unified source includes its files as build/<dir>/unified/../../../src/...
+static std::string fileOf(const PresumedLoc &P) {
+  llvm::SmallString<256> path(P.getFilename());
+  llvm::sys::path::remove_dots(path, /*remove_dot_dot=*/true);
+  return path.str().str();
+}
+
 static std::string qualifiedName(const NamedDecl *D) {
   std::string s;
   llvm::raw_string_ostream os(s);
@@ -489,9 +497,8 @@ public:
           m_sm.getPresumedLoc(m_sm.getExpansionLoc(def->getLocation()));
       if (!P.isValid())
         continue;
-      std::string file = P.getFilename();
-      if (!matchesAny(file, under) ||
-          file.find("vendor/WebKit") != std::string::npos)
+      std::string file = fileOf(P);
+      if (!matchesAny(file, under))
         continue;
       os << mangledKey(FD) << "\t" << summaryKey(FD) << "\t"
          << Summary::kindName(s.kind) << "\t" << s.exitStates << "\t"
@@ -545,7 +552,7 @@ private:
             n == "assertNoException" || n == "releaseAssertNoException" ||
             n == "assertNoExceptionExceptTermination" ||
             n == "releaseAssertNoExceptionExceptTermination" ||
-            n == "tryClearException" ||
+            n == "tryClearException" || n == "didCheck" ||
             n == "clearExceptionExceptTermination" ||
             n == "hasExceptionsAfterHandlingTraps") {
           s.kind = Summary::Check;
@@ -564,6 +571,16 @@ private:
           return s;
         }
       }
+    }
+
+    // The wrappers in EngineExports.h declare an Engine::MayThrow around the
+    // exports that can throw.
+    if (FD->isExternC() && !FD->hasBody() && name.rfind("engine_", 0) == 0) {
+      bool throws = name.rfind("engine_throw_", 0) == 0;
+      s.kind = throws ? Summary::Thrower : Summary::Nothrow;
+      s.verifiesAtEntry = throws;
+      s.why = "export of the engine";
+      return s;
     }
 
     const FunctionDecl *def = nullptr;
@@ -708,7 +725,7 @@ private:
     SourceLocation spelling = m_sm.getExpansionLoc(loc);
     PresumedLoc P = m_sm.getPresumedLoc(spelling);
     Finding f;
-    f.file = P.isValid() ? P.getFilename() : "<unknown>";
+    f.file = P.isValid() ? fileOf(P) : "<unknown>";
     f.line = P.isValid() ? P.getLine() : 0;
     f.col = P.isValid() ? P.getColumn() : 0;
     f.function = qualifiedName(FD);
@@ -793,6 +810,13 @@ private:
                        "pending after " +
                            ctx.lastSource);
         return mapStates(in, [](unsigned st) { return st & ~kPending; });
+      }
+      if (ctor && qualifiedName(ctor->getParent()) == "Engine::MayThrow") {
+        Summary s;
+        s.kind = Summary::MayThrow;
+        s.verifiesAtEntry = true;
+        return applyCallSummary(FD, CC->getBeginLoc(), qualifiedName(ctor), s,
+                                in, report, result, ctx);
       }
       // Constructors that take a global object may run JS (rare).
       if (ctor && hasThrowCarrierParam(ctor)) {
@@ -1061,12 +1085,11 @@ private:
     PresumedLoc P = SM.getPresumedLoc(loc);
     if (!P.isValid())
       return;
-    std::string file = P.getFilename();
+    std::string file = fileOf(P);
     if (file.find(m_onlyUnder) != std::string::npos)
       m_analyzer.analyzeFunction(FD);
     else if (!ExportSummaries.empty() &&
-             Analyzer::matchesAny(file, m_exportUnder) &&
-             file.find("vendor/WebKit") == std::string::npos)
+             Analyzer::matchesAny(file, m_exportUnder))
       m_analyzer.summarizeForExport(FD);
   }
 

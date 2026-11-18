@@ -1,5 +1,6 @@
 use bun_aot_interface::compile::{BuildFailed, Compilation};
 use bun_aot_interface::diagnostic_codes::Code;
+use bun_aot_interface::diagnostics::Severity;
 use bun_aot_interface::engine::{EngineModuleId, EngineResult, RejectedOptionWord};
 use bun_aot_interface::options::Options;
 use bun_aot_interface::report::{
@@ -7,7 +8,7 @@ use bun_aot_interface::report::{
 };
 use bun_aot_interface::statistics::{StatisticId, Statistics};
 use bun_aot_interface::{Opaque, SourceProvider};
-use bun_ast::Log;
+use bun_ast::{Data, Kind, Log, Msg};
 use bun_options_types::aot_options::{AotOptions, ExplainSet};
 use bun_sema::atom::Interner;
 use bun_sema::check::aot::NamedValues;
@@ -22,9 +23,29 @@ fn absent() -> ! {
     panic!("this build of Bun has no ahead-of-time compiler")
 }
 
+fn log_diagnostic(log: &mut Log, code: Code, arguments: &[&[u8]]) {
+    let kind = match code.severity() {
+        Severity::Error => Kind::Err,
+        Severity::Warning => Kind::Warn,
+        Severity::Note => Kind::Note,
+    };
+    log.errors += u32::from(kind == Kind::Err);
+    log.warnings += u32::from(kind == Kind::Warn);
+    let mut text = format!("TS{}: ", code.number()).into_bytes();
+    text.extend(code.message(arguments));
+    log.add_msg(Msg {
+        kind,
+        data: Data {
+            text: text.into(),
+            location: None,
+        },
+        ..Msg::default()
+    });
+}
+
 bun_aot_interface::define_linked_functions! {
     fn bun_aot_compile(_options: &Options<'_>, _provider: &dyn SourceProvider, _log: &mut Log) -> Result<Compilation, BuildFailed> { absent() }
-    fn bun_aot_log_diagnostic(_log: &mut Log, _code: Code, _arguments: &[&[u8]]) { absent() }
+    fn bun_aot_log_diagnostic(log: &mut Log, code: Code, arguments: &[&[u8]]) { log_diagnostic(log, code, arguments) }
     fn bun_aot_parse_json<'s>(_text: &[u8], _arena: &'s Arena, _atoms: &Interner<'s>) -> Option<&'s DataValue<'s>> { absent() }
     fn bun_aot_check_option_word(_earlier_words: &[Box<[u8]>], _word: &[u8]) -> Result<(), RejectedOptionWord> { Ok(()) }
     fn bun_aot_used_features(_result: &EngineResult) -> UsedFeatures { absent() }

@@ -7,15 +7,10 @@
 
 #include "wtf/Scope.h"
 
-#include "JavaScriptCore/JIT.h"
 #include "JavaScriptCore/JSModuleEnvironment.h"
 #include "JavaScriptCore/JSModuleRecord.h"
 #include "JavaScriptCore/JSPromise.h"
 #include "JavaScriptCore/JSSourceCode.h"
-#include "JavaScriptCore/ModuleAnalyzer.h"
-#include "JavaScriptCore/ModuleProgramCodeBlock.h"
-#include "JavaScriptCore/Parser.h"
-#include "JavaScriptCore/SourceCodeKey.h"
 
 namespace Bun {
 using namespace NodeVM;
@@ -94,30 +89,15 @@ void NodeVMSyntheticModule::createModuleRecord(JSGlobalObject* globalObject)
 
     JSModuleLoader* loader = moduleLoader(globalObject);
     RETURN_IF_EXCEPTION(scope, void());
-    // The source type only feeds AbstractModuleRecord::moduleType(), which the loader attaches to
-    // errors as the failing module's kind; a vm.SyntheticModule is a JavaScript module in that sense.
-    SyntheticModuleRecord* moduleRecord = SyntheticModuleRecord::create(globalObject, vm, globalObject->syntheticModuleRecordStructure(), loader, Identifier::fromString(vm, identifier()), SourceProviderSourceType::Module);
-    RETURN_IF_EXCEPTION(scope, void());
 
-    m_moduleRecord.set(vm, this, moduleRecord);
-
-    SymbolTable* exportSymbolTable = SymbolTable::create(vm);
-
-    ScopeOffset offset = exportSymbolTable->takeNextScopeOffset(NoLockingNecessary);
-    exportSymbolTable->set(NoLockingNecessary, vm.propertyNames->starNamespacePrivateName.impl(), SymbolTableEntry(VarOffset(offset)));
-
-    for (const String& exportName : m_exportNames) {
-        auto offset = exportSymbolTable->takeNextScopeOffset(NoLockingNecessary);
-        Identifier exportIdentifier = Identifier::fromString(vm, exportName);
-        moduleRecord->addExportEntry(SyntheticModuleRecord::ExportEntry::createLocal(exportIdentifier, exportIdentifier));
-        exportSymbolTable->set(NoLockingNecessary, exportIdentifier.releaseImpl().get(), SymbolTableEntry(VarOffset(offset)));
-    }
+    Vector<Identifier> exportNames;
+    exportNames.reserveInitialCapacity(m_exportNames.size());
+    for (const String& exportName : m_exportNames)
+        exportNames.append(Identifier::fromString(vm, exportName));
 
     // V8 initializes synthetic-module exports to undefined (reading one
     // before setExport() yields undefined), unlike TDZ which would throw.
-    JSModuleEnvironment* moduleEnvironment = JSModuleEnvironment::create(vm, globalObject, nullptr, exportSymbolTable, jsUndefined(), moduleRecord);
-    moduleRecord->setModuleEnvironment(globalObject, moduleEnvironment);
-    RELEASE_AND_RETURN(scope, void());
+    m_moduleRecord.set(vm, this, SyntheticModuleRecord::createWithUndefinedExports(globalObject, loader, Identifier::fromString(vm, identifier()), exportNames.span()));
 }
 
 void NodeVMSyntheticModule::ensureModuleRecord(JSGlobalObject* globalObject)
@@ -141,21 +121,6 @@ JSValue NodeVMSyntheticModule::link(JSGlobalObject* globalObject, JSArray* speci
     if (m_status != Status::Unlinked) {
         throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_STATUS, "Module must be unlinked before linking"_s);
         return {};
-    }
-
-    SyntheticModuleRecord* record = m_moduleRecord.get();
-
-    if (NodeVMGlobalObject* nodeVmGlobalObject = getGlobalObjectFromContext(globalObject, m_context.get(), false)) {
-        globalObject = nodeVmGlobalObject;
-    }
-
-    (void)scriptFetcher;
-    Synchronousness sync = record->link(globalObject, nullptr);
-
-    RETURN_IF_EXCEPTION(scope, {});
-
-    if (sync == Synchronousness::Async) {
-        RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("TODO(@heimskr): async SyntheticModule linking");
     }
 
     status(Status::Linked);

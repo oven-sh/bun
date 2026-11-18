@@ -15,7 +15,6 @@
 #include <JavaScriptCore/APICast.h>
 #include <JavaScriptCore/AggregateError.h>
 #include <JavaScriptCore/BytecodeIndex.h>
-#include <JavaScriptCore/CachedBytecode.h>
 #include <JavaScriptCore/CallFrameInlines.h>
 #include <JavaScriptCore/ClassInfo.h>
 #include <JavaScriptCore/CodeBlock.h>
@@ -24,7 +23,6 @@
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/HeapSnapshotBuilder.h>
-#include <JavaScriptCore/JIT.h>
 #include <JavaScriptCore/JSBasePrivate.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSONObject.h>
@@ -42,22 +40,20 @@
 
 #include "BunProcess.h"
 #include "JSEnvironmentVariableMap.h"
-#include <JavaScriptCore/SourceProviderCache.h>
-#if ENABLE(REMOTE_INSPECTOR)
-#include <JavaScriptCore/RemoteInspectorServer.h>
-#endif
 
 #include "JSDOMConvertBase.h"
 #include "ZigSourceProvider.h"
 #include "StrongRootBlock.h"
 #include "BunClientData.h"
 #include "mimalloc.h"
+#include <bun-usockets/src/internal/networking/bsd.h>
 extern "C" char* mi_stats_get_json(size_t, char*);
 extern "C" char* mi_heap_dump_json(bool include_blocks, bool hash_addresses);
 
 #if OS(DARWIN)
 #if ASSERT_ENABLED
 #if !__has_feature(address_sanitizer)
+#include <mach/mach_init.h>
 #include <malloc/malloc.h>
 #define IS_MALLOC_DEBUGGING_ENABLED 1
 #endif
@@ -69,6 +65,19 @@ extern "C" size_t Bun__Feature__heap_snapshot;
 using namespace JSC;
 using namespace WTF;
 using namespace WebCore;
+
+// Once in a process. Nothing is served on it: `bun --inspect` is how to debug.
+static bool reserveRemoteDebuggerPort(const char* host, uint16_t port)
+{
+    static Lock lock;
+    static bool isListening;
+    Locker locker { lock };
+    if (isListening)
+        return false;
+    int error = 0;
+    isListening = bsd_create_listen_socket(host, port, LIBUS_LISTEN_REUSE_PORT, &error).release() != LIBUS_SOCKET_ERROR;
+    return isListening;
+}
 
 JSC_DECLARE_HOST_FUNCTION(functionStartRemoteDebugger);
 JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger,
@@ -87,7 +96,6 @@ JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger,
     // The debugger evaluates what its client sends, whatever the engine's eval setting.
     THROW_AND_RETURN_IF_CODE_GENERATION_FROM_STRINGS_IS_STRICT(globalObject, scope, {});
 
-#if ENABLE(REMOTE_INSPECTOR)
     static const char* defaultHost = "127.0.0.1\0";
     static uint16_t defaultPort = 9230; // node + 1
 
@@ -127,8 +135,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger,
     }
 
     globalObject->setInspectable(true);
-    auto& server = Inspector::RemoteInspectorServer::singleton();
-    if (!server.start(WTF::UTF8CStringView::unsafeFromUTF8(host), port)) {
+    if (!reserveRemoteDebuggerPort(host, port)) {
         throwVMError(
             globalObject, scope,
             createError(globalObject,
@@ -139,13 +146,6 @@ JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger,
     }
 
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsUndefined()));
-#else
-    throwVMError(globalObject, scope,
-        createTypeError(
-            globalObject,
-            "Remote inspector is not enabled in this build of Bun"_s));
-    return JSC::JSValue::encode(JSC::jsUndefined());
-#endif
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionDescribe);
@@ -154,7 +154,7 @@ JSC_DEFINE_HOST_FUNCTION(functionDescribe, (JSGlobalObject * globalObject, CallF
     VM& vm = globalObject->vm();
     if (callFrame->argumentCount() < 1)
         return JSValue::encode(jsUndefined());
-    return JSValue::encode(jsString(vm, toString(callFrame->argument(0))));
+    return JSValue::encode(jsString(vm, describeRepresentation(callFrame->argument(0))));
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionDescribeArray);
@@ -284,13 +284,13 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
 
     JSValue objectTypeCounts = createdSortedTypeCounts(vm.heap.objectTypeCounts());
 
-    // bun_jsc::Strong handles live in StrongRootBlock cells instead of the
-    // HandleSet, so merge those slots into the protected counts.
+    // bun_jsc::Strong handles live in StrongRootBlock cells, so
+    // merge those slots into the protected counts.
     TypeCountSet protectedTypeCounts = vm.heap.protectedObjectTypeCounts();
     size_t strongRootCount = 0;
     for (auto* block = WebCore::clientData(vm)->m_strongRootBlockHead; block; block = block->next()) {
         block->forEachOccupiedCell([&](JSC::JSCell* cell) {
-            protectedTypeCounts.add(cell->classInfo()->className);
+            protectedTypeCounts.add(JSC::Heap::typeName(cell));
             ++strongRootCount;
         });
     }
@@ -471,7 +471,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler,
         JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
-    JSC::SamplingProfiler& samplingProfiler = vm.ensureSamplingProfiler(WTF::Stopwatch::create());
+    JSC::SamplingProfiler& samplingProfiler = vm.ensureSamplingProfiler();
 
     JSC::JSValue directoryValue = callFrame->argument(0);
     JSC::JSValue sampleValue = callFrame->argument(1);
@@ -495,7 +495,6 @@ JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler,
                 return {};
             }
 
-            // JSC::Options is read-only after Config::finalize, so store the directory on the VM.
             auto directory = Bun::toString(path);
             Bun__VirtualMachine__setSamplingProfilerDirectory(bunVM(globalObject), &directory);
         }
@@ -506,9 +505,19 @@ JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler,
             Seconds::fromMicroseconds(sampleInterval));
     }
 
-    samplingProfiler.noticeCurrentThreadAsJSCExecutionThread();
     samplingProfiler.start();
     return JSC::JSValue::encode(jsUndefined());
+}
+
+static JSValue takeStackTraces(JSGlobalObject* globalObject, JSC::SamplingProfiler& samplingProfiler)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    String json = samplingProfiler.stackTracesAsJSON();
+    if (json.isNull()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+    RELEASE_AND_RETURN(scope, JSONParse(globalObject, json));
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionSamplingProfilerStackTraces);
@@ -525,8 +534,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSamplingProfilerStackTraces,
             globalObject, scope,
             createError(globalObject, "Sampling profiler was never started"_s)));
 
-    WTF::String jsonString = vm.samplingProfiler()->stackTracesAsJSON()->toJSONString();
-    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSONParse(globalObject, jsonString)));
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(takeStackTraces(globalObject, *vm.samplingProfiler())));
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionGetRandomSeed);
@@ -578,7 +586,7 @@ JSC_DEFINE_HOST_FUNCTION(functionNoFTL,
     if (callFrame->argumentCount()) {
         FunctionExecutable* executable = getExecutableForFunction(callFrame->argument(0));
         if (executable)
-            executable->setNeverFTLOptimize(true);
+            executable->setNeverFTLOptimize();
     }
     return JSValue::encode(jsUndefined());
 }
@@ -588,7 +596,7 @@ JSC_DEFINE_HOST_FUNCTION(functionNoOSRExitFuzzing,
     (JSGlobalObject * globalObject,
         CallFrame* callFrame))
 {
-    return JSValue::encode(setCannotUseOSRExitFuzzing(globalObject, callFrame));
+    return JSValue::encode(jsUndefined());
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionOptimizeNextInvocation);
@@ -620,11 +628,7 @@ JSC_DECLARE_HOST_FUNCTION(functionTotalCompileTime);
 JSC_DEFINE_HOST_FUNCTION(functionTotalCompileTime,
     (JSGlobalObject*, CallFrame*))
 {
-#if ENABLE(JIT)
-    return JSValue::encode(jsNumber(JIT::totalCompileTime().milliseconds()));
-#else
-    return JSValue::encode(jsNumber(0));
-#endif
+    return JSValue::encode(jsNumber(JSC::totalCompileTime().milliseconds()));
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionGetProtectedObjects);
@@ -704,17 +708,14 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeZone, (JSGlobalObject * globalObject, Ca
             makeString("Invalid timezone: \""_s, timeZoneName, "\""_s));
         return {};
     }
-    Bun::resetDateCachesAfterTimeZoneChange(vm);
-    WTF::Vector<char16_t, 32> buffer;
-    WTF::getTimeZoneOverride(buffer);
-    WTF::String timeZoneString(buffer.span());
-    return JSValue::encode(jsString(vm, timeZoneString));
+    vm.dateCache.clearForTimeZoneChange();
+    return JSValue::encode(jsString(vm, WTF::canonicalTimeZone(timeZoneName)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
-    JSC::SamplingProfiler& samplingProfiler = vm.ensureSamplingProfiler(WTF::Stopwatch::create());
+    JSC::SamplingProfiler& samplingProfiler = vm.ensureSamplingProfiler();
 
     JSC::JSValue callbackValue = callFrame->argument(0);
     JSC::JSValue sampleValue = callFrame->argument(1);
@@ -749,35 +750,23 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
         auto throwScope = DECLARE_THROW_SCOPE(vm);
 
         auto& samplingProfiler = *vm.samplingProfiler();
-        StringPrintStream topFunctions;
-        samplingProfiler.reportTopFunctions(topFunctions);
+        String topFunctions = samplingProfiler.topFunctionsReport();
+        String byteCodes = samplingProfiler.topBytecodesReport();
+        JSValue stackTraces = takeStackTraces(globalObject, samplingProfiler);
 
-        StringPrintStream byteCodes;
-        samplingProfiler.reportTopBytecodes(byteCodes);
-
-        JSValue stackTraces = JSONParse(globalObject, samplingProfiler.stackTracesAsJSON()->toJSONString());
-
-        // Use pause() instead of shutdown() to allow the profiler to be restarted
-        // shutdown() sets m_isShutDown=true which is never reset, making the profiler unusable
-        {
-            auto& lock = samplingProfiler.getLock();
-            WTF::Locker locker { lock };
-            samplingProfiler.pause();
-            samplingProfiler.clearData();
-        }
+        samplingProfiler.pause();
+        samplingProfiler.clearData();
         RETURN_IF_EXCEPTION(throwScope, {});
 
         JSObject* result = constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);
-        Bun::putDirectNamed(vm, result, "functions"_s, jsString(vm, topFunctions.toString()));
-        Bun::putDirectNamed(vm, result, "bytecodes"_s, jsString(vm, byteCodes.toString()));
+        Bun::putDirectNamed(vm, result, "functions"_s, jsString(vm, topFunctions));
+        Bun::putDirectNamed(vm, result, "bytecodes"_s, jsString(vm, byteCodes));
         Bun::putDirectNamed(vm, result, "stackTraces"_s, stackTraces);
 
         return result;
     };
     const auto reportFailure = [](JSC::VM& vm) -> JSC::JSValue {
         if (auto* samplingProfiler = vm.samplingProfiler()) {
-            auto& lock = samplingProfiler->getLock();
-            WTF::Locker locker { lock };
             samplingProfiler->pause();
             samplingProfiler->clearData();
         }
@@ -787,7 +776,6 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
 
     JSC::CallData callData = JSC::getCallData(callbackValue);
 
-    samplingProfiler.noticeCurrentThreadAsJSCExecutionThread();
     samplingProfiler.start();
     JSValue returnValue = JSC::profiledCall(globalObject, ProfilingReason::API, callbackValue, callData, JSC::jsUndefined(), args);
 
@@ -836,19 +824,17 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshotForDebugging,
 
     Bun__Feature__heap_snapshot += 1;
 
-    String jsonString;
-    {
-        DeferGCForAWhile deferGC(vm); // Prevent concurrent GC from interfering with
-                                      // the full GC that the snapshot does.
+    HeapSnapshotBuilder snapshotBuilder(
+        vm.ensureHeapProfiler(),
+        HeapSnapshotBuilder::SnapshotType::GCDebuggingSnapshot);
+    snapshotBuilder.buildSnapshot();
 
-        HeapSnapshotBuilder snapshotBuilder(
-            vm.ensureHeapProfiler(),
-            HeapSnapshotBuilder::SnapshotType::GCDebuggingSnapshot);
-        snapshotBuilder.buildSnapshot();
-
-        jsonString = snapshotBuilder.json();
+    String jsonString = snapshotBuilder.json();
+    scope.assertNoException();
+    if (jsonString.isNull()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
     }
-    scope.releaseAssertNoException();
 
     RELEASE_AND_RETURN(scope, JSValue::encode(JSONParse(globalObject, WTF::move(jsonString))));
 }
@@ -978,32 +964,25 @@ JSC_DEFINE_HOST_FUNCTION(functionPercentAvailableMemoryInUse, (JSGlobalObject * 
     return JSValue::encode(jsNull());
 }
 
+extern "C" bool Bun__BytecodeOrder__statistics(uint32_t* regionEnds, uint64_t* decoded);
+
 // null unless this executable's bytecode was laid out by an order file (`bun build --compile --bytecode-order`).
 JSC_DEFINE_HOST_FUNCTION(functionBytecodeOrderStats, (JSGlobalObject * globalObject, CallFrame*))
 {
-    VM& vm = globalObject->vm();
-    auto* payloads = vm.persistentBytecodePayloadsIfExists();
-    auto* statistics = payloads ? payloads->linkedPayloadStatistics() : nullptr;
-    if (!statistics)
+    static constexpr ASCIILiteral regionNames[] = { "moduleHeads"_s, "hot"_s, "unknown"_s, "lateModuleHeads"_s, "cold"_s, "expressionInfo"_s };
+    static constexpr ASCIILiteral decodedNames[] = { "hot"_s, "unknown"_s, "cold"_s, "hotBytes"_s, "unknownBytes"_s, "coldBytes"_s };
+    uint32_t regionEnds[std::size(regionNames)];
+    uint64_t decoded[std::size(decodedNames)];
+    if (!Bun__BytecodeOrder__statistics(regionEnds, decoded))
         return JSValue::encode(jsNull());
 
-    JSObject* regions = constructEmptyObject(globalObject);
-    static constexpr ASCIILiteral regionNames[] = { "moduleHeads"_s, "hot"_s, "unknown"_s, "lateModuleHeads"_s, "cold"_s, "expressionInfo"_s };
-    static_assert(std::size(regionNames) == JSC::BytecodeLinkRegions::Count);
-    uint32_t start = 0;
-    for (unsigned i = 0; i < JSC::BytecodeLinkRegions::Count; ++i) {
-        uint32_t end = std::max(start, statistics->regionEnds[i]);
-        regions->putDirect(vm, Identifier::fromString(vm, regionNames[i]), jsNumber(end - start));
-        start = end;
-    }
-
+    VM& vm = globalObject->vm();
     JSObject* result = constructEmptyObject(globalObject);
-    Bun::putDirectNamed(vm, result, "hot"_s, jsNumber(statistics->hot.count));
-    Bun::putDirectNamed(vm, result, "unknown"_s, jsNumber(statistics->unknown.count));
-    Bun::putDirectNamed(vm, result, "cold"_s, jsNumber(statistics->cold.count));
-    Bun::putDirectNamed(vm, result, "hotBytes"_s, jsNumber(statistics->hot.bytes));
-    Bun::putDirectNamed(vm, result, "unknownBytes"_s, jsNumber(statistics->unknown.bytes));
-    Bun::putDirectNamed(vm, result, "coldBytes"_s, jsNumber(statistics->cold.bytes));
+    for (size_t i = 0; i < std::size(decodedNames); ++i)
+        Bun::putDirectNamed(vm, result, decodedNames[i], jsNumber(decoded[i]));
+    JSObject* regions = constructEmptyObject(globalObject);
+    for (size_t i = 0; i < std::size(regionNames); ++i)
+        Bun::putDirectNamed(vm, regions, regionNames[i], jsNumber(regionEnds[i] - (i ? regionEnds[i - 1] : 0)));
     Bun::putDirectNamed(vm, result, "regions"_s, regions);
     return JSValue::encode(result);
 }

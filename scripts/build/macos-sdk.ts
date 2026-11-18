@@ -22,9 +22,7 @@
  * The deployment target (`-mmacosx-version-min`, `cfg.osxDeploymentTarget`)
  * — not the SDK version — controls the oldest macOS the binary runs on, so
  * the pin tracks the newest SDK Apple serves: newer SDKs list more symbols in
- * their `.tbd` stubs (required when the WebKit prebuilt was built against a
- * newer SDK than ours) and that is the only direction that can't break the
- * link.
+ * their `.tbd` stubs, and that is the only direction that can't break the link.
  */
 
 import { spawnSync } from "node:child_process";

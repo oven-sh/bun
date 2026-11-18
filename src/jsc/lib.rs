@@ -16,7 +16,6 @@
 // `Tag` is a fieldless enum, so this is the structural-match subset of the
 // feature.
 #![feature(adt_const_params)]
-#![feature(core_io_borrowed_buf)]
 // `#[thread_local]` for the per-JS-thread VM holder and adjacent hot
 // per-callback statics — bare `__thread`/`.tbss` instead of the
 // `thread_local!` macro's `LocalKey::__getit` wrapper. node:http perf showed
@@ -71,7 +70,7 @@ pub mod js_uint8_array;
 #[path = "MarkedArgumentBuffer.rs"]
 pub mod marked_argument_buffer;
 #[path = "RegularExpression.rs"]
-pub mod regular_expression;
+mod regular_expression;
 #[path = "ScriptExecutionStatus.rs"]
 pub mod script_execution_status;
 #[path = "sizes.rs"]
@@ -386,7 +385,6 @@ pub use self::js_map::JSMap;
 pub use self::js_runtime_type::JSRuntimeType;
 pub use self::js_uint8_array::JSUint8Array;
 pub use self::marked_argument_buffer::MarkedArgumentBuffer;
-pub use self::regular_expression::RegularExpression;
 pub use self::script_execution_status::ScriptExecutionStatus;
 pub use self::source_provider::SourceProvider;
 pub use self::url_search_params::URLSearchParams;
@@ -429,8 +427,6 @@ pub mod virtual_machine_exports;
 pub mod any_promise;
 #[path = "BytecodeOrderRecorder.rs"]
 pub mod bytecode_order_recorder;
-#[path = "CachedBytecode.rs"]
-pub mod cached_bytecode;
 pub mod compiled_program;
 #[path = "DOMFormData.rs"]
 pub mod dom_form_data;
@@ -491,8 +487,6 @@ pub struct InitializeOptions {
     pub short_lived_globals: bool,
     pub runs_compiled_code: bool,
     pub locks_builtins: bool,
-    /// This process is `bun compile`: a release build of Bun takes no B3, Air or macro assembler option from `BUN_JSC_*`.
-    pub is_compiler: bool,
 }
 
 /// Binding for JSCInitialize in ZigGlobalObject.cpp
@@ -516,7 +510,6 @@ pub fn initialize(options: InitializeOptions) {
             options.short_lived_globals,
             options.runs_compiled_code,
             options.locks_builtins,
-            options.is_compiler,
         )
     };
 }
@@ -563,9 +556,9 @@ extern "C" fn on_jsc_invalid_env_var(name: *const u8, len: usize) {
     bun_core::err_generic!(
         "invalid JSC environment variable\n\n    <b>{}<r>\n\n\
 For a list of options, see this file:\n\n    \
-https://github.com/oven-sh/webkit/blob/main/Source/JavaScriptCore/runtime/OptionsList.h\n\n\
+https://github.com/oven-sh/bun/blob/main/src/engine/vm/options.rs\n\n\
 Environment variables must be prefixed with \"BUN_JSC_\". This code runs before .env files are loaded, so those won't work here.\n\n\
-Warning: options change between releases of Bun and WebKit without notice. This is not a stable API, you should not rely on it beyond debugging something, and it may be removed entirely in a future version of Bun.",
+Warning: options change between releases of Bun without notice. This is not a stable API, you should not rely on it beyond debugging something, and it may be removed entirely in a future version of Bun.",
         bstr::BStr::new(name),
     );
     bun_core::exit(1);
@@ -1477,7 +1470,6 @@ unsafe extern "C" {
         short_lived_globals: bool,
         runs_compiled_code: bool,
         locks_builtins: bool,
-        is_compiler: bool,
     );
     fn JSC__useOptionsForVMPerThread(env: *const *const c_char, count: usize);
 }

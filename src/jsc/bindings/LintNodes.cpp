@@ -258,8 +258,8 @@ private:
         auto flags = Yarr::parseFlags(flagsText.data);
         if (!flags)
             return jsNull();
-        RegExp* regExp = RegExp::create(m_vm, text.data, *flags);
-        if (!regExp->isValid())
+        RegExp* regExp = RegExp::tryCreate(m_vm, text.data, *flags);
+        if (!regExp)
             return jsNull();
         return RegExpObject::create(m_vm, m_globalObject->regExpStructure(), regExp);
     }

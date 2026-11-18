@@ -67,7 +67,6 @@ const MIRI_CRATES = [
 // Crates of which Miri runs only the unit tests under these paths. The rest of
 // their tests start other programs, call vendored C, or would take hours to interpret.
 const MIRI_UNIT_TESTS: Record<string, string[]> = {
-  bun_aot: ["ir::parallel"],
   bun_core: ["c_str_list", "util::tests"],
   bun_io: ["max_buf"],
 };
@@ -84,11 +83,11 @@ const buildOptionsRs = resolve(repo, "build/debug/codegen/build_options.rs");
 const lolhtmlCargo = resolve(repo, "vendor/lolhtml/Cargo.toml");
 const argon2Cargo = resolve(repo, "vendor/rust-argon2/Cargo.toml");
 if (!existsSync(buildOptionsRs) || !existsSync(lolhtmlCargo) || !existsSync(argon2Cargo)) {
-  console.log("\x1b[36m[setup]\x1b[0m bun run build --configure-only");
-  if (run("bun", ["run", "build", "--configure-only"]).status !== 0) process.exit(1);
+  console.log("\x1b[36m[setup]\x1b[0m bun run build --icu=system --configure-only");
+  if (run("bun", ["run", "build", "--icu=system", "--configure-only"]).status !== 0) process.exit(1);
   if (
     (!existsSync(lolhtmlCargo) || !existsSync(argon2Cargo)) &&
-    run("bun", ["run", "build", "--target=clone-lolhtml", "--target=clone-rust-argon2"]).status !== 0
+    run("bun", ["run", "build", "--icu=system", "--target=clone-lolhtml", "--target=clone-rust-argon2"]).status !== 0
   ) {
     process.exit(1);
   }
@@ -96,9 +95,9 @@ if (!existsSync(buildOptionsRs) || !existsSync(lolhtmlCargo) || !existsSync(argo
   // checkout, ninja target rename) — fail fast instead of letting cargo
   // produce a confusing workspace-resolution error.
   for (const [path, hint] of [
-    [buildOptionsRs, "bun run build --configure-only"],
-    [lolhtmlCargo, "bun run build --target=clone-lolhtml"],
-    [argon2Cargo, "bun run build --target=clone-rust-argon2"],
+    [buildOptionsRs, "bun run build --icu=system --configure-only"],
+    [lolhtmlCargo, "bun run build --icu=system --target=clone-lolhtml"],
+    [argon2Cargo, "bun run build --icu=system --target=clone-rust-argon2"],
   ] as const) {
     if (!existsSync(path)) {
       console.error(`\x1b[31m[error]\x1b[0m ${path} still missing after setup — try: ${hint}`);

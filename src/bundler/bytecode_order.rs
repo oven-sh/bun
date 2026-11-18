@@ -4,13 +4,12 @@
 //! module evaluated, a module that was in the executable and not evaluated, a function that was written in the
 //! executable's code and not run (whether or not the executable had bytecode for it); `F` and `S` lines are in
 //! first-use order. Code is named here, not by JavaScriptCore (`CodeNames`): the build that lays a payload out and
-//! the run that records an order file parse the same text the same way. A string is JSC's
-//! `bytecodeOrderStringHash`. The file only ever changes where things are placed: lines that are malformed, of an
+//! the run that records an order file parse the same text the same way. A string is its
+//! `bun_engine_bytecode::cache::order_hash`. The file only ever changes where things are placed: lines that are malformed, of an
 //! unknown kind, or name nothing in this build are ignored.
 
-use bun_js_parser::function_identities::{
-    FunctionIdentities, FunctionIdentity, FunctionKind, Text,
-};
+use bun_engine_bytecode::cache::{FunctionKey, FunctionRole, Hints};
+use bun_js_parser::function_identities::{FunctionIdentities, FunctionKind, Text};
 
 /// What an order file calls the code of one text JavaScriptCore compiles, by where each function starts.
 pub type CodeNames = FunctionIdentities;
@@ -134,69 +133,21 @@ pub fn names_of_all(texts: &[Named<'_>]) -> Vec<Option<CodeNames>> {
         .collect()
 }
 
-/// What a link ends with.
-pub struct LinkedPayload {
-    pub payload: Vec<u8>,
-    /// Each module's cache entry.
-    pub entry_offsets: Vec<u32>,
-    pub region_ends: [u32; REGION_COUNT],
-    /// How many of the order files' hot functions name a function of the link, and how many functions went to HOT.
-    pub named_hot_functions: u32,
-    pub placed_hot_functions: u32,
-    /// How many functions of modules that have names have none.
-    pub functions_without_name: u32,
+pub(crate) fn name_of(names: &CodeNames, function: FunctionKey) -> Option<u64> {
+    let kind = match function.role {
+        FunctionRole::Written => FunctionKind::Function,
+        FunctionRole::FieldInitializer => FunctionKind::ClassFields,
+        FunctionRole::DefaultConstructor => FunctionKind::DefaultConstructor,
+    };
+    names.find(function.start, kind)
 }
 
-/// `Bun::BytecodeOrderNamesRef`. A text that did not parse has no names: its functions are laid out as code no order
-/// file knows, and counted (`JSC::BytecodeLinkEncoder::Result::functionsWithoutName`).
-#[repr(C)]
-pub struct CodeNamesRef<'a> {
-    module: u64,
-    functions: *const FunctionIdentity,
-    function_count: usize,
-    names: core::marker::PhantomData<&'a CodeNames>,
-}
-
-impl<'a> From<Option<&'a CodeNames>> for CodeNamesRef<'a> {
-    fn from(names: Option<&'a CodeNames>) -> Self {
-        let functions: &[FunctionIdentity] = names.map_or(&[], |names| &names.functions);
-        Self {
-            // Not a name (`JSC::isValidOrderHash`).
-            module: names.and_then(|names| names.module).unwrap_or(u64::MAX),
-            functions: functions.as_ptr(),
-            function_count: functions.len(),
-            names: core::marker::PhantomData,
-        }
-    }
-}
-
-/// `JSC::RecordedOrderSource`: the bytecode a recorder saw something decoded from is known by where it is.
-#[repr(C)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub struct RecordedSource {
-    pub payload: *const u8,
-    pub entry_offset: u32,
-}
-
-/// `JSC::RecordedOrderFunction`.
-#[repr(C)]
-pub struct RecordedFunction {
-    /// An index into the recording's sources.
-    pub source: u32,
-    pub start: u32,
-    /// `FunctionKind`, as JavaScriptCore wrote it.
-    pub kind: u8,
-}
-
-/// What the VMs of a process recorded (`JSC::BytecodeOrderRecording`). Anything may be listed more than once.
+/// What the threads of a process recorded, of the modules whose code has names. Anything may be listed more than once.
+#[derive(Default)]
 pub struct Recording<'a> {
-    /// For each source, the names of the module it is the bytecode of. `None`: not one of the executable's modules
-    /// (the runtime's own builtins have bytecode too), or one whose text does not parse.
-    pub sources: &'a [Option<&'a CodeNames>],
-    pub functions: &'a [RecordedFunction],
-    /// Indices into `sources`.
-    pub evaluated_sources: &'a [u32],
-    pub strings: &'a [u64],
+    pub functions: Vec<(&'a CodeNames, FunctionKey)>,
+    pub evaluated_modules: Vec<&'a CodeNames>,
+    pub strings: Vec<u64>,
 }
 
 /// The order file of `recording`, and how many functions the program ran that have no name. `modules`: everything the
@@ -210,31 +161,25 @@ pub fn write(modules: &[Option<&CodeNames>], recording: &Recording<'_>) -> (Vec<
             let _ = writeln!(text, "{} {hash:016x}", kind as char);
         }
     };
-    let names_of = |source: u32| recording.sources.get(source as usize).copied().flatten();
     let mut functions_without_name = 0usize;
-    for function in recording.functions {
-        let Some(names) = names_of(function.source) else {
-            continue;
-        };
-        match FunctionKind::from_u8(function.kind).and_then(|kind| names.find(function.start, kind))
-        {
+    for &(names, function) in &recording.functions {
+        match name_of(names, function) {
             Some(name) => line(b'F', b'F', name),
             None => functions_without_name += 1,
         }
     }
-    for &source in recording.evaluated_sources {
-        if let Some(name) = names_of(source).and_then(|names| names.module) {
-            line(b'M', b'M', name);
-        }
+    for name in (recording.evaluated_modules.iter()).filter_map(|names| names.module) {
+        line(b'M', b'M', name);
     }
-    for &string in recording.strings {
+    for &string in &recording.strings {
         line(b'S', b'S', string);
     }
     for names in modules.iter().flatten() {
         if let Some(name) = names.module {
             line(b'M', b'N', name);
         }
-        for function in &names.functions {
+        // Such a body is no function of its own, so nothing is known of it.
+        for function in (names.functions.iter()).filter(|it| it.kind != FunctionKind::InnerBody) {
             line(b'F', b'K', function.identity);
         }
     }
@@ -361,6 +306,15 @@ impl BytecodeOrder {
                     .map(|p| &p.not_evaluated_modules[..])
                     .collect(),
             ),
+        }
+    }
+
+    pub(crate) fn hints(&self) -> Hints<'_> {
+        Hints {
+            hot_functions: &self.hot_functions,
+            known_functions: &self.known_functions,
+            loaded_entries: &self.evaluated_modules,
+            unloaded_entries: &self.not_evaluated_modules,
         }
     }
 

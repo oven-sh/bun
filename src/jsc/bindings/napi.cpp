@@ -337,6 +337,12 @@ void NAPICallFrame::extract(size_t* argc, napi_value* argv, napi_value* this_arg
     }
 }
 
+// Like Node.js, replaces what is not UTF-8.
+static WTF::String stringFromUtf8(const char* utf8, size_t length = NAPI_AUTO_LENGTH)
+{
+    return WTF::String::fromUTF8ReplacingInvalidSequences(byteCast<char8_t>(std::span { utf8, length == NAPI_AUTO_LENGTH ? strlen(utf8) : length }));
+}
+
 napi_status Napi::defineProperty(napi_env env, JSC::JSObject* to, const napi_property_descriptor& property, JSC::ExceptionScope& scope)
 {
     Zig::GlobalObject* globalObject = env->globalObject();
@@ -345,8 +351,7 @@ napi_status Napi::defineProperty(napi_env env, JSC::JSObject* to, const napi_pro
 
     JSC::Identifier propertyName;
     if (property.utf8name != nullptr) {
-        auto span = std::span { reinterpret_cast<const Latin1Character*>(property.utf8name), strlen(property.utf8name) };
-        propertyName = JSC::Identifier::fromString(vm, WTF::String::fromUTF8ReplacingInvalidSequences(span).isolatedCopy());
+        propertyName = JSC::Identifier::fromString(vm, stringFromUtf8(property.utf8name));
     } else {
         if (!property.name) {
             return napi_name_expected;
@@ -485,7 +490,7 @@ extern "C" napi_status napi_has_property(napi_env env, napi_value object,
     NAPI_CHECK_TO_OBJECT(env, globalObject, target, toJS(object));
 
     auto keyProp = toJS(key);
-    JSC::PropertyName name = keyProp.toPropertyKey(globalObject);
+    auto name = keyProp.toPropertyKey(globalObject);
     NAPI_RETURN_IF_EXCEPTION(env);
 
     bool hasProperty = target->hasProperty(globalObject, name);
@@ -558,7 +563,7 @@ extern "C" napi_status napi_delete_property(napi_env env, napi_value object,
     NAPI_CHECK_TO_OBJECT(env, globalObject, target, toJS(object));
 
     auto keyProp = toJS(key);
-    auto name = JSC::PropertyName(keyProp.toPropertyKey(globalObject));
+    auto name = keyProp.toPropertyKey(globalObject);
     NAPI_RETURN_IF_EXCEPTION(env);
 
     auto deleteResult = target->deleteProperty(globalObject, name);
@@ -587,7 +592,7 @@ extern "C" napi_status napi_has_own_property(napi_env env, napi_value object,
     JSValue keyProp = toJS(key);
     NAPI_RETURN_EARLY_IF_FALSE(env, keyProp.isString() || keyProp.isSymbol(), napi_name_expected);
 
-    auto name = JSC::PropertyName(keyProp.toPropertyKey(globalObject));
+    auto name = keyProp.toPropertyKey(globalObject);
     NAPI_RETURN_IF_EXCEPTION(env);
 
     bool hasOwnProperty = target->hasOwnProperty(globalObject, name);
@@ -608,7 +613,7 @@ JSC::Identifier identifierFromUtf8(JSC::VM& vm, const char* utf8Name)
     std::span<const Latin1Character> utf8Span { reinterpret_cast<const Latin1Character*>(utf8Name), utf8Len };
     return WTF::charactersAreAllASCII(utf8Span)
         ? JSC::Identifier::fromString(vm, utf8Span)
-        : JSC::Identifier::fromString(vm, WTF::String::fromUTF8(utf8Span));
+        : JSC::Identifier::fromString(vm, stringFromUtf8(utf8Name, utf8Len));
 }
 
 extern "C" napi_status napi_set_named_property(napi_env env, napi_value object,
@@ -766,7 +771,7 @@ void Napi::executePendingNapiModule(Zig::GlobalObject* globalObject, const napi_
         return;
     }
 
-    if (!resultValue.isObject()) {
+    if (!resultValue.isObject() || !resultValue.getObject()->canHaveProperties()) {
         JSValue errorInstance = createError(globalObject, makeString("Expected Node-API module \""_s, keyStr, "\" to return an exports object"_s));
         JSC::throwException(globalObject, scope, errorInstance);
         return;
@@ -845,7 +850,7 @@ extern "C" napi_status napi_wrap(napi_env env,
     auto& vm = JSC::getVM(globalObject);
     JSValue jsc_value = toJS(js_object);
     JSObject* jsc_object = jsc_value.getObject();
-    NAPI_RETURN_EARLY_IF_FALSE(env, jsc_object, napi_invalid_arg);
+    NAPI_RETURN_EARLY_IF_FALSE(env, jsc_object && jsc_object->canHaveProperties(), napi_invalid_arg);
 
     // NapiPrototype has an inline field to store a napi_ref, so we use that if we can
     auto* napi_instance = dynamicDowncast<NapiPrototype>(jsc_object);
@@ -951,7 +956,8 @@ extern "C" napi_status napi_create_function(napi_env env, const char* utf8name,
     auto name = WTF::String();
 
     if (utf8name != nullptr) {
-        name = WTF::String::fromUTF8({ utf8name, length == NAPI_AUTO_LENGTH ? strlen(utf8name) : length });
+        NAPI_RETURN_EARLY_IF_FALSE(env, length == NAPI_AUTO_LENGTH || length <= INT_MAX, napi_invalid_arg);
+        name = stringFromUtf8(utf8name, length);
     }
 
     auto function = NapiClass::create(vm, env, name, cb, data, 0, nullptr);
@@ -1031,8 +1037,8 @@ static napi_status throwErrorWithCStrings(napi_env env, const char* code_utf8, c
         return napi_set_last_error(env, napi_invalid_arg);
     }
 
-    WTF::String code = code_utf8 ? WTF::String::fromUTF8(code_utf8) : WTF::String();
-    WTF::String message = WTF::String::fromUTF8(msg_utf8);
+    WTF::String code = code_utf8 ? stringFromUtf8(code_utf8) : WTF::String();
+    WTF::String message = stringFromUtf8(msg_utf8);
 
     JSC::ErrorInstance* error = createErrorWithCode(vm, globalObject, code, message, type);
     env->scheduleException(error);
@@ -1402,7 +1408,8 @@ extern "C" napi_status node_api_symbol_for(napi_env env,
         }
     }
 
-    auto description = WTF::String::fromUTF8({ utf8description, length == NAPI_AUTO_LENGTH ? strlen(utf8description) : length });
+    NAPI_RETURN_EARLY_IF_FALSE(env, length == NAPI_AUTO_LENGTH || length <= INT_MAX, napi_invalid_arg);
+    auto description = stringFromUtf8(utf8description, length);
     *result = toNapi(JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey(description)), globalObject);
 
     NAPI_RETURN_SUCCESS(env);
@@ -1564,7 +1571,7 @@ extern "C" JS_EXPORT napi_status node_api_create_buffer_from_arraybuffer(napi_en
 
     auto* impl = jsArrayBuffer->impl();
 
-    if (!impl || byte_offset + byte_length > impl->byteLength()) [[unlikely]] {
+    if (!impl || byte_offset > impl->byteLength() || byte_length > impl->byteLength() - byte_offset) [[unlikely]] {
         auto* error = createErrorWithCode(JSC::getVM(globalObject), globalObject, "ERR_OUT_OF_RANGE"_s, "The byte offset + length is out of range"_s, JSC::ErrorType::RangeError);
         RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
         env->scheduleException(error);
@@ -1647,7 +1654,7 @@ extern "C" JS_EXPORT napi_status node_api_create_object_with_properties(napi_env
     JSC::EnsureStillAliveScope ensureAlive(obj);
 
     for (size_t i = 0; i < property_count; i++) {
-        auto name = JSC::PropertyName(toJS(property_names[i]).toPropertyKey(globalObject));
+        auto name = toJS(property_names[i]).toPropertyKey(globalObject);
         NAPI_RETURN_IF_EXCEPTION(env);
         JSValue value = toJS(property_values[i]);
         obj->putDirectMayBeIndex(globalObject, name, value.isEmpty() ? jsUndefined() : value);
@@ -1722,16 +1729,17 @@ static NEVER_INLINE void throwBufferTooLarge(napi_env env)
 // NapiEnv::doFinalizer.
 class NapiNoEnvExternalBufferDestructor final : public SharedTask<void(void*)> {
 public:
-    NapiNoEnvExternalBufferDestructor(node_api_noenv_finalize cb, void* hint)
+    NapiNoEnvExternalBufferDestructor(node_api_noenv_finalize cb, void* data, void* hint)
         : m_cb(cb)
+        , m_data(data)
         , m_hint(hint)
     {
     }
 
-    void run(void* data) override
+    void run(void*) override
     {
         if (m_armed && m_cb) {
-            m_cb(data, m_hint);
+            m_cb(m_data, m_hint);
         }
     }
 
@@ -1739,6 +1747,7 @@ public:
 
 private:
     node_api_noenv_finalize m_cb;
+    void* m_data;
     void* m_hint;
     bool m_armed { false };
 };
@@ -1757,9 +1766,12 @@ extern "C" JS_EXPORT napi_status node_api_create_external_sharedarraybuffer(napi
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = JSC::getVM(globalObject);
 
-    Ref<NapiNoEnvExternalBufferDestructor> destructor = adoptRef(*new NapiNoEnvExternalBufferDestructor(finalize_cb, finalize_hint));
+    Ref<NapiNoEnvExternalBufferDestructor> destructor = adoptRef(*new NapiNoEnvExternalBufferDestructor(finalize_cb, external_data, finalize_hint));
     auto* destructorPtr = destructor.ptr();
-    auto arrayBuffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(external_data), byte_length }, WTF::move(destructor));
+    // No address means detached, which a shared buffer cannot be.
+    static constexpr uint64_t noBytes = 0;
+    auto bytes = external_data ? std::span { static_cast<const uint8_t*>(external_data), byte_length } : asByteSpan(noBytes).first(0);
+    auto arrayBuffer = ArrayBuffer::createFromBytes(bytes, WTF::move(destructor));
     arrayBuffer->makeShared();
 
     auto* buffer = JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(ArrayBufferSharingMode::Shared), WTF::move(arrayBuffer));
@@ -1863,13 +1875,15 @@ extern "C" napi_status napi_create_dataview(napi_env env, size_t length,
     auto arraybufferPtr = dynamicDowncast<JSC::JSArrayBuffer>(arraybufferValue);
     NAPI_RETURN_EARLY_IF_FALSE(env, arraybufferPtr, napi_arraybuffer_expected);
 
-    if (byte_offset + length > arraybufferPtr->impl()->byteLength()) {
+    if (size_t byteLength = arraybufferPtr->impl()->byteLength(); byte_offset > byteLength || length > byteLength - byte_offset) {
         napi_throw_range_error(env, "ERR_NAPI_INVALID_DATAVIEW_ARGS", "byte_offset + byte_length should be less than or equal to the size in bytes of the array passed in");
         return napi_set_last_error(env, napi_pending_exception);
     }
 
-    auto dataView = JSC::DataView::create(arraybufferPtr->impl(), byte_offset, length);
-    *result = toNapi(dataView->wrap(globalObject, globalObject), globalObject);
+    auto* structure = globalObject->typedArrayStructure(JSC::TypeDataView, arraybufferPtr->isResizableOrGrowableShared());
+    auto* dataView = JSC::JSDataView::create(globalObject, structure, arraybufferPtr->impl(), byte_offset, length);
+    RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
+    *result = toNapi(dataView, globalObject);
     RELEASE_AND_RETURN(scope, napi_set_last_error(env, napi_ok));
 }
 
@@ -2061,8 +2075,9 @@ extern "C" napi_status napi_get_all_property_names(
     if (key_filter & filter_by_any_descriptor) {
         JSArray* filteredKeys = JSArray::create(JSC::getVM(globalObject), globalObject->originalArrayStructureForIndexingType(ArrayWithContiguous), 0);
         for (unsigned i = 0; i < exportKeys->getArrayLength(); i++) {
-            JSValue key = exportKeys->get(globalObject, i);
+            JSValue key = exportKeys->getIndexQuickly(i);
             auto propKey = key.toPropertyKey(globalObject);
+            NAPI_RETURN_IF_EXCEPTION(env);
             PropertyDescriptor desc;
 
             JSObject* owner = object;
@@ -2080,8 +2095,8 @@ extern "C" napi_status napi_get_all_property_names(
                 }
             } else {
                 owner->getOwnPropertyDescriptor(globalObject, propKey, desc);
-                NAPI_RETURN_IF_EXCEPTION(env);
             }
+            NAPI_RETURN_IF_EXCEPTION(env);
 
             // V8 never applies ONLY_WRITABLE/ONLY_CONFIGURABLE to Proxy keys
             // (FilterProxyKeys checks enumerable only) or to a String wrapper's
@@ -2111,6 +2126,7 @@ extern "C" napi_status napi_get_all_property_names(
 
             if (include) {
                 filteredKeys->push(globalObject, key);
+                NAPI_RETURN_IF_EXCEPTION(env);
             }
         }
         exportKeys = filteredKeys;
@@ -2121,7 +2137,7 @@ extern "C" napi_status napi_get_all_property_names(
     if (key_conversion == napi_key_keep_numbers) {
         unsigned length = exportKeys->getArrayLength();
         for (unsigned i = 0; i < length; i++) {
-            JSValue key = exportKeys->getDirectIndex(globalObject, i);
+            JSValue key = exportKeys->getIndexQuickly(i);
             if (!key.isString())
                 continue;
             auto keyStr = asString(key)->value(globalObject);
@@ -2153,14 +2169,11 @@ extern "C" napi_status napi_define_class(napi_env env,
     NAPI_CHECK_ARG(env, utf8name);
     NAPI_CHECK_ARG(env, constructor);
     NAPI_RETURN_EARLY_IF_FALSE(env, properties || property_count == 0, napi_invalid_arg);
+    NAPI_RETURN_EARLY_IF_FALSE(env, length == NAPI_AUTO_LENGTH || length <= INT_MAX, napi_invalid_arg);
 
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = JSC::getVM(globalObject);
-    size_t len = length;
-    if (len == NAPI_AUTO_LENGTH) {
-        len = strlen(utf8name);
-    }
-    auto name = WTF::String::fromUTF8(std::span { utf8name, len }).isolatedCopy();
+    auto name = stringFromUtf8(utf8name, length);
     napi_status propertyStatus = napi_ok;
     NapiClass* napiClass = NapiClass::create(vm, env, name, constructor, data, property_count, properties, &propertyStatus);
     JSValue value = JSValue(napiClass);
@@ -2559,7 +2572,7 @@ extern "C" napi_status napi_get_value_int64(napi_env env, napi_value value, int6
     NAPI_RETURN_EARLY_IF_FALSE(env, jsValue.isNumber(), napi_number_expected);
 
     double js_number = jsValue.asNumber();
-    if (isfinite(js_number)) {
+    if (std::isfinite(js_number)) {
         // upper is 2^63 exactly, not 2^63-1, as the latter can't be represented exactly
         constexpr double lower = std::numeric_limits<int64_t>::min(), upper = 1ull << 63;
         if (js_number >= upper) {

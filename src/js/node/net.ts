@@ -2234,6 +2234,7 @@ Socket.prototype._onTimeout = function () {
 };
 
 Object.defineProperty(Socket.prototype, "bufferSize", {
+  __proto__: null,
   get: function () {
     // Node returns undefined once the handle is gone (after close).
     if (this._handle) {
@@ -2243,12 +2244,14 @@ Object.defineProperty(Socket.prototype, "bufferSize", {
 });
 
 Object.defineProperty(Socket.prototype, "_bytesDispatched", {
+  __proto__: null,
   get: function () {
     return this[kBytesWritten] || 0;
   },
 });
 
 Object.defineProperty(Socket.prototype, "bytesWritten", {
+  __proto__: null,
   get: function (this: SocketInstance) {
     let bytes = this[kBytesWritten] || 0;
     const data = this._pendingData;
@@ -2594,30 +2597,35 @@ Socket.prototype._final = function _final(callback) {
 };
 
 Object.defineProperty(Socket.prototype, "localAddress", {
+  __proto__: null,
   get: function () {
     return this._getsockname().address;
   },
 });
 
 Object.defineProperty(Socket.prototype, "localFamily", {
+  __proto__: null,
   get: function () {
     return this._getsockname().family;
   },
 });
 
 Object.defineProperty(Socket.prototype, "localPort", {
+  __proto__: null,
   get: function () {
     return this._getsockname().port;
   },
 });
 
 Object.defineProperty(Socket.prototype, "_connecting", {
+  __proto__: null,
   get: function () {
     return this.connecting;
   },
 });
 
 Object.defineProperty(Socket.prototype, "pending", {
+  __proto__: null,
   get: function () {
     return !this._handle || this.connecting;
   },
@@ -2772,6 +2780,7 @@ Socket.prototype._getsockname = function () {
 };
 
 Object.defineProperty(Socket.prototype, "readyState", {
+  __proto__: null,
   get: function () {
     if (this.connecting) return "opening";
     if (this.readable && this.writable) return "open";
@@ -2797,18 +2806,21 @@ Socket.prototype.ref = function ref() {
 };
 
 Object.defineProperty(Socket.prototype, "remotePort", {
+  __proto__: null,
   get: function () {
     return this._getpeername().port;
   },
 });
 
 Object.defineProperty(Socket.prototype, "remoteAddress", {
+  __proto__: null,
   get: function () {
     return this._getpeername().address;
   },
 });
 
 Object.defineProperty(Socket.prototype, "remoteFamily", {
+  __proto__: null,
   get: function () {
     return this._getpeername().family;
   },
@@ -3795,6 +3807,7 @@ function Server(options?, connectionListener?): void {
 $toClass(Server, "Server", EventEmitter);
 
 Object.defineProperty(Server.prototype, "listening", {
+  __proto__: null,
   get() {
     return !!this._handle;
   },

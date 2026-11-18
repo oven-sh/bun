@@ -9391,13 +9391,6 @@
     "windows": 400,
     "windows-aarch64": 600
   },
-  "internal/build-cmake-lists.test.ts": {
-    "default": 100,
-    "asan": 300,
-    "musl": 100,
-    "windows": 100,
-    "windows-aarch64": 100
-  },
   "internal/build-codegen-declared-outputs.test.ts": {
     "default": 400,
     "asan": 4300,
@@ -9418,13 +9411,6 @@
     "musl": 200,
     "windows": 100,
     "windows-aarch64": 100
-  },
-  "internal/build-local-webkit.test.ts": {
-    "default": 800,
-    "asan": 2300,
-    "musl": 1000,
-    "windows": 3700,
-    "windows-aarch64": 6200
   },
   "internal/build-post-link-ordering.test.ts": {
     "default": 100,
@@ -10580,13 +10566,6 @@
     "musl": 700,
     "windows": 1000,
     "windows-aarch64": 1100
-  },
-  "js/bun/jsc-stress/testFFI.test.ts": {
-    "default": 2200,
-    "asan": 13300,
-    "musl": 2300,
-    "windows": 2400,
-    "windows-aarch64": 3400
   },
   "js/bun/jsc/bun-jsc.test.ts": {
     "default": 500,
@@ -49353,13 +49332,6 @@
     "windows": 100,
     "windows-aarch64": 100
   },
-  "internal/aot-schema-generator.test.ts": {
-    "default": 100,
-    "asan": 200,
-    "musl": 100,
-    "windows": 100,
-    "windows-aarch64": 100
-  },
   "internal/bindgen-declared-results.test.ts": {
     "default": 500,
     "asan": 4400,
@@ -49401,13 +49373,6 @@
     "musl": 200,
     "windows": 2000,
     "windows-aarch64": 5100
-  },
-  "internal/build-ir-text-stays-out.test.ts": {
-    "default": 100,
-    "asan": 400,
-    "musl": 100,
-    "windows": 200,
-    "windows-aarch64": 400
   },
   "internal/build-left-out-features.test.ts": {
     "default": 200,

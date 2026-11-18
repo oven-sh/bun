@@ -730,7 +730,6 @@ impl TaskContext for BlobContext {
                         Blob::create_with_bytes_and_allocator(data, global, false).into_js(global)
                     }
                     BlobOutputType::Bytes => {
-                        // Ownership transfers to JSC's `MarkedArrayBuffer_deallocator`.
                         JSValue::create_buffer_from_box(global, data.into_boxed_slice())?
                     }
                 }))

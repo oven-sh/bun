@@ -104,14 +104,6 @@ mod tty {
 #[cfg(debug_assertions)]
 use tty::Color;
 
-#[cfg(debug_assertions)]
-unsafe extern "C" {
-    // safe: link-time section markers — only their *addresses* are taken
-    // (`&raw const … as usize`), never dereferenced; no Rust-side precondition.
-    safe static jsc_llint_begin: u8;
-    safe static jsc_llint_end: u8;
-}
-
 /// allocated using bun.default_allocator. when called from lldb, it is never freed.
 #[unsafe(no_mangle)]
 extern "C" fn dumpBtjsTrace() -> *const c_char {
@@ -192,6 +184,28 @@ fn print_source_at_address(
     if !cfg!(debug_assertions) {
         unreachable!();
     }
+    let script_frame = VirtualMachine::get_or_null()
+        .and_then(|vm| Some((vm.global(), CallFrame::of_script_at(vm.global(), fp)?)));
+    if let Some((global, frame)) = script_frame {
+        let srcloc = frame.get_caller_src_loc(global);
+        tty_config.set_color(out_stream, Color::Bold)?;
+        write!(
+            out_stream,
+            "{}:{}:{}: ",
+            srcloc.str, srcloc.line, srcloc.column
+        )?;
+        tty_config.set_color(out_stream, Color::Reset)?;
+        tty_config.set_color(out_stream, Color::Dim)?;
+        writeln!(
+            out_stream,
+            "0x{:x} in {}",
+            address,
+            frame.function_name(global)
+        )?;
+        tty_config.set_color(out_stream, Color::Reset)?;
+        return Ok(());
+    }
+
     let module = match get_module_for_address(debug_info, address) {
         Ok(m) => m,
         Err(Error::MissingDebugInfo) => {
@@ -208,36 +222,6 @@ fn print_source_at_address(
         Err(e) => return Err(e),
     };
 
-    // jsc_llint_begin/end are link-time symbols; `&raw const` avoids creating a reference to extern static
-    let llint_begin = (&raw const jsc_llint_begin) as usize;
-    let llint_end = (&raw const jsc_llint_end) as usize;
-    let probably_llint = address > llint_begin && address < llint_end;
-    let mut allow_llint = true;
-    if symbol_info.name.starts_with(b"__") {
-        allow_llint = false; // disallow llint for __ZN3JSC11Interpreter20executeModuleProgramEPNS_14JSModuleRecordEPNS_23ModuleProgramExecutableEPNS_14JSGlobalObjectEPNS_19JSModuleEnvironmentENS_7JSValueES9_
-    }
-    if symbol_info.name.starts_with(b"_llint_call_javascript") {
-        allow_llint = false; // disallow llint for _llint_call_javascript
-    }
-    let do_llint = probably_llint && allow_llint;
-
-    // SAFETY: fp is a raw frame pointer from the stack iterator; only dereferenced when
-    // do_llint holds (i.e. address is inside the JSC LLInt range, so fp is a JSC CallFrame).
-    // Single audited backref-deref hoisted for both LLInt branches below.
-    let frame: Option<&CallFrame> = do_llint.then(|| unsafe { &*(fp as *const CallFrame) });
-    if let Some(frame) = frame {
-        // VM singleton is process-lifetime; `global` is set before any
-        // JS frame can be on the stack to inspect.
-        let srcloc = frame.get_caller_src_loc(VirtualMachine::get().global());
-        tty_config.set_color(out_stream, Color::Bold)?;
-        write!(
-            out_stream,
-            "{}:{}:{}: ",
-            srcloc.str, srcloc.line, srcloc.column
-        )?;
-        tty_config.set_color(out_stream, Color::Reset)?;
-    }
-
     print_line_info(
         out_stream,
         symbol_info.source_location.as_ref(),
@@ -246,17 +230,7 @@ fn print_source_at_address(
         &symbol_info.compile_unit_name,
         tty_config,
         print_line_from_file_any_os,
-        do_llint,
-    )?;
-    if let Some(frame) = frame {
-        let desc = frame.describe_frame();
-        write!(out_stream, "    {}\n    ", bstr::BStr::new(desc))?;
-        tty_config.set_color(out_stream, Color::Green)?;
-        out_stream.extend_from_slice(b"^");
-        tty_config.set_color(out_stream, Color::Reset)?;
-        out_stream.extend_from_slice(b"\n");
-    }
-    Ok(())
+    )
 }
 
 #[cfg(debug_assertions)]
@@ -278,7 +252,6 @@ fn print_unknown_source(
         module_name.as_deref().unwrap_or(b"???"),
         tty_config,
         print_line_from_file_any_os,
-        false,
     )
 }
 
@@ -292,7 +265,6 @@ fn print_line_info(
     tty_config: tty::Config,
     // impl-Trait so it monomorphizes, not a runtime fn pointer.
     print_line_from_file: impl Fn(&mut Vec<u8>, &SourceLocation) -> Result<(), Error>,
-    do_llint: bool,
 ) -> Result<(), Error> {
     if !cfg!(debug_assertions) {
         unreachable!();
@@ -309,14 +281,12 @@ fn print_line_info(
             sl.line,
             sl.column
         )?;
-    } else if !do_llint {
+    } else {
         out_stream.extend_from_slice(b"???:?:?");
     }
 
     tty_config.set_color(out_stream, Color::Reset)?;
-    if !do_llint || source_location.is_some() {
-        out_stream.extend_from_slice(b": ");
-    }
+    out_stream.extend_from_slice(b": ");
     tty_config.set_color(out_stream, Color::Dim)?;
     write!(
         out_stream,

@@ -18,6 +18,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { linksWithLld, type Config } from "./config.ts";
+import { newerThanOldestIcucore } from "./deps/icu.ts";
 import {
   overridesDarwinAllocator,
   replacedLibcAllocationSymbols,
@@ -110,20 +111,16 @@ export interface BinaryExpectations {
    * none of its own; the runtime's (mimalloc, libstdc++'s locale tables,
    * crt) are listed. Undefined = not checkable on this format (PE).
    *
-   * Not a list to grow: an initializer from bun/JSC/WTF code is a bug
+   * Not a list to grow: an initializer from bun's code is a bug
    * (startup cost on every invocation, init-order hazards). Make the global
    * lazy instead — function-local static, LazyNeverDestroyed, constinit.
    */
   staticInitializers?: string[];
   /**
    * Symbols that the executable's own symbol table may not define (`*`
-   * wildcards over mangled names): code that is there for tests and debugging
-   * and has to stay out of what ships. Undefined = not checkable on this
-   * format (PE: the names are in the PDB), or the flavour may have them.
-   *
-   * A match means that something reachable calls it: find the caller. In the
-   * engine it belongs under `#if ASSERT_ENABLED`, in Rust behind the feature.
-   * It also has what LTO has to inline: see `inlinedSymbols()`.
+   * wildcards over mangled names): what LTO has to inline, see
+   * `inlinedSymbols()`. Undefined = not checkable on this format (PE: the
+   * names are in the PDB), or the flavour may have them.
    */
   forbiddenSymbols?: string[];
   elf?: {
@@ -214,18 +211,9 @@ export function binaryFormat(cfg: Config): BinaryFormat {
 /**
  * Static initializers the runtime libraries contribute on each target — the
  * allowlist for that target and nothing wider, so an entry that starts
- * showing up somewhere new is noticed too. bun, JSC and WTF add none (WTF's
- * NeverDestroyed / LazyNeverDestroyed exist so they don't have to); a
- * `_GLOBAL__sub_I_<file>` from one of ours is the thing to catch, in debug
- * builds as much as release.
- *
- * JSC/WTF/bmalloc come from the prebuilt WebKit tarball, so "none" for them is
- * a statement about oven-sh/WebKit's build, not about flags set here. It
- * holds for the release tarball (a linux-x64 bun-profile linked against it has
- * exactly the runtime's eight entries below). If another lane's tarball turns
- * out to carry an initializer, fix it in oven-sh/WebKit; if it has to be
- * tolerated meanwhile, give it a list of its own here named for the tarball,
- * not an entry in this one.
+ * showing up somewhere new is noticed too. bun adds none (NeverDestroyed /
+ * LazyNeverDestroyed exist so it doesn't have to); a `_GLOBAL__sub_I_<file>`
+ * from one of ours is the thing to catch, in debug builds as much as release.
  */
 function runtimeInitializers(cfg: Config): string[] {
   const gnu = cfg.linux && cfg.abi === "gnu";
@@ -269,15 +257,14 @@ function runtimeInitializers(cfg: Config): string[] {
   if (cfg.arm64 && cfg.freebsd) {
     // compiler-rt's outline-atomics probe and its cpu-feature init. clang 23
     // made -moutline-atomics the FreeBSD aarch64 default
-    // (FreeBSD::IsAArch64OutlineAtomicsDefault), so both our objects and the
-    // prebuilt WebKit's call the __aarch64_* helpers that bring these in.
+    // (FreeBSD::IsAArch64OutlineAtomicsDefault), so our objects call the
+    // __aarch64_* helpers that bring these in.
     initializers.push("init_have_lse_atomics", "__init_cpu_features");
   }
   if (cfg.fuzzilli && gnu) {
     // -fsanitize-coverage: the constructor that hands the guards to
-    // FuzzilliREPRL.cpp (one for the binary, bun's objects and the -coverage
-    // WebKit's share it), and the two of clang's runtime, which the flag
-    // links (flags.ts).
+    // FuzzilliREPRL.cpp (one for the binary), and the two of clang's runtime,
+    // which the flag links (flags.ts).
     initializers.push(
       "sancov.module_ctor_trace_pc_guard",
       "_GLOBAL__sub_I_sanitizer_common_libcdep.cpp",
@@ -323,6 +310,7 @@ function forbiddenImports(cfg: Config): string[] {
     // unwinder entry must not be imported either.
     forbidden.push("_Unwind_Resume");
   }
+  if (cfg.darwin) forbidden.push(...newerThanOldestIcucore);
   if (overridesDarwinAllocator(cfg)) {
     // Everything linked into the executable allocates from mimalloc
     // (MimallocOverrideDarwin.cpp). An import of one of these is code that
@@ -339,71 +327,6 @@ function forbiddenImports(cfg: Config): string[] {
     forbidden.push("pthread_exit");
   }
   return forbidden;
-}
-
-/**
- * TEMPORARY: exports bun.exe has only because the prebuilt WebKit's bmalloc is
- * compiled with BEXPORT=__declspec(dllexport) (bmalloc/BExport.h has no
- * static-build carve-out the way WTF's export macros do), so every bmalloc.lib
- * member the link pulls carries `-export:` directives. Remove once
- * oven-sh/WebKit builds bmalloc with BEXPORT empty (`-DBEXPORT=`); the export
- * check then holds bun.exe to the Node-API / V8 / libuv set alone.
- *
- * The 23 names, from `llvm-readobj --coff-exports` on a released
- * bun-windows-x64 bun.exe: 22 MSVC-mangled members of namespace bmalloc
- * (`bmalloc::api::*`, `bmalloc::Mutex::lockSlowCase`, `bmalloc::Environment`'s
- * constructor, `bmalloc::systemHeapCache`, the StaticPerProcess storage of
- * Environment and SystemHeap) — every one contains `@bmalloc@@`, hence the
- * pattern, which is as narrow as a pattern over mangled names gets — and the
- * C symbol `g_config` (bmalloc/libpas' GigacageConfig slot array).
- */
-const PREBUILT_BMALLOC_DLLEXPORTS = {
-  exact: ["g_config"],
-  patterns: ["?*@bmalloc@@*"],
-};
-
-/**
- * Code that only the AoT compiler's tests use. Bun hands the engine the program as bytes, so nothing in Bun reads or
- * writes IR text: in WebKit the lexer, parser and printer of IR text are sources of testaot alone, and in bun_aot the
- * printer is behind the `ir_text` feature. The rest is declared in the engine's own headers but defined under WebKit's
- * aot/tests/, which only testaot links: the printer and parser of the walk's Code, the parser of summaries, and the
- * procedures that the back end's tests build and run.
- */
-function testOnlySymbols(cfg: Config): string[] | undefined {
-  if (cfg.assertions) return undefined;
-  return [
-    "*3JSC3AOT5Typed5Lexer*",
-    "*3JSC3AOT5Typed10TextParser*",
-    "*3JSC3AOT5Typed12parseProgram*",
-    "*3JSC3AOT5Typed11parseFields*",
-    "*3JSC3AOT5Typed12parseVariant*",
-    "*3JSC3AOT5Typed18WireProgramBuilder*",
-    "*3JSC3AOT5Typed9IRPrinter*",
-    "*3JSC3AOT5Typed11printFields*",
-    "*3JSC3AOT5Typed12printVariant*",
-    "*3JSC3AOT5Typed12printProgram*",
-    "*3JSC3AOT5Typed13printFunction*",
-    "*3JSC3AOT5Typed9printBody*",
-    "*3JSC3AOT5Typed10printValue*",
-    "*3JSC3AOT5Typed15printTerminator*",
-    // Only the overload that takes a Program: the one that takes a TypeReader (ir/AOTTypeText.h) is the library's.
-    "*3JSC3AOT5Typed9printTypeERN3WTF11PrintStreamERKNS1_7ProgramE*",
-    "*3JSC3AOT5Typed11printString*",
-    "*3JSC3AOT5Typed16printPropertyKey*",
-    "*3JSC3AOT5Typed9printCode*",
-    "*3JSC3AOT5Typed9parseCode*",
-    "*3JSC3AOT5Typed10walkToText*",
-    "*3JSC3AOT5Typed14parseSummaries*",
-    "*3JSC3AOT7Machine13TestProcedure*",
-    "*3JSC3AOT7Machine20buildRandomProcedure*",
-    "*builtinTableRuntimeFunctionTokens*",
-    "*7bun_aot2ir5print*",
-    "*7bun_aot2ir10print_body*",
-    "*7bun_aot2ir11print_names*",
-    "*7bun_aot2ir9generated10entry_text*",
-    "*7bun_aot2ir9generated11record_text*",
-    "*RUNTIME_FUNCTION_TOKENS*",
-  ];
 }
 
 /**
@@ -477,26 +400,17 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
   // the same list: an initializer that only -O2 folds away is still one we
   // wrote (make it constexpr/constinit instead).
   const sanitizerLibs = cfg.asan ? ["*clang_rt.asan*", "libgcc_s.so.1"] : [];
-  // Android: -llog (WTF's logging goes to logcat) is linked --as-needed, so
+  // Android: -llog is linked --as-needed, so
   // liblog.so is NEEDED exactly when a live __android_log_* reference
   // survives — a system library either way, allowed rather than pinned.
-  // --webkit=local on Linux links the host's ICU (bun.ts systemLibs); the
-  // prebuilt bundles its own statically. A developer-only flavour, never
-  // shipped, so the sonames (libicuuc.so.78 …) are allowed rather than pinned.
-  const localWebKitLibs =
-    cfg.webkit === "local" && cfg.linux && cfg.abi !== "android"
-      ? ["libicudata.so.*", "libicui18n.so.*", "libicuuc.so.*"]
-      : [];
+  // --icu=system on Linux is a developer-only flavour, never shipped, so the
+  // sonames (libicuuc.so.78 …) are allowed rather than pinned.
+  const icuLibs = cfg.icu === "system" && cfg.linux ? ["libicudata.so.*", "libicui18n.so.*", "libicuuc.so.*"] : [];
   // --fuzzilli=on: clang's coverage runtime needs it.
   const coverageLibs = cfg.fuzzilli && cfg.linux && cfg.abi === "gnu" ? ["libresolv.so.2"] : [];
-  const allowedLibs = [
-    ...sanitizerLibs,
-    ...coverageLibs,
-    ...localWebKitLibs,
-    ...(cfg.abi === "android" ? ["liblog.so"] : []),
-  ];
+  const allowedLibs = [...sanitizerLibs, ...coverageLibs, ...icuLibs, ...(cfg.abi === "android" ? ["liblog.so"] : [])];
   const staticInitializers = cfg.asan ? undefined : runtimeInitializers(cfg);
-  const forbiddenSymbols = testOnlySymbols(cfg)?.concat(inlinedSymbols(cfg));
+  const forbiddenSymbols = cfg.assertions ? undefined : inlinedSymbols(cfg);
 
   switch (format) {
     case "elf": {
@@ -604,29 +518,11 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
         format,
         exports: {
           symbolList: src("symbols.def"),
-          exact: [
-            "node_module_register",
-            // WTF's out-of-line currentStackPointer (StackPointer.cpp, used
-            // when NDEBUG is off) is assembly that carries its own
-            // `.drectve -export:` for WTF.dll's sake; statically linked, that
-            // directive exports it from bun-debug.exe. Debug builds only.
-            ...(cfg.debug ? ["currentStackPointer"] : []),
-            ...PREBUILT_BMALLOC_DLLEXPORTS.exact,
-          ],
+          exact: ["node_module_register"],
           // Node-API and the V8 / node C++ embedder API are exported from the
           // source with __declspec(dllexport) (NAPI_EXTERN, BUN_EXPORT), the
           // C++ ones under their MSVC-mangled names; symbols.def adds libuv.
-          patterns: [
-            "napi_*",
-            "node_api_*",
-            "?*@v8@@*",
-            "?*@node@@*",
-            ...PREBUILT_BMALLOC_DLLEXPORTS.patterns,
-            // The debug WebKit prebuilt's libpas exports its system-heap entry
-            // points the same way (`-export:` directives in the archive
-            // members); the release prebuilt has none. Debug builds only.
-            ...(cfg.debug ? ["pas_system_heap_*"] : []),
-          ],
+          patterns: ["napi_*", "node_api_*", "?*@v8@@*", "?*@node@@*"],
         },
         neededLibs: {
           names: [

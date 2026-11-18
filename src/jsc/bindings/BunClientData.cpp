@@ -5,21 +5,16 @@
 #include "WebCoreJSBuiltins.h"
 
 #include "ExtendedDOMClientIsoSubspaces.h"
-#include "ExtendedDOMIsoSubspaces.h"
 #include <JavaScriptCore/FastMallocAlignedMemoryAllocator.h>
 #include <JavaScriptCore/HeapInlines.h>
 #include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
 #include <JavaScriptCore/SimpleMarkingConstraint.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <JavaScriptCore/VM.h>
-#include <JavaScriptCore/CachedTypes.h>
-#include <JavaScriptCore/PrelinkedModuleGraph.h>
 #include <wtf/MainThread.h>
 
 #include "JSDOMConstructorBase.h"
 
-#include "BunGCOutputConstraint.h"
-#include "WebCoreTypedArrayController.h"
 #include <JavaScriptCore/JSCInlines.h>
 
 #include "JSDOMWrapper.h"
@@ -31,64 +26,17 @@
 namespace WebCore {
 using namespace JSC;
 
-RefPtr<JSC::SourceProvider> createBuiltinsSourceProvider();
-
-JSHeapData::JSHeapData(Heap& heap)
-    : m_domConstructorSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMConstructorBase)
-    , m_domNamespaceObjectSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMObject)
-    , m_subspaces(makeUnique<ExtendedDOMIsoSubspaces>())
-
-{
-}
-
-JSHeapData::~JSHeapData() = default;
-
-#define CLIENT_ISO_SUBSPACE_INIT(subspace) subspace(m_heapData->subspace)
-
-JSVMClientData::JSVMClientData(VM& vm, RefPtr<JSC::SourceProvider> sourceProvider)
+JSVMClientData::JSVMClientData(VM& vm)
     : commonStrings(vm)
     , schemaStrings(vm)
     , m_builtinNames(vm)
-    , m_builtinFunctions(makeUnique<JSBuiltinFunctions>(vm, sourceProvider, m_builtinNames))
-    , m_heapData(JSHeapData::ensureHeapData(vm.heap))
     , m_consoleClient(makeUniqueRef<Bun::ConsoleObject>())
-    , CLIENT_ISO_SUBSPACE_INIT(m_domConstructorSpace)
-    , CLIENT_ISO_SUBSPACE_INIT(m_domNamespaceObjectSpace)
     , m_clientSubspaces(makeUnique<ExtendedDOMClientIsoSubspaces>())
     , m_heapSizeAfterLastCollection(vm.heap)
 {
 }
 
-#undef CLIENT_ISO_SUBSPACE_INIT
-
-JSHeapData* JSHeapData::ensureHeapData(Heap& heap)
-{
-    if (!Options::useGlobalGC())
-        return new JSHeapData(heap);
-
-    static JSHeapData* singleton = nullptr;
-    static std::once_flag onceFlag;
-    std::call_once(onceFlag, [&] {
-        singleton = new JSHeapData(heap);
-    });
-    return singleton;
-}
-
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(JSVMClientData);
-
-// Frees a per-VM `JSHeapData`; leaves the `useGlobalGC` singleton alone (it is
-// shared by every VM and lives for the process lifetime). This runs as part of
-// `~JSVMClientData` member teardown — after the client `IsoSubspace` members,
-// whose `~LocalAllocator` dereferences a `BlockDirectory` inside this object
-// (see the member-ordering note in the header). `~VM` invokes `~JSVMClientData`
-// only after `heap.lastChanceToFinalize()`, with `heap` (a `VM` member)
-// outliving the destructor, so tearing the server `IsoSubspace`s down here is
-// safe.
-void JSVMClientData::JSHeapDataDeleter::operator()(JSHeapData* heapData) const
-{
-    if (!JSC::Options::useGlobalGC())
-        delete heapData;
-}
 
 JSVMClientData::~JSVMClientData()
 {
@@ -103,8 +51,7 @@ JSVMClientData::~JSVMClientData()
 }
 void JSVMClientData::create(VM* vm, void* bunVM, WorkerMessagingProxy* worker)
 {
-    auto provider = WebCore::createBuiltinsSourceProvider();
-    JSVMClientData* clientData = new JSVMClientData(*vm, provider);
+    JSVMClientData* clientData = new JSVMClientData(*vm);
     clientData->bunVM = bunVM;
     clientData->m_isWorkerVM = !!worker;
     clientData->m_isNodeWorkerVM = worker && worker->options().kind == WorkerOptions::Kind::Node;
@@ -119,11 +66,17 @@ void JSVMClientData::create(VM* vm, void* bunVM, WorkerMessagingProxy* worker)
     vm->deferredWorkTimer->onCancelPendingWork = [clientData](JSC::DeferredWorkTimer::Ticket& ticket) -> void {
         Bun::JSCTaskScheduler::onCancelPendingWork(clientData, ticket);
     };
+    vm->deferredWorkTimer->onSetTimer = [vm, clientData](std::optional<Seconds> delay) -> void {
+        clientData->deferredWorkTimer.setTimer(delay);
+        // The loop may be asleep, or past the point where it looks for a timer that is due.
+        if (delay && (delay->value() <= 0 || !vm->currentThreadIsHoldingAPILock()))
+            Bun__VmHandle__wake(clientData->vmHandle.get());
+    };
+    clientData->deferredWorkTimer.createTimer(*vm);
+    vm->deferredWorkTimer->start(*vm);
 
     vm->clientData = clientData; // ~VM deletes this pointer.
     clientData->m_normalWorld = DOMWrapperWorld::create(*vm);
-
-    vm->heap.addMarkingConstraint(makeUnique<WebCore::DOMGCOutputConstraint>(*vm, clientData->heapData()));
 
     // Root the StrongRootBlock list from the VM instead of any one global.
     //
@@ -177,44 +130,18 @@ void JSVMClientData::create(VM* vm, void* bunVM, WorkerMessagingProxy* worker)
             clientData->schemaStrings.visit(visitor);
         })),
         JSC::ConstraintVolatility::GreyedByExecution));
-
-    vm->m_typedArrayController = adoptRef(new WebCoreTypedArrayController(true));
-    clientData->builtinFunctions().exportNames();
 }
 
-JSC::GCClient::IsoSubspace* subspaceForImplSlow(JSC::VM& vm, const SubspaceForInit& init, SubspaceSlots slots, const JSC::HeapCellType& (*getCustomHeapCellType)())
+JSC::GCClient::IsoSubspace* subspaceForImplSlow(JSC::VM& vm, SubspaceSlots slots, size_t cellSize, void (*destroy)(JSC::JSCell*), bool hasOutputConstraints)
 {
     auto& clientData = *downcast<JSVMClientData>(vm.clientData);
-    auto& clientSlot = *reinterpret_cast<JSC::GCClient::IsoSubspace**>(reinterpret_cast<uint8_t*>(&clientData.clientSubspaces()) + slots.clientOffset);
+    auto& slot = *reinterpret_cast<JSC::GCClient::IsoSubspace**>(reinterpret_cast<uint8_t*>(&clientData.clientSubspaces()) + slots.clientOffset);
+    return slot = &vm.heap.createIsoSubspace(cellSize, destroy, hasOutputConstraints);
+}
 
-    auto& heapData = clientData.heapData();
-    Locker locker { heapData.lock() };
-
-    auto& serverSlot = *reinterpret_cast<JSC::IsoSubspace**>(reinterpret_cast<uint8_t*>(&heapData.subspaces()) + slots.serverOffset);
-    JSC::IsoSubspace* space = serverSlot;
-    if (!space) {
-        JSC::Heap& heap = vm.heap;
-        const JSC::HeapCellType* cellType;
-        switch (init.cellType) {
-        case SubspaceForInit::CellType::Custom:
-            cellType = &getCustomHeapCellType();
-            break;
-        case SubspaceForInit::CellType::Destructible:
-            cellType = &heap.destructibleObjectHeapCellType;
-            break;
-        case SubspaceForInit::CellType::Cell:
-            cellType = &heap.cellHeapCellType;
-            break;
-        }
-        // What `ISO_SUBSPACE_INIT(heap, ..., T)` stringified to inside the old template: the token `T`.
-        space = serverSlot = makeUnique<JSC::IsoSubspace>("T"_s, heap, *cellType, init.cellSize, init.numberOfLowerTierPreciseCells).release();
-
-        if (init.hasOutputConstraints)
-            heapData.outputConstraintSpaces().append(space);
-    }
-
-    clientSlot = makeUnique<JSC::GCClient::IsoSubspace>(*space).release();
-    return clientSlot;
+void destroyWithClassInCell(JSC::JSCell* cell)
+{
+    static_cast<JSC::JSDestructibleObject*>(cell)->classInfo()->methodTable.destroy(cell);
 }
 
 } // namespace WebCore
@@ -251,59 +178,9 @@ void* allocatePlainObjectCell(JSC::VM& vm, size_t size)
 
 namespace WebCore {
 
-template<typename Subspace, typename Table>
-static void deleteSubspaceTable(Table* table)
+void JSVMClientData::reportErrorOfMicrotask(JSC::JSGlobalObject* globalObject, JSC::Exception* exception)
 {
-    static_assert(sizeof(Table) % sizeof(Subspace*) == 0);
-    auto** slots = reinterpret_cast<Subspace**>(table);
-    for (size_t i = 0; i < sizeof(Table) / sizeof(Subspace*); ++i)
-        std::unique_ptr<Subspace> { slots[i] };
-}
-
-DOMIsoSubspaces::~DOMIsoSubspaces()
-{
-    deleteSubspaceTable<JSC::IsoSubspace>(this);
-}
-
-DOMClientIsoSubspaces::~DOMClientIsoSubspaces()
-{
-    deleteSubspaceTable<JSC::GCClient::IsoSubspace>(this);
-}
-
-void JSVMClientData::reconcileWeakReferencesAtGCEnd(JSC::VM& vm, JSC::CollectionScope)
-{
-    Bun::JSCTaskScheduler::cancelWorkOfDeadRealms(this, vm);
-}
-
-void JSVMClientData::setDecoderStringTable(std::span<const uint8_t> bytes)
-{
-    if (m_decoderStringTable)
-        return; // slots may already hold cells this VM visits; never replace
-    m_decoderStringTable = makeUnique<JSC::DecoderStringTable>(bytes);
-}
-
-extern "C" bool Bun__standalonePrelinkedModuleGraph(const uint8_t** blob, size_t* blobLength, const uint8_t** slotTable, size_t* slotTableLength);
-
-JSC::PrelinkedModuleGraph* JSVMClientData::prelinkedModuleGraph(JSC::VM& vm)
-{
-    if (!m_prelinkedModuleGraphChecked) [[unlikely]] {
-        if (!m_decoderStringTable)
-            return nullptr; // not installed (yet): a later call may still build the graph
-        m_prelinkedModuleGraphChecked = true;
-        const uint8_t* blob = nullptr;
-        size_t blobLength = 0;
-        const uint8_t* slotTable = nullptr;
-        size_t slotTableLength = 0;
-        if (Bun__standalonePrelinkedModuleGraph(&blob, &blobLength, &slotTable, &slotTableLength) && slotTableLength >= sizeof(uint32_t)) {
-            // ModuleInfoSlotTable: u32 count, then `count` u32 slots (4-byte aligned in the mapped section).
-            ASSERT(!(reinterpret_cast<uintptr_t>(slotTable) % alignof(uint32_t)));
-            uint32_t count = 0;
-            memcpy(&count, slotTable, sizeof(count));
-            if (count <= (slotTableLength - sizeof(uint32_t)) / sizeof(uint32_t))
-                m_prelinkedModuleGraph = JSC::PrelinkedModuleGraph::tryCreate(vm, *m_decoderStringTable, { blob, blobLength }, { reinterpret_cast<const uint32_t*>(slotTable + sizeof(uint32_t)), count });
-        }
-    }
-    return m_prelinkedModuleGraph.get();
+    Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
 }
 
 } // namespace WebCore

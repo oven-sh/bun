@@ -42,9 +42,9 @@ build "$SUP/simdutf_shim.o" $CXX -O3 -fPIC -std=c++20 -I"$SUP" -c src/parsers/be
 for f in abort targets per_target print timer nanobenchmark aligned_allocator; do
   build "$SUP/hwy_$f.o" $CXX -O3 -fPIC -std=c++17 -Ivendor/highway -c "vendor/highway/hwy/$f.cc"
 done
-for k in json xml; do
+for k in json xml utf8; do
   if [ -f src/jsc/bindings/highway_$k.cpp ]; then
-    $CXX -O3 -fPIC -std=c++17 -Ivendor/highway -Isrc/jsc/bindings -I"$BUN_CODEGEN_DIR" -c src/jsc/bindings/highway_$k.cpp -o "$SUP/highway_$k.o"
+    $CXX -O3 -fPIC -std=c++20 -Ivendor/highway -Isrc/jsc/bindings -I"$BUN_CODEGEN_DIR" -c src/jsc/bindings/highway_$k.cpp -o "$SUP/highway_$k.o"
   fi
 done
 # C/C++ XML parsers for benches/xml_parse.rs to compare against (optional).

@@ -12,7 +12,6 @@
 #include "../bindings/webcore/WebSocket.h"
 #include "../bindings/webcore/MessageEvent.h"
 #include <JavaScriptCore/ConsoleClient.h>
-#include <JavaScriptCore/ScriptArguments.h>
 #include <JavaScriptCore/Strong.h>
 
 #include <JavaScriptCore/JSCInlines.h>
@@ -963,10 +962,6 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         }
 
         if (enc == ScreenshotEncoding::Buffer) {
-            // createBuffer(span) copies into a JSC-allocated ArrayBuffer.
-            // decoded Vector drops after; one copy. We can't
-            // adopt-the-Vector because WTF::Vector uses WTF's bmalloc, not
-            // the JSC ArrayBuffer allocator — destructors wouldn't match.
             settle(g, view, entry.slot, true,
                 createBuffer(g, decoded->span()));
             return;
@@ -1236,10 +1231,7 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
 
         if (view->m_consoleIsGlobal) {
             // ConsoleClient::logWithLevel — the same path console.log()
-            // takes after argument collection. ScriptArguments holds
-            // Vector<Strong<Unknown>> which GC-roots across the call
-            // (util.format allocates). Inspector forwarding + Bun's
-            // console formatter apply.
+            // takes. Inspector forwarding + Bun's console formatter apply.
             //
             // CDP type → MessageLevel. trace/dir/table/assert all render
             // through Log level with their formatting intact (the args
@@ -1256,14 +1248,9 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
             else if (type == "info"_s)
                 ml = MessageLevel::Info;
 
-            WTF::Vector<Strong<Unknown>> strongArgs;
-            strongArgs.reserveInitialCapacity(args.size());
-            for (unsigned i = 0; i < args.size(); ++i)
-                strongArgs.append(Strong<Unknown>(vm, args.at(i)));
-            auto scriptArgs = Inspector::ScriptArguments::create(g, WTF::move(strongArgs));
             scope.release();
             if (auto clientRef = g->consoleClient())
-                clientRef->logWithLevel(g, WTF::move(scriptArgs), ml);
+                clientRef->logWithLevel(g, args, ml);
             return;
         }
 

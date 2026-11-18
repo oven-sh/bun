@@ -14,10 +14,9 @@
 // functions run on every Bun process start.
 //
 // Bun never touches C++ iostreams at runtime. Use fputs/fprintf for error
-// output, or WTF's dataLog()/PrintStream in JSC-adjacent code.
+// output, or dataLog()/PrintStream in the bindings.
 //
-// Because Bun's own headers include wtf/SIMDUTF.h (and others) from the
-// WebKit prebuilt, this shim also catches a WebKit header that starts
+// This shim also catches a dependency's header (simdutf.h, for one) that starts
 // including <iostream>: it will fail Bun's release build rather than silently
 // regressing startup.
 #ifndef BUN_ALLOW_IOSTREAM

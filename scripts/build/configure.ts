@@ -162,13 +162,13 @@ export interface ConfigureResult {
  * an existing one to import it).
  *
  * Excludes scripts that only run as ninja subprocesses (ci.ts, stream.ts,
- * npm-ci.ts) or only print paths (aot-paths.ts) — changes to those don't
- * affect the build graph. fetch-cli.ts and download.ts count: configure
- * computes fetch URLs and checks source staleness through them.
+ * npm-ci.ts) — changes to those don't affect the build graph. fetch-cli.ts
+ * and download.ts count: configure computes fetch URLs and checks source
+ * staleness through them.
  */
 function configureInputs(cwd: string): string[] {
   const buildDir = resolve(cwd, "scripts", "build");
-  const excluded = new Set(["ci.ts", "stream.ts", "npm-ci.ts", "aot-paths.ts"]);
+  const excluded = new Set(["ci.ts", "stream.ts", "npm-ci.ts"]);
 
   const scripts = globSync("*.ts", { cwd: buildDir })
     .filter(f => !excluded.has(f))
@@ -222,16 +222,8 @@ export interface ConfigureInput {
  * --config-file and re-expands the profile against the current
  * profiles.ts. Edits to a profile therefore take effect on the next
  * `ninja` in an existing build dir without `rm -rf`.
- *
- * `depInputs`: what the deps read from their source trees to describe their
- * part of the graph (ResolvedDep.configureInputs).
  */
-function emitGeneratorRule(
-  n: Ninja,
-  cfg: Config | CodegenConfig,
-  input: ConfigureInput,
-  depInputs: string[] = [],
-): void {
+function emitGeneratorRule(n: Ninja, cfg: Config | CodegenConfig, input: ConfigureInput): void {
   const configFile = resolve(cfg.buildDir, "configure.json");
   const buildScript = resolve(cfg.cwd, "scripts", "build.ts");
 
@@ -262,7 +254,7 @@ function emitGeneratorRule(
     // The Rust plans: the per-crate edges are generated from them (rust.ts), so a changed plan — new lockfile,
     // manifest, toolchain — must reconfigure. They are build outputs; when one is dirty ninja builds it first,
     // reruns this edge, and restarts with the new manifest.
-    implicitInputs: [...configureInputs(cfg.cwd), ...(buildsRust(cfg) ? rustPlanFiles(cfg) : []), ...depInputs],
+    implicitInputs: [...configureInputs(cfg.cwd), ...(buildsRust(cfg) ? rustPlanFiles(cfg) : [])],
   });
 }
 
@@ -382,8 +374,7 @@ export interface CodegenConfigureResult<N extends string | undefined = string> {
  * configure() for `mode: "codegen"`: a graph of the code generators alone, whose default target is `codegen`.
  * Looks for bun, the root install's esbuild and perl, and for no compiler, linker, cmake or cargo; writes no
  * `.cargo/config.toml` and fetches no SDK or sysroot. It has a build directory of its own (`build/debug-codegen`);
- * the type declarations go to `cfg.typesDir`, which every build directory shares. The steps that read the engine's
- * files (aot.ts: the IR schema, the table of built-ins, the archive of Bun's own sources) are not in this graph.
+ * the type declarations go to `cfg.typesDir`, which every build directory shares.
  */
 export function configureCodegen(input: ConfigureInput): Promise<CodegenConfigureResult> {
   return generateCodegen(input, ensureNinja);
@@ -507,8 +498,8 @@ async function generate<N extends string | undefined>(
   writeToolIdentities(cfg);
   mark("generateCargoConfig");
 
-  // Perl check: LUT codegen (create-hash-table.ts) shells out to the
-  // perl script from JSC. If perl is missing, codegen fails cryptically.
+  // Perl check: LUT codegen (create-hash-table.ts) shells out to a
+  // perl script. If perl is missing, codegen fails cryptically.
   // Check here so the error is at configure time with a clear hint.
   requirePerl();
   mark("validate+perl");
@@ -525,12 +516,7 @@ async function generate<N extends string | undefined>(
   mkdirSync(cfg.buildDir, { recursive: true });
   const output = emitBun(n, cfg, sources);
   mark("emitBun");
-  emitGeneratorRule(
-    n,
-    cfg,
-    input,
-    output.deps.flatMap(d => d.configureInputs),
-  );
+  emitGeneratorRule(n, cfg, input);
 
   // Default targets: the `bun` phony (or stripped file); the smoke test
   // rides along as a validation of the link.
@@ -541,7 +527,6 @@ async function generate<N extends string | undefined>(
   // auto-trigger).
   const targets = [output.strippedExe !== undefined ? n.rel(output.strippedExe) : "bun"];
   if (output.dsym !== undefined) targets.push(n.rel(output.dsym));
-  if (cfg.ci) targets.push("engine-test-programs");
   n.default(targets);
 
   const { changed, ninjaPath } = await writeManifest(n, cfg, ninja, mark);

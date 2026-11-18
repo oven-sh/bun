@@ -4,7 +4,7 @@ This document explains how Bun's event loop works, including task draining, micr
 
 ## Overview
 
-Bun's event loop is built on top of **uSockets** (a cross-platform event loop based on epoll/kqueue) and integrates with **JavaScriptCore's** microtask queue and a custom **process.nextTick** queue. The event loop processes tasks in a specific order to ensure correct JavaScript semantics while maximizing performance.
+Bun's event loop is built on top of **uSockets** (a cross-platform event loop based on epoll/kqueue) and integrates with the engine's microtask queue and a custom **process.nextTick** queue. The event loop processes tasks in a specific order to ensure correct JavaScript semantics while maximizing performance.
 
 ## Core Components
 
@@ -33,7 +33,7 @@ For operations that should be batched and deferred until after microtasks drain 
 
 Node.js-compatible implementation of `process.nextTick()`, which runs before microtasks but after each task.
 
-### 6. Microtask Queue (JavaScriptCore VM)
+### 6. Microtask Queue (VM)
 
 Built-in JSC microtask queue for promises and queueMicrotask.
 

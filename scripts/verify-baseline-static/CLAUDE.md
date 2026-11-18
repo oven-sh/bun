@@ -156,7 +156,7 @@ table, an HWCAP test. Known patterns:
 
 | Dependency                            | Gate                                                        | Where                                 |
 | ------------------------------------- | ----------------------------------------------------------- | ------------------------------------- |
-| simdutf                               | `set_best()` — CPUID first call, cached atomic ptr          | `vendor/` or WebKit's bundled copy    |
+| simdutf                               | `set_best()` — CPUID first call, cached atomic ptr          | `vendor/simdutf`                      |
 | Highway (Bun)                         | `BUN_HWY_DISPATCH` → `hwy::SupportedTargets()`              | `src/jsc/bindings/highway_dispatch.h` |
 | `with_bmi2!` (Bun)                    | `is_x86_feature_detected!("bmi2")`                          | `src/highway/lib.rs`                  |
 | BoringSSL                             | `OPENSSL_ia32cap_P` global, set at init                     | `vendor/boringssl/crypto/cpu_intel.c` |

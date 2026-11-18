@@ -165,10 +165,10 @@ private:
     ALWAYS_INLINE Identifier identifier(const RowStr& key)
     {
         if constexpr (encoding == RowEncoding::Utf16)
-            return Identifier::fromString(m_vm, m_vm.jsonCache().makeIdentifier(m_vm, utf16(key)));
+            return Identifier::fromString(m_vm, utf16(key));
         else {
             if (encoding == RowEncoding::Latin1 || charactersAreAllASCII(key.span())) [[likely]]
-                return Identifier::fromString(m_vm, m_vm.jsonCache().makeIdentifier(m_vm, key.span()));
+                return Identifier::fromString(m_vm, key.span());
             JSValue decoded = utf8(key);
             if (!decoded) [[unlikely]]
                 return {};
@@ -180,11 +180,11 @@ private:
     {
         JSString* result;
         if constexpr (encoding == RowEncoding::Utf16)
-            result = m_vm.jsonCache().tryMakeJSString(m_vm, utf16(s));
+            result = tryMakeJSONString(m_vm, utf16(s));
         else {
             if (encoding == RowEncoding::Utf8 && !charactersAreAllASCII(s.span())) [[unlikely]]
                 return utf8(s);
-            result = m_vm.jsonCache().tryMakeJSString(m_vm, s.span());
+            result = tryMakeJSONString(m_vm, s.span());
         }
         if (!result) [[unlikely]] {
             auto scope = DECLARE_THROW_SCOPE(m_vm);

@@ -15,10 +15,8 @@ import path from "node:path";
 // stream types but do not emit the static Init object. If you need to print to
 // stderr from C++, use fputs/fprintf.
 //
-// The upstream source of the original leak was the vendored simdutf header
-// inside WebKit (Source/WTF/wtf/simdutf/simdutf_impl.h); that is handled by
-// the WebKit pin. This test guards Bun's own compiled C++ so the initializer
-// cannot creep back in through packages/ or src/.
+// This test guards Bun's own compiled C++ so the initializer cannot creep in
+// through packages/ or src/.
 test("C++ sources compiled into Bun do not include <iostream>", async () => {
   const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
 

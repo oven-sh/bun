@@ -10,6 +10,7 @@
  *   import), so it is read as text.
  * - The rustflags put the Rust half of the binary on the CPU baseline the C++
  *   half is compiled for (`cpuTargetFlags` in scripts/build/flags.ts).
+ * - Frame pointers are set by Cargo.toml's profiles alone.
  * - Under ASAN, the Rust half and the C/C++ half (bun's sources and the deps)
  *   both compile out the fake-stack instrumentation.
  * - clang's LLVM and rustc's LLVM are the same major version, or configure
@@ -212,6 +213,45 @@ describe("CPU baseline", () => {
     const linuxX64 = resolve({ os: "linux", arch: "x64", abi: "gnu", linuxSysroot: "/fake" });
     expect(cpuFlags(linuxX64)).toEqual(["-Ctarget-cpu=nehalem"]);
     expect(cpuFlags(withAbi(linuxX64, "android"))).toEqual(["-Ctarget-cpu=nehalem"]);
+  });
+});
+
+describe("frame pointers", () => {
+  type Profile = { rustflags?: string[]; package?: Record<string, { rustflags?: string[]; "opt-level"?: unknown }> };
+  const { profile, workspace } = Bun.TOML.parse(readFileSync(join(repoRoot, "Cargo.toml"), "utf8")) as {
+    profile: Record<string, Profile>;
+    workspace: { dependencies: Record<string, unknown> };
+  };
+
+  test.each(["dev", "release"])("%s keeps them everywhere but in the interpreter's leaf functions", name => {
+    expect(profile[name]!.rustflags).toEqual(["-Cforce-frame-pointers=yes"]);
+    expect(Object.entries(profile[name]!.package!).filter(([, override]) => override.rustflags)).toEqual([
+      [
+        "bun_engine_interpreter",
+        expect.objectContaining({ rustflags: ["-Zunstable-options", "-Cforce-frame-pointers=non-leaf"] }),
+      ],
+    ]);
+  });
+
+  test("the Windows shim does not inherit them", () => {
+    expect(profile.shim!.rustflags).toEqual([]);
+  });
+
+  // rustc takes the strongest setting on its command line, so one in the flags of every crate undoes the interpreter's.
+  test("nothing that reaches every crate names them", () => {
+    const cfg = resolve({ os: "linux", arch: "x64", abi: "gnu", linuxSysroot: "/fake" });
+    expect(cargoBuildInvocation(cfg).rustflags.filter(flag => flag.includes("frame-pointers"))).toEqual([]);
+    for (const file of ["scripts/build/cargo-config.ts", "scripts/rust-test.ts"]) {
+      expect(readFileSync(join(repoRoot, file), "utf8")).not.toContain("force-frame-pointers");
+    }
+  });
+
+  test("a debug build optimizes every library of the engine", () => {
+    const libraries = Object.keys(workspace.dependencies).filter(
+      name => /^bun_(engine|icu)/.test(name) && name !== "bun_engine_macros",
+    );
+    expect(libraries).toContain("bun_engine_vm");
+    expect(libraries.filter(name => profile.dev!.package![name]?.["opt-level"] !== 2)).toEqual([]);
   });
 });
 

@@ -174,7 +174,7 @@ impl SocketAddress {
             str
         };
 
-        let url = bun_jsc::url::Parsed::from_string(&url_str)?;
+        let url = bun_jsc::url::URL::from_string(&url_str)?;
         let host: BunString = url.host();
         let port_: u16 = {
             let port32 = url.port();

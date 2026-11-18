@@ -661,7 +661,7 @@ pub fn with_current_context<R>(run: impl FnOnce(usize, &bun_windows_sys::CONTEXT
 /// The walk is `RtlLookupFunctionEntry` + `RtlVirtualUnwind`
 /// seeded from that context, so it starts at the fault frame and the handler's
 /// own frames are never in the chain. `rbp` is not a reliable frame pointer
-/// across the prebuilt JavaScriptCore/LLInt code, so an fp-walk would derail;
+/// across the libraries of the system, so an fp-walk would derail;
 /// `.pdata` is always emitted, so the Rtl unwinder works everywhere.
 #[cfg(windows)]
 pub fn capture_from_context(

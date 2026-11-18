@@ -30,7 +30,7 @@ std::optional<NidKeyPairJobCtx> NidKeyPairJobCtx::fromJS(JSGlobalObject* globalO
     } else if (int pqcNid = pqcKeyTypeToNid(typeView)) {
         id = pqcNid;
     } else {
-        UNREACHABLE();
+        RELEASE_ASSERT_NOT_REACHED();
     }
 
     return NidKeyPairJobCtx(

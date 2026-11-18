@@ -1,17 +1,16 @@
 /**
- * Unified source bundling — WebKit-style.
+ * Unified source bundling.
  *
  * Concatenates N small .cpp files into one translation unit by writing
  * `UnifiedSource-<dir>-<n>.cpp` files that contain only `#include` lines
  * pointing at the originals, then compiling those instead.
  *
  * Why: Bun has ~550 .cpp files, ~330 of them under 200 lines. Each compile
- * spends most of its time re-parsing the same JSC/WebCore headers. Bundling
- * N files into one TU means 1 header parse instead of N — same code, 1/Nth
- * the redundant frontend work. WebKit reports a 3–4× clean-build speedup
- * from this technique alone.
+ * spends most of its time re-parsing the same headers. Bundling N files into
+ * one TU means 1 header parse instead of N — same code, 1/Nth the redundant
+ * frontend work.
  *
- * Algorithm (matches WebKit's generate-unified-source-bundles):
+ * Algorithm:
  *   - Group sources by parent directory. Files from different directories
  *     never share a bundle — keeps `using namespace WebCore` in webcore/
  *     from leaking into bindings/ etc.
@@ -89,10 +88,9 @@ const noUnify: readonly string[] = [
   "src/jsc/bindings/sqlite/JSSQLStatement.cpp",
   "src/jsc/bindings/sqlite/NodeSqlite.cpp",
 
-  // WebKit-derived crypto algorithm impls share file-static helper names
-  // (`aesAlgorithm`, `cryptEncrypt`, `ALG128`, `IVSIZE`, ...) — upstream
-  // also compiles these outside unified sources. The remaining ~70
-  // webcrypto files (JS bindings, key types) bundle cleanly.
+  // These crypto algorithm impls share file-static helper names
+  // (`aesAlgorithm`, `cryptEncrypt`, `ALG128`, `IVSIZE`, ...). The remaining
+  // ~70 webcrypto files (JS bindings, key types) bundle cleanly.
   "src/jsc/bindings/webcrypto/CryptoAlgorithmAES_CBC.cpp",
   "src/jsc/bindings/webcrypto/CryptoAlgorithmAES_CBCOpenSSL.cpp",
   "src/jsc/bindings/webcrypto/CryptoAlgorithmAES_CFB.cpp",
@@ -165,8 +163,18 @@ const noUnify: readonly string[] = [
   "src/jsc/bindings/highway_webp_encoder.cpp",
   // The highway TU for the checksums of gzip and zlib — same reason.
   "src/jsc/bindings/highway_checksums.cpp",
+  // foreach_target.h has to come before highway.h, which StaticSIMD.h includes.
+  "src/jsc/bindings/highway_strings.cpp",
+  // The highway TU for the elements of arrays — same reason.
+  "src/jsc/bindings/highway_elements.cpp",
+  // The highway TU for the strings of the engine — same reason.
+  "src/jsc/bindings/highway_text.cpp",
+  // The highway TU that decodes UTF-8 — same reason.
+  "src/jsc/bindings/highway_utf8.cpp",
   // The highway TU of the Brotli encoder — same reason.
   "src/jsc/bindings/highway_brotli.cpp",
+  // The highway TU for JSON.parse: behind foreach_target.h, highway.h would not be for the static target.
+  "src/jsc/bindings/highway_json_text.cpp",
   // Declares its own minimal CGRect/kCFStringEncodingUTF8/kCFNumberDoubleType
   // so it doesn't pull a CoreGraphics load command; bundled with files that
   // include the real CF headers those names become ambiguous.
@@ -192,7 +200,7 @@ const noUnifyDirs: readonly string[] = [
 ];
 
 /**
- * How many .cpp files per bundle. WebKit defaults to 8.
+ * How many .cpp files per bundle.
  *
  * Release (incl. release-asan): 32. Measured 701s vs 866s @ 16 vs 1532s @ 8
  * release, C/C++ objects only — frontend parsing dominates, so more dedup wins. ~70 TUs

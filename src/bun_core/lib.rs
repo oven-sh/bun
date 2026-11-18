@@ -60,7 +60,7 @@ pub use ::bstr::{BStr, BString, ByteSlice};
 pub use string::string_joiner::StringJoiner;
 pub use string::{
     EncodedSlice, HashedString, MutableString, NodeEncoding, String, StringBuilder, StringOrView,
-    StringView, Utf8Bytes, Utf8WithString, WTFStringImpl, WTFStringImplExt, WTFStringImplStruct,
+    StringView, Utf8Bytes, Utf8WithString, WTFStringImpl, WTFStringImplStruct,
 };
 pub use string::{
     STRING_ALLOCATION_LIMIT, cheap_prefix_normalizer, escape_reg_exp, identifier, lexer,
@@ -1541,13 +1541,6 @@ pub(crate) mod strings_impl {
         (c0 as u32, 1)
     }
 
-    #[inline]
-    pub fn latin1_to_codepoint_bytes_assume_not_ascii(c: u8) -> [u8; 2] {
-        debug_assert!(c >= 0x80);
-        let cp = c as u32;
-        [0xC0 | (cp >> 6) as u8, 0x80 | (cp & 0x3F) as u8]
-    }
-
     fn append_latin1_as_utf8(list: &mut Vec<u8>, latin1: WithUtf8Len<'_, u8>) {
         list.reserve(latin1.utf8_len());
         crate::vec::append_with(list, usize::MAX, |out| {
@@ -1830,7 +1823,6 @@ pub(crate) mod strings_impl {
                 break;
             }
 
-            debug_assert!(latin1_[read] >= 0x80);
             if STOP {
                 return EncodeIntoResult {
                     written: usize::MAX,
@@ -1840,8 +1832,8 @@ pub(crate) mod strings_impl {
             if buf_.len() - written < 2 {
                 break;
             }
-            buf_[written..written + 2]
-                .copy_from_slice(&latin1_to_codepoint_bytes_assume_not_ascii(latin1_[read]));
+            let byte = latin1_[read];
+            buf_[written..written + 2].copy_from_slice(&[0xC0 | byte >> 6, 0x80 | byte & 0x3F]);
             written += 2;
             read += 1;
         }

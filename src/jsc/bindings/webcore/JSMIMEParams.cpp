@@ -530,15 +530,8 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncToString, (JSGlobalObject * global
     JSMapIterator* iterator = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), map, IterationKind::Entries);
 
     while (true) {
-        JSValue nextValue;
-        if (!iterator->next(globalObject, nextValue)) break;
-
-        JSArray* entry = dynamicDowncast<JSArray>(nextValue);
-        if (!entry || entry->length() < 2) // Should not happen
-            continue;
-
-        JSValue keyJS = entry->getIndex(globalObject, 0);
-        JSValue valueJS = entry->getIndex(globalObject, 1);
+        JSValue keyJS, valueJS;
+        if (!iterator->nextKeyValue(globalObject, keyJS, valueJS)) break;
 
         // Key should already be lowercase string from set/constructor
         String key = keyJS.toWTFString(globalObject);

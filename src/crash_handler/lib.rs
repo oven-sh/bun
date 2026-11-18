@@ -1855,8 +1855,8 @@ mod draft {
                 // Backstop for exceptions the VEH passed on: runs only after
                 // every frame-based (SEH) handler has declined, so an
                 // exception a foreign module handles itself never reaches it.
-                // The handler JSC registers for JIT frames
-                // (ZigGlobalObject.cpp -> setJITExceptionHandlerWin) catches
+                // The handler for JIT frames (ZigGlobalObject.cpp ->
+                // setExceptionHandlerOfGeneratedCode) catches
                 // the under-JIT case before this.
                 bun_sys::windows::kernel32::SetUnhandledExceptionFilter(Some(
                     bun_ptr::cast_fn_ptr::<
@@ -1938,19 +1938,15 @@ mod draft {
         // Just the panic message — no `(file:line:col)` suffix. The call site is
         // captured in the backtrace and symbolized there. With `-Zlocation-detail=none`
         // in release the location would be `<redacted>:0:0` anyway.
-        let mut msg_buf = BoundedArray::<u8, 1024>::default();
-        {
-            let payload = info.payload();
-            let msg: &str = if let Some(s) = payload.downcast_ref::<&'static str>() {
-                s
-            } else if let Some(s) = payload.downcast_ref::<std::string::String>() {
-                s.as_str()
-            } else {
-                "<non-string panic payload>"
-            };
-            let _ = write!(msg_buf.writer(), "{msg}");
-        }
-        let reason = CrashReason::Panic(msg_buf.const_slice());
+        let payload = info.payload();
+        let message: &str = if let Some(s) = payload.downcast_ref::<&'static str>() {
+            s
+        } else if let Some(s) = payload.downcast_ref::<std::string::String>() {
+            s.as_str()
+        } else {
+            "<non-string panic payload>"
+        };
+        let reason = CrashReason::Panic(message[..message.floor_char_boundary(1024)].as_bytes());
 
         let mut trace_str_buf = BoundedArray::<u8, 1024>::default();
         let addresses_in_trace: [usize; 20];
@@ -2218,10 +2214,9 @@ mod draft {
         // `ERROR_INVALID_PARAMETER`. Treating that first-chance exception as
         // fatal kills the process for what the callee was about to recover
         // from. So only take over here when the faulting instruction is inside
-        // Bun's own image; for foreign code, let SEH dispatch proceed. JSC
+        // Bun's own image; for foreign code, let SEH dispatch proceed. The engine
         // registers unwind info for its JIT pool with a language-specific
-        // handler (LLInt is pending build-time offlineasm .seh_* emission)
-        // that routes back to `Bun__crashHandlerFromJSCFrame`, and
+        // handler that routes back to `Bun__crashHandlerFromJSCFrame`, and
         // `handle_unhandled_exception_windows` reports anything that still
         // goes unhandled. Stack overflow is always claimed here: no foreign
         // `__except` recovers from it in practice, and SEH dispatch itself
@@ -2245,7 +2240,7 @@ mod draft {
         );
     }
 
-    /// Called from JSC's `jscJITSEHHandler` when SEH dispatch reaches a JIT
+    /// Called when SEH dispatch reaches a JIT
     /// frame with an unhandled exception. Reports the crash if the reason is
     /// one we classify; otherwise continues the search so an outer handler
     /// (or UEF) can claim it.
@@ -2259,7 +2254,7 @@ mod draft {
     ) -> c_long {
         use bun_sys::windows::disposition::ExceptionContinueSearch;
         // A PEXCEPTION_ROUTINE can also be invoked during the unwind phase if
-        // the frame's UNWIND_INFO carries UNW_FLAG_UHANDLER (the WebKit side
+        // the frame's UNWIND_INFO carries UNW_FLAG_UHANDLER (the engine
         // currently sets EHANDLER only; this matches SpiderMonkey's guard).
         // Also decline once `reset_segfault_handler` has torn down the VEH so
         // a re-fault during teardown reaches the OS default instead of
@@ -3396,7 +3391,7 @@ mod draft {
     use bun_core::DumpStackTraceOptions as WriteStackTraceLimits;
 
     /// Clone of `debug.writeStackTrace`, but can be configured to stop at either a
-    /// frame count, or when hitting jsc LLInt Additionally, the printing function
+    /// frame count, or when hitting the interpreter. Additionally, the printing function
     /// does not print the `^`, instead it highlights the word at the column. This
     /// Makes each frame take up two lines instead of three.
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
@@ -3455,7 +3450,9 @@ mod draft {
                 frame_index += 1;
                 continue;
             }
-            if limits.stop_at_jsc_llint && strings::includes(&source.symbol_name, b"_llint_") {
+            if limits.stop_at_interpreter
+                && strings::includes(&source.symbol_name, b"bun_engine_interpreter")
+            {
                 break;
             }
 

@@ -2,12 +2,6 @@ use bun_valkey::client::{Acked, Attempt, Client, Close, Config, Event, Lost, Rea
 use bun_valkey::command::Reply;
 use bun_valkey::valkey_protocol::RESPValue;
 
-/// Stands in for wtf-bindings.cpp; no test sends a double.
-#[unsafe(no_mangle)]
-extern "C" fn WTF__parseDouble(_: *const u8, _: usize, _: *mut usize) -> f64 {
-    unreachable!()
-}
-
 /// Stands in for highway_strings.cpp.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn highway_memmem(

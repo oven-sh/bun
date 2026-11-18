@@ -1,121 +1,151 @@
-//! `BUN_BYTECODE_ORDER_OUT=<path>` in a `--compile --bytecode` executable: record what every VM of the process (the main
-//! thread's and each Worker's) reads out of the bytecode payload, and have the main thread write it at exit as a payload
+//! `BUN_BYTECODE_ORDER_OUT=<path>` in a `--compile --bytecode` executable: record what every thread of the process (the main
+//! thread and each Worker) reads out of the bytecode payload, and have the main thread write it at exit as a payload
 //! order file (`bun_bundler::bytecode_order` reads it back
 //! for `--bytecode-order`). `%p` in the path becomes the pid. Nothing is recorded without the variable.
-//! Apart from that, in an executable built with an order file every VM counts the function bodies it decodes by the
+//! Apart from that, in an executable built with an order file every thread counts the function bodies it decodes by the
 //! region of the payload they are in (`bytecodeOrderStats()` of `bun:jsc`).
 
-use bun_bundler::bytecode_order::{self, CodeNames, RecordedFunction, RecordedSource, Recording};
+use core::cell::Cell;
+
+use bun_bundler::bytecode::{digest_of_chunk, digest_of_internal_module, host_builtins};
+use bun_bundler::bytecode_order::{self, REGION_COUNT, Recording};
+use bun_collections::HashMap;
+use bun_engine_bytecode::cache::{
+    Digest, Embedding, EntryId, FunctionKey, Observer, Region, order_hash,
+};
+use bun_engine_text::{StringRef, Text};
+use bun_exe_format::builtins::Builtins;
+use bun_threading::Guarded;
 
 use crate::generated_bindgen::bytecode_order_recorder::{
     BytecodeOrderNames, BytecodeOrderTextKind,
 };
-use crate::virtual_machine::VirtualMachine;
-use crate::vm::VM;
 
-unsafe extern "C" {
-    fn Bun__BytecodeOrder__enableRecording(vm: *mut VM);
-    fn Bun__BytecodeOrder__setLinkedPayload(
-        vm: *mut VM,
-        payload: *const u8,
-        payload_size: usize,
-        region_ends: *const u32,
-        region_count: usize,
-    );
-    fn Bun__BytecodeOrder__takeRecording(
-        ctx: *mut core::ffi::c_void,
-        take: unsafe extern "C" fn(
-            ctx: *mut core::ffi::c_void,
-            sources: *const RecordedSource,
-            source_count: usize,
-            functions: *const RecordedFunction,
-            function_count: usize,
-            evaluated_sources: *const u32,
-            evaluated_source_count: usize,
-            rejected_sources: *const u32,
-            rejected_source_count: usize,
-            strings: *const u64,
-            string_count: usize,
-        ),
-    );
-    fn Bun__BytecodeOrder__digestInternalModule(
-        vm: *mut VM,
-        id: u32,
-        bytecode: *mut u8,
-        bytecode_size: usize,
-        entry_offset: u32,
-        digest: *mut u64,
-        code_blocks: *mut u32,
-    ) -> bool;
+type Graph = &'static dyn bun_resolver::StandaloneModuleGraph;
+
+/// What one thread has read, in that order.
+#[derive(Default)]
+struct Reads {
+    functions: Vec<(EntryId, FunctionKey)>,
+    entries: Vec<(EntryId, bool)>,
+    strings: Vec<u64>,
+    seen_strings: HashMap<u64, ()>,
 }
 
-unsafe extern "C" {
-    fn Bun__BytecodeOrder__digestModule(
-        vm: *mut VM,
-        source: &bun_core::String,
-        origin_path: &bun_core::String,
-        is_module: bool,
-        bytecode: *mut u8,
-        bytecode_size: usize,
-        entry_offset: u32,
-        digest: *mut u64,
-        code_blocks: *mut u32,
-    ) -> bool;
+/// In the order in which the threads began. `None` once they are taken, and if nothing is recorded.
+static READS: Guarded<Option<Vec<Reads>>> = Guarded::new(None);
+
+thread_local! {
+    static INDEX_IN_READS: Cell<Option<usize>> = const { Cell::new(None) };
+    /// How many functions were hot, unknown and cold, then how many bytes.
+    static DECODED: [Cell<u64>; 6] = const { [const { Cell::new(0) }; 6] };
+}
+
+fn record(read: impl FnOnce(&mut Reads)) {
+    if let Some(threads) = &mut *READS.lock() {
+        let index = INDEX_IN_READS.get().unwrap_or_else(|| {
+            threads.push(Reads::default());
+            threads.len() - 1
+        });
+        INDEX_IN_READS.set(Some(index));
+        read(&mut threads[index]);
+    }
+}
+
+struct Watcher {
+    region_ends: [u32; REGION_COUNT],
+    is_recording: bool,
+}
+
+impl Observer for Watcher {
+    fn entry_read(&self, entry: EntryId, is_usable: bool) {
+        if self.is_recording {
+            record(|reads| reads.entries.push((entry, is_usable)));
+        }
+    }
+
+    fn function_read(&self, entry: EntryId, key: Option<FunctionKey>, at: core::ops::Range<u32>) {
+        let is_after = |region: Region| usize::from(at.start >= self.region_ends[region as usize]);
+        let class = is_after(Region::Hot) + is_after(Region::Unknown);
+        DECODED.with(|decoded| {
+            decoded[class].update(|count| count + 1);
+            decoded[3 + class].update(|bytes| bytes + at.len() as u64);
+        });
+        if self.is_recording {
+            record(|reads| reads.functions.extend(key.map(|key| (entry, key))));
+        }
+    }
+
+    fn shared_string_read(&self, text: Text<'_>) {
+        let hash = order_hash(text);
+        record(|reads| {
+            if reads.seen_strings.insert(hash, ()).is_none() {
+                reads.strings.push(hash);
+            }
+        });
+    }
+}
+
+/// Before the first VM is made.
+pub(crate) fn install(graph: Graph) {
+    let (linked, is_recording) = (graph.linked_bytecode_payload(), output_path().is_some());
+    *READS.lock() = is_recording.then(Vec::new);
+    let watcher = (is_recording || linked.is_some()).then(|| Watcher {
+        region_ends: linked.map_or_default(|(_, region_ends)| region_ends),
+        is_recording,
+    });
+    Embedding {
+        strings: graph.bytecode_string_table(),
+        observer: watcher.map(|it| Box::leak(Box::new(it)) as &dyn Observer),
+        is_recorded: is_recording,
+    }
+    .install();
+}
+
+/// `bytecodeOrderStats()` of `bun:jsc`. False unless an order file has laid the bytecode out.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__BytecodeOrder__statistics(
+    region_ends: &mut [u32; REGION_COUNT],
+    decoded: &mut [u64; 6],
+) -> bool {
+    let graph = crate::virtual_machine::standalone_module_graph();
+    let Some((_, ends)) = graph.and_then(|graph| graph.linked_bytecode_payload()) else {
+        return false;
+    };
+    *region_ends = ends;
+    *decoded = DECODED.with(|decoded| decoded.each_ref().map(Cell::get));
+    true
 }
 
 /// `BUN_BYTECODE_DIGEST_OUT=<path>`: decode everything every module's bytecode holds and write one sorted line per
-/// module, `<path the bytecode is keyed on> <digest> <code blocks>` (`- -` where the bytecode does not decode for the
+/// module, `<path> <digest> <records>` (`- -` where the bytecode does not decode for the
 /// module). Two builds of the same sources have equal digests however their bytecode is laid out.
 #[inline(never)]
-fn write_digests(vm: &VirtualMachine, graph: &'static dyn bun_resolver::StandaloneModuleGraph) {
+fn write_digests(graph: Graph) {
     bun_removable_features::removable_definition!(Interpreter, write_digests);
     let Some(path) = bun_core::env_var::BUN_BYTECODE_DIGEST_OUT.get_not_empty() else {
         return;
     };
     let mut lines: Vec<String> = Vec::new();
+    let mut add = |name: &dyn core::fmt::Display, digest: Option<Digest>| {
+        lines.push(match digest {
+            Some(Digest { hash, records }) => format!("{name} {hash:016x} {records}\n"),
+            None => format!("{name} - -\n"),
+        });
+    };
     graph.for_each_bytecode_module(&mut |module| {
-        let origin_path = bun_core::String::clone_utf8(module.origin_path);
-        let (mut digest, mut code_blocks) = (0u64, 0u32);
-        // SAFETY: `jsc_vm` is this thread's live VM; the payload is a live section of the executable.
-        let ok = unsafe {
-            Bun__BytecodeOrder__digestModule(
-                vm.jsc_vm.get(),
-                &module.source,
-                &origin_path,
-                module.is_esm,
-                module.bytecode.cast::<u8>(),
-                module.bytecode.len(),
-                module.bytecode_entry_offset,
-                &raw mut digest,
-                &raw mut code_blocks,
-            )
-        };
-        let name = bstr::BStr::new(module.origin_path);
-        lines.push(if ok {
-            format!("{name} {digest:016x} {code_blocks}\n")
-        } else {
-            format!("{name} - -\n")
-        });
+        let text = (module.source.as_engine_string()).map_or_default(StringRef::retain);
+        let (bytecode, entry) = (module.bytecode, module.bytecode_entry_offset);
+        let digest = digest_of_chunk(&text, module.is_esm, bytecode, entry);
+        add(&bstr::BStr::new(module.origin_path), digest);
     });
-    graph.for_each_builtin_bytecode(&mut |id, bytecode, entry_offset| {
-        let (mut digest, mut code_blocks) = (0u64, 0u32);
-        // SAFETY: as above.
-        let ok = unsafe {
-            Bun__BytecodeOrder__digestInternalModule(
-                vm.jsc_vm.get(),
-                id,
-                bytecode.cast::<u8>(),
-                bytecode.len(),
-                entry_offset,
-                &raw mut digest,
-                &raw mut code_blocks,
-            )
-        };
-        lines.push(if ok {
-            format!("internal:{id} {digest:016x} {code_blocks}\n")
-        } else {
-            format!("internal:{id} - -\n")
+    let builtins = Builtins::parse(host_builtins()).ok();
+    graph.for_each_builtin_bytecode(&mut |id, bytecode, entry| {
+        let digest = builtins.as_ref().and_then(|builtins| {
+            let text = builtins.module(id)?.source;
+            digest_of_internal_module(text, builtins.source_stamp, bytecode, entry)
         });
+        add(&format_args!("internal:{id}"), digest);
     });
     lines.sort();
     if let Err(err) = write_replacing(path, lines.concat().as_bytes()) {
@@ -131,40 +161,8 @@ fn output_path() -> Option<&'static [u8]> {
     bun_core::env_var::BUN_BYTECODE_ORDER_OUT.get_not_empty()
 }
 
-/// For every VM, once its `DecoderStringTable` (if the executable has one) is installed.
-pub(crate) fn init_vm(
-    vm: &VirtualMachine,
-    graph: &'static dyn bun_resolver::StandaloneModuleGraph,
-) {
-    // `bytecodeOrderStats()` of `bun:jsc`: this VM counts the function bodies it decodes by the payload's regions.
-    if let Some((payload, region_ends)) = graph.linked_bytecode_payload() {
-        // SAFETY: `jsc_vm` is this thread's live VM; the payload is a live section of the executable.
-        unsafe {
-            Bun__BytecodeOrder__setLinkedPayload(
-                vm.jsc_vm.get(),
-                payload.cast::<u8>(),
-                payload.len(),
-                region_ends.as_ptr(),
-                region_ends.len(),
-            )
-        };
-    }
-    enable_if_requested(vm);
-}
-
-fn enable_if_requested(vm: &VirtualMachine) {
-    if output_path().is_none() {
-        return;
-    }
-    // SAFETY: `jsc_vm` is this thread's live VM.
-    unsafe { Bun__BytecodeOrder__enableRecording(vm.jsc_vm.get()) };
-}
-
 /// Once: a process that outlives the signal it sent itself has written its order file when it really exits.
-pub(crate) fn write_at_exit(
-    vm: &VirtualMachine,
-    graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
-) {
+pub(crate) fn write_at_exit(graph: Option<Graph>) {
     static WRITTEN: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
     let Some(graph) = graph else {
         return;
@@ -178,26 +176,29 @@ pub(crate) fn write_at_exit(
     }
     // Taking the recording ends it: digesting reads every string, which would count as read by the program.
     write_order_file(graph);
-    write_digests(vm, graph);
+    write_digests(graph);
 }
 
-/// What every VM of the process recorded, as an order file names it: JavaScriptCore knows the code it saw run by where
+/// What every thread of the process recorded, as an order file names it: the engine knows the code it saw run by where
 /// it starts in which of the executable's bytecode, and the names come from parsing the text all of it was compiled from.
 #[inline(never)]
-fn write_order_file(graph: &'static dyn bun_resolver::StandaloneModuleGraph) {
+fn write_order_file(graph: Graph) {
     bun_removable_features::removable_definition!(Interpreter, write_order_file);
     let Some(path) = output_path() else {
         return;
     };
+    let threads = READS.lock().take().unwrap_or_default();
     // Everything the executable has bytecode for: where that is, what it is called, and its text.
-    let mut bytecode: Vec<RecordedSource> = Vec::new();
+    let mut module_at: HashMap<EntryId, usize> = HashMap::default();
+    let entry_id = |payload: &[u8], offset| EntryId {
+        payload: payload.as_ptr().addr(),
+        offset,
+    };
     let mut module_names: Vec<&[u8]> = Vec::new();
     let mut chunks: Vec<(bun_core::String, bool)> = Vec::new();
     graph.for_each_bytecode_module(&mut |module| {
-        bytecode.push(RecordedSource {
-            payload: module.bytecode.cast::<u8>().cast_const(),
-            entry_offset: module.bytecode_entry_offset,
-        });
+        let entry = entry_id(module.bytecode, module.bytecode_entry_offset);
+        module_at.insert(entry, module_names.len());
         module_names.push(module.origin_path);
         chunks.push((module.source, module.is_esm));
     });
@@ -218,16 +219,10 @@ fn write_order_file(graph: &'static dyn bun_resolver::StandaloneModuleGraph) {
         })
         .collect();
     let chunk_count = named.len();
-    let builtins = bun_exe_format::builtins::Builtins::parse(
-        crate::cached_bytecode::__bun_jsc_host_builtins(),
-    )
-    .ok();
+    let builtins = Builtins::parse(host_builtins()).ok();
     graph.for_each_builtin_bytecode(&mut |id, payload, entry_offset| {
         if let Some(module) = builtins.as_ref().and_then(|builtins| builtins.module(id)) {
-            bytecode.push(RecordedSource {
-                payload: payload.cast::<u8>().cast_const(),
-                entry_offset,
-            });
+            module_at.insert(entry_id(payload, entry_offset), module_names.len());
             module_names.push(module.name);
             named.push(bytecode_order::Named::InternalModule(module.source));
         }
@@ -251,85 +246,30 @@ fn write_order_file(graph: &'static dyn bun_resolver::StandaloneModuleGraph) {
         }
     }
 
-    struct Context<'a> {
-        bytecode: &'a [RecordedSource],
-        names: &'a [Option<CodeNames>],
-        text: Vec<u8>,
-        functions_without_name: usize,
+    let names_at = |entry: &EntryId| names[*module_at.get(entry)?].as_ref();
+    let mut recording = Recording::default();
+    let mut was_usable: Vec<Option<bool>> = vec![None; names.len()];
+    for reads in &threads {
+        for (entry, is_usable) in &reads.entries {
+            if let Some(&module) = module_at.get(entry) {
+                *was_usable[module].get_or_insert_default() |= is_usable;
+            }
+            (recording.evaluated_modules).extend(names_at(entry).filter(|_| *is_usable));
+        }
+        let functions = reads.functions.iter();
+        (recording.functions).extend(functions.filter_map(|it| Some((names_at(&it.0)?, it.1))));
+        recording.strings.extend(&reads.strings);
     }
-    unsafe extern "C" fn take(
-        ctx: *mut core::ffi::c_void,
-        sources: *const RecordedSource,
-        source_count: usize,
-        functions: *const RecordedFunction,
-        function_count: usize,
-        evaluated_sources: *const u32,
-        evaluated_source_count: usize,
-        rejected_sources: *const u32,
-        rejected_source_count: usize,
-        strings: *const u64,
-        string_count: usize,
-    ) {
-        // SAFETY: `ctx` is the `Context` below; each array is valid for its count for the duration of the call.
-        let (ctx, sources, functions, evaluated_sources, rejected_sources, strings) = unsafe {
-            (
-                &mut *ctx.cast::<Context<'_>>(),
-                bun_core::ffi::slice(sources, source_count),
-                bun_core::ffi::slice(functions, function_count),
-                bun_core::ffi::slice(evaluated_sources, evaluated_source_count),
-                bun_core::ffi::slice(rejected_sources, rejected_source_count),
-                bun_core::ffi::slice(strings, string_count),
-            )
-        };
-        // Bytecode that is not one of the executable's modules is the runtime's own.
-        let names_of_source: Vec<Option<&CodeNames>> = sources
-            .iter()
-            .map(|source| {
-                let module = ctx
-                    .bytecode
-                    .iter()
-                    .position(|bytecode| bytecode == source)?;
-                ctx.names[module].as_ref()
-            })
-            .collect();
-        // A module that ran from its source, its bytecode being for another, says nothing about what it ran: it is
-        // not listed as not evaluated, nor its functions as not run.
-        let ran_from_source = |module: usize| {
-            let is_module = |source: &u32| {
-                sources
-                    .get(*source as usize)
-                    .is_some_and(|source| ctx.bytecode[module] == *source)
-            };
-            rejected_sources.iter().any(is_module) && !evaluated_sources.iter().any(is_module)
-        };
-        let listed: Vec<Option<&CodeNames>> = ctx
-            .names
-            .iter()
-            .enumerate()
-            .map(|(module, names)| names.as_ref().filter(|_| !ran_from_source(module)))
-            .collect();
-        (ctx.text, ctx.functions_without_name) = bytecode_order::write(
-            &listed,
-            &Recording {
-                sources: &names_of_source,
-                functions,
-                evaluated_sources,
-                strings,
-            },
-        );
-    }
-    let mut context = Context {
-        bytecode: &bytecode,
-        names: &names,
-        text: Vec::new(),
-        functions_without_name: 0,
-    };
-    // SAFETY: `take` gets our `&mut context`, during the call only.
-    unsafe { Bun__BytecodeOrder__takeRecording((&raw mut context).cast(), take) };
-    if context.functions_without_name != 0 {
+    // A module that ran from its source, its bytecode being for another, says nothing about what it ran: it is not
+    // listed as not evaluated, nor its functions as not run.
+    let listed: Vec<_> = (names.iter().zip(was_usable))
+        .map(|(names, was_usable)| names.as_ref().filter(|_| was_usable != Some(false)))
+        .collect();
+    let (mut text, functions_without_name) = bytecode_order::write(&listed, &recording);
+    if functions_without_name != 0 {
         bun_core::warn!(
             "the bytecode order file does not list {} functions the program ran: they have no names",
-            context.functions_without_name,
+            functions_without_name,
         );
     }
 
@@ -339,14 +279,14 @@ fn write_order_file(graph: &'static dyn bun_resolver::StandaloneModuleGraph) {
             bstr::BStr::new(path)
         );
         // Not what the path held before, which a build would take for this run's.
-        context.text = format!(
+        text = format!(
             "{}\n{}: none of the program's code has names\n",
             bytecode_order::VERSION,
             bytecode_order::NOT_RECORDED
         )
         .into_bytes();
     }
-    if let Err(err) = write_replacing(path, &context.text) {
+    if let Err(err) = write_replacing(path, &text) {
         bun_core::Output::err(
             err,
             "failed to write the bytecode order file <b>{}<r>",
@@ -417,10 +357,7 @@ pub(crate) fn names_for_testing(
         BytecodeOrderTextKind::Builtin => bytecode_order::Named::InternalModule(text).names(),
         // `text` is the specifier of one of this executable's internal modules, which are all ASCII.
         BytecodeOrderTextKind::Internal => {
-            let builtins = bun_exe_format::builtins::Builtins::parse(
-                crate::cached_bytecode::__bun_jsc_host_builtins(),
-            )
-            .ok();
+            let builtins = Builtins::parse(host_builtins()).ok();
             let Some(module) = builtins
                 .as_ref()
                 .and_then(|builtins| builtins.module(builtins.find(text)?))
@@ -436,4 +373,30 @@ pub(crate) fn names_for_testing(
     let mut lines = Vec::new();
     bytecode_order::write_names(&mut lines, &names);
     BytecodeOrderNames::Lines(lines)
+}
+
+/// `bun:internal-for-testing`: what an executable would have for an internal module with that text. Calls `take` with
+/// the bytecode and the strings, unless the text has an error.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn Bun__internalModuleBytecode(
+    text: *const u8,
+    length: usize,
+    stamp: u32,
+    context: *mut core::ffi::c_void,
+    take: unsafe extern "C" fn(*mut core::ffi::c_void, *const u8, usize, *const u8, usize),
+) {
+    use bun_bundler::bytecode::{Generator, Source, StringTableBuilder};
+    // SAFETY: the characters of a string that the caller holds.
+    let source = Source::InternalModule(unsafe { bun_core::ffi::slice(text, length) }, stamp);
+    let mut strings = StringTableBuilder::default();
+    if let Some(code) = Generator::default().generate(source, u32::MAX, Some(&mut strings))
+        && let Ok(strings) = strings.finish()
+    {
+        let (code, strings) = (
+            (code.as_ptr(), code.len()),
+            (strings.as_ptr(), strings.len()),
+        );
+        // SAFETY: the two go together, and it reads the bytes during the call.
+        unsafe { take(context, code.0, code.1, strings.0, strings.1) };
+    }
 }

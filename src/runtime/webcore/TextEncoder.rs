@@ -1,8 +1,5 @@
-use core::ffi::c_void;
-
 use bun_core::strings;
 use bun_jsc::HostReturn as _;
-use bun_jsc::js_string::Iterator as JSStringIterator;
 use bun_jsc::{ArrayBuffer, JSGlobalObject, JSString, JSType, JSValue, JsResult};
 use bun_simdutf_sys::simdutf::WithUtf8Len;
 
@@ -119,98 +116,6 @@ unsafe extern "C" fn TextEncoder__encode16(
         .or_pending_exception()
 }
 
-// This is a fast path for copying a Rope string into a Uint8Array.
-// This keeps us from an extra string temporary allocation
-struct RopeStringEncoder<'a> {
-    buf: &'a mut [u8],
-    tail: usize,
-    any_non_ascii: bool,
-}
-
-impl<'a> RopeStringEncoder<'a> {
-    /// Recover `(&mut JSStringIterator, &mut Self)` from the rope-iteration
-    /// callback's `*mut JSStringIterator`. Centralises the per-callback raw
-    /// derefs so the four `extern "C"` thunks below are safe callers (one
-    /// accessor, N safe call sites).
-    ///
-    /// # Safety (encapsulated)
-    /// Only ever invoked from the four callbacks registered in [`Self::iter`],
-    /// which JSC calls with the live stack-allocated `JSStringIterator` whose
-    /// `.data` field was set to `&mut Self` by `iter()`. The iterator and the
-    /// encoder live in disjoint stack allocations (the iterator is a local in
-    /// `TextEncoder__encodeRopeString`; the encoder is its sibling local), so
-    /// the two `&mut` borrows do not alias. JSC rope iteration is
-    /// single-threaded and re-entrancy-free, so each is the sole live `&mut`
-    /// for the callback's duration.
-    #[inline(always)]
-    fn resolve<'r>(it: *mut JSStringIterator) -> (&'r mut JSStringIterator, &'r mut Self) {
-        debug_assert!(!it.is_null());
-        // SAFETY: see fn doc — `it` is the live iterator JSC passed; `it.data`
-        // is the `&mut RopeStringEncoder` stashed in `iter()`. Disjoint
-        // allocations, single-threaded, exclusively accessed for `'r`.
-        unsafe {
-            let it = &mut *it;
-            let this = &mut *it.data_ptr().cast::<RopeStringEncoder<'a>>();
-            (it, this)
-        }
-    }
-
-    // The four rope-iteration callbacks coerce (safe → unsafe `extern "C"`) to
-    // the `JSStringIterator` callback-pointer field types at `iter()` below.
-    extern "C" fn append8(it: *mut JSStringIterator, ptr: *const u8, len: u32) {
-        let (it, this) = Self::resolve(it);
-        // SAFETY: ptr[0..len] is provided by JSC rope iteration
-        let src = unsafe { core::slice::from_raw_parts(ptr, len as usize) };
-        let result = strings::copy_latin1_into_utf8_stop_on_non_ascii::<true>(
-            &mut this.buf[this.tail..],
-            src,
-        );
-        if result.read == usize::MAX && result.written == usize::MAX {
-            it.stop = 1;
-            this.any_non_ascii = true;
-        } else {
-            this.tail += result.written;
-        }
-    }
-
-    extern "C" fn append16(it: *mut JSStringIterator, _: *const u16, _: u32) {
-        let (it, this) = Self::resolve(it);
-        this.any_non_ascii = true;
-        it.stop = 1;
-    }
-
-    extern "C" fn write8(it: *mut JSStringIterator, ptr: *const u8, len: u32, offset: u32) {
-        let (it, this) = Self::resolve(it);
-        // SAFETY: ptr[0..len] is provided by JSC rope iteration
-        let src = unsafe { core::slice::from_raw_parts(ptr, len as usize) };
-        let result = strings::copy_latin1_into_utf8_stop_on_non_ascii::<true>(
-            &mut this.buf[offset as usize..],
-            src,
-        );
-        if result.read == usize::MAX && result.written == usize::MAX {
-            it.stop = 1;
-            this.any_non_ascii = true;
-        }
-    }
-
-    extern "C" fn write16(it: *mut JSStringIterator, _: *const u16, _: u32, _: u32) {
-        let (it, this) = Self::resolve(it);
-        this.any_non_ascii = true;
-        it.stop = 1;
-    }
-
-    fn iter(&mut self) -> JSStringIterator {
-        JSStringIterator {
-            data: std::ptr::from_mut::<Self>(self).cast::<c_void>(),
-            stop: 0,
-            append8: Some(Self::append8),
-            append16: Some(Self::append16),
-            write8: Some(Self::write8),
-            write16: Some(Self::write16),
-        }
-    }
-}
-
 // This fast path is only suitable for ASCII strings
 // It's not suitable for UTF-16 strings, because getting the byteLength is unpredictable
 // It also isn't usable for latin1 strings which contain non-ascii characters
@@ -229,20 +134,9 @@ extern "C" fn TextEncoder__encodeRopeString(
     let Some(mut array_buffer) = array.as_array_buffer(global_this) else {
         return JSValue::ZERO;
     };
-    let mut encoder = RopeStringEncoder {
-        buf: array_buffer.byte_slice_mut(),
-        tail: 0,
-        any_non_ascii: false,
-    };
-    let mut iter = encoder.iter();
-    array.ensure_still_alive();
-    rope_str.iterator(global_this, &mut iter);
-    array.ensure_still_alive();
-
-    if encoder.any_non_ascii {
+    if !rope_str.copy_if_ascii(array_buffer.byte_slice_mut()) {
         return JSValue::UNDEFINED;
     }
-
     array
 }
 

@@ -250,12 +250,8 @@ fn pregrow_fd_table() {
 ///   `OPENSSL_system_malloc/realloc/free` definitions in `bun_boringssl`
 ///   (`BORINGSSL_REQUIRE_MEMORY_HOOKS`, off under ASAN).
 fn use_mimalloc_in_dependencies() {
-    // ICU: `u_setMemoryFunctions` (bun_icu_malloc.cpp; no-op under ASAN and
-    // on macOS, where ICU is the system libicucore).
-    unsafe extern "C" {
-        safe fn Bun__useMimallocForICU();
-    }
-    Bun__useMimallocForICU();
+    // SAFETY: nothing has called ICU, and there is no other thread.
+    unsafe { bun_icu::use_default_allocator() };
 
     // libuv (only linked on Windows). Must precede the first uv call. Left on
     // the CRT heap under ASAN like ICU and BoringSSL, so the sanitizer sees

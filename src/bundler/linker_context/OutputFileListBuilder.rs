@@ -3,7 +3,7 @@
 //!    chunk indexing remains the same:
 //!
 //!    1. chunks
-//!    2. sourcemaps, bytecode, and module_info
+//!    2. sourcemaps and bytecode
 //!    3. additional output files
 //!
 //!    We can calculate the space ahead of time and avoid having to do something
@@ -119,12 +119,6 @@ impl OutputFileList {
             0
         };
 
-        let module_info_count: usize = if c.options.generates_module_info() {
-            bytecode_count
-        } else {
-            0
-        };
-
         let additional_output_files_count: usize = if c.options.compile_mode.is_standalone_html() {
             0
         } else {
@@ -132,14 +126,10 @@ impl OutputFileList {
         };
         (
             u32::try_from(
-                chunks.len()
-                    + source_map_count
-                    + bytecode_count
-                    + module_info_count
-                    + additional_output_files_count,
+                chunks.len() + source_map_count + bytecode_count + additional_output_files_count,
             )
             .unwrap(),
-            u32::try_from(source_map_count + bytecode_count + module_info_count).expect("int cast"),
+            u32::try_from(source_map_count + bytecode_count).expect("int cast"),
         )
     }
 

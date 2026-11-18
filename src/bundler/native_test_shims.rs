@@ -22,20 +22,9 @@ not_called_by_tests! {
     __bun_resolver_init_package_manager
     __bun_macro_context_call
     __bun_macro_collect_vm_garbage
-    __bun_jsc_wtf_string_hash
-    __bun_jsc_host_builtins
-    __bun_jsc_generate_internal_module_bytecode_from_source
-    __bun_jsc_generate_internal_module_bytecode
-    __bun_jsc_generate_cached_bytecode
-    __bun_jsc_encoder_string_table_take
-    __bun_jsc_encoder_string_table_slot
-    __bun_jsc_encoder_string_table_new
-    __bun_jsc_bytecode_link_encoder_new
-    __bun_jsc_bytecode_link_encoder_finish
-    __bun_jsc_bytecode_link_encoder_destroy
-    __bun_jsc_bytecode_link_encoder_add_module
-    __bun_jsc_bytecode_link_encoder_add_internal_module_from_source
-    __bun_jsc_bytecode_link_encoder_add_internal_module
+    __bun_engine_embed_detached_host
+    Bun__builtinsSection
+    highway_xxhash3_64
     __bun_dispatch__JsEventLoop__Jsc__tick
     __bun_dispatch__JsEventLoop__Jsc__js_poster
     __bun_dispatch__JsEventLoop__Jsc__auto_tick
@@ -50,7 +39,6 @@ not_called_by_tests! {
     __bun_dispatch__DevServerHandle__Bake__current_bundle_start_data
     __bun_dispatch__DevServerHandle__Bake__barrel_needed_exports
     __bun_dispatch__DevServerHandle__Bake__asset_hash
-    URL__getFileURLString
     JSBundlerPlugin__hasOnBeforeParsePlugins
     JSBundlerPlugin__freezeFilters
     JSBundlerPlugin__callOnBeforeParsePlugins
@@ -77,22 +65,6 @@ extern "C" fn Bun__JSC__operationMathPow(base: f64, exponent: f64) -> f64 {
         return f64::NAN;
     }
     base.powf(exponent)
-}
-
-// No text is a URL here: whoever asks goes on as behind a text that does not parse.
-#[unsafe(no_mangle)]
-#[linkage = "weak"]
-extern "C" fn URL__getHref(_text: &bun_core::String) -> bun_core::String {
-    bun_core::String::DEAD
-}
-
-#[unsafe(no_mangle)]
-#[linkage = "weak"]
-extern "C" fn URL__getHrefJoin(
-    _base: &bun_core::String,
-    _relative: &bun_core::String,
-) -> bun_core::String {
-    bun_core::String::DEAD
 }
 
 const SIZE_OF_LOOP: usize = 64 * 1024;

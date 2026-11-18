@@ -25,7 +25,7 @@
 //! | `a.localeCompare(b)`, `new Intl.Collator("en", { numeric: true, sensitivity: "base" })` | `bun_core::strings` | `strings::locale_compare(a, b)`, `strings::locale_compare_numeric_base(a, b)` |
 //! | a `Literal` listener that looks at strings or numbers: keys, module specifiers and literal types are not expressions here | `rule.rs` | `on.string_literals(f)`, `on.number_literals(f)` |
 //! | `n.toString(radix)`, `parseInt`, `parseFloat`, `ToInt32` | [`eslint_utils::js_number`] | `js_number::parse_int(text, 10)`, .. |
-//! | `n.toPrecision(p)`, `n.toFixed(d)`, `n.toExponential(d)`, `Number(s)` | `bun_core::fmt` | `FormatDouble::to_precision(&mut [0; 124], n, p)`, `js_string_to_number(s)` |
+//! | `n.toPrecision(p)`, `n.toFixed(d)`, `n.toExponential(d)`, `Number(s)` | `bun_core::fmt` | `FormatDouble::to_precision(&mut [0; 128], n, p)`, `js_string_to_number(s)` |
 //! | methods of `String`, `/\s/` | [`text`] | `bun_core::strings::trim_js_whitespace(bytes)`, `bun_core::strings::wtf8_len_utf16(bytes)` |
 //! | a fix that renames a variable or declares a new one | [`names`] | `names::is_free(name, scope, uses)` |
 //! | a fix that's only correct for an array, a string or a regular expression, in a rule without type information | [`visible`] | `report.fix_where_safe(\|\| visible::is_visibly_array(e), fix)` |

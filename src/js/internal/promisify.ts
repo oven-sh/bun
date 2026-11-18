@@ -71,7 +71,10 @@ var promisify = function promisify(original: (...args: any[]) => unknown) {
   }
   Object.setPrototypeOf(fn, Object.getPrototypeOf(original));
   defineCustomPromisify(fn, fn);
-  return Object.defineProperties(fn, Object.getOwnPropertyDescriptors(original));
+  const descriptors = Object.getOwnPropertyDescriptors(original);
+  const keys = Reflect.ownKeys(descriptors);
+  for (let i = 0; i < keys.length; i++) Object.setPrototypeOf(descriptors[keys[i]], null);
+  return Object.defineProperties(fn, descriptors);
 } as Promisify;
 promisify.custom = kCustomPromisifiedSymbol;
 

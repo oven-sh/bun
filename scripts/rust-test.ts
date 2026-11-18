@@ -1,10 +1,9 @@
 #!/usr/bin/env bun
 /**
- * `cargo test` for the crates whose tests link without JavaScriptCore and
- * Bun's C++.
+ * `cargo test` for the crates whose tests link without Bun's C++.
  *
  * A crate's test binary links everything the crate can reach, so a crate that
- * declares functions of the engine or of vendored C cannot be tested this way:
+ * declares functions of the bindings or of vendored C cannot be tested this way:
  * its tests run as part of Bun, from test/.
  *
  * Usage:
@@ -13,17 +12,10 @@
  *
  * `cargo test` runs one test program behind another. For the whole list each program starts when cargo has linked it,
  * beside those that still run and beside the rest of the build. What a program prints is shown when it ends.
- *
- * TESTAOT=<testaot>: the engine reads what the front end writes in some tests of bun_aot. With it, and in CI, a test that
- * the engine did not see fails. Without it such a test leaves that part out.
- *
- * BUN_UNDER_TEST=<bun>: beside the crates it builds and runs the programs of test/aot/library-sweeps, which compile all of
- * Bun's library or much of it. This step has the processors for them, and no shard of the tests waits for it.
  */
 
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { readdirSync } from "node:fs";
-import { delimiter, dirname, join, relative, resolve } from "node:path";
+import { spawn, spawnSync } from "node:child_process";
+import { delimiter, dirname, relative, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { isBuildkite } from "./buildkite.ts";
 
@@ -31,9 +23,7 @@ const repo = resolve(import.meta.dirname, "..");
 
 // To add a crate it must have at least one `#[test]` and link by itself.
 const crates = [
-  "bun_aot",
   "bun_base64",
-  "bun_builtin_sources",
   "bun_bundler",
   "bun_collections",
   "bun_crash_handler",
@@ -74,28 +64,10 @@ const crates = [
   "bun_wyhash",
 ];
 
-// Not `spawnSync`: what runs beside it writes into pipes that this process empties.
-async function run(cmd: string, args: string[], env: NodeJS.ProcessEnv = process.env) {
+function run(cmd: string, args: string[], env: NodeJS.ProcessEnv = process.env) {
   console.log(`\x1b[36m[test]\x1b[0m ${cmd} ${args.join(" ")}`);
-  const child = spawn(cmd, args, { stdio: "inherit", cwd: repo, env });
-  const status = await new Promise<number | null>(done => child.on("close", done).on("error", () => done(1)));
-  if (status === 0) return;
-  // Asked to end, a program ends what it has started itself.
-  for (const program of running) program.kill();
-  await Promise.all(programs);
-  process.exit(status ?? 1);
-}
-
-const requiresEngine = !!process.env.TESTAOT || !!process.env.CI;
-if (requiresEngine && !process.env.TESTAOT) {
-  console.error("TESTAOT is not set: in CI the step downloads testaot from the build (.buildkite/ci.ts)");
-  process.exit(1);
-}
-
-const bunUnderTest = process.env.BUN_UNDER_TEST;
-if (process.env.CI && !bunUnderTest) {
-  console.error("BUN_UNDER_TEST is not set: in CI the step downloads Bun from the build (.buildkite/ci.ts)");
-  process.exit(1);
+  const { status } = spawnSync(cmd, args, { stdio: "inherit", cwd: repo, env });
+  if (status !== 0) process.exit(status ?? 1);
 }
 
 interface TestProgram {
@@ -107,18 +79,15 @@ interface TestProgram {
 function start(name: string, command: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv }) {
   const started = performance.now();
   const program = spawn(command, args, { ...options, stdio: ["ignore", "pipe", "pipe"] });
-  running.add(program);
   const output: Buffer[] = [];
   program.stdout.on("data", chunk => output.push(chunk));
   program.stderr.on("data", chunk => output.push(chunk));
   return new Promise<TestProgram>(done => {
     program.on("error", error => {
-      running.delete(program);
       console.error(`\x1b[31m[test]\x1b[0m ${name}: ${error.message}`);
       done({ name, status: 1 });
     });
     program.on("close", (code, signal) => {
-      running.delete(program);
       const seconds = ((performance.now() - started) / 1000).toFixed(1);
       console.log(`\x1b[36m[test]\x1b[0m ${name} (${seconds} s)`);
       process.stdout.write(Buffer.concat(output));
@@ -129,27 +98,16 @@ function start(name: string, command: string, args: string[], options: { cwd: st
 
 const extraArgs = process.argv.slice(2);
 const programs: Promise<TestProgram>[] = [];
-const running = new Set<ChildProcess>();
 
 // The crates `include!()` generated sources, cargo cannot resolve the workspace until the vendored path dependencies
-// exist, and the build script of bun_sema_standalone compiles zstd's decoder. Of WebKit the code generators are enough.
-await run("bun", ["install", "--frozen-lockfile"]);
-// They need nothing of what follows, which leaves most of the processors idle until cargo starts.
-if (bunUnderTest && !extraArgs.length) {
-  const sweeps = "test/aot/library-sweeps";
-  const files = readdirSync(resolve(repo, sweeps)).filter(name => /\.[cm]?[jt]s$/.test(name));
-  const args = ["test/aot/run-parallel.ts", `--root=${sweeps}`, ...files.map(name => join(sweeps, name))];
-  programs.push(start(sweeps, bunUnderTest, args, { cwd: repo, env: process.env }));
-}
-await run(
-  // A CI machine runs the build with the node of its image, and the build checks the version of what runs it.
-  isBuildkite ? "node" : "bun",
-  [
-    "scripts/build.ts",
-    ...["codegen", "clone-zstd", "clone-lolhtml", "clone-rust-argon2"].map(name => `--target=${name}`),
-  ],
-  { BUN_WEBKIT_GENERATORS_ONLY: "1", ...process.env },
-);
+// exist, and the build script of bun_sema_standalone compiles zstd's decoder.
+run("bun", ["install", "--frozen-lockfile"]);
+// A CI machine runs the build with the node of its image, and the build checks the version of what runs it.
+run(isBuildkite ? "node" : "bun", [
+  "scripts/build.ts",
+  "--icu=system",
+  ...["codegen", "clone-zstd", "clone-lolhtml", "clone-rust-argon2"].map(name => `--target=${name}`),
+]);
 
 // .cargo/config.toml has flags for the target, and cargo joins these to them. Flags for the build would be passed over.
 const host = /^host: (.+)$/m.exec(spawnSync("rustc", ["-vV"], { encoding: "utf8", cwd: repo }).stdout)?.[1] ?? "";
@@ -162,18 +120,16 @@ const env = {
   ...(process.env.CI && { CARGO_INCREMENTAL: "0" }),
   ...process.env,
   BUN_CODEGEN_DIR: resolve(repo, "build/debug/codegen"),
-  ...(requiresEngine && { AOT_IR_REQUIRES_ENGINE: "1" }),
   // Without optimization a frame is several times as large, and the tests of the nesting limits reach the end of the
   // stack before the limit.
   CARGO_PROFILE_DEV_OPT_LEVEL: "1",
-  // With optimization the frame pointer goes unless it is forced, as scripts/build/rust.ts does:
-  // `bun_core::return_address()` reads it. The two largest crates are compiled one behind the other, each with most of
-  // the processors idle until it generates code: see `-Zthreads` there.
-  [flagsOfHost]: "-Cforce-frame-pointers=yes -Zthreads=8",
+  // The largest crates are compiled one behind the other, each with most of the processors idle until it generates
+  // code: see `-Zthreads` in scripts/build/rust.ts.
+  [flagsOfHost]: "-Zthreads=8",
 };
 
 if (extraArgs.length) {
-  await run("cargo", ["test", "--no-fail-fast", ...extraArgs], env);
+  run("cargo", ["test", "--no-fail-fast", ...extraArgs], env);
   process.exit(0);
 }
 

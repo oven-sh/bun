@@ -1562,6 +1562,18 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(b.toString()).toBe("xxx");
       });
 
+      it.each(["base64", "base64url"])("write %s stops at the first = whatever the size of the buffer", encoding => {
+        for (const chunks of [0, 1, 20, 100]) {
+          const decoded = Buffer.alloc(3 * chunks + 1, "ABC");
+          const text = Buffer.alloc(4 * chunks, "QUJD").toString() + "QQ==" + Buffer.alloc(80, "REVG").toString();
+          for (const spare of [0, 1, 5, 200]) {
+            const buffer = Buffer.alloc(decoded.length + spare, "-");
+            expect(buffer.write(text, encoding)).toBe(decoded.length);
+            expect(buffer.subarray(0, decoded.length)).toEqual(decoded);
+          }
+        }
+      });
+
       it("buffer overflow", () => {
         // issue GH-5587
         expect(() => Buffer.alloc(8).writeFloatLE(0, 5)).toThrow(RangeError);

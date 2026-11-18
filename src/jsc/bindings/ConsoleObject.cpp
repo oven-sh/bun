@@ -6,87 +6,34 @@
 #include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/ConsoleClient.h>
-#include <JavaScriptCore/ConsoleMessage.h>
 #include <JavaScriptCore/JSString.h>
-#include <JavaScriptCore/ScriptArguments.h>
 #include <wtf/text/WTFString.h>
 
 #include <JavaScriptCore/JSGlobalObjectInspectorController.h>
-#include <JavaScriptCore/JSGlobalObjectDebuggable.h>
-#include <JavaScriptCore/ConsoleClient.h>
-
-#include "GCDefferalContext.h"
-#include <JavaScriptCore/InspectorScriptProfilerAgent.h>
-#include <JavaScriptCore/InspectorDebuggerAgent.h>
-#include <JavaScriptCore/InspectorConsoleAgent.h>
 
 namespace Bun {
 using namespace JSC;
-using namespace Inspector;
 
-using ScriptArguments = Inspector::ScriptArguments;
-using MessageType = JSC::MessageType;
-using MessageLevel = JSC::MessageLevel;
-using JSGlobalObject = JSC::JSGlobalObject;
-
-using String = WTF::String;
+static constexpr size_t maxPrintedArguments = 255;
 
 void ConsoleObject::messageWithTypeAndLevel(MessageType type, MessageLevel level,
     JSC::JSGlobalObject* globalObject,
-    Ref<ScriptArguments>&& arguments)
+    const ArgList& arguments)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (globalObject->inspectable()) {
-        if (auto client = globalObject->inspectorController().consoleClient()) {
-            client->messageWithTypeAndLevel(type, level, globalObject, arguments.copyRef());
-            RETURN_IF_EXCEPTION(scope, );
-        }
-    }
-    auto args = arguments.ptr();
-    JSC::EncodedJSValue jsArgs[255];
-
-    auto count = std::min(args->argumentCount(), (size_t)255);
-    for (size_t i = 0; i < count; i++) {
-        auto val = args->argumentAt(i);
-        jsArgs[i] = JSC::JSValue::encode(val);
+        globalObject->inspectorController().addConsoleMessage(globalObject, type, level, arguments.span());
+        RETURN_IF_EXCEPTION(scope, );
     }
 
-    if (type == MessageType::Table && count >= 2 && !args->argumentAt(1).isUndefined() && (!args->argumentAt(1).isCell() || args->argumentAt(1).asCell()->type() != JSC::JSType::ArrayType)) [[unlikely]] {
+    if (type == MessageType::Table && !arguments.at(1).isUndefined() && !isJSArray(arguments.at(1))) [[unlikely]] {
         JSC::throwTypeError(globalObject, scope, "The \"properties\" argument must be an instance of Array."_s);
         return;
     }
 
-    RELEASE_AND_RETURN(scope, Bun__ConsoleObject__messageWithTypeAndLevel(static_cast<uint32_t>(type), static_cast<uint32_t>(level), globalObject, jsArgs, count));
+    RELEASE_AND_RETURN(scope, Bun__ConsoleObject__messageWithTypeAndLevel(static_cast<uint32_t>(type), static_cast<uint32_t>(level), globalObject, arguments.data(), std::min(arguments.size(), maxPrintedArguments)));
 }
-
-extern "C" SYSV_ABI void Bun__ConsoleObject__printOneText(uint32_t level, JSC::JSGlobalObject*, JSC::EncodedJSValue);
-
-static JSC::EncodedJSValue printValues(JSC::JSGlobalObject* globalObject, const JSC::EncodedJSValue* values, size_t count, MessageLevel level)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto client = globalObject->consoleClient();
-    if (!client)
-        return JSValue::encode(jsUndefined());
-    if (count != 1 || !JSValue::decode(values[0]).isString() || globalObject->inspectable() || !globalObject->inherits<Zig::GlobalObject>()) {
-        Vector<JSC::Strong<JSC::Unknown>> arguments;
-        arguments.reserveInitialCapacity(count);
-        for (size_t index = 0; index < count; ++index)
-            arguments.append({ vm, JSValue::decode(values[index]) });
-        client->logWithLevel(globalObject, ScriptArguments::create(globalObject, WTF::move(arguments)), level);
-    } else
-        Bun__ConsoleObject__printOneText(static_cast<uint32_t>(level), globalObject, values[0]);
-    RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(jsUndefined());
-}
-
-// AOT-compiled code calls these directly for `console.log(..)` and its kin (`directEntry` in the table of built-ins).
-extern "C" SYSV_ABI JSC::EncodedJSValue Bun__ConsoleObject__logValues(JSC::JSGlobalObject* globalObject, const JSC::EncodedJSValue* values, size_t count) { return printValues(globalObject, values, count, MessageLevel::Log); }
-extern "C" SYSV_ABI JSC::EncodedJSValue Bun__ConsoleObject__infoValues(JSC::JSGlobalObject* globalObject, const JSC::EncodedJSValue* values, size_t count) { return printValues(globalObject, values, count, MessageLevel::Info); }
-extern "C" SYSV_ABI JSC::EncodedJSValue Bun__ConsoleObject__debugValues(JSC::JSGlobalObject* globalObject, const JSC::EncodedJSValue* values, size_t count) { return printValues(globalObject, values, count, MessageLevel::Debug); }
-extern "C" SYSV_ABI JSC::EncodedJSValue Bun__ConsoleObject__warnValues(JSC::JSGlobalObject* globalObject, const JSC::EncodedJSValue* values, size_t count) { return printValues(globalObject, values, count, MessageLevel::Warning); }
-extern "C" SYSV_ABI JSC::EncodedJSValue Bun__ConsoleObject__errorValues(JSC::JSGlobalObject* globalObject, const JSC::EncodedJSValue* values, size_t count) { return printValues(globalObject, values, count, MessageLevel::Error); }
 
 void ConsoleObject::count(JSGlobalObject* globalObject, const String& label)
 {
@@ -109,49 +56,27 @@ void ConsoleObject::time(JSGlobalObject*, const String& label)
     auto input = Bun::toString(label);
     Bun__ConsoleObject__time(&input);
 }
-void ConsoleObject::timeLog(JSGlobalObject* globalObject, const String& label,
-    Ref<ScriptArguments>&& arguments)
+void ConsoleObject::timeLog(JSGlobalObject* globalObject, const String& label, const ArgList& arguments)
 {
     auto input = Bun::toString(label);
-
-    auto args = arguments.ptr();
-    JSC::EncodedJSValue jsArgs[255];
-    auto count = std::min(args->argumentCount(), (size_t)255);
-    for (size_t i = 0; i < count; i++) {
-        auto val = args->argumentAt(i);
-        jsArgs[i] = JSC::JSValue::encode(val);
-    }
-
-    Bun__ConsoleObject__timeLog(globalObject, &input, jsArgs, count);
+    Bun__ConsoleObject__timeLog(globalObject, &input, arguments.data(), std::min(arguments.size(), maxPrintedArguments));
 }
 void ConsoleObject::timeEnd(JSGlobalObject*, const String& label)
 {
     auto input = Bun::toString(label);
     Bun__ConsoleObject__timeEnd(&input);
 }
-void ConsoleObject::timeStamp(JSGlobalObject*, Ref<ScriptArguments>&&) {}
-void ConsoleObject::record(JSGlobalObject*, Ref<ScriptArguments>&&) {}
-void ConsoleObject::recordEnd(JSGlobalObject*, Ref<ScriptArguments>&&) {}
-void ConsoleObject::screenshot(JSGlobalObject*, Ref<ScriptArguments>&&)
-{
-}
 
 void ConsoleObject::profile(JSC::JSGlobalObject* globalObject, const String& title)
 {
-    if (globalObject->inspectable()) {
-        if (auto client = globalObject->inspectorController().consoleClient()) {
-            client->profile(globalObject, title);
-        }
-    }
+    if (globalObject->inspectable())
+        globalObject->inspectorController().startConsoleProfile(globalObject, title);
 }
 
 void ConsoleObject::profileEnd(JSC::JSGlobalObject* globalObject, const String& title)
 {
-    if (globalObject->inspectable()) {
-        if (auto client = globalObject->inspectorController().consoleClient()) {
-            client->profileEnd(globalObject, title);
-        }
-    }
+    if (globalObject->inspectable())
+        globalObject->inspectorController().stopConsoleProfile(globalObject, title);
 }
 
 }

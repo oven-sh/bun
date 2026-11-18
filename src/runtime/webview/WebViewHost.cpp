@@ -462,8 +462,8 @@ void WebViewHost::onSelectorComplete(id result, id error)
         hostWriter()->sendReplyStr(m_viewId, Reply::Error, "malformed selector result"_s);
         return;
     }
-    float x = static_cast<float>(s.substring(0, comma).toDouble());
-    float y = static_cast<float>(s.substring(comma + 1).toDouble());
+    float x = static_cast<float>(JSC::jsToNumber(StringView(s).left(comma)));
+    float y = static_cast<float>(JSC::jsToNumber(StringView(s).substring(comma + 1)));
     doNativeClick(x, y, m_selButton, m_selModifiers, m_selClickCount);
 }
 

@@ -4,6 +4,7 @@
 #include "JavaScriptCore/TypedArrayType.h"
 #include "JSBuffer.h"
 #include "MimallocWTFMalloc.h"
+#include "ZigGlobalObject.h"
 
 namespace Bun {
 
@@ -12,27 +13,29 @@ static void freeDefaultAllocatorBytes(void* bytes, void*)
     Bun::defaultAllocatorFree(bytes);
 }
 
-extern "C" JSC::EncodedJSValue JSUint8Array__fromDefaultAllocator(JSC::JSGlobalObject* lexicalGlobalObject, uint8_t* ptr, size_t length)
+// Does not take `ptr` if `length` is zero.
+static JSC::EncodedJSValue adoptAsUint8Array(JSC::JSGlobalObject* lexicalGlobalObject, JSC::Structure* structure, uint8_t* ptr, size_t length)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::JSUint8Array* uint8Array;
 
-    if (length > 0) [[likely]] {
-        if (Bun::rejectBytesNoCopyAboveArrayBufferLimit(lexicalGlobalObject, scope, ptr, length, freeDefaultAllocatorBytes, nullptr)) [[unlikely]]
-            return {};
+    if (!length) [[unlikely]]
+        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::JSUint8Array::create(lexicalGlobalObject, structure, 0)));
 
-        auto buffer = ArrayBuffer::createFromBytes({ ptr, length }, createSharedTask<void(void*)>([](void* p) {
-            freeDefaultAllocatorBytes(p, nullptr);
-        }));
+    if (Bun::rejectBytesNoCopyAboveArrayBufferLimit(lexicalGlobalObject, scope, ptr, length, freeDefaultAllocatorBytes, nullptr)) [[unlikely]]
+        return {};
 
-        uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructureWithTypedArrayType<JSC::TypeUint8>(), WTF::move(buffer), 0, length);
-    } else {
-        uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructureWithTypedArrayType<JSC::TypeUint8>(), 0);
-    }
-    RETURN_IF_EXCEPTION(scope, {});
+    return JSC::JSValue::encode(JSC::JSUint8Array::createAdopted(vm, structure, { ptr, length }));
+}
 
-    return JSC::JSValue::encode(uint8Array);
+extern "C" JSC::EncodedJSValue JSUint8Array__fromDefaultAllocator(JSC::JSGlobalObject* lexicalGlobalObject, uint8_t* ptr, size_t length)
+{
+    return adoptAsUint8Array(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructureWithTypedArrayType<JSC::TypeUint8>(), ptr, length);
+}
+
+extern "C" JSC::EncodedJSValue JSBuffer__fromDefaultAllocator(JSC::JSGlobalObject* lexicalGlobalObject, uint8_t* ptr, size_t length)
+{
+    return adoptAsUint8Array(lexicalGlobalObject, defaultGlobalObject(lexicalGlobalObject)->JSBufferSubclassStructure(), ptr, length);
 }
 
 extern "C" JSC::EncodedJSValue JSArrayBuffer__fromDefaultAllocator(JSC::JSGlobalObject* lexicalGlobalObject, uint8_t* ptr, size_t length)
@@ -45,9 +48,7 @@ extern "C" JSC::EncodedJSValue JSArrayBuffer__fromDefaultAllocator(JSC::JSGlobal
         if (Bun::rejectBytesNoCopyAboveArrayBufferLimit(lexicalGlobalObject, scope, ptr, length, freeDefaultAllocatorBytes, nullptr)) [[unlikely]]
             return {};
 
-        buffer = ArrayBuffer::createFromBytes({ ptr, length }, createSharedTask<void(void*)>([](void* p) {
-            freeDefaultAllocatorBytes(p, nullptr);
-        }));
+        buffer = ArrayBuffer::createAdopted({ ptr, length });
     } else {
         buffer = ArrayBuffer::create(0, 1);
     }

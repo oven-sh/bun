@@ -3,7 +3,6 @@
 
 #include "BunClientData.h"
 #include "DOMClientIsoSubspaces.h"
-#include "DOMIsoSubspaces.h"
 #include "GeneratedSink.h"
 #include "JSDOMBinding.h"
 #include "JSDOMExceptionHandling.h"

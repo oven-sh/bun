@@ -152,6 +152,7 @@ Local<Value> Isolate::ThrowError(Local<String> message)
     JSC::VM& vm = this->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     WTF::String wtfMessage = message->localToJSString()->value(m_globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
     // JSC::createError asserts that the message is not empty.
     JSC::JSObject* error = JSC::ErrorInstance::create(vm, m_globalObject->errorStructure(), wtfMessage, JSC::JSValue());
     Local<Value> handle = currentHandleScope()->createLocal<Value>(vm, error);

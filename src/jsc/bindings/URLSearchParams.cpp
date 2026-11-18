@@ -48,17 +48,6 @@ extern "C" void URLSearchParams__toString(WebCore::URLSearchParams* urlSearchPar
     callback(ctx, &slice);
 }
 
-static bool canDecodeURLEncodedPart(StringView part)
-{
-    // There's nothing to decode, so the parser returns the part unchanged.
-    if (part.containsOnlyASCII() && part.find('%') == notFound)
-        return true;
-    size_t utf8Length = part.is8Bit()
-        ? simdutf::utf8_length_from_latin1(reinterpret_cast<const char*>(part.span8().data()), part.length())
-        : simdutf::utf8_length_from_utf16le(part.span16().data(), part.length());
-    return utf8Length <= Bun::maxVectorSize<char16_t>();
-}
-
 static bool tryAppendPair(Vector<KeyValuePair<String, String>>& pairs, KeyValuePair<String, String>&& pair)
 {
     return pairs.size() < Bun::maxVectorSize<KeyValuePair<String, String>>() && pairs.tryAppend(WTF::move(pair));
@@ -66,21 +55,10 @@ static bool tryAppendPair(Vector<KeyValuePair<String, String>>& pairs, KeyValueP
 
 ExceptionOr<Vector<KeyValuePair<String, String>>> URLSearchParams::parseURLEncodedForm(StringView input)
 {
-    // A UTF-16 code unit is at most 3 UTF-8 bytes.
-    bool mayBeTooLong = static_cast<size_t>(input.length()) * 3 > Bun::maxVectorSize<char16_t>();
-    Vector<KeyValuePair<String, String>> pairs;
-    for (StringView pair : input.split('&')) {
-        if (mayBeTooLong) [[unlikely]] {
-            size_t equalIndex = pair.find('=');
-            if (equalIndex == notFound ? !canDecodeURLEncodedPart(pair) : !canDecodeURLEncodedPart(pair.left(equalIndex)) || !canDecodeURLEncodedPart(pair.substring(equalIndex + 1)))
-                return Exception { OutOfMemoryError };
-        }
-        if (auto nameAndValue = WTF::URLParser::parseQueryNameAndValue(pair)) {
-            if (!tryAppendPair(pairs, WTF::move(*nameAndValue))) [[unlikely]]
-                return Exception { OutOfMemoryError };
-        }
-    }
-    return WTF::move(pairs);
+    auto pairs = WTF::URLParser::tryParseURLEncodedForm(input, Bun::maxVectorSize<uint8_t>());
+    if (!pairs) [[unlikely]]
+        return Exception { OutOfMemoryError };
+    return WTF::move(*pairs);
 }
 
 static ExceptionOr<Vector<KeyValuePair<String, String>>> parseSearch(const String& search)

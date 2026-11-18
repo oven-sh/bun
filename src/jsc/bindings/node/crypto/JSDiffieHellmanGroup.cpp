@@ -1,7 +1,6 @@
 #include "JSDiffieHellmanGroup.h"
 #include "JSDiffieHellmanGroupPrototype.h"
 #include "JSDiffieHellmanGroupConstructor.h"
-#include "DOMIsoSubspaces.h"
 #include "ZigGlobalObject.h"
 #include "ErrorCode.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>

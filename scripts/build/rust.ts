@@ -37,6 +37,7 @@
 import { existsSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { Abi, Arch, Config, OS } from "./config.ts";
+import { bundledIcuMajorVersion } from "./deps/icu.ts";
 import { assert } from "./error.ts";
 import { computeCpuTargetFlags, rustLtoInLink } from "./flags.ts";
 import type { Ninja } from "./ninja.ts";
@@ -237,12 +238,7 @@ export interface RustBuildInputs {
  * when they start with `src/`, where a trailing `/` names a directory. A package's crates wait for those files alone,
  * and every other crate for none.
  */
-const generatedBuiltinTables = ["aot_builtin_ids.rs", "aot_builtin_syntax.rs", "aot_builtin_table.rs"];
-
 const generatedFilesReadBy: Record<string, string[] | "all"> = {
-  bun_aot: [...generatedBuiltinTables, "aot_schema.rs"],
-  bun_aot_builtins: [...generatedBuiltinTables, "aot_schema_builtins.rs"],
-  bun_aot_interface: ["aot_schema_interface.rs"],
   bun_ast: ["runtime.out.js"],
   bun_bundler: ["bake.server.js", "compressed/codegen/bake.client.js.zst"],
   bun_core: ["build_options.rs"],
@@ -315,7 +311,6 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     profile,
     "--locked",
   ];
-  if (!cfg.aot) args.push("--no-default-features", "--features", "without_aot");
   // std is compiled from source (cargoBuildStdArg) in every build: the link is bun's own and takes each crate's rlib
   // as the output of an edge (rust/units.ts linkedRlibs), so std's crates have to be units of the graph like the
   // rest; the toolchain's prebuilt std is not. It also gives:
@@ -360,9 +355,6 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     if (cfg.lockEnvironment) rustflags.push("--cfg=bun_locked_environment");
     if (!cfg.executeOnlyStart) rustflags.push("--cfg=bun_refuses_execute_only_start");
   }
-  // Keep frame pointers — matches the C++ side's `-fno-omit-frame-pointer`
-  // (flags.ts:293-301). Needed so profilers and crash backtraces can walk Rust frames.
-  rustflags.push("-Cforce-frame-pointers=yes");
   // The one of `hardeningFlags` (flags.ts) rustc has and does not already do:
   // its stack probes are inline on this target with or without this.
   if (cfg.hardened) rustflags.push("-Zstack-protector=strong");
@@ -505,8 +497,8 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   // cold-start working set un-ordered). One merged `.profdata` covers both:
   // clang and rustc share LLVM's IR-PGO format, and scripts/build-pgo.ts
   // resolves `llvm-profdata` from the build's own toolchain so the versions
-  // line up. Stale/partial coverage is expected (codegen drifts; prebuilt
-  // WebKit isn't instrumented) — `-fprofile-use`'s C++ warnings are already
+  // line up. Stale/partial coverage is expected (codegen drifts) —
+  // `-fprofile-use`'s C++ warnings are already
   // silenced in flags.ts; rustc just emits "no profile data" notes and skips
   // those functions, it does not fail. Driven end-to-end by
   // scripts/build-pgo.ts. RUSTFLAGS only reach target crates (with `--target`), so
@@ -545,9 +537,8 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   // `linker_messages` lint then re-surfaces clang's
   // "argument unused during compilation: '-no-pie'" as a warning on every
   // build-rust job. No target cdylib exists today (same story as
-  // `-fuse-ld=lld` above), so this too is defensive. Same approach as the
-  // WebKit configure (`-Qunused-arguments`); real linker errors still fail
-  // the link.
+  // `-fuse-ld=lld` above), so this too is defensive. Real linker errors
+  // still fail the link.
   if (!cfg.windows) rustflags.push(`-Clink-arg=-Qunused-arguments`);
   // And allow the lint itself: CI treats new warnings as failures, and the
   // lint forwards anything any platform's linker prints to stderr - the
@@ -556,7 +547,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   rustflags.push(`-Alinker_messages`);
   if (rustLtoInLink(cfg)) {
     // Every release build but ASan's: the crates carry ThinLTO bitcode, not machine code, and bun's link optimises
-    // it. Where cross-language LTO is on that is one ThinLTO graph with the C/C++ and JSC, and importing works across
+    // it. Where cross-language LTO is on that is one ThinLTO graph with the C/C++, and importing works across
     // the languages; elsewhere (FreeBSD, Android, Windows arm64, `--lto=off`) it is ThinLTO over the crates alone.
     // Thin, not fat: a pre-merged fat module cannot take part in a thin link's importing, and the backends run in
     // parallel. The release profile's `lto = "off"` is what leaves each crate's bitcode with its summary.
@@ -569,7 +560,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     // splitting" if any bitcode module in the link disagrees with the others.
     // Every LTO platform now links ThinLTO with the C/C++ side passing
     // -fno-split-lto-unit (index-based WPD, no hybrid split), so every C/C++
-    // module (ours and the WebKit -lto prebuilts) says 0. rustc's default is
+    // module says 0. rustc's default is
     // also 0, so pass nothing. (`-Clink-arg=-fuse-ld=lld` is pushed
     // unconditionally above — under LTO it doubles as making rustc's bitcode
     // link go through the LTO-aware linker our final link uses, not BFD
@@ -606,6 +597,8 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     CXX: cfg.cxx,
     AR: cfg.ar,
   };
+  // For src/icu/build.rs, which reads the version of any other ICU from its headers.
+  if (cfg.icu === "bundled") unitEnv.BUN_ICU_MAJOR_VERSION = bundledIcuMajorVersion(cfg);
   if (cfg.cargoHome !== undefined) unitEnv.CARGO_HOME = cfg.cargoHome;
   if (cfg.rustupHome !== undefined) unitEnv.RUSTUP_HOME = cfg.rustupHome;
   // Pin the toolchain explicitly. `vendor/` is commonly a symlink shared across worktrees; rustup's directory walk
@@ -686,7 +679,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
  *
  * None of the main build's rustflags: the shim has its own panic strategy (abort) so `-Zsanitizer=address` (which
  * assumes unwind) and `-Clinker-plugin-lto` (the PE is final-linked by rustc, not deferred to bun's lld link) don't
- * apply, and `-Cforce-frame-pointers` / `-Ctarget-cpu` cost size we don't want. A freestanding flag set instead:
+ * apply, and `-Ctarget-cpu` costs size we don't want. A freestanding flag set instead:
  *   - `-Cpanic=immediate-abort` — every panic call (incl. the core::fmt-carrying assert/unreachable/unwrap, slice
  *                                 indexing) compiles to a bare trap with no `Arguments` payload; that machinery
  *                                 is otherwise the bulk of `.text`.

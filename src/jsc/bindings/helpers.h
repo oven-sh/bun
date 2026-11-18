@@ -63,7 +63,7 @@ static bool isTaggedExternalPtr(const unsigned char* ptr)
     return (reinterpret_cast<uintptr_t>(ptr) & (static_cast<uint64_t>(1) << 62)) != 0;
 }
 
-static void free_global_string(void* str, void* ptr, unsigned len)
+static void free_global_string(void* str, void* ptr, size_t len)
 {
     // i don't understand why this happens
     if (ptr == nullptr)
@@ -72,42 +72,10 @@ static void free_global_string(void* str, void* ptr, unsigned len)
     EncodedSlice__freeGlobal(reinterpret_cast<const unsigned char*>(ptr), len);
 }
 
-static WTF::String tryConvertValidUTF8ToString(std::span<const unsigned char> bytes);
-
+// Returns null if the allocation fails or the result exceeds the max string length.
 static WTF::String convertUTF8ToString(std::span<const unsigned char> bytes)
 {
-    if (!bytes.empty() && simdutf::validate_utf8(reinterpret_cast<const char*>(bytes.data()), bytes.size())) [[likely]]
-        return tryConvertValidUTF8ToString(bytes);
-
-    // fromUTF8ReplacingInvalidSequences CRASH()es past a ~2^30-byte input
-    // (it sizes an intermediate Vector<char16_t> by byte count).
-    if (!WTF::isValidCapacityForVector<char16_t>(bytes.size())) [[unlikely]]
-        return {};
-    return WTF::String::fromUTF8ReplacingInvalidSequences(bytes);
-}
-
-// `bytes` must be valid UTF-8. Returns null if the allocation fails or the result exceeds the max string length.
-static WTF::String tryConvertValidUTF8ToString(std::span<const unsigned char> bytes)
-{
-    const char* data = reinterpret_cast<const char*>(bytes.data());
-    size_t utf16Length = simdutf::utf16_length_from_utf8(data, bytes.size());
-    if (utf16Length > WTF::String::MaxLength) [[unlikely]]
-        return {};
-    if (utf16Length == bytes.size()) {
-        // all-ASCII: stays 8-bit
-        std::span<Latin1Character> out;
-        auto impl = WTF::StringImpl::tryCreateUninitialized(bytes.size(), out);
-        if (!impl) [[unlikely]]
-            return {};
-        memcpy(out.data(), bytes.data(), bytes.size());
-        return WTF::String(WTF::move(impl));
-    }
-    std::span<char16_t> out;
-    auto impl = WTF::StringImpl::tryCreateUninitialized(utf16Length, out);
-    if (!impl) [[unlikely]]
-        return {};
-    RELEASE_ASSERT(simdutf::convert_utf8_to_utf16(data, bytes.size(), out.data()) == utf16Length);
-    return WTF::String(WTF::move(impl));
+    return WTF::String::tryFromUTF8ReplacingInvalidSequences(byteCast<char8_t>(bytes));
 }
 
 // Switching to AtomString doesn't yield a perf benefit because we're recreating it each time.
@@ -136,7 +104,7 @@ static const WTF::String toString(EncodedSlice str)
     if (isTaggedExternalPtr(str.ptr)) [[unlikely]] {
         // This will fail if the string is too long. Let's make it explicit instead of an ASSERT.
         if (str.len > Bun__stringSyntheticAllocationLimit || str.len > WTF::String::MaxLength) [[unlikely]] {
-            free_global_string(nullptr, reinterpret_cast<void*>(const_cast<unsigned char*>(untag(str.ptr))), static_cast<unsigned>(str.len));
+            free_global_string(nullptr, reinterpret_cast<void*>(const_cast<unsigned char*>(untag(str.ptr))), str.len);
             return {};
         }
 
@@ -217,32 +185,6 @@ static const WTF::String toStringCopy(EncodedSlice str)
         memcpy(out.data(), untag(str.ptr), str.len * sizeof(Latin1Character));
         return WTF::String(WTF::move(impl));
     }
-}
-
-static void appendToBuilder(EncodedSlice str, WTF::StringBuilder& builder)
-{
-    if (str.len == 0 || str.ptr == nullptr) {
-        return;
-    }
-    if (isTaggedUTF8Ptr(str.ptr)) [[unlikely]] {
-        // Check if the resulting UTF-16 string could possibly exceed the maximum length.
-        size_t maxLength = std::min(Bun__stringSyntheticAllocationLimit, static_cast<size_t>(WTF::String::MaxLength));
-        if (str.len > maxLength) [[unlikely]] {
-            size_t utf16Length = simdutf::utf16_length_from_utf8(reinterpret_cast<const char*>(untag(str.ptr)), str.len);
-            if (utf16Length > maxLength) {
-                return;
-            }
-        }
-        WTF::String converted = convertUTF8ToString(std::span { untag(str.ptr), str.len });
-        builder.append(converted);
-        return;
-    }
-    if (isTaggedUTF16Ptr(str.ptr)) {
-        builder.append({ reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len });
-        return;
-    }
-
-    builder.append({ byteCast<Latin1Character>(untag(str.ptr)), str.len });
 }
 
 static JSC::JSString* toJSStringGC(EncodedSlice str, JSC::JSGlobalObject* global)

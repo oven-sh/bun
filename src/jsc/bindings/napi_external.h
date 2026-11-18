@@ -55,7 +55,7 @@ public:
             accessor->sourceOriginURL = origin.string();
 
             std::unique_ptr<Vector<StackFrame>> stackTrace = makeUnique<Vector<StackFrame>>();
-            vm.interpreter.getStackTrace(accessor, *stackTrace, 0, 20);
+            vm.interpreter.getStackTrace(*stackTrace, 0, 20);
             if (!stackTrace->isEmpty()) {
                 for (auto& frame : *stackTrace) {
                     if (frame.hasLineAndColumnInfo()) {

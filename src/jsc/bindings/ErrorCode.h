@@ -10,16 +10,16 @@
 #include "CryptoKeyType.h"
 #include <wtf/text/StringBuilder.h>
 
-#define RELEASE_RETURN_IF_EXCEPTION(scope__, value__)                                                              \
-    do {                                                                                                           \
-        SUPPRESS_UNCOUNTED_LOCAL JSC::VM& vm = (scope__).vm();                                                     \
-        EXCEPTION_ASSERT(!!(scope__).exception() == vm.traps().needHandling(JSC::VMTraps::NeedExceptionHandling)); \
-        if (vm.traps().maybeNeedHandling()) [[unlikely]] {                                                         \
-            if (vm.hasExceptionsAfterHandlingTraps()) {                                                            \
-                scope__.release();                                                                                 \
-                return value__;                                                                                    \
-            }                                                                                                      \
-        }                                                                                                          \
+#define RELEASE_RETURN_IF_EXCEPTION(scope__, value__)      \
+    do {                                                   \
+        JSC::VM& vm = (scope__).vm();                      \
+        (scope__).didCheck();                              \
+        if (vm.traps().maybeNeedHandling()) [[unlikely]] { \
+            if (vm.hasExceptionsAfterHandlingTraps()) {    \
+                scope__.release();                         \
+                return value__;                            \
+            }                                              \
+        }                                                  \
     } while (false)
 
 JSC_DECLARE_HOST_FUNCTION(NodeError_proto_toString);
@@ -49,9 +49,7 @@ private:
     // These assert `!hasOverflowed()`. Use `tryToString` or `finish`.
     using WTF::StringBuilder::capacity;
     using WTF::StringBuilder::length;
-    using WTF::StringBuilder::toAtomString;
     using WTF::StringBuilder::toString;
-    using WTF::StringBuilder::toStringPreserveCapacity;
 };
 
 // For a message built with `tryMakeString`: a null `message` did not fit, and is thrown as `RangeError: Out of memory`.

@@ -12,7 +12,7 @@
 
 use core::mem::{MaybeUninit, size_of};
 use core::ptr::{NonNull, addr_of_mut};
-use core::sync::atomic::{AtomicU16, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU16, Ordering};
 use std::collections::HashMap;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -103,6 +103,16 @@ pub mod default_alloc {
             unsafe { libc::malloc(size) }
         } else {
             crate::mimalloc::mi_malloc(size)
+        }
+    }
+
+    #[inline]
+    pub fn zalloc(size: usize) -> *mut c_void {
+        if cfg!(bun_asan) {
+            // SAFETY: `libc::calloc` has no input preconditions; null on failure.
+            unsafe { libc::calloc(size, 1) }
+        } else {
+            crate::mimalloc::mi_zalloc(size)
         }
     }
 
@@ -544,186 +554,6 @@ pub fn page_size() -> usize {
             info.dw_page_size as usize
         }
     })
-}
-
-/// Port of `WTFStringImplStruct` — must match WebKit's `WTF::StringImpl` layout.
-///
-/// `m_ref_count` and `m_hash_and_flags` are interior-mutable: Rust, C++ and other threads write them behind a `&Self`.
-#[repr(C)]
-pub struct WTFStringImplStruct {
-    /// `std::atomic<uint32_t> m_refCount` (StringImpl.h:162).
-    pub(crate) m_ref_count: AtomicU32,
-    pub(crate) m_length: u32,
-    pub m_ptr: WTFStringImplPtr,
-    pub(crate) m_hash_and_flags: core::cell::Cell<u32>,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub union WTFStringImplPtr {
-    pub latin1: *const u8,
-    pub utf16: *const u16,
-}
-
-/// `*WTFStringImplStruct` — always non-null when `tag == WTFStringImpl`.
-pub type WTFStringImpl = *mut WTFStringImplStruct;
-
-impl WTFStringImplStruct {
-    // ---------------------------------------------------------------------
-    // These details must stay in sync with WTFStringImpl.h in WebKit!
-    // ---------------------------------------------------------------------
-    pub(crate) const S_HASH_FLAG_8BIT_BUFFER: u32 = 1 << 2;
-    pub(crate) const S_HASH_FLAG_STRING_KIND_IS_ATOM: u32 = 1 << 4;
-    pub(crate) const S_HASH_FLAG_STRING_KIND_IS_SYMBOL: u32 = 1 << 5;
-    /// The bottom bit in the ref count indicates a static (immortal) string.
-    pub(crate) const S_REF_COUNT_FLAG_IS_STATIC_STRING: u32 = 0x1;
-    /// This allows us to ref / deref without disturbing the static string flag.
-    pub(crate) const S_REF_COUNT_INCREMENT: u32 = 0x2;
-
-    #[inline]
-    pub fn length(&self) -> u32 {
-        self.m_length
-    }
-    #[inline]
-    pub fn is_8bit(&self) -> bool {
-        (self.m_hash_and_flags.get() & Self::S_HASH_FLAG_8BIT_BUFFER) != 0
-    }
-    #[inline]
-    pub fn byte_length(&self) -> usize {
-        if self.is_8bit() {
-            self.m_length as usize
-        } else {
-            (self.m_length as usize) * 2
-        }
-    }
-    #[inline]
-    pub fn memory_cost(&self) -> usize {
-        self.byte_length()
-    }
-    #[inline]
-    pub fn ref_count(&self) -> u32 {
-        self.m_ref_count.load(Ordering::Relaxed) / Self::S_REF_COUNT_INCREMENT
-    }
-    #[inline(always)]
-    fn is_static(&self) -> bool {
-        let count = self.m_ref_count.load(Ordering::Relaxed);
-        count & Self::S_REF_COUNT_FLAG_IS_STATIC_STRING != 0
-    }
-    /// Inline port of `WTF::StringImpl::ref()` (StringImpl.h:1181).
-    ///
-    /// Cross-language LTO does not inline the `Bun__WTFStringImpl__ref` C++
-    /// shim into Rust callers (2151 out-of-line `callq` sites in the release
-    /// binary), so the one-instruction body is reimplemented here.
-    /// `Relaxed` matches WebKit's
-    /// `m_refCount.fetch_add(s_refCountIncrement, std::memory_order_relaxed)`.
-    /// A static string can be in read-only memory, so its count is never written.
-    #[inline]
-    pub fn r#ref(&self) {
-        if self.is_static() {
-            return;
-        }
-        let old = self
-            .m_ref_count
-            .fetch_add(Self::S_REF_COUNT_INCREMENT, Ordering::Relaxed);
-        debug_assert!(old > 0); // hasAtLeastOneRef — also true for static (flag bit set)
-        debug_assert!(
-            old.wrapping_add(Self::S_REF_COUNT_INCREMENT) / Self::S_REF_COUNT_INCREMENT
-                > old / Self::S_REF_COUNT_INCREMENT
-                || old & Self::S_REF_COUNT_FLAG_IS_STATIC_STRING != 0
-        );
-    }
-    /// Inline port of `WTF::StringImpl::deref()` (StringImpl.h:1193).
-    ///
-    /// Hot path is a single `lock xadd`; only the last-ref branch crosses FFI
-    /// to `StringImpl::destroy`. `Relaxed` matches WebKit's
-    /// `m_refCount.fetch_sub(s_refCountIncrement, std::memory_order_relaxed)`.
-    #[inline]
-    pub fn deref(&self) {
-        if self.is_static() {
-            return;
-        }
-        let old = self
-            .m_ref_count
-            .fetch_sub(Self::S_REF_COUNT_INCREMENT, Ordering::Relaxed);
-        debug_assert!(old > 0); // hasAtLeastOneRef
-        if old != Self::S_REF_COUNT_INCREMENT {
-            return;
-        }
-        // Cold path: last reference dropped — hand the impl to C++ for
-        // destruction (handles substring/symbol/external buffer ownership).
-        // SAFETY: `old == s_refCountIncrement` ⇒ count is now 0 and we held
-        // the sole ref; `self` is not touched again after this call.
-        unsafe { Bun__WTFStringImpl__destroy(self) };
-    }
-    /// Borrow `len` raw bytes from `m_ptr`. The `latin1` arm of the `repr(C)`
-    /// union is a valid byte pointer regardless of encoding (both arms share
-    /// the same offset). Centralises the `from_raw_parts(m_ptr.latin1, …)` used
-    /// by `byte_slice` / `latin1_slice` / `utf8_slice`.
-    #[inline(always)]
-    pub fn raw_bytes(&self, len: usize) -> &[u8] {
-        // SAFETY: `m_ptr.latin1` points at the impl's character buffer for the
-        // lifetime of `self`; every caller passes `len ≤ byte_length()`.
-        unsafe { core::slice::from_raw_parts(self.m_ptr.latin1, len) }
-    }
-    #[inline]
-    pub fn byte_slice(&self) -> &[u8] {
-        self.raw_bytes(self.byte_length())
-    }
-    #[inline]
-    pub fn latin1_slice(&self) -> &[u8] {
-        debug_assert!(self.is_8bit());
-        self.raw_bytes(self.m_length as usize)
-    }
-    #[inline]
-    pub fn utf16_slice(&self) -> &[u16] {
-        debug_assert!(!self.is_8bit());
-        // SAFETY: WebKit guarantees m_ptr.utf16 valid for m_length u16s when !8-bit.
-        unsafe { core::slice::from_raw_parts(self.m_ptr.utf16, self.m_length as usize) }
-    }
-    #[inline]
-    pub fn utf16_byte_length(&self) -> usize {
-        if self.is_8bit() {
-            self.m_length as usize * 2
-        } else {
-            self.m_length as usize
-        }
-    }
-    #[inline]
-    pub fn is_atom(&self) -> bool {
-        (self.m_hash_and_flags.get() & Self::S_HASH_FLAG_STRING_KIND_IS_ATOM) != 0
-    }
-    #[inline]
-    pub fn is_symbol(&self) -> bool {
-        (self.m_hash_and_flags.get() & Self::S_HASH_FLAG_STRING_KIND_IS_SYMBOL) != 0
-    }
-    #[inline]
-    pub fn is_thread_isolated(&self) -> bool {
-        WTFStringImpl__isThreadIsolated(self)
-    }
-    #[inline]
-    pub fn is_thread_shareable(&self) -> bool {
-        WTFStringImpl__isThreadShareable(self)
-    }
-    /// Compute the hash() if necessary
-    #[inline]
-    pub fn ensure_hash(&self) {
-        Bun__WTFStringImpl__ensureHash(self);
-    }
-}
-
-unsafe extern "C" {
-    // `&WTFStringImplStruct` is ABI-identical to the C++ `StringImpl*` (thin
-    // non-null pointer to a `#[repr(C)]` struct). C++-side mutation lands in
-    // `m_ref_count` / `m_hash_and_flags`, both interior-mutable, so writes through
-    // a `&`-derived pointer are sound. The type encodes the only validity
-    // precondition, so `safe fn` discharges the link-time proof.
-    // `ref`/`deref` are inlined in Rust above; only the cold last-ref
-    // `destroy` path crosses FFI. `*const` + `unsafe`: it frees the
-    // allocation backing the pointer.
-    pub fn Bun__WTFStringImpl__destroy(this: *const WTFStringImplStruct);
-    safe fn WTFStringImpl__isThreadIsolated(this: &WTFStringImplStruct) -> bool;
-    safe fn WTFStringImpl__isThreadShareable(this: &WTFStringImplStruct) -> bool;
-    safe fn Bun__WTFStringImpl__ensureHash(this: &WTFStringImplStruct);
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -341,7 +341,7 @@ WTF::String NodeExeImports::Scope::unresolvedImportError(HMODULE loaded)
     }
     if (!m_failed)
         return {};
-    return makeString(m_module[0] ? WTF::String(m_module) : "it"_s, " imports '"_s, WTF::String::fromLatin1(m_symbol), "' from node.exe, which Bun does not provide"_s);
+    return makeString(m_module[0] ? WTF::String(std::span { reinterpret_cast<const char16_t*>(m_module), wcslen(m_module) }) : "it"_s, " imports '"_s, WTF::String::fromLatin1(m_symbol), "' from node.exe, which Bun does not provide"_s);
 }
 
 void NodeExeImports::forget(HMODULE module)

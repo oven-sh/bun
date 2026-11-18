@@ -237,7 +237,7 @@ export const pins = {
       aarch64: "c456bf75ee3d0b4da0b0b527402b0a9e61497f02756b2cc5801b51e80b3f90c4",
     },
   },
-  // The release WebKit's prebuilt is built on (glibc 2.31).
+  // glibc 2.31.
   glibcSysroot: {
     ubuntu: {
       release: "20.04",
@@ -1232,9 +1232,8 @@ function freebsdSysroot(): Tool {
 
 /**
  * ubuntu:20.04's root filesystem (glibc 2.31), focal's libc headers, and
- * gcc-13's libstdc++: the environment WebKit's prebuilt is built in. The
- * architectures and package names are known here, so the script loops only
- * over what is known on the machine.
+ * gcc-13's libstdc++. The architectures and package names are known here, so
+ * the script loops only over what is known on the machine.
  */
 function glibcSysroot(): Tool {
   const { ubuntu, debs, gccDebs } = pins.glibcSysroot;
@@ -1285,7 +1284,7 @@ function glibcSysroot(): Tool {
           ...(arch === "x64"
             ? [unlessExists(`${sysroot}/lib64`, [symlink(`usr/lib/${triple}`, `${sysroot}/lib64`)])]
             : []),
-          comment(`${deb}: gcc-13's libstdc++ and libgcc, the same packages WebKit's image uses.`),
+          comment(`${deb}: gcc-13's libstdc++ and libgcc.`),
           ...unpackedArchive({
             url: `${gccDebs.url}/gcc-13-focal-${deb}.tar.gz`,
             sha256: gccDebs.sha256[arch],

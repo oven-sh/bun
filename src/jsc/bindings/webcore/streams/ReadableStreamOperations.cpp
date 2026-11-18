@@ -859,8 +859,7 @@ static IterationRecord getIteratorAsync(JSC::VM& vm, JSGlobalObject* globalObjec
         }
         IterationRecord syncRecord = iteratorDirect(globalObject, syncIterator);
         RETURN_IF_EXCEPTION(scope, {});
-        auto* asyncFromSyncIterator = JSAsyncFromSyncIterator::create(vm, globalObject->asyncFromSyncIteratorStructure(), asObject(syncRecord.iterator), syncRecord.nextMethod, IterationMode::Generic);
-        RETURN_IF_EXCEPTION(scope, {});
+        auto* asyncFromSyncIterator = JSAsyncFromSyncIterator::create(globalObject, asObject(syncRecord.iterator), syncRecord.nextMethod);
         RELEASE_AND_RETURN(scope, iteratorDirect(globalObject, asyncFromSyncIterator));
     }
     auto callData = JSC::getCallData(asyncMethod);
@@ -923,9 +922,6 @@ JSPromise* fromIterableCancelAlgorithm(JSGlobalObject* globalObject, JSReadableS
         auto* runtime = JSStreamsRuntime::from(globalObject);
         const auto* context = uncheckedDowncast<WebCore::JSStreamFromIterableContext>(controller->m_algorithms.algorithmContext.get());
         JSObject* iterator = context->iterator();
-        // JSC's wrapper tracks one step at a time, and a next() can still be pending here.
-        if (auto* wrapper = dynamicDowncast<JSAsyncFromSyncIterator>(iterator))
-            iterator = JSAsyncFromSyncIterator::create(vm, wrapper->structure(), wrapper->syncIterator(), wrapper->nextMethod(), wrapper->iterationMode());
         JSValue returnMethod = iterator->get(globalObject, vm.propertyNames->returnKeyword);
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (returnMethod.isUndefinedOrNull())

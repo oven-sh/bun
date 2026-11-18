@@ -4,10 +4,8 @@
 #include "root.h"
 #include "headers-handwritten.h"
 #include <JavaScriptCore/JSGlobalObject.h>
-#include <JavaScriptCore/YarrInterpreter.h>
+#include <JavaScriptCore/YarrFlags.h>
 #include "napi_external.h"
-#include <JavaScriptCore/Yarr.h>
-#include <wtf/BumpPointerAllocator.h>
 #include "WriteBarrierList.h"
 #include <wtf/HashMap.h>
 
@@ -16,6 +14,12 @@ typedef void (*JSBundlerPluginOnLoadAsyncCallback)(void*, JSC::EncodedJSValue, J
 typedef void (*JSBundlerPluginOnResolveAsyncCallback)(void*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);
 typedef void (*JSBundlerPluginNativeOnBeforeParseCallback)(const OnBeforeParseArguments*, OnBeforeParseResult*);
 
+// src/jsc/RegularExpression.rs
+struct CompiledRegularExpression;
+extern "C" CompiledRegularExpression* Bun__RegularExpression__compile(const BunString* pattern, uint16_t flags);
+extern "C" bool Bun__RegularExpression__matches(const CompiledRegularExpression*, const BunString* input);
+extern "C" void Bun__RegularExpression__destroy(CompiledRegularExpression*);
+
 namespace Bun {
 
 using namespace JSC;
@@ -23,36 +27,26 @@ using namespace JSC;
 class BundlerPlugin final {
 public:
     /// In native plugins, the regular expression could be called concurrently on multiple threads.
-    /// Therefore, we need a mutex to synchronize access.
-    /// Compiles the bytecode itself because Yarr::RegularExpression asserts that the flags are a subset of i, m and v.
     class FilterRegExp {
     public:
-        String m_pattern;
-        // The bytecode points to its allocator, so the allocator can't move when a Vector grows.
-        std::unique_ptr<WTF::BumpPointerAllocator> m_allocator;
-        std::unique_ptr<Yarr::BytecodePattern> m_bytecode;
-        WTF::Lock lock {};
-
-        FilterRegExp(FilterRegExp&& other)
-            : m_pattern(WTF::move(other.m_pattern))
-            , m_allocator(WTF::move(other.m_allocator))
-            , m_bytecode(WTF::move(other.m_bytecode))
-        {
-        }
-
         FilterRegExp(const String& pattern, OptionSet<Yarr::Flags> flags)
-            // Ensure it's safe for cross-thread usage.
-            : m_pattern(pattern.isolatedCopy())
-            , m_allocator(WTF::makeUnique<WTF::BumpPointerAllocator>())
         {
-            Yarr::ErrorCode errorCode = Yarr::ErrorCode::NoError;
-            Yarr::YarrPattern yarrPattern(m_pattern, flags, errorCode);
-            if (Yarr::hasError(errorCode))
-                return;
-            m_bytecode = Yarr::byteCompile(yarrPattern, m_allocator.get(), errorCode);
+            auto source = Bun::toString(pattern);
+            m_compiled.reset(Bun__RegularExpression__compile(&source, flags.toRaw()));
         }
 
-        bool match(JSC::VM& vm, const String& path);
+        bool match(const String& path) const
+        {
+            auto input = Bun::toString(path);
+            return m_compiled && !path.isNull() && Bun__RegularExpression__matches(m_compiled.get(), &input);
+        }
+
+    private:
+        struct Destroy {
+            void operator()(CompiledRegularExpression* compiled) const { Bun__RegularExpression__destroy(compiled); }
+        };
+
+        std::unique_ptr<CompiledRegularExpression, Destroy> m_compiled;
     };
 
     class NamespaceList {

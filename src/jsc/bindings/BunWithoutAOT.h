@@ -1,11 +1,10 @@
 #pragma once
 
-// What Bun's bindings ask of JavaScriptCore's ahead-of-time run time, in a Bun built with ENABLE_AOT=0: no image is ever registered, no object is a compiled
-// object, and every notice to the run time goes nowhere. root.h includes this, so a call site reads the same in both builds.
+// What Bun's bindings ask of an ahead-of-time run time, in a Bun that has none: no image is ever registered, no object is a compiled object, no feature
+// is removed, and every notice to the run time goes nowhere. root.h includes this.
 
 #if !ENABLE(AOT)
 
-#include <JavaScriptCore/AOTImage.h>
 #include <span>
 #include <wtf/IterationStatus.h>
 #include <wtf/text/ASCIILiteral.h>
@@ -16,7 +15,50 @@ namespace JSC {
 class AbstractModuleRecord;
 class Symbol;
 
+enum class RemovableFeature : uint16_t {};
+enum class RemovedFeatureStub : uint8_t { Abort,
+    Throw,
+    ReturnUndefined,
+    ReturnDefault };
+enum class GuardOrigin : uint8_t { NativeCode,
+    Builtin };
+
+constexpr bool isFeatureRemoved(RemovableFeature) { return false; }
+template<RemovableFeature, RemovedFeatureStub, auto entryPoint, GuardOrigin = GuardOrigin::NativeCode, uint32_t builtin = 0> ALWAYS_INLINE void recordRemovableEntryPoint() {}
+template<auto& table, RemovableFeature, RemovedFeatureStub, auto entryPoint, GuardOrigin = GuardOrigin::NativeCode, uint32_t builtin = 0> ALWAYS_INLINE void recordRemovableTableEntry() {}
+template<RemovableFeature, auto function, RemovedFeatureStub = RemovedFeatureStub::Abort, uint32_t builtin = 0> ALWAYS_INLINE void recordRemovableDefinition() {}
+template<RemovableFeature, RemovedFeatureStub, auto function, GuardOrigin = GuardOrigin::NativeCode, uint32_t builtin = 0> ALWAYS_INLINE decltype(function) removableFunction() { return function; }
+template<RemovableFeature, RemovedFeatureStub, auto function, uint32_t builtin> ALWAYS_INLINE decltype(function) removableBuiltinFunction() { return function; }
+
+template<RemovableFeature, RemovedFeatureStub, auto function, GuardOrigin = GuardOrigin::NativeCode, uint32_t builtin = 0, typename... Arguments>
+ALWAYS_INLINE std::invoke_result_t<decltype(function), Arguments...> callRemovable(Arguments&&... arguments) { return function(std::forward<Arguments>(arguments)...); }
+template<RemovableFeature, auto function, uint32_t builtin, typename... Arguments>
+ALWAYS_INLINE std::invoke_result_t<decltype(function), Arguments...> callRemovableBuiltin(Arguments&&... arguments) { return function(std::forward<Arguments>(arguments)...); }
+template<RemovableFeature, RemovedFeatureStub, typename Result, typename Realm, typename Body>
+ALWAYS_INLINE Result callRemovableBody(Realm, Body&& body) { return body(); }
+
+template<RemovableFeature, RemovedFeatureStub, typename Result, typename Body> struct RemovableBody {
+    static Result run(Body& body) { return body(); }
+};
+
+extern "C" EncodedJSValue Bun__throwForRemovedFeature(JSGlobalObject*, uint16_t feature);
+
+inline constexpr unsigned WriteHooksHonorImmutableProperties = 0;
+
+class AllowLazyMaterializationOfImmutableProperties {
+public:
+    explicit AllowLazyMaterializationOfImmutableProperties(VM&) {}
+};
+
+inline String withAOTErrorNote(const String& message) { return message; }
+
 namespace AOT {
+
+class Image {
+public:
+    static constexpr const Image* current() { return nullptr; }
+    static constexpr bool isRegistered() { return false; }
+};
 
 struct ModuleHost {};
 

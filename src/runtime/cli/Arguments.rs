@@ -14,8 +14,6 @@ use bun_clap::parse_param;
 use bun_core::env::OperatingSystem;
 use bun_core::strings;
 use bun_core::{self, FeatureFlags, Global, Output, env_var};
-use bun_jsc::RegularExpression;
-use bun_jsc::regular_expression::Flags as RegexFlags;
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
 use bun_options_types::context::{
     Debugger, DebuggerEnable, HotReload, MacroOptions, Shard, TestEnvironment, TestGlobals,
@@ -766,9 +764,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!(
             "--bytecode-depth <NUMBER>        How many levels of nested functions to compile to bytecode ahead of time. Defaults to all"
         ),
-        parse_param!(
-            "--no-optimize-bytecode           With --bytecode: skip the build-time bytecode optimization passes"
-        ),
+        parse_param!("--no-optimize-bytecode           Accepted for compatibility. Has no effect"),
         parse_param!(
             "--watch                          Automatically restart the process on file change"
         ),
@@ -2295,10 +2291,9 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     }
     if let Some(name_pattern) = args.option(b"--test-name-pattern") {
         ctx.test_options.test_filter_pattern = Some(name_pattern.into());
-        let regex = match RegularExpression::init(
-            &bun_core::StringView::from_bytes(name_pattern),
-            RegexFlags::None,
-        ) {
+        let regex = match bun_core::StringView::from_bytes(name_pattern)
+            .with_text(|pattern| bun_yarr::Compiled::new(pattern, 0))
+        {
             Ok(r) => r,
             Err(_) => {
                 bun_core::pretty_errorln!(
@@ -2308,10 +2303,7 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
                 Global::exit(1);
             }
         };
-        // The compiled regex lives in `bun_jsc::RegularExpression` (T6); the
-        // T3 `TestOptions` field is type-erased to `NonNull<()>` to break the
-        // back-edge. High tier owns construction/destruction.
-        ctx.test_options.test_filter_regex = core::ptr::NonNull::new(regex.cast::<()>());
+        ctx.test_options.test_filter_regex = Some(Box::leak(Box::new(regex)));
     }
     if let Some(since) = args.option(b"--changed") {
         ctx.test_options.changed = Some(since.into());
@@ -3077,9 +3069,6 @@ fn parse_build_command_options(
                 Output::err_generic("format must be 'cjs' or 'esm' when bytecode is true.", ());
                 Global::exit(1);
             }
-            // ESM bytecode requires --compile because module_info (import/export metadata)
-            // is only available in compiled binaries. Without it, JSC must parse the file
-            // twice (once for module analysis, once for bytecode), which is a deopt.
             if format == options::Format::Esm && !ctx.bundler_options.compile {
                 Output::err_generic(
                     "ESM bytecode requires --compile. Use --format=cjs for bytecode without --compile.",

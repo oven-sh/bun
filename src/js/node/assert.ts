@@ -231,6 +231,7 @@ Assert.prototype.fail = fail;
 
 // The AssertionError is defined in internal/error.
 Object.defineProperty(assert, "AssertionError", {
+  __proto__: null,
   get() {
     loadAssertionError();
     return AssertionError;
@@ -944,6 +945,7 @@ Assert.prototype.doesNotMatch = function doesNotMatch(string, regexp, message) {
 
 var CallTracker;
 Object.defineProperty(assert, "CallTracker", {
+  __proto__: null,
   get() {
     if (CallTracker === undefined) {
       const { deprecate } = require("internal/util/deprecate");
@@ -992,7 +994,7 @@ for (const name of [
 }
 
 for (const key of ObjectKeys(assert)) {
-  ObjectDefineProperty(strict, key, ObjectGetOwnPropertyDescriptor(assert, key)!);
+  ObjectDefineProperty(strict, key, { __proto__: null, ...ObjectGetOwnPropertyDescriptor(assert, key) });
 }
 // The loop above already copied every other member of `assert` onto `strict`.
 assert.strict = ObjectAssign(strict, {

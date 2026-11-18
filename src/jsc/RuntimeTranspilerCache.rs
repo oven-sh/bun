@@ -411,8 +411,7 @@ impl Entry {
                     // bench regression).
                     //
                     // Instead, pread straight into a WTF-allocated Latin-1
-                    // buffer (`WTF::StringImpl::tryCreateUninitialized` →
-                    // bmalloc, not the worker mimalloc heap). Transpiler
+                    // buffer of the default allocator. Transpiler
                     // output is overwhelmingly pure ASCII, in which case the
                     // buffer *is* the final `BunString` and we skip the
                     // 1.2 MB `clone_utf8` memcpy the consumer used to do at

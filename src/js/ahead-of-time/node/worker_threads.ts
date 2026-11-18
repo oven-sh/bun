@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/worker_threads.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 4b1d2dfce35036bd4b694be3a8983426d217479f024b4892787b351a84305ca9.
+// Written against that file with the SHA-256 2ad0edaf7d5ec8f3f8bdf5d99ce0be2b174bc94a585800ba030622754f275c40.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 declare const self: EventTarget & {
@@ -679,6 +679,7 @@ function receiveMessageOnPort(port: MessagePort) {
 function fakeParentPort() {
   const fake = Object.create(MessagePort.prototype);
   Object.defineProperty(fake, "onmessage", {
+    __proto__: null,
     get() {
       return self.onmessage;
     },
@@ -688,6 +689,7 @@ function fakeParentPort() {
   });
 
   Object.defineProperty(fake, "onmessageerror", {
+    __proto__: null,
     get() {
       return self.onmessageerror;
     },

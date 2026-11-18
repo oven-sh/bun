@@ -122,28 +122,35 @@ void JSCTaskScheduler::onCancelPendingWork(WebCore::JSVMClientData* clientData, 
         Bun__VmHandle__refKeepAlive(vmHandle, BunLoopKind::Regular, -1);
 }
 
-void JSCTaskScheduler::cancelWorkOfDeadRealms(WebCore::JSVMClientData* clientData, JSC::VM& vm)
+extern "C" WTFTimer* WTFTimer__create(JSC::VM*);
+extern "C" void WTFTimer__update(WTFTimer*, double seconds);
+extern "C" void WTFTimer__cancel(WTFTimer*);
+extern "C" void WTFTimer__deinit(WTFTimer*);
+
+extern "C" void WTFTimer__fire(JSC::VM* vm)
 {
-    auto& scheduler = clientData->deferredWorkTimer;
-    UncheckedKeyHashSet<JSGlobalObject*> deadRealms;
-    {
-        Locker<Lock> holder { scheduler.m_lock };
-        auto collect = [&](auto& pendingTickets) {
-            for (auto& ticket : pendingTickets.keys()) {
-                if (ticket->isCancelled())
-                    continue;
-                auto* realm = ticket->target()->globalObject();
-                if (!vm.heap.isMarked(realm))
-                    deadRealms.add(realm);
-            }
-        };
-        collect(scheduler.m_pendingTicketsKeepingEventLoopAlive);
-        collect(scheduler.m_pendingTicketsOther);
-    }
-    // What ~JSGlobalObject does, too late for a global that is swept lazily. Reaches
-    // onCancelPendingWork, which takes m_lock.
-    for (auto* realm : deadRealms)
-        realm->clearWeakTickets();
+    vm->deferredWorkTimer->runDueTimers(*vm);
+}
+
+void JSCTaskScheduler::createTimer(JSC::VM& vm)
+{
+    m_timer = WTFTimer__create(&vm);
+}
+
+void JSCTaskScheduler::setTimer(std::optional<Seconds> delay)
+{
+    if (!m_timer)
+        return;
+    if (delay)
+        WTFTimer__update(m_timer, delay->value());
+    else
+        WTFTimer__cancel(m_timer);
+}
+
+JSCTaskScheduler::~JSCTaskScheduler()
+{
+    if (m_timer)
+        WTFTimer__deinit(m_timer);
 }
 
 static void runPendingWork(const ::BunVmHandleRef* vmHandle, Bun::JSCTaskScheduler& scheduler, std::unique_ptr<JSCDeferredWorkTask> job)

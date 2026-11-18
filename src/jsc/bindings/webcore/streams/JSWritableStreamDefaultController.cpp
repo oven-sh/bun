@@ -2,7 +2,6 @@
 #include "JSWritableStreamDefaultController.h"
 
 #include "DOMClientIsoSubspaces.h"
-#include "DOMIsoSubspaces.h"
 #include "JSAbortController.h"
 #include "JSAbortSignal.h"
 #include "JSDOMExceptionHandling.h"

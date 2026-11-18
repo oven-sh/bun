@@ -649,6 +649,7 @@ function receiveMessageOnPort(port: MessagePort) {
 function fakeParentPort() {
   const fake = Object.create(MessagePort.prototype);
   Object.defineProperty(fake, "onmessage", {
+    __proto__: null,
     get() {
       return self.onmessage;
     },
@@ -658,6 +659,7 @@ function fakeParentPort() {
   });
 
   Object.defineProperty(fake, "onmessageerror", {
+    __proto__: null,
     get() {
       return self.onmessageerror;
     },
@@ -762,6 +764,7 @@ function applyWorkerProcessOverrides() {
   if (hasIpc) {
     for (const name of ["channel", "connected"]) {
       Object.defineProperty(proc, name, {
+        __proto__: null,
         configurable: true,
         enumerable: false,
         get() {

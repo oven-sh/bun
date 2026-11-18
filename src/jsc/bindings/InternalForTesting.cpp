@@ -89,8 +89,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_isASANEnabled, (JSC::JSGlobalObject * global
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_heapProfilerHasSnapshot, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    auto* heapProfiler = JSC::getVM(globalObject).heapProfiler();
-    return JSValue::encode(jsBoolean(heapProfiler && heapProfiler->mostRecentSnapshot()));
+    return JSValue::encode(jsBoolean(JSC::getVM(globalObject).heapProfiler()->hasSnapshot()));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_readFreedStringUnderASAN, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

@@ -945,16 +945,6 @@ public:
         return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
     }
 
-    NapiPrototype* subclass(JSC::JSGlobalObject* globalObject, JSC::JSObject* newTarget)
-    {
-        VM& vm = globalObject->vm();
-        Structure* structure = JSC::InternalFunction::createSubclassStructure(globalObject, newTarget, this->structure());
-        if (!structure) {
-            return nullptr;
-        }
-        return NapiPrototype::create(vm, structure);
-    }
-
     NapiRef* napiRef = nullptr;
 
 private:

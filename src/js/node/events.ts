@@ -988,6 +988,7 @@ class EventEmitterAsyncResource extends EventEmitter {
 
 Object.defineProperties(EventEmitter, {
   captureRejections: {
+    __proto__: null,
     get() {
       return EventEmitterPrototype[kCapture];
     },
@@ -999,6 +1000,7 @@ Object.defineProperties(EventEmitter, {
     enumerable: true,
   },
   defaultMaxListeners: {
+    __proto__: null,
     enumerable: true,
     get: () => {
       return defaultMaxListeners;

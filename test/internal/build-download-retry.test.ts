@@ -2,7 +2,7 @@
  * downloadWithRetry() (scripts/build/download.ts) is all that stands between
  * a CI build lane and github.com: every dep whose pin moved after the CI
  * images (and the prefetch cache baked into them) were published downloads
- * live on every lane of every build, WebKit included, so a build makes on the
+ * live on every lane of every build, so a build makes on the
  * order of a hundred github.com round-trips through this one loop. The
  * outages CI actually hits are agent-wide and last from 30s to a few minutes;
  * a 5 attempt / ~30s schedule gave up inside them and failed the lane with
@@ -127,7 +127,7 @@ test("429 is retried, and the retry line says what failed", async () => {
   expect(lines).toEqual([`retry 2/${downloadRetry.attempts} in 0ms (HTTP 429 Too Many Requests for ${server.url})`]);
 });
 
-test("404 is not retried and is thrown as-is (prefetch-deps.ts matches on the message)", async () => {
+test("404 is not retried and is thrown as-is (fetchPrebuilt matches on the message)", async () => {
   using dir = tempDir("build-download-retry", {});
   await using server = await fakeServer(["404 Not Found"]);
   const dest = join(String(dir), "dep.tar.gz");

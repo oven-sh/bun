@@ -43,7 +43,7 @@ const srcDir = path.join(import.meta.dir, "../");
 
 const sourceFiles = readdirRecursiveWithExclusionsAndExtensionsSync(
   srcDir,
-  ["deps", "node_modules", "WebKit"],
+  ["deps", "node_modules"],
   [".cpp", ".bind.ts"],
 );
 

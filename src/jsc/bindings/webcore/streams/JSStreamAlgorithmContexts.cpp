@@ -3,7 +3,6 @@
 
 #include "WebStreamsHeapAnalyzer.h"
 #include "DOMClientIsoSubspaces.h"
-#include "DOMIsoSubspaces.h"
 #include "JSDOMBinding.h"
 #include "JSDOMGlobalObject.h"
 #include <JavaScriptCore/JSCInlines.h>

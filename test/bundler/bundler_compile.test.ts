@@ -360,6 +360,62 @@ describe("bundler", () => {
     }
   }
 
+  // What a TypeScript entry point re-exports from an external module may be a type.
+  for (const [name, reexport] of [
+    ["ExportFrom", `export { NotAValue } from "node:fs";`],
+    ["ImportThenExport", `import { NotAValue } from "node:fs"; export { NotAValue };`],
+  ]) {
+    itBundled(`compile/ESMBytecodeReExportsType${name}`, {
+      compile: true,
+      bytecode: true,
+      format: "esm",
+      files: { "/entry.ts": `${reexport} console.log("ok");` },
+      run: { stdout: "ok" },
+    });
+  }
+
+  itBundled("compile/ESMBytecodeReExportsTypeFromSharedChunk", {
+    compile: true,
+    bytecode: true,
+    splitting: true,
+    format: "esm",
+    files: {
+      "/entry.ts": `console.log(Object.keys(await import("./a.ts")), Object.keys(await import("./b.ts")));`,
+      "/a.ts": `export * from "./shared.ts"; export const a = 1;`,
+      "/b.ts": `export * from "./shared.ts"; export const b = 2;`,
+      "/shared.ts": `export { NotAValue } from "node:fs"; export const s = Date.now();`,
+    },
+    run: { stdout: `[ "a", "s" ] [ "b", "s" ]` },
+  });
+
+  itBundled("compile/ESMBytecodeRequireWhileBuiltinIsMade", {
+    compile: true,
+    bytecode: true,
+    splitting: true,
+    format: "esm",
+    files: {
+      "/entry.js": /* js */ `
+        const { env } = process;
+        let load = () => require("./lazy.js");
+        Object.defineProperty(process, "env", {
+          enumerable: true,
+          get() {
+            const once = load;
+            load = undefined;
+            if (once) console.log("required", once().value);
+            return env;
+          },
+        });
+        console.log("imported", (await import("./lazy.js")).value);
+      `,
+      "/lazy.js": /* js */ `
+        import process from "node:process";
+        export const value = typeof process;
+      `,
+    },
+    run: { stdout: "required object\nimported object" },
+  });
+
   // Multi-entry ESM bytecode with Worker (can't be in the matrix — needs
   // entryPointsRaw, outfile, setCwd). Each entry becomes a separate module
   // in the standalone graph with its own bytecode + ModuleInfo.

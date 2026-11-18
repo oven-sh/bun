@@ -307,6 +307,7 @@ private:
 class JSStatementSync final : public JSC::JSDestructibleObject, public WTF::BasicRawSentinelNode<JSStatementSync> {
 public:
     using Base = JSC::JSDestructibleObject;
+    using Base::operator new;
     static constexpr JSC::DestructionMode needsDestruction = NeedsDestruction;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 

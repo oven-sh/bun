@@ -320,7 +320,7 @@ pub fn message_with_type_and_level(
     }
 }
 
-/// `console.log(text)` in AOT-compiled code: one string and nothing else. Nothing is formatted,
+/// `console.log(text)`: one string and nothing else. Nothing is formatted,
 /// so no `Formatter` is made and no option is looked up: what `format2` writes for a lone
 /// string is the indent of the open groups, its characters and a line break.
 fn print_one_text(level: MessageLevel, global: &JSGlobalObject, text: JSValue) -> JsResult<()> {
@@ -366,6 +366,11 @@ fn message_with_type_and_level_(
     global: &JSGlobalObject,
     vals: &[JSValue],
 ) -> JsResult<()> {
+    if let (MessageType::Log, &[text]) = (message_type, vals)
+        && text.is_string_literal()
+    {
+        return print_one_text(level, global, text);
+    }
     let console = vm_console(global);
     let is_start_group = matches!(
         message_type,
@@ -2145,26 +2150,7 @@ pub mod formatter {
 
                 // None of these should ever exist here
                 // But we're going to check anyway
-                T::APIValueWrapper
-                | T::NativeExecutable
-                | T::ProgramExecutable
-                | T::ModuleProgramExecutable
-                | T::EvalExecutable
-                | T::FunctionExecutable
-                | T::UnlinkedFunctionExecutable
-                | T::UnlinkedProgramCodeBlock
-                | T::UnlinkedModuleProgramCodeBlock
-                | T::UnlinkedEvalCodeBlock
-                | T::UnlinkedFunctionCodeBlock
-                | T::CodeBlock
-                | T::JSCellButterfly
-                | T::JSSourceCode
-                | T::JSCallee
-                | T::GlobalLexicalEnvironment
-                | T::LexicalEnvironment
-                | T::ModuleEnvironment
-                | T::StrictEvalActivation
-                | T::WithScope => TagPayload::NativeCode,
+                T::JSCallee => TagPayload::NativeCode,
 
                 T::Event => TagPayload::Event,
 
@@ -5770,21 +5756,6 @@ pub(crate) extern "C" fn Bun__ConsoleObject__takeHeapSnapshot(global_this: &JSGl
 
 #[unsafe(no_mangle)]
 #[crate::host_call]
-pub(crate) extern "C" fn Bun__ConsoleObject__printOneText(
-    level: u32,
-    global: &JSGlobalObject,
-    text: JSValue,
-) {
-    if let Err(err) = print_one_text(MessageLevel::from_raw(level), global, text) {
-        if matches!(err, jsc::JsError::OutOfMemory) {
-            global.throw_out_of_memory_value();
-        }
-        debug_assert!(global.has_exception());
-    }
-}
-
-#[unsafe(no_mangle)]
-#[crate::host_call]
 pub(crate) extern "C" fn Bun__ConsoleObject__messageWithTypeAndLevel(
     // Taking the
     // exhaustive Rust enums by value at the C ABI would be UB on an
@@ -5800,7 +5771,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__messageWithTypeAndLevel(
         MessageType::from_raw(message_type),
         MessageLevel::from_raw(level),
         global,
-        // SAFETY: C++ passes its stack array `jsArgs` and the number of values it wrote to it.
-        unsafe { core::slice::from_raw_parts(vals, len) },
+        // SAFETY: the arguments of the call, which stay for as long as it runs.
+        unsafe { bun_core::ffi::slice(vals, len) },
     );
 }

@@ -37,9 +37,8 @@ JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue NapiClass_ConstructorFunction(JSC::
         // Use ::get instead of ::getIfPropertyExists here so that DontEnum is ignored.
         auto prototypeValue = napi->get(globalObject, vm.propertyNames->prototype);
         RETURN_IF_EXCEPTION(scope, {});
-        NapiPrototype* prototype = dynamicDowncast<NapiPrototype>(prototypeValue);
 
-        if (!prototype) {
+        if (!prototypeValue.inherits<NapiPrototype>()) {
             JSC::throwVMError(globalObject, scope, JSC::createTypeError(globalObject, "NapiClass constructor is missing the prototype"_s));
             return JSValue::encode(JSC::jsUndefined());
         }
@@ -56,9 +55,10 @@ JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue NapiClass_ConstructorFunction(JSC::
             RETURN_IF_EXCEPTION(scope, {});
             thisValue = constructEmptyObject(vm, objectStructure);
         } else {
-            thisValue = prototype->subclass(globalObject, asObject(newTarget));
+            Structure* instanceStructure = InternalFunction::createSubclassStructure(globalObject, napi, defaultGlobalObject(globalObject)->NapiPrototypeStructure());
+            RETURN_IF_EXCEPTION(scope, {});
+            thisValue = NapiPrototype::create(vm, instanceStructure);
         }
-        RETURN_IF_EXCEPTION(scope, {});
         callFrame->setThisValue(thisValue);
     }
 
@@ -112,7 +112,7 @@ napi_status NapiClass::finishCreation(VM& vm, const String& name, napi_callback 
     this->m_constructor = constructor;
     auto globalObject = static_cast<Zig::GlobalObject*>(this->globalObject());
 
-    this->putDirect(vm, vm.propertyNames->name, jsString(vm, name), JSC::PropertyAttribute::DontEnum | 0);
+    this->putDirect(vm, vm.propertyNames->name, jsString(vm, name), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
 
     NapiPrototype* prototype = NapiPrototype::create(vm, globalObject->NapiPrototypeStructure());
 

@@ -11,7 +11,6 @@ use bun_paths as path;
 
 use crate::Chunk;
 use crate::Index;
-use crate::analyze_transpiled_module;
 use crate::cheap_prefix_normalizer;
 use crate::chunk::{ReferencePathStyle, SourceMapShiftTracking};
 use crate::options;
@@ -29,6 +28,7 @@ use crate::linker_context::static_route_visitor::StaticRouteVisitor;
 use crate::linker_context::write_output_files_to_disk::write_output_files_to_disk;
 use crate::linker_context_mod::GenerateChunkCtx;
 
+use crate::bytecode::Source;
 use crate::bytecode_sidecar::EXTENSION as BYTECODE_EXTENSION;
 
 // `Chunk.final_rel_path` is an owned `Box<[u8]>`; assignments
@@ -411,148 +411,11 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
         }
     }
 
-    // After final_rel_path is computed for all chunks, fix up module_info
-    // cross-chunk import specifiers. During printing, cross-chunk imports use
-    // unique_key placeholders as paths. Now that final paths are known, replace
-    // those placeholders with the resolved paths and serialize.
-    let external_string_table = (c.options.generate_bytecode_cache
-        && c.options.compile_mode.is_executable())
-    .then(crate::bundle_v2::dispatch::EncoderStringTableHandle::new);
-    // A payload order file: every chunk's bytecode goes into one payload laid out by it, encoded after the chunk loop
-    // (the layout wants the chunks in load order, which is only known then).
-    // `--bytecode-order` / `compile.bytecodeOrder`, read when the bundle started (`BundleV2::init`).
-    let bytecode_order = if external_string_table.is_none() {
-        None
-    } else {
-        c.bundle.bytecode_order.as_ref()
-    };
-    // (chunk index, its `Bytecode` output file, the URL its bytecode is keyed on), for `bytecode_order`.
-    let mut linked_bytecode_chunks: Vec<(usize, u32, BunString)> = Vec::new();
-    let mut module_info_strings = analyze_transpiled_module::ModuleInfoSlotTableBuilder::default();
-    // (`prelinked_module_graph` blob, chunk index of each graph module), when one was built.
-    let mut prelinked_graph: Option<(Vec<u8>, Vec<u32>)> = None;
-    if c.options.generates_module_info() {
-        let external_string_table = external_string_table
-            .as_ref()
-            .expect("module_info is only generated for --compile --bytecode");
-        // Build map from unique_key -> final resolved path
-        let mut unique_key_to_path: StringHashMap<Box<[u8]>> = StringHashMap::default();
-        for ch in chunks.iter() {
-            if ch.unique_key.len() > 0 && ch.final_rel_path.len() > 0 {
-                // Use the per-chunk public_path to match what IntermediateOutput.code()
-                // uses during emission (browser chunks from server builds use the
-                // browser transpiler's public_path).
-                let public_path: &[u8] = &c.options_for_chunk(ch).public_path;
-                let normalizer = cheap_prefix_normalizer(public_path, &ch.final_rel_path);
-                let mut resolved: Vec<u8> = Vec::new();
-                resolved.extend_from_slice(normalizer[0]);
-                resolved.extend_from_slice(normalizer[1]);
-                let _ = unique_key_to_path.put(ch.unique_key, resolved.into_boxed_slice()); // OOM-only Result
-            }
-        }
-
-        // The printer's module info only covers the code it printed, but every chunk also
-        // includes `--banner` and `--footer`.
-        let raw_text = c.options.raw_text_module_syntax();
-        if raw_text.import_meta || raw_text.top_level_await {
-            for chunk in chunks.iter_mut() {
-                if let crate::chunk::Content::Javascript(js) = &mut chunk.content
-                    && let Some(mi) = js.module_info.as_mut()
-                {
-                    mi.flags.contains_import_meta |= raw_text.import_meta;
-                    mi.flags.has_tla |= raw_text.top_level_await;
-                }
-            }
-        }
-
-        // Fix up each chunk's module_info; every chunk's strings go into one
-        // table (`OutputKind::ModuleInfoStringTable`) their bodies index into.
-        let mut table_ids: Vec<Vec<u32>> = Vec::new();
-        let unique_key_prefix = c.unique_key_prefix;
-        let paths = &unique_key_to_path;
-        for chunk in chunks.iter_mut() {
-            let crate::chunk::Content::Javascript(js) = &mut chunk.content else {
-                continue;
-            };
-            let Some(mi) = js.module_info.as_mut() else {
-                continue;
-            };
-
-            // In place, so the per-build placeholder does not survive as an extra string.
-            mi.rewrite_strings(move |s| {
-                if !s.starts_with(unique_key_prefix) {
-                    return None;
-                }
-                paths.get(s).map(|path| &path[..])
-            });
-
-            if mi.finalize().is_err() {
-                js.module_info = None;
-                continue;
-            }
-            table_ids.push(module_info_strings.intern_all(mi, |s| external_string_table.slot(s)));
-        }
-
-        // The pre-resolved graph over every chunk with module_info (`OutputKind::PrelinkedModuleGraph`): graph module
-        // `i` is the i-th such chunk, keyed by the path other chunks request it by. Built before the slot table is
-        // serialized below (it interns the keys). Its modules ship no module_info body: the graph is their record.
-        {
-            let mut inputs: Vec<crate::prelinked_module_graph::ModuleInput<'_>> = Vec::new();
-            let mut chunk_indices: Vec<u32> = Vec::new();
-            let mut complete = true;
-            let mut ids = table_ids.iter();
-            for (chunk_index, chunk) in chunks.iter().enumerate() {
-                let crate::chunk::Content::Javascript(js) = &chunk.content else {
-                    continue;
-                };
-                let Some(mi) = js.module_info.as_ref() else {
-                    continue;
-                };
-                let table_ids = ids.next().expect("one per chunk with module_info");
-                let Some(path) = unique_key_to_path.get(chunk.unique_key) else {
-                    complete = false;
-                    break;
-                };
-                inputs.push(crate::prelinked_module_graph::ModuleInput {
-                    path: &path[..],
-                    info: mi,
-                    table_ids,
-                });
-                chunk_indices.push(chunk_index as u32);
-            }
-            if complete && !inputs.is_empty() {
-                prelinked_graph = crate::prelinked_module_graph::build(
-                    &inputs,
-                    &mut module_info_strings,
-                    external_string_table,
-                )
-                .map(|bytes| (bytes, chunk_indices));
-            }
-        }
-
-        let mut table_ids = table_ids.iter();
-        for (chunk_index, chunk) in chunks.iter_mut().enumerate() {
-            let crate::chunk::Content::Javascript(js) = &mut chunk.content else {
-                continue;
-            };
-            let Some(mi) = js.module_info.take() else {
-                continue;
-            };
-            let table_ids = table_ids.next().expect("one per chunk with module_info");
-            if prelinked_graph.as_ref().is_some_and(|(_, chunk_indices)| {
-                chunk_indices.binary_search(&(chunk_index as u32)).is_ok()
-            }) {
-                // Keeps the chunk's (empty) module_info output slot so output-file indices stay dense.
-                js.module_info_bytes = Some(Box::default());
-                continue;
-            }
-            js.module_info_bytes = Some(bun_js_printer::serialize_module_info_body(
-                &mi,
-                module_info_strings.count(),
-                table_ids,
-            ));
-        }
-    }
+    let mut bytecode_generator =
+        (c.options.generate_bytecode_cache).then(crate::bytecode::Generator::default);
+    // An executable's chunks share their strings, so they are encoded in load order, which is only known after the chunk
+    // loop: (chunk index, its `Bytecode` output file).
+    let mut embedded_bytecode_chunks: Vec<(usize, u32)> = Vec::new();
 
     let mut output_files = OutputFileListBuilder::init(c, chunks)?;
 
@@ -808,7 +671,6 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                         is_executable: false,
                         source_map_index,
                         bytecode_index: None,
-                        module_info_index: None,
                         side: Some(options::Side::Client),
                         entry_point_index: None,
                         referenced_css_chunks: Box::default(),
@@ -951,21 +813,12 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                 SourceMapOption::None => {}
             }
 
-            // Compute side early so it can be used for bytecode, module_info, and main chunk output files
             let side: options::Side = c.chunk_side(chunk);
 
-            let mut linked_bytecode_url: Option<BunString> = None;
             let bytecode_output_file: Option<options::OutputFile> = 'brk: {
-                if c.options.generate_bytecode_cache {
+                if let Some(generator) = &mut bytecode_generator {
                     if c.chunk_gets_bytecode(chunk) {
-                        // For --compile builds, the bytecode URL must match the module name
-                        // that will be used at runtime. The module name is:
-                        //   public_path + final_rel_path (e.g., "/$bunfs/root/app.js")
-                        // Without this prefix, the JSC bytecode cache key won't match at runtime.
-                        // Use the per-chunk public_path (already computed above) for browser chunks
-                        // from server builds, and normalize with cheapPrefixNormalizer for consistency
-                        // with module_info path fixup.
-                        // For non-compile builds, use the normal .jsc extension.
+                        // In an executable, the path that other chunks import it by (e.g. "/$bunfs/root/app.js").
                         let source_provider_url = if c.options.compile_mode.is_executable() {
                             let normalizer =
                                 cheap_prefix_normalizer(public_path, &chunk.final_rel_path);
@@ -982,30 +835,16 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                             ))
                         };
 
-                        // With a payload order file the chunk's code is in the link's one payload, and the file says
-                        // where (`bytecode_entry_offset`) once that is encoded (below).
-                        let bytecode = if bytecode_order.is_some() {
+                        let bytecode = if is_compile {
                             Some(Box::default())
                         } else {
-                            crate::bundle_v2::dispatch::generate_cached_bytecode(
-                                c.options.output_format,
-                                &code_result.buffer,
-                                &source_provider_url,
-                                c.options.bytecode_depth,
-                                c.options.optimize_bytecode,
-                                external_string_table.as_ref().and_then(|table| table.get()),
-                            )
+                            Source::chunk(c.options.output_format, &code_result.buffer)
+                                .and_then(|source| {
+                                    generator.generate(source, c.options.bytecode_depth, None)
+                                })
+                                .map(crate::bytecode_sidecar::frame)
                         };
                         if let Some(bytecode) = bytecode {
-                            if bytecode_order.is_some() {
-                                linked_bytecode_url = Some(source_provider_url.clone());
-                            }
-                            // Executables embed the raw payload (aligned by the module graph).
-                            let bytecode = if c.options.compile_mode.is_executable() {
-                                bytecode
-                            } else {
-                                crate::bytecode_sidecar::frame(bytecode)
-                            };
                             let source_provider_url_str = source_provider_url.to_utf8();
                             debug!(
                                 "Bytecode cache generated {}: {}",
@@ -1056,49 +895,6 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                 break 'brk None;
             };
 
-            // Create module_info output file for ESM bytecode in --compile builds
-            let module_info_output_file: Option<options::OutputFile> = 'brk: {
-                if c.options.generates_module_info() {
-                    if c.chunk_gets_bytecode(chunk) {
-                        if let crate::chunk::Content::Javascript(js) = &chunk.content {
-                            if let Some(module_info_bytes) = &js.module_info_bytes {
-                                let mut out_path: Vec<u8> = Vec::new();
-                                out_path.extend_from_slice(&chunk.final_rel_path);
-                                out_path.extend_from_slice(b".module-info");
-                                let mut in_path: Vec<u8> = Vec::new();
-                                in_path.extend_from_slice(&chunk.final_rel_path);
-                                in_path.extend_from_slice(b".module-info");
-
-                                break 'brk Some(options::OutputFile::init(
-                                    options::OutputFileInit {
-                                        output_path: out_path.into_boxed_slice(),
-                                        input_path: in_path.into_boxed_slice(),
-                                        input_loader: Loader::Js,
-                                        hash: chunk.template.placeholder.hash.map(|_| {
-                                            chunk
-                                                .template
-                                                .content_hash(bun_wyhash::hash(module_info_bytes))
-                                        }),
-                                        output_kind: options::OutputKind::ModuleInfo,
-                                        loader: Loader::File,
-                                        size: Some(module_info_bytes.len()),
-                                        display_size: module_info_bytes.len() as u32,
-                                        data: options::OutputFileData::Buffer {
-                                            data: module_info_bytes.clone(),
-                                        },
-                                        side: Some(side),
-                                        entry_point_index: None,
-                                        is_executable: false,
-                                        ..Default::default()
-                                    },
-                                ));
-                            }
-                        }
-                    }
-                }
-                break 'brk None;
-            };
-
             let source_map_index: Option<u32> = if let Some(f) = sourcemap_output_file {
                 Some(output_files.insert_for_sourcemap_or_bytecode(f)?)
             } else {
@@ -1107,20 +903,10 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
 
             let bytecode_index: Option<u32> = if let Some(f) = bytecode_output_file {
                 let index = output_files.insert_for_sourcemap_or_bytecode(f)?;
-                if let Some(source_provider_url) = linked_bytecode_url {
-                    linked_bytecode_chunks.push((
-                        chunk_index_in_chunks_list,
-                        index,
-                        source_provider_url,
-                    ));
+                if is_compile {
+                    embedded_bytecode_chunks.push((chunk_index_in_chunks_list, index));
                 }
                 Some(index)
-            } else {
-                None
-            };
-
-            let module_info_index: Option<u32> = if let Some(f) = module_info_output_file {
-                Some(output_files.insert_for_sourcemap_or_bytecode(f)?)
             } else {
                 None
             };
@@ -1148,7 +934,6 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                     is_executable: chunk.flags.contains(crate::chunk::Flags::IS_EXECUTABLE),
                     source_map_index,
                     bytecode_index,
-                    module_info_index,
                     side: Some(side),
                     entry_point_index: if output_kind == options::OutputKind::EntryPoint {
                         Some(
@@ -1227,107 +1012,14 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
             &output_files.output_files,
             c.options.target.is_bun(),
         );
+        let loaders = c.parse_graph().input_files.items_loader();
         for (chunk_index, &position) in order.iter().enumerate() {
             let file = &mut output_files.output_files[chunk_index];
             file.load_order = position;
             file.loads_at_startup = position < startup_count;
+            file.starts_from_typescript =
+                loaders[chunks[chunk_index].entry_point.source_index() as usize].is_typescript();
         }
-    }
-
-    // The internal modules the executable will carry bytecode for, as its builtins section has them.
-    let internal_modules = (c.options.generate_internal_module_bytecode
-        && c.options.compile_mode.is_executable())
-    .then(|| builtins_of(c.options.target_builtins))
-    .flatten()
-    .map(|builtins| (wanted_internal_modules(c, &builtins), builtins));
-    let mut linked_bytecode: Option<LinkedBytecode> = None;
-    if let Some(order) = bytecode_order {
-        let table = external_string_table
-            .as_ref()
-            .and_then(|table| table.get())
-            .expect("an order file is only loaded for --compile --bytecode");
-        let encoder = crate::bundle_v2::dispatch::BytecodeLinkEncoderHandle::new(table, order);
-        linked_bytecode_chunks
-            .sort_by_key(|&(chunk_index, _, _)| output_files.output_files[chunk_index].load_order);
-        let is_esm = c.options.output_format == options::Format::Esm;
-        // What `IntermediateOutput::code` wrote where a text imports a chunk.
-        let mut chunk_paths: Vec<Vec<u8>> = chunks
-            .iter()
-            .map(|chunk| {
-                let public_path: &[u8] = &c.options_for_chunk(chunk).public_path;
-                cheap_prefix_normalizer(public_path, &chunk.final_rel_path).concat()
-            })
-            .collect();
-        chunk_paths.sort_unstable();
-        let chunk_paths: Vec<&[u8]> = chunk_paths.iter().map(Vec::as_slice).collect();
-        // Everything the link will hold is named in one go: the chunks, then the internal modules.
-        let mut named: Vec<crate::bytecode_order::Named<'_>> = linked_bytecode_chunks
-            .iter()
-            .map(|&(chunk_index, _, _)| crate::bytecode_order::Named::Chunk {
-                text: output_files.output_files[chunk_index].value.as_slice(),
-                is_esm,
-                chunk_paths: &chunk_paths,
-            })
-            .collect();
-        if let Some((wanted, builtins)) = &internal_modules {
-            named.extend(wanted.iter().map(|&id| {
-                crate::bytecode_order::Named::InternalModule(
-                    builtins.module(id).map_or(&[][..], |module| module.source),
-                )
-            }));
-        }
-        let mut names = crate::bytecode_order::names_of_all(&named);
-        let internal_names = names.split_off(linked_bytecode_chunks.len());
-        let mut linked = LinkedBytecode {
-            encoder,
-            output_files: Vec::with_capacity(linked_bytecode_chunks.len()),
-            internal_names,
-            names_out: crate::bytecode_order::names_out().map(|path| (path, Vec::new())),
-        };
-        for ((chunk_index, bytecode_index, source_provider_url), names) in
-            linked_bytecode_chunks.iter().zip(&names)
-        {
-            if let Some((_, names_out)) = &mut linked.names_out {
-                crate::bytecode_order::write_names_of(
-                    names_out,
-                    source_provider_url.to_utf8().slice(),
-                    names.as_ref(),
-                );
-            }
-            if linked.encoder.add_module(
-                c.options.output_format,
-                output_files.output_files[*chunk_index].value.as_slice(),
-                source_provider_url,
-                c.options.bytecode_depth,
-                c.options.optimize_bytecode,
-                names.as_ref(),
-            ) {
-                linked.output_files.push(*bytecode_index);
-                if names.is_none() {
-                    // JavaScriptCore compiled what the parser here does not take: nothing of the chunk can be listed
-                    // in an order file, or placed by one.
-                    log.add_warning_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "the bytecode order files cannot place the functions of {}: they have no names",
-                            bstr::BStr::new(&output_files.output_files[*chunk_index].dest_path)
-                        ),
-                    );
-                }
-                continue;
-            }
-            output_files.output_files[*chunk_index].bytecode_index = u32::MAX;
-            log.add_error_fmt(
-                None,
-                bun_ast::Loc::EMPTY,
-                format_args!(
-                    "Failed to generate bytecode for {}",
-                    bstr::BStr::new(&output_files.output_files[*chunk_index].dest_path)
-                ),
-            );
-        }
-        linked_bytecode = Some(linked);
     }
 
     if is_standalone {
@@ -1352,177 +1044,15 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
     }
 
     let mut result = output_files.take();
-    if let Some(internal_modules) = internal_modules {
-        append_internal_module_bytecode(
+    if let Some(generator) = bytecode_generator.filter(|_| is_compile) {
+        embed_bytecode(
             c,
             log,
+            chunks,
             &mut result,
-            external_string_table.as_ref().and_then(|t| t.get()),
-            linked_bytecode.as_mut(),
-            internal_modules,
-        );
-    }
-    let mut linked_bytecode_payload: Option<Box<[u8]>> = None;
-    if let Some(mut linked) = linked_bytecode {
-        if let Some((path, names_out)) = &linked.names_out {
-            let path = bun_core::ZBox::from_bytes(path);
-            if let Err(err) = bun_sys::File::write_file(bun_core::Fd::cwd(), &path, names_out) {
-                bun_core::warn!(
-                    "failed to write {}: {}",
-                    bstr::BStr::new(path.as_bytes()),
-                    err
-                );
-            }
-        }
-        let encoded = linked.output_files;
-        match linked.encoder.finish() {
-            Some(crate::bytecode_order::LinkedPayload {
-                payload,
-                entry_offsets,
-                region_ends,
-                named_hot_functions,
-                placed_hot_functions,
-                functions_without_name,
-            }) => {
-                if functions_without_name != 0 {
-                    log.add_warning_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "the bytecode order files cannot place {functions_without_name} functions: they have no names"
-                        ),
-                    );
-                }
-                // An order file of another program moves nothing: say so. (A share is not judged: a recording also lists
-                // functions of Bun's internal modules, which are not part of every link.)
-                let listed = bytecode_order.map_or(0, |order| order.hot_functions.len());
-                if listed != 0 && named_hot_functions == 0 {
-                    log.add_warning_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "none of the {listed} functions the bytecode order files list is in this build"
-                        ),
-                    );
-                }
-                debug!(
-                    "Linked bytecode payload: {} modules, {} bytes, regions end at {:?}, {} of {} listed functions named, {} functions in HOT",
-                    entry_offsets.len(),
-                    payload.len(),
-                    region_ends,
-                    named_hot_functions,
-                    listed,
-                    placed_hot_functions
-                );
-                // `encoded` holds positions in the output file list (`insert_for_sourcemap_or_bytecode`), which `result`
-                // still is: a chunk's own file comes first, at the chunk's index, its `Bytecode` file after all of those.
-                for (&bytecode_file, entry_offset) in encoded.iter().zip(entry_offsets) {
-                    result
-                        .get_mut(bytecode_file as usize)
-                        .expect("a Bytecode output file of this link")
-                        .bytecode_entry_offset = entry_offset;
-                }
-                linked_bytecode_payload =
-                    Some(crate::bytecode_order::payload_file(payload, region_ends));
-            }
-            None => {
-                log.add_error(
-                    None,
-                    bun_ast::Loc::EMPTY,
-                    b"Failed to encode the linked bytecode payload",
-                );
-                return Err(crate::Error::BuildFailed);
-            }
-        }
-    }
-    if let Some((bytes, chunk_indices)) = prelinked_graph {
-        debug!(
-            "prelinked module graph: {} modules, {} bytes",
-            chunk_indices.len(),
-            bytes.len()
-        );
-        // `result[i]` is chunk `i`'s output file (see the chunk loop above).
-        for (module_index, &chunk_index) in chunk_indices.iter().enumerate() {
-            result[chunk_index as usize].prelinked_module_index = module_index as u32;
-        }
-        result.push(options::OutputFile::init(options::OutputFileInit {
-            output_path: b".prelinked-module-graph".to_vec().into_boxed_slice(),
-            input_path: Box::default(),
-            input_loader: Loader::File,
-            hash: None,
-            output_kind: options::OutputKind::PrelinkedModuleGraph,
-            loader: Loader::File,
-            size: Some(bytes.len()),
-            display_size: bytes.len() as u32,
-            data: options::OutputFileData::Buffer {
-                data: bytes.into_boxed_slice(),
-            },
-            side: None,
-            entry_point_index: None,
-            is_executable: false,
-            ..Default::default()
-        }));
-    }
-    if c.options.generates_module_info() {
-        let bytes = module_info_strings.serialize();
-        debug!(
-            "module_info string table: {} strings, {} bytes",
-            module_info_strings.count(),
-            bytes.len()
-        );
-        result.push(options::OutputFile::init(options::OutputFileInit {
-            output_path: b".module-info-strings".to_vec().into_boxed_slice(),
-            input_path: Box::default(),
-            input_loader: Loader::File,
-            hash: None,
-            output_kind: options::OutputKind::ModuleInfoStringTable,
-            loader: Loader::File,
-            size: Some(bytes.len()),
-            display_size: bytes.len() as u32,
-            data: options::OutputFileData::Buffer {
-                data: bytes.into_boxed_slice(),
-            },
-            side: None,
-            entry_point_index: None,
-            is_executable: false,
-            ..Default::default()
-        }));
-    }
-    if let Some(bytes) = linked_bytecode_payload {
-        result.push(options::OutputFile::init(options::OutputFileInit {
-            output_path: b".bytecode-payload".to_vec().into_boxed_slice(),
-            input_path: Box::default(),
-            input_loader: Loader::File,
-            hash: None,
-            output_kind: options::OutputKind::BytecodePayload,
-            loader: Loader::File,
-            size: Some(bytes.len()),
-            display_size: bytes.len() as u32,
-            data: options::OutputFileData::Buffer { data: bytes },
-            side: None,
-            entry_point_index: None,
-            is_executable: false,
-            ..Default::default()
-        }));
-    }
-    if let Some(table) = external_string_table {
-        let bytes = table.take(bytecode_order.map_or(&[][..], |order| &order.hot_strings));
-        debug!("Bytecode external string table: {} bytes", bytes.len());
-        result.push(options::OutputFile::init(options::OutputFileInit {
-            output_path: b".bytecode-strings".to_vec().into_boxed_slice(),
-            input_path: Box::default(),
-            input_loader: Loader::File,
-            hash: None,
-            output_kind: options::OutputKind::BytecodeStringTable,
-            loader: Loader::File,
-            size: Some(bytes.len()),
-            display_size: bytes.len() as u32,
-            data: options::OutputFileData::Buffer { data: bytes },
-            side: None,
-            entry_point_index: None,
-            is_executable: false,
-            ..Default::default()
-        }));
+            generator,
+            embedded_bytecode_chunks,
+        )?;
     }
     debug_assert_no_placeholder_left(c, &result);
     Ok(result)
@@ -1544,27 +1074,15 @@ fn debug_assert_no_placeholder_left(c: &LinkerContext, files: &[options::OutputF
     }
 }
 
-/// The link's one bytecode payload (`--bytecode-order`), and for each module added to it its `Bytecode` or
-/// `BuiltinBytecode` output file.
-struct LinkedBytecode {
-    encoder: crate::bundle_v2::dispatch::BytecodeLinkEncoderHandle,
-    output_files: Vec<u32>,
-    /// What the code of the internal modules that will join the link is called, in their order.
-    internal_names: Vec<Option<crate::bytecode_order::CodeNames>>,
-    /// `BUN_BYTECODE_ORDER_NAMES_OUT`, and what is written there.
-    names_out: Option<(&'static [u8], Vec<u8>)>,
-}
-
 /// Returns the builtins section of the executable being built: `target_section`, or this bun's
 /// if `None`. Returns `None` if this bun can't compile that section's modules.
 fn builtins_of(target_section: Option<&[u8]>) -> Option<bun_exe_format::builtins::Builtins<'_>> {
     use bun_exe_format::builtins::Builtins;
-    let builtins = Builtins::parse(crate::bundle_v2::dispatch::host_builtins()).and_then(|host| {
-        match target_section {
+    let builtins =
+        Builtins::parse(crate::bytecode::host_builtins()).and_then(|host| match target_section {
             Some(section) => Builtins::parse(section)?.require_same_engine(&host),
             None => Ok(host),
-        }
-    });
+        });
     match builtins {
         Ok(builtins) => Some(builtins),
         Err(e) => {
@@ -1629,103 +1147,200 @@ fn wanted_internal_modules(
     wanted
 }
 
-/// `--compile --bytecode`: the executable also carries ahead-of-time bytecode for the internal modules (node:fs, …) the
-/// bundle imports and everything those can require (while loading or lazily later), so their first `require` decodes
-/// instead of parsing. One
-/// `OutputKind::BuiltinBytecode` per module; StandaloneModuleGraph::to_bytes lays them out and InternalModuleRegistry
-/// picks them up by id. The modules, their ids and (when compiling for another platform) their sources come from the
-/// builtins section of the executable the bundle is going into.
-fn append_internal_module_bytecode(
+fn file_of_executable(
+    path: &[u8],
+    kind: options::OutputKind,
+    data: Box<[u8]>,
+) -> options::OutputFile {
+    options::OutputFile::init(options::OutputFileInit {
+        output_path: path.into(),
+        input_loader: Loader::File,
+        output_kind: kind,
+        loader: Loader::File,
+        display_size: data.len() as u32,
+        data: options::OutputFileData::Buffer { data },
+        ..Default::default()
+    })
+}
+
+/// `--compile --bytecode`: the bytecode of the chunks, and of the internal modules (node:fs, …) that the bundle imports
+/// and everything those can require (while loading or lazily later), as the builtins section of the executable that
+/// the bundle is going into has them. With `--bytecode-order` it is all one payload, and a module's file only says
+/// where its entry is. `files[i]` is chunk `i`'s, and `with_bytecode` has (chunk index, its `Bytecode` file).
+fn embed_bytecode(
     c: &LinkerContext,
     log: &mut bun_ast::Log,
-    output_files: &mut Vec<options::OutputFile>,
-    external_strings: Option<core::ptr::NonNull<crate::bundle_v2::dispatch::EncoderStringTable>>,
-    // With an order file the internal modules are more modules of the link's one payload, and their output files say
-    // where in it, like the chunks'.
-    mut linked_bytecode: Option<&mut LinkedBytecode>,
-    (wanted, builtins): (Vec<u32>, bun_exe_format::builtins::Builtins<'_>),
-) {
-    use crate::bundle_v2::dispatch;
-    let target_section = c.options.target_builtins;
-    // `wanted`'s modules as the builtins section has them, and (for a link) what the order files call their code.
-    let modules: Vec<Option<bun_exe_format::builtins::Module<'_>>> =
-        wanted.iter().map(|&id| builtins.module(id)).collect();
-    for (index, id) in wanted.into_iter().enumerate() {
-        let bytecode = if let Some(linked) = linked_bytecode.as_deref_mut() {
-            // This executable's own builtins section has every module it has an id for.
-            debug_assert!(target_section.is_some() || modules[index].is_some());
-            let Some(module) = &modules[index] else {
-                continue;
-            };
-            // Another executable's builtins may be another version's, in a syntax the parser here does not take.
-            let names = linked.internal_names[index].take();
-            if names.is_none() {
-                log.add_warning_fmt(
-                    None,
-                    bun_ast::Loc::EMPTY,
-                    format_args!(
-                        "the bytecode order files cannot place the functions of {}: they have no names",
-                        bstr::BStr::new(module.name)
-                    ),
-                );
-            }
-            linked
-                .encoder
-                .add_internal_module(
-                    id,
-                    module,
-                    target_section.map(|_| builtins.source_stamp),
-                    c.options.bytecode_depth,
-                    names.as_ref(),
-                )
-                .then(|| {
-                    if let Some((_, names_out)) = &mut linked.names_out {
-                        crate::bytecode_order::write_names_of(
-                            names_out,
-                            module.name,
-                            names.as_ref(),
-                        );
-                    }
-                    linked.output_files.push(output_files.len() as u32);
-                    Box::default()
-                })
-        } else {
-            match target_section {
-                Some(_) => builtins.module(id).and_then(|m| {
-                    dispatch::generate_internal_module_bytecode_from_source(
-                        &m,
-                        builtins.source_stamp,
-                        c.options.bytecode_depth,
-                        external_strings,
-                    )
-                }),
-                None => dispatch::generate_internal_module_bytecode(
-                    id,
-                    c.options.bytecode_depth,
-                    external_strings,
-                ),
-            }
+    chunks: &[Chunk],
+    files: &mut Vec<options::OutputFile>,
+    mut generator: crate::bytecode::Generator,
+    mut with_bytecode: Vec<(usize, u32)>,
+) -> Result<(), crate::Error> {
+    use crate::bytecode_order::{self, Named};
+    use bun_engine_bytecode::cache::{Encoder, Output, StringTableBuilder};
+
+    with_bytecode.sort_by_key(|&(chunk, _)| files[chunk].load_order);
+    let builtins = (c.options.generate_internal_module_bytecode)
+        .then(|| builtins_of(c.options.target_builtins))
+        .flatten();
+    let internal_modules: Vec<_> = (builtins.iter())
+        .flat_map(|builtins| {
+            (wanted_internal_modules(c, builtins).into_iter())
+                .filter_map(|id| Some((id, builtins.module(id)?, builtins.source_stamp)))
+        })
+        .collect();
+
+    let order = c.bundle.bytecode_order.as_ref();
+    let mut names = Vec::new();
+    if order.is_some() {
+        // What `IntermediateOutput::code` wrote where a text imports a chunk.
+        let mut chunk_paths: Vec<Vec<u8>> = chunks
+            .iter()
+            .map(|chunk| {
+                let public_path: &[u8] = &c.options_for_chunk(chunk).public_path;
+                cheap_prefix_normalizer(public_path, &chunk.final_rel_path).concat()
+            })
+            .collect();
+        chunk_paths.sort_unstable();
+        let chunk_paths: Vec<&[u8]> = chunk_paths.iter().map(Vec::as_slice).collect();
+        let named_chunks = with_bytecode.iter().map(|&(chunk, _)| Named::Chunk {
+            text: files[chunk].value.as_slice(),
+            is_esm: c.options.output_format == options::Format::Esm,
+            chunk_paths: &chunk_paths,
+        });
+        let named_modules =
+            (internal_modules.iter()).map(|(_, module, _)| Named::InternalModule(module.source));
+        names =
+            bytecode_order::names_of_all(&named_chunks.chain(named_modules).collect::<Vec<_>>());
+    }
+    let mut names = names.into_iter();
+
+    let mut strings = StringTableBuilder::new(order.map_or(&[], |order| &order.hot_strings));
+    let mut link = order.map(|order| Encoder::new(order.hints()));
+    let mut names_out =
+        (order.and_then(|_| bytecode_order::names_out())).map(|path| (path, Vec::new()));
+    let depth = c.options.bytecode_depth;
+    // Once for each text, in the order in which they are named. Nothing for what goes in the link's payload.
+    let mut encode = |log: &mut bun_ast::Log, source: Option<Source<'_>>, path: &[u8]| {
+        let Some(encoder) = &mut link else {
+            return generator.generate(source?, depth, Some(&mut strings));
         };
-        let Some(bytecode) = bytecode else {
+        let names = names.next().flatten();
+        if let Some((_, names_out)) = &mut names_out {
+            bytecode_order::write_names_of(names_out, path, names.as_ref());
+        }
+        let functions = |key| bytecode_order::name_of(names.as_ref()?, key);
+        let output = Output {
+            encoder,
+            strings: Some(&mut strings),
+            names: (names.as_ref()).map(|names| bun_engine_bytecode::cache::OrderNames {
+                entry: names.module,
+                functions: &functions,
+            }),
+            depth,
+        };
+        generator.add(source?, output).then_some(())?;
+        if names.is_none() {
+            // The engine took what the parser here does not: nothing of it can be listed in an order file, or placed by one.
+            log.add_warning_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "the bytecode order files cannot place the functions of {}: they have no names",
+                    bstr::BStr::new(path)
+                ),
+            );
+        }
+        Some(Box::default())
+    };
+
+    let mut encoded: Vec<usize> = Vec::new();
+    for (chunk, file) in with_bytecode {
+        let source = Source::chunk(c.options.output_format, files[chunk].value.as_slice());
+        let Some(bytes) = encode(log, source, &files[file as usize].dest_path) else {
+            files[chunk].bytecode_index = u32::MAX;
+            log.add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "Failed to generate bytecode for {}",
+                    bstr::BStr::new(&files[chunk].dest_path)
+                ),
+            );
             continue;
         };
-        debug!("Internal module bytecode {}: {} bytes", id, bytecode.len());
-        output_files.push(options::OutputFile::init(options::OutputFileInit {
-            output_path: id.to_string().into_bytes().into_boxed_slice(),
-            input_path: Box::default(),
-            input_loader: Loader::Js,
-            hash: None,
-            output_kind: options::OutputKind::BuiltinBytecode,
-            loader: Loader::File,
-            size: Some(bytecode.len()),
-            display_size: bytecode.len() as u32,
-            data: options::OutputFileData::Buffer { data: bytecode },
-            side: None,
-            entry_point_index: None,
-            is_executable: false,
-            ..Default::default()
-        }));
+        encoded.push(file as usize);
+        files[file as usize].size = bytes.len();
+        files[file as usize].value = crate::output_file::Value::Buffer { bytes };
     }
+    for (id, module, stamp) in internal_modules {
+        let source = Source::InternalModule(module.source, stamp);
+        if let Some(bytes) = encode(log, Some(source), module.name) {
+            encoded.push(files.len());
+            let kind = options::OutputKind::BuiltinBytecode;
+            files.push(file_of_executable(id.to_string().as_bytes(), kind, bytes));
+        }
+    }
+
+    if let Some((path, names_out)) = &names_out {
+        let path = bun_core::ZBox::from_bytes(path);
+        if let Err(err) = bun_sys::File::write_file(bun_core::Fd::cwd(), &path, names_out) {
+            bun_core::warn!(
+                "failed to write {}: {}",
+                bstr::BStr::new(path.as_bytes()),
+                err
+            );
+        }
+    }
+    let (Ok(strings), Ok(linked)) = (strings.finish(), link.map(Encoder::finish).transpose())
+    else {
+        log.add_error(None, bun_ast::Loc::EMPTY, b"The bytecode is too large");
+        return Err(crate::Error::BuildFailed);
+    };
+    if let Some(linked) = linked {
+        if linked.functions_without_name != 0 {
+            log.add_warning_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "the bytecode order files cannot place {} functions: they have no names",
+                    linked.functions_without_name
+                ),
+            );
+        }
+        // An order file of another program moves nothing: say so. (A share is not judged: a recording also lists
+        // functions of Bun's internal modules, which are not part of every link.)
+        let listed = order.map_or(0, |order| order.hot_functions.len());
+        if listed != 0 && linked.named_hot_functions == 0 {
+            log.add_warning_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "none of the {listed} functions the bytecode order files list is in this build"
+                ),
+            );
+        }
+        debug!(
+            "Linked bytecode payload: {} modules, regions end at {:?}, {} of {} listed functions named",
+            linked.entries.len(),
+            linked.region_ends,
+            linked.named_hot_functions,
+            listed
+        );
+        for (&file, &entry) in encoded.iter().zip(&linked.entries) {
+            files[file].bytecode_entry_offset = entry;
+        }
+        files.push(file_of_executable(
+            b".bytecode-payload",
+            options::OutputKind::BytecodePayload,
+            bytecode_order::payload_file(linked.payload, linked.region_ends),
+        ));
+    }
+    files.push(file_of_executable(
+        b".bytecode-strings",
+        options::OutputKind::BytecodeStringTable,
+        strings.into(),
+    ));
+    Ok(())
 }
 
 /// Runs on the pool, for element `i` of `chunk.compile_results_for_chunk`.

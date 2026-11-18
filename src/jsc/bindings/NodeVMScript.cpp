@@ -8,8 +8,6 @@
 #include "JavaScriptCore/Completion.h"
 #include "JavaScriptCore/JSWeakMap.h"
 #include "JavaScriptCore/JSWeakMapInlines.h"
-#include "JavaScriptCore/ProgramCodeBlock.h"
-#include "JavaScriptCore/SourceCodeKey.h"
 
 #include "NodeVMScriptFetcher.h"
 #include "../vm/NodeVMRunTermination.h"
@@ -175,17 +173,13 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
 
     // Like Node, reject an empty cachedData.
     if (script->options().cachedDataProvided) {
-        // Only record whether the bytecode decodes. Each run links the block compiled from source (unlinkedCodeBlockFor).
-        bool accepted = false;
-        if (RefPtr<JSC::CachedBytecode> cachedBytecode = unwrapCachedData(cachedData.span())) {
-            JSC::LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? JSC::TaintedByWithScopeLexicallyScopedFeature : JSC::NoLexicallyScopedFeatures;
-            JSC::SourceCodeKey key(script->source(), {}, JSC::SourceCodeType::ProgramType, lexicallyScopedFeatures, JSC::JSParserScriptMode::Classic, JSC::DerivedContextType::None, JSC::EvalContextType::None, false, {}, std::nullopt);
-            accepted = !!JSC::decodeCodeBlock<UnlinkedProgramCodeBlock>(vm, key, cachedBytecode.releaseNonNull());
-        }
+        bool accepted = JSC::isBytecodeOf(script->source(), JSC::SourceCodeType::ProgramType, cachedData.span());
         script->cachedDataRejected(accepted ? TriState::False : TriState::True);
         cachedData = {};
-    } else if (script->options().produceCachedData)
-        script->cacheBytecode();
+    } else if (script->options().produceCachedData) {
+        script->getBytecodeBuffer();
+        RETURN_IF_EXCEPTION(scope, {});
+    }
 
     return JSValue::encode(script);
 }
@@ -202,17 +196,14 @@ JSC_DEFINE_HOST_FUNCTION(scriptConstructorConstruct, (JSGlobalObject * globalObj
 
 JSC::UnlinkedProgramCodeBlock* NodeVMScript::unlinkedCodeBlockFor(JSGlobalObject* globalObject, JSC::ParserError& error)
 {
-    VM& vm = JSC::getVM(globalObject);
-    OptionSet<JSC::CodeGenerationMode> codeGenerationMode = globalObject->defaultCodeGenerationMode();
-
-    if (m_unlinkedCodeBlock && m_unlinkedCodeBlock->codeGenerationMode() == codeGenerationMode)
+    if (m_unlinkedCodeBlock && m_unlinkedCodeBlock->isUsableIn(globalObject))
         return m_unlinkedCodeBlock.get();
 
-    // The CodeCache records the parse on the executable passed to it, and every run links its own executable.
-    JSC::UnlinkedProgramCodeBlock* block = vm.codeCache()->getUnlinkedProgramCodeBlock(vm, JSC::ProgramExecutable::create(globalObject, m_source), m_source, codeGenerationMode, error);
-    if (block)
-        m_unlinkedCodeBlock.set(vm, this, block);
-    return block;
+    RefPtr block = JSC::UnlinkedProgramCodeBlock::compile(globalObject, m_source, error);
+    if (!block)
+        return nullptr;
+    m_unlinkedCodeBlock = WTF::move(block);
+    return m_unlinkedCodeBlock.get();
 }
 
 JSValue NodeVMScript::evaluate(JSGlobalObject* globalObject, NakedPtr<JSC::Exception>& exception)
@@ -223,33 +214,10 @@ JSValue NodeVMScript::evaluate(JSGlobalObject* globalObject, NakedPtr<JSC::Excep
     return JSC::evaluate(globalObject, m_source, unlinkedCodeBlockFor(globalObject, ignoredError), globalObject, exception);
 }
 
-void NodeVMScript::cacheBytecode()
-{
-    m_cachedBytecode = getBytecode(globalObject(), JSC::SourceCodeType::ProgramType, m_source);
-    m_cachedDataProduced = m_cachedBytecode != nullptr;
-}
-
 JSC::JSUint8Array* NodeVMScript::getBytecodeBuffer()
 {
-    auto scope = DECLARE_THROW_SCOPE(vm());
-    if (!m_options.produceCachedData) {
-        return nullptr;
-    }
-
-    if (!m_cachedBytecodeBuffer) {
-        if (!m_cachedBytecode)
-            cacheBytecode();
-        if (!m_cachedBytecode)
-            return nullptr;
-
-        m_cachedBytecodeBuffer.set(vm(), this, createCachedDataBuffer(globalObject(), m_cachedBytecode->span()));
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        if (!m_cachedBytecodeBuffer) {
-            return nullptr;
-        }
-    }
-
-    ASSERT(m_cachedBytecodeBuffer);
+    if (m_options.produceCachedData && !m_cachedBytecodeBuffer)
+        m_cachedBytecodeBuffer.setMayBeNull(vm(), this, tryCreateCachedData(globalObject(), m_source, JSC::SourceCodeType::ProgramType));
     return m_cachedBytecodeBuffer.get();
 }
 
@@ -262,7 +230,6 @@ void NodeVMScript::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_cachedBytecodeBuffer);
-    visitor.append(thisObject->m_unlinkedCodeBlock);
     NodeVMScriptFetcher::visitSource(visitor, thisObject->m_source);
 }
 
@@ -526,11 +493,11 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
     getNodeVMContextOptions(globalObject, vm, scope, contextOptionsArg, contextOptions, optionNames(vm).contextCodeGeneration(vm), &importer);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // A vm.constants.DONT_CONTEXTIFY context's handle is its own global, so run in that context instead of wrapping it in a new one.
+    // As in Node, an object that is a context already stays the context that it is.
     NodeVMGlobalObject* targetContext = context ? getGlobalObjectFromContext(globalObject, context, false) : nullptr;
     RETURN_IF_EXCEPTION(scope, {});
-    if (!targetContext || targetContext->contextifiedObject()) {
-        targetContext = NodeVMGlobalObject::create(vm, contextOptions, importer, context);
+    if (!targetContext) {
+        targetContext = NodeVMGlobalObject::create(globalObject, contextOptions, importer, context);
         RETURN_IF_EXCEPTION(scope, {});
     }
 

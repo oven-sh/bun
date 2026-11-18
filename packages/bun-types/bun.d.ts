@@ -3535,14 +3535,10 @@ declare module "bun" {
      */
     bytecodeDepth?: number;
 
-    /**
-     * Build-time optimizations for `bytecode` builds.
-     */
     optimize?: {
       /**
-       * Run JavaScriptCore's build-time optimization passes over the generated
-       * bytecode. Only used when `bytecode: true`.
-       * @default true
+       * Accepted for compatibility. The bytecode is the same either way.
+       * @deprecated This option has no effect.
        */
       bytecode?: boolean;
     };

@@ -110,7 +110,7 @@ describe("emitPostLink ninja ordering", () => {
 
   describe.each([
     ["plain", {}, { type: "EXEC", relro: false, bindNow: false }],
-    ["--hardened=on", { hardened: true, webkit: "local" }, { type: "DYN", relro: true, bindNow: true }],
+    ["--hardened=on", { hardened: true }, { type: "DYN", relro: true, bindNow: true }],
   ] as [string, PartialConfig, object][])("the stripped executable of a %s Linux build", (_name, partial, layout) => {
     test.each([
       ["fails the build in CI", true],
@@ -144,7 +144,7 @@ describe("emitPostLink ninja ordering", () => {
       const spec = JSON.parse(readFileSync(join(buildDir, "bun.verify.json"), "utf8"));
       expect(spec.exe).toBe(strippedExe);
       expect(spec.expect.elf).toEqual({ ...layout, execStack: false, rwxLoad: false, tlsSegment: true });
-      for (const needsSymbols of ["staticInitializers", "forbiddenSymbols", "debugInfo"])
+      for (const needsSymbols of ["staticInitializers", "debugInfo"])
         expect(spec.expect).not.toHaveProperty(needsSymbols);
     });
   });

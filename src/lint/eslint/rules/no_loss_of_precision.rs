@@ -66,7 +66,7 @@ fn not_base_ten_loses_precision_in_oxlint(digits: &[u8], bits_per_digit: u32) ->
 /// `value.toPrecision(precision)` for a finite `value > 0` and a precision from 1 to 100. Returns the digits and the
 /// exponent of the first digit.
 fn to_precision(value: f64, precision: usize) -> (Vec<u8>, i64) {
-    let mut buffer = [0; 124];
+    let mut buffer = [0; 128];
     let text =
         bun_core::fmt::FormatDouble::to_exponential(&mut buffer, value, Some(precision as u32 - 1));
     let (digits, exponent) = strings::split_once_char(text, b'e').unwrap_or((text, b"0"));

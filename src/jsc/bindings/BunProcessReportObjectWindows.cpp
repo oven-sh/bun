@@ -261,7 +261,7 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
         javascriptStack->putDirect(vm, vm.propertyNames->message, jsString(vm, String("Error [ERR_SYNTHETIC]: JavaScript Callstack"_s)), 0);
 
         WTF::Vector<StackFrame> stackFrames;
-        vm.interpreter.getStackTrace(javascriptStack, stackFrames, 1);
+        vm.interpreter.getStackTrace(stackFrames, 1);
 
         String name = "Error"_s;
         String message = "JavaScript Callstack"_s;

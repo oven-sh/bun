@@ -62,8 +62,8 @@ ExceptionOr<URLPatternComponent> URLPatternComponent::compile(Ref<JSC::VM> vm, S
     if (options.ignoreCase)
         flags.add(JSC::Yarr::Flags::IgnoreCase);
 
-    JSC::RegExp* regularExpression = JSC::RegExp::create(vm, regularExpressionString, flags);
-    if (!regularExpression->isValid())
+    JSC::RegExp* regularExpression = JSC::RegExp::tryCreate(vm, regularExpressionString, flags);
+    if (!regularExpression)
         return Exception { ExceptionCode::TypeError, "Unable to create RegExp object regular expression from provided URLPattern string."_s };
 
     auto maybePatternString = generatePatternString(partList, options);
@@ -99,13 +99,11 @@ bool URLPatternComponent::matchSpecialSchemeProtocol(JSC::JSGlobalObject* global
 // https://urlpattern.spec.whatwg.org/#create-a-component-match-result
 std::optional<URLPatternComponentResult> URLPatternComponent::componentMatch(JSC::JSGlobalObject* globalObject, String&& input) const
 {
-    auto* regExp = m_regularExpression.get();
-    auto ovector = regExp->ovectorSpan();
-    int position = regExp->match(globalObject, input, 0, ovector);
-    if (position < 0)
+    auto ovector = m_regularExpression->matchWithGroups(globalObject, input, 0);
+    if (ovector.isEmpty())
         return std::nullopt;
 
-    unsigned numSubpatterns = regExp->numSubpatterns();
+    unsigned numSubpatterns = ovector.size() / 2 - 1;
 
     URLPatternComponentResult::GroupsRecord groups;
     groups.reserveInitialCapacity(numSubpatterns);

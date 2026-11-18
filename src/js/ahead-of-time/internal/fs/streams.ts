@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/fs/streams.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 4c73ad1978cefd870065b89eaf36d4c329a29a24f0008fcb06e721058f973a51.
+// Written against that file with the SHA-256 b79b5aa57cdf56fa3cfbb259dd65824cac6e225994606e4dea197997f7bc3a76.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // fs.ReadStream and fs.WriteStream are lazily loaded to avoid importing 'node:stream' until required
@@ -369,6 +369,7 @@ if (StoredReadable !== Readable) extendStoredBase([ReadStream, StoredReadable]);
 const readStreamPrototype = ReadStream.prototype;
 
 Object.defineProperty(readStreamPrototype, "autoClose", {
+  __proto__: null,
   get(this: $Node.ReadStream) {
     return this._readableState.autoDestroy;
   },
@@ -493,6 +494,7 @@ readStreamPrototype.close = function (this: $Node.ReadStream, cb?: ErrorCallback
 };
 
 Object.defineProperty(readStreamPrototype, "pending", {
+  __proto__: null,
   get(this: $Node.ReadStream) {
     return this.fd == null;
   },
@@ -1015,6 +1017,7 @@ writeStreamPrototype.close = function (this: $Node.WriteStream, cb?: ErrorCallba
 writeStreamPrototype.destroySoon = writeStreamPrototype.end;
 
 Object.defineProperty(writeStreamPrototype, "autoClose", {
+  __proto__: null,
   get(this: $Node.WriteStream) {
     return this._writableState.autoDestroy;
   },
@@ -1024,6 +1027,7 @@ Object.defineProperty(writeStreamPrototype, "autoClose", {
 });
 
 Object.defineProperty(writeStreamPrototype, "pending", {
+  __proto__: null,
   get(this: $Node.WriteStream) {
     return this.fd === null;
   },

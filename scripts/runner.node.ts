@@ -39,7 +39,6 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { heldTooMuchTogether } from "../test/aot/harness/killed-for-memory.ts";
 import { ownTemporaryFolder } from "../test/aot/harness/temporary-folders.ts";
-import { startsToolsOfTheEngine } from "../test/aot/harness/tests-that-start-tools-of-the-engine.ts";
 import { prestartMap as dockerPrestartMap } from "../test/docker/prestart-map.mjs";
 import {
   getAbi,
@@ -91,20 +90,15 @@ function escapePowershell(string: string): string {
 }
 
 /** `members`: what is unpacked alone, or left packed, as patterns of paths in the archive. */
-async function unzip(
-  filename: string,
-  output?: string,
-  members: { only?: string[]; without?: string[] } = {},
-): Promise<string> {
+async function unzip(filename: string, output?: string, without: string[] = []): Promise<string> {
   const destination = output || mkdtempSync(join(tmpdir(), "unzip-"));
-  const { only = [], without = [] } = members;
   if (isWindows) {
     // The tar of Windows reads a zip, several times as fast as Expand-Archive.
     const tar = join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe");
     if (existsSync(tar)) {
       try {
         mkdirSync(destination, { recursive: true });
-        await run([tar, "-xf", filename, "-C", destination, ...without.map(member => `--exclude=${member}`), ...only]);
+        await run([tar, "-xf", filename, "-C", destination, ...without.map(member => `--exclude=${member}`)]);
         return destination;
       } catch (error) {
         console.warn(error);
@@ -114,7 +108,7 @@ async function unzip(
     await run(["powershell", "-Command", command]);
   } else {
     const leftPacked = without.length ? ["-x", ...without] : [];
-    await run(["unzip", "-o", "-q", filename, ...only, "-d", destination, ...leftPacked]);
+    await run(["unzip", "-o", "-q", filename, "-d", destination, ...leftPacked]);
   }
   return destination;
 }
@@ -469,10 +463,6 @@ const aotTestsThatFeedNothingNew = [
   "aot/trim-report-",
   "aot/program-handover",
 ];
-// The engine's shell, its test program and its tests are packed beside Bun and are as large as Bun. They stay packed in a shard
-// that has none of the tests that start them: startsToolsOfTheEngine().
-const toolsOfTheEngine = [`*/jsc${isWindows ? ".exe" : ""}`, `*/testaot${isWindows ? ".exe" : ""}`, "*/aot-tests/*"];
-let unpackToolsOfTheEngine: ((isNeeded: boolean) => Promise<unknown>) | undefined;
 // A fifth of the unpacked archive. Other CI steps read them, no test does.
 const linkerMaps = ["*/bun-*.linker-map", ...(isWindows ? ["*/bun-*.map"] : [])];
 // With test/aot go the tests of the tools that the compiler is built and started with.
@@ -1090,9 +1080,7 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
   const { tests, driver } = early
     ? await early.listed
     : { tests: getRelevantTests(testsPath, modifiers, expectations, execPath), driver: undefined };
-  const beforeFirstTest: (Promise<unknown> | undefined)[] = [
-    unpackToolsOfTheEngine?.(tests.some(startsToolsOfTheEngine)),
-  ];
+  const beforeFirstTest: (Promise<unknown> | undefined)[] = [];
   !isQuiet && console.log("Running tests:", tests.length);
 
   // Start the docker-service coordinator (test/docker/coordinator.ts). It
@@ -3622,24 +3610,12 @@ async function getExecPathFromBuildkite(target: string, buildId?: string): Promi
     .filter(filename => /^bun.*\.zip$/i.test(filename))
     .map(filename => join(archives, filename))
     .find(path => path !== archive);
-  const toolsArchive = readdirSync(archives, { encoding: "utf-8" })
-    .filter(filename => /^test-tools-.*\.zip$/.test(filename))
-    .map(filename => join(archives, filename))
-    .at(0);
-  // Two of the archives unpack into this folder, and unzip fails where another makes it first.
-  mkdirSync(join(releasePath, basename(archive, ".zip")), { recursive: true });
   // Side by side: each keeps one processor busy for seconds.
   const [strippedFolder] = await Promise.all([
     strippedArchive && unpackStripped(strippedArchive),
-    unzip(archive, releasePath, { without: linkerMaps }),
-    toolsArchive && unzip(toolsArchive, releasePath, { without: toolsOfTheEngine }),
+    unzip(archive, releasePath, linkerMaps),
   ]);
-  // A build without them: the tests that start them say so.
-  unpackToolsOfTheEngine = async isNeeded => {
-    if (isNeeded && toolsArchive)
-      await unzip(toolsArchive, releasePath, { only: toolsOfTheEngine }).catch(console.warn);
-    if (archives !== releasePath) rmSync(archives, { recursive: true, force: true });
-  };
+  if (archives !== releasePath) rmSync(archives, { recursive: true, force: true });
 
   const releaseFiles = readdirSync(releasePath, { recursive: true, encoding: "utf-8" });
   for (const entry of releaseFiles) {

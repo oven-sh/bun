@@ -249,7 +249,7 @@ extern "C" EncodedJSValue Bun__NodeHTTP__buildHeadersObject(JSC::JSGlobalObject*
         JSValue value;
         if (names[index] == otherName) {
             identifier = Identifier::fromString(vm, StringView(nameBytes).convertToASCIILowercaseAtom());
-            if (parseIndex(identifier) || headers->getDirect(vm, identifier))
+            if (parseIndex(identifier) || headers->getDirect(vm, identifier) || objectPrototype->findPropertyHashEntry(identifier))
                 return JSValue::encode(jsUndefined());
             value = jsString(vm, String(valueBytes));
         } else {

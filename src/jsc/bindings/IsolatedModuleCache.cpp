@@ -5,8 +5,6 @@
 #include "ZigSourceProvider.h"
 #include "JavaScriptCore/JSCInlines.h"
 #include <JavaScriptCore/JSFunction.h>
-#include <JavaScriptCore/StrongInlines.h>
-#include <JavaScriptCore/UnlinkedFunctionExecutable.h>
 
 namespace Bun {
 
@@ -67,12 +65,12 @@ const IsolatedInternalModule* IsolatedModuleCache::lookupInternalModule(JSC::VM&
     return id < modules.size() && modules[id].executable ? &modules[id] : nullptr;
 }
 
-void IsolatedModuleCache::insertInternalModule(JSC::VM& vm, uint32_t id, const JSC::SourceCode& source, JSC::UnlinkedFunctionExecutable* executable)
+void IsolatedModuleCache::insertInternalModule(JSC::VM& vm, uint32_t id, const JSC::SourceCode& source, JSC::UnlinkedFunctionExecutable& executable)
 {
     auto& modules = WebCore::clientData(vm)->isolationInternalModules;
     if (id >= modules.size())
         modules.grow(id + 1);
-    modules[id] = { source, JSC::Strong<JSC::UnlinkedFunctionExecutable>(vm, executable) };
+    modules[id] = { source, &executable };
 }
 
 void IsolatedModuleCache::insertIfAbsent(JSC::VM& vm, const WTF::String& key, Zig::SourceProvider& provider, const CodeString* pluginContents)

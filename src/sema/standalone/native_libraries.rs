@@ -1,7 +1,5 @@
-use bun_alloc::WTFStringImplStruct;
 use bun_boringssl_sys::{ENGINE, EVP_MD, EVP_MD_CTX, SHA256_CTX, env_md_ctx_md_data};
 use bun_core::ffi::zeroed;
-use bun_core::fmt::js_string_to_number;
 use core::ffi::{c_int, c_uint, c_void};
 use core::sync::atomic::{AtomicI32, Ordering};
 
@@ -308,36 +306,6 @@ extern "C" fn Bun__AOT__addressOfOffsetInCode(offset: usize) -> usize {
     panic!("offset {offset} is in compiled code, and this program has none")
 }
 
-#[unsafe(no_mangle)]
-#[linkage = "weak"]
-extern "C" fn BunString__fromBytes(_bytes: *const u8, _len: usize) -> bun_core::String {
-    panic!("this program has no WTF strings")
-}
-
-#[unsafe(no_mangle)]
-#[linkage = "weak"]
-extern "C" fn BunString__fromLatin1(_bytes: *const u8, _len: usize) -> bun_core::String {
-    panic!("this program has no WTF strings")
-}
-
-#[unsafe(no_mangle)]
-#[linkage = "weak"]
-extern "C" fn BunString__fromUTF16(_units: *const u16, _len: usize) -> bun_core::String {
-    panic!("this program has no WTF strings")
-}
-
-#[unsafe(no_mangle)]
-#[linkage = "weak"]
-extern "C" fn BunString__fromUTF16ToLatin1(_units: *const u16, _len: usize) -> bun_core::String {
-    panic!("this program has no WTF strings")
-}
-
-#[unsafe(no_mangle)]
-#[linkage = "weak"]
-extern "C" fn Bun__WTFStringImpl__destroy(_this: *const WTFStringImplStruct) {
-    panic!("this program has no WTF strings")
-}
-
 unsafe extern "C" {
     safe static bun_stdio_tty: [AtomicI32; 3];
 }
@@ -388,13 +356,6 @@ extern "C" fn Bun__JSC__operationMathPow(base: f64, exponent: f64) -> f64 {
     base.powf(exponent)
 }
 
-#[unsafe(no_mangle)]
-#[linkage = "weak"]
-unsafe extern "C" fn JSC__jsToNumber(text: *const u8, len: usize) -> f64 {
-    // SAFETY: the caller passes the pointer and the length of a slice that it holds.
-    js_string_to_number(unsafe { bytes(text, len) })
-}
-
 #[cfg(any(target_os = "linux", target_os = "android"))]
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
@@ -423,7 +384,6 @@ macro_rules! not_asked_by_the_front_end {
 }
 
 not_asked_by_the_front_end! {
-    URL__getFileURLString
     __bun_macro_context_call
 }
 

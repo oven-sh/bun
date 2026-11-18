@@ -511,6 +511,22 @@ describe("buildRustGraph + unitManifest", () => {
     expect(traced.phases).toBe(`${dep.output}.phases.json`);
   });
 
+  test("a unit is compiled with its own profile: the overrides of one package reach no other", () => {
+    const plan = planWith(["-Ctarget-cpu=x86-64"]);
+    const [dep, bin] = plan.unitGraph.units;
+    dep!.profile = { ...profile, opt_level: "2", debug_assertions: true, overflow_checks: true, rustflags: ["-Cdep"] };
+    bin!.profile = { ...profile, rustflags: ["-Cbin"] };
+    const graph = buildRustGraph(plan, "/build/rust-target/shim");
+    const flagsOf = (unit: RustUnit) =>
+      (unitManifest(context(graph), unit) as RustcUnitManifest).args.filter(arg =>
+        /^(opt-level=|debug-assertions=|overflow-checks=|-C.)/.test(arg),
+      );
+    expect(graph.units.map(flagsOf)).toEqual([
+      ["opt-level=2", "-Cdep", "debug-assertions=on", "-Ctarget-cpu=x86-64"],
+      ["opt-level=z", "-Cbin", "-Ctarget-cpu=x86-64"],
+    ]);
+  });
+
   test("target rustflags change where an artifact is written but not how its symbols are mangled", () => {
     const plain = buildRustGraph(planWith([]), "/build/rust-target/shim").units[0];
     const flagged = buildRustGraph(planWith(["-Ctarget-cpu=native"]), "/build/rust-target/shim").units[0];

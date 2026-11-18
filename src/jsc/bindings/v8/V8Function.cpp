@@ -32,7 +32,7 @@ bool functionSourcePosition(const JSC::JSCell* cell, WTF::String& url, JSC::Line
         return false;
     }
     // A synthesized default constructor has no source of its own. V8 reports the `class` keyword.
-    const JSC::SourceCode source = executable->unlinkedExecutable()->isBuiltinDefaultClassConstructor()
+    const JSC::SourceCode source = executable->isBuiltinDefaultClassConstructor()
         ? executable->classSource()
         : executable->source();
     JSC::SourceProvider* provider = source.provider();

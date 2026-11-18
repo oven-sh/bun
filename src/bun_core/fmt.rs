@@ -3,6 +3,8 @@
 use core::cell::Cell;
 use core::fmt::{self, Display, Formatter, Write as _};
 
+use bun_engine_number::{parse_decimal_prefix, to_exponential, to_fixed, to_precision, write_f64};
+
 use crate::output as Output;
 // `strings` is the canonical `crate::strings` (lib.rs); `js_printer`/`js_lexer`
 // are defined locally below (move-in subset) and re-exported at the crate root.
@@ -971,49 +973,29 @@ impl core::fmt::Display for InvalidCharacter {
 }
 impl core::error::Error for InvalidCharacter {}
 
-/// `WTF.parseDouble` — partial-match Latin-1 double parser. Returns `Ok` if
-/// any numeric prefix was consumed; `Err(InvalidCharacter)` on empty input or
-/// when no leading digit/sign was recognised.
+/// Partial-match Latin-1 double parser. Returns `Ok` if any numeric prefix was
+/// consumed; `Err(InvalidCharacter)` on empty input or when no leading
+/// digit/sign was recognised.
 pub fn parse_double(buf: &[u8]) -> Result<f64, InvalidCharacter> {
-    if buf.is_empty() {
-        return Err(InvalidCharacter);
+    match parse_decimal_prefix(buf) {
+        Some((value, _)) => Ok(value),
+        None => Err(InvalidCharacter),
     }
-    let mut count: usize = 0;
-    // SAFETY: `buf` is a valid slice; WTF reads at most `len` Latin-1 bytes.
-    let res = unsafe { WTF__parseDouble(buf.as_ptr(), buf.len(), &raw mut count) };
-    if count == 0 {
-        return Err(InvalidCharacter);
-    }
-    Ok(res)
-}
-
-// `WTF__parseDouble` — WebKit's JS-semantics double parser (Latin-1 input,
-// reports prefix length). Declared here (not via `bun_string`) so tier-0
-// callers can parse floats with no UTF-8 validation. Link-time symbol
-// provided by `src/jsc/bindings/wtf-bindings.cpp`.
-unsafe extern "C" {
-    fn WTF__parseDouble(bytes: *const u8, length: usize, counted: *mut usize) -> f64;
 }
 
 /// Full-match parse of `s` as an `f64`.
 /// Returns `None` on empty input, trailing garbage (`b"1.5x"`), or non-numeric
-/// input. Backed by `WTF__parseDouble` (no `&str` round-trip — digits are
-/// ASCII, validation is wasted work).
-///
-/// `WTF::parseDouble` rejects `inf`/`nan` (JS-number semantics); those are
-/// special-cased here.
+/// input (no `&str` round-trip — digits are ASCII, validation is wasted work).
 pub fn parse_f64(s: &[u8]) -> Option<f64> {
     if s.is_empty() {
         return None;
     }
-    let mut count: usize = 0;
-    // SAFETY: `s` is a valid slice; WTF reads at most `len` Latin-1 bytes.
-    let res = unsafe { WTF__parseDouble(s.as_ptr(), s.len(), &raw mut count) };
+    let (res, count) = parse_decimal_prefix(s).unwrap_or_default();
     if count == s.len() {
         return Some(res);
     }
     if count == 0 {
-        // WTF__parseDouble doesn't recognise inf/nan; handle them here.
+        // A decimal literal of JavaScript has no inf/nan; handle them here.
         let (neg, rest) = match s[0] {
             b'-' => (true, &s[1..]),
             b'+' => (false, &s[1..]),
@@ -3297,10 +3279,10 @@ impl<T: AsRef<[u8]>> Display for FormatSlice<'_, T> {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// FormatDouble — Uses WebKit's double formatter
+// FormatDouble — `Number.prototype.toString` and friends
 // ───────────────────────────────────────────────────────────────────────────
 
-/// Uses WebKit's double formatter
+/// `String(number)`
 pub fn double(number: f64) -> FormatDouble {
     FormatDouble { number }
 }
@@ -3309,34 +3291,9 @@ pub struct FormatDouble {
     pub(crate) number: f64,
 }
 
-unsafe extern "C" {
-    // `&mut [u8; 124]` is ABI-identical to the C `char *` argument (thin
-    // non-null pointer to 124 writable bytes); the type encodes WTF__dtoa's
-    // only precondition (≥124-byte writable buffer), so `safe fn` discharges
-    // the link-time proof and callers need no `unsafe` block.
-    safe fn WTF__dtoa(buf: &mut [u8; 124], number: f64) -> usize;
-    // The same, for the arguments that the callers below let through: at most 100 digits, and for
-    // `toFixed` a number below 1e21.
-    safe fn WTF__numberToFixed(
-        buf: &mut [u8; 124],
-        number: f64,
-        fraction_digits: core::ffi::c_uint,
-    ) -> usize;
-    safe fn WTF__numberToPrecision(
-        buf: &mut [u8; 124],
-        number: f64,
-        precision: core::ffi::c_uint,
-    ) -> usize;
-    safe fn WTF__numberToExponential(
-        buf: &mut [u8; 124],
-        number: f64,
-        fraction_digits: core::ffi::c_int,
-    ) -> usize;
-}
-
 impl FormatDouble {
     pub fn dtoa(buf: &mut [u8; 124], number: f64) -> &[u8] {
-        let len = WTF__dtoa(buf, number);
+        let len = write_f64(number, &mut buf.as_chunks_mut().0[0]);
         &buf[..len]
     }
 
@@ -3344,38 +3301,24 @@ impl FormatDouble {
         if number == 0.0 && number.is_sign_negative() {
             return b"-0";
         }
-        let len = WTF__dtoa(buf, number);
-        &buf[..len]
+        Self::dtoa(buf, number)
     }
 
     /// `number.toFixed(fraction_digits)`. More than 100 digits are 100.
-    pub fn to_fixed(buf: &mut [u8; 124], number: f64, fraction_digits: u32) -> &[u8] {
-        // "If x ≥ 10^21, then let m be ToString(x)", and so for what is not finite.
-        if number.is_nan() || number.abs() >= 1e21 {
-            return Self::dtoa(buf, number);
-        }
-        let len = WTF__numberToFixed(buf, number, fraction_digits.min(100));
-        &buf[..len]
+    pub fn to_fixed(buf: &mut [u8; 128], number: f64, fraction_digits: u32) -> &[u8] {
+        to_fixed(number, fraction_digits.min(100) as i32, buf).unwrap_or_default()
     }
 
     /// `number.toPrecision(precision)`, for a precision from 1 to 100.
-    pub fn to_precision(buf: &mut [u8; 124], number: f64, precision: u32) -> &[u8] {
-        if !number.is_finite() {
-            return Self::dtoa(buf, number);
-        }
-        let len = WTF__numberToPrecision(buf, number, precision.clamp(1, 100));
-        &buf[..len]
+    pub fn to_precision(buf: &mut [u8; 128], number: f64, precision: u32) -> &[u8] {
+        to_precision(number, precision.clamp(1, 100) as i32, buf).unwrap_or_default()
     }
 
     /// `number.toExponential(fraction_digits)`. `None`: as many digits as it takes. More than 100
     /// are 100.
-    pub fn to_exponential(buf: &mut [u8; 124], number: f64, fraction_digits: Option<u32>) -> &[u8] {
-        if !number.is_finite() {
-            return Self::dtoa(buf, number);
-        }
-        let digits = fraction_digits.map_or(-1, |it| it.min(100) as i32);
-        let len = WTF__numberToExponential(buf, number, digits);
-        &buf[..len]
+    pub fn to_exponential(buf: &mut [u8; 128], number: f64, fraction_digits: Option<u32>) -> &[u8] {
+        let digits = fraction_digits.map(|it| it.min(100) as i32);
+        to_exponential(number, digits, buf).unwrap_or_default()
     }
 }
 

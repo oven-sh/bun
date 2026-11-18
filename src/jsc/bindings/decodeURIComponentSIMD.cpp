@@ -4,7 +4,7 @@
 #include "BunString.h"
 #include "helpers.h"
 #include <wtf/text/WTFString.h>
-#include <wtf/SIMDHelpers.h>
+#include "StaticSIMD.h"
 #include <wtf/SIMDUTF.h>
 namespace Bun {
 using namespace WTF;

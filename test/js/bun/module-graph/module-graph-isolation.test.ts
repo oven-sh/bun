@@ -847,6 +847,18 @@ const dir = String(
       console.log(JSON.stringify(read()));
       process.exit(0);
     `,
+    "wraps-commonjs-after-a-statement.cjs": `
+      const Module = require("node:module");
+      Module.wrapper = ["globalThis.aroundTheWrapper = typeof tag; (function (exports, require, module, __filename, __dirname) {", "\\n})"];
+      require.extensions[".wrapped"] = (module, filename) => module._compile("module.exports = () => [aroundTheWrapper, tag];", filename);
+      module.exports = require("./payload.wrapped");
+    `,
+    "custom-commonjs-wrapper-after-a-statement.mjs": `
+      const graph = new Bun.ModuleGraph({ globals: { tag: "of the graph" } });
+      const read = (await graph.import(import.meta.dir + "/wraps-commonjs-after-a-statement.cjs")).default;
+      console.log(JSON.stringify(read()));
+      process.exit(0);
+    `,
     "manages-its-files.mjs": `
       import fs from "node:fs";
       // A descriptor script holds is script's to manage: what this opens, it closes when it is asked to.
@@ -3825,6 +3837,12 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
   test("a CommonJS wrapper made inside another function keeps that function's scope", async () => {
     expect(await runsFixture("custom-commonjs-wrapper.mjs")).toEqual({
       stdout: `["of the wrapper","undefined"]`,
+      exitCode: 0,
+    });
+  });
+  test("a CommonJS wrapper at the top level sees the graph's globals, and what is around it does not", async () => {
+    expect(await runsFixture("custom-commonjs-wrapper-after-a-statement.mjs")).toEqual({
+      stdout: `["undefined","of the graph"]`,
       exitCode: 0,
     });
   });

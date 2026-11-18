@@ -93,7 +93,7 @@ ExceptionOr<String> canonicalizeProtocol(StringView value, BaseURLStringType val
 }
 
 // https://urlpattern.spec.whatwg.org/#canonicalize-a-username, combined with https://urlpattern.spec.whatwg.org/#process-username-for-init
-String canonicalizeUsername(StringView value, BaseURLStringType valueType)
+ExceptionOr<String> canonicalizeUsername(StringView value, BaseURLStringType valueType)
 {
     if (value.isEmpty())
         return value.toString();
@@ -102,13 +102,14 @@ String canonicalizeUsername(StringView value, BaseURLStringType valueType)
         return value.toString();
 
     URL dummyURL(dummyURLCharacters);
-    dummyURL.setUser(value);
+    if (!dummyURL.setUser(value)) [[unlikely]]
+        return Exception { ExceptionCode::OutOfMemoryError };
 
     return dummyURL.encodedUser().toString();
 }
 
 // https://urlpattern.spec.whatwg.org/#canonicalize-a-password, combined with https://urlpattern.spec.whatwg.org/#process-password-for-init
-String canonicalizePassword(StringView value, BaseURLStringType valueType)
+ExceptionOr<String> canonicalizePassword(StringView value, BaseURLStringType valueType)
 {
     if (value.isEmpty())
         return value.toString();
@@ -117,7 +118,8 @@ String canonicalizePassword(StringView value, BaseURLStringType valueType)
         return value.toString();
 
     URL dummyURL(dummyURLCharacters);
-    dummyURL.setPassword(value);
+    if (!dummyURL.setPassword(value)) [[unlikely]]
+        return Exception { ExceptionCode::OutOfMemoryError };
 
     return dummyURL.encodedPassword().toString();
 }
@@ -210,7 +212,8 @@ ExceptionOr<String> canonicalizePathname(StringView pathnameValue)
 
     // FIXME: Set state override to State::PathStart after URLParser supports state override.
     URL dummyURL(dummyURLCharacters);
-    dummyURL.setPath(maybeAddSlashPrefix);
+    if (!dummyURL.setPath(maybeAddSlashPrefix)) [[unlikely]]
+        return Exception { ExceptionCode::OutOfMemoryError };
     ASSERT(dummyURL.isValid());
 
     auto result = dummyURL.path();
@@ -247,7 +250,8 @@ ExceptionOr<String> canonicalizeSearch(StringView value, BaseURLStringType value
         return strippedValue.toString();
 
     URL dummyURL(dummyURLCharacters);
-    dummyURL.setQuery(strippedValue);
+    if (!dummyURL.setQuery(strippedValue)) [[unlikely]]
+        return Exception { ExceptionCode::OutOfMemoryError };
     ASSERT(dummyURL.isValid());
 
     return dummyURL.query().toString();
@@ -265,7 +269,8 @@ ExceptionOr<String> canonicalizeHash(StringView value, BaseURLStringType valueTy
         return strippedValue.toString();
 
     URL dummyURL(dummyURLCharacters);
-    dummyURL.setFragmentIdentifier(strippedValue);
+    if (!dummyURL.setFragmentIdentifier(strippedValue)) [[unlikely]]
+        return Exception { ExceptionCode::OutOfMemoryError };
     ASSERT(dummyURL.isValid());
 
     return dummyURL.fragmentIdentifier().toString();

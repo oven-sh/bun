@@ -10,8 +10,6 @@
 #include <JavaScriptCore/ScriptExecutable.h>
 #include <JavaScriptCore/FunctionExecutable.h>
 #include <JavaScriptCore/SourceProvider.h>
-#include <wtf/Stopwatch.h>
-#include <wtf/StringPrintStream.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/JSONValues.h>
 #include <wtf/HashMap.h>
@@ -49,17 +47,12 @@ bool isCPUProfilerRunning()
 
 void startCPUProfiler(JSC::VM& vm)
 {
-    // Capture the wall clock time when profiling starts (before creating stopwatch)
+    // Capture the wall clock time when profiling starts
     // This will be used as the profile's startTime
     s_profilingStartTime = MonotonicTime::now().approximate<WTF::WallTime>().secondsSinceEpoch().value() * 1000000.0;
 
-    // Create a stopwatch and start it
-    auto stopwatch = WTF::Stopwatch::create();
-    stopwatch->start();
-
-    JSC::SamplingProfiler& samplingProfiler = vm.ensureSamplingProfiler(WTF::move(stopwatch));
+    JSC::SamplingProfiler& samplingProfiler = vm.ensureSamplingProfiler();
     samplingProfiler.setTimingInterval(WTF::Seconds::fromMicroseconds(s_samplingInterval));
-    samplingProfiler.noticeCurrentThreadAsJSCExecutionThread();
     samplingProfiler.start();
     s_isProfilerRunning = true;
 }
@@ -108,9 +101,9 @@ static WTF::String formatFunctionName(const WTF::String& name, const JSC::Sampli
     WTF::String displayName = name.isEmpty() ? "(anonymous)"_s : name;
 
     // Check if this is an async function and add prefix if needed
-    if (frame.frameType == JSC::SamplingProfiler::FrameType::Executable && frame.executable) {
+    if (frame.executable) {
         if (auto* functionExecutable = dynamicDowncast<JSC::FunctionExecutable>(frame.executable)) {
-            if (JSC::isAsyncFunctionParseMode(functionExecutable->parseMode())) {
+            if (functionExecutable->isAsyncFunction()) {
                 if (!displayName.startsWith("async "_s)) {
                     return makeString("async "_s, displayName);
                 }
@@ -331,13 +324,8 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
     // Defer GC while we're working with stack traces
     JSC::DeferGC deferGC(vm);
 
-    // Pause the profiler while holding the lock
-    auto& lock = profiler->getLock();
-    WTF::Locker profilerLocker { lock };
     profiler->pause();
-
-    // releaseStackTraces() calls processUnverifiedStackTraces() internally
-    auto stackTraces = profiler->releaseStackTraces();
+    auto stackTraces = profiler->releaseStackTraces(deferGC);
     profiler->clearData();
 
     // If neither output is requested, we're done
@@ -400,7 +388,7 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
             for (int i = stackTrace.frames.size() - 1; i >= 0; i--) {
                 auto& frame = stackTrace.frames[i];
 
-                WTF::String functionName = frame.displayName(vm);
+                WTF::String functionName = frame.displayName;
                 WTF::String url;
                 int scriptId = 0;
                 // Function-definition line/column (0-indexed) for callFrame.
@@ -409,9 +397,8 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                 // Current-sample line (1-indexed) for positionTicks.
                 int sampleLine = 0;
 
-                if (frame.frameType == JSC::SamplingProfiler::FrameType::Executable && frame.executable) {
-                    auto sourceProviderAndID = frame.sourceProviderAndID();
-                    auto* provider = std::get<0>(sourceProviderAndID);
+                if (frame.executable) {
+                    auto* provider = frame.sourceProvider();
                     if (provider) {
                         url = provider->sourceURL();
                         scriptId = static_cast<int>(provider->asID());
@@ -422,8 +409,8 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                     // The definition (not the sample position) is remapped
                     // through the sourcemap callback so callFrame.url and
                     // callFrame.line/column agree on the function's source.
-                    int rawFunctionStartLine = frame.functionStartLine();
-                    unsigned rawFunctionStartColumn = frame.functionStartColumn();
+                    int rawFunctionStartLine = frame.functionStartLine;
+                    unsigned rawFunctionStartColumn = frame.functionStartColumn;
                     if (rawFunctionStartLine > 0 && rawFunctionStartColumn != std::numeric_limits<unsigned>::max()) {
                         JSC::LineColumn functionStartLineColumn {
                             static_cast<unsigned>(rawFunctionStartLine),
@@ -451,7 +438,7 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                     // sourcemap rewriting is done.
                     normalizeURL(url);
 
-                    if (frame.hasExpressionInfo()) {
+                    if (frame.position) {
                         // Sample position for positionTicks. Use a throwaway
                         // out-param so the sample remap can't clobber `url`
                         // with a different file than the function definition.
@@ -461,7 +448,7 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                         // code) — attaching a line number from one file to a
                         // ProfileNode whose callFrame.url is a different file
                         // would mislocate the tick in Chrome DevTools.
-                        JSC::LineColumn sourceMappedLineColumn = frame.semanticLocation.lineColumn;
+                        JSC::LineColumn sourceMappedLineColumn = *frame.position;
                         // Seed with the raw provider URL (NOT empty). If the
                         // sourcemap callback is a no-op — BUN_JSC_ADDITIONS
                         // off, fn null, or the provider has no sourcemap —
@@ -484,18 +471,6 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                         if (sourceMappedLineColumn.line > 0 && sampleURL == url)
                             sampleLine = static_cast<int>(sourceMappedLineColumn.line);
                     }
-                } else if (frame.isCompiledFrame()) {
-                    url = frame.url();
-                    normalizeURL(url);
-                    scriptId = static_cast<int>(std::get<1>(frame.sourceProviderAndID()));
-                    int definitionLine = frame.functionStartLine();
-                    unsigned definitionColumn = frame.functionStartColumn();
-                    if (definitionLine > 0 && definitionColumn != std::numeric_limits<unsigned>::max()) {
-                        functionDefLine = definitionLine - 1;
-                        functionDefColumn = definitionColumn > 0 ? static_cast<int>(definitionColumn) - 1 : 0;
-                    }
-                    if (frame.hasExpressionInfo())
-                        sampleLine = static_cast<int>(frame.semanticLocation.lineColumn.line);
                 }
 
                 // line/column here identify the function's DEFINITION, so all
@@ -654,14 +629,13 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
             for (int i = stackTrace.frames.size() - 1; i >= 0; i--) {
                 auto& frame = stackTrace.frames[i];
 
-                WTF::String rawFunctionName = frame.displayName(vm);
+                WTF::String rawFunctionName = frame.displayName;
                 WTF::String functionName = formatFunctionName(rawFunctionName, frame);
                 WTF::String url;
                 int lineNumber = -1;
 
-                if (frame.frameType == JSC::SamplingProfiler::FrameType::Executable && frame.executable) {
-                    auto sourceProviderAndID = frame.sourceProviderAndID();
-                    auto* provider = std::get<0>(sourceProviderAndID);
+                if (frame.executable) {
+                    auto* provider = frame.sourceProvider();
                     if (provider) {
                         url = provider->sourceURL();
 
@@ -680,8 +654,8 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                             url = WTF::URL::fileURLWithFileSystemPath(url).string();
                     }
 
-                    if (frame.hasExpressionInfo()) {
-                        JSC::LineColumn sourceMappedLineColumn = frame.semanticLocation.lineColumn;
+                    if (frame.position) {
+                        JSC::LineColumn sourceMappedLineColumn = *frame.position;
                         if (provider) {
 #if USE(BUN_JSC_ADDITIONS)
                             auto& fn = vm.computeLineColumnWithSourcemap();
@@ -691,10 +665,6 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                         }
                         lineNumber = static_cast<int>(sourceMappedLineColumn.line);
                     }
-                } else if (frame.isCompiledFrame()) {
-                    url = frame.url();
-                    normalizeURL(url);
-                    lineNumber = frame.hasExpressionInfo() ? static_cast<int>(frame.semanticLocation.lineColumn.line) : frame.functionStartLine();
                 }
 
                 WTF::String location = formatLocation(url, lineNumber);
@@ -968,13 +938,5 @@ extern "C" void Bun__SamplingProfiler__report(JSC::VM* vm, BunString* out)
     if (!profiler)
         return;
 
-    WTF::StringPrintStream report;
-    {
-        JSC::JSLockHolder locker(*vm);
-        // A terminated Worker has a pending termination exception, and the report's DeferTermination asserts there isn't one.
-        JSC::SuspendExceptionScope suspendExceptions(*vm);
-        profiler->reportTopFunctions(report);
-        profiler->reportTopBytecodes(report);
-    }
-    *out = Bun::toStringRef(report.toString()).leak();
+    *out = Bun::toStringRef(makeString(profiler->topFunctionsReport(), profiler->topBytecodesReport())).leak();
 }

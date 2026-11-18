@@ -434,6 +434,7 @@ export function createConsoleConstructor(console: Console) {
         let stderr: ConsoleStream | undefined;
         Object.defineProperties(this, {
           "_stdout": {
+            __proto__: null,
             enumerable: false,
             configurable: true,
             get() {
@@ -445,6 +446,7 @@ export function createConsoleConstructor(console: Console) {
             },
           },
           "_stderr": {
+            __proto__: null,
             enumerable: false,
             configurable: true,
             get() {

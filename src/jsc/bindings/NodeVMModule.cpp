@@ -166,8 +166,7 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
             status(Status::Evaluating);
             syntheticThis->evaluate(globalObject);
             RETURN_IF_EXCEPTION(scope, );
-            result = record->evaluate(globalObject, jsUndefined(), jsNumber(static_cast<int32_t>(JSGenerator::ResumeMode::NormalMode)));
-            RETURN_IF_EXCEPTION(scope, );
+            result = jsUndefined();
         }
     };
 

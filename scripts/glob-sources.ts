@@ -48,22 +48,6 @@ const patterns = {
   js: {
     paths: ["src/js/**/*.{js,ts}", "src/install/PackageManager/scanner-entry.ts"],
   },
-  /** the generator of the table of built-ins, with Bun's own declarations and data files */
-  builtinsTableCodegen: {
-    paths: ["src/codegen/builtins/**/*.{ts,txt}"],
-  },
-  /** built-ins the AoT compiler implements in TypeScript, read by that generator */
-  aotPrelude: {
-    paths: ["src/aot/prelude/*.ts"],
-  },
-  /** native code that can load a runtime module, scanned by the generator of the table of built-ins */
-  nativeModuleLoadSites: {
-    paths: ["src/jsc/bindings/**/*.{cpp,h}", "src/jsc/modules/**/*.{cpp,h}", "src/runtime/**/*.{cpp,h}"],
-  },
-  /** Rust that can call a function of the runtime's JavaScript, scanned by that generator beside the C++ above */
-  nativeCallSites: {
-    paths: ["src/jsc/**/*.rs", "src/runtime/**/*.rs", "src/uws/**/*.rs", "src/*_jsc/**/*.rs"],
-  },
   /** declarations of what `--trim` can remove */
   removableFeatures: {
     paths: ["src/trim/features/*.def"],
@@ -107,7 +91,7 @@ const patterns = {
       "rust-toolchain.toml",
     ],
   },
-  /** all `*.cpp` compiled into bun (bindings, webcore, v8 shim, usockets) */
+  /** all `*.cpp` compiled into bun (bindings, webcore, v8 shim, the engine's embedding layer, usockets) */
   cxx: {
     paths: [
       "src/io/*.cpp",
@@ -128,13 +112,10 @@ const patterns = {
       "src/uws_sys/*.cpp",
       "src/simdutf_sys/*.cpp",
       "src/jsc/bindings/vm/*.cpp",
+      "src/engine/embed/cpp/*.cpp",
       "packages/bun-usockets/src/*.cpp",
       "packages/bun-usockets/src/crypto/*.cpp",
     ],
-  },
-  /** the native tests of the AoT compiler that ask bun's table of built-ins: compiled like `cxx`, linked into testaot alone */
-  aotNativeTests: {
-    paths: ["test/aot/native/*.cpp"],
   },
   /** all `*.c` compiled into bun (usockets, uv polyfills) */
   c: {
@@ -144,6 +125,10 @@ const patterns = {
       "src/jsc/bindings/uv-posix-polyfills.c",
       "src/jsc/bindings/uv-posix-stubs.c",
     ],
+  },
+  /** what those include, scanned for the names of the engine's headers (build/forwarding-headers.ts) */
+  headers: {
+    paths: ["src/**/*.h", "packages/bun-usockets/src/**/*.h", "packages/bun-uws/src/**/*.h"],
   },
 } satisfies Record<string, SourcePattern>;
 

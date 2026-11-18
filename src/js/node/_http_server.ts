@@ -1204,6 +1204,7 @@ function httpAllowHalfOpenSet(this: Server, value) {
 function defineHttpAllowHalfOpen(server: Server) {
   server[kHttpAllowHalfOpen] = false;
   Object.defineProperty(server, "httpAllowHalfOpen", {
+    __proto__: null,
     configurable: true,
     enumerable: true,
     get: httpAllowHalfOpenGet,
@@ -1233,6 +1234,7 @@ function maxHeadersCountSet(this: Server, value) {
 function defineMaxHeadersCount(server: Server) {
   server[kMaxHeadersCount] = null;
   Object.defineProperty(server, "maxHeadersCount", {
+    __proto__: null,
     configurable: true,
     enumerable: true,
     get: maxHeadersCountGet,
@@ -3246,6 +3248,7 @@ ServerResponse.prototype.removeHeader = function removeHeader(name) {
 // res.headers / res.headers= are Bun-specific conveniences kept for backwards
 // compatibility; they are views over the Node.js-style header storage.
 Object.defineProperty(ServerResponse.prototype, "headers", {
+  __proto__: null,
   get() {
     return this.getHeaders();
   },
@@ -3272,6 +3275,7 @@ Object.defineProperty(ServerResponse.prototype, "headers", {
 });
 
 Object.defineProperty(ServerResponse.prototype, "socket", {
+  __proto__: null,
   get() {
     if (this[kPipelinedQueuedState] !== undefined) {
       // Queued pipelined response: like Node.js, res.socket is null until the
@@ -3290,6 +3294,7 @@ Object.defineProperty(ServerResponse.prototype, "socket", {
 });
 
 Object.defineProperty(ServerResponse.prototype, "connection", {
+  __proto__: null,
   get() {
     return this.socket;
   },
@@ -3303,6 +3308,7 @@ Object.defineProperty(ServerResponse.prototype, "connection", {
 // _storeHeader/write_/end machinery, which sets and reads it to frame the
 // body - so it needs real storage.
 Object.defineProperty(ServerResponse.prototype, "chunkedEncoding", {
+  __proto__: null,
   get() {
     return this[kChunkedEncoding] ?? false;
   },
@@ -3312,6 +3318,7 @@ Object.defineProperty(ServerResponse.prototype, "chunkedEncoding", {
 });
 
 Object.defineProperty(ServerResponse.prototype, "writableCorked", {
+  __proto__: null,
   get() {
     return this.socket?.writableCorked ?? 0;
   },
@@ -3358,6 +3365,7 @@ ServerResponse.prototype[kPendingFinish] = undefined;
 ServerResponse.prototype[kRejectNonStandardBodyWrites] = undefined;
 
 Object.defineProperty(ServerResponse.prototype, "headersSent", {
+  __proto__: null,
   get() {
     return (
       this[headerStateSymbol] === NodeHTTPHeaderState.sent || this[headerStateSymbol] === NodeHTTPHeaderState.assigned
@@ -3698,6 +3706,7 @@ function finishDrainedResponse(res) {
 }
 
 Object.defineProperty(ServerResponse.prototype, "writable", {
+  __proto__: null,
   // Node.js's OutgoingMessage assigns `this.writable = true` in the
   // constructor and never flips it back to false - not on end(), not on
   // destroy(), not when the peer aborts (see upstream
@@ -3920,6 +3929,7 @@ ServerResponse.prototype._implicitHeader = function () {
 };
 
 Object.defineProperty(ServerResponse.prototype, "writableNeedDrain", {
+  __proto__: null,
   get() {
     // True between a write() that returned false and the next 'drain'. An armed native drain callback means a later write flushed the bytes.
     const handle = this[kHandle];
@@ -3935,6 +3945,7 @@ Object.defineProperty(ServerResponse.prototype, "writableNeedDrain", {
 });
 
 Object.defineProperty(ServerResponse.prototype, "writableFinished", {
+  __proto__: null,
   get() {
     const handle = this[kHandle];
     // Like Node, nothing is left to write once the socket is gone.
@@ -3946,6 +3957,7 @@ Object.defineProperty(ServerResponse.prototype, "writableFinished", {
 });
 
 Object.defineProperty(ServerResponse.prototype, "writableLength", {
+  __proto__: null,
   get() {
     if (this.writableFinished) return 0;
     // Bytes handed off this event-loop turn (including chunked framing, like
@@ -3959,6 +3971,7 @@ Object.defineProperty(ServerResponse.prototype, "writableLength", {
 });
 
 Object.defineProperty(ServerResponse.prototype, "writableHighWaterMark", {
+  __proto__: null,
   get() {
     // Like Node.js's OutgoingMessage: the socket's high water mark when one
     // is assigned (the stream default differs by platform), otherwise the
@@ -3968,6 +3981,7 @@ Object.defineProperty(ServerResponse.prototype, "writableHighWaterMark", {
 });
 
 Object.defineProperty(ServerResponse.prototype, "closed", {
+  __proto__: null,
   get() {
     return this._closed;
   },
@@ -4061,6 +4075,7 @@ ServerResponse.prototype.assignSocket = function (socket) {
 // shutdown helpers clear it on in-flight responses, and renderNativeHeaders
 // consults it for the Connection header and close-on-finish.
 Object.defineProperty(ServerResponse.prototype, "shouldKeepAlive", {
+  __proto__: null,
   get() {
     return this[kShouldKeepAlive] ?? true;
   },

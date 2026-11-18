@@ -60,7 +60,7 @@ JSC_DEFINE_HOST_FUNCTION(throwTypeErrorForJSDOMConstructorNotConstructable, (JSG
 
 JSC::GCClient::IsoSubspace* JSDOMConstructorBase::subspaceForImpl(JSC::VM& vm)
 {
-    return &static_cast<JSVMClientData*>(vm.clientData)->domConstructorSpace();
+    return &vm.heap.cellSpace().allocatorFor<sizeof(JSDOMConstructorBase)>();
 }
 
 void JSDOMConstructorBase::initializeBaseProperties(JSC::VM& vm, unsigned length, ASCIILiteral name, JSC::JSObject* prototype)

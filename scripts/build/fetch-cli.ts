@@ -22,10 +22,10 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { closeSync, existsSync, openSync, readFileSync, readSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { downloadWithRetry, extractTarGz, fetchPrebuilt } from "./download.ts";
+import { checkSha256, downloadWithRetry, extractTarGz, fetchPrebuilt } from "./download.ts";
 import { BuildError, assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
 import { formatElapsed } from "./tty.ts";
@@ -52,7 +52,16 @@ async function main(): Promise<void> {
       const [name, repo, commit, dest, cache, ...patches] = args;
       assert(name !== undefined && repo !== undefined && commit !== undefined, "dep: missing name/repo/commit");
       assert(dest !== undefined && cache !== undefined, "dep: missing dest/cache");
-      return fetchDep(name, repo, commit, dest, cache, patches);
+      const url = `https://github.com/${repo}/archive/${commit}.tar.gz`;
+      return fetchDep(name, { url, commit }, dest, cache, patches);
+    }
+
+    case "tarball": {
+      // fetch-cli.ts tarball <name> <url> <sha256> <dest> <cache> [...patches]
+      const [name, url, sha256, dest, cache, ...patches] = args;
+      assert(name !== undefined && url !== undefined && sha256 !== undefined, "tarball: missing name/url/sha256");
+      assert(dest !== undefined && cache !== undefined, "tarball: missing dest/cache");
+      return fetchDep(name, { url, sha256 }, dest, cache, patches);
     }
 
     case "subst": {
@@ -90,18 +99,6 @@ async function main(): Promise<void> {
       return checkUndefined(name, nm, rspfile, stamp, symbols.split(","));
     }
 
-    case "check-defined": {
-      // fetch-cli.ts check-defined <name> <lib> <stamp> <symbols>
-      // <symbols> is comma-separated. Writes <stamp> when <lib> names every
-      // one of them. See Provides.requireDefined in source.ts.
-      const [name, lib, stamp, symbols] = args;
-      assert(
-        name !== undefined && lib !== undefined && stamp !== undefined && symbols !== undefined,
-        "check-defined: missing name/lib/stamp/symbols",
-      );
-      return checkDefined(name, lib, stamp, symbols.split(","));
-    }
-
     case "prebuilt": {
       // fetch-cli.ts prebuilt <name> <url> <dest> <identity> [...rm_paths]
       const [name, url, dest, identity, ...rmPaths] = args;
@@ -109,17 +106,6 @@ async function main(): Promise<void> {
         name !== undefined && url !== undefined && dest !== undefined && identity !== undefined,
         "prebuilt: missing name/url/dest/identity",
       );
-      // A job that builds `codegen` alone reads the engine's code generators and nothing else of WebKit's tarball. A
-      // release has them as an asset of its own. An older one does not, and then it is the tarball after all.
-      if (name === "WebKit" && process.env.BUN_WEBKIT_GENERATORS_ONLY === "1") {
-        const generators = new URL("bun-webkit-aot-sources.tar.gz", url).href;
-        try {
-          return await fetchPrebuilt(name, generators, dest, `${identity}-generators-only`, rmPaths);
-        } catch (error) {
-          if (!(error instanceof BuildError)) throw error;
-          console.log(`${generators} could not be fetched, fetching ${url}`);
-        }
-      }
       return fetchPrebuilt(name, url, dest, identity, rmPaths);
     }
 
@@ -140,6 +126,7 @@ Usage: bun fetch-cli.ts <kind> <args...>
 
 Kinds:
   dep             <name> <repo> <commit> <dest> <cache> [...patches]
+  tarball         <name> <url> <sha256> <dest> <cache> [...patches]
   prebuilt        <name> <url> <dest> <identity> [...rm_paths]
   subst           <in> <out> [<from> <to>]...
   check-undefined <name> <nm> <rspfile> <stamp> <symbol,...>
@@ -215,49 +202,11 @@ function checkUndefined(name: string, nm: string, rspfile: string, stamp: string
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// check-defined: a prebuilt library has to name the given symbols
+// source fetch: download tarball, extract, patch, stamp
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
- * An archive's index and the string table of each member, object or bitcode,
- * hold a name as plain bytes, so this needs no tool that may be missing. Only
- * the definition names these symbols: nothing in the library refers to them.
- */
-function checkDefined(name: string, lib: string, stamp: string, symbols: string[]): void {
-  const found = new Set<string>();
-  const longest = Math.max(...symbols.map(symbol => symbol.length));
-  const buffer = Buffer.allocUnsafe(64 << 20);
-  const descriptor = openSync(lib, "r");
-  try {
-    // What is kept from one read to the next is a name that lies across the two.
-    for (let kept = 0, read; (read = readSync(descriptor, buffer, kept, buffer.length - kept, null)) > 0;) {
-      const bytes = buffer.subarray(0, kept + read);
-      for (const symbol of symbols) if (bytes.includes(symbol)) found.add(symbol);
-      kept = Math.min(longest - 1, bytes.length);
-      buffer.copyWithin(0, bytes.length - kept, bytes.length);
-    }
-  } finally {
-    closeSync(descriptor);
-  }
-  const missing = symbols.filter(symbol => !found.has(symbol));
-  if (missing.length > 0) {
-    throw new BuildError(
-      `${name}: ${lib} was not compiled with what this build asks of it. It does not define ${missing.join(", ")}`,
-      {
-        hint: `requireDefined in scripts/build/deps/${name.toLowerCase()}.ts says which option each symbol stands for. Take a version of ${name} whose prebuilts are compiled with it, or compile ${name} here`,
-      },
-    );
-  }
-  // dep_check_defined is restat=1: an existing stamp keeps its mtime.
-  writeIfChanged(stamp, "");
-}
-
-// ───────────────────────────────────────────────────────────────────────────
-// github-archive dep fetch: download tarball, extract, patch, stamp
-// ───────────────────────────────────────────────────────────────────────────
-
-/**
- * Fetch a github archive, extract, apply patches, write .ref stamp.
+ * Fetch a source tarball, extract, apply patches, write .ref stamp.
  *
  * Idempotent: if .ref exists and matches the computed identity, does nothing.
  * The ninja rule has restat=1, so a no-op fetch won't trigger downstream.
@@ -268,8 +217,7 @@ function checkDefined(name: string, lib: string, stamp: string, symbols: string[
  */
 async function fetchDep(
   name: string,
-  repo: string,
-  commit: string,
+  source: { url: string } & ({ commit: string } | { sha256: string }),
   dest: string,
   cache: string,
   patches: string[],
@@ -290,7 +238,7 @@ async function fetchDep(
     }
   }
 
-  const identity = computeSourceIdentity(commit, patchContents);
+  const identity = computeSourceIdentity("sha256" in source ? source.sha256 : source.commit, patchContents);
 
   // Short-circuit: already fetched at this identity?
   if (existsSync(refPath)) {
@@ -305,11 +253,11 @@ async function fetchDep(
     console.log(`source identity changed (was ${existing.slice(0, 8)}, now ${identity.slice(0, 8)})`);
   }
 
-  console.log(`fetching ${repo}@${commit.slice(0, 8)}`);
+  const { url } = source;
+  console.log(`fetching ${url}`);
   const started = performance.now();
 
   // ─── Download (with cache) ───
-  const url = `https://github.com/${repo}/archive/${commit}.tar.gz`;
   const urlHash = createHash("sha256").update(url).digest("hex").slice(0, 16);
   const tarballPath = join(cache, `${name}-${urlHash}.tar.gz`);
 
@@ -318,13 +266,22 @@ async function fetchDep(
   if (!existsSync(tarballPath)) {
     await downloadWithRetry(url, tarballPath, name);
   }
+  if ("sha256" in source) {
+    try {
+      checkSha256(tarballPath, source.sha256);
+    } catch (error) {
+      // Or the next build would find it in the cache again.
+      await rm(tarballPath, { force: true });
+      throw error;
+    }
+  }
 
   // ─── Extract ───
   // Wipe dest first — we don't want leftover files from a previous version.
   await rm(dest, { recursive: true, force: true });
   await mkdir(dest, { recursive: true });
 
-  // Github archives have a top-level directory <repo>-<commit>/. Strip it.
+  // Strip the top-level directory (<repo>-<commit>/ in a github archive).
   await extractTarGz(tarballPath, dest);
 
   // ─── Apply patches ───
@@ -341,7 +298,7 @@ async function fetchDep(
 }
 
 /**
- * Source identity: sha256(commit + patch_contents)[:16]. This is what goes
+ * Source identity: sha256(commit or checksum + patch_contents)[:16]. This is what goes
  * in the .ref stamp. Hashing patch CONTENTS (not paths) means editing a
  * patch invalidates the source without a commit bump.
  *
@@ -356,9 +313,9 @@ async function fetchDep(
  * Exported so source.ts can compute the same identity at configure time
  * (for the preemptive-delete-on-mismatch check).
  */
-export function computeSourceIdentity(commit: string, patchContents: string[]): string {
+export function computeSourceIdentity(pin: string, patchContents: string[]): string {
   const h = createHash("sha256");
-  h.update(commit);
+  h.update(pin);
   for (const content of patchContents) {
     h.update("\0"); // Separator so patch concatenation can't produce collisions.
     h.update(normalizeLf(content));
@@ -405,9 +362,8 @@ function applyPatch(dest: string, patchPath: string, patchBody: string): void {
 // Only run if this file is the entry point (not imported as a module).
 // fetch-cli.ts is ALSO imported by source.ts to get fetchCliPath —
 // that import should NOT execute main(). No top-level await: it would mark
-// this module HasTLA and force every importer (and the {config,webkit,flags,
-// source} cycle) onto the async-evaluation path for code that's dead on
-// import anyway.
+// this module HasTLA and force every importer onto the async-evaluation path
+// for code that's dead on import anyway.
 if (process.argv[1] === import.meta.filename) {
   main().catch(err => {
     // Format BuildError nicely; rethrow anything else to bun's default

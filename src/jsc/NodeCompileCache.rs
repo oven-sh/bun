@@ -1,15 +1,15 @@
 //! Node-compatible on-disk compile cache (`NODE_COMPILE_CACHE`): entries in a
-//! version-tagged subdir store the post-transpile source + JSC bytecode; the
+//! version-tagged subdir store the post-transpile source + bytecode; the
 //! stored source is byte-compared on load so stale caches recompile normally.
 
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use bstr::ByteSlice;
 use bun_boringssl::c as boring;
+use bun_bundler::bytecode::{Generator, Source};
 use bun_collections::{HashMap, IdentityContext};
 use bun_core::String as BunString;
 use bun_core::{Mutex, ZStr, env_var};
-use bun_options_types::Format;
 use bun_paths::{MAX_PATH_BYTES, SEP};
 use bun_sys::{self as sys, Fd, O};
 
@@ -18,7 +18,7 @@ pub const STATUS_ENABLED: i32 = 1;
 pub const STATUS_ALREADY_ENABLED: i32 = 2;
 pub const STATUS_DISABLED: i32 = 3;
 
-const MAGIC: u32 = 0xb0bcace2;
+const MAGIC: u32 = 0xb0bcace3;
 const HASH_SIZE: usize = 32;
 /// `magic u32 | code_size u32 | cache_size u32 | code sha256 | blob sha256`.
 const HEADER_SIZE: usize = 3 * 4 + 2 * HASH_SIZE;
@@ -51,15 +51,12 @@ struct Entry {
     code: Option<Box<[u8]>>,
     /// Deserialized bytecode blob handed to JSC (the cache was accepted).
     /// Kept alive for the process — `ZigSourceProvider` wraps it, no copy.
-    blob: Option<AlignedBlob>,
+    blob: Option<Blob>,
     persisted: bool,
 }
 
-/// 128-byte-aligned blob. JSC's bytecode decoder reads the blob in place and
-/// requires the same alignment the standalone graph provides (see
-/// StandaloneModuleGraph.rs "Bytecode alignment" note). Either a heap buffer
-/// or a span inside a whole-file mapping.
-struct AlignedBlob {
+/// A span inside the cache file, which is either mapped or read.
+struct Blob {
     backing: Backing,
     /// The blob runs from here to the end of `backing`.
     start: usize,
@@ -67,37 +64,21 @@ struct AlignedBlob {
 
 enum Backing {
     Heap(Vec<u8>),
-    /// `PROT_READ`/`MAP_PRIVATE` mapping of the whole cache file; `start` is
-    /// [`blob_file_offset`] inside it, 128-aligned because the mapping base
-    /// is page-aligned. Safe against entry rewrites: writers go through
-    /// tmpfile + rename, so a replaced file's old inode stays live under the
-    /// mapping.
+    /// `PROT_READ`/`MAP_PRIVATE`. Safe against entry rewrites: writers go
+    /// through tmpfile + rename, so a replaced file's old inode stays live
+    /// under the mapping.
     Map(sys::Mmap),
 }
 
 // SAFETY: the buffer is plain bytes; ownership is unique to the entry map.
-unsafe impl Send for AlignedBlob {}
+unsafe impl Send for Blob {}
 
 /// Blobs displaced by an entry refresh. JSC providers hold raw spans into accepted blobs past the
 /// initial compile, so displaced blobs are retired (leaked), never freed — freeing is a UAF across
 /// the FFI boundary. Bounding this needs a JSC-side provider release hook first, not a cap here.
-static RETIRED_BLOBS: Mutex<Vec<AlignedBlob>> = Mutex::new(Vec::new());
+static RETIRED_BLOBS: Mutex<Vec<Blob>> = Mutex::new(Vec::new());
 
-const BLOB_ALIGN: usize = 128;
-
-impl AlignedBlob {
-    fn copy_of(blob: &[u8]) -> Option<Self> {
-        let mut bytes = Vec::<u8>::new();
-        bytes.try_reserve_exact(blob.len() + BLOB_ALIGN - 1).ok()?;
-        let start = bytes.as_ptr().align_offset(BLOB_ALIGN);
-        bytes.resize(start, 0);
-        bytes.extend_from_slice(blob);
-        Some(Self {
-            backing: Backing::Heap(bytes),
-            start,
-        })
-    }
-
+impl Blob {
     fn as_slice(&self) -> &[u8] {
         let backing = match &self.backing {
             Backing::Heap(bytes) => bytes,
@@ -631,11 +612,9 @@ fn cache_basename(key: u64) -> [u8; 16] {
     out
 }
 
-/// Blob's byte offset in the cache file: header + stored code, padded to the
-/// decoder's 128-byte alignment so a page-aligned mapping keeps the blob
-/// aligned in place.
+/// After the header and the stored code.
 fn blob_file_offset(code_size: u32) -> u64 {
-    (HEADER_SIZE as u64 + u64::from(code_size)).next_multiple_of(BLOB_ALIGN as u64)
+    HEADER_SIZE as u64 + u64::from(code_size)
 }
 
 fn read_cache_file(state: &CacheState, key: u64, entry: &mut Entry, code: Option<&[u8]>) {
@@ -689,12 +668,9 @@ fn read_cache_file(state: &CacheState, key: u64, entry: &mut Entry, code: Option
     let (prot, flags) = (libc::PROT_READ, libc::MAP_PRIVATE);
     #[cfg(not(unix))]
     let (prot, flags) = (0i32, 0i32);
-    let mapped = sys::Mmap::new(total, prot, flags, file.fd(), 0).ok();
-    let heap_contents;
-    let bytes: &[u8] = match &mapped {
-        // SAFETY: see `Backing::Map`.
-        Some(mapped) => unsafe { mapped.as_slice() },
-        None => {
+    let backing = match sys::Mmap::new(total, prot, flags, file.fd(), 0) {
+        Ok(pages) => Backing::Map(pages),
+        Err(_) => {
             let mut contents: Vec<u8> = Vec::new();
             if contents.try_reserve_exact(total).is_err() {
                 finish(line, &|| "allocation failed\n".into());
@@ -707,10 +683,11 @@ fn read_cache_file(state: &CacheState, key: u64, entry: &mut Entry, code: Option
                 finish(line, &|| "reading header failed\n".into());
                 return;
             }
-            heap_contents = contents;
-            &heap_contents
+            Backing::Heap(contents)
         }
     };
+    let mut blob = Blob { backing, start: 0 };
+    let bytes = blob.as_slice();
 
     let magic = u32::from_le_bytes(bytes[0..4].try_into().expect("4 bytes"));
     let code_size = u32::from_le_bytes(bytes[4..8].try_into().expect("4 bytes"));
@@ -800,24 +777,7 @@ fn read_cache_file(state: &CacheState, key: u64, entry: &mut Entry, code: Option
         return;
     }
 
-    // The decoder requires the blob 128-aligned. The mapping base is
-    // page-aligned (every supported page size is a multiple of 128) and
-    // `blob_off` is a multiple of 128 by construction, but a miss here would
-    // be a JSC assert or segfault, so verify instead of assuming.
-    let is_aligned = blob_bytes.as_ptr().addr().is_multiple_of(BLOB_ALIGN);
-    let blob = match mapped {
-        Some(pages) if is_aligned => AlignedBlob {
-            backing: Backing::Map(pages),
-            start: blob_off as usize,
-        },
-        _ => {
-            let Some(blob) = AlignedBlob::copy_of(blob_bytes) else {
-                finish(line, &|| "allocation failed\n".into());
-                return;
-            };
-            blob
-        }
-    };
+    blob.start = blob_off as usize;
     finish(line, &|| format!(" success, size={cache_size}\n"));
     entry.blob = Some(blob);
 }
@@ -826,64 +786,29 @@ fn read_cache_file(state: &CacheState, key: u64, entry: &mut Entry, code: Option
 // Persist (exit + flush)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Bytecode generation runs on one long-lived worker thread with its own JSC
-/// VM (`getVMForBytecodeCache`), mirroring `bun build --bytecode`'s bundler
-/// threads, so only a single extra VM ever exists.
-struct GenJob {
-    format: Format,
-    code: Box<[u8]>,
-    url: Box<[u8]>,
-    resp: std::sync::mpsc::SyncSender<Option<Box<[u8]>>>,
-}
-
-fn generate_bytecode(format: Format, code: &[u8], url: &[u8]) -> Option<Box<[u8]>> {
-    use std::sync::mpsc;
-    static WORKER: Mutex<Option<mpsc::Sender<GenJob>>> = Mutex::new(None);
-
-    let (resp_tx, resp_rx) = mpsc::sync_channel(1);
-    {
-        let mut guard = WORKER.lock();
-        if guard.is_none() {
-            let (tx, rx) = mpsc::channel::<GenJob>();
-            let spawned = std::thread::Builder::new()
-                .name("BunCompileCache".to_string())
-                // JSC parsing of large modules needs a deep stack.
-                .stack_size(16 * 1024 * 1024)
-                .spawn(move || {
-                    for job in rx {
-                        let url = BunString::clone_utf8(&job.url);
-                        // No bytecode optimizer: it doubles the write that lands after
-                        // `exit` on every cold start. `bun build --bytecode` pays it once.
-                        let result = crate::cached_bytecode::__bun_jsc_generate_cached_bytecode(
-                            job.format,
-                            &job.code,
-                            &url,
-                            u32::MAX,
-                            false,
-                            None,
-                        );
-                        let _ = job.resp.send(result);
-                    }
-                });
-            match spawned {
-                Ok(_) => *guard = Some(tx),
-                Err(_) => return None,
-            }
-        }
-        let tx = guard.as_ref().expect("set above");
-        if tx
-            .send(GenJob {
-                format,
-                code: code.into(),
-                url: url.into(),
-                resp: resp_tx,
-            })
-            .is_err()
-        {
-            return None;
-        }
+/// On a thread of its own, for the stack: the process may be exiting from deep inside something.
+fn generate_bytecode(jobs: &[PersistJob]) -> Vec<Option<Box<[u8]>>> {
+    if jobs.is_empty() {
+        return Vec::new();
     }
-    resp_rx.recv().ok().flatten()
+    let generate = || {
+        let mut generator = Generator::default();
+        let blobs = jobs.iter().map(|job| {
+            let source = match job.is_cjs {
+                true => Source::CommonJs(&job.code),
+                false => Source::Module(&job.code),
+            };
+            generator.generate(source, u32::MAX, None)
+        });
+        blobs.collect()
+    };
+    std::thread::scope(|scope| {
+        let thread = std::thread::Builder::new()
+            .name("BunCompileCache".to_string())
+            .stack_size(16 * 1024 * 1024)
+            .spawn_scoped(scope, generate);
+        (thread.ok().and_then(|it| it.join().ok())).unwrap_or_else(|| vec![None; jobs.len()])
+    })
 }
 
 /// One unit of persist work, snapshotted out of `STATE` so bytecode generation runs with the lock
@@ -891,7 +816,6 @@ fn generate_bytecode(format: Format, code: &[u8], url: &[u8]) -> Option<Box<[u8]
 /// `(is_cjs, filename)` — not content — so Phase 3 re-checks `code_hash` before touching the entry.
 struct PersistJob {
     key: u64,
-    format: Format,
     code: Box<[u8]>,
     filename: Box<[u8]>,
     is_cjs: bool,
@@ -930,11 +854,6 @@ fn collect_persist_jobs(state: &mut CacheState) -> Vec<PersistJob> {
         };
         jobs.push(PersistJob {
             key,
-            format: if entry.is_cjs {
-                Format::Cjs
-            } else {
-                Format::Esm
-            },
             code,
             filename: entry.filename.clone(),
             is_cjs: entry.is_cjs,
@@ -1011,7 +930,6 @@ fn write_persist_job_locked(
     let write_all = || -> sys::Maybe<()> {
         file.pwrite_all(&header_bytes, 0)?;
         file.pwrite_all(&job.code, HEADER_SIZE as i64)?;
-        // The gap up to the 128-aligned blob offset is a hole (zeros).
         file.pwrite_all(blob, blob_file_offset(job.code_size) as i64)?;
         Ok(())
     };
@@ -1054,24 +972,18 @@ fn persist_pass() {
     };
 
     // Phase 2: generate bytecode, unlocked.
-    let mut generated: Vec<(PersistJob, Option<Box<[u8]>>)> = Vec::with_capacity(jobs.len());
-    for job in jobs {
-        let blob = generate_bytecode(job.format, &job.code, &job.filename);
-        if blob.is_none() {
+    let blobs = generate_bytecode(&jobs);
+
+    // Phase 3: write files and update entries under the lock.
+    let mut guard = STATE.lock();
+    let Some(state) = guard.as_mut() else { return };
+    for (job, blob) in jobs.into_iter().zip(blobs) {
+        let Some(blob) = blob else {
             cclog!(
                 "[compile cache] generating cache for {} {} failed, skipping\n",
                 type_name(job.is_cjs),
                 display_name(&job.filename, job.is_cjs)
             );
-        }
-        generated.push((job, blob));
-    }
-
-    // Phase 3: write files and update entries under the lock.
-    let mut guard = STATE.lock();
-    let Some(state) = guard.as_mut() else { return };
-    for (job, blob) in generated {
-        let Some(blob) = blob else {
             // Do not retry on the next persist pass. Skip if the entry now
             // holds different content (file changed and was re-fetched).
             if let Some(entry) = state.entries.get_mut(&job.key) {

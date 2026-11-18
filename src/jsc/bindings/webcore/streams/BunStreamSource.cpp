@@ -4,7 +4,6 @@
 
 #include "BunStandaloneTextSink.h"
 #include "DOMClientIsoSubspaces.h"
-#include "DOMIsoSubspaces.h"
 #include "ErrorCode.h"
 #include "JSDOMBinding.h"
 #include "JSDOMGlobalObject.h"

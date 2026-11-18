@@ -147,65 +147,12 @@ impl JSType {
     /// ```
     pub const CustomGetterSetter: JSType = JSType(6);
 
-    /// Wrapper for native API values exposed to JavaScript.
-    pub const APIValueWrapper: JSType = JSType(7);
-
-    /// Compiled native code executable for built-in functions.
-    /// ```js
-    /// // Built-in functions like:
-    /// parseInt("42")
-    /// Array.from([1, 2, 3])
-    /// ```
-    pub const NativeExecutable: JSType = JSType(8);
-
-    /// Compiled executable for top-level program code.
-    pub const ProgramExecutable: JSType = JSType(9);
-
-    /// Compiled executable for ES6 module code.
-    pub const ModuleProgramExecutable: JSType = JSType(10);
-
-    /// Compiled executable for eval() expressions.
-    /// ```js
-    /// eval('var x = 42; console.log(x);')
-    /// ```
-    pub const EvalExecutable: JSType = JSType(11);
-
     /// Compiled executable for function bodies.
     /// ```js
     /// function foo() { return 42; }
     /// const bar = () => 123
     /// ```
     pub const FunctionExecutable: JSType = JSType(12);
-
-    pub const UnlinkedFunctionExecutable: JSType = JSType(13);
-    pub const UnlinkedProgramCodeBlock: JSType = JSType(14);
-    pub const UnlinkedModuleProgramCodeBlock: JSType = JSType(15);
-    pub const UnlinkedEvalCodeBlock: JSType = JSType(16);
-    pub const UnlinkedFunctionCodeBlock: JSType = JSType(17);
-
-    /// Compiled bytecode block ready for execution.
-    pub const CodeBlock: JSType = JSType(18);
-
-    pub const JSCellButterfly: JSType = JSType(19);
-    pub const JSSourceCode: JSType = JSType(20);
-
-    /// Slim promise reaction (no rejection handler / context payload).
-    /// Internal object used in the promise resolution mechanism.
-    pub(crate) const SlimPromiseReaction: JSType = JSType(21);
-
-    /// Full promise reaction (carries onFulfilled/onRejected and async context).
-    /// Internal object used in the promise resolution mechanism.
-    pub(crate) const FullPromiseReaction: JSType = JSType(22);
-
-    /// Context object for Promise.all() operations.
-    /// Internal object used to track the state of Promise.all() resolution.
-    /// Note: Moved before ObjectType in recent WebKit.
-    pub(crate) const PromiseAllContext: JSType = JSType(23);
-
-    /// Global context for Promise.all() (new in recent WebKit).
-    pub(crate) const PromiseAllGlobalContext: JSType = JSType(24);
-
-    pub(crate) const CompiledEnvironment: JSType = JSType(33);
 
     /// Base JavaScript object type.
     /// ```js
@@ -390,19 +337,6 @@ impl JSType {
     /// global // in Node.js
     /// ```
     pub const GlobalObject: JSType = JSType(64);
-
-    pub const GlobalLexicalEnvironment: JSType = JSType(65);
-    pub const LexicalEnvironment: JSType = JSType(66);
-    pub const ModuleEnvironment: JSType = JSType(67);
-    pub const StrictEvalActivation: JSType = JSType(68);
-
-    /// Scope object for with statements.
-    /// ```js
-    /// with (obj) {
-    ///   prop; // looks up prop in obj first
-    /// }
-    /// ```
-    pub const WithScope: JSType = JSType(69);
 
     /// Namespace object for ES6 modules.
     /// ```js
@@ -721,29 +655,9 @@ impl JSType {
         }
     }
 
+    /// A cell of the engine's own, which is no value of the language.
     pub fn is_hidden(self) -> bool {
-        matches!(
-            self,
-            JSType::APIValueWrapper
-                | JSType::NativeExecutable
-                | JSType::ProgramExecutable
-                | JSType::ModuleProgramExecutable
-                | JSType::EvalExecutable
-                | JSType::FunctionExecutable
-                | JSType::UnlinkedFunctionExecutable
-                | JSType::UnlinkedProgramCodeBlock
-                | JSType::UnlinkedModuleProgramCodeBlock
-                | JSType::UnlinkedEvalCodeBlock
-                | JSType::UnlinkedFunctionCodeBlock
-                | JSType::CodeBlock
-                | JSType::JSCellButterfly
-                | JSType::JSSourceCode
-                | JSType::SlimPromiseReaction
-                | JSType::FullPromiseReaction
-                | JSType::PromiseAllContext
-                | JSType::PromiseAllGlobalContext
-                | JSType::CompiledEnvironment
-        )
+        self.0 > JSType::CustomGetterSetter.0 && self.0 < JSType::Object.0
     }
 
     #[inline]

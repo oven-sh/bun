@@ -6,7 +6,7 @@
  * Related flags (e.g. `-fno-unwind-tables` + `--no-eh-frame-hdr` + strip
  * `-R .eh_frame`) live adjacent so their coupling is obvious.
  *
- * Note: dependency include paths (WebKit, boringssl, etc.) are NOT here —
+ * Note: dependency include paths (boringssl, zstd, etc.) are NOT here —
  * they come from each dep's `Provides.includes`. This file covers only flags
  * that apply uniformly to bun's own C/C++ sources.
  */
@@ -23,16 +23,6 @@ export const safeStackDependencies: readonly DepName[] = ["zlib", "zstd"];
 
 export function usesSafeStack(c: Pick<Config, "hardened" | "x64" | "abi" | "asan">): boolean {
   return c.hardened && c.x64 && c.abi === "gnu" && !c.asan;
-}
-
-/** What makes a translation unit report coverage to Fuzzilli: for Bun's own sources and, in an engine built from source, JavaScriptCore's. */
-export function fuzzilliCoverageFlags(cfg: Pick<Config, "cwd" | "fuzzilli" | "fuzzilliCompilerOnly">): string[] {
-  if (!cfg.fuzzilli) return [];
-  const list = join(cfg.cwd, "scripts/build/fuzzilli-compiler-coverage.txt");
-  return [
-    "-fsanitize-coverage=trace-pc-guard",
-    ...(cfg.fuzzilliCompilerOnly ? [`-fsanitize-coverage-allowlist=${list}`] : []),
-  ];
 }
 
 export function safeStackFlags(c: Pick<Config, "hardened" | "x64" | "abi" | "asan">, dependency: DepName): string[] {
@@ -65,13 +55,6 @@ export interface Flag {
   lang?: "c" | "cxx";
   /** What this flag does. */
   desc: string;
-  /**
-   * linkerFlags only: part of the toolchain half of the link line (triple +
-   * sysroot, which linker, C++ runtime, PIE policy, deployment target,
-   * sanitizer runtime), which any executable for the target needs, not only
-   * bun. See computeTargetLinkFlags().
-   */
-  toolchain?: true;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -115,11 +98,7 @@ export const cpuTargetFlags: Flag[] = [
   },
 ];
 
-/**
- * `--hardened=on`. The same list as `HARDENING` in oven-sh/WebKit's
- * .github/scripts/lanes.mjs, which the `-hardened` prebuilts are compiled with, but for what `--guarded-pages=on` and
- * `--execute-only-start=off` add: that list has both, and here each is a flag of its own.
- */
+/** `--hardened=on`. */
 export const hardeningFlags = [
   "-fstack-protector-strong",
   "-D_FORTIFY_SOURCE=2",
@@ -133,8 +112,6 @@ export const hardeningFlags = [
   "-fsanitize-trap=array-bounds",
   "-D_GLIBCXX_ASSERTIONS=1",
   "-fPIE",
-  "-DBUN_HARDENED=1",
-  "-DENABLE_AOT_POSITION_INDEPENDENT_IMAGE=1",
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -373,11 +350,9 @@ export const globalFlags: Flag[] = [
   },
   {
     // -glldb implies -fstandalone-debug: every TU emits the definition of
-    // every type it can see, i.e. the whole JSC/WTF universe the PCH pulls
-    // in, again. Homing (clang's default on Linux) emits a type once, in the
-    // TU that defines its constructor or vtable, so bun's types come from
-    // bun's own objects and JSC's from the WebKit prebuilt, which carries its
-    // own DWARF. Same types and variables in the debugger; BunObject.cpp
+    // every type it can see, i.e. everything the PCH pulls in, again. Homing
+    // (clang's default on Linux) emits a type once, in the TU that defines its
+    // constructor or vtable. Same types and variables in the debugger; BunObject.cpp
     // measured 8.2s -> 5.35s to compile (the line-tables-only build of the
     // same file is 5.25s), object 9.0 MB -> 5.2 MB. Irrelevant to the LTO
     // builds: line tables (-g1 below) carry no type definitions either way.
@@ -386,7 +361,7 @@ export const globalFlags: Flag[] = [
     desc: "Emit each type's debug info once, where it is defined, instead of in every TU",
   },
   {
-    // The bitcode carries the debug info through the ThinLTO link, which is the longest step of a CI build; the -lto WebKit prebuilts make the same trade.
+    // The bitcode carries the debug info through the ThinLTO link, which is the longest step of a CI build.
     flag: "-g1",
     when: c => c.unix && c.debugInfo === "lines",
     desc: "Line tables only (backtraces and symbolication; no types): LTO builds, --debug-info=lines",
@@ -472,21 +447,6 @@ export const globalFlags: Flag[] = [
     desc: "No stack protector (pin the toolchain-independent default)",
   },
   {
-    flag: "-DENABLE_AOT=0",
-    when: c => !c.aot,
-    desc: "No ahead-of-time compiler and no run time for its programs (wtf/PlatformEnable.h turns it on wherever the FTL is on)",
-  },
-  {
-    flag: "-DENABLE_AOT_GUARDED_PAGES=1",
-    when: c => c.guardedPages,
-    desc: "What a compiled program maps for good lies between two pages without access, each mapping at a random address of its own",
-  },
-  {
-    flag: "-DBUN_REFUSES_EXECUTE_ONLY_START=1",
-    when: c => !c.executeOnlyStart,
-    desc: "A compiled program that cannot open its own file exits at start, and nothing moves what its loader mapped",
-  },
-  {
     flag: computeHardeningFlags,
     when: c => c.hardened,
     desc: "Stack protector, checked libc calls (in an optimized build without ASan), stack clash protection, zeroed locals up to 4 KB, no assumptions from undefined behavior, traps on an index outside a fixed-size array, libstdc++ assertions, position-independent code",
@@ -495,8 +455,7 @@ export const globalFlags: Flag[] = [
     // Every clang turns the protector on for a Darwin target (level 1, what
     // -fstack-protector asks for), the cross-compiling CI one included, so
     // that is what bun has always shipped on macOS: about 1,250 functions of
-    // bun's own C/C++ and the vendored deps carry a canary there, as the
-    // WebKit prebuilt's do.
+    // bun's own C/C++ and the vendored deps carry a canary there.
     flag: "-fstack-protector",
     when: c => c.darwin,
     desc: "Stack protector on macOS (clang's default for Darwin targets, stated)",
@@ -616,23 +575,20 @@ export const globalFlags: Flag[] = [
   {
     // Thin, not full: each .o carries a per-module summary so the link runs
     // the LTO backends in parallel (and could cache them) instead of merging
-    // every module into one serial multi-gigabyte regular-LTO partition. The
-    // WebKit macos -lto prebuilts and rustc's -Clinker-plugin-lto bitcode are
-    // both ThinLTO-summaried, so this makes the whole link one uniform
-    // ThinLTO graph with cross-module importing across C++/Rust/JSC
-    // boundaries. All platforms now use ThinLTO (the linux JSC ThinLTO
-    // miscompile was fixed in the WebKit prebuilt).
+    // every module into one serial multi-gigabyte regular-LTO partition.
+    // rustc's -Clinker-plugin-lto bitcode is ThinLTO-summaried too, so this
+    // makes the whole link one uniform ThinLTO graph with cross-module
+    // importing across the C++/Rust boundary.
     flag: "-flto=thin",
     when: c => c.unix && c.lto,
     desc: "Thin link-time optimization",
   },
   {
     // Windows (cross) uses ThinLTO like darwin: clang-cl accepts -flto=thin
-    // directly (core option), the WebKit windows-amd64-lto prebuilt is
-    // ThinLTO-summaried bitcode, and rustc's -Clinker-plugin-lto bitcode is
-    // too, so lld-link runs one uniform ThinLTO graph with cross-language
-    // importing. lld-link does LTO automatically when it sees bitcode
-    // inputs — no link-side -flto spelling exists or is needed there.
+    // directly (core option), and rustc's -Clinker-plugin-lto bitcode is
+    // ThinLTO-summaried, so lld-link runs one uniform ThinLTO graph with
+    // cross-language importing. lld-link does LTO automatically when it sees
+    // bitcode inputs — no link-side -flto spelling exists or is needed there.
     flag: "-flto=thin",
     when: c => c.windows && c.lto,
     desc: "Thin link-time optimization (clang-cl)",
@@ -650,8 +606,7 @@ export const globalFlags: Flag[] = [
     // Unix only (not windows): on COFF, whole-program vtable opt drops
     // vtable symbols that associative COMDAT sections still name as their
     // parent and the LTO codegen aborts ("Associative COMDAT symbol
-    // '??_7...' does not exist"). The WebKit windows-amd64-lto prebuilt is
-    // built without it for the same reason.
+    // '??_7...' does not exist").
     flag: ["-fforce-emit-vtables", "-fwhole-program-vtables"],
     when: c => c.unix && c.lto,
     lang: "cxx",
@@ -669,8 +624,8 @@ export const globalFlags: Flag[] = [
     // The type hierarchy goes into the per-module ThinLTO summaries instead
     // (typeidCompatibleVTable entries) and whole-program devirtualization
     // runs in index-based mode via --lto-whole-program-visibility at link
-    // time. 0 is also the default for rustc, for Apple targets, and for the
-    // WebKit -lto prebuilts, so this is the configuration that can't drift.
+    // time. 0 is also the default for rustc and for Apple targets, so this is
+    // the configuration that can't drift.
     flag: "-fno-split-lto-unit",
     when: c => c.lto,
     desc: "Index-based WPD: keep type metadata in the ThinLTO summaries, no regular-LTO half",
@@ -732,9 +687,7 @@ export const bunOnlyFlags: Flag[] = [
   },
 
   // ─── Language standard ───
-  // Not in globalFlags because deps set their own standard (WebKit itself is
-  // -std=c++23, as its cmake builds it; the GNU-extensions dialect differs in
-  // accepted syntax and predefined macros, not ABI).
+  // Not in globalFlags because deps set their own standard.
   {
     flag: "-std=gnu++23",
     when: c => c.linux || c.freebsd,
@@ -796,7 +749,7 @@ export const bunOnlyFlags: Flag[] = [
     desc: "Undefined-behavior sanitizers",
   },
   {
-    flag: c => [...fuzzilliCoverageFlags(c), "-DFUZZILLI_ENABLED"],
+    flag: ["-fsanitize-coverage=trace-pc-guard", "-DFUZZILLI_ENABLED"],
     when: c => c.fuzzilli,
     desc: "Fuzzilli coverage instrumentation",
   },
@@ -842,7 +795,6 @@ export const bunOnlyFlags: Flag[] = [
   },
   {
     // Debug adds -Werror=unused; release omits it (vars used only in ASSERT).
-    // unused-lambda-capture: JavaScriptCore's AssemblyHelpers.h captures `this` in generic lambdas.
     flag: ["-Werror=unused", "-Wno-unused-function", "-Wno-unused-lambda-capture"],
     when: c => c.unix && c.debug,
     desc: "Warn on unused vars in debug (catches dead code)",
@@ -872,13 +824,9 @@ export const defines: Flag[] = [
     flag: [
       "_HAS_EXCEPTIONS=0",
       "LIBUS_USE_OPENSSL=1",
-      "STATICALLY_LINKED_WITH_JavaScriptCore=1",
-      "BUILDING_WITH_CMAKE=1",
-      "JSC_OBJC_API_ENABLED=0",
       "NAPI_EXPERIMENTAL=ON",
       "NODE_API_EXPERIMENTAL_NOGC_ENV_OPT_OUT=1",
       "NOMINMAX",
-      "BUILDING_JSCONLY__",
     ],
     desc: "Core bun defines (always on)",
   },
@@ -924,6 +872,16 @@ export const defines: Flag[] = [
     desc: "--disallow-code-generation-from-strings=strict as a compile-time constant",
   },
   {
+    flag: "ENABLE_AOT=0",
+    when: c => !c.aot,
+    desc: "No ahead-of-time compiler and no run time for its programs",
+  },
+  {
+    flag: "ENABLE_AOT_GUARDED_PAGES=1",
+    when: c => c.guardedPages,
+    desc: "Every thread's second stack lies at a random address of its own",
+  },
+  {
     flag: "BUN_DISABLE_WEBASSEMBLY=1",
     when: c => !c.webAssembly,
     desc: "No WebAssembly global: JSC's useWasm option is always false",
@@ -964,6 +922,10 @@ export const defines: Flag[] = [
     desc: "Standard Windows defines + disable CRT security warnings",
   },
   {
+    flag: ["U_SHOW_CPLUSPLUS_API=0", "U_SHOW_CPLUSPLUS_HEADER_API=0", "U_HIDE_DEPRECATED_API=1"],
+    desc: "Only the C interface of ICU, which is the same in every release",
+  },
+  {
     flag: "U_STATIC_IMPLEMENTATION",
     when: c => c.windows,
     desc: "ICU static linkage (without this: ABI mismatch → STATUS_STACK_BUFFER_OVERRUN)",
@@ -998,7 +960,6 @@ export const linkerFlags: Flag[] = [
     flag: "-fsanitize=address",
     when: c => c.unix && c.asan,
     desc: "Link ASAN runtime",
-    toolchain: true,
   },
   {
     flag: "-fsanitize=null",
@@ -1037,10 +998,7 @@ export const linkerFlags: Flag[] = [
     desc: "Enable index-based whole-program devirtualization at link time",
   },
   {
-    // ELF spelling of the entry above. The WebKit -lto prebuilts carry the
-    // !type/!vcall_visibility metadata (built with -fwhole-program-vtables),
-    // so this upgrades JSC/WTF's exported classes to hidden LTO visibility
-    // and lets WPD fire on them, not just on our -fvisibility=hidden classes.
+    // ELF spelling of the entry above.
     flag: ["-Wl,--lto-whole-program-visibility"],
     when: c => c.unix && !c.darwin && c.lto,
     desc: "Enable index-based whole-program devirtualization at link time (lld ELF)",
@@ -1087,7 +1045,6 @@ export const linkerFlags: Flag[] = [
     flag: c => (icfMode(c) === "safe" ? "/OPT:SAFEICF" : "/OPT:NOICF"),
     when: c => c.windows,
     desc: "Identical-code-folding (safe in release)",
-    toolchain: true,
   },
   {
     flag: c => [`/opt:lldlto=${ltoLevel(c)}`, `/opt:lldltocgo=${ltoLevel(c)}`],
@@ -1123,7 +1080,6 @@ export const linkerFlags: Flag[] = [
     flag: c => `/machine:${c.arm64 ? "arm64" : "x64"}`,
     when: c => c.windows,
     desc: "Target machine type for lld-link (required on arm64; x64 hosts default correctly but explicit is harmless)",
-    toolchain: true,
   },
   {
     // Serviced UCRT overlay: an explicit /libpath: is searched before the
@@ -1134,7 +1090,6 @@ export const linkerFlags: Flag[] = [
     flag: c => quote(`/libpath:${ucrtServicingLibDir(c)!}`, false),
     when: c => c.windows && c.host.os !== "windows",
     desc: "Windows cross-compile: serviced Universal CRT static libs (SDK NuGet) override the splat's",
-    toolchain: true,
   },
   {
     // Windows cross-compile: these ldflags go after /link, straight to
@@ -1145,7 +1100,6 @@ export const linkerFlags: Flag[] = [
     flag: c => quote(`/winsysroot:${c.winsysroot!}`, false),
     when: c => c.windows && c.winsysroot !== undefined,
     desc: "Windows cross-compile: MSVC CRT + Windows SDK library search root (xwin splat)",
-    toolchain: true,
   },
   {
     flag: ["/STACK:0x1200000,0x200000", "/errorlimit:0"],
@@ -1209,9 +1163,9 @@ export const linkerFlags: Flag[] = [
   {
     // lld-link's spelling of the symbol ordering file (the Linux entry below
     // explains it): one COMDAT leader name per line, laid out first in .text.
-    // Every function is its own COMDAT here — /Gy for bun's C++ and for the
-    // WebKit prebuilt, rustc's default function sections for the Rust side, and
-    // LTO output is per-function regardless — so one trace reorders all of
+    // Every function is its own COMDAT here — /Gy for bun's C++, rustc's
+    // default function sections for the Rust side, and LTO output is
+    // per-function regardless — so one trace reorders all of
     // them. /ignore:4037 is --no-warn-symbol-ordering's counterpart: the names
     // were traced from an earlier build's binary (see usesOrderFile), and each
     // one that no longer exists would otherwise be an LNK4037 warning.
@@ -1262,9 +1216,7 @@ export const linkerFlags: Flag[] = [
     // mode is what folded callBigIntConstructor into constructBigInt on
     // Windows (/OPT:ICF) and broke `expect.any()`. Matches the Linux
     // release link's -Wl,-icf=safe. lld-only: Apple's ld has no ICF, so
-    // this is a cross-only divergence (smaller binary than native). The
-    // prebuilt WebKit archives are compiled with -faddrsig too, so WebKit
-    // code participates in the folding.
+    // this is a cross-only divergence (smaller binary than native).
     flag: c => `-Wl,--icf=${icfMode(c)}`,
     when: c => c.darwin && linksWithLld(c),
     desc: "macOS cross-link: fold identical address-insignificant functions (release)",
@@ -1288,7 +1240,6 @@ export const linkerFlags: Flag[] = [
     flag: c => [`--target=${c.crossTarget!}`, "-mlinker-version=705", `--ld-path=${c.ld}`],
     when: c => c.darwin && c.crossTarget !== undefined,
     desc: "macOS cross-link: target triple + ld64.lld + modern linker arg style",
-    toolchain: true,
   },
   {
     // The `__BUN,__bun` standalone-graph placeholder (c-bindings.cpp) is a
@@ -1311,7 +1262,6 @@ export const linkerFlags: Flag[] = [
     flag: c => [`-mmacosx-version-min=${c.osxDeploymentTarget!}`, "-isysroot", c.osxSysroot!],
     when: c => c.darwin && c.osxDeploymentTarget !== undefined && c.osxSysroot !== undefined,
     desc: "macOS deployment target at link (sets LC_BUILD_VERSION minos)",
-    toolchain: true,
   },
   {
     flag: "-Wl,-w",
@@ -1351,7 +1301,6 @@ export const linkerFlags: Flag[] = [
     flag: c => [`--target=${c.crossTarget!}`, `--sysroot=${c.sysroot!}`],
     when: c => c.linux && c.abi !== "android" && c.crossTarget !== undefined && c.sysroot !== undefined,
     desc: "linux sysroot link (gnu: ubuntu:20.04+gcc-13; musl: alpine)",
-    toolchain: true,
   },
   {
     // Wrap glibc symbols whose default version on the sysroot's glibc (2.31)
@@ -1433,13 +1382,11 @@ export const linkerFlags: Flag[] = [
     flag: ["-static-libstdc++", "-static-libgcc"],
     when: c => c.linux && c.abi === "gnu",
     desc: "Static C++ runtime (don't depend on host libstdc++)",
-    toolchain: true,
   },
   {
     flag: ["-lstdc++", "-lgcc"],
     when: c => c.linux && c.abi === "musl",
     desc: "Dynamic C++ runtime on musl (static unavailable)",
-    toolchain: true,
   },
   {
     flag: c => [
@@ -1455,7 +1402,6 @@ export const linkerFlags: Flag[] = [
     ],
     when: c => c.linux && c.abi === "android",
     desc: "Android link: target/sysroot + compiler-rt/libunwind + static libc++",
-    toolchain: true,
   },
   {
     // Paired with compile-side -fno-unwind-tables above.
@@ -1476,25 +1422,21 @@ export const linkerFlags: Flag[] = [
     flag: c => `--ld-path=${c.ld}`,
     when: c => c.linux,
     desc: "Use lld instead of system ld",
-    toolchain: true,
   },
   {
     flag: ["-fno-pic", "-Wl,-no-pie"],
     when: c => c.linux && c.abi !== "android" && !c.hardened,
     desc: "No PIE (we don't need ASLR; simpler codegen)",
-    toolchain: true,
   },
   {
     flag: ["-fPIE", "-pie"],
     when: c => c.hardened,
     desc: "Hardened: position-independent executable",
-    toolchain: true,
   },
   {
     flag: ["-fPIC", "-pie"],
     when: c => c.abi === "android",
     desc: "Android: bionic loader requires PIE",
-    toolchain: true,
   },
   {
     flag: c => [
@@ -1648,19 +1590,16 @@ export const linkerFlags: Flag[] = [
     flag: c => [`--target=${c.crossTarget!}`, `--sysroot=${c.sysroot!}`, "-stdlib=libc++"],
     when: c => c.freebsd && c.crossTarget !== undefined,
     desc: "FreeBSD cross-link: target/sysroot + libc++ (FreeBSD base ships libc++)",
-    toolchain: true,
   },
   {
     flag: c => `--ld-path=${c.ld}`,
     when: c => c.freebsd,
     desc: "Use lld instead of system ld",
-    toolchain: true,
   },
   {
     flag: ["-fno-pic", "-Wl,-no-pie"],
     when: c => c.freebsd,
-    desc: "FreeBSD 13+ clang defaults to PIE; opt out (matches Linux, avoids -fPIC rebuild of WebKit/deps)",
-    toolchain: true,
+    desc: "FreeBSD 13+ clang defaults to PIE; opt out (matches Linux)",
   },
   {
     flag: [
@@ -1903,7 +1842,7 @@ export const stripFlags: Flag[] = [
 // ═══════════════════════════════════════════════════════════════════════════
 // INCLUDE DIRECTORIES
 //   Bun's own source tree + build-time generated code.
-//   Dependency includes (WebKit, boringssl, ...) come from resolveDep().
+//   Dependency includes (boringssl, zstd, ...) come from resolveDep().
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
@@ -1914,7 +1853,7 @@ export function bunIncludes(cfg: Config): string[] {
   const { cwd, codegenDir, vendorDir } = cfg;
   const includes: string[] = [
     // Release builds shadow <iostream> with a #error shim. A single <iostream>
-    // include anywhere (our headers, bun-uws, or a WebKit header pulled into a
+    // include anywhere (our headers, bun-uws, or a dependency's header pulled into a
     // Bun TU) drags libstdc++'s globals_io.o into the link and runs
     // std::ios_base::Init + the full locale facet set before main. Debug builds
     // keep the real header available for ad-hoc printf-debugging.
@@ -1933,6 +1872,7 @@ export function bunIncludes(cfg: Config): string[] {
     join(cwd, "src/js/builtins"),
     join(cwd, "src/runtime/napi"),
     join(cwd, "src/uws_sys"),
+    join(cwd, "src/engine/embed/include"),
     codegenDir,
     vendorDir,
     join(vendorDir, "zlib"),
@@ -2017,16 +1957,40 @@ export const fileOverrides: FileOverride[] = [
     desc: "Same as highway_json.cpp below: the kernels run over every byte of what is in a gzip or zlib stream.",
   },
   {
+    file: "src/jsc/bindings/highway_elements.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the kernels run over every element of an array that is searched.",
+  },
+  {
     file: "src/jsc/bindings/highway_jpeg.cpp",
     extraFlags: ["-O2"],
     when: c => c.debug,
     desc: "Same as highway_json.cpp below: the kernels run over every sample of a JPEG image.",
   },
   {
+    file: "src/jsc/bindings/highway_json_text.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the kernels run for every key and string that JSON.parse sees.",
+  },
+  {
     file: "src/jsc/bindings/highway_png.cpp",
     extraFlags: ["-O2"],
     when: c => c.debug,
     desc: "Same as highway_json.cpp below: the kernels run over every byte of a PNG image.",
+  },
+  {
+    file: "src/jsc/bindings/highway_text.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the kernels run over every character of a long string.",
+  },
+  {
+    file: "src/jsc/bindings/highway_utf8.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the kernels run over every byte of text that is not ASCII.",
   },
   {
     file: "src/jsc/bindings/highway_webp_decoder.cpp",
@@ -2143,22 +2107,6 @@ export function computeDepFlags(cfg: Config): { cflags: string[]; cxxflags: stri
   const cxxflags: string[] = [];
   evalTable(globalFlags, cfg, cflags, cxxflags);
   return { cflags, cxxflags };
-}
-
-/**
- * The link flags of an executable for the target that is not bun (JSC's LLInt
- * extractors, the jsc shell): the `toolchain` entries of linkerFlags, plus
- * dropping unreferenced sections. Bun's own link policy (symbol lists, ICF,
- * stack size, wraps) is left out.
- */
-export function computeTargetLinkFlags(cfg: Config): string[] {
-  const out: string[] = [];
-  for (const f of linkerFlags) {
-    if (!f.toolchain || (f.when && !f.when(cfg))) continue;
-    out.push(...resolveFlagValue(f.flag, cfg));
-  }
-  if (!cfg.windows) out.push(cfg.darwin ? "-Wl,-dead_strip" : "-Wl,--gc-sections");
-  return out;
 }
 
 export function computeHardeningFlags(cfg: Config): string[] {

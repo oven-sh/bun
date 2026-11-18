@@ -8,24 +8,13 @@
  */
 
 import { spawn as nodeSpawn, spawnSync } from "node:child_process";
-import {
-  chmodSync,
-  cpSync,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
-import { basename, join, relative, resolve } from "node:path";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { basename, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isBuildkite, markBuildkiteStepReported, reportAnnotationToBuildkite } from "../buildkite.ts";
 import { formatAnnotationToHtml, parseAnnotations } from "./annotations.ts";
 import { bunExeName, shouldStrip, type BunOutput } from "./bun.ts";
 import type { Config } from "./config.ts";
-import { webkitAotFile, webkitJSCPath, webkitTestAotPath, webkitTestFFIPath } from "./deps/webkit.ts";
 import { BuildError } from "./error.ts";
 import { crossFeaturesJson } from "./features-json.ts";
 import { linkerMapOutputs, orderFilePath, usesOrderFile } from "./flags.ts";
@@ -273,15 +262,6 @@ const TIMINGS_META_DATA = "timings:";
 //           ├── bun-asan
 //           └── features.json
 //
-//   test-tools-${bunTriplet}[-asan].zip   (in no release)
-//     └── ${bunTriplet}-profile/ or -asan/   (so it unpacks beside that Bun)
-//           ├── testFFI[.exe]            (WebKit FFI test binary, when shipped)
-//           ├── jsc[.exe]                (WebKit's shell, with this bun's table of built-ins where the tarball has its objects)
-//           ├── testaot[.exe]            (the engine's AoT test program, likewise)
-//           ├── aot-tests/               (its IR tests: WebKit's Source/JavaScriptCore/aot/tests)
-//           ├── aot-engine/              (the engine's generators and its schema, for the tests that import them)
-//           └── aot_builtin_table.json   (the table of built-ins this Bun was built with: test/aot/generate.ts writes programs from it)
-//
 // bunTriplet = bun-${os}-${arch}[-musl][-baseline]
 //
 // Test steps (runner.node.ts) download '**' from build-bun and pick any
@@ -346,43 +326,6 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   // Result: bun-linux-x64-profile, bun-linux-x64-asan, etc.
   const bunPath = exeName.replace(/^bun/, bunTriplet);
   const files: string[] = [basename(exe), "features.json"];
-  const testTools: string[] = [];
-  for (const program of [webkitTestFFIPath(cfg), webkitJSCPath(cfg), webkitTestAotPath(cfg)]) {
-    if (existsSync(program)) {
-      chmodSync(program, 0o755);
-      testTools.push(program);
-    }
-  }
-  const engineTests = webkitAotFile(cfg, "tests");
-  if (existsSync(engineTests)) {
-    // makeZip names an entry by its base name, and this folder's is `tests`.
-    const staged = resolve(buildDir, "aot-tests");
-    rmSync(staged, { recursive: true, force: true });
-    cpSync(engineTests, staged, { recursive: true });
-    testTools.push("aot-tests");
-  }
-  // What src/codegen/engine-directory.ts looks for: tests import the generators, which are files of the engine.
-  const engineDirectory = webkitAotFile(cfg, "directory");
-  if (existsSync(join(engineDirectory, "builtins", "generator"))) {
-    const staged = resolve(buildDir, "aot-engine");
-    rmSync(staged, { recursive: true, force: true });
-    for (const part of [
-      ["builtins", "generator"],
-      ["ir", "generator"],
-      ["ir", "schema"],
-      ["ir", "AOTSchema.def"],
-    ]) {
-      cpSync(join(engineDirectory, ...part), join(staged, ...part), { recursive: true });
-    }
-    // What the engine was compiled with, where a prebuilt WebKit has it.
-    const compiledWith = webkitAotFile(cfg, "builtins-generated");
-    for (const name of readdirSync(compiledWith).filter(name => name.startsWith("AOTBuiltin"))) {
-      cpSync(join(compiledWith, name), join(staged, "builtins", "generated", name));
-    }
-    testTools.push("aot-engine");
-  }
-  const builtinTable = resolve(cfg.codegenDir, "aot_builtin_table.json");
-  if (existsSync(builtinTable)) testTools.push(builtinTable);
   // Debug symbols / linker map — platform-specific extras.
   if (cfg.windows) {
     files.push(`${exeName}.pdb`);
@@ -401,9 +344,6 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   }
   if (cfg.trimmable) files.push(`${basename(exe)}.trim`);
   zipPaths.push(makeZip(cfg, bunPath, files));
-  // runner.node.ts takes any bun*.zip for a Bun, and bun-pr any zip with "profile" in its name.
-  const testToolsZip = `test-tools-${bunPath.replace("-profile", "")}.zip`;
-  if (testTools.length) zipPaths.push(makeZip(cfg, bunPath, testTools, testToolsZip));
 
   // ─── Stripped zip ───
   // Only for plain release (shouldStrip). Just the stripped `bun` binary.
@@ -420,7 +360,7 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
 }
 
 /**
- * Create a zip at buildDir/${zip} containing ${name}/<files>.
+ * Create a zip at buildDir/${name}.zip containing ${name}/<files>.
  *
  * Uses `cmake -E tar cfv x.zip --format=zip` — cmake's cross-platform
  * zip wrapper (wraps libarchive). GNU tar (Linux default) DOESN'T support
@@ -432,8 +372,9 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
  * Files that don't exist are silently skipped (e.g., .pdb on a clean build).
  * Returns the zip path relative to buildDir (for the upload call).
  */
-function makeZip(cfg: Config, name: string, files: string[], zip = `${name}.zip`): string {
+function makeZip(cfg: Config, name: string, files: string[]): string {
   const buildDir = cfg.buildDir;
+  const zip = `${name}.zip`;
   const stageDir = resolve(buildDir, name);
 
   // Clean previous run (idempotent).

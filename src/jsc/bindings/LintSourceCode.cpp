@@ -1322,7 +1322,7 @@ __attribute__((minsize)) void defineProperties(JSGlobalObject* globalObject, JSO
         else
             object->putDirect(vm, name, jsBoolean(true), frozen);
     }
-    object->methodTable()->preventExtensions(object, globalObject);
+    JSObject::preventExtensions(object, globalObject);
 }
 
 JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructSourceCode, __attribute__((minsize)), (JSGlobalObject * globalObject, CallFrame* callFrame))

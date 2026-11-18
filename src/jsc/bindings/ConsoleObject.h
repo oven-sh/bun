@@ -10,23 +10,17 @@ using namespace JSC;
 
 class ConsoleObject final : public JSC::ConsoleClient {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ConsoleObject);
-    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(ConsoleObject);
 
 private:
-    void messageWithTypeAndLevel(MessageType, MessageLevel, JSC::JSGlobalObject*,
-        Ref<Inspector::ScriptArguments>&&);
-    void count(JSC::JSGlobalObject*, const String& label);
-    void countReset(JSC::JSGlobalObject*, const String& label);
-    void profile(JSC::JSGlobalObject*, const String& title);
-    void profileEnd(JSC::JSGlobalObject*, const String& title);
-    void takeHeapSnapshot(JSC::JSGlobalObject*, const String& title);
-    void time(JSC::JSGlobalObject*, const String& label);
-    void timeLog(JSC::JSGlobalObject*, const String& label, Ref<Inspector::ScriptArguments>&&);
-    void timeEnd(JSC::JSGlobalObject*, const String& label);
-    void timeStamp(JSC::JSGlobalObject*, Ref<Inspector::ScriptArguments>&&);
-    void record(JSC::JSGlobalObject*, Ref<Inspector::ScriptArguments>&&);
-    void recordEnd(JSC::JSGlobalObject*, Ref<Inspector::ScriptArguments>&&);
-    void screenshot(JSC::JSGlobalObject*, Ref<Inspector::ScriptArguments>&&);
+    void messageWithTypeAndLevel(MessageType, MessageLevel, JSC::JSGlobalObject*, const ArgList&) final;
+    void count(JSC::JSGlobalObject*, const String& label) final;
+    void countReset(JSC::JSGlobalObject*, const String& label) final;
+    void profile(JSC::JSGlobalObject*, const String& title) final;
+    void profileEnd(JSC::JSGlobalObject*, const String& title) final;
+    void takeHeapSnapshot(JSC::JSGlobalObject*, const String& title) final;
+    void time(JSC::JSGlobalObject*, const String& label) final;
+    void timeLog(JSC::JSGlobalObject*, const String& label, const ArgList&) final;
+    void timeEnd(JSC::JSGlobalObject*, const String& label) final;
 };
 
 } // namespace Zig

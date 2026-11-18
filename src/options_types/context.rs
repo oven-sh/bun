@@ -218,6 +218,7 @@ pub struct BundlerOptions {
     pub output_format: bundle_enums::Format,
     pub bytecode: bool,
     pub bytecode_depth: u32,
+    /// False with `--no-optimize-bytecode`, which has no effect.
     pub optimize_bytecode: bool,
     /// `--bytecode-order`: payload order files, most important first.
     pub bytecode_order: Vec<Box<[u8]>>,
@@ -473,13 +474,7 @@ pub struct TestOptions {
     pub path_ignore_patterns: Vec<Box<[u8]>>,
     pub path_ignore_patterns_from_cli: bool,
     pub test_filter_pattern: Option<Box<[u8]>>,
-    /// `?*bun.jsc.RegularExpression` — typed as opaque to keep this file free
-    /// of `jsc/` references. Read via `test_filter_regex()`.
-    // FORWARD_DECL(b0): erased bun_jsc::RegularExpression to break the T3→T6
-    // back-edge. High tier owns construction/destruction; this field only
-    // stores the pointer. LIFETIMES.tsv says OWNED, so the high-tier setter is
-    // responsible for freeing any previous value.
-    pub test_filter_regex: Option<core::ptr::NonNull<()>>, // SAFETY: erased *mut bun_jsc::RegularExpression
+    pub test_filter_regex: Option<&'static bun_yarr::Compiled>,
     pub max_concurrency: u32,
     pub resets_before_each_test: [Option<bool>; RESETS_BEFORE_EACH_TEST.len()],
     /// The absolute path of the file that `--config` names. The workers of `--parallel` read it instead of `./bunfig.toml`.
@@ -603,16 +598,6 @@ impl JunitSuites {
             b"flat" => Some(Self::Flat),
             _ => None,
         }
-    }
-}
-
-impl TestOptions {
-    /// Returns the erased `*mut bun_jsc::RegularExpression`. Caller (high tier)
-    /// casts back: `unsafe { &*ptr.cast::<bun_jsc::RegularExpression>() }`.
-    #[inline]
-    pub fn test_filter_regex(&self) -> Option<core::ptr::NonNull<()>> {
-        // SAFETY: erased bun_jsc::RegularExpression — see field decl.
-        self.test_filter_regex
     }
 }
 

@@ -1,5 +1,5 @@
-// Finds the top-level functions of a bundled internal module so that InternalModuleRegistry.cpp can fill JSC's
-// SourceProviderCache before the module is parsed. The parser then skips their bodies until they are called.
+// Finds the top-level functions of a bundled internal module so that InternalModuleRegistry.cpp can describe them to
+// the parser before the module is parsed. The parser then skips their bodies until they are called.
 
 type TokenKind =
   | "identifier"
@@ -24,13 +24,11 @@ export interface LazyFunction {
   parametersStart: number;
   closeBrace: number;
   parameterCount: number;
-  containsTaggedTemplate: boolean;
 }
 
 export interface LazyFunctionTable {
-  capturedNames: { start: number; length: number }[];
+  capturedNames: { start: number; length: number; mayBeAssigned: boolean }[];
   functions: LazyFunction[];
-  capturedNamesOwner: number;
 }
 
 const keywords = new Set(
@@ -243,6 +241,30 @@ function countParameters(tokens: Token[], match: Int32Array, open: number) {
   return count;
 }
 
+const assignmentOperators = new Set(
+  "= += -= *= /= %= **= <<= >>= >>>= &= |= ^= &&= ||= ??= ++ --".split(" "),
+);
+const declarationKeywords = new Set(["var", "let", "const"]);
+
+/** Whether the tokens from `first` to `last`, a name or something in brackets, stand where the target of an assignment does. */
+function mayBeAssignmentTarget(tokens: Token[], match: Int32Array, first: number, last: number) {
+  const [before, after] = [tokens[first - 1], tokens[last + 1]];
+  if (declarationKeywords.has(before.text)) return false;
+  if (tokens[first].text === "[") {
+    const isAfterCondition =
+      before.text === ")" && [...keywordsBeforeParenthesizedCondition, "await"].includes(tokens[match[first - 1] - 1].text);
+    const isAfterOperand =
+      before.kind === "punctuator"
+        ? before.text === ")" || before.text === "]" || before.text === "?."
+        : !keywordsBeforeExpression.has(before.text);
+    if (isAfterOperand && !isAfterCondition) return false;
+  }
+  if (after.kind === "punctuator" && assignmentOperators.has(after.text)) return true;
+  if (before.kind === "punctuator" && (before.text === "++" || before.text === "--")) return true;
+  const startsLoopHead = before.text === "(" && ["for", "await"].includes(tokens[first - 2].text);
+  return startsLoopHead && (after.text === "in" || after.text === "of");
+}
+
 const modulePrefix = '(function (){"use strict";';
 
 export function findLazyFunctions(source: string): LazyFunctionTable | null {
@@ -253,9 +275,10 @@ export function findLazyFunctions(source: string): LazyFunctionTable | null {
   if (tokens[bodyOpen].text !== "{" || match[bodyOpen] !== tokens.length - 2)
     throw new Error("unexpected module wrapper");
 
-  const functions: (LazyFunction & { expressionName: string | null })[] = [];
+  const functions: LazyFunction[] = [];
   const namesOutside = new Map<string, number>();
   const namesInside = new Set<string>();
+  const namesAssignedInside = new Set<string>();
 
   let arrowBodyEnd = -1;
   for (let index = bodyOpen + 1; index < match[bodyOpen]; index++) {
@@ -326,30 +349,19 @@ export function findLazyFunctions(source: string): LazyFunctionTable | null {
         continue;
       }
 
-      let containsTaggedTemplate = false;
+      let patternEnd = -1;
       for (let inner = parametersOpen; inner <= functionBodyClose; inner++) {
-        if (isVariableReference(tokens, inner)) namesInside.add(tokens[inner].text);
-        const kind = tokens[inner].kind;
-        if (kind === "template" || kind === "templateHead") {
-          const before = tokens[inner - 1];
-          if (
-            before.kind === "identifier" ||
-            before.kind === "template" ||
-            before.kind === "templateTail" ||
-            before.text === ")" ||
-            before.text === "]" ||
-            before.text === "this" ||
-            before.text === "super"
-          )
-            containsTaggedTemplate = true;
-        }
+        if (opensBracket(tokens[inner]) && mayBeAssignmentTarget(tokens, match, inner, match[inner]))
+          patternEnd = Math.max(patternEnd, match[inner]);
+        if (!isVariableReference(tokens, inner)) continue;
+        namesInside.add(tokens[inner].text);
+        if (inner < patternEnd || mayBeAssignmentTarget(tokens, match, inner, inner))
+          namesAssignedInside.add(tokens[inner].text);
       }
       functions.push({
         parametersStart: tokens[parametersOpen].start,
         closeBrace: tokens[functionBodyClose].start,
         parameterCount: countParameters(tokens, match, parametersOpen),
-        containsTaggedTemplate,
-        expressionName: name && !isDeclaration ? name.text : null,
       });
       index = functionBodyClose;
       continue;
@@ -361,11 +373,8 @@ export function findLazyFunctions(source: string): LazyFunctionTable | null {
   if (!functions.length) return null;
   const capturedNames = [...namesOutside]
     .filter(([name]) => namesInside.has(name))
-    .map(([name, start]) => ({ start, length: name.length }))
+    .map(([name, start]) => ({ start, length: name.length, mayBeAssigned: namesAssignedInside.has(name) }))
     .sort((a, b) => a.start - b.start);
-  const captured = new Set(capturedNames.map(({ start, length }) => source.slice(start, start + length)));
-  const capturedNamesOwner = functions.findIndex(fn => fn.expressionName === null || !captured.has(fn.expressionName));
-  if (capturedNamesOwner < 0) return null;
 
   for (const fn of functions) {
     const text = source.slice(fn.parametersStart, fn.closeBrace + 1).replaceAll("@", "$");
@@ -381,11 +390,7 @@ export function findLazyFunctions(source: string): LazyFunctionTable | null {
       );
   }
 
-  return {
-    capturedNames,
-    functions: functions.map(({ expressionName, ...fn }) => fn),
-    capturedNamesOwner,
-  };
+  return { capturedNames, functions };
 }
 
 export function encodeLazyFunctionTable(table: LazyFunctionTable | null): number[] {
@@ -398,18 +403,17 @@ export function encodeLazyFunctionTable(table: LazyFunctionTable | null): number
   };
   writeVarint(table.capturedNames.length);
   let previous = 0;
-  for (const { start, length } of table.capturedNames) {
+  for (const { start, length, mayBeAssigned } of table.capturedNames) {
     writeVarint(start - previous);
-    writeVarint(length);
+    writeVarint((length << 1) | (mayBeAssigned ? 1 : 0));
     previous = start;
   }
   writeVarint(table.functions.length);
-  writeVarint(table.capturedNamesOwner);
   previous = 0;
   for (const fn of table.functions) {
     writeVarint(fn.parametersStart - previous);
     writeVarint(fn.closeBrace - fn.parametersStart);
-    writeVarint((fn.parameterCount << 1) | (fn.containsTaggedTemplate ? 1 : 0));
+    writeVarint(fn.parameterCount);
     previous = fn.closeBrace;
   }
   return bytes;

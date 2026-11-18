@@ -1,13 +1,11 @@
 /**
- * Which build configurations link an executable `--trim` can work on (`Config.trimmable`), and that they give the
- * link the map scripts/build/trim/link.ts reads. Configure-time logic only: no compiler and no download.
+ * No build configuration links an executable `--trim` can work on (`Config.trimmable`). What such a link is compiled
+ * with, and the map that scripts/build/trim/link.ts reads. Configure-time logic only: no compiler and no download.
  */
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isMacOS, isWindows } from "harness";
-import { join } from "node:path";
+import { isMacOS, isWindows } from "harness";
 
 import {
-  formatConfig,
   linksWithLld,
   resolveConfig,
   type Config,
@@ -15,10 +13,8 @@ import {
   type Toolchain,
 } from "../../scripts/build/config.ts";
 import { computeFlags, linkerMapOutputs, linkerMapPath, writesLinkerMap } from "../../scripts/build/flags.ts";
-import { getProfile, profiles } from "../../scripts/build/profiles.ts";
+import { getProfile, type ProfileName } from "../../scripts/build/profiles.ts";
 import { cargoBuildInvocation } from "../../scripts/build/rust.ts";
-
-const buildScript = join(import.meta.dirname, "..", "..", "scripts", "build.ts");
 
 /** Both resolve on every host: a sysroot's path is only recorded, never opened. */
 const linux = { os: "linux", arch: "x64", abi: "gnu", linuxSysroot: "/fake/linux-sysroot" } satisfies PartialConfig;
@@ -59,35 +55,24 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
   } as Toolchain;
 }
 
-const resolve = (partial: PartialConfig): Config =>
-  resolveConfig({ buildType: "Release", trimmable: true, ...partial }, mockToolchain());
-
-async function build(...args: string[]): Promise<{ stderr: string; exitCode: number }> {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), buildScript, ...args],
-    env: bunEnv,
-    stdout: "ignore",
-    stderr: "pipe",
-  });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  return { stderr, exitCode };
-}
+const resolve = (partial: PartialConfig, trimmable = true): Config => ({
+  ...resolveConfig({ buildType: "Release", ...partial }, mockToolchain()),
+  trimmable,
+});
 
 describe.skipIf(isWindows)("trimmable build config", () => {
-  const trimmableTargets: PartialConfig[] = [
+  const targets: PartialConfig[] = [
     linux,
     freebsd,
     { os: "windows", arch: "x64", winsysroot: "/fake/winsysroot" },
     ...(isMacOS ? [] : [{ os: "darwin", arch: "aarch64" } satisfies PartialConfig]),
   ];
 
-  test.each(trimmableTargets)("$os is trimmable and writes a linker map", partial => {
+  test.each(targets)("$os links with lld and writes a linker map", partial => {
     const cfg = resolve(partial);
-    expect(cfg.trimmable).toBe(true);
     expect(linksWithLld(cfg)).toBe(true);
     expect(writesLinkerMap(cfg)).toBe(true);
     expect(linkerMapOutputs(cfg).length).toBeGreaterThan(0);
-    expect(formatConfig(cfg, "bun")).toContain("trimmable");
   });
 
   test("freebsd passes the map flag to the linker", () => {
@@ -97,55 +82,25 @@ describe.skipIf(isWindows)("trimmable build config", () => {
 
   test("with LTO, C is compiled so that each c-function of src/trim/features stays a function", () => {
     const keepsFunction = "-force-attribute=us_nq_loop_drain:noinline";
-    const flagsOf = (partial: PartialConfig) => computeFlags(resolve({ ...linux, ...partial }));
+    const flagsOf = (partial: PartialConfig, trimmable?: boolean) =>
+      computeFlags(resolve({ ...linux, ...partial }, trimmable));
     expect(flagsOf({ lto: true }).cflags).toContain(keepsFunction);
     expect(flagsOf({ lto: true }).cxxflags).not.toContain(keepsFunction);
     expect(flagsOf({ lto: false }).cflags).not.toContain(keepsFunction);
-    expect(flagsOf({ lto: true, trimmable: false }).cflags).not.toContain(keepsFunction);
+    expect(flagsOf({ lto: true }, false).cflags).not.toContain(keepsFunction);
   });
 
   test("without LTO over the crates, rustc gives no section the names of two functions", () => {
     const keepsFunctionsApart = "-Zmerge-functions=disabled";
-    const flagsOf = (partial: PartialConfig) =>
-      cargoBuildInvocation(resolve({ ...linux, lto: false, ...partial })).rustflags;
+    const flagsOf = (partial: PartialConfig, trimmable?: boolean) =>
+      cargoBuildInvocation(resolve({ ...linux, lto: false, ...partial }, trimmable)).rustflags;
     expect(flagsOf({ rustLto: false })).toContain(keepsFunctionsApart);
     expect(flagsOf({ rustLto: true })).not.toContain(keepsFunctionsApart);
-    expect(flagsOf({ rustLto: false, trimmable: false })).not.toContain(keepsFunctionsApart);
+    expect(flagsOf({ rustLto: false }, false)).not.toContain(keepsFunctionsApart);
   });
 
-  test("is off unless asked for", () => {
-    expect(resolveConfig({ ...linux, buildType: "Release" }, mockToolchain()).trimmable).toBe(false);
-  });
-
-  test("is off in a debug build", () => {
-    expect(resolve({ ...linux, buildType: "Debug", asan: false }).trimmable).toBe(false);
-  });
-
-  test("is off under asan and valgrind", () => {
-    expect(resolve({ ...linux, asan: true }).trimmable).toBe(false);
-    expect(resolve({ ...linux, valgrind: true }).trimmable).toBe(false);
-  });
-
-  test.skipIf(!isMacOS)("is off with Apple's linker", () => {
-    const cfg = resolve({ os: "darwin" });
-    expect(linksWithLld(cfg)).toBe(false);
-    expect(cfg.trimmable).toBe(false);
-  });
-
-  test("only ci-build asks for it", () => {
-    expect(getProfile("ci-build").trimmable).toBe(true);
-    const askers = Object.entries(profiles).filter(([, profile]) => "trimmable" in profile);
-    expect(askers.map(([name]) => name)).toEqual(["ci-build"]);
-  });
-
-  test.concurrent("--trimmable is a config flag", async () => {
-    const { exitCode } = await build("--trimmable=on", "--help");
-    expect(exitCode).toBe(0);
-  });
-
-  test.concurrent("--islands is not a config flag", async () => {
-    const { stderr, exitCode } = await build("--islands=on");
-    expect(stderr).toContain("Unknown config field: --islands");
-    expect(exitCode).toBe(1);
+  test.each(["debug", "release", "ci-build"] satisfies ProfileName[])("is off in %s, as the compiler is", name => {
+    const { trimmable, aot } = resolveConfig({ ...getProfile(name), ...linux }, mockToolchain());
+    expect({ trimmable, aot }).toEqual({ trimmable: false, aot: false });
   });
 });

@@ -23,19 +23,19 @@ Using your system's package manager, install Bun's dependencies:
 {% codetabs group="os" %}
 
 ```bash#macOS (Homebrew)
-$ brew install automake ccache cmake coreutils gnu-sed go icu4c libiconv libtool ninja pkg-config rustup-init ruby
+$ brew install automake ccache cmake coreutils gnu-sed go icu4c libiconv libtool ninja pkg-config rustup-init
 ```
 
 ```bash#Ubuntu/Debian
-$ sudo apt install curl wget lsb-release software-properties-common cmake git golang libtool ninja-build pkg-config ruby-full xz-utils
+$ sudo apt install curl wget lsb-release software-properties-common cmake git golang libtool ninja-build pkg-config xz-utils
 ```
 
 ```bash#Arch
-$ sudo pacman -S base-devel cmake git go libiconv libtool make ninja pkg-config python rustup sed unzip ruby
+$ sudo pacman -S base-devel cmake git go libiconv libtool make ninja pkg-config python rustup sed unzip
 ```
 
 ```bash#Fedora
-$ sudo dnf install clang23 llvm23 lld23 cmake git golang libtool ninja-build pkg-config ruby libatomic-static libstdc++-static sed unzip which libicu-devel 'perl(Math::BigInt)'
+$ sudo dnf install clang23 llvm23 lld23 cmake git golang libtool ninja-build pkg-config libatomic-static libstdc++-static sed unzip which libicu-devel 'perl(Math::BigInt)'
 ```
 
 ```bash#openSUSE Tumbleweed
@@ -200,10 +200,10 @@ Several code generation scripts are used during Bun's build process. These are r
 
 In particular, these are:
 
-- `./src/codegen/bindgen.ts` -- Generates Rust, C++ & TypeScript bindings for functions and JavaScriptCore classes implemented in Rust. `**/*.bind.ts` files declare the functions, classes, methods, getters/setters and the types of their arguments; the generator emits the C++ objects, the argument conversions and the calls into Rust. See [Bindgen](/project/bindgen).
+- `./src/codegen/bindgen.ts` -- Generates Rust, C++ & TypeScript bindings for functions and classes implemented in Rust. `**/*.bind.ts` files declare the functions, classes, methods, getters/setters and the types of their arguments; the generator emits the C++ objects, the argument conversions and the calls into Rust. See [Bindgen](/project/bindgen).
 - `./src/codegen/cppbind.ts` -- Scans the C++ bindings for functions marked with an export attribute and generates automatic Rust FFI wrappers (`cpp.rs`) for them.
 - `./src/codegen/bundle-modules.ts` -- Bundles built-in modules like `node:fs`, `bun:ffi` into files we can include in the final binary. In development, these can be reloaded without rebuilding native code (you still need to run `bun run build`, but it re-reads the transpiled files from disk afterwards). In release builds, these are embedded into the binary.
-- `./src/codegen/bundle-functions.ts` -- Bundles globally-accessible functions implemented in JavaScript/TypeScript like `ReadableStream`, `WritableStream`, and a handful more. These are used similarly to the builtin modules, but the output more closely aligns with what WebKit/Safari does for Safari's built-in functions so that we can copy-paste the implementations from WebKit as a starting point.
+- `./src/codegen/bundle-functions.ts` -- Bundles globally-accessible functions implemented in JavaScript/TypeScript like `ReadableStream`, `WritableStream`, and a handful more. These are used similarly to the builtin modules, but each function is compiled on its own when it is first used.
 
 ## Modifying ESM modules
 
@@ -266,35 +266,21 @@ $ bun run build:asan
 
 In CI, we run our test suite with at least one target that is built with Address Sanitizer.
 
-## Building WebKit locally + Debug mode of JSC
+## Working on the JavaScript engine
 
-WebKit is not cloned by default (to save time and disk space). To clone and build WebKit locally, run:
+The engine is part of this repository (`src/engine/`, written in Rust) and is compiled by every build. Bun's C++ reaches it through the headers in `src/engine/embed/include`. For a faster loop than building Bun, it has a shell of its own:
 
 ```bash
-# Clone WebKit into ./vendor/WebKit
-$ git clone https://github.com/oven-sh/WebKit vendor/WebKit
+# target/debug/engine-shell: optimized, with assertions
+$ cargo build -p bun_engine_shell
 
-# Check out the version pinned in WEBKIT_VERSION in scripts/build/deps/webkit.ts
-# (a commit sha or an autobuild-* release tag; this handles both)
-$ bun sync-webkit-source
-
-# Build bun with JSC compiled from that checkout
-$ bun run build:local
+# Tests of the C++ headers
+$ bun src/engine/embed/tests/run.ts
 ```
 
-`bun run build:local` compiles JSC in the same build graph as Bun itself (no separate CMake build), so one command builds both, and on subsequent runs only what a changed WebKit source affects is rebuilt. JSC's code generators need `ruby`, `python3` and `perl` in your `PATH`. To keep the clone somewhere else, or share one between worktrees, set `BUN_WEBKIT_PATH` to it. `bun run build:local --target=jsc` builds the `jsc` shell at `./build/debug-local/jsc`.
+Engine options are environment variables that start with `BUN_JSC_`, for example `BUN_JSC_useJIT=0`, `BUN_JSC_validateExceptionChecks=1` or `BUN_JSC_slowPathAllocsBetweenGCs=100 BUN_JSC_verifyGC=1`. They are listed in `src/engine/vm/options.rs`.
 
-The build output goes to `./build/debug-local` (instead of `./build/debug`), so you'll need to update a couple of places:
-
-- The first line in [`src/js/builtins.d.ts`](/src/js/builtins.d.ts)
-- The `CompilationDatabase` line in [`.clangd` config](/.clangd) should be `CompilationDatabase: build/debug-local`
-- In [`.vscode/launch.json`](/.vscode/launch.json), many configurations use `./build/debug/`, change them as you see fit
-
-Note that the WebKit folder, including build artifacts, is 8GB+ in size.
-
-If you are using a JSC debug build and using VScode, make sure to run the `C/C++: Select a Configuration` command to configure intellisense to find the debug headers.
-
-Note that if you make changes to our [WebKit fork](https://github.com/oven-sh/WebKit), you will also have to change `WEBKIT_VERSION` in [`scripts/build/deps/webkit.ts`](/scripts/build/deps/webkit.ts) to point to your commit hash or release tag.
+`bun run build:local` links the ICU of your system instead of building the pinned one. Its output goes to `./build/debug-local`.
 
 ## Troubleshooting
 

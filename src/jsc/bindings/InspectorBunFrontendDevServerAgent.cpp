@@ -1,15 +1,7 @@
 #include "InspectorBunFrontendDevServerAgent.h"
 
-#include <JavaScriptCore/InspectorFrontendRouter.h>
-#include <JavaScriptCore/InspectorBackendDispatcher.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <wtf/text/WTFString.h>
-#include <JavaScriptCore/ScriptCallStackFactory.h>
-#include <JavaScriptCore/ScriptArguments.h>
-#include <JavaScriptCore/ConsoleMessage.h>
-#include <JavaScriptCore/InspectorConsoleAgent.h>
-#include <JavaScriptCore/JSGlobalObjectDebuggable.h>
-#include <JavaScriptCore/JSGlobalObjectInspectorController.h>
 #include <wtf/TZoneMallocInlines.h>
 #include "ZigGlobalObject.h"
 
@@ -20,98 +12,99 @@ extern "C" void Bun__InspectorBunFrontendDevServerAgent__setEnabled(Inspector::I
 WTF_MAKE_TZONE_ALLOCATED_IMPL(InspectorBunFrontendDevServerAgent);
 
 InspectorBunFrontendDevServerAgent::InspectorBunFrontendDevServerAgent(JSC::JSGlobalObject& globalObject)
-    : InspectorAgentBase("BunFrontendDevServer"_s)
-    , m_backendDispatcher(BunFrontendDevServerBackendDispatcher::create(globalObject.inspectorController().backendDispatcher(), this))
-    , m_frontendDispatcher(makeUnique<BunFrontendDevServerFrontendDispatcher>(const_cast<FrontendRouter&>(globalObject.inspectorController().frontendRouter())))
-    , m_enabled(false)
+    : InspectorAgentBase(globalObject, "BunFrontendDevServer"_s)
 {
 }
 
-InspectorBunFrontendDevServerAgent::~InspectorBunFrontendDevServerAgent() = default;
-
-void InspectorBunFrontendDevServerAgent::didCreateFrontendAndBackend()
+void InspectorBunFrontendDevServerAgent::didEnable()
 {
-}
-
-void InspectorBunFrontendDevServerAgent::willDestroyFrontendAndBackend(DisconnectReason)
-{
-    (void)disable();
-}
-
-Protocol::ErrorStringOr<void> InspectorBunFrontendDevServerAgent::enable()
-{
-    if (m_enabled)
-        return {};
-
-    m_enabled = true;
     Bun__InspectorBunFrontendDevServerAgent__setEnabled(this);
-    return {};
 }
 
-Protocol::ErrorStringOr<void> InspectorBunFrontendDevServerAgent::disable()
+void InspectorBunFrontendDevServerAgent::didDisable()
 {
-    if (!m_enabled)
-        return {};
-
-    m_enabled = false;
     Bun__InspectorBunFrontendDevServerAgent__setEnabled(nullptr);
-    return {};
 }
 
 void InspectorBunFrontendDevServerAgent::clientConnected(int devServerId, int connectionId)
 {
-    if (!m_enabled || !m_frontendDispatcher)
+    if (!isEnabled())
         return;
 
-    m_frontendDispatcher->clientConnected(devServerId, connectionId);
+    auto parameters = JSON::Object::create();
+    parameters->setInteger("serverId"_s, devServerId);
+    parameters->setInteger("connectionId"_s, connectionId);
+    sendEvent("clientConnected"_s, WTF::move(parameters));
 }
 
 void InspectorBunFrontendDevServerAgent::clientDisconnected(int devServerId, int connectionId)
 {
-    if (!m_enabled || !m_frontendDispatcher)
+    if (!isEnabled())
         return;
 
-    m_frontendDispatcher->clientDisconnected(devServerId, connectionId);
+    auto parameters = JSON::Object::create();
+    parameters->setInteger("serverId"_s, devServerId);
+    parameters->setInteger("connectionId"_s, connectionId);
+    sendEvent("clientDisconnected"_s, WTF::move(parameters));
 }
 
 void InspectorBunFrontendDevServerAgent::bundleStart(int devServerId, Ref<JSON::ArrayOf<String>>&& triggerFiles)
 {
-    if (!m_enabled || !m_frontendDispatcher)
+    if (!isEnabled())
         return;
 
-    m_frontendDispatcher->bundleStart(devServerId, WTF::move(triggerFiles));
+    auto parameters = JSON::Object::create();
+    parameters->setInteger("serverId"_s, devServerId);
+    parameters->setArray("triggerFiles"_s, WTF::move(triggerFiles));
+    sendEvent("bundleStart"_s, WTF::move(parameters));
 }
 
 void InspectorBunFrontendDevServerAgent::bundleComplete(int devServerId, double durationMs)
 {
-    if (!m_enabled || !m_frontendDispatcher)
+    if (!isEnabled())
         return;
 
-    m_frontendDispatcher->bundleComplete(devServerId, durationMs);
+    auto parameters = JSON::Object::create();
+    parameters->setInteger("serverId"_s, devServerId);
+    parameters->setDouble("durationMs"_s, durationMs);
+    sendEvent("bundleComplete"_s, WTF::move(parameters));
 }
 
 void InspectorBunFrontendDevServerAgent::bundleFailed(int devServerId, const String& buildErrorsPayloadBase64)
 {
-    if (!m_enabled || !m_frontendDispatcher)
+    if (!isEnabled())
         return;
 
-    m_frontendDispatcher->bundleFailed(devServerId, buildErrorsPayloadBase64);
+    auto parameters = JSON::Object::create();
+    parameters->setInteger("serverId"_s, devServerId);
+    parameters->setString("buildErrorsPayloadBase64"_s, buildErrorsPayloadBase64);
+    sendEvent("bundleFailed"_s, WTF::move(parameters));
 }
 
 void InspectorBunFrontendDevServerAgent::clientNavigated(int devServerId, int connectionId, const String& url, std::optional<int> routeBundleId)
 {
-    if (!m_enabled || !m_frontendDispatcher)
+    if (!isEnabled())
         return;
 
-    m_frontendDispatcher->clientNavigated(devServerId, connectionId, url, WTF::move(routeBundleId));
+    auto parameters = JSON::Object::create();
+    parameters->setInteger("serverId"_s, devServerId);
+    parameters->setInteger("connectionId"_s, connectionId);
+    parameters->setString("url"_s, url);
+    if (routeBundleId)
+        parameters->setInteger("routeBundleId"_s, *routeBundleId);
+    sendEvent("clientNavigated"_s, WTF::move(parameters));
 }
 
 void InspectorBunFrontendDevServerAgent::consoleLog(int devServerId, char kind, const String& data)
 {
-    if (!m_enabled || !m_frontendDispatcher)
+    if (!isEnabled())
         return;
 
-    m_frontendDispatcher->consoleLog(devServerId, kind, data);
+    auto parameters = JSON::Object::create();
+    parameters->setInteger("serverId"_s, devServerId);
+    parameters->setDouble("kind"_s, kind);
+    parameters->setString("message"_s, data);
+    sendEvent("consoleLog"_s, WTF::move(parameters));
 }
 
 // C API implementations for the Rust side

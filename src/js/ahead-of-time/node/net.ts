@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 d6861dbd59c52394231c89ff7bae0bcff81e31756f79b40db9ee7cee0562b4a5.
+// Written against that file with the SHA-256 c1ea9aa0a2f49e0d392f734a3368f2033eb6394a3df9f1e40329a1e566dd2935.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"
@@ -2623,6 +2623,7 @@ Socket.prototype._onTimeout = function (this: $Node.Socket) {
 };
 
 Object.defineProperty(Socket.prototype, "bufferSize", {
+  __proto__: null,
   get: function (this: $Node.Socket) {
     // Node returns undefined once the handle is gone (after close).
     if (this._handle) {
@@ -2632,12 +2633,14 @@ Object.defineProperty(Socket.prototype, "bufferSize", {
 });
 
 Object.defineProperty(Socket.prototype, "_bytesDispatched", {
+  __proto__: null,
   get: function (this: $Node.Socket) {
     return this[kBytesWritten] || 0;
   },
 });
 
 Object.defineProperty(Socket.prototype, "bytesWritten", {
+  __proto__: null,
   get: function (this: $Node.Socket) {
     let bytes = this[kBytesWritten] || 0;
     const data = this._pendingData;
@@ -2988,30 +2991,35 @@ Socket.prototype._final = function _final(this: $Node.Socket, callback: WriteCal
 };
 
 Object.defineProperty(Socket.prototype, "localAddress", {
+  __proto__: null,
   get: function (this: $Node.Socket) {
     return this._getsockname().address;
   },
 });
 
 Object.defineProperty(Socket.prototype, "localFamily", {
+  __proto__: null,
   get: function (this: $Node.Socket) {
     return this._getsockname().family;
   },
 });
 
 Object.defineProperty(Socket.prototype, "localPort", {
+  __proto__: null,
   get: function (this: $Node.Socket) {
     return this._getsockname().port;
   },
 });
 
 Object.defineProperty(Socket.prototype, "_connecting", {
+  __proto__: null,
   get: function (this: $Node.Socket) {
     return this.connecting;
   },
 });
 
 Object.defineProperty(Socket.prototype, "pending", {
+  __proto__: null,
   get: function (this: $Node.Socket) {
     return !this._handle || this.connecting;
   },
@@ -3176,6 +3184,7 @@ Socket.prototype._getsockname = function (this: $Node.Socket) {
 };
 
 Object.defineProperty(Socket.prototype, "readyState", {
+  __proto__: null,
   get: function (this: $Node.Socket) {
     if (this.connecting) return "opening";
     if (this.readable && this.writable) return "open";
@@ -3201,18 +3210,21 @@ Socket.prototype.ref = function ref(this: $Node.Socket) {
 };
 
 Object.defineProperty(Socket.prototype, "remotePort", {
+  __proto__: null,
   get: function (this: $Node.Socket) {
     return this._getpeername().port;
   },
 });
 
 Object.defineProperty(Socket.prototype, "remoteAddress", {
+  __proto__: null,
   get: function (this: $Node.Socket) {
     return this._getpeername().address;
   },
 });
 
 Object.defineProperty(Socket.prototype, "remoteFamily", {
+  __proto__: null,
   get: function (this: $Node.Socket) {
     return this._getpeername().family;
   },
@@ -4243,6 +4255,7 @@ function Server(
 $toClass(Server, "Server", EventEmitter);
 
 Object.defineProperty(Server.prototype, "listening", {
+  __proto__: null,
   get(this: $Node.NetServer) {
     return !!this._handle;
   },

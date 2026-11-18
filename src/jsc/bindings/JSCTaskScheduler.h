@@ -9,6 +9,8 @@ class JSVMClientData;
 
 namespace Bun {
 
+struct WTFTimer;
+
 class JSCTaskScheduler {
 public:
     JSCTaskScheduler()
@@ -16,15 +18,16 @@ public:
         , m_pendingTicketsOther()
     {
     }
+    ~JSCTaskScheduler();
 
     static void onAddPendingWork(WebCore::JSVMClientData* clientData, Ref<JSC::DeferredWorkTimer::Ticket>&& ticket, JSC::DeferredWorkTimer::WorkType kind);
     static void onScheduleWorkSoon(WebCore::JSVMClientData* clientData, Ref<JSC::DeferredWorkTimer::Ticket>&& ticket, JSC::DeferredWorkTimer::Task&& task);
     static void onCancelPendingWork(WebCore::JSVMClientData* clientData, JSC::DeferredWorkTimer::Ticket& ticket);
 
-    // After marking, before the sweep. Only its realm marks a ticket's cells, so the sweep frees
-    // those of a realm that died. DeferredWorkTimer::cancelPendingWork(VM&) cancels such tickets
-    // in the set it keeps, which is empty here: onAddPendingWork takes them.
-    static void cancelWorkOfDeadRealms(WebCore::JSVMClientData* clientData, JSC::VM&);
+    // The one timer of the VM. There is none on a thread without an event loop.
+    void createTimer(JSC::VM&);
+    // On any thread.
+    void setTimer(std::optional<Seconds> delay);
 
     // Set once the owning VM's event loop has taken its last tick. After this,
     // onScheduleWorkSoon drops the task up front instead of posting it (~VM ->
@@ -51,6 +54,9 @@ public:
     bool m_isShuttingDown WTF_GUARDED_BY_LOCK(m_lock) { false };
     UncheckedKeyHashMap<Ref<JSC::DeferredWorkTimer::Ticket>, PendingWork> m_pendingTicketsKeepingEventLoopAlive;
     UncheckedKeyHashMap<Ref<JSC::DeferredWorkTimer::Ticket>, PendingWork> m_pendingTicketsOther;
+
+private:
+    WTFTimer* m_timer { nullptr };
 };
 
 }

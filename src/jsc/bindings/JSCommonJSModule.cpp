@@ -106,6 +106,8 @@ using namespace JSC;
 
 static bool canPerformFastEnumeration(Structure* s)
 {
+    if (s->hasNonReifiedStaticProperties())
+        return false;
     if (s->typeInfo().overridesGetOwnPropertySlot())
         return false;
     if (s->typeInfo().overridesAnyFormOfGetOwnPropertyNames())
@@ -180,37 +182,10 @@ static void putModuleGraphRequireMain(VM& vm, JSFunction* requireFunction, JSCom
         requireFunction->putDirectCustomAccessor(vm, WebCore::builtinNames(vm).mainPublicName(), JSC::CustomGetterSetter::create(vm, jsModuleGraphRequireMainGetter, nullptr), JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly);
 }
 
-// The source a graph's module is compiled from: the same text, in a code-cache entry of its
-// overlay shape's own. A graph's wrapper runs under the graph's overlay (below), and JSC's code
-// cache shares compiled code, baseline JIT code included, between everything with the same key;
-// that JIT code is only right under the scope chain it was first linked for. The cache key is the
-// source's hash, so the shape goes into it: distinct shapes, distinct keys. Graphs of one shape
-// share code; nothing shares with the host or with another shape.
-//
-// A stand-in: ES modules of a graph need none of this because JSC compiles them knowing their
-// module scope (ModuleProgramExecutable). CommonJS wrappers should be compiled the same way.
-class GraphCommonJSSourceProvider final : public JSC::SourceProvider {
-public:
-    static Ref<GraphCommonJSSourceProvider> create(Ref<JSC::SourceProvider>&& source, unsigned overlayShape)
-    {
-        return adoptRef(*new GraphCommonJSSourceProvider(WTF::move(source), overlayShape));
-    }
-
-    unsigned hash() const final { return m_source->hash() ^ m_overlayShape; }
-    StringView source() const final { return m_source->source(); }
-    bool hasTextOf(JSC::SourceProvider& other) const { return m_source.ptr() == &other || (m_source->hash() == other.hash() && m_source->source() == other.source()); }
-
-private:
-    GraphCommonJSSourceProvider(Ref<JSC::SourceProvider>&& source, unsigned overlayShape)
-        : JSC::SourceProvider(source->sourceOrigin(), String(source->sourceURL()), String(source->preRedirectURL()), source->taintedness(), source->startPosition(), source->sourceType(), source->provenance())
-        , m_source(WTF::move(source))
-        , m_overlayShape(overlayShape)
-    {
-    }
-
-    const Ref<JSC::SourceProvider> m_source;
-    const unsigned m_overlayShape;
-};
+static bool haveSameText(JSC::SourceProvider& a, JSC::SourceProvider& b)
+{
+    return &a == &b || (a.hash() == b.hash() && a.source() == b.source());
+}
 
 // The require map lacks the compiled files.
 static bool hasLoadedCompiledCommonJSModule([[maybe_unused]] Zig::GlobalObject* globalObject)
@@ -231,19 +206,15 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     // an earlier graph of its shape linked, if the text is still the same.
     String sharedWrapperKey;
     FunctionExecutable* sharedWrapper = nullptr;
-    if (JSModuleGraph* graph = moduleObject->moduleGraph(); graph && code.provider()) {
+    JSModuleGraph* graph = moduleObject->moduleGraph();
+    if (graph && code.provider()) {
         sharedWrapperKey = makeString(graph->overlayShape(), ':', code.provider()->sourceURL());
         if (CodeBlock* linked = globalObject->m_moduleGraphs->commonJSWrappers.get(sharedWrapperKey)) {
             auto* executable = uncheckedDowncast<FunctionExecutable>(linked->ownerExecutable());
-            if (static_cast<GraphCommonJSSourceProvider*>(executable->source().provider())->hasTextOf(*code.provider())) {
+            if (canCloseOver(executable, graph->overlay()) && haveSameText(*executable->sourceProvider(), *code.provider())) {
                 sharedWrapper = executable;
                 graph->keepCommonJSWrapper(vm, linked);
             }
-        }
-        if (!sharedWrapper) {
-            RefPtr<JSC::SourceProvider> provider = GraphCommonJSSourceProvider::create(*code.provider(), graph->overlayShape());
-            Zig::addCodeCoverageSourceID(vm, *provider);
-            code = SourceCode(WTF::move(provider), code.startOffset(), code.endOffset());
         }
     }
 
@@ -341,24 +312,12 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     }
 #endif
 
-    // Same out-param pattern as the eval-entry path above: the 3-arg
-    // overload would swallow the exception, leaving the misleading
-    // "function wrapper" TypeError below instead of the real error.
-    WTF::NakedPtr<JSC::Exception> wrapperException;
-    JSValue fnValue = sharedWrapper ? JSValue(JSFunction::create(vm, globalObject, sharedWrapper, moduleObject->moduleGraph()->overlay())) : JSC::evaluate(globalObject, code, jsUndefined(), wrapperException);
-    if (wrapperException) [[unlikely]] {
-        scope.throwException(globalObject, wrapperException.get());
-        return false;
-    }
-    ASSERT(fnValue);
-
     // A graph's module: the wrapper closes over the graph's overlay instead of the global scope.
-    // Only a wrapper that closed over the global scope and has not been linked yet can be moved:
-    // one a custom `Module.wrapper` made inside another function reads that function's variables by
-    // their offsets in its scope, and one that already ran was compiled for the chain it ran in.
-    JSModuleGraph* graph = moduleObject->moduleGraph();
-    if (auto* wrapper = graph ? dynamicDowncast<JSFunction>(fnValue) : nullptr; wrapper && !wrapper->isHostFunction() && wrapper->scope() == globalObject->globalScope() && !wrapper->jsExecutable()->eitherCodeBlock())
-        fnValue = JSFunction::create(vm, globalObject, wrapper->jsExecutable(), graph->overlay());
+    // One that a custom `Module.wrapper` makes inside another function keeps the scope of that.
+    JSValue fnValue = sharedWrapper ? JSValue(JSFunction::create(vm, globalObject, sharedWrapper, graph->overlay()))
+        : graph                     ? JSC::evaluateToFunctionInScope(globalObject, code, graph->overlay())
+                                    : JSC::evaluateInScope(globalObject, code, globalObject->globalScope());
+    RETURN_IF_EXCEPTION(scope, false);
 
     JSObject* fn = fnValue.getObject();
     if (!fn) [[unlikely]] {
@@ -1011,7 +970,6 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
     String dirnameString = dirnameValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    WTF::NakedPtr<JSC::Exception> exception;
     evaluateCommonJSModuleOnce(
         vm,
         uncheckedDowncast<Zig::GlobalObject>(globalObject),

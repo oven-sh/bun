@@ -587,28 +587,7 @@ impl Tag {
 
             // None of these should ever exist here
             // But we're going to check anyway
-            JSType::GetterSetter
-            | JSType::CustomGetterSetter
-            | JSType::APIValueWrapper
-            | JSType::NativeExecutable
-            | JSType::ProgramExecutable
-            | JSType::ModuleProgramExecutable
-            | JSType::EvalExecutable
-            | JSType::FunctionExecutable
-            | JSType::UnlinkedFunctionExecutable
-            | JSType::UnlinkedProgramCodeBlock
-            | JSType::UnlinkedModuleProgramCodeBlock
-            | JSType::UnlinkedEvalCodeBlock
-            | JSType::UnlinkedFunctionCodeBlock
-            | JSType::CodeBlock
-            | JSType::JSCellButterfly
-            | JSType::JSSourceCode
-            | JSType::JSCallee
-            | JSType::GlobalLexicalEnvironment
-            | JSType::LexicalEnvironment
-            | JSType::ModuleEnvironment
-            | JSType::StrictEvalActivation
-            | JSType::WithScope => Tag::NativeCode,
+            JSType::GetterSetter | JSType::CustomGetterSetter | JSType::JSCallee => Tag::NativeCode,
 
             JSType::Event => Tag::Event,
 

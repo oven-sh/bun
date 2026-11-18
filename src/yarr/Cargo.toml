@@ -10,3 +10,9 @@ path = "lib.rs"
 workspace = true
 
 [dependencies]
+bun_core.workspace = true
+bun_engine_regexp.workspace = true
+bun_engine_text.workspace = true
+
+[dev-dependencies]
+bun_engine_standalone.workspace = true

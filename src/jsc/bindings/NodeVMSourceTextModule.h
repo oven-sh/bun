@@ -3,10 +3,6 @@
 #include "NodeVM.h"
 #include "NodeVMModule.h"
 
-namespace JSC {
-class ModuleProgramNode;
-}
-
 namespace Bun {
 
 class NodeVMSourceTextModule final : public NodeVMModule {
@@ -35,7 +31,6 @@ public:
     AbstractModuleRecord* moduleRecord(JSGlobalObject* globalObject);
     JSValue link(JSGlobalObject* globalObject, JSArray* specifiers, JSArray* moduleNatives, JSValue scriptFetcher);
     JSValue instantiate(JSGlobalObject* globalObject);
-    RefPtr<CachedBytecode> bytecode(JSGlobalObject* globalObject);
     JSUint8Array* cachedData(JSGlobalObject* globalObject);
     void initializeImportMeta(JSGlobalObject* globalObject);
     bool hasTopLevelAwait() const { return m_hasTopLevelAwait; }
@@ -50,12 +45,11 @@ private:
     WriteBarrier<JSArray> m_moduleRequestsArray;
     WriteBarrier<JSUint8Array> m_cachedBytecodeBuffer;
     WriteBarrier<Unknown> m_initializeImportMeta;
-    RefPtr<CachedBytecode> m_bytecode;
     SourceCode m_sourceCode;
     bool m_hasTopLevelAwait { false };
     bool m_linkCalled { false };
 
-    JSModuleRecord* analyzeSourceText(JSGlobalObject* globalObject, std::unique_ptr<JSC::ModuleProgramNode>& node);
+    JSModuleRecord* analyzeSourceText(JSGlobalObject* globalObject);
     void replaceUnlinkedRecords(JSGlobalObject* globalObject);
 
     NodeVMSourceTextModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context, SourceCode sourceCode, JSValue moduleWrapper, JSValue initializeImportMeta)

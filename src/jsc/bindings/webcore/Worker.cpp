@@ -193,11 +193,6 @@ extern "C" void WebWorker__parentContextWillDestroy(WorkerMessagingProxy* proxy)
     proxy->parentContextWillDestroy();
 }
 
-extern "C" void WebWorker__postOutOfMemoryError(WorkerMessagingProxy* proxy)
-{
-    proxy->postOutOfMemoryErrorToWorkerObject();
-}
-
 extern "C" void WebWorker__postFailedToStartError(WorkerMessagingProxy* proxy)
 {
     proxy->postFailedToStartErrorToWorkerObject();

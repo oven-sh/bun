@@ -5,7 +5,7 @@
  * (Rust↔C++) LTO through lld-link.
  *
  * These exercise the configure-time logic only — no compiler, sysroot, or
- * WebKit download is involved — so they run on every platform. Scenarios that
+ * download is involved — so they run on every platform. Scenarios that
  * specifically cover the "windows target on a non-windows host" path are
  * skipped on Windows, where the same inputs intentionally resolve to the
  * native toolchain instead.
@@ -14,7 +14,6 @@ import { describe, expect, test } from "bun:test";
 import { isWindows } from "harness";
 
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../../scripts/build/config.ts";
-import { webkit } from "../../../scripts/build/deps/webkit.ts";
 import { computeFlags } from "../../../scripts/build/flags.ts";
 import { rustTarget } from "../../../scripts/build/rust.ts";
 
@@ -84,13 +83,8 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     expect(cfg.lto).toBe(true);
   });
 
-  test("no -lto WebKit prebuilt exists for arm64 — LTO is forced off there", () => {
-    // arm64: LLVM's CodeView emitter aborts on ARM64 NEON tuple registers
-    // during LTO codegen, so oven-sh/WebKit ships no windows-arm64-lto.
-    const arm64 = resolveWindowsCross({ arch: "aarch64" });
-    expect(arm64.lto).toBe(false);
-    // Forced off even when explicitly requested, so the WebKit fetch never
-    // 404s on a tarball that doesn't exist.
+  test("LTO is forced off for arm64, even when asked for", () => {
+    expect(resolveWindowsCross({ arch: "aarch64" }).lto).toBe(false);
     expect(resolveWindowsCross({ arch: "aarch64", lto: true }).lto).toBe(false);
   });
 
@@ -127,26 +121,6 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     for (const lto of [true, false]) {
       expect(resolveWindowsCross({ lto, baseline: false }).ld).toBe("/fake/llvm/bin/lld-link");
     }
-  });
-
-  test("LTO selects the -lto WebKit prebuilt with a windows-keyed cache dir", () => {
-    // Default windows x64 cross config (baseline=true, lto=true): every x64
-    // WebKit is built at the nehalem floor, so the plain -lto tarball is the
-    // one baseline fetches too.
-    const def = webkit.source(resolveWindowsCross({ aot: false }));
-    if (def.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${def.kind}`);
-    expect(def.url).toContain("bun-webkit-windows-amd64-lto.tar.gz");
-    expect(def.destDir).toContain("-windows");
-    expect(def.destDir).toEndWith("-lto");
-
-    const plain = webkit.source(resolveWindowsCross({ lto: false, aot: false }));
-    if (plain.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${plain.kind}`);
-    expect(plain.url).toContain("bun-webkit-windows-amd64.tar.gz");
-    expect(plain.destDir).not.toEndWith("-lto");
-
-    const arm64 = webkit.source(resolveWindowsCross({ arch: "aarch64", aot: false }));
-    if (arm64.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${arm64.kind}`);
-    expect(arm64.url).toContain("bun-webkit-windows-arm64.tar.gz");
   });
 
   test("rust side targets pc-windows-msvc triples", () => {

@@ -54,6 +54,4 @@ functions_of_no_engine! {
     fn Bun__AOT__describeRegExpSyntaxError(*const u8, usize, *const u8, usize, *mut u8, usize) -> usize;
     fn Bun__AOT__classifyRegExpLiteral(*const u8, usize, *const u8, usize) -> u32;
     fn Bun__AOT__describeRegExpConstructionError(*const u8, usize, *const u8, usize, *mut u8, usize) -> usize;
-    fn Bun__WTFStringHashLatin1(*const u8, usize) -> u32;
-    fn Bun__WTFStringHashUTF16(*const u16, usize) -> u32;
 }

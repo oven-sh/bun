@@ -13,6 +13,8 @@ import { guardHeader } from "./toy-program.ts";
 const root = join(import.meta.dir, "..", "..", "..");
 const model = loadFeatures(root);
 const uses: BuiltinUses = { entries: builtinFeatureUses() };
+// A Bun without the ahead-of-time compiler has no table of built-ins, and lists nothing.
+const testOfTable = test.skipIf(uses.entries.length === 0);
 
 function mockToolchain(): Toolchain {
   return {
@@ -66,12 +68,12 @@ test.skipIf(!guardHeader)("the engine's header lists the engine features in orde
   );
 });
 
-test("the built-ins table names declared features only, each once for an entry, with ascending ids", () => {
+testOfTable("the built-ins table names declared features only, each once for an entry, with ascending ids", () => {
   expect(uses.entries.length).toBeGreaterThan(1000);
   expect(() => checkBuiltinUses(uses, model, "builtinFeatureUses()")).not.toThrow();
 });
 
-test("a native binding that only the modules for Bun's own tests name uses a feature", () => {
+testOfTable("a native binding that only the modules for Bun's own tests name uses a feature", () => {
   const modulesForTests = ["internal-for-testing.ts", "internal/test/binding.ts"];
   const kinds = { cpp: "Cpp", newCppFunction: "NewCppFunction", bindgen: "Bindgen" };
   const nativeCall = /\$(cpp|newCppFunction|bindgen)\(\s*"([^"\n]+)"\s*,\s*"([^"\n]+)"/g;

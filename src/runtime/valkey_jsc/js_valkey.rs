@@ -22,7 +22,7 @@ use super::protocol_jsc::{
     ToJSOptions, resp_value_to_js, resp_value_to_js_with_options, valkey_error_to_js,
 };
 use super::valkey;
-use bun_jsc::url::Parsed;
+use bun_jsc::url::URL;
 use bun_valkey::client::{Acked, Attempt, Client, Close, Config, Event, Lost, Reason, Sent};
 use bun_valkey::command::Reply;
 use bun_valkey::valkey_protocol::{RESPValue, RedisError};
@@ -367,7 +367,7 @@ impl JSValkeyClient {
         };
         let mut fallback_url_buf = [0u8; 2048];
 
-        // Parse and validate the URL using `Parsed::from_utf8`, which returns null for invalid URLs
+        // Parse and validate the URL using `URL::from_utf8`, which returns null for invalid URLs
         // TODO(markovejnovic): The following check for :// is a stop-gap. It is my expectation
         // that URL.fromString returns null if the protocol is not specified. This is not, in-fact,
         // the case right now and I do not understand why. It will take some work in JSC to
@@ -383,7 +383,7 @@ impl JSValkeyClient {
             }
 
             if strings::contains(url_byte_slice, b"://") {
-                break 'get_url match Parsed::from_utf8(url_byte_slice) {
+                break 'get_url match URL::from_utf8(url_byte_slice) {
                     Some(u) => u,
                     None => {
                         return Err(cx
@@ -409,7 +409,7 @@ impl JSValkeyClient {
                 break 'get_url_slice &fallback_url_buf[..written];
             };
 
-            match Parsed::from_utf8(corrected_url) {
+            match URL::from_utf8(corrected_url) {
                 Some(u) => u,
                 None => {
                     return Err(cx

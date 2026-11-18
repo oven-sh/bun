@@ -30,9 +30,7 @@
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
 #include <JavaScriptCore/TypedArrayInlines.h>
-#include "GCDefferalContext.h"
 
-#include <JavaScriptCore/DOMJITAbstractHeap.h>
 #include "JSBuffer.h"
 #include <JavaScriptCore/DFGAbstractHeap.h>
 #include "wtf/SIMDUTF.h"
@@ -71,34 +69,6 @@ static constexpr int32_t kOwnedByDatabaseFlag = 1 << 3;
 #include "SqliteUserFunction.h"
 #include <wtf/SetForScope.h>
 
-#if !USE(SYSTEM_MALLOC)
-#include <bmalloc/BPlatform.h>
-#define ENABLE_SQLITE_FAST_MALLOC (BENABLE(MALLOC_SIZE) && BENABLE(MALLOC_GOOD_SIZE))
-#endif
-
-static void enableFastMallocForSQLite()
-{
-#if ENABLE(SQLITE_FAST_MALLOC)
-    int returnCode = sqlite3_config(SQLITE_CONFIG_LOOKASIDE, 0, 0);
-    ASSERT_WITH_MESSAGE(returnCode == SQLITE_OK, "Unable to reduce lookaside buffer size");
-
-    static sqlite3_mem_methods fastMallocMethods = {
-        [](int n) { return fastMalloc(n); },
-        [](void* p) { return fastFree(p); },
-        [](void* p, int n) { return fastRealloc(p, n); },
-        [](void* p) { return static_cast<int>(fastMallocSize(p)); },
-        [](int n) { return static_cast<int>(fastMallocGoodSize(n)); },
-        [](void*) { return SQLITE_OK; },
-        [](void*) {},
-        nullptr
-    };
-
-    returnCode = sqlite3_config(SQLITE_CONFIG_MALLOC, &fastMallocMethods);
-    ASSERT_WITH_MESSAGE(returnCode == SQLITE_OK, "Unable to replace SQLite malloc");
-
-#endif
-}
-
 class AutoDestructingSQLiteStatement {
 public:
     sqlite3_stmt* stmt { nullptr };
@@ -123,7 +93,6 @@ extern "C" void Bun__initializeSQLite()
         sqlite3_config(SQLITE_CONFIG_MEMSTATUS, 0);
         // A connection is only used by the thread that opened it, so it gets a mutex only with SQLITE_OPEN_FULLMUTEX.
         sqlite3_config(SQLITE_CONFIG_MULTITHREAD);
-        enableFastMallocForSQLite();
     });
 }
 
@@ -834,10 +803,7 @@ void JSSQLStatement::buildRowShape(JSC::JSGlobalObject* globalObject)
         } else if (namesLeft) {
             namesLeft--;
             PropertyOffset offset;
-            if (auto* existing = Structure::addPropertyTransitionToExistingStructure(structure, name, 0, offset))
-                structure = existing;
-            else
-                structure = Structure::addNewPropertyTransition(vm, structure, name, 0, offset, PutPropertySlot::PutById);
+            structure = Structure::addPropertyTransition(vm, structure, name, 0, offset);
             slots.append({ SQLiteColumnSlot::Kind::Offset, static_cast<uint32_t>(offset) });
         } else {
             structure = nullptr;
@@ -869,7 +835,6 @@ static bool holdsNamedParameters(JSC::JSObject* object)
     switch (object->type()) {
     case FinalObjectType:
     case ObjectType:
-    case CompiledObjectType:
     case ProxyObjectType:
     case DirectArgumentsType:
     case ScopedArgumentsType:
@@ -2000,10 +1965,7 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
     JSC::JSObject* result;
 
     if (auto* structure = castedThis->_structure.get()) [[likely]] {
-        if (unsigned outOfLineCapacity = structure->outOfLineCapacity()) [[unlikely]]
-            result = JSC::JSFinalObject::createWithButterfly(vm, structure, JSC::Butterfly::create(vm, nullptr, 0, outOfLineCapacity, false, JSC::IndexingHeader(), 0));
-        else
-            result = JSC::constructEmptyObject(vm, structure);
+        result = JSC::constructEmptyObject(vm, structure);
 
         int i = 0;
         for (auto slot : castedThis->columnSlots) {

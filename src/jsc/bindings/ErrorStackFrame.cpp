@@ -22,7 +22,7 @@ void adjustPositionBackwards(ZigStackFramePosition& pos, int amount, CodeBlock* 
 
     pos.column_zero_based = pos.column_zero_based - amount;
     if (pos.column_zero_based < 0) {
-        auto* provider = code->source().provider();
+        auto* provider = code->sourceProvider();
         if (!provider) {
             pos.line_zero_based = 0;
             pos.column_zero_based = 0;
@@ -56,9 +56,9 @@ void adjustPositionBackwards(ZigStackFramePosition& pos, int amount, CodeBlock* 
 
 ZigStackFramePosition getAdjustedPositionForBytecode(JSC::CodeBlock* code, JSC::BytecodeIndex bc)
 {
-    auto expr = code->expressionInfoForBytecodeIndex(bc);
+    auto expr = code->expressionRangeForBytecodeIndex(bc);
     // Expression info has offsets only. The provider derives the line and the column from the divot.
-    auto lineColumn = code->source().provider()->documentLineColumnForOffset(expr.divot);
+    auto lineColumn = code->sourceProvider()->documentLineColumnForOffset(expr.divot);
 
     ZigStackFramePosition pos {
         .line_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.line).zeroBasedInt(),
@@ -66,28 +66,11 @@ ZigStackFramePosition getAdjustedPositionForBytecode(JSC::CodeBlock* code, JSC::
         .byte_position = (int)expr.divot,
     };
 
-    auto inst = code->instructionAt(bc);
-
-    /// JavaScriptCore places error divots at different places than v8
-    // Uncomment to debug this:
-    // printf("lc = %d : %d (byte = %d)\n", pos.line.oneBasedInt(), pos.column.oneBasedInt(), expr.divot);
-    // printf("off = %d : %d\n", expr.startOffset, expr.endOffset);
-    // printf("name = %s\n", inst->name());
-
-    switch (inst->opcodeID()) {
-    case op_construct:
-    case op_construct_varargs:
-    case op_super_construct:
-    case op_super_construct_varargs:
-        // The divot by default is pointing at the `(` or the end of the class name.
-        // We want to point at the `new` keyword, which is conveniently at the
-        // expression start.
-        adjustPositionBackwards(pos, expr.startOffset, code);
-        break;
-
-    default:
-        break;
-    }
+    // The divot by default is pointing at the `(` or the end of the class name.
+    // Like V8, we want to point at the `new` keyword, which is conveniently at the
+    // expression start.
+    if (code->constructsAt(bc))
+        adjustPositionBackwards(pos, expr.divot - expr.start, code);
 
     return pos;
 }

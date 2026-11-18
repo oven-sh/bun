@@ -177,8 +177,9 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructWebView, __attribute__((minsiz
                 return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
                     "backend.type must be a string"_s);
             }
-            if (!parseBackendType(type.toWTFString(globalObject))) return {};
+            auto typeString = type.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
+            if (!parseBackendType(typeString)) return {};
 
             JSValue path = beObj->get(globalObject, Identifier::fromString(vm, "path"_s));
             RETURN_IF_EXCEPTION(scope, {});

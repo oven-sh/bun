@@ -208,7 +208,6 @@ fn create_entry_file(dest_path: &[u8], source_path: &[u8], index: u32) -> Output
         hash: None,
         source_map_index: None,
         bytecode_index: None,
-        module_info_index: None,
         output_path: Box::from(dest_path),
         source_index: IndexOptional::NONE,
         size: None,

@@ -876,8 +876,8 @@ class Event {
   }
 }
 
-Object.defineProperty(Event.prototype, "target", { enumerable: true });
-Object.defineProperty(Event.prototype, "type", { enumerable: true });
+Object.defineProperty(Event.prototype, "target", { __proto__: null, enumerable: true });
+Object.defineProperty(Event.prototype, "type", { __proto__: null, enumerable: true });
 
 class CloseEvent extends Event {
   declare [kCode]: number;
@@ -905,9 +905,9 @@ class CloseEvent extends Event {
   }
 }
 
-Object.defineProperty(CloseEvent.prototype, "code", { enumerable: true });
-Object.defineProperty(CloseEvent.prototype, "reason", { enumerable: true });
-Object.defineProperty(CloseEvent.prototype, "wasClean", { enumerable: true });
+Object.defineProperty(CloseEvent.prototype, "code", { __proto__: null, enumerable: true });
+Object.defineProperty(CloseEvent.prototype, "reason", { __proto__: null, enumerable: true });
+Object.defineProperty(CloseEvent.prototype, "wasClean", { __proto__: null, enumerable: true });
 
 class ErrorEvent extends Event {
   declare [kError]: unknown;
@@ -929,8 +929,8 @@ class ErrorEvent extends Event {
   }
 }
 
-Object.defineProperty(ErrorEvent.prototype, "error", { enumerable: true });
-Object.defineProperty(ErrorEvent.prototype, "message", { enumerable: true });
+Object.defineProperty(ErrorEvent.prototype, "error", { __proto__: null, enumerable: true });
+Object.defineProperty(ErrorEvent.prototype, "message", { __proto__: null, enumerable: true });
 
 class MessageEvent extends Event {
   declare [kData]: Data | null;
@@ -946,7 +946,7 @@ class MessageEvent extends Event {
   }
 }
 
-Object.defineProperty(MessageEvent.prototype, "data", { enumerable: true });
+Object.defineProperty(MessageEvent.prototype, "data", { __proto__: null, enumerable: true });
 
 function callListener(listener: Listener, thisArg: WebSocket, event: Event): void {
   const handleEvent = typeof listener === "object" && listener.handleEvent;
@@ -1431,11 +1431,12 @@ for (let i = 0; i < readyStates.length; i++) {
 }
 
 ["binaryType", "bufferedAmount", "extensions", "isPaused", "protocol", "readyState", "url"].forEach(property => {
-  Object.defineProperty(WebSocket.prototype, property, { enumerable: true });
+  Object.defineProperty(WebSocket.prototype, property, { __proto__: null, enumerable: true });
 });
 
 ["open", "error", "close", "message"].forEach(method => {
   Object.defineProperty(WebSocket.prototype, `on${method}`, {
+    __proto__: null,
     configurable: true,
     enumerable: true,
     get(this: WebSocket): Listener | null | undefined {

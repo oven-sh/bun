@@ -17,7 +17,7 @@ use crate::webcore::jsc::{
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_core as bun;
 use bun_core::Output;
-use bun_core::{EncodedSlice, String as BunString, Utf8Bytes, WTFStringImplExt as _, strings};
+use bun_core::{EncodedSlice, String as BunString, Utf8Bytes, strings};
 use bun_http_types::MimeType::MimeType;
 use bun_jsc::{EncodedSliceJsc as _, StringJsc as _, bun_string_jsc};
 use bun_ptr::RefPtr;
@@ -5219,7 +5219,7 @@ impl Any {
         match self {
             Any::Blob(blob) => blob.store().map(|s| s.memory_cost()).unwrap_or(0),
             Any::WTFStringImpl(s) => {
-                if s.ref_count() == 1 {
+                if s.string().ref_count() == 1 {
                     s.memory_cost()
                 } else {
                     0

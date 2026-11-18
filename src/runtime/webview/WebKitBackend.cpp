@@ -22,7 +22,6 @@
 #include <JavaScriptCore/Weak.h>
 #include <JavaScriptCore/WeakInlines.h>
 #include <JavaScriptCore/ConsoleClient.h>
-#include <JavaScriptCore/ScriptArguments.h>
 #include <JavaScriptCore/Strong.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/Base64.h>
@@ -371,13 +370,8 @@ void HostClient::handleReply(const Frame& h, Reader r)
             else if (type == "info"_s)
                 ml = MessageLevel::Info;
 
-            WTF::Vector<Strong<Unknown>> strongArgs;
-            strongArgs.reserveInitialCapacity(args.size());
-            for (unsigned i = 0; i < args.size(); ++i)
-                strongArgs.append(Strong<Unknown>(vm, args.at(i)));
-            auto scriptArgs = Inspector::ScriptArguments::create(g, WTF::move(strongArgs));
             if (auto clientRef = g->consoleClient())
-                clientRef->logWithLevel(g, WTF::move(scriptArgs), ml);
+                clientRef->logWithLevel(g, args, ml);
             return;
         }
 

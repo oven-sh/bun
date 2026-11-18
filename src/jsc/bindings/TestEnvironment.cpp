@@ -90,7 +90,13 @@ static void forEachPropertySlot(JSC::JSObject* object, JSC::Structure* structure
         visit(JSC::firstOutOfLineOffset + i);
 }
 
-// For each object its structure and then its property slots, or null if those do not tell whether it has changed.
+static unsigned propertySlotCount(JSC::Structure* structure)
+{
+    return structure->inlineSize() + structure->outOfLineSize();
+}
+
+// For each object its structure, the number of its property slots, which grows when a lazy property is first used, and
+// then the slots, or null if those do not tell whether it has changed.
 JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionShapesOfObjects, __attribute__((minsize)), (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -104,6 +110,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionShapesOfObjects, __attribute_
             continue;
         }
         shapes.append(structure);
+        shapes.append(JSC::jsNumber(propertySlotCount(structure)));
         forEachPropertySlot(object, structure, [&](JSC::JSValue value) { shapes.append(value); });
     }
     return JSC::JSValue::encode(JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), shapes));
@@ -123,9 +130,10 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionIndexesOfChangedObjects, __at
         }
         auto* object = asObject(objects->getIndexQuickly(i));
         auto* structure = uncheckedDowncast<JSC::Structure>(shape.asCell());
+        unsigned slotCount = shapes->getIndexQuickly(next++).asUInt32();
         unsigned slot = next;
-        next += structure->inlineSize() + structure->outOfLineSize();
-        bool isSame = object->structure() == structure;
+        next += slotCount;
+        bool isSame = object->structure() == structure && propertySlotCount(structure) == slotCount;
         if (isSame)
             forEachPropertySlot(object, structure, [&](JSC::JSValue value) { isSame &= value == shapes->getIndexQuickly(slot++); });
         if (!isSame)

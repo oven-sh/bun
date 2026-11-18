@@ -1,5 +1,4 @@
 #include "config.h"
-#include "NodeURLHelpers.h"
 #include "ZigGlobalObject.h"
 
 namespace Bun {

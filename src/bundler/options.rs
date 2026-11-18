@@ -1450,8 +1450,6 @@ pub struct BundleOptions<'a> {
     pub bytecode: bool,
     /// How many levels of nested functions get bytecode (`u32::MAX` = all; 0 = only each module's top level).
     pub bytecode_depth: u32,
-    /// Run JSC's build-time bytecode optimization passes over the cached bytecode (`optimize.bytecode`).
-    pub optimize_bytecode: bool,
     /// `--compile --bytecode`: payload order files to lay the bytecode out by (`bytecode_order`), most important first.
     pub bytecode_order: Vec<Box<[u8]>>,
     /// `--compile --bytecode`: whose internal modules get ahead-of-time bytecode embedded alongside the bundle's.
@@ -1668,7 +1666,6 @@ impl<'a> BundleOptions<'a> {
             deprecated_namespace_object_setters: self.deprecated_namespace_object_setters,
             bytecode: self.bytecode,
             bytecode_depth: self.bytecode_depth,
-            optimize_bytecode: self.optimize_bytecode,
             bytecode_order: self.bytecode_order.clone(),
             compile_target_builtins: self.compile_target_builtins.clone(),
             code_coverage: self.code_coverage,
@@ -1924,7 +1921,6 @@ impl<'a> BundleOptions<'a> {
             deprecated_namespace_object_setters: true,
             bytecode: false,
             bytecode_depth: u32::MAX,
-            optimize_bytecode: true,
             bytecode_order: Vec::new(),
             compile_target_builtins: CompileTargetBuiltins::Host,
             code_coverage: false,

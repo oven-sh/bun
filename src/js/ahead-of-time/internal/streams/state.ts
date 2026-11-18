@@ -272,6 +272,7 @@ const definePropertyWhereBunRunDoes: typeof ObjectDefineProperty = CAN_REPLACE_B
 // TODO(benjamingr) it is likely slower to do it this way than with free functions
 function makeBitMapDescriptor(bit: number) {
   return {
+    __proto__: null,
     enumerable: false,
     get(this: ReadableState | WritableState) {
       return (this[kState] & bit) !== 0;

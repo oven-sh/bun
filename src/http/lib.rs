@@ -4476,7 +4476,7 @@ impl<'a> HTTPClient<'a> {
                         let input = StringView::borrow_utf8(string_builder.allocated_slice());
                         let normalized_url = bun_url::href_from_string(&input);
                         if normalized_url.tag() == BunStringTag::Dead {
-                            // URL__getHref failed, dont pass dead tagged string to toOwnedSlice.
+                            // The URL is invalid, dont pass dead tagged string to toOwnedSlice.
                             return Err(crate::Error::RedirectURLInvalid);
                         }
                         let normalized_url_str = normalized_url.to_owned_slice();

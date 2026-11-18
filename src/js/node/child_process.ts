@@ -1523,6 +1523,7 @@ class ChildProcess extends EventEmitter {
         this.disconnect = this.#disconnect;
         this.channel = new Control();
         Object.defineProperty(this, "_channel", {
+          __proto__: null,
           get() {
             return this.channel;
           },
@@ -1685,6 +1686,7 @@ class ChildProcess extends EventEmitter {
   static {
     Object.defineProperties(this.prototype, {
       stdin: {
+        __proto__: null,
         get: function (this: ChildProcess) {
           const value = (this.#stdin ??= this.#getBunSpawnIo(0, false));
           // Define as own enumerable property on first access
@@ -1700,6 +1702,7 @@ class ChildProcess extends EventEmitter {
         configurable: true,
       },
       stdout: {
+        __proto__: null,
         get: function (this: ChildProcess) {
           const value = (this.#stdout ??= this.#getBunSpawnIo(1, false));
           // Define as own enumerable property on first access
@@ -1715,6 +1718,7 @@ class ChildProcess extends EventEmitter {
         configurable: true,
       },
       stderr: {
+        __proto__: null,
         get: function (this: ChildProcess) {
           const value = (this.#stderr ??= this.#getBunSpawnIo(2, false));
           // Define as own enumerable property on first access
@@ -1730,6 +1734,7 @@ class ChildProcess extends EventEmitter {
         configurable: true,
       },
       stdio: {
+        __proto__: null,
         get: function (this: ChildProcess) {
           const value = (this.#stdioObject ??= this.#createStdioObject());
           // Define as own enumerable property on first access

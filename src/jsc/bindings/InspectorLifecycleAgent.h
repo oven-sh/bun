@@ -1,53 +1,24 @@
 #pragma once
 
 #include "root.h"
-#include <JavaScriptCore/AlternateDispatchableAgent.h>
-#include <JavaScriptCore/InspectorAgentBase.h>
-#include <JavaScriptCore/InspectorBackendDispatchers.h>
-#include <JavaScriptCore/InspectorFrontendDispatchers.h>
-#include <JavaScriptCore/JSGlobalObject.h>
-#include <wtf/Forward.h>
-#include <wtf/Noncopyable.h>
 #include "headers-handwritten.h"
+#include <JavaScriptCore/InspectorAgentBase.h>
+
 namespace Inspector {
 
-class FrontendRouter;
-class BackendDispatcher;
-class LifecycleReporterFrontendDispatcher;
-enum class DisconnectReason;
-
-class InspectorLifecycleAgent final : public InspectorAgentBase, public Inspector::LifecycleReporterBackendDispatcherHandler, public CanMakeThreadSafeCheckedPtr<InspectorLifecycleAgent> {
-    WTF_MAKE_NONCOPYABLE(InspectorLifecycleAgent);
+class InspectorLifecycleAgent final : public InspectorAgentBase {
     WTF_MAKE_TZONE_ALLOCATED(InspectorLifecycleAgent);
-    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(InspectorLifecycleAgent);
 
 public:
-    OVERRIDE_ABSTRACT_CAN_MAKE_CHECKEDPTR(CanMakeThreadSafeCheckedPtr);
+    explicit InspectorLifecycleAgent(JSC::JSGlobalObject&);
 
-    InspectorLifecycleAgent(JSC::JSGlobalObject&);
-    virtual ~InspectorLifecycleAgent();
-
-    // InspectorAgentBase
-    virtual void didCreateFrontendAndBackend() final;
-    virtual void willDestroyFrontendAndBackend(DisconnectReason) final;
-
-    // LifecycleReporterBackendDispatcherHandler
-    virtual Protocol::ErrorStringOr<void> enable() final;
-    virtual Protocol::ErrorStringOr<void> disable() final;
-
-    virtual CommandResultOf<Ref<JSON::ArrayOf<String>> /* esm */, Ref<JSON::ArrayOf<String>> /* cjs */, String /* cwd */, String /* main */, Ref<JSON::ArrayOf<String>> /* argv */> getModuleGraph() final;
-
-    // Public API
     void reportError(ZigException&);
-    Protocol::ErrorStringOr<void> preventExit();
-    Protocol::ErrorStringOr<void> stopPreventingExit();
 
 private:
-    JSC::JSGlobalObject& m_globalObject;
-    std::unique_ptr<LifecycleReporterFrontendDispatcher> m_frontendDispatcher;
-    Ref<LifecycleReporterBackendDispatcher> m_backendDispatcher;
-    bool m_enabled { false };
-    bool m_preventingExit { false };
+    void didEnable() final;
+    void didDisable() final;
+    std::optional<CommandResult> runCommand(StringView) final;
+    CommandResult getModuleGraph();
 };
 
 } // namespace Inspector

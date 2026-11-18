@@ -48,24 +48,6 @@ namespace Bun {
 
 using namespace WebCore;
 
-void invalidateLiveDateInstanceCaches(JSC::VM& vm)
-{
-    JSC::HeapIterationScope iterationScope(vm.heap);
-    vm.heap.dateInstanceSpace.forEachLiveCell([](JSC::HeapCell* cell, JSC::HeapCell::Kind) -> IterationStatus {
-        static_cast<JSC::DateInstance*>(static_cast<JSC::JSCell*>(cell))->invalidateCachedLocalGregorianDateTime();
-        return IterationStatus::Continue;
-    });
-}
-
-void resetDateCachesAfterTimeZoneChange(JSC::VM& vm)
-{
-    // The shared DateCache reset and the per-instance gregorian-cache
-    // invalidation must always travel together; callers use this pair.
-    WTF::timeZoneDidChange();
-    vm.dateCache.clearForTimeZoneChange();
-    invalidateLiveDateInstanceCaches(vm);
-}
-
 const JSC::ClassInfo JSEnvironmentVariableMap::s_info = { "ProcessEnv"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSEnvironmentVariableMap) };
 
 // Node's EnvSetter DEP0104 (https://github.com/nodejs/node/blob/main/src/node_env_var.cc): once per
@@ -132,12 +114,12 @@ static void removeNativeEnvValue(JSGlobalObject* globalObject, const String& nam
 
 static void setNativeEnvValue(JSGlobalObject* globalObject, const String& name, JSC::JSString* value)
 {
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     auto view = value->view(globalObject);
-    if (view->isNull())
-        return;
+    RETURN_IF_EXCEPTION(scope, );
     BunString key = Bun::toString(name);
     BunString val = Bun::toStringView(view);
-    Bun__setEnvValue(globalObject, &key, &val);
+    RELEASE_AND_RETURN(scope, Bun__setEnvValue(globalObject, &key, &val));
 }
 
 static void applyTZFromString(JSGlobalObject*, const String&);
@@ -735,7 +717,7 @@ static void applyTZFromString(JSGlobalObject* globalObject, const String& value)
     if (!shouldApplyTZSideEffect(globalObject))
         return;
     if (value.length() < 32 && WTF::setTimeZoneOverride(value))
-        resetDateCachesAfterTimeZoneChange(JSC::getVM(globalObject));
+        JSC::getVM(globalObject).dateCache.clearForTimeZoneChange();
 }
 extern "C" void Bun__VM__restoreTestTimeZone(void* bunVM);
 

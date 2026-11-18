@@ -454,7 +454,7 @@ static void appendInspectedObject(JSC::JSGlobalObject* globalObject, MessageBuil
     RETURN_IF_EXCEPTION(scope, );
     if (className.isEmpty())
         className = "Object"_s;
-    bool isPlainObject = object->type() == JSC::FinalObjectType || object->type() == JSC::CompiledObjectType;
+    bool isPlainObject = object->type() == JSC::FinalObjectType;
     if (!isPlainObject || depth > inspectedDepth) {
         builder.append('[', className, ']');
         return;
@@ -522,14 +522,11 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, MessageBuilder& buil
         if (!symbol->uid().isNullSymbol() && !symbol->uid().isEmpty()) {
             builder.append(symbol->tryGetDescriptiveString().value_or(String()));
         } else {
-            builder.append(globalObject->vm().smallStrings.symbolString());
+            builder.append("symbol"_s);
         }
         return;
     }
     case JSC::JSType::InternalFunctionType:
-    case JSC::JSType::CompiledClosureType:
-    case JSC::JSType::SlimClosureType:
-    case JSC::JSType::SlimClosureWithPropertiesType:
     case JSC::JSType::JSFunctionType: {
         auto& vm = JSC::getVM(globalObject);
         auto name = Zig::functionName(vm, cell->getObject());
@@ -625,7 +622,7 @@ static bool hasOwnEnumerableProperty(JSC::VM& vm, JSC::JSGlobalObject* globalObj
 // What util.inspect(object, { depth: -1 }) prints for a plain object. Any other object would need script to say more than "[Object]".
 static ASCIILiteral describeObjectWithoutConstructorName(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* object)
 {
-    if (object->type() != JSC::FinalObjectType && object->type() != JSC::CompiledObjectType)
+    if (object->type() != JSC::FinalObjectType)
         return "[Object]"_s;
     bool hasProperties = hasOwnEnumerableProperty(vm, globalObject, object);
     if (object->getPrototypeDirect().isNull())
@@ -784,7 +781,7 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, Messa
             return;
         }
         // In an executable: util.inspect(value, { depth: -1 }) of a plain object, as in Node: its own custom inspect function runs, and nothing that it holds is printed.
-        if (vm.hasCompiledCode() && (cell->type() == JSC::FinalObjectType || cell->type() == JSC::CompiledObjectType)) {
+        if (vm.hasCompiledCode() && cell->type() == JSC::FinalObjectType) {
             auto customInspect = value.get(globalObject, Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.util.inspect.custom"_s)));
             RETURN_IF_EXCEPTION(scope, void());
             if (!customInspect.isCallable()) {
@@ -2210,7 +2207,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Bun::jsFunctionMakeErrorWithCode, __att
     }
 #endif
 
-    int code = codeValue.toInt32(globalObject);
+    int code = JSC::toInt32(codeValue.asNumber());
 
 #if ASSERT_ENABLED
     if (code > Bun::NODE_ERROR_COUNT - 1 || code < 0) {
@@ -2313,7 +2310,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Bun::jsFunctionMakeErrorWithCode, __att
     case Bun::ErrorCode::ERR_MISSING_ARGS: {
         switch (callFrame->argumentCount()) {
         case 0: {
-            UNREACHABLE();
+            RELEASE_ASSERT_NOT_REACHED();
         }
         case 1: {
             ASSERT("At least one arg needs to be specified");

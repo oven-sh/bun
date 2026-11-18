@@ -1,5 +1,5 @@
-//! `WTFTimer` — a timer created by WTF (WebKit) code and invoked by Bun's
-//! event loop. Backs `WTF::RunLoop::TimerBase` on the Bun runloop.
+//! `WTFTimer` — the one timer of a `JSC::VM`, invoked by Bun's event loop.
+//! `Bun::JSCTaskScheduler` owns it.
 //!
 //! jsc/runtime crate cycle: the low-tier `bun_jsc::VirtualMachine.timer` is a
 //! `()` placeholder, so this module resolves the timer heap through
@@ -20,7 +20,7 @@ use super::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 const NS_PER_S: i64 = bun_core::time::NS_PER_S as i64;
 
 bun_opaque::opaque_ffi! {
-    /// This is `WTF::RunLoop::TimerBase` from WebKit — opaque FFI handle.
+    /// What `WTFTimer__fire` gets.
     pub(crate) struct RunLoopTimer;
 }
 
@@ -34,14 +34,10 @@ impl RunLoopTimer {
     }
 }
 
-/// A timer created by WTF code and invoked by Bun's event loop.
 pub(crate) struct WTFTimer {
     // Backref to the owning VirtualMachine (captured from the thread-local VM
-    // in `WTFTimer__create`); never owned here. The C++ `RunLoop::TimerBase`
-    // that owns this wrapper lives on the VM's run loop, so the VM outlives
-    // the timer.
+    // in `WTFTimer__create`); never owned here. It outlives the timer.
     vm: NonNull<VirtualMachine>,
-    // FFI handle into WebKit's RunLoop::TimerBase; owned by C++.
     run_loop_timer: NonNull<RunLoopTimer>,
     pub(crate) event_loop_timer: EventLoopTimer,
     // Backref into `vm.eventLoop().imminent_gc_timer`. Low tier stores
@@ -55,8 +51,7 @@ pub(crate) struct WTFTimer {
 bun_event_loop::impl_timer_owner!(WTFTimer; from_timer_ptr => event_loop_timer);
 
 impl WTFTimer {
-    /// Fire the underlying `RunLoop::TimerBase`,
-    /// removing `self` from the timer heap first if it's currently scheduled.
+    /// Fires, removing `self` from the timer heap first if it's currently scheduled.
     /// Reached from `bun_jsc::event_loop` via `__bun_run_wtf_timer`
     /// (definer in [`crate::dispatch`]).
     ///
@@ -73,29 +68,6 @@ impl WTFTimer {
     #[inline]
     fn run_without_removing(&self) {
         RunLoopTimer::fire(self.run_loop_timer);
-    }
-
-    #[bun_uws::uws_callback(export = "WTFTimer__isActive", no_catch)]
-    pub(crate) fn is_active(&self) -> bool {
-        if self.event_loop_timer.state.get() == EventLoopTimerState::ACTIVE {
-            return true;
-        }
-        // `imminent` is a `BackRef` into the VM's event loop, which outlives this timer.
-        let loaded = self.imminent.load(Ordering::SeqCst);
-        // Null can never equal `this`, so a single pointer compare suffices.
-        loaded.cast_const().cast::<WTFTimer>() == ptr::from_ref(self)
-    }
-
-    #[bun_uws::uws_callback(export = "WTFTimer__secondsUntilTimer", no_catch)]
-    pub(crate) fn seconds_until_timer(&self) -> f64 {
-        if self.event_loop_timer.state.get() == EventLoopTimerState::ACTIVE {
-            let next = self.event_loop_timer.next.get();
-            let until = next.duration(&Timespec::now(TimespecMockMode::ForceRealTime));
-            let sec = until.sec as f64;
-            let nsec = until.nsec as f64;
-            return sec + nsec / NS_PER_S as f64;
-        }
-        f64::INFINITY
     }
 
     /// # Safety
@@ -128,9 +100,6 @@ impl WTFTimer {
             Ordering::SeqCst,
         );
 
-        // seconds can be +inf: JSC's GC scheduler divides by gcTimeSlice, which is 0 whenever
-        // bytes*deathRate truncates to 0. Other WTF::RunLoop backends saturate Seconds→int;
-        // do the same so the float→int cast below can't overflow.
         let clamped = seconds.min(i32::MAX as f64);
 
         let ipart = clamped.trunc();
@@ -215,13 +184,10 @@ impl WTFTimer {
     }
 }
 
-/// A `WTF::RunLoop` timer on this thread, backed by this thread's event loop. Null when the thread has no Bun
-/// `VirtualMachine` (a `JSC::VM` on a bundler thread generating bytecode, say): the timer then never fires, which
-/// `RunLoop::TimerBase` accepts.
+/// Backed by this thread's event loop. Null when the thread has no Bun `VirtualMachine`.
 ///
 /// # Safety
-/// `run_loop_timer` must be a non-null, live `WTF::RunLoop::TimerBase` owned
-/// by the caller for the lifetime of the returned `WTFTimer`.
+/// `run_loop_timer` must be non-null and outlive the returned `WTFTimer`.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn WTFTimer__create(run_loop_timer: *mut RunLoopTimer) -> *mut c_void {
     let Some(vm) = VirtualMachine::get_or_null() else {
@@ -255,7 +221,7 @@ unsafe extern "C" fn WTFTimer__create(run_loop_timer: *mut RunLoopTimer) -> *mut
 /// # Safety
 /// `this` must point at a live `WTFTimer` produced by [`WTFTimer__create`].
 #[unsafe(no_mangle)]
-unsafe extern "C" fn WTFTimer__update(this: *mut WTFTimer, seconds: f64, _repeat: bool) {
+unsafe extern "C" fn WTFTimer__update(this: *mut WTFTimer, seconds: f64) {
     // SAFETY: per fn contract.
     unsafe { WTFTimer::update(this, seconds) };
 }

@@ -79,3 +79,6 @@ src/cli/init/tsconfig.default.json linguist-language=JSON-with-Comments
 
 # Every byte of these files is part of a CI image's name (scripts/build/ci-images/spec.ts).
 scripts/build/ci-images/** text eol=lf
+
+# Every line is independent of the others.
+src/engine/text/names.txt text eol=lf merge=union

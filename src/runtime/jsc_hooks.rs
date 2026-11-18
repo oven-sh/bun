@@ -13,7 +13,6 @@
 //!      C++ entry points.
 //!   4. `__bun_get_vm_ctx` / `__bun_http_sync_download_*` — low-tier extern impls.
 
-use bun_core::WTFStringImplExt as _;
 use bun_options_types::LoaderExt as _;
 use core::cell::Cell;
 use core::ffi::c_void;
@@ -2136,7 +2135,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     arena_guard.2 = false; // give_back_arena = false
                     // Node compile cache: record the failed module so exit-time
                     // persist logs the "was not initialized" skip (Node parity).
-                    if !DATA_ONLY {
+                    if !DATA_ONLY && args.virtual_source.is_none() {
                         note_compile_cache_parse_failure(path, loader, module_type);
                     }
                     return Err(crate::Error::ParseError);
@@ -2176,7 +2175,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     arena_guard.2 = false;
                     // Node compile cache: record the failed module so exit-time
                     // persist logs the "was not initialized" skip (Node parity).
-                    if !DATA_ONLY {
+                    if !DATA_ONLY && args.virtual_source.is_none() {
                         note_compile_cache_parse_failure(path, loader, module_type);
                     }
                     return Err(crate::Error::ParseError);
@@ -2362,6 +2361,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     // read `output_code` before it is consumed below. UTF-16
                     // output would hash differently than the print path — skip.
                     let node_compile_cache_blob = if bun_jsc::node_compile_cache::is_enabled()
+                        && args.virtual_source.is_none()
                         && source.path.is_file()
                         && loader.is_java_script_like()
                         && !entry.output_code.is_utf16()
@@ -2486,6 +2486,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 if jsc_vm.is_watcher_enabled() {
                     let written = printer.ctx.get_written();
                     let node_compile_cache_blob = if bun_jsc::node_compile_cache::is_enabled()
+                        && args.virtual_source.is_none()
                         && path.is_file()
                         && loader.is_java_script_like()
                     {
@@ -2539,6 +2540,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 // Node compile cache hook (sync transpile path). `fetch` copies
                 // `written`; the printer may be replaced below.
                 let node_compile_cache_blob = if bun_jsc::node_compile_cache::is_enabled()
+                    && args.virtual_source.is_none()
                     && path.is_file()
                     && loader.is_java_script_like()
                 {
@@ -3116,39 +3118,20 @@ export default db;
             });
         }
 
-        // SAFETY: `file.module_info` is a live subrange of the embedded section (set in `Graph::from_bytes`).
-        let module_info = unsafe { &*file.module_info };
-        let module_info_strings: &'static [u8] = bun_standalone_graph::Graph::get_ref()
-            .map_or(&[], |graph| graph.module_info_string_table);
         return Some(ResolvedSource {
             source_code: file.to_wtf_string(),
             source_url: specifier.clone(),
             is_static: true,
-            // An embedded file is served through the builtin-module path but is a file: its origin is its own path
-            // (or, with --bytecode, the path the cache was generated under, which must match exactly).
+            // An embedded file is served through the builtin-module path but is a file: its origin is its own path.
             origin_path: if file.bytecode_origin_path.is_empty() {
                 specifier.clone()
             } else {
                 bun_core::String::from_static_bytes(file.bytecode_origin_path)
             },
-            bytecode_cache: Bytecode::persistent_at(file.bytecode, file.bytecode_entry_offset),
+            bytecode_cache: Bytecode::embedded(file.bytecode, file.bytecode_entry_offset),
             source_code_hash: file.source_hash,
-            module_info: if !module_info.is_empty() {
-                let decoded = bun_bundler::analyze_transpiled_module::ModuleInfoSlotTable::parse(
-                    module_info_strings,
-                )
-                .ok()
-                .and_then(|table| {
-                    bun_bundler::analyze_transpiled_module::ModuleInfoDeserialized
-                            ::create_with_table(&table, module_info)
-                });
-                debug_assert!(decoded.is_some(), "embedded module_info does not decode");
-                decoded
-            } else {
-                None
-            },
+            may_reexport_types: file.may_reexport_types,
             is_commonjs_module: file.module_format == ModuleFormat::Cjs,
-            is_prelinked_module: file.prelinked_index != u32::MAX,
             ..ResolvedSource::default()
         });
     }

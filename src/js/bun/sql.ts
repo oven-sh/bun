@@ -1101,8 +1101,8 @@ const defaultSQLMembers = [
 for (let i = 0; i < defaultSQLMembers.length; i++) {
   defaultSQLObject[defaultSQLMembers[i]] = callDefaultSQL.bind(undefined, defaultSQLMembers[i]);
 }
-defineProperty(defaultSQLObject, "options", { get: defaultSQLOptions });
-defineProperty(defaultSQLObject, Symbol.asyncDispose, { get: defaultSQLAsyncDispose });
+defineProperty(defaultSQLObject, "options", { __proto__: null, get: defaultSQLOptions });
+defineProperty(defaultSQLObject, Symbol.asyncDispose, { __proto__: null, get: defaultSQLAsyncDispose });
 setPrototypeOf(defaultSQLObject, SQLPrototype);
 
 // Bun.sql and Bun.SQL

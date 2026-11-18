@@ -51,16 +51,9 @@ fn to_js_module_record(
     let body = *res.body();
     let identifier_count = res.strings_count();
 
-    // Identifier slots the ids index, filled on first use: the VM-wide slots
-    // for an executable's shared table, else a throwaway array for this record.
-    let mut owned_identifiers: Option<OwnedIdentifierArray> = None;
-    let identifiers: *mut IdentifierArray = if res.shared() {
-        IdentifierArray::shared(vm, identifier_count)
-    } else {
-        owned_identifiers
-            .insert(OwnedIdentifierArray::new(identifier_count))
-            .ptr
-    };
+    // Identifier slots the ids index, filled on first use.
+    let owned_identifiers = OwnedIdentifierArray::new(identifier_count);
+    let identifiers = owned_identifiers.ptr;
     // Every id handed to JSC goes through here: in range (or a sentinel, which
     // `IdCursor` already vetted) and materialized.
     let ready = |id: StringID| -> Result<StringID, analyze::ModuleInfoError> {
@@ -71,10 +64,7 @@ fn to_js_module_record(
                     .string(id.0)
                     .ok_or(analyze::ModuleInfoError::BadModuleInfo)?;
                 // SAFETY: as above.
-                let ok = unsafe { IdentifierArray::set(identifiers, id.0 as usize, vm, string) };
-                if !ok {
-                    return Err(analyze::ModuleInfoError::BadModuleInfo);
-                }
+                unsafe { IdentifierArray::set(identifiers, id.0 as usize, vm, string) };
             }
         }
         Ok(id)
@@ -95,11 +85,9 @@ fn to_js_module_record(
         .count();
     let module_record = JSModuleRecord::create(
         global_object,
-        vm,
         module_loader,
         module_key,
         source_code,
-        res.flags.contains_import_meta(),
         res.flags.is_typescript(),
         res.flags.has_tla(),
         u32::try_from(body.requested_tags.len()).expect("int cast"),
@@ -250,7 +238,6 @@ fn to_js_module_record(
 
 bun_opaque::opaque_ffi! { pub struct IdentifierArray; }
 unsafe extern "C" {
-    fn Bun__VM__sharedModuleInfoIdentifiers(vm: *const VM, count: usize) -> *mut IdentifierArray;
     safe fn JSC__IdentifierArray__create(count: usize) -> *mut IdentifierArray;
     fn JSC__IdentifierArray__destroy(identifiers: *mut IdentifierArray, count: usize);
     fn JSC__IdentifierArray__isNull(identifier_array: *mut IdentifierArray, n: usize) -> bool;
@@ -262,21 +249,6 @@ unsafe extern "C" {
         len: usize,
         is_8bit: bool,
     );
-    fn JSC__IdentifierArray__setFromSlot(
-        identifier_array: *mut IdentifierArray,
-        n: usize,
-        vm: *const VM,
-        slot: u32,
-    ) -> bool;
-}
-impl IdentifierArray {
-    /// The VM's slots for the executable's shared module-info string table,
-    /// grown to at least `count`; null until filled.
-    #[inline]
-    pub(crate) fn shared(vm: &VM, count: usize) -> *mut IdentifierArray {
-        // SAFETY: FFI call; the vector lives on the VM's client data.
-        unsafe { Bun__VM__sharedModuleInfoIdentifiers(vm, count) }
-    }
 }
 /// `count` identifier slots owned by this value (fastMalloc'd on the C++ side).
 struct OwnedIdentifierArray {
@@ -313,25 +285,11 @@ impl IdentifierArray {
         n: usize,
         vm: &VM,
         string: analyze::ModuleInfoString<'_>,
-    ) -> bool {
+    ) {
+        let (chars, is_8bit) = (string.chars, string.is_8bit);
         // SAFETY: caller contract — `this` is live, `n` is in bounds; `chars` is a valid slice for the call.
         unsafe {
-            match string {
-                analyze::ModuleInfoString::Chars { chars, is_8bit } => {
-                    JSC__IdentifierArray__setFromChars(
-                        this,
-                        n,
-                        vm,
-                        chars.as_ptr(),
-                        chars.len(),
-                        is_8bit,
-                    );
-                    true
-                }
-                analyze::ModuleInfoString::Slot(slot) => {
-                    JSC__IdentifierArray__setFromSlot(this, n, vm, slot)
-                }
-            }
+            JSC__IdentifierArray__setFromChars(this, n, vm, chars.as_ptr(), chars.len(), is_8bit);
         }
     }
 }
@@ -344,11 +302,9 @@ bun_opaque::opaque_ffi! {
 unsafe extern "C" {
     fn JSC_JSModuleRecord__create(
         global_object: *const JSGlobalObject,
-        vm: *const VM,
         module_loader: *mut JSModuleLoader,
         module_key: *const IdentifierArray,
         source_code: *const SourceCode,
-        has_import_meta: bool,
         is_typescript: bool,
         has_tla: bool,
         requested_module_count: u32,
@@ -453,11 +409,9 @@ impl JSModuleRecord {
     #[inline]
     fn create(
         global_object: &JSGlobalObject,
-        vm: &VM,
         module_loader: *mut JSModuleLoader,
         module_key: &IdentifierArray,
         source_code: &SourceCode,
-        has_import_meta: bool,
         is_typescript: bool,
         has_tla: bool,
         requested_module_count: u32,
@@ -468,11 +422,9 @@ impl JSModuleRecord {
         unsafe {
             JSC_JSModuleRecord__create(
                 global_object,
-                vm,
                 module_loader,
                 module_key,
                 source_code,
-                has_import_meta,
                 is_typescript,
                 has_tla,
                 requested_module_count,

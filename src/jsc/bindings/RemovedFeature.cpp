@@ -54,12 +54,12 @@ ASCIILiteral trimFeatureNameOf(JSC::RemovableFeature feature)
 
 static bool isRemoved(uint16_t feature)
 {
-    return feature >= JSC::removableFeatureIndexLimit || JSC::isFeatureRemoved(static_cast<JSC::RemovableFeature>(feature));
+    return feature >= removableFeatureIndexLimit || JSC::isFeatureRemoved(static_cast<JSC::RemovableFeature>(feature));
 }
 
-static bool isRemovedByRequest(uint16_t feature)
+static bool isRemovedByRequest(uint16_t)
 {
-    return feature < JSC::removableFeatureIndexLimit && JSC::removalOf(static_cast<JSC::RemovableFeature>(feature)) == JSC::FeatureRemoval::Requested;
+    return false;
 }
 
 static WTF::String messageOfRemovedFeature(const WTF::String& api, uint16_t feature)
@@ -86,7 +86,7 @@ static JSC::EncodedJSValue throwFeatureRemovedError(JSC::JSGlobalObject* globalO
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     // Where the flag or the compiled program refuses text it is refused with the interpreter too, so keeping the interpreter is no advice.
-    if (feature == static_cast<uint16_t>(JSC::RemovableFeature::Interpreter) && (isCodeGenerationDisallowedByFlags() || isCodeGenerationDisallowedByCompiledProgram())) {
+    if (feature == static_cast<uint16_t>(Bun::Feature::Interpreter) && (isCodeGenerationDisallowedByFlags() || isCodeGenerationDisallowedByCompiledProgram())) {
         JSC::throwException(globalObject, scope, createCodeGenerationFromStringsError(globalObject));
         return {};
     }
@@ -169,7 +169,7 @@ extern "C" [[noreturn]] void Bun__abortForRemovedFeature(uint16_t feature)
     auto text = Bun::textOfRemovableFeature(static_cast<JSC::RemovableFeature>(feature)).span();
     const char* beBun = getenv("BUN_BE_BUN");
     bool actsAsBun = beBun && *beBun;
-    bool isTrimmed = JSC::Bun__removableFeatureState.isTrimmed;
+    constexpr bool isTrimmed = false;
     Bun::writeToStandardError(actsAsBun ? "error: BUN_BE_BUN is set, but this executable doesn't include "_span : isTrimmed ? "error: --trim removed "_span
                                                                                                                             : "error: This executable doesn't include "_span);
     Bun::writeToStandardError(text);

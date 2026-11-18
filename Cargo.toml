@@ -1,3 +1,5 @@
+cargo-features = ["profile-rustflags"]
+
 [workspace]
 resolver = "2"
 members = [
@@ -20,9 +22,7 @@ members = [
   "src/paths",
   "src/resolver",
   "src/safety",
-  "src/aot",
   "src/aot/absent",
-  "src/aot/builtins",
   "src/aot/interface",
   "src/sema",
   "src/sema/baselines",
@@ -102,6 +102,7 @@ members = [
   "src/resolve_builtins",
   "src/sourcemap_jsc",
   "src/url",
+  "src/url/whatwg",
   "src/windows_sys",
   "src/jsc",
   "src/jsc_macros",
@@ -138,7 +139,39 @@ members = [
   "src/spawn",
   "src/spawn_sys",
   "src/bunfig",
-  "src/builtin_sources",
+  "src/icu",
+  "src/engine/text",
+  "src/engine/unicode",
+  "src/engine/number",
+  "src/engine/bigint",
+  "src/engine/date",
+  "src/engine/regexp",
+  "src/engine/regexp_jit",
+  "src/engine/syntax",
+  "src/engine/bytecode",
+  "src/engine/asm",
+  "src/engine/exec_memory",
+  "src/engine/platform",
+  "src/engine/codegen",
+  "src/engine/vm",
+  "src/engine/interpreter",
+  "src/engine/builtins",
+  "src/engine/intl",
+  "src/engine/temporal",
+  "src/engine/ffi",
+  "src/engine/baseline",
+  "src/engine/optimizer",
+  "src/engine/wasm_format",
+  "src/engine/wasm_compiler",
+  "src/engine/wasm_runtime",
+  "src/engine/wasm_interpreter",
+  "src/engine/wasm",
+  "src/engine/inspector",
+  "src/engine",
+  "src/engine/embed",
+  "src/engine/macros",
+  "src/engine/standalone",
+  "src/engine/shell",
 ]
 # `vendor/lolhtml` (the `lol_html` crate) is a non-member path dependency,
 # fetched into `vendor/` by `scripts/build/deps/lolhtml.ts` before cargo runs.
@@ -165,15 +198,20 @@ edition = "2024"
 # so `catch_unwind` is unreachable for Rust panics regardless, and no landing
 # pads means smaller `.pdata`/`.xdata`.
 #
+# Frame pointers, as the C++ keeps them: `bun_core::return_address()`, profilers and crash reports walk them. In the
+# profiles and not in RUSTFLAGS, because rustc takes the strongest setting it is given in any order, and only a
+# profile's flags can be replaced for one package (`bun_engine_interpreter` below).
 [profile.release]
 lto = "off"
 codegen-units = 1
 debug = "line-tables-only"
 strip = "none"
 panic = "abort"
+rustflags = ["-Cforce-frame-pointers=yes"]
 
 [profile.dev]
 panic = "abort"
+rustflags = ["-Cforce-frame-pointers=yes"]
 # Split DWARF: debuginfo goes into `.dwo` files alongside each `.o` instead of
 # being packed into the rlibs. Per-crate codegen writes less to disk, and `gdb`/`lldb` still resolve full debuginfo via
 # the skeleton CUs (`DW_AT_dwo_name`) pointing into `<target>/deps/*.dwo`.
@@ -214,6 +252,7 @@ strip = "symbols"
 # here the env overrides on `release` would be inherited.
 debug-assertions = false
 overflow-checks = false
+rustflags = []
 
 [workspace.lints.rust]
 # Every rustc warning is an error. Individual lints below can override this
@@ -224,7 +263,7 @@ warnings = { level = "deny", priority = -1 }
 # (`--cfg=...` + `--check-cfg=cfg(...)`) by scripts/build/rust.ts; register
 # them here so a plain `cargo build` / `cargo check` (without those flags)
 # doesn't warn.
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)', 'cfg(bun_debug)', 'cfg(bun_fuzzilli)', 'cfg(bun_hardened)', 'cfg(bun_locked_environment)', 'cfg(bun_refuses_execute_only_start)', 'cfg(bun_starts_without_mdwe)', 'cfg(socket_fault_injection)', 'cfg(bun_disallow_code_generation_from_strings)', 'cfg(bun_sema_mimalloc)', 'cfg(mordant)'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)', 'cfg(bun_debug)', 'cfg(bun_fuzzilli)', 'cfg(bun_hardened)', 'cfg(bun_locked_environment)', 'cfg(bun_refuses_execute_only_start)', 'cfg(bun_starts_without_mdwe)', 'cfg(socket_fault_injection)', 'cfg(bun_disallow_code_generation_from_strings)', 'cfg(bun_sema_mimalloc)', 'cfg(mordant)', 'cfg(rootcheck)'] }
 # link.exe unconditionally prints "Creating library X.dll.lib and object
 # X.dll.exp" to stdout when linking each proc-macro DLL on Windows hosts;
 # there is no linker flag to suppress it. The lint already exempts itself
@@ -389,6 +428,38 @@ bun_base64 = { path = "src/base64" }
 bun_bundler = { path = "src/bundler" }
 bun_collections = { path = "src/collections" }
 bun_css = { path = "src/css" }
+bun_icu = { path = "src/icu" }
+bun_engine_text = { path = "src/engine/text" }
+bun_engine_unicode = { path = "src/engine/unicode" }
+bun_engine_number = { path = "src/engine/number" }
+bun_engine_bigint = { path = "src/engine/bigint" }
+bun_engine_date = { path = "src/engine/date" }
+bun_engine_regexp = { path = "src/engine/regexp" }
+bun_engine_regexp_jit = { path = "src/engine/regexp_jit" }
+bun_engine_syntax = { path = "src/engine/syntax" }
+bun_engine_bytecode = { path = "src/engine/bytecode" }
+bun_engine_asm = { path = "src/engine/asm" }
+bun_engine_exec_memory = { path = "src/engine/exec_memory" }
+bun_engine_platform = { path = "src/engine/platform" }
+bun_engine_codegen = { path = "src/engine/codegen" }
+bun_engine_vm = { path = "src/engine/vm" }
+bun_engine_interpreter = { path = "src/engine/interpreter" }
+bun_engine_builtins = { path = "src/engine/builtins" }
+bun_engine_intl = { path = "src/engine/intl" }
+bun_engine_temporal = { path = "src/engine/temporal" }
+bun_engine_ffi = { path = "src/engine/ffi" }
+bun_engine_baseline = { path = "src/engine/baseline" }
+bun_engine_optimizer = { path = "src/engine/optimizer" }
+bun_engine_wasm_format = { path = "src/engine/wasm_format" }
+bun_engine_wasm_compiler = { path = "src/engine/wasm_compiler" }
+bun_engine_wasm_runtime = { path = "src/engine/wasm_runtime" }
+bun_engine_wasm_interpreter = { path = "src/engine/wasm_interpreter" }
+bun_engine_wasm = { path = "src/engine/wasm" }
+bun_engine_inspector = { path = "src/engine/inspector" }
+bun_engine = { path = "src/engine" }
+bun_engine_embed = { path = "src/engine/embed" }
+bun_engine_macros = { path = "src/engine/macros" }
+bun_engine_standalone = { path = "src/engine/standalone" }
 bun_errno = { path = "src/errno" }
 bun_glob = { path = "src/glob" }
 bun_http = { path = "src/http" }
@@ -400,11 +471,8 @@ bun_md = { path = "src/md" }
 bun_paths = { path = "src/paths" }
 bun_resolver = { path = "src/resolver" }
 bun_safety = { path = "src/safety" }
-bun_aot = { path = "src/aot" }
 bun_aot_absent = { path = "src/aot/absent" }
-bun_aot_builtins = { path = "src/aot/builtins" }
 bun_aot_interface = { path = "src/aot/interface" }
-bun_builtin_sources = { path = "src/builtin_sources" }
 bun_sema = { path = "src/sema" }
 bun_sema_baselines = { path = "src/sema/baselines" }
 bun_sema_driver = { path = "src/sema/driver" }
@@ -480,6 +548,7 @@ bun_perf = { path = "src/perf" }
 bun_resolve_builtins = { path = "src/resolve_builtins" }
 bun_sourcemap_jsc = { path = "src/sourcemap_jsc" }
 bun_url = { path = "src/url" }
+bun_url_whatwg = { path = "src/url/whatwg" }
 bun_windows_sys = { path = "src/windows_sys" }
 bun_jsc = { path = "src/jsc" }
 bun_jsc_macros = { path = "src/jsc_macros" }
@@ -545,6 +614,75 @@ opt-level = 3
 # It stands in for vector code that every test program runs over each byte it parses.
 [profile.dev.package.bun_sema_standalone]
 opt-level = 3
+
+# The engine runs every line of JavaScript. Assertions and overflow checks stay on.
+[profile.dev.package.bun_icu]
+opt-level = 2
+[profile.dev.package.bun_engine]
+opt-level = 2
+[profile.dev.package.bun_engine_asm]
+opt-level = 2
+[profile.dev.package.bun_engine_baseline]
+opt-level = 2
+[profile.dev.package.bun_engine_bigint]
+opt-level = 2
+[profile.dev.package.bun_engine_builtins]
+opt-level = 2
+[profile.dev.package.bun_engine_bytecode]
+opt-level = 2
+[profile.dev.package.bun_engine_codegen]
+opt-level = 2
+[profile.dev.package.bun_engine_date]
+opt-level = 2
+[profile.dev.package.bun_engine_embed]
+opt-level = 2
+[profile.dev.package.bun_engine_exec_memory]
+opt-level = 2
+[profile.dev.package.bun_engine_ffi]
+opt-level = 2
+[profile.dev.package.bun_engine_platform]
+opt-level = 2
+[profile.dev.package.bun_engine_inspector]
+opt-level = 2
+[profile.dev.package.bun_engine_intl]
+opt-level = 2
+[profile.dev.package.bun_engine_number]
+opt-level = 2
+[profile.dev.package.bun_engine_optimizer]
+opt-level = 2
+[profile.dev.package.bun_engine_regexp]
+opt-level = 2
+[profile.dev.package.bun_engine_regexp_jit]
+opt-level = 2
+[profile.dev.package.bun_engine_standalone]
+opt-level = 2
+[profile.dev.package.bun_engine_syntax]
+opt-level = 2
+[profile.dev.package.bun_engine_temporal]
+opt-level = 2
+[profile.dev.package.bun_engine_text]
+opt-level = 2
+[profile.dev.package.bun_engine_unicode]
+opt-level = 2
+[profile.dev.package.bun_engine_vm]
+opt-level = 2
+[profile.dev.package.bun_engine_wasm]
+opt-level = 2
+[profile.dev.package.bun_engine_wasm_compiler]
+opt-level = 2
+[profile.dev.package.bun_engine_wasm_format]
+opt-level = 2
+[profile.dev.package.bun_engine_wasm_runtime]
+opt-level = 2
+[profile.dev.package.bun_engine_wasm_interpreter]
+opt-level = 2
+
+# A bytecode handler that calls nothing runs on the frame of the JavaScript function.
+[profile.dev.package.bun_engine_interpreter]
+opt-level = 2
+rustflags = ["-Zunstable-options", "-Cforce-frame-pointers=non-leaf"]
+[profile.release.package.bun_engine_interpreter]
+rustflags = ["-Zunstable-options", "-Cforce-frame-pointers=non-leaf"]
 
 [profile.release.package.bun_react_compiler]
 opt-level = "s"

@@ -163,7 +163,7 @@ struct ValidatorArgumentContext : Detail::ContextBase<ValidatorArgumentContext> 
     {
         // `JSValue::type_name` in src/jsc/JSValue.rs.
         bool isArray = m_actual.isCell() && (m_actual.asCell()->type() == JSC::ArrayType || m_actual.asCell()->type() == JSC::DerivedArrayType);
-        WTF::String actual = isArray ? WTF::String("array"_s) : JSC::jsTypeStringForValue(&global, m_actual)->value(&global).data;
+        WTF::String actual = isArray ? WTF::String("array"_s) : JSC::jsTypeStringForValue(&global, m_actual)->tryGetValue().data;
         WTF::String index = m_index ? WTF::makeString('[', *m_index, ']') : WTF::emptyString();
         Bun::throwError(&global, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
             WTF::makeString("The \""_s, m_name, index, "\" property must be of type "_s, m_expected, ", got "_s, actual));

@@ -244,16 +244,15 @@ and the narrow (`u8`) variant on POSIX.
 
 ## URL Parsing (`bun_url::whatwg`)
 
-WHATWG-compliant, backed by WebKit's URL parser. `Parsed` owns the C++
-`WTF::URL` (freed on `Drop`) and derefs to `URL` for the getters; parsing
-returns `None` for invalid input. `bun_jsc::url` re-exports both; the
+WHATWG-compliant, backed by `bun_url_whatwg` (`src/url/whatwg`). Parsing
+returns `None` for invalid input. `bun_jsc::url` re-exports `URL`; the
 JS-value entry point (`URL::href_from_js`) comes from the `bun_jsc::URLJsc`
 trait.
 
 ```rust
-use bun_url::whatwg::Parsed;
+use bun_url::whatwg::URL;
 
-let url: Parsed = Parsed::from_utf8(href)?;       // or Parsed::from_string(&bun_string)?
+let url = URL::from_utf8(href)?;       // or URL::from_string(&bun_string)?
 
 url.protocol()   // bun_core::String
 url.pathname()   // bun_core::String

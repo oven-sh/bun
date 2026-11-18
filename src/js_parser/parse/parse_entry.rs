@@ -70,19 +70,6 @@ impl<'a> ParsedOnly<'_, 'a> {
             .get(import_record_index as usize)
             .map_or(&[], |record| record.path.text)
     }
-    pub fn module_syntax(&self) -> ModuleSyntax {
-        ModuleSyntax {
-            import_meta: self.p.has_import_meta,
-            top_level_await: self.p.top_level_await_keyword.len > 0,
-        }
-    }
-}
-
-/// Module record flags found while parsing.
-#[derive(Clone, Copy, Default)]
-pub struct ModuleSyntax {
-    pub import_meta: bool,
-    pub top_level_await: bool,
 }
 
 /// Runs `Parser::parse_only` on JavaScript text that isn't one of the build's files. Returns `None`

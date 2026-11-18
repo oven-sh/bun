@@ -26,26 +26,11 @@ pub enum FunctionKind {
     DefaultConstructor = 3,
 }
 
-impl FunctionKind {
-    pub fn from_u8(kind: u8) -> Option<Self> {
-        Some(match kind {
-            0 => Self::Function,
-            1 => Self::InnerBody,
-            2 => Self::ClassFields,
-            3 => Self::DefaultConstructor,
-            _ => return None,
-        })
-    }
-}
-
-/// `JSC::BytecodeOrderNames::Function`.
 #[derive(Clone, Copy, Debug)]
-#[repr(C)]
 pub struct FunctionIdentity {
     /// In UTF-16 code units of the text, which is what JavaScriptCore counts in.
     pub start: u32,
     pub kind: FunctionKind,
-    _padding: [u8; 3],
     pub identity: u64,
 }
 
@@ -54,7 +39,6 @@ impl FunctionIdentity {
         Self {
             start,
             kind,
-            _padding: [0; 3],
             identity,
         }
     }

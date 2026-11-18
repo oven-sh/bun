@@ -109,7 +109,6 @@ test.each([true, false])("the strip rule runs it when hardened is %p", hardened 
       os: "linux",
       arch: "x64",
       abi: "gnu",
-      webkit: "local",
       linuxSysroot: buildDir,
       hardened,
     },

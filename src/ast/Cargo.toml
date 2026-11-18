@@ -10,6 +10,8 @@ path = "lib.rs"
 workspace = true
 
 [dependencies]
+bun_engine_number.workspace = true
+bun_engine_text.workspace = true
 thiserror.workspace = true
 strum.workspace = true
 bstr.workspace = true

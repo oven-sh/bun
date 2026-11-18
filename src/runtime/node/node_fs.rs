@@ -7493,7 +7493,7 @@ impl NodeFS {
                     if flavor == Flavor::Sync && string_type == ReadFileStringType::Default {
                         if let Some(vm) = self.vm {
                             // Attempt to create the buffer in JSC's heap.
-                            // This avoids creating a WastefulTypedArray.
+                            // This avoids creating an ArrayBuffer.
                             let global = vm.global();
                             let Ok(array_buffer) = bun_jsc::ArrayBuffer::create_buffer(
                                 global,

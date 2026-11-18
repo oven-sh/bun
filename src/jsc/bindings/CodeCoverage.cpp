@@ -13,8 +13,7 @@ extern "C" bool CodeCoverage__withBlocksAndFunctions(
 
     VM& vm = *vmPtr;
 
-    auto basicBlocks = vm.controlFlowProfiler()->getBasicBlocksForSourceIDWithoutFunctionRange(
-        sourceID, vm);
+    auto basicBlocks = vm.controlFlowProfiler()->basicBlocks(sourceID);
 
     if (basicBlocks.isEmpty()) {
         blockCallback(ctx, nullptr, 0, 0);
@@ -23,19 +22,18 @@ extern "C" bool CodeCoverage__withBlocksAndFunctions(
 
     size_t functionStartOffset = basicBlocks.size();
 
-    auto functionRanges = vm.functionHasExecutedCache()->getFunctionRanges(sourceID);
+    auto functionRanges = vm.controlFlowProfiler()->codeRanges(sourceID);
 
     basicBlocks.reserveCapacity(functionRanges.size() + basicBlocks.size());
 
     for (const auto& functionRange : functionRanges) {
         // A generator or an async function is one function, and a static block is none.
-        auto parseMode = std::get<3>(functionRange);
-        if (JSC::isProgramOrModuleParseMode(parseMode) || JSC::isGeneratorOrAsyncFunctionBodyParseMode(parseMode) || parseMode == JSC::SourceParseMode::ClassStaticBlockMode)
+        if (functionRange.kind != CodeRange::Kind::Function)
             continue;
         BasicBlockRange range;
-        range.m_hasExecuted = std::get<0>(functionRange);
-        range.m_startOffset = static_cast<int>(std::get<1>(functionRange));
-        range.m_endOffset = static_cast<int>(std::get<2>(functionRange));
+        range.m_hasExecuted = functionRange.hasExecuted;
+        range.m_startOffset = static_cast<int>(functionRange.start);
+        range.m_endOffset = static_cast<int>(functionRange.end);
         range.m_executionCount = range.m_hasExecuted
             ? 1
             : 0; // This is a hack. We don't actually count this.

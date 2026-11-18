@@ -3,8 +3,6 @@ use core::ffi::c_uint;
 
 use crate::virtual_machine::VirtualMachine;
 use crate::{JSGlobalObject, JSValue};
-#[cfg(debug_assertions)]
-use bun_core::ZStr;
 
 bun_opaque::opaque_ffi! {
     /// Call Frame for JavaScript -> Native function calls. The bindings
@@ -21,10 +19,17 @@ impl CallFrame {
         CallerSrcLoc { str, line, column }
     }
 
+    /// `None` unless a script runs in the frame at that address.
     #[cfg(debug_assertions)]
-    pub(crate) fn describe_frame(&self) -> &ZStr {
-        // SAFETY: FFI returns a NUL-terminated C string with lifetime tied to the frame.
-        unsafe { ZStr::from_c_ptr(Bun__CallFrame__describeFrame(self)) }
+    pub(crate) fn of_script_at(global: &JSGlobalObject, address: usize) -> Option<&CallFrame> {
+        Bun__CallFrame__ofScriptAt(global, address)
+    }
+
+    #[cfg(debug_assertions)]
+    pub(crate) fn function_name(&self, global: &JSGlobalObject) -> bun_core::String {
+        let mut name = bun_core::String::default();
+        Bun__CallFrame__getFunctionName(self, global, &mut name);
+        name
     }
 }
 
@@ -97,8 +102,7 @@ impl<'a> ArgumentsSlice<'a> {
 
 // `CallFrame`/`VM`/`JSGlobalObject` are opaque `UnsafeCell`-backed ZST handles;
 // `&T` is ABI-identical to non-null `*const T`. Out-params are exclusive `&mut`
-// to plain `#[repr(C)]` PODs. `describeFrame` returns a raw C string that the
-// caller must NUL-scan, so it stays `unsafe fn`.
+// to plain `#[repr(C)]` PODs.
 unsafe extern "C" {
     safe fn Bun__CallFrame__getCallerSrcLoc(
         cf: &CallFrame,
@@ -114,5 +118,14 @@ unsafe extern "C" {
         out_column: &mut c_uint,
     );
     #[cfg(debug_assertions)]
-    fn Bun__CallFrame__describeFrame(cf: *const CallFrame) -> *const core::ffi::c_char;
+    safe fn Bun__CallFrame__ofScriptAt(
+        global: &JSGlobalObject,
+        address: usize,
+    ) -> Option<&CallFrame>;
+    #[cfg(debug_assertions)]
+    safe fn Bun__CallFrame__getFunctionName(
+        cf: &CallFrame,
+        global: &JSGlobalObject,
+        out_name: &mut bun_core::String,
+    );
 }

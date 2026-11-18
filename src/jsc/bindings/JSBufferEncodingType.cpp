@@ -55,11 +55,7 @@ static std::optional<BufferEncodingType> parseEnumerationAllowBufferInternal(JSG
         return std::nullopt;
     }
 
-    auto* str = arg.toStringOrNull(&lexicalGlobalObject);
-    if (!str) {
-        return std::nullopt;
-    }
-    const auto& view = str->view(&lexicalGlobalObject);
+    const auto& view = asString(arg)->view(&lexicalGlobalObject);
     if constexpr (allowBuffer) {
         if (WTF::equalIgnoringASCIICase(view, "buffer"_s)) {
             return BufferEncodingType::buffer;

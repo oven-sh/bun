@@ -603,7 +603,7 @@ impl ScopeFunctions {
                         "matches_filter \"{}\"",
                         bstr::BStr::new(filter_buffer.as_slice())
                     ));
-                    matches_filter = filter_regex.matches(&str);
+                    matches_filter = !str.is_empty() && str.with_text(|name| filter_regex.is_match(name));
 
                     filter_buffer.clear();
                     bun_test.collection.filter_buffer.set(filter_buffer);

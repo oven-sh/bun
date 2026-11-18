@@ -48,29 +48,7 @@ static ImplementationVisibility getImplementationVisibility(JSC::CodeBlock* code
 
 bool isImplementationVisibilityPrivate(JSC::StackVisitor& visitor)
 {
-    ImplementationVisibility implementationVisibility = [&]() -> ImplementationVisibility {
-        if (visitor->callee().isCell()) {
-            if (auto* callee = visitor->callee().asCell()) {
-                if (auto* jsFunction = dynamicDowncast<JSFunction>(callee)) {
-                    if (auto* executable = jsFunction->executable())
-                        return executable->implementationVisibility();
-                }
-            }
-        }
-
-        if (auto* codeBlock = visitor->codeBlock()) {
-            return getImplementationVisibility(codeBlock);
-        }
-
-#if ENABLE(WEBASSEMBLY)
-        if (visitor->isNativeCalleeFrame())
-            return visitor->callee().asNativeCallee()->implementationVisibility();
-#endif
-
-        return ImplementationVisibility::Public;
-    }();
-
-    return implementationVisibility != ImplementationVisibility::Public;
+    return visitor->implementationVisibility() != ImplementationVisibility::Public;
 }
 
 bool isImplementationVisibilityPrivate(const JSC::StackFrame& frame)
@@ -124,26 +102,8 @@ JSCStackTrace JSCStackTrace::fromExisting(JSC::VM& vm, const WTF::Vector<JSC::St
     return JSCStackTrace(newFrames);
 }
 
-// Which entry into the VM the frames of suspended async functions follow is decided
-// among all entries that resumed one. A walk that ends early decides alike if there
-// is no second one.
-static bool severalEntriesResumedAsyncFunctions(JSC::VM& vm)
+void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::JSValue caller, WTF::Vector<JSC::StackFrame>& stackTrace, size_t stackTraceLimit)
 {
-    bool hasFoundOne = false;
-    for (JSC::EntryFrame* entryFrame = vm.topEntryFrame; entryFrame; entryFrame = vmEntryRecord(entryFrame)->prevTopEntryFrame()) {
-        if (!JSC::Interpreter::asyncFunctionIn(vmEntryRecord(entryFrame)->m_context))
-            continue;
-        if (hasFoundOne)
-            return true;
-        hasFoundOne = true;
-    }
-    return false;
-}
-
-void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, JSC::JSCell* owner, JSC::JSValue caller, WTF::Vector<JSC::StackFrame>& stackTrace, size_t stackTraceLimit)
-{
-    UNUSED_PARAM(callFrame);
-
     JSC::JSObject* callerObject = caller.getObject();
     // Made at the first frame that is not the caller's by identity.
     std::optional<WTF::String> nameOfCaller;
@@ -223,8 +183,7 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
         // built-in caller filtering skips entry-frame tracking during the skip phase,
         // which loses async frames when the caller is the innermost sync frame.
         hasFoundCaller = !callerObject;
-        stackTrace.shrink(0);
-        vm.interpreter.getStackTrace(owner, stackTrace, 1, framesToCollect, nullptr, nullptr, nullptr, &filter);
+        vm.interpreter.getStackTrace(stackTrace, 1, framesToCollect, &filter);
 
         // Match V8: if the caller is not found anywhere in the sync portion of the
         // stack, remove everything.
@@ -245,7 +204,10 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
             hasAsyncFrame = true;
             hasPrivateAsyncFrame |= isImplementationVisibilityPrivate(frame);
         }
-        if (!hasPrivateAsyncFrame && !(hasAsyncFrame && severalEntriesResumedAsyncFunctions(vm)))
+        // Which entry into the VM the frames of suspended async functions follow is decided
+        // among all entries that resumed one. A walk that ends early decides alike if there
+        // is no second one.
+        if (!hasPrivateAsyncFrame && !(hasAsyncFrame && vm.interpreter.isInsideSeveralResumedAsyncFunctions()))
             break;
     }
 
@@ -266,14 +228,23 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
         stackTrace.shrink(stackTraceLimit);
 }
 
+// A generator or a function that awaits goes by what the source calls it, whatever its `name` has become.
+static String functionNameOfCallee(JSC::VM& vm, JSC::JSObject* callee)
+{
+    if (auto* function = dynamicDowncast<JSC::JSFunction>(callee); function && !function->isHostFunction() && function->jsExecutable()->canSuspend()) {
+        if (String name = function->jsExecutable()->ecmaName(); !name.isEmpty())
+            return name;
+    }
+    return Zig::functionName(vm, callee);
+}
+
 static bool isVisibleBuiltinFunction(JSC::CodeBlock* codeBlock)
 {
     if (!codeBlock->ownerExecutable()) {
         return false;
     }
 
-    const JSC::SourceCode& source = codeBlock->source();
-    return !Zig::sourceURL(source).isEmpty();
+    return !Zig::sourceURL(codeBlock->sourceProvider()).isEmpty();
 }
 
 JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
@@ -291,11 +262,9 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
 
     // Based on JSC's GetStackTraceFunctor (Interpreter.cpp)
     if (frame.isWasmFrame()) {
-        m_wasmFunctionIndexOrName = frame.wasmFunctionIndexOrName();
         m_isWasmFrame = true;
     } else if (auto* codeBlock = frame.codeBlock()) {
-        auto* unlinkedCodeBlock = codeBlock->unlinkedCodeBlock();
-        if (!unlinkedCodeBlock->isBuiltinFunction() || isVisibleBuiltinFunction(codeBlock)) {
+        if (!codeBlock->isBuiltinFunction() || isVisibleBuiltinFunction(codeBlock)) {
             m_codeBlock = codeBlock;
             m_bytecodeIndex = frame.bytecodeIndex();
         }
@@ -405,13 +374,18 @@ ALWAYS_INLINE String JSCStackFrame::retrieveFunctionName()
 {
 
     if (m_isWasmFrame) {
-        return JSC::Wasm::makeString(m_wasmFunctionIndexOrName);
+        return m_stackFrame->wasmFunctionName(m_vm);
     }
 
     if (m_callee) {
+        // Optimized code may run a closure without making it.
+        if (m_callee->type() == JSC::JSCalleeType && m_stackFrame->codeBlock()) {
+            String name = Zig::functionName(m_vm, m_stackFrame->codeBlock());
+            return name.isNull() ? emptyString() : name;
+        }
         auto* calleeObject = m_callee->getObject();
         if (calleeObject) {
-            return Zig::functionName(m_vm, calleeObject);
+            return functionNameOfCallee(m_vm, calleeObject);
         }
     }
 
@@ -485,8 +459,7 @@ String sourceURL(JSC::CodeBlock& codeBlock)
         return String();
     }
 
-    const auto& source = codeBlock.source();
-    return sourceURL(source);
+    return sourceURL(codeBlock.sourceProvider());
 }
 
 String sourceURL(JSC::CodeBlock* codeBlock)
@@ -602,7 +575,7 @@ String sourceURL(JSC::VM& vm, JSC::JSFunction* function)
         return String();
     }
 
-    return Zig::sourceURL(function->jsExecutable()->source());
+    return Zig::sourceURL(function->jsExecutable()->sourceProvider());
 }
 
 String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock)
@@ -615,7 +588,7 @@ String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock)
     }
 
     if (codeType == JSC::FunctionCode) {
-        return uncheckedDowncast<JSC::FunctionExecutable>(executable)->ecmaNameWithoutGC();
+        return uncheckedDowncast<JSC::FunctionExecutable>(executable)->ecmaName();
     }
 
     return String();
@@ -637,7 +610,7 @@ String functionName(JSC::VM& vm, JSC::JSObject* object)
             JSValue functionNameValue = object->getDirect(offset);
             if (functionNameValue && functionNameValue.isString()) {
                 auto name = asString(functionNameValue)->tryGetValueWithoutGC();
-                if (!name->isEmpty())
+                if (!name.isEmpty())
                     return name;
             }
         }
@@ -658,7 +631,7 @@ String functionName(JSC::VM& vm, JSC::JSObject* object)
                 auto* function = uncheckedDowncast<JSC::JSFunction>(object);
                 functionName = function->nameWithoutGC(vm);
                 if (functionName.isEmpty() && !function->isHostFunction()) {
-                    functionName = function->jsExecutable()->ecmaNameWithoutGC();
+                    functionName = function->jsExecutable()->ecmaName();
                 }
             } else if (jstype == JSC::InternalFunctionType) {
                 functionName = uncheckedDowncast<JSC::InternalFunction>(object)->name();
@@ -734,9 +707,9 @@ String functionName(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* fla
                 }
             }
             if (callee) {
-                functionName = Zig::functionName(vm, callee);
+                functionName = functionNameOfCallee(vm, callee);
 
-                if (flags && codeblock->unlinkedCodeBlock()->isBuiltinFunction()) {
+                if (flags && codeblock->isBuiltinFunction()) {
                     *flags |= static_cast<unsigned int>(FunctionNameFlags::Builtin);
                 }
             }
@@ -751,7 +724,7 @@ String functionName(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* fla
             functionName = Zig::functionName(vm, codeblock);
         }
     } else if (callee) {
-        functionName = Zig::functionName(vm, callee);
+        functionName = functionNameOfCallee(vm, callee);
     }
 
     if ((flags && (*flags & static_cast<unsigned int>(FunctionNameFlags::AddNewKeyword))) && isConstructor && !functionName.isEmpty()) {

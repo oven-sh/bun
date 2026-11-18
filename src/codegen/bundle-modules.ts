@@ -41,14 +41,14 @@ const BASE = path.join(import.meta.dir, "../js");
 const debug = process.argv[2] === "--debug=ON";
 const CMAKE_BUILD_ROOT = process.argv[3];
 const TYPES_DIR = process.argv[4];
-const WEBKIT_VERSION = process.argv.find(arg => arg.startsWith("--webkit-version="))?.slice("--webkit-version=".length);
+const ENGINE_VERSION = process.argv.find(arg => arg.startsWith("--engine-version="))?.slice("--engine-version=".length);
 
 const timeString = 'Bundled "src/js" for ' + (debug ? "development" : "production");
 console.time(timeString);
 
-if (!CMAKE_BUILD_ROOT || !TYPES_DIR || !WEBKIT_VERSION) {
+if (!CMAKE_BUILD_ROOT || !TYPES_DIR || !ENGINE_VERSION) {
   console.error(
-    "Usage: bun bundle-modules.ts --debug=[OFF|ON] <CMAKE_WORK_DIR> <TYPES_DIR> --webkit-version=<version>",
+    "Usage: bun bundle-modules.ts --debug=[OFF|ON] <CMAKE_WORK_DIR> <TYPES_DIR> --engine-version=<version>",
   );
   process.exit(1);
 }
@@ -531,7 +531,7 @@ let blobDataOffset: number;
     depsOffset,
     blobDataOffset,
     data.length,
-    engineStamp(WEBKIT_VERSION, privateNames),
+    engineStamp(ENGINE_VERSION, privateNames),
     0,
   ].forEach((v, i) => blob.writeUInt32LE(v >>> 0, 8 + i * 4));
   records.forEach((v, i) => blob.writeUInt32LE(v, modulesOffset + i * 4));

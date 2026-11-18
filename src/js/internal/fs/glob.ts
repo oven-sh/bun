@@ -3072,6 +3072,7 @@ function lazyMinimatch(): MinimatchModule {
   exports.Minimatch = Minimatch;
   var ast_js_2 = require_ast();
   Object.defineProperty(exports, "AST", {
+    __proto__: null,
     enumerable: true,
     get: function () {
       return ast_js_2.AST;
@@ -3079,6 +3080,7 @@ function lazyMinimatch(): MinimatchModule {
   });
   var escape_js_2 = require_escape();
   Object.defineProperty(exports, "escape", {
+    __proto__: null,
     enumerable: true,
     get: function () {
       return escape_js_2.escape;
@@ -3086,6 +3088,7 @@ function lazyMinimatch(): MinimatchModule {
   });
   var unescape_js_2 = require_unescape();
   Object.defineProperty(exports, "unescape", {
+    __proto__: null,
     enumerable: true,
     get: function () {
       return unescape_js_2.unescape;

@@ -39,92 +39,88 @@ pub mod route_param {
 }
 use route_param::List as ParamsList;
 
-// ── whatwg (WTF::URL FFI shim, MOVE_DOWN from bun_jsc) ────────────────────
-// The JS-value entry points (`hrefFromJS`, `fromJS`)
-// stay in tier-6 `bun_jsc` as extension methods — they need JSValue/JSGlobalObject.
-// Everything else is a thin extern-"C" wrapper around WTF::URL and is JSC-agnostic.
+// ── whatwg ────────────────────────────────────────────────────────────────
+// `bun_url_whatwg` over `bun_core::String`. The JS-value entry point
+// (`href_from_js`) is in `bun_jsc`.
 pub mod whatwg {
-    use core::ptr::NonNull;
+    use bun_core::{UnwrapOrOom as _, strings};
+    use bun_url_whatwg::{ByteUrl, Input, PathStyle, Punycode, Url};
 
     use super::BunString as String;
-    use super::strings;
 
-    bun_opaque::opaque_ffi! {
-        /// Opaque handle to a heap-allocated `WTF::URL` (C++); owned via
-        /// [`Parsed`].
-        pub struct URL;
+    fn parse(input: &String, base: Option<&Url>) -> Option<Url> {
+        let input = match (input.as_engine_string(), input.text()) {
+            (Some(string), _) => Input::String(string),
+            (None, Some(text)) => Input::Text(text),
+            (None, None) => Input::Utf8(input.byte_slice()),
+        };
+        Url::parse(input, base, Punycode::Unchecked).ok()
     }
 
-    // Getters take `&URL` (C++ never mutates on read). String inputs are
-    // `const BunString*`; string returns are +1 (`Bun::toStringRef`), declared
-    // as owning `String`. `URL__deinit` frees the allocation, so it stays
-    // `unsafe fn`. `URL__getHrefFromJS` lives in `bun_jsc::URLJsc`.
-    unsafe extern "C" {
-        safe fn URL__fromString(str: &String) -> Option<NonNull<URL>>;
-        safe fn URL__protocol(url: &URL) -> String;
-        safe fn URL__href(url: &URL) -> String;
-        safe fn URL__username(url: &URL) -> String;
-        safe fn URL__password(url: &URL) -> String;
-        safe fn URL__host(url: &URL) -> String;
-        safe fn URL__hostname(url: &URL) -> String;
-        safe fn URL__port(url: &URL) -> u32;
-        safe fn URL__pathname(url: &URL) -> String;
-        safe fn URL__fragmentIdentifier(url: &URL) -> String;
-        fn URL__deinit(url: *mut URL);
-        safe fn URL__getHref(input: &String) -> String;
-        safe fn URL__getFileURLString(input: &String) -> String;
-        safe fn URL__pathFromFileURL(input: &String) -> String;
-        safe fn URL__getHrefJoin(base: &String, relative: &String) -> String;
-        fn URL__originLength(latin1_slice: *const u8, len: usize) -> usize;
+    fn href(url: Option<Url>) -> String {
+        url.and_then(Url::into_string)
+            .map_or(String::DEAD, String::from)
     }
 
     /// Percent-encodes the URL, punycode-encodes the hostname, and returns the normalized
     /// href. If parsing fails, the returned String's tag is `Dead`.
     pub fn href_from_string(str: &String) -> String {
-        URL__getHref(str)
+        href(parse(str, None))
     }
     pub fn join(base: &String, relative: &String) -> String {
-        URL__getHrefJoin(base, relative)
+        href(parse(relative, parse(base, None).as_ref()))
     }
     pub fn file_url_from_string(str: &String) -> String {
-        URL__getFileURLString(str)
+        str.with_text(|path| Url::from_file_path(path, PathStyle::NATIVE))
+            .unwrap_or_oom()
+            .into_string()
+            .map_or(String::EMPTY, String::from)
     }
     pub fn path_from_file_url(str: &String) -> String {
-        URL__pathFromFileURL(str)
+        let Some(url) = parse(str, None) else {
+            return String::DEAD;
+        };
+        url.file_path(PathStyle::NATIVE)
+            .unwrap_or_oom()
+            .map_or(String::EMPTY, String::from)
     }
     /// Returns the origin (`scheme://host[:port]`) prefix of `slice` as a borrowed
     /// subslice, or `None` if `slice` does not parse as a valid WHATWG URL.
-    ///
-    /// Backed by `WTF::URL::pathStart()` via `URL__originLength` (BunString.cpp).
     #[inline]
     pub fn origin_from_slice(slice: &[u8]) -> Option<&[u8]> {
-        // A valid URL will not have non-ASCII bytes in its origin, so it suffices
-        // to hand C++ only the leading ASCII prefix (latin1-safe).
+        // A valid URL will not have non-ASCII bytes in its origin.
         let first_non_ascii = strings::first_non_ascii(slice).map_or(slice.len(), |i| i as usize);
-        // SAFETY: ptr/len derived from a valid slice prefix; C++ only reads.
-        let len = unsafe { URL__originLength(slice.as_ptr(), first_non_ascii) };
-        if len == 0 || len > first_non_ascii {
-            return None;
-        }
-        Some(&slice[..len])
+        let ascii = &slice[..first_non_ascii];
+        ascii.get(..ByteUrl::parse(ascii, None).ok()?.path_start())
     }
 
+    /// A valid URL.
+    pub struct URL(Url);
+
     impl URL {
+        pub fn from_string(str: &String) -> Option<Self> {
+            parse(str, None).map(Self)
+        }
+        pub fn from_utf8(input: &[u8]) -> Option<Self> {
+            Self::from_string(&bun_core::StringView::borrow_utf8(input))
+        }
         /// The URL fragment (the part after `#`), excluding the leading '#'.
         pub fn fragment_identifier(&self) -> String {
-            URL__fragmentIdentifier(self)
+            String::clone_latin1(self.0.fragment().unwrap_or_default())
         }
         pub fn protocol(&self) -> String {
-            URL__protocol(self)
+            String::clone_latin1(self.0.scheme_name())
         }
         pub fn href(&self) -> String {
-            URL__href(self)
+            self.0.string().cloned().map_or(String::EMPTY, String::from)
         }
         pub fn username(&self) -> String {
-            URL__username(self)
+            let username = self.0.decoded_username().unwrap_or_oom();
+            username.map_or(String::EMPTY, String::from)
         }
         pub fn password(&self) -> String {
-            URL__password(self)
+            let password = self.0.decoded_password().unwrap_or_oom();
+            password.map_or(String::EMPTY, String::from)
         }
         /// The host WITHOUT the port (JS `hostname`).
         ///
@@ -132,7 +128,7 @@ pub mod whatwg {
         /// URL("http://example.com:8080").host() => "example.com"
         /// ```
         pub fn host(&self) -> String {
-            URL__host(self)
+            String::clone_latin1(self.0.hostname())
         }
         /// The host WITH the port (JS `host`).
         ///
@@ -140,41 +136,14 @@ pub mod whatwg {
         /// URL("http://example.com:8080").hostname() => "example.com:8080"
         /// ```
         pub fn hostname(&self) -> String {
-            URL__hostname(self)
+            String::clone_latin1(self.0.host())
         }
         /// `u32::MAX` if the port is not set; otherwise within `u16` range.
         pub fn port(&self) -> u32 {
-            URL__port(self)
+            self.0.port().map_or(u32::MAX, u32::from)
         }
         pub fn pathname(&self) -> String {
-            URL__pathname(self)
-        }
-    }
-
-    /// A `URL` this handle owns; `Drop` frees it.
-    pub struct Parsed(NonNull<URL>);
-
-    impl Parsed {
-        pub fn from_string(str: &String) -> Option<Self> {
-            URL__fromString(str).map(Self)
-        }
-        pub fn from_utf8(input: &[u8]) -> Option<Self> {
-            Self::from_string(&bun_core::StringView::borrow_utf8(input))
-        }
-    }
-
-    impl core::ops::Deref for Parsed {
-        type Target = URL;
-        fn deref(&self) -> &URL {
-            // SAFETY: `self.0` is a live heap `WTF::URL` that only `Drop` frees.
-            unsafe { self.0.as_ref() }
-        }
-    }
-
-    impl Drop for Parsed {
-        fn drop(&mut self) {
-            // SAFETY: this handle is the only owner of the `WTF::URL`, so it is deleted once.
-            unsafe { URL__deinit(self.0.as_ptr()) }
+            String::clone_latin1(self.0.path())
         }
     }
 }
@@ -384,9 +353,9 @@ impl<'a> URL<'a> {
             return None;
         }
         let normalized = if as_written.protocol.is_empty() {
-            whatwg::Parsed::from_utf8(&[b"https://".as_slice(), input].concat())
+            whatwg::URL::from_utf8(&[b"https://".as_slice(), input].concat())
         } else {
-            whatwg::Parsed::from_utf8(input)
+            whatwg::URL::from_utf8(input)
         };
         let Some(url) = normalized else {
             return Some(S3Endpoint {

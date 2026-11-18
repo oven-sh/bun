@@ -3,7 +3,7 @@
 #include "root.h"
 #include "headers-handwritten.h"
 #include <JavaScriptCore/SourceCode.h>
-#include <JavaScriptCore/Strong.h>
+#include <JavaScriptCore/UnlinkedFunctionExecutable.h>
 
 namespace Zig {
 class GlobalObject;
@@ -17,7 +17,7 @@ struct CodeString;
 // An internal JS module (InternalModuleRegistry) as compiled for the first global that loaded it.
 struct IsolatedInternalModule {
     JSC::SourceCode source;
-    JSC::Strong<JSC::UnlinkedFunctionExecutable> executable;
+    RefPtr<JSC::UnlinkedFunctionExecutable> executable;
 };
 
 // Per-VM cache mapping resolved specifier (absolute path) → Zig::SourceProvider,
@@ -70,7 +70,7 @@ public:
     // By the module's id in InternalModuleRegistry. The functions a global has compiled hang off the executable,
     // so the next global compiles only the ones that none before it has called.
     static const IsolatedInternalModule* lookupInternalModule(JSC::VM&, uint32_t id);
-    static void insertInternalModule(JSC::VM&, uint32_t id, const JSC::SourceCode&, JSC::UnlinkedFunctionExecutable*);
+    static void insertInternalModule(JSC::VM&, uint32_t id, const JSC::SourceCode&, JSC::UnlinkedFunctionExecutable&);
 
     // For callers that run some time after their lookup, or without one: the
     // answer of the transpiler's thread, which another fetch of the key may

@@ -17,7 +17,6 @@ use bun_ast::Index;
 use bun_core::{string_joiner::StringJoiner, strings};
 use bun_sourcemap as source_map;
 
-use crate::analyze_transpiled_module;
 use crate::bun_css;
 use crate::bun_fs;
 
@@ -1175,11 +1174,6 @@ pub struct JavaScriptChunk {
     ///
     /// Mutated while sorting chunks in `computeChunks`
     pub(crate) css_chunks: Box<[u32]>,
-
-    /// Serialized ModuleInfo for ESM bytecode (--compile --bytecode --format=esm)
-    pub(crate) module_info_bytes: Option<Box<[u8]>>,
-    /// Unserialized ModuleInfo for deferred serialization (after chunk paths are resolved)
-    pub(crate) module_info: Option<Box<analyze_transpiled_module::ModuleInfo>>,
 }
 
 pub struct CssChunk<'a> {

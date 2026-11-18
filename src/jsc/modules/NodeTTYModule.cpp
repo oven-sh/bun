@@ -2,6 +2,10 @@
 
 #include "NodeTTYModule.h"
 
+#if !OS(WINDOWS)
+#include <unistd.h>
+#endif
+
 using namespace JSC;
 
 namespace Zig {

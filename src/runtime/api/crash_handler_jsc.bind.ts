@@ -17,7 +17,7 @@ export const crashHandler = b.namespace({
   segfaultHoldingThreadSuspendLock: { length: 1 },
   segfaultInDll: { length: 1 },
   panic: { length: 1 },
-  rustPanic: { length: 1 },
+  rustPanic: { args: { padding: b.u32.default(0) }, length: 1 },
   stackOverflow: { length: 1 },
   rootError: { length: 1 },
   outOfMemory: { length: 1 },

@@ -537,10 +537,7 @@ pub fn start_node_inspector_server(url: &mut BunString, wait_for_connection: boo
         return false;
     }
 
-    // Install Bun's controller before any yield can let a client
-    // connectFrontend() to JSC's default one; the waiting path's later call
-    // from wait_for_debugger_if_necessary is then a bunControllerInstalled
-    // no-op that only handles the block.
+    // Console messages are kept for a frontend from here on.
     Bun__ensureDebugger(dbg.script_execution_context_id.get(), false);
 
     true

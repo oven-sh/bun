@@ -292,7 +292,6 @@ fn collect_client_files(outputs: Vec<OutputFile>) -> Vec<OutputFile> {
                     new_positions[file.source_map_index as usize].unwrap_or(NO_OUTPUT_FILE);
             }
             file.bytecode_index = NO_OUTPUT_FILE;
-            file.module_info_index = NO_OUTPUT_FILE;
             file
         })
         .collect()
@@ -340,8 +339,8 @@ mod tests {
             ),
             output(b"logo.svg", OutputKind::Asset, None, NO_OUTPUT_FILE),
             output(
-                b"graph",
-                OutputKind::PrelinkedModuleGraph,
+                b"strings",
+                OutputKind::BytecodeStringTable,
                 None,
                 NO_OUTPUT_FILE,
             ),
@@ -360,12 +359,10 @@ mod tests {
         let side = Some(Side::Client);
         let mut chunk = output(b"client.js", OutputKind::Chunk, side, NO_OUTPUT_FILE);
         chunk.bytecode_index = 4;
-        chunk.module_info_index = 5;
 
         let kept = collect_client_files(vec![chunk]);
 
         assert_eq!(kept[0].bytecode_index, NO_OUTPUT_FILE);
-        assert_eq!(kept[0].module_info_index, NO_OUTPUT_FILE);
     }
 
     #[test]

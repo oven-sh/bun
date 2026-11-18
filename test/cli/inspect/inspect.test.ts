@@ -454,6 +454,51 @@ describe("unix domain socket without websocket", () => {
       const path = randomSocketPath();
       await runTest(path, [], { ...bunEnv, BUN_INSPECT: "unix:" + path });
     });
+
+    test("messages that arrive along with one that pauses are handled during the pause", async () => {
+      const path = randomSocketPath();
+      const requests = [
+        { method: "Debugger.enable" },
+        { method: "Debugger.setBreakpointsActive", params: { active: true } },
+        { method: "Debugger.setPauseOnDebuggerStatements", params: { enabled: true } },
+        { method: "Runtime.evaluate", params: { expression: "debugger" } },
+        { method: "Debugger.resume" },
+      ].map((request, id) => Buffer.from(JSON.stringify({ id, ...request })));
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      const seen: (string | number)[] = [];
+      const framer = new SocketFramer(text => {
+        const { id, method } = JSON.parse(text);
+        if (method === "Debugger.scriptParsed") return;
+        seen.push(method ?? id);
+        if (id === 3) resolve();
+      });
+
+      using listener = Bun.listen({
+        unix: path,
+        socket: {
+          open: socket => {
+            const framed = requests.flatMap(request => {
+              const length = Buffer.alloc(4);
+              length.writeUInt32BE(request.length);
+              return [length, request];
+            });
+            socket.write(Buffer.concat(framed));
+          },
+          data: (socket, bytes) => framer.onData(socket, bytes),
+          error: (_, error) => reject(error),
+          close: () => reject(new Error("closed")),
+        },
+      });
+
+      await using inspectee = spawn({
+        cmd: [bunExe(), "--inspect=unix:" + path, "-e", "setInterval(() => {}, 1000)"],
+        env: bunEnv,
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      await promise;
+      expect(seen).toEqual([0, 1, 2, "Debugger.paused", 4, "Debugger.resumed", 3]);
+    });
   }
 });
 

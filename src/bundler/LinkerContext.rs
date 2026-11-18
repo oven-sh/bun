@@ -27,7 +27,6 @@ use bun_ast::{
 use crate::Index;
 use bun_ast::{E, G, S};
 use bun_js_parser::lexer as lex;
-use bun_js_parser::parse::parse_entry::{ModuleSyntax, parse_only_text};
 use bun_js_printer::{self as js_printer, renamer};
 
 use crate::bun_node_fallbacks as NodeFallbackModules;
@@ -501,7 +500,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
         }
     }
 
-    /// Whether `chunk` is one that bytecode (and, in an executable, module info) is made for. The output file list
+    /// Whether `chunk` is one that bytecode is made for. The output file list
     /// counts those files with this before they are made (`OutputFileList::calculate_output_file_list_capacity`).
     pub(crate) fn chunk_gets_bytecode(&self, chunk: &Chunk) -> bool {
         // The CSS chunk of a JavaScript entry point has that entry point's loader.
@@ -969,7 +968,6 @@ pub(crate) struct LinkerOptions<'l> {
     /// See `CompileTargetBuiltins::Target`.
     pub(crate) target_builtins: Option<&'l [u8]>,
     pub(crate) bytecode_depth: u32,
-    pub(crate) optimize_bytecode: bool,
     pub(crate) output_format: Format,
     pub(crate) ignore_dce_annotations: bool,
     pub(crate) emit_dce_annotations: bool,
@@ -1010,7 +1008,6 @@ impl<'l> LinkerOptions<'l> {
                 _ => None,
             },
             bytecode_depth: options.bytecode_depth,
-            optimize_bytecode: options.optimize_bytecode,
             output_format: options.output_format,
             ignore_dce_annotations: options.ignore_dce_annotations,
             emit_dce_annotations: options.emit_dce_annotations,
@@ -1038,31 +1035,6 @@ impl<'l> LinkerOptions<'l> {
             mode: LinkerOptionsMode::Bundle,
             public_path: &options.public_path,
         }
-    }
-
-    /// ESM bytecode in a `--compile` build: JSC does not parse the chunk, so
-    /// its `JSModuleRecord` is built from a `ModuleInfo` the linker records
-    /// while printing (see `post_process_js_chunk`).
-    pub(crate) fn generates_module_info(&self) -> bool {
-        self.generate_bytecode_cache
-            && self.output_format == Format::Esm
-            && self.compile_mode.is_executable()
-    }
-
-    /// Returns the module-record flags for `--banner` and `--footer`, which the printer never sees.
-    pub(crate) fn raw_text_module_syntax(&self) -> ModuleSyntax {
-        let mut syntax = ModuleSyntax::default();
-        for text in [self.banner, self.footer] {
-            if text.is_empty() {
-                continue;
-            }
-            if let Some(piece) = parse_only_text(text, true, false, |parsed| parsed.module_syntax())
-            {
-                syntax.import_meta |= piece.import_meta;
-                syntax.top_level_await |= piece.top_level_await;
-            }
-        }
-        syntax
     }
 }
 
@@ -1701,7 +1673,6 @@ impl<'a> LinkerContext<'_, 'a> {
         runtime_require_ref: Option<Ref>,
         source_index: Index,
         source: &Source,
-        module_info: Option<&mut crate::analyze_transpiled_module::ModuleInfo>,
     ) -> js_printer::PrintResult {
         let parts_to_print = &[Part {
             stmts: bun_ast::StoreSlice::new_mut(out_stmts),
@@ -1768,7 +1739,6 @@ impl<'a> LinkerContext<'_, 'a> {
                 None
             },
             mangled_props: Some(&self.mangled_props),
-            module_info,
             ..Default::default()
         };
 

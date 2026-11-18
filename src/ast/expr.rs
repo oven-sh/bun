@@ -2827,13 +2827,5 @@ pub fn string_to_equivalent_number_value(str: &[u8]) -> f64 {
     if !bun_core::is_all_ascii(str) {
         return f64::NAN;
     }
-    unsafe extern "C" {
-        // NOT `safe fn`: callee dereferences `ptr` for `len` bytes — caller must
-        // guarantee the (ptr,len) pair is a valid readable range.
-        fn JSC__jsToNumber(ptr: *const u8, len: usize) -> f64;
-    }
-    // SAFETY: `str` is a live `&[u8]`, so `as_ptr()` is non-null and readable for
-    // exactly `str.len()` bytes for the duration of this call; the C++ side reads
-    // only (no mutation, no retention past return).
-    unsafe { JSC__jsToNumber(str.as_ptr(), str.len()) }
+    bun_engine_number::string_to_number(bun_engine_text::Text::Latin1(str))
 }

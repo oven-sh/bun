@@ -28,13 +28,11 @@
 #include "headers.h"
 
 #include "BunClientData.h"
-#include "GCDefferalContext.h"
 #include "WebCoreJSBuiltins.h"
 
 #include "JavaScriptCore/AggregateError.h"
 #include "JavaScriptCore/ArrayBufferView.h"
 #include "JavaScriptCore/ArrayStorage.h"
-#include "JavaScriptCore/SourceProviderCache.h"
 #include "JavaScriptCore/SparseArrayValueMap.h"
 #include "JavaScriptCore/BytecodeIndex.h"
 #include "JavaScriptCore/CodeBlock.h"
@@ -102,7 +100,6 @@
 #include "JavaScriptCore/ScriptExecutable.h"
 #include "JavaScriptCore/StackFrame.h"
 #include "JavaScriptCore/StackVisitor.h"
-#include "JavaScriptCore/TypedArrayController.h"
 #include "JavaScriptCore/VM.h"
 #include "JavaScriptCore/WasmFaultSignalHandler.h"
 #include "ZigGlobalObject.h"
@@ -119,22 +116,7 @@
 #include "wtf/text/StringView.h"
 #include "wtf/text/WTFString.h"
 #include "wtf/PlainGregorianDateTime.h"
-#include "JavaScriptCore/IntlObject.h"
-#include "JavaScriptCore/ISO8601.h"
-#include "JavaScriptCore/JSCTimeZone.h"
-#include "JavaScriptCore/InstantCore.h"
-#include "JavaScriptCore/TemporalCoreTypes.h"
-#include "JavaScriptCore/TemporalDuration.h"
-#include "JavaScriptCore/TemporalEnums.h"
-#include "JavaScriptCore/TemporalInstant.h"
-#include "JavaScriptCore/TemporalPlainDate.h"
-#include "JavaScriptCore/TemporalPlainDateTime.h"
-#include "JavaScriptCore/TemporalPlainMonthDay.h"
-#include "JavaScriptCore/TemporalPlainTime.h"
-#include "JavaScriptCore/TemporalPlainYearMonth.h"
-#include "JavaScriptCore/TemporalZonedDateTime.h"
 #include "JavaScriptCore/TemporalObject.h"
-#include "JavaScriptCore/TimeZoneICUBridge.h"
 
 #include "JavaScriptCore/FunctionPrototype.h"
 #include "JSFetchHeaders.h"
@@ -334,11 +316,8 @@ extern "C" __attribute__((minsize)) JSC::EncodedJSValue ExpectStringMatching__co
     auto scope = DECLARE_THROW_SCOPE(vm);
     String source = JSValue::decode(encodedSource).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    RegExp* regExp = RegExp::create(vm, source, {});
-    if (!regExp->isValid()) {
-        throwException(globalObject, scope, regExp->errorToThrow(globalObject));
-        return {};
-    }
+    RegExp* regExp = RegExp::create(globalObject, source, {});
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(RegExpObject::create(vm, globalObject->regExpStructure(), regExp));
 }
 
@@ -711,7 +690,7 @@ static ALWAYS_INLINE bool mayHaveAsymmetricMatchMethod(JSGlobalObject* globalObj
     if (!structure->hasMonoProto() || structure->storedPrototype() != JSValue(globalObject->objectPrototype()))
         return true;
     auto* name = WebCore::builtinNames(globalObject->vm()).asymmetricMatchPublicName().impl();
-    return !structure->seenProperties().ruleOut(CompactPtr<UniquedStringImpl>::encode(name));
+    return !structure->rulesOut(name);
 }
 
 // Values with the same structure both have the method or both don't, and two matchers are compared as plain objects.
@@ -988,38 +967,43 @@ static bool isWellKnownConstructor(JSValue value)
     JSCell* cell = value.asCell();
     if (cell->type() != InternalFunctionType && cell->type() != JSFunctionType)
         return false;
-    const ClassInfo* info = cell->classInfo();
-    return info == JSC::ObjectConstructor::info()
-        || info == JSC::ArrayConstructor::info()
-        || info == JSC::FunctionConstructor::info()
-        || info == JSC::RegExpConstructor::info()
-        || info == JSC::JSPromiseConstructor::info()
-        || info == JSC::StringConstructor::info()
-        || info == JSC::SymbolConstructor::info()
-        || info == JSC::BigIntConstructor::info()
-        || info == JSC::BooleanConstructor::info()
-        || info == JSC::NumberConstructor::info()
-        || info == JSC::DateConstructor::info()
-        || info == JSC::ErrorConstructor::info()
-        || info == JSC::MapConstructor::info()
-        || info == JSC::SetConstructor::info()
-        || info == JSC::WeakMapConstructor::info()
-        || info == JSC::WeakSetConstructor::info()
-        || info == JSC::JSArrayBufferConstructor::info()
-        || info == JSC::JSInt8ArrayConstructor::info()
-        || info == JSC::JSInt16ArrayConstructor::info()
-        || info == JSC::JSInt32ArrayConstructor::info()
-        || info == JSC::JSUint8ArrayConstructor::info()
-        || info == JSC::JSUint8ClampedArrayConstructor::info()
-        || info == JSC::JSUint16ArrayConstructor::info()
-        || info == JSC::JSUint32ArrayConstructor::info()
-        || info == JSC::JSFloat16ArrayConstructor::info()
-        || info == JSC::JSFloat32ArrayConstructor::info()
-        || info == JSC::JSFloat64ArrayConstructor::info()
-        || info == JSC::JSBigInt64ArrayConstructor::info()
-        || info == JSC::JSBigUint64ArrayConstructor::info()
-        || info == JSC::JSDataViewConstructor::info()
-        || info == WebCore::JSBufferConstructor::info();
+    if (cell->classInfo() == WebCore::JSBufferConstructor::info())
+        return true;
+    using namespace Engine::RealmSlot;
+    static constexpr uint16_t slots[] = {
+        object_constructor,
+        array_constructor,
+        function_constructor,
+        regexp_constructor,
+        promise_constructor,
+        string_constructor,
+        symbol_constructor,
+        bigint_constructor,
+        boolean_constructor,
+        number_constructor,
+        date_constructor,
+        error_constructor,
+        map_constructor,
+        set_constructor,
+        weak_map_constructor,
+        weak_set_constructor,
+        array_buffer_constructor,
+        int8_array_constructor,
+        int16_array_constructor,
+        int32_array_constructor,
+        uint8_array_constructor,
+        uint8_clamped_array_constructor,
+        uint16_array_constructor,
+        uint32_array_constructor,
+        float16_array_constructor,
+        float32_array_constructor,
+        float64_array_constructor,
+        bigint64_array_constructor,
+        biguint64_array_constructor,
+        data_view_constructor,
+    };
+    auto* realm = asObject(cell)->realmMayBeNull();
+    return realm && std::ranges::any_of(slots, [&](uint16_t slot) { return realm->eagerSlot<JSCell>(slot) == cell; });
 }
 
 extern "C" bool Bun__VM__isRunningVitestEntry(void* bunVM);
@@ -1579,18 +1563,6 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     return true;
 }
 
-static bool isTemporalObject(JSC::JSObject* object)
-{
-    return object->inherits<JSC::TemporalInstant>()
-        || object->inherits<JSC::TemporalPlainDate>()
-        || object->inherits<JSC::TemporalPlainDateTime>()
-        || object->inherits<JSC::TemporalPlainTime>()
-        || object->inherits<JSC::TemporalZonedDateTime>()
-        || object->inherits<JSC::TemporalPlainYearMonth>()
-        || object->inherits<JSC::TemporalPlainMonthDay>()
-        || object->inherits<JSC::TemporalDuration>();
-}
-
 // Temporal objects keep their state in internal slots and have no own
 // properties, so the generic own-property walk would call any two instances
 // of a class equal. Compare the internal fields instead, the way JSDateType
@@ -1598,50 +1570,9 @@ static bool isTemporalObject(JSC::JSObject* object)
 // object.
 static std::optional<bool> temporalObjectsDequal(JSC::JSObject* o1, JSC::JSObject* o2)
 {
-    if (auto* instant1 = dynamicDowncast<JSC::TemporalInstant>(o1)) {
-        auto* instant2 = dynamicDowncast<JSC::TemporalInstant>(o2);
-        return instant2 && instant1->exactTime() == instant2->exactTime();
-    }
-    if (auto* date1 = dynamicDowncast<JSC::TemporalPlainDate>(o1)) {
-        auto* date2 = dynamicDowncast<JSC::TemporalPlainDate>(o2);
-        return date2 && date1->plainDate() == date2->plainDate() && date1->calendarID() == date2->calendarID();
-    }
-    if (auto* dateTime1 = dynamicDowncast<JSC::TemporalPlainDateTime>(o1)) {
-        auto* dateTime2 = dynamicDowncast<JSC::TemporalPlainDateTime>(o2);
-        return dateTime2 && dateTime1->plainDate() == dateTime2->plainDate() && dateTime1->plainTime() == dateTime2->plainTime() && dateTime1->calendarID() == dateTime2->calendarID();
-    }
-    if (auto* time1 = dynamicDowncast<JSC::TemporalPlainTime>(o1)) {
-        auto* time2 = dynamicDowncast<JSC::TemporalPlainTime>(o2);
-        return time2 && time1->plainTime() == time2->plainTime();
-    }
-    if (auto* zoned1 = dynamicDowncast<JSC::TemporalZonedDateTime>(o1)) {
-        auto* zoned2 = dynamicDowncast<JSC::TemporalZonedDateTime>(o2);
-        return zoned2 && zoned1->exactTime() == zoned2->exactTime() && zoned1->timeZone() == zoned2->timeZone() && zoned1->calendarID() == zoned2->calendarID();
-    }
-    if (auto* yearMonth1 = dynamicDowncast<JSC::TemporalPlainYearMonth>(o1)) {
-        auto* yearMonth2 = dynamicDowncast<JSC::TemporalPlainYearMonth>(o2);
-        return yearMonth2 && yearMonth1->plainYearMonth() == yearMonth2->plainYearMonth() && yearMonth1->calendarID() == yearMonth2->calendarID();
-    }
-    if (auto* monthDay1 = dynamicDowncast<JSC::TemporalPlainMonthDay>(o1)) {
-        auto* monthDay2 = dynamicDowncast<JSC::TemporalPlainMonthDay>(o2);
-        return monthDay2 && monthDay1->plainMonthDay() == monthDay2->plainMonthDay() && monthDay1->calendarID() == monthDay2->calendarID();
-    }
-    if (auto* duration1 = dynamicDowncast<JSC::TemporalDuration>(o1)) {
-        auto* duration2 = dynamicDowncast<JSC::TemporalDuration>(o2);
-        if (!duration2)
-            return false;
-        // Field-wise: PT1H and PT60M are different Duration values.
-        for (size_t i = 0; i < JSC::numberOfTemporalUnits; i++) {
-            if (duration1->duration()[i] != duration2->duration()[i])
-                return false;
-        }
-        return true;
-    }
-    // `o1` is not a Temporal object; a Temporal `o2` can then never be equal
-    // (and must not reach the own-property walk).
-    if (isTemporalObject(o2))
-        return false;
-    return std::nullopt;
+    if (JSC::temporalType(o1) == JSC::TemporalType::None && JSC::temporalType(o2) == JSC::TemporalType::None)
+        return std::nullopt;
+    return JSC::temporalObjectsHoldTheSame(o1, o2);
 }
 
 // A KeyObject or CryptoKey keeps its key in an internal slot and has no own properties
@@ -1790,7 +1721,7 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
                 return false;
             }
 
-            if (left->regExp()->key() != right->regExp()->key()) {
+            if (left->regExp()->flags() != right->regExp()->flags() || left->regExp()->pattern() != right->regExp()->pattern()) {
                 return false;
             }
             if (mode.checkPrototypes) {
@@ -1845,12 +1776,6 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
 
             // Vitest compares the causes only if the expected error has one, and the `errors` of an AggregateError.
             bool isLikeVitest = mode.enableAsymmetricMatchers && Bun__VM__isRunningVitestEntry(bunVM(globalObject));
-
-            if (mode.isStrict && !isLikeVitest) {
-                if (left->runtimeTypeForCause() != right->runtimeTypeForCause()) {
-                    return false;
-                }
-            }
 
             VM& vm = JSC::getVM(globalObject);
 
@@ -2106,10 +2031,7 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
         return true;
     }
     case JSFunctionType:
-    case InternalFunctionType:
-    case CompiledClosureType:
-    case SlimClosureType:
-    case SlimClosureWithPropertiesType: {
+    case InternalFunctionType: {
         return false;
     }
 
@@ -2430,9 +2352,6 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
     case StringObjectType:
     case JSFunctionType:
     case InternalFunctionType:
-    case CompiledClosureType:
-    case SlimClosureType:
-    case SlimClosureWithPropertiesType:
     case JSAsJSONType:
     case JSDOMWrapperType:
     case GlobalObjectType:
@@ -2615,10 +2534,10 @@ bool Bun__deepMatch(
     // arrays should match exactly
     bool objIsArray = isArray(globalObject, objValue);
     RETURN_IF_EXCEPTION(throwScope, false);
-    bool subsetIsArray = objIsArray && isArray(globalObject, subsetValue);
+    bool subsetIsArray = isArray(globalObject, subsetValue);
     RETURN_IF_EXCEPTION(throwScope, false);
     if (subsetIsArray) {
-        if (obj->getArrayLength() != subsetObj->getArrayLength()) {
+        if (!objIsArray || obj->getArrayLength() != subsetObj->getArrayLength()) {
             return false;
         }
         PropertyNameArrayBuilder objProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
@@ -3474,8 +3393,7 @@ bool JSC__JSFunction__getSourceCode(JSC::EncodedJSValue JSValue0, BunString* out
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     if (JSC::JSFunction* func = dynamicDowncast<JSC::JSFunction>(value)) {
-        auto* sourceCode = func->sourceCode();
-        if (sourceCode != nullptr) { // native functions have no source code
+        if (auto sourceCode = func->sourceCode()) { // native functions have no source code
             *outSourceCode = Bun::toStringRef(sourceCode->view().toString()).leak();
             return true;
         }
@@ -3567,14 +3485,10 @@ void JSC__VM__collectAsyncIdle(JSC::VM* vm)
     auto* clientData = WebCore::clientData(*vm);
     JSC::GCRequest request(JSC::CollectionScope::Full);
     request.isIdle = true;
-    // See Bun__JSC_onBeforeWait. The end phase may run on the collector thread while the JS thread is parked, and the
-    // epilogue that sweeps what the collection freed runs when the JS thread takes heap access back: wake it for that. A
-    // request with this hook is never coalesced into another, so the count always comes back down.
+    // A request with this hook is never coalesced into another, so the count always comes back down.
     if (!clientData->idleCollectionDidFinish) {
-        clientData->idleCollectionDidFinish = createSharedTask<void()>([vm, clientData] {
+        clientData->idleCollectionDidFinish = createSharedTask<void()>([clientData] {
             clientData->idleCollectionsPending.fetch_sub(1);
-            if (!vm->currentThreadIsHoldingAPILock())
-                Bun__VmHandle__wake(clientData->vmHandle.get());
         });
     }
     request.didFinishEndPhase = clientData->idleCollectionDidFinish;
@@ -3896,53 +3810,14 @@ static_assert(JSC::JSString::offsetOfValue() == 8 && JSC::JSString::isRopeInPoin
 static_assert(JSC::JSRopeString::offsetOfLength() == 16 && JSC::JSRopeString::offsetOfFiber1Lower() == 20 && JSC::JSRopeString::offsetOfFiber2() == 24 && JSC::JSRopeString::offsetOfFiber2Lower() == 26 && sizeof(JSC::JSRopeString) == 32, "JSRopeString's fibers are mirrored in src/jsc/JSString.rs");
 static_assert(JSC::JSRopeString::CompactFibers::addressMask <= (1ULL << 48) - 1 && JSC::JSRopeString::CompactFibers::shiftOfFiber2InUpperWord == 16, "JSRopeString's fibers are mirrored in src/jsc/JSString.rs");
 static_assert(JSC::JSString::MaxLength == std::numeric_limits<int32_t>::max(), "JSString::MaxLength is mirrored in src/jsc/JSString.rs");
-static_assert(WTF::StringImpl::lengthMemoryOffset() == 4 && WTF::StringImpl::dataOffset() == 8 && WTF::StringImpl::flagsOffset() == 16 && WTF::StringImpl::flagIs8Bit() == 4, "StringImpl is mirrored in src/bun_alloc/lib.rs");
-static_assert(WTF::StringImpl::flagIsAtom() == 16 && WTF::StringImpl::flagIsSymbol() == 32 && WTF::StringImpl::refCountOfStaticString() == 1, "StringImpl's flags are mirrored in src/bun_alloc/lib.rs");
 static_assert(JSC::JSValue::ValueEmpty == 0 && JSC::JSValue::ValueNull == 0x2 && JSC::JSValue::ValueDeleted == 0x4 && JSC::JSValue::ValueFalse == 0x6 && JSC::JSValue::ValueTrue == 0x7 && JSC::JSValue::ValueUndefined == 0xa, "JSValue's immediates are mirrored in src/jsc/JSValue.rs and src/runtime/ffi/FFI.h");
 static_assert(JSC::JSValue::NumberTag == 0xfffe000000000000ll && JSC::JSValue::NotCellMask == 0xfffe000000000002ll && JSC::JSValue::DoubleEncodeOffset == 1ll << 49 && JSC::PNaNAsBits == 0x7ff8000000000000ull, "JSValue's number encoding is mirrored in src/jsc/JSValue.rs and src/runtime/ffi/FFI.h");
 static_assert(JSC::JSCell::typeInfoTypeOffset() == 5, "JSCell::m_type is read by JSValue::js_type in src/jsc/JSValue.rs");
 static_assert(static_cast<int>(JSC::CallFrameSlot::firstArgument) == 6, "CallFrameSlot::firstArgument is mirrored in src/jsc/sizes.rs");
-static_assert(sizeof(WTF::NumberToStringBuffer) == 124, "NumberToStringBuffer is mirrored in src/bun_core/fmt.rs");
 
-// Whether the next cell of `space` comes off the free list.
-static ALWAYS_INLINE bool nextCellIsOnFreeList(JSC::GCClient::IsoSubspace& space)
-{
-    auto* allocator = space.allocatorFor(0, JSC::AllocatorForMode::AllocatorIfExists).localAllocator();
-    auto* freeList = std::bit_cast<char*>(allocator) + JSC::LocalAllocator::offsetOfFreeList();
-    return *std::bit_cast<char**>(freeList + JSC::FreeList::offsetOfIntervalStart()) < *std::bit_cast<char**>(freeList + JSC::FreeList::offsetOfIntervalEnd());
-}
-
-static NEVER_INLINE JSC::JSString* substringOfResolvedSlow(JSC::VM& vm, JSC::JSString* string, uint32_t offset, uint32_t length)
-{
-    return JSC::jsSubstringOfResolved(vm, string, offset, length);
-}
-
-// `string` is no rope. `isPart`: the substring is not all of it.
-static ALWAYS_INLINE JSC::JSString* substringOfResolved(JSC::VM& vm, JSC::JSString* string, uint32_t offset, uint32_t length, bool isPart)
-{
-    ASSERT(!string->isRope());
-    ASSERT(!isPart || length < string->length());
-    if (length > 2 && nextCellIsOnFreeList(vm.ropeStringSpace())) [[likely]] {
-        if (string->isSubstring())
-            __builtin_unreachable();
-        if (auto* text = string->tryGetValueImpl(); isPart && (!text || text->length() == length))
-            __builtin_unreachable();
-        [[clang::always_inline]] return JSC::jsSubstringOfResolved(vm, nullptr, string, offset, length);
-    }
-    if (!length)
-        return vm.smallStrings.emptyString();
-    if (length == 1) {
-        if (auto character = (*string->tryGetValueImpl())[offset]; character <= JSC::maxSingleCharacterString)
-            return vm.smallStrings.singleCharacterString(character);
-    }
-    // Those of two characters have a cache.
-    return substringOfResolvedSlow(vm, string, offset, length);
-}
-
-// The substring is not all of `string`.
 extern "C" JSC::EncodedJSValue JSC__JSString__substringOfResolved(JSC::JSString* string, JSC::JSGlobalObject* globalObject, uint32_t offset, uint32_t length)
 {
-    return JSC::JSValue::encode(substringOfResolved(JSC::getVM(globalObject), string, offset, length, true));
+    return JSC::JSValue::encode(JSC::jsSubstringOfResolved(JSC::getVM(globalObject), string, offset, length));
 }
 
 // `ranges` holds an offset and a length for each of the `count` substrings. The collector finds them in the frame of the caller.
@@ -3950,7 +3825,7 @@ extern "C" void JSC__JSString__substringsOfResolved(JSC::JSString* string, JSC::
 {
     JSC::VM& vm = JSC::getVM(globalObject);
     for (size_t i = 0; i < count; ++i)
-        substrings[i] = JSC::JSValue::encode(substringOfResolved(vm, string, ranges[2 * i], ranges[2 * i + 1], false));
+        substrings[i] = JSC::JSValue::encode(JSC::jsSubstringOfResolved(vm, string, ranges[2 * i], ranges[2 * i + 1]));
 }
 
 // At most `capacity` of them. A rope is not resolved: nothing is allocated in the heap and nothing is thrown.
@@ -3964,6 +3839,20 @@ extern "C" uint32_t JSC__JSString__firstCharacters(const JSC::JSString* string, 
             characters[count++] = leaf[i];
     }
     return count;
+}
+
+// False if there is another character than ASCII, or `length` is not that of the string. A rope is not resolved.
+extern "C" bool JSC__JSString__copyIfASCII(const JSC::JSString* string, Latin1Character* characters, size_t length)
+{
+    if (!string->is8Bit() || string->length() != length)
+        return false;
+    for (JSC::JSRopeString::LeafIterator leaves { string }; !leaves.isAtEnd();) {
+        auto leaf = leaves.next().span8();
+        if (!WTF::charactersAreAllASCII(leaf))
+            return false;
+        characters = std::ranges::copy(leaf, characters).out;
+    }
+    return true;
 }
 
 extern "C" JSC::EncodedJSValue JSC__JSString__singleLatin1Character(JSC::JSGlobalObject* globalObject, uint8_t character)
@@ -4108,83 +3997,41 @@ bool JSC__JSValue__asArrayBuffer(
 
 // Pin/unpin the storage behind a JSArrayBuffer or JSArrayBufferView so it
 // cannot move or be freed while a native borrower holds a slice into it.
-// SharedArrayBuffer is never detachable and never moves, so it is left
-// unpinned rather than rejected. Returns false if `value` has no storage.
+// Returns false if `value` has no storage.
 //
-// A pin does not make detaching fail, it makes it copy. `pin()` clears
-// `ArrayBuffer::isDetachable()`, and `ArrayBuffer::transferTo()` answers an
-// undetachable buffer by copying the bytes into the destination and reporting
-// success (`if (!isDetachable()) m_contents.copyTo(result)`). So while a borrow
-// is live, `ab.transfer()`, `structuredClone(v, { transfer: [ab] })` and
+// A pin does not make detaching fail, it makes it copy. While a borrow is
+// live, `ab.transfer()`, `structuredClone(v, { transfer: [ab] })` and
 // `port.postMessage(v, [ab])` each return normally, give the destination an
 // independent copy, and leave `ab` attached; the bytes being read never move.
 //
-// A view with no ArrayBuffer yet (`Buffer.allocUnsafeSlow`, `new Uint8Array(n)`
-// past fastSizeLimit: OversizeTypedArray) is held, not adopted: materializing
-// an ArrayBuffer just to pin it registers the bytes with the heap a second
-// time and, because ArrayBuffers are only reclaimed by full collections,
-// turns every threadpool fs/zlib/crypto op over a fresh Buffer into full-GC
-// pressure. Such a view cannot be detached without JS first touching
-// `.buffer`. Known gap: if JS does that mid-op, the new ArrayBuffer is
-// unpinned, so `transfer(0)` frees the storage at once and a same-length
-// `transfer()` frees it when the new owner is collected.
-// The caller keeps the returned kind and only calls unpin for `Pinned`; a
-// held view is kept alive by the caller's own root, and nothing here needs
-// undoing for it.
-enum class PinKind : uint8_t { None = 0,
-    Pinned = 1,
-    Held = 2 };
-static PinKind pinStorage(JSC::JSValue value)
+// A large view that has no ArrayBuffer yet does not get one for this. One that
+// JS asks for later can be detached, and the bytes stay until they are unpinned.
+CPP_DECL bool JSC__JSValue__pinArrayBuffer(JSC::EncodedJSValue v)
 {
-    JSC::ArrayBuffer* buf = nullptr;
-    if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value))
-        buf = jb->impl();
-    else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
-        if (view->isDetached())
-            return PinKind::None;
-        if (!view->hasArrayBuffer() && view->mode() == JSC::OversizeTypedArray)
-            return PinKind::Held;
-        buf = view->possiblySharedBuffer();
-    }
-    if (!buf || buf->isDetached())
-        return PinKind::None;
-    if (!buf->isShared())
-        buf->pin();
-    return PinKind::Pinned;
+    auto value = JSC::JSValue::decode(v);
+    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value))
+        return !view->isDetached() && view->tryPin();
+    auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value);
+    if (!jb || jb->impl()->isDetached())
+        return false;
+    jb->impl()->pin();
+    return true;
 }
-CPP_DECL uint8_t JSC__JSValue__pinArrayBuffer(JSC::EncodedJSValue v)
-{
-    return static_cast<uint8_t>(pinStorage(JSC::JSValue::decode(v)));
-}
-// Only call this for a value that `pinStorage` returned `Pinned` for. That buffer still exists because pinned buffers can't be detached.
+// Only call this for a value that has been pinned. Reached from finalizers: these casts look at nothing but the JSType.
 CPP_DECL void JSC__JSValue__unpinArrayBuffer(JSC::EncodedJSValue v)
 {
-    // Reached from finalizers during GC sweep, where classInfo() (and so any
-    // dynamicDowncast) is forbidden; dispatch on JSType like JSC::Weak<T>::get().
     auto value = JSC::JSValue::decode(v);
-    if (!value.isCell())
-        return;
-    JSC::JSCell* cell = value.asCell();
-    JSC::JSType type = cell->type();
-    JSC::ArrayBuffer* buf = nullptr;
-    if (type == JSC::ArrayBufferType)
-        buf = static_cast<JSC::JSArrayBuffer*>(cell)->impl();
-    else if (type == JSC::DataViewType)
-        buf = static_cast<JSC::JSDataView*>(cell)->possiblySharedBuffer();
-    else if (JSC::isTypedArrayType(type)) {
-        auto* view = static_cast<JSC::JSArrayBufferView*>(cell);
-        if (JSC::isWastefulTypedArray(view->mode()))
-            buf = view->butterfly()->indexingHeader()->arrayBuffer();
-    }
-    if (buf && !buf->isShared())
-        buf->unpin();
+    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value))
+        view->unpin();
+    else if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value))
+        jb->impl()->unpin();
 }
 
 // Returns the ArrayBuffer that `value` already has, or null. Never materializes one.
 static ALWAYS_INLINE JSC::ArrayBuffer* existingArrayBuffer(JSC::JSValue value)
 {
     if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value))
-        return view->hasArrayBuffer() ? view->possiblySharedBuffer() : nullptr;
+        return view->existingBuffer();
     if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value))
         return jb->impl();
     return nullptr;
@@ -4205,7 +4052,6 @@ CPP_DECL bool JSC__JSValue__canBeFreedWhilePinned(JSC::EncodedJSValue v)
 
 // Returns the WebAssembly.Memory that `v` is a view of and sets `out_offset` to where `v` starts in it.
 // Returns empty if `v` isn't a view of a non-shared memory or that memory was collected.
-// A fixed-length buffer doesn't point to its memory, so this checks every live one.
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__findWasmMemory(JSC::EncodedJSValue v, size_t* out_offset)
 {
 #if ENABLE(WEBASSEMBLY)
@@ -4216,17 +4062,7 @@ CPP_DECL JSC::EncodedJSValue JSC__JSValue__findWasmMemory(JSC::EncodedJSValue v,
     auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value);
     *out_offset = view ? view->byteOffset() : 0;
 
-    auto* space = value.asCell()->vm().heap.webAssemblyMemorySpace<JSC::SubspaceAccess::OnMainThread>();
-    JSC::JSWebAssemblyMemory* found = nullptr;
-    // HeapIterationScope stops every allocator in the heap, which costs more than a read. Only this subspace's have to stop.
-    space->forEachDirectory([](JSC::BlockDirectory& directory) { directory.stopAllocating(); });
-    space->forEachLiveCell([&](JSC::HeapCell* cell, JSC::HeapCell::Kind) {
-        auto* memory = static_cast<JSC::JSWebAssemblyMemory*>(static_cast<JSC::JSCell*>(cell));
-        if (memory->basePointer() == buf->data())
-            found = memory;
-    });
-    space->forEachDirectory([](JSC::BlockDirectory& directory) { directory.resumeAllocating(); });
-    return JSC::JSValue::encode(found);
+    return JSC::JSValue::encode(JSC::JSWebAssemblyMemory::ownerOf(value.asCell()->vm(), *buf));
 #else
     UNUSED_PARAM(v);
     UNUSED_PARAM(out_offset);
@@ -4255,7 +4091,7 @@ CPP_DECL void JSC__JSValue__arrayBufferExtent(JSC::EncodedJSValue v, uint8_t** o
 #if ENABLE(WEBASSEMBLY)
     else if (auto* memory = dynamicDowncast<JSC::JSWebAssemblyMemory>(value)) {
         *out_ptr = static_cast<uint8_t*>(memory->basePointer());
-        *out_len = memory->memory().size();
+        *out_len = memory->size();
         return;
     }
 #endif
@@ -4263,48 +4099,26 @@ CPP_DECL void JSC__JSValue__arrayBufferExtent(JSC::EncodedJSValue v, uint8_t** o
     *out_len = 0;
 }
 
-// Borrow `v`'s byte storage for off-thread reading. Splits out only the
-// `FastTypedArray` case from `pinArrayBuffer`, because that's the one mode
-// where `possiblySharedBuffer()` actually COPIES data
-// (`ArrayBuffer::tryCreate(span())`) — and it's ≤ fastSizeLimit elements, so
-// the caller dupes instead. Every other mode goes through `pinStorage` (pin an
-// existing ArrayBuffer, hold an OversizeTypedArray without adopting it).
+// Borrow `v`'s byte storage for off-thread reading. Pinning a view whose
+// elements are in the heap would copy them into a new ArrayBuffer, and there
+// are at most fastSizeLimit of them, so the caller dupes those instead.
 //
 //   0  Detached/null — nothing to read.
-//   1  `FastTypedArray` — ≤ fastSizeLimit elements, GC-movable. Caller
-//      should dupe `out_ptr[0..out_len]`; no unpin.
-//   2  Pinned an existing ArrayBuffer; caller MUST `unpinArrayBuffer(v)`
-//      when done.
-//   3  Held: a bufferless OversizeTypedArray; nothing to unpin, caller roots
-//      the value for the duration as it already does for 2.
+//   1  In the heap. Caller should dupe `out_ptr[0..out_len]`; no unpin.
+//   2  Pinned; caller MUST `unpinArrayBuffer(v)` when done.
 //
 // `out_ptr`/`out_len` describe the VIEW's byte range (offset+length).
 CPP_DECL int32_t JSC__JSValue__borrowBytesForOffThread(JSC::EncodedJSValue v, const uint8_t** out_ptr, size_t* out_len)
 {
     auto value = JSC::JSValue::decode(v);
-    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
-        if (view->isDetached()) return 0;
-        if (view->mode() == JSC::FastTypedArray) {
-            *out_ptr = static_cast<const uint8_t*>(view->vector());
-            *out_len = view->byteLength();
-            return 1;
-        }
-        auto kind = pinStorage(view);
-        if (kind == PinKind::None) return 0;
-        *out_ptr = static_cast<const uint8_t*>(view->vector());
-        *out_len = view->byteLength();
-        return kind == PinKind::Held ? 3 : 2;
-    }
-    if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value)) {
-        auto* buf = jb->impl();
-        if (!buf || buf->isDetached()) return 0;
-        if (!buf->isShared())
-            buf->pin();
-        *out_ptr = static_cast<const uint8_t*>(buf->data());
-        *out_len = buf->byteLength();
-        return 2;
-    }
-    return 0;
+    auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value);
+    bool isInHeap = view && view->hasVectorInHeap();
+    if (!isInHeap && !JSC__JSValue__pinArrayBuffer(v))
+        return 0;
+    auto bytes = view ? view->span() : uncheckedDowncast<JSC::JSArrayBuffer>(value)->impl()->span();
+    *out_ptr = bytes.data();
+    *out_len = bytes.size();
+    return isInHeap ? 1 : 2;
 }
 
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__createEmptyArray(JSC::JSGlobalObject* arg0, size_t length)
@@ -4565,12 +4379,7 @@ bool JSC__JSValue__isAnyError(JSC::EncodedJSValue JSValue0)
 
     JSC::JSCell* cell = value.asCell();
     JSC::JSType type = cell->type();
-
-    if (type == JSC::CellType) {
-        return cell->inherits<JSC::Exception>();
-    }
-
-    return type == JSC::ErrorInstanceType;
+    return type == JSC::ExceptionType || type == JSC::ErrorInstanceType;
 }
 
 // This implementation closely mimics the one in JSC::JSPromise::reject
@@ -5516,7 +5325,7 @@ BunString JSC__JSValue__getNameProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlo
             return toStringAdopt(WTF::move(actualName));
         }
 
-        return Bun::toStringRef(function->jsExecutable()->name().string()).leak();
+        return Bun::toStringRef(function->jsExecutable()->name()).leak();
     }
 
     if (JSC::InternalFunction* function = dynamicDowncast<JSC::InternalFunction>(obj)) {
@@ -5565,14 +5374,13 @@ JSC::EncodedJSValue JSC__JSValue__toError_(JSC::EncodedJSValue JSValue0)
     case JSC::ErrorInstanceType:
         return JSC::JSValue::encode(value);
 
-    case JSC::CellType:
-        if (cell->inherits<JSC::Exception>()) {
-            JSC::Exception* exception = uncheckedDowncast<JSC::Exception>(cell);
-            // The VM's TerminationException wraps a bare string; it is not an error anyone should see as a value.
-            if (exception->vm().isTerminationException(exception))
-                return {};
-            return JSC::JSValue::encode(exception->value());
-        }
+    case JSC::ExceptionType: {
+        JSC::Exception* exception = uncheckedDowncast<JSC::Exception>(cell);
+        // The VM's TerminationException wraps a bare string; it is not an error anyone should see as a value.
+        if (exception->vm().isTerminationException(exception))
+            return {};
+        return JSC::JSValue::encode(exception->value());
+    }
     default: {
     }
     }
@@ -5582,21 +5390,8 @@ JSC::EncodedJSValue JSC__JSValue__toError_(JSC::EncodedJSValue JSValue0)
 
 #pragma mark - JSC::VM
 
-// A mitigation, not an exact fix: zeroes a fixed amount of dead stack between the heap iteration and the collection in
-// JSC__VM__runGC. Zeroing dead stack cannot free anything live; the worst it can do is not help.
-//
-// What it is for: deleteAllUnlinkedCodeBlocks() stops the allocators to iterate the heap, and prologues under
-// MarkedBlock::Handle::stopAllocating() spill a register holding a free list's sentinel (the address of the first cell
-// allocated from its last interval, plus 1). The collector's frames are then built over those words without writing
-// every slot, and the conservative scan covers those frames, so that one cell, dead or not, survives the collection.
-// Nothing leaks (the next collection frees it), but a test that expects Bun.gc(true) to collect an object it just
-// dropped fails: node-sqlite.test.ts did on x64 ASAN. It has not been seen in a release build.
-//
-// The sizes: only the stack between JSC__VM__runGC and callWithCurrentThreadState(), where the collector captures the
-// stack, is scanned. Measured on x64, that is 0.6 KB in a release build and 1.8 KB under ASAN; the sizes below are a
-// few times that and nothing derives them from the collector's frames. If such a test fails again after the collector's
-// call path grows, measure again. The fix without a constant is to capture the stack before
-// deleteAllUnlinkedCodeBlocks() and have the collection use that capture as its conservative roots.
+// The frames between JSC__VM__runGC and the collector are scanned conservatively and do not write all of their slots, so
+// they are built on zeros and not on what the calls before have left there.
 static NEVER_INLINE SUPPRESS_ASAN void clearStackBelowCaller()
 {
 #if ASAN_ENABLED || ASSERT_ENABLED
@@ -5620,23 +5415,17 @@ size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
 #endif
 
     vm->finalizeSynchronousJSExecution();
-
-    // A full collection only drops the caches that nothing has used since the one before it.
-    vm->sourceProviderCacheMap.clear();
+    clearStackBelowCaller();
 
     if (sync) {
-        vm->heap.deleteAllUnlinkedCodeBlocks(JSC::PreventCollectionAndDeleteAllCode);
-        // What the call above left on the stack must not be scanned by the collection below; see the helper's comment.
-        clearStackBelowCaller();
         vm->heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
 #if IS_MALLOC_DEBUGGING_ENABLED && OS(DARWIN)
         malloc_zone_pressure_relief(nullptr, 0);
 #endif
     } else {
-        vm->heap.deleteAllUnlinkedCodeBlocks(JSC::DeleteAllCodeIfNotCollecting);
-        clearStackBelowCaller();
         vm->heap.collectSync(JSC::CollectionScope::Full);
     }
+    vm->heap.deleteAllUnlinkedCodeBlocks(JSC::DeleteAllCodeIfNotCollecting);
 
     vm->finalizeSynchronousJSExecution();
 
@@ -5669,27 +5458,14 @@ void JSC__VM__holdAPILock(JSC::VM* arg0, void* ctx, void (*callback)(void* arg0)
     callback(ctx);
 }
 
-// The following two functions are copied 1:1 from JSLockHolder to provide a
-// new, more ergonomic binding for interacting with the lock from native code
-// https://github.com/WebKit/WebKit/blob/main/Source/JavaScriptCore/runtime/JSLock.cpp
-
 extern "C" void JSC__VM__getAPILock(JSC::VM* vm)
 {
-    // https://github.com/WebKit/WebKit/blob/6cb5017d237ef7cb898582a22f05acca22322845/Source/JavaScriptCore/runtime/JSLock.cpp#L67
     vm->apiLock().lock();
 }
 
 extern "C" void JSC__VM__releaseAPILock(JSC::VM* vm)
 {
-    // https://github.com/WebKit/WebKit/blob/6cb5017d237ef7cb898582a22f05acca22322845/Source/JavaScriptCore/runtime/JSLock.cpp#L72
-    RefPtr<JSLock> apiLock(&vm->apiLock());
-    apiLock->unlock();
-}
-
-void JSC__JSString__iterator(JSC::JSString* arg0, JSC::JSGlobalObject* arg1, void* arg2)
-{
-    jsstring_iterator* iter = (jsstring_iterator*)arg2;
-    arg0->value(iter);
+    vm->apiLock().unlock();
 }
 
 void JSC__VM__deleteAllCode(JSC::VM* arg1, JSC::JSGlobalObject* globalObject)
@@ -5769,14 +5545,6 @@ void JSC__VM__notifyNeedTermination(JSC::VM* arg0)
 {
     arg0->notifyNeedTermination();
 }
-void JSC__VM__notifyNeedDebuggerBreak(JSC::VM* arg0)
-{
-    (*arg0).notifyNeedDebuggerBreak();
-}
-void JSC__VM__notifyNeedShellTimeoutCheck(JSC::VM* arg0)
-{
-    (*arg0).notifyNeedShellTimeoutCheck();
-}
 
 NEVER_INLINE void JSC__VM__throwError(JSC::VM* vm_, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue encodedValue)
 {
@@ -5787,12 +5555,9 @@ NEVER_INLINE void JSC__VM__throwError(JSC::VM* vm_, JSC::JSGlobalObject* arg1, J
     ASSERT(!value.isEmpty()); // can't throw an empty value.
 
     // This case can happen if we did not call .toError() on a JSValue.
-    if (value.isCell()) {
-        JSC::JSCell* cell = value.asCell();
-        if (cell->type() == JSC::CellType && cell->inherits<JSC::Exception>()) {
-            scope.throwException(arg1, uncheckedDowncast<JSC::Exception>(value));
-            return;
-        }
+    if (auto* exception = dynamicDowncast<JSC::Exception>(value)) {
+        scope.throwException(arg1, exception);
+        return;
     }
 
     // Do not call .getObject() on it.
@@ -6096,7 +5861,7 @@ static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC:
             }
         }
     }
-    auto* propertyNames = vm.propertyNames;
+    auto& propertyNames = vm.propertyNames;
     auto& builtinNames = WebCore::builtinNames(vm);
     JSC::IdentifierSet visitedProperties;
 
@@ -6344,7 +6109,7 @@ restart:
             }
 
             // reuse memory
-            properties.data()->propertyNameVector().shrink(0);
+            properties.clear();
             if (iterating->isCallable())
                 break;
             if (iterating == globalObject || isOtherGlobal)
@@ -6426,7 +6191,7 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
         RETURN_IF_EXCEPTION(scope, );
     }
 
-    auto vector = properties.data()->propertyNameVector();
+    auto vector = properties.releaseData()->propertyNameVector();
     std::sort(vector.begin(), vector.end(), [](const Identifier& a, const Identifier& b) { return codePointCompare(a.impl(), b.impl()) < 0; });
     auto clientData = WebCore::clientData(vm);
 
@@ -6772,45 +6537,6 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__msToGregorianDateTime(JSC::JSGlobal
     *weekday = dt.weekDay();
 }
 
-extern "C" [[ZIG_EXPORT(nothrow)]] uint32_t Bun__resolveTimeZoneID(const uint8_t* name, size_t len)
-{
-    auto id = JSC::intlResolveTimeZoneID(StringView { std::span(reinterpret_cast<const Latin1Character*>(name), len) });
-    return id ? *id : std::numeric_limits<uint32_t>::max();
-}
-
-extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__msToGregorianDateTimeInZone(JSC::JSGlobalObject* globalObject, double ms, uint32_t tzID,
-    int* year, int* month, int* day, int* hour, int* minute, int* second, int* weekday)
-{
-    UNUSED_PARAM(globalObject);
-    auto tz = JSC::TimeZone::fromID(tzID);
-    auto exact = JSC::ISO8601::ExactTime::fromEpochMilliseconds(static_cast<int64_t>(ms));
-    auto off = JSC::TemporalCore::getOffsetNanosecondsFor(tz, exact);
-    int64_t offNs = off ? *off : 0;
-    auto dt = JSC::TemporalCore::exactTimeToLocalDateAndTime(exact, offNs);
-    *year = dt.date.year();
-    *month = dt.date.month();
-    *day = dt.date.day();
-    *hour = static_cast<int>(dt.time.hour());
-    *minute = static_cast<int>(dt.time.minute());
-    *second = static_cast<int>(dt.time.second());
-    // ISO8601::dayOfWeek: 1=Mon..7=Sun; GregorianDateTime consumers expect 0=Sun..6=Sat.
-    *weekday = JSC::ISO8601::dayOfWeek(dt.date) % 7;
-}
-
-extern "C" [[ZIG_EXPORT(nothrow)]] double Bun__gregorianDateTimeToMSInZone(JSC::JSGlobalObject* globalObject,
-    int year, int month, int day, int hour, int minute, int second, int millisecond, uint32_t tzID)
-{
-    UNUSED_PARAM(globalObject);
-    auto tz = JSC::TimeZone::fromID(tzID);
-    JSC::ISO8601::PlainDate date { year, static_cast<unsigned>(month), static_cast<unsigned>(day) };
-    JSC::ISO8601::PlainTime time { static_cast<unsigned>(hour), static_cast<unsigned>(minute),
-        static_cast<unsigned>(second), static_cast<unsigned>(millisecond), 0, 0 };
-    auto r = JSC::TemporalCore::getEpochNanosecondsFor(tz, date, time, JSC::TemporalDisambiguation::Compatible);
-    if (!r)
-        return std::numeric_limits<double>::quiet_NaN();
-    return static_cast<double>(r->epochMilliseconds());
-}
-
 // Materializes a date/time literal as a Temporal object through the same
 // paths `Temporal.*.from(string)` takes. `kind` mirrors the Rust
 // `bun_ast::E::TomlDateTimeKind` discriminants.
@@ -6829,26 +6555,9 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] EncodedJSValue Bun__Temporal__fromDateT
     WTF::String string { std::span(reinterpret_cast<const Latin1Character*>(text), len) };
     JSC::JSValue item = JSC::jsString(vm, string);
 
-    JSC::JSObject* result = nullptr;
-    switch (kind) {
-    case 1:
-        result = JSC::TemporalInstant::toInstant(globalObject, item);
-        break;
-    case 2:
-        result = JSC::TemporalPlainDateTime::from(globalObject, item, JSC::jsUndefined());
-        break;
-    case 3:
-        result = JSC::TemporalPlainDate::from(globalObject, item, JSC::jsUndefined());
-        break;
-    case 4:
-        result = JSC::TemporalPlainTime::from(globalObject, item, JSC::jsUndefined());
-        break;
-    default:
-        RELEASE_ASSERT_NOT_REACHED();
-    }
-    RETURN_IF_EXCEPTION(scope, {});
-    ASSERT(result);
-    return JSValue::encode(result);
+    static_assert(static_cast<uint8_t>(JSC::TemporalType::Instant) == 1 && static_cast<uint8_t>(JSC::TemporalType::PlainDateTime) == 2);
+    static_assert(static_cast<uint8_t>(JSC::TemporalType::PlainDate) == 3 && static_cast<uint8_t>(JSC::TemporalType::PlainTime) == 4);
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::temporalObjectFrom(globalObject, static_cast<JSC::TemporalType>(kind), item)));
 }
 
 extern "C" [[ZIG_EXPORT(nothrow)]] JSC::TemporalType Bun__JSValue__temporalType(JSC::EncodedJSValue encodedValue)
@@ -6868,29 +6577,31 @@ static Int128 floorToMultiple(Int128 ns, Int128 unit)
     return rem == 0 ? ns : ns - rem - (ns < 0 ? unit : 0);
 }
 
-// The `±HH:MM` offset to spell `exactTime` with so its local year has TOML's
+static constexpr int64_t nsPerSecond = 1000 * 1000 * 1000;
+static constexpr int64_t nsPerMinute = 60 * nsPerSecond;
+static constexpr int64_t nsPerHour = 60 * nsPerMinute;
+
+// The `±HH:MM` offset to spell `epoch` with so its local year has TOML's
 // four digits: `preferredNs` if that fits, else the closest whole-hour (then
 // whole-minute) offset that does; nullopt if none within ±23:59 does.
-static std::optional<int64_t> tomlOffsetForInstant(JSC::ISO8601::ExactTime exactTime, int64_t preferredNs)
+static std::optional<int64_t> tomlOffsetForInstant(Int128 epoch, int64_t preferredNs)
 {
-    using JSC::ISO8601::ExactTime;
-    constexpr Int128 minLocal = Int128 { -62167219200 } * ExactTime::nsPerSecond; // 0000-01-01T00:00:00
-    constexpr Int128 maxLocal = Int128 { 253402300800 } * ExactTime::nsPerSecond; // +010000-01-01T00:00:00
-    constexpr Int128 maxOffset = ExactTime::nsPerHour * 23 + ExactTime::nsPerMinute * 59;
+    constexpr Int128 minLocal = Int128 { -62167219200 } * nsPerSecond; // 0000-01-01T00:00:00
+    constexpr Int128 maxLocal = Int128 { 253402300800 } * nsPerSecond; // +010000-01-01T00:00:00
+    constexpr Int128 maxOffset = nsPerHour * 23 + nsPerMinute * 59;
 
-    Int128 epoch = exactTime.epochNanoseconds();
     // Whole-minute offsets o with minLocal <= epoch + o < maxLocal.
-    Int128 lo = std::max(ceilToMultiple(minLocal - epoch, ExactTime::nsPerMinute), -maxOffset);
-    Int128 hi = std::min(floorToMultiple(maxLocal - Int128 { 1 } - epoch, ExactTime::nsPerMinute), maxOffset);
+    Int128 lo = std::max(ceilToMultiple(minLocal - epoch, nsPerMinute), -maxOffset);
+    Int128 hi = std::min(floorToMultiple(maxLocal - Int128 { 1 } - epoch, nsPerMinute), maxOffset);
     if (lo > hi)
         return std::nullopt;
     Int128 preferred { preferredNs };
     if (preferred < lo) {
-        Int128 hour = ceilToMultiple(lo, ExactTime::nsPerHour);
+        Int128 hour = ceilToMultiple(lo, nsPerHour);
         return static_cast<int64_t>(hour <= hi ? hour : lo);
     }
     if (preferred > hi) {
-        Int128 hour = floorToMultiple(hi, ExactTime::nsPerHour);
+        Int128 hour = floorToMultiple(hi, nsPerHour);
         return static_cast<int64_t>(hour >= lo ? hour : hi);
     }
     return preferredNs;
@@ -6900,56 +6611,25 @@ static std::optional<int64_t> tomlOffsetForInstant(JSC::ISO8601::ExactTime exact
 // returns the length written, or -1 if its year is outside TOML's
 // 0000..9999. The `[u-ca=...]` and `[Time/Zone]` annotations, which TOML
 // cannot carry, are dropped.
-extern "C" [[ZIG_EXPORT(check_slow)]] int32_t Bun__Temporal__toTOMLDateTime(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, JSC::TemporalType temporalType, uint8_t* buf, size_t bufLen)
+extern "C" [[ZIG_EXPORT(nothrow)]] int32_t Bun__Temporal__toTOMLDateTime(JSC::EncodedJSValue encodedValue, JSC::TemporalType temporalType, uint8_t* buf, size_t bufLen)
 {
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    JSC::JSCell* cell = JSC::JSValue::decode(encodedValue).asCell();
-    constexpr JSC::PrecisionData autoPrecision { { JSC::Precision::Auto, 0 }, JSC::TemporalUnit::Nanosecond, 1 };
+    JSC::JSObject* object = JSC::asObject(JSC::JSValue::decode(encodedValue));
 
     WTF::String string;
-    switch (temporalType) {
-    case JSC::TemporalType::Instant: {
-        auto exactTime = uncheckedDowncast<JSC::TemporalInstant>(cell)->exactTime();
-        std::optional<int64_t> offsetNs = tomlOffsetForInstant(exactTime, 0);
-        if (!offsetNs)
-            return -1;
-        if (!*offsetNs)
-            offsetNs = std::nullopt; // `Z`
-        string = JSC::TemporalCore::instantToString(exactTime, offsetNs, autoPrecision);
-        break;
-    }
-    case JSC::TemporalType::PlainDateTime: {
-        auto* dateTime = uncheckedDowncast<JSC::TemporalPlainDateTime>(cell);
-        string = JSC::ISO8601::temporalDateTimeToString(dateTime->plainDate(), dateTime->plainTime(), { JSC::Precision::Auto, 0 });
-        break;
-    }
-    case JSC::TemporalType::PlainDate:
-        string = JSC::ISO8601::temporalDateToString(uncheckedDowncast<JSC::TemporalPlainDate>(cell)->plainDate());
-        break;
-    case JSC::TemporalType::PlainTime:
-        string = JSC::ISO8601::temporalTimeToString(uncheckedDowncast<JSC::TemporalPlainTime>(cell)->plainTime(), { JSC::Precision::Auto, 0 });
-        break;
-    case JSC::TemporalType::ZonedDateTime: {
-        auto* zoned = uncheckedDowncast<JSC::TemporalZonedDateTime>(cell);
-        std::optional<int64_t> zoneOffsetNs = zoned->getOffsetNanoseconds(globalObject);
-        RETURN_IF_EXCEPTION(scope, 0);
-        ASSERT(zoneOffsetNs);
+    if (temporalType == JSC::TemporalType::Instant || temporalType == JSC::TemporalType::ZonedDateTime) {
+        int64_t zoneOffsetNs = temporalType == JSC::TemporalType::Instant ? 0 : JSC::temporalOffsetNanoseconds(object);
         // TOML offsets are `HH:MM`; a historic sub-minute (LMT) offset is
         // spelled as `Z` instead.
-        bool wholeMinutes = *zoneOffsetNs % 60000000000ll == 0;
-        std::optional<int64_t> offsetNs = tomlOffsetForInstant(zoned->exactTime(), wholeMinutes ? *zoneOffsetNs : 0);
+        bool keepsZoneOffset = temporalType == JSC::TemporalType::ZonedDateTime && zoneOffsetNs % nsPerMinute == 0;
+        std::optional<int64_t> offsetNs = tomlOffsetForInstant(JSC::temporalEpochNanoseconds(object), keepsZoneOffset ? zoneOffsetNs : 0);
         if (!offsetNs)
             return -1;
-        if (!wholeMinutes && !*offsetNs)
-            offsetNs = std::nullopt;
-        string = JSC::TemporalCore::instantToString(zoned->exactTime(), offsetNs, autoPrecision);
-        break;
-    }
-    default:
-        RELEASE_ASSERT_NOT_REACHED();
-    }
+        std::optional<int16_t> offsetMinutes;
+        if (keepsZoneOffset || *offsetNs)
+            offsetMinutes = *offsetNs / nsPerMinute;
+        string = JSC::temporalExactTimeToString(object, offsetMinutes);
+    } else
+        string = JSC::temporalPlainValueToString(object);
 
     // The expanded-year form of a PlainDate/PlainDateTime (`+010000-…`, `-000001-…`).
     if (!isASCIIDigit(string[0]))
@@ -6994,40 +6674,6 @@ extern "C" int JSC__JSValue__toISOString(EncodedJSValue dateValue, JSC::JSGlobal
     auto& vm = JSC::getVM(globalObject);
 
     return static_cast<int>(Bun::toISOString(vm, thisDateObj->internalNumber(), buf));
-}
-
-extern "C" int JSC__JSValue__DateNowISOString(JSC::JSGlobalObject* globalObject, char* buf)
-{
-    char buffer[29];
-    JSC::DateInstance* thisDateObj = JSC::DateInstance::create(globalObject->vm(), globalObject->dateStructure(), globalObject->jsDateNow());
-
-    if (!std::isfinite(thisDateObj->internalNumber()))
-        return -1;
-
-    auto& vm = JSC::getVM(globalObject);
-
-    auto gregorianDateTime = thisDateObj->gregorianDateTimeUTC(vm.dateCache);
-    if (!gregorianDateTime)
-        return -1;
-
-    // If the year is outside the bounds of 0 and 9999 inclusive we want to use the extended year format (ES 15.9.1.15.1).
-    int ms = static_cast<int>(fmod(thisDateObj->internalNumber(), msPerSecond));
-    if (ms < 0)
-        ms += msPerSecond;
-
-    int charactersWritten;
-    if (gregorianDateTime.year() > 9999 || gregorianDateTime.year() < 0)
-        charactersWritten = snprintf(buffer, sizeof(buffer), "%+07d-%02d-%02dT%02d:%02d:%02d.%03dZ", gregorianDateTime.year(), gregorianDateTime.month() + 1, gregorianDateTime.monthDay(), gregorianDateTime.hour(), gregorianDateTime.minute(), gregorianDateTime.second(), ms);
-    else
-        charactersWritten = snprintf(buffer, sizeof(buffer), "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ", gregorianDateTime.year(), gregorianDateTime.month() + 1, gregorianDateTime.monthDay(), gregorianDateTime.hour(), gregorianDateTime.minute(), gregorianDateTime.second(), ms);
-
-    memcpy(buf, buffer, charactersWritten);
-
-    ASSERT(charactersWritten > 0 && static_cast<unsigned>(charactersWritten) < sizeof(buffer));
-    if (static_cast<unsigned>(charactersWritten) >= sizeof(buffer))
-        return -1;
-
-    return charactersWritten;
 }
 
 #pragma mark - WebCore::DOMFormData
@@ -7147,12 +6793,9 @@ CPP_DECL [[ZIG_EXPORT(nothrow)]] uint32_t JSC__JSMap__size(JSC::JSMap* map)
     return map->size();
 }
 
-// Enable only: compiled instrumented code holds raw pointers into the profiler,
-// so it lives as long as the VM (see JSInspectorProfiler.cpp).
 CPP_DECL void JSC__VM__enableControlFlowProfiler(JSC::VM* vm)
 {
-    if (!vm->controlFlowProfiler())
-        vm->enableControlFlowProfiler();
+    vm->enableControlFlowProfiler();
 }
 
 extern "C" EncodedJSValue ExpectMatcherUtils__getSingleton(JSC::JSGlobalObject* globalObject_)
@@ -7190,8 +6833,7 @@ extern "C" EncodedJSValue JSFunction__createFromZig(
         implementation,
         implementation_visibility,
         intrinsic,
-        constructorOrNull ? constructorOrNull : JSC::callHostFunctionAsConstructor,
-        nullptr));
+        constructorOrNull ? constructorOrNull : JSC::callHostFunctionAsConstructor));
 }
 
 extern "C" EncodedJSValue JSArray__constructEmptyArray(
@@ -7267,13 +6909,12 @@ CPP_DECL JSC::EncodedJSValue Bun__JSValue__getProxyTarget(JSC::EncodedJSValue en
 
 CPP_DECL JSC::EncodedJSValue Bun__JSValue__getArrayBufferViewBuffer(JSC::EncodedJSValue encoded, JSC::JSGlobalObject* globalObject)
 {
-    auto& vm = JSC::getVM(globalObject);
     JSC::JSValue value = JSValue::decode(encoded);
     if (!value || !value.isCell())
         return JSValue::encode(JSValue());
     if (auto* view = dynamicDowncast<JSArrayBufferView>(value.asCell())) {
         if (ArrayBuffer* buffer = view->possiblySharedBuffer())
-            return JSValue::encode(vm.m_typedArrayController->toJS(globalObject, view->realm(), *buffer));
+            return JSValue::encode(JSArrayBuffer::wrap(view->realm(), *buffer));
     }
     return JSValue::encode(JSValue());
 }
@@ -7412,9 +7053,20 @@ extern "C" void Bun__JSValue__protect(JSC::EncodedJSValue encodedValue)
     }
 }
 #if ASSERT_ENABLED
-CPP_DECL const char* Bun__CallFrame__describeFrame(JSC::CallFrame* callFrame)
+CPP_DECL JSC::CallFrame* Bun__CallFrame__ofScriptAt(JSC::JSGlobalObject* globalObject, JSC::CallFrame* address)
 {
-    return callFrame->describeFrame();
+    JSC::CallFrame* found = nullptr;
+    JSC::StackVisitor::visit(address, JSC::getVM(globalObject), [&](JSC::StackVisitor& visitor) {
+        if (visitor->codeBlock())
+            found = address;
+        return WTF::IterationStatus::Done;
+    });
+    return found;
+}
+
+CPP_DECL void Bun__CallFrame__getFunctionName(JSC::CallFrame* callFrame, JSC::JSGlobalObject* globalObject, Bun::OwnedString* name)
+{
+    *name = Bun::toStringRef(Zig::functionName(JSC::getVM(globalObject), callFrame->jsCallee()));
 }
 #endif
 
@@ -7748,11 +7400,10 @@ extern "C" JSC::EncodedJSValue Bun__REPL__formatValue(
 // A backing store detached during the first pass reads back as a zero-length
 // span.
 //
-// When `pinBuffers` is true, each view's backing ArrayBuffer is materialized
-// and pinned before its data pointer is read, so the span stays valid after
-// control returns to JS (an in-flight async I/O). The caller must balance
-// every pinned element with `JSC__JSValue__unpinArrayBuffer`. SharedArrayBuffer
-// is never detachable and never moves, so it is left unpinned.
+// When `pinBuffers` is true, each view is pinned before its data pointer is
+// read, so the span stays valid after control returns to JS (an in-flight
+// async I/O). The caller must balance every pinned element with
+// `JSC__JSValue__unpinArrayBuffer`.
 // `isWasmMemory` marks a pinned element over a non-shared WebAssembly.Memory,
 // whose block `grow()` can free despite the pin.
 //
@@ -7792,16 +7443,10 @@ extern "C" int32_t Bun__JSArray__collectBufferSpans(
             return 1;
         bool isWasmMemory = false;
         if (pinBuffers) {
-            // possiblySharedBuffer() converts a FastTypedArray (GC-movable
-            // storage, no ArrayBuffer yet) into a malloc-backed one and can
-            // repoint m_vector, so it must run before vector() is read.
-            auto* buf = view->possiblySharedBuffer();
-            if (!buf) [[unlikely]]
+            // Can move the elements, so it must run before vector() is read.
+            if (!view->tryPin()) [[unlikely]]
                 return 2;
-            if (!buf->isShared()) {
-                buf->pin();
-                isWasmMemory = buf->isWasmMemory();
-            }
+            isWasmMemory = JSC__JSValue__isNonSharedWasmMemory(JSC::JSValue::encode(view));
         }
         append(ctx, JSC::JSValue::encode(view), view->vector(), view->byteLength(), isWasmMemory);
     }
@@ -7861,69 +7506,13 @@ extern "C" bool Bun__JSArray__contiguousVectorIsStillValid(
 }
 
 // Smallest own present index of a JSArray that is >= `start`, or UINT64_MAX
-// when every index from `start` to the end of the array is a hole. Mirrors the
-// butterfly walk in JSObject::getOwnIndexedPropertyNames so the caller can skip
-// a run of holes without probing each index of a huge sparse array.
+// when every index from `start` to the end of the array is a hole, so the caller
+// can skip a run of holes without probing each index of a huge sparse array.
 extern "C" uint64_t Bun__JSArray__nextPresentIndex(
     JSC::EncodedJSValue encodedValue,
     uint32_t start)
 {
-    static constexpr uint64_t notFound = std::numeric_limits<uint64_t>::max();
-
-    JSC::JSArray* array = uncheckedDowncast<JSC::JSArray>(JSC::JSValue::decode(encodedValue).asCell());
-
-    switch (array->indexingType()) {
-    case ALL_BLANK_INDEXING_TYPES:
-    case ALL_UNDECIDED_INDEXING_TYPES:
-        return notFound;
-
-    case ALL_INT32_INDEXING_TYPES:
-    case ALL_CONTIGUOUS_INDEXING_TYPES: {
-        JSC::Butterfly* butterfly = array->butterfly();
-        unsigned usedLength = butterfly->publicLength();
-        for (unsigned i = start; i < usedLength; ++i) {
-            if (butterfly->contiguous().at(array, i))
-                return i;
-        }
-        return notFound;
-    }
-
-    case ALL_DOUBLE_INDEXING_TYPES: {
-        JSC::Butterfly* butterfly = array->butterfly();
-        unsigned usedLength = butterfly->publicLength();
-        for (unsigned i = start; i < usedLength; ++i) {
-            double value = butterfly->contiguousDouble().at(array, i);
-            // In DoubleShape storage the hole is NaN. A real NaN element can
-            // never be stored there: JSObject::putByIndex / putDirectIndex
-            // convert the array to ContiguousShape first.
-            if (value == value)
-                return i;
-        }
-        return notFound;
-    }
-
-    case ALL_ARRAY_STORAGE_INDEXING_TYPES: {
-        JSC::ArrayStorage* storage = array->butterfly()->arrayStorage();
-        unsigned usedVectorLength = std::min(storage->length(), storage->vectorLength());
-        for (unsigned i = start; i < usedVectorLength; ++i) {
-            if (storage->m_vector[i])
-                return i;
-        }
-
-        uint64_t result = notFound;
-        if (JSC::SparseArrayValueMap* map = storage->m_sparseMap.get()) {
-            for (const auto& entry : *map) {
-                if (entry.index() >= start && entry.index() < result)
-                    result = entry.index();
-            }
-        }
-        return result;
-    }
-
-    default:
-        ASSERT_NOT_REACHED();
-        return start;
-    }
+    return uncheckedDowncast<JSC::JSArray>(JSC::JSValue::decode(encodedValue).asCell())->nextPresentIndex(start);
 }
 
 extern "C" void JSC__ArrayBuffer__ref(JSC::ArrayBuffer* self) { self->ref(); }

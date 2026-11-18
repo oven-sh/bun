@@ -107,7 +107,7 @@ fn report_unsupported_options(options: &BundleOptions<'_>, log: &mut Log) -> boo
         polyfill_node_globals: _, load_tsconfig_json: _, load_package_json: _, conditions: _,
         extra_cjs_extensions: _, global_cache: _, install_preference: _, install: _,
         inline_entrypoint_import_meta_main: _, type_check: _,
-        deprecated_namespace_object_setters: _, bytecode_depth: _, optimize_bytecode: _,
+        deprecated_namespace_object_setters: _, bytecode_depth: _,
         bytecode_order: _, compile_target_builtins: _, metafile: _, metafile_json_path: _,
         metafile_markdown_path: _, serve_plugins: _, bunfig_path: _, unwrap_commonjs_packages: _,
         supports_multiple_outputs: _, rewrite_jest_for_tests: _, vitest_globals: _,

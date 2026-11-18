@@ -5,6 +5,8 @@ use core::cell::Cell;
 use bstr::BStr;
 use bun_core::{Timespec, TimespecMockMode};
 use bun_cron::{CronExpression, TimeZone, WallClock};
+use bun_engine_date::{DateFields, TimeZoneId, make_date_from_integers};
+use bun_engine_text::Text;
 use bun_io::KeepAlive;
 use bun_jsc::bindgen::{Callable, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::js_promise::{UnwrapMode, Unwrapped};
@@ -26,8 +28,7 @@ use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 enum CronTz {
     Utc,
     Local,
-    /// From `JSGlobalObject::resolve_time_zone_id`.
-    Named(u32),
+    Named(TimeZoneId),
 }
 
 impl CronTz {
@@ -35,10 +36,7 @@ impl CronTz {
         let Some(name) = options.and_then(|options| options.tz) else {
             return Ok(CronTz::Local);
         };
-        // `Bun__resolveTimeZoneID` reads the bytes as Latin-1.
-        if name.is_ascii()
-            && let Some(id) = JSGlobalObject::resolve_time_zone_id(name)
-        {
+        if let Some(id) = TimeZoneId::find(Text::Latin1(name)) {
             return Ok(CronTz::Named(id));
         }
         Err(global.throw_invalid_arguments(format_args!(
@@ -62,7 +60,17 @@ impl TimeZone for JscZone<'_> {
         let at = match self.1 {
             CronTz::Utc => self.0.ms_to_gregorian_date_time_utc(ms),
             CronTz::Local => self.0.ms_to_gregorian_date_time(ms),
-            CronTz::Named(id) => self.0.ms_to_gregorian_date_time_in_zone(ms, id),
+            CronTz::Named(id) => {
+                let at = DateFields::in_zone(ms, id).unwrap_or(DateFields::EPOCH);
+                return WallClock {
+                    year: at.year(),
+                    month: i32::from(at.month()) + 1,
+                    day: at.day().into(),
+                    hour: at.hour().into(),
+                    minute: at.minute().into(),
+                    weekday: at.week_day().into(),
+                };
+            }
         };
         WallClock {
             year: at.year,
@@ -79,7 +87,7 @@ impl TimeZone for JscZone<'_> {
         match self.1 {
             CronTz::Utc => g.gregorian_date_time_to_ms_utc(y, mo, d, h, mi, 0, 0),
             CronTz::Local => g.gregorian_date_time_to_ms(y, mo, d, h, mi, 0, 0),
-            CronTz::Named(id) => Ok(g.gregorian_date_time_to_ms_in_zone(y, mo, d, h, mi, 0, 0, id)),
+            CronTz::Named(id) => Ok(id.utc(make_date_from_integers([y, mo - 1, d, h, mi, 0, 0]))),
         }
     }
 }

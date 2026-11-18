@@ -208,7 +208,7 @@ public:
 
     bool hasException(JSC::ExceptionScope& scope) const
     {
-        EXCEPTION_ASSERT(!!scope.exception() == scope.vm().traps().needHandling(JSC::VMTraps::NeedExceptionHandling));
+        scope.didCheck();
 
 #if ENABLE(EXCEPTION_SCOPE_VERIFICATION)
         if (m_storage.hasException()) {

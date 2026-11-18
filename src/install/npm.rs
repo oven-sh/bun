@@ -2394,7 +2394,9 @@ fn publish_timestamp_ms(time: &JSON::E::JsonValue) -> f64 {
         JsonValue::Null | JsonValue::Boolean(false) => 0.0,
         JsonValue::Number(n) if n.value() == 0.0 => 0.0,
         JsonValue::String(s) if s.slice().is_empty() => 0.0,
-        JsonValue::String(s) => bun_core::wtf::parse_date(s.slice()).unwrap_or(f64::INFINITY),
+        JsonValue::String(s) => Some(bun_engine_date::parse_date_as_utc(s.slice()))
+            .filter(|ms| ms.is_finite())
+            .unwrap_or(f64::INFINITY),
         _ => f64::INFINITY,
     }
 }

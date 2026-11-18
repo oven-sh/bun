@@ -1,19 +1,10 @@
 #include "InspectorLifecycleAgent.h"
 #include "BunModuleRegistry.h"
 #include "ZigGlobalObject.h"
-#include <JavaScriptCore/InspectorFrontendRouter.h>
-#include <JavaScriptCore/InspectorBackendDispatcher.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSModuleLoader.h>
 #include <JavaScriptCore/ModuleRegistryEntry.h>
 #include <wtf/text/WTFString.h>
-#include <JavaScriptCore/ScriptCallStackFactory.h>
-#include <JavaScriptCore/ScriptArguments.h>
-#include <JavaScriptCore/ConsoleMessage.h>
-#include <JavaScriptCore/InspectorConsoleAgent.h>
-#include <JavaScriptCore/JSGlobalObjectDebuggable.h>
-#include <JavaScriptCore/JSGlobalObjectInspectorController.h>
-#include "ConsoleObject.h"
 #include <wtf/TZoneMallocInlines.h>
 #include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/IteratorOperations.h>
@@ -43,56 +34,33 @@ void Bun__LifecycleAgentReportError(Inspector::InspectorLifecycleAgent* agent, Z
 }
 
 InspectorLifecycleAgent::InspectorLifecycleAgent(JSC::JSGlobalObject& globalObject)
-    : InspectorAgentBase("LifecycleReporter"_s)
-    , m_globalObject(globalObject)
-    , m_backendDispatcher(LifecycleReporterBackendDispatcher::create(m_globalObject.inspectorController().backendDispatcher(), this))
-    , m_frontendDispatcher(makeUnique<LifecycleReporterFrontendDispatcher>(const_cast<FrontendRouter&>(m_globalObject.inspectorController().frontendRouter())))
+    : InspectorAgentBase(globalObject, "LifecycleReporter"_s)
 {
 }
 
-InspectorLifecycleAgent::~InspectorLifecycleAgent()
+void InspectorLifecycleAgent::didEnable()
 {
-    if (m_enabled) {
-        Bun__LifecycleAgentDisable(this);
-    }
-}
-
-void InspectorLifecycleAgent::didCreateFrontendAndBackend()
-{
-}
-
-void InspectorLifecycleAgent::willDestroyFrontendAndBackend(DisconnectReason)
-{
-    (void)disable();
-}
-
-Protocol::ErrorStringOr<void> InspectorLifecycleAgent::enable()
-{
-    if (m_enabled)
-        return {};
-
-    m_enabled = true;
     Bun__LifecycleAgentEnable(this);
-    return {};
 }
 
-Protocol::ErrorStringOr<void> InspectorLifecycleAgent::disable()
+void InspectorLifecycleAgent::didDisable()
 {
-    if (!m_enabled)
-        return {};
-
-    m_enabled = false;
     Bun__LifecycleAgentDisable(this);
-    return {};
+}
+
+std::optional<CommandResult> InspectorLifecycleAgent::runCommand(StringView command)
+{
+    if (command == "getModuleGraph"_s)
+        return getModuleGraph();
+    if (command == "preventExit"_s || command == "stopPreventingExit"_s)
+        return JSON::Object::create();
+    return std::nullopt;
 }
 
 void InspectorLifecycleAgent::reportError(ZigException& exception)
 {
-    if (!m_enabled)
+    if (!isEnabled())
         return;
-
-    String message = exception.message.toWTFString();
-    String name = exception.name.toWTFString();
 
     Ref<JSON::ArrayOf<String>> urls = JSON::ArrayOf<String>::create();
     Ref<JSON::ArrayOf<int>> lineColumns = JSON::ArrayOf<int>::create();
@@ -109,28 +77,19 @@ void InspectorLifecycleAgent::reportError(ZigException& exception)
         urls->addItem(frame->source_url.toWTFString());
     }
 
-    // error(const String& message, const String& name, Ref<JSON::ArrayOf<String>>&& urls, Ref<JSON::ArrayOf<int>>&& lineColumns, Ref<JSON::ArrayOf<String>>&& sourceLines);
-    m_frontendDispatcher->error(WTF::move(message), WTF::move(name), WTF::move(urls), WTF::move(lineColumns), WTF::move(sourceLines));
+    auto parameters = JSON::Object::create();
+    parameters->setString("message"_s, exception.message.toWTFString());
+    parameters->setString("name"_s, exception.name.toWTFString());
+    parameters->setArray("urls"_s, WTF::move(urls));
+    parameters->setArray("lineColumns"_s, WTF::move(lineColumns));
+    parameters->setArray("sourceLines"_s, WTF::move(sourceLines));
+    sendEvent("error"_s, WTF::move(parameters));
 }
 
-Protocol::ErrorStringOr<void> InspectorLifecycleAgent::preventExit()
+CommandResult InspectorLifecycleAgent::getModuleGraph()
 {
-    m_preventingExit = true;
-    return {};
-}
-
-Protocol::ErrorStringOr<void> InspectorLifecycleAgent::stopPreventingExit()
-{
-    m_preventingExit = false;
-    return {};
-}
-
-using ModuleGraph = std::tuple<Ref<JSON::ArrayOf<String>> /* esm */, Ref<JSON::ArrayOf<String>> /* cjs */, String /* cwd */, String /* main */, Ref<JSON::ArrayOf<String>> /* argv */>;
-
-Protocol::ErrorStringOr<ModuleGraph> InspectorLifecycleAgent::getModuleGraph()
-{
-    auto& vm = m_globalObject.vm();
-    // The caller is the generated protocol dispatcher, which never does JSC
+    auto& vm = globalObject().vm();
+    // The caller is the protocol dispatcher, which never does
     // exception checks, so exceptions must not escape this function: report
     // them as a protocol error and clear them (keeping only termination).
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -139,7 +98,7 @@ Protocol::ErrorStringOr<ModuleGraph> InspectorLifecycleAgent::getModuleGraph()
         return makeUnexpected(ErrorString { message });
     };
 
-    auto* global = defaultGlobalObject(&m_globalObject);
+    auto* global = defaultGlobalObject(&globalObject());
     auto* cjsMap = global->requireMap();
 
     Ref<JSON::ArrayOf<String>> esm = JSON::ArrayOf<String>::create();
@@ -196,13 +155,19 @@ Protocol::ErrorStringOr<ModuleGraph> InspectorLifecycleAgent::getModuleGraph()
 
     String cwd;
     {
-        auto cwdValue = JSC::JSValue::decode(Bun__Process__getCwd(&m_globalObject));
+        auto cwdValue = JSC::JSValue::decode(Bun__Process__getCwd(&globalObject()));
         RETURN_IF_EXCEPTION(scope, fail("Failed to get cwd"_s));
         cwd = cwdValue.toWTFString(global);
         RETURN_IF_EXCEPTION(scope, fail("Failed to convert value to string"_s));
     }
 
-    return ModuleGraph { WTF::move(esm), WTF::move(cjs), WTF::move(cwd), WTF::move(main), WTF::move(argv) };
+    auto graph = JSON::Object::create();
+    graph->setArray("esm"_s, WTF::move(esm));
+    graph->setArray("cjs"_s, WTF::move(cjs));
+    graph->setString("cwd"_s, cwd);
+    graph->setString("main"_s, main);
+    graph->setArray("argv"_s, WTF::move(argv));
+    return graph;
 }
 
 }

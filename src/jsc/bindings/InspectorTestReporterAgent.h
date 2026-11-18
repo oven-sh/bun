@@ -1,51 +1,24 @@
 #pragma once
 
 #include "root.h"
-#include <JavaScriptCore/AlternateDispatchableAgent.h>
 #include <JavaScriptCore/InspectorAgentBase.h>
-#include <JavaScriptCore/InspectorBackendDispatchers.h>
-#include <JavaScriptCore/InspectorFrontendDispatchers.h>
-#include <JavaScriptCore/JSGlobalObject.h>
-#include <wtf/Forward.h>
-#include <wtf/Noncopyable.h>
 
 namespace Inspector {
 
-class FrontendRouter;
-class BackendDispatcher;
-class TestReporterFrontendDispatcher;
-enum class DisconnectReason;
-
-class InspectorTestReporterAgent final : public InspectorAgentBase, public Inspector::TestReporterBackendDispatcherHandler, public CanMakeThreadSafeCheckedPtr<InspectorTestReporterAgent> {
-    WTF_MAKE_NONCOPYABLE(InspectorTestReporterAgent);
+class InspectorTestReporterAgent final : public InspectorAgentBase {
     WTF_MAKE_TZONE_ALLOCATED(InspectorTestReporterAgent);
-    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(InspectorTestReporterAgent);
 
 public:
-    OVERRIDE_ABSTRACT_CAN_MAKE_CHECKEDPTR(CanMakeThreadSafeCheckedPtr);
+    explicit InspectorTestReporterAgent(JSC::JSGlobalObject&);
 
-    InspectorTestReporterAgent(JSC::JSGlobalObject&);
-    virtual ~InspectorTestReporterAgent();
-
-    // InspectorAgentBase
-    virtual void didCreateFrontendAndBackend() final;
-    virtual void willDestroyFrontendAndBackend(DisconnectReason) final;
-
-    // TestReporterBackendDispatcherHandler
-    virtual Protocol::ErrorStringOr<void> enable() final;
-    virtual Protocol::ErrorStringOr<void> disable() final;
-
-    // Public API for reporting test events
-    void reportTestFound(int testId, const String& name, Protocol::TestReporter::TestType type = Protocol::TestReporter::TestType::Test, int parentId = -1);
-    void reportTestFoundWithLocation(int testId, const String& name, Protocol::TestReporter::TestType type, int parentId, const String& sourceURL, int line);
+    void reportTestFound(int testId, const String& name, ASCIILiteral type, int parentId);
+    void reportTestFoundWithLocation(int testId, const String& name, ASCIILiteral type, int parentId, const String& scriptId, const String& sourceURL, int line);
     void reportTestStart(int testId);
-    void reportTestEnd(int testId, Protocol::TestReporter::TestStatus status, double elapsed);
+    void reportTestEnd(int testId, ASCIILiteral status, double elapsed);
 
 private:
-    JSC::JSGlobalObject& m_globalObject;
-    std::unique_ptr<TestReporterFrontendDispatcher> m_frontendDispatcher;
-    Ref<TestReporterBackendDispatcher> m_backendDispatcher;
-    bool m_enabled { false };
+    void didEnable() final;
+    void didDisable() final;
 };
 
 } // namespace Inspector

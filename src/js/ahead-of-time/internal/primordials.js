@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/primordials.js, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 dc9515751b0719840243a4f428b908ab6192265e608b94f1456beb14fcfcc581.
+// Written against that file with the SHA-256 9ca66613ef67e6d4f59f0a95263d2e483df70beed32a5f37a86bb75cd732f556.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
@@ -223,7 +223,10 @@ if (
     enumerable: false,
     configurable: true,
   });
-  ReflectDefineProperty(SafeMapPrototype, "size", ReflectGetOwnPropertyDescriptor(MapPrototype, "size"));
+  ReflectDefineProperty(SafeMapPrototype, "size", {
+    __proto__: null,
+    ...ReflectGetOwnPropertyDescriptor(MapPrototype, "size"),
+  });
   if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(MapPrototype, "values");
   const SafeMapValues = createSafeIterator(MapPrototypeValues, MapIteratorPrototypeNext);
   const safeMapValues = { value: undefined, writable: true, enumerable: false, configurable: true };
@@ -253,7 +256,10 @@ if (
     enumerable: false,
     configurable: true,
   });
-  ReflectDefineProperty(SafeMap, SymbolSpecies, ReflectGetOwnPropertyDescriptor(Map, SymbolSpecies));
+  ReflectDefineProperty(SafeMap, SymbolSpecies, {
+    __proto__: null,
+    ...ReflectGetOwnPropertyDescriptor(Map, SymbolSpecies),
+  });
   defineOwnPropertiesLeftOut(SafeMapPrototype, MapPrototype, makersOfSafeIteratorsOfMap);
   defineOwnPropertiesLeftOut(SafeMap, Map, undefined);
   sealClass(SafeMap);
@@ -348,7 +354,10 @@ if (
     return new SafeSetKeys(this);
   };
   ReflectDefineProperty(SafeSetPrototype, "keys", safeSetKeys);
-  ReflectDefineProperty(SafeSetPrototype, "size", ReflectGetOwnPropertyDescriptor(SetPrototype, "size"));
+  ReflectDefineProperty(SafeSetPrototype, "size", {
+    __proto__: null,
+    ...ReflectGetOwnPropertyDescriptor(SetPrototype, "size"),
+  });
   if (CAN_REPLACE_BUILT_INS) ReflectGetOwnPropertyDescriptor(SetPrototype, "values");
   const SafeSetValues = createSafeIterator(SetPrototypeValues, SetIteratorPrototypeNext);
   const safeSetValues = { value: undefined, writable: true, enumerable: false, configurable: true };
@@ -420,7 +429,10 @@ if (
     configurable: true,
   });
   if (CAN_REPLACE_BUILT_INS) ReflectOwnKeys(Set);
-  ReflectDefineProperty(SafeSet, SymbolSpecies, ReflectGetOwnPropertyDescriptor(Set, SymbolSpecies));
+  ReflectDefineProperty(SafeSet, SymbolSpecies, {
+    __proto__: null,
+    ...ReflectGetOwnPropertyDescriptor(Set, SymbolSpecies),
+  });
   defineOwnPropertiesLeftOut(SafeSetPrototype, SetPrototype, makersOfSafeIteratorsOfSet);
   defineOwnPropertiesLeftOut(SafeSet, Set, undefined);
   sealClass(SafeSet);

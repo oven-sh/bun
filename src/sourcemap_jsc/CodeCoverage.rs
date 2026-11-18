@@ -1403,23 +1403,6 @@ fn find_or_insert(
     map.get_mut(&hash).unwrap()
 }
 
-/// For a provider that wraps another one. `module._compile()` wraps a text of its own.
-#[unsafe(no_mangle)]
-extern "C" fn ByteRangeMapping__addSourceID(
-    source_url: &bun_core::String,
-    source_contents: &bun_core::String,
-    source_id: i32,
-) {
-    let Some(mut this) = find(source_url) else {
-        return;
-    };
-    // SAFETY: pointer into the thread-local map, valid for this call.
-    let this = unsafe { this.as_mut() };
-    if this.source_hash == bun_wyhash::hash(source_contents.to_utf8().slice()) {
-        this.source_ids.push(source_id);
-    }
-}
-
 fn find(path: &bun_core::String) -> Option<NonNull<ByteRangeMapping>> {
     let slice = path.to_utf8();
 

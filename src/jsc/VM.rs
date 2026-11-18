@@ -64,7 +64,7 @@ impl VM {
         JSC__VM__holdAPILock(self, ctx, callback)
     }
 
-    /// See `JSLock.h` in WebKit for more detail on how the API lock prevents races.
+    /// The last release runs the microtasks that are left.
     pub fn get_api_lock(&self) -> Lock<'_> {
         JSC__VM__getAPILock(self);
         Lock { vm: self }
@@ -122,7 +122,7 @@ impl VM {
         JSC__VM__shrinkFootprintNow(self)
     }
 
-    /// Multiply JSC's LLInt->Baseline and Baseline->DFG tier-up thresholds by `scale` (1 = normal). Mutator thread only.
+    /// Multiply the tier-up thresholds by `scale` (1 = normal). Mutator thread only.
     pub fn set_startup_jit_deferral_scale(&self, scale: f64) {
         JSC__VM__setStartupJITDeferralScale(self, scale)
     }
@@ -139,7 +139,7 @@ impl VM {
         JSC__VM__notifyNeedTermination(self)
     }
 
-    /// A script frame is on this VM's stack (JSC::VM::isEntered — a VMEntryScope is live).
+    /// A script frame is on this VM's stack (JSC::VM::isEntered).
     pub fn is_entered(&self) -> bool {
         JSC__VM__isEntered(self)
     }

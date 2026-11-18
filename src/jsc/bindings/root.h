@@ -35,13 +35,6 @@
  *
  */
 
-#define HAVE_CONFIG_H 1
-#define BUILDING_WITH_CMAKE 1
-
-#if defined(HAVE_CONFIG_H) && HAVE_CONFIG_H && defined(BUILDING_WITH_CMAKE)
-#include "cmakeconfig.h"
-#endif
-
 #define JSC_API_AVAILABLE(...)
 #define JSC_CLASS_AVAILABLE(...) JS_EXPORT
 #define JSC_API_DEPRECATED(...)
@@ -73,6 +66,7 @@
 #ifdef __cplusplus
 #if OS(LINUX)
 #include <limits>
+#include <mutex>
 #endif
 #include <wtf/PlatformCallingConventions.h>
 #include <JavaScriptCore/JSCJSValue.h>
@@ -81,8 +75,8 @@
 #include <JavaScriptCore/StrongSet.h>
 #include <wtf/Ref.h>
 #include <wtf/ThreadSafeRefCounted.h>
-#include "RemovableFeatures.h"
 #include "BunWithoutAOT.h"
+#include "RemovableFeatures.h"
 #endif
 
 #define ENABLE_WEB_CRYPTO 1

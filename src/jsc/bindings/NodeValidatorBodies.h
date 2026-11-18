@@ -367,7 +367,7 @@ template<typename Arguments> ALWAYS_INLINE JSC::EncodedJSValue validateObject(JS
 
     JSValue value = arguments.at(0);
     // What an object literal or a class of a program makes is no function, no array and no proxy of one.
-    if (value.isCell() && (value.asCell()->type() == FinalObjectType || value.asCell()->type() == CompiledObjectType))
+    if (value.isCell() && value.asCell()->type() == FinalObjectType)
         return JSValue::encode(jsUndefined());
 
     JSValue givenOptions = arguments.at(2);

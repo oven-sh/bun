@@ -9,15 +9,11 @@ test = false
 bench = false
 doctest = false
 
-[features]
-default = ["aot"]
-aot = ["dep:bun_aot"]
-# The functions that `bun_aot_interface` declares, in a Bun without the compiler.
-without_aot = ["dep:bun_aot_absent"]
-
 [dependencies]
-bun_aot = { workspace = true, features = ["linked_names", "linked_archive"], optional = true }
-bun_aot_absent = { workspace = true, optional = true }
+# The functions that `bun_aot_interface` declares.
+bun_aot_absent.workspace = true
+# The functions that the bindings call.
+bun_engine_embed.workspace = true
 bun_runtime = { path = "../runtime" }
 
 [lints]

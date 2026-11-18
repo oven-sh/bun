@@ -11,7 +11,6 @@
 #include <JavaScriptCore/AOTRealmStartup.h>
 #include <JavaScriptCore/AOTRuntimeDescription.h>
 #include <JavaScriptCore/JSGlobalObject.h>
-#include <JavaScriptCore/MarkedBlockCage.h>
 #include <JavaScriptCore/Options.h>
 #include <JavaScriptCore/WasmStreamingParser.h>
 #include <array>
@@ -60,68 +59,6 @@ struct alignas(8) DescribedBuild {
 extern "C" AOT_IN_RUNTIME_DESCRIPTION_SECTION const DescribedBuild Bun__AOT__describedBuild;
 extern "C" AOT_KEPT_BY_EVERY_LINKER constinit const DescribedBuild Bun__AOT__describedBuild = { { 'B', 'U', 'N', 'A', 'O', 'T', 'L', 'O' }, sizeof(DescribedBuild), leftOutOfThisBuild };
 #endif
-
-namespace Bun {
-
-[[noreturn]] static void exitForCageError(JSC::MarkedBlockCage::Error error)
-{
-    using Error = JSC::MarkedBlockCage::Error;
-
-    unsigned size = JSC::Options::markedBlockCageSizeInMB();
-    switch (error) {
-    case Error::Disabled:
-        dataLogLn("error: this executable can't run with BUN_JSC_markedBlockCageSizeInMB=0. Build it with --aot-huge-heap to run it without a heap limit.");
-        break;
-    case Error::InvalidSize:
-        dataLogLn("markedBlockCageSizeInMB is not 0 or a power of two of at most 32768: ", size);
-        break;
-    case Error::BlocksOutsideCage:
-        dataLogLn("error: the objects created before this executable's code was loaded don't fit in BUN_JSC_markedBlockCageSizeInMB=", size, ". Raise it, or build with --aot-huge-heap.");
-        break;
-    case Error::ReservationFailed: {
-        auto [sizeWithinBudget, smallestSize] = JSC::MarkedBlockCage::reservationFailure();
-        if (sizeWithinBudget < smallestSize)
-            dataLogLn("error: this executable needs ", smallestSize / MB, " MB of address space for its JavaScript heap, and the limit on address space (ulimit -v) leaves ", sizeWithinBudget / MB, " MB for it. Raise the limit, or build with --aot-huge-heap.");
-        else
-            dataLogLn("error: this executable could not reserve address space for its JavaScript heap. It asked for ", sizeWithinBudget / MB, " MB and then for less, down to ", smallestSize / MB, " MB. Raise the limit on address space (ulimit -v), or build with --aot-huge-heap.");
-        break;
-    }
-    }
-    exit(EXIT_FAILURE);
-}
-
-void initializeCellCage()
-{
-    if (auto result = JSC::MarkedBlockCage::initialize(); !result)
-        exitForCageError(result.error());
-}
-
-void requireCellCage()
-{
-#if ENABLE(AOT)
-    const JSC::AOT::Image* image = JSC::AOT::Image::current();
-    if (!image || image->header().options.useWideReferences())
-        return;
-    if (auto result = JSC::MarkedBlockCage::require(); !result)
-        exitForCageError(result.error());
-#endif
-}
-
-static constinit std::optional<unsigned> defaultWasmOMGOptimizationLevel;
-
-void saveBackEndOptionDefaults()
-{
-    defaultWasmOMGOptimizationLevel = JSC::Options::wasmOMGOptimizationLevel();
-}
-
-void discardBackEndOptionsOfEnvironment()
-{
-#ifndef BUN_DEBUG
-    JSC::Options::wasmOMGOptimizationLevel() = *defaultWasmOMGOptimizationLevel;
-#endif
-}
-
-} // namespace Bun
 
 #if ENABLE(AOT)
 

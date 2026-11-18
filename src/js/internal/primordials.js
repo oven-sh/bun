@@ -42,7 +42,7 @@ const copyProps = (src, dest) => {
   for (let i = 0; i < keys.length; i++) {
     const key = keys[i];
     if (!ObjectPrototypeHasOwnProperty(dest, key)) {
-      Reflect.defineProperty(dest, key, Reflect.getOwnPropertyDescriptor(src, key));
+      Reflect.defineProperty(dest, key, { __proto__: null, ...Reflect.getOwnPropertyDescriptor(src, key) });
     }
   }
 };
@@ -65,7 +65,7 @@ const makeSafe = (unsafe, safe) => {
     for (let i = 0; i < keys.length; i++) {
       const key = keys[i];
       if (ObjectPrototypeHasOwnProperty(safePrototype, key)) continue;
-      const desc = Reflect.getOwnPropertyDescriptor(unsafePrototype, key);
+      const desc = { __proto__: null, ...Reflect.getOwnPropertyDescriptor(unsafePrototype, key) };
       if (typeof desc.value === "function" && desc.value.length === 0) {
         const called = desc.value.$call(dummy) || {};
         if (SymbolIterator in (typeof called === "object" ? called : {})) {

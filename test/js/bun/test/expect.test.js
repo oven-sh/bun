@@ -3971,6 +3971,14 @@ describe("expect()", () => {
       expect({ a: shared, b: shared }).toMatchObject({ a: { v: 1 }, b: { v: 1 } });
       expect({ a: shared, b: [shared, { c: shared }] }).not.toMatchObject({ a: {}, b: [{}, { c: { v: 2 } }] });
     });
+    test("does not ask for the private methods of the pattern", () => {
+      class Pattern {
+        a = 1;
+        #method() {}
+      }
+      expect({ a: 1 }).toMatchObject(new Pattern());
+      expect({ a: 1 }).toEqual(expect.objectContaining(new Pattern()));
+    });
     test("ends on cycles", () => {
       const received = { v: 1, other: { v: 2 } };
       received.self = received;

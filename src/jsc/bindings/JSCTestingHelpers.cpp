@@ -8,9 +8,6 @@
 
 #include <JavaScriptCore/JSBigInt.h>
 #include <JavaScriptCore/JSBigIntInlines.h>
-#if OS(WINDOWS)
-#include <JavaScriptCore/ExecutableAllocator.h>
-#endif
 
 extern "C" bool JSC__JSValue__isLiveCell(JSC::EncodedJSValue);
 
@@ -65,7 +62,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionStartOfFixedExecutableMemoryPool,
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::createFrom(globalObject, static_cast<uint64_t>(JSC::startOfFixedExecutableMemoryPool<uintptr_t>()))));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::createFrom(globalObject, static_cast<uint64_t>(JSC::startOfExecutableMemory()))));
 }
 #endif
 

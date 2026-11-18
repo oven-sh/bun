@@ -13,7 +13,6 @@
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/JSONObject.h>
 #include <JavaScriptCore/GCDeferralContext.h>
-#include "GCDefferalContext.h"
 #include "wtf/Assertions.h"
 
 #include "JavaScriptCore/ArgList.h"

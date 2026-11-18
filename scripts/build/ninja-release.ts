@@ -78,8 +78,8 @@ export function ninjaIfPresent(cfg: NinjaConfig): string {
  * this machine will not run it. The fallback builds the same graph, only without starting crates before their dependencies'
  * rustc has exited.
  *
- * A fetch reports itself the way a prebuilt dependency's edge does (`[WebKit] fetching …`,
- * `[WebKit] extracted to …`), on stderr like those: stdout is the built program's under build-then-exec.
+ * A fetch reports itself the way a prebuilt dependency's edge does (`[nodejs] fetching …`,
+ * `[nodejs] extracted to …`), on stderr like those: stdout is the built program's under build-then-exec.
  */
 export async function ensureNinja(cfg: NinjaConfig): Promise<string> {
   const say = (line: string) => process.stderr.write(`${nameColor("ninja", "[ninja]")} ${line}\n`);

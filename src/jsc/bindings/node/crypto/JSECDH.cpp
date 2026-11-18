@@ -1,7 +1,6 @@
 #include "JSECDH.h"
 #include "JSECDHPrototype.h"
 #include "JSECDHConstructor.h"
-#include "DOMIsoSubspaces.h"
 #include "ZigGlobalObject.h"
 #include "ErrorCode.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>

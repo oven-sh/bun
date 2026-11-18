@@ -124,7 +124,6 @@ fn thread_main(waker: &Waker) -> ! {
             has_bundled = true;
         }
         if has_bundled {
-            bun_jsc::cached_bytecode::destroy_bytecode_cache_vm();
             bun_alloc::mimalloc::mi_collect(false);
         }
 

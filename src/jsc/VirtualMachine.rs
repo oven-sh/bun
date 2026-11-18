@@ -534,7 +534,7 @@ pub fn standalone_module_graph() -> Option<&'static dyn bun_resolver::Standalone
 }
 
 /// InternalModuleRegistry::generateModule: ahead-of-time bytecode for internal module `id` from a `bun build --compile`
-/// executable (process-lifetime bytes JSC may alias), if this process is one and it carries it.
+/// executable (process-lifetime bytes), if this process is one and it carries it.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__standaloneInternalModuleBytecode(
     _vm: *mut c_void,
@@ -549,8 +549,7 @@ pub extern "C" fn Bun__standaloneInternalModuleBytecode(
     let Some((found, found_entry_offset)) = graph.builtin_module_bytecode(id) else {
         return false;
     };
-    // `found` points into the executable's mapped section.
-    *bytes = found.cast::<u8>();
+    *bytes = found.as_ptr();
     *size = found.len();
     *entry_offset = found_entry_offset;
     true
@@ -585,61 +584,14 @@ pub unsafe extern "C" fn Bun__standaloneModuleKey(
     }
 }
 
-/// `StandaloneGlobalObject::moduleLoaderFetch`: an embedded key whose file carries a serialized ES module record, i.e.
-/// one the loader can register ahead of JSC's graph walk (CommonJS, JSON, assets take the normal path).
+/// `StandaloneGlobalObject::moduleLoaderFetch`: an embedded key that the loader can register ahead of the graph walk
+/// (CommonJS, JSON, assets take the normal path).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__standaloneModuleHasModuleInfo(name: *const u8, len: usize) -> bool {
+pub unsafe extern "C" fn Bun__isStandaloneModuleWithBytecode(name: *const u8, len: usize) -> bool {
     // SAFETY: `name[..len]` is the caller's live 8-bit string buffer.
     let name = unsafe { bun_core::ffi::slice(name, len) };
     bun_options_types::standalone_path::is_bun_standalone_file_path(name)
-        && standalone_module_graph().is_some_and(|graph| graph.has_module_info(name))
-}
-
-/// The executable's pre-resolved module graph blob and module-info slot table (`JSVMClientData::prelinkedModuleGraph`);
-/// false when there is none. Both spans live as long as the process.
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__standalonePrelinkedModuleGraph(
-    blob: &mut *const u8,
-    blob_len: &mut usize,
-    slot_table: &mut *const u8,
-    slot_table_len: &mut usize,
-) -> bool {
-    let Some((graph, slots)) =
-        standalone_module_graph().map(|graph| graph.prelinked_module_graph())
-    else {
-        return false;
-    };
-    if graph.is_empty() || slots.is_empty() {
-        return false;
-    }
-    *blob = graph.as_ptr();
-    *blob_len = graph.len();
-    *slot_table = slots.as_ptr();
-    *slot_table_len = slots.len();
-    true
-}
-
-/// The graph module index of an embedded module key, or `u32::MAX` when it is not a module of the pre-resolved graph.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__standalonePrelinkedModuleIndex(name: *const u8, len: usize) -> u32 {
-    // SAFETY: `name[..len]` is the caller's live 8-bit string buffer.
-    let name = unsafe { bun_core::ffi::slice(name, len) };
-    if !bun_options_types::standalone_path::is_bun_standalone_file_path(name) {
-        return u32::MAX;
-    }
-    standalone_module_graph().map_or(u32::MAX, |graph| graph.prelinked_module_index(name))
-}
-
-/// The module key (canonical embedded name) of graph module `index`; null if out of range.
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__standalonePrelinkedModuleName(index: u32, out_len: &mut usize) -> *const u8 {
-    match standalone_module_graph().and_then(|graph| graph.prelinked_module_name(index)) {
-        Some(name) => {
-            *out_len = name.len();
-            name.as_ptr()
-        }
-        None => core::ptr::null(),
-    }
+        && standalone_module_graph().is_some_and(|graph| graph.is_module_with_bytecode(name))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -748,7 +700,7 @@ impl VMHolder {
         // Written once, and writing it ends the recording: only before a signal that is sure to end the process, not
         // one a program sends itself along the way (SIGTSTP on Ctrl-Z, SIGWINCH, one that is being ignored, ...).
         if signal_ends_process && vm.is_main_thread() {
-            crate::bytecode_order_recorder::write_at_exit(vm, standalone_module_graph());
+            crate::bytecode_order_recorder::write_at_exit(standalone_module_graph());
         }
     }
 }
@@ -1369,8 +1321,8 @@ impl VirtualMachine {
     }
 
     /// Let the main VM's heap take the executable's initial module graph without collecting: everything allocated
-    /// while it loads is live, so collections before it finishes only re-mark it. The budget is what loading the graph
-    /// reads (bytecode, records, string table; capped); after the first collection JSC's usual sizing applies. Workers load a fraction of the graph and
+    /// while it loads is live, so collections before it finishes only re-mark it. The budget follows what loading the graph
+    /// reads (bytecode, string table; capped); after the first collection JSC's usual sizing applies. Workers load a fraction of the graph and
     /// keep the default.
     fn let_heap_take_initial_module_graph(
         &self,
@@ -1381,28 +1333,10 @@ impl VirtualMachine {
         }
         const MIN_BUDGET: usize = 8 * 1024 * 1024;
         const MAX_BUDGET: usize = 128 * 1024 * 1024;
-        let budget = graph
-            .module_graph_load_bytes()
-            .clamp(MIN_BUDGET, MAX_BUDGET);
+        let budget = (2 * graph.module_graph_load_bytes()).clamp(MIN_BUDGET, MAX_BUDGET);
         if budget > MIN_BUDGET {
             JSC__Heap__setInitialAllocationBudget(self.jsc_vm(), budget);
         }
-    }
-
-    /// Hand the executable's shared bytecode string table (if any) to JSC as this VM's `DecoderStringTable`.
-    fn install_bytecode_string_table(
-        &self,
-        graph: &'static dyn bun_resolver::StandaloneModuleGraph,
-    ) {
-        unsafe extern "C" {
-            fn Bun__DecoderStringTable__install(vm: *mut VM, bytes: *const u8, len: usize);
-        }
-        let table = graph.bytecode_string_table();
-        if table.is_empty() {
-            return;
-        }
-        // SAFETY: `jsc_vm` set in `init()`; `table` is a mmapped process-lifetime span from the executable's own section.
-        unsafe { Bun__DecoderStringTable__install(self.jsc_vm.get(), table.as_ptr(), table.len()) };
     }
 
     /// Safe `&VM` accessor for the JSC VM owned by this Bun VM. Set once in
@@ -2180,7 +2114,7 @@ impl VirtualMachine {
         // module.enableCompileCache()) after user exit handlers ran.
         if self.is_main_thread() {
             crate::node_compile_cache::persist_at_exit();
-            crate::bytecode_order_recorder::write_at_exit(self, standalone_module_graph());
+            crate::bytecode_order_recorder::write_at_exit(standalone_module_graph());
         }
     }
 
@@ -3011,7 +2945,9 @@ impl VirtualMachine {
             .context_id
             .unwrap_or(if opts.is_main_thread { 1 } else { i32::MAX });
         if let Some(graph) = opts.graph {
-            let _ = STANDALONE_MODULE_GRAPH.set(graph);
+            if STANDALONE_MODULE_GRAPH.set(graph).is_ok() {
+                crate::bytecode_order_recorder::install(graph);
+            }
         }
 
         // Saves a `mi_heap_new`/`mi_heap_destroy` pair.
@@ -3224,13 +3160,6 @@ impl VirtualMachine {
             IS_SMOL_MODE.store(true, core::sync::atomic::Ordering::Relaxed);
         }
 
-        // `Bun__standaloneInternalModuleBytecode` serves the executable's embedded bytecode to every VM in the
-        // process, so every VM needs the executable's string table (the debugger thread's VM included).
-        if let Some(graph) = standalone_module_graph() {
-            vm.install_bytecode_string_table(graph);
-            crate::bytecode_order_recorder::init_vm(vm, graph);
-        }
-
         Ok(vm)
     }
 
@@ -3348,7 +3277,6 @@ impl VirtualMachine {
                 .worker_ref()
                 .and_then(crate::web_worker::WebWorker::exec_argv)
                 .is_some_and(|exec_argv| {
-                    use bun_core::WTFStringImplExt as _;
                     exec_argv.iter().any(|&arg| {
                         // SAFETY: each entry borrows the C++ `WorkerOptions`
                         // array, kept alive by the owning `WebCore::Worker`

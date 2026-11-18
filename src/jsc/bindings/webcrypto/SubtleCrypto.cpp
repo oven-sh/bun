@@ -621,7 +621,7 @@ static std::optional<KeyData> toKeyData(SubtleCrypto::KeyFormat format, SubtleCr
                         promise->reject(OperationError, "Input data is too large"_s);
                         return std::nullopt;
                     }
-                    return KeyData { Vector(std::span { static_cast<const uint8_t*>(bufferSource->data()), bufferSource->byteLength() }) };
+                    return KeyData { Vector<uint8_t>(std::span { static_cast<const uint8_t*>(bufferSource->data()), bufferSource->byteLength() }) };
                 }),
             keyDataVariant);
     case SubtleCrypto::KeyFormat::Jwk:

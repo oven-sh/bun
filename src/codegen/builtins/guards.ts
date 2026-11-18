@@ -1,7 +1,7 @@
 import { guardFeatureOf } from "../../../scripts/build/trim/builtin-uses.ts";
 import type { BuiltinEntry, BuiltinUses } from "../../../scripts/build/trim/types.ts";
-import { GeneratorError } from "./declarations.ts";
 import {
+  GeneratorError,
   isHiddenRootComponent,
   joinPath,
   memberPathOf,

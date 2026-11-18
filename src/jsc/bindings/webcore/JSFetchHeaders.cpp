@@ -45,8 +45,6 @@
 #include <variant>
 #include <wtf/Vector.h>
 
-#include "GCDefferalContext.h"
-
 namespace WebCore {
 using namespace JSC;
 

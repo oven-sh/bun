@@ -51,11 +51,7 @@ bun_opaque::opaque_ffi! {
 }
 
 pub struct StandaloneModuleGraph {
-    /// Raw view over the serialized graph (`[0, offsets.byte_count)`). Stored as a
-    /// raw fat pointer — NOT `&'static [u8]` — because `byte_count` covers the
-    /// bytecode/module_info subranges that JSC mutates in place via
-    /// `File.bytecode`. Holding a `&'static [u8]` over those bytes would freeze
-    /// them under Stacked/Tree Borrows and make the later foreign write UB.
+    /// Raw view over the serialized graph (`[0, offsets.byte_count)`).
     pub bytes: *const [u8],
     pub files: StringArrayHashMap<File>,
     /// Directory prefixes derived from `files` keys (no trailing `/`, always posix-separated).
@@ -63,21 +59,14 @@ pub struct StandaloneModuleGraph {
     pub entry_point_id: u32,
     pub compile_exec_argv: &'static [u8],
     pub flags: Flags,
-    /// InternalModuleRegistry id → its bytecode inside `bytes` (JSC reads it in place; see `File::bytecode`).
+    /// InternalModuleRegistry id → its bytecode inside `bytes`.
     /// The `u32`: where the module's cache entry starts in those bytes (a linked payload, see `linked_bytecode_payload`).
-    pub builtin_bytecode: Vec<(u32, *mut [u8], u32)>,
-    /// The one shared bytecode string table (`JSC::EncoderStringTable::serialize`) every chunk's payload references by ordinal; installed on the VM's `DecoderStringTable` at startup.
+    pub builtin_bytecode: Vec<(u32, &'static [u8], u32)>,
+    /// The strings that all bytecode refers to.
     pub bytecode_string_table: &'static [u8],
-    /// Built with a payload order file: the one payload every `File::bytecode` is (`JSC::BytecodeLinkEncoder`) and where
+    /// Built with a payload order file: the one payload every `File::bytecode` is and where
     /// each of its regions ends; `None` when each file has a payload of its own.
-    pub linked_bytecode_payload: Option<(*mut [u8], [u32; LINKED_BYTECODE_REGION_COUNT])>,
-    /// The slot table every module's `module_info` body indexes (`ModuleInfoSlotTable`); empty when there is none.
-    pub module_info_string_table: &'static [u8],
-    /// The pre-resolved ES module graph JSC's loader consumes (`JSC::PrelinkedModuleGraph`, built by
-    /// `bun_bundler::prelinked_module_graph`); empty when there is none. 128-byte aligned in the mapped section.
-    pub prelinked_module_graph: &'static [u8],
-    /// Graph module index → index into `files` (table order).
-    pub prelinked_module_files: Vec<u32>,
+    pub linked_bytecode_payload: Option<(&'static [u8], [u32; LINKED_BYTECODE_REGION_COUNT])>,
     /// The first `startup_module_count` of `files` (table order = load order) are the entry
     /// point's static import closure, i.e. what loads before the first `import()`.
     pub startup_module_count: u32,
@@ -472,23 +461,10 @@ unsafe impl Sync for StandaloneModuleGraph {}
 /// slice; the `&mut`-returning inherent methods above stay for the runtime's
 /// blob/sourcemap caching path.
 impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
-    fn has_module_info(&self, name: &[u8]) -> bool {
-        self.find_ref(name)
-            .is_some_and(|file| !file.module_info.is_empty() || file.prelinked_index != u32::MAX)
-    }
-    fn prelinked_module_graph(&self) -> (&'static [u8], &'static [u8]) {
-        (self.prelinked_module_graph, self.module_info_string_table)
-    }
-    fn prelinked_module_index(&self, name: &[u8]) -> u32 {
-        if self.prelinked_module_graph.is_empty() {
-            return u32::MAX;
-        }
-        self.find_ref(name)
-            .map_or(u32::MAX, |file| file.prelinked_index)
-    }
-    fn prelinked_module_name(&self, index: u32) -> Option<&'static [u8]> {
-        let &file = self.prelinked_module_files.get(index as usize)?;
-        self.files.values().get(file as usize).map(|file| file.name)
+    fn is_module_with_bytecode(&self, name: &[u8]) -> bool {
+        self.find_ref(name).is_some_and(|file| {
+            file.module_format == ModuleFormat::Esm && !file.bytecode.is_empty()
+        })
     }
     fn find_assume_standalone_path(&self, name: &[u8]) -> Option<&'static [u8]> {
         let file = self.lookup_file(name)?;
@@ -502,10 +478,10 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
     fn compile_exec_argv(&self) -> &[u8] {
         self.compile_exec_argv
     }
-    fn builtin_module_bytecode(&self, id: u32) -> Option<(*mut [u8], u32)> {
+    fn builtin_module_bytecode(&self, id: u32) -> Option<(&'static [u8], u32)> {
         StandaloneModuleGraph::builtin_module_bytecode(self, id)
     }
-    fn for_each_builtin_bytecode(&self, each: &mut dyn FnMut(u32, *mut [u8], u32)) {
+    fn for_each_builtin_bytecode(&self, each: &mut dyn FnMut(u32, &'static [u8], u32)) {
         for &(id, bytes, entry_offset) in &self.builtin_bytecode {
             each(id, bytes, entry_offset);
         }
@@ -520,13 +496,13 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
             .iter()
             .filter(|f| f.loader.is_javascript_like() || !f.bytecode.is_empty())
             .map(|f| {
-                (if f.bytecode.is_empty() {
+                if f.bytecode.is_empty() {
                     f.contents.len()
                 } else if self.linked_bytecode_payload.is_some() {
                     0 // every file has the same payload: counted once below
                 } else {
                     f.bytecode.len()
-                }) + f.module_info.len()
+                }
             })
             .sum();
         let linked_payload = self
@@ -567,9 +543,8 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
     }
     fn linked_bytecode_payload(
         &self,
-    ) -> Option<(*const [u8], [u32; LINKED_BYTECODE_REGION_COUNT])> {
+    ) -> Option<(&'static [u8], [u32; LINKED_BYTECODE_REGION_COUNT])> {
         self.linked_bytecode_payload
-            .map(|(payload, region_ends)| (payload.cast_const(), region_ends))
     }
     fn compiled_program(&self) -> Option<&CompiledProgram> {
         self.compiled_program.as_ref()
@@ -589,9 +564,11 @@ pub(crate) struct CompiledModuleGraphFile {
     pub contents: StringPointer,
     pub sourcemap: StringPointer,
     pub bytecode: StringPointer,
-    pub module_info: StringPointer,
-    /// The file path used when generating bytecode (e.g., "B:/~BUN/root/app.js").
-    /// Must match exactly at runtime for bytecode cache hits.
+    /// See `File::may_reexport_types`.
+    pub may_reexport_types: u32,
+    /// Zero. With the field before it, where other versions have a `StringPointer`.
+    pub reserved: u32,
+    /// The path that other chunks import it by (e.g., "B:/~BUN/root/app.js"), if it has bytecode.
     pub bytecode_origin_path: StringPointer,
     pub encoding: Encoding,
     pub loader: Loader,
@@ -969,21 +946,19 @@ pub struct File {
     pub encoding: Encoding,
     wtf_string: std::sync::OnceLock<BunString>,
     utf8: std::sync::OnceLock<Box<[u8]>>,
-    // BACKREF into the embedded section; JSC mutates the bytecode buffer in place.
-    // Built with a payload order file, this is the one payload all files share, and the file's own cache entry
-    // starts `bytecode_entry_offset` into it.
-    pub bytecode: *mut [u8],
+    /// Built with a payload order file, this is the one payload all files share, and the file's own cache entry
+    /// starts `bytecode_entry_offset` into it.
+    pub bytecode: &'static [u8],
     pub bytecode_entry_offset: u32,
-    pub module_info: *mut [u8],
-    /// The file path used when generating bytecode (e.g., "B:/~BUN/root/app.js").
-    /// Must match exactly at runtime for bytecode cache hits.
+    /// A chunk that starts from TypeScript, built with `--bytecode --format=esm`: what it re-exports from an external
+    /// module may be a type, which that module does not export.
+    pub may_reexport_types: bool,
+    /// The path that other chunks import it by (e.g., "B:/~BUN/root/app.js"), if it has bytecode.
     pub bytecode_origin_path: &'static [u8],
     /// `WTF::StringImpl::hash()` of `contents`, computed at build time (0 = not recorded).
     pub source_hash: u32,
     pub module_format: ModuleFormat,
     pub side: FileSide,
-    /// This file's module index in `prelinked_module_graph` (`u32::MAX`: not a module of it).
-    pub prelinked_index: u32,
 }
 
 impl File {
@@ -1154,8 +1129,8 @@ bitflags::bitflags! {
         const DISABLE_AUTOLOAD_BUNFIG       = 1 << 1;
         const DISABLE_AUTOLOAD_TSCONFIG     = 1 << 2;
         const DISABLE_AUTOLOAD_PACKAGE_JSON = 1 << 3;
-        /// Every file's `contents` lies in one run that no bytecode, module
-        /// info, name, or source map region overlaps (see `to_bytes`).
+        /// Every file's `contents` lies in one run that no bytecode,
+        /// name, or source map region overlaps (see `to_bytes`).
         const SOURCE_TEXT_CONTIGUOUS        = 1 << 4;
         /// A `[u32; modules]` of each file's WTF string hash (0 = none) follows
         /// the module table, so loading a module from bytecode never has to
@@ -1164,24 +1139,22 @@ bitflags::bitflags! {
         /// After the source hashes: `u32 count`, then `count` × `{ u32 id, StringPointer bytes }` — ahead-of-time
         /// bytecode for internal modules (InternalModuleRegistry ids), read by InternalModuleRegistry::generateModule.
         const HAS_BUILTIN_BYTECODE          = 1 << 6;
-        /// After the builtin-bytecode table: one `StringPointer` to the shared bytecode string table (`JSC::EncoderStringTable::serialize`), which every chunk's payload references by ordinal.
+        /// After the builtin-bytecode table: one `StringPointer` to the strings that all bytecode refers to.
         const HAS_BYTECODE_STRING_TABLE     = 1 << 7;
         /// After the string-table pointer: `u32` count of leading modules (in table order) that make up the
         /// entry point's static import closure, i.e. load before the first `import()`; `prefetch_startup_pages` reads ahead what they need.
         const HAS_STARTUP_MODULE_COUNT      = 1 << 8;
-        /// After the startup module count: one `StringPointer` to the string table every module's `module_info`
-        /// body indexes.
+        /// After the startup module count: one `StringPointer`. Only other versions write it.
         const HAS_MODULE_INFO_STRING_TABLE  = 1 << 9;
         /// Built with `--compile --bytecode --target=<a different os/arch/libc than the bun that built it>`: the embedded
         /// bytecode was written by another platform's JavaScriptCore. Reported with crash reports.
         const CROSS_COMPILED_BYTECODE       = 1 << 10;
-        /// After the module-info string table pointer: `StringPointer` to the pre-resolved module graph blob
-        /// (`JSC::PrelinkedModuleGraph` layout), then `u32 count` and `count` × `u32` file-table index per graph module.
+        /// After that: a `StringPointer`, `u32 count`, then `count` × `u32`. Only other versions write it.
         const HAS_PRELINKED_MODULE_GRAPH    = 1 << 11;
-        /// After the prelinked-graph record: `u32 flags`, `u32 value` (`RuntimeOptions`). Absent = defaults.
+        /// After that: `u32 flags`, `u32 value` (`RuntimeOptions`). Absent = defaults.
         const HAS_RUNTIME_OPTIONS           = 1 << 12;
         /// After the runtime options: `StringPointer` to the one bytecode payload of all modules
-        /// (`JSC::BytecodeLinkEncoder`, built with a payload order file), then where each of its
+        /// (built with a payload order file), then where each of its
         /// `bytecode_order::REGION_COUNT` regions ends (`u32` each; the first two regions are what the recorded run
         /// read). A module's `bytecode` then runs from its cache entry to the end of that payload.
         const HAS_LINKED_BYTECODE_PAYLOAD   = 1 << 13;
@@ -1192,16 +1165,6 @@ bitflags::bitflags! {
 }
 
 const TRAILER: &[u8] = b"\n---- Bun! ----\n";
-
-unsafe extern "C" {
-    fn Bun__WTFStringHashLatin1(ptr: *const u8, len: usize) -> u32;
-    fn Bun__WTFStringHashUTF16(ptr: *const u16, len: usize) -> u32;
-}
-/// `WTF::StringImpl::hash()` for an 8-bit string with these bytes.
-fn wtf_latin1_string_hash(bytes: &[u8]) -> u32 {
-    // SAFETY: reads `len` bytes from `ptr`; pure function.
-    unsafe { Bun__WTFStringHashLatin1(bytes.as_ptr(), bytes.len()) }
-}
 
 impl StandaloneModuleGraph {
     pub(crate) fn from_bytes(
@@ -1221,9 +1184,6 @@ impl StandaloneModuleGraph {
                 builtin_bytecode: Vec::new(),
                 bytecode_string_table: &[],
                 linked_bytecode_payload: None,
-                module_info_string_table: &[],
-                prelinked_module_graph: &[],
-                prelinked_module_files: Vec::new(),
                 startup_module_count: 0,
                 runtime_options: RuntimeOptions::default(),
                 compiled_program: None,
@@ -1231,18 +1191,9 @@ impl StandaloneModuleGraph {
             });
         }
 
-        // This function hands out read-only subslices
-        // (name/contents/sourcemap) AND writable subslices (bytecode/module_info, which JSC
-        // mutates in place) into the same allocation. We must not derive the writable
-        // ones from a `&[u8]` reborrow (writing through const-derived provenance is UB), and we
-        // must not hold a long-lived `&[u8]` that *spans* a writable subrange (a foreign write
-        // would invalidate it under Stacked/Tree Borrows). Keep `(raw_ptr, raw_len)` raw and
-        // derive every read-only `&'static [u8]` per-call over its own disjoint subrange only;
-        // the bytecode/module_info regions never have a shared reference formed over them.
         let raw_const: *const u8 = raw_ptr;
 
-        // SAFETY: modules metadata blob is a read-only subrange of `[0, raw_len)` disjoint
-        // from bytecode/module_info, serialized by `to_bytes`.
+        // SAFETY: modules metadata blob is a read-only subrange of `[0, raw_len)`, serialized by `to_bytes`.
         let modules_list_bytes = unsafe { slice_to(raw_const, raw_len, offsets.modules_ptr) };
         // Note: the modules blob sits at an arbitrary byte offset in the section, and
         // `&[CompiledModuleGraphFile]` would require natural alignment (StringPointer's u32 fields
@@ -1280,7 +1231,7 @@ impl StandaloneModuleGraph {
             None
         };
 
-        let mut builtin_bytecode: Vec<(u32, *mut [u8], u32)> = Vec::new();
+        let mut builtin_bytecode: Vec<(u32, &'static [u8], u32)> = Vec::new();
         if offsets.flags.contains(Flags::HAS_BUILTIN_BYTECODE) {
             let count = read_u32(record_at) as usize;
             record_at += size_of::<u32>();
@@ -1292,8 +1243,8 @@ impl StandaloneModuleGraph {
                     length: read_u32(record_at + 8),
                 };
                 record_at += 3 * size_of::<u32>();
-                // SAFETY: same provenance rules as `File::bytecode`: a writable subrange JSC may patch in place.
-                let bytes = unsafe { slice_to_mut(raw_ptr, raw_len, pointer) };
+                // SAFETY: a read-only subrange placed by `to_bytes`.
+                let bytes = unsafe { slice_to(raw_const, raw_len, pointer) };
                 builtin_bytecode.push((id, bytes, 0));
             }
         }
@@ -1320,56 +1271,13 @@ impl StandaloneModuleGraph {
         } else {
             0
         };
-        let module_info_string_table: &'static [u8] =
-            if offsets.flags.contains(Flags::HAS_MODULE_INFO_STRING_TABLE)
-                && record_at + 2 * size_of::<u32>() <= raw_len
-            {
-                let ptr = StringPointer {
-                    offset: read_u32(record_at),
-                    length: read_u32(record_at + 4),
-                };
-                record_at += 2 * size_of::<u32>();
-                if (ptr.offset as usize).saturating_add(ptr.length as usize) > raw_len {
-                    &[]
-                } else {
-                    // SAFETY: bounds checked above; read-only subrange placed by `to_bytes`, disjoint from
-                    // the writable regions.
-                    unsafe { slice_to(raw_const, raw_len, ptr) }
-                }
-            } else {
-                &[]
-            };
-        let mut prelinked_module_graph: &'static [u8] = &[];
-        let mut prelinked_module_files: Vec<u32> = Vec::new();
+        if offsets.flags.contains(Flags::HAS_MODULE_INFO_STRING_TABLE) {
+            record_at += size_of::<StringPointer>();
+        }
         if offsets.flags.contains(Flags::HAS_PRELINKED_MODULE_GRAPH)
             && record_at + 3 * size_of::<u32>() <= raw_len
         {
-            let ptr = StringPointer {
-                offset: read_u32(record_at),
-                length: read_u32(record_at + 4),
-            };
-            let count = read_u32(record_at + 8) as usize;
-            record_at += 3 * size_of::<u32>();
-            if (ptr.offset as usize).saturating_add(ptr.length as usize) <= raw_len
-                && count <= modules_list_count
-                && record_at + count * size_of::<u32>() <= raw_len
-            {
-                // SAFETY: bounds checked above; read-only subrange placed by `to_bytes`, disjoint from the writable regions.
-                prelinked_module_graph = unsafe { slice_to(raw_const, raw_len, ptr) };
-                prelinked_module_files = (0..count)
-                    .map(|i| read_u32(record_at + i * size_of::<u32>()))
-                    .collect();
-                record_at += count * size_of::<u32>();
-                if prelinked_module_files
-                    .iter()
-                    .any(|&file| file as usize >= modules_list_count)
-                {
-                    prelinked_module_graph = &[];
-                    prelinked_module_files = Vec::new();
-                }
-            } else {
-                record_at = raw_len;
-            }
+            record_at += (3 + read_u32(record_at + 8) as usize) * size_of::<u32>();
         }
         let mut runtime_options = RuntimeOptions::default();
         if offsets.flags.contains(Flags::HAS_RUNTIME_OPTIONS)
@@ -1423,7 +1331,7 @@ impl StandaloneModuleGraph {
         if linked_bytecode_payload.length != 0 {
             // Like a module's `bytecode`, an internal module's runs from its cache entry to the end of the payload.
             builtin_bytecode.retain_mut(|(_, bytes, entry_offset)| {
-                let start = (bytes.cast::<u8>() as usize).wrapping_sub(raw_ptr as usize);
+                let start = bytes.as_ptr().addr().wrapping_sub(raw_const.addr());
                 let Some(offset) = start
                     .checked_sub(linked_bytecode_payload.offset as usize)
                     .filter(|&offset| offset < linked_bytecode_payload.length as usize)
@@ -1432,7 +1340,7 @@ impl StandaloneModuleGraph {
                 };
                 *entry_offset = offset as u32;
                 // SAFETY: the payload's bounds were checked when its record was read.
-                *bytes = unsafe { slice_to_mut(raw_ptr, raw_len, linked_bytecode_payload) };
+                *bytes = unsafe { slice_to(raw_const, raw_len, linked_bytecode_payload) };
                 true
             });
         } else if offsets.flags.contains(Flags::HAS_LINKED_BYTECODE_PAYLOAD) {
@@ -1443,10 +1351,6 @@ impl StandaloneModuleGraph {
         let _ = record_at;
         let has_linked_bytecode_payload =
             offsets.flags.contains(Flags::HAS_LINKED_BYTECODE_PAYLOAD);
-        let mut file_prelinked_index = vec![u32::MAX; modules_list_count];
-        for (module_index, &file) in prelinked_module_files.iter().enumerate() {
-            file_prelinked_index[file as usize] = module_index as u32;
-        }
 
         let mut modules = StringArrayHashMap::<File>::new();
         modules.reserve(modules_list_count);
@@ -1498,31 +1402,17 @@ impl StandaloneModuleGraph {
                     bytecode: if module.bytecode.length > 0
                         && (linked_entry_offset.is_some() || !has_linked_bytecode_payload)
                     {
-                        // SAFETY: section bytes are a writable 'static allocation; JSC mutates
-                        // bytecode in place. Subrange is in-bounds (serialized by to_bytes) and
-                        // disjoint from every read-only subslice handed out above — no
-                        // `&[u8]` is ever formed over this range.
-                        unsafe {
-                            slice_to_mut(
-                                raw_ptr,
-                                raw_len,
-                                if linked_entry_offset.is_some() {
-                                    linked_bytecode_payload
-                                } else {
-                                    module.bytecode
-                                },
-                            )
-                        }
+                        let bytecode = match linked_entry_offset {
+                            Some(_) => linked_bytecode_payload,
+                            None => module.bytecode,
+                        };
+                        // SAFETY: a read-only subrange placed by `to_bytes`.
+                        unsafe { slice_to(raw_const, raw_len, bytecode) }
                     } else {
-                        std::ptr::from_mut::<[u8]>(&mut [])
+                        &[]
                     },
                     bytecode_entry_offset: linked_entry_offset.unwrap_or(0),
-                    module_info: if module.module_info.length > 0 {
-                        // SAFETY: see bytecode above.
-                        unsafe { slice_to_mut(raw_ptr, raw_len, module.module_info) }
-                    } else {
-                        std::ptr::from_mut::<[u8]>(&mut [])
-                    },
+                    may_reexport_types: (module.may_reexport_types, module.reserved) == (1, 0),
                     bytecode_origin_path: if module.bytecode_origin_path.length > 0 {
                         bytecode_origin.as_bytes()
                     } else {
@@ -1537,7 +1427,6 @@ impl StandaloneModuleGraph {
                     encoding: module.encoding,
                     wtf_string: std::sync::OnceLock::new(),
                     utf8: std::sync::OnceLock::new(),
-                    prelinked_index: file_prelinked_index[i],
                 },
             );
         }
@@ -1572,8 +1461,6 @@ impl StandaloneModuleGraph {
         dirs.lock_pointers();
 
         Ok(StandaloneModuleGraph {
-            // Stored as a raw fat pointer — `byte_count` covers the writable
-            // bytecode/module_info regions, so a `&'static [u8]` here would alias them.
             bytes: core::ptr::slice_from_raw_parts(raw_const, offsets.byte_count),
             files: modules,
             dirs,
@@ -1589,13 +1476,10 @@ impl StandaloneModuleGraph {
             linked_bytecode_payload: (linked_bytecode_payload.length != 0).then(|| {
                 (
                     // SAFETY: the payload's bounds were checked when its record was read.
-                    unsafe { slice_to_mut(raw_ptr, raw_len, linked_bytecode_payload) },
+                    unsafe { slice_to(raw_const, raw_len, linked_bytecode_payload) },
                     linked_bytecode_region_ends,
                 )
             }),
-            module_info_string_table,
-            prelinked_module_graph,
-            prelinked_module_files,
             startup_module_count: startup_module_count.min(module_count as u32),
             runtime_options,
             compiled_program,
@@ -1604,7 +1488,7 @@ impl StandaloneModuleGraph {
     }
 
     /// Ahead-of-time bytecode for internal module `id`, if the executable carries it.
-    pub fn builtin_module_bytecode(&self, id: u32) -> Option<(*mut [u8], u32)> {
+    pub fn builtin_module_bytecode(&self, id: u32) -> Option<(&'static [u8], u32)> {
         self.builtin_bytecode
             .iter()
             .find(|(candidate, _, _)| *candidate == id)
@@ -1612,10 +1496,6 @@ impl StandaloneModuleGraph {
     }
 }
 
-/// Read-only subslice helper. Builds a `&'static [u8]` over the *subrange only* so no
-/// shared reference ever spans the writable bytecode/module_info regions of the same
-/// allocation (which would be invalidated by JSC's in-place writes).
-///
 /// SAFETY: caller guarantees `base[..len]` is a live 'static allocation and
 /// `[ptr.offset, ptr.offset + ptr.length)` is in-bounds and never written through a
 /// `*mut` alias for the lifetime of the returned reference.
@@ -1628,20 +1508,6 @@ unsafe fn slice_to(base: *const u8, len: usize, ptr: StringPointer) -> &'static 
     debug_assert!(off.checked_add(n).is_some_and(|end| end <= len));
     // SAFETY: caller contract — `[off, off+n)` lies within a live 'static read-only allocation.
     unsafe { core::slice::from_raw_parts(base.add(off), n) }
-}
-
-/// Mutable-subslice helper for `from_bytes`. Derives a `*mut [u8]` directly from the raw
-/// section base so the result carries write provenance — going through `slice_to` (which
-/// returns `&[u8]`) and casting `*const [u8] as *mut [u8]` would be UB on write.
-///
-/// SAFETY: caller guarantees `base[..len]` is a live allocation with write permission and
-/// that `[ptr.offset, ptr.offset + ptr.length)` is in-bounds.
-unsafe fn slice_to_mut(base: *mut u8, len: usize, ptr: StringPointer) -> *mut [u8] {
-    let off = ptr.offset as usize;
-    let n = ptr.length as usize;
-    debug_assert!(off.checked_add(n).is_some_and(|end| end <= len));
-    // SAFETY: caller contract — `off` is in-bounds of the writable allocation at `base`.
-    core::ptr::slice_from_raw_parts_mut(unsafe { base.add(off) }, n)
 }
 
 /// SAFETY: as `slice_to`, plus `base[ptr.offset + ptr.length] == 0` (written by
@@ -1679,7 +1545,7 @@ fn encode_text_module(
         let hash = if utf8.is_empty() {
             0
         } else {
-            wtf_latin1_string_hash(utf8)
+            bun_engine_text::hash_latin1(utf8)
         };
         return (string_builder.append_count_z(utf8), Encoding::Latin1, hash);
     };
@@ -1696,8 +1562,7 @@ fn encode_text_module(
     strings::copy_u8_into_u16(ascii_units, ascii);
     let len = ascii.len() + strings::convert_utf8_to_utf16_in_buffer(rest_units, rest).len();
     dst[len] = 0;
-    // SAFETY: `dst` starts with `len` initialized units.
-    let hash = unsafe { Bun__WTFStringHashUTF16(dst.as_ptr(), len) };
+    let hash = bun_engine_text::hash_utf16(&dst[..len]);
     let byte_len = 2 * len;
     string_builder.len += byte_len + 2;
     (
@@ -1787,18 +1652,8 @@ pub(crate) fn to_bytes(
                 || output_file.output_kind == options::OutputKind::BytecodeStringTable
                 || output_file.output_kind == options::OutputKind::BytecodePayload
             {
-                // Allocate up to 256 byte alignment for bytecode (+ a table record for builtin bytecode)
-                string_builder.cap += bytes.len().div_ceil(256) * 256 + 256 + 16;
-            } else if output_file.output_kind == options::OutputKind::ModuleInfo {
-                string_builder.cap += bytes.len();
-            } else if output_file.output_kind == options::OutputKind::ModuleInfoStringTable {
-                // 4-byte aligned (JSC reads the slots in place), then its record: pointer.
-                string_builder.cap += bytes.len() + 3 + 2 * size_of::<u32>();
-            } else if output_file.output_kind == options::OutputKind::PrelinkedModuleGraph {
-                // Aligned like bytecode (JSC reads it in place as u32 arrays), then its record: pointer, count,
-                // and one file index per graph module (at most one per output file).
-                string_builder.cap += bytes.len().div_ceil(256) * 256 + 256 + 16;
-                string_builder.cap += 3 * size_of::<u32>() + output_files.len() * size_of::<u32>();
+                // Padding, and the record that points to it.
+                string_builder.cap += bytes.len() + BYTECODE_ALIGNMENT + 16;
             } else {
                 has_entry_point |= is_entry_point(output_file);
 
@@ -1877,8 +1732,8 @@ pub(crate) fn to_bytes(
         .iter()
         .take_while(|f| f.loads_at_startup)
         .count();
-    let mut shared_bytecode: Option<(Vec<u8>, StringPointer, StringPointer, StringPointer)> = None;
-    // Built with a payload order file: all modules' bytecode is one payload (`JSC::BytecodeLinkEncoder`), written
+    let mut shared_bytecode: Option<(Vec<u8>, StringPointer)> = None;
+    // Built with a payload order file: all modules' bytecode is one payload, written
     // right after the shared bytecode so that its hot front extends the startup run; each module's `Bytecode` file says
     // where its cache entry is in it (`bytecode_entry_offset`).
     let linked_payload: Option<(&[u8], [u32; bun_bundler::bytecode_order::REGION_COUNT])> =
@@ -1888,40 +1743,12 @@ pub(crate) fn to_bytes(
             .map(|f| bun_bundler::bytecode_order::split_payload_file(f.value.as_slice()));
     let mut linked_payload_ptr = StringPointer::default();
 
-    // `Flags::HAS_PRELINKED_MODULE_GRAPH`: graph module index -> file-table position, so the runtime registers a whole
-    // import closure by index without looking any path up. Empty (and the graph is not embedded) unless every graph
-    // module's chunk is in the executable.
-    let prelinked_module_to_file: Vec<u32> = {
-        let mut module_to_file: Vec<u32> = Vec::new();
-        for (position, output_file) in module_files.iter().enumerate() {
-            let module_index = output_file.prelinked_module_index;
-            if module_index == u32::MAX {
-                continue;
-            }
-            if module_to_file.len() <= module_index as usize {
-                module_to_file.resize(module_index as usize + 1, u32::MAX);
-            }
-            module_to_file[module_index as usize] = position as u32;
-        }
-        let graph_module_count = output_files
-            .iter()
-            .find(|f| f.output_kind == options::OutputKind::PrelinkedModuleGraph)
-            .and_then(|f| bun_bundler::prelinked_module_graph::module_count(f.value.as_slice()))
-            .map_or(0, |count| count as usize);
-        if module_to_file.len() != graph_module_count || module_to_file.contains(&u32::MAX) {
-            module_to_file.clear();
-        }
-        module_to_file
-    };
-    let embed_prelinked_graph = !prelinked_module_to_file.is_empty();
-
     let mut modules: Vec<CompiledModuleGraphFile> = Vec::with_capacity(module_files.len());
     for (i, &output_file) in module_files.iter().enumerate() {
         if i == startup_module_count {
             shared_bytecode = Some(append_shared_bytecode(
                 &mut string_builder,
                 output_files,
-                embed_prelinked_graph,
                 linked_payload.is_some(),
             ));
             if let Some((payload, _)) = linked_payload {
@@ -1932,22 +1759,6 @@ pub(crate) fn to_bytes(
 
         let bytecode: StringPointer = 'brk: {
             if output_file.bytecode_index != u32::MAX {
-                // Bytecode alignment for JSC bytecode cache deserialization.
-                // Not aligning correctly causes a runtime assertion error or segfault.
-                //
-                // PLATFORM-SPECIFIC ALIGNMENT:
-                // - PE (Windows) and Mach-O (macOS): The module graph data is embedded in
-                //   a dedicated section with an 8-byte size header. At runtime, the section
-                //   is memory-mapped at a page-aligned address (hence 128-byte aligned).
-                //   The data buffer starts 8 bytes after the section start.
-                //   For bytecode at offset O to be 128-byte aligned:
-                //     (section_va + 8 + O) % 128 == 0
-                //     => O % 128 == 120
-                //
-                // - ELF (Linux): the payload is mapped by the kernel as part of the
-                //   RW PT_LOAD (see exe_format/elf.rs) at a page-aligned address, also
-                //   preceded by the same 8-byte length header, so the same arithmetic
-                //   applies.
                 let bytecode = &output_files[output_file.bytecode_index as usize];
                 if linked_payload.is_some() {
                     // The cache-entry offset for now; made a range of the payload once that is placed (below).
@@ -1960,32 +1771,6 @@ pub(crate) fn to_bytes(
             } else {
                 break 'brk StringPointer::default();
             }
-        };
-
-        // Embed module_info for ESM bytecode
-        let module_info: StringPointer = 'brk: {
-            if output_file.module_info_index != u32::MAX {
-                let mi_bytes = output_files[output_file.module_info_index as usize]
-                    .value
-                    .as_slice();
-                bun_core::scoped_log!(
-                    StandaloneModuleGraph,
-                    "module_info {}: {} bytes (js {} bytes, bytecode {} bytes)",
-                    bstr::BStr::new(&output_file.dest_path),
-                    mi_bytes.len(),
-                    output_file.value.as_slice().len(),
-                    bytecode.length
-                );
-                let offset = string_builder.len;
-                let writable = string_builder.writable();
-                writable[0..mi_bytes.len()].copy_from_slice(&mi_bytes[0..mi_bytes.len()]);
-                string_builder.len += mi_bytes.len();
-                break 'brk StringPointer {
-                    offset: offset as u32,
-                    length: mi_bytes.len() as u32,
-                };
-            }
-            break 'brk StringPointer::default();
         };
 
         if Environment::IS_CANARY || Environment::IS_DEBUG {
@@ -2045,7 +1830,12 @@ pub(crate) fn to_bytes(
                 ModuleFormat::None
             },
             bytecode,
-            module_info,
+            may_reexport_types: u32::from(
+                output_format == Format::Esm
+                    && bytecode.length != 0
+                    && output_file.starts_from_typescript,
+            ),
+            reserved: 0,
             bytecode_origin_path: StringPointer::default(),
             side: match output_file.side.unwrap_or(options::Side::Server) {
                 options::Side::Server => FileSide::Server,
@@ -2055,23 +1845,15 @@ pub(crate) fn to_bytes(
         });
     }
 
-    let (
-        builtin_bytecode_table,
-        bytecode_string_table_ptr,
-        module_info_string_table_ptr,
-        prelinked_module_graph_ptr,
-    ) = shared_bytecode.unwrap_or_else(|| {
-        let shared = append_shared_bytecode(
-            &mut string_builder,
-            output_files,
-            embed_prelinked_graph,
-            linked_payload.is_some(),
-        );
-        if let Some((payload, _)) = linked_payload {
-            linked_payload_ptr = append_bytecode_aligned(&mut string_builder, payload);
-        }
-        shared
-    });
+    let (builtin_bytecode_table, bytecode_string_table_ptr) =
+        shared_bytecode.unwrap_or_else(|| {
+            let shared =
+                append_shared_bytecode(&mut string_builder, output_files, linked_payload.is_some());
+            if let Some((payload, _)) = linked_payload {
+                linked_payload_ptr = append_bytecode_aligned(&mut string_builder, payload);
+            }
+            shared
+        });
     let mut builtin_bytecode_table = builtin_bytecode_table;
     if linked_payload.is_some() {
         // `u32 count`, then `{ u32 id, StringPointer bytes }` each.
@@ -2094,7 +1876,7 @@ pub(crate) fn to_bytes(
         .map(|program| compiled_program::append_image(&mut string_builder, program, image_place))
         .transpose()?;
 
-    // Region layout after the bytecode/module_info run above: source maps
+    // Region layout after the bytecode run above: source maps
     // (unread until an error prints), then every file's source text as one run
     // (`Flags::SOURCE_TEXT_CONTIGUOUS`, so `hint_source_pages_dont_need` can
     // drop exactly it), then everything booting touches — names, origin paths,
@@ -2149,8 +1931,6 @@ pub(crate) fn to_bytes(
                 bstr::BStr::new(module_dest_path(output_file))
             )),
         };
-        // The bytecode cache was generated under the bytecode output file's
-        // path; the runtime must present exactly the same path to hit it.
         if output_file.bytecode_index != u32::MAX {
             module.bytecode_origin_path = string_builder
                 .append_count_z(&output_files[output_file.bytecode_index as usize].dest_path);
@@ -2180,26 +1960,6 @@ pub(crate) fn to_bytes(
     }
     let _ = string_builder.append_count(&(startup_module_count as u32).to_le_bytes());
     flags |= Flags::HAS_STARTUP_MODULE_COUNT;
-    if module_info_string_table_ptr.length != 0 {
-        let mut record = [0u8; 8];
-        record[0..4].copy_from_slice(&module_info_string_table_ptr.offset.to_le_bytes());
-        record[4..8].copy_from_slice(&module_info_string_table_ptr.length.to_le_bytes());
-        let _ = string_builder.append_count(&record);
-        flags |= Flags::HAS_MODULE_INFO_STRING_TABLE;
-    }
-    if prelinked_module_graph_ptr.length != 0 {
-        debug_assert!(embed_prelinked_graph);
-        let module_to_file = &prelinked_module_to_file;
-        let mut record: Vec<u8> = Vec::with_capacity(12 + module_to_file.len() * 4);
-        record.extend_from_slice(&prelinked_module_graph_ptr.offset.to_le_bytes());
-        record.extend_from_slice(&prelinked_module_graph_ptr.length.to_le_bytes());
-        record.extend_from_slice(&(module_to_file.len() as u32).to_le_bytes());
-        for file in module_to_file {
-            record.extend_from_slice(&file.to_le_bytes());
-        }
-        let _ = string_builder.append_count(&record);
-        flags |= Flags::HAS_PRELINKED_MODULE_GRAPH;
-    }
     if runtime_options.jit_policy > 1.0 {
         let mut record = [0u8; 8];
         record[0..4].copy_from_slice(&RuntimeOptions::HAS_JIT_POLICY.to_le_bytes());
@@ -2282,15 +2042,9 @@ pub(crate) fn to_bytes(
         let range = |p: StringPointer| p.offset..p.offset + p.length;
         let lo = modules.iter().map(|m| m.contents.offset).min().unwrap();
         let hi = modules.iter().map(|m| range(m.contents).end).max().unwrap();
-        let others = modules.iter().flat_map(|m| {
-            [
-                m.bytecode,
-                m.module_info,
-                m.sourcemap,
-                m.name,
-                m.bytecode_origin_path,
-            ]
-        });
+        let others = modules
+            .iter()
+            .flat_map(|m| [m.bytecode, m.sourcemap, m.name, m.bytecode_origin_path]);
         for p in others
             .chain([offsets.modules_ptr, offsets.compile_exec_argv_ptr])
             .chain(image_ptr)
@@ -3556,21 +3310,14 @@ impl StandaloneModuleGraph {
         let startup = &self.files.values()[..self.startup_module_count as usize];
         let span = if startup.iter().any(|f| !f.bytecode.is_empty()) {
             // A linked payload follows the string table; its hot front is what any module reads at startup.
-            let linked_hot = self.linked_bytecode_payload.map(|(payload, region_ends)| {
-                // Heads of the modules the recorded run evaluated, then the function bodies it decoded.
-                core::ptr::slice_from_raw_parts_mut(payload.cast::<u8>(), region_ends[1] as usize)
-            });
+            // Heads of the modules the recorded run evaluated, then the function bodies it decoded.
+            let linked_hot = (self.linked_bytecode_payload)
+                .map(|(payload, region_ends)| &payload[..region_ends[1] as usize]);
             address_span(
                 startup
                     .iter()
-                    .flat_map(|f| {
-                        let own_bytecode = if self.linked_bytecode_payload.is_some() {
-                            core::ptr::slice_from_raw_parts_mut(f.bytecode.cast::<u8>(), 0)
-                        } else {
-                            f.bytecode
-                        };
-                        [own_bytecode, f.module_info]
-                    })
+                    .filter(|_| self.linked_bytecode_payload.is_none())
+                    .map(|f| f.bytecode)
                     .chain(linked_hot)
                     .chain(
                         self.builtin_bytecode
@@ -3579,11 +3326,8 @@ impl StandaloneModuleGraph {
                             .filter(|_| self.linked_bytecode_payload.is_none())
                             .map(|&(_, bytes, _)| bytes),
                     )
-                    .map(|bytes| (bytes.cast::<u8>().cast_const(), bytes.len()))
-                    .chain([(
-                        self.bytecode_string_table.as_ptr(),
-                        self.bytecode_string_table.len(),
-                    )]),
+                    .chain([self.bytecode_string_table])
+                    .map(|bytes| (bytes.as_ptr(), bytes.len())),
             )
         } else {
             address_span(
@@ -3692,16 +3436,13 @@ fn address_span(regions: impl Iterator<Item = (*const u8, usize)>) -> Option<(us
     (lo < hi).then_some((lo, hi))
 }
 
-/// Writes the ahead-of-time bytecode of the internal modules, the shared
-/// bytecode string table and the module-info string table. Returns the builtin
-/// table (`u32 count`, then `count` × `{ u32 id, StringPointer bytes }`) and
-/// the two string tables' pointers.
+/// Writes the ahead-of-time bytecode of the internal modules and the shared bytecode string table. Returns the builtin
+/// table (`u32 count`, then `count` × `{ u32 id, StringPointer bytes }`) and the string table's pointer.
 fn append_shared_bytecode(
     string_builder: &mut bun_core::StringBuilder,
     output_files: &[OutputFile],
-    embed_prelinked_graph: bool,
     linked: bool,
-) -> (Vec<u8>, StringPointer, StringPointer, StringPointer) {
+) -> (Vec<u8>, StringPointer) {
     let mut builtin_bytecode_table: Vec<u8> = Vec::new();
     let mut count: u32 = 0;
     builtin_bytecode_table.extend_from_slice(&0u32.to_le_bytes());
@@ -3744,33 +3485,7 @@ fn append_shared_bytecode(
         };
         bytecode_string_table_ptr = append_bytecode_aligned(string_builder, bytes);
     }
-    let mut module_info_string_table_ptr = StringPointer::default();
-    if let Some(table) = output_files
-        .iter()
-        .find(|f| f.output_kind == options::OutputKind::ModuleInfoStringTable)
-    {
-        // 4-byte aligned at runtime (the section payload starts 8 bytes past a page boundary): JSC reads the slots in place.
-        let padding = (4 - string_builder.len % 4) % 4;
-        string_builder.writable()[0..padding].fill(0);
-        string_builder.len += padding;
-        module_info_string_table_ptr = string_builder.append_count(table.value.as_slice());
-    }
-    let mut prelinked_module_graph_ptr = StringPointer::default();
-    if embed_prelinked_graph {
-        if let Some(graph) = output_files
-            .iter()
-            .find(|f| f.output_kind == options::OutputKind::PrelinkedModuleGraph)
-        {
-            prelinked_module_graph_ptr =
-                append_bytecode_aligned(string_builder, graph.value.as_slice());
-        }
-    }
-    (
-        builtin_bytecode_table,
-        bytecode_string_table_ptr,
-        module_info_string_table_ptr,
-        prelinked_module_graph_ptr,
-    )
+    (builtin_bytecode_table, bytecode_string_table_ptr)
 }
 
 /// What is appended next starts at a multiple of `alignment` once mapped. The section data begins 8 bytes after a page-aligned address (the length header).
@@ -3781,29 +3496,15 @@ fn align_next_append(string_builder: &mut bun_core::StringBuilder, alignment: us
     string_builder.len += padding;
 }
 
-/// JSC reads cached bytecode in place and expects its start 128-byte aligned once mapped. The section data begins
-/// 8 bytes after a page-aligned address (the length header), so the offset must be 120 mod 128.
+/// For a `--target` of another version, which reads the first words in place to find that it is not for it.
+const BYTECODE_ALIGNMENT: usize = 8;
+
 fn append_bytecode_aligned(
     string_builder: &mut bun_core::StringBuilder,
     bytecode: &[u8],
 ) -> StringPointer {
-    let target_mod: usize = 128 - size_of::<u64>();
-    let current_mod = string_builder.len % 128;
-    let padding = if current_mod <= target_mod {
-        target_mod - current_mod
-    } else {
-        128 - current_mod + target_mod
-    };
-    let writable = string_builder.writable();
-    writable[0..padding].fill(0);
-    string_builder.len += padding;
-    let aligned_offset = string_builder.len;
-    string_builder.writable()[0..bytecode.len()].copy_from_slice(bytecode);
-    string_builder.len += bytecode.len();
-    StringPointer {
-        offset: aligned_offset as u32,
-        length: bytecode.len() as u32,
-    }
+    align_next_append(string_builder, BYTECODE_ALIGNMENT);
+    string_builder.append_count(bytecode)
 }
 
 /// Allocates a StandaloneModuleGraph in the process-static `INSTANCE`,

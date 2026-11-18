@@ -13,7 +13,7 @@ import { sharedCacheDir as resolveSharedCacheDir } from "./config.ts";
 import { allDeps } from "./deps/index.ts";
 
 const cwd = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-// Machine-shared cache (ccache/cargo/tarballs/webkit): resolveConfig()'s
+// Machine-shared cache (ccache/cargo/tarballs): resolveConfig()'s
 // non-CI default. `clean` is a dev-machine tool so we don't branch on CI here.
 const sharedCacheDir = resolveSharedCacheDir(cwd);
 
@@ -34,9 +34,8 @@ presets:
   rust             rust-target/ dirs across all profiles + <build cache>/cargo
   cpp              C++ obj/ + pch/ across all profiles
   cache            machine-shared build cache (${sharedCacheDir}: ccache, cargo,
-                   tarballs, prebuilt webkit) — affects ALL checkouts
-  deep             build/, target/, vendor/* (except manually managed deps
-                   like WebKit)
+                   tarballs) — affects ALL checkouts
+  deep             build/, target/, vendor/*
 
 flags:
   --dry-run        list what would be removed without deleting
@@ -54,11 +53,6 @@ function buildProfiles(): string[] {
 }
 
 const profile = (name: string) => () => [resolve(cwd, "build", name)];
-
-// Deps whose vendor/<name>/ dir is user-managed (manual clone, not fetched
-// by the build system). `deep` skips these; everything else in allDeps gets
-// its vendor dir nuked.
-const userManagedDeps = new Set(["WebKit"]);
 
 const presets: Record<string, () => string[]> = {
   "debug": profile("debug"),
@@ -78,11 +72,7 @@ const presets: Record<string, () => string[]> = {
 
   cache: () => [sharedCacheDir],
 
-  deep: () => [
-    resolve(cwd, "build"),
-    resolve(cwd, "target"),
-    ...allDeps.filter(d => !userManagedDeps.has(d.name)).map(d => resolve(cwd, "vendor", d.name)),
-  ],
+  deep: () => [resolve(cwd, "build"), resolve(cwd, "target"), ...allDeps.map(d => resolve(cwd, "vendor", d.name))],
 };
 
 if (!(preset in presets)) {

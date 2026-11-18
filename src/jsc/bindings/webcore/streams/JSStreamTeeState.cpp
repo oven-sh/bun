@@ -2,7 +2,6 @@
 #include "JSStreamTeeState.h"
 
 #include "DOMClientIsoSubspaces.h"
-#include "DOMIsoSubspaces.h"
 #include "JSDOMBinding.h"
 #include "JSDOMGlobalObject.h"
 #include "JSReadableStream.h"

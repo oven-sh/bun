@@ -127,6 +127,18 @@ impl Utf8WithStringJsc for Utf8WithString {
     }
 }
 
+/// For InternalForTesting.cpp.
+#[unsafe(no_mangle)]
+extern "C" fn BunString__threadIsolatedCopy(string: &String) -> String {
+    string.thread_isolated_copy()
+}
+
+/// For InternalForTesting.cpp.
+#[unsafe(no_mangle)]
+extern "C" fn BunString__makeThreadShareable(string: &mut String) {
+    string.make_thread_shareable()
+}
+
 /// `BunString__toJSDOMURL` opens a `DECLARE_THROW_SCOPE` and throws (returning
 /// encoded `0`) when the string is not a valid URL, so wrap it in a validation
 /// scope exactly like `to_js`/`into_js` above. Without this, under

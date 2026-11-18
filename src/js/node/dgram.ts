@@ -88,6 +88,7 @@ class ERR_SOCKET_BUFFER_SIZE extends Error {
     }
     ObjectDefineProperty(this, "info", { value: ctx, enumerable: true, configurable: true, writable: false });
     ObjectDefineProperty(this, "errno", {
+      __proto__: null,
       get() {
         return ctx.errno;
       },
@@ -98,6 +99,7 @@ class ERR_SOCKET_BUFFER_SIZE extends Error {
       configurable: true,
     });
     ObjectDefineProperty(this, "syscall", {
+      __proto__: null,
       get() {
         return ctx.syscall;
       },
@@ -1604,6 +1606,7 @@ Socket.prototype.getSendQueueCount = function (this: $Node.DgramSocket) {
 
 // Deprecated private APIs.
 ObjectDefineProperty(Socket.prototype, "_handle", {
+  __proto__: null,
   get: deprecate(
     function (this: $Node.DgramSocket) {
       return this[kStateSymbol].handle;
@@ -1621,6 +1624,7 @@ ObjectDefineProperty(Socket.prototype, "_handle", {
 });
 
 ObjectDefineProperty(Socket.prototype, "_receiving", {
+  __proto__: null,
   get: deprecate(
     function (this: $Node.DgramSocket) {
       return this[kStateSymbol].receiving;
@@ -1638,6 +1642,7 @@ ObjectDefineProperty(Socket.prototype, "_receiving", {
 });
 
 ObjectDefineProperty(Socket.prototype, "_bindState", {
+  __proto__: null,
   get: deprecate(
     function (this: $Node.DgramSocket) {
       return this[kStateSymbol].bindState;
@@ -1655,6 +1660,7 @@ ObjectDefineProperty(Socket.prototype, "_bindState", {
 });
 
 ObjectDefineProperty(Socket.prototype, "_queue", {
+  __proto__: null,
   get: deprecate(
     function (this: $Node.DgramSocket) {
       return this[kStateSymbol].queue;
@@ -1672,6 +1678,7 @@ ObjectDefineProperty(Socket.prototype, "_queue", {
 });
 
 ObjectDefineProperty(Socket.prototype, "_reuseAddr", {
+  __proto__: null,
   get: deprecate(
     function (this: $Node.DgramSocket) {
       return this[kStateSymbol].reuseAddr;

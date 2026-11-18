@@ -120,10 +120,8 @@ pub(crate) enum Source {
 
 // Image-specific (pins typed-array storage for the off-thread pipeline); no `bun_jsc` wrapper.
 unsafe extern "C" {
-    /// 0 = detached/null, 1 = FastTypedArray (≤~1 KB, GC-movable — dupe),
-    /// 2 = pinned an existing ArrayBuffer (caller must unpin). 3 = held a
-    /// bufferless OversizeTypedArray: valid for the op, nothing to unpin (the
-    /// caller roots the value as it does for 2).
+    /// 0 = detached/null, 1 = in the heap (small, can move — dupe),
+    /// 2 = pinned (caller must unpin).
     safe fn JSC__JSValue__borrowBytesForOffThread(
         v: JSValue,
         out_ptr: &mut *const u8,
@@ -680,21 +678,11 @@ impl Image {
                 let Some(v) = js::source_js_get_cached(this_value) else {
                     return Err(PinError::Detached);
                 };
-                // Classify the storage mode WITHOUT promoting it. A fresh
-                // `new Uint8Array(N)` (the common path — `await res.bytes()`,
-                // `Buffer.from(file)`) is `OversizeTypedArray`: bytes in
-                // fastMalloc, no JSArrayBuffer wrapper, can't be detached or
-                // moved. Calling `possiblySharedBuffer()` on that would
-                // `slowDownAndWasteMemory()` → copy + allocate a wrapper for
-                // every input. The classifier returns the slice directly and
-                // tells us whether anything actually needs pinning.
                 let mut ptr: *const u8 = core::ptr::null();
                 let mut len: usize = 0;
                 match JSC__JSValue__borrowBytesForOffThread(v, &mut ptr, &mut len) {
                     0 => Err(PinError::Detached),
-                    // FastTypedArray (≤ fastSizeLimit elements, GC-movable): tiny
-                    // by definition — dupe instead of forcing JSC to copy via
-                    // tryCreate(span()) + allocate a butterfly.
+                    // In the heap (≤ fastSizeLimit elements): tiny by definition.
                     1 => {
                         if len == 0 {
                             Err(PinError::Detached)
@@ -711,13 +699,10 @@ impl Image {
                             ))
                         }
                     }
-                    // 2: Wasteful/DataView/JSArrayBuffer, pinned by the helper (unpin when done).
-                    // 3: OversizeTypedArray held without adopting an ArrayBuffer; nothing to unpin.
-                    kind @ (2 | 3) => {
+                    // Pinned by the helper (unpin when done).
+                    2 => {
                         if len == 0 {
-                            if kind == 2 {
-                                v.unpin_array_buffer();
-                            }
+                            v.unpin_array_buffer();
                             Err(PinError::Detached)
                         } else {
                             // SAFETY: pinned until the returned `Pin` drops (with the job's
@@ -728,7 +713,7 @@ impl Image {
                                     bytes: bun_ptr::RawSlice::new(bytes),
                                     ..Default::default()
                                 },
-                                if kind == 2 { Pin(v) } else { Pin::NONE },
+                                Pin(v),
                             ))
                         }
                     }
@@ -1407,7 +1392,7 @@ pub(crate) struct Input {
     // Borrows `image.source.path` (NUL-terminated); the owning `Image` is
     // held via BACKREF for the task's lifetime, same as `bytes` above.
     path: Option<*const ZStr>,
-    /// FastTypedArray inputs are tiny and GC-movable: copied instead of pinned.
+    /// Inputs in the heap are tiny and can move: copied instead of pinned.
     copied: Option<Vec<u8>>,
 }
 

@@ -9,7 +9,6 @@
 #include <JavaScriptCore/ScriptExecutable.h>
 #include <JavaScriptCore/SourceProvider.h>
 #include <JavaScriptCore/DeferGC.h>
-#include <wtf/Stopwatch.h>
 #include <wtf/MonotonicTime.h>
 #include <wtf/WallTime.h>
 #include <wtf/HashMap.h>
@@ -39,11 +38,8 @@ uint32_t CpuProfilerImpl::start(WTF::String&& title, bool recordSamples)
 
     if (m_sessions.size() == 1) {
         auto& vm = m_isolate->vm();
-        auto stopwatch = WTF::Stopwatch::create();
-        stopwatch->start();
-        JSC::SamplingProfiler& sampler = vm.ensureSamplingProfiler(WTF::move(stopwatch));
+        JSC::SamplingProfiler& sampler = vm.ensureSamplingProfiler();
         sampler.setTimingInterval(WTF::Seconds::fromMicroseconds(m_samplingIntervalUs));
-        sampler.noticeCurrentThreadAsJSCExecutionThread();
         sampler.start();
     }
 
@@ -88,11 +84,7 @@ static void buildProfileTree(JSC::VM& vm, CpuProfileImpl& profile, int64_t start
     JSC::JSLockHolder jsLock(vm);
     JSC::DeferGC deferGC(vm);
 
-    WTF::Vector<JSC::SamplingProfiler::StackTrace> stackTraces;
-    {
-        WTF::Locker locker { sampler->getLock() };
-        stackTraces = sampler->releaseStackTraces();
-    }
+    auto stackTraces = sampler->releaseStackTraces(deferGC);
 
     CpuProfileNodeImpl* root = makeRoot();
 
@@ -151,29 +143,27 @@ static void buildProfileTree(JSC::VM& vm, CpuProfileImpl& profile, int64_t start
             // (i == 0) it falls through and becomes the expected "(program)"
             // leaf node with a hit.
             if (current == root && i > 0
-                && frame.frameType == JSC::SamplingProfiler::FrameType::Executable
                 && frame.executable
                 && !frame.executable->isFunctionExecutable()
                 && !frame.executable->isHostFunction()) {
                 continue;
             }
 
-            WTF::String functionName = frame.displayName(vm);
+            WTF::String functionName = frame.displayName;
             WTF::String url;
             int scriptId = 0;
             int line = CpuProfileNode::kNoLineNumberInfo;
             int column = CpuProfileNode::kNoColumnNumberInfo;
             int sampleLine = 0;
 
-            if (frame.frameType == JSC::SamplingProfiler::FrameType::Executable && frame.executable) {
-                auto providerAndId = frame.sourceProviderAndID();
-                auto* provider = std::get<0>(providerAndId);
+            if (frame.executable) {
+                auto* provider = frame.sourceProvider();
                 if (provider) {
                     url = provider->sourceURL();
                     scriptId = static_cast<int>(provider->asID());
                 }
-                int rawLine = frame.functionStartLine();
-                unsigned rawColumn = frame.functionStartColumn();
+                int rawLine = frame.functionStartLine;
+                unsigned rawColumn = frame.functionStartColumn;
                 bool definitionRemapped = false;
                 if (rawLine > 0 && rawColumn != std::numeric_limits<unsigned>::max()) {
                     JSC::LineColumn lc { static_cast<unsigned>(rawLine), rawColumn };
@@ -196,8 +186,8 @@ static void buildProfileTree(JSC::VM& vm, CpuProfileImpl& profile, int64_t start
                     if (rawColumn != std::numeric_limits<unsigned>::max())
                         column = static_cast<int>(rawColumn);
                 }
-                if (frame.hasExpressionInfo()) {
-                    JSC::LineColumn sampleLc = frame.semanticLocation.lineColumn;
+                if (frame.position) {
+                    JSC::LineColumn sampleLc = *frame.position;
 #if USE(BUN_JSC_ADDITIONS)
                     if (provider && definitionRemapped) {
                         auto& remap = vm.computeLineColumnWithSourcemap();
@@ -297,7 +287,6 @@ CpuProfileImpl* CpuProfilerImpl::stop(uint32_t id)
 
     if (m_sessions.isEmpty()) {
         if (JSC::SamplingProfiler* sampler = vm.samplingProfiler()) {
-            WTF::Locker locker { sampler->getLock() };
             sampler->pause();
             sampler->clearData();
         }
@@ -468,7 +457,6 @@ void CpuProfiler::Dispose()
     auto* impl = toImpl(this);
     if (!impl->m_sessions.isEmpty()) {
         if (JSC::SamplingProfiler* sampler = impl->m_isolate->vm().samplingProfiler()) {
-            WTF::Locker locker { sampler->getLock() };
             sampler->pause();
             sampler->clearData();
         }

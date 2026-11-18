@@ -8,7 +8,7 @@
 
 import { mkdirSync, readdirSync } from "node:fs";
 import { availableParallelism } from "node:os";
-import { basename, delimiter, dirname, extname, relative, resolve, sep } from "node:path";
+import { basename, dirname, extname, relative, resolve, sep } from "node:path";
 import { builtinUsesJson, removableFeaturesJson, trimDirectory, trimScript } from "./aot.ts";
 import { linksWithLld, type Config } from "./config.ts";
 import { assert } from "./error.ts";
@@ -83,15 +83,6 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
     pool: "compile",
   });
 
-  if (cfg.ccache !== undefined && !cfg.windows) {
-    n.rule("cxx_pch_chained", {
-      command: `${ccacheLauncher}extra_files_to_hash=$pch_bases ${cxx} $cxxflags -Winvalid-pch -Xclang -include-pch -Xclang $pch_file -Xclang -include -Xclang $pch_header -MMD -MT $out -MF $out.d -c $in -o $out`,
-      description: "cxx $out",
-      ...depfileOpts,
-      pool: "compile",
-    });
-  }
-
   // ─── C compile ───
   n.rule("cc", {
     command: cfg.windows
@@ -127,9 +118,9 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   // during PCH compilation instead of deferring to each consuming .cpp
   // (faster builds, CMake does this too).
   // -MD (not -MMD): the wrapper header has `#pragma clang system_header` to
-  // suppress JSC warnings, which makes everything it transitively includes
+  // suppress warnings, which makes everything it transitively includes
   // "system" for -MMD purposes. -MMD would give a near-empty depfile; -MD
-  // tracks all headers so PCH invalidates when WebKit headers change.
+  // tracks all headers so PCH invalidates when one changes.
   // -fno-pch-timestamp: don't embed input mtimes in the PCH. A cached PCH's
   // embedded mtime can be stale (e.g. after deleting pch/ and reconfiguring)
   // → every consumer fails with "mtime changed". ninja's depfile already
@@ -158,21 +149,12 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
       pool: "compile",
     });
   } else {
-    const pchCommand = `${cxx} $cxxflags -Winvalid-pch -fpch-instantiate-templates -Xclang -fno-pch-timestamp -Xclang -emit-pch -Xclang -include -Xclang $pch_header -x c++-header -MD -MT $out -MF $out.d -c $in -o $out`;
     n.rule("pch", {
-      command: pchCommand,
+      command: `${cxx} $cxxflags -Winvalid-pch -fpch-instantiate-templates -Xclang -fno-pch-timestamp -Xclang -emit-pch -Xclang -include -Xclang $pch_header -x c++-header -MD -MT $out -MF $out.d -c $in -o $out`,
       description: "pch $out",
       ...depfileOpts,
       pool: "compile",
     });
-    if (cfg.ccache !== undefined) {
-      n.rule("pch_chained", {
-        command: `${pchCommand} && ${cfg.jsRuntime} ${q(pchChecksumScript)} $out $out.sum`,
-        description: "pch $out",
-        ...depfileOpts,
-        pool: "compile",
-      });
-    }
   }
 
   if (cfg.ccache !== undefined) {
@@ -255,7 +237,6 @@ export interface CompileOpts {
   pch?: string;
   /** Original header the PCH was built from (needed for clang-cl /Yu). */
   pchHeader?: string;
-  pchBases?: string[];
   /**
    * Extra implicit deps. Use for generated headers this specific .cpp needs
    * (e.g. ErrorCode.cpp depends on ErrorCode+List.h), and for dep outputs
@@ -346,8 +327,7 @@ function compile(n: Ninja, cfg: Config, src: string, opts: CompileOpts, lang: "c
     ...(opts.implicitInputs ?? []),
     ...(opts.pch !== undefined ? [opts.pch] : []),
   ];
-  const pchChecksums =
-    opts.pch !== undefined && cfg.ccache !== undefined ? [...(opts.pchBases ?? []), opts.pch].map(pchChecksumPath) : [];
+  const pchChecksums = opts.pch !== undefined && cfg.ccache !== undefined ? [pchChecksumPath(opts.pch)] : [];
   const node = {
     outputs: [out],
     inputs: [absSrc],
@@ -362,17 +342,11 @@ function compile(n: Ninja, cfg: Config, src: string, opts: CompileOpts, lang: "c
     n.build({ ...node, rule: "cxx", vars: { cxxflags: flags } });
   } else {
     assert(opts.pchHeader !== undefined, "cxx with pch requires pchHeader (the wrapper .hxx)");
-    const vars = { cxxflags: flags, pch_file: n.rel(opts.pch), pch_header: n.rel(opts.pchHeader) };
-    const bases = opts.pchBases ?? [];
-    if (bases.length > 0 && cfg.ccache !== undefined) {
-      n.build({
-        ...node,
-        rule: "cxx_pch_chained",
-        vars: { ...vars, pch_bases: bases.map(base => n.rel(pchChecksumPath(base))).join(delimiter) },
-      });
-    } else {
-      n.build({ ...node, rule: "cxx_pch", vars });
-    }
+    n.build({
+      ...node,
+      rule: "cxx_pch",
+      vars: { cxxflags: flags, pch_file: n.rel(opts.pch), pch_header: n.rel(opts.pchHeader) },
+    });
   }
 
   // Record for compile_commands.json
@@ -400,12 +374,6 @@ function pchChecksumPath(pch: string): string {
   return `${pch}.sum`;
 }
 
-export interface PrecompiledHeader {
-  pch: string;
-  wrapperHeader: string;
-  bases: string[];
-}
-
 /**
  * Compile a header into a precompiled header.
  * Returns `{ pch, wrapperHeader }` — both paths absolute.
@@ -428,8 +396,8 @@ export function pch(
   opts: {
     flags: string[];
     /**
-     * Files whose change must invalidate the PCH. Typically: dep output
-     * libs (libJavaScriptCore.a etc.).
+     * Files whose change must invalidate the PCH. Typically: dep outputs
+     * (fetch stamps).
      *
      * Can't be order-only: the depfile tracks headers, but ninja stats at
      * startup. A dep's headers are rewritten by its fetch MID-RUN. At
@@ -448,11 +416,9 @@ export function pch(
      * and inputs don't change mid-build.
      */
     orderOnlyInputs?: string[];
-    base?: PrecompiledHeader;
   },
-): PrecompiledHeader {
+): { pch: string; wrapperHeader: string } {
   const absHeader = resolve(cfg.cwd, header);
-  const base = cfg.windows ? undefined : opts.base;
   const pchDir = resolve(cfg.buildDir, "pch");
   const wrapperHeader = resolve(pchDir, `${basename(header)}.hxx`);
   const stubCxx = resolve(pchDir, `${basename(header)}.hxx.cxx`);
@@ -491,17 +457,10 @@ export function pch(
     // absHeader + wrapper editing must rebuild PCH. Dep outputs too — see
     // the docstring above for why these can't be order-only (startup-stat
     // vs mid-build header regeneration). The depfile tracks the REST.
-    implicitInputs: [
-      absHeader,
-      wrapperHeader,
-      toolIdentityFile(cfg, "cxx"),
-      ...(base !== undefined ? [base.pch] : []),
-      ...(opts.implicitInputs ?? []),
-    ],
+    implicitInputs: [absHeader, wrapperHeader, toolIdentityFile(cfg, "cxx"), ...(opts.implicitInputs ?? [])],
     orderOnlyInputs: [pchDirStamp(cfg), ...(opts.orderOnlyInputs ?? [])],
   };
-  const chain = base !== undefined ? ["-Xclang", "-include-pch", "-Xclang", n.rel(base.pch)] : [];
-  const vars = { cxxflags: [...opts.flags, ...chain].join(" "), pch_header: n.rel(wrapperHeader) };
+  const vars = { cxxflags: opts.flags.join(" "), pch_header: n.rel(wrapperHeader) };
   if (cfg.windows) {
     n.build({
       ...node,
@@ -509,13 +468,11 @@ export function pch(
       implicitOutputs: [stubObj],
       vars: { ...vars, pch_stub_obj: n.rel(stubObj) },
     });
-  } else if (base !== undefined && cfg.ccache !== undefined) {
-    n.build({ ...node, rule: "pch_chained", implicitOutputs: [pchChecksumPath(out)], vars });
   } else {
     n.build({ ...node, rule: "pch", vars });
   }
 
-  if (base === undefined && cfg.ccache !== undefined) {
+  if (cfg.ccache !== undefined) {
     n.build({
       outputs: [pchChecksumPath(out)],
       rule: "pch_checksum",
@@ -524,7 +481,7 @@ export function pch(
     });
   }
 
-  return { pch: out, wrapperHeader, bases: base !== undefined ? [...base.bases, base.pch] : [] };
+  return { pch: out, wrapperHeader };
 }
 
 // ---------------------------------------------------------------------------

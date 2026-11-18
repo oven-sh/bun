@@ -7,12 +7,7 @@
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/ControlFlowProfiler.h>
-#include <JavaScriptCore/FunctionHasExecutedCache.h>
-#include <JavaScriptCore/HeapIterationScope.h>
-#include <JavaScriptCore/MarkedSpaceInlines.h>
-#include <JavaScriptCore/ScriptExecutable.h>
 #include <JavaScriptCore/SourceProvider.h>
-#include <JavaScriptCore/SubspaceInlines.h>
 #include <wtf/JSONValues.h>
 
 using namespace JSC;
@@ -58,22 +53,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_isCPUProfilerRunning, (JSGlobalObject*, Call
     return JSValue::encode(jsBoolean(Bun::isCPUProfilerRunning()));
 }
 
-// Precise code coverage via JSC's control-flow profiler. Unlike V8 (which
-// deopts and instruments already-compiled code), only functions compiled from
-// this point on are instrumented: JSC's own toggle recompiles everything
-// (deleteAllCode when idle), which would corrupt suspended TLA module bodies.
-//
-// Compiled instrumented code writes through raw BasicBlockLocation pointers the
-// profiler owns (op_profile_control_flow), so without that recompile the
-// profiler can never be freed again once code has been compiled against it: it
-// is enabled once and stays for the VM's lifetime. "stop" is protocol state in
-// node/inspector.ts only.
+// Precise code coverage via the control-flow profiler. Unlike V8 (which deopts
+// and instruments already-compiled code), only functions compiled from this
+// point on are instrumented. It is enabled once and stays for the VM's
+// lifetime: "stop" is protocol state in node/inspector.ts only.
 JSC_DECLARE_HOST_FUNCTION(jsFunction_startPreciseCoverage);
 JSC_DEFINE_HOST_FUNCTION(jsFunction_startPreciseCoverage, (JSGlobalObject * globalObject, CallFrame*))
 {
-    auto& vm = globalObject->vm();
-    if (!vm.controlFlowProfiler())
-        vm.enableControlFlowProfiler();
+    globalObject->vm().enableControlFlowProfiler();
     return JSValue::encode(jsUndefined());
 }
 
@@ -95,33 +82,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_collectPreciseCoverage, (JSGlobalObject * gl
     if (!profiler)
         return JSValue::encode(jsNull());
 
-    // Enumerate SourceIDs by walking only the four ScriptExecutable subspaces
-    // (not the whole heap). Providers whose executables were all GC'd are not
-    // reported, and offsets index the transpiled source for Bun-loaded modules;
-    // Bun appends an inline //# sourceMappingURL, so consumers that read the
-    // script source (v8-to-istanbul) can remap.
-    Vector<Ref<JSC::SourceProvider>> providers;
-    HashSet<SourceID> seenSourceIDs;
-    {
-        HeapIterationScope iterationScope(vm.heap);
-        vm.heap.forEachScriptExecutableSpace([&](auto& spaceAndSet) {
-            spaceAndSet.space.forEachLiveCell([&](HeapCell* cell, HeapCell::Kind) {
-                auto* executable = static_cast<ScriptExecutable*>(cell);
-                auto* provider = executable->source().provider();
-                if (!provider)
-                    return;
-                if (!seenSourceIDs.add(provider->asID()).isNewEntry)
-                    return;
-                providers.append(*provider);
-            });
-        });
-    }
-
+    // Providers whose executables were all GC'd are not reported, and offsets
+    // index the transpiled source for Bun-loaded modules; Bun appends an inline
+    // //# sourceMappingURL, so consumers that read the script source
+    // (v8-to-istanbul) can remap.
     auto scripts = JSON::Array::create();
-    for (auto& provider : providers) {
+    for (auto& provider : profiler->sourceProviders()) {
         SourceID sourceID = provider->asID();
-        auto blocks = profiler->getBasicBlocksForSourceIDWithoutFunctionRange(sourceID, vm, JSC::ControlFlowProfiler::Gaps::With);
-        auto functionRanges = vm.functionHasExecutedCache()->getFunctionRanges(sourceID);
+        auto blocks = profiler->basicBlocks(sourceID, JSC::ControlFlowProfiler::Gaps::With);
+        auto functionRanges = profiler->codeRanges(sourceID);
         if (blocks.isEmpty() && functionRanges.isEmpty())
             continue;
 
@@ -151,13 +120,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_collectPreciseCoverage, (JSGlobalObject * gl
         for (const auto& functionRange : functionRanges) {
             // V8 has a static block as a function, and a generator or an async function once.
             // The program has the whole-script entry.
-            auto parseMode = std::get<3>(functionRange);
-            if (JSC::isProgramOrModuleParseMode(parseMode) || JSC::isGeneratorOrAsyncFunctionBodyParseMode(parseMode))
+            if (functionRange.kind != CodeRange::Kind::Function && functionRange.kind != CodeRange::Kind::StaticBlock)
                 continue;
             auto range = JSON::Array::create();
-            range->pushDouble(static_cast<double>(std::get<1>(functionRange)));
-            range->pushDouble(static_cast<double>(std::get<2>(functionRange)) + 1);
-            range->pushBoolean(std::get<0>(functionRange));
+            range->pushDouble(static_cast<double>(functionRange.start));
+            range->pushDouble(static_cast<double>(functionRange.end) + 1);
+            range->pushBoolean(functionRange.hasExecuted);
             functionArray->pushValue(WTF::move(range));
         }
         script->setValue("functions"_s, WTF::move(functionArray));

@@ -27,9 +27,8 @@ test("Rust sources linked into Bun do not use the streams of the standard librar
     ["src/trim/tests/trimming_invariants.rs", 1],
   ]);
   // Programs of their own.
-  const programs = ["src/sema/standalone/"];
-  const isLinked = (file: string) =>
-    !file.endsWith("/build.rs") && !file.includes("/benches/") && !programs.some(it => file.startsWith(it));
+  const programs = /^src\/(?:sema\/standalone|engine\/shell|engine\/[a-z_]+\/(?:tests|examples))\//;
+  const isLinked = (file: string) => !file.endsWith("/build.rs") && !file.includes("/benches/") && !programs.test(file);
 
   const found = new Map<string, number>();
   let scanned = 0;

@@ -15,10 +15,10 @@ extern "C" BunString Bun__JSFunction__sourceFromParameters(JSC::EncodedJSValue e
     auto* function = dynamicDowncast<JSC::JSFunction>(value);
     if (!function)
         return { BunStringTag::Dead };
-    const JSC::SourceCode* source = function->sourceCode();
+    auto source = function->sourceCode();
     if (!source || function->jsExecutable()->isClass())
         return { BunStringTag::Dead };
-    *isArrowFunction = JSC::isArrowFunctionParseMode(function->jsExecutable()->parseMode());
+    *isArrowFunction = function->jsExecutable()->isArrowFunction();
     return Bun::toStringRef(source->view().toString()).leak();
 }
 

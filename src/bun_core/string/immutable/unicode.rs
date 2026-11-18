@@ -13,25 +13,12 @@ use crate::string::immutable::CodePoint; // i32
 fn wstr_in_buf(wbuf: &[u16], len: usize) -> &WStr {
     WStr::from_buf(wbuf, len)
 }
-use bun_simdutf_sys::simdutf::{self, WithUtf8Len, WithUtf16Len};
+use bun_engine_text::{Text, append_utf8_lossy, append_valid_utf8, unfinished_utf8_len};
+use bun_simdutf_sys::simdutf::{self, WithUtf8Len};
 
 crate::declare_scope!(strings, hidden);
 
-/// Widen-append `src` ASCII bytes onto `dst` as `u16` code units. Reserves,
-/// commits the new length, then scalar-widens via `copy_u8_into_u16`. Folds
-/// the `reserve + set_len + copy_u8_into_u16` triple repeated across the
-/// UTF-8→UTF-16 paths into one audited block.
-#[inline]
-fn append_u8_as_u16(dst: &mut Vec<u16>, src: &[u8]) {
-    if src.is_empty() {
-        return;
-    }
-    // SAFETY: copy_u8_into_u16 fills exactly src.len() slots.
-    copy_u8_into_u16(unsafe { crate::vec::writable_slice(dst, src.len()) }, src);
-}
-
 /// Narrow-append `src` Latin-1/ASCII `u16` code units onto `dst` as bytes.
-/// Mirrors [`append_u8_as_u16`] for the UTF-16→UTF-8 fast path.
 #[inline]
 fn append_u16_as_u8(dst: &mut Vec<u8>, src: &[u16]) {
     if src.is_empty() {
@@ -210,7 +197,6 @@ pub struct UTF16Replacement {
     /// and a genuine error.
     pub fail: bool,
 
-    pub(crate) can_buffer: bool,
     pub(crate) is_lead: bool,
 }
 
@@ -220,7 +206,6 @@ impl Default for UTF16Replacement {
             code_point: unicode_replacement,
             len: 0,
             fail: false,
-            can_buffer: true,
             is_lead: false,
         }
     }
@@ -238,11 +223,7 @@ impl UTF16Replacement {
     }
 }
 
-fn convert_utf8_bytes_into_utf16_with_length(
-    sequence: [u8; 4],
-    len: U3Fast,
-    remaining_len: usize,
-) -> UTF16Replacement {
+fn convert_utf8_bytes_into_utf16_with_length(sequence: [u8; 4], len: U3Fast) -> UTF16Replacement {
     debug_assert!(sequence[0] > 127);
     match len {
         2 => {
@@ -252,7 +233,6 @@ fn convert_utf8_bytes_into_utf16_with_length(
                 return UTF16Replacement {
                     len: 1,
                     fail: true,
-                    can_buffer: remaining_len < 2,
                     ..Default::default()
                 };
             }
@@ -271,7 +251,6 @@ fn convert_utf8_bytes_into_utf16_with_length(
                         return UTF16Replacement {
                             len: 1,
                             fail: true,
-                            can_buffer: remaining_len < 2,
                             ..Default::default()
                         };
                     }
@@ -281,7 +260,6 @@ fn convert_utf8_bytes_into_utf16_with_length(
                         return UTF16Replacement {
                             len: 1,
                             fail: true,
-                            can_buffer: remaining_len < 2,
                             ..Default::default()
                         };
                     }
@@ -291,7 +269,6 @@ fn convert_utf8_bytes_into_utf16_with_length(
                         return UTF16Replacement {
                             len: 1,
                             fail: true,
-                            can_buffer: remaining_len < 2,
                             ..Default::default()
                         };
                     }
@@ -301,7 +278,6 @@ fn convert_utf8_bytes_into_utf16_with_length(
                 return UTF16Replacement {
                     len: 2,
                     fail: true,
-                    can_buffer: remaining_len < 3,
                     ..Default::default()
                 };
             }
@@ -321,7 +297,6 @@ fn convert_utf8_bytes_into_utf16_with_length(
                         return UTF16Replacement {
                             len: 1,
                             fail: true,
-                            can_buffer: remaining_len < 2,
                             ..Default::default()
                         };
                     }
@@ -331,7 +306,6 @@ fn convert_utf8_bytes_into_utf16_with_length(
                         return UTF16Replacement {
                             len: 1,
                             fail: true,
-                            can_buffer: remaining_len < 2,
                             ..Default::default()
                         };
                     }
@@ -342,7 +316,6 @@ fn convert_utf8_bytes_into_utf16_with_length(
                     return UTF16Replacement {
                         len: 1,
                         fail: true,
-                        can_buffer: false,
                         ..Default::default()
                     };
                 }
@@ -351,7 +324,6 @@ fn convert_utf8_bytes_into_utf16_with_length(
                         return UTF16Replacement {
                             len: 1,
                             fail: true,
-                            can_buffer: remaining_len < 2,
                             ..Default::default()
                         };
                     }
@@ -362,7 +334,6 @@ fn convert_utf8_bytes_into_utf16_with_length(
                 return UTF16Replacement {
                     len: 2,
                     fail: true,
-                    can_buffer: remaining_len < 3,
                     ..Default::default()
                 };
             }
@@ -370,7 +341,6 @@ fn convert_utf8_bytes_into_utf16_with_length(
                 return UTF16Replacement {
                     len: 3,
                     fail: true,
-                    can_buffer: remaining_len < 4,
                     ..Default::default()
                 };
             }
@@ -395,8 +365,7 @@ fn convert_utf8_bytes_into_utf16_with_length(
 }
 
 // This variation matches WebKit behavior.
-// fn convertUTF8BytesIntoUTF16(sequence: *const [4]u8, remaining_len: usize) UTF16Replacement {
-pub(super) fn convert_utf8_bytes_into_utf16(bytes: &[u8]) -> UTF16Replacement {
+fn convert_utf8_bytes_into_utf16(bytes: &[u8]) -> UTF16Replacement {
     let sequence: [u8; 4] = match bytes.len() {
         0 => unreachable!(),
         1 => [bytes[0], 0, 0, 0],
@@ -406,7 +375,7 @@ pub(super) fn convert_utf8_bytes_into_utf16(bytes: &[u8]) -> UTF16Replacement {
     };
     debug_assert!(sequence[0] > 127);
     let sequence_length = non_ascii_sequence_length(sequence[0]);
-    convert_utf8_bytes_into_utf16_with_length(sequence, sequence_length, bytes.len())
+    convert_utf8_bytes_into_utf16_with_length(sequence, sequence_length)
 }
 
 /// Codepoint at the front of non-empty `bytes`; ill-formed input is U+FFFD per maximal subpart.
@@ -668,119 +637,26 @@ crate::oom_from_alloc!(ToUTF16Error);
 pub fn to_utf16_alloc_maybe_buffered<const FAIL_IF_INVALID: bool, const FLUSH: bool>(
     bytes: &[u8],
 ) -> Result<Option<(Vec<u16>, [u8; 3], u8)>, ToUTF16Error> {
-    let Some(first_non_ascii_idx) = first_non_ascii(bytes) else {
+    if Text::Latin1(bytes).is_ascii() {
         return Ok(None);
-    };
-    let first_non_ascii_idx = first_non_ascii_idx as usize;
+    }
 
-    let mut output: Vec<u16> = if crate::FeatureFlags::USE_SIMDUTF {
-        'output: {
-            let input = WithUtf16Len::utf8(bytes);
-            let out_length = input.utf16_len();
-
-            if out_length == 0 {
-                break 'output Vec::new();
-            }
-
-            let mut out: Vec<u16> = Vec::new();
-            out.try_reserve_exact(out_length)
-                .map_err(|_| ToUTF16Error::OutOfMemory)?;
-            let res = crate::vec::append_with(&mut out, usize::MAX, |out| {
-                simdutf::convert::utf8::to::utf16::with_errors::le(input, out)
-            });
-            if res.is_successful() {
-                crate::scoped_log!(
-                    strings,
-                    "toUTF16 {} UTF8 -> {} UTF16",
-                    bytes.len(),
-                    out_length
-                );
-                return Ok(Some((out, [0; 3], 0)));
-            }
-
-            // SAFETY: simdutf converts sequentially and the first error is at or
-            // after the first non-ASCII byte, so the leading `first_non_ascii_idx`
-            // code units (one per ASCII prefix byte, `<= out_length`) are
-            // initialised; keep exactly those.
-            unsafe { out.set_len(first_non_ascii_idx) };
-            break 'output out;
-        }
-    } else {
-        Vec::new()
-    };
-    // errdefer output.deinit(allocator) — Vec drops on `?`
-
-    let start = if !output.is_empty() {
-        first_non_ascii_idx
-    } else {
+    let mut output = Vec::new();
+    let remaining = &bytes[append_valid_utf8(bytes, &mut output, 0)?..];
+    let pending = if FLUSH {
         0
+    } else {
+        unfinished_utf8_len(remaining)
     };
-    let mut remaining = &bytes[start..];
-    // The replacement decode emits at most one code unit per consumed byte, so
-    // `remaining.len()` bounds the tail's growth (the bound `to_utf16_alloc`'s
-    // slow path reserves too); the appends below stay inside this reservation.
-    output
-        .try_reserve(remaining.len())
-        .map_err(|_| ToUTF16Error::OutOfMemory)?;
-
-    let mut non_ascii: Option<u32> = Some(0);
-    while let Some(i) = non_ascii {
-        let i = i as usize;
-        {
-            append_u8_as_u16(&mut output, &remaining[..i]);
-            remaining = &remaining[i..];
-        }
-
-        let sequence: [u8; 4] = match remaining.len() {
-            0 => unreachable!(),
-            1 => [remaining[0], 0, 0, 0],
-            2 => [remaining[0], remaining[1], 0, 0],
-            3 => [remaining[0], remaining[1], remaining[2], 0],
-            _ => remaining[..4].try_into().expect("infallible: size matches"),
-        };
-
-        let converted_length = non_ascii_sequence_length(sequence[0]);
-
-        let converted =
-            convert_utf8_bytes_into_utf16_with_length(sequence, converted_length, remaining.len());
-
-        if !FLUSH {
-            if converted.fail
-                && converted.can_buffer
-                && (converted_length as usize) > remaining.len()
-            {
-                let buffered: [u8; 3] = match remaining.len() {
-                    1 => [remaining[0], 0, 0],
-                    2 => [remaining[0], remaining[1], 0],
-                    3 => [remaining[0], remaining[1], remaining[2]],
-                    _ => unreachable!(),
-                };
-                return Ok(Some((
-                    output,
-                    buffered,
-                    u8::try_from(remaining.len()).expect("int cast"),
-                )));
-            }
-        }
-
+    let (invalid, pending) = remaining.split_at(remaining.len() - pending);
+    if !invalid.is_empty() {
         if FAIL_IF_INVALID {
-            if converted.fail {
-                debug_assert!(converted.code_point == unicode_replacement);
-                return Err(ToUTF16Error::InvalidByteSequence);
-            }
+            return Err(ToUTF16Error::InvalidByteSequence);
         }
-
-        remaining = &remaining[(converted.len as usize).max(1)..];
-
-        // #define U16_LENGTH(c) ((uint32_t)(c)<=0xffff ? 1 : 2)
-        push_codepoint_utf16(&mut output, converted.code_point);
-
-        non_ascii = first_non_ascii(remaining);
+        append_utf8_lossy(invalid, &mut output, 0)?;
     }
-
-    if !remaining.is_empty() {
-        append_u8_as_u16(&mut output, remaining);
-    }
+    let mut buffered = [0; 3];
+    buffered[..pending.len()].copy_from_slice(pending);
 
     crate::scoped_log!(
         strings,
@@ -788,7 +664,7 @@ pub fn to_utf16_alloc_maybe_buffered<const FAIL_IF_INVALID: bool, const FLUSH: b
         bytes.len(),
         output.len()
     );
-    Ok(Some((output, [0; 3], 0)))
+    Ok(Some((output, buffered, pending.len() as u8)))
 }
 
 #[inline]
@@ -872,8 +748,6 @@ pub fn utf16_codepoint(input: &[u16]) -> UTF16Replacement {
         }
     }
 }
-
-pub(super) use crate::strings_impl::push_codepoint_utf16;
 
 // `unreachable_pub`: these are re-exported externally via the parent's
 // `pub use unicode_draft::{… u16_is_lead, u16_is_trail …}`; the lint does not

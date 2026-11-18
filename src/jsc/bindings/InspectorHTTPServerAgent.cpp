@@ -1,11 +1,7 @@
 #include "InspectorHTTPServerAgent.h"
 
-#include <JavaScriptCore/InspectorFrontendRouter.h>
-#include <JavaScriptCore/InspectorBackendDispatcher.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <wtf/text/WTFString.h>
-#include <JavaScriptCore/JSGlobalObjectDebuggable.h>
-#include <JavaScriptCore/JSGlobalObjectInspectorController.h>
 #include <wtf/TZoneMallocInlines.h>
 #include "ZigGlobalObject.h"
 
@@ -19,117 +15,53 @@ void Bun__HTTPServerAgent__setEnabled(Inspector::InspectorHTTPServerAgent* agent
 }
 
 InspectorHTTPServerAgent::InspectorHTTPServerAgent(JSC::JSGlobalObject& globalObject)
-    : InspectorAgentBase("HTTPServer"_s)
-    , m_backendDispatcher(HTTPServerBackendDispatcher::create(globalObject.inspectorController().backendDispatcher(), this))
-    , m_frontendDispatcher(makeUnique<HTTPServerFrontendDispatcher>(const_cast<FrontendRouter&>(globalObject.inspectorController().frontendRouter())))
-    , m_enabled(false)
+    : InspectorAgentBase(globalObject, "HTTPServer"_s)
 {
 }
 
-InspectorHTTPServerAgent::~InspectorHTTPServerAgent()
+void InspectorHTTPServerAgent::didEnable()
 {
-    if (m_enabled) {
-        Bun__HTTPServerAgent__setEnabled(nullptr);
-    }
-}
-
-void InspectorHTTPServerAgent::didCreateFrontendAndBackend()
-{
-}
-
-void InspectorHTTPServerAgent::willDestroyFrontendAndBackend(DisconnectReason)
-{
-    (void)disable();
-}
-
-Protocol::ErrorStringOr<void> InspectorHTTPServerAgent::enable()
-{
-    if (m_enabled)
-        return {};
-
-    m_enabled = true;
     Bun__HTTPServerAgent__setEnabled(this);
-    return {};
 }
 
-Protocol::ErrorStringOr<void> InspectorHTTPServerAgent::disable()
+void InspectorHTTPServerAgent::didDisable()
 {
-    if (!m_enabled)
-        return {};
-
-    m_enabled = false;
     Bun__HTTPServerAgent__setEnabled(nullptr);
-    return {};
 }
 
-// Event dispatchers
-
-void InspectorHTTPServerAgent::serverStarted(int serverId, const String& url, double startTime, AnyServerPtr serverInstance)
+void InspectorHTTPServerAgent::serverStarted(int serverId, const String& url, double startTime)
 {
-    this->m_serverIdToServerInstance.set(serverId, serverInstance);
-    if (!m_enabled || !m_frontendDispatcher) {
+    if (!isEnabled())
         return;
-    }
 
-    this->m_frontendDispatcher->listen(serverId, url, startTime);
+    auto parameters = JSON::Object::create();
+    parameters->setInteger("serverId"_s, serverId);
+    parameters->setString("url"_s, url);
+    parameters->setDouble("startTime"_s, startTime);
+    sendEvent("listen"_s, WTF::move(parameters));
 }
+
 void InspectorHTTPServerAgent::serverStopped(int serverId, double timestamp)
 {
-    this->m_serverIdToServerInstance.remove(serverId);
-
-    if (!m_enabled || !m_frontendDispatcher) {
+    if (!isEnabled())
         return;
-    }
 
-    this->m_frontendDispatcher->close(serverId, timestamp);
+    auto parameters = JSON::Object::create();
+    parameters->setInteger("serverId"_s, serverId);
+    parameters->setDouble("timestamp"_s, timestamp);
+    sendEvent("close"_s, WTF::move(parameters));
 }
-void InspectorHTTPServerAgent::serverRoutesUpdated(int serverId, int hotReloadId, Ref<JSON::ArrayOf<Protocol::HTTPServer::Route>>&& routes)
-{
-    if (!m_enabled || !m_frontendDispatcher) {
-        return;
-    }
 
-    this->m_frontendDispatcher->serverRoutesUpdated(serverId, hotReloadId, WTF::move(routes));
-}
-void InspectorHTTPServerAgent::requestWillBeSent(Ref<Protocol::HTTPServer::Request>&& request)
+void InspectorHTTPServerAgent::serverRoutesUpdated(int serverId, int hotReloadId, Ref<JSON::Array>&& routes)
 {
-    if (!m_enabled || !m_frontendDispatcher) {
+    if (!isEnabled())
         return;
-    }
 
-    this->m_frontendDispatcher->requestWillBeSent(WTF::move(request));
-}
-void InspectorHTTPServerAgent::responseReceived(Ref<Protocol::HTTPServer::Response>&& response)
-{
-    if (!m_enabled || !m_frontendDispatcher) {
-        return;
-    }
-
-    this->m_frontendDispatcher->responseReceived(WTF::move(response));
-}
-void InspectorHTTPServerAgent::bodyChunkReceived(Ref<Protocol::HTTPServer::BodyChunk>&& chunk)
-{
-    if (!m_enabled || !m_frontendDispatcher) {
-        return;
-    }
-
-    this->m_frontendDispatcher->bodyChunkReceived(WTF::move(chunk));
-}
-void InspectorHTTPServerAgent::requestFinished(int requestId, int serverId, double timestamp, std::optional<double>&& opt_duration)
-{
-    if (!m_enabled || !m_frontendDispatcher) {
-        return;
-    }
-
-    this->m_frontendDispatcher->requestFinished(requestId, serverId, timestamp, WTF::move(opt_duration));
-}
-void InspectorHTTPServerAgent::requestHandlerException(Ref<Protocol::HTTPServer::RequestHandlerError>&& error)
-{
-    if (!m_enabled || !m_frontendDispatcher) {
-        return;
-    }
-
-    this->m_frontendDispatcher->requestHandlerException(WTF::move(error));
+    auto parameters = JSON::Object::create();
+    parameters->setInteger("serverId"_s, serverId);
+    parameters->setInteger("hotReloadId"_s, hotReloadId);
+    parameters->setArray("routes"_s, WTF::move(routes));
+    sendEvent("serverRoutesUpdated"_s, WTF::move(parameters));
 }
 
 }
@@ -147,7 +79,7 @@ typedef int RequestId;
 [[ZIG_EXPORT(nothrow)]] void Bun__HTTPServerAgent__notifyServerStarted(Inspector::InspectorHTTPServerAgent* agent, ServerId serverId, HotReloadId hotReloadId, const BunString* address, double startTime, void* serverInstance)
 {
 
-    agent->serverStarted(serverId, address->toWTFString(), startTime, serverInstance);
+    agent->serverStarted(serverId, address->toWTFString(), startTime);
 }
 
 [[ZIG_EXPORT(nothrow)]] void Bun__HTTPServerAgent__notifyServerStopped(Inspector::InspectorHTTPServerAgent* agent, ServerId serverId, double timestamp)
@@ -180,42 +112,40 @@ struct Route {
     Route* routes_ptr, size_t routes_len)
 {
 
-    auto routes = JSON::ArrayOf<Inspector::Protocol::HTTPServer::Route>::create();
+    auto routes = JSON::Array::create();
     for (size_t i = 0; i < routes_len; i++) {
         auto& route = routes_ptr[i];
 
-        auto route_type = Inspector::Protocol::HTTPServer::RouteType::Default;
+        auto route_type = "default"_s;
         switch (route.type) {
         case Route::Type::Api:
-            route_type = Inspector::Protocol::HTTPServer::RouteType::API;
+            route_type = "api"_s;
             break;
         case Route::Type::Html:
-            route_type = Inspector::Protocol::HTTPServer::RouteType::HTML;
+            route_type = "html"_s;
             break;
         case Route::Type::Static:
-            route_type = Inspector::Protocol::HTTPServer::RouteType::Static;
+            route_type = "static"_s;
             break;
-        default:
-            route_type = Inspector::Protocol::HTTPServer::RouteType::Default;
+        case Route::Type::Default:
             break;
         }
 
-        auto object = Inspector::Protocol::HTTPServer::Route::create()
-                          .setRouteId(route.route_id)
-                          .setPath(route.path.toWTFString())
-                          .setType(route_type)
-                          .setScriptLine(route.script_line)
-                          .release();
+        auto object = JSON::Object::create();
+        object->setInteger("routeId"_s, route.route_id);
+        object->setString("path"_s, route.path.toWTFString());
+        object->setString("type"_s, route_type);
+        object->setInteger("scriptLine"_s, route.script_line);
 
         if (!route.file_path.isEmpty()) {
-            object->setFilePath(route.file_path.toWTFString());
+            object->setString("filePath"_s, route.file_path.toWTFString());
         }
 
         if (!route.script_url.isEmpty()) {
-            object->setScriptUrl(route.script_url.toWTFString());
+            object->setString("scriptUrl"_s, route.script_url.toWTFString());
         }
 
-        routes->addItem(WTF::move(object));
+        routes->pushValue(WTF::move(object));
     }
 
     agent->serverRoutesUpdated(serverId, hotReloadId, WTF::move(routes));

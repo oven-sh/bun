@@ -5,7 +5,7 @@
 namespace Bun {
 
 static_assert(sizeof(StrongRootBlock) <= JSC::MarkedSpace::largeCutoff,
-    "StrongRootBlock must fit in a MarkedBlock; lower capacity if this fires");
+    "StrongRootBlock must fit in a block of the heap; lower capacity if this fires");
 
 // for CREATE_METHOD_TABLE
 namespace JSCastingHelpers = JSC::JSCastingHelpers;

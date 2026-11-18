@@ -71,9 +71,16 @@ const lockfileWithScopedOverrides: Bun.BunLockFile = {
     },
     "kind-of": "6.0.3",
   },
+  packageExtensions: {
+    "legacy-plugin@2.0.3": { dependencies: ["lodash"], optionalPeers: ["webpack"] },
+    "react-redux@7.2.9": { peerDependencies: ["react"] },
+  },
   packages: {},
 };
 
+expectType(lockfileWithScopedOverrides.packageExtensions).is<
+  Record<string, { dependencies?: string[]; peerDependencies?: string[]; optionalPeers?: string[] }> | undefined
+>();
 expectType(lockfileWithScopedOverrides.lockfileVersion).is<0 | 1 | 2 | 3>();
 expectType(lockfileWithScopedOverrides.overrides).is<Record<string, string | Record<string, string>> | undefined>();
 

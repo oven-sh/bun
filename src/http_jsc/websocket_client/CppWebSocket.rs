@@ -102,9 +102,9 @@ unsafe extern "C" {
         verified_hostname: FfiSlice<'_>,
     ) -> *mut core::ffi::c_void;
     #[allow(improper_ctypes)]
-    safe fn WebSocket__didConnectWithTunnel(
+    fn WebSocket__didConnectWithTunnel(
         websocket_context: &CppWebSocket,
-        tunnel: RefPtr<WebSocketProxyTunnel>,
+        tunnel: *mut WebSocketProxyTunnel,
         buffered_data: Option<Box<InitialData>>,
         deflate_params: Option<&websocket_deflate::Params>,
     ) -> *mut core::ffi::c_void;
@@ -442,15 +442,16 @@ impl CppWebSocket {
         });
     }
 
-    /// `tunnel` and `buffered_data` are handed on to the connected client.
+    /// `buffered_data` is handed on to the connected client.
     pub(crate) fn did_connect_with_tunnel(
         &self,
-        tunnel: RefPtr<WebSocketProxyTunnel>,
+        tunnel: &RefPtr<WebSocketProxyTunnel>,
         buffered_data: Option<Box<InitialData>>,
         deflate_params: Option<&websocket_deflate::Params>,
     ) {
-        Self::open_then_deliver_initial_data::<false>(|| {
-            WebSocket__didConnectWithTunnel(self, tunnel, buffered_data, deflate_params)
+        // SAFETY: the caller's ref lasts for the call, in which the connected client takes its own.
+        Self::open_then_deliver_initial_data::<false>(|| unsafe {
+            WebSocket__didConnectWithTunnel(self, tunnel.as_ptr(), buffered_data, deflate_params)
         });
     }
 

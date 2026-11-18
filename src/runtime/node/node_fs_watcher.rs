@@ -19,7 +19,7 @@ use bun_jsc::{
     CommonAbortReasonExt as _, GlobalRef, JSGlobalObject, JSValue, JsRef, JsResult,
     VirtualMachineRef as VirtualMachine,
 };
-use bun_jsc::{JsCell, JsCellRefExt as _};
+use bun_jsc::{JsCell, JsCellRefExt as _, WrapperGuard};
 use bun_paths::resolve_path::{self as Path, platform};
 use bun_ptr::{RefPtr, ThreadSafeRefCount};
 use bun_sys::{self, SystemErrno};
@@ -84,10 +84,11 @@ pub(crate) struct FSWatcher {
 
 bun_jsc::impl_abort_handle_owner!(FSWatcher, abort_handle, |this, cause| {
     // SAFETY: trait contract — `this` is live (armed ⇒ not yet detached).
-    let this = unsafe { RefPtr::init_ref(this) };
-    match cause {
-        bun_jsc::AbortCause::Signal(reason) => this.emit_abort(reason),
-        bun_jsc::AbortCause::ContextStopped(_) => this.close_without_event(),
+    unsafe {
+        match cause {
+            bun_jsc::AbortCause::Signal(reason) => RefPtr::init_ref(this).emit_abort(reason),
+            bun_jsc::AbortCause::ContextStopped(_) => (*this).close_without_event(),
+        }
     }
 });
 
@@ -578,16 +579,16 @@ impl<'a> Arguments<'a> {
 }
 
 impl FSWatcher {
-    fn init_js(self: &RefPtr<Self>, listener: JSValue) {
+    /// The GC wrapper takes over `self`.
+    fn init_js(
+        self: RefPtr<Self>,
+        global: &JSGlobalObject,
+        listener: JSValue,
+    ) -> WrapperGuard<'_, Self> {
         if self.persistent.get() {
             let vm_ctx = self.ctx.loop_ctx();
             self.poll_ref.ref_(vm_ctx);
         }
-
-        let js_this = js::to_js(self.clone(), &self.global_this);
-        self.js_this
-            .set(JsRef::init_strong(js_this, &self.global_this));
-        js::listener_set_cached(js_this, &self.global_this, listener);
 
         if let Some(s) = self.signal.get() {
             // already aborted?
@@ -599,6 +600,11 @@ impl FSWatcher {
                 unsafe { bun_jsc::AbortHandle::follow_owner(self.as_ptr(), s.clone()) };
             }
         }
+
+        let this = js::wrap(self, global);
+        this.js_this.set(JsRef::init_strong(this.to_js(), global));
+        js::listener_set_cached(this.to_js(), global, listener);
+        this
     }
 
     pub(crate) fn emit_if_aborted(&self) {
@@ -925,7 +931,8 @@ impl FSWatcher {
         } else {
             None
         });
-        ctx_ref.init_js(args.listener.with_async_context_if_needed(args.global_this));
+        let listener = args.listener.with_async_context_if_needed(args.global_this);
+        let ctx_ref = ctx_ref.init_js(args.global_this, listener);
         // SAFETY: `ctx` is heap-allocated; `detach()` disarms it before it is finalized.
         unsafe { bun_jsc::AbortHandle::arm_owner(ctx, args.context) };
         Ok(ctx_ref.js_this.get_or_undefined())

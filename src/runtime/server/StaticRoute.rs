@@ -23,10 +23,6 @@ use crate::webcore::{AnyBlob, FetchHeaders, InternalBlob, Response};
 #[derive(bun_ptr::CellRefCounted)]
 pub(crate) struct StaticRoute {
     ref_count: Cell<u32>,
-    /// The ref that in-flight responses (whose uws userdata is this route)
-    /// collectively hold, from the first `to_async` to the last `on_async_complete`.
-    pending_ref: Cell<Option<RefPtr<StaticRoute>>>,
-    pending_responses: Cell<u32>,
     // TODO: Remove optional. StaticRoute requires a server object or else it will
     // not ensure it is alive while sending a large blob.
     pub(crate) server: Cell<Option<AnyServer>>,
@@ -63,8 +59,6 @@ impl StaticRoute {
     ) -> StaticRoute {
         StaticRoute {
             ref_count: Cell::new(1),
-            pending_ref: Cell::new(None),
-            pending_responses: Cell::new(0),
             cached_blob_size: blob.size(),
             has_date: headers.get(b"date").is_some(),
             blob,
@@ -144,8 +138,6 @@ impl StaticRoute {
 
         RefPtr::new(StaticRoute {
             ref_count: Cell::new(1),
-            pending_ref: Cell::new(None),
-            pending_responses: Cell::new(0),
             blob: AnyBlob::Blob(duped),
             cached_blob_size: self.cached_blob_size,
             has_date: self.has_date,
@@ -327,23 +319,20 @@ impl StaticRoute {
         self.to_async(resp);
     }
 
+    /// The two handlers of `resp` own the ref between its events.
     fn to_async(self: RefPtr<Self>, resp: AnyResponse) {
-        resp.on_aborted_this(Self::on_async_complete, &self);
-        resp.on_writable_this(Self::on_writable, &self);
-        let n = self.pending_responses.get();
-        if n == 0 {
-            self.pending_ref.set(Some(self.clone()));
-        }
-        self.pending_responses.set(n + 1);
-    }
-
-    fn on_async_complete(self: RefPtr<Self>, resp: AnyResponse) {
-        self.on_response_complete(resp);
-        let n = self.pending_responses.get() - 1;
-        self.pending_responses.set(n);
-        if n == 0 {
-            self.pending_ref.set(None);
-        }
+        // SAFETY: `this` is the ref given up below. `on_response_complete` clears both handlers, an abort
+        // is the last event of a response, and uWS dispatches none under `timeout` or `try_end`.
+        let take = |this: *mut Self| unsafe { RefPtr::from_raw(this) };
+        let this = self.into_raw();
+        resp.on_aborted(
+            move |this, resp| take(this).on_response_complete(resp),
+            this,
+        );
+        resp.on_writable(
+            move |this, write_offset, resp| take(this).on_writable(write_offset, resp),
+            this,
+        );
     }
 
     fn on_response_start(&self, resp: AnyResponse) {
@@ -401,10 +390,11 @@ impl StaticRoute {
         }
 
         if !self.on_writable_bytes(write_offset, resp) {
+            let _ = self.into_raw(); // the handlers' until the next event
             return false;
         }
 
-        self.on_async_complete(resp);
+        self.on_response_complete(resp);
         true
     }
 

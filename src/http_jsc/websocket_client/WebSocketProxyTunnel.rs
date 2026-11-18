@@ -556,10 +556,10 @@ impl WebSocketProxyTunnel {
 // HOST_EXPORT(WebSocketProxyTunnel__setConnectedWebSocket, c)
 pub fn set_connected_web_socket(
     tunnel: &crate::websocket_client::websocket_proxy_tunnel::WebSocketProxyTunnel,
-    ws: &RefPtr<crate::websocket_client::WebSocketClient>,
+    ws: RefPtr<crate::websocket_client::WebSocketClient>,
 ) {
     bun_core::scoped_log!(WebSocketProxyTunnel, "setConnectedWebSocket");
-    tunnel.connected_websocket.set(Some(ws.clone()));
+    tunnel.connected_websocket.set(Some(ws));
     // Clear the upgrade client reference since we're now in connected phase
     tunnel.upgrade_client.set(None);
 }

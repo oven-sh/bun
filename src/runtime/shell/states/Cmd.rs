@@ -597,12 +597,12 @@ impl Cmd {
 
         if did_exit_immediately {
             // `watch()` failed → process already gone.
-            let process = bun_ptr::RefPtr::clone(subproc.proc());
+            let process = subproc.proc();
+            let mut rusage = crate::api::bun::process::rusage_zeroed();
             if let Some(status) = process.status() {
-                let rusage = crate::api::bun::process::rusage_zeroed();
-                process.on_exit(status.clone(), &rusage);
-            } else {
-                process.wait(false);
+                process.on_exit(status.clone()).dispatch(&rusage);
+            } else if let Some(exit) = process.wait(false, &mut rusage) {
+                exit.dispatch(&rusage);
             }
         }
 

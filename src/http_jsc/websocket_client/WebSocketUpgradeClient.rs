@@ -574,7 +574,11 @@ where
         usize::try_from(socket.write(buf)).ok()
     }
 
-    pub(crate) fn cancel(self: &RefPtr<Self>) {
+    fn tunnel(&self) -> Option<RefPtr<WebSocketProxyTunnel>> {
+        self.proxy.get().as_ref()?.get_tunnel().cloned()
+    }
+
+    pub(crate) fn cancel(self: RefPtr<Self>) {
         self.clear_data();
 
         // The C++ end of the socket is no longer holding a reference to this, so we must clear it.
@@ -833,8 +837,7 @@ where
         // For tunnel mode after successful upgrade, forward all data to the tunnel
         // The tunnel will decrypt and pass to the WebSocket client
         if self.state.get() == State::Done {
-            let tunnel = self.proxy.get().as_ref().and_then(|p| p.get_tunnel());
-            if let Some(tunnel) = tunnel {
+            if let Some(tunnel) = self.tunnel() {
                 tunnel.receive(data);
             }
             return;
@@ -855,12 +858,9 @@ where
         }
 
         // Route through proxy tunnel if TLS handshake is in progress or complete
-        {
-            let tunnel = self.proxy.get().as_ref().and_then(|p| p.get_tunnel());
-            if let Some(tunnel) = tunnel {
-                tunnel.receive(data);
-                return;
-            }
+        if let Some(tunnel) = self.tunnel() {
+            tunnel.receive(data);
+            return;
         }
 
         self.handle_upgrade_response_data(data);
@@ -951,7 +951,7 @@ where
     /// `pause()` / `resume()` while CONNECTING only apply to a non-upgrade response's body, never to
     /// the handshake. Data that was already read is still delivered. While paused, the idle timeout
     /// is off and the socket doesn't keep the process alive, like node:http.
-    pub(crate) fn set_paused(self: &RefPtr<Self>, paused: bool) {
+    pub(crate) fn set_paused(self: RefPtr<Self>, paused: bool) {
         if self.response_body.get().is_none() {
             return;
         }
@@ -1112,9 +1112,11 @@ where
         // Take the WebSocket upgrade request from proxy state (transfers
         // ownership) along with the tunnel to send it through.
         let step = self.proxy.with_mut(|proxy| {
-            proxy
-                .as_mut()
-                .map(|p| (p.take_websocket_request_buf().into_vec(), p.get_tunnel()))
+            let p = proxy.as_mut()?;
+            Some((
+                p.take_websocket_request_buf().into_vec(),
+                p.get_tunnel().cloned(),
+            ))
         });
         let Some((request_buf, tunnel)) = step else {
             self.terminate(ErrorCode::ProxyTunnelFailed);
@@ -1323,8 +1325,7 @@ where
             || (!remain_buf.is_empty()).then(|| Box::new(super::InitialData(remain_buf.to_vec())));
 
         // Check if we're using a proxy tunnel (wss:// through HTTP proxy)
-        let tunnel = self.proxy.get().as_ref().and_then(|p| p.get_tunnel());
-        if let Some(tunnel) = tunnel {
+        if let Some(tunnel) = self.tunnel() {
             // wss:// through HTTP proxy: use tunnel mode
             // For tunnel mode, the upgrade client STAYS ALIVE to forward socket data to the tunnel.
             // The socket continues to call handle_data on the upgrade client, which forwards to tunnel.
@@ -1362,7 +1363,7 @@ where
                 self.poll_ref.unref(VirtualMachineRef::get().loop_ctx());
 
                 // Create the WebSocket client with the tunnel
-                ws.did_connect_with_tunnel(tunnel, overflow(), deflate_params.as_ref());
+                ws.did_connect_with_tunnel(&tunnel, overflow(), deflate_params.as_ref());
             } else if tcp.is_closed() {
                 self.terminate(ErrorCode::Cancel);
             } else if !has_ws {
@@ -1431,8 +1432,7 @@ where
         debug_assert!(self.is_same_socket(socket));
 
         // Forward to proxy tunnel if active
-        let tunnel = self.proxy.get().as_ref().and_then(|p| p.get_tunnel());
-        if let Some(tunnel) = tunnel {
+        if let Some(tunnel) = self.tunnel() {
             tunnel.on_writable();
             // In .done state (after WebSocket upgrade), just handle tunnel writes
             if self.state.get() == State::Done {
@@ -1443,8 +1443,7 @@ where
             if self.to_send_len.get() == 0 {
                 return;
             }
-            let tunnel = self.proxy.get().as_ref().and_then(|p| p.get_tunnel());
-            self.write_pending(|buf| tunnel?.write(buf).ok());
+            self.write_pending(|buf| self.tunnel()?.write(buf).ok());
             return;
         }
 
@@ -1845,14 +1844,14 @@ pub fn bun__websockethttpclient__connect(
 
 // HOST_EXPORT(Bun__WebSocketHTTPClient__cancel, c)
 pub fn bun__websockethttpclient__cancel(
-    this: &RefPtr<crate::websocket_client::websocket_upgrade_client::HttpUpgradeClient>,
+    this: RefPtr<crate::websocket_client::websocket_upgrade_client::HttpUpgradeClient>,
 ) {
     this.cancel();
 }
 
 // HOST_EXPORT(Bun__WebSocketHTTPClient__setPaused, c)
 pub fn bun__websockethttpclient__set_paused(
-    this: &RefPtr<crate::websocket_client::websocket_upgrade_client::HttpUpgradeClient>,
+    this: RefPtr<crate::websocket_client::websocket_upgrade_client::HttpUpgradeClient>,
     paused: bool,
 ) {
     this.set_paused(paused);
@@ -1918,14 +1917,14 @@ pub fn bun__websockethttpsclient__connect(
 
 // HOST_EXPORT(Bun__WebSocketHTTPSClient__cancel, c)
 pub fn bun__websockethttpsclient__cancel(
-    this: &RefPtr<crate::websocket_client::websocket_upgrade_client::HttpsUpgradeClient>,
+    this: RefPtr<crate::websocket_client::websocket_upgrade_client::HttpsUpgradeClient>,
 ) {
     this.cancel();
 }
 
 // HOST_EXPORT(Bun__WebSocketHTTPSClient__setPaused, c)
 pub fn bun__websockethttpsclient__set_paused(
-    this: &RefPtr<crate::websocket_client::websocket_upgrade_client::HttpsUpgradeClient>,
+    this: RefPtr<crate::websocket_client::websocket_upgrade_client::HttpsUpgradeClient>,
     paused: bool,
 ) {
     this.set_paused(paused);

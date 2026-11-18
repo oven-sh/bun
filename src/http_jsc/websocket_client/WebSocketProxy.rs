@@ -45,8 +45,8 @@ impl WebSocketProxy {
     }
 
     /// Get the TLS tunnel for wss:// through HTTP proxy
-    pub(crate) fn get_tunnel(&self) -> Option<RefPtr<WebSocketProxyTunnel>> {
-        self.tunnel.clone()
+    pub(crate) fn get_tunnel(&self) -> Option<&RefPtr<WebSocketProxyTunnel>> {
+        self.tunnel.as_ref()
     }
 
     /// Store the TLS tunnel, taking over the caller's ref.

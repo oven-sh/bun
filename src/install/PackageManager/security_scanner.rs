@@ -946,7 +946,6 @@ impl<'a> SecurityScanSubprocess<'a> {
         // `&mut self` on Windows); take ownership of the result and let the
         // moved-from `*spawned` drop empty (`extra_pipes` already read).
         let process = std::mem::take(spawned).to_process_handle(event_loop);
-        let process = bun_ptr::RefPtr::clone(self.process.insert(process));
 
         let owner = Owner::new(
             PollTag::SecurityScanWriter,
@@ -965,14 +964,16 @@ impl<'a> SecurityScanSubprocess<'a> {
             }
         }
 
-        // SAFETY: dropping `self` detaches `process`. `self` is not used again in this frame.
+        // SAFETY: dropping `self` detaches `process`, which becomes its field.
         let handler =
             unsafe { ProcessExit::new(ProcessExitKind::SecurityScan, core::ptr::from_mut(self)) };
         process.set_exit_handler(handler);
 
-        // May re-enter `on_process_exit` synchronously (already-exited child).
-        if process.watch_or_reap().is_err() {
-            return Err(crate::Error::ProcessWatchFailed);
+        let mut rusage = bun_core::ffi::zeroed();
+        match self.process.insert(process).watch_or_reap(&mut rusage) {
+            Ok(None) => {}
+            Ok(Some(exit)) => exit.dispatch(&rusage),
+            Err(_) => return Err(crate::Error::ProcessWatchFailed),
         }
 
         Ok(())

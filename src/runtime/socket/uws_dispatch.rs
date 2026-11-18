@@ -210,8 +210,8 @@ unsafe extern "C" fn us_dispatch_ssl_raw_tap(
     debug_assert!(us_socket_t::opaque_mut(s).kind() == SocketKind::BunSocketTls);
     // `bun.jsc.API.NewSocket(true)` → the runtime-local `socket::NewSocket<true>`.
     // The ext slot of an open `BunSocketTls` holds its `TLSSocket`.
-    let tls = NativeRef::<true>::of(s).get().unwrap();
-    if let Some(raw) = tls.twin.cloned() {
+    let twin = NativeRef::<true>::of(s).owner_ref().unwrap().twin.cloned();
+    if let Some(raw) = twin {
         // A negative length from the C side means there is nothing to deliver;
         // never panic across the `extern "C"` boundary.
         let Ok(len) = usize::try_from(len) else {
@@ -271,7 +271,7 @@ pub(crate) extern "C" fn us_dispatch_server_identity(
     let verdict = match s_ref.kind() {
         SocketKind::BunSocketTls => s_ref
             .ext::<NativeRef<true>>()
-            .get()
+            .owner_ref()
             .map_or(Unchecked, |tls| tls.server_identity(ssl)),
         SocketKind::HttpClientTls => {
             bun_http::http_context::Handler::<true>::server_identity(NewSocketHandler::from(s), ssl)
@@ -313,7 +313,7 @@ pub(crate) extern "C" fn us_dispatch_new_session(
             0
         }
         SocketKind::BunSocketTls => {
-            let Some(tls) = s_ref.ext::<NativeRef<true>>().get() else {
+            let Some(tls) = s_ref.ext::<NativeRef<true>>().owner_ref() else {
                 return 0;
             };
             let session = SSL_SESSION::opaque_ref(session);

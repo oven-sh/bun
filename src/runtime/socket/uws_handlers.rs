@@ -36,6 +36,7 @@ fn wrap<const SSL: bool>(s: *mut us_socket_t) -> NewSocketHandler<SSL> {
 /// A handler owns a ref: it can release the one that the ext slot stands for.
 pub(crate) trait SocketEvents<const SSL: bool>: AnyRefCounted {
     const HAS_ON_OPEN: bool = false;
+    const HAS_ON_END: bool = true;
 
     fn on_open(self: RefPtr<Self>, _s: NewSocketHandler<SSL>) {}
     fn on_data(self: RefPtr<Self>, _s: NewSocketHandler<SSL>, _data: &[u8]) {}
@@ -68,7 +69,7 @@ where
     const HAS_ON_CLOSE: bool = true;
     const HAS_ON_TIMEOUT: bool = true;
     const HAS_ON_LONG_TIMEOUT: bool = true;
-    const HAS_ON_END: bool = true;
+    const HAS_ON_END: bool = T::HAS_ON_END;
     const HAS_ON_CONNECT_ERROR: bool = true;
     const HAS_ON_CONNECTING_ERROR: bool = true;
     const HAS_ON_HANDSHAKE: bool = true;
@@ -168,6 +169,7 @@ where
 impl<const SSL: bool> SocketEvents<SSL> for websocket_client::WebSocket<SSL> {
     // No `on_open` / `on_connect_error` override — adoption of an already-connected socket.
     // No `on_end` override — the socket doesn't allow half-open, so uSockets closes it right after.
+    const HAS_ON_END: bool = false;
 
     fn on_data(self: RefPtr<Self>, _s: NewSocketHandler<SSL>, data: &[u8]) {
         self.handle_data(data);
@@ -383,9 +385,7 @@ impl<const SSL: bool> VHandler for Valkey<SSL> {
     const HAS_ON_DATA: bool = true;
     const HAS_ON_WRITABLE: bool = true;
     const HAS_ON_CLOSE: bool = true;
-    const HAS_ON_TIMEOUT: bool = true;
-    const HAS_ON_LONG_TIMEOUT: bool = true;
-    const HAS_ON_END: bool = true;
+    // No `on_end`: half-open sockets are not allowed, so the close event follows.
     const HAS_ON_CONNECT_ERROR: bool = true;
     const HAS_ON_CONNECTING_ERROR: bool = true;
     const HAS_ON_HANDSHAKE: bool = true;
@@ -409,10 +409,6 @@ impl<const SSL: bool> VHandler for Valkey<SSL> {
             fold(ValkeyH::<SSL>::on_close(dial));
         }
     }
-    fn on_timeout(_: &mut Self::Ext, _: *mut us_socket_t) {}
-    fn on_long_timeout(_: &mut Self::Ext, _: *mut us_socket_t) {}
-    /// Half-open sockets are not allowed: the close event follows.
-    fn on_end(_: &mut Self::Ext, _: *mut us_socket_t) {}
     fn on_connect_error(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32) {
         if let Some(dial) = ext.owner_ref().and_then(|this| this.dial.take()) {
             fold(ValkeyH::<SSL>::on_connect_error(dial, wrap(s), code));

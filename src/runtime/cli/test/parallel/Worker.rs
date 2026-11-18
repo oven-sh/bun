@@ -226,7 +226,9 @@ impl Worker {
             }
         }
 
-        let process = bun_ptr::RefPtr::clone(this.process.as_ref().expect("set above"));
+        this.alive = true;
+        let worker = &raw mut **this;
+        let process = this.process.as_ref().expect("set above");
         #[cfg(windows)]
         {
             if let Some(job) = coord.windows_job {
@@ -235,17 +237,15 @@ impl Worker {
                 }
             }
         }
-        this.alive = true;
         // SAFETY: `this` is the live `Box<Worker>` slot in
         // `Coordinator.workers`; it outlives `process`.
         process.set_exit_handler(unsafe {
-            bun_spawn::ProcessExit::new(
-                bun_spawn::ProcessExitKind::TestParallelWorker,
-                &raw mut **this,
-            )
+            bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::TestParallelWorker, worker)
         });
-        match process.watch_or_reap() {
-            Ok(_) => {}
+        let mut rusage = bun_core::ffi::zeroed();
+        match process.watch_or_reap(&mut rusage) {
+            Ok(None) => {}
+            Ok(Some(exit)) => exit.dispatch(&rusage),
             Err(e) => {
                 // Resource cleanup is handled by the function-scope errdefer.
                 this.alive = false;

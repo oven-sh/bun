@@ -1165,13 +1165,13 @@ impl JSValkeyClient {
         let global = cx.global();
         // The duplicate is the calling script's, whoever made the original.
         let new_client = self.clone_without_connecting(&cx);
-        let wrapper = js::wrap(new_client.clone(), global);
-        let new_client_js = wrapper.to_js();
         if self.get_connected() {
+            let wrapper = js::wrap(new_client.clone(), global);
             new_client.connection_promise_returns_client.set(true);
             return Ok(new_client.do_connect(global, (&wrapper).into()));
         }
 
+        let new_client_js = js::to_js(new_client, global);
         Ok(JSPromise::resolved_promise_value(global, new_client_js))
     }
 }

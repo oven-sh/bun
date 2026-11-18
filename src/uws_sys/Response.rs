@@ -1051,24 +1051,7 @@ impl AnyResponse {
         }
     }
 
-    /// [`on_writable`](Self::on_writable) for a handler owned by an
-    /// intrusively-refcounted `U`: the registrant keeps a ref on `U` until it clears
-    /// the handler, so the trampoline can hand the handler a ref of its own.
-    pub fn on_writable_this<U: AnyRefCounted + 'static, H>(self, _handler: H, this: &RefPtr<U>)
-    where
-        H: Fn(RefPtr<U>, u64, AnyResponse) -> bool + Copy + 'static,
-    {
-        self.on_writable(
-            |u: *mut U, off, any| {
-                // SAFETY: `u` is the pointer registered below; the registrant holds a ref on it until the handler is cleared.
-                thunk::zst::<H>()(unsafe { RefPtr::init_ref(u) }, off, any)
-            },
-            this.as_ptr(),
-        )
-    }
-
-    /// [`on_aborted`](Self::on_aborted) counterpart of
-    /// [`on_writable_this`](Self::on_writable_this).
+    /// The registrant keeps a ref on `this` until it clears the handler, which gets a ref of its own.
     pub fn on_aborted_this<U: AnyRefCounted + 'static, H>(self, _handler: H, this: &RefPtr<U>)
     where
         H: Fn(RefPtr<U>, AnyResponse) + Copy + 'static,

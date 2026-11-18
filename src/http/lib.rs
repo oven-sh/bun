@@ -1996,10 +1996,10 @@ impl<'a> HTTPClient<'a> {
                 // unified here, so rebuild from the InternalSocket.
                 let tls_socket = uws::SocketTLS::from_any(socket.socket);
                 let ctx = self.get_ssl_ctx::<true>();
-                // The context's registry holds the session's ref from here on.
                 let session = h2::ClientSession::create(ctx, tls_socket, self);
                 GenHttpContext::<true>::tag_as_h2(tls_socket, session.as_ptr());
                 self.resolve_pending_h2(PendingH2Resolution::H2(&session));
+                Self::ssl_ctx_mut(ctx).register_h2(session);
                 return Break(NextStep::AttachH2);
             }
             self.flags.protocol = Protocol::Http1_1;

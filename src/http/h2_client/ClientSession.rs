@@ -265,9 +265,7 @@ impl ClientSession {
         self.write_frame(wire::FrameType::HTTP_FRAME_RST_STREAM, 0, stream.id, &value);
     }
 
-    /// Allocate a session for a socket whose ALPN just selected h2 and list it
-    /// in the context's registry. The caller tags the socket with it (`tag_as_h2`) and then opens the
-    /// leader's stream with [`Self::attach_leader`].
+    /// For a socket whose ALPN just selected h2: `tag_as_h2`, `register_h2` and [`Self::attach_leader`] follow.
     pub(crate) fn create(
         ctx: *mut NewHTTPContext<true>,
         socket: Socket,
@@ -315,10 +313,6 @@ impl ClientSession {
             registry_index: Cell::new(u32::MAX),
         });
         super::live_sessions.fetch_add(1, Ordering::Relaxed);
-        // `ctx` is a live back-ref to the owning context (set-once,
-        // HTTP-thread-only, no ancestor `&mut HTTPContext` on this path) —
-        // route through the centralised [`HTTPClient::ssl_ctx_mut`] accessor.
-        HTTPClient::ssl_ctx_mut(ctx).register_h2(&this);
         this
     }
 

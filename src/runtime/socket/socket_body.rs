@@ -374,6 +374,11 @@ impl<const SSL: bool> NativeRef<SSL> {
         self.0.as_ref().cloned()
     }
 
+    /// For what cannot close the socket.
+    pub(crate) fn owner_ref(&self) -> Option<&NewSocket<SSL>> {
+        self.0.as_deref()
+    }
+
     /// Counts the socket only if the event goes to JS.
     pub(crate) fn consumer(&self, read_from: Option<SocketHandler<SSL>>) -> Option<Consumer<SSL>> {
         let socket = self.0.as_ref()?;
@@ -3434,10 +3439,9 @@ impl<const SSL: bool> NewSocket<SSL> {
             verify_error: JsCell::new(None),
             latest_session: JsCell::new(None),
         });
-        tls.twin.set(Some(raw.clone()));
-
         let tls_js_value = tls.get_this_value(global);
         let raw_js_value = raw.get_this_value(global);
+        tls.twin.set(Some(raw));
         TLSSocket::data_set_cached(tls_js_value, global, default_data);
         // `raw` keeps the pre-upgrade `data` so its callbacks emit on the
         // original net.Socket, not the TLS one.
@@ -4244,7 +4248,7 @@ pub(crate) fn upgrade_duplex_to_tls<'a>(
         ptr::addr_of_mut!((*duplex_context).ref_count).write(Cell::new(1));
         ptr::addr_of_mut!((*duplex_context).connection_ref)
             .write(Cell::new(Some(RefPtr::from_raw(duplex_context))));
-        ptr::addr_of_mut!((*duplex_context).tls).write(Cell::new(Some(tls.clone())));
+        ptr::addr_of_mut!((*duplex_context).tls).write(Cell::new(None));
         ptr::addr_of_mut!((*duplex_context).vm).write(VirtualMachine::get());
         ptr::addr_of_mut!((*duplex_context).task_event).write(Cell::new(EventState::StartTLS));
         ptr::addr_of_mut!((*duplex_context).queued).write(Cell::new(false));
@@ -4286,6 +4290,7 @@ pub(crate) fn upgrade_duplex_to_tls<'a>(
 
     tls.socket.set(duplex_context_ref.duplex_socket());
     tls.mark_active();
+    duplex_context_ref.tls.set(Some(tls));
     // Unlike a real socket, a TLS engine over a JS stream has no I/O of its
     // own to wait for - it is driven entirely by the stream's events - so it
     // must not hold the event loop open. Node's TLSWrap over a JS stream

@@ -289,7 +289,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// `handle_tunnel_close` still parse `initial_data`, though replies can no longer be sent.
     /// A listener fired from that parse can call `terminate()` again. The socket is already
     /// closed by then, so the nested call is a no-op.
-    pub(crate) fn cancel(self: &RefPtr<Self>) {
+    pub(crate) fn cancel(self: RefPtr<Self>) {
         log!("cancel");
         // `ws` calls this from JS. Holding `_scope` makes the `did_*` callbacks' `enter()` nested, so
         // they don't drain `process.nextTick` callbacks and microtasks before the calling JS frame
@@ -634,7 +634,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     /// Fires `message` events, so never call this from inside a JS call into the WebSocket.
-    pub(crate) fn deliver_initial_data(self: &RefPtr<Self>) {
+    pub(crate) fn deliver_initial_data(self: RefPtr<Self>) {
         if self.cpp_websocket().is_some_and(|ws| !ws.is_paused()) {
             self.parse_initial_data();
         }
@@ -1250,7 +1250,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.close_sent.set(true);
         if !self.options.ws_mode {
             // Resume reading, or we'd never see the peer's Close frame or FIN.
-            self.resume();
+            self.resume_stream();
             self.arm_close_timeout();
         }
         self.send_control_frame(Opcode::Close, payload);
@@ -1393,7 +1393,12 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.tcp.get().pause_stream()
     }
 
-    pub(crate) fn resume(&self) -> bool {
+    pub(crate) fn resume(self: RefPtr<Self>) -> bool {
+        self.resume_stream()
+    }
+
+    /// Closes the socket if it cannot register the poll again.
+    fn resume_stream(&self) -> bool {
         if let Some(tunnel) = self.tunnel().cloned() {
             return tunnel.resume_stream();
         }
@@ -1411,7 +1416,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.send_data(bytes, !self.has_backpressure(), kind);
     }
 
-    pub(crate) fn write_binary_data(self: &RefPtr<Self>, slice: &[u8], op: u8, flags: u8) {
+    pub(crate) fn write_binary_data(self: RefPtr<Self>, slice: &[u8], op: u8, flags: u8) {
         if !self.can_send() || op > 0xF {
             return;
         }
@@ -1463,7 +1468,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         !self.close_sent.get() && self.has_tcp()
     }
 
-    pub(crate) fn write_string(self: &RefPtr<Self>, str: &EncodedSlice, op: u8, flags: u8) {
+    pub(crate) fn write_string(self: RefPtr<Self>, str: &EncodedSlice, op: u8, flags: u8) {
         if !self.can_send() {
             return;
         }
@@ -1501,7 +1506,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     /// `code` 1005 ("no status received") sends a Close frame with an empty payload.
     /// `reason` is UTF-8. It's left out if it doesn't fit, but C++ already rejects those.
-    pub(crate) fn close(self: &RefPtr<Self>, code: u16, reason: &[u8]) {
+    pub(crate) fn close(self: RefPtr<Self>, code: u16, reason: &[u8]) {
         let mut payload = [0u8; MAX_CONTROL_PAYLOAD];
         let mut payload_len = 0;
         if code != 1005 {
@@ -1688,7 +1693,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// Parse bytes read from the JS stream. A listener can re-enter `feed` while we're parsing
     /// (e.g. an in-memory duplex pair whose other end replies synchronously). Re-entrant bytes
     /// are queued and parsed in order.
-    pub(crate) fn feed(self: &RefPtr<Self>, data: &[u8]) {
+    pub(crate) fn feed(self: RefPtr<Self>, data: &[u8]) {
         if data.is_empty() {
             return;
         }
@@ -1714,7 +1719,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     /// The JS stream was closed or destroyed.
-    pub(crate) fn stream_closed(self: &RefPtr<Self>) {
+    pub(crate) fn stream_closed(self: RefPtr<Self>) {
         if matches!(self.transport.get(), Transport::Stream) {
             self.transport.set(Transport::Socket);
         }
@@ -1741,7 +1746,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// ref, so forget it first: nothing below may call back into it or into script. Then drop the
     /// connection, with a raw close on TLS too, since there may be no loop left to finish a
     /// graceful one.
-    pub(crate) fn finalize(self: &RefPtr<Self>) {
+    pub(crate) fn finalize(self: RefPtr<Self>) {
         log!("finalize");
         // This is only called by outgoing_websocket.
         self.release_cpp_ref();
@@ -1799,7 +1804,7 @@ pub type WebSocketClient = WebSocket<false>;
 pub type WebSocketClientTLS = WebSocket<true>;
 
 // HOST_EXPORT(Bun__WebSocketClient__cancel, c)
-pub fn bun__websocketclient__cancel(this: &RefPtr<crate::websocket_client::WebSocketClient>) {
+pub fn bun__websocketclient__cancel(this: RefPtr<crate::websocket_client::WebSocketClient>) {
     this.cancel()
 }
 // HOST_EXPORT(Bun__WebSocketClient__bufferedAmount, c)
@@ -1814,7 +1819,7 @@ pub fn bun__websocketclient__pause(this: &crate::websocket_client::WebSocketClie
 }
 // HOST_EXPORT(Bun__WebSocketClient__resume, c)
 pub fn bun__websocketclient__resume(
-    this: &RefPtr<crate::websocket_client::WebSocketClient>,
+    this: RefPtr<crate::websocket_client::WebSocketClient>,
 ) -> bool {
     this.resume()
 }
@@ -1842,14 +1847,14 @@ pub fn bun__websocketclient__us_socket(
 }
 // HOST_EXPORT(Bun__WebSocketClient__close, c)
 pub fn bun__websocketclient__close(
-    this: &RefPtr<crate::websocket_client::WebSocketClient>,
+    this: RefPtr<crate::websocket_client::WebSocketClient>,
     code: u16,
     reason: &[u8],
 ) {
     this.close(code, reason)
 }
 // HOST_EXPORT(Bun__WebSocketClient__finalize, c)
-pub fn bun__websocketclient__finalize(this: &RefPtr<crate::websocket_client::WebSocketClient>) {
+pub fn bun__websocketclient__finalize(this: RefPtr<crate::websocket_client::WebSocketClient>) {
     this.finalize()
 }
 // HOST_EXPORT(Bun__WebSocketClient__init, c)
@@ -1876,14 +1881,14 @@ pub fn bun__websocketclient__init(
 }
 // HOST_EXPORT(Bun__WebSocketClient__deliverInitialData, c)
 pub fn bun__websocketclient__deliver_initial_data(
-    this: &RefPtr<crate::websocket_client::WebSocketClient>,
+    this: RefPtr<crate::websocket_client::WebSocketClient>,
 ) {
     this.deliver_initial_data()
 }
 // HOST_EXPORT(Bun__WebSocketClient__initWithTunnel, c)
 pub fn bun__websocketclient__init_with_tunnel(
     outgoing: &crate::websocket_client::cpp_websocket::CppWebSocket,
-    tunnel: bun_ptr::RefPtr<crate::websocket_client::websocket_proxy_tunnel::WebSocketProxyTunnel>,
+    tunnel: RefPtr<crate::websocket_client::websocket_proxy_tunnel::WebSocketProxyTunnel>,
     global_this: &JSGlobalObject,
     buffered_data: Option<Box<crate::websocket_client::InitialData>>,
     deflate_params: Option<&crate::websocket_client::websocket_deflate::Params>,
@@ -1909,15 +1914,13 @@ pub fn bun__websocketclient__init_over_stream(
 }
 // HOST_EXPORT(Bun__WebSocketClient__feed, c)
 pub fn bun__websocketclient__feed(
-    this: &RefPtr<crate::websocket_client::WebSocketClient>,
+    this: RefPtr<crate::websocket_client::WebSocketClient>,
     bytes: &[u8],
 ) {
     this.feed(bytes)
 }
 // HOST_EXPORT(Bun__WebSocketClient__streamClosed, c)
-pub fn bun__websocketclient__stream_closed(
-    this: &RefPtr<crate::websocket_client::WebSocketClient>,
-) {
+pub fn bun__websocketclient__stream_closed(this: RefPtr<crate::websocket_client::WebSocketClient>) {
     this.stream_closed()
 }
 // HOST_EXPORT(Bun__WebSocketClient__memoryCost, c)
@@ -1926,7 +1929,7 @@ pub fn bun__websocketclient__memory_cost(this: &crate::websocket_client::WebSock
 }
 // HOST_EXPORT(Bun__WebSocketClient__writeBinaryData, c)
 pub fn bun__websocketclient__write_binary_data(
-    this: &RefPtr<crate::websocket_client::WebSocketClient>,
+    this: RefPtr<crate::websocket_client::WebSocketClient>,
     bytes: &[u8],
     op: u8,
     flags: u8,
@@ -1935,7 +1938,7 @@ pub fn bun__websocketclient__write_binary_data(
 }
 // HOST_EXPORT(Bun__WebSocketClient__writeString, c)
 pub fn bun__websocketclient__write_string(
-    this: &RefPtr<crate::websocket_client::WebSocketClient>,
+    this: RefPtr<crate::websocket_client::WebSocketClient>,
     str_: &bun_core::EncodedSlice,
     op: u8,
     flags: u8,
@@ -1944,7 +1947,7 @@ pub fn bun__websocketclient__write_string(
 }
 
 // HOST_EXPORT(Bun__WebSocketClientTLS__cancel, c)
-pub fn bun__websocketclienttls__cancel(this: &RefPtr<crate::websocket_client::WebSocketClientTLS>) {
+pub fn bun__websocketclienttls__cancel(this: RefPtr<crate::websocket_client::WebSocketClientTLS>) {
     this.cancel()
 }
 // HOST_EXPORT(Bun__WebSocketClientTLS__bufferedAmount, c)
@@ -1959,7 +1962,7 @@ pub fn bun__websocketclienttls__pause(this: &crate::websocket_client::WebSocketC
 }
 // HOST_EXPORT(Bun__WebSocketClientTLS__resume, c)
 pub fn bun__websocketclienttls__resume(
-    this: &RefPtr<crate::websocket_client::WebSocketClientTLS>,
+    this: RefPtr<crate::websocket_client::WebSocketClientTLS>,
 ) -> bool {
     this.resume()
 }
@@ -1987,7 +1990,7 @@ pub fn bun__websocketclienttls__us_socket(
 }
 // HOST_EXPORT(Bun__WebSocketClientTLS__close, c)
 pub fn bun__websocketclienttls__close(
-    this: &RefPtr<crate::websocket_client::WebSocketClientTLS>,
+    this: RefPtr<crate::websocket_client::WebSocketClientTLS>,
     code: u16,
     reason: &[u8],
 ) {
@@ -1995,7 +1998,7 @@ pub fn bun__websocketclienttls__close(
 }
 // HOST_EXPORT(Bun__WebSocketClientTLS__finalize, c)
 pub fn bun__websocketclienttls__finalize(
-    this: &RefPtr<crate::websocket_client::WebSocketClientTLS>,
+    this: RefPtr<crate::websocket_client::WebSocketClientTLS>,
 ) {
     this.finalize()
 }
@@ -2023,7 +2026,7 @@ pub fn bun__websocketclienttls__init(
 }
 // HOST_EXPORT(Bun__WebSocketClientTLS__deliverInitialData, c)
 pub fn bun__websocketclienttls__deliver_initial_data(
-    this: &RefPtr<crate::websocket_client::WebSocketClientTLS>,
+    this: RefPtr<crate::websocket_client::WebSocketClientTLS>,
 ) {
     this.deliver_initial_data()
 }
@@ -2035,7 +2038,7 @@ pub fn bun__websocketclienttls__memory_cost(
 }
 // HOST_EXPORT(Bun__WebSocketClientTLS__writeBinaryData, c)
 pub fn bun__websocketclienttls__write_binary_data(
-    this: &RefPtr<crate::websocket_client::WebSocketClientTLS>,
+    this: RefPtr<crate::websocket_client::WebSocketClientTLS>,
     bytes: &[u8],
     op: u8,
     flags: u8,
@@ -2044,7 +2047,7 @@ pub fn bun__websocketclienttls__write_binary_data(
 }
 // HOST_EXPORT(Bun__WebSocketClientTLS__writeString, c)
 pub fn bun__websocketclienttls__write_string(
-    this: &RefPtr<crate::websocket_client::WebSocketClientTLS>,
+    this: RefPtr<crate::websocket_client::WebSocketClientTLS>,
     str_: &bun_core::EncodedSlice,
     op: u8,
     flags: u8,

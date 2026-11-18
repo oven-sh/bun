@@ -917,8 +917,15 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
         #[cfg(not(windows))]
         PollTag::Process => {
             in_features!([ChildProcess], (proc: *mut Process = owner.ptr().cast::<Process>()) {
-                // SAFETY: a process frees its poll before it is freed.
-                unsafe { RefPtr::init_ref(proc) }.wait(false);
+                let mut rusage = bun_spawn::process::rusage_zeroed();
+                // SAFETY: a process frees its poll before it is freed, and `wait_posix` releases no ref.
+                unsafe {
+                    if let Some(exit) = (*proc).wait_posix(false, &mut rusage) {
+                        exit.dispatch(&rusage);
+                    } else if let Some(exit) = RefPtr::init_ref(proc).rewatch_or_reap(&mut rusage) {
+                        exit.dispatch(&rusage);
+                    }
+                }
             })
         }
         #[cfg(not(windows))]

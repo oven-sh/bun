@@ -210,15 +210,11 @@ impl OsJob {
             Ok(None) => return self.finish(Ok(())),
             Err(failure) => return self.finish(Err(failure)),
         };
-        process.set_exit_handler(self);
-        match process.watch_or_reap() {
-            Ok(false) => self.process.set(Some(process)),
-            Ok(true) => {}
-            Err(err) => {
-                if !process.has_exited() {
-                    process.on_exit(Status::Err(err), &bun_core::ffi::zeroed());
-                }
-            }
+        process.set_exit_owner(self);
+        let mut rusage = bun_core::ffi::zeroed();
+        match process.watch_or_exit(&mut rusage) {
+            Some(exit) => exit.dispatch(&rusage),
+            None => self.process.set(Some(process)),
         }
     }
 

@@ -455,10 +455,10 @@ impl<const SSL: bool> HTTPContext<SSL> {
         )
     }
 
-    pub(crate) fn register_h2(&mut self, session: &RefPtr<h2::ClientSession>) {
+    pub(crate) fn register_h2(&mut self, session: RefPtr<h2::ClientSession>) {
         debug_assert!(SSL && session.registry_index() == u32::MAX);
         session.set_registry_index(u32::try_from(self.active_h2_sessions.len()).expect("int cast"));
-        self.active_h2_sessions.push(session.clone());
+        self.active_h2_sessions.push(session);
     }
 
     /// Called from drainQueuedShutdowns when the abort-tracker lookup
@@ -1100,7 +1100,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 if let Some(session) = found.h2_session.take() {
                     debug_assert!(SSL);
                     h2_session_mut(&session).socket = sock.assume_ssl();
-                    self.register_h2(&session);
+                    self.register_h2(session.clone());
                     Self::tag_as_h2(sock, session.as_ptr());
                     return session.adopt(client);
                 }

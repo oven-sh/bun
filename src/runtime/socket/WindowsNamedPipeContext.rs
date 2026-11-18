@@ -171,7 +171,7 @@ impl WindowsNamedPipeContext {
         ssl: &mut bun_boringssl_sys::SSL,
     ) -> bun_boringssl::ServerIdentity {
         // SAFETY: see `on_open`.
-        match unsafe { (*this).socket.clone() } {
+        match unsafe { &(*this).socket } {
             Some(OwnedSocket::Tls(s)) => s.server_identity(ssl),
             _ => bun_boringssl::ServerIdentity::Unchecked,
         }

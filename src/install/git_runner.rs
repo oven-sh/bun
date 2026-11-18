@@ -1231,15 +1231,11 @@ impl GitSubprocess {
 
         debug_assert!(self.process.get().is_none());
         let process = spawned.to_process_handle(self.event_loop);
-        process.set_exit_handler(self);
-        match process.watch_or_reap() {
-            Ok(false) => self.process.set(Some(process)),
-            Ok(true) => {}
-            Err(err) => {
-                if !process.has_exited() {
-                    process.on_exit(Status::Err(err), &bun_core::ffi::zeroed::<Rusage>());
-                }
-            }
+        process.set_exit_owner(self);
+        let mut rusage = bun_core::ffi::zeroed();
+        match process.watch_or_exit(&mut rusage) {
+            Some(exit) => exit.dispatch(&rusage),
+            None => self.process.set(Some(process)),
         }
         Ok(())
     }
@@ -1509,7 +1505,7 @@ impl GitSubprocess {
 
 bun_spawn::link_impl_ProcessExit! {
     InstallGit for GitSubprocess => |this| {
-        // SAFETY: `this` is the live runner installed via `set_exit_handler`.
+        // SAFETY: `this` is the live runner installed via `set_exit_owner`.
         on_process_exit(status, rusage) =>
             RefPtr::init_ref(this).on_process_exit(status, rusage),
     }

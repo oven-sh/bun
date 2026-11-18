@@ -406,13 +406,12 @@ impl DispatchedRequest<'_> {
     /// Used by DevServer to defer calling
     /// the JS handler until the bundle is actually ready.
     fn save<const SSL: bool, const DEBUG: bool>(
-        request: bun_ptr::RefPtr<Request>,
+        self,
         dispatch: &ServerDispatch<SSL, DEBUG>,
         global: &jsc::JSGlobalObject,
         req: &mut uws_sys::Request,
         resp: *mut uws_sys::NewAppResponse<SSL>,
     ) -> SavedRequest {
-        let this = DispatchedRequest(request.clone().wrap_for_bake(global));
         let ctx = AnyRequestContext::init(&raw const **dispatch);
         // Before `to_async`, which releases the context of a request that is already aborted.
         let ctx = any_request_context::AnyRequestContextRef::new(ctx);
@@ -421,12 +420,12 @@ impl DispatchedRequest<'_> {
         // future requests (stack allocated).
         dispatch.to_async(
             std::ptr::from_mut::<uws_sys::Request>(req).cast::<c_void>(),
-            &request,
+            &self.0,
         );
 
         SavedRequest {
-            js_request: jsc::Strong::create(this.0.to_js(), global),
-            request,
+            js_request: jsc::Strong::create(self.0.to_js(), global),
+            request: bun_ptr::BackRef::new(&*self.0),
             ctx,
             response: any_response_from::<SSL>(resp),
         }
@@ -979,7 +978,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             SavedRequestUnion::Saved(data) => (
                 // SAFETY: `save` wrapped `request` in `js_request`.
                 DispatchedRequest(unsafe {
-                    jsc::WrapperGuard::from_parts(data.js_request.get(), data.request.as_non_null())
+                    jsc::WrapperGuard::from_parts(data.js_request.get(), data.request.into())
                 }),
                 // SAFETY: `data.ctx` holds a ref.
                 request_context::Dispatch::new(unsafe {
@@ -3670,7 +3669,7 @@ impl AnyServer {
             let Some((request, ctx)) = s.prepare_js_request_context(req, r, method) else {
                 return Ok(None);
             };
-            Some(DispatchedRequest::save(request, &ctx, global, req, r))
+            Some(DispatchedRequest(request.wrap_for_bake(global)).save(&ctx, global, req, r))
         }))
     }
 
@@ -3861,7 +3860,8 @@ pub(crate) mod http_server_agent {
 // ─── SavedRequest ────────────────────────────────────────────────────────────
 pub(crate) struct SavedRequest {
     pub(crate) js_request: jsc::Strong,
-    pub(crate) request: bun_ptr::RefPtr<crate::webcore::Request>,
+    /// What `js_request` wraps.
+    pub(crate) request: bun_ptr::BackRef<crate::webcore::Request>,
     pub(crate) ctx: any_request_context::AnyRequestContextRef,
     pub(crate) response: uws::AnyResponse,
 }

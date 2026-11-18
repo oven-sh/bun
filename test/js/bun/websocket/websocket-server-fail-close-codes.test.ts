@@ -321,8 +321,7 @@ describe.skipIf(!isASAN)("when a receive buffer can't grow", () => {
         client.send(OP.continuation, Buffer.alloc(3 * MiB));
       },
     ],
-    // The fragment buffer also stores inflate's 9 bytes of padding and control frames split across reads.
-    ["a compressed message with no room left for its padding", deflate, client => client.binary(full, { rsv1: true })],
+    // The fragment buffer also stores control frames split across reads.
     [
       "a split control frame after a fragment that fills the buffer",
       undefined,
@@ -368,6 +367,15 @@ describe.skipIf(!isASAN)("when a receive buffer can't grow", () => {
       expect(await nextEvent()).toEqual({ close: 1006, reason: diagnostic });
       await expectStillServing(scheme);
     });
+  });
+
+  test("inflates a message that fills the buffer", async () => {
+    using client = await connect("ws", deflate);
+    // A final block with two bytes. What follows it does not count.
+    client.binary(Buffer.concat([deflated(2), full]).subarray(0, full.length), { rsv1: true });
+    client.close(1000);
+    expect(await client.remainingFrames()).toEqual(['text "got 2"', "close 1000"]);
+    expect(await nextEvent()).toEqual({ close: 1000, reason: "" });
   });
 
   // Appending 1 MiB to 2.5 MiB first tries to double to 5 MiB, which fails, then falls back to exactly 3.5 MiB.

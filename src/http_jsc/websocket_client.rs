@@ -404,7 +404,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             Some(deflate) => deflate
                 .decompress(data, &mut decompressed, self.options.payload_limit())
                 .map_err(|err| match err {
-                    websocket_deflate::Error::InflateFailed => ErrorCode::InvalidCompressedData,
+                    websocket_deflate::Error::Corrupt => ErrorCode::InvalidCompressedData,
                     websocket_deflate::Error::TooLarge => ProtocolError::MessageTooBig.into(),
                     websocket_deflate::Error::OutOfMemory => ErrorCode::FailedToAllocateMemory,
                 }),

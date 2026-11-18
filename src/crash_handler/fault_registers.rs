@@ -64,11 +64,6 @@ fn read(machine: &libc::mcontext_t) -> ([usize; NAMES.len()], usize, usize) {
     for (register, value) in registers.iter_mut().zip(machine.regs) {
         *register = value as usize;
     }
-    // Signed from the first instruction of a function that signs to its first call. Between calls it may hold anything.
-    let link = bun_core::debug::strip_return_address_signature(registers[30]);
-    if may_be_address(link) {
-        registers[30] = link;
-    }
     (registers, machine.pc as usize, sp)
 }
 
@@ -94,16 +89,18 @@ fn may_be_address(value: usize) -> bool {
 }
 
 fn write_value(line: &mut Line, value: usize, sp: usize) -> core::fmt::Result {
-    if !may_be_address(value) {
+    // Code that reads a frame has the signed return address in any register.
+    let address = bun_core::debug::strip_return_address_signature(value);
+    if !may_be_address(address) {
         write!(line, "{value:#x}")
-    } else if let Some(offset) = crate::compiled_frames::offset_in_code(value) {
+    } else if let Some(offset) = crate::compiled_frames::offset_in_code(address) {
         write!(line, "code+{offset:#x}")
-    } else if value.wrapping_sub(sp) < REACH_OF_STACK {
-        write!(line, "stack+{:#x}", value - sp)
-    } else if sp.wrapping_sub(value) < REACH_OF_STACK {
-        write!(line, "stack-{:#x}", sp - value)
+    } else if address.wrapping_sub(sp) < REACH_OF_STACK {
+        write!(line, "stack+{:#x}", address - sp)
+    } else if sp.wrapping_sub(address) < REACH_OF_STACK {
+        write!(line, "stack-{:#x}", sp - address)
     } else {
-        write!(line, "address..{:03x}", value % PAGE)
+        write!(line, "address..{:03x}", address % PAGE)
     }
 }
 

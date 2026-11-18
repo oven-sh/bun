@@ -6,7 +6,7 @@ use smallvec::{SmallVec, smallvec};
 /// Prevents passing a function reference directly to iterator methods.
 pub struct NoArrayCallbackReference;
 
-const NO_ARRAY_CALLBACK_REFERENCE: Message = Message::new("", "Avoid passing a function reference directly to iterator methods");
+const NO_ARRAY_CALLBACK_REFERENCE: &Message = &Message::new("", "Avoid passing a function reference directly to iterator methods");
 
 const METHODS: [&str; 12] = [
     "every",

@@ -206,6 +206,21 @@ describe.concurrent.skipIf(skip)("WebSocket client (wss://) under injected sysca
     expect(r).toMatchObject({ ok: true, opened: true, signal: null, exitCode: 0 });
   });
 
+  test("send → more bytes than it was given for a frame fires onclose with an abnormal code", async () => {
+    using server = makeEchoServer({ tls: true });
+    const r = await runWSClient(
+      `wss://127.0.0.1:${server.port}/`,
+      { syscall: "send", action: "excess" },
+      /* js */ `
+      const ws = new WebSocket(url, { tls: { ca: process.env.CA } });
+      ws.onopen = () => { fault.set(rule); ws.send("x"); };
+      ws.onmessage = () => out({ ok: false, unexpected: "message" });
+      ws.onclose = (e) => { out({ ok: true, code: e.code }); process.exit(0); };
+    `,
+    );
+    expect(r).toMatchObject({ ok: true, code: 1006, signal: null, exitCode: 0 });
+  });
+
   test("recv → ECONNRESET mid-handshake fires onerror (no hang)", async () => {
     using server = makeEchoServer({ tls: true });
     const r = await runWSClient(
@@ -378,6 +393,50 @@ describe.concurrent.skipIf(skip)("Bun.serve WebSocket server under injected sysc
     });
     expect(exitCode).toBe(0);
   });
+
+  // Same route to the writev hook as the test above. A paused socket defers the client's hangup, so only the server can close it.
+  test.each(["reading", "paused"] as const)(
+    "writev → more bytes than it was given on a ≥16 KB frame of a %s server socket: both ends close and the frame is not sent again",
+    async state => {
+      const fixture = /* js */ `
+      const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+      const seen = { messages: 0 };
+      const done = () => {
+        if (seen.server === undefined || seen.client === undefined) return;
+        console.log(JSON.stringify(seen));
+        s.stop(true);
+        process.exit(0);
+      };
+      const s = Bun.serve({ port: 0, hostname: "127.0.0.1",
+        fetch(req, server) { if (server.upgrade(req)) return; return new Response("no", {status:426}); },
+        websocket: {
+          message(ws) {
+            ${state === "paused" ? "ws.pause();" : ""}
+            fault.set({ syscall: "writev", action: "excess" });
+            ws.send(Buffer.alloc(20000, 0x57));
+          },
+          close(ws, code) { seen.server = code; done(); },
+        } });
+      const ws = new WebSocket("ws://127.0.0.1:" + s.port);
+      ws.onopen = () => ws.send("go");
+      ws.onmessage = () => { seen.messages++; };
+      ws.onclose = (e) => { seen.client = e.code; done(); };
+    `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ out: JSON.parse(stdout.trim() || "{}"), signal: proc.signalCode, stderr }).toEqual({
+        out: { messages: 0, server: 1006, client: 1006 },
+        signal: null,
+        stderr: expect.any(String),
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
 
   test("client disconnect under server short sends: every ws reaches close()", async () => {
     const fixture = /* js */ `

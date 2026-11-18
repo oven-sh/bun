@@ -3,16 +3,16 @@ use bun_lint::prelude::*;
 /// Disallow calls to the `Object` constructor without an argument.
 pub struct NoObjectConstructor;
 
-const PREFER_LITERAL: Message =
-    Message::new("preferLiteral", "The object literal notation {} is preferable.");
-const USE_LITERAL: Message = Message::new("useLiteral", "Replace with '{{replacement}}'.");
-const USE_LITERAL_AFTER_SEMICOLON: Message = Message::new(
+const PREFER_LITERAL: &Message =
+    &Message::new("preferLiteral", "The object literal notation {} is preferable.");
+const USE_LITERAL: &Message = &Message::new("useLiteral", "Replace with '{{replacement}}'.");
+const USE_LITERAL_AFTER_SEMICOLON: &Message = &Message::new(
     "useLiteralAfterSemicolon",
     "Replace with '{{replacement}}', add preceding semicolon.",
 );
 
 /// Each suggestion's message, its `replacement` value, and the text that replaces the call.
-const SUGGESTIONS: [(Message, &str, &str); 3] = [
+const SUGGESTIONS: [(&Message, &str, &str); 3] = [
     (USE_LITERAL, "{}", "{}"),
     (USE_LITERAL, "({})", "({})"),
     (USE_LITERAL_AFTER_SEMICOLON, "({})", ";({})"),

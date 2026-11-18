@@ -1,0 +1,18 @@
+# `last` returns at once what `twice` gives. `twice` stands in no ring of tail calls, so the call need not be a jump: it stays a call, and the arrow lies in the frame.
+# `round` calls itself in tail position: the jump is owed, and its arrow is made in the heap.
+# f1 = twice, f3 = last, f2 = round
+# -- source: closure-taken-by-the-call-that-ends-the-unit-lies-in-the-frame-where-the-callee-comes-back.ts
+# declare function sink(...values: unknown[]): void;
+# function twice(a: number, f: (x: number) => number): number { let t = a; for (let i = 0; i < 2; i++) t = f(t); return t; }
+# function last(a: number, k: number) { return twice(a, x => x - k); }
+# function round(n: number, f: () => number): number { if (n <= 0) return f(); return round(n - 1, () => n); }
+# sink(last(1, 2), last(2, 3), round(3, () => 0), round(4, () => 1));
+# -- end of source
+# RUN: walk f3 mechanisms=all-Inlining
+# CHECK-NOT: ReturnCall
+# RUN(BYTES): bytes f3 mechanisms=all-Inlining
+# BYTES-NOT: NewSlimClosure.Plain
+# RUN(ROUND): walk f2 mechanisms=all-Inlining
+# ROUND: ReturnCall
+# RUN(HEAP): bytes f2 mechanisms=all-Inlining
+# HEAP: NewSlimClosure.Plain

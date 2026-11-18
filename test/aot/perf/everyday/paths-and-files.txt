@@ -1,0 +1,102 @@
+//// five-parts-are-joined
+import { join } from "node:path";
+const folders: string[] = ["/Users/someone/projects/application", "/home/user/config/tool/settings", "/usr/local/lib/node_modules", "/var/www/sites/example/releases"];
+const names: string[] = ["index.tsx", "file.json", "typescript.js", "app.css"];
+function turn(i: number): number {
+  return join(folders[i & 3]!, "packages", "components/buttons", "src", names[i & 3]!).length;
+}
+//// a-part-that-goes-up-is-joined
+import { join } from "node:path";
+const folders: string[] = ["/Users/someone/projects/application/src/components", "/home/user/config/tool/settings/of/the/day", "/usr/local/lib/node_modules/typescript/lib", "/var/www/sites/example/releases/current/public"];
+const names: string[] = ["../button/index.tsx", "../file.json", "../../typescript.js", "../assets/app.css"];
+function turn(i: number): number {
+  return join(folders[i & 3]!, names[i & 3]!).length;
+}
+//// short-relative-parts-are-joined
+import { join } from "node:path";
+const folders: string[] = ["src", "lib", "test", "docs"];
+const names: string[] = ["index.ts", "file.json", "a.js", "app.css"];
+function turn(i: number): number {
+  return join(folders[i & 3]!, names[i & 3]!).length;
+}
+//// a-long-tidy-path-is-normalized
+import { normalize } from "node:path";
+const files: string[] = ["/Users/someone/projects/application/node_modules/.cache/some-package-name/lib/index.js", "/home/user/config/tool/settings/of/the/day/and/of/the/night/in/a/folder/file.json", "/usr/local/lib/node_modules/typescript/lib/and/some/more/folders/below/typescript.js", "/var/www/sites/example/releases/current/public/assets/styles/of/the/pages/app.css"];
+function turn(i: number): number {
+  return normalize(files[i & 3]!).length;
+}
+//// a-path-to-a-file-in-a-sibling-folder
+import { relative } from "node:path";
+const folders: string[] = ["/Users/someone/projects/application/src/components", "/home/user/config/tool/settings/of/the/day", "/usr/local/lib/node_modules/typescript/lib", "/var/www/sites/example/releases/current/public"];
+const files: string[] = ["/Users/someone/projects/application/lib/button/index.tsx", "/home/user/config/tool/other/file.json", "/usr/local/lib/node_modules/other/typescript.js", "/var/www/sites/example/shared/assets/app.css"];
+function turn(i: number): number {
+  return relative(folders[i & 3]!, files[i & 3]!).length;
+}
+//// a-relative-path-is-resolved
+import { resolve } from "node:path";
+const files: string[] = ["src/components/button/index.tsx", "settings/file.json", "lib/typescript.js", "public/assets/app.css"];
+function turn(i: number): number {
+  return resolve(files[i & 3]!).length & 255;
+}
+//// a-long-path-is-taken-apart
+import { basename, dirname, extname } from "node:path";
+const files: string[] = ["/Users/someone/projects/application/node_modules/.cache/some-package-name/lib/index.js", "/home/user/config/tool/settings/of/the/day/and/of/the/night/in/a/folder/file.json", "/usr/local/lib/node_modules/typescript/lib/and/some/more/folders/below/typescript.js", "/var/www/sites/example/releases/current/public/assets/styles/of/the/pages/app.css"];
+function turn(i: number): number {
+  const file = files[i & 3]!;
+  return dirname(file).length + basename(file).length + extname(file).length;
+}
+//// a-long-path-is-parsed
+import { parse } from "node:path";
+const files: string[] = ["/Users/someone/projects/application/node_modules/.cache/some-package-name/lib/index.js", "/home/user/config/tool/settings/of/the/day/and/of/the/night/in/a/folder/file.json", "/usr/local/lib/node_modules/typescript/lib/and/some/more/folders/below/typescript.js", "/var/www/sites/example/releases/current/public/assets/styles/of/the/pages/app.css"];
+function turn(i: number): number {
+  const parsed = parse(files[i & 3]!);
+  return parsed.dir.length + parsed.name.length;
+}
+//// a-file-that-is-there-is-asked-for
+import { existsSync } from "node:fs";
+const file = process.execPath;
+function turn(i: number): number {
+  return existsSync(file) ? 1 : i & 1;
+}
+//// a-file-that-is-not-there-is-asked-for
+import { existsSync } from "node:fs";
+const file = "/a-folder-that-is-not-there/of-some-tool/settings.json";
+function turn(i: number): number {
+  return existsSync(file) ? 1 : i & 1;
+}
+//// a-file-is-asked-for-by-a-relative-path
+import { existsSync } from "node:fs";
+import { basename, dirname } from "node:path";
+process.chdir(dirname(process.execPath));
+const file = basename(process.execPath);
+function turn(i: number): number {
+  return existsSync(file) ? 1 : i & 1;
+}
+//// a-file-is-asked-for-by-the-bytes-of-its-path
+import { existsSync } from "node:fs";
+const file = Buffer.from(process.execPath);
+function turn(i: number): number {
+  return existsSync(file) ? 1 : i & 1;
+}
+//// whether-a-path-is-a-file
+import { statSync } from "node:fs";
+const file = process.execPath;
+function turn(i: number): number {
+  return statSync(file).isFile() ? 1 : i & 1;
+}
+//// the-size-of-a-file-that-may-be-missing
+import { statSync } from "node:fs";
+const file = "/a-folder-that-is-not-there/of-some-tool/settings.json";
+function turn(i: number): number {
+  return statSync(file, { throwIfNoEntry: false })?.size ?? i & 1;
+}
+//// a-small-file-is-read-as-text
+import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+const file = join(tmpdir(), "a-small-file-" + process.pid + ".txt");
+writeFileSync(file, "a small file of one line\n");
+process.on("exit", () => unlinkSync(file));
+function turn(i: number): number {
+  return readFileSync(file, "utf8").length + (i & 1);
+}

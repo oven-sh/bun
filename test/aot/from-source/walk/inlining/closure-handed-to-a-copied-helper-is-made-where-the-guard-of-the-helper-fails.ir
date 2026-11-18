@@ -1,0 +1,21 @@
+# -- source: closure-handed-to-a-copied-helper-is-made-where-the-guard-of-the-helper-fails.ts
+# declare function print(...values: unknown[]): void;
+# function some(list: number[], test: (x: number) => boolean): boolean { for (let i = 0; i < list.length; i++) { if (test(list[i])) return true; } return false; }
+# function has(list: number[], k: number): boolean { return some(list, x => x === k); }
+# const list = [1, 2, 3];
+# const like: any = { length: 2, 0: 7, 1: 8 };
+# print(has(list, 3), has(list, 4), has(like, 8), has(like, 9), some(list, x => x === 2));
+# -- end of source
+# The helper and the callback are both copied, so on the way that runs nobody reads the cell of the closure. The helper has a guard on its list, and the failing side calls the slow version, which is handed the cell.
+# If the closure stood in front of the guard for that reader, it would be made at every call and read at none. It is made in the rare block, out of the same operation of the input.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: frame 1 callee=f1
+# CHECK: frame 2 callee=f4 {{*}}parent=1
+# CHECK-NOT: = NewClosure
+# CHECK: frequency=Rare
+# CHECK-NEXT: [[closure]]: f4 {{*}} = NewClosure
+# CHECK: = CallDirect {{*}} function=f1 role=SlowBody
+# CHECK-NOT: = NewClosure
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: true false true false true

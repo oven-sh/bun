@@ -117,6 +117,11 @@ impl CompileTarget {
         self.os == host.os && self.arch == host.arch && self.libc == host.libc
     }
 
+    /// This bun itself: the host platform at this version. x64 ships as one build, which `-baseline` names too.
+    pub fn is_this_bun(&self) -> bool {
+        self.is_host_platform() && self.version.eql(CompileTarget::default().version)
+    }
+
     pub fn to_npm_registry_url<'a>(&self, buf: &'a mut [u8]) -> crate::Result<&'a [u8]> {
         if let Some(url) = env_var::BUN_COMPILE_TARGET_TARBALL_URL.get() {
             if strings::has_prefix(url, b"http://") || strings::has_prefix(url, b"https://") {
@@ -203,10 +208,8 @@ impl CompileTarget {
                     return Err(crate::Error::BufferTooSmall);
                 }
                 buf[..self_exe_path.len()].copy_from_slice(self_exe_path.as_bytes());
-                buf[self_exe_path.len()] = 0;
                 *needs_download = false;
-                // SAFETY: buf[self_exe_path.len()] == 0 written above
-                return Ok(ZStr::from_buf(&buf[..], self_exe_path.len()));
+                return Ok(ZStr::nul_terminate(buf, self_exe_path.len()));
             }
         }
 
@@ -378,7 +381,7 @@ impl CompileTarget {
                     bun_core::err_generic!(
                         "Unsupported target {} in \"bun{}\"\n\
                          To see the supported targets:\n  \
-                         https://bun.com/docs/bundler/executables",
+                         https://bun.com/docs/compiler/executables",
                         bun_fmt::quote(token),
                         bstr::BStr::new(input_),
                     );

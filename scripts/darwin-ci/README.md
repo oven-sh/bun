@@ -44,9 +44,8 @@ The versions it installs are the ones every other CI machine gets.
 after the toolchain verifies, under the same lock the command hook clones
 with. Re-run it when toolchain pins move.
 
-Everything here runs on whatever bun `host.sh` pinned when the host was first
-provisioned, so it sticks to `Bun.spawn` with argv arrays and stays off
-`Bun.$`.
+Everything here runs on whatever bun `host.sh` pinned when it last ran on the
+host, so it sticks to `Bun.spawn` with argv arrays and stays off `Bun.$`.
 
 ## Bringing up a host
 

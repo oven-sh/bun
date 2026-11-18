@@ -24,6 +24,7 @@
 #include <errno.h>
 #ifndef WIN32
 #include <fcntl.h>
+#include <poll.h>
 #endif
 
 int us_socket_local_port(struct us_socket_t *s) {
@@ -98,6 +99,10 @@ unsigned char us_connecting_socket_kind(struct us_connecting_socket_t *c) {
 }
 
 __attribute__((always_inline)) void us_socket_timeout(struct us_socket_t *s, unsigned int seconds) {
+    /* A deferred close has a deadline of its own, which its owner does not put off. */
+    if (s->ssl && s->ssl_close_after_spill) {
+        return;
+    }
     if (seconds) {
         s->timeout = ((unsigned int)s->group->timestamp + ((seconds + 3) >> 2)) % 240;
     } else {
@@ -236,7 +241,7 @@ void us_connecting_socket_close(struct us_connecting_socket_t *c) {
     if (c->pending_resolve_callback) {
         // The DNS callback has not been drained. Try to remove c from the
         // request's notify list so it never fires. Returns 0 if the result is
-        // already set (the callback has fired or is about to), in which case
+        // already set (the callback has fired), in which case
         // after_resolve will see c->closed and finish teardown.
         if (c->addrinfo_req && Bun__addrinfo_cancel(c->addrinfo_req, c)) {
 #ifdef _WIN32
@@ -343,7 +348,7 @@ static struct us_socket_t *us_internal_socket_close_and_notify(struct us_socket_
         /* A candidate of a us_connecting_socket_t is held through that, which hears
          * on_connecting_error once every candidate has failed. */
 
-        us_internal_ssl_detach(s);
+        if (s->group->loop->data.ssl_data) us_internal_ssl_detach(s);
 
         /* Link this socket to the close-list and let it be deleted after this iteration */
         s->next = loop->data.closed_head;
@@ -359,7 +364,7 @@ static struct us_socket_t *us_internal_socket_close_and_notify(struct us_socket_
 /* Bypasses the SSL layer entirely — the public us_socket_close() routes through
  * us_internal_ssl_close() first so a client-initiated close sends close_notify and (with
  * code==0) waits for the peer's, instead of slamming the fd shut and racing the peer's
- * handshake/secureConnection event. openssl.c re-enters here once that graceful path is done. */
+ * handshake/secureConnection event. openssl.cpp re-enters here once that graceful path is done. */
 struct us_socket_t *us_internal_socket_close_raw(struct us_socket_t *s, int code, void *reason) {
     /* Not an error a connect can fail with, so the holder can tell the two apart. */
     return us_internal_socket_close_and_notify(s, code, reason, LIBUS_ECANCELED);
@@ -382,6 +387,22 @@ struct us_socket_t *us_socket_close_now(struct us_socket_t *s) {
     return us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, NULL);
 }
 
+#ifndef WIN32
+void us_socket_read_now(struct us_socket_t *s) {
+    if (us_socket_is_closed(s)) {
+        return;
+    }
+    struct pollfd pollfd = { .fd = us_poll_fd(&s->p), .events = POLLIN };
+    int hangup = poll(&pollfd, 1, 0) == 1 && (pollfd.revents & POLLHUP);
+
+    /* A callback can tick the loop, which must not free the socket that this dispatch still reads. */
+    struct us_loop_t *loop = s->group->loop;
+    loop->data.tick_depth++;
+    us_internal_dispatch_ready_poll(&s->p, 0, hangup ? LIBUS_POLL_HANGUP : 0, LIBUS_SOCKET_READABLE);
+    loop->data.tick_depth--;
+}
+#endif
+
 struct us_socket_t *us_socket_pair(struct us_socket_group_t *group, unsigned char kind, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR *fds) {
 #if defined(LIBUS_USE_LIBUV) || defined(WIN32)
     return 0;
@@ -403,6 +424,27 @@ void us_internal_rearm_writable(struct us_socket_t *s) {
                    LIBUS_SOCKET_WRITABLE | ((s->flags.is_paused || s->read_eof) ? 0 : LIBUS_SOCKET_READABLE));
 }
 
+/* macOS can report more bytes sent than it was given (golang/go#61060). How many it took is unknown, so nothing
+ * may follow them. ECONNABORTED is a peer-gone errno, so it is never retried; the shutdown is for the writers that
+ * take any failed send for backpressure. No write may close under its caller: the writable event does. */
+static ssize_t us_internal_reject_excess_send(struct us_socket_t *s, ssize_t written, size_t length) {
+    if (written < 0 || (size_t) written <= length) {
+        return written;
+    }
+    us_internal_socket_raw_shutdown(s);
+    if (s->ssl) {
+        s->ssl_send_rejected = 1;
+    } else {
+        s->send_rejected = 1;
+    }
+    us_internal_rearm_writable(s);
+#ifdef _WIN32
+    WSASetLastError(WSAECONNABORTED);
+#endif
+    errno = ECONNABORTED;
+    return -1;
+}
+
 /* See libusockets.h: whether a zero-progress write on a writable event proves
  * the peer is gone. Only the libuv backend has to ask the kernel. */
 int us_socket_stalled_write_means_peer_gone(struct us_socket_t *s) {
@@ -422,7 +464,8 @@ int us_socket_write2(struct us_socket_t *s, const char *header, int header_lengt
         return 0;
     }
 
-    int written = bsd_write2(us_poll_fd(&s->p), header, header_length, payload, payload_length);
+    ssize_t sent = bsd_write2(us_poll_fd(&s->p), header, header_length, payload, payload_length);
+    int written = us_internal_reject_excess_send(s, sent, (size_t) header_length + (size_t) payload_length);
     if (written != header_length + payload_length) {
         s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);
@@ -457,6 +500,7 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     s->unclassified_send_failures = 0;
     s->read_eof = 0;
     s->hangup_closes_unsent = 0;
+    s->send_rejected = 0;
     s->connect_state = NULL;
 
     /* We always use nodelay */
@@ -495,7 +539,7 @@ int us_socket_write(struct us_socket_t *s, const char *data, int length) {
         return 0;
     }
 
-    int written = bsd_send(us_poll_fd(&s->p), data, length);
+    int written = us_internal_reject_excess_send(s, bsd_send(us_poll_fd(&s->p), data, length), length);
     if (written != length) {
         s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);
@@ -593,7 +637,7 @@ int us_socket_write_check_error(struct us_socket_t *s, const char *data, int len
         return written;
     }
 
-    int written = bsd_send(us_poll_fd(&s->p), data, length);
+    int written = us_internal_reject_excess_send(s, bsd_send(us_poll_fd(&s->p), data, length), length);
     if (written < 0) {
         int fatal_send_error = us_internal_classify_failed_send(s);
         if (!fatal_send_error) {
@@ -629,7 +673,7 @@ int us_socket_raw_writev(struct us_socket_t *s, const struct us_iovec_t *iov, in
     size_t total = 0;
     for (int i = 0; i < count; i++) total += iov[i].iov_len;
 
-    ssize_t written = bsd_writev(us_poll_fd(&s->p), iov, count);
+    ssize_t written = us_internal_reject_excess_send(s, bsd_writev(us_poll_fd(&s->p), iov, count), total);
     if (written != (ssize_t)total) {
         s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);
@@ -639,7 +683,7 @@ int us_socket_raw_writev(struct us_socket_t *s, const struct us_iovec_t *iov, in
 }
 
 int us_internal_socket_raw_write(struct us_socket_t *s, const char *data, int length, int *fatal_send_error) {
-    /* Bypass-TLS path: openssl.c uses this to flush close_notify *after*
+    /* Bypass-TLS path: openssl.cpp uses this to flush close_notify *after*
      * SSL_shutdown() has marked the SSL layer shut down, so checking
      * us_socket_is_shut_down() here would deadlock the alert in userspace.
      * Gate only on fd close and TCP-level FIN. */
@@ -647,7 +691,7 @@ int us_internal_socket_raw_write(struct us_socket_t *s, const char *data, int le
         return 0;
     }
 
-    int written = bsd_send(us_poll_fd(&s->p), data, length);
+    int written = us_internal_reject_excess_send(s, bsd_send(us_poll_fd(&s->p), data, length), length);
     int fatal = 0;
     if (written >= 0) {
         s->unclassified_send_failures = 0;

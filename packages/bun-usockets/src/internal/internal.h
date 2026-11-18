@@ -64,8 +64,8 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop,
 #endif
 
 #ifndef LIKELY
-#define LIKELY(cond) __builtin_expect((_Bool)(cond), 1)
-#define UNLIKELY(cond) __builtin_expect((_Bool)(cond), 0)
+#define LIKELY(cond) __builtin_expect(!!(cond), 1)
+#define UNLIKELY(cond) __builtin_expect(!!(cond), 0)
 #endif
 
 extern void __attribute__((__noreturn__)) Bun__panic(const char *message, size_t length);
@@ -73,7 +73,38 @@ extern void __attribute__((__noreturn__)) Bun__panic(const char *message, size_t
 
 /* Reports "Bun ran out of memory" through the crash handler and aborts. For
  * allocations this library has no way to fail gracefully from. */
-extern void __attribute__((__noreturn__)) Bun__outOfMemory(void);
+#ifdef __cplusplus
+extern "C"
+#else
+extern
+#endif
+void __attribute__((__noreturn__)) Bun__outOfMemory(void);
+
+/* With AddressSanitizer us_malloc and us_calloc are the C library's. Below bsd.h,
+ * which defines _GNU_SOURCE for the system headers. */
+#include <stdlib.h>
+
+/* mimalloc returns NULL when the system has no more memory or address space to
+ * give. These never do: use them where the caller can't report a failure. */
+static inline void *us_xmalloc(size_t size) {
+    void *p = us_malloc(size);
+    if (!p) Bun__outOfMemory();
+    return p;
+}
+
+static inline void *us_xcalloc(size_t count, size_t size) {
+    void *p = us_calloc(count, size);
+    if (!p) Bun__outOfMemory();
+    return p;
+}
+
+#ifdef __cplusplus
+/* The global `new` is not us_malloc on Windows. */
+struct us_allocated_t {
+    static void *operator new(size_t size) { return us_xmalloc(size); }
+    static void operator delete(void *p) { us_free(p); }
+};
+#endif
 
 /* The error code a loop-driven close carries (recv()'s error, SO_ERROR, or
  * the fallback where those report nothing) is in LIBUS_ERR's numbering: errno
@@ -155,22 +186,14 @@ extern int us_dispatch_new_session(us_socket_r s, struct ssl_session_st *session
 extern int us_dispatch_server_identity(us_socket_r s, struct ssl_st *ssl);
 extern struct ssl_ctx_st *us_dispatch_socket_server_name(us_socket_r s, const char *hostname, int *abort_handshake);
 extern struct us_socket_t *us_dispatch_ssl_raw_tap(us_socket_r s, char *data, int length);
-/* crypto/sni_tree.cpp: the one place server names are compared. */
-void *sni_new();
-void sni_free(void *sni, void (*cb)(void *));
-void *sni_add(void *sni, const char *hostname, void *user);
-void *sni_find(void *sni, const char *hostname);
-#ifdef __cplusplus
-}
-#endif
 
 extern int Bun__addrinfo_get(struct us_loop_t* loop, const char* host, uint16_t port,  struct addrinfo_request** ptr);
 /* Fills *out when host is a numeric address (incl. inet_aton shorthand and %zone); 0 when it is a name. */
 extern int Bun__parseIpAddress(const char* host, uint16_t port, struct sockaddr_storage* out);
-extern int Bun__addrinfo_set(struct addrinfo_request* ptr, struct us_connecting_socket_t* socket);
+extern void Bun__addrinfo_set(struct addrinfo_request* ptr, struct us_connecting_socket_t* socket);
 extern int Bun__addrinfo_cancel(struct addrinfo_request* ptr, struct us_connecting_socket_t* socket);
 extern void Bun__addrinfo_freeRequest(struct addrinfo_request* addrinfo_req, int error);
-extern struct addrinfo_result *Bun__addrinfo_getRequestResult(struct addrinfo_request* addrinfo_req);
+extern struct addrinfo_result Bun__addrinfo_getRequestResult(struct addrinfo_request* addrinfo_req);
 
 
 /* Loop related */
@@ -218,6 +241,11 @@ void us_nq_loop_flush_if_pending(struct us_loop_t *loop);
 void us_nq_loop_drain(struct us_loop_t *loop);
 void us_nq_loop_register(struct us_loop_t *loop, struct us_nq_driver_s *d, void *owner);
 void us_nq_loop_unregister(struct us_loop_t *loop, struct us_nq_driver_s *d);
+
+/* lsquic_engine_new after the one lsquic_global_init of the process: a second one breaks handshakes in flight. */
+struct lsquic_engine;
+struct lsquic_engine_api;
+struct lsquic_engine *us_quic_engine_new(unsigned flags, const struct lsquic_engine_api *api);
 
 /* Asyncs (old) */
 struct us_internal_async *us_internal_create_async(struct us_loop_t *loop,
@@ -267,6 +295,7 @@ struct us_socket_t *us_internal_ssl_on_timeout(us_socket_r s);
 struct us_socket_t *us_internal_ssl_on_close(us_socket_r s, int code, void *reason);
 struct us_socket_t *us_internal_ssl_on_end(us_socket_r s);
 struct us_socket_t *us_internal_ssl_on_end_after_rejected_send(us_socket_r s);
+int us_internal_ssl_defer_end(us_socket_r s);
 int us_internal_ssl_is_low_prio(us_socket_r s);
 
 int us_internal_ssl_is_handshake_finished(us_socket_r s);
@@ -283,7 +312,7 @@ struct us_bun_verify_error_t us_internal_ssl_verify_error(us_socket_r s);
 const char *us_internal_ssl_sni_servername(us_socket_r s);
 /* Drops the listen socket's references to ls->ssl_ctx and ls->server_names. Called from us_listen_socket_close. */
 void us_internal_listen_socket_ssl_free(struct us_listen_socket_t *ls);
-/* Opaque SSL_CTX_up_ref/SSL_CTX_free so context.c needn't include OpenSSL. */
+/* Opaque SSL_CTX_up_ref/SSL_CTX_free so context.cpp needn't include OpenSSL. */
 void us_internal_ssl_ctx_up_ref(struct ssl_ctx_st *ssl_ctx);
 void us_internal_ssl_ctx_unref(struct ssl_ctx_st *ssl_ctx);
 /* TCP-level FIN, bypassing the SSL layer (used by ssl_on_end). */
@@ -337,7 +366,7 @@ struct us_socket_t {
    * Used by Bun's `socket.upgradeTLS()` so the returned [raw, tls] pair's
    * `raw` half can observe ciphertext (node:net Duplex.ondata semantics). */
   unsigned char ssl_raw_tap : 1;
-  /* Sealed ciphertext of this socket waits for the kernel (openssl.c us_ssl_spill_t). */
+  /* Sealed ciphertext of this socket waits for the kernel (openssl.cpp us_ssl_spill_t). */
   unsigned char ssl_spilled : 1;
   /* Some of that ciphertext was thrown away before the kernel took it. */
   unsigned char ssl_spill_dropped : 1;
@@ -386,8 +415,10 @@ struct us_socket_t {
   unsigned char ssl_first_flight_before_fin : 1;
   /* us_internal_ssl_shutdown held its FIN back for that step. */
   unsigned char ssl_shutdown_after_first_flight : 1;
-  /* ssl_raw_write shut the write side down, not the owner. */
+  /* A send that no retry can save shut the write side down, not the owner. */
   unsigned char ssl_send_rejected : 1;
+  /* The same on a socket without TLS: loop.c closes it after its next event. */
+  unsigned char send_rejected : 1;
   /* Consecutive send() failures with an errno that is neither
    * would-block/transient nor a known peer-gone error (see
    * us_socket_write_check_error). Reset by any send that makes progress.
@@ -522,7 +553,7 @@ struct us_listen_socket_t {
    * close. NULL → plain TCP. */
   struct ssl_ctx_st *ssl_ctx;
   /* SNI tree + dynamic resolver, shared with every SSL this listener accepted
-   * (crypto/openssl.c). NULL until the first name, resolver or TLS accept. */
+   * (crypto/openssl.cpp). NULL until the first name, resolver or TLS accept. */
   struct us_server_names_t *server_names;
   unsigned int socket_ext_size;
   /* kind to stamp on accepted sockets. */
@@ -538,7 +569,7 @@ void us_internal_socket_group_unlink_connecting_socket(us_socket_group_r group, 
 
 
 /* Save/restore the per-loop BIO routing state around in-handshake JS
- * callbacks (SNI / ALPN). Defined in crypto/openssl.c. The snapshot is an
+ * callbacks (SNI / ALPN). Defined in crypto/openssl.cpp. The snapshot is an
  * opaque void*[US_SSL_LOOP_STATE_SLOTS] the caller provides; Rust callers
  * size their array from us_internal_ssl_loop_state_slots() in a debug
  * assertion so growth cannot silently corrupt a caller's stack. */
@@ -546,5 +577,35 @@ void us_internal_socket_group_unlink_connecting_socket(us_socket_group_r group, 
 int us_internal_ssl_loop_state_slots(void);
 void us_internal_ssl_loop_state_save(void *ssl, void **out);
 void us_internal_ssl_loop_state_restore(void **saved);
+
+#ifdef __cplusplus
+}
+
+#include <memory>
+
+struct us_poll_deleter_t {
+    struct us_loop_t *loop;
+    void operator()(struct us_poll_t *p) const {
+        us_keep_last_error_t keep;
+        us_poll_free(p, loop);
+    }
+};
+
+/* NULL if the loop refuses `fd` (e.g. ENOSPC at fs.epoll.max_user_watches), with the reason in errno. */
+inline struct us_poll_t *us_internal_start_poll(struct us_loop_t *loop, LIBUS_SOCKET_DESCRIPTOR fd, int poll_type,
+                                                unsigned int ext_size, int events) {
+    std::unique_ptr<struct us_poll_t, us_poll_deleter_t> p{us_create_poll(loop, 0, ext_size), {loop}};
+    us_poll_init(p.get(), fd, poll_type);
+    return us_poll_start_rc(p.get(), loop, events) == 0 ? p.release() : NULL;
+}
+
+/* The poll closes `fd`. */
+inline struct us_poll_t *us_internal_start_poll(struct us_loop_t *loop, us_fd_t fd, int poll_type,
+                                                unsigned int ext_size, int events) {
+    struct us_poll_t *p = us_internal_start_poll(loop, fd.get(), poll_type, ext_size, events);
+    if (p) fd.release();
+    return p;
+}
+#endif
 
 #endif // INTERNAL_H

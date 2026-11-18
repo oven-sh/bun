@@ -1,0 +1,28 @@
+# const evaluate = globalThis.eval;  const make = Function.prototype.constructor;  function ask() { return make("return 1"); }  ask();
+# A chain of two reads by written names: the constant holds the function constructor, and the call in the other body is a call of it: text is evaluated.
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: causes mechanisms=all
+# CHECK: cause EvaluatesText Function at f1
+
+variable g0 name="make" module=m0 declared={type=anything} flags=[IsImmutable]
+module m0 path="main.mjs" displayPath="main.mjs" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Function
+    v1 = PropGet v0 key="prototype"
+    v2 = PropGet v1 key="constructor"
+    PutModuleVariable v2 variable=g0
+    v4 = NewClosure function=f1
+    v5 = Call v4 calleeName="ask"
+    v6 = Undefined
+    Return v6
+}
+function f1 name="ask" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="make"
+    v2 = String string="return 1"
+    v3 = Call v1, -, v2 calleeName="make"
+    Return v3
+}

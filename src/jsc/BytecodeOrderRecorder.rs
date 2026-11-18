@@ -7,6 +7,9 @@
 
 use bun_bundler::bytecode_order::{self, CodeNames, RecordedFunction, RecordedSource, Recording};
 
+use crate::generated_bindgen::bytecode_order_recorder::{
+    BytecodeOrderNames, BytecodeOrderTextKind,
+};
 use crate::virtual_machine::VirtualMachine;
 use crate::vm::VM;
 
@@ -63,7 +66,9 @@ unsafe extern "C" {
 /// `BUN_BYTECODE_DIGEST_OUT=<path>`: decode everything every module's bytecode holds and write one sorted line per
 /// module, `<path the bytecode is keyed on> <digest> <code blocks>` (`- -` where the bytecode does not decode for the
 /// module). Two builds of the same sources have equal digests however their bytecode is laid out.
+#[inline(never)]
 fn write_digests(vm: &VirtualMachine, graph: &'static dyn bun_resolver::StandaloneModuleGraph) {
+    bun_removable_features::removable_definition!(Interpreter, write_digests);
     let Some(path) = bun_core::env_var::BUN_BYTECODE_DIGEST_OUT.get_not_empty() else {
         return;
     };
@@ -74,7 +79,7 @@ fn write_digests(vm: &VirtualMachine, graph: &'static dyn bun_resolver::Standalo
         // SAFETY: `jsc_vm` is this thread's live VM; the payload is a live section of the executable.
         let ok = unsafe {
             Bun__BytecodeOrder__digestModule(
-                vm.jsc_vm,
+                vm.jsc_vm.get(),
                 &module.source,
                 &origin_path,
                 module.is_esm,
@@ -97,7 +102,7 @@ fn write_digests(vm: &VirtualMachine, graph: &'static dyn bun_resolver::Standalo
         // SAFETY: as above.
         let ok = unsafe {
             Bun__BytecodeOrder__digestInternalModule(
-                vm.jsc_vm,
+                vm.jsc_vm.get(),
                 id,
                 bytecode.cast::<u8>(),
                 bytecode.len(),
@@ -136,7 +141,7 @@ pub(crate) fn init_vm(
         // SAFETY: `jsc_vm` is this thread's live VM; the payload is a live section of the executable.
         unsafe {
             Bun__BytecodeOrder__setLinkedPayload(
-                vm.jsc_vm,
+                vm.jsc_vm.get(),
                 payload.cast::<u8>(),
                 payload.len(),
                 region_ends.as_ptr(),
@@ -152,7 +157,7 @@ fn enable_if_requested(vm: &VirtualMachine) {
         return;
     }
     // SAFETY: `jsc_vm` is this thread's live VM.
-    unsafe { Bun__BytecodeOrder__enableRecording(vm.jsc_vm) };
+    unsafe { Bun__BytecodeOrder__enableRecording(vm.jsc_vm.get()) };
 }
 
 /// Once: a process that outlives the signal it sent itself has written its order file when it really exits.
@@ -164,6 +169,10 @@ pub(crate) fn write_at_exit(
     let Some(graph) = graph else {
         return;
     };
+    if graph.compiled_program().is_some() {
+        crate::compiled_program::finish_order_recording();
+        return;
+    }
     if WRITTEN.swap(true, core::sync::atomic::Ordering::Relaxed) {
         return;
     }
@@ -174,7 +183,9 @@ pub(crate) fn write_at_exit(
 
 /// What every VM of the process recorded, as an order file names it: JavaScriptCore knows the code it saw run by where
 /// it starts in which of the executable's bytecode, and the names come from parsing the text all of it was compiled from.
+#[inline(never)]
 fn write_order_file(graph: &'static dyn bun_resolver::StandaloneModuleGraph) {
+    bun_removable_features::removable_definition!(Interpreter, write_order_file);
     let Some(path) = output_path() else {
         return;
     };
@@ -367,89 +378,62 @@ fn write_replacing(path: &[u8], text: &[u8]) -> bun_sys::Maybe<()> {
             bun_sys::Tag::open,
         ));
     }
-    let dir = bun_core::ZBox::from_bytes(bun_paths::dirname(&final_path).unwrap_or(b"."));
     let name = bun_core::ZBox::from_bytes(bun_paths::basename(&final_path));
-    let dir_fd = bun_sys::openat(
-        bun_core::Fd::cwd(),
-        &dir,
-        bun_sys::O::DIRECTORY | bun_sys::O::RDONLY | bun_sys::O::CLOEXEC,
-        0,
-    )?;
-    let _close_dir = bun_sys::CloseOnDrop::new(dir_fd);
+    let dir = bun_sys::Dir::open(bun_paths::dirname(&final_path).unwrap_or(b"."))?;
 
     let mut tmpname_buf = bun_paths::path_buffer_pool::get();
     let tmpname: &bun_core::ZStr =
         bun_resolver::fs::FileSystem::tmpname(b".order", &mut tmpname_buf[..], u64::from(pid))
             .map_err(|_| bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open))?;
-    let tmpfile = bun_sys::Tmpfile::create_with_mode(dir_fd, tmpname, 0o600)?;
-    let _close = bun_sys::CloseOnDrop::new(tmpfile.fd);
+    let tmpfile = bun_sys::Tmpfile::create_with_mode(dir.fd(), tmpname, 0o600)?;
+    tmpfile.file.write_all(text)?;
     // Not `Tmpfile::finish`: that removes an empty directory that is in the way.
-    let result = bun_sys::File::borrow(&tmpfile.fd)
-        .write_all(text)
-        .and_then(|()| bun_sys::renameat(dir_fd, tmpname, dir_fd, &name));
-    if result.is_err() {
-        let _ = bun_sys::unlinkat(dir_fd, tmpname);
-    }
-    result
+    bun_sys::renameat(&dir, tmpname, &dir, &name)?;
+    tmpfile.keep();
+    Ok(())
 }
 
 /// `bun:internal-for-testing`: what an order file calls the code of `text` (a `"module"` or `"script"` whose other chunks'
 /// paths start with the third argument, a `"builtin"`, or the specifier of an `"internal"` module, undefined if there is
 /// none), as `M <name>` and `<start> <kind> <name>` lines, or null for a text that has no names.
-#[crate::host_fn]
-pub fn names_for_testing(
-    global: &crate::JSGlobalObject,
-    frame: &crate::CallFrame,
-) -> crate::JsResult<crate::JSValue> {
-    let text = frame.argument(0).to_utf8(global)?;
-    let kind = frame.argument(1).to_utf8(global)?;
-    let chunk_paths = frame.argument(2);
-    let chunk_paths = if chunk_paths.is_undefined() {
-        None
-    } else {
-        Some(chunk_paths.to_utf8(global)?)
-    };
+pub(crate) fn names_for_testing(
+    text: &[u8],
+    kind: BytecodeOrderTextKind,
+    chunk_paths: Option<&[u8]>,
+) -> BytecodeOrderNames {
     // One path to a line.
-    let mut chunk_paths: Vec<&[u8]> = bun_core::strings::split(
-        chunk_paths.as_ref().map_or(&b""[..], |paths| paths.slice()),
-        b"\n",
-    )
-    .filter(|path| !path.is_empty())
-    .collect();
+    let mut chunk_paths: Vec<&[u8]> = bun_core::strings::split(chunk_paths.unwrap_or(b""), b"\n")
+        .filter(|path| !path.is_empty())
+        .collect();
     chunk_paths.sort_unstable();
     let chunk = |is_esm| bytecode_order::Named::Chunk {
-        text: text.slice(),
+        text,
         is_esm,
         chunk_paths: &chunk_paths,
     };
-    let names = match kind.slice() {
-        b"module" => chunk(true).names(),
-        b"script" => chunk(false).names(),
-        b"builtin" => bytecode_order::Named::InternalModule(text.slice()).names(),
+    let names = match kind {
+        BytecodeOrderTextKind::Module => chunk(true).names(),
+        BytecodeOrderTextKind::Script => chunk(false).names(),
+        BytecodeOrderTextKind::Builtin => bytecode_order::Named::InternalModule(text).names(),
         // `text` is the specifier of one of this executable's internal modules, which are all ASCII.
-        b"internal" => {
+        BytecodeOrderTextKind::Internal => {
             let builtins = bun_exe_format::builtins::Builtins::parse(
                 crate::cached_bytecode::__bun_jsc_host_builtins(),
             )
             .ok();
             let Some(module) = builtins
                 .as_ref()
-                .and_then(|builtins| builtins.module(builtins.find(text.slice())?))
+                .and_then(|builtins| builtins.module(builtins.find(text)?))
             else {
-                return Ok(crate::JSValue::UNDEFINED);
+                return BytecodeOrderNames::Unknown;
             };
             bytecode_order::Named::InternalModule(module.source).names()
         }
-        _ => {
-            return Err(global.throw(format_args!(
-                "expected \"module\", \"script\", \"builtin\" or \"internal\""
-            )));
-        }
     };
     let Some(names) = names else {
-        return Ok(crate::JSValue::NULL);
+        return BytecodeOrderNames::Unnamed;
     };
     let mut lines = Vec::new();
     bytecode_order::write_names(&mut lines, &names);
-    crate::bun_string_jsc::create_utf8_for_js(global, &lines)
+    BytecodeOrderNames::Lines(lines)
 }

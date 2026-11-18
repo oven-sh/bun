@@ -1,0 +1,10 @@
+# -- source: arguments-object-beside-a-rest-parameter-stays.cjs
+# 'use strict';
+# module.exports = function (fn) { return function only(...rest) { rest[0] = 9; rest.push(7); return fn.name === "keep" ? arguments : fn.apply(this, rest); }; };
+# -- end of source
+# The list of a rest parameter is the program's own: an arguments object that is filled out of it is made in front of what may write the list.
+# RUN: walk f2:Body mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK-NOT: ElemSet
+# CHECK-NOT: PropGet
+# CHECK: = CreateUnmappedArguments

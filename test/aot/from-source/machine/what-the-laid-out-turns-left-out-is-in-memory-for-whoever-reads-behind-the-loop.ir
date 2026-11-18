@@ -1,0 +1,51 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function unseen<T>(value: T): T;
+# let total = 0;
+# let half = 0.5;
+# function add(n: number) {
+#   for (let i = 0; i < n; i++) {
+#     total += i & 7;
+#     half += 2;
+#   }
+# }
+# function addUntilNine(view: Int32Array, n: number) {
+#   for (let i = 0; i < n; i++) {
+#     if (view[i] === 9) break;
+#     total += view[i] & 7;
+#   }
+# }
+# function look() {
+#   return total + " " + half;
+# }
+# for (const n of [0, 7, 8, 40, 43]) {
+#   total = 0;
+#   half = 0.5;
+#   unseen(add)(n);
+#   print(n, unseen(look)());
+# }
+# const view = new Int32Array(64);
+# for (const stop of [0, 1, 7, 8, 9, 20, 63]) {
+#   total = 0;
+#   view.fill(3);
+#   view[stop] = 9;
+#   unseen(addUntilNine)(unseen(view), 64);
+#   print(stop, unseen(look)());
+# }
+# -- end of source
+# Other code reads the variables out of memory behind the loop: behind no turn, fewer than eight, eight, five times eight, and a rest; and behind a laid-out turn that leaves by a break, which begins
+# again in the loop as written. With the store at the hand-over struck the second list prints 0 from `1` on; with that and the store in front of the poll struck the first prints 0 at 8 and 40.
+# RUN(RIGHT): run-in-shell globalThis.unseen = (value) => value;
+# RIGHT: 0 0 0.5
+# RIGHT-NEXT: 7 21 14.5
+# RIGHT-NEXT: 8 28 16.5
+# RIGHT-NEXT: 40 140 80.5
+# RIGHT-NEXT: 43 143 86.5
+# RIGHT-NEXT: 0 0 86.5
+# RIGHT-NEXT: 1 3 86.5
+# RIGHT-NEXT: 7 21 86.5
+# RIGHT-NEXT: 8 24 86.5
+# RIGHT-NEXT: 9 27 86.5
+# RIGHT-NEXT: 20 60 86.5
+# RIGHT-NEXT: 63 189 86.5
+# RIGHT-NEXT: exited with 0

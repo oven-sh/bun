@@ -5,6 +5,8 @@
 #![deny(improper_ctypes, improper_ctypes_definitions)]
 #![feature(thread_local)]
 #![feature(adt_const_params)]
+#![feature(core_io_borrowed_buf)]
+#![feature(vec_fallible_shrink)]
 // For `__rust_no_alloc_shim_is_unstable_v2` in bin_entry.
 #![feature(rustc_attrs)]
 #![allow(internal_features)]
@@ -12,6 +14,7 @@
 // this crate's `pub(crate)` items alive, so in a test build most of the crate
 // reads as dead code. `dead_code` is checked by the crate's own build.
 #![cfg_attr(test, allow(dead_code))]
+// `#[optimize(size)]` is for what runs once per process or per test file, or only words a message.
 
 pub(crate) mod error;
 pub(crate) use error::{Error, Result};
@@ -31,7 +34,6 @@ pub(crate) mod jsc {
 }
 
 // ─── runtime submodules ──────────────────────────────────────────────────
-pub(crate) mod allocators; // moved from bun_alloc (tier-0 → bun_core/sys/runtime back-edge)
 pub(crate) mod crypto;
 pub(crate) mod ffi;
 #[path = "node.rs"]
@@ -51,10 +53,12 @@ pub(crate) mod shell;
 // cycle the `bun_bun_js` shims were papering over.
 #[path = "api.rs"]
 pub(crate) mod api;
-#[cfg(debug_assertions)]
-pub(crate) mod class_ref_test;
+pub(crate) mod checker_queries_testing;
+pub(crate) mod code_resolver_testing;
 pub(crate) mod dispatch;
 pub(crate) mod hw_exports;
+#[cfg(debug_assertions)]
+pub(crate) mod imported_class_test;
 pub(crate) mod ipc;
 pub(crate) mod ipc_host;
 pub(crate) mod jsc_hooks;
@@ -62,15 +66,15 @@ pub(crate) mod jsc_hooks;
 pub(crate) mod json_line_buffer;
 pub(crate) mod linear_fifo_testing;
 pub(crate) mod napi;
+pub(crate) mod removed_feature;
 #[path = "../bun.js.rs"]
 pub(crate) mod run_main;
 pub(crate) mod timer;
 
+// In the crate graph for the functions generated C++ calls.
+use {bun_css_jsc as _, bun_install_jsc as _, bun_patch_jsc as _, bun_semver_jsc as _};
 pub(crate) mod generated_bindgen; // include!()s ${BUN_CODEGEN_DIR}/generated_bindgen_bun_runtime.rs
-pub(crate) mod generated_classes; // include!()s ${BUN_CODEGEN_DIR}/generated_classes.rs
 pub(crate) mod generated_host_exports; // include!()s ${BUN_CODEGEN_DIR}/generated_host_exports.rs
-pub(crate) mod generated_js2native; // include!()s ${BUN_CODEGEN_DIR}/generated_js2native.rs
-pub(crate) mod generated_jssink; // include!()s ${BUN_CODEGEN_DIR}/generated_jssink.rs
 
 pub(crate) mod dns_jsc;
 pub(crate) mod image;

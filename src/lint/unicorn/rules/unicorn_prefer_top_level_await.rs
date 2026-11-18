@@ -7,9 +7,9 @@ use bun_lint::utils::ancestor_memo::AncestorMemo;
 /// Prefer top-level await over top-level promises and async function calls.
 pub struct PreferTopLevelAwait;
 
-const OVER_PROMISE_CHAIN: Message = Message::new("", "Prefer top-level await over using a promise chain.");
-const OVER_ASYNC_IIFE: Message = Message::new("", "Prefer top-level await over using an async IIFE.");
-const OVER_ASYNC_FUNCTION_CALL: Message = Message::new("", "Prefer top-level await over an async function call.");
+const OVER_PROMISE_CHAIN: &Message = &Message::new("", "Prefer top-level await over using a promise chain.");
+const OVER_ASYNC_IIFE: &Message = &Message::new("", "Prefer top-level await over using an async IIFE.");
+const OVER_ASYNC_FUNCTION_CALL: &Message = &Message::new("", "Prefer top-level await over an async function call.");
 
 const PROMISE_METHODS: [&str; 3] = ["then", "catch", "finally"];
 

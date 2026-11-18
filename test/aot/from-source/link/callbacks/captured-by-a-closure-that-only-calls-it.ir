@@ -1,0 +1,23 @@
+# `wrapped` calls `f` and captures it in an arrow that one call of `each` takes. `each` only calls what arrives, and all that the arrow does with its capture is to call it: `f` is only called, and the second word says that a closure holds it.
+# The capture is the first entry parameter of the arrow. It bears the first word alone: the arrow hands it to no closure.
+# f1 = each, f2 = wrapped, f3 = maker, f4 = the arrow of wrapped, f5 = the arrow of maker
+# -- source: captured-by-a-closure-that-only-calls-it.ts
+# declare function sink(...values: unknown[]): void;
+# function each(list: number[], f: (x: number) => number): number { let t = 0; for (let i = 0; i < list.length; i++) t += f(list[i]); return t; }
+# function wrapped(list: number[], f: (x: number) => number): number { const t = each(list, x => f(x) + 1); return t + f(0); }
+# function maker(list: number[], k: number) { const a = wrapped(list, x => x * k); return a + 1; }
+# sink(maker([1, 2], 3), maker([4], 5));
+# -- end of source
+# RUN: link functions mechanisms=all
+# CHECK-LABEL: function f1
+# CHECK: parameter 1 {{*}}only-called
+# CHECK-NOT: captured
+# CHECK-LABEL: function f2
+# CHECK: parameter 1 {{*}}only-called captured
+# CHECK-LABEL: function f3
+# CHECK-LABEL: function f4
+# CHECK: parameter 0 {{*}}only-called
+# CHECK-NOT: captured
+# CHECK-LABEL: function f5
+# RUN(WITHHELD): link functions mechanisms=all-CellsInFrames
+# WITHHELD-NOT: only-called

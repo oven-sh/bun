@@ -4,7 +4,7 @@ use bun_lint_oxlint::ast_util::get_inner_expression;
 /// Disallow unnecessary calls to `.bind()`.
 pub struct NoExtraBind;
 
-const UNEXPECTED: Message = Message::new("unexpected", "The function binding is unnecessary.");
+const UNEXPECTED: &Message = &Message::new("unexpected", "The function binding is unnecessary.");
 
 /// The keywords that would change meaning if a function became an arrow function.
 #[derive(Default)]

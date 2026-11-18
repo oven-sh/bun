@@ -6,12 +6,14 @@ import {
   chmodSync,
   copyFileSync,
   existsSync,
+  linkSync,
   lstatSync,
   lutimesSync,
   mkdirSync,
   readdirSync,
   readFileSync,
   realpathSync,
+  statSync,
 } from "fs";
 import { cp, exists, lstat, mkdir, readlink, rename, rm, symlink, writeFile } from "fs/promises";
 import {
@@ -91,7 +93,7 @@ describe.concurrent("auto-install", () => {
   test("symlinks (and junctions) are created correctly in the install cache", async () => {
     const { packageDir, env } = await setupTest();
     const { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "--print", "require('is-number')"],
+      cmd: [bunExe(), "--install=fallback", "--print", "require('is-number')"],
       cwd: packageDir,
       stdout: "pipe",
       stderr: "pipe",
@@ -5843,6 +5845,72 @@ describe.concurrent("binaries", () => {
         expect(err).not.toContain("error:");
         expect(join(packageDir, bin)).toBeValidBin(wins);
         expect({ run, exitCode }).toEqual({ run, exitCode: 0 });
+      }
+    });
+
+    // `bunx <package>` starts the file of the package itself when another package has the name. So the file gets
+    // what a linked bin gets: the mode, and a `#!` line without a carriage return.
+    const claimWithCRLF = (dir: string, name: string) => ({
+      ...claim(dir, name),
+      [`${dir}/claim.js`]: "#!/usr/bin/env node\r\n",
+    });
+    test
+      .skipIf(isWindows)
+      .each<[title: string, linker: string, files: Record<string, object | string>, loser: string]>([
+        [
+          "a workspace package",
+          "hoisted",
+          {
+            "package.json": { name: "foo", workspaces: ["packages/*"], dependencies: direct },
+            ...claimWithCRLF("packages/aaa", "aaa"),
+          },
+          "packages/aaa/claim.js",
+        ],
+        [
+          "a file: directory",
+          "hoisted",
+          {
+            "package.json": { name: "foo", dependencies: { ...direct, aaa: "file:./aaa" } },
+            ...claimWithCRLF("aaa", "aaa"),
+          },
+          "node_modules/aaa/claim.js",
+        ],
+        [
+          "a workspace package in a member's .bin",
+          "isolated",
+          {
+            "package.json": { name: "foo", workspaces: ["packages/*"] },
+            "packages/app/package.json": { name: "app", dependencies: { ...direct, aaa: "workspace:*" } },
+            ...claimWithCRLF("packages/aaa", "aaa"),
+          },
+          "packages/aaa/claim.js",
+        ],
+      ])("the file of %s that does not get it is made executable (%s)", async (_, linker, files, loser) => {
+      const { packageDir, env } = await setupTest();
+      await Promise.all(
+        Object.entries(files).map(([path, content]) =>
+          write(join(packageDir, path), typeof content === "string" ? content : JSON.stringify(content)),
+        ),
+      );
+
+      // The second run finds a tree in which the file is not executable, as an earlier version left it.
+      for (const run of ["fresh", "again"]) {
+        await using proc = spawn({
+          cmd: [bunExe(), "install", "--linker", linker],
+          cwd: packageDir,
+          env,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(err).not.toContain("error:");
+        expect({
+          run,
+          ownerExecute: statSync(join(packageDir, loser)).mode & 0o100,
+          file: readFileSync(join(packageDir, loser), "utf8"),
+          exitCode,
+        }).toEqual({ run, ownerExecute: 0o100, file: "#!/usr/bin/env node\n", exitCode: 0 });
+        chmodSync(join(packageDir, loser), 0o644);
       }
     });
 
@@ -13681,6 +13749,56 @@ describe.concurrent("windows bin linking shim should work", async () => {
       target: "bunx-bins\\bin-bun.ts",
       isAbsoluteTarget: false,
       versionBits: BUNX_VERSION_BITS,
+    });
+  });
+
+  test("a .bunx file with an odd number of bytes is corrupt", async () => {
+    const binDir = join(packageDir, "node_modules", ".bin");
+    using dir = tempDir("odd-bunx", {
+      "odd.exe": readFileSync(join(binDir, "native.exe")),
+      "odd.bunx": Buffer.concat([Buffer.from("a"), readFileSync(join(binDir, "native.bunx"))]),
+    });
+
+    await using proc = spawn({
+      cmd: [join(String(dir), "odd.exe"), "中"],
+      stdout: "pipe",
+      stderr: "pipe",
+      env: shimEnv,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).toStartWith("error: bin metadata is corrupt (validate)");
+    expect(out).toBe("");
+    expect(exitCode).toBe(255);
+  });
+
+  const onlyBunDir = join(packageDir, "only-bun");
+  mkdirSync(onlyBunDir);
+  linkSync(join(temp_bin_dir, "a.exe"), join(onlyBunDir, "bun.exe"));
+  async function runWithOnlyBunInPath(bin: string) {
+    await using proc = spawn({
+      cmd: [join(packageDir, "node_modules", ".bin", bin + ".exe"), "arg1", "arg2"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: mergeWindowEnvs([bunEnv, { PATH: onlyBunDir }]),
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out: out.trim(), firstErrorLine: err.split("\n")[0], exitCode };
+  }
+
+  test("a missing interpreter is named", async () => {
+    expect(await runWithOnlyBunInPath("bin3")).toEqual({
+      out: "",
+      firstErrorLine: 'error: interpreter executable "aaa" not found in %PATH%',
+      exitCode: 255,
+    });
+  });
+
+  test("bun runs the bin if node is missing", async () => {
+    expect(await runWithOnlyBunInPath("bin-node")).toEqual({
+      out: "i am bin-node arg1 arg2",
+      firstErrorLine: "",
+      exitCode: 0,
     });
   });
 

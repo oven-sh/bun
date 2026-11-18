@@ -1,0 +1,32 @@
+# -- source: main.ts
+# class Base { replace(what: unknown, by: unknown): unknown { return 0; } }
+# class A extends Base { replace(what: unknown, by: unknown): unknown { return typeof by === "function" ? "function" : (by as number) + 1; } }
+# class B extends Base { replace(what: unknown, by: unknown): unknown { return typeof by === "function" ? "FUNCTION" : (by as number) + 2; } }
+# const nobodyKnows: (found: string) => string = (globalThis as any).swap ?? ((found: string) => found.toUpperCase());
+# function swap(text: Base | string, by: any): unknown { return text.replace("x", by); }
+# const out: unknown[] = [];
+# out.push(swap(new A(), nobodyKnows), swap(new B(), nobodyKnows), swap("axb", nobodyKnows));
+# out.push(new A().replace("x", 1));
+# print(out.join(" "));
+# declare function print(...values: unknown[]): void;
+# -- end of source
+# The receiver in swap() is an object of the family or a text. For the text the built-in is handed a callback that nobody knows, so the site may enter unseen code; the objects of the family do not leave with it and
+# their methods have not escaped. While such a site forgot its shared calls, the method of A had one call that anybody listed, the direct one: it counted as called from one place, as run at most once, and its body
+# took what that caller leaves, though swap() enters it too.
+# f1 = swap; f3, f5, f7 = the methods of Base, A, B
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f3 callers-known
+# LINK-NOT: one-callee
+# LINK-NOT: takes-arrivals
+# LINK: function f4
+# LINK: function f5 callers-known
+# LINK-NOT: one-callee
+# LINK-NOT: runs-once
+# LINK-NOT: takes-arrivals
+# LINK: function f6
+# LINK: function f7 callers-known
+# LINK-NOT: one-callee
+# LINK-NOT: takes-arrivals
+# LINK: function f8
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: function FUNCTION aXb 2

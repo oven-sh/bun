@@ -1,0 +1,22 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# function twice(n: number): number { return n + n; }
+# function main(): number { return twice(21); }
+# print(main());
+# -- end of source
+# f1 = twice, f2 = main
+# `twice` goes by what its callers leave: every caller is known and every call has one callee. So what a direct call hands over must lie within what the call's own unit has left there
+# (findCallThatHandsOverWhatItsUnitHasNotLeft(), walk/AOTCompileUnit.cpp). verify-code holds a text to the judge as the code of a unit that has left nothing: the call rings.
+# RUN: verify-code mechanisms=Folding,DirectCalls,Arrivals
+# CHECK: TypeOutOfDate: f2 Body v1 (CallDirect) hands 21 to entry parameter 0 of f1, which goes by what its callers leave, and its unit has left nothing there
+# The same call as the walk builds it, with what the walk holds for the callee, passes.
+# RUN(WALKED): walk f2 mechanisms=Folding,DirectCalls,Arrivals
+# WALKED: CallDirect {{*}} function=f1
+# -- code
+# code f2:Body {
+#   v0: 21 @JSValue = Integer integer=21
+#   b0() entry=0:
+#     v1: anything?ResultOfUnknownCallee @JSValue = CallDirect v0 function=f1 traits=[mayThrow, mayCollect]
+#     Return v1
+# }
+# -- end of code

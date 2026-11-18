@@ -1,5 +1,4 @@
 use core::cmp::Ordering;
-use core::mem::ManuallyDrop;
 
 use bun_paths::strings;
 use bun_semver as Semver;
@@ -170,8 +169,8 @@ impl DependencyExt for Dependency {
     ) {
         builder.count(self.name.slice(name_buf));
         builder.count(self.version.literal.slice(version_buf));
-        if self.version.tag == Tag::Workspace {
-            builder.count(self.version.workspace().slice(version_buf));
+        if let Value::Workspace(workspace) = &self.version.value {
+            builder.count(workspace.slice(version_buf));
         }
     }
 
@@ -205,13 +204,10 @@ impl DependencyExt for Dependency {
 
         // A workspace edge's path is not always its literal: `Package::parse` links an npm range
         // (`^1`, `*`, `npm:pkg@1`) to a workspace and keeps the range as the literal.
-        let version = if self.version.tag == Tag::Workspace {
+        let version = if let Value::Workspace(workspace) = &self.version.value {
             Version {
-                tag: Tag::Workspace,
                 literal: new_literal,
-                value: Value {
-                    workspace: builder.append_string(self.version.workspace().slice(version_buf)),
-                },
+                value: Value::Workspace(builder.append_string(workspace.slice(version_buf))),
             }
         } else {
             let out_slice = builder.string_bytes();
@@ -222,7 +218,7 @@ impl DependencyExt for Dependency {
                     new_name.slice(out_slice),
                 )),
                 new_literal.slice(out_slice),
-                self.version.tag,
+                self.version.tag(),
                 &sliced,
                 None,
                 Some(package_manager as &mut dyn NpmAliasRegistry),
@@ -241,12 +237,11 @@ impl DependencyExt for Dependency {
     /// Get the name of the package as it should appear in a remote registry.
     #[inline]
     fn realname(&self) -> String {
-        match self.version.tag {
-            Tag::DistTag => self.version.dist_tag().name,
-            Tag::Git => self.version.git().package_name,
-            Tag::Github => self.version.github().package_name,
-            Tag::Npm => self.version.npm().name,
-            Tag::Tarball => self.version.tarball().package_name,
+        match &self.version.value {
+            Value::DistTag(dist_tag) => dist_tag.name,
+            Value::Git(repo) | Value::Github(repo) => repo.package_name,
+            Value::Npm(npm) => npm.name,
+            Value::Tarball(tarball) => tarball.package_name,
             _ => self.name,
         }
     }
@@ -479,7 +474,7 @@ pub mod version {
     pub use super::Tag;
 }
 pub mod tarball {
-    pub use super::{TarballInfo, URI as Uri};
+    pub use super::URI as Uri;
 }
 
 /// Turns `foo@1.1.1` into `foo`, `1.1.1`, or `@foo/bar@1.1.1` into `@foo/bar`, `1.1.1`, or `foo` into `foo`, `null`.
@@ -736,36 +731,34 @@ impl VersionExt for Version {
     #[inline]
     fn to_external(&self) -> VersionExternal {
         let mut bytes: VersionExternal = [0u8; 9];
-        bytes[0] = self.tag as u8;
+        bytes[0] = self.tag() as u8;
         bytes[1..9].copy_from_slice(&self.literal.bytes);
         bytes
     }
 
     #[inline]
     fn eql(&self, rhs: &Version, lhs_buf: &[u8], rhs_buf: &[u8]) -> bool {
-        if self.tag != rhs.tag {
-            return false;
-        }
-
-        match self.tag {
+        match (&self.value, &rhs.value) {
             // if the two versions are identical as strings, it should often be faster to compare that than the actual semver version
             // semver ranges involve a ton of pointer chasing
-            Tag::Npm => {
-                strings::eql_long(
-                    self.literal.slice(lhs_buf),
-                    rhs.literal.slice(rhs_buf),
-                    true,
-                ) || self.npm().eql(rhs.npm(), lhs_buf, rhs_buf)
+            (Value::Npm(l), Value::Npm(r)) => {
+                strings::eql_long(self.literal.slice(lhs_buf), rhs.literal.slice(rhs_buf))
+                    || l.eql(r, lhs_buf, rhs_buf)
             }
-            Tag::Folder | Tag::DistTag | Tag::Symlink => {
+            (Value::Folder(_), Value::Folder(_))
+            | (Value::DistTag(_), Value::DistTag(_))
+            | (Value::Symlink(_), Value::Symlink(_)) => {
                 self.literal.eql(rhs.literal, lhs_buf, rhs_buf)
             }
-            Tag::Git => Repository::eql(self.git(), rhs.git(), lhs_buf, rhs_buf),
-            Tag::Github => Repository::eql(self.github(), rhs.github(), lhs_buf, rhs_buf),
-            Tag::Tarball => self.tarball().eql(rhs.tarball(), lhs_buf, rhs_buf),
-            Tag::Workspace => self.workspace().eql(*rhs.workspace(), lhs_buf, rhs_buf),
-            Tag::Catalog => self.catalog().eql(*rhs.catalog(), lhs_buf, rhs_buf),
-            _ => true,
+            (Value::Git(l), Value::Git(r)) | (Value::Github(l), Value::Github(r)) => {
+                Repository::eql(l, r, lhs_buf, rhs_buf)
+            }
+            (Value::Tarball(l), Value::Tarball(r)) => l.eql(r, lhs_buf, rhs_buf),
+            (Value::Workspace(l), Value::Workspace(r)) | (Value::Catalog(l), Value::Catalog(r)) => {
+                l.eql(*r, lhs_buf, rhs_buf)
+            }
+            (Value::Uninitialized, Value::Uninitialized) => true,
+            _ => false,
         }
     }
 }
@@ -1275,14 +1268,11 @@ pub(crate) fn parse_with_tag(
 
             let result = Version {
                 literal: sliced.value(),
-                value: Value {
-                    npm: ManuallyDrop::new(NpmInfo {
-                        is_alias,
-                        name,
-                        version,
-                    }),
-                },
-                tag: Tag::Npm,
+                value: Value::Npm(NpmInfo {
+                    is_alias,
+                    name,
+                    version,
+                }),
             };
 
             if is_alias && nameless_npm_alias(dependency).is_none() {
@@ -1309,17 +1299,14 @@ pub(crate) fn parse_with_tag(
 
             Some(Version {
                 literal: sliced.value(),
-                value: Value {
-                    dist_tag: TagInfo {
-                        name: actual,
-                        tag: if tag_to_use.is_empty() {
-                            String::from(b"latest")
-                        } else {
-                            tag_to_use
-                        },
+                value: Value::DistTag(TagInfo {
+                    name: actual,
+                    tag: if tag_to_use.is_empty() {
+                        String::from(b"latest")
+                    } else {
+                        tag_to_use
                     },
-                },
-                tag: Tag::DistTag,
+                }),
             })
         }
         Tag::Git => {
@@ -1331,25 +1318,22 @@ pub(crate) fn parse_with_tag(
 
             Some(Version {
                 literal: sliced.value(),
-                value: Value {
-                    git: ManuallyDrop::new(Repository {
-                        owner: String::from(b""),
-                        repo: sliced
-                            .sub(if let Some(index) = hash_index {
-                                &input[0..index]
-                            } else {
-                                input
-                            })
-                            .value(),
-                        committish: if let Some(index) = hash_index {
-                            sliced.sub(&input[index + 1..]).value()
+                value: Value::Git(Repository {
+                    owner: String::from(b""),
+                    repo: sliced
+                        .sub(if let Some(index) = hash_index {
+                            &input[0..index]
                         } else {
-                            String::from(b"")
-                        },
-                        ..Default::default()
-                    }),
-                },
-                tag: Tag::Git,
+                            input
+                        })
+                        .value(),
+                    committish: if let Some(index) = hash_index {
+                        sliced.sub(&input[index + 1..]).value()
+                    } else {
+                        String::from(b"")
+                    },
+                    ..Default::default()
+                }),
             })
         }
         Tag::Github => {
@@ -1380,50 +1364,38 @@ pub(crate) fn parse_with_tag(
 
             Some(Version {
                 literal: sliced.value(),
-                value: Value {
-                    github: ManuallyDrop::new(Repository {
-                        owner: find(info.user().unwrap_or(b""))?,
-                        repo: find(info.project())?,
-                        committish,
-                        ..Default::default()
-                    }),
-                },
-                tag: Tag::Github,
+                value: Value::Github(Repository {
+                    owner: find(info.user().unwrap_or(b""))?,
+                    repo: find(info.project())?,
+                    committish,
+                    ..Default::default()
+                }),
             })
         }
         Tag::Tarball => {
             if is_remote_tarball(dependency) {
                 return Some(Version {
-                    tag: Tag::Tarball,
                     literal: sliced.value(),
-                    value: Value {
-                        tarball: TarballInfo {
-                            uri: URI::Remote(sliced.sub(dependency).value()),
-                            package_name: String::default(),
-                        },
-                    },
+                    value: Value::Tarball(TarballInfo {
+                        uri: URI::Remote(sliced.sub(dependency).value()),
+                        package_name: String::default(),
+                    }),
                 });
             } else if dependency.starts_with(b"file://") {
                 return Some(Version {
-                    tag: Tag::Tarball,
                     literal: sliced.value(),
-                    value: Value {
-                        tarball: TarballInfo {
-                            uri: URI::Local(sliced.sub(&dependency[7..]).value()),
-                            package_name: String::default(),
-                        },
-                    },
+                    value: Value::Tarball(TarballInfo {
+                        uri: URI::Local(sliced.sub(&dependency[7..]).value()),
+                        package_name: String::default(),
+                    }),
                 });
             } else if dependency.starts_with(b"file:") {
                 return Some(Version {
-                    tag: Tag::Tarball,
                     literal: sliced.value(),
-                    value: Value {
-                        tarball: TarballInfo {
-                            uri: URI::Local(sliced.sub(&dependency[5..]).value()),
-                            package_name: String::default(),
-                        },
-                    },
+                    value: Value::Tarball(TarballInfo {
+                        uri: URI::Local(sliced.sub(&dependency[5..]).value()),
+                        package_name: String::default(),
+                    }),
                 });
             } else if strings::index_of(dependency, b"://").is_some() {
                 if let Some(log) = log_ {
@@ -1440,14 +1412,11 @@ pub(crate) fn parse_with_tag(
             }
 
             Some(Version {
-                tag: Tag::Tarball,
                 literal: sliced.value(),
-                value: Value {
-                    tarball: TarballInfo {
-                        uri: URI::Local(sliced.sub(dependency).value()),
-                        package_name: String::default(),
-                    },
-                },
+                value: Value::Tarball(TarballInfo {
+                    uri: URI::Local(sliced.sub(dependency).value()),
+                    package_name: String::default(),
+                }),
             })
         }
         Tag::Folder => {
@@ -1485,10 +1454,7 @@ pub(crate) fn parse_with_tag(
                         {
                             return Some(Version {
                                 literal: sliced.value(),
-                                value: Value {
-                                    folder: sliced.sub(maybe_dot_dot).value(),
-                                },
-                                tag: Tag::Folder,
+                                value: Value::Folder(sliced.sub(maybe_dot_dot).value()),
                             });
                         }
 
@@ -1504,20 +1470,14 @@ pub(crate) fn parse_with_tag(
                         if let Some(dep) = is_windows_abs_path_with_leading_slashes(folder) {
                             return Some(Version {
                                 literal: sliced.value(),
-                                value: Value {
-                                    folder: sliced.sub(dep).value(),
-                                },
-                                tag: Tag::Folder,
+                                value: Value::Folder(sliced.sub(dep).value()),
                             });
                         }
                     }
 
                     return Some(Version {
                         literal: sliced.value(),
-                        value: Value {
-                            folder: sliced.sub(folder).value(),
-                        },
-                        tag: Tag::Folder,
+                        value: Value::Folder(sliced.sub(folder).value()),
                     });
                 }
 
@@ -1527,10 +1487,7 @@ pub(crate) fn parse_with_tag(
                     if protocol == 1 && strings::starts_with_windows_drive_letter_t(dependency) {
                         return Some(Version {
                             literal: sliced.value(),
-                            value: Value {
-                                folder: sliced.sub(dependency).value(),
-                            },
-                            tag: Tag::Folder,
+                            value: Value::Folder(sliced.sub(dependency).value()),
                         });
                     }
 
@@ -1541,10 +1498,7 @@ pub(crate) fn parse_with_tag(
                     if let Some(dep) = is_windows_abs_path_with_leading_slashes(dependency) {
                         return Some(Version {
                             literal: sliced.value(),
-                            value: Value {
-                                folder: sliced.sub(dep).value(),
-                            },
-                            tag: Tag::Folder,
+                            value: Value::Folder(sliced.sub(dep).value()),
                         });
                     }
                 }
@@ -1563,34 +1517,24 @@ pub(crate) fn parse_with_tag(
             }
 
             Some(Version {
-                value: Value {
-                    folder: sliced.sub(dependency).value(),
-                },
-                tag: Tag::Folder,
+                value: Value::Folder(sliced.sub(dependency).value()),
                 literal: sliced.value(),
             })
         }
         Tag::Uninitialized => Some(Version {
-            tag: Tag::Uninitialized,
             literal: sliced.value(),
-            value: Value::default(),
+            value: Value::Uninitialized,
         }),
         Tag::Symlink => {
             if let Some(colon) = strings::index_of_char(dependency, b':') {
                 return Some(Version {
-                    value: Value {
-                        symlink: sliced.sub(&dependency[colon as usize + 1..]).value(),
-                    },
-                    tag: Tag::Symlink,
+                    value: Value::Symlink(sliced.sub(&dependency[colon as usize + 1..]).value()),
                     literal: sliced.value(),
                 });
             }
 
             Some(Version {
-                value: Value {
-                    symlink: sliced.sub(dependency).value(),
-                },
-                tag: Tag::Symlink,
+                value: Value::Symlink(sliced.sub(dependency).value()),
                 literal: sliced.value(),
             })
         }
@@ -1600,10 +1544,7 @@ pub(crate) fn parse_with_tag(
                 input = &input[b"workspace:".len()..];
             }
             Some(Version {
-                value: Value {
-                    workspace: sliced.sub(input).value(),
-                },
-                tag: Tag::Workspace,
+                value: Value::Workspace(sliced.sub(input).value()),
                 literal: sliced.value(),
             })
         }
@@ -1614,10 +1555,7 @@ pub(crate) fn parse_with_tag(
             let trimmed = strings::trim(group, &strings::WHITESPACE_CHARS);
 
             Some(Version {
-                value: Value {
-                    catalog: sliced.sub(trimmed).value(),
-                },
-                tag: Tag::Catalog,
+                value: Value::Catalog(sliced.sub(trimmed).value()),
                 literal: sliced.value(),
             })
         }

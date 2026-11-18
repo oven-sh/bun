@@ -42,11 +42,11 @@ const getExtraCACertificates = $newCppFunction("NodeTLS.cpp", "getExtraCACertifi
 // Node warns at the first secure context; the once-per-process native load is what prints it.
 const maybeWarnAboutExtraCACerts = $newCppFunction("NodeTLS.cpp", "loadExtraCACertificates", 0);
 const getSystemCACertificates = $newCppFunction("NodeTLS.cpp", "getSystemCACertificates", 1);
-const canonicalizeIP = $newCppFunction("NodeTLS.cpp", "Bun__canonicalizeIP", 1);
+const canonicalizeIP = $bindgen("cares_jsc.bind.ts", "canonicalizeIP");
 const parseCACertificates = $newCppFunction("NodeTLS.cpp", "parseCACertificates", 1);
 
-const getTLSDefaultCiphers = $newCppFunction("NodeTLS.cpp", "getDefaultCiphers", 0);
-const setTLSDefaultCiphers = $newCppFunction("NodeTLS.cpp", "setDefaultCiphers", 1);
+const getTLSDefaultCiphers = $bindgen("rare_data.bind.ts", "getTLSDefaultCiphers");
+const setTLSDefaultCiphers = $bindgen("rare_data.bind.ts", "setTLSDefaultCiphers");
 const selectServerName = $newCppFunction("NodeTLS.cpp", "selectServerName", 2);
 let _VALID_CIPHERS_SET: Set<string> | undefined;
 function getValidCiphersSet() {
@@ -435,7 +435,7 @@ function checkServerIdentity(hostname, cert) {
 // — Postgres, Valkey, `Bun.connect`, …), so identical options return the same
 // native handle and the same `SSL_CTX*`. Replaces the SHA-256/WeakRef cache
 // that used to live in this file.
-const NativeSecureContext = $rust("SecureContext.rs", "js.getConstructor");
+const NativeSecureContext = $bindgen("SecureContext.bind.ts", "SecureContext");
 
 // Node treats any falsy key/cert/ca as "not provided" (test-tls-options-
 // boolean-check.js exercises false/0/""). The bindgen SSLConfigFile union only
@@ -609,6 +609,7 @@ const buntls = Symbol.for("::buntls::");
 // (Node's `context.context || context` unwrap accepts both the wrapper and
 // the unwrapped native context).
 const kNativeSecureContextCtor = Symbol.for("::buntlsnativesecurecontextctor::");
+const kUpgradeServerTLS = Symbol.for("::bunUpgradeServerTLS::");
 
 function TLSSocket(socket?, options?) {
   this[ksecureContext] = undefined;
@@ -729,7 +730,7 @@ function TLSSocket(socket?, options?) {
   // Both upgrades live in net.ts (module-private state); _handle stays unset until one hands back the TLS handle.
   if (isNetSocketOrDuplex) {
     if (isServer) {
-      this[Symbol.for("::bunUpgradeServerTLS::")](socket, this[buntls](null, null));
+      this[kUpgradeServerTLS](socket, this[buntls](null, null));
     } else {
       // The rule of tls.connect(): an untrusted certificate is rejected unless the caller passes `false`.
       this._rejectUnauthorized = ObjectPrototypeHasOwnProperty.$call(options, "rejectUnauthorized")
@@ -1583,23 +1584,28 @@ function cacheBundledRootCertificates(): string[] {
   bundledRootCertificates ||= getBundledRootCertificates() as string[];
   return bundledRootCertificates;
 }
-const getUseSystemCA = $bindgen("node_tls_binding.bind.ts", "getUseSystemCA");
+const getCAStore = $bindgen("node_tls_binding.bind.ts", "getCAStore");
 
 let defaultCACertificates: string[] | undefined;
 function cacheDefaultCACertificates() {
   if (defaultCACertificates) return defaultCACertificates;
   defaultCACertificates = [];
 
-  const bundled = cacheBundledRootCertificates();
-  for (let i = 0; i < bundled.length; ++i) {
-    ArrayPrototypePush.$call(defaultCACertificates, bundled[i]);
-  }
+  // As in Node, what OpenSSL's default certificate file and directory hold is not listed.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/tls.js#L157
+  const store = getCAStore();
+  if (store !== "openssl") {
+    const bundled = cacheBundledRootCertificates();
+    for (let i = 0; i < bundled.length; ++i) {
+      ArrayPrototypePush.$call(defaultCACertificates, bundled[i]);
+    }
 
-  // Include system certificates when --use-system-ca is set or NODE_USE_SYSTEM_CA=1
-  if (getUseSystemCA() || process.env.NODE_USE_SYSTEM_CA === "1") {
-    const system = cacheSystemCACertificates();
-    for (let i = 0; i < system.length; ++i) {
-      ArrayPrototypePush.$call(defaultCACertificates, system[i]);
+    // Include system certificates when --use-system-ca is set or NODE_USE_SYSTEM_CA=1
+    if (store === "system" || process.env.NODE_USE_SYSTEM_CA === "1") {
+      const system = cacheSystemCACertificates();
+      for (let i = 0; i < system.length; ++i) {
+        ArrayPrototypePush.$call(defaultCACertificates, system[i]);
+      }
     }
   }
 

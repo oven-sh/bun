@@ -3,7 +3,8 @@ use bun_lint::prelude::*;
 /// Disallow `new` operators with calls to `require`.
 pub struct NoNewRequire;
 
-const NO_NEW_REQUIRE: Message = Message::new("noNewRequire", "Unexpected use of new with require.");
+const NO_NEW_REQUIRE: &Message =
+    &Message::new("noNewRequire", "Unexpected use of new with require.");
 
 impl Rule for NoNewRequire {
     const META: Meta = Meta::eslint("no-new-require", Kind::Suggestion).deprecated();

@@ -1,0 +1,22 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# let kept: (() => number) | null = null;
+# function keep(callback: () => number): void { kept = callback; }
+# function make(start: number): number { let total = start; keep(() => total); total += 5; return total; }
+# print(make(3));
+# print(make(4));
+# print(kept!());
+# print("went on");
+# -- end of source
+# With testing=CheckProofsAtRunTime, a scope that is released when its function returns is overwritten instead of going on the free list, and it is never reused.
+# Every read and every store of a field of a scope checks the cell's header first.
+# Fault injection, testing=AssumeCalleesRetainNothing: Link claims that keep() only calls its argument, so the closure counts as borrowed and nothing marks the scope as escaped.
+# The slot holds an unboxed number, so no proof check would notice a zero.
+# OPTIONS: testing=CheckProofsAtRunTime,AssumeCalleesRetainNothing
+# RUN(CALL): run-in-shell mechanisms=-Inlining
+# CALL: 8
+# CALL: 9
+# CALL: bun: internal AOT error: lifetime check failed
+# CALL-NEXT: an object that this function allocated was used after the compiler ended its lifetime
+# CALL-NOT: went on
+# CALL: crashed with

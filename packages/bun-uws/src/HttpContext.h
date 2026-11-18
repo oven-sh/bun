@@ -103,8 +103,6 @@ struct HttpContext {
     template<bool> friend struct TemplatedApp;
     template<bool> friend struct HttpResponse;
 private:
-    HttpContext() = default;
-
     /* Embedded list-head for accepted sockets. The vtable is `httpVTable` below;
      * SSL_CTX comes from the listener, not from here. */
     us_socket_group_t group{};
@@ -218,7 +216,7 @@ private:
          * onEnd() below decides whether to close right away (idle, or a
          * response the application is still producing) or to keep writing
          * response bytes already handed to uWS. Without this flag the loop
-         * (and openssl.c us_internal_ssl_on_end for TLS) force-closes the
+         * (and openssl.cpp us_internal_ssl_on_end for TLS) force-closes the
          * socket right after dispatching onEnd, discarding those bytes.
          * onEnd's defer and onWritable's close gate use hasFullyDrained(),
          * which accounts for the TLS ciphertext spill, so they are accurate
@@ -268,7 +266,8 @@ private:
                 httpContextData->onSocketData(httpResponseData->socketData, SSL, s, "", 0, true);
             }
             /* node:http: the body of a tunnel that started has had its last chunk from the parser. This close can come from inside that call. */
-            if(httpResponseData->inStream && (!IsNodeHttp || nodeHttpTunnelAfterBody)) {
+            /* Bun.serve ends the body from onAborted, once that is set. */
+            if(httpResponseData->inStream && (IsNodeHttp ? nodeHttpTunnelAfterBody : !httpResponseData->onAborted)) {
                 httpResponseData->inStream(reinterpret_cast<HttpResponse<SSL> *>(s), "", 0, true, httpResponseData->userData);
                 httpResponseData->inStream = nullptr;
             }
@@ -302,6 +301,8 @@ private:
             httpResponseData->onAborted((HttpResponse<SSL> *)s, httpResponseData->userData);
         }
 
+        /* A write from one of the callbacks corks again. */
+        ((AsyncSocket<SSL> *)s)->uncorkWithoutSending();
 
         /* Destruct the type onOpen<IsNodeHttp> constructed */
         if constexpr (IsNodeHttp) {
@@ -333,6 +334,12 @@ private:
         return us_socket_is_shut_down(s);
     }
 
+    /* Not for the body of an accepted Upgrade request: its last chunk starts a tunnel. */
+    static bool readsBodyBehindOwnFin(HttpResponseData<SSL> *httpResponseData) {
+        return (httpResponseData->state & (HttpResponseData<SSL>::HTTP_NODE_HALF_CLOSED | HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY)) == HttpResponseData<SSL>::HTTP_NODE_HALF_CLOSED
+            && httpResponseData->inStream != nullptr;
+    }
+
     template <bool IsNodeHttp>
     static us_socket_t *onData(us_socket_t *s, char *data, int length) {
         // ref the socket to make sure we process it entirely before it is closed
@@ -347,10 +354,10 @@ private:
         HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
         HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext(s);
 
-        /* Do not accept any data while in shutdown state. A node:http tunnel is half-open: it still reads after socket.end(). */
+        /* Do not accept any data while in shutdown state. node:http is half-open: a tunnel and the body of the request in flight still read after socket.end(). */
         bool isHalfOpenTunnel = false;
         if constexpr (IsNodeHttp) isHalfOpenTunnel = httpResponseData->isConnectRequest;
-        if (us_socket_is_shut_down((us_socket_t *) s) && !isHalfOpenTunnel) {
+        if (us_socket_is_shut_down((us_socket_t *) s) && !isHalfOpenTunnel && !readsBodyBehindOwnFin(httpResponseData)) {
             /* Balance the us_socket_ref above — every other return path
              * reaches the unref via returnedData. */
             us_socket_unref(s);
@@ -603,7 +610,7 @@ private:
             }
 
             /* We absolutely have to terminate parsing if shutdown */
-            if (isShutDownByOwner<IsNodeHttp>((us_socket_t *) s)) {
+            if (isShutDownByOwner<IsNodeHttp>((us_socket_t *) s) && !readsBodyBehindOwnFin(httpResponseData)) {
                 return nullptr;
             }
 
@@ -695,7 +702,7 @@ private:
                 }
 
                 /* We absolutely have to terminate parsing if shutdown */
-                if (isShutDownByOwner<IsNodeHttp>((us_socket_t *) user)) {
+                if (isShutDownByOwner<IsNodeHttp>((us_socket_t *) user) && (fin || !readsBodyBehindOwnFin(httpResponseData))) {
                     /* node:http: this socket can be a tunnel that still reads. Its bytes are not for a body that ended. */
                     if constexpr (IsNodeHttp) {
                         if (fin) {
@@ -1163,19 +1170,15 @@ private:
 public:
     /* Construct a new HttpContext using specified loop. SSL_CTX is built and
      * owned by TemplatedApp; we only learn about it at listen() time. */
-    static HttpContext *create(Loop *loop, bool requestCert = false, bool rejectUnauthorized = false) {
-        HttpContext *httpContext = new HttpContext;
-        us_socket_group_init(&httpContext->group, (us_loop_t *) loop, &httpVTable<false>, httpContext);
+    HttpContext(Loop *loop, bool requestCert, bool rejectUnauthorized) {
+        us_socket_group_init(&group, (us_loop_t *) loop, &httpVTable<false>, this);
         if (requestCert && rejectUnauthorized) {
-            httpContext->data.flags.rejectUnauthorized = true;
+            data.flags.rejectUnauthorized = true;
         }
-        return httpContext;
     }
 
-    /* Destruct the HttpContext, it does not follow RAII */
-    void free() {
+    ~HttpContext() {
         us_socket_group_deinit(&group);
-        delete this;
     }
 
     void filter(MoveOnlyFunction<void(HttpResponse<SSL> *, int)> &&filterHandler) {

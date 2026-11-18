@@ -6,7 +6,7 @@
 //! and `node::types::{PathLike, PathOrFileDescriptor}` — all `bun_runtime`
 //! types. `bun_runtime` already depends on `bun_bundler`, so there is no cycle.
 
-use bun_jsc::{JSGlobalObject, JSValue};
+use bun_jsc::{JSGlobalObject, JSValue, JsClass as _};
 
 use bun_bundler::options_impl::LoaderExt as _;
 use bun_bundler::output_file::{OutputFile, Value as OutputFileValue};
@@ -69,21 +69,17 @@ impl OutputFileJsc for OutputFile {
                     )),
                 };
 
-                let build_output = Box::new(BuildArtifact {
+                BuildArtifact {
                     blob: Blob::init_with_store(file_blob, global_object),
                     hash: self.hash,
                     loader: self.input_loader,
                     output_kind: self.output_kind,
                     path: Box::<[u8]>::from(copy.pathname.as_ref()),
-                });
-
-                // Ownership transfers to the JS `BuildArtifact` wrapper
-                // (`finalize` reclaims it). Typed `Box`-taking entry point —
-                // the leak/from_raw pair lives once in the `#[js_class]` shim.
-                BuildArtifact::to_js_boxed(build_output, global_object)
+                }
+                .to_js(global_object)
             }
             OutputFileValue::Saved(_) => {
-                let path_to_use: &[u8] = owned_pathname.unwrap_or(self.src_path.text);
+                let path_to_use: &[u8] = owned_pathname.unwrap_or(&self.src_path);
 
                 let file_blob = match BlobStore::init_file(
                     PathOrFileDescriptor::Path(PathLike::owned(path_to_use.to_vec())),
@@ -96,16 +92,14 @@ impl OutputFileJsc for OutputFile {
                     )),
                 };
 
-                let build_output = Box::new(BuildArtifact {
+                BuildArtifact {
                     blob: Blob::init_with_store(file_blob, global_object),
                     hash: self.hash,
                     loader: self.input_loader,
                     output_kind: self.output_kind,
                     path: Box::<[u8]>::from(path_to_use),
-                });
-
-                // See `Copy` arm.
-                BuildArtifact::to_js_boxed(build_output, global_object)
+                }
+                .to_js(global_object)
             }
             OutputFileValue::Buffer { bytes } => {
                 let bytes_len = bytes.len();
@@ -115,19 +109,17 @@ impl OutputFileJsc for OutputFile {
 
                 let path: Box<[u8]> = match owned_pathname {
                     Some(p) => Box::from(p),
-                    None => Box::from(self.src_path.text),
+                    None => Box::from(&*self.src_path),
                 };
 
-                let build_output = Box::new(BuildArtifact {
+                BuildArtifact {
                     blob,
                     hash: self.hash,
                     loader: self.input_loader,
                     output_kind: self.output_kind,
                     path,
-                });
-
-                // See `Copy` arm.
-                BuildArtifact::to_js_boxed(build_output, global_object)
+                }
+                .to_js(global_object)
             }
             OutputFileValue::Noop => {
                 // SAFETY: filtered out by the early-out match above.
@@ -150,7 +142,7 @@ impl OutputFileJsc for OutputFile {
 
         let mime = self
             .loader
-            .to_mime_type(&[self.dest_path.as_ref(), self.src_path.text]);
+            .to_mime_type(&[self.dest_path.as_ref(), &self.src_path]);
 
         match value {
             OutputFileValue::Copy(copy) => {
@@ -162,7 +154,7 @@ impl OutputFileJsc for OutputFile {
             }
             OutputFileValue::Saved(_) => {
                 let file_blob = BlobStore::init_file(
-                    PathOrFileDescriptor::Path(PathLike::owned(self.src_path.text.to_vec())),
+                    PathOrFileDescriptor::Path(PathLike::owned(self.src_path.to_vec())),
                     Some(mime),
                 )?;
                 Ok(Blob::init_with_store(file_blob, global_this))

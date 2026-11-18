@@ -10,13 +10,13 @@ pub struct NoRelativeParentImports {
     visitor: Visitor,
 }
 
-const FROM_PARENT: Message = Message::new(
+const FROM_PARENT: &Message = &Message::new(
     "",
     "Relative imports from parent directories are not allowed. Please either pass what you're importing through at \
      runtime (dependency injection), move `{{filename}}` to same directory as `{{depPath}}` or consider making \
      `{{depPath}}` a package.",
 );
-const OXLINT: Message = Message::new("", "Relative imports from parent directories are not allowed");
+const OXLINT: &Message = &Message::new("", "Relative imports from parent directories are not allowed");
 
 /// The module systems oxlint checks, regardless of the options.
 const OXLINT_SYSTEMS: Systems = Systems { esmodule: true, commonjs: true, amd: false };

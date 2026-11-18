@@ -42,12 +42,18 @@ pub(crate) enum OverrideRule<'a> {
 }
 
 impl<'a> OverrideRule<'a> {
+    /// The rule as stored: the name in its key and its value. `catalog:` is the entry of that name.
+    #[inline]
+    pub(crate) fn dep(self) -> &'a Dependency {
+        match self {
+            OverrideRule::Flat(dep) => dep,
+            OverrideRule::Scoped(rule) => &rule.dep,
+        }
+    }
+
     #[inline]
     pub(crate) fn version(self) -> &'a dependency::Version {
-        match self {
-            OverrideRule::Flat(dep) => &dep.version,
-            OverrideRule::Scoped(rule) => &rule.dep.version,
-        }
+        &self.dep().version
     }
 }
 
@@ -56,18 +62,13 @@ impl ScopedOverride {
     pub(crate) fn parent_has_range(&self) -> bool {
         self.parent
             .as_ref()
-            .is_some_and(|parent| parent.version.tag == VersionTag::Npm)
+            .is_some_and(|parent| parent.version.tag() == VersionTag::Npm)
     }
 
     #[inline]
     pub(crate) fn has_target_range(&self) -> bool {
-        self.target_range.tag != VersionTag::Uninitialized
+        self.target_range.tag() != VersionTag::Uninitialized
     }
-}
-
-#[inline]
-fn is_npm_alias(version: &dependency::Version) -> bool {
-    version.tag == VersionTag::Npm && version.npm().is_alias
 }
 
 /// How the range in a `name@<range>` key is compared with the range that a dependency declares.
@@ -87,21 +88,22 @@ fn range_selects(
     selects: Selects,
     buf: &[u8],
 ) -> bool {
-    match (range.tag, declared.tag) {
-        (VersionTag::Npm, VersionTag::Npm) => {
+    match (&range.value, &declared.value) {
+        (dependency::Value::Npm(range_npm), dependency::Value::Npm(declared_npm)) => {
             let is_same_text = dependency::without_npm_protocol(range.literal.slice(buf))
                 == dependency::without_npm_protocol(declared.literal.slice(buf));
-            let (range, declared) = (range.npm(), declared.npm());
             // An alias key selects aliases of the same package. A plain key never selects an alias.
-            range.is_alias == declared.is_alias
-                && (!range.is_alias || range.name.eql(declared.name, buf, buf))
+            range_npm.is_alias == declared_npm.is_alias
+                && (!range_npm.is_alias || range_npm.name.eql(declared_npm.name, buf, buf))
                 && match selects {
-                    Selects::Overlapping => range.version.intersects(buf, &declared.version, buf),
+                    Selects::Overlapping => {
+                        (range_npm.version).intersects(buf, &declared_npm.version, buf)
+                    }
                     Selects::SameRange => is_same_text,
                 }
         }
-        (VersionTag::Catalog, VersionTag::Catalog) => {
-            CatalogMap::same_name(range.catalog().slice(buf), declared.catalog().slice(buf))
+        (dependency::Value::Catalog(range), dependency::Value::Catalog(declared)) => {
+            CatalogMap::same_name(range.slice(buf), declared.slice(buf))
         }
         _ => false,
     }
@@ -208,7 +210,7 @@ struct ParseContext<'a, 'b> {
     lockfile_dependencies: &'a [Dependency],
     root_package: &'a Package,
     log: &'a mut bun_ast::Log,
-    source: &'a bun_ast::Source,
+    source: &'a bun_ast::Source<'a>,
     workspace_names: &'a WorkspaceMap,
     builder: &'a mut StringBuilder<'b>,
 }
@@ -287,7 +289,8 @@ impl OverrideMap {
             }
         }
         // Only a key that spells out the alias (`name@npm:other@^1`) overrides an `npm:` alias.
-        self.get_flat(name_hash).filter(|_| !is_npm_alias(declared))
+        self.get_flat(name_hash)
+            .filter(|_| !declared.is_npm_alias())
     }
 
     #[inline]
@@ -312,7 +315,7 @@ impl OverrideMap {
 
         for rule in &self.scoped {
             if rule.dep.name_hash != name_hash
-                || (!rule.has_target_range() && is_npm_alias(declared))
+                || (!rule.has_target_range() && declared.is_npm_alias())
             {
                 continue;
             }
@@ -326,16 +329,11 @@ impl OverrideMap {
                 if owner_name_hash != parent.name_hash {
                     continue;
                 }
-                if rule.parent_has_range() {
+                if let dependency::Value::Npm(range) = &parent.version.value {
                     let Some(owner_version) = owner_version else {
                         continue;
                     };
-                    if !parent
-                        .version
-                        .npm()
-                        .version
-                        .satisfies(owner_version, buf, buf)
-                    {
+                    if !range.version.satisfies(owner_version, buf, buf) {
                         continue;
                     }
                     tier = 4;
@@ -427,6 +425,11 @@ impl OverrideMap {
             .is_some_and(|dep| dep.name.slice(buf) == name)
     }
 
+    /// What every rule replaces a dependency with.
+    pub(crate) fn values(&self) -> impl Iterator<Item = &Dependency> {
+        (self.map.values().iter()).chain(self.scoped.iter().map(|rule| &rule.dep))
+    }
+
     #[inline]
     pub(crate) fn is_empty(&self) -> bool {
         self.map.count() == 0 && self.scoped.is_empty()
@@ -449,12 +452,12 @@ impl OverrideMap {
 
     pub(crate) fn append_catalog_valued_name_hashes(&self, out: &mut Vec<PackageNameHash>) {
         for (name_hash, dep) in self.map.iter() {
-            if dep.version.tag == VersionTag::Catalog {
+            if dep.version.tag() == VersionTag::Catalog {
                 out.push(*name_hash);
             }
         }
         for rule in &self.scoped {
-            if rule.dep.version.tag == VersionTag::Catalog {
+            if rule.dep.version.tag() == VersionTag::Catalog {
                 out.push(rule.dep.name_hash);
             }
         }
@@ -471,9 +474,11 @@ impl OverrideMap {
         root: &Expr,
         has_workspaces: bool,
     ) {
-        let rules = (self.map.values().iter()).chain(self.scoped.iter().map(|rule| &rule.dep));
-        for dep in rules.filter(|dep| dep.version.tag == VersionTag::Catalog) {
-            if (catalogs.get_ref(buf, *dep.version.catalog(), dep.name)).is_some() {
+        for dep in self.values() {
+            let dependency::Value::Catalog(catalog) = dep.version.value else {
+                continue;
+            };
+            if (catalogs.get_ref(buf, catalog, dep.name)).is_some() {
                 continue;
             }
             let name = dep.name.slice(buf);
@@ -702,7 +707,7 @@ impl OverrideMap {
             }
         };
 
-        let is_flat = parent.is_none() && target_range.tag == VersionTag::Uninitialized;
+        let is_flat = parent.is_none() && target_range.tag() == VersionTag::Uninitialized;
         let value = buf.append(value)?;
         let sliced = value.sliced(buf.bytes.as_slice());
         let Some(version) = dependency::parse(name, name_hash, sliced.slice, &sliced, log, None)
@@ -1073,9 +1078,9 @@ fn rule_loc(root: &Expr, name: &[u8]) -> bun_ast::Loc {
 
 /// A parent is selected by its installed version. A target is selected by how it is declared.
 fn is_selector_range(version: &dependency::Version, is_target: bool) -> bool {
-    match version.tag {
-        VersionTag::Npm => is_target || !version.npm().is_alias,
-        VersionTag::Catalog => is_target,
+    match &version.value {
+        dependency::Value::Npm(npm) => is_target || !npm.is_alias,
+        dependency::Value::Catalog(_) => is_target,
         _ => false,
     }
 }
@@ -1121,7 +1126,7 @@ fn clone_range(
         dep.name,
         Some(dep.name_hash),
         sliced.slice,
-        range.tag,
+        range.tag(),
         &sliced,
         None,
         None,

@@ -3,7 +3,7 @@ use bun_alloc::AllocError;
 use bun_ast::{self, self as js_ast, E, Expr, ExprData};
 use bun_collections::{StringArrayHashMap, VecExt};
 use bun_core::fmt::{escape_control_chars, for_terminal};
-use bun_core::{Global, strings};
+use bun_core::strings;
 use bun_semver as semver;
 use bun_semver::{ExternalString, String};
 use bun_sys::{self as sys, Fd};
@@ -19,7 +19,7 @@ use crate::migration::{
 use crate::npm::{self};
 use crate::package_manager_real::add_remove_with_filter::WorkspaceTarget;
 use crate::package_manager_real::package_json_write_back;
-use crate::package_manager_real::update_package_json_and_install::print_package_json_into_cache_entry;
+use crate::package_manager_real::update_package_json_and_install::save_entry;
 use crate::repository::Repository;
 use crate::resolution::{self, Resolution, TaggedValue};
 use crate::yarn_berry::scalar_text;
@@ -388,12 +388,12 @@ fn importer_package_json(
     }
 }
 
-pub(crate) fn migrate_pnpm_lockfile<'a>(
-    lockfile: &'a mut Lockfile,
+pub(crate) fn migrate_pnpm_lockfile(
+    lockfile: &mut Lockfile,
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
     data: &[u8],
-) -> Result<LoadResult<'a>, MigratePnpmLockfileError> {
+) -> Result<LoadResult, MigratePnpmLockfileError> {
     lockfile.init_empty();
     crate::initialize_store();
     bun_core::analytics::Features::pnpm_migration_inc(1);
@@ -656,7 +656,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
 
     let mut pkg_map: StringArrayHashMap<PackageID> = StringArrayHashMap::new();
 
-    pkg_map.put(crate::bun_fs::FileSystem::instance().top_level_dir(), 0)?;
+    pkg_map.put(crate::bun_fs::FileSystem::get().top_level_dir(), 0)?;
 
     for workspace_path in lockfile.workspace_paths.values().to_vec() {
         // Every workspace path is the key of an importer with a named package.json.
@@ -721,16 +721,17 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
         'next_dep: for dep_id in deps.begin()..deps.end() {
             let dep = lockfile.buffers.dependencies[dep_id as usize].clone();
 
-            if dep.behavior.is_workspace()
-                || !matches!(
-                    dep.version.tag,
-                    VersionTag::Folder | VersionTag::Workspace | VersionTag::Symlink
-                )
-                || (dep.version.tag == VersionTag::Symlink
-                    && !dependency::is_link_path(
-                        dep.version.symlink().slice(string_bytes!(lockfile)),
-                    ))
-            {
+            if dep.behavior.is_workspace() {
+                continue;
+            }
+            let is_local = match &dep.version.value {
+                dependency::Value::Folder(_) | dependency::Value::Workspace(_) => true,
+                dependency::Value::Symlink(target) => {
+                    dependency::is_link_path(target.slice(string_bytes!(lockfile)))
+                }
+                _ => false,
+            };
+            if !is_local {
                 continue;
             }
             let Some(version_str) = importer_versions.get(dep.name.slice(string_bytes!(lockfile)))
@@ -745,7 +746,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             };
 
             // create a link package for the workspace dependency only if it doesn't already exist
-            if dep.version.tag == VersionTag::Workspace {
+            if dep.version.tag() == VersionTag::Workspace {
                 // A link that does not fit a path buffer names no workspace.
                 let link_path_buf = join_top_level_dir(&[workspace_path, link_path])
                     .ok_or(MigratePnpmLockfileError::NonExistentWorkspaceDependency)?;
@@ -999,7 +1000,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 None => {
                     let url = crate::extract_tarball::build_url(
                         registry,
-                        &strings::StringOrTinyString::init(name.slice(string_bytes!(lockfile))),
+                        name.slice(string_bytes!(lockfile)),
                         res.npm().version,
                         string_bytes!(lockfile),
                     )?;
@@ -1070,10 +1071,12 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             let string_buf = string_bytes!(lockfile);
 
             // implicit workspace dependencies
-            if dep.behavior.is_workspace() {
+            if dep.behavior.is_workspace()
+                && let dependency::Value::Workspace(path) = &dep.version.value
+            {
                 let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
                 // bounded input
-                let _ = path_buf.join(&[dep.version.workspace().slice(string_buf)]);
+                let _ = path_buf.join(&[path.slice(string_buf)]);
                 if let Some(workspace_pkg_id) = pkg_map.get(path_buf.slice()) {
                     lockfile.buffers.resolutions[dep_id as usize] = *workspace_pkg_id;
                     continue;
@@ -1165,7 +1168,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 continue;
             } else {
                 if matches!(
-                    dep.version.tag,
+                    dep.version.tag(),
                     VersionTag::Folder | VersionTag::Symlink | VersionTag::Workspace
                 ) && let Some(link_pkg_id) =
                     join_top_level_dir(&[strings::without_prefix(reference, b"link:")])
@@ -1215,7 +1218,6 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
     )?;
 
     Ok(LoadResult::Ok(LoadResultOk {
-        lockfile,
         migrated: lockfile::Migrated::Pnpm,
         serializer_result: Default::default(),
         format: lockfile::Format::Text,
@@ -1348,10 +1350,9 @@ fn declare_folder_dependencies_relative_to_their_package(
 
         for dep_id in rows.begin() as usize..rows.end() as usize {
             let dep = &lockfile.buffers.dependencies[dep_id];
-            if dep.version.tag != VersionTag::Folder {
+            let dependency::Value::Folder(folder) = dep.version.value else {
                 continue;
-            }
-            let folder = *dep.version.folder();
+            };
 
             literal.clear();
             literal.extend_from_slice(b"file:");
@@ -1958,13 +1959,8 @@ fn update_package_json_after_migration(
         return Ok(());
     }
 
-    // The spliced-in nodes live in `bump` and the AST store, so the cache entry is reprinted to own
-    // its tree.
-    print_package_json_into_cache_entry(root_pkg_json, json);
-    if let Err(err) = root_pkg_json.reparse_root(log) {
-        bun_core::pretty_errorln!("package.json failed to parse due to error {}", err.name());
-        Global::crash();
-    }
+    // The spliced-in nodes live in `bump` and the AST store: the cache entry must own its tree.
+    save_entry(root_pkg_json, json, log);
 
     package_json_write_back::record_migrated(manager, WorkspaceTarget::root(), copied);
 

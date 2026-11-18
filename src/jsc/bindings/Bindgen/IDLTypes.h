@@ -3,6 +3,7 @@
 #include "Bindgen/JSStringUTF8View.h"
 // WebCore's. In quotes it would be this file.
 #include <IDLTypes.h>
+#include <JavaScriptCore/ArgList.h>
 #include <concepts>
 #include <cstddef>
 #include <span>
@@ -25,8 +26,12 @@ struct IDLRawAny : WebCore::IDLType<JSC::JSValue> {
     static JSC::JSValue nullValue() { return {}; }
 };
 
+// An argument and every one after it, read in place from the call frame.
+struct IDLVariadicArguments : WebCore::IDLType<JSC::ArgList> {};
+
 // For use in unions, to represent a nullable union.
 struct IDLStrictNull : WebCore::IDLType<std::nullptr_t> {};
+struct IDLStrictUndefined : WebCore::IDLType<std::nullptr_t> {};
 
 // Treats all falsy values as null.
 template<typename IDL>
@@ -36,6 +41,14 @@ struct IDLFalsyAsNull : WebCore::IDLNullable<IDL> {};
 template<typename IDL>
 struct IDLEmptyStringAsNull : WebCore::IDLNullable<IDL> {};
 
+// Treats every value that IDL does not take as null.
+template<typename IDL>
+struct IDLOtherAsNull : WebCore::IDLNullable<IDL> {};
+
+// Treats the empty value, which stands for an argument the call does not have, as null.
+template<typename IDL>
+struct IDLIfPassed : WebCore::IDLNullable<IDL> {};
+
 enum class AllowBigInt : bool {
     No,
     Yes,
@@ -44,6 +57,8 @@ enum class AllowBigInt : bool {
 template<std::integral T, AllowBigInt = AllowBigInt::No>
 struct IDLStrictInteger : WebCore::IDLInteger<T> {};
 struct IDLStrictDouble : WebCore::IDLUnrestrictedDouble {};
+// A Date is its time value.
+struct IDLStrictDoubleOrDate : WebCore::IDLUnrestrictedDouble {};
 // Converts to a numeric first. A BigInt is the double nearest to it.
 struct IDLLooseDoubleOrBigInt : WebCore::IDLUnrestrictedDouble {};
 struct IDLStrictBoolean : WebCore::IDLBoolean {};
@@ -83,6 +98,12 @@ struct IDLArrayBufferRef : IDLRef<JSC::ArrayBuffer> {};
 // Defined in IDLConvertBlob.h
 struct IDLBlobRef;
 
+// The pointer that `JSValue::then` in Rust gave a promise reaction as its context: `JSValue::from_ptr_address`, a double.
+struct IDLPromisePtr : WebCore::IDLType<void*> {};
+
+// The NativePromiseContext cell that a promise reaction was given as its context, as what `take()` returns.
+struct IDLNativePromiseContext : WebCore::IDLType<void*> {};
+
 // A dictionary that holds a raw `JSValue` or a `JSStringUTF8View`. Its struct is WTF_FORBID_HEAP_ALLOCATION.
 template<typename T>
 struct IDLStackOnlyDictionary : WebCore::IDLType<T> {
@@ -106,6 +127,15 @@ struct IDLStrictUTF8String : WebCore::IDLType<JSStringUTF8View> {
 struct IDLLooseUTF8String : IDLStrictUTF8String {};
 // The values IDLStrictUTF8String takes, as the WTF::String.
 struct IDLStrictStringOrStringObject : WebCore::IDLDOMString {};
+
+// Bytes that C++ passes to Rust. Nothing converts a JS value to it.
+struct IDLByteSpan : WebCore::IDLType<std::span<const uint8_t>> {};
+
+// The characters of a string where they are: no reference is taken, and those of a substring stay in its base.
+template<bool allowStringObject>
+struct IDLStringView : WebCore::IDLType<JSC::GCOwnedDataScope<WTF::StringView>> {
+    using SequenceStorageType = void;
+};
 
 // `b.bytes`: which values it takes.
 struct BytesOptions {
@@ -137,6 +167,20 @@ struct IDLRawBufferSource : IDLRawAny {};
 // A function, or a proxy of one, as the `JSValue` itself. See IDLRawAny.
 struct IDLRawCallable : IDLRawAny {};
 
+// A string as the cell itself. The caller's frame keeps it alive.
+struct IDLRawString : WebCore::IDLType<JSC::JSString*> {
+    using SequenceStorageType = void;
+    using NullableType = JSC::JSString*;
+    using NullableInnerParameterType = JSC::JSString*;
+    static JSC::JSString* nullValue() { return nullptr; }
+};
+
+// An object as the `JSValue` itself. See IDLRawAny.
+struct IDLRawObject : IDLRawAny {};
+
+// An array as the `JSValue` itself. See IDLRawAny.
+struct IDLRawArray : IDLRawAny {};
+
 // An instance of a generated class, as the cell itself. The caller's frame keeps it alive.
 template<typename JSClass>
 struct IDLRawInterface : WebCore::IDLType<JSClass*> {
@@ -146,7 +190,7 @@ struct IDLRawInterface : WebCore::IDLType<JSClass*> {
     static JSClass* nullValue() { return nullptr; }
 };
 
-// An instance of a class of a `.classes.ts` file, as what it wraps. The caller's frame keeps the cell alive.
+// An instance of a `refCounted` class, as what it wraps. The caller's frame keeps the cell alive.
 template<typename JSClass, auto name>
 struct IDLWrappedInterface : WebCore::IDLType<void*> {
     using SequenceStorageType = void;

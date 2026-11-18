@@ -1,117 +1,59 @@
 //! JSC host fns for `bun_install::npm`, kept here so that `install/` has
-//! no `JSValue`/`JSGlobalObject`/`CallFrame` references.
+//! no `JSValue`/`JSGlobalObject` references.
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _};
+use bun_core::Utf8Bytes;
+use bun_jsc::bindgen::{self, JsHeap};
 
-pub fn operating_system_is_match(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+use crate::generated_bindgen::npm_jsc::PackageManifest;
+
+pub(crate) fn operating_system_is_match(names: Vec<Utf8Bytes<'static>>) -> bool {
     use bun_install::npm;
-    let [arg] = frame.arguments_as_array::<1>();
     let mut operating_system = npm::OperatingSystem::NONE.negatable();
-    let mut iter = arg.array_iterator(global)?;
-    while let Some(item) = iter.next()? {
-        let slice = item.to_utf8(global)?;
-        operating_system.apply(slice.slice());
+    for name in names {
+        operating_system.apply(name.slice());
     }
-    Ok(JSValue::js_boolean(
-        operating_system
-            .combine()
-            .is_match(npm::OperatingSystem::CURRENT),
-    ))
+    operating_system
+        .combine()
+        .is_match(npm::OperatingSystem::CURRENT)
 }
 
-pub fn architecture_is_match(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn architecture_is_match(names: Vec<Utf8Bytes<'static>>) -> bool {
     use bun_install::npm;
-    let [arg] = frame.arguments_as_array::<1>();
     let mut architecture = npm::Architecture::NONE.negatable();
-    let mut iter = arg.array_iterator(global)?;
-    while let Some(item) = iter.next()? {
-        let slice = item.to_utf8(global)?;
-        architecture.apply(slice.slice());
+    for name in names {
+        architecture.apply(name.slice());
     }
-    Ok(JSValue::js_boolean(
-        architecture.combine().is_match(npm::Architecture::CURRENT),
-    ))
+    architecture.combine().is_match(npm::Architecture::CURRENT)
 }
 
-/// Free-fn alias of [`ManifestBindings::generate`] so `bun_runtime::dispatch::js2native`
-/// can `pub use` it (associated fns aren't importable items).
-#[inline]
-pub fn package_manifest_bindings_generate(global: &JSGlobalObject) -> JSValue {
-    ManifestBindings::generate(global)
-}
-
-/// Formerly `npm.PackageManifest.bindings` — testing-only (`internal-for-testing.ts`).
-pub(crate) struct ManifestBindings;
-
-impl ManifestBindings {
-    pub(crate) fn generate(global: &JSGlobalObject) -> JSValue {
-        use bun_jsc::JSFunction;
-        let obj = JSValue::create_empty_object(global, 1);
-        obj.put(
-            global,
-            b"parseManifest",
-            JSFunction::create(
-                global,
-                "parseManifest",
-                // `#[bun_jsc::host_fn]` on the module-scope `js_parse_manifest`
-                // emits this `JSHostFn`-ABI shim.
-                __jsc_host_js_parse_manifest,
-                2,
-                Default::default(),
-            ),
-        );
-        obj
-    }
-}
-
-// Lives at module scope (not `impl ManifestBindings`) because the
-// `#[bun_jsc::host_fn]` Free-kind shim body emits `#fn_name(__g, __f)` without
-// a `Self::` qualifier, so the wrapped fn must resolve unqualified.
-#[bun_jsc::host_fn]
-fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn parse_manifest<'a>(
+    heap: &JsHeap<'a>,
+    manifest_filename: &[u8],
+    registry: &[u8],
+) -> bindgen::Result<'a, PackageManifest> {
     use bstr::BStr;
-    use bun_core::String as BunString;
     use bun_install::npm;
-    use bun_jsc::JsError;
-    use std::io::Write as _;
 
-    let args = frame.arguments();
-    if args.len() < 2 || !args[0].is_string() || !args[1].is_string() {
-        return Err(global.throw(format_args!(
-            "expected manifest filename and registry string arguments"
-        )));
-    }
-
-    let manifest_filename_str = args[0].to_bun_string(global)?;
-    let manifest_filename = manifest_filename_str.to_utf8();
-
-    let registry_str = args[1].to_bun_string(global)?;
-    let registry = registry_str.to_utf8();
-
-    let manifest_file = match bun_sys::openat_a(
-        bun_sys::Fd::cwd(),
-        manifest_filename.slice(),
-        bun_sys::O::RDONLY,
-        0,
-    ) {
-        Ok(fd) => bun_sys::File::from_fd(fd),
-        Err(err) => {
-            return Err(global.throw(format_args!(
-                "failed to open manifest file \"{}\": {}",
-                BStr::new(manifest_filename.slice()),
-                BStr::new(err.name()),
-            )));
-        }
-    };
+    let manifest_file =
+        match bun_sys::openat_a(bun_sys::Fd::cwd(), manifest_filename, bun_sys::O::RDONLY, 0) {
+            Ok(fd) => bun_sys::File::from_fd(fd),
+            Err(err) => {
+                return Err(heap.error(format_args!(
+                    "failed to open manifest file \"{}\": {}",
+                    BStr::new(manifest_filename),
+                    BStr::new(err.name()),
+                )));
+            }
+        };
 
     let mut scope = npm::registry::Scope::default();
-    scope.set_url(Box::from(registry.slice()));
+    scope.set_url(Box::from(registry));
 
     let maybe_package_manifest =
         match npm::package_manifest::Serializer::load_by_file(&scope, &manifest_file) {
             Ok(m) => m,
             Err(err) => {
-                return Err(global.throw(format_args!(
+                return Err(heap.error(format_args!(
                     "failed to load manifest file: {}",
                     BStr::new(err.name())
                 )));
@@ -121,38 +63,22 @@ fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
     let package_manifest: npm::PackageManifest = match maybe_package_manifest {
         Some(m) => m,
         None => {
-            return Err(global.throw(format_args!("manifest is invalid ")));
+            return Err(heap.error(format_args!("manifest is invalid ")));
         }
     };
 
-    let mut buf: Vec<u8> = Vec::new();
-
     // TODO: we can add more information. for now just versions is fine
-
-    write!(
-        &mut buf,
-        "{{\"name\":\"{}\",\"versions\":[",
-        BStr::new(package_manifest.name()),
-    )
-    .map_err(|_| JsError::OutOfMemory)?;
-
-    for (i, version) in package_manifest.versions.iter().enumerate() {
-        if i == package_manifest.versions.len() - 1 {
-            write!(
-                &mut buf,
-                "\"{}\"]}}",
-                version.fmt(&package_manifest.string_buf),
-            )
-            .map_err(|_| JsError::OutOfMemory)?;
-        } else {
-            write!(
-                &mut buf,
-                "\"{}\",",
-                version.fmt(&package_manifest.string_buf),
-            )
-            .map_err(|_| JsError::OutOfMemory)?;
-        }
-    }
-
-    BunString::borrow_utf8(&buf).to_js_by_parse_json(global)
+    Ok(PackageManifest {
+        name: package_manifest.name().to_vec(),
+        versions: package_manifest
+            .versions
+            .iter()
+            .map(|version| {
+                version
+                    .fmt(&package_manifest.string_buf)
+                    .to_string()
+                    .into_bytes()
+            })
+            .collect(),
+    })
 }

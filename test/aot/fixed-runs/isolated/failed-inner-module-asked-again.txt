@@ -1,0 +1,29 @@
+The rethrowing __esm helper of a bundler: every ask for an inner module that failed throws the same error again, also through another inner module.
+Over layers the failed module was taken out of the program like a file, and the next ask read a file under its number: a BuildMessage for the kept error.
+#### a.test.js
+import { test, expect } from "bun:test";
+import "./subject.mjs";
+test("subject", () => { expect(1).toBe(1); });
+#### package.json
+{ "name": "p", "type": "module" }
+#### subject.mjs
+const root = typeof globalThis !== "undefined" ? globalThis : undefined;
+var __esm = (fn, res, err) => () => {
+  if (fn)
+    try {
+      res = fn((fn = 0));
+    } catch (e) {
+      err = [e];
+    }
+  if (err) throw err[0];
+  return res;
+};
+var init_opt = __esm(() => { const e = new Error("Cannot find module 'fast-path'"); e.code = "MODULE_NOT_FOUND"; throw e; });
+var init_user = __esm(() => { init_opt(); });
+let a, b, c, d;
+try { a = "returned " + typeof init_user(); } catch (e) { a = e; }
+try { b = "returned " + typeof init_user(); } catch (e) { b = e; }
+try { c = "returned " + typeof init_opt(); } catch (e) { c = e; }
+try { d = "returned " + typeof init_opt(); } catch (e) { d = e; }
+const say = x => typeof x === "string" ? x : x.constructor.name + " " + x.code;
+console.log("| CASE", say(a), "|", say(b), "|", say(c), "|", say(d), "|", a === b, b === c, c === d);

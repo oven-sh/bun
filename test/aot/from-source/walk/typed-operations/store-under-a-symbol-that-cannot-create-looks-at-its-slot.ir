@@ -1,0 +1,20 @@
+# -- source: store-under-a-symbol-that-cannot-create-looks-at-its-slot.ts
+# declare function report(value: unknown): void;
+# const kRequest = Symbol("request");
+# interface Connection { open: boolean; [kRequest]: object | undefined; }
+# function make() {
+#   class Socket implements Connection { open = true; declare [kRequest]: object | undefined; }
+#   function serve(socket: Socket, request: object | undefined) { socket[kRequest] = request; }
+#   return { Socket, serve };
+# }
+# report(make());
+# report(make());
+# -- end of source
+# f1 = make, f2 = serve
+# `make()` runs twice, so the class may be evaluated again, nobody answers for what stands above its objects, and no typed store may create a property.
+# The type that the class implements requires the symbol, so its slot is reserved in the cell, and a socket serves many requests: from the first store on the slot is filled.
+# A store into a filled slot asks nothing of what stands above: the slot is looked at, and behind the look the store is one instruction. An empty slot goes the closed way. One store alone: one operation makes all the tests.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: PutSlot {{*}}key=symbol("request"){{*}} receivers=[L0] level=Expected
+# CHECK-NOT: PutSlotOrAdd

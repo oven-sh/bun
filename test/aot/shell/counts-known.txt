@@ -1,0 +1,1 @@
+# Programs whose counts quick.py does not hold today: on which processor (x64, arm64 or both), and what they say.

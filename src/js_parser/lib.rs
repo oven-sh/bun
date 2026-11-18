@@ -26,14 +26,18 @@ pub mod scan;
 pub mod typescript;
 pub mod visit;
 
+pub use lower::import_meta_glob::*;
 pub use p::P;
-pub use parse::parse_entry::{Options as ParserOptions, Parser};
+pub use parse::parse_entry::{
+    CacheLookup, Options as ParserOptions, ParsedForCache, Parser, TranspilerCache,
+};
 
-// Full impl lives in *_jsc; this stub re-exposes the JSC-free constants and a
-// placeholder `MacroContext` so lower-tier crates (bundler, transpiler) that
-// only need the namespace strings / a context handle stay unblocked.
+// The part of macros that needs no JSC. The rest is in `bun_js_parser_jsc::Macro`.
 #[allow(non_snake_case)]
 pub mod Macro {
+    use bun_collections::{ArrayHashMap, StringArrayHashMap};
+    use core::cell::RefCell;
+
     pub const NAMESPACE: &[u8] = b"macro";
     pub const NAMESPACE_WITH_COLON: &[u8] = b"macro:";
 
@@ -61,52 +65,50 @@ pub mod Macro {
         }
     }
 
-    /// Lower-tier handle for `js_parser_jsc::Macro::MacroContext`.
-    ///
-    /// Real fields (`env`, `macros`, `remap`, `resolver`, `bump`) reference
-    /// `Transpiler` and JSC types that live in crates which depend on
-    /// `bun_js_parser`. To break the dep cycle the higher-tier `_jsc` crate
-    /// owns that state behind `data`; the visit pass reaches it via
-    /// link-time-resolved `extern "Rust"` fns so `visitExpr.rs` avoids an
-    /// upward import. `javascript_object` is surfaced here so
-    /// `Transpiler::parse` can thread `this_parse.macro_js_ctx` through
-    /// without this crate depending on `bun_jsc::JSValue`.
-    pub struct MacroContext {
+    #[derive(Clone, Copy)]
+    pub enum MacroLoadState {
+        /// The load failed or has not finished.
+        Disabled,
+        Loaded,
+    }
+
+    /// Keyed by `MacroEntryPoint::generate_id`. A macro can start a nested parse that uses the same table.
+    #[derive(Default)]
+    pub struct MacroLoadStates(RefCell<ArrayHashMap<i32, MacroLoadState>>);
+    impl MacroLoadStates {
+        pub fn get(&self, id: i32) -> Option<MacroLoadState> {
+            self.0.borrow().get(&id).copied()
+        }
+
+        pub fn set(&self, id: i32, state: MacroLoadState) {
+            self.0.borrow_mut().insert(id, state);
+        }
+
+        pub fn clear(&self) {
+            self.0.borrow_mut().clear();
+        }
+
+        pub fn replace(&self, states: Self) -> Self {
+            self.0.swap(&states.0);
+            states
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    pub struct MacroContext<'a> {
+        /// A `bun_bundler::Transpiler`, which this crate cannot name.
+        transpiler: *mut (),
+        pub macro_load_states: &'a MacroLoadStates,
         /// Encoded `JSC.JSValue` (the caller-supplied macro JS context).
         /// `bun_js_parser_jsc` reinterprets the bits as a `JSValue`.
         pub javascript_object: MacroJSCtx,
-        /// Opaque pointer to the higher-tier macro-runner state
-        /// (resolver/env/macros/remap/bump). Allocated by `init` and leaked
-        /// (process lifetime); `bun_js_parser` never dereferences it.
-        pub data: *mut core::ffi::c_void,
     }
-    impl Default for MacroContext {
-        #[inline]
-        fn default() -> Self {
-            Self {
-                javascript_object: MacroJSCtx::ZERO,
-                data: core::ptr::null_mut(),
-            }
-        }
-    }
+
+    // Defined `#[no_mangle]` in `bun_js_parser_jsc::Macro`.
     unsafe extern "Rust" {
-        /// Defined `#[no_mangle]` in `bun_js_parser_jsc::Macro`. `transpiler`
-        /// is `*mut bun_bundler::Transpiler<'_>` — erased because this crate
-        /// cannot name it (dep-cycle).
-        // NOT `safe fn`: callee derefs `transpiler` as `&mut Transpiler<'_>` —
-        // caller must guarantee it is non-null, exclusively borrowed, and of
-        // that exact concrete type.
-        fn __bun_macro_context_init(transpiler: *mut core::ffi::c_void) -> MacroContext;
-        // NOT `safe fn`: when non-null, `data` must be the exact `Box::into_raw`
-        // value produced by `__bun_macro_context_init` and uniquely owned
-        // (callee `Box::from_raw`s it → double-free / aliasing UB otherwise).
-        fn __bun_macro_context_deinit(data: *mut core::ffi::c_void);
-        // All args are safe Rust-ABI types (refs/slices/by-value); the only
-        // raw pointer involved is `ctx.data`, which is a struct invariant
-        // maintained by `init`/`Default` — not a caller precondition. The
-        // `#[no_mangle]` body in `bun_js_parser_jsc` is itself a safe `pub fn`.
         safe fn __bun_macro_context_call(
-            ctx: &mut MacroContext,
+            ctx: MacroContext<'_>,
+            arena: &bun_alloc::Arena,
             import_record_path: &[u8],
             source_dir: &[u8],
             log: &mut bun_ast::Log,
@@ -115,35 +117,44 @@ pub mod Macro {
             caller: bun_ast::Expr,
             function_name: &[u8],
         ) -> Result<bun_ast::Expr, crate::Error>;
-        // NOT `safe fn`: callee derefs `data` unconditionally as
-        // `&MacroContext` — caller must guarantee non-null + produced by
-        // `__bun_macro_context_init` + the backing `Transpiler.options` table
-        // outlives the returned `'static` borrow.
-        fn __bun_macro_context_get_remap(
-            data: *mut core::ffi::c_void,
-            path: &[u8],
-        ) -> Option<&'static MacroRemapEntry>;
-        // No raw-pointer args; the body is a safe `pub fn` in
-        // `bun_js_parser_jsc`. See [`collect_vm_garbage`] for the call-site
-        // contract.
+        // See [`collect_vm_garbage`] for the call-site contract.
         safe fn __bun_macro_collect_vm_garbage();
     }
 
     /// Sweep this thread's bundler-macro VM so JS-wrapper-owned native boxes
     /// (e.g. a `new Bun.Transpiler()` constructed inside a macro body) are
     /// finalized before the worker thread's TLS root vanishes. Only call from
-    /// `bun_bundler::ThreadPool::Worker::deinit` after both per-worker
-    /// `MacroContext` boxes are freed — every other `MacroContext::deinit`
-    /// path is either inside JS execution or inside a GC sweep, where
-    /// re-entering `run_gc(true)` is unsound.
+    /// `bun_bundler::ThreadPool::Worker::drop`, not inside JS execution or a
+    /// GC sweep, where re-entering `run_gc(true)` is unsound.
     #[inline]
     pub fn collect_vm_garbage() {
         __bun_macro_collect_vm_garbage();
     }
-    impl MacroContext {
+    impl<'a> MacroContext<'a> {
+        /// # Safety
+        /// `transpiler` is a `bun_bundler::Transpiler` that is live for `'a`, and nothing else
+        /// uses its resolver, or writes to its options, at the time the parser calls a macro.
+        pub unsafe fn new(
+            transpiler: *mut (),
+            macro_load_states: &'a MacroLoadStates,
+            javascript_object: MacroJSCtx,
+        ) -> Self {
+            Self {
+                transpiler,
+                macro_load_states,
+                javascript_object,
+            }
+        }
+
+        pub fn transpiler(self) -> *mut () {
+            self.transpiler
+        }
+
+        /// The strings of the result are in `arena`.
         #[inline]
         pub(crate) fn call(
-            &mut self,
+            self,
+            arena: &'a bun_alloc::Arena,
             import_record_path: &[u8],
             source_dir: &[u8],
             log: &mut bun_ast::Log,
@@ -154,6 +165,7 @@ pub mod Macro {
         ) -> Result<bun_ast::Expr, crate::Error> {
             __bun_macro_context_call(
                 self,
+                arena,
                 import_record_path,
                 source_dir,
                 log,
@@ -163,55 +175,10 @@ pub mod Macro {
                 function_name,
             )
         }
-        /// `T` is always `bun_bundler::Transpiler<'_>`; generic so callers in
-        /// `bun_bundler`/`bun_runtime` compile without `bun_js_parser` taking
-        /// an upward dep on the bundler. The `_jsc` crate reads the concrete
-        /// type back inside `__bun_macro_context_init`.
-        #[inline]
-        pub fn init<T>(transpiler: &mut T) -> Self {
-            // SAFETY: `transpiler` is a live `&mut T` (exclusive, non-null,
-            // aligned) for the duration of the call; the callee casts it back to
-            // `&mut Transpiler<'_>` and only reads/borrows fields — it does not
-            // retain the pointer past return (the boxed state it allocates owns
-            // its own data).
-            unsafe {
-                __bun_macro_context_init(
-                    core::ptr::from_mut(transpiler).cast::<core::ffi::c_void>(),
-                )
-            }
-        }
-        /// Free the boxed higher-tier state behind `data`. Only call when the
-        /// owning `Transpiler` is a short-lived bytewise clone (e.g. the
-        /// off-thread `RuntimeTranspilerStore` worker) — the long-lived
-        /// `vm.transpiler` instance leaks it intentionally (process-lifetime).
-        #[inline]
-        pub fn deinit(self) {
-            // SAFETY: `self.data` is either null (callee no-ops) or the exact
-            // `Box::into_raw` produced by `__bun_macro_context_init`; `self` is
-            // taken by value so this is the unique owner and no double-free is
-            // possible.
-            unsafe { __bun_macro_context_deinit(self.data) }
-        }
-        /// Returns `'static` so callers can keep the result across `&mut self`
-        /// parser calls without a borrowck conflict; the table lives in
-        /// `Transpiler.options` which outlives every parse.
-        #[inline]
-        pub(crate) fn get_remap(&self, path: &[u8]) -> Option<&'static MacroRemapEntry> {
-            if self.data.is_null() {
-                return None;
-            }
-            // SAFETY: `self.data` is non-null (checked above) and was produced by
-            // `__bun_macro_context_init`, so it points at a live `Macro::Data`
-            // whose remap table the callee borrows. The table is owned by
-            // `Transpiler.options` (process-lifetime), justifying the `'static`
-            // return.
-            unsafe { __bun_macro_context_get_remap(self.data, path) }
-        }
     }
 
-    /// Values are owned (`Box<[u8]>`) so callers can populate without `unsafe`
-    /// lifetime-extension casts; matches `bun_resolver::package_json::MacroImportReplacementMap`.
-    pub type MacroRemapEntry = bun_collections::StringArrayHashMap<Box<[u8]>>;
+    /// Matches `bun_resolver::package_json::MacroMap`.
+    pub type MacroRemap = StringArrayHashMap<StringArrayHashMap<Box<[u8]>>>;
 }
 use bun_ast::{Ast, Ref};
 
@@ -357,6 +324,7 @@ pub mod defines {
         }
     }
 
+    /// Threads share it only through the read-only `Box<Define>`, and the `StoreRef`s in `value` point into immutable, process-lifetime AST stores.
     #[derive(Clone)]
     pub struct DefineData {
         pub value: ExprData,
@@ -369,14 +337,6 @@ pub mod defines {
         pub original_name: Option<Box<[u8]>>,
         pub flags: Flags,
     }
-
-    // SAFETY: `ExprData` contains `StoreRef` raw pointers into immutable,
-    // process-lifetime AST stores. `DefineData` is only shared across threads
-    // via the read-only `Box<Define>` after init. Never written through.
-    unsafe impl Send for DefineData {}
-    // SAFETY: see `Send` impl above — the `StoreRef` targets are immutable and
-    // process-lifetime, and `DefineData` is read-only after init.
-    unsafe impl Sync for DefineData {}
 
     impl Default for DefineData {
         fn default() -> Self {
@@ -448,7 +408,7 @@ pub mod defines {
             self.flags.method_call_must_be_replaced_with_undefined()
         }
         #[inline]
-        pub(crate) fn valueless(&self) -> bool {
+        pub fn valueless(&self) -> bool {
             self.flags.valueless()
         }
 
@@ -535,6 +495,64 @@ pub mod defines {
     }
 
     impl Define {
+        /// A table with only the globals that are known to have no side effects.
+        pub fn with_pure_globals(
+            drop_debugger: bool,
+            omit_unused_global_calls: bool,
+        ) -> Box<Define> {
+            use crate::defines_table::{
+                GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING,
+                GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES,
+            };
+            let mut define = Box::new(Define {
+                drop_debugger,
+                ..Default::default()
+            });
+            define.dots.reserve(124);
+
+            let value_define = DefineData::init(Options {
+                value: ExprData::EUndefined(E::Undefined),
+                valueless: true,
+                can_be_removed_if_unused: true,
+                ..Default::default()
+            });
+            for global in GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES.iter() {
+                define.insert_global(global, &value_define);
+            }
+
+            let to_string_safe = DefineData::init(Options {
+                value: ExprData::EUndefined(E::Undefined),
+                valueless: true,
+                can_be_removed_if_unused: true,
+                call_can_be_unwrapped_if_unused: E::CallUnwrap::IfUnusedAndToStringSafe,
+                ..Default::default()
+            });
+            let call_define = if omit_unused_global_calls {
+                &to_string_safe
+            } else {
+                &value_define
+            };
+            for global in GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING.iter() {
+                define.insert_global(global, call_define);
+            }
+            define
+        }
+
+        fn insert_global(&mut self, global: &[&[u8]], value_define: &DefineData) {
+            let key = global[global.len() - 1];
+            let parts: Vec<Box<[u8]>> = global.iter().map(|p| Box::<[u8]>::from(*p)).collect();
+            self.dots_filter.insert(key);
+            let dot_define = DotDefine {
+                parts,
+                data: value_define.clone(),
+            };
+            if let Some(existing) = self.dots.get_mut(key) {
+                existing.push(dot_define);
+            } else {
+                self.dots.put_assume_capacity(key, vec![dot_define]);
+            }
+        }
+
         /// The dot defines whose last part is `name` (`NODE_ENV` for
         /// `process.env.NODE_ENV`).
         #[inline]

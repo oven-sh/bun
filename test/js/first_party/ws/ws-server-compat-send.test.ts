@@ -558,10 +558,41 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
       expect(await store).toBe("the sender's");
     });
 
-    // send() flushes queued data first, so a later send() can be the first to notice that backpressure cleared. The
-    // client reads from another process because this one never returns to its event loop. npm ws only writes from the
-    // event loop.
-    test.skipIf(!builtin)("send() callbacks fire in call order after backpressure clears", async () => {
+    // terminate() fails the callbacks that wait, from its own call. They still belong to the calls that passed them.
+    test.skipIf(!builtin)(
+      "terminate() inside an AsyncLocalStorage store doesn't pass it to the callbacks of buffered sends",
+      async () => {
+        await using server = await openServer(implementation);
+        const { ws, client } = server;
+        client.socket.pause();
+        shrinkBuffers({ sender: ws, receiver: client.socket });
+        const storage = new AsyncLocalStorage<string>();
+        const calls: string[][] = [];
+        const { promise: done, resolve } = Promise.withResolvers<void>();
+        const callback =
+          (call: string) =>
+          (...args: unknown[]) => {
+            const shown = args.map(arg => (arg instanceof Error ? "Error" : show(arg))).join(", ");
+            if (calls.push([call, shown, storage.getStore() ?? "no store"]) === 4) resolve();
+          };
+        ws.send(Buffer.alloc(MiB), callback("send"));
+        expect(ws.bufferedAmount).toBeGreaterThan(0);
+        ws.ping("a", undefined, callback("ping"));
+        ws.pong("b", undefined, callback("pong"));
+        storage.run("the sender's", () => ws.send("c", callback("send")));
+        storage.run("the terminator's", () => ws.terminate());
+        await done;
+        expect(calls).toEqual([
+          ["send", "Error", "no store"],
+          ["ping", "Error", "no store"],
+          ["pong", "Error", "no store"],
+          ["send", "Error", "the sender's"],
+        ]);
+      },
+    );
+
+    /** Runs `use` with a server socket whose client reads from another process, for a test that blocks its event loop. */
+    async function withReaderProcess(use: (ws: Socket) => Promise<void>) {
       const wss = new implementation.WebSocketServer({ port: 0, host: "127.0.0.1" });
       await once(wss, "listening");
       await using reader = Bun.spawn({
@@ -578,6 +609,18 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
       });
       try {
         const [ws] = (await once(wss, "connection")) as [Socket];
+        await use(ws);
+      } finally {
+        for (const client of wss.clients) client.terminate();
+        wss.close();
+      }
+    }
+
+    // send() flushes queued data first, so a later send() can be the first to notice that backpressure cleared. The
+    // client reads from another process because this one never returns to its event loop. npm ws only writes from the
+    // event loop.
+    test.skipIf(!builtin)("send() callbacks fire in call order after backpressure clears", () =>
+      withReaderProcess(async ws => {
         const order: number[] = [];
         const { promise: done, resolve } = Promise.withResolvers<void>();
         let calls = 0;
@@ -598,11 +641,44 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
         }
         await done;
         expect(order).toEqual(Array.from({ length: calls }, (_, call) => call));
-      } finally {
-        for (const client of wss.clients) client.terminate();
-        wss.close();
-      }
-    });
+      }),
+    );
+
+    // That later send() runs the callbacks of the earlier ones from its own call. They still belong to their own calls.
+    test.skipIf(!builtin)(
+      "a send() that notices that backpressure cleared runs earlier callbacks in the AsyncLocalStorage store of their call",
+      () =>
+        withReaderProcess(async ws => {
+          const storage = new AsyncLocalStorage<string>();
+          const stores: string[] = [];
+          const { promise: done, resolve } = Promise.withResolvers<void>();
+          let calls = 0;
+          let ran = 0;
+          const send = (data: Buffer) => {
+            const call = calls++;
+            ws.send(data, (...args) => {
+              stores[call] = `${args.map(show).join(", ")} in ${storage.getStore() ?? "no store"}`;
+              if (++ran === calls) resolve();
+            });
+          };
+          shrinkBuffers({ sender: ws });
+          while (ws.bufferedAmount === 0 && calls < 32) send(Buffer.alloc(MiB));
+          expect(ws.bufferedAmount).toBeGreaterThan(0);
+          const outsideEveryStore = calls;
+          const oneByte = Buffer.alloc(1);
+          for (let attempts = 0; ws.bufferedAmount > 0; attempts++) {
+            if (attempts === 10_000) throw new Error("the client isn't reading");
+            Bun.sleepSync(1);
+            storage.run("a later sender's", () => send(oneByte));
+          }
+          await done;
+          expect(stores).toEqual(
+            Array.from({ length: calls }, (_, call) =>
+              call < outsideEveryStore ? "null in no store" : "null in a later sender's",
+            ),
+          );
+        }),
+    );
 
     // Bun.serve() drops messages once 16 MiB is buffered. A `ws` socket has no such limit.
     test("queues messages and callbacks past 16 MiB, then delivers each message once, in order", async () => {

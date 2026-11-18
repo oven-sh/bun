@@ -40,6 +40,9 @@ type PrivateLoweredMap = HashMap<u32, PrivateLoweredInfo>;
 struct LoweredClass {
     /// `var` statement for the temporaries the class body now refers to.
     temps: Option<Stmt>,
+    /// `let` statement for `inner_class_ref`. Block scoped, so that a class
+    /// evaluated in a loop gets a fresh binding each time.
+    inner_binding: Option<Stmt>,
     class_decorators: Option<ClassDecorators>,
 }
 
@@ -102,7 +105,8 @@ fn initializer_group(prop: &Property) -> Option<usize> {
 }
 
 /// Puts `inserted` in `constructor` right after a top-level `super()`
-/// statement returns, which is after the last instance field.
+/// statement returns, which is after the last instance field. Without
+/// one, `inserted` goes after the directive prologue.
 fn insert_after_super<'a>(
     constructor: &mut Property,
     inserted: &[Stmt],
@@ -116,7 +120,7 @@ fn insert_after_super<'a>(
     let after_super = body
         .iter()
         .position(|stmt| stmt.is_super_call())
-        .map_or(0, |i| i + 1);
+        .map_or_else(|| crate::visit::leading_directive_count(body), |i| i + 1);
     let mut stmts = BumpVec::<'a, Stmt>::with_capacity_in(body.len() + inserted.len(), arena);
     stmts.extend_from_slice(&body[..after_super]);
     stmts.extend_from_slice(inserted);
@@ -192,7 +196,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    fn bump_name3(&self, a: &[u8], b: &[u8], c: &[u8]) -> &'a [u8] {
+    pub(crate) fn bump_name3(&self, a: &[u8], b: &[u8], c: &[u8]) -> &'a [u8] {
         let mut v = BumpVec::<u8>::with_capacity_in(a.len() + b.len() + c.len(), self.arena);
         v.extend_from_slice(a);
         v.extend_from_slice(b);
@@ -564,8 +568,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// Declare receiver-capture temporaries created past `temps_before` at the
-    /// top of the function body they were created in, so each invocation gets
-    /// a fresh binding. A binding hoisted outside the function would be shared
+    /// top of the function body they were created in (after its directive
+    /// prologue), so each invocation gets a fresh binding. A binding hoisted outside the function would be shared
     /// across invocations, and `__privateGet(_obj = recv, _s, getter)` runs the
     /// user getter between the write and the `.call(_obj)` read; re-entering
     /// the same call site through that getter would clobber the shared temp.
@@ -579,9 +583,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return stmts;
         };
         let old_stmts = stmts.slice();
+        let prologue_len = crate::visit::leading_directive_count(old_stmts);
         let mut new_stmts = BumpVec::<Stmt>::with_capacity_in(old_stmts.len() + 1, self.arena);
+        new_stmts.extend_from_slice(&old_stmts[..prologue_len]);
         new_stmts.push(decl_stmt);
-        new_stmts.extend_from_slice(old_stmts);
+        new_stmts.extend_from_slice(&old_stmts[prologue_len..]);
         js_ast::StmtNodeList::from_bump(new_stmts)
     }
 
@@ -752,6 +758,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
         let lowered = self.lower_class_body(&mut s_class.class, stmt.loc, None);
         out.extend(lowered.temps);
+        out.extend(lowered.inner_binding);
         let Some(decorators) = lowered.class_decorators else {
             out.push(stmt);
             return;
@@ -775,21 +782,74 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         name_from_context: Option<&'a [u8]>,
     ) -> Expr {
         let lowered = self.lower_class_body(class, expr.loc, name_from_context);
-        if let Some(decl) = lowered.temps
-            && let Some(stmt_list) = self.nearest_stmt_list_mut()
-        {
-            stmt_list.push(decl);
+        let has_own_stmt_list = !self.is_param_default_or_field_initializer();
+        if let Some(stmt_list) = self.nearest_stmt_list_mut() {
+            stmt_list.extend(lowered.temps);
+            if has_own_stmt_list {
+                stmt_list.extend(lowered.inner_binding);
+            }
         }
         let Some(decorators) = lowered.class_decorators else {
             return expr;
         };
         let decorated = self.use_ref(decorators.decorated, expr.loc);
-        Expr::join_all_with_comma(&[
+        let value = Expr::join_all_with_comma(&[
             decorators.evaluate,
             expr,
             decorators.run_extra_initializers,
             decorated,
-        ])
+        ]);
+        if has_own_stmt_list || !class.inner_class_ref.is_symbol() {
+            return value;
+        }
+
+        // `((_C) => value)()` gives each evaluation its own binding. Neither
+        // position allows `await` or `yield`, which an arrow would break.
+        let binding = self.b(
+            B::Identifier {
+                r#ref: class.inner_class_ref,
+            },
+            expr.loc,
+        );
+        let args = js_ast::StoreSlice::new_mut(self.arena.alloc_slice_fill_iter([G::Arg {
+            binding,
+            ..Default::default()
+        }]));
+        let body = self.s(S::Return { value: Some(value) }, expr.loc);
+        let target = self.new_expr(
+            E::Arrow {
+                args,
+                body: G::FnBody {
+                    loc: expr.loc,
+                    stmts: self.arena.alloc_slice_copy(&[body]).into(),
+                },
+                prefer_expr: true,
+                ..Default::default()
+            },
+            expr.loc,
+        );
+        self.new_expr(
+            E::Call {
+                target,
+                ..Default::default()
+            },
+            expr.loc,
+        )
+    }
+
+    /// Both run once per call or instance, and the nearest statement list is
+    /// outside the function or class they belong to.
+    fn is_param_default_or_field_initializer(&self) -> bool {
+        let mut scope = self.current_scope_ref();
+        loop {
+            match scope.kind {
+                js_ast::scope::Kind::FunctionArgs => return true,
+                // Set for a field's initializer, not for its key or decorators.
+                js_ast::scope::Kind::ClassBody => return scope.forbid_arguments,
+                _ if scope.kind_stops_hoisting() => return false,
+                _ => scope = scope.parent.unwrap(),
+            }
+        }
     }
 
     // ── Core lowering ────────────────────────────────────
@@ -813,8 +873,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let bump = p.arena;
         let temps_before = p.temp_refs_to_declare.len();
 
-        let class_decorators: ExprNodeList = bun_alloc::AstAlloc::take(&mut class.ts_decorators);
-        let has_class_decorators = class_decorators.len_u32() > 0;
+        let class_decorators = core::mem::take(&mut class.ts_decorators);
+        let has_class_decorators = !class_decorators.is_empty();
 
         // `__decorateElement` numbers the initializer lists of accessors and
         // fields in the order it is called: static accessors, instance
@@ -823,7 +883,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut has_member_decorators = false;
         let mut lowered_names: HashMap<u32, ()> = HashMap::default();
         for prop in class.properties.slice() {
-            if prop.ts_decorators.len_u32() == 0 {
+            if prop.ts_decorators.is_empty() {
                 continue;
             }
             has_member_decorators = true;
@@ -880,11 +940,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 js_ast::ExprData::EPrivateIdentifier(private) => Some(private.ref_.inner_index()),
                 _ => None,
             };
-            let decorators: ExprNodeList = bun_alloc::AstAlloc::take(&mut prop.ts_decorators);
+            let decorators = core::mem::take(&mut prop.ts_decorators);
             // An undecorated `accessor #x` behaves like the field `#x`.
             if private_index.is_some()
                 && prop.kind == PropertyKind::AutoAccessor
-                && decorators.len_u32() == 0
+                && decorators.is_empty()
             {
                 prop.kind = PropertyKind::Normal;
             }
@@ -902,11 +962,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             );
             let group = usize::from(!is_static) + if kind == 5 { 2 } else { 0 };
 
-            let dec_ref = if decorators.len_u32() > 0 {
+            let dec_ref = if !decorators.is_empty() {
                 let dec = p.declared_temp(b"_dec");
                 let list = p.new_expr(
                     E::Array {
-                        items: decorators,
+                        items: ExprNodeList::from_arena_slice(&decorators),
                         ..Default::default()
                     },
                     loc,
@@ -1203,7 +1263,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let dec = p.declared_temp(b"_dec");
                 let list = p.new_expr(
                     E::Array {
-                        items: class_decorators,
+                        items: ExprNodeList::from_arena_slice(&class_decorators),
                         ..Default::default()
                     },
                     loc,
@@ -1215,11 +1275,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         .slice(),
                     None => name_from_context.unwrap_or(b""),
                 };
-                let decorated_ref = p.declared_temp(if js_lexer::is_identifier(name) {
-                    p.bump_name3(b"_", name, b"")
+                // A named class has the binding its body reads (`visit_class`).
+                let decorated_ref = if class.inner_class_ref.is_symbol() {
+                    class.inner_class_ref
                 } else {
-                    b"_class"
-                });
+                    p.declared_temp(if js_lexer::is_identifier(name) {
+                        p.bump_name3(b"_", name, b"")
+                    } else {
+                        b"_class"
+                    })
+                };
                 let this = p.new_expr(E::This {}, loc);
                 let name = p.new_expr(E::EString::init(name), loc);
                 let decorated = p.decorate_element(init_ref, 0.0, name, dec, this, None, loc);
@@ -1290,8 +1355,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         class.has_decorators = false;
         class.should_lower_standard_decorators = false;
 
+        let inner_binding = class.inner_class_ref.is_symbol().then(|| {
+            let binding = p.b(
+                B::Identifier {
+                    r#ref: class.inner_class_ref,
+                },
+                loc,
+            );
+            p.s(
+                S::Local {
+                    kind: js_ast::s::Kind::KLet,
+                    decls: DeclList::init_one(G::Decl {
+                        binding,
+                        value: None,
+                    }),
+                    ..Default::default()
+                },
+                loc,
+            )
+        });
+
         LoweredClass {
             temps: p.drain_capture_temp_decls(temps_before, loc),
+            inner_binding,
             class_decorators: class_decorators_result,
         }
     }

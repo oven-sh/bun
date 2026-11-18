@@ -1,0 +1,122 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# let noted: string[] = [];
+# function note(value: unknown): void {
+#     noted.push(String(value));
+# }
+# function all(items: number[]): void {
+#     for (const item of items)
+#         note(item);
+# }
+# function tell(items: number[], stopAt: number, failAt: number): void {
+#     for (const item of items) {
+#         if (item === stopAt)
+#             break;
+#         if (item === failAt)
+#             throw new Error("failed at " + item);
+#         note(item);
+#     }
+# }
+# function grow(items: number[]): void {
+#     for (const item of items) {
+#         if (items.length < 6)
+#             items.push(item + 10);
+#         note(item);
+#     }
+# }
+# function shrink(items: number[]): void {
+#     for (const item of items) {
+#         items.pop();
+#         note(item);
+#     }
+# }
+# function nest(rows: number[][]): void {
+#     for (const row of rows) {
+#         for (const item of row)
+#             note(item);
+#         note(";");
+#     }
+# }
+# const open = globalThis as unknown as Record<string, (...values: unknown[]) => void>;
+# open.all = all as never;
+# open.tell = tell as never;
+# open.grow = grow as never;
+# open.shrink = shrink as never;
+# open.nest = nest as never;
+# function tried(what: () => void): string {
+#     let end = "ends";
+#     try {
+#         what();
+#     } catch (error) {
+#         end = (error as Error).name + ": " + (error as Error).message.split(" (evaluating")[0];
+#     }
+#     const text = "[" + noted.join(",") + "] " + end + " |";
+#     noted = [];
+#     return text;
+# }
+# function counting(upTo: number, last: unknown): Iterable<number> {
+#     return {
+#         [Symbol.iterator]() {
+#             let at = 0;
+#             return {
+#                 next() {
+#                     at++;
+#                     note("next " + at);
+#                     return (at > upTo ? { done: last, value: -1 } : { done: 0, value: at }) as unknown as IteratorResult<number>;
+#                 },
+#                 return() {
+#                     note("return");
+#                     return { done: true, value: undefined };
+#                 },
+#             };
+#         },
+#     };
+# }
+# function* made(): Generator<number> {
+#     try {
+#         yield 1;
+#         yield 2;
+#         yield 3;
+#     } finally {
+#         note("closed");
+#     }
+# }
+# for (let turn = 0; turn < 2; ++turn) {
+#     print(turn, tried(() => open.all([1, 2, 3])), tried(() => open.all([])), tried(() => open.all([1, , 3])), tried(() => open.all([1.5, 2.5])), tried(() => open.all(["a", null, undefined, {}])));
+#     print(turn, tried(() => open.all(new Set([4, 5, 6]))), tried(() => open.all(new Set())), tried(() => open.all("ab\u{1F600}c")), tried(() => open.all("")), tried(() => open.all(new Map([[1, 2]]).keys())));
+#     print(turn, tried(() => open.all(new Uint8Array([7, 8, 9]))), tried(() => open.all(made())));
+#     print(turn, tried(() => open.all(counting(2, true))), tried(() => open.all(counting(2, 1))), tried(() => open.all(counting(2, "yes"))), tried(() => open.all(counting(0, {}))));
+#     print(turn, tried(() => open.all(undefined)), tried(() => open.all(null)), tried(() => open.all(5)), tried(() => open.all({})));
+#     print(turn, tried(() => open.all({ [Symbol.iterator]() { return { next() { return 5; } }; } })), tried(() => open.all({ [Symbol.iterator]() { return { next() { throw new RangeError("next fails"); } }; } })));
+#     print(turn, tried(() => open.grow([1, 2])), tried(() => open.shrink([1, 2, 3, 4, 5])), tried(() => open.nest([[1, 2], [], [3]])));
+#     print(turn, tried(() => open.nest([new Set([1]), "xy", [2]])), tried(() => open.nest(new Set([[1], [2, 3]]))));
+#     print(turn, tried(() => open.tell([1, 2, 3], 2, 0)), tried(() => open.tell([1, 2, 3], 0, 3)), tried(() => open.tell(new Set([4, 5, 6]), 5, 0)), tried(() => open.tell(new Uint8Array([7, 8, 9]), 8, 0)));
+#     print(turn, tried(() => open.tell(made(), 2, 0)), tried(() => open.tell(made(), 0, 2)), tried(() => open.tell(counting(3, true), 2, 0)), tried(() => open.tell(counting(3, true), 0, 2)));
+# }
+# -- end of source
+# What is stepped is held to be a list by its type alone: each call goes through a name that anybody may write. The lines below are what plain Bun prints.
+# RUN: run-in-shell mechanisms=all
+# RUN: run-in-shell mechanisms=all testing=FailSpeculations
+# RUN: run-in-shell mechanisms=all testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# RUN: run-in-shell mechanisms=all testing=IgnoreExpectedTypes
+# CHECK: 0 [1,2,3] ends | [] ends | [1,undefined,3] ends | [1.5,2.5] ends | [a,null,undefined,[object Object]] ends |
+# CHECK-NEXT: 0 [4,5,6] ends | [] ends | [a,b,😀,c] ends | [] ends | [1] ends |
+# CHECK-NEXT: 0 [7,8,9] ends | [1,2,3,closed] ends |
+# CHECK-NEXT: 0 [next 1,1,next 2,2,next 3] ends | [next 1,1,next 2,2,next 3] ends | [next 1,1,next 2,2,next 3] ends | [next 1] ends |
+# CHECK-NEXT: 0 [] TypeError: undefined is not an object | [] TypeError: null is not an object | [] TypeError: number is not iterable | [] TypeError: {} is not iterable |
+# CHECK-NEXT: 0 [] TypeError: Iterator result interface is not an object. | [] RangeError: next fails |
+# CHECK-NEXT: 0 [1,2,11,12,21,22] ends | [1,2,3] ends | [1,2,;,;,3,;] ends |
+# CHECK-NEXT: 0 [1,;,x,y,;,2,;] ends | [1,;,2,3,;] ends |
+# CHECK-NEXT: 0 [1] ends | [1,2] Error: failed at 3 | [4] ends | [7] ends |
+# CHECK-NEXT: 0 [1,closed] ends | [1,closed] Error: failed at 2 | [next 1,1,next 2,return] ends | [next 1,1,next 2,return] Error: failed at 2 |
+# CHECK-NEXT: 1 [1,2,3] ends | [] ends | [1,undefined,3] ends | [1.5,2.5] ends | [a,null,undefined,[object Object]] ends |
+# CHECK-NEXT: 1 [4,5,6] ends | [] ends | [a,b,😀,c] ends | [] ends | [1] ends |
+# CHECK-NEXT: 1 [7,8,9] ends | [1,2,3,closed] ends |
+# CHECK-NEXT: 1 [next 1,1,next 2,2,next 3] ends | [next 1,1,next 2,2,next 3] ends | [next 1,1,next 2,2,next 3] ends | [next 1] ends |
+# CHECK-NEXT: 1 [] TypeError: undefined is not an object | [] TypeError: null is not an object | [] TypeError: number is not iterable | [] TypeError: {} is not iterable |
+# CHECK-NEXT: 1 [] TypeError: Iterator result interface is not an object. | [] RangeError: next fails |
+# CHECK-NEXT: 1 [1,2,11,12,21,22] ends | [1,2,3] ends | [1,2,;,;,3,;] ends |
+# CHECK-NEXT: 1 [1,;,x,y,;,2,;] ends | [1,;,2,3,;] ends |
+# CHECK-NEXT: 1 [1] ends | [1,2] Error: failed at 3 | [4] ends | [7] ends |
+# CHECK-NEXT: 1 [1,closed] ends | [1,closed] Error: failed at 2 | [next 1,1,next 2,return] ends | [next 1,1,next 2,return] Error: failed at 2 |
+# CHECK-NEXT: exited with 0

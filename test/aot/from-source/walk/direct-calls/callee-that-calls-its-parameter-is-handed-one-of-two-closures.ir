@@ -1,0 +1,25 @@
+# the callee calls its parameter, and this call hands it a closure of one of two functions: a function, as is expected there, and no one function whose effects could be added. So Link's effects of the callee stand, which count on whatever arrives
+# the call stands in a block behind the join, so the join is not walked once for each way and the one call takes what the two ways bring
+# f1 = each, f2 = mark, f3 = clear, f4 = one, f5 = either, f6 = any
+# -- source: callee-that-calls-its-parameter-is-handed-one-of-two-closures.ts
+# declare function sink(...values: unknown[]): void;
+# let marks = 0;
+# function each(f: () => void) { f(); f(); }
+# function mark() { marks = (marks + 1) | 0; }
+# function clear() { marks = 0; }
+# function one() { each(mark); return marks; }
+# function either(flag: boolean, go: boolean) { const f = flag ? mark : clear; if (go) each(f); return marks; }
+# function any(f: () => void) { each(f); return marks; }
+# sink(one, either, any);
+# -- end of source
+# RUN: walk f5 mechanisms=none+TypedOperations+DirectCalls
+# CHECK-LABEL: code f5:Body
+# CHECK: = CallDirect {{*}}function=f1{{*}}mayCallUnknownCode
+# RUN(BARE): walk f5 mechanisms=none+DirectCalls
+# BARE-LABEL: code f5:Body
+# BARE: = CallDirect {{*}}function=f1{{*}}mayCallUnknownCode
+# RUN(ONE): walk f4 mechanisms=none+TypedOperations+DirectCalls
+# ONE-LABEL: code f4:Body
+# ONE: = CallDirect {{*}}function=f1
+# RUN(QUIET): walk f4 mechanisms=none+TypedOperations+DirectCalls
+# QUIET-NOT: = CallDirect {{*}}function=f1{{*}}mayCallUnknownCode

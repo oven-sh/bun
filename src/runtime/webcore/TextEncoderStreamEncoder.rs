@@ -1,13 +1,11 @@
 use core::cell::Cell;
-use core::ptr::NonNull;
 
 use bun_alloc::AllocError;
 use bun_core::strings;
 use bun_jsc::{JSGlobalObject, JSUint8Array, JSValue, JsResult};
-use bun_ptr::RawSlice;
 use bun_simdutf_sys::simdutf;
 
-use crate::webcore::sink::sink_handle_from_id;
+use crate::webcore::sink::ReadableSinkController;
 use crate::webcore::streams;
 
 bun_output::declare_scope!(TextEncoderStreamEncoder, visible);
@@ -165,10 +163,10 @@ impl TextEncoderStreamEncoder {
             break 'prepend None;
         };
 
-        let length = simdutf::length::utf8::from::utf16::le(remain);
+        let measured = simdutf::WithUtf8Len::utf16(remain);
 
         buf.try_reserve(
-            length
+            measured.utf8_len()
                 + match prepend {
                     Some(pre) => pre.len as usize,
                     None => 0,
@@ -180,21 +178,9 @@ impl TextEncoderStreamEncoder {
             buf.extend_from_slice(&pre.bytes[0..pre.len as usize]);
         }
 
-        // SAFETY: simdutf writes initialized bytes into the spare capacity and returns the
-        // count; on non-SUCCESS we commit 0 and fall through to the slow path.
-        let result = unsafe {
-            bun_core::vec::fill_spare(buf, 0, |spare| {
-                let r = simdutf::convert::utf16::to::utf8::with_errors::le(remain, spare);
-                (
-                    if r.status == simdutf::Status::SUCCESS {
-                        r.count
-                    } else {
-                        0
-                    },
-                    r,
-                )
-            })
-        };
+        let result = bun_core::vec::append_with(buf, usize::MAX, |spare| {
+            simdutf::convert::utf16::to::utf8::with_errors::le(measured, spare)
+        });
 
         if result.status != simdutf::Status::SUCCESS {
             // Slow path: there was invalid UTF-16, so we need to convert it without simdutf.
@@ -218,22 +204,19 @@ impl TextEncoderStreamEncoder {
 // ─── extern "C" surface (JSTextEncoderStream.cpp) ─────────────────────────
 // The TextEncoderStream cell owns its encoder directly as a `void*` (no JS
 // wrapper cell, no prototype lookup) and drives it through these.
+// `runNativeArm` (C++) defers a release that user JS triggers during a call until the call has returned.
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn TextEncoderStreamEncoder__createForStream() -> *mut TextEncoderStreamEncoder
+pub(crate) extern "C" fn TextEncoderStreamEncoder__createForStream() -> Box<TextEncoderStreamEncoder>
 {
-    Box::into_raw(Box::new(TextEncoderStreamEncoder::default()))
+    Box::default()
 }
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn TextEncoderStreamEncoder__destroyForStream(
-    this: *mut TextEncoderStreamEncoder,
+    this: Option<Box<TextEncoderStreamEncoder>>,
 ) {
-    if !this.is_null() {
-        // SAFETY: `this` was returned by `TextEncoderStreamEncoder__createForStream` and has not been
-        // freed (the C++ cell clears its pointer before calling).
-        drop(unsafe { Box::from_raw(this) });
-    }
+    drop(this);
 }
 
 /// The TextEncoderStream transform step: WebIDL `USVString` conversion of
@@ -241,17 +224,13 @@ pub(crate) extern "C" fn TextEncoderStreamEncoder__destroyForStream(
 /// on success, or `JSValue::zero` with the exception pending on `global`.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn TextEncoderStreamEncoder__encodeForStream(
-    this: *mut TextEncoderStreamEncoder,
+    this: &TextEncoderStreamEncoder,
     global: &JSGlobalObject,
     chunk: JSValue,
 ) -> JSValue {
     let Ok(str) = chunk.to_js_string_view(global) else {
         return JSValue::ZERO;
     };
-    // SAFETY: `this` is the live encoder owned by the calling JS cell; driven
-    // only from the JS thread, so `&*this` has no mutable alias. Taken after
-    // the coercion so no user JS runs while the borrow is live.
-    let this = unsafe { &*this };
     let encoded = if str.is_utf16() {
         this.encode_utf16(global, str.utf16())
     } else {
@@ -262,11 +241,10 @@ pub(crate) extern "C" fn TextEncoderStreamEncoder__encodeForStream(
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn TextEncoderStreamEncoder__flushForStream(
-    this: *mut TextEncoderStreamEncoder,
+    this: &TextEncoderStreamEncoder,
     global: &JSGlobalObject,
 ) -> JSValue {
-    // SAFETY: as in `TextEncoderStreamEncoder__encodeForStream`.
-    bun_jsc::to_js_host_fn_result(global, unsafe { &*this }.flush_body(global))
+    bun_jsc::to_js_host_fn_result(global, this.flush_body(global))
 }
 
 /// Cap on the reusable scratch buffer so a single huge chunk doesn't pin
@@ -282,18 +260,14 @@ const SCRATCH_CAP: usize = 64 * 1024;
 /// pending on `global`.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
-    this: *mut TextEncoderStreamEncoder,
+    this: &TextEncoderStreamEncoder,
     global: &JSGlobalObject,
     chunk: JSValue,
-    sink_id: u8,
-    sink_ptr: *mut core::ffi::c_void,
+    controller: &ReadableSinkController,
 ) -> JSValue {
     let Ok(str) = chunk.to_js_string_view(global) else {
         return JSValue::ZERO;
     };
-    // SAFETY: `this` is the live encoder owned by the calling JS cell; taken
-    // after the coercion so no user JS runs while the borrow is live.
-    let this = unsafe { &*this };
     // Move the Vec out of the RefCell for the duration of the sink write so a
     // (theoretical) re-entrant encode-into-sink call cannot BorrowMut-panic.
     let mut buf = this.scratch.take();
@@ -310,20 +284,15 @@ pub(crate) extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
         this.scratch.replace(buf);
         return JSValue::UNDEFINED;
     }
-    let Some(ptr) = NonNull::new(sink_ptr) else {
-        this.scratch.replace(buf);
-        return JSValue::UNDEFINED;
-    };
-    // SAFETY: `sink_ptr` is a live JSSink of type `sink_id` (the C++ caller
-    // null-checks it before attaching); the sink copies what it needs.
-    let handle = unsafe { sink_handle_from_id(sink_id, ptr) };
+    // The sink copies what it needs.
+    let handle = controller.sink_handle();
     if handle.is_none() {
         this.scratch.replace(buf);
         return JSValue::UNDEFINED;
     }
     let wrote = handle
-        .write(&streams::Result::Temporary(RawSlice::new(&buf)))
-        .to_js(&global.js_thread_of_caller_no_frame());
+        .write(&streams::Result::Temporary(&buf))
+        .to_js(&global.js_thread_of_caller());
     if buf.capacity() <= SCRATCH_CAP {
         this.scratch.replace(buf);
     }
@@ -333,26 +302,19 @@ pub(crate) extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
 /// Native-sink flush step; see `TextEncoderStreamEncoder__encodeIntoSink` for the return contract.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn TextEncoderStreamEncoder__flushIntoSink(
-    this: *mut TextEncoderStreamEncoder,
+    this: &TextEncoderStreamEncoder,
     global: &JSGlobalObject,
-    sink_id: u8,
-    sink_ptr: *mut core::ffi::c_void,
+    controller: &ReadableSinkController,
 ) -> JSValue {
-    // SAFETY: as in `TextEncoderStreamEncoder__encodeForStream`.
-    let this = unsafe { &*this };
     if this.pending_lead_surrogate.get().is_none() {
         return JSValue::UNDEFINED;
     }
     const REPLACEMENT: [u8; 3] = [0xef, 0xbf, 0xbd];
-    let Some(ptr) = NonNull::new(sink_ptr) else {
-        return JSValue::UNDEFINED;
-    };
-    // SAFETY: as in `TextEncoderStreamEncoder__encodeIntoSink`.
-    let handle = unsafe { sink_handle_from_id(sink_id, ptr) };
+    let handle = controller.sink_handle();
     if handle.is_none() {
         return JSValue::UNDEFINED;
     }
     handle
-        .write(&streams::Result::Temporary(RawSlice::new(&REPLACEMENT)))
-        .to_js(&global.js_thread_of_caller_no_frame())
+        .write(&streams::Result::Temporary(&REPLACEMENT))
+        .to_js(&global.js_thread_of_caller())
 }

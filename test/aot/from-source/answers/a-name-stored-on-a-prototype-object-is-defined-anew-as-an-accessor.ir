@@ -1,0 +1,14 @@
+# A function is stored under the name, an object is made, and then a getter is defined under the same name. Both statements are in sight; neither is "what the name holds".
+# -- source: main.js
+# function Mid() { this.more = 2; }
+# Mid.prototype.tell = () => 9;
+# const mid = new Mid();
+# Object.defineProperty(Mid.prototype, "tell", { get() { return 7; }, configurable: true });
+# print(mid.more);
+# -- end of source
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: 2
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: 2
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime
+# CHECKED: 2

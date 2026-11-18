@@ -91,9 +91,9 @@ test.skipIf(isWindows)("Apple's ld has no such group: a native macOS link takes 
 });
 
 test("on Windows only assembler outputs are lazy; elsewhere every dependency object is", () => {
-  const objects = ["obj/vendor/zlib/adler32.c.obj", "obj/vendor/boringssl/aesni-gcm-x86_64-win.asm.obj", "obj/x.S.obj"];
+  const objects = ["obj/vendor/zstd/xxhash.c.obj", "obj/vendor/boringssl/aesni-gcm-x86_64-win.asm.obj", "obj/x.S.obj"];
   expect(lazyDepObjects({ windows: true } as Config, objects)).toEqual({
-    eager: ["obj/vendor/zlib/adler32.c.obj"],
+    eager: ["obj/vendor/zstd/xxhash.c.obj"],
     lazy: ["obj/vendor/boringssl/aesni-gcm-x86_64-win.asm.obj", "obj/x.S.obj"],
   });
   expect(lazyDepObjects({ windows: false } as Config, objects)).toEqual({ eager: [], lazy: objects });

@@ -5,8 +5,8 @@ pub struct NoDuplicateHeadings {
     check_siblings_only: bool,
 }
 
-const DUPLICATE_HEADING: Message =
-    Message::new("duplicateHeading", "Duplicate heading \"{{text}}\" found.");
+const DUPLICATE_HEADING: &Message =
+    &Message::new("duplicateHeading", "Duplicate heading \"{{text}}\" found.");
 
 pub(crate) struct Seen {
     /// The headings seen so far, by level. Only the first set is used unless `checkSiblingsOnly` is on.

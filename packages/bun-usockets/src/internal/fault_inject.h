@@ -35,7 +35,7 @@ enum us_fault_syscall {
     US_FAULT_RECVMSG,
     US_FAULT_CONNECT,
     US_FAULT_ACCEPT,
-    /* Reserved: no bsd.c hooks yet, so the JS setter does not accept them. */
+    /* Reserved: no bsd.cpp hooks yet, so the JS setter does not accept them. */
     US_FAULT_SOCKET,
     US_FAULT_CLOSE,
     US_FAULT_SHUTDOWN,
@@ -70,6 +70,9 @@ enum us_fault_action {
     /* recv/recvmsg: return 0 (peer closed); send/sendmsg/writev: return 0
      * (treated as backpressure). The JS setter rejects other syscalls. */
     US_FAULT_ZERO,
+    /* send/writev: send nothing and return more than the call was given (length + 1; INT_MAX + 1
+     * for writev). The JS setter rejects other syscalls. */
+    US_FAULT_EXCESS,
 };
 
 struct us_fault_rule {

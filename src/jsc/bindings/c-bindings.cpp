@@ -1,9 +1,11 @@
 // when we don't want to use @cInclude, we can just stick wrapper functions here
 #include "root.h"
+#include "OwnedFd.h"
 #include <cstdio>
 #include <cstdlib>
 
 #if !OS(WINDOWS)
+#include <wtf/Threading.h>
 #include <wtf/WTFConfig.h>
 #include <sys/resource.h>
 #include <fcntl.h>
@@ -23,6 +25,15 @@
 #if OS(DARWIN)
 #include <mach-o/loader.h>
 #endif
+#if defined(BUN_SAFE_STACK)
+#include <climits>
+#include <sys/mman.h>
+#include <sys/syscall.h>
+#include <sys/uio.h>
+#if ENABLE(AOT_GUARDED_PAGES)
+#include <wtf/WTFConfig.h>
+#endif
+#endif
 #else
 #include <uv.h>
 #include <windows.h>
@@ -31,7 +42,6 @@
 #include <new>
 #include <wtf/Threading.h>
 #endif // !OS(WINDOWS)
-#include <lshpack.h>
 
 // Runs before Output and the Windows env block are initialized, so it uses the CRT.
 extern "C" [[noreturn]] void bun_abort_missing_simd()
@@ -82,11 +92,7 @@ extern "C" bool is_executable_file(const char* path)
 {
 #if defined(O_EXEC) && !OS(LINUX)
     // musl defines O_EXEC as O_PATH, which opens any file.
-    int fd = open(path, O_EXEC | O_CLOEXEC | O_NONBLOCK | O_NOCTTY, 0);
-    if (fd < 0)
-        return false;
-    close(fd);
-    return true;
+    return !!Bun::OwnedFd { open(path, O_EXEC | O_CLOEXEC | O_NONBLOCK | O_NOCTTY, 0) };
 #endif // defined(O_EXEC) && !OS(LINUX)
 
     struct stat st;
@@ -184,18 +190,18 @@ extern "C" size_t Bun__memoryFootprint()
 extern "C" size_t Bun__memoryFootprint()
 {
     // smaps_rollup (Linux ≥4.14) is one read instead of walking every VMA.
-    int fd;
+    int opened;
     do {
-        fd = open("/proc/self/smaps_rollup", O_RDONLY | O_CLOEXEC);
-    } while (fd == -1 && errno == EINTR);
-    if (fd == -1) return 0;
+        opened = open("/proc/self/smaps_rollup", O_RDONLY | O_CLOEXEC);
+    } while (opened == -1 && errno == EINTR);
+    Bun::OwnedFd fd { opened };
+    if (!fd) return 0;
 
     char buf[2048];
     ssize_t n;
     do {
-        n = read(fd, buf, sizeof(buf) - 1);
+        n = read(fd.get(), buf, sizeof(buf) - 1);
     } while (n == -1 && errno == EINTR);
-    close(fd);
     if (n <= 0) return 0;
     buf[n] = '\0';
 
@@ -382,7 +388,34 @@ static void unset_cloexec(int fd)
     fcntl(fd, F_SETFD, flags);
 }
 
-extern "C" void on_before_reload_process_posix()
+#if OS(LINUX)
+#include <dirent.h>
+#include <wtf/NeverDestroyed.h>
+#include <wtf/Vector.h>
+
+static WTF::Vector<int>& inheritedFileDescriptors()
+{
+    static NeverDestroyed<WTF::Vector<int>> descriptors;
+    return descriptors.get();
+}
+
+extern "C" void bun_remember_inherited_file_descriptors()
+{
+    std::unique_ptr<DIR, decltype([](DIR* directory) { closedir(directory); })> directory { opendir("/proc/self/fd") };
+    if (!directory)
+        return;
+    while (struct dirent* entry = readdir(directory.get())) {
+        char* end = nullptr;
+        long fd = strtol(entry->d_name, &end, 10);
+        if (end != entry->d_name && *end == '\0' && fd >= 3 && fd <= INT_MAX && fd != dirfd(directory.get()))
+            inheritedFileDescriptors().append(static_cast<int>(fd));
+    }
+}
+#endif
+
+extern "C" void Bun__willRestartProcess();
+
+extern "C" void on_before_reload_process_posix([[maybe_unused]] bool closeInheritedFileDescriptors)
 {
     unset_cloexec(STDIN_FILENO);
     unset_cloexec(STDOUT_FILENO);
@@ -392,7 +425,14 @@ extern "C" void on_before_reload_process_posix()
     // close all file descriptors except stdin, stdout, stderr and possibly IPC.
     // if you're passing additional file descriptors to Bun, you're probably not passing more than 8.
     // If this fails, it's ultimately okay, we're just trying our best to avoid leaking file descriptors.
-    bun_close_range(3, ~0U, CLOSE_RANGE_CLOEXEC);
+    if (closeInheritedFileDescriptors)
+        bun_close_range(3, ~0U, CLOSE_RANGE_CLOEXEC);
+#endif
+#if OS(LINUX)
+    if (!closeInheritedFileDescriptors) {
+        for (int fd : inheritedFileDescriptors())
+            unset_cloexec(fd);
+    }
 #endif
 
     // Preserve the IPC channel to the parent across the execve: NODE_CHANNEL_FD survives in
@@ -433,6 +473,8 @@ extern "C" void on_before_reload_process_posix()
     sigset_t signal_set;
     sigemptyset(&signal_set);
     sigprocmask(SIG_SETMASK, &signal_set, nullptr);
+
+    Bun__willRestartProcess();
 }
 
 #if OS(LINUX)
@@ -451,12 +493,192 @@ static std::atomic<unsigned> execve_generation { 0 };
 static pid_t execve_counting_pid = 0;
 
 extern "C" int __real_execve(const char*, char* const[], char* const[]);
+extern "C" bool CrashHandler__isReloadingProcess();
 extern "C" int __real_pthread_create(pthread_t*, const pthread_attr_t*, void* (*)(void*), void*);
+
+#if defined(BUN_SAFE_STACK)
+extern "C" __attribute__((visibility("default"))) thread_local void* __safestack_unsafe_stack_ptr = nullptr;
+
+namespace {
+
+constexpr size_t unsafeStackGuardSize = 256 * 1024;
+constexpr size_t unsafeStackDefaultSize = 8 * 1024 * 1024;
+constexpr size_t unsafeStackPageSize = 4096;
+
+struct UnsafeStack {
+    void* mapping;
+    size_t mappingSize;
+    void* (*routine)(void*);
+    void* argument;
+    pid_t process;
+    pid_t thread;
+    int destructorRoundsLeft;
+    UnsafeStack* next;
+};
+
+pthread_key_t unsafeStackKey;
+pthread_mutex_t retiredUnsafeStacksLock = PTHREAD_MUTEX_INITIALIZER;
+UnsafeStack* retiredUnsafeStacks = nullptr;
+
+#if ENABLE(AOT_GUARDED_PAGES)
+// What the system places by itself shares one random base: an address of an array on this stack would give away the stack with the return addresses and the C library.
+// Runs before the C library's own initializers too: it asks the kernel itself for the random number.
+void* mapAtRandomAddress(size_t mappingSize)
+{
+    constexpr uintptr_t lowestRandomAddress = 64ull << 30;
+    constexpr uintptr_t highestRandomAddress = 124ull << 40;
+    constexpr unsigned maxDraws = 16;
+    if (WTF::isAddressRandomizationDisabled())
+        return MAP_FAILED;
+    uintptr_t numberOfSlots = (highestRandomAddress - lowestRandomAddress - mappingSize) / unsafeStackPageSize;
+    for (unsigned draw = 0; draw < maxDraws; ++draw) {
+        uint64_t random;
+        if (syscall(SYS_getrandom, &random, sizeof(random), 0) != sizeof(random))
+            break;
+        void* requestedAddress = reinterpret_cast<void*>(lowestRandomAddress + random % numberOfSlots * unsafeStackPageSize);
+        void* mapping = mmap(requestedAddress, mappingSize, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+        if (mapping == MAP_FAILED || mapping == requestedAddress)
+            return mapping;
+        munmap(mapping, mappingSize);
+    }
+    return MAP_FAILED;
+}
+#endif
+
+void* mapUnsafeStack(size_t size, size_t& mappingSize)
+{
+    size = (size + unsafeStackPageSize - 1) & ~(unsafeStackPageSize - 1);
+    mappingSize = size + 2 * unsafeStackGuardSize;
+    void* mapping = MAP_FAILED;
+#if ENABLE(AOT_GUARDED_PAGES)
+    mapping = mapAtRandomAddress(mappingSize);
+#endif
+    if (mapping == MAP_FAILED)
+        mapping = mmap(nullptr, mappingSize, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+    if (mapping == MAP_FAILED)
+        return nullptr;
+    if (mprotect(static_cast<char*>(mapping) + unsafeStackGuardSize, size, PROT_READ | PROT_WRITE)) {
+        munmap(mapping, mappingSize);
+        return nullptr;
+    }
+    return mapping;
+}
+
+void* topOfUnsafeStack(void* mapping, size_t mappingSize)
+{
+    return static_cast<char*>(mapping) + mappingSize - unsafeStackGuardSize;
+}
+
+void releaseUnsafeStack(UnsafeStack* stack)
+{
+    munmap(stack->mapping, stack->mappingSize);
+    free(stack);
+}
+
+bool threadIsGone(const UnsafeStack* stack)
+{
+    return stack->process != getpid() || (syscall(SYS_tgkill, stack->process, stack->thread, 0) == -1 && errno == ESRCH);
+}
+
+void retireUnsafeStack(void* value)
+{
+    auto* stack = static_cast<UnsafeStack*>(value);
+    if (--stack->destructorRoundsLeft > 0) {
+        pthread_setspecific(unsafeStackKey, stack);
+        return;
+    }
+    pthread_mutex_lock(&retiredUnsafeStacksLock);
+    UnsafeStack** link = &retiredUnsafeStacks;
+    while (UnsafeStack* each = *link) {
+        if (threadIsGone(each)) {
+            *link = each->next;
+            releaseUnsafeStack(each);
+        } else
+            link = &each->next;
+    }
+    stack->next = retiredUnsafeStacks;
+    retiredUnsafeStacks = stack;
+    pthread_mutex_unlock(&retiredUnsafeStacksLock);
+}
+
+void* startWithUnsafeStack(void* value)
+{
+    auto* stack = static_cast<UnsafeStack*>(value);
+    stack->process = getpid();
+    stack->thread = static_cast<pid_t>(syscall(SYS_gettid));
+    __safestack_unsafe_stack_ptr = topOfUnsafeStack(stack->mapping, stack->mappingSize);
+    pthread_setspecific(unsafeStackKey, stack);
+    return stack->routine(stack->argument);
+}
+
+UnsafeStack* makeUnsafeStack(const pthread_attr_t* attributes, void* (*routine)(void*), void* argument)
+{
+    size_t size = 0;
+    pthread_attr_t defaults;
+    if (attributes)
+        pthread_attr_getstacksize(attributes, &size);
+    else if (!pthread_attr_init(&defaults)) {
+        pthread_attr_getstacksize(&defaults, &size);
+        pthread_attr_destroy(&defaults);
+    }
+    auto* stack = static_cast<UnsafeStack*>(malloc(sizeof(UnsafeStack)));
+    if (!stack)
+        return nullptr;
+    *stack = { nullptr, 0, routine, argument, 0, 0, PTHREAD_DESTRUCTOR_ITERATIONS, nullptr };
+    stack->mapping = mapUnsafeStack(size ? size : unsafeStackDefaultSize, stack->mappingSize);
+    if (!stack->mapping) {
+        free(stack);
+        return nullptr;
+    }
+    return stack;
+}
+
+// Runs before the C library's own initializers: it formats nothing.
+[[noreturn]] void abortBecauseOf(const char* call, int error)
+{
+    char digits[12];
+    char* first = digits + sizeof(digits);
+    for (unsigned rest = static_cast<unsigned>(error); first == digits + sizeof(digits) || rest; rest /= 10)
+        *--first = static_cast<char>('0' + rest % 10);
+    const struct iovec sentence[] = {
+        { const_cast<char*>("error: the main thread got no second stack: "), 44 },
+        { const_cast<char*>(call), strlen(call) },
+        { const_cast<char*>(" failed with errno "), 19 },
+        { first, static_cast<size_t>(digits + sizeof(digits) - first) },
+        { const_cast<char*>("\n"), 1 },
+    };
+    [[maybe_unused]] ssize_t written = writev(STDERR_FILENO, sentence, 5);
+    abort();
+}
+
+void giveMainThreadItsUnsafeStack()
+{
+    struct rlimit limit;
+    size_t size = !getrlimit(RLIMIT_STACK, &limit) && limit.rlim_cur != RLIM_INFINITY ? limit.rlim_cur : unsafeStackDefaultSize;
+    size_t mappingSize;
+    void* mapping = mapUnsafeStack(size, mappingSize);
+    if (!mapping)
+        abortBecauseOf("mmap or mprotect", errno);
+    if (int error = pthread_key_create(&unsafeStackKey, retireUnsafeStack))
+        abortBecauseOf("pthread_key_create", error);
+    __safestack_unsafe_stack_ptr = topOfUnsafeStack(mapping, mappingSize);
+}
+
+__attribute__((section(".preinit_array"), used)) void (*unsafeStackInitializer)() = giveMainThreadItsUnsafeStack;
+
+} // namespace
+#endif
 
 extern "C" int __wrap_execve(const char* path, char* const argv[], char* const envp[])
 {
     if (getpid() != execve_counting_pid)
         return __real_execve(path, argv, envp);
+    // execve keeps a signal that is pending on this thread and resets its handler, so a suspend or
+    // resume signal sent now would kill the new image. Senders hold this lock. A thread that
+    // crashed may already hold it, and it is not recursive.
+    std::optional<WTF::ThreadSuspendLocker> suspendLocker;
+    if (!CrashHandler__isReloadingProcess())
+        suspendLocker.emplace();
     threads_in_execve.fetch_add(1, std::memory_order_seq_cst);
     execve_generation.fetch_add(1, std::memory_order_seq_cst);
     int rc = __real_execve(path, argv, envp);
@@ -466,7 +688,7 @@ extern "C" int __wrap_execve(const char* path, char* const argv[], char* const e
 }
 
 // The attempt bound keeps a real limit, hit while an exec never completes, from looping forever.
-extern "C" int __wrap_pthread_create(pthread_t* thread, const pthread_attr_t* attr, void* (*start_routine)(void*), void* arg)
+static int createThreadUnlessExecIsInFlight(pthread_t* thread, const pthread_attr_t* attr, void* (*start_routine)(void*), void* arg)
 {
     for (int attempt = 0;; attempt++) {
         unsigned generation = execve_generation.load(std::memory_order_seq_cst);
@@ -482,134 +704,24 @@ extern "C" int __wrap_pthread_create(pthread_t* thread, const pthread_attr_t* at
         usleep(1000);
     }
 }
+
+extern "C" int __wrap_pthread_create(pthread_t* thread, const pthread_attr_t* attr, void* (*start_routine)(void*), void* arg)
+{
+#if defined(BUN_SAFE_STACK)
+    UnsafeStack* stack = makeUnsafeStack(attr, start_routine, arg);
+    if (!stack)
+        return EAGAIN;
+    int rc = createThreadUnlessExecIsInFlight(thread, attr, startWithUnsafeStack, stack);
+    if (rc)
+        releaseUnsafeStack(stack);
+    return rc;
+#else
+    return createThreadUnlessExecIsInFlight(thread, attr, start_routine, arg);
+#endif
+}
 #endif // OS(LINUX)
 
 #endif // !OS(WINDOWS)
-
-#define LSHPACK_MAX_HEADER_SIZE 65536
-
-// Lazily heap-allocated so it doesn't land in the .tls section on Windows
-// (PE has no TLS BSS; a static thread_local char[65536] ships as 64 KB of
-// zeros in bun.exe and is copied into every thread's TLS block at creation).
-static std::unique_ptr<char[]>& shared_header_buffer_slot()
-{
-    static thread_local std::unique_ptr<char[]> buffer;
-    return buffer;
-}
-
-static char* shared_header_buffer_get()
-{
-    auto& buffer = shared_header_buffer_slot();
-    if (!buffer) [[unlikely]] {
-        buffer.reset(new char[LSHPACK_MAX_HEADER_SIZE]);
-    }
-    return buffer.get();
-}
-
-// A Worker returns out of shutdown() instead of calling pthread_exit, and the process can exit
-// before its TLS destructors run, so the worker releases this explicitly at teardown. The getter
-// re-allocates on demand.
-extern "C" void Bun__freeSharedHeaderBufferForThreadExit()
-{
-    shared_header_buffer_slot().reset();
-}
-
-extern "C" {
-typedef void* (*lshpack_wrapper_alloc)(size_t size);
-typedef void (*lshpack_wrapper_free)(void*);
-typedef struct {
-    struct lshpack_enc enc;
-    struct lshpack_dec dec;
-    lshpack_wrapper_free free;
-} lshpack_wrapper;
-
-typedef struct {
-    const char* name;
-    size_t name_len;
-    const char* value;
-    size_t value_len;
-    bool never_index;
-    uint16_t hpack_index;
-} lshpack_header;
-
-lshpack_wrapper* lshpack_wrapper_init(lshpack_wrapper_alloc alloc, lshpack_wrapper_free free, unsigned max_capacity)
-{
-    lshpack_wrapper* coders = (lshpack_wrapper*)alloc(sizeof(lshpack_wrapper));
-    if (!coders)
-        return nullptr;
-    coders->free = free;
-    if (lshpack_enc_init(&coders->enc) != 0)
-        return nullptr;
-    lshpack_dec_init(&coders->dec);
-    lshpack_enc_set_max_capacity(&coders->enc, max_capacity);
-    lshpack_dec_set_max_capacity(&coders->dec, max_capacity);
-    return coders;
-}
-
-size_t lshpack_wrapper_encode(lshpack_wrapper* self,
-    const unsigned char* name, size_t name_len,
-    const unsigned char* val, size_t val_len,
-    int never_index,
-    unsigned char* buffer, size_t buffer_len, size_t buffer_offset)
-{
-    if (name_len + val_len > LSHPACK_MAX_HEADER_SIZE)
-        return 0;
-
-    char* shared_header_buffer = shared_header_buffer_get();
-    lsxpack_header_t hdr;
-    memset(&hdr, 0, sizeof(lsxpack_header_t));
-    memcpy(&shared_header_buffer[0], name, name_len);
-    memcpy(&shared_header_buffer[name_len], val, val_len);
-    lsxpack_header_set_offset2(&hdr, &shared_header_buffer[0], 0, name_len, name_len, val_len);
-    if (never_index) {
-        hdr.indexed_type = 2;
-    }
-    auto* start = buffer + buffer_offset;
-    auto* ptr = lshpack_enc_encode(&self->enc, start, buffer + buffer_len, &hdr);
-    if (!ptr)
-        return 0;
-    return ptr - start;
-}
-
-size_t lshpack_wrapper_decode(lshpack_wrapper* self,
-    const unsigned char* src, size_t src_len,
-    lshpack_header* output)
-{
-    lsxpack_header_t hdr;
-    memset(&hdr, 0, sizeof(lsxpack_header_t));
-    lsxpack_header_prepare_decode(&hdr, shared_header_buffer_get(), 0, LSHPACK_MAX_HEADER_SIZE);
-
-    const unsigned char* s = src;
-
-    auto rc = lshpack_dec_decode(&self->dec, &s, s + src_len, &hdr);
-    if (rc != 0)
-        return 0;
-
-    output->name = lsxpack_header_get_name(&hdr);
-    output->name_len = hdr.name_len;
-    output->value = lsxpack_header_get_value(&hdr);
-    output->value_len = hdr.val_len;
-    output->never_index = (hdr.flags & LSXPACK_NEVER_INDEX) != 0;
-    if (hdr.hpack_index != LSHPACK_HDR_UNKNOWN && hdr.hpack_index <= LSHPACK_HDR_WWW_AUTHENTICATE) {
-        output->hpack_index = hdr.hpack_index - 1;
-    } else {
-        output->hpack_index = 255;
-    }
-    return s - src;
-}
-
-void lshpack_wrapper_enc_set_max_capacity(lshpack_wrapper* self, unsigned max_capacity)
-{
-    lshpack_enc_set_max_capacity(&self->enc, max_capacity);
-}
-
-void lshpack_wrapper_deinit(lshpack_wrapper* self)
-{
-    lshpack_dec_cleanup(&self->dec);
-    lshpack_enc_cleanup(&self->enc);
-    self->free(self);
-}
-}
 
 #if OS(LINUX)
 
@@ -765,6 +877,12 @@ extern "C" void Bun__lockThreadSuspensionForExit()
 }
 #endif
 
+// For tests. Never released.
+extern "C" void Bun__lockThreadSuspensionForTesting()
+{
+    new WTF::ThreadSuspendLocker();
+}
+
 extern "C" int32_t bun_is_stdio_null[3] = { 0, 0, 0 };
 
 #if OS(DARWIN)
@@ -793,6 +911,11 @@ static NEVER_INLINE void openDevNullIfStdioIsClosed(int fd)
 
 extern "C" void bun_initialize_process()
 {
+#if OS(DARWIN)
+    if (JSC::Bun__removableFeatureState.isTrimmed || JSC::Bun__removableFeatureState.removedRangeCount) [[unlikely]]
+        Bun__prepareTrimmedExecutable();
+#endif
+
     // Disable printf() buffering. We buffer it ourselves.
     setvbuf(stdout, nullptr, _IONBF, 0);
     setvbuf(stderr, nullptr, _IONBF, 0);

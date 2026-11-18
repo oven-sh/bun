@@ -20,12 +20,19 @@ extern "C" size_t highway_count_char(const uint8_t* haystack, size_t haystack_le
 extern "C" size_t highway_line_starts(const uint8_t* text, size_t text_len, uint32_t* out);
 extern "C" size_t highway_index_of_any_char(const uint8_t* text, size_t text_len, const uint8_t* chars, size_t chars_len);
 extern "C" size_t highway_last_index_of_any_char(const uint8_t* text, size_t text_len, const uint8_t* chars, size_t chars_len);
+extern "C" size_t highway_index_of_untidy_slash(const uint8_t* path, size_t len);
+extern "C" size_t highway_index_of_untidy_slash_or_non_ascii(const uint8_t* path, size_t len);
+extern "C" size_t highway_last_index_of_slash(const uint8_t* path, size_t len);
+extern "C" size_t highway_last_index_of_slash_or_dot(const uint8_t* path, size_t len);
+extern "C" size_t highway_common_prefix_length(const uint8_t* a, const uint8_t* b, size_t len);
+extern "C" size_t highway_count_slashes(const uint8_t* path, size_t len);
 extern "C" void* highway_memmem(const uint8_t* haystack, size_t haystack_len, const uint8_t* needle, size_t needle_len);
 extern "C" size_t highway_memrmem(const uint8_t* haystack, size_t haystack_len, const uint8_t* needle, size_t needle_len);
 extern "C" size_t highway_memmem16(const uint16_t* haystack, size_t haystack_len, const uint16_t* needle, size_t needle_len);
 extern "C" size_t highway_memrmem16(const uint16_t* haystack, size_t haystack_len, const uint16_t* needle, size_t needle_len);
 extern "C" void highway_scanner_run_stops(const uint8_t* text, size_t text_len, uint8_t* out, size_t plane_len);
 extern "C" void highway_odd_blocks(const uint8_t* text, size_t text_len, uint64_t* out);
+extern "C" size_t highway_byte_set_prefix_length(const uint8_t* text, size_t len, const uint8_t* set);
 
 namespace Bun {
 
@@ -38,6 +45,8 @@ namespace Bun {
 // writes its three bitmaps into `arg`, a third of the view each, and returns 0.
 // lineStarts writes uint32 offsets into `arg` and returns how many.
 // oddBlocks writes its uint64 words into `arg` and returns 0.
+// byteSetPrefixLength takes the 16 rows and the 16 columns of the set in `arg`.
+// The kernels that look for slashes ignore `arg`. commonPrefixLength compares `haystack` with `arg`.
 BUN_DEFINE_HOST_FUNCTION(Bun__highwayStringsForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -86,6 +95,18 @@ BUN_DEFINE_HOST_FUNCTION(Bun__highwayStringsForTesting, (JSC::JSGlobalObject * g
         result = op == "indexOfAny"_s
             ? highway_index_of_any_char(haystack, len, needle, needle_len)
             : highway_last_index_of_any_char(haystack, len, needle, needle_len);
+    } else if (op == "indexOfUntidySlash"_s) {
+        result = highway_index_of_untidy_slash(haystack, len);
+    } else if (op == "indexOfUntidySlashOrNonAscii"_s) {
+        result = highway_index_of_untidy_slash_or_non_ascii(haystack, len);
+    } else if (op == "lastIndexOfSlash"_s) {
+        result = highway_last_index_of_slash(haystack, len);
+    } else if (op == "lastIndexOfSlashOrDot"_s) {
+        result = highway_last_index_of_slash_or_dot(haystack, len);
+    } else if (op == "commonPrefixLength"_s) {
+        result = highway_common_prefix_length(haystack, needle, std::min(len, needle_len));
+    } else if (op == "countSlashes"_s) {
+        result = highway_count_slashes(haystack, len);
     } else if (op == "memmem"_s) {
         if (!needle_len)
             RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsNumber(0)));
@@ -122,6 +143,12 @@ BUN_DEFINE_HOST_FUNCTION(Bun__highwayStringsForTesting, (JSC::JSGlobalObject * g
         }
         highway_odd_blocks(haystack, len, reinterpret_cast<uint64_t*>(const_cast<uint8_t*>(needle)));
         result = 0;
+    } else if (op == "byteSetPrefixLength"_s) {
+        if (len < 16 || needle_len != 32) {
+            throwRangeError(globalObject, scope, "needs 16 bytes of text and a set of 32 bytes"_s);
+            return {};
+        }
+        result = highway_byte_set_prefix_length(haystack, len, needle);
     } else {
         throwTypeError(globalObject, scope, "unknown op"_s);
         return {};

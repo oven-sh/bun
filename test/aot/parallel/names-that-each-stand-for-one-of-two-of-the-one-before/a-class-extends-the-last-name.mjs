@@ -1,0 +1,57 @@
+// The walk to what a name stands for goes on from both arms of `c ? a : b`. Without a memory of what it found, the build takes twice as long with each name.
+function Base() {
+  if (new.target) this.tag = "base";
+  return undefined;
+}
+const pick = JSON.parse("true");
+const a0 = pick ? Base : Base;
+const a1 = pick ? a0 : a0;
+const a2 = pick ? a1 : a1;
+const a3 = pick ? a2 : a2;
+const a4 = pick ? a3 : a3;
+const a5 = pick ? a4 : a4;
+const a6 = pick ? a5 : a5;
+const a7 = pick ? a6 : a6;
+const a8 = pick ? a7 : a7;
+const a9 = pick ? a8 : a8;
+const a10 = pick ? a9 : a9;
+const a11 = pick ? a10 : a10;
+const a12 = pick ? a11 : a11;
+const a13 = pick ? a12 : a12;
+const a14 = pick ? a13 : a13;
+const a15 = pick ? a14 : a14;
+const a16 = pick ? a15 : a15;
+const a17 = pick ? a16 : a16;
+const a18 = pick ? a17 : a17;
+const a19 = pick ? a18 : a18;
+const a20 = pick ? a19 : a19;
+const a21 = pick ? a20 : a20;
+const a22 = pick ? a21 : a21;
+const a23 = pick ? a22 : a22;
+const a24 = pick ? a23 : a23;
+const a25 = pick ? a24 : a24;
+const a26 = pick ? a25 : a25;
+const a27 = pick ? a26 : a26;
+const a28 = pick ? a27 : a27;
+const a29 = pick ? a28 : a28;
+const a30 = pick ? a29 : a29;
+const a31 = pick ? a30 : a30;
+const a32 = pick ? a31 : a31;
+const a33 = pick ? a32 : a32;
+const a34 = pick ? a33 : a33;
+const a35 = pick ? a34 : a34;
+const a36 = pick ? a35 : a35;
+const a37 = pick ? a36 : a36;
+const a38 = pick ? a37 : a37;
+const a39 = pick ? a38 : a38;
+const a40 = pick ? a39 : a39;
+const a41 = pick ? a40 : a40;
+const a42 = pick ? a41 : a41;
+const a43 = pick ? a42 : a42;
+const a44 = pick ? a43 : a43;
+const a45 = pick ? a44 : a44;
+const a46 = pick ? a45 : a45;
+const a47 = pick ? a46 : a46;
+const a48 = pick ? a47 : a47;
+class Top extends a48 {}
+console.log(new Top().tag, Object.getPrototypeOf(Top) === Base);

@@ -535,7 +535,7 @@ impl CheckCommand {
         if options.aot {
             compile_check::exec(options)
         }
-        short_run::share_heaps_of_libc();
+        short_run::expect_many_threads();
         let (cwd, command_line) = (working_directory(), &options.command_line);
         // The closure returns the report so that it's never dropped. The process exits instead.
         let (exit_code, _report) = run(

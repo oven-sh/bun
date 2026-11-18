@@ -305,7 +305,7 @@ pub(crate) fn run_and_exit(
     run: impl FnOnce(&Environment) -> Outcome,
 ) -> ! {
     disallow_code_generation_before(command);
-    super::short_run::share_heaps_of_libc();
+    super::short_run::expect_many_threads();
     if let Some(cwd) = cwd_before(command) {
         change_directory(cwd);
     }

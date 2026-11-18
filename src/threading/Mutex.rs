@@ -288,6 +288,15 @@ impl DarwinImpl {
 }
 
 #[cfg(not(any(windows, target_vendor = "apple")))]
+static SPINS: AtomicU32 = AtomicU32::new(0);
+
+/// For a process whose threads are all busy, and hold their locks for less time than a sleep and a wake-up take.
+pub fn spin_before_sleeping() {
+    #[cfg(not(any(windows, target_vendor = "apple")))]
+    SPINS.store(100, Ordering::Relaxed);
+}
+
+#[cfg(not(any(windows, target_vendor = "apple")))]
 #[derive(Default)]
 pub struct FutexImpl {
     state: AtomicU32,
@@ -305,7 +314,6 @@ impl FutexImpl {
     const LOCKED: u32 = 0b01;
     /// must contain the `LOCKED` bit for x86 optimization below
     const CONTENDED: u32 = 0b11;
-    const SPINS: u32 = 100;
 
     fn lock(&self) {
         if !self.try_lock() {
@@ -343,8 +351,7 @@ impl FutexImpl {
 
     #[cold]
     fn lock_slow(&self) {
-        // Most locks are held for less time than a sleep and a wake-up take.
-        for _ in 0..Self::SPINS {
+        for _ in 0..SPINS.load(Ordering::Relaxed) {
             if self.state.load(Ordering::Relaxed) == Self::UNLOCKED && self.try_lock() {
                 return;
             }

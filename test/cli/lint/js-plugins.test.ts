@@ -6440,6 +6440,30 @@ test(
 );
 
 test(
+  "what a configuration starts loads its modules as any program does",
+  async () => {
+    const files = {
+      "tell.cjs": `require("fs").appendFileSync(__dirname + "/told.txt", typeof $Bun_defer + " ");`,
+      "eslint.config.mjs": `import { spawnSync } from "node:child_process";
+        import { readFileSync } from "node:fs";
+        import { Worker } from "node:worker_threads";
+        await import("./tell.cjs");
+        const path = import.meta.dirname + "/tell.cjs";
+        spawnSync(process.execPath, [path]);
+        spawnSync(process.execPath, ["-e", "require(" + JSON.stringify(path) + ")"]);
+        await new Promise(done => new Worker(path).on("exit", done));
+        const message = readFileSync(import.meta.dirname + "/told.txt", "utf8").trim();
+        export default [{ files: ["a.js"], rules: { "no-restricted-globals": ["error", { name: "foo", message }] } }];`,
+      "a.js": `foo;\n`,
+    };
+    const { raw, exitCode } = await lint(files, ["-f", "unix", "a.js"]);
+    expect(raw).toContain("function undefined undefined undefined [Error/no-restricted-globals]");
+    expect(exitCode).toBe(1);
+  },
+  timeout,
+);
+
+test(
   "with little memory, large files stay with one engine",
   async () => {
     const files: Record<string, string> = {

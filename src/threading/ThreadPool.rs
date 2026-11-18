@@ -754,8 +754,9 @@ impl ThreadPool {
 
     /// Like `schedule`, but the calling thread wakes or starts a thread for each task, as far as there are threads.
     /// With `schedule` each thread that wakes up wakes the next, so the last of `n` begins `n` wake-ups late.
+    /// Only in a pool `without_spare_threads`: the tasks of the others are too short to pay for a thread each.
     pub fn schedule_all_at_once(&self, mut batch: Batch) {
-        if batch.len < 2 {
+        if batch.len < 2 || self.keeps_spare_thread_awake {
             return self.schedule(batch);
         }
         let allowed = self.allowed_threads.load(Ordering::Relaxed) as usize;

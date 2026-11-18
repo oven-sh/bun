@@ -142,6 +142,19 @@ impl<C> Stream<C> {
     }
 }
 
+/// `_writeState` has to be able to count it.
+fn length_from_js(global: &JSGlobalObject, name: &str, value: JsLocal<'_>) -> JsResult<u32> {
+    if value.to_js().as_number() > f64::from(u32::MAX) {
+        return Err(global
+            .err(
+                ErrorCode::OUT_OF_RANGE,
+                format_args!("{name} must be <= {}", u32::MAX),
+            )
+            .throw());
+    }
+    Ok(jsv_to_u32(value.to_js()))
+}
+
 /// The codecs `memcpy` from `in` to `out`.
 fn throw_if_overlapping(
     global: &JSGlobalObject,
@@ -437,7 +450,8 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
                     )
                     .throw());
             }
-            let (in_off, in_len) = (jsv_to_u32(in_off.to_js()), jsv_to_u32(in_len.to_js()));
+            let in_off = jsv_to_u32(in_off.to_js());
+            let in_len = length_from_js(global_this, "in_len", in_len)?;
             if in_buf.byte_len < in_off as usize + in_len as usize {
                 return Err(global_this
                     .err(
@@ -462,7 +476,7 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
                 .throw());
         };
         let out_off: u32 = jsv_to_u32(out_off.to_js());
-        let out_len: u32 = jsv_to_u32(out_len.to_js());
+        let out_len = length_from_js(global_this, "out_len", out_len)?;
         if out_buf.byte_len < out_off as usize + out_len as usize {
             return Err(global_this
                 .err(
@@ -563,7 +577,8 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
                     )
                     .throw());
             };
-            let (in_off, in_len) = (jsv_to_u32(in_off.to_js()), jsv_to_u32(in_len.to_js()));
+            let in_off = jsv_to_u32(in_off.to_js());
+            let in_len = length_from_js(global_this, "in_len", in_len)?;
             if in_buf.byte_len < in_off as usize + in_len as usize {
                 return Err(global_this
                     .err(
@@ -589,7 +604,7 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
                 .throw());
         };
         let out_off: u32 = jsv_to_u32(out_off.to_js());
-        let out_len: u32 = jsv_to_u32(out_len.to_js());
+        let out_len = length_from_js(global_this, "out_len", out_len)?;
         if out_buf.byte_len < out_off as usize + out_len as usize {
             return Err(global_this
                 .err(

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { totalmem } from "node:os";
 import { totalmem } from "node:os";
 import zlib from "node:zlib";
 import { inflate, nothing, Z_FINISH } from "./zlib-golden/engine";
@@ -918,5 +919,68 @@ describe("zlib native handle errors and arguments", () => {
       it.handle.params(0, 0);
       expect(it.finish(plain)).toEqual(zlib.gzipSync(plain));
     });
+  });
+});
+
+describe.skipIf(Math.min(totalmem(), process.constrainedMemory() || Infinity) < 12 * 1024 ** 3)("2 ** 32 bytes", () => {
+  const size = 2 ** 32;
+  // In a process of its own, which gives the memory back.
+  async function run(script: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `const zlib = require("zlib"), size = ${size};\n${script}`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+
+  test.each([
+    ["inflateSync", size],
+    ["inflate", size],
+    ["inflateSync", size - 0.5],
+  ])("as the chunkSize of %s(): %d", async (method, chunkSize) => {
+    expect(
+      await run(`
+        const print = (error, out) => console.log(error ?? out.toString("hex"));
+        const out = zlib.${method}(zlib.deflateSync("abc"), { chunkSize: ${chunkSize} }, print);
+        if (out) print(null, out);
+      `),
+    ).toEqual({ stdout: "616263", stderr: "", exitCode: 0 });
+  });
+
+  test("are more than the handle can count", async () => {
+    expect(
+      await run(`
+        const [large, small] = [Buffer.allocUnsafe(size), Buffer.alloc(64)];
+        for (const method of ["write", "writeSync"]) {
+          for (const [input, out] of [[large, small], [small, large]]) {
+            try {
+              zlib.createDeflate()._handle[method](0, input, 0, input.length, out, 0, out.length);
+            } catch (error) {
+              console.log(error.code, error.message);
+            }
+          }
+        }
+      `),
+    ).toEqual({
+      stdout: ["in", "out", "in", "out"].map(name => `ERR_OUT_OF_RANGE ${name}_len must be <= 4294967295`).join("\n"),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.skipIf(isDebug || isASAN).each(["gzipSync", "gzip"])("are all taken by %s()", async method => {
+    expect(
+      await run(`
+        const input = Buffer.alloc(size);
+        input[size - 1] = 1;
+        // The CRC-32, and the length modulo 2 ** 32.
+        const print = (error, out) => console.log(error ?? out.subarray(-8).toString("hex"));
+        const out = zlib.${method}(input, { level: 1, chunkSize: 1 << 20 }, print);
+        if (out) print(null, out);
+      `),
+    ).toEqual({ stdout: "1bdf05a500000000", stderr: "", exitCode: 0 });
   });
 });

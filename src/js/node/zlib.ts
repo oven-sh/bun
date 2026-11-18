@@ -26,6 +26,10 @@ const { Transform, finished } = require("node:stream");
 const owner_symbol = Symbol("owner_symbol");
 const { checkRangesOrGetDefault, validateFunction, validateFiniteNumber } = require("internal/validators");
 
+// What `_writeState` can count. A Buffer can have one byte more.
+const kMaxWriteLength = 2 ** 32 - 1;
+// Z_NO_FLUSH, BROTLI_OPERATION_PROCESS and ZSTD_e_continue.
+const kNoFlush = 0;
 const kFlushFlag = Symbol("kFlushFlag");
 const kAfterFlush = Symbol("kAfterFlush");
 const kError = Symbol("kError");
@@ -269,6 +273,8 @@ function ZlibBase(
       chunkSize = Z_DEFAULT_CHUNK;
     } else if (chunkSize < Z_MIN_CHUNK) {
       throw $ERR_OUT_OF_RANGE("options.chunkSize", `>= ${Z_MIN_CHUNK}`, chunkSize);
+    } else if (chunkSize > kMaxWriteLength && chunkSize <= kMaxWriteLength + 1) {
+      chunkSize = kMaxWriteLength;
     }
 
     // prettier-ignore
@@ -457,11 +463,12 @@ function processChunkSync(self: $Node.ZlibBase, chunk: View, flushFlag: number):
   });
 
   while (true) {
+    const heldBack = availInBefore > kMaxWriteLength ? availInBefore - kMaxWriteLength : 0;
     handle.writeSync(
-      flushFlag,
+      heldBack ? kNoFlush : flushFlag,
       chunk, // in
       inOff, // in_off
-      availInBefore, // in_len
+      availInBefore - heldBack, // in_len
       buffer, // out
       offset, // out_off
       availOutBefore, // out_len
@@ -476,7 +483,7 @@ function processChunkSync(self: $Node.ZlibBase, chunk: View, flushFlag: number):
     } else if (self[kError]) throw self[kError];
 
     availOutAfter = state[0];
-    availInAfter = state[1];
+    availInAfter = state[1] + heldBack;
 
     const inDelta = availInBefore - availInAfter;
     inputRead += inDelta;
@@ -502,9 +509,11 @@ function processChunkSync(self: $Node.ZlibBase, chunk: View, flushFlag: number):
       availOutBefore = chunkSize;
       offset = 0;
       buffer = Buffer.allocUnsafe(chunkSize);
+    } else {
+      availOutBefore = availOutAfter;
     }
 
-    if (availOutAfter === 0) {
+    if (availOutAfter === 0 || (heldBack && availInAfter === heldBack)) {
       // Not actually done. Need to reprocess.
       // Also, update the availInBefore to the availInAfter value,
       // so that if we have to hit it a third (fourth, etc.) time,
@@ -527,6 +536,12 @@ function processChunkSync(self: $Node.ZlibBase, chunk: View, flushFlag: number):
 function processChunk(self: $Node.ZlibBase, chunk: View, flushFlag: number, cb: () => void) {
   const handle = self._handle;
   if (!handle) return process.nextTick(cb);
+
+  if (chunk.byteLength > kMaxWriteLength) {
+    const { buffer } = chunk;
+    const rest = () => processChunk(self, Buffer.from(buffer, kMaxWriteLength), flushFlag, cb);
+    return processChunk(self, Buffer.from(buffer, 0, kMaxWriteLength), kNoFlush, rest);
+  }
 
   handle.buffer = chunk;
   handle.cb = cb;
@@ -841,7 +856,7 @@ function createConvenienceMethod(ctor: ZlibFunction | ZlibClass, sync: boolean, 
           bufferSize = 0;
         }
         // Set pledgedSrcSize if not already set
-        if (!opts?.pledgedSrcSize && bufferSize > 0) {
+        if (!opts?.pledgedSrcSize && bufferSize > 0 && bufferSize <= kMaxWriteLength) {
           opts = { ...opts, pledgedSrcSize: bufferSize };
         }
       }

@@ -69,6 +69,7 @@ function expectEmptyText(stdout: string, checked: number) {
 }
 
 const MISSING_NOTE = "note: run 'bun install' first";
+const STALE_LOCKFILE = `error: bun.lock does not match package.json, nothing to list\n${MISSING_NOTE}\n`;
 
 // Text output is printable text and newlines; any other C0 byte, DEL or C1 character came through from a package.json unescaped.
 const RAW_CONTROL = /[\x00-\x09\x0b-\x1f\x7f\x80-\x9f]/;
@@ -1468,6 +1469,133 @@ describe("bun pm licenses", () => {
       `"error: No workspace packages matched the filter "nope""`,
     );
     expect(exitCode).toBe(1);
+  });
+
+  // Without --filter the listing is for the workspace that the command runs in. The lockfile lists a
+  // workspace under its folder. Older versions of bun listed the root's packages when the lockfile
+  // did not have the workspace's name. Now the command stops where `bun install` changes the lockfile.
+  describe.each(["bun.lock", "bun.lockb"])("in a workspace that %s does not list as it is on disk", lockfile => {
+    const setupMono = async () => {
+      const { packageDir: dir } = await registry.createTestDir({
+        bunfigOpts: { linker: "hoisted", saveTextLockfile: lockfile === "bun.lock" },
+        files: monorepoFiles,
+      });
+      await install(dir, "hoisted");
+      expect(existsSync(join(dir, lockfile))).toBeTrue();
+      return { dir, foo: join(dir, "packages", "foo"), bar: join(dir, "packages", "bar") };
+    };
+    const rename = (folder: string, name: string) => {
+      const manifest = JSON.parse(readFileSync(join(folder, "package.json"), "utf8"));
+      writeFileSync(join(folder, "package.json"), JSON.stringify({ ...manifest, name }));
+    };
+
+    test.concurrent("added after the install: an error, not the root's listing", async () => {
+      const { dir, foo } = await setupMono();
+      const added = join(dir, "packages", "added");
+      mkdirSync(join(added, "src"), { recursive: true });
+      writeFileSync(join(added, "package.json"), JSON.stringify({ name: "added", dependencies: { "a-dep": "1.0.1" } }));
+
+      expect(
+        await Promise.all([
+          licenses(added),
+          licenses(added, "--json"),
+          licenses(added, "--prod"),
+          licenses(join(added, "src")),
+          licenses(added, "--silent"),
+        ]),
+      ).toStrictEqual([
+        ["", STALE_LOCKFILE, 1],
+        ["", STALE_LOCKFILE, 1],
+        ["", STALE_LOCKFILE, 1],
+        ["", STALE_LOCKFILE, 1],
+        ["", "", 1],
+      ]);
+      // The root and the workspaces that the lockfile lists are answered as before.
+      expect(await Promise.all([licensesJson(dir), licensesJson(foo)])).toStrictEqual([
+        { MIT: fullJson.MIT, ...fooJson },
+        fooJson,
+      ]);
+    });
+
+    test.concurrent("renamed after the install: the rows of its folder", async () => {
+      const { foo } = await setupMono();
+      rename(foo, "foo-renamed");
+      expect(await Promise.all([licensesJson(foo), licensesJson(foo, "--filter", ".")])).toStrictEqual([
+        fooJson,
+        fooJson,
+      ]);
+    });
+
+    // The lockfile has the workspace's name at another folder, so it does not say whose rows those are.
+    test.concurrent("moved, copied, or renamed to the name of another workspace: an error", async () => {
+      const [moved, copied, exchanged] = await Promise.all([setupMono(), setupMono(), setupMono()]);
+      renameSync(moved.foo, join(moved.dir, "packages", "moved"));
+      mkdirSync(join(copied.dir, "packages", "copy"));
+      copyFileSync(join(copied.foo, "package.json"), join(copied.dir, "packages", "copy", "package.json"));
+      rename(exchanged.foo, "bar");
+      rename(exchanged.bar, "foo");
+
+      expect(
+        await Promise.all([
+          licenses(join(moved.dir, "packages", "moved"), "--json"),
+          licenses(exchanged.foo, "--json"),
+          licenses(exchanged.bar, "--json"),
+        ]),
+      ).toStrictEqual([
+        ["", STALE_LOCKFILE, 1],
+        ["", STALE_LOCKFILE, 1],
+        ["", STALE_LOCKFILE, 1],
+      ]);
+      // Two workspaces with one name are an error of the project, which is reported as an install reports it.
+      const [stdout, stderr, exitCode] = await licenses(join(copied.dir, "packages", "copy"), "--json");
+      expect([stdout, stderr.split("\n").filter(line => /^(error|note):/.test(line)), exitCode]).toStrictEqual([
+        "",
+        [`error: Workspace name "foo" already exists`, "note: Package name is also declared here"],
+        1,
+      ]);
+    });
+  });
+
+  // `bun install` keeps a lockfile that has no entry for a workspace named like a registry dependency of the
+  // root. `bun update` in the workspace adds the entry, and moves its ranges as in any workspace.
+  test.concurrent("a workspace that bun install leaves out of bun.lock is listed after bun update", async () => {
+    const dir = await setup("hoisted", {
+      ...monorepoFiles,
+      "package.json": JSON.stringify({
+        name: "mono",
+        private: true,
+        workspaces: ["packages/*"],
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+    });
+    const member = join(dir, "packages", "no-deps");
+    const declared = () => JSON.parse(readFileSync(join(member, "package.json"), "utf8")).dependencies;
+    mkdirSync(member);
+    writeFileSync(
+      join(member, "package.json"),
+      JSON.stringify({ name: "no-deps", version: "3.0.0", dependencies: { "a-dep": "^1.0.1" } }),
+    );
+    await install(dir, "hoisted");
+
+    expect(await licenses(member, "--json")).toStrictEqual([
+      "",
+      `error: workspace "packages/no-deps" not in lockfile, nothing to list\nnote: run 'bun update' here\n`,
+      1,
+    ]);
+
+    await using update = spawn({
+      cmd: [bunExe(), "update"],
+      env: installEnv(dir),
+      cwd: member,
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    expect([(await update.stderr.text()).includes("error:"), await update.exited]).toStrictEqual([false, 0]);
+    expect([declared(), await licensesJson(member)]).toStrictEqual([
+      { "a-dep": "^1.0.10" },
+      { Unknown: [u("a-dep", "1.0.10")] },
+    ]);
   });
 
   test.concurrent("--filter patterns that match nothing are reported when other patterns match", async () => {

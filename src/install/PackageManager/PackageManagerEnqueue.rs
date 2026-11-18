@@ -3951,17 +3951,8 @@ fn update_target_declares(this: &mut PackageManager, dependency_id: DependencyID
     if let Some(targets) = this.update_target_workspaces.as_deref() {
         return lockfile.is_dependency_of_workspace_in(targets, dependency_id);
     }
-    let in_member = this.workspace_name_hash.is_some();
-    let id = match this.root_package_id.id {
-        Some(id) if id != 0 || !in_member => id,
-        _ => {
-            let id = lockfile.get_workspace_package_id(this.workspace_name_hash);
-            if id == 0 && in_member {
-                return false;
-            }
-            this.root_package_id.id = Some(id);
-            id
-        }
+    let Some(id) = (this.root_package_id).get(lockfile, this.workspace_name_hash) else {
+        return false;
     };
     (lockfile.packages.items_dependencies().get(id as usize))
         .is_some_and(|rows| rows.contains(dependency_id))

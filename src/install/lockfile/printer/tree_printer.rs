@@ -18,7 +18,8 @@ fn print_installed_workspace_section<W: Write>(
     this: &Printer,
     manager: &mut PackageManager,
     writer: &mut W,
-    workspace_package_id: PackageID,
+    // `None`: the lockfile has no rows for the workspace, so the section has no rows of its own.
+    workspace_package_id: Option<PackageID>,
     installed: &Bitset,
     printed_new_install: &mut bool,
     id_map: Option<&mut [DependencyID]>,
@@ -33,13 +34,12 @@ fn print_installed_workspace_section<W: Write>(
     let packages = &lockfile.packages;
     let resolutions = lockfile.buffers.resolutions.as_slice();
     let dependencies = lockfile.buffers.dependencies.as_slice();
-    let workspace_res = &packages.items_resolution()[workspace_package_id as usize];
     let names = packages.items_name();
     let pkg_metas = packages.items_meta();
-    debug_assert!(
-        workspace_res.tag == resolution::Tag::Workspace
-            || workspace_res.tag == resolution::Tag::Root
-    );
+    debug_assert!(workspace_package_id.is_none_or(|id| matches!(
+        packages.items_resolution()[id as usize].tag,
+        resolution::Tag::Workspace | resolution::Tag::Root
+    )));
     let resolutions_list = packages.items_resolutions();
     let mut printed_section_header = false;
     let mut printed_update = false;
@@ -53,13 +53,16 @@ fn print_installed_workspace_section<W: Write>(
     let mut id_map = id_map;
     macro_rules! print_section_header_once {
         () => {
-            if print_section_header && !printed_section_header {
+            if print_section_header
+                && !printed_section_header
+                && let Some(id) = workspace_package_id
+            {
                 printed_section_header = true;
                 bun_core::write_pretty!(
                     writer,
                     enable_ansi_colors,
                     "<r>\n<cyan>{s}<r><d>:<r>\n",
-                    bstr::BStr::new(names[workspace_package_id as usize].slice(string_buf)),
+                    bstr::BStr::new(names[id as usize].slice(string_buf)),
                 )?;
             }
         };
@@ -75,7 +78,7 @@ fn print_installed_workspace_section<W: Write>(
                 manager,
                 dep_id,
                 installed,
-                if owner == workspace_package_id {
+                if Some(owner) == workspace_package_id {
                     id_map.as_deref_mut()
                 } else {
                     None
@@ -136,9 +139,10 @@ fn print_installed_workspace_section<W: Write>(
         }
     }
 
-    for dep_id in resolutions_list[workspace_package_id as usize].begin()
-        ..resolutions_list[workspace_package_id as usize].end()
-    {
+    let own_rows = workspace_package_id.map_or(0..0, |id| {
+        resolutions_list[id as usize].begin()..resolutions_list[id as usize].end()
+    });
+    for dep_id in own_rows {
         match should_print_package_install(
             this,
             manager,
@@ -612,6 +616,31 @@ fn print_installed_update_request<W: Write>(
     Ok(())
 }
 
+/// The workspace packages of `lockfile`: first the ones that a `workspace` row of the root leads
+/// to, in the order of those rows. A bun.lockb from Bun 1.4 can have a workspace package that no
+/// such row leads to.
+fn workspace_package_ids(lockfile: &install::Lockfile) -> Vec<PackageID> {
+    let resolved = lockfile.packages.items_resolution();
+    let rows = lockfile.packages.items_resolutions()[0];
+    let mut ids: Vec<PackageID> = (rows.begin()..rows.end())
+        .filter(|&dep_id| {
+            lockfile.buffers.dependencies[dep_id as usize]
+                .behavior
+                .is_workspace()
+        })
+        .map(|dep_id| lockfile.buffers.resolutions[dep_id as usize])
+        .filter(|&id| (id as usize) < resolved.len())
+        .collect();
+    let linked = ids.len();
+    for (id, res) in resolved.iter().enumerate() {
+        let id = id as PackageID;
+        if res.tag == resolution::Tag::Workspace && !ids[..linked].contains(&id) {
+            ids.push(id);
+        }
+    }
+    ids
+}
+
 /// - Prints an empty newline with no diffs
 /// - Prints a leading and trailing blank newline with diffs
 #[inline(never)]
@@ -644,18 +673,10 @@ pub(crate) fn print<W: Write>(
     let mut had_printed_new_install = false;
     if let Some(installed) = this.successfully_installed.as_ref() {
         if log_level.is_verbose() {
-            let mut workspaces_to_print: Vec<DependencyID> = Vec::new();
-
-            for dep_id in resolutions_list[0].begin()..resolutions_list[0].end() {
-                let dep = &dependencies_buffer[dep_id as usize];
-                if dep.behavior.is_workspace() {
-                    workspaces_to_print.push(dep_id);
-                }
-            }
+            let workspaces_to_print = workspace_package_ids(this.lockfile);
 
             // Fills `id_map`.
-            for &workspace_dep_id in &workspaces_to_print {
-                let workspace_package_id = resolutions_buffer[workspace_dep_id as usize];
+            for &workspace_package_id in &workspaces_to_print {
                 for dep_id in resolutions_list[workspace_package_id as usize].begin()
                     ..resolutions_list[workspace_package_id as usize].end()
                 {
@@ -674,7 +695,7 @@ pub(crate) fn print<W: Write>(
                 this,
                 manager,
                 writer,
-                0,
+                Some(0),
                 installed,
                 &mut had_printed_new_install,
                 None,
@@ -684,13 +705,12 @@ pub(crate) fn print<W: Write>(
                 /* print_section_header */ false,
             )?;
 
-            for &workspace_dep_id in &workspaces_to_print {
-                let workspace_package_id = resolutions_buffer[workspace_dep_id as usize];
+            for &workspace_package_id in &workspaces_to_print {
                 print_installed_workspace_section(
                     this,
                     manager,
                     writer,
-                    workspace_package_id,
+                    Some(workspace_package_id),
                     installed,
                     &mut had_printed_new_install,
                     None,
@@ -702,30 +722,17 @@ pub(crate) fn print<W: Write>(
             }
         } else {
             // just print installed packages for the current workspace
-            let mut workspace_package_id: PackageID = 0;
-            if let Some(workspace_name_hash) = manager.workspace_name_hash {
-                for dep_id in resolutions_list[0].begin()..resolutions_list[0].end() {
-                    let dep = &dependencies_buffer[dep_id as usize];
-                    if dep.behavior.is_workspace() && dep.name_hash == workspace_name_hash {
-                        workspace_package_id = resolutions_buffer[dep_id as usize];
-                        break;
-                    }
-                }
-            }
+            let workspace_package_id =
+                (this.lockfile).get_workspace_package_id(manager.workspace_name_hash);
 
             // `bun update -r` / `--filter`: the `^` rows of every selected workspace, whether or not the cwd is one of them.
-            let mut update_owners: Vec<PackageID> = vec![workspace_package_id];
+            let mut update_owners: Vec<PackageID> = Vec::from_iter(workspace_package_id);
             if manager.subcommand == Subcommand::Update {
                 if let Some(targets) = manager.update_target_workspaces.as_deref() {
                     let names = packages.items_name();
                     let name_hashes = packages.items_name_hash();
-                    let members = (resolutions_list[0].begin()..resolutions_list[0].end())
-                        .filter(|&dep_id| {
-                            dependencies_buffer[dep_id as usize].behavior.is_workspace()
-                        })
-                        .map(|dep_id| resolutions_buffer[dep_id as usize]);
                     update_owners = core::iter::once(0)
-                        .chain(members)
+                        .chain(workspace_package_ids(this.lockfile))
                         .filter(|&importer| {
                             importer < end
                                 && targets.iter().any(|target| {

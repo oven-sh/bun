@@ -1984,6 +1984,92 @@ describe("bun update <name> semantics", () => {
       expect([rootAfter, bAfter, aAfter === aBefore]).toStrictEqual([rootBefore, bBefore, aDep === "1.0.1"]);
       await install(dir, "--frozen-lockfile");
     });
+
+    // The summary takes the version that a dependency moves from out of the rows bun.lock has for the workspace. A
+    // workspace that bun.lock does not list yet has none, and older versions of bun took the root's rows for it.
+    it.concurrent("a bare update from a workspace added after the install lists its dependencies as new", async () => {
+      const dir = await createDir({
+        "package.json": { ...ROOT, dependencies: { "a-dep": "1.0.1" } },
+        "packages/a/package.json": member("a"),
+      });
+      await install(dir);
+      const added = join(dir, "packages", "added");
+      await mkdir(added);
+      await writeFile(join(added, "package.json"), stringify(member("added", { "a-dep": "^1.0.3" })));
+
+      const { stdout, stderr, exitCode } = await runFrom(added, dir, "update");
+      expect(stderr).not.toContain("error:");
+      expect(stdout.split("\n").filter(line => line.includes("a-dep"))).toStrictEqual(["+ a-dep@1.0.10"]);
+      expect(exitCode).toBe(0);
+      expect((await packageJsonOf(dir)).dependencies).toStrictEqual({ "a-dep": "1.0.1" });
+      expect((await lock(dir)).workspaces["packages/added"].dependencies).toStrictEqual({ "a-dep": "^1.0.10" });
+      await install(dir, "--frozen-lockfile");
+    });
+
+    // bun.lock has a workspace under its folder. A new `name` in its package.json is a new workspace for the
+    // install, so the summary has no version that a-dep moves from. Older versions of bun took the root's.
+    it.concurrent("a bare update from a workspace renamed after the install", async () => {
+      const dir = await createDir({
+        "package.json": { ...ROOT, dependencies: { "a-dep": "1.0.1" } },
+        "packages/a/package.json": member("a", { "a-dep": "1.0.3" }),
+      });
+      await install(dir);
+      const renamed = join(dir, "packages", "a");
+      await writeFile(join(renamed, "package.json"), stringify(member("a-renamed", { "a-dep": "^1.0.3" })));
+
+      const { stdout, stderr, exitCode } = await runFrom(renamed, dir, "update");
+      expect(stderr).not.toContain("error:");
+      expect(stdout.split("\n").filter(line => line.includes("a-dep"))).toStrictEqual(["+ a-dep@1.0.10"]);
+      expect(exitCode).toBe(0);
+      expect((await packageJsonOf(dir)).dependencies).toStrictEqual({ "a-dep": "1.0.1" });
+      expect((await lock(dir)).workspaces["packages/a"]).toMatchObject({
+        name: "a-renamed",
+        dependencies: { "a-dep": "^1.0.10" },
+      });
+      await install(dir, "--frozen-lockfile");
+    });
+
+    // `--prod`, `--depth` and a pattern select among the rows that bun.lock has for the workspace. Older versions
+    // of bun looked for the rows by the workspace's name alone, and selected nothing when bun.lock did not have it.
+    describe.each(["--prod", "--depth 0", "a-*"])("bun update %s", selector => {
+      it.concurrent("from a workspace renamed after the install moves its own a-dep", async () => {
+        const { dir, texts, packageJsons } = await unreachableFromA();
+        const renamed = join(dir, "packages", "a");
+        await writeFile(join(renamed, "package.json"), stringify(member("a-renamed", { "a-dep": "^1.0.1" })));
+
+        const { stderr, exitCode } = await runFrom(renamed, dir, "update", ...selector.split(" "));
+        expect(stderr).not.toContain("error:");
+        expect(exitCode).toBe(0);
+        expect(await lockedVersions(dir, "a-dep")).toStrictEqual(["1.0.10"]);
+        expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
+        expect((await lock(dir)).workspaces["packages/a"]).toMatchObject({
+          name: "a-renamed",
+          dependencies: { "a-dep": "^1.0.10" },
+        });
+        expect((await packageJsonOf(dir, "packages/a")).dependencies).toStrictEqual({ "a-dep": "^1.0.10" });
+        const [rootAfter, , bAfter] = await texts();
+        expect([rootAfter, bAfter]).toStrictEqual([packageJsons[0], packageJsons[2]]);
+        await install(dir, "--frozen-lockfile");
+      });
+
+      it.concurrent("from a workspace added after the install is an error that writes nothing", async () => {
+        const { dir, texts, packageJsons, lockBefore } = await unreachableFromA();
+        const added = join(dir, "packages", "added");
+        await mkdir(added);
+        const manifest = stringify(member("added", { "a-dep": "^1.0.1" }));
+        await writeFile(join(added, "package.json"), manifest);
+
+        const { stdout, stderr, exitCode } = await runFrom(added, dir, "update", ...selector.split(" "));
+        expect(stderr).toBe(
+          "error: bun.lock does not match package.json, nothing to update\nnote: run 'bun install' first\n",
+        );
+        expect(stdout).not.toContain("Checked");
+        expect(await lockText(dir)).toBe(lockBefore);
+        expect(await texts()).toStrictEqual(packageJsons);
+        expect(await packageJsonText(dir, "packages/added")).toBe(manifest);
+        expect(exitCode).toBe(1);
+      });
+    });
   });
 
   describe("patterns", () => {

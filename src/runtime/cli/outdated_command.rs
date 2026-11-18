@@ -132,13 +132,8 @@ impl OutdatedCommand {
                 );
                 (ids, true)
             } else {
-                let root_pkg_id = manager
-                    .root_package_id
-                    .get(&manager.lockfile, manager.workspace_name_hash);
-                if root_pkg_id == bun_install::INVALID_PACKAGE_ID {
-                    return Ok(());
-                }
-                (vec![root_pkg_id], false)
+                let workspace_pkg_id = manager.cwd_workspace_id_or_exit("nothing outdated");
+                (vec![workspace_pkg_id], false)
             };
         populate_manifest_cache::populate_manifest_cache(
             manager,

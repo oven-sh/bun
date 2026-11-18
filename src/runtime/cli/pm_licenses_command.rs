@@ -101,7 +101,6 @@ impl PmLicensesCommand {
 
         let json_output = pm.options.json_output;
         let features = pm.options.local_package_features;
-        let lockfile: &Lockfile = &pm.lockfile;
 
         if flags.dev_only && !features.dev_dependencies {
             if not_silent {
@@ -123,12 +122,11 @@ impl PmLicensesCommand {
         path.set_length(top_len);
 
         let filter_patterns = pm.options.filter_patterns;
-        let (roots, follow_workspace_edges): (Vec<PackageID>, bool) = if filter_patterns.is_empty()
-        {
-            (
-                vec![pm.root_package_id.get(lockfile, pm.workspace_name_hash)],
-                true,
-            )
+        let cwd_root =
+            (filter_patterns.is_empty()).then(|| pm.cwd_workspace_id_or_exit("nothing to list"));
+        let lockfile: &Lockfile = &pm.lockfile;
+        let (roots, follow_workspace_edges): (Vec<PackageID>, bool) = if let Some(id) = cwd_root {
+            (vec![id], true)
         } else {
             let selection = workspace_selection::select_lockfile_workspaces(
                 lockfile,

@@ -24,8 +24,8 @@ use bun_install::package_manager_real::package_json_editor::{
 };
 use bun_install::update_scope::selects;
 use bun_install::{
-    CommandLineArguments, GetJsonOptions, GetJsonResult, INVALID_PACKAGE_ID, PackageID,
-    PackageManager, WorkspacePackageJsonCacheEntry, resolution,
+    CommandLineArguments, GetJsonOptions, GetJsonResult, PackageID, PackageManager,
+    WorkspacePackageJsonCacheEntry, resolution,
 };
 use bun_install_types::DependencyGroup;
 use bun_paths::{self as path, PathBuffer};
@@ -425,13 +425,7 @@ impl UpdateInteractiveCommand {
                     original_cwd,
                 )
             } else {
-                let root_pkg_id = manager
-                    .root_package_id
-                    .get(&manager.lockfile, manager.workspace_name_hash);
-                if root_pkg_id == INVALID_PACKAGE_ID {
-                    return Ok(());
-                }
-                vec![root_pkg_id]
+                vec![manager.cwd_workspace_id_or_exit("nothing to update")]
             };
 
         populate_manifest_cache::populate_manifest_cache(

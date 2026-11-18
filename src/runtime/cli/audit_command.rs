@@ -15,7 +15,8 @@ use bun_install::package_manager_real::command_line_arguments::AuditLevel;
 use bun_install::package_manager_real::install_with_manager;
 use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{
-    CommandLineArguments, Dependency, LogLevel, PackageManager, PackageNameHash, Subcommand,
+    CommandLineArguments, Dependency, LogLevel, PackageID, PackageManager, PackageNameHash,
+    Subcommand,
 };
 use bun_parsers::json as bun_json;
 use bun_url::URL;
@@ -411,8 +412,6 @@ fn collect_packages_for_audit(
     pm: &mut PackageManager,
     apply_omit: bool,
 ) -> Result<CollectPackagesResult, bun_alloc::AllocError> {
-    let root_id = pm.root_package_id.get(&pm.lockfile, pm.workspace_name_hash);
-
     let mut groups: Vec<(AuditRegistry, Vec<PackageVersions>)> = vec![(
         AuditRegistry::from_scope(&pm.options.scope, true),
         Vec::new(),
@@ -423,12 +422,15 @@ fn collect_packages_for_audit(
         && !(features.dev_dependencies
             && features.optional_dependencies
             && features.peer_dependencies);
-    let wanted_packages: Option<DynamicBitSet> = omits_something.then(|| {
+    // Only the walk starts at the workspace that the command runs in. Without it, every package
+    // of the lockfile is audited.
+    let walk_root = omits_something.then(|| pm.cwd_workspace_id_or_exit("nothing to audit"));
+    let wanted_packages: Option<DynamicBitSet> = walk_root.map(|root| {
         reachable::packages(
             &pm.lockfile,
             pm.lockfile.buffers.resolutions.as_slice(),
             reachable::Options {
-                root: root_id,
+                root,
                 dev: features.dev_dependencies,
                 optional: features.optional_dependencies,
                 peer: features.peer_dependencies,
@@ -451,8 +453,7 @@ fn collect_packages_for_audit(
     let mut ver_scratch: Vec<u8> = Vec::new();
 
     for (idx, (name, res)) in pkg_names.iter().zip(pkg_resolutions.iter()).enumerate() {
-        if idx as u32 == root_id
-            || res.tag != ResolutionTag::Npm
+        if res.tag != ResolutionTag::Npm
             || (wanted_packages.as_ref()).is_some_and(|wanted| !wanted.is_set(idx))
         {
             continue;
@@ -747,14 +748,14 @@ fn parse_vulnerability(package_name: &[u8], vuln: &E::ObjectJSON) -> Vulnerabili
     vulnerability
 }
 
+/// `cwd_workspace` is `None` if the lockfile does not list the workspace that the command runs in.
 fn find_dependency_paths(
     target_package: &[u8],
     dependency_tree: &StringHashMap<Vec<Box<[u8]>>>,
-    pm: &mut PackageManager,
+    pm: &PackageManager,
+    cwd_workspace: Option<PackageID>,
 ) -> Result<Vec<DependencyPath>, bun_alloc::AllocError> {
     let mut paths: Vec<DependencyPath> = Vec::new();
-
-    let root_id = pm.root_package_id.get(&pm.lockfile, pm.workspace_name_hash);
 
     let packages = &pm.lockfile.packages;
     let dependencies = pm.lockfile.buffers.dependencies.as_slice();
@@ -763,7 +764,7 @@ fn find_dependency_paths(
     let pkg_resolutions = packages.items_resolution();
     let pkg_deps = packages.items_dependencies();
 
-    let dep_slice = pkg_deps[root_id as usize].get(dependencies);
+    let dep_slice = cwd_workspace.map_or(&[][..], |id| pkg_deps[id as usize].get(dependencies));
     let workspaces: Vec<(&[u8], &[Dependency])> = (pkg_resolutions.iter())
         .zip(pkg_deps.iter())
         .zip(pkg_names.iter())
@@ -1029,12 +1030,13 @@ fn print_enhanced_audit_report(
         ">"
     };
 
+    let cwd_workspace = pm.cwd_workspace_id();
     for group in vulnerabilities.chunk_by(|a, b| a.package_name == b.package_name) {
         let package_name: &[u8] = &group[0].package_name;
 
         print_package_heading(package_name, collected.installed_versions(package_name));
 
-        for path in &find_dependency_paths(package_name, dependency_tree, pm)? {
+        for path in &find_dependency_paths(package_name, dependency_tree, pm, cwd_workspace)? {
             print_dependency_path(path, separator);
         }
 

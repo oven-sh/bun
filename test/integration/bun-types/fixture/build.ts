@@ -1,7 +1,7 @@
 import { expectAssignable, expectType } from "./utilities";
 
-expectType<BuildMessage["level"]>().is<"error" | "warn" | "info" | "debug" | "verbose">();
-expectType<ResolveMessage["level"]>().is<"error" | "warn" | "info" | "debug" | "verbose">();
+expectType<BuildMessage["level"]>().is<"error" | "warn" | "note" | "debug" | "verbose">();
+expectType<ResolveMessage["level"]>().is<"error" | "warn" | "note" | "debug" | "verbose">();
 
 Bun.build({
   entrypoints: ["hey"],

@@ -43,6 +43,9 @@ async function errorsOfEach(sources: Record<string, string>, strict = true) {
   return errors;
 }
 
+// A loop inside the argument, and behind it `s` is a string.
+const ownLoop = 'let s: string | number = 0; while (typeof s === "number") { s = s > 3 ? "x" : s + 1; }';
+
 // [what the argument is, the type of the parameter, the argument]
 const argumentsThatTheParameterTypes: [string, string, string][] = [
   ["an object literal", "Place", '{ kind: "place", id }'],
@@ -72,6 +75,21 @@ const argumentsThatTheParameterTypes: [string, string, string][] = [
     '() => { if (id) return { kind: "place", id }; return { kind: "skip" }; }',
   ],
   ["an arrow function that returns another", '() => () => "place"', '() => () => "place"'],
+  [
+    "an arrow function with a loop of its own",
+    '() => "place"',
+    '() => { let n = 0; while (n < 3) n++; return "place"; }',
+  ],
+  [
+    "an arrow function that returns what a loop of its own assigns",
+    "() => Place",
+    `() => { ${ownLoop} return { kind: "place", id: s }; }`,
+  ],
+  [
+    "an object literal with an arrow function that returns what a loop of its own assigns",
+    "{ m: () => Place }",
+    `{ m: () => { ${ownLoop} return { kind: "place", id: s }; } }`,
+  ],
   ["an arrow function that is not null", '() => "place"', '(() => "place")!'],
   ["an async arrow function", '() => Promise<"place">', 'async () => "place"'],
   ["a function expression", '() => "place"', 'function () { return "place"; }'],
@@ -146,6 +164,10 @@ test.concurrent(
           "export const same: Equals<ReturnType<typeof g> | typeof o, typeof o> = true;\n",
         wrongText: inLoop(run("Place"), 'out = out && run(out, { kind: "nope", id });'),
         wrongTextFromAnArrow: inLoop(run('() => "place"'), 'out = out && run(out, () => "nope");'),
+        wrongTextBehindALoopInTheArrow: inLoop(
+          run("() => Place"),
+          `out = out && run(out, () => { ${ownLoop} return { kind: "nope", id: s }; });`,
+        ),
         excessProperty: inLoop(run("Place"), 'out = out && run(out, { kind: "place", id, extra: 1 });'),
         nameWithoutAType: inLoop(run("Place"), `const next = out && run(out, ${place}); out = next;`),
         nameWithoutATypeInTheArrow: inLoop(
@@ -192,6 +214,9 @@ test.concurrent(
       literalOutsideTheCall: [],
       wrongText: [`TS2322: Type '"nope"' is not assignable to type '"place"'.`],
       wrongTextFromAnArrow: [`TS2322: Type '"nope"' is not assignable to type '"place"'.`],
+      wrongTextBehindALoopInTheArrow: [
+        `TS2345: Argument of type '() => { kind: "nope"; id: string; }' is not assignable to parameter of type '() => Place'.`,
+      ],
       excessProperty: [
         "TS2353: Object literal may only specify known properties, and 'extra' does not exist in type 'Place'.",
       ],

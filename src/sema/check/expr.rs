@@ -4532,7 +4532,6 @@ impl<'p, 's> Checker<'p, 's> {
                 || (self.p.fn_return_types.get(&self.task, &(file, func))).is_none())
             && self.enter(Query::ReturnAtFirstLook(file, func))
         {
-            let flow_taints = self.incomplete_flow_taints;
             let ty = self.return_type_of_fn_uncached(file, func, check_mode);
             // Under a check mode, `checkExpressionCachedEx` doesn't touch `flowLoopStack`, and a
             // return type derived from a loop's incomplete type is stored like any other. So
@@ -4547,10 +4546,14 @@ impl<'p, 's> Checker<'p, 's> {
                 Err(open) => {
                     let left_frame = self.left_frame;
                     // Without a check mode the frame can have the mark of a loop from `push_frame`
-                    // alone. A return type that read no incomplete type is the one tsgo stores, and
-                    // a later resolution doesn't find the contextual type that's pushed now.
+                    // alone: nothing it computed read that loop's incomplete type, a loop in the
+                    // body marks only the frames above this one. Such a return type is the one tsgo
+                    // stores, and a later resolution doesn't find the contextual type that's pushed
+                    // now.
+                    let is_marked_by_push_alone = left_frame
+                        .is_some_and(|it| self.lowest_taint_since(it.serial) > self.frames.len());
                     let is_stored_in_flow_loop = (is_check_final || !is_context_sensitive)
-                        && (is_checked_under_mode || self.incomplete_flow_taints == flow_taints);
+                        && (is_checked_under_mode || is_marked_by_push_alone);
                     let stored = if is_stored_in_flow_loop {
                         self.incomplete_flow_result(q)
                     } else {

@@ -405,9 +405,8 @@ impl SideEffects {
                     loc: expr.loc,
                 };
 
-                // Otherwise only the side effects stay. An object literal converts a computed key
-                // as a property key, so the keys stay in one, ahead of the next value that stays.
-                let mut keys: Option<G::PropertyList> = None;
+                // Only side effects stay. A computed key stays in an object literal: ToPropertyKey.
+                let mut keys_before_next_value: Option<G::PropertyList> = None;
                 let object_of_keys = |properties: G::PropertyList| E::Object {
                     properties,
                     is_single_line: true,
@@ -420,7 +419,8 @@ impl SideEffects {
                     if flags.contains(bun_ast::flags::Property::IsComputed) {
                         let key_expr = key.unwrap();
                         let zero = p.new_expr(E::Number::new(0.0), key_expr.loc);
-                        keys.get_or_insert_with(bun_alloc::AstAlloc::vec)
+                        keys_before_next_value
+                            .get_or_insert_with(bun_alloc::AstAlloc::vec)
                             .push(G::Property {
                                 key: Some(key_expr),
                                 value: Some(zero),
@@ -430,14 +430,14 @@ impl SideEffects {
                     }
                     let v = value.unwrap();
                     if let Some(value) = Self::simplify_unused_expr(p, v) {
-                        if let Some(properties) = keys.take() {
+                        if let Some(properties) = keys_before_next_value.take() {
                             let object = p.new_expr(object_of_keys(properties), expr.loc);
                             result = Expr::join_with_comma(result, object);
                         }
                         result = Expr::join_with_comma(result, value);
                     }
                 }
-                if let Some(properties) = keys {
+                if let Some(properties) = keys_before_next_value {
                     let object = p.new_expr(object_of_keys(properties), expr.loc);
                     result = Expr::join_with_comma(result, object);
                 }

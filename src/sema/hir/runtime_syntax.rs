@@ -218,26 +218,37 @@ impl<S: Storage> FileIn<S> {
 }
 
 impl<S: Storage> FileIn<S> {
-    /// True if `pos` lies between two tokens of a JSX tag, and in no expression of the tag. Only whitespace, `//` and `/* */` are trivia there: every
-    /// reader refuses a legacy HTML comment mark between the tokens of a tag.
-    pub fn is_between_tokens_of_jsx_tag(&self, pos: u32) -> bool {
-        let is_inside = |(from, to): (u32, u32)| from < pos && pos < to;
-        self.exprs.iter().any(|element| {
+    /// The first of `marks` that lies between two tokens of a JSX tag and in no expression of the tag. `marks` are the starts of the legacy HTML
+    /// comment marks of the text, in their order. Only whitespace, `//` and `/* */` are trivia between the tokens of a tag: every reader refuses a
+    /// mark there.
+    pub fn find_mark_between_tokens_of_jsx_tag(&self, marks: &[u32]) -> Option<u32> {
+        let mut found: Option<u32> = None;
+        for element in self.exprs.iter() {
             let ExprKind::Jsx(jsx) = element.kind else {
-                return false;
+                continue;
             };
             let jsx = &self[jsx];
-            let tags = [(element.pos, jsx.opening_end), (jsx.close_pos, jsx.end)];
-            let is_in_expression_of = |tag: (u32, u32)| {
+            let is_in_expression_of = |tag: (u32, u32), mark: u32| {
+                let is_around = |(from, to): (u32, u32)| from < mark && mark < to;
                 let mut braces = self.jsx_expressions.iter().map(|it| (it.1, it.2));
                 let mut spreads = jsx.attrs.iter().map(|attribute| &self[attribute]);
-                braces.any(|it| tag.0 < it.0 && it.1 <= tag.1 && is_inside(it))
+                braces.any(|it| tag.0 < it.0 && it.1 <= tag.1 && is_around(it))
                     || spreads
-                        .any(|it| it.kind == PropKind::Spread && is_inside((it.start, it.end)))
+                        .any(|it| it.kind == PropKind::Spread && is_around((it.start, it.end)))
             };
-            tags.into_iter()
-                .any(|tag| tag.0 != u32::MAX && is_inside(tag) && !is_in_expression_of(tag))
-        })
+            for tag in [(element.pos, jsx.opening_end), (jsx.close_pos, jsx.end)] {
+                let first = marks.partition_point(|&mark| mark <= tag.0);
+                let in_tag = marks[first..].iter().take_while(|&&mark| mark < tag.1);
+                let between_tokens = in_tag
+                    .copied()
+                    .find(|&mark| !is_in_expression_of(tag, mark));
+                found = match (found, between_tokens) {
+                    (Some(found), Some(mark)) => Some(found.min(mark)),
+                    (found, mark) => found.or(mark),
+                };
+            }
+        }
+        found
     }
 }
 

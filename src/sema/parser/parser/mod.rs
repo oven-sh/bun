@@ -1055,19 +1055,36 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         }
     }
 
-    /// Turns `Lexer::flagged` into diagnostics. A legacy HTML comment mark is none yet: the first one is noted for those that know what the file is.
+    /// Notes the legacy HTML comment marks of a text that is compiled. The first one is kept for those that know what the file is. One between the
+    /// tokens of a JSX tag is a parse error at once, as every `<!--` was when the lexer reported it.
+    #[cold]
+    #[inline(never)]
+    fn note_html_comment_marks(&mut self, flagged: &[(u32, u32, u32)]) {
+        let marks = flagged.iter().filter(|it| it.0 == HTML_COMMENT_MARK);
+        let starts: Vec<u32> = marks.clone().map(|it| it.1).collect();
+        let in_tag = match self.f.jsx.is_empty() {
+            true => None,
+            false => self.f.find_mark_between_tokens_of_jsx_tag(&starts),
+        };
+        let mut marks = marks.map(|&(_, start, end)| (start, end));
+        match in_tag.and_then(|start| marks.clone().find(|it| it.0 == start)) {
+            Some(at) => {
+                let error = Diagnostic::new(DiagnosticKind::Parse, at, HTML_COMMENT_MARK, &[]);
+                self.f.diagnostics.push(error);
+                self.f.has_parse_diagnostics = true;
+            }
+            None => self.f.html_comment_end = marks.next().map_or(0, |it| it.1),
+        }
+    }
+
+    /// Turns `Lexer::flagged` into diagnostics. A legacy HTML comment mark is none yet: see `note_html_comment_marks`.
     fn report_scanner_flagged_errors(&mut self) {
-        for (code, start, end) in std::mem::take(&mut self.lx.flagged) {
+        let flagged = std::mem::take(&mut self.lx.flagged);
+        if flagged.iter().any(|it| it.0 == HTML_COMMENT_MARK) {
+            self.note_html_comment_marks(&flagged);
+        }
+        for (code, start, end) in flagged {
             if code == HTML_COMMENT_MARK {
-                if !self.f.jsx.is_empty() && self.f.is_between_tokens_of_jsx_tag(start) {
-                    // A parse error, as every `<!--` was when the lexer reported it.
-                    let at = (start, end);
-                    let error = Diagnostic::new(DiagnosticKind::Parse, at, HTML_COMMENT_MARK, &[]);
-                    self.f.diagnostics.push(error);
-                    self.f.has_parse_diagnostics = true;
-                } else if self.f.html_comment_end == 0 {
-                    self.f.html_comment_end = end;
-                }
                 continue;
             }
             let raw = self

@@ -2517,7 +2517,7 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        fn print_jsx_child_text(&mut self, str_: &E::String) {
+        fn print_jsx_text(&mut self, str_: &E::String) {
             let str_ = str_.flattened(self.bump);
             if str_.is_utf8() {
                 self.print(str_.slice8());
@@ -2534,15 +2534,6 @@ pub(crate) mod __gated_printer {
                     .data
                     .e_string()
                     .is_some_and(|str_| self.can_print_as_jsx_child_text(&str_))
-        }
-
-        fn print_jsx_name_string(&mut self, str_: &E::String) {
-            let str_ = str_.flattened(self.bump);
-            if str_.is_utf8() {
-                self.print(str_.slice8());
-            } else {
-                self.print_utf16_as_utf8(str_.slice16());
-            }
         }
 
         fn print_jsx_tag(&mut self, tag: Expr, map_opening_tag: bool) {
@@ -2577,7 +2568,7 @@ pub(crate) mod __gated_printer {
                     if map_opening_tag {
                         self.add_source_mapping(tag.loc);
                     }
-                    self.print_jsx_name_string(str_);
+                    self.print_jsx_text(str_);
                 }
                 ExprData::EThis(_) => {
                     if map_opening_tag {
@@ -4749,7 +4740,7 @@ pub(crate) mod __gated_printer {
 
                             self.print(b" ");
                             self.add_source_mapping(key.loc);
-                            self.print_jsx_name_string(&name);
+                            self.print_jsx_text(&name);
                             if prop.flags.contains(js_ast::flags::Property::WasShorthand) {
                                 continue;
                             }
@@ -4804,7 +4795,7 @@ pub(crate) mod __gated_printer {
                                 ExprData::EString(str_) => {
                                     self.add_source_mapping(child.loc);
                                     if is_text {
-                                        self.print_jsx_child_text(str_);
+                                        self.print_jsx_text(str_);
                                     } else {
                                         self.print_jsx_string_expression(str_);
                                     }
@@ -4826,10 +4817,10 @@ pub(crate) mod __gated_printer {
                             self.print_indent();
                         }
 
-                        self.add_source_mapping(e_.close_tag_loc);
+                        self.add_source_mapping(e_.close_tag_start_loc);
                         self.print(b"</");
                         if let Some(tag) = e_.tag {
-                            self.add_source_mapping(e_.close_tag_name_loc);
+                            self.add_source_mapping(e_.close_tag_loc);
                             self.print_jsx_tag(tag, false);
                         }
                         self.print(b">");

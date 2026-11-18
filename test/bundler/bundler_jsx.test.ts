@@ -1552,12 +1552,15 @@ describe("bundler", () => {
             generatedIndex: generated.indexOf("</section>"),
             sourceIndex: source.indexOf("</section>"),
           },
-          {
+        ];
+        // esbuild 0.18 maps the closing name to the opening name.
+        if (!ESBUILD) {
+          tokens.push({
             token: "closing tag name",
             generatedIndex: generated.indexOf("</section>") + 2,
             sourceIndex: source.indexOf("</section>") + 2,
-          },
-        ];
+          });
+        }
 
         await SourceMapConsumer.with(map, null, consumer => {
           const positions = tokens.map(({ token, generatedIndex }) => {
@@ -1737,6 +1740,30 @@ describe("bundler", () => {
             { type: "div", props: { title: "ropevalue" }, children: ["ropechild"] },
           ],
         }),
+      },
+    });
+  });
+
+  describe.each(["classic", "automatic"] as const)("lowered JSX source maps (%s)", runtime => {
+    itBundled(`jsx/LoweredClosingNameSourcemap-${runtime}`, {
+      files: { "/in.jsx": "export const element = <div>\n  hello\n</div>;\n" },
+      outdir: "/out",
+      target: "bun",
+      backend: "cli",
+      external: ["react"],
+      jsx: { runtime },
+      sourceMap: "external",
+      // This checks Bun's existing closing-name mapping for lowered calls.
+      skipOnEsbuild: true,
+      async onAfterBundle(api) {
+        const lines = api.readFile("/out/in.js").split("\n");
+        const line = lines.findIndex(line => line.includes(");"));
+        expect(line).toBeGreaterThanOrEqual(0);
+        const column = lines[line].indexOf(");");
+        const map = JSON.parse(api.readFile("/out/in.js.map"));
+        await SourceMapConsumer.with(map, null, consumer => {
+          expect(consumer.originalPositionFor({ line: line + 1, column })).toMatchObject({ line: 3, column: 2 });
+        });
       },
     });
   });

@@ -352,8 +352,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             properties,
                             key_prop_index: key_prop_i,
                             flags,
-                            close_tag_loc: less_than_loc,
-                            close_tag_name_loc: end_tag.range.loc,
+                            close_tag_loc: end_tag.range.loc,
+                            close_tag_start_loc: less_than_loc,
                             ..Default::default()
                         },
                         loc,

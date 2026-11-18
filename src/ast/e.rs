@@ -630,8 +630,10 @@ pub struct JSXElement {
 
     pub flags: crate::flags::JSXElementBitset,
 
+    /// Closing name, `>` for a fragment, or `/` for a self-closing tag.
     pub close_tag_loc: crate::Loc,
-    pub close_tag_name_loc: crate::Loc,
+    /// The `<` of an explicit closing tag.
+    pub close_tag_start_loc: crate::Loc,
 }
 impl Default for JSXElement {
     fn default() -> Self {
@@ -642,7 +644,7 @@ impl Default for JSXElement {
             key_prop_index: -1,
             flags: crate::flags::JSXElementBitset::default(),
             close_tag_loc: crate::Loc::EMPTY,
-            close_tag_name_loc: crate::Loc::EMPTY,
+            close_tag_start_loc: crate::Loc::EMPTY,
         }
     }
 }

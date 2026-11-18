@@ -365,8 +365,7 @@ describe.each(["TLSv1.3", "TLSv1.2"] as const)(
       await using srv = await mtlsServer({ maxVersion });
       const client = new RedisClient(`rediss://localhost:${srv.port}`, { tls: mtls, maxRetries: 0 } as any);
       const err = await settle(client.connect());
-      // connect() settles from the close event, not from the handshake verdict.
-      expect(err?.code).toBe("ERR_REDIS_CONNECTION_CLOSED");
+      expect(err?.code).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
       client.close();
       await srv.seen.closed;
       expect(srv.seen.peerCN).toBeNull();
@@ -548,9 +547,8 @@ describe.each(["TLSv1.3", "TLSv1.2"] as const)(
       await using srv = await mtlsServer({ identity: otherHost, maxVersion });
       const client = new RedisClient(`rediss://localhost:${srv.port}`, { tls: otherHostMtls, maxRetries: 0 } as any);
       const [err, commandErr] = await Promise.all([settle(client.connect()), settle(client.send("PING", []))]);
-      // connect() settles from the close event. The handshake verdict goes to
-      // the queued commands, and it is the one of the check after the handshake.
-      expect(err?.code).toBe("ERR_REDIS_CONNECTION_CLOSED");
+      // The verdict is the one of the check after the handshake.
+      expect(err).toBe(commandErr);
       expect({ code: commandErr?.code, message: commandErr?.message }).toEqual({
         code: "ERR_TLS_CERT_ALTNAME_INVALID",
         message: "Hostname/IP does not match certificate's altnames: Host: localhost",

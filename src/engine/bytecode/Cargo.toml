@@ -1,0 +1,22 @@
+[package]
+name = "bun_engine_bytecode"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_engine_text.workspace = true
+bun_engine_number.workspace = true
+bun_engine_bigint.workspace = true
+bun_engine_syntax.workspace = true
+bitflags.workspace = true
+smallvec.workspace = true
+hashbrown.workspace = true
+
+[dev-dependencies]
+bun_engine_standalone.workspace = true

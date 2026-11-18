@@ -1,6 +1,6 @@
 use crate::mal_prelude::*;
 use bun_ast::{ImportKind, ImportRecord, StmtData, StmtOrExpr};
-use bun_collections::{AutoBitSet, StringHashMap, VecExt};
+use bun_collections::{AutoBitSet, HashMap, StringHashMap, VecExt};
 
 use crate::linker_context::merge_small_chunks::part_has_no_side_effects;
 use crate::options::{Loader, OutputFormat};
@@ -126,6 +126,7 @@ pub(crate) fn find_imported_parts_in_js_order(
         namespace_objects: Vec::new(),
         class_names: Vec::new(),
         ends_range_of_files: false,
+        has_import_that_prints_nothing: false,
         chunk_index,
         // The one column written through a shared `&LinkerContext` (see `place`).
         entry_point_chunk_indices: this.graph.files.split_raw().entry_point_chunk_index,
@@ -148,12 +149,24 @@ pub(crate) fn find_imported_parts_in_js_order(
 
     let ChunkLayout {
         files,
-        part_ranges,
+        mut part_ranges,
         parts_prefix,
         namespace_objects,
         class_names,
+        has_import_that_prints_nothing,
         ..
     } = layout;
+    // A range that holds only such imports prints nothing: it is no range.
+    if has_import_that_prints_nothing {
+        let parts = this.graph.ast.items_parts();
+        part_ranges.retain(|range| {
+            let source_index = range.source_index.get();
+            parts[source_index as usize].as_slice()
+                [range.part_index_begin as usize..range.part_index_end as usize]
+                .iter()
+                .any(|part| !this.is_import_of_stylesheet_that_had_a_wrapper(source_index, part))
+        });
+    }
     let mut parts_in_chunk_order: Vec<PartRange> = Vec::with_capacity(
         parts_prefix.len() + namespace_objects.len() + class_names.len() + part_ranges.len(),
     );
@@ -228,6 +241,8 @@ struct WalkPlan {
     entry_id_of_file: Vec<u32>,
     /// With code splitting: `load_rank`.
     rank: Vec<u32>,
+    /// Per stylesheet, when a stylesheet has a JS stub: a part of another file names its class names, and the stylesheet had no wrapper before it had a stub. Each chunk then printed the class names between its files (see `ChunkLayout::place`).
+    printed_class_names: Vec<bool>,
 }
 
 impl WalkPlan {
@@ -241,7 +256,35 @@ impl WalkPlan {
             slot_of_chunk: vec![0; chunks.len()],
             entry_id_of_file: Vec::new(),
             rank: Vec::new(),
+            printed_class_names: Vec::new(),
         };
+
+        let css_js_stubs = &c.parse_graph().css_js_stubs;
+        if css_js_stubs.len() > 0 {
+            let flags = c.graph.meta.items_flags();
+            let parts = c.graph.ast.items_parts();
+            plan.printed_class_names = vec![false; files_len];
+            for source_index in c.graph.reachable_files.iter() {
+                let file = source_index.get() as usize;
+                if !c.graph.files_live.is_set(file) {
+                    continue;
+                }
+                for (part_index, part) in parts[file].as_slice().iter().enumerate() {
+                    if !c.graph.parts_live[file].is_set(part_index) {
+                        continue;
+                    }
+                    for dependency in part.dependencies.iter() {
+                        let other = dependency.source_index.get();
+                        if other as usize != file
+                            && let Some(stylesheet) = css_js_stubs.stylesheet_of(other)
+                        {
+                            plan.printed_class_names[stylesheet as usize] =
+                                !flags[stylesheet as usize].did_wrap_dependencies;
+                        }
+                    }
+                }
+            }
+        }
 
         if code_splitting {
             // A file is in the chunk that has its entry bits as key, also when it prints nothing there.
@@ -630,6 +673,7 @@ fn for_each_edge(
 
     let parts = c.graph.ast.items_parts()[source_index as usize].as_slice();
     let parts_live = &c.graph.parts_live[source_index as usize];
+    let css_js_stubs = &c.parse_graph().css_js_stubs;
     // The namespace export part (index 0) counts last: what it names goes after what the `import` statements import.
     const _: () = assert!(bun_ast::NAMESPACE_EXPORT_PART_INDEX == 0);
     for part_index in 1..=parts.len() {
@@ -653,6 +697,17 @@ fn for_each_edge(
                     Edge::LoadLater(other)
                 },
             );
+        }
+        // A part that names the class names of a stylesheet leads to the stylesheet, also when the `import` is in another file: `EntryWalk::walk` ends a range there.
+        if runs_here && css_js_stubs.len() > 0 {
+            for dependency in part.dependencies.iter() {
+                let other = dependency.source_index.get();
+                if other != source_index
+                    && let Some(stylesheet) = css_js_stubs.stylesheet_of(other)
+                {
+                    each(part_index, Edge::Import(stylesheet));
+                }
+            }
         }
     }
 }
@@ -766,6 +821,8 @@ enum WalkFrame {
     Enter { source_index: IndexInt, loader: u32 },
     /// The walk is past what `run` waits for: `run` goes at the end of `owned[slot].runs`.
     Place { run: PartRun, slot: u32 },
+    /// A run of a stylesheet goes at the end of `owned[slot].runs`, unless the list has it. It prints nothing: it is where the chunk printed the class names before they had a JS stub (`WalkPlan::printed_class_names`).
+    PlaceCss { source_index: IndexInt, slot: u32 },
 }
 
 struct OwnedChunk {
@@ -789,8 +846,17 @@ impl EntryWalk {
         let mut seen = bun_core::handle_oom(AutoBitSet::init_empty(c.graph.files.len()));
         let mut left = bun_core::handle_oom(AutoBitSet::init_empty(c.graph.files.len()));
         let mut stack: Vec<WalkFrame> = Vec::new();
+        let mut css_placed: HashMap<u64, ()> = HashMap::default();
         let root = c.graph.entry_points.items_source_index()[self.entry_id as usize];
-        self.walk(c, plan, &mut seen, &mut left, &mut stack, root);
+        self.walk(
+            c,
+            plan,
+            &mut seen,
+            &mut left,
+            &mut stack,
+            &mut css_placed,
+            root,
+        );
 
         // Chunk folding can move a file into a chunk whose entry points do not import it. It goes last there.
         let runtime = Index::RUNTIME.value();
@@ -798,7 +864,15 @@ impl EntryWalk {
             let chunk = &chunks[self.owned[slot].chunk_index as usize];
             for &source_index in chunk.files_with_parts_in_chunk.keys() {
                 if source_index != runtime && !seen.is_set(source_index as usize) {
-                    self.walk(c, plan, &mut seen, &mut left, &mut stack, source_index);
+                    self.walk(
+                        c,
+                        plan,
+                        &mut seen,
+                        &mut left,
+                        &mut stack,
+                        &mut css_placed,
+                        source_index,
+                    );
                 }
             }
         }
@@ -812,6 +886,7 @@ impl EntryWalk {
         seen: &mut AutoBitSet,
         left: &mut AutoBitSet,
         stack: &mut Vec<WalkFrame>,
+        css_placed: &mut HashMap<u64, ()>,
         root: IndexInt,
     ) {
         let entry_id = self.entry_id;
@@ -820,7 +895,6 @@ impl EntryWalk {
         let flags = c.graph.meta.items_flags();
         let css = &c.parse_graph().css_asts;
         let css_js_stubs = &c.parse_graph().css_js_stubs;
-        let targets = c.graph.ast.items_target();
         let loads = |source_index: IndexInt, loader: u32| {
             files_live.is_set(source_index as usize)
                 && entry_bits[source_index as usize].is_set(loader as usize)
@@ -852,6 +926,17 @@ impl EntryWalk {
                     }
                     continue;
                 }
+                WalkFrame::PlaceCss { source_index, slot } => {
+                    let key = u64::from(slot) << 32 | u64::from(source_index);
+                    if !bun_core::handle_oom(css_placed.get_or_put(key)).found_existing {
+                        self.owned[slot as usize].runs.push(PartRun {
+                            source_index,
+                            begin: 0,
+                            end: u32::MAX,
+                        });
+                    }
+                    continue;
+                }
                 WalkFrame::Enter {
                     source_index,
                     loader,
@@ -880,15 +965,49 @@ impl EntryWalk {
                 if other == Index::RUNTIME.value() {
                     return;
                 }
-                // A stylesheet is in no JS chunk. Its JS stub is placed where the stylesheet is first imported, also by a bare `import`.
-                let other = if css[other as usize].is_some() {
-                    match css_js_stubs.stub_of(other, targets[source_index as usize]) {
-                        Some(stub) => stub,
-                        None => return,
-                    }
+                let is_css = css[other as usize].is_some();
+                let stylesheet = if is_css {
+                    Some(other)
                 } else {
-                    other
+                    css_js_stubs.stylesheet_of(other)
                 };
+                // A file that the walk places leads to a stylesheet, or to its JS stub: the run of the stylesheet goes here, once for each chunk.
+                if let Some(stylesheet) = stylesheet
+                    && let Some(slot) = slot
+                    && plan
+                        .printed_class_names
+                        .get(stylesheet as usize)
+                        .is_some_and(|&printed| printed)
+                    // The chunk of the importer loads the CSS file, whatever load reached the importer.
+                    && (if c.graph.code_splitting {
+                        files_live.is_set(stylesheet as usize)
+                            && entry_bits[stylesheet as usize]
+                                .has_intersection(&entry_bits[source_index as usize])
+                    } else {
+                        loads(stylesheet, entry_id)
+                    })
+                    && !css_placed.contains(&(u64::from(slot) << 32 | u64::from(stylesheet)))
+                {
+                    if splits && part_index > begin {
+                        stack.push(WalkFrame::Place {
+                            run: PartRun {
+                                source_index,
+                                begin,
+                                end: part_index,
+                            },
+                            slot,
+                        });
+                        begin = part_index;
+                    }
+                    stack.push(WalkFrame::PlaceCss {
+                        source_index: stylesheet,
+                        slot,
+                    });
+                }
+                // A stylesheet is in no JS chunk: the walk does not enter it.
+                if is_css {
+                    return;
+                }
                 if seen.is_set(other as usize) {
                     if !left.is_set(other as usize)
                         && let Some(slot) = slot_of(other)
@@ -957,6 +1076,8 @@ struct ChunkLayout<'a, 'ctx> {
     class_names: Vec<PartRange>,
     /// The next part of a file starts a range (see `place`).
     ends_range_of_files: bool,
+    /// Some range holds the `import` of a stylesheet that had a wrapper (see `place`).
+    has_import_that_prints_nothing: bool,
     chunk_index: u32,
     /// Raw `entry_point_chunk_index` column, for the one write in `place`.
     entry_point_chunk_indices: *mut [u32],
@@ -1005,22 +1126,25 @@ impl ChunkLayout<'_, '_> {
 
     fn place(&mut self, run: PartRun) {
         let source_index = run.source_index;
-        debug_assert!(self.c.parse_graph().css_asts[source_index as usize].is_none());
+        // The dev server format takes one range per file.
+        let has_sections = self.c.options.output_format != OutputFormat::InternalBakeDev;
+        // Before the class names had a section, the chunk printed them at the run of their stylesheet: the range of the file before it ends there.
+        if self.c.parse_graph().css_asts[source_index as usize].is_some() {
+            self.ends_range_of_files |= has_sections;
+            return;
+        }
         let parts = self.c.graph.ast.items_parts()[source_index as usize].as_slice();
         let leaves = run.end == u32::MAX;
         // Wrapped files can't be split because they are all inside the wrapper
         let can_be_split =
             self.c.graph.meta.items_flags()[source_index as usize].wrap == Wrap::None;
-        // The dev server format takes one range per file.
-        let stylesheet = (self.c.options.output_format != OutputFormat::InternalBakeDev)
-            .then(|| {
-                self.c
-                    .parse_graph()
-                    .css_js_stubs
-                    .stylesheet_of(source_index)
-            })
-            .flatten();
-        let is_class_names = stylesheet.is_some();
+        let is_class_names = has_sections
+            && self
+                .c
+                .parse_graph()
+                .css_js_stubs
+                .stylesheet_of(source_index)
+                .is_some();
         if can_be_split {
             let parts_live = &self.c.graph.parts_live[source_index as usize];
             let end = if leaves { parts.len() as u32 } else { run.end };
@@ -1055,24 +1179,15 @@ impl ChunkLayout<'_, '_> {
                             source_index,
                             part_index,
                         );
-                        // Before the class names had a section, they printed here unless their stylesheet had a wrapper: the range of the file that imports them ends here.
-                        if let Some(stylesheet) = stylesheet
-                            && !self.c.graph.meta.items_flags()[stylesheet as usize]
-                                .did_wrap_dependencies
-                        {
-                            self.ends_range_of_files = true;
-                        }
                     }
                 } else if parts_live.is_set(part_index as usize)
                     && self.c.is_import_of_stylesheet_that_had_a_wrapper(
                         source_index,
                         &parts[part_index as usize],
                     )
-                    && let Some(last_range) = self.part_ranges.last_mut()
-                    && last_range.source_index.get() == source_index
-                    && last_range.part_index_end == part_index
                 {
-                    last_range.part_index_end += 1;
+                    self.append_or_extend_range(Section::Files, source_index, part_index);
+                    self.has_import_that_prints_nothing = true;
                 }
             }
         }

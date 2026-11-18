@@ -63,6 +63,21 @@ fn css_chunk_key<'a>(
     key
 }
 
+/// `[name]` of a chunk that holds only the class names of a stylesheet: the name of the stylesheet, then `.css`, which `[name]` of its `import()` chunk does not have. No path that JavaScript imports had that name before: a byte that such a path or a file name cannot hold is `_`, and a long name is cut.
+fn class_names_chunk_name(stylesheet_name: &[u8]) -> Box<[u8]> {
+    const NAME_BYTES_MAX: usize = 128;
+    let mut name: Vec<u8> = stylesheet_name
+        .iter()
+        .take(NAME_BYTES_MAX)
+        .map(|&byte| match byte {
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'.' | b'-' | b'_' => byte,
+            _ => b'_',
+        })
+        .collect();
+    name.extend_from_slice(b".css");
+    name.into_boxed_slice()
+}
+
 #[inline(never)]
 pub(crate) fn compute_chunks<'a>(
     this: &mut LinkerContext<'_, 'a>,
@@ -646,19 +661,21 @@ pub(crate) fn compute_chunks<'a>(
             }
         }
 
-        // A chunk that holds only the class names of a stylesheet has the name of the stylesheet, as the chunk of an `import()` of it has.
-        let pathname = bun_fs::PathName::init(
-            if !chunk.entry_point.is_entry_point()
-                && css_js_stubs
-                    .stylesheet_of(chunk.entry_point.source_index())
-                    .is_some()
-            {
-                sources[chunk.entry_point.source_index() as usize].path.text
-            } else {
-                output_paths[chunk.entry_point.entry_point_id() as usize].slice()
-            },
-        );
-        chunk.template.placeholder.name = pathname.base.to_vec().into_boxed_slice();
+        // A chunk that holds only the class names of a stylesheet has a name of its own, from the name of the stylesheet.
+        let holds_only_class_names = !chunk.entry_point.is_entry_point()
+            && css_js_stubs
+                .stylesheet_of(chunk.entry_point.source_index())
+                .is_some();
+        let pathname = bun_fs::PathName::init(if holds_only_class_names {
+            sources[chunk.entry_point.source_index() as usize].path.text
+        } else {
+            output_paths[chunk.entry_point.entry_point_id() as usize].slice()
+        });
+        chunk.template.placeholder.name = if holds_only_class_names {
+            class_names_chunk_name(pathname.base)
+        } else {
+            pathname.base.to_vec().into_boxed_slice()
+        };
         chunk.template.placeholder.ext = chunk.content.ext().to_vec().into_boxed_slice();
 
         if chunk.template.needs(PlaceholderField::Target) {

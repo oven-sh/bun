@@ -88,7 +88,7 @@ describe("css", () => {
         .sort();
       expect([barEntry, chunk, fooEntry]).toEqual([
         "bar-entry.js",
-        expect.stringMatching(/^common\.module-[a-z0-9]{8}\.js$/),
+        expect.stringMatching(/^common\.module\.css-[a-z0-9]{8}\.js$/),
         "foo-entry.js",
       ]);
       api.expectFile("/out/" + chunk).toMatchInlineSnapshot(`
@@ -688,6 +688,96 @@ describe("css", () => {
     },
     outdir: "/out",
     run: { stdout: "first\nsecond" },
+  });
+
+  // A file of a package with no side effects has a bare import of the stylesheet, and the bundle drops that file.
+  // The ranges of entry.js do not change where the walk passes the dropped file. They end where entry.js exports
+  // the class names: first.cjs runs before second.js, and a.js and b.js start together.
+  for (const [kind, entry, stdout] of [
+    [
+      "BetweenRequiredAndImportedFiles",
+      `
+        import "./pkg/dropped.js";
+        import "./first.cjs";
+        export { default as styles } from "./x.module.css";
+        import "./second.js";
+        export const later = () => import("./second.js");
+      `,
+      "first\nsecond",
+    ],
+    [
+      "BetweenTwoImportsThatAwait",
+      `
+        import "./a.js";
+        export * from "./pkg/dropped.js";
+        import "./b.js";
+        export { default as styles } from "./x.module.css";
+        export const later = () => [import("./a.js"), import("./b.js")];
+      `,
+      "a set by b",
+    ],
+  ] as const) {
+    itBundled(`css-module/BareImportInDroppedFile${kind}`, {
+      files: {
+        "/entry.js": entry,
+        "/pkg/package.json": `{ "name": "pkg", "sideEffects": false }`,
+        "/pkg/dropped.js": `import "../x.module.css";`,
+        "/first.cjs": `console.log("first");`,
+        "/second.js": `console.log("second");`,
+        "/a.js": `await null; console.log("a", globalThis.fromB);`,
+        "/b.js": `globalThis.fromB = "set by b";`,
+        "/x.module.css": `.foo { color: red }`,
+      },
+      outdir: "/out",
+      run: { stdout },
+    });
+  }
+
+  // e2.js reads the class names. e1.js has a bare import of the stylesheet, in f.js, and prints no class names.
+  // The range of e1.js ends at that import, as it did when e1.js printed a copy of them.
+  itBundled("css-module/BareImportOfStylesheetThatAnotherEntryPointReads", {
+    files: {
+      "/e1.js": `
+        import "./first.cjs";
+        export * from "./f.js";
+        import "./second.js";
+        export const later = () => import("./second.js");
+      `,
+      "/e2.js": `import styles from "./x.module.css"; console.log("e2", typeof styles.foo);`,
+      "/f.js": `import "./x.module.css";`,
+      "/first.cjs": `console.log("first");`,
+      "/second.js": `console.log("second");`,
+      "/x.module.css": `.foo { color: red }`,
+    },
+    entryPoints: ["/e1.js", "/e2.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(api.readFile("/out/e1.js")).not.toContain("foo_");
+    },
+    run: [
+      { file: "/out/e1.js", stdout: "first\nsecond" },
+      { file: "/out/e2.js", stdout: "e2 string" },
+    ],
+  });
+
+  // A range of statements stops at 128 KB of source. A wrapped file (w.js) imports the stylesheet, so the import of
+  // it in entry.js was a statement of a range before. It prints nothing now and is still the first statement of
+  // its range: that range stops ahead of the import of w.js, and c.cjs runs before w.js.
+  itBundled("css-module/ImportOfStylesheetOfWrappedFileStartsRangeOfLargeFile", {
+    files: {
+      "/entry.js": [
+        `import styles from "./x.module.css";`,
+        `import "./c.cjs";`,
+        `/*${Buffer.alloc(131030, "y").toString()}*/`,
+        `import "./w.js";`,
+        `export const later = () => require("./w.js");`,
+      ].join("\n"),
+      "/c.cjs": `console.log("c");`,
+      "/w.js": `import styles from "./x.module.css"; console.log("w", typeof styles.foo);`,
+      "/x.module.css": `.foo { color: red }`,
+    },
+    outdir: "/out",
+    run: { stdout: "c\nw string" },
   });
 
   // entry.js has exports that are known at run time only. Its bare import reads no export of the stylesheet.

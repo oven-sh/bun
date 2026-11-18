@@ -41,9 +41,12 @@ enum Target<'a> {
 }
 
 /// Those, or the groups, that start before `end`. It takes longer to wait for new ones within `memset()` or `memcpy()`.
-#[inline]
+#[inline(always)]
 fn touch_pages(vec: &mut Vec<u8>, end: usize, is_ring: bool) {
     let len = end.saturating_sub(vec.len());
+    if len <= vec.as_ptr_range().end.addr().wrapping_neg() % PAGE_LEN {
+        return;
+    }
     // A stream may never fill its ring.
     let takes_groups = vec.len() >= LARGE_LEN && !is_ring;
     let mask = if takes_groups {
@@ -52,10 +55,13 @@ fn touch_pages(vec: &mut Vec<u8>, end: usize, is_ring: bool) {
         PAGE_LEN
     } - 1;
     let spare = vec.spare_capacity_mut();
-    let first = spare.as_ptr().addr().wrapping_neg() & mask;
-    let groups_len = (len.saturating_sub(first) + mask) & !mask;
-    for byte in (spare.iter_mut().skip(first).take(groups_len)).step_by(PAGE_LEN) {
+    let mut page = spare.as_ptr().addr().wrapping_neg() & mask;
+    let groups_end = page + ((len.saturating_sub(page) + mask) & !mask);
+    while page < groups_end
+        && let Some(byte) = spare.get_mut(page)
+    {
         byte.write(0);
+        page += PAGE_LEN;
     }
 }
 
@@ -109,7 +115,7 @@ impl Target<'_> {
     }
 
     /// At least `len`, for which there is capacity.
-    #[inline]
+    #[inline(always)]
     fn bytes_mut(&mut self, len: usize) -> &mut [u8] {
         let is_ring = matches!(self, Self::Ring(_));
         match self {
@@ -125,7 +131,7 @@ impl Target<'_> {
     }
 
     /// Cut off at `start`, if `len` bytes from there have to be appended.
-    #[inline]
+    #[inline(always)]
     fn to_extend(&mut self, start: usize, len: usize) -> Option<&mut Vec<u8>> {
         let is_ring = matches!(self, Self::Ring(_));
         match self {
@@ -293,7 +299,7 @@ impl<'a> Output<'a> {
     }
 
     /// Behind `ahead` bytes of what was lent or written like this. There has to be room.
-    #[inline]
+    #[inline(always)]
     pub(crate) fn write_ahead(&mut self, ahead: usize, bytes: &[u8]) {
         let start = self.position + ahead;
         if bytes.len() > PIECE_LEN {

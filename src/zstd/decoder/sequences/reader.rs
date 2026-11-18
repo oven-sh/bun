@@ -51,6 +51,7 @@ pub(super) struct Reader<'a> {
 }
 
 impl<'a> Reader<'a> {
+    #[inline(always)]
     pub(super) fn new(
         tables: [&'a SequenceTables; 3],
         mut bits: BackwardBits<'a>,

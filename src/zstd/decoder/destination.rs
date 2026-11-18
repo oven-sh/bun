@@ -1,13 +1,19 @@
 //! Where a block goes, and what it can refer to.
 
 use crate::error::{Error, Result};
+use crate::format::BLOCK_LEN_MAX;
 use crate::frame::FrameHeader;
 use crate::output::Output;
 
 /// How many bytes behind the end of a copy it may read and write.
 pub(crate) const OVERSHOOT: usize = 32;
-/// Positions in it and in the block behind it fit in 32 bits.
-const ADJACENT_HISTORY_MAX: usize = (1 << 32) - (1 << 19);
+/// Positions in it and in the block behind it fit in 32 bits. Unit tests do not get that far.
+const ADJACENT_HISTORY_MAX: usize = if cfg!(test) {
+    700
+} else {
+    (1 << 32) - (1 << 19)
+};
+const _: () = assert!(ADJACENT_HISTORY_MAX + 3 * BLOCK_LEN_MAX <= u32::MAX as usize);
 
 /// The content size in a header gets no more memory at once than this...
 const RESERVED_AT_ONCE_MAX: u64 = 16 << 20;
@@ -157,9 +163,8 @@ impl<'o, 'a> Destination<'o, 'a> {
         write: impl FnOnce(&mut Destination<'_, '_>) -> Result<(usize, T)>,
     ) -> Result<(usize, T)> {
         let is_short = self.history_len == 0 && self.limit <= STAND_IN_LENS[1] && !self.grows();
-        let is_tight =
-            |size| self.limit + OVERSHOOT > self.out.room_with_slack() && size <= self.limit as u64;
-        if !(is_short && self.frame.content_size.is_some_and(is_tight)) {
+        let fits = matches!(self.frame.content_size, Some(size) if size <= self.limit as u64);
+        if !(is_short && fits && self.limit + OVERSHOOT > self.out.room_with_slack()) {
             return write(self);
         }
         let (mut few_bytes, mut many_bytes);
@@ -221,5 +226,46 @@ impl<'o, 'a> Destination<'o, 'a> {
             detached = out.split_off_mut(..detached_len).ok_or(Error::Internal)?;
         }
         Ok(Loan { detached, out })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{Decoder, Dictionary, Output, Result, decompress};
+
+    #[test]
+    fn matches_reach_beyond_the_adjacent_history() -> Result<()> {
+        /// 800 times "a", then "6789aaaa" from 804 bytes back. Like the others, it has a checksum.
+        const INTO_DICTIONARY: &[u8] = b"\x28\xb5\x2f\xfd\x04\x00\x02\x19\x00a\x45\x00\x00\x00\x01\x54\x00\x09\x05\x27\x03\x5e\x3b\x9f\x43";
+        let fixtures: [(&[u8], &[u8], usize); 3] = [
+            (include_bytes!("tests/fixtures/generated.zst"), &[], 122576),
+            (
+                include_bytes!("tests/fixtures/small-window.zst"),
+                &[],
+                40000,
+            ),
+            (INTO_DICTIONARY, b"0123456789", 808),
+        ];
+        for (frames, dictionary, len) in fixtures {
+            let (mut slice, mut vec) = (vec![0; 1 << 17], Vec::with_capacity(1 << 17));
+            let shared = Dictionary::new(dictionary)?;
+            decompress(frames, &mut Output::slice(&mut slice), Some(&shared))?;
+            let mut spare = Output::spare_capacity(&mut vec, usize::MAX);
+            decompress(frames, &mut spare, Some(&shared))?;
+            drop(spare);
+
+            let (mut decoder, mut streamed) = (Decoder::new(), Vec::new());
+            decoder.load_dictionary(dictionary)?;
+            for mut piece in frames.chunks(100) {
+                while !piece.is_empty() {
+                    let (consumed, status) = decoder.step_growing(piece, &mut streamed, usize::MAX);
+                    status?;
+                    assert!(consumed != 0);
+                    piece = piece.get(consumed..).unwrap_or_default();
+                }
+            }
+            assert!(vec.len() == len && streamed == vec && slice.starts_with(&vec));
+        }
+        Ok(())
     }
 }

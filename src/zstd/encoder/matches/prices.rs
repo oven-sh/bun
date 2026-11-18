@@ -1,6 +1,7 @@
 //! What literals and matches are expected to cost, in 1/256 of a bit.
 
 use bun_zstd_decoder::array::At;
+use bun_zstd_decoder::bounded::Bounded;
 use bun_zstd_decoder::format::{
     BLOCK_LEN_MAX, CodeKind, MAX_LITERAL_LENGTH_CODE, MAX_MATCH_LENGTH_CODE, MAX_OFFSET_CODE,
     MIN_MATCH,
@@ -21,11 +22,11 @@ const FEW_LITERALS: usize = 64;
 #[inline(always)]
 fn log2<const IS_ACCURATE: bool>(count: u32) -> i32 {
     const FRACTION_BITS: u32 = f32::MANTISSA_DIGITS - 1;
-    let bits = ((count + 1) as i32 as f32).to_bits() as i32;
+    let bits = (count.plus(1) as i32 as f32).to_bits() as i32;
     if IS_ACCURATE {
-        (bits - 0.5f32.to_bits() as i32) >> (FRACTION_BITS - ACCURACY_LOG)
+        bits.minus(0.5f32.to_bits() as i32) >> (FRACTION_BITS - ACCURACY_LOG)
     } else {
-        (bits - 1f32.to_bits() as i32) >> FRACTION_BITS << ACCURACY_LOG
+        bits.minus(1f32.to_bits() as i32) >> FRACTION_BITS << ACCURACY_LOG
     }
 }
 
@@ -49,7 +50,7 @@ impl<const USED: usize, const N: usize> Frequencies<USED, N> {
         for (symbol, out) in self.counts.iter_mut().enumerate().take(USED) {
             *out = count(symbol);
         }
-        self.sum = self.counts.iter().sum();
+        self.sum = self.counts.into_iter().fold(0, u32::plus);
     }
 
     /// From how many bits each symbol takes in a dictionary.

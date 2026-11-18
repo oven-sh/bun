@@ -6,6 +6,7 @@ use super::ranks::Ranks;
 use super::streams::{LOOKUPS, Lane, ROUNDS_MAX, Stream, Windows, interleave, prefetch, unload};
 use super::{HuffmanWeights, QUICK_LOG};
 use crate::array::At;
+use crate::bounded::Bounded;
 use crate::error::{Error, Result};
 use crate::format::BLOCK_LEN_MAX;
 
@@ -234,7 +235,7 @@ impl PairTable {
     #[inline(always)]
     pub(super) fn fill(&mut self, tree: &HuffmanWeights, ranks: &Ranks<'_>) -> Result<()> {
         for (length, weight) in self.lengths_by_symbol.iter_mut().zip(&tree.weights) {
-            *length = (tree.table_log as u8 + 1).wrapping_sub(*weight);
+            *length = (tree.table_log as u8).plus(1).wrapping_sub(*weight);
         }
         let mut row = 0;
         for (length, firsts) in ranks.up_to(QUICK_LOG) {

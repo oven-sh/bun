@@ -2,6 +2,7 @@
 
 use crate::array::in_range;
 use crate::bits::load_from;
+use crate::bounded::Bounded;
 use crate::error::{Error, Result};
 use crate::format::{FSE_TABLE_LOG_MIN, fse_table_step};
 
@@ -32,28 +33,29 @@ pub(crate) fn read_counts(src: &[u8], counts: &mut [i16]) -> Result<TableDescrip
     if table_log > DESCRIBED_TABLE_LOG_MAX {
         return Err(Error::CorruptionDetected);
     }
-    let (mut position, mut symbol) = (4, 0);
+    let (mut position, mut symbol) = (4usize, 0usize);
     let mut remaining = (1u32 << table_log) + 1;
     // From where the count before started, so that no count waits for a load.
     let (mut loaded, mut loaded_at) = (load_from(src, 0), 0);
     while remaining > 1 {
         let short_width = remaining.ilog2();
-        let threshold = 1 << short_width;
-        let short_values = 2 * threshold - 1 - remaining;
-        let bits = (loaded >> (position - loaded_at)) as u32;
+        let threshold = 1u32 << short_width;
+        let long_mask = threshold.times(2).minus(1);
+        let short_values = long_mask.minus(remaining);
+        let bits = loaded.wrapping_shr(position.minus(loaded_at) as u32) as u32;
         (loaded, loaded_at) = (load_from(src, position / 8), position & !7);
-        let (short, long) = (bits & (threshold - 1), bits & (2 * threshold - 1));
+        let (short, long) = (bits & (threshold - 1), bits & long_mask);
         let is_short = short < short_values;
         let value = if is_short || long < threshold {
             short
         } else {
-            long - short_values
+            long.minus(short_values)
         };
-        position += short_width as usize + usize::from(!is_short);
-        let count = value as i32 - 1;
+        position = position.plus(short_width as usize + usize::from(!is_short));
+        let count = (value as i32).minus(1);
         *counts.get_mut(symbol).ok_or(Error::CorruptionDetected)? = count as i16;
         symbol += 1;
-        remaining -= count.unsigned_abs();
+        remaining = remaining.minus(count.unsigned_abs());
         if count != 0 {
             continue;
         }
@@ -117,18 +119,18 @@ impl<const PADDED: usize, const SYMBOLS_MAX: usize> Spread<PADDED, SYMBOLS_MAX> 
         let size = 1 << table_log;
         let step = fse_table_step(size);
         let Self { symbols, ranks, .. } = self;
-        let (mut symbol, mut end, mut rare) = (0, 0, 0);
+        let (mut symbol, mut end, mut rare) = (0, 0usize, 0usize);
         while symbol < counts.len() {
             let count = counts[symbol];
             ranks[in_range::<SYMBOLS_MAX>(symbol)] = count.unsigned_abs();
-            rare += (count < 0) as usize;
+            rare = rare.plus((count < 0) as usize);
             let mut start = end;
-            end += if count < 0 { 0 } else { count as usize };
+            end = end.plus(if count < 0 { 0 } else { count as usize });
             loop {
                 if let Some(eight) = symbols.split_at_mut(start % Self::MAX).1.first_chunk_mut() {
                     *eight = [symbol as u8; 8];
                 }
-                start += 8;
+                start = start.plus(8);
                 if start >= end {
                     break;
                 }
@@ -142,11 +144,11 @@ impl<const PADDED: usize, const SYMBOLS_MAX: usize> Spread<PADDED, SYMBOLS_MAX> 
             inverse.wrapping_mul(2usize.wrapping_sub(step.wrapping_mul(inverse)))
         } else {
             let sorted = *symbols;
-            let (mut row, mut index) = (0, 0);
+            let (mut row, mut index) = (0usize, 0usize);
             loop {
                 symbols[row % Self::MAX] = sorted[index % Self::MAX];
-                index += (row < end) as usize;
-                row = (row + step) & (size - 1);
+                index = index.plus((row < end) as usize);
+                row = row.plus(step) & (size - 1);
                 if row == 0 {
                     break;
                 }
@@ -171,8 +173,8 @@ impl<const PADDED: usize, const SYMBOLS_MAX: usize> Spread<PADDED, SYMBOLS_MAX> 
         self.index = self.index.wrapping_add(self.stride);
         let next_rank = &mut self.ranks[in_range::<SYMBOLS_MAX>(symbol as usize)];
         let rank = *next_rank as u32;
-        *next_rank = rank as u16 + 1;
-        let bits = (rank.leading_zeros() + self.table_log).wrapping_sub(31);
+        *next_rank = (rank as u16).plus(1);
+        let bits = rank.leading_zeros().plus(self.table_log).wrapping_sub(31);
         State {
             symbol,
             bits,

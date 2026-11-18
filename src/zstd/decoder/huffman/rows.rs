@@ -95,8 +95,12 @@ pub(super) fn repeat_rows_for<T: Copy, const N: usize>(
         let pattern = rows.split_off_mut(..period).ok_or(Error::Internal)?;
         for &symbol in symbols {
             let copy = rows.split_off_mut(..period).ok_or(Error::Internal)?;
-            for (to, from) in copy.as_chunks_mut().0.iter_mut().zip(pattern.as_chunks().0) {
-                *to = mapped(*from, symbol);
+            let (to, from) = (copy.as_chunks_mut().0, pattern.as_chunks().0);
+            // `zip()` is not inlined in hardened builds.
+            for index in 0..to.len().min(from.len()) {
+                if let (Some(to), Some(from)) = (to.get_mut(index), from.get(index)) {
+                    *to = mapped(*from, symbol);
+                }
                 black_box(());
             }
         }

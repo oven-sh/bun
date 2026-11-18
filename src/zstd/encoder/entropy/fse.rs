@@ -1,6 +1,7 @@
 //! Finite State Entropy.
 
 use bun_zstd_decoder::array::At;
+use bun_zstd_decoder::bounded::Bounded;
 use bun_zstd_decoder::format::{Distribution, FSE_TABLE_LOG_MIN, fse_table_step};
 use bun_zstd_decoder::{Error, Result, read_normalized_counts};
 
@@ -483,7 +484,7 @@ impl<const ALL_STATES: usize, const ALL_SYMBOLS: usize> Tables<ALL_STATES, ALL_S
     #[inline(always)]
     pub(super) fn encode(&self, writer: &mut BitWriter<'_>, state: &mut u32, symbol: u8) {
         let transform = self.transforms.at(usize::from(symbol));
-        let bits = (*state + transform.bits_delta) >> BITS_SHIFT;
+        let bits = state.plus(transform.bits_delta) >> BITS_SHIFT;
         writer.add(*state, bits);
         *state = self.next_state(*state >> bits, *transform);
     }

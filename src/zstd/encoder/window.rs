@@ -3,6 +3,7 @@
 use core::hint::select_unpredictable;
 
 use bun_zstd_decoder::array::At;
+use bun_zstd_decoder::bounded::Bounded;
 
 use crate::bytes::{
     AtLeast, chunk_at, common_suffix, compare, first_difference, likely, u32_at, u64_at,
@@ -262,7 +263,7 @@ impl<'a> History<'a> {
             if let Some(index) = first_difference(a, b) {
                 return (end + index, b.at(index as usize) < a.at(index as usize));
             }
-            end += a.len() as u32;
+            end = end.plus(a.len() as u32);
         }
         let at = end.wrapping_add(distance);
         let (more, is_below) = Self::compare_bytes(self.prefix, end, run, at);
@@ -294,9 +295,9 @@ impl<'a> History<'a> {
             && let Some(b) = chunk_at(run, end.wrapping_add(distance))
         {
             if let Some(index) = first_difference(a, b) {
-                return end + index - position;
+                return end.plus(index).minus(position);
             }
-            end += a.len() as u32;
+            end = end.plus(a.len() as u32);
         }
         let at = end.wrapping_add(distance);
         end - position + Self::compare_bytes(self.prefix, end, run, at).0

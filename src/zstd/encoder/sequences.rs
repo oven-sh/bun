@@ -14,6 +14,7 @@ use bun_zstd_decoder::{Error, Result};
 use crate::bytes::{chunk_at, chunk_at_mut, highest_bit, likely};
 use crate::entropy::first_symbol;
 use crate::entropy::fse::SYMBOLS;
+use crate::entropy::histogram::raise;
 use crate::vec;
 
 /// An offset as the format has it: 1 to 3 repeat a recent one, the others are raised by 3.
@@ -260,7 +261,7 @@ pub(crate) type CodeCounts = [u32; 256];
 #[inline(always)]
 fn count(counts: &mut CodeCounts, sequence: Sequence) {
     for symbol in sequence.symbols() {
-        *counts.at_mut(usize::from(symbol)) += 1;
+        raise(counts.at_mut(usize::from(symbol)), 1);
     }
 }
 

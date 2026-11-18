@@ -2,6 +2,7 @@
 
 use crate::array::At;
 use crate::bits::{BackwardBits, Width};
+use crate::bounded::Bounded;
 use crate::error::{Error, Result};
 use crate::format::HUFFMAN_TABLE_LOG_MAX;
 use crate::fse::{Spread, read_counts};
@@ -48,7 +49,7 @@ impl Buckets {
     fn add(&mut self, symbol: usize, weight: u8) {
         let end = self.ends.at_mut(weight.into());
         *self.symbols.at_mut((*end).into()) = symbol as u8;
-        *end += 1;
+        *end = end.plus(1);
     }
 }
 
@@ -99,7 +100,7 @@ impl HuffmanWeights {
 
         let buckets = Buckets::STARTS.iter().zip(&self.by_weight.ends);
         for (count, (start, end)) in self.rank_counts.iter_mut().zip(buckets) {
-            *count = (end - start).into();
+            *count = end.minus(*start).into();
         }
         let ranks = self.rank_counts.iter().skip(1).zip(0..);
         let total: u32 = ranks.map(|(count, shorter_by)| count << shorter_by).sum();
@@ -123,14 +124,19 @@ impl HuffmanWeights {
     }
 
     #[inline(always)]
+    fn weight_of(&self, length: u32) -> usize {
+        self.table_log.plus(1).minus(length) as usize
+    }
+
+    #[inline(always)]
     pub(super) fn count_of(&self, length: u32) -> u32 {
-        *self.rank_counts.at((self.table_log + 1 - length) as usize)
+        *self.rank_counts.at(self.weight_of(length))
     }
 
     /// The symbols with codes of `length` bits, and other bytes behind them.
     #[inline(always)]
     pub(super) fn padded_symbols_of(&self, length: u32) -> &[u8] {
-        let start = *Buckets::STARTS.at((self.table_log + 1 - length) as usize);
+        let start = *Buckets::STARTS.at(self.weight_of(length));
         (self.by_weight.symbols.get(start.into()..)).unwrap_or_default()
     }
 }
@@ -180,7 +186,7 @@ fn decompress(src: &[u8], weights: &mut [u8; 256], by_weight: &mut Buckets) -> R
         return Err(Error::CorruptionDetected);
     }
     let after = |row: &Row, bits: &mut BackwardBits<'_>| {
-        table.at(usize::from(row.baseline) + bits.read(row.bits as u32) as usize)
+        table.at(usize::from(row.baseline).plus(bits.read(row.bits as u32) as usize))
     };
 
     let mut count = 0;

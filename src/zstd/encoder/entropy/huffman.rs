@@ -3,6 +3,7 @@
 use bun_highway::with_bmi2;
 use bun_highway::zstd::{Written, are_quicker_for, write_codes};
 use bun_zstd_decoder::array::At;
+use bun_zstd_decoder::bounded::Bounded;
 use bun_zstd_decoder::format::HUFFMAN_TABLE_LOG_MAX;
 use bun_zstd_decoder::{Error, Result};
 
@@ -453,7 +454,7 @@ impl Table {
             if len == 0 {
                 0
             } else {
-                (self.log as u8 + 1).wrapping_sub(len)
+                (self.log as u8 + 1).minus(len)
             }
         };
         // `map()` goes byte by byte in hardened builds.
@@ -500,8 +501,8 @@ impl Table {
 
     pub(super) fn compressed_len(&self, counts: &[u32]) -> usize {
         let pairs = counts.iter().zip(&self.lens);
-        let bits: u32 = pairs.map(|(&count, &len)| count * u32::from(len)).sum();
-        (bits / 8) as usize
+        let bits = pairs.map(|(&count, &len)| count.times(len.into()));
+        (bits.fold(0, u32::plus) / 8) as usize
     }
 
     pub(super) fn has_codes_for(&self, counts: &[u32]) -> bool {

@@ -11,6 +11,7 @@ use bun_highway::with_bmi2;
 
 use crate::array::{get_or_allocate, grow};
 use crate::bits::bits_below_mark;
+use crate::bounded::Bounded;
 use crate::error::{Error, Result};
 use pairs::PairTable;
 use ranks::Ranks;
@@ -63,15 +64,16 @@ impl HuffmanTable {
 
         let half_len = self.half_len();
         grow(&mut self.singles, 0, 2 * half_len + FILL)?;
-        let mut row = 0;
+        let mut row = 0usize;
         for (length, symbols) in ranks.up_to(self.log) {
-            let rows = symbols.len() << (self.log - length);
+            let rows = symbols.len().wrapping_shl(self.log.minus(length));
             fill_rows::<_, FILL>(&mut self.singles, row, rows, length as u8)?;
-            row += rows;
+            row = row.plus(rows);
         }
         row = half_len;
         for (length, symbols) in ranks.up_to(self.log) {
-            let (rows, count) = (1 << (self.log - length), symbols.len());
+            let rows = 1usize.wrapping_shl(self.log.minus(length));
+            let count = symbols.len();
             let (singles, padded) = (&mut self.singles, tree.padded_symbols_of(length));
             match rows {
                 1 => repeat_few_times::<16>(singles, row, padded, count),
@@ -80,7 +82,7 @@ impl HuffmanTable {
                 8 => repeat_few_times::<2>(singles, row, padded, count),
                 _ => repeat_each::<_, FILL>(singles, row, symbols, rows, |symbol| symbol),
             }?;
-            row += count * rows;
+            row = row.plus(count.times(rows));
         }
         Ok(())
     }
@@ -185,4 +187,17 @@ impl HuffmanTable {
             },
         )
     }
+}
+
+#[test]
+fn pairs_are_for_many_literals_with_short_codes() -> Result<()> {
+    let has_pairs = |weights: &[u8], literals| {
+        let mut table = HuffmanTable::default();
+        table.read(weights, literals).map(|_| table.has_pairs)
+    };
+    // Codes of 1 to 4 bits, and 128 of 7 bits.
+    let (short, long) = ([0x83, 0x43, 0x21], [&[0xFE][..], &[0x11; 64]].concat());
+    assert!(has_pairs(&short, 4000)? && !has_pairs(&short, 1200)?);
+    assert!(!has_pairs(&long, 100_000)?);
+    Ok(())
 }

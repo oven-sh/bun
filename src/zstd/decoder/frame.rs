@@ -1,6 +1,7 @@
 //! Frame and block headers.
 
 use crate::bits::load_from;
+use crate::bounded::Bounded;
 use crate::dictionary::Dictionary;
 use crate::error::{Error, Result};
 use crate::format::{
@@ -51,6 +52,11 @@ fn field_lens(descriptor: u8) -> [usize; 3] {
         1 << (descriptor & 3) >> 1,
         content_size,
     ]
+}
+
+#[inline(always)]
+fn low_bytes(word: u64, count: u32) -> u64 {
+    word & !u64::MAX.unbounded_shl(count.times(8))
 }
 
 fn header_len(descriptor: u8) -> usize {
@@ -105,7 +111,7 @@ impl Header {
         }
 
         let [window_len, id_len, size_len] = field_lens(descriptor);
-        let field = |start, len| load_from(fields, start) & !u64::MAX.unbounded_shl(8 * len as u32);
+        let field = |start, len: usize| low_bytes(load_from(fields, start), len as u32);
         let content_size = match size_len {
             0 => None,
             2 => Some(field(window_len + id_len, size_len) + 256),

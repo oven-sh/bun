@@ -111,7 +111,10 @@ fn copy_distant_match(
         let both = Cell::from_mut(both).as_slice_of_cells();
         let to = both.get(offset..)?;
         let (from, to) = (both.get(..to.len())?.as_chunks().0, to.as_chunks().0);
-        for ([to_0, to_1], [from_0, from_1]) in to.as_chunks().0.iter().zip(from.as_chunks().0) {
+        let (to, from) = (to.as_chunks().0, from.as_chunks().0);
+        // Like in `copy_start()`.
+        for index in 0..to.len().min(from.len()) {
+            let ([to_0, to_1], [from_0, from_1]) = (to.get(index)?, from.get(index)?);
             prefetch_write(to_0[0].as_ptr().wrapping_add(LOAN_MAX), Locality::L1);
             copy(from_0, to_0);
             copy(from_1, to_1);
@@ -208,7 +211,7 @@ fn copy_detached_match(
 /// What the copies go between.
 pub(super) struct Buffers<'a> {
     literals: &'a [u8],
-    /// Where the padding starts.
+    /// Where the room for the overshoot starts.
     literals_limit: usize,
     /// The history before `out`.
     detached: &'a [u8],

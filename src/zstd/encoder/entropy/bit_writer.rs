@@ -1,5 +1,7 @@
 //! Streams of bits.
 
+use bun_zstd_decoder::bounded::Bounded;
+
 use crate::bytes::likely;
 
 const WORD_LEN: usize = 8;
@@ -70,14 +72,14 @@ impl<'a> BitWriter<'a> {
     /// The lowest `count` bits of `value`. At most 63 bits can be pending.
     #[inline(always)]
     pub(super) fn add(&mut self, value: u32, count: u32) {
-        self.add_all(u64::from(value) & (1u64.wrapping_shl(count) - 1), count);
+        self.add_all(u64::from(value) & 1u64.wrapping_shl(count).minus(1), count);
     }
 
     /// For a `value` without higher bits.
     #[inline(always)]
     pub(super) fn add_all(&mut self, value: u64, count: u32) {
         self.bits |= value.wrapping_shl(self.count);
-        self.count += count;
+        self.count = self.count.plus(count);
     }
 
     /// Leaves at most 7 bits pending.

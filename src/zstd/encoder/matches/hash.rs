@@ -2,6 +2,8 @@
 
 use core::hint::{cold_path, select_unpredictable};
 
+use bun_zstd_decoder::bounded::Bounded;
+
 use super::Owner;
 use crate::bytes::likely;
 use crate::parameters::TAG_BITS;
@@ -55,7 +57,7 @@ impl Hasher {
 
     #[inline(always)]
     fn tagged(self, word: u64, index: u32) -> u32 {
-        let shift = self.shift - TAG_BITS;
+        let shift = self.shift.minus(TAG_BITS);
         Tagged::new(index, Self { shift, ..self }.hash(word)).0
     }
 }

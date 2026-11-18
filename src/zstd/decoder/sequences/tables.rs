@@ -4,6 +4,7 @@ use bun_highway::with_bmi2;
 
 use crate::array::{At, in_range};
 use crate::bits::Width;
+use crate::bounded::Bounded;
 use crate::error::{Error, Result};
 use crate::format::{
     CodeKind, DEFAULT_LITERAL_LENGTHS, DEFAULT_MATCH_LENGTHS, DEFAULT_OFFSETS, Distribution,
@@ -174,7 +175,7 @@ impl SequenceTables {
                 while let [row, rest @ ..] = rows {
                     let state = states.next_state();
                     *row = $codes[in_range::<CODES_MAX>(state.symbol as usize)];
-                    row.total_bits += state.bits as u8;
+                    row.total_bits = row.total_bits.plus(state.bits as u8);
                     row.state_bits = Width::new(state.bits);
                     row.next = state.baseline as _;
                     rows = rest;
@@ -248,7 +249,8 @@ impl SequenceTables {
     pub(super) fn has_many_far_offsets(&self) -> bool {
         let log = self.log(CodeKind::Offset);
         let rows = self.offsets.iter().take(1 << log);
-        let far = rows.filter(|row| row.extra_bits as u32 > 22).count();
+        let far = rows.map(|row| usize::from(row.extra_bits as u32 > 22));
+        let far = far.fold(0, usize::plus);
         far << (OFFSET_TABLE_LOG_MAX - log) >= 7
     }
 }

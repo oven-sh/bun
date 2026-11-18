@@ -5,6 +5,8 @@ use core::convert::Infallible;
 
 use bun_highway::{out_of_line, with_bmi2};
 
+use bun_zstd_decoder::bounded::Bounded;
+
 use super::hash::{Hasher, Tagged, fill_gap, insert};
 use super::near::{Entries, Near};
 use super::{Attached, MatchState, Owner, Progress, Reach, SKIP_LOG, cells, prefetch};
@@ -27,10 +29,11 @@ pub(super) fn fill<const OWNER: Owner>(state: &mut MatchState, history: &History
             let index = history.index(*position);
             insert::<OWNER>(table, hasher, word_in::<0, _>(chunk), index)?;
             if OWNER == Owner::Dictionary {
-                fill_gap::<HAS_MANY_GAPS>(table, hasher, word_in::<1, _>(chunk), index + 1)?;
-                fill_gap::<HAS_MANY_GAPS>(table, hasher, word_in::<2, _>(chunk), index + 2)?;
+                let [second, third] = [index.plus(1), index.plus(2)];
+                fill_gap::<HAS_MANY_GAPS>(table, hasher, word_in::<1, _>(chunk), second)?;
+                fill_gap::<HAS_MANY_GAPS>(table, hasher, word_in::<2, _>(chunk), third)?;
             }
-            *position += 3;
+            *position = position.plus(3);
         }
     }
 

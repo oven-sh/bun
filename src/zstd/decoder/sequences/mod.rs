@@ -10,6 +10,7 @@ use bun_highway::with_bmi2;
 
 use crate::array::At;
 use crate::bits::{BackwardBits, Width};
+use crate::bounded::Bounded;
 use crate::destination::{Destination, Loan, OVERSHOOT};
 use crate::error::{Error, Result};
 use crate::literals::LITERALS_PADDING;
@@ -63,19 +64,19 @@ fn read_and_run<const AHEAD: usize>(
     let mut states = reader.states;
     let mut position = reader.bits.position as u32;
     let mut container = reader.bits.container;
-    let mut spare_bits = reader.bits.available - states.total_bits(tables);
+    let mut spare_bits = reader.bits.available.minus(states.total_bits(tables));
     let mut read_position = if AHEAD > 1 { queue.end_position()? } else { 0 };
 
     while spare_bits >= 0 && queue.pending == AHEAD {
         queue.rewind_if_through()?;
         let count = reader
             .quick_count(position as usize)
-            .min(queue.batch - queue.start);
+            .min(queue.batch.minus(queue.start));
         if count == 0 {
             break;
         }
         let slots = queue.slots.get_mut(queue.start..);
-        let slots = slots.and_then(|slots| slots.get_mut(..count + REPEATS + AHEAD));
+        let slots = slots.and_then(|slots| slots.get_mut(..count.plus(REPEATS + AHEAD)));
         let mut slots = slots.ok_or(Error::Internal)?;
         let first_address = slots.as_ptr().addr();
 
@@ -129,17 +130,17 @@ fn read_and_run<const AHEAD: usize>(
             slots = slots.get_mut(1..).unwrap_or_default();
         }
 
-        let done = (slots.as_ptr().addr() - first_address) / size_of::<Slot>();
+        let done = slots.as_ptr().addr().minus(first_address) / size_of::<Slot>();
         let is_ahead = usize::from(done < count);
-        queue.start += done;
-        queue.pending += is_ahead;
-        reader.left -= done + is_ahead;
+        queue.start = queue.start.plus(done);
+        queue.pending = queue.pending.plus(is_ahead);
+        reader.left = reader.left.minus(done + is_ahead);
     }
 
     reader.states = states;
     reader.bits.position = position as usize;
     reader.bits.container = container;
-    reader.bits.available = spare_bits + states.total_bits(tables);
+    reader.bits.available = spare_bits.plus(states.total_bits(tables));
     Ok(())
 }
 
@@ -183,7 +184,7 @@ impl Queue<'_> {
             .skip(self.start + REPEATS)
             .take(self.pending);
         let lens = pending.map(|it| u32::from(it.literal_len) + u32::from(it.match_len));
-        Ok(self.next()?.position.wrapping_add(lens.sum()))
+        Ok((self.next()?.position).wrapping_add(lens.fold(0, u32::plus)))
     }
 
     /// Puts the next sequence in a slot, or in `large` if it does not fit.

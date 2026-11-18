@@ -5,6 +5,8 @@ use core::convert::Infallible;
 
 use bun_highway::{out_of_line, with_bmi2};
 
+use bun_zstd_decoder::bounded::Bounded;
+
 use super::hash::{Hasher, Tagged, fill_gap, insert};
 use super::near::{Entries, Near};
 use super::{
@@ -31,10 +33,11 @@ pub(super) fn fill<const OWNER: Owner>(state: &mut MatchState, history: &History
             insert::<OWNER>(chain, short, word, index)?;
             insert::<OWNER>(hash, long, word, index)?;
             if OWNER == Owner::Dictionary {
-                fill_gap::<HAS_MANY_GAPS>(hash, long, word_in::<1, _>(chunk), index + 1)?;
-                fill_gap::<HAS_MANY_GAPS>(hash, long, word_in::<2, _>(chunk), index + 2)?;
+                let [second, third] = [index.plus(1), index.plus(2)];
+                fill_gap::<HAS_MANY_GAPS>(hash, long, word_in::<1, _>(chunk), second)?;
+                fill_gap::<HAS_MANY_GAPS>(hash, long, word_in::<2, _>(chunk), third)?;
             }
-            *position += 3;
+            *position = position.plus(3);
         }
     }
 
@@ -448,7 +451,7 @@ impl<'a> Searcher<'a> {
             let (short_entry, long_entry) = (self.short_entry(word)?, self.long_entry(word)?);
             let current = history.index(at);
             let (short, long) = (short_entry.replace(current), long_entry.replace(current));
-            let back = (at + 1).wrapping_sub(progress.recent);
+            let back = at.plus(1).wrapping_sub(progress.recent);
 
             let found = if history.has_at(back, (word >> 8) as u32) && progress.recent != 0 {
                 Match::repeat(at + 1, history.index(back))
@@ -462,7 +465,7 @@ impl<'a> Searcher<'a> {
                     Match::new(at, short, 4)
                 }
             } else {
-                at += ((at - progress.anchor) >> SKIP_LOG) + 1;
+                at = at.plus((at.minus(progress.anchor) >> SKIP_LOG) + 1);
                 continue;
             };
             at = self.take_match::<{ Reach::Older }>(at, found, progress)?;
@@ -525,7 +528,7 @@ impl<'a> Searcher<'a> {
             let attached_short = Tagged::look_up(attached.chain, short_hasher.hash(word))?;
             let current = history.index(at);
             let (short, long) = (short_entry.replace(current), long_entry.replace(current));
-            let back = (at + 1).wrapping_sub(progress.recent);
+            let back = at.plus(1).wrapping_sub(progress.recent);
 
             let found = if history.has_at(back, next_word as u32) && progress.recent != 0 {
                 Match::repeat(at + 1, history.index(back))
@@ -538,7 +541,7 @@ impl<'a> Searcher<'a> {
                     None => Match::new(at, short, 4),
                 }
             } else {
-                at += ((at - progress.anchor) >> SKIP_LOG) + 1;
+                at = at.plus((at.minus(progress.anchor) >> SKIP_LOG) + 1);
                 #[cfg(target_arch = "aarch64")]
                 prefetch(history.prefix, at as usize + 256);
                 continue;

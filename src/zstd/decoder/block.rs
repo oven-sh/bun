@@ -1,6 +1,6 @@
 //! Blocks, and what one leaves for the next.
 
-use crate::array::{get_or_allocate, grow};
+use crate::array::{At, get_or_allocate, grow};
 use crate::bits::BackwardBits;
 use crate::destination::Destination;
 use crate::dictionary::{Dictionary, Entropy};
@@ -186,7 +186,9 @@ fn select_tables<'t, 's>(
     if modes & 3 != 0 {
         return Err(Error::CorruptionDetected);
     }
-    let encodings = [6, 4, 2].map(|shift| Encoding::from_low_bits(modes >> shift));
+    // `map()` is not inlined in hardened builds.
+    let encoding = |shift| Encoding::from_low_bits(modes >> shift);
+    let encodings = [encoding(6), encoding(4), encoding(2)];
     let mut shared = [None; 3];
     for ((source, encoding), shared) in sources.iter_mut().zip(encodings).zip(&mut shared) {
         *source = match encoding {
@@ -209,8 +211,8 @@ fn select_tables<'t, 's>(
     }
 
     let own = get_or_allocate(own, || SequenceTables::EMPTY)?;
-    for ((kind, encoding), shared) in CodeKind::ALL.into_iter().zip(encodings).zip(shared) {
-        let len = match encoding {
+    for &kind in &CodeKind::ALL {
+        let len = match encodings.at(kind as usize) {
             Encoding::Compressed => own.read(kind, src)?,
             Encoding::Rle => {
                 own.set_rle(kind, *src.first().ok_or(Error::CorruptionDetected)?)?;
@@ -219,7 +221,7 @@ fn select_tables<'t, 's>(
             _ => 0,
         };
         src = src.get(len..).ok_or(Error::Internal)?;
-        if let Some(tables) = shared {
+        if let Some(tables) = shared.at(kind as usize) {
             own.copy_from(tables, kind);
         }
     }

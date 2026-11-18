@@ -1,5 +1,6 @@
 //! Readers of bitstreams.
 
+use crate::bounded::Bounded;
 use crate::error::{Error, Result};
 
 /// A number of bits. The compiler knows that it can shift by it.
@@ -88,15 +89,17 @@ impl<'a> BackwardBits<'a> {
 
     #[inline(always)]
     pub(crate) fn read(&mut self, count: u32) -> u64 {
-        self.available -= count as isize;
+        self.available = self.available.minus(count as isize);
         self.container.wrapping_shr(self.available as u32) & !u64::MAX.wrapping_shl(count)
     }
 
     #[inline(always)]
     pub(crate) fn refill(&mut self) {
-        let bytes = self.position.min((63 - self.available) as usize / 8);
+        let bytes = self
+            .position
+            .min(63isize.minus(self.available) as usize / 8);
         self.position -= bytes;
-        self.available += 8 * bytes as isize;
+        self.available = self.available.plus(8 * bytes as isize);
         self.container = load_from(self.src, self.position);
     }
 
@@ -123,6 +126,7 @@ impl<'a> BackwardBits<'a> {
     /// How many bits of the stream are yet to be read. Negative once more were read than it has.
     #[inline(always)]
     pub(crate) fn left(&self) -> isize {
-        8 * (self.position as isize - self.start as isize) + self.available
+        let bytes = (self.position as isize).minus(self.start as isize);
+        bytes.times(8).plus(self.available)
     }
 }

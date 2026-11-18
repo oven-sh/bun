@@ -2,6 +2,7 @@
 
 use bun_highway::zstd::{are_quicker_for, count_bytes};
 use bun_zstd_decoder::array::At;
+use bun_zstd_decoder::bounded::Bounded;
 
 /// How often each of `N` symbols occurs.
 #[derive(Clone, Copy)]
@@ -33,7 +34,7 @@ impl<const N: usize> Histogram<N> {
     pub(crate) fn new(counts: [u32; N]) -> Self {
         let (mut max_symbol, mut largest_count) = (0u32, 0);
         // Without branches, it compiles to vector instructions.
-        for (symbol, &count) in (0..).zip(&counts) {
+        for (symbol, &count) in (0..N as u32).zip(&counts) {
             max_symbol = max_symbol.max(if count != 0 { symbol } else { 0 });
             largest_count = largest_count.max(count);
         }
@@ -51,9 +52,14 @@ impl<const N: usize> Histogram<N> {
 }
 
 #[inline(always)]
+pub(crate) fn raise(count: &mut u32, by: u32) {
+    *count = count.plus(by);
+}
+
+#[inline(always)]
 pub(crate) fn add(counts: &mut [u32; 256], symbols: &[u8]) {
     for &symbol in symbols {
-        *counts.at_mut(usize::from(symbol)) += 1;
+        raise(counts.at_mut(usize::from(symbol)), 1);
     }
 }
 
@@ -75,7 +81,7 @@ fn count_interleaved<const SETS: usize>(symbols: &[u8]) -> [u32; 256] {
             // Keeps the load ahead of the stores.
             core::hint::black_box(());
             for (byte, table) in sets.at_mut(index % SETS).iter_mut().enumerate() {
-                *table.at_mut(usize::from((word >> (8 * byte)) as u8)) += 1;
+                raise(table.at_mut(usize::from((word >> (8 * byte)) as u8)), 1);
             }
         }
     }
@@ -84,7 +90,7 @@ fn count_interleaved<const SETS: usize>(symbols: &[u8]) -> [u32; 256] {
     add(&mut counts, rest);
     for table in sets.as_flattened() {
         for (count, more) in counts.iter_mut().zip(table) {
-            *count += more;
+            raise(count, *more);
         }
     }
     // What `loaded` started with.

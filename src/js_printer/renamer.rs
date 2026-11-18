@@ -446,16 +446,12 @@ impl MinifyRenamer {
                 // with a "#" character.
                 match ns {
                     symbol::SlotNamespace::Default => {
-                        while self.reserved_names.contains_key(name_buf.as_slice()) {
+                        let needs_capital = slots[data.slot as usize].needs_capital_for_jsx;
+                        while self.reserved_names.contains_key(name_buf.as_slice())
+                            || (needs_capital && name_buf[0].is_ascii_lowercase())
+                        {
                             name_minifier.number_to_minified_name(&mut name_buf, next_name)?;
                             next_name += 1;
-                        }
-
-                        if slots[data.slot as usize].needs_capital_for_jsx {
-                            while name_buf[0] >= b'a' && name_buf[0] <= b'z' {
-                                name_minifier.number_to_minified_name(&mut name_buf, next_name)?;
-                                next_name += 1;
-                            }
                         }
                     }
                     symbol::SlotNamespace::Label => {

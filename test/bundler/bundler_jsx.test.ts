@@ -314,6 +314,32 @@ describe("bundler", () => {
       }
     }
 
+    for (const backend of ["cli", "api"] as const) {
+      itBundled(`jsx/PreserveReservedCapitalNames-${backend}`, {
+        // esbuild 0.18 can reuse a reserved uppercase global for a preserved JSX tag.
+        skipOnEsbuild: true,
+        files: {
+          "/in.jsx": `
+            function Component() { return "component"; }
+            console.log(<Component />, ${Array.from({ length: 26 }, (_, i) => String.fromCharCode(65 + i)).join(", ")});
+          `,
+        },
+        backend,
+        jsx: { runtime: "preserve" },
+        minifyIdentifiers: true,
+        onAfterBundle(api) {
+          const out = api.readFile("/out.js");
+          const { code } = transformSync(out, { loader: "jsx", jsxFactory: "globalThis.__jsxPreserveFactory" });
+          const globals = Array.from({ length: 26 }, (_, i) => {
+            const name = String.fromCharCode(65 + i);
+            return `globalThis.${name} = ${JSON.stringify(name)};`;
+          }).join("\n");
+          api.writeFile("/out.js", `globalThis.__jsxPreserveFactory = type => type();\n${globals}\n${code}`);
+        },
+        run: { stdout: "component A B C D E F G H I J K L M N O P Q R S T U V W X Y Z" },
+      });
+    }
+
     describe.each(["cli", "api", "bunfig"] as const)("tsconfig preserve precedence (%s)", source => {
       describe.each(["react", "react-jsx", "react-jsxdev"])("tsconfig jsx=%s", jsx => {
         itBundled(`jsx/PreserveOverridesTsconfig-${source}-${jsx}`, {

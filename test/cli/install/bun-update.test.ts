@@ -1962,12 +1962,13 @@ describe("bun update <name> semantics", () => {
     );
 
     // Before Bun 1.2.19, the dependencies of a workspace could have the workspace bit too. Bun 1.2.18 wrote
-    // fixtures/bun.lockb.v1.2.18-workspaces: foo depends on one-range-dep, whose no-deps ^1.0.0 is at 1.0.0.
+    // fixtures/bun.lockb.v1.2.18-workspaces: foo depends on one-range-dep, whose no-deps ^1.0.0 is at 1.0.0, the
+    // version that bar pins. The update saves it as bun.lock.
     it.concurrent(
       "bun update no-deps from a workspace moves the row it reaches in a bun.lockb from Bun 1.2.18",
       async () => {
         const { packageDir: dir } = await verdaccio.createTestDir({
-          bunfigOpts: { saveTextLockfile: false, linker: "hoisted" },
+          bunfigOpts: { saveTextLockfile: true, linker: "hoisted" },
           files: {
             "bun.lockb": await readFile(join(import.meta.dir, "fixtures", "bun.lockb.v1.2.18-workspaces")),
             "package.json": stringify({
@@ -1987,9 +1988,10 @@ describe("bun update <name> semantics", () => {
         });
 
         const foo = join(dir, "packages", "foo");
-        const { stdout, stderr, exitCode } = await runFrom(foo, dir, "update", "no-deps", "--lockfile-only");
+        const { stderr, exitCode } = await runFrom(foo, dir, "update", "no-deps", "--lockfile-only");
         expect(stderr).not.toContain("error:");
-        expect(stdout).toMatch(/^\^ no-deps 1\.0\.0 -> 1\./m);
+        expect(await noDepsEdges(dir)).toStrictEqual({ "one-range-dep": "1.0.1" });
+        expect((await lock(dir)).packages["no-deps"][0]).toBe("no-deps@1.0.0");
         expect(exitCode).toBe(0);
       },
     );

@@ -86,7 +86,7 @@ Before Bun writes `3`, or a `2` that the lockfile did not have before, it checks
 
 This check ignores the registries in your configuration, so the result is the same on every machine. Such a lockfile stays at `1`, also with object values in `overrides`. Bun v1.4.0 and later reads object values at every `lockfileVersion`.
 
-A version of Bun that does not know the `lockfileVersion` stops with `Unsupported lockfile version`. Run `bun upgrade`.
+If the `lockfileVersion` is a whole number higher than your version of Bun supports, Bun stops with `Unsupported lockfile version`. Run `bun upgrade`. If the value is not a whole number from 0 to 4294967295, Bun stops with `Invalid lockfile version`, and an upgrade does not help.
 
 #### Automatic lockfile migration
 

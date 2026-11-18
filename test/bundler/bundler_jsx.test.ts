@@ -1885,7 +1885,8 @@ describe("bundler", () => {
       itBundled(`jsx/PreserveSharedComponent-${minifyIdentifiers}`, {
         files: {
           "/a.tsx": `import { component as Component } from "./component"; console.log(<Component />);`,
-          "/b.tsx": `import { component as Component } from "./component"; console.log(<Component />);`,
+          "/b.tsx": `import * as components from "./reexport"; console.log(<components.component />);`,
+          "/reexport.ts": `export { component } from "./component";`,
           "/component.ts": `export class component {}`,
         },
         entryPoints: ["/a.tsx", "/b.tsx"],

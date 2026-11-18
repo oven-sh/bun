@@ -79,9 +79,12 @@ pub(crate) fn assign_unminified(
     c.cross_chunk_names.reserve(refs.len());
     for ref_ in refs {
         let symbol = c.graph.symbols.get_const(ref_).unwrap();
+        let followed = c.graph.symbols.follow(ref_);
+        let root = c.graph.symbols.get_const(followed).unwrap();
         let mut base =
             bun_core::MutableString::ensure_valid_identifier(symbol.original_name.slice())?;
-        if symbol.must_start_with_capital_letter_for_jsx()
+        if (symbol.must_start_with_capital_letter_for_jsx()
+            || root.must_start_with_capital_letter_for_jsx())
             && base.first().is_some_and(u8::is_ascii_lowercase)
         {
             base[0].make_ascii_uppercase();
@@ -107,7 +110,6 @@ pub(crate) fn assign_unminified(
         let name: &[u8] = c.arena().alloc_slice_copy(name);
         c.cross_chunk_names.insert(ref_, name);
         // An importing chunk's renamer looks the binding up by the symbol its links lead to.
-        let followed = c.graph.symbols.follow(ref_);
         if !followed.eql(ref_) {
             c.cross_chunk_names.insert(followed, name);
         }
@@ -149,12 +151,11 @@ pub(crate) fn assign_minified(
     let mut index_of: bun_collections::HashMap<Ref, u32> = Default::default();
     let mut order: Vec<(u32, u32, Ref, bool)> = Vec::with_capacity(refs.len());
     for (i, &ref_) in refs.iter().enumerate() {
-        let capital = c
-            .graph
-            .symbols
-            .get_const(ref_)
-            .unwrap()
-            .must_start_with_capital_letter_for_jsx();
+        let symbol = c.graph.symbols.get_const(ref_).unwrap();
+        let followed = c.graph.symbols.follow(ref_);
+        let root = c.graph.symbols.get_const(followed).unwrap();
+        let capital = symbol.must_start_with_capital_letter_for_jsx()
+            || root.must_start_with_capital_letter_for_jsx();
         index_of.insert(ref_, i as u32);
         order.push((0, i as u32, ref_, capital));
     }

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux } from "harness";
+import { bunEnv, bunExe, isLinux, isPosix } from "harness";
 
 // On Linux, Bun.spawn opens a pidfd after posix_spawn so the event loop can
 // observe the child's exit. When the process is at its RLIMIT_NOFILE, the
@@ -114,3 +114,81 @@ for (const fd of held) fs.closeSync(fd);
     expect(exitCode).toBe(0);
   },
 );
+
+// The call that runs out of descriptors takes no file: the socketpair of a
+// pipe, the fcntl that moves a descriptor the caller passed above the child's
+// stdio slots, and on Linux the pidfd_open after the child has started. The
+// error names the command as its `path` all the same: argv[0] as the child
+// would have seen it, which is also the path of a posix_spawn that fails.
+// bun 1.3 reported the first two as posix_spawn with that path.
+test.skipIf(!isPosix)("Bun.spawn at the fd limit names the command as the path of the EMFILE error", async () => {
+  const fixture = `
+const fs = require("fs");
+const cmd = ["/bin/sh", "-c", ":"];
+// The first Bun.spawnSync of a process creates an event loop, and that takes
+// descriptors of its own (spawn-sync-loop-init-fail.test.ts).
+Bun.spawnSync({ cmd, stdio: ["ignore", "ignore", "ignore"] });
+const held = [];
+for (;;) {
+  try {
+    held.push(fs.openSync("/dev/null", "r"));
+  } catch {
+    break;
+  }
+}
+function attempt(spawn) {
+  try {
+    spawn().kill?.();
+    return "spawned";
+  } catch (e) {
+    return { message: e.message, code: e.code, syscall: e.syscall, path: e.path, fd: e.fd };
+  }
+}
+const pipes = { stdin: "pipe", stdout: "pipe", stderr: "inherit" };
+const passedFd = { stdio: ["ignore", "ignore", "ignore", 1] };
+const errors = {
+  spawnPipes: attempt(() => Bun.spawn(cmd, pipes)),
+  spawnSyncPipes: attempt(() => Bun.spawnSync(cmd, pipes)),
+  spawnPassedFd: attempt(() => Bun.spawn(cmd, passedFd)),
+  spawnSyncPassedFd: attempt(() => Bun.spawnSync(cmd, passedFd)),
+  spawnArgv0: attempt(() => Bun.spawn(cmd, { ...pipes, argv0: "pretend" })),
+  spawnSyncArgv0: attempt(() => Bun.spawnSync(cmd, { ...pipes, argv0: "pretend" })),
+};
+if (process.platform === "linux") {
+  errors.spawnInherit = attempt(() => Bun.spawn(cmd, { stdin: "inherit", stdout: "inherit", stderr: "inherit" }));
+  // Elsewhere the search of PATH opens each candidate, so a name is not found with no descriptor left.
+  errors.spawnName = attempt(() => Bun.spawn(["sh", "-c", ":"], pipes));
+}
+// LeakSanitizer reads /proc/self/task at exit, which needs a free fd.
+for (const fd of held) fs.closeSync(fd);
+console.log(JSON.stringify(errors));
+`;
+
+  await using proc = Bun.spawn({
+    cmd: ["/bin/sh", "-c", 'ulimit -n 64 && exec "$@"', "sh", bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const emfile = (syscall: string) => ({ message: "EMFILE: too many open files, " + syscall, code: "EMFILE", syscall });
+  const socketpair = { ...emfile("socketpair"), path: "/bin/sh" };
+  const fcntl = { ...emfile("fcntl"), path: "/bin/sh", fd: 1 };
+  expect({ errors: stdout.startsWith("{") ? JSON.parse(stdout) : stdout, stderr, exitCode }).toEqual({
+    errors: {
+      spawnPipes: socketpair,
+      spawnSyncPipes: socketpair,
+      spawnPassedFd: fcntl,
+      spawnSyncPassedFd: fcntl,
+      spawnArgv0: { ...socketpair, path: "pretend" },
+      spawnSyncArgv0: { ...socketpair, path: "pretend" },
+      ...(isLinux && {
+        spawnInherit: { ...emfile("pidfd_open"), path: "/bin/sh" },
+        spawnName: { ...socketpair, path: "sh" },
+      }),
+    },
+    stderr: "",
+    exitCode: 0,
+  });
+});

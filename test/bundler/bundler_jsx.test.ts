@@ -1478,6 +1478,37 @@ describe("bundler", () => {
       });
     });
 
+    for (const minifyIdentifiers of [false, true]) {
+      itBundled(`jsx/PreserveNonIdentifierTagMembers-${minifyIdentifiers}`, {
+        files: {
+          "/in.jsx": `
+            import * as Ns from "./ns";
+            function fromThis() { return <this.svg:path />; }
+            function fromArguments() {
+              arguments["some:tag"] = 9;
+              return <arguments.some:tag />;
+            }
+            console.log(
+              <Ns.svg:path></Ns.svg:path>,
+              <svg:path />,
+              fromThis.call({ "svg:path": 7 }),
+              fromArguments(0),
+            );
+          `,
+          "/ns.js": 'const value = 42; export { value as "svg:path" };',
+        },
+        jsx: { runtime: "preserve" },
+        minifyIdentifiers,
+        // The member names are Bun extensions.
+        skipOnEsbuild: true,
+        onAfterBundle(api) {
+          const { code } = transformSync(api.readFile("/out.js"), { loader: "jsx", jsxFactory: "h" });
+          api.writeFile("/out.js", `const h = type => type;\n${code}`);
+        },
+        run: { stdout: "42 svg:path 7 9" },
+      });
+    }
+
     itBundled("jsx/PreserveUnicodeNames", {
       files: {
         "/in.tsx": `export const element = <x-étiquette résumé="😺">你好</x-étiquette>;`,

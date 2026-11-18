@@ -379,47 +379,39 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn jsx_tag_member(p: &mut Self, tag: Expr) -> (Expr, Expr, Option<Ref>) {
         let mut object = E::Object::default();
         let body = G::FnBody::init_return_expr(p.arena, tag).expect("arena allocation failed");
-        let body = if tag.data.e_identifier().is_some_and(|id| {
-            p.symbols[id.ref_.inner_index() as usize]
-                .original_name
-                .slice()
-                == b"arguments"
-        }) {
-            // Capturing lexical `arguments` in an arrow; the getter has its own `arguments`.
-            let read = p.new_expr(
-                E::Arrow {
-                    body,
-                    prefer_expr: true,
-                    ..Default::default()
-                },
-                tag.loc,
-            );
-            let key = p.new_expr(E::EString::from_static(b"read"), tag.loc);
-            object.properties.push(G::Property {
-                key: Some(key),
-                value: Some(read),
+        // Deferring the tag read to the getter preserves factory and tag evaluation order.
+        // The arrow keeps the original lexical `this` and `arguments`.
+        let read = p.new_expr(
+            E::Arrow {
+                body,
+                prefer_expr: true,
                 ..Default::default()
-            });
-            let this = p.new_expr(E::This {}, tag.loc);
-            let target = p.new_expr(
-                E::Dot {
-                    target: this,
-                    name: b"read".as_slice().into(),
-                    ..Default::default()
-                },
-                tag.loc,
-            );
-            let call = p.new_expr(
-                E::Call {
-                    target,
-                    ..Default::default()
-                },
-                tag.loc,
-            );
-            G::FnBody::init_return_expr(p.arena, call).expect("arena allocation failed")
-        } else {
-            body
-        };
+            },
+            tag.loc,
+        );
+        let key = p.new_expr(E::EString::from_static(b"read"), tag.loc);
+        object.properties.push(G::Property {
+            key: Some(key),
+            value: Some(read),
+            ..Default::default()
+        });
+        let this = p.new_expr(E::This {}, tag.loc);
+        let target = p.new_expr(
+            E::Dot {
+                target: this,
+                name: b"read".as_slice().into(),
+                ..Default::default()
+            },
+            tag.loc,
+        );
+        let call = p.new_expr(
+            E::Call {
+                target,
+                ..Default::default()
+            },
+            tag.loc,
+        );
+        let body = G::FnBody::init_return_expr(p.arena, call).expect("arena allocation failed");
         let getter = p.new_expr(
             E::Function {
                 func: G::Fn {
@@ -540,7 +532,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         p.visit_expr(&mut tag);
                         if runtime == options::JSX::Runtime::Preserve {
                             let mut root = tag;
+                            let mut has_valid_members = true;
                             while let Data::EDot(dot) = root.data {
+                                has_valid_members &= dot.optional_chain.is_none()
+                                    && js_lexer::is_identifier(dot.name.slice());
                                 root = dot.target;
                             }
                             if matches!(root.data, Data::ESpecial(E::Special::ModuleExports)) {
@@ -572,6 +567,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     _ => false,
                                 };
                             if !tag_can_print_directly
+                                || !has_valid_members
                                 || has_string_named_import
                                 || has_lowercase_name
                             {

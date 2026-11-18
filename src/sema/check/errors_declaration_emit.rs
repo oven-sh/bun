@@ -1222,28 +1222,19 @@ impl<'p, 's> Checker<'p, 's> {
         if symbol == files.global_this_symbol {
             return None;
         }
-        let (symbol, value) = match files.transient(symbol) {
-            None => (symbol, None),
-            Some(Transient::ModuleClone { target, .. }) => (target, None),
+        let (symbol, of_value) = match files.transient(symbol) {
+            None => (symbol, List::default()),
+            Some(Transient::ModuleClone { target, .. }) => (target, List::default()),
             Some(Transient::Combined { alias, .. }) => {
-                (symbol, self.value_of_combined_symbol(alias))
+                (symbol, self.declarations_of_combined_value(alias))
             }
         };
-        let container_of = |&(file, decl): &(FileId, Decl)| {
+        let declarations = files.decls_of(symbol);
+        let mut declarations = of_value.iter().chain(declarations.iter());
+        declarations.find_map(|&(file, decl)| {
             let scope = self.bound(file).scope_of_declaration(self.hir(file), decl);
             self.external_module_container(file, scope)
-        };
-        // `combineValueAndTypeSymbols`: the declarations of the value symbol come first.
-        let of_value = match value {
-            Some(PropSymbol::Declared(value)) => {
-                files.decls_of(value).iter().find_map(container_of)
-            }
-            Some(PropSymbol::InLiteral(file, property)) => {
-                container_of(&(file, Decl::Property(property)))
-            }
-            Some(PropSymbol::PrototypeOf(_)) | None => None,
-        };
-        of_value.or_else(|| files.decls_of(symbol).iter().find_map(container_of))
+        })
     }
 
     /// `getExternalModuleContainer`

@@ -1666,6 +1666,20 @@ impl<'p, 's> Checker<'p, 's> {
         self.symbol_of_prop(object, property)
     }
 
+    /// `valueSymbol.Declarations` of `combineValueAndTypeSymbols` for `alias`, which come before those of the type.
+    pub(super) fn declarations_of_combined_value(
+        &mut self,
+        alias: Sym,
+    ) -> List<'p, (FileId, Decl)> {
+        match self.value_of_combined_symbol(alias) {
+            Some(PropSymbol::Declared(value)) => self.files().decls_of(value),
+            Some(PropSymbol::InLiteral(file, property)) => {
+                List::One((file, Decl::Property(property)))
+            }
+            Some(PropSymbol::PrototypeOf(_)) | None => List::default(),
+        }
+    }
+
     /// What has the `Parent` of `property`, a property of `object`. `None` if no one declaration has it.
     pub(super) fn symbol_of_prop(&self, object: TypeId, property: &Prop) -> Option<PropSymbol> {
         match Self::value_declaration(property) {

@@ -1628,6 +1628,36 @@ describe("bundler", () => {
       stdout: `{"0":"FOO","1":"BAR","FOO":0,"BAR":1}`,
     },
   });
+  // https://github.com/oven-sh/bun/issues/49245
+  // An unused object literal leaves the conversion of its computed keys to
+  // property keys: a Symbol stays a Symbol, and an object is asked for a string.
+  itBundled("dce/UnusedObjectLiteralComputedKey", {
+    files: {
+      "/entry.js": /* js */ `
+        import { sym, key, log } from './lib';
+        ({ [sym]: 1 });
+        /* @__PURE__ */ String({ [Symbol.toStringTag]: 2 });
+        ({ [key]: 3 });
+        console.log(log.join());
+      `,
+      "/lib.js": /* js */ `
+        export const sym = Symbol("k");
+        export const log = [];
+        export const key = {
+          toString() { log.push("toString"); return "k"; },
+          valueOf() { log.push("valueOf"); return 1; },
+        };
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("({ [sym]: 0 });");
+      api.expectFile("/out.js").toContain("({ [Symbol.toStringTag]: 0 });");
+      api.expectFile("/out.js").toContain("({ [key]: 0 });");
+    },
+    run: {
+      stdout: "toString",
+    },
+  });
   // https://github.com/oven-sh/bun/issues/40114
   // A computed class member key that is a side-effect-free reference (a local
   // const, an import item) must not block tree-shaking of the class.

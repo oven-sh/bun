@@ -1006,12 +1006,6 @@ async function agreesWithKeysConvertedBeforeValues(folder: string, extension: st
   return removeDetailsOfErrors(ran.stdout) === removeDetailsOfErrors(stdout);
 }
 
-/** Whether `bun run` stopped at an object literal that nothing uses, because one of its computed keys is a symbol. */
-function stoppedAtAnUnusedLiteral(text: string, { stderr }: Ended) {
-  const line = /Cannot convert a symbol to a string\n\s+at .*programs[\\/]\d+\.[a-z]+:(\d+):/.exec(stderr)?.[1];
-  return line !== undefined && /^\s*\(\{/.test(text.split("\n")[Number(line) - 1] ?? "");
-}
-
 /** What a stopped build said, without the numbers and the names that differ from build to build. */
 const wordsOf = (reason: string) => reason.replace(/[0-9a-f]/gi, "");
 
@@ -2184,10 +2178,7 @@ for (
       const said = await withErrorsOfItsOwnExecutable(alone, extension, second);
       if ((await build(alone, 1, extension, 1)).writesToBuiltins.size) kind = "documented difference";
       else if (await printsTheDepthOfTheStack(alone, extension)) kind = "documented difference";
-      else if (
-        stoppedAtAnUnusedLiteral(texts[index], referenceAgain) ||
-        (!referenceAgain.stderr.includes("ReferenceError") && (await stoppedAtANameThatDoesNotExist(alone, said)))
-      )
+      else if (!referenceAgain.stderr.includes("ReferenceError") && (await stoppedAtANameThatDoesNotExist(alone, said)))
         kind = "documented difference";
       else if (!hidesFunctionSource && (await dependsOnFunctionSource(alone, extension))) kind = "function source";
       else if (

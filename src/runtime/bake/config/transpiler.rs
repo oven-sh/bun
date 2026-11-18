@@ -25,16 +25,9 @@ impl Framework {
         let mut out = bun_bundler::Transpiler::init(
             arena,
             log,
-            bun_schema::api::TransformOptions {
-                define: Some(bun_schema::api::StringMap {
-                    keys: vec![Box::from(b"process.env.NODE_ENV".as_slice())],
-                    values: vec![Box::from(match mode {
-                        Mode::Development => b"\"development\"".as_slice(),
-                        Mode::ProductionStatic => b"\"production\"".as_slice(),
-                    })],
-                }),
-                ..Default::default()
-            },
+            // `TransformOptions::default()`: every `Option` is `None`, every
+            // slice empty, every scalar zero/false.
+            bun_schema::api::TransformOptions::default(),
             None,
         )?;
 
@@ -81,11 +74,6 @@ impl Framework {
             out.options.conditions.append_slice(&[b"node"])?;
         }
 
-        out.options.force_node_env = match mode {
-            Mode::Development => bun_bundler::options::ForceNodeEnv::Development,
-            Mode::ProductionStatic => bun_bundler::options::ForceNodeEnv::Production,
-        };
-        out.options.jsx.development = mode == Mode::Development;
         out.options.production = mode != Mode::Development;
         out.options.tree_shaking = mode != Mode::Development;
         // The dev server never minifies.
@@ -115,6 +103,8 @@ impl Framework {
 
         out.configure_linker();
         out.configure_defines()?;
+
+        out.options.jsx.development = mode == Mode::Development;
 
         add_import_meta_defines(
             &mut out.options.define,

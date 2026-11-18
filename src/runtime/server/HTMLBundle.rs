@@ -390,12 +390,6 @@ impl Route {
         config.define.put(b"import.meta.env.SSR", b"false")?;
         config.define.put(b"import.meta.env.STATIC", b"false")?;
 
-        if is_development {
-            config
-                .define
-                .put(b"process.env.NODE_ENV", b"\"development\"")?;
-        }
-
         if let Some(define) = &cli.args.serve_define {
             debug_assert_eq!(define.keys.len(), define.values.len());
             // `StringMap` exposes only put/insert (no bulk re-index);

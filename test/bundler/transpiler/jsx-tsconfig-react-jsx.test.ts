@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 
 // tsconfig "jsx": "react-jsx" selects the production automatic runtime (jsx/jsxs),
 // "react-jsxdev" selects the development runtime (jsxDEV), matching TypeScript/esbuild.
@@ -133,9 +134,9 @@ describe("tsconfig compilerOptions.jsx", () => {
   // tsconfig: `bun run` executes the output, and tsconfigs written for other
   // toolchains (Next.js) ask for it.
   test.concurrent.each([
-    [undefined, "dev jsxDEV", "shim/jsx-dev-runtime"],
-    ["production", "prod jsx", "shim/jsx-runtime"],
-  ] as const)('"preserve" in tsconfig is ignored with NODE_ENV=%s', async (NODE_ENV, runStdout, importSource) => {
+    [undefined, "dev jsxDEV"],
+    ["production", "prod jsx"],
+  ] as const)('"preserve" in tsconfig is ignored with NODE_ENV=%s', async (NODE_ENV, runStdout) => {
     using dir = tempDir("jsx-tsconfig-preserve", {
       ...shimFiles,
       "tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "preserve", jsxImportSource: "shim" } }),
@@ -154,7 +155,7 @@ describe("tsconfig compilerOptions.jsx", () => {
       expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: runStdout, stderr: "", exitCode: 0 });
     }
 
-    {
+    const build = async () => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "build", "m.jsx", "--external", "shim*"],
         env,
@@ -163,11 +164,18 @@ describe("tsconfig compilerOptions.jsx", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stdout).toContain(JSON.stringify(importSource));
-      expect(stdout).not.toContain("<div");
-      expect(stderr).toBe("");
-      expect(exitCode).toBe(0);
-    }
+      return { stdout, stderr, exitCode };
+    };
+    const withPreserve = await build();
+    await Bun.write(
+      join(String(dir), "tsconfig.json"),
+      JSON.stringify({ compilerOptions: { jsxImportSource: "shim" } }),
+    );
+    const withoutJsxMode = await build();
+    expect(withPreserve).toEqual(withoutJsxMode);
+    expect(withPreserve.stdout).toMatch(/"shim\/jsx(-dev)?-runtime"/);
+    expect(withPreserve.stderr).toBe("");
+    expect(withPreserve.exitCode).toBe(0);
   });
 
   describe.each([

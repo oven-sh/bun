@@ -1074,11 +1074,6 @@ impl EventLoop {
             .immediate_tasks
             .replace(self.next_immediate_tasks.take());
 
-        if !to_run_now.is_empty() {
-            // The frames of an immediate lie over those of the tasks before it, and the collector reads the slots they never write.
-            virtual_machine.jsc_vm().sanitize_stack();
-        }
-
         let mut exception_thrown = false;
         for task in to_run_now.iter() {
             // SAFETY: the queue holds a ref on each, which `__bun_run_immediate_task` consumes.

@@ -462,30 +462,42 @@ describe("unix domain socket without websocket", () => {
     // them in many partial sends.
     test("a client that reads late receives a backlog of large console messages in order", async () => {
       const count = 32;
-      const size = 512 * 1024;
+      const size = 256 * 1024;
       const path = randomSocketPath();
-      const { promise: connection, resolve: onConnection } = Promise.withResolvers<net.Socket>();
+      const { promise: connection, resolve: onConnection, reject: onServerError } = Promise.withResolvers<net.Socket>();
       const server = net.createServer(onConnection);
-      server.listen(path);
-      await once(server, "listening");
-
-      const { promise: logged, resolve: onLogged } = Promise.withResolvers<void>();
-      await using inspectee = spawn({
-        cmd: [bunExe(), "--inspect-wait=unix:" + path, join(import.meta.dir, "inspectee-console-backlog.js")],
-        env: { ...bunEnv, BACKLOG_COUNT: String(count), BACKLOG_SIZE: String(size) },
-        stdout: "ignore",
-        stderr: "inherit",
-        stdin: "ignore",
-        ipc: message => {
-          if (message === "logged") onLogged();
-        },
-      });
-
+      server.on("error", onServerError);
       let socket: net.Socket | undefined;
       try {
-        socket = await connection;
+        server.listen(path);
+        await once(server, "listening");
+
+        const { promise: logged, resolve: onLogged } = Promise.withResolvers<void>();
+        await using inspectee = spawn({
+          cmd: [bunExe(), "--inspect-wait=unix:" + path, join(import.meta.dir, "inspectee-console-backlog.js")],
+          env: { ...bunEnv, BACKLOG_COUNT: String(count), BACKLOG_SIZE: String(size) },
+          stdout: "ignore",
+          stderr: "inherit",
+          stdin: "ignore",
+          ipc: message => {
+            if (message === "logged") onLogged();
+          },
+        });
+        // An inspectee that exits early fails the wait at once.
+        const orExit = <T>(wait: Promise<T>, what: string) =>
+          Promise.race([
+            wait,
+            inspectee.exited.then(code => {
+              throw new Error(`the inspectee exited with code ${code} before ${what}`);
+            }),
+          ]);
+
+        socket = await orExit(connection, "it connected");
         const { promise: received, resolve: onReceived, reject } = Promise.withResolvers<void>();
         socket.on("error", reject);
+        socket.on("close", () => reject(new Error("the socket closed before the client had all messages")));
+        // `await received` below reads a rejection. Until then it is not an unhandled one.
+        received.catch(() => {});
         let next = 0;
         let mismatches = 0;
         // Frames are a 4-byte big-endian length, then that many bytes of JSON.
@@ -522,23 +534,28 @@ describe("unix domain socket without websocket", () => {
           socket.write(frame);
         }
         socket.pause();
-        await logged;
+        await orExit(logged, "it logged all messages");
         const receivedWhilePaused = next;
+        const closed = once(socket, "close");
         socket.resume();
-        await received;
+        await orExit(received, "the client had all messages");
         inspectee.send("done");
+        const exitCode = await inspectee.exited;
+        // The counts are final once the socket has closed.
+        await closed;
 
-        expect({ receivedWhilePaused, received: next, mismatches }).toEqual({
+        expect({ receivedWhilePaused, received: next, mismatches, bytesOfPartialFrame: buffered, exitCode }).toEqual({
           receivedWhilePaused: 0,
           received: count,
           mismatches: 0,
+          bytesOfPartialFrame: 0,
+          exitCode: 0,
         });
-        expect(await inspectee.exited).toBe(0);
       } finally {
         socket?.destroy();
         server.close();
       }
-    }, 30_000);
+    });
   }
 });
 

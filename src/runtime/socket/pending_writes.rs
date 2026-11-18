@@ -33,8 +33,7 @@ impl PendingWrites {
         self.0 = StreamBuffer::default();
     }
 
-    /// Drops the first `n` unsent bytes. `n` can exceed `len()`: one writev
-    /// sends the queue and part of the chunk behind it.
+    /// Drops the first `n` unsent bytes.
     #[inline]
     pub(crate) fn consume(&mut self, n: usize) {
         if n >= self.len() {
@@ -42,5 +41,23 @@ impl PendingWrites {
         } else {
             self.0.wrote(n);
         }
+    }
+
+    /// Drops the first `n` unsent bytes and queues `bytes` behind the rest.
+    /// `n` can exceed `len()`: one writev sends the queue and part of the
+    /// chunk behind it. `bytes` then take over the allocation of the queue.
+    #[cfg(unix)]
+    #[inline]
+    pub(crate) fn consume_then_append(&mut self, n: usize, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return self.consume(n);
+        }
+        if n >= self.len() {
+            self.0.cursor = 0;
+            self.0.list.clear();
+        } else {
+            self.0.wrote(n);
+        }
+        self.append_slice(bytes);
     }
 }

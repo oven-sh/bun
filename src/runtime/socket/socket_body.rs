@@ -2659,12 +2659,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                         let remaining_in_input_data = &buffer.slice()[input_written..];
 
                         self.buffered_data_for_node_net
-                            .with_mut(|b| b.consume(written));
-
-                        if !remaining_in_input_data.is_empty() {
-                            self.buffered_data_for_node_net
-                                .with_mut(|b| b.append_slice(remaining_in_input_data));
-                        }
+                            .with_mut(|b| b.consume_then_append(written, remaining_in_input_data));
 
                         break 'brk rc;
                     }

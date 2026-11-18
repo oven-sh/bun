@@ -7,6 +7,7 @@ import https from "node:https";
 import net, { type AddressInfo } from "node:net";
 import { join } from "node:path";
 import tls from "node:tls";
+import { bytesWrittenUntil, patterned, receive } from "../net/unsent-bytes-helpers";
 
 const skip = !fault.available() || isWindows;
 
@@ -677,60 +678,32 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
 // has no writev arm: a write behind a queued tail is added to the queue, then
 // one SSL_write sends from its front.
 describe.skipIf(skip)("node:tls queue of unsent bytes under short sends", () => {
-  // Each byte depends on its position and on the seed, so bytes sent from the
-  // wrong offset or in the wrong order do not compare equal.
-  function patterned(size: number, seed: number) {
-    const block = Buffer.allocUnsafe(65521);
-    let x = seed;
-    for (let i = 0; i < block.length; i++) {
-      x ^= x << 13;
-      x ^= x >>> 17;
-      x ^= x << 5;
-      block[i] = x;
-    }
-    return Buffer.alloc(size, block);
-  }
-
   test("writes that writable events drain arrive in order", async () => {
     using p = await connectedTLSPair();
     const handle = (p.client as any)._handle;
-    const first = patterned(1024 * 1024, 0x9e3779b9);
+    const first = patterned(1024 * 1024);
     const second = patterned(256 * 1024, 0x85ebca6b);
     const expected = Buffer.concat([first, second]);
-    const state = { received: 0, intact: true };
-    p.serverSock.on("data", chunk => {
-      state.intact &&= chunk.equals(expected.subarray(state.received, state.received + chunk.length));
-      state.received += chunk.length;
-    });
+    const state = receive(p.serverSock, expected);
     const idle = estimateShallowMemoryUsageOf(handle);
 
     fault.set({ syscall: "send", action: "short", bytes: 16384, repeat: -1, fd: handle.fd });
-    let firstWritten = false;
-    (p.client as any)._write(first, "buffer", () => (firstWritten = true));
-    const queued = estimateShallowMemoryUsageOf(handle) - idle;
+    (p.client as any)._write(first, "buffer", () => {});
+    const queuedTail = estimateShallowMemoryUsageOf(handle) - idle;
     const { promise: written, resolve, reject } = Promise.withResolvers<void>();
     (p.client as any)._write(second, "buffer", (err?: Error | null) => (err ? reject(err) : resolve()));
-    const bytesWritten = new Set<number>();
-    let pending = true;
-    const settled = written.finally(() => (pending = false));
-    while (pending) {
-      bytesWritten.add(handle.bytesWritten);
-      await new Promise(resolve => setImmediate(resolve));
-    }
-    await settled;
+    const bytesWritten = await bytesWrittenUntil(written, handle);
     const allocatedAfterDrain = estimateShallowMemoryUsageOf(handle) - idle;
     p.client.end();
     await once(p.serverSock, "end");
 
     expect({
-      firstWritten,
-      queued: queued > 0 && queued < first.length,
-      bytesWritten: [...bytesWritten],
+      tailIsQueued: queuedTail > 0 && queuedTail < first.length,
+      bytesWritten,
       allocatedAfterDrain,
       ...state,
     }).toEqual({
-      firstWritten: false,
-      queued: true,
+      tailIsQueued: true,
       bytesWritten: [expected.length],
       allocatedAfterDrain: 0,
       received: expected.length,
@@ -743,32 +716,35 @@ describe.skipIf(skip)("node:tls queue of unsent bytes under short sends", () => 
   test("a write behind a tail that is mostly sent does not grow the allocation", async () => {
     using p = await connectedTLSPair();
     const handle = (p.client as any)._handle;
-    const first = patterned(1024 * 1024, 0x9e3779b9);
+    const first = patterned(1024 * 1024);
     const second = patterned(65536, 0x85ebca6b);
     const expected = Buffer.concat([first, second]);
-    const state = { received: 0, intact: true };
-    p.serverSock.on("data", chunk => {
-      state.intact &&= chunk.equals(expected.subarray(state.received, state.received + chunk.length));
-      state.received += chunk.length;
-    });
+    const state = receive(p.serverSock, expected);
     const idle = estimateShallowMemoryUsageOf(handle);
 
     fault.set({ syscall: "send", action: "short", bytes: 16384, repeat: -1, fd: handle.fd });
     (p.client as any)._write(first, "buffer", () => {});
-    const queued = estimateShallowMemoryUsageOf(handle) - idle;
+    const queuedTail = estimateShallowMemoryUsageOf(handle) - idle;
     while (state.received <= (first.length * 3) / 4) await once(p.serverSock, "data");
     const allocatedBefore = estimateShallowMemoryUsageOf(handle) - idle;
     const { promise: written, resolve, reject } = Promise.withResolvers<void>();
     (p.client as any)._write(second, "buffer", (err?: Error | null) => (err ? reject(err) : resolve()));
     const allocatedAfter = estimateShallowMemoryUsageOf(handle) - idle;
-    await written;
+    const bytesWritten = await bytesWrittenUntil(written, handle);
     p.client.end();
     await once(p.serverSock, "end");
 
-    expect({ allocatedBefore, allocatedAfter, bytesWritten: handle.bytesWritten, ...state }).toEqual({
-      allocatedBefore: queued,
-      allocatedAfter: queued,
-      bytesWritten: expected.length,
+    expect({
+      tailIsQueued: queuedTail > 0 && queuedTail < first.length,
+      allocatedBefore: allocatedBefore - queuedTail,
+      allocatedAfter: allocatedAfter - queuedTail,
+      bytesWritten,
+      ...state,
+    }).toEqual({
+      tailIsQueued: true,
+      allocatedBefore: 0,
+      allocatedAfter: 0,
+      bytesWritten: [expected.length],
       received: expected.length,
       intact: true,
     });

@@ -1,4 +1,5 @@
 //! Which copy runs, and which items the macros accept.
+#![cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #![forbid(unsafe_code)]
 use bun_simd::{Isa, Target, limit_to, limit_to_named, limit_to_with};
 
@@ -201,9 +202,9 @@ mod listed {
 fn portable_copies_have_the_widths_in_the_list() {
     let lens = [Target::Portable64, Target::Portable32, Target::Portable].map(|target| {
         limit_to(target);
-        listed::len()
+        [listed::len(), capped_simd::len()]
     });
-    assert_eq!(lens, [16, 32, 16]);
+    assert_eq!(lens, [[16, 64], [32, 16], [16, 16]]);
 }
 
 #[test]
@@ -239,6 +240,11 @@ mod capped_simd {
     #[export(up_to = avx2)]
     pub fn module() -> &'static str {
         stringify!(this_target)
+    }
+
+    #[export]
+    pub fn len() -> usize {
+        isa::U8::LEN
     }
 }
 

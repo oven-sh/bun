@@ -5,8 +5,9 @@
 
 import { cpuDispatch, highwayStringsForTesting as hw } from "bun:internal-for-testing";
 import { afterEach, describe, expect, it } from "bun:test";
-import { isArm64, isLinux } from "harness";
+import { isArm64, isLinux, isWindows } from "harness";
 import { readFileSync } from "node:fs";
+import { cpus, release } from "node:os";
 
 // Lengths that straddle 16/32/64-byte lanes and the scalar tails on either side.
 const LENGTHS = [0, 1, 2, 3, 8, 15, 16, 17, 31, 32, 33, 48, 63, 64, 65, 127, 128, 129, 255, 256, 257, 1024, 1029];
@@ -704,5 +705,11 @@ describe("targets", () => {
       .split(" ");
     const hasAll = ["aes", "asimdhp", "asimddp", "bf16"].every(feature => features.includes(feature));
     expect(cpuDispatch().checksums).toBe(hasAll ? "NEON_BF16" : "NEON_WITHOUT_AES");
+  });
+
+  // Windows reports BF16 from 11 24H2 on.
+  const isCobalt = isWindows && isArm64 && cpus()[0].model.includes("Cobalt") && +release().split(".")[2] >= 26100;
+  it.skipIf(!isCobalt)("the checksums use what Windows reports on arm64", () => {
+    expect(cpuDispatch().checksums).toBe("NEON_BF16");
   });
 });

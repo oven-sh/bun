@@ -9,6 +9,10 @@
 #endif
 // Without this, hn::CLMulLower and hn::CLMulUpper are emulated.
 #undef HWY_DISABLE_PCLMUL_AES
+#if defined(__aarch64__) && (defined(_WIN32) || defined(__FreeBSD__))
+#define CHOOSES_BY_ITSELF
+#define HWY_HAVE_RUNTIME_DISPATCH 1
+#endif
 #ifndef __OPTIMIZE__
 #error "Unless hwy::ChosenTarget::GetIndex() is inlined, the linker may keep that of a file with other targets."
 #endif
@@ -127,7 +131,8 @@ static HWY_INLINE V Fold(V earlier, V later)
 {
     constexpr uint64_t lower = PowerOfX(8 * kDistance + 31), upper = PowerOfX(8 * kDistance - 33);
     const V factors = hn::Dup128VecFromValues(hn::DFromV<V>(), lower, upper);
-    return hn::Xor3(hn::CLMulLower(earlier, factors), hn::CLMulUpper(earlier, factors), later);
+    // Not hn::Xor3: Apple's cores fuse a PMULL with the EOR after it, but not with an EOR3.
+    return hn::Xor(hn::Xor(hn::CLMulLower(earlier, factors), hn::CLMulUpper(earlier, factors)), later);
 }
 
 // Folds the input, at least `kCount` vectors, into `kCount` chains until less than that is left.
@@ -423,10 +428,36 @@ static int64_t Target() { return HWY_TARGET; }
 HWY_AFTER_NAMESPACE();
 
 #if HWY_ONCE
+#if defined(CHOOSES_BY_ITSELF) && HWY_OS_WIN
+#include <windows.h>
+#elif defined(CHOOSES_BY_ITSELF)
+#include <sys/auxv.h>
+#endif
+
 namespace bun {
+#ifdef CHOOSES_BY_ITSELF
+static bool HasNeonBf16()
+{
+#if HWY_OS_WIN
+    // PF_ARM_V82_FP16_INSTRUCTIONS_AVAILABLE and PF_ARM_V86_BF16_INSTRUCTIONS_AVAILABLE, which older SDKs lack
+    constexpr DWORD fp16 = 67, bf16 = 68;
+    return IsProcessorFeaturePresent(PF_ARM_V8_CRYPTO_INSTRUCTIONS_AVAILABLE) && IsProcessorFeaturePresent(PF_ARM_V82_DP_INSTRUCTIONS_AVAILABLE)
+        && IsProcessorFeaturePresent(fp16) && IsProcessorFeaturePresent(bf16);
+#else
+    constexpr unsigned long needed = HWCAP_AES | HWCAP_PMULL | HWCAP_ASIMDHP | HWCAP_ASIMDDP;
+    unsigned long hwcap = 0, hwcap2 = 0;
+    elf_aux_info(AT_HWCAP, &hwcap, sizeof(hwcap));
+    elf_aux_info(AT_HWCAP2, &hwcap2, sizeof(hwcap2));
+    return (hwcap & needed) == needed && (hwcap2 & HWCAP2_BF16);
+#endif
+}
+#define CHOOSE(FUNC) (HasNeonBf16() ? &N_NEON_BF16::FUNC : &N_NEON_WITHOUT_AES::FUNC)
+#else
 HWY_EXPORT(Crc32);
 HWY_EXPORT(Adler32);
 HWY_EXPORT(Target);
+#define CHOOSE HWY_DYNAMIC_POINTER
+#endif
 
 static auto ChooseCrc32()
 {
@@ -435,7 +466,7 @@ static auto ChooseCrc32()
     if (!__get_cpuid(1, &eax, &ebx, &ecx, &edx) || !(ecx & bit_PCLMUL))
         return &N_SSSE3::Crc32;
 #endif
-    return HWY_DYNAMIC_POINTER(Crc32);
+    return CHOOSE(Crc32);
 }
 
 static HWY_INLINE uint32_t UpdateAligned(auto update, uint32_t state, const uint8_t* bytes, size_t len)
@@ -455,13 +486,13 @@ extern "C" uint32_t highway_crc32(uint32_t crc, const uint8_t* bytes, size_t len
 
 extern "C" uint32_t highway_adler32(const uint8_t* bytes, size_t len)
 {
-    return UpdateAligned(BUN_HWY_DISPATCH(Adler32), 1, bytes, len);
+    return UpdateAligned(BUN_HWY_DISPATCH_TO(CHOOSE(Adler32)), 1, bytes, len);
 }
 
 // For bun:internal-for-testing
 extern "C" int64_t highway_checksums_target()
 {
-    return BUN_HWY_DISPATCH(Target)();
+    return BUN_HWY_DISPATCH_TO(CHOOSE(Target))();
 }
 } // namespace bun
 #endif

@@ -1,0 +1,34 @@
+[package]
+name = "bun_engine"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_engine_text.workspace = true
+bun_engine_vm.workspace = true
+bun_engine_interpreter.workspace = true
+bun_engine_builtins.workspace = true
+bun_engine_intl.workspace = true
+bun_engine_temporal.workspace = true
+bun_engine_ffi.workspace = true
+bun_engine_baseline.workspace = true
+bun_engine_optimizer.workspace = true
+bun_engine_wasm.workspace = true
+bun_engine_inspector.workspace = true
+
+[dev-dependencies]
+bun_engine_bytecode.workspace = true
+bun_engine_macros.workspace = true
+bun_engine_number.workspace = true
+bun_engine_standalone.workspace = true
+
+[[bench]]
+name = "heap"
+path = "benches/heap.rs"
+harness = false

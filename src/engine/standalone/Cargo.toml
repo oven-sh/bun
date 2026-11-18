@@ -1,0 +1,20 @@
+[package]
+name = "bun_engine_standalone"
+version.workspace = true
+edition.workspace = true
+build = "build.rs"
+
+[lib]
+path = "lib.rs"
+test = false
+doctest = false
+
+[dependencies]
+bun_alloc.workspace = true
+bun_core.workspace = true
+
+[build-dependencies]
+cc = "1"
+
+[lints]
+workspace = true

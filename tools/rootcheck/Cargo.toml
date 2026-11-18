@@ -1,0 +1,13 @@
+[package]
+name = "rootcheck"
+version = "0.0.0"
+edition = "2024"
+
+# Links the compiler's own crates, so it stays out of the repository's workspace.
+[workspace]
+
+[package.metadata.rust-analyzer]
+rustc_private = true
+
+[profile.release]
+debug = "line-tables-only"

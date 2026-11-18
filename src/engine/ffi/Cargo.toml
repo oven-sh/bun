@@ -1,0 +1,24 @@
+[package]
+name = "bun_engine_ffi"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_engine_macros.workspace = true
+bun_engine_text.workspace = true
+bun_engine_number.workspace = true
+bun_engine_bytecode.workspace = true
+bun_engine_asm.workspace = true
+bun_engine_exec_memory.workspace = true
+bun_engine_vm.workspace = true
+bun_threading.workspace = true
+smallvec.workspace = true
+
+[dev-dependencies]
+bun_engine_standalone.workspace = true

@@ -1,0 +1,28 @@
+[package]
+name = "bun_engine_shell"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "engine-shell"
+path = "main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_engine.workspace = true
+bun_engine_bytecode.workspace = true
+bun_engine_date.workspace = true
+bun_engine_exec_memory.workspace = true
+bun_engine_ffi.workspace = true
+bun_engine_inspector.workspace = true
+bun_engine_intl.workspace = true
+bun_engine_macros.workspace = true
+bun_engine_number.workspace = true
+bun_engine_standalone.workspace = true
+bun_engine_text.workspace = true
+bun_engine_vm.workspace = true
+bun_engine_wasm.workspace = true
+bun_icu.workspace = true
+libc.workspace = true

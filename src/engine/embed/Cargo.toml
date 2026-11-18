@@ -1,0 +1,45 @@
+[package]
+name = "bun_engine_embed"
+version.workspace = true
+edition.workspace = true
+autotests = false
+
+[lib]
+path = "lib.rs"
+
+# What the C++ tests link (tests/run.ts).
+[[example]]
+name = "native_tests"
+path = "tests/native_tests.rs"
+crate-type = ["staticlib"]
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_engine.workspace = true
+bun_engine_exec_memory.workspace = true
+bun_engine_inspector.workspace = true
+bun_engine_macros.workspace = true
+bun_engine_date.workspace = true
+bun_engine_number.workspace = true
+bun_engine_platform.workspace = true
+bun_engine_regexp.workspace = true
+bun_engine_temporal.workspace = true
+bun_engine_ffi.workspace = true
+bun_engine_text.workspace = true
+bun_engine_bigint.workspace = true
+bun_engine_bytecode.workspace = true
+bun_engine_unicode.workspace = true
+bun_engine_vm.workspace = true
+bun_engine_wasm.workspace = true
+bun_alloc.workspace = true
+bun_core.workspace = true
+bun_icu.workspace = true
+bun_sys.workspace = true
+bun_threading.workspace = true
+bun_url_whatwg.workspace = true
+libc.workspace = true
+
+[dev-dependencies]
+bun_engine_standalone.workspace = true

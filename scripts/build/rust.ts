@@ -136,7 +136,8 @@ export const cargoBuildStdArg = "-Zbuild-std=core,alloc,std,proc_macro,panic_abo
  * real CPU instead (cortex-a72), which also assumed aes, sha2 and pmuv3
  * (`rustc --print cfg`), none of which the C++ side does.
  *
- * clang-cl (windows) spells the same flags `/clang:-march=...`.
+ * clang-cl (windows) spells the same flags `/clang:-march=...`. For apple-m1,
+ * that is not enough: see `ccidx` in flags.ts.
  */
 function rustCpuTargetFlags(cfg: Config): string[] {
   const rustflags: string[] = [];

@@ -393,8 +393,7 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
             })
             .collect()
     });
-    // The selectors read the lockfile as it is saved, where the workspace that the command runs
-    // in can still have another name.
+    // The selectors read the saved lockfile, which can have this workspace under its old name.
     let invoking = match selection {
         Some(_) => manager.workspace_name_hash,
         None => {

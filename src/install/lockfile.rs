@@ -1161,8 +1161,7 @@ impl Lockfile {
         self.overrides.get(self, id, dependency.name_hash).is_some()
     }
 
-    /// The root package for `None`, else the workspace package with that name. Returns `None` if
-    /// the lockfile has no workspace package with that name. The root is not a substitute for it.
+    /// The root (no hash), or the workspace package with that name hash if the lockfile has one.
     pub(crate) fn get_workspace_package_id(
         &self,
         workspace_name_hash: Option<PackageNameHash>,
@@ -1179,8 +1178,7 @@ impl Lockfile {
             .map(|i| i as PackageID)
     }
 
-    /// Whether the lockfile has the workspace package `id` at `folder`, a path from the root with
-    /// the separators of the platform.
+    /// Whether the workspace package `id` is at `folder`, a root-relative path in platform form.
     pub(crate) fn is_workspace_at(&self, id: PackageID, folder: &[u8]) -> bool {
         let res = &self.packages.items_resolution()[id as usize];
         res.tag == ResolutionTag::Workspace && {
@@ -1191,8 +1189,7 @@ impl Lockfile {
         }
     }
 
-    /// The workspace package at `folder`. A lockfile lists a workspace under its folder, so this
-    /// finds the rows of a workspace whose `name` changed after the lockfile was saved.
+    /// The workspace package at `folder`: finds a workspace whose `name` changed since the save.
     pub(crate) fn workspace_package_id_at(&self, folder: &[u8]) -> Option<PackageID> {
         (0..self.packages.len() as PackageID).find(|&id| self.is_workspace_at(id, folder))
     }

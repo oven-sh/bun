@@ -531,8 +531,7 @@ pub struct PackageManager {
     pub root_package_json_name_at_time_of_init: Box<[u8]>,
 
     /// The package id corresponding to the workspace the install is happening in. Could be root, or
-    /// could be any of the workspaces. Not set while the lockfile does not list that workspace.
-    /// A command that reads the lockfile as it is saved calls `cwd_workspace_id`.
+    /// could be any of the workspaces.
     pub(crate) root_package_id: RootPackageId,
 
     /// The hash of the `name` in the root package.json. `workspace_paths` only has the workspaces,
@@ -702,8 +701,7 @@ pub(crate) struct RootPackageId {
 }
 
 impl RootPackageId {
-    /// `None` if `lockfile` does not list the workspace with that name. A miss is not kept: an
-    /// install misses for a new workspace until its package.json is read, and then finds it.
+    /// A miss is not kept: an install misses for a new workspace until the differ adds it.
     pub(crate) fn get(
         &mut self,
         lockfile: &Lockfile,
@@ -989,8 +987,7 @@ static ROOT_PACKAGE_JSON_PATH_BUF: bun_core::RacyCell<PathBuffer> =
 // impl PackageManager
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `package_json` is the package.json of a workspace. `init` found the root above its folder, so
-/// the root's path is the start of the folder's.
+/// The folder of a workspace's package.json, from the root that `init` found above it.
 fn workspace_folder_of(package_json: &ZStr) -> &[u8] {
     let folder = resolve_path::dirname::<platform::Auto>(package_json.as_bytes());
     let root = FileSystem::get().top_level_dir_without_trailing_slash();
@@ -998,14 +995,12 @@ fn workspace_folder_of(package_json: &ZStr) -> &[u8] {
     below.strip_prefix(&[SEP]).unwrap_or(below)
 }
 
-/// Which rows `workspace_id_of` takes when the lockfile has the workspace's name at another
-/// folder: the workspace was moved or copied, or it took the name of another one.
+/// What `workspace_id_of` takes when the lockfile has the workspace's name at another folder.
 #[derive(Clone, Copy)]
 enum NameElsewhere {
     /// None. A command that reads the rows as the workspace's own cannot tell whose they are.
     NoRows,
-    /// The rows at the workspace's folder, else the rows under its name. For a command that only
-    /// looks for the copy of a package that the workspace loads.
+    /// The rows at its folder, else the rows under its name, for a moved or copied workspace.
     FolderThenName,
 }
 
@@ -1026,8 +1021,7 @@ fn workspace_id_of(
         return by_name;
     }
     match (by_name, name_elsewhere) {
-        // Only the `name` changed: the lockfile has the folder, and the new name nowhere. This
-        // package is not kept in `root_package_id`, because an install finds it by its name.
+        // Only the `name` changed. Not kept in `root_package_id`: an install looks up the name.
         (None, _) => lockfile.workspace_package_id_at(folder),
         (Some(_), NameElsewhere::NoRows) => None,
         (Some(_), NameElsewhere::FolderThenName) => {
@@ -1046,10 +1040,7 @@ impl PackageManager {
         workspace_folder_of(&self.original_package_json_path)
     }
 
-    /// For a command that reads the lockfile as it is saved: the package that the lockfile has
-    /// at the folder of the workspace that the command runs in. `None` if the lockfile does not
-    /// say which rows are that workspace's, so the command has no rows to read. The root and
-    /// another workspace are not substitutes.
+    /// The package that the saved lockfile has at the folder of the cwd workspace, if it has one.
     pub fn cwd_workspace_id(&mut self) -> Option<PackageID> {
         workspace_id_of(
             &mut self.root_package_id,
@@ -1060,8 +1051,7 @@ impl PackageManager {
         )
     }
 
-    /// For a command that looks for the copy of a package that the workspace it runs in loads:
-    /// `cwd_workspace_id`, and for a workspace that was moved or copied, the rows under its name.
+    /// `cwd_workspace_id`, or the package under the workspace's name if it was moved or copied.
     pub fn cwd_workspace_id_or_named(&mut self) -> Option<PackageID> {
         workspace_id_of(
             &mut self.root_package_id,
@@ -1098,8 +1088,7 @@ impl PackageManager {
     fn exit_on_unlisted_cwd_workspace(&mut self, nothing: &str) -> ! {
         // What `bun install` does with this lockfile, whatever the command freezes.
         (self.options.enable).set(package_manager_options::Enable::FROZEN_LOCKFILE, false);
-        // Exits if `bun install` changes the lockfile. Else it keeps a lockfile that has no entry
-        // for this workspace: one named like a registry dependency of the root.
+        // Exits if `bun install` would change the lockfile. Else it keeps the workspace out.
         let kept = crate::prune::exit_unless_lockfile_matches_package_json(self, nothing).is_ok();
         if kept && self.options.log_level != package_manager_options::LogLevel::Silent {
             let mut folder = self.cwd_workspace_folder().to_vec();

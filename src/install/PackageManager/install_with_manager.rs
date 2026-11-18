@@ -237,9 +237,9 @@ pub fn install_with_manager(
                 }
 
                 // A lockfile from an older Bun has no entries for these workspaces. They are added the
-                // next time the dependencies change. Until then that lockfile is valid as it is. A
-                // command that edits the package.json of one of them changes its dependencies.
+                // next time the dependencies change. Until then that lockfile is valid as it is.
                 let left_out = core::mem::take(&mut manager.summary.members_left_out);
+                // A command that edits the package.json of one of them changes its dependencies.
                 let edits_left_out = left_out.iter().any(|&row| {
                     let member = (maybe_root.dependencies.off + row) as usize;
                     let name_hash = Some(lockfile.buffers.dependencies[member].name_hash);

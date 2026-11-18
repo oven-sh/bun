@@ -422,8 +422,7 @@ fn collect_packages_for_audit(
         && !(features.dev_dependencies
             && features.optional_dependencies
             && features.peer_dependencies);
-    // Only the walk starts at the workspace that the command runs in. Without it, every package
-    // of the lockfile is audited.
+    // Only this walk starts at the cwd workspace. Without it the whole lockfile is audited.
     let walk_root = omits_something.then(|| pm.cwd_workspace_id_or_exit("nothing to audit"));
     let wanted_packages: Option<DynamicBitSet> = walk_root.map(|root| {
         reachable::packages(

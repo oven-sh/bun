@@ -616,9 +616,7 @@ fn print_installed_update_request<W: Write>(
     Ok(())
 }
 
-/// The workspace packages of `lockfile`: first the ones that a `workspace` row of the root leads
-/// to, in the order of those rows. A bun.lockb from Bun 1.4 can have a workspace package that no
-/// such row leads to.
+/// The workspace packages: first the ones that the root's `workspace` rows lead to, in row order.
 fn workspace_package_ids(lockfile: &install::Lockfile) -> Vec<PackageID> {
     let resolved = lockfile.packages.items_resolution();
     let rows = lockfile.packages.items_resolutions()[0];
@@ -632,6 +630,7 @@ fn workspace_package_ids(lockfile: &install::Lockfile) -> Vec<PackageID> {
         .filter(|&id| (id as usize) < resolved.len())
         .collect();
     let linked = ids.len();
+    // A bun.lockb from Bun 1.4 can have a workspace package that no row of the root leads to.
     for (id, res) in resolved.iter().enumerate() {
         let id = id as PackageID;
         if res.tag == resolution::Tag::Workspace && !ids[..linked].contains(&id) {

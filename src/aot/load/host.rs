@@ -1808,17 +1808,6 @@ impl CodeHost for LoadHost<'_> {
         };
         let parsed_text = body_of_bundle.as_deref().unwrap_or(text);
         let mut hir = parse_for_compile(arena, &compile_options, parsed_text, atoms);
-        let jsx_runtime = request.settings.jsx.runtime_with_pragmas(&hir.jsx_pragmas);
-        let mut diagnostics = Vec::new();
-        if jsx_runtime == bun_sema::resolve::JsxRuntime::Preserve && !hir.jsx.is_empty() {
-            diagnostics.push(FileDiagnostic::new(
-                Code::UnsupportedOption,
-                (0, 0),
-                &[b"preserved JSX"],
-            ));
-            // Rejecting before import scanning; preserved JSX must not acquire automatic runtime imports.
-            hir = parse_for_compile(arena, &compile_options, EMPTY_MODULE, atoms);
-        }
         let is_entry_text = self.plugins.loader_of_entry_text(path).is_some();
         let is_language_assumed = is_entry_text
             || (matches!(served_by, ServedBy::Disk)
@@ -1837,8 +1826,30 @@ impl CodeHost for LoadHost<'_> {
         {
             return parse_data(Loader::File, plugin_module);
         }
-        if parse_failure.is_some() {
-            hir = parse_for_compile(arena, &compile_options, EMPTY_MODULE, atoms);
+        let mut diagnostics = Vec::new();
+        let jsx_runtime = request.settings.jsx.runtime_with_pragmas(&hir.jsx_pragmas);
+        if jsx_runtime == bun_sema::resolve::JsxRuntime::Preserve
+            && !hir.jsx.is_empty()
+            && syntax_errors_of(&hir).next().is_none()
+            && let Some(first) = hir
+                .exprs
+                .iter()
+                .filter(|expr| matches!(expr.kind, hir::ExprKind::Jsx(_)))
+                .min_by_key(|expr| expr.pos)
+        {
+            diagnostics.push(FileDiagnostic::new(
+                Code::UnsupportedOption,
+                (first.pos, first.end),
+                &[b"preserved JSX"],
+            ));
+        }
+        if parse_failure.is_some() || !diagnostics.is_empty() {
+            let mut stub = parse_for_compile(arena, &compile_options, EMPTY_MODULE, atoms);
+            if !diagnostics.is_empty() {
+                // Letting the loader attach the original source for diagnostic locations.
+                stub.source_len = hir.source_len;
+            }
+            hir = stub;
         } else if is_bundled_commonjs && body_of_bundle.is_none() {
             let what = b"a file that begins with \"// @bun @bun-cjs\" and does not go on with the function that bun build --format=cjs --target=bun writes";
             self.refuse_file(what, path);

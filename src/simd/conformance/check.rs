@@ -1015,9 +1015,10 @@ impl Round<'_> {
         }
         let used = from_fn(|word| (0..64).map(|i| u64::from(counts[64 * word + i] != 0) << i).sum());
         let entry = |n: u32| [if n < 256 { f64::from(n.ilog2()) + 0.37 } else { 99.0 }, n.into()];
-        let table = Vec::from_iter([[1e6, 0.0]].into_iter().chain((1..256 + brotli::SPARE_LOGARITHMS as u32).map(entry)));
+        // One more, as QEMU reads 32 bytes for a `vinsertf128`, which takes 16.
+        let table = Vec::from_iter([[1e6, 0.0]].into_iter().chain((1..=256 + brotli::SPARE_LOGARITHMS as u32).map(entry)));
         let (totals, others) = ([counts.iter().sum(); 4], [&*b.copy_of(&[0; 704], at); 4]);
-        let costs = brotli::estimate_costs(a.copy_of(&counts, at), others, &used, &totals, &gaps, c.copy_of(&table, at));
+        let costs = brotli::estimate_costs(a.copy_of(&counts, at), others, &used, &totals, &gaps, &mut c.copy_of(&table, at)[..table.len() - 1]);
         self.digests.add("brotli::estimate_costs", hash(&costs));
 
         let place = brotli::Place { ring: a.copy_of(&random.bytes(72, b"ab"), at), ring_mask: 63, position: random.next() as u32, pair: *b"ab" };

@@ -23,6 +23,7 @@ struct PackedWordTables {
     unpacking: [[u8; 16]; 256],
     sizes: [Size; 256],
 }
+
 static PACKED: PackedWordTables = {
     let mut t = PackedWordTables {
         packing: [[0x80; 16]; 256],

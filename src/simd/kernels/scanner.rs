@@ -18,6 +18,8 @@ const fn set_of(mut classes: &[(u32, u32, u32)]) -> ByteSet {
     }
     ByteSet { rows, columns }
 }
+
+/// The first two bits are for tab and space, the others for `$`, digits, letters and `_`.
 const NAME_OR_BLANK: ByteSet = set_of(&[
     (0, 1 << 0, 1 << 9),
     (1, 1 << 2, 1 << 0),
@@ -79,7 +81,7 @@ mod simd {
         [!name, name | neither, !plain].map(u64::to_le_bytes)
     }
 
-    /// Panics unless each plane has a bit for each byte.
+    /// What ends a name, blanks, and plain text in a string. Panics unless each has a bit for each byte.
     #[export(up_to = neon)]
     pub fn scanner_run_stops(text: &[u8], planes: [&mut [[u8; 8]]; 3]) {
         let (whole, rest) = text.as_chunks();

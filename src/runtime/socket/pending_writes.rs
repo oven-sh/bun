@@ -1,7 +1,6 @@
 use bun_io::StreamBuffer;
 
-/// Bytes that a write accepted and the socket did not take yet. A partial send
-/// advances a cursor and moves no bytes. An empty queue holds no allocation.
+/// Bytes a write accepted and the socket has not taken. A partial send advances a cursor, and an empty queue holds no allocation.
 #[derive(Default)]
 pub(crate) struct PendingWrites(StreamBuffer);
 
@@ -42,8 +41,7 @@ impl PendingWrites {
         }
     }
 
-    /// Drops the first `n` unsent bytes and queues `bytes` behind the rest. When one
-    /// writev took the queue and part of the chunk, `bytes` reuse the allocation.
+    /// `consume(n)` then `append_slice(bytes)`. When `n` covers the whole queue, `bytes` reuse its allocation.
     #[cfg(unix)]
     #[inline]
     pub(crate) fn consume_then_append(&mut self, n: usize, bytes: &[u8]) {

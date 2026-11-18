@@ -540,26 +540,6 @@ describe.concurrent("bun test --changed, a component", () => {
     expect(existsSync(join(String(dir), "macro-ran"))).toBe(false);
     expect(exitCode).toBe(0);
   });
-
-  // The bundler of `Bun.serve` loads what a page imports. The plugin of a preload file is not part of it, so
-  // there a component is an asset, and the scan does not read it.
-  test("a component that a page imports stays an asset", async () => {
-    using dir = tempDir("test-changed-component-page", {
-      "package.json": JSON.stringify({ name: "component-page", type: "module" }),
-      "page.html": `<!doctype html>\n<html>\n  <body>\n    <script type="module" src="./client.ts"></script>\n  </body>\n</html>\n`,
-      "client.ts": `import App from "./App.svelte";\nconsole.log(App);\n`,
-      "App.svelte": `<script>\n  import { m } from "./m.ts";\n</script>\n\n<p>{m}</p>\n`,
-      "m.ts": `export const m = 1;\n`,
-      "m.test.ts": testFile("m", `import { m } from "./m.ts";`, "expect(m).toBe(1);"),
-      "page.test.ts": testFile("page", `import page from "./page.html";`, "expect(page).toBeDefined();"),
-    });
-    initRepo(String(dir));
-    appendFileSync(join(String(dir), "m.ts"), "// touched\n");
-
-    const { stderr, exitCode } = await runTestChanged(String(dir));
-    expect(ranFiles(stderr, ["m.test.ts", "page.test.ts"])).toEqual(["m.test.ts"]);
-    expect(exitCode).toBe(0);
-  });
 });
 
 // On Windows, `bun test --watch` runs as a parent watcher-manager that

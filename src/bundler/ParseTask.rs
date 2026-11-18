@@ -1335,7 +1335,6 @@ pub mod parse_worker {
                 debug_assert!(loader.should_copy_for_bundling());
                 // A plugin compiles a component in the test run. This scan runs no plugin, and reads what the scripts import.
                 if topts.component_scripts
-                    && topts.target.is_server_side()
                     && crate::component_scripts::has_scripts(source.path.text, source.contents())
                 {
                     return get_component_ast(log, &topts.define, opts, bump, source);

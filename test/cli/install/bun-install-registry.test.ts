@@ -811,14 +811,17 @@ ljelkjwelkgjw;lekj;lkejflkj
     // and `bun add` has made the package.json that it did not find. Each run has a folder of its
     // own, so each one does that.
     test.each([
-      ["pm bin -g", project],
-      ["add no-deps", {}],
-    ])("bun %s stops in every run", async (command, files) => {
+      ["pm bin -g", project, ".bun-install/install/global"],
+      ["add no-deps", {}, "package.json"],
+    ])("bun %s stops in every run", async (command, files, made) => {
       const runs = await Promise.all(
         Array.from({ length: 5 }, async () => {
           const { packageDir, env } = await setup(files);
           const result = await run(packageDir, env, [...command.split(" "), "--cafile", "does-not-exist"]);
-          return { result, expected: stopped(packageDir) };
+          return {
+            result: { ...result, made: existsSync(join(packageDir, made)) },
+            expected: { ...stopped(packageDir), made: true },
+          };
         }),
       );
       expect(runs.map(({ result }) => result)).toEqual(runs.map(({ expected }) => expected));

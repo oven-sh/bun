@@ -75,11 +75,13 @@ macro_rules! x256_in_halves {
             #[target_feature(enable = $feature)]
             pub fn compress(self, bits: usize) -> Self {
                 use {crate::native::{Aligned, kept_part}, core::array::from_fn};
-                static BYTES: Aligned<[[u8; 32]; 16]> =
-                    Aligned(from_fn(const |bits| from_fn(const |i| kept_part(bits, i, 8) as u8)));
+                // The third and the fourth lane that are kept come from the second half.
+                static BYTES: Aligned<[[u8; 32]; 16]> = Aligned(from_fn(const |bits| {
+                    from_fn(const |i| kept_part(bits, i, 8) as u8 % if i < 16 { 32 } else { 16 })
+                }));
                 let [first, second] = self.bitcast::<x256::U8>().halves();
                 let [a, b] = x256::U8::from_array(BYTES.0[bits % 16]).halves();
-                x256::U8::from_halves([first.lookup2(second, a), first.lookup2(second, b)]).bitcast()
+                x256::U8::from_halves([first.lookup2(second, a), second.lookup(b)]).bitcast()
             }
         }
 

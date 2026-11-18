@@ -49,7 +49,7 @@ jsxImportSource = "react"
 
 Supported `jsx` values in `bunfig.toml` are `"automatic"`, `"classic"`, `"react"`, `"react-jsx"`, `"react-jsxdev"`, and `"preserve"`. Bun ignores `"preserve"` in `tsconfig.json`.
 
-`"preserve"` keeps JSX syntax in `bun build` output for another tool to transform. Bun rejects actual JSX in this mode when executing files with `bun run`, compiling executables, or compiling standalone HTML. Files without JSX remain valid, including when they share a `bunfig.toml` that enables preserve mode.
+`"preserve"` keeps JSX syntax in `bun build` output for another tool to transform. Bun rejects retained JSX when executing files with `bun run` or building executables, bytecode, or standalone HTML. Files without JSX remain valid, including when they share a `bunfig.toml` that enables preserve mode.
 
 Refer to the tsconfig docs for more information on these fields.
 

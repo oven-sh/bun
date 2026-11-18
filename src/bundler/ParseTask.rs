@@ -832,6 +832,9 @@ pub mod parse_worker {
                                     options::CompileMode::StandaloneHtml => {
                                         Some(b"Cannot preserve JSX when compiling standalone HTML")
                                     }
+                                    options::CompileMode::None if topts.bytecode => {
+                                        Some(b"Cannot preserve JSX when generating bytecode")
+                                    }
                                     options::CompileMode::None => None,
                                 };
                                 if let Some(message) = message {

@@ -993,6 +993,23 @@ describe("bundler", () => {
         jsx: { runtime: "preserve" },
         bundleErrors: { "/in.jsx": ["Cannot preserve JSX when compiling standalone HTML"] },
       });
+
+      itBundled(`jsx/PreserveBytecodeRejected-${backend}`, {
+        files: { "/in.jsx": "export const element = <div />;" },
+        backend,
+        bytecode: true,
+        jsx: { runtime: "preserve" },
+        bundleErrors: { "/in.jsx": ["Cannot preserve JSX when generating bytecode"] },
+      });
+
+      itBundled(`jsx/PreserveBytecodePlain-${backend}`, {
+        files: { "/in.jsx": 'console.log("plain");' },
+        backend,
+        bytecode: true,
+        outdir: "/out",
+        jsx: { runtime: "preserve" },
+        run: { file: "/out/in.js", stdout: "plain" },
+      });
     }
 
     for (const backend of ["cli", "api"] as const) {

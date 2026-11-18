@@ -21,8 +21,6 @@
 #include "config.h"
 #include "JSURLPattern.h"
 
-#include "ExtendedDOMClientIsoSubspaces.h"
-#include "ExtendedDOMIsoSubspaces.h"
 #include "JSDOMAttribute.h"
 #include "JSDOMBinding.h"
 #include "JSDOMConstructor.h"
@@ -37,23 +35,13 @@
 #include "JSDOMGlobalObject.h"
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMOperation.h"
-#include "JSDOMWrapperCache.h"
+#include "JSDOMPrototype.h"
 #include "JSURLPatternInit.h"
 #include "JSURLPatternOptions.h"
 #include "JSURLPatternResult.h"
 #include "ScriptExecutionContext.h"
-#include "WebCoreJSClientData.h"
-#include <JavaScriptCore/FunctionPrototype.h>
-#include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSCInlines.h>
-#include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
-#include <JavaScriptCore/SlotVisitorMacros.h>
-#include <JavaScriptCore/SubspaceInlines.h>
-#include <wtf/GetPtr.h>
-#include <wtf/PointerPreparations.h>
-#include <wtf/URL.h>
 #include <wtf/Variant.h>
-#include <wtf/text/MakeString.h>
 
 namespace WebCore {
 using namespace JSC;
@@ -80,7 +68,6 @@ static JSC_DECLARE_HOST_FUNCTION(jsURLPatternPrototypeFunction_exec);
 
 // Attributes
 
-static JSC_DECLARE_CUSTOM_GETTER(jsURLPatternConstructor);
 static JSC_DECLARE_CUSTOM_GETTER(jsURLPattern_protocol);
 static JSC_DECLARE_CUSTOM_GETTER(jsURLPattern_username);
 static JSC_DECLARE_CUSTOM_GETTER(jsURLPattern_password);
@@ -91,38 +78,7 @@ static JSC_DECLARE_CUSTOM_GETTER(jsURLPattern_search);
 static JSC_DECLARE_CUSTOM_GETTER(jsURLPattern_hash);
 static JSC_DECLARE_CUSTOM_GETTER(jsURLPattern_hasRegExpGroups);
 
-class JSURLPatternPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static JSURLPatternPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSURLPatternPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSURLPatternPrototype))) JSURLPatternPrototype(vm, globalObject, structure);
-        ptr->finishCreation(vm);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSURLPatternPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSURLPatternPrototype(JSC::VM& vm, JSC::JSGlobalObject*, JSC::Structure* structure)
-        : JSC::JSNonFinalObject(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&);
-};
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSURLPatternPrototype, JSURLPatternPrototype::Base);
-
+using JSURLPatternPrototype = JSDOMPrototype<JSURLPattern>;
 using JSURLPatternDOMConstructor = JSDOMConstructor<JSURLPattern>;
 
 static inline EncodedJSValue constructJSURLPattern1(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
@@ -214,21 +170,10 @@ JSC_ANNOTATE_HOST_FUNCTION(JSURLPatternConstructorConstruct, JSURLPatternDOMCons
 
 template<> const ClassInfo JSURLPatternDOMConstructor::s_info = { "URLPattern"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSURLPatternDOMConstructor) };
 
-template<> JSValue JSURLPatternDOMConstructor::prototypeForStructure(JSC::VM& vm, const JSDOMGlobalObject& globalObject)
-{
-    UNUSED_PARAM(vm);
-    return globalObject.functionPrototype();
-}
-
-template<> void JSURLPatternDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
-{
-    initializeBaseProperties(vm, 0, "URLPattern"_s, JSURLPattern::prototype(vm, globalObject));
-}
-
 /* Hash table for prototype */
 
 static const std::array<HashTableValue, 12> JSURLPatternPrototypeTableValues {
-    HashTableValue { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsURLPatternConstructor, 0 } },
+    HashTableValue { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, JSURLPatternPrototype::constructorGetter, 0 } },
     HashTableValue { "protocol"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsURLPattern_protocol, 0 } },
     HashTableValue { "username"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsURLPattern_username, 0 } },
     HashTableValue { "password"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsURLPattern_password, 0 } },
@@ -242,9 +187,9 @@ static const std::array<HashTableValue, 12> JSURLPatternPrototypeTableValues {
     HashTableValue { "exec"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsURLPatternPrototypeFunction_exec, 0 } },
 };
 
-const ClassInfo JSURLPatternPrototype::s_info = { "URLPattern"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSURLPatternPrototype) };
+template<> const ClassInfo JSURLPatternPrototype::s_info = { "URLPattern"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSURLPatternPrototype) };
 
-void JSURLPatternPrototype::finishCreation(VM& vm)
+template<> void JSURLPatternPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSURLPattern::info(), JSURLPatternPrototypeTableValues, *this);
@@ -253,42 +198,14 @@ void JSURLPatternPrototype::finishCreation(VM& vm)
 
 const ClassInfo JSURLPattern::s_info = { "URLPattern"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSURLPattern) };
 
-JSURLPattern::JSURLPattern(Structure* structure, JSDOMGlobalObject& globalObject, Ref<URLPattern>&& impl)
-    : JSDOMWrapper<URLPattern>(structure, globalObject, WTF::move(impl))
-{
-}
-
 JSObject* JSURLPattern::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    auto* structure = JSURLPatternPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
-    structure->setMayBePrototype(true);
-    return JSURLPatternPrototype::create(vm, &globalObject, structure);
-}
-
-JSObject* JSURLPattern::prototype(VM& vm, JSDOMGlobalObject& globalObject)
-{
-    return getDOMPrototype<JSURLPattern>(vm, globalObject);
+    return JSURLPatternPrototype::create(vm, globalObject, globalObject.objectPrototype());
 }
 
 JSValue JSURLPattern::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSURLPatternDOMConstructor, DOMConstructorID::URLPattern>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
-}
-
-void JSURLPattern::destroy(JSC::JSCell* cell)
-{
-    SUPPRESS_MEMORY_UNSAFE_CAST JSURLPattern* thisObject = static_cast<JSURLPattern*>(cell);
-    thisObject->JSURLPattern::~JSURLPattern();
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsURLPatternConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
-{
-    SUPPRESS_UNCOUNTED_LOCAL auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = dynamicDowncast<JSURLPatternPrototype>(JSValue::decode(thisValue));
-    if (!prototype) [[unlikely]]
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    return JSValue::encode(JSURLPattern::getConstructor(vm, prototype->globalObject()));
 }
 
 static inline JSValue jsURLPattern_protocolGetter(JSGlobalObject& lexicalGlobalObject, JSURLPattern& thisObject)
@@ -458,73 +375,6 @@ static inline JSC::EncodedJSValue jsURLPatternPrototypeFunction_execBody(JSC::JS
 JSC_DEFINE_HOST_FUNCTION(jsURLPatternPrototypeFunction_exec, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSURLPattern>::call<jsURLPatternPrototypeFunction_execBody>(*lexicalGlobalObject, *callFrame, "exec");
-}
-
-JSC::GCClient::IsoSubspace* JSURLPattern::subspaceForImpl(JSC::VM& vm)
-{
-    return WebCore::subspaceForImpl<JSURLPattern, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForURLPattern, m_subspaceForURLPattern));
-}
-
-void JSURLPattern::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
-{
-    auto* thisObject = uncheckedDowncast<JSURLPattern>(cell);
-    analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
-    if (RefPtr context = thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, makeString("url "_s, context->url().string()));
-    Base::analyzeHeap(cell, analyzer);
-}
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-#if ENABLE(BINDING_INTEGRITY)
-#if PLATFORM(WIN)
-#pragma warning(disable : 4483)
-extern "C" {
-extern void (*const __identifier("??_7URLPattern@WebCore@@6B@")[])();
-}
-#else
-extern "C" {
-extern void* _ZTVN7WebCore10URLPatternE[];
-}
-#endif
-template<std::same_as<URLPattern> T>
-static inline void verifyVTable(URLPattern* ptr)
-{
-    if constexpr (std::is_polymorphic_v<T>) {
-        const void* actualVTablePointer = getVTablePointer<T>(ptr);
-#if PLATFORM(WIN)
-        void* expectedVTablePointer = __identifier("??_7URLPattern@WebCore@@6B@");
-#else
-        void* expectedVTablePointer = &_ZTVN7WebCore10URLPatternE[2];
-#endif
-
-        // If you hit this assertion you either have a use after free bug, or
-        // URLPattern has subclasses. If URLPattern has subclasses that get passed
-        // to toJS() we currently require URLPattern you to opt out of binding hardening
-        // by adding the SkipVTableValidation attribute to the interface IDL definition
-        RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
-    }
-}
-#endif
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-
-JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<URLPattern>&& impl)
-{
-#if ENABLE(BINDING_INTEGRITY)
-    verifyVTable<URLPattern>(impl.ptr());
-#endif
-    return createWrapper<URLPattern>(globalObject, WTF::move(impl));
-}
-
-JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, URLPattern& impl)
-{
-    return wrap(lexicalGlobalObject, globalObject, impl);
-}
-
-URLPattern* JSURLPattern::toWrapped(JSC::VM&, JSC::JSValue value)
-{
-    if (auto* wrapper = dynamicDowncast<JSURLPattern>(value))
-        return &wrapper->wrapped();
-    return nullptr;
 }
 
 }

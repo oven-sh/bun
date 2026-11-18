@@ -1,4 +1,5 @@
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { afterEach, describe, expect, test } from "bun:test";
 import { isWindows } from "harness";
 import { once } from "node:events";
@@ -461,4 +462,201 @@ describe.skipIf(skip)("node:net seeded syscall fuzz", () => {
       expect(p.client.destroyed).toBe(true);
     }
   });
+});
+
+// A short send leaves the rest of the chunk in the handle's queue of unsent
+// bytes, and each writable event sends more of it.
+describe.skipIf(skip)("node:net queue of unsent bytes under short sends", () => {
+  // Each byte depends on its position and on the seed, so bytes sent from the
+  // wrong offset or in the wrong order do not compare equal.
+  function patterned(size: number, seed = 0x9e3779b9) {
+    const block = Buffer.allocUnsafe(65521);
+    let x = seed;
+    for (let i = 0; i < block.length; i++) {
+      x ^= x << 13;
+      x ^= x >>> 17;
+      x ^= x << 5;
+      block[i] = x;
+    }
+    return Buffer.alloc(size, block);
+  }
+
+  function receive(reader: net.Socket, expected: Buffer) {
+    const state = { received: 0, intact: true };
+    reader.on("data", chunk => {
+      state.intact &&= chunk.equals(expected.subarray(state.received, state.received + chunk.length));
+      state.received += chunk.length;
+    });
+    return state;
+  }
+
+  // The values of `bytesWritten` (sent plus queued) that the handle reports,
+  // one read per turn of the loop until `written` settles.
+  async function bytesWrittenUntil(written: Promise<void>, handle: any) {
+    const samples = new Set<number>();
+    let pending = true;
+    const settled = written.finally(() => (pending = false));
+    while (pending) {
+      samples.add(handle.bytesWritten);
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    await settled;
+    return [...samples];
+  }
+
+  for (const side of ["client", "server"] as const) {
+    test(`a write that writable events drain arrives intact (${side} writer)`, async () => {
+      using p = await connectedPair();
+      const writer = side === "client" ? p.client : p.serverSock;
+      const reader = side === "client" ? p.serverSock : p.client;
+      const handle = (writer as any)._handle;
+      const payload = patterned(1024 * 1024);
+      const state = receive(reader, payload);
+      const idle = estimateShallowMemoryUsageOf(handle);
+
+      fault.set({ syscall: "send", action: "short", bytes: 16384, repeat: -1, fd: handle.fd });
+      const { promise: written, resolve, reject } = Promise.withResolvers<void>();
+      writer.write(payload, err => (err ? reject(err) : resolve()));
+      const queued = estimateShallowMemoryUsageOf(handle) - idle;
+      const bytesWritten = await bytesWrittenUntil(written, handle);
+      const allocatedAfterDrain = estimateShallowMemoryUsageOf(handle) - idle;
+      writer.end();
+      await once(reader, "end");
+
+      expect({ queued, bytesWritten, allocatedAfterDrain, ...state }).toEqual({
+        queued: payload.length - 16384,
+        bytesWritten: [payload.length],
+        allocatedAfterDrain: 0,
+        received: payload.length,
+        intact: true,
+      });
+    });
+  }
+
+  // Socket.prototype._write reaches the native write while a tail is queued,
+  // as the inspector's socket transport does. On a plain socket one writev
+  // then carries the tail and the chunk.
+  test.each([
+    // The writev stops inside the tail: the chunk goes behind the rest of it.
+    { clamp: "below", writev: 1024 },
+    // The writev takes the tail and 17,408 bytes of the chunk.
+    { clamp: "above", writev: 32768 },
+  ])("a write behind a queued tail arrives in order (writev clamp $clamp the tail)", async ({ writev }) => {
+    using p = await connectedPair();
+    const handle = (p.client as any)._handle;
+    const first = patterned(16384);
+    const second = patterned(65536, 0x85ebca6b);
+    const expected = Buffer.concat([first, second]);
+    const state = receive(p.serverSock, expected);
+    const idle = estimateShallowMemoryUsageOf(handle);
+
+    fault.set({ syscall: "send", action: "short", bytes: 1024, repeat: -1, fd: handle.fd });
+    fault.set({ syscall: "writev", action: "short", bytes: writev, repeat: -1, fd: handle.fd });
+    let firstWritten = false;
+    (p.client as any)._write(first, "buffer", () => (firstWritten = true));
+    const { promise: written, resolve, reject } = Promise.withResolvers<void>();
+    (p.client as any)._write(second, "buffer", (err?: Error | null) => (err ? reject(err) : resolve()));
+    const bytesWritten = await bytesWrittenUntil(written, handle);
+    const allocatedAfterDrain = estimateShallowMemoryUsageOf(handle) - idle;
+    p.client.end();
+    await once(p.serverSock, "end");
+
+    expect({ firstWritten, bytesWritten, allocatedAfterDrain, ...state }).toEqual({
+      firstWritten: false,
+      bytesWritten: [expected.length],
+      allocatedAfterDrain: 0,
+      received: expected.length,
+      intact: true,
+    });
+  });
+
+  // Writable events send from the tail before the second write arrives, so the
+  // second chunk goes behind a tail whose front the socket already took.
+  test("a write behind a tail that writable events partly sent arrives in order", async () => {
+    using p = await connectedPair();
+    const handle = (p.client as any)._handle;
+    const first = patterned(256 * 1024);
+    const second = patterned(1024 * 1024, 0x85ebca6b);
+    const expected = Buffer.concat([first, second]);
+    const state = receive(p.serverSock, expected);
+    const idle = estimateShallowMemoryUsageOf(handle);
+
+    fault.set({ syscall: "send", action: "short", bytes: 1024, repeat: -1, fd: handle.fd });
+    fault.set({ syscall: "writev", action: "short", bytes: 1024, repeat: -1, fd: handle.fd });
+    (p.client as any)._write(first, "buffer", () => {});
+    // The write itself sent 1,024 bytes. What arrives beyond them left in a writable event.
+    while (state.received <= 1024) await once(p.serverSock, "data");
+    const { promise: written, resolve, reject } = Promise.withResolvers<void>();
+    (p.client as any)._write(second, "buffer", (err?: Error | null) => (err ? reject(err) : resolve()));
+    fault.set({ syscall: "send", action: "short", bytes: 16384, repeat: -1, fd: handle.fd });
+    const bytesWritten = await bytesWrittenUntil(written, handle);
+    const allocatedAfterDrain = estimateShallowMemoryUsageOf(handle) - idle;
+    p.client.end();
+    await once(p.serverSock, "end");
+
+    expect({ bytesWritten, allocatedAfterDrain, ...state }).toEqual({
+      bytesWritten: [expected.length],
+      allocatedAfterDrain: 0,
+      received: expected.length,
+      intact: true,
+    });
+  });
+
+  // A write that brings no bytes still sends from the front of a queued tail:
+  // net.ts retries a pending write with "". TLS and Windows take this arm for
+  // each write behind a tail, because only a plain POSIX socket has the writev.
+  test("an empty write behind a queued tail sends from the front of the tail", async () => {
+    using p = await connectedPair();
+    const handle = (p.client as any)._handle;
+    const payload = patterned(65536);
+    const state = receive(p.serverSock, payload);
+
+    fault.set({ syscall: "send", action: "short", bytes: 1024, repeat: -1, fd: handle.fd });
+    let firstWritten = false;
+    (p.client as any)._write(payload, "buffer", () => (firstWritten = true));
+    const { promise: written, resolve, reject } = Promise.withResolvers<void>();
+    // Each of these sends 1,024 bytes more of the tail, past its half.
+    for (let i = 0; i < 40; i++) {
+      (p.client as any)._write(Buffer.alloc(0), "buffer", (err?: Error | null) => (err ? reject(err) : resolve()));
+    }
+    const bytesWritten = await bytesWrittenUntil(written, handle);
+    p.client.end();
+    await once(p.serverSock, "end");
+
+    expect({ firstWritten, bytesWritten, ...state }).toEqual({
+      firstWritten: false,
+      bytesWritten: [payload.length],
+      received: payload.length,
+      intact: true,
+    });
+  });
+
+  // Both writes drain in 4,096 sends. The second one holds 16 times the bytes
+  // in the queue at each send. A queue that moves its unsent bytes to the front
+  // after each send takes about 8 times the CPU time for the second write.
+  test("the CPU time of a drain follows the number of sends, not the bytes still queued", async () => {
+    async function drainCpuTime(sends: number, bytesPerSend: number) {
+      using p = await connectedPair();
+      const handle = (p.client as any)._handle;
+      const payload = Buffer.alloc(sends * bytesPerSend, 0x61);
+      let received = 0;
+      p.serverSock.on("data", chunk => (received += chunk.length));
+
+      fault.set({ syscall: "send", action: "short", bytes: bytesPerSend, repeat: -1, fd: handle.fd });
+      const { promise: written, resolve, reject } = Promise.withResolvers<void>();
+      const before = process.cpuUsage();
+      p.client.write(payload, err => (err ? reject(err) : resolve()));
+      await written;
+      const { user, system } = process.cpuUsage(before);
+      fault.clear();
+      p.client.end();
+      await once(p.serverSock, "end");
+      expect(received).toBe(payload.length);
+      return user + system;
+    }
+
+    const small = await drainCpuTime(4096, 1024);
+    const large = await drainCpuTime(4096, 16384);
+    expect(large / small).toBeLessThan(3);
+  }, 60_000);
 });

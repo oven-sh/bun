@@ -1,4 +1,5 @@
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tls as certs, isLinux, isWindows, tempDir } from "harness";
 import { once } from "node:events";
@@ -668,6 +669,72 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
     expect({ events: client.events, errors: client.errors, destroyed: c.destroyed, secureConnect }).toEqual({
       ...RESET_CLOSE,
       secureConnect: false,
+    });
+  });
+});
+
+// The queue of a TLS handle holds plaintext that SSL_write did not take. TLS
+// has no writev arm: a write behind a queued tail is added to the queue, then
+// one SSL_write sends from its front.
+describe.skipIf(skip)("node:tls queue of unsent bytes under short sends", () => {
+  // Each byte depends on its position and on the seed, so bytes sent from the
+  // wrong offset or in the wrong order do not compare equal.
+  function patterned(size: number, seed: number) {
+    const block = Buffer.allocUnsafe(65521);
+    let x = seed;
+    for (let i = 0; i < block.length; i++) {
+      x ^= x << 13;
+      x ^= x >>> 17;
+      x ^= x << 5;
+      block[i] = x;
+    }
+    return Buffer.alloc(size, block);
+  }
+
+  test("writes that writable events drain arrive in order", async () => {
+    using p = await connectedTLSPair();
+    const handle = (p.client as any)._handle;
+    const first = patterned(1024 * 1024, 0x9e3779b9);
+    const second = patterned(256 * 1024, 0x85ebca6b);
+    const expected = Buffer.concat([first, second]);
+    const state = { received: 0, intact: true };
+    p.serverSock.on("data", chunk => {
+      state.intact &&= chunk.equals(expected.subarray(state.received, state.received + chunk.length));
+      state.received += chunk.length;
+    });
+    const idle = estimateShallowMemoryUsageOf(handle);
+
+    fault.set({ syscall: "send", action: "short", bytes: 16384, repeat: -1, fd: handle.fd });
+    let firstWritten = false;
+    (p.client as any)._write(first, "buffer", () => (firstWritten = true));
+    const queued = estimateShallowMemoryUsageOf(handle) - idle;
+    const { promise: written, resolve, reject } = Promise.withResolvers<void>();
+    (p.client as any)._write(second, "buffer", (err?: Error | null) => (err ? reject(err) : resolve()));
+    const bytesWritten = new Set<number>();
+    let pending = true;
+    const settled = written.finally(() => (pending = false));
+    while (pending) {
+      bytesWritten.add(handle.bytesWritten);
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    await settled;
+    const allocatedAfterDrain = estimateShallowMemoryUsageOf(handle) - idle;
+    p.client.end();
+    await once(p.serverSock, "end");
+
+    expect({
+      firstWritten,
+      queued: queued > 0 && queued < first.length,
+      bytesWritten: [...bytesWritten],
+      allocatedAfterDrain,
+      ...state,
+    }).toEqual({
+      firstWritten: false,
+      queued: true,
+      bytesWritten: [expected.length],
+      allocatedAfterDrain: 0,
+      received: expected.length,
+      intact: true,
     });
   });
 });

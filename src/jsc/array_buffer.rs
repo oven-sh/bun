@@ -1,4 +1,4 @@
-use core::ffi::{c_uint, c_void};
+use core::ffi::c_void;
 use core::ptr;
 
 use crate::{
@@ -221,7 +221,7 @@ impl ArrayBuffer {
 
     // require('buffer').kMaxLength.
     // keep in sync with Bun::Buffer::kMaxLength
-    pub const MAX_SIZE: c_uint = c_uint::MAX;
+    pub const MAX_SIZE: usize = 1 << 32;
 
     pub fn bytes_per_element(&self) -> Option<u8> {
         match self.typed_array_type {

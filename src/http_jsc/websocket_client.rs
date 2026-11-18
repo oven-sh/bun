@@ -483,7 +483,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             Some(deflate) => deflate
                 .decompress(data, &mut decompressed, self.max_payload_length())
                 .map_err(|err| match err {
-                    websocket_deflate::Error::InflateFailed => ErrorCode::InvalidCompressedData,
+                    websocket_deflate::Error::Corrupt => ErrorCode::InvalidCompressedData,
                     websocket_deflate::Error::TooLarge => ErrorCode::MessageTooBig,
                     websocket_deflate::Error::OutOfMemory => ErrorCode::FailedToAllocateMemory,
                 }),

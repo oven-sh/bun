@@ -40,7 +40,7 @@ pub(crate) type ResponseStream<const SSL_ENABLED: bool> =
 /// This pre-allocates up to 2,048 RequestContext structs.
 /// It costs about 655,632 bytes.
 // Capacity 0 when heap-breakdown is enabled routes every allocation through
-// the fallback heap path so the per-type malloc zones can attribute them.
+// the fallback heap path.
 const REQUEST_CONTEXT_POOL_CAPACITY: usize = if bun_alloc::heap_breakdown::ENABLED {
     0
 } else {

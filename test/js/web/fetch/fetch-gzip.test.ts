@@ -1063,6 +1063,9 @@ describe("Content-Encoding: deflate, zlib-wrapped or raw", () => {
     wb9: deflateSync(plain, { windowBits: 9 }),
     wb15: deflateSync(plain),
     twoReadings, // fetch() must return the zlib reading
+    // Only gzip has members. Behind the others, one is stray bytes like any.
+    rawThenMember: Buffer.concat([deflateRawSync(plain), gzipSync("more")]),
+    wb15ThenMember: Buffer.concat([deflateSync(plain), gzipSync("more")]),
   };
   // Node or curl accept each of these bodies: https://github.com/oven-sh/bun/issues/44428
   const fails: Record<string, Buffer> = {

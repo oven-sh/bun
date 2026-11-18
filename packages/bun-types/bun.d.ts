@@ -11080,17 +11080,17 @@ declare module "bun" {
 
     /**
      * ```
-     * INFO = { prod/dev/optional/peer dependencies, os, cpu, libc (TODO), bin, binDir }
+     * INFO = { prod/dev/optional/peer dependencies, os, cpu, libc, bin, binDir }
      *
      * // first index is resolution for each type of package
      * npm         -> [ "name@version", registry (TODO: remove if default), INFO, integrity]
      * symlink     -> [ "name@link:path", INFO ]
      * folder      -> [ "name@file:path", INFO ]
      * workspace   -> [ "name@workspace:path" ] // workspace is only path
-     * tarball     -> [ "name@tarball", INFO ]
+     * tarball     -> [ "name@tarball", INFO, integrity (when Bun has one) ]
      * root        -> [ "name@root:", { bin, binDir } ]
-     * git         -> [ "name@git+repo", INFO, .bun-tag string (TODO: remove this) ]
-     * github      -> [ "name@github:user/repo", INFO, .bun-tag string (TODO: remove this) ]
+     * git         -> [ "name@git+repo", INFO, .bun-tag string, integrity (when Bun has one) ]
+     * github      -> [ "name@github:user/repo", INFO, .bun-tag string, integrity (when Bun has one) ]
      * ```
      */
     packages: {
@@ -11118,6 +11118,8 @@ declare module "bun" {
   type BunLockFilePackageInfo = BunLockFileBasePackageInfo & {
     os?: string | string[];
     cpu?: string | string[];
+    /** Present when the package supports only one libc */
+    libc?: "glibc" | "musl";
     hasInstallScript?: true;
     bundled?: true;
   };
@@ -11128,10 +11130,14 @@ declare module "bun" {
     | [pkg: string, registry: string, info: BunLockFilePackageInfo, integrity: string]
     /** symlink, folder, tarball */
     | [pkg: string, info: BunLockFilePackageInfo]
+    /** tarball with an integrity hash */
+    | [pkg: string, info: BunLockFilePackageInfo, integrity: string]
     /** workspace */
     | [pkg: string]
     /** git, github */
     | [pkg: string, info: BunLockFilePackageInfo, bunTag: string]
+    /** git, github with an integrity hash */
+    | [pkg: string, info: BunLockFilePackageInfo, bunTag: string, integrity: string]
     /** root */
     | [pkg: string, info: Pick<BunLockFileBasePackageInfo, "bin" | "binDir">];
 

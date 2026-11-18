@@ -75,8 +75,46 @@ const lockfileWithScopedOverrides: Bun.BunLockFile = {
     "legacy-plugin@2.0.3": { dependencies: ["lodash"], optionalPeers: ["webpack"] },
     "react-redux@7.2.9": { peerDependencies: ["react"] },
   },
-  packages: {},
+  packages: {
+    "@rollup/rollup-linux-x64-musl": [
+      "@rollup/rollup-linux-x64-musl@4.9.0",
+      "",
+      { os: "linux", cpu: "x64", libc: "musl" },
+      "sha512-VFAC1RDRSbU3iOF98X42KaVicAfKf0m0OvIu8dbnqhTe26Kh6Ym9JrDulz7Hbk7/9zGc41JkV02g+p3BivOdAg==",
+    ],
+    // tarball with an integrity hash
+    "is-number": [
+      "is-number@https://registry.npmjs.org/is-number/-/is-number-7.0.0.tgz",
+      {},
+      "sha512-41Cifkg6e8TylSpdtTpeLVMqvSBEVzTttHvERD741+pnZ8ANv0004MRL43QKPDlK9cGvNp6NZWZUBlbGXYxxng==",
+    ],
+    // github with an integrity hash
+    "kind-of": [
+      "kind-of@github:jonschlinkert/kind-of#668b595",
+      {},
+      "jonschlinkert-kind-of-668b595",
+      "sha512-D8LJZadajuFIjieklJph9BxDn91LdpjDZqP9yZ8WGkaQLIqBae+qVPRhFnnGzJyqb/CXEpMOgcF132yLMt+jBQ==",
+    ],
+    // git without an integrity hash
+    "is-odd": ["is-odd@git+https://example.com/is-odd.git#a80ee0d", {}, "a80ee0d"],
+  },
 };
+
+declare const lockfilePackage: Bun.BunLockFilePackageArray;
+if (lockfilePackage.length === 4) {
+  // npm has the registry at index 1. git and github have the info object there.
+  expectType(lockfilePackage[1]).is<string | Bun.BunLockFilePackageInfo>();
+}
+
+const lockfileWithUnknownLibc: Bun.BunLockFile = {
+  lockfileVersion: 2,
+  workspaces: {},
+  packages: {
+    // @ts-expect-error
+    "some-package": ["some-package@1.0.0", "", { libc: "bionic" }, "sha512-AAAA"],
+  },
+};
+expectType(lockfileWithUnknownLibc).toBeDefined();
 
 expectType(lockfileWithScopedOverrides.packageExtensions).is<
   Record<string, { dependencies?: string[]; peerDependencies?: string[]; optionalPeers?: string[] }> | undefined

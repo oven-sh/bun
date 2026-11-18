@@ -7,7 +7,7 @@
 //!   - `posix_spawn(2)` libc wrappers (`Actions`/`Attr`/`spawn_z`/`wait4`)
 //!   - the `posix_spawn_bun` repr(C) request structs and FFI decl
 //!   - `spawn_process_posix` (fd plumbing + `posix_spawn` call)
-//!   - `PosixSpawnOptions`/`PosixStdio`/`PosixSpawnResult`/`ExtraPipe`/
+//!   - `SpawnOptions`/`Stdio`/`SpawnResult`/`ExtraPipe`/
 //!     `StdioKind`/`Dup2`/`Rusage`
 //!   - signal-forwarding / no-orphans `extern "C"` decls
 //!
@@ -77,7 +77,7 @@ pub mod ffi {
 
 // ──────────────────────────────────────────────────────────────────────────
 // Waiter-thread fallback flag — owned here so `spawn_process_posix` /
-// `PosixSpawnResult::pifd_from_pid` can flip it without depending on
+// `SpawnResult::pifd_from_pid` can flip it without depending on
 // `bun_threading`. `bun_spawn::process::WaiterThread` reads/writes through these.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod waiter_thread_flag {
@@ -102,7 +102,7 @@ pub mod waiter_thread_flag {
 
 // ──────────────────────────────────────────────────────────────────────────
 // `PR_SET_PDEATHSIG` default — `spawn_process_posix` consults this when
-// `PosixSpawnOptions::linux_pdeathsig` is `None`. Storage lives here (lowest
+// `SpawnOptions::linux_pdeathsig` is `None`. Storage lives here (lowest
 // tier that reads it); `bun_io::ParentDeathWatchdog::enable()` flips it on
 // from the main thread. `PR_SET_PDEATHSIG` is *thread*-scoped in the kernel,
 // so the default only applies when spawning from the same thread that armed
@@ -153,6 +153,6 @@ pub use spawn_process::process_rusage;
 #[cfg(unix)]
 pub use spawn_process::spawn_process_posix;
 pub use spawn_process::{
-    Dup2, ExtraPipe, PidT, PosixSpawnOptions, PosixSpawnResult, PosixStdio, Rusage, RusageFields,
-    StdioKind, rusage_zeroed,
+    Dup2, ExtraPipe, PidT, Rusage, RusageFields, SpawnOptions, SpawnResult, Stdio, StdioKind,
+    rusage_zeroed,
 };

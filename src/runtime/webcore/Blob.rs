@@ -35,22 +35,24 @@ use crate::node::types::{PathLikeExt as _, PathOrFdExt as _};
 pub(crate) use store::Store;
 use store::{FileExt as _, S3Ext as _, StoreExt as _};
 
-#[cfg(windows)]
-#[path = "blob/blocking.rs"]
-mod blocking;
+#[cfg(not(windows))]
 #[path = "blob/copy_file.rs"]
 pub(crate) mod copy_file;
 #[cfg(not(windows))]
 #[path = "blob/io_parking.rs"]
 pub(crate) mod io_parking;
-#[cfg(windows)]
-#[path = "blob/job_file.rs"]
-mod job_file;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 #[path = "blob/memfd.rs"]
 mod memfd;
 #[path = "blob/read_file.rs"]
 pub(crate) mod read_file;
+#[cfg(windows)]
+#[path = "blob/windows/mod.rs"]
+mod windows;
+#[cfg(not(windows))]
+use copy_file::CopyFile;
+#[cfg(windows)]
+use windows::CopyFile;
 #[path = "blob/write_file.rs"]
 pub(crate) mod write_file;
 
@@ -3575,8 +3577,7 @@ pub(crate) fn write_file_with_source_destination(
             destination_blob.borrowed_view(),
             source_blob.borrowed_view(),
             options.mkdirp_if_not_exists.unwrap_or(true),
-        )
-        .expect("unreachable");
+        );
         // Defer promise creation until we're just about to schedule the task.
         let promise = jsc::JSPromiseStrong::init(cx.global());
         let promise_value = promise.value();
@@ -3586,7 +3587,7 @@ pub(crate) fn write_file_with_source_destination(
     }
     // If this is file <> file, we can just copy the file
     else if destination_type == store::DataTag::File && source_type == store::DataTag::File {
-        return Ok(copy_file::CopyFile::create(
+        return Ok(CopyFile::create(
             destination_store,
             source_store,
             #[cfg(not(windows))]

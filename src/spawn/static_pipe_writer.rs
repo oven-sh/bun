@@ -46,7 +46,6 @@ impl<S: Source> AsRef<[u8]> for Shared<S> {
 struct State<S> {
     writer: BufferedWriter,
     /// Until `start` hands it to `writer`.
-    #[cfg(not(windows))]
     file: Cell<StdioResult>,
     #[cfg(not(windows))]
     source: S,
@@ -72,7 +71,6 @@ impl<S: Source> StaticPipeWriter<S> {
     pub unsafe fn create(owner: Owner, result: StdioResult, source: S) -> Self {
         let state = AliasableBox::new(State {
             writer: BufferedWriter::owning_fd(),
-            #[cfg(not(windows))]
             file: Cell::new(result),
             #[cfg(not(windows))]
             source,
@@ -82,13 +80,6 @@ impl<S: Source> StaticPipeWriter<S> {
         });
         // SAFETY: fn contract, and the box gives out shared borrows only.
         unsafe { state.writer.set_owner(owner) };
-        #[cfg(windows)]
-        {
-            let StdioResult::Buffer(pipe) = result else {
-                unreachable!("StaticPipeWriter stdin requires WindowsStdioResult::Buffer");
-            };
-            state.writer.set_pipe(pipe);
-        }
         Self { state }
     }
 
@@ -103,16 +94,15 @@ impl<S: Source> StaticPipeWriter<S> {
     pub fn start(&self, event_loop: EventLoopHandle) -> bun_sys::Result<PipeState> {
         let state: &State<S> = &self.state;
         bun_output::scoped_log!(StaticPipeWriter, "StaticPipeWriter({:p}) start()", state);
+        let file = state.file.take().unwrap();
         #[cfg(windows)]
         {
-            let _ = event_loop;
-            state
-                .writer
-                .write_shared(state, Rc::<Shared<S>>::clone(&state.source));
+            let (writer, source) = (&state.writer, Rc::<Shared<S>>::clone(&state.source));
+            writer.set_pipe(bun_io::Pipe::from_exclusive(event_loop.loop_(), file));
+            writer.write_shared(state, source);
         }
         #[cfg(not(windows))]
         {
-            let file = state.file.take().unwrap();
             state
                 .writer
                 .start(state, event_loop.as_event_loop_ctx(), file.fd(), true)?;

@@ -1,32 +1,25 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
-#[cfg(not(windows))]
-use core::sync::atomic::{AtomicU8, Ordering};
 
-use crate::Error;
-#[cfg(not(windows))]
-use bun_io::{self as io, IntrusiveIoRequest as _};
-use bun_jsc::node_path::PathOrFileDescriptor;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, SystemError};
-use bun_sys as sys;
+
+use crate::webcore::blob::{self, Blob, SizeType};
+use crate::webcore::body;
 #[cfg(not(windows))]
-use bun_sys::Fd;
-#[cfg(not(windows))]
-use bun_threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask};
+use {
+    crate::Error,
+    crate::webcore::blob::{
+        ClosingState, FileCloser, FileOpener, MkdirpTarget, Retry, mkdir_if_not_exists,
+    },
+    bun_io::{self as io, IntrusiveIoRequest as _},
+    bun_jsc::node_path::PathOrFileDescriptor,
+    bun_sys::{self as sys, Fd},
+    bun_threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask},
+    core::sync::atomic::{AtomicU8, Ordering},
+};
 
 #[cfg(windows)]
-use crate::io_order::Turn;
-use crate::webcore::blob::{self, Blob, SizeType};
-#[cfg(not(windows))]
-use crate::webcore::blob::{
-    ClosingState, FileCloser, FileOpener, MkdirpTarget, Retry, mkdir_if_not_exists,
-};
-#[cfg(windows)]
-use crate::webcore::blob::{
-    blocking::BlockingPart,
-    job_file::{JobFile, Target, is_device},
-};
-use crate::webcore::body;
+pub(crate) use super::windows::WriteFile;
 
 #[cfg(not(windows))]
 bun_output::declare_scope!(WriteFile, hidden);
@@ -47,26 +40,20 @@ pub(crate) enum WriteFileResultType {
 }
 
 /// The completion token a `WriteFile` keeps across its async I/O.
+#[cfg(not(windows))]
 pub(crate) type WriteFileTask = bun_jsc::Completion<WriteFile>;
 
+#[cfg(not(windows))]
 impl bun_jsc::JobContext for WriteFile {
     const CANCELLABLE: bool = true;
-    /// Windows has no synchronous path for small writes, which a Worker that exits would lose.
-    const RUNS_IN_FINAL_WAIT: bool = cfg!(windows);
-    const IS_FILE_IO: bool = true;
     type OffThread = Self;
     /// Whom the write is reported to, and the global it was made in. (Dropped with the job when
     /// that is released unrun: the promise then stays pending.)
     type Js = (jsc::JSPromiseStrong, bun_ptr::BackRef<JSGlobalObject>);
-    #[cfg(not(windows))]
     fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         // Starts the write; finishes from the io loop via the token.
         this.run(done);
         None
-    }
-    #[cfg(windows)]
-    fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
-        this.run(done)
     }
     fn then(
         this: Self,
@@ -77,7 +64,6 @@ impl bun_jsc::JobContext for WriteFile {
     }
     /// As `ReadFile`: a write parked on a full pipe nobody drains is the one
     /// state this job can be stuck in.
-    #[cfg(not(windows))]
     unsafe fn cancel(this: *mut Self) {
         // SAFETY: fn contract; see `ReadFile::cancel`.
         unsafe {
@@ -86,13 +72,9 @@ impl bun_jsc::JobContext for WriteFile {
             }
         }
     }
-    #[cfg(windows)]
-    unsafe fn cancel(this: *mut Self) {
-        // SAFETY: fn contract. Nothing writes to the field.
-        unsafe { &(*this).blocking_part }.cancel();
-    }
 }
 
+#[cfg(not(windows))]
 impl WriteFile {
     /// JS thread: hand a prepared `WriteFile` to the work pool (the job is
     /// its one heap allocation).
@@ -102,60 +84,30 @@ impl WriteFile {
         cx: &bun_jsc::JsThread<'_>,
     ) {
         let global_this = bun_ptr::BackRef::new(cx.global());
-        #[cfg(not(windows))]
         bun_jsc::Job::<WriteFile>::schedule(cx, this, (promise, global_this));
-        #[cfg(windows)]
-        {
-            let target = Target::new(this.destination());
-            let can_block = is_device(this.destination());
-            Turn::after_earlier(cx, target.key(this.destination()), true, |turn| {
-                let this = WriteFile {
-                    turn: Some(turn),
-                    target,
-                    ..this
-                };
-                bun_jsc::Job::<WriteFile>::create(cx, this, (promise, global_this))
-                    .for_device_if(can_block)
-            });
-        }
     }
 }
 
+#[cfg(not(windows))]
 pub(crate) struct WriteFile {
     pub(crate) file_blob: Blob,
     pub(crate) bytes_blob: Blob,
 
-    #[cfg(not(windows))]
     pub(crate) opened_fd: Fd,
     pub(crate) system_error: Option<SystemError>,
-    #[cfg(not(windows))]
     pub(crate) errno: Option<Error>,
-    #[cfg(not(windows))]
     pub task: WorkPoolTask,
-    #[cfg(not(windows))]
     pub(crate) io_task: Option<WriteFileTask>,
-    #[cfg(not(windows))]
     pub(crate) io_poll: io::Poll,
-    #[cfg(not(windows))]
     pub(crate) io_request: io::Request,
-    #[cfg(not(windows))]
     pub(crate) io_parking: super::IoParking,
-    #[cfg(not(windows))]
     pub(crate) state: AtomicU8, // ClosingState
 
     pub(crate) total_written: usize,
 
-    #[cfg(not(windows))]
     pub(crate) could_block: bool,
-    #[cfg(not(windows))]
     pub(crate) close_after_io: bool,
     pub(crate) mkdirp_if_not_exists: bool,
-    #[cfg(windows)]
-    turn: Option<Turn>,
-    #[cfg(windows)]
-    target: Target,
-    #[cfg(windows)]
-    blocking_part: BlockingPart<()>,
 }
 
 #[cfg(not(windows))]
@@ -306,56 +258,34 @@ impl WriteFile {
             .store_callback_seq_cst(Self::on_request_writable);
         io::IoRequestLoop::schedule(&mut self.io_request);
     }
-}
 
-impl WriteFile {
     pub(crate) fn create(
         file_blob: Blob,
         bytes_blob: Blob,
         mkdirp_if_not_exists: bool,
-    ) -> Result<WriteFile, Error> {
-        let write_file = WriteFile {
+    ) -> WriteFile {
+        WriteFile {
             file_blob,
             bytes_blob,
-            #[cfg(not(windows))]
             opened_fd: Fd::INVALID,
             system_error: None,
-            #[cfg(not(windows))]
             errno: None,
-            #[cfg(not(windows))]
             task: WorkPoolTask {
                 node: Default::default(),
                 callback: Self::do_write_loop_task,
             },
-            #[cfg(not(windows))]
             io_task: None,
-            #[cfg(not(windows))]
             io_poll: io::Poll::default(),
-            #[cfg(not(windows))]
             io_request: io::Request::new(Self::on_request_writable),
-            #[cfg(not(windows))]
             io_parking: super::IoParking::new(),
-            #[cfg(not(windows))]
             state: AtomicU8::new(ClosingState::Running as u8),
             total_written: 0,
-            #[cfg(not(windows))]
             could_block: false,
-            #[cfg(not(windows))]
             close_after_io: false,
             mkdirp_if_not_exists,
-            #[cfg(windows)]
-            turn: None,
-            #[cfg(windows)]
-            target: Target::default(),
-            #[cfg(windows)]
-            blocking_part: BlockingPart::default(),
-        };
-        Ok(write_file)
+        }
     }
-}
 
-#[cfg(not(windows))]
-impl WriteFile {
     // reshaped for borrowck — take (off, len) here and re-derive the slice
     // internally so callers don't hold a borrow of self across the &mut self call.
     pub(crate) fn do_write(&mut self, off: usize, len: usize) -> WriteStep {
@@ -385,18 +315,12 @@ impl WriteFile {
             }
         }
     }
-}
 
-impl WriteFile {
     pub(crate) fn then(
         mut this: WriteFile,
         mut promise: jsc::JSPromiseStrong,
         global_this: &JSGlobalObject,
     ) -> jsc::JsResult<()> {
-        #[cfg(windows)]
-        if let Some(result) = this.blocking_part.take_result() {
-            this.finish(result);
-        }
         let system_error = this.system_error.take();
         let total_written = this.total_written;
         if system_error.is_none() {
@@ -418,10 +342,7 @@ impl WriteFile {
             WriteFileResultType::Result(total_written as SizeType),
         )
     }
-}
 
-#[cfg(not(windows))]
-impl WriteFile {
     pub(crate) fn run(&mut self, task: WriteFileTask) {
         self.io_task = Some(task);
         self.run_async();
@@ -570,59 +491,10 @@ impl WriteFile {
     }
 }
 
-#[cfg(windows)]
-use sys::windows_format::open_flags::SEQUENTIAL;
-
-#[cfg(windows)]
-impl WriteFile {
-    fn destination(&self) -> &PathOrFileDescriptor<'static> {
-        let store = self.file_blob.store().expect("infallible: store present");
-        &store.data.as_file().pathlike
-    }
-
-    fn run(&mut self, done: WriteFileTask) -> Option<WriteFileTask> {
-        let turn = self.turn.take();
-        let target = core::mem::take(&mut self.target);
-        let bytes = self.bytes_blob.shared_view();
-        let (flags, mkdirp) = (sys::O::TRUNC | SEQUENTIAL, self.mkdirp_if_not_exists);
-        let file = JobFile::destination(target, self.destination(), flags, mkdirp);
-        match file {
-            // The write reports a bad descriptor.
-            Ok(file) if file.can_block().unwrap_or_default() => {
-                let store = self.bytes_blob.store().expect("infallible: store present");
-                let start = (self.bytes_blob.offset.get() as usize).min(store.shared_view().len());
-                let (store, range) = (store.clone(), start..start + bytes.len());
-                self.blocking_part.run(done, move |blocking| {
-                    let bytes = &store.shared_view()[range];
-                    let result = file.write_everything(bytes, Some(blocking));
-                    drop((file, turn));
-                    result
-                })
-            }
-            file => {
-                self.finish(file.and_then(|file| file.write_everything(bytes, None)));
-                Some(done)
-            }
-        }
-    }
-
-    fn finish(&mut self, result: sys::Result<()>) {
-        let Err(err) = result else {
-            self.total_written = self.bytes_blob.shared_view().len();
-            return;
-        };
-        let err = match self.destination() {
-            PathOrFileDescriptor::Path(path) => err.with_path(path.slice()),
-            PathOrFileDescriptor::Fd(fd) => err.with_fd(*fd),
-        };
-        self.system_error = Some(err.to_system_error().into());
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Reports a finished write to its promise.
-fn settle(
+pub(super) fn settle(
     promise: &mut JSPromise,
     global_this: &JSGlobalObject,
     count: WriteFileResultType,
@@ -643,7 +515,7 @@ fn settle(
 
 // ──────────────────────────────────────────────────────────────────────────
 
-fn note_written(file: &Blob) {
+pub(super) fn note_written(file: &Blob) {
     let store = file.store.get().as_ref();
     if let Some(blob::store::Data::File(file)) = store.map(|it| &it.data)
         && file.pathlike.is_path()

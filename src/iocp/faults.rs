@@ -7,7 +7,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use bun_windows_sys::Win32Error;
 
 /// In the environment of a run for which ntdll has none.
-pub(super) const NO_WAIT_PACKETS: &str = "BUN_IOCP_TEST_NO_WAIT_PACKETS";
+pub(crate) const NO_WAIT_PACKETS: &str = "BUN_IOCP_TEST_NO_WAIT_PACKETS";
 
 type Plan = Box<dyn FnMut(&[usize]) -> Option<usize>>;
 
@@ -22,7 +22,7 @@ unsafe extern "system" {
 }
 
 #[must_use]
-pub(super) struct Intercepted(Call);
+pub(crate) struct Intercepted(Call);
 
 impl Drop for Intercepted {
     fn drop(&mut self) {
@@ -31,7 +31,7 @@ impl Drop for Intercepted {
 }
 
 /// `plan` gets the arguments of the calls of this thread, and returns the result of those that are not made.
-pub(super) fn intercept(
+pub(crate) fn intercept(
     call: Call,
     plan: impl FnMut(&[usize]) -> Option<usize> + 'static,
 ) -> Intercepted {
@@ -39,7 +39,7 @@ pub(super) fn intercept(
     Intercepted(call)
 }
 
-pub(super) fn fail(call: Call, mut times: usize, result: usize) -> Intercepted {
+pub(crate) fn fail(call: Call, mut times: usize, result: usize) -> Intercepted {
     intercept(call, move |_| {
         times = times.checked_sub(1)?;
         Some(result)
@@ -106,7 +106,7 @@ macro_rules! calls {
         looked_up { $($looked_up:ident $looked_up_args:tt)* }
     ) => {
         #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-        pub(super) enum Call { $($imported,)* $($looked_up,)* }
+        pub(crate) enum Call { $($imported,)* $($looked_up,)* }
 
         extern "C" fn install() {
             $(replace_import!($imported $imported_args);)*

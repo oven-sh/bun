@@ -20,7 +20,7 @@ use crate::runtime_transpiler_cache::RuntimeTranspilerCache;
 use crate::saved_source_map::SavedSourceMap;
 use crate::{
     self as jsc, Exception, JSGlobalObject, JSInternalPromise, JSValue, JsCell, JsResult,
-    PlatformEventLoop, ResolvedSource, VM, ZigException,
+    ResolvedSource, VM, ZigException,
 };
 
 pub use crate::process_auto_killer as ProcessAutoKiller;
@@ -1453,13 +1453,6 @@ impl VirtualMachine {
         self.fs().top_level_dir()
     }
 
-    /// Safe `&PlatformEventLoop` accessor for `event_loop_handle`. `None` only before
-    /// `ensure_waker()` runs.
-    #[inline(always)]
-    pub(crate) fn platform_loop_opt(&self) -> Option<&PlatformEventLoop> {
-        self.event_loop_handle.get().map(|h| &**h)
-    }
-
     /// Read-then-zero `pending_unref_counter`. `swap(0)` so a concurrent
     /// `increment_pending_unref_counter()` from another thread can't be lost
     /// between the read and the reset.
@@ -1580,8 +1573,8 @@ impl VirtualMachine {
         }
     }
 
-    fn is_platform_loop_active(&self) -> bool {
-        self.platform_loop_opt().is_some_and(|h| h.is_active())
+    fn is_uws_loop_active(&self) -> bool {
+        self.event_loop_handle.get().is_some_and(|h| h.is_active())
     }
 
     fn has_queued_work_excluding_immediates(&self) -> bool {
@@ -1598,7 +1591,7 @@ impl VirtualMachine {
 
     pub fn is_event_loop_alive_excluding_immediates(&self) -> bool {
         self.unhandled_error_counter.get() == 0
-            && (self.is_platform_loop_active() || self.has_queued_work_excluding_immediates())
+            && (self.is_uws_loop_active() || self.has_queued_work_excluding_immediates())
     }
 
     pub fn is_event_loop_alive(&self) -> bool {
@@ -1607,7 +1600,7 @@ impl VirtualMachine {
 
     /// `is_event_loop_alive` for `bun test`, which keeps running after an unhandled error.
     pub(crate) fn is_event_loop_alive_despite_errors(&self) -> bool {
-        self.is_platform_loop_active()
+        self.is_uws_loop_active()
             || self.has_queued_work_excluding_immediates()
             || self.has_immediates()
     }
@@ -1655,7 +1648,8 @@ impl VirtualMachine {
             .and_then(|rare| rare.file_polls.get())
             .map_or(0, |polls| polls.disarmed_count());
         let fires_nothing = i32::from(timers_hold_loop_ref) + i32::from(has_coordinator) + disarmed;
-        self.platform_loop_opt()
+        self.event_loop_handle
+            .get()
             .is_some_and(|h| h.poll_count() > fires_nothing)
     }
 

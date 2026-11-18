@@ -6,7 +6,7 @@ use core::mem::ManuallyDrop;
 use bstr::BStr;
 use bun_core::{CStringList, EncodedSlice, ZBox, strings};
 use bun_cron::{Registration, Title};
-use bun_io::{BufferedReader, IoEvent, JsKeepAlive, Owner, PollTag, ReadResult};
+use bun_io::{BufferedReader, IoEvent, JsKeepAlive, Owner, PollTag, ReadResult, ReaderFlags};
 use bun_jsc::bindgen::JsScope;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
@@ -20,7 +20,6 @@ use bun_resolver::fs::FileSystem;
 use bun_sys::{self as sys, Fd, File};
 use scopeguard::ScopeGuard;
 
-#[cfg(not(windows))]
 use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{self as spawn, ProcessHandle, SpawnOptions, Status, Stdio};
 use crate::jsc_hooks::runtime_state;
@@ -245,11 +244,6 @@ impl OsJob {
                 let found = bun_which::which(&mut path_buf, path, b"", b"schtasks");
                 Some(found.ok_or("Could not find 'schtasks' in PATH")?.into())
             },
-            #[cfg(windows)]
-            windows: spawn::WindowsOptions {
-                loop_: event_loop,
-                ..Default::default()
-            },
             ..SpawnOptions::default()
         };
         #[cfg(unix)]
@@ -262,18 +256,12 @@ impl OsJob {
             .map_err(|err| Failure::Spawn(err.name()))?;
 
         let mut child = Child::OutputEnded(Ok(Vec::new()));
-        #[cfg(unix)]
-        if let Some(stdout) = spawned.stdout.take().map(File::into_raw) {
-            use bun_io::PosixFlags;
-            (self.output).update_flags(|f| f.insert(PosixFlags::NONBLOCKING | PosixFlags::SOCKET));
-            let read = (self.output.start(bun_io::js_vm_ctx(), stdout, true))
-                .map_err(|_| "Failed to start reading stdout")?;
+        if let Some(output) = spawned.stdout.take().or_else(|| spawned.stderr.take()) {
+            (self.output)
+                .update_flags(|f| f.insert(ReaderFlags::NONBLOCKING | ReaderFlags::SOCKET));
+            let read = (self.output.start_own_pipe(bun_io::js_vm_ctx(), output))
+                .map_err(|_| "Failed to start reading the output")?;
             child = (self.take_output(read)).map_or(Child::Running, Child::OutputEnded);
-        }
-        #[cfg(windows)]
-        if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stderr.take() {
-            (self.output.start_with_pipe(pipe)).map_err(|_| "Failed to start reading stderr")?;
-            child = Child::Running;
         }
         self.step.set(Some((step, child)));
         Ok(spawned.to_process_handle(event_loop))

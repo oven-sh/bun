@@ -188,9 +188,6 @@
   "src/runtime/webcore/Blob.rs": {
     "WorkPool::schedule*": 1
   },
-  "src/runtime/webcore/blob/blocking.rs": {
-    "FilePool, DEVICE_POOL": 1
-  },
   "src/runtime/webcore/blob/copy_file.rs": {
     "unsafe impl Send": [
       "CopyFile"
@@ -201,6 +198,19 @@
     "intrusive_work_task!": [
       "ReadFile"
     ],
+    "unsafe impl Send": [
+      "ReadFile"
+    ]
+  },
+  "src/runtime/webcore/blob/windows/blocking.rs": {
+    "FilePool, DEVICE_POOL": 1
+  },
+  "src/runtime/webcore/blob/windows/copy_file.rs": {
+    "unsafe impl Send": [
+      "CopyFile"
+    ]
+  },
+  "src/runtime/webcore/blob/windows/read_file.rs": {
     "unsafe impl Send": [
       "ReadFile"
     ]

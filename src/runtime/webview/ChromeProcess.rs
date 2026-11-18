@@ -37,7 +37,6 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_output::{declare_scope, scoped_log};
 use bun_paths::{self, path_buffer_pool, platform, resolve_path};
 use bun_ptr::{AliasableBox, CellExt as _};
-#[cfg(unix)]
 use bun_spawn::SpawnResultExt as _;
 use bun_spawn::{
     self, EventLoopHandle, Process, ProcessExit, ProcessExitKind, ProcessHandle, SpawnOptions,
@@ -591,17 +590,10 @@ fn spawn(
             },
             extra_fds: endpoints.child_fds(), // dup2'd to child fd 3 and 4, in order
             argv0: argv.first(),
-            #[cfg(windows)]
-            windows: bun_spawn::WindowsOptions {
-                loop_: event_loop,
-                ..Default::default()
-            },
             ..SpawnOptions::default()
         };
 
         let spawned = bun_spawn::spawn_process(&opts, argv, Some(env.as_list()))??;
-        #[cfg(windows)]
-        let mut spawned = spawned;
 
         // Keeping our copies of the child's ends would mask Chrome's death (no EOF).
         endpoints.close_child_ends();

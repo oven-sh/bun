@@ -1,6 +1,5 @@
 use core::cell::{Cell, OnceCell};
 use core::time::Duration;
-use std::os::windows::io::OwnedHandle;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
@@ -102,12 +101,12 @@ impl Pipe {
     }
 
     /// For an end that this process has opened for overlapped I/O, and keeps to itself.
-    pub fn from_exclusive(loop_: &Loop, handle: OwnedHandle) -> Pipe {
-        Pipe::from_exclusive_on(loop_.port(), handle)
+    pub fn from_exclusive(loop_: &Loop, end: impl Into<sys::File>) -> Pipe {
+        Pipe::from_exclusive_on(loop_.port(), end)
     }
 
-    pub(super) fn from_exclusive_on(port: &Rc<Port>, handle: OwnedHandle) -> Pipe {
-        let handle = Handle::from_owned(handle);
+    pub(super) fn from_exclusive_on(port: &Rc<Port>, end: impl Into<sys::File>) -> Pipe {
+        let handle = Handle::new(end.into().into_raw());
         Pipe::exclusive(Rc::new(AsyncFile::exclusive(port, handle)))
     }
 

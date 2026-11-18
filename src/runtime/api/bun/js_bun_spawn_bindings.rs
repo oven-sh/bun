@@ -22,9 +22,7 @@ use bun_sys::UV_E;
 use bun_sys::{self as sys, SignalCode};
 
 // Process / spawn machinery is local to this crate (api/bun/process.rs).
-#[cfg(unix)]
 use crate::api::bun_process::ExtraPipe;
-#[cfg(not(windows))]
 use crate::api::bun_process::SpawnResultExt as _;
 use crate::api::bun_process::{self as spawn, Process, Rusage, SpawnOptions};
 // User-facing JS `Stdio` enum (extract/as_spawn_option/is_piped).
@@ -62,12 +60,7 @@ fn subprocess_ipc_owner(ptr: *mut SubprocessT<'_>) -> Option<IPC::SendQueueOwner
 
 bun_output::declare_scope!(Subprocess, hidden);
 
-// Stdio is platform-dependent: process.rs defines `PosixStdio` / `WindowsStdio`
-// as siblings; alias the active one here so the body stays platform-neutral.
-#[cfg(not(windows))]
-type SpawnOptionsStdio = spawn::PosixStdio;
-#[cfg(windows)]
-type SpawnOptionsStdio = spawn::WindowsStdio;
+type SpawnOptionsStdio = spawn::Stdio;
 
 // Reading the symbol address has no precondition (the value itself is a
 // rodata `const char*`); kept `safe` to match the identical declaration in
@@ -376,7 +369,6 @@ fn spawn_maybe_sync(
     let mut maybe_ipc_mode: Option<IPC::Mode> = None;
     let mut ipc_callback: JSValue = JSValue::ZERO;
     let mut extra_fds: Vec<SpawnOptionsStdio> = Vec::new();
-    #[cfg(not(windows))]
     let mut socket_fd_indices: Vec<usize> = Vec::new();
     let mut ipc_channel: i32 = -1;
     let mut timeout: Option<i32> = None;
@@ -1013,11 +1005,10 @@ fn spawn_maybe_sync(
         extra_fds: {
             // Record which extra-stdio slots are 'socket-fd' so we can
             // downgrade them from OwnedFd to UnownedFd after all fallible
-            // init below succeeds. spawn_process_posix pushes OwnedFd for
+            // init below succeeds. spawn_process pushes OwnedFd for
             // SocketFd so every error path's finalize_streams still closes
             // the bun-created fd; the caller-owns-it contract only begins
             // once the Subprocess is returned and .stdio[i] is readable.
-            #[cfg(not(windows))]
             for (j, e) in extra_fds.iter().enumerate() {
                 if matches!(e, SpawnOptionsStdio::SocketFd) {
                     socket_fd_indices.push(j);
@@ -1039,13 +1030,10 @@ fn spawn_maybe_sync(
             .as_deref()
             .or(terminal_info.0.as_deref())
             .and_then(Terminal::get_pseudoconsole),
-
         #[cfg(windows)]
-        windows: spawn::WindowsOptions {
-            hide_window: windows_hide,
-            verbatim_arguments: windows_verbatim_arguments,
-            loop_: loop_handle,
-        },
+        hide_window: windows_hide,
+        #[cfg(windows)]
+        verbatim_arguments: windows_verbatim_arguments,
         #[cfg(any(target_os = "linux", target_os = "android"))]
         cgroup_fd: cgroup_dir.as_ref().map(|c| c.dir.handle()),
         ..Default::default()
@@ -1244,13 +1232,10 @@ fn spawn_maybe_sync(
             // no-op.
             drop((spawned_stdout, spawned_stderr));
             subprocess.finalize_streams();
-            #[cfg(unix)]
             let _ = Process::kill_and_reap(
                 subprocess.process.this_ptr(),
                 &mut bun_core::ffi::zeroed::<Rusage>(),
             );
-            #[cfg(windows)]
-            let _ = subprocess.try_kill(SignalCode::SIGKILL);
             subprocess.process().detach();
             if let Some(ipc_data) = subprocess.ipc_data.take() {
                 // Nothing else holds it yet (no socket wired, no task scheduled).
@@ -1350,6 +1335,8 @@ fn spawn_maybe_sync(
         (out, None)
     };
 
+    #[cfg_attr(unix, expect(unused_mut))]
+    let mut ipc_err = None;
     if let Some(ipc_data) = subprocess.ipc() {
         #[cfg(unix)]
         {
@@ -1369,17 +1356,17 @@ fn spawn_maybe_sync(
         }
         #[cfg(not(unix))]
         {
-            let idx = usize::try_from(ipc_channel).expect("int cast");
-            // The IPC channel is always a `buffer` pipe on Windows.
-            let ipc_pipe = subprocess.stdio_pipes.with_mut(|pipes| pipes[idx].take());
-            let spawn::WindowsStdioResult::Buffer(ipc_pipe) = ipc_pipe else {
-                unreachable!("IPC channel stdio is not a buffer pipe");
-            };
-            if let Err(err) = ipc_data.windows_configure_server(ipc_pipe) {
-                return Err(cx.global().throw_value(err.to_js(cx.global())));
-            }
+            let ipc_pipe = subprocess.stdio_pipes.with_mut(|v| {
+                let slot = &mut v[usize::try_from(ipc_channel).expect("int cast")];
+                core::mem::replace(slot, ExtraPipe::Unavailable).into_owned()
+            });
+            let ipc_pipe = ipc_pipe.expect("Stdio::Ipc makes a pipe");
+            let ipc_pipe = bun_io::Pipe::from_exclusive(loop_handle.loop_(), ipc_pipe);
+            ipc_err = ipc_data.windows_configure_server(ipc_pipe).err();
         }
-        ipc_data.write_version_packet(cx.global());
+        if ipc_err.is_none() {
+            ipc_data.write_version_packet(cx.global());
+        }
     }
 
     if matches!(subprocess.stdin.get(), Writable::Pipe(_)) && promise_for_stream == JSValue::ZERO {
@@ -1462,6 +1449,7 @@ fn spawn_maybe_sync(
     }
 
     let mut setup_err = match subprocess.stdin.get() {
+        _ if ipc_err.is_some() => ipc_err,
         Writable::Buffer(buffer) => {
             let started = buffer.start(loop_handle);
             started.map(|state| subprocess.on_stdin_state(state)).err()
@@ -1470,7 +1458,6 @@ fn spawn_maybe_sync(
     };
     if let Some(err) = &setup_err {
         // A Buffer left here pins the wrapper.
-        #[cfg(not(windows))] // Windows adopts the pipe at create and start() cannot fail there.
         subprocess.close_stdin_buffer();
         // Only this call can reap a sync child: it is killed once watched, and the error thrown after the wait.
         if !is_sync {
@@ -1489,7 +1476,6 @@ fn spawn_maybe_sync(
     // after populating stdio_pipes; on those paths the caller never receives
     // the Subprocess, so the OwnedFd slot must remain for finalize_streams to
     // close.
-    #[cfg(not(windows))]
     if !socket_fd_indices.is_empty() {
         subprocess.stdio_pipes.with_mut(|pipes| {
             for j in &socket_fd_indices {

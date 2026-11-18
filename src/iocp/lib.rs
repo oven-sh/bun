@@ -4,6 +4,8 @@
 
 mod afd;
 pub mod blocking;
+#[cfg(test)]
+mod faults;
 mod notifier;
 mod port;
 mod read_to_end;

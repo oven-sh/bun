@@ -745,29 +745,6 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
 
 void us_internal_socket_after_open(struct us_socket_t *s, int error) {
     struct us_connecting_socket_t *c = s->connect_state;
-    #if _WIN32
-    if (error == 0) {
-        if (recv(us_poll_fd((struct us_poll_t*)s), NULL, 0, MSG_PUSH_IMMEDIATE) == SOCKET_ERROR) {
-            error = WSAGetLastError();
-            switch (error) {
-                case WSAEWOULDBLOCK:
-                case WSAEINTR: {
-                    error = 0;
-                    break;
-                }
-                default: {
-                    /* The probe only says the socket is not connected
-                     * (WSAENOTCONN); SO_ERROR has why the connect failed. */
-                    int so_error = us_socket_get_error(s);
-                    if (so_error > 0) {
-                        error = so_error;
-                    }
-                    break;
-                }
-            }
-        }
-    }
-    #endif
     if (error) {
         if (c) {
             for (struct us_socket_t **next = &c->connecting_head; *next; next = &(*next)->connect_next) {

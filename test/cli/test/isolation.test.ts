@@ -1459,8 +1459,9 @@ describe.concurrent("bun test --isolate", () => {
       expect(exitCode).toBe(0);
     } finally {
       // Nothing swaps after the last file of a serial run, so its sleeper is
-      // ours to kill, as is anything an unfixed runner leaked.
-      for (const pid of loggedPids()) {
+      // ours to kill, as is anything an unfixed runner leaked. On Windows they
+      // end with the runner, and their pids soon go to other processes.
+      for (const pid of isWindows ? [] : loggedPids()) {
         try {
           process.kill(Number(pid));
         } catch {}

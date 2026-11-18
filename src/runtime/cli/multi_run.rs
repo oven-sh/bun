@@ -21,10 +21,9 @@ use crate::run_command::{ConfigureEnvOptions, RunCommand};
 
 // `bun.spawn` (Process/Status/SpawnOptions/Rusage/spawnProcess) —
 // lives under crate::api::bun::process.
-#[cfg(unix)]
 use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{
-    self as spawn, Rusage, SpawnOptions, SpawnProcessResult, Status, event_loop_handle_to_ctx,
+    self as spawn, Rusage, SpawnOptions, SpawnResult, Status, event_loop_handle_to_ctx,
 };
 use bun_collections::index_sort;
 use bun_dotenv::Loader as DotEnvLoader;
@@ -203,7 +202,7 @@ impl<'a> ProcessHandle<'a> {
 
         let start_time = Instant::now();
         let envp;
-        let mut spawned: SpawnProcessResult = {
+        let mut spawned: SpawnResult = {
             let original_path: Box<[u8]> = env.map.get(b"PATH").map(Box::from).unwrap_or_default();
             let _ = env.map.put(b"PATH", &self.config.path);
             let mut env = scopeguard::guard(env, move |env| {
@@ -227,37 +226,15 @@ impl<'a> ProcessHandle<'a> {
             unsafe { pipe.reader.set_owner(owner) };
         }
 
-        #[cfg(windows)]
-        {
-            if let spawn::WindowsStdioResult::Buffer(pipe) = stdout_pipe {
-                self.stdout_reader.reader.set_pipe(pipe);
-            }
-            if let spawn::WindowsStdioResult::Buffer(pipe) = stderr_pipe {
-                self.stderr_reader.reader.set_pipe(pipe);
-            }
-        }
-
-        #[cfg(unix)]
         for (pipe, file) in [
             (&self.stdout_reader, stdout_pipe),
             (&self.stderr_reader, stderr_pipe),
         ] {
-            if let Some(fd) = file.map(bun_sys::File::into_raw) {
-                let _ = bun_sys::set_nonblocking(fd);
+            if let Some(file) = file {
+                let _ = bun_sys::set_nonblocking(file.fd());
                 let event_loop = self.shared.event_loop.as_event_loop_ctx();
-                let _ = pipe.reader.start(event_loop, fd, true)?;
+                let _ = pipe.reader.start_own_pipe(event_loop, file)?;
             }
-        }
-        #[cfg(not(unix))]
-        {
-            self.stdout_reader
-                .reader
-                .start_with_current_source()
-                .map_err(Error::from)?;
-            self.stderr_reader
-                .reader
-                .start_with_current_source()
-                .map_err(Error::from)?;
         }
 
         self.process = Some(ProcessSlot {
@@ -976,11 +953,6 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                 stdout: spawn::Stdio::Buffer,
                 stderr: spawn::Stdio::Buffer,
                 cwd: config.cwd.clone(),
-                #[cfg(windows)]
-                windows: spawn::WindowsOptions {
-                    loop_: EventLoopHandle::init_mini(event_loop),
-                    ..Default::default()
-                },
                 stream: true,
                 ..Default::default()
             },

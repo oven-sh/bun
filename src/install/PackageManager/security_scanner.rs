@@ -21,7 +21,6 @@ use bun_install::{
 #[cfg(unix)]
 use bun_io::pipe_reader::ReaderFlags;
 use bun_io::{BufferedReader, IoEvent, Owner, PollTag, ReadResult};
-#[cfg(not(windows))]
 use bun_spawn::SpawnResultExt as _;
 use bun_spawn::subprocess::{PipeState, StaticPipeWriter, StdioResult};
 use bun_spawn::{
@@ -859,7 +858,7 @@ impl<'a> SecurityScanSubprocess<'a> {
             .update_flags(|f| f.insert(ReaderFlags::NONBLOCKING));
 
         let json_pipe = spawned.extra_pipes.swap_remove(1).into_owned();
-        self.finish_spawn(&mut spawned, Some(ipc_read), json_pipe)
+        self.finish_spawn(spawned, ipc_read, json_pipe)
     }
 
     /// `Stdio::Buffer` in `extra_fds` gives the child an overlapped end, and it reads and writes synchronously.
@@ -870,8 +869,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         let pipe = |direction| {
             let pair = pipe_pair(PipeMode::Overlapped, PipeMode::Synchronous, direction)
                 .map_err(|_| crate::Error::IPCPipeFailed)?;
-            let ours = bun_io::Pipe::from_exclusive(self.event_loop_handle.loop_(), pair.ours);
-            Ok::<_, Error>((ours, File::from(pair.theirs)))
+            Ok::<_, Error>((File::from(pair.ours), File::from(pair.theirs)))
         };
         let (ipc_read, ipc_write) = pipe(PipeDirection::OursReads)?;
         let (json_write, json_read) = pipe(PipeDirection::OursWrites)?;
@@ -884,28 +882,23 @@ impl<'a> SecurityScanSubprocess<'a> {
             stdin: Stdio::Inherit,
             cwd: Box::from(FileSystem::get().top_level_dir()),
             extra_fds,
-            windows: spawn::WindowsOptions {
-                loop_: self.event_loop_handle,
-                ..Default::default()
-            },
             ..Default::default()
         };
 
-        let mut spawned = spawn::spawn_process_z(&spawn_options, argv, Some(envp))?
+        let spawned = spawn::spawn_process_z(&spawn_options, argv, Some(envp))?
             .map_err(|e| e.to_zig_err())?;
 
         drop((ipc_write, json_read));
 
-        let [ipc_read, json_write] = [ipc_read, json_write].map(StdioResult::Buffer);
-        self.finish_spawn(&mut spawned, ipc_read, json_write)
+        self.finish_spawn(spawned, ipc_read, Some(json_write))
     }
 
     /// Common post-spawn setup: start the fd 3 reader, attach the process,
     /// start the fd 4 JSON writer, and begin watching for exit.
     fn finish_spawn(
         &mut self,
-        spawned: &mut spawn::SpawnResult,
-        ipc_read: StdioResult,
+        spawned: spawn::SpawnResult,
+        ipc_read: File,
         json_stdio: StdioResult,
     ) -> Result<(), Error> {
         let json_source = core::mem::take(&mut self.json_data);
@@ -913,23 +906,13 @@ impl<'a> SecurityScanSubprocess<'a> {
         // ipc_reader (fd 3) + json_writer (fd 4)
         self.remaining_fds = 2;
         let event_loop = self.event_loop_handle;
-        #[cfg(unix)]
-        if let Some(file) = ipc_read {
-            let result = self
-                .ipc_reader
-                .start(event_loop.as_event_loop_ctx(), file.into_raw(), true)
-                .map_err(|e| e.to_zig_err())?;
-            self.on_read_result(result);
-        }
-        #[cfg(windows)]
-        if let StdioResult::Buffer(pipe) = ipc_read {
-            (self.ipc_reader.start_with_pipe(pipe)).map_err(|e| e.to_zig_err())?;
-        }
+        let result = self
+            .ipc_reader
+            .start_own_pipe(event_loop.as_event_loop_ctx(), ipc_read)
+            .map_err(|e| e.to_zig_err())?;
+        self.on_read_result(result);
 
-        // `to_process` consumes `SpawnResult` by value on POSIX (and
-        // `&mut self` on Windows); take ownership of the result and let the
-        // moved-from `*spawned` drop empty (`extra_pipes` already read).
-        let process = std::mem::take(spawned).to_process_handle(event_loop);
+        let process = spawned.to_process_handle(event_loop);
         let process = self.process.insert(process).this_ptr();
 
         let owner = Owner::new(

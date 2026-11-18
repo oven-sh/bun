@@ -16,8 +16,7 @@ use core::ffi::c_int;
 use crate::node::StringOrBuffer;
 use bun_core::EncodedSlice;
 use bun_core::SignalCode;
-#[cfg(unix)]
-use bun_io::pipe_reader::PosixFlags;
+use bun_io::pipe_reader::ReaderFlags;
 use bun_io::{
     BufferedReader, IoEvent, Owner, PollTag, ReadResult, StreamingWriter, WriteHandler, WriteStatus,
 };
@@ -27,14 +26,12 @@ use bun_jsc::{
     self as jsc, EventLoopHandle, JSGlobalObject, JSValue, JsCell, JsRef, JsResult,
     MarkedArrayBuffer, SysErrorJsc,
 };
-use bun_sys as sys;
 #[cfg(unix)]
-use bun_sys::{Fd, File};
+use bun_sys::Fd;
+use bun_sys::{self as sys, File};
 
 #[cfg(windows)]
 use bun_sys::windows;
-#[cfg(windows)]
-use std::os::windows::io::OwnedHandle;
 
 bun_output::declare_scope!(Terminal, hidden);
 
@@ -344,22 +341,22 @@ impl Terminal {
             terminal.reader.set_owner(owner(PollTag::TerminalReader));
             terminal.writer.set_owner(owner(PollTag::TerminalWriter));
         }
-        #[cfg(unix)]
-        let result = Self::start_io(&terminal, pty_result.read, pty_result.write)?;
-        #[cfg(windows)]
-        let result = {
-            let loop_ = terminal.event_loop_handle.loop_();
-            let pipe = |handle| bun_io::Pipe::from_exclusive(loop_, handle);
-            (terminal.writer).start_with_pipe(&*terminal, pipe(pty_result.write));
-            terminal.writer_ref.set(Some(terminal.clone()));
-            if terminal
-                .reader
-                .start_with_pipe(pipe(pty_result.read))
-                .is_err()
-            {
-                return Err(terminal.fail_reader_start());
+        let event_loop = terminal.event_loop_handle.as_event_loop_ctx();
+
+        // Start writer with the write fd - adds a ref.
+        match (terminal.writer).start_own_pipe(&*terminal, event_loop, pty_result.write) {
+            sys::Result::Ok(()) => terminal.writer_ref.set(Some(terminal.clone())),
+            sys::Result::Err(_) => {
+                // The writer did not take its ref, and the reader never started.
+                drop(pty_result.read);
+                terminal.close_internal();
+                return Err(InitError::WriterStartFailed);
             }
-            ReadResult::Pending
+        }
+
+        // Start reader with the read fd - adds a ref.
+        let Ok(result) = terminal.reader.start_own_pipe(event_loop, pty_result.read) else {
+            return Err(terminal.fail_reader_start());
         };
         terminal.reader_ref.set(Some(terminal.clone()));
         terminal.on_read_result(result);
@@ -367,10 +364,9 @@ impl Terminal {
             return Err(terminal.fail_reader_start());
         }
         // PTY behaves like a pipe, not a socket
-        #[cfg(unix)]
         terminal
             .reader
-            .update_flags(|f| f.insert(PosixFlags::NONBLOCKING));
+            .update_flags(|f| f.insert(ReaderFlags::NONBLOCKING));
         terminal.update_flags(|f| f.insert(Flags::READER_STARTED));
 
         // Start reading data
@@ -381,38 +377,6 @@ impl Terminal {
         }
 
         Ok(terminal)
-    }
-
-    #[cfg(unix)]
-    fn start_io(
-        terminal: &bun_ptr::RefPtr<Terminal>,
-        read: File,
-        write: File,
-    ) -> Result<ReadResult, InitError> {
-        let event_loop = terminal.event_loop_handle.as_event_loop_ctx();
-
-        // Start writer with the write fd - adds a ref. On `Err` the unused closure drops the file.
-        match terminal
-            .writer
-            .start(&**terminal, event_loop, write.fd(), true)
-            .map(|()| write.into_raw())
-        {
-            sys::Result::Ok(_) => terminal.writer_ref.set(Some(terminal.clone())),
-            sys::Result::Err(_) => {
-                // The writer took neither its ref nor the fd, and the reader never started.
-                drop(read);
-                terminal.close_internal();
-                return Err(InitError::WriterStartFailed);
-            }
-        }
-
-        let Ok(result) = terminal.reader.start(event_loop, read.fd(), true) else {
-            // The reader did not take the fd.
-            drop(read);
-            return Err(terminal.fail_reader_start());
-        };
-        read.into_raw();
-        Ok(result)
     }
 
     /// `this_value` is the JS wrapper, which owns the ref [`open`](Self::open) returned.
@@ -653,18 +617,13 @@ impl Terminal {
     }
 }
 
-/// A duplicate of the master fd.
-#[cfg(unix)]
-type PtyEnd = File;
-/// The overlapped end of a pipe.
-#[cfg(windows)]
-type PtyEnd = OwnedHandle;
-
 pub(crate) struct PtyResult {
     #[cfg(unix)]
     pub(crate) master: File,
-    pub(crate) read: PtyEnd,
-    pub(crate) write: PtyEnd,
+    /// Duplicated master fd (POSIX) / overlapped read pipe end (Windows)
+    pub(crate) read: File,
+    /// Duplicated master fd (POSIX) / overlapped write pipe end (Windows)
+    pub(crate) write: File,
     #[cfg(unix)]
     pub(crate) slave: File,
     #[cfg(windows)]
@@ -937,8 +896,8 @@ fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError>
         .ok_or(CreatePtyError::OpenPtyFailed)?;
 
     Ok(PtyResult {
-        read: output.ours,
-        write: input.ours,
+        read: output.ours.into(),
+        write: input.ours.into(),
         hpcon,
     })
 }

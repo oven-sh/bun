@@ -1499,8 +1499,7 @@ impl Drop for Interpreter {
             "Interpreter(0x{:x}) drop",
             std::ptr::from_ref(self) as usize
         );
-        // `Cmd` has no `Drop`. Windows leaks them, see `abort_after_failed_start`.
-        #[cfg(not(windows))]
+        // `Cmd` has no `Drop`.
         if self.free_list.get().len() != self.nodes.get().len() {
             let node_count = self.nodes.get().len();
             for i in 0..node_count {

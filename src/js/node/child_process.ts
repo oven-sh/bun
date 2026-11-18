@@ -1420,12 +1420,9 @@ class ChildProcess extends EventEmitter {
     // as UnownedFd from the start and Subprocess.finalize_streams never
     // double-closes it. Async path only: spawnSync never wraps extra fds in
     // net.Socket (no .stdio on Bun.spawnSync's result yet) and must keep
-    // them OwnedFd so finalize_streams still closes them. On Windows extra
-    // stdio is a pipe handle with no raw-fd handoff, so leave as "pipe".
-    if (process.platform !== "win32") {
-      for (let i = 3; i < bunStdio.length; i++) {
-        if (bunStdio[i] === "pipe") bunStdio[i] = "socket-fd";
-      }
+    // them OwnedFd so finalize_streams still closes them.
+    for (let i = 3; i < bunStdio.length; i++) {
+      if (bunStdio[i] === "pipe") bunStdio[i] = "socket-fd";
     }
 
     const has_ipc = $isJSArray(stdio) && stdio.includes("ipc");

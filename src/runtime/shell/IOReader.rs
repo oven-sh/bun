@@ -352,7 +352,6 @@ impl IOReader {
 impl Drop for IOReader {
     fn drop(&mut self) {
         // The poll goes before its fd.
-        #[cfg(not(windows))]
         self.reader.release_handle();
         let fd = self.state.get_mut().fd;
         if fd != Fd::INVALID {

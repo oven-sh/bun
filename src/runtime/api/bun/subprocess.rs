@@ -18,9 +18,7 @@ use enumset::{EnumSet, EnumSetType};
 // external `bun_spawn` crate. The `bun_spawn` workspace crate only carries the
 // platform-thin `Stdio`/`Status` shims used by `bun.spawnSync` callers.
 use crate::api::bun::Terminal;
-#[cfg(not(windows))]
-use crate::api::bun_process::ExtraPipe;
-use crate::api::bun_process::{Process, Rusage, Status};
+use crate::api::bun_process::{ExtraPipe, Process, Rusage, Status};
 use crate::ipc as IPC;
 use crate::node::node_cluster_binding;
 use crate::timer::{EventLoopTimer, EventLoopTimerState};
@@ -53,13 +51,7 @@ bun_output::declare_scope!(IPC, visible);
 
 pub(crate) use crate::generated_bindgen::subprocess::js_Subprocess as js;
 
-/// Platform-dependent stdio result type.
 pub(crate) use bun_spawn::subprocess::StdioResult;
-
-#[cfg(windows)]
-type StdioPipeItem = StdioResult;
-#[cfg(not(windows))]
-type StdioPipeItem = ExtraPipe;
 
 pub(crate) type StaticPipeWriter = static_pipe_writer::StaticPipeWriter<webcore::AnyBlob>;
 
@@ -89,7 +81,7 @@ pub struct Subprocess<'a> {
     pub(crate) stdin: JsCell<Writable>,
     pub(crate) stdout: JsCell<Readable>,
     pub(crate) stderr: JsCell<Readable>,
-    pub(crate) stdio_pipes: JsCell<Vec<StdioPipeItem>>,
+    pub(crate) stdio_pipes: JsCell<Vec<ExtraPipe>>,
     pub(crate) pid_rusage: Cell<Option<Rusage>>,
 
     /// Terminal attached to this subprocess (if spawned with terminal option)
@@ -630,57 +622,19 @@ impl Subprocess<'_> {
         array.push(global, JSValue::NULL)?; // TODO: align this with options
         array.push(global, JSValue::NULL)?; // TODO: align this with options
 
-        // Once the values are visible to JS the caller owns them (it hands
-        // them to `net.connect({ fd })`, which closes them with the socket).
-        // Our pipe would close the same HANDLE again when this
-        // Subprocess is finalized, so expose a duplicate instead. The pipe is
-        // closed right away: as long as our handle stayed open, the child
-        // would not see EOF when the caller closes its copy. The duplicate is
-        // kept so later reads return the same value.
-        #[cfg(windows)]
-        self.stdio_pipes.with_mut(|pipes| {
-            for slot in pipes.iter_mut() {
-                let buffer = match core::mem::take(slot) {
-                    StdioResult::Buffer(buffer) => buffer,
-                    other => {
-                        *slot = other;
-                        continue;
-                    }
-                };
-                // On failure the slot stays `Unavailable` and reads as null.
-                if let Ok(dup) = bun_sys::dup(buffer.fd()) {
-                    *slot = StdioResult::UnownedFd(dup);
-                }
-            }
-        });
-
         for item in self.stdio_pipes.get().iter() {
-            #[cfg(windows)]
-            {
-                if let StdioResult::UnownedFd(fd) = item {
-                    // Expose the numeric HANDLE value.
-                    let handle: usize = fd.native() as usize;
-                    array.push(global, JSValue::js_number(handle as f64))?;
-                } else {
-                    array.push(global, JSValue::NULL)?;
-                }
-            }
-            #[cfg(not(windows))]
-            {
-                match item {
-                    ExtraPipe::OwnedFd(_) | ExtraPipe::UnownedFd(_) => {
-                        array.push(global, JSValue::js_number(item.fd().native() as f64))?;
-                    }
-                    ExtraPipe::Unavailable => {
-                        array.push(global, JSValue::NULL)?;
-                    }
-                }
-            }
+            let value = match item {
+                ExtraPipe::Unavailable => JSValue::NULL,
+                #[cfg(windows)]
+                item => JSValue::js_number(item.fd().native().addr() as f64),
+                #[cfg(not(windows))]
+                item => JSValue::js_number(item.fd().native() as f64),
+            };
+            array.push(global, value)?;
         }
         // The raw fd numbers are now visible to JS and the caller owns them.
         // Downgrade so finalize_streams never closes a number JS may have
         // already closed (whose value the kernel may have since recycled).
-        #[cfg(not(windows))]
         self.stdio_pipes
             .with_mut(|pipes| pipes.iter_mut().for_each(ExtraPipe::release_to_caller));
         Ok(array)

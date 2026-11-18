@@ -1,4 +1,4 @@
-//! The file that a `ReadFile`, `WriteFile` or `CopyFile` works on, on Windows.
+//! The file that a `ReadFile`, `WriteFile` or `CopyFile` works on.
 
 use bun_core::{ZBox, ZStr};
 use bun_sys::windows_format::wide;
@@ -8,6 +8,7 @@ use super::blocking::Blocking;
 use crate::io_order::{KeptOpen, Key};
 use crate::node::fs::DEFAULT_PERMISSION;
 use crate::node::types::PathLikeExt as _;
+use crate::webcore::blob::{mkdirp, sys_error_with_path_like};
 use crate::webcore::node_types::PathOrFileDescriptor;
 
 /// What the script named.
@@ -73,7 +74,7 @@ impl JobFile {
             Target::Lent(file) => Ok(Self::Lent(file)),
             Target::Path(path) => File::open(path.as_zstr(), O::RDONLY, 0)
                 .map(Self::Opened)
-                .map_err(|err| super::sys_error_with_path_like(&err, pathlike)),
+                .map_err(|err| sys_error_with_path_like(&err, pathlike)),
         }
     }
 
@@ -82,7 +83,7 @@ impl JobFile {
         target: Target,
         pathlike: &PathOrFileDescriptor<'_>,
         flags: i32,
-        mut mkdirp: bool,
+        mut may_make_folder: bool,
     ) -> sys::Result<Self> {
         let path = match target {
             Target::Lent(file) => return Ok(Self::Lent(file)),
@@ -94,7 +95,7 @@ impl JobFile {
                 Ok(file) => return Ok(Self::Opened(file)),
                 Err(err)
                     if err.get_errno() == E::ENOENT
-                        && core::mem::take(&mut mkdirp)
+                        && core::mem::take(&mut may_make_folder)
                         && !is_malformed(shown) =>
                 {
                     make_folder_for(path, shown)?;
@@ -147,7 +148,7 @@ pub(super) fn make_folder_for(path: &ZStr, shown: &[u8]) -> sys::Result<()> {
         [b'\\', b'\\', b'?', b'\\', path @ ..] if matches!(path, [_, b':', b'\\', ..]) => path,
         path => path,
     };
-    super::mkdirp(folder(path)).map_err(|err| err.with_path(folder(shown)))
+    mkdirp(folder(path)).map_err(|err| err.with_path(folder(shown)))
 }
 
 /// `err` with its code and system call only.

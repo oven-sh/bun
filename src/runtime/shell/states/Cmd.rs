@@ -806,7 +806,6 @@ impl Cmd {
     /// [`Self::deinit`] for the VM-shutdown finalizer: defuses the
     /// `> ${arraybuffer}` unpins first — the heap sweep already deleted the
     /// `JSC::ArrayBuffer` impls they would write to.
-    #[cfg(not(windows))]
     pub(crate) fn deinit_from_finalizer(interp: &Interpreter, this: NodeId) {
         {
             let me = interp.as_cmd_mut(this);
@@ -856,7 +855,6 @@ impl Cmd {
                     (*child).unref::<true>();
                     // Stop any still-active stdio before the drop (only the
                     // VM-shutdown path reaches here in flight).
-                    #[cfg(not(windows))]
                     (*child).deinit_in_flight_io();
                     drop(bun_core::heap::take(child));
                 }

@@ -1306,7 +1306,7 @@ describe.concurrent("in a terminal", () => {
       `);
       expect(await child.next()).toBe("written");
       await child.shows("the end");
-      expect(child.screen()).not.toContain("\ufffd");
+      expect(child.screen()).toContain("\u{1F600}y");
     });
 
     it("a ReadStream on CONIN$ reads a line", async () => {

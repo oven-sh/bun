@@ -239,7 +239,6 @@ impl FileResponseStream {
             f.remove(ReaderFlags::CLOSE_HANDLE); // `self.fd` closes it
             f.set(ReaderFlags::POLLABLE, opts.pollable);
             f.set(ReaderFlags::NONBLOCKING, opts.file_type != FileType::File);
-            #[cfg(unix)]
             f.set(ReaderFlags::SOCKET, opts.file_type == FileType::Socket);
         });
         // The reader reports the end of the body as EOF, so `on_read_chunk` ends the response there like at a real EOF.
@@ -481,7 +480,6 @@ impl FileResponseStream {
             self.insert_state(State::RESPONSE_DONE);
             self.detach_resp();
             // An `abort` listener may close the fd, and epoll cannot remove a closed fd.
-            #[cfg(unix)]
             self.reader.release_handle();
             self.deliver(self.resp.get(), StreamEnd::Abort);
         }

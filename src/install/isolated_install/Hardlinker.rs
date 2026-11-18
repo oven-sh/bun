@@ -126,7 +126,7 @@ impl Hardlinker {
                                 break 'body Ok(());
                             };
                             match link_err1.get_errno() {
-                                sys::E::UV_EEXIST | sys::E::EEXIST => {
+                                sys::E::EEXIST => {
                                     if crate::PackageManager::verbose_install() {
                                         bun_core::pretty_errorln!(
                                             "Hardlinking {} to a path that already exists: {}",
@@ -151,7 +151,7 @@ impl Hardlinker {
                                         );
                                     let _ = Fd::cwd().delete_tree(delete_tree_path);
                                 }
-                                sys::E::UV_ENOENT | sys::E::ENOENT => {
+                                sys::E::ENOENT => {
                                     if crate::PackageManager::verbose_install() {
                                         bun_core::pretty_errorln!(
                                             "Hardlinking {} to a path that doesn't exist: {}",

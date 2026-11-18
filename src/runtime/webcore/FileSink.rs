@@ -28,7 +28,7 @@ bun_core::declare_scope!(FileSink, visible);
 
 // Shared borrows only. A method may release every ref but the one its caller borrows from.
 #[derive(bun_ptr::CellRefCounted)]
-pub struct FileSink {
+pub(crate) struct FileSink {
     ref_count: Cell<u32>,
     pub(crate) writer: StreamingWriter,
     /// Held while a write is in flight.
@@ -491,14 +491,16 @@ impl FileSink {
         }
     }
 
-    #[cfg(windows)]
-    pub(crate) fn create_with_pipe(
-        event_loop_: impl Into<EventLoopHandle>,
-        pipe: bun_io::Pipe,
-    ) -> RefPtr<FileSink> {
-        let this = Self::init(pipe.fd(), event_loop_);
-        this.writer.set_pipe(pipe);
-        this
+    /// For our end of a pipe that `bun_spawn` has made.
+    pub(crate) fn create_with_own_pipe(
+        event_loop: EventLoopHandle,
+        pipe: sys::File,
+    ) -> sys::Result<RefPtr<FileSink>> {
+        let this = Self::init(pipe.fd(), event_loop);
+        (this.writer).start_own_pipe(&*this, event_loop.as_event_loop_ctx(), pipe)?;
+        #[cfg(not(windows))]
+        this.writer.set_poll_flag(bun_io::FilePollFlag::Socket);
+        Ok(this)
     }
 
     /// Starts the writer on `self.fd`.
@@ -511,11 +513,6 @@ impl FileSink {
             let event_loop = self.event_loop_handle.as_event_loop_ctx();
             self.writer.start(self, event_loop, self.fd.get(), true)
         }
-    }
-
-    #[cfg(not(windows))]
-    pub(crate) fn create(event_loop_: impl Into<EventLoopHandle>, fd: Fd) -> RefPtr<FileSink> {
-        Self::init(fd, event_loop_)
     }
 
     pub(crate) fn setup(
@@ -891,7 +888,7 @@ impl FileSink {
         this
     }
 
-    pub fn write(&self, data: &streams::Result<'_>) -> streams::Writable {
+    pub(crate) fn write(&self, data: &streams::Result<'_>) -> streams::Writable {
         if self.done.get() {
             return streams::Writable::Done;
         }
@@ -1044,7 +1041,7 @@ impl FileSink {
         }
     }
 
-    pub fn to_js(this: RefPtr<FileSink>, global_this: &JSGlobalObject) -> JSValue {
+    pub(crate) fn to_js(this: RefPtr<FileSink>, global_this: &JSGlobalObject) -> JSValue {
         JSSink::create_object(global_this, WrapperRef(this), None)
     }
 
@@ -1466,7 +1463,7 @@ pub(crate) fn on_reject_stream(
 
 impl FileSink {
     /// `Bun.write(file, stream)`: the byte-count promise `on_close` settles.
-    pub fn pipe_stream(
+    pub(crate) fn pipe_stream(
         this: &RefPtr<FileSink>,
         stream: &mut ReadableStream,
         global_this: &JSGlobalObject,
@@ -1520,7 +1517,7 @@ impl FileSink {
         }
     }
 
-    pub fn assign_to_stream(
+    pub(crate) fn assign_to_stream(
         this: &RefPtr<FileSink>,
         stream: &mut ReadableStream,
         global_this: &JSGlobalObject,

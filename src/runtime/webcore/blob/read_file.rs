@@ -1,40 +1,28 @@
 use core::marker::PhantomData;
-#[cfg(not(windows))]
-use core::mem::MaybeUninit;
-#[cfg(not(windows))]
-use core::sync::atomic::{AtomicU8, Ordering};
 
 use scopeguard::ScopeGuard;
 
-#[cfg(not(windows))]
-use crate::Error;
-#[cfg(windows)]
-use crate::io_order::{Key, Turn};
-use crate::webcore::blob::store::{Data, File as FileStore};
-use crate::webcore::blob::{Blob, SizeType, Store};
-#[cfg(not(windows))]
-use crate::webcore::blob::{ClosingState, FileCloser, FileOpener, MAX_SIZE};
-#[cfg(windows)]
-use crate::webcore::blob::{
-    blocking::{Blocking, BlockingPart},
-    job_file::{JobFile, Target, bare, is_device},
-};
+use crate::webcore::blob::{Blob, SizeType};
 use crate::webcore::node_types::PathOrFileDescriptor;
 use bun_core::String as BunString;
-use bun_core::vec::append_with;
+use bun_jsc::{AnyPromise, JSGlobalObject, JSPromiseStrong, JSValue, JsResult, SystemError};
 #[cfg(not(windows))]
-use bun_core::vec::{BorrowedBuf, BorrowedCursor};
-#[cfg(not(windows))]
-use bun_io::{self as io, FileAction};
-use bun_jsc::{
-    self as jsc, AnyPromise, JSGlobalObject, JSPromiseStrong, JSValue, JsResult, SystemError,
+use {
+    crate::Error,
+    crate::webcore::blob::store::{Data, File as FileStore},
+    crate::webcore::blob::{ClosingState, FileCloser, FileOpener, MAX_SIZE, Store},
+    bun_core::vec::{BorrowedBuf, BorrowedCursor, append_with},
+    bun_io::{self as io, FileAction},
+    bun_jsc as jsc,
+    bun_ptr::RefPtr,
+    bun_sys::{Fd, Stat},
+    bun_threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask},
+    core::mem::MaybeUninit,
+    core::sync::atomic::{AtomicU8, Ordering},
 };
-use bun_ptr::RefPtr;
-#[cfg(not(windows))]
-use bun_sys::Fd;
-use bun_sys::Stat;
-#[cfg(not(windows))]
-use bun_threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask};
+
+#[cfg(windows)]
+pub(crate) use super::windows::ReadFile;
 
 #[cfg(not(windows))]
 bun_output::declare_scope!(WriteFile, hidden);
@@ -125,11 +113,11 @@ pub(crate) struct PendingReadFileCompletion(
 );
 
 impl PendingReadFileCompletion {
-    fn new(completion: Box<dyn ReadFileCompletion>) -> Self {
+    pub(super) fn new(completion: Box<dyn ReadFileCompletion>) -> Self {
         Self(scopeguard::guard(completion, ReadFileCompletion::cancel))
     }
 
-    fn complete(self, bytes: ReadFileResultType) -> JsResult<()> {
+    pub(super) fn complete(self, bytes: ReadFileResultType) -> JsResult<()> {
         ScopeGuard::into_inner(self.0).run(bytes)
     }
 }
@@ -152,29 +140,26 @@ pub(crate) enum ReadFileResultType {
 }
 
 /// The completion token a `ReadFile` keeps across its async I/O.
+#[cfg(not(windows))]
 pub(crate) type ReadFileTask = bun_jsc::Completion<ReadFile>;
 
 // SAFETY: file store / byte store / blob store ref (atomic), the read buffer and io-loop
 // registration state — nothing thread-affine. What the bytes are delivered to lives in the job's
 // JS side (`PendingReadFileCompletion`), never here.
+#[cfg(not(windows))]
 unsafe impl Send for ReadFile {}
 
+#[cfg(not(windows))]
 impl bun_jsc::JobContext for ReadFile {
     const CANCELLABLE: bool = true;
-    const IS_FILE_IO: bool = true;
     type OffThread = Self;
     /// Where the bytes go: completed by `then`, or cancelled (its `Drop`) when the job comes
     /// back to a VM that is no longer running script and is released unrun.
     type Js = PendingReadFileCompletion;
-    #[cfg(not(windows))]
     fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         // Starts the read; finishes from the io loop via the token.
         this.run(done);
         None
-    }
-    #[cfg(windows)]
-    fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
-        this.run(done)
     }
     fn then(
         this: Self,
@@ -186,7 +171,6 @@ impl bun_jsc::JobContext for ReadFile {
     /// A read parked on a pipe/tty that never becomes readable is the one
     /// state this job can be stuck in; end that wait (the read fails with
     /// ECANCELED through the usual close path).
-    #[cfg(not(windows))]
     unsafe fn cancel(this: *mut Self) {
         // SAFETY: fn contract; `io_parking` is atomic, and a `true` means no
         // other thread touches `io_request` until it is queued again here.
@@ -196,13 +180,9 @@ impl bun_jsc::JobContext for ReadFile {
             }
         }
     }
-    #[cfg(windows)]
-    unsafe fn cancel(this: *mut Self) {
-        // SAFETY: fn contract. Nothing writes to the field.
-        unsafe { &(*this).blocking_part }.cancel();
-    }
 }
 
+#[cfg(not(windows))]
 impl ReadFile {
     /// JS thread: hand a prepared `ReadFile` and what to do with its bytes to the work pool (the
     /// job is its one heap allocation).
@@ -211,24 +191,7 @@ impl ReadFile {
         completion: Box<dyn ReadFileCompletion>,
         cx: &bun_jsc::JsThread<'_>,
     ) {
-        let completion = PendingReadFileCompletion::new(completion);
-        #[cfg(windows)]
-        if let PathOrFileDescriptor::Fd(fd) = this.file_store.pathlike {
-            let can_block = is_device(&this.file_store.pathlike);
-            let key = if can_block {
-                Key::device_input
-            } else {
-                Key::descriptor
-            };
-            return Turn::after_earlier(cx, key(fd), false, |turn| {
-                let this = ReadFile {
-                    turn: Some(turn),
-                    ..this
-                };
-                bun_jsc::Job::<ReadFile>::create(cx, this, completion).for_device_if(can_block)
-            });
-        }
-        bun_jsc::Job::<ReadFile>::schedule(cx, this, completion);
+        bun_jsc::Job::<ReadFile>::schedule(cx, this, PendingReadFileCompletion::new(completion));
     }
 }
 
@@ -236,48 +199,27 @@ impl ReadFile {
 // ReadFile
 // ──────────────────────────────────────────────────────────────────────────
 
+#[cfg(not(windows))]
 pub(crate) struct ReadFile {
     pub(crate) file_store: FileStore,
-    #[cfg(windows)]
-    target: Target,
-    #[cfg(windows)]
-    turn: Option<Turn>,
     pub(crate) store: Option<RefPtr<Store>>,
     pub offset: SizeType,
     pub(crate) max_length: SizeType,
-    #[cfg(not(windows))]
     pub(crate) total_size: SizeType,
-    #[cfg(not(windows))]
     pub(crate) opened_fd: Fd,
-    #[cfg(not(windows))]
     pub(crate) read_eof: bool,
-    #[cfg(not(windows))]
     pub(crate) size: SizeType,
     pub(crate) buffer: Vec<u8>,
-    #[cfg(not(windows))]
     pub task: WorkPoolTask,
     pub(crate) system_error: Option<SystemError>,
-    #[cfg(not(windows))]
     pub(crate) errno: Option<Error>,
-    #[cfg(not(windows))]
     pub(crate) io_task: Option<ReadFileTask>,
-    #[cfg(not(windows))]
     pub(crate) io_poll: io::Poll,
-    #[cfg(not(windows))]
     pub(crate) io_request: io::Request,
-    #[cfg(not(windows))]
     pub(crate) io_parking: super::IoParking,
-    #[cfg(not(windows))]
     pub(crate) could_block: bool,
-    #[cfg(not(windows))]
     pub(crate) close_after_io: bool,
-    #[cfg(not(windows))]
     pub(crate) state: AtomicU8, // ClosingState
-    /// For the store, which `then` updates.
-    #[cfg(windows)]
-    last_modified: Option<jsc::JSTimeType>,
-    #[cfg(windows)]
-    blocking_part: BlockingPart<Vec<u8>>,
 }
 
 #[cfg(not(windows))]
@@ -308,8 +250,8 @@ impl FileOpener for ReadFile {
 #[cfg(not(windows))]
 crate::webcore::blob::impl_file_closer!(ReadFile);
 
+#[cfg(not(windows))]
 impl ReadFile {
-    #[cfg(not(windows))]
     pub(crate) fn update(&mut self) {
         if self.state.load(Ordering::Relaxed) == ClosingState::Closing as u8 {
             self.on_finish();
@@ -322,59 +264,35 @@ impl ReadFile {
         let store = blob.store().expect("infallible: store present").clone();
         let file_store = store.data.as_file().clone();
         ReadFile {
-            #[cfg(windows)]
-            target: Target::new(&file_store.pathlike),
-            #[cfg(windows)]
-            turn: None,
             file_store,
             store: Some(store),
             offset: blob.offset.get(),
             max_length: blob.size.get(),
-            #[cfg(not(windows))]
             total_size: MAX_SIZE,
-            #[cfg(not(windows))]
             opened_fd: Fd::INVALID,
-            #[cfg(not(windows))]
             read_eof: false,
-            #[cfg(not(windows))]
             size: 0,
             buffer: Vec::new(),
-            #[cfg(not(windows))]
             task: WorkPoolTask {
                 node: Default::default(),
                 callback: Self::do_read_loop_task,
             },
             system_error: None,
-            #[cfg(not(windows))]
             errno: None,
-            #[cfg(not(windows))]
             io_task: None,
-            #[cfg(not(windows))]
             io_poll: io::Poll::default(),
-            #[cfg(not(windows))]
             io_request: io::Request {
                 next: bun_threading::Link::new(),
                 callback: Self::on_request_readable,
                 scheduled: false,
             },
-            #[cfg(not(windows))]
             io_parking: super::IoParking::new(),
-            #[cfg(not(windows))]
             could_block: false,
-            #[cfg(not(windows))]
             close_after_io: false,
-            #[cfg(not(windows))]
             state: AtomicU8::new(ClosingState::Running as u8),
-            #[cfg(windows)]
-            last_modified: None,
-            #[cfg(windows)]
-            blocking_part: BlockingPart::default(),
         }
     }
-}
 
-#[cfg(not(windows))]
-impl ReadFile {
     pub(crate) const IO_TAG: io::Tag = io::Tag::ReadFile;
 
     pub(crate) fn on_ready(&mut self) {
@@ -534,9 +452,7 @@ impl ReadFile {
 
         true
     }
-}
 
-impl ReadFile {
     pub(crate) fn then(
         this: Self,
         completion: PendingReadFileCompletion,
@@ -562,8 +478,6 @@ impl ReadFile {
         }
 
         let _store = this.store.take().unwrap();
-        #[cfg(windows)]
-        this.arrive(&_store);
         // reshaped for borrowck — take buffer out so it survives `drop(this)`.
         let buf = core::mem::take(&mut this.buffer);
 
@@ -580,23 +494,6 @@ impl ReadFile {
         }))
     }
 
-    fn directory_error(&self) -> SystemError {
-        SystemError {
-            code: BunString::static_("EISDIR"),
-            path: if self.file_store.pathlike.is_path() {
-                BunString::clone_utf8(self.file_store.pathlike.path().slice())
-            } else {
-                BunString::EMPTY
-            },
-            message: BunString::static_("Directories cannot be read like files"),
-            syscall: BunString::static_("read"),
-            ..Default::default()
-        }
-    }
-}
-
-#[cfg(not(windows))]
-impl ReadFile {
     pub(crate) fn run(&mut self, task: ReadFileTask) {
         self.run_async(task);
     }
@@ -653,7 +550,7 @@ impl ReadFile {
 
         if bun_sys::S::ISDIR(stat.st_mode as _) {
             self.errno = Some(crate::Error::Sys(bun_errno::SystemErrno::EISDIR));
-            self.system_error = Some(self.directory_error());
+            self.system_error = Some(directory_error(&self.file_store.pathlike));
             return;
         }
 
@@ -843,103 +740,16 @@ impl ReadFile {
     }
 }
 
-#[cfg(windows)]
-const MAX_BUFFER: usize = bun_jsc::ArrayBuffer::MAX_SIZE as usize;
-
-#[cfg(windows)]
-impl ReadFile {
-    fn run(&mut self, done: ReadFileTask) -> Option<ReadFileTask> {
-        let turn = self.turn.take();
-        let Some((file, stat)) = self.open() else {
-            return Some(done);
-        };
-        if !bun_sys::S::ISREG(stat.st_mode as _) {
-            let max_length = self.max_length as usize;
-            return (self.blocking_part).run(done, move |blocking| {
-                let _turn = turn;
-                read_stream(&file, max_length, blocking)
-            });
-        }
-        if let Err(err) = self.read_regular_file(&file, stat.st_size) {
-            self.fail(&bare(&err));
-        }
-        Some(done)
+pub(super) fn directory_error(pathlike: &PathOrFileDescriptor<'_>) -> SystemError {
+    SystemError {
+        code: BunString::static_("EISDIR"),
+        path: if pathlike.is_path() {
+            BunString::clone_utf8(pathlike.path().slice())
+        } else {
+            BunString::EMPTY
+        },
+        message: BunString::static_("Directories cannot be read like files"),
+        syscall: BunString::static_("read"),
+        ..Default::default()
     }
-
-    /// JS thread.
-    fn arrive(&mut self, store: &RefPtr<Store>) {
-        if let (Some(last_modified), Data::File(file)) =
-            (self.last_modified, Store::data_mut(store))
-        {
-            file.last_modified = last_modified;
-        }
-        match self.blocking_part.take_result() {
-            Some(Ok(bytes)) => self.buffer = bytes,
-            Some(Err(err)) => self.fail(&bare(&err)),
-            None => {}
-        }
-    }
-
-    fn fail(&mut self, err: &bun_sys::Error) {
-        self.system_error = Some(err.to_system_error().into());
-    }
-
-    fn open(&mut self) -> Option<(JobFile, Stat)> {
-        let file = JobFile::source(core::mem::take(&mut self.target), &self.file_store.pathlike);
-        let file = file.inspect_err(|err| self.fail(err)).ok()?;
-        let stat = file.stat().inspect_err(|err| self.fail(&bare(err))).ok()?;
-        self.last_modified = Some(super::stat_to_js_mtime(&stat));
-        if bun_sys::S::ISDIR(stat.st_mode as _) {
-            self.system_error = Some(self.directory_error());
-            return None;
-        }
-        Some((file, stat))
-    }
-
-    fn read_regular_file(&mut self, file: &JobFile, size: u64) -> bun_sys::Result<()> {
-        let len = size.saturating_sub(self.offset).min(self.max_length) as usize;
-        if file.is_lent() && self.offset > 0 {
-            // The descriptor is left at the start of the slice.
-            let _ = file.seek_to(self.offset);
-        }
-        if len == 0 {
-            return Ok(());
-        }
-        if len > MAX_BUFFER || self.buffer.try_reserve_exact(len).is_err() {
-            return Err(bun_sys::Error::oom());
-        }
-        append_with(&mut self.buffer, len, |spare| {
-            if file.is_lent() {
-                return file.pread_all_buf(spare, self.offset);
-            }
-            if self.offset > 0 {
-                file.seek_to(self.offset)?;
-            }
-            file.read_all_buf(spare)
-        })?;
-        Ok(())
-    }
-}
-
-#[cfg(windows)]
-fn read_stream(file: &JobFile, max_length: usize, blocking: &Blocking) -> bun_sys::Result<Vec<u8>> {
-    const MIN_READ: usize = 64 * 1024;
-    /// The system touches every page of the buffer in front of each read.
-    const MAX_READ: usize = 1024 * 1024;
-
-    let mut bytes = Vec::new();
-    while bytes.len() < max_length {
-        let left = max_length - bytes.len();
-        if bytes.len() > MAX_BUFFER || bytes.try_reserve(left.min(MIN_READ)).is_err() {
-            return Err(bun_sys::Error::oom());
-        }
-        let read = append_with(&mut bytes, left.min(MAX_READ), |spare| {
-            blocking.read(file.fd(), spare)
-        })?;
-        if read == 0 {
-            break;
-        }
-    }
-    bytes.shrink_to_fit();
-    Ok(bytes)
 }

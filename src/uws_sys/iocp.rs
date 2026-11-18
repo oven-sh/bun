@@ -18,6 +18,7 @@ const WRITABLE: c_int = 2;
 
 const POLL_TYPE_SOCKET: u8 = 0;
 const POLL_TYPE_SOCKET_SHUT_DOWN: u8 = 1;
+const POLL_TYPE_SEMI_SOCKET: u8 = 2;
 const POLL_TYPE_POLLING_OUT: u8 = 8;
 const POLL_TYPE_POLLING_IN: u8 = 16;
 const POLL_TYPE_KIND_MASK: u8 = 0b111;
@@ -253,8 +254,9 @@ impl Poll {
 
     /// The `error`, `eof` and `events` of `us_internal_dispatch_ready_poll`.
     fn translate(&self, ready: Readiness) -> (c_int, c_int, c_int) {
-        let error = ready.contains(Readiness::WATCH_FAILED)
-            || (ready.contains(Readiness::ABORT) && self.is_connected_stream());
+        let is_stream = self.is_connected_stream() || self.kind() == POLL_TYPE_SEMI_SOCKET;
+        let error = ready.intersects(Readiness::WATCH_FAILED | Readiness::CONNECT_FAIL)
+            || (ready.contains(Readiness::ABORT) && is_stream);
         // Data can still be on its way, so the end of any other socket is for `recv` to find.
         let eof =
             ready.contains(Readiness::DISCONNECT) && self.kind() == POLL_TYPE_SOCKET_SHUT_DOWN;

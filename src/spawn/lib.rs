@@ -9,7 +9,7 @@
 //! `bun_runtime` re-exports them. The only non-leaf dependencies are
 //! `bun_io` (`FilePoll`/`KeepAlive`/`EventLoopCtx`), `bun_ptr`
 //! (`ThreadSafeRefCount`), `bun_io` (`BufferedWriter`), `bun_event_loop`,
-//! `bun_threading`, and on Windows `bun_iocp` and `bun_uws_sys` — none of which depend back on this crate, so no cycle.
+//! `bun_threading`, and on Windows `bun_iocp` — none of which depend back on this crate, so no cycle.
 
 // ──────────────────────────────────────────────────────────────────────────
 // Module layout
@@ -43,8 +43,8 @@ pub use bun_spawn_sys::RusageFields;
 #[cfg(unix)]
 pub use bun_spawn_sys::posix_spawn::posix_spawn::LARGEST_REAPED_CHILD;
 pub use process::{
-    Dup2, Exited, ExtraPipe, PidT, Process, ProcessHandle, Rusage, SpawnOptions,
-    SpawnProcessResult, SpawnResultExt, Status, StdioKind, spawn_process, spawn_process_z,
+    Dup2, Exited, ExtraPipe, PidT, Process, ProcessHandle, Rusage, SpawnOptions, SpawnResult,
+    SpawnResultExt, Status, Stdio, StdioKind, spawn_process, spawn_process_z,
 };
 
 // Variant types live in `bun_runtime`/`bun_install`; each provides its body
@@ -72,17 +72,7 @@ bun_dispatch::link_interface! {
 pub type ProcessExitHandler = Option<ProcessExit>;
 
 #[cfg(unix)]
-pub use process::{PosixSpawnOptions, PosixSpawnResult, PosixStdio as Stdio, WaitPidResult};
-#[cfg(unix)]
-pub type SpawnResult = process::PosixSpawnResult;
-
-#[cfg(windows)]
-pub use process::{
-    WindowsOptions, WindowsSpawnOptions, WindowsSpawnResult, WindowsStdio as Stdio,
-    WindowsStdioResult as SpawnedStdio,
-};
-#[cfg(windows)]
-pub type SpawnResult = process::WindowsSpawnResult;
+pub use process::WaitPidResult;
 
 /// Blocking (synchronous) spawn helpers.
 pub mod sync {
@@ -99,8 +89,5 @@ pub mod sync {
 pub mod subprocess {
     pub use crate::static_pipe_writer::{PipeState, StaticPipeWriter};
 
-    #[cfg(not(windows))]
     pub type StdioResult = Option<bun_sys::File>;
-    #[cfg(windows)]
-    pub type StdioResult = crate::process::WindowsStdioResult;
 }

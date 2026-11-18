@@ -298,8 +298,7 @@ pub use pipe_writer::{
 #[cfg(windows)]
 pub use source::{Pipe, PipeConnect, PipeServer};
 
-#[cfg(not(windows))]
-pub use pipe_reader::PosixFlags;
+pub use pipe_reader::ReaderFlags;
 pub use pipe_reader::{BufferedReader, ReadResult};
 
 pub use open_for_writing_mod::{open_for_writing, open_for_writing_impl};

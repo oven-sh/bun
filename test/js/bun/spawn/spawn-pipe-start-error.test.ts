@@ -34,7 +34,7 @@ try {
       cmd: [bunExe(), "-e", fixture],
       env: {
         ...bunEnv,
-        // The injection point sits in start_with_current_pipe(), which is the
+        // The injection point sits in start_with_current_source(), which is the
         // first call the non-lazy Windows start() path makes on the stdout pipe.
         BUN_INTERNAL_FAIL_PIPE_READER_START: "1",
       },
@@ -49,6 +49,31 @@ try {
     expect(exitCode).toBe(0);
   },
 );
+
+test.skipIf(!isWindows || !isDebug)("spawn: a child whose IPC channel cannot start is ended (windows)", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `try {
+         Bun.spawn({
+           cmd: [process.execPath, "-e", "setInterval(() => {}, 1000)"],
+           stdio: ["ignore", "pipe", "pipe"],
+           env: { ...process.env, BUN_INTERNAL_FAIL_PIPE_READER_START: undefined },
+           ipc() {},
+           onExit: (_, code, signal) => console.log(signal),
+         });
+       } catch (error) {
+         console.log(error.code);
+       }`,
+    ],
+    env: { ...bunEnv, BUN_INTERNAL_FAIL_PIPE_READER_START: "1", BUN_DESTRUCT_VM_ON_EXIT: "1" },
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  expect(await proc.stdout.text()).toBe("EINVAL\nSIGKILL\n");
+  expect(await proc.exited).toBe(0);
+});
 
 // POSIX counterpart for the writers. When a pipe writer's start() fails to
 // register its fd with the event loop, the writer no longer holds the fd and

@@ -1466,18 +1466,23 @@ mod _async_tasks {
     pub(crate) struct AsyncFSTask<R, A, const F: NodeFSFunctionEnum> {
         pub(crate) result: Maybe<R>,
         pub args: ThreadIsolated<A>,
-        #[cfg(windows)]
-        pending_write: Option<bun_iocp::PendingWrite>,
         /// For a call that can wait for ever.
         #[cfg(windows)]
         cancel: Option<Cancel>,
         #[cfg(windows)]
-        device: Option<Device>,
-        #[cfg(windows)]
-        turn: Option<Turn>,
+        held: Held,
     }
 
-    /// What a call on a pipe, a console or another device holds until it returns.
+    /// Until the call returns.
+    #[cfg(windows)]
+    #[derive(Default)]
+    struct Held {
+        _pending_write: Option<bun_iocp::PendingWrite>,
+        device: Option<Device>,
+        _turn: Option<Turn>,
+    }
+
+    /// A pipe, a console or another device.
     #[cfg(windows)]
     struct Device {
         /// In place of `shown` in the arguments.
@@ -1733,13 +1738,9 @@ mod _async_tasks {
                 // may be niche-optimised; never construct an all-zero `Result`.
                 result: Err(sys::Error::default()),
                 #[cfg(windows)]
-                pending_write: None,
-                #[cfg(windows)]
                 cancel: None,
                 #[cfg(windows)]
-                device: None,
-                #[cfg(windows)]
-                turn: None,
+                held: Held::default(),
             };
             let js = AsyncFSJs {
                 completion,
@@ -1758,7 +1759,7 @@ mod _async_tasks {
         fn start(mut self, cx: &bun_jsc::JsThread<'_>, js: AsyncFSJs) {
             let Some(fd) = self.args.descriptor() else {
                 let port = cx.vm().uws_loop().port();
-                self.pending_write = Self::IS_WRITE.then(|| port.pending_write());
+                self.held._pending_write = Self::IS_WRITE.then(|| port.pending_write());
                 return bun_jsc::Job::<Self>::schedule(cx, self, js);
             };
             let mut key = Key::descriptor(*fd);
@@ -1773,25 +1774,24 @@ mod _async_tasks {
                 }
                 let file = KeptOpen::new(*fd);
                 let shown = core::mem::replace(fd, file.fd());
-                self.device = Some(Device { file, shown });
+                self.held.device = Some(Device { file, shown });
                 self.cancel = Some(Cancel::default());
             }
             Turn::after_earlier(cx, key, Self::IS_WRITE, |turn| {
-                let can_block = self.device.is_some();
-                self.turn = Some(turn);
+                let can_block = self.held.device.is_some();
+                self.held._turn = Some(turn);
                 bun_jsc::Job::<Self>::create(cx, self, js).for_device_if(can_block)
             });
         }
 
         #[cfg(windows)]
         fn let_go(&mut self) {
-            self.pending_write.take();
-            if let (Some(device), Err(err)) = (self.device.take(), &mut self.result)
+            let held = core::mem::take(&mut self.held);
+            if let (Some(device), Err(err)) = (&held.device, &mut self.result)
                 && err.fd == device.file.fd()
             {
                 err.fd = device.shown;
             }
-            self.turn.take();
         }
     }
 

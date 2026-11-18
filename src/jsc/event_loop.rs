@@ -1319,7 +1319,10 @@ pub(crate) fn get_active_tasks(
         tasks: event_loop.queued_task_count(),
         immediate_tasks: event_loop.immediate_task_count(),
         concurrent_tasks_empty: event_loop.concurrent_tasks.is_empty(),
-        loop_active: vm_ref.platform_loop_opt().is_some_and(|h| h.is_active()),
+        loop_active: vm_ref
+            .event_loop_handle
+            .get()
+            .is_some_and(|h| h.is_active()),
         event_loop_alive: vm_ref.is_event_loop_alive(),
         concurrent_ref: event_loop.concurrent_ref.load(Ordering::SeqCst),
         num_polls: uws::Loop::get().poll_count(),

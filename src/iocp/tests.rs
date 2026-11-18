@@ -1,5 +1,3 @@
-mod faults;
-
 use core::cell::{Cell, RefCell};
 use core::ptr::{self, NonNull};
 use core::time::Duration;
@@ -13,8 +11,8 @@ use std::time::Instant;
 use bun_sys::windows::{self as w, NTSTATUS, PipeDirection, PipeMode};
 use bun_threading::fifo_pool::{Config, FifoPool};
 
-use self::faults::{Call, fail, intercept};
 use crate::blocking::{self, Cancel};
+use crate::faults::{self, Call, fail, intercept};
 use crate::sys;
 use crate::{
     AsyncFile, Completion, Event, Handle, Hold, Port, Readiness, Request, SocketWatch, Watcher,

@@ -172,9 +172,16 @@ impl Channel {
         }
     }
 
-    /// Starts reading.
+    /// `adopt`, for the end that the coordinator keeps.
+    pub(crate) fn adopt_own(&self, vm: &VirtualMachine, end: File) -> bool {
+        #[cfg(windows)]
+        return self.adopt_pipe(Pipe::from_exclusive(vm.uws_loop(), end));
+        #[cfg(not(windows))]
+        self.adopt(vm, end)
+    }
+
     #[cfg(windows)]
-    pub(crate) fn adopt_pipe(&self, pipe: Pipe) -> bool {
+    fn adopt_pipe(&self, pipe: Pipe) -> bool {
         let this = core::ptr::from_ref(self).cast_mut();
         let owner = Owner::new(PollTag::TestParallelChannel, this.cast());
         // SAFETY: both are fields of `self`, which does not move once it is adopted.

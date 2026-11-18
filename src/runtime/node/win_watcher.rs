@@ -7,7 +7,7 @@ use core::ffi::c_void;
 use std::rc::Rc;
 
 use bun_core::strings::basename_windows;
-use bun_core::{String as BunString, Timespec, TimespecMockMode, WStr, ZStr};
+use bun_core::{Timespec, TimespecMockMode, WStr, ZStr};
 use bun_iocp::{AsyncFile, Completion, Request};
 use bun_jsc as jsc;
 use bun_ptr::CellExt as _;
@@ -17,13 +17,7 @@ use bun_sys::windows::{self as w, NT_SUCCESS, NTSTATUS, Win32Error};
 use bun_sys::windows_format::directory_changes::{self, Change};
 
 use super::node_fs_watcher::WatchEventKind;
-use crate::node::Encoding;
-// The callbacks are *associated functions* on `FSWatcher`, not free fns.
-use crate::node::node_fs_watcher::{Event, FSWatcher, StringOrBytesToDecode};
-#[allow(non_upper_case_globals)]
-const on_path_update_fn: fn(Option<*mut c_void>, Event, bool) = FSWatcher::ON_PATH_UPDATE;
-#[allow(non_upper_case_globals)]
-const on_update_end_fn: fn(Option<*mut c_void>) = FSWatcher::on_update_end;
+use crate::node::node_fs_watcher::{Event, FSWatcher};
 
 // Rust identifiers cannot contain '.', so
 // the static is declared by hand (instead of via `declare_scope!`) with the
@@ -40,7 +34,6 @@ pub(crate) type Handle = Rc<PathWatcher>;
 pub(crate) struct PathWatcher {
     /// The `FSWatcher`, which has the only [`Handle`].
     owner: *mut c_void,
-    encoding: Encoding,
     last_event: Cell<ChangeEvent>,
     target: Target,
     recursive: bool,
@@ -181,6 +174,7 @@ impl PathWatcher {
         let done = move |completion| {
             if let Some(this) = this.upgrade() {
                 this.on_changes(&next, completion);
+                FSWatcher::on_update_end(Some(this.owner));
             }
         };
         let read = file.read_changes(buffer, size, FILTER, self.recursive, done);
@@ -188,7 +182,7 @@ impl PathWatcher {
         Ok(())
     }
 
-    fn on_changes(self: Rc<Self>, file: &Rc<AsyncFile>, completion: Completion) {
+    fn on_changes(self: &Rc<Self>, file: &Rc<AsyncFile>, completion: Completion) {
         let Completion { status, buffer, .. } = completion;
         let timestamp = Timespec::now(TimespecMockMode::ForceRealTime).ms_unsigned();
         // One is how a share can say that there were too many.
@@ -234,8 +228,7 @@ impl PathWatcher {
     }
 
     fn send(&self, event: Event, is_file: bool) {
-        on_path_update_fn(Some(self.owner), event, is_file);
-        on_update_end_fn(Some(self.owner));
+        FSWatcher::on_path_update(Some(self.owner), event, is_file);
     }
 
     fn emit(&self, name: &[u16], timestamp: u64, event_type: WatchEventKind) {
@@ -254,12 +247,7 @@ impl PathWatcher {
         if !(self.last_event).with_taken(|last| last.emit(hash, timestamp, event_type)) {
             return;
         }
-        // `EventPathString` on Windows is `StringOrBytesToDecode`.
-        let payload = match self.encoding {
-            Encoding::Utf8 => StringOrBytesToDecode::String(BunString::clone_utf8(&path)),
-            _ => StringOrBytesToDecode::BytesToFree(path.into_boxed_slice()),
-        };
-        self.send(event_type.to_event(payload), is_file);
+        self.send(event_type.to_event(path.into()), is_file);
     }
 
     /// JS-thread entry point from `FSWatcher.detach()`.
@@ -274,7 +262,6 @@ pub(crate) fn watch(
     vm: &jsc::VirtualMachineRef,
     path: &ZStr,
     recursive: bool,
-    encoding: Encoding,
     owner: *mut c_void,
 ) -> sys::Result<Handle> {
     let mut outbuf = bun_paths::path_buffer_pool::get();
@@ -298,7 +285,6 @@ pub(crate) fn watch(
     let (target, handle) = Target::open(wide).map_err(error)?;
     let this = Rc::new(PathWatcher {
         owner,
-        encoding,
         last_event: Cell::default(),
         recursive: recursive && matches!(target, Target::Directory(_)),
         target,

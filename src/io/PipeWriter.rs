@@ -681,6 +681,18 @@ impl PosixStreamingWriter {
         }
     }
 
+    /// For our end of a pipe that this process has made.
+    pub fn start_own_pipe(
+        &self,
+        handler: &impl WriteHandler,
+        ev: EventLoopHandle,
+        pipe: sys::File,
+    ) -> sys::Result<()> {
+        self.start(handler, ev, pipe.fd(), true)?;
+        pipe.into_raw();
+        sys::Result::Ok(())
+    }
+
     /// On `Err` the writer holds nothing; `fd` is still the caller's to close.
     pub fn start(
         &self,
@@ -1288,6 +1300,16 @@ impl WindowsStreamingWriter {
 
     pub fn set_pipe(&self, pipe: Pipe) {
         self.base.set_source(pipe.into());
+    }
+
+    pub fn start_own_pipe(
+        &self,
+        handler: &impl WriteHandler,
+        ev: EventLoopHandle,
+        pipe: sys::File,
+    ) -> sys::Result<()> {
+        self.start_with_pipe(handler, Pipe::from_exclusive(ev.loop_(), pipe));
+        sys::Result::Ok(())
     }
 
     pub fn start_with_pipe(&self, handler: &impl WriteHandler, pipe: Pipe) {

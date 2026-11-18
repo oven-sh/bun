@@ -5,7 +5,6 @@ use std::io::Write as _;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
-#[cfg(unix)]
 use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{self as spawn, Rusage, SpawnOptions, Status};
 use crate::cli::Command;
@@ -151,7 +150,7 @@ impl<'a> ProcessHandle<'a> {
 
         let argv = ScriptArgv::new(shell_bin, handle.output.config.combined)?;
         let start_time = Instant::now();
-        let mut spawned: spawn::SpawnProcessResult = 'brk: {
+        let mut spawned: spawn::SpawnResult = 'brk: {
             // Get the envp with the PATH configured
             // There's probably a more optimal way to do this where you have a Vec shared
             // instead of creating a new one for each process
@@ -191,28 +190,12 @@ impl<'a> ProcessHandle<'a> {
             unsafe { handle.reader(kind).set_owner(owner) };
         }
 
-        #[cfg(windows)]
-        {
-            if let spawn::WindowsStdioResult::Buffer(pipe) = stdout_pipe {
-                handle.stdout.set_pipe(pipe);
-            }
-            if let spawn::WindowsStdioResult::Buffer(pipe) = stderr_pipe {
-                handle.stderr.set_pipe(pipe);
-            }
-        }
-
-        #[cfg(unix)]
         for (reader, pipe) in [(&handle.stdout, stdout_pipe), (&handle.stderr, stderr_pipe)] {
-            if let Some(fd) = pipe.map(bun_sys::File::into_raw) {
-                let _ = bun_sys::set_nonblocking(fd);
+            if let Some(pipe) = pipe {
+                let _ = bun_sys::set_nonblocking(pipe.fd());
                 let event_loop = handle.output.shared.event_loop.as_event_loop_ctx();
-                let _ = reader.start(event_loop, fd, true)?;
+                let _ = reader.start_own_pipe(event_loop, pipe)?;
             }
-        }
-        #[cfg(not(unix))]
-        {
-            handle.stdout.start_with_current_source()?;
-            handle.stderr.start_with_current_source()?;
         }
 
         handle.process = Some(ProcessInfo {
@@ -938,11 +921,6 @@ pub(crate) fn run_scripts_with_filter(
                     &script.package_json_path,
                 )
                 .into(),
-                #[cfg(windows)]
-                windows: spawn::WindowsOptions {
-                    loop_: EventLoopHandle::init_mini(event_loop),
-                    ..Default::default()
-                },
                 stream: true,
                 ..Default::default()
             },

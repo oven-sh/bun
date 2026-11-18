@@ -21,6 +21,7 @@ use bun_core::{
     string_joiner::{StringJoiner, Watcher},
     strings,
 };
+use bun_js_parser::Parser;
 use bun_js_printer::{self as js_printer, PrintResult};
 use bun_sourcemap as SourceMap;
 
@@ -420,16 +421,19 @@ pub(crate) fn post_process_js_chunk(
     }
 
     let is_bun = c.graph.ast.items_target()[chunk.entry_point.source_index() as usize].is_bun();
+    let banner_pragma =
+        Parser::bun_pragma_start(banner, hashbang.is_empty() && banner.starts_with(b"#!"));
     let ast_flags = c.graph.ast.items_flags();
-    // Keeping chunks with preserved JSX eligible for runtime transpilation.
-    let has_bun_pragma = is_bun
-        && !chunk
+    let has_preserved_jsx = (is_bun || banner_pragma.is_some())
+        && chunk
             .files_with_parts_in_chunk
             .keys()
             .iter()
             .any(|&source_index| {
                 ast_flags[source_index as usize].contains(AstFlags::HAS_PRESERVED_JSX)
             });
+    // Keeping chunks with preserved JSX eligible for runtime transpilation.
+    let has_bun_pragma = is_bun && !has_preserved_jsx;
     if has_bun_pragma {
         if c.options.generate_bytecode_cache && output_format == options::OutputFormat::Cjs {
             const INPUT: &[u8] =
@@ -450,8 +454,19 @@ pub(crate) fn post_process_js_chunk(
         }
     }
 
-    // Add the banner (excluding any hashbang part) for all chunks
+    // Add the banner (excluding the entry point's hashbang) for all chunks.
     if !banner.is_empty() {
+        let banner = if let Some(start) = banner_pragma.filter(|_| has_preserved_jsx) {
+            // Moving the banner off the pragma line; the runtime must transpile the JSX.
+            let (before_pragma, banner) = banner.split_at(start);
+            j.push_static(before_pragma);
+            line_offset.advance(before_pragma);
+            j.push_static(b"\n");
+            line_offset.advance(b"\n");
+            banner
+        } else {
+            banner
+        };
         j.push_static(banner);
         line_offset.advance(banner);
         if !strings::ends_with_char(banner, b'\n') {

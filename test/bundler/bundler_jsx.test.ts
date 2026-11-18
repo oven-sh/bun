@@ -1277,6 +1277,38 @@ describe("bundler", () => {
       }
     }
 
+    for (const [variant, banner, prefix] of [
+      ["Prefix", "// @bundle generated", "\n// @bundle generated\n"],
+      ["Hashbang", "#!/usr/bin/env bun\n// @bun", "#!/usr/bin/env bun\n\n// @bun\n"],
+    ]) {
+      itBundled(`jsx/PreserveBundlePragmaBanner-${variant}`, {
+        files: {
+          "/in.jsx": "console.log(<div />);",
+          "/node_modules/react/jsx-runtime.js": "export const jsx = type => type;",
+          "/node_modules/react/jsx-dev-runtime.js": "export const jsxDEV = type => type;",
+        },
+        backend: "api",
+        target: "bun",
+        jsx: { runtime: "preserve" },
+        skipOnEsbuild: true,
+        banner,
+        sourceMap: "external",
+        async onAfterBundle(api) {
+          const out = api.readFile("/out.js");
+          expect(out.startsWith(prefix)).toBe(true);
+          const lines = out.split("\n");
+          const index = lines.findIndex(line => line.includes("<div"));
+          expect(index).toBeGreaterThanOrEqual(0);
+          const map = JSON.parse(api.readFile("/out.js.map"));
+          await SourceMapConsumer.with(map, null, consumer => {
+            const generated = { line: index + 1, column: lines[index].indexOf("<div") + 1 };
+            expect(consumer.originalPositionFor(generated)).toMatchObject({ line: 1, column: 13 });
+          });
+        },
+        run: { stdout: "div", setCwd: true },
+      });
+    }
+
     itBundled("jsx/PreserveCliRuntimeFlag", {
       files: {
         "/in.tsx": `console.log(<span>Hello</span>);`,

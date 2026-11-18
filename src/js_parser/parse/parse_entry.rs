@@ -108,6 +108,8 @@ pub fn parse_only_text<R>(
     parser.parse_only(f).ok()
 }
 
+const BUN_PRAGMA: &[u8] = b"// @bun";
+
 pub struct Parser<'a> {
     pub(crate) options: Options<'a>,
     pub(crate) lexer: js_lexer::Lexer<'a>,
@@ -2685,43 +2687,21 @@ impl<'a> Parser<'a> {
         Ok(crate::Result::Ast(ast))
     }
 
-    // associated fn (was `&self` reading `self.lexer.source.contents`)
-    // because `_parse` consumes `self` by value and destructures it before this
-    // call site; the source contents are passed explicitly.
-    // called from gated `_parse` body above
+    /// Find the already-bundled marker at the start of a file or just after its hashbang.
+    pub fn bun_pragma_start(contents: &[u8], has_hashbang: bool) -> Option<usize> {
+        let start = if has_hashbang {
+            strings::index_of_char(contents, b'\n')? as usize + 1
+        } else {
+            0
+        };
+        contents[start..].starts_with(BUN_PRAGMA).then_some(start)
+    }
+
     fn has_bun_pragma(contents: &[u8], has_hashbang: bool) -> Option<crate::AlreadyBundled> {
-        const BUN_PRAGMA: &[u8] = b"// @bun";
-        let end = contents.len();
-
-        // pragmas may appear after a hashbang comment
-        //
-        //   ```js
-        //   #!/usr/bin/env bun
-        //   // @bun
-        //   const myCode = 1;
-        //   ```
-        let mut cursor: usize = 0;
-        if has_hashbang {
-            while contents[cursor] != b'\n' {
-                cursor += 1;
-                if cursor >= end {
-                    return None;
-                }
-            }
-
-            // eat the last newline
-            // NOTE: in windows, \n comes after \r so no extra work needs to be done
-            cursor += 1;
-        }
-
-        if !contents[cursor..].starts_with(BUN_PRAGMA) {
-            return None;
-        }
-        cursor += BUN_PRAGMA.len();
-
+        let mut cursor = Self::bun_pragma_start(contents, has_hashbang)? + BUN_PRAGMA.len();
         let mut state = PragmaState::default();
 
-        while cursor < end {
+        while cursor < contents.len() {
             match contents[cursor] {
                 b'\n' => break,
                 b'@' => {

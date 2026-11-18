@@ -24,20 +24,23 @@ test.concurrent.each([true, false])("a served HTML module must be executable (de
   using dir = tempDir("html-route-preserved-jsx", {
     "plain.html": '<script type="module" src="./plain.tsx"></script>',
     "plain.tsx": "/** @jsxRuntime preserve */\nconsole.log('plain');\n",
+    "compiled.html": '<script type="module" src="./compiled.tsx"></script>',
+    "compiled.tsx": "console.log(<div />);",
     "broken.html": '<script type="module" src="./broken.tsx"></script>',
     "broken.tsx": "/** @jsxRuntime preserve */\nconsole.log(<div />);\n",
     "node_modules/react/jsx-runtime.js": "export const jsx = () => null;",
     "node_modules/react/jsx-dev-runtime.js": "export const jsxDEV = () => null;",
     "server.ts": `
       import plain from "./plain.html";
+      import compiled from "./compiled.html";
       import broken from "./broken.html";
       using server = Bun.serve({
         port: 0,
         hostname: "127.0.0.1",
         development: ${development},
-        routes: { "/": plain, "/broken": broken },
+        routes: { "/": plain, "/compiled": compiled, "/broken": broken },
       });
-      for (const path of ["/", "/broken"]) {
+      for (const path of ["/", "/compiled", "/broken", "/broken"]) {
         const response = await fetch(new URL(path, server.url));
         console.log(response.status);
         await response.text();
@@ -52,7 +55,7 @@ test.concurrent.each([true, false])("a served HTML module must be executable (de
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout.trim().split(/\r?\n/)).toEqual(["200", "500"]);
+  expect(stdout.trim().split(/\r?\n/)).toEqual(["200", "200", "500", "500"]);
   if (development) {
     expect(stderr).toContain("Cannot preserve JSX");
     expect(stderr).toContain("broken.tsx:2:13");

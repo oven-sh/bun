@@ -255,8 +255,7 @@ impl Route {
                             bstr::BStr::new(req.url())
                         );
                     }
-                    // TODO: use the code from bake/dev_server/failures.rs to render the error
-                    resp.end_without_body(true);
+                    Self::end_build_error(resp);
                 }
                 State::Html(html) => {
                     if bun_core::Environment::ENABLE_LOGS {
@@ -595,6 +594,12 @@ impl Route {
         self.resume_pending_responses();
     }
 
+    fn end_build_error(resp: AnyResponse) {
+        resp.write_status(b"500 Build Failed");
+        resp.write_header_int(b"Content-Length", 0);
+        resp.end_without_body(true);
+    }
+
     fn resume_pending_responses(&self) {
         // R-2: `JsCell::replace` moves the Vec out so the per-response loop
         // (which writes responses and may run uws callbacks) holds no borrow
@@ -619,24 +624,8 @@ impl Route {
                     }
                 }
                 State::Err(_log) => {
-                    if self
-                        .server
-                        .get()
-                        .expect("server set")
-                        .config()
-                        .is_development()
-                    {
-                        // TODO: use the code from bake/dev_server/failures.rs to render the error
-                    } else {
-                        // To protect privacy, do not show errors to end users in production.
-                        // TODO: Show a generic error page.
-                    }
-                    // This runs from a JS event-loop task, not a uWS handler,
-                    // so `end_without_body(true)` alone cannot close the
-                    // socket; write Content-Length so the client has framing.
-                    resp.write_status(b"500 Build Failed");
-                    resp.write_header_int(b"Content-Length", 0);
-                    resp.end_without_body(true);
+                    // Pending responses are completed outside the uWS handler and need explicit framing.
+                    Self::end_build_error(resp);
                 }
                 _ => {
                     resp.write_header_int(b"Content-Length", 0);

@@ -1856,9 +1856,11 @@ describe("bundler", () => {
           const obj = { key: "value" }, key = "identifier", View = () => null;
           console.log(JSON.stringify([
             <View {obj.key} />, <View {key} />, <View {"key"} />, <View key="explicit" />,
+            <View {obj.key} key="explicit" />,
           ]));
         `,
         "/node_modules/fixture/jsx-runtime.js": "export const jsx = (_, props, key) => ({ props, key });",
+        "/node_modules/fixture/index.js": "export const createElement = (_, props) => ({ props });",
       },
       target: "bun",
       jsx: { runtime: "preserve" },
@@ -1877,6 +1879,7 @@ describe("bundler", () => {
           { props: { key: "identifier" } },
           { props: { key: "key" } },
           { props: {}, key: "explicit" },
+          { props: { key: "explicit" } },
         ]),
       },
     });

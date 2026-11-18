@@ -2,6 +2,7 @@
 
 #![warn(unused_must_use)]
 #![feature(arbitrary_self_types)]
+#![feature(core_io_borrowed_buf)]
 pub mod error;
 pub use error::{CertError, Error, Result};
 #[path = "AsyncHTTP.rs"]

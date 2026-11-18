@@ -165,6 +165,10 @@ const noUnify: readonly string[] = [
   "src/jsc/bindings/highway_webp_encoder.cpp",
   // The highway TU for the checksums of gzip and zlib — same reason.
   "src/jsc/bindings/highway_checksums.cpp",
+  // The highway TU of the Brotli encoder — same reason.
+  "src/jsc/bindings/highway_brotli.cpp",
+  // The highway TU of src/zlib — same reason.
+  "src/jsc/bindings/highway_zlib.cpp",
   // Declares its own minimal CGRect/kCFStringEncodingUTF8/kCFNumberDoubleType
   // so it doesn't pull a CoreGraphics load command; bundled with files that
   // include the real CF headers those names become ambiguous.

@@ -11,4 +11,5 @@ pub mod method_jsc;
 
 pub mod headers_jsc;
 
+mod permessage_deflate;
 pub mod websocket_client;

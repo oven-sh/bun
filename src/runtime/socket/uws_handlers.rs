@@ -414,12 +414,15 @@ impl<const SSL: bool> VHandler for Valkey<SSL> {
     /// Half-open sockets are not allowed: the close event follows.
     fn on_end(_: &mut Self::Ext, _: *mut us_socket_t) {}
     fn on_connect_error(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32) {
-        Self::on_close(ext, s, code, None);
+        if let Some(dial) = ext.owner_ref().and_then(|this| this.dial.take()) {
+            fold(ValkeyH::<SSL>::on_connect_error(dial, wrap(s), code));
+        }
     }
-    fn on_connecting_error(c: *mut ConnectingSocket, _: i32) {
+    fn on_connecting_error(c: *mut ConnectingSocket, code: i32) {
         let ext = ConnectingSocket::opaque_mut(c).ext::<Self::Ext>();
         if let Some(dial) = ext.owner_ref().and_then(|this| this.dial.take()) {
-            fold(ValkeyH::<SSL>::on_close(dial));
+            let socket = NewSocketHandler::from_connecting(c);
+            fold(ValkeyH::<SSL>::on_connect_error(dial, socket, code));
         }
     }
     fn on_handshake(

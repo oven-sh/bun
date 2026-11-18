@@ -11,7 +11,7 @@ use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, GlobalRef, JSArray, JSGlobalObject, JSMap, JSPromise, JSPromiseStrong, JSValue,
-    JsCell, JsResult,
+    JsCell, JsResult, Strong,
 };
 use bun_ptr::RefPtr;
 use bun_uws as uws;
@@ -22,7 +22,7 @@ use super::protocol_jsc::{
 };
 use super::valkey;
 use bun_jsc::url::Parsed;
-use bun_valkey::client::{Acked, Attempt, Client, Close, Config, Event, Lost, Sent};
+use bun_valkey::client::{Acked, Attempt, Client, Close, Config, Event, Lost, Reason, Sent};
 use bun_valkey::command::Reply;
 use bun_valkey::valkey_protocol::{RESPValue, RedisError};
 
@@ -596,7 +596,7 @@ impl JSValkeyClient {
             Close::Socket => self.close_socket(uws::CloseCode::FastShutdown),
             Close::Retry(attempt) => {
                 self.reconnect_timer.disarm();
-                self.on_lost(this.into(), attempt)
+                self.on_lost(this.into(), attempt, None)
             }
         }
     }
@@ -688,12 +688,19 @@ impl JSValkeyClient {
     fn dial(self: &RefPtr<Self>, object: Object<'_>, attempt: Attempt) {
         self.update_poll_ref(object);
         let hold = Rc::new(Hold::new(self, object));
-        let dial = Dial { hold, attempt };
-        if let Some(socket) = self.open_socket() {
-            self.socket.set(socket);
-            self.dial.set(dial);
-            self.reset_connection_timeout();
-            return;
+        let mut dial = Dial {
+            hold,
+            attempt,
+            failure: None,
+        };
+        match self.open_socket() {
+            Ok(socket) => {
+                self.socket.set(socket);
+                self.dial.set(dial);
+                self.reset_connection_timeout();
+                return;
+            }
+            Err(failure) => dial.failure = failure,
         }
         self.client.with_mut(Client::dial_failed);
         // A turn later: `onclose` may dial, and fail the same way.
@@ -703,10 +710,14 @@ impl JSValkeyClient {
             .enqueue_task(jsc::Task::from_boxed(task));
     }
 
-    fn open_socket(self: &RefPtr<Self>) -> Option<Socket> {
+    fn dial_failure(&self, message: &str) -> Strong {
+        Strong::create(self.closed_error(message), &self.global_object)
+    }
+
+    fn open_socket(self: &RefPtr<Self>) -> Result<Socket, Option<Strong>> {
         // What script of a disposed `Bun.ModuleGraph` starts does not start.
         if self.context_stopped() {
-            return None;
+            return Err(None);
         }
 
         let is_tls = !matches!(self.tls, valkey::TLS::None);
@@ -730,22 +741,20 @@ impl JSValkeyClient {
                     self._secure.set(cache.get_or_create(custom, &mut err));
                 }
                 let Some(secure) = self._secure.get() else {
+                    let failure = self.dial_failure("Failed to create TLS context");
                     // Only the VM's termination fails a rejection, and that stays pending.
-                    let _ = self.fail(valkey_error_to_js(
-                        &self.global_object,
-                        b"Failed to create TLS context",
-                        RedisError::ConnectionClosed,
-                    ));
-                    return None;
+                    let _ = self.fail(failure.get());
+                    return Err(Some(failure));
                 };
                 Some(secure.as_ptr())
             }
         };
 
         let dialed = self.address.connect(self.as_ptr(), group, ssl_ctx, is_tls);
-        dialed
-            .inspect_err(|err| debug!("dial failed before a socket was opened: {}", err.name()))
-            .ok()
+        dialed.map_err(|_| {
+            let message = self.address.connect_error(bun_sys::last_error() as i32)?;
+            Some(self.dial_failure(&message))
+        })
     }
 
     /// The close event has run when this returns; `Err` when it left a termination pending.
@@ -921,7 +930,8 @@ impl JSValkeyClient {
             Ok(hello) => hello,
             Err(err) if global_object.has_pending_termination_exception() => return Err(err),
             Err(err) => {
-                let error = global_object.take_exception(err);
+                let exception = global_object.take_exception(err);
+                let error = exception.to_error().unwrap_or(exception);
                 self.connection_promise_returns_client.set(false);
                 let rejected = match object.take_connection_promise(global_object) {
                     Some(promise) => promise.reject(global_object, Ok(error)),
@@ -958,26 +968,28 @@ impl JSValkeyClient {
         result
     }
 
-    fn reject_all_as_closed(&self, promises: Vec<JSPromiseStrong>, reason: &str) -> JsResult<()> {
-        if promises.is_empty() {
-            return Ok(());
-        }
-        let (reason, error) = (reason.as_bytes(), RedisError::ConnectionClosed);
-        let error = valkey_error_to_js(&self.global_object, reason, error);
-        self.reject_all(promises, error)
+    fn closed_error(&self, message: &str) -> JSValue {
+        let error = RedisError::ConnectionClosed;
+        valkey_error_to_js(&self.global_object, message.as_bytes(), error)
     }
 
     fn fail(&self, error: JSValue) -> JsResult<()> {
         let Some(pending) = self.client.with_mut(Client::fail) else {
             return Ok(());
         };
+        self.dial.fail(Strong::create(error, &self.global_object));
         let rejected = self.reject_all(pending, error);
         // The one code whose close event has run when the call returns.
         let closed = self.close_socket(uws::CloseCode::Failure);
         rejected.and(closed)
     }
 
-    fn on_lost(self: &RefPtr<Self>, object: Object<'_>, attempt: Attempt) -> JsResult<()> {
+    fn on_lost(
+        self: &RefPtr<Self>,
+        object: Object<'_>,
+        attempt: Attempt,
+        failure: Option<&Strong>,
+    ) -> JsResult<()> {
         let _update = UpdatePollRefOnDrop(self, object);
         AutoFlusher::unregister_deferred_microtask_with_type(&**self, self.vm);
         let owner_is_gone = self.context_stopped();
@@ -986,16 +998,29 @@ impl JSValkeyClient {
             .with_mut(|client| client.lost(attempt, owner_is_gone));
         // It bounded the attempt that just ended.
         self.timer.disarm();
+        let closed = || self.closed_error("Connection closed");
         match lost {
             Lost::ForGood { reason, pending } => {
-                self.reject_all_as_closed(pending, reason)?;
-                self.on_closed(object)
+                let failure = || failure.map_or_else(closed, Strong::get);
+                let error = match reason {
+                    Reason::Requested => closed(),
+                    Reason::Final => failure(),
+                    Reason::RetriesUsedUp => {
+                        let error = self.closed_error("Max reconnection attempts reached");
+                        error.put_non_enumerable(&self.global_object, b"cause", failure());
+                        error
+                    }
+                };
+                self.reject_all(pending, error)?;
+                self.on_closed(object, error)
             }
             Lost::Retry {
                 delay_ms,
                 in_flight,
             } => {
-                self.reject_all_as_closed(in_flight, "Connection closed")?;
+                if !in_flight.is_empty() {
+                    self.reject_all(in_flight, closed())?;
+                }
                 debug!("reconnect in {}ms", delay_ms);
                 self.reconnect_timer
                     .arm(self, delay_ms, || Hold::new(self, object));
@@ -1004,7 +1029,7 @@ impl JSValkeyClient {
         }
     }
 
-    fn on_closed(&self, object: Object<'_>) -> JsResult<()> {
+    fn on_closed(&self, object: Object<'_>, error: JSValue) -> JsResult<()> {
         let global_object = &self.global_object;
         let this_value = object.to_js();
         if global_object.has_exception() {
@@ -1012,11 +1037,6 @@ impl JSValkeyClient {
             return Err(bun_jsc::JsError::Thrown);
         }
 
-        let error = valkey_error_to_js(
-            global_object,
-            b"Connection closed",
-            RedisError::ConnectionClosed,
-        );
         let _exit = self.vm.enter_event_loop_scope();
 
         if let Some(promise) = object.take_connection_promise(global_object) {
@@ -1196,11 +1216,10 @@ impl<const SSL: bool> SocketHandler<SSL> {
             this.start();
         } else if let Some(in_flight) = this.client.with_mut(Client::session_broke) {
             // uSockets closes the socket next. No scope: script sees these once it has.
-            if !in_flight.is_empty() {
-                let global = &this.global_object;
-                let error = crate::socket::uws_jsc::verify_error_to_js(&ssl_error, global);
-                return this.reject_all(in_flight, error);
-            }
+            let global = &this.global_object;
+            let error = crate::socket::uws_jsc::verify_error_to_js(&ssl_error, global);
+            this.dial.fail(Strong::create(error, global));
+            return this.reject_all(in_flight, error);
         } else if ssl_error.error_no == uws::us_bun_verify_error_t::HOSTNAME_MISMATCH {
             // The same check, made inside the handshake (`server_identity`).
             let hostname = Self::configured_hostname(this);
@@ -1228,12 +1247,28 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this.fail(err_value)
     }
 
-    pub(crate) fn on_close(Dial { hold, attempt }: Dial) -> JsResult<()> {
+    pub(crate) fn on_close(dial: Dial) -> JsResult<()> {
         debug!("Socket closed.");
-        let this = &hold.client;
+        let this = &dial.hold.client;
         this.socket
             .set(Socket::SocketTcp(uws::SocketTCP::detached()));
-        this.on_lost(hold.object(), attempt)
+        this.on_lost(dial.hold.object(), dial.attempt, dial.failure.as_ref())
+    }
+
+    pub(crate) fn on_connect_error(
+        mut dial: Dial,
+        socket: SocketType<SSL>,
+        code: i32,
+    ) -> JsResult<()> {
+        let this = &dial.hold.client;
+        let message = match socket.dns_error() {
+            0 => this.address.connect_error(code),
+            code => this.address.lookup_error(code),
+        };
+        if let Some(message) = message {
+            dial.failure = Some(this.dial_failure(&message));
+        }
+        Self::on_close(dial)
     }
 
     pub(crate) fn on_data(hold: &Hold, socket: SocketType<SSL>, data: &[u8]) {
@@ -1344,11 +1379,15 @@ pub(crate) struct ValkeyDeferredClose(Dial);
 impl ValkeyDeferredClose {
     #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
     pub(crate) fn run(self: Box<Self>) {
-        let Dial { hold, attempt } = self.0;
-        let this = &hold.client;
+        let dial = self.0;
+        let this = &dial.hold.client;
         // (A socket's close event arrives inside the client's context; so does this one.)
         let _context = this.vm.enter_context(this.context);
-        crate::dispatch::fold(this.on_lost(hold.object(), attempt));
+        crate::dispatch::fold(this.on_lost(
+            dial.hold.object(),
+            dial.attempt,
+            dial.failure.as_ref(),
+        ));
     }
 }
 

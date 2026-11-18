@@ -303,6 +303,38 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
         true
     }
 
+    /// The bare `import` of a stylesheet that had a wrapper before it had a JS stub (a wrapped file imports it, or its stub has a wrapper): the part prints nothing and stays in the range of its file.
+    pub(crate) fn is_import_of_stylesheet_that_had_a_wrapper(
+        &self,
+        source_index: crate::IndexInt,
+        part: &Part,
+    ) -> bool {
+        let stmts: &[Stmt] = part.stmts.slice();
+        if stmts.len() != 1 {
+            return false;
+        }
+        let Some(s_import) = stmts[0].data.s_import() else {
+            return false;
+        };
+        let record = &self.graph.ast.items_import_records()[source_index as usize]
+            [s_import.import_record_index as usize];
+        if !record.source_index.is_valid() {
+            return false;
+        }
+        let stylesheet = record.source_index.get();
+        let flags = self.graph.meta.items_flags();
+        self.parse_graph().css_asts[stylesheet as usize].is_some()
+            && (flags[stylesheet as usize].did_wrap_dependencies
+                || self
+                    .parse_graph()
+                    .css_js_stubs
+                    .stub_of(
+                        stylesheet,
+                        self.graph.ast.items_target()[source_index as usize],
+                    )
+                    .is_some_and(|stub| flags[stub as usize].wrap != WrapKind::None))
+    }
+
     pub(crate) fn load(
         bundle: &'l BundleV2<'a>,
         mut graph: LinkerGraph<'a>,
@@ -678,10 +710,9 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
             }
         }
 
-        // A stylesheet has no JS parts and no wrapper. Its JS stub has no `__esm` wrapper: its class names exist before any file runs.
+        // A stylesheet has no JS parts and no wrapper. What JavaScript reads of it is in its JS stub.
         if cfg!(debug_assertions) {
             let flags = self.graph.meta.items_flags();
-            let css_js_stubs = &self.parse_graph().css_js_stubs;
             for (source_index, stylesheet) in self.parse_graph().css_asts.iter().enumerate() {
                 debug_assert!(
                     stylesheet.is_none()
@@ -689,10 +720,6 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
                             .find_first_set()
                             .is_none()
                             && flags[source_index].wrap == WrapKind::None)
-                );
-                debug_assert!(
-                    css_js_stubs.stylesheet_of(source_index as u32).is_none()
-                        || flags[source_index].wrap != WrapKind::Esm
                 );
             }
         }

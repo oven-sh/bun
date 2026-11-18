@@ -2173,7 +2173,10 @@ pub mod bv2_impl {
                                 && !is_css
                                 && loader != Loader::Html
                                 && match import_record.kind {
-                                    ImportKind::Require | ImportKind::Dynamic => true,
+                                    // An `import` of the path of a stylesheet as an HTML page has the row of the stylesheet.
+                                    ImportKind::Require
+                                    | ImportKind::Dynamic
+                                    | ImportKind::HtmlManifest => true,
                                     ImportKind::Stmt => {
                                         !import_record.flags.contains(
                                             bun_ast::ImportRecordFlags::WAS_ORIGINALLY_BARE_IMPORT,

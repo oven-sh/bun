@@ -145,6 +145,19 @@ impl CssJsStubs {
             .map(|&(stylesheet, _)| stylesheet)
     }
 
+    /// The stub that JavaScript of `target` imports for the value of `stylesheet`.
+    #[inline]
+    pub(crate) fn stub_of(
+        &self,
+        stylesheet: IndexInt,
+        target: options::Target,
+    ) -> Option<IndexInt> {
+        if self.stubs.is_empty() {
+            return None;
+        }
+        Some(self.first + self.stubs.get_index(&(stylesheet, target))? as IndexInt)
+    }
+
     pub(crate) fn len(&self) -> usize {
         self.stubs.count()
     }

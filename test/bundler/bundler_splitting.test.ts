@@ -974,6 +974,21 @@ describe("bundler", () => {
     });
   }
 
+  // An HTML page and its own script are two entry points. The chunk of the page's script and the entry point have
+  // one path, `p/index.js` and `./p/index.js`, and equal bytes: the build writes it, as it did before.
+  itBundled("splitting/ChunkNameWithoutHashOfPageAndItsScript", {
+    backend: "cli",
+    files: {
+      "/p/index.html": `<script type="module" src="./index.js"></script>`,
+      "/p/index.js": `console.log("index ran");`,
+      "/q/other.js": `console.log("other ran");`,
+    },
+    entryPointsRaw: ["./p/index.html", "./p/index.js", "./q/other.js"],
+    outdir: "/out",
+    chunkNaming: "[dir]/[name].[ext]",
+    run: { file: "/out/p/index.js", stdout: "index ran" },
+  });
+
   // The size of a chunk for --min-chunk-size does not count the text of a stylesheet: the class names of a
   // long stylesheet go into the chunk of shared.js, as the class names of a short one do.
   itBundled("splitting/MinChunkSizeDoesNotCountTheTextOfAStylesheet", {

@@ -125,6 +125,7 @@ pub(crate) fn find_imported_parts_in_js_order(
         parts_prefix: Vec::new(),
         namespace_objects: Vec::new(),
         class_names: Vec::new(),
+        ends_range_of_files: false,
         chunk_index,
         // The one column written through a shared `&LinkerContext` (see `place`).
         entry_point_chunk_indices: this.graph.files.split_raw().entry_point_chunk_index,
@@ -947,6 +948,8 @@ struct ChunkLayout<'a, 'ctx> {
     namespace_objects: Vec<PartRange>,
     /// The class names of a stylesheet (its JS stub) run nothing and exist before any file runs, like a namespace object.
     class_names: Vec<PartRange>,
+    /// The class names printed where their stub is placed, before they had a section: the range of the file that imports them still ends there.
+    ends_range_of_files: bool,
     chunk_index: u32,
     /// Raw `entry_point_chunk_index` column, for the one write in `place`.
     entry_point_chunk_indices: *mut [u32],
@@ -969,10 +972,17 @@ impl ChunkLayout<'_, '_> {
         let max = RANGE_SOURCE_BYTES_MAX;
         let ranges = match section {
             Section::Prefix => &mut self.parts_prefix,
-            Section::ClassNames => &mut self.class_names,
+            Section::ClassNames => {
+                self.ends_range_of_files = true;
+                &mut self.class_names
+            }
             Section::Files => &mut self.part_ranges,
         };
-        if let Some(last_range) = ranges.last_mut() {
+        let ends_range = matches!(section, Section::Files)
+            && core::mem::take(&mut self.ends_range_of_files);
+        if let Some(last_range) = ranges.last_mut()
+            && !ends_range
+        {
             if last_range.source_index.get() == source_index
                 && last_range.part_index_end == part_index
                 && part_start(part_index) - part_start(last_range.part_index_begin) < max
@@ -1040,6 +1050,16 @@ impl ChunkLayout<'_, '_> {
                             part_index,
                         );
                     }
+                } else if parts_live.is_set(part_index as usize)
+                    && self.c.is_import_of_stylesheet_that_had_a_wrapper(
+                        source_index,
+                        &parts[part_index as usize],
+                    )
+                    && let Some(last_range) = self.part_ranges.last_mut()
+                    && last_range.source_index.get() == source_index
+                    && last_range.part_index_end == part_index
+                {
+                    last_range.part_index_end += 1;
                 }
             }
         }

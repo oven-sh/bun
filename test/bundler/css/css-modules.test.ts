@@ -602,6 +602,86 @@ describe("css", () => {
     });
   }
 
+  // a.js and b.js await at their top level, and entry.js starts both before either of them finishes. The import
+  // of the stylesheet between them does not end that range of statements: page.js, which import() loads, imports
+  // the stylesheet too.
+  for (const [kind, statement] of Object.entries({
+    CSSModule: `import styles from "./x.module.css";`,
+    BareImport: `import "./plain.css";`,
+  })) {
+    itBundled(`css-module/${kind}BetweenTwoImportsThatAwait`, {
+      files: {
+        "/entry.js": `
+          import "./a.js";
+          ${statement}
+          import "./b.js";
+          console.log("entry");
+          export const later = () => import("./page.js");
+        `,
+        "/page.js": `
+          import "./a.js";
+          import "./b.js";
+          ${statement}
+          console.log("page");
+        `,
+        "/a.js": `console.log("a1"); await 0; console.log("a2");`,
+        "/b.js": `console.log("b1"); await 0; console.log("b2");`,
+        "/x.module.css": `.foo { color: red }`,
+        "/plain.css": `.plain { color: green }`,
+      },
+      outdir: "/out",
+      run: { stdout: "a1\nb1\na2\nb2\nentry" },
+    });
+  }
+
+  // first.cjs runs before second.js. The class names that entry.js exports between the two imports print ahead
+  // of every file, and the statements of entry.js keep the two ranges that they had.
+  itBundled("css-module/ReExportOfClassNamesBetweenRequiredAndImportedFiles", {
+    files: {
+      "/entry.js": `
+        import "./first.cjs";
+        export { default } from "./x.module.css";
+        import "./second.js";
+        export const later = () => import("./second.js");
+      `,
+      "/first.cjs": `console.log("first");`,
+      "/second.js": `console.log("second");`,
+      "/x.module.css": `.foo { color: red }`,
+    },
+    outdir: "/out",
+    run: { stdout: "first\nsecond" },
+  });
+
+  // entry.js has exports that are known at run time only. Its bare import reads no export of the stylesheet.
+  itBundled("css-module/BareImportNextToExportStarOfCommonJS", {
+    files: {
+      "/entry.js": `
+        import "./plain.css";
+        export * from "./legacy.cjs";
+        console.log("entry");
+      `,
+      "/legacy.cjs": `module.exports = { value: 1 };`,
+      "/plain.css": `.plain { color: green }`,
+    },
+    outdir: "/out",
+    run: { stdout: "entry" },
+  });
+
+  // The path of a stylesheet that is also imported as an HTML page has one row, the stylesheet.
+  itBundled("css-module/StylesheetPathImportedAsHTMLPage", {
+    files: {
+      "/entry.js": `
+        import styles from "./x.module.css";
+        import page from "./x.module.css" with { type: "html" };
+        console.log(styles.foo, JSON.stringify(page));
+      `,
+      "/x.module.css": `.foo { color: red }`,
+    },
+    target: "bun",
+    outdir: "/out",
+    run: { stdout: 'foo_e7Ht-A {"foo":"foo_e7Ht-A"}' },
+  });
+
   // A file that is wrapped (here: loaded by require() or by an import() that is not split) can have a bare
   // import of a stylesheet. The stylesheet has no JavaScript, so it gets no wrapper and no call.
   const wrappedFiles = {

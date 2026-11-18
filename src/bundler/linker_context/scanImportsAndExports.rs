@@ -96,15 +96,7 @@ pub(crate) fn scan_imports_and_exports(
                     input_files,
                 );
 
-                // `DependencyWrapper::wrap` stops at a stylesheet: no JS parts. A wrapped file can have a bare `import` of one.
-                meta.flags[id].did_wrap_dependencies = true;
-
                 continue;
-            }
-
-            // The JS stub of a stylesheet runs nothing: a wrapped importer does not wrap it. It prints ahead of every file.
-            if css_js_stubs.stylesheet_of(id as u32).is_some() {
-                meta.flags[id].did_wrap_dependencies = true;
             }
 
             // Named static imports contribute exactly their aliases to the
@@ -384,6 +376,9 @@ pub(crate) fn scan_imports_and_exports(
                 export_star_map: HashMap::default(),
                 export_star_records: ast.export_star_import_records,
                 output_format,
+                css_asts,
+                css_js_stubs,
+                targets: ast.target,
                 wrap_stack: Vec::new(),
                 export_star_stack: Vec::new(),
             };
@@ -432,6 +427,34 @@ pub(crate) fn scan_imports_and_exports(
                         if dependency_wrapper.exports_kind[si as usize] == ExportsKind::Cjs {
                             dependency_wrapper.wrap(si);
                         }
+                    }
+                }
+            }
+        }
+
+        // A bare `import` of a stylesheet calls the `init_` wrapper of its JS stub, as an `import` of the class names does.
+        if css_js_stubs.len() > 0 {
+            for source_index_ in &reachable {
+                let id = source_index_.get() as usize;
+                if !(id < ast.import_records.len())
+                    || css_asts[id].is_some()
+                    || loaders[id] == Loader::Html
+                {
+                    continue;
+                }
+                let target = ast.target[id];
+                for record in ast.import_records[id].as_mut_slice() {
+                    if record.kind != ImportKind::Stmt || !record.source_index.is_valid() {
+                        continue;
+                    }
+                    let stylesheet = record.source_index.get();
+                    if css_asts[stylesheet as usize].is_none() {
+                        continue;
+                    }
+                    if let Some(stub) = css_js_stubs.stub_of(stylesheet, target)
+                        && meta.flags[stub as usize].wrap == WrapKind::Esm
+                    {
+                        record.source_index = Index::init(stub);
                     }
                 }
             }
@@ -669,6 +692,7 @@ pub(crate) fn scan_imports_and_exports(
         let (arena, code_splitting) = (this.graph.arena(), this.graph.code_splitting);
         this.entry_point_part_indices = vec![u32::MAX; this.graph.ast.len()];
 
+        let css_asts = &this.parse_graph().css_asts;
         let ast = this.graph.ast.split_mut();
         let meta = this.graph.meta.split_mut();
         let entry_point_kinds = this.graph.files.items_entry_point_kind();
@@ -1201,6 +1225,7 @@ pub(crate) fn scan_imports_and_exports(
                         }
                     } else if kind == ImportKind::Stmt
                         && export_kind == ExportsKind::EsmWithDynamicFallback
+                        && css_asts[other_id].is_none()
                     {
                         // This is an import of a module that has a dynamic export fallback
                         // object. In that case we need to depend on that object in case
@@ -1358,7 +1383,7 @@ fn should_call_runtime_require(format: options::Format) -> bool {
 // ──────────────────────────────────────────────────────────────────────────
 // DependencyWrapper
 // ──────────────────────────────────────────────────────────────────────────
-struct DependencyWrapper<'a> {
+struct DependencyWrapper<'a, 'css> {
     flags: &'a mut [js_meta::Flags],
     exports_kind: &'a mut [ExportsKind],
     import_records: &'a [ImportRecordList<'a>],
@@ -1366,6 +1391,9 @@ struct DependencyWrapper<'a> {
     entry_point_kinds: &'a [EntryPoint::Kind],
     export_star_records: &'a [bun_alloc::AstVec<u32>],
     output_format: options::Format,
+    css_asts: &'a crate::Graph::CssAsts<'css>,
+    css_js_stubs: &'a crate::Graph::CssJsStubs,
+    targets: &'a [options::Target],
     wrap_stack: Vec<IndexInt>,
     export_star_stack: Vec<ExportStarFrame>,
 }
@@ -1385,7 +1413,7 @@ enum ExportStarEntry {
     Pushed,
 }
 
-impl DependencyWrapper<'_> {
+impl DependencyWrapper<'_, '_> {
     /// Marks `source_index` as `EsmWithDynamicFallback` if it transitively
     /// `export *`s from a file whose exports are not statically analyzable
     /// (CommonJS, or an unresolved external `export *`), along with every file
@@ -1490,10 +1518,23 @@ impl DependencyWrapper<'_> {
             }
 
             for record in self.import_records[source_index as usize].as_slice() {
-                if record.source_index.is_valid()
-                    && !self.flags[record.source_index.get() as usize].did_wrap_dependencies
-                {
-                    self.wrap_stack.push(record.source_index.get());
+                if !record.source_index.is_valid() {
+                    continue;
+                }
+                let mut other = record.source_index.get();
+                // A stylesheet has no JS parts and no wrapper. Its JS stub has the wrapper, also for a bare `import`. The flag says that a wrapped file imports the stylesheet.
+                if self.css_asts[other as usize].is_some() {
+                    self.flags[other as usize].did_wrap_dependencies = true;
+                    match self
+                        .css_js_stubs
+                        .stub_of(other, self.targets[source_index as usize])
+                    {
+                        Some(stub) => other = stub,
+                        None => continue,
+                    }
+                }
+                if !self.flags[other as usize].did_wrap_dependencies {
+                    self.wrap_stack.push(other);
                 }
             }
         }

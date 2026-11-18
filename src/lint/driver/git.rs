@@ -13,7 +13,9 @@ use bun_core::strings;
 use bun_sema::resolve::ScriptKind;
 use bun_sema::util::{FxHashMap, FxHashSet};
 use bun_sema_driver::host::{AlreadyRead, as_read, from_native};
+use bun_threading::Guarded;
 use std::borrow::Cow;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Selects the files to ask git for.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -149,14 +151,23 @@ fn object_id(finished: &Finished) -> Option<&[u8]> {
     (finished.is_ok && !id.is_empty() && id.iter().all(u8::is_ascii_hexdigit)).then_some(id)
 }
 
+/// Returns the last part of `path`, which is absolute and uses `/`. [`paths::basename`] is a slower loop over bytes.
+fn file_name(path: &[u8]) -> &[u8] {
+    strings::last_index_of_char(path, b'/').map_or(path, |at| &path[at + 1..])
+}
+
 /// The files git listed for `--staged` or `--changed`.
 pub(crate) struct Files<'e> {
     only: &'e Only,
     environment: &'e Environment<'e>,
-    /// The root of the work tree. It comes from `getcwd`, so it contains no symlinks.
-    top: Vec<u8>,
-    /// Absolute paths, in `top`.
+    /// Absolute paths. Git names a file by its real path, below a root that comes from `getcwd`.
     listed_paths: FxHashSet<Vec<u8>>,
+    /// The file names in `listed_paths`.
+    names: FxHashSet<Vec<u8>>,
+    /// False after a [search](Files::searched) that went through no symlink: its paths are spelled like the lists.
+    resolves: AtomicBool,
+    /// For a directory that was resolved: its real path if a symlink leads to it, `None` if the path is the real one.
+    real_directories: Guarded<FxHashMap<Vec<u8>, Option<Vec<u8>>>>,
     /// For `--staged`: index contents of files that differ on disk or were deleted there, keyed by absolute path.
     /// Covers the files in `listed_paths` and, in a run that follows imports, every file they could import.
     index_contents: FxHashMap<Vec<u8>, Vec<u8>>,
@@ -175,8 +186,10 @@ impl<'e> Files<'e> {
         let mut files = Files {
             only,
             environment,
-            top: Vec::new(),
             listed_paths: FxHashSet::default(),
+            names: FxHashSet::default(),
+            resolves: AtomicBool::new(true),
+            real_directories: Guarded::new(FxHashMap::default()),
             index_contents: FxHashMap::default(),
             not_on_disk: Vec::new(),
         };
@@ -192,7 +205,6 @@ impl<'e> Files<'e> {
         let up =
             strings::last_index_of_char(printed, b'\n').map_or(printed, |at| &printed[at + 1..]);
         let top = paths::resolve(&environment.cwd, &paths::from_native(up));
-        files.top.clone_from(&top);
         match only {
             Only::Staged => {
                 files.listed_paths = files.diff(&top, &[b"--cached", EXISTING_FILES_FILTER])?;
@@ -222,6 +234,8 @@ impl<'e> Files<'e> {
                 )?);
             }
         }
+        let names: FxHashSet<&[u8]> = files.listed_paths.iter().map(|it| file_name(it)).collect();
+        files.names = names.into_iter().map(<[u8]>::to_vec).collect();
         Ok(files)
     }
 
@@ -359,24 +373,64 @@ impl<'e> Files<'e> {
         ))
     }
 
+    /// Takes what a file search went through: `links` are symlinks to directories, each with its real path.
+    pub(crate) fn searched(&self, links: Vec<(Vec<u8>, Vec<u8>)>, named_a_file: bool) {
+        // The search doesn't resolve a file that an argument names, so that path can go through a symlink too.
+        let resolves = named_a_file || !links.is_empty();
+        self.resolves.store(resolves, Ordering::Relaxed);
+        let links = links.into_iter().map(|(link, real)| (link, Some(real)));
+        self.real_directories.lock().extend(links);
+    }
+
+    /// Like [`Files::searched`], for a search that follows no symlink and doesn't resolve its `arguments`.
+    #[optimize(size)]
+    pub(crate) fn searched_unresolved(&self, arguments: &[Vec<u8>]) {
+        // Only the working directory is known to be real.
+        let cwd = &self.environment.cwd;
+        let is_elsewhere = |it: &Vec<u8>| paths::resolve(cwd, &paths::from_native(it)) != *cwd;
+        self.searched(Vec::new(), arguments.iter().any(is_elsewhere));
+    }
+
     /// Returns `path` (absolute) spelled the way the lists spell it. An argument can reach the work tree through a
     /// symlink: `/tmp/repo/a.js` on macOS, or `$PWD/a.js` in a shell that got here through one. Only the directory is
-    /// resolved, because a symlink to a file doesn't count as that file. A path in `top` is used as is, so an ordinary
+    /// resolved, because a symlink to a file doesn't count as that file. A search says if it met one, so an ordinary
     /// run resolves nothing.
     fn as_listed<'p>(&self, path: &'p [u8]) -> Cow<'p, [u8]> {
-        if paths::inside(&self.top, path).is_some() {
+        // A path that is listed or in the index is that file, even if a directory in it is now a symlink.
+        let is_as_listed = !self.resolves.load(Ordering::Relaxed)
+            || self.listed_paths.contains(path)
+            || self.index_contents.contains_key(path);
+        if is_as_listed {
             return Cow::Borrowed(path);
         }
-        match fs::real_path(paths::dirname(path)) {
-            Some(directory) => Cow::Owned(paths::join(&directory, paths::basename(path))),
+        match self.real_directory(paths::dirname(path)) {
+            Some(real) => Cow::Owned(paths::join(&real, file_name(path))),
             None => Cow::Borrowed(path),
         }
     }
 
-    /// True if git listed the file at `path` (absolute). A symlink doesn't count, even if it points to a file.
+    /// Returns the real path of `directory` (absolute) if it has a symlink in it. Each directory is resolved once.
+    #[optimize(size)]
+    fn real_directory(&self, directory: &[u8]) -> Option<Vec<u8>> {
+        if let Some(real) = self.real_directories.lock().get(directory) {
+            return real.clone();
+        }
+        let real = fs::real_path(directory).filter(|it| it != directory);
+        (self.real_directories.lock()).insert(directory.to_vec(), real.clone());
+        real
+    }
+
+    /// True if git listed the file at `path` (absolute). A symlink there doesn't count, even if it points to a file.
     pub(crate) fn has(&self, path: &[u8]) -> bool {
-        self.listed_paths.contains(&*self.as_listed(path))
+        // Few files are named like a listed one, so few directories are resolved after a search that met a symlink.
+        self.names.contains(file_name(path))
+            && self.listed_paths.contains(&*self.as_listed(path))
             && matches!(fs::link_kind_and_size(path), Some((fs::LinkKind::File, _)))
+    }
+
+    /// True if `path` (absolute) is the path that git has for a listed file, not another path to that file.
+    pub(crate) fn is_git_path(&self, path: &[u8]) -> bool {
+        self.listed_paths.contains(path)
     }
 
     /// Returns the staged files that exist only in the index, not on disk: absolute paths, each with the size of its
@@ -400,15 +454,52 @@ impl<'e> Files<'e> {
         (self.index_contents.get(&*self.as_listed(path))).map(Vec::as_slice)
     }
 
+    /// Returns the symlinks that lead to the directories in `real_directories`, each with its real path.
+    #[optimize(size)]
+    fn links(&self) -> Vec<(Vec<u8>, Vec<u8>)> {
+        let resolved = self.real_directories.lock();
+        let behind_links = resolved.iter().filter(|it| it.1.is_some());
+        let behind_links: Vec<Vec<u8>> = behind_links.map(|it| it.0.clone()).collect();
+        drop(resolved);
+        let (mut links, mut seen) = (Vec::new(), FxHashSet::default());
+        for directory in &behind_links {
+            // The directories above it are behind the symlink too, up to the symlink itself.
+            let behind = paths::ancestors(directory)
+                .take_while(|it| seen.insert(*it))
+                .map_while(|it| Some((it, self.real_directory(it)?)));
+            for (directory, real) in behind {
+                let above = self.real_directory(paths::dirname(directory));
+                if above.is_none_or(|it| paths::join(&it, file_name(directory)) != real) {
+                    links.push((directory.to_vec(), real));
+                }
+            }
+        }
+        links
+    }
+
     /// Converts `index_contents` for code that follows imports, so an imported file is read as it will be committed,
     /// even if it isn't staged itself.
+    #[optimize(size)]
     pub(crate) fn already_read(&self, keeps_byte_order_marks: bool) -> AlreadyRead {
-        (self.index_contents.iter())
-            .map(|(path, text)| {
-                let text = as_read(path, text.clone(), keeps_byte_order_marks);
-                (from_native(path), text)
-            })
-            .collect()
+        let read = |path: &[u8], text: &[u8]| {
+            let text = as_read(path, text.to_vec(), keeps_byte_order_marks);
+            (from_native(path), text)
+        };
+        let files = self.index_contents.iter();
+        let mut files: AlreadyRead = files.map(|(path, text)| read(path, text)).collect();
+        // A file behind a symlink to a directory names what it imports through that symlink.
+        let links = (!files.is_empty()).then(|| self.links());
+        for (link, real) in links.into_iter().flatten() {
+            files.extend(self.index_contents.iter().filter_map(|(listed, text)| {
+                let through = paths::join(&link, paths::inside(&real, listed)?);
+                // Below a nearer symlink, or a directory that became one, the path is another file.
+                let is_same = !self.index_contents.contains_key(&through)
+                    && (self.real_directory(paths::dirname(&through)))
+                        .is_none_or(|it| it == paths::dirname(listed));
+                is_same.then(|| read(&through, text))
+            }));
+        }
+        files
     }
 
     /// Message for a run with no files left. `verb` is what the run does to files, like "lint".

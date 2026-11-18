@@ -290,6 +290,11 @@ fn oxc_among<'p>(plugins: impl Iterator<Item = &'p [u8]>) -> Oxc {
     oxc
 }
 
+/// True if the plugin `name` is a package, as opposed to a path.
+fn is_package(name: &[u8]) -> bool {
+    !name.starts_with(b".") && !paths::is_absolute(name) && !name.starts_with(b"file:")
+}
+
 fn is_tailwind_plugin(name: &[u8]) -> bool {
     package_of(name) == TAILWIND_PLUGIN
 }
@@ -300,7 +305,7 @@ fn is_built_in(plugin: &Json) -> bool {
 
 /// Plugins that add a language to Prettier and don't affect other languages, each with its file name endings. The rest
 /// of a project is formatted the same without them.
-const LANGUAGE_PLUGINS: [(&[u8], &[&[u8]]); 21] = [
+const LANGUAGE_PLUGINS: [(&[u8], &[&[u8]]); 22] = [
     (b"prettier-plugin-astro", &[b".astro"]),
     (b"@prettier/plugin-pug", &[b".pug", b".jade"]),
     (b"@prettier/plugin-php", &[b".php"]),
@@ -331,6 +336,19 @@ const LANGUAGE_PLUGINS: [(&[u8], &[&[u8]]); 21] = [
     (b"prettier-plugin-marko", &[b".marko"]),
     (b"prettier-plugin-ejs", &[b".ejs"]),
     (b"prettier-plugin-elm", &[b".elm"]),
+    (
+        b"prettier-plugin-go-template",
+        &[
+            b".go.html",
+            b".gohtml",
+            b".gotmpl",
+            b".go.tmpl",
+            b".tmpl",
+            b".tpl",
+            b".html.tmpl",
+            b".html.tpl",
+        ],
+    ),
 ];
 
 fn plugin_endings(name: &[u8]) -> Option<&'static [&'static [u8]]> {
@@ -845,8 +863,7 @@ impl Plugins {
                 .map(<[u8]>::to_vec)
                 .collect(),
             packages: (plugins.iter().filter_map(Json::as_str))
-                .filter(|it| !it.starts_with(b".") && !it.starts_with(b"/"))
-                .filter(|it| !it.starts_with(b"file:"))
+                .filter(|it| is_package(it))
                 .map(<[u8]>::to_vec)
                 .collect(),
             endings: (plugins.iter())
@@ -1709,7 +1726,7 @@ impl<'c> Configs<'c> {
             .copied()
     }
 
-    /// True if Prettier formats the file at `path` in `scope` with a plugin that adds a language.
+    /// True if the file at `path` in `scope` is named like the files of a plugin that adds a language.
     pub(crate) fn is_formatted_by_plugin(&self, scope: &Scope, path: &[u8]) -> bool {
         (self.all_plugin_endings(scope, Some(path))).any(|ending| path.ends_with(ending))
     }
@@ -1722,13 +1739,25 @@ impl<'c> Configs<'c> {
     ) -> impl Iterator<Item = &'s [u8]> + use<'s, 'c> {
         (self.plugins_for(scope, path).into_iter())
             .flat_map(|it| &it.packages)
-            .chain(&self.options.plugins)
+            .chain(self.options.plugins.iter().filter(|it| is_package(it)))
             .map(|it| &it[..])
     }
 
     /// The path of the configuration file that applies in `scope`.
     pub(crate) fn config_file_path<'s>(&'s self, scope: &'s Scope) -> Option<&'s [u8]> {
         (self.config_of(scope).ok().flatten()).map(|config| &config.path[..])
+    }
+
+    /// The `[[fmt.overrides]]` options for the file at `path` that Prettier has, in the order they apply.
+    pub(crate) fn bunfig_overrides_for(&self, path: &[u8]) -> Vec<(&[u8], &[u8])> {
+        if self.overrides.is_empty() {
+            return Vec::new();
+        }
+        let relative = paths::relative(&self.bunfig_base_directory, path);
+        (self.overrides.iter().filter(|it| it.matches(&relative)))
+            .flat_map(|it| it.settings.iter().map(|it| (&it.0[..], &it.1[..])))
+            .filter(|it| is_prettier_option(it.0))
+            .collect()
     }
 
     /// True if `--no-svelte` or `svelte = false` in `[fmt]` keeps a component in `directory`, whose scope is `scope`,

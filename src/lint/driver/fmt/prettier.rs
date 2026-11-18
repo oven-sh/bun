@@ -8,6 +8,7 @@ use super::cli::{Options, Precedence};
 use super::config::is_prettier_option;
 use crate::run::Environment;
 use crate::{fs, git, paths};
+use bun_core::strings;
 use bun_lint::js_plugin::{Host, Unformatted};
 use bun_lint::linter::write_json;
 use bun_lint::options::Json;
@@ -27,6 +28,8 @@ pub(crate) struct Prettier<'e> {
     cwd: Vec<u8>,
     /// The settings shared by all files, in the shape that `formatWithPrettier` in `worker/prettier.js` reads.
     run: Vec<(Vec<u8>, Json)>,
+    /// `flags` of the same: what the command line and `[fmt]` set. A file's `[[fmt.overrides]]` are added per file.
+    flags: Vec<(Vec<u8>, Json)>,
     written_files: fs::WrittenFiles,
 }
 
@@ -40,14 +43,9 @@ impl<'e> Prettier<'e> {
     ) -> Prettier<'e> {
         let host = Host::with_engine(environment.js_engine, &environment.cwd);
         host.expect(files, size, threads);
-        // A string flag's value has no quotes, so it isn't valid JSON.
-        let value = |text: &[u8]| match bun_lint::json::parse(text) {
-            Some(value @ (Json::Bool(_) | Json::Number(_))) => value,
-            _ => Json::String(text.to_vec()),
-        };
         let mut flags: Vec<(Vec<u8>, Json)> = (options.format.iter())
             .filter(|it| is_prettier_option(it.0))
-            .map(|it| (it.0.to_vec(), value(&it.1)))
+            .map(|it| (it.0.to_vec(), flag_value(&it.1)))
             .collect();
         if !options.plugins.is_empty() {
             let plugins = options.plugins.iter().cloned().map(Json::String);
@@ -64,13 +62,13 @@ impl<'e> Prettier<'e> {
             (b"looksAtStdin".to_vec(), Json::Bool(looks_at_stdin)),
             (b"usesConfig".to_vec(), Json::Bool(options.config_lookup)),
             (b"editorconfig".to_vec(), Json::Bool(options.editorconfig)),
-            (b"flags".to_vec(), Json::Object(flags)),
             (b"precedence".to_vec(), Json::String(precedence.to_vec())),
         ];
         Prettier {
             host,
             cwd: environment.cwd.clone(),
             run,
+            flags,
             written_files: fs::WrittenFiles::default(),
         }
     }
@@ -85,21 +83,26 @@ impl<'e> Prettier<'e> {
         self.host.for_each(count, is_heavy, work);
     }
 
-    /// Formats the file at `path`. With `writes`, the file is written if it changes. Returns whether it changed. `Err`
-    /// is the message to print.
+    /// Formats the file at `path` with its `overrides`. Writes it if `writes` and it changed.
     pub(crate) fn format_file(
         &self,
         (path, display_name): (&[u8], &[u8]),
-        config: Option<&[u8]>,
+        (config, overrides): (Option<&[u8]>, &[(&[u8], &[u8])]),
         writes: bool,
         only: Option<&git::Files>,
-    ) -> Result<bool, Vec<u8>> {
-        let fail =
-            |what: &[u8], why: &[u8]| [what, b" file \"", display_name, b"\":\n", why].concat();
+    ) -> Result<bool, Problem> {
+        let fail = |what: &[u8], why: &[u8]| {
+            Problem::Failed([what, b" file \"", display_name, b"\":\n", why].concat())
+        };
         let text = git::read(only, path)
             .map_err(|error| fail(b"Unable to read", &fs::describe(&error)))?;
-        let formatted = (self.format(Some(path), config, &text))
-            .map_err(|why| [display_name, b": ", &describe(why)].concat())?;
+        let formatted =
+            (self.format((Some(path), overrides), config, &text)).map_err(
+                |why| match config_error(&why) {
+                    Some(message) => Problem::Stops(message.to_vec()),
+                    None => Problem::Failed([display_name, b": ", &describe(why)].concat()),
+                },
+            )?;
         if formatted == text {
             return Ok(false);
         }
@@ -111,14 +114,17 @@ impl<'e> Prettier<'e> {
     }
 
     /// Returns Prettier's output for `text`, the contents of the file at `path`. `path` is `None` if it has no file
-    /// name. `config` is its config file.
+    /// name. `overrides` are the options of its `[[fmt.overrides]]`. `config` is its config file.
     pub(crate) fn format(
         &self,
-        path: Option<&[u8]>,
+        (path, overrides): (Option<&[u8]>, &[(&[u8], &[u8])]),
         config: Option<&[u8]>,
         text: &[u8],
     ) -> Result<Vec<u8>, Unformatted> {
         let mut how = self.run.clone();
+        let mut flags = self.flags.clone();
+        flags.extend(overrides.iter().map(|it| (it.0.to_vec(), flag_value(it.1))));
+        how.push((b"flags".to_vec(), Json::Object(flags)));
         let or_null = |it: Option<&[u8]>| it.map_or(Json::Null, |it| Json::String(it.to_vec()));
         how.push((b"path".to_vec(), or_null(path)));
         how.push((b"config".to_vec(), or_null(config)));
@@ -133,6 +139,32 @@ impl<'e> Prettier<'e> {
         let formatted = self.host.format_with_prettier(&json, text)?;
         Ok([mark, &formatted].concat())
     }
+}
+
+/// A flag's value as JSON. A string's has no quotes, so it isn't valid JSON.
+fn flag_value(text: &[u8]) -> Json {
+    match bun_lint::json::parse(text) {
+        Some(value @ (Json::Bool(_) | Json::Number(_))) => value,
+        _ => Json::String(text.to_vec()),
+    }
+}
+
+/// Why a file wasn't formatted.
+pub(crate) enum Problem {
+    /// A message to print. The run goes on.
+    Failed(Vec<u8>),
+    /// Prettier's `handleError` stops at this error, with only this message, and exits with 1.
+    Stops(Vec<u8>),
+}
+
+/// The message of a `ConfigError` that Prettier threw (a parser that no plugin provides), without the stack.
+pub(crate) fn config_error(why: &Unformatted) -> Option<&[u8]> {
+    let Unformatted::Thrown(why) = why else {
+        return None;
+    };
+    let message = why.strip_prefix(b"ConfigError: ")?;
+    let end = strings::index_of(message, b"\n    at ").unwrap_or(message.len());
+    Some(&message[..end])
 }
 
 /// The message to print after the file name.

@@ -34,7 +34,7 @@ async function run(source: string) {
 
 // The expected lines are what Node.js prints for the same program.
 test.concurrent("computed key of an unused object literal is converted as a property key", async () => {
-  const { stdout, exitCode } = await run(`
+  const { stdout, stderr, exitCode } = await run(`
     const sym = Symbol("k");
     const log = [];
     const key = name => ({
@@ -80,30 +80,33 @@ test.concurrent("computed key of an unused object literal is converted as a prop
       return JSON.stringify(named.name);
     });
   `);
-  expect(stdout).toEqual([
-    "statement: ok",
-    "if test: truthy",
-    "ternary test: truthy",
-    "left of a comma: ok",
-    "void: ok",
-    "in an array: ok",
-    "pure call argument: ok",
-    "pure new argument: ok",
-    "getter: ok",
-    "setter: ok",
-    "method: ok",
-    "async generator: ok",
-    "for init: ok",
-    "object key: ok, a.toString",
-    "Symbol.toPrimitive: ok, hint string",
-    "two keys: ok, a.toString, value a, b.toString, value b",
-    "key without a conversion: TypeError",
-    "undeclared key: ReferenceError",
-    "literal keys: ok, value a, value b",
-    "tag behind a conditional: undefined",
-    "tag behind a comma: undefined",
-    'name of a function behind a conditional: ""',
-  ]);
+  expect({ stdout, stderr }).toEqual({
+    stdout: [
+      "statement: ok",
+      "if test: truthy",
+      "ternary test: truthy",
+      "left of a comma: ok",
+      "void: ok",
+      "in an array: ok",
+      "pure call argument: ok",
+      "pure new argument: ok",
+      "getter: ok",
+      "setter: ok",
+      "method: ok",
+      "async generator: ok",
+      "for init: ok",
+      "object key: ok, a.toString",
+      "Symbol.toPrimitive: ok, hint string",
+      "two keys: ok, a.toString, value a, b.toString, value b",
+      "key without a conversion: TypeError",
+      "undeclared key: ReferenceError",
+      "literal keys: ok, value a, value b",
+      "tag behind a conditional: undefined",
+      "tag behind a comma: undefined",
+      'name of a function behind a conditional: ""',
+    ],
+    stderr: "",
+  });
   expect(exitCode).toBe(0);
 });
 

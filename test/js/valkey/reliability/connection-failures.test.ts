@@ -2859,6 +2859,25 @@ describe.concurrent("Valkey: Handshake", () => {
     expect(fake.seen).toEqual([seen]);
   });
 
+  test.each([
+    { observer: "nobody", setup: "", stdout: "" },
+    { observer: "onclose", setup: "client.onclose = e => console.log(e.message);", stdout: "WRONGPASS\n" },
+    { observer: "a command", setup: "client.ping().catch(e => console.log(e.message));", stdout: "WRONGPASS\n" },
+  ])("a reconnect holds the process for whoever waits for it: $observer", async ({ setup, stdout }) => {
+    using fake = await commandServer((_, connection) => (connection === 1 ? undefined : "-WRONGPASS"));
+    const program = `
+      const client = new Bun.RedisClient("redis://${fake.host}");
+      await client.send("DROP", []).catch(() => {});
+      ${setup}
+    `;
+    expect({ ...(await run(program, {})), redialed: fake.seen.length > 1 }).toEqual({
+      stdout,
+      stderr: "",
+      exitCode: 0,
+      redialed: stdout !== "",
+    });
+  });
+
   test("the error for an unknown scheme names every scheme", () => {
     expect(() => new RedisClient("http://localhost")).toThrow(
       "Expected url protocol to be one of redis, valkey, rediss, valkeys, redis+tls, valkey+tls, redis+unix, valkey+unix, redis+tls+unix, valkey+tls+unix",

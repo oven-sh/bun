@@ -448,6 +448,36 @@ describe.concurrent("a legacy HTML comment in a file that another file loads", (
     expect(counted(await run(cwd, "test", "--aot"))).toEqual(expected);
   });
 
+  // Bun reads a file again for an import statement, also where a require() runs it first, and that reading is a module for its
+  // `import.meta`. Whether the require() has run by then differs from run to run, so only the failure is expected of bun run. The
+  // build compiles the one form that runs, which is CommonJS.
+  test("runs in a build where require() loads the file before an import statement, and bun run stops at the import", async () => {
+    using dir = tempDir("aot-early-errors", {
+      "main.mjs": `import "./first.cjs";\nimport "./package/both.jsx";\nconsole.log("main done");\n`,
+      "first.cjs": `require("./package/both.jsx");\n`,
+      "package/package.json": JSON.stringify({ type: "commonjs" }),
+      "package/both.jsx": `import.meta.url; require("./empty.cjs");\nvar a = 1 <!-- c\n;\nconsole.log("ran");\n`,
+      "package/empty.cjs": `\n`,
+    });
+    const cwd = String(dir);
+    const plain = await run(cwd, "run", "./main.mjs");
+    const compiled = await run(cwd, "run", "--debug-aot", "./main.mjs");
+    expect({
+      errors: plain.stderr.match(/^error\b.*/gm),
+      isDone: plain.stdout.includes("main done"),
+      exitCode: plain.exitCode,
+    }).toEqual({
+      errors: ["error: Legacy HTML single-line comments are not allowed in ECMAScript modules"],
+      isDone: false,
+      exitCode: 1,
+    });
+    expect({ stdout: compiled.stdout, stderr: compiled.stderr, exitCode: compiled.exitCode }).toEqual({
+      stdout: "ran\nmain done\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   // A file with no extension is read as TypeScript, where `<!--` is three operators: the program would print "false 4". The build
   // reports that reading and compiles nothing.
   test("stops the build in a file with no extension, where bun run reads a comment", async () => {

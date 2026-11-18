@@ -423,6 +423,32 @@ describe.each(linkers)("%s linker", linker => {
       },
     );
 
+    // A report in the workspace has no rows to read, and `bun install` keeps this lockfile. The note names a
+    // command that adds the workspace. For `bun update` that is not the command that stopped.
+    const updateNote = "run 'bun update' without flags or names here, or 'bun update <name>'";
+    test.concurrent.each([
+      ["outdated", "nothing outdated", "run 'bun update' here"],
+      ["update --prod", "nothing to update", updateNote],
+      ["update -i", "nothing to update", updateNote],
+    ])("a range, in a bun.lock from Bun 1.4: bun %s in the workspace is an error", async (command, nothing, note) => {
+      const dependencies = { "no-deps": "1.0.0", "a-dep": "1.0.2" };
+      const dir = await project(linker, { "": { name: "sandbox", version: "1.0.0", dependencies } });
+      await ok(dir, "install");
+      const workspace = join(dir, "packages", "no-deps");
+      await Promise.all([
+        write(join(dir, "package.json"), JSON.stringify(root({ dependencies }))),
+        write(join(workspace, "package.json"), JSON.stringify(member)),
+      ]);
+      const older = await lockText(dir);
+
+      const { stderr, exitCode } = await bun(workspace, ...command.split(" "));
+      expect({ stderr, exitCode, lock: (await lockText(dir)) === older }).toEqual({
+        stderr: `error: workspace "packages/no-deps" not in lockfile, ${nothing}\nnote: ${note}\n`,
+        exitCode: 1,
+        lock: true,
+      });
+    });
+
     test.concurrent("an alias under its own name, in a bun.lock from Bun 1.4: it isn't changed", async () => {
       const dependencies = { "no-deps": "npm:no-deps@1.0.0" };
       const dir = await project(linker, { "": { name: "sandbox", version: "1.0.0", dependencies } });

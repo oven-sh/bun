@@ -144,9 +144,14 @@ describe.concurrent("bun update --interactive actually installs packages", () =>
       );
 
     // Installs `files`, applies `edits`, then selects the first row in `bun update --interactive` run in `cwd`.
-    // Nothing newer is in range of any row, so Space selects the row's Latest.
-    async function updateFirstRow(edits: Record<string, string>, cwd: string) {
-      const dir = tempDir("update-interactive-unlisted", {
+    // Nothing newer is in range of any row, so Space selects the row's Latest. `read` takes what a test needs
+    // from the project before it is removed.
+    async function updateFirstRow<T = undefined>(
+      edits: Record<string, string>,
+      cwd: string,
+      read?: (dir: string) => Promise<T>,
+    ) {
+      using dir = tempDir("update-interactive-unlisted", {
         "bunfig.toml": `[install]\ncache = false\nregistry = "${registry.registryUrl()}"\n`,
         ...files,
       });
@@ -169,19 +174,17 @@ describe.concurrent("bun update --interactive actually installs packages", () =>
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       const after = await manifests(String(dir), paths);
       return {
-        dir,
         rows: ["no-deps", "a-dep", "what-bin"].filter(name => stdout.includes(name)),
         errors: stderr.split("\n").filter(line => /^(error|note):/.test(line)),
         exitCode,
         changed: paths.filter(path => before[path] !== after[path]),
+        read: await read?.(String(dir)),
       };
     }
 
     test("added after the install: nothing is listed and no package.json changes", async () => {
       const added = JSON.stringify({ name: "added", dependencies: { "a-dep": "1.0.1" } });
-      const { dir, ...result } = await updateFirstRow({ "packages/added/package.json": added }, "packages/added");
-      using _ = dir;
-      expect(result).toEqual({
+      expect(await updateFirstRow({ "packages/added/package.json": added }, "packages/added")).toEqual({
         rows: [],
         errors: STALE_LOCKFILE,
         exitCode: 1,
@@ -190,15 +193,11 @@ describe.concurrent("bun update --interactive actually installs packages", () =>
     });
 
     test("renamed to the name of a sibling: nothing is listed and no package.json changes", async () => {
-      const { dir, ...result } = await updateFirstRow(
-        {
-          "packages/app/package.json": files["packages/app/package.json"].replace(`"app"`, `"lib"`),
-          "packages/lib/package.json": files["packages/lib/package.json"].replace(`"lib"`, `"app"`),
-        },
-        "packages/app",
-      );
-      using _ = dir;
-      expect(result).toEqual({
+      const exchanged = {
+        "packages/app/package.json": files["packages/app/package.json"].replace(`"app"`, `"lib"`),
+        "packages/lib/package.json": files["packages/lib/package.json"].replace(`"lib"`, `"app"`),
+      };
+      expect(await updateFirstRow(exchanged, "packages/app")).toEqual({
         rows: [],
         errors: STALE_LOCKFILE,
         exitCode: 1,
@@ -207,19 +206,27 @@ describe.concurrent("bun update --interactive actually installs packages", () =>
     });
 
     test("renamed: its own row is listed, updated and installed", async () => {
-      const { dir, ...result } = await updateFirstRow(
-        { "packages/app/package.json": files["packages/app/package.json"].replace(`"app"`, `"app-renamed"`) },
-        "packages/app",
-      );
-      using _ = dir;
-      expect(result).toEqual({ rows: ["a-dep"], errors: [], exitCode: 0, changed: ["packages/app/package.json"] });
-      expect({
-        declared: (await Bun.file(join(String(dir), "packages/app/package.json")).json()).dependencies,
-        locked: (await Bun.file(join(String(dir), "bun.lock")).text()).match(
-          /"packages\/app": \{\s+"name": "([^"]+)"/,
-        )?.[1],
-        installed: (await Bun.file(join(String(dir), "packages/app/node_modules/a-dep/package.json")).json()).version,
-      }).toEqual({ declared: { "a-dep": "1.0.10" }, locked: "app-renamed", installed: "1.0.10" });
+      const renamed = {
+        "packages/app/package.json": files["packages/app/package.json"].replace(`"app"`, `"app-renamed"`),
+      };
+      const result = await updateFirstRow(renamed, "packages/app", async dir => ({
+        declared: (await Bun.file(join(dir, "packages/app/package.json")).json()).dependencies,
+        locked: (await Bun.file(join(dir, "bun.lock")).text()).match(/"packages\/app": \{\s+"name": "([^"]+)"/)?.[1],
+        // `undefined` if the update installed nothing there.
+        installed: await Bun.file(join(dir, "packages/app/node_modules/a-dep/package.json"))
+          .json()
+          .then(
+            json => json.version,
+            () => undefined,
+          ),
+      }));
+      expect(result).toEqual({
+        rows: ["a-dep"],
+        errors: [],
+        exitCode: 0,
+        changed: ["packages/app/package.json"],
+        read: { declared: { "a-dep": "1.0.10" }, locked: "app-renamed", installed: "1.0.10" },
+      });
     });
   });
 

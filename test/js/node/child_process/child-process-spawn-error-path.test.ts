@@ -172,15 +172,31 @@ describe("a spawn that fails names the file as its path", () => {
     },
   );
 
-  // `spawn()` refuses an empty file. The constructor does not, and node then leaves `path` out.
+  // `spawn()` refuses an empty file. The constructor does not, and node then leaves the file out of `path` and of
+  // `syscall`.
   test("and no path when the file is empty", async () => {
     const child = new ChildProcess() as ChildProcess & { spawn(options: object): void };
     const event = errorEvent(child);
     child.spawn({ file: "", args: [""], stdio: "pipe" });
     const error = await event;
     assert.deepStrictEqual(
-      { code: (error as NodeJS.ErrnoException).code, hasPath: Object.hasOwn(error, "path") },
-      { code: "ENOENT", hasPath: false },
+      { ...fields(error), hasPath: Object.hasOwn(error, "path") },
+      { code: "ENOENT", path: undefined, syscall: "spawn", spawnargs: [], hasPath: false },
+    );
+  });
+
+  // A TypeError about an option is not a spawn that failed. node throws it, and bun gives it as the `error` of the
+  // result.
+  test("and no path when an option is at fault", () => {
+    let error: unknown;
+    try {
+      error = spawnSync(exe, ["-e", "0"], { env: { ...env, A: Symbol("a") as unknown as string } }).error;
+    } catch (thrown) {
+      error = thrown;
+    }
+    assert.deepStrictEqual(
+      { isTypeError: error instanceof TypeError, hasPath: Object.hasOwn(error as object, "path") },
+      { isTypeError: true, hasPath: false },
     );
   });
 });

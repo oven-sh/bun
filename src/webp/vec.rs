@@ -1,5 +1,7 @@
 //! Allocations that may be refused.
 
+use core::alloc::Allocator;
+
 use crate::error::{Error, Result};
 
 pub(crate) fn filled<T: Clone>(value: T, len: usize) -> Result<Vec<T>> {
@@ -28,6 +30,12 @@ pub(crate) fn boxed<T, const N: usize>(vec: Vec<T>) -> Result<Box<[T; N]>> {
 
 pub(crate) fn with_room<T>(capacity: usize) -> Result<Vec<T>> {
     let mut vec = Vec::new();
+    vec.try_reserve_exact(capacity)?;
+    Ok(vec)
+}
+
+pub(crate) fn with_room_in<T, A: Allocator>(capacity: usize, allocator: A) -> Result<Vec<T, A>> {
+    let mut vec = Vec::new_in(allocator);
     vec.try_reserve_exact(capacity)?;
     Ok(vec)
 }

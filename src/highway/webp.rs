@@ -186,7 +186,12 @@ pub fn upsample(from: [&[u8]; 2], to: [&mut [u8]; 2], count: usize) {
 /// `width` pixels from `start` on, in the place of those that `rgba` has there and in the room behind them. The inputs
 /// are long enough for a multiple of `ROW_STEP` pixels.
 #[inline(always)]
-pub fn yuv_to_rgba(yuva: [&[u8]; 4], rgba: &mut Vec<[u8; 4]>, start: usize, width: usize) {
+pub fn yuv_to_rgba(
+    yuva: [&[u8]; 4],
+    rgba: &mut Vec<[u8; 4], impl core::alloc::Allocator>,
+    start: usize,
+    width: usize,
+) {
     assert!(start <= rgba.len() && width <= rgba.capacity() - start);
     let padded = width.next_multiple_of(ROW_STEP);
     assert!(yuva.iter().all(|row| row.len() >= padded));

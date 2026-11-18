@@ -1,0 +1,52 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>ImageData Tests</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<script>
+test(function() {
+    assert_throws_dom("IndexSizeError", function() {
+        new ImageData(0, 1);
+    });
+}, "ImageData(w, h), width cannot be 0");
+
+test(function() {
+    assert_throws_dom("IndexSizeError", function() {
+        new ImageData(1, 0);
+    });
+}, "ImageData(w, h), height cannot be 0");
+
+test(function() {
+    var imageData = new ImageData(2, 3);
+    assert_equals(imageData.width, 2);
+    assert_equals(imageData.height, 3);
+    assert_equals(imageData.data.length, 24);
+    assert_true(imageData.data instanceof Uint8ClampedArray);
+}, "ImageData(w, h), exposed attributes check");
+
+test(function() {
+    assert_throws_dom("InvalidStateError", function() {
+        new ImageData(new Uint8ClampedArray(3), 1);
+    });
+}, "ImageData(buffer, w), the buffer size must be a multiple of 4");
+
+test(function() {
+    assert_throws_dom("IndexSizeError", function() {
+        new ImageData(new Uint8ClampedArray(16), 3);
+    });
+}, "ImageData(buffer, w), buffer size must be a multiple of the image width");
+
+test(function() {
+    assert_throws_dom("IndexSizeError", function() {
+        new ImageData(new Uint8ClampedArray(16), 4, 3);
+    });
+}, "ImageData(buffer, w, h), buffer.length == 4 * w * h must be true");
+
+test(function() {
+    var imageData = new ImageData(new Uint8ClampedArray(24), 2);
+    assert_equals(imageData.width, 2);
+    assert_equals(imageData.height, 3);
+    assert_equals(imageData.data.length, 24);
+    assert_true(imageData.data instanceof Uint8ClampedArray);
+}, "ImageData(buffer, w, opt h), exposed attributes check");
+</script>

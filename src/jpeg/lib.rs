@@ -85,6 +85,7 @@ mod tests {
     use super::*;
     use crate::header::{ColorSpace, Segments};
     use crate::output::Output;
+    use bun_alloc::Lender;
 
     /// One gray block with the DC coefficient 5, and 8 for all quantization steps.
     fn one_block() -> Vec<u8> {
@@ -107,7 +108,7 @@ mod tests {
     #[test]
     fn the_smallest_scale_is_an_eighth() -> Result<()> {
         for eighths in [0, 1] {
-            let image = Decoder::new(&one_block())?.decode(eighths)?;
+            let image = Decoder::new(&one_block())?.decode(eighths, Lender::NONE)?;
             assert_eq!(image.rgba, [133, 133, 133, 255]);
         }
         Ok(())
@@ -127,12 +128,12 @@ mod tests {
     fn output_refuses_what_does_not_fit() -> Result<()> {
         let frame = Segments::new(&one_block())?.read_frame()?;
         for eighths in [1, 8] {
-            let mut output = Output::new(&frame, ColorSpace::Gray, eighths)?;
+            let mut output = Output::new(&frame, ColorSpace::Gray, eighths, Lender::NONE)?;
             let below = output.planes[0].put(&[block::ZERO], &block::ZERO, 0, 1);
             assert_eq!(below, Err(Error::Internal));
-            assert_eq!(output.into_rgba(), Err(Error::Internal));
+            assert_eq!(output.into_rgba().err(), Some(Error::Internal));
         }
-        let mut output = Output::new(&frame, ColorSpace::Rgb, 8)?;
+        let mut output = Output::new(&frame, ColorSpace::Rgb, 8, Lender::NONE)?;
         assert_eq!(output.finish_strip(), Err(Error::Internal));
         Ok(())
     }

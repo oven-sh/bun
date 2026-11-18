@@ -1,7 +1,9 @@
 //! Entropy-coded pixels: literals, copies of earlier pixels and colors from the cache.
 
+use core::alloc::Allocator;
 use core::hint::cold_path;
 use core::ops::Range;
+use std::alloc::Global;
 
 use super::Rgba;
 use super::bit_reader::BitReader;
@@ -62,7 +64,7 @@ pub(super) fn read_subimage(
 ) -> Result<Vec<Rgba>> {
     let cache_bits = read_cache_bits(reader)?;
     let groups = Groups::read_one(reader, cache_bits)?;
-    Coding { cache_bits, groups }.read_pixels(reader, width, height)
+    Coding { cache_bits, groups }.read_pixels(reader, width, height, Global)
 }
 
 fn read_cache_bits(reader: &mut BitReader) -> Result<u32> {
@@ -99,22 +101,23 @@ impl Coding {
         width: usize,
         height: usize,
     ) -> Result<Vec<u8>> {
-        read_pixels(&self.groups, reader, width, height, &mut NoCache)
+        read_pixels(&self.groups, reader, width, height, &mut NoCache, Global)
     }
 
-    pub(super) fn read_pixels(
+    pub(super) fn read_pixels<A: Allocator>(
         &self,
         reader: &mut BitReader,
         width: usize,
         height: usize,
-    ) -> Result<Vec<Rgba>> {
+        allocator: A,
+    ) -> Result<Vec<Rgba, A>> {
         match self.cache_bits {
-            0 => read_pixels(&self.groups, reader, width, height, &mut NoCache),
+            0 => read_pixels(&self.groups, reader, width, height, &mut NoCache, allocator),
             bits => {
                 let colors = vec::array([0; 4])?;
                 let spare_bits = MAX_CACHE_BITS - bits;
                 let mut cache = ColorCache { colors, spare_bits };
-                read_pixels(&self.groups, reader, width, height, &mut cache)
+                read_pixels(&self.groups, reader, width, height, &mut cache, allocator)
             }
         }
     }
@@ -196,20 +199,21 @@ impl Cache<Rgba> for ColorCache {
     }
 }
 
-fn read_pixels<P: Pixel>(
+fn read_pixels<P: Pixel, A: Allocator>(
     groups: &Groups,
     reader: &mut BitReader,
     width: usize,
     height: usize,
     cache: &mut impl Cache<P>,
-) -> Result<Vec<P>> {
+    allocator: A,
+) -> Result<Vec<P, A>> {
     let len = width * height;
-    let mut pixels = vec::with_room(len + COPY_STEP)?;
+    let mut pixels = vec::with_room_in(len, allocator)?;
     let (mut x, mut y, mut at) = (0, 0, 0);
     reader.refill();
     while at < len && !reader.is_past_end() {
         let goal = len.min(at + GROWTH);
-        pixels.resize(len.min(goal + MAX_COPY_LEN) + COPY_STEP, P::default());
+        pixels.resize(len.min(goal + MAX_COPY_LEN + COPY_STEP), P::default());
         while at < goal {
             let (group, tables, count) = groups.at(x, y, width)?;
             let (start, end) = (at, goal.min(at + count));
@@ -232,7 +236,6 @@ fn read_pixels<P: Pixel>(
     if reader.is_past_end() {
         return Err(Error::UnexpectedEof);
     }
-    pixels.truncate(len);
     Ok(pixels)
 }
 
@@ -319,7 +322,7 @@ fn read_prefixed(symbol: usize, reader: &mut BitReader) -> usize {
 }
 
 /// `count` pixels from `distance` back to `at`, which may repeat what it has just written. Up to `COPY_STEP` more
-/// are changed: `pixels` end that far behind the image, or have room for any copy.
+/// are changed. `pixels` end with the image, or have room for any copy and those.
 #[inline(always)]
 fn copy<P: Pixel>(
     pixels: &mut [P],
@@ -329,7 +332,7 @@ fn copy<P: Pixel>(
     cache: &mut impl Cache<P>,
 ) -> Option<()> {
     if distance > at || count + COPY_STEP > pixels.len() - at {
-        return None;
+        return copy_near_end(pixels, at, distance, count, cache);
     }
     if distance == 1 {
         let reach = pixels.get_mut(at - 1..at + count.next_multiple_of(COPY_STEP));
@@ -363,10 +366,36 @@ fn copy<P: Pixel>(
         let reach = pixels.get_mut(at - distance..at + count + COPY_STEP);
         reach.map(|reach| repeat(reach, distance))
     };
-    // The last `distance` pixels again leave the cache as it is, and what repeats counts the last time.
-    let fresh = count.checked_sub(distance).unwrap_or(count).min(distance);
     let done = copied.and_then(|()| pixels.get(..at + count));
-    done.map(|done| cache.remember_last(done, fresh))
+    done.map(|done| cache.remember_last(done, fresh(distance, count)))
+}
+
+/// The last `distance` pixels again leave the cache as it is, and what repeats counts the last time.
+#[inline(always)]
+fn fresh(distance: usize, count: usize) -> usize {
+    count.checked_sub(distance).unwrap_or(count).min(distance)
+}
+
+/// The same, and nothing behind the copy is changed.
+#[cold]
+#[inline(never)]
+fn copy_near_end<P: Pixel>(
+    pixels: &mut [P],
+    at: usize,
+    distance: usize,
+    count: usize,
+    cache: &mut impl Cache<P>,
+) -> Option<()> {
+    let (start, end) = (at.checked_sub(distance)?, at + count);
+    let pixels = pixels.get_mut(..end)?;
+    let mut to = at;
+    while to < end {
+        let len = (to - start).min(end - to);
+        pixels.copy_within(start..start + len, to);
+        to += len;
+    }
+    cache.remember_last(pixels, fresh(distance, count));
+    Some(())
 }
 
 #[inline(always)]
@@ -440,18 +469,20 @@ mod tests {
             const START: usize = 3;
             let pixel = |i: usize| P::from_rgba([(i >> 8) as u8, (i % 251) as u8, 0, 0]);
             let (at, spare) = (START + distance, pixel(usize::MAX));
-            let mut pixels = Vec::new();
-            pixels.extend((0..at).map(pixel));
-            pixels.resize(at + count + 2 * COPY_STEP, spare);
-            let copied = checked(|| Ok(copy(&mut pixels, at, distance, count, &mut NoCache)));
-            let (copies, rest) = pixels.part(at..).split_at(count);
-            let expected = (0..count).map(|i| pixel(START + i % distance));
-            assert!(
-                copied == Ok(Some(()))
-                    && expected.eq(copies.iter().copied())
-                    && rest.ends_with(&[spare; COPY_STEP]),
-                "{count} from {distance} back"
-            );
+            for behind in [0, COPY_STEP - 1, 2 * COPY_STEP] {
+                let mut pixels = Vec::new();
+                pixels.extend((0..at).map(pixel));
+                pixels.resize(at + count + behind, spare);
+                let copied = checked(|| Ok(copy(&mut pixels, at, distance, count, &mut NoCache)));
+                let (copies, rest) = pixels.part(at..).split_at(count);
+                let expected = (0..count).map(|i| pixel(START + i % distance));
+                assert!(
+                    copied == Ok(Some(()))
+                        && expected.eq(copies.iter().copied())
+                        && rest.iter().rev().take(COPY_STEP).all(|&it| it == spare),
+                    "{count} from {distance} back"
+                );
+            }
         }
         let lens = || (1..70).chain([96, 97, 128, 129, 511, 513, 2047, 2049, MAX_COPY_LEN]);
         for (distance, count) in lens().flat_map(|it| lens().map(move |other| (it, other))) {
@@ -472,19 +503,29 @@ mod tests {
                 Ok(cache)
             };
             for (distance, count) in lens().flat_map(|it| lens().map(move |other| (it, other))) {
-                let mut pixels = Vec::new();
-                pixels.extend((0..AT).map(|i| [1, ((i / run).pow(2) % 61) as u8, 2, 3]));
-                pixels.resize(AT + count + COPY_STEP, [0; 4]);
-                let mut actual = cache(pixels.part(..AT))?;
-                let copied = checked(|| Ok(copy(&mut pixels, AT, distance, count, &mut actual)));
-                let expected = cache(pixels.part(..AT + count))?;
-                assert!(
-                    copied == Ok(Some(())) && actual.colors == expected.colors,
-                    "{count} from {distance} back"
-                );
+                for behind in [0, COPY_STEP] {
+                    let mut pixels = Vec::new();
+                    pixels.extend((0..AT).map(|i| [1, ((i / run).pow(2) % 61) as u8, 2, 3]));
+                    pixels.resize(AT + count + behind, [0; 4]);
+                    let mut actual = cache(pixels.part(..AT))?;
+                    let copied =
+                        checked(|| Ok(copy(&mut pixels, AT, distance, count, &mut actual)));
+                    let expected = cache(pixels.part(..AT + count))?;
+                    assert!(
+                        copied == Ok(Some(())) && actual.colors == expected.colors,
+                        "{count} from {distance} back"
+                    );
+                }
             }
         }
         Ok(())
+    }
+
+    #[test]
+    fn a_copy_stays_within_the_image() {
+        let copy = |distance, count| copy(&mut [0u8; 40], 20, distance, count, &mut NoCache);
+        assert_eq!([copy(20, 1), copy(1, 20), copy(20, 20)], [Some(()); 3]);
+        assert_eq!([copy(21, 1), copy(1, 21), copy(21, 20)], [None; 3]);
     }
 
     #[test]

@@ -21,11 +21,17 @@ pub(crate) fn dimensions(bytes: &[u8]) -> Result<(u32, u32), codecs::Error> {
     Ok((decoder.width(), decoder.height()))
 }
 
-pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::Error> {
+pub(crate) fn decode<'a>(
+    bytes: &[u8],
+    max_pixels: u64,
+    canvas: codecs::Canvas<'a>,
+) -> Result<codecs::Decoded<'a>, codecs::Error> {
     let decoder = bun_webp::Decoder::new(bytes).map_err(decode_error)?;
     let (width, height) = (decoder.width(), decoder.height());
     codecs::guard(width, height, max_pixels)?;
-    let image = decoder.decode().map_err(decode_error)?;
+    let image = decoder
+        .decode(canvas.lender_for(width, height))
+        .map_err(decode_error)?;
     Ok(codecs::Decoded {
         rgba: image.rgba,
         width,

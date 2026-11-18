@@ -345,6 +345,7 @@ const openers: (Open & { className?: string })[] = [
   () => ({ value: openRouter().match("/")!, close: noop }),
   () => ({ value: new Bun.Archive({ "a.txt": "text" }), close: noop }),
   () => ({ value: new Bun.Image(Buffer.from(pixel, "base64")), close: noop }),
+  () => ({ value: new ImageData(1, 1), close: noop }),
   openTerminal,
   openCronJob,
   () => ({ value: createHistogram(), close: noop }),

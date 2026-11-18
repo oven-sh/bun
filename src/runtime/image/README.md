@@ -9,7 +9,9 @@ off the JS thread.
 | ------------------------------------- | ----------------------------------------------------------------------------------------------------- | ---------------------------------------- |
 | `Image.bind.ts`                       | JS surface (codegen input)                                                                            | adding/renaming a JS method              |
 | `Image.rs`                            | JS↔native glue: arg parsing, op recording, `ConcurrentPromiseTask` scheduling, result delivery        | new options, new chainable, new terminal |
+| `ImageData.bind.ts`, `ImageData.rs`   | the `ImageData` global (C++ part: `src/jsc/bindings/JSImageData.cpp`)                                 | following the HTML spec                  |
 | `codecs.rs`                           | thin wrappers over `bun_jpeg` / `bun_png` / `bun_webp` + the `Format` sniffer + the pixel-limit guard | bumping a codec, adding a format         |
+| `color.rs`                            | ICC profile → `colorSpace` for `.imageData()`, and the profiles that raw input is encoded with        | new kind of profile, new colour space    |
 | `exif.rs`                             | JPEG APP1/TIFF Orientation reader (tag 0x0112 only)                                                   | extending EXIF coverage                  |
 | `quantize.rs`                         | median-cut RGBA → palette for `png({palette})`                                                        | dithering, perceptual weighting          |
 | `backend_coregraphics.rs`             | macOS ImageIO/CoreGraphics, lazy `dlopen`                                                             | macOS-specific behaviour                 |
@@ -46,8 +48,17 @@ JPEG, PNG and WebP are `src/jpeg`, `src/png` and `src/webp`, in Rust, on the ker
 
 - Pixel format is **RGBA8 everywhere** between decode and encode. Decoders are
   configured to emit it; encoders are fed it. Nothing branches on channels.
-- **Decode** and **encode** return a `Vec<u8>`. `then()` hands the encoded one
+- Alpha is **straight** (not premultiplied). `.imageData()` shows it to JS.
+- **Decode** and **encode** return a `Vec<u8>`. `then()` hands the last one
   to JS without a copy.
+- A stage that moves pixels allocates its result with the `Lender` that
+  `Canvas::lender_for(width, height)` gives it, **once and with exactly
+  `width * height * 4` bytes**. That request is what `.imageData(target)` answers
+  with the target. Any other size works, but costs an allocation and a copy.
+- Only the last such stage gets the `Canvas`, and only if its size is that of
+  the target, so a size mismatch leaves the target untouched.
+- Script can write to a target while it is filled. A stage may read what it has
+  written, but never trust it for an index or a length.
 - The `max_pixels` guard fires **after the header read, before the RGBA alloc**
   in every codec. New codecs must do the same.
 - `image_resize.cpp` must stay in `noUnify` (see `scripts/build/unified.ts`) —

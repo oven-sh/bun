@@ -823,7 +823,7 @@ impl InflateDecoder {
     pub fn step_limited(
         &mut self,
         input: &[u8],
-        out: &mut Vec<u8>,
+        out: &mut Vec<u8, impl core::alloc::Allocator>,
         limit: usize,
     ) -> (usize, ReturnCode) {
         self.step_up_to(input, out, limit, limit, FlushValue::NoFlush)
@@ -833,7 +833,7 @@ impl InflateDecoder {
     pub fn step_up_to(
         &mut self,
         input: &[u8],
-        out: &mut Vec<u8>,
+        out: &mut Vec<u8, impl core::alloc::Allocator>,
         reserve: usize,
         limit: usize,
         flush: FlushValue,

@@ -82,6 +82,7 @@ it("writable", () => {
     ["CustomEvent", CustomEvent],
     ["CloseEvent", CloseEvent],
     ["File", File],
+    ["ImageData", ImageData],
   ];
   for (let [name, Class] of classes) {
     globalThis[name] = 123;
@@ -103,6 +104,7 @@ it("name", () => {
     ["Transpiler", Bun.Transpiler],
     ["Buffer", Buffer],
     ["File", File],
+    ["ImageData", ImageData],
   ];
   for (let [name, Class] of classes) {
     expect(Class.name).toBe(name);

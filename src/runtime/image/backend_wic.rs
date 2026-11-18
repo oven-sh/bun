@@ -79,7 +79,11 @@ impl BackendError {
 
 bun_core::oom_from_alloc!(BackendError);
 
-pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendError> {
+pub(crate) fn decode<'a>(
+    bytes: &[u8],
+    max_pixels: u64,
+    canvas: codecs::Canvas<'a>,
+) -> Result<codecs::Decoded<'a>, BackendError> {
     let f = factory()?;
     // IWICStream::InitializeFromMemory takes a DWORD count; the checked cast
     // below is a process abort, not silent truncation.
@@ -137,7 +141,8 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, B
     if out_len > u32::MAX as u64 {
         return Err(TooManyPixels);
     }
-    let mut out = vec![0u8; usize::try_from(out_len).expect("int cast")];
+    let lender = canvas.lender_for(w, h);
+    let mut out = lender.zeroed(usize::try_from(out_len).expect("int cast"));
     if conv.copy_pixels(
         ptr::null(),
         u32::try_from(stride).expect("int cast"),

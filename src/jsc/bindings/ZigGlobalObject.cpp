@@ -76,6 +76,7 @@
 #include "GeneratedBunObject.h"
 #include "GeneratedCrypto.h"
 #include "GeneratedHtmlRewriter.h"
+#include "GeneratedImageData.h"
 #include "GeneratedPrompt.h"
 #include "GeneratedResolveMessage.h"
 #include "GeneratedResponse.h"

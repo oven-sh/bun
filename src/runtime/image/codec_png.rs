@@ -20,11 +20,17 @@ fn encode_error(error: bun_png::Error) -> codecs::Error {
     }
 }
 
-pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::Error> {
+pub(crate) fn decode<'a>(
+    bytes: &[u8],
+    max_pixels: u64,
+    canvas: codecs::Canvas<'a>,
+) -> Result<codecs::Decoded<'a>, codecs::Error> {
     let decoder = bun_png::Decoder::new(bytes).map_err(decode_error)?;
     let bun_png::Header { width, height, .. } = decoder.header();
     codecs::guard(width, height, max_pixels)?;
-    let image = decoder.decode().map_err(decode_error)?;
+    let image = decoder
+        .decode(canvas.lender_for(width, height))
+        .map_err(decode_error)?;
     Ok(codecs::Decoded {
         rgba: image.rgba,
         width,

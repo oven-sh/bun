@@ -10,7 +10,18 @@
 // Kept in its own file so the happy-path image.test.ts stays readable.
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, emptyProcessMaxRSS, gcTick, isASAN, isDebug, rss, runFixtureMaxRSS, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  emptyProcessMaxRSS,
+  expectRssDeltaBelow,
+  gcTick,
+  isASAN,
+  isDebug,
+  rss,
+  runFixtureMaxRSS,
+  tempDir,
+} from "harness";
 import { join } from "node:path";
 import zlib from "node:zlib";
 import { linesAtATime } from "./png-golden/check";
@@ -1139,6 +1150,70 @@ describe("memory hygiene", () => {
     expect(delta).toBeLessThan((isASAN ? 128 : 32) * 1024 * 1024);
   });
 
+  test.concurrent("pixels in and out plateau", async () => {
+    // Each buffer is 1 MiB, so one that leaks in each round makes 100 MiB.
+    const fixture = `
+      const source = new ImageData(512, 512);
+      const inWasm = new ImageData(new Uint8ClampedArray(new WebAssembly.Memory({ initial: 16 }).buffer), 512);
+      async function rounds(count) {
+        for (let i = 0; i < count; i++) {
+          await new Bun.Image(source).imageData();
+          await new Bun.Image(source).imageData(new ImageData(512, 512));
+          await new Bun.Image(source).flip().imageData(inWasm);
+          await new Bun.Image(source).flip().imageData(new ImageData(256, 1024)).catch(() => {});
+          const pending = new Bun.Image(source).imageData(source);
+          await new Bun.Image(source).imageData(source).catch(() => {});
+          await pending;
+          if (i % 10 === 9) Bun.gc(true);
+        }
+        return process.memoryUsage.rss();
+      }
+      const before = await rounds(30);
+      console.log(JSON.stringify({ deltaMiB: ((await rounds(100)) - before) / 1024 / 1024 }));
+    `;
+    await expectRssDeltaBelow(["-e", fixture], { release: 40, debug: 50 });
+  });
+
+  // Files that are cheap to make and to decode, for an image of 64 MiB.
+  test.concurrent.each([
+    ["an RGBA PNG", `png(6, 8, 4 * side)`],
+    ["an RGB PNG", `png(2, 8, 3 * side)`],
+    ["a gray PNG", `png(0, 1, side / 8)`],
+    [
+      "a JPEG",
+      `(async () => {
+        const file = Buffer.from(await new Bun.Image(new ImageData(8, 8)).jpeg().bytes());
+        const at = file.indexOf(Buffer.of(0xff, 0xc0));
+        file.writeUInt16BE(side, at + 5);
+        file.writeUInt16BE(side, at + 7);
+        return file;
+      })()`,
+    ],
+    ["a lossless WebP", `Buffer.from("524946461a000000574542505650384c0d0000002fffcfff03a840033a5082020000", "hex")`],
+  ])("imageData(target) of %s allocates no second image", async (_, file) => {
+    const fixture = `
+      const side = 4096;
+      const png = (colorType, depth, rowLength) => {
+        const chunk = (type, data) => Buffer.concat([Buffer.of(0, 0, data.length >> 8, data.length), Buffer.from(type), data, Buffer.alloc(4)]);
+        const deflate = require("zlib").createDeflate();
+        const rows = Buffer.alloc(64 * (1 + rowLength));
+        for (let y = 0; y < side; y += 64) deflate.write(rows);
+        deflate.end();
+        return Array.fromAsync(deflate).then(parts => Buffer.concat([
+          Buffer.from("89504e470d0a1a0a", "hex"),
+          chunk("IHDR", Buffer.of(0, 0, 16, 0, 0, 0, 16, 0, depth, colorType, 0, 0, 0)),
+          ...parts.map(part => chunk("IDAT", part)),
+        ]));
+      };
+      const target = new ImageData(side, side);
+      target.data.fill(7);
+      await new Bun.Image(await ${file}).imageData(target);
+      console.log(target.data.includes(7));
+    `;
+    const [fixtureMaxRSS, baselineMaxRSS] = await Promise.all([runFixtureMaxRSS(fixture, false), emptyProcessMaxRSS()]);
+    expect((fixtureMaxRSS - baselineMaxRSS) / 1024 / 1024).toBeLessThan(64 + (isASAN || isDebug ? 44 : 24));
+  });
+
   test("constructor with throwing getter cleans up under repetition", () => {
     const before = rss();
     for (let i = 0; i < 10_000; i++) {
@@ -1394,6 +1469,80 @@ describe("concurrent terminals on one Image", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr: stderr.slice(-3000), exitCode }).toEqual({ stdout: "256\n", stderr: "", exitCode: 0 });
+  });
+});
+
+describe("a target that is being filled", () => {
+  async function run(script: string) {
+    const files = `
+      const source = new ImageData(257, 199);
+      for (let i = 0; i < source.data.length; i += 7) source.data[i] = i >> 3;
+      const encode = (format, options) => new Bun.Image(source)[format](options).bytes();
+      const files = await Promise.all([
+        encode("png"),
+        encode("png", { palette: true }),
+        encode("jpeg"),
+        encode("webp"),
+        encode("webp", { lossless: true }),
+      ]);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", files + script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr: stderr.slice(-3000), exitCode };
+  }
+
+  // The decoders read what they have written. The docs forbid this write. It can corrupt the image, but it must not crash.
+  test.concurrent("can be written to by script without a crash", async () => {
+    const result = await run(`
+      const memory = new Uint8ClampedArray(20 * source.data.length);
+      let settled = 0;
+      for (let round = 0; round < 8; round++) {
+        for (let i = 0; i < 20; i++) {
+          const data = memory.subarray(i * source.data.length, (i + 1) * source.data.length);
+          const target = new ImageData(data, 257, 199, { colorSpace: i & 1 ? "srgb" : "display-p3" });
+          new Bun.Image(files[i % 5]).modulate({ saturation: 2 }).imageData(target).catch(() => {}).then(() => settled++);
+        }
+        while (settled < 20 * (round + 1)) {
+          for (let k = 0; k < 8; k++) memory.fill(k & 1 ? 255 : k);
+          await new Promise(resolve => setImmediate(resolve));
+        }
+      }
+      console.log(settled);
+    `);
+    expect(result).toEqual({ stdout: "160\n", stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("outlasts the termination of its Worker", async () => {
+    const result = await run(`
+      const url = URL.createObjectURL(new Blob([\`
+        onmessage = ({ data: files }) => {
+          for (let i = 0; i < 40; i++) new Bun.Image(files[i % 5]).imageData(new ImageData(257, 199));
+          postMessage("pending");
+        };
+      \`]));
+      await Promise.all(Array.from({ length: 4 }, async () => {
+        const worker = new Worker(url);
+        const closed = new Promise(resolve => worker.addEventListener("close", resolve));
+        worker.onmessage = () => worker.terminate();
+        worker.postMessage(files);
+        await closed;
+      }));
+      console.log("closed");
+    `);
+    expect(result).toEqual({ stdout: "closed\n", stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("outlasts process.exit()", async () => {
+    const result = await run(`
+      for (let i = 0; i < 40; i++) new Bun.Image(files[i % 5]).imageData(new ImageData(257, 199));
+      process.exit(3);
+    `);
+    expect(result).toEqual({ stdout: "", stderr: "", exitCode: 3 });
   });
 });
 

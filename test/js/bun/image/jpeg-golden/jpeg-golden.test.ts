@@ -8,8 +8,10 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { differences } from "../../archive-golden/observe";
+import { differentInTarget } from "../png-golden/check";
 import { loadCases } from "../png-golden/observe";
 import { withTrailer } from "./decode";
+import { scaled } from "./model";
 import { observable, type Cases } from "./observe";
 
 const recorded = await loadCases<Cases>(join(import.meta.dir, "cases.json.gz"));
@@ -34,5 +36,29 @@ describe.each([
       })),
     );
     expect(differences(results)).toBe("");
+  });
+});
+
+describe("into a target", () => {
+  const files = new Map(recorded.decode.map(c => [c.name, Buffer.from(c.data, "base64")]));
+
+  test("decode", async () => {
+    const images = recorded.decode.map(({ name, maxPixels }) => ({
+      name,
+      open: () => new Bun.Image(files.get(name)!, { maxPixels }),
+    }));
+    expect(await differentInTarget(images)).toEqual({ decoded: 802, refused: 80, different: [] });
+  });
+
+  test("scale", async () => {
+    const images = recorded.scale.map(({ source, eighths }) => ({
+      name: `${source} at ${eighths}`,
+      async open() {
+        const image = new Bun.Image(files.get(source)!);
+        const { width, height } = await image.metadata();
+        return image.resize(scaled(width, eighths), scaled(height, eighths), { fit: "fill" });
+      },
+    }));
+    expect(await differentInTarget(images)).toEqual({ decoded: 1290, refused: 0, different: [] });
   });
 });

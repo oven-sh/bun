@@ -1,5 +1,6 @@
 //! A row of macroblocks on its way through the loop filter to RGBA.
 
+use bun_alloc::Lender;
 use bun_highway::webp::{self as kernels, FilterStrength, ROW_STEP};
 
 use super::header::FilterType;
@@ -99,7 +100,7 @@ impl Upsampled<'_> {
     }
 }
 
-pub(super) struct Planes<'a> {
+pub(super) struct Planes<'a, 'b> {
     y: Plane<'a>,
     u: Plane<'a>,
     v: Plane<'a>,
@@ -110,11 +111,11 @@ pub(super) struct Planes<'a> {
     height: usize,
     alpha: Option<alpha::decoder::Rows<'a>>,
     opaque: &'a [u8],
-    pixels: Vec<[u8; 4]>,
+    pixels: Vec<[u8; 4], Lender<'b>>,
     rows_done: usize,
 }
 
-impl<'a> Planes<'a> {
+impl<'a, 'b> Planes<'a, 'b> {
     /// All but the pixels and their alpha is put into `memory`.
     pub(super) fn new(
         width: usize,
@@ -122,13 +123,14 @@ impl<'a> Planes<'a> {
         filter_type: FilterType,
         alpha: Option<&'a [u8]>,
         memory: &'a mut Vec<u8>,
+        lender: Lender<'b>,
     ) -> Result<Self> {
         let (alpha, pixels) = match alpha {
             Some(chunk) => {
-                let (rows, pixels) = alpha::decoder::Rows::new(chunk, width, height)?;
+                let (rows, pixels) = alpha::decoder::Rows::new(chunk, width, height, lender)?;
                 (Some(rows), pixels)
             }
-            None => (None, vec::with_room(width * height)?),
+            None => (None, vec::with_room_in(width * height, lender)?),
         };
         let padded = width.next_multiple_of(ROW_STEP);
         // What the filter reads across an edge. The first of them is final, and shared by pixels above and below it.
@@ -259,7 +261,7 @@ impl<'a> Planes<'a> {
         kernels::yuv_to_rgba(yuva, &mut self.pixels, start, count);
     }
 
-    pub(super) fn into_pixels(self) -> Vec<[u8; 4]> {
+    pub(super) fn into_pixels(self) -> Vec<[u8; 4], Lender<'b>> {
         self.pixels
     }
 }

@@ -1569,7 +1569,7 @@ pub fn jpeg_ycc_to_rgba(
     y: &[u8],
     chroma: JpegChroma<'_>,
     width: usize,
-    out: &mut Vec<[u8; 4]>,
+    out: &mut Vec<[u8; 4], impl core::alloc::Allocator>,
 ) -> Result<(), JpegMisfit> {
     jpeg_require(width <= y.len())?;
     let padded = width.next_multiple_of(JPEG_PIXEL_GROUP);

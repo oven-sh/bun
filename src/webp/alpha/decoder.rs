@@ -1,5 +1,6 @@
 //! The alpha channel, a row at a time.
 
+use bun_alloc::Lender;
 use bun_highway::webp::ROW_STEP;
 
 use super::{Filter, LOSSLESS_COMPRESSION, NO_COMPRESSION, gradient};
@@ -27,11 +28,12 @@ enum Source<'a> {
 
 impl<'a> Rows<'a> {
     /// Also returns where the picture goes: room for `width * height` pixels, which may be there already.
-    pub(crate) fn new(
+    pub(crate) fn new<'b>(
         chunk: &'a [u8],
         width: usize,
         height: usize,
-    ) -> Result<(Self, Vec<[u8; 4]>)> {
+        lender: Lender<'b>,
+    ) -> Result<(Self, Vec<[u8; 4], Lender<'b>>)> {
         let &[header, ref data @ ..] = chunk else {
             return Err(Error::InvalidAlpha);
         };
@@ -49,7 +51,7 @@ impl<'a> Rows<'a> {
         let padded = width.next_multiple_of(ROW_STEP);
         let (source, pixels) = match header & 3 {
             NO_COMPRESSION if data.len() >= width * height => (Source::Raw(data), None),
-            LOSSLESS_COMPRESSION => match decode_green(data, width, height)? {
+            LOSSLESS_COMPRESSION => match decode_green(data, width, height, lender)? {
                 Green::Indexed(green) => {
                     let row = vec::with_room(padded + MAX_BUNDLE_LEN)?;
                     (Source::Indexed(green, row), None)
@@ -68,7 +70,7 @@ impl<'a> Rows<'a> {
         };
         Ok((
             rows,
-            pixels.map_or_else(|| vec::with_room(width * height), Ok)?,
+            pixels.map_or_else(|| vec::with_room_in(width * height, lender), Ok)?,
         ))
     }
 

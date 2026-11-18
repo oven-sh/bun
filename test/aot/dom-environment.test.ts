@@ -223,6 +223,7 @@ test("the build knows every name that the runner defines for a window", () => {
     ...[...runner.matchAll(/addProperty\(globals, "([^"]+)"/g)].map(match => match[1]),
     "onerror",
     "onmessage",
+    "ImageData",
   ];
   expect(lists).toHaveLength(4);
   const known = readFileSync(join(source, "aot/load/globals_of_a_window.rs"), "utf8");

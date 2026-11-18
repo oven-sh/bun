@@ -113,10 +113,11 @@ function windowProperties(win: any, additionalKeys: string[]): Pick<Environment,
   const names = $Object.$getOwnPropertyNames(win);
   for (let i = 0; i < names.length; i++) {
     const key = names[i];
-    // Bun has `onerror` and `onmessage` globals but Node doesn't, so vitest ends up with the window's.
+    // Bun has these globals but Node doesn't, so vitest ends up with the window's.
+    const isMissingInNode = key === "onerror" || key === "onmessage" || key === "ImageData";
     // With --isolate=modules, a name can be on globalThis only because the last file's window put it there.
     const isFromLastWindow = originalDescriptors.$has(key) && !originalDescriptors.$get(key);
-    if (!(key in globalThis) || isFromLastWindow || key === "onerror" || key === "onmessage") take(key);
+    if (!(key in globalThis) || isFromLastWindow || isMissingInNode) take(key);
   }
   for (let i = 0; i < SELF_KEYS.length; i++) properties.$set(SELF_KEYS[i], dataProperty(globalThis, true));
   const { document } = win;

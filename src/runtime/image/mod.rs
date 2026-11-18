@@ -40,6 +40,8 @@ pub(crate) mod backend_coregraphics;
 pub(crate) mod backend_wic;
 
 // ─── pure helpers (no jsc / no FFI sys deps) ─────────────────────────────────
+#[path = "color.rs"]
+pub(crate) mod color;
 #[path = "exif.rs"]
 pub(crate) mod exif;
 #[path = "quantize.rs"]
@@ -54,3 +56,7 @@ pub(crate) mod thumbhash;
 #[path = "Image.rs"]
 pub(crate) mod image_body;
 pub(crate) use image_body::Image;
+
+#[path = "ImageData.rs"]
+pub(crate) mod image_data;
+pub(crate) use image_data::ImageData;

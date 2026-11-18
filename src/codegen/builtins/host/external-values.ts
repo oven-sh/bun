@@ -33,6 +33,7 @@ export const externalValueFeatures: readonly FeatureName[] = [
   "Bodies",
   "WebCrypto",
   "NetAddresses",
+  "ImageData",
   "RegExpUnicodeProperties",
   ...arrayBufferViewFeatures,
 ];

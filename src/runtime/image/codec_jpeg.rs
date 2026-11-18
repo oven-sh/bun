@@ -25,12 +25,16 @@ pub(crate) fn dimensions(bytes: &[u8]) -> Result<(u32, u32), codecs::Error> {
     Ok((header.width, header.height))
 }
 
+fn scaled(width: u32, height: u32, eighths: u8) -> [u32; 2] {
+    [width, height].map(|size| (size * u32::from(eighths)).div_ceil(8))
+}
+
 /// The scale with the fewest pixels that is still no smaller than the target. The resize pass goes the rest of the way.
 fn eighths(width: u32, height: u32, hint: codecs::DecodeHint) -> u8 {
     if hint.target_w == 0 || hint.target_h == 0 {
         return 8;
     }
-    let scaled = |eighths: u8| [width, height].map(|size| (size * u32::from(eighths)).div_ceil(8));
+    let scaled = |eighths| scaled(width, height, eighths);
     // Backwards, for the largest of the scales that give the same size.
     (1..=8)
         .rev()
@@ -42,16 +46,19 @@ fn eighths(width: u32, height: u32, hint: codecs::DecodeHint) -> u8 {
         .unwrap_or(8)
 }
 
-pub(crate) fn decode(
+pub(crate) fn decode<'a>(
     bytes: &[u8],
     max_pixels: u64,
     hint: codecs::DecodeHint,
-) -> Result<codecs::Decoded, codecs::Error> {
+    canvas: codecs::Canvas<'a>,
+) -> Result<codecs::Decoded<'a>, codecs::Error> {
     let decoder = bun_jpeg::Decoder::new(bytes).map_err(decode_error)?;
     let bun_jpeg::Header { width, height } = decoder.header();
     codecs::guard(width, height, max_pixels)?;
+    let eighths = eighths(width, height, hint);
+    let [scaled_width, scaled_height] = scaled(width, height, eighths);
     let image = decoder
-        .decode(eighths(width, height, hint))
+        .decode(eighths, canvas.lender_for(scaled_width, scaled_height))
         .map_err(decode_error)?;
     Ok(codecs::Decoded {
         rgba: image.rgba,

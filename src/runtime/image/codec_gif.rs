@@ -249,7 +249,11 @@ pub(crate) fn first_frame(bytes: &[u8]) -> Result<Frame<'_>, codecs::Error> {
     Err(codecs::Error::DecodeFailed)
 }
 
-pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::Error> {
+pub(crate) fn decode<'a>(
+    bytes: &[u8],
+    max_pixels: u64,
+    canvas: codecs::Canvas<'a>,
+) -> Result<codecs::Decoded<'a>, codecs::Error> {
     let frame = first_frame(bytes)?;
     codecs::guard(frame.width, frame.height, max_pixels)?;
     decode_frame(
@@ -261,10 +265,11 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
         frame.color_table,
         frame.min_code,
         frame.transparent,
+        canvas,
     )
 }
 
-fn decode_frame(
+fn decode_frame<'a>(
     bytes: &[u8],
     lzw_off: usize,
     w: u32,
@@ -273,7 +278,8 @@ fn decode_frame(
     ct: &[u8],
     min_code: u8,
     trns: Option<u8>,
-) -> Result<codecs::Decoded, codecs::Error> {
+    canvas: codecs::Canvas<'a>,
+) -> Result<codecs::Decoded<'a>, codecs::Error> {
     let npix: usize = (w as usize) * (h as usize);
 
     // LZW dictionary state. `clear` and `eoi` are the two reserved codes
@@ -355,7 +361,7 @@ fn decode_frame(
     // from 4, every 4th from 2, every 2nd from 1). The decoded `idx` is in
     // pass order; remap to scan order while expanding so we don't allocate a
     // second index buffer.
-    let mut out: Vec<u8> = Vec::with_capacity(npix * 4);
+    let mut out = Vec::with_capacity_in(npix * 4, canvas.lender_for(w, h));
     let (pixels, _) = out.spare_capacity_mut().as_chunks_mut::<4>();
 
     let mut pal: [[u8; 4]; 256] = [[0, 0, 0, 255]; 256];

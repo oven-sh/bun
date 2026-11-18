@@ -10,6 +10,8 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
+use bun_alloc::Lender;
+
 use super::codecs;
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, Copy, Clone, Eq, PartialEq)]
@@ -153,7 +155,11 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<(u32, u32), Backend
     }
 }
 
-pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendError> {
+pub(crate) fn decode<'a>(
+    bytes: &[u8],
+    max_pixels: u64,
+    canvas: codecs::Canvas<'a>,
+) -> Result<codecs::Decoded<'a>, BackendError> {
     let mut w: u32 = 0;
     let mut h: u32 = 0;
     // Phase 1: dimensions only (out=null) so we can allocate in the global
@@ -173,7 +179,7 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, B
         rc => return Err(map_err(rc)),
     }
     let n = (w as usize) * (h as usize) * 4;
-    let mut out: Vec<u8> = Vec::with_capacity(n);
+    let mut out = Vec::with_capacity_in(n, canvas.lender_for(w, h));
     // Phase 2: render. The C side re-creates the CGImageSource (cheap — the
     // header parse is the only repeated work) so we don't have to thread an
     // opaque handle across the boundary.
@@ -262,19 +268,20 @@ unsafe extern "C" {
 /// vImageScale's default kernel is Lanczos-3 (the HQ flag widens to L5), so
 /// we only take this path for the `.lanczos3` default — explicit non-Lanczos
 /// filters fall through to the Highway kernel which honours them exactly.
-pub(crate) fn scale(
+pub(crate) fn scale<'a>(
     src: &[u8],
     sw: u32,
     sh: u32,
     dw: u32,
     dh: u32,
     filter: codecs::Filter,
-) -> Result<Vec<u8>, BackendError> {
+    lender: Lender<'a>,
+) -> Result<codecs::Rgba<'a>, BackendError> {
     if filter != codecs::Filter::Lanczos3 {
         return Err(BackendError::BackendUnavailable);
     }
     // PERF: zero-fill alloc — profile if hot.
-    let mut out = vec![0u8; (dw as usize) * (dh as usize) * 4];
+    let mut out = lender.zeroed((dw as usize) * (dh as usize) * 4);
     // SAFETY: src has sw*sh*4 bytes (caller invariant); out has dw*dh*4 bytes.
     if unsafe { bun_coregraphics_scale(src.as_ptr(), sw, sh, out.as_mut_ptr(), dw, dh) } != CG_OK {
         return Err(BackendError::BackendUnavailable);
@@ -282,9 +289,15 @@ pub(crate) fn scale(
     Ok(out)
 }
 
-pub(crate) fn rotate(src: &[u8], w: u32, h: u32, quarters: u32) -> Result<Vec<u8>, BackendError> {
+pub(crate) fn rotate<'a>(
+    src: &[u8],
+    w: u32,
+    h: u32,
+    quarters: u32,
+    lender: Lender<'a>,
+) -> Result<codecs::Rgba<'a>, BackendError> {
     // PERF: zero-fill alloc — profile if hot.
-    let mut out = vec![0u8; (w as usize) * (h as usize) * 4];
+    let mut out = lender.zeroed((w as usize) * (h as usize) * 4);
     // SAFETY: src and out both have w*h*4 bytes.
     if unsafe { bun_coregraphics_rotate90(src.as_ptr(), w, h, out.as_mut_ptr(), quarters) } != CG_OK
     {
@@ -293,9 +306,15 @@ pub(crate) fn rotate(src: &[u8], w: u32, h: u32, quarters: u32) -> Result<Vec<u8
     Ok(out)
 }
 
-pub(crate) fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u8>, BackendError> {
+pub(crate) fn flip<'a>(
+    src: &[u8],
+    w: u32,
+    h: u32,
+    horizontal: bool,
+    lender: Lender<'a>,
+) -> Result<codecs::Rgba<'a>, BackendError> {
     // PERF: zero-fill alloc — profile if hot.
-    let mut out = vec![0u8; (w as usize) * (h as usize) * 4];
+    let mut out = lender.zeroed((w as usize) * (h as usize) * 4);
     // SAFETY: src and out both have w*h*4 bytes.
     if unsafe { bun_coregraphics_reflect(src.as_ptr(), w, h, out.as_mut_ptr(), horizontal as i32) }
         != CG_OK

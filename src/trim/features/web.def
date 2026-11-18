@@ -66,6 +66,8 @@ feature TextDecoderStream "TextDecoderStream"
 
 feature Bodies "Blob, File, Request, Response, Bun.stdin, Bun.stdout and Bun.stderr"
 
+feature ImageData "ImageData"
+
 feature Worker "worker threads"
 
 feature IntlLocale "Intl.Locale and Intl.supportedValuesOf"

@@ -137,6 +137,7 @@ const constructorsRequiringNew = [
   "EventTarget",
   "HTMLRewriter",
   "Headers",
+  "ImageData",
   "ReadableStream",
   "Request",
   "ResolveMessage",

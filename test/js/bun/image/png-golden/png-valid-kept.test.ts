@@ -7,7 +7,7 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
 import { loadCases } from "../../archive-golden/observe";
-import { decoded } from "./check";
+import { decoded, differentInTarget } from "./check";
 
 type Entry = {
   name: string;
@@ -35,6 +35,12 @@ async function expectToDecode(fixture: string, count: number) {
     }
   });
   expect(await Promise.all(results)).toEqual(entries.map(({ data, maxPixels, ...expected }) => expected));
+
+  const images = entries.map(({ name, data, maxPixels }) => ({
+    name,
+    open: () => new Bun.Image(Buffer.from(data, "base64"), { maxPixels }),
+  }));
+  expect(await differentInTarget(images)).toEqual({ decoded: count, refused: 0, different: [] });
 }
 
 // Pictures that were made up first and then written by 24 programs in many of the ways that each offers. A name says

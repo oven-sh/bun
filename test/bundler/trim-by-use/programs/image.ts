@@ -38,3 +38,14 @@ await describe("palette", await new Bun.Image(png).png({ palette: true }).bytes(
 const response = new Response(new Bun.Image(png).flip().png() as any);
 console.log("body", response.headers.get("content-type"), (await response.bytes()).length);
 console.log("placeholder", (await new Bun.Image(png).placeholder()).slice(0, 22));
+const pixels = await new Bun.Image(png).resize(2, 1).imageData();
+console.log("pixels", pixels.constructor.name, pixels.data.constructor.name, pixels.width, pixels.data.join());
+const target = {
+  data: new Uint8Array([0, 0, 0, 0, 0, 0, 0, 0]),
+  width: 1,
+  height: 2,
+  colorSpace: "display-p3",
+} as const;
+await new Bun.Image(pixels).rotate(90).imageData(target);
+console.log("target", target.data[0], target.data.join());
+await describe("raw", await new Bun.Image(target).bytes());

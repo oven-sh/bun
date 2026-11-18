@@ -5,6 +5,8 @@
 
 use core::ffi::c_int;
 
+use bun_alloc::Lender;
+
 // Per-format implementations live in their own files; codecs.rs is the
 // dispatch surface only.
 pub(crate) use super::codec_bmp as bmp;
@@ -201,9 +203,31 @@ bun_core::comptime_string_map! {
     };
 }
 
-#[derive(Default)]
-pub(crate) struct Decoded {
-    pub(crate) rgba: Vec<u8>, // global allocator (mimalloc)
+pub(crate) type Rgba<'a> = Vec<u8, Lender<'a>>;
+
+/// The caller's memory, for an image of one width and height: 2x8 pixels take as many bytes as 4x4.
+#[derive(Clone, Copy)]
+pub(crate) struct Canvas<'a>(Option<(Lender<'a>, (u32, u32))>);
+
+impl<'a> Canvas<'a> {
+    pub(crate) const NONE: Canvas<'static> = Canvas(None);
+
+    pub(crate) fn new(lender: Lender<'a>, size: (u32, u32)) -> Self {
+        Self(Some((lender, size)))
+    }
+
+    pub(crate) fn filter(self, is_kept: impl FnOnce((u32, u32)) -> bool) -> Self {
+        Self(self.0.filter(|&(_, size)| is_kept(size)))
+    }
+
+    pub(crate) fn lender_for(self, width: u32, height: u32) -> Lender<'a> {
+        let Self(fitting) = self.filter(|size| size == (width, height));
+        fitting.map_or(Lender::NONE, |(lender, _)| lender)
+    }
+}
+
+pub(crate) struct Decoded<'a> {
+    pub(crate) rgba: Rgba<'a>,
     pub(crate) width: u32,
     pub(crate) height: u32,
     /// ICC color profile bytes pulled from the source container (JPEG APP2,
@@ -259,33 +283,37 @@ pub(crate) struct DecodeHint {
     pub(crate) target_h: u32,
 }
 
-pub(crate) fn decode(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<Decoded, Error> {
+pub(crate) fn decode<'a>(
+    bytes: &[u8],
+    max_pixels: u64,
+    hint: DecodeHint,
+    canvas: Canvas<'a>,
+) -> Result<Decoded<'a>, Error> {
     let fmt = Format::sniff(bytes).ok_or(Error::UnknownFormat)?;
     match fmt {
-        Format::Jpeg => jpeg::decode(bytes, max_pixels, hint),
-        Format::Png => png::decode(bytes, max_pixels),
-        Format::Webp => webp::decode(bytes, max_pixels),
+        Format::Jpeg => jpeg::decode(bytes, max_pixels, hint, canvas),
+        Format::Png => png::decode(bytes, max_pixels, canvas),
+        Format::Webp => webp::decode(bytes, max_pixels, canvas),
         // Static codecs cover everything we ship; profiling on M-series showed
         // ImageIO is no faster (for JPEG, Huffman is the
         // bottleneck and isn't vectorisable; for PNG, zlib-ng beats ImageIO's
         // system libz). The OS backend is purely a *capability* fallback for
         // containers we don't link a decoder for — and `backend == .bun` opts
         // out of even that so behaviour is identical to Linux.
-        Format::Heic | Format::Avif | Format::Tiff => match decode_via_system(bytes, max_pixels)? {
-            Some(d) => Ok(d),
-            None => Err(Error::UnsupportedOnPlatform),
-        },
+        Format::Heic | Format::Avif | Format::Tiff => {
+            decode_via_system(bytes, max_pixels, canvas)?.ok_or(Error::UnsupportedOnPlatform)
+        }
         // BMP/GIF have static decoders so Linux (and `backend == .bun`) work;
         // the system backend is tried first because ImageIO/WIC handle the
         // long tail (RLE BMP, animated GIF disposal, etc.) we don't.
-        Format::Bmp => match decode_via_system(bytes, max_pixels)? {
+        Format::Bmp => match decode_via_system(bytes, max_pixels, canvas)? {
             Some(d) => Ok(d),
-            None => bmp::decode(bytes, max_pixels),
+            None => bmp::decode(bytes, max_pixels, canvas),
         },
         Format::Gif => {
-            let mut d = match decode_via_system(bytes, max_pixels)? {
+            let mut d = match decode_via_system(bytes, max_pixels, canvas)? {
                 Some(d) => d,
-                None => gif::decode(bytes, max_pixels)?,
+                None => gif::decode(bytes, max_pixels, canvas)?,
             };
             // GIF transparency is a binary palette-index flag — the RGB at
             // α=0 is whatever the colour-table slot happened to hold and has
@@ -308,10 +336,15 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<
 }
 
 // `Result<Option<Decoded>, Error>` where `Ok(None)` = BackendUnavailable.
-fn decode_via_system(_bytes: &[u8], _max_pixels: u64) -> Result<Option<Decoded>, Error> {
+fn decode_via_system<'a>(
+    _bytes: &[u8],
+    _max_pixels: u64,
+    _canvas: Canvas<'a>,
+) -> Result<Option<Decoded<'a>>, Error> {
     #[cfg(any(target_os = "macos", windows))]
     if use_system() {
-        return system_backend::BackendError::split(system_backend::decode(_bytes, _max_pixels));
+        let decoded = system_backend::decode(_bytes, _max_pixels, _canvas);
+        return system_backend::BackendError::split(decoded);
     }
     Ok(None)
 }
@@ -567,26 +600,29 @@ pub(crate) fn modulate(rgba: &mut [u8], brightness: f32, saturation: f32) {
     unsafe { bun_image_modulate_rgba8(rgba.as_mut_ptr(), rgba.len(), brightness, saturation) }
 }
 
-fn try_with_capacity(capacity: usize) -> Result<Vec<u8>, Error> {
-    let mut vec = Vec::new();
+fn try_with_capacity(capacity: usize, lender: Lender) -> Result<Rgba, Error> {
+    let mut vec = Vec::new_in(lender);
     vec.try_reserve_exact(capacity)
         .map_err(|_| Error::OutOfMemory)?;
     Ok(vec)
 }
 
-pub(crate) fn resize(
+pub(crate) fn resize<'a>(
     src: &[u8],
     sw: u32,
     sh: u32,
     dw: u32,
     dh: u32,
     f: Filter,
-) -> Result<Vec<u8>, Error> {
+    canvas: Canvas<'a>,
+) -> Result<Rgba<'a>, Error> {
+    let lender = canvas.lender_for(dw, dh);
     // Only `backend_coregraphics` provides
     // scale/rotate/flip (vImage); WIC has decode/encode only.
     #[cfg(target_os = "macos")]
     if use_system() {
-        match system_backend::BackendError::split(system_backend::scale(src, sw, sh, dw, dh, f)) {
+        let scaled = system_backend::scale(src, sw, sh, dw, dh, f, lender);
+        match system_backend::BackendError::split(scaled) {
             Ok(Some(out)) => return Ok(out),
             Ok(None) => {} // BackendUnavailable → fall through
             Err(e) => return Err(e),
@@ -604,8 +640,13 @@ pub(crate) fn resize(
         i32::try_from(dh).expect("int cast"),
         f as i32,
     );
-    let mut block = try_with_capacity(out_sz + scratch_sz)?;
-    // SAFETY: capacity = dst [0..out_sz) + scratch; the kernel fills scratch before reading it.
+    let (mut block, mut scratch_apart) = if lender.lends(out_sz) {
+        let scratch = try_with_capacity(scratch_sz, Lender::NONE)?;
+        (try_with_capacity(out_sz, lender)?, Some(scratch))
+    } else {
+        (try_with_capacity(out_sz + scratch_sz, Lender::NONE)?, None)
+    };
+    // SAFETY: capacity = dst [0..out_sz) + scratch, unless that is apart; the kernel fills scratch before reading it.
     let rc = unsafe {
         bun_image_resize_rgba8(
             src.as_ptr(),
@@ -615,7 +656,10 @@ pub(crate) fn resize(
             i32::try_from(dw).expect("int cast"),
             i32::try_from(dh).expect("int cast"),
             f as i32,
-            block.as_mut_ptr().add(out_sz),
+            match &mut scratch_apart {
+                Some(scratch) => scratch.as_mut_ptr(),
+                None => block.as_mut_ptr().add(out_sz),
+            },
         )
     };
     if rc != 0 {
@@ -630,15 +674,23 @@ pub(crate) fn resize(
     Ok(block)
 }
 
-pub(crate) fn rotate(src: &[u8], w: u32, h: u32, degrees: u32) -> Result<Decoded, Error> {
+pub(crate) fn rotate<'a>(
+    src: &[u8],
+    w: u32,
+    h: u32,
+    degrees: u32,
+    canvas: Canvas<'a>,
+) -> Result<Decoded<'a>, Error> {
     let (dw, dh): (u32, u32) = if degrees == 90 || degrees == 270 {
         (h, w)
     } else {
         (w, h)
     };
+    let lender = canvas.lender_for(dw, dh);
     #[cfg(target_os = "macos")]
     if use_system() {
-        match system_backend::BackendError::split(system_backend::rotate(src, w, h, degrees / 90)) {
+        let rotated = system_backend::rotate(src, w, h, degrees / 90, lender);
+        match system_backend::BackendError::split(rotated) {
             Ok(Some(out)) => {
                 return Ok(Decoded {
                     rgba: out,
@@ -652,7 +704,7 @@ pub(crate) fn rotate(src: &[u8], w: u32, h: u32, degrees: u32) -> Result<Decoded
         }
     }
     let out_len = (dw as usize) * (dh as usize) * 4;
-    let mut out = try_with_capacity(out_len)?;
+    let mut out = try_with_capacity(out_len, lender)?;
     // SAFETY: src has w*h*4 bytes; out has dw*dh*4 bytes of capacity; degrees is multiple of 90.
     unsafe {
         bun_image_rotate_rgba8(
@@ -673,17 +725,25 @@ pub(crate) fn rotate(src: &[u8], w: u32, h: u32, degrees: u32) -> Result<Decoded
     })
 }
 
-pub(crate) fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u8>, Error> {
+pub(crate) fn flip<'a>(
+    src: &[u8],
+    w: u32,
+    h: u32,
+    horizontal: bool,
+    canvas: Canvas<'a>,
+) -> Result<Rgba<'a>, Error> {
+    let lender = canvas.lender_for(w, h);
     #[cfg(target_os = "macos")]
     if use_system() {
-        match system_backend::BackendError::split(system_backend::flip(src, w, h, horizontal)) {
+        let flipped = system_backend::flip(src, w, h, horizontal, lender);
+        match system_backend::BackendError::split(flipped) {
             Ok(Some(out)) => return Ok(out),
             Ok(None) => {} // BackendUnavailable → fall through
             Err(e) => return Err(e),
         }
     }
     let out_len = (w as usize) * (h as usize) * 4;
-    let mut out = try_with_capacity(out_len)?;
+    let mut out = try_with_capacity(out_len, lender)?;
     // SAFETY: src has w*h*4 bytes; out has w*h*4 bytes of capacity.
     unsafe {
         bun_image_flip_rgba8(

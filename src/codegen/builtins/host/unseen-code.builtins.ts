@@ -105,6 +105,7 @@ const classesWithConstructor = [
   "%HTTPParser%",
   "%Histogram%",
   "%Image%",
+  "%ImageData%",
   "%Immediate%",
   "%NativeBrotli%",
   "%NativeZlib%",

@@ -20,6 +20,7 @@ const fakePackages = {
         this.document = { body: { id }, defaultView: this };
         this.location = { href: options.url };
         this.matchMedia = undefined;
+        this.ImageData = class HappyImageData {};
         this.happyDOM = {
           async abort() {
             await Promise.resolve();
@@ -562,6 +563,23 @@ describe.concurrent("test environment", () => {
         }),
       )
     `;
+
+    test("ImageData is that of the window, if it has one", async () => {
+      const logImageData = `
+        import { test } from "bun:test";
+        test("ImageData", () => console.log(new ImageData(1, 1).constructor.name));
+      `;
+      using dir = tempDir("test-environment", {
+        ...fakePackages,
+        "0.test.js": `// ${VITEST} happy-dom\n${logImageData}`,
+        "1.test.js": `// ${VITEST} jsdom\n${logImageData}`,
+        "2.test.js": logImageData,
+      });
+      const { stdout, stderr, exitCode } = await bunTest(String(dir));
+      expect(stdout.filter(line => !line.startsWith("open "))).toEqual(["HappyImageData", "ImageData", "ImageData"]);
+      expect(summary(stderr)).toEqual(["3 pass", "0 fail"]);
+      expect(exitCode).toBe(0);
+    });
 
     test("every global is restored after a file", async () => {
       using dir = tempDir("test-environment", {

@@ -9,13 +9,17 @@
 //! `toBase64`/`metadata`) is awaited, as a `bun_jsc::Job` (`PipelineTask`).
 
 use core::cell::Cell;
-use core::mem;
+use core::mem::{self, MaybeUninit};
+use core::ops::Range;
+use core::ptr::NonNull;
 
+use crate::jsc_hooks::runtime_state;
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
 use crate::webcore::blob::store as blob_store;
 use crate::webcore::blob::{ReadBytesHandler, ReadBytesResult};
 use crate::webcore::node_types::PathOrFileDescriptor;
+use bun_alloc::{Lender, Loan};
 use bun_core::ZBox;
 use bun_core::base64;
 use bun_core::zstr;
@@ -23,13 +27,16 @@ use bun_core::{EncodedSlice, ZStr, strings};
 use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
-    self as jsc, ArrayBuffer, EncodedSliceJsc as _, JSGlobalObject, JSPromise, JSValue, JsCell,
-    JsClass as _, JsRef, JsResult, StringJsc as _, Strong, SysErrorJsc as _,
+    self as jsc, ArrayBuffer, EncodedSliceJsc as _, ErrorCode, JSGlobalObject, JSPromise, JSValue,
+    JsCell, JsClass as _, JsRef, JsResult, PinnedArrayBuffer, StringJsc as _, Strong,
+    SysErrorJsc as _,
 };
 use bun_sys as sys;
 
-use super::codecs;
+use super::codecs::{self, Canvas};
+use super::color;
 use super::exif;
+use super::image_data::{ImageData, ImageDataPixelFormat, PredefinedColorSpace, Settings};
 use super::thumbhash;
 
 /// Lowercase JS-visible name for a `codecs::Format`. Local until `Format`
@@ -113,6 +120,21 @@ pub(crate) enum Source {
     /// task off the resulting Promise. After the first read completes the
     /// source is swapped to `.owned` so subsequent terminals reuse the bytes.
     Blob(Strong),
+    /// `data` is in the `sourceJS` slot. Each terminal copies it, because the encoders count on what they have read.
+    Pixels(PixelLayout),
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct PixelLayout {
+    width: u32,
+    height: u32,
+    color_space: PredefinedColorSpace,
+}
+
+impl PixelLayout {
+    fn byte_len(self) -> u64 {
+        (u64::from(self.width) * u64::from(self.height)).saturating_mul(4)
+    }
 }
 
 // `Vec<u8>`, `ZString`, and
@@ -201,6 +223,13 @@ pub(crate) struct Pipeline {
     pub(crate) output: Option<codecs::EncodeOptions>,
 }
 
+impl Pipeline {
+    fn before_resize<'a>(&self, canvas: Canvas<'a>) -> Canvas<'a> {
+        let resized = |(w, h)| self.resize.map_or((w, h), |r| resolve_resize(r, w, h));
+        canvas.filter(|size| resized(size) == size)
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct Modulate {
     /// Multiplier; 1.0 = identity.
@@ -256,16 +285,16 @@ impl Image {
         let input = input.to_js();
         if input.is_undefined_or_null() {
             return Err(global.throw_invalid_arguments(format_args!(
-                "Image() expects a path, ArrayBuffer, TypedArray, Blob or data: URL",
+                "Image() expects a path, ArrayBuffer, TypedArray, Blob, ImageData or data: URL",
             )));
         }
         let mut img = Image::default();
-        img.source.set(source_from_js(global, input)?);
+        let (source, source_js) = source_from_js(global, input)?;
+        img.source.set(source);
         apply_options(&mut img, global, options.to_js())?;
-        let borrows_input = matches!(img.source.get(), Source::JsBuffer);
         let this_value = structure.create(&cx.heap, img);
-        if borrows_input {
-            js::source_js_set_cached(this_value.to_js(), cx.global(), input);
+        if let Some(source_js) = source_js {
+            js::source_js_set_cached(this_value.to_js(), cx.global(), source_js);
         }
         Ok(this_value)
     }
@@ -280,10 +309,10 @@ impl Image {
         let mut img = Image::default();
         apply_options(&mut img, global, options)?;
         // For Blob receivers `source_from_js` either dupes (in-memory blob) or
-        // creates a Strong (file/S3); the cached `sourceJS` slot is only used
-        // for the `.js_buffer` path, which a Blob never produces.
-        img.source.set(source_from_js(global, blob_value)?);
-        debug_assert!(!matches!(img.source.get(), Source::JsBuffer));
+        // creates a Strong (file/S3), so nothing goes in the `sourceJS` slot.
+        let (source, source_js) = source_from_js(global, blob_value)?;
+        debug_assert!(source_js.is_none());
+        img.source.set(source);
         Ok(img.to_js(global))
     }
 
@@ -292,7 +321,7 @@ impl Image {
         // counted via the cached value slot); the worker's RGBA scratch is
         // task-scoped and freed before any GC could observe it.
         match self.source.get() {
-            Source::JsBuffer | Source::Blob(_) => 0,
+            Source::JsBuffer | Source::Blob(_) | Source::Pixels(_) => 0,
             Source::Owned(b) => b.len(),
             Source::Path(p) => p.len(),
         }
@@ -314,8 +343,8 @@ fn apply_options(img: &mut Image, global: &JSGlobalObject, opt: JSValue) -> JsRe
     Ok(())
 }
 
-/// The caller of a `Source::JsBuffer` result puts `value` in the `sourceJS` slot.
-fn source_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Source> {
+/// The second result is for the `sourceJS` slot.
+fn source_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<(Source, Option<JSValue>)> {
     // String → file path or data:/base64 URL. Everything else → bytes.
     if value.is_string() {
         let str = value.to_bun_string(global)?;
@@ -345,10 +374,10 @@ fn source_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Source> {
                 )));
             }
             out.truncate(r.written);
-            return Ok(Source::Owned(out));
+            return Ok((Source::Owned(out), None));
         }
         crate::node::types::Valid::path_null_bytes(s, global)?;
-        return Ok(Source::Path(ZBox::from_bytes(s)));
+        return Ok((Source::Path(ZBox::from_bytes(s)), None));
     }
     if let Some(ab) = value.as_array_buffer(global) {
         // A resizable/growable buffer can shrink or reallocate underneath any
@@ -365,14 +394,14 @@ fn source_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Source> {
         }
         // Just remember the JS object — see Source::JsBuffer for why we don't
         // cache the pointer or pin here.
-        return Ok(Source::JsBuffer);
+        return Ok((Source::JsBuffer, Some(value)));
     }
     if let Some(blob) = value.as_class_ref::<Blob>() {
         // In-memory blob: dupe its bytes (the store may be sliced/replaced
         // independently).
         let view = blob.shared_view();
         if !view.is_empty() {
-            return Ok(Source::Owned(view.to_vec()));
+            return Ok((Source::Owned(view.to_vec()), None));
         }
         // Anything with a backing store but no in-memory view yet
         // (`Bun.file()`, `Bun.s3()`, fd, …) — keep the JS object and read it
@@ -380,12 +409,65 @@ fn source_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Source> {
         // that store type does (file → ReadFile, S3 → fetch, etc.) without
         // knowing about it here.
         if blob.store.get().is_some() {
-            return Ok(Source::Blob(Strong::create(value, global)));
+            return Ok((Source::Blob(Strong::create(value, global)), None));
         }
+    } else if let Some((data, layout)) = pixels_from_js(global, value)? {
+        return Ok((Source::Pixels(layout), Some(data)));
     }
     Err(global.throw_invalid_arguments(format_args!(
-        "Image() input must be a path string, data: URL, ArrayBuffer, TypedArray or Blob",
+        "Image() input must be a path string, data: URL, ArrayBuffer, TypedArray, Blob or ImageData",
     )))
+}
+
+fn color_space_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<PredefinedColorSpace> {
+    let settings = Settings::from_js(global, value)?;
+    if settings.pixel_format != ImageDataPixelFormat::RgbaUnorm8 {
+        return Err(global.throw_invalid_arguments(format_args!(
+            r#"Image: only the pixelFormat "rgba-unorm8" is supported"#
+        )));
+    }
+    Ok(settings.color_space)
+}
+
+fn throw_invalid_data(global: &JSGlobalObject, data: JSValue) -> jsc::JsError {
+    let expected = "an instance of Uint8ClampedArray or Uint8Array";
+    global.throw_invalid_argument_type_value2("data", expected, data)
+}
+
+/// By shape: canvas packages have an `ImageData` of their own. The view is detached, or as long as the layout says.
+fn pixels_from_js(
+    global: &JSGlobalObject,
+    value: JSValue,
+) -> JsResult<Option<(JSValue, PixelLayout)>> {
+    let Some(data) = value.get(global, "data")? else {
+        return Ok(None);
+    };
+    let layout = PixelLayout {
+        width: value.get_optional_int(global, "width")?.unwrap_or(0),
+        height: value.get_optional_int(global, "height")?.unwrap_or(0),
+        color_space: color_space_from_js(global, value)?,
+    };
+    if !matches!(
+        data.js_type(),
+        jsc::JSType::Uint8ClampedArray | jsc::JSType::Uint8Array
+    ) {
+        return Err(throw_invalid_data(global, data));
+    }
+    let view = ArrayBuffer::from_typed_array(global, data);
+    if view.can_change_under_borrow() {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "Image: the data must not be a view of a shared or resizable buffer"
+        )));
+    }
+    let byte_len = layout.byte_len();
+    let fits = view.is_detached() || view.byte_len as u64 == byte_len;
+    if !fits || !(1..=ArrayBuffer::MAX_SIZE.into()).contains(&byte_len) {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "Image: {} bytes of data are not {}x{} RGBA pixels",
+            view.byte_len, layout.width, layout.height
+        )));
+    }
+    Ok(Some((data, layout)))
 }
 
 // ───────────────────────────── chainable ops ────────────────────────────────
@@ -657,6 +739,21 @@ fn error_with_code(global: &JSGlobalObject, code: &'static ZStr, msg: &'static Z
 enum PinError {
     #[error("detached")]
     Detached,
+    #[error(transparent)]
+    Codec(#[from] codecs::Error),
+}
+
+impl PinError {
+    fn to_js(&self, global: &JSGlobalObject) -> JSValue {
+        match *self {
+            Self::Detached => error_with_code(
+                global,
+                zstr!("ERR_INVALID_STATE"),
+                zstr!("Image: source ArrayBuffer was detached"),
+            ),
+            Self::Codec(e) => reject_error(global, e),
+        }
+    }
 }
 
 impl Image {
@@ -673,13 +770,27 @@ impl Image {
     fn pin_for_task(
         &self,
         this_value: JSValue,
-        _global: &JSGlobalObject,
+        global: &JSGlobalObject,
     ) -> Result<(Input, Pin), PinError> {
         match self.source.get() {
             Source::JsBuffer => {
                 let Some(v) = js::source_js_get_cached(this_value) else {
                     return Err(PinError::Detached);
                 };
+                if let Some(buffer) = v.as_array_buffer(global)
+                    && buffer.byte_len != 0
+                    && (buffer.can_be_freed_while_pinned()
+                        || overlaps_pending_target(buffer.byte_slice()))
+                {
+                    let copied = buffer.try_copy_bytes().ok_or(codecs::Error::OutOfMemory)?;
+                    return Ok((
+                        Input {
+                            copied: Some(copied),
+                            ..Default::default()
+                        },
+                        Pin::NONE,
+                    ));
+                }
                 // Classify the storage mode WITHOUT promoting it. A fresh
                 // `new Uint8Array(N)` (the common path — `await res.bytes()`,
                 // `Buffer.from(file)`) is `OversizeTypedArray`: bytes in
@@ -751,6 +862,21 @@ impl Image {
                 },
                 Pin::NONE,
             )),
+            &Source::Pixels(layout) => {
+                codecs::guard(layout.width, layout.height, self.max_pixels)?;
+                let data = js::source_js_get_cached(this_value)
+                    .and_then(|data| data.as_array_buffer(global))
+                    .filter(|data| data.byte_len as u64 == layout.byte_len())
+                    .ok_or(PinError::Detached)?;
+                let rgba = data.try_copy_bytes().ok_or(codecs::Error::OutOfMemory)?;
+                Ok((
+                    Input {
+                        pixels: Some((rgba, layout)),
+                        ..Default::default()
+                    },
+                    Pin::NONE,
+                ))
+            }
             // schedule() peels this off before pin_for_task is reached.
             Source::Blob(_) => unreachable!(),
         }
@@ -855,6 +981,29 @@ impl Image {
     pub(crate) fn get_height(&self) -> i32 {
         self.last_height.get()
     }
+
+    fn set_last_size(&self, width: u32, height: u32) {
+        self.last_width.set(i32::try_from(width).expect("int cast"));
+        self.last_height
+            .set(i32::try_from(height).expect("int cast"));
+    }
+}
+
+fn metadata_to_js(
+    global: &JSGlobalObject,
+    width: u32,
+    height: u32,
+    format: &'static str,
+) -> JsResult<JSValue> {
+    let obj = JSValue::create_empty_object(global, 3);
+    obj.put(global, b"width", JSValue::js_number(f64::from(width)));
+    obj.put(global, b"height", JSValue::js_number(f64::from(height)));
+    obj.put(
+        global,
+        b"format",
+        bun_core::String::static_(format).to_js(global)?,
+    );
+    Ok(obj)
 }
 
 // ───────────────────────────── async terminals ──────────────────────────────
@@ -884,6 +1033,17 @@ impl Image {
             }
             Source::Owned(b) => Some(b.as_slice()),
             Source::Path(_) | Source::Blob(_) => None,
+            &Source::Pixels(PixelLayout { width, height, .. }) => {
+                return match codecs::guard(width, height, self.max_pixels) {
+                    Ok(()) => {
+                        self.set_last_size(width, height);
+                        let metadata = metadata_to_js(global, width, height, "raw")?;
+                        Ok(JSPromise::resolved_promise_value(global, metadata))
+                    }
+                    Err(e) => Ok(JSPromise::rejected_promise(global, reject_error(global, e))
+                        .as_value(global)),
+                };
+            }
         };
         if let Some(buf) = bytes {
             match codecs::probe(buf, self.max_pixels) {
@@ -896,17 +1056,9 @@ impl Image {
                             mem::swap(&mut w, &mut h);
                         }
                     }
-                    self.last_width.set(i32::try_from(w).expect("int cast"));
-                    self.last_height.set(i32::try_from(h).expect("int cast"));
-                    let obj = JSValue::create_empty_object(global, 3);
-                    obj.put(global, b"width", JSValue::js_number(f64::from(w)));
-                    obj.put(global, b"height", JSValue::js_number(f64::from(h)));
-                    obj.put(
-                        global,
-                        b"format",
-                        bun_core::String::static_(format_name(p.format)).to_js(global)?,
-                    );
-                    return Ok(JSPromise::resolved_promise_value(global, obj));
+                    self.set_last_size(w, h);
+                    let metadata = metadata_to_js(global, w, h, format_name(p.format))?;
+                    return Ok(JSPromise::resolved_promise_value(global, metadata));
                 }
                 // HEIC/AVIF need the system backend → fall through to async.
                 Err(codecs::Error::UnsupportedOnPlatform) => {}
@@ -984,6 +1136,41 @@ impl Image {
             Kind::Encode(self.pipeline.get().output),
             Deliver::DataUrl,
         )
+    }
+
+    /// The pixels, without an encode. `target` is an `ImageData` to fill, or the settings of a new one.
+    pub(crate) fn image_data<'a>(
+        &self,
+        this_value: JsWrapper<'a, Self>,
+        cx: &mut JsScope<'a>,
+        target: JsLocal<'a>,
+    ) -> JsResult<JSValue> {
+        let cx = cx.js_thread();
+        let global = cx.global();
+        let target = target.to_js();
+        if target.as_array_buffer(global).is_some() {
+            return Err(global.throw_invalid_argument_type_value2(
+                "target",
+                "an instance of ImageData",
+                target,
+            ));
+        }
+        let (kind, deliver) = match pixels_from_js(global, target)? {
+            Some((data, layout)) => match Target::new(global, target, data, layout) {
+                Ok(target) => (Kind::Fill(target.memory(), layout), Deliver::Target(target)),
+                Err(reason) => {
+                    return Ok(JSPromise::rejected_promise(global, reason).as_value(global));
+                }
+            },
+            None if target.get(global, "width")?.is_some() => {
+                return Err(throw_invalid_data(global, JSValue::UNDEFINED));
+            }
+            None => (
+                Kind::Pixels(color_space_from_js(global, target)?),
+                Deliver::ImageData,
+            ),
+        };
+        self.schedule(&cx, this_value.to_js(), kind, deliver)
     }
 
     /// `.placeholder()` — ThumbHash-rendered ≤32px PNG `data:` URL. ~28 chars
@@ -1082,17 +1269,10 @@ impl Image {
         }
         let (input, pin) = match self.pin_for_task(this_value, cx.global()) {
             Ok(i) => i,
-            Err(PinError::Detached) => {
+            Err(e) => {
                 drop(deliver);
-                return Ok(JSPromise::rejected_promise(
-                    cx.global(),
-                    error_with_code(
-                        cx.global(),
-                        zstr!("ERR_INVALID_STATE"),
-                        zstr!("Image: source ArrayBuffer was detached"),
-                    ),
-                )
-                .as_value(cx.global()));
+                let error = e.to_js(cx.global());
+                return Ok(JSPromise::rejected_promise(cx.global(), error).as_value(cx.global()));
             }
         };
         let work = PipelineTask {
@@ -1169,6 +1349,7 @@ impl Image {
             Err(PinError::Detached) => {
                 return Err(global.throw(format_args!("Image: source ArrayBuffer was detached")));
             }
+            Err(PinError::Codec(e)) => return Err(global.throw_value(reject_error(global, e))),
         };
         // `_pin` unpins at scope exit, after `run()` is done with the bytes.
         let mut task = PipelineTask {
@@ -1186,8 +1367,7 @@ impl Image {
         );
         match result {
             TaskResult::Encoded { out, format, w, h } => {
-                self.last_width.set(i32::try_from(w).expect("int cast"));
-                self.last_height.set(i32::try_from(h).expect("int cast"));
+                self.set_last_size(w, h);
                 Ok((out, format.mime()))
             }
             TaskResult::Err(e) => Err(global.throw(format_args!(
@@ -1196,7 +1376,10 @@ impl Image {
             ))),
             // Preserve errno/path/syscall instead of flattening to DecodeFailed.
             TaskResult::IoErr(e) => Err(global.throw_value(e.to_js(global))),
-            TaskResult::Meta { .. } => unreachable!(),
+            TaskResult::Meta { .. }
+            | TaskResult::Pixels { .. }
+            | TaskResult::Filled(_)
+            | TaskResult::WrongSize { .. } => unreachable!(),
         }
     }
 }
@@ -1391,7 +1574,14 @@ impl jsc::JobContext for PipelineTask {
     type OffThread = Self;
     type Js = PipelineJs;
     fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
-        this.run();
+        match this.kind {
+            Kind::Fill(memory, layout) => {
+                // SAFETY: the job's `Target` keeps other tasks away from it.
+                let memory = unsafe { memory.under_ticket(done.ticket()) };
+                this.result = this.fill(memory, layout);
+            }
+            _ => this.run(),
+        }
         Some(done)
     }
     fn then(this: Self, js: PipelineJs, cx: &jsc::JsThread<'_>) -> jsc::JsResult<()> {
@@ -1407,8 +1597,10 @@ pub(crate) struct Input {
     // Borrows `image.source.path` (NUL-terminated); the owning `Image` is
     // held via BACKREF for the task's lifetime, same as `bytes` above.
     path: Option<*const ZStr>,
-    /// FastTypedArray inputs are tiny and GC-movable: copied instead of pinned.
+    /// What a pin cannot keep in place, or a target is written over.
     copied: Option<Vec<u8>>,
+    /// In place of everything above: there is nothing to decode.
+    pixels: Option<(Vec<u8>, PixelLayout)>,
 }
 
 impl Default for Input {
@@ -1417,6 +1609,7 @@ impl Default for Input {
             bytes: bun_ptr::RawSlice::EMPTY,
             path: None,
             copied: None,
+            pixels: None,
         }
     }
 }
@@ -1443,13 +1636,83 @@ pub(crate) enum Deliver {
     /// implementation with this as the destination. Anything `Bun.write`
     /// accepts (path string / BunFile / S3 / fd) works here unchanged.
     WriteDest(Strong),
+    ImageData,
+    Target(Target),
 }
 // `Deliver::deinit` is just `Strong::Drop` on the `WriteDest` arm — handled
 // automatically.
 
+/// `.imageData(target)`
+pub(crate) struct Target {
+    object: Strong,
+    data: PinnedArrayBuffer,
+    addresses: Range<usize>,
+}
+// SAFETY: a `Strong`, a pin and an entry in the state of the VM.
+unsafe impl bun_jsc::job::JsAffine for Target {}
+
+fn overlaps_pending_target(bytes: &[u8]) -> bool {
+    let Range { start, end } = bytes.as_ptr_range();
+    let mut pending = runtime_state().image_targets.get().iter();
+    pending.any(|it| it.start < end.addr() && start.addr() < it.end)
+}
+
+impl Target {
+    /// `Err` is the reason to reject with.
+    fn new(
+        global: &JSGlobalObject,
+        object: JSValue,
+        data: JSValue,
+        layout: PixelLayout,
+    ) -> Result<Self, JSValue> {
+        let invalid_state = |message| Err(global.err(ErrorCode::INVALID_STATE, message).to_js());
+        // A view without a buffer has nothing to pin, and `postMessage(it, [it.data.buffer])` would take its memory.
+        let mut data = data
+            .materialize_array_buffer_view_buffer()
+            .then(|| PinnedArrayBuffer::root(global, data))
+            .flatten()
+            .ok_or_else(|| reject_error(global, codecs::Error::OutOfMemory))?;
+        if data.byte_len as u64 != layout.byte_len() {
+            return invalid_state(format_args!("Image: target ArrayBuffer was detached"));
+        }
+        // The decoders read what they have written, so two of them cannot share memory.
+        if overlaps_pending_target(data.byte_slice()) {
+            return invalid_state(format_args!(
+                "Image: another imageData() call is still writing to the target"
+            ));
+        }
+        let addresses = data.ptr.addr()..data.ptr.addr() + data.byte_len;
+        let pending = &runtime_state().image_targets;
+        pending.with_mut(|pending| pending.push(addresses.clone()));
+        data.write_to_scratch_if_wasm(0, data.byte_len);
+        Ok(Self {
+            object: Strong::create(object, global),
+            data,
+            addresses,
+        })
+    }
+
+    fn memory(&self) -> jsc::JsPtr<[MaybeUninit<u8>]> {
+        let address = NonNull::new(self.data.ptr).expect("not empty");
+        let memory = NonNull::slice_from_raw_parts(address.cast(), self.data.byte_len);
+        // SAFETY: pinned and rooted by `self`, which is on the job's Js side.
+        unsafe { jsc::JsPtr::new(memory) }
+    }
+}
+
+impl Drop for Target {
+    fn drop(&mut self) {
+        let pending = &runtime_state().image_targets;
+        pending.with_mut(|pending| pending.retain(|it| *it != self.addresses));
+    }
+}
+
 pub(crate) enum Kind {
     /// `None` ⇒ re-encode in the source format (resolved after decode).
     Encode(Option<codecs::EncodeOptions>),
+    Pixels(PredefinedColorSpace),
+    /// The memory of a `Target`.
+    Fill(jsc::JsPtr<[MaybeUninit<u8>]>, PixelLayout),
     Metadata,
     /// `.placeholder()` — decode → box-resize ≤100 → ThumbHash → render
     /// → PNG → `data:` URL. The whole chain runs on the worker; the
@@ -1470,13 +1733,26 @@ pub(crate) enum TaskResult {
         h: u32,
         format: codecs::Format,
     },
+    Pixels {
+        rgba: Vec<u8>,
+        layout: PixelLayout,
+    },
+    Filled(PixelLayout),
+    WrongSize {
+        w: u32,
+        h: u32,
+        target: PixelLayout,
+    },
     Err(codecs::Error),
     IoErr(sys::Error),
 }
 
 impl PipelineTask {
-    /// Runs on a `WorkPool` thread. No JSC access.
-    pub(crate) fn run(&mut self) {
+    /// `Err` is the result of a task that ends here, which is how `.metadata()` succeeds too.
+    fn decode<'a>(
+        &self,
+        canvas: Canvas<'a>,
+    ) -> Result<(codecs::Decoded<'a>, codecs::Format), TaskResult> {
         // `self.input` was prepared on the JS thread by `pin_for_task`: either a
         // pinned ArrayBuffer slice (pin lives until `then()` unpins), an owned
         // buffer, or a path to read here.
@@ -1506,36 +1782,31 @@ impl PipelineTask {
             let file = match sys::File::openat(sys::Fd::cwd(), p, oflags, 0) {
                 sys::Result::Ok(f) => f,
                 sys::Result::Err(e) => {
-                    self.result = TaskResult::IoErr(e.with_path(p.as_bytes()));
-                    return;
+                    return Err(TaskResult::IoErr(e.with_path(p.as_bytes())));
                 }
             };
             // `defer file.close()` — assume `sys::File` closes on Drop.
             let st = match file.stat() {
                 sys::Result::Ok(s) => s,
                 sys::Result::Err(e) => {
-                    self.result = TaskResult::IoErr(e.with_path(p.as_bytes()));
-                    return;
+                    return Err(TaskResult::IoErr(e.with_path(p.as_bytes())));
                 }
             };
             if !sys::S::ISREG(st.st_mode as _) {
-                self.result = TaskResult::IoErr(sys::Error {
+                return Err(TaskResult::IoErr(sys::Error {
                     errno: sys::E::ENODEV as _,
                     syscall: sys::Tag::read,
                     path: p.as_bytes().to_vec().into_boxed_slice(),
                     ..Default::default()
-                });
-                return;
+                }));
             }
             if u64::try_from(st.st_size.max(0)).expect("int cast") > MAX_INPUT_FILE_BYTES {
-                self.result = TaskResult::Err(codecs::Error::TooManyPixels);
-                return;
+                return Err(TaskResult::Err(codecs::Error::TooManyPixels));
             }
             match file.read_to_end() {
                 Ok(bytes) => owned_file = Some(bytes),
                 Err(e) => {
-                    self.result = TaskResult::IoErr(e.with_path(p.as_bytes()));
-                    return;
+                    return Err(TaskResult::IoErr(e.with_path(p.as_bytes())));
                 }
             }
             owned_file.as_deref().unwrap()
@@ -1558,22 +1829,26 @@ impl PipelineTask {
                             mem::swap(&mut w, &mut h);
                         }
                     }
-                    self.result = TaskResult::Meta {
+                    return Err(TaskResult::Meta {
                         w,
                         h,
                         format: p.format,
-                    };
-                    return;
+                    });
                 }
                 // HEIC/AVIF have no header probe — fall through to full decode
                 // via the system backend.
                 Err(codecs::Error::UnsupportedOnPlatform) => {}
                 Err(e) => {
-                    self.result = TaskResult::Err(e);
-                    return;
+                    return Err(TaskResult::Err(e));
                 }
             }
         }
+
+        let src_format = codecs::Format::sniff(input).unwrap_or(codecs::Format::Png);
+        let orient = match self.auto_orient && src_format == codecs::Format::Jpeg {
+            true => exif::read_jpeg(input),
+            false => exif::Orientation::Normal,
+        };
 
         // Decode-time downscale hint. The IDCT picker constrains in *stored*
         // axes, so any 90/270 rotate that runs before resize — explicit OR
@@ -1586,10 +1861,7 @@ impl PipelineTask {
             // r.h==0 means "preserve aspect" — constrain on width only.
             let mut th = if r.h != 0 { r.h } else { r.w };
             let swap_explicit = self.pipeline.rotate == 90 || self.pipeline.rotate == 270;
-            let swap_exif = self.auto_orient && {
-                let t = exif::read_jpeg(input).transform();
-                t.rotate == 90 || t.rotate == 270
-            };
+            let swap_exif = matches!(orient.transform().rotate, 90 | 270);
             if swap_explicit != swap_exif {
                 mem::swap(&mut tw, &mut th);
             }
@@ -1601,38 +1873,92 @@ impl PipelineTask {
             codecs::DecodeHint::default()
         };
 
-        let mut decoded = match codecs::decode(input, self.max_pixels, hint) {
-            Ok(d) => d,
-            Err(e) => {
-                self.result = TaskResult::Err(e);
-                return;
-            }
-        };
-        // `defer decoded.deinit()` — `codecs::Decoded` Drop frees rgba/icc.
-
-        let src_format = codecs::Format::sniff(input).unwrap_or(codecs::Format::Png);
+        let decode_canvas = canvas.filter(|_| orient == exif::Orientation::Normal);
+        let mut decoded =
+            codecs::decode(input, self.max_pixels, hint, decode_canvas).map_err(TaskResult::Err)?;
 
         // EXIF auto-orient: applied BEFORE any user op so resize targets and
         // metadata report the visually-upright dimensions, the way Sharp does.
-        if self.auto_orient && src_format == codecs::Format::Jpeg {
-            let orient = exif::read_jpeg(input);
-            if orient != exif::Orientation::Normal {
-                if let Err(e) = apply_orientation(&mut decoded, orient) {
-                    self.result = TaskResult::Err(e);
-                    return;
-                }
-            }
-        }
+        apply_orientation(&mut decoded, orient, canvas).map_err(TaskResult::Err)?;
 
         if matches!(self.kind, Kind::Metadata) {
             // Reached only for HEIC/AVIF (probe fell through).
-            self.result = TaskResult::Meta {
+            return Err(TaskResult::Meta {
                 w: decoded.width,
                 h: decoded.height,
                 format: src_format,
-            };
-            return;
+            });
         }
+        Ok((decoded, src_format))
+    }
+
+    fn source_pixels<'a>(
+        &mut self,
+        canvas: Canvas<'a>,
+    ) -> Result<(codecs::Decoded<'a>, codecs::Format), TaskResult> {
+        let Some((rgba, layout)) = self.input.pixels.take() else {
+            return self.decode(canvas);
+        };
+        let mut decoded = codecs::Decoded {
+            rgba: Lender::adopt(rgba),
+            width: layout.width,
+            height: layout.height,
+            icc_profile: color::profile_of(layout.color_space),
+        };
+        let keeps_profile = match self.kind {
+            Kind::Placeholder => false,
+            Kind::Encode(Some(options)) => {
+                !matches!(options.format, codecs::Format::Heic | codecs::Format::Avif)
+            }
+            _ => true,
+        };
+        if !keeps_profile {
+            let profile = decoded.icc_profile.take();
+            let srgb = PredefinedColorSpace::Srgb;
+            color::convert(&mut decoded.rgba, profile.as_deref(), srgb);
+        }
+        Ok((decoded, codecs::Format::Png))
+    }
+
+    /// The last stage that moves pixels puts them on `canvas`. If it could not, they are returned.
+    fn draw(&mut self, canvas: Canvas, target: PixelLayout) -> Result<Option<Vec<u8>>, TaskResult> {
+        let p = self.pipeline;
+        let source_canvas = p.before_resize(canvas);
+        let source_canvas = source_canvas.filter(|_| p.rotate == 0 && !p.flip && !p.flop);
+        let (mut decoded, _) = self.source_pixels(source_canvas)?;
+        self.apply_pipeline(&mut decoded, canvas)
+            .map_err(TaskResult::Err)?;
+        let (w, h) = (decoded.width, decoded.height);
+        if (w, h) != (target.width, target.height) {
+            return Err(TaskResult::WrongSize { w, h, target });
+        }
+        let profile = decoded.icc_profile.as_deref();
+        color::convert(&mut decoded.rgba, profile, target.color_space);
+        Ok(Lender::release(decoded.rgba))
+    }
+
+    fn fill(&mut self, memory: &mut [MaybeUninit<u8>], target: PixelLayout) -> TaskResult {
+        // As every row of an allocated image is. ImageIO, vImage and WIC do not say that less is enough.
+        let is_aligned = memory.as_ptr().addr().is_multiple_of(4);
+        let loan = Loan::new(memory);
+        let canvas = Canvas::new(loan.lender(), (target.width, target.height));
+        match self.draw(canvas.filter(|_| is_aligned), target) {
+            Ok(Some(rgba)) => _ = memory.write_copy_of_slice(&rgba),
+            Ok(None) => {}
+            Err(result) => return result,
+        }
+        TaskResult::Filled(target)
+    }
+
+    /// Runs on a `WorkPool` thread. No JSC access.
+    pub(crate) fn run(&mut self) {
+        let (mut decoded, src_format) = match self.source_pixels(Canvas::NONE) {
+            Ok(decoded) => decoded,
+            Err(result) => {
+                self.result = result;
+                return;
+            }
+        };
 
         if matches!(self.kind, Kind::Placeholder) {
             self.result = match make_placeholder(&decoded.rgba, decoded.width, decoded.height) {
@@ -1642,8 +1968,22 @@ impl PipelineTask {
             return;
         }
 
-        if let Err(e) = self.apply_pipeline(&mut decoded) {
+        if let Err(e) = self.apply_pipeline(&mut decoded, Canvas::NONE) {
             self.result = TaskResult::Err(e);
+            return;
+        }
+
+        if let Kind::Pixels(color_space) = self.kind {
+            let profile = decoded.icc_profile.as_deref();
+            color::convert(&mut decoded.rgba, profile, color_space);
+            self.result = TaskResult::Pixels {
+                rgba: Lender::release(decoded.rgba).expect("nothing was lent"),
+                layout: PixelLayout {
+                    width: decoded.width,
+                    height: decoded.height,
+                    color_space,
+                },
+            };
             return;
         }
 
@@ -1700,9 +2040,11 @@ impl PipelineTask {
         // Stash final dims here (JS thread) — `run()` is on a WorkPool thread
         // so writing `image.*` there would race the synchronous getters.
         match &self.result {
-            TaskResult::Encoded { w, h, .. } | TaskResult::Meta { w, h, .. } => {
-                image.last_width.set(i32::try_from(*w).expect("int cast"));
-                image.last_height.set(i32::try_from(*h).expect("int cast"));
+            TaskResult::Encoded { w, h, .. }
+            | TaskResult::Meta { w, h, .. }
+            | TaskResult::WrongSize { w, h, .. } => image.set_last_size(*w, *h),
+            TaskResult::Pixels { layout, .. } | TaskResult::Filled(layout) => {
+                image.set_last_size(layout.width, layout.height);
             }
             _ => {}
         }
@@ -1789,17 +2131,39 @@ impl PipelineTask {
                         };
                         promise.resolve(global, write_promise)?;
                     }
+                    Deliver::ImageData | Deliver::Target(_) => unreachable!(),
                 }
             }
+            TaskResult::Pixels { rgba, layout } => promise.settle(
+                global,
+                ImageData::from_rgba8(
+                    global,
+                    rgba,
+                    layout.width,
+                    layout.height,
+                    layout.color_space,
+                ),
+            )?,
+            TaskResult::WrongSize { w, h, target } => {
+                let message = format_args!(
+                    "Image: the output is {w}x{h}, but the target is {}x{}",
+                    target.width, target.height
+                );
+                let error = global.err(ErrorCode::IMAGE_SIZE_MISMATCH, message);
+                promise.reject(global, Ok(error.to_js()))?;
+            }
+            TaskResult::Filled(_) => {
+                let Deliver::Target(mut target) = js.deliver else {
+                    unreachable!()
+                };
+                target.data.write_back(usize::MAX);
+                let object = target.object.get();
+                // Resolving looks for a `then` on the object, which can run script that uses it again.
+                drop(target);
+                promise.resolve(global, object)?;
+            }
             TaskResult::Meta { w, h, format } => {
-                let obj = JSValue::create_empty_object(global, 3);
-                obj.put(global, b"width", JSValue::js_number(f64::from(w)));
-                obj.put(global, b"height", JSValue::js_number(f64::from(h)));
-                let fmt_js = bun_core::String::static_(format_name(format))
-                    .to_js(global)
-                    .unwrap_or(JSValue::UNDEFINED);
-                obj.put(global, b"format", fmt_js);
-                promise.resolve(global, obj)?;
+                promise.settle(global, metadata_to_js(global, w, h, format_name(format)))?;
             }
             TaskResult::Err(e) => promise.reject(global, Ok(reject_error(global, e)))?,
             TaskResult::IoErr(e) => promise.reject(global, Ok(e.to_js(global)))?,
@@ -1814,10 +2178,16 @@ impl PipelineTask {
     /// `icc_profile == None`, so overwriting `d.*` wholesale would drop the
     /// source's colour profile. Geometry doesn't change colour meaning, so
     /// the profile survives unchanged.
-    fn apply_pipeline(&self, d: &mut codecs::Decoded) -> Result<(), codecs::Error> {
+    fn apply_pipeline<'a>(
+        &self,
+        d: &mut codecs::Decoded<'a>,
+        canvas: Canvas<'a>,
+    ) -> Result<(), codecs::Error> {
         let p = &self.pipeline;
+        let before_resize = p.before_resize(canvas);
         if p.rotate != 0 {
-            let next = codecs::rotate(&d.rgba, d.width, d.height, u32::from(p.rotate))?;
+            let canvas = before_resize.filter(|_| !p.flip && !p.flop);
+            let next = codecs::rotate(&d.rgba, d.width, d.height, u32::from(p.rotate), canvas)?;
             // Assignment drops
             // the old `Vec<u8>`/owned buffer.
             d.rgba = next.rgba;
@@ -1825,11 +2195,12 @@ impl PipelineTask {
             d.height = next.height;
         }
         if p.flip {
-            let next = codecs::flip(&d.rgba, d.width, d.height, false)?;
+            let canvas = before_resize.filter(|_| !p.flop);
+            let next = codecs::flip(&d.rgba, d.width, d.height, false, canvas)?;
             d.rgba = next;
         }
         if p.flop {
-            let next = codecs::flip(&d.rgba, d.width, d.height, true)?;
+            let next = codecs::flip(&d.rgba, d.width, d.height, true, before_resize)?;
             d.rgba = next;
         }
         if let Some(r) = p.resize {
@@ -1846,7 +2217,7 @@ impl PipelineTask {
                 return Err(codecs::Error::TooManyPixels);
             }
             if t.0 != d.width || t.1 != d.height {
-                let next = codecs::resize(&d.rgba, d.width, d.height, t.0, t.1, r.filter)?;
+                let next = codecs::resize(&d.rgba, d.width, d.height, t.0, t.1, r.filter, canvas)?;
                 d.rgba = next;
                 d.width = t.0;
                 d.height = t.1;
@@ -1869,7 +2240,7 @@ fn make_placeholder(rgba: &[u8], sw: u32, sh: u32) -> Result<TaskResult, codecs:
     const MAX_IN: u32 = 100;
     let mut w = sw;
     let mut h = sh;
-    let mut owned: Option<Vec<u8>> = None;
+    let mut owned: Option<codecs::Rgba> = None;
     let mut pixels: &[u8] = rgba;
     if w > MAX_IN || h > MAX_IN {
         let r = (w as f32) / (h as f32);
@@ -1880,7 +2251,8 @@ fn make_placeholder(rgba: &[u8], sw: u32, sh: u32) -> Result<TaskResult, codecs:
             h = MAX_IN;
             w = 1u32.max(((MAX_IN as f32) * r).round() as u32);
         }
-        owned = Some(codecs::resize(rgba, sw, sh, w, h, codecs::Filter::Box)?);
+        let filter = codecs::Filter::Box;
+        owned = Some(codecs::resize(rgba, sw, sh, w, h, filter, Canvas::NONE)?);
         pixels = owned.as_deref().unwrap();
     }
     let mut buf = [0u8; thumbhash::MAX_LEN];
@@ -1927,23 +2299,26 @@ fn resolve_resize(r: Resize, sw: u32, sh: u32) -> (u32, u32) {
     (w, h)
 }
 
-fn apply_orientation(
-    d: &mut codecs::Decoded,
+fn apply_orientation<'a>(
+    d: &mut codecs::Decoded<'a>,
     orient: exif::Orientation,
+    canvas: Canvas<'a>,
 ) -> Result<(), codecs::Error> {
     let t = orient.transform();
     if t.flip {
-        let next = codecs::flip(&d.rgba, d.width, d.height, false)?;
+        let canvas = canvas.filter(|_| !t.flop && t.rotate == 0);
+        let next = codecs::flip(&d.rgba, d.width, d.height, false, canvas)?;
         d.rgba = next;
     }
     if t.flop {
-        let next = codecs::flip(&d.rgba, d.width, d.height, true)?;
+        let canvas = canvas.filter(|_| t.rotate == 0);
+        let next = codecs::flip(&d.rgba, d.width, d.height, true, canvas)?;
         d.rgba = next;
     }
     if t.rotate != 0 {
         // Swap pixel slots only — `next` carries no ICC profile, and the
         // one on `d` (set by decode) must survive EXIF auto-orient.
-        let next = codecs::rotate(&d.rgba, d.width, d.height, u32::from(t.rotate))?;
+        let next = codecs::rotate(&d.rgba, d.width, d.height, u32::from(t.rotate), canvas)?;
         d.rgba = next.rgba;
         d.width = next.width;
         d.height = next.height;

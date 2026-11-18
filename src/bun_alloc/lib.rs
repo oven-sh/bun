@@ -92,6 +92,9 @@ pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
 //   basic                    → `impl GlobalAlloc for Mimalloc` above is the canonical impl
 pub mod stack_fallback;
 
+mod loan;
+pub use loan::{Lender, Loan};
+
 /// Raw alloc/free matching the `#[global_allocator]` (`mi_*` normally, libc under ASAN).
 pub mod default_alloc {
     use core::ffi::c_void;

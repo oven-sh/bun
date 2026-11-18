@@ -105,6 +105,7 @@ export default b.declarations(
   extendAll(["TextDecoderStream", "LegacyEncodings", "WebStreams"], "TextDecoderStream"),
   extendAll(["TextEncoder"], "TextEncoder"),
   extendAll(["Base64Globals"], "atob", "btoa"),
+  extendAll(["ImageData", "Uint8ClampedArray", "Float16Array"], "ImageData"),
 
   extendAll(
     [...fetchFeatures, ...usesWhen(b.whenOperandStartsWith("input", "s3:", "S3:"), ...s3Features)],

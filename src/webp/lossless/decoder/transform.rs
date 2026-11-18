@@ -1,5 +1,7 @@
 //! What was done to the pixels to make them compress better, and how it is undone.
 
+use core::alloc::Allocator;
+
 use bun_highway::webp::{undo_cross_color, undo_prediction};
 
 use super::Rgba;
@@ -177,7 +179,12 @@ pub(super) struct Lookup<T> {
 
 impl<T: Copy> Lookup<T> {
     /// All colors of the bundles, the unused ones of the last in a row too. `to` has room for them.
-    pub(super) fn append<B>(&self, coded: &[B], bundle: impl Fn(&B) -> u8, to: &mut Vec<T>) {
+    pub(super) fn append<B>(
+        &self,
+        coded: &[B],
+        bundle: impl Fn(&B) -> u8,
+        to: &mut Vec<T, impl Allocator>,
+    ) {
         match self.bundle_bits {
             0 => self.append_by::<B, 1>(coded, bundle, to),
             1 => self.append_by::<B, 2>(coded, bundle, to),
@@ -190,7 +197,7 @@ impl<T: Copy> Lookup<T> {
         &self,
         coded: &[B],
         bundle: impl Fn(&B) -> u8,
-        to: &mut Vec<T>,
+        to: &mut Vec<T, impl Allocator>,
     ) {
         let table = self.table.as_chunks::<N>().0.first_chunk::<256>();
         if let Some(table) = known(table) {

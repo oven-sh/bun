@@ -1,20 +1,27 @@
 //! WebP to 8-bit RGBA.
 
+use bun_alloc::Lender;
+
 use crate::error::{Error, Result};
 use crate::riff::{Bitstream, Container, ImageChunk};
 use crate::{lossless, lossy, slice, vec};
 
-pub struct Image {
+pub struct Image<'a> {
     /// `width * height * 4` bytes, rows from the top, not premultiplied.
-    pub rgba: Vec<u8>,
+    pub rgba: Vec<u8, Lender<'a>>,
     pub icc_profile: Option<Vec<u8>>,
 }
 
-impl Image {
-    fn new(pixels: Vec<[u8; 4]>, len: usize, icc_profile: Option<Vec<u8>>) -> Result<Self> {
+impl<'a> Image<'a> {
+    fn new(
+        pixels: Vec<[u8; 4], Lender<'a>>,
+        len: usize,
+        icc_profile: Option<Vec<u8>>,
+    ) -> Result<Self> {
         if pixels.len() != len {
             return Err(Error::Internal);
         }
+        debug_assert!(len == 0 || pixels.capacity() == len);
         Ok(Self {
             rgba: pixels.into_flattened(),
             icc_profile,
@@ -88,13 +95,13 @@ impl<'a> Decoder<'a> {
         self.height
     }
 
-    pub fn decode(self) -> Result<Image> {
+    pub fn decode(self, lender: Lender) -> Result<Image> {
         if !self.container.is_complete() {
             return Err(Error::UnexpectedEof);
         }
         let pixels = slice::checked(|| match self.frame? {
-            Frame::Lossless(header) => header.decode(),
-            Frame::Lossy { header, alpha } => header.decode(alpha),
+            Frame::Lossless(header) => header.decode(lender),
+            Frame::Lossy { header, alpha } => header.decode(alpha, lender),
         })?;
         Image::new(
             pixels,
@@ -110,7 +117,8 @@ mod tests {
 
     #[test]
     fn an_image_has_all_of_its_pixels() {
-        assert!(Image::new(Vec::new(), 0, None).is_ok());
-        assert_eq!(Image::new(Vec::new(), 1, None).err(), Some(Error::Internal));
+        let empty = |len| Image::new(Vec::new_in(Lender::NONE), len, None);
+        assert!(empty(0).is_ok());
+        assert_eq!(empty(1).err(), Some(Error::Internal));
     }
 }

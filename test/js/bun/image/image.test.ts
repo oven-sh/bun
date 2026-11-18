@@ -1368,6 +1368,469 @@ describe("Bun.Image", () => {
   });
 });
 
+describe("pixels", () => {
+  const pixelsOf = (width: number, height: number, pixelOf: (x: number, y: number) => number[]) =>
+    new ImageData(
+      Uint8ClampedArray.from(
+        Array.from({ length: width * height }, (_, i) => pixelOf(i % width, (i / width) | 0)).flat(),
+      ),
+      width,
+    );
+  const corners = () => pixelsOf(4, 3, cornerPattern);
+  const fromPng = (png: Uint8Array) => {
+    const { w, data } = decodePngRaw(png);
+    return new ImageData(new Uint8ClampedArray(data), w);
+  };
+  const codeOf = (promise: Promise<unknown>) =>
+    promise.then(
+      () => "resolved",
+      error => error.code,
+    );
+  function detached(width = 4, height = 3) {
+    const image = new ImageData(width, height);
+    image.data.buffer.transfer();
+    return image;
+  }
+
+  // Every kind of step, and sizes at which a step is left out.
+  const noise = (x: number, y: number) => [(x * 53 + y * 7) & 255, (x * y * 11) & 255, (y * 91 + x) & 255, 255 - x - y];
+  const pipelines = [0, 90, 180, 270].flatMap(degrees =>
+    [[], ["flip"], ["flop"], ["flip", "flop"]].flatMap(mirrors =>
+      [[], [5, 4], [13, 9], [9, 13], [20], [99, 99, { fit: "inside", withoutEnlargement: true }]].map(size => ({
+        name: `rotate(${degrees}) ${mirrors} resize(${JSON.stringify(size).slice(1, -1)})`,
+        apply(image: Bun.Image) {
+          image.rotate(degrees);
+          for (const mirror of mirrors) image[mirror]();
+          if (size.length) (image as any).resize(...size);
+          return size[0] === 5 ? image.modulate({ brightness: 1.3, saturation: 0.4 }) : image;
+        },
+      })),
+    ),
+  );
+
+  describe("imageData()", () => {
+    test("resolves to the pixels", async () => {
+      const image = new Bun.Image(cornersPng);
+      const result = await image.imageData();
+      expect(result).toBeInstanceOf(ImageData);
+      expect(result).toStrictEqual(corners());
+      expect([result.colorSpace, result.pixelFormat]).toEqual(["srgb", "rgba-unorm8"]);
+      expect([result.data.byteOffset, result.data.buffer.byteLength]).toEqual([0, 48]);
+      expect([image.width, image.height]).toEqual([4, 3]);
+      expect((await image.imageData()).data.buffer).not.toBe(result.data.buffer);
+    });
+
+    test("runs the pipeline", async () => {
+      const source = makePng(13, 9, noise as any);
+      const results = pipelines.map(async ({ name, apply }) => {
+        const image = apply(new Bun.Image(source));
+        return Bun.deepEquals(await image.imageData(), fromPng(await image.png().bytes())) ? [] : [name];
+      });
+      expect((await Promise.all(results)).flat()).toEqual([]);
+    });
+
+    test("does not encode, whatever the format", async () => {
+      for (const format of ["jpeg", "webp", "heic", "avif"] as const) {
+        expect(await new Bun.Image(cornersPng)[format]({ quality: 1 }).imageData()).toEqual(corners());
+      }
+      expect(await new Bun.Image(cornersPng).png({ palette: true, colors: 2 }).imageData()).toEqual(corners());
+    });
+
+    test("is not premultiplied", async () => {
+      const invisible = makePng(1, 1, () => [200, 100, 50, 0]);
+      expect([...(await new Bun.Image(invisible).imageData()).data]).toEqual([200, 100, 50, 0]);
+      const source = pixelsOf(16, 16, x => [200, 100, 50, [1, 2, 128, 254][x & 3]]);
+      for (const [file, tolerance] of [
+        [await new Bun.Image(source).png().bytes(), 0],
+        [await new Bun.Image(source).png({ palette: true }).bytes(), 0],
+        [await new Bun.Image(source).webp({ lossless: true }).bytes(), 0],
+        [await new Bun.Image(source).webp({ quality: 100 }).bytes(), 3],
+      ] as const) {
+        const { data } = await new Bun.Image(file).imageData();
+        const isFar = (value: number, i: number) => Math.abs(value - source.data[i]) > (i % 4 === 3 ? 0 : tolerance);
+        expect(data.findIndex(isFar)).toBe(-1);
+      }
+    });
+
+    test("reads every kind of input", async () => {
+      using dir = tempDir("image-data", { "corners.png": Buffer.from(cornersPng) });
+      const path = join(String(dir), "corners.png");
+      for (const open of [
+        () => new Bun.Image(path),
+        () => Bun.file(path).image(),
+        () => new Blob([cornersPng]).image(),
+        () => new Bun.Image(`data:image/png;base64,${cornersPng.toBase64()}`),
+        () => new Bun.Image(new Uint8Array(cornersPng).buffer),
+      ]) {
+        expect(await open().imageData()).toEqual(corners());
+        expect(await open().imageData(new ImageData(4, 3))).toEqual(corners());
+      }
+    });
+
+    test("rejects like the other terminals", async () => {
+      const buffer = new Uint8Array(cornersPng).buffer;
+      const transferred = new Bun.Image(buffer);
+      buffer.transfer();
+      for (const [image, code] of [
+        [new Bun.Image(Buffer.from("no image")), "ERR_IMAGE_UNKNOWN_FORMAT"],
+        [new Bun.Image(cornersPng.subarray(0, 50)), "ERR_IMAGE_DECODE_FAILED"],
+        [new Bun.Image(cornersPng, { maxPixels: 11 }), "ERR_IMAGE_TOO_MANY_PIXELS"],
+        [new Bun.Image(cornersPng, { maxPixels: 12 }).resize(4, 4), "ERR_IMAGE_TOO_MANY_PIXELS"],
+        [new Bun.Image(join(import.meta.dir, "missing.png")), "ENOENT"],
+        [Bun.file(join(import.meta.dir, "missing.png")).image(), "ENOENT"],
+        [transferred, "ERR_INVALID_STATE"],
+      ] as const) {
+        expect(await codeOf(image.imageData())).toBe(code);
+        const target = new ImageData(4, 3);
+        expect(await codeOf(image.imageData(target))).toBe(code);
+        // The target is free again.
+        expect(await new Bun.Image(cornersPng).imageData(target)).toEqual(corners());
+      }
+    });
+
+    test.each<[unknown, string]>([
+      [1, `The "settings" argument must be of type object. Received type number (1)`],
+      [{ colorSpace: "rec2020" }, `colorSpace must be "srgb", "srgb-linear", "display-p3" or "display-p3-linear"`],
+      [{ pixelFormat: "rgba-float16" }, `Image: only the pixelFormat "rgba-unorm8" is supported`],
+      [
+        { width: 4, height: 3 },
+        `The "data" argument must be an instance of Uint8ClampedArray or Uint8Array. Received undefined`,
+      ],
+      [
+        new Uint8ClampedArray(48),
+        `The "target" argument must be an instance of ImageData. Received an instance of Uint8ClampedArray`,
+      ],
+      [
+        new ArrayBuffer(48),
+        `The "target" argument must be an instance of ImageData. Received an instance of ArrayBuffer`,
+      ],
+    ])("throws for %p", (argument, message) => {
+      expect(() => new Bun.Image(cornersPng).imageData(argument as any)).toThrow(new TypeError(message));
+    });
+
+    test.each([undefined, null, {}, { pixelFormat: "rgba-unorm8" }])("takes %p for the defaults", async settings => {
+      expect(await new Bun.Image(cornersPng).imageData(settings as any)).toEqual(corners());
+    });
+  });
+
+  describe("imageData(target)", () => {
+    test("fills the target and resolves to it", async () => {
+      const target = new ImageData(4, 3);
+      const { data } = target;
+      const image = new Bun.Image(cornersPng);
+      expect(await image.imageData(target)).toBe(target);
+      expect(target.data).toBe(data);
+      expect(target).toEqual(corners());
+      expect([image.width, image.height]).toEqual([4, 3]);
+      expect(await image.flip().imageData(target)).toEqual(pixelsOf(4, 3, (x, y) => cornerPattern(x, 2 - y)));
+    });
+
+    const exif = (orientation: number) =>
+      Buffer.from(`ffe1002245786966000049492a0008000000010012010300010000000${orientation}00000000000000`, "hex");
+    test.each<[string, (pixels: ImageData) => ImageData | Promise<Uint8Array>]>([
+      ["pixels", pixels => pixels],
+      ["a PNG", pixels => new Bun.Image(pixels).png().bytes()],
+      ["a WebP", pixels => new Bun.Image(pixels).webp().bytes()],
+      ...[1, 2, 3, 4, 5, 6, 7, 8].map((orientation): [string, (pixels: ImageData) => Promise<Uint8Array>] => [
+        `a JPEG with orientation ${orientation}`,
+        async pixels => {
+          const jpeg = await new Bun.Image(pixels).jpeg().bytes();
+          return Buffer.concat([jpeg.subarray(0, 2), exif(orientation), jpeg.subarray(2)]);
+        },
+      ]),
+    ])("after any steps on %s: the right size gets the pixels, and the others get nothing", async (name, encode) => {
+      const source = await encode(pixelsOf(13, 9, noise));
+      expect((await new Bun.Image(source).metadata()).width).toBe(/[5-8]$/.test(name) ? 9 : 13);
+      const results = pipelines.map(async ({ name, apply }) => {
+        const image = apply(new Bun.Image(source));
+        const expected = await image.imageData();
+        const { width, height } = expected;
+        // The sizes before and between the steps, and others with as many pixels.
+        const sizes = [`${width}x${height}`, `${height}x${width}`, `${width * height}x1`, "13x9", "9x13", "117x1"];
+        const wrong = [...new Set(sizes)].map(async (size, i) => {
+          const [w, h] = size.split("x").map(Number);
+          const target = new ImageData(new Uint8ClampedArray(w * h * 4).fill(7), w);
+          const code = await codeOf(image.imageData(target));
+          const isRight =
+            i === 0
+              ? code === "resolved" && Bun.deepEquals(target, expected)
+              : code === "ERR_IMAGE_SIZE_MISMATCH" && Buffer.alloc(w * h * 4, 7).equals(target.data);
+          return isRight ? [] : [`${name} into ${size}: ${code}`];
+        });
+        return (await Promise.all(wrong)).flat();
+      });
+      expect((await Promise.all(results)).flat()).toEqual([]);
+    });
+
+    test("says what the sizes are", async () => {
+      const image = new Bun.Image(cornersPng).rotate(90);
+      const error = await image.imageData(new ImageData(4, 3)).catch(error => error);
+      expect(error).toBeInstanceOf(RangeError);
+      expect([error.code, error.message]).toEqual([
+        "ERR_IMAGE_SIZE_MISMATCH",
+        "Image: the output is 3x4, but the target is 4x3",
+      ]);
+      expect(await codeOf(image.imageData(new ImageData(image.width, image.height)))).toBe("resolved");
+    });
+
+    test.each([0, 1, 2, 3, 4, 8])("writes nothing next to a view at offset %i", async offset => {
+      const memory = new Uint8ClampedArray(offset + 48 + 8).fill(7);
+      await new Bun.Image(cornersPng).imageData(new ImageData(memory.subarray(offset, offset + 48), 4));
+      expect([...memory]).toEqual([...Array(offset).fill(7), ...corners().data, ...Array(8).fill(7)]);
+    });
+
+    test("is refused while another call writes to a part of it", async () => {
+      using dir = tempDir("image-data", { "corners.png": Buffer.from(cornersPng) });
+      const memory = new Uint8ClampedArray(3 * 48);
+      const at = (offset: number) => new ImageData(memory.subarray(offset, offset + 48), 4);
+      for (const first of [new Bun.Image(cornersPng), Bun.file(join(String(dir), "corners.png")).image()]) {
+        memory.fill(0);
+        const middle = at(48);
+        const pending = first.imageData(middle);
+        const second = new Bun.Image(cornersPng).flip();
+        const others = [middle, at(48), at(4), at(92), at(0), at(96)].map(target => second.imageData(target));
+        expect(await Promise.all([pending, ...others].map(codeOf))).toEqual([
+          "resolved",
+          ...Array(4).fill("ERR_INVALID_STATE"),
+          "resolved",
+          "resolved",
+        ]);
+        await expect(others[0]).rejects.toThrow("Image: another imageData() call is still writing to the target");
+        const flipped = (await second.imageData()).data;
+        expect([...memory]).toEqual([...flipped, ...corners().data, ...flipped]);
+      }
+    });
+
+    test("is free when its `then` is looked up", async () => {
+      let again: Promise<unknown> | undefined;
+      const target = {
+        data: new Uint8Array(48),
+        width: 4,
+        height: 3,
+        get then() {
+          again ??= new Bun.Image(cornersPng).imageData(target);
+          return undefined;
+        },
+      };
+      expect(await new Bun.Image(cornersPng).imageData(target)).toBe(target);
+      expect(await again).toBe(target);
+    });
+
+    test("can be the source", async () => {
+      const frame = corners();
+      await new Bun.Image(frame).rotate(180).imageData(frame);
+      expect(frame).toEqual(pixelsOf(4, 3, (x, y) => cornerPattern(3 - x, 2 - y)));
+    });
+
+    test.each(["png", "jpeg", "webp"] as const)("can hold the %s file that is decoded into it", async format => {
+      const file = await new Bun.Image(pixelsOf(64, 64, noise))[format]().bytes();
+      const target = new ImageData(64, 64);
+      target.data.set(file);
+      await new Bun.Image(target.data.subarray(0, file.length)).imageData(target);
+      expect(target).toEqual(await new Bun.Image(file).imageData());
+    });
+
+    test("is rejected if it is detached", async () => {
+      const error = await new Bun.Image(cornersPng).imageData(detached()).catch(error => error);
+      expect([error.code, error.message]).toEqual(["ERR_INVALID_STATE", "Image: target ArrayBuffer was detached"]);
+    });
+
+    // In the heap of the garbage collector, in an allocation of the view, and in one of a buffer.
+    test.each<[string, () => ImageData]>([
+      ["small", () => new ImageData(4, 3)],
+      ["large", () => new ImageData(400, 300)],
+      ["a view", () => new ImageData(new Uint8ClampedArray(new ArrayBuffer(480_000)), 400)],
+    ])("cannot be detached until it is filled, if it is %s", async (_, create) => {
+      const { width, height } = create();
+      const image = new Bun.Image(cornersPng).resize(width, height);
+      const expected = await image.imageData();
+      for (const detach of [
+        (buffer: ArrayBuffer) => buffer.transfer(),
+        (buffer: ArrayBuffer) => buffer.transfer(0),
+        (buffer: ArrayBuffer) => structuredClone(buffer, { transfer: [buffer] }),
+      ]) {
+        const target = create();
+        const pending = image.imageData(target);
+        detach(target.data.buffer);
+        Bun.gc(true);
+        expect(await pending).toEqual(expected);
+        detach(target.data.buffer);
+        expect(target.data.length).toBe(0);
+      }
+    });
+
+    test("is kept alive until it is filled", async () => {
+      const image = new Bun.Image(cornersPng).resize(200, 150);
+      const pending = Array.from({ length: 20 }, () => image.imageData(new ImageData(200, 150)));
+      // What is written to is the array that `data` was at the time of the call.
+      let reads = 0;
+      const changing = { width: 200, height: 150, get data() { return reads++, new Uint8Array(120_000); } }; // prettier-ignore
+      const replaced = image.imageData(changing);
+      Bun.gc(true);
+      expect(await Promise.all(pending)).toEqual(Array(20).fill(await image.imageData()));
+      expect(await replaced).toBe(changing);
+      expect(reads).toBe(1);
+    });
+
+    test("can be in a WebAssembly.Memory that grows meanwhile", async () => {
+      const memory = new WebAssembly.Memory({ initial: 8 });
+      const view = () => new Uint8ClampedArray(memory.buffer, 1024, 480_000);
+      const image = new Bun.Image(cornersPng).resize(400, 300);
+      const expected = await image.imageData();
+      expect(await image.imageData(new ImageData(view(), 400))).toEqual(expected);
+
+      view().fill(7);
+      const target = new ImageData(view(), 400);
+      const pending = image.imageData(target);
+      expect(await codeOf(image.imageData(target))).toBe("ERR_INVALID_STATE");
+      memory.grow(64);
+      Bun.gc(true);
+      expect(await pending).toBe(target);
+      expect(target.data.length).toBe(0);
+      expect(view()).toEqual(expected.data);
+      expect(new Uint8Array(memory.buffer, 0, 1024)).toEqual(new Uint8Array(1024));
+      expect(new Uint8Array(memory.buffer, 481_024, 1024)).toEqual(new Uint8Array(1024));
+
+      view().fill(7);
+      expect(await codeOf(image.imageData(new ImageData(view(), 300)))).toBe("ERR_IMAGE_SIZE_MISMATCH");
+      expect(view()).toEqual(new Uint8ClampedArray(480_000).fill(7));
+    });
+  });
+
+  describe("new Bun.Image(imageData)", () => {
+    test("encodes as PNG if no format is chosen", async () => {
+      const image = new Bun.Image(corners());
+      expect([image.width, image.height]).toEqual([-1, -1]);
+      expect(fromPng(await image.bytes())).toEqual(corners());
+      expect([image.width, image.height]).toEqual([4, 3]);
+      expect((await image.blob()).type).toBe("image/png");
+      expect(await image.dataurl()).toStartWith("data:image/png;base64,");
+      const response = new Response(image);
+      expect(response.headers.get("content-type")).toBe("image/png");
+      expect(fromPng(await response.bytes())).toEqual(corners());
+    });
+
+    test("gives what a file with these pixels gives", async () => {
+      const [pixels, file] = [pixelsOf(13, 9, noise), makePng(13, 9, noise as any)];
+      const results = pipelines.map(async ({ name, apply }, i) => {
+        const format = (["png", "jpeg", "webp"] as const)[i % 3];
+        const [actual, expected] = [pixels, file].map(source => apply(new Bun.Image(source))[format]().bytes());
+        return Bun.deepEquals(await actual, await expected) ? [] : [name];
+      });
+      expect((await Promise.all(results)).flat()).toEqual([]);
+      expect(await new Bun.Image(pixels).placeholder()).toBe(await new Bun.Image(file).placeholder());
+    });
+
+    test("write() goes by the extension", async () => {
+      using dir = tempDir("image-data", {});
+      const formats = ["a.jpg", "a.webp", "a.png", "a.bmp", "a"].map(async name => {
+        await new Bun.Image(corners()).write(join(String(dir), name));
+        return (await new Bun.Image(join(String(dir), name)).metadata()).format;
+      });
+      expect(await Promise.all(formats)).toEqual(["jpeg", "webp", "png", "png", "png"]);
+    });
+
+    test("metadata()", async () => {
+      const image = new Bun.Image(corners()).rotate(90);
+      expect(await image.metadata()).toEqual({ width: 4, height: 3, format: "raw" });
+      expect([image.width, image.height]).toEqual([4, 3]);
+    });
+
+    test("maxPixels", async () => {
+      const codes = (image: Bun.Image) =>
+        Promise.all([image.metadata(), image.bytes(), image.imageData(), image.placeholder()].map(codeOf));
+      expect(await codes(new Bun.Image(corners(), { maxPixels: 12 }))).toEqual(Array(4).fill("resolved"));
+      const tooMany = new Bun.Image(corners(), { maxPixels: 11 });
+      expect(await codes(tooMany)).toEqual(Array(4).fill("ERR_IMAGE_TOO_MANY_PIXELS"));
+      expect(() => new Response(tooMany)).toThrow(expect.objectContaining({ code: "ERR_IMAGE_TOO_MANY_PIXELS" }));
+    });
+
+    test("a terminal takes the pixels as they are when it is called", async () => {
+      const frame = new ImageData(300, 200);
+      const image = new Bun.Image(frame);
+      const pending = [1, 2, 3].map(value => (frame.data.fill(value), image.bytes()));
+      frame.data.buffer.transfer(0);
+      const decoded = await Promise.all(pending.map(async file => (await new Bun.Image(await file).imageData()).data));
+      expect(decoded).toEqual([1, 2, 3].map(value => new Uint8ClampedArray(240_000).fill(value)));
+      expect(await codeOf(image.bytes())).toBe("ERR_INVALID_STATE");
+      expect(await codeOf(new Bun.Image(frame).imageData())).toBe("ERR_INVALID_STATE");
+      expect(() => new Response(image)).toThrow("Image: source ArrayBuffer was detached");
+    });
+
+    test("keeps the pixels alive", async () => {
+      const images = Array.from({ length: 20 }, (_, i) => new Bun.Image(pixelsOf(20, 20, () => [i, i, i, i])));
+      Bun.gc(true);
+      const results = await Promise.all(images.map(image => image.imageData()));
+      expect(results.map(({ data }) => [data[0], data[1599]])).toEqual(images.map((_, i) => [i, i]));
+    });
+  });
+
+  describe.each<[string, (value: any) => unknown]>([
+    ["input", value => new Bun.Image(value).imageData()],
+    ["target", value => new Bun.Image(cornersPng).imageData(value)],
+  ])("as the %s", (_, use) => {
+    test.each<[string, () => { data: Uint8Array | Uint8ClampedArray }]>([
+      ["a Uint8Array", () => ({ data: new Uint8Array(corners().data), width: 4, height: 3 })],
+      ["a Buffer", () => ({ data: Buffer.from(corners().data), width: 4, height: 3 })],
+      ["a subclass", () => new (class Frame extends ImageData {})(corners().data, 4)],
+      ["getters", () => Object.create({ data: corners().data, get width() { return 4; }, get height() { return 3; } })], // prettier-ignore
+      ["a Proxy", () => new Proxy({ data: corners().data, width: 4, height: 3 }, {})],
+    ])("the shape of an ImageData is enough: %s", async (_, create) => {
+      const result = (await use(create())) as ImageData;
+      expect([...result.data]).toEqual([...corners().data]);
+    });
+
+    const size = { width: 4, height: 3 };
+    const data = new Uint8ClampedArray(48);
+    const unstable = "Image: the data must not be a view of a shared or resizable buffer";
+    const type = `The "data" argument must be an instance of Uint8ClampedArray or Uint8Array. Received`;
+    test.each<[string, object, string]>([
+      ["float16", new ImageData(4, 3, { pixelFormat: "rgba-float16" }), `only the pixelFormat "rgba-unorm8"`],
+      ["shared", { ...size, data: new Uint8Array(new SharedArrayBuffer(48)) }, unstable],
+      ["resizable", { ...size, data: new Uint8Array(new ArrayBuffer(48, { maxByteLength: 64 }), 0, 48) }, unstable],
+      ["an array", { ...size, data: Array(48).fill(0) }, `${type} an instance of Array`],
+      ["an ArrayBuffer", { ...size, data: new ArrayBuffer(48) }, `${type} an instance of ArrayBuffer`],
+      ["a Uint32Array", { ...size, data: new Uint32Array(12) }, `${type} an instance of Uint32Array`],
+      ["null", { ...size, data: null }, `${type} null`],
+      ["RGB", { ...size, data: new Uint8Array(36) }, "Image: 36 bytes of data are not 4x3 RGBA pixels"],
+      ["too long", { ...size, data: new Uint8Array(52) }, "Image: 52 bytes of data are not 4x3 RGBA pixels"],
+      ["no bytes", { ...size, data: new Uint8Array(0) }, "Image: 0 bytes of data are not 4x3 RGBA pixels"],
+      ["no height", { data, width: 4 }, "Image: 48 bytes of data are not 4x0 RGBA pixels"],
+      ["empty", { data: new Uint8Array(0), width: 0, height: 0 }, "Image: 0 bytes of data are not 0x0 RGBA pixels"],
+      ["4 times the size is 2^64", { data: new Uint8Array(0), width: 2 ** 31, height: 2 ** 31 }, "are not 2147483648x"],
+      ["detached and too wide", { data: detached().data, width: 2 ** 31, height: 1 }, "are not 2147483648x1 RGBA"],
+      ["a fraction", { data, width: 4.5, height: 3 }, `"width"`],
+      ["negative", { data, width: -4, height: -3 }, `"width"`],
+      ["a string", { data, width: 4, height: "3" }, `"height"`],
+      ["an unknown color space", { data, ...size, colorSpace: "rec2020" }, "colorSpace must be"],
+    ])("throws for %s", (_, value, message) => {
+      expect(() => use(value)).toThrow(message);
+    });
+
+    test.each(["width", "height", "colorSpace", "pixelFormat"])("sees that the %s getter detached it", async key => {
+      const { data } = corners();
+      const value = { data, ...size };
+      const result = value[key];
+      Object.defineProperty(value, key, { get: () => (data.buffer.transfer(), result) });
+      expect(await codeOf(use(value) as Promise<unknown>)).toBe("ERR_INVALID_STATE");
+    });
+  });
+});
+
+test("an encoded input can be in a WebAssembly.Memory that grows meanwhile", async () => {
+  const file = makePng(300, 200, (x, y) => [x, y, x ^ y, 255]);
+  const expected = await new Bun.Image(file).bytes();
+  const memory = new WebAssembly.Memory({ initial: 8 });
+  new Uint8Array(memory.buffer).set(file);
+  const pending = Array.from({ length: 16 }, () =>
+    new Bun.Image(new Uint8Array(memory.buffer, 0, file.length)).bytes(),
+  );
+  new Uint8Array(memory.buffer).fill(0);
+  memory.grow(64);
+  Bun.gc(true);
+  expect(await Promise.all(pending)).toEqual(Array(16).fill(expected));
+});
+
 test("a subclass inherits Bun.Image.backend", () => {
   class Subclass extends Bun.Image {}
   expect(Subclass.backend).toBe(Bun.Image.backend);
@@ -1470,6 +1933,70 @@ describe("decode-only formats (BMP / TIFF / GIF)", () => {
     const { data } = decodePngRaw(png);
     expect([...data.subarray(0, 4)]).toEqual([255, 0, 0, 255]);
     expect([...data.subarray(4, 8)]).toEqual([0, 255, 0, 255]);
+  });
+
+  async function expectPixels(file: Uint8Array, expected: number[], tolerance = 0) {
+    const fresh = await new Bun.Image(file).imageData();
+    const far = expected.filter((it, i) => !(Math.abs(fresh.data[i] - it) <= tolerance));
+    expect({ far, length: fresh.data.length }, fresh.data.join()).toEqual({ far: [], length: expected.length });
+    for (const offset of [8, 12, 9]) {
+      const memory = new Uint8ClampedArray(offset + expected.length + 8).fill(7);
+      const target = new ImageData(memory.subarray(offset, -8), fresh.width);
+      expect(await new Bun.Image(file).imageData(target)).toEqual(fresh);
+      expect([...memory.subarray(0, offset), ...memory.subarray(-8)]).toEqual(Array(offset + 8).fill(7));
+    }
+  }
+
+  test.each(["bun", "system"] as const)("imageData() of BMP and GIF is not premultiplied (backend=%s)", async be => {
+    Bun.Image.backend = be;
+    // BITMAPV5HEADER, which is what WIC writes for alpha, with BI_BITFIELDS, 2×1.
+    const bmp = Buffer.alloc(14 + 124 + 8);
+    bmp.write("BM");
+    [bmp.length, 0, 138, 124, 2, 1, 0x200001, 3, 8].forEach((it, i) => bmp.writeUInt32LE(it, 2 + 4 * i));
+    [0xff0000, 0xff00, 0xff, 0xff000000].forEach((it, i) => bmp.writeUInt32LE(it, 54 + 4 * i));
+    bmp.write("BGRs", 70);
+    bmp.set([50, 100, 200, 128, 50, 100, 200, 255], 138);
+    await expectPixels(bmp, [200, 100, 50, 128, 200, 100, 50, 255], be === "system" ? 1 : 0);
+
+    const palette: [number, number, number][] = [
+      [200, 100, 50],
+      [1, 2, 3],
+    ];
+    for (const interlace of [false, true]) {
+      const gif = makeGif(1, 9, palette, (_, y) => y & 1, { trns: 1, interlace });
+      await expectPixels(gif, Array.from({ length: 9 }, (_, y) => (y & 1 ? [0, 0, 0, 0] : [200, 100, 50, 255])).flat());
+    }
+  });
+
+  test.skipIf(!isMacOS && !isWindows).each([
+    ["not premultiplied", 2, [200, 100, 50, 128]],
+    ["premultiplied", 1, [100, 50, 25, 128]],
+  ] as const)("imageData() of a TIFF that is %s is not premultiplied", async (_, extraSamples, stored) => {
+    Bun.Image.backend = "system";
+    // Tag, type (3 is 16 bits, 4 is 32), count, and the value or where it is.
+    const entries = [
+      [256, 3, 1, 2], // ImageWidth
+      [257, 3, 1, 1], // ImageLength
+      [258, 3, 4, 146], // BitsPerSample
+      [259, 3, 1, 1], // Compression: none
+      [262, 3, 1, 2], // PhotometricInterpretation: RGB
+      [273, 4, 1, 154], // StripOffsets
+      [277, 3, 1, 4], // SamplesPerPixel
+      [278, 3, 1, 1], // RowsPerStrip
+      [279, 4, 1, 8], // StripByteCounts
+      [284, 3, 1, 1], // PlanarConfiguration: interleaved
+      [338, 3, 1, extraSamples], // ExtraSamples
+    ];
+    const tiff = Buffer.alloc(162);
+    tiff.write("II*\0\x08\0\0\0", "latin1");
+    tiff.writeUInt16LE(entries.length, 8);
+    entries.forEach(([tag, type, count, value], i) => {
+      tiff.writeUInt32LE(tag | (type << 16), 10 + 12 * i);
+      tiff.writeUInt32LE(count, 14 + 12 * i);
+      tiff.writeUInt32LE(value, 18 + 12 * i);
+    });
+    tiff.set([8, 0, 8, 0, 8, 0, 8, 0, ...stored, 200, 100, 50, 255], 146);
+    await expectPixels(tiff, [200, 100, 50, 128, 200, 100, 50, 255], 2);
   });
 
   test("static BMP decoder rejects truncated pixel data (no OOB read)", async () => {

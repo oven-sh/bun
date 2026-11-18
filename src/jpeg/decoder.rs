@@ -12,13 +12,14 @@ use crate::smoothing::{self, Accuracy, Progress};
 use crate::{
     Error, MAX_COMPONENTS, Result, batches, fill_up, filled, lossless, wrapped, wrapped_mut,
 };
+use bun_alloc::Lender;
 
 /// The most blocks that are decoded before they are transformed. They fit in the L1 cache.
 const BATCH_LEN: usize = 96;
 const _: () = assert!(BATCH_LEN < BATCH_ROOM);
 
-pub struct Image {
-    pub rgba: Vec<u8>,
+pub struct Image<'a> {
+    pub rgba: Vec<u8, Lender<'a>>,
     pub width: u32,
     pub height: u32,
     pub icc_profile: Option<Vec<u8>>,
@@ -111,12 +112,12 @@ impl Coefficients {
 }
 
 /// Where the blocks of a sequential scan go.
-enum Target<'a> {
-    Output(&'a mut Output, &'a QuantTables),
+enum Target<'a, 'b> {
+    Output(&'a mut Output<'b>, &'a QuantTables),
     Coefficients(&'a mut Coefficients),
 }
 
-impl Target<'_> {
+impl Target<'_, '_> {
     fn put(&mut self, blocks: &[Block], place: Place) -> Result<()> {
         match self {
             Self::Output(output, quant) => {
@@ -184,7 +185,7 @@ impl<'a> Decoder<'a> {
     }
 
     /// The image is `eighths / 8` of its size, rounded up, for `eighths` from 1 to 8. A lossless one keeps its size.
-    pub fn decode(mut self, eighths: u8) -> Result<Image> {
+    pub fn decode(mut self, eighths: u8, lender: Lender) -> Result<Image> {
         let color_space = self.segments.color_space(&self.frame);
         let is_lossless = self.frame.process == Process::Lossless;
         let needs_conversion = !matches!(color_space, ColorSpace::Rgb | ColorSpace::Cmyk);
@@ -203,7 +204,7 @@ impl<'a> Decoder<'a> {
         if is_only_scan {
             self.frame.ignore_lone_sampling();
         }
-        let mut output = Output::new(&self.frame, color_space, eighths.clamp(1, 8))?;
+        let mut output = Output::new(&self.frame, color_space, eighths.clamp(1, 8), lender)?;
         match (is_lossless, is_only_scan) {
             (true, _) => self.decode_lossless(&mut output, is_only_scan)?,
             (false, true) => self.decode_only_scan(&mut output)?,
@@ -244,7 +245,7 @@ impl<'a> Decoder<'a> {
     }
 
     #[inline(never)]
-    fn decode_sequential(&mut self, scan: &Scan, mut target: Target<'_>) -> Result<()> {
+    fn decode_sequential(&mut self, scan: &Scan, mut target: Target<'_, '_>) -> Result<()> {
         let layout = Layout::new(&self.frame, scan)?;
         let batch = (BATCH_LEN / layout.blocks_in_mcu).min(layout.mcus.wide);
         let parts = layout.parts().iter();

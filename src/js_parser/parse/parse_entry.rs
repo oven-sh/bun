@@ -123,27 +123,6 @@ pub struct Parser<'a> {
     pub(crate) orig_error_count: u32,
 }
 
-/// Execution boundary requiring JavaScript without JSX syntax.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum JsxPreserveRestriction {
-    #[default]
-    None,
-    Executable,
-    StandaloneHtml,
-    Runtime,
-}
-
-impl JsxPreserveRestriction {
-    pub fn error_message(self) -> Option<&'static [u8]> {
-        match self {
-            Self::None => None,
-            Self::Executable => Some(b"Cannot preserve JSX when compiling an executable"),
-            Self::StandaloneHtml => Some(b"Cannot preserve JSX when compiling standalone HTML"),
-            Self::Runtime => Some(b"Cannot preserve JSX in a file that Bun runs"),
-        }
-    }
-}
-
 pub struct Options<'a> {
     pub jsx: options::JSX::Pragma,
     pub ts: bool,
@@ -162,7 +141,6 @@ pub struct Options<'a> {
     pub tree_shaking: bool,
     pub bundle: bool,
     pub code_splitting: bool,
-    pub jsx_preserve_restriction: JsxPreserveRestriction,
     pub package_version: &'a [u8],
 
     pub macro_context: Option<MacroContext<'a>>,
@@ -280,7 +258,6 @@ impl<'a> Options<'a> {
             tree_shaking: self.tree_shaking,
             bundle: self.bundle,
             code_splitting: self.code_splitting,
-            jsx_preserve_restriction: self.jsx_preserve_restriction,
             package_version: self.package_version,
             macro_context: None,
             macro_remap: None,
@@ -303,11 +280,10 @@ impl<'a> Options<'a> {
     pub fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash, did_use_jsx: bool) {
         debug_assert!(!self.bundle);
 
-        // Separating preserve restrictions even for `.js` dependencies that omit JSX settings from the cache key.
-        hasher.update(&[
-            u8::from(self.jsx.runtime == options::JSX::Runtime::Preserve),
-            self.jsx_preserve_restriction as u8,
-        ]);
+        // Some `.js` dependencies omit the rest of the JSX settings from the key.
+        hasher.update(&[u8::from(
+            self.jsx.runtime == options::JSX::Runtime::Preserve,
+        )]);
 
         if did_use_jsx {
             if self.jsx.parse {
@@ -367,7 +343,6 @@ impl<'a> Options<'a> {
             tree_shaking: false,
             bundle: false,
             code_splitting: false,
-            jsx_preserve_restriction: JsxPreserveRestriction::None,
             package_version: b"",
             macro_context: None,
             macro_remap: None,

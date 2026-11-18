@@ -38,6 +38,15 @@ impl Default for JsxSettings {
 }
 
 impl JsxSettings {
+    pub fn runtime_with_pragmas(&self, pragmas: &JsxPragmas) -> JsxRuntime {
+        match (pragmas.preserve, pragmas.classic) {
+            (true, _) => JsxRuntime::Preserve,
+            (_, Some(true)) => JsxRuntime::Classic,
+            (_, Some(false)) => JsxRuntime::Automatic,
+            _ => self.runtime,
+        }
+    }
+
     pub fn runtime_specifier(&self) -> Vec<u8> {
         let subpath: &[u8] = match self.is_development {
             true => b"/jsx-dev-runtime",
@@ -51,16 +60,8 @@ impl JsxSettings {
             return None;
         }
         let text = |atom: Atom| atom.is_some().then(|| atoms.bytes(atom));
-        let runtime = if pragmas.preserve {
-            Some(JsxRuntime::Preserve)
-        } else {
-            pragmas.classic.map(|is_classic| match is_classic {
-                true => JsxRuntime::Classic,
-                false => JsxRuntime::Automatic,
-            })
-        };
         let fields = JsxFields {
-            runtime,
+            runtime: Some(self.runtime_with_pragmas(pragmas)),
             is_development: pragmas.is_development,
             factory: text(pragmas.factory).and_then(split_members),
             fragment: text(pragmas.fragment_factory).and_then(split_members),

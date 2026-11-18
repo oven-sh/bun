@@ -45,6 +45,8 @@ pub struct Ast<'a> {
     // that they can be used in log messages. Check to see if "Len > 0".
     pub export_keyword: Range, // Does not include TypeScript-specific syntax
     pub top_level_await_keyword: Range,
+    /// First JSX element retained by the visitor.
+    pub first_preserved_jsx: Option<crate::Loc>,
 
     /// These are stored at the AST level instead of on individual AST nodes so
     /// they can be manipulated efficiently without a full AST traversal
@@ -117,6 +119,7 @@ impl<'a> Ast<'a> {
         Self {
             approximate_newline_count: 0,
             has_lazy_export: false,
+            first_preserved_jsx: None,
             runtime_imports: Default::default(),
             nested_scope_slot_counts: SlotCounts::default(),
             uses_exports_ref: false,

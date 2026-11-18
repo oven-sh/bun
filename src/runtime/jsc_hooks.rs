@@ -2059,7 +2059,6 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     is_test_entry_point: (is_main || is_preload) && options.rewrite_jest_for_tests,
                     keep_json_and_toml_as_one_statement: true,
                     allow_bytecode_cache: true,
-                    forbid_jsx_preserve: true,
                     set_breakpoint_on_first_line,
                     runtime_transpiler_cache: if !DATA_ONLY
                         && !disable_transpilying
@@ -2152,7 +2151,9 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 }
 
                 // SAFETY: `transpiler.log` was swapped to non-null `args.log` above.
-                if unsafe { (*(*transpiler).log).errors > 0 } {
+                let log = unsafe { &mut *(*transpiler).log };
+                let runnable = parse_result.require_runnable_js(log);
+                if runnable.is_err() || log.has_errors() {
                     arena_guard.2 = false;
                     // Node compile cache: record the failed module so exit-time
                     // persist logs the "was not initialized" skip (Node parity).

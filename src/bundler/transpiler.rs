@@ -708,6 +708,19 @@ pub struct ParseResult<'a> {
 }
 
 impl<'a> ParseResult<'a> {
+    /// Check that this source can be handed to the runtime.
+    pub fn require_runnable_js(&self, log: &mut bun_ast::Log) -> Result<(), crate::Error> {
+        if let Some(loc) = self.ast.first_preserved_jsx {
+            log.add_error(
+                Some(&self.source),
+                loc,
+                b"Cannot preserve JSX in a file that Bun runs",
+            );
+            return Err(crate::Error::ParserError);
+        }
+        Ok(())
+    }
+
     #[inline]
     fn empty_with(
         arena: &'a bun_alloc::Arena,
@@ -779,8 +792,6 @@ pub struct ParseOptions<'a, 'b> {
 
     pub keep_json_and_toml_as_one_statement: bool,
     pub allow_bytecode_cache: bool,
-    /// Bun executes the output, so JSX cannot stay as syntax.
-    pub forbid_jsx_preserve: bool,
 }
 
 use bun_options_types::schema::api;
@@ -1323,11 +1334,6 @@ impl<'a> Transpiler<'a> {
                     tree_shaking: self.options.tree_shaking,
                     bundle: false,
                     code_splitting: false,
-                    jsx_preserve_restriction: if this_parse.forbid_jsx_preserve {
-                        js_ast::JsxPreserveRestriction::Runtime
-                    } else {
-                        js_ast::JsxPreserveRestriction::None
-                    },
                     package_version: b"",
                     macro_context: None,
                     macro_remap: None,
@@ -2688,7 +2694,6 @@ impl<'a> Transpiler<'a> {
                     runtime_transpiler_cache: None,
                     keep_json_and_toml_as_one_statement: false,
                     allow_bytecode_cache: false,
-                    forbid_jsx_preserve: false,
                 };
 
                 let Some(mut result) = self.parse(parse_opts, None) else {

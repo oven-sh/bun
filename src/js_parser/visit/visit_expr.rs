@@ -496,10 +496,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .expect("infallible: variant checked");
         let runtime = p.options.jsx.runtime;
         if runtime == options::JSX::Runtime::Preserve {
-            let restriction = core::mem::take(&mut p.options.jsx_preserve_restriction);
-            if let Some(message) = restriction.error_message() {
-                p.log().add_error(Some(p.source), expr.loc, message);
-            }
+            p.first_preserved_jsx.get_or_insert(expr.loc);
         }
         if matches!(
             runtime,

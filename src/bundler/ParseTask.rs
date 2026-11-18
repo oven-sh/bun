@@ -823,7 +823,24 @@ pub mod parse_worker {
                     // `Cached`/`AlreadyBundled` are runtime-loader
                     // states that never reach the bundler's `getAST`, so unwrap.
                     match res {
-                        bun_js_parser::Result::Ast(ast) => Ok(JSAst::init(*ast)),
+                        bun_js_parser::Result::Ast(ast) => {
+                            if let Some(loc) = ast.first_preserved_jsx {
+                                let message: Option<&[u8]> = match topts.compile_mode {
+                                    options::CompileMode::Executable => {
+                                        Some(b"Cannot preserve JSX when compiling an executable")
+                                    }
+                                    options::CompileMode::StandaloneHtml => {
+                                        Some(b"Cannot preserve JSX when compiling standalone HTML")
+                                    }
+                                    options::CompileMode::None => None,
+                                };
+                                if let Some(message) = message {
+                                    log.add_error(Some(source), loc, message);
+                                    return Err(crate::Error::ParserError);
+                                }
+                            }
+                            Ok(JSAst::init(*ast))
+                        }
                         bun_js_parser::Result::Cached
                         | bun_js_parser::Result::AlreadyBundled(_) => {
                             unreachable!("bundler parse never yields Cached/AlreadyBundled")
@@ -2256,13 +2273,6 @@ pub mod parse_worker {
             loader,
         );
         opts.bundle = true;
-        opts.jsx_preserve_restriction = match topts.compile_mode {
-            options::CompileMode::Executable => bun_js_parser::JsxPreserveRestriction::Executable,
-            options::CompileMode::StandaloneHtml => {
-                bun_js_parser::JsxPreserveRestriction::StandaloneHtml
-            }
-            options::CompileMode::None => bun_js_parser::JsxPreserveRestriction::None,
-        };
         opts.warn_about_unbundled_modules = false;
         // `AllowUnresolved` is the same nominal type on
         // both sides (re-export in options.rs). `'static` erasure: `topts` borrows

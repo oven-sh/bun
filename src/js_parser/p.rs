@@ -505,6 +505,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // a runtime import. Record whether JSX was parsed; the scan result applies
     // the effective per-file runtime before adding synthetic imports.
     pub(crate) needs_jsx_import: NeedsJSXType,
+    pub(crate) first_preserved_jsx: Option<js_ast::Loc>,
 
     // The parser does two passes and we need to pass the scope tree information
     // from the first pass to the second pass. That's done by tracking the calls
@@ -9383,6 +9384,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             import_meta_ref: self.import_meta_ref,
             depends_on_more_than_source: self.depends_on_more_than_source(),
             has_deferred_requires: self.has_deferred_requires,
+            first_preserved_jsx: self.first_preserved_jsx,
 
             symbols,
             parts: parts_list,
@@ -9660,6 +9662,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             module_scope: scope,
             scopes_in_order: scope_order,
             needs_jsx_import: false,
+            first_preserved_jsx: None,
             lexer,
 
             commonjs_named_exports_deoptimized,

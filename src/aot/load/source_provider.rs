@@ -398,7 +398,6 @@ fn parse_without_bundler(
     let mut pragma = jsx::Pragma::default();
     apply_jsx_settings(&mut pragma, &file.settings.jsx);
     let mut options = ParserOptions::init(pragma, file.loader);
-    options.jsx_preserve_restriction = bun_js_parser::JsxPreserveRestriction::Executable;
     options.bundle = true;
     options.warn_about_unbundled_modules = false;
     options.tree_shaking = true;
@@ -429,7 +428,8 @@ fn parse_without_bundler(
     let mut log = Log::init();
     let parsed =
         Parser::init(options, &mut log, &source, define, &arena).and_then(|parser| parser.parse());
-    parsed.is_ok() && !log.has_errors()
+    matches!(parsed, Ok(bun_js_parser::Result::Ast(ast)) if ast.first_preserved_jsx.is_none())
+        && !log.has_errors()
 }
 
 pub struct WithoutServices;

@@ -1808,11 +1808,9 @@ impl CodeHost for LoadHost<'_> {
         };
         let parsed_text = body_of_bundle.as_deref().unwrap_or(text);
         let mut hir = parse_for_compile(arena, &compile_options, parsed_text, atoms);
-        let preserves_jsx = hir.jsx_pragmas.preserve
-            || (self.input.options.code.jsx.runtime == bun_sema::resolve::JsxRuntime::Preserve
-                && hir.jsx_pragmas.classic.is_none());
+        let jsx_runtime = request.settings.jsx.runtime_with_pragmas(&hir.jsx_pragmas);
         let mut diagnostics = Vec::new();
-        if preserves_jsx && !hir.jsx.is_empty() {
+        if jsx_runtime == bun_sema::resolve::JsxRuntime::Preserve && !hir.jsx.is_empty() {
             diagnostics.push(FileDiagnostic::new(
                 Code::UnsupportedOption,
                 (0, 0),

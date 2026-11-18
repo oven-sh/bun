@@ -758,7 +758,6 @@ impl TranspilerJob {
             module_type,
             keep_json_and_toml_as_one_statement: false,
             allow_bytecode_cache: true,
-            forbid_jsx_preserve: true,
         };
 
         if is_node_override {
@@ -792,6 +791,12 @@ impl TranspilerJob {
             this.parse_error = Some(crate::CrateError::ParseError);
             return;
         };
+
+        let runnable = parse_result.require_runnable_js(log_clone_guard.1);
+        if runnable.is_err() {
+            this.parse_error = Some(crate::CrateError::ParseError);
+            return;
+        }
 
         // SAFETY: leaf scalar field read; see `vm` note above. Inlined
         // `VirtualMachine::use_isolation_source_provider_cache` to avoid forming

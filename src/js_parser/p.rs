@@ -506,6 +506,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // the effective per-file runtime before adding synthetic imports.
     pub(crate) needs_jsx_import: NeedsJSXType,
     pub(crate) first_preserved_jsx: Option<js_ast::Loc>,
+    /// Preserved tag bindings to name once all source references have been resolved.
+    jsx_tag_temps_without_renamer: List<'a, Ref>,
 
     // The parser does two passes and we need to pass the scope tree information
     // from the first pass to the second pass. That's done by tracking the calls
@@ -8378,6 +8380,43 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ref_
     }
 
+    pub(crate) fn generate_jsx_tag_temp(&mut self, scoped: bool) -> Ref {
+        let ref_ = if scoped {
+            self.generate_temp_ref(Some(b"JSXTag"))
+        } else {
+            self.generate_temp_var(b"JSXTag")
+        };
+        if !self.will_use_renamer() {
+            self.jsx_tag_temps_without_renamer.push(ref_);
+        }
+        ref_
+    }
+
+    fn name_jsx_tag_temps(&mut self) {
+        if self.jsx_tag_temps_without_renamer.is_empty() {
+            return;
+        }
+        let mut occupied = HashMap::<&[u8], ()>::new();
+        for symbol in self.symbols.iter() {
+            let name = symbol.original_name.slice();
+            if name.starts_with(b"JSXTag$") {
+                occupied.insert(name, ());
+            }
+        }
+        let mut suffix = 0;
+        for ref_ in self.jsx_tag_temps_without_renamer.iter() {
+            let name = loop {
+                suffix += 1;
+                let name = bun_alloc::arena_format!(in self.arena, "JSXTag${suffix}");
+                let name = name.into_bump_str().as_bytes();
+                if !occupied.contains_key(name) {
+                    break name;
+                }
+            };
+            self.symbols[ref_.inner_index() as usize].original_name = name.into();
+        }
+    }
+
     /// Nested scopes are renamed from `Scope::generated`, a file's top level from `Part::declared_symbols`.
     pub(crate) fn declare_temp_var(&mut self, ref_: Ref) {
         let mut scope = self.current_scope_ref();
@@ -9334,6 +9373,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // into the `Ast` and leave the parser-side slot empty — a pointer move,
         // no realloc/memcpy. `Ast.{symbols,parts,import_records}` are now
         // `ArenaVec<'a, T>` so the move is type-checked.
+        self.name_jsx_tag_temps();
         let symbols = core::mem::replace(&mut self.symbols, BumpVec::new_in(arena));
         let parts_list = core::mem::replace(parts, BumpVec::new_in(arena));
         let import_records = self.import_records.move_to_baby_list(arena);
@@ -9663,6 +9703,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             scopes_in_order: scope_order,
             needs_jsx_import: false,
             first_preserved_jsx: None,
+            jsx_tag_temps_without_renamer: BumpVec::new_in(arena),
             lexer,
 
             commonjs_named_exports_deoptimized,

@@ -637,6 +637,50 @@ describe("bundler", () => {
       });
     });
 
+    test.each(["cli", "transpiler"] as const)("rewritten tag bindings avoid source names (%s)", async backend => {
+      const input = String.raw`
+        let JSXTag$1 = "local";
+        let JSXTag\u00242 = "escaped";
+        globalThis.JSXTag$3 = "global";
+        function field(__bun_temp_ref_1$) {
+          return new class { value = <Comp />; }().value + __bun_temp_ref_1$;
+        }
+        console.log(JSXTag$1, <Comp />, JSXTag$2, <Comp />, JSXTag$3, field(1));
+      `;
+      let emitted: string;
+      if (backend === "transpiler") {
+        const transpiler = new Bun.Transpiler({ loader: "jsx", define: { Comp: "42" } });
+        emitted = transpiler.transformSync(`/** @jsxRuntime preserve */\n${input}`);
+      } else {
+        using dir = tempDir("jsx-tag-collision", { "in.jsx": input });
+        await using build = Bun.spawn({
+          cmd: [bunExe(), "build", "in.jsx", "--no-bundle", "--jsx-runtime=preserve", "--define=Comp:42"],
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
+        emitted = stdout;
+      }
+
+      const { code } = transformSync(emitted, { loader: "jsx", jsxFactory: "h" });
+      await using run = Bun.spawn({
+        cmd: [bunExe(), "-e", `const h = type => type;\n${code}`],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "local 42 escaped 42 global 43\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
     describe.each(["cli", "api"] as const)("defined JSX tags (%s)", backend => {
       itBundled(`jsx/PreserveNumericDefinedTags-${backend}`, {
         files: {

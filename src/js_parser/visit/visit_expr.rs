@@ -439,11 +439,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         });
         let value = p.new_expr(object, tag.loc);
         let scoped = p.is_param_default_or_field_initializer();
-        let ref_ = if scoped {
-            p.generate_temp_ref(Some(b"JSXTag"))
-        } else {
-            p.generate_temp_var(b"JSXTag")
-        };
+        let ref_ = p.generate_jsx_tag_temp(scoped);
         let identifier = Expr::init_identifier(ref_, tag.loc);
         let initializer = if scoped {
             value

@@ -1287,4 +1287,25 @@ mod tests {
         assert!(!is_listed("_RNvCs2b_3bar3run"));
         assert!(!is_listed("plain_too"));
     }
+
+    #[test]
+    fn nothing_else_matches_by_a_part_of_the_name() {
+        let keys = [
+            "fast<generic-args>",
+            "fast<u8>",
+            "_xR<generic-args>",
+            "plain",
+        ];
+        let allowlist = Allowlist::from(keys.map(|key| (key.into(), None)));
+        assert_eq!(allowlist_key("fast<u16>", &allowlist), keys[0]);
+        for symbol in [
+            "fast<u8>",
+            "not::fast<u16>",
+            "fast:<u16>",
+            "_xRy",
+            "plain<u8>",
+        ] {
+            assert_eq!(allowlist_key(symbol, &allowlist), symbol);
+        }
+    }
 }

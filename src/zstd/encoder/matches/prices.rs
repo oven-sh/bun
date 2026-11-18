@@ -263,3 +263,23 @@ impl Prices {
         self.short_matches.get(base..base + LANES)?.as_array()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_log_is_the_exponent_of_the_count_above_it() {
+        // `count + 1` is a power of two here, so nothing is left below the exponent.
+        for exponent in 0..20 {
+            let count = (1u32 << exponent) - 1;
+            assert_eq!(log2::<false>(count), exponent * BIT);
+            assert_eq!(log2::<true>(count), (exponent + 1) * BIT);
+        }
+        // Halfway between two exponents only the accurate one says so.
+        assert_eq!(
+            [log2::<false>(5), log2::<true>(5)],
+            [2 * BIT, 3 * BIT + BIT / 2]
+        );
+    }
+}

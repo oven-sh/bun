@@ -73,6 +73,7 @@ const crates = [
   "bun_valkey",
   "bun_webp",
   "bun_wyhash",
+  "bun_zstd",
   "bun_zstd_decoder",
   "bun_zstd_encoder",
 ];

@@ -456,6 +456,13 @@ mod tests {
     use super::*;
     use crate::parameters::Purpose;
 
+    #[test]
+    fn a_pool_needs_a_thread() {
+        let mut pool = Pool::default();
+        assert_eq!(pool.prepare(0).err(), Some(Error::MemoryAllocation));
+        assert!(pool.prepare(1).is_ok() && pool.prepare(0).is_ok());
+    }
+
     /// The hash is of what `ZSTDMT_initCStream_internal()` arrives at.
     #[test]
     fn sections_are_those_of_zstd() -> Result<()> {

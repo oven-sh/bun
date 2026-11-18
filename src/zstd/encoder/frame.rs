@@ -419,6 +419,15 @@ mod tests {
 
     const PIECE_LEN: usize = 3000;
 
+    #[test]
+    fn only_another_thread_loses_interest() -> Result<()> {
+        let (own, shared) = (Interest::default(), Interest::new()?);
+        own.lose();
+        shared.lose();
+        assert_eq!(shared.ensure(), Err(Error::StageWrong));
+        own.ensure()
+    }
+
     /// Words of 3 to 10 bytes.
     fn sample() -> Vec<u8> {
         let words = (0..3000u64).map(|it| {

@@ -285,7 +285,7 @@ impl LiteralTables {
         candidate.build(counts, len, tuning.strategy >= Strategy::Ultra);
         let estimated_len = candidate.compressed_len(counts);
         let description = Description::of(candidate).ok();
-        // One that there is no room for counts as -1.
+        // Without one, the other choices are weighed against a byte less.
         let description_len = description.as_ref().map_or(usize::MAX, |it| it.len);
         let new_len = estimated_len.wrapping_add(description_len);
 
@@ -356,4 +356,19 @@ fn a_part_without_literals_is_raw() -> Result<()> {
     let written = LiteralTables::EMPTY.write_part(&plan, &[], false, &mut out)?;
     assert_eq!((written, out), (Some((1, false)), [0, 0xFF]));
     Ok(())
+}
+
+#[test]
+fn there_has_to_be_room_behind_the_header() {
+    use crate::parameters::{Purpose, Request};
+
+    let tuning = Request::new(1).tuning(None, Purpose::Frame { dictionary_len: 0 });
+    let mut tables = LiteralTables::EMPTY;
+    let mut len = |room| {
+        Ok(tables
+            .compress(&[7; 64], &tuning, false, &mut vec![0; room])?
+            .0)
+    };
+    assert_eq!([len(2), len(3)], [Err(Error::DstSizeTooSmall); 2]);
+    assert_eq!(len(4), Ok(3));
 }

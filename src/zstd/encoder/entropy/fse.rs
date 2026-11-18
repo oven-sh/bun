@@ -563,4 +563,24 @@ mod tests {
         }
         Ok(())
     }
+
+    #[test]
+    fn counts_that_do_not_add_up_are_not_described() -> Result<()> {
+        let normalized = Normalized::new(&[1, 1], 2, 5, false)?;
+        for second in [15, 17] {
+            let mut wrong = normalized;
+            wrong.counts[1] = second;
+            assert_eq!(wrong.write(&mut [0; 9]), Err(Error::Internal));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn two_states_take_two_symbols() -> Result<()> {
+        let mut tables = Tables::<64, 16>::EMPTY;
+        let shape = tables.build(0, &Normalized::new(&[1, 1], 2, 5, false)?);
+        let len = |symbols| tables.compress(shape, symbols, &mut [0; 16]);
+        assert_eq!([len(&[1]), len(&[1, 0])], [None, Some(2)]);
+        Ok(())
+    }
 }

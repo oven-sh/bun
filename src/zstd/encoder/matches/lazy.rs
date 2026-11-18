@@ -322,3 +322,39 @@ impl Parser<'_> {
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parser(bytes: &[u8]) -> Parser<'_> {
+        Parser {
+            history: History {
+                prefix: bytes,
+                prefix_index: 0,
+                older: &[],
+                start: 0,
+            },
+            bounds: Bounds {
+                prefix_start: 0,
+                older_start: 0,
+                max_distance: u32::MAX,
+            },
+            start: 0,
+            depth: 1,
+        }
+    }
+
+    /// An offset of 0 would let every position repeat itself, and 1 is a run of one byte.
+    #[test]
+    fn a_repeat_is_of_an_offset_that_reaches_back() {
+        let it = parser(b"0123012301230123012301230123abcd");
+        assert_eq!(it.repeat_len::<{ Reach::Prefix }>(8, 0), None);
+        assert_eq!(it.repeat_len::<{ Reach::Attached }>(8, 0), None);
+        assert_eq!(it.repeat_len::<{ Reach::Prefix }>(8, 4), Some(20));
+        assert_eq!(it.repeat_len::<{ Reach::Attached }>(8, 4), Some(20));
+        let run = parser(b"aaaaaaaaaaaaaaaa");
+        assert_eq!(run.repeat_len::<{ Reach::Attached }>(4, 1), Some(12));
+        assert_eq!(run.repeat_len::<{ Reach::Prefix }>(4, 1), Some(12));
+    }
+}

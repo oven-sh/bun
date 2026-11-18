@@ -585,3 +585,51 @@ impl Match {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parameters::Strategy;
+    use crate::window::FIRST_INDEX;
+
+    /// The tables of a dictionary take three positions at a time, and the gaps between them go in the long one.
+    #[test]
+    fn a_dictionary_is_found_at_every_position_of_it() -> crate::Result<()> {
+        let dictionary: Vec<u8> = (0..300u32).map(|it| (it * it / 5 + it / 3) as u8).collect();
+        let tuning = Tuning {
+            window_log: 20,
+            chain_log: 14,
+            hash_log: 16,
+            search_log: 1,
+            min_match: 4,
+            target_length: 0,
+            strategy: Strategy::DoubleFast,
+        };
+        let mut state = MatchState::new(tuning);
+        state.reset(tuning, false, Owner::Dictionary, dictionary.len())?;
+        let history = History {
+            prefix: &dictionary,
+            prefix_index: FIRST_INDEX,
+            older: &[],
+            start: 0,
+        };
+        fill::<{ Owner::Dictionary }>(&mut state, &history);
+        let tables = state.tables.split_mut();
+
+        let wide = Hasher::new(8, tuning.hash_log + TAG_BITS);
+        let words = dictionary.array_windows().map(|it| u64::from_le_bytes(*it));
+        let hashes: Vec<_> = words.map(|it| wide.hash(it)).collect();
+        let mut checked = 0;
+        for (at, &hash) in (0..).zip(&hashes).take(hashes.len() - 2).skip(1) {
+            // Two positions in one slot keep only one of themselves.
+            let in_slot = hashes.iter().filter(|it| (**it ^ hash) >> TAG_BITS == 0);
+            if in_slot.count() == 1 {
+                let found = Tagged::look_up(tables.hash, hash).and_then(Tagged::index);
+                assert_eq!(found, Some(history.index(at)), "position {at}");
+                checked += 1;
+            }
+        }
+        assert!(checked > 250, "{checked}");
+        Ok(())
+    }
+}

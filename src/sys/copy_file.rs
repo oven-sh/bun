@@ -91,12 +91,16 @@ pub fn copy_file_with_state(
     let _ = copy_file_state;
     #[cfg(target_os = "macos")]
     {
-        match crate::fcopyfile(in_, out, libc::COPYFILE_DATA) {
-            Ok(()) => return Ok(()),
+        let state = core::ptr::null_mut();
+        // SAFETY: a null `copyfile_state_t` is documented as "use defaults".
+        let rc = unsafe { libc::fcopyfile(in_.native(), out.native(), state, libc::COPYFILE_DATA) };
+
+        match crate::get_errno(rc) {
+            E::SUCCESS => return Ok(()),
             // The source file is not a directory, symbolic link, or regular file.
             // Try with the fallback path before giving up.
-            Err(err) if err.get_errno() == E::EOPNOTSUPP => {}
-            Err(err) => return Err(crate::Error::from_code(err.get_errno(), Tag::copyfile)),
+            E::EOPNOTSUPP => {}
+            e => return Err(crate::Error::from_code(e, Tag::copyfile)),
         }
     }
 
@@ -111,17 +115,17 @@ pub fn copy_file_with_state(
         {
             // We only check once if the ioctl is supported, and cache the result.
             // EXT4 does not support FICLONE.
-            let errno = match crate::ioctl_ficlone(out, in_) {
-                Ok(()) => E::SUCCESS,
-                Err(err) => err.get_errno(),
-            };
+            let rc = crate::linux::ioctl_ficlone(out, in_);
             // the ordering is flipped but it is consistent with other system calls.
-            crate::syslog!("ioctl_ficlone({}, {}) = {:?}", in_, out, errno);
-            match errno {
+            crate::syslog!("ioctl_ficlone({}, {}) = {}", in_, out, rc);
+            match crate::get_errno(rc) {
                 E::SUCCESS => return Ok(()),
                 E::EXDEV => {
                     copy_file_state.insert(LinuxCopyFileState::HAS_SEEN_EXDEV);
                 }
+
+                // Don't worry about EINTR here.
+                E::EINTR => {}
 
                 // On Linux EOPNOTSUPP == ENOTSUP.
                 E::EACCES | E::EBADF | E::EINVAL | E::ENOTSUP | E::ENOSYS | E::EPERM => {

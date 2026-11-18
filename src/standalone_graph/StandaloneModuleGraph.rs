@@ -2540,7 +2540,7 @@ pub(crate) fn inject<'a>(
         {
             // if we're on a mac, use clonefile() if we can
             // failure is okay, clonefile is just a fast path.
-            if let bun_sys::Result::Ok(()) = Syscall::clonefile(self_exe, zname, 0) {
+            if let bun_sys::Result::Ok(()) = Syscall::clonefile(self_exe, zname) {
                 let flags = bun_sys::O::RDWR | bun_sys::O::CLOEXEC;
                 if let Ok(file) = ExecutableFile::openat(Fd::cwd(), zname, flags, 0) {
                     break 'brk (file.fd(), UnfinishedCopy::new(file, zname));

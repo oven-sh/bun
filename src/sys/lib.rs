@@ -719,9 +719,35 @@ pub fn open_dir_for_iteration_os_path(dir: Fd, path: &bun_paths::OSPathSlice) ->
 
 pub fn lstatat(fd: impl AsFd, path: &ZStr) -> Result<Stat> {
     let fd = fd.as_fd();
-    #[cfg(unix)]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        posix_impl::fstatat_with_flags(fd, path, libc::AT_SYMLINK_NOFOLLOW)
+        let dir = if fd.is_valid() { fd } else { Fd::cwd() };
+        linux_syscall::fstatat(dir, path, libc::AT_SYMLINK_NOFOLLOW)
+            .map_err(|e| Error::from_code_int(e, Tag::fstatat).with_path(path.as_bytes()))
+    }
+    #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
+    {
+        let mut st = core::mem::MaybeUninit::<libc::stat>::uninit();
+        let dirfd = if fd.is_valid() {
+            fd.native()
+        } else {
+            libc::AT_FDCWD
+        };
+        // SAFETY: path is NUL-terminated; st is written on success.
+        let rc = unsafe {
+            libc::fstatat(
+                dirfd,
+                path.as_ptr().cast(),
+                st.as_mut_ptr(),
+                libc::AT_SYMLINK_NOFOLLOW,
+            )
+        };
+        if rc == 0 {
+            // SAFETY: rc == 0 ⇒ kernel populated `st`.
+            Ok(unsafe { st.assume_init() })
+        } else {
+            Err(Error::from_code_int(last_errno(), Tag::fstatat).with_path(path.as_bytes()))
+        }
     }
     #[cfg(windows)]
     {
@@ -2840,13 +2866,11 @@ mod posix_impl {
         Ok(())
     }
     pub fn fstatat(fd: impl AsFd, path: &ZStr) -> Maybe<Stat> {
-        fstatat_with_flags(fd.as_fd(), path, 0)
-    }
-    pub(crate) fn fstatat_with_flags(fd: Fd, path: &ZStr, flags: i32) -> Maybe<Stat> {
+        let fd = fd.as_fd();
         let dir = if fd.is_valid() { fd } else { Fd::cwd() };
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            return super::linux_syscall::fstatat(dir, path, flags)
+            return super::linux_syscall::fstatat(dir, path, 0)
                 .map_err(|e| Error::from_code_int(e, Tag::fstatat).with_path(path.as_bytes()));
         }
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
@@ -2854,7 +2878,7 @@ mod posix_impl {
             let mut st = core::mem::MaybeUninit::<Stat>::uninit();
             check_p!(
                 // SAFETY: `path` is NUL-terminated; `st` is a valid out-param.
-                unsafe { libc::fstatat(dir.native(), path.as_ptr(), st.as_mut_ptr(), flags) },
+                unsafe { libc::fstatat(dir.native(), path.as_ptr(), st.as_mut_ptr(), 0) },
                 Tag::fstatat,
                 path
             );
@@ -2914,9 +2938,10 @@ mod posix_impl {
         );
         Ok(())
     }
-    /// Windows uses `GetFileAttributesW`; posix is `faccessat(AT_FDCWD, path, F_OK)`.
+    /// Windows uses `GetFileAttributesW`; posix is plain `access`.
     pub fn exists_z(path: &ZStr) -> bool {
-        exists_at(Fd::cwd(), path)
+        // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
+        unsafe { libc::access(path.as_ptr(), libc::F_OK) == 0 }
     }
     pub fn exists_at(dir: impl AsFd, sub: &ZStr) -> bool {
         let dir = dir.as_fd();
@@ -2926,16 +2951,9 @@ mod posix_impl {
         }
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
-            loop {
-                // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
-                // valid NUL-terminated C string.
-                if unsafe { libc::faccessat(dir.native(), sub.as_ptr(), libc::F_OK, 0) } == 0 {
-                    return true;
-                }
-                if last_errno() != libc::EINTR {
-                    return false;
-                }
-            }
+            // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
+            // valid NUL-terminated C string.
+            unsafe { libc::faccessat(dir.native(), sub.as_ptr(), libc::F_OK, 0) == 0 }
         }
     }
     /// Calls extern C `is_executable_file` (c-bindings.cpp:72-89) via FFI.
@@ -2964,17 +2982,12 @@ mod posix_impl {
         }
         #[cfg(not(target_os = "macos"))]
         use libc::realpath as _realpath;
-        let p = loop {
-            // SAFETY: `path` is NUL-terminated (`ZStr`); `buf` is a `PathBuffer`
-            // (>= PATH_MAX bytes) which `realpath` requires for the resolved path.
-            let p = unsafe { _realpath(path.as_ptr(), buf.0.as_mut_ptr().cast()) };
-            if !p.is_null() {
-                break p;
-            }
-            if last_errno() != libc::EINTR {
-                return Err(err_with_path(Tag::realpath, path));
-            }
-        };
+        // SAFETY: `path` is NUL-terminated (`ZStr`); `buf` is a `PathBuffer`
+        // (>= PATH_MAX bytes) which `realpath` requires for the resolved path.
+        let p = unsafe { _realpath(path.as_ptr(), buf.0.as_mut_ptr().cast()) };
+        if p.is_null() {
+            return Err(err_with_path(Tag::realpath, path));
+        }
         // SAFETY: on success `realpath` returned `buf`'s pointer with a
         // NUL-terminated absolute path written into it.
         let len = unsafe { libc::strlen(p) };
@@ -3293,10 +3306,10 @@ mod posix_impl {
             ) -> i32;
             fn fcopyfile(from: i32, to: i32, state: *mut core::ffi::c_void, flags: u32) -> i32;
         }
-        pub fn clonefile_(from: &ZStr, to: &ZStr, flags: u32) -> Maybe<()> {
+        pub fn clonefile_(from: &ZStr, to: &ZStr) -> Maybe<()> {
             check_p!(
                 // SAFETY: both `ZStr`s are valid NUL-terminated C strings.
-                unsafe { clonefile(from.as_ptr(), to.as_ptr(), flags) },
+                unsafe { clonefile(from.as_ptr(), to.as_ptr(), 0) },
                 Tag::clonefile,
                 from
             );
@@ -3330,22 +3343,13 @@ mod posix_impl {
             );
             Ok(())
         }
-        /// EINTR runs again only while both positions are at 0: a call truncates `to` to its own bytes.
         pub fn fcopyfile_(from: Fd, to: Fd, flags: u32) -> Maybe<()> {
-            let at_start = |fd: Fd| matches!(lseek(fd, 0, libc::SEEK_CUR), Ok(0));
-            loop {
+            check!(
                 // SAFETY: a null `copyfile_state_t` is documented as "use defaults".
-                if unsafe { fcopyfile(from.native(), to.native(), core::ptr::null_mut(), flags) }
-                    == 0
-                {
-                    return Ok(());
-                }
-                let e = last_errno();
-                if e == libc::EINTR && at_start(from) && at_start(to) {
-                    continue;
-                }
-                return Err(Error::from_code_int(e, Tag::fcopyfile));
-            }
+                unsafe { fcopyfile(from.native(), to.native(), core::ptr::null_mut(), flags) },
+                Tag::fcopyfile
+            );
+            Ok(())
         }
     }
     #[cfg(target_os = "macos")]
@@ -3486,14 +3490,16 @@ mod posix_impl {
         }
     }
 
-    /// `sendfile(src, dest, offset, len)`. Clamps `len` (avoid EINVAL on
+    /// `sendfile(src, dest, len)`. Clamps `len` (avoid EINVAL on
     /// >2GB), EINTR-retries, and attaches the *source* fd to the error.
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub fn sendfile(src: Fd, dest: Fd, mut offset: Option<&mut i64>, len: usize) -> Maybe<usize> {
+    pub fn sendfile(src: Fd, dest: Fd, len: usize) -> Maybe<usize> {
         let len = len.min(i32::MAX as usize - 1);
         loop {
-            let (out_fd, in_fd) = (dest.native(), src.native());
-            let rc = super::linux::sendfile(out_fd, in_fd, offset.as_deref_mut(), len);
+            // SAFETY: `src`/`dest` are live fds; null `offset` tells the
+            // kernel to use and update `src`'s file offset.
+            let rc =
+                unsafe { libc::sendfile(dest.native(), src.native(), core::ptr::null_mut(), len) };
             if rc < 0 {
                 let e = last_errno();
                 if e == libc::EINTR {
@@ -3503,85 +3509,6 @@ mod posix_impl {
             }
             return Ok(rc as usize);
         }
-    }
-
-    /// `sendfile(2)` of macOS and FreeBSD. EAGAIN or EINTR after some bytes is a short count.
-    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-    pub fn sendfile(src: Fd, dest: Fd, offset: &mut i64, len: usize) -> Maybe<usize> {
-        // A length of 0 asks these kernels for the whole rest of the file.
-        if len == 0 {
-            return Ok(0);
-        }
-        let len = len.min(i64::MAX as usize);
-        loop {
-            #[cfg(target_os = "macos")]
-            let (rc, sent) = {
-                let mut sent = len as i64;
-                let rc = super::c::sendfile(src.native(), dest.native(), *offset, &mut sent, 0);
-                (rc, sent)
-            };
-            #[cfg(target_os = "freebsd")]
-            let (rc, sent) = {
-                let mut sent: i64 = 0;
-                let (file, socket) = (src.native(), dest.native());
-                let rc = super::c::sendfile(file, socket, *offset, len, &mut sent, 0);
-                (rc, sent)
-            };
-            if rc == 0 {
-                *offset += sent;
-                return Ok(sent as usize);
-            }
-            let e = last_errno();
-            if (e == libc::EAGAIN || e == libc::EINTR) && sent > 0 {
-                *offset += sent;
-                return Ok(sent as usize);
-            }
-            if e == libc::EINTR {
-                continue;
-            }
-            return Err(Error::from_code_int(e, Tag::sendfile).with_fd(src));
-        }
-    }
-
-    /// `copy_file_range(2)`. An offset of `None` uses and advances the file position.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub fn copy_file_range(
-        in_: Fd,
-        mut off_in: Option<&mut i64>,
-        out: Fd,
-        mut off_out: Option<&mut i64>,
-        len: usize,
-        flags: u32,
-    ) -> Maybe<usize> {
-        let rc = check!(
-            super::linux::copy_file_range(
-                in_.native(),
-                off_in.as_deref_mut(),
-                out.native(),
-                off_out.as_deref_mut(),
-                len,
-                flags,
-            ),
-            Tag::copy_file_range
-        );
-        Ok(rc as usize)
-    }
-
-    /// `splice(2)` between the file positions of `src` and `dest`.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub fn splice(src: Fd, dest: Fd, len: usize) -> Maybe<usize> {
-        let rc = check!(
-            super::linux::splice(src.native(), dest.native(), len),
-            Tag::splice
-        );
-        Ok(rc as usize)
-    }
-
-    /// `ioctl(dest, FICLONE, src)`.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub fn ioctl_ficlone(dest: Fd, src: Fd) -> Maybe<()> {
-        check!(super::linux::ioctl_ficlone(dest, src), Tag::ioctl_ficlone);
-        Ok(())
     }
 }
 #[cfg(unix)]
@@ -4804,6 +4731,27 @@ pub mod c {
         vm_statistics64_data_t,
     };
 
+    /// Safe rc-returning `clonefile(2)` — callers that want their own
+    /// `sys::Tag` / path boxing (`errno_sys_p`) take the raw `c_int` instead
+    /// of the `Maybe<()>`-shaped [`super::clonefile`].
+    #[cfg(target_os = "macos")]
+    #[inline]
+    pub fn clonefile_rc(src: &bun_core::ZStr, dst: &bun_core::ZStr, flags: u32) -> c_int {
+        // SAFETY: `&ZStr` guarantees a readable NUL-terminated buffer.
+        unsafe { libc::clonefile(src.as_ptr(), dst.as_ptr(), flags) }
+    }
+    /// Safe rc-returning `copyfile(3)` with a null state handle.
+    #[cfg(target_os = "macos")]
+    #[inline]
+    pub fn copyfile_rc(
+        src: &bun_core::ZStr,
+        dst: &bun_core::ZStr,
+        flags: libc::copyfile_flags_t,
+    ) -> c_int {
+        // SAFETY: `&ZStr` guarantees a readable NUL-terminated buffer; `state`
+        // may be null per copyfile(3).
+        unsafe { libc::copyfile(src.as_ptr(), dst.as_ptr(), core::ptr::null_mut(), flags) }
+    }
     /// `PROCESSOR_CPU_LOAD_INFO_COUNT` — sizeof(processor_cpu_load_info)/sizeof(natural_t).
     /// Not bound by `libc`; <mach/processor_info.h>.
     #[cfg(target_os = "macos")]
@@ -4865,13 +4813,13 @@ pub mod c {
     /// advance their offset by `*len` even on error. This wrapper is raw (no
     /// EINTR retry); the caller owns the offset bookkeeping.
     #[cfg(target_os = "macos")]
-    pub(crate) fn sendfile(fd: c_int, s: c_int, off: i64, len: &mut i64, flags: c_int) -> c_int {
+    pub fn sendfile(fd: c_int, s: c_int, off: i64, len: &mut i64, flags: c_int) -> c_int {
         // SAFETY: `len` is live, and a null `hdtr` is allowed.
         unsafe { libc::sendfile(fd, s, off, len, core::ptr::null_mut(), flags) }
     }
     /// FreeBSD `sendfile(fd, s, off, nbytes, *hdtr, *sbytes, flags)`, without headers or trailers.
     #[cfg(target_os = "freebsd")]
-    pub(crate) fn sendfile(
+    pub fn sendfile(
         fd: c_int,
         s: c_int,
         off: i64,
@@ -5103,7 +5051,7 @@ pub mod linux {
     }
     /// Raw `splice(2)` at the position of each file; libc-convention return.
     #[inline]
-    pub(crate) fn splice(in_fd: c_int, out_fd: c_int, len: usize) -> isize {
+    pub fn splice(in_fd: c_int, out_fd: c_int, len: usize) -> isize {
         let no_offset = core::ptr::null_mut();
         // SAFETY: both offsets may be null.
         unsafe { libc::splice(in_fd, no_offset, out_fd, no_offset, len, 0) }
@@ -5114,12 +5062,7 @@ pub mod linux {
     }
     /// Raw `sendfile(out, in, *offset, count)`. With an `offset`, the kernel reads and updates it.
     #[inline]
-    pub(crate) fn sendfile(
-        out_fd: c_int,
-        in_fd: c_int,
-        offset: Option<&mut i64>,
-        count: usize,
-    ) -> isize {
+    pub fn sendfile(out_fd: c_int, in_fd: c_int, offset: Option<&mut i64>, count: usize) -> isize {
         super::linux_syscall::sendfile(out_fd, in_fd, offset, count)
     }
     /// Raw `ppoll(fds, nfds, *timeout, *sigmask)`.
@@ -5178,7 +5121,7 @@ pub mod linux {
     /// `bun.linux.ioctl_ficlone`: raw FICLONE ioctl.
     /// Support for FICLONE is dependent on the filesystem driver.
     #[inline]
-    pub(crate) fn ioctl_ficlone(dest_fd: super::Fd, src_fd: super::Fd) -> isize {
+    pub fn ioctl_ficlone(dest_fd: super::Fd, src_fd: super::Fd) -> isize {
         // FICLONE = _IOW(0x94, 9, c_int).
         const FICLONE: libc::c_ulong = 0x40049409;
         // SAFETY: raw `ioctl(2)`; both fds owned by caller.
@@ -5194,7 +5137,7 @@ pub mod linux {
 
     /// `copy_file_range` raw syscall.
     #[inline]
-    pub(crate) fn copy_file_range(
+    pub fn copy_file_range(
         in_: c_int,
         off_in: Option<&mut i64>,
         out: c_int,
@@ -6580,12 +6523,13 @@ pub fn get_file_attributes(path: &ZStr) -> Option<WindowsFileAttributes> {
     })
 }
 
-/// [`exists_z`] on POSIX, where `file_only` is ignored.
+/// `access(path, F_OK) == 0`. `file_only` ignored on POSIX.
 pub fn exists_os_path(path: &bun_paths::OSPathSliceZ, file_only: bool) -> bool {
     #[cfg(not(windows))]
     {
         let _ = file_only;
-        exists_z(path)
+        // SAFETY: path is NUL-terminated.
+        unsafe { libc::access(path.as_ptr().cast(), libc::F_OK) == 0 }
     }
     #[cfg(windows)]
     {

@@ -278,6 +278,8 @@ impl CopyFile {
         &mut self,
         total_written: &mut SizeType,
     ) -> Result<(), crate::Error> {
+        use bun_sys::linux;
+
         let mut remain: usize = self.max_length as usize;
         let unknown_size = remain == MAX_SIZE as usize || remain == 0;
         if unknown_size {
@@ -301,19 +303,17 @@ impl CopyFile {
 
         loop {
             // TODO: this should use non-blocking I/O.
-            let result = match USE {
+            let written: isize = match USE {
                 TryWith::CopyFileRange => {
-                    bun_sys::copy_file_range(src_fd, None, dest_fd, None, remain, 0)
+                    linux::copy_file_range(src_fd.native(), None, dest_fd.native(), None, remain, 0)
                 }
-                TryWith::Sendfile => bun_sys::sendfile(src_fd, dest_fd, None, remain),
-                TryWith::Splice => bun_sys::splice(src_fd, dest_fd, remain),
-            };
-            let (written, errno) = match result {
-                Ok(written) => (written, bun_sys::E::SUCCESS),
-                Err(err) => (0, err.get_errno()),
+                TryWith::Sendfile => {
+                    linux::sendfile(dest_fd.native(), src_fd.native(), None, remain)
+                }
+                TryWith::Splice => linux::splice(src_fd.native(), dest_fd.native(), remain),
             };
 
-            match errno {
+            match bun_sys::get_errno(written) {
                 bun_sys::E::SUCCESS => {}
 
                 // XDEV: cross-device copy not supported
@@ -385,12 +385,12 @@ impl CopyFile {
             }
 
             // wrote zero bytes means EOF
-            *total_written += written as u64;
+            *total_written += u64::try_from(written).expect("int cast");
             if written == 0 {
                 break;
             }
             if !unknown_size {
-                remain = remain.saturating_sub(written);
+                remain = remain.saturating_sub(usize::try_from(written).expect("int cast"));
                 if remain == 0 {
                     break;
                 }
@@ -483,7 +483,6 @@ impl CopyFile {
                     .path()
                     .slice_z(&mut source_buf),
                 dest,
-                0,
             ) {
                 bun_sys::Result::Err(errno) => {
                     match blob::mkdir_if_not_exists(self, &errno, dest) {

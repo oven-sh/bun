@@ -29,7 +29,7 @@ disallowed-methods = [
   { path = "libc::isatty", reason = "use bun_sys::isatty", allow-invalid = true },
   { path = "libc::socketpair", reason = "use bun_sys::socketpair", allow-invalid = true },
   { path = "libc::fallocate", reason = "use bun_sys::linux::fallocate", allow-invalid = true },
-  { path = "libc::splice", reason = "use bun_sys::splice", allow-invalid = true },
+  { path = "libc::splice", reason = "use bun_sys::linux::splice", allow-invalid = true },
   { path = "libc::shm_open", reason = "use bun_sys::freebsd::create_shared_memory", allow-invalid = true },
   { path = "libc::ioctl", reason = "use a function of bun_sys for the request", allow-invalid = true },
   { path = "libc::cfsetispeed", reason = "use bun_sys::posix::cfsetspeed", allow-invalid = true },

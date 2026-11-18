@@ -22,53 +22,24 @@
 
 #if ENABLE(WEB_CRYPTO)
 
-#include "JSDOMWrapper.h"
+#include "JSDOMInterface.h"
 #include "SubtleCrypto.h"
 
 namespace WebCore {
 
-class JSSubtleCrypto : public JSDOMWrapper<SubtleCrypto> {
+class JSSubtleCrypto final : public JSDOMInterface<JSSubtleCrypto, SubtleCrypto> {
 public:
-    using Base = JSDOMWrapper<SubtleCrypto>;
-    static JSSubtleCrypto* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<SubtleCrypto>&& impl)
-    {
-        JSSubtleCrypto* ptr = new (NotNull, JSC::allocateCell<JSSubtleCrypto>(globalObject->vm())) JSSubtleCrypto(structure, *globalObject, WTF::move(impl));
-        ptr->finishCreation(globalObject->vm());
-        return ptr;
-    }
-
-    static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
-    static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
-    static void destroy(JSC::JSCell*);
+    using JSDOMInterface::JSDOMInterface;
 
     DECLARE_INFO;
+    static constexpr auto subspaceSlots = BUN_SUBSPACE_SLOTS(m_clientSubspaceForSubtleCrypto, m_subspaceForSubtleCrypto);
 
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
-    }
-
+    static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
-    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-        return subspaceForImpl(vm);
-    }
-    static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
-    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
-
-protected:
-    JSSubtleCrypto(JSC::Structure*, JSDOMGlobalObject&, Ref<SubtleCrypto>&&);
-
-    void finishCreation(JSC::VM&);
 };
-
-JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<SubtleCrypto>&&);
 
 template<> struct JSDOMWrapperConverterTraits<SubtleCrypto> {
     using WrapperClass = JSSubtleCrypto;
-    using ToWrappedReturnType = SubtleCrypto*;
 };
 
 } // namespace WebCore

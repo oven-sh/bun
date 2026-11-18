@@ -21,8 +21,6 @@
 #include "config.h"
 #include "JSPerformanceMark.h"
 
-#include "ExtendedDOMClientIsoSubspaces.h"
-#include "ExtendedDOMIsoSubspaces.h"
 #include "JSDOMAttribute.h"
 #include "JSDOMBinding.h"
 #include "JSDOMConstructor.h"
@@ -33,61 +31,22 @@
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMOperation.h"
-#include "JSDOMWrapperCache.h"
+#include "JSDOMPrototype.h"
 #include "JSPerformanceMarkOptions.h"
 #include "ScriptExecutionContext.h"
-#include "WebCoreJSClientData.h"
-#include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSCInlines.h>
-#include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
-#include <JavaScriptCore/SubspaceInlines.h>
-#include <wtf/GetPtr.h>
-#include <wtf/PointerPreparations.h>
-#include <wtf/URL.h>
 
 namespace WebCore {
 using namespace JSC;
 
 // Attributes
 
-static JSC_DECLARE_CUSTOM_GETTER(jsPerformanceMarkConstructor);
 static JSC_DECLARE_CUSTOM_GETTER(jsPerformanceMark_detail);
 static JSC_DECLARE_HOST_FUNCTION(jsPerformanceMarkPrototypeFunction_toJSON);
 
-class JSPerformanceMarkPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static JSPerformanceMarkPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSPerformanceMarkPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSPerformanceMarkPrototype))) JSPerformanceMarkPrototype(vm, globalObject, structure);
-        ptr->finishCreation(vm);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSPerformanceMarkPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSPerformanceMarkPrototype(JSC::VM& vm, JSC::JSGlobalObject*, JSC::Structure* structure)
-        : JSC::JSNonFinalObject(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&);
-};
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSPerformanceMarkPrototype, JSPerformanceMarkPrototype::Base);
-
+using JSPerformanceMarkPrototype = JSDOMPrototype<JSPerformanceMark>;
 using JSPerformanceMarkDOMConstructor = JSDOMConstructor<JSPerformanceMark>;
 
 template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSPerformanceMarkDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
@@ -124,11 +83,6 @@ JSC_ANNOTATE_HOST_FUNCTION(JSPerformanceMarkDOMConstructorConstruct, JSPerforman
 
 template<> const ClassInfo JSPerformanceMarkDOMConstructor::s_info = { "PerformanceMark"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformanceMarkDOMConstructor) };
 
-template<> JSValue JSPerformanceMarkDOMConstructor::prototypeForStructure(JSC::VM& vm, const JSDOMGlobalObject& globalObject)
-{
-    return JSPerformanceEntry::getConstructor(vm, &globalObject);
-}
-
 template<> void JSPerformanceMarkDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
     initializeBaseProperties(vm, 1, "PerformanceMark"_s, JSPerformanceMark::prototype(vm, globalObject));
@@ -137,14 +91,14 @@ template<> void JSPerformanceMarkDOMConstructor::initializeProperties(VM& vm, JS
 /* Hash table for prototype */
 
 static const HashTableValue JSPerformanceMarkPrototypeTableValues[] = {
-    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformanceMarkConstructor, 0 } },
+    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, JSPerformanceMarkPrototype::constructorGetter, 0 } },
     { "detail"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformanceMark_detail, 0 } },
     { "toJSON"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsPerformanceMarkPrototypeFunction_toJSON, 0 } },
 };
 
-const ClassInfo JSPerformanceMarkPrototype::s_info = { "PerformanceMark"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformanceMarkPrototype) };
+template<> const ClassInfo JSPerformanceMarkPrototype::s_info = { "PerformanceMark"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformanceMarkPrototype) };
 
-void JSPerformanceMarkPrototype::finishCreation(VM& vm)
+template<> void JSPerformanceMarkPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSPerformanceMark::info(), JSPerformanceMarkPrototypeTableValues, *this);
@@ -153,38 +107,14 @@ void JSPerformanceMarkPrototype::finishCreation(VM& vm)
 
 const ClassInfo JSPerformanceMark::s_info = { "PerformanceMark"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformanceMark) };
 
-JSPerformanceMark::JSPerformanceMark(Structure* structure, JSDOMGlobalObject& globalObject, Ref<PerformanceMark>&& impl)
-    : JSPerformanceEntry(structure, globalObject, WTF::move(impl))
-{
-}
-
-// static_assert(!std::is_base_of<ActiveDOMObject, PerformanceMark>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
-
 JSObject* JSPerformanceMark::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    auto* structure = JSPerformanceMarkPrototype::createStructure(vm, &globalObject, JSPerformanceEntry::prototype(vm, globalObject));
-    structure->setMayBePrototype(true);
-    return JSPerformanceMarkPrototype::create(vm, &globalObject, structure);
-}
-
-JSObject* JSPerformanceMark::prototype(VM& vm, JSDOMGlobalObject& globalObject)
-{
-    return getDOMPrototype<JSPerformanceMark>(vm, globalObject);
+    return JSPerformanceMarkPrototype::create(vm, globalObject, JSPerformanceEntry::prototype(vm, globalObject));
 }
 
 JSValue JSPerformanceMark::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSPerformanceMarkDOMConstructor, DOMConstructorID::PerformanceMark>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsPerformanceMarkConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = dynamicDowncast<JSPerformanceMarkPrototype>(JSValue::decode(thisValue));
-    if (!prototype) [[unlikely]]
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    return JSValue::encode(JSPerformanceMark::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
 
 static inline JSValue jsPerformanceMark_detailGetter(JSGlobalObject& lexicalGlobalObject, JSPerformanceMark& thisObject)
@@ -232,11 +162,6 @@ JSC_DEFINE_HOST_FUNCTION(jsPerformanceMarkPrototypeFunction_toJSON, (JSGlobalObj
     return IDLOperation<JSPerformanceMark>::call<jsPerformanceMarkPrototypeFunction_toJSONBody>(*lexicalGlobalObject, *callFrame, "toJSON");
 }
 
-JSC::GCClient::IsoSubspace* JSPerformanceMark::subspaceForImpl(JSC::VM& vm)
-{
-    return WebCore::subspaceForImpl<JSPerformanceMark, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForPerformanceMark, m_subspaceForPerformanceMark));
-}
-
 template<typename Visitor>
 void JSPerformanceMark::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
@@ -247,54 +172,5 @@ void JSPerformanceMark::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 }
 
 DEFINE_VISIT_CHILDREN(JSPerformanceMark);
-
-void JSPerformanceMark::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
-{
-    auto* thisObject = uncheckedDowncast<JSPerformanceMark>(cell);
-    analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
-    if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
-    Base::analyzeHeap(cell, analyzer);
-}
-
-#if ENABLE(BINDING_INTEGRITY)
-#if PLATFORM(WIN)
-#pragma warning(disable : 4483)
-extern "C" {
-extern void (*const __identifier("??_7PerformanceMark@WebCore@@6B@")[])();
-}
-#else
-extern "C" {
-extern void* _ZTVN7WebCore15PerformanceMarkE[];
-}
-#endif
-#endif
-
-JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<PerformanceMark>&& impl)
-{
-
-    if constexpr (std::is_polymorphic_v<PerformanceMark>) {
-#if ENABLE(BINDING_INTEGRITY)
-        // const void* actualVTablePointer = getVTablePointer(impl.ptr());
-#if PLATFORM(WIN)
-        void* expectedVTablePointer = __identifier("??_7PerformanceMark@WebCore@@6B@");
-#else
-        // void* expectedVTablePointer = &_ZTVN7WebCore15PerformanceMarkE[2];
-#endif
-
-        // If you hit this assertion you either have a use after free bug, or
-        // PerformanceMark has subclasses. If PerformanceMark has subclasses that get passed
-        // to toJS() we currently require PerformanceMark you to opt out of binding hardening
-        // by adding the SkipVTableValidation attribute to the interface IDL definition
-        // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
-#endif
-    }
-    return createWrapper<PerformanceMark>(globalObject, WTF::move(impl));
-}
-
-JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, PerformanceMark& impl)
-{
-    return wrap(lexicalGlobalObject, globalObject, impl);
-}
 
 }

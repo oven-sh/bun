@@ -1201,7 +1201,8 @@ describe("bundler", () => {
         target: "bun",
         conditions: ["aot"],
         skipOnEsbuild: true,
-        run: { stdout: "div" },
+        // Selecting the bundle explicitly also exercises the regular bundler in AOT parity runs.
+        run: { file: "/out.js", stdout: "div" },
       });
 
       itBundled(`jsx/PreserveAotDependencyBundle-${backend}`, {

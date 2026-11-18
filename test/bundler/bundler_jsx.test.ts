@@ -3,7 +3,7 @@ import { transformSync } from "esbuild";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "node:path";
 import { SourceMapConsumer } from "source-map";
-import { BundlerTestInput, ESBUILD, itBundled } from "./expectBundled";
+import { type BundlerTestBundleAPI, BundlerTestInput, ESBUILD, itBundled } from "./expectBundled";
 
 const helpers = {
   "/node_modules/bun-test-helpers/index.js": /* js */ `
@@ -589,71 +589,59 @@ describe("bundler", () => {
     });
 
     describe.each(["cli", "api"] as const)("defined JSX tags (%s)", backend => {
-      test.concurrent.each([
-        ["arrow attribute", "<Comp fn={() => 1} />; export const after = () => 2;"],
-        ["arrow child", "<Comp>{() => 1}</Comp>; export const after = () => 2;"],
-        ["function attribute", "<Comp fn={function () { return 1; }} />; export function after() {}"],
-        ["class child", "<Comp>{class Inner { method() {} }}</Comp>; export class After {}"],
-      ])("invalid tags consume nested scopes: %s", async (_, source) => {
-        using dir = tempDir("jsx-invalid-tag-scopes", { "in.jsx": `export const bad = ${source}` });
-        const entrypoint = join(String(dir), "in.jsx");
-        const cmd =
-          backend === "cli"
-            ? [bunExe(), "build", entrypoint, "--jsx-runtime=preserve", "--define=Comp:1"]
-            : [
-                bunExe(),
-                "-e",
-                `const result = await Bun.build({ entrypoints: [${JSON.stringify(entrypoint)}], jsx: { runtime: "preserve" }, define: { Comp: "1" }, throw: false });
-                 for (const log of result.logs) console.error(log.message);
-                 process.exit(result.success ? 0 : 1);`,
-              ];
-        await using proc = Bun.spawn({ cmd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect(stdout).toBe("");
-        expect(stderr).toContain("Cannot preserve JSX tag after it resolves to an invalid JSX tag expression");
-        expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 1, signalCode: null });
+      itBundled(`jsx/PreserveNumericDefinedTags-${backend}`, {
+        files: {
+          "/in.jsx": `
+            const a = <Comp fn={() => 1} />;
+            const b = <Comp>{() => 2}</Comp>;
+            const c = <Comp fn={function () { return 3; }} />;
+            const d = <Comp>{class Inner { static method() { return 4; } }}</Comp>;
+            function after() { return 5; }
+            console.log(a[0], a[1].fn(), b[0], b[2](), c[1].fn(), d[2].method(), after(), (<Comp.constructor />)[0] === Number);
+          `,
+        },
+        backend,
+        jsx: { runtime: "preserve" },
+        define: { Comp: "42" },
+        // esbuild cannot print these defined values as JSX names.
+        skipOnEsbuild: true,
+        onAfterBundle(api) {
+          const out = api.readFile("/out.js");
+          const { code } = transformSync(out, { loader: "jsx", jsxFactory: "h" });
+          api.writeFile("/out.js", `const h = (...parts) => parts;\n${code}`);
+        },
+        run: { stdout: "42 1 42 2 3 4 5 true" },
       });
 
-      describe.each(
-        [
-          "",
-          "two words",
-          "1name",
-          "name:",
-          "name::part",
-          "name.part",
-          "name/><other",
-          "\uD800",
-          "name\npart",
-          "-name",
-        ].map((name, index) => [index, name] as const),
-      )("invalid string tag %i: %j", (index, name) => {
-        itBundled(`jsx/PreserveInvalidStringTag-${backend}-${index}`, {
-          files: { "/in.jsx": "export default <Comp />;" },
-          backend,
-          jsx: { runtime: "preserve" },
-          define: { Comp: JSON.stringify(name) },
-          // The diagnostic and define handling belong to Bun.
-          skipOnEsbuild: true,
-          bundleErrors: { "/in.jsx": ["Cannot preserve JSX tag after it resolves to an invalid JSX tag expression"] },
-        });
-      });
-
+      const tagStrings = [
+        "section",
+        "Widget",
+        "résumé",
+        "𐐀",
+        "svg:path",
+        "X-name",
+        "",
+        "two words",
+        "1name",
+        "name:",
+        "name::part",
+        "name.part",
+        "name/><other",
+        "\uD800",
+        "name\npart",
+        "-name",
+      ];
+      const definedTags = Object.fromEntries(tagStrings.map((name, index) => [`Tag${index}`, JSON.stringify(name)]));
       describe.each([false, true])("defined string tag values, minify=%s", minify => {
         itBundled(`jsx/PreserveDefinedStringTagValues-${backend}-${minify}`, {
           files: {
-            "/in.jsx": `console.log(JSON.stringify([<Lower />, <Upper />, <Unicode />, <Astral />, <Namespaced />, <Dashed />]));`,
+            "/in.jsx": `console.log(JSON.stringify([${Object.keys(definedTags)
+              .map(tag => `<${tag} />`)
+              .join(", ")}]));`,
           },
           backend,
           jsx: { runtime: "preserve" },
-          define: {
-            Lower: '"section"',
-            Upper: '"Widget"',
-            Unicode: '"résumé"',
-            Astral: '"𐐀"',
-            Namespaced: '"svg:path"',
-            Dashed: '"X-name"',
-          },
+          define: definedTags,
           minifyIdentifiers: minify,
           minifySyntax: minify,
           minifyWhitespace: minify,
@@ -664,7 +652,7 @@ describe("bundler", () => {
             const { code } = transformSync(out, { loader: "jsx", jsxFactory: "h", charset: "utf8" });
             api.writeFile("/out.js", `const h = type => type;\n${code}`);
           },
-          run: { stdout: JSON.stringify(["section", "Widget", "résumé", "𐐀", "svg:path", "X-name"]) },
+          run: { stdout: JSON.stringify(tagStrings) },
         });
       });
 
@@ -766,17 +754,6 @@ describe("bundler", () => {
             },
             run: { stdout },
           });
-        });
-      });
-
-      describe.each(["Comp", "Comp.Member"])("tag %s", tag => {
-        itBundled(`jsx/PreserveInvalidDefinedTag-${backend}-${tag}`, {
-          files: { "/in.jsx": `export default <${tag} />;` },
-          backend,
-          jsx: { runtime: "preserve" },
-          define: { Comp: "1" },
-          skipOnEsbuild: true,
-          bundleErrors: { "/in.jsx": ["Cannot preserve JSX tag after it resolves to an invalid JSX tag expression"] },
         });
       });
 
@@ -1234,6 +1211,132 @@ describe("bundler", () => {
             }),
           },
         });
+      });
+    });
+
+    describe.each(["cli", "api"] as const)("rewritten JSX tags (%s)", backend => {
+      function compileJsx(api: BundlerTestBundleAPI) {
+        const out = api.readFile("/out.js");
+        const { code } = transformSync(out, { loader: "jsx", jsxFactory: "globalThis.factory" });
+        api.writeFile("/out.js", "globalThis.factory = type => type;\n" + code);
+      }
+
+      itBundled(`jsx/PreserveCommonJSExportTags-${backend}`, {
+        files: {
+          "/in.jsx": `
+            exports.Component = () => "first";
+            const first = <exports.Component></exports.Component>;
+            module.exports.Component = () => "second";
+            module.exports.Group = { Child: () => "nested" };
+            console.log(first(), (<module.exports.Component />)(), (<exports.Group.Child />)());
+          `,
+        },
+        backend,
+        target: "bun",
+        format: "esm",
+        jsx: { runtime: "preserve" },
+        minifyIdentifiers: backend === "api",
+        onAfterBundle: compileJsx,
+        run: { stdout: "first second nested" },
+      });
+
+      itBundled(`jsx/PreserveReassignedCommonJSExportTags-${backend}`, {
+        files: {
+          "/in.jsx": `
+            exports.Component = () => "original";
+            function render() {
+              return [(<exports.Component />)(), (<module.exports.Component />)(), (<module.exports />).Component()];
+            }
+            module.exports = { Component: () => "replacement" };
+            console.log(...render());
+          `,
+        },
+        backend,
+        target: "bun",
+        format: "esm",
+        jsx: { runtime: "preserve" },
+        onAfterBundle: compileJsx,
+        run: { stdout: "original replacement replacement" },
+      });
+
+      itBundled(`jsx/PreserveModuleExportsObjectTag-${backend}`, {
+        files: {
+          "/in.js": 'import "./component.jsx";',
+          "/component.jsx": `
+            exports.Component = () => "component";
+            console.log((<module.exports />).Component());
+          `,
+        },
+        backend,
+        target: "bun",
+        format: backend === "cli" ? "esm" : "iife",
+        jsx: { runtime: "preserve" },
+        onAfterBundle: compileJsx,
+        run: { stdout: "component" },
+      });
+
+      itBundled(`jsx/PreserveRequireTags-${backend}`, {
+        files: {
+          "/in.jsx": `
+            console.log(typeof <require.resolve />, <require.cache /> === require.cache, <require.main /> === require.main);
+          `,
+        },
+        backend,
+        target: "bun",
+        jsx: { runtime: "preserve" },
+        onAfterBundle: compileJsx,
+        run: { stdout: "function true true" },
+      });
+
+      itBundled(`jsx/PreserveLocalEnumTags-${backend}`, {
+        files: {
+          "/in.tsx": `
+            enum Tags { Text = "section" }
+            const enum Values { Number = 42 }
+            console.log(<Tags.Text />, <Values.Number />, <Values.Number.constructor /> === Number);
+          `,
+        },
+        backend,
+        jsx: { runtime: "preserve" },
+        // esbuild inlines the string into the JSX name, which cannot be parsed.
+        skipOnEsbuild: true,
+        onAfterBundle: compileJsx,
+        run: { stdout: "section 42 true" },
+      });
+
+      itBundled(`jsx/PreserveImportedEnumTags-${backend}`, {
+        files: {
+          "/in.tsx": `
+            import { Tags } from "./tags";
+            import * as UI from "./tags";
+            console.log(<Tags.Text />, <UI.Tags.Number />, <Tags.Text.constructor /> === String, Tags.Number);
+          `,
+          "/tags.ts": 'export const enum Tags { Text = "section", Number = 42 }',
+        },
+        backend,
+        jsx: { runtime: "preserve" },
+        minifyIdentifiers: backend === "api",
+        // esbuild drops the declaration but still prints a reference to the enum.
+        skipOnEsbuild: true,
+        onAfterBundle: compileJsx,
+        run: { stdout: "section 42 true 42" },
+      });
+
+      itBundled(`jsx/PreserveHoistedTagBindings-${backend}`, {
+        files: {
+          "/in.jsx": `
+            function parameter(Component) { { var Component; return <Component />; } }
+            function local() { var Component = "variable"; { var Component; return <Component />; } }
+            console.log(parameter("parameter"), local());
+          `,
+        },
+        backend,
+        jsx: { runtime: "preserve" },
+        minifyIdentifiers: true,
+        // esbuild renames each linked binding to a lowercase JSX intrinsic.
+        skipOnEsbuild: true,
+        onAfterBundle: compileJsx,
+        run: { stdout: "parameter variable" },
       });
     });
 

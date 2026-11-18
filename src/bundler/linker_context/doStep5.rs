@@ -234,7 +234,8 @@ impl LinkerContext<'_, '_> {
                                 let mut found_non_inlined_enum = false;
 
                                 for (name, prop_use) in properties.iter() {
-                                    if enum_data.get(name).is_none() {
+                                    // A JSX member tag still reads the enum object.
+                                    if prop_use.is_jsx_tag || enum_data.get(name).is_none() {
                                         found_non_inlined_enum = true;
                                         use_.merge(SymbolUse::unscoped(prop_use.count_estimate));
                                     }

@@ -444,7 +444,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         } else {
             p.generate_temp_var(b"JSXTag")
         };
-        p.symbols[ref_.inner_index() as usize].set_must_start_with_capital_letter_for_jsx(true);
         let identifier = Expr::init_identifier(ref_, tag.loc);
         let initializer = if scoped {
             value
@@ -494,7 +493,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .data
             .e_jsx_element()
             .expect("infallible: variant checked");
-        let runtime = p.options.jsx.runtime;
+        let runtime = match p.options.jsx.runtime {
+            options::JSX::Runtime::_None => options::JSX::Runtime::Classic,
+            runtime => runtime,
+        };
         if runtime == options::JSX::Runtime::Preserve {
             p.first_preserved_jsx.get_or_insert(expr.loc);
         }
@@ -536,18 +538,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             JSXTransformType::React => {
                 let mut tag_initializer = None;
                 let mut tag_binding = None;
-                let mut invalid_tag = false;
                 let tag: Expr = 'tagger: {
                     if let Some(mut tag) = e_.tag {
                         let was_string = matches!(tag.data, Data::EString(_));
                         p.visit_expr(&mut tag);
-                        if p.options.jsx.runtime == options::JSX::Runtime::Preserve {
+                        if runtime == options::JSX::Runtime::Preserve {
                             let mut root = tag;
                             while let Data::EDot(dot) = root.data {
                                 root = dot.target;
                             }
-                            let valid_tag = match &tag.data {
-                                Data::EString(str_) => str_.is_jsx_name(p.arena),
+                            if matches!(root.data, Data::ESpecial(E::Special::ModuleExports)) {
+                                // Retaining the whole exports object prevents lifting its individual exports.
+                                p.record_usage(p.exports_ref);
+                            }
+                            let tag_can_print_directly = match tag.data {
+                                Data::EString(_) => was_string,
                                 _ => matches!(
                                     root.data,
                                     Data::EIdentifier(_)
@@ -555,17 +560,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         | Data::EThis(_)
                                 ),
                             };
-                            if !valid_tag {
-                                p.log().add_error(
-                                    Some(p.source),
-                                    tag.loc,
-                                    b"Cannot preserve JSX tag after it resolves to an invalid JSX tag expression",
-                                );
-                                invalid_tag = true;
-                                break 'tagger tag;
-                            }
-                            let is_defined_string =
-                                !was_string && matches!(tag.data, Data::EString(_));
                             let identifier = tag.data.e_identifier();
                             let has_lowercase_name = identifier.is_some_and(|id| {
                                 p.symbols[id.ref_.inner_index() as usize]
@@ -581,7 +575,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     }
                                     _ => false,
                                 };
-                            if has_string_named_import || is_defined_string || has_lowercase_name {
+                            if !tag_can_print_directly
+                                || has_string_named_import
+                                || has_lowercase_name
+                            {
+                                // Reading through a member lets the ordinary printer handle rewritten tags.
                                 let (member, initializer, binding) = Self::jsx_tag_member(p, tag);
                                 tag = member;
                                 tag_initializer = Some(initializer);
@@ -618,6 +616,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     _ => None,
                                 };
                                 if let Some(ref_) = ref_ {
+                                    let ref_ = js_ast::symbol::follow_symbols(&p.symbols, ref_);
                                     p.symbols[ref_.inner_index() as usize]
                                         .set_must_start_with_capital_letter_for_jsx(true);
                                 }
@@ -625,10 +624,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                         break 'tagger tag;
                     }
-                    if p.options.jsx.runtime == options::JSX::Runtime::Preserve {
+                    if runtime == options::JSX::Runtime::Preserve {
                         break 'tagger p.new_expr(E::Missing {}, expr.loc);
                     }
-                    if p.options.jsx.runtime == options::JSX::Runtime::Classic {
+                    if runtime == options::JSX::Runtime::Classic {
                         break 'tagger p
                             .jsx_classic_member_expression(expr.loc, |jsx| &jsx.fragment);
                     }
@@ -659,6 +658,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 for property in e_.properties.slice_mut() {
+                    if runtime != options::JSX::Runtime::Preserve {
+                        property.flags.remove(Flags::Property::WasShorthand);
+                    }
                     if property.kind != G::PropertyKind::Spread {
                         p.visit_expr(property.key.as_mut().expect("infallible: prop has key"));
                     }
@@ -949,11 +951,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     e_.children.truncate(last_child as usize);
 
-                    // Draining nested scopes before discarding an invalid tag.
-                    if invalid_tag {
-                        *e = p.new_expr(E::Missing {}, expr.loc);
-                        return;
-                    }
                     let Some(initializer) = tag_initializer else {
                         *e = expr;
                         return;

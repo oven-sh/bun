@@ -173,6 +173,31 @@ describe("CompressionStream and DecompressionStream", () => {
       await readAll;
       expect(received).toBe(firstLine.length + secondLine.length);
     });
+
+    const hello = zlib.brotliCompressSync("hello");
+    const junk = Buffer.from("junk");
+    const trailingJunk = {
+      code: "ERR_TRAILING_JUNK_AFTER_STREAM_END",
+      message: "Trailing junk found after the end of the compressed stream",
+    };
+    const unexpectedEnd = { message: "unexpected end of file" };
+
+    test.each([
+      ["junk in the last chunk", [Buffer.concat([hello, junk])], trailingJunk],
+      ["junk in a chunk of its own", [hello, junk], trailingJunk],
+      ["a second stream", [hello, hello], trailingJunk],
+      ["a stream without its last byte", [hello.subarray(0, -1)], unexpectedEnd],
+      ["no input", [], unexpectedEnd],
+    ])("DecompressionStream rejects %s", async (_, chunks, error) => {
+      const read = ReadableStream.from(chunks).pipeThrough(new DecompressionStream("brotli")).text();
+      await expect(read).rejects.toMatchObject({ name: "TypeError", ...error });
+    });
+
+    test("DecompressionStream takes a byte at a time, and empty chunks anywhere", async () => {
+      const empty = new Uint8Array(0);
+      const chunks = [empty, ...[...hello].flatMap(byte => [Uint8Array.of(byte), empty])];
+      expect(await ReadableStream.from(chunks).pipeThrough(new DecompressionStream("brotli")).text()).toBe("hello");
+    });
   });
 
   describe("zstd", () => {
@@ -568,9 +593,7 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
     } catch (e: any) {
       expect(e).toBeInstanceOf(TypeError);
       expect(Object.hasOwn(e, "code")).toBe(true);
-      // Node builds these as "ERR_" + BrotliDecoderErrorString(), and brotli
-      // returns the macro PREFIX+NAME ("_ERROR_FORMAT_" + "PADDING_2"), so the
-      // double underscore is what node:zlib emits.
+      // The double underscore is what node:zlib emits.
       expect(e.code).toBe("ERR__ERROR_FORMAT_PADDING_2");
       expect(e.cause.code).toBe(e.code);
     }
@@ -1230,6 +1253,38 @@ describe("bounded output per input chunk", () => {
     await written;
     expect(largest(pieces)).toBeLessThanOrEqual(kDefaultHighWaterMark);
     expect(inflaters[format](Buffer.concat(pieces)).equals(Buffer.concat(chunks))).toBe(true);
+  });
+
+  test.each([16 * 1024, kDefaultHighWaterMark])("brotli: output of exactly %d bytes is one piece", async size => {
+    const through = (chunk: Uint8Array, codec: CompressionStream | DecompressionStream) =>
+      Array.fromAsync(ReadableStream.from([chunk]).pipeThrough(codec));
+    // Storing incompressible input adds four bytes.
+    const input = randomBytes(size - 4);
+    const compressed = await through(input, new CompressionStream("brotli"));
+    expect(compressed.map(piece => piece.byteLength)).toEqual([size]);
+    expect(zlib.brotliDecompressSync(compressed[0]).equals(input)).toBe(true);
+
+    const zeros = new Uint8Array(size);
+    expect(await through(zlib.brotliCompressSync(zeros), new DecompressionStream("brotli"))).toEqual([zeros]);
+  });
+
+  test.each([130_000, 200_000])("CompressionStream(brotli): a step ends in the middle of %d bytes", async size => {
+    // The encoder holds its output back until a match comes after a MiB of literals.
+    const chunks = Array.from({ length: Math.ceil(1_300_000 / size) }, () => randomBytes(size).fill(0, 0, 64));
+    const codec = new CompressionStream("brotli", { level: 4 });
+    const pieces = await Array.fromAsync(ReadableStream.from(chunks).pipeThrough(codec));
+    expect(largest(pieces)).toBe(size);
+    expect(zlib.brotliDecompressSync(Buffer.concat(pieces)).equals(Buffer.concat(chunks))).toBe(true);
+  });
+
+  test("DecompressionStream(brotli): a step ends in the middle of a chunk", async () => {
+    const plain = Buffer.from(randomBytes(20_000).toString("hex"));
+    // The decoder stops reading when its window is full.
+    const compressed = zlib.brotliCompressSync(plain, { params: { [zlib.constants.BROTLI_PARAM_LGWIN]: 10 } });
+    const codec = new DecompressionStream("brotli", { highWaterMark: 1000 });
+    const pieces = await Array.fromAsync(ReadableStream.from([compressed]).pipeThrough(codec));
+    expect(largest(pieces)).toBe(compressed.length);
+    expect(Buffer.concat(pieces).equals(plain)).toBe(true);
   });
 
   // The close algorithm clears the transform's algorithms (which normally frees

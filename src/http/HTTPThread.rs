@@ -205,8 +205,7 @@ pub struct InitOpts {
 }
 
 impl InitOpts {
-    /// Builds the default HTTPS context on the calling thread, which is the one that reports a
-    /// `ca` / `ca_file_name` that does not load.
+    /// Builds the default HTTPS context on the calling thread, which reports a CA that does not load.
     pub fn with_ca(ca: &[ZBox], ca_file_name: &ZStr) -> Result<Self, InitError> {
         if ca.is_empty() && ca_file_name.is_empty() {
             return Ok(Self::default());
@@ -249,9 +248,7 @@ impl HttpThread {
         }
     }
 
-    /// With no context from [`InitOpts`], the default HTTPS context is built at its first use:
-    /// bun's trust store costs ~0.7 ms / ~400 KB to parse, and a cached `bun install` makes no
-    /// HTTPS request.
+    /// Without a context from [`InitOpts`], bun's trust store (~0.7 ms / ~400 KB to parse) waits for the first HTTPS use.
     #[inline]
     fn ensure_https_context_init(&mut self) {
         if self.https_context.secure.is_none() {

@@ -2633,8 +2633,7 @@ pub fn init(
         Global::crash();
     }
 
-    // A CA that does not load ends the command here, on the main thread, before the HTTP thread
-    // starts.
+    // A CA that does not load ends the command here, before the HTTP thread starts.
     let http_thread_opts = match http::http_thread::InitOpts::with_ca(&ca, &abs_ca_file_name) {
         Ok(opts) => opts,
         Err(err) => exit_with_ca_error(err, &abs_ca_file_name),

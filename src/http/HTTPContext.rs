@@ -285,8 +285,7 @@ struct ExistingSocket<const SSL: bool> {
     verification: PeerVerification,
 }
 
-/// Any thread can build the `SSL_CTX`: [`HTTPContext::init_with_ssl_ctx`] is the step that needs
-/// the HTTP thread.
+/// Any thread can call this: [`HTTPContext::init_with_ssl_ctx`] is the step that needs the HTTP thread.
 fn build_ssl_ctx(
     opts: &uws::SocketContext::BunSocketContextOptions,
 ) -> Result<UniqueSslCtx, InitError> {
@@ -305,8 +304,7 @@ fn build_ssl_ctx(
     }
 }
 
-/// The `SSL_CTX` of the default HTTPS context. `ca_file_name`, or else `ca`, replaces bun's
-/// default trust store.
+/// The `SSL_CTX` of the default HTTPS context: `ca_file_name`, or else `ca`, replaces bun's default trust store.
 pub(crate) fn build_default_ssl_ctx(
     ca: &[bun_core::ZBox],
     ca_file_name: &bun_core::ZStr,

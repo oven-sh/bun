@@ -344,8 +344,7 @@ impl Drop for OwnedSslCtx {
     }
 }
 
-/// The only reference to an `SSL_CTX`. Unlike [`OwnedSslCtx`] it is `Send`: the thread that
-/// builds a context can hand it to the thread that will use it.
+/// The only reference to an `SSL_CTX`, so the thread that builds it can hand it to the thread that uses it.
 #[repr(transparent)]
 pub struct UniqueSslCtx(OwnedSslCtx);
 
@@ -354,11 +353,7 @@ pub struct UniqueSslCtx(OwnedSslCtx);
 unsafe impl Send for UniqueSslCtx {}
 
 impl UniqueSslCtx {
-    /// Takes the +1 `raw` carries; `None` when `raw` is null.
-    ///
-    /// # Safety
-    /// `raw` must be null or the only reference to its context, and the ex-data and callbacks of
-    /// that context must not need the thread that built it.
+    /// SAFETY: `raw` is null, or carries the only reference to a context whose ex-data and callbacks need no particular thread.
     pub unsafe fn from_raw(raw: *mut SSL_CTX) -> Option<Self> {
         // SAFETY: the only reference is one the caller gives up.
         unsafe { OwnedSslCtx::from_raw(raw) }.map(Self)

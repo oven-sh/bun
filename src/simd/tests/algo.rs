@@ -399,6 +399,7 @@ mod simd {
         searches::<u8, _, 16>(alignments, plain);
         searches::<u8, _, 16>(alignments, shared);
         searches::<u8, _, 32>(alignments, plain);
+        searches::<u16, _, 8>(alignments, plain);
         searches::<u16, _, 16>(alignments, plain);
         searches::<u16, _, { U16::LEN }>(alignments, plain);
         searches::<u32, _, { U32::LEN }>(alignments, plain);

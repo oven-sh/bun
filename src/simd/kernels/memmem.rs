@@ -11,30 +11,31 @@ type SharedU16 = [SharedU8; 2];
 /// After so many bytes or false candidates, it can pay to look for better units than the ends.
 const BYTES_BEFORE_LEARNING: usize = 4096;
 const MISSES_BEFORE_LEARNING: usize = 16;
-/// Up to this length, the ends of a needle are as safe as its rarest units, and a call does not pay.
+/// Up to this length, the ends of a needle are as safe as its rarest units.
 const SHORT: usize = 16;
-/// How many units of the needle to look through for a better one.
-const REACH: usize = 16;
 /// A step of `two_way` that goes so far is cheaper than a scan.
 const FAR: usize = 64;
 /// One that goes so far is cheaper than a scan that leaves its start out.
 const VERY_FAR: usize = 4 * FAR;
 
-/// In vectors: a scan for two units that is worth a call, and one for a single unit.
+/// In vectors: what makes up for a try to skip. It has room for a step back and a block.
 const LEAST_STRETCH: usize = 8;
+/// In vectors: a skip that has paid.
 const GOOD_SKIP: usize = 32;
+/// In vectors: the text that it takes to try a skip for one more unit of the needle.
+const TEXT_PER_TRY: usize = 8 * GOOD_SKIP;
+const MOST_TRIES: usize = 32;
 
+const _: () = assert!(usize::BITS == 64, "costs overflow otherwise");
 /// The unit of costs is a scan of so many starts for two units. A rate is a cost for as many.
 const SCANNED: usize = 32;
 const RATE_OF_SIX: usize = 4;
 const COST_OF_STEP: usize = 4;
 const COST_OF_MISS: usize = 3;
 const COST_OF_FALLBACK: usize = 512;
-/// What the misses of a pair of units may cost until it is the turn of the next pair.
+/// What the misses of a pair of units may cost until it is the turn of the other pair.
 const LEAST_PATIENCE: usize = COST_OF_MISS * MISSES_BEFORE_LEARNING;
 const MOST_PATIENCE: usize = 16 * LEAST_PATIENCE;
-/// A turn for each pair.
-const A_ROUND: usize = 3 * LEAST_PATIENCE;
 
 #[derive(Default)]
 struct Misses {
@@ -42,157 +43,90 @@ struct Misses {
     left: isize,
     /// Where the last one that was compared in full has differed.
     in_needle: usize,
+    /// The same for the last one that starts and ends like the needle.
     in_haystack: usize,
 }
 
-/// A new pair, the one with the lowest rate, and the ends or the rarest units of the needle.
-const ON_TRIAL: usize = 0;
-const BEST: usize = 1;
-const SAFE: usize = 2;
-
-/// Pairs of places in the needle, whose units are looked for in turns.
-struct Turns {
-    pairs: [[usize; 2]; 3],
-    rates: [usize; 3],
-    now: usize,
-    patience: [usize; 3],
-    misses: Misses,
-    /// From the start and from the end, the last place that went on trial.
-    tried: [usize; 2],
-    side: usize,
-    until_ranking: usize,
-    until_fallback: usize,
-    /// What it takes to prepare `two_way`.
-    setup: usize,
-    /// How far the next `scan` and the next `cross` go.
-    stretch: usize,
-    far: usize,
-    lanes: usize,
+/// Two pairs of places in the needle, which take turns. No result depends on them.
+struct Pairs {
+    /// One changes. The usual one is the ends, or the rarest units of a needle that is not short.
+    indices: [[usize; 2]; 2],
+    is_usual: bool,
+    patience: [usize; 2],
+    rates: [usize; 2],
 }
 
-impl Turns {
-    /// `differs` is where a candidate has differed, or 0 after a search for the ends.
+impl Pairs {
+    fn now(&self) -> usize {
+        self.is_usual.into()
+    }
+
+    /// `rare` is the place of a unit that is rare in the text.
     #[inline(never)]
-    fn new(len: usize, differs: usize, is_forward: bool, lanes: usize) -> Self {
-        let (last, has_hint, setup) = (len - 1, differs > 0, 2 * len + COST_OF_FALLBACK);
-        let ends = if is_forward { [last, 0] } else { [0, last] };
-        let (now, spent) = [(SAFE, LEAST_PATIENCE), (BEST, 0)][usize::from(has_hint)];
+    fn rank(&mut self, rarest: [usize; 2], rare: Option<usize>, len: usize) {
+        self.is_usual = len > SHORT;
+        self.indices[self.now()] = rarest;
+        if let Some(rare) = rare {
+            self.is_usual = false;
+            self.indices[0] = [rare, rarest[1]];
+        }
+    }
+
+    #[inline(never)]
+    fn end_turn(&mut self, missed: usize, covered: usize, differs: usize) {
+        let now = self.now();
+        self.rates[now] = SCANNED * missed / (covered + 1);
+        let wins = self.rates[now] <= self.rates[1 - now];
+        self.patience[now] = match wins {
+            true => MOST_PATIENCE.min(2 * self.patience[now]),
+            false => LEAST_PATIENCE,
+        };
+        if self.is_usual && wins {
+            (self.indices[0], self.patience[0]) = ([differs, self.indices[1][0]], LEAST_PATIENCE);
+        }
+        self.is_usual = !self.is_usual;
+    }
+}
+
+/// When `two_way` takes over, and for how many starts.
+struct Fallback {
+    /// About what it takes to prepare it.
+    setup: usize,
+    /// A rate that is not worth it.
+    calm: usize,
+    /// What misses may still cost.
+    left: usize,
+    far: usize,
+}
+
+impl Fallback {
+    #[inline(never)]
+    fn new(len: usize) -> Self {
+        let [setup, left, far] = [2 * len + COST_OF_FALLBACK; 3];
+        let calm = if len < VERY_FAR { RATE_OF_SIX } else { 1 };
         Self {
-            pairs: [ends, [differs, ends[0]], ends],
-            rates: [usize::MAX; 3],
-            now,
-            patience: [LEAST_PATIENCE; 3],
-            misses: Misses::default(),
-            tried: [0, last],
-            // A hint is from the near end.
-            side: usize::from(has_hint == is_forward),
-            // What `rarest_two` costs.
-            until_ranking: (len + len / 2).saturating_sub(spent),
-            until_fallback: setup,
             setup,
-            stretch: LEAST_STRETCH * lanes,
-            far: setup,
-            lanes,
+            calm,
+            left,
+            far,
         }
     }
 
-    /// `skip` is the farthest one, and the place of its unit. A calm pair is the one to beat.
     #[inline(never)]
-    fn rank(&mut self, skip: Option<[usize; 2]>, [rarest, second]: [usize; 2], len: usize) {
-        (self.pairs[ON_TRIAL], self.rates[ON_TRIAL]) = match self.misses.left > 0 {
-            true => (self.pairs[self.now], 0),
-            false => (self.pairs[BEST], self.rates[BEST]),
-        };
-        self.pairs[BEST] = match skip {
-            Some([far, it]) if far >= GOOD_SKIP * self.lanes && it != rarest => [it, rarest],
-            _ => [rarest, second],
-        };
-        if len > SHORT {
-            self.pairs[SAFE] = [rarest, second];
-        }
-        (self.now, self.patience[BEST], self.until_ranking) = (BEST, LEAST_PATIENCE, usize::MAX);
-    }
-
-    fn budget(&self) -> isize {
-        let most = self.until_ranking.min(self.patience[self.now]);
-        most.cast_signed()
-    }
-
-    /// After a skip and a scan. Returns the pair if it is to be improved on.
-    #[inline(never)]
-    fn book(&mut self, [began, skipped, seen, starts]: [usize; 4]) -> Option<[usize; 2]> {
-        let missed = self.budget().abs_diff(self.misses.left);
-        self.until_ranking = self.until_ranking.saturating_sub(missed);
-        let earned = (seen - began) / (SCANNED / RATE_OF_SIX);
-        let saved = (self.until_fallback + earned).saturating_sub(missed);
-        self.until_fallback = saved.min(self.setup);
-        // It is calm again.
-        if saved > A_ROUND + LEAST_PATIENCE {
+    fn charge(&mut self, missed: usize, covered: usize) {
+        let saved = (self.left + covered * self.calm / SCANNED).saturating_sub(missed);
+        self.left = saved.min(self.setup);
+        // The text is calm again.
+        if saved >= self.setup {
             self.far = self.setup;
         }
-        if self.misses.left <= 0 || saved == 0 {
-            return self.end(SCANNED * missed / (seen - began + 1));
-        }
-        if skipped >= began + GOOD_SKIP * self.lanes {
-            self.stretch = LEAST_STRETCH * self.lanes;
-        } else {
-            // The next skip is for the other unit, and the one after it comes later.
-            self.pairs[self.now].swap(0, 1);
-            // Close to the end, a ranking would not pay.
-            let scanned = self.stretch.min(starts - seen);
-            self.until_ranking = self.until_ranking.saturating_sub(scanned / SCANNED);
-            self.stretch = self.stretch.saturating_mul(4);
-        }
-        None
     }
 
-    /// Decides which pair is best, and which is next.
-    fn end(&mut self, rate: usize) -> Option<[usize; 2]> {
-        let (now, pair) = (self.now, self.pairs[self.now]);
-        let wins = rate <= self.rates[if now == BEST { ON_TRIAL } else { BEST }];
-        self.rates[now] = rate;
-        match (now, wins) {
-            (BEST, true) => self.patience[now] = MOST_PATIENCE.min(2 * self.patience[now]),
-            (SAFE, true) => (self.pairs[BEST], self.rates[BEST]) = (pair, rate),
-            (BEST, false) | (ON_TRIAL, true) => {
-                self.pairs.swap(ON_TRIAL, BEST);
-                self.rates.swap(ON_TRIAL, BEST);
-            }
-            _ => {}
-        }
-        if now == BEST && !wins {
-            self.patience[BEST] = LEAST_PATIENCE;
-        }
-        self.now = match now {
-            BEST if !self.pairs[SAFE].iter().all(|it| pair.contains(it)) => SAFE,
-            ON_TRIAL => BEST,
-            _ => ON_TRIAL,
+    fn end(&mut self, has_paid: bool) {
+        (self.left, self.far) = match has_paid {
+            true => (2 * LEAST_PATIENCE, 2 * self.far),
+            false => (self.setup, self.setup),
         };
-        (now == BEST || now == SAFE && wins).then_some(pair)
-    }
-
-    /// With the next place at which the last candidate differs, from both ends in turns.
-    #[inline(never)]
-    fn improve_on<S: Unit>(&mut self, pair: [usize; 2], needle: &[S], candidate: &[S]) {
-        let side = self.side;
-        let after = |n| [self.tried[0] + n, self.tried[1].wrapping_sub(n)][side];
-        let differs = |&i: &usize| differ_at(needle, candidate, i);
-        let next = (1..REACH).map(after).find(differs);
-        let new = next.unwrap_or(self.misses.in_needle);
-        let is_alike = needle[new].get() == needle[pair[0]].get();
-        self.pairs[ON_TRIAL] = [new, pair[usize::from(is_alike)]];
-        self.tried[side] = next.unwrap_or([0, needle.len() - 1][side]);
-        (self.rates[ON_TRIAL], self.side) = (usize::MAX, 1 - side);
-    }
-
-    fn after_fallback(&mut self, has_paid: bool) {
-        if has_paid {
-            (self.until_fallback, self.patience[BEST]) = (A_ROUND, LEAST_PATIENCE);
-            self.far *= 2;
-        } else {
-            self.until_fallback = self.setup;
-        }
-        self.stretch = LEAST_STRETCH * self.lanes;
     }
 }
 
@@ -262,9 +196,12 @@ pub(crate) mod simd {
         }
     }
 
-    /// Unlike `have_equal_ends`, with no branch on which end it is.
+    /// In the first, the last or the middle vector, with no branch on which end it is.
     #[inline(always)]
-    fn differ_at_ends<S: Unit<Lane: Int<N>>, const N: usize>(a: &[S], b: &[S]) -> Option<bool> {
+    pub(crate) fn differ_in_part<S: Unit<Lane: Int<N>>, const N: usize>(
+        a: &[S],
+        b: &[S],
+    ) -> Option<bool> {
         let differ = |a, b| Vector::<_, N>::load(a).simd_ne(Vector::load(b));
         let first = differ(a.first_chunk()?, b.first_chunk()?);
         let ends = first | differ(a.split_last_chunk()?.1, b.split_last_chunk()?.1);
@@ -306,6 +243,16 @@ pub(crate) mod simd {
         }
     }
 
+    #[inline(never)]
+    fn skip<S: Unit<Lane: Int<N>>, const N: usize, const FORWARD: bool>(
+        place: &[S],
+        unit: &S,
+        seen: usize,
+    ) -> usize {
+        let unit = Vector::<_, N>::splat(unit.get());
+        Vector::skip::<S, FORWARD>(place, seen, |v| [v.simd_eq(unit); 2])
+    }
+
     /// Returns a match, or how far `range` and what was `left` have lasted.
     #[inline(never)]
     fn scan<'a, S: Fits<N, M>, const N: usize, const M: usize, const FORWARD: bool>(
@@ -323,15 +270,10 @@ pub(crate) mod simd {
                 };
                 misses.left -= COST_OF_MISS.cast_signed();
                 if misses.left > 0
-                    && differ_at_ends::<S, N>(needle, candidate)
-                        .or_else(|| differ_at_ends::<S, M>(needle, candidate))
+                    && differ_in_part::<S, N>(needle, candidate)
+                        .or_else(|| differ_in_part::<S, M>(needle, candidate))
                         .unwrap_or_else(|| are_equal::<S, M>(needle, candidate) == Some(false))
                 {
-                    continue;
-                }
-                let seen = seen_at::<FORWARD>(at, places[0].len());
-                // The last block may overlap.
-                if seen <= range.start {
                     continue;
                 }
                 if !differ_at(needle, candidate, misses.in_haystack.wrapping_sub(at)) {
@@ -339,11 +281,14 @@ pub(crate) mod simd {
                         return Break(candidate.first());
                     };
                     let equal = found.abs_diff(if FORWARD { 0 } else { needle.len() - 1 });
-                    (misses.in_needle, misses.in_haystack) = (found, at + found);
+                    misses.in_needle = found;
+                    if misses.left > 0 {
+                        misses.in_haystack = at + found;
+                    }
                     misses.left -= (COST_OF_MISS + equal / N).cast_signed();
                 }
                 if misses.left <= 0 {
-                    return Continue(seen);
+                    return Continue(seen_at::<FORWARD>(at, places[0].len()));
                 }
             }
         }
@@ -375,20 +320,22 @@ pub(crate) mod simd {
                 return Continue((seen.max(end), true));
             };
             let until = seen_with::<S, N, FORWARD>(&block, starts);
-            // As long as that pays, it goes on without a scan, farther each time.
-            reach = if seen >= limit { reach + FAR } else { 0 };
-            limit = until + reach;
             let range = seen.max(until - Vector::<S::Lane, N>::BLOCK_LEN)..until;
-            let state = (range, block, [limit, end]);
-            let (differs, time);
-            [seen, differs, time] =
+            // While each block has candidates, it goes on without a scan, farther each time.
+            let is_dense = range.start == seen && seen >= limit;
+            reach = if is_dense { reach + FAR } else { 0 };
+            (limit, cost) = (until + reach, cost + (until - seen) * RATE_OF_SIX / SCANNED);
+            let (state, differs, steps);
+            state = (range, block, [limit, end]);
+            [seen, differs, steps] =
                 two_way::<S, FORWARD>(haystack, needle, state, halves, difference)?;
-            cost += COST_OF_STEP * time;
-            if differs <= last {
+            cost += COST_OF_STEP * steps;
+            if !six.contains(&index(differs)) {
                 six = [index(differs), six[0], six[1], six[2], six[3], six[4]];
             }
             // A far step could make up for as much.
-            if cost.saturating_sub(last + 2 * FAR) > rate.saturating_mul((seen - began) / SCANNED) {
+            let over = SCANNED * cost.saturating_sub(last + 2 * FAR);
+            if over > rate.saturating_mul(seen - began) {
                 return Continue((seen, false));
             }
         }
@@ -407,56 +354,80 @@ pub(crate) mod simd {
         let unit = |index: usize| Some(Vector::<_, N>::splat(needle.get(index)?.get()));
         let place = |index: usize| haystack.get(index..)?.get(..starts);
         let of = |[a, b]: [usize; 2]| Some(([place(a)?, place(b)?], [unit(a)?, unit(b)?]));
-        let skip = |index: usize, seen: usize| {
-            let unit = unit(index)?;
-            let tests = |v: Vector<_, N>| [v.simd_eq(unit); 2];
-            Some(Vector::skip::<S, FORWARD>(place(index)?, seen, tests))
+        let skip = |i: usize, seen| Some(skip::<S, N, FORWARD>(place(i)?, needle.get(i)?, seen));
+        let ends = if FORWARD { [last, 0] } else { [0, last] };
+        let mut pairs = Pairs {
+            indices: [[differs, ends[0]], ends],
+            is_usual: differs == 0,
+            patience: [LEAST_PATIENCE; 2],
+            rates: [usize::MAX, 0],
         };
-        let (mut turns, mut halves) = (Turns::new(len, differs, FORWARD, N), None);
+        let (mut halves, mut stretch, mut misses) = (None, LEAST_STRETCH * N, Misses::default());
+        let spent = if pairs.is_usual { LEAST_PATIENCE } else { 0 };
+        // About what the ranking costs, less what has been spent.
+        let mut until_ranking = (len + len / 2).saturating_sub(spent);
+        let mut fallback = Fallback::new(len);
         loop {
-            if turns.until_ranking == 0 {
-                // The longer the text, the more units it pays to try a skip for.
-                let tries = (starts - seen) / (2 * GOOD_SKIP * N);
-                let skips = (0..len.min(2 * REACH).min(tries)).map(|i| {
-                    let began = seen;
-                    seen = seen.max(skip(i, seen).unwrap_or(0));
-                    [seen - began, i]
-                });
-                turns.rank(skips.max(), rarest_two(needle), len);
+            let began = seen;
+            if until_ranking == 0 {
+                let (mut farthest, mut rare) = (GOOD_SKIP * N, None);
+                for i in 0..len.min(MOST_TRIES) {
+                    if starts - seen < (i + 1) * TEXT_PER_TRY * N {
+                        break;
+                    }
+                    let far = skip(i, seen)?.saturating_sub(seen);
+                    if far >= farthest {
+                        (farthest, rare) = (far, Some(i));
+                    }
+                    seen += far;
+                }
+                pairs.rank(rarest_two(needle), rare, len);
+                (until_ranking, stretch) = (usize::MAX, LEAST_STRETCH * N);
             }
-            let (pair, began) = (turns.pairs[turns.now], seen);
-            let (both, skipped) = (of(pair)?, skip(pair[0], seen)?);
-            let range = skipped.max(seen)..skipped.saturating_add(turns.stretch);
-            // The last block overlaps: what is seen again is free.
-            let block = Vector::<S::Lane, N>::BLOCK_LEN;
-            let again = COST_OF_MISS * block.saturating_sub(starts - range.start);
-            turns.misses.left = turns.budget() + again.cast_signed();
-            match scan::<S, N, M, FORWARD>(haystack, needle, both, range, &mut turns.misses) {
+            let now = pairs.now();
+            let (both, skipped) = (of(pairs.indices[now])?, skip(pairs.indices[now][0], seen)?);
+            // The last block overlaps what has been seen: a turn could end before it began.
+            let most = match starts - seen < Vector::<S::Lane, N>::BLOCK_LEN {
+                true => isize::MAX,
+                false => until_ranking.min(pairs.patience[now]).cast_signed(),
+            };
+            misses.left = most;
+            let range = skipped.max(seen)..skipped + stretch;
+            match scan::<S, N, M, FORWARD>(haystack, needle, both, range, &mut misses) {
                 Break(found) => return found,
                 Continue(until) if until >= starts => return None,
                 Continue(until) => seen = until,
             }
-            if let Some(pair) = turns.book([began, skipped, seen, starts]) {
-                let candidate = &haystack[if FORWARD { seen - 1 } else { starts - seen }..];
-                turns.improve_on(pair, needle, candidate);
+            let missed = most.abs_diff(misses.left);
+            until_ranking = until_ranking.saturating_sub(missed);
+            if skipped >= began + GOOD_SKIP * N {
+                stretch = LEAST_STRETCH * N;
+            } else if misses.left > 0 {
+                // The next skip is for the other unit, and the one after it comes later.
+                pairs.indices[now].swap(0, 1);
+                // Close to the end, a ranking would not pay.
+                until_ranking = until_ranking.saturating_sub(stretch.min(starts - seen) / SCANNED);
+                stretch *= 4;
             }
-            if turns.until_fallback == 0 {
-                let halves = *halves.get_or_insert_with(|| {
-                    let found @ ((split, _), _) = halves_and_bits::<S, FORWARD>(needle);
-                    // What a period does not tell is where the halves meet.
-                    let place = |n: usize| n.min(last).abs_diff(if FORWARD { 0 } else { last });
-                    (turns.now, turns.pairs[ON_TRIAL]) = (ON_TRIAL, [split, split + 1].map(place));
-                    found
-                });
-                let [a, b, c] = turns.rates;
-                let limits = [seen, seen.saturating_add(turns.far), a.min(b).min(c)];
+            fallback.charge(missed, seen - began);
+            if misses.left <= 0 || fallback.left == 0 {
+                pairs.end_turn(missed, seen - began, misses.in_needle);
+            }
+            if fallback.left == 0 {
+                let halves = *halves.get_or_insert_with(|| halves_and_bits::<S, FORWARD>(needle));
+                let [a, b] = pairs.rates;
+                let range = [seen, seen + fallback.far, a.min(b)];
                 let has_paid;
-                match cross::<S, N, M, FORWARD>(haystack, needle, halves, limits) {
+                match cross::<S, N, M, FORWARD>(haystack, needle, halves, range) {
                     Break(found) => return found,
                     Continue((until, _)) if until >= starts => return None,
                     Continue(it) => (seen, has_paid) = it,
                 }
-                turns.after_fallback(has_paid);
+                fallback.end(has_paid);
+                if has_paid {
+                    pairs.patience = [LEAST_PATIENCE; 2];
+                }
+                stretch = LEAST_STRETCH * N;
             }
         }
     }
@@ -701,7 +672,10 @@ fn halves_and_bits<S: Unit, const FORWARD: bool>(needle: &[S]) -> (Halves, u64) 
     let [ascending, descending] = [true, false].map(|it| maximal_suffix::<S, FORWARD>(needle, it));
     let [split, period] = ascending.max(descending);
     let is_periodic = (0..split).all(|i| nth(needle, i) == nth(needle, period + i));
-    let bits = needle.iter().fold(0, |bits, it| bits | bit_of(it.get()));
+    let (mut bits, mut units) = (0, needle.iter());
+    while let Some(unit) = units.next().filter(|_| bits != u64::MAX) {
+        bits |= bit_of(unit.get());
+    }
     (halves(needle.len(), [split, period], is_periodic), bits)
 }
 
@@ -714,10 +688,8 @@ fn two_way<'a, S: Unit, const FORWARD: bool>(
     ((split, after_right_half), bits): (Halves, u64),
     difference: Difference<S>,
 ) -> ControlFlow<Option<&'a S>, [usize; 3]> {
-    let (len, mut seen, mut is_candidate) = (needle.len(), range.start, false);
-    let ([mut known, mut taken, mut steps], mut differs) = ([0usize; 3], len);
-    // In steps. The call is worth two candidates, and a candidate three steps.
-    let time_of_block = |taken: usize| 3 * (2 + taken);
+    let (len, mut seen, mut is_due) = (needle.len(), range.start, false);
+    let ([mut known, mut taken, mut steps], mut differs) = ([0; 3], split);
     // What is known has been paid for.
     while seen < limit || known > 0 {
         let back = haystack.len().wrapping_sub(len).wrapping_sub(seen);
@@ -732,28 +704,25 @@ fn two_way<'a, S: Unit, const FORWARD: bool>(
                 false => len - end..len - start,
             };
             let (a, b) = (&needle[part.clone()], &window[part]);
-            let at = match a.len() > SHORT {
+            // The call pays only for a long part.
+            let at = match a.len() > 16 {
                 true => difference(a, b)?,
                 false => difference_by_units::<S, FORWARD>(a, b)?,
             };
             Some(if FORWARD { start + at } else { end - 1 - at })
         };
         let is_there = bits & bit_of(nth::<S, FORWARD>(window, len - 1)) != 0;
-        if is_there && known == 0 && seen >= range.end {
-            // Past the block, as long as the steps cost less than it has.
-            if steps.saturating_mul(FAR) > time_of_block(taken).saturating_mul(seen - range.end) {
+        if is_there && known == 0 && !is_due {
+            if seen >= range.end {
                 break;
             }
-        } else if is_there && known == 0 && !is_candidate {
             candidates.cut_at(at, FORWARD);
             seen = next::<FORWARD>(&mut candidates).map_or(range.end, |it| seen + it.abs_diff(at));
-            is_candidate = seen < range.end;
-            taken += usize::from(is_candidate);
+            (is_due, taken) = (seen < limit, taken + usize::from(seen < range.end));
             continue;
         }
         let (step, found);
         ((step, known), found) = if !is_there {
-            // To leave such candidates out pays only if the step is short.
             ((len, 0), if len < FAR / 2 { len - 1 } else { differs })
         } else {
             match mismatch(split.max(known), len) {
@@ -764,18 +733,21 @@ fn two_way<'a, S: Unit, const FORWARD: bool>(
                 },
             }
         };
-        if is_candidate && step < VERY_FAR {
+        // To leave such candidates out does not pay if they lead far.
+        if is_due && seen < range.end && step < VERY_FAR {
             differs = found;
         }
-        steps += usize::from(seen >= range.end);
-        (seen, is_candidate) = (seen + step, false);
+        (seen, steps) = (seen + step, steps + usize::from(seen >= range.end));
         // The next one may start close by.
         if step >= FAR {
             limit = limit.max(until.min(seen + FAR / 2));
         }
+        // Past the block, as long as the steps cost less than it has.
+        is_due = (range.end..limit).contains(&seen)
+            && steps * FAR <= (4 + 2 * taken) * (seen - range.end);
     }
-    // How far it got, where the last candidate has differed, and the time in steps.
-    Continue([seen, differs, time_of_block(taken) + steps])
+    // How far it got, a place to look at, and the time. A candidate takes three steps, the call six.
+    Continue([seen, differs, 3 * (2 + taken) + steps])
 }
 
 #[cfg(all(test, not(miri)))]
@@ -894,6 +866,16 @@ mod tests {
     fn long_needles_that_may_have_changed() {
         long_needles::<true>();
         long_needles::<false>();
+    }
+
+    #[test]
+    fn three_vectors_leave_nothing_out() {
+        for (len, at) in (8..=24).flat_map(|len| (0..len).map(move |at| (len, at))) {
+            let (a, mut b) = (vec![7u16; len], vec![7; len]);
+            assert_eq!(simd::portable::differ_in_part::<_, 8>(&a, &b), Some(false));
+            b[at] = 8;
+            assert_eq!(simd::portable::differ_in_part::<_, 8>(&a, &b), Some(true));
+        }
     }
 
     #[test]

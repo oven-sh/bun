@@ -13,6 +13,5 @@ workspace = true
 bun_simd.workspace = true
 bun_simd_kernels.workspace = true
 bun_core.workspace = true
-bun_highway.workspace = true
 bun_sys.workspace = true
 libc.workspace = true

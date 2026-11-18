@@ -534,7 +534,7 @@ function rustcUnitManifest(ctx: ManifestContext, unit: RustUnit): RustcUnitManif
   // The plan's rustflags (rust.ts's list): appended to every *target* unit, and handed to build scripts as
   // CARGO_ENCODED_RUSTFLAGS.
   if (!isHost) args.push(...plan.plannedWith.rustflags);
-  if (unit.crateName === "bun_simd_kernels") {
+  if (/^bun_simd_(kernels|conformance)$/.test(unit.crateName)) {
     // Without LTO, another crate's instance of a generic is a call in a vector loop.
     args.push("-Zshare-generics=n");
   }

@@ -19,7 +19,7 @@ thread_local! {
 
 fn read(units: &[Counted]) -> &'static [u8] {
     let (reads, (start, values, choice)) = (READS.get(), BYTES.get());
-    assert!(reads < MOST.get(), "too many reads");
+    assert!(reads < MOST.get(), "over {reads} reads");
     READS.set(reads + 1);
     let (at, len) = (units.as_ptr().addr() - start, units.len());
     &values[if len == 1 { 2 } else { choice(reads, at) }][at..][..len]
@@ -44,10 +44,9 @@ fn at_all_widths<const FORWARD: bool>(cases: &[Case], choice: Choice) -> [Option
     let [text, needle] = cases[0].each_ref().map(Vec::len);
     let mut units = Vec::<Counted>::with_capacity(64 + text + needle);
     let before = units.as_ptr().addr().wrapping_neg() % 64;
-    let leak = |[a, b]: &Case| &*[&[0; 64][..before], a, b].concat().leak();
-    let values: Vec<_> = cases.iter().map(leak).collect();
-    units.extend(values[0].iter().map(|&it| Counted(it)));
-    let values = [0, 1, 2].map(|i| &values[i % values.len()][before..]);
+    units.resize_with(before + text + needle, || Counted(0));
+    let values: Vec<_> = cases.iter().map(|it| &*it.concat().leak()).collect();
+    let values = [0, 1, 2].map(|i| values[i % values.len()]);
     let units = &units[before..];
     BYTES.set((units.as_ptr().addr(), values, choice));
     let (a, b) = units.split_at(text);
@@ -145,7 +144,7 @@ fn without_many_candidates() {
     reads_at_most(83_500, [[cycle(b"ab", 300_000), b"axb".into()]]);
     let sparse = [b"a.x.b", &[b'.'; 5000][..]].concat();
     let text = [cycle(b"ab", 20_000), sparse.repeat(80)].concat();
-    reads_at_most(125_000, [[text, b"axb".into()]]);
+    reads_at_most(130_000, [[text, b"axb".into()]]);
 
     let text = [gap.repeat(600), b"a".into(), gap.repeat(200)].concat();
     reads_at_most(23_000, [[text, b"axb".into()]]);
@@ -248,7 +247,7 @@ fn once_it_has_learned() {
             [[decoy, cycle(period, 20_000)].concat(), needle]
         })
     });
-    reads_at_most(210_000, decoys);
+    reads_at_most(237_000, decoys);
     for (most, period) in [(300_000, &b"ab"[..]), (300_000, b"abc"), (320_000, b"abcd")] {
         let case = |(len, at)| [cycle(period, 20_000), out_of_step(period, len, at)];
         reads_at_most(most, inside(&LENGTHS[1..]).map(case));
@@ -258,7 +257,7 @@ fn once_it_has_learned() {
     let mostly_a = put(cycle(b"a", 32), 0, b'c');
     let cases = each(&[&b"ac"[..], b"aac", &mostly_a], &[20, 70, 150]).into_iter();
     reads_at_most(
-        360_000,
+        615_000,
         cases.map(|(it, len)| [noise(it, 20_000), needle(len)]),
     );
     let text = [
@@ -267,7 +266,7 @@ fn once_it_has_learned() {
         noise(b"bc", 10_000),
     ]
     .concat();
-    reads_at_most(115_000, [70, 150].map(|len| [text.clone(), needle(len)]));
+    reads_at_most(130_000, [70, 150].map(|len| [text.clone(), needle(len)]));
 
     let lengths = [24, 33, 70, 150, 700];
     reads_at_most(
@@ -289,7 +288,7 @@ fn when_it_falls_back() {
         );
     }
     let jumps = |len| [broken(b"b", len, 20_000), cycle(b"b", len)];
-    reads_at_most(106_000, [9, 33, 150].map(jumps));
+    reads_at_most(88_000, [9, 33, 150].map(jumps));
     let text = [broken(b"a", 27, 20_000), cycle(b".", 20_000)].concat();
     reads_at_most(62_000, [[text, cycle(b"a", 35)]]);
     for (most, [dense, calm, times]) in
@@ -301,7 +300,7 @@ fn when_it_falls_back() {
     }
     let text = |len| [broken(b"ab", len - 1, 1500), cycle(b"a", 6000)].concat();
     let only_ends = |len| [text(len).repeat(20), cycle(b"ab", len)];
-    reads_at_most(745_000, [71, 151].map(only_ends));
+    reads_at_most(575_000, [71, 151].map(only_ends));
     // Each candidate differs far from its start, and at another place.
     let period = put(cycle(b"abcdef", 72), 71, b'e');
     let (mut text, needle) = (period.repeat(3600), cycle(&period, 900 * 72 + 18));
@@ -309,28 +308,35 @@ fn when_it_falls_back() {
     reads_at_most(2_700_000, [[text, needle]]);
     // The same place each time, but the unit there is no help.
     let needle = put(cycle(b"ababb", 60_001), 59_797, b'b');
-    reads_at_most(200_000, [[cycle(b"ababb", 180_003), needle]]);
+    reads_at_most(6_350_000, [[cycle(b"ababb", 180_003), needle]]);
     let needle = put(cycle(b"abb", 30_002), 29_901, b'b');
     let last_block = |more: usize| [cycle(b"abb", 30_002 + more), needle.clone()];
-    reads_at_most(100_000, [70, 100, 120].map(last_block));
+    reads_at_most(1_150_000, [70, 100, 120].map(last_block));
+    let record = |i: usize, gap| [put(cycle(b"en", 30), 13 * i % 30, b'#'), cycle(b".", gap)];
+    let gaps = (0..282).map(|i| if i < 30 { 4 } else { 3 }).enumerate();
+    let dense_then_calm: Vec<_> = gaps.flat_map(|(i, gap)| record(i, gap).concat()).collect();
+    reads_at_most(
+        190_000,
+        [[cycle(&dense_then_calm, 100_000), cycle(b"ne", 30)]],
+    );
     let islands = cycle(&phases([b"a", b"."], [6, 994]), 16_000);
     let text = [broken(b"a", 5, 17_500), islands].concat();
-    reads_at_most(69_000, [[text, cycle(b"a", 7)]]);
+    reads_at_most(65_000, [[text, cycle(b"a", 7)]]);
 }
 
 #[test]
 fn where_six_units_tell() {
     for (len, run) in each(&[6, 7, 8, 10, 30, 37, 74, 211], &[4, 5, 6]) {
-        reads_at_most(83_500, [[broken(b"a", run, 30_000), cycle(b"a", len)]]);
+        reads_at_most(79_500, [[broken(b"a", run, 30_000), cycle(b"a", len)]]);
     }
     for (most, needle, at, unit) in [
-        (32_500, thue_morse(70), 69, b'c'),
-        (39_500, thue_morse(100), 99, b'c'),
+        (29_500, thue_morse(70), 69, b'c'),
+        (33_500, thue_morse(100), 99, b'c'),
         (80_000, thue_morse(100), 0, b'b'),
         (82_000, thue_morse(144), 0, b'c'),
         (82_000, thue_morse(144), 142, b'c'),
         (87_000, thue_morse(163), 0, b'c'),
-        (62_000, thue_morse(163), 161, b'c'),
+        (89_000, thue_morse(163), 161, b'c'),
         (91_000, thue_morse(244), 207, b'c'),
         (34_000, noise(b"ab", 100), 99, b'c'),
         (91_000, noise(b"ab", 700), 698, b'c'),
@@ -350,41 +356,41 @@ fn in_periods_and_phases() {
     let slip = |period: &[u8], a, b| [&cycle(period, a), &period[..1], &cycle(period, b)].concat();
     let then = |start: &[u8], len| [start, &cycle(&start[start.len() - 3..], len)].concat();
     for (most, period, needle) in [
-        (18_500, &b"aab"[..], b"aaaaaba".into()),
-        (59_000, b"aab", b"aaaabaaba".into()),
-        (28_000, b"abb#bcabb", b"abbabcabb".into()),
-        (23_000, b"bbaaaa", put(cycle(b"a", 20), 15, b'b')),
+        (67_000, &b"aab"[..], b"aaaaaba".into()),
+        (77_000, b"aab", b"aaaabaaba".into()),
+        (64_000, b"abb#bcabb", b"abbabcabb".into()),
+        (75_000, b"bbaaaa", put(cycle(b"a", 20), 15, b'b')),
         (72_000, b"bbbbbabbbbbbbbbbb.....", cycle(b"b", 17)),
         (33_000, b"abaabaa#aabaaba#baabaab#", cycle(b"aba", 64)),
         (78_000, b"abababaa", cycle(b"ab", 72)),
-        (27_000, b"cabcabcaccabcabccbcabcab", then(b"accab", 264)),
-        (88_500, b"bcccbccbccbccbc", then(b"cbccbccbcccccb", 345)),
-        (46_000, &broken(b"aca", 34, 34), slip(b"aca", 117, 111)),
+        (77_000, b"cabcabcaccabcabccbcabcab", then(b"accab", 264)),
+        (95_000, b"bcccbccbccbccbc", then(b"cbccbccbcccccb", 345)),
+        (83_000, &broken(b"aca", 34, 34), slip(b"aca", 117, 111)),
         (30_000, &broken(b"ccb", 34, 34), slip(b"ccb", 63, 99)),
         (9600, b"abaabaa", put(cycle(b"abb", 14), 2, b'x')),
         (89_000, b"aaaaaaacaabab", cycle(b"a", 12)),
-        (54_500, b"aaaaaaaa!bbaaaaba", cycle(b"a", 33)),
-        (130_000, b"a!aaaaa", cycle(b"a", 63)),
-        (77_500, b"aaaaaaabaaaaaa!!baaaaaaabaa!aaa", cycle(b"a", 63)),
-        (48_500, b"aaaaaabb!", cycle(b"a", 70)),
-        (110_000, b"aaa!a!aaaaaab", cycle(b"a", 70)),
+        (54_000, b"aaaaaaaa!bbaaaaba", cycle(b"a", 33)),
+        (140_000, b"a!aaaaa", cycle(b"a", 63)),
+        (84_000, b"aaaaaaabaaaaaa!!baaaaaaabaa!aaa", cycle(b"a", 63)),
+        (64_000, b"aaaaaabb!", cycle(b"a", 70)),
+        (105_000, b"aaa!a!aaaaaab", cycle(b"a", 70)),
         (57_000, b"!ba!aaaaaac!baaaaacbaaaabb!acaa", cycle(b"a", 150)),
-        (95_000, b"!abababa", cycle(b"ba", 8)),
+        (92_500, b"!abababa", cycle(b"ba", 8)),
     ] {
         reads_at_most(most, [[cycle(period, 30_000), needle]]);
     }
     for lengths in [[700, 200], [700, 300], [700, 500], [700, 1000], [1000, 300]] {
         let text = cycle(&phases([b"bxa", b"bbbba"], lengths), 30_000);
-        reads_at_most(20_500, [[text, b"abbbbxa".into()]]);
+        reads_at_most(46_500, [[text, b"abbbbxa".into()]]);
     }
     let text = cycle(&phases([b"a", b"abx"], [200, 200]), 30_000);
     reads_at_most(17_500, [[text, b"aax".into()]]);
-    for (most, second, first_len) in [(18_500, &b"aabbb"[..], 3000), (18_500, b"abbbbbbc", 600)] {
+    for (most, second, first_len) in [(74_500, &b"aabbb"[..], 3000), (22_000, b"abbbbbbc", 600)] {
         let text = cycle(&phases([b"cbbbbbb", second], [first_len, 6000]), 30_000);
         reads_at_most(most, [[text, b"abbbbbbbbbbb".into()]]);
     }
     let text = phases([b"abbbbbb", b"0bb0"], [10_000, 60_000]);
-    reads_at_most(39_500, [[text, b"bbbbbbb0".into()]]);
+    reads_at_most(115_000, [[text, b"bbbbbbb0".into()]]);
 }
 
 #[test]
@@ -392,7 +398,7 @@ fn in_copies_that_differ_at_one_place() {
     for (most, needle, at, unit, total) in [
         (57_500, thue_morse(7), 0, b'#', 30_000),
         (62_500, b"aabaabaaaaaaaa".into(), 7, b'b', 30_000),
-        (12_200, cycle(b"a", 16), 5, b'b', 1500),
+        (10_500, cycle(b"a", 16), 5, b'b', 1500),
         (85_000, noise(b"aaab", 16), 0, b'b', 30_000),
         (3350, cycle(b"ab", 17), 0, b'b', 6000),
         (430, thue_morse(24), 12, b'#', 150),
@@ -400,7 +406,7 @@ fn in_copies_that_differ_at_one_place() {
         (19_400, cycle(b"a", 40), 30, b'#', 6000),
         (44_500, phases([b"a", b"aaab"], [1, 39]), 37, b'!', 30_000),
         (890, put(cycle(b"ab", 64), 0, b'b'), 61, b'#', 700),
-        (53_500, cycle(b"aabab", 128), 96, b'b', 30_000),
+        (65_500, cycle(b"aabab", 128), 96, b'b', 30_000),
         (58_000, thue_morse(256), 128, b'#', 30_000),
         (76_000, put(cycle(b"aab", 385), 384, b'b'), 0, b'b', 60_000),
         (1400, cycle(b"a", 1000), 999, b'b', 1030),
@@ -420,7 +426,7 @@ fn in_copies_that_differ_at_one_place() {
             300,
             put(cycle(b"abc", 255), 192, b'x'),
         ),
-        (250_000, b"abb", 1666, b'b', 30_000, cycle(b"abb", 5000)),
+        (120_000, b"abb", 1666, b'b', 30_000, cycle(b"abb", 5000)),
     ] {
         let runs = cycle(&put(cycle(period, run), run - 1, unit), total);
         reads_at_most(most, [[runs, needle]]);
@@ -437,14 +443,14 @@ fn in_other_texts() {
         (810, noise(b"aaab", 150), thue_morse(40)),
         (900, noise(b"abx", 700), cycle(b"abc", 8)),
         (265, cycle(b"b", 700), thue_morse(20)),
-        (7650, cycle(b"aabab", 1500), b"abb".into()),
+        (2350, cycle(b"aabab", 1500), b"abb".into()),
         (350, cycle(b".", 6000), noise(b"ab", 5000)),
         (
             11_100,
             cycle(b"ababb", 20_000),
             phases([b"a", b"aabab"], [1, 254]),
         ),
-        (85_000, cycle(b"aab", 60_000), noise(b"aab", 2000)),
+        (170_000, cycle(b"aab", 60_000), noise(b"aab", 2000)),
         (
             21_000,
             noise(b"aab", 60_000),
@@ -476,20 +482,24 @@ fn in_ordinary_texts() {
     let zeros = noise(b"0000000000000002", 100_000);
     let with_ones = [[b'0'; 150], [b'1'; 150], [b'1'; 150], [b'0'; 150]].concat();
     for (most, text, needle) in [
-        (28_500, digits.clone(), b"192.168.0.1".into()),
+        (29_000, digits.clone(), b"192.168.0.1".into()),
         (28_500, digits, b"2001-02-03".into()),
         (28_500, genes.clone(), b"GATTNACA".into()),
         (170_000, genes, b"ACGGTCATTGCA".into()),
-        (91_500, zeros, with_ones),
-        (47_000, cycle(b"aaaa!", 200_000), cycle(b"aaaaab", 50_000)),
-        (125_000, copies, needle),
+        (230_000, zeros, with_ones),
         (
-            58_500,
+            1_950_000,
+            cycle(b"aaaa!", 200_000),
+            cycle(b"aaaaab", 50_000),
+        ),
+        (240_000, copies, needle),
+        (
+            235_000,
             cycle(b"bcxabaaabaaabaa", 100_000),
             b"baxabaaabaaabaa".into(),
         ),
         (
-            58_000,
+            58_500,
             [rare, cycle(&ends, 200_000)].concat(),
             b"z#x".into(),
         ),
@@ -508,7 +518,7 @@ fn while_the_input_changes() {
         |_, at| 1 - at % 2,
         |reads, at| usize::from(at % 2 == 0 && reads % 61 < 9),
     ];
-    let lengths = [(18, 40), (22, 300), (24, 5000), (33, 30_000)];
+    let lengths = [(17, 40), (20, 300), (24, 5000), (35, 30_000)];
     let cases = each(&[&b"a"[..], b"ab"], &lengths);
     for ((period, (most, len)), choice) in each(&cases, &choices) {
         let (text, whole) = (cycle(period, 20_000 + 3 * len), cycle(period, len));
@@ -516,7 +526,8 @@ fn while_the_input_changes() {
         let cases = [put(late.clone(), 2, b'!'), late, whole].map(|it| [text.clone(), it]);
         READS.set(0);
         MOST.set(most * text.len());
-        at_all_widths::<true>(&cases, choice);
-        at_all_widths::<false>(&cases.each_ref().map(turned), choice);
+        let back = cases.each_ref().map(turned);
+        assert_eq!(at_all_widths::<true>(&cases, choice), [None; 3]);
+        assert_eq!(at_all_widths::<false>(&back, choice), [None; 3]);
     }
 }

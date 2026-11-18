@@ -64,6 +64,7 @@ const noUnify: readonly string[] = [
 
   // No longer heavy; kept standalone so webcore bundle composition stays put.
   "src/jsc/bindings/webcore/HTTPParsers.cpp",
+  "src/jsc/bindings/webcore/JSWasmStreamingCompiler.cpp",
 
   // The ahead-of-time compiler's files: standalone, so that they move no other file into another bundle.
   "src/jsc/bindings/BunAOTCompile.cpp",
@@ -83,7 +84,6 @@ const noUnify: readonly string[] = [
   // on ordinary lookup at template definition time. That fails if an earlier
   // file in the bundle already parsed JSDOMConvertInterface.h /
   // JSDOMWrapperCache.h before the overload was visible.
-  "src/jsc/bindings/webcore/JSWasmStreamingCompiler.cpp",
   "src/jsc/bindings/webcore/JSDOMPromiseDeferred.cpp",
   "src/jsc/bindings/webcore/JSMessageEventCustom.cpp",
   "src/jsc/bindings/sqlite/JSSQLStatement.cpp",
@@ -138,33 +138,6 @@ const noUnify: readonly string[] = [
   "packages/bun-usockets/src/crypto/root_certs_windows.cpp",
   "packages/bun-usockets/src/crypto/root_certs_darwin.cpp",
 
-  // Second highway TU. foreach_target.h has a TU-wide include guard, so when
-  // bundled after highway_strings.cpp it doesn't re-expand and only the
-  // baseline ISA namespace exists for image_resize → HWY_EXPORT can't find
-  // N_AVX2/N_AVX3/etc. variants.
-  "src/jsc/bindings/image_resize.cpp",
-  // Third highway TU — same foreach_target.h include-guard reason as
-  // image_resize.cpp: it must expand its own per-ISA namespaces so
-  // HWY_EXPORT(HashLong) resolves the N_AVX2/N_AVX3/etc. variants.
-  "src/jsc/bindings/xxhash3.cpp",
-  // Fourth highway TU — same foreach_target.h include-guard reason.
-  "src/jsc/bindings/highway_sourcemap.cpp",
-  // Fifth highway TU (JSON structural indexer) — same foreach_target.h
-  // include-guard reason.
-  "src/jsc/bindings/highway_json.cpp",
-  // Sixth highway TU (XML structural indexer) — same reason.
-  "src/jsc/bindings/highway_xml.cpp",
-  // Seventh highway TU (PNG scanline filters) — same reason.
-  "src/jsc/bindings/highway_png.cpp",
-  // Eighth highway TU (byte sets) — same reason.
-  "src/jsc/bindings/highway_byte_set.cpp",
-  // Ninth highway TU (JPEG transforms and color conversion) — same reason.
-  "src/jsc/bindings/highway_jpeg.cpp",
-  // The highway TUs of the WebP codec — same reason.
-  "src/jsc/bindings/highway_webp_decoder.cpp",
-  "src/jsc/bindings/highway_webp_encoder.cpp",
-  // The highway TU for the checksums of gzip and zlib — same reason.
-  "src/jsc/bindings/highway_checksums.cpp",
   // Declares its own minimal CGRect/kCFStringEncodingUTF8/kCFNumberDoubleType
   // so it doesn't pull a CoreGraphics load command; bundled with files that
   // include the real CF headers those names become ambiguous.

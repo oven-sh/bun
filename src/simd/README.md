@@ -28,13 +28,13 @@ fn main() {
 }
 ```
 
-| Folder        | Crate                  | Contents                                                                    |
-| ------------- | ---------------------- | --------------------------------------------------------------------------- |
-| `.`           | `bun_simd`             | Vectors, loops over slices, dispatch. `forbid(unsafe_code)`                 |
-| `trusted`     | `bun_simd_trusted`     | All the `unsafe`, and the detection that it relies on                       |
-| `macros`      | `bun_simd_macros`      | The attributes that copy a module. They emit no `unsafe`                    |
-| `kernels`     | `bun_simd_kernels`     | Ports of Bun's kernels. `forbid(unsafe_code)`                               |
-| `conformance` | `bun_simd_conformance` | Compares and times them against the kernels on Highway, inside a canary Bun |
+| Folder        | Crate                  | Contents                                                                        |
+| ------------- | ---------------------- | ------------------------------------------------------------------------------- |
+| `.`           | `bun_simd`             | Vectors, loops over slices, dispatch. `forbid(unsafe_code)`                     |
+| `trusted`     | `bun_simd_trusted`     | All the `unsafe`, and the detection that it relies on                           |
+| `macros`      | `bun_simd_macros`      | The attributes that copy a module. They emit no `unsafe`                        |
+| `kernels`     | `bun_simd_kernels`     | Bun's kernels. `forbid(unsafe_code)`                                            |
+| `conformance` | `bun_simd_conformance` | Checks and times them inside a canary Bun. `unsafe` in `probe.rs` and `room.rs` |
 
 ## Writing a kernel
 
@@ -233,15 +233,20 @@ LLVM can still pick such an instruction for plain code in a kernel. Read the dis
 
 ## Tests
 
-| Command                                                  | What it checks                                                                           |
-| -------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `bun run rust:test -p bun_simd`                          | Ops and loops against plain code, the dispatch, the programs in `rejected.md`            |
-| `bun run rust:test -p bun_simd -- --include-ignored`     | The same with more inputs and alignments                                                 |
-| `bun run rust:test -p bun_simd_kernels`                  | Kernels against plain code, on every target of the machine and the portable ones         |
-| `bun run rust:test -p bun_simd_trusted`                  | Detection against what rustc knows of features and CPUs, `asm!` next to missing pages    |
-| `bun run rust:miri -p bun_simd_kernels`                  | The kernels on the portable targets: uninitialized output, data races                    |
-| `bun bd test test/internal/simd.test.ts`                 | Kernels, next to missing pages, against Highway. An instruction of each detected feature |
-| The same with `BUN_SIMD_BENCHMARK=1`, on a release build | Prints times                                                                             |
-| `bun scripts/verify-baseline.ts --simd-cpus`             | The same on emulated CPUs, and the instructions of each copy against its target          |
+| Command                                                  | What it checks                                                                                 |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `bun run rust:test -p bun_simd`                          | Ops and loops against plain code, the dispatch, the programs in `rejected.md`                  |
+| `bun run rust:test -p bun_simd -- --include-ignored`     | The same with more inputs and alignments                                                       |
+| `bun run rust:test -p bun_simd_kernels`                  | Kernels against plain code, on every target of the machine and the portable ones               |
+| `bun run rust:test -p bun_simd_trusted`                  | Detection against what rustc knows of features and CPUs, `asm!` next to missing pages          |
+| `bun run rust:miri -p bun_simd_kernels`                  | The kernels on the portable targets: uninitialized output, data races                          |
+| `bun bd test test/internal/simd.test.ts`                 | Kernels, next to missing pages, against `digests.txt`. An instruction of each detected feature |
+| The same with `BUN_SIMD_BENCHMARK=1`, on a release build | Prints times                                                                                   |
+| And with `BUN_SIMD_BENCHMARK_AGAINST=/path/to/bun`       | Prints the times of the kernels in that build too, and the ratio                               |
+| `bun scripts/verify-baseline.ts --simd-cpus`             | The checks on emulated CPUs, and the instructions of each copy against its target              |
+
+`conformance/digests.txt` has a hash of the results of each kernel in each part of `check.rs`, after 3, 1200 and 10000 rounds. It was recorded on x86-64 from the C++ kernels that came before, through adapters that are not in the repository. Where the interfaces differ, the adapter decided. `modulate` is compared with its formula instead, `lone_match` with the place of the match, and some kernels with a twin. `bun bd test --run-simd-tests check 1200` prints the lines to add and to remove for that number. Before you replace one, show with `rust:test` that the new results are right. A new part adds lines and changes none. With the name of a kernel at the end, the command prints the results that it hashes too, for a diff between two targets or builds. `check-only webp 1200` runs the parts whose names start with that, `check-only j..m 1200` those that sort from `j` to below `m`.
+
+`BUN_SIMD_BENCHMARK_FILTER=memmem` with `-t "kernels on"` times only the rows that have this in their name. The time of a short call depends on the address of the code: between two builds of the same kernels, some rows differ by more than 10%.
 
 With the feature `test_support`, `limit_to` and `limit_to_with` pick a target, and features beyond it, for the thread and nothing is cached. `portable32` and `portable64` then run a kernel at those widths on any machine. `Memory` is exported, for a `Source` that counts its reads.

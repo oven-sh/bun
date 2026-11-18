@@ -1,4 +1,5 @@
-//! Ports of highway_strings.cpp, for `Bun.stringWidth`.
+//! For `Bun.stringWidth`.
+use bun_simd::Isa;
 use core::array::from_fn;
 
 const BEL: u8 = 0x07;
@@ -240,6 +241,11 @@ pub(crate) mod simd {
     }
 
     fn has_fixed_width(v: U16) -> Mask<u16, { U16::LEN }> {
+        // It takes longer to turn masks into vectors, for the lookups.
+        if isa::Isa::HAS_MASK_REGISTERS {
+            let is_in = |i: usize| v.in_range(STARTS[i]..=ENDS[i]);
+            return (1..2 * PAIRS).fold(is_in(0), |any, i| any | is_in(i));
+        }
         let (v, mut pair) = (v.bitcast::<I16>() + signed(0), U8::repeat([0, 8]));
         for i in 1..PAIRS {
             pair -= v.simd_ge(signed(STARTS[2 * i])).to_vector().bitcast::<U8>();

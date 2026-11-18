@@ -6,7 +6,10 @@ use core::array::from_fn;
 const MODULUS: u32 = 65521;
 /// The most bytes after which both sums fit in 32 bits. Lanes may wrap around before that.
 const CHUNK: usize = 5552;
-const _: () = assert!(255 * CHUNK * (CHUNK + 1) / 2 + (CHUNK + 1) * 65520 <= u32::MAX as usize);
+const _: () = {
+    let n = CHUNK as u64;
+    assert!(255 * n * (n + 1) / 2 + (n + 1) * 65520 < 1 << 32);
+};
 /// Below it, neither sum reaches the modulus.
 const SHORT: usize = 16;
 const _: () = assert!(255 * SHORT * (SHORT + 1) / 2 + SHORT < MODULUS as usize);

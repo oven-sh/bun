@@ -1,4 +1,4 @@
-//! Ports of highway_strings.cpp, for `node:path`.
+//! For `node:path`.
 
 use bun_simd::Isa;
 

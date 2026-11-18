@@ -1,4 +1,4 @@
-//! Port of highway_png.cpp. `a` is left of the byte `x`, `b` is above it, and `c` is above `a`.
+//! PNG filters. `a` is left of the byte `x`, `b` is above it, and `c` is above `a`.
 
 use bun_simd::{Isa, opaque};
 use core::hint::{black_box, select_unpredictable};

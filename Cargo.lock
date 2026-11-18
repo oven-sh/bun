@@ -747,13 +747,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_highway"
-version = "0.0.0"
-dependencies = [
- "bstr",
-]
-
-[[package]]
 name = "bun_histogram"
 version = "0.0.0"
 
@@ -1907,7 +1900,6 @@ name = "bun_simd_conformance"
 version = "0.0.0"
 dependencies = [
  "bun_core",
- "bun_highway",
  "bun_simd",
  "bun_simd_kernels",
  "bun_sys",

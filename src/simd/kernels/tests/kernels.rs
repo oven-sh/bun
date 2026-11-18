@@ -1293,6 +1293,9 @@ fn byte_classes() {
         let has = |class| json::OF_BYTE[usize::from(byte)] & class != 0;
         assert_eq!(has(json::STRUCTURAL), is_in(b"{}[]:,"), "{byte}");
         assert_eq!(has(json::WHITESPACE), is_in(b" \t\n\r"), "{byte}");
+        let (oddity, control) = (0x20, 0x40);
+        assert_eq!(has(oddity), is_in(b"/'"), "{byte}");
+        assert_eq!(has(control), byte < b' ', "{byte}");
 
         let has = |class| xml::OF_BYTE[usize::from(byte)] & class != 0;
         let is_control = byte < 0x20 && !is_in(b"\t\n");

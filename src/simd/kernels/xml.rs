@@ -1,4 +1,4 @@
-//! Port of highway_xml.cpp.
+//! The structural index of XML.
 use crate::ByteSet;
 use bun_simd::{Out, blocks};
 use class::{ANYWHERE, GT, IN_TAG, LT};

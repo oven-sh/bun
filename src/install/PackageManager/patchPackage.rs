@@ -470,10 +470,15 @@ pub fn do_patch_commit(
     match load_result {
         lockfile::LoadResult::NotFound => {
             match manager.missing_lockfile_note() {
-                LockfileNote::RunInstall => Output::err_generic(
-                    "Cannot find lockfile. Install packages with `<cyan>bun install<r>` before patching them.",
-                    (),
-                ),
+                LockfileNote::RunInstall(setting) => {
+                    Output::err_generic(
+                        "Cannot find lockfile. Install packages with `<cyan>bun install<r>` before patching them.",
+                        (),
+                    );
+                    if let Some(setting) = setting {
+                        setting.print_note();
+                    }
+                }
                 note => {
                     Output::err_generic("Cannot find lockfile.", ());
                     manager.print_lockfile_note(note);

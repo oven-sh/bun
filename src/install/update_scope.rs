@@ -295,8 +295,13 @@ fn exit_on_lockfile_load_failure(manager: &mut PackageManager, subject: &[u8]) -
         if manager.options.log_level != LogLevel::Silent {
             Output::flush();
             Output::err_generic("no bun.lock to match {} against", (BStr::new(subject),));
-            match manager.missing_lockfile_note() {
-                LockfileNote::RunInstall => bun_core::pretty_errorln!("    <cyan>bun install<r>"),
+            match manager.unread_lockfile_note() {
+                LockfileNote::RunInstall(setting) => {
+                    bun_core::pretty_errorln!("    <cyan>bun install<r>");
+                    if let Some(setting) = setting {
+                        setting.print_note();
+                    }
+                }
                 note => manager.print_lockfile_note(note),
             }
             Output::flush();

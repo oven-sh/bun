@@ -783,7 +783,8 @@ pub fn dedupe_before_install(
         LoadResult::NotFound => {
             if !quiet {
                 Output::err_generic("missing lockfile, nothing to dedupe", ());
-                manager.print_missing_lockfile_note();
+                let note = manager.unread_lockfile_note();
+                manager.print_lockfile_note(note);
             }
             Global::exit(1);
         }

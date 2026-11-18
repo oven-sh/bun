@@ -3067,7 +3067,16 @@ describe.concurrent("without a package.json", () => {
       HOME: root,
       USERPROFILE: root,
     };
-    for (const key of ["BUN_INSTALL_GLOBAL_DIR", "BUN_INSTALL_BIN", "BUN_INSTALL_CACHE_DIR"]) delete spawnEnv[key];
+    for (const key of [
+      "BUN_INSTALL_GLOBAL_DIR",
+      "BUN_INSTALL_BIN",
+      "BUN_INSTALL_CACHE_DIR",
+      "BUN_CONFIG_SKIP_SAVE_LOCKFILE",
+      "BUN_CONFIG_SKIP_LOAD_LOCKFILE",
+      "BUN_CONFIG_YARN_LOCKFILE",
+    ]) {
+      delete spawnEnv[key];
+    }
     return {
       root,
       bunInstall,

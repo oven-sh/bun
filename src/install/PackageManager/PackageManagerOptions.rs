@@ -1300,24 +1300,24 @@ impl Options {
     pub(crate) fn lockfile_saving_off_by_config(
         config: Option<&Api::BunInstall>,
         env: &DotEnvLoader,
-    ) -> Option<LockfileSavingOff> {
+    ) -> Option<LockfileSetting> {
         // The variable replaces `save` of bunfig.toml, whichever way it points.
         match env.get(b"BUN_CONFIG_SKIP_SAVE_LOCKFILE") {
-            Some(skip) if skip != b"0" => return Some(LockfileSavingOff::Env),
+            Some(skip) if skip != b"0" => return Some(LockfileSetting::SkipSave),
             Some(_) => {}
             None if config.is_some_and(|config| config.save_lockfile == Some(false)) => {
-                return Some(LockfileSavingOff::Save);
+                return Some(LockfileSetting::Save);
             }
             None => {}
         }
         let config = config?;
         if config.frozen_lockfile == Some(true) {
-            return Some(LockfileSavingOff::FrozenLockfile);
+            return Some(LockfileSetting::FrozenLockfile);
         }
         if config.production == Some(true) {
-            return Some(LockfileSavingOff::Production);
+            return Some(LockfileSetting::Production);
         }
-        (config.dry_run == Some(true)).then_some(LockfileSavingOff::DryRun)
+        (config.dry_run == Some(true)).then_some(LockfileSetting::DryRun)
     }
 
     /// An install writes yarn.lock whether or not it saves bun.lock, but not in a dry run.
@@ -1332,14 +1332,51 @@ impl Options {
     }
 }
 
-/// A setting in bunfig.toml, .npmrc or the environment that keeps `bun install` from saving bun.lock.
+/// What a command prints below its `error:` line if it has no lockfile that matches package.json.
 #[derive(Clone, Copy)]
-pub(crate) enum LockfileSavingOff {
-    Env,
+pub(crate) enum LockfileNote {
+    /// `run 'bun install' first`, and the setting of this command that stands in the way of it.
+    RunInstall(Option<LockfileSetting>),
+    /// `bun install` accepts the package.json files and finds nothing to lock in them.
+    NothingToLock,
+}
+
+/// A setting that keeps `bun install` from saving bun.lock, or the command from loading it.
+#[derive(Clone, Copy)]
+pub(crate) enum LockfileSetting {
+    SkipLoad,
+    SkipSave,
     Save,
     FrozenLockfile,
     Production,
     DryRun,
+}
+
+impl LockfileSetting {
+    /// The second note of `LockfileNote::RunInstall`.
+    #[cold]
+    pub(crate) fn print_note(self) {
+        match self {
+            LockfileSetting::SkipLoad => bun_core::note!(
+                "loading the lockfile is disabled: <b>BUN_CONFIG_SKIP_LOAD_LOCKFILE<r> is set"
+            ),
+            LockfileSetting::SkipSave => bun_core::note!(
+                "saving the lockfile is disabled: <b>BUN_CONFIG_SKIP_SAVE_LOCKFILE<r> is set"
+            ),
+            LockfileSetting::Save => bun_core::note!(
+                "saving the lockfile is disabled: <b>save = false<r> under <b>[install.lockfile]<r> in bunfig.toml"
+            ),
+            LockfileSetting::FrozenLockfile => bun_core::note!(
+                "lockfile is frozen: <b>frozenLockfile = true<r> under <b>[install]<r> in bunfig.toml"
+            ),
+            LockfileSetting::Production => bun_core::note!(
+                "lockfile is frozen: <b>production = true<r> under <b>[install]<r> in bunfig.toml"
+            ),
+            LockfileSetting::DryRun => bun_core::note!(
+                "install is a dry run: <b>dryRun = true<r> under <b>[install]<r> in bunfig.toml, or <b>dry-run=true<r> in .npmrc"
+            ),
+        }
+    }
 }
 
 bitflags::bitflags! {

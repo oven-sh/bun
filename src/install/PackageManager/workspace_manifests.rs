@@ -95,7 +95,8 @@ impl ScratchManifests {
 
         // `parse_root` exits on a workspace whose package.json is an empty file, which this walk skips.
         let cache = &mut manager.workspace_package_json_cache;
-        let members = WorkspaceMap::init()
+        let mut members = WorkspaceMap::init();
+        let named = members
             .process_manifest(
                 cache,
                 &mut bun_ast::Log::init(),
@@ -104,13 +105,15 @@ impl ScratchManifests {
                 MissingWorkspace::SkipEmptyToo,
             )
             .ok()?;
-        if members > 0 {
+        if named > 0 {
             return Some(false);
         }
-        if cache
-            .map
-            .values()
-            .any(|member| member.source.contents.is_empty())
+        // An install warns about a member with dependencies that it skips for having no name.
+        if members.skipped_any_with_dependencies()
+            || cache
+                .map
+                .values()
+                .any(|member| member.source.contents.is_empty())
         {
             return None;
         }

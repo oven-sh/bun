@@ -334,7 +334,7 @@ impl Timeout {
     /// takes via `markAborted()`: it clears `m_timeout` and frees `this` through
     /// [`AbortSignal__Timeout__deinit`] (which unlinks the node if it is still in
     /// a heap). Unlinking the node alone is not enough: while `m_timeout` is set,
-    /// `JSAbortSignalOwner::isReachableFromOpaqueRoots` keeps an observed signal's
+    /// `JSAbortSignal::isReachableFromOpaqueRoots` keeps an observed signal's
     /// wrapper, and everything its abort listeners close over, alive for a timer
     /// that can no longer fire.
     ///

@@ -474,7 +474,10 @@ fn refused_memory_is_an_error_where_a_small_window_needs_more() {
 fn spare_capacity_is_enough_behind_the_last_block_too() {
     let mut stream = Writer::default();
     stream.fixed(false).literals(&[7; 900]).end_block();
-    let stream = stream.fixed(true).end_block().finish();
+    // An empty fixed block does not get as far as the output.
+    let only_the_end: Vec<_> = (0..257).map(|it| u8::from(it == 256)).collect();
+    stream.dynamic(true, &only_the_end, &[1]);
+    let stream = stream.end_block().finish();
     let mut out = Vec::with_capacity(900 + SPARE_CAPACITY);
     let status = Inflater::new(Container::Raw).inflate_to_vec(&mut &stream[..], &mut out, 9999);
     assert!(status == Ok(Status::StreamEnd) && out == [7; 900]);

@@ -1606,3 +1606,40 @@ fn a_match_starts_no_earlier_than_the_output() {
         }
     }
 }
+
+#[test]
+fn what_is_left_of_the_buffer_has_nothing_from_the_window() {
+    let mut random = Random::new(24);
+    let stream = crate::deflate::raw(&random.mixed(250_000, WINDOW_SIZE), 6, 5);
+    let with_dictionary = |byte| raw_with(&[byte; WINDOW_SIZE]);
+    let behind_another_stream = |byte| {
+        let mut other = Writer::default();
+        other.fixed(true).literals(&[byte; 40_000]).end_block();
+        let mut inflater = raw_with(&[]);
+        run(&mut inflater, &other.finish(), false, || (999, 300));
+        inflater.reset();
+        inflater
+    };
+    let starts: [fn(u8) -> Inflater; _] = [with_dictionary, behind_another_stream];
+    for (start, largest) in starts.into_iter().flat_map(|it| [(it, 900), (it, 60_000)]) {
+        let mut inflaters = [1, 2].map(start);
+        let (mut read, mut status) = (0, Status::NeedsInput);
+        while status != Status::StreamEnd {
+            let piece = &stream[read..stream.len().min(read + random.up_to(largest))];
+            let room = random.pick(&[300, 500, 16_384, 70_000, 120_000]);
+            let by_blocks = random.below(4) == 0;
+            let [first, second] = inflaters.each_mut().map(|inflater| {
+                let (mut rest, mut bytes) = (piece, vec![0xa5; room]);
+                let mut out = BorrowedBuf::from(&mut bytes[..]);
+                status = match by_blocks {
+                    true => inflater.inflate_block(&mut rest, out.unfilled()),
+                    false => inflater.inflate(&mut rest, out.unfilled()),
+                }
+                .unwrap();
+                (piece.len() - rest.len(), bytes)
+            });
+            assert!(first == second, "{read} {room}");
+            read += first.0;
+        }
+    }
+}

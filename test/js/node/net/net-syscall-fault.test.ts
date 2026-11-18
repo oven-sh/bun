@@ -579,27 +579,33 @@ describe.skipIf(skip)("node:net queue of unsent bytes under short sends", () => 
     fault.set({ syscall: "send", action: "short", bytes: 1024, repeat: -1, fd: handle.fd });
     (p.client as any)._write(payload, "buffer", () => {});
     const queuedTail = estimateShallowMemoryUsageOf(handle) - idle;
-    const { promise: written, resolve, reject } = Promise.withResolvers<void>();
+    const errors: Error[] = [];
     // Each of these sends 1,024 bytes more of the tail. The queue frees its
     // allocation when the last one takes the last byte, and not before.
     let allocatedBeforeLastWrite = 0;
     for (let i = 0; i < 40; i++) {
       if (i === 39) allocatedBeforeLastWrite = estimateShallowMemoryUsageOf(handle) - idle;
-      (p.client as any)._write(Buffer.alloc(0), "buffer", (err?: Error | null) => (err ? reject(err) : resolve()));
+      (p.client as any)._write(Buffer.alloc(0), "buffer", (err?: Error | null) => {
+        if (err) errors.push(err);
+      });
     }
-    const allocatedAfterWrites = estimateShallowMemoryUsageOf(handle) - idle;
-    const bytesWritten = await bytesWrittenUntil(written, handle);
-    p.client.end();
-    await once(p.serverSock, "end");
-
-    expect({ queuedTail, allocatedBeforeLastWrite, allocatedAfterWrites, bytesWritten, ...state }).toEqual({
+    expect({
+      queuedTail,
+      allocatedBeforeLastWrite,
+      allocatedAfterWrites: estimateShallowMemoryUsageOf(handle) - idle,
+      bytesWritten: handle.bytesWritten,
+      errors,
+    }).toEqual({
       queuedTail: payload.length - 1024,
       allocatedBeforeLastWrite: payload.length - 1024,
       allocatedAfterWrites: 0,
-      bytesWritten: [payload.length],
-      received: payload.length,
-      intact: true,
+      bytesWritten: payload.length,
+      errors: [],
     });
+
+    p.client.end();
+    await once(p.serverSock, "end");
+    expect({ errors, ...state }).toEqual({ errors: [], received: payload.length, intact: true });
   });
 
   // One writev takes the tail and 4,096 bytes of the chunk. The rest of the

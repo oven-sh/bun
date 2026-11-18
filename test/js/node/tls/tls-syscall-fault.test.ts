@@ -850,15 +850,9 @@ describe.skipIf(skip)("fatal SSL_write after the handshake", () => {
   test("node:tls fails a write whose tail is retried from the writable event", async () => {
     using p = await connectedTLSPair();
     const serverSide = observe(p.serverSock);
-    // The client does not read, so a write ends up partial and its tail is held natively.
-    const chunk = Buffer.alloc(1024 * 1024, "z");
-    let partialWrite: Promise<Error | null | undefined>;
-    do {
-      const { promise, resolve } = Promise.withResolvers<Error | null | undefined>();
-      partialWrite = promise;
-      p.serverSock.write(chunk, resolve);
-      await new Promise(resolve => process.nextTick(resolve));
-    } while (p.serverSock.writableLength === 0);
+    // The client does not read, and this is far more than the socket buffers hold, so plaintext is left for a later SSL_write.
+    const { promise: partialWrite, resolve } = Promise.withResolvers<Error | null | undefined>();
+    p.serverSock.write(Buffer.alloc(16 * 1024 * 1024, "z"), resolve);
     fault.set({ syscall: "ssl_write", action: "errno", errno: "EINVAL", repeat: -1, fd: fdOf(p.serverSock) });
     p.client.resume();
     await serverSide.closed;

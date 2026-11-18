@@ -409,6 +409,15 @@ extern "C" fn us_poll_stop(p: &Poll, _loop: &Loop) {
 }
 
 #[unsafe(no_mangle)]
+extern "C" fn us_tmp_recv_again(loop_: &Loop) -> c_int {
+    match bun_iocp::tune(2, 0) {
+        count @ 100.. if loop_.has_sent.get() == 0 => count as c_int - 100,
+        100.. => 0,
+        count => count as c_int,
+    }
+}
+
+#[unsafe(no_mangle)]
 extern "C" fn bsd_winsock_ensure() {
     bun_windows_sys::ws2_32::ensure_started();
 }

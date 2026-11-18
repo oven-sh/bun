@@ -1733,7 +1733,7 @@ impl SendQueue {
         }
         AutoFlusher::register_deferred_microtask_with_type(self, vm);
         self.windows.messages_written.update(|count| count + 1);
-        self.windows.messages_written.get() > WRITTEN_SINGLY
+        self.windows.messages_written.get() > bun_iocp::tune(13, WRITTEN_SINGLY.into()) as u32
             && matches!(&self.queue.get()[..], [only]
                 if only.handle.is_none() && only.data.list.len() < LARGE_WRITE)
     }

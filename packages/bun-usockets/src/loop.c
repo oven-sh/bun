@@ -900,6 +900,12 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                             }
                         }
                         #undef LOOP_ISNT_VERY_BUSY_THRESHOLD
+                        #ifdef LIBUS_USE_IOCP
+                        extern int us_tmp_recv_again(us_loop_r loop);
+                        if (s && !us_socket_is_closed(s) && !s->flags.is_paused && repeat_recv_count++ < us_tmp_recv_again(loop)) {
+                            continue;
+                        }
+                        #endif
                     } else if (!length) {
                         eof = LIBUS_POLL_EOF; // lets handle EOF in the same place
                         read_fin = 1;

@@ -376,6 +376,10 @@ enum Delivery {
 /// Of one request. The system copies what a pipe has no room for into memory of its own.
 pub const MAX_LEN: usize = 8 * 1024 * 1024;
 
+fn max_write() -> usize {
+    bun_threading::spin::tune(5, MAX_LEN as u64) as usize
+}
+
 /// The bytes that a request uses.
 enum Bytes {
     Fill(Vec<u8>, usize),
@@ -550,13 +554,13 @@ impl AsyncFile {
             Bytes::Drain(buffer, from) => {
                 let (bytes, len) = (buffer[from..].as_ptr(), buffer.len() - from);
                 slot.buffer.set(buffer);
-                (bytes.cast_mut(), len.min(MAX_LEN))
+                (bytes.cast_mut(), len.min(max_write()))
             }
             Bytes::DrainShared(shared, from) => {
                 let rest = &(*shared).as_ref()[from..];
                 let (bytes, len) = (rest.as_ptr(), rest.len());
                 slot.shared.set(Some(shared));
-                (bytes.cast_mut(), len.min(MAX_LEN))
+                (bytes.cast_mut(), len.min(max_write()))
             }
         };
         let give_back = || {

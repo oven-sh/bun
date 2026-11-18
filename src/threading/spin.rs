@@ -2,6 +2,26 @@
 
 use std::sync::LazyLock;
 
+/// Temporary: `BUN_TMP_TUNE=0=1,3=4096` replaces defaults, to measure variants.
+pub fn tune(index: usize, default: u64) -> u64 {
+    static VALUES: LazyLock<[Option<u64>; 16]> = LazyLock::new(|| {
+        let mut values = [None; 16];
+        let text = bun_core::getenv_z(bun_core::zstr!("BUN_TMP_TUNE")).unwrap_or_default();
+        for pair in bun_core::strings::split(text, b",") {
+            if let Some((key, value)) = bun_core::strings::split_once_char(pair, b'=')
+                && let Ok(key) = bun_core::fmt::parse_int::<usize>(key, 10)
+            {
+                values[key] = bun_core::fmt::parse_int(value, 10).ok();
+            }
+        }
+        values
+    });
+    if cfg!(test) {
+        return default;
+    }
+    VALUES[index].unwrap_or(default)
+}
+
 /// About what a sleep costs.
 const SHORT_NS: u64 = 10_000;
 /// Enough for another thread to wake up and answer. From then on neither has to sleep.
@@ -37,7 +57,7 @@ impl Spin {
     pub fn limit_ns(self) -> u64 {
         static HAS_OTHER_CPU: LazyLock<bool> = LazyLock::new(|| bun_sys::windows::cpu::count() > 1);
         match self.next {
-            _ if !self.is_busy || !*HAS_OTHER_CPU => 0,
+            _ if !self.is_busy || !*HAS_OTHER_CPU || tune(11, 0) == 1 => 0,
             Next::Short | Next::ShortAfterLong => SHORT_NS,
             Next::Long => LONG_NS,
             Next::Nothing(_) => 0,
@@ -55,6 +75,7 @@ impl Spin {
                 Next::Short
             }
             Next::Short | Next::Nothing(0) => Next::Long,
+            Next::Long if tune(1, 0) == 1 && ns <= LONG_NS => Next::Long,
             Next::Long => Next::ShortAfterLong,
             Next::ShortAfterLong => {
                 self.rest = (self.rest * 2 + 1).min(63);

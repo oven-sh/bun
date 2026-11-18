@@ -9,6 +9,7 @@ use bun_ptr::{CellExt as _, OptionCellExt as _};
 use bun_sys::windows::named_pipe::{self, Kind};
 use bun_sys::windows::{self as w, NT_ERROR, NTSTATUS, Win32Error, Win32ErrorExt as _};
 use bun_sys::{self as sys, E, Fd, Tag};
+use bun_threading::spin::tune;
 use bun_uws_sys::Loop;
 
 use super::Payload;
@@ -334,9 +335,15 @@ impl Inner {
         file: &AsyncFile,
         max_len: usize,
     ) -> Result<Request, Completion> {
-        let max_len = max_len.min(BUSY_SIZE);
+        let has_more = self.has_more.take();
+        let size = tune(4, BUSY_SIZE as u64) as usize;
+        let max_len = max_len.min(if has_more { size } else { BUSY_SIZE });
         let done = self.on_read(Inner::on_data);
-        file.read(self.endpoint.buffer(max_len), max_len, done)
+        let mut buffer = self.endpoint.buffer(max_len);
+        if has_more {
+            buffer.reserve(max_len);
+        }
+        file.read(buffer, max_len, done)
     }
 
     fn started_read(self: &Rc<Self>, started: Result<Request, Completion>) {
@@ -391,8 +398,12 @@ impl Inner {
     fn on_data(self: Rc<Self>, completion: Completion) {
         let (status, mut buffer) = (completion.status, completion.buffer);
         if !buffer.is_empty() {
+            if let Some(Io::Overlapped(_)) = self.io.get() {
+                (self.has_more).set(buffer.len() == buffer.capacity() && buffer.len() >= BUSY_SIZE);
+            }
             if buffer.len() == buffer.capacity() {
                 self.endpoint.expect_much();
+                self.endpoint.port.expect_more();
             } else {
                 self.endpoint.port.did_receive();
             }
@@ -437,7 +448,7 @@ impl Inner {
         let (handle, cancel) = (Arc::clone(&self.handle), Cancel::default());
         let (mut buffer, thread) = (self.endpoint.buffer(max_len), cancel.clone());
         if self.has_more.take() {
-            buffer.reserve(max_len.min(THREAD_SIZE));
+            buffer.reserve(max_len.min(tune(3, THREAD_SIZE as u64) as usize));
         }
         let is_kind_known = self.io.get().is_some();
         let take = self.is_input_shared.get().then_some(take);

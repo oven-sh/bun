@@ -66,7 +66,9 @@ impl Endpoint {
     }
 
     pub(super) fn recycle(&self, mut buffer: Vec<u8>) {
-        if (1..=4 * BUSY_SIZE).contains(&buffer.capacity()) {
+        if (1..=bun_threading::spin::tune(12, 4 * BUSY_SIZE as u64) as usize)
+            .contains(&buffer.capacity())
+        {
             buffer.clear();
             self.spare.set(buffer);
         }

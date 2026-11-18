@@ -9,7 +9,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use bun_core::{Timespec, TimespecMockMode};
-use bun_threading::spin::Spin;
+use bun_threading::spin::{Spin, tune};
 use bun_threading::{Condition, Guarded};
 use bun_windows_sys::Win32Error;
 
@@ -101,6 +101,7 @@ pub struct Port {
     /// Since the last wait. What is sent unasked comes in larger pieces to a thread that sleeps.
     has_received: Cell<bool>,
     has_sent: Cell<bool>,
+    expects_more: Cell<bool>,
     /// `batch[next..end]` came from the system and is yet to be dispatched.
     batch: [Cell<Packet>; BATCH],
     next: Cell<usize>,
@@ -141,6 +142,7 @@ impl Port {
             spin: Cell::new(Spin::new()),
             has_received: Cell::new(false),
             has_sent: Cell::new(false),
+            expects_more: Cell::new(false),
             batch: [const { Cell::new(Packet::EMPTY) }; BATCH],
             next: Cell::new(0),
             end: Cell::new(0),
@@ -178,6 +180,10 @@ impl Port {
 
     pub fn did_receive(&self) {
         self.has_received.set(true);
+    }
+
+    pub fn expect_more(&self) {
+        self.expects_more.set(true);
     }
 
     pub fn did_send(&self) {
@@ -271,8 +277,13 @@ impl Port {
         let next_due = self.delayed.borrow().peek().map(|entry| entry.0.0);
         let deadline = (timeout_ns.map_or(u64::MAX, |timeout| start.saturating_add(timeout)))
             .min(next_due.unwrap_or(u64::MAX));
-        let only_receives = self.has_received.take() & !self.has_sent.take();
+        let only_receives = self.has_received.take() & !self.has_sent.take() && tune(0, 1) == 1;
         let awake_ns = if only_receives { 0 } else { spin.limit_ns() };
+        let awake_ns = if self.expects_more.take() {
+            awake_ns.max(tune(6, 0))
+        } else {
+            awake_ns
+        };
         let (mut now, awake_until) = (start, start + awake_ns);
         loop {
             let timeout = match deadline {
@@ -362,12 +373,34 @@ impl Port {
         const MAX_NS: u64 = 100_000_000;
 
         let since = self.ran_late_at.take();
-        if !(0..MIN_ROUNDS).all(|_| self.dispatch_deferred(on_event)) {
+        let more = || {
+            if self.dispatch_deferred(on_event) {
+                return true;
+            }
+            if tune(7, 0) == 0 || !self.expects_more.take() {
+                return false;
+            }
+            let until = now_ns() + tune(7, 0);
+            while !self.fill_batch(Timeout::Now) {
+                if now_ns() > until {
+                    self.expects_more.set(true);
+                    return false;
+                }
+            }
+            self.dispatch_batch(on_event);
+            self.prepare();
+            true
+        };
+        if !(0..MIN_ROUNDS).all(|_| more()) {
+            if self.expects_more.get() && tune(8, 0) == 1 {
+                self.ran_late_at.set(Some(now_ns()));
+            }
             return;
         }
         let start = now_ns();
-        let deadline = start + (start - since.unwrap_or(start)).clamp(MIN_NS, MAX_NS);
-        while self.dispatch_deferred(on_event) {
+        let share = (start - since.unwrap_or(start)) * tune(9, 1);
+        let deadline = start + share.clamp(tune(10, MIN_NS), MAX_NS);
+        while more() {
             let now = now_ns();
             if now > deadline {
                 return self.ran_late_at.set(Some(now));

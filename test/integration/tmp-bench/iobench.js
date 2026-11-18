@@ -385,7 +385,7 @@ const cases = {
       return n / MB / ((now() - t) / 1000);
     },
   ],
-  "child stdout, buffered": [
+  "child stdout buffered": [
     "MB/s",
     1,
     async () => {
@@ -738,6 +738,7 @@ const cases = {
 
 const argv = process.argv.slice(2);
 if (argv[0] === "--role") await roles[argv[1]]();
+else if (argv[0] === "--list") console.log(JSON.stringify(Object.entries(cases).map(([name, [, higher]]) => [name, higher])));
 else if (argv[0] === "--case") {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "iobench-"));
   try {

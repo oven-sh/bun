@@ -17,6 +17,7 @@ mod tests;
 mod timer;
 
 pub use afd::{Readiness, SocketWatch, Watcher};
+pub use bun_threading::spin::tune;
 pub use port::{Event, Hold, PendingWrite, Port, Waker};
 pub use read_to_end::read_to_end;
 pub use request::{AsyncFile, Completion, Handle, MAX_LEN, Remote, Request};

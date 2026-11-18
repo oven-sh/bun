@@ -124,6 +124,9 @@ pub fn copy_file_with_state(
                     copy_file_state.insert(LinuxCopyFileState::HAS_SEEN_EXDEV);
                 }
 
+                // Don't worry about EINTR here.
+                E::EINTR => {}
+
                 // On Linux EOPNOTSUPP == ENOTSUP.
                 E::EACCES | E::EBADF | E::EINVAL | E::ENOTSUP | E::ENOSYS | E::EPERM => {
                     bun_core::scoped_log!(debug, "ioctl_ficlonerange is NOT supported");

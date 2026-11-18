@@ -6875,15 +6875,16 @@ ssize_t splice(int in, off_t *in_offset, int out, off_t *out_offset, size_t leng
 }
 
 long syscall(long number, ...) {
-  static char copied[PATH_MAX], sent[PATH_MAX], listed[PATH_MAX], cloned[PATH_MAX];
+  static char copied[PATH_MAX], sent[PATH_MAX], listed[PATH_MAX];
   va_list list;
   va_start(list, number);
   long a = va_arg(list, long), b = va_arg(list, long), c = va_arg(list, long);
   long d = va_arg(list, long), e = va_arg(list, long), f = va_arg(list, long);
   va_end(list);
   if (number == SYS_copy_file_range) {
-    // A copy to a file named "enospc-" fails with another errno.
+    // Each copy to a file named "enospc-" fails with another errno.
     if (strstr(in_test(path_of(c)), "enospc-")) {
+      dprintf(2, "copy_file_range ENOSPC\\n");
       errno = ENOSPC;
       return -1;
     }
@@ -6891,13 +6892,6 @@ long syscall(long number, ...) {
   }
   if (number == SYS_sendfile && is_interrupted("sendfile", path_of(b), sent)) return -1;
   if (number == SYS_getdents64 && is_interrupted("getdents64", path_of(a), listed)) return -1;
-  if (number == SYS_ioctl && b == 0x40049409) {
-    // FICLONE. A file named "eintr-clone" is on a file system that has clones: the call after the failed one
-    // succeeds, and clones nothing. Every other file is on a file system without them.
-    if (strstr(in_test(path_of(a)), "eintr-clone")) return is_interrupted("ioctl_ficlone", path_of(a), cloned) ? -1 : 0;
-    errno = EOPNOTSUPP;
-    return -1;
-  }
   return ((long (*)(long, ...)) dlsym(RTLD_NEXT, "syscall"))(number, a, b, c, d, e, f);
 }
 `;
@@ -6916,7 +6910,15 @@ async function runUnderEintrShim(script: string) {
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "index.js"],
-    env: { ...bunEnv, LD_PRELOAD: bunEnv.LD_PRELOAD ? `${soPath}:${bunEnv.LD_PRELOAD}` : soPath },
+    env: {
+      ...bunEnv,
+      // A relative path: the loader splits LD_PRELOAD at each space and colon.
+      LD_PRELOAD: bunEnv.LD_PRELOAD ? `./shim.so:${bunEnv.LD_PRELOAD}` : "./shim.so",
+      // Without the clone, a copy reaches copy_file_range on every file system.
+      BUN_CONFIG_DISABLE_ioctl_ficlonerange: "1",
+      BUN_CONFIG_DISABLE_COPY_FILE_RANGE: undefined,
+      NODE_DISABLE_COMPILE_CACHE: undefined,
+    },
     cwd: String(dir),
     stderr: "pipe",
   });
@@ -6924,7 +6926,7 @@ async function runUnderEintrShim(script: string) {
   return { stdout, stderr, exitCode };
 }
 
-it.skipIf(!isLinux || !cc)("a copy is made again after EINTR", async () => {
+it.concurrent.skipIf(!isLinux || !cc)("a copy is made again after EINTR", async () => {
   const result = await runUnderEintrShim(`
 import fs from "node:fs";
 import { promisify } from "node:util";
@@ -6933,17 +6935,6 @@ const row = async (name, run) =>
   console.log(name, JSON.stringify(await Promise.resolve().then(run).catch(error => error.code)));
 const copied = to => fs.readFileSync(to, "utf8") === text;
 fs.writeFileSync("eintr-source", text);
-
-// The clone of the shim copies nothing, so a clone that was made again leaves an empty file.
-await row("forced clone", () => {
-  fs.copyFileSync("eintr-source", "eintr-clone-1", fs.constants.COPYFILE_FICLONE_FORCE);
-  return fs.statSync("eintr-clone-1").size;
-});
-await row("clones after it", () => {
-  fs.copyFileSync("eintr-source", "eintr-clone-2");
-  fs.cpSync("eintr-source", "eintr-clone-3");
-  return [fs.statSync("eintr-clone-2").size, fs.statSync("eintr-clone-3").size];
-});
 
 await row("cpSync", () => (fs.cpSync("eintr-source", "eintr-copy-1"), copied("eintr-copy-1")));
 fs.writeFileSync("eintr-copy-2", text + text);
@@ -6962,10 +6953,10 @@ await row("Bun.write", () =>
 const device = Bun.file("/dev/null");
 void device.size;
 await row("Bun.write to a device", () => Bun.write(device, Bun.file("eintr-source")));
-// Both ends are pipes, and Bun.write uses splice.
-const pipeline = 'echo eintr | "$0" -e "await Bun.write(Bun.stdout, Bun.stdin)" | wc -c';
+// Both ends are pipes, and Bun.write uses splice. The row is the count of bytes and the exit code of bun.
+const pipeline = 'echo eintr | { "$0" -e "await Bun.write(Bun.stdout, Bun.stdin)"; echo $? > status; } | wc -c';
 const piped = Bun.spawnSync({ cmd: ["sh", "-c", pipeline, process.execPath], stderr: "inherit" });
-console.log("Bun.write in a pipeline", piped.stdout.toString().trim());
+console.log("Bun.write in a pipeline", piped.stdout.toString().trim(), fs.readFileSync("status", "utf8").trim());
 
 // fetch and Bun.serve use sendfile for a file of this size.
 fs.writeFileSync("eintr-upload", Buffer.alloc(1 << 20, "0123456789"));
@@ -6984,7 +6975,7 @@ fs.writeFileSync("eintr-served", Buffer.alloc(1 << 20, "0123456789"));
   await row("Bun.serve", () => fetch(server.url).then(async response => (await response.arrayBuffer()).byteLength));
 }
 
-// Another errno is not a reason to call again.
+// Another errno is not a reason to call again: the shim logs one call for each copy.
 fs.writeFileSync("enospc-source", text);
 await row("cpSync without space", () => fs.cpSync("enospc-source", "enospc-copy-1"));
 await row("copyFileSync without space", () => fs.copyFileSync("enospc-source", "enospc-copy-2"));
@@ -6993,8 +6984,6 @@ await row("copyFileSync without space", () => fs.copyFileSync("enospc-source", "
   expect(result).toEqual({
     stdout:
       [
-        "forced clone 0",
-        "clones after it [0,0]",
         "cpSync true",
         "cpSync onto a longer file true",
         "cp true",
@@ -7003,7 +6992,7 @@ await row("copyFileSync without space", () => fs.copyFileSync("enospc-source", "
         "promises.copyFile true",
         "Bun.write [10000,true]",
         "Bun.write to a device 10000",
-        "Bun.write in a pipeline 6",
+        "Bun.write in a pipeline 6 0",
         'fetch "1048576"',
         "Bun.serve 1048576",
         'cpSync without space "ENOSPC"',
@@ -7011,15 +7000,15 @@ await row("copyFileSync without space", () => fs.copyFileSync("enospc-source", "
       ].join("\n") + "\n",
     stderr:
       [
-        ...["ioctl_ficlone", "ioctl_ficlone", "ioctl_ficlone"],
         ...Array(7).fill("copy_file_range"),
         ...["sendfile", "splice", "sendfile", "sendfile"],
+        ...["copy_file_range ENOSPC", "copy_file_range ENOSPC"],
       ].join("\n") + "\n",
     exitCode: 0,
   });
 });
 
-it.skipIf(!isLinux || !cc)("a folder read and a path lookup are made again after EINTR", async () => {
+it.concurrent.skipIf(!isLinux || !cc)("a folder read and a path lookup are made again after EINTR", async () => {
   const result = await runUnderEintrShim(`
 import fs from "node:fs";
 import module from "node:module";

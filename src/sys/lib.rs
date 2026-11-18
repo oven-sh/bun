@@ -5078,6 +5078,7 @@ pub mod linux {
         crate::safe_libc::fallocate(fd, 0, offset, len) == 0
     }
     /// Raw `sendfile(out, in, *offset, count)`. With an `offset`, the kernel reads and updates it.
+    /// Runs again on EINTR.
     #[inline]
     pub fn sendfile(out_fd: c_int, in_fd: c_int, offset: Option<&mut i64>, count: usize) -> isize {
         super::linux_syscall::sendfile(out_fd, in_fd, offset, count)
@@ -5135,24 +5136,25 @@ pub mod linux {
     // the kernel-convention `GetErrno for usize` impl which would mis-decode
     // every failure as EPERM (`-1 as usize` → errno 1).
 
-    /// `bun.linux.ioctl_ficlone`: raw FICLONE ioctl. Runs again on EINTR.
+    /// `bun.linux.ioctl_ficlone`: raw FICLONE ioctl.
     /// Support for FICLONE is dependent on the filesystem driver.
+    /// No retry, as in libuv: when a clone fails, a caller copies the bytes or reports the errno.
     #[inline]
     pub fn ioctl_ficlone(dest_fd: super::Fd, src_fd: super::Fd) -> isize {
         // FICLONE = _IOW(0x94, 9, c_int).
         const FICLONE: libc::c_ulong = 0x40049409;
         // SAFETY: raw `ioctl(2)`; both fds owned by caller.
-        super::linux_syscall::retry_raw(|| unsafe {
+        unsafe {
             libc::syscall(
                 libc::SYS_ioctl,
                 dest_fd.native() as libc::c_long,
                 FICLONE,
                 src_fd.native() as libc::c_long,
             ) as isize
-        })
+        }
     }
 
-    /// `copy_file_range` raw syscall.
+    /// `copy_file_range` raw syscall. Runs again on EINTR.
     #[inline]
     pub fn copy_file_range(
         in_: c_int,

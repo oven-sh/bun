@@ -792,7 +792,11 @@ impl TranspilerJob {
             return;
         };
 
-        let runnable = parse_result.require_runnable_js(log_clone_guard.1);
+        let runnable = bun_bundler::transpiler::require_runnable_js(
+            &parse_result.ast,
+            &parse_result.source,
+            log_clone_guard.1,
+        );
         if runnable.is_err() {
             this.parse_error = Some(crate::CrateError::ParseError);
             return;

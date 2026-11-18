@@ -697,20 +697,24 @@ pub struct ParseResult<'a> {
     pub source_contents_backing: resolver::cache::Contents,
 }
 
-impl<'a> ParseResult<'a> {
-    /// Check that this source can be handed to the runtime.
-    pub fn require_runnable_js(&self, log: &mut bun_ast::Log) -> Result<(), crate::Error> {
-        if let Some(loc) = self.ast.first_preserved_jsx {
-            log.add_error(
-                Some(&self.source),
-                loc,
-                b"Cannot preserve JSX in a file that Bun runs",
-            );
-            return Err(crate::Error::ParserError);
-        }
-        Ok(())
+/// Check that the parsed source can be handed to the runtime.
+pub fn require_runnable_js(
+    ast: &bun_ast::Ast<'_>,
+    source: &bun_ast::Source<'_>,
+    log: &mut bun_ast::Log,
+) -> Result<(), crate::Error> {
+    if let Some(loc) = ast.first_preserved_jsx {
+        log.add_error(
+            Some(source),
+            loc,
+            b"Cannot preserve JSX in a file that Bun runs",
+        );
+        return Err(crate::Error::ParserError);
     }
+    Ok(())
+}
 
+impl<'a> ParseResult<'a> {
     #[inline]
     fn empty_with(
         arena: &'a bun_alloc::Arena,

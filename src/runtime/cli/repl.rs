@@ -1609,10 +1609,17 @@ impl<'a> Repl<'a> {
         };
 
         // Transform the code using REPL mode (hoists declarations, wraps result in { value: expr })
-        let Some(transformed_code) = self.transform_for_repl(code) else {
-            // Transform failed, try evaluating raw code (for syntax errors, etc.)
-            self.evaluate_raw(code);
-            return;
+        let transformed_code = match self.transform_for_repl(code) {
+            Err(log) => {
+                let _ = log.print(Output::writer());
+                return;
+            }
+            Ok(None) => {
+                // Transform failed, try evaluating raw code (for syntax errors, etc.)
+                self.evaluate_raw(code);
+                return;
+            }
+            Ok(Some(code)) => code,
         };
 
         // Evaluate the transformed code
@@ -1758,25 +1765,32 @@ impl<'a> Repl<'a> {
             return false;
         }
 
-        let Some(transformed_code) = self.transform_for_repl(code) else {
-            // Transform failed — fall back to raw evaluation for the error message
-            let mut exception: JSValue = JSValue::UNDEFINED;
-            // SAFETY: `global` is a live opaque `JSGlobalObject` handle; slice ptr/len pairs
-            // are valid for the duration of the call; `exception` is a stack local.
-            unsafe {
-                let _ = Bun__REPL__evaluate(
-                    global,
-                    code.as_ptr(),
-                    code.len(),
-                    b"[eval]".as_ptr(),
-                    b"[eval]".len(),
-                    &raw mut exception,
-                );
+        let transformed_code = match self.transform_for_repl(code) {
+            Err(log) => {
+                let _ = log.print(Output::error_writer());
+                return true;
             }
-            if !exception.is_undefined() && !exception.is_null() {
-                self.print_js_error_to(exception, Output::error_writer(), stderr_colors);
+            Ok(None) => {
+                // Transform failed — fall back to raw evaluation for the error message
+                let mut exception: JSValue = JSValue::UNDEFINED;
+                // SAFETY: `global` is a live opaque `JSGlobalObject` handle; slice ptr/len pairs
+                // are valid for the duration of the call; `exception` is a stack local.
+                unsafe {
+                    let _ = Bun__REPL__evaluate(
+                        global,
+                        code.as_ptr(),
+                        code.len(),
+                        b"[eval]".as_ptr(),
+                        b"[eval]".len(),
+                        &raw mut exception,
+                    );
+                }
+                if !exception.is_undefined() && !exception.is_null() {
+                    self.print_js_error_to(exception, Output::error_writer(), stderr_colors);
+                }
+                return true;
             }
-            return true;
+            Ok(Some(code)) => code,
         };
 
         let mut exception: JSValue = JSValue::UNDEFINED;
@@ -1912,9 +1926,16 @@ impl<'a> Repl<'a> {
             return;
         };
 
-        let Some(transformed_code) = self.transform_for_repl(code) else {
-            self.evaluate_raw(code);
-            return;
+        let transformed_code = match self.transform_for_repl(code) {
+            Err(log) => {
+                let _ = log.print(Output::writer());
+                return;
+            }
+            Ok(None) => {
+                self.evaluate_raw(code);
+                return;
+            }
+            Ok(Some(code)) => code,
         };
 
         let mut exception: JSValue = JSValue::UNDEFINED;
@@ -2098,12 +2119,14 @@ impl<'a> Repl<'a> {
     }
 
     /// Transform code using the REPL parser (hoists declarations, wraps expressions)
-    fn transform_for_repl(&self, code: &[u8]) -> Option<Box<[u8]>> {
-        let vm = self.vm?;
+    fn transform_for_repl(&self, code: &[u8]) -> Result<Option<Box<[u8]>>, Box<bun_ast::Log>> {
+        let Some(vm) = self.vm else {
+            return Ok(None);
+        };
 
         // Skip empty code
         if code.is_empty() || strings::trim(code, b" \t\n\r").is_empty() {
-            return None;
+            return Ok(None);
         }
 
         // Check if code looks like an object literal that would be misinterpreted as a block
@@ -2163,21 +2186,25 @@ impl<'a> Repl<'a> {
         // Parse with REPL transforms
         let parser = match bun_js_parser::Parser::init(opts, &mut log, &source, define, &arena) {
             Ok(p) => p,
-            Err(_) => return None,
+            Err(_) => return Ok(None),
         };
 
         let parse_result = match parser.parse() {
             Ok(r) => r,
-            Err(_) => return None,
+            Err(_) => return Ok(None),
         };
         let bun_js_parser::Result::Ast(mut ast) = parse_result else {
-            return None;
+            return Ok(None);
         };
         // Don't call ast.deinit() - the arena handles cleanup
 
         // Check for parse errors
         if log.errors > 0 {
-            return None;
+            return Ok(None);
+        }
+        let runnable = bun_bundler::transpiler::require_runnable_js(&ast, &source, &mut log);
+        if runnable.is_err() {
+            return Err(Box::new(log));
         }
         // Print the transformed AST back to JavaScript
         let buffer_writer = bun_js_printer::BufferWriter::init();
@@ -2209,12 +2236,12 @@ impl<'a> Repl<'a> {
         )
         .is_err()
         {
-            return None;
+            return Ok(None);
         }
 
         // Get the written buffer
         let written = buffer_printer.ctx.get_written();
-        Some(Box::<[u8]>::from(written))
+        Ok(Some(Box::<[u8]>::from(written)))
     }
 
     fn print_js_error(&self, error_value: JSValue) {

@@ -332,6 +332,19 @@ async function withTerminalRepl(
 }
 
 describe.concurrent("Bun REPL", () => {
+  test("reports preserved JSX and continues reading input", async () => {
+    const { stdout, outputs, stderr, exitCode } = await runRepl([
+      "/** @jsxRuntime preserve */ <div />",
+      "1 + 2",
+      ".exit",
+    ]);
+    expect(stdout).toContain("[repl]:1:29");
+    expect(outputs[0]).toContain("Cannot preserve JSX in a file that Bun runs");
+    expect(outputs[1]).toBe("3");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   describe("basic evaluation", () => {
     test("prints the value of each evaluated line", async () => {
       const { outputs, stderr, exitCode } = await runRepl([

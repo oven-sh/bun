@@ -349,15 +349,16 @@ impl Drop for OwnedSslCtx {
 #[repr(transparent)]
 pub struct UniqueSslCtx(OwnedSslCtx);
 
-// SAFETY: no other thread can reach the context (`from_raw`'s contract), and BoringSSL does not
-// tie an `SSL_CTX` to the thread that created it.
+// SAFETY: `from_raw`'s contract: no other thread can reach the context, and nothing attached to
+// it needs the thread that built it. BoringSSL does not tie an `SSL_CTX` to a thread.
 unsafe impl Send for UniqueSslCtx {}
 
 impl UniqueSslCtx {
     /// Takes the +1 `raw` carries; `None` when `raw` is null.
     ///
     /// # Safety
-    /// `raw` must be null or the only reference to its context.
+    /// `raw` must be null or the only reference to its context, and the ex-data and callbacks of
+    /// that context must not need the thread that built it.
     pub unsafe fn from_raw(raw: *mut SSL_CTX) -> Option<Self> {
         // SAFETY: the only reference is one the caller gives up.
         unsafe { OwnedSslCtx::from_raw(raw) }.map(Self)

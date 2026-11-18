@@ -704,14 +704,27 @@ ljelkjwelkgjw;lekj;lkejflkj
       "why pkg-a",
     ];
 
-    async function setup(files: Record<string, string> = {}) {
+    async function setup(files: Record<string, string> = project) {
       const { packageDir, env } = await setupTest();
-      await Promise.all(
-        Object.entries({ ...project, ...files }).map(([name, content]) => write(join(packageDir, name), content)),
-      );
-      // `bun link` registers the project here.
-      return { packageDir, env: { ...env, BUN_INSTALL: join(packageDir, ".bun-install") } };
+      await Promise.all(Object.entries(files).map(([name, content]) => write(join(packageDir, name), content)));
+      // `bun link` and `-g` write here.
+      const global = join(packageDir, ".bun-install");
+      return {
+        packageDir,
+        env: {
+          ...env,
+          BUN_INSTALL: global,
+          BUN_INSTALL_GLOBAL_DIR: join(global, "install", "global"),
+          BUN_INSTALL_BIN: join(global, "bin"),
+        },
+      };
     }
+
+    const stopped = (packageDir: string) => ({
+      stdout: "",
+      stderr: `HTTPThread: could not find CA file: '${join(packageDir, "does-not-exist")}'\n`,
+      exitCode: 1,
+    });
 
     async function run(cwd: string, env: NodeJS.Dict<string>, args: string[]) {
       await using proc = spawn({ cmd: [bunExe(), ...args], cwd, stdout: "pipe", stderr: "pipe", env });
@@ -759,7 +772,7 @@ ljelkjwelkgjw;lekj;lkejflkj
       ],
       ["ca in .npmrc that is not a certificate", [], { ".npmrc": "ca=not-valid\n" }, () => "the CA is invalid"],
     ])("bun pm bin stops for a %s", async (_, flags, files, message) => {
-      const { packageDir, env } = await setup(files);
+      const { packageDir, env } = await setup({ ...project, ...files });
       expect(await run(packageDir, env, ["pm", "bin", ...flags])).toEqual({
         stdout: "",
         stderr: `HTTPThread: ${message(packageDir)}\n`,
@@ -772,13 +785,7 @@ ljelkjwelkgjw;lekj;lkejflkj
       const runs = await Promise.all(
         Array.from({ length: 5 }, () => run(packageDir, env, [...command.split(" "), "--cafile", "does-not-exist"])),
       );
-      expect(runs).toEqual(
-        Array(5).fill({
-          stdout: "",
-          stderr: `HTTPThread: could not find CA file: '${join(packageDir, "does-not-exist")}'\n`,
-          exitCode: 1,
-        }),
-      );
+      expect(runs).toEqual(Array(5).fill(stopped(packageDir)));
       expect({
         "package.json": await file(join(packageDir, "package.json")).text(),
         "bun.lock": await file(join(packageDir, "bun.lock")).text(),
@@ -794,33 +801,27 @@ ljelkjwelkgjw;lekj;lkejflkj
 
     // The control: the same project and commands, with a CA that loads.
     test.each(commands)("bun %s runs with a --cafile that loads", async command => {
-      const { packageDir, env } = await setup({ "ca.pem": tls.cert });
+      const { packageDir, env } = await setup({ ...project, "ca.pem": tls.cert });
       const { stderr, exitCode } = await run(packageDir, env, [...command.split(" "), "--cafile", "ca.pem"]);
       expect(stderr).not.toContain("HTTPThread");
       expect(exitCode).toBe(0);
     });
 
     // `PackageManager::init` reads the CA last. By then it has made the global directory for `-g`,
-    // and `bun add` has made the package.json that it did not find.
+    // and `bun add` has made the package.json that it did not find. Each run has a folder of its
+    // own, so each one does that.
     test.each([
       ["pm bin -g", project],
       ["add no-deps", {}],
     ])("bun %s stops in every run", async (command, files) => {
-      const { packageDir, env } = await setupTest();
-      await Promise.all(Object.entries(files).map(([name, content]) => write(join(packageDir, name), content)));
-      const globalEnv = { ...env, BUN_INSTALL: join(packageDir, ".bun-install") };
       const runs = await Promise.all(
-        Array.from({ length: 5 }, () =>
-          run(packageDir, globalEnv, [...command.split(" "), "--cafile", "does-not-exist"]),
-        ),
-      );
-      expect(runs).toEqual(
-        Array(5).fill({
-          stdout: "",
-          stderr: `HTTPThread: could not find CA file: '${join(packageDir, "does-not-exist")}'\n`,
-          exitCode: 1,
+        Array.from({ length: 5 }, async () => {
+          const { packageDir, env } = await setup(files);
+          const result = await run(packageDir, env, [...command.split(" "), "--cafile", "does-not-exist"]);
+          return { result, expected: stopped(packageDir) };
         }),
       );
+      expect(runs.map(({ result }) => result)).toEqual(runs.map(({ expected }) => expected));
     });
 
     test("bun install from a lockfile and a warm cache places nothing", async () => {
@@ -829,11 +830,7 @@ ljelkjwelkgjw;lekj;lkejflkj
       await runBunInstall(env, packageDir);
       await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
 
-      expect(await run(packageDir, env, ["install", "--cafile", "does-not-exist"])).toEqual({
-        stdout: "",
-        stderr: `HTTPThread: could not find CA file: '${join(packageDir, "does-not-exist")}'\n`,
-        exitCode: 1,
-      });
+      expect(await run(packageDir, env, ["install", "--cafile", "does-not-exist"])).toEqual(stopped(packageDir));
       expect(existsSync(join(packageDir, "node_modules"))).toBe(false);
     });
   });

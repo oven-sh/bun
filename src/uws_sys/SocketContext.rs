@@ -170,6 +170,8 @@ impl BunSocketContextOptions {
     ) -> Option<UniqueSslCtx> {
         // SAFETY: FFI call; `self` is `#[repr(C)]` and passed by value, `err` is a valid out-param.
         // A non-null return carries the +1 from `SSL_CTX_new`, and nothing else has the context yet.
+        // What the call attaches is not tied to a thread: callbacks without state, plain values as
+        // ex-data, and a free function that decrements an atomic counter.
         unsafe { UniqueSslCtx::from_raw(c::us_ssl_ctx_from_options(self, err)) }
     }
 

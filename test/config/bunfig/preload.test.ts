@@ -1,5 +1,5 @@
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, bunRun, normalizeBunSnapshot, tempDir } from "harness";
 import { join, resolve } from "path";
 
 const fixturePath = (...segs: string[]) => resolve(import.meta.dirname, "fixtures", "preload", ...segs);
@@ -52,6 +52,15 @@ describe.concurrent("Given a single universal preload", () => {
     expect(code).toBe(0);
   });
 }); // </given a single universal preload>
+
+test.concurrent("a backslash separates in the path of a preload, and not in a data: URL", async () => {
+  using dir = tempDir("preload-backslash", {
+    "bunfig.toml": String.raw`preload = ['.\setup\a.js', 'data:text/javascript,console.log("b\nc")']`,
+    "setup/a.js": `console.log("a");`,
+    "index.js": `console.log("d");`,
+  });
+  expect(await bunRun(join(String(dir), "index.js"))).toSpawn("a\nb\nc\nd");
+});
 
 describe.concurrent("Given a bunfig.toml with both universal and test-only preloads", () => {
   const dir = fixturePath("mixed");

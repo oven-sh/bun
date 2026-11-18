@@ -972,7 +972,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 Global::exit(1);
             };
             let mut entry_points = vec![path];
-            entry_points.extend(ctx.preloads.iter().cloned());
+            entry_points.extend(crate::cli::run_compiled::entry_points_of_preloads(ctx));
             crate::cli::run_compiled::start(ctx, entry_points, 0);
         }
         crate::cli::run_compiled::read_no_environment_file_again(ctx);

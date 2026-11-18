@@ -4,7 +4,6 @@ use crate::Error;
 use crate::bun_fs::FileSystem;
 use crate::lockfile_real::package::PackageColumns;
 use crate::npm::registry::{FolderCacheKey, Scope};
-use crate::package_install::{Method, PackageInstall};
 use crate::repository::Repository;
 use bun_core::ZStr;
 use bun_core::{Global, Output, ZBox, env_var, fmt as bun_fmt, strings};
@@ -356,10 +355,8 @@ fn ensure_cache_directory(this: &mut PackageManager) -> sys::Maybe<&'static Cach
     if this.options.enable.contains(Enable::CACHE) {
         let configured = this.options.cache_directory;
         let env_base_dir = this.options.env_base_dir();
-        let uses_symlink_backend = PackageInstall::supported_method() == Method::Symlink;
         if let Ok(CacheDir { path, .. }) =
             fetch_cache_directory_path(this.env_mut(), env_base_dir, Some(configured))
-            && (!uses_symlink_backend || node_can_import_from(&path))
             && let Ok(handle) = Dir::cwd().make_open_path(&path, Default::default())
         {
             let path = ZBox::from_vec(path);

@@ -2138,7 +2138,12 @@ impl<'a> PackageInstaller<'a> {
                     }
 
                     let copy = (self.copy_trees)
-                        .is_set_allow_out_of_bound(self.current_tree_id as usize, false);
+                        .is_set_allow_out_of_bound(self.current_tree_id as usize, false)
+                        || (PackageInstall::supported_method() == package_install::Method::Symlink
+                            && resolution.can_enqueue_install_task()
+                            && !package_manager::node_can_import_from(
+                                &self.manager_mut().get_cache_directory().path,
+                            ));
                     if can_defer_link.unwrap_or_else(|| {
                         self.can_defer_link(
                             alias.slice(string_buf!()),

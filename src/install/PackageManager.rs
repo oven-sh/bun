@@ -1980,7 +1980,7 @@ fn find_workspace_root_above<'a>(
             let child_path = Path::relative(root_dir, child_cwd).into_portable();
             if let Some((_, entry)) = (workspace_names.keys().iter())
                 .zip(workspace_names.values())
-                .find(|(path, _)| bun_paths::strip_prefix(&child_path, path) == Some(b""))
+                .find(|(dir, _)| bun_paths::strip_prefix(&child_path, dir) == Some(b""))
             {
                 let name_hash = Semver::string::Builder::string_hash(&entry.name);
                 return Ok(Some((parent, json_file, name_hash)));

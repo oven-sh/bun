@@ -298,6 +298,31 @@ describe.concurrent("bun lint and bun fmt", () => {
   });
 });
 
+test.skipIf(isWindows)("a backslash separates in the path of an entry point, and not in a data: URL", async () => {
+  using dir = tempDir("bunfig-entry-points", {
+    "bunfig.toml": String.raw`
+      [bundle]
+      entryPoints = ['.\src\a.js', 'data:text/javascript,console.log("b\x63")']
+    `,
+    "src/a.js": `console.log("a");`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--root=.", "--outdir=out", "--entry-naming=[hash].js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const outputs = await Array.fromAsync(new Bun.Glob("out/*.js").scan({ cwd: String(dir), absolute: true }), file =>
+    Bun.file(file).text(),
+  );
+
+  expect(stderr).toBe("");
+  expect(outputs.map(text => text.match(/^console\.log\("(.*)"\);$/m)?.[1]).sort()).toEqual(["a", "bc"]);
+  expect(exitCode).toBe(0);
+});
+
 test.skipIf(isWindows)("bunfig.toml is loaded when the cwd contains a backslash", async () => {
   using dir = tempDir("bunfig-backslash", { "a\\b": { "bunfig.toml": `[define]\nFROM = '"bunfig"'\n` } });
   await using proc = Bun.spawn({

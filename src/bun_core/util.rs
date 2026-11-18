@@ -362,12 +362,6 @@ impl WStr {
     pub const fn as_ptr(&self) -> *const u16 {
         self.0.as_ptr()
     }
-    /// Mirrors [`ZStr::nul_terminate`].
-    #[inline]
-    pub fn nul_terminate(buf: &mut [u16], len: usize) -> &WStr {
-        buf[len] = 0;
-        Self::from_buf(buf, len)
-    }
     /// Mirrors [`ZStr::substring`].
     #[inline]
     pub fn substring(&self, start_index: usize) -> &WStr {
@@ -5037,10 +5031,6 @@ mod tests {
         let mut bytes = *b"abc";
         let string = ZStr::nul_terminate(&mut bytes, 2);
         assert_eq!(string.as_bytes_with_nul(), b"ab\0");
-
-        let mut units = [1, 2, 3];
-        assert_eq!(WStr::nul_terminate(&mut units, 2).as_slice(), [1, 2]);
-        assert_eq!(units, [1, 2, 0]);
     }
 
     #[test]

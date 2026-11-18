@@ -410,6 +410,7 @@ dependencies = [
  "bun_clap",
  "bun_collections",
  "bun_core",
+ "bun_glob",
  "bun_install_types",
  "bun_io",
  "bun_options_types",

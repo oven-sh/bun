@@ -3129,7 +3129,7 @@ impl TestCommand {
             let mut entry_points: Vec<Box<[u8]>> =
                 test_files.iter().map(|path| Box::from(&**path)).collect();
             let file_count = entry_points.len();
-            entry_points.extend(ctx.preloads.iter().cloned());
+            entry_points.extend(run_compiled::entry_points_of_preloads(ctx));
             let files = test_files.iter().map(|path| &**path);
             let has_window = has_file_with_window(files, ctx.test_options.environment);
             if has_window {

@@ -134,6 +134,14 @@ pub(crate) fn files_in_memory() -> Option<&'static FileMap> {
     *STAND_IN.lock()
 }
 
+/// `\` is `/` in what is imported, and not in an entry point.
+pub(crate) fn entry_points_of_preloads(ctx: &ContextData) -> impl Iterator<Item = Box<[u8]>> {
+    (ctx.preloads.iter()).map(|name| match bun_paths::is_package_path(name) {
+        true => name.clone(),
+        false => bun_paths::from_portable(name).into(),
+    })
+}
+
 #[cold]
 #[inline(never)]
 pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, test_file_count: usize) -> ! {

@@ -148,9 +148,16 @@ pub(crate) fn init_external_modules(
         } else if bun_paths::is_package_path(external) {
             result.node_modules.insert(external).expect("unreachable");
         } else {
-            let mut normalized = bun_paths::Path::resolve(&[cwd, external]);
-            normalized.copy_trailing_sep_from(external);
-            result.abs_paths.insert(&normalized).expect("unreachable");
+            // `import` reads `\` as `/`, and `require()` does not.
+            let mut imported = path.to_vec();
+            let below_cwd = bun_paths::strip_prefix(path, cwd).unwrap_or(path);
+            let start = path.len() - below_cwd.len();
+            strings::replace_char_in_place(&mut imported[start..], b'\\', b'/');
+            for spelling in [path, &imported] {
+                let mut normalized = bun_paths::Path::resolve(&[cwd, spelling]);
+                normalized.copy_trailing_sep_from(spelling);
+                result.abs_paths.insert(&normalized).expect("unreachable");
+            }
         }
     }
 

@@ -259,6 +259,25 @@ describe.concurrent("bun compile", () => {
     buildLimit,
   );
 
+  test.skipIf(isWindows)(
+    "a backslash escapes in a pattern of [bundle] entryPoints",
+    () =>
+      slot(async () => {
+        using dir = tempDir("compile-bunfig-entry-pattern", {
+          "pages/[id]/app.js": `console.log("[id]");`,
+          "pages/i/app.js": `console.log("i");`,
+          "bunfig.toml": `[bundle]\nentryPoints = ['pages/\\[id\\]/*.js']\n`,
+        });
+        const folder = String(dir);
+        expect(await bun(folder, "compile", "--outfile", "out")).toMatchObject({ exitCode: 0 });
+        expect(await spawned([executable(folder, "out")], folder, env)).toMatchObject({
+          stdout: "[id]\n",
+          exitCode: 0,
+        });
+      }),
+    buildLimit,
+  );
+
   test(
     "Bun.build compiles, and --no-aot and plain --compile do not",
     () =>

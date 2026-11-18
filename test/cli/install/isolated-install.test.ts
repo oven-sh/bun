@@ -779,12 +779,14 @@ describe.concurrent.skipIf(isWindows).each([
 
 // Node.js refuses to import a module whose real path contains a backslash.
 test.concurrent.skipIf(isWindows).each([
-  ["the global store", { linker: "isolated", globalStore: true }, []],
-  ["--backend symlink", { linker: "hoisted" }, ["--backend", "symlink"]],
-] as const)("%s is not used when the cache path contains a backslash", async (_, bunfig, flags) => {
+  ["the global store", { linker: "isolated", globalStore: true }, [], "node_modules/"],
+  ["--backend symlink", { linker: "hoisted" }, ["--backend", "symlink"], "folder/"],
+  ["--backend symlink (isolated)", { linker: "isolated" }, ["--backend", "symlink"], "node_modules/"],
+] as const)("%s is not used when the cache path contains a backslash", async (_, bunfig, flags, folderIsIn) => {
   using dir = tempDir("linked-cache-backslash", {
     "a\\b/.keep": "",
-    "app/package.json": JSON.stringify({ name: "app", dependencies: { "no-deps": "1.0.1" } }),
+    "app/package.json": JSON.stringify({ name: "app", dependencies: { "no-deps": "1.0.1", folder: "file:./folder" } }),
+    "app/folder/package.json": JSON.stringify({ name: "folder", version: "1.0.0" }),
   });
   const project = join(String(dir), "app");
   await registry.writeBunfig(project, bunfig);
@@ -793,6 +795,9 @@ test.concurrent.skipIf(isWindows).each([
   await runBunInstall(env, project, { packages: [...flags] });
 
   expect(realpathSync(join(project, "node_modules/no-deps/index.js"))).toStartWith(join(project, "node_modules"));
+  expect(realpathSync(join(project, "node_modules/folder/package.json"))).toStartWith(join(project, folderIsIn));
+  expect(await readdirSorted(env.BUN_INSTALL_CACHE_DIR)).toContainEqual(expect.stringMatching(/^no-deps@1\.0\.1@/));
+  expect(existsSync(join(project, "node_modules/.cache"))).toBeFalse();
   expect(await readdirSorted(String(dir))).toEqual(["a\\b", "app"]);
 });
 

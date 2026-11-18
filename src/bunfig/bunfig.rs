@@ -44,6 +44,17 @@ fn estring_to_path(s: &E::EString, bump: &Bump) -> Box<[u8]> {
     from_portable(s.string(bump).expect("OOM")).into()
 }
 
+/// For what is imported: a `data:` URL and a query are not paths.
+fn estring_to_specifier(s: &E::EString, bump: &Bump) -> Box<[u8]> {
+    let text = s.string(bump).expect("OOM");
+    let end_of_path = match text.starts_with(b"data:") {
+        true => 0,
+        false => bun_core::strings::index_of_char_usize(text, b'?').unwrap_or(text.len()),
+    };
+    let (path, rest) = text.split_at(end_of_path);
+    [&from_portable(path), rest].concat().into()
+}
+
 /// Macro-remap parsing (the `PackageJSON.parseMacrosJSON` shape),
 /// implemented here against the value-shaped `bun_ast::Expr` (the
 /// tree produced by the TOML/JSON parsers) and returning the
@@ -298,7 +309,7 @@ impl<'a> Parser<'a, '_> {
                     self.expect_string(item)?;
                     if let ExprData::EString(s) = &item.data {
                         if s.len() > 0 {
-                            preloads.push(estring_to_path(s, self.bump));
+                            preloads.push(estring_to_specifier(s, self.bump));
                         }
                     }
                 }
@@ -306,7 +317,7 @@ impl<'a> Parser<'a, '_> {
             }
             ExprData::EString(s) => {
                 if s.len() > 0 {
-                    self.ctx.preloads = vec![estring_to_path(s, self.bump)];
+                    self.ctx.preloads = vec![estring_to_specifier(s, self.bump)];
                 }
             }
             ExprData::ENull(_) => {}
@@ -1068,13 +1079,13 @@ impl<'a> Parser<'a, '_> {
                     let mut names: Vec<Box<[u8]>> = Vec::with_capacity(items.len());
                     for item in items {
                         self.expect_string(item)?;
-                        names.push(estring_to_path(
-                            item.data
-                                .e_string()
-                                .expect("infallible: variant checked")
-                                .get(),
-                            self.bump,
-                        ));
+                        let name = item.as_string(self.bump).unwrap_or(b"");
+                        let is_path =
+                            !name.starts_with(b"data:") && !bun_glob::detect_glob_syntax(name);
+                        names.push(match is_path {
+                            true => from_portable(name).into(),
+                            false => name.into(),
+                        });
                     }
                     self.ctx.args.entry_points = names;
                 }
@@ -1692,12 +1703,12 @@ impl<'a> Parser<'a, '_> {
             if let ExprData::EObject(_) = security_obj.data {
                 if let Some(scanner) = security_obj.get(b"scanner") {
                     self.expect_string(&scanner)?;
-                    install.security_scanner = scanner.as_string(self.bump).map(|name| {
+                    install.security_scanner = scanner.data.e_string().map(|name| {
                         // The scanner process runs in the project directory, so a relative path
                         // from the project's own bunfig.toml already resolves correctly.
-                        let name = from_portable(name);
+                        let name = estring_to_specifier(name.get(), self.bump);
                         if self.is_project_file || bun_paths::is_package_path(&name) {
-                            return name.into();
+                            return name;
                         }
                         let mut path = self.install_path(&name);
                         bun_paths::to_portable_in_place(&mut path[..]);
@@ -1810,7 +1821,7 @@ impl<'a> Parser<'a, '_> {
                     let mut plugins: Vec<Box<[u8]>> = Vec::with_capacity(raw.len());
                     for p in raw {
                         self.expect_string(p)?;
-                        plugins.push(estring_to_path(
+                        plugins.push(estring_to_specifier(
                             p.data
                                 .e_string()
                                 .expect("infallible: variant checked")
@@ -1825,7 +1836,7 @@ impl<'a> Parser<'a, '_> {
                         .data
                         .e_string()
                         .expect("infallible: variant checked");
-                    break 'plugins Some(vec![estring_to_path(s.get(), self.bump)]);
+                    break 'plugins Some(vec![estring_to_specifier(s.get(), self.bump)]);
                 }
             };
             // TODO: accept entire config object.

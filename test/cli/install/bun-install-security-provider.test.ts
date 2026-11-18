@@ -1377,6 +1377,20 @@ describe.concurrent("where the scanner is looked up", () => {
     expect(await install(files)).toEqual({ ran: "a-scanner", exitCode: 0 });
   });
 
+  it("a relative path with a backslash in the user's bunfig starts at that file", async () => {
+    const files = {
+      "home/.bunfig.toml": bunfig(".\\s.ts"),
+      "home/s.ts": scannerOf("the user"),
+      "project/node_modules/s.ts": scannerOf("the project"),
+    };
+    expect(await install(files)).toEqual({ ran: "the user", exitCode: 0 });
+  });
+
+  it.each(["project/bunfig.toml", "home/.bunfig.toml"])("a data: URL with a backslash in %s", async file => {
+    const files = { [file]: bunfig("data:text/javascript," + scannerOf("a\\b")) };
+    expect(await install(files)).toEqual({ ran: "a\\b", exitCode: 0 });
+  });
+
   it.skipIf(isWindows)("a file with a quote in its name", async () => {
     const files = { "project/bunfig.toml": bunfig('./s"q.ts'), 'project/s"q.ts': scannerOf("the project") };
     expect(await install(files)).toEqual({ ran: "the project", exitCode: 0 });

@@ -545,9 +545,8 @@ describe("unix domain socket without websocket", () => {
         socket.resume();
         await orFailure(received, "the client had all messages");
         inspectee.send("done");
-        const exitCode = await inspectee.exited;
         // The counts are final once the socket has closed.
-        await Promise.race([failed, closed]);
+        const [exitCode] = await Promise.race([failed, Promise.all([inspectee.exited, closed])]);
 
         expect({
           receivedWhilePaused,

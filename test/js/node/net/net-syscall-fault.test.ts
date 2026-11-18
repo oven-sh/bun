@@ -572,7 +572,7 @@ describe.skipIf(skip)("node:net queue of unsent bytes under short sends", () => 
   test("an empty write behind a queued tail sends from the front of the tail", async () => {
     using p = await connectedPair();
     const handle = (p.client as any)._handle;
-    const payload = patterned(65536);
+    const payload = patterned(41 * 1024);
     const state = receive(p.serverSock, payload);
     const idle = estimateShallowMemoryUsageOf(handle);
 
@@ -580,22 +580,22 @@ describe.skipIf(skip)("node:net queue of unsent bytes under short sends", () => 
     (p.client as any)._write(payload, "buffer", () => {});
     const queuedTail = estimateShallowMemoryUsageOf(handle) - idle;
     const { promise: written, resolve, reject } = Promise.withResolvers<void>();
-    // Each of these sends 1,024 bytes more of the tail, past its half.
+    // Each of these sends 1,024 bytes more of the tail. The queue frees its
+    // allocation when the last one takes the last byte, and not before.
+    let allocatedBeforeLastWrite = 0;
     for (let i = 0; i < 40; i++) {
+      if (i === 39) allocatedBeforeLastWrite = estimateShallowMemoryUsageOf(handle) - idle;
       (p.client as any)._write(Buffer.alloc(0), "buffer", (err?: Error | null) => (err ? reject(err) : resolve()));
     }
-    // No writable event sends more, so the peer gets what the 41 writes sent.
-    fault.set({ syscall: "send", action: "errno", errno: "EAGAIN", repeat: -1, fd: handle.fd });
-    while (state.received < 41 * 1024) await once(p.serverSock, "data");
-    const sentByWrites = state.received;
-    fault.set({ syscall: "send", action: "short", bytes: 1024, repeat: -1, fd: handle.fd });
+    const allocatedAfterWrites = estimateShallowMemoryUsageOf(handle) - idle;
     const bytesWritten = await bytesWrittenUntil(written, handle);
     p.client.end();
     await once(p.serverSock, "end");
 
-    expect({ queuedTail, sentByWrites, bytesWritten, ...state }).toEqual({
+    expect({ queuedTail, allocatedBeforeLastWrite, allocatedAfterWrites, bytesWritten, ...state }).toEqual({
       queuedTail: payload.length - 1024,
-      sentByWrites: 41 * 1024,
+      allocatedBeforeLastWrite: payload.length - 1024,
+      allocatedAfterWrites: 0,
       bytesWritten: [payload.length],
       received: payload.length,
       intact: true,

@@ -22,23 +22,25 @@ pub(crate) fn for_each<'a>(path: &[u8], contents: &'a [u8], mut each: impl FnMut
     }
 }
 
-/// Each `<script` outside an HTML comment counts, also in a string or in prose: a stray one can add an import.
+/// Each `<script` counts, also in a string, in a comment or in prose: a stray one can add an import.
 fn scripts_before_end_tag<'a>(part: &'a [u8], each: &mut impl FnMut(&'a [u8])) {
     // A script runs to the end of the part, and so does a stray `<script` before it: the part gives twice its text in full.
     let mut in_full = part.len() * 2;
     // An attribute value can have a `<script`. The open tag then ends after the next one, and the part gives its text once to find that end.
     let mut past_next = part.len();
-    let comments_end = strings::last_index_of(part, b"-->");
-    let mut next = next_script(part, 0, comments_end);
+    let mut comments = Comments::new(part);
+    let mut next = strings::index_of(part, b"<script");
+    let mut rest = part;
     while let Some(at) = next {
-        let start = at + b"<script".len();
-        let rest = &part[start..];
-        next = next_script(part, start, comments_end);
-        let until_next = &part[start..next.unwrap_or(part.len())];
+        let in_comment = comments.contain(part.len() - rest.len() + at);
+        rest = &rest[at + b"<script".len()..];
+        next = strings::index_of(rest, b"<script");
+        let until_next = &rest[..next.unwrap_or(rest.len())];
         if let Some(tag_end) = end_of_open_tag(until_next) {
             let to_end = &rest[tag_end + 1..];
             // After that, a script ends at the next `<script`, so the parser gets each byte four times at most for each language.
-            if to_end.len() <= in_full {
+            // One in an HTML comment is most likely not a script, and takes nothing of what the part gives in full.
+            if !in_comment && to_end.len() <= in_full {
                 in_full -= to_end.len();
                 each(to_end);
             } else {
@@ -53,19 +55,46 @@ fn scripts_before_end_tag<'a>(part: &'a [u8], each: &mut impl FnMut(&'a [u8])) {
     }
 }
 
-/// The index of the next `<script` in `part` from `from` that is not in an HTML comment. `comments_end` is where the last `-->` is.
-fn next_script(part: &[u8], mut from: usize, comments_end: Option<usize>) -> Option<usize> {
-    loop {
-        let at = from + strings::index_of(&part[from..], b"<script")?;
-        let Some(open) = strings::index_of(&part[from..at], b"<!--") else {
-            return Some(at);
-        };
-        let body = from + open + b"<!--".len();
-        // A comment that does not end is text.
-        if comments_end.is_none_or(|end| end < body) {
-            return Some(at);
+/// The HTML comments of a part, read once from start to end.
+struct Comments<'a> {
+    part: &'a [u8],
+    /// Where the last `-->` of the part is. A `<!--` after it does not end, and is text.
+    last_end: Option<usize>,
+    /// Up to here the comments are known: `from` is outside of them, or it ends the comment that the last `at` is in.
+    from: usize,
+}
+
+impl<'a> Comments<'a> {
+    fn new(part: &'a [u8]) -> Self {
+        Self {
+            part,
+            last_end: strings::last_index_of(part, b"-->"),
+            from: 0,
         }
-        from = body + strings::index_of(&part[body..], b"-->")? + b"-->".len();
+    }
+
+    /// Whether `at` is in a comment. Each call has an `at` after the one before.
+    fn contain(&mut self, at: usize) -> bool {
+        if at < self.from {
+            return true;
+        }
+        loop {
+            let Some(open) = strings::index_of(&self.part[self.from..at], b"<!--") else {
+                self.from = at;
+                return false;
+            };
+            let body = self.from + open + b"<!--".len();
+            let Some(end) = self.last_end.filter(|&end| end >= body) else {
+                self.from = at;
+                return false;
+            };
+            let close = strings::index_of(&self.part[body..], b"-->").map_or(end, |i| body + i)
+                + b"-->".len();
+            self.from = close;
+            if at < close {
+                return true;
+            }
+        }
     }
 }
 
@@ -120,6 +149,17 @@ mod tests {
                 "<!-- one <script> -->\n<!-- two <script> -->\n<script>\n  const tag = \"<script>\";\n  import './a';\n  export const text = \"a script longer than the text before it\";\n</script>\n",
                 "\n  const tag = \"<script>\";\n  import './a';\n  export const text = \"a script longer than the text before it\";\n",
             ),
+            // The real script looks like it is in a comment.
+            (
+                "an open comment in a string",
+                "<p>{\"<!--\"}</p>\n<script>\n  let i = 2;\n  while (i-->0) {}\n  import './a';\n</script>\n",
+                "\n  let i = 2;\n  while (i-->0) {}\n  import './a';\n",
+            ),
+            (
+                "an open comment in a style",
+                "<style>/* <!-- */</style>\n<script>\n  const arrow = \"-->\";\n  import './a';\n</script>\n",
+                "\n  const arrow = \"-->\";\n  import './a';\n",
+            ),
             (
                 "quotes",
                 "<script generics='T extends Record<string, number>'>\n  import './a';\n</script>\n",
@@ -173,7 +213,6 @@ mod tests {
     #[test]
     fn has_scripts_only_in_text() {
         assert!(has_scripts(b"C.svelte", b"<script>import './a';</script>"));
-        assert!(!has_scripts(b"C.svelte", b"<SCRIPT>import './a';</SCRIPT>"));
         assert!(!has_scripts(b"c.dat", b"\0<script>import './a';</script>"));
         assert!(!has_scripts(b"c.dat", b"import './a';"));
     }

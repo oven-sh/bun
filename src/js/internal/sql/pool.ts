@@ -30,7 +30,10 @@ const enum PooledConnectionFlags {
   retiring = 1 << 1,
   /// It has a prepared distributed transaction. MariaDB reports a transaction until that is committed or rolled back.
   prepared = 1 << 2,
+  /// Left inside a transaction while other queries still run on it. Nobody gets it until one of them ends that.
+  stranded = 1 << 3,
 }
+const notReady = PooledConnectionFlags.reserved | PooledConnectionFlags.retiring | PooledConnectionFlags.stranded;
 export type { PooledConnection };
 
 /// What the native connections of both drivers have.
@@ -171,7 +174,6 @@ class PooledConnection<ConnectionHandle extends NativeConnection = any> {
       return;
     }
     this.flags |= PooledConnectionFlags.retiring;
-    this.adapter.readyConnections.delete(this);
   }
 
   retire() {
@@ -256,6 +258,11 @@ function closeTimeoutMs(options?: { timeout?: number }): number | undefined {
 
 function idleFirst(a: PooledConnection, b: PooledConnection) {
   return a.queryCount - b.queryCount;
+}
+
+/// Whether the pool can give it to a caller.
+function isReady(connection: PooledConnection): boolean {
+  return connection.state === PooledConnectionState.open && (connection.flags & notReady) === 0;
 }
 
 function sameOption(a: unknown, b: unknown): boolean {
@@ -489,8 +496,9 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
   protected abstract readonly rollbackPrepared: string;
 
   /// Every connection that is connecting or open. One enters before it dials and leaves when it closes.
+  /// The open ones come first, in the order they logged in. Only a login and a close change the order, so the
+  /// callers that come one after the other get the same connection, and the others can reach `idleTimeout`.
   public readonly connections: PooledConnection[] = [];
-  public readonly readyConnections: Set<PooledConnection> = new Set();
 
   public queue: Array<OnConnected | Reservation> = [];
 
@@ -660,7 +668,7 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
   /// A login ends it.
   #dialForQueued() {
     if (this.queue.length !== 0) {
-      this.#dial(this.readyConnections.size === 0);
+      this.#dial(this.#leastBusy(Infinity, 0) === null);
     }
   }
 
@@ -707,10 +715,11 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
       if (pool.generation === generation || !sameSettings(pool, this)) {
         continue;
       }
-      for (const connection of pool.readyConnections) {
-        if (connection.queryCount === 0 && connection.connection.inTransaction !== true) {
-          pool.connections.splice(pool.connections.indexOf(connection), 1);
-          pool.readyConnections.delete(connection);
+      const theirs = pool.connections;
+      for (let j = 0; j < theirs.length; j++) {
+        const connection = theirs[j];
+        if (isReady(connection) && connection.queryCount === 0 && connection.connection.inTransaction !== true) {
+          theirs.splice(j, 1);
           connection.moveTo(this);
           this.connections.push(connection);
           this.connectionOpened(connection);
@@ -729,18 +738,26 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
     }
   }
 
-  /// The ready connection that runs the fewest queries, if fewer than `limit`. The `setAside` that will be
-  /// idle first are left to the reservations that wait ahead of the caller.
+  /// The ready connection that runs the fewest queries, if fewer than `limit`: of several, the one that logged
+  /// in first. The `setAside` that will be idle first are left to the reservations that wait ahead of the caller.
   #leastBusy(limit: number, setAside: number): PooledConnection | null {
+    const connections = this.connections;
     let found: PooledConnection | undefined;
     if (setAside === 0) {
-      for (const connection of this.readyConnections) {
-        if (found === undefined || connection.queryCount < found.queryCount) {
+      for (let i = 0; i < connections.length; i++) {
+        const connection = connections[i];
+        if (connection.state !== PooledConnectionState.open) {
+          break;
+        }
+        if ((connection.flags & notReady) === 0 && (found === undefined || connection.queryCount < found.queryCount)) {
           found = connection;
+          if (connection.queryCount === 0) {
+            break;
+          }
         }
       }
     } else {
-      found = Array.from(this.readyConnections).sort(idleFirst)[setAside];
+      found = connections.filter(isReady).sort(idleFirst)[setAside];
     }
     return found !== undefined && found.queryCount < limit ? found : null;
   }
@@ -774,7 +791,6 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
         connection.flags |= PooledConnectionFlags.reserved;
         connection.queryCount++;
         this.totalQueries++;
-        this.readyConnections.delete(connection);
         (connection.connection as NativeConnection).hold();
         waiter.onConnected(null, connection);
         return true;
@@ -809,7 +825,7 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
         connection.flags &= ~PooledConnectionFlags.prepared;
       } else if (!(connection.flags & PooledConnectionFlags.prepared)) {
         // Nobody gets the transaction that it was left in. What already runs behind may end it.
-        this.readyConnections.delete(connection);
+        connection.flags |= PooledConnectionFlags.stranded;
         if (connection.queryCount === 0) {
           connection.retire();
         }
@@ -820,16 +836,23 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
       connection.retire();
       return;
     }
-    this.readyConnections.add(connection);
+    connection.flags &= ~PooledConnectionFlags.stranded;
     this.#serve();
   }
 
   connectionOpened(connection: PooledConnection) {
     this.saslprep = connection.saslprep;
-    this.#most = Math.max(this.#most, this.connections.length - this.#connecting());
+    const connections = this.connections;
+    const open = connections.length - this.#connecting();
+    this.#most = Math.max(this.#most, open);
     this.#tries = 0;
     this.#refusedAt = -Infinity;
-    this.readyConnections.add(connection);
+    // Behind the ones that logged in before it, ahead of the ones that still dial.
+    const index = connections.indexOf(connection);
+    if (index !== open - 1) {
+      connections.splice(index, 1);
+      connections.splice(open - 1, 0, connection);
+    }
     if (this.#dialsHeld) {
       this.#dialsHeld = false;
       this.#dial(true);
@@ -850,7 +873,6 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
       hotPools.delete(this);
       this.#dialsHeld = false;
     }
-    this.readyConnections.delete(connection);
     if (!established) {
       this.#most = connections.length - this.#connecting();
       this.#refusedAt = monotonicNowMs();

@@ -33,15 +33,17 @@ if (mode === "child") {
       kind === "exe"
         ? readFileSync(names).subarray(8 << 20, 9 << 20)
         : Buffer.concat(names.split(" ").map(it => readFileSync(join(repo, it))));
-    for (const size of [300, 2000]) {
-      const data = all.subarray(1000, 1000 + size);
-      for (const quality of [10, 11]) {
-        const options = { params: { [k.BROTLI_PARAM_QUALITY]: quality } };
-        const hash = Bun.hash.crc32(zlib.brotliCompressSync(data, options)).toString(16);
-        console.log(
-          `q${quality} ${data.length} ${kind} ${hash}\t${best(() => zlib.brotliCompressSync(data, options))}`,
-        );
-      }
+    for (const [size, count, quality] of [
+      [300, 1, 10],
+      [300, 200, 10],
+      [300, 200, 11],
+      [2000, 50, 10],
+    ]) {
+      const some = Array.from({ length: count }, (_, i) => all.subarray(1000 + 777 * i, 1000 + 777 * i + size));
+      const options = { params: { [k.BROTLI_PARAM_QUALITY]: quality } };
+      const each = () => some.map(it => zlib.brotliCompressSync(it, options));
+      const hash = Bun.hash.crc32(Buffer.concat(each())).toString(16);
+      console.log(`q${quality}x${count} ${size} ${kind} ${hash}\t${best(each)}`);
     }
   }
 } else {
@@ -49,7 +51,7 @@ if (mode === "child") {
   console.log(cpus().length, "x", cpus()[0].model);
   for (const it of builds) console.log(Bun.spawnSync([it, "--revision"]).stdout.toString().trim());
   const best = new Map<string, number[]>();
-  for (let turn = 0; turn < 7 * 9; turn++) {
+  for (let turn = 0, start = Date.now(); turn % 9 || Date.now() - start < 200e3; turn++) {
     const side = turn % 9;
     const { stdout, success } = Bun.spawnSync([builds[side ? 1 : 0], import.meta.path, "child", builds[0]], {
       stderr: "inherit",

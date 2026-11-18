@@ -60,7 +60,13 @@ Bun.diff.chars("abc", "xyz", { maxEditLength: 5 }); // undefined
 
 Bun looks for the shortest diff and limits the work it spends on the search. The limit is a number of steps, so the same inputs give the same result on every machine.
 
-The limit covers about 8,000 additions plus 8,000 removals. Tokens that appear in only one input don't count. Past the limit, Bun returns a diff that is correct but can be longer than the shortest one, and `maxEditLength` applies to that diff.
+Tokens that appear in only one input don't count toward the limit. Inputs stay within it when one of these is true:
+
+- Each input has up to about 70,000 tokens.
+- The diff has up to about 8,000 additions plus 8,000 removals.
+- Few tokens repeat, as with a long list of unique lines in a different order.
+
+Past the limit, Bun returns a diff that is correct but can be longer than the shortest one, and `maxEditLength` applies to that diff.
 
 ## Create a patch
 

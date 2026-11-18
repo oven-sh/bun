@@ -240,6 +240,14 @@ describe("of several shortest diffs, the one that diff picks", () => {
   });
 });
 
+test("of several shortest diffs of unrelated inputs, the one that diff picks", () => {
+  const next = random(5);
+  for (const distinct of [3, 30, 300]) {
+    const [a, b] = [0, 1].map(() => Array.from({ length: 300 + next(40) }, () => `${next(1000) % distinct}\n`));
+    expect(short(diff.lines(a.join(""), b.join("")))).toEqual(reference(a, b));
+  }
+});
+
 describe("maxEditLength", () => {
   test.each([
     ["lines", (o: object) => diff.lines("a\nb\nc\n", "b\na\nd\n", o)],
@@ -295,9 +303,45 @@ describe("large inputs, on which diff is quadratic", () => {
     expect(edits(diff.chars(b, a))).toBe(a.length - b.length);
   });
 
-  test("past the limit of the search, the diff is still correct", () => {
+  test("reversed", () => {
     const [a, b] = [numbered(30_000, i => i), numbered(30_000, i => 29_999 - i)];
+    expect(short(diff.lines(a, b))).toEqual([
+      ["-", a.slice(0, -6), 29_999],
+      ["=", "29999\n", 1],
+      ["+", b.slice(6), 29_999],
+    ]);
+  });
+
+  test("halves swapped", () => {
+    const [first, second] = [numbered(15_000, i => i), numbered(15_000, i => -i - 1)];
+    expect(short(diff.lines(first + second, second + first))).toEqual([
+      ["-", first, 15_000],
+      ["=", second, 15_000],
+      ["+", first, 15_000],
+    ]);
+  });
+
+  type Next = ReturnType<typeof random>;
+  test.each([
+    ["frequent", (next: Next) => next(1000) % 7, 4634, 2544168612],
+    ["rare", (next: Next) => next(3000), 9648, 2232959018],
+    ["frequent and rare", (next: Next) => (next(1000) % 3 ? next(3000) : -1 - (next(1000) % 5)), 7982, 635490954],
+  ])("unrelated inputs of %s tokens", (_, token, expectedEdits, checksum) => {
+    const next = random(3);
+    const [a, b] = [0, 1].map(() => numbered(5000, () => token(next)));
     const changes = diff.lines(a, b);
+    const script = short(changes)!.map(([operation, , count]) => `${operation}${count}`);
+    expect([edits(changes), Bun.hash.crc32(script.join(""))]).toEqual([expectedEdits, checksum]);
+    expect(diff.lines(a, b, { maxEditLength: expectedEdits })).toEqual(changes);
+    expect(diff.lines(a, b, { maxEditLength: expectedEdits - 1 })).toBeUndefined();
+  });
+
+  test("past the limit of the search, the diff is still correct", () => {
+    const next = random(4);
+    const [a, b] = [0, 1].map(() =>
+      Buffer.from(Array.from({ length: 80_000 }, () => 97 + (next(1000) % 20))).toString(),
+    );
+    const changes = diff.chars(a, b);
     expect(side(changes, "added") === a).toBeTrue();
     expect(side(changes, "removed") === b).toBeTrue();
   }, 30_000);

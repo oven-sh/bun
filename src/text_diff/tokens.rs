@@ -8,6 +8,7 @@
 use bun_core::slice_as_bytes;
 use bun_core::strings::{CodeUnits, PathByte, count_char, is_js_whitespace};
 
+use crate::bit_rows::Matches;
 use crate::{Elem, Hunk, Interner, MAX_LEN, diff_shared_tokens, search_bounded};
 
 /// A code unit of a JS string: Latin-1 or UTF-16.
@@ -210,25 +211,59 @@ pub fn diff_ids(a: &[u32], b: &[u32], distinct: usize, max_edits: usize) -> Opti
         |shared_a, shared_b, changed_a, changed_b| {
             let unshared = (a.len() - shared_a.len()) + (b.len() - shared_b.len());
             let max_edits = max_edits.saturating_sub(unshared);
-            match search(shared_a, shared_b, max_edits) {
-                Search::Found(script) => script.mark(shared_a, shared_b, changed_a, changed_b),
-                Search::OutOfWork if shared_a.len().max(shared_b.len()) < MAX_LEN => {
-                    search_bounded(shared_a, shared_b, changed_a, changed_b);
-                }
-                Search::OutOfWork | Search::TooFar => {
-                    changed_a.fill(true);
-                    changed_b.fill(true);
-                }
-            }
+            mark(
+                shared_a, shared_b, distinct, max_edits, changed_a, changed_b,
+            );
         },
     );
     let edits: usize = hunks.iter().map(|h| h.deleted() + h.inserted()).sum();
     (edits <= max_edits).then_some(hunks)
 }
 
-/// Enough for 8,192 insertions and as many deletions among shared tokens. A step keeps one bit.
+/// Enough for Myers' search to find 8,192 insertions and as many deletions, and for 70,000 rows of 70,000 bits.
 const WORK: usize = 80_000_000;
 const WORK_PER_TOKEN: usize = 32;
+
+/// Myers' search is fast if the sequences are close, which only running it tells. What rows of bits cost is known before.
+fn mark(
+    a: &[u32],
+    b: &[u32],
+    distinct: usize,
+    max_edits: usize,
+    changed_a: &mut [bool],
+    changed_b: &mut [bool],
+) {
+    let linear = WORK_PER_TOKEN * (a.len() + b.len());
+    let mut found = search(a, b, max_edits, linear);
+    if let Search::OutOfWork = found {
+        let matches = Matches::new(b, distinct);
+        let cost = matches.cost(a);
+        let is_affordable = cost <= WORK + linear;
+        let work = if is_affordable {
+            cost / 2
+        } else {
+            WORK + linear
+        };
+        if work > linear {
+            found = search(a, b, max_edits, work);
+        }
+        if let Search::OutOfWork = found
+            && is_affordable
+        {
+            return matches.mark(a, cost, changed_a, changed_b);
+        }
+    }
+    match found {
+        Search::Found(script) => script.mark(a, b, changed_a, changed_b),
+        Search::OutOfWork if a.len().max(b.len()) < MAX_LEN => {
+            search_bounded(a, b, changed_a, changed_b);
+        }
+        Search::OutOfWork | Search::TooFar => {
+            changed_a.fill(true);
+            changed_b.fill(true);
+        }
+    }
+}
 
 enum Search {
     Found(Script),
@@ -258,12 +293,12 @@ impl Script {
 
 /// A script has as many edits as the lengths differ by, and some pairs of an insertion and a deletion. Looking for one
 /// with at most `pairs` of those takes (`pairs` + 1) × (`pairs` + difference + 1) steps.
-fn search(a: &[u32], b: &[u32], max_edits: usize) -> Search {
+fn search(a: &[u32], b: &[u32], max_edits: usize, work: usize) -> Search {
     let Some(spare) = max_edits.checked_sub(a.len().abs_diff(b.len())) else {
         return Search::TooFar;
     };
     let max_pairs = (spare / 2).min(a.len()).min(b.len());
-    let mut work = (WORK + WORK_PER_TOKEN * (a.len() + b.len())) as isize;
+    let mut work = work as isize;
     let mut pairs = 2;
     loop {
         match search_within(a, b, pairs.min(max_pairs), &mut work) {

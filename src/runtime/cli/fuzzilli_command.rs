@@ -257,7 +257,13 @@ mod reprl {
             let _ = vm.uncaught_exception(vm.global(), reason, true);
         }
         vm.set_pending_internal_promise(None);
-        rejected.is_null()
+        if !rejected.is_null() {
+            return false;
+        }
+        // What a preload throws in a microtask, or rejects and does not handle, is its failure and not the program's.
+        vm.drain_microtasks();
+        let _ = vm.global().handle_rejected_promises();
+        vm.unhandled_error_counter.get() == 0
     }
 
     /// Runs `source` as global code. Returns what it threw.

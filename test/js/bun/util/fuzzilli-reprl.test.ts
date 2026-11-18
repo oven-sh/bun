@@ -501,20 +501,19 @@ describe.skipIf(!enabled)("bun fuzzilli", () => {
       });
     });
 
-    test.concurrent("that fails at the start ends the child before the handshake", async () => {
+    test.concurrent.each([
+      ["throws", `throw new Error("preload failure");`, "at <dir>/preload.js:1:11"],
+      ["leaves an unhandled rejection", `Promise.reject(new Error("preload failure"));`, "at <dir>/preload.js:1:20"],
+    ])("that %s at the start ends the child before the handshake", async (_, preload, frame) => {
       const result = await runReprl([`console.log("program 0");`], {
-        files: { ...bunfig, "preload.js": `throw new Error("preload failure");` },
+        files: { ...bunfig, "preload.js": preload },
       });
 
       expect(result).toEqual({
         handshake: "",
         statuses: [],
         stdout: [],
-        stderr: [
-          "error: preload failure",
-          "at <dir>/preload.js:1:11",
-          "error: [REPRL] could not start: a preload failed",
-        ],
+        stderr: ["error: preload failure", frame, "error: [REPRL] could not start: a preload failed"],
         exitCode: 1,
       });
     });
@@ -594,20 +593,32 @@ describe.skipIf(!enabled)("bun fuzzilli", () => {
     {
       name: "process.exitCode",
       program: `process.exitCode = 3; console.log("set");`,
-      differs: "the status reports errors, not the exit code",
+      differs: {
+        why: "the status reports errors, not the exit code",
+        asProgram: { ok: true, stdout: ["set"] },
+        asFile: { ok: false, stdout: ["set"] },
+      },
     },
     {
       name: "an exit listener",
       program: `process.on("exit", () => console.log("exit listener"));`,
-      differs: "the process does not exit when a program ends",
+      differs: {
+        why: "the process does not exit when a program ends",
+        asProgram: { ok: true, stdout: [] },
+        asFile: { ok: true, stdout: ["exit listener"] },
+      },
     },
     {
       name: "top-level await",
       program: `await 1; console.log("after");`,
-      differs: "a program is global code, where await is not a keyword",
+      differs: {
+        why: "a program is global code, where await is not a keyword",
+        asProgram: { ok: false, stdout: [] },
+        asFile: { ok: true, stdout: ["after"] },
+      },
     },
   ])("$name", ({ program, differs, files }) => {
-    test.concurrent(differs ? `differs from bun <file>: ${differs}` : "is as with bun <file>", async () => {
+    test.concurrent(differs ? `differs from bun <file>: ${differs.why}` : "is as with bun <file>", async () => {
       using dir = tempDir("fuzzilli-reprl-file", { ...files, "program.cjs": program });
       await using proc = Bun.spawn({
         cmd: [bunExe(), "program.cjs"],
@@ -625,7 +636,7 @@ describe.skipIf(!enabled)("bun fuzzilli", () => {
       const asProgram = { ok: reprl.statuses[0] === 0, stdout: reprl.stdout };
       const asFile = { ok: exitCode === 0, stdout: lines(stdout) };
       expect(reprl.statuses).toHaveLength(1);
-      if (differs) expect(asProgram).not.toEqual(asFile);
+      if (differs) expect({ asProgram, asFile }).toEqual({ asProgram: differs.asProgram, asFile: differs.asFile });
       else expect(asProgram).toEqual(asFile);
     });
   });

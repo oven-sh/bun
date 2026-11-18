@@ -835,6 +835,12 @@ pub mod parse_worker {
                                     options::CompileMode::None if topts.bytecode => {
                                         Some(b"Cannot preserve JSX when generating bytecode")
                                     }
+                                    options::CompileMode::None if topts.has_dev_server() => {
+                                        Some(b"Cannot preserve JSX in a development server bundle")
+                                    }
+                                    options::CompileMode::None if topts.framework.is_some() => {
+                                        Some(b"Cannot preserve JSX when building a Bake app")
+                                    }
                                     options::CompileMode::None => None,
                                 };
                                 if let Some(message) = message {

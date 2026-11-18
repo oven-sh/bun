@@ -97,6 +97,9 @@ pub struct FormatOptions {
     pub jsdoc: Option<JsdocOptions>,
     /// oxfmt's `sortTailwindcss`: how to sort Tailwind CSS classes, if at all.
     pub tailwind: Option<std::sync::Arc<crate::tailwind::Tailwind>>,
+    /// The Prettier plugins that add a language, if the configuration lists any. A block in one of their languages is
+    /// noted there.
+    pub plugin_languages: Option<std::sync::Arc<crate::plugins::PluginLanguages>>,
     /// Format TOML even in Prettier's flavor. Only the caller that detects file types reads this.
     pub toml: bool,
     /// For tests: what to output instead of the formatted text.

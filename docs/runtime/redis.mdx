@@ -483,6 +483,9 @@ Common error codes:
 - `ERR_REDIS_AUTHENTICATION_FAILED` - Failed to authenticate with the server
 - `ERR_REDIS_INVALID_RESPONSE` - Received an invalid response from the server
 - `ERR_REDIS_SERVER_ERROR` - The server sent an error reply, either rejecting one command or, in subscriber mode, closing the connection
+- `ERR_REDIS_CONNECTION_TIMEOUT`, `ERR_REDIS_IDLE_TIMEOUT` - `connectionTimeout` or `idleTimeout` expired
+
+When a connection fails, `connect()`, queued commands and `onclose` get the same error. After the last retry, `error.cause` is the error of the last attempt.
 
 ---
 

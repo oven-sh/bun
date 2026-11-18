@@ -111,8 +111,8 @@ pub enum Error {
     Core(#[from] bun_core::Error),
     #[error(transparent)]
     Sys(#[from] bun_errno::SystemErrno),
-    #[error(transparent)]
-    Zlib(bun_zlib::ZlibError),
+    #[error("ZlibError")]
+    Zlib,
     #[error(transparent)]
     Brotli(bun_brotli::Error),
     #[error(transparent)]
@@ -315,7 +315,7 @@ impl Error {
             Self::Alloc(_) => "OutOfMemory",
             Self::Core(e) => e.name(),
             Self::Sys(e) => <&'static str>::from(e),
-            Self::Zlib(e) => <&'static str>::from(e),
+            Self::Zlib => "ZlibError",
             Self::Brotli(e) => e.name(),
             Self::Zstd(e) => <&'static str>::from(e),
         }
@@ -328,11 +328,11 @@ impl bun_core::output::ErrName for Error {
     }
 }
 
-impl From<bun_zlib::ZlibError> for Error {
-    fn from(e: bun_zlib::ZlibError) -> Self {
+impl From<bun_zlib::Error> for Error {
+    fn from(e: bun_zlib::Error) -> Self {
         match e {
-            bun_zlib::ZlibError::ShortRead => Error::ShortRead,
-            _ => Error::Zlib(e),
+            bun_zlib::Error::Alloc(e) => Error::Alloc(e),
+            _ => Error::Zlib,
         }
     }
 }

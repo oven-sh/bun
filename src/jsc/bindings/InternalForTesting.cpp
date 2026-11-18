@@ -40,15 +40,6 @@
 extern "C" BunString BunString__threadIsolatedCopy(const BunString* str);
 extern "C" void BunString__makeThreadShareable(BunString* str);
 extern "C" int64_t highway_checksums_target();
-#if CPU(ARM64)
-// vendor/zlib/arch/arm/arm_features.h
-struct arm_cpu_features {
-    int has_simd;
-    int has_neon;
-    int has_crc32;
-};
-extern "C" void arm_check_features(arm_cpu_features*);
-#endif
 
 namespace Bun {
 
@@ -82,11 +73,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_cpuDispatch, (JSC::JSGlobalObject * globalOb
     auto* result = constructEmptyObject(globalObject);
     result->putDirect(vm, Identifier::fromString(vm, "highway"_s), highway);
     result->putDirect(vm, Identifier::fromString(vm, "checksums"_s), nameOf(highway_checksums_target()));
-#if CPU(ARM64)
-    arm_cpu_features features;
-    arm_check_features(&features);
-    result->putDirect(vm, Identifier::fromString(vm, "zlibHasArmCrc32"_s), jsBoolean(features.has_crc32));
-#endif
     return JSValue::encode(result);
 }
 

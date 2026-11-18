@@ -83,7 +83,7 @@ export const highwayStringsForTesting: (
 
 // `highway`: what this CPU supports of the default list of targets (scripts/build/deps/highway.ts), best first.
 // `checksums`: the target of highway_checksums.cpp, which has a list of its own.
-export const cpuDispatch: () => { highway: string[]; checksums: string; zlibHasArmCrc32?: boolean } = $newCppFunction(
+export const cpuDispatch: () => { highway: string[]; checksums: string } = $newCppFunction(
   "InternalForTesting.cpp",
   "jsFunction_cpuDispatch",
   0,

@@ -48,6 +48,6 @@ struct HighwayDispatch<Choose, Result (*)(Arguments...) noexcept(isNoexcept)> {
 // thousands of callers, which get the load and the call and nothing else.
 #define BUN_HWY_DISPATCH(FUNC) BUN_HWY_DISPATCH_TO(HWY_DYNAMIC_POINTER(FUNC))
 
-// For a choice that depends on more than the target.
+// The same for a choice that takes more than the target into account.
 #define BUN_HWY_DISPATCH_TO(POINTER) \
     (*::bun::HighwayDispatch<decltype([] { return POINTER; })>::fn.load(std::memory_order_relaxed))

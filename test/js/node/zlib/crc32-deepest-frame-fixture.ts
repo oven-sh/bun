@@ -14,7 +14,6 @@ function mapAtTheDeepestFrame<T, U>(values: T[], callback: (value: T) => U): U[]
 if (isMainThread) {
   new Worker(new URL(import.meta.url)).on("message", sums => console.log(JSON.stringify(sums)));
 } else {
-  // zlib-ng has kernels for up to 72 bytes, 8, 32 and 512 KiB, and for more.
   const inputs = [50, 1000, 20_000, 100_000, 600_000].map(length => new Uint8Array(length).fill(7));
   const gzip = (library: "zlib" | "libdeflate") =>
     mapAtTheDeepestFrame(inputs, input => Bun.gzipSync(input, { level: 0, library }));

@@ -385,4 +385,23 @@ describe.concurrent.each(decompressors)("inflate failures (%s decompressor)", (_
     raw.client.binary(pmdDeflate(payload), { rsv1: true });
     expect(await Promise.race([raw.messages(1), raw.serverClose])).toEqual([payload.toString("hex")]);
   });
+
+  // Its last block is a stored one of four bytes, which are those that the receiver appends.
+  const withoutLastFour = (size: number) =>
+    Buffer.concat([pmdDeflate(Buffer.alloc(size - 4, "a")), Buffer.from([0x04, 0x00, 0xfb, 0xff])]);
+
+  it("delivers a message that the appended bytes are part of", async () => {
+    using raw = await connectRaw({ perMessageDeflate, maxPayloadLength: 1000 });
+    raw.client.binary(withoutLastFour(1000), { rsv1: true });
+    const expected = Buffer.alloc(996, "a").toString("hex") + "0000ffff";
+    expect(await Promise.race([raw.messages(1), raw.serverClose])).toEqual([expected]);
+  });
+
+  it.each([1001, 1002, 1004])("maxPayloadLength 1000: the appended bytes make it %d", async size => {
+    using raw = await connectRaw({ perMessageDeflate, maxPayloadLength: 1000 });
+    raw.client.binary(withoutLastFour(size), { rsv1: true });
+    const reason = "Received too big message";
+    expect(await Promise.race([raw.serverClose, raw.firstMessage])).toEqual({ code: 1006, reason });
+    expect(await raw.sentFrames()).toEqual([`close 1009 "${reason}"`]);
+  });
 });

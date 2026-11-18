@@ -135,6 +135,7 @@ __arm_tpidr2_save  [SVE]
 
 # ----------------------------------------------------------------------------
 # Bun Adler-32 (src/jsc/bindings/highway_checksums.cpp).
-# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (1 symbol)
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (2 symbols)
 # ----------------------------------------------------------------------------
-_ZN3bun11N_NEON_BF16L7Adler32EjPKhm  [DotProd]
+_ZN3bun11N_NEON_BF16L7Adler32EjPKhm            [DotProd]
+_ZN3bun11N_NEON_BF16L14CopyAndAdler32EjPKhPhm  [DotProd]

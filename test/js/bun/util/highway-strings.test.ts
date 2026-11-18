@@ -709,12 +709,8 @@ describe("targets", () => {
     expect(cpuDispatch().highway.at(-1)).toBe("SSE4");
   });
 
-  it.skipIf(isArm64)("x64 has no 512-bit vectors before Ice Lake", () => {
+  it.skipIf(isArm64)("x64 has no 512-bit vectors before Ice Lake by default", () => {
     expect(cpuDispatch().highway).not.toContain("AVX3");
-  });
-
-  it.skipIf(!isArm64)("zlib uses the CRC instructions of arm64", () => {
-    expect(cpuDispatch().zlibHasArmCrc32).toBe(true);
   });
 
   it.skipIf(!isArm64 || !isLinux)("arm64 uses what Linux reports, but for SVE", () => {
@@ -722,11 +718,10 @@ describe("targets", () => {
       .match(/^Features\s*:(.*)$/m)![1]
       .split(" ");
     const has = (...wanted: string[]) => wanted.every(feature => features.includes(feature));
-    const best = has("aes", "asimdhp", "asimddp", "bf16") ? ["NEON_BF16"] : [];
-    expect(cpuDispatch()).toMatchObject({
-      highway: [...best, ...(has("aes") ? ["NEON"] : []), "NEON_WITHOUT_AES"],
-      checksums: best[0] ?? "NEON_WITHOUT_AES",
-    });
+    const highway = ["NEON_WITHOUT_AES"];
+    if (has("aes")) highway.unshift("NEON");
+    if (has("aes", "asimdhp", "asimddp", "bf16")) highway.unshift("NEON_BF16");
+    expect(cpuDispatch()).toEqual({ highway, checksums: highway[0] });
   });
 
   // Windows reports BF16 from 11 24H2 on.

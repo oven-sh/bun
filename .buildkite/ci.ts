@@ -841,49 +841,6 @@ function getTraceOrderStep(target: Target, tracePlatform: Platform, options: Pip
   };
 }
 
-/** Temporary: times this build against a build of main, on the same machine. */
-function getDispatchBenchmarkSteps(): CommandStep[] {
-  const mainBuild = "01a1ecf3-d2d2-4803-9dc7-0e295747ac76";
-  const debian = (arch: Arch): Platform => ({ os: "linux", arch, distro: "debian", release: "13" });
-  const machines: [Platform, string?][] = [
-    [debian("aarch64"), "c8g.xlarge"],
-    [debian("aarch64"), "c7g.xlarge"],
-    [debian("aarch64"), "c6g.xlarge"],
-    [{ os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.23" }, "m8g.xlarge"],
-    [debian("x64"), "c7i.xlarge"],
-    [debian("x64"), "c5.2xlarge"],
-    [{ os: "windows", arch: "aarch64", release: "11" }],
-    [{ os: "darwin", arch: "aarch64", release: "any" }],
-  ];
-  return machines.map(([platform, instanceType]) => {
-    const step = `${getTargetKey(platform)}-build-bun`;
-    const triplet = getTargetTriplet(platform);
-    const windows = platform.os === "windows";
-    const orFail = windows ? " || exit /b 1" : "";
-    const exe = (dir: string) => (windows ? `.\\${dir}\\${triplet}\\bun.exe` : `./${dir}/${triplet}/bun`);
-    const unpack = (dir: string) =>
-      windows ? `tar -xf ${dir}/${triplet}.zip -C ${dir}` : `unzip -oq ${dir}/${triplet}.zip -d ${dir}`;
-    const name = instanceType ?? getTargetKey(platform);
-    return {
-      key: `dispatch-benchmark-${name.replace(".", "-")}`,
-      label: `dispatch benchmark ${name}`,
-      depends_on: [step],
-      agents: instanceType ? getEc2Agent(platform, { instanceType }) : getTestAgent(platform),
-      soft_fail: true,
-      timeout_in_minutes: 25,
-      command: [
-        `mkdir tmp-main tmp-pr`,
-        `buildkite-agent artifact download ${triplet}.zip tmp-main/ --step ${step} --build ${mainBuild}`,
-        `buildkite-agent artifact download ${triplet}.zip tmp-pr/ --step ${step}`,
-        unpack("tmp-main"),
-        unpack("tmp-pr"),
-        ...(windows ? [] : [`chmod +x ${exe("tmp-main")} ${exe("tmp-pr")}`]),
-        `${exe("tmp-pr")} scripts/tmp-dispatch-benchmark.mjs ${exe("tmp-main")} ${exe("tmp-pr")}`,
-      ].map(line => line + orFail),
-    };
-  });
-}
-
 /** Where `cargo test` runs. An entry of `testPlatforms`, so the step runs on an image that exists. */
 const cargoTestPlatform: Platform = { os: "linux", arch: "x64", distro: "debian", release: "13" };
 
@@ -1912,7 +1869,6 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
   }
 
   steps.push(...binaryCheckSteps);
-  if (!buildId) steps.push(...getDispatchBenchmarkSteps());
 
   // Binary-size tracking: main records the baseline, PRs enforce the threshold.
   const strippedPlatforms = buildPlatforms.filter(p => (p.profile ?? "release") === "release");

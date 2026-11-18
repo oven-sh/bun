@@ -531,7 +531,15 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
      * Only on a tick that really parks: there is no time to sweep in a poll that returns at once.
      * With no scavenger to hand off to, fall back to sweeping inline, rate-limited, because doing
      * it between ticks is what we are avoiding. */
-    const int handed_off = will_idle_inside_event_loop && mi_on_thread_idle_start();
+#ifdef __APPLE__
+    /* In-process WebKit runs CFRunLoopRunInMode inside g_bun_apple_poll_hook on Thread 0,
+     * which invokes Cocoa/WebKit callbacks that allocate via mimalloc. Handing Thread 0's
+     * heaps to mi-scavenger across that poll races with mi_page_purge_holes_now. */
+    const int can_handoff_heap = will_idle_inside_event_loop && g_bun_apple_poll_hook == NULL;
+#else
+    const int can_handoff_heap = will_idle_inside_event_loop;
+#endif
+    const int handed_off = can_handoff_heap && mi_on_thread_idle_start();
     if (!handed_off && will_idle_inside_event_loop) {
         static const uint64_t idle_sweep_interval_ns = 100 * 1000000ULL;
         static _Thread_local uint64_t last_idle_sweep_ns = 0;

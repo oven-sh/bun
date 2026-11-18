@@ -7,7 +7,7 @@ use bun_jsc::bindgen::{self, JsScope};
 use bun_jsc::rare_data::HotMapEntry;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSPromise, JSPromiseStrong, JSValue, bun_string_jsc};
-use bun_ptr::{RefCount, RefCounted};
+use bun_ptr::{RefCount, RefCounted, RefPtr};
 
 use crate::generated_bindgen::desktop_window::BrowserWindowOptions;
 
@@ -41,6 +41,7 @@ unsafe extern "C" {
         args_ptr: *const u8,
         args_len: u32,
     );
+    fn Bun__Desktop__evaluateJS(id: u32, req_id: u32, script_ptr: *const u8, script_len: u32);
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
@@ -48,6 +49,38 @@ static NEXT_WINDOW_ID: AtomicU32 = AtomicU32::new(1);
 
 thread_local! {
     static PENDING_NAVS: RefCell<HashMap<u32, JSPromiseStrong>> = RefCell::new(HashMap::new());
+    static NEXT_EVAL_REQ_ID: Cell<u32> = const { Cell::new(1) };
+    static PENDING_EVALS: RefCell<HashMap<u32, JSPromiseStrong>> = RefCell::new(HashMap::new());
+}
+
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__Desktop__onEvalResult(
+    global: *mut JSGlobalObject,
+    req_id: u32,
+    ok: bool,
+    res_ptr: *const u8,
+    res_len: u32,
+) {
+    let maybe = PENDING_EVALS.with(|m| m.borrow_mut().remove(&req_id));
+    let Some(mut strong) = maybe else {
+        return;
+    };
+    if global.is_null() {
+        return;
+    }
+    let global_ref = unsafe { &*global };
+    let slice = if res_ptr.is_null() || res_len == 0 {
+        if ok { &b"null"[..] } else { &b"Eval failed"[..] }
+    } else {
+        unsafe { core::slice::from_raw_parts(res_ptr, res_len as usize) }
+    };
+    let promise = JSPromise::opaque_mut(strong.swap());
+    let val = bun_string_jsc::create_utf8_for_js(global_ref, slice).unwrap_or(JSValue::UNDEFINED);
+    if ok {
+        let _ = promise.resolve(global_ref, val);
+    } else {
+        let _ = promise.reject(global_ref, Ok(val));
+    }
 }
 
 fn settle_pending_nav(global: *mut JSGlobalObject, window_id: u32, ok: bool, msg: &[u8]) {
@@ -103,6 +136,7 @@ pub(crate) struct DesktopWindow {
     height: Cell<i32>,
     visible: Cell<bool>,
     maximized: Cell<bool>,
+    minimized: Cell<bool>,
     closed: Cell<bool>,
     hot_key: RefCell<Option<String>>,
     vm_ptr: Cell<*const VirtualMachine>,
@@ -124,7 +158,7 @@ impl DesktopWindow {
     pub(crate) fn constructor<'a>(
         cx: &mut JsScope<'a>,
         options: &BrowserWindowOptions,
-    ) -> bindgen::Result<'a, *mut Self> {
+    ) -> bindgen::Result<'a, RefPtr<Self>> {
         let title_str = String::from_utf8_lossy(options.title).into_owned();
         let vm_ptr = core::ptr::from_ref(cx.global().bun_vm());
         let hot_key_str = format!(
@@ -144,8 +178,7 @@ impl DesktopWindow {
             if !win.closed.get() {
                 win.set_title(options.title);
                 win.set_size(options.width, options.height);
-                unsafe { RefCount::<Self>::ref_(win_ptr) };
-                return Ok(win_ptr);
+                return Ok(unsafe { RefPtr::init_ref(win_ptr) });
             }
             hot.remove(hot_key_str.as_bytes());
             unsafe { RefCount::<Self>::deref(win_ptr) };
@@ -174,8 +207,13 @@ impl DesktopWindow {
                 _ => (0, 0),
             };
             let preload_js = options
-                .preload
-                .and_then(|p| std::fs::read_to_string(String::from_utf8_lossy(p).as_ref()).ok())
+                .preload_code
+                .map(|b| String::from_utf8_lossy(b).into_owned())
+                .or_else(|| {
+                    options
+                        .preload
+                        .and_then(|p| std::fs::read_to_string(String::from_utf8_lossy(p).as_ref()).ok())
+                })
                 .unwrap_or_default();
 
             let win_id = unsafe {
@@ -206,7 +244,7 @@ impl DesktopWindow {
             NEXT_WINDOW_ID.fetch_add(1, Ordering::Relaxed)
         };
 
-        let ptr = bun_ptr::RefPtr::new(Self {
+        let ptr = RefPtr::new(Self {
             ref_count: RefCount::init(),
             id,
             title: RefCell::new(title_str),
@@ -214,12 +252,13 @@ impl DesktopWindow {
             height: Cell::new(options.height),
             visible: Cell::new(options.show),
             maximized: Cell::new(false),
+            minimized: Cell::new(false),
             closed: Cell::new(false),
             hot_key: RefCell::new(None),
             vm_ptr: Cell::new(vm_ptr),
         });
-        let raw_ptr = ptr.into_raw();
         if let Some(hot) = unsafe { (*vm_ptr).hot_map() } {
+            let raw_ptr = ptr.as_ptr();
             *unsafe { &*raw_ptr }.hot_key.borrow_mut() = Some(hot_key_str.clone());
             unsafe { RefCount::<Self>::ref_(raw_ptr) };
             hot.insert_raw(
@@ -230,7 +269,7 @@ impl DesktopWindow {
                 },
             );
         }
-        Ok(raw_ptr)
+        Ok(ptr)
     }
 
     pub(crate) fn finalize(&self) {
@@ -398,16 +437,64 @@ impl DesktopWindow {
     }
 
     pub(crate) fn minimize(&self) {
+        self.minimized.set(true);
         self.send_window_action(3);
+    }
+
+    pub(crate) fn is_minimized(&self) -> bool {
+        self.minimized.get()
+    }
+
+    pub(crate) fn restore(&self) {
+        self.minimized.set(false);
+        self.send_window_action(6);
     }
 
     pub(crate) fn focus(&self) {
         self.visible.set(true);
+        self.minimized.set(false);
         self.send_window_action(4);
     }
 
     pub(crate) fn center(&self) {
         self.send_window_action(5);
+    }
+
+    pub(crate) fn evaluate_java_script<'a>(
+        &self,
+        cx: &mut JsScope<'a>,
+        code: &[u8],
+    ) -> bindgen::Result<'a, JSValue> {
+        if self.closed.get() {
+            return Err(cx
+                .heap
+                .invalid_arguments(format_args!("BrowserWindow is closed")));
+        }
+        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+        {
+            let req_id = NEXT_EVAL_REQ_ID.with(|c| {
+                let id = c.get();
+                c.set(id.wrapping_add(1).max(1));
+                id
+            });
+            let promise = JSPromiseStrong::init(cx.global());
+            let promise_val = promise.value();
+            PENDING_EVALS.with(|m| {
+                m.borrow_mut().insert(req_id, promise);
+            });
+            unsafe {
+                Bun__Desktop__evaluateJS(self.id, req_id, code.as_ptr(), code.len() as u32);
+            }
+            Ok(promise_val)
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+        {
+            let _ = code;
+            Ok(JSPromise::resolved_promise_value(
+                cx.global(),
+                JSValue::UNDEFINED,
+            ))
+        }
     }
 
     pub(crate) fn set_progress_bar(&self, progress: f64) {

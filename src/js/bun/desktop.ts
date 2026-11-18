@@ -6,21 +6,128 @@ const nativeApp = $bindgen("desktop_app.bind.ts", "app");
 const nativeIpcMain = $bindgen("desktop_ipc.bind.ts", "ipcMain");
 const nativeProtocol = $bindgen("desktop_protocol.bind.ts", "protocol");
 
-class WebContents extends EventEmitter {
-  #win: { id: number; getTitle(): string; sendToRenderer(ch: string, argsJson: string): void };
-  #url = "about:blank";
+let nextPortId = 1;
+class MessagePortMain extends EventEmitter {
+  readonly _id: number;
+  _peer: MessagePortMain | null = null;
+  _senderWin: { sendToRenderer(ch: string, argsJson: string): void } | null = null;
+  _closed = false;
 
-  constructor(win: { id: number; getTitle(): string; sendToRenderer(ch: string, argsJson: string): void }) {
+  constructor(id: number) {
+    super();
+    this._id = id;
+  }
+
+  start() {}
+  ref() {}
+  unref() {}
+
+  postMessage(data: unknown) {
+    if (this._closed) return;
+    if (this._senderWin) {
+      this._senderWin.sendToRenderer("__bun_port_data__", JSON.stringify([this._id, data]));
+      return;
+    }
+    if (this._peer && !this._peer._closed) {
+      if (this._peer._senderWin) {
+        this._peer._senderWin.sendToRenderer("__bun_port_data__", JSON.stringify([this._peer._id, data]));
+      } else {
+        queueMicrotask(() => {
+          if (!this._peer?._closed) this._peer?.emit("message", { data });
+        });
+      }
+    }
+  }
+
+  close() {
+    if (this._closed) return;
+    this._closed = true;
+    this.emit("close");
+    if (this._peer && !this._peer._closed) {
+      if (this._peer._senderWin) {
+        this._peer._senderWin.sendToRenderer("__bun_port_close__", JSON.stringify([this._peer._id]));
+      } else {
+        this._peer.close();
+      }
+    }
+  }
+}
+
+class MessageChannelMain {
+  readonly port1: MessagePortMain;
+  readonly port2: MessagePortMain;
+  constructor() {
+    this.port1 = new MessagePortMain(nextPortId++);
+    this.port2 = new MessagePortMain(nextPortId++);
+    this.port1._peer = this.port2;
+    this.port2._peer = this.port1;
+  }
+}
+
+const activeTransferredPorts = new Map<number, MessagePortMain>();
+
+type NativeWinLike = {
+  id: number;
+  getTitle(): string;
+  sendToRenderer(ch: string, argsJson: string): void;
+  evaluateJavaScript?(code: string): Promise<unknown>;
+};
+
+class WebContents extends EventEmitter {
+  static #byId = new Map<number, WebContents>();
+  #win: NativeWinLike;
+  #url = "about:blank";
+  #destroyed = false;
+  #loading = false;
+  #zoomLevel = 0;
+  #zoomFactor = 1;
+  mainFrame = { url: "about:blank" };
+
+  constructor(win: NativeWinLike) {
     super();
     this.#win = win;
+    WebContents.#byId.set(win.id, this);
+  }
+
+  static getAllWebContents(): WebContents[] {
+    return Array.from(WebContents.#byId.values());
+  }
+
+  static fromId(id: number): WebContents | null {
+    return WebContents.#byId.get(id) ?? null;
   }
 
   get id(): number {
     return this.#win.id;
   }
 
+  get session() {
+    return session.defaultSession;
+  }
+
   _setURL(url: string) {
     this.#url = url;
+    this.mainFrame.url = url;
+  }
+
+  _setLoading(loading: boolean) {
+    this.#loading = loading;
+  }
+
+  isLoading(): boolean {
+    return this.#loading;
+  }
+
+  _setDestroyed(destroyed: boolean) {
+    this.#destroyed = destroyed;
+    if (destroyed) {
+      WebContents.#byId.delete(this.#win.id);
+      this.emit("destroyed");
+    }
+  }
+
+  isDestroyed(): boolean {
+    return this.#destroyed;
   }
 
   getURL(): string {
@@ -32,6 +139,61 @@ class WebContents extends EventEmitter {
   }
 
   openDevTools(_options?: unknown) {}
+  setIgnoreMenuShortcuts(_ignore: boolean) {}
+  setWindowOpenHandler(_handler: unknown) {}
+  setBackgroundThrottling(_allowed: boolean) {}
+  setVisualZoomLevelLimits(_min: number, _max: number): Promise<void> {
+    return Promise.resolve();
+  }
+  getZoomFactor(): number {
+    return this.#zoomFactor;
+  }
+  setZoomFactor(factor: number) {
+    this.#zoomFactor = Number(factor) > 0 ? Number(factor) : 1;
+  }
+  getZoomLevel(): number {
+    return this.#zoomLevel;
+  }
+  setZoomLevel(level: number) {
+    this.#zoomLevel = Number(level) || 0;
+  }
+
+  async executeJavaScript(code: string, _userGesture?: boolean): Promise<unknown> {
+    if (this.#destroyed || typeof this.#win.evaluateJavaScript !== "function") return undefined;
+    const raw = await this.#win.evaluateJavaScript(String(code));
+    if (typeof raw === "string") {
+      try {
+        return JSON.parse(raw);
+      } catch {
+        return raw;
+      }
+    }
+    return raw;
+  }
+
+  async printToPDF(_options?: unknown): Promise<Uint8Array> {
+    return new Uint8Array(0);
+  }
+
+  async capturePage(_rect?: unknown): Promise<{ toPNG(): Uint8Array }> {
+    return { toPNG: () => new Uint8Array(0) };
+  }
+
+  postMessage(channel: string, message: unknown, transfer?: unknown[]) {
+    if (this.#destroyed) return;
+    const portIds: number[] = [];
+    if (Array.isArray(transfer)) {
+      for (const item of transfer) {
+        if (item instanceof MessagePortMain) {
+          item._senderWin = this.#win;
+          activeTransferredPorts.set(item._id, item);
+          if (item._peer) item._peer._senderWin = null;
+          portIds.push(item._id);
+        }
+      }
+    }
+    this.#win.sendToRenderer("__bun_port_open__", JSON.stringify([channel, message, portIds]));
+  }
 
   send(channel: string, ...args: unknown[]) {
     this.#win.sendToRenderer(channel, JSON.stringify(args));
@@ -93,7 +255,9 @@ function compileWindowCapabilities(
   const contextIsolation = sandbox ? true : webPreferences?.contextIsolation !== false;
 
   const ipc = capabilities?.ipc;
-  const ipcDefaultPolicy: "allow" | "deny" = ipc?.defaultPolicy ?? (sandbox ? "deny" : "allow");
+  // Electron's `sandbox: true` disables Node integration & enforces context isolation without
+  // blocking IPC; explicit `capabilities.ipc.defaultPolicy` still controls deny-by-default.
+  const ipcDefaultPolicy: "allow" | "deny" = ipc?.defaultPolicy ?? "allow";
   const ipcAllow = Array.isArray(ipc?.allow) ? new Set(ipc.allow.map(String)) : null;
   const ipcDeny = Array.isArray(ipc?.deny) ? new Set(ipc.deny.map(String)) : null;
   const ipcOrigins = Array.isArray(ipc?.origins) ? new Set(ipc.origins.map(String)) : null;
@@ -391,9 +555,27 @@ const CDP_BRIDGE_JS = `(() => {
       let s = listeners.get(channel);
       if (!s) { s = new Set(); listeners.set(channel, s); }
       s.add(fn);
+      return window.bunDesktopIpc;
+    },
+    once(channel, fn) {
+      const wrapped = (ev, ...args) => {
+        window.bunDesktopIpc.removeListener(channel, wrapped);
+        fn(ev, ...args);
+      };
+      return window.bunDesktopIpc.on(channel, wrapped);
+    },
+    off(channel, fn) {
+      listeners.get(channel)?.delete(fn);
+      return window.bunDesktopIpc;
     },
     removeListener(channel, fn) {
       listeners.get(channel)?.delete(fn);
+      return window.bunDesktopIpc;
+    },
+    removeAllListeners(channel) {
+      if (channel === undefined) listeners.clear();
+      else listeners.delete(channel);
+      return window.bunDesktopIpc;
     },
   };
   if (typeof window.fetch === "function") {
@@ -407,11 +589,17 @@ const CDP_BRIDGE_JS = `(() => {
       return origFetch(input, init);
     };
   }
+  const _cdpContextBridge = {
+    exposeInMainWorld(key, api) {
+      window[String(key)] = api;
+    },
+  };
   if (typeof window.require !== "function") {
     window.require = function(id) {
       if (id === "electron") {
         return {
           ipcRenderer: window.bunDesktopIpc,
+          contextBridge: _cdpContextBridge,
           webUtils: { getPathForFile(f) { return (f && f.path) || (f && f.name) || ""; } },
         };
       }
@@ -658,7 +846,11 @@ class CdpWindowAdapter {
       }
       return;
     }
-    const event = { senderId: this.id, sender: win?.webContents };
+    const event = {
+      senderId: this.id,
+      sender: win?.webContents,
+      senderFrame: { url: win?.webContents.getURL() ?? "about:blank" },
+    };
     if (msg.isInvoke) {
       const handler = ipcMain._getHandler(channel);
       if (!handler) {
@@ -782,9 +974,18 @@ class CdpWindowAdapter {
     return this.#maximized;
   }
   minimize() {}
+  isMinimized() {
+    return false;
+  }
+  restore() {}
   focus() {}
   center() {}
   setProgressBar(_p: number) {}
+  async evaluateJavaScript(code: string): Promise<unknown> {
+    if (!this.#ws || !this.#sessionId || this.#closed) return undefined;
+    const res = await this.#cdp("Runtime.evaluate", { expression: String(code), awaitPromise: true, returnByValue: true }, true);
+    return res?.result?.value;
+  }
   sendToRenderer(channel: string, argsJson: string) {
     if (!this.#ws || !this.#sessionId || this.#closed) return;
     void this.#cdp(
@@ -817,6 +1018,7 @@ class CdpWindowAdapter {
       ws.onopen = null;
       ws.onerror = null;
       try {
+        (ws as { terminate?(): void }).terminate?.();
         ws.close();
       } catch {}
     }
@@ -833,6 +1035,131 @@ class CdpWindowAdapter {
   }
 }
 
+function buildPreloadWrapper(userPreloadSrc: string, additionalArgs: unknown[]): string {
+  const argvJson = JSON.stringify([
+    "bun-desktop",
+    ...(Array.isArray(additionalArgs) ? additionalArgs.map(a => String(a)) : []),
+  ]);
+  const platformJson = JSON.stringify(process.platform);
+  const archJson = JSON.stringify(process.arch);
+  const versionsJson = JSON.stringify({
+    node: process.versions?.node ?? "22.0.0",
+    bun: typeof Bun !== "undefined" ? Bun.version : "1.4.5",
+    chrome: "130.0.0.0",
+    electron: "35.0.0",
+  });
+  return `(() => {
+  const _el = typeof window.require === "function" ? window.require("electron") : {
+    ipcRenderer: window.bunDesktopIpc,
+    contextBridge: { exposeInMainWorld(k, v) { window[String(k)] = v; } },
+    webUtils: { getPathForFile(f) { return (f && f.path) || (f && f.name) || ""; } },
+  };
+  const _ports = new Map();
+  if (_el && _el.ipcRenderer && !_el.ipcRenderer.__bunPortHooked) {
+    _el.ipcRenderer.__bunPortHooked = true;
+    _el.ipcRenderer.on("__bun_port_open__", (_ev, channel, message, portIds) => {
+      const transferred = [];
+      if (Array.isArray(portIds)) {
+        for (const id of portIds) {
+          const mc = new MessageChannel();
+          mc.port1.onmessage = ev => _el.ipcRenderer.send("__bun_port_data__", id, ev.data);
+          mc.port1.start();
+          _ports.set(id, mc.port1);
+          transferred.push(mc.port2);
+        }
+      }
+      if (typeof window.__bunIpcDispatchWithPorts === "function") {
+        window.__bunIpcDispatchWithPorts(channel, message, transferred);
+      } else {
+        window.__bunDispatchPortMsg?.(channel, message, transferred);
+      }
+    });
+    _el.ipcRenderer.on("__bun_port_data__", (_ev, id, data) => {
+      const p = _ports.get(id);
+      if (p) p.postMessage(data);
+    });
+    _el.ipcRenderer.on("__bun_port_close__", (_ev, id) => {
+      const p = _ports.get(id);
+      if (p) { p.close(); _ports.delete(id); }
+    });
+    const _origOn = _el.ipcRenderer.on.bind(_el.ipcRenderer);
+    const _portListeners = new Map();
+    window.__bunDispatchPortMsg = (channel, message, ports) => {
+      const set = _portListeners.get(channel);
+      if (!set) return;
+      for (const fn of set) fn({ senderId: 0, ports }, message);
+    };
+    _el.ipcRenderer.on = function(ch, fn) {
+      let s = _portListeners.get(ch);
+      if (!s) { s = new Set(); _portListeners.set(ch, s); }
+      s.add(fn);
+      return _origOn(ch, fn);
+    };
+  }
+  const __bunPreIpc = _el.ipcRenderer;
+  const __bunPreContextBridge = _el.contextBridge || { exposeInMainWorld(k, v) { window[String(k)] = v; } };
+  const __bunPreWebUtils = _el.webUtils || { getPathForFile(f) { return (f && f.path) || (f && f.name) || ""; } };
+  const __bunPreElectron = { ipcRenderer: __bunPreIpc, contextBridge: __bunPreContextBridge, webUtils: __bunPreWebUtils };
+  const __bunPreProcess = {
+    platform: ${platformJson},
+    arch: ${archJson},
+    versions: ${versionsJson},
+    argv: ${argvJson},
+    env: {},
+  };
+  const __bunPreRequire = id => {
+    if (id === "electron") return __bunPreElectron;
+    if (typeof window.require === "function") return window.require(id);
+    throw new Error("Cannot find module '" + id + "'");
+  };
+  const __bunPreModule = { exports: {} };
+  const __bunPreExports = __bunPreModule.exports;
+  if (typeof window.fetch === "function" && !window.__bunFetchWebRequestHooked) {
+    window.__bunFetchWebRequestHooked = true;
+    let _hookActive = true;
+    const _origFetch = window.fetch.bind(window);
+    window.fetch = async function(input, init) {
+      const urlStr = typeof input === "string"
+        ? input
+        : input instanceof Request
+          ? input.url
+          : input instanceof URL
+            ? input.href
+            : String(input ?? "");
+      if (_hookActive && (urlStr.startsWith("http://127.0.0.1") || urlStr.startsWith("http://localhost"))) {
+        try {
+          const baseHeaders = new Headers(input instanceof Request ? input.headers : undefined);
+          if (init && init.headers) {
+            new Headers(init.headers).forEach((v, k) => baseHeaders.set(k, v));
+          }
+          const hdrObj = {};
+          baseHeaders.forEach((v, k) => { hdrObj[k] = v; });
+          const method = (init && init.method) || (input instanceof Request ? input.method : "GET");
+          const out = await _el.ipcRenderer.invoke("__bun_web_request_headers__", urlStr, method, hdrObj);
+          if (out && out.none) {
+            _hookActive = false;
+          } else if (out && out.headers) {
+            const nextHeaders = new Headers(baseHeaders);
+            for (const [k, v] of Object.entries(out.headers)) {
+              if (typeof v === "string") nextHeaders.set(k, v);
+            }
+            if (input instanceof Request) {
+              input = new Request(input, init ? { ...init, headers: nextHeaders } : { headers: nextHeaders });
+              return _origFetch(input);
+            }
+            init = { ...(init || {}), headers: nextHeaders };
+          }
+        } catch {}
+      }
+      return _origFetch(input, init);
+    };
+  }
+  (function(require, module, exports, process) {
+${userPreloadSrc}
+  })(__bunPreRequire, __bunPreModule, __bunPreExports, __bunPreProcess);
+})();`;
+}
+
 class BrowserWindow extends EventEmitter {
   static #windows = new Set<BrowserWindow>();
   static #windowsById = new Map<number, BrowserWindow>();
@@ -841,6 +1168,9 @@ class BrowserWindow extends EventEmitter {
   #visible: boolean;
   #x: number;
   #y: number;
+  #documentEdited = false;
+  #representedFilename = "";
+  #fullScreen = false;
   #capabilities: WindowCapabilityState;
   #webPreferences: WebPreferences;
   readonly webContents: WebContents;
@@ -849,13 +1179,30 @@ class BrowserWindow extends EventEmitter {
     options?: Record<string, unknown> & { capabilities?: WindowCapabilities; webPreferences?: WebPreferences },
   ) {
     super();
-    const webPrefs = (options?.webPreferences as WebPreferences | undefined) ?? undefined;
+    const webPrefs = (options?.webPreferences as (WebPreferences & { additionalArguments?: unknown[] }) | undefined) ?? undefined;
     const rawCaps = (options?.capabilities as WindowCapabilities | undefined) ?? undefined;
     const capState = compileWindowCapabilities(rawCaps, webPrefs);
+    const preloadPath =
+      typeof webPrefs?.preload === "string"
+        ? webPrefs.preload
+        : typeof options?.preload === "string"
+          ? options.preload
+          : undefined;
+    let preloadCode: string | undefined;
+    if (preloadPath) {
+      try {
+        const rawPreload = require("node:fs").readFileSync(preloadPath, "utf8");
+        preloadCode = buildPreloadWrapper(rawPreload, webPrefs?.additionalArguments ?? []);
+      } catch {}
+    }
     const normalizedOpts =
-      options && webPrefs && typeof webPrefs.preload === "string" && !options.preload
-        ? { ...options, preload: webPrefs.preload }
-        : options;
+      options || preloadPath || preloadCode
+        ? {
+            ...(options ?? {}),
+            ...(preloadPath ? { preload: preloadPath } : {}),
+            ...(preloadCode ? { preloadCode } : {}),
+          }
+        : undefined;
     const backendSpec = resolveBackendSpec(options?.backend);
     if (backendSpec.type === "chrome" || backendSpec.type === "cef") {
       this.#native = new CdpWindowAdapter(
@@ -867,7 +1214,7 @@ class BrowserWindow extends EventEmitter {
     }
     this.#capabilities = capState;
     this.#webPreferences = {
-      preload: typeof webPrefs?.preload === "string" ? webPrefs.preload : undefined,
+      preload: preloadPath,
       sandbox: capState.sandbox,
       nodeIntegration: capState.nodeIntegration,
       contextIsolation: capState.contextIsolation,
@@ -882,6 +1229,7 @@ class BrowserWindow extends EventEmitter {
     if (this.#visible) {
       BrowserWindow.#focused = this;
     }
+    app.emit("browser-window-created", {}, this);
   }
 
   static getAllWindows(): BrowserWindow[] {
@@ -897,6 +1245,11 @@ class BrowserWindow extends EventEmitter {
 
   static fromId(id: number): BrowserWindow | null {
     return BrowserWindow.#windowsById.get(id) ?? null;
+  }
+
+  static fromWebContents(wc: WebContents | { id?: number } | null | undefined): BrowserWindow | null {
+    if (!wc || typeof wc.id !== "number") return null;
+    return BrowserWindow.#windowsById.get(wc.id) ?? null;
   }
 
   get id(): number {
@@ -919,7 +1272,11 @@ class BrowserWindow extends EventEmitter {
       return Promise.reject(new Error(`Navigation to '${url}' denied by window capabilities`));
     }
     this.webContents._setURL(url);
+    this.webContents._setLoading(true);
     return Promise.resolve(this.#native.loadURL(url)).then(res => {
+      this.webContents._setLoading(false);
+      this.webContents.emit("did-navigate", {}, url, 200, "");
+      this.webContents.emit("did-finish-load");
       this.emit("ready-to-show");
       return res;
     });
@@ -935,7 +1292,11 @@ class BrowserWindow extends EventEmitter {
       return Promise.reject(new Error(`Navigation to '${fileUrl}' denied by window capabilities`));
     }
     this.webContents._setURL(`file://${filePath}`);
+    this.webContents._setLoading(true);
     return Promise.resolve(this.#native.loadFile(filePath)).then(res => {
+      this.webContents._setLoading(false);
+      this.webContents.emit("did-navigate", {}, fileUrl, 200, "");
+      this.webContents.emit("did-finish-load");
       this.emit("ready-to-show");
       return res;
     });
@@ -963,6 +1324,7 @@ class BrowserWindow extends EventEmitter {
     this.emit("close", { preventDefault() {} });
     this.#visible = false;
     if (BrowserWindow.#focused === this) BrowserWindow.#focused = null;
+    this.webContents._setDestroyed(true);
     this.#native.close();
     windowCapabilities.delete(this.#native.id);
     BrowserWindow.#windows.delete(this);
@@ -1030,6 +1392,13 @@ class BrowserWindow extends EventEmitter {
     this.#native.minimize();
     this.emit("minimize");
   }
+  isMinimized(): boolean {
+    return typeof this.#native.isMinimized === "function" ? this.#native.isMinimized() : false;
+  }
+  restore() {
+    if (typeof this.#native.restore === "function") this.#native.restore();
+    this.emit("restore");
+  }
   unmaximize() {
     this.#native.unmaximize();
     this.emit("unmaximize");
@@ -1037,11 +1406,36 @@ class BrowserWindow extends EventEmitter {
   isMaximized(): boolean {
     return this.#native.isMaximized();
   }
+  setDocumentEdited(edited: boolean) {
+    this.#documentEdited = Boolean(edited);
+  }
+  isDocumentEdited(): boolean {
+    return this.#documentEdited;
+  }
+  setRepresentedFilename(filename: string) {
+    this.#representedFilename = String(filename ?? "");
+  }
+  getRepresentedFilename(): string {
+    return this.#representedFilename;
+  }
+  setMinimumSize(_w: number, _h: number) {}
+  setAutoHideMenuBar(_v: boolean) {}
+  setMenuBarVisibility(_v: boolean) {}
+  isFullScreen(): boolean {
+    return this.#fullScreen;
+  }
+  setFullScreen(flag: boolean) {
+    this.#fullScreen = Boolean(flag);
+    this.emit(this.#fullScreen ? "enter-full-screen" : "leave-full-screen");
+  }
   focus() {
     this.#visible = true;
     BrowserWindow.#focused = this;
     this.#native.focus();
     this.emit("focus");
+  }
+  isFocused(): boolean {
+    return BrowserWindow.#focused === this;
   }
   center() {
     this.#native.center();
@@ -1055,6 +1449,8 @@ class BrowserWindow extends EventEmitter {
 }
 
 class App extends EventEmitter {
+  #customPaths = new Map<string, string>();
+
   isReady(): boolean {
     return nativeApp.isReady();
   }
@@ -1098,7 +1494,17 @@ class App extends EventEmitter {
   }
 
   getPath(name: string): string {
-    return nativeApp.getPath(name);
+    const key = String(name);
+    const custom = this.#customPaths.get(key);
+    if (custom !== undefined) return custom;
+    if (key === "sessionData") {
+      return require("node:path").join(this.getPath("userData"), "SessionData");
+    }
+    return nativeApp.getPath(key);
+  }
+
+  setPath(name: string, pathVal: string) {
+    this.#customPaths.set(String(name), String(pathVal));
   }
 
   getAppPath(): string {
@@ -1203,14 +1609,82 @@ class IpcMain extends EventEmitter {
       }
     }
     const win = BrowserWindow.fromId(windowId);
-    if (!isIpcAllowed(windowId, channel, win?.webContents.getURL())) {
+    const isInternalTransport =
+      channel === "__bun_port_data__" ||
+      channel === "__bun_port_close__" ||
+      (isInvoke && channel === "__bun_web_request_headers__");
+    if (!isInternalTransport && !isIpcAllowed(windowId, channel, win?.webContents.getURL())) {
       if (isInvoke) {
         nativeIpcMain.sendIpcReply(windowId, reqId, false, `IPC channel '${channel}' denied by window capabilities`);
       }
       return;
     }
-    const event = { senderId: windowId, sender: win?.webContents };
+    const event = {
+      senderId: windowId,
+      sender: win?.webContents,
+      senderFrame: { url: win?.webContents.getURL() ?? "about:blank" },
+    };
 
+    if (channel === "__bun_port_data__") {
+      const portId = Number(args[0] ?? 0);
+      const port = activeTransferredPorts.get(portId);
+      const target = port?._peer;
+      if (target && !target._closed) {
+        target.emit("message", { data: args[1] });
+      }
+      return;
+    }
+    if (channel === "__bun_port_close__") {
+      const portId = Number(args[0] ?? 0);
+      const port = activeTransferredPorts.get(portId);
+      if (port) {
+        activeTransferredPorts.delete(portId);
+        port.close();
+      }
+      return;
+    }
+    if (isInvoke && channel === "__bun_web_request_headers__") {
+      if (beforeSendHeadersListeners.length === 0) {
+        nativeIpcMain.sendIpcReply(windowId, reqId, true, JSON.stringify({ none: true }));
+        return;
+      }
+      const reqUrl = String(args[0] ?? "");
+      const reqMethod = String(args[1] ?? "GET");
+      const reqHdrs = (args[2] && typeof args[2] === "object" ? args[2] : {}) as Record<string, string>;
+      void runBeforeSendHeaders(win?.webContents.getURL() ?? "about:blank", reqUrl, reqMethod, reqHdrs).then(
+        headers => nativeIpcMain.sendIpcReply(windowId, reqId, true, JSON.stringify({ headers })),
+        err => nativeIpcMain.sendIpcReply(windowId, reqId, false, err instanceof Error ? err.message : String(err)),
+      );
+      return;
+    }
+    if (isInvoke && channel.startsWith("__bun_bin__:")) {
+      const realCh = channel.slice("__bun_bin__:".length);
+      const rawBytes = args[0] ? new Uint8Array(Buffer.from(String(args[0]), "base64")) : new Uint8Array(0);
+      const binHandler = this.#binaryHandlers.get(realCh);
+      if (!binHandler) {
+        nativeIpcMain.sendIpcReply(windowId, reqId, false, `No binary handler registered for '${realCh}'`);
+        return;
+      }
+      Promise.resolve()
+        .then(() => binHandler(event, rawBytes))
+        .then(
+          val => {
+            const outBytes =
+              val instanceof Uint8Array
+                ? val
+                : val instanceof ArrayBuffer
+                  ? new Uint8Array(val)
+                  : ArrayBuffer.isView(val)
+                    ? new Uint8Array(val.buffer, val.byteOffset, val.byteLength)
+                    : typeof val === "string"
+                      ? new TextEncoder().encode(val)
+                      : new Uint8Array(0);
+            nativeIpcMain.sendIpcReply(windowId, reqId, true, JSON.stringify(Buffer.from(outBytes).toString("base64")));
+          },
+          err => nativeIpcMain.sendIpcReply(windowId, reqId, false, err instanceof Error ? err.message : String(err)),
+        );
+      return;
+    }
     if (isInvoke) {
       const handler = this.#handlers.get(channel);
       if (!handler) {
@@ -1255,7 +1729,11 @@ class IpcMain extends EventEmitter {
       );
       return;
     }
-    const event = { senderId: windowId, sender: win?.webContents };
+    const event = {
+      senderId: windowId,
+      sender: win?.webContents,
+      senderFrame: { url: win?.webContents.getURL() ?? "about:blank" },
+    };
     const handler = this.#binaryHandlers.get(channel);
     if (!handler) {
       nativeIpcMain.sendIpcBinaryReply(windowId, reqId, 404, `No binary handler registered for '${channel}'`);
@@ -1315,6 +1793,15 @@ nativeIpcMain.setBinaryDispatcher((windowId: number, reqId: number, channel: str
 const protocolHandlers = new Map<string, (request: Request) => Response | Promise<Response>>();
 
 const protocol = {
+  registerSchemesAsPrivileged(customSchemes: Array<{ scheme?: string } | string>) {
+    if (!Array.isArray(customSchemes)) return;
+    for (const entry of customSchemes) {
+      const s = typeof entry === "string" ? entry : entry?.scheme;
+      if (typeof s === "string" && s) {
+        nativeProtocol.registerScheme(s.toLowerCase());
+      }
+    }
+  },
   handle(scheme: string, handler: (request: Request) => Response | Promise<Response>) {
     protocolHandlers.set(scheme.toLowerCase(), handler);
     nativeProtocol.handle(scheme, handler);
@@ -1422,22 +1909,47 @@ async function defaultBundleHandler(req: Request, windowId?: number): Promise<Re
   return new Response(file);
 }
 
-nativeProtocol.setDispatcher((windowId: number, taskId: number, url: string, method: string, rangeHeader: string) => {
-  const colon = url.indexOf(":");
-  const scheme = colon > 0 ? url.slice(0, colon).toLowerCase() : "";
-  if (!isProtocolSchemeAllowed(windowId, scheme)) {
-    nativeProtocol.sendResponseError(windowId, taskId, 403);
-    return;
-  }
-  const handler = protocolHandlers.get(scheme) ?? (scheme === "app" ? defaultBundleHandler : undefined);
-  if (!handler) {
-    nativeProtocol.sendResponseError(windowId, taskId, 404);
-    return;
-  }
+nativeProtocol.setDispatcher(
+  (
+    windowId: number,
+    taskId: number,
+    url: string,
+    method: string,
+    rangeHeader: string,
+    rawHeadersJson?: string,
+    rawBody?: Uint8Array,
+  ) => {
+    const colon = url.indexOf(":");
+    const scheme = colon > 0 ? url.slice(0, colon).toLowerCase() : "";
+    if (!isProtocolSchemeAllowed(windowId, scheme)) {
+      nativeProtocol.sendResponseError(windowId, taskId, 403);
+      return;
+    }
+    const handler = protocolHandlers.get(scheme) ?? (scheme === "app" ? defaultBundleHandler : undefined);
+    if (!handler) {
+      nativeProtocol.sendResponseError(windowId, taskId, 404);
+      return;
+    }
 
-  const reqHeaders = new Headers();
-  if (rangeHeader) reqHeaders.set("range", rangeHeader);
-  const req = new Request(url, { method: method || "GET", headers: reqHeaders });
+    const reqHeaders = new Headers();
+    if (rawHeadersJson && rawHeadersJson !== "{}") {
+      try {
+        const parsed = JSON.parse(rawHeadersJson) as Record<string, string>;
+        if (parsed && typeof parsed === "object") {
+          for (const [k, v] of Object.entries(parsed)) {
+            if (typeof v === "string") reqHeaders.set(k, v);
+          }
+        }
+      } catch {}
+    }
+    if (rangeHeader && !reqHeaders.has("range")) reqHeaders.set("range", rangeHeader);
+    const reqMethod = (method || "GET").toUpperCase();
+    const canHaveBody = reqMethod !== "GET" && reqMethod !== "HEAD" && rawBody && rawBody.byteLength > 0;
+    const req = new Request(url, {
+      method: reqMethod,
+      headers: reqHeaders,
+      ...(canHaveBody ? { body: rawBody as BodyInit } : {}),
+    });
 
   Promise.resolve()
     .then(() => (handler === defaultBundleHandler ? defaultBundleHandler(req, windowId) : handler(req)))
@@ -1464,9 +1976,58 @@ nativeProtocol.setDispatcher((windowId: number, taskId: number, url: string, met
 
 let currentAppMenu: { items: unknown[]; popup(): void } | null = null;
 
+function wrapMenuSubmenus(items: unknown[]): unknown[] {
+  for (const item of items) {
+    if (item && typeof item === "object" && Array.isArray((item as { submenu?: unknown }).submenu)) {
+      const sub = (item as { submenu: unknown[] & Record<string, unknown> }).submenu;
+      wrapMenuSubmenus(sub);
+      if (!sub.items) sub.items = sub;
+      if (typeof sub.on !== "function") {
+        const ee = new EventEmitter();
+        sub.on = ee.on.bind(ee);
+        sub.once = ee.once.bind(ee);
+        sub.off = ee.off.bind(ee);
+        sub.removeListener = ee.removeListener.bind(ee);
+        sub.emit = ee.emit.bind(ee);
+      }
+    }
+  }
+  return items;
+}
+
+function findMenuItemById(items: unknown[], id: string): unknown {
+  for (const item of items) {
+    if (!item || typeof item !== "object") continue;
+    const obj = item as { id?: string; submenu?: unknown };
+    if (obj.id === id) return obj;
+    const sub = Array.isArray(obj.submenu)
+      ? obj.submenu
+      : Array.isArray((obj.submenu as { items?: unknown[] } | undefined)?.items)
+        ? (obj.submenu as { items: unknown[] }).items
+        : null;
+    if (sub) {
+      const found = findMenuItemById(sub, id);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
 const Menu = {
   buildFromTemplate(template: unknown[]) {
-    return { items: Array.isArray(template) ? template : [], popup() {} };
+    const items = Array.isArray(template) ? wrapMenuSubmenus(template) : [];
+    const ee = new EventEmitter();
+    return {
+      items,
+      popup() {},
+      on: ee.on.bind(ee),
+      once: ee.once.bind(ee),
+      off: ee.off.bind(ee),
+      emit: ee.emit.bind(ee),
+      getMenuItemById(id: string) {
+        return findMenuItemById(items, String(id));
+      },
+    };
   },
   setApplicationMenu(menu: { items?: unknown[]; popup(): void } | null) {
     currentAppMenu = menu ? { items: menu.items ?? [], popup: menu.popup ?? (() => {}) } : null;
@@ -1520,6 +2081,20 @@ const shell = {
       Bun.spawn(["open", "-R", fullPath], { stdout: "ignore", stderr: "ignore" });
     }
   },
+  async openPath(fullPath: string): Promise<string> {
+    const target = String(fullPath);
+    if (process.platform === "darwin") {
+      const proc = Bun.spawn(["open", target], { stdout: "ignore", stderr: "pipe" });
+      const code = await proc.exited;
+      return code === 0 ? "" : `Failed to open '${target}' (exit ${code})`;
+    }
+    if (process.platform === "linux") {
+      const proc = Bun.spawn(["xdg-open", target], { stdout: "ignore", stderr: "pipe" });
+      const code = await proc.exited;
+      return code === 0 ? "" : `Failed to open '${target}' (exit ${code})`;
+    }
+    return nativeApp.openExternal(target) ? "" : `Failed to open '${target}'`;
+  },
   async trashItem(fullPath: string) {
     if (!nativeApp.trashItem(String(fullPath))) {
       throw new Error(`Failed to move item to trash: ${fullPath}`);
@@ -1568,6 +2143,9 @@ const screen = new (class extends EventEmitter {
     return [this.getPrimaryDisplay()];
   }
   getDisplayNearestPoint(_point: { x: number; y: number }) {
+    return this.getPrimaryDisplay();
+  }
+  getDisplayMatching(_rect: { x?: number; y?: number; width?: number; height?: number }) {
     return this.getPrimaryDisplay();
   }
 })();
@@ -1665,23 +2243,168 @@ const powerSaveBlocker = {
   },
 };
 
+const beforeSendHeadersListeners: Array<{
+  urls: string[] | null;
+  fn: (
+    details: { url: string; method: string; requestHeaders: Record<string, string>; frame: { parent: null; url: string } },
+    callback: (res: { cancel?: boolean; requestHeaders?: Record<string, string> }) => void,
+  ) => void;
+}> = [];
+
+function matchesWebRequestPattern(urlStr: string, pattern: string): boolean {
+  if (pattern === "<all_urls>" || pattern === "*") return true;
+  const schemeEnd = pattern.indexOf("://");
+  if (schemeEnd === -1) return matchesUrlPattern(urlStr, pattern);
+  let parsed: URL;
+  try {
+    parsed = new URL(urlStr);
+  } catch {
+    return matchesUrlPattern(urlStr, pattern);
+  }
+  const patScheme = pattern.slice(0, schemeEnd).toLowerCase();
+  const actualScheme = parsed.protocol.replace(/:$/, "").toLowerCase();
+  if (patScheme === "*") {
+    if (actualScheme !== "http" && actualScheme !== "https" && actualScheme !== "ws" && actualScheme !== "wss") {
+      return false;
+    }
+  } else if (patScheme !== actualScheme) {
+    return false;
+  }
+  const rest = pattern.slice(schemeEnd + 3);
+  const slashIdx = rest.indexOf("/");
+  const patHostPort = slashIdx === -1 ? rest : rest.slice(0, slashIdx);
+  const patPath = slashIdx === -1 ? "/*" : rest.slice(slashIdx);
+  if (patHostPort !== "*") {
+    const colonIdx = patHostPort.lastIndexOf(":");
+    const patHost = colonIdx !== -1 ? patHostPort.slice(0, colonIdx) : patHostPort;
+    const patPort = colonIdx !== -1 ? patHostPort.slice(colonIdx + 1) : "";
+    if (patPort && patPort !== "*" && patPort !== parsed.port) return false;
+    if (!matchesUrlPattern(parsed.hostname.toLowerCase(), patHost.toLowerCase())) return false;
+  }
+  return matchesUrlPattern(parsed.pathname + parsed.search, patPath);
+}
+
+async function runBeforeSendHeaders(
+  winUrl: string,
+  url: string,
+  method: string,
+  requestHeaders: Record<string, string>,
+): Promise<Record<string, string>> {
+  let headers = { ...requestHeaders };
+  for (const entry of beforeSendHeadersListeners) {
+    if (entry.urls && !entry.urls.some(pat => matchesWebRequestPattern(url, pat))) continue;
+    await new Promise<void>(resolve => {
+      try {
+        entry.fn(
+          { url, method, requestHeaders: headers, frame: { parent: null, url: winUrl } },
+          res => {
+            if (res?.requestHeaders) headers = res.requestHeaders;
+            resolve();
+          },
+        );
+      } catch {
+        resolve();
+      }
+    });
+  }
+  return headers;
+}
+
 const session = {
   defaultSession: {
     protocol,
-    webRequest: { onHeadersReceived() {} },
+    webRequest: {
+      onHeadersReceived() {},
+      onBeforeSendHeaders(filterOrFn: unknown, maybeFn?: unknown) {
+        const hasFilter = typeof maybeFn === "function";
+        const fn = hasFilter ? maybeFn : filterOrFn;
+        if (typeof fn !== "function") return;
+        const urls =
+          hasFilter && filterOrFn && typeof filterOrFn === "object" && Array.isArray((filterOrFn as { urls?: unknown[] }).urls)
+            ? (filterOrFn as { urls: string[] }).urls
+            : null;
+        beforeSendHeadersListeners.push({
+          urls,
+          fn: fn as (typeof beforeSendHeadersListeners)[number]["fn"],
+        });
+      },
+    },
+    setPermissionRequestHandler(_handler: unknown) {},
+    setPermissionCheckHandler(_handler: unknown) {},
+    setSpellCheckerEnabled(_enabled: boolean) {},
+    setSpellCheckerLanguages(_langs: string[]) {},
+    getSpellCheckerLanguages(): string[] {
+      return [];
+    },
+    availableSpellCheckerLanguages: [] as string[],
+  },
+};
+
+const systemPreferences = {
+  getMediaAccessStatus(_mediaType: string): string {
+    return "granted";
+  },
+  async askForMediaAccess(_mediaType: string): Promise<boolean> {
+    return true;
   },
 };
 
 const contextBridge = {
   exposeInMainWorld(key: string, api: unknown) {
-    (globalThis as Record<string, unknown>)[key] = api;
+    const g = globalThis as Record<string, unknown>;
+    g[key] = api;
+    if (typeof (g as { window?: Record<string, unknown> }).window === "object" && g.window) {
+      (g.window as Record<string, unknown>)[key] = api;
+    }
   },
+};
+
+const net = {
+  fetch: globalThis.fetch.bind(globalThis),
+  isOnline: () => true,
+};
+
+const crashReporter = {
+  start(_opts?: unknown) {},
+  getLastCrashReport: () => null,
+  getUploadedReports: () => [],
+};
+
+const netLog = {
+  currentlyLogging: false,
+  async startLogging(_path: string, _opts?: unknown) {},
+  async stopLogging() {
+    return "";
+  },
+};
+
+const contentTracing = {
+  async startRecording(_opts?: unknown) {},
+  async stopRecording(path?: string) {
+    return path ?? "";
+  },
+};
+
+const autoUpdater = new (class extends EventEmitter {
+  setFeedURL(_opts?: unknown) {}
+  checkForUpdates() {}
+  quitAndInstall() {}
+})();
+
+class ImageView {
+  setImage(_img?: unknown) {}
+}
+
+const webContents = {
+  getAllWebContents: WebContents.getAllWebContents,
+  fromId: WebContents.fromId,
 };
 
 export default {
   app,
   BrowserWindow,
   ipcMain,
+  MessageChannelMain,
   protocol,
   Menu,
   dialog,
@@ -1693,5 +2416,13 @@ export default {
   Notification,
   powerSaveBlocker,
   session,
+  systemPreferences,
+  net,
+  crashReporter,
+  netLog,
+  contentTracing,
+  autoUpdater,
+  ImageView,
+  webContents,
   contextBridge,
 };

@@ -15,6 +15,9 @@ export const protocol = b.namespace({
     args: { scheme: b.string.utf8 },
     returns: b.bool,
   },
+  registerScheme: {
+    args: { scheme: b.string.utf8 },
+  },
   setDispatcher: {
     args: { fn: b.callable },
     capability: "js",

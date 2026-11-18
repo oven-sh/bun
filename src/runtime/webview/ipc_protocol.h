@@ -80,6 +80,9 @@ enum class Op : uint8_t {
     DesktopWindowProgress = 24, // f64 progress
     DesktopDialog = 25, // u32 reqId, u8 kind (0=open,1=save,2=message,3=error), str optsJson
     DesktopIpcBinaryReply = 26, // u32 reqId, u16 status, u32 dataLen, data bytes
+    DesktopWarm = 27, // (empty) pre-warm WebContent XPC + shared WKProcessPool
+    DesktopRegisterScheme = 28, // str scheme
+    DesktopEval = 29, // u32 reqId, str script
 };
 
 // Mouse button: 0=left, 1=right, 2=middle.
@@ -257,6 +260,8 @@ enum class Reply : uint8_t {
     DesktopDialogResult = 16,
     // u32 reqId, str channel, u32 dataLen, data bytes
     DesktopIpcBinary = 17,
+    // u32 reqId, u8 ok, str resultJsonOrErr
+    DesktopEvalResult = 18,
 };
 
 enum class DataStoreKind : uint8_t {

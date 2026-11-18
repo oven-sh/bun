@@ -32,6 +32,7 @@ unsafe extern "C" {
         body_ptr: *const u8,
         body_len: u32,
     ) -> bool;
+    fn Bun__Desktop__warm(g: *const JSGlobalObject);
 }
 
 thread_local! {
@@ -91,6 +92,15 @@ pub(crate) mod app {
 
     pub(crate) fn is_ready() -> bool {
         APP_STATE.with(|s| s.borrow().ready)
+    }
+
+    pub(crate) fn warm<'a>(cx: &mut JsScope<'a>) {
+        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+        unsafe {
+            Bun__Desktop__warm(cx.global());
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+        let _ = cx;
     }
 
     pub(crate) fn quit<'a>(_cx: &mut JsScope<'a>) {

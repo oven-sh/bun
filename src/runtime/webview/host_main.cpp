@@ -358,6 +358,22 @@ void Host::dispatch(uint32_t viewId, Op op, Reader r)
         WebViewHost::showDialog(viewId, reqId, kind, optsJson);
         return;
     }
+    case Op::DesktopWarm:
+        WebViewHost::warmDesktop();
+        return;
+    case Op::DesktopRegisterScheme: {
+        WTF::String scheme = r.str();
+        WebViewHost::registerCustomScheme(scheme);
+        return;
+    }
+    case Op::DesktopEval: {
+        uint32_t reqId = r.u32();
+        WTF::String script = r.str();
+        if (auto* v = view(viewId, op)) {
+            v->evaluateDesktopJS(reqId, script);
+        }
+        return;
+    }
     case Op::DesktopIpcReply: {
         uint32_t reqId = r.u32();
         uint8_t ok = r.u8();

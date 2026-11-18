@@ -256,12 +256,19 @@ static void delegateDidReceiveScriptMessage(id self, SEL, id /*controller*/, id 
     id rawBody = objc::WKScriptMessage(message).body();
     if (!objc::Ref(rawBody).isKindOf(objc::NSDictionary::cls)) return;
     objc::NSDictionary body(rawBody);
-    id ipcFlag = body.objectForKey(objc::NSString::fromWTF("bunIpc"_s).m_id);
+    static id kBunIpc = objc::Ref(objc::NSString::fromWTF("bunIpc"_s).m_id).msg<id>(objc::Ref::s_retain);
+    static id kReqId = objc::Ref(objc::NSString::fromWTF("reqId"_s).m_id).msg<id>(objc::Ref::s_retain);
+    static id kIsInvoke = objc::Ref(objc::NSString::fromWTF("isInvoke"_s).m_id).msg<id>(objc::Ref::s_retain);
+    static id kChannel = objc::Ref(objc::NSString::fromWTF("channel"_s).m_id).msg<id>(objc::Ref::s_retain);
+    static id kPayload = objc::Ref(objc::NSString::fromWTF("payload"_s).m_id).msg<id>(objc::Ref::s_retain);
+    static id kType = objc::Ref(objc::NSString::fromWTF("type"_s).m_id).msg<id>(objc::Ref::s_retain);
+    static id kArgs = objc::Ref(objc::NSString::fromWTF("args"_s).m_id).msg<id>(objc::Ref::s_retain);
+    id ipcFlag = body.objectForKey(kBunIpc);
     if (ipcFlag) {
-        id reqIdStr = body.objectForKey(objc::NSString::fromWTF("reqId"_s).m_id);
-        id isInvokeStr = body.objectForKey(objc::NSString::fromWTF("isInvoke"_s).m_id);
-        id channel = body.objectForKey(objc::NSString::fromWTF("channel"_s).m_id);
-        id payload = body.objectForKey(objc::NSString::fromWTF("payload"_s).m_id);
+        id reqIdStr = body.objectForKey(kReqId);
+        id isInvokeStr = body.objectForKey(kIsInvoke);
+        id channel = body.objectForKey(kChannel);
+        id payload = body.objectForKey(kPayload);
         if (!objc::Ref(channel).isKindOf(objc::NSString::cls)) return;
         uint32_t reqId = 0;
         if (objc::Ref(reqIdStr).isKindOf(objc::NSString::cls)) {
@@ -278,8 +285,8 @@ static void delegateDidReceiveScriptMessage(id self, SEL, id /*controller*/, id 
         host->onDesktopIpcMessage(reqId, isInvoke, chStr, plStr);
         return;
     }
-    id type = body.objectForKey(objc::NSString::fromWTF("type"_s).m_id);
-    id args = body.objectForKey(objc::NSString::fromWTF("args"_s).m_id);
+    id type = body.objectForKey(kType);
+    id args = body.objectForKey(kArgs);
     if (!objc::Ref(type).isKindOf(objc::NSString::cls)) return;
     if (args && !objc::Ref(args).isKindOf(objc::NSArray::cls)) return;
     host->onConsoleMessage(type, args);
@@ -293,8 +300,10 @@ static void delegateDidReceiveScriptMessageWithReply(id self, SEL, id /*controll
     id rawBody = objc::WKScriptMessage(message).body();
     if (!objc::Ref(rawBody).isKindOf(objc::NSDictionary::cls)) return;
     objc::NSDictionary body(rawBody);
-    id channel = body.objectForKey(objc::NSString::fromWTF("channel"_s).m_id);
-    id payload = body.objectForKey(objc::NSString::fromWTF("payload"_s).m_id);
+    static id kChannel = objc::Ref(objc::NSString::fromWTF("channel"_s).m_id).msg<id>(objc::Ref::s_retain);
+    static id kPayload = objc::Ref(objc::NSString::fromWTF("payload"_s).m_id).msg<id>(objc::Ref::s_retain);
+    id channel = body.objectForKey(kChannel);
+    id payload = body.objectForKey(kPayload);
     if (!objc::Ref(channel).isKindOf(objc::NSString::cls)) return;
     WTF::String chStr = objc::NSString(channel).toWTF();
     WTF::String plStr = objc::Ref(payload).isKindOf(objc::NSString::cls)

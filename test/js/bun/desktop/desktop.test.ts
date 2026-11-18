@@ -621,7 +621,7 @@ describe("bun:desktop scaffolding & CLI flags", () => {
         protocol.handle("app", () => new Response(\`<!doctype html><html><body><script>
           (async () => {
             const r = await window.bunDesktopIpc.invoke("cdp-ping", 41);
-            window.bunDesktopIpc.send("cdp-done", { ok: r.ok, isChrome: /Chrome\\//.test(navigator.userAgent) });
+            window.bunDesktopIpc.send("cdp-done", { ok: r.ok, isChrome: new RegExp("Chrome/").test(navigator.userAgent) });
           })();
         </script></body></html>\`, { headers: { "content-type": "text/html; charset=utf-8" } }));
         const done = new Promise<any>((resolve) => ipcMain.on("cdp-done", (_ev, d) => resolve(d)));
@@ -743,6 +743,106 @@ describe("bun:desktop scaffolding & CLI flags", () => {
       expect(parsed.allowed).toBe("ok");
       expect(parsed.deniedErr).toContain("denied");
       expect(parsed.traversalStatus).toBe(403);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test.if(process.platform === "darwin")(
+    "sandbox preload with const ipcRenderer, MessageChannelMain, and webRequest port matching work together",
+    async () => {
+      using dir = tempDir("desktop-sandbox-port", {
+        "preload.js": `
+          const { contextBridge, ipcRenderer } = require("electron");
+          ipcRenderer.on("rpc-port", ev => {
+            const port = ev.ports && ev.ports[0];
+            if (port) window.postMessage("rpc-port", "*", [port]);
+          });
+          contextBridge.exposeInMainWorld("bridge", {
+            ping: () => ipcRenderer.invoke("sb-ping"),
+            ready: () => ipcRenderer.send("rpc-ready"),
+          });
+        `,
+        "index.html": `<!doctype html><html><body><script>
+          window.addEventListener("message", async e => {
+            if (e.data !== "rpc-port" || !e.ports[0]) return;
+            const port = e.ports[0];
+            port.onmessage = async ev => {
+              const pingVal = await window.bridge.ping();
+              const authRes = await fetch(ev.data.srvUrl + "check").then(r => r.json());
+              port.postMessage({ pingVal, auth: authRes.auth });
+            };
+            port.start();
+          });
+          window.bridge.ready();
+        </script></body></html>`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "--desktop",
+          "-e",
+          `
+          import { app, BrowserWindow, ipcMain, MessageChannelMain, session } from "bun:desktop";
+          import path from "node:path";
+          await app.whenReady();
+          const srv = Bun.serve({
+            port: 0,
+            hostname: "127.0.0.1",
+            fetch(req) {
+              const cors = {
+                "access-control-allow-origin": "*",
+                "access-control-allow-headers": "*",
+              };
+              if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
+              return Response.json({ auth: req.headers.get("authorization") ?? "" }, { headers: cors });
+            },
+          });
+          session.defaultSession.webRequest.onBeforeSendHeaders(
+            { urls: ["http://127.0.0.1/*"] },
+            (details, cb) => {
+              cb({ requestHeaders: { ...details.requestHeaders, Authorization: "Basic dGVzdDp0b2tlbg==" } });
+            },
+          );
+          ipcMain.handle("sb-ping", () => "pong-sb");
+          const ready = new Promise<void>(resolve => ipcMain.once("rpc-ready", () => resolve()));
+          const win = new BrowserWindow({
+            width: 320,
+            height: 240,
+            show: false,
+            webPreferences: {
+              preload: path.join(process.cwd(), "preload.js"),
+              sandbox: true,
+              contextIsolation: true,
+              nodeIntegration: false,
+            },
+          });
+          await win.loadURL("app://bundle/index.html");
+          await ready;
+          const ch = new MessageChannelMain();
+          const reply = new Promise<any>(resolve => {
+            ch.port1.on("message", ev => resolve(ev.data));
+          });
+          ch.port1.start();
+          win.webContents.postMessage("rpc-port", null, [ch.port2]);
+          ch.port1.postMessage({ srvUrl: srv.url.href });
+          const res = await reply;
+          win.close();
+          srv.stop(true);
+          console.log(JSON.stringify(res));
+          process.exit(0);
+          `,
+        ],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr.replace(/^DEBUG: Reloading\.\.\.\r?\n/gm, "")).toBe("");
+      expect(JSON.parse(stdout.trim())).toEqual({
+        pingVal: "pong-sb",
+        auth: "Basic dGVzdDp0b2tlbg==",
+      });
       expect(exitCode).toBe(0);
     },
   );

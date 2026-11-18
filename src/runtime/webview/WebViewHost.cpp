@@ -881,13 +881,36 @@ static constexpr const char* kDesktopBridgeJS = R"js(
   };
   const _replyHandler = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.bunIpcReply;
   const _postHandler = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.bunIpc;
-  const _isAppOrigin = location.protocol === "app:" && location.origin !== "null";
-  const _blobPrefix = _isAppOrigin ? location.origin + "/__bun_ipc__/" : "";
-  const _binPrefix = _isAppOrigin ? location.origin + "/__bun_ipc_bin__/" : "";
+  const _isCustomOrigin = location.protocol !== "file:" && location.protocol !== "about:" && location.protocol !== "data:" && location.origin !== "null";
+  const _blobPrefix = _isCustomOrigin ? location.origin + "/__bun_ipc__/" : "";
+  const _binPrefix = _isCustomOrigin ? location.origin + "/__bun_ipc_bin__/" : "";
+  function _toBytes(data) {
+    if (data === undefined || data === null) return new Uint8Array(0);
+    if (data instanceof Uint8Array) return data;
+    if (ArrayBuffer.isView(data)) return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+    if (data instanceof ArrayBuffer) return new Uint8Array(data);
+    return new Uint8Array(0);
+  }
+  function _u8ToB64(u8) {
+    let s = "";
+    const CHUNK = 0x8000;
+    for (let i = 0; i < u8.length; i += CHUNK) {
+      s += String.fromCharCode.apply(null, u8.subarray(i, i + CHUNK));
+    }
+    return btoa(s);
+  }
+  function _b64ToU8(b64) {
+    const bin = atob(b64);
+    const u8 = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    return u8;
+  }
   window.bunDesktopIpc = {
     async invokeBinary(channel, data) {
       if (!_binPrefix) {
-        throw new Error("ipcRenderer.invokeBinary requires an app:// origin");
+        const b64 = _u8ToB64(_toBytes(data));
+        const resB64 = await window.bunDesktopIpc.invoke("__bun_bin__:" + String(channel), b64);
+        return resB64 ? _b64ToU8(String(resB64)) : new Uint8Array(0);
       }
       const body = data === undefined || data === null ? new Uint8Array(0) : data;
       const res = await fetch(_binPrefix + encodeURIComponent(String(channel)), {
@@ -908,7 +931,7 @@ static constexpr const char* kDesktopBridgeJS = R"js(
           payload: args.length === 0 ? "[]" : JSON.stringify(args),
         });
         if (resJson === undefined || resJson === null) return undefined;
-        if (_isAppOrigin && typeof resJson === "string" && resJson.length < 48 && resJson.charCodeAt(0) === 123 && resJson.startsWith('{"__bunIpcBlob":')) {
+        if (_blobPrefix && typeof resJson === "string" && resJson.length < 48 && resJson.charCodeAt(0) === 123 && resJson.startsWith('{"__bunIpcBlob":')) {
           const meta = JSON.parse(resJson);
           const r = await fetch(_blobPrefix + meta.__bunIpcBlob);
           return await r.json();
@@ -940,9 +963,32 @@ static constexpr const char* kDesktopBridgeJS = R"js(
       let s = listeners.get(channel);
       if (!s) { s = new Set(); listeners.set(channel, s); }
       s.add(fn);
+      return window.bunDesktopIpc;
+    },
+    once(channel, fn) {
+      const wrapped = (ev, ...args) => {
+        window.bunDesktopIpc.removeListener(channel, wrapped);
+        fn(ev, ...args);
+      };
+      return window.bunDesktopIpc.on(channel, wrapped);
+    },
+    off(channel, fn) {
+      listeners.get(channel)?.delete(fn);
+      return window.bunDesktopIpc;
     },
     removeListener(channel, fn) {
       listeners.get(channel)?.delete(fn);
+      return window.bunDesktopIpc;
+    },
+    removeAllListeners(channel) {
+      if (channel === undefined) listeners.clear();
+      else listeners.delete(channel);
+      return window.bunDesktopIpc;
+    },
+  };
+  const _contextBridge = {
+    exposeInMainWorld(key, api) {
+      window[String(key)] = api;
     },
   };
   if (typeof window.require !== "function") {
@@ -950,6 +996,7 @@ static constexpr const char* kDesktopBridgeJS = R"js(
       if (id === "electron") {
         return {
           ipcRenderer: window.bunDesktopIpc,
+          contextBridge: _contextBridge,
           webUtils: { getPathForFile(f) { return (f && f.path) || (f && f.name) || ""; } },
         };
       }
@@ -958,6 +1005,36 @@ static constexpr const char* kDesktopBridgeJS = R"js(
   }
 })();
 )js";
+
+static WTF::Vector<WTF::String>& registeredCustomSchemes()
+{
+    static LazyNeverDestroyed<WTF::Vector<WTF::String>> schemes;
+    static std::once_flag once;
+    std::call_once(once, [] { schemes.construct(); });
+    return schemes.get();
+}
+
+void WebViewHost::registerCustomScheme(const WTF::String& scheme)
+{
+    WTF::String lower = scheme.convertToASCIILowercase();
+    if (lower.isEmpty() || lower == "app"_s || lower == "http"_s || lower == "https"_s || lower == "file"_s) return;
+    auto& list = registeredCustomSchemes();
+    for (const auto& s : list) {
+        if (s == lower) return;
+    }
+    list.append(WTF::move(lower));
+}
+
+void WebViewHost::warmDesktop()
+{
+    static bool warmed = false;
+    if (warmed) return;
+    if (!ObjCRuntime::tryLoad()->m_loaded) return;
+    warmed = true;
+    ObjCRuntime::ARPool pool;
+    // Initialize shared WKProcessPool + WebKit frameworks without allocating a throwaway WKWebView.
+    (void)objc::WKWebViewConfiguration::createEphemeral();
+}
 
 Ref<WebViewHost> WebViewHost::createDesktopForIPC(
     uint32_t viewId,
@@ -970,7 +1047,10 @@ Ref<WebViewHost> WebViewHost::createDesktopForIPC(
     const WTF::String& preloadJs)
 {
     ASSERT(ObjCRuntime::tryLoad()->m_loaded);
-    objc::NSApplication::setActivationPolicyRegular();
+    const bool show = (flags & 1) != 0;
+    if (show) {
+        objc::NSApplication::setActivationPolicyRegular();
+    }
 
     auto host = adoptRef(*new WebViewHost());
     host->m_viewId = viewId;
@@ -978,6 +1058,9 @@ Ref<WebViewHost> WebViewHost::createDesktopForIPC(
     auto cfg = objc::WKWebViewConfiguration::createEphemeral();
     host->m_delegate = objc::NavigationDelegate::create(host.ptr());
     cfg.setURLSchemeHandler(host->m_delegate, objc::NSString::fromWTF("app"_s));
+    for (const auto& s : registeredCustomSchemes()) {
+        cfg.setURLSchemeHandler(host->m_delegate, objc::NSString::fromWTF(s));
+    }
 
     objc::WKUserContentController ucc(cfg.userContentController());
     ucc.addScriptMessageHandler(host->m_delegate, objc::NSString::fromWTF("bunConsole"_s));
@@ -1013,7 +1096,6 @@ Ref<WebViewHost> WebViewHost::createDesktopForIPC(
     host->m_webview.setNavigationDelegate(host->m_delegate);
     host->m_webview.setUIDelegate(host->m_delegate);
 
-    bool show = (flags & 1) != 0;
     bool resizable = (flags & 2) != 0;
     bool frame = (flags & 4) != 0;
     bool transparent = (flags & 8) != 0;
@@ -1056,9 +1138,10 @@ void WebViewHost::setWindowTitle(const WTF::String& title)
 void WebViewHost::showWindow(bool visible)
 {
     if (m_closed || !m_window.m_id) return;
-    if (visible)
+    if (visible) {
+        objc::NSApplication::setActivationPolicyRegular();
         m_window.makeKeyAndOrderFront();
-    else
+    } else
         m_window.orderOut();
 }
 
@@ -1083,6 +1166,7 @@ void WebViewHost::performWindowAction(uint8_t action)
         m_window.msg<void>(selFn("miniaturize:"), static_cast<id>(nullptr));
         break;
     case 4: // Focus
+        objc::NSApplication::setActivationPolicyRegular();
         m_window.makeKeyAndOrderFront();
         if (clsFn) {
             if (Class nsAppCls = clsFn("NSApplication")) {
@@ -1094,6 +1178,9 @@ void WebViewHost::performWindowAction(uint8_t action)
         break;
     case 5: // Center
         m_window.msg<void>(selFn("center"));
+        break;
+    case 6: // Restore
+        m_window.msg<void>(selFn("deminiaturize:"), static_cast<id>(nullptr));
         break;
     default:
         break;
@@ -1336,7 +1423,9 @@ void WebViewHost::sendDesktopIpcReply(uint32_t reqId, bool ok, const WTF::String
         if (block) {
             auto fn = reinterpret_cast<void (^)(id, id)>(block);
             if (ok) {
-                if (resultJson.length() >= 131072 && m_webview.m_id && url().startsWith("app://"_s)) {
+                const auto u = url();
+                const bool isCustom = !u.isEmpty() && !u.startsWith("http:"_s) && !u.startsWith("https:"_s) && !u.startsWith("file:"_s) && !u.startsWith("data:"_s) && !u.startsWith("about:"_s);
+                if (resultJson.length() >= 131072 && m_webview.m_id && isCustom) {
                     m_pendingIpcBlobs.emplace(reqId, resultJson);
                     fn(objc::NSString::fromWTF(makeString("{\"__bunIpcBlob\":"_s, reqId, '}')).m_id, nullptr);
                 } else {
@@ -1508,6 +1597,67 @@ static WTF::String percentDecodeChannel(const WTF::String& s)
     return WTF::String::fromUTF8(std::span<const char>(reinterpret_cast<const char*>(out.span().data()), out.size()));
 }
 
+void WebViewHost::evaluateDesktopJS(uint32_t reqId, const WTF::String& script)
+{
+    if (m_closed || !m_webview.m_id) {
+        WTF::Vector<uint8_t, 256> out;
+        out.grow(5);
+        memcpy(out.mutableSpan().data(), &reqId, 4);
+        out[4] = 0;
+        appendHostStr(out, "Window closed"_s);
+        hostWriter()->sendReply(m_viewId, Reply::DesktopEvalResult, out.span().data(), static_cast<uint32_t>(out.size()));
+        return;
+    }
+
+    struct EvalBlock {
+        void* isa;
+        int32_t flags;
+        int32_t reserved;
+        void (*invoke)(EvalBlock*, id, id);
+        const HostBlockDescriptor* descriptor;
+        Ref<WebViewHost> host;
+        uint32_t reqId;
+    };
+    static const HostBlockDescriptor desc {
+        0, sizeof(EvalBlock), nullptr,
+        [](const void* p) {
+            static_cast<EvalBlock*>(const_cast<void*>(p))->host.~Ref();
+        }
+    };
+    auto* b = static_cast<EvalBlock*>(malloc_zone_malloc(malloc_default_zone(), sizeof(EvalBlock)));
+    b->isa = _NSConcreteMallocBlock;
+    b->flags = BLOCK_NEEDS_FREE | BLOCK_HAS_COPY_DISPOSE | (1 << 1);
+    b->reserved = 0;
+    b->reqId = reqId;
+    b->descriptor = &desc;
+    new (&b->host) Ref<WebViewHost>(*this);
+    b->invoke = [](EvalBlock* self, id result, id error) {
+        ObjCRuntime::ARPool pool;
+        WebViewHost& h = self->host.get();
+        if (h.m_closed) return;
+        WTF::Vector<uint8_t, 256> out;
+        out.grow(5);
+        memcpy(out.mutableSpan().data(), &self->reqId, 4);
+        if (error) {
+            out[4] = 0;
+            objc::NSError err(error);
+            id msg = objc::NSDictionary(err.userInfo()).objectForKey(objc::NSString::fromWTF("WKJavaScriptExceptionMessage"_s).m_id);
+            appendHostStr(out, msg ? objc::NSString(msg).toWTF() : err.localizedDescription());
+        } else {
+            out[4] = 1;
+            WTF::String resStr = objc::Ref(result).isKindOf(objc::NSString::cls)
+                ? objc::NSString(result).toWTF()
+                : "null"_s;
+            appendHostStr(out, resStr);
+        }
+        hostWriter()->sendReply(h.m_viewId, Reply::DesktopEvalResult, out.span().data(), static_cast<uint32_t>(out.size()));
+    };
+
+    auto body = makeString("return JSON.stringify(await ("_s, script, "))"_s);
+    m_webview.callAsync(objc::NSString::fromWTF(body), nullptr, b);
+    _Block_release(b);
+}
+
 void WebViewHost::onSchemeTaskStart(id task)
 {
     if (m_closed || !task) return;
@@ -1515,10 +1665,11 @@ void WebViewHost::onSchemeTaskStart(id task)
     objc::NSURLRequest req = st.request();
     objc::NSURL nsUrl = req.URL();
     WTF::String url = nsUrl.absoluteString();
+    const bool isCustomScheme = !url.isEmpty() && !url.startsWith("http:"_s) && !url.startsWith("https:"_s) && !url.startsWith("file:"_s) && !url.startsWith("data:"_s);
 
     static constexpr auto kIpcBinMarker = "/__bun_ipc_bin__/"_s;
     auto binMarkerPos = url.find(kIpcBinMarker);
-    if (url.startsWith("app://"_s) && binMarkerPos != WTF::notFound
+    if (isCustomScheme && binMarkerPos != WTF::notFound
         && !req.headerValue(objc::NSString::fromWTF("x-bun-ipc-invoke"_s)).isEmpty()) {
         WTF::String rawChannel = url.substring(binMarkerPos + kIpcBinMarker.length());
         auto qPos = rawChannel.find('?');
@@ -1553,7 +1704,7 @@ void WebViewHost::onSchemeTaskStart(id task)
 
     static constexpr auto kIpcBlobMarker = "/__bun_ipc__/"_s;
     auto markerPos = url.find(kIpcBlobMarker);
-    if (url.startsWith("app://"_s) && markerPos != WTF::notFound) {
+    if (isCustomScheme && markerPos != WTF::notFound) {
         WTF::String idStr = url.substring(markerPos + kIpcBlobMarker.length());
         uint32_t blobId = 0;
         bool validId = idStr.length() > 0;
@@ -1597,6 +1748,12 @@ void WebViewHost::onSchemeTaskStart(id task)
 
     WTF::String method = req.HTTPMethod();
     WTF::String range = req.headerValue(objc::NSString::fromWTF("Range"_s));
+    static auto selFn = reinterpret_cast<SEL (*)(const char*)>(dlsym(RTLD_DEFAULT, "sel_registerName"));
+    static SEL s_allHdrs = selFn ? selFn("allHTTPHeaderFields") : nullptr;
+    id hdrDict = s_allHdrs ? req.msg<id>(s_allHdrs) : nullptr;
+    WTF::String headersJson = hdrDict ? serializeJsonObjC(hdrDict) : "{}"_s;
+    objc::NSData body = req.HTTPBody();
+    std::span<const uint8_t> bodySpan = body.span();
 
     WTF::Vector<uint8_t, 256> out;
     out.grow(4);
@@ -1604,6 +1761,12 @@ void WebViewHost::onSchemeTaskStart(id task)
     appendHostStr(out, url);
     appendHostStr(out, method);
     appendHostStr(out, range);
+    appendHostStr(out, headersJson);
+    uint32_t bodyLen = static_cast<uint32_t>(bodySpan.size());
+    size_t bOff = out.size();
+    out.grow(bOff + 4 + bodyLen);
+    memcpy(out.mutableSpan().data() + bOff, &bodyLen, 4);
+    if (bodyLen > 0) memcpy(out.mutableSpan().data() + bOff + 4, bodySpan.data(), bodyLen);
     hostWriter()->sendReply(m_viewId, Reply::DesktopSchemeRequest, out.span().data(), static_cast<uint32_t>(out.size()));
 }
 

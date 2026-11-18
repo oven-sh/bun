@@ -16,7 +16,7 @@ extern "C" {
 void Bun__Desktop__onNavDone(Zig::GlobalObject* g, uint32_t windowId, bool ok, const uint8_t* errPtr, uint32_t errLen);
 void Bun__Desktop__onIpcMessage(Zig::GlobalObject* g, uint32_t windowId, uint32_t reqId, bool isInvoke, const uint8_t* chPtr, uint32_t chLen, const uint8_t* argsPtr, uint32_t argsLen);
 void Bun__Desktop__onWindowClosed(Zig::GlobalObject* g, uint32_t windowId);
-void Bun__Desktop__onSchemeRequest(Zig::GlobalObject* g, uint32_t windowId, uint32_t taskId, const uint8_t* urlPtr, uint32_t urlLen, const uint8_t* methodPtr, uint32_t methodLen, const uint8_t* rangePtr, uint32_t rangeLen);
+void Bun__Desktop__onSchemeRequest(Zig::GlobalObject* g, uint32_t windowId, uint32_t taskId, const uint8_t* urlPtr, uint32_t urlLen, const uint8_t* methodPtr, uint32_t methodLen, const uint8_t* rangePtr, uint32_t rangeLen, const uint8_t* headersPtr, uint32_t headersLen, const uint8_t* bodyPtr, uint32_t bodyLen);
 }
 
 namespace Bun {
@@ -225,5 +225,8 @@ extern "C" bool Bun__Desktop__openExternal(const char*, uint32_t) { return false
 extern "C" bool Bun__Desktop__showItemInFolder(const char*, uint32_t) { return false; }
 extern "C" bool Bun__Desktop__trashItem(const char*, uint32_t) { return false; }
 extern "C" bool Bun__Desktop__showNotification(const char*, uint32_t, const char*, uint32_t) { return false; }
+extern "C" void Bun__Desktop__warm(Zig::GlobalObject*) {}
+extern "C" void Bun__Desktop__registerScheme(const char*, uint32_t) {}
+extern "C" void Bun__Desktop__evaluateJS(uint32_t, uint32_t, const char*, uint32_t) {}
 
 #endif // OS(LINUX)

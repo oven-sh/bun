@@ -4,6 +4,7 @@ export default b.module({ rustPath: "crate::desktop::app::app" });
 
 export const app = b.namespace({
   isReady: { returns: b.bool },
+  warm: { capability: "js" },
   quit: { capability: "js" },
   exit: { args: { code: b.i32.default(0) } },
   getName: { returns: b.string.utf8 },

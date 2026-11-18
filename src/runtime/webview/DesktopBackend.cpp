@@ -19,8 +19,9 @@ void Bun__Desktop__onIpcMessage(Zig::GlobalObject* g, uint32_t windowId, uint32_
 void Bun__Desktop__onIpcBinaryMessage(Zig::GlobalObject* g, uint32_t windowId, uint32_t reqId, const uint8_t* chPtr, uint32_t chLen, const uint8_t* dataPtr, uint32_t dataLen);
 void Bun__Desktop__onWindowClosed(Zig::GlobalObject* g, uint32_t windowId);
 void Bun__Desktop__onHostDied();
-void Bun__Desktop__onSchemeRequest(Zig::GlobalObject* g, uint32_t windowId, uint32_t taskId, const uint8_t* urlPtr, uint32_t urlLen, const uint8_t* methodPtr, uint32_t methodLen, const uint8_t* rangePtr, uint32_t rangeLen);
+void Bun__Desktop__onSchemeRequest(Zig::GlobalObject* g, uint32_t windowId, uint32_t taskId, const uint8_t* urlPtr, uint32_t urlLen, const uint8_t* methodPtr, uint32_t methodLen, const uint8_t* rangePtr, uint32_t rangeLen, const uint8_t* headersPtr, uint32_t headersLen, const uint8_t* bodyPtr, uint32_t bodyLen);
 void Bun__Desktop__onDialogResult(Zig::GlobalObject* g, uint32_t reqId, const uint8_t* resPtr, uint32_t resLen);
+void Bun__Desktop__onEvalResult(Zig::GlobalObject* g, uint32_t reqId, bool ok, const uint8_t* resPtr, uint32_t resLen);
 }
 
 namespace Bun {
@@ -108,7 +109,11 @@ bool handleReply(Zig::GlobalObject* global, const Frame& h, Reader r)
         const uint8_t* methodPtr = r.bytes(methodLen);
         uint32_t rangeLen = r.u32();
         const uint8_t* rangePtr = r.bytes(rangeLen);
-        Bun__Desktop__onSchemeRequest(global, h.viewId, taskId, urlPtr, urlLen, methodPtr, methodLen, rangePtr, rangeLen);
+        uint32_t headersLen = r.remaining() >= 4 ? r.u32() : 0;
+        const uint8_t* headersPtr = headersLen ? r.bytes(headersLen) : nullptr;
+        uint32_t bodyLen = r.remaining() >= 4 ? r.u32() : 0;
+        const uint8_t* bodyPtr = bodyLen ? r.bytes(bodyLen) : nullptr;
+        Bun__Desktop__onSchemeRequest(global, h.viewId, taskId, urlPtr, urlLen, methodPtr, methodLen, rangePtr, rangeLen, headersPtr, headersLen, bodyPtr, bodyLen);
         return true;
     }
 
@@ -117,6 +122,15 @@ bool handleReply(Zig::GlobalObject* global, const Frame& h, Reader r)
         uint32_t resLen = r.u32();
         const uint8_t* resPtr = r.bytes(resLen);
         Bun__Desktop__onDialogResult(global, reqId, resPtr, resLen);
+        return true;
+    }
+
+    case Reply::DesktopEvalResult: {
+        uint32_t reqId = r.u32();
+        bool ok = r.remaining() >= 1 ? (r.u8() != 0) : false;
+        uint32_t resLen = r.remaining() >= 4 ? r.u32() : 0;
+        const uint8_t* resPtr = resLen ? r.bytes(resLen) : nullptr;
+        Bun__Desktop__onEvalResult(global, reqId, ok, resPtr, resLen);
         return true;
     }
 
@@ -135,6 +149,62 @@ bool handleReply(Zig::GlobalObject* global, const Frame& h, Reader r)
 } // namespace DesktopBackend
 } // namespace Bun
 
+static WTF::Vector<WTF::String>& pendingCustomSchemes()
+{
+    static LazyNeverDestroyed<WTF::Vector<WTF::String>> list;
+    static std::once_flag once;
+    std::call_once(once, [] { list.construct(); });
+    return list.get();
+}
+
+static void flushPendingCustomSchemes()
+{
+    auto& client = Bun::WK::client();
+    for (const auto& s : pendingCustomSchemes()) {
+        WTF::Vector<uint8_t, 256> buf;
+        WTF::CString utf8 = s.utf8();
+        Bun::DesktopBackend::appendStr(buf, reinterpret_cast<const char*>(utf8.data()), static_cast<uint32_t>(utf8.length()));
+        client.writeFrame(Bun::WebViewProto::Op::DesktopRegisterScheme, 0, buf.span().data(), static_cast<uint32_t>(buf.size()));
+    }
+}
+
+extern "C" void Bun__Desktop__warm(Zig::GlobalObject* g)
+{
+    auto& client = Bun::WK::client();
+    if (!client.ensureSpawned(g, false, false)) {
+        return;
+    }
+    flushPendingCustomSchemes();
+    client.writeFrame(Bun::WebViewProto::Op::DesktopWarm, 0, nullptr, 0);
+}
+
+extern "C" void Bun__Desktop__registerScheme(const char* ptr, uint32_t len)
+{
+    if (!ptr || len == 0) return;
+    WTF::String scheme = WTF::String::fromUTF8(std::span<const char>(ptr, len)).convertToASCIILowercase();
+    if (scheme.isEmpty() || scheme == "app"_s || scheme == "http"_s || scheme == "https"_s || scheme == "file"_s) return;
+    auto& list = pendingCustomSchemes();
+    for (const auto& existing : list) {
+        if (existing == scheme) return;
+    }
+    list.append(scheme);
+    auto& client = Bun::WK::client();
+    if (!client.dead && (client.inProcess || client.sock)) {
+        WTF::Vector<uint8_t, 256> buf;
+        Bun::DesktopBackend::appendStr(buf, ptr, len);
+        client.writeFrame(Bun::WebViewProto::Op::DesktopRegisterScheme, 0, buf.span().data(), static_cast<uint32_t>(buf.size()));
+    }
+}
+
+extern "C" void Bun__Desktop__evaluateJS(uint32_t id, uint32_t reqId, const char* scriptPtr, uint32_t scriptLen)
+{
+    WTF::Vector<uint8_t, 256> buf;
+    buf.grow(4);
+    memcpy(buf.mutableSpan().data(), &reqId, 4);
+    Bun::DesktopBackend::appendStr(buf, scriptPtr, scriptLen);
+    Bun::WK::client().writeFrame(Bun::WebViewProto::Op::DesktopEval, id, buf.span().data(), static_cast<uint32_t>(buf.size()));
+}
+
 extern "C" uint32_t Bun__Desktop__createWindow(
     Zig::GlobalObject* g,
     int32_t width,
@@ -151,6 +221,7 @@ extern "C" uint32_t Bun__Desktop__createWindow(
     if (!client.ensureSpawned(g, false, false)) {
         return 0;
     }
+    flushPendingCustomSchemes();
 
     uint32_t id = client.nextViewId++;
     Bun::DesktopBackend::activeWindows().insert(id);

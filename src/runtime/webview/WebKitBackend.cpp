@@ -698,6 +698,7 @@ void HostClient::handleReply(const Frame& h, Reader r)
     case Reply::DesktopWindowClosed:
     case Reply::DesktopSchemeRequest:
     case Reply::DesktopDialogResult:
+    case Reply::DesktopEvalResult:
         return;
     }
 }

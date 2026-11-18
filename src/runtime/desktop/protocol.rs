@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use bun_jsc::bindgen::{self, Callable, JsLocal, JsScope};
-use bun_jsc::{JSGlobalObject, JSValue, Strong, bun_string_jsc};
+use bun_jsc::{JSGlobalObject, JSUint8Array, JSValue, JsClass, Strong, bun_string_jsc};
 
 use crate::webcore::blob::{MAX_SIZE, store};
 use crate::webcore::body::Value as BodyValue;
@@ -32,6 +32,7 @@ unsafe extern "C" {
         length: u64,
     );
     fn Bun__Desktop__sendSchemeResponseError(id: u32, task_id: u32, status: u16);
+    fn Bun__Desktop__registerScheme(ptr: *const u8, len: u32);
 }
 
 thread_local! {
@@ -117,6 +118,10 @@ pub(crate) extern "C" fn Bun__Desktop__onSchemeRequest(
     method_len: u32,
     range_ptr: *const u8,
     range_len: u32,
+    headers_ptr: *const u8,
+    headers_len: u32,
+    body_ptr: *const u8,
+    body_len: u32,
 ) {
     if global.is_null() {
         return;
@@ -145,6 +150,11 @@ pub(crate) extern "C" fn Bun__Desktop__onSchemeRequest(
     } else {
         unsafe { core::slice::from_raw_parts(range_ptr, range_len as usize) }
     };
+    let headers_bytes = if headers_ptr.is_null() || headers_len == 0 {
+        &b"{}"[..]
+    } else {
+        unsafe { core::slice::from_raw_parts(headers_ptr, headers_len as usize) }
+    };
     let Ok(url_js) = bun_string_jsc::create_utf8_for_js(global_ref, url_bytes) else {
         return;
     };
@@ -154,18 +164,40 @@ pub(crate) extern "C" fn Bun__Desktop__onSchemeRequest(
     let Ok(range_js) = bun_string_jsc::create_utf8_for_js(global_ref, range_bytes) else {
         return;
     };
+    let Ok(headers_js) = bun_string_jsc::create_utf8_for_js(global_ref, headers_bytes) else {
+        return;
+    };
+    let body_js = if body_ptr.is_null() || body_len == 0 {
+        JSValue::UNDEFINED
+    } else {
+        let body_bytes = unsafe { core::slice::from_raw_parts(body_ptr, body_len as usize) };
+        JSUint8Array::from_bytes_copy(global_ref, body_bytes).unwrap_or(JSValue::UNDEFINED)
+    };
     let args = [
         JSValue::js_number(window_id as f64),
         JSValue::js_number(task_id as f64),
         url_js,
         method_js,
         range_js,
+        headers_js,
+        body_js,
     ];
     let _ = func.call(global_ref, JSValue::UNDEFINED, &args);
 }
 
 pub(crate) mod protocol {
     use super::*;
+
+    pub(crate) fn register_scheme(scheme: &[u8]) {
+        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+        if !scheme.is_empty() {
+            unsafe {
+                Bun__Desktop__registerScheme(scheme.as_ptr(), scheme.len() as u32);
+            }
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+        let _ = scheme;
+    }
 
     pub(crate) fn handle<'a>(
         cx: &mut JsScope<'a>,
@@ -178,6 +210,7 @@ pub(crate) mod protocol {
                 .heap
                 .error(format_args!("protocol.handle() expects a non-empty scheme")));
         }
+        register_scheme(key.as_bytes());
         let strong = Strong::create(handler.to_js(), cx.global());
         PROTOCOL_HANDLERS.with(|h| {
             h.borrow_mut().insert(key, strong);
@@ -212,7 +245,8 @@ pub(crate) mod protocol {
         range_header: &[u8],
         headers_json: &[u8],
     ) -> bool {
-        let Some(resp) = response::from_js_ref(response_val.to_js()) else {
+        let response_js = response_val.to_js();
+        let Some(resp) = response::Response::from_js(&response_js) else {
             return false;
         };
         let mut status = resp.status_code();

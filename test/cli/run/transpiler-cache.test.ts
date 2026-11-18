@@ -10,6 +10,7 @@ import {
   rmSync,
   statSync,
   unlinkSync,
+  utimesSync,
   writeFileSync,
 } from "fs";
 import { bunEnv, bunExe, bunRun, isWindows, MAX_PATH_BYTES, tempDir, tmpdirSync } from "harness";
@@ -84,16 +85,26 @@ describe("transpiler cache", () => {
     };
     for (const warm of [false, true]) {
       if (warm) {
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "--jsx-runtime=classic", "main.ts"],
-          cwd: String(dir),
-          env: childEnv,
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect({ stdout, stderr, exitCode }).toEqual({ stdout: "div\n", stderr: "", exitCode: 0 });
-        expect(readdirSync(cache).length).toBeGreaterThan(0);
+        const runClassic = async () => {
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "--jsx-runtime=classic", "main.ts"],
+            cwd: String(dir),
+            env: childEnv,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect({ stdout, stderr, exitCode }).toEqual({ stdout: "div\n", stderr: "", exitCode: 0 });
+        };
+        await runClassic();
+        const entries = readdirSync(cache).map(name => join(cache, name));
+        expect(entries).toHaveLength(1);
+        const [entry] = entries;
+        // A cache miss transpiles the same source again and replaces the file.
+        utimesSync(entry, 1, 1);
+        const mtime = statSync(entry, { bigint: true }).mtimeNs;
+        await runClassic();
+        expect(statSync(entry, { bigint: true }).mtimeNs).toBe(mtime);
       }
       await using proc = Bun.spawn({
         cmd: [bunExe(), "--jsx-runtime=preserve", "main.ts"],

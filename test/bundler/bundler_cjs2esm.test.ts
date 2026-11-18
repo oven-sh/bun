@@ -686,11 +686,11 @@ describe("bundler", () => {
       stdout: "side effect\n42 42 object",
     },
   });
-  // A require() of a `.json` specifier is never unwrapped. `import * as ns`
-  // of a JSON file is a module namespace where the parsed value is owed, and
-  // Node rejects the import when the package is external: it has no
-  // `with { type: "json" }`. Bun accepts that import, so the cases that read
-  // one key assert the printed call.
+  // With a target that has require() (node, bun), a require() of a `.json`
+  // specifier is not unwrapped. `import * as ns` of a JSON file is a module
+  // namespace where the parsed value is owed, and Node rejects the import when
+  // the package is external: it has no `with { type: "json" }`. Bun accepts
+  // that import, so the cases that read one key assert the printed call.
   const reactPackageJson = {
     "/node_modules/react/package.json": fakeReactNodeModules["/node_modules/react/package.json"],
   };
@@ -722,13 +722,16 @@ describe("bundler", () => {
     ...requireJsonOfExternalReact,
     packages: "external",
   });
-  // With `target: "browser"` the call reaches the `__require` shim, as for a
-  // package that is not on the list. The shim throws where no require() exists.
-  itBundled("cjs2esm/RequireJsonOfUnwrappedPackageExternalTargetBrowser", {
-    ...requireJsonOfExternalReact,
+  // `target: "browser"` has no require(): the call is still unwrapped there.
+  itBundled("cjs2esm/RequireJsonOfUnwrappedPackageTargetBrowserIsUnwrapped", {
+    files: requireJsonOfExternalReact.files,
     external: ["react"],
     target: "browser",
-    run: false,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain('import * as pkg from "react/package.json"');
+      expect(code).not.toContain("__require");
+    },
   });
   // Bun accepts the import and gives the keys as named exports, so only a
   // use of the whole value shows the namespace there.
@@ -779,6 +782,7 @@ describe("bundler", () => {
         "/node_modules/react/default.json": /* json */ `{ "default": "d" }`,
       },
       format,
+      target: "node",
       run: { stdout: "name,version,main 2.0.0 true 2 a d\ntrue true" },
     });
   }
@@ -792,6 +796,7 @@ describe("bundler", () => {
       `,
       ...fakeReactNodeModules,
     },
+    target: "node",
     onAfterBundle(api) {
       const code = api.readFile("/out.js");
       expect(code).toContain("var pkg = require_package();");
@@ -811,6 +816,7 @@ describe("bundler", () => {
       `,
       ...fakeReactNodeModules,
     },
+    target: "node",
     run: { stdout: "1 undefined react" },
   });
   const requireJsonSourceForms = /* js */ `
@@ -841,6 +847,7 @@ describe("bundler", () => {
   };
   itBundled("cjs2esm/RequireJsonOfUnwrappedPackageSourceFormsBundled", {
     files: { "/entry.js": requireJsonSourceForms, ...reactJsonFiles },
+    target: "node",
     run: { stdout: "react 2.0.0 a 3 3 3 3" },
   });
   itBundled("cjs2esm/RequireJsonOfUnwrappedPackageSourceFormsExternal", {
@@ -859,6 +866,7 @@ describe("bundler", () => {
       `,
       ...fakeReactNodeModules,
     },
+    target: "node",
     run: { stdout: "name,version,main" },
   });
   // The same for a require() written inside an unwrapped package.
@@ -875,6 +883,7 @@ describe("bundler", () => {
       "/node_modules/react/list.json": /* json */ `["a", "b"]`,
       "/node_modules/foo/list.json": /* json */ `["c"]`,
     },
+    target: "node",
     run: { stdout: "true 2 true c" },
   });
   // A require() resolves with the "require" condition.
@@ -894,6 +903,7 @@ describe("bundler", () => {
       "/node_modules/react/esm.json": /* json */ `{ "kind": "esm" }`,
       "/node_modules/react/cjs.json": /* json */ `{ "kind": "cjs" }`,
     },
+    target: "node",
     run: { stdout: "cjs" },
   });
   // The unwrap list matches the text of the specifier, so an alias with the
@@ -914,6 +924,7 @@ describe("bundler", () => {
       `,
       "/src/scheduler/config.json": /* json */ `["x"]`,
     },
+    target: "node",
     run: { stdout: "true x" },
   });
   // Only `.json` names a data file: `react-dom/server.node` is the JavaScript
@@ -937,6 +948,7 @@ describe("bundler", () => {
       `,
     },
     cjs2esm: true,
+    target: "node",
     run: { stdout: "rendered" },
   });
   // Other `exports` uses next to `module.exports = require()` keep the file

@@ -239,6 +239,8 @@ pub mod Runtime {
 
         pub commonjs_at_runtime: bool,
         pub unwrap_commonjs_to_esm: bool,
+        /// `require()` exists at run time: every target except `browser`.
+        pub target_has_require: bool,
 
         pub emit_decorator_metadata: bool,
         pub standard_decorators: bool,
@@ -311,6 +313,7 @@ pub mod Runtime {
                 unwrap_commonjs_packages: &[],
                 commonjs_at_runtime: false,
                 unwrap_commonjs_to_esm: false,
+                target_has_require: false,
                 emit_decorator_metadata: false,
                 standard_decorators: false,
                 remove_cjs_module_wrapper: false,

@@ -32,8 +32,9 @@ const enum PooledConnectionFlags {
   prepared = 1 << 2,
   /// Left inside a transaction while other queries still run on it. Nobody gets it until one of them ends that.
   stranded = 1 << 3,
+  /// The pool gives it to nobody.
+  notReady = reserved | retiring | stranded,
 }
-const notReady = PooledConnectionFlags.reserved | PooledConnectionFlags.retiring | PooledConnectionFlags.stranded;
 export type { PooledConnection };
 
 /// What the native connections of both drivers have.
@@ -262,7 +263,7 @@ function idleFirst(a: PooledConnection, b: PooledConnection) {
 
 /// Whether the pool can give it to a caller.
 function isReady(connection: PooledConnection): boolean {
-  return connection.state === PooledConnectionState.open && (connection.flags & notReady) === 0;
+  return connection.state === PooledConnectionState.open && (connection.flags & PooledConnectionFlags.notReady) === 0;
 }
 
 function sameOption(a: unknown, b: unknown): boolean {
@@ -742,24 +743,29 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
   /// in first. The `setAside` that will be idle first are left to the reservations that wait ahead of the caller.
   #leastBusy(limit: number, setAside: number): PooledConnection | null {
     const connections = this.connections;
-    let found: PooledConnection | undefined;
-    if (setAside === 0) {
-      for (let i = 0; i < connections.length; i++) {
-        const connection = connections[i];
-        if (connection.state !== PooledConnectionState.open) {
+    if (setAside !== 0) {
+      const found = connections.filter(isReady).sort(idleFirst)[setAside];
+      return found !== undefined && found.queryCount < limit ? found : null;
+    }
+    let found: PooledConnection | null = null;
+    for (let i = 0; i < connections.length; i++) {
+      const connection = connections[i];
+      if (connection.state !== PooledConnectionState.open) {
+        break;
+      }
+      if ((connection.flags & PooledConnectionFlags.notReady) !== 0) {
+        continue;
+      }
+      const queryCount = connection.queryCount;
+      if (queryCount < limit) {
+        found = connection;
+        if (queryCount === 0) {
           break;
         }
-        if ((connection.flags & notReady) === 0 && (found === undefined || connection.queryCount < found.queryCount)) {
-          found = connection;
-          if (connection.queryCount === 0) {
-            break;
-          }
-        }
+        limit = queryCount;
       }
-    } else {
-      found = connections.filter(isReady).sort(idleFirst)[setAside];
     }
-    return found !== undefined && found.queryCount < limit ? found : null;
+    return found;
   }
 
   /// Serves the oldest caller that can be served now. It is booked before it is called: it can re-enter the pool.

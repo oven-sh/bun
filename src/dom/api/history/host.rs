@@ -140,7 +140,7 @@ pub(super) fn navigate_other<'a>(
     if !window.knows_other_windows()
         && !window
             .context()
-            .is_some_and(|it| window.cluster().is_some() && it.container().is_some())
+            .is_some_and(|it| window.cluster().is_some() && it.is_frame())
     {
         return Target::Unknown;
     }

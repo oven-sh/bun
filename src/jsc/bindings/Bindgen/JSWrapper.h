@@ -81,6 +81,10 @@ JSC::JSObject* createClassPrototype(JSC::VM&, JSC::JSGlobalObject*, JSC::JSObjec
 // `name` is an export of internal/desktop_requires.ts. May throw.
 JSC::JSValue requireNodeModule(Zig::GlobalObject*, ASCIILiteral name);
 
+// While the VM terminates nothing loads, and these are `Function.prototype` and `Object.prototype`.
+JSC::JSObject* nodeClassConstructor(JSC::JSGlobalObject*, ASCIILiteral name);
+JSC::JSObject* nodeClassPrototype(JSC::JSGlobalObject*, ASCIILiteral name);
+
 // Of `node:events`.
 JSC::JSObject* eventEmitterConstructor(JSC::JSGlobalObject*);
 JSC::JSObject* eventEmitterPrototype(JSC::JSGlobalObject*);

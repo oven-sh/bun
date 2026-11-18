@@ -4,7 +4,8 @@ mod intersection;
 mod resize;
 
 pub(crate) use intersection::{
-    IntersectionObserverEntry, frame_moved, notify_intersection_observers, update_intersections,
+    IntersectionObserverEntry, frame_moved, notify_intersection_observers, shown_part_of_frame,
+    update_intersections,
 };
 pub(crate) use resize::{
     ResizeObserverEntry, ResizeObserverSize, deliver_resizes, has_resized_boxes,
@@ -67,6 +68,7 @@ pub(crate) struct ObservedBoxes {
     /// What can change without a layout.
     is_volatile: Cell<bool>,
     is_across_frames: Cell<bool>,
+    is_update_queued: Cell<bool>,
 }
 
 fn observations(list: List<'_>) -> impl Iterator<Item = &BoxObservation> {
@@ -266,6 +268,9 @@ impl BoxObserver {
         let home = made.activate(&cx.heap);
         observe_again(&cx.heap, home);
         home.invalidate(cx);
+        if self.intersection.is_some() {
+            intersection::update_out_of_sight(cx, home);
+        }
     }
 
     fn stop<'a>(&'a self, heap: &JsHeap<'a>, target: &'a Element) {

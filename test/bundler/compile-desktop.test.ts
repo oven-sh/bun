@@ -11,7 +11,7 @@ import {
   libcPathForDlopen,
   tempDir,
 } from "harness";
-import { chmodSync, existsSync, readdirSync, readFileSync, readlinkSync, statSync, symlinkSync } from "node:fs";
+import { chmodSync, existsSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { crc32, deflateSync } from "node:zlib";
 import { isHardened } from "../aot/hardened";
@@ -65,6 +65,10 @@ async function run(cmd: string[], cwd: string, env: Record<string, string | unde
 
 const bun = (dir: { toString(): string }, ...args: string[]) =>
   run([bunExe(), ...args], String(dir), { BUN_DESKTOP_LIBRARY: join(String(dir), "library") });
+
+/** The arguments for pages in the process of the app, and in others. */
+const places = isLinux ? [[], ["--enable-sandbox"]] : [[]];
+const withSandbox = { BUN_DESKTOP_HEADLESS: "1", BUN_DESKTOP_PAGE_PROCESSES: "asked" };
 
 const forMac = ["--target=bun-darwin-arm64", "--compile-executable-path=darwin-template"];
 const forWindows = ["--target=bun-windows-x64", "--compile-executable-path=windows-template"];
@@ -448,6 +452,21 @@ console.log(all.map(one => one.value?.default ?? one.reason.message).join(), log
       expect(exitCode).toBe(0);
     });
 
+    test.skipIf(!hasLibrary)("BUN_DESKTOP_JSC_ brings back nothing that BUN_JSC_ does not", async () => {
+      using dir = project(
+        { name: "notes", desktop: { name: "Memo" } },
+        { "app.js": `console.log(typeof ShadowRealm, typeof WebAssembly);` },
+      );
+      expect(await run([bunExe(), "compile", "--desktop", "app.js", "--outfile=out"], String(dir))).toMatchObject({
+        exitCode: 0,
+      });
+      const env = { BUN_DESKTOP_JSC_useShadowRealm: "1", BUN_DESKTOP_JSC_useWasm: "0" };
+      expect(await run([join(String(dir), "out" + extension, executable)], String(dir), env)).toMatchObject({
+        stdout: "undefined undefined\n",
+        exitCode: 0,
+      });
+    });
+
     test.skipIf(!hasLibrary)("--aot-assume", async () => {
       using dir = project(
         { name: "notes", desktop: { name: "Memo" } },
@@ -478,14 +497,58 @@ import(self.origin + "/rare.js").then(rare => console.log([sizeOf(new Box(1)), s
         const built = await run([bunExe(), "compile", "--desktop", ...flags, ...files, "--outfile=out"], String(dir));
         expect(built).toMatchObject({ exitCode: 0 });
         const cmd = [join(String(dir), "out" + extension, executable)];
-        outputs.push((await run(cmd, String(dir), { BUN_DESKTOP_HEADLESS: "1" })).stdout);
+        for (const args of places) outputs.push((await run([...cmd, ...args], String(dir), withSandbox)).stdout);
       }
       expect(outputs).toEqual([
-        "2,7,a0,replaced,5,[object LockManager]\n",
-        "2,7,a1,TypeError,5,[object LockManager]\n",
+        ...places.map(() => "2,7,a0,replaced,5,[object LockManager]\n"),
+        ...places.map(() => "2,7,a1,TypeError,5,[object LockManager]\n"),
       ]);
       const { stderr } = await bun(dir, "compile", "--aot-assume=anything", "app.js");
       expect(stderr).toContain("separate-realms, locked-builtins, complete-order");
+    });
+
+    test.skipIf(!hasLibrary)("a page cannot import the modules of Node.js or the rest of the program", async () => {
+      const tries = `Promise.allSettled(names.map(it => import(it))).then(all => all.map(it => it.status).join())`;
+      using dir = project(
+        { name: "notes", desktop: { name: "Memo" } },
+        {
+          "app.js": `const { app, BrowserWindow, protocol } = require("bun:desktop/electron");
+protocol.registerSchemesAsPrivileged([{ scheme: "app", privileges: { standard: true, secure: true } }]);
+app.trustOrigins(["app://bundle"]);
+app.setCompiledScripts({ "app://bundle/": "/$bunfs/root/web/" });
+const names = ["node:fs", "node:child_process", "bun:sqlite", "/..%2Fsecret.js", "/..%5Csecret.js", "/fixed.js", "/own.js"];
+const files = {
+  "/": "<script>names = " + JSON.stringify(names) + "</script><script src=/text.js></script><script type=module src=node:process></script><script type=module src=/page.js></script>",
+  "/text.js": ${JSON.stringify(`fromText = ${tries};`)},
+  "/fixed.js": "import 'node:fs';",
+  "/worker.js": ${JSON.stringify(`onmessage = ({ data: names }) => ${tries}.then(postMessage);`)},
+};
+app.whenReady().then(() => {
+  protocol.handle("app", ({ url }) => {
+    const file = files[new URL(url).pathname];
+    return new Response(file, { status: file ? 200 : 404, headers: { "content-type": url.endsWith(".js") ? "text/javascript" : "text/html" } });
+  });
+  const { webContents } = new BrowserWindow();
+  webContents.on("console-message", ({ level, message }) => level === "info" && (console.log(message), process.exit(0)));
+  webContents.loadURL("app://bundle/");
+});`,
+          "secret.js": `export { readFileSync } from "node:fs";`,
+          "web/own.js": `export default 1;`,
+          "web/page.js": `const worker = new Worker(self.origin + "/worker.js");
+worker.postMessage(names);
+const fromWorker = new Promise(done => (worker.onmessage = event => done(event.data)));
+console.log([await ${tries}, await fromText, await fromWorker].join("\\n"));`,
+        },
+      );
+      const files = ["app.js", "secret.js", "web/page.js", "web/own.js"];
+      const built = await run([bunExe(), "compile", "--desktop", ...files, "--outfile=out"], String(dir));
+      expect(built).toMatchObject({ exitCode: 0 });
+      for (const args of places) {
+        const cmd = [join(String(dir), "out" + extension, executable), ...args];
+        expect((await run(cmd, String(dir), withSandbox)).stdout).toBe(
+          ("rejected,".repeat(6) + "fulfilled\n").repeat(3),
+        );
+      }
     });
 
     test.skipIf(!hasLibrary)("a page without compiled scripts can change its built-in objects", async () => {
@@ -687,6 +750,41 @@ console.log(typeof Bun, typeof process, Buffer.from("a").length, globalThis inst
       });
     });
 
+    test.skipIf(!hasLibrary)("a compiled page gets nothing of its preload script", async () => {
+      using dir = project(
+        { name: "notes", desktop: { name: "Memo" } },
+        {
+          "app.js": `const { app, BrowserWindow, protocol } = require("bun:desktop/electron");
+protocol.registerSchemesAsPrivileged([{ scheme: "app", privileges: { standard: true, secure: true } }]);
+app.trustOrigins(["app://bundle"]);
+app.setCompiledScripts({ "app://bundle/": "/$bunfs/root/web/" }, { exclusive: true });
+app.whenReady().then(() => {
+  protocol.handle("app", () => new Response("<script type=module src=/page.js></script>", { headers: { "content-type": "text/html" } }));
+  const { webContents } = new BrowserWindow({ webPreferences: { preload: process.cwd() + "/preload.js" } });
+  webContents.on("console-message", event => (console.log(event.message), process.exit(0)));
+  webContents.loadURL("app://bundle/");
+});`,
+          "preload.js": `const { port1, port2 } = new MessageChannel();
+const api = { take() {}, call: it => fetch("data:,").then(() => ((port1.onmessage = () => it()), port2.postMessage(1))) };
+require("electron").contextBridge.exposeInMainWorld("api", api);`,
+          "web/page.js": `const got = [];
+Object.defineProperty(Response.prototype, "then", { get: () => void got.push("response") });
+api.take(Object.assign(Promise.resolve(), { then: () => got.push("function") }));
+api.call(() => console.log([...got, typeof self.event].join()));`,
+        },
+      );
+      const built = await run(
+        [bunExe(), "compile", "--desktop", "app.js", "web/page.js", "--outfile=out"],
+        String(dir),
+      );
+      expect(built).toMatchObject({ exitCode: 0 });
+      const cmd = [join(String(dir), "out" + extension, executable)];
+      expect(await run(cmd, String(dir), { BUN_DESKTOP_HEADLESS: "1" })).toMatchObject({
+        stdout: "undefined\n",
+        exitCode: 0,
+      });
+    });
+
     test.skipIf(!hasLibrary)("a compiled page does not find the globals of Bun", async () => {
       using dir = project(
         { name: "notes", desktop: { name: "Memo" } },
@@ -752,9 +850,558 @@ app.whenReady().then(async () => {
       const built = await run([bunExe(), "compile", "--desktop", ...files, "--outfile=out"], String(dir));
       expect(built).toMatchObject({ exitCode: 0 });
       const cmd = [join(String(dir), "out" + extension, executable)];
-      expect(await run(cmd, String(dir), { BUN_DESKTOP_HEADLESS: "1" })).toMatchObject({
-        stdout: ",b,refused,a\n,b,refused,TypeError\na,b,ran,a\n",
-        exitCode: 0,
+      for (const args of places)
+        expect(await run([...cmd, ...args], String(dir), withSandbox)).toMatchObject({
+          stdout: ",b,refused,a\n,b,refused,TypeError\na,b,ran,a\n",
+          exitCode: 0,
+        });
+    });
+
+    test.skipIf(!hasLibrary || !isLinux).each([[[]], ...(canTrim ? [[["--trim"]]] : [])])(
+      "compiled pages run in a sandbox, without the rest of the program (%j)",
+      async flags => {
+        using dir = project(
+          { name: "notes", desktop: { name: "Memo" } },
+          {
+            "app.js": `const { app, BrowserWindow, ipcMain, protocol } = require("bun:desktop/electron");
+console.log("main");
+protocol.registerSchemesAsPrivileged([{ scheme: "app", privileges: { standard: true, secure: true } }]);
+app.trustOrigins(["app://bundle"]);
+app.setCompiledScripts({ "app://bundle/": "/$bunfs/root/web/", "file:///app/": "/$bunfs/root/web/" }, { exclusive: true });
+app.whenReady().then(() => {
+  protocol.handle("app", () => new Response("<script type=module src=/page.js></script>", { headers: { "content-type": "text/html" } }));
+  ipcMain.handle("twice", (event, value) => value * 2);
+  const { webContents } = new BrowserWindow({ webPreferences: { sandbox: true, preload: "/app/preload.js" } });
+  webContents.on("console-message", event => {
+    const read = name => require("fs").readFileSync("/proc/" + webContents.getOSProcessId() + "/" + name, "latin1");
+    console.log(event.message, /Seccomp:\\s2/.test(read("status")), /rwx/.test(read("maps")));
+    webContents.send("crash");
+  });
+  webContents.on("render-process-gone", (event, { reason }) => (console.log(reason), process.exit(0)));
+  webContents.loadURL("app://bundle/");
+});`,
+            "web/preload.js": `export default function (require, process) {
+  const { contextBridge, ipcRenderer } = require("electron");
+  contextBridge.exposeInMainWorld("twice", it => ipcRenderer.invoke("twice", it));
+  ipcRenderer.on("crash", () => process.crash());
+}`,
+            "web/worker.js": `postMessage("worker");`,
+            "web/page.js": `new Worker("/worker.js").onmessage = async ({ data }) => console.log(data, await twice(2));`,
+          },
+        );
+        const files = ["app.js", "web/page.js", "web/worker.js", "web/preload.js"];
+        const built = await run([bunExe(), "compile", "--desktop", ...flags, ...files, "--outfile=out"], String(dir));
+        expect(built).toMatchObject({ exitCode: 0 });
+        const cmd = [join(String(dir), "out" + extension, executable)];
+        expect(await run(cmd, String(dir), withSandbox)).toMatchObject({
+          stdout: "main\nworker 4 true false\ncrashed\n",
+          exitCode: 0,
+        });
+      },
+    );
+
+    describe.skipIf(!hasLibrary)("pages", () => {
+      /** Runs it without the files that it was made from. */
+      async function compileAndRun(dir: { toString(): string }, sources: string[], ...args: string[]) {
+        const built = await run([bunExe(), "compile", "--desktop", ...args, "--outfile=out"], String(dir));
+        expect(built).toMatchObject({ exitCode: 0 });
+        for (const it of sources) rmSync(join(String(dir), it), { recursive: true });
+        const cmd = [join(String(dir), "out" + extension, executable)];
+        const { stdout, exitCode } = await run(cmd, String(dir), { BUN_DESKTOP_HEADLESS: "1" });
+        const inSandbox = async () => (await run([...cmd, ...places.at(-1)!], String(dir), withSandbox)).stdout;
+        return { warnings: built.stderr.match(/(?<=warn: )TS\d+/g), stdout, exitCode, inSandbox };
+      }
+
+      test("scripts mean what they mean in a browser", async () => {
+        using dir = project(
+          { "name": "notes", "desktop": { "name": "Memo", "pages": ["web/index.html", "web/later/*.js"] } },
+          {
+            "app.js": String.raw`const { app, BrowserWindow, protocol } = require("bun:desktop/electron");
+const fs = require("node:fs");
+protocol.registerSchemesAsPrivileged([{ scheme: "app", privileges: { standard: true, secure: true } }]);
+app.trustOrigins(["app://bundle"], { inFrames: true });
+app.setCompiledScripts({ "app://bundle/": "/$bunfs/root/web/" });
+app.whenReady().then(() => {
+  protocol.handle("app", request => {
+    const pathname = decodeURIComponent(new URL(request.url).pathname);
+    const name = pathname.includes(".") ? pathname : "/index.html";
+    return new Response(fs.readFileSync(__dirname + "/web" + name), { headers: { "content-type": name.endsWith("html") ? "text/html" : "text/javascript" } });
+  });
+  const { webContents } = new BrowserWindow();
+  webContents.on("console-message", event => (event.message === "end" ? process.exit(0) : console.log(event.message)));
+  webContents.loadURL("app://bundle/some/route");
+});`,
+            "web/declares.js": String.raw`function show(what, get) { let it; try { it = JSON.stringify(get()); } catch (error) { it = error.name + ": " + error.message; } console.log(what, it); }
+show("hoisting", () => [typeof plain, hoisted(), "plain" in window, typeof inBlock, "inBlock" in window]);
+show("dead zone", () => lexical);
+var plain = 1, unset, { a, b = 2, ...rest } = { a: 1, x: 3 }, fn = function () {};
+function hoisted() { return "first"; }
+function hoisted() { return "second"; }
+async function* generator() {}
+let lexical = 2, empty, arrow = () => {}, [c, , d = class {}.name] = [3];
+const constant = 3, { named = function () {} } = {};
+class Klass { name = Klass.name; }
+for (var i = 0, unused; i < 2; i++);
+for (var key in { k: 1 });
+for (var [item] of [[4]]);
+for (var initialized = 5 in {});
+for (let local = 0; local < 1; local++) { let inner; }
+{ function inBlock() { return "block"; } }
+if (true) function inIf() { return "if"; }
+switch (1) { case 1: function inCase() { return "case"; } }
+{ function lexical2() {} } let lexical3; { function lexical3() {} }
+try { throw 6; } catch (caught) { var caught = 7, fromCatch = caught; }
+with ({ target: 0 }) { var target = 8; }
+label: function labeled() {}
+show("properties", () => ["plain", "unset", "hoisted", "generator", "lexical", "constant", "Klass", "local", "inner", "inBlock", "inIf", "inCase", "lexical3", "caught", "target", "labeled", "initialized"].map(it => { const own = Object.getOwnPropertyDescriptor(window, it); return own ? it + +own.configurable + typeof own.value : "-"; }).join());
+show("values", () => [inBlock(), inIf(), inCase(), typeof lexical3, caught, fromCatch, target, initialized, empty]);
+show("names", () => [fn.name, hoisted.name, generator.name, arrow.name, named.name, Klass.name, String(hoisted), String(arrow)]);
+show("constant", () => (constant = 0));
+show("this", () => [this === window, (function () { return this === window; })(), typeof arguments]);
+show("Node.js", () => [typeof require, typeof module, typeof exports, typeof __filename, typeof process, typeof global, typeof Bun]);
+show("eval in a function", function () { var local = 1; return [eval("typeof require + typeof module + typeof __dirname + local + plain"), eval("(function () { return typeof require + typeof exports; })")(), new Function("return typeof module + eval('typeof require')")()]; });
+show("as written", () => { let it; (it) = function () {}; return [it.name, String(() => 1 + 2)]; });
+show("NODE_ENV", () => process.env.NODE_ENV);
+show("replaced", () => { function call() { return hoisted(); } window.hoisted = () => "third"; return call(); });
+show("pure", () => { let calls = 0; const f = () => calls++; /* @__PURE__ */ f(); return calls; });
+show("current", () => document.currentScript.src);
+show("first line", () => { try { show.a.b; } catch (error) { return error.message; } });
+implicit = 10;
+var count = 0, await = 11;
+function caller() { return new Error().stack.split("\n").find(it => it.includes("@") ? !it.startsWith("caller") : /\bat (?!caller)/.test(it)).match(/:(\d+):(\d+)/).slice(1); }`,
+            "web/evaluates.js": String.raw`var fromEvaluated = eval("1") && import("./module.js"); show("left to the engine", () => new Error().stack.match(/app:[^:]*:\d+/)[0]);`,
+            "web/frame.html": String.raw`<script>var inFrame = 1; parent.fromFrame = [typeof plain, window.inFrame, parent.plain];</script>`,
+            "web/index.html": String.raw`<!doctype html><base href="/"><body>
+<script src="/declares.js?v=1"></script>
+<script>
+  show("from another script", () => [plain, hoisted(), lexical, constant, new Klass().name, a, b, rest, c, d, i, key, item]);
+  show("position", () => caller());
+  onerror = (message, url, line, column, error) => (console.log("error", error.name, error.message), true);
+</script>
+<script src="/strict.js"></script>
+<script src="/umd.js"></script><script src="/evaluates.js"></script>
+<script src="/with%20space.js"></script>
+<script src="/twice.js"></script><script src="/twice.js"></script>
+<script>let lexical;</script>
+<script>var constant;</script>
+<script>function untouched() {} let plain;</script>
+<script>show("after errors", () => typeof untouched); throw new RangeError("thrown"); const never = 1;</script>
+<script>show("never initialized", () => never);</script>
+<script>this is no script</script>
+<script>eval("var evaluated = 9"); { let local = 8; eval("var inBlockToo = local"); } show("eval", () => [window.evaluated, window.inBlockToo, eval("typeof arguments")]);</script>
+<script>console.log("returns"); return;</script>
+<script>console.log("new.target"); () => new.target;</script>
+<script>console.log("import.meta"); import.meta;</script>
+<script>}, function () {</script>
+<script><!--
+show("comments", () => 1);
+--></script>
+<script>class Range { static mine = 1 } const Map2 = Map; let name = "lexical name";</script>
+<script>show("shadows", () => [Range.mine, typeof window.Range.mine, name, window.name]);</script>
+<script type="text/template">this is no script either</script>
+<script type="module">import { value } from "./module.js"; show("module", () => [value, this, typeof plain]);</script>
+<script type="module" src="/umd-module.js?a"></script>
+<script type="module">import { url } from "/module.js"; show("urls", () => [url, import.meta.url, import.meta.resolve("./x"), new Error().stack.match(/:(\d+):(\d+)/)[1]]);</script>
+<script type="module">count++;</script><script type="module">count++;</script>
+<iframe src="/frame.html"></iframe>
+<script src="/last.js" defer></script>`,
+            "web/last.js": String.raw`onload = () => {
+  show("loaded", () => [count, fromFrame]);
+  const script = document.createElement("script");
+  script.src = "/later/chunk.js";
+  script.onload = async () => {
+    const [known, computed] = await chunk, evaluated = await fromEvaluated;
+    show("import()", () => [known.value, known === computed, known === evaluated]);
+    const worker = new Worker("/later/worker.js");
+    worker.onmessage = event => (show("worker", () => event.data), console.log("end"));
+    worker.onerror = event => (console.log("worker error", event.message), console.log("end"));
+  };
+  document.body.append(script);
+};`,
+            "web/module.js": String.raw`export const value = "m", url = import.meta.url;`,
+            "web/strict.js": String.raw`"use strict"; var strictVar = 1; function strictFunction() { return this; } { function strictBlock() {} }
+show("strict", () => [window.strictVar, strictFunction(), typeof strictBlock, this === window, implicit, await]);
+show("undeclared", () => (undeclared = 1));`,
+            "web/twice.js": String.raw`var runs = (self.runs || 0) + 1; show("twice", () => [runs, caller()]);`,
+            "web/umd-module.js": String.raw`if (typeof module === "object" && module.id) module.exports = 1; else self.fromModule = 2;
+show("module without exports", () => [self.fromModule, this === undefined, typeof __filename, require === self.require, import.meta.url, (function () { return this; })()]);`,
+            "web/umd.js": String.raw`(function (root, factory) {
+  if (typeof exports === "object" && typeof module !== "undefined") module.exports = factory(require("missing"));
+  else root.Library = factory();
+})(this, () => "umd");
+var module = { exports: {} }, exports = module.exports;
+function require(name) { return "required " + name; }
+exports.a = require("fs");
+show("umd", () => [Library, window.module.exports, require.name, { module }.module === window.module]);
+show("message", () => module.b.c);`,
+            "web/with space.js": String.raw`#!/usr/bin/env x
+show("space", () => caller());`,
+            "web/later/chunk.js": String.raw`var chunk = Promise.all([import("../module.js"), import(["..", "module.js"].reduce((a, b) => a + "/" + b))]);`,
+            "web/later/imported.js": String.raw`const imported = 2; function fromImported() { return own; }`,
+            "web/later/worker.js": String.raw`importScripts("imported.js"); var own = 1; function onmessage() {} postMessage([self.own, imported, fromImported(), typeof window]);`,
+          },
+        );
+        const { warnings, stdout, exitCode, inSandbox } = await compileAndRun(dir, ["web"], "app.js");
+        expect(await inSandbox()).toBe(stdout);
+        expect(warnings).toEqual(["TS100064"]);
+        expect(stdout).toMatchInlineSnapshot(`
+"hoisting ["undefined","second",true,"undefined",true]
+dead zone ReferenceError: Cannot access 'lexical' before initialization.
+properties "plain0number,unset0undefined,hoisted0function,generator0function,-,-,-,-,-,inBlock0function,inIf0function,inCase0function,-,caught0undefined,target0undefined,labeled0function,initialized0number"
+values ["block","if","case","undefined",null,7,null,5,null]
+names ["fn","hoisted","generator","arrow","named","Klass","function hoisted() { return \\"second\\"; }","() => {}"]
+constant TypeError: Attempted to assign to readonly property.
+this [true,true,"undefined"]
+Node.js ["undefined","undefined","undefined","undefined","undefined","undefined","undefined"]
+eval in a function ["undefinedundefinedundefined11","undefinedundefined","undefinedundefined"]
+as written ["","() => 1 + 2"]
+NODE_ENV ReferenceError: process is not defined
+replaced "third"
+pure 1
+current "app://bundle/declares.js?v=1"
+first line "undefined is not an object (evaluating 'show.a.b')"
+from another script [1,"third",2,3,"Klass",1,2,{"x":3},3,"",2,"k",4]
+position ["5","26"]
+strict [1,null,"undefined",true,10,11]
+undeclared ReferenceError: undeclared is not defined
+umd ["umd",{"a":"required fs"},"require",true]
+message TypeError: undefined is not an object (evaluating 'module.b.c')
+left to the engine "app://bundle/evaluates.js:1"
+space ["2","21"]
+twice [1,["1","61"]]
+twice [2,["1","61"]]
+error SyntaxError Can't create duplicate variable: 'lexical'
+error SyntaxError Can't create duplicate variable: 'constant'
+error SyntaxError Can't create duplicate variable that shadows a global property: 'plain'
+after errors "undefined"
+error RangeError thrown
+never initialized ReferenceError: Cannot access 'never' before initialization.
+error SyntaxError Unexpected identifier 'is'
+eval [9,8,"undefined"]
+error SyntaxError Return statements are only valid inside functions.
+error SyntaxError new.target is not valid inside arrow functions in global code.
+error SyntaxError import.meta is only valid inside modules.
+error SyntaxError Parser error
+comments 1
+shadows [1,"undefined","lexical name",""]
+module ["m",null,"number"]
+module without exports [2,true,"undefined",true,"app://bundle/umd-module.js?a",null]
+urls ["app://bundle/module.js","app://bundle/","app://bundle/x","31"]
+loaded [2,["undefined",1,1]]
+import() ["m",true,true]
+worker [1,2,1,"undefined"]
+"
+`);
+        expect(exitCode).toBe(0);
+      });
+
+      test.skipIf(isWindows)("file: URLs find what pages load, and nothing of the main process", async () => {
+        using dir = project(
+          {
+            "name": "notes",
+            "main": "main.js",
+            "desktop": { "name": "Memo", "preloads": "preload.js", "pages": ["ui/lazy/*.js"] },
+          },
+          {
+            "main.js": String.raw`const { app, BrowserWindow, ipcMain } = require("electron");
+const { join } = require("node:path");
+require("./secret.js");
+app.whenReady().then(async () => {
+  ipcMain.handle("ping", () => "pong");
+  const window = new BrowserWindow({ webPreferences: { preload: join(__dirname, "preload.js") } });
+  window.webContents.on("preload-error", (event, path, error) => console.log("preload-error", error.message));
+  for (const file of ["ui/index.html", join(__dirname, "ui/index.html")]) {
+    await window.loadFile(file);
+    console.log(JSON.stringify(await window.webContents.executeJavaScript("done")));
+    const names = ["./lib/state.js", "./lazy/module.js", "../main.js", "../secret.js", "../preload.js", "../preload.js.preload.cjs", "./classic.js.script.cjs"];
+    console.log(await window.webContents.executeJavaScript("Promise.all(" + JSON.stringify(names) + ".map(it => import(it).then(it => it.state === state, it => it.name))).then(String)"));
+  }
+  app.exit(0);
+});`,
+            "preload.js": String.raw`const { contextBridge, ipcRenderer } = require("electron");
+contextBridge.exposeInMainWorld("api", { ping: () => ipcRenderer.invoke("ping") });`,
+            "secret.js": String.raw`exports.read = require("node:fs").readFileSync;`,
+            "real/file.js": String.raw`var linked = "linked";`,
+            "real/module.js": String.raw`export default "linked module";`,
+            "ui/a.svg": String.raw`<svg xmlns="http://www.w3.org/2000/svg" width="7" height="7"/>`,
+            "ui/app.js": String.raw`import { state } from "./lib/state.js?v=1";
+import pkg, { scoped as inner } from "pkg";
+import other from "pkg/other.js";
+import outer from "scoped";
+import linkedModule from "./linked/module.js";
+import data from "./data.json" with { type: "json" };
+import sheet from "./sheet.css" with { type: "css" };
+self.state = state;
+const answer = worker => new Promise(done => Object.assign(worker, { onmessage: it => done(it.data), onerror: it => done("error " + it.message) }));
+const below = url => url.slice(url.lastIndexOf("/ui/"));
+finish({
+  title: document.title,
+  style: [getComputedStyle(document.body).color, getComputedStyle(document.body).backgroundColor, await document.images[0].decode().then(() => document.images[0].naturalWidth)],
+  ping: await api.ping(),
+  imports: [pkg, inner, other, outer, linked, linkedModule, data, sheet.cssRules.length],
+  meta: [below(import.meta.url), below(import.meta.resolve("pkg")), Object.keys(import.meta).join()],
+  text: await (await fetch(new URL("./text.txt", import.meta.url))).text(),
+  workers: [await answer(new Worker(new URL("./sloppy.js", import.meta.url))), await answer(new Worker("worker.js")), await answer(new Worker(new URL("./module-worker.js", import.meta.url), { type: "module" }))],
+  lazy: [(await import(["lazy", "module.js"].reduce((a, b) => a + "/" + b, "."))).state === state, await new Promise(done => document.body.append(Object.assign(document.createElement("script"), { src: "lazy/classic.js", onload: () => done(lazy), onerror: () => done("error") })))],
+  node: [typeof require, typeof module, typeof process, typeof __dirname, this],
+});`,
+            "ui/classic.js": String.raw`var finish, done = new Promise(it => (finish = it));`,
+            "ui/data.json": String.raw`{ "a": 1 }`,
+            "ui/imported.js": String.raw`var imported = "imported ";`,
+            "ui/index.html": String.raw`<!doctype html><title>Memo</title><link rel="stylesheet" href="style.css">
+<script type="importmap">{ "imports": { "pkg": "./vendor/pkg/index.js", "pkg/": "./vendor/pkg/", "scoped": "./vendor/outer.js" }, "scopes": { "./vendor/pkg/": { "scoped": "./vendor/inner.js" } } }</script>
+<img src="a.svg"><script src="classic.js"></script><script src="linked/file.js"></script>
+<script type="module" src="app.js"></script>`,
+            "ui/module-worker.js": String.raw`import { state } from "./lib/state.js"; postMessage(typeof state + typeof this);`,
+            "ui/more.css": String.raw`body { background-color: rgb(4, 5, 6) }`,
+            "ui/sheet.css": String.raw`p { color: red }`,
+            "ui/sloppy.js": String.raw`with (self) postMessage(010);`,
+            "ui/style.css": String.raw`@import "more.css"; body { color: rgb(1, 2, 3) }`,
+            "ui/text.txt": String.raw`text`,
+            "ui/worker.js": String.raw`with (self) importScripts("imported.js"); postMessage(imported + typeof this);`,
+            "ui/lazy/classic.js": String.raw`var lazy = "lazy";`,
+            "ui/lazy/module.js": String.raw`export { state } from "../lib/state.js";`,
+            "ui/lib/state.js": String.raw`export const state = {};`,
+            "ui/vendor/inner.js": String.raw`export default "inner";`,
+            "ui/vendor/outer.js": String.raw`export default "outer";`,
+            "ui/vendor/pkg/index.js": String.raw`export { default as scoped } from "scoped"; export default "pkg";`,
+            "ui/vendor/pkg/other.js": String.raw`export default "other";`,
+          },
+        );
+        symlinkSync("../real", join(String(dir), "ui/linked"));
+        const sources = ["ui", "real", "main.js", "preload.js", "secret.js"];
+        const { warnings, stdout, exitCode, inSandbox } = await compileAndRun(dir, sources, "main.js", "ui/index.html");
+        expect(await inSandbox()).toBe(stdout);
+        expect(warnings).toEqual(["TS100064"]);
+        expect(stdout).toMatchInlineSnapshot(`
+"{"title":"Memo","style":["rgb(1, 2, 3)","rgb(4, 5, 6)",7],"ping":"pong","imports":["pkg","inner","other","outer","linked","linked module",{"a":1},1],"meta":["/ui/app.js","/ui/vendor/pkg/index.js","url,resolve"],"text":"text","workers":[8,"imported object","objectundefined"],"lazy":[true,"lazy"],"node":["undefined","undefined","undefined","undefined",null]}
+true,true,TypeError,TypeError,TypeError,TypeError,TypeError
+{"title":"Memo","style":["rgb(1, 2, 3)","rgb(4, 5, 6)",7],"ping":"pong","imports":["pkg","inner","other","outer","linked","linked module",{"a":1},1],"meta":["/ui/app.js","/ui/vendor/pkg/index.js","url,resolve"],"text":"text","workers":[8,"imported object","objectundefined"],"lazy":[true,"lazy"],"node":["undefined","undefined","undefined","undefined",null]}
+true,true,TypeError,TypeError,TypeError,TypeError,TypeError
+"
+`);
+        expect(exitCode).toBe(0);
+      });
+
+      describe("files outside of the project", () => {
+        const app = (page: string, files: Record<string, string> = {}) =>
+          tempDir("compile-desktop-outside", {
+            "outside.css": "p { color: rgb(1, 1, 1) }",
+            "outside.js": "var outside = 1;",
+            "outside.html": "",
+            "outside.txt": "",
+            "app/package.json": JSON.stringify({ name: "notes", main: "main.js", desktop: { name: "Memo" } }),
+            "app/main.js": `const { app, BrowserWindow } = require("electron");
+app.whenReady().then(async () => {
+  const window = new BrowserWindow();
+  await window.loadFile(__dirname + "/ui/index.html");
+  console.log(await window.webContents.executeJavaScript("getComputedStyle(document.querySelector('p')).color + typeof outside"));
+  app.exit(0);
+});`,
+            "app/ui/index.html": page,
+            ...files,
+          });
+        const build = (dir: { toString(): string }, ...args: string[]) =>
+          run([bunExe(), "compile", "--desktop", "main.js", ...args, "--outfile=out"], join(String(dir), "app"));
+        function isInBundle(dir: { toString(): string }, text: string) {
+          const bundle = join(String(dir), "app/out" + extension);
+          return filesIn(bundle).some(it => readFileSync(join(bundle, it)).includes(text));
+        }
+
+        test.each([
+          ["outside.css", "ui/index.html", `<link rel="stylesheet" href="../../outside.css">`],
+          ["outside.txt", "ui/index.html", `<img src="..%2F..%2Foutside.txt">`],
+          ["outside.txt", "ui/index.html", `<p style="background: url(../../outside.txt)">`],
+          ["outside.html", "ui/index.html", `<a href="../../outside.html">`],
+          ["outside.js", "ui/index.html", `<script src="../../outside.js"></script>`],
+          ["outside.js", "ui/index.html", `<script type="module" src="../../outside.js"></script>`],
+          ["outside.js", "ui/index.html", `<script>new Worker("../../outside.js")</script>`],
+          ["outside.css", "ui/index.html", `<base href="../../"><link rel="stylesheet" href="outside.css">`],
+          ["outside.txt", "ui/index.html", `<img src="/../outside.txt">`],
+          ["outside.txt", "node_modules/a/a.css", `<link rel="stylesheet" href="../node_modules/a/a.css">`],
+          ["outside.txt", "ui/url.js", `<script type="module" src="url.js"></script>`],
+          ["outside.css", "ui/import.js", `<script type="module" src="import.js"></script>`],
+        ])("%s, named by %s: %s", async (file, namedBy, page) => {
+          using dir = app(page, {
+            "app/node_modules/a/a.css": "p { background: url(../../../outside.txt) }",
+            "app/ui/url.js": `fetch(new URL("../../outside.txt", import.meta.url));`,
+            "app/ui/import.js": `import "../../outside.css" with { type: "css" };`,
+          });
+          const { stderr, exitCode } = await build(dir, "ui/index.html");
+          const [project, from, to] = ["app", join("app", namedBy), file].map(it => `"${join(String(dir), it)}"`);
+          expect(stderr).toContain(`error: ${from} loads ${to}, which is outside of ${project}.`);
+          expect(exitCode).toBe(1);
+        });
+
+        test.skipIf(isWindows).each([
+          ["ui/link", "../..", "link/outside.css"],
+          ["node_modules/a/link", "../../..", "../node_modules/a/link/outside.css"],
+        ])("through the link %s", async (link, target, url) => {
+          using dir = app(`<link rel="stylesheet" href="${url}">`, { "app/node_modules/a/index.js": "" });
+          symlinkSync(target, join(String(dir), "app", link));
+          const { stderr, exitCode } = await build(dir, "ui/index.html");
+          expect(stderr).toContain(`loads "${join(String(dir), "app", link, "outside.css")}", which is outside of`);
+          expect(exitCode).toBe(1);
+        });
+
+        test("/ is not looked for above the project, and a link to a document takes nothing", async () => {
+          const page = `<link rel="stylesheet" href="/outside.css"><link rel="stylesheet" href="/inside.css"><script src="/outside.js"></script><a href="../../outside.txt">`;
+          using dir = app(page, {
+            "outside.css": "p { --found-above-the-project: 1 }",
+            "app/inside.css": "p { --found-in-the-project: 1 }",
+          });
+          expect(await build(dir, "ui/index.html")).toMatchObject({ exitCode: 0 });
+          expect(isInBundle(dir, "--found-in-the-project")).toBe(true);
+          expect(isInBundle(dir, "--found-above-the-project")).toBe(false);
+        });
+
+        test("--root", async () => {
+          using dir = app(
+            `<link rel="stylesheet" href="../../outside.css"><script src="../../outside.js"></script><p>`,
+          );
+          expect(await build(dir, "ui/index.html", "--root=..")).toMatchObject({ exitCode: 0 });
+          for (const it of ["app/ui", "outside.css", "outside.js"]) rmSync(join(String(dir), it), { recursive: true });
+          const cmd = [join(String(dir), "app/out" + extension, executable)];
+          expect(await run(cmd, String(dir), { BUN_DESKTOP_HEADLESS: "1" })).toMatchObject({
+            stdout: "rgb(1, 1, 1)number\n",
+            exitCode: 0,
+          });
+        });
+
+        test.skipIf(isWindows)("packages, imports, and what is beside a page that is listed", async () => {
+          const page = `<link rel="stylesheet" href="../../node_modules/@a/hoisted/a.css"><link rel="stylesheet" href="../node_modules/linked/a.css"><script type="module" src="a.js"></script>`;
+          using dir = app(page, {
+            "node_modules/@a/hoisted/a.css": "p { --is-hoisted: 1 }",
+            "packages/linked/a.css": "p { --is-linked: 1 }",
+            "shared/a.js": `export default "--is-imported";`,
+            "web/index.html": `<link rel="stylesheet" href="a.css">`,
+            "web/a.css": "p { --is-beside: 1 }",
+            "app/node_modules/a/index.js": "",
+            "app/ui/a.js": `import a from "../../shared/a.js"; document.title = a;`,
+          });
+          symlinkSync("../../packages/linked", join(String(dir), "app/node_modules/linked"));
+          expect(await build(dir, "ui/index.html", "../web/index.html")).toMatchObject({ exitCode: 0 });
+          const texts = ["--is-hoisted", "--is-linked", "--is-imported", "--is-beside"];
+          expect(texts.filter(it => !isInBundle(dir, it))).toEqual([]);
+        });
+      });
+
+      test.skipIf(!isLinux)("only the processes of pages that were compiled have the program", async () => {
+        using dir = project(
+          {
+            "name": "notes",
+            "main": "main.js",
+            "desktop": { "name": "Memo", "preloads": "preload.js", "pages": ["ui/*.html"] },
+          },
+          {
+            "main.js": String.raw`const { app, BrowserWindow } = require("bun:desktop/electron");
+const seen = [];
+const server = require("http").createServer((request, response) => response.writeHead(200, { "content-type": "text/html" }).end("<script>console.log('served', self.bridge)</script>"));
+app.whenReady().then(() => server.listen(0, "127.0.0.1", async () => {
+  const url = "http://127.0.0.1:" + server.address().port + "/";
+  app.trustOrigins([url.slice(0, -1)], { inFrames: true });
+  const open = preload => {
+    const window = new BrowserWindow({ webPreferences: { sandbox: true, preload } });
+    window.webContents.on("console-message", ({ message, frame }) => {
+      const read = name => require("fs").readFileSync("/proc/" + frame.osProcessId + "/" + name, "latin1");
+      seen.push([message, read("cmdline").match(/child=([\w-]+)/)[1], /Seccomp:\s2/.test(read("status")), /rwx/.test(read("maps"))].join(" "));
+    });
+    return window;
+  };
+  await open().loadFile("ui/index.html", { hash: url });
+  await open().loadURL(url);
+  await open(__dirname + "/preload.js").loadURL(url);
+  while (seen.length < 4) await new Promise(setImmediate);
+  console.log(seen.join("\n"));
+  app.exit(0);
+}));`,
+            "preload.js": `require("electron").contextBridge.exposeInMainWorld("bridge", String(() => 1).includes("native"));`,
+            "ui/index.html": `<body><script>console.log("listed", String(() => 1).includes("native")); document.body.append(Object.assign(document.createElement("iframe"), { src: location.hash.slice(1) }));</script>`,
+          },
+        );
+        const built = await run(
+          [bunExe(), "compile", "--desktop", "--no-compile-function-source", "main.js", "--outfile=out"],
+          String(dir),
+        );
+        expect(built).toMatchObject({ exitCode: 0 });
+        for (const it of ["ui", "preload.js"]) rmSync(join(String(dir), it), { recursive: true });
+        expect(await run([join(String(dir), "out" + extension, executable)], String(dir), withSandbox)).toMatchObject({
+          stdout: [
+            "listed true compiled-page true false",
+            "served undefined page true true",
+            "served undefined page true true",
+            "served true compiled-page true false\n",
+          ].join("\n"),
+          exitCode: 0,
+        });
+      });
+
+      test("what is compiled and what is interpreted", async () => {
+        using dir = project(
+          {
+            "name": "notes",
+            "main": "main.js",
+            "type": "module",
+            "desktop": { "name": "Memo", "preloads": "preload.js", "pages": ["ui/*.html"] },
+          },
+          {
+            "main.js": String.raw`import { app, BrowserWindow } from "electron";
+import { writeFileSync } from "node:fs";
+app.whenReady().then(async () => {
+  const seen = [];
+  const open = async (file, webPreferences) => {
+    const window = new BrowserWindow({ webPreferences });
+    window.webContents.on("console-message", event => seen.push(event.message));
+    await window.loadFile(file);
+  };
+  await open("ui/index.html", { preload: import.meta.dirname + "/preload.js" });
+  await open("ui/node.html", { nodeIntegration: true, contextIsolation: false });
+  const written = process.cwd() + "/written.html";
+  writeFileSync(written, '<script src="file://' + import.meta.dirname + '/ui/classic.js" onerror="console.log(\'written without\')"></script><script>Math.max = null; console.log("written patches", !Math.max)</script>');
+  await open(written);
+  while (seen.length < 15) await new Promise(setImmediate);
+  console.log(seen.sort().join("\n"));
+  app.exit(0);
+});`,
+            "preload.js": String.raw`console.log("preload", String(() => 1).includes("native") ? "compiled" : "interpreted", typeof require("electron").ipcRenderer);`,
+            "ui/classic.js": String.raw`function tell(what, it) { console.log(what, String(it).includes("native") ? "compiled" : "interpreted"); }
+tell("classic", () => 1);
+new Worker("worker.js").onmessage = event => event.data.forEach(it => console.log(it));`,
+            "ui/imported.js": String.raw`tell("imported", () => 1);`,
+            "ui/index.html": String.raw`<script src="classic.js"></script>
+<script>tell("inline", () => 1);</script>
+<script>try { eval("Math.max = null"); } catch {} console.log("patches", !Math.max); tell("eval outside of a function", () => 1);</script>
+<script type="module">import "./imported.js"; tell("inline module", () => 1);</script>
+<script type="module" src="module.js"></script>
+<body onload="tell('attribute', () => 1)">`,
+            "ui/module.js": String.raw`tell("module", () => 1);`,
+            "ui/more.js": String.raw`var more = "importScripts() " + kind(() => 1);`,
+            "ui/node.html": String.raw`<script>console.log("node", String(() => 1).includes("native") ? "compiled" : "interpreted", typeof require("fs").readFileSync, typeof require("electron").ipcRenderer, typeof process.pid, typeof module);</script>`,
+            "ui/worker.js": String.raw`var kind = it => (String(it).includes("native") ? "compiled" : "interpreted"); importScripts("more.js"); with (self) postMessage(["worker " + kind(() => 1), more]);`,
+          },
+        );
+        const args = ["--no-compile-function-source", "main.js"];
+        const { warnings, stdout, exitCode } = await compileAndRun(dir, ["ui", "preload.js"], ...args);
+        expect(warnings).toBeNull();
+        expect(stdout).toMatchInlineSnapshot(`
+"Failed to load resource: net::ERR_FILE_NOT_FOUND
+attribute interpreted
+classic compiled
+eval outside of a function interpreted
+importScripts() compiled
+imported compiled
+inline compiled
+inline module compiled
+module compiled
+node compiled function object number object
+patches false
+preload compiled object
+worker compiled
+written patches true
+written without
+"
+`);
+        expect(exitCode).toBe(0);
       });
     });
 
@@ -1083,6 +1730,32 @@ app.whenReady().then(() => {
       exitCode: 0,
     });
   });
+
+  test
+    .skipIf(!hasLibrary || !isLinux)
+    .each([["build", "--compile"], ...(aotIsUnsupported || isDebug ? [] : [["compile"]])])(
+    "pages run in sandboxed processes after bun %s",
+    async (...command) => {
+      using dir = tempDir("compile-desktop", {
+        "package.json": JSON.stringify({ name: "pages", version: "1.0.0" }),
+        "app.js": `const { app, BrowserWindow, protocol } = require("electron");
+protocol.registerSchemesAsPrivileged([{ scheme: "app", privileges: { standard: true } }]);
+app.setWebEngine({ type: "bun" });
+app.whenReady().then(async () => {
+  protocol.handle("app", () => new Response("<script>document.title = eval('typeof Bun') + [1].map(it => it * 2)</script>", { headers: { "content-type": "text/html" } }));
+  const window = new BrowserWindow(), page = window.webContents;
+  await window.loadURL("app://other/");
+  console.log(page.getTitle(), /Seccomp:\\s2/.test(require("fs").readFileSync("/proc/" + page.getOSProcessId() + "/status", "latin1")));
+  app.quit();
+});`,
+      });
+      const built = await run([bunExe(), ...command, "--desktop", "app.js", "--outfile=out"], String(dir));
+      expect(built).toMatchObject({ exitCode: 0 });
+      expect(
+        await run([join(String(dir), "out.AppDir/AppRun"), "--no-sandbox"], String(dir), withSandbox),
+      ).toMatchObject({ stdout: "undefined2 true\n", exitCode: 0 });
+    },
+  );
 
   test.skipIf(isWindows)("a compiled program does not take the argument that makes a process for pages", async () => {
     using dir = project(undefined, { "app.ts": `console.log(process.argv.slice(2).join());` });

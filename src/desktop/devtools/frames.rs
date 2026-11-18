@@ -13,7 +13,6 @@ use crate::prelude::*;
 use crate::task;
 use crate::value::Value;
 use crate::webview::remote::Remote;
-use crate::webview::remote::field;
 
 struct Attached {
     target: Rc<str>,
@@ -27,13 +26,14 @@ struct Frame {
 }
 
 impl Frame {
-    fn element(&self) -> JSValue {
+    fn place(&self) -> Option<Value> {
         let object = self.object.get();
-        let place = match inspection::around(object) {
+        let [page, frame] = match inspection::around(object) {
             Some(contents) => contents.place_of_element(),
             None => cast(object).and_then(Remote::place_of_element),
-        };
-        field(place.map(|[page, frame]| bun_web::dom::element_of_frame(page, frame)))
+        }?;
+        let attached = self.attached.borrow();
+        Some(record! { "page": page, "frame": frame, "target": &*attached.as_ref()?.target })
     }
 }
 
@@ -196,23 +196,13 @@ impl Frames {
         (self.emit)("Target.detachedFromTarget", params);
     }
 
-    pub(super) fn id_of(&self, element: JSValue) -> JsResult<Option<Rc<str>>> {
-        let all = self.all.borrow().clone();
-        for frame in all {
-            if frame.element() == element {
-                let attached = frame.attached.borrow();
-                return Ok(attached.as_ref().map(|it| Rc::clone(&it.target)));
-            }
-        }
-        Ok(None)
-    }
-
-    pub(super) fn owner_of(&self, target: &str) -> JsResult<Option<JSValue>> {
-        let is_it = |it: &&Rc<Frame>| {
-            (it.attached.borrow().as_ref()).is_some_and(|it| *it.target == *target)
-        };
-        let found = self.all.borrow().iter().find(is_it).cloned();
-        Ok(found.map(|it| it.element()))
+    /// Of their elements.
+    pub(super) fn places(&self) -> Value {
+        self.all
+            .borrow()
+            .iter()
+            .filter_map(|it| it.place())
+            .collect()
     }
 
     pub(super) fn close(&self) {

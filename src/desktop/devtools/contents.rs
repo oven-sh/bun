@@ -1,12 +1,8 @@
 //! What a session needs from a `WebContents`.
 
-use bun_ui::dom;
-
 use super::target_id_of;
 use crate::contents::{self, inspection};
 use crate::prelude::*;
-use crate::realm;
-use crate::renderer::{self, Document, World};
 use crate::value::Value;
 
 pub(super) struct Contents(Root<contents::Contents>);
@@ -73,23 +69,6 @@ impl Contents {
 
     pub(super) fn token(&self) -> String {
         string(self.page().token())
-    }
-
-    fn renderer(&self) -> JsResult<&'static Document> {
-        Document::of(self.live_page()?.id()).ok_or_else(renderer::disposed)
-    }
-
-    pub(super) fn control(&self, method: &str, arguments: &[JSValue]) -> JsResult<JSValue> {
-        self.renderer()?.inspect(method, arguments)
-    }
-
-    pub(super) fn document(&self) -> JsResult<dom::Document> {
-        let document = self.control("currentDocument", &[])?;
-        Ok(dom::Document(realm::peek(document)))
-    }
-
-    pub(super) fn world(&self, id: u32) -> JsResult<World> {
-        self.renderer()?.world_with_id(id)
     }
 
     pub(super) fn simulate(&self, input: bun_web::input::Input) -> JsResult<()> {

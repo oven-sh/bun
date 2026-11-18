@@ -9,7 +9,7 @@ use bun_jsc::bindgen::{
 use bun_jsc::{JSType, JSValue};
 
 use super::Failure;
-use super::bitmap::{area_of, size_from};
+use super::bitmap::{area_of, convert, size_from};
 use crate::generated_bindgen::canvas::{
     ImageDataArray, ImageDataPixelFormat as Format, ImageDataSettings, PredefinedColorSpace,
     js_ImageData,
@@ -170,7 +170,7 @@ impl ImageData {
         )
     }
 
-    /// `None` is what there was no memory for.
+    /// `None` is what there was no memory for. The pixels are in `otherwise`.
     pub(super) fn from_pixels<'a>(
         heap: &JsHeap<'a>,
         size: [u32; 2],
@@ -178,6 +178,13 @@ impl ImageData {
         settings: &ImageDataSettings,
         otherwise: PredefinedColorSpace,
     ) -> bindgen::Result<'a, &'a Self> {
+        let mut rgba = rgba;
+        if let Some((rgba, wanted)) = rgba
+            .as_mut()
+            .zip(settings.color_space.filter(|it| *it != otherwise))
+        {
+            convert(rgba, wanted == PredefinedColorSpace::DisplayP3);
+        }
         let bytes = rgba.and_then(|rgba| match settings.pixel_format {
             Format::RgbaUnorm8 => Some(rgba),
             Format::RgbaFloat16 => {
@@ -197,6 +204,10 @@ impl ImageData {
             settings.pixel_format,
         )?;
         Ok(js_ImageData::create(heap, ImageData::new(size, settings, otherwise)).with_data(data))
+    }
+
+    pub(super) fn is_wide(&self) -> bool {
+        self.color_space == PredefinedColorSpace::DisplayP3
     }
 
     pub(super) fn with_pixels<R>(

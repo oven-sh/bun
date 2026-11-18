@@ -192,6 +192,8 @@ pub(crate) struct Document {
     pub(crate) shaped: RefCell<Map<u64, Rc<Shaped>>>,
     /// Since the long texts that are not used any more were last dropped.
     pub(crate) newly_shaped_bytes: Cell<usize>,
+    /// How long the paragraphs are that `Inline::of_words` has got since boxes are being built.
+    pub(crate) words_built: core::cell::Cell<usize>,
     /// `None` until it has loaded.
     pub(crate) images: RefCell<Map<Str, Option<Replaced>>>,
     /// The floats that wait for them.
@@ -217,6 +219,8 @@ pub(crate) struct Document {
     /// The containing blocks that are only a part of the box.
     pub(crate) containing_parts: Map<BoxId, abi::Rect>,
     pub(crate) anchored: Map<NodeId, crate::anchor::Anchoring>,
+    /// With the anchor functions of their keyframes.
+    pub(crate) anchored_by_animation: Map<NodeId, Rc<Style>>,
     pub(crate) anchor_index: Option<crate::anchor::Index>,
     pub(crate) anchors: Set<NodeId>,
     pub(crate) implicit_anchors: Map<NodeId, NodeId>,
@@ -567,6 +571,7 @@ impl Document {
             font_requests: None,
             shaped: Default::default(),
             newly_shaped_bytes: Cell::new(0),
+            words_built: Default::default(),
             images: Default::default(),
             shape_images: Default::default(),
             image_shapes: Default::default(),
@@ -584,6 +589,7 @@ impl Document {
             locks: Default::default(),
             containing_parts: Default::default(),
             anchored: Default::default(),
+            anchored_by_animation: Default::default(),
             anchor_index: None,
             anchors: Default::default(),
             implicit_anchors: Default::default(),
@@ -2202,6 +2208,10 @@ impl Document {
     }
 
     pub(crate) fn relayout(&mut self, id: NodeId) {
+        self.relayout_with(id, false);
+    }
+
+    pub(crate) fn relayout_with(&mut self, id: NodeId, keeps_static_position: bool) {
         if let Some(own) = self.own_box(id) {
             let clipped = self.boxes[own].overflow[0] != crate::types::Overflow::Visible;
             self.update_box_style(own);
@@ -2215,7 +2225,10 @@ impl Document {
                     .chain([own])
                     .for_each(|it| self.boxes[it].cache.clear());
             }
-            self.boxes.mark_layout(own);
+            if self.boxes[own].is_cell() {
+                self.boxes.forget_replaced_in_cell(own);
+            }
+            self.boxes.mark_layout_with(own, keeps_static_position);
             self.needs_layout = self.needs_layout || !self.boxes.is_parked(own);
         }
     }
@@ -3270,6 +3283,7 @@ impl Document {
         for _ in 0..16 {
             self.update_style();
             self.request_fonts();
+            self.needs_layout |= self.note_visibility_of_anchors();
             if !self.needs_layout {
                 self.update_scrollers_of_moved_boxes();
             }

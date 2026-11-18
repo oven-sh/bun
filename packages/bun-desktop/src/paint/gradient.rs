@@ -1,4 +1,5 @@
-use super::raster::{Pixel, map_point};
+use super::raster::{Pixel, map_point, prefer_wide};
+use super::scan::Floats;
 use crate::abi::GradientStop;
 use crate::gfx::Transform;
 
@@ -36,6 +37,49 @@ pub struct Gradient {
     stops: Vec<(f32, [f32; 4])>,
 }
 
+/// The first pixel is at `first` of the way from one to the other.
+#[inline(always)]
+pub(super) fn between<F: Floats>(
+    [from, to]: [[f32; 4]; 2],
+    first: f32,
+    step: f32,
+    row: &mut [Pixel],
+) {
+    let (all, steps) = (
+        |it: f32| F::new([it; 8]),
+        F::new(std::array::from_fn(|it| it as f32 * step)),
+    );
+    let (start, by) = (
+        from.map(|it| all(it + 0.5)),
+        [0, 1, 2, 3].map(|it| all(to[it] - from[it])),
+    );
+    for (index, run) in row.chunks_mut(8).enumerate() {
+        let progress = all(first + (index * 8) as f32 * step)
+            .add(steps)
+            .max(all(0.))
+            .min(all(1.));
+        let [r, g, b, a] = [
+            start[0].add(by[0].mul(progress)).whole(),
+            start[1].add(by[1].mul(progress)).whole(),
+            start[2].add(by[2].mul(progress)).whole(),
+            start[3].add(by[3].mul(progress)).whole(),
+        ];
+        let mut colors = [[0; 4]; 8];
+        for (it, color) in colors.iter_mut().enumerate() {
+            *color = (r[it] | g[it] << 8 | b[it] << 16 | a[it] << 24).to_le_bytes();
+        }
+        match run.first_chunk_mut() {
+            Some(run) => *run = colors,
+            None => run.copy_from_slice(&colors[..run.len()]),
+        }
+    }
+}
+
+fn shade_between(ends: [[f32; 4]; 2], first: f32, step: f32, row: &mut [Pixel]) {
+    prefer_wide!(shade_between(ends, first, step, row));
+    between::<[f32; 8]>(ends, first, step, row);
+}
+
 impl Gradient {
     pub fn new(
         geometry: Geometry,
@@ -54,6 +98,26 @@ impl Gradient {
             premultiplied,
             stops: stops.collect(),
         }
+    }
+
+    /// Of the stops, without alpha.
+    pub fn average(&self) -> u32 {
+        let [r, g, b] = [0, 1, 2].map(|at| {
+            (self.stops.iter().map(|it| it.1[at]).sum::<f32>() / self.stops.len() as f32 + 0.5)
+                as u8
+        });
+        u32::from_be_bytes([r, g, b, 255])
+    }
+
+    /// Everywhere.
+    pub fn is_opaque(&self) -> bool {
+        let covers_all = match self.geometry {
+            Geometry::Radial { from, to } => {
+                (to[0] - from[0]).hypot(to[1] - from[1]) < (to[2] - from[2]).abs() * 0.99
+            }
+            _ => true,
+        };
+        covers_all && self.stops.iter().all(|it| it.1[3] == 255.)
     }
 
     /// For `vector/shader.h`. False if it has no colors, or too many.
@@ -182,6 +246,17 @@ impl Gradient {
 
     /// For offsets that grow by `step` from one pixel to the next.
     fn shade_evenly(&self, first: f32, step: f32, row: &mut [Pixel]) {
+        if let [(from, a), (to, b)] = self.stops[..]
+            && to - from > 1e-3
+        {
+            let scale = if self.premultiplied { 1. } else { a[3] / 255. };
+            return shade_between(
+                [a, b].map(|[r, g, b, a]| [r * scale, g * scale, b * scale, a]),
+                (first - from) / (to - from),
+                step / (to - from),
+                row,
+            );
+        }
         let mut start = 0;
         while start < row.len() {
             let offset = first + step * start as f32;
@@ -257,20 +332,26 @@ mod tests {
             (0.9, 0xFFFF_FFFF),
         ]
         .map(|(offset, color)| GradientStop { offset, color });
-        let gradient = Gradient::new(
-            Geometry::Linear {
-                from: [10., 5.],
-                to: [250., 40.],
-            },
-            &stops,
-            Spread::Pad,
-            true,
-        );
-        for inverse in [
+        let gradients = [&stops[..], &stops[..2], &stops[3..]].map(|it| {
+            Gradient::new(
+                Geometry::Linear {
+                    from: [10., 5.],
+                    to: [250., 40.],
+                },
+                it,
+                Spread::Pad,
+                true,
+            )
+        });
+        let inverses = [
             Transform::identity(),
             Transform::from_row(-1., 0.3, 0.2, 1., 300., 0.),
             Transform::from_row(0., 0., 3., 1., 0., 0.),
-        ] {
+        ];
+        for (gradient, inverse) in gradients
+            .iter()
+            .flat_map(|it| inverses.map(|inverse| (it, inverse)))
+        {
             for y in 0..60 {
                 let mut row = [[0; 4]; 300];
                 gradient.shade(&inverse, 0, y, &mut row);

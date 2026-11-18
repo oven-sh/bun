@@ -1055,6 +1055,8 @@ pub(crate) struct Template(Vec<Part>);
 /// What is being resolved, and from where on it is in a cycle.
 #[derive(Default)]
 pub(crate) struct Stack {
+    /// Where the innermost custom property is among the keys.
+    pub(crate) variable: usize,
     keys: smallvec::SmallVec<[Name; 8]>,
     cycle: Option<usize>,
     /// Where the cycle starts that what has last been resolved is in, if that is still being resolved.
@@ -1067,6 +1069,16 @@ pub(crate) struct Stack {
 impl Stack {
     pub(crate) fn keys(&self) -> &[Name] {
         &self.keys
+    }
+
+    /// From the innermost custom property on.
+    fn reaches_attribute(&mut self, key: Name) -> bool {
+        self.keys[self.variable.min(self.keys.len())..].contains(&key) && self.reaches(key)
+    }
+
+    /// Returns what to put back.
+    pub(crate) fn enter_variable(&mut self) -> usize {
+        core::mem::replace(&mut self.variable, self.keys.len())
     }
 
     /// Whether `key` is being resolved, which makes a cycle.
@@ -1438,8 +1450,11 @@ fn append(out: &mut Out, text: &[u8]) {
 
 impl AttrType {
     fn parse(&self, name: &[u8], value: &str, lookup: &mut dyn Lookup) -> Option<Text> {
-        let mut out = Out::new();
+        let (mut out, key) = (Out::new(), Name::new(name).salted(9));
         match self {
+            AttrType::String | AttrType::Unit(_) if lookup.stack().reaches_attribute(key) => {
+                return None;
+            }
             AttrType::String => write_string(value.as_bytes(), &mut out),
             AttrType::Unit(unit) => {
                 parse_all(value.as_bytes(), |p| p.expect_number().ok())?;
@@ -1448,15 +1463,12 @@ impl AttrType {
                 out = [value.trim_ascii().as_bytes(), unit].concat();
             }
             AttrType::Syntax(syntax) => {
-                let value =
-                    guarded(
-                        lookup,
-                        Name::new(name).salted(9),
-                        |lookup| match Template::parse(value.as_bytes(), true).ok()? {
-                            Some(template) => template.value(lookup),
-                            None => Some(scan::trim(value.as_bytes()).into()),
-                        },
-                    )?;
+                let value = guarded(lookup, key, |lookup| {
+                    match Template::parse(value.as_bytes(), true).ok()? {
+                        Some(template) => template.value(lookup),
+                        None => Some(scan::trim(value.as_bytes()).into()),
+                    }
+                })?;
                 return if syntax.0.is_empty() {
                     Some(value)
                 } else {

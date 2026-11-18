@@ -76,6 +76,10 @@ impl Window {
 
     pub(super) fn read_environment(&self, container: FromContainer) {
         let mut new = *self.host().environment();
+        let container = new
+            .container
+            .as_ref()
+            .map_or(container, FromContainer::from);
         new.is_dark = container.is_dark.unwrap_or(new.is_dark);
         self.set_languages(core::mem::take(&mut new.languages));
         self.view.environment.replace(new);
@@ -133,7 +137,10 @@ impl Window {
 
     /// Scripts see the new bounds until the host says otherwise.
     fn set_bounds(&self, bounds: Rect) {
-        if !self.is_disposed() && !self.document().is(DocFlags::IN_FRAME) {
+        if !self.is_disposed()
+            && !self.document().is(DocFlags::IN_FRAME)
+            && self.environment().container.is_none()
+        {
             let bounds = self
                 .environment()
                 .display

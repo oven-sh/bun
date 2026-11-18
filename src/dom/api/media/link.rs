@@ -271,7 +271,7 @@ impl Link {
             .borrow()
             .borrow()
             .iter()
-            .for_each(|it| it.0.send(&commands));
+            .for_each(|it| it.0.send(&commands, [true; 2]));
     }
 
     #[optimize(size)]

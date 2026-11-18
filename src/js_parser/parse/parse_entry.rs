@@ -525,6 +525,7 @@ impl<'a> Parser<'a> {
         }
         let result = Self::scan_imports_with(p);
         scan_pass.import_records = p.import_records.take_scan(p.arena);
+        scan_pass.has_export_statement = !p.esm_export_keyword.is_empty();
         scan_pass.named_imports = core::mem::take(&mut p.named_imports);
         if let Some(used_symbols) = p.parse_pass_symbol_uses.take() {
             scan_pass.used_symbols = used_symbols;

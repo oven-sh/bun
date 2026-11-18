@@ -196,6 +196,9 @@ pub trait Embedder {
     /// Of a module that is part of the program without being compiled.
     fn source_of(&self, url: &Url) -> LocalFuture<'static, Result<Option<Vec<u8>>>>;
     fn cookie_changed(&self, change: &Change);
+    fn service_workers_report(&self, news: crate::service::News);
+    /// Without a window.
+    fn lets_notify(&self, url: &Url) -> bool;
     /// Those of another program whose profile this is, once.
     fn encrypt(&self, bytes: &[u8]) -> Option<Vec<u8>>;
     fn decrypt(&self, bytes: &[u8]) -> Option<Vec<u8>>;

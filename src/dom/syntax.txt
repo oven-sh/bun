@@ -31,12 +31,13 @@ value. `keep=`: what is written if everything could be left out.
 <symbols> = ^symbols symbols( [ cyclic | numeric | alphabetic | symbolic | fixed ]?~symbolic <string>+ )
 <prefixed-display> = -webkit-box | -webkit-inline-box | -webkit-flex | -webkit-inline-flex
 
-<image> = <url> | <gradient> | <image-set> | -webkit-cross-fade( <image-or-none> , <image-or-none> , <alpha> ) | ^light-dark light-dark( <image-or-none> , <image-or-none> ) | paint( <custom-ident> [ , <any> ]? ) | image( <color> )
+<image> = <url> | <image-set> | <generated-image>
+<generated-image> = <gradient> | -webkit-cross-fade( <image-or-none> , <image-or-none> , <alpha> ) | ^light-dark light-dark( <image-or-none> , <image-or-none> ) | paint( <custom-ident> [ , <any> ]? ) | image( <color> )
 <url-modifiers> = cross-origin( anonymous | use-credentials ) || integrity( <string> ) || referrer-policy( no-referrer | no-referrer-when-downgrade | same-origin | origin | strict-origin | origin-when-cross-origin | strict-origin-when-cross-origin | unsafe-url )
 <image-or-none> = none | <image>
 <cursor-image> = <url> | <image-set> | light-dark( [ none | <cursor-image> ] , [ none | <cursor-image> ] )
 <image-set> = ^unprefix [ image-set( <image-set-option># ) | -webkit-image-set( <image-set-option># ) ]
-<image-set-option> = [ <string-url> | <url> | <gradient> ] [ <resolution [0,inf]> && <image-type> | <resolution [0,inf]> | [ +1x ]~~1x ++1dppx <image-type>? ]
+<image-set-option> = [ <string-url> | <url> | <generated-image> ] [ <resolution [0,inf]> && <image-type> | <resolution [0,inf]> | [ +1x ]~~1x ++1dppx <image-type>? ]
 <image-type> = type( <string> )
 <gradient> = ^gradient [ linear-gradient( <linear> ) | repeating-linear-gradient( <linear> ) | radial-gradient( <radial> ) | repeating-radial-gradient( <radial> ) | conic-gradient( <conic> ) | repeating-conic-gradient( <conic> ) ] | -webkit-linear-gradient( <old-linear> ) | -webkit-repeating-linear-gradient( <old-linear> ) | -webkit-radial-gradient( <old-radial> ) | -webkit-repeating-radial-gradient( <old-radial> ) | -webkit-gradient( <oldest> )
 <linear> = [ [ [ <angle0>~180deg | [ to [ [ left | right ] || [ top | bottom ] ] ]~to_bottom ] || <interpolation> ] , ]? <stops>
@@ -51,12 +52,12 @@ value. `keep=`: what is written if everything could be left out.
 <oldest> = [ linear , <old-point> , <old-point> | radial , <old-point> , <number+> , <old-point> , <number+> ] [ , [ from( <color> ) | to( <color> ) | ^old-stop color-stop( <alpha> , <color> ) ] ]*
 <old-point> = [ left>0% | center>50% | right>100% | <number> | <percentage> ] [ top>0% | center>50% | bottom>100% | <number> | <percentage> ]
 
-<basic-shape> = inset( <lp>{1,4}s <round> ) | circle( <shape-radius>?~closest-side <shape-at>? ) | ellipse( <shape-radius>{2}?~closest-side_closest-side <shape-at>? ) | polygon( [ [ <fill-rule> [ round <length+> ]?~round_0px | [ round <length+> ]~round_0px ] , ]? [ <lp> <lp> ]# ) | ^to-inset rect( [ <lp> | auto ]{4} <round> ) | ^to-inset xywh( <lp>{2} <lp+>{2} <round> ) | path( [ <fill-rule> , ]? %<path-data> ) | shape( <fill-rule>? from <position> , <shape-command># )
+<basic-shape> = inset( <lp>{1,4}s <round> ) | circle( <shape-radius>?~closest-side <shape-at>? ) | ellipse( <shape-radius>{2}?~closest-side_closest-side <shape-at>? ) | polygon( [ [ [ nonzero | evenodd ]?~nonzero [ round <length+> ]?~round_0px ]! , ]?~nonzero_round_0px, [ <lp> <lp> ]# ) | ^to-inset rect( [ <lp> | auto ]{4} <round> ) | ^to-inset xywh( <lp>{2} <lp+>{2} <round> ) | path( [ <fill-rule> , ]? %<path-data> ) | shape( <fill-rule>? from <position> , <shape-command># )
 <shape-radius> = <lp+> | closest-side | farthest-side
 <shape-at> = at <position>
 <fill-rule> = [ nonzero | evenodd ]~nonzero
 <round> = [ round ^radii [ <lp+>{1,4}s [ / <lp+>{1,4}s ]? ] ]?~round_0px
-<shape-command> = move <end-point> | line <end-point> | hline [ to [ <lp> | <x-edge> | x-start | x-end ] | by <lp> ] | vline [ to [ <lp> | <y-edge> | y-start | y-end ] | by <lp> ] | curve [ to <position> with <control> [ / <control> ]? | by <lp>{2} with <relative-control> [ / <relative-control> ]? ] | smooth [ to <position> [ with <control> ]? | by <lp>{2} [ with <relative-control> ]? ] | arc <end-point> [ [ of <lp>{1,2} ] && [ %[ cw | ccw ] ]?~ccw && [ %[ large | small ] ]?~small && [ rotate <angle> ]?~rotate_0deg ] | close
+<shape-command> = move <end-point> | line <end-point> | hline [ to [ <lp> | left>>0% | center>>50% | right>>100% | x-start>>0% | x-end>>100% ] | by <lp> ] | vline [ to [ <lp> | top>>0% | center>>50% | bottom>>100% | y-start>>0% | y-end>>100% ] | by <lp> ] | curve [ to <position> with <control> [ / <control> ]? | by <lp>{2} with <relative-control> [ / <relative-control> ]? ] | smooth [ to <position> [ with <control> ]? | by <lp>{2} [ with <relative-control> ]? ] | arc <end-point> [ [ of <lp>{1,2} ] && [ %[ cw | ccw ] ]?~ccw && [ %[ large | small ] ]?~small && [ rotate <angle> ]?~rotate_0deg ] | close
 <end-point> = to <position> | by <lp>{2}
 <control> = <lp>{2} [ from [ start | end | origin ] ]~from_origin | <position>
 <relative-control> = <lp>{2} [ from [ start | end | origin ] ]?~from_start
@@ -66,6 +67,8 @@ value. `keep=`: what is written if everything could be left out.
 <range-name> = cover | contain | entry | exit | entry-crossing | exit-crossing | scroll
 <range-start> = <range-name> <lp>?~0% | <lp>
 <range-end> = <range-name> <lp>?~100% | <lp>
+<trigger-start> = <range-name> [ <lp>?~0% ]~calc(0%) | <lp>
+<trigger-end> = <range-name> [ <lp>?~100% ]~calc(100%) | <lp>
 <view-inset> = [ auto | <lp> ]{1,2}s
 <timeline> = auto | none | <dashed-ident> | scroll( [ [ root | nearest | self ]~nearest || <axis>~block ]? ) | view( [ <axis>~block || <view-inset>~auto ]? )
 <filter> = none | [ blur( <length+>? ) | hue-rotate( <angle0>? ) | drop-shadow( <color>? && [ <length>{2} <length+>? ] ) | brightness( <np+>? ) | contrast( <np+>? ) | saturate( <np+>? ) | grayscale( <limited>? ) | invert( <limited>? ) | opacity( <limited>? ) | sepia( <limited>? ) | <url> ]+
@@ -233,7 +236,7 @@ border-left-width i=medium = <line-width>
 border-right-color = <color>
 border-right-style = <line-style>
 border-right-width i=medium = <line-width>
-border-shape i=none ~ = none | <basic-shape> [ <geometry-box> | half-border-box ]?~~border-box <basic-shape> [ <geometry-box> | half-border-box ]?~~padding-box | <basic-shape> [ <geometry-box> | half-border-box ]?~~half-border-box
+border-shape i=none ~ = none | ^same-shapes [ <basic-shape> [ <geometry-box> | half-border-box ]?~~border-box <basic-shape> [ <geometry-box> | half-border-box ]?~~padding-box ] | <basic-shape> [ <geometry-box> | half-border-box ]?~~half-border-box
 border-top-color = <color>
 border-top-left-radius = <radius>
 border-top-right-radius = <radius>
@@ -528,10 +531,10 @@ text-underline-position = auto | [ under | from-font ] || [ left | right ]
 text-wrap-mode = wrap | nowrap
 text-wrap-style = auto | balance | pretty | stable
 timeline-scope i=none x = <scope>
-timeline-trigger-activation-range-end i=normal x = [ normal | <range-end> ]#
-timeline-trigger-activation-range-start i=normal x = [ normal | <range-start> ]#
-timeline-trigger-active-range-end i=auto x = [ auto | normal | <range-end> ]#
-timeline-trigger-active-range-start i=auto x = [ auto | normal | <range-start> ]#
+timeline-trigger-activation-range-end i=normal x = [ normal | <trigger-end> ]#
+timeline-trigger-activation-range-start i=normal x = [ normal | <trigger-start> ]#
+timeline-trigger-active-range-end i=auto x = [ auto | normal | <trigger-end> ]#
+timeline-trigger-active-range-start i=auto x = [ auto | normal | <trigger-start> ]#
 timeline-trigger-name i=none x = [ none | <dashed-ident> ]#
 timeline-trigger-source i=auto x = <timeline>#
 top = <inset>
@@ -578,11 +581,11 @@ zoom = normal | <np+>
 -webkit-column-break-inside : break-inside = @break-inside [ auto | avoid ]
 -webkit-mask-box-image : -webkit-mask-box-image-source -webkit-mask-box-image-slice -webkit-mask-box-image-width -webkit-mask-box-image-outset -webkit-mask-box-image-repeat cfull = <'-webkit-mask-box-image-source'> || <'-webkit-mask-box-image-slice'> [ / [ <'-webkit-mask-box-image-width'>? [ / <'-webkit-mask-box-image-outset'> ]? ]! ]? || <'-webkit-mask-box-image-repeat'>
 -webkit-mask-composite : mask-composite = [ [ clear | source-in | destination-in ] @mask-composite=intersect | [ source-out | destination-out ] @mask-composite=subtract | xor @mask-composite=exclude | [ copy | source-over | source-atop | destination-over | destination-atop | plus-lighter ] @mask-composite=add | <'mask-composite'> ]#
--webkit-perspective : perspective = @perspective [ none | <length+> | ^px <number+> ]
+-webkit-perspective : perspective = @perspective [ none | <length+> | <number+> ]
 -webkit-text-stroke : -webkit-text-stroke-width -webkit-text-stroke-color cfull = <'-webkit-text-stroke-width'> || <'-webkit-text-stroke-color'>
 animation : animation-duration animation-timing-function animation-delay animation-iteration-count animation-direction animation-fill-mode animation-play-state animation-name animation-timeline! animation-range-start! animation-range-end! full keep=animation-name = [ <'animation-duration'> || <'animation-timing-function'> || <'animation-delay'> || <'animation-iteration-count'> || <'animation-direction'> || <'animation-fill-mode'> || <'animation-play-state'> || <'animation-name'> ]#
 animation-range : animation-range-start animation-range-end=? = [ <'animation-range-start'> <'animation-range-end'>? ]#
-background : background-image background-position-x background-position-y background-size background-repeat background-attachment background-origin background-clip=background-origin background-color! = [ <'background-image'> || <'background-position'> [ / <'background-size'> ]? || <'background-repeat'> || <'background-attachment'> || <'background-origin'> || <'background-clip'> || <'background-color'> ]#
+background : background-image background-position-x background-position-y background-size background-repeat background-attachment background-origin=? background-clip=background-origin background-color! = [ <'background-image'> || <'background-position'> [ / <'background-size'> ]? || <'background-repeat'> || <'background-attachment'> || <'background-origin'> || <'background-clip'> || <'background-color'> ]#
 background-position : background-position-x background-position-y = [ @background-position-x [ center | [ left | right ] <lp>? ] && @background-position-y [ center | [ top | bottom ] <lp>? ] | @background-position-x [ <x-edge> | <lp> ] @background-position-y [ <y-edge> | <lp> ] | @background-position-y [ top | bottom ] @background-position-x=center | @background-position-x [ <x-edge> | <lp> ] @background-position-y=center ]#
 border : border-top-width border-right-width border-bottom-width border-left-width border-top-style border-right-style border-bottom-style border-left-style border-top-color border-right-color border-bottom-color border-left-color border-image-source border-image-slice border-image-width border-image-outset border-image-repeat cfull = @border-top-width,border-right-width,border-bottom-width,border-left-width <line-width> || @border-top-style,border-right-style,border-bottom-style,border-left-style <line-style> || @border-top-color,border-right-color,border-bottom-color,border-left-color <color>
 border-block : border-block-start-width border-block-end-width border-block-start-style border-block-end-style border-block-start-color border-block-end-color cfull = @border-block-start-width,border-block-end-width <line-width> || @border-block-start-style,border-block-end-style <line-style> || @border-block-start-color,border-block-end-color <color>
@@ -701,7 +704,7 @@ white-space : white-space-collapse text-wrap-mode = normal | pre @white-space-co
 <mq-integer> = <integer>
 <mq-boolean> = <integer [0,1]>
 <mq-resolution> = <resolution [0,inf]>
-<anchored-fallback> = none | [ <dashed-ident> || <try-tactic> ] | <position-area> | any any | [ any && <position-area> ] | any
+<anchored-fallback> = none | [ <dashed-ident> || <try-tactic> ] | any any | any <position-area> | <position-area> any | <position-area> | any
 <font-format> = collection | opentype | truetype | woff | woff2
 <font-tech> = features-opentype | features-aat | color-colrv0 | color-colrv1 | color-sbix | color-cbdt | variations | palettes
 <font-source> = <url> [ format( ^format [ <font-format> | <string> ] ) ]? [ tech( <font-tech># ) ]? | local( ^quoted <face-name> )

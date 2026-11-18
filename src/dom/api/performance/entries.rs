@@ -5,6 +5,7 @@ use core::cell::Cell;
 use bun_alloc::WTFStringImplStruct as Impl;
 use bun_jsc::bindgen::ClassStructure;
 use bun_jsc::{JSObject, Weak};
+use bun_web::service::router::Route;
 use bun_web::timing::{ResourceTiming, ServerTiming};
 
 use super::*;
@@ -241,11 +242,15 @@ impl Resource {
             }
         };
         match name {
-            b"redirectStart" if record.allows_timing && record.redirects > 0 => {
-                detailed(timing.redirect_start).max(0.1)
-            }
+            b"redirectStart" if record.allows_timing => detailed(timing.redirect_start),
             b"redirectEnd" if record.allows_timing => detailed(timing.redirect_end),
-            b"fetchStart" if !self.allows_timing() => self.start,
+            b"fetchStart" if !self.allows_timing() => {
+                self.start.max(since(timing.routing.worker_start))
+            }
+            b"workerStart" if !self.allows_timing() => since(timing.routing.worker_start),
+            b"workerStart" => detailed(timing.routing.worker_start),
+            b"workerRouterEvaluationStart" => detailed(timing.routing.evaluation_start),
+            b"workerCacheLookupStart" => detailed(timing.routing.cache_lookup_start),
             b"secureConnectionStart" if record.is_secure => detailed(timing.fetch_start),
             b"fetchStart" | b"domainLookupStart" | b"domainLookupEnd" | b"connectStart"
             | b"connectEnd" => detailed(timing.fetch_start),
@@ -265,7 +270,18 @@ impl Resource {
         match name {
             b"initiatorType" if self.kind == Type::Navigation => b"navigation",
             b"initiatorType" => record.initiator_type.as_bytes(),
+            b"deliveryType"
+                if self.allows_timing() && record.timing.routing.taken == Route::Cache =>
+            {
+                b"cache-storage"
+            }
             b"deliveryType" if self.allows_timing() && record.is_from_cache => b"cache",
+            b"workerMatchedSourceType" if self.allows_timing() => {
+                record.timing.routing.matched.as_bytes()
+            }
+            b"workerFinalSourceType" if self.allows_timing() => {
+                record.timing.routing.taken.as_bytes()
+            }
             b"nextHopProtocol" if self.allows_timing() => record.protocol.as_bytes(),
             b"renderBlockingStatus" if record.blocks_rendering => b"blocking",
             b"renderBlockingStatus" => b"non-blocking",

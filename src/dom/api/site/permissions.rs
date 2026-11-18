@@ -1,13 +1,18 @@
 //! <https://w3c.github.io/permissions/>, <https://notifications.spec.whatwg.org/>
 
 use bun_jsc::JSObject;
+use bun_web::channel::Serialized;
 use bun_web::exec::oneshot;
 use bun_web::host::Permission;
+use bun_web::realm::Scope;
+use bun_web::service;
 
 use super::*;
 use crate::api::realm::promise_for;
 
 const LONGEST_VIBRATION: u32 = 10_000;
+const MAX_ACTIONS: u32 = 2;
+const LARGEST_PERSISTENT: usize = 1 << 20;
 
 const NAMES: &str = "accelerometer background-fetch background-sync camera clipboard-read clipboard-write display-capture geolocation gyroscope \
     idle-detection local-fonts local-network-access magnetometer microphone midi notifications payment-handler periodic-background-sync \
@@ -88,6 +93,7 @@ pub(crate) struct Notification {
     navigate: DomString,
     timestamp: f64,
     id: u32,
+    is_persistent: bool,
     dir: NotificationDirection,
     renotify: bool,
     silent: Option<bool>,
@@ -137,12 +143,170 @@ impl Notification {
         title: DomString,
         options: &NotificationOptions<'a>,
     ) -> Result<'a, &'a Self> {
+        if realm_of(&cx.heap).scope() == Scope::ServiceWorker {
+            return Err(cx.heap.type_error(format_args!(
+                "Illegal constructor. Use ServiceWorkerRegistration.showNotification() instead."
+            )));
+        }
+        if !options.actions.is_empty() {
+            return Err(cx.heap.type_error(format_args!(
+                "Actions are only supported for persistent notifications."
+            )));
+        }
+        let id = LAST_ID.get() + 1;
+        LAST_ID.set(id);
+        let this = Notification::new(cx, structure, title, options, id)?;
+        match WindowTarget::of_realm(&cx.heap)
+            .filter(|_| Notification::permission(&cx.heap) == Permission::Granted)
+        {
+            Some(global) => {
+                shown().add(cx, id, this.to_js());
+                global.host().show_notification(
+                    id,
+                    this.title.to_utf8().into(),
+                    this.body.to_utf8().into(),
+                    this.silent == Some(true),
+                );
+            }
+            None => queue_task(&cx.heap, [this.to_js()], |cx, [this]| {
+                emit(cx, this, atom!("error"))
+            }),
+        }
+        Ok(this)
+    }
+
+    /// For a service worker.
+    #[optimize(size)]
+    pub(crate) fn persistent<'a>(
+        cx: Cx<'_, 'a>,
+        title: DomString,
+        options: &NotificationOptions<'a>,
+    ) -> Result<'a, service::Notification> {
+        let it = Notification::new(
+            cx,
+            js_DomNotification::CLASS.structure(&cx.heap),
+            title,
+            options,
+            0,
+        )?;
+        let [title, body, tag, lang, image, icon, badge, navigate] = [
+            &it.title,
+            &it.body,
+            &it.tag,
+            &it.lang,
+            &it.image,
+            &it.icon,
+            &it.badge,
+            &it.navigate,
+        ]
+        .map(|it| it.to_utf8().into_owned());
+        let [data, actions, vibrate] = [
+            js_DomNotification::data(it),
+            js_DomNotification::actions(it),
+            js_DomNotification::vibrate(it),
+        ]
+        .map(|it| Serialized::new(cx.global(), it.unwrap_or(JSValue::NULL), &[], &[]));
+        let values = [data?, actions?, vibrate?];
+        let texts = [&title, &body, &tag, &lang, &image, &icon, &badge, &navigate].map(String::len);
+        if texts
+            .into_iter()
+            .chain(values.iter().map(Serialized::size))
+            .sum::<usize>()
+            > LARGEST_PERSISTENT
+        {
+            return Err(cx.heap.type_error(format_args!(
+                "The notification is larger than {LARGEST_PERSISTENT} bytes."
+            )));
+        }
+        let (timestamp, direction, renotifies, is_silent, requires_interaction) = (
+            it.timestamp,
+            it.dir as u8,
+            it.renotify,
+            it.silent,
+            it.require_interaction,
+        );
+        Ok(service::Notification {
+            id: 0,
+            title,
+            body,
+            tag,
+            lang,
+            urls: [image, icon, badge, navigate],
+            timestamp,
+            direction,
+            renotifies,
+            is_silent,
+            requires_interaction,
+            tells_of_closing: false,
+            values,
+        })
+    }
+
+    #[optimize(size)]
+    pub(crate) fn restore<'a>(cx: Cx<'_, 'a>, it: &service::Notification) -> Result<'a, JSValue> {
+        let ([title, body, tag, lang], [image, icon, badge, navigate]) = (
+            [&it.title, &it.body, &it.tag, &it.lang].map(|it| DomString::from_utf8(it)),
+            it.urls.each_ref().map(|it| DomString::from_utf8(it)),
+        );
+        let dir = [
+            NotificationDirection::Auto,
+            NotificationDirection::Ltr,
+            NotificationDirection::Rtl,
+        ][usize::from(it.direction)];
+        let (timestamp, id, renotify, silent, require_interaction) = (
+            it.timestamp,
+            it.id,
+            it.renotifies,
+            it.is_silent,
+            it.requires_interaction,
+        );
+        let this = Notification {
+            base: Default::default(),
+            fields: Default::default(),
+            title,
+            lang,
+            body,
+            tag,
+            image,
+            icon,
+            badge,
+            navigate,
+            timestamp,
+            id,
+            is_persistent: true,
+            dir,
+            renotify,
+            silent,
+            require_interaction,
+        };
+        let (this, [data, actions, vibrate]) =
+            (js_DomNotification::create(&cx.heap, this), &it.values);
+        let list = |cx: Cx<'_, 'a>, it: &Serialized| -> Result<'a, JSValue> {
+            let items = it.deserialize(cx.global(), &[])?;
+            let count = items.get_length(cx.global())? as u32;
+            let each = (0..count)
+                .map(|at| items.get_index(cx.global(), at))
+                .collect::<bun_jsc::JsResult<Vec<_>>>()?;
+            let list = frozen(&cx.heap, each);
+            items.ensure_still_alive();
+            list
+        };
+        js_DomNotification::set_data(this, data.deserialize(cx.global(), &[])?);
+        js_DomNotification::set_actions(this, list(cx, actions)?);
+        js_DomNotification::set_vibrate(this, list(cx, vibrate)?);
+        Ok(this.to_js())
+    }
+
+    #[optimize(size)]
+    fn new<'a>(
+        cx: Cx<'_, 'a>,
+        structure: ClassStructure<'a, Self>,
+        title: DomString,
+        options: &NotificationOptions<'a>,
+        id: u32,
+    ) -> Result<'a, &'a Self> {
         let is_silent = options.silent == Some(true);
         let refusals = [
-            (
-                !options.actions.is_empty(),
-                "Actions are only supported for persistent notifications.",
-            ),
             (
                 is_silent && options.vibrate.is_some(),
                 "Silent notifications must not specify vibration patterns.",
@@ -167,8 +331,6 @@ impl Notification {
                 .and_then(|it| parse_url(&cx.heap, it))
                 .unwrap_or_default()
         });
-        let id = LAST_ID.get() + 1;
-        LAST_ID.set(id);
         let this = structure.create(
             &cx.heap,
             Notification {
@@ -189,6 +351,7 @@ impl Notification {
                     .timestamp
                     .map_or_else(|| bun_core::time::milli_timestamp() as f64, |it| it as f64),
                 id,
+                is_persistent: false,
                 dir: options.dir,
                 renotify: options.renotify,
                 silent: options.silent,
@@ -210,23 +373,34 @@ impl Notification {
                     .map(|it| JSValue::js_number((*it).min(LONGEST_VIBRATION).into())),
             )?,
         );
-        js_DomNotification::set_actions(this, frozen(&cx.heap, [])?);
-        match WindowTarget::of_realm(&cx.heap)
-            .filter(|_| Notification::permission(&cx.heap) == Permission::Granted)
-        {
-            Some(global) => {
-                shown().add(cx, id, this.to_js());
-                global.host().show_notification(
-                    id,
-                    this.title.to_utf8().into(),
-                    this.body.to_utf8().into(),
-                    is_silent,
-                );
-            }
-            None => queue_task(&cx.heap, [this.to_js()], |cx, [this]| {
-                emit(cx, this, atom!("error"))
-            }),
-        }
+        let actions = cx.heap.create_array(
+            options.actions.iter().take(MAX_ACTIONS as usize),
+            |heap, it| {
+                let action = heap.create_empty_object();
+                NotificationAction::from_js(global_of(heap), it.to_js(), |it| {
+                    let [icon, navigate] = [&it.icon, &it.navigate]
+                        .map(|it| it.as_ref().and_then(|it| parse_url(heap, it)));
+                    for (name, value) in [
+                        ("action", Some(it.action)),
+                        ("icon", icon),
+                        ("navigate", navigate),
+                        ("title", Some(it.title.into())),
+                    ] {
+                        value.into_iter().for_each(|it| {
+                            action.to_js().put(
+                                global_of(heap),
+                                name.as_bytes(),
+                                it.to_js(heap).to_js(),
+                            )
+                        });
+                    }
+                    Ok(())
+                })?;
+                Ok(action.as_value())
+            },
+        )?;
+        let actions = cx.heap.freeze_array(actions)?.to_js();
+        js_DomNotification::set_actions(this, actions);
         Ok(this)
     }
 
@@ -243,7 +417,7 @@ impl Notification {
     }
 
     pub(crate) fn get_max_actions() -> u32 {
-        2
+        MAX_ACTIONS
     }
 
     pub(crate) fn request_permission<'a>(
@@ -272,7 +446,11 @@ impl Notification {
     }
 
     pub(crate) fn close<'a>(&'a self, cx: Cx<'_, 'a>) {
-        if let Some(global) = WindowTarget::of_realm(self.realm(&cx.heap)) {
+        if self.is_persistent {
+            client_of(self.realm(&cx.heap)).into_iter().for_each(|it| {
+                it.call_service_workers(0, service::Call::CloseNotification(self.id))
+            });
+        } else if let Some(global) = WindowTarget::of_realm(self.realm(&cx.heap)) {
             global.host().close_notification(self.id);
         }
     }

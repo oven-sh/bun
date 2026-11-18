@@ -22,6 +22,8 @@ const prelude = `
   protocol.registerSchemesAsPrivileged([{ scheme: "app", privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
   app.trustOrigins(["app://trusted"]);
   const print = value => console.log(JSON.stringify(value));
+  const isShownByBun = page => page.getOSProcessId() === process.pid ||
+    (process.platform === "linux" && page.getOSProcessId() !== 0 && require("fs").readFileSync("/proc/" + page.getOSProcessId() + "/cmdline", "latin1").includes("--bun-desktop-child"));
   const respond = (body, headers) => typeof body === "function" ? body : () => new Response(body, { headers: { "content-type": "text/html", ...headers } });
   /** The origin of a site that is not trusted. */
   const site = files => Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: request => respond(files[new URL(request.url).pathname] ?? "")(request) }).url.origin;
@@ -503,13 +505,13 @@ for (const engine of engines) {
         print(origin);
         page.executeJavaScript("location.href = '" + origin + "'");
         await once(page, "did-finish-load");
-        print([page.getURL(), page.getTitle(), page.mainFrame.origin, page.getOSProcessId() === process.pid, await page.executeJavaScript("typeof RTCPeerConnection")]);
+        print([page.getURL(), page.getTitle(), page.mainFrame.origin, isShownByBun(page), await page.executeJavaScript("typeof RTCPeerConnection")]);
         page.once("will-navigate", event => event.preventDefault());
         page.executeJavaScript("document.links[0].click()");
         print((await once(page, "will-navigate"))[1]);
         page.executeJavaScript("location.href = '/back'");
         await until(() => page.getURL() === "app://trusted/back" && !page.isLoading());
-        print([page.getOSProcessId() === process.pid, page.navigationHistory.getAllEntries().map(it => it.url)]);`);
+        print([isShownByBun(page), page.navigationHistory.getAllEntries().map(it => it.url)]);`);
       expect(rest).toEqual([
         [origin + "/", "Site", origin, false, "function"],
         origin + "/no",
@@ -743,7 +745,7 @@ for (const engine of engines) {
         await run(`${echo}
           for (const script of ["location.assign('" + other + "/echo')", "location.replace('" + other + "/echo')", "location.assign('" + other + "/nothing')"]) {
             const { page, seen, entries } = await go(own + "/a", script);
-            print([seen, entries, page.getOSProcessId() === process.pid]);
+            print([seen, entries, isShownByBun(page)]);
           }`),
       ).toEqual([
         ...[false, true].map(replaces => [
@@ -789,10 +791,10 @@ for (const engine of engines) {
           await page.loadURL(origin);
           page.executeJavaScript("history.pushState(0, '', '/login')");
           await until(() => page.getTitle() === "login");
-          print([page.getOSProcessId() === process.pid, await page.executeJavaScript("document.cookie")]);
+          print([isShownByBun(page), await page.executeJavaScript("document.cookie")]);
           page.executeJavaScript("location.href = '/login/done'");
           await until(() => page.getTitle() === "in" && !page.isLoading());
-          print([page.getOSProcessId() === process.pid, await page.executeJavaScript("document.body.textContent")]);`),
+          print([isShownByBun(page), await page.executeJavaScript("document.body.textContent")]);`),
       ).toEqual([
         [false, "a=1"],
         [true, "a=1; b=2"],
@@ -807,10 +809,10 @@ for (const engine of engines) {
           const { webContents: page } = new BrowserWindow();
           await page.loadURL(origin);
           await page.executeJavaScript("history.pushState(0, '', '/item'); new Promise(done => setTimeout(done))");
-          print([page.getOSProcessId() === process.pid, page.isLoading(), page.getTitle()]);
+          print([isShownByBun(page), page.isLoading(), page.getTitle()]);
           page.reload();
           await until(() => page.getTitle() === "item");
-          print([page.getOSProcessId() === process.pid]);`),
+          print([isShownByBun(page)]);`),
       ).toEqual([[true, false, "in"], [false]]);
     });
 
@@ -824,6 +826,37 @@ for (const engine of engines) {
           await page.loadURL(origin);
           print(await page.executeJavaScript("next().then(e => [e.data, e.source === frames[0], document.querySelector('iframe').contentDocument])"));`),
       ).toEqual([["/shell", true, null]]);
+    });
+
+    test("the app is asked again for a document that it did not have", async () => {
+      expect(
+        await run(`
+          const origin = site({ "/": "<title>theirs</title>" });
+          let serves = true;
+          app.trustOrigins([origin]);
+          protocol.serve(origin, () => serves ? respond("<title>ours</title>")() : undefined);
+          const { webContents: page } = new BrowserWindow();
+          await page.loadURL(origin + "/#a");
+          print(page.getTitle());
+          serves = false;
+          page.reload();
+          await until(() => page.getTitle() === "theirs" && !page.isLoading());
+          serves = true;
+          await page.executeJavaScript("location.hash = 'b'");
+          await until(() => page.getURL().endsWith("#b"));
+          print(await page.executeJavaScript("document.title"));
+          await page.loadURL(page.getURL());
+          print([page.getTitle(), page.getOSProcessId() === process.pid, page.navigationHistory.length()]);
+          serves = false;
+          page.reload();
+          await until(() => page.getTitle() === "theirs" && !page.isLoading());
+          serves = true;
+          await page.executeJavaScript("history.pushState(null, '', '/other')");
+          await until(() => page.getTitle() === "ours" && !page.isLoading());
+          page.navigationHistory.goBack();
+          await until(() => page.getURL().endsWith("#b") && !page.isLoading());
+          print(await page.executeJavaScript("document.title"));`),
+      ).toEqual(["ours", "theirs", ["ours", true, 2], "ours"]);
     });
 
     test("a frame in an empty window that a page has opened", async () => {
@@ -1150,6 +1183,15 @@ for (const engine of engines) {
       ).toEqual([pages]);
     });
 
+    test("a page is printed without what does not arrive", async () => {
+      expect(
+        await run(`
+          const page = await open(({ url }) => (url.endsWith("/never") ? new Promise(() => {}) : respond("<p>1")()));
+          await page.executeJavaScript("document.body.append(Object.assign(new Image(), { src: '/never' }))");
+          print((await page.printToPDF({})).toString("latin1").match(/Type .Page\\b/g).length);`),
+      ).toEqual([1]);
+    });
+
     test("what a frame refers to is fetched for the frame when a page is printed", async () => {
       expect(
         await run(`
@@ -1324,7 +1366,7 @@ for (const engine of engines) {
           const { webContents: page } = new BrowserWindow();
           await page.loadURL(origin);
           print(await page.executeJavaScript("fetch('/moved', { method: 'POST', body: new Uint8Array(1e6) }).then(it => it.json())"));
-          print([page.getOSProcessId() === process.pid, app.getAppMetrics().some(it => it.name === "Web Engine")]);`),
+          print([isShownByBun(page), app.getAppMetrics().some(it => it.name === "Web Engine")]);`),
       ).toEqual([
         ["a=1", 1e6],
         [true, true],

@@ -215,6 +215,10 @@ impl Window {
         self.document().is(DocFlags::IN_FRAME)
     }
 
+    fn is_in_any_container(&self) -> bool {
+        self.is_in_container() || self.environment().container.is_some()
+    }
+
     fn post<'a>(
         &'a self,
         heap: &JsHeap<'a>,
@@ -521,7 +525,7 @@ impl Window {
         let is_possible = self.is(Is::PAINTED)
             && !self.is(Is::RENDERING | Is::RESIZED)
             && self.surface() != 0
-            && !self.is_in_container()
+            && !self.is_in_any_container()
             && !self.is_disposed();
         if !(is_worth_it && is_possible && self.is_scheduled())
             || transition::has_view_transitions(doc)
@@ -565,7 +569,7 @@ impl Window {
     fn update_background<'a>(&'a self, cx: Cx<'_, 'a>, doc: &'a Doc) {
         let Some(root) = doc
             .document_element()
-            .filter(|_| self.is_in_container() || !self.environment().is_transparent)
+            .filter(|_| self.is_in_any_container() || !self.environment().is_transparent)
         else {
             return;
         };
@@ -576,7 +580,7 @@ impl Window {
                 .style(id)
                 .is_some_and(|it| it.dark && it.display() != crate::types::Display::None)
         });
-        let background = match self.is_in_container() {
+        let background = match self.is_in_any_container() {
             true if is_dark == container::from_container(cx, self).looks_dark => 0,
             _ if self.environment().forces_colors => crate::color::forced(b"canvas", is_dark),
             _ if is_dark => DARK_CANVAS,
@@ -779,7 +783,7 @@ impl Window {
             }
             self.paint(doc);
             take_requests(cx, doc);
-            if self.is_in_container() {
+            if self.is_in_any_container() {
                 self.host().painted_in_frame(self.surface_scale());
             } else if self.environment().reports_paints {
                 self.host().painted();

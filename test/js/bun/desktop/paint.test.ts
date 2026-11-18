@@ -2,9 +2,13 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, isMacOS, libcPathForDlopen, tempDir } from "harness";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { deflateSync } from "node:zlib";
+import { crc32, deflateSync } from "node:zlib";
 import { hasLibrary } from "./library";
-import { openOn, readScreen, screens } from "./screen";
+import { openOn, ownScreen, readScreen, screens } from "./screen";
+
+/** paint-sandbox.test.ts runs these tests with pages in other processes. */
+const hasSandbox = import.meta.url.endsWith("?sandbox");
+const place = hasSandbox ? { BUN_DESKTOP_PAGE_PROCESSES: "1" } : {};
 
 /** What `script` returns, and the colors that the page then has at `points`. */
 const render = renderTo.bind(null, "memory");
@@ -32,7 +36,7 @@ async function renderTo(
         for (const end = Date.now() + 10_000; !(await condition()); await Bun.sleep(1)) if (Date.now() > end) throw new Error("gave up on " + condition);
       };
       app.whenReady().then(async () => {
-        const window = new BrowserWindow({ width: 200, height: 100, useContentSize: true });
+        const window = new BrowserWindow({ width: 200, height: 100, useContentSize: true, ...(process.env.PLACE && { ...JSON.parse(process.env.PLACE), frame: false, roundedCorners: false }) });
         await window.loadFile("index.html");
         const page = window.webContents;
         page.setZoomFactor(${zoom});
@@ -48,14 +52,15 @@ async function renderTo(
         for (const [x, y] of ${JSON.stringify(points)}) {
           const [b, g, r] = (await page.capturePage({ x, y, width: 1, height: 1 })).toBitmap();
           if (process.env.SCREEN) await until(() => Buffer.from(shown(x, y), "hex").every((value, index) => Math.abs(value - [r, g, b][index]) <= 8));
-          colors.push(process.env.SCREEN ? shown(x, y) : Buffer.from([r, g, b]).toString("hex"));
+          // The window server of macOS converts colors.
+          colors.push(process.env.SCREEN && !process.env.PLACE ? shown(x, y) : Buffer.from([r, g, b]).toString("hex"));
         }
         console.log(JSON.stringify([result ?? null, ...colors]));
       }).then(() => app.exit(0), error => { console.error(error); app.exit(1); });`,
   });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "--preload=bun:desktop/electron", "."],
-    env: { ...bunEnv, BUN_DESKTOP_HEADLESS: "1", ...screen?.env, ...env },
+    env: { ...bunEnv, BUN_DESKTOP_HEADLESS: "1", ...place, ...screen?.env, ...env },
     cwd: String(dir),
     stderr: "pipe",
   });
@@ -67,7 +72,7 @@ async function renderTo(
 const svg = (source: string) =>
   `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" ${source}</svg>`)}`;
 
-describe.skipIf(!hasLibrary).concurrent.each(["memory", ...screens])("paint to %s", where => {
+describe.skipIf(!hasLibrary).concurrent.each(["memory", ...screens, ...ownScreen])("paint to %s", where => {
   const render = renderTo.bind(null, where);
 
   test("colors change wherever they are used", async () => {
@@ -236,6 +241,205 @@ describe.skipIf(!hasLibrary).concurrent.each(["memory", ...screens])("paint to %
       [18, 18],
     ]);
     expect(colors.map(isBlue)).toEqual([false, false, false, true, true, true, true]);
+  });
+
+  test.each([
+    ["a background", "background: #000", ""],
+    ["a gradient", "background: linear-gradient(#000, #010101)", ""],
+    ["a border", "border: 20px solid", ""],
+    ["a clip", "overflow: hidden", "<div style='width: 50px; height: 50px; background: #000'></div>"],
+    [
+      "an image",
+      "",
+      `<img style="display: block; width: 100%; height: 100%" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAAAAACwAAAAAAQABAAACAkQBADs=">`,
+    ],
+  ])("scaled, %s ends within a pixel", async (_, declarations, contents) => {
+    const html = `<div style="box-sizing: border-box; margin: 10px; width: 41px; height: 41px; transform-origin: 0 0; transform: scale(1.25); ${declarations}">${contents}</div>`;
+    const [, ...colors] = await render(html, "await Promise.all([...document.images].map(it => it.decode()))", [
+      [60, 30],
+      [61, 30],
+      [62, 30],
+      [30, 61],
+    ]);
+    expect(colors.map((it: string) => Math.round(parseInt(it.slice(0, 2), 16) / 64))).toEqual([0, 3, 4, 3]);
+  });
+
+  test.each([
+    ["all around", ""],
+    ["on three sides", "border-bottom: none; border-bottom-left-radius: 0; border-bottom-right-radius: 0"],
+  ])("a background does not show at the curve of a border %s", async (_, declarations) => {
+    const html = `<div style="width: 60px; height: 60px; background: #ff0; border: 20px solid #00f; border-radius: 15px; ${declarations}"></div>`;
+    const [, ...colors] = await render(html, "", [
+      [7, 1],
+      [11, 0],
+      [12, 0],
+    ]);
+    expect(colors.map((it: string) => it.slice(4))).toEqual(["ff", "ff", "ff"]);
+  });
+
+  test.each([
+    ["a block", "", [0, 0]],
+    ["a block from right to left", "direction: rtl", [160, 0]],
+    ["a flex container", "display: flex; place-content: center; align-items: center", [80, 20]],
+    ["a grid", "display: grid; place-items: end", [160, 40]],
+    ["vertical text", "writing-mode: vertical-rl", [160, 0]],
+    ["columns", "columns: 1; text-align: center", [0, 0]],
+  ])("a box at its static position in %s is resized", async (_, declarations, place) => {
+    const html = `<div id=s style="position: relative; width: 200px; height: 100px; overflow: hidden; ${declarations}"><div id=a style="position: absolute; width: 10px; height: 10px; background: #00f"></div></div>`;
+    const script = `
+      await new Promise(requestAnimationFrame);
+      await new Promise(requestAnimationFrame);
+      Object.assign(a.style, { width: "40px", height: "60px" });
+      return [a.offsetLeft, a.offsetTop];`;
+    expect(
+      await render(html, script, [
+        [place[0] + 1, place[1] + 1],
+        [place[0] + 38, place[1] + 58],
+      ]),
+    ).toEqual([place, "0000ff", "0000ff"]);
+  });
+
+  test("half a pixel is rounded up on both sides of the origin", async () => {
+    const html = `<div style="position: absolute; transform-origin: 0 0; transform: translate(50px, 50px) scale(4)">
+      <div style="position: absolute; left: -1.5px; top: -.5px; width: 5px; height: 5px; background: #00f"></div></div>`;
+    expect(
+      await render(html, "", [
+        [44, 55],
+        [47, 55],
+        [55, 48],
+        [55, 51],
+      ]),
+    ).toEqual([null, "ffffff", "0000ff", "ffffff", "0000ff"]);
+  });
+
+  test.each([
+    ["on its own", "", "0000ff"],
+    ["in what is translucent", "opacity: .6", "6666ff"],
+    ["in what is filtered", "filter: invert(1)", "ffff00"],
+    ["in what is masked", "mask: linear-gradient(#000, #000) no-clip 0 0 / 200px 100px", "0000ff"],
+    ["in what is turned", "transform: rotate(360deg) scale(1.0001)", "0000ff"],
+    ["between pixels", "left: .25px; top: .25px", "0000ff"],
+    ["in a frame", "", "0000ff"],
+  ])("a box keeps moving %s", async (where, around, blue) => {
+    const page = `<body style="margin: 0; overflow: hidden"><div style="position: absolute; width: 10px; height: 10px; ${around}">
+      <div id=a style="width: 60px; height: 20px; background: #00f; transform: translate(-50px)"><div id=b style="position: relative; width: 20px; height: 20px; overflow: hidden"><p style="margin: 0; width: 20px; height: 40px; background: #00f"></p></div></div></div>`;
+    const isFramed = where === "in a frame";
+    const script = `
+      const view = ${isFramed ? "(await new Promise(done => Object.assign(f, { onload: done, srcdoc: " + JSON.stringify(page) + " })), f.contentWindow)" : "window"};
+      const seen = [];
+      for (const transform of ["translate(-40px)", "translate(-500px)", "translate(-45px, 5px)", "rotate(90deg)", "scale(0)", "translate(1px) rotate(45deg)", "translate(190px)", "translate(100px, 50px) rotate(180deg)", "translate(100px, 50px)"]) {
+        view.a.style.transform = transform;
+        await new Promise(view.requestAnimationFrame);
+        await new Promise(view.requestAnimationFrame);
+        seen.push([[5, 10], [30, 30], [195, 10], [110, 60], [150, 60]].map(it => view.document.elementFromPoint(...it).closest("[id]")?.id ?? "-").join(""));
+      }
+      return seen;`;
+    const html = isFramed
+      ? "<iframe id=f style='display: block; border: 0; width: 200px; height: 100px'></iframe>"
+      : page;
+    expect(
+      await render(html, script, [
+        [5, 10],
+        [98, 60],
+        [102, 52],
+        [110, 75],
+        [158, 68],
+        [162, 60],
+      ]),
+    ).toEqual([
+      ["a----", "-----", "a----", "-a---", "-----", "-----", "--b--", "---ab", "---ba"],
+      "ffffff",
+      "ffffff",
+      blue,
+      "ffffff",
+      blue,
+      "ffffff",
+    ]);
+  });
+
+  test.each([
+    ["moves", `a.style.transform = "translate(" + step + "px)"`],
+    ["is painted again", `a.style.backgroundImage = "radial-gradient(#fff, #ff" + step + ")"`],
+  ])("a box that keeps moving stays in the margin of a clip that %s", async (_, change) => {
+    const html = `<div id=a style="width: 40px; height: 40px; overflow: clip; overflow-clip-margin: 20px; transform: translate(0)">
+      <div id=b style="width: 20px; height: 20px; background: #00f; transform: translate(0)"></div></div>`;
+    const script = `
+      for (const step of [1, 2, 3, 50]) {
+        if (step < 50) ${change};
+        b.style.transform = "translate(" + step + "px)";
+        await new Promise(requestAnimationFrame);
+        await new Promise(requestAnimationFrame);
+      }`;
+    expect(
+      (
+        await render(html, script, [
+          [57, 10],
+          [68, 10],
+        ])
+      ).slice(1),
+    ).toEqual(["0000ff", "ffffff"]);
+  });
+
+  test("an SVG image in a box that keeps growing is laid out for its size", async () => {
+    const image = `<svg xmlns='http://www.w3.org/2000/svg'><foreignObject width='50' height='50'><p xmlns='http://www.w3.org/1999/xhtml' style='margin: 0; height: 50px; border-left: 4px solid blue'/></foreignObject></svg>`;
+    const html = `<div style="transform-origin: 0 0; transform: scale(32)">
+      <div id=a style="width: 50px; height: 50px; transform-origin: 0 0; transform: scale(.002); background: url('data:image/svg+xml,${encodeURIComponent(image).replaceAll("'", "%27")}')"></div></div>`;
+    const script = `
+      for (const scale of [.0021, .0022, 1 / 32]) {
+        a.style.transform = "scale(" + scale + ")";
+        await new Promise(requestAnimationFrame);
+        await new Promise(requestAnimationFrame);
+      }`;
+    expect(
+      (
+        await render(html, script, [
+          [2, 20],
+          [10, 20],
+        ])
+      ).slice(1),
+    ).toEqual(["0000ff", "ffffff"]);
+  });
+
+  test("a box that keeps moving changes its looks and what can be scrolled to", async () => {
+    const html = `<style>::-webkit-scrollbar { width: 10px; height: 10px; background: #0f0 } ::-webkit-scrollbar-thumb { background: #f00 }</style>
+      <div id=s style="width: 200px; height: 100px; overflow: scroll hidden"><div id=a style="width: 40px; opacity: .2; font: 900 70px/70px sans-serif; transform: translate(0)">
+      <p style="margin: 0; width: 40px; height: 40px; border-top: 20px solid; background: #000"></p></div><div id=c style="width: 10px; height: 10px; transform: translate(200px)"></div></div>`;
+    const script = `
+      const widths = [];
+      for (let step = 1; step <= 4; step++) {
+        Object.assign(a.style, { transform: \`translate(\${step * 20}px)\`, color: step < 4 ? "#f00" : "#00f", opacity: step / 5 - .2 || .1 });
+        c.style.transform = \`translate(\${200 + step * 150}px)\`;
+        await new Promise(requestAnimationFrame);
+        await new Promise(requestAnimationFrame);
+        widths.push(s.scrollWidth);
+      }
+      return widths;`;
+    expect(
+      await render(html, script, [
+        [70, 10],
+        [100, 10],
+        [100, 40],
+        [20, 95],
+        [80, 95],
+      ]),
+    ).toEqual([[360, 510, 660, 810], "ffffff", "6666ff", "666666", "ff0000", "00ff00"]);
+  });
+
+  test.each([
+    ["square", "", "1111"],
+    ["round", "border-radius: 50%", "0000"],
+    ["with one corner round", "border-top-left-radius: 50%", "0111"],
+    ["mirrored", "border-top-left-radius: 50%; scale: 1 -1", "1110"],
+  ])("a turned box is %s", async (_, declarations, tips) => {
+    const html = `<div style="margin: 20px 70px; width: 60px; height: 60px; background: #00f; rotate: 45deg; ${declarations}"></div>`;
+    const [, ...colors] = await render(html, "", [
+      [100, 14],
+      [136, 50],
+      [100, 86],
+      [64, 50],
+      [110, 50],
+    ]);
+    expect(colors.map((it: string) => +(it === "0000ff")).join("")).toBe(tips + "1");
   });
 
   test("an empty box shows, hides and can be hit among many others", async () => {
@@ -414,6 +618,50 @@ describe.skipIf(!hasLibrary).concurrent.each(["memory", ...screens])("paint to %
     );
     const isGray = (it: string) => Math.abs(parseInt(it.slice(0, 2), 16) - parseInt(it.slice(2, 4), 16)) < 12;
     expect(colors.map((it, index) => (index % 2 ? it : isGray(it)))).toEqual(Array(4).fill([true, "ff0000"]).flat());
+  });
+
+  test.each(["", "overflow-wrap: anywhere", "width: min-content", "text-align: center"])(
+    "a paragraph far down is what it would be at the top with '%s'",
+    async style => {
+      const words = (seed: number) =>
+        Array.from(
+          { length: 24 },
+          (_, i) => "AVfiTowordW".slice((seed + i) % 5, 6 + ((seed * 7 + i * 3) % 6)) + seed,
+        ).join(" ") +
+        " " +
+        "W".repeat(30) +
+        " end";
+      const page = (count: number) =>
+        `<style>p { margin: 0; font: 14px/16px sans-serif; width: 150px; ${style} } p:last-of-type { margin-bottom: 100px } ::-webkit-scrollbar { width: 0; height: 0 }</style>` +
+        Array.from({ length: count }, (_, i) => `<p>${words(count - i)}`).join("");
+      const script = `
+      const last = document.querySelector("p:last-of-type"), { width, height, top } = last.getBoundingClientRect(), range = new Range();
+      scrollTo(0, top);
+      await new Promise(requestAnimationFrame);
+      range.selectNodeContents(last);
+      return [width, height, ...Array.from(range.getClientRects(), it => [it.x, it.y, it.width]).flat()];`;
+      const points = Array.from({ length: 100 }, (_, i) => [(i % 50) * 3, i < 50 ? 9 : 41]);
+      const [[lines, ...alone], [linesBelow, ...below]] = await Promise.all([
+        render(page(1), script, points),
+        render(page(80), script, points),
+      ]);
+      expect([linesBelow, below]).toEqual([lines.map(it => expect.closeTo(it, 2)), alone]);
+      expect(new Set(alone).size).toBeGreaterThan(2);
+    },
+  );
+
+  test("a background does not shine through a round border that lacks a side", async () => {
+    const html = `<div style="box-sizing: border-box; width: 40px; height: 40px; margin: 5px; border-radius: 20px 20px 0 0; background: #f00; border: 4px solid #000; border-bottom: 0"></div>`;
+    const [, edge, ...inside] = await render(html, "", [
+      [8, 13],
+      [25, 25],
+      [25, 44],
+    ]);
+    expect([Math.abs(parseInt(edge.slice(0, 2), 16) - parseInt(edge.slice(2, 4), 16)) < 12, ...inside]).toEqual([
+      true,
+      "ff0000",
+      "ff0000",
+    ]);
   });
 
   test.each(["", "position: relative", "isolation: isolate"])(
@@ -2025,6 +2273,160 @@ describe.skipIf(!hasLibrary).concurrent("canvas", () => {
     expect(await render("", script)).toEqual([[null, null, 0, 255, 0, 255]]);
   });
 
+  test("an arc is a turn at most, however large its angles are", async () => {
+    const script = `
+      const it = new OffscreenCanvas(100, 100).getContext("2d");
+      return [[(2 ** 53 - 4) * 2 ** 40, 0], [0, 1.2345e30, true], [1e308, -1e308], [1e12 + 1, 1e12]].map(angles => {
+        it.reset(), it.arc(50, 50, 10, ...angles), it.fill(), it.stroke();
+        return +it.isPointInPath(50, 70) + +it.isPointInStroke(50, 70) + it.getImageData(50, 70, 1, 1).data[3];
+      });`;
+    expect(await render("", script)).toEqual([[0, 0, 0, 0]]);
+  });
+
+  test("a path goes on where an arc or a rounded rectangle has left it", async () => {
+    const script = `
+      const it = new OffscreenCanvas(100, 100).getContext("2d");
+      const inside = (build, ...points) => { it.beginPath(), build(it); const path = new Path2D(); build(path); return points.map(([x, y]) => +it.isPointInPath(x, y) + +it.isPointInPath(path, x, y)).join(""); };
+      const turned = new Path2D(), arc = new Path2D();
+      arc.arc(0, 0, 10, 0, 7), turned.rect(0, 0, 5, 5), turned.addPath(arc, { a: 3, d: 1, e: 50, f: 50 }), turned.addPath(arc, { a: 1, d: 1, e: 80, f: 20 });
+      return [
+        inside(p => (p.arc(50, 50, 20, 0, Math.PI / 2), p.arcTo(10, 70, 10, 10, 20), p.lineTo(10, 10)), [13, 67], [20, 60], [60, 60]),
+        inside(p => (p.arc(50, 50, 20, Math.PI, 0), p.closePath(), p.lineTo(30, 90), p.lineTo(10, 90)), [27, 80], [50, 40], [50, 60]),
+        inside(p => (p.roundRect(40, 40, 50, 50, 20), p.lineTo(0, 40), p.lineTo(0, 0)), [10, 30], [42, 42], [60, 60]),
+        inside(p => (p.roundRect(10, 10, 80, 80, 5), p.roundRect(70, 30, -40, 40, 5)), [20, 20], [50, 50]),
+        inside(p => p.arc(50, 50, 20, 1e6 * Math.PI, (1e6 + 1) * Math.PI), [50, 60], [50, 40]),
+        [[75, 50], [50, 65], [80, 25], [40, 25], [70, 35]].map(([x, y]) => +it.isPointInPath(turned, x, y)).join(""),
+      ];`;
+    expect(await render("", script)).toEqual([["022", "220", "202", "20", "20", "10100"]]);
+  });
+
+  test("arcs that touch lines have no joins that show", async () => {
+    const script = `
+      const it = new OffscreenCanvas(900, 200).getContext("2d");
+      it.lineWidth = 8;
+      let spikes = 0;
+      for (let i = 0; i < 200; i++) {
+        const [x, y, r] = [700.37 + i * 0.173, 40.11 + i * 0.071, 7.3 + i * 0.047];
+        it.clearRect(0, 0, 900, 200), it.beginPath(), it.moveTo(x + r, y);
+        it.arcTo(x + 90, y, x + 90, y + 70, r), it.arcTo(x + 90, y + 70, x, y + 70, r), it.lineTo(x + r, y + 70), it.arc(x + r, y + 70 - r, r, Math.PI / 2, Math.PI), it.arcTo(x, y, x + 90, y, r);
+        it.closePath(), it.stroke(), it.clearRect(Math.floor(x - 5), Math.floor(y - 5), 102, 82);
+        spikes += new Uint32Array(it.getImageData(650, 0, 250, 200).data.buffer).sort().at(-1) > 0;
+      }
+      return spikes;`;
+    expect(await render("", script)).toEqual([0]);
+  });
+
+  test("colors are converted between sRGB and Display P3", async () => {
+    const script = `
+      const context = colorSpace => new OffscreenCanvas(2, 2).getContext("2d", { colorSpace });
+      const filled = (colorSpace, style) => { const it = context(colorSpace); return (it.fillStyle = style(it)), it.fillRect(0, 0, 2, 2), it; };
+      const drawn = (colorSpace, image) => { const it = context(colorSpace); return it.drawImage(image, 0, 0), it; };
+      const read = (it, colorSpace) => Array.from(it.getImageData(0, 0, 1, 1, { colorSpace }).data.slice(0, 3), it => Math.round(it / 4) * 4).join();
+      const red = filled("srgb", () => "#b00"), wide = filled("display-p3", () => "color(display-p3 0.7333 0 0)"), put = context("srgb");
+      put.putImageData(wide.getImageData(0, 0, 2, 2), 0, 0);
+      const file = await wide.canvas.convertToBlob(), part = await createImageBitmap(await createImageBitmap(file), 1, 1, 1, 1);
+      const gradient = it => { const it2 = it.createLinearGradient(0, 0, 2, 0); return it2.addColorStop(0, "color(display-p3 0.7333 0 0)"), it2; };
+      return {
+        narrow: [read(red), read(put), read(wide, "srgb"), read(drawn("srgb", wide.canvas)), read(drawn("srgb", part)), read(filled("srgb", () => wide.createPattern(wide.canvas, "")))],
+        widened: [read(red, "display-p3"), read(filled("display-p3", () => "#b00")), read(drawn("display-p3", red.canvas)), read(filled("display-p3", it => it.createPattern(red.canvas, "")))],
+        kept: [wide.canvas, part, structuredClone(part), await createImageBitmap(wide.getImageData(0, 0, 2, 2))].map(it => read(drawn("display-p3", it))).concat(read(filled("display-p3", gradient))),
+      };`;
+    expect(await render("", script)).toEqual([
+      {
+        narrow: ["188,0,0", ...Array(5).fill("204,0,0")],
+        widened: Array(4).fill("172,36,24"),
+        kept: Array(5).fill("188,0,0"),
+      },
+    ]);
+  });
+
+  test("a bitmap of a bitmap keeps its colors however often that is repeated", async () => {
+    const script = `
+      const context = () => new OffscreenCanvas(1, 1).getContext("2d", { colorSpace: "display-p3" }), [from, to] = [context(), context()];
+      (from.fillStyle = "color(display-p3 0.7333 0 0)"), from.fillRect(0, 0, 1, 1);
+      let bitmap = await createImageBitmap(await from.canvas.convertToBlob());
+      for (let n = 0; n < 150000; n++) { const next = await createImageBitmap(bitmap); bitmap.close(), (bitmap = next); }
+      to.drawImage(bitmap, 0, 0), bitmap.close();
+      return Array.from(to.getImageData(0, 0, 1, 1).data, it => Math.round(it / 4) * 4);`;
+    expect(await render("", script)).toEqual([[188, 0, 0, 256]]);
+  });
+
+  test("a custom element hears of the size at once", async () => {
+    const script = `
+      const heard = [];
+      customElements.define("a-canvas", class extends HTMLCanvasElement { static observedAttributes = ["width", "height"]; attributeChangedCallback(name, _, value) { heard.push(name + value); } }, { extends: "canvas" });
+      const it = document.createElement("canvas", { is: "a-canvas" });
+      return [((it.width = 1), heard.join()), ((it.height = 2), heard.join())];`;
+    expect(await render("", script)).toEqual([["width1", "width1,height2"]]);
+  });
+
+  test("only bitmaps of a reasonable width are sharpened", async () => {
+    const script = `
+      const darkest = async resizeWidth => {
+        const it = new OffscreenCanvas(1, 1).getContext("2d"), from = new ImageData(new Uint8ClampedArray([64, 64, 64, 255, 64, 64, 64, 255, 192, 192, 192, 255, 192, 192, 192, 255]), 4);
+        it.drawImage(await createImageBitmap(from, { resizeWidth, resizeHeight: 2, resizeQuality: "high" }), resizeWidth * 0.3125 - 0.5, 0, 1, 1, 0, 0, 1, 1);
+        return it.getImageData(0, 0, 1, 1).data[0];
+      };
+      return [await darkest(8), await darkest(2 ** 17)];`;
+    expect(await render("", script)).toEqual([[55, 64]]);
+  });
+
+  test("a canvas in Display P3 is shown in the colors of the page", async () => {
+    const script = `const it = document.querySelector("canvas").getContext("2d", { colorSpace: "display-p3" }); (it.fillStyle = "color(display-p3 0.7333 0 0)"), it.fillRect(0, 0, 20, 20);`;
+    expect(await render("<canvas width=20 height=20></canvas>", script, [[10, 10]])).toEqual([null, "cd0000"]);
+  });
+
+  test("a bitmap of high quality is sharper, and only a canvas without a successor can be resized", async () => {
+    const script = `
+      const row = async resizeQuality => {
+        const it = new OffscreenCanvas(8, 2).getContext("2d");
+        it.drawImage(await createImageBitmap(new ImageData(new Uint8ClampedArray([64, 64, 64, 255, 64, 64, 64, 255, 192, 192, 192, 255, 192, 192, 192, 255]), 4), { resizeWidth: 8, resizeHeight: 2, resizeQuality }), 0, 0);
+        return Array.from(it.getImageData(0, 0, 8, 1).data.filter((_, at) => at % 4 === 0));
+      };
+      const canvas = document.createElement("canvas");
+      canvas.width = -1;
+      const width = canvas.width;
+      canvas.transferControlToOffscreen();
+      try { canvas.height = 150; } catch (error) { return [await row("low"), await row("high"), width, error.name]; }`;
+    expect(await render("", script)).toEqual([
+      [[64, 64, 64, 96, 160, 192, 192, 192], [64, 61, 55, 90, 166, 201, 195, 192], 300, "InvalidStateError"],
+    ]);
+  });
+
+  test("what reaches very far is drawn, clips and is hit nearby", async () => {
+    const script = `
+      const it = new OffscreenCanvas(20, 20).getContext("2d"), far = new Path2D("M0 -1e30H10V20H0z");
+      (it.globalCompositeOperation = "xor"), it.fill(far), (it.globalCompositeOperation = "source-over");
+      const filled = it.getImageData(5, 5, 1, 1).data[3];
+      it.clip(far), it.clearRect(0, 0, 20, 20), it.scale(Number.MAX_VALUE, Number.MAX_VALUE), it.rect(-10, -10, 20, 20);
+      return [filled, it.getImageData(5, 5, 1, 1).data[3], it.isPointInPath(0, 0)];`;
+    expect(await render("", script)).toEqual([[255, 0, true]]);
+  });
+
+  test.skipIf(!isMacOS)("text is as heavy as that of the page", async () => {
+    const script = `
+      const ink = canvas => { const it = canvas.getContext("2d"); return (it.font = "14px Helvetica"), it.fillText("Hamburgefonstiv", 5, 20), it.getImageData(0, 0, 200, 30).data.reduce((all, it) => all + it); };
+      const [plain, thin] = Array.from(document.querySelectorAll("canvas"), ink);
+      return [plain > thin * 1.05, ink(new OffscreenCanvas(200, 30)) === plain];`;
+    expect(
+      await render('<canvas></canvas><div style="-webkit-font-smoothing: antialiased"><canvas></canvas></div>', script),
+    ).toEqual([[true, true]]);
+  });
+
+  test("the weight of text and of its outline depends on how light it is", async () => {
+    const script = `
+      const ink = (method, color) => { const it = new OffscreenCanvas(200, 30).getContext("2d"); return (it.font = "20px sans-serif"), (it.fillStyle = it.strokeStyle = color), it[method]("Hage", 5, 20), it.getImageData(0, 0, 200, 30).data.reduce((all, it, at) => all + (at % 4 === 3) * it); };
+      return [ink("fillText", "#800") === ink("fillText", "#000"), ink("fillText", "#00f") === ink("fillText", "#000"), ink("strokeText", "#fff") > ink("strokeText", "#000") * 1.05];`;
+    expect(await render("", script)).toEqual([[true, true, true]]);
+  });
+
+  test("six digits are a color, and six other characters are not", async () => {
+    const script = `
+      const it = new OffscreenCanvas(1, 1).getContext("2d");
+      return ["#aB09fF", "#g00000", "#00000G", "#00:000", "#000/00", "#0000@0", "#\x6000000", "#00000\xe1"].map(color => ((it.fillStyle = "#123456"), (it.fillStyle = color), it.fillStyle));`;
+    expect(await render("", script)).toEqual([["#ab09ff", ...Array(7).fill("#123456")]]);
+  });
+
   test("a saved state holds its gradients, and their prototypes are those of the IDL", async () => {
     const script = `
       const context = new OffscreenCanvas(1, 1).getContext("2d");
@@ -2068,13 +2470,15 @@ describe.skipIf(!hasLibrary || !hasGPU).concurrent("a canvas that the GPU draws"
       for (let i = 0; i < 16; i++) (it.fillStyle = ["#f00", "#0f0", "#00f8", "#ff0"][(i + (i >> 2)) % 4]), it.fillRect(((i % 4) * width) / 4, ((i >> 2) * height) / 4, width / 4, height / 4);
       return it.canvas;
     };
+    const coverOften = it => { for (let i = 0; i < 5000; i++) it.fillRect(0, 0, 119, 80); it.getImageData(0, 0, 1, 1), it.clearRect(0, 0, 120, 80); };
+    const clipOften = it => { for (let i = 0; i < 9; i++) it.save(), it.clip(new Path2D("M0 0H120L0 80z")), it.clearRect(0, 0, 1, 1), it.restore(); };
     const star = new Path2D("M40 5L62 72L5 30L75 30L18 72z");`;
 
-  test("takes samples of edges, unless it is read often", async () => {
+  test("takes samples of edges, unless it is read often or the GPU is out of reach", async () => {
     const script = `${prelude}
       return both(it => (it.arc(60, 40, 33, 0, 4), it.fill())).map(data => new Set(data.filter((_, at) => at % 4 === 3)).size);`;
     const [[sampled, exact]] = await onGPU("memory", "", script);
-    expect([sampled, exact > 20]).toEqual([5, true]);
+    expect([sampled, exact > 20]).toEqual([hasSandbox ? exact : 5, true]);
   });
 
   test.skipIf(!isLinux)("is left to the CPU in a process that cannot make memory executable", async () => {
@@ -2108,6 +2512,47 @@ describe.skipIf(!hasLibrary || !hasGPU).concurrent("a canvas that the GPU draws"
     ],
     ["a pen that is wider than the curve", `it.lineWidth = 60; it.arc(60, 40, 5, 0, -Math.PI / 2, true); it.stroke()`],
     [
+      "lines that bend a little",
+      `it.strokeStyle = "#0008"; for (const [row, join] of ["miter", "round", "bevel"].entries()) { (it.lineJoin = join), (it.lineWidth = 2 + row * 3), it.beginPath(); for (let x = 0; x < 120; x += 1.5) it.lineTo(x, 14 + row * 25 + 9 * Math.sin((x * x) / 900)); it.stroke(); }`,
+    ],
+    [
+      "many long paths",
+      `it.rect(5, 5, 110, 70), it.clip(); for (let i = 0; i < 600; i++) {
+      (it.fillStyle = i == 300 ? gradient(it.createLinearGradient(0, 0, 120, 0)) : ["#f00", "#0f0", "#00f"][i % 3]), (it.strokeStyle = ["#000", "#ff0"][i % 2]), (it.globalAlpha = i % 5 ? 1 : 0.5), (it.lineWidth = 2 + i % 3 * 2);
+      it.setTransform(i == 450 ? 2 : 1, 0, 0, 1, i * 7 % 100, i * 11 % 60), it.setLineDash(i == 500 ? [4, 4] : []), it.beginPath();
+      for (let at = 0; at < 40; at += 2) it.lineTo(at, at % 8 ? 0 : 20), it.lineTo(at + 2, at % 8 ? 0 : 20);
+      i % 4 ? it.stroke() : it.fill(i % 8 ? "evenodd" : "nonzero"); }`,
+    ],
+    [
+      "contours of lines",
+      `it.lineWidth = 5; it.strokeStyle = "#00f8"; for (it.lineCap of ["butt", "round", "square"]) it.stroke(new Path2D("M5 9H30M5 20L5 20L30 20L30 20L9 30M9 40h20v20h-20zM15 50zM2 70h9zh9v-9M30 75h0")), it.translate(40, 0)`,
+    ],
+    [
+      "long outlines",
+      `it.fillStyle = "#00f8"; for (let i = 0; i < 3000; i++) it.lineTo(60 + Math.cos(i / 30) * (i / 60 + 5), 40 + Math.sin(i / 31) * 35); it.fill("evenodd")`,
+    ],
+    [
+      "areas of charts",
+      `it.fillStyle = "#00f8"; for (const turn of [0, 1]) { it.setTransform(1 - turn, turn, turn, 1 - turn, turn * 50, 0); it.beginPath(); for (let x = 0; x <= 60; x += 3) it.lineTo(x, 30 + (x * 37 % 41)); for (let x = 60; x >= 0; x -= 7.5) it.lineTo(x, 40 + (x * 3 % 20)); it.fill(turn ? "evenodd" : "nonzero"); }`,
+    ],
+    [
+      "stars that do not cross themselves",
+      `for (const rule of ["nonzero", "evenodd"]) { it.beginPath(); for (let i = 0; i < 10; i++) it.lineTo(30 + Math.sin(i * 0.6283) * (i % 2 ? 12 : 29), 40 - Math.cos(i * 0.6283) * (i % 2 ? 12 : 29)); it.fill(rule); it.translate(60, 0); }`,
+    ],
+    [
+      "clips in clips",
+      `clipOften(it); it.fillStyle = "#0f0"; it.fillRect(0, 30, 120, 9); it.save(); it.roundRect(10, 5, 70, 70, 20); it.clip(); it.drawImage(picture(120, 80, true), 0, 0); it.save(); it.clip(star, "evenodd"); it.fillStyle = "#000"; it.fillRect(0, 0, 120, 50); it.restore();
+      it.fillStyle = "#fff"; it.fillRect(50, 45, 60, 9); it.globalCompositeOperation = "copy"; it.beginPath(); it.rect(0, 60, 120, 20); it.clip(); it.fillRect(30, 62, 9, 9); it.restore(); it.fillStyle = "#f0f"; it.fillRect(70, 0, 5, 80)`,
+    ],
+    [
+      "a clip that outlasts a pass",
+      `clipOften(it); it.clip(star); it.fillRect(0, 0, 40, 80); it.getImageData(0, 0, 1, 1); it.fillStyle = "#f00"; it.fillRect(40, 0, 40, 40); it.globalCompositeOperation = "clear"; it.fillRect(0, 50, 40, 9)`,
+    ],
+    [
+      "what a path clips",
+      `clipOften(it); it.clip(star); it.drawImage(picture(60, 60, true), 3, 4); it.font = "20px sans-serif"; it.fillText("Hello", 15, 45); it.clearRect(30, 20, 10, 40)`,
+    ],
+    [
       "a pen that is distorted",
       `it.setTransform(2, 0.3, -0.4, 0.7, 20, 0); it.lineWidth = 8; it.arc(25, 40, 15, 0, 5); it.stroke()`,
     ],
@@ -2130,7 +2575,7 @@ describe.skipIf(!hasLibrary || !hasGPU).concurrent("a canvas that the GPU draws"
     ],
     [
       "more than fits in a pass",
-      `it.lineWidth = 2; const steps = new Path2D("M0 0H9V9H19V19H29V29H39"); for (let i = 0; i < 20000; i++) it.strokeStyle = i % 2 ? "#f00" : "#00f1", it.setTransform(1, 0, 0, 1, i * 7 % 80, i * 3 % 50), it.stroke(steps)`,
+      `it.lineWidth = 2; const steps = new Path2D("M0 0H9V9H19V19H29V29H39"); for (let i = 0; i < 40000; i++) it.strokeStyle = i % 2 ? "#f00" : "#00f1", it.setTransform(1, 0, 0, 1, i * 7 % 80, i * 3 % 50), it.stroke(steps)`,
     ],
     [
       "operators",
@@ -2176,6 +2621,45 @@ describe.skipIf(!hasLibrary || !hasGPU).concurrent("a canvas that the GPU draws"
     expect(await onGPU("memory", "", script)).toEqual([[true, true, 0]]);
   });
 
+  test.each([
+    [
+      "arcs",
+      `it.lineWidth = 5; for (let i = 0; i < 12; i++) { const [x, y] = [i % 6 * 20 + 10, i < 6 ? 20 : 60]; it.fillStyle = it.strokeStyle = i % 2 ? "#00f8" : "#080"; it.beginPath(); i % 3 || it.moveTo(x, y); it.arc(x, y, 14, i * 9, i * 9 + 1 + i / 2, i % 4 > 1); i % 5 || it.closePath(); i < 6 ? it.fill() : it.stroke(); }`,
+    ],
+    [
+      "discs and rings",
+      `for (let i = 0; i < 24; i++) it.beginPath(), it.arc(i % 8 * 15 + 7.3, (i >> 3) * 26 + 13.6, 0.3 + i / 2, 0, 7), (it.lineWidth = 0.2 + i % 5), (it.globalAlpha = i % 3 ? 1 : 0.5), i % 2 ? it.fill() : it.stroke()`,
+    ],
+    [
+      "discs and rings where much is hidden",
+      `coverOften(it); it.lineWidth = 5; for (let i = 0; i < 12; i++) (it.fillStyle = it.strokeStyle = ["#f00", "#0f0", "#00f8"][i % 3]), it.beginPath(), it.arc(i * 37 % 120, i * 53 % 80, 9 + i * 2, 0, 7), i % 2 ? it.fill() : it.stroke()`,
+    ],
+    [
+      "many discs in one path",
+      `it.fillStyle = "#f008"; for (let i = 0; i < 40; i++) it.moveTo(i * 37 % 120 + 9, i * 53 % 80), it.arc(i * 37 % 120, i * 53 % 80, 9, 0, 7); it.fill()`,
+    ],
+    [
+      "rounded rectangles",
+      `it.lineWidth = 3; it.fillStyle = "#0a08"; for (const [x, radius] of [[4, 0], [33.5, 2], [63, 9], [92, 99]]) it.beginPath(), it.roundRect(x, 5, 24, 30.5, radius), it.fill(), it.beginPath(), it.roundRect(x + 24, 75, -24, -30, radius), it.stroke()`,
+    ],
+    [
+      "round ends",
+      `it.lineCap = "round"; it.strokeStyle = "#0008"; for (let i = 0; i < 9; i++) (it.lineWidth = 1 + i * 2), it.beginPath(), it.moveTo(10 + i * 12, 12), it.lineTo(5 + i * 13, 68), it.stroke()`,
+    ],
+    [
+      "gradients that cover each other",
+      `for (let i = 0; i < 40; i++) { it.fillStyle = it.createLinearGradient(0, 0, 120, 80); it.fillStyle.addColorStop(0, ["#f00", "#0f0", "#00f8"][i % 3]); it.fillStyle.addColorStop(1, "#ff0"); i % 4 || (it.fillStyle = "#0ff"); it.beginPath(), it.arc(i * 37 % 120, i * 53 % 80, 15 + i % 9, 0, 7), it.fill(); }`,
+    ],
+  ])("has the pixels of what is drawn larger and reduced: %s", async (_, draw) => {
+    const script = `${prelude}
+      const draw = it => { ${draw} }, [gpu] = both(draw), large = new OffscreenCanvas(480, 320).getContext("2d", { willReadFrequently: true });
+      large.scale(4, 4), draw(large);
+      const [{ data }, expected] = [large.getImageData(0, 0, 480, 320), new Float32Array(gpu.length)];
+      data.forEach((it, at) => (expected[((at / 7680 | 0) * 120 + (at % 1920 >> 4)) * 4 + at % 4] += (at % 4 < 3 ? (it * data[at | 3]) / 255 : it) / 16));
+      return [expected.filter(it => it).length > 500, expected.filter((it, at) => Math.abs(it - (at % 4 < 3 ? (gpu[at] * gpu[at | 3]) / 255 : gpu[at])) > 100).length];`;
+    expect(await onGPU("memory", "", script)).toEqual([[true, 0]]);
+  });
+
   const operators =
     "source-over source-in source-out source-atop destination-over destination-in destination-out destination-atop lighter copy xor multiply screen overlay darken lighten color-dodge color-burn hard-light soft-light difference exclusion hue saturation color luminosity clear";
   test.each([
@@ -2185,6 +2669,13 @@ describe.skipIf(!hasLibrary || !hasGPU).concurrent("a canvas that the GPU draws"
       it.setTransform(1, 0, 0, 1, i % 9 * 13, (i / 9 | 0) * 26); it.drawImage(picture(12, 16, true), 0, 0);
       for (const [clip, draw] of [["M0 0H4V25H0z", () => it.fillRect(1, 5, 2, 15)], ["M4 0H8V25H4z", () => it.drawImage(picture(4, 8, true), 5, 12)], ["M8 0L12 2V25L8 20z", () => it.fill(new Path2D("M8 4H12V22H8zM9 9H11V14H9z"), "evenodd")]])
         it.save(), it.clip(new Path2D(clip)), (it.globalCompositeOperation = operator), (it.fillStyle = "#3c98"), draw(), it.restore();
+    }`,
+    ],
+    [
+      "operators within one of many paths that clip",
+      `clipOften(it); for (const [i, operator] of "${operators}".split(" ").entries()) {
+      it.setTransform(1, 0, 0, 1, i % 9 * 13, (i / 9 | 0) * 26); it.drawImage(picture(12, 16, true), 0, 0);
+      it.save(), it.clip(new Path2D("M2 0H12V25H7V20H2z")), (it.globalCompositeOperation = operator), (it.fillStyle = "#3c98"), it.fill(new Path2D("M4 4H12V22H4zM6 9H11V14H6z"), "evenodd"), it.restore();
     }`,
     ],
     [
@@ -2232,6 +2723,14 @@ describe.skipIf(!hasLibrary || !hasGPU).concurrent("a canvas that the GPU draws"
       `it.clip(star); it.drawImage(picture(60, 60, true), 3, 4); it.font = "20px sans-serif"; it.fillText("Hello", 15, 45); it.clearRect(30, 20, 10, 40)`,
     ],
     [
+      "frames",
+      `for (const [i, width] of [0.5, 1, 2.5, 9, 40].entries()) (it.lineWidth = width), (it.strokeStyle = ["#f00", "#0f08", "#00f"][i % 3]), it.strokeRect(5 + i * 20.5, 20.5, 14, 40 - i * 5); it.scale(2, 2); it.lineWidth = 1; it.strokeRect(30, 5, -25, -3)`,
+    ],
+    [
+      "rectangles between pixels where much is hidden",
+      `coverOften(it); for (let i = 0; i < 12; i++) (it.fillStyle = i % 4 ? ["#f00", "#0f0", "#00f8"][i % 3] : gradient(it.createLinearGradient(0, 0, 120, 0))), it.fillRect(i * 7.25, i * 3.5, 30.5, 40.25)`,
+    ],
+    [
       "many clips",
       `for (let i = 0; i < 200; i++) it.save(), it.beginPath(), it.rect(i % 20 * 6, (i / 20 | 0) * 8, 5, 7), it.clip(), (it.fillStyle = i % 3 ? "#f008" : "#00f"), it.fill(new Path2D("M9 9H99V70H9z")), it.restore(), i % 7 || it.fillRect(i % 100, 40, 9, 9)`,
     ],
@@ -2254,7 +2753,24 @@ describe.skipIf(!hasLibrary || !hasGPU).concurrent("a canvas that the GPU draws"
     ]);
   });
 
-  test.each(["memory", ...screens])("is shown in %s, in a frame and under other things", async where => {
+  test("has the pixels of an SVG file", async () => {
+    const script = `${prelude}
+      const image = new Image();
+      image.src = "data:image/svg+xml," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><circle cx="10" cy="10" r="9" fill="#08f"/><path d="M2 2H12V7z" fill="red"/></svg>');
+      await image.decode();
+      return [it => it.drawImage(image, 5, 5, 60, 40), it => (it.rotate(0.4), it.drawImage(image, 40.3, 0, 45, 45), it.drawImage(image, 5, 5, 10, 10, 20, 20, 30, 30))].map(draw => {
+        const [gpu, cpu] = both(draw);
+        return [cpu.some(it => it), cpu.filter((it, at) => at % 4 === 3 && Math.abs(it - gpu[at]) > 100).length];
+      });`;
+    expect(await onGPU("memory", "", script)).toEqual([
+      [
+        [true, 0],
+        [true, 0],
+      ],
+    ]);
+  });
+
+  test.each(["memory", ...screens, ...ownScreen])("is shown in %s, in a frame and under other things", async where => {
     const html = `<canvas id=a width=40 height=40 style="position: absolute"></canvas><canvas id=b width=40 height=40 style="position: absolute; left: 50px; background: #ff0"></canvas>
       <div style="position: absolute; left: 50px; width: 9px; height: 9px; background: #0ff"></div><iframe id=f style="position: absolute; left: 100px; border: 0" width=40 height=40></iframe>`;
     const script = `
@@ -2299,6 +2815,149 @@ describe.skipIf(!hasLibrary).concurrent("web fonts", () => {
       const [ttf, woff, woff2] = [await draw("a", fonts[0]), await draw("b", fonts[1]), await draw("c", fonts[2])];
       return [ttf.includes("255"), woff === ttf, woff2 === ttf];`;
     expect(await render("", script)).toEqual([[true, true, true]]);
+  });
+
+  test("pictures in fonts are PNG files of any kind, and nothing else", async () => {
+    const u32 = (...all: number[]) => Buffer.concat(all.map(it => Buffer.from([it >>> 24, it >>> 16, it >>> 8, it])));
+    const chunk = (name: string, data: Buffer) =>
+      Buffer.concat([u32(data.length), Buffer.from(name), data, u32(crc32(data, crc32(name)))]);
+    const side = 11;
+    const png = (kind: number, depth: number, isInterlaced: boolean, samples: number[][], ...more: Buffer[]) => {
+      const passes = isInterlaced
+        ? [
+            [0, 0, 8, 8],
+            [4, 0, 8, 8],
+            [0, 4, 4, 8],
+            [2, 0, 4, 4],
+            [0, 2, 2, 4],
+            [1, 0, 2, 2],
+            [0, 1, 1, 2],
+          ]
+        : [[0, 0, 1, 1]];
+      const step = Math.ceil((samples[0].length * depth) / 8),
+        rows: number[] = [];
+      for (const [left, top, across, down] of passes) {
+        let above: number[] = [];
+        for (let y = top; y < side; y += down) {
+          let bits = "";
+          for (let x = left; x < side; x += across)
+            bits += samples[y * side + x].map(it => it.toString(2).padStart(depth, "0")).join("");
+          const row = bits.match(/.{1,8}/g)!.map(it => parseInt(it.padEnd(8, "0"), 2)),
+            filter = y % 5;
+          const predict = (a = 0, b = 0, c = 0) =>
+            [0, a, b, (a + b) >> 1, [a, b, c].sort((p, q) => Math.abs(a + b - c - p) - Math.abs(a + b - c - q))[0]][
+              filter
+            ];
+          rows.push(filter, ...row.map((it, at) => it - predict(row[at - step], above[at], above[at - step])));
+          above = row;
+        }
+      }
+      const data = deflateSync(Buffer.from(rows));
+      return Buffer.concat([
+        Buffer.from("89504e470d0a1a0a", "hex"),
+        chunk("IHDR", Buffer.concat([u32(side, side), Buffer.from([depth, kind, 0, 0, +isInterlaced])])),
+        ...more,
+        chunk("IDAT", data.subarray(0, 9)),
+        chunk("IDAT", data.subarray(9)),
+        chunk("IEND", Buffer.alloc(0)),
+      ]);
+    };
+    const original = Buffer.from(font("ttf"), "base64"),
+      tables = original.readUInt16BE(4);
+    const withPicture = (picture: Buffer) => {
+      const glyphs = original.readUInt16BE(original.readUInt32BE(original.indexOf("maxp") + 8) + 4),
+        first = 4 + (glyphs + 1) * 4;
+      const ends = Array.from({ length: glyphs }, (_, at) => first + 8 + picture.length + at * 10);
+      const others = Buffer.alloc((glyphs - 1) * 10, "\0\0\0\0dupe\0\0");
+      const sbix = Buffer.concat([
+        u32(0x10001, 1, 12, (side << 16) + 72, first, ...ends, 0),
+        Buffer.from("png "),
+        picture,
+        others,
+      ]);
+      const directory = Buffer.from(original.subarray(0, 12 + tables * 16));
+      directory.writeUInt16BE(tables + 1, 4);
+      for (let at = 20; at < directory.length; at += 16) directory.writeUInt32BE(directory.readUInt32BE(at) + 16, at);
+      return Buffer.concat([
+        directory,
+        Buffer.from("sbix"),
+        u32(0, original.length + 16, sbix.length),
+        original.subarray(directory.length),
+        sbix,
+      ]).toString("base64");
+    };
+    const pairs = [
+      [0, 1],
+      [0, 2],
+      [0, 4],
+      [0, 8],
+      [0, 16],
+      [2, 8],
+      [2, 16],
+      [3, 1],
+      [3, 2],
+      [3, 4],
+      [3, 8],
+      [4, 8],
+      [4, 16],
+      [6, 8],
+      [6, 16],
+    ].flatMap(([kind, depth]) => {
+      const samples = Array.from({ length: side * side }, (_, at) =>
+        Array.from(
+          { length: [1, 0, 3, 1, 2, 0, 4][kind] },
+          (_, it) => ((at * at * 40503 + it * 9973 + at) >> 1) % 2 ** depth,
+        ),
+      );
+      const palette = Array.from({ length: 2 ** depth % 65536 }, (_, it) => [
+          (it * 7 + 90) % 256,
+          (it * 50) % 256,
+          255 - it,
+        ]),
+        opacities = [200, 100];
+      const key = Buffer.from(samples[5].flatMap(it => [it >> 8, it]));
+      const more =
+        kind === 3
+          ? [chunk("PLTE", Buffer.from(palette.flat())), chunk("tRNS", Buffer.from(opacities))]
+          : kind < 3
+            ? [chunk("tRNS", key)]
+            : [];
+      const plain = samples.map(it => {
+        const [a, b, c, d] = it.map(it => (depth === 16 ? it >> 8 : (it * 255) / (2 ** depth - 1))),
+          opacity = it.join() === samples[5].join() ? 0 : 255;
+        return [
+          [a, a, a, opacity],
+          [],
+          [a, b, c, opacity],
+          [...(palette[it[0]] ?? []), opacities[it[0]] ?? 255],
+          [a, a, a, b],
+          [],
+          [a, b, c, d],
+        ][kind];
+      });
+      return [false, true].map(it =>
+        [png(kind, depth, it, samples, ...more), png(6, 8, false, plain)].map(withPicture),
+      );
+    });
+    const blue = png(2, 8, false, Array(side * side).fill([0, 0, 255]));
+    const gif = Buffer.from(
+      "47494638396101000100810000ff0000" + "0000000b0000000b00" + "2c00000000010001000002024401003b",
+      "hex",
+    );
+    const script = `
+      let last = 0;
+      const draw = async font => {
+        document.fonts.add(await new FontFace("f" + ++last, Uint8Array.fromBase64(font)).load());
+        const context = new OffscreenCanvas(20, 20).getContext("2d");
+        context.font = "${side}px f" + last;
+        context.fillText("A", 2, 15);
+        return context.getImageData(0, 0, 20, 20).data.join();
+      };
+      const different = [];
+      for (const [at, [one, other]] of ${JSON.stringify(pairs)}.entries()) if (await draw(one) !== await draw(other)) different.push(at);
+      const [blue, cut, gif] = ${JSON.stringify([blue, blue.subarray(0, 50), gif].map(withPicture))};
+      return [different, (await draw(blue)).includes("0,0,255,255"), await draw(gif) === await draw(cut), (await draw(gif)).includes("255,0,0,255")];`;
+    expect(await render("", script)).toEqual([[[], true, true, false]]);
   });
 
   test("a face does not get what was shaped with another one", async () => {
@@ -2473,6 +3132,22 @@ test.skipIf(!hasLibrary).concurrent.each([
     return [[...p.querySelectorAll("q")].map(it => cells(it.getBoundingClientRect())), [Math.round(p.scrollWidth / ch), p.offsetHeight / 20]];`;
   expect(await render(`${style}<p>${html}</p>`, script)).toEqual([[rects, size]]);
 });
+
+test.skipIf(!hasLibrary).concurrent.each(["", "p::first-line { color: red }", "p { text-align: justify }"])(
+  "a carriage return does not hide the line feed: %s",
+  async style => {
+    const script = `
+    const all = ["e\\r\\nbc", "漢\\r\\nbc", "e\\u0301\\r\\nbc", "😀\\r\\n\\r\\nbc"].map(textContent => document.body.appendChild(Object.assign(document.createElement("p"), { textContent })));
+    return all.map(it => it.offsetHeight > 30);`;
+    expect(
+      await render(
+        `<style>p { margin: 0; float: left; font: 10px/20px monospace; white-space: pre-wrap } ${style}</style>`,
+        script,
+        [[199, 99]],
+      ),
+    ).toEqual([[true, true, true, true], "ffffff"]);
+  },
+);
 
 test.skipIf(!hasLibrary).concurrent("control characters are visible, whatever is around them", async () => {
   const script = `

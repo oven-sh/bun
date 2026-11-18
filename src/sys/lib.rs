@@ -7875,7 +7875,8 @@ pub mod net {
             let mut peer: libc::pid_t = 0;
             let mut len = size_of::<libc::pid_t>() as socklen_t;
             let (level, name) = (libc::SOL_LOCAL, libc::LOCAL_PEERPID);
-            // SAFETY: LOCAL_PEERPID writes at most `len` bytes into `peer`.
+            let (mut user, mut group) = (0, 0);
+            // SAFETY: LOCAL_PEERPID writes at most `len` bytes into `peer`, and getpeereid(3) one id into each.
             unsafe {
                 libc::getsockopt(
                     fd.native(),
@@ -7885,6 +7886,8 @@ pub mod net {
                     &raw mut len,
                 ) == 0
                     && peer == libc::getppid()
+                    && libc::getpeereid(fd.native(), &raw mut user, &raw mut group) == 0
+                    && user == libc::geteuid()
             }
         }
 

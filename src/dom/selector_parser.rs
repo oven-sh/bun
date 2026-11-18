@@ -865,13 +865,15 @@ impl Reader<'_> {
                 Pseudo::Highlight(Name::new(name))
             }
             b"picker" | b"scroll-button" => {
-                let argument = ident(p).or_else(|| delim(p, b'*').then_some(b"*"))?;
+                let argument = &ident(p)
+                    .or_else(|| delim(p, b'*').then_some(b"*"))?
+                    .to_ascii_lowercase()[..];
                 let known = if name == b"picker" {
                     "select"
                 } else {
                     "* up down left right block-start block-end inline-start inline-end"
                 };
-                is_in(known, &argument.to_ascii_lowercase()).then_some(())?;
+                is_in(known, argument).then_some(())?;
                 self.text(&[argument]);
                 Pseudo::from_name(&[name, b"(", argument, b")"].concat())
             }

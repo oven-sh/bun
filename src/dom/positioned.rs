@@ -234,7 +234,7 @@ impl Document {
             it.layout.location = location;
             let (parent, container, position) = (it.parent, it.container, it.style.layout.position);
             if last.replace((parent, position)) != Some((parent, position)) {
-                self.boxes.mark_moved(id);
+                self.boxes.mark_moved(id, true);
                 self.boxes.note_change(container);
                 self.moved_boxes_in_scrollers.push(id);
             }
@@ -496,12 +496,17 @@ impl Document {
             } else {
                 edge
             };
+            let mut range = if room[1] < room[0] {
+                [weak.of(room); 2]
+            } else {
+                room
+            };
+            if it.kind == Kind::Table && range[1] - range[0] > size[axis] {
+                range[0] = edge.of([range[0], range[1] - size[axis]]);
+                range[1] = range[0] + size[axis];
+            }
             Axis {
-                range: if room[1] < room[0] {
-                    [weak.of(room); 2]
-                } else {
-                    room
-                },
+                range,
                 has_both_insets,
                 edge,
                 align,

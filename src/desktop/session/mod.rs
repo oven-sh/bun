@@ -11,6 +11,7 @@ mod net_log;
 pub(crate) mod online;
 pub(crate) mod parts;
 pub(crate) mod protocol;
+mod service_workers;
 pub(crate) mod socket;
 #[cfg(unix)]
 pub(crate) mod updates;
@@ -49,6 +50,7 @@ pub(crate) struct Session {
     storage_path: Option<String>,
     network: Arc<Network>,
     mirror: Box<Mirror>,
+    own_workers: Box<service_workers::Own>,
     schemes: protocol::Schemes,
     zoom_levels: parts::ZoomLevels,
     user_agent: RefCell<Option<String>>,
@@ -119,6 +121,7 @@ fn create(key: String, storage_path: Option<String>) -> JsResult<&'static Sessio
             network: Network::new(directory, |id| Rc::new(embedder::ForNetwork(id))),
             storage_path,
             mirror: Default::default(),
+            own_workers: Default::default(),
             schemes: Default::default(),
             zoom_levels: Default::default(),
             user_agent: Default::default(),
@@ -386,6 +389,9 @@ impl Session {
             listed: listed.iter().map(|it| it.as_bytes().into()).collect(),
             are_meant: only.is_some(),
         };
+        if includes(&["serviceworkers"]) {
+            self.network.clear_service_workers(origins.clone());
+        }
         let kinds = stored
             .into_iter()
             .filter(|it| includes(it.1))

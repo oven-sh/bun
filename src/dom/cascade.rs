@@ -868,6 +868,9 @@ struct Resolver<'a> {
     relative_units: &'a [Unit],
     /// Those that are in a cycle with it.
     relative: Vec<Name>,
+    matched: &'a [Matched],
+    /// The address of the block whose declaration is being resolved.
+    block: usize,
     cx: &'a Ctx<'a>,
     stack: Stack,
 }
@@ -953,8 +956,13 @@ impl Resolver<'_> {
                 compute(Rc::clone(value), self.cx).or_else(|| unset(self.customs))
             }
             Declared::Template(template) => {
+                let outer = (
+                    core::mem::replace(&mut self.block, core::ptr::from_ref(block).addr()),
+                    self.stack.enter_variable(),
+                );
                 let substituted = guarded(self, name, |this| template.value(this))
                     .filter(|it| !self.is_relative(name, it));
+                (self.block, self.stack.variable) = outer;
                 open_cycle = self.stack.open_cycle.take();
                 if let Some(wide @ (Wide::Revert | Wide::RevertLayer | Wide::RevertRule)) =
                     substituted.as_ref().and_then(|it| Wide::of(it))
@@ -1091,7 +1099,12 @@ impl Lookup for Resolver<'_> {
     }
 
     fn function(&self, name: &str, scope: Option<NodeId>) -> Option<(Rc<Function>, NodeId)> {
-        let own = self.document.tree[self.id].scope;
+        let level = self
+            .matched
+            .iter()
+            .find(|it| Rc::as_ptr(&it.block).addr() == self.block)
+            .map(|it| it.level);
+        let own = self.document.tree_of_level(self.id, level);
         if own != DOCUMENT {
             self.cx.uses(Deps::ATTRIBUTES);
         }
@@ -1117,6 +1130,7 @@ enum Outcome {
 impl Resolver<'_> {
     fn resolve(&mut self, declaration: &Declaration, block: &Block) -> Outcome {
         let (cx, prop) = (self.cx, declaration.prop);
+        self.block = core::ptr::from_ref(block).addr();
         if matches!(&declaration.value, Declared::Text(it) if **it == *Transforms::ATTRIBUTE.as_bytes())
             && prop == Prop::Long(Id::Transform)
         {
@@ -2963,12 +2977,18 @@ impl Document {
                 .find(|it| it.0 == property)
                 .map(|it| rules.matched[usize::from(it.1.0)].level)
         });
-        let of = if element.is_generated() {
-            element.originator
-        } else {
-            id
-        };
-        let in_tree = match winner {
+        self.tree_of_level(
+            if element.is_generated() {
+                element.originator
+            } else {
+                id
+            },
+            winner,
+        )
+    }
+
+    fn tree_of_level(&self, of: NodeId, level: Option<Level>) -> NodeId {
+        let in_tree = match level {
             Some(Level::Outer(level)) => self.tree.exporting_hosts(of).nth(level.into()),
             Some(Level::Inner(0)) => return self.tree.element(of).map_or(0, |it| it.shadow_root),
             Some(Level::Inner(level)) => self.tree.slots(of).nth((u8::MAX - level).into()),
@@ -3168,6 +3188,8 @@ impl Document {
             reverting: Vec::new(),
             relative_units: &[],
             relative: Vec::new(),
+            matched: &[],
+            block: 0,
             cx,
             stack: Stack::default(),
         }
@@ -3241,6 +3263,7 @@ impl Document {
                 }
                 let mut resolver = Resolver {
                     declared,
+                    matched: &rules.matched,
                     ..self.resolver(id, &inherited, cx)
                 };
                 let (mut own, mut local) = (Entries::new(), Entries::new());
@@ -3313,6 +3336,7 @@ impl Document {
                 let mut resolver = Resolver {
                     declared,
                     relative_units,
+                    matched: &rules.matched,
                     ..self.resolver(id, &inherited, cx)
                 };
                 drop(guarded(&mut resolver, Name::NONE, |it| template.value(it)));
@@ -3374,7 +3398,10 @@ impl Document {
                     deps: Cell::default(),
                     ..*cx
                 };
-                let mut resolver = self.resolver(id, &style.customs, cx);
+                let mut resolver = Resolver {
+                    matched: &rules.matched,
+                    ..self.resolver(id, &style.customs, cx)
+                };
                 for won in winners.chunk_by(|a, b| a.1 == b.1) {
                     let (declaration, block) = rules.declaration(won[0].1);
                     let outcome = if invalid.contains(&won[0].1) {

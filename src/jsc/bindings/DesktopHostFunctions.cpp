@@ -98,13 +98,11 @@ extern "C" size_t Bun__DesktopHost__findBreaks(uint8_t kind, const uint8_t* text
         { UBRK_WORD, "en" },
     } };
     using Iterator = std::unique_ptr<UBreakIterator, decltype([](UBreakIterator* iterator) { ubrk_close(iterator); })>;
-    [[clang::always_destroy]] static thread_local std::unique_ptr<std::array<Iterator, kinds.size()>> iterators;
+    [[clang::always_destroy]] static thread_local std::array<Iterator, kinds.size()> iterators;
     if (kind >= kinds.size() || length > INT32_MAX)
         return 0;
     UErrorCode status = U_ZERO_ERROR;
-    if (!iterators)
-        iterators = std::make_unique<std::array<Iterator, kinds.size()>>();
-    auto& iterator = (*iterators)[kind];
+    auto& iterator = iterators[kind];
     if (!iterator)
         iterator.reset(ubrk_open(kinds[kind].first, kinds[kind].second, nullptr, 0, &status));
     UText source = UTEXT_INITIALIZER;

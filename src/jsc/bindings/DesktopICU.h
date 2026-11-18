@@ -54,6 +54,7 @@ typedef enum { UDATPG_MATCH_HOUR_FIELD_LENGTH = 1 << 11 } UDateTimePatternMatchO
 constexpr int32_t UCAL_SUNDAY = 1;
 UCalendar* ucal_open(const UChar* zone, int32_t length, const char* locale, UCalendarType, UErrorCode*);
 void ucal_close(UCalendar*);
+int32_t ucal_getHostTimeZone(UChar* result, int32_t capacity, UErrorCode*);
 int32_t ucal_getAttribute(const UCalendar*, UCalendarAttribute);
 UDateFormat* udat_open(UDateFormatStyle time, UDateFormatStyle date, const char* locale, const UChar* zone, int32_t zoneLength, const UChar* pattern, int32_t patternLength, UErrorCode*);
 void udat_close(UDateFormat*);

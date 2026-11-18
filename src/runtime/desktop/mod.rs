@@ -140,7 +140,11 @@ unsafe extern "C" {
     );
     fn us_loop_foreign_wait_reenter(loop_: &bun_uws::Loop);
     safe fn Bun__DesktopIdleWork__create(vm: &bun_jsc::VM) -> *mut c_void;
-    fn Bun__DesktopIdleWork__beforeWait(work: *mut c_void, timeout_ns: c_longlong) -> c_longlong;
+    fn Bun__DesktopIdleWork__beforeWait(
+        work: *mut c_void,
+        timeout_ns: c_longlong,
+        slack_ms: f64,
+    ) -> c_longlong;
     fn Bun__DesktopIdleWork__didGetEvents(work: *mut c_void, has_input: bool);
     safe fn Bun__Ui__handleEvents(global: &JSGlobalObject);
     fn Bun__Ui__fireTimer(timer: *mut c_void);
@@ -162,7 +166,9 @@ extern "C" fn wait_for_ui(source: isize, mut timeout_ns: c_longlong) {
     quick_fs::begin_turn();
     if timeout_ns != 0 && !IDLE_WORK.get().is_null() {
         // SAFETY: it is never freed, and this is the thread of its VM.
-        timeout_ns = unsafe { Bun__DesktopIdleWork__beforeWait(IDLE_WORK.get(), timeout_ns) };
+        timeout_ns = unsafe {
+            Bun__DesktopIdleWork__beforeWait(IDLE_WORK.get(), timeout_ns, bun_web::tasks::slack())
+        };
     }
     if !(library().ui.pump)(source, timeout_ns, IS_TICKING.replace(false)) {
         return;
@@ -247,6 +253,8 @@ fn load(global: &JSGlobalObject) -> JsResult<()> {
         .and_then(|path| Library::open(&path))
         .map_err(|message| global.throw(format_args!("{}", BStr::new(&message))))?;
     if is_page_process() {
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+        child::seal(opened.ui);
         (opened.ui.become_page_process)();
     }
     (opened.init)(tick, main_thread::is_lent());
@@ -282,6 +290,25 @@ fn __bun_desktop_path_of_library() -> &'static [u8] {
     &library().path
 }
 
+#[unsafe(no_mangle)]
+fn __bun_desktop_can_sandbox_pages() -> bool {
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+    return child::is_supported();
+    #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
+    false
+}
+
+#[unsafe(no_mangle)]
+fn __bun_desktop_can_run_uncompiled_code() -> bool {
+    bun_removable_features::can_run_uncompiled_code()
+}
+
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+#[inline(never)]
+pub(crate) fn has_pages_without_program() -> bool {
+    child::has_pages() && !child::runs_program()
+}
+
 #[inline(never)]
 pub(crate) fn is_page_process() -> bool {
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
@@ -307,15 +334,15 @@ fn __bun_desktop_find_chrome() -> Option<Vec<u8>> {
 }
 
 thread_local! {
-    static MAPPED: Box<RefCell<Vec<(Box<[u8]>, &'static [u8])>>> = Box::default();
+    static MAPPED: RefCell<Vec<(Box<[u8]>, &'static [u8])>> = const { RefCell::new(Vec::new()) };
 }
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__Desktop__mappedResource(bytes: *const u8, len: usize) -> *const u8 {
     // SAFETY: the caller passes a live slice.
     let bytes = unsafe { core::slice::from_raw_parts(bytes, len) };
-    MAPPED.with(|all| {
-        (all.borrow().iter())
+    MAPPED.with_borrow(|all| {
+        all.iter()
             .find(|it| it.1 == bytes)
             .map_or(core::ptr::null(), |it| it.1.as_ptr())
     })
@@ -330,7 +357,7 @@ fn map_resource(path: &[u8]) -> Option<&'static [u8]> {
         })
     });
     ships.then_some(())?;
-    let known = MAPPED.with(|all| Some(all.borrow().iter().find(|it| *it.0 == *path)?.1));
+    let known = MAPPED.with_borrow(|all| Some(all.iter().find(|it| *it.0 == *path)?.1));
     if known.is_some() {
         return known;
     }
@@ -342,7 +369,7 @@ fn map_resource(path: &[u8]) -> Option<&'static [u8]> {
     let start = start.ok()?;
     // SAFETY: never unmapped, and an installed program's files are replaced, not written to.
     let bytes = unsafe { core::slice::from_raw_parts(start.cast_const(), len) };
-    MAPPED.with(|all| all.borrow_mut().push((path.into(), bytes)));
+    MAPPED.with_borrow_mut(|all| all.push((path.into(), bytes)));
     Some(bytes)
 }
 

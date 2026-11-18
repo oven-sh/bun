@@ -16,7 +16,7 @@ use bun_resolve_builtins::Alias;
 use bun_sema::atom::Interner;
 use bun_sema::bind::Bound;
 use bun_sema::fold::Decisions;
-use bun_sema::hir::{self, CallId, ExprId, File, NodeData};
+use bun_sema::hir::{self, CallId, ExprId, File, NodeData, ScriptOfPage};
 use bun_sema::hir_from_data::{DataValue, FOLDER_OF_DATABASE, HostValue};
 use bun_sema::module_format::ModuleFormat;
 use bun_sema::program::{HostLoader, HostModuleId};
@@ -43,6 +43,7 @@ use crate::diagnostics::{
 };
 use crate::load::builtin_uses::{self, BuiltinUseInput};
 use crate::load::bundled_commonjs::{blank_commonjs_wrapper, is_bundled_commonjs};
+use crate::load::classic_scripts;
 use crate::load::compiler_declarations;
 use crate::load::contents::worker_entries::{
     count_highest_level_on_way, find_file_named_as_in_executable, find_file_on_way,
@@ -177,6 +178,9 @@ pub(crate) struct LoadHost<'a> {
     modules_with_queries: ModulesWithQueries,
     react_compiler: ReactCompiler<'a>,
     entry_point_paths: Vec<Vec<u8>>,
+    classic_script_paths: Vec<Vec<u8>>,
+    module_of_page_paths: Vec<Vec<u8>>,
+    imports_of_pages: FxHashMap<(Vec<u8>, &'a [u8]), Option<&'a [u8]>>,
     outfile: Option<Vec<u8>>,
     other_products: Vec<Vec<u8>>,
     files_left_out_by_patterns: Guarded<FxHashSet<FileLeftOutByPattern>>,
@@ -387,6 +391,8 @@ impl<'a> LoadHost<'a> {
         let options = input.options;
         let load = &options.load;
         let entry_point_paths = collect_entry_point_paths(disk, options, &options.entry_points);
+        let classic_scripts = load.classic_scripts.iter().map(|it| it.1.clone());
+        let classic_scripts: Vec<Vec<u8>> = classic_scripts.collect();
         let is_binary = |path: &&Vec<u8>| {
             loader_named_by_path(&load.loaders, path).is_none()
                 && (disk.read(path)).is_some_and(|contents| appears_to_be_binary(&contents, true))
@@ -418,6 +424,16 @@ impl<'a> LoadHost<'a> {
             entry_points_that_run_despite_their_names,
             entry_points_by_file: collect_entry_points_by_file(options),
             entry_point_paths,
+            imports_of_pages: (load.imports_of_pages.iter())
+                .map(|it| {
+                    (
+                        (from_native(&it.importer), &it.specifier[..]),
+                        it.file.as_deref(),
+                    )
+                })
+                .collect(),
+            classic_script_paths: collect_entry_point_paths(disk, options, &classic_scripts),
+            module_of_page_paths: collect_entry_point_paths(disk, options, &load.modules_of_pages),
             outfile: provider.outfile().map(from_native),
             other_products: (options.aot.other_products.iter())
                 .map(|path| from_native(path))
@@ -540,6 +556,10 @@ impl<'a> LoadHost<'a> {
             }
             ServedBy::Declarations(_) | ServedBy::RuntimeTypes => false,
         }
+    }
+
+    fn is_classic_script(&self, path: &[u8]) -> bool {
+        self.is_among(&self.classic_script_paths, path)
     }
 
     fn is_entry_point(&self, path: &[u8]) -> bool {
@@ -1165,7 +1185,8 @@ impl CodeHost for LoadHost<'_> {
 
     // The program may only read such a file. Like text that may be evaluated, nothing in it stops the build.
     fn is_evaluated_text(&self, path: &[u8]) -> bool {
-        self.is_among(&self.files_of_packages_that_worker_may_start.lock(), path)
+        self.is_classic_script(path)
+            || self.is_among(&self.files_of_packages_that_worker_may_start.lock(), path)
     }
 
     fn resolve_code(&self, request: &CodeRequest<'_>) -> HostResolution {
@@ -1175,6 +1196,18 @@ impl CodeHost for LoadHost<'_> {
         };
         if is_import && request.specifier == BUNDLE_MODULE {
             return HostResolution::Erased;
+        }
+        if !self.imports_of_pages.is_empty()
+            && let key = (request.importer.to_vec(), request.specifier)
+            && let Some(file) = self.imports_of_pages.get(&key)
+        {
+            return match file {
+                Some(file) => HostResolution::Path(from_native(file)),
+                None => HostResolution::External {
+                    specifier: request.specifier.to_vec(),
+                    kind: ExternalKind::UncompiledCode,
+                },
+            };
         }
         let modules = &self.modules_with_queries;
         if request.form == CodeImportForm::WrittenByHost
@@ -1803,6 +1836,7 @@ impl CodeHost for LoadHost<'_> {
                 })),
             };
         };
+        let is_module_of_page = self.is_among(&self.module_of_page_paths, path);
         let compile_options = CompileParseOptions {
             path,
             script_kind: Some(script_kind)
@@ -1812,15 +1846,41 @@ impl CodeHost for LoadHost<'_> {
             every_file_is_a_module: request.options.module_detection == ModuleDetection::Force,
             reads_jsdoc: request.reads_jsdoc,
             ignores_pure_comments: self.input.options.removable.ignores_pure_annotations
+                || is_module_of_page
                 || hir::find_transpiled_mark(text).is_some(),
         };
-        let is_bundled_commonjs = is_bundled_commonjs(text);
+        if self.is_classic_script(path) {
+            let options = CompileParseOptions {
+                ignores_pure_comments: true,
+                ..compile_options
+            };
+            let mut hir = parse_for_compile(arena, &options, text, atoms);
+            hir.script_of_page = ScriptOfPage::Classic;
+            if syntax_errors_of(&hir).next().is_some() || classic_scripts::is_left_to_engine(&hir) {
+                hir = parse_for_compile(arena, &options, classic_scripts::LEFT_TO_ENGINE, atoms);
+                let (start, end) = (hir::CLASSIC_SCRIPT_START, hir::CLASSIC_SCRIPT_END);
+                let written = &text[start.len()..text.len() - end.len()];
+                classic_scripts::set_names(&mut hir, atoms.intern(written));
+            }
+            return ParsedCode {
+                hir,
+                host_values: &[],
+                payload: Some(Box::new(ParsedSource {
+                    byte_count: text.len(),
+                    ..ParsedSource::new(SourceKind::Program, loader)
+                })),
+            };
+        }
+        let is_bundled_commonjs = !is_module_of_page && is_bundled_commonjs(text);
         let body_of_bundle = match is_bundled_commonjs {
             true => blank_commonjs_wrapper(text),
             false => None,
         };
         let parsed_text = body_of_bundle.as_deref().unwrap_or(text);
         let mut hir = parse_for_compile(arena, &compile_options, parsed_text, atoms);
+        if is_module_of_page {
+            hir.script_of_page = ScriptOfPage::Module;
+        }
         let is_entry_text = self.plugins.loader_of_entry_text(path).is_some();
         let is_language_assumed = is_entry_text
             || (matches!(served_by, ServedBy::Disk)
@@ -1914,6 +1974,10 @@ impl CodeHost for LoadHost<'_> {
         request: &mut TransformRequest<'_, 's>,
         payload: &mut Option<HostPayload>,
     ) -> TreeChange {
+        if classic_scripts::declare_in_global_scope(arena, atoms, request) != TreeChange::Unchanged
+        {
+            return TreeChange::ChangedAndUnfinished;
+        }
         let source = parsed_source_mut(payload);
         if source.kind == SourceKind::Program
             && made_own_require::keep_own_require(request) == TreeChange::Changed

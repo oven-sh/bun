@@ -1,6 +1,8 @@
 //! The scripts of workers and of worklets.
 
 use bun_web::client::{Script, ScriptType};
+use bun_web::compiled::{self, Form};
+use bun_web::realm::Scope;
 use bun_web::request::Credentials;
 use bun_web::streams::promise_for;
 
@@ -18,6 +20,7 @@ pub(crate) struct WorkerScript(Kind);
 
 enum Kind {
     Classic(SharedBytes),
+    CompiledClassic(Vec<u8>),
     Module(Module),
 }
 
@@ -59,42 +62,61 @@ pub(crate) fn prepare_worker_script(
                     .filter(|it| !matches!(it, Module::Broken(_)))?,
             ),
             (None, Some(source)) => Kind::Classic(source),
-            (None, None) => {
-                Kind::Module(Module::Compiled(bun_web::compiled::path_of(url?.href())?))
-            }
+            (None, None) => match compiled::path_of(
+                url?.href(),
+                if is_module {
+                    Form::Module
+                } else {
+                    Form::Classic
+                },
+            )? {
+                path if compiled::is_classic_script(&path) => Kind::CompiledClassic(path),
+                path => Kind::Module(Module::Compiled(path)),
+            },
         }))
     }
 }
 
+fn run_compiled<'a>(cx: Cx<'_, 'a>, path: &[u8], url: &[u8]) -> Result<'a> {
+    modules::will_run_compiled(&cx.heap, path, url, &Default::default());
+    match modules::run_compiled_classic(cx, path)? {
+        Some(text) => modules::evaluate_classic(cx, &text, url, url, (0, 0)).map(drop),
+        None => Ok(()),
+    }
+}
+
 /// False if it has to run for the worker to start, and does not.
-pub(crate) fn run_worker_script(cx: Cx<'_, '_>, script: WorkerScript, has_to_parse: bool) -> bool {
+pub(crate) fn run_worker_script(cx: Cx<'_, '_>, script: WorkerScript, scope: Scope) -> bool {
     let Some(client) = client_of(&cx.heap) else {
         return false;
     };
     client.worker_has_started();
-    match script.0 {
-        Kind::Module(module) => module.run(cx),
-        Kind::Classic(source) => {
-            let (url, mut has_run) = (client.url(), true);
-            run_script(cx, |cx| {
-                if let Err(error) = modules::evaluate_classic(
-                    cx,
-                    &utf8_text(&source),
-                    url.href(),
-                    url.href(),
-                    (0, 0),
-                ) && let Ok(error) = cx.catch(error)
-                {
-                    has_run = !has_to_parse || !is_parse_error_of(cx.global(), error, url.href());
-                    if has_run {
-                        report_to_realm(cx, error, None, url.href());
-                    }
+    let run = |cx: Cx<'_, '_>, evaluate: &dyn for<'a> Fn(Cx<'_, 'a>, &[u8]) -> Result<'a>| {
+        let (url, mut has_run) = (client.url(), true);
+        run_script(cx, |cx| {
+            if let Err(error) = evaluate(cx, url.href())
+                && let Ok(error) = cx.catch(error)
+            {
+                has_run = scope == Scope::DedicatedWorker
+                    || !is_parse_error_of(cx.global(), error, url.href());
+                if has_run {
+                    report_to_realm(cx, error, None, url.href());
                 }
-            });
-            return has_run;
+                has_run &= scope != Scope::ServiceWorker;
+            }
+        });
+        has_run
+    };
+    match script.0 {
+        Kind::Module(module) => {
+            module.run(cx) == bun_jsc::js_promise::Status::Fulfilled
+                || scope != Scope::ServiceWorker
         }
+        Kind::Classic(source) => run(cx, &|cx, url| {
+            modules::evaluate_classic(cx, &utf8_text(&source), url, url, (0, 0)).map(drop)
+        }),
+        Kind::CompiledClassic(path) => run(cx, &|cx, url| run_compiled(cx, &path, url)),
     }
-    true
 }
 
 #[optimize(size)]
@@ -108,6 +130,11 @@ fn import_script<'a>(cx: Cx<'_, 'a>, url: &Url) -> Result<'a> {
             ),
         )
     };
+    if let Some(path) = client_of(&cx.heap).and_then(|it| {
+        it.compiled_path(url, Form::Classic, Destination::Script, &Default::default())
+    }) {
+        return run_compiled(cx, &path, url.href());
+    }
     let fetching = realm_of(&cx.heap).client().map(|client| {
         let request = new_request(
             &client,
@@ -126,7 +153,17 @@ fn import_script<'a>(cx: Cx<'_, 'a>, url: &Url) -> Result<'a> {
     if !loaded.head.is_cors_cross_origin() {
         modules::script_was_fetched(&cx.heap, own);
     }
-    match modules::evaluate_classic(cx, &source, own, own, (0, 0)) {
+    match modules::evaluate_classic(
+        cx,
+        &source,
+        own,
+        if loaded.head.is_cors_cross_origin() {
+            b"about:blank"
+        } else {
+            own
+        },
+        (0, 0),
+    ) {
         Err(error) if loaded.head.is_cors_cross_origin() => {
             Err(cx.catch(error).map_or_else(|it| it, |_| failed(cx, "run")))
         }

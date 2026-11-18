@@ -251,7 +251,8 @@ impl Input {
                 matches!(mouse.action, Action::Down | Action::Up)
             }
             Input::Key(key) => key.is_down,
-            Input::Touch { .. } | Input::Perform { .. } => true,
+            Input::Touch { phase, .. } => matches!(phase, Phase::Start | Phase::End),
+            Input::Perform { .. } => true,
             _ => false,
         }
     }

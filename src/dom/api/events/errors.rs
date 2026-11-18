@@ -29,11 +29,15 @@ unsafe extern "C" {
         maker: &mut bun_core::String,
     );
     safe fn Bun__IsolatedWorld__pageOrItself(realm: &JSGlobalObject) -> &JSGlobalObject;
-    safe fn Bun__IsolatedWorld__hasThrown(page: &JSGlobalObject, value: JSValue) -> bool;
+    safe fn Bun__IsolatedWorld__takeThrown<'a>(
+        page: &'a JSGlobalObject,
+        value: JSValue,
+        original: &mut JSValue,
+    ) -> Option<&'a JSGlobalObject>;
 }
 
 /// Also for an isolated world, whose values it must not get.
-fn window_around<'a>(realm: &JsHeap<'a>) -> Option<&'a WindowTarget> {
+pub(crate) fn window_around<'a>(realm: &JsHeap<'a>) -> Option<&'a WindowTarget> {
     WindowTarget::of(
         realm,
         Bun__IsolatedWorld__pageOrItself(global_of(realm)).to_js_value(),
@@ -229,7 +233,17 @@ impl WindowTarget {
         thrown: Option<JSValue>,
         script: &[u8],
     ) {
-        let realm = self.realm(&cx.heap);
+        let (realm, mut original) = (self.realm(&cx.heap), JSValue::ZERO);
+        if let Some(world) =
+            Bun__IsolatedWorld__takeThrown(global_of(realm), exception, &mut original)
+        {
+            // SAFETY: scripts may run in `cx`.
+            return unsafe {
+                JsScope::with(world.as_mut_ptr(), |cx| {
+                    report_to_realm(cx, original, Some(thrown.unwrap_or(exception)), script)
+                })
+            };
+        }
         let target = (!is_program(global_of(realm)))
             .then(|| WindowTarget::of_realm(realm))
             .flatten()
@@ -249,9 +263,6 @@ impl WindowTarget {
             at.url = script.into();
         }
         let message = format!("Uncaught {}", describe(cx.global(), exception));
-        if Bun__IsolatedWorld__hasThrown(global_of(self.realm(&cx.heap)), exception) {
-            return target.tell_host(cx, message, &at, exception, false);
-        }
         target.report_error_at(cx, message, &at, exception);
     }
 

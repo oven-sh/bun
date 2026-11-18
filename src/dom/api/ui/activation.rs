@@ -62,11 +62,15 @@ impl Ui {
                 .window()
                 .into_iter()
                 .for_each(|it| it.host().activation_consumed());
-            crate::api::frames::tree(&cx.heap, self)
-                .iter()
-                .for_each(|it| it.activation.last.set(f64::NEG_INFINITY));
+            self.forget_activation(cx);
         }
         was_active
+    }
+
+    pub(crate) fn forget_activation<'a>(&'a self, cx: &mut Cx<'a>) {
+        crate::api::frames::tree(&cx.heap, self)
+            .iter()
+            .for_each(|it| it.activation.last.set(f64::NEG_INFINITY));
     }
 }
 

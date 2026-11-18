@@ -33,6 +33,10 @@ pub(crate) struct Context {
     is_initial: Cell<bool>,
     is_closed: Cell<bool>,
     has_crashed: Cell<bool>,
+    /// Its document is in another process.
+    is_elsewhere: Cell<bool>,
+    children_elsewhere: RefCell<Vec<u32>>,
+    image: u32,
     /// Those that have a window object for it.
     seen_by: RefCell<Vec<Rc<Cluster>>>,
 }
@@ -104,8 +108,20 @@ impl Context {
         self.is_closed.get()
     }
 
-    pub(super) fn has_crashed(&self) -> bool {
+    pub(crate) fn has_crashed(&self) -> bool {
         self.has_crashed.get()
+    }
+
+    pub(crate) fn is_elsewhere(&self) -> bool {
+        self.is_elsewhere.get()
+    }
+
+    pub(crate) fn is_frame(&self) -> bool {
+        self.parent().is_some()
+    }
+
+    pub(crate) fn image(&self) -> u32 {
+        self.image
     }
 
     pub(crate) fn has_origin(&self, cluster: &Cluster) -> bool {
@@ -137,17 +153,23 @@ impl Context {
 
     pub(crate) fn started_window(&self, wanted_by: &Window) -> Option<&Window> {
         self.window().or_else(|| {
-            wanted_by.host().start_window(self.id);
+            (!self.is_elsewhere()).then(|| wanted_by.host().start_window(self.id))?;
             self.window()
         })
     }
 
     /// In the order of the tree.
     pub(super) fn children(&self) -> impl Iterator<Item = &Context> {
+        let elsewhere = if self.is_elsewhere() {
+            self.children_elsewhere.borrow().clone()
+        } else {
+            Vec::new()
+        };
         self.window()
             .and_then(|it| Ui::of(it.document()))
             .into_iter()
             .flat_map(frames::entry::local_contexts)
+            .chain(elsewhere.into_iter().filter_map(Context::with_id))
     }
 
     fn windows(&self) -> List<'_> {
@@ -287,7 +309,7 @@ impl Window {
 
     /// Whether the windows that it opens, and the one that has opened it, share objects with it.
     pub(super) fn knows_other_windows(&self) -> bool {
-        self.cluster().is_some() && bun_web::trust::trusts_all_frames()
+        self.cluster().is_some() && bun_web::trust::relates_windows()
     }
 
     /// `None` if it has no relatives.
@@ -332,13 +354,23 @@ impl Window {
     }
 }
 
-fn create(id: u32, [embedder, opener, related]: [Option<u32>; 3], frame: u32, image: u32) {
+fn create(id: u32, [embedder, parent, opener, related]: [Option<u32>; 4], frame: u32, image: u32) {
     let heap = JsHeap::from_global(bun_ui::main_global());
     let group = related
         .and_then(Context::with_id)
         .map(|it| Rc::clone(&it.group))
         .unwrap_or_default();
-    let (page, origin, name, is_initial, is_closed, has_crashed, seen_by) = Default::default();
+    let (
+        page,
+        origin,
+        name,
+        is_initial,
+        is_closed,
+        has_crashed,
+        is_elsewhere,
+        children_elsewhere,
+        seen_by,
+    ) = Default::default();
     let this = js_BrowsingContext::create(
         heap,
         Context {
@@ -350,13 +382,16 @@ fn create(id: u32, [embedder, opener, related]: [Option<u32>; 3], frame: u32, im
             is_initial,
             is_closed,
             has_crashed,
+            is_elsewhere,
+            children_elsewhere,
+            image,
             seen_by,
         },
     );
     js_BrowsingContext::set_windows(this, List::new(heap).to_js());
     this.set_opener(opener.and_then(Context::with_id));
+    this.set_parent(parent.and_then(Context::with_id));
     if let Some(embedder) = embedder.and_then(Window::of_page) {
-        this.set_parent(embedder.context());
         this.set_frame(Frame::with_number(embedder, frame));
         this.frame()
             .into_iter()
@@ -372,13 +407,14 @@ fn create(id: u32, [embedder, opener, related]: [Option<u32>; 3], frame: u32, im
 fn __bun_dom_change_context(id: u32, change: Change) {
     if let Change::Created {
         embedder,
+        parent,
         frame,
         image,
         opener,
         related,
     } = change
     {
-        return create(id, [embedder, opener, related], frame, image);
+        return create(id, [embedder, parent, opener, related], frame, image);
     }
     let Some(this) = Context::with_id(id) else {
         return;
@@ -392,8 +428,23 @@ fn __bun_dom_change_context(id: u32, change: Change) {
         } => {
             this.is_initial.set(is_initial);
             this.has_crashed.set(false);
-            this.show(JsHeap::from_global(bun_ui::main_global()), page, origin);
+            this.is_elsewhere.set(origin.is_none());
+            this.show(
+                JsHeap::from_global(bun_ui::main_global()),
+                page,
+                origin.unwrap_or_default(),
+            );
+            if let Some(frame) = this.frame().filter(|_| this.is_elsewhere())
+                && let Some(outer) = Window::of(frame.around().doc())
+            {
+                outer.enter(|cx, _| {
+                    Frame::from_value(frame.to_js())
+                        .into_iter()
+                        .for_each(|it| it.lose_document(cx))
+                });
+            }
         }
+        Change::Children(all) => drop(this.children_elsewhere.replace(all)),
         Change::Renamed(name) => drop(this.name.replace(name)),
         Change::OpenedBy(opener) => this.set_opener(opener.and_then(Context::with_id)),
         Change::Crashed => this.has_crashed.set(true),

@@ -126,6 +126,10 @@ struct Difference {
     total: Damage,
     change: Change,
     moves: bool,
+    /// `INK` is about nothing but another transform.
+    only_turns: bool,
+    /// `LAYOUT` is about nothing but its size.
+    only_resizes: bool,
     repositions: bool,
     changes_container: bool,
     leaves_or_joins_flow: bool,
@@ -265,45 +269,62 @@ fn inherited_change(before: &Style, after: &Style) -> Change {
 }
 
 impl Difference {
+    const CHANGE_AT: u32 = u16::BITS - Damage::all().bits().leading_zeros();
+    const FLAGS_AT: u32 = Difference::CHANGE_AT + u8::BITS - Change::all().bits().leading_zeros();
+    const FLAGS: usize = 7;
+
     fn of(old: &Style, new: &Style) -> Difference {
+        const { assert!(Difference::FLAGS_AT + Difference::FLAGS as u32 <= Style::FOUND_BITS) };
         let Some(bits) = new.comparison_with(old) else {
             let it = Difference::between(old, new);
-            let flags = [
+            let flags: [_; Difference::FLAGS] = [
                 it.moves,
                 it.repositions,
                 it.changes_container,
                 it.leaves_or_joins_flow,
                 it.resizes,
-            ]
-            .into_iter()
-            .rfold(0, |all, it| all << 1 | u32::from(it));
+                it.only_turns,
+                it.only_resizes,
+            ];
+            let flags = flags
+                .into_iter()
+                .rfold(0, |all, it| all << 1 | u32::from(it));
             new.note_comparison(
                 old,
-                u32::from(it.total.bits()) | u32::from(it.change.bits()) << 16 | flags << 24,
+                u32::from(it.total.bits())
+                    | u32::from(it.change.bits()) << Difference::CHANGE_AT
+                    | flags << Difference::FLAGS_AT,
             );
             return it;
         };
-        debug_assert!(bits as u16 == Difference::between(old, new).total.bits());
+        let flags: [_; Difference::FLAGS] =
+            core::array::from_fn(|it| bits >> Difference::FLAGS_AT >> it & 1 != 0);
         let [
             moves,
             repositions,
             changes_container,
             leaves_or_joins_flow,
             resizes,
-        ] = [24, 25, 26, 27, 28].map(|it| bits >> it & 1 != 0);
+            only_turns,
+            only_resizes,
+        ] = flags;
         let (total, change) = (
-            Damage::from_bits_retain(bits as u16),
-            Change::from_bits_retain((bits >> 16) as u8),
+            Damage::from_bits_truncate(bits as u16),
+            Change::from_bits_truncate((bits >> Difference::CHANGE_AT) as u8),
         );
-        Difference {
+        let it = Difference {
             total,
             change,
             moves,
+            only_turns,
+            only_resizes,
             repositions,
             changes_container,
             leaves_or_joins_flow,
             resizes,
-        }
+        };
+        debug_assert!(it == Difference::between(old, new));
+        it
     }
 
     /// `None` if the values change what kind of box it is.
@@ -312,6 +333,8 @@ impl Difference {
             total: Damage::empty(),
             change: Change::empty(),
             moves: false,
+            only_turns: false,
+            only_resizes: true,
             repositions: false,
             changes_container: false,
             leaves_or_joins_flow: false,
@@ -341,6 +364,8 @@ impl Difference {
             };
             it.change = Change::NOT_INHERITED;
             it.moves |= property == Id::Transform;
+            it.only_turns = it.moves;
+            it.only_resizes &= !is_in(Id::Width, Id::Left) || is_in(Id::Width, Id::MaxHeight);
             it.repositions |= property == Id::Transform || is_in(Id::Width, Id::Left);
             it.resizes |= matches!(property, Id::Width | Id::Height);
         }
@@ -350,6 +375,7 @@ impl Difference {
     fn between(old: &Style, new: &Style) -> Difference {
         let (mut total, mut change, mut moves, mut repositions) =
             (Damage::empty(), Change::empty(), false, false);
+        let (mut only_turns, mut only_resizes) = (old.has_transform() && new.has_transform(), true);
         old.differences(new, |property| {
             let is_translucent =
                 |it: &Style| it.effects.opacity.0 > 0.0 && it.effects.opacity.0 < 1.0;
@@ -392,6 +418,9 @@ impl Difference {
             moves |= damage.contains(Damage::INK) && !damage.contains(Damage::STAYS);
             let is_in =
                 |first: Id, last: Id| (first as u16..=last as u16).contains(&(property as u16));
+            only_turns &=
+                !damage.contains(Damage::INK) || is_in(Id::Transform, Id::TransformOrigin);
+            only_resizes &= !damage.contains(Damage::LAYOUT) || is_in(Id::Width, Id::MaxHeight);
             repositions |= is_in(Id::Width, Id::Left)
                 || is_in(Id::Transform, Id::Scale)
                 || property == Id::Position;
@@ -417,16 +446,17 @@ impl Difference {
         if (old.zoom, old.dark, old.metrics, old.font_id)
             != (new.zoom, new.dark, new.metrics, new.font_id)
         {
-            (total, change) = (
+            (total, change, only_resizes) = (
                 total | Damage::CONTENTS | Damage::LAYOUT,
                 change | Change::INHERITED,
+                false,
             );
         }
         if old.display() != new.display() || old.clamps_lines() != new.clamps_lines() {
             change |= Change::DISPLAY;
         }
         if old.look != new.look {
-            total |= Damage::LAYOUT;
+            (total, only_resizes) = (total | Damage::LAYOUT, false);
             change |= Change::REMATCH_ALL | Change::RECASCADE_ALL;
         }
         if old.layout.justify_items.is_legacy() != new.layout.justify_items.is_legacy() {
@@ -439,10 +469,10 @@ impl Difference {
             || old.stacking()[0] != new.stacking()[0]
             || old.effects.filter.0.is_empty() != new.effects.filter.0.is_empty()
         {
-            total |= Damage::LAYOUT;
+            (total, only_resizes) = (total | Damage::LAYOUT, false);
         }
         if old.animates != new.animates || old.stacking()[1] != new.stacking()[1] {
-            (total, moves) = (total | Damage::INK, true);
+            (total, moves, only_turns) = (total | Damage::INK, true, false);
         }
         let resizes =
             (&old.layout.height, &old.layout.width) != (&new.layout.height, &new.layout.width);
@@ -450,6 +480,8 @@ impl Difference {
             total,
             change,
             moves,
+            only_turns: only_turns && moves,
+            only_resizes,
             repositions,
             changes_container,
             leaves_or_joins_flow: old.is_out_of_flow() != new.is_out_of_flow(),
@@ -1461,6 +1493,12 @@ impl Document {
                 self.with_animated_anchors(id, animated)
             }
         };
+        if !self.anchored.is_empty()
+            && [&base, &new].iter().all(|it| it.display() == Display::None)
+            && self.anchored.remove(&id).is_some()
+        {
+            self.tree.mark_style(id, Flags::RECASCADE);
+        }
         if self.tree.is_root(id) && self.update_root_units(id, &new) {
             change |= Change::RECASCADE_ALL;
         }
@@ -2171,8 +2209,9 @@ impl Document {
                 if change.contains(Change::BY_ANIMATION)
                     && !flags.intersects(Flags::REMATCH | Flags::RECASCADE) => {}
             Some(old) => {
-                let after =
-                    after(self, &inherited(self)).filter(|_| !new.deps.contains(Deps::ANCHOR));
+                let after = after(self, &inherited(self))
+                    .filter(|_| !new.deps.contains(Deps::ANCHOR))
+                    .map(|it| self.with_used_position(id, it));
                 self.update_transitions(
                     id,
                     before.as_ref().unwrap_or(old),
@@ -2411,6 +2450,7 @@ impl Document {
             Kind::Table | Kind::RowGroup | Kind::Row => {
                 is_bare() && new.text.border_collapse != BorderCollapse::Collapse
             }
+            Kind::Replaced => damage == Damage::OPACITY,
             _ => false,
         }) else {
             return self.repaint(id);
@@ -2487,7 +2527,33 @@ impl Document {
         if total.is_empty() || is_shown {
             return change;
         }
-        self.repaint_damage(id, [old, new], total, difference.change);
+        let can_turn = difference.only_turns
+            && ((Damage::LOOKS - Damage::PAINT) | Damage::INK).contains(total)
+            && self.accessibility.is_none();
+        let turned = own.filter(|_| {
+            can_turn
+                && !self.has_depth.get()
+                && !new.has_depth()
+                && self
+                    .tree
+                    .element(id)
+                    .is_some_and(|it| it.namespace != Namespace::Svg)
+        });
+        if turned.is_none() || total != Damage::INK {
+            self.repaint_damage(
+                id,
+                [old, new],
+                if turned.is_some() {
+                    total - Damage::INK
+                } else {
+                    total
+                },
+                difference.change,
+            );
+        }
+        turned
+            .into_iter()
+            .for_each(|it| self.retouch(it, Retouch::TRANSFORM));
         self.register(id, new, Some(old));
         if self
             .tree
@@ -2579,7 +2645,10 @@ impl Document {
             self.mark_rebuild(id);
         }
         if total.intersects(Damage::LAYOUT | Damage::PARENT) {
-            self.relayout(id);
+            self.relayout_with(
+                id,
+                difference.only_resizes && !total.intersects(Damage::PARENT | Damage::CONTENTS),
+            );
         } else if total.contains(Damage::BORDER_COLOR)
             && new.text.border_collapse == BorderCollapse::Collapse
             && (self.boxes[own].collapsed.is_some()
@@ -2591,8 +2660,10 @@ impl Document {
             self.boxes.mark_layout(own);
             self.needs_layout = true;
         }
-        if total - (Damage::BOX | Damage::OPACITY) == Damage::INK && Rc::ptr_eq(old, new) {
-            self.boxes.mark_moved(own);
+        if turned.is_some()
+            || total - (Damage::BOX | Damage::OPACITY) == Damage::INK && Rc::ptr_eq(old, new)
+        {
+            self.boxes.mark_moved(own, turned.is_none());
         } else if total.contains(Damage::INK) {
             if !Rc::ptr_eq(&old.ink, &new.ink) {
                 self.boxes.mark_ink_of_text(own);

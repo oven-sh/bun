@@ -1,14 +1,16 @@
 //! `contentTracing`: a file in the format of Chromium's traces.
 
 use bun_jsc::virtual_machine::VirtualMachine;
+use bun_web::renderer::Tracing;
 use bun_web::trace;
 
+use crate::contents::process as page_processes;
 use crate::generated_bindgen::electron::ElectronContentTracing;
 use crate::prelude::*;
 use crate::text::{random_uuid, split, split_once};
 use crate::value::Value;
 use crate::webview::wire;
-use crate::{files, paths, process};
+use crate::{files, paths, process, task};
 
 const USER_TIMING: &str = "blink.user_timing";
 const LOADING: &str = "loading";
@@ -91,8 +93,44 @@ fn samples(on_thread: &Value) -> Vec<Value> {
     ]
 }
 
+pub(crate) fn in_progress() -> Option<Tracing> {
+    (recording().borrow().as_ref()).map(|it| Tracing {
+        categories: it.categories.iter().map(|it| (*it).to_owned()).collect(),
+        room: it.room.try_into().unwrap_or(u32::MAX),
+    })
+}
+
+/// In a page process.
+pub(crate) fn join(it: &Tracing) {
+    let is_wanted = |name: &&str| it.categories.iter().any(|it| it == name);
+    Recording::start(
+        ALL.into_iter().filter(is_wanted).collect(),
+        it.room as usize,
+    );
+}
+
+pub(crate) fn finish_for_app() -> String {
+    Value::List(
+        recording()
+            .take()
+            .map(Recording::finish)
+            .unwrap_or_default(),
+    )
+    .to_json()
+}
+
 impl Recording {
-    fn finish(self) -> String {
+    fn start(categories: Vec<&'static str>, room: usize) {
+        if recording().borrow().is_none() {
+            if categories.contains(&SAMPLES) {
+                bun_jsc::bun_cpu_profiler::start_cpu_profiler(VirtualMachine::get().jsc_vm());
+            }
+            trace::restart(room);
+            recording().replace(Some(Recording { categories, room }));
+        }
+    }
+
+    fn finish(self) -> Vec<Value> {
         let on = |thread: u64| record! { "pid": process::id(), "tid": thread as f64 };
         let main = on(trace::this_thread());
         let name = |of: &str, name: &str| {
@@ -128,7 +166,7 @@ impl Recording {
         if self.categories.contains(&SAMPLES) {
             all.extend(samples(&main));
         }
-        record! { "traceEvents": Value::List(all), "metadata": Value::empty() }.to_json()
+        all
     }
 }
 
@@ -155,34 +193,35 @@ impl ElectronContentTracing {
         let for_exit = vm.cpu_profiler_config.take();
         categories.retain(|it| *it != SAMPLES || for_exit.is_none());
         vm.cpu_profiler_config.set(for_exit);
-        if categories.contains(&SAMPLES) {
-            bun_jsc::bun_cpu_profiler::start_cpu_profiler(vm.jsc_vm());
-        }
         let room = options["trace_buffer_size_in_events"].as_number();
         let room = room
             .filter(|it| *it >= 1.)
             .map_or(1 << 20, |it| it as usize);
-        trace::restart(room);
-        recording().replace(Some(Recording { categories, room }));
+        Recording::start(categories, room);
+        page_processes::statics_changed()?;
         resolved(JSValue::UNDEFINED)
     }
 
     pub(crate) fn stop_recording(_: Cx<'_, '_>, path: Option<&[u8]>) -> JsResult<JSValue> {
-        let finish = || {
-            let recording = recording().take().ok_or_else(|| {
+        let (events, path) = (recording().take().map(Recording::finish), path.map(string));
+        Ok(task::promise(async move {
+            let mut all = events.ok_or_else(|| {
                 error(format_args!(
                     "Failed to stop tracing (was a trace in progress?)"
                 ))
             })?;
+            for (pid, events) in page_processes::finish_traces().await {
+                let events = Value::parse(events.as_bytes()).unwrap_or_default();
+                let events = events.into_items().into_iter().filter(Value::is_object);
+                all.extend(events.map(|it| it.with("pid", pid)));
+            }
             let path = match path.filter(|it| !it.is_empty()) {
-                Some(path) => string(path),
+                Some(path) => path,
                 None => files::join(&[&paths::temporary()?, &format!("trace-{}", random_uuid())]),
             };
-            files::or_throw(files::write(&path, recording.finish().as_bytes(), 0o600))?;
+            let all = record! { "traceEvents": Value::List(all), "metadata": Value::empty() };
+            files::or_throw(files::write(&path, all.to_json().as_bytes(), 0o600))?;
             js(path)
-        };
-        let result = Deferred::new();
-        result.settle(finish())?;
-        Ok(result.promise())
+        }))
     }
 }

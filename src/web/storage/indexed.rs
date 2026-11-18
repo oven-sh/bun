@@ -1,7 +1,10 @@
 //! What <https://w3c.github.io/IndexedDB/> stores. The keys of what is in use are in memory, for all threads.
 
+pub mod either;
+pub(crate) mod far;
+
 use core::ops::Bound::{Excluded, Included, Unbounded};
-use core::sync::atomic::Ordering;
+use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
@@ -19,6 +22,8 @@ use crate::exec::{Receiver, Sender, oneshot, sleep, spawn_background};
 use crate::net::record::{RecordReader, RecordWriter};
 
 const LAST_GENERATED_KEY: f64 = 9_007_199_254_740_992.0;
+/// Of a bucket.
+const MOST_IN_KEYS: usize = 2 << 30;
 /// For who opens it for each use.
 const KEPT_AFTER_CLOSING: Duration = Duration::from_secs(10);
 
@@ -30,6 +35,8 @@ pub enum Failure {
     Erased,
     Sql(SqlError),
 }
+
+crate::wire!(impl enum Failure { KeyExists, IndexKeyExists, NoKeyLeft, Erased, Sql(SqlError), });
 
 impl From<SqlError> for Failure {
     fn from(error: SqlError) -> Failure {
@@ -43,13 +50,16 @@ type Result<T = ()> = core::result::Result<T, Failure>;
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Table(pub(super) i64);
 
+crate::wire!(impl Table(_));
+
 impl Table {
-    pub fn unique() -> Table {
+    fn unique() -> Table {
         Table((crate::random() >> 11) as i64)
     }
 }
 
 /// Names and key paths are encoded like keys.
+#[derive(Clone)]
 pub struct IndexSchema {
     pub table: Table,
     pub name: Key,
@@ -58,6 +68,7 @@ pub struct IndexSchema {
     pub is_multi_entry: bool,
 }
 
+#[derive(Clone)]
 pub struct StoreSchema {
     pub table: Table,
     pub name: Key,
@@ -66,11 +77,15 @@ pub struct StoreSchema {
     pub indexes: Vec<IndexSchema>,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Schema {
     pub version: u64,
     pub stores: Vec<StoreSchema>,
 }
+
+crate::wire!(impl IndexSchema { table, name, key_path, is_unique, is_multi_entry });
+crate::wire!(impl StoreSchema { table, name, key_path, auto_increments, indexes });
+crate::wire!(impl Schema { version, stores });
 
 impl Schema {
     pub(super) fn serialize_stores(&self) -> Vec<u8> {
@@ -121,21 +136,55 @@ impl Schema {
     }
 }
 
+/// How much memory keys take.
+struct Weight {
+    own: usize,
+    of_bucket: Arc<AtomicUsize>,
+}
+
+impl Weight {
+    const OF_ENTRY: usize = 32;
+
+    fn new(of_bucket: &Arc<AtomicUsize>) -> Weight {
+        Weight {
+            own: 0,
+            of_bucket: Arc::clone(of_bucket),
+        }
+    }
+
+    fn add(&mut self, key: &[u8]) {
+        self.own += key.len() + Weight::OF_ENTRY;
+        self.of_bucket
+            .fetch_add(key.len() + Weight::OF_ENTRY, Ordering::Relaxed);
+    }
+
+    fn remove(&mut self, key: &[u8]) {
+        self.own -= key.len() + Weight::OF_ENTRY;
+        self.of_bucket
+            .fetch_sub(key.len() + Weight::OF_ENTRY, Ordering::Relaxed);
+    }
+
+    fn check_room(&self, bytes: usize) -> Result {
+        if self.of_bucket.load(Ordering::Relaxed).saturating_add(bytes) <= MOST_IN_KEYS {
+            Ok(())
+        } else {
+            Err(SqlError::TOO_BIG.into())
+        }
+    }
+}
+
+impl Drop for Weight {
+    fn drop(&mut self) {
+        self.of_bucket.fetch_sub(self.own, Ordering::Relaxed);
+    }
+}
+
 struct Rows {
     keys: BTreeSet<Key>,
+    weight: Weight,
     /// The entries of an index with their halves swapped, once they are needed.
     by_record: Option<BTreeSet<Key>>,
     next_key: f64,
-}
-
-impl Default for Rows {
-    fn default() -> Rows {
-        Rows {
-            keys: BTreeSet::new(),
-            by_record: None,
-            next_key: 1.0,
-        }
-    }
 }
 
 fn swapped(entry: &[u8]) -> Key {
@@ -161,11 +210,17 @@ impl Rows {
                 by_record.remove(&entry)
             };
         }
-        if exists {
+        let existed = if exists {
             !self.keys.insert(Arc::clone(key))
         } else {
             self.keys.remove(key)
+        };
+        match (existed, exists) {
+            (false, true) => self.weight.add(key),
+            (true, false) => self.weight.remove(key),
+            _ => {}
         }
+        existed
     }
 
     fn entries_for(&mut self, record: &[u8]) -> Vec<Key> {
@@ -235,6 +290,8 @@ pub enum Mode {
     VersionChange,
 }
 
+crate::wire!(impl enum Mode { ReadOnly, ReadWrite, VersionChange, });
+
 struct Scheduled {
     id: u32,
     mode: Mode,
@@ -255,6 +312,7 @@ impl Scheduled {
 struct State {
     schema: Option<Arc<Schema>>,
     tables: HashMap<Table, Rows>,
+    weight_of_bucket: Arc<AtomicUsize>,
     times_erased: u32,
     last_id: u32,
     connections: Vec<(u32, Box<dyn Fn(Notice) + Send>)>,
@@ -277,7 +335,12 @@ impl State {
     }
 
     fn rows(&mut self, table: Table) -> &mut Rows {
-        self.tables.entry(table).or_default()
+        self.tables.entry(table).or_insert_with(|| Rows {
+            keys: BTreeSet::new(),
+            weight: Weight::new(&self.weight_of_bucket),
+            by_record: None,
+            next_key: 1.0,
+        })
     }
 }
 
@@ -394,12 +457,24 @@ impl Turn {
 }
 
 impl Database {
-    pub(super) fn new(storage: Arc<Storage>, bucket: &[u8], name: Key) -> Database {
+    /// `sibling` is in the same bucket.
+    pub(super) fn new(
+        storage: Arc<Storage>,
+        bucket: &[u8],
+        name: Key,
+        sibling: Option<&Database>,
+    ) -> Database {
+        let weight_of_bucket = sibling
+            .map(|it| Arc::clone(&it.state.lock().weight_of_bucket))
+            .unwrap_or_default();
         Database {
             storage,
             bucket: bucket.into(),
             name,
-            state: Guarded::default(),
+            state: Guarded::new(State {
+                weight_of_bucket,
+                ..State::default()
+            }),
         }
     }
 
@@ -471,6 +546,8 @@ impl Database {
         if self.state.lock().tables.contains_key(&table) {
             return Ok(());
         }
+        let mut weight = Weight::new(&self.state.lock().weight_of_bucket);
+        weight.check_room(0)?;
         let keys = sql.all(
             "SELECT key FROM records WHERE tab = ? ORDER BY key",
             &[Integer(table.0)],
@@ -483,8 +560,10 @@ impl Database {
                 |it| it.real(0),
             )?
             .unwrap_or(1.0);
+        keys.iter().for_each(|it| weight.add(it));
         let rows = Rows {
             keys: keys.into_iter().collect(),
+            weight,
             by_record: None,
             next_key,
         };
@@ -567,6 +646,7 @@ impl Connection {
         if !has_started {
             self.database.start_transactions(&mut state);
         }
+        let weight = Weight::new(&state.weight_of_bucket);
         (
             Transaction {
                 place: Some(place),
@@ -574,6 +654,7 @@ impl Connection {
                 written: Vec::new(),
                 cleared: Vec::new(),
                 undo: Vec::new(),
+                weight,
             },
             started,
         )
@@ -608,6 +689,7 @@ enum Undo {
     Clear {
         table: Table,
         keys: BTreeSet<Key>,
+        weight: Weight,
         written: Written,
     },
     NextKey {
@@ -616,6 +698,7 @@ enum Undo {
     },
 }
 
+#[derive(Clone)]
 pub struct IndexKeys {
     pub table: Table,
     pub is_unique: bool,
@@ -629,6 +712,9 @@ pub struct Direction {
     pub skips_duplicates: bool,
 }
 
+crate::wire!(impl IndexKeys { table, is_unique, keys });
+crate::wire!(impl Direction { is_forward, skips_duplicates });
+
 /// One after the other.
 #[derive(Default)]
 pub struct Values {
@@ -636,6 +722,7 @@ pub struct Values {
     ends: Vec<usize>,
     /// If only the first one is needed now: how many have been left out at the end.
     skipped: Option<usize>,
+    most_bytes: Option<usize>,
 }
 
 impl Values {
@@ -658,7 +745,15 @@ impl Values {
         self.ends.push(self.bytes.len());
     }
 
+    fn check_size(&self) -> sql::Result {
+        self.most_bytes
+            .is_none_or(|it| self.bytes.len() <= it)
+            .then_some(())
+            .ok_or(SqlError::TOO_BIG)
+    }
+
     fn push_stored(&mut self, row: &sql::Row<'_>, storage: &Storage) -> sql::Result {
+        self.check_size()?;
         if !row.is_text(0) {
             self.push(row.bytes(0));
             return Ok(());
@@ -685,6 +780,8 @@ pub struct Ahead {
     entries: Vec<Key>,
     values: Values,
     next: usize,
+    /// If they are from another process: how often the transaction had written.
+    times_written: u32,
 }
 
 impl Ahead {
@@ -708,6 +805,8 @@ pub struct Transaction {
     written: Vec<(Table, Written)>,
     cleared: Vec<Table>,
     undo: Vec<Undo>,
+    /// Of the keys in `undo`.
+    weight: Weight,
 }
 
 /// With the database locked.
@@ -716,6 +815,7 @@ struct Writer<'t> {
     written: &'t mut Vec<(Table, Written)>,
     cleared: &'t mut Vec<Table>,
     undo: &'t mut Vec<Undo>,
+    weight: &'t mut Weight,
 }
 
 impl Writer<'_> {
@@ -734,6 +834,7 @@ impl Writer<'_> {
     fn write(&mut self, table: Table, key: Key, value: Option<Bytes>) {
         let existed = self.state.rows(table).set(&key, value.is_some());
         let before = self.written_to(table).insert(Arc::clone(&key), value);
+        self.weight.add(&key);
         self.undo.push(Undo::Write {
             table,
             key,
@@ -749,6 +850,10 @@ impl Writer<'_> {
     }
 
     fn add_to_index(&mut self, index: &IndexKeys, record: &[u8]) -> Result {
+        self.weight
+            .check_room(index.keys.iter().fold(0, |all: usize, it| {
+                all.saturating_add(it.len() + record.len())
+            }))?;
         for key in &index.keys {
             if index.is_unique
                 && self
@@ -796,6 +901,7 @@ impl Transaction {
             written: &mut self.written,
             cleared: &mut self.cleared,
             undo: &mut self.undo,
+            weight: &mut self.weight,
         })
     }
 
@@ -818,6 +924,19 @@ impl Transaction {
         })
     }
 
+    /// For its turn, or for its keys, unless all is gone.
+    fn is_waiting(&self) -> bool {
+        self.database()
+            .lock_unless_erased(self.times_erased)
+            .map(drop)
+            .is_ok()
+            && !self.has_started()
+    }
+
+    pub fn new_table(&self) -> Table {
+        Table::unique()
+    }
+
     /// For [`roll_back`](Self::roll_back).
     pub fn mark(&self) -> usize {
         self.undo.len()
@@ -833,6 +952,7 @@ impl Transaction {
                     existed,
                     before,
                 } => {
+                    it.weight.remove(&key);
                     it.state.rows(table).set(&key, existed);
                     _ = match before {
                         Some(before) => it.written_to(table).insert(key, before),
@@ -842,10 +962,11 @@ impl Transaction {
                 Undo::Clear {
                     table,
                     keys,
+                    weight,
                     written,
                 } => {
                     let rows = it.state.rows(table);
-                    (rows.keys, rows.by_record) = (keys, None);
+                    (rows.keys, rows.weight, rows.by_record) = (keys, weight, None);
                     *it.written_to(table) = written;
                     it.cleared.pop();
                 }
@@ -881,6 +1002,7 @@ impl Transaction {
         replaces: bool,
     ) -> Result {
         let mut it = self.writer()?;
+        it.weight.check_room(key.len())?;
         if (!replaces || !indexes.is_empty()) && it.state.rows(store).keys.contains(key) {
             if !replaces {
                 return Err(Failure::KeyExists);
@@ -920,14 +1042,17 @@ impl Transaction {
         let mut it = self.writer()?;
         let rows = it.state.rows(table);
         rows.by_record = None;
-        let (keys, written) = (
+        let none = Weight::new(&rows.weight.of_bucket);
+        let (keys, weight) = (
             core::mem::take(&mut rows.keys),
-            core::mem::take(it.written_to(table)),
+            core::mem::replace(&mut rows.weight, none),
         );
+        let written = core::mem::take(it.written_to(table));
         it.cleared.push(table);
         it.undo.push(Undo::Clear {
             table,
             keys,
+            weight,
             written,
         });
         Ok(())
@@ -1019,6 +1144,7 @@ impl Transaction {
                         )?
                         .ok_or(Failure::Erased)??,
                 }
+                values.check_size()?;
             }
             Result::Ok(())
         };
@@ -1080,6 +1206,7 @@ impl Transaction {
             entries,
             values,
             next: 1,
+            times_written: 0,
         };
         Ok(None)
     }
@@ -1108,7 +1235,7 @@ impl Transaction {
                 push,
             ),
         })?;
-        result?;
+        result.and_then(|()| values.check_size())?;
         if values.ends.len() + values.skipped.unwrap_or(0) == keys.len() {
             Ok(values)
         } else {

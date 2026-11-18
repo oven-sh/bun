@@ -807,6 +807,14 @@ test("document.fonts follows the rules", async () => {
   ]);
 });
 
+test("a transition ends at the limit of lengths", () => {
+  using page = open(`<p style="transition: 100s -50s linear; x: 0px; r: 0px; width: 0px">`);
+  const [{ style }, computed] = [page.$("p"), page.window.getComputedStyle(page.$("p"))];
+  computed.x;
+  style.x = style.r = style.width = "4294967296px";
+  expect([computed.x, computed.r, computed.width]).toEqual(Array(3).fill("1.67772e+07px"));
+});
+
 test("a value that one property refuses is taken by another", () => {
   using page = open("<p>");
   const { style } = page.$("p");
@@ -1286,6 +1294,157 @@ test.each<[string, string, (a: any) => unknown, unknown]>([
     "<div id=a style='font: 10px/10px a; width: 10px'><span style='white-space: pre'>a-</span><span style='white-space: pre'>a</span></div>",
     a => a.offsetHeight,
     20,
+  ],
+  [
+    "a negative margin makes a box too wide for the side of a float",
+    "<div style='width: 50px; margin-left: 50px'><div style='float: right; width: 25px; height: 50px'></div><div id=a style='overflow: hidden; margin-left: -50px'></div></div>",
+    a => [a.offsetLeft, a.offsetTop, a.offsetWidth],
+    [0, 50, 100],
+  ],
+  [
+    "boxes of the same style differ by their tags",
+    "<style>#a > * { all: unset; display: block; font: 10px/10px a }</style><div id=a style='width: 90px'><p>a</p><button>a</button><p>a</p><fieldset><legend>a</legend>a</fieldset></div>",
+    a => [...a.querySelectorAll("*")].map(it => it.offsetWidth),
+    [90, 10, 90, 90, 14],
+  ],
+  [
+    "boxes of the same style differ by the writing mode of their parents",
+    "<style>p { writing-mode: horizontal-tb; margin: 5px 0; height: 5px; width: 5px } i { display: block; margin: 9px 0; height: 1px }</style><div id=a style='overflow: hidden'><div><p><i></i></p></div><div style='writing-mode: vertical-lr'><p><i></i></p></div></div>",
+    a => [...a.querySelectorAll("i")].map(it => it.offsetTop - it.parentNode.offsetTop),
+    [0, 9],
+  ],
+  [
+    "a cell that gets a span",
+    "<table style='border-spacing: 0'><tr><td id=a style='padding: 0'><tr><td style='padding: 5px'><td style='padding: 5px'></table>",
+    a => [a.offsetWidth, ((a.colSpan = 2), a.offsetWidth)],
+    [10, 20],
+  ],
+  [
+    "what sticks out of a cell is scrolled to",
+    "<div id=a style='overflow: hidden; width: 20px; height: 20px'><table style='border-spacing: 0; table-layout: fixed; width: 10px'><tr><td style='padding: 0'><div style='width: 50px; height: 1px'></div></table></div>",
+    a => [a.scrollWidth, ((a.querySelector("td div").style.width = "70px"), a.scrollWidth)],
+    [50, 70],
+  ],
+  [
+    "the space at the end of the only text collapses",
+    "<div id=a style='font: 10px/10px a; float: left'>a a </div>",
+    a =>
+      (it => (
+        it.setStart(a.firstChild, 2),
+        it.setEnd(a.firstChild, 4),
+        [a.offsetWidth, it.getBoundingClientRect().x, it.getBoundingClientRect().width]
+      ))(a.ownerDocument.createRange()),
+    [30, 20, 10],
+  ],
+  [
+    "a positioned table has no more room than its containing block",
+    "<div style='position: relative; width: 50px; margin-left: 50px'><table id=a style='position: absolute; left: -50px; border-spacing: 0; font: 10px/10px a'><td style='padding: 0'>a a a a a a</table></div>",
+    a => [a.offsetLeft, a.offsetWidth],
+    [-50, 50],
+  ],
+  [
+    "percentages of what is replaced are of the height that a cell is given",
+    "<table style='border-spacing: 0'><td style='padding: 0; height: 20px; line-height: 0'><canvas id=a width=1 height=1 style='height: 200%'></canvas><td style='padding: 0'><div style='height: 60px'></div></table>",
+    a => [
+      a.offsetWidth,
+      a.parentNode.offsetWidth,
+      ((a.parentNode.style.height = "10px"), a.offsetWidth),
+      a.parentNode.offsetWidth,
+    ],
+    [40, 40, 20, 20],
+  ],
+  [
+    "a cell without a line has its baseline at the end of its content",
+    "<table style='border-spacing: 0; font: 10px/10px a'><tr style='vertical-align: baseline'><td style='padding: 0 0 7px'><div id=a style='height: 3px'></div><td style='padding: 0'>a</table>",
+    a => [a.getBoundingClientRect().y, a.parentNode.offsetHeight],
+    [5, 15],
+  ],
+  [
+    "the baseline of a row does not move what is only positioned",
+    "<table style='border-spacing: 0; font: 10px/10px a'><tr style='vertical-align: baseline'><td style='padding: 0'><div id=a style='position: absolute'></div><td style='padding: 0'>a</table>",
+    a => a.getBoundingClientRect().y,
+    0,
+  ],
+  [
+    "the baseline of a row follows percentages of its height",
+    "<table style='border-spacing: 0; height: 100px'><tr style='vertical-align: baseline'><td style='padding: 0'><div id=a style='height: 50%'></div><td style='padding: 0'><div style='height: 80%'></div></table>",
+    a => a.getBoundingClientRect().y,
+    30,
+  ],
+  [
+    "a row without cells has its baseline at the top",
+    "<div style='font: 10px/10px a'>a<table id=a style='display: inline-table; border-spacing: 0'><tr style='height: 20px'></table></div>",
+    a => a.offsetTop,
+    8,
+  ],
+  [
+    "a button that is higher than what is in it centers that",
+    "<button style='all: unset; display: block; height: 30px; font: 10px/10px a'><div id=a>a</div></button>",
+    a => [a.offsetTop, a.parentNode.offsetWidth, ((a.parentNode.style.height = "50px"), a.offsetTop)],
+    [10, 10, 20],
+  ],
+  [
+    "a button in a row is stretched around what is in it",
+    "<div style='display: flex; height: 30px'><button style='all: unset; font: 10px/10px a'><b id=a style='font: inherit'>a</b></button></div>",
+    a => [a.offsetTop, ((a.parentNode.parentNode.style.height = "50px"), a.offsetTop)],
+    [10, 20],
+  ],
+  [
+    "a box that shrinks takes its offset along",
+    "<div id=a style='overflow: hidden; height: 10px'><div style='height: 50px'></div></div>",
+    a => [((a.scrollTop = 40), a.scrollTop), ((a.style.height = "30px"), a.offsetHeight, a.scrollTop)],
+    [40, 20],
+  ],
+  [
+    "a text field measures as itself and scrolls as its text",
+    "<input id=a value=aaaaaaaa style='font: 10px/10px a; border: 1px solid; padding: 5px 7px; width: 50px; height: 20px'>",
+    a => [a.clientWidth, a.clientHeight, a.scrollWidth, a.scrollHeight],
+    [64, 30, 94, 30],
+  ],
+  [
+    "an empty grid that can be edited has a line",
+    "<div id=a contenteditable style='display: grid; font: 10px/10px a'></div>",
+    a => a.offsetHeight,
+    10,
+  ],
+  [
+    "align-content does not push anything out at the start of what scrolls",
+    "<div style='overflow: hidden; height: 10px; align-content: end'><div id=a style='height: 30px'></div></div>",
+    a => a.offsetTop,
+    0,
+  ],
+  [
+    "a line that overflows ends before an inline block with a negative margin",
+    "<div id=a style='width: min-content; font-size: 0'><i style='display: inline-block; width: 20px'></i> <i style='display: inline-block; margin-right: -10px'></i></div>",
+    a => a.offsetWidth,
+    20,
+  ],
+  [
+    "text is beside the floats before one that clears",
+    "<div id=a style='width: max-content; font: 10px/10px a'><div style='float: left; width: 50px; height: 5px'></div><div style='float: left; clear: left; width: 30px; height: 5px'></div>aa</div>",
+    a => a.offsetWidth,
+    70,
+  ],
+  [
+    "a vertical table is as wide as its rows",
+    "<div style='position: relative; width: 50px; height: 20px'><table id=a style='position: absolute; right: 0; width: 10px; writing-mode: vertical-lr; border-spacing: 0'><td style='padding: 0'><div style='width: 30px'></div></table></div>",
+    a => [a.offsetLeft, a.offsetWidth],
+    [20, 30],
+  ],
+  [
+    "a vertical table is split between columns",
+    "<div style='writing-mode: vertical-lr; columns: 2; gap: 0; column-fill: auto; width: 20px; height: 40px'><table style='border-spacing: 0; height: 100%'><td id=a style='padding: 0'><div style='width: 30px'></div></table></div>",
+    a => [...a.getClientRects()].map(it => [it.x, it.y, it.width, it.height]),
+    [
+      [0, 0, 20, 20],
+      [0, 20, 10, 20],
+    ],
+  ],
+  [
+    "align-content takes a cell off the baseline",
+    "<table style='border-spacing: 0; font: 10px/10px a'><tr style='vertical-align: baseline'><td style='padding: 0; align-content: start'><div id=a>a</div><td style='padding: 20px 0 0'>a</table>",
+    a => a.getBoundingClientRect().y,
+    0,
   ],
 ])("%s", (_, html, measure, expected) => {
   using page = open(`<body style="margin: 0">${html}`);
@@ -2619,4 +2778,222 @@ test("commitStyles() resolves percentages that are interpolated as a matrix", ()
 test("a shape is the subject of a timeline in the scroll container around the svg", () => {
   using page = open("<svg height=3000><path d='M 50 0 V 3000'/></svg>");
   expect(new page.window.ViewTimeline({ subject: page.$("path") }).source).toBe(page.document.documentElement);
+});
+
+test.each([
+  ["-webkit-perspective", "1000", "1000px", "1000px"],
+  ["cx", "99999999999px", null, "3.35544e+07px"],
+  ["width", "calc(2 * 3px * sibling-index())", "calc(6px * sibling-index())", "6px"],
+  ["text-shadow", "red 1px 1px calc(-2px)", null, "rgb(255, 0, 0) 1px 1px 0px"],
+  [
+    "background-image",
+    'image-set(light-dark(url("data:,a"), url("data:,b")) 1x)',
+    null,
+    'image-set(url("data:,a") 1dppx)',
+  ],
+  [
+    "clip-path",
+    "shape(from 0px 0px, hline to right, vline to center)",
+    null,
+    "shape(from 0px 0px, hline to 100%, vline to 50%)",
+  ],
+  ["border-shape", "circle() border-box circle() border-box", null, "circle() border-box"],
+  ["timeline-trigger-active-range", "entry calc(0%) entry calc(100%)", "entry", "entry"],
+  ["color", "color-mix(in hwb, lch(none none 180), hwb(0 20 40))", null, "color(srgb 0.6 0.2 0.2)"],
+  ["color", "color-mix(in lch, hwb(0 none none) 0%, lch(11 33 44))", null, "lch(11 33 44)"],
+  [
+    "background",
+    "border-area padding-box",
+    "padding-box border-area",
+    "rgba(0, 0, 0, 0) none repeat scroll 0% 0% / auto padding-box border-area",
+  ],
+  ["--a", "a\\", "a�", "a�"],
+  ["--a", '"a\\', '"a"', '"a"'],
+  ["--a", "url(a\\", "url(a�)", "url(a�)"],
+])("%s: %s", (property, value, specified, computed) => {
+  using page = open("<p style='display: none'></p>");
+  const { style } = page.$("p");
+  style.setProperty(property, value);
+  expect([style.getPropertyValue(property), page.computed("p", property)]).toEqual([
+    specified ?? expect.any(String),
+    computed,
+  ]);
+});
+
+test.each([
+  ["border-area is the origin too", "<p style='background: border-area'>", "background-origin", "border-box"],
+  ["attr() as a string is in a cycle", "<p a='attr(a)' style='--a: attr(a type(*), b)'>", "--a", "b"],
+  [
+    "a media query knows no siblings",
+    "<style>@media (width > calc(1px * sibling-index())) { p { order: 1 } }</style><p>",
+    "order",
+    "0",
+  ],
+])("%s", (_, html, property, value) => {
+  using page = open(html);
+  expect(page.computed("p", property)).toBe(value);
+});
+
+test.each([
+  ["clip-path", "polygon(0px 0px)", "polygon(round 20px, 0px 0px)", "polygon(round 10px, 0px 0px)", "replace"],
+  ["aspect-ratio", "1 / 1", "1 / 1", "2 / 1", "add"],
+])("%s from %s to %s", (property, from, to, halfway, composite) => {
+  using page = open("<p style='aspect-ratio: 2'>");
+  const name = property.replace(/-./, it => it[1].toUpperCase());
+  page.$("p").animate({ [name]: [from, to] }, { duration: 2, delay: -1, composite });
+  expect(page.computed("p", property)).toBe(halfway);
+});
+
+test("::slotted() calls the functions of its tree", () => {
+  using page = open("<div><p>");
+  page.$("div").attachShadow({ mode: "open" }).innerHTML =
+    "<style>@function --f() { result: 1 } ::slotted(p) { order: --f() }</style><slot>";
+  expect(page.computed("p", "order")).toBe("1");
+});
+
+test("rules are serialized without what is not valid, and in lowercase", () => {
+  using page = open("<style>@font-feature-values a { @styleset { 1a: 1 } } ::picker(SELECT) {}</style>");
+  const [values, picker] = page.document.styleSheets[0].cssRules;
+  expect([values.styleset.size, picker.selectorText]).toEqual([0, "::picker(select)"]);
+});
+
+test.each([
+  ["width: 300px", (it: HTMLElement) => it.offsetWidth],
+  ["display: none", (it: HTMLElement) => it.offsetWidth],
+  ["font-size: 40px", (it: HTMLElement) => (it.firstChild as HTMLElement).offsetHeight],
+])("what two styles differ in is not taken for what two others do: %s", (declaration, measure) => {
+  using page = open("");
+  const rounds = Array.from({ length: 16 }, (_, round) => {
+    const rules = [..."abcdef"].map((it, i) => `.${it} { background: rgb(${i} ${round} 0) }`);
+    page.document.body.innerHTML = `<style>${rules.join("")} .d { ${declaration} }</style><div><p>a</p></div>`;
+    const sizes = [...("ef".slice(0, round % 3) + "abacdcda")].map(
+      it => ((page.$("div").className = it), measure(page.$("div"))),
+    );
+    return sizes.at(-1) === sizes[0];
+  });
+  expect(rounds).not.toContain(false);
+});
+
+test.each([1, 2, 3, 4])("elements that keep coming back to the same styles are like new ones (%d)", seed => {
+  const below = (n: number) => ((seed = (seed * 1103515245 + 12345) % 2 ** 31) >> 8) % n;
+  const declarations =
+    `width: 90px; height: 30px; min-width: 200px; display: none; display: flex; display: inline-block; display: contents; display: grid;
+    float: left; position: absolute; position: relative; top: 7px; margin: 5px; padding: 3px; border: 2px solid; font-size: 30px; line-height: 3;
+    white-space: nowrap; writing-mode: vertical-rl; direction: rtl; zoom: 2; overflow: scroll; transform: scale(2); transform: rotate(9deg); translate: 4px;
+    opacity: 0.5; opacity: 0.7; color: red; color: blue; background: red; background: blue; visibility: hidden; --a: 9px; margin-left: var(--a, 1px);
+    text-indent: 1em; container-type: inline-size; list-style: inside; display: list-item; columns: 2; box-shadow: 0 0 9px; z-index: 1`.split(
+      ";",
+    );
+  const rules = Array.from(
+    { length: 6 },
+    (_, i) =>
+      `.c${i} { ${Array.from({ length: below(3) + 1 }, () => declarations[below(declarations.length)]).join(";")} }`,
+  );
+  using page =
+    open(`<style>main { position: absolute; inset: 0 auto auto 0; width: 400px; height: 400px; contain: strict } ${rules.join("")}</style>
+    <main><div>a <span>b <i>c</i></span><p>d <b>e</b></p></div><div><p>f</p></div></main>`);
+  const main = page.$("main");
+  const measure = (root: Element) =>
+    [...root.querySelectorAll("*")].map(it => {
+      const [{ x, y, width, height }, { color, fontSize }] = [
+        it.getBoundingClientRect(),
+        page.window.getComputedStyle(it),
+      ];
+      return [it.className, ...[x, y, width, height].map(it => Math.round(it * 10)), color, fontSize].join();
+    });
+  const all = [...main.querySelectorAll("*")];
+  for (let step = 0; step < 150; step++) {
+    all[below(all.length)].className = "c" + below(7);
+    const actual = measure(main);
+    if (step % 3) continue;
+    const copy = page.document.body.appendChild(main.cloneNode(true) as Element);
+    expect(actual).toEqual(measure(copy));
+    copy.remove();
+  }
+});
+
+test("what is in the top layer has no offsetParent", () => {
+  using page = open(
+    "<div style='position: relative; margin: 20px'><p popover style='position: absolute; inset: 50px; margin: 0'>",
+  );
+  page.$("p").showPopover();
+  expect([page.$("p").offsetParent, page.$("p").offsetTop]).toEqual([null, 50]);
+});
+
+describe("anchor positioning", () => {
+  const anchored = (css: string, html = "<i></i><p></p>") =>
+    open(`<style>
+      body, p { margin: 0 }
+      i { display: block; height: 100px; anchor-name: --a }
+      p { position: absolute; width: 10px; height: 10px; position-anchor: --a }
+      ${css}
+    </style>${html}`);
+
+  test("a box stays where it is while it fades out", () => {
+    using page = anchored("i { margin-top: 20px } p { position-area: top; transition: display 100s allow-discrete }");
+    expect(page.$("p").offsetTop).toBe(10);
+    page.$("p").style.display = "none";
+    expect(page.$("p").offsetTop).toBe(10);
+  });
+
+  test.each(["top: anchor(bottom)", "position-area: top"])("keyframes hide a box with %s", declaration => {
+    using page = anchored(`p { ${declaration}; animation: a 100s both } @keyframes a { from, to { display: none } }`);
+    expect([page.$("p").offsetTop, page.computed("p", "display")]).toEqual([0, "none"]);
+  });
+
+  test("keyframes have anchor functions", () => {
+    using page = anchored(
+      "p { position-anchor: none; animation: a 100s steps(2, start) } @keyframes a { from { top: anchor(--a top) } to { top: anchor(--a bottom) } }",
+    );
+    expect(page.$("p").offsetTop).toBe(50);
+  });
+
+  test("an anchor is in the inline containing block", () => {
+    using page = anchored(
+      "span { position: relative } i { display: inline-block; width: 20px } p { width: anchor-size(width) }",
+      "<span><i></i><p></p></span><span><i style='width: 30px'></i></span>".replaceAll("<p></p>", "<b></b>") +
+        "<style>b { position: absolute; width: anchor-size(--a width) }</style>",
+    );
+    expect(page.$("b").offsetWidth).toBe(20);
+  });
+
+  test("a box is shown with its anchor", () => {
+    using page = anchored("i { visibility: hidden } p { top: anchor(bottom) }");
+    expect(page.document.elementFromPoint(5, 105)).not.toBe(page.$("p"));
+    page.$("i").style.visibility = "visible";
+    expect(page.document.elementFromPoint(5, 105)).toBe(page.$("p"));
+  });
+
+  test("the viewport does not clip a fixed anchor", () => {
+    using page = anchored(
+      "i { position: fixed; top: -200px; width: 10px } p { position: fixed; top: 0; left: anchor(left) }",
+    );
+    expect(page.document.elementFromPoint(5, 5)).toBe(page.$("p"));
+  });
+
+  test("a fixed box is scrolled into view along with its anchor", () => {
+    using page = anchored("i { margin-top: 5000px } p { position: fixed; top: anchor(top) }");
+    page.$("p").scrollIntoView();
+    expect(page.window.scrollY).toBeGreaterThan(4000);
+  });
+
+  test.each([
+    ["flip-block", "1"],
+    ["flip-y", "0"],
+    ["any", "0"],
+  ])("anchored(fallback: %s)", (fallback, order) => {
+    using page = anchored(
+      `p { position-area: top; position-try-fallbacks: flip-block; container-type: anchored } @container anchored(fallback: ${fallback}) { b { order: 1 } }`,
+      "<i></i><p><b>",
+    );
+    expect(page.computed("b", "order")).toBe(order);
+  });
+
+  test("anchored(fallback: span-end any)", () => {
+    using page = anchored(
+      "p { position-area: top; position-try-fallbacks: span-bottom; container-type: anchored } @container anchored(fallback: span-end any) { b { order: 1 } }",
+      "<i></i><p><b>",
+    );
+    expect(page.computed("b", "order")).toBe("1");
+  });
 });

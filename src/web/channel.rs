@@ -1,17 +1,22 @@
 //! Messages between realms, whatever their thread: https://html.spec.whatwg.org/#channel-messaging
 
 use core::cell::RefCell;
-use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU64, Ordering};
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::rc::Rc;
 use std::sync::Arc;
 
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, from_js_host_call, from_js_host_call_generic};
 use bun_threading::Guarded;
+use bun_ui::protocol::{Bitmap, ImageFormat};
 
+pub(crate) use self::flat::{STORED_NULL, is_fit_for_storage};
+use crate::client::Client;
 use crate::exec::Thread;
+use crate::remote::petition::{self, Handle, Tidings};
+use crate::remote::{Peer, clerk};
+use crate::storage::Shelf;
 use crate::wire;
 
 #[path = "channel_far.rs"]
@@ -36,6 +41,7 @@ unsafe extern "C" {
         objects: *const JSValue,
         object_count: usize,
     ) -> JSValue;
+    fn Bun__SerializedScriptValue__memoryCost(value: NonNull<SerializedScriptValue>) -> usize;
     fn Bun__SerializedScriptSlice__free(value: NonNull<SerializedScriptValue>);
 }
 
@@ -112,6 +118,20 @@ impl Serialized {
         )))))
     }
 
+    /// For tests: as if the check of what another process has sent had let it pass.
+    pub fn unchecked(bytes: Vec<u8>) -> Serialized {
+        Serialized(Form::Flat(Arc::new(flat::Flat::trusting(bytes))))
+    }
+
+    /// Of what `new` has made.
+    pub fn size(&self) -> usize {
+        match &self.0 {
+            // SAFETY: it is alive.
+            Form::Wire(wire) => unsafe { Bun__SerializedScriptValue__memoryCost(wire.0) },
+            _ => 0,
+        }
+    }
+
     fn unreadable() -> Serialized {
         Serialized(Form::Unreadable)
     }
@@ -142,7 +162,56 @@ pub enum Transferred {
         readable: Endpoint,
         writable: Endpoint,
     },
-    Canvas(Box<dyn core::any::Any + Send>),
+    Canvas(Box<dyn Graphic>),
+}
+
+pub trait Graphic: core::any::Any + Send {
+    /// `None` if it cannot leave the process.
+    fn loosen(self: Box<Self>) -> Option<LooseBitmap>;
+}
+
+crate::wire! {
+    /// Not premultiplied.
+    pub struct LooseBitmap {
+        pub size: [u32; 2],
+        pub rgba: Vec<u8>,
+    }
+}
+
+impl LooseBitmap {
+    pub async fn decode(bytes: Vec<u8>) -> Option<LooseBitmap> {
+        let decode = bun_ui::loaded()?.decode_bitmap;
+        // SAFETY: the parts of a slice.
+        let work = move || unsafe { decode(bytes.as_ptr(), bytes.len()) }.get().ok();
+        let it = crate::exec::blocking(work).await??;
+        Some(LooseBitmap {
+            size: [it.width, it.height],
+            rgba: it.pixels.into_vec(),
+        })
+    }
+
+    /// `None` if it does not have the size that it says.
+    pub fn checked(self) -> Option<Bitmap> {
+        let [width, height] = self.size;
+        let bytes = (u64::from(width) * u64::from(height)).checked_mul(4)?;
+        (bytes != 0 && bytes == self.rgba.len() as u64).then(|| Bitmap {
+            width,
+            height,
+            pixels: self.rgba.into(),
+        })
+    }
+
+    pub async fn into_png(self) -> Option<Vec<u8>> {
+        let (encode, pixels) = (bun_ui::loaded()?.encode_bitmap, self.checked()?);
+        let work = move || encode(&pixels, ImageFormat::Png, 0).get().ok();
+        Some(crate::exec::blocking(work).await??.into_vec())
+    }
+}
+
+impl Graphic for Option<LooseBitmap> {
+    fn loosen(self: Box<Self>) -> Option<LooseBitmap> {
+        *self
+    }
 }
 
 pub struct Message {
@@ -192,6 +261,8 @@ pub enum Arrival {
 #[derive(Default)]
 struct Side {
     inbox: VecDeque<Arrival>,
+    /// Of what another process has sent since it was empty.
+    bytes_from_afar: usize,
     is_closed: bool,
     listener: Option<(Thread, u64)>,
     /// It is in another process, by that number.
@@ -200,9 +271,8 @@ struct Side {
 
 type Listener = Rc<dyn Fn()>;
 
-thread_local! {
-    static LISTENERS: ManuallyDrop<RefCell<std::collections::BTreeMap<u64, Listener>>> = bun_ui::lasting(|| drop(LISTENERS.with(|it| it.take())));
-}
+static LISTENERS: bun_ui::Lasting<RefCell<std::collections::BTreeMap<u64, Listener>>> =
+    bun_ui::Lasting::empty();
 
 fn tell(id: u64) {
     if let Some(listener) = LISTENERS.with(|it| it.borrow().get(&id).cloned()) {
@@ -354,47 +424,134 @@ impl Drop for Endpoint {
     }
 }
 
-static BROADCASTS: Guarded<Vec<(Box<[u8]>, Address)>> = Guarded::new(Vec::new());
+#[derive(Clone)]
+enum Member {
+    Here(Address),
+    In(Peer, u32),
+}
+
+#[derive(Default)]
+struct Members {
+    all: Vec<Member>,
+    /// One for all in this process.
+    in_host: Option<Arc<Handle>>,
+}
+
+static BROADCASTS: Guarded<BTreeMap<Box<[u8]>, Members>> = Guarded::new(BTreeMap::new());
+
+fn leave_broadcast(key: &[u8], is_it: impl Fn(&Member) -> bool) {
+    let mut all = BROADCASTS.lock();
+    let Some(members) = all.get_mut(key) else {
+        return;
+    };
+    members.all.retain(|it| !is_it(it));
+    let last = members.all.is_empty().then(|| all.remove(key));
+    drop(all);
+    drop(last);
+}
+
+fn key_of_broadcast(partition: &[u8], name: &[u8]) -> Box<[u8]> {
+    [partition, b"\n", name].concat().into()
+}
+
+fn broadcast(key: &[u8], value: &Serialized, is_other: impl Fn(&Member) -> bool) {
+    let others: Vec<_> = (BROADCASTS.lock().get(key).iter())
+        .flat_map(|it| it.all.iter().filter(|it| is_other(it)).cloned())
+        .collect();
+    for it in others {
+        match it {
+            Member::Here(it) => it.deliver(Arrival::Message(value.clone().into())),
+            Member::In(peer, id) => clerk::tell(peer, id, Tidings::Broadcast(value.clone())),
+        }
+    }
+}
 
 /// https://html.spec.whatwg.org/#broadcasting-to-other-browsing-contexts
 pub struct Broadcast {
     key: Box<[u8]>,
     pub endpoint: Endpoint,
+    in_host: Option<Arc<Handle>>,
 }
 
 impl Broadcast {
-    pub fn join(key: Box<[u8]>) -> Broadcast {
+    pub fn join(client: &Client, name: &[u8]) -> Broadcast {
         let address = Address {
             sides: Arc::default(),
             side: 0,
         };
-        BROADCASTS.lock().push((key.clone(), address.clone()));
+        let key = key_of_broadcast(&client.partition_key(), name);
+        let shelf = (client.session.storage.far_shelf(&client.bucket()))
+            .filter(|_| !client.origin().is_opaque());
+        let mut all = BROADCASTS.lock();
+        let members = all.entry(key.clone()).or_default();
+        members.all.push(Member::Here(address.clone()));
+        if let Some(shelf) = shelf.filter(|_| members.in_host.is_none()) {
+            let key = key.clone();
+            let handle = Handle::with_listener(move |it| {
+                if let Tidings::Broadcast(value) = it {
+                    broadcast(&key, &value, |_| true);
+                }
+            });
+            petition::join(handle.id(), shelf, name.into());
+            members.in_host = Some(handle.into());
+        }
+        let in_host = members.in_host.clone();
+        drop(all);
         Broadcast {
             key,
             endpoint: Endpoint(address),
+            in_host,
         }
     }
 
+    fn is(&self, member: &Member) -> bool {
+        matches!(member, Member::Here(it) if Arc::ptr_eq(&it.sides, &self.endpoint.0.sides))
+    }
+
     pub fn send(&self, value: &Serialized) {
-        let is_other = |it: &&(Box<[u8]>, Address)| {
-            it.0 == self.key && !Arc::ptr_eq(&it.1.sides, &self.endpoint.0.sides)
-        };
-        let others: Vec<_> = BROADCASTS
-            .lock()
-            .iter()
-            .filter(is_other)
-            .map(|it| it.1.clone())
-            .collect();
-        others
-            .iter()
-            .for_each(|it| it.deliver(Arrival::Message(value.clone().into())));
+        broadcast(&self.key, value, |it| !self.is(it));
+        if let Some(handle) = &self.in_host {
+            petition::broadcast(handle.id(), value.clone());
+        }
     }
 }
 
 impl Drop for Broadcast {
     fn drop(&mut self) {
-        BROADCASTS
-            .lock()
-            .retain(|it| !Arc::ptr_eq(&it.1.sides, &self.endpoint.0.sides));
+        leave_broadcast(&self.key, |it| self.is(it));
+    }
+}
+
+/// In the host, for one in a page process.
+pub(crate) struct FarBroadcast {
+    key: Box<[u8]>,
+    peer: Peer,
+    id: u32,
+}
+
+impl FarBroadcast {
+    pub(crate) fn join(peer: Peer, id: u32, shelf: &Shelf, name: &[u8]) -> FarBroadcast {
+        let partition = [&shelf.session.to_le_bytes(), &*shelf.bucket].concat();
+        let key = key_of_broadcast(&partition, name);
+        let mut all = BROADCASTS.lock();
+        let members = &mut all.entry(key.clone()).or_default().all;
+        members.retain(|it| !matches!(it, Member::In(of, _) if *of == peer));
+        members.push(Member::In(peer, id));
+        drop(all);
+        FarBroadcast { key, peer, id }
+    }
+
+    /// To other processes.
+    pub(crate) fn send(&self, value: &Serialized) {
+        let is_other = |it: &Member| !matches!(it, Member::In(peer, _) if *peer == self.peer);
+        broadcast(&self.key, value, is_other);
+    }
+}
+
+impl Drop for FarBroadcast {
+    fn drop(&mut self) {
+        let is_it =
+            |it: &Member| matches!(*it, Member::In(peer, id) if (peer, id) == (self.peer, self.id));
+        leave_broadcast(&self.key, is_it);
     }
 }

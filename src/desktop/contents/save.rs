@@ -21,8 +21,8 @@ struct Wanted {
     name: String,
 }
 
-fn snapshot(page: &Page, purpose: Purpose) -> JsResult<(String, Vec<Wanted>)> {
-    let (snapshot, pages) = (page.snapshot(purpose)?, page.with_descendants()?);
+async fn snapshot(page: &Page, purpose: Purpose) -> JsResult<(String, Vec<Wanted>)> {
+    let (snapshot, pages) = (page.snapshot(purpose).await?, page.with_descendants()?);
     let wanted = |it: page::Resource| {
         Some(Wanted {
             by: Root::new(pages.iter().find(|by| by.get().id == it.page)?.get()),
@@ -51,7 +51,7 @@ fn write(path: &str, contents: &[u8]) -> JsResult<()> {
 }
 
 async fn save_archive(page: &Root<Page>, path: &str) -> JsResult<()> {
-    let (markup, mut wanted) = snapshot(page.get(), Purpose::Archive)?;
+    let (markup, mut wanted) = snapshot(page.get(), Purpose::Archive).await?;
     let (boundary, url) = (
         format!("----MultipartBoundary--{}----", random_uuid()),
         page.get().url(),
@@ -116,7 +116,7 @@ async fn save_with_resources(page: &Root<Page>, path: &str) -> JsResult<()> {
     let extension = bun_paths::extension(path.as_bytes()).len();
     let folder = format!("{}_files", &path[..path.len() - extension]);
     let purpose = Purpose::Save(encode_path(files::name(&folder)));
-    let (markup, wanted) = snapshot(page.get(), purpose)?;
+    let (markup, wanted) = snapshot(page.get(), purpose).await?;
     files::or_throw(files::make_directory(&folder, 0o777))?;
     for it in wanted {
         if let Some(found) = it.by.get().fetch(&it.url, it.destination)?.await {

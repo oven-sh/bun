@@ -4,6 +4,7 @@ use std::rc::Rc;
 
 use bun_jsc::JSMap;
 use bun_ui::protocol::{SurfaceCommand, WindowCommand};
+use bun_web::channel::LooseBitmap;
 use bun_web::headers::HeaderList;
 use bun_web::host::Keystroke;
 use bun_web::input::{Action, Input, Mouse, Place};
@@ -171,9 +172,10 @@ impl Contents {
         match self.guest() {
             Some(guest) => guest.edit(command),
             None if self.is_destroyed.get() || self.has_crashed() => {}
-            None => self
-                .started_page()?
-                .tell(|it| it.edit(command.to_owned()))?,
+            None => {
+                self.started_page()?;
+                (self.page_with_keys()).tell(|it| it.edit(command.to_owned()))?;
+            }
         }
         Ok(())
     }
@@ -298,7 +300,7 @@ impl Contents {
 
     fn insert(&self, given: &[JSValue]) -> JsResult<()> {
         let text = text_at(given, 0)?;
-        self.page().tell(|it| it.insert_text(text))
+        self.page_with_keys().tell(|it| it.insert_text(text))
     }
 
     pub(crate) fn nothing(&self) {}
@@ -537,17 +539,17 @@ impl Contents {
         } else {
             referrer
         })?;
+        let is_shown = match self.guest() {
+            Some(guest) => url == guest.mirrored("url").text(),
+            None => url == self.page().url_in_history(),
+        };
         let navigation = Navigation {
             request: Rc::new(request),
             user_agent: options.user_agent.map(string),
             wants_web_engine: options.web_engine,
             base_of_data: options.base_url_for_data_url.map(string),
-            starts_over: url == self.page().url_in_history(),
-            ..Navigation::new(if url == self.page().url_in_history() {
-                How::Reload
-            } else {
-                How::Push
-            })
+            starts_over: is_shown,
+            ..Navigation::new(if is_shown { How::Reload } else { How::Push })
         };
         self.load_for_app(&url, navigation)
     }
@@ -620,8 +622,8 @@ impl Contents {
             return Ok(());
         }
         if let Some(process) = self.page().process() {
-            process.kill("killed");
-            return Ok(());
+            self.cancel_pending()?;
+            return process.end();
         }
         self.crash("killed", 2)
     }
@@ -854,8 +856,15 @@ impl Contents {
         let (Some(window), true) = (self.window(), IS_MAC) else {
             return Ok(());
         };
-        let selected = Some(self.page().ask(Controls::selection_text)?).filter(|it| !it.is_empty());
-        selected.map_or(Ok(()), |it| window.tell(WindowCommand::LookUp(it.into())))
+        let (page, window) = (Root::new(self.page_with_keys()), Root::new(window));
+        task::spawn(async move {
+            let selected = page.get().ask_later(Controls::selection_text).await;
+            task::report(selected.and_then(|it| match it.is_empty() {
+                true => Ok(()),
+                false => window.get().tell(WindowCommand::LookUp(it.into())),
+            }));
+        });
+        Ok(())
     }
 
     pub(crate) fn start_drag<'a>(&self, _: Cx<'a, '_>, item: JsLocal<'a>) -> JsResult<()> {
@@ -932,22 +941,23 @@ impl Contents {
         }
         let at = |index| argument(raw(values), index).to_number(global());
         let (x, y) = (at(0)?, at(1)?);
-        let found = self.page().ask(|it, reply| it.hit_info(x, y, reply))?;
-        let Some(url) = found.map(|it| it.src_url).filter(|it| !it.is_empty()) else {
-            return Ok(());
-        };
-        let fetched = self.page().fetch(&url, Destination::Image)?;
-        let copy = |bytes| {
-            let pixels = NativeImage::from_bytes(bytes).pixels(global())?;
-            let Some(pixels) = pixels.and_then(Rc::into_inner) else {
-                return Ok(());
-            };
+        let page = Root::new(self.page());
+        let copy = |pixels| {
             let image = NativeImage::from_pixels(pixels).to_js(global());
             invoke(bun_ui::clipboard::module(heap()), "writeImage", &[image]).map(drop)
         };
-        task::spawn(async move {
-            task::report(fetched.await.map_or(Ok(()), |it| copy(it.bytes.to_vec())));
-        });
+        let steps = async move {
+            let found = (page.get()).ask_later(|it, reply| it.hit_info(x, y, reply));
+            let Some(url) = (found.await?.map(|it| it.src_url)).filter(|it| !it.is_empty()) else {
+                return Ok(());
+            };
+            let Some(fetched) = page.get().fetch(&url, Destination::Image)?.await else {
+                return Ok(());
+            };
+            let image = page.get().decode_image(fetched.bytes.to_vec())?.await;
+            image.and_then(LooseBitmap::checked).map_or(Ok(()), copy)
+        };
+        task::spawn(async { task::report(steps.await) });
         Ok(())
     }
 
@@ -996,15 +1006,24 @@ impl Contents {
             if it.is_destroyed.get() || it.has_crashed() {
                 return Ok(());
             }
-            let found = (it.started_page()?).ask(|it, reply| it.find(text, search, reply))?;
-            let result = object!({
-                "requestId": id,
-                "activeMatchOrdinal": found.active,
-                "matches": found.matches,
-                "selectionArea": found.area,
-                "finalUpdate": true,
-            });
-            it.announce("found-in-page", &[result])
+            let (this, page) = (Root::new(it), Root::new(it.started_page()?));
+            let steps = async move {
+                let found = (page.get()).ask_later(|it, reply| it.find(text, search, reply));
+                let found = found.await?;
+                if this.get().is_destroyed.get() {
+                    return Ok(());
+                }
+                let result = object!({
+                    "requestId": id,
+                    "activeMatchOrdinal": found.active,
+                    "matches": found.matches,
+                    "selectionArea": found.area,
+                    "finalUpdate": true,
+                });
+                this.get().announce("found-in-page", &[result])
+            };
+            task::spawn(async { task::report(steps.await) });
+            Ok(())
         });
         Ok(id)
     }
@@ -1051,8 +1070,10 @@ impl Contents {
             self.related_page(id)
                 .filter(|it| same(it.owner(), self.owner()))
         };
-        match self.page().ask(Controls::focused_frame)? {
-            Focused::Itself => Ok(JSValue::UNDEFINED),
+        let page = self.page_with_keys();
+        match page.ask(Controls::focused_frame)? {
+            Focused::Itself if same(page, self.page()) => Ok(JSValue::UNDEFINED),
+            Focused::Itself => Ok(page.handle()),
             Focused::Page(id) => Ok(field(below(id).map(Page::handle))),
             Focused::Guest { page, frame } => {
                 let guest = below(page).map(|it| it.with_number(frame)).transpose()?;
@@ -1061,7 +1082,7 @@ impl Contents {
         }
     }
 
-    fn focused_page(&self) -> JsResult<&'static Page> {
+    pub(super) fn focused_page(&self) -> JsResult<&'static Page> {
         let frame = cast::<parts::WebFrameMain>(self.focused_below()?);
         Ok(frame.map_or_else(|| self.page(), parts::WebFrameMain::page))
     }
@@ -1165,7 +1186,7 @@ impl Contents {
             it.check()?;
             let origin = object_in(given.get(1).copied()).map(|it| get(it, "cssOrigin")).transpose()?;
             let is_of_user = text_if_any(field(origin))?.is_some_and(|it| it == "user");
-            resolved(it.live_page()?.insert_css(text_at(given, 0)?, is_of_user)?)
+            it.live_page()?.insert_css(text_at(given, 0)?, is_of_user)
         };
         remove_inserted_css: "removeInsertedCSS", |it, given| resolved(nothing(it.page().remove_inserted_css(argument(given, 0)))?);
         insert_text: "insertText", |it, given| resolved(nothing(it.live_page().and_then(|_| it.insert(given)))?);
@@ -1173,7 +1194,10 @@ impl Contents {
         print_to_pdf: "printToPDF", |it, given| print::print_to_pdf(it.live_page()?, wire::data_from_js(argument(given, 0))?);
         save_page: "savePage", |it, given| save::save(it.live_page()?, text_at(given, 0)?, text_at(given, 1)?);
         set_visual_zoom_level_limits: "setVisualZoomLevelLimits", |_, _| resolved(JSValue::UNDEFINED);
-        take_heap_snapshot: "takeHeapSnapshot", |_, given| {
+        take_heap_snapshot: "takeHeapSnapshot", |it, given| {
+            if it.live_page()?.is_far() {
+                return it.page().write_heap_snapshot(text_at(given, 0)?);
+            }
             match crate::process::write_heap_snapshot(&text_at(given, 0)?) {
                 true => resolved(JSValue::UNDEFINED),
                 false => Err(error(format_args!("Failed to take heap snapshot"))),
@@ -1196,13 +1220,15 @@ impl Contents {
             Deferred::new(),
         );
         let promise = result.promise();
-        let capture = move || {
+        let capture = async move {
             let it = this.get();
             it.check()?;
             if it.has_crashed() {
                 return Ok(NativeImage::from_bytes(Vec::new()).to_js(global()));
             }
-            it.started_page()?.ask(Controls::render)?;
+            let page = Root::new(it.started_page()?);
+            page.get().ask_later(Controls::render).await?;
+            it.check()?;
             let bitmap = answer((bun_ui::renderer(global())?.capture)(
                 it.surface,
                 area.into(),
@@ -1210,7 +1236,10 @@ impl Contents {
             Ok(NativeImage::from_pixels(bitmap).to_js(global()))
         };
         // The caller may be inside a frame that has yet to be painted.
-        later::soon(move |_| result.settle(capture()));
+        later::soon(move |_| {
+            task::spawn(async move { task::report(result.settle(capture.await)) });
+            Ok(())
+        });
         Ok(promise)
     }
 
@@ -1227,7 +1256,9 @@ impl Contents {
         let m = has(&["shift"])
             | has(&["control", "ctrl"]) << 1
             | has(&["alt"]) << 2
-            | has(&["meta", "command", "cmd"]) << 3;
+            | has(&["meta", "command", "cmd"]) << 3
+            | has(&["capslock"]) << 5
+            | has(&["numlock"]) << 9;
         let (x, y) = (it.x, it.y);
         let place = Place {
             window: [x, y],
@@ -1273,14 +1304,14 @@ impl Contents {
                 })
             }
             kind => {
-                let name = accelerator::parse(&string(it.key_code))?.key;
-                let [key, code] = devtools::input::describe_key(&name, m & 1 != 0);
+                let mut modifiers = m;
+                let [key, code] = accelerator::describe_key(&string(it.key_code), &mut modifiers);
                 Input::Key(Keystroke {
                     is_down: kind != b"keyUp",
                     key,
                     code,
-                    location: 0,
-                    modifiers: m,
+                    location: has(&["left"]) | (has(&["right"]) * 2) | (has(&["iskeypad"]) * 3),
+                    modifiers,
                     repeats: has(&["isautorepeat"]) != 0,
                     is_composing: false,
                 })

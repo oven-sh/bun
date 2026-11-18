@@ -195,7 +195,7 @@ fn paint(id: u32, mirror: Mirror, scale: f32) -> Option<()> {
     let layer = surface::get(mirror.surface)?
         .try_borrow()
         .ok()?
-        .render_area(mirror.outdated, scale)
+        .render_area(mirror.outdated, scale, crate::window::LONGEST_FRAME)
         .ok()?;
     VIEWS.with_borrow_mut(|views| {
         let view = views.get_mut(&id)?;

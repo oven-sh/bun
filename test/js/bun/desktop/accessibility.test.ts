@@ -38,7 +38,7 @@ describe.skipIf(!hasLibrary).concurrent("what a screen reader is told", () => {
   test("a text that is laid out in parts is read as a whole", async () => {
     expect(
       await run(`
-        await open("<style>.a::first-letter { text-transform: uppercase }</style><p class=a>just now<pre><bdi>one\\ntwo\\nthree</bdi> four</pre><div id=e contenteditable class=a>éa <b>b</b></div>");
+        await open("<style>.a::first-letter { text-transform: uppercase } .b::first-letter { float: left }</style><p class=a>just now<p class=b>drop cap<h1 class=b>name</h1><pre><bdi>one\\ntwo\\nthree</bdi> four</pre><div id=e contenteditable class=a>éa <b>b</b></div>");
         print(ask("tree root"));
         const left = range => +ask("get #e AXBoundsForRange " + range).split(" ")[0];
         print(left("0..1") < left("1..2"), left("1..2") < left("2..3"), left("2..3") < left("3..4"));`),
@@ -46,6 +46,10 @@ describe.skipIf(!hasLibrary).concurrent("what a screen reader is told", () => {
       "AXWebArea AXTitle="Title" AXFocused=true
         AXGroup
           AXStaticText AXValue="Just now"
+        AXGroup
+          AXStaticText AXValue="drop cap"
+        AXHeading AXTitle="name" AXValue=1
+          AXStaticText AXValue="name"
         AXGroup
           AXStaticText AXValue="one\\ntwo\\nthree"
           AXStaticText AXValue=" four"
@@ -940,10 +944,11 @@ describe.skipIf(!hasLibrary).concurrent("what a screen reader is told", () => {
         ask("do #d>1 AXPress");
         await until(() => ask("tree #d").includes("Today"));
         print(ask("tree #d").split("\\n").filter(it => /AXTable|Dialog|April 2020|Today|Cell.*(March [34],|Su")/.test(it)).join("\\n"));
-        const table = ask("get focus AXParent | AXParent");
+        listen();
+        heard = [];
         press("Right");
-        await until(() => ask("get focus AXTitle").includes("March 4"));
-        print(ask("get focus AXSelected"), ask("get focus AXParent | AXParent") === table);`),
+        print(...(await hear("AXSelectedRowsChanged", /Selected|Focused|Destroyed/)));
+        print(...get("focus", "AXTitle", "AXSelected", "AXParent | AXParent | AXRowCount"));`),
     ).toMatchInlineSnapshot(`
       "AXWebArea AXTitle="Title" AXFocused=true
         AXTimeField AXTitle="Start" AXDescription="Start" AXValue="09:30"
@@ -980,9 +985,25 @@ describe.skipIf(!hasLibrary).concurrent("what a screen reader is told", () => {
               AXCell AXTitle="Tuesday, March 3, 2020" AXDescription="Tuesday, March 3, 2020" AXFocused=true AXSelected=true
               AXCell AXTitle="Wednesday, March 4, 2020" AXDescription="Wednesday, March 4, 2020"
           AXButton AXTitle="Today"
-      true
-      true"
+      AXSelectedRowsChanged AXTable
+      AXFocusedUIElementChanged AXCell
+      AXTitle = "Wednesday, March 4, 2020"
+      AXSelected = true
+      AXParent | AXParent | AXRowCount = 6"
     `);
+  });
+
+  test("nothing is said about the rows of a tree that the focus has left", async () => {
+    expect(
+      await run(`
+        const page = await open('<div role=tree><div role=treeitem id=a tabindex=0>a</div></div><button id=b>b</button><p id=l aria-live=polite></p>');
+        ask("set #a AXFocused 1");
+        await hear("AXSelectedRowsChanged");
+        ask("set #b AXFocused 1");
+        await until(() => ask("get #a AXSelected") !== "true");
+        await page.executeJavaScript("l.textContent = 'end'");
+        print(...(await hear("AXLiveRegionChanged", /Selected|Focused/)));`),
+    ).toBe("AXFocusedUIElementChanged #b");
   });
 
   test("formulas", async () => {

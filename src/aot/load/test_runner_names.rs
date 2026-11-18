@@ -1,6 +1,6 @@
 use bun_ast::import_record::is_test_module;
 use bun_js_parser::Jest;
-use bun_sema::atom::{Atom, Interner, known};
+use bun_sema::atom::{Atom, Interner, NAME_IN_GLOBAL_SCOPE, known};
 use bun_sema::bind::{Binding, BindingKind, Bound, Parent};
 use bun_sema::hir::{
     BinOp, Branches, Call, Chain, ExprId, ExprKind, File, FileBuilder, Flags, IdList, Import,
@@ -32,7 +32,7 @@ const MODULE_OF_BUN: &[u8] = b"bun";
 pub(crate) fn written_name_of_local(name: &[u8]) -> &[u8] {
     match name.first() {
         Some(b'%') => written_name_of_marked_local(name),
-        _ => name,
+        _ => name.strip_prefix(NAME_IN_GLOBAL_SCOPE).unwrap_or(name),
     }
 }
 

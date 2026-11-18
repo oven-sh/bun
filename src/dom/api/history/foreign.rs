@@ -26,7 +26,7 @@ unsafe extern "C" {
 }
 
 enum Place {
-    /// As the documents of that origin see it.
+    /// In this engine, as the documents of that origin see it.
     ThisProcess(Rc<Cluster>),
     /// In the web engine: the indices of the frames that lead to it from that of an `<iframe>`.
     Frame(Box<[u32]>),
@@ -117,6 +117,45 @@ fn post(target: &Window, source: &Window, message: Message, target_origin: &[u8]
         Priority::Visible,
         Work::Once(Box::new(work)),
         &[target.to_js(), source.to_js(), sender.to_js()],
+    );
+}
+
+/// The host has checked that it is for `target`.
+pub(crate) fn deliver_from_afar(
+    target: &Window,
+    sender: u32,
+    origin: String,
+    token: String,
+    message: Message,
+) {
+    let work = move |global: &JSGlobalObject, values: &[JSValue]| {
+        let Some((target, cluster)) = Window::from_value(values[0])
+            .filter(|it| !it.is_disposed())
+            .and_then(|it| Some((it, it.cluster()?)))
+        else {
+            return Ok(());
+        };
+        let sender = Context::from_value(values[1]).map_or(JSValue::NULL, |it| {
+            it.window_for(JsHeap::from_global(global), cluster)
+        });
+        target.enter(|cx, target| {
+            for_host::deliver_message(
+                cx,
+                target.window(),
+                message,
+                DomString::from_utf8(&origin),
+                sender,
+                DomString::from_utf8(&token),
+            )
+        });
+        Ok(())
+    };
+    let sender = Context::with_id(sender).map_or(JSValue::UNDEFINED, |it| it.to_js());
+    tasks::post(
+        bun_ui::main_global(),
+        Priority::Visible,
+        Work::Once(Box::new(work)),
+        &[target.to_js(), sender],
     );
 }
 
@@ -450,10 +489,14 @@ impl ForeignWindow {
         if let Place::ThisProcess(cluster) = &self.0 {
             let source =
                 Some(self.caller(cx)).filter(|it| cluster.has(it) && !self.context().has_crashed());
-            if let Some((target, source)) =
-                source.and_then(|it| Some((self.context().started_window(it)?, it)))
-            {
-                post(target, source, message, target_origin);
+            match source.map(|it| (self.context().started_window(it), it)) {
+                Some((Some(target), source)) => post(target, source, message, target_origin),
+                Some((None, source)) if self.context().is_elsewhere() => {
+                    source
+                        .host()
+                        .post(self.context().id(), message, lossy(target_origin))
+                }
+                _ => {}
             }
         } else if !self.get_closed(cx) {
             self.tell_engine(|path| ToGuest::Post {

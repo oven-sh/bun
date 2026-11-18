@@ -305,13 +305,27 @@ pub(super) const META_STEPS: Steps = Steps {
 };
 
 pub(crate) fn take_frame_margins<'a>(cx: Cx<'_, 'a>, body: &'a Element) {
-    if !body.doc().is(DocFlags::IN_FRAME) {
-        return;
-    }
-    for name in [atom!("marginwidth"), atom!("marginheight")] {
-        let margin = crate::api::frames::container(body.doc())
-            .and_then(|it| it.attr(name))
-            .and_then(|it| parse_integer(it.to_utf8().as_bytes()));
+    let names = [atom!("marginwidth"), atom!("marginheight")];
+    let margins = match body.doc().is(DocFlags::IN_FRAME) {
+        true => names.map(|name| {
+            Some(
+                crate::api::frames::container(body.doc())?
+                    .attr(name)?
+                    .to_utf8()
+                    .into_owned(),
+            )
+        }),
+        false => {
+            let Some(apart) = crate::api::window::Window::of(body.doc())
+                .and_then(|it| Some(it.environment().container.as_ref()?.margins.clone()))
+            else {
+                return;
+            };
+            apart
+        }
+    };
+    for (name, margin) in names.into_iter().zip(margins) {
+        let margin = margin.and_then(|it| parse_integer(it.as_bytes()));
         if let Some(margin) = margin.filter(|it| *it >= 0) {
             body.set_attr(cx, name, DomString::from_integer(margin));
         }

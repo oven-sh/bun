@@ -1,11 +1,30 @@
 //! What the pages of a session store. <https://storage.spec.whatwg.org/>
 
+/// Either future is made at once.
+macro_rules! in_host_or_here {
+    ($in_host:expr, |$it:ident| $far:expr, $near:expr) => {{
+        use crate::exec::Either::{First, Second};
+        let started = match $in_host {
+            Some($it) => First($far),
+            None => Second($near),
+        };
+        async {
+            match started {
+                First(it) => it.await,
+                Second(it) => it.await,
+            }
+        }
+    }};
+}
+
+pub mod areas;
 pub mod caches;
 pub mod files;
 mod import;
 pub mod indexed;
 pub mod key;
 mod large;
+mod scripts;
 mod sql;
 mod upgrade;
 
@@ -24,6 +43,7 @@ use self::sql::{Connection, Value::*};
 use crate::Bytes;
 use crate::exec::{LocalFuture, Thread, sleep, spawn_background};
 use crate::net::cookies::Cookie;
+use crate::remote::petition;
 use crate::serial::Serial;
 
 pub const QUOTA: u64 = 1 << 36;
@@ -31,6 +51,7 @@ const DELAY_OF_AREA_CHANGES: Duration = Duration::from_millis(500);
 
 crate::wire! {
     /// Some origins, or all others.
+    #[derive(Clone)]
     pub struct Origins {
         pub listed: Vec<Bytes>,
         pub are_meant: bool,
@@ -41,6 +62,15 @@ impl Origins {
     pub fn include(&self, bucket: &[u8]) -> bool {
         let origin = strings::split_once_char(bucket, b'^').map_or(bucket, |it| it.0);
         self.listed.iter().any(|it| **it == *origin) == self.are_meant
+    }
+}
+
+crate::wire! {
+    /// A bucket, with the number that the host has for the session.
+    #[derive(Clone, PartialEq, Eq)]
+    pub struct Shelf {
+        pub session: u32,
+        pub bucket: Bytes,
     }
 }
 
@@ -56,6 +86,7 @@ bitflags::bitflags! {
 
 crate::wire! {
     /// Of `localStorage`. The strings are UTF-16LE.
+    #[derive(Clone)]
     pub enum AreaChange {
         Set { key: Bytes, value: Bytes },
         Remove { key: Bytes },
@@ -68,6 +99,7 @@ crate::wire! {
         pub of_databases: f64,
         pub of_caches: f64,
         pub of_files: f64,
+        pub of_service_workers: f64,
     }
 }
 
@@ -90,6 +122,7 @@ impl Connections {
             CREATE INDEX IF NOT EXISTS large_records ON records (tab, key, value) WHERE typeof(value) = 'text';
             CREATE TABLE IF NOT EXISTS cache_names (id INTEGER PRIMARY KEY AUTOINCREMENT, bucket TEXT, name BLOB);
             CREATE TABLE IF NOT EXISTS cached (cache INTEGER, url TEXT, request BLOB, response BLOB, body BLOB);
+            CREATE TABLE IF NOT EXISTS scripts (id INTEGER PRIMARY KEY, bucket TEXT, value BLOB);
             CREATE INDEX IF NOT EXISTS cached_by_url ON cached (cache, url);
             DELETE FROM cached WHERE cache IN (SELECT id FROM cache_names WHERE name IS NULL);
             DELETE FROM cache_names WHERE name IS NULL;",
@@ -143,6 +176,8 @@ fn durably<R>(
 }
 
 pub struct Storage {
+    /// In a page process: the session in the host, which has the real one.
+    far: Option<u32>,
     directory: Option<Bytes>,
     main: Thread,
     connections: OnceLock<sql::Result<Connections>>,
@@ -159,7 +194,23 @@ pub struct Storage {
 impl Storage {
     /// On the main thread. Without a directory, nothing outlasts the program.
     pub fn new(directory: Option<&[u8]>) -> Arc<Storage> {
+        Storage::make(None, directory)
+    }
+
+    pub(crate) fn far(session: u32) -> Arc<Storage> {
+        Storage::make(Some(session), None)
+    }
+
+    pub fn far_shelf(&self, bucket: &[u8]) -> Option<Shelf> {
+        self.far.map(|session| Shelf {
+            session,
+            bucket: bucket.into(),
+        })
+    }
+
+    fn make(far: Option<u32>, directory: Option<&[u8]>) -> Arc<Storage> {
         Arc::new(Storage {
+            far,
             directory: directory.map(Bytes::from),
             main: Thread::current(),
             connections: OnceLock::new(),
@@ -323,10 +374,16 @@ impl Storage {
 
     /// Nothing is ever evicted, so this is only what scripts are told.
     pub fn is_persisted(&self, bucket: &[u8]) -> bool {
+        if let Some(shelf) = self.far_shelf(bucket) {
+            return petition::is_persisted(shelf).is_some_and(|it| it.0);
+        }
         self.persisted.lock().iter().any(|it| **it == *bucket)
     }
 
     pub fn persist(&self, bucket: &[u8]) {
+        if let Some(shelf) = self.far_shelf(bucket) {
+            return petition::persist(shelf);
+        }
         if !self.is_persisted(bucket) {
             self.persisted.lock().push(bucket.into());
         }
@@ -379,22 +436,33 @@ impl Storage {
         }));
     }
 
-    pub fn database(self: &Arc<Self>, bucket: &[u8], name: Key) -> Arc<Database> {
+    pub fn database(self: &Arc<Self>, bucket: &[u8], name: Key) -> indexed::either::Database {
+        match self.far_shelf(bucket) {
+            Some(shelf) => indexed::either::Database::Far(shelf, name),
+            None => indexed::either::Database::Near(self.near_database(bucket, name)),
+        }
+    }
+
+    pub(crate) fn near_database(self: &Arc<Self>, bucket: &[u8], name: Key) -> Arc<Database> {
         let mut databases = self.databases.lock();
         databases.retain(|it| it.strong_count() > 0);
-        databases
-            .iter()
-            .filter_map(Weak::upgrade)
-            .find(|it| *it.bucket == *bucket && it.name == name)
-            .unwrap_or_else(|| {
-                let database = Arc::new(Database::new(Arc::clone(self), bucket, name));
-                databases.push(Arc::downgrade(&database));
-                database
-            })
+        let of_bucket =
+            || (databases.iter().filter_map(Weak::upgrade)).filter(|it| *it.bucket == *bucket);
+        if let Some(found) = of_bucket().find(|it| it.name == name) {
+            return found;
+        }
+        let sibling = of_bucket().next();
+        let database = Database::new(Arc::clone(self), bucket, name, sibling.as_deref());
+        let database = Arc::new(database);
+        databases.push(Arc::downgrade(&database));
+        database
     }
 
     /// Their names and versions.
     pub async fn databases(self: Arc<Self>, bucket: Vec<u8>) -> sql::Result<Vec<(Key, u64)>> {
+        if let Some(shelf) = self.far_shelf(&bucket) {
+            return SqlError::unless(petition::databases(shelf)).await;
+        }
         self.write(move |sql| {
             sql.all(
                 "SELECT name, version FROM databases WHERE bucket = ?",
@@ -406,6 +474,9 @@ impl Storage {
     }
 
     pub async fn usage(self: Arc<Self>, bucket: Vec<u8>) -> sql::Result<Usage> {
+        if let Some(shelf) = self.far_shelf(&bucket) {
+            return SqlError::unless(petition::usage(shelf)).await;
+        }
         let this = Arc::clone(&self);
         let measure = move |sql: &mut Connection| {
             let mut sum = |query| {
@@ -419,7 +490,11 @@ impl Storage {
                     "SELECT total(length(name) + length(stores)) FROM databases WHERE bucket = ?",
                 )?,
                 of_caches: sum(
-                    "SELECT total(length(request) + length(response) + ifnull(length(body), 0)) FROM cached JOIN cache_names ON id = cache WHERE bucket = ?",
+                    // The size of an opaque response is a secret.
+                    "SELECT total(length(request) + iif(substr(response, 5, 6) = CAST('opaque' AS BLOB), 7 << 20, length(response) + ifnull(length(body), 0))) FROM cached JOIN cache_names ON id = cache WHERE bucket = ?",
+                )?,
+                of_service_workers: sum(
+                    "SELECT total(length(value)) FROM scripts WHERE bucket = ?",
                 )?,
                 of_files: this.size_of_files(&bucket) as f64,
             })

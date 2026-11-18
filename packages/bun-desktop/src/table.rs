@@ -2,7 +2,7 @@
 
 use std::cell::RefCell;
 use std::mem::MaybeUninit;
-use std::os::fd::{FromRawFd as _, OwnedFd};
+use std::os::fd::BorrowedFd;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::thread::LocalKey;
 use std::time::{Duration, Instant};
@@ -12,7 +12,7 @@ use crate::codec::Rgba;
 use crate::error::{Context as _, Result};
 use crate::host::{self, platform, thread};
 use crate::protocol::*;
-use crate::remote::{guest, pages};
+use crate::remote::{guest, pages, sandbox};
 use crate::{app, bridge, cover, guard, images, surface, text, webview};
 
 fn here<T>(work: impl FnOnce() -> Result<T>) -> Outcome<T> {
@@ -140,26 +140,40 @@ unsafe extern "C" fn drain(events: *mut Event, capacity: usize) -> usize {
         guest::take_events();
     }
     // SAFETY: the caller's contract.
-    bridge::drain(unsafe {
+    let count = bridge::drain(unsafe {
         std::slice::from_raw_parts_mut(events.cast::<MaybeUninit<Event>>(), capacity)
-    })
+    });
+    // What a page has painted comes before what it has said since.
+    thread::run_jobs_of_outsiders();
+    count
 }
 
-unsafe extern "C" fn send(to: u32, lane: Lane, bytes: *const u8, length: usize, descriptor: i32) {
+unsafe extern "C" fn send(to: u32, lane: Lane, bytes: *const u8, length: usize) {
     // SAFETY: the caller's contract.
-    let (bytes, descriptor) = unsafe {
-        (
-            crate::borrow(bytes, length),
-            (descriptor >= 0).then(|| OwnedFd::from_raw_fd(descriptor)),
-        )
-    };
+    let bytes = unsafe { crate::borrow(bytes, length) };
     guard("error", (), || {
         if guest::is_on() {
             guest::send(bytes, lane == Lane::Scripts)
         } else {
-            pages::send(to, lane, bytes, descriptor)
+            pages::send(to, lane, bytes)
         }
     });
+}
+
+unsafe extern "C" fn petition(bytes: *const u8, length: usize, is_answered: bool) -> Ruling {
+    // SAFETY: the caller's contract.
+    guest::petition(unsafe { crate::borrow(bytes, length) }, is_answered)
+}
+
+unsafe extern "C" fn rule(to: u32, bytes: *const u8, length: usize, descriptor: i32) {
+    // SAFETY: the caller's contract.
+    let (bytes, descriptor) = unsafe {
+        (
+            crate::borrow(bytes, length),
+            (descriptor >= 0).then(|| BorrowedFd::borrow_raw(descriptor)),
+        )
+    };
+    pages::rule(to, bytes, descriptor);
 }
 
 unsafe extern "C" fn decode_bitmap(bytes: *const u8, length: usize) -> Outcome<Bitmap> {
@@ -217,13 +231,21 @@ static UI: Ui = Ui {
     present: function!(|| -> () { guard("fatal", (), host::events_were_handled) }),
     hold: function!(|| -> () { thread::hold_jobs() }),
 
+    prepare_sandbox: function!(|| -> () { sandbox::prepare() }),
+    enter_sandbox: function!(|generates_code: bool| -> bool { sandbox::enter(generates_code) }),
     become_page_process: function!(|| -> () { guest::connect() }),
-    open_page_process: function!(here || -> PageProcess { pages::open()? }),
+    open_page_process: function!(here |is_trusted: bool| -> PageProcess { pages::open(is_trusted)? }),
     tell_page_process: function!(|id: u32, command: PageCommand| -> () {
         guard("error", (), || pages::command(id, command))
     }),
     send,
     receive: function!(|| -> Message { guest::receive_elsewhere() }),
+    times_outdated: function!(|| -> u32 { guest::times_outdated() }),
+    petition,
+    next_petition: function!(|from: u32| -> List<u8> {
+        pages::next_petition(from).unwrap_or_default().into()
+    }),
+    rule,
 
     window_geometry: function!(|window: u32| -> Outcome<Geometry> {
         ask_once(&GEOMETRIES, window, true, move || {

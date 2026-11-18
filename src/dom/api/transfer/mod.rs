@@ -90,7 +90,9 @@ impl FileList {
     ) -> bindgen::Result<'a, &'a FileList> {
         Ok(FileList::new(
             &cx.heap,
-            List::from_script(&cx.heap, clone.to_js()).values(),
+            List::from_script(&cx.heap, clone.to_js())
+                .values()
+                .filter(|it| crate::api::ui::host::type_of_file(*it).is_some()),
         ))
     }
 }

@@ -148,6 +148,8 @@ export const RendererProcess = b.interface("RendererProcess", {
     emitWarning: { args: { warning: b.DOMString }, rustName: "warn", ...js },
     uptime: { returns: b.f64, capability: "js" },
     cwd: { returns: b.string.utf8 },
+    crash: js,
+    hang: js,
     getBlinkMemoryInfo: returnsObject,
     getCPUUsage: { rustName: "get_cpu_usage", ...returnsObject },
     getCreationTime: { returns: b.f64 },

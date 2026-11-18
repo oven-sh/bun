@@ -39,6 +39,7 @@ fn check_source<'a>(cx: Cx<'_, 'a>, source: Option<JsLocal<'a, JSObject>>) -> Re
         return Ok(JSValue::ZERO);
     };
     if MessagePort::is(source)
+        || crate::api::service_workers::ServiceWorker::is(source)
         || WindowTarget::of(&cx.heap, source).is_some()
         || source.js_type() == bun_jsc::JSType::GlobalProxy
     {
@@ -408,15 +409,16 @@ impl BroadcastChannel {
             .as_ref()
             .map(|it| DomString::from_latin1(it.origin().as_bytes()))
             .unwrap_or_default();
-        let key = |partition: Vec<u8>| {
-            partition
-                .into_iter()
-                .chain(*b"\n")
-                .chain(name.units().flat_map(u16::to_le_bytes))
-                .collect()
-        };
         let joined = client
-            .map(|it| hold(&cx.heap, Broadcast::join(key(it.partition_key()))))
+            .map(|it| {
+                hold(
+                    &cx.heap,
+                    Broadcast::join(
+                        &it,
+                        &name.units().flat_map(u16::to_le_bytes).collect::<Vec<_>>(),
+                    ),
+                )
+            })
             .unwrap_or_default();
         let this = structure.create(
             &cx.heap,

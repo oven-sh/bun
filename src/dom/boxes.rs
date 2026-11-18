@@ -63,7 +63,7 @@ pub(crate) struct LayoutBox {
     pub(crate) mode: WritingMode,
     pub(crate) turned: WritingMode,
     pub(crate) has_turned_children: bool,
-    /// Nothing but its style and its children decides on its size.
+    /// Nothing but its style, its children and `shrinks_to_fit` decides on its size.
     pub(crate) is_ordinary: bool,
     /// Its first child is the rendered legend of a fieldset.
     pub(crate) has_legend: bool,
@@ -118,6 +118,10 @@ pub(crate) struct LayoutBox {
     pub(crate) is_foreign_object: bool,
     /// In the intrinsic widths of a table.
     pub(crate) ignores_column_percentages: bool,
+    /// A cell that may take more than one column or row.
+    pub(crate) may_span: bool,
+    /// It has another transform than in the last picture.
+    pub(crate) is_moving: Cell<bool>,
 }
 
 const _: () = assert!(size_of::<LayoutBox>() <= 384);
@@ -208,6 +212,26 @@ impl core::ops::DerefMut for LayoutBox {
     }
 }
 
+/// What ordinary elements that have the same tag and the same style come to in horizontal parents.
+#[derive(Clone, Copy)]
+struct Mould {
+    tag: Name,
+    kind: Option<Kind>,
+    ratio: Option<f32>,
+    uses_parent: [bool; 2],
+    shrinks_to_fit: bool,
+    joins_formatting_context: bool,
+    is_ordinary: bool,
+}
+
+impl Mould {
+    #[inline(always)]
+    fn slot(tag: Name, style: &Rc<Style>) -> usize {
+        (((Rc::as_ptr(style).addr() as u64 ^ tag.bits()).wrapping_mul(0x9e37_79b9_7f4a_7c15)) >> 59)
+            as usize
+    }
+}
+
 pub(crate) struct Boxes {
     boxes: Vec<LayoutBox>,
     free: crate::tree::FreeList,
@@ -231,6 +255,8 @@ pub(crate) struct Boxes {
     pub(crate) styled_first: RefCell<Set<NodeId>>,
     /// Some styles with that of an anonymous child, while boxes are built.
     anonymous_styles: [Option<[Rc<Style>; 2]>; 32],
+    moulds: [Option<(Rc<Style>, Mould)>; 32],
+    has_built: bool,
     /// Those whose contents have changed.
     pub(crate) stale: Vec<BoxId>,
     pub(crate) parked: Map<BoxId, crate::lock::Parked>,
@@ -279,6 +305,20 @@ impl core::ops::IndexMut<BoxId> for Boxes {
 }
 
 impl LayoutBox {
+    fn update_is_ordinary(&mut self, is_host_of_controls: bool) {
+        self.is_ordinary = matches!(self.kind, Kind::Block | Kind::Flex | Kind::Grid)
+            && self.ratio.is_none()
+            && self.mode == WritingMode::HorizontalTb
+            && !(self.shrinks_to_fit && self.tag != name!("button")
+                || self.changes_mode
+                || self.fills_parent
+                || self.passes_height
+                || is_host_of_controls
+                || self.style.look.is_checkable())
+            && !self.overflow.contains(&Overflow::Auto)
+            && self.scrollbars == [false; 2];
+    }
+
     #[inline(always)]
     fn new(kind: Kind, node: NodeId, style: Rc<Style>) -> LayoutBox {
         LayoutBox {
@@ -321,8 +361,10 @@ impl LayoutBox {
             parent_kind: Kind::Block,
             is_skipped: false,
             is_parking: false,
+            may_span: false,
             is_foreign_object: false,
             ignores_column_percentages: false,
+            is_moving: Cell::new(false),
             ink: Extent::default(),
             painted: Default::default(),
             reach: Extent::default(),
@@ -481,6 +523,8 @@ impl Boxes {
             boxes: vec![new(Kind::Free, 0), new(Kind::Block, DOCUMENT)],
             free: Default::default(),
             anonymous_styles: Default::default(),
+            moulds: Default::default(),
+            has_built: false,
             stale: Vec::new(),
             parked: Map::default(),
             parked_stale: Vec::new(),
@@ -717,6 +761,14 @@ impl Boxes {
         }
     }
 
+    #[inline(always)]
+    pub(crate) fn prefetch_start_after(&self, id: BoxId) {
+        if let Some(it) = self.boxes.get(id as usize + 8) {
+            crate::forecast::prefetch(it);
+            crate::forecast::prefetch(&it.may_span);
+        }
+    }
+
     /// What tells whether it is in sight.
     #[inline(always)]
     pub(crate) fn prefetch_extent(&self, id: BoxId) {
@@ -742,10 +794,14 @@ impl Boxes {
 
     /// Its style has changed.
     pub(crate) fn mark_layout(&mut self, id: BoxId) {
+        self.mark_layout_with(id, false);
+    }
+
+    pub(crate) fn mark_layout_with(&mut self, id: BoxId, keeps_static_position: bool) {
         self.note_new_part(id);
         let it = &mut self[id];
         let is_apart = it.style.is_out_of_flow()
-            && it.has_insets()
+            && (keeps_static_position || it.has_insets())
             && it.cache.is_current()
             && !it.cache.has_escapees();
         if it.has_anonymous_children {
@@ -765,6 +821,25 @@ impl Boxes {
         if self[changed].cache.make_stale() {
             self.stale.push(changed);
         }
+    }
+
+    /// For `styled_height_of_cell_around`.
+    pub(crate) fn forget_replaced_in_cell(&mut self, id: BoxId) -> bool {
+        let mut has_some = false;
+        for index in 0..self[id].children.len() {
+            let child = self[id].children[index];
+            if self[child].uses_parent[1]
+                && (self[child].is_replaced()
+                    || self[child].node == 0 && self.forget_replaced_in_cell(child))
+            {
+                self[child].cache.clear();
+                has_some = true;
+            }
+        }
+        if has_some {
+            self[id].cache.clear();
+        }
+        has_some
     }
 
     pub(crate) fn note_new_part(&mut self, id: BoxId) {
@@ -841,7 +916,7 @@ impl Boxes {
     }
 
     /// It is somewhere else, and that is all.
-    pub(crate) fn mark_moved(&self, id: BoxId) {
+    pub(crate) fn mark_moved(&self, id: BoxId, repaints: bool) {
         let mut at = self[id].parent;
         while at != 0 {
             let it = &self[at];
@@ -851,11 +926,15 @@ impl Boxes {
             [&it.ink, &it.reach, &it.spread]
                 .into_iter()
                 .for_each(Extent::forget);
-            it.painted.forget();
+            if repaints {
+                it.painted.forget();
+            }
             it.painted.was_laid_out.update(|it| it || at != VIEWPORT);
             at = it.parent;
         }
-        self.note_change(id);
+        if repaints {
+            self.note_change(id);
+        }
     }
 
     pub(crate) fn note_change(&self, id: BoxId) {
@@ -1601,11 +1680,19 @@ impl Document {
                     && known.font_id == outer.font_id
                     && known.is_visible() == outer.is_visible()
         };
-        let style = match &self.boxes.anonymous_styles[slot] {
-            Some([known, style]) if does(known) && style.display() == display => Rc::clone(style),
-            _ => {
+        let known = [slot, slot ^ 1].into_iter().find_map(|it| {
+            self.boxes.anonymous_styles[it]
+                .as_ref()
+                .filter(|[known, style]| does(known) && style.display() == display)
+        });
+        let style = match known {
+            Some([_, style]) => Rc::clone(style),
+            None => {
                 let style = self.anonymous_style(outer, display);
-                self.boxes.anonymous_styles[slot] = Some([Rc::clone(outer), Rc::clone(&style)]);
+                let new = [Rc::clone(outer), Rc::clone(&style)];
+                self.boxes.anonymous_styles[slot ^ 1] =
+                    self.boxes.anonymous_styles[slot].replace(new);
+                self.boxes.has_built = true;
                 style
             }
         };
@@ -1669,14 +1756,186 @@ impl Document {
         self.tree[id].layout_box = new;
         self.adopt(parent, new);
         self.boxes[new].has_first_line = has_first_line;
-        self.update_box_style(new);
+        let fits_mould = parent != VIEWPORT
+            && self.boxes[parent].mode == WritingMode::HorizontalTb
+            && self.boxes[parent].kind != Kind::Svg;
+        match self
+            .mould(id, &self.boxes[new].style)
+            .filter(|it| fits_mould && it.kind == Some(kind))
+        {
+            Some(mould) => {
+                self.boxes.note_new_part(new);
+                self.boxes[new].may_span = self.may_span(new);
+                let it = &mut self.boxes[new];
+                (it.tag, it.ratio, it.uses_parent) = (mould.tag, mould.ratio, mould.uses_parent);
+                (
+                    it.shrinks_to_fit,
+                    it.joins_formatting_context,
+                    it.is_ordinary,
+                ) = (
+                    mould.shrinks_to_fit,
+                    mould.joins_formatting_context,
+                    mould.is_ordinary,
+                );
+                self.boxes.announce_floats(new);
+            }
+            None => {
+                self.update_box_style(new);
+                let it = &self.boxes[new];
+                let (
+                    l,
+                    LayoutBox {
+                        tag,
+                        ratio,
+                        uses_parent,
+                        shrinks_to_fit,
+                        joins_formatting_context,
+                        is_ordinary,
+                        ..
+                    },
+                ) = (&it.style.layout, it);
+                if fits_mould
+                    && matches!(kind, Kind::Block | Kind::Flex | Kind::Grid | Kind::Row)
+                    && [it.mode, it.style.text.writing_mode] == [WritingMode::HorizontalTb; 2]
+                    && it.overflow == [l.overflow_x, l.overflow_y]
+                    && !it
+                        .overflow
+                        .iter()
+                        .any(|it| matches!(it, Overflow::Scroll | Overflow::Auto))
+                    && l.scrollbar_gutter.is_empty()
+                    && !is_name!(*tag, "body" | "legend")
+                    && self.environment.quirks != Quirks::All
+                    && self.kind_of(id, &it.style) == Some(kind)
+                {
+                    let mould = Mould {
+                        tag: *tag,
+                        kind: Some(kind),
+                        ratio: *ratio,
+                        uses_parent: *uses_parent,
+                        shrinks_to_fit: *shrinks_to_fit,
+                        joins_formatting_context: *joins_formatting_context,
+                        is_ordinary: *is_ordinary,
+                    };
+                    self.keep_mould(id, Rc::clone(&it.style), mould);
+                }
+            }
+        }
         self.build_children(new);
         new
+    }
+
+    #[inline(always)]
+    fn may_span(&self, id: BoxId) -> bool {
+        let spans = |it: &crate::tree::Element| {
+            it.namespace != Namespace::Html
+                || it
+                    .attributes
+                    .iter()
+                    .any(|it| is_name!(it.name, "colspan" | "rowspan"))
+        };
+        self.boxes[id].parent_kind == Kind::Row
+            && self.tree.element(self.boxes[id].node).is_some_and(spans)
+    }
+
+    #[inline(always)]
+    fn mould(&self, id: NodeId, style: &Rc<Style>) -> Option<Mould> {
+        let tag = self.tree.element(id).filter(|it| it.is_ordinary())?.tag;
+        self.boxes.moulds[Mould::slot(tag, style)]
+            .as_ref()
+            .filter(|it| Rc::ptr_eq(&it.0, style) && it.1.tag == tag)
+            .map(|it| it.1)
+    }
+
+    fn keep_mould(&mut self, id: NodeId, style: Rc<Style>, mould: Mould) {
+        if self.tree.element(id).is_some_and(|it| it.is_ordinary()) {
+            let slot = Mould::slot(mould.tag, &style);
+            (self.boxes.moulds[slot], self.boxes.has_built) = (Some((style, mould)), true);
+        }
+    }
+
+    /// `kind_of` while boxes are built.
+    #[inline(always)]
+    fn kind_to_build(&mut self, id: NodeId, style: &Rc<Style>) -> Option<Kind> {
+        if let Some(mould) = self.mould(id, style) {
+            return mould.kind;
+        }
+        let kind = self.kind_of(id, style);
+        if kind.is_none() {
+            let mould = Mould {
+                tag: self.tree.html_tag(id),
+                kind,
+                ratio: None,
+                uses_parent: [false; 2],
+                shrinks_to_fit: false,
+                joins_formatting_context: false,
+                is_ordinary: false,
+            };
+            self.keep_mould(id, Rc::clone(style), mould);
+        }
+        kind
+    }
+
+    /// For a box without children whose element has none either, or nothing but words.
+    #[inline(always)]
+    fn fill_leaf(
+        &mut self,
+        id: BoxId,
+        node: NodeId,
+        style: &Rc<Style>,
+        replaced: usize,
+    ) -> Option<()> {
+        let (it, first) = (&self.boxes[id], self.tree[node].first_child);
+        let element = self.tree.element(node)?;
+        (self.tree[first].next == 0
+            && matches!(it.kind, Kind::Block | Kind::Flex | Kind::Grid)
+            && element.is_ordinary()
+            && element.generated == [0; 4]
+            && element.tag != name!("fieldset")
+            && !self.tree[node].has(Flags::REDIRECTS_CHILDREN)
+            && it.depth < MAX_DEPTH
+            && self.carousels.is_empty()
+            && self.deep_lists.is_empty())
+        .then_some(())?;
+        if first == 0 {
+            (!style.is_editable()).then_some(())?;
+        } else {
+            (self.boxes.styles_first == [false; 2]
+                && style
+                    .fixed()
+                    .traits
+                    .contains(crate::layout::Traits::WRITES_PLAINLY))
+            .then_some(())?;
+            let text = self.tree[first].stored_text()?;
+            let former = self
+                .boxes
+                .replaced_lines
+                .get(replaced)
+                .map(|it| &self.boxes[it[1]]);
+            (!former.is_some_and(|it| {
+                it.inline
+                    .as_ref()
+                    .is_some_and(|inline| inline.may_go_on_as(text, &it.style, style))
+            }))
+            .then_some(())?;
+            let inline = Inline::of_words(self, first, text, style)?;
+            let lines = self.anonymous(id, Kind::Lines, Display::Block);
+            self.tree[first].layout_box = lines;
+            let it = &mut self.boxes[lines];
+            it.uses_parent[1] = false;
+            if let Some(widths) = inline.widths_of_label(&it.style) {
+                it.cache.note_widths(widths);
+            }
+            it.inline = Some(inline);
+            self.boxes[id].children.push(lines);
+        }
+        self.boxes[id].splits_layers = false;
+        Some(())
     }
 
     /// After `style` has changed in a way that layout sees.
     pub(crate) fn update_box_style(&mut self, id: BoxId) {
         self.boxes.note_new_part(id);
+        self.boxes[id].may_span = self.may_span(id);
         let (node, style) = (self.boxes[id].node, Rc::clone(&self.boxes[id].style));
         let tag = self.tree.html_tag(node);
         let mut overflow = [style.layout.overflow_x, style.layout.overflow_y];
@@ -1807,17 +2066,7 @@ impl Document {
             && style.layout.align_content == Align::NORMAL
             && !style.contain().intersects(Contain::LAYOUT | Contain::PAINT)
             && !style.queried_axes().contains(&true);
-        it.is_ordinary = matches!(it.kind, Kind::Block | Kind::Flex | Kind::Grid)
-            && it.ratio.is_none()
-            && it.mode == WritingMode::HorizontalTb
-            && !(it.shrinks_to_fit
-                || it.changes_mode
-                || it.fills_parent
-                || it.passes_height
-                || is_host_of_controls
-                || style.look.is_checkable())
-            && !overflow.contains(&Overflow::Auto)
-            && it.scrollbars == [false; 2];
+        it.update_is_ordinary(is_host_of_controls);
         self.boxes.announce_floats(id);
         let it = &mut self.boxes[id];
         if it.anchored.is_some() && !self.anchored.contains_key(&node) {
@@ -1941,6 +2190,7 @@ impl Document {
         self.boxes.tell_bereaved();
         let had_annotations = self.boxes.has_annotations;
         self.boxes.are_being_built = true;
+        self.words_built.set(0);
         self.boxes.had_styles_first = self.boxes.styles_first != [false; 2];
         self.boxes.styles_first =
             [Pseudo::FirstLine, Pseudo::FirstLetter].map(|it| self.has_rules_for(it));
@@ -1961,11 +2211,10 @@ impl Document {
             marked.order_by_cached_key(|it| self.tree.flat_ancestors(*it).count());
             marked.into_iter().for_each(|it| self.rebuild_below(it));
         }
-        (
-            self.boxes.anonymous_styles,
-            self.boxes.are_being_built,
-            self.boxes.spare_builder,
-        ) = Default::default();
+        (self.boxes.are_being_built, self.boxes.spare_builder) = Default::default();
+        if core::mem::take(&mut self.boxes.has_built) {
+            (self.boxes.anonymous_styles, self.boxes.moulds) = Default::default();
+        }
         self.boxes.edited.clear();
         if self.boxes.has_annotations != had_annotations {
             self.boxes
@@ -2059,6 +2308,9 @@ impl Document {
     }
 
     fn orphan_children(&mut self, id: BoxId) {
+        if self.boxes[id].children.is_empty() && self.boxes[id].outside_marker == 0 {
+            return;
+        }
         let marker = core::mem::take(&mut self.boxes[id].outside_marker);
         let children = core::mem::take(&mut self.boxes[id].children);
         self.boxes.has_lost_out_of_flow |=
@@ -2095,6 +2347,10 @@ impl Document {
             self.boxes[id].has_anonymous_children,
         ) = (false, false);
         self.orphan_children(id);
+        if self.fill_leaf(id, node, &style, replaced).is_some() {
+            self.boxes.replaced_lines.truncate(replaced);
+            return self.destroy_doomed(mark);
+        }
         if !self.boxes[id].is_replaced() && self.boxes[id].depth < MAX_DEPTH {
             let mut children = Gathered::new();
             self.gather(node, &style, &mut children);
@@ -2212,6 +2468,9 @@ impl Document {
     }
 
     fn destroy_doomed(&mut self, mark: usize) {
+        if self.doomed.len() == mark {
+            return;
+        }
         for doomed in self.doomed.split_off(mark) {
             if self.boxes[doomed].parent == 0 && self.boxes[doomed].kind != Kind::Free {
                 self.destroy_box(doomed);
@@ -2605,7 +2864,7 @@ impl Document {
                 }
                 Child::Element(id, style) => (*id, style),
             };
-            let Some(kind) = self.kind_of(id, style) else {
+            let Some(kind) = self.kind_to_build(id, style) else {
                 self.add_inline(siblings, id, style);
                 continue;
             };
@@ -2782,7 +3041,7 @@ impl Document {
                     (0, 1)
                 }
                 Child::Element(node, style) if belongs(self, first) => {
-                    let kind = self.kind_of(*node, style).unwrap_or(Kind::Block);
+                    let kind = self.kind_to_build(*node, style).unwrap_or(Kind::Block);
                     (self.box_for(id, *node, kind, style), 1)
                 }
                 _ => {

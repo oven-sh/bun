@@ -1,4 +1,5 @@
 use core::num::NonZeroUsize;
+use core::ops::Range;
 
 use crate::engine::{ExecutableIdentity, TargetImageForm};
 use bun_ast::Loader;
@@ -44,6 +45,14 @@ impl core::fmt::Debug for PathFilter {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImportOfPage {
+    pub importer: Vec<u8>,
+    pub specifier: Vec<u8>,
+    /// `None`: the page finds it when it runs.
+    pub file: Option<Vec<u8>>,
+}
+
 #[derive(Clone, Debug)]
 pub struct LoadOptions {
     pub project_root: Vec<u8>,
@@ -53,6 +62,13 @@ pub struct LoadOptions {
     pub react_compiler_filter: Option<PathFilter>,
     pub in_memory_files: Vec<(Vec<u8>, Vec<u8>)>,
     pub in_memory_file_keys: Vec<(Vec<u8>, Vec<u8>)>,
+    /// Places in `Options::entry_points`.
+    pub scripts_of_pages: Range<usize>,
+    /// The file, and the one of `in_memory_files` that stands for it.
+    pub classic_scripts: Vec<(Vec<u8>, Vec<u8>)>,
+    /// They mean what they mean to a browser.
+    pub modules_of_pages: Vec<Vec<u8>>,
+    pub imports_of_pages: Vec<ImportOfPage>,
     pub entry_texts: Vec<EntryText>,
     pub omits_builtin_modules: bool,
     pub runs_tests: bool,
@@ -119,6 +135,10 @@ impl LoadOptions {
             react_compiler_filter: None,
             in_memory_files: Vec::new(),
             in_memory_file_keys: Vec::new(),
+            scripts_of_pages: 0..0,
+            classic_scripts: Vec::new(),
+            modules_of_pages: Vec::new(),
+            imports_of_pages: Vec::new(),
             entry_texts: Vec::new(),
             omits_builtin_modules: false,
             runs_tests: false,

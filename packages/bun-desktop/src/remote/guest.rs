@@ -1,11 +1,10 @@
 //! In the process of a page.
 
 use std::cell::Cell;
-use std::collections::VecDeque;
 use std::os::fd::{AsRawFd as _, FromRawFd as _, IntoRawFd as _, OwnedFd};
 use std::os::unix::net::UnixStream;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use super::ring::{Consumer, Producer, Shared};
@@ -22,7 +21,8 @@ use crate::images::{self, Exported};
 use crate::motion::Tables;
 use crate::paint::scene::{Scene, copy};
 use crate::protocol::{
-    Command, Event, Input, Maybe, Message, SOCKET_TO_PARENT, SurfaceCommand, WebViewCommand,
+    Command, Event, Input, Lane, Maybe, Message, Ruling, SOCKET_TO_PARENT, SurfaceCommand,
+    WebViewCommand,
 };
 use crate::sync::Mutex;
 use crate::text::{self, Origin};
@@ -40,7 +40,6 @@ struct Up {
 struct Down {
     ring: Consumer,
     bell: UnixStream,
-    descriptors: VecDeque<OwnedFd>,
     header: Option<Header>,
     /// What has arrived of the header, or of what follows it.
     bytes: Vec<u8>,
@@ -52,9 +51,11 @@ struct Host {
     bell: UnixStream,
     room: UnixStream,
     answers: Mutex<UnixStream>,
+    petitions: Mutex<UnixStream>,
     pixels: Mutex<UnixStream>,
     down: [Mutex<Down>; 2],
     epoch: Instant,
+    shared: Arc<Shared>,
 }
 
 static IS_ON: AtomicBool = AtomicBool::new(false);
@@ -88,15 +89,14 @@ pub fn connect() {
     let connect = || {
         bell.set_nonblocking(false).ok()?;
         let next = || receive(&bell, &mut [0], 0).ok()?;
-        let [memory, other_bell, room, answers, pixels] =
-            [next()?, next()?, next()?, next()?, next()?];
+        let [memory, other_bell, room, answers, pixels, petitions] =
+            [next()?, next()?, next()?, next()?, next()?, next()?];
         let (shared, epoch) = (Shared::map(&memory)?, Reader(&bell).get::<u64>()?);
         let down = |lane: usize, bell| {
             let ring = Consumer::new(&shared, DOWN[lane]);
             Mutex::new(Down {
                 ring,
                 bell,
-                descriptors: VecDeque::new(),
                 header: None,
                 bytes: Vec::new(),
                 told: [0; 2],
@@ -119,9 +119,11 @@ pub fn connect() {
             ],
             room: room.into(),
             answers: Mutex::new(answers.into()),
+            petitions: Mutex::new(petitions.into()),
             pixels: Mutex::new(pixels),
             epoch: Instant::now() - Duration::from_nanos(clock().saturating_sub(epoch)),
             bell,
+            shared: shared.clone(),
         });
         std::thread::Builder::new()
             .name("pixels".into())
@@ -133,6 +135,10 @@ pub fn connect() {
         host_is_gone();
     }
     IS_ON.store(true, Ordering::Relaxed);
+}
+
+pub fn times_outdated() -> u32 {
+    host().shared.times_outdated().load(Ordering::SeqCst)
 }
 
 /// That of the host.
@@ -545,6 +551,18 @@ pub struct Answer {
 }
 
 impl Answer {
+    fn from(socket: &UnixStream) -> Answer {
+        let answer = || {
+            let descriptor = receive(socket, &mut [0], 0).ok()?;
+            Some(Answer {
+                descriptor,
+                bytes: Reader(socket).list(usize::MAX)?,
+                at: 0,
+            })
+        };
+        answer().unwrap_or_else(|| host_is_gone())
+    }
+
     fn get<T: Valid>(&mut self) -> Option<T> {
         let value = Reader(self.bytes.get(self.at..)?).get();
         self.at += size_of::<T>();
@@ -562,15 +580,31 @@ fn ask(question: Asked, numbers: [u32; 2], lists: [&[u8]; 2]) -> Answer {
         .list(lists[0])
         .list(lists[1])
         .flush();
-    let answer = || {
-        let descriptor = receive(&answers, &mut [0], 0).ok()?;
-        Some(Answer {
-            descriptor,
-            bytes: Reader(&*answers).list(usize::MAX)?,
-            at: 0,
-        })
-    };
-    answer().unwrap_or_else(|| host_is_gone())
+    Answer::from(&answers)
+}
+
+pub fn petition(bytes: &[u8], is_answered: bool) -> Ruling {
+    let socket = host().petitions.lock();
+    if send_all(
+        &socket,
+        &mut [bytes_of(&[bytes.len() as u32]), bytes_of(bytes)],
+        None,
+    )
+    .is_none()
+    {
+        host_is_gone();
+    }
+    if !is_answered {
+        return Ruling {
+            bytes: Vec::new().into(),
+            descriptor: -1,
+        };
+    }
+    let answer = Answer::from(&socket);
+    Ruling {
+        bytes: answer.bytes.into(),
+        descriptor: answer.descriptor.map_or(-1, OwnedFd::into_raw_fd),
+    }
 }
 
 pub fn family_named(name: &str) -> Option<u32> {
@@ -581,13 +615,30 @@ pub fn generic_family(name: &str) -> Option<u32> {
     ask(Asked::Generic, [0; 2], [name.as_bytes(), &[]]).get()
 }
 
-pub fn fallback_family(character: char, is_in_color: bool, language: &[u8]) -> Option<u32> {
+/// `like` is a font of the system, a weight, whether it is italic, and a scale.
+pub fn fallback_family(
+    character: char,
+    is_in_color: bool,
+    language: &[u8],
+    like: Option<[u32; 4]>,
+) -> Option<u32> {
     ask(
         Asked::Fallback,
         [character.into(), is_in_color.into()],
-        [language, &[]],
+        [language, &Writer::default().all(like.as_slice()).0],
     )
     .get()
+}
+
+/// What only the system knows about a glyph.
+#[cfg(target_os = "macos")]
+pub fn ask_about_glyph(font: u32, glyph: u32, question: [f32; 4]) -> Vec<u8> {
+    ask(
+        Asked::Native,
+        [font, glyph],
+        [&Writer::default().put(question).0, &[]],
+    )
+    .bytes
 }
 
 pub fn font_named(name: &str) -> Option<u32> {
@@ -667,12 +718,25 @@ fn serve_pixels(requests: &UnixStream) {
     host_is_gone();
 }
 
+fn message(header: Header, bytes: Vec<u8>) -> Message {
+    let lane = match Told::of(header[0] as u8) {
+        Some(Told::Input) => Lane::Input,
+        Some(Told::Motion) => Lane::Motion,
+        _ => Lane::Scripts,
+    };
+    Message {
+        bytes: bytes.into(),
+        edits: header[4],
+        lane,
+    }
+}
+
 impl Down {
     fn listen(&mut self, flags: i32) {
-        match receive(&self.bell, &mut [0; 64], flags) {
-            Ok(descriptor) => self.descriptors.extend(descriptor),
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
-            Err(_) => host_is_gone(),
+        if receive(&self.bell, &mut [0; 64], flags)
+            .is_err_and(|it| it.kind() != std::io::ErrorKind::WouldBlock)
+        {
+            host_is_gone();
         }
     }
 
@@ -698,7 +762,7 @@ impl Down {
         }
         let next = self
             .header
-            .filter(|it| self.gather(it[2] as usize))
+            .filter(|it| self.gather(it[1] as usize))
             .map(|it| (it, std::mem::take(&mut self.bytes)));
         self.header.take_if(|_| next.is_some());
         if self.ring.release() {
@@ -707,27 +771,13 @@ impl Down {
         next
     }
 
-    fn message(&mut self, header: Header, bytes: Vec<u8>) -> Message {
-        while header[1] != 0 && self.descriptors.is_empty() {
-            self.listen(0);
-        }
-        let descriptor = (header[1] != 0)
-            .then(|| self.descriptors.pop_front())
-            .flatten();
-        Message {
-            bytes: bytes.into(),
-            descriptor: descriptor.map_or(-1, OwnedFd::into_raw_fd),
-            edits: header[5],
-        }
-    }
-
     fn event(&mut self, header: Header, bytes: Vec<u8>) -> Option<Event> {
-        self.told = [header[3], header[4]];
+        self.told = [header[2], header[3]];
         let mut numbers = Reader(&bytes[..]);
         Some(match Told::of(header[0] as u8)? {
-            Told::Message => Event::Message {
+            Told::Message | Told::Input | Told::Motion => Event::Message {
                 from: 0,
-                message: self.message(header, bytes),
+                message: message(header, bytes),
             },
             Told::Frame => {
                 let (id, [time, interval]) = (numbers.get()?, numbers.get()?);
@@ -801,7 +851,7 @@ pub fn receive_elsewhere() -> Message {
     let down = &mut *host().down[1].lock();
     loop {
         if let Some((header, bytes)) = down.next() {
-            return down.message(header, bytes);
+            return message(header, bytes);
         }
         if down.ring.will_sleep() {
             down.listen(0);

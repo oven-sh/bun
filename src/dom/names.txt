@@ -86,6 +86,7 @@ accesskey
 accesskeylabel
 accumulate
 acknowledgments
+activate
 addEventListener
 additional-name
 additive
@@ -414,6 +415,7 @@ continuous
 controllerchange
 controls
 controlslist
+cookiechange
 coords
 copyLink
 copyMove
@@ -905,6 +907,8 @@ nonce
 noresize
 noscript
 noshade
+notificationclick
+notificationclose
 novalidate
 nowrap
 numOctaves
@@ -1044,6 +1048,7 @@ progressbar
 prologue
 protocol
 pullquote
+pushsubscriptionchange
 radialGradient
 radialgradient
 radiogroup

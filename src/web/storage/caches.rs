@@ -4,30 +4,40 @@ use std::sync::Arc;
 
 use bun_core::strings;
 
-use super::Storage;
 use super::sql::{self, Connection, SqlError, Value::*};
+use super::{Shelf, Storage};
 use crate::Bytes;
 use crate::headers::{HeaderList, split};
 use crate::net::record::{RecordReader, RecordWriter};
+use crate::remote::petition;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct CacheId(pub i64);
 
 pub struct CachedRequest {
     pub url: Bytes,
     pub method: Bytes,
     pub headers: HeaderList,
+    /// 1 for a reload, 2 for a traversal of the history.
+    pub navigation: u8,
 }
 
 pub struct CachedResponse {
     pub kind: Bytes,
     pub url: Bytes,
     pub is_redirected: bool,
+    pub omits_credentials: bool,
     pub status: u16,
     pub status_text: Bytes,
     pub headers: HeaderList,
     pub body: Option<Vec<u8>>,
 }
+
+crate::wire!(impl CacheId(_));
+crate::wire!(impl CachedRequest { url, method, headers, navigation });
+crate::wire!(impl CachedResponse { kind, url, is_redirected, omits_credentials, status, status_text, headers, body });
+crate::wire!(impl QueryOptions { ignores_search, ignores_vary });
+crate::wire!(impl enum PutError { Duplicate, Sql(SqlError), });
 
 #[derive(Clone, Copy, Default)]
 pub struct QueryOptions {
@@ -46,29 +56,13 @@ impl From<SqlError> for PutError {
     }
 }
 
-fn write_headers(out: &mut RecordWriter, headers: &HeaderList) {
-    out.count(headers.iter().count());
-    headers
-        .iter()
-        .flat_map(|it| [it.0, it.1])
-        .for_each(|it| out.bytes(it));
-}
-
-fn read_headers(record: &mut RecordReader<'_>) -> Option<HeaderList> {
-    Some(
-        record
-            .list(|it| Some((it.bytes()?, it.bytes()?)))?
-            .into_iter()
-            .collect(),
-    )
-}
-
 impl CachedRequest {
     fn serialize(&self) -> Vec<u8> {
         let mut out = RecordWriter::default();
         out.bytes(&self.url);
         out.bytes(&self.method);
-        write_headers(&mut out, &self.headers);
+        self.headers.write(&mut out);
+        out.0.push(self.navigation);
         out.0
     }
 
@@ -77,7 +71,8 @@ impl CachedRequest {
         Some(CachedRequest {
             url: it.bytes()?.into(),
             method: it.bytes()?.into(),
-            headers: read_headers(&mut it)?,
+            headers: HeaderList::read(&mut it)?,
+            navigation: it.0.first().copied().unwrap_or(0),
         })
     }
 
@@ -96,22 +91,24 @@ impl CachedResponse {
         let mut out = RecordWriter::default();
         out.bytes(&self.kind);
         out.bytes(&self.url);
-        out.count(self.is_redirected.into());
+        out.count(usize::from(self.is_redirected) + 2 * usize::from(self.omits_credentials));
         out.count(self.status.into());
         out.bytes(&self.status_text);
-        write_headers(&mut out, &self.headers);
+        self.headers.write(&mut out);
         out.0
     }
 
     fn parse_head(bytes: &[u8]) -> Option<CachedResponse> {
         let mut it = RecordReader(bytes);
+        let (kind, url, flags) = (it.bytes()?.into(), it.bytes()?.into(), it.count()?);
         Some(CachedResponse {
-            kind: it.bytes()?.into(),
-            url: it.bytes()?.into(),
-            is_redirected: it.count()? == 1,
+            kind,
+            url,
+            is_redirected: flags & 1 != 0,
+            omits_credentials: flags & 2 != 0,
             status: it.count()? as u16,
             status_text: it.bytes()?.into(),
-            headers: read_headers(&mut it)?,
+            headers: HeaderList::read(&mut it)?,
             body: None,
         })
     }
@@ -199,50 +196,64 @@ macro_rules! later {
 }
 
 impl Caches {
+    fn shelf(&self) -> Option<Shelf> {
+        self.storage.far_shelf(&self.bucket)
+    }
+
     pub fn names(&self) -> later!(Vec<Bytes>) {
-        let bucket = self.bucket.clone();
-        self.storage.write(move |sql| {
-            sql.all(
-                "SELECT name FROM cache_names WHERE bucket = ? AND name IS NOT NULL ORDER BY id",
-                &[Text(&bucket)],
-                |it| it.bytes(0).into(),
-            )
-        })
+        in_host_or_here!(
+            self.shelf(),
+            |it| SqlError::unless(petition::cache_names(it)),
+            {
+                let bucket = self.bucket.clone();
+                self.storage.write(move |sql| sql.all("SELECT name FROM cache_names WHERE bucket = ? AND name IS NOT NULL ORDER BY id", &[Text(&bucket)], |it| it.bytes(0).into()))
+            }
+        )
     }
 
     pub fn has(&self, name: Vec<u8>) -> later!(bool) {
-        let bucket = self.bucket.clone();
-        self.storage
-            .write(move |sql| Ok(find(sql, &bucket, &name)?.is_some()))
+        in_host_or_here!(
+            self.shelf(),
+            |it| SqlError::unless(petition::has_cache(it, name)),
+            {
+                let bucket = self.bucket.clone();
+                self.storage
+                    .write(move |sql| Ok(find(sql, &bucket, &name)?.is_some()))
+            }
+        )
     }
 
     pub fn open(&self, name: Vec<u8>) -> later!(CacheId) {
-        let bucket = self.bucket.clone();
-        self.storage
-            .write(move |sql| match find(sql, &bucket, &name)? {
-                Some(known) => Ok(known),
-                None => Ok(sql
-                    .one(
-                        "INSERT INTO cache_names (bucket, name) VALUES (?, ?) RETURNING id",
-                        &[Text(&bucket), Blob(&name)],
-                        |it| CacheId(it.integer(0)),
-                    )?
-                    .expect("a row")),
-            })
+        in_host_or_here!(
+            self.shelf(),
+            |it| SqlError::unless(petition::open_cache(it, name)),
+            {
+                let bucket = self.bucket.clone();
+                self.storage
+                    .write(move |sql| match find(sql, &bucket, &name)? {
+                        Some(known) => Ok(known),
+                        None => Ok(sql
+                            .one(
+                                "INSERT INTO cache_names (bucket, name) VALUES (?, ?) RETURNING id",
+                                &[Text(&bucket), Blob(&name)],
+                                |it| CacheId(it.integer(0)),
+                            )?
+                            .expect("a row")),
+                    })
+            }
+        )
     }
 
     /// Whoever has it open can go on using it.
     pub fn delete(&self, name: Vec<u8>) -> later!(bool) {
-        let bucket = self.bucket.clone();
-        self.storage.write(move |sql| {
-            Ok(sql
-                .one(
-                    "UPDATE cache_names SET name = NULL WHERE bucket = ? AND name = ? RETURNING id",
-                    &[Text(&bucket), Blob(&name)],
-                    |_| (),
-                )?
-                .is_some())
-        })
+        in_host_or_here!(
+            self.shelf(),
+            |it| SqlError::unless(petition::delete_cache(it, name)),
+            {
+                let bucket = self.bucket.clone();
+                self.storage.write(move |sql| Ok(sql.one("UPDATE cache_names SET name = NULL WHERE bucket = ? AND name = ? RETURNING id", &[Text(&bucket), Blob(&name)], |_| ())?.is_some()))
+            }
+        )
     }
 
     /// In the cache of that name, or in all.
@@ -252,16 +263,22 @@ impl Caches {
         asked: CachedRequest,
         options: QueryOptions,
     ) -> later!(Option<CachedResponse>) {
-        let bucket = self.bucket.clone();
-        self.storage.write(move |sql| {
-            let values = [Text(&bucket), name.as_deref().map_or(Null, Blob)];
-            for cache in sql.all("SELECT id FROM cache_names WHERE bucket = ?1 AND name = ifnull(?2, name) ORDER BY id", &values, |it| CacheId(it.integer(0)))? {
-                if let Some(found) = query(sql, cache, Some(&asked), options)?.into_iter().next() {
-                    return with_body(sql, found).map(Some);
+        in_host_or_here!(
+            self.shelf(),
+            |it| SqlError::unless(petition::first_response(it, name, asked, options)),
+            {
+                let bucket = self.bucket.clone();
+                self.storage.write(move |sql| {
+                let values = [Text(&bucket), name.as_deref().map_or(Null, Blob)];
+                for cache in sql.all("SELECT id FROM cache_names WHERE bucket = ?1 AND name = ifnull(?2, name) ORDER BY id", &values, |it| CacheId(it.integer(0)))? {
+                    if let Some(found) = query(sql, cache, Some(&asked), options)?.into_iter().next() {
+                        return with_body(sql, found).map(Some);
+                    }
                 }
+                Ok(None)
+            })
             }
-            Ok(None)
-        })
+        )
     }
 
     pub fn requests(
@@ -270,12 +287,18 @@ impl Caches {
         asked: Option<CachedRequest>,
         options: QueryOptions,
     ) -> later!(Vec<CachedRequest>) {
-        self.storage.write(move |sql| {
-            Ok(query(sql, cache, asked.as_ref(), options)?
-                .into_iter()
-                .map(|it| it.request)
-                .collect())
-        })
+        in_host_or_here!(
+            self.shelf(),
+            |it| SqlError::unless(petition::requests(it, cache, asked, options)),
+            {
+                self.storage.write(move |sql| {
+                    Ok(query(sql, cache, asked.as_ref(), options)?
+                        .into_iter()
+                        .map(|it| it.request)
+                        .collect())
+                })
+            }
+        )
     }
 
     pub fn responses(
@@ -285,13 +308,19 @@ impl Caches {
         options: QueryOptions,
         limit: usize,
     ) -> later!(Vec<CachedResponse>) {
-        self.storage.write(move |sql| {
-            query(sql, cache, asked.as_ref(), options)?
-                .into_iter()
-                .take(limit)
-                .map(|it| with_body(sql, it))
-                .collect()
-        })
+        in_host_or_here!(
+            self.shelf(),
+            |it| SqlError::unless(petition::responses(it, cache, asked, options, limit)),
+            {
+                self.storage.write(move |sql| {
+                    query(sql, cache, asked.as_ref(), options)?
+                        .into_iter()
+                        .take(limit)
+                        .map(|it| with_body(sql, it))
+                        .collect()
+                })
+            }
+        )
     }
 
     pub fn remove(
@@ -300,11 +329,17 @@ impl Caches {
         asked: CachedRequest,
         options: QueryOptions,
     ) -> later!(bool) {
-        self.storage.write(move |sql| {
-            let found = query(sql, cache, Some(&asked), options)?;
-            sql.atomically(|sql| remove(sql, &found))
-                .map(|()| !found.is_empty())
-        })
+        in_host_or_here!(
+            self.shelf(),
+            |it| SqlError::unless(petition::remove_cached(it, cache, asked, options)),
+            {
+                self.storage.write(move |sql| {
+                    let found = query(sql, cache, Some(&asked), options)?;
+                    sql.atomically(|sql| remove(sql, &found))
+                        .map(|()| !found.is_empty())
+                })
+            }
+        )
     }
 
     /// <https://w3c.github.io/ServiceWorker/#batch-cache-operations-algorithm>
@@ -313,30 +348,36 @@ impl Caches {
         cache: CacheId,
         entries: Vec<(CachedRequest, CachedResponse)>,
     ) -> impl Future<Output = Result<(), PutError>> + use<> {
-        let store = move |sql: &mut Connection| {
-            let mut first = i64::MAX;
-            for (request, response) in &entries {
-                let replaced = query(sql, cache, Some(request), QueryOptions::default())?;
-                if replaced.iter().any(|it| it.row >= first) {
-                    return Err(PutError::Duplicate);
-                }
-                let (about, head) = (request.serialize(), response.serialize_head());
-                let values = [
-                    Integer(cache.0),
-                    Text(request.compared_url().0),
-                    Blob(&about),
-                    Blob(&head),
-                    response.body.as_deref().map_or(Null, Blob),
-                ];
-                sql.each(
-                    "INSERT INTO cached VALUES (?, ?, ?, ?, ?) RETURNING rowid",
-                    &values,
-                    |it| first = first.min(it.integer(0)),
-                )?;
-                remove(sql, &replaced)?;
+        in_host_or_here!(
+            self.shelf(),
+            |it| SqlError::unless(petition::put_cached(it, cache, entries)),
+            {
+                let store = move |sql: &mut Connection| {
+                    let mut first = i64::MAX;
+                    for (request, response) in &entries {
+                        let replaced = query(sql, cache, Some(request), QueryOptions::default())?;
+                        if replaced.iter().any(|it| it.row >= first) {
+                            return Err(PutError::Duplicate);
+                        }
+                        let (about, head) = (request.serialize(), response.serialize_head());
+                        let values = [
+                            Integer(cache.0),
+                            Text(request.compared_url().0),
+                            Blob(&about),
+                            Blob(&head),
+                            response.body.as_deref().map_or(Null, Blob),
+                        ];
+                        sql.each(
+                            "INSERT INTO cached VALUES (?, ?, ?, ?, ?) RETURNING rowid",
+                            &values,
+                            |it| first = first.min(it.integer(0)),
+                        )?;
+                        remove(sql, &replaced)?;
+                    }
+                    Ok(())
+                };
+                self.storage.write(move |sql| sql.atomically(store))
             }
-            Ok(())
-        };
-        self.storage.write(move |sql| sql.atomically(store))
+        )
     }
 }

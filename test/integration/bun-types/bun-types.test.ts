@@ -387,6 +387,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "audio.bind.ts": null,
   "fonts.bind.ts": null,
   "scheduler.bind.ts": null,
+  "service_workers.bind.ts": null,
   "images.bind.ts": null,
   "indexeddb.bind.ts": null,
   "media.bind.ts": null,

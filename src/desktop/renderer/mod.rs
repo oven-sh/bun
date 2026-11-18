@@ -7,8 +7,9 @@ use std::rc::Rc;
 
 use bun_collections::HashMap;
 use bun_jsc::{JSMap, Strong, from_js_host_call, from_js_host_call_generic};
-use bun_web::channel::{Endpoint, Message, Serialized, Transferred};
+use bun_web::channel::{Endpoint, LooseBitmap, Message, Serialized, Transferred};
 use bun_web::client::Client;
+use bun_web::compiled::PRELOAD_PARAMETERS;
 use bun_web::dom::{self, Opening};
 use bun_web::exec::{Settled, settled, with_realm};
 use bun_web::host::{Host, Reply, Thrown};
@@ -17,6 +18,7 @@ use bun_web::realm::Realm as OfTheWeb;
 use bun_web::renderer::{Command, Done, Executed, NewDocument, Preloads, Source, Task};
 
 use self::preload::Preload;
+use crate::devtools::agent;
 use crate::generated_bindgen::renderer::js_RendererDocument as fields;
 use crate::prelude::*;
 use crate::realm::{self, Realm};
@@ -24,8 +26,6 @@ use crate::webview::wire;
 use crate::{files, process, task};
 
 const OF_PRELOAD: u32 = 999;
-const PARAMETERS: &str =
-    "require,process,Buffer,global,setImmediate,clearImmediate,exports,module,__filename,__dirname";
 
 /// `WebGlobalObject::NodeGlobals`
 #[derive(Clone, Copy)]
@@ -216,9 +216,12 @@ pub(crate) fn obey(page: u32, command: Command) -> JsResult<()> {
         return Ok(());
     };
     match command {
-        Command::Start { .. } => Ok(()),
+        Command::Start { .. } | Command::Foretell { .. } | Command::Prepare { .. } => Ok(()),
         Command::DocumentChanged {} => it.changed(),
-        Command::Dispose {} => it.dispose(),
+        Command::Dispose {} => {
+            agent::far::forget(page);
+            it.dispose()
+        }
         Command::UpdateClient { update } => {
             it.client.apply(update);
             Ok(())
@@ -228,6 +231,11 @@ pub(crate) fn obey(page: u32, command: Command) -> JsResult<()> {
         }
         Command::Reply { ticket, result } => {
             fields::preload(it).map_or(Ok(()), |it| it.accept_reply(ticket, result))
+        }
+        Command::Inspect { session, how } => agent::far::begin(page, session, &how),
+        Command::StopInspecting { session } => {
+            agent::far::end(session);
+            Ok(())
         }
     }
 }
@@ -247,11 +255,42 @@ fn pack(outcome: Result<Strong, Strong>) -> JsResult<Executed> {
 }
 
 pub(crate) fn perform(page: u32, task: Task, reply: Reply<Option<Done>>) {
-    let Task::Execute {
-        world,
-        code,
-        is_by_user,
-    } = task;
+    let (world, code, is_by_user) = match task {
+        Task::Execute {
+            world,
+            code,
+            is_by_user,
+        } => (world, code, is_by_user),
+        Task::AskInspector {
+            session,
+            method,
+            params,
+            files: _,
+        } => {
+            return task::spawn(async move {
+                let result = agent::far::run(session, &method, &params).await;
+                reply(global(), Some(Done::AskInspector(Some(result))));
+            });
+        }
+        Task::DecodeImage { bytes } => {
+            return task::spawn(async move {
+                let image = LooseBitmap::decode(bytes).await;
+                reply(global(), Some(Done::DecodeImage(image)));
+            });
+        }
+        Task::Render {} => {
+            render_pages();
+            return reply(global(), Some(Done::Render(())));
+        }
+        Task::FinishTrace {} => {
+            let events = crate::tracing::finish_for_app();
+            return reply(global(), Some(Done::FinishTrace(events)));
+        }
+        Task::TakeHeapSnapshot {} => {
+            let snapshot = Some(crate::process::heap_snapshot());
+            return reply(global(), Some(Done::TakeHeapSnapshot(snapshot)));
+        }
+    };
     let begin = || {
         let code = bun_jsc::bun_string_jsc::owned_utf16_into_js(global(), code)?;
         (Document::of(page).ok_or_else(disposed)?).begin(world, code, is_by_user)
@@ -271,6 +310,10 @@ impl Document {
     /// Until it is disposed.
     pub(crate) fn of(page: u32) -> Option<&'static Document> {
         documents().borrow().get(&page).map(Root::get)
+    }
+
+    pub(crate) fn origin(&self) -> String {
+        string(self.client.origin().as_bytes())
     }
 
     /// `undefined` if there is no document.
@@ -555,7 +598,7 @@ fn run_preload(preload: &Preload, world: World, file: &str, source: Source) -> J
         Source::Compiled(path) => field(run_compiled(realm, &path)?.get(realm, "default")?),
         Source::Text(text) => {
             let source = js(format!(
-                "(function({PARAMETERS}){{{text}
+                "(function({PRELOAD_PARAMETERS}){{{text}
 }})"
             ))?;
             let url = files::to_url(file);

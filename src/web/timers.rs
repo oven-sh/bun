@@ -24,8 +24,6 @@ struct Timer {
 pub(crate) struct Timers {
     active: RefCell<HashMap<i32, Timer>>,
     last_id: Cell<i32>,
-    /// Of the timer that is running.
-    nesting: Cell<u32>,
 }
 
 impl Timers {
@@ -54,14 +52,13 @@ fn run(global: &JSGlobalObject, id: u64, values: &[JSValue]) -> JsResult<()> {
         }
     }
     drop(active);
-    timers.nesting.set(nesting);
+    tasks::nesting_of_timers(global).set(nesting);
     let result = if values[0].is_string() {
         (values[1].to_utf8(global))
             .and_then(|url| realm.evaluate(values[0], &url, &values[2].to_utf8(global)?))
     } else {
         values[0].call(global, realm.global_this(), &values[1..])
     };
-    timers.nesting.set(0);
     match result {
         Err(error) if values[0].is_object() => {
             // SAFETY: the function keeps its realm alive.
@@ -101,7 +98,7 @@ pub fn start(
     if realm.is_stopped() {
         return Ok(id);
     }
-    let nesting = timers.nesting.get();
+    let nesting = tasks::nesting_of_timers(global).get();
     if nesting >= NESTING_WITHOUT_LIMIT {
         timeout = timeout.max(SHORTEST_NESTED_TIMEOUT);
     }

@@ -345,33 +345,36 @@ impl State {
     }
 }
 
-struct Tasks(RefCell<State>);
+struct Tasks(RefCell<State>, Cell<u32>);
 
 impl Default for Tasks {
     fn default() -> Tasks {
-        Tasks(RefCell::new(State {
-            tasks: Vec::new(),
-            free: Vec::new(),
-            queues: Default::default(),
-            timers: Vec::new(),
-            stale: Vec::new(),
-            after_microtasks: Vec::new(),
-            next_order: 0,
-            is_pump_queued: false,
-            is_suspended: false,
-            has_had_input: false,
-            hurried_frames_left: 0,
-            scrolls_until: 0.0,
-            stale_since: 0.0,
-            was_put_off: false,
-            has_to_ask_display: false,
-            last_frame: 0.0,
-            hurry_until: 0.0,
-            busy_since: None,
-            alarm_time: f64::INFINITY,
-            alarm: None,
-            keep_alive: JsKeepAlive::default(),
-        }))
+        Tasks(
+            RefCell::new(State {
+                tasks: Vec::new(),
+                free: Vec::new(),
+                queues: Default::default(),
+                timers: Vec::new(),
+                stale: Vec::new(),
+                after_microtasks: Vec::new(),
+                next_order: 0,
+                is_pump_queued: false,
+                is_suspended: false,
+                has_had_input: false,
+                hurried_frames_left: 0,
+                scrolls_until: 0.0,
+                stale_since: 0.0,
+                was_put_off: false,
+                has_to_ask_display: false,
+                last_frame: 0.0,
+                hurry_until: 0.0,
+                busy_since: None,
+                alarm_time: f64::INFINITY,
+                alarm: None,
+                keep_alive: JsKeepAlive::default(),
+            }),
+            Cell::new(0),
+        )
     }
 }
 
@@ -510,6 +513,11 @@ pub fn cancel(global: &JSGlobalObject, id: TaskId) {
     });
 }
 
+/// Of the timer that is running, or whose microtasks are.
+pub(crate) fn nesting_of_timers(global: &JSGlobalObject) -> &Cell<u32> {
+    &tasks_of(global.bun_vm()).1
+}
+
 /// From the next time on.
 pub(crate) fn set_interval(global: &JSGlobalObject, id: TaskId, interval: f64) {
     with_state(global, |state, _| {
@@ -634,6 +642,18 @@ pub fn idle_time(global: &JSGlobalObject) -> f64 {
             false => until_timer.min(state.last_frame + frame_interval() - 2.0 - now),
         }
     })
+}
+
+/// The same, for what the thread does instead of waiting.
+pub fn slack() -> f64 {
+    let vm = VirtualMachine::get();
+    if TASKS.get().is_null() {
+        LONGEST_IDLE_PERIOD
+    } else if tasks_of(vm).0.try_borrow_mut().is_ok() {
+        idle_time(vm.global())
+    } else {
+        0.0
+    }
 }
 
 pub fn render(global: &JSGlobalObject) {
@@ -767,6 +787,7 @@ impl Tasks {
             }
             vm.drain_microtasks();
             finish_checkpoint(global);
+            self.1.set(0);
             let before = core::mem::replace(&mut time, now(vm));
             let state = &mut *self.0.borrow_mut();
             state.was_put_off = renders;

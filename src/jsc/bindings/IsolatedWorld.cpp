@@ -10,6 +10,7 @@
 #include "DesktopRealm.h"
 #include "DesktopWindow.h"
 #include "GeneratedBlob.h"
+#include "JSAbortAlgorithm.h"
 #include "JSAbortSignal.h"
 #include "JSCryptoKey.h"
 #include "JSDOMException.h"
@@ -30,6 +31,8 @@
 #include <JavaScriptCore/DOMAttributeGetterSetter.h>
 #include <JavaScriptCore/GeneratorPrototype.h>
 #include <JavaScriptCore/GetterSetter.h>
+#include <JavaScriptCore/IteratorOperations.h>
+#include <JavaScriptCore/JSArrayIterator.h>
 #include <JavaScriptCore/JSCellButterfly.h>
 #include <JavaScriptCore/JSCustomGetterFunction.h>
 #include <JavaScriptCore/JSCustomSetterFunction.h>
@@ -39,6 +42,7 @@
 #include <JavaScriptCore/JSMapInlines.h>
 #include <JavaScriptCore/JSMapIterator.h>
 #include <JavaScriptCore/JSNativeStdFunction.h>
+#include <JavaScriptCore/JSPromisePrototype.h>
 #include <JavaScriptCore/JSSetInlines.h>
 #include <JavaScriptCore/JSSetIterator.h>
 #include <JavaScriptCore/JSTypedArrays.h>
@@ -282,6 +286,11 @@ static JSC_DECLARE_HOST_FUNCTION(getInPage);
 static JSC_DECLARE_HOST_FUNCTION(setInPage);
 static JSC_DECLARE_HOST_FUNCTION(callInWorld);
 static JSC_DECLARE_HOST_FUNCTION(callMethodInWorld);
+static JSC_DECLARE_HOST_FUNCTION(primitiveOfOriginal);
+static JSC_DECLARE_HOST_FUNCTION(iteratorOfOriginal);
+static JSC_DECLARE_HOST_FUNCTION(passOnAbort);
+static JSC_DECLARE_HOST_FUNCTION(getCurrentEvent);
+static JSC_DECLARE_HOST_FUNCTION(replaceCurrentEvent);
 
 class Constructor final : public InternalFunction {
 public:
@@ -341,6 +350,37 @@ static bool holdsAnyValue(PropertyName name)
 
 static thread_local const ScopedLambda<JSValue()>* whatRunsBehindBarrier;
 
+// What the page's side gets of a value of the world.
+enum class Use : uint8_t {
+    // Only the platform has it. It leads to functions of the world.
+    Loan,
+    // The platform passes it on, mostly back to the world. It leads nowhere.
+    Transit,
+    // For the scripts of the page. It leads nowhere, and is an ordinary object.
+    Gift,
+};
+
+static Use useOfArguments(const String& name)
+{
+    if (name == "setFormValue"_s || (name.startsWith("init"_s) && name.endsWith("Event"_s)))
+        return Use::Gift;
+    return std::ranges::any_of(std::array { "abort"_s, "cancel"_s, "enqueue"_s, "error"_s, "next"_s, "return"_s, "throw"_s, "write"_s }, [&](ASCIILiteral it) { return name == it; }) ? Use::Transit : Use::Loan;
+}
+
+static bool isSealed(JSObject* object)
+{
+    JSObject* prototype = object->getPrototypeDirect().getObject();
+    return prototype && prototype->type() == FinalObjectType && prototype->getDirect(prototype->vm(), handlersName(prototype->vm()));
+}
+
+static std::atomic<VM*> vmWithWorlds;
+
+// The places in the record of the world.
+enum class Sealed : uint8_t { Object = 6,
+    List,
+    AsyncList,
+    Promise };
+
 class World {
 public:
     explicit World(JSGlobalObject* global)
@@ -354,7 +394,7 @@ public:
     {
         VM& vm = global->vm();
         auto map = [&] { return JSWeakMap::create(vm, global->weakMapStructure()); };
-        global->putDirect(vm, recordName(vm), createRecord(vm, { page, map(), map(), map(), createHolder(global), JSFunction::create(vm, page, 0, emptyString(), runBehindBarrier, ImplementationVisibility::Public) }));
+        global->putDirect(vm, recordName(vm), createRecord(vm, { page, map(), map(), map(), createHolder(global), JSFunction::create(vm, page, 0, emptyString(), runBehindBarrier, ImplementationVisibility::Public), JSValue(), JSValue(), JSValue(), JSValue(), JSValue(), JSValue() }));
     }
 
     VM& vm() const { return m_vm; }
@@ -367,6 +407,8 @@ public:
     JSWeakMap* prototypes() const { return uncheckedDowncast<JSWeakMap>(m_record->get(3)); }
 
     JSObject* deletedGlobals() const { return asObject(m_record->get(4)); }
+    JSValue currentEvent() const { return m_record->get(10); }
+    void setCurrentEvent(JSValue event) { m_record->setIndex(m_vm, 10, event); }
 
     // A script of the page that `run` gets to has no function of the world as its `caller`.
     JSValue behindBarrier(NOESCAPE const auto& run)
@@ -384,11 +426,46 @@ public:
     }
 
     // It has to be public: `Function.prototype.caller` looks past the others.
-    JSFunction* createFunction(JSGlobalObject* realm, unsigned length, const String& name, NativeFunction call, std::initializer_list<JSValue> record)
+    JSFunction* createFunction(JSGlobalObject* realm, unsigned length, const String& name, NativeFunction call, std::initializer_list<JSValue> record, Structure* structure = nullptr)
     {
         auto* function = JSFunction::create(m_vm, realm, length, name, call, ImplementationVisibility::Public);
+        if (structure)
+            function->setStructure(m_vm, structure);
         function->putDirect(m_vm, recordName(m_vm), createRecord(m_vm, record));
         return function;
+    }
+
+    // For what the platform gets from the world. With a prototype of the page, a script would get it as `this` of an accessor.
+    JSObject* sealedPrototype(Sealed kind)
+    {
+        if (JSObject* known = m_record->get(static_cast<unsigned>(kind)).getObject())
+            return known;
+        auto& names = *m_vm.propertyNames;
+        unsigned fixed = PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly;
+        JSObject* prototype = constructEmptyObject(m_vm, page()->nullPrototypeObjectStructure());
+        auto forward = [&](const Identifier& name, NativeFunction steps) {
+            prototype->putDirect(m_vm, name, createFunction(page(), 0, emptyString(), steps, { m_global, prototype, identifierToJSValue(m_vm, name) }), fixed);
+        };
+        forward(names.toPrimitiveSymbol, primitiveOfOriginal);
+        if (kind == Sealed::List || kind == Sealed::AsyncList)
+            forward(kind == Sealed::List ? names.iteratorSymbol : names.asyncIteratorSymbol, iteratorOfOriginal);
+        if (kind == Sealed::Promise) {
+            for (auto& name : { names.then, names.builtinNames().thenPrivateName() })
+                prototype->putDirect(m_vm, name, page()->promiseProtoThenFunction(), fixed);
+        }
+        prototype->putDirect(m_vm, handlersName(m_vm), m_global, fixed);
+        JSObject::preventExtensions(prototype, page());
+        prototype->didBecomePrototype(m_vm);
+        m_record->setIndex(m_vm, static_cast<unsigned>(kind), prototype);
+        return prototype;
+    }
+
+    // Where built-in objects are read-only, a native function keeps its prototype.
+    Structure* sealedFunctionStructure()
+    {
+        if (m_record->get(11).isUndefined())
+            m_record->setIndex(m_vm, 11, JSFunction::createStructure(m_vm, page(), sealedPrototype(Sealed::Object)));
+        return uncheckedDowncast<Structure>(m_record->get(11));
     }
 
     JSObject* functionFor(JSObject* function, const String& givenName = {}, bool keepsResult = false)
@@ -400,7 +477,7 @@ public:
             name = asString(value)->tryGetValue();
         if (function->realm() == m_global && isNativeFunction(function))
             function = JSFunction::create(m_vm, page(), length, name, uncheckedDowncast<JSFunction>(function)->nativeFunction().retagged<CFunctionPtrTag>(), ImplementationVisibility::Public);
-        return createFunction(m_global, length, name, callInPage, { function, jsBoolean(keepsResult), jsBoolean(name == "initCustomEvent"_s || name == "initMessageEvent"_s) });
+        return createFunction(m_global, length, name, callInPage, { function, jsBoolean(keepsResult), jsNumber(static_cast<uint8_t>(useOfArguments(name))) });
     }
 
     // What legacy platform objects have of `Array.prototype`.
@@ -654,9 +731,11 @@ public:
             return value;
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         JSObject* object = asObject(value);
-        if (m_isData && object->isCallable())
-            return remember(object, constructEmptyObject(m_realm));
-        if (JSObject* known = counterpartOf(object))
+        if (isData() && (object->isCallable() || standsFor(object, { "NodeIterator"_s, "Observable"_s, "TreeWalker"_s })))
+            return remember(object, createObject());
+        if (m_to == To::Page && !isData() && standsFor(object, { "Headers"_s }))
+            return seal(constructEmptyObject(m_realm, m_world.sealedPrototype(Sealed::List)), object);
+        if (JSObject* known = counterpartOf(object); known && !(isData() && isSealed(known)))
             return known;
         if (auto seen = m_seen.find(object); seen != m_seen.end())
             return seen->value;
@@ -666,13 +745,16 @@ public:
         }
         if (!object->structure()->realm() && object->type() != GlobalObjectType)
             return jsNull();
-        RELEASE_AND_RETURN(scope, m_to == To::World ? toWorld(object) : toPage(object));
+        if (m_to == To::World)
+            RELEASE_AND_RETURN(scope, toWorld(object));
+        JSValue made = toPage(object);
+        RETURN_IF_EXCEPTION(scope, {});
+        return seals() && made.isObject() && made != object ? seal(asObject(made), object) : made;
     }
 
-    // Nothing in it can be called.
-    JSValue convertData(JSValue value)
+    JSValue convert(JSValue value, Use use)
     {
-        SetForScope isData(m_isData, true);
+        SetForScope change(m_use, std::max(m_use, use));
         return convert(value);
     }
 
@@ -682,15 +764,14 @@ public:
         if (m_to == To::World || !object || object->type() == JSDOMWrapperType || object->inherits<WebCore::JSEventTarget>())
             return convert(value);
         JSObject* known = counterpartOf(object);
-        return known ? known : constructEmptyObject(m_realm);
+        return known ? known : createObject();
     }
 
-    void convertArguments(CallFrame* callFrame, MarkedArgumentBuffer& arguments, bool areData = false)
+    void convertArguments(CallFrame* callFrame, MarkedArgumentBuffer& arguments, Use use = Use::Loan)
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
-        SetForScope isData(m_isData, areData);
         for (unsigned i = 0; i < callFrame->argumentCount(); ++i) {
-            JSValue argument = convert(callFrame->uncheckedArgument(i));
+            JSValue argument = convert(callFrame->uncheckedArgument(i), use);
             RETURN_IF_EXCEPTION(scope, );
             arguments.append(argument);
         }
@@ -701,6 +782,8 @@ public:
     void convertArgumentsOfConstructor(CallFrame* callFrame, MarkedArgumentBuffer& arguments)
     {
         m_isForConstructor = true;
+        String name = uncheckedDowncast<InternalFunction>(callFrame->jsCallee())->name();
+        m_isForEvent = name.endsWith("Event"_s) || name == "Touch"_s;
         convertArguments(callFrame, arguments);
     }
 
@@ -709,16 +792,25 @@ public:
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         JSValue result = run();
-        if (auto* exception = scope.exception()) [[unlikely]] {
+        if (!scope.exception()) [[likely]] {
+            if (auto* kept = dynamicDowncast<JSCellButterfly>(result))
+                return JSValue::encode(kept->get(1));
+            result = convert(result);
+        }
+        auto* exception = scope.exception();
+        if (!exception) [[likely]]
+            return JSValue::encode(result);
+        if (!scope.tryClearException())
+            return {};
+        JSValue error = convert(exception->value(), m_to == To::Page ? Use::Transit : Use::Loan);
+        if (scope.exception()) [[unlikely]] {
             if (!scope.tryClearException())
                 return {};
-            JSValue error = convert(exception->value());
-            RETURN_IF_EXCEPTION(scope, {});
-            return throwVMError(m_realm, scope, error);
+            error = jsUndefined();
         }
-        if (auto* kept = dynamicDowncast<JSCellButterfly>(result))
-            return JSValue::encode(kept->get(1));
-        RELEASE_AND_RETURN(scope, JSValue::encode(convert(result)));
+        if (m_to == To::Page)
+            m_realm->putDirect(m_vm, thrownName(m_vm), createRecord(m_vm, { error, m_world.global(), exception->value() }));
+        return throwVMError(m_realm, scope, error);
     }
 
     JSObject* counterpartOf(JSObject* object)
@@ -763,6 +855,31 @@ public:
     }
 
 private:
+    bool isData() const { return m_use != Use::Loan; }
+    bool seals() const { return m_to == To::Page && m_use != Use::Gift; }
+    JSObject* createObject() { return seals() ? constructEmptyObject(m_realm, m_world.sealedPrototype(Sealed::Object)) : constructEmptyObject(m_realm); }
+
+    // A file may end up in the document.
+    JSObject* seal(JSObject* made, JSObject* original)
+    {
+        if (made->inherits<Bindgen::Generated::JSBlob>())
+            return made;
+        m_world.inWorld()->set(m_vm, made, original);
+        if (isSealed(made))
+            return made;
+        JSC::JSType type = made->type();
+        bool isList = !isData() && (type == ArrayType || type == JSMapType || type == JSSetType || type == StringObjectType || isTypedArrayType(type) || made->inherits<WebCore::JSURLSearchParams>() || made->inherits<WebCore::JSDOMFormData>());
+        made->setPrototypeDirect(m_vm, m_world.sealedPrototype(type == JSPromiseType ? Sealed::Promise : isList ? Sealed::List
+                                                                                                                : Sealed::Object));
+        return made;
+    }
+
+    static bool standsFor(JSObject* object, std::initializer_list<ASCIILiteral> classNames)
+    {
+        auto* alias = dynamicDowncast<Alias>(object);
+        return alias && std::ranges::any_of(classNames, [&](ASCIILiteral it) { return alias->target()->classInfo()->className == it; });
+    }
+
     bool hasElements(JSObject* object)
     {
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(m_vm);
@@ -870,7 +987,7 @@ private:
         if (object->structure()->realm() == m_realm)
             return object;
         if (object->isCallable()) {
-            JSObject* function = m_world.createFunction(m_realm, 0, emptyString(), callInWorld, { m_world.global(), object });
+            JSObject* function = m_world.createFunction(m_realm, 0, emptyString(), callInWorld, { m_world.global(), object }, m_world.sealedFunctionStructure());
             m_world.pair(object, function);
             return function;
         }
@@ -878,10 +995,17 @@ private:
             RELEASE_AND_RETURN(scope, twinOf(object));
         if (auto* signal = dynamicDowncast<WebCore::JSAbortSignal>(object)) {
             auto* realm = uncheckedDowncast<Zig::GlobalObject>(m_realm);
-            JSValue follower = WebCore::toJS(realm, realm, WebCore::AbortSignal::any(*realm->scriptExecutionContext(), { &signal->wrapped() }).get());
+            JSValue follower = WebCore::toJS(realm, realm, WebCore::AbortSignal::create(realm->scriptExecutionContext()).get());
             RETURN_IF_EXCEPTION(scope, {});
-            m_world.pair(object, asObject(follower));
-            return follower;
+            JSObject* steps = m_world.createFunction(m_world.global(), 1, emptyString(), passOnAbort, { follower });
+            auto listenTo = [&](WebCore::AbortSignal& source) { WebCore::AbortSignal::addAbortAlgorithmToSignal(source, WebCore::JSAbortAlgorithm::create(m_vm, steps)); };
+            if (signal->wrapped().isDependent() && !signal->wrapped().aborted()) {
+                for (Ref source : signal->wrapped().sourceSignals())
+                    listenTo(source);
+            } else
+                listenTo(signal->wrapped());
+            RETURN_IF_EXCEPTION(scope, {});
+            return pairWith(object, asObject(follower));
         }
         if (auto* url = dynamicDowncast<WebCore::JSDOMURL>(object))
             return jsString(m_vm, url->wrapped().href().string());
@@ -895,14 +1019,14 @@ private:
             copyEntriesToAnotherRealm(data->wrapped(), copy);
             RELEASE_AND_RETURN(scope, WebCore::toJSNewlyCreated(realm, realm, WTF::move(copy)));
         }
-        if (!m_isData && (object->type() == FinalObjectType || object->type() == ProxyObjectType || object->type() == CompiledObjectType)) {
+        if (!isData() && (object->type() == FinalObjectType || object->type() == ProxyObjectType || object->type() == CompiledObjectType)) {
             for (ASCIILiteral name : { "handleEvent"_s, "acceptNode"_s, "lookupNamespaceURI"_s }) {
                 auto method = Identifier::fromString(m_vm, name);
                 bool has = object->hasProperty(m_world.global(), method);
                 RETURN_IF_EXCEPTION(scope, {});
                 if (!has)
                     continue;
-                JSObject* callback = constructEmptyObject(m_realm);
+                JSObject* callback = createObject();
                 callback->putDirect(m_vm, method, m_world.createFunction(m_realm, 1, name, callMethodInWorld, { m_world.global(), object, jsString(m_vm, String(name)) }));
                 m_world.pair(object, callback);
                 return callback;
@@ -912,11 +1036,11 @@ private:
         RETURN_IF_EXCEPTION(scope, {});
         if (copy)
             return copy;
-        if (!m_isData) {
+        if (!isData()) {
             copy = standInFor(object);
             RETURN_IF_EXCEPTION(scope, {});
         }
-        return copy ? copy : remember(object, constructEmptyObject(m_realm));
+        return copy ? copy : remember(object, createObject());
     }
 
     // For what is consumed piece by piece.
@@ -952,7 +1076,7 @@ private:
             return pairWith(object, targetOf(asObject(alias)));
         }
         if (StringView(object->classInfo()->className).endsWith("Stream"_s)) {
-            JSObject* ends = constructEmptyObject(m_realm);
+            JSObject* ends = createObject();
             for (ASCIILiteral end : { "readable"_s, "writable"_s }) {
                 auto name = Identifier::fromString(m_vm, end);
                 JSValue value = object->get(world, name);
@@ -965,7 +1089,7 @@ private:
         }
         if (object->type() < JSGeneratorType || object->type() > JSAsyncFromSyncIteratorType)
             return {};
-        JSObject* iterator = constructEmptyObject(m_realm, object->type() == JSAsyncGeneratorType ? static_cast<JSObject*>(m_realm->asyncIteratorPrototype()) : m_realm->iteratorPrototype());
+        JSObject* iterator = constructEmptyObject(m_realm, m_world.sealedPrototype(object->type() == JSAsyncGeneratorType ? Sealed::AsyncList : Sealed::List));
         for (ASCIILiteral name : { "next"_s, "return"_s, "throw"_s }) {
             auto method = Identifier::fromString(m_vm, name);
             bool has = object->hasProperty(world, method);
@@ -1016,7 +1140,7 @@ private:
             return remember(object, copy);
         }
         if (auto* buffer = dynamicDowncast<JSArrayBuffer>(object)) {
-            RefPtr bytes = sameBytes(buffer->impl(), buffer->impl()->span());
+            RefPtr bytes = m_use == Use::Gift ? nullptr : sameBytes(buffer->impl(), buffer->impl()->span());
             if (!bytes)
                 RELEASE_AND_RETURN(scope, clone(object));
             return pairWith(object, JSArrayBuffer::create(m_vm, m_realm->arrayBufferStructure(ArrayBufferSharingMode::Default), WTF::move(bytes)));
@@ -1064,10 +1188,10 @@ private:
         bool isList = isJSArray(object) || object->type() == DerivedArrayType;
         if (!isList && object->type() != FinalObjectType && object->type() != CompiledObjectType && object->type() != ProxyObjectType)
             return {};
-        JSObject* copy = isList ? static_cast<JSObject*>(constructEmptyArray(m_realm, nullptr, uncheckedDowncast<JSArray>(object)->length())) : constructEmptyObject(m_realm);
+        JSObject* copy = isList ? static_cast<JSObject*>(constructEmptyArray(m_realm, nullptr, uncheckedDowncast<JSArray>(object)->length())) : createObject();
         RETURN_IF_EXCEPTION(scope, {});
         remember(object, copy);
-        bool isDictionary = m_to == To::Page && !m_isData && !isList && object->type() != ProxyObjectType;
+        bool isDictionary = m_to == To::Page && !isData() && !isList && object->type() != ProxyObjectType;
         isDictionary ? copyDictionary(object, copy) : copyProperties(object, copy);
         RETURN_IF_EXCEPTION(scope, {});
         if (isList && m_to == To::World && object->structure()->isFrozen(m_vm)) {
@@ -1086,10 +1210,10 @@ private:
             forEachMember(from, [&](const Identifier& name, JSValue member, unsigned attributes) {
                 if (scope.exception() || to->getDirect(m_vm, name) || (from != object && name == m_vm.propertyNames->constructor) || (name.isSymbol() && name != m_vm.propertyNames->toPrimitiveSymbol && name != m_vm.propertyNames->iteratorSymbol && name != m_vm.propertyNames->asyncIteratorSymbol))
                     return;
-                bool holdsData = WTF::equal(name.impl(), "info"_s) || (m_isForConstructor && holdsAnyValue(name));
+                bool holdsData = m_isForEvent || WTF::equal(name.impl(), "info"_s) || (m_isForConstructor && holdsAnyValue(name));
                 unsigned visibility = from == object ? attributes & PropertyAttribute::DontEnum : static_cast<unsigned>(PropertyAttribute::DontEnum);
                 if (!(attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)) {
-                    JSValue value = holdsData ? convertData(member) : convert(member);
+                    JSValue value = convert(member, holdsData ? Use::Gift : Use::Loan);
                     if (!scope.exception())
                         to->putDirect(m_vm, name, value, visibility);
                     return;
@@ -1141,10 +1265,10 @@ private:
         bool wasHandled = promise->isHandled();
         auto reaction = [&](bool isRejection) {
             return JSNativeStdFunction::create(
-                m_vm, m_realm, 1, emptyString(), [follower, world = m_world.global(), to = m_to, isRejection, wasHandled](JSGlobalObject* realm, CallFrame* callFrame) {
+                m_vm, m_realm, 1, emptyString(), [follower, world = m_world.global(), to = m_to, use = isRejection && m_to == To::Page ? std::max(m_use, Use::Transit) : m_use, isRejection, wasHandled](JSGlobalObject* realm, CallFrame* callFrame) {
                     VM& vm = realm->vm();
                     auto scope = DECLARE_THROW_SCOPE(vm);
-                    JSValue value = Crossing(World(world), to).convert(callFrame->argument(0));
+                    JSValue value = Crossing(World(world), to).convert(callFrame->argument(0), use);
                     if (auto* exception = scope.exception()) [[unlikely]] {
                         if (scope.tryClearException())
                             follower->reject(vm, to == To::World ? exception->value() : jsUndefined());
@@ -1180,6 +1304,8 @@ private:
 
     JSObject* pairWith(JSObject* object, JSObject* twin)
     {
+        if (isData())
+            return asObject(remember(object, twin));
         m_to == To::World ? m_world.pair(twin, object) : m_world.pair(object, twin);
         return twin;
     }
@@ -1188,7 +1314,7 @@ private:
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         RefPtr buffer = view->possiblySharedBuffer();
-        RefPtr bytes = view->isDetached() ? nullptr : sameBytes(buffer, view->span());
+        RefPtr bytes = view->isDetached() || m_use == Use::Gift ? nullptr : sameBytes(buffer, view->span());
         if (!bytes)
             RELEASE_AND_RETURN(scope, clone(view));
         auto type = typedArrayType(view->type());
@@ -1211,8 +1337,9 @@ private:
     World m_world;
     VM& m_vm;
     To m_to;
-    bool m_isData { false };
+    Use m_use { Use::Loan };
     bool m_isForConstructor { false };
+    bool m_isForEvent { false };
     JSGlobalObject* m_realm;
     UncheckedKeyHashMap<JSObject*, JSValue> m_seen;
     MarkedArgumentBuffer m_copies;
@@ -1268,6 +1395,10 @@ std::pair<JSValue, unsigned> World::memberOfWindow(JSObject* window, PropertyNam
     unsigned attributes = attributesForStructure(row.attributes());
     if (row.attributes() & PropertyAttribute::Function)
         return memberFor(name, JSFunction::create(m_vm, window->realm(), row.functionLength(), String(name.uid()), row.function(), ImplementationVisibility::Public), attributes);
+    if (WTF::equal(name.uid(), "event"_s))
+        return { GetterSetter::create(m_vm, m_global, createFunction(m_global, 0, "get event"_s, getCurrentEvent, {}), createFunction(m_global, 1, "set event"_s, replaceCurrentEvent, {})), static_cast<unsigned>(PropertyAttribute::Accessor) };
+    if (WTF::equal(name.uid(), "console"_s))
+        return { Bindgen::interfaceObjectNamed(m_global, *name.uid()), static_cast<unsigned>(PropertyAttribute::DontEnum) };
     if (row.attributes() & PropertyAttribute::CustomValue) {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         JSValue value = JSValue::decode(Crossing(*this, To::World).convertOutcome([&] {
@@ -1489,7 +1620,7 @@ bool ExoticAlias::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName n
         alias->putDirect(world.vm(), name, value);
         return true;
     }
-    value = Crossing(world, To::Page).convert(value);
+    value = Crossing(world, To::Page).convert(value, alias->isArray() ? Use::Gift : Use::Loan);
     RETURN_IF_EXCEPTION(scope, false);
     bool didPut = false;
     Crossing(world, To::World).convertOutcome([&] {
@@ -1657,6 +1788,7 @@ void enter(WebGlobalObject* global, JSGlobalObject* page)
 {
     VM& vm = global->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    vmWithWorlds.store(&vm, std::memory_order_relaxed);
     World::create(global, page);
     World world(global);
     JSObject* prototype = world.prototypeOfInterface(Bindgen::interfaceOf(Bindgen::existingReceiverOf(page, jsUndefined())));
@@ -1715,7 +1847,7 @@ static JSValue keptResult(World world, CallFrame* callFrame, JSValue result)
     return kept;
 }
 
-static EncodedJSValue callAcross(World world, To to, CallFrame* callFrame, JSValue callee, JSValue receiver = {}, bool keepsResult = false, bool takesData = false)
+static EncodedJSValue callAcross(World world, To to, CallFrame* callFrame, JSValue callee, JSValue receiver = {}, bool keepsResult = false, Use use = Use::Loan)
 {
     auto scope = DECLARE_THROW_SCOPE(world.vm());
     auto* realm = to == To::World ? world.global() : world.page();
@@ -1727,7 +1859,7 @@ static EncodedJSValue callAcross(World world, To to, CallFrame* callFrame, JSVal
             receiver = there.convertReceiver(callFrame->thisValue().toThis(realm, ECMAMode::strict()));
             RETURN_IF_EXCEPTION(scope, JSValue());
         }
-        there.convertArguments(callFrame, arguments, takesData);
+        there.convertArguments(callFrame, arguments, use);
         RETURN_IF_EXCEPTION(scope, JSValue());
         JSValue result = call(realm, callee, receiver, arguments, "The value is not a function"_s);
         RETURN_IF_EXCEPTION(scope, JSValue());
@@ -1738,18 +1870,13 @@ static EncodedJSValue callAcross(World world, To to, CallFrame* callFrame, JSVal
 JSC_DEFINE_HOST_FUNCTION(callInPage, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto* record = recordOfCallee(callFrame);
-    return callAcross(World(globalObject), To::Page, callFrame, record->get(0), {}, record->get(1).isTrue(), record->get(2).isTrue());
+    return callAcross(World(globalObject), To::Page, callFrame, record->get(0), {}, record->get(1).isTrue(), record->get(2).isInt32() ? static_cast<Use>(record->get(2).asInt32()) : Use::Loan);
 }
 
 JSC_DEFINE_HOST_FUNCTION(callInWorld, (JSGlobalObject*, CallFrame* callFrame))
 {
     auto* record = recordOfCallee(callFrame);
-    World world(uncheckedDowncast<JSGlobalObject>(record->get(0)));
-    auto scope = DECLARE_THROW_SCOPE(world.vm());
-    EncodedJSValue result = callAcross(world, To::World, callFrame, record->get(1));
-    if (auto* exception = scope.exception()) [[unlikely]]
-        world.page()->putDirect(world.vm(), thrownName(world.vm()), exception->value());
-    return result;
+    return callAcross(World(uncheckedDowncast<JSGlobalObject>(record->get(0))), To::World, callFrame, record->get(1));
 }
 
 JSC_DEFINE_HOST_FUNCTION(getInWorld, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -1764,7 +1891,7 @@ JSC_DEFINE_HOST_FUNCTION(getInWorld, (JSGlobalObject * globalObject, CallFrame* 
         auto scope = DECLARE_THROW_SCOPE(world.vm());
         JSValue value = record->get(1).get(world.global(), name);
         RETURN_IF_EXCEPTION(scope, JSValue());
-        RELEASE_AND_RETURN(scope, record->get(3).isTrue() ? crossing.convertData(value) : crossing.convert(value));
+        RELEASE_AND_RETURN(scope, crossing.convert(value, record->get(3).isTrue() ? Use::Gift : Use::Loan));
     }));
 }
 
@@ -1886,6 +2013,65 @@ JSC_DEFINE_HOST_FUNCTION(callMethodInWorld, (JSGlobalObject * globalObject, Call
     RELEASE_AND_RETURN(scope, callAcross(world, To::World, callFrame, method, record->get(1)));
 }
 
+static EncodedJSValue askOriginal(CallFrame* callFrame, NOESCAPE const auto& ask)
+{
+    auto* record = recordOfCallee(callFrame);
+    World world(uncheckedDowncast<JSGlobalObject>(record->get(0)));
+    JSObject* copy = callFrame->thisValue().getObject();
+    JSObject* original = copy && copy->getPrototypeDirect() == record->get(1) ? world.inWorld()->get(copy).getObject() : nullptr;
+    if (!original)
+        return Bindgen::throwIllegalInvocation(world.page());
+    return Crossing(world, To::Page).convertOutcome([&] { return ask(world.global(), original, record->get(2)); });
+}
+
+JSC_DEFINE_HOST_FUNCTION(primitiveOfOriginal, (JSGlobalObject*, CallFrame* callFrame))
+{
+    return askOriginal(callFrame, [&](JSGlobalObject* world, JSObject* original, JSValue) {
+        String hint = callFrame->argument(0).isString() ? String(asString(callFrame->argument(0))->tryGetValue()) : String();
+        return original->toPrimitive(world, hint == "string"_s ? PreferString : hint == "number"_s ? PreferNumber
+                                                                                                   : NoPreference);
+    });
+}
+
+JSC_DEFINE_HOST_FUNCTION(iteratorOfOriginal, (JSGlobalObject*, CallFrame* callFrame))
+{
+    return askOriginal(callFrame, [&](JSGlobalObject* world, JSObject* original, JSValue name) {
+        auto scope = DECLARE_THROW_SCOPE(world->vm());
+        auto key = name.toPropertyKey(world);
+        RETURN_IF_EXCEPTION(scope, JSValue());
+        JSValue method = original->get(world, key);
+        RETURN_IF_EXCEPTION(scope, JSValue());
+        if (!original->inherits<Alias>() && !original->inherits<WebCore::JSURLSearchParams>() && !original->inherits<WebCore::JSDOMFormData>())
+            RELEASE_AND_RETURN(scope, call(world, method, original, ArgList(), "The value is not iterable"_s));
+        JSArray* all = constructEmptyArray(world, nullptr);
+        RETURN_IF_EXCEPTION(scope, JSValue());
+        forEachInIterable(*world, original, method, [&](VM&, JSGlobalObject&, JSValue it) { all->push(world, it); });
+        RETURN_IF_EXCEPTION(scope, JSValue());
+        return JSValue(JSArrayIterator::create(world->vm(), world->arrayIteratorStructure(), all, IterationKind::Values));
+    });
+}
+
+JSC_DEFINE_HOST_FUNCTION(passOnAbort, (JSGlobalObject * world, CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(world->vm());
+    JSValue reason = Crossing(World(world), To::Page).convert(callFrame->argument(0), Use::Transit);
+    RETURN_IF_EXCEPTION(scope, {});
+    scope.release();
+    uncheckedDowncast<WebCore::JSAbortSignal>(recordOfCallee(callFrame)->get(0))->wrapped().signalAbort(reason);
+    return encodedJSUndefined();
+}
+
+JSC_DEFINE_HOST_FUNCTION(getCurrentEvent, (JSGlobalObject * world, CallFrame*))
+{
+    return JSValue::encode(toWorld(world, World(world).currentEvent()));
+}
+
+JSC_DEFINE_HOST_FUNCTION(replaceCurrentEvent, (JSGlobalObject * world, CallFrame* callFrame))
+{
+    world->createDataProperty(world, Identifier::fromString(world->vm(), "event"_s), callFrame->argument(0), true);
+    return encodedJSUndefined();
+}
+
 JSC_DEFINE_HOST_FUNCTION(constructInPage, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -1927,6 +2113,14 @@ static EncodedJSValue accessInPage(JSGlobalObject* globalObject, CallFrame* call
         RELEASE_AND_RETURN(scope, Bindgen::throwIllegalInvocation(globalObject));
     JSObject* window = asWindow(asObject(receiver));
     JSGlobalObject* realm = window ? window->realm() : world.page();
+    auto replace = [&] {
+        (given.isObject() ? asObject(given) : globalObject->globalThis())->createDataProperty(globalObject, name, callFrame->argument(0), true);
+    };
+    if (isSetter && window && name == "opener"_s && !callFrame->argument(0).isNull()) {
+        scope.release();
+        replace();
+        return encodedJSUndefined();
+    }
     JSValue value = isSetter ? toPage.convert(callFrame->argument(0)) : jsUndefined();
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, Crossing(world, To::World).convertOutcome([&] {
@@ -1941,7 +2135,7 @@ static EncodedJSValue accessInPage(JSGlobalObject* globalObject, CallFrame* call
         RETURN_IF_EXCEPTION(scope, JSValue());
         scope.release();
         if (replacement.wasAskedFor())
-            (given.isObject() ? asObject(given) : globalObject->globalThis())->createDataProperty(globalObject, name, callFrame->argument(0), true);
+            replace();
         return jsUndefined();
     }));
 }
@@ -1973,6 +2167,53 @@ WebGlobalObject* pageOf(JSGlobalObject* world) { return is(world) ? uncheckedDow
 JSObject* deletedGlobalsOf(JSGlobalObject* world) { return World(world).deletedGlobals(); }
 JSValue toWorld(JSGlobalObject* world, JSValue value) { return Crossing(World(world), To::World).convert(value); }
 JSValue toPage(JSGlobalObject* world, JSValue value) { return Crossing(World(world), To::Page).convert(value); }
+
+static bool isBesideWorlds(JSGlobalObject* realm) { return vmWithWorlds.load(std::memory_order_relaxed) == &realm->vm(); }
+
+// In the object, or in what a script has made for it to inherit from.
+static bool mayHaveOwn(JSObject* object, PropertyName name)
+{
+    VM& vm = object->vm();
+    JSC::JSType type = object->type();
+    if (type == ModuleNamespaceObjectType || type == GlobalProxyType)
+        return true;
+    if (type != FinalObjectType && type != CompiledObjectType && type != ProxyObjectType && type != JSPromiseType)
+        return !!object->getDirect(vm, name);
+    for (JSObject* it = object; it && (it == object || it->type() == FinalObjectType || it->type() == CompiledObjectType || it->type() == ProxyObjectType); it = it->getPrototypeDirect().getObject()) {
+        if (it->type() == ProxyObjectType || it->type() == CompiledObjectType || it->getDirect(vm, name))
+            return true;
+    }
+    return false;
+}
+
+bool resolveUnobserved(JSGlobalObject* realm, JSPromise* promise, JSObject* value)
+{
+    BUN_BEGIN_REMOVABLE_ENTRY_POINT(Desktop, Abort, bool)
+    VM& vm = realm->vm();
+    if (!isBesideWorlds(realm) || value == promise || mayHaveOwn(value, vm.propertyNames->then))
+        return false;
+    auto* source = dynamicDowncast<JSPromise>(value);
+    if (!source)
+        promise->fulfill(vm, value);
+    else if (source->realm()->promiseThenWatchpointSet().isStillValid() && source->realm()->promiseSpeciesWatchpointSet().isStillValid())
+        return false;
+    else
+        promise->pipeFrom(vm, source);
+    return true;
+    BUN_END_REMOVABLE_ENTRY_POINT
+}
+
+JSPromise* promiseFor(JSGlobalObject* realm, JSValue value)
+{
+    if (!value.isObject() || !isBesideWorlds(realm))
+        return JSPromise::resolvedPromise(realm, value);
+    VM& vm = realm->vm();
+    if (auto* given = dynamicDowncast<JSPromise>(value); given && given->getPrototypeDirect() == realm->promisePrototype() && !given->getDirect(vm, vm.propertyNames->constructor))
+        return given;
+    auto* promise = JSPromise::create(vm, realm->promiseStructure());
+    resolve(realm, promise, value);
+    return promise;
+}
 
 JSValue frameAt(JSGlobalObject* world, unsigned index)
 {
@@ -2011,21 +2252,38 @@ extern "C" JSGlobalObject* Bun__IsolatedWorld__pageOrItself(JSGlobalObject* real
     return page ? page : realm;
 }
 
-// Whether it is what a function of a world has thrown last. It is asked once.
-extern "C" bool Bun__IsolatedWorld__hasThrown(JSGlobalObject* page, EncodedJSValue value)
+// The world, if `value` stands for what one has thrown last. It is asked once.
+extern "C" JSGlobalObject* Bun__IsolatedWorld__takeThrown(JSGlobalObject* page, EncodedJSValue value, EncodedJSValue* original)
 {
     VM& vm = page->vm();
     auto& name = IsolatedWorld::thrownName(vm);
-    if (page->getDirect(vm, name) != JSValue::decode(value))
-        return false;
-    page->putDirect(vm, name, page);
-    return true;
+    JSValue kept = page->getDirect(vm, name);
+    auto* record = kept ? dynamicDowncast<JSCellButterfly>(kept) : nullptr;
+    if (!record || record->get(0) != JSValue::decode(value))
+        return nullptr;
+    *original = JSValue::encode(record->get(2));
+    page->putDirect(vm, name, jsUndefined());
+    return uncheckedDowncast<JSGlobalObject>(record->get(1));
+}
+
+extern "C" bool Bun__IsolatedWorld__isLent(EncodedJSValue object) { return IsolatedWorld::isSealed(asObject(JSValue::decode(object))); }
+
+// `window.event` of the world that has lent `listener`.
+extern "C" EncodedJSValue Bun__IsolatedWorld__swapEvent(EncodedJSValue listener, EncodedJSValue event)
+{
+    JSObject* prototype = asObject(asObject(JSValue::decode(listener))->getPrototypeDirect());
+    IsolatedWorld::World world(uncheckedDowncast<JSGlobalObject>(prototype->getDirect(prototype->vm(), IsolatedWorld::handlersName(prototype->vm()))));
+    JSValue before = world.currentEvent();
+    world.setCurrentEvent(event ? JSValue::decode(event) : jsUndefined());
+    return JSValue::encode(before);
 }
 
 extern "C" EncodedJSValue Bun__IsolatedWorld__carry(JSGlobalObject* from, JSGlobalObject* to, EncodedJSValue object)
 {
     auto scope = DECLARE_THROW_SCOPE(from->vm());
-    JSValue ofPage = IsolatedWorld::is(from) ? IsolatedWorld::toPage(from, JSValue::decode(object)) : JSValue::decode(object);
+    using namespace IsolatedWorld;
+    JSValue given = JSValue::decode(object);
+    JSValue ofPage = is(from) ? Crossing(World(from), To::Page).convert(given, isShared(asObject(given)) ? Use::Gift : Use::Loan) : given;
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(IsolatedWorld::is(to) ? IsolatedWorld::toWorld(to, ofPage) : ofPage));
 }

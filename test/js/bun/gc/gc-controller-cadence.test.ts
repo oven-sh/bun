@@ -162,6 +162,37 @@ describe.skipIf(isDebug)("GarbageCollectionController eden cadence", () => {
   });
 });
 
+// The marking threads ask for the JS thread with a timer, which is on with --smol.
+test.concurrent.each(["main thread", "worker"])("a collection is finished while the %s is idle", async where => {
+  using dir = tempDir("gc-under-way", {
+    "main thread.js": `
+      const { isMainThread } = require("worker_threads");
+      globalThis.registry = new FinalizationRegistry(() => (isMainThread ? process.exit(0) : postMessage(0)));
+      setTimeout(() => {}, 1e6);
+      setImmediate(() => {
+        // One thread at a time can mark a list, so the collection goes on concurrently.
+        for (let i = 0; i < 300000; i++) globalThis.list = { next: globalThis.list };
+        Bun.gc(true);
+        for (let i = 0; i < 100; i++) registry.register({}, i);
+        globalThis.large = new ArrayBuffer(64 << 20);
+      });`,
+    "worker.js": `new Worker(__dirname + "/main thread.js").onmessage = () => process.exit(0);`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), where + ".js"],
+    cwd: String(dir),
+    env: {
+      ...bunEnv,
+      BUN_DISABLE_STOP_IF_NECESSARY_TIMER: "0",
+      BUN_GC_TIMER_DISABLE: "1",
+      BUN_JSC_useGenerationalGC: "0",
+    },
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  expect(await proc.exited).toBe(0);
+});
+
 // After BUN_IDLE_GC_SECONDS of timer ticks in which the JS heap did not grow,
 // the controller requests a full collection (so JSC can age out code that no
 // longer runs and return memory). An app parked at a prompt still fires the odd

@@ -6,14 +6,15 @@ use bun_jsc::bindgen::JsList;
 use bun_web::exec::{self, Either};
 use bun_web::headers::split;
 use bun_web::net::fetch::Controller;
-use bun_web::net::response::is_ok_status;
-use bun_web::request::InitiatorType;
+use bun_web::net::response::{Head, ResponseType, is_ok_status};
+use bun_web::request::{InitiatorType, Navigation};
 use bun_web::storage::caches::{
     CacheId, CachedRequest, CachedResponse, Caches, PutError, QueryOptions,
 };
 use bun_web::storage::key::{self, Token};
 
 use super::body::Content;
+use super::fetch::follow;
 use super::headers::Guard;
 use super::request::{Options, Parts};
 use super::response::About;
@@ -70,7 +71,7 @@ fn frozen<'a, T>(
         .to_js())
 }
 
-fn encode(name: &DomString) -> Vec<u8> {
+pub(crate) fn encode_cache_name(name: &DomString) -> Vec<u8> {
     let mut encoded = Vec::new();
     key::push_string(&mut encoded, name.units().collect::<Vec<_>>().into_iter());
     encoded
@@ -78,15 +79,20 @@ fn encode(name: &DomString) -> Vec<u8> {
 
 fn describe<'a>(heap: &JsHeap<'a>, request: &DomRequestInfo<'a>) -> Result<'a, CachedRequest> {
     Ok(match request {
-        DomRequestInfo::Request(it) => CachedRequest {
-            url: it.options.url.href().into(),
-            method: it.options.method.clone(),
-            headers: it.headers.list().clone(),
-        },
+        DomRequestInfo::Request(it) => {
+            let navigation = it.options.navigation as u8;
+            CachedRequest {
+                url: it.options.url.href().into(),
+                method: it.options.method.clone(),
+                headers: it.headers.list().clone(),
+                navigation,
+            }
+        }
         DomRequestInfo::Url(url) => CachedRequest {
             url: request::parse(heap, &DomString::from(*url))?.href().into(),
             method: b"GET"[..].into(),
             headers: HeaderList::default(),
+            navigation: 0,
         },
     })
 }
@@ -130,16 +136,14 @@ async fn unless_none<T: Default, E>(
 }
 
 fn restore_request(heap: &JsHeap<'_>, it: CachedRequest) -> JSValue {
-    Url::parse(&it.url).map_or(JSValue::UNDEFINED, |url| {
-        Request::new(
-            heap,
-            Options::new(url),
-            it.headers,
-            Guard::Immutable,
-            Content::Null,
-        )
-        .to_js()
-    })
+    let Some(mut options) = Url::parse(&it.url).map(Options::new) else {
+        return JSValue::UNDEFINED;
+    };
+    options.navigation = [Navigation::Reload, Navigation::History]
+        .into_iter()
+        .find(|kind| *kind as u8 == it.navigation)
+        .unwrap_or(Navigation::Other);
+    Request::new(heap, options, it.headers, Guard::Immutable, Content::Null).to_js()
 }
 
 fn restore_response(heap: &JsHeap<'_>, it: CachedResponse) -> JSValue {
@@ -148,12 +152,34 @@ fn restore_response(heap: &JsHeap<'_>, it: CachedResponse) -> JSValue {
         .into_iter()
         .find(|kind| **kind == *it.kind)
         .unwrap_or(b"default");
+    if let Some((kind, url)) = ResponseType::parse(kind)
+        .filter(|it| it.as_bytes().starts_with(b"opaque"))
+        .zip(Url::parse(&it.url))
+    {
+        let head = Head {
+            status: it.status,
+            status_text: it.status_text,
+            redirects: it.is_redirected.into(),
+            includes_credentials: !it.omits_credentials,
+            ..Head::new(kind, url, it.headers)
+        };
+        let response = Response::new(
+            heap,
+            About::of(&head),
+            HeaderList::default(),
+            Guard::Immutable,
+            Default::default(),
+        );
+        it.body.into_iter().for_each(|it| response.hide(it));
+        return response.to_js();
+    }
     let about = About {
         kind,
         url: it.url,
         is_redirected: it.is_redirected,
         status: it.status,
         status_text: it.status_text,
+        internal: None,
     };
     Response::new(
         heap,
@@ -193,11 +219,28 @@ fn to_store(
         is_redirected,
         status,
         status_text,
+        internal,
     } = about;
+    if let Some(it) = internal.filter(|it| it.is_cors_cross_origin()) {
+        let (url, mut headers) = (it.url.without_fragment().into(), it.headers.clone());
+        headers.delete(b"vary");
+        headers.delete(b"set-cookie");
+        return Ok(CachedResponse {
+            kind: kind.into(),
+            url,
+            is_redirected: it.redirects > 0,
+            omits_credentials: !it.includes_credentials,
+            status: it.status,
+            status_text: it.status_text.clone(),
+            headers,
+            body: None,
+        });
+    }
     Ok(CachedResponse {
         kind: kind.into(),
         url,
         is_redirected,
+        omits_credentials: false,
         status,
         status_text,
         headers,
@@ -269,7 +312,7 @@ impl Cache {
             .collect::<Result<'a, Vec<_>>>()?;
         let (caches, id, controller) = (caches(&cx.heap)?, self.0, Controller::default());
         let client = client_of(&cx.heap).ok_or_else(|| body::failure(cx, None))?;
-        let mut fetching = Vec::with_capacity(keys.len());
+        let (mut fetching, mut followed) = (Vec::with_capacity(keys.len()), Vec::new());
         for (request, key) in requests.iter().zip(keys) {
             let Parts {
                 options,
@@ -283,6 +326,7 @@ impl Cache {
                     signal.reason(&cx.heap),
                 )));
             }
+            followed.extend(signal.map(|it| follow(cx, it, &controller)));
             let request =
                 options.into_request(&client, headers.list().clone(), InitiatorType::Fetch);
             let (client, controller) = (Rc::clone(&client), controller.clone());
@@ -309,9 +353,12 @@ impl Cache {
                 Err(problem) => Either::Second(problem),
             }
         };
-        Ok(promise_for(cx, storing, |cx, result| match result {
+        Ok(promise_for(cx, storing, move |cx, result| match result {
             Either::First(result) => stored(&cx.heap, &result),
-            Either::Second(problem) => Err(type_error(&cx.heap, problem)),
+            Either::Second(problem) => Err(followed
+                .iter()
+                .find_map(|it| it.reason(&cx.heap))
+                .unwrap_or_else(|| type_error(&cx.heap, problem))),
         }))
     }
 
@@ -341,10 +388,17 @@ impl Cache {
         let (key, caches, id) = (storable(&cx.heap, &request)?, caches(&cx.heap)?, self.0);
         let head = to_store(response.about.clone(), response.headers.list().clone())
             .map_err(|it| type_error(&cx.heap, it))?;
-        let (has_body, reading) = (response.has_body(), response.read_all(cx)?);
+        let (has_body, reading, hidden) = (
+            response.has_body(),
+            response.read_all(cx)?,
+            response.read_hidden(),
+        );
         let storing = async move {
             let bytes = reading.await?.into_vec();
-            let body = has_body.then_some(bytes);
+            let body = match hidden {
+                Some(hidden) => Some(hidden.await.ok_or(body::ReadError::Network(None))?.to_vec()),
+                None => has_body.then_some(bytes),
+            };
             Ok(caches
                 .put(id, vec![(key, CachedResponse { body, ..head })])
                 .await)
@@ -418,7 +472,7 @@ impl CacheStorage {
             )?,
             caches(&cx.heap)?,
         );
-        let name = cache_name.map(|it| encode(&it.into()));
+        let name = cache_name.map(|it| encode_cache_name(&it.into()));
         later(
             cx,
             unless_none(
@@ -429,19 +483,19 @@ impl CacheStorage {
     }
 
     pub(crate) fn has<'a>(&self, cx: Cx<'_, 'a>, name: &DomString) -> Result<'a, JSValue> {
-        let asking = caches(&cx.heap)?.has(encode(name));
+        let asking = caches(&cx.heap)?.has(encode_cache_name(name));
         later(cx, asking, boolean)
     }
 
     pub(crate) fn open<'a>(&self, cx: Cx<'_, 'a>, name: &DomString) -> Result<'a, JSValue> {
-        let asking = caches(&cx.heap)?.open(encode(name));
+        let asking = caches(&cx.heap)?.open(encode_cache_name(name));
         later(cx, asking, |heap, id| {
             Ok(js_Cache::create(heap, Cache(id)).to_js())
         })
     }
 
     pub(crate) fn delete<'a>(&self, cx: Cx<'_, 'a>, name: &DomString) -> Result<'a, JSValue> {
-        let asking = caches(&cx.heap)?.delete(encode(name));
+        let asking = caches(&cx.heap)?.delete(encode_cache_name(name));
         later(cx, asking, boolean)
     }
 

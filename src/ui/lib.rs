@@ -1,9 +1,10 @@
 //! Windows, input and the services of the system, through the UI library of `bun:desktop`.
 
 use core::cell::{Cell, RefCell};
+use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
+use core::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::OnceLock;
-use std::thread::LocalKey;
 
 use bun_jsc::strong::StrongCell;
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -41,6 +42,72 @@ static UI: OnceLock<&'static Ui> = OnceLock::new();
 thread_local! {
     static OWNER: ManuallyDrop<StrongCell> = ManuallyDrop::default();
     static RELEASES: ManuallyDrop<RefCell<Vec<Box<dyn FnOnce()>>>> = ManuallyDrop::default();
+    static SLOTS: ManuallyDrop<RefCell<Vec<*const ()>>> = const { ManuallyDrop::new(RefCell::new(Vec::new())) };
+    static WORKER: Cell<Worker> = const { Cell::new(Worker::Unknown) };
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Worker {
+    Unknown,
+    Runs,
+    HasEnded,
+}
+
+/// A pointer of each thread. Every thread of the process pays for what a `thread_local!` holds, so these are on the heap.
+pub struct Slot<T>(AtomicUsize, PhantomData<fn() -> T>);
+
+impl<T> Slot<T> {
+    pub const fn empty() -> Self {
+        Slot(AtomicUsize::new(0), PhantomData)
+    }
+
+    #[inline]
+    fn get(&self) -> *const T {
+        let place = self.0.load(Ordering::Relaxed);
+        SLOTS.with(|it| {
+            it.borrow()
+                .get(place)
+                .map_or(core::ptr::null(), |it| it.cast())
+        })
+    }
+
+    #[cold]
+    fn set(&self, value: *const T) {
+        fn set(place: &AtomicUsize, value: *const ()) {
+            static LAST: AtomicUsize = AtomicUsize::new(0);
+            if place.load(Ordering::Relaxed) == 0 {
+                let next = LAST.fetch_add(1, Ordering::Relaxed) + 1;
+                let _ = place.compare_exchange(0, next, Ordering::Relaxed, Ordering::Relaxed);
+            }
+            let place = place.load(Ordering::Relaxed);
+            SLOTS.with(|it| {
+                let mut slots = it.borrow_mut();
+                if slots.is_empty() {
+                    at_end_of_worker(|| {});
+                }
+                if slots.len() <= place {
+                    slots.resize(place + 1, core::ptr::null());
+                }
+                slots[place] = value;
+            });
+        }
+        set(&self.0, value.cast());
+    }
+
+    /// Returns the value, and what destroys it.
+    fn fill(&'static self) -> (*const T, impl FnOnce())
+    where
+        T: Default,
+    {
+        let value = bun_core::heap::into_raw(Box::<T>::default());
+        self.set(value);
+        let release = move || {
+            self.set(core::ptr::null());
+            // SAFETY: from `into_raw`. The callers call this where no reference is left.
+            unsafe { bun_core::heap::destroy(value) };
+        };
+        (value, release)
+    }
 }
 
 fn is_worker() -> bool {
@@ -48,61 +115,76 @@ fn is_worker() -> bool {
 }
 
 /// The VM is gone by then.
-pub fn at_end_of_worker(step: fn()) {
-    struct Steps(RefCell<Vec<fn()>>);
+pub fn at_end_of_worker(step: impl FnOnce() + 'static) {
+    add_step_at_end_of_worker(Box::new(step));
+}
+
+fn add_step_at_end_of_worker(step: Box<dyn FnOnce()>) {
+    struct Steps(RefCell<Vec<Box<dyn FnOnce()>>>);
     impl Drop for Steps {
         fn drop(&mut self) {
+            WORKER.set(Worker::HasEnded);
             self.0.take().into_iter().for_each(|it| it());
+            SLOTS.with(|it| it.take());
         }
     }
     thread_local! {
         static STEPS: Steps = const { Steps(RefCell::new(Vec::new())) };
     }
-    if is_worker() {
-        let _ = STEPS.try_with(|it| it.0.borrow_mut().push(step));
+    if WORKER.get() == Worker::Unknown && is_worker() {
+        WORKER.set(Worker::Runs);
+    }
+    if WORKER.get() == Worker::Runs {
+        STEPS.with(|it| it.0.borrow_mut().push(step));
     }
 }
 
-/// For a thread-local that is on the heap, because every thread pays for its size.
-pub trait BoxedLocal<T> {
-    fn with_borrow<R>(&'static self, steps: impl FnOnce(&T) -> R) -> R;
-    fn with_borrow_mut<R>(&'static self, steps: impl FnOnce(&mut T) -> R) -> R;
-}
+/// A thread-local that destructors can use. It is dropped [`at_end_of_worker`].
+pub struct Lasting<T>(Slot<T>);
 
-impl<T> BoxedLocal<T> for LocalKey<Box<RefCell<T>>> {
-    fn with_borrow<R>(&'static self, steps: impl FnOnce(&T) -> R) -> R {
-        self.with(|it| steps(&it.borrow()))
+impl<T: Default + 'static> Lasting<T> {
+    pub const fn empty() -> Self {
+        Lasting(Slot::empty())
     }
 
-    fn with_borrow_mut<R>(&'static self, steps: impl FnOnce(&mut T) -> R) -> R {
-        self.with(|it| steps(&mut it.borrow_mut()))
+    #[inline]
+    pub fn with<R>(&'static self, steps: impl FnOnce(&T) -> R) -> R {
+        let temporary;
+        let mut value = self.0.get();
+        if value.is_null() {
+            if WORKER.get() == Worker::HasEnded {
+                temporary = T::default();
+                value = &raw const temporary;
+            } else {
+                value = self.fill();
+            }
+        }
+        // SAFETY: it lives until the thread ends, or else until this function returns.
+        steps(unsafe { &*value })
     }
-}
 
-/// For a thread-local that destructors use, so that it cannot have one.
-pub fn lasting<T: Default>(free: fn()) -> ManuallyDrop<T> {
-    at_end_of_worker(free);
-    ManuallyDrop::default()
+    #[cold]
+    fn fill(&'static self) -> *const T {
+        let (value, release) = self.0.fill();
+        at_end_of_worker(release);
+        value
+    }
 }
 
 /// What `slot` has for the global object of this thread's VM. `bun test --isolate` makes a new one for each file.
-pub fn state<T: Default>(slot: &'static LocalKey<Cell<*const T>>) -> &'static T {
+pub fn state<T: Default>(slot: &'static Slot<T>) -> &'static T {
     let global = main_global();
     if OWNER.with(|it| it.get()) != Some(global.to_js_value()) {
         change_owner(global);
     }
-    if slot.get().is_null() {
-        let value = bun_core::heap::into_raw(Box::<T>::default());
-        slot.set(value);
-        let release = move || {
-            slot.set(core::ptr::null());
-            // SAFETY: from `into_raw`. The global object is replaced between the turns of the event loop.
-            unsafe { bun_core::heap::destroy(value) };
-        };
+    let mut value = slot.get();
+    if value.is_null() {
+        let release;
+        (value, release) = slot.fill();
         release_later(global, Box::new(release));
     }
-    // SAFETY: as above.
-    unsafe { &*slot.get() }
+    // SAFETY: the global object is replaced between the turns of the event loop.
+    unsafe { &*value }
 }
 
 fn release_everything() {
@@ -141,9 +223,7 @@ fn change_owner(global: &JSGlobalObject) {
 macro_rules! state {
     ($visibility:vis fn $name:ident() -> $type:ty) => {
         $visibility fn $name() -> &'static $type {
-            thread_local! {
-                static SLOT: core::cell::Cell<*const $type> = const { core::cell::Cell::new(core::ptr::null()) };
-            }
+            static SLOT: $crate::Slot<$type> = $crate::Slot::empty();
             $crate::state(&SLOT)
         }
     };
@@ -166,6 +246,7 @@ struct Session {
     listeners: Cell<Option<Listeners>>,
     is_started: Cell<bool>,
     is_accessory: Cell<bool>,
+    is_app_headless: Cell<bool>,
     holds: Cell<u32>,
     keep_alive: bun_io::JsKeepAlive,
 }
@@ -192,7 +273,13 @@ pub fn environment(global: &JSGlobalObject, name: &str) -> JsResult<Option<Vec<u
 }
 
 pub fn is_headless(global: &JSGlobalObject) -> JsResult<bool> {
-    Ok(environment(global, "BUN_DESKTOP_HEADLESS")?.as_deref() == Some(b"1"))
+    Ok(session().is_app_headless.get()
+        || environment(global, "BUN_DESKTOP_HEADLESS")?.as_deref() == Some(b"1"))
+}
+
+/// In the process of a page, which does not have the environment of the app.
+pub fn set_app_headless(is_headless: bool) {
+    session().is_app_headless.set(is_headless);
 }
 
 pub fn loaded() -> Option<&'static Ui> {

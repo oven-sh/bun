@@ -9,36 +9,6 @@ use super::contents::Contents;
 use crate::prelude::*;
 use crate::value::Value;
 
-/// The `key` and the `code` for a name in an accelerator.
-pub(crate) fn describe_key(name: &str, is_shifted: bool) -> [String; 2] {
-    let upper = name.to_uppercase();
-    let key = match name.as_bytes() {
-        b"space" => return [" ".into(), "Space".into()],
-        [b'a'..=b'z'] => {
-            let code = format!("Key{upper}");
-            return [if is_shifted { upper } else { name.into() }, code];
-        }
-        [b'0'..=b'9'] => return [name.into(), format!("Digit{name}")],
-        b"backspace" => "Backspace",
-        b"delete" => "Delete",
-        b"down" => "ArrowDown",
-        b"end" => "End",
-        b"enter" => "Enter",
-        b"escape" => "Escape",
-        b"home" => "Home",
-        b"insert" => "Insert",
-        b"left" => "ArrowLeft",
-        b"pagedown" => "PageDown",
-        b"pageup" => "PageUp",
-        b"right" => "ArrowRight",
-        b"tab" => "Tab",
-        b"up" => "ArrowUp",
-        _ => &upper,
-    };
-    let code = if key.chars().count() > 1 { key } else { "" };
-    [key.into(), code.into()]
-}
-
 fn modifiers(params: &Value) -> u8 {
     let bits = params["modifiers"].int();
     let held = [(1, ALT), (2, CONTROL), (4, META), (8, SHIFT)].into_iter();

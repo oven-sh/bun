@@ -82,6 +82,14 @@ impl Shared {
     }
 }
 
+impl Shared {
+    /// How often what a page remembers has changed.
+    pub fn times_outdated(&self) -> &AtomicU32 {
+        // SAFETY: it is in the header, behind the positions, and all bytes are a value.
+        unsafe { &*self.0.cast::<Positions>().add(CAPACITIES.len()).cast() }
+    }
+}
+
 impl Drop for Shared {
     fn drop(&mut self) {
         // SAFETY: nothing refers to it any more.

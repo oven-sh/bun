@@ -142,10 +142,10 @@ impl Link {
 struct MaybeLink(Option<Link>);
 
 impl Connection for MaybeLink {
-    fn send(&self, commands: &[u8]) {
+    fn send(&self, commands: &[u8], [may_list, may_capture]: [bool; 2]) {
         if let Some(Link { id, host, .. }) = &self.0 {
             host.evaluate(format!(
-                "receive({id},JSON.parse({}))",
+                "receive({id},JSON.parse({}),{may_list},{may_capture})",
                 quote(&string(commands))
             ));
         }

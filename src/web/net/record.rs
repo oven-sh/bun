@@ -16,6 +16,11 @@ impl RecordWriter {
         self.count(bytes.len());
         self.0.extend_from_slice(bytes);
     }
+
+    pub(crate) fn optional(&mut self, bytes: Option<&[u8]>) {
+        self.count(bytes.is_some().into());
+        self.bytes(bytes.unwrap_or_default());
+    }
 }
 
 pub(crate) struct RecordReader<'a>(pub &'a [u8]);
@@ -40,6 +45,11 @@ impl<'a> RecordReader<'a> {
         let (bytes, rest) = self.0.split_at_checked(length)?;
         self.0 = rest;
         Some(bytes)
+    }
+
+    pub(crate) fn optional(&mut self) -> Option<Option<&'a [u8]>> {
+        let (is_there, bytes) = (self.count()? == 1, self.bytes()?);
+        Some(is_there.then_some(bytes))
     }
 
     pub(crate) fn list<T>(

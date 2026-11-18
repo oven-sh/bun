@@ -85,7 +85,7 @@ pub(crate) fn is_held(ui: &Ui) -> bool {
             _ => true,
         };
         it.drag.get().is_some()
-            || it.buttons.get() != 0 && (ui.container().is_some() || is_busy() || is_tracked())
+            || it.buttons.get() != 0 && (ui.any_container().is_some() || is_busy() || is_tracked())
     };
     holds(ui.mouse()) || ui.pen().is_some_and(holds)
 }
@@ -585,7 +585,7 @@ fn scroll<'a>(
         ui.pointer().scrolled_at.set(host::now());
         ui.doc().invalidate(cx);
     } else {
-        ui.container()
+        ui.any_container()
             .into_iter()
             .for_each(|it| it.scroll_around(cx, delta));
     }

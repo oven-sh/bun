@@ -1,6 +1,7 @@
 pub(crate) mod asked_by_test_runner;
 pub(crate) mod builtin_uses;
 pub(crate) mod bundled_commonjs;
+mod classic_scripts;
 pub(crate) mod compiler_declarations;
 pub(crate) mod contents;
 mod copied_factories;

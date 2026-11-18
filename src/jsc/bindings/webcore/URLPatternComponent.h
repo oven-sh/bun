@@ -48,6 +48,7 @@ class URLPatternComponent {
 public:
     static ExceptionOr<URLPatternComponent> compile(Ref<JSC::VM>, StringView, EncodingCallbackType, const URLPatternStringOptions&);
     const String& patternString() const { return m_patternString; }
+    JSC::RegExp* regularExpression() const { return m_regularExpression.get(); }
     bool hasRegexGroupsFromPartList() const { return m_hasRegexGroupsFromPartList; }
     bool matchSpecialSchemeProtocol(JSC::JSGlobalObject*) const;
     std::optional<URLPatternComponentResult> componentMatch(JSC::JSGlobalObject*, String&& input) const;

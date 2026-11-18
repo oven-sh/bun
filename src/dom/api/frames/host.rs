@@ -12,7 +12,7 @@ fn text(value: &DomString) -> String {
     value.to_utf8().into_owned()
 }
 
-fn tell_local(frame: &Frame, message: ToFrame) {
+pub(super) fn tell_local(frame: &Frame, message: ToFrame) {
     if let Some(window) = frame.around().doc().last_window() {
         window.host().tell_frame(frame.number, message);
     }
@@ -79,6 +79,8 @@ fn owner(frame: &Frame) -> Box<Owner> {
         allows_fullscreen: frame.element().has_attr(atom!("allowfullscreen")),
         csp: attribute(atom!("csp")),
         is_indexed: frame.is_indexed(),
+        forbids_scrolling: frame.forbids_scrolling(),
+        margins: [atom!("marginwidth"), atom!("marginheight")].map(attribute),
     })
 }
 
@@ -137,6 +139,9 @@ pub(super) fn input(frame: &Frame, input: Input) {
             tell_remote(frame, ToGuest::Moved(whereabouts(frame)));
         }
         return tell_remote(frame, ToGuest::Input(input));
+    }
+    if frame.is_apart() && !frame.context().is_some_and(Context::has_crashed) {
+        return tell_local(frame, ToFrame::Input(input));
     }
     match (frame.inner_window(), input) {
         (Some(window), input) => {

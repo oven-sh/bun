@@ -136,7 +136,7 @@ pub(super) fn choose_window(
         .iter()
         .any(|it| target.eq_ignore_ascii_case(it));
     let may_choose = link::knows_other_windows(page) || context.is_frame();
-    let found = if may_choose && (is_keyword || trust::trusts_all_frames()) {
+    let found = if may_choose && (is_keyword || trust::relates_windows()) {
         context.choose(target)?
     } else {
         None
@@ -149,13 +149,13 @@ pub(super) fn choose_window(
     }
     Ok(Chosen::Context {
         id: found.id,
-        verdict: wish.map_or(Ok(Verdict::Granted), |it| found.judge(page, it, None))?,
+        verdict: wish.map_or(Ok(Verdict::Granted), |it| found.judge_for_script(page, it))?,
     })
 }
 
 pub(super) fn navigate(page: &Page, wish: Wish) -> JsResult<()> {
     let named = (wish.initiator)
         .and_then(|it| page.contents().related_page(it))
-        .filter(|it| page.has_relatives.get() && it.origin_key() == page.origin_key());
+        .filter(|it| page.has_relatives.get() && it.is_kin_of(page));
     (page.contents()).wish(page, wish, Initiator::of(named.unwrap_or(page)), None)
 }

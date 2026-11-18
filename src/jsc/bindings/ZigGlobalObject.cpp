@@ -360,11 +360,14 @@ extern "C" bool Bun__isOptionThatCompiledCodeDoesNotTake(const char* entry)
 }
 #endif
 
-extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup, bool shortLivedGlobals, bool runsCompiledCode, bool locksBuiltins, bool isCompiler)
+extern "C" void JSC__useOptionsForDesktopProgram();
+static bool s_isDesktopProgram;
+
+extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup, bool shortLivedGlobals, bool runsCompiledCode, bool locksBuiltins, bool isCompiler, bool isDesktopProgram)
 {
     static std::once_flag jsc_init_flag;
     // NOLINTBEGIN
-    std::call_once(jsc_init_flag, [evalMode, oneShotStartup, shortLivedGlobals, runsCompiledCode, locksBuiltins, isCompiler, envp, envc, onCrash]() {
+    std::call_once(jsc_init_flag, [evalMode, oneShotStartup, shortLivedGlobals, runsCompiledCode, locksBuiltins, isCompiler, isDesktopProgram, envp, envc, onCrash]() {
         locksBuiltinsWithoutImage = locksBuiltins;
         if (locksBuiltins)
             JSC::AOT::lockBuiltinsWithoutImage();
@@ -443,6 +446,10 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::showPrivateScriptsInStackTraces() = true;
 #endif
 
+            s_isDesktopProgram = isDesktopProgram;
+            if (isDesktopProgram)
+                JSC__useOptionsForDesktopProgram();
+
             if (oneShotStartup) {
                 // One-shot invocations (`bun -e ...` / `bun --print ...`) run a
                 // trivial amount of JavaScript and then exit; they never reach a
@@ -470,9 +477,11 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
                 auto envc_copy = envc;
                 while (envc_copy--) {
                     const char* env = (const char*)envp[envc_copy];
+                    // Child processes inherit the environment, and another version of Bun refuses a BUN_JSC_ option that it does not know.
+                    bool isForDesktopProgram = isDesktopProgram && !strncmp(env, "BUN_DESKTOP_JSC_", 16);
                     // need to check for \0 so we might as well make this single pass
                     // strlen would check the end of the string
-                    if (!(env[0] == 'B' && env[1] == 'U' && env[2] == 'N' && env[3] == '_' && env[4] == 'J' && env[5] == 'S' && env[6] == 'C' && env[7] == '_')) [[likely]] {
+                    if (!isForDesktopProgram && !(env[0] == 'B' && env[1] == 'U' && env[2] == 'N' && env[3] == '_' && env[4] == 'J' && env[5] == 'S' && env[6] == 'C' && env[7] == '_')) [[likely]] {
                         if (env[0] == 'B' && env[1] == 'U' && env[2] == 'N' && env[3] == '_' && env[4] == 'F' && !strncmp(env + 5, "EATURE_FLAG_INTERNAL_FOR_TESTING=", 33)) [[unlikely]] {
 #if defined(BUN_LOCKED_ENVIRONMENT)
                             if (runsCompiledCode)
@@ -483,11 +492,12 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
                         continue;
                     }
 
+                    const char* assignment = env + (isForDesktopProgram ? 16 : 8);
 #if defined(BUN_LOCKED_ENVIRONMENT)
-                    if (runsCompiledCode && !isOptionThatCompiledCodeTakesFromEnvironment(env + 8)) [[unlikely]]
+                    if (runsCompiledCode && !isOptionThatCompiledCodeTakesFromEnvironment(assignment)) [[unlikely]]
                         onCrash(env, strcspn(env, "="));
 #endif
-                    if (!JSC::Options::setOption(env + 8)) [[unlikely]] {
+                    if (!JSC::Options::setOption(assignment)) [[unlikely]] {
                         onCrash(env, strlen(env));
                     }
                 }
@@ -705,7 +715,8 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(int32_t executionConte
         // Keep stopIfNecessaryTimer enabled by default when either:
         // - `--smol` is passed
         // - The machine has less than 4GB of RAM
-        bool shouldDisableStopIfNecessaryTimer = !miniMode;
+        // - Somebody is watching: without the marking threads, which an idle worker would keep, a collection is one long pause
+        bool shouldDisableStopIfNecessaryTimer = !miniMode && !s_isDesktopProgram;
 
         if (disable_stop_if_necessary_timer) {
             const char value = disable_stop_if_necessary_timer[0];
@@ -3621,11 +3632,12 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     staticGlobals.append(GlobalPropertyInfo(builtinNames.internalModuleRegistryPrivateName(), this->internalModuleRegistry(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
     staticGlobals.append(GlobalPropertyInfo(builtinNames.processBindingConstantsPrivateName(), this->processBindingConstants(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
     staticGlobals.append(GlobalPropertyInfo(builtinNames.requireMapPrivateName(), this->requireMap(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0));
-    m_natives.set(vm, this, NativeGlobals::create(vm, this));
-    staticGlobals.append(GlobalPropertyInfo(builtinNames.nativesPrivateName(), m_natives.get(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
+    JSObject* natives = NativeGlobals::create(vm, this);
+    staticGlobals.append(GlobalPropertyInfo(builtinNames.nativesPrivateName(), natives, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
     bool isOfTheWeb = Bun::WebGlobalObject::is(this);
-    staticGlobals.append(GlobalPropertyInfo(builtinNames.globalsPrivateName(), isOfTheWeb ? m_natives.get() : this, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
+    staticGlobals.append(GlobalPropertyInfo(builtinNames.globalsPrivateName(), isOfTheWeb ? natives : this, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
     addStaticGlobals(staticGlobals.mutableSpan());
+    ensureStillAliveHere(natives);
 
     // TODO: most/all of these private properties can be made as static globals.
     // i've noticed doing it as is will work somewhat but getDirect() wont be able to find them
@@ -5469,6 +5481,12 @@ const JSC::ClassInfo GlobalObject::s_info = { "GlobalObject"_s, &Base::s_info, n
 
 const JSC::ClassInfo GlobalObject::s_infoWithBunGlobals = { "GlobalObject"_s, &s_info, &bunGlobalObjectTable, nullptr,
     CREATE_METHOD_TABLE(GlobalObject) };
+
+JSC::JSObject* GlobalObject::natives()
+{
+    auto entry = symbolTable()->get(WebCore::builtinNames(vm()).nativesPrivateName().impl());
+    return entry.isNull() ? nullptr : asObject(variableAt(entry.scopeOffset()).get());
+}
 
 bool GlobalObject::isNameOfNative(JSC::VM& vm, UniquedStringImpl* name)
 {

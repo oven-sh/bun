@@ -570,7 +570,7 @@ impl Document {
         })
     }
 
-    pub(crate) fn scroll_size(&self, node: NodeId) -> [f32; 2] {
+    pub(crate) fn scroll_size(&self, node: NodeId, scroller: NodeId) -> [f32; 2] {
         let Some(own) = self.own_box(node) else {
             return [0.0; 2];
         };
@@ -579,7 +579,7 @@ impl Document {
             if self.pieces(own).is_some() {
                 [[0.0; 2]; 2]
             } else {
-                self.scroll_range(own)
+                self.scroll_range(self.own_box(scroller).unwrap_or(own))
             },
         );
         let extent =
@@ -725,16 +725,32 @@ pub(crate) fn dump_display_list<'a>(cx: &mut JsScope<'a>, doc: &'a Doc) -> Strin
 }
 
 pub(crate) fn decodes_message<'a>(
-    heap: &bun_jsc::bindgen::JsHeap<'a>,
+    cx: &mut JsScope<'a>,
     family: &[u8],
     bytes: bun_jsc::bindgen::JsLocal<'a, bun_jsc::bindgen::BufferSource>,
 ) -> bool {
-    use bun_web::{host, wire::decode};
-    bytes.with_bytes(heap, |it| match family {
-        b"notice" => decode::<host::Notice>(it).is_ok(),
-        b"question" => decode::<host::Question>(it).is_ok(),
-        _ => decode::<host::Answer>(it).is_ok(),
-    })
+    use bun_web::channel::{Arrival, Serialized};
+    use bun_web::{host, remote, wire::decode};
+    let bytes = bytes.with_bytes(&cx.heap, <[u8]>::to_vec);
+    let message = match family {
+        b"notice" => return decode::<host::Notice>(&bytes).is_ok(),
+        b"question" => return decode::<host::Question>(&bytes).is_ok(),
+        b"answer" => return decode::<host::Answer>(&bytes).is_ok(),
+        b"forged" => {
+            return bytes.split_first().is_some_and(|(page, it)| {
+                decode(it).is_ok_and(|it| remote::forge((*page).into(), it))
+            });
+        }
+        b"port" => match remote::open(u32::MAX, &bytes) {
+            Ok(Arrival::Message(it)) => it,
+            _ => return false,
+        },
+        _ => Serialized::unchecked(bytes).into(),
+    };
+    message
+        .open(cx.global())
+        .inspect_err(|_| _ = cx.global().clear_exception_except_termination())
+        .is_ok()
 }
 
 pub(crate) fn ask_as_assistive_technology(question: &[u8]) -> Vec<u8> {

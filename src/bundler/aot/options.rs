@@ -1,3 +1,4 @@
+use core::ops::Range;
 use std::collections::BTreeMap;
 
 use bun_aot::diagnostic_codes::Code;
@@ -18,6 +19,7 @@ use bun_sema::util::{FxHashSet, SharedSort};
 use bun_sema_driver::Libs;
 use bun_sema_driver::host::{from_argument, from_native, to_native};
 
+use super::pages::{Pages, is_page};
 use super::paths::{absolute_path, relative_path, report_long_path};
 use crate::bun_fs::PathName;
 use crate::bundle_v2::FileMap;
@@ -36,6 +38,7 @@ pub(crate) struct OptionsInput<'r, 'i, 'a> {
     pub module_prefix: &'i [u8],
     pub typescript_libs: Libs<'r>,
     pub file_map: Option<&'i FileMap>,
+    pub pages: &'i Pages,
     pub working_directory: &'i [u8],
     pub node_path: Option<&'i [u8]>,
 }
@@ -53,6 +56,9 @@ pub(crate) fn options_from_bundler<'r>(
     );
     let entry_points = entry_points.map(|list| follow_links(input, list));
     let entry_points = entry_points.and_then(|list| start_with_first_script(input, list, log));
+    let mut scripts_of_pages = 0..0;
+    let entry_points =
+        entry_points.map(|list| with_scripts_of_pages(input, list, &mut scripts_of_pages));
     let paths = (entry_points.as_ref()).and_then(|list| path_options(input, list, log));
     let (true, Some(entry_points), Some(paths)) = (is_supported, entry_points, paths) else {
         return None;
@@ -64,7 +70,10 @@ pub(crate) fn options_from_bundler<'r>(
         entry_points,
         code: code_options(input),
         typescript_libs: input.typescript_libs,
-        load: load_options(input),
+        load: LoadOptions {
+            scripts_of_pages,
+            ..load_options(input)
+        },
         paths,
         removable: RemovableOptions {
             ignores_pure_annotations: input.bundle_options.ignore_dce_annotations,
@@ -284,6 +293,10 @@ fn load_options(input: &OptionsInput<'_, '_, '_>) -> LoadOptions {
         react_compiler_filter: options.react_compiler_filter.map(PathFilter),
         in_memory_files: in_memory_files(input),
         in_memory_file_keys: in_memory_file_keys(input),
+        scripts_of_pages: 0..0,
+        classic_scripts: input.pages.classic_scripts(),
+        modules_of_pages: input.pages.modules_as_written(),
+        imports_of_pages: input.pages.imports(),
         entry_texts: Vec::new(),
         omits_builtin_modules: input.aot.omits_builtin_modules,
         runs_tests: input.aot.runs_tests,
@@ -306,23 +319,21 @@ fn paths_of_preloads(input: &OptionsInput<'_, '_, '_>) -> Vec<Vec<u8>> {
 }
 
 fn in_memory_files(input: &OptionsInput<'_, '_, '_>) -> Vec<(Vec<u8>, Vec<u8>)> {
-    let Some(file_map) = input.file_map else {
-        return Vec::new();
-    };
-    let by_path = in_memory_files_by_path(file_map, input.working_directory);
-    let files = by_path.into_iter();
-    files
-        .map(|(path, (_, contents))| (path, contents.to_vec()))
-        .collect()
+    let mut files = input.pages.texts.clone();
+    if let Some(file_map) = input.file_map {
+        for (path, (_, contents)) in in_memory_files_by_path(file_map, input.working_directory) {
+            files.entry(path).or_insert_with(|| contents.to_vec());
+        }
+    }
+    files.into_iter().collect()
 }
 
 fn in_memory_file_keys(input: &OptionsInput<'_, '_, '_>) -> Vec<(Vec<u8>, Vec<u8>)> {
-    let Some(file_map) = input.file_map else {
-        return Vec::new();
-    };
-    let by_path = in_memory_files_by_path(file_map, input.working_directory);
-    let mut keys: Vec<_> = (by_path.into_iter())
-        .map(|(path, (key, _))| (key.to_vec(), path))
+    let by_path = (input.file_map.into_iter())
+        .flat_map(|file_map| in_memory_files_by_path(file_map, input.working_directory));
+    let of_pages = input.pages.texts.keys();
+    let mut keys: Vec<_> = (by_path.map(|(path, (key, _))| (key.to_vec(), path)))
+        .chain(of_pages.map(|path| (path.clone(), path.clone())))
         .collect();
     keys.shared_sort_unstable();
     keys
@@ -407,7 +418,11 @@ fn root_directory(
     entry_points: &[Vec<u8>],
     log: &mut Log,
 ) -> Option<Vec<u8>> {
-    let written = &input.bundle_options.root_dir[..];
+    let written = match &input.bundle_options.root_dir[..] {
+        // A path below `app.getAppPath()` names the same file below the root.
+        [] if !input.pages.is_empty() => &input.aot.pages.app_directory[..],
+        written => written,
+    };
     if written.is_empty() {
         let directory = common_entry_directory(input.working_directory, entry_points);
         let assets = if input.aot.runs_in_place {
@@ -531,7 +546,32 @@ fn start_with_first_script(
     Some(entry_points)
 }
 
-fn real_file_path(path: &[u8]) -> Option<Vec<u8>> {
+fn with_scripts_of_pages(
+    input: &OptionsInput<'_, '_, '_>,
+    mut entry_points: Vec<Vec<u8>>,
+    places: &mut Range<usize>,
+) -> Vec<Vec<u8>> {
+    if input.pages.is_empty() {
+        return entry_points;
+    }
+    let absolute = |it: &[u8]| absolute_path(input.working_directory, it);
+    let mut others = entry_points.split_off(1);
+    others.retain(|it| !is_page(it) && !input.pages.modules.contains(&absolute(it)));
+    let main = absolute(&entry_points[0]);
+    entry_points.append(&mut others);
+    places.start = entry_points.len();
+    entry_points.extend(
+        input
+            .pages
+            .entry_points()
+            .into_iter()
+            .filter(|it| *it != main),
+    );
+    places.end = entry_points.len();
+    entry_points
+}
+
+pub(super) fn real_file_path(path: &[u8]) -> Option<Vec<u8>> {
     let mut name = bun_paths::path_buffer_pool::get();
     if path.len() >= name.len() {
         return None;

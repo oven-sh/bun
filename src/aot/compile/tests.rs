@@ -144,6 +144,7 @@ fn links_small_program() {
     let expected = EntryPointPaths {
         public_path: b"/$bunfs/root/a.ts".to_vec(),
         source_path: b"/project/a.ts".to_vec(),
+        is_loaded_by_page: false,
     };
     assert_eq!(summary.entry_points, [expected]);
     assert!(summary.statistics.get(Stage::Load.time()) > 0);
@@ -1412,6 +1413,7 @@ fn worker_file_named_by_url_is_an_entry_point_after_one_load() {
     let expected = ["main.js", "worker.js"].map(|name| EntryPointPaths {
         public_path: format!("/$bunfs/root/{name}").into_bytes(),
         source_path: format!("/project/{name}").into_bytes(),
+        is_loaded_by_page: false,
     });
     let found_by_load = with_loaded_build(&files, &default_settings(), |build, loaded| {
         assert!(build.retired_sessions.is_empty());

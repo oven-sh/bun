@@ -2701,6 +2701,7 @@ impl TestCommand {
                 && !run_compiled::test_files_share_global(ctx),
             runs_compiled_code: run_compiled::runs_compiled_code(),
             locks_builtins: run_compiled::is_checked(),
+            is_desktop_program: jsc::preloads_desktop(&ctx.preloads),
             ..Default::default()
         });
         run_compiled::list_refused_changes();

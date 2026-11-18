@@ -221,14 +221,55 @@ pub enum Command {
 }
 
 impl Command {
-    pub fn transform(&self, by: &Transform) -> Command {
+    #[inline]
+    pub fn map(&self, f: impl Fn(Point) -> Point) -> Command {
         match *self {
-            Command::MoveTo(to) => Command::MoveTo(by.map(to)),
-            Command::LineTo(to) => Command::LineTo(by.map(to)),
-            Command::QuadTo(a, to) => Command::QuadTo(by.map(a), by.map(to)),
-            Command::CurveTo(a, b, to) => Command::CurveTo(by.map(a), by.map(b), by.map(to)),
+            Command::MoveTo(to) => Command::MoveTo(f(to)),
+            Command::LineTo(to) => Command::LineTo(f(to)),
+            Command::QuadTo(a, to) => Command::QuadTo(f(a), f(to)),
+            Command::CurveTo(a, b, to) => Command::CurveTo(f(a), f(b), f(to)),
             Command::Close => Command::Close,
         }
+    }
+
+    pub fn transform(&self, by: &Transform) -> Command {
+        self.map(|it| by.map(it))
+    }
+}
+
+/// What has commands.
+pub trait Walk {
+    fn walk(self, take: impl FnMut(Command));
+
+    /// Takes the first contour if it is known to consist of lines. Returns whether it is closed.
+    fn take_lines(&mut self, _points: &mut Vec<Point>) -> Option<bool> {
+        None
+    }
+
+    /// False if that is not known.
+    fn is_empty(&self) -> bool {
+        false
+    }
+
+    fn transformed(self, by: &Transform) -> impl Walk
+    where
+        Self: Sized,
+    {
+        struct Transformed<'a, T>(T, &'a Transform);
+        impl<T: Walk> Walk for Transformed<'_, T> {
+            #[inline(always)]
+            fn walk(self, mut take: impl FnMut(Command)) {
+                self.0.walk(|it| take(it.transform(self.1)));
+            }
+        }
+        Transformed(self, by)
+    }
+}
+
+impl<T: Iterator<Item = Command>> Walk for T {
+    #[inline(always)]
+    fn walk(self, take: impl FnMut(Command)) {
+        self.for_each(take);
     }
 }
 

@@ -282,6 +282,7 @@ impl Native for OfProgram {
             let paths = shown.await.map_err(|it| task::throw(&it));
             let paths = paths.and_then(|it| texts_of(it.get()));
             let paths = task::or_warning(paths);
+            let paths = paths.map(|it| it.into_iter().map(bun_web::host::ChosenFile).collect());
             reply(global(), Some(Answer::PickFiles(paths)));
         });
     }

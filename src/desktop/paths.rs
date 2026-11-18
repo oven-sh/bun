@@ -191,6 +191,17 @@ pub(crate) fn path(name: &str) -> JsResult<String> {
     }
 }
 
+pub(crate) fn is_set(name: &str) -> bool {
+    paths().overridden.borrow().iter().any(|it| it.0 == name)
+}
+
+pub(crate) fn make_data_directories() -> JsResult<()> {
+    for name in ["userData", "sessionData"] {
+        let _ = files::make_directory(&path(name)?, 0o700);
+    }
+    Ok(())
+}
+
 pub(crate) fn set_path(name: &str, path: String) -> JsResult<()> {
     if !files::is_absolute(&path) {
         return Err(match crate::app::is_electron() {

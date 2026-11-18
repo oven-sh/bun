@@ -2,6 +2,7 @@
 pub struct EntryPointPaths {
     pub public_path: Vec<u8>,
     pub source_path: Vec<u8>,
+    pub is_loaded_by_page: bool,
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]

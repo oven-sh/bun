@@ -926,7 +926,12 @@ impl<'a> Breaker<'a, '_> {
                     hanging += advance;
                 } else {
                     let autospace = inline.autospace_after(at);
-                    if x + advance - autospace > available + TOLERANCE && advance > 0.0 {
+                    let has_overflowed =
+                        is_atomic && opportunity.is_some_and(|it| it.1 > available + TOLERANCE);
+                    if x + advance - autospace > available + TOLERANCE
+                        && (advance > 0.0 || is_atomic)
+                        || has_overflowed
+                    {
                         if let Some((cut, width, has_hyphen)) = opportunity {
                             return end(cut, width, has_hyphen);
                         }
@@ -2390,7 +2395,104 @@ impl Label {
     }
 }
 
+/// What is between two places where a line may break.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Measured {
+    /// The cluster after it.
+    end: u32,
+    width: f32,
+    with_space: f32,
+}
+
+/// Fails unless there is nothing but words.
+pub(crate) fn measure_words(letters: &[Letter]) -> Option<Box<[Measured]>> {
+    let bits = |it: &Letter| {
+        u64::from(it.advance.to_bits())
+            | u64::from(it.glyph) << 32
+            | u64::from(it.flags) << 48
+            | u64::from(it.face) << 56
+    };
+    let (any, both) = letters.iter().map(bits).fold((0, 0), |(any, both), it| {
+        (any | it | it.wrapping_sub(1) & 1 << 31, both | it & it >> 1)
+    });
+    (any & (0xfc << 48 | 1 << 31) == 0
+        && both & 1 << 48 == 0
+        && letters.first()?.flags != CLUSTER_SPACE)
+        .then_some(())?;
+    let (mut all, mut x) = (
+        Vec::with_capacity(letters.len() / 4 + 64),
+        letters[0].advance,
+    );
+    let (mut starts, mut ends) = ([0.0; 64], [0u8; 64]);
+    let word = |end: usize, last: &Letter, with_space: f32| Measured {
+        end: end as u32,
+        width: with_space
+            - if last.flags == CLUSTER_SPACE {
+                last.advance
+            } else {
+                0.0
+            },
+        with_space,
+    };
+    for first in (1..letters.len()).step_by(63) {
+        let (mut count, some) = (0, &letters[first - 1..letters.len().min(first + 63)]);
+        for (index, it) in some[1..].iter().enumerate() {
+            (starts[count % 64], ends[count % 64]) = (x, index as u8);
+            count += usize::from(it.flags & CLUSTER_BREAK_BEFORE);
+            x += it.advance;
+        }
+        let mut start = 0.0;
+        all.extend(starts.iter().zip(&ends).take(count).map(|(x, end)| {
+            word(
+                first + usize::from(*end),
+                &some[usize::from(*end)],
+                x - core::mem::replace(&mut start, *x),
+            )
+        }));
+        x -= start;
+    }
+    all.push(word(letters.len(), letters.last()?, x));
+    Some(all[..].into())
+}
+
+/// Letters without glyphs that take the room of the words.
+#[cold]
+pub(crate) fn blanks_for(words: &[Measured]) -> Vec<Letter> {
+    let mut letters = Vec::new();
+    for it in words {
+        let (first, has_space) = (letters.len(), it.with_space > it.width);
+        let count = it.end as usize - first - usize::from(has_space);
+        let blank = |advance, flags| Letter {
+            advance,
+            glyph: crate::abi::NO_GLYPH,
+            flags,
+            face: 0,
+        };
+        letters.extend((0..count).map(|at| {
+            blank(
+                it.width / count as f32,
+                if at == 0 && first > 0 {
+                    CLUSTER_BREAK_BEFORE
+                } else {
+                    0
+                },
+            )
+        }));
+        letters.extend(has_space.then(|| blank(it.with_space - it.width, CLUSTER_SPACE)));
+    }
+    letters
+}
+
 impl Inline {
+    fn words(&self) -> Option<&[Measured]> {
+        let [only] = self.clusters.as_shaped()? else {
+            return None;
+        };
+        only.shaped
+            .words()
+            .filter(|_| self.only_text().is_some_and(wraps))
+    }
+
     /// If there is nothing but text whose spaces collapse.
     fn only_text(&self) -> Option<&Style> {
         let (
@@ -2440,6 +2542,19 @@ impl Inline {
 
     fn widths_of_prose(&self, root: &Style) -> Option<[f32; 2]> {
         matches!(root.text.indent.length, Lp::Px(0.0)).then_some(())?;
+        if let Some(words) = self
+            .words()
+            .filter(|_| !breaks_anywhere(&self.items[0].style))
+        {
+            return Some(
+                words
+                    .iter()
+                    .fold([0.0; 2], |[min, max], it| {
+                        [at_least(min, it.width), max + it.with_space]
+                    })
+                    .map(ceil_to_unit),
+            );
+        }
         if self.prose.get().is_none()
             && self.is_dense()
             && self
@@ -3029,7 +3144,7 @@ impl Prose {
         let apart = inline
             .clusters
             .as_shaped()
-            .filter(|it| !inline.has_bidi && it.iter().all(|it| !it.shaped.letters.is_empty()));
+            .filter(|it| !inline.has_bidi && it.iter().all(|it| it.shaped.has_letters()));
         let letters = match apart {
             Some(_) => Default::default(),
             None if inline.has_bidi => inline
@@ -3070,10 +3185,9 @@ impl Prose {
             else {
                 return &[];
             };
-            &shaped.letters[(range.start - first_cluster) as usize
+            &shaped.letters()[(range.start - first_cluster) as usize
                 ..shaped
-                    .letters
-                    .len()
+                    .letter_count()
                     .min((range.end - first_cluster) as usize)]
         };
         let (mut end_of_paragraph, mut after_last) = (ends.next().unwrap_or(u32::MAX), Start::Yes);
@@ -3964,15 +4078,15 @@ impl Prose {
 impl Inline {
     fn prose(&self, root: &Style) -> Option<&Prose> {
         self.prose
-            .get_or_init(|| Prose::new(self, root, None))
-            .as_ref()
+            .get_or_init(|| Prose::new(self, root, None).map(Box::new))
+            .as_deref()
             .filter(|it| it.is_sized)
     }
 
     fn reusable_prose(&self) -> Option<&Prose> {
         self.prose
             .get()?
-            .as_ref()
+            .as_deref()
             .filter(|it| !(it.has_hyphens || it.has_atomics || it.is_odd.get()))
     }
 
@@ -4005,13 +4119,11 @@ impl Inline {
     /// From what the text has been before a change.
     pub(crate) fn take_over(&mut self, former: Inline, root: &Style, kept: Kept) {
         if former.reusable_prose().is_some()
-            && let Some(prose) = former
-                .prose
-                .into_inner()
-                .flatten()
-                .and_then(|it| Prose::new(self, root, Some((it, kept))))
+            && let Some(mut place) = former.prose.into_inner().flatten()
+            && let Some(prose) = Prose::new(self, root, Some((core::mem::take(&mut *place), kept)))
         {
-            self.prose = Some(prose).into();
+            *place = prose;
+            self.prose = Some(place).into();
         }
         self.former_lines = former
             .lines
@@ -4384,7 +4496,10 @@ impl Document {
             && floats.is_none()
             && !has_ellipsis
             && inline.prose.get().is_none()
-            && (lines.lines.is_empty() || kept.is_some() || inline.is_dense());
+            && (lines.lines.is_empty()
+                || kept.is_some()
+                || inline.words().is_some()
+                || inline.is_dense());
         let filled = match inline
             .items
             .first()
@@ -4455,21 +4570,32 @@ impl Document {
         let ([item], [paragraph]) = (&inline.items[..], &inline.clusters.paragraphs[..]) else {
             return None;
         };
-        let (style, letters) = (&*item.style, inline.clusters.letters(&item.clusters)?);
+        let (style, mut words, len) = (
+            &*item.style,
+            inline.words().filter(|_| kept.is_none()),
+            item.clusters.len(),
+        );
+        let mut letters = if words.is_some() {
+            &[]
+        } else {
+            inline
+                .clusters
+                .letters(&item.clusters)
+                .filter(|it| it.first().is_some_and(|it| it.flags & CLUSTER_SPACE == 0))?
+        };
         (item.kind == ItemKind::Text
             && item.is_uniform
             && wraps(style)
             && !style.has_central_baseline()
             && inline.first_line.is_none()
             && root.text.align != TextAlign::Justify
-            && root.text.align_last != TextAlignLast::Justify
-            && letters.first()?.flags & CLUSTER_SPACE == 0)
+            && root.text.align_last != TextAlignLast::Justify)
             .then_some(())?;
         let ([mut above, mut below], metrics) = (self.strut_with(root, item), &style.metrics);
         if let Some(face) = paragraph
             .shaped
             .faces
-            .get(usize::from(letters[0].face))
+            .get(letters.first().map_or(0, |it| usize::from(it.face)))
             .filter(|_| style.font.line_height == LineHeight::Normal)
         {
             let [up, down] = self.with_leading(
@@ -4479,9 +4605,7 @@ impl Document {
             );
             (above, below) = (above.max(up), below.max(down));
         }
-        let count = 1 + letters
-            .len()
-            .min((letters.len() as f32 * metrics.average_advance / width) as usize);
+        let count = 1 + len.min((len as f32 * metrics.average_advance / width) as usize);
         let breaks_words =
             breaks_anywhere(style) || style.text.overflow_wrap == OverflowWrap::BreakWord;
         let (mut first, mut y, mut holds, mut across) =
@@ -4499,9 +4623,48 @@ impl Document {
             }
         }
         out.made_for = None;
-        while first < letters.len() {
-            let (count, own, x) = fit_words(&letters[first..], width + TOLERANCE, breaks_words)?;
-            let (end, is_last) = (first + count, first + count == letters.len());
+        while first < len {
+            if words
+                .take_if(|it| breaks_words && it[0].width > width + TOLERANCE)
+                .is_some()
+            {
+                letters = inline.clusters.letters(&item.clusters)?;
+            }
+            let (end, own, x, hidden) = match &mut words {
+                Some(words) => {
+                    let (mut last, mut x, mut count) = (words[0], 0.0, 1);
+                    for it in &words[1..] {
+                        if x + last.with_space + it.width > width + TOLERANCE {
+                            break;
+                        }
+                        (x, last, count) = (x + last.with_space, *it, count + 1);
+                    }
+                    *words = &words[count..];
+                    (
+                        last.end as usize,
+                        x + last.width,
+                        x + last.with_space,
+                        u8::from(last.with_space > last.width),
+                    )
+                }
+                None => {
+                    let (count, own, x) =
+                        fit_words(&letters[first..], width + TOLERANCE, breaks_words)?;
+                    (
+                        first + count,
+                        own,
+                        x,
+                        letters[..first + count]
+                            .iter()
+                            .rev()
+                            .take_while(|it| it.flags == CLUSTER_SPACE)
+                            .count()
+                            .try_into()
+                            .ok()?,
+                    )
+                }
+            };
+            let is_last = end == len;
             let used = if !is_last {
                 own
             } else if x <= width + TOLERANCE {
@@ -4509,13 +4672,6 @@ impl Document {
             } else {
                 own.max(width.min(x))
             };
-            let hidden = letters[..end]
-                .iter()
-                .rev()
-                .take_while(|it| it.flags == CLUSTER_SPACE)
-                .count()
-                .try_into()
-                .ok()?;
             let (start, clusters, index) = (
                 alignment(root, is_last, false, width - used).1,
                 first as u32..end as u32,
@@ -4577,8 +4733,7 @@ impl Document {
         );
         (out.visible, out.holds, out.advances) = (
             None,
-            (starts_left && holds[0] <= width && letters.len() == inline.text.len())
-                .then_some(holds),
+            (starts_left && holds[0] <= width && len == inline.text.len()).then_some(holds),
             Vec::new(),
         );
         (out.made_for, out.overhang) = (
@@ -4668,7 +4823,7 @@ impl Document {
         } in paragraphs
         {
             let (letters, mut first, has_break) =
-                (&shaped.letters[..], 0, shaped.text.ends_with('\n'));
+                (shaped.letters(), 0, shaped.text.ends_with('\n'));
             let before_break = letters.len().checked_sub(1)? + usize::from(!has_break);
             lefts.resize(letters.len() + 1, 0.0);
             loop {
@@ -6002,34 +6157,35 @@ impl Document {
                 hyphen,
                 candidates: None,
             };
-            let (mut widest, mut floats) = (0.0f32, [0.0f32; 2]);
+            let mut widest = 0.0f32;
             let limit = if is_min_content { 0.0 } else { f32::INFINITY };
             breaker.visit_lines(self.text_indents(id, 0.0), limit, |line| {
+                let (mut floats, mut side) = (0.0, None);
                 for (item, width) in inline.items[..line.next.item]
                     .iter()
                     .zip(&widths)
                     .skip(line.start.item)
                 {
                     if let ItemKind::Float(_) = item.kind {
-                        let cleared = clears(&item.style);
-                        widest = widest.max(if is_min_content {
-                            *width
+                        if side.is_some_and(|it: usize| clears(&item.style)[it]) {
+                            widest = widest.max(
+                                core::mem::take(&mut floats)
+                                    + if is_min_content { 0.0 } else { line.width },
+                            );
+                        }
+                        floats = if is_min_content {
+                            width.max(floats)
                         } else {
-                            floats[0] + floats[1]
-                        });
-                        floats = [0, 1].map(|side| if cleared[side] { 0.0 } else { floats[side] });
-                        floats[usize::from(item.style.floats_right())] += width.max(0.0);
+                            floats + width.max(0.0)
+                        };
+                        side = Some(usize::from(item.style.floats_right()));
                     }
                 }
-                widest = widest.max(
-                    line.width
-                        + if is_min_content {
-                            0.0
-                        } else {
-                            floats[0] + floats[1]
-                        },
-                );
-                floats = [0.0; 2];
+                widest = widest.max(if is_min_content {
+                    line.width.max(floats)
+                } else {
+                    line.width + floats
+                });
             });
             ceil_to_unit(widest)
         });

@@ -232,7 +232,8 @@ impl Element {
 
     pub(crate) fn scrolling_area<'a>(&'a self, cx: &mut JsScope<'a>) -> [f32; 2] {
         let id = scroller(cx, self).max(DOCUMENT);
-        laid_out(cx, self, id, |engine| engine.scroll_size(id))
+        let around = if id == DOCUMENT { DOCUMENT } else { self.id() };
+        laid_out(cx, self, id, |engine| engine.scroll_size(around, id))
     }
 
     fn reveal<'a>(
@@ -434,12 +435,10 @@ impl ElementView {
         } else {
             is_root(self)
         };
-        let id = if is_viewport {
+        let id = if is_viewport || scroller(cx, self) == DOCUMENT {
             DOCUMENT
         } else {
-            Some(scroller(cx, self))
-                .filter(|it| *it != 0)
-                .unwrap_or_else(|| self.id())
+            self.id()
         };
         laid_out(cx, self, id, |engine| engine.client_metrics(id))
     }

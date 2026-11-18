@@ -330,7 +330,7 @@ fn pan<'a>(cx: &mut Cx<'a>, ui: &'a Ui, finger: &'a Pointer, from: [f64; 2]) {
         return;
     };
     if !layout::user_scroll(cx, target, delta, ScrollUnit::Pixel, false) {
-        ui.container()
+        ui.any_container()
             .into_iter()
             .for_each(|it| it.scroll_around(cx, delta));
     }

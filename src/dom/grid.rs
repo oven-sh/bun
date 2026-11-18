@@ -2515,8 +2515,13 @@ impl Document {
                 &mut |it| all.push(it),
             );
         }
+        let empty_line = if grid.items.is_empty() && self.has_line_if_empty(self.boxes[id].node) {
+            unit(grid.style.line_height())
+        } else {
+            0.0
+        };
         let finish = |document: &Document, total: f32, output: &mut Output| {
-            output.intrinsic = inset.sums()[1] + total;
+            output.intrinsic = inset.sums()[1] + total.max(empty_line);
             document.finish_height(id, input, inset, output);
             (output.height - inset.sums()[1]).max(0.0)
         };

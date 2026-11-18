@@ -13,6 +13,7 @@ use crate::hash::{FastMap, FastSet};
 use crate::host::{self, thread};
 use crate::input::{self, Ime};
 use crate::motion::{Motion, Next, Tables};
+use crate::paint::allowance::Allowance;
 use crate::paint::cpu::Painter;
 use crate::paint::raster::{Clip, IntRect, Layer};
 use crate::paint::scene::{Frame, Scene, copy};
@@ -420,11 +421,24 @@ impl Surface {
                 height: height * scale,
             }),
             scale,
+            5 * window::LONGEST_FRAME,
         )
     }
 
-    pub fn render_area(&self, area: IntRect, scale: f32) -> Result<Layer> {
-        let frame = Frame::new(scale * self.scene.zoom, false);
+    /// `patience` is with what another process has sent.
+    pub fn render_area(&self, area: IntRect, scale: f32, patience: Duration) -> Result<Layer> {
+        let (mut frame, meter) = (
+            Frame::new(scale * self.scene.zoom, false),
+            self.scene.allowance.as_deref().map(Allowance::meter),
+        );
+        if let Some(allowance) = &self.scene.allowance {
+            frame.gives_up_at = frame.now
+                + if allowance.is_spent() {
+                    Duration::ZERO
+                } else {
+                    patience
+                };
+        }
         let painter = Painter {
             scene: &self.scene,
             frame: &frame,
@@ -446,6 +460,7 @@ impl Surface {
             .union(area);
         let mut layer = Layer::new(needed).context("the area is empty or too large")?;
         painter.paint(items, &mut layer, &matrix, &Clip::new(needed));
+        meter.into_iter().for_each(|it| it.stop(0));
         if needed == area {
             Ok(layer)
         } else {
@@ -512,6 +527,7 @@ pub fn spare_submission() -> Submission {
 pub fn adopt(id: u32, mut submission: Submission) {
     trace!("the scene of {id} has arrived");
     let window = get(id).and_then(|surface| surface.borrow_mut().adopt(&mut submission));
+    submission.0.allowance = None;
     *SPARE.lock() = Some(submission);
     window.into_iter().for_each(window::draw_after_jobs);
 }
@@ -653,6 +669,9 @@ pub fn begin_frame(state: &WindowState) {
             window::request_frame(state.id);
         }
     }
+    window::platform_window(state.id)
+        .into_iter()
+        .for_each(|it| it.set_scrolling(is_scrolling));
     diagnostics::frame_began(now, host::interval(), is_scrolling, is_followed);
 }
 

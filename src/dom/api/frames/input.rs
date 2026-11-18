@@ -183,7 +183,7 @@ pub(crate) fn focus_changed<'a>(cx: &mut Cx<'a>, ui: &'a Ui) {
     if ui.framing.are_shown.get() {
         follow_focus(cx, ui);
     }
-    if let Some(container) = ui.container().filter(|_| ui.focused().is_some()) {
+    if let Some(container) = ui.any_container().filter(|_| ui.focused().is_some()) {
         container.focus(cx);
     }
 }

@@ -192,6 +192,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 this_scope: None,
                 owner: CodeUnit::File,
                 class: None,
+                is_script: false,
             },
             entered_from_parameters: FunctionScopes::new(),
             bindings: Vec::with_capacity(listed_once.len()),
@@ -218,7 +219,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         names_of_file: &[SymbolId],
     ) -> (Vec<EvalBinding>, EvalOperands) {
         let bound = self.file.bound;
-        let depths = compute_scope_depths(self.file, eval_scope.scope);
+        let mut depths = compute_scope_depths(self.file, eval_scope.scope);
+        if let Some(last) = depths.iter().position(|it| it.0 == eval_scope.global_code) {
+            depths.truncate(last + 1);
+        }
         let entered_from_parameters =
             find_functions_entered_from_parameters(self.file.hir, bound, &depths, call);
         let mut record = EvalRecord {
@@ -391,8 +395,10 @@ impl EvalRecord<'_, '_, '_, '_, '_, '_> {
     fn add_owner_bindings(&mut self, scope: ScopeId, depth: u32) {
         let flags = self.context.flags;
         let owner = self.context.owner;
-        let arguments_depth = self.compute_parameter_depth(Binding::Arguments(owner), scope, depth);
-        self.add_arguments_binding(owner, arguments_depth);
+        if !self.context.is_script {
+            let depth = self.compute_parameter_depth(Binding::Arguments(owner), scope, depth);
+            self.add_arguments_binding(owner, depth);
+        }
         let new_target = BindingRef::Slot(scope, ScopeSlot::NewTarget);
         if self.lowering.file.has_location(new_target) {
             let binding = create_binding(EvalBindingKind::NewTarget, None, depth);

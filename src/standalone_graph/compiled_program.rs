@@ -1463,6 +1463,15 @@ impl StandaloneModuleGraph {
         Some(&buffer[..=end])
     }
 
+    pub(crate) fn key_of_path(&self, path: &[u8]) -> Option<Vec<u8>> {
+        let mut buffer = path_buffer_pool::get();
+        let key = absolute_key(path, &mut buffer)?.as_bytes();
+        match &self.compiled_program {
+            Some(program) => Self::key_under_own_root(program, key),
+            None => is_bun_standalone_file_path(key).then(|| key.to_vec()),
+        }
+    }
+
     /// `key`, as `absolute_key` makes it, under the root of the executable, as the loader reads it.
     /// `__dirname` and `__filename` hold paths of the machine that built the program, as with `bun build --compile`: in, below or above the folder in which it was built. Where the disk has them no longer, what the executable holds answers.
     /// `/$bunfs/commands` is what `path.join(import.meta.dir, "../commands")` makes.

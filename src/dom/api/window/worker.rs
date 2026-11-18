@@ -56,6 +56,7 @@ impl WorkerGlobalScope {
                 };
                 match realm.scope() {
                     Scope::SharedWorker => &**js_SharedWorkerGlobalScope::create(heap, scope),
+                    Scope::ServiceWorker => &**js_ServiceWorkerGlobalScope::create(heap, scope),
                     _ => &**js_DedicatedWorkerGlobalScope::create(heap, scope),
                 }
             },

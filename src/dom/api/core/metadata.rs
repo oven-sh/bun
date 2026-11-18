@@ -122,13 +122,20 @@ pub(crate) fn tell_theme_color(doc: &Doc) {
 fn allow_sizing(doc: &Doc, content: &str) -> Option<()> {
     let origins = content
         .strip_prefix("allow-origins=")
-        .filter(|_| doc.is(DocFlags::IN_FRAME) && doc.body().is_none())?;
+        .filter(|_| doc.body().is_none())?;
+    let apart = || {
+        Some(
+            crate::api::window::Window::of(doc)?
+                .environment()
+                .container
+                .as_ref()?
+                .origin
+                .clone(),
+        )
+    };
     let (embedder, own) = (
-        crate::api::frames::container(doc)?
-            .doc()
-            .window()?
-            .host()
-            .origin()?,
+        crate::api::frames::container(doc)
+            .map_or_else(apart, |it| it.doc().window()?.host().origin())?,
         Url::parse(doc.url().to_utf8().as_bytes())?,
     );
     let origins = origins

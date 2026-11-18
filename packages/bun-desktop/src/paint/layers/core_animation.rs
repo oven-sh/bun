@@ -48,14 +48,24 @@ unsafe extern "C" {
     );
     safe fn bd_layer_set_opaque(layer: &c_void, is_opaque: bool);
     safe fn bd_layer_remove(layer: &c_void);
+    safe fn bd_layers_wait();
     safe fn bd_layers_flush();
+    safe fn bd_witness_create(parent: &c_void) -> Object;
+    safe fn bd_witness_present(layer: &c_void, tell: extern "C" fn(f64, f64));
+}
+
+/// Until the window server cannot take it for the frame before.
+pub fn wait_to_flush() {
+    bd_layers_wait();
 }
 
 pub fn flush() {
     bd_layers_flush();
 }
 
-pub use metal::{finish_and_check as gpu_has_spoiled_surfaces, note_pause, waits_for_pause};
+pub use metal::{
+    expect_scroll, finish_and_check as gpu_has_spoiled_surfaces, note_pause, waits_for_pause,
+};
 
 pub fn uses_gpu() -> bool {
     static IS_WANTED: LazyLock<bool> =
@@ -153,6 +163,7 @@ pub struct Tree {
     /// By their contents, with how long they are kept.
     pictures: FastMap<u128, (Surface, Instant)>,
     caret: Option<(Object, Caret)>,
+    witness: Option<Object>,
     /// At the top left corner.
     corner: Object,
     /// The window server takes all layers in one for changed when one comes or goes, and blurs again what is below them.
@@ -180,6 +191,7 @@ impl Tree {
             overlays: Vec::new(),
             pictures,
             caret: None,
+            witness: None,
             corner,
             groups,
             over_blur: 0..0,
@@ -402,6 +414,19 @@ impl Tree {
             );
         }
         self.caret = Some((layer, caret));
+    }
+
+    /// `diagnostics::was_shown` follows.
+    pub fn witness(&mut self, port: IntRect) {
+        let layer = self
+            .witness
+            .take()
+            .unwrap_or_else(|| bd_witness_create(&self.groups[Group::Above as usize]));
+        let (left, top) = (port.right - 1, port.top.midpoint(port.bottom));
+        self.place(&layer, IntRect::new(left, top, left + 1, top + 1));
+        bd_layer_set_opaque(&layer, false);
+        bd_witness_present(&layer, crate::diagnostics::was_shown);
+        self.witness = Some(layer);
     }
 
     pub fn release_memory(&mut self) {

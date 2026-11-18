@@ -734,6 +734,8 @@ bitflags::bitflags! {
         const IS_PLAIN_IN_LINES = 1 << 7;
         /// Nor does it paint anything, so that its text can stand in for it.
         const LEAVES_NO_TRACE = 1 << 8;
+        /// As a block container, words in ASCII are shaped as they are, and that is all.
+        const WRITES_PLAINLY = 1 << 9;
     }
 }
 
@@ -896,6 +898,29 @@ impl Style {
                 && self.paint.decoration_line.is_empty()
                 && self.is_bare(),
         );
+        let text = &self.text;
+        traits.set(
+            Traits::WRITES_PLAINLY,
+            (
+                text.collapse,
+                text.transform,
+                text.security,
+                text.writing_mode,
+            ) == (
+                WhiteSpaceCollapse::Collapse,
+                TextTransform::None,
+                TextSecurity::None,
+                WritingMode::HorizontalTb,
+            ) && matches!(
+                l.unicode_bidi,
+                UnicodeBidi::Normal | UnicodeBidi::Isolate | UnicodeBidi::Embed
+            ) && text.line_break != LineBreak::Anywhere
+                && self.display() != Display::BlockRuby
+                && !self.is_rtl()
+                && self
+                    .other_if_set(crate::properties::Id::TextEmphasisStyle)
+                    .is_none(),
+        );
         self.measures.0.set(Fixed {
             units: units_per_pixel(),
             traits,
@@ -1000,6 +1025,7 @@ impl LayoutBox {
         !known.uses_height
             && !matches!(self.parent_kind, Kind::Block | Kind::Row)
             && self.outside_marker == 0
+            && !self.shrinks_to_fit
             && without(key) == without(&known.key)
     }
 
@@ -1423,6 +1449,19 @@ impl Document {
                 uses_height: false,
             };
         }
+        if it.children.is_empty()
+            && it.kind == Kind::Block
+            && it.is_ordinary
+            && !it.is_skipped
+            && !it.is_parking
+            && it.style.fixed().traits.contains(Traits::IS_PLAIN_INSIDE)
+        {
+            self.boxes[id].cache.note_widths([inset; 2]);
+            return Widths {
+                sizes: [inset; 2],
+                uses_height: false,
+            };
+        }
         if turns {
             self.turn_children(id, self.boxes[id].mode);
         }
@@ -1689,6 +1728,9 @@ impl Document {
         }
         if transfers && l.min_width == Size::Auto && !it.overflow[0].scrolls() {
             limits[0] = self.content_widths(id, room, edges, false).sizes[0].min(limits[1]);
+        }
+        if self.boxes[id].kind == Kind::Table {
+            limits[0] = limits[0].max(self.orthogonal_widths(id, room).sizes[0]);
         }
         clamp(width, limits)
     }
@@ -2557,6 +2599,12 @@ impl Document {
             core::mem::take(&mut self.boxes.sized_by_viewport)
                 .into_iter()
                 .for_each(|id| self.boxes.mark_layout(id));
+            if let Some(root) = self
+                .own_box(self.tree.root_element())
+                .filter(|_| self.environment.is_object)
+            {
+                self.boxes.mark_layout(root);
+            }
         }
         if self.boxes.turned_styles.get_mut().len() > 1024 {
             self.boxes.turned_styles.get_mut().clear();
@@ -2802,6 +2850,27 @@ impl Document {
         changed
     }
 
+    /// So that what is replaced is as large when the cell is measured as when it is laid out.
+    fn styled_height_of_cell_around(&self, id: BoxId) -> Option<f32> {
+        let it = &self.boxes[id];
+        (it.uses_parent[1] && !it.style.is_out_of_flow()).then_some(())?;
+        let cell = self
+            .boxes
+            .containers(id)
+            .map(|it| &self.boxes[it])
+            .find(|it| it.node != 0 || it.is_cell())
+            .filter(|it| {
+                it.is_cell() && matches!(it.style.layout.height, Size::Length(Lp::Px(_)))
+            })?;
+        let edges = cell.border_and_padding(0.0).sums();
+        Some(
+            (cell.styled_height(&Room::default(), edges, None, None)?
+                - edges[1]
+                - cell.gutters().sums()[1])
+                .max(0.0),
+        )
+    }
+
     /// `width` overrides the style. `ignores` leaves out what the style says about the width or the height.
     pub(crate) fn replaced_size(
         &self,
@@ -2814,6 +2883,13 @@ impl Document {
         if self.environment.is_object && it.kind == Kind::Svg && it.parent == VIEWPORT {
             return it.turned.turn_axes(self.environment.viewport);
         }
+        let room = &Room {
+            basis: [
+                room.basis[0],
+                self.styled_height_of_cell_around(id).or(room.basis[1]),
+            ],
+            ..*room
+        };
         let edges = it.border_and_padding(room.basis[0].unwrap_or(0.0)).sums();
         let natural = self.natural_size(id);
         let natural = [0, 1].map(|axis| fixed[axis].or(natural[axis]).map(|it| it + edges[axis]));

@@ -1,7 +1,7 @@
 import * as b from "../../../codegen/bindgen-lib.ts";
 import { DesktopEventTarget, DomElement } from "../core/core.bind.ts";
 import { HTMLElement } from "../core/html.bind.ts";
-import { htmlConstructor, reflect } from "../core/reflect.ts";
+import { htmlConstructor } from "../core/reflect.ts";
 import { OnEvent, WindowTarget } from "../events/events.bind.ts";
 import { DOMMatrix2DInit, DOMPointInit } from "../geometry/geometry.bind.ts";
 
@@ -22,6 +22,8 @@ const text = b.DOMString.utf8;
 const long = b.i32.enforceRange();
 const each = <T>(names: string, type: T) => Object.fromEntries(names.split(" ").map(name => [name, type]));
 const numbers = (names: string) => each(names, number);
+const hot = { isCold: false } as const;
+const hottest = { isCold: false, withoutFrame: true } as const;
 const plain = <T>(getter: T) => ({ getter, setter: true, pure: true }) as const;
 const choice = <T>(getter: T) => ({ getter, setter: true, ignoreInvalid: true }) as const;
 const path = b.ref("Path2D");
@@ -148,7 +150,7 @@ export const Radius = b.union({ point: DOMPointInit, number }, webidl);
 export const Radii = b.union({ list: b.sequenceVec(Radius), point: DOMPointInit, number }, webidl);
 export const Path2DOrString = b.union({ path, data: text }, webidl);
 export const CanvasStyle = b.union(
-  { gradient: b.ref("CanvasGradient"), pattern: b.ref("CanvasPattern"), color: text },
+  { gradient: b.ref("CanvasGradient"), pattern: b.ref("CanvasPattern"), color: b.DOMString },
   webidl,
 );
 export const ImageDataArray = b.union(
@@ -156,22 +158,23 @@ export const ImageDataArray = b.union(
   webidl,
 );
 
-export const HasPath = b.interface("HasPath", { abstract: true, rustPath: "crate::api::canvas::Path", size: 104 });
+export const HasPath = b.interface("HasPath", { abstract: true, rustPath: "crate::api::canvas::Path", size: 96 });
 
 export const CanvasPath = b.mixin("CanvasPath", {
   on: HasPath,
   proto: {
-    closePath: {},
-    moveTo: { args: numbers("x y"), isCold: false },
-    lineTo: { args: numbers("x y"), isCold: false },
-    quadraticCurveTo: { args: numbers("cpx cpy x y") },
-    bezierCurveTo: { args: numbers("cp1x cp1y cp2x cp2y x y"), isCold: false },
+    closePath: hottest,
+    moveTo: { args: numbers("x y"), ...hottest },
+    lineTo: { args: numbers("x y"), ...hottest },
+    quadraticCurveTo: { args: numbers("cpx cpy x y"), ...hot },
+    bezierCurveTo: { args: numbers("cp1x cp1y cp2x cp2y x y"), ...hot },
     arcTo: { args: numbers("x1 y1 x2 y2 radius"), throws: true },
-    rect: { args: numbers("x y w h"), isCold: false },
+    rect: { args: numbers("x y w h"), ...hot },
     roundRect: { args: { ...numbers("x y w h"), radii: Radii.optional }, throws: true },
     arc: {
       args: { ...numbers("x y radius startAngle endAngle"), counterclockwise: b.bool.loose.default(false) },
       throws: true,
+      ...hot,
     },
     ellipse: {
       args: {
@@ -192,7 +195,7 @@ export const Path2D = b.interface("Path2D", {
 
 export const CanvasGradient = b.interface("CanvasGradient", {
   rustPath: "crate::api::canvas::CanvasGradient",
-  proto: { addColorStop: { args: { offset: b.double, color: text }, throws: true } },
+  proto: { addColorStop: { args: { offset: b.double, color: text }, throws: true, ...hottest } },
 });
 
 export const CanvasPattern = b.interface("CanvasPattern", {
@@ -280,27 +283,27 @@ export const CanvasDrawing = b.mixin("CanvasDrawing", {
   proto: {
     canvas: { getter: b.object, field: "canvas" },
     getContextAttributes: { returns: ContextAttributes },
-    save: fallible,
-    restore: fallible,
+    save: { ...fallible, ...hottest },
+    restore: { ...fallible, ...hottest },
     reset: {},
     isContextLost: { returns: b.bool },
-    scale: { args: numbers("x y") },
-    rotate: { args: numbers("angle") },
-    translate: { args: numbers("x y"), isCold: false },
+    scale: { args: numbers("x y"), ...hottest },
+    rotate: { args: numbers("angle"), ...hottest },
+    translate: { args: numbers("x y"), ...hottest },
     transform: { args: numbers("a b c d e f") },
     getTransform: { returns: b.any.returning("object"), ...js },
     setTransform: [
-      { args: numbers("a b c d e f") },
+      { args: numbers("a b c d e f"), ...hot },
       { rustName: "set_transform_to", args: { transform: DOMMatrix2DInit.default({}) }, throws: true },
     ],
     resetTransform: {},
-    globalAlpha: plain(number),
+    globalAlpha: { ...plain(number), ...hot },
     globalCompositeOperation: choice(GlobalCompositeOperation),
     imageSmoothingEnabled: plain(b.bool.loose),
     imageSmoothingQuality: choice(ImageSmoothingQuality),
     strokeStyle: style,
     fillStyle: style,
-    createLinearGradient: { args: each("x0 y0 x1 y1", b.double), returns: gradient, ...heap },
+    createLinearGradient: { args: each("x0 y0 x1 y1", b.double), returns: gradient, ...heap, ...hot },
     createRadialGradient: { args: each("x0 y0 r0 x1 y1 r1", b.double), returns: gradient, ...fallible },
     createConicGradient: { args: each("startAngle x y", b.double), returns: gradient, ...heap },
     createPattern: {
@@ -313,13 +316,19 @@ export const CanvasDrawing = b.mixin("CanvasDrawing", {
     shadowBlur: plain(number),
     shadowColor: { getter: text, setter: js },
     filter: { getter: text, setter: js },
-    clearRect: { args: numbers("x y w h"), isCold: false },
-    fillRect: { args: numbers("x y w h"), isCold: false },
-    strokeRect: { args: numbers("x y w h") },
-    beginPath: {},
-    fill: [{ rustName: "fill_given", args: { path, fillRule } }, { args: { fillRule } }],
-    stroke: [{}, { rustName: "stroke_given", args: { path } }],
-    clip: [{ rustName: "clip_given", args: { path, fillRule } }, { args: { fillRule } }],
+    clearRect: { args: numbers("x y w h"), ...hot },
+    fillRect: { args: numbers("x y w h"), ...hot },
+    strokeRect: { args: numbers("x y w h"), ...hot },
+    beginPath: hottest,
+    fill: [
+      { rustName: "fill_given", args: { path, fillRule }, ...hot },
+      { args: { fillRule }, ...hot },
+    ],
+    stroke: { args: { path: path.ifPassed }, ...hottest },
+    clip: [
+      { rustName: "clip_given", args: { path, fillRule }, ...hot },
+      { args: { fillRule }, ...hot },
+    ],
     isPointInPath: [
       { rustName: "is_point_in_given_path", args: { path, ...numbers("x y"), fillRule }, returns: b.bool },
       { args: { ...numbers("x y"), fillRule }, returns: b.bool },
@@ -328,13 +337,18 @@ export const CanvasDrawing = b.mixin("CanvasDrawing", {
       { args: numbers("x y"), returns: b.bool },
       { rustName: "is_point_in_given_stroke", args: { path, ...numbers("x y") }, returns: b.bool },
     ],
-    fillText: { args: drawnText, ...js },
+    fillText: { args: drawnText, ...js, ...hot },
     strokeText: { args: drawnText, ...js },
     measureText: { args: { text }, returns: b.ref("TextMetrics"), ...js },
     drawImage: [
-      { args: { image: CanvasImageSource, ...numbers("dx dy") }, ...js },
-      { rustName: "draw_image_sized", args: { image: CanvasImageSource, ...numbers("dx dy dw dh") }, ...js },
-      { rustName: "draw_image_part", args: { image: CanvasImageSource, ...numbers("sx sy sw sh dx dy dw dh") }, ...js },
+      { args: { image: CanvasImageSource, ...numbers("dx dy") }, ...js, ...hot },
+      { rustName: "draw_image_sized", args: { image: CanvasImageSource, ...numbers("dx dy dw dh") }, ...js, ...hot },
+      {
+        rustName: "draw_image_part",
+        args: { image: CanvasImageSource, ...numbers("sx sy sw sh dx dy dw dh") },
+        ...js,
+        ...hot,
+      },
     ],
     createImageData: [
       { args: { ...each("sw sh", long), settings }, returns: imageData, ...fallible },
@@ -349,7 +363,7 @@ export const CanvasDrawing = b.mixin("CanvasDrawing", {
         ...fallible,
       },
     ],
-    lineWidth: plain(number),
+    lineWidth: { ...plain(number), ...hot },
     lineCap: choice(CanvasLineCap),
     lineJoin: choice(CanvasLineJoin),
     miterLimit: plain(number),
@@ -410,7 +424,7 @@ export const HTMLCanvasElement = b.interface("HTMLCanvasElement", {
   extends: HTMLElement,
   ...htmlConstructor,
   proto: {
-    ...reflect("width+300 height+150"),
+    ...each("width height", { getter: b.u32, setter: { type: b.u32.wrap, ...js }, ceReactions: true }),
     getContext: { args: { contextId: text, options: contextOptions }, returns: b.any, ...js },
     toDataURL: { rustName: "to_data_url", args: encoding, returns: b.USVString.utf8, ...js },
     toBlob: { args: { callback: b.callable, ...encoding }, ...js },

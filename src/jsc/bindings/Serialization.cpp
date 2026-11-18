@@ -66,6 +66,11 @@ extern "C" SerializedScriptValue* Bun__SerializedScriptValue__create(JSGlobalObj
     return &serialized.releaseReturnValue().leakRef();
 }
 
+extern "C" size_t Bun__SerializedScriptValue__memoryCost(SerializedScriptValue* value)
+{
+    return value->memoryCost();
+}
+
 extern "C" EncodedJSValue Bun__SerializedScriptValue__deserialize(SerializedScriptValue* value, JSGlobalObject* globalObject, const EncodedJSValue* objects, size_t objectCount)
 {
     return JSValue::encode(value->deserializeWithHostObjects(*globalObject, { objects, objectCount }));

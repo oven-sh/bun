@@ -15,6 +15,7 @@ use super::raster::{
 use super::raster::{
     fill_rows_through, map_point, over, premultiply, scale, set_rows, swap_red_and_blue,
 };
+use super::slant::{self, Slant};
 use super::warp::{Samples, draw_samples};
 use crate::abi::{Rect, smoothing_of_corners};
 use crate::gfx::Transform;
@@ -255,9 +256,14 @@ fn mix(a: Pixel, b: Pixel, fraction: u8) -> Pixel {
     (pair(a, b) | pair(a >> 8, b >> 8) << 8).to_ne_bytes()
 }
 
-/// The pixels whose centers are inside, as on a GPU.
+/// The pixels whose centers are inside, as on a GPU, unless the edges are smooth.
 fn covered(primitive: &Primitive) -> IntRect {
-    IntRect::nearest(primitive.bounds).intersect(primitive.clip)
+    let all = if is_shaped(primitive) {
+        IntRect::around(primitive.bounds)
+    } else {
+        IntRect::nearest(primitive.bounds)
+    };
+    all.intersect(primitive.clip)
 }
 
 pub(super) fn border_of(primitive: &Primitive) -> [f32; 4] {
@@ -936,6 +942,20 @@ impl<'a> Band<'a> {
         );
     }
 
+    fn slanted(&mut self, bounds: Rect, slant: &Slant, color: Pixel, area: IntRect) {
+        let (x, y) = (
+            area.left as f32 + 0.5 - bounds.x - bounds.width / 2.,
+            0.5 - bounds.y - bounds.height / 2.,
+        );
+        slant::fill(
+            self.rows(area)
+                .zip(area.top..)
+                .map(|(row, top)| (row, [x, y + top as f32])),
+            slant,
+            color,
+        );
+    }
+
     fn paint(&mut self, primitive: &Primitive, area: IntRect) {
         if area.is_empty() {
             return;
@@ -969,6 +989,12 @@ impl<'a> Band<'a> {
                 &textures[*texture as usize],
                 to_texels,
                 alpha(primitive.opacity),
+                area,
+            ),
+            Kind::Slanted(slant, color) => self.slanted(
+                primitive.bounds,
+                slant,
+                bgra(*color, primitive.opacity),
                 area,
             ),
             Kind::Pending(_) => {}
@@ -1080,6 +1106,23 @@ impl Summary {
                     combine(a, id.into()),
                     b,
                     pair(it.tx.to_bits(), it.ty.to_bits()),
+                ]
+            }
+            Kind::Slanted(
+                Slant {
+                    along: [cos, sin],
+                    half: [x, y],
+                    radii,
+                },
+                color,
+            ) => {
+                let [a, b] = floats([cos, sin, x, y]);
+                [
+                    combine(a, color.into()),
+                    b,
+                    radii
+                        .into_iter()
+                        .fold(0, |all, it| all << 16 | u64::from(it)),
                 ]
             }
             Kind::Quad {
@@ -1796,7 +1839,7 @@ impl Compositor {
         let work_for = |(primitive, summary): (&Primitive, &Summary)| match primitive.kind {
             Kind::Quad { .. } | Kind::Pending(_) => 0,
             Kind::Mask(..) | Kind::Image(_) => summary.area.intersect(changed).area() * 2,
-            Kind::Turned { .. } => summary.area.intersect(changed).area() * 8,
+            Kind::Turned { .. } | Kind::Slanted(..) => summary.area.intersect(changed).area() * 8,
         };
         let painted = count(&actions) as i64 * i64::from(TILE_WIDTH * TILE_HEIGHT);
         let work = painted
@@ -1837,6 +1880,92 @@ impl Compositor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::abi::RoundedRect;
+
+    #[test]
+    fn a_slanted_shape_covers_what_its_outline_does() {
+        let (area, rect) = (
+            IntRect::new(0, 0, 61, 61),
+            Rect {
+                x: -20.,
+                y: -12.,
+                width: 40.,
+                height: 24.,
+            },
+        );
+        for (radii, degrees, flip) in [
+            ([0.; 4], 30f32, 1.),
+            ([12.; 4], 45., 1.),
+            ([24., 0., 0., 3.], 200., 1.),
+            ([0., 24., 0., 24.], 77., -1.),
+        ] {
+            let (shape, (sin, cos)) = (
+                RoundedRect {
+                    rect,
+                    radii: radii.map(|it| [it; 2]),
+                    smoothing: 0.,
+                },
+                degrees.to_radians().sin_cos(),
+            );
+            let matrix = Transform::from_row(cos, sin, -sin * flip, cos * flip, 30.25, 30.5);
+            let bounds = Rect {
+                x: 0.25,
+                y: 0.5,
+                width: 60.,
+                height: 60.,
+            };
+            let shown = Atlas::default()
+                .snapshot(
+                    &[Primitive::new(
+                        bounds,
+                        area,
+                        Kind::Slanted(Slant::of(&shape, &matrix).unwrap().0, 0xFF),
+                    )],
+                    area,
+                    1,
+                    || false,
+                )
+                .unwrap();
+            let has = |(x, y): (f32, f32)| {
+                let is_cut = |(radius, [right, down]): (f32, [f32; 2])| {
+                    (x * right - 20. + radius)
+                        .max(0.)
+                        .hypot((y * down - 12. + radius).max(0.))
+                        > radius
+                };
+                !radii
+                    .into_iter()
+                    .zip([[-1., -1.], [1., -1.], [1., 1.], [-1., 1.]])
+                    .any(is_cut)
+            };
+            let (inverse, at) = (matrix.invert().unwrap(), |pixel: usize, part: usize| {
+                pixel as f32 + (part as f32 + 0.5) / 16.
+            });
+            let exact = |pixel: usize| {
+                (0..256)
+                    .filter(|it| {
+                        has(map_point(
+                            &inverse,
+                            at(pixel % 61, it % 16),
+                            at(pixel / 61, it / 16),
+                        ))
+                    })
+                    .count()
+                    .min(255) as u8
+            };
+            let differences: Vec<_> = shown
+                .pixels()
+                .iter()
+                .enumerate()
+                .map(|(index, it)| it[3].abs_diff(exact(index)))
+                .collect();
+            assert!(
+                differences.iter().all(|it| *it < 48)
+                    && differences.iter().filter(|it| **it > 14).count() < 8,
+                "{radii:?} {differences:?}"
+            );
+        }
+    }
 
     #[test]
     fn a_quarter_turn_moves_whole_pixels() {

@@ -347,6 +347,9 @@ impl Document {
     pub(crate) fn note_extents(&self, id: BoxId) {
         let it = &self.boxes[id];
         let gathered = self.gathered.take().filter(|it| it.0 == id).map(|it| it.1);
+        if it.overflow == [Overflow::Hidden; 2] {
+            return self.note_extents_of_scroller(id);
+        }
         if !(it.is_ordinary
             && it.turned == it.mode
             && it.overflow == [Overflow::Visible; 2]
@@ -382,6 +385,51 @@ impl Document {
             }
             return;
         }
+        self.note_contents(id, contents);
+    }
+
+    fn note_extents_of_scroller(&self, id: BoxId) {
+        let it = &self.boxes[id];
+        if !(it.is_ordinary
+            && it.turned == it.mode
+            && it.outside_marker == 0
+            && !it.has_legend
+            && it.is_quiet())
+        {
+            return;
+        }
+        let (whole, mut contents) = (self.border_box(id), Contents::default());
+        it.spread.set(whole);
+        it.ink.set(
+            whole.union(
+                &whole
+                    .grown(it.style.fixed().outset)
+                    .grown(it.layout.border.top),
+            ),
+        );
+        if it.children.len() <= 8 && it.children.iter().all(|it| contents.add(&self.boxes[*it])) {
+            self.note_layers(id, contents.layers, Layers::SCROLLS);
+        }
+    }
+
+    /// For a row or a group of rows.
+    pub(crate) fn note_extents_of_part(&self, id: BoxId, contents: Contents) {
+        let it = &self.boxes[id];
+        if [it.mode, it.turned] == [WritingMode::HorizontalTb; 2]
+            && it.is_quiet()
+            && it.hoisted.is_empty()
+            && !it.is_skipped
+            && !it.is_parking
+            && self.boxes.is_unbroken(id)
+            && !self.is_collapsed_row(id)
+        {
+            self.note_contents(id, contents);
+        }
+    }
+
+    #[inline(always)]
+    fn note_contents(&self, id: BoxId, contents: Contents) {
+        let it = &self.boxes[id];
         let (border, whole) = (it.layout.border, self.border_box(id));
         let (reach, mut ink) = (
             around(contents.reach, whole.shrunk(border.to_array())),
@@ -399,7 +447,7 @@ impl Document {
         });
         it.ink
             .set(ink.union(&whole.grown(it.style.fixed().outset).grown(border.top)));
-        self.note_layers(id, contents.layers);
+        self.note_layers(id, contents.layers, Layers::empty());
     }
 
     /// What it takes to show the document without scrolling.
@@ -663,6 +711,9 @@ impl Document {
         let Some(id) = self.scroller(node).filter(|it| !self.boxes[*it].is_parking) else {
             return false;
         };
+        if offset == [0.0; 2] && self.scroll_offset(node) == offset {
+            return false;
+        }
         let offset = self.clamp_offset(id, offset);
         if offset == self.scroll_offset(node) {
             return false;
@@ -1111,7 +1162,17 @@ impl Document {
     ) -> Option<Revealed> {
         let mut rect = rect.transformed(&self.to_viewport(at));
         let mut at = at;
-        while at != VIEWPORT && !self.is_fixed_to_viewport(at) && self.boxes[at].container != 0 {
+        while at != VIEWPORT && self.boxes[at].container != 0 {
+            let moves = if self.is_fixed_to_viewport(at) {
+                self.anchored
+                    .get(&self.boxes[at].node)
+                    .map_or([false; 2], |it| it.follows)
+            } else {
+                [true; 2]
+            };
+            if moves == [false; 2] {
+                break;
+            }
             at = self.boxes[at].container;
             if !self.boxes[at].scrolls() {
                 continue;
@@ -1124,6 +1185,7 @@ impl Document {
                 let is_visible = start >= near && end <= far || start <= near && end >= far;
                 from[axis]
                     + match align[axis] {
+                        _ if !moves[axis] => 0.0,
                         Alignment::Nearest | Alignment::CenterIfNeeded if is_visible => 0.0,
                         Alignment::Start => start - near,
                         Alignment::End => end - far,
@@ -1613,7 +1675,9 @@ impl Document {
             }
         }
         for node in core::mem::take(&mut self.resized_scrollers) {
-            self.set_scroll_offset(node, self.scroll_offset(node));
+            if self.scroll_offset(node) != [0.0; 2] {
+                self.set_scroll_offset(node, self.scroll_offset(node));
+            }
         }
         if !self.scrolling.initial_targets.is_empty() {
             self.scroll_to_initial_targets();

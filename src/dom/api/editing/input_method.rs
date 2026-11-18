@@ -273,7 +273,7 @@ fn show_composition(ui: &Ui) {
 
 /// Tells the library, if something has changed.
 pub(super) fn update<'a>(cx: &mut Cx<'a>, ui: &'a Ui) -> bool {
-    if ui.container().is_some_and(|it| !it.is_focused()) {
+    if ui.any_container().is_some_and(|it| !it.is_focused()) {
         return false;
     }
     let told = &ui.editing.input_method.told;

@@ -5,7 +5,8 @@ use core::f64::consts::{FRAC_PI_2, TAU};
 use bun_jsc::JsCell;
 
 use super::{Affine, Failure, are_finite};
-use crate::abi::PathVerb;
+use crate::abi::{PathVerb, Rect};
+use crate::abi_graphics::Verb;
 use crate::generated_bindgen::canvas::{CanvasPath, Path2D, Path2DOrString, Radii, Radius};
 use crate::generated_bindgen::geometry::{DOMMatrix2DInit, DOMPointInit};
 
@@ -14,10 +15,10 @@ type Point = [f64; 2];
 /// The verbs have the points after `matrix`, which may change from one call to the next.
 #[derive(Default)]
 pub(super) struct Outline {
-    pub(super) verbs: Vec<PathVerb>,
+    verbs: Vec<u32>,
     pub(super) matrix: Affine,
-    at: Point,
-    start: Point,
+    /// Where the first so many words of `verbs` end, and where that contour began.
+    known: (usize, [[f32; 2]; 2]),
 }
 
 #[derive(Default)]
@@ -33,91 +34,249 @@ fn widen(point: [f32; 2]) -> Point {
     point.map(f64::from)
 }
 
-pub(super) fn transformed(verb: PathVerb, matrix: &Affine) -> PathVerb {
-    let map = |point| narrow(matrix.map(widen(point)));
-    match verb {
-        PathVerb::Move(to) => PathVerb::Move(map(to)),
-        PathVerb::Line(to) => PathVerb::Line(map(to)),
-        PathVerb::Cubic(a, b, to) => PathVerb::Cubic(map(a), map(b), map(to)),
-        PathVerb::Close => PathVerb::Close,
+pub(super) fn add_transformed(mut verbs: &[u32], matrix: &Affine, to: &mut Vec<u32>) {
+    if matrix.0 == Affine::default().0 {
+        return to.extend_from_slice(verbs);
+    }
+    let (map, mut is_first) = (|point| narrow(matrix.map(widen(point))), true);
+    while let Some(verb) = Verb::read(&mut verbs) {
+        match verb {
+            Verb::Move(end) => Verb::Move(map(end)).write(to),
+            Verb::Line(end) => Verb::Line(map(end)).write(to),
+            Verb::Quad(a, end) => Verb::Quad(map(a), map(end)).write(to),
+            Verb::Cubic(a, b, end) => Verb::Cubic(map(a), map(b), map(end)).write(to),
+            Verb::Arc {
+                center: [x, y],
+                radius,
+                from,
+                sweep,
+            } => {
+                let sweep = if sweep.abs() == core::f32::consts::TAU {
+                    TAU.copysign(sweep.into())
+                } else {
+                    sweep.into()
+                };
+                add_arc(
+                    matrix.then([radius, 0.0, 0.0, radius, x, y].map(f64::from)),
+                    from.into(),
+                    sweep,
+                    is_first,
+                    to,
+                );
+            }
+            Verb::RoundRect { rect, radius } => add_round_rect(
+                matrix,
+                [rect.x, rect.y, rect.width, rect.height].map(f64::from),
+                [[radius.into(); 2]; 4],
+                to,
+            ),
+            Verb::Close => Verb::Close.write(to),
+        }
+        is_first = false;
     }
 }
 
-impl Outline {
-    fn append(&mut self, verbs: impl IntoIterator<Item = PathVerb>) {
-        for verb in verbs {
-            match verb {
-                PathVerb::Move(to) => (self.at, self.start) = (widen(to), widen(to)),
-                PathVerb::Line(to) | PathVerb::Cubic(_, _, to) => self.at = widen(to),
-                PathVerb::Close => self.at = self.start,
-            }
-            self.verbs.push(verb);
+/// For what single precision is not enough.
+const LARGE: f64 = 4096.0;
+
+#[inline]
+fn within_turn(angle: f64) -> f64 {
+    let rest = if angle.abs() < 1e9 {
+        angle - (angle * (1.0 / TAU)).floor() * TAU
+    } else {
+        angle.rem_euclid(TAU)
+    };
+    if rest >= TAU {
+        rest - TAU
+    } else {
+        rest.max(0.0)
+    }
+}
+
+/// Of the unit circle.
+#[inline(always)]
+fn add_arc(place: Affine, from: f64, sweep: f64, is_first: bool, to: &mut Vec<u32>) {
+    let [a, b, c, d, x, y] = place.0;
+    let (radius, turn) = if b == 0.0 && a > 0.0 {
+        (a, 0.0)
+    } else {
+        ((a * a + b * b).sqrt(), b.atan2(a))
+    };
+    match a == d && b == -c && radius > 0.0 && radius < LARGE {
+        true => Verb::Arc {
+            center: narrow([x, y]),
+            radius: radius as f32,
+            from: within_turn(from + turn) as f32,
+            sweep: sweep as f32,
         }
-        if self.verbs.last() == Some(&PathVerb::Close) {
-            self.verbs.push(PathVerb::Move(narrow(self.start)));
+        .write(to),
+        false => add_curves(place, from, sweep, is_first, to),
+    }
+}
+
+fn add_curves(place: Affine, from: f64, sweep: f64, is_first: bool, to: &mut Vec<u32>) {
+    let (map, (mut v, mut u)) = (|point| narrow(place.map(point)), from.sin_cos());
+    if is_first {
+        Verb::Move(map([u, v]))
+    } else {
+        Verb::Line(map([u, v]))
+    }
+    .write(to);
+    let count = (sweep.abs() / FRAC_PI_2).ceil();
+    let handle = 4.0 / 3.0 * (sweep / count / 4.0).tan();
+    for step in 1..=count as u8 {
+        let first = [u - handle * v, v + handle * u];
+        (v, u) = (from + sweep * f64::from(step) / count).sin_cos();
+        Verb::Cubic(
+            map(first),
+            map([u + handle * v, v - handle * u]),
+            map([u, v]),
+        )
+        .write(to);
+    }
+}
+
+fn add_round_rect(
+    matrix: &Affine,
+    [x, y, width, height]: [f64; 4],
+    [tl, tr, br, bl]: [[f64; 2]; 4],
+    verbs: &mut Vec<u32>,
+) {
+    let (w, h) = (width.abs(), height.abs());
+    let room = [
+        w / (tl[0] + tr[0]),
+        h / (tr[1] + br[1]),
+        w / (br[0] + bl[0]),
+        h / (tl[1] + bl[1]),
+    ];
+    let (scale, map) = (room.into_iter().fold(1.0, f64::min), |point| {
+        narrow(matrix.map(point))
+    });
+    if let [a, 0.0, 0.0, d, ..] = matrix.0
+        && a == d
+        && a > 0.0
+        && [tl, tr, br, bl] == [[tl[0]; 2]; 4]
+    {
+        let ([x, y], [width, height]) = (map([x, y]), narrow([width * a, height * a]));
+        return Verb::RoundRect {
+            rect: Rect {
+                x,
+                y,
+                width,
+                height,
+            },
+            radius: (tl[0] * scale * a) as f32,
+        }
+        .write(verbs);
+    }
+    let [sx, sy] = [width, height].map(|it| if it < 0.0 { -scale } else { scale });
+    Verb::Move(map([x + tl[0] * sx, y])).write(verbs);
+    for (corner, from, to) in [
+        ([x + width, y], [-tr[0] * sx, 0.0], [0.0, tr[1] * sy]),
+        (
+            [x + width, y + height],
+            [0.0, -br[1] * sy],
+            [-br[0] * sx, 0.0],
+        ),
+        ([x, y + height], [bl[0] * sx, 0.0], [0.0, -bl[1] * sy]),
+        ([x, y], [0.0, tl[1] * sy], [tl[0] * sx, 0.0]),
+    ] {
+        const HANDLE: f64 = 1.0 - 0.552_284_749_8;
+        let along =
+            |offset: Point, by: f64| map([corner[0] + offset[0] * by, corner[1] + offset[1] * by]);
+        Verb::Line(along(from, 1.0)).write(verbs);
+        Verb::Cubic(along(from, HANDLE), along(to, HANDLE), along(to, 1.0)).write(verbs);
+    }
+    Verb::Close.write(verbs);
+    Verb::Move(map([x, y])).write(verbs);
+}
+
+impl Outline {
+    #[inline]
+    pub(super) fn clear(&mut self) {
+        self.verbs.clear();
+        self.known.0 = 0;
+    }
+
+    fn at(&mut self) -> Point {
+        let (mut rest, [mut at, mut start], mut is_first) =
+            (&self.verbs[self.known.0..], self.known.1, self.known.0 == 0);
+        while let Some(verb) = Verb::read(&mut rest) {
+            match verb {
+                Verb::Move(to) => (at, start) = (to, to),
+                Verb::Line(to) | Verb::Quad(_, to) | Verb::Cubic(_, _, to) => at = to,
+                Verb::Arc {
+                    center: [x, y],
+                    radius,
+                    from,
+                    sweep,
+                } => {
+                    let point = |angle: f32| [x + radius * angle.cos(), y + radius * angle.sin()];
+                    (at, start) = (
+                        point(from + sweep),
+                        if is_first { point(from) } else { start },
+                    );
+                }
+                Verb::RoundRect { rect, .. } => (at, start) = ([rect.x, rect.y], [rect.x, rect.y]),
+                Verb::Close => at = start,
+            }
+            is_first = false;
+        }
+        self.known = (self.verbs.len(), [at, start]);
+        widen(at)
+    }
+
+    #[inline]
+    fn close(&mut self) {
+        if !self.verbs.is_empty() {
+            Verb::Close.write(&mut self.verbs);
         }
     }
 
-    fn close(&mut self) {
-        if !self.verbs.is_empty() {
-            self.at = self.start;
-            self.verbs
-                .extend([PathVerb::Close, PathVerb::Move(narrow(self.start))]);
-        }
+    #[inline(always)]
+    fn map(&self, point: Point) -> [f32; 2] {
+        narrow(self.matrix.map(point))
     }
 
     #[inline]
     fn move_to(&mut self, to: Point) {
-        self.at = self.matrix.map(to);
-        self.start = self.at;
-        self.verbs.push(PathVerb::Move(narrow(self.at)));
+        Verb::Move(self.map(to)).write(&mut self.verbs);
     }
 
     #[inline]
     fn line_to(&mut self, to: Point) {
-        if self.verbs.is_empty() {
-            return self.move_to(to);
+        match self.verbs.is_empty() {
+            true => Verb::Move(self.map(to)).write(&mut self.verbs),
+            false => Verb::Line(self.map(to)).write(&mut self.verbs),
         }
-        self.at = self.matrix.map(to);
-        self.verbs.push(PathVerb::Line(narrow(self.at)));
     }
 
+    #[inline]
     fn ensure_subpath(&mut self, at: Point) {
         if self.verbs.is_empty() {
             self.move_to(at);
         }
     }
 
+    #[inline]
     fn quadratic_to(&mut self, control: Point, to: Point) {
         self.ensure_subpath(control);
-        let (control, from) = (self.matrix.map(control), self.at);
-        self.at = self.matrix.map(to);
-        let handle = |end: Point| {
-            narrow([0, 1].map(|axis| end[axis] + (control[axis] - end[axis]) * (2.0 / 3.0)))
-        };
-        self.verbs.push(PathVerb::Cubic(
-            handle(from),
-            handle(self.at),
-            narrow(self.at),
-        ));
+        Verb::Quad(self.map(control), self.map(to)).write(&mut self.verbs);
     }
 
+    #[inline]
     fn cubic_to(&mut self, first: Point, second: Point, to: Point) {
         self.ensure_subpath(first);
-        self.at = self.matrix.map(to);
-        self.verbs.push(PathVerb::Cubic(
-            narrow(self.matrix.map(first)),
-            narrow(self.matrix.map(second)),
-            narrow(self.at),
-        ));
+        Verb::Cubic(self.map(first), self.map(second), self.map(to)).write(&mut self.verbs);
     }
 
     fn arc_to(&mut self, [x1, y1]: Point, [x2, y2]: Point, radius: f64) {
         self.ensure_subpath([x1, y1]);
-        let [x0, y0] = self.matrix.unmap(self.at);
+        let at = self.at();
+        let [x0, y0] = self.matrix.unmap(at);
         let ([ax, ay], [bx, by]) = ([x0 - x1, y0 - y1], [x2 - x1, y2 - y1]);
         let (length_a, length_b, cross) = (ax.hypot(ay), bx.hypot(by), ax * by - ay * bx);
-        let is_bent = cross.abs() > 1e-9 * length_a * length_b;
+        let is_bent = cross.abs() > 1e-6 * length_a * length_b;
         if radius == 0.0 || !is_bent {
             return self.line_to([x1, y1]);
         }
@@ -131,9 +290,22 @@ impl Outline {
         let from = (start[1] - center[1]).atan2(start[0] - center[0]);
         let to = (y1 + by / length_b * distance - center[1])
             .atan2(x1 + bx / length_b * distance - center[0]);
-        self.ellipse(center, [radius; 2], 0.0, from, to, cross > 0.0);
+        self.any_ellipse(center, [radius; 2], 0.0, from, to, cross > 0.0);
     }
 
+    fn any_ellipse(
+        &mut self,
+        center: Point,
+        radii: [f64; 2],
+        rotation: f64,
+        from: f64,
+        to: f64,
+        is_counterclockwise: bool,
+    ) {
+        self.ellipse(center, radii, rotation, from, to, is_counterclockwise);
+    }
+
+    #[inline(always)]
     fn ellipse(
         &mut self,
         [x, y]: Point,
@@ -149,29 +321,24 @@ impl Outline {
             to - from
         } {
             TAU.. => TAU,
-            sweep @ ..0.0 => TAU - (-sweep % TAU),
+            sweep @ ..0.0 => TAU - within_turn(-sweep),
             sweep => sweep,
         };
-        let sweep = if is_counterclockwise { -sweep } else { sweep };
         let (sin, cos) = if rotation == 0.0 {
             (0.0, 1.0)
         } else {
             rotation.sin_cos()
         };
-        let place = Affine([rx * cos, rx * sin, -ry * sin, ry * cos, x, y]);
-        let (mut v, mut u) = from.sin_cos();
-        self.line_to(place.map([u, v]));
-        let count = (sweep.abs() / FRAC_PI_2).ceil();
-        let handle = 4.0 / 3.0 * (sweep / count / 4.0).tan();
-        for step in 1..=count as u8 {
-            let first = [u - handle * v, v + handle * u];
-            (v, u) = (from + sweep * f64::from(step) / count).sin_cos();
-            self.cubic_to(
-                place.map(first),
-                place.map([u + handle * v, v - handle * u]),
-                place.map([u, v]),
-            );
-        }
+        let place = self
+            .matrix
+            .then([rx * cos, rx * sin, -ry * sin, ry * cos, x, y]);
+        add_arc(
+            place,
+            from,
+            if is_counterclockwise { -sweep } else { sweep },
+            self.verbs.is_empty(),
+            &mut self.verbs,
+        );
     }
 
     fn rect(&mut self, x: f64, y: f64, width: f64, height: f64) {
@@ -180,44 +347,6 @@ impl Outline {
         self.line_to([x + width, y + height]);
         self.line_to([x, y + height]);
         self.close();
-    }
-
-    fn round_rect(
-        &mut self,
-        x: f64,
-        y: f64,
-        width: f64,
-        height: f64,
-        [tl, tr, br, bl]: [[f64; 2]; 4],
-    ) {
-        let (w, h) = (width.abs(), height.abs());
-        let room = [
-            w / (tl[0] + tr[0]),
-            h / (tr[1] + br[1]),
-            w / (br[0] + bl[0]),
-            h / (tl[1] + bl[1]),
-        ];
-        let scale = room.into_iter().fold(1.0, f64::min);
-        let [sx, sy] = [width, height].map(|it| if it < 0.0 { -scale } else { scale });
-        self.move_to([x + tl[0] * sx, y]);
-        for (corner, from, to) in [
-            ([x + width, y], [-tr[0] * sx, 0.0], [0.0, tr[1] * sy]),
-            (
-                [x + width, y + height],
-                [0.0, -br[1] * sy],
-                [-br[0] * sx, 0.0],
-            ),
-            ([x, y + height], [bl[0] * sx, 0.0], [0.0, -bl[1] * sy]),
-            ([x, y], [0.0, tl[1] * sy], [tl[0] * sx, 0.0]),
-        ] {
-            const HANDLE: f64 = 1.0 - 0.552_284_749_8;
-            let along =
-                |offset: Point, by: f64| [corner[0] + offset[0] * by, corner[1] + offset[1] * by];
-            self.line_to(along(from, 1.0));
-            self.cubic_to(along(from, HANDLE), along(to, HANDLE), along(to, 1.0));
-        }
-        self.close();
-        self.move_to([x, y]);
     }
 }
 
@@ -322,10 +451,11 @@ impl CanvasPath {
             }
         }
         self.outline
-            .with_mut(|path| path.round_rect(x, y, w, h, corners));
+            .with_mut(|path| add_round_rect(&path.matrix, [x, y, w, h], corners, &mut path.verbs));
         Ok(())
     }
 
+    #[inline]
     pub(crate) fn arc(
         &self,
         x: f64,
@@ -335,7 +465,15 @@ impl CanvasPath {
         to: f64,
         is_counterclockwise: bool,
     ) -> Result<(), Failure> {
-        self.ellipse(x, y, radius, radius, 0.0, from, to, is_counterclockwise)
+        if !are_finite([x, y, radius, from, to]) {
+            return Ok(());
+        }
+        if radius < 0.0 {
+            return Err(NEGATIVE_RADIUS);
+        }
+        self.outline
+            .with_mut(|path| path.ellipse([x, y], [radius; 2], 0.0, from, to, is_counterclockwise));
+        Ok(())
     }
 
     pub(crate) fn ellipse(
@@ -356,14 +494,15 @@ impl CanvasPath {
             return Err(NEGATIVE_RADIUS);
         }
         self.outline.with_mut(|path| {
-            path.ellipse([x, y], [rx, ry], rotation, from, to, is_counterclockwise)
+            path.any_ellipse([x, y], [rx, ry], rotation, from, to, is_counterclockwise)
         });
         Ok(())
     }
 }
 
 impl Path {
-    pub(super) fn verbs(&self) -> &[PathVerb] {
+    #[inline]
+    pub(super) fn verbs(&self) -> &[u32] {
         &self.outline.get().verbs
     }
 }
@@ -373,9 +512,17 @@ impl Path2D {
         let mut outline = Outline::default();
         match path {
             None => {}
-            Some(Path2DOrString::Path(path)) => outline.append(path.verbs().iter().copied()),
+            Some(Path2DOrString::Path(path)) => outline.verbs.extend_from_slice(path.verbs()),
             Some(Path2DOrString::Data(data)) => {
-                outline.append(crate::path::Path::parse(crate::values::text(data)).verbs)
+                for verb in crate::path::Path::parse(crate::values::text(data)).verbs {
+                    let verb = match verb {
+                        PathVerb::Move(to) => Verb::Move(to),
+                        PathVerb::Line(to) => Verb::Line(to),
+                        PathVerb::Cubic(first, second, to) => Verb::Cubic(first, second, to),
+                        PathVerb::Close => Verb::Close,
+                    };
+                    verb.write(&mut outline.verbs);
+                }
             }
         }
         Path {
@@ -390,12 +537,22 @@ impl Path2D {
     ) -> Result<(), Failure> {
         let matrix = Affine::from_init(transform)?;
         if are_finite(matrix.0) {
-            let verbs: Vec<_> = path
-                .verbs()
-                .iter()
-                .map(|it| transformed(*it, &matrix))
-                .collect();
-            self.outline.with_mut(|outline| outline.append(verbs));
+            let mut verbs = Vec::new();
+            if let Some(Verb::Arc {
+                center: [x, y],
+                radius,
+                from,
+                ..
+            }) = Verb::read(&mut path.verbs())
+            {
+                Verb::Move(narrow(
+                    matrix.map(widen([x + radius * from.cos(), y + radius * from.sin()])),
+                ))
+                .write(&mut verbs);
+            }
+            add_transformed(path.verbs(), &matrix, &mut verbs);
+            self.outline
+                .with_mut(|outline| outline.verbs.append(&mut verbs));
         }
         Ok(())
     }

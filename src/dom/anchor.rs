@@ -4,7 +4,7 @@ use core::cell::RefCell;
 use std::rc::Rc;
 
 use crate::abi::Rect;
-use crate::boxes::{BoxId, VIEWPORT};
+use crate::boxes::{BoxId, Kind, VIEWPORT};
 use crate::calc::{Anchor, AnchorSide, AnchorSize, Measure, Node, Unit};
 use crate::document::Document;
 use crate::fragment::Piece;
@@ -14,7 +14,7 @@ use crate::order::Order as _;
 use crate::positioned::Edge;
 use crate::properties::{Id, Style, Value};
 use crate::sheet::{AtKind, Block, Defined};
-use crate::tree::{Flags, NodeId};
+use crate::tree::{Flags, NodeId, Tree};
 use crate::types::*;
 use crate::values::{Auto, Calc, Deps, Lp, MaxSize, NoneOrSpaces, Out, Size, Str, text};
 
@@ -45,6 +45,10 @@ pub(crate) struct Anchoring {
     scrolled: Map<NodeId, [f32; 2]>,
     pub(crate) shift: [f32; 2],
     pub(crate) is_hidden: bool,
+    /// The default anchor, and whether it was visible.
+    default: Option<(NodeId, bool)>,
+    /// Along which axes it moves with the default anchor.
+    pub(crate) follows: [bool; 2],
     /// Those that it refers to.
     pub(crate) anchors: Vec<NodeId>,
     /// Relative to the border box of the container.
@@ -68,6 +72,7 @@ struct Resolved {
     default: Option<NodeId>,
     anchors: Vec<NodeId>,
     shift: [f32; 2],
+    follows: [bool; 2],
     /// The sides of the inset-modified containing block that scroll along.
     are_tied: [bool; 4],
 }
@@ -136,6 +141,10 @@ fn anchored_margin(margin: &Auto<Lp>) -> Option<&Node> {
         }
         _ => None,
     }
+}
+
+fn is_visible(tree: &Tree, anchor: NodeId) -> bool {
+    tree.contains(anchor) && tree.style(anchor).is_none_or(|it| it.is_visible())
 }
 
 fn is_positioned_by_layout(style: &Style) -> bool {
@@ -484,7 +493,9 @@ fn options(style: &Style) -> Vec<&str> {
 impl Document {
     /// For a style that has just been computed.
     pub(crate) fn with_anchors(&mut self, node: NodeId, specified: Rc<Style>) -> Rc<Style> {
-        if !is_positioned_by_layout(&specified) || specified.display() == Display::None {
+        if !is_positioned_by_layout(&specified)
+            || specified.display() == Display::None && !self.anchored.contains_key(&node)
+        {
             if !self.anchored.is_empty() && self.anchored.remove(&node).is_some() {
                 self.relayout(node);
             }
@@ -505,6 +516,8 @@ impl Document {
             scrolled: Map::default(),
             shift: [0.0; 2],
             is_hidden: false,
+            default: None,
+            follows: [false; 2],
             anchors: Vec::new(),
             block: Rect::default(),
             room: [0.0; 2],
@@ -523,7 +536,7 @@ impl Document {
     }
 
     /// For a style with values from keyframes.
-    pub(crate) fn with_animated_anchors(&self, node: NodeId, style: Rc<Style>) -> Rc<Style> {
+    pub(crate) fn with_animated_anchors(&mut self, node: NodeId, style: Rc<Style>) -> Rc<Style> {
         let has_anchors = insets(&style)
             .iter()
             .any(|it| matches!(it, Inset::Anchor(_)))
@@ -531,13 +544,25 @@ impl Document {
             || margins(&style)
                 .iter()
                 .any(|it| anchored_margin(it).is_some());
-        match self
-            .own_box(node)
-            .filter(|_| has_anchors && style.is_out_of_flow())
-        {
-            Some(id) => Rc::new(self.resolve_anchors(id, Style::clone(&style), false).style),
-            None => style,
+        if !has_anchors || !style.is_out_of_flow() {
+            self.anchored_by_animation.remove(&node);
+            return style;
         }
+        self.anchored_by_animation.insert(node, Rc::clone(&style));
+        self.own_box(node).map_or_else(
+            || Rc::clone(&style),
+            |id| Rc::new(self.resolve_anchors(id, Style::clone(&style), false).style),
+        )
+    }
+
+    /// With what the last layout has found for it.
+    pub(crate) fn with_used_position(&self, node: NodeId, mut style: Rc<Style>) -> Rc<Style> {
+        self.anchored
+            .get(&node)
+            .into_iter()
+            .flat_map(|it| &it.used)
+            .for_each(|it| Rc::make_mut(&mut style).groups.set(it));
+        style
     }
 
     /// Whether the fallback in use is that one, or any if `value` is empty.
@@ -576,14 +601,7 @@ impl Document {
                 .iter()
                 .all(|(it, axis)| it.name == "any" || expected[*axis] == actual[*axis]);
         }
-        let flips = |words: &[Str]| {
-            words
-                .iter()
-                .filter_map(|it| tactic(it, block))
-                .fold([0, 1, 2, 3], |all, it| all.map(|side| it[side]))
-        };
-        let name = |words: &[Str]| words.iter().find(|it| it.starts_with("--")).cloned();
-        (flips(&wanted), name(&wanted)) == (flips(&used), name(&used))
+        wanted == used
     }
 
     pub(crate) fn forget_position_options(&mut self) {
@@ -654,8 +672,18 @@ impl Document {
             self.boxes[last].node,
             self.boxes[last].style.is_out_of_flow(),
         );
+        let inline = || {
+            self.tree.flat_ancestors(positioned).find(|it| {
+                self.tree
+                    .style(*it)
+                    .is_some_and(|it| it.is_positioned() || it.contains_fixed())
+            })
+        };
         from != 0
             && last != own
+            && (self.boxes[container].kind != Kind::Lines
+                || inline()
+                    .is_none_or(|it| self.tree.flat_ancestors(anchor).any(|above| above == it)))
             && !self.boxes.is_parked(from)
             && self
                 .tree
@@ -944,6 +972,7 @@ impl Document {
             default,
             anchors: anchors.take(),
             shift: [0, 1].map(|it| if follows[it] { -moved[it] } else { 0.0 }),
+            follows,
             are_tied,
         }
     }
@@ -1026,6 +1055,17 @@ impl Document {
         (resolved, fits)
     }
 
+    /// Whether one has been shown or hidden.
+    pub(crate) fn note_visibility_of_anchors(&mut self) -> bool {
+        let anchors = self
+            .anchored
+            .values_mut()
+            .filter_map(|it| it.default.as_mut());
+        anchors.fold(false, |any, it| {
+            any | (core::mem::replace(&mut it.1, is_visible(&self.tree, it.0)) != it.1)
+        })
+    }
+
     fn is_anchor_out_of_sight(&self, anchor: NodeId, id: BoxId) -> bool {
         let (rects, container) = (self.local_rects(anchor), self.boxes[id].container);
         let Some((mut at, mut rect)) = rects.into_iter().reduce(|a, b| {
@@ -1039,13 +1079,14 @@ impl Document {
         };
         let is_empty = rect.is_empty();
         while at != container {
+            let is_fixed = self.is_fixed_to_viewport(at);
             (rect, at) = (
                 rect.transformed(&self.to_container(at)),
                 self.boxes[at].container,
             );
             if let Some(clip) = self
                 .overflow_clip(at)
-                .filter(|_| at != container || self.is_fixed_to_viewport(id))
+                .filter(|_| at != container || self.is_fixed_to_viewport(id) && !is_fixed)
             {
                 if !clip.touches(&rect) || !is_empty && rect.intersection(&clip).is_empty() {
                     return true;
@@ -1053,7 +1094,7 @@ impl Document {
                 rect = rect.intersection(&clip);
             }
         }
-        self.tree.style(anchor).is_some_and(|it| !it.is_visible())
+        !is_visible(&self.tree, anchor)
             || self
                 .way_to_anchor(anchor, id)
                 .any(|it| self.is_hidden_by_anchor(it))
@@ -1105,7 +1146,7 @@ impl Document {
                     }
                 }
             }
-            is_fresh |= best.is_some();
+            is_fresh = true;
             let (fits, (option, style)) = (
                 best.is_some(),
                 best.map_or((kept, kept_style), |it| (it.1, it.2)),
@@ -1136,11 +1177,13 @@ impl Document {
             .map(|it| (it, self.scrolled_by(it, id)))
             .collect();
         let used: Vec<_> = accepted().map(|it| resolved.style.get(it)).collect();
+        let default = resolved.default.map(|it| (it, is_visible(&self.tree, it)));
         let Some(state) = self.anchored.get_mut(&node) else {
             return;
         };
         state.scrolled.extend(scrolled);
-        state.anchors = resolved.anchors;
+        (state.anchors, state.default, state.follows) =
+            (resolved.anchors, default, resolved.follows);
         if (state.shift, state.is_hidden) != (resolved.shift, is_hidden) {
             (state.shift, state.is_hidden) = (resolved.shift, is_hidden);
             self.boxes.mark_ink(id);
@@ -1206,6 +1249,18 @@ impl Document {
             .for_each(|it| self.position_anchored_box(it));
         if self.anchor_index.take().is_some() {
             self.lay_out_viewport();
+        }
+        self.anchored_by_animation
+            .retain(|node, _| self.tree.contains(*node) && self.tree[*node].has(Flags::ANIMATED));
+        for (node, style) in &self.anchored_by_animation {
+            if self.own_box(*node).is_some_and(|id| {
+                self.resolve_anchors(id, Style::clone(style), false)
+                    .style
+                    .layout
+                    != self.boxes[id].style.layout
+            }) {
+                self.tree.mark_style(*node, Flags::REANIMATE);
+            }
         }
     }
 }

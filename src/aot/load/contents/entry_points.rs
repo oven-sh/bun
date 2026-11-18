@@ -1313,6 +1313,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                 names_written.push(EntryPointPaths {
                     public_path,
                     source_path: source_path_of(&path),
+                    is_loaded_by_page: false,
                 });
             }
             paths.push(path);

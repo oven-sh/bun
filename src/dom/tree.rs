@@ -482,6 +482,12 @@ impl Element {
         self.rare.is_some()
     }
 
+    /// HTML, and neither generated, nor replaced, nor a shadow host.
+    #[inline]
+    pub(crate) fn is_ordinary(&self) -> bool {
+        self.namespace == Namespace::Html && self.rare.is_none() && self.usual == 0
+    }
+
     /// To take something away.
     pub(crate) fn rare_if_any(&mut self) -> Option<&mut Rare> {
         self.rare.as_deref_mut()

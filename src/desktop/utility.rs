@@ -1,5 +1,7 @@
 //! `utilityProcess`, and `process.parentPort` in such a process.
 
+use bun_web::compiled::{self, Form};
+
 use crate::generated_bindgen::ipc::{
     ElectronParentPort, ElectronUtilityProcesses, ForkOptions, js_ElectronParentPort,
     js_ElectronUtilityProcess as fields,
@@ -84,7 +86,7 @@ impl UtilityProcess {
                 .unwrap_or(b"Node Utility Process"),
         );
         // The entry point of an executable loads this module first, and then only goes on in the main process.
-        let in_executable = bun_web::compiled::path_of(files::to_url(module).as_bytes());
+        let in_executable = compiled::path_of(files::to_url(module).as_bytes(), Form::Program);
         let about = object!({
             "serviceName": &*name,
             "resourcesPath": get(process::object(), "resourcesPath")?,

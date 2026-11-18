@@ -8,7 +8,7 @@ use core::pin::{Pin, pin};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use core::task::{Context, Poll, Waker};
 use core::time::Duration;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::task::Wake;
@@ -158,8 +158,9 @@ struct Executor {
     last_id: u64,
 }
 
+static EXECUTOR: bun_ui::Lasting<ManuallyDrop<RefCell<Executor>>> = bun_ui::Lasting::empty();
+
 thread_local! {
-    static EXECUTOR: ManuallyDrop<RefCell<Executor>> = ManuallyDrop::default();
     static RUNNING: Cell<u64> = const { Cell::new(0) };
 }
 
@@ -341,7 +342,6 @@ pub async fn race<A, B>(
     .await
 }
 
-/// Not before who has started it is done with what it is doing.
 /// Runs them side by side, until one fails.
 pub async fn try_all<T, E>(
     futures: Vec<impl Future<Output = core::result::Result<T, E>>>,
@@ -361,6 +361,7 @@ pub async fn try_all<T, E>(
     .await
 }
 
+/// Not before who has started it is done with what it is doing.
 pub async fn never_at_once<T>(future: impl Future<Output = T>) -> T {
     let (mut future, mut is_first, mut early) = (pin!(future), true, None);
     poll_fn(|cx| {
@@ -524,6 +525,72 @@ impl<T: Clone> Future for Shared<T> {
             outcome.wakers.push(cx.waker().clone());
         }
         outcome.value.clone().map_or(Poll::Pending, Poll::Ready)
+    }
+}
+
+/// Up to where it first waits on this thread, and then on the thread pool.
+pub(crate) fn detach(future: impl Future<Output = ()> + Send + 'static) {
+    Detached::start(future, None);
+}
+
+struct Detached {
+    future: Guarded<Option<Pin<Box<dyn Future<Output = ()> + Send>>>>,
+    line: Option<Arc<Line>>,
+}
+
+impl Detached {
+    fn start(future: impl Future<Output = ()> + Send + 'static, line: Option<Arc<Line>>) {
+        let future = Guarded::new(Some(Box::pin(future) as _));
+        Arc::new(Detached { future, line }).poll();
+    }
+
+    fn poll(self: Arc<Self>) {
+        let (waker, mut future) = (Waker::from(Arc::clone(&self)), self.future.lock());
+        future.take_if(|it| {
+            it.as_mut()
+                .poll(&mut Context::from_waker(&waker))
+                .is_ready()
+        });
+    }
+}
+
+impl Wake for Detached {
+    fn wake(self: Arc<Self>) {
+        match self.line.clone() {
+            Some(line) => line.join(self),
+            None => bun_core::handle_oom(WorkPool::go(self, Detached::poll)),
+        }
+    }
+}
+
+/// What is detached here goes on in the order in which it is woken.
+#[derive(Default)]
+pub(crate) struct Line(Guarded<Option<VecDeque<Arc<Detached>>>>);
+
+impl Line {
+    pub(crate) fn detach(self: &Arc<Self>, future: impl Future<Output = ()> + Send + 'static) {
+        Detached::start(future, Some(Arc::clone(self)));
+    }
+
+    fn join(self: Arc<Self>, it: Arc<Detached>) {
+        let mut waiting = self.0.lock();
+        let is_served = waiting.is_some();
+        waiting.get_or_insert_default().push_back(it);
+        drop(waiting);
+        if !is_served {
+            bun_core::handle_oom(WorkPool::go(self, Line::serve));
+        }
+    }
+
+    fn serve(self: Arc<Self>) {
+        loop {
+            let mut waiting = self.0.lock();
+            let Some(next) = waiting.as_mut().and_then(VecDeque::pop_front) else {
+                return *waiting = None;
+            };
+            drop(waiting);
+            next.poll();
+        }
     }
 }
 

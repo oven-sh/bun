@@ -159,6 +159,10 @@ void bd_layer_animate(void* pointer, bool fades, const double* samples, size_t c
 void bd_layer_set_opaque(void* layer, bool isOpaque) { ((__bridge CALayer*)layer).opaque = isOpaque; }
 void bd_layer_remove(void* layer) { [(__bridge CALayer*)layer removeFromSuperlayer]; }
 
+CFTimeInterval commitsFrom;
+
+void bd_layers_wait(void) { [NSThread sleepForTimeInterval:commitsFrom - CACurrentMediaTime()]; }
+
 void bd_layers_flush(void)
 {
     @autoreleasepool {
@@ -167,6 +171,36 @@ void bd_layers_flush(void)
 }
 
 static id<MTLDevice> device;
+
+/// A pixel that gets to know when it is on the screen.
+void* bd_witness_create(void* parent)
+{
+    @autoreleasepool {
+        CAMetalLayer* layer = [CAMetalLayer new];
+        layer.device = device ?: MTLCreateSystemDefaultDevice();
+        layer.presentsWithTransaction = YES;
+        layer.opaque = NO;
+        layer.anchorPoint = CGPointZero;
+        layer.drawableSize = CGSizeMake(1, 1);
+        [(__bridge CALayer*)parent addSublayer:layer];
+        return (__bridge_retained void*)layer;
+    }
+}
+
+/// `tell` gets seconds. A display that is not real does not know when it shows something, which leaves the time of the news.
+void bd_witness_present(void* layer, void (*tell)(double shownAt, double delay))
+{
+    @autoreleasepool {
+        id<CAMetalDrawable> drawable = ((__bridge CAMetalLayer*)layer).nextDrawable;
+        CFTimeInterval paintedAt = CACurrentMediaTime();
+        [drawable addPresentedHandler:^(id<MTLDrawable> it) {
+            CFTimeInterval shownAt = it.presentedTime ?: CACurrentMediaTime();
+            tell(shownAt, it.presentedTime ? shownAt - paintedAt : 0);
+        }];
+        [drawable present];
+    }
+}
+
 static id<MTLCommandQueue> queue;
 static id<MTLRenderPipelineState> pipeline;
 

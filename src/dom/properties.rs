@@ -1195,7 +1195,11 @@ impl Id {
             _ => color().map(SvgPaint::Color),
         };
         let number = |source: &[u8]| crate::path::Numbers::only(source);
-        let px = || Some(Lp::Px(number(source.strip_suffix(b"px")?)? * cx.zoom));
+        let px = || {
+            Some(Lp::Px(finite(
+                number(source.strip_suffix(b"px")?)? * cx.zoom,
+            )))
+        };
         let size = || px().filter(|_| source[0] != b'-');
         Some(match self {
             Id::Fill => Value::Fill(paint()?),
@@ -1207,7 +1211,7 @@ impl Id {
             Id::StrokeOpacity => Value::StrokeOpacity(Alpha::new(number(source)?)),
             Id::StopOpacity => Value::StopOpacity(Alpha::new(number(source)?)),
             Id::StrokeWidth => Value::StrokeWidth(StrokeWidth(size().or_else(|| {
-                Some(Lp::Px(
+                Some(Lp::limited(
                     number(source).filter(|_| source[0] != b'-')? * cx.zoom,
                 ))
             })?)),
@@ -1224,6 +1228,11 @@ impl Id {
     }
 
     pub(crate) fn parse(self, source: &[u8], cx: &Ctx) -> Option<Value> {
+        self.parse_simple(source, cx)
+            .or_else(|| self.parse_by_grammar(source, cx))
+    }
+
+    fn parse_by_grammar(self, source: &[u8], cx: &Ctx) -> Option<Value> {
         let computed = || {
             Some(Str::from(text(
                 &self.syntax().write(source, Mode::Computed(cx))?,
@@ -1231,9 +1240,6 @@ impl Id {
         };
         if !self.has_type() {
             return Some(Value::Other(self, computed()?));
-        }
-        if let Some(value) = self.parse_simple(source, cx) {
-            return Some(value);
         }
         let value = parse_all(source, |p| self.parse_typed(p, cx));
         if !self.is_spelled() {
@@ -1412,7 +1418,11 @@ impl Prop {
             let id = self.id(cx.flow)?;
             if let Some(plain) = id.parse_plain(source, cx.zoom) {
                 debug_assert!(
-                    self.accepts(source) && id.parse(source, cx).as_ref() == Some(&plain)
+                    self.accepts(source)
+                        && id.parse_by_grammar(source, cx).as_ref() == Some(&plain),
+                    "{}: {}",
+                    id.name(),
+                    crate::values::text(source)
                 );
                 return Some(Rc::new([plain]));
             }
@@ -1821,7 +1831,7 @@ impl Style {
         is_plain
     }
 
-    const FOUND_BITS: u32 = 29;
+    pub(crate) const FOUND_BITS: u32 = 26;
 
     /// What `note_comparison` was given for the same one.
     #[inline]
@@ -1836,10 +1846,15 @@ impl Style {
             LAST_NUMBER.update(|it| it + 1);
             old.measures.2.0.set(LAST_NUMBER.get());
         }
+        let number = old.measures.2.0.get();
         self.measures
             .2
             .1
-            .set(old.measures.2.0.get() << Style::FOUND_BITS | u64::from(found));
+            .set(if number.leading_zeros() < Style::FOUND_BITS {
+                0
+            } else {
+                number << Style::FOUND_BITS | u64::from(found)
+            });
     }
 
     #[inline]

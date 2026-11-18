@@ -5,9 +5,10 @@ use bun_http_types::{ETag, MimeType};
 use bun_simdutf_sys::simdutf;
 use bun_sys::{Fd, File, O};
 
-use super::body::{Blob, Data};
+use super::body::{Blob, Data, SharedBytes};
 use super::error::{NetError, Result};
 use super::response::Answer;
+use crate::compiled;
 use crate::exec::blocking;
 use crate::headers::{HeaderList, digits, trim_tabs_and_spaces};
 use crate::mime::Mime;
@@ -117,6 +118,14 @@ const READ_AT_ONCE: u64 = 1 << 20;
 
 pub(super) async fn fetch_file(url: &Url, asked: &HeaderList) -> Result<Answer> {
     let path = url.file_path().ok_or(NetError::FileNotFound)?;
+    if let Some(bytes) = compiled::embedded_file(&path) {
+        let headers = [
+            ("content-type", &*mime_of_file(&path)),
+            ("accept-ranges", b"bytes"),
+        ];
+        let (data, range) = (Data::Bytes(SharedBytes::new(bytes)), asked.get(b"range"));
+        return answer_with(&data, headers.into_iter().collect(), range.as_deref());
+    }
     let name = path.clone();
     let open = move || {
         let file = File::openat(Fd::cwd(), &name, O::RDONLY | O::CLOEXEC | O::NONBLOCK, 0)?;

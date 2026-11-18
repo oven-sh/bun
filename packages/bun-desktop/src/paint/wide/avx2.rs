@@ -204,6 +204,12 @@ impl Floats for Numbers {
     }
 
     #[inline(always)]
+    fn sqrt(self) -> Self {
+        // SAFETY: the processor has the instructions.
+        Numbers(unsafe { _mm256_sqrt_ps(self.0) })
+    }
+
+    #[inline(always)]
     fn bytes(self) -> [u8; 8] {
         // SAFETY: the processor has the instructions.
         unsafe {

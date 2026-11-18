@@ -1,6 +1,7 @@
 #include "root.h"
 
 #include "DesktopRealm.h"
+#include "DesktopICU.h"
 #include "Bindgen/JSInterface.h"
 
 #include "BunClientData.h"
@@ -23,6 +24,9 @@
 #include "webcore/ErrorEvent.h"
 #include "webcore/EventListener.h"
 #include "webcore/EventNames.h"
+#include "webcore/JSURLPattern.h"
+#include "webcore/JSURLPatternInit.h"
+#include "webcore/URLPatternOptions.h"
 #include "webcore/Worker.h"
 
 #include <JavaScriptCore/AOTRealmStartup.h>
@@ -31,6 +35,7 @@
 #include <JavaScriptCore/DeferGCInlines.h>
 #include <JavaScriptCore/FunctionConstructor.h>
 #include <JavaScriptCore/GlobalObjectMethodTable.h>
+#include <JavaScriptCore/JSGlobalLexicalEnvironment.h>
 #include <JavaScriptCore/JSGlobalProxy.h>
 #include <JavaScriptCore/JSModuleLoader.h>
 #include <JavaScriptCore/JSPromise.h>
@@ -38,21 +43,17 @@
 #include <JavaScriptCore/JSSourceCode.h>
 #include <JavaScriptCore/JSWithScope.h>
 #include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/ProxyObject.h>
 #include <JavaScriptCore/ScriptFetchParameters.h>
 #include <JavaScriptCore/SourceProvider.h>
 #include <JavaScriptCore/StackVisitor.h>
 #include <JavaScriptCore/WebAssemblyCompileOptions.h>
+#include <wtf/DateMath.h>
+#include <wtf/unicode/icu/ICUHelpers.h>
 
 namespace Bun {
 
 using namespace JSC;
-
-static void trackRejection(JSGlobalObject*, JSPromise*, JSPromiseRejectionOperation);
-
-bool isDesktopRealm(JSGlobalObject* globalObject)
-{
-    return globalObject->globalObjectMethodTable()->promiseRejectionTracker == &trackRejection;
-}
 
 extern "C" bool Bun__isDesktopRealm(JSGlobalObject* globalObject)
 {
@@ -217,6 +218,23 @@ static JSGlobalObject* desktopRealmOnStack(VM& vm)
     return realm;
 }
 
+extern "C" bool Bun__IsolatedWorld__isCalling()
+{
+    VM& vm = defaultGlobalObject()->vm();
+    bool isCalling = false;
+    StackVisitor::visit(vm.entryScope ? vm.topCallFrame : nullptr, vm, [&](StackVisitor& visitor) {
+        auto* ofScript = visitor->codeBlock() ? visitor->codeBlock()->globalObject() : nullptr;
+#if ENABLE(AOT)
+        if (visitor->isCompiledFrame())
+            ofScript = visitor->compiledFrame().globalObject();
+#endif
+        auto* realm = ofScript || !visitor->callee().isCell() ? ofScript : desktopRealmOf(visitor->callee().asCell());
+        isCalling = realm && IsolatedWorld::is(realm);
+        return isCalling || ofScript ? IterationStatus::Done : IterationStatus::Continue;
+    });
+    return isCalling;
+}
+
 static JSGlobalObject* desktopRealmThatThrew(JSC::Exception* exception)
 {
     if (JSValue value = RealmBridge::originalOf(exception->value()); value.isObject())
@@ -288,6 +306,46 @@ void desktopRealmRevokeObjectURL(JSGlobalObject* realm, const String& text)
     BUN_END_REMOVABLE_ENTRY_POINT
 }
 
+// https://urlpattern.spec.whatwg.org/#build-a-url-pattern-from-a-web-idl-value, as a regular expression for each component. False if it throws.
+extern "C" bool Bun__DesktopRealm__describeURLPattern(JSGlobalObject* realm, EncodedJSValue encoded, const BunString* base, BunString* sources, bool* ignoresCase)
+{
+    VM& vm = realm->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue value = JSValue::decode(encoded);
+    RefPtr pattern = WebCore::JSURLPattern::toWrapped(vm, value);
+    if (!pattern) {
+        WebCore::URLPattern::URLPatternInput input;
+        String baseURL = base->toWTFString();
+        if (value.isObject()) {
+            auto init = WebCore::convertDictionary<WebCore::URLPatternInit>(*realm, value);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (init.baseURL.isNull())
+                init.baseURL = baseURL;
+            baseURL = {};
+            input = WTF::move(init);
+        } else {
+            input = value.toWTFString(realm);
+            RETURN_IF_EXCEPTION(scope, false);
+        }
+        auto made = WebCore::URLPattern::create(*defaultGlobalObject(realm)->scriptExecutionContext(), WTF::move(input), WTF::move(baseURL), {});
+        RETURN_IF_EXCEPTION(scope, false);
+        if (made.hasException()) {
+            WebCore::propagateException(*realm, scope, made.releaseException());
+            return false;
+        }
+        pattern = made.releaseReturnValue();
+    }
+    if (pattern->hasRegExpGroups()) {
+        throwTypeError(realm, scope, "The URL pattern has regular expression groups."_s);
+        return false;
+    }
+    for (auto* component : pattern->components()) {
+        *sources++ = Bun::toStringRef(component->regularExpression()->pattern()).leak();
+        *ignoresCase = component->regularExpression()->ignoreCase();
+    }
+    return true;
+}
+
 // https://html.spec.whatwg.org/#outstanding-rejected-promises-weak-set
 static const Identifier& outstandingName(VM& vm) { return WebCore::builtinNames(vm).selfPrivateName(); }
 
@@ -319,7 +377,7 @@ extern "C" bool Bun__DesktopRealm__describeError(JSGlobalObject* realm, EncodedJ
     return true;
 }
 
-static void trackRejection(JSGlobalObject* realm, JSPromise* promise, JSPromiseRejectionOperation operation)
+void desktopRealmTrackRejection(JSGlobalObject* realm, JSPromise* promise, JSPromiseRejectionOperation operation)
 {
     BUN_BEGIN_REMOVABLE_ENTRY_POINT(Desktop, Abort, void)
     if (!isRunning(realm))
@@ -354,6 +412,19 @@ static bool mayCompileString(JSGlobalObject* realm, CompilationType type, String
     bool result = Bun__DOM__mayCompile(realm, JSValue::encode(jsString(realm->vm(), code)), arguments.data(), arguments.size(), type == CompilationType::Function);
     RETURN_IF_EXCEPTION(scope, false);
     return result;
+}
+
+extern "C" void Bun__Desktop__readWhatPagesNeed()
+{
+#if !OS(WINDOWS)
+    tzset();
+#endif
+    Vector<char16_t, 32> timeZone;
+    getTimeZoneOverride(timeZone);
+    if (timeZone.isEmpty() && U_SUCCESS(callBufferProducingFunction(ucal_getHostTimeZone, timeZone)))
+        setTimeZoneOverride(timeZone.span());
+    UErrorCode status = U_ZERO_ERROR;
+    ucal_close(ucal_open(nullptr, 0, "en", UCAL_DEFAULT, &status));
 }
 
 NEVER_INLINE JSObject* desktopRealmSerialize(JSGlobalObject* realm, JSObject* object, bool isForStorage)
@@ -399,6 +470,7 @@ JSValue desktopRealmDeserialize(JSGlobalObject* realm, JSObject* serialized)
 extern "C" EncodedJSValue Bun__Modules__resolve(JSGlobalObject*, EncodedJSValue specifier, EncodedJSValue referrer, bool isForLoader);
 extern "C" EncodedJSValue Bun__Modules__fetch(JSGlobalObject*, EncodedJSValue key, const BunString* type);
 extern "C" EncodedJSValue Bun__Modules__urlOf(JSGlobalObject*, EncodedJSValue key);
+extern "C" bool Bun__Modules__isPathInProgram(const BunString* key);
 
 static Identifier resolveModule(JSGlobalObject* realm, JSModuleLoader*, JSValue key, JSValue referrer, RefPtr<ScriptFetcher>, bool useImportMap)
 {
@@ -407,6 +479,17 @@ static Identifier resolveModule(JSGlobalObject* realm, JSModuleLoader*, JSValue 
         RELEASE_AND_RETURN(scope, key.toPropertyKey(realm));
     JSValue resolved = JSValue::decode(Bun__Modules__resolve(realm, JSValue::encode(key), JSValue::encode(referrer), true));
     RETURN_IF_EXCEPTION(scope, {});
+#if ENABLE(AOT)
+    // `node:fs` is a URL, and the name of a compiled module too.
+    if (realm->globalObjectMethodTable()->moduleHost) {
+        String name = resolved.toWTFString(realm);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (auto module = AOT::findModule(name); module && (AOT::isNativeModule(*module) || AOT::isOfLibrary(*module))) [[unlikely]] {
+            throwTypeError(realm, scope, makeString("Failed to fetch dynamically imported module: "_s, name));
+            return {};
+        }
+    }
+#endif
     RELEASE_AND_RETURN(scope, resolved.toPropertyKey(realm));
 }
 
@@ -418,7 +501,8 @@ static JSPromise* fetchModule(JSGlobalObject* realm, JSModuleLoader*, JSValue ke
         String path = key.toWTFString(realm);
         if (scope.exception()) [[unlikely]]
             return JSPromise::rejectedPromiseWithCaughtException(realm, scope);
-        auto* compiled = compiledModuleSource(uncheckedDowncast<Zig::GlobalObject>(realm), path, nullptr);
+        BunString borrowedPath = Bun::toString(path);
+        auto* compiled = Bun__Modules__isPathInProgram(&borrowedPath) ? compiledModuleSource(uncheckedDowncast<Zig::GlobalObject>(realm), path, nullptr) : nullptr;
         if (scope.exception()) [[unlikely]]
             return JSPromise::rejectedPromiseWithCaughtException(realm, scope);
         if (compiled)
@@ -442,6 +526,8 @@ static JSPromise* importModuleFrom(JSGlobalObject* realm, JSModuleLoader* loader
 {
     VM& vm = realm->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (defaultGlobalObject(realm)->m_bindgenAdditions.m_exposure & Bindgen::Exposure::ServiceWorker) [[unlikely]]
+        return JSPromise::rejectedPromise(realm, createTypeError(realm, "import() is disallowed in service workers."_s));
     String specifier = specifierValue->value(realm);
     if (scope.exception()) [[unlikely]]
         return JSPromise::rejectedPromiseWithCaughtException(realm, scope);
@@ -545,7 +631,7 @@ static const GlobalObjectMethodTable& desktopRealmMethodTable()
         table.moduleLoaderFetch = &fetchModule;
         table.moduleLoaderCreateImportMetaProperties = &createImportMeta;
         table.moduleLoaderEvaluate = nullptr;
-        table.promiseRejectionTracker = &trackRejection;
+        table.promiseRejectionTracker = &desktopRealmTrackRejection;
         table.reportViolationForUnsafeEval = &reportRefusedEval;
         table.codeForEval = &codeOfTrustedScript;
         table.canCompileStrings = &mayCompileString;
@@ -879,7 +965,7 @@ extern "C" void Bun__WebGlobalObject__setPaused(JSGlobalObject* realm, bool isPa
 
 extern "C" bool Bun__hasLocalMessages()
 {
-    return WebCore::MessagePortPipe::hasLocalDrain();
+    return *WebCore::clientData(defaultGlobalObject()->vm())->localPortDrains;
 }
 
 extern "C" EncodedJSValue Bun__exchangeAsyncContext(JSGlobalObject* globalObject, EncodedJSValue context)
@@ -890,6 +976,53 @@ extern "C" EncodedJSValue Bun__exchangeAsyncContext(JSGlobalObject* globalObject
     return JSValue::encode(before);
 }
 
+// The `set` trap of what a classic script is called with. A space is in front of the name of a function in a block.
+JSC_DEFINE_HOST_FUNCTION(initializeGlobalBinding, (JSGlobalObject * realm, CallFrame* callFrame))
+{
+    VM& vm = realm->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String key = callFrame->uncheckedArgument(1).toWTFString(realm);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto* lexical = realm->globalLexicalEnvironment();
+    bool isVariable = key.startsWith(' ');
+    auto name = Identifier::fromString(vm, isVariable ? key.substring(1) : key);
+    if (isVariable && lexical->symbolTable()->contains(name.impl()))
+        return JSValue::encode(jsBoolean(true));
+    JSObject* holder = isVariable ? static_cast<JSObject*>(realm) : lexical;
+    PutPropertySlot slot(holder, false, PutPropertySlot::UnknownContext, !isVariable);
+    holder->methodTable()->put(holder, realm, name, callFrame->uncheckedArgument(2), slot);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsBoolean(true));
+}
+
+// See src/aot/load/classic_scripts.rs. Returns the text of a script that has no code.
+static EncodedJSValue runClassicScript(JSGlobalObject* realm, JSValue exports, const String& path)
+{
+    VM& vm = realm->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue code = exports.get(realm, Identifier::fromString(vm, "run"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue namesValue = exports.get(realm, Identifier::fromString(vm, "names"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    if (code.isUndefined())
+        return JSValue::encode(namesValue);
+    String names = namesValue.toWTFString(realm);
+    RETURN_IF_EXCEPTION(scope, {});
+    MarkedArgumentBuffer arguments;
+    if (!names.isEmpty()) {
+        run(realm, makeSource(names, SourceOrigin {}, SourceTaintedOrigin::Untainted, path));
+        if (!scope.exception()->value().isInt32() || !scope.tryClearException())
+            return {};
+        auto* handler = constructEmptyObject(vm, realm->nullPrototypeObjectStructure());
+        handler->putDirect(vm, vm.propertyNames->set, JSFunction::create(vm, realm, 3, String(), initializeGlobalBinding, ImplementationVisibility::Private));
+        arguments.append(ProxyObject::create(realm, constructEmptyObject(vm, realm->nullPrototypeObjectStructure()), handler));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    JSValue result = call(realm, code, getCallData(code), realm->globalThis(), arguments);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(result);
+}
+
 static EncodedJSValue runCompiled(JSGlobalObject* globalObject, const String& path, bool isSynchronous)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
@@ -898,6 +1031,8 @@ static EncodedJSValue runCompiled(JSGlobalObject* globalObject, const String& pa
     auto* realm = uncheckedDowncast<Zig::GlobalObject>(globalObject);
     JSValue result = isSynchronous ? loadCompiledModuleNamespace(realm, path) : JSValue(importCompiledModule(realm, path, nullptr, -1));
     RETURN_IF_EXCEPTION(scope, {});
+    if (path.endsWith(".script.cjs"_s))
+        RELEASE_AND_RETURN(scope, runClassicScript(realm, result, path));
     return JSValue::encode(result ? result : jsUndefined());
 }
 

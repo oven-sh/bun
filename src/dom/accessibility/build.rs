@@ -172,8 +172,30 @@ fn is_leaf_of(item: &Item, id: NodeId) -> bool {
     item.node == id && matches!(item.kind, ItemKind::Text | ItemKind::Break)
 }
 
+/// It has lines of its own.
+fn floating_first_letter(document: &Document, id: NodeId) -> Option<(BoxId, &Inline, usize)> {
+    let boxes = &document.boxes;
+    let children = if boxes.has_pinned_styles {
+        &boxes[document.tree[id].layout_box].children[..]
+    } else {
+        &[]
+    };
+    children
+        .iter()
+        .filter(|it| boxes[**it].node == 0)
+        .find_map(|it| {
+            let lines = *boxes[*it].children.first()?;
+            let inline = boxes[lines].inline.as_deref()?;
+            Some((
+                lines,
+                inline,
+                inline.items.iter().position(|it| is_leaf_of(it, id))?,
+            ))
+        })
+}
+
 fn items_of(document: &Document, id: NodeId) -> Items<'_> {
-    let mut found = Items::new();
+    let mut found: Items = floating_first_letter(document, id).into_iter().collect();
     for (lines, inline) in document.lines_with(id) {
         found.extend(
             inline
@@ -959,8 +981,9 @@ impl<'a> Builder<'a> {
         };
         let last = items[items.len() - 1].2;
         let range = inline.items[first].start as usize..inline.items[last].end as usize;
-        let joined: Option<String> =
-            (last - first >= items.len()).then(|| items.iter().map(text_of).collect());
+        let letter = floating_first_letter(self.document, id);
+        let joined: Option<String> = (last - first >= items.len() || letter.is_some())
+            .then(|| letter.iter().chain(&items).map(text_of).collect());
         let name = joined
             .as_deref()
             .unwrap_or_else(|| &inline.text[range.clone()]);
@@ -1023,9 +1046,20 @@ impl<'a> Builder<'a> {
             .iter()
             .map(|it| self.map(lines, self.document.from_lines(lines, it.0)))
             .collect();
+        let letter = letter.and_then(|it| {
+            Some((
+                text_of(&it),
+                self.map(
+                    it.0,
+                    self.document
+                        .from_lines(it.0, it.1.lines.fragments.first()?.rect()),
+                ),
+            ))
+        });
         let whole = rects
             .iter()
             .copied()
+            .chain(letter.map(|it| it.1))
             .reduce(|a, b| a.union(&b))
             .unwrap_or_else(|| self.nowhere(context));
         let is_misspelled = |it: &&(_, Mark)| it.1 == Mark::Highlight(name!("::spelling-error"));
@@ -1033,7 +1067,11 @@ impl<'a> Builder<'a> {
             .document
             .marks_of(id)
             .filter(is_misspelled)
-            .map(|it| [it.0.start, it.0.end].map(|it| rendered_offset(&items, it)))
+            .map(|it| {
+                [it.0.start, it.0.end].map(|it| {
+                    letter.map_or(0, |it| it.0.len() as u32) + rendered_offset(&items, it)
+                })
+            })
             .collect();
 
         let lengths = self.out.lengths();
@@ -1080,12 +1118,31 @@ impl<'a> Builder<'a> {
         let before =
             |at: usize, it: &Item| at.clamp(it.start as usize, it.end as usize) - it.start as usize;
         let offset = |cluster: u32| match joined {
-            Some(_) => items
-                .iter()
-                .map(|it| before(in_lines(cluster), &inline.items[it.2]))
-                .sum(),
+            Some(_) => {
+                name.len()
+                    - items
+                        .iter()
+                        .map(|it| {
+                            text_of(it).len() - before(in_lines(cluster), &inline.items[it.2])
+                        })
+                        .sum::<usize>()
+            }
             None => in_lines(cluster) - range.start,
         };
+        if let Some((text, rect)) = letter {
+            out.runs.push(Run {
+                start: 0,
+                rect: Rect::new(relative(&rect)),
+                is_rtl: false,
+                is_vertical,
+                starts_line: false,
+            });
+            let along = if is_vertical { rect.height } else { rect.width };
+            out.advances.extend(
+                text.char_indices()
+                    .map(|it| if it.0 == 0 { along } else { 0.0 }),
+            );
+        }
         for (index, (piece, rect)) in pieces.iter().zip(&rects).enumerate() {
             let start = offset(piece.2) as u32;
             out.runs.push(Run {

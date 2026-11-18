@@ -4,9 +4,9 @@ use std::rc::Rc;
 
 use bun_jsc::JSGlobalObject;
 
-use crate::channel::Message;
+use crate::channel::{LooseBitmap, Message};
 use crate::client::{Seed, Update};
-use crate::host::{Reply, Thrown};
+use crate::host::{Activation, Arrival, ChosenFile, Environment, HistoryEntries, Reply, Thrown};
 use crate::input::Extent;
 use crate::page::About;
 use crate::scheme::Privileges;
@@ -48,12 +48,43 @@ crate::wire! {
         pub opener: Option<u32>,
     }
 
+    /// What a page in another process need not ask for while it has the same document.
+    pub struct Facts {
+        pub has_spell_checker: bool,
+        pub is_at_top: bool,
+        pub loads_images: bool,
+        pub runs_scripts: bool,
+        pub tab: u32,
+        /// Not for the empty document at the beginning.
+        pub origins: Option<Origins>,
+    }
+
+    pub struct Origins {
+        pub activation: Option<Box<Activation>>,
+        pub arrival: Arrival,
+        /// Until the page hears of a change.
+        pub history: Option<HistoryEntries>,
+        pub inbound_transition: u32,
+        pub refresh: Option<String>,
+        pub restores_scroll: bool,
+    }
+
+    /// For the order that follows.
+    pub struct Conditions {
+        pub environment: Box<Environment>,
+        /// What a page is waiting for overtakes what has been sent before.
+        pub number: u32,
+    }
+
     pub struct Start {
         pub client: Box<Seed>,
         pub document: NewDocument,
         /// Of the surface.
         pub extent: Option<Extent>,
         pub preloads: Option<Box<Preloads>>,
+        pub facts: Facts,
+        pub conditions: Option<Conditions>,
+        pub is_online: Option<bool>,
     }
 
     pub enum Executed {
@@ -65,12 +96,19 @@ crate::wire! {
     /// What holds for all pages.
     pub struct Statics {
         trust: Trust,
+        has_sandbox_for_the_rest: bool,
         schemes: Vec<(Bytes, u8)>,
         compiled: compiled::Settings,
-        pub switches: Vec<(String, String)>,
         pub resources_path: String,
         pub is_accessibility_active: bool,
         pub has_screen_reader: bool,
+        pub is_headless: bool,
+        pub tracing: Option<Tracing>,
+    }
+
+    pub struct Tracing {
+        pub categories: Vec<String>,
+        pub room: u32,
     }
 }
 
@@ -81,22 +119,31 @@ impl wire::Message for Statics {
 }
 
 impl Statics {
-    pub fn new(switches: Vec<(String, String)>, resources_path: String) -> Statics {
+    /// With `is_like_browser` pages run the scripts that they like.
+    pub fn new(resources_path: String, is_like_browser: bool) -> Statics {
+        let (trust, compiled) = match is_like_browser {
+            true => (Trust::in_everything(), Default::default()),
+            false => (trust::current(), compiled::settings()),
+        };
         Statics {
-            trust: trust::current(),
+            trust,
+            has_sandbox_for_the_rest: trust::has_sandbox_for_the_rest(),
             schemes: (scheme::registered().into_iter())
                 .map(|it| (it.0, it.1.bits()))
                 .collect(),
-            compiled: compiled::settings(),
-            switches,
+            compiled,
             resources_path,
             is_accessibility_active: bun_ui::surfaces::is_accessibility_active(),
             has_screen_reader: bun_ui::surfaces::has_screen_reader(),
+            is_headless: false,
+            tracing: None,
         }
     }
 
     pub fn adopt(&self) {
+        bun_ui::set_app_headless(self.is_headless);
         trust::replace(self.trust.clone());
+        trust::set_sandbox_for_the_rest(self.has_sandbox_for_the_rest);
         compiled::replace(self.compiled.clone());
         (self.schemes.iter())
             .for_each(|it| scheme::register(&it.0, Privileges::from_bits_retain(it.1)));
@@ -136,6 +183,10 @@ messages! {
         #[size = large]
         Start = start(how: Box<Start>);
         DocumentChanged = document_changed();
+        #[size = large]
+        Foretell = foretell(facts: Box<Facts>);
+        #[size = large]
+        Prepare = prepare(conditions: Conditions);
         Dispose = dispose();
         #[size = large]
         UpdateClient = update_client(update: Update);
@@ -143,10 +194,24 @@ messages! {
         Send = send(channel: String, message: Message);
         #[size = large]
         Reply = reply(ticket: u32, result: Result<Message, String>);
+        #[size = large]
+        Inspect = inspect(session: u32, how: String);
+        StopInspecting = stop_inspecting(session: u32);
     }
     ask Task -> Done {}
     request {
         #[size = large]
         Execute = execute(world: u32, code: Vec<u16>, is_by_user: bool) -> Option<Executed>;
+        #[size = large]
+        AskInspector = ask_inspector(session: u32, method: String, params: String, files: Vec<ChosenFile>)
+            -> Option<Result<String, String>>;
+        #[size = large]
+        DecodeImage = decode_image(bytes: Vec<u8>) -> Option<LooseBitmap>;
+        Render = render() -> ();
+        /// A list in JSON.
+        #[size = large]
+        FinishTrace = finish_trace() -> String;
+        #[size = large]
+        TakeHeapSnapshot = take_heap_snapshot() -> Option<String>;
     }
 }

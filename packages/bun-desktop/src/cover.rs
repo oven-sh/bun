@@ -875,11 +875,14 @@ fn target(Point { x, y }: Point) -> Option<SurfacePoint> {
         for (rect, piece) in shown.iter().flat_map(|it| &it.pieces) {
             match *piece {
                 Piece::Color(color) => paste(&mut then, *rect, Piece::Color(color)),
-                Piece::Image(image) => drop(images::with_first_frame(image, |content, _| {
-                    if let images::Content::Pixels(image) = content {
-                        paste(&mut then, *rect, Piece::Image(image));
-                    }
-                })),
+                Piece::Image(image) => drop(images::with_first_frame(
+                    images::in_space(image, false),
+                    |content, _| {
+                        if let images::Content::Pixels(image) = content {
+                            paste(&mut then, *rect, Piece::Image(image));
+                        }
+                    },
+                )),
             }
         }
     });

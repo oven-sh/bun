@@ -101,6 +101,7 @@ bitflags::bitflags! {
         const COLOR = 1 << 2;
         /// The colors in an `svg`.
         const SHAPES = 1 << 3;
+        const TRANSFORM = 1 << 4;
     }
 }
 
@@ -112,6 +113,14 @@ struct Own {
     recording: Option<u16>,
     /// All of it has the color of the element that the lines are in.
     is_plain_text: bool,
+    /// It has all of the box, in a transform that is its first link. From its origin to that of the transform.
+    pivot: Option<[f32; 2]>,
+    /// By which that transform multiplied areas.
+    magnification: f32,
+}
+
+fn magnification(m: &Matrix) -> f32 {
+    (m[0] * m[3] - m[1] * m[2]).abs()
 }
 
 #[derive(Clone, Copy)]
@@ -202,6 +211,8 @@ struct Segment {
     /// And so can the ones in it.
     are_contents_independent: bool,
     has_children: bool,
+    /// In a group that began in the parent.
+    is_grouped: bool,
     own: Own,
 }
 
@@ -241,6 +252,7 @@ struct Position {
     growth: u32,
     /// The index in `Pictures::kept`, if it is not in the last picture.
     kept: u32,
+    is_grouped: bool,
 }
 
 impl Default for Position {
@@ -253,6 +265,7 @@ impl Default for Position {
             link: 0,
             growth: NONE,
             kept: NONE,
+            is_grouped: false,
         }
     }
 }
@@ -268,6 +281,8 @@ pub(crate) struct Segments {
     new: Position,
     next_order: u32,
     reads_contents: bool,
+    /// How many have begun in it and not ended.
+    pub(crate) groups: u32,
     own: Own,
     growths: Vec<Growth>,
     /// Where the tables of the old picture begin. What was before is in the new one.
@@ -310,6 +325,7 @@ impl Segments {
             link,
             growth: it.growth,
             kept: outer.kept,
+            is_grouped: outer.is_grouped || it.is_grouped,
         }
     }
 }
@@ -454,7 +470,7 @@ impl Document {
         );
         spare.clear();
         pictures.changes = 0;
-        let retouched = core::mem::take(&mut pictures.retouched);
+        let mut retouched = core::mem::take(&mut pictures.retouched);
         match old.as_mut() {
             _ if retouched.is_empty() => {}
             Some(picture) => {
@@ -479,10 +495,47 @@ impl Document {
             (self.pictures.segments, self.pictures.spare) = (segments, spare);
             return self.pictures.current.insert(picture);
         }
+        let boxes = &self.boxes;
+        retouched.retain(|it| it.1.contains(Retouch::TRANSFORM) && boxes.is_alive(it.0));
+        retouched
+            .iter()
+            .for_each(|it| boxes[it.0].is_moving.set(true));
+        for watched in &self.animations.watched {
+            core::iter::successors(Some(*watched), |it| Some(boxes[*it].parent))
+                .take_while(|it| *it != 0)
+                .for_each(|it| boxes[it].is_moving.set(false));
+        }
+        self.paint_changes(
+            old,
+            spare,
+            segments,
+            &changed,
+            was_laid_out,
+            locks,
+            canvas_source,
+            caret,
+        );
+        retouched
+            .iter()
+            .for_each(|it| self.boxes[it.0].is_moving.set(false));
+        self.pictures.current.as_ref().expect("is not none")
+    }
+
+    fn paint_changes(
+        &mut self,
+        mut old: Option<Picture>,
+        mut spare: Picture,
+        mut segments: Segments,
+        changed: &[BoxId],
+        was_laid_out: bool,
+        locks: Vec<NodeId>,
+        canvas_source: NodeId,
+        caret: Option<(BoxId, Rect)>,
+    ) {
         let patch = old
             .as_ref()
             .filter(|_| !was_laid_out)
-            .and_then(|it| self.find_patch(&changed, &segments, it));
+            .and_then(|it| self.find_patch(changed, &segments, it));
         if let Some(patch) = patch
             && let Some(mut picture) = old.take()
         {
@@ -495,7 +548,8 @@ impl Document {
             if has_worked {
                 (self.pictures.segments, self.pictures.spare) = (segments, spare);
                 self.release_kept_pictures();
-                return self.pictures.current.insert(picture);
+                self.pictures.current = Some(picture);
+                return;
             }
             spare.clear();
             old = Some(picture);
@@ -534,7 +588,17 @@ impl Document {
         segments.growths.clear();
         self.pictures.segments = segments;
         self.release_kept_pictures();
-        self.pictures.current.insert(new)
+        self.pictures.current = Some(new);
+    }
+
+    fn has_other_range(&self, scroller: BoxId, picture: &Picture) -> bool {
+        let known = picture
+            .scroller_nodes
+            .iter()
+            .position(|it| *it == self.boxes[scroller].node)
+            .map(|it| &picture.scrollers[it]);
+        known.map(|it| [0, 1].map(|axis| [it.min[axis], it.max[axis]]))
+            != self.composited_range(scroller)
     }
 
     fn release_kept_pictures(&mut self) {
@@ -559,7 +623,7 @@ impl Document {
     }
 
     fn has_scrollers_of(&self, picture: &Picture) -> bool {
-        self.compositor.is_on
+        (self.compositor.is_on || picture.range == self.scroll_range(VIEWPORT))
             && picture
                 .scrollers
                 .iter()
@@ -615,18 +679,9 @@ impl Document {
                 }
                 a
             })?;
-        let moves = |id: BoxId| {
-            let known = picture
-                .scroller_nodes
-                .iter()
-                .position(|it| *it == boxes[id].node)
-                .map(|it| &picture.scrollers[it]);
-            known.map(|it| [0, 1].map(|axis| [it.min[axis], it.max[axis]]))
-                != self.composited_range(id)
-        };
         if let Some(scroller) = boxes
             .containers(id)
-            .filter(|it| boxes[*it].scrolls() && moves(*it))
+            .filter(|it| boxes[*it].scrolls() && self.has_other_range(*it, picture))
             .last()
         {
             id = scroller;
@@ -657,7 +712,11 @@ impl Document {
                     .growths
                     .get(parent.growth as usize)
                     .is_some_and(|growth| growth.order != it.order);
-                if parent.serial != it.parent || has_other || !parent.are_contents_independent {
+                if parent.serial != it.parent
+                    || has_other
+                    || !parent.are_contents_independent
+                    || parent.own.pivot.is_some()
+                {
                     obstacle = Some(parent.id);
                 }
                 path.push(it.parent_index);
@@ -1135,6 +1194,42 @@ impl Painter<'_> {
         }
     }
 
+    /// Whether all of it is painted, wherever it is, so that it does not have to be painted again when it moves on.
+    pub(crate) fn paints_whole(&self, id: BoxId) -> bool {
+        let (document, it) = (self.document, &self.document.boxes[id]);
+        it.is_moving.get()
+            && !self.is_copy
+            && !self.svg.is_on
+            && !it.cache.has_escapees()
+            && it.collapsed.is_none()
+            && self.out.items.len() < 32768
+            && {
+                let (ink, viewport) = (document.ink(id), document.border_box(VIEWPORT));
+                ink.width * ink.height <= viewport.width * viewport.height * 4.0
+                    && !document.tree.is_root(it.node)
+            }
+    }
+
+    pub(crate) fn is_grouped(&self) -> bool {
+        self.segments.new.is_grouped || self.segments.groups > 0
+    }
+
+    /// Its transform is the next link.
+    pub(crate) fn note_pivot(&mut self, id: BoxId, pivot: [f32; 2], matrix: &Matrix) {
+        let segment = &self.segments.new;
+        if self
+            .segments
+            .all
+            .get(segment.index as usize)
+            .is_some_and(|it| it.id == id)
+            && segment.start.links as usize == self.out.links.len()
+        {
+            self.segments.own.pivot =
+                Some([pivot[0] - segment.origin[0], pivot[1] - segment.origin[1]]);
+            self.segments.own.magnification = magnification(matrix);
+        }
+    }
+
     pub(crate) fn note_plain_text(&mut self) {
         self.segments.own.is_plain_text = true;
     }
@@ -1157,6 +1252,7 @@ impl Painter<'_> {
             Painter::new(document, None, scratch, Segments::default()),
             vec![segments.new],
         );
+        let (mut last_container, mut last_scroller) = (0, 0);
         picture.is_submitted = false;
         for (index, (id, what)) in retouched
             .iter()
@@ -1194,13 +1290,17 @@ impl Painter<'_> {
             });
             let mut is_done = !what.contains(Retouch::COLOR)
                 || !document.uses_color_elsewhere(id) && picture.caret.is_none_or(|it| it.0 != id);
-            if is_done && what.intersects(Retouch::DECORATIONS | Retouch::OPACITY) {
+            if is_done
+                && what.intersects(Retouch::DECORATIONS | Retouch::OPACITY | Retouch::TRANSFORM)
+            {
                 is_done = locate(id).is_some_and(|(segment, at)| {
-                    (!what.contains(Retouch::DECORATIONS)
-                        || segment
-                            .own
-                            .decorations
-                            .is_some_and(|it| painter.decorate_again(id, it, &at, picture)))
+                    (!what.contains(Retouch::TRANSFORM)
+                        || painter.transform_again(segment, &at, picture))
+                        && (!what.contains(Retouch::DECORATIONS)
+                            || segment
+                                .own
+                                .decorations
+                                .is_some_and(|it| painter.decorate_again(id, it, &at, picture)))
                         && (!what.contains(Retouch::OPACITY)
                             || style.effects.backdrop_filter.0.is_empty() && !is_animated() && {
                                 let layer = segment
@@ -1238,6 +1338,17 @@ impl Painter<'_> {
             }
             if !is_done {
                 document.repaint_eventually(id);
+            }
+            if what.contains(Retouch::TRANSFORM)
+                && core::mem::replace(&mut last_container, boxes[id].container) != last_container
+                && let Some(scroller) = boxes.containers(id).find(|it| boxes[*it].scrolls())
+                && core::mem::replace(&mut last_scroller, scroller) != scroller
+                && (!document.compositor.is_on
+                    && scroller != VIEWPORT
+                    && boxes[scroller].overflow != [crate::types::Overflow::Hidden; 2]
+                    || document.has_other_range(scroller, picture))
+            {
+                document.repaint_eventually(scroller);
             }
             let new = style.ink.text_fill_color.resolve(style.color());
             let mut anonymous: SmallVec<[BoxId; 8]> = what
@@ -1286,6 +1397,58 @@ impl Painter<'_> {
         }
         painter.out.clear();
         painter.out
+    }
+
+    fn transform_again(&self, segment: &Segment, at: &Position, picture: &mut Picture) -> bool {
+        let Lengths {
+            items,
+            links,
+            regions,
+            local_verbs,
+            ..
+        } = segment.lengths;
+        let Some((pivot, own)) = segment
+            .own
+            .pivot
+            .filter(|_| !at.is_grouped && regions == 0)
+            .zip(self.document.own_transform(segment.id))
+        else {
+            return false;
+        };
+        let pivot = [at.origin[0] + pivot[0], at.origin[1] + pivot[1]];
+        let (matrix, needed) = self.placed(&own, pivot);
+        let is_moved = own[..4] == crate::types::IDENTITY[..4];
+        let is_near =
+            |a: [f32; 2], b: [f32; 2]| (a[0] - b[0]).abs().max((a[1] - b[1]).abs()) < 0.001;
+        let first = at.start.links as usize;
+        let is_zoomed = (magnification(&matrix) / segment.own.magnification - 1.0).abs() > 0.001;
+        if !is_near(pivot, if is_moved { at.origin } else { needed })
+            || crate::types::invert(&matrix).is_none()
+            || local_verbs > 0 && is_zoomed
+        {
+            return false;
+        }
+        match part(&mut picture.items, at.start.items as usize, items as usize).first_mut() {
+            Some(Item::PushTransform(it)) => *it = matrix,
+            Some(_) => return false,
+            None => {}
+        }
+        picture.links[first].item = Item::PushTransform(matrix);
+        for index in first..first + links as usize {
+            let (outer, it) = (
+                picture.links[picture.links[index].parent as usize].matrix,
+                &mut picture.links[index],
+            );
+            it.matrix = if let Item::PushTransform(own)
+            | Item::PushVector(own)
+            | Item::PushPattern { matrix: own, .. } = &it.item
+            {
+                multiply(&outer, own)
+            } else {
+                outer
+            };
+        }
+        true
     }
 
     fn decorate_again(
@@ -1345,7 +1508,12 @@ impl Painter<'_> {
             segments.next_order,
         );
         let (base, lengths) = (patch.own.start, segments.lengths(&known));
-        (segments.old, segments.new, segments.base) = (Some(patch.outer), patch.outer, base);
+        (segments.old, segments.new, segments.base, segments.groups) = (
+            Some(patch.outer),
+            patch.outer,
+            base,
+            u32::from(known.is_grouped),
+        );
         let scroller = picture
             .scroller_nodes
             .iter()
@@ -1377,7 +1545,7 @@ impl Painter<'_> {
                     (painter.out.first_hit as u32).wrapping_add(by.hits) as usize;
             }
         }
-        painter.segments.new = root;
+        (painter.segments.new, painter.segments.groups) = (root, 0);
         let (segments, mut child) = (&mut painter.segments, known);
         while by != Lengths::default() {
             let parent = segments.all.get_mut(child.parent_index as usize);
@@ -1470,7 +1638,24 @@ impl Painter<'_> {
         let slot = usize::from(kind == Painted::Inside);
         let (index, is_unchanged) = (&it.painted.segments[slot], &it.painted.is_unchanged[slot]);
         let (outer_old, outer) = (self.segments.old, self.segments.new);
-        let (start, looks) = (Lengths::of(&self.out), self.document.looks(id));
+        let is_own = |it: &&Segment| it.id == id && (it.kind == Painted::Inside) == (slot == 1);
+        let known = self
+            .segments
+            .all
+            .get(index.get() as usize)
+            .filter(is_own)
+            .copied();
+        let whole = known.filter(|it| it.own.pivot.is_some() && is_unchanged.get());
+        let (start, mut looks) = (
+            Lengths::of(&self.out),
+            whole.map_or_else(|| self.document.looks(id), |it| it.looks),
+        );
+        let cut = |looks: &Looks| {
+            space
+                .visible
+                .moved(space.origin.map(|it| -it))
+                .intersection(&looks.ink.grown(1.0))
+        };
         let mut new = Segment {
             id,
             kind,
@@ -1483,10 +1668,7 @@ impl Painter<'_> {
             ],
             start: start.minus(&outer.start),
             lengths: Lengths::default(),
-            cut: space
-                .visible
-                .moved(space.origin.map(|it| -it))
-                .intersection(&looks.ink.grown(1.0)),
+            cut: cut(&looks),
             scroller: self
                 .out
                 .scroller_nodes
@@ -1508,16 +1690,10 @@ impl Painter<'_> {
             is_independent: false,
             are_contents_independent: true,
             has_children: false,
+            is_grouped: self.segments.groups > 0,
             own: Own::default(),
         };
         self.segments.next_order += 1;
-        let is_own = |it: &&Segment| it.id == id && (it.kind == Painted::Inside) == (slot == 1);
-        let known = self
-            .segments
-            .all
-            .get(index.get() as usize)
-            .filter(is_own)
-            .copied();
         let around = known.and_then(|it| {
             outer_old
                 .filter(|outer| it.parent == outer.serial)
@@ -1537,8 +1713,8 @@ impl Painter<'_> {
         if is_unchanged.get()
             && let (Some(known), Some(old), Some(picture)) =
                 (known, old, kept.map(|it| &it.picture).or(self.old))
-            && (known.is_hidden, known.cut, known.scroller)
-                == (new.is_hidden, new.cut, new.scroller)
+            && (known.is_hidden, known.scroller) == (new.is_hidden, new.scroller)
+            && (known.cut == new.cut || known.own.pivot.is_some())
             && (kept.is_none() || known.lengths.scrollers + known.lengths.driven == 0)
         {
             let by = [
@@ -1574,6 +1750,10 @@ impl Painter<'_> {
                 return;
             }
         }
+        if whole.is_some() {
+            looks = self.document.looks(id);
+            (new.looks, new.cut) = (looks, cut(&looks));
+        }
         if let Some(old) = moved.filter(|_| known.is_some_and(|it| it.has_children)) {
             self.segments.replace(&old);
         }
@@ -1591,13 +1771,17 @@ impl Painter<'_> {
             link: space.link,
             growth: NONE,
             kept: NONE,
+            is_grouped: self.is_grouped(),
         };
         (self.segments.old, self.segments.new) = (old, position);
         let (outside, outer_reads) = (
             self.outside,
             core::mem::take(&mut self.segments.reads_contents),
         );
-        let outer_own = core::mem::take(&mut self.segments.own);
+        let (outer_own, outer_groups) = (
+            core::mem::take(&mut self.segments.own),
+            core::mem::take(&mut self.segments.groups),
+        );
         is_unchanged.set(true);
         paint(self);
         (new.own, new.has_children) = (
@@ -1608,7 +1792,8 @@ impl Painter<'_> {
         if self.outside != outside {
             is_unchanged.set(false);
         }
-        (self.segments.old, self.segments.new) = (outer_old, outer);
+        (self.segments.old, self.segments.new, self.segments.groups) =
+            (outer_old, outer, outer_groups);
         new.lengths = Lengths::of(&self.out).minus(&start);
         new.are_contents_independent =
             !core::mem::replace(&mut self.segments.reads_contents, outer_reads);

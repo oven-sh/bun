@@ -1,4 +1,3 @@
-use std::cell::Cell;
 use std::sync::OnceLock;
 
 use super::fonts::Face;
@@ -91,9 +90,8 @@ fn path_bounds(path: &Path, outset: f32) -> Rect {
 fn rasterize_bitmap(bitmap: Bitmap, size: f32, matrix: &Transform) -> Option<GlyphImage> {
     let pixmap = match bitmap.pixels {
         Pixels::Png(png) => {
-            crate::codec::size(png, true)
-                .filter(|it| i64::from(it.0) * i64::from(it.1) < MAX_GLYPH_PIXELS)?;
-            images::decode_pixmap(png)?
+            let (width, height, rgba) = crate::png_rows::decode(png, MAX_GLYPH_PIXELS as usize)?;
+            images::pixmap_from_rgba(width, height, rgba)?
         }
         Pixels::Bgra(bgra) => {
             let rgba = bgra
@@ -362,29 +360,25 @@ pub fn ink_for(face: &Face, color: u32) -> u32 {
     }
 }
 
-/// 3 bits of luminance, as a shade of gray.
+/// 3 bits of luminance, as a shade of gray: `SkComputeLuminance` of `SkMaskGamma::CanonicalColor`.
 fn shade_for(color: u32) -> u32 {
-    thread_local! {
-        static KNOWN: [Cell<(u32, u32)>; 64] = const { [const { Cell::new((0, 0xFF)) }; 64] };
+    let three_bits = |it: u32| it >> 5 << 5 | it >> 5 << 2 | it >> 6;
+    let [r, g, b, _] = color
+        .to_be_bytes()
+        .map(|it| three_bits(u32::from(it >> u8::from(cfg!(target_os = "macos")))));
+    (three_bits((r * 54 + g * 183 + b * 19) >> 8) * 0x0101_0100) | 0xFF
+}
+
+/// For the outlines of glyphs of so many pixels, which are as light as the glyphs.
+pub fn correct_stroke(face: &Face, size: f32, color: u32, coverage: &mut [u8]) {
+    const LARGEST: f32 = if cfg!(target_os = "macos") {
+        161.
+    } else {
+        256.
+    };
+    if size <= LARGEST && (face.is_smoothed || !cfg!(target_os = "macos")) {
+        correct(coverage, shade_for(color) >> 24);
     }
-    KNOWN.with(|known| {
-        let (rgb, known) = (
-            color >> 8,
-            &known[((color >> 8).wrapping_mul(0x9E37_79B9) >> 26) as usize],
-        );
-        if known.get().0 != rgb {
-            let [r, g, b, _] = color.to_be_bytes().map(|channel| {
-                to_linear(f32::from(channel >> u8::from(cfg!(target_os = "macos"))) / 255.)
-            });
-            let luminance =
-                (from_linear(r * 0.2126 + g * 0.7152 + b * 0.0722) * 255.).round() as u32 >> 5;
-            known.set((
-                rgb,
-                ((luminance << 5 | luminance << 2 | luminance >> 1) * 0x0101_0100) | 0xFF,
-            ));
-        }
-        known.get().1
-    })
 }
 
 /// `SkTMaskGamma_build_correcting_lut`, which makes blending look as if it were done in linear light.
@@ -406,22 +400,15 @@ fn correct(coverage: &mut [u8], shade: u32) {
         .for_each(|value| *value = table[usize::from(*value)]);
 }
 
-/// How far a black rectangle on white reaches beyond the left, upper, right and lower edge of `exact`, with a gamma of 2.
+/// How far a black rectangle on white reaches beyond the left and the right edge of `exact`, with a gamma of 2.
 #[cfg(any(test, target_os = "macos"))]
-pub fn growth_of_block(pixels: &[u32], columns: usize, exact: Rect) -> [f32; 4] {
+pub fn growth_of_block(pixels: &[u32], columns: usize, exact: Rect) -> [f32; 2] {
     let ink = |pixel: &u32| 1. - (f32::from((pixel >> 8) as u8) / 255.).powi(2);
-    let (rows, [x, y]) = (
-        pixels.len() / columns,
-        [columns / 2, pixels.len() / columns / 2],
-    );
-    let (row, column) = (&pixels[y * columns..][..columns], || {
-        pixels[x..].iter().step_by(columns)
-    });
+    let (left, right) =
+        pixels[pixels.len() / columns / 2 * columns..][..columns].split_at(columns / 2);
     [
-        exact.x - x as f32 + row[..x].iter().map(ink).sum::<f32>(),
-        exact.y - y as f32 + column().take(y).map(ink).sum::<f32>(),
-        x as f32 + row[x..].iter().map(ink).sum::<f32>() - exact.x - exact.width,
-        y as f32 + column().skip(y).take(rows).map(ink).sum::<f32>() - exact.y - exact.height,
+        exact.x - left.len() as f32 + left.iter().map(ink).sum::<f32>(),
+        left.len() as f32 + right.iter().map(ink).sum::<f32>() - exact.x - exact.width,
     ]
 }
 
@@ -582,10 +569,40 @@ mod tests {
         assert!(
             measured
                 .iter()
-                .zip(growth)
+                .zip([growth[0], growth[2]])
                 .all(|(a, b)| (a - b).abs() < 0.01),
             "{measured:?}"
         );
         assert_eq!(fill(&ring)[7 * 15..][4..11], [255, 96, 0, 0, 0, 32, 255]);
+        assert_eq!(
+            fill(&ring)[7..]
+                .iter()
+                .step_by(15)
+                .skip(4)
+                .take(7)
+                .copied()
+                .collect::<Vec<_>>(),
+            [255, 48, 0, 0, 0, 64, 255]
+        );
+    }
+
+    #[test]
+    fn shades_are_those_of_chromium() {
+        let shades = [
+            0x000, 0xF00, 0x0F0, 0x00F, 0xFF0, 0x0FF, 0xF0F, 0xD22, 0x22D, 0x888, 0x800, 0x06C,
+            0xE80, 0xFFF,
+        ]
+        .map(|it: u32| {
+            shade_for((it >> 8) * 0x1100_0000 + (it >> 4 & 15) * 0x11_0000 + (it & 15) * 0x1100)
+                >> 29
+        });
+        assert_eq!(
+            shades,
+            if cfg!(target_os = "macos") {
+                [0, 0, 2, 0, 3, 2, 0, 0, 0, 2, 0, 1, 2, 3]
+            } else {
+                [0, 1, 5, 0, 7, 6, 2, 2, 1, 4, 0, 2, 4, 7]
+            }
+        );
     }
 }

@@ -214,6 +214,12 @@ fn feature(p: &mut P, of: Of, out: &mut Out) -> Option<Condition> {
             (_, it) => of == Of::Media && (*it as u8) < Feature::Stuck as u8,
         })
     };
+    let operand = |feature: Feature, p: &mut P, out: &mut Out| {
+        let start = out.len();
+        feature
+            .operand(p, out)
+            .filter(|_| of != Of::Media || !bun_core::strings::contains(&out[start..], b"sibling-"))
+    };
     let (state, start) = (p.state(), out.len());
     if let Some(name) = ident(p).map(<[u8]>::to_ascii_lowercase) {
         out.extend(&name);
@@ -240,7 +246,7 @@ fn feature(p: &mut P, of: Of, out: &mut Out) -> Option<Condition> {
                     .filter(|it| it.is_range() && plain[4] != b'-')?,
                 None => known(&name)?,
             };
-            return Some(match feature.operand(p, out)? {
+            return Some(match operand(feature, p, out)? {
                 Operand::Keyword(value) if of == Of::ScrollState => {
                     Condition::ScrollState(feature, Some(value))
                 }
@@ -255,7 +261,7 @@ fn feature(p: &mut P, of: Of, out: &mut Out) -> Option<Condition> {
             return Some(Condition::Compare(
                 feature,
                 Comparison::parse(p, out)?,
-                feature.operand(p, out)?,
+                operand(feature, p, out)?,
             ));
         }
     }
@@ -266,7 +272,7 @@ fn feature(p: &mut P, of: Of, out: &mut Out) -> Option<Condition> {
     let feature = known(ident(p)?).filter(|it| it.is_range())?;
     p.reset(&state);
     out.truncate(start);
-    let (low, first) = (feature.operand(p, out)?, Comparison::parse(p, out)?);
+    let (low, first) = (operand(feature, p, out)?, Comparison::parse(p, out)?);
     out.extend(ident(p)?.to_ascii_lowercase());
     let low = Condition::Compare(feature, first.flipped(), low);
     let Some(second) = Comparison::parse(p, out) else {
@@ -276,7 +282,7 @@ fn feature(p: &mut P, of: Of, out: &mut Out) -> Option<Condition> {
         .then_some(())?;
     Some(Condition::All(vec![
         low,
-        Condition::Compare(feature, second, feature.operand(p, out)?),
+        Condition::Compare(feature, second, operand(feature, p, out)?),
     ]))
 }
 

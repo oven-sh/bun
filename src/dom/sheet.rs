@@ -182,7 +182,7 @@ impl Declared {
             return Some(Declared::Template(template));
         }
         let source = if is_custom {
-            source.into()
+            scan::without_escaped_end(source)
         } else {
             crate::calc::scope_random(prop, source)
         };

@@ -37,7 +37,7 @@ CTFontRef bd_font_with_traits(CTFontRef font, bool isBold, bool isItalic)
 CTFontRef bd_font_with_weight(CTFontRef font, double size, double weight)
 {
     @autoreleasepool {
-        id axes = CFBridgingRelease(CTFontDescriptorCreateWithAttributes((__bridge CFDictionaryRef) @{ (id)kCTFontVariationAttribute : @{ @('wght') : @(weight) } }));
+        id axes = CFBridgingRelease(CTFontDescriptorCreateWithAttributes((__bridge CFDictionaryRef) @{ (id)kCTFontVariationAttribute : @{ @((uint32_t)'wght') : @(weight) } }));
         return CTFontCreateCopyWithAttributes(font, size, NULL, weight == 400 ? NULL : (__bridge CTFontDescriptorRef)axes);
     }
 }

@@ -606,6 +606,7 @@ fn build_program(
     if let Some(desktop) = request.executable.desktop {
         options.has_realms_of_the_web = true;
         options.starts_in_window = desktop.starts_in_window;
+        options.pages.clone_from(&desktop.pages);
     }
     if options.has_realms_of_the_web {
         options.option_words.push(Box::from(&b"several-realms"[..]));

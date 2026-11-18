@@ -5,12 +5,10 @@ use bun_web::client::DeferError;
 use bun_web::headers::is_cors_safelisted;
 use bun_web::net::fetch::Controller;
 use bun_web::request::{Credentials, InitiatorType, Mode, RequestBody};
-use bun_web::streams::{self, Incoming};
+use bun_web::streams;
 
 use super::body::{Body, Content, failure};
-use super::headers::Guard;
 use super::request::{Options, Parts};
-use super::response::About;
 use super::*;
 use crate::api::realm::{hold, quota_exceeded_with};
 
@@ -111,21 +109,7 @@ fn send<'a>(
                 return Ok(JsLocal::new(&cx.heap, cx.heap.create_promise().to_js()));
             }
             let fetched = fetched.map_err(|_| failure(cx, signal))?;
-            let incoming = fetched.body.map(Incoming::new);
-            if let Some(incoming) = &incoming {
-                incoming.hold_until_end(Box::new(following));
-                incoming.read_ahead();
-            }
-            let content = incoming
-                .filter(|_| !fetched.head.is_cors_cross_origin())
-                .map_or(Content::Null, Content::Incoming);
-            let response = Response::new(
-                &cx.heap,
-                About::of(&fetched.head),
-                fetched.head.exposed_headers(),
-                Guard::Immutable,
-                content.into(),
-            );
+            let response = Response::of_fetched(&cx.heap, fetched, Box::new(following));
             if let Some((pending, signal)) = pending.zip(signal) {
                 js_Message::set_followed(response, signal);
                 js_PendingFetch::set_response(pending, response.to_js());
@@ -140,7 +124,37 @@ fn send<'a>(
 }
 
 /// An algorithm of a signal.
-struct Following(Strong, u32);
+pub(super) struct Following(Strong, u32);
+
+pub(super) fn follow<'a>(
+    cx: Cx<'_, 'a>,
+    signal: JsLocal<'a, bun_jsc::AbortSignal>,
+    controller: &Controller,
+) -> Following {
+    let pending = js_PendingFetch::create(
+        &cx.heap,
+        PendingFetch {
+            controller: controller.clone(),
+            _interior: Default::default(),
+        },
+    );
+    let algorithm = cx
+        .heap
+        .create_callback(abort, [pending.to_js(), JSValue::UNDEFINED], 0);
+    Following(
+        Strong::create(signal.to_js(), cx.global()),
+        signal.add_algorithm(cx, algorithm),
+    )
+}
+
+impl Following {
+    pub(super) fn reason<'a>(&self, heap: &JsHeap<'a>) -> Option<Error<'a>> {
+        let signal = JsLocal::new(heap, self.0.get())
+            .as_abort_signal()
+            .filter(|it| it.is_aborted())?;
+        Some(Error::from_value(JsLocal::new(heap, signal.reason(heap))))
+    }
+}
 
 impl Drop for Following {
     fn drop(&mut self) {

@@ -66,7 +66,7 @@ impl Contents {
         let is_script = url.starts_with("javascript:");
         let (is_blank, is_shared) = (
             is_script || before(before(url, "#"), "?") == "about:blank",
-            trust::trusts_all_frames(),
+            trust::relates_windows(),
         );
         let details = object!({
             "url": url,
@@ -97,7 +97,7 @@ impl Contents {
             if is_blank {
                 opened.show(opened.page(), "", Markup::Html)?;
                 opened.page().set_initial_url(url)?;
-                return if is_script && is_shared {
+                return if is_script && is_shared && opened.page().is_kin_of(opener) {
                     let wish = Wish {
                         url: url.to_owned(),
                         ..Default::default()

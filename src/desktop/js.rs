@@ -431,6 +431,7 @@ pub(crate) fn post(priority: Priority, work: impl FnOnce() -> JsResult<()> + 'st
 
 pub(crate) fn render_pages() {
     tasks::render(global());
+    crate::contents::process::render_trusted_pages();
 }
 
 // ── promises ──

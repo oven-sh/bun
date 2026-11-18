@@ -9,7 +9,7 @@ use bun_jsc::{DOMExceptionCode, JsCell};
 use super::bitmap::Owned;
 use super::recorder::{List, add};
 use super::{Affine, Failure, are_finite};
-use crate::abi::GradientStop;
+use crate::abi::{GradientStop, Span};
 use crate::abi_graphics as wire;
 use crate::color::{Exact, Specified};
 use crate::generated_bindgen::geometry::DOMMatrix2DInit;
@@ -23,6 +23,24 @@ pub(super) struct Color {
     exact: Option<Exact>,
 }
 
+#[inline]
+pub(super) fn parse_six_digits(source: &[u8]) -> Option<u32> {
+    const ONES: u64 = u64::MAX / 255;
+    let &[b'#', a, b, c, d, e, f] = source else {
+        return None;
+    };
+    let all = u64::from_be_bytes([a, b, c, d, e, f, b'f', b'f']);
+    let is_letter = all >> 6 & ONES;
+    let values = (all & (ONES * 15)) + is_letter * 9;
+    let lowered = values + ONES * 48 + ((values + ONES * 6) >> 4 & ONES) * 39;
+    if all | is_letter << 5 != lowered || values & (ONES * 16) != 0 {
+        return None;
+    }
+    let pairs = (values | values >> 4) & 0x00ff_00ff_00ff_00ff;
+    let quads = (pairs | pairs >> 8) & 0x0000_ffff_0000_ffff;
+    Some((quads | quads >> 16) as u32)
+}
+
 /// `#rgb` and the like, and `rgb()` with commas and plain numbers.
 fn parse_simple(source: &[u8]) -> Option<u32> {
     if let [b'#', digits @ ..] = source {
@@ -31,7 +49,7 @@ fn parse_simple(source: &[u8]) -> Option<u32> {
         return match digits.len() {
             3 => Some(digits.iter().try_fold(0, doubled)? << 8 | 0xff),
             4 => digits.iter().try_fold(0, doubled),
-            6 => Some(digits.iter().try_fold(0, digit)? << 8 | 0xff),
+            6 => parse_six_digits(source),
             8 => digits.iter().try_fold(0, digit),
             _ => None,
         };
@@ -76,7 +94,7 @@ pub(super) enum Parsed {
 }
 
 thread_local! {
-    static KNOWN: Box<JsCell<Map<Box<[u8]>, Color>>> = Box::default();
+    static KNOWN: JsCell<Map<Box<[u8]>, Color>> = JsCell::default();
 }
 
 impl Color {
@@ -85,6 +103,27 @@ impl Color {
 
     pub(super) const fn plain(rgba: u32) -> Color {
         Color { rgba, exact: None }
+    }
+
+    #[inline]
+    pub(super) fn is(&self, rgba: u32) -> bool {
+        self.rgba == rgba && self.exact.is_none()
+    }
+
+    #[inline(always)]
+    pub(super) fn for_canvas(&self, is_wide: bool) -> u32 {
+        if is_wide {
+            self.in_display_p3()
+        } else {
+            self.rgba
+        }
+    }
+
+    #[cold]
+    fn in_display_p3(&self) -> u32 {
+        self.exact
+            .unwrap_or_else(|| Exact::legacy(self.rgba))
+            .rgba_in_display_p3()
     }
 
     #[optimize(size)]
@@ -150,7 +189,7 @@ pub(super) enum Shape {
 }
 
 enum Kind {
-    Gradient(Shape, JsCell<Vec<GradientStop>>),
+    Gradient(Shape, JsCell<Vec<(f32, Color)>>),
     Pattern {
         tile: Owned,
         repeats: [bool; 2],
@@ -166,10 +205,16 @@ pub(super) struct Paint {
 }
 
 impl Paint {
-    pub(super) fn record(&self, list: &mut List) -> wire::Paint {
-        match &self.kind {
+    pub(super) fn record(&self, list: &mut List, is_wide: bool) -> Span {
+        let paint = match &self.kind {
             Kind::Gradient(shape, stops) => {
-                let stops = add(&mut list.stops, stops.get().iter().copied());
+                let stops = add(
+                    &mut list.stops,
+                    stops.get().iter().map(|(offset, color)| GradientStop {
+                        offset: *offset,
+                        color: color.for_canvas(is_wide),
+                    }),
+                );
                 match *shape {
                     Shape::Linear(from, to) => wire::Paint::Linear { from, to, stops },
                     Shape::Radial(from, to) => wire::Paint::Radial { from, to, stops },
@@ -189,7 +234,8 @@ impl Paint {
                 repeats: *repeats,
                 matrix: matrix.get().narrow(),
             },
-        }
+        };
+        list.add_part(|to| paint.write(to))
     }
 
     fn did_change(&self) {
@@ -217,8 +263,8 @@ impl CanvasGradient {
             ));
         }
         let color = match Color::parse(color) {
-            Some(Parsed::Color(color)) => color.rgba,
-            Some(Parsed::OfCurrent(color)) => Color::resolve(&color, 0xff).rgba,
+            Some(Parsed::Color(color)) => color,
+            Some(Parsed::OfCurrent(color)) => Color::resolve(&color, 0xff),
             None => {
                 return Err(Failure::Dom(
                     DOMExceptionCode::SyntaxError,
@@ -230,10 +276,7 @@ impl CanvasGradient {
             return Ok(());
         };
         stops.with_mut(|stops| {
-            stops.insert(
-                stops.partition_point(|it| it.offset <= offset),
-                GradientStop { offset, color },
-            )
+            stops.insert(stops.partition_point(|it| it.0 <= offset), (offset, color))
         });
         self.0.did_change();
         Ok(())

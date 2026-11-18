@@ -34,12 +34,14 @@ use crate::outside::Outside;
 use crate::referrer::ReferrerPolicy;
 use crate::request::{
     CacheMode, Credentials, Destination, InitiatorType, Mode, Redirect, Request, RequestBody,
+    Starter,
 };
 use crate::scheme::{Privileges, privileges_of};
+use crate::service::{self, Handler, Reserved, Routing, Served};
 use crate::storage::{Kinds, Origins};
 use crate::time::{monotonic_now, wall_now};
 use crate::url::Url;
-use crate::{Bytes, mime, sniff};
+use crate::{Bytes, compiled, mime, sniff};
 
 crate::wire! {
     #[derive(Clone, Copy, PartialEq, Eq)]
@@ -70,6 +72,7 @@ crate::wire! {
 }
 
 /// Who a request is made for, which a page has no say in.
+#[derive(Clone)]
 pub struct Initiator {
     pub role: Role,
     /// `None` is the user, or the app.
@@ -85,6 +88,9 @@ pub struct Initiator {
     pub embedder_policy: Isolation,
     pub document_isolation_policy: Isolation,
     pub is_inspected: bool,
+    pub service: Handler,
+    /// What it says that it wants the response for may not be true.
+    pub is_in_page_process: bool,
 }
 
 impl Initiator {
@@ -107,6 +113,8 @@ impl Initiator {
             embedder_policy: Isolation::default(),
             document_isolation_policy: Isolation::default(),
             is_inspected: false,
+            service: Handler::Nobody,
+            is_in_page_process: false,
         }
     }
 }
@@ -121,6 +129,11 @@ pub trait Observer {
     /// `first` is there after a redirect.
     fn allows(&self, _: &Request, _first: Option<&Url>) -> bool {
         true
+    }
+
+    /// A service worker has got the response from the URL of the request.
+    fn accepts(&self, request: &Request, first: Option<&Url>) -> bool {
+        self.allows(request, first)
     }
 
     fn blocked_as_mixed_content(&self, _: &Request, _first: Option<&Url>) {}
@@ -239,6 +252,37 @@ fn is_local(url: &Url) -> bool {
     matches!(url.scheme(), b"data" | b"blob")
 }
 
+fn can_run_code(destination: Destination) -> bool {
+    destination.is_navigation()
+        || destination.is_script_like()
+        || matches!(destination, Destination::Style | Destination::Xslt)
+}
+
+/// Aborts if it is dropped.
+struct Interest(Option<Controller>);
+
+impl Interest {
+    fn keep(mut self) {
+        self.0 = None;
+    }
+}
+
+impl Drop for Interest {
+    fn drop(&mut self) {
+        self.0.iter().for_each(Controller::abort);
+    }
+}
+
+/// The body of a request, until somebody reads it.
+struct Lent(Arc<Guarded<Option<Body>>>, Option<Body>);
+
+impl Source for Lent {
+    fn poll_read(&mut self, cx: &mut Context<'_>) -> Poll<Read> {
+        let body = (self.1).get_or_insert_with(|| self.0.lock().take().unwrap_or_default());
+        body.poll_read(cx)
+    }
+}
+
 fn is_get_or_head(method: &[u8]) -> bool {
     matches!(method, b"GET" | b"HEAD")
 }
@@ -329,10 +373,7 @@ impl Transfer {
             return Ok(own);
         }
         let destination = about.destination.unwrap_or(Destination::Empty);
-        if !destination.is_navigation()
-            && !destination.is_script_like()
-            && !matches!(destination, Destination::Style | Destination::Xslt)
-        {
+        if !can_run_code(destination) {
             return self.run(headers).await;
         }
         if destination == Destination::Document && *self.method == *b"GET" {
@@ -419,6 +460,8 @@ struct Fetch<'a> {
     redirects: Vec<HeaderList>,
     timing: Timing,
     needs_web_engine: bool,
+    skips_service_workers: bool,
+    reserved: Option<Reserved>,
 }
 
 impl Fetch<'_> {
@@ -534,7 +577,9 @@ impl Fetch<'_> {
 
     fn cookie_context(&self) -> cookies::Context {
         let (url, initiator) = (&self.request.url, self.initiator);
-        let is_top_level_navigation = self.request.destination == Destination::Document;
+        let started = self.request.starter.as_ref();
+        let is_top_level_navigation =
+            started.map_or(self.request.destination, |it| it.destination) == Destination::Document;
         let outermost = initiator
             .ancestors
             .last()
@@ -567,10 +612,11 @@ impl Fetch<'_> {
         if !self.is_checked() || !is_potentially_trustworthy(&request.url) {
             return;
         }
+        let urls = || (request.starter.iter().flat_map(|it| &it.urls)).chain(&self.urls);
         let site: &[u8] = match origin {
             None => b"none",
-            Some(origin) if self.urls.iter().all(|it| origin.is_origin_of(it)) => b"same-origin",
-            Some(origin) if self.urls.iter().all(|it| origin.is_same_site_with(it)) => b"same-site",
+            Some(origin) if urls().all(|it| origin.is_origin_of(it)) => b"same-origin",
+            Some(origin) if urls().all(|it| origin.is_same_site_with(it)) => b"same-site",
             Some(_) => b"cross-site",
         };
         headers.set(
@@ -645,11 +691,11 @@ impl Fetch<'_> {
             b"file" => return schemes::fetch_file(&request.url, &request.headers).await,
             b"data" => return schemes::fetch_data(&request.url),
             b"blob" => {
-                return schemes::fetch_blob(
-                    self.request.blob.clone(),
-                    &request.method,
-                    &request.headers,
-                );
+                let blob = match self.request.blob.clone() {
+                    None => crate::outside::serve::borrow_blob(session, &request.url).await,
+                    blob => blob,
+                };
+                return schemes::fetch_blob(blob, &request.method, &request.headers);
             }
             b"http" | b"https" => {}
             _ => return Err(NetError::UnknownUrlScheme),
@@ -925,6 +971,7 @@ impl Fetch<'_> {
                 listed: vec![Origin::of(url).as_bytes().into()],
                 are_meant: true,
             };
+            session.clear_service_workers(origins.clone());
             Arc::clone(&session.storage)
                 .clear(Kinds::all(), origins)
                 .await;
@@ -935,23 +982,27 @@ impl Fetch<'_> {
     }
 
     /// https://fetch.spec.whatwg.org/#cross-origin-resource-policy-check
-    fn corp_check(&self, headers: &HeaderList, includes_credentials: bool) -> bool {
+    fn corp_check(
+        &self,
+        kind: ResponseType,
+        url: &Url,
+        headers: &HeaderList,
+        includes_credentials: bool,
+    ) -> bool {
         let is_navigation = self.request.mode == Mode::Navigate;
         let origin = if is_navigation {
             self.initiator.ancestors.first()
         } else {
             self.initiator.origin.as_ref()
         };
-        let Some(origin) =
-            origin.filter(|_| is_navigation || self.tainting == ResponseType::Opaque)
-        else {
+        let Some(origin) = origin.filter(|_| is_navigation || kind == ResponseType::Opaque) else {
             return true;
         };
         let allows = |policy| {
             checks::corp_allows(
                 origin,
                 policy,
-                &self.request.url,
+                url,
                 headers,
                 includes_credentials,
                 is_navigation,
@@ -1075,7 +1126,9 @@ impl Fetch<'_> {
     }
 
     async fn is_blocked_by_orb(&self, answer: &mut Answer) -> Result<bool> {
-        if self.tainting != ResponseType::Opaque || !self.request.url.is_http() {
+        if self.tainting != ResponseType::Opaque
+            || !(self.request.url.is_http() || self.initiator.is_in_page_process)
+        {
             return Ok(false);
         }
         if let Some(is_blocked) = checks::orb_blocks_by_headers(&answer.headers, answer.status) {
@@ -1083,6 +1136,102 @@ impl Fetch<'_> {
         }
         let start = answer.body.peek(sniff::HEADER_LENGTH).await?;
         Ok(!start.is_empty() && checks::orb_blocks_by_body(&answer.headers, answer.status, start))
+    }
+
+    /// The first steps of https://fetch.spec.whatwg.org/#concept-http-fetch
+    #[optimize(size)]
+    async fn ask_service_worker(&mut self) -> Result<Option<Served>> {
+        let (session, mut request) = (self.session, self.request.without_body());
+        let earlier = self.reserved.take();
+        if !service::is_allowed_at(&request.url) && (self.navigates() || !request.url.is_http()) {
+            return Ok(None);
+        }
+        let is_only_from_app = |url: &Url| {
+            can_run_code(self.request.destination)
+                && (compiled::is_exclusive() || session.serves(url))
+        };
+        let is_for_network = is_only_from_app(&request.url);
+        (request.headers).set_if_absent(b"Accept", checks::default_accept(request.destination));
+        request.referrer.clone_from(&self.referrer);
+        request.referrer_policy =
+            (request.referrer_policy).or(ReferrerPolicy::StrictOriginWhenCrossOrigin);
+        request.may_become_code =
+            request.destination.is_navigation() || request.destination.is_script_like();
+        if request.mode == Mode::Navigate {
+            request.redirect = Redirect::Manual;
+            request.starter = Some(Starter {
+                origin: self.initiator.origin.clone(),
+                has_tainted_origin: self.has_tainted_origin,
+                urls: self.urls.clone(),
+                destination: request.destination,
+                has_user_activation: request.has_user_activation,
+            });
+        }
+        let (mode, redirect, lent) = (request.mode, request.redirect, Arc::default());
+        request.body = match &mut self.request.body {
+            Some(RequestBody::Stream(body)) => {
+                *Guarded::lock(&lent) = body.take();
+                let lent = Lent(Arc::clone(&lent), None);
+                Some(RequestBody::Stream(Some(Body::new(lent))))
+            }
+            body => body.as_mut().map(RequestBody::take),
+        };
+        let start = monotonic_now();
+        let mut initiator = self.initiator.clone();
+        if let Handler::Matching { reserved, .. } = &mut initiator.service {
+            *reserved = earlier.map(|it| it.presence);
+        }
+        let interest = Interest(Some(Controller::default()));
+        let controller = interest.0.clone().unwrap_or_default();
+        let handled =
+            service::handle_fetch(session, initiator, request, controller, is_for_network).await;
+        interest.keep();
+        (self.reserved, self.timing.routing) = (handled.reserved, handled.routing);
+        let Routing {
+            evaluation_start,
+            cache_lookup_start,
+            worker_start,
+            ..
+        } = handled.routing;
+        let start = start
+            .max(evaluation_start)
+            .max(cache_lookup_start)
+            .max(worker_start);
+        self.timing.fetch_start = start;
+        let Some(served) = handled.served.transpose()? else {
+            if let Some(RequestBody::Stream(body)) = &mut self.request.body {
+                *body = Some(lent.lock().take().ok_or(NetError::Failed)?);
+            }
+            self.skips_service_workers = redirect == Redirect::Follow;
+            return Ok(None);
+        };
+        if match served.kind {
+            Some(ResponseType::Cors) => mode == Mode::SameOrigin,
+            Some(ResponseType::Opaque) => mode != Mode::NoCors,
+            Some(ResponseType::OpaqueRedirect) => redirect != Redirect::Manual,
+            _ => false,
+        } || (served.is_redirected && redirect != Redirect::Follow)
+        {
+            return Err(NetError::Failed);
+        }
+        if let Some(url) =
+            (served.url.as_ref()).filter(|it| it.href() != self.request.url.without_fragment())
+        {
+            if can_run_code(self.request.destination) && session.serves(url) {
+                return Err(NetError::BlockedByClient);
+            }
+            if self.initiator.prohibits_mixed_content && checks::is_insecure(url) {
+                return Err(NetError::AccessDenied);
+            }
+            let asked = core::mem::replace(&mut self.request.url, url.clone());
+            let is_accepted = self.observer.accepts(&self.request, self.urls.first());
+            self.request.url = asked;
+            if !is_accepted {
+                return Err(NetError::BlockedByCsp);
+            }
+        }
+        (self.timing.request_start, self.timing.response_start) = (start, monotonic_now());
+        Ok(Some(served))
     }
 
     /// `None` after a redirect.
@@ -1107,7 +1256,15 @@ impl Fetch<'_> {
             monotonic_now()
         };
         self.urls.push(self.request.url.clone());
-        let (about, is_told) = (self.about(), !is_local(&self.request.url));
+        let mut served = None;
+        if !matches!(self.initiator.service, Handler::Nobody) && !self.skips_service_workers {
+            served = Box::pin(self.ask_service_worker()).await?;
+        }
+        let is_served = served.is_some();
+        if !is_served && core::mem::take(&mut self.request.is_only_for_service_worker) {
+            return Err(NetError::CacheMiss);
+        }
+        let (about, is_told) = (self.about(), !is_local(&self.request.url) && !is_served);
         if is_told {
             let upload = || match &self.request.body {
                 Some(RequestBody::Data(Data::Bytes(bytes))) => Details {
@@ -1129,13 +1286,34 @@ impl Fetch<'_> {
                 return Ok(None);
             }
         }
-        if self.tainting == ResponseType::Cors && self.request.url.is_http() {
+        if self.tainting == ResponseType::Cors && self.request.url.is_http() && !is_served {
             self.preflight().await?;
         }
-        let (includes_credentials, context) = (self.includes_credentials(), self.cookie_context());
-        let mut answer = self
-            .network_or_cache_fetch(includes_credentials, &context)
-            .await?;
+        let (mut includes_credentials, context) =
+            (self.includes_credentials(), self.cookie_context());
+        let mut has_credentials_mode_include = self.request.credentials == Credentials::Include;
+        let (mut kind, mut url, mut was_redirected) = (self.tainting, about.url.clone(), false);
+        let mut answer = if let Some(served) = served {
+            kind = served.kind.unwrap_or(ResponseType::Basic);
+            if let Some(from) = served.url.filter(|_| !self.navigates()) {
+                url = match (from.fragment(), url.fragment()) {
+                    (None, Some(it)) if from.href() == url.without_fragment() => {
+                        from.with_fragment(it)
+                    }
+                    _ => from,
+                };
+            }
+            (includes_credentials, has_credentials_mode_include) = (
+                served.includes_credentials,
+                served.has_credentials_mode_include,
+            );
+            was_redirected = served.is_redirected;
+            self.allows_timing &= served.allows_timing;
+            served.answer
+        } else {
+            self.network_or_cache_fetch(includes_credentials, &context)
+                .await?
+        };
         let received = |it: &Answer| Received {
             status: it.status,
             status_text: it.status_text.clone(),
@@ -1157,12 +1335,16 @@ impl Fetch<'_> {
                 (answer.status, answer.status_text) = (status, text.into());
             }
         }
-        if includes_credentials && !self.request.omits_cookies && answer.cached != Cached::Local {
+        if includes_credentials
+            && !self.request.omits_cookies
+            && answer.cached != Cached::Local
+            && !is_served
+        {
             self.store_site_data(&answer.headers, &context).await;
         }
-        let has_credentials_mode_include = self.request.credentials == Credentials::Include;
         if (answer.status == 407 && self.is_checked() && !self.navigates())
-            || (self.tainting == ResponseType::Cors
+            || (kind == ResponseType::Cors
+                && !is_served
                 && !checks::cors_check(
                     &answer.headers,
                     self.serialized_origin(),
@@ -1171,7 +1353,7 @@ impl Fetch<'_> {
         {
             return Err(NetError::Failed);
         }
-        if !self.corp_check(&answer.headers, includes_credentials) {
+        if !self.corp_check(kind, &url, &answer.headers, includes_credentials) {
             return Err(NetError::BlockedByResponse);
         }
         let origin = Origin::of(&about.url);
@@ -1181,10 +1363,9 @@ impl Fetch<'_> {
                 .as_ref()
                 .map_or_else(|| Origin::of(&self.urls[0]) != origin, |it| *it != origin)
         };
-        if self.tainting != ResponseType::Basic || (self.navigates() && has_left_origin()) {
+        if !is_served && (kind != ResponseType::Basic || (self.navigates() && has_left_origin())) {
             self.allows_timing &= checks::tao_check(&answer.headers, self.serialized_origin());
         }
-        let mut kind = self.tainting;
         if is_redirect_status(answer.status) {
             match self.request.redirect {
                 Redirect::Error => return Err(NetError::Failed),
@@ -1193,19 +1374,21 @@ impl Fetch<'_> {
                     self.redirect_fetch(&about, received(&answer)).await?;
                     return Ok(None);
                 }
+                _ if kind == ResponseType::OpaqueRedirect => kind = ResponseType::Basic,
                 _ => {}
             }
         }
         let request = &self.request;
         if (self.is_checked()
             && checks::is_blocked_by_mime_type(&answer.headers, request.destination))
-            || (kind == ResponseType::Opaque
+            || (is_served
+                && kind == ResponseType::Opaque
                 && answer.status == 206
                 && !request.headers.contains(b"range"))
         {
             return Err(NetError::BlockedByResponse);
         }
-        if self.is_blocked_by_orb(&mut answer).await? {
+        if !is_served && self.is_blocked_by_orb(&mut answer).await? {
             if request.destination != Destination::Empty {
                 return Err(NetError::BlockedByOrb);
             }
@@ -1214,7 +1397,7 @@ impl Fetch<'_> {
         session.tell(RequestEvent::ResponseStarted, &about, || details(&answer));
         let has_body = *request.method != *b"HEAD"
             && (self.is_for_socket() || !is_null_body_status(answer.status))
-            && kind != ResponseType::OpaqueRedirect;
+            && (kind != ResponseType::OpaqueRedirect || !answer.headers.contains(b"location"));
         if !request.metadata.integrity.is_empty() {
             let bytes = core::mem::take(&mut answer.body).read_to_end().await?;
             if !has_body
@@ -1229,11 +1412,11 @@ impl Fetch<'_> {
             (self.urls.iter().rev().skip(1)).any(|it| Origin::of(it) != origin);
         let head = Head {
             kind,
-            url: about.url.clone(),
+            url,
             status: answer.status,
             status_text: answer.status_text,
             headers: answer.headers,
-            redirects: self.urls.len() as u8 - 1,
+            redirects: (self.urls.len() as u8 - 1).max(was_redirected.into()),
             has_cross_origin_redirects,
             includes_credentials,
             has_credentials_mode_include,
@@ -1245,6 +1428,8 @@ impl Fetch<'_> {
             protocol: answer.protocol,
             timing: self.timing,
             referrer: self.referrer.clone(),
+            reserved: self.reserved.take(),
+            is_from_service_worker: is_served,
         };
         let ending = Ending {
             session: Arc::clone(session),
@@ -1289,8 +1474,9 @@ struct Ending {
 }
 
 impl Ending {
-    fn of(self, body: Option<Body>, controller: &Controller) -> Response {
+    fn of(mut self, body: Option<Body>, controller: &Controller) -> Response {
         let head = self.head.clone();
+        self.head.reserved = None;
         let Some(source) = body else {
             self.run(Ok(0));
             return Response { head, body: None };
@@ -1468,9 +1654,9 @@ async fn run_fetch(
         id: next_request_id(),
         urls: Vec::new(),
         referrer: request.referrer.clone(),
+        has_tainted_origin: (request.starter.as_ref()).is_some_and(|it| it.has_tainted_origin),
         request,
         tainting: ResponseType::Basic,
-        has_tainted_origin: false,
         allows_timing: true,
         redirects: Vec::new(),
         timing: Timing {
@@ -1478,6 +1664,8 @@ async fn run_fetch(
             ..Timing::default()
         },
         needs_web_engine: false,
+        skips_service_workers: false,
+        reserved: None,
     };
     loop {
         match controller.race(fetch.main_fetch()).await {

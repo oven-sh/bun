@@ -96,8 +96,15 @@ impl WebRequest {
 pub(crate) struct ServiceWorkers(pub(super) &'static Session);
 
 impl ServiceWorkers {
+    fn running(&self) -> Value {
+        let own = self.0.own_workers.running.borrow();
+        let by_version = |it: &Value| (it["versionId"].number().to_string().into(), it.clone());
+        Value::Record(own.iter().map(by_version).collect())
+            .and(&self.0.mirror.running_workers.borrow())
+    }
+
     pub(crate) fn get_all_running(&self, _: Cx<'_, '_>) -> JsResult<JSValue> {
-        js(&Value::empty().and(&self.0.mirror.running_workers.borrow()))
+        js(&self.running())
     }
 
     pub(crate) fn get_worker(&self, _: Cx<'_, '_>, version: f64) -> JsResult<JSValue> {
@@ -119,7 +126,7 @@ impl ServiceWorkers {
     }
 
     pub(crate) fn get_info(&self, _: Cx<'_, '_>, version: f64) -> JsResult<JSValue> {
-        match &self.0.mirror.running_workers.borrow()[&*version.to_string()] {
+        match &self.running()[&*version.to_string()] {
             Value::Undefined => Err(error(format_args!(
                 "Could not find service worker with that version_id"
             ))),

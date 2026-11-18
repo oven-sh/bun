@@ -274,7 +274,7 @@ impl Window {
         if ui.focused_frame().is_some() {
             crate::api::ui::entry::reset_focus(cx, ui);
         }
-        match ui.container() {
+        match ui.any_container() {
             Some(container) => container.focus(cx),
             None => self.host().focus_window(),
         }

@@ -1,17 +1,18 @@
 // For `paint/vector/metal.rs`.
 #import "bridge.h"
 #import <IOSurface/IOSurfaceObjC.h>
+#import <CoreGraphics/CoreGraphics.h>
 #import <Metal/Metal.h>
 
-typedef enum : uint32_t { BDBlend, BDOpaque, BDCount, BDCoverNonZero, BDCoverOdd, BDModes } BDMode;
-typedef enum : uint32_t { BDBlends, BDHides, BDCounts, BDMixes, BDPipelines } BDPipeline;
+typedef enum : uint32_t { BDBlend, BDOpaque, BDTint, BDCount, BDCoverNonZero, BDCoverOdd, BDBlockNonZero, BDBlockOdd, BDModes } BDMode;
+typedef enum : uint32_t { BDBlends, BDHides, BDTints, BDShades, BDCounts, BDMixes, BDPipelines } BDPipeline;
 typedef enum : uint32_t { BDColors, BDDepths, BDDepth, BDImage } BDKind;
 typedef struct { int32_t left, top, right, bottom; } BDBounds;
 typedef struct { BDMode mode; uint32_t mixing, texture, first, end; BDBounds clip; } BDStep;
 typedef struct {
-    const void *words, *units, *opaqueUnits;
-    size_t wordBytes, unitBytes, opaqueBytes;
-    BDStep opaque;
+    const void *words, *units[3];
+    size_t wordBytes, unitBytes[3];
+    BDStep opaque[2];
     const BDStep* steps;
     size_t count;
     void* const* textures;
@@ -71,14 +72,14 @@ char* bd_vector_start(const char* shader)
         MTLRenderPipelineColorAttachmentDescriptor* color = descriptor.colorAttachments[0];
         color.pixelFormat = MTLPixelFormatBGRA8Unorm;
         color.sourceRGBBlendFactor = color.sourceAlphaBlendFactor = MTLBlendFactorOne;
-        color.destinationRGBBlendFactor = MTLBlendFactorOneMinusSource1Color;
-        color.destinationAlphaBlendFactor = MTLBlendFactorOneMinusSource1Alpha;
         descriptor.depthAttachmentPixelFormat = descriptor.stencilAttachmentPixelFormat = MTLPixelFormatDepth32Float_Stencil8;
         for (BDPipeline it = 0; it < BDPipelines; it++) {
-            bool isPlain = it == BDHides || it == BDCounts;
+            bool isPlain = it == BDHides || it == BDTints || it == BDCounts;
             descriptor.vertexFunction = [library newFunctionWithName:isPlain ? @"place_plain_corner" : @"place_corner"];
-            descriptor.fragmentFunction = [library newFunctionWithName:isPlain ? @"paint_plain_pixel" : it == BDMixes ? @"mix_pixel" : @"paint_pixel"];
-            color.blendingEnabled = it == BDBlends;
+            descriptor.fragmentFunction = [library newFunctionWithName:isPlain ? @"paint_plain_pixel" : it == BDShades ? @"shade_pixel" : it == BDMixes ? @"mix_pixel" : @"paint_pixel"];
+            color.blendingEnabled = it == BDBlends || it == BDTints;
+            color.destinationRGBBlendFactor = it == BDTints ? MTLBlendFactorOneMinusSourceAlpha : MTLBlendFactorOneMinusSource1Color;
+            color.destinationAlphaBlendFactor = it == BDTints ? MTLBlendFactorOneMinusSourceAlpha : MTLBlendFactorOneMinusSource1Alpha;
             color.writeMask = it == BDCounts ? MTLColorWriteMaskNone : MTLColorWriteMaskAll;
             for (int hasSamples = it == BDCounts; hasSamples < 2; hasSamples++) {
                 descriptor.rasterSampleCount = hasSamples ? samples : 1;
@@ -96,8 +97,8 @@ char* bd_vector_start(const char* shader)
                 front.depthStencilPassOperation = MTLStencilOperationIncrementWrap;
                 back.depthStencilPassOperation = MTLStencilOperationDecrementWrap;
             } else if (mode > BDCount) {
-                front.stencilCompareFunction = MTLCompareFunctionNotEqual;
-                front.readMask = mode == BDCoverOdd ? 1 : 255;
+                front.stencilCompareFunction = mode > BDCoverOdd ? MTLCompareFunctionEqual : MTLCompareFunctionNotEqual;
+                front.readMask = mode == BDCoverOdd || mode == BDBlockOdd ? 1 : 255;
                 front.stencilFailureOperation = front.depthFailureOperation = front.depthStencilPassOperation = MTLStencilOperationZero;
             }
             test.frontFaceStencil = front, test.backFaceStencil = back;
@@ -132,6 +133,8 @@ void* bd_vector_texture(IOSurfaceRef surface, int32_t width, int32_t height, BDK
         return (__bridge_retained void*)[device newTextureWithDescriptor:descriptor];
     }
 }
+
+void bd_vector_widen(IOSurfaceRef surface) { IOSurfaceSetValue(surface, kIOSurfaceColorSpace, kCGColorSpaceDisplayP3); }
 
 static void finish(size_t which)
 {
@@ -188,15 +191,18 @@ char* bd_vector_write(void* texture, const BDBounds* area, const uint32_t* pixel
     });
 }
 
-static void draw(id<MTLRenderCommandEncoder> encoder, const BDStep* step)
+static void draw(id<MTLRenderCommandEncoder> encoder, const BDStep* step, BDBounds* clip)
 {
     if (step->first == step->end)
         return;
-    [encoder setScissorRect:(MTLScissorRect) { step->clip.left, step->clip.top, step->clip.right - step->clip.left, step->clip.bottom - step->clip.top }];
+    if (memcmp(clip, &step->clip, sizeof *clip)) {
+        *clip = step->clip;
+        [encoder setScissorRect:(MTLScissorRect) { clip->left, clip->top, clip->right - clip->left, clip->bottom - clip->top }];
+    }
     for (uint32_t first = step->first; first < step->end; first += unitsPerDraw) {
-        [encoder setVertexBytes:&first length:sizeof first atIndex:3];
         [encoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle indexCount:MIN(step->end - first, (uint32_t)unitsPerDraw) * 6
-                             indexType:MTLIndexTypeUInt16 indexBuffer:corners indexBufferOffset:0];
+                             indexType:MTLIndexTypeUInt16 indexBuffer:corners indexBufferOffset:0
+                         instanceCount:1 baseVertex:0 baseInstance:first];
     }
 }
 
@@ -204,10 +210,10 @@ char* bd_vector_draw(const BDScene* scene, void* colors, void* depths, void* bef
 {
     return attempt(^{
         id<MTLCommandBuffer> commands = begin();
-        id<MTLBuffer> words = room(0, scene->wordBytes), units = room(1, scene->unitBytes + scene->opaqueBytes);
+        id<MTLBuffer> words = room(0, scene->wordBytes), units = room(1, scene->unitBytes[0] + scene->unitBytes[1] + scene->unitBytes[2]);
         memcpy(words.contents, scene->words, scene->wordBytes);
-        memcpy(units.contents, scene->units, scene->unitBytes);
-        memcpy((char*)units.contents + scene->unitBytes, scene->opaqueUnits, scene->opaqueBytes);
+        for (size_t it = 0, at = 0; it < 3; at += scene->unitBytes[it++])
+            memcpy((char*)units.contents + at, scene->units[it], scene->unitBytes[it]);
         bool hasSamples = scene->needsSamples;
         id<MTLTexture> target = (__bridge id<MTLTexture>)after;
         MTLRenderPassDescriptor* pass = [MTLRenderPassDescriptor new];
@@ -237,23 +243,31 @@ char* bd_vector_draw(const BDScene* scene, void* colors, void* depths, void* bef
         [encoder setFragmentTexture:(__bridge id<MTLTexture>)before atIndex:0];
         [encoder setFragmentTexture:(__bridge id<MTLTexture>)before atIndex:1];
         BDMode mode = BDModes;
+        BDPipeline pipeline = BDPipelines;
+        BDBounds clip = { 0, 0, target.width, target.height };
         uint32_t mixing = 0, texture = 0;
-        if (scene->opaqueBytes) {
-            [encoder setRenderPipelineState:pipelines[hasSamples][BDHides]];
+        for (const BDStep* step = scene->opaque; step < scene->opaque + 2; step++) {
+            if (step->first == step->end)
+                continue;
+            [encoder setRenderPipelineState:pipelines[hasSamples][step == scene->opaque ? BDHides : BDShades]];
             [encoder setDepthStencilState:tests[BDOpaque]];
-            draw(encoder, &scene->opaque);
+            draw(encoder, step, &clip);
         }
         for (const BDStep* step = scene->steps; step < scene->steps + scene->count; step++) {
-            if (mode != step->mode || mixing != step->mixing) {
-                mode = step->mode, mixing = step->mixing;
-                [encoder setRenderPipelineState:pipelines[hasSamples][mode == BDCount ? BDCounts : mixing ? BDMixes : BDBlends]];
-                [encoder setDepthStencilState:tests[mode]];
-                if (mixing)
-                    [encoder setFragmentBytes:&mixing length:sizeof mixing atIndex:3];
+            // What has no color changes none, and it takes time to go to a pipeline that knows that.
+            bool hasColor = step->mode != BDCount && step->mode <= BDCoverOdd;
+            BDPipeline needed = step->mode == BDTint ? BDTints : hasColor ? step->mixing ? BDMixes : BDBlends : pipeline == BDBlends && step->end - step->first < 256 ? BDBlends : BDCounts;
+            if (pipeline != needed)
+                [encoder setRenderPipelineState:pipelines[hasSamples][pipeline = needed]];
+            if (mode != step->mode)
+                [encoder setDepthStencilState:tests[mode = step->mode]];
+            if (step->mixing && mixing != step->mixing) {
+                mixing = step->mixing;
+                [encoder setFragmentBytes:&mixing length:sizeof mixing atIndex:3];
             }
             if (step->texture && step->texture != texture)
                 [encoder setFragmentTexture:(__bridge id<MTLTexture>)scene->textures[(texture = step->texture) - 1] atIndex:1];
-            draw(encoder, step);
+            draw(encoder, step, &clip);
         }
         [encoder endEncoding];
         [commands commit];

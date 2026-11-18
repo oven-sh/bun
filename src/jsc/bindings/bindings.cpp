@@ -28,6 +28,7 @@
 #include "headers.h"
 
 #include "BunClientData.h"
+#include "IsolatedWorld.h"
 #include "GCDefferalContext.h"
 #include "WebCoreJSBuiltins.h"
 
@@ -4555,7 +4556,7 @@ JSC::JSPromise* JSC__JSPromise__rejectedPromise(JSC::JSGlobalObject* globalObjec
     ASSERT_WITH_MESSAGE(arg0 != target, "Promise cannot be resolved to itself");
 
     // Note: the Promise can be another promise. Since we go through the generic promise resolve codepath.
-    arg0->resolve(arg1, arg1->vm(), JSC::JSValue::decode(JSValue2));
+    Bun::IsolatedWorld::resolve(arg1, arg0, target);
 }
 
 // This implementation closely mimics the one in JSC::JSPromise::resolve

@@ -95,7 +95,7 @@ pub(crate) fn set_focused<'a>(cx: &mut Cx<'a>, ui: &'a Ui, is_focused: bool) {
     if ui.is_focused.replace(is_focused) == is_focused {
         return;
     }
-    if ui.container().is_some() {
+    if ui.any_container().is_some() {
         input_method::forget_what_was_told(ui);
     }
     if !is_focused {

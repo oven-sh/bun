@@ -40,4 +40,5 @@ bun_threading.workspace = true
 bun_ui.workspace = true
 bun_url.workspace = true
 bun_wyhash.workspace = true
+bun_yarr.workspace = true
 encoding_rs.workspace = true

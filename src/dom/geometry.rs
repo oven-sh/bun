@@ -754,7 +754,10 @@ impl Document {
         let Some(style) = self.tree.style(node) else {
             return 0;
         };
-        if self.tree.html_tag(node) == name!("body") || self.tree.is_root(node) {
+        if self.tree.html_tag(node) == name!("body")
+            || self.tree.is_root(node)
+            || self.top_layer.contains(&node)
+        {
             return 0;
         }
         let is_fixed = style.layout.position == PositionKind::Fixed;

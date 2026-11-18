@@ -8,7 +8,9 @@ use crate::Bytes;
 use crate::csp::Metadata;
 use crate::headers::HeaderList;
 use crate::net::body::{Blob, Body, Data};
+use crate::origin::Origin;
 use crate::referrer::ReferrerPolicy;
+use crate::service::Handler;
 use crate::url::Url;
 use crate::wire::{self, Wire};
 
@@ -168,6 +170,13 @@ impl RequestBody {
 }
 
 crate::wire! {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum Navigation {
+        Other,
+        Reload,
+        History,
+    }
+
     /// What a page may decide about a request. Who it is made for is not part of that.
     pub struct Request {
         pub url: Url,
@@ -195,8 +204,30 @@ crate::wire! {
         pub has_user_activation: bool,
         pub blocks_rendering: bool,
         pub keepalive: bool,
+        pub navigation: Navigation,
+        /// Of a navigation.
+        pub starter: Option<Starter>,
+        /// A service worker passes on a request for a script or a document.
+        pub may_become_code: bool,
+        pub is_only_for_service_worker: bool,
+        /// If it is not that of the client.
+        pub handler: Option<Handler>,
     }
 }
+
+/// It still counts if a service worker passes the request on.
+#[derive(Clone)]
+pub struct Starter {
+    /// `None` is the user, or the app.
+    pub(crate) origin: Option<Origin>,
+    pub(crate) has_tainted_origin: bool,
+    /// Those that have been asked for.
+    pub(crate) urls: Vec<Url>,
+    pub(crate) destination: Destination,
+    pub(crate) has_user_activation: bool,
+}
+
+crate::wire!(impl never Starter);
 
 impl Request {
     pub fn new(
@@ -227,6 +258,27 @@ impl Request {
             has_user_activation: false,
             blocks_rendering: false,
             keepalive: false,
+            navigation: Navigation::Other,
+            starter: None,
+            may_become_code: false,
+            is_only_for_service_worker: false,
+            handler: None,
+        }
+    }
+
+    pub(crate) fn without_body(&self) -> Request {
+        Request {
+            url: self.url.clone(),
+            method: self.method.clone(),
+            headers: self.headers.clone(),
+            cors_exempt_headers: self.cors_exempt_headers.clone(),
+            body: None,
+            referrer: self.referrer.clone(),
+            metadata: self.metadata.clone(),
+            blob: self.blob.clone(),
+            starter: self.starter.clone(),
+            handler: None,
+            ..*self
         }
     }
 

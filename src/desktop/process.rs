@@ -351,6 +351,10 @@ impl DesktopProcess {
     }
 }
 
+pub(crate) fn heap_snapshot() -> String {
+    string(&Bun__generateHeapSnapshotV8(global().vm()).to_utf8())
+}
+
 pub(crate) fn write_heap_snapshot(file: &str) -> bool {
     let snapshot = Bun__generateHeapSnapshotV8(global().vm());
     files::write(file, &snapshot.to_utf8(), 0o600).is_ok()

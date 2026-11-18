@@ -617,7 +617,7 @@ impl XMLHttpRequest {
     fn start_response<'a>(&'a self, cx: Cx<'_, 'a>, head: &Head, length: u64) {
         let (upload, generation) = (self.upload(), self.generation.get());
         self.is_uploaded.set(true);
-        if let Some(upload) = upload {
+        if let Some(upload) = upload.filter(|_| !head.is_from_service_worker) {
             [atom!("progress"), atom!("load"), atom!("loadend")]
                 .into_iter()
                 .for_each(|it| progress(cx, upload, it, length, length));

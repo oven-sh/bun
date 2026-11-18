@@ -122,6 +122,9 @@ unsafe extern "C" fn decode_brotli(
     output: *mut u8,
     output_len: usize,
 ) -> usize {
+    if bun_removable_features::is_removed(bun_removable_features::Feature::BrotliDecoder) {
+        return 0;
+    }
     // SAFETY: the library passes the parts of two slices.
     let (mut input, output) = unsafe {
         (

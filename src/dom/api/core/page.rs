@@ -143,7 +143,7 @@ pub(super) fn cookie<'a>(heap: &JsHeap<'a>, doc: &'a Doc) -> Result<'a, DomStrin
     };
     let (version, url, mut known) = (
         client.cookie_version(),
-        client.url(),
+        client.cookie_url(),
         doc.extra::<Cookies>().0.borrow_mut(),
     );
     known.take_if(|it| it.0 != version || it.1.href() != url.href());

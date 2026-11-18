@@ -17,9 +17,7 @@ struct OfThread {
     is_in_use: bool,
 }
 
-thread_local! {
-    static OF_THREAD: ManuallyDrop<RefCell<OfThread>> = ManuallyDrop::default();
-}
+static OF_THREAD: bun_ui::Lasting<ManuallyDrop<RefCell<OfThread>>> = bun_ui::Lasting::empty();
 
 fn of_thread<R>(steps: impl FnOnce(&mut OfThread) -> R) -> R {
     OF_THREAD.with(|it| steps(&mut it.borrow_mut()))

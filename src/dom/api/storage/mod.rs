@@ -100,6 +100,7 @@ impl StorageManager {
                 ("caches", usage.of_caches),
                 ("fileSystem", usage.of_files),
                 ("indexedDB", usage.of_databases),
+                ("serviceWorkerRegistrations", usage.of_service_workers),
             ];
             parts
                 .iter()

@@ -2076,4 +2076,5 @@ pub mod options;
 pub mod package_names;
 pub mod resolver;
 pub mod result;
+pub mod scripts_of_pages;
 pub mod standalone_module_graph;

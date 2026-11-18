@@ -37,8 +37,20 @@ unsafe extern "C" {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct SqlError(c_int);
 
+crate::wire!(impl SqlError(_));
+
 impl SqlError {
+    /// Unless the host answers.
+    pub(super) async fn unless<T, E: From<SqlError>>(
+        answer: crate::exec::Receiver<core::result::Result<T, E>>,
+    ) -> core::result::Result<T, E> {
+        answer
+            .await
+            .unwrap_or_else(|| Err(SqlError::CANNOT_OPEN.into()))
+    }
+
     const CANNOT_OPEN: SqlError = SqlError(14);
+    pub(super) const TOO_BIG: SqlError = SqlError(18);
     pub(super) const FULL: SqlError = SqlError(13);
     pub(super) const IO: SqlError = SqlError(10);
 

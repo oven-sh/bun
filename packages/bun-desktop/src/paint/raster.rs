@@ -565,6 +565,47 @@ pub fn blend_row(row: &mut [Pixel], colors: &[Pixel], by: u8) {
         .for_each(|(pixel, color)| *pixel = over(*pixel, scale(*color, by)));
 }
 
+fn blend_through(row: &mut [Pixel], colors: &mut [Pixel], coverage: &[u8]) {
+    prefer_wide!(blend_through(row, colors, coverage));
+    colors
+        .iter_mut()
+        .zip(coverage)
+        .for_each(|(color, by)| *color = scale(*color, *by));
+    blend_row(row, colors, 255);
+}
+
+/// From the first to the last that is not 0.
+fn covered_part(coverage: &[u8]) -> Range<usize> {
+    let before = coverage
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .take_while(|it| **it == [0; 8])
+        .count()
+        * 8;
+    let Some(start) = coverage[before..]
+        .iter()
+        .position(|it| *it != 0)
+        .map(|it| it + before)
+    else {
+        return 0..0;
+    };
+    let rest = coverage.len()
+        - coverage
+            .as_rchunks::<8>()
+            .1
+            .iter()
+            .rev()
+            .take_while(|it| **it == [0; 8])
+            .count()
+            * 8;
+    start
+        ..coverage[..rest]
+            .iter()
+            .rposition(|it| *it != 0)
+            .map_or(start, |it| it + 1)
+}
+
 pub fn premultiply_row(row: &mut [[u8; 4]]) {
     prefer_wide!(premultiply(row));
     row.iter_mut()
@@ -702,6 +743,18 @@ impl Coverage {
     }
 
     pub fn of_shape(shape: &RoundedRect, matrix: &Transform, area: IntRect) -> Coverage {
+        let is_turned = matrix
+            .kx
+            .abs()
+            .max(matrix.ky.abs())
+            .min(matrix.sx.abs().max(matrix.sy.abs()))
+            > 1e-4;
+        if let Some((slant, center)) = is_turned
+            .then(|| super::slant::Slant::of(shape, matrix))
+            .flatten()
+        {
+            return slant.coverage(center, area);
+        }
         let (path, inside) = (
             rounded_rect_path(shape),
             inner_band(shape, matrix).intersect(area),
@@ -1004,24 +1057,18 @@ impl<'a> View<'a> {
             (Paint::Solid(color), None) => fill_row(row, *color),
             (Paint::Solid(color), Some(coverage)) => fill_through(row, *color, coverage),
             (Paint::Shader(shade), coverage) => {
-                let end = coverage.map_or(row.len(), |it| {
-                    it.iter().rposition(|it| *it != 0).map_or(0, |it| it + 1)
-                });
-                let start = coverage
-                    .and_then(|it| it.iter().position(|it| *it != 0))
-                    .unwrap_or(0);
+                let Range { start, end } = coverage.map_or(0..row.len(), covered_part);
                 if start == end {
                     return;
                 }
                 colors.resize(end - start, [0; 4]);
                 shade(left + start as i32, y, colors);
-                if let Some(coverage) = coverage {
-                    colors
-                        .iter_mut()
-                        .zip(&coverage[start..])
-                        .for_each(|(color, by)| *color = scale(*color, *by));
+                match coverage {
+                    Some(coverage) => {
+                        blend_through(&mut row[start..end], colors, &coverage[start..end])
+                    }
+                    None => blend_row(&mut row[start..end], colors, 255),
                 }
-                blend_row(&mut row[start..end], colors, 255);
             }
         }
     }

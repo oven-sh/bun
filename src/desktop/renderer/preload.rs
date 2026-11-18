@@ -9,6 +9,7 @@ use bun_web::dom;
 use bun_web::exec::block_pages;
 use bun_web::host::{Host, Relation};
 use bun_web::page::{Order, Outcome, Query};
+use bun_web::remote::is_page_process;
 use bun_web::renderer::Preloads;
 use bun_web::tasks::{self, Work};
 
@@ -922,6 +923,20 @@ impl RendererProcess {
 
     pub(crate) fn uptime(cx: Cx<'_, '_>) -> f64 {
         Preload::of(cx.global()).map_or(0., |it| it.started.elapsed().as_secs_f64())
+    }
+
+    pub(crate) fn crash(cx: Cx<'_, '_>) -> JsResult<()> {
+        if is_page_process() {
+            DesktopProcess::crash();
+        }
+        Preload::of_or_throw(cx.global())?.ask(Host::crashed)
+    }
+
+    pub(crate) fn hang(cx: Cx<'_, '_>) -> JsResult<()> {
+        if is_page_process() {
+            DesktopProcess::hang();
+        }
+        Err((cx.global()).throw(format_args!("process.hang() needs the option sandbox")))
     }
 
     pub(crate) fn cwd() -> &'static str {

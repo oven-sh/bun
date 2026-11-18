@@ -171,6 +171,8 @@ CGFloat primaryHeight(void);
 /// Outside of menus and drags, and of everything that could not run again while
 /// `body` runs a loop of its own.
 void soon(void (^body)(void));
+/// What is painted before then waits.
+extern CFTimeInterval commitsFrom;
 void whenIdle(void (^body)(void));
 void giveFocusBack(NSWindow *window);
 void displaysChanged(void);

@@ -1677,6 +1677,7 @@ mod tests {
         let paths = |public_path: &str, file_name: &str| EntryPointPaths {
             public_path: public_path.as_bytes().to_vec(),
             source_path: source_path_of(file_name.as_bytes()),
+            is_loaded_by_page: false,
         };
         let names_written = vec![
             paths("/$bunfs/root/worker", "/project/main.ts"),

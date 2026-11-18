@@ -7,6 +7,7 @@ use bun_ast::E::{JsonValue, ObjectJSON};
 use bun_core::env::OperatingSystem;
 use bun_core::fmt::quote;
 use bun_core::{ZBox, strings};
+use bun_options_types::aot_options::PageOptions;
 use bun_options_types::compile_target::CompileTarget;
 use bun_options_types::context::ContextData;
 use bun_options_types::{DesktopOptions, WindowsOptions};
@@ -29,7 +30,7 @@ macro_rules! fail {
 /// `src/desktop/paths.rs` reads it. It also tells a bundle of an earlier build from another directory.
 const MANIFEST: &[u8] = b"desktop.json";
 
-const KEYS: [&[u8]; 12] = [
+const KEYS: [&[u8]; 14] = [
     b"name",
     b"identifier",
     b"version",
@@ -42,6 +43,8 @@ const KEYS: [&[u8]; 12] = [
     b"resources",
     b"infoPlist",
     b"dom",
+    b"pages",
+    b"preloads",
 ];
 
 /// The suffix of `public.app-category.*`, and freedesktop.org's categories.
@@ -86,6 +89,7 @@ pub(crate) struct DesktopBundle {
     pub(crate) shown_path: Vec<u8>,
     pub(crate) executable: Vec<u8>,
     pub(crate) starts_in_window: bool,
+    pub(crate) pages: PageOptions,
     root: Vec<u8>,
     library: Vec<u8>,
     files: Vec<GeneratedFile>,
@@ -1137,10 +1141,25 @@ impl DesktopBundle {
             );
         }
 
+        let paths = |key| -> Result<Vec<Vec<u8>>> {
+            let Some(setting) = layers.get(key) else {
+                return Ok(Vec::new());
+            };
+            let written = setting.strings()?.into_iter();
+            Ok(written.map(|it| join(setting.directory, &[it])).collect())
+        };
+        let pages = PageOptions {
+            listed: paths("pages")?,
+            preloads: paths("preloads")?,
+            shipped: resources.iter().map(|it| it.from.clone()).collect(),
+            app_directory: strings::without_trailing_slash(package_directory).to_vec(),
+        };
+
         Ok(DesktopBundle {
             shown_path,
             executable,
             starts_in_window,
+            pages,
             root,
             library: layout.library,
             files,

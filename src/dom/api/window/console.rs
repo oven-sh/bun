@@ -4,7 +4,7 @@ use bun_web::client::ScriptLocation;
 use bun_web::host::{ConsoleAudience, Level};
 
 use super::*;
-use crate::api::events::{describe, stack_of};
+use crate::api::events::{describe, stack_of, window_around};
 
 type Data<'r, 'a> = &'r [JsLocal<'a>];
 
@@ -87,7 +87,7 @@ fn format(global: &JSGlobalObject, mut values: &[JSValue]) -> String {
 
 /// `method` is what the inspector calls it.
 fn write<'a>(cx: Cx<'_, 'a>, level: Level, method: &str, first: Option<&str>, data: Data<'_, 'a>) {
-    let Some(window) = WindowTarget::of_realm(&cx.heap) else {
+    let Some(window) = window_around(&cx.heap) else {
         return;
     };
     let audience = window.host().console_audience();
@@ -106,12 +106,17 @@ fn write<'a>(cx: Cx<'_, 'a>, level: Level, method: &str, first: Option<&str>, da
         format(cx.global(), &all[1..]),
     );
     if audience == ConsoleAudience::Inspector {
+        let summary = [DomString::from_utf8(&message).to_js(&cx.heap).to_js()];
         window
             .host()
             .link()
             .inspect(bun_web::host::Inspected::Console {
                 method: name,
-                values: &all[1..],
+                values: if WindowTarget::of_realm(&cx.heap).is_some() {
+                    &all[1..]
+                } else {
+                    &summary
+                },
             });
     }
     method.ensure_still_alive();

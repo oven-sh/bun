@@ -28,11 +28,15 @@ const HOME: &str = ".print.invalid";
 const BLOB: &str = "https://print.invalid/.blob/";
 const POLICY: &str = "default-src 'none'; img-src * data:; font-src * data:; style-src * 'unsafe-inline'; base-uri *; frame-src https://*.page.print.invalid";
 
+const MILLISECONDS_FOR_RESOURCE: u64 = 3000;
+const MILLISECONDS_FOR_ALL: u64 = 60_000;
+
 struct Duplicate {
     /// The document, and those in its frames.
     pages: Vec<Root<Page>>,
     markup: BTreeMap<String, String>,
-    blobs: Vec<Option<Blob>>,
+    /// With the URL, and which of the pages has it.
+    blobs: Vec<(Option<Blob>, String, usize)>,
     /// Which of the pages a document or a style sheet is for.
     referrers: Rc<RefCell<BTreeMap<String, usize>>>,
 }
@@ -50,7 +54,7 @@ impl Duplicate {
             .chain(snapshot.frames)
         {
             if let Some(index) = this.pages.iter().position(|it| it.get().id() == id) {
-                let (url, copy) = (printed_from(id), this.copy(&markup));
+                let (url, copy) = (printed_from(id), this.copy(&markup, index));
                 this.referrers.borrow_mut().insert(url.clone(), index);
                 this.markup.insert(url, copy);
             }
@@ -62,16 +66,19 @@ impl Duplicate {
         printed_from(self.pages[0].get().id())
     }
 
-    fn copy(&mut self, mut markup: &str) -> String {
-        let mut copy = String::new();
+    fn copy(&mut self, mut markup: &str, index: usize) -> String {
+        let (mut copy, is_here) = (
+            String::new(),
+            !self.pages[index].get().is_in_other_process(),
+        );
         while let Some((before, after)) = split_once(markup, "blob:") {
             let is_part = |it: &u8| !it.is_ascii_whitespace() && !b"\"'()<>&".contains(it);
             let (rest_of_url, rest) = after.split_at(after.bytes().take_while(is_part).count());
             copy += &format!("{before}{BLOB}{}", self.blobs.len());
-            self.blobs.push(
-                Url::parse(format!("blob:{rest_of_url}").as_bytes())
-                    .and_then(|it| resolve_blob_url(&it)),
-            );
+            let url = format!("blob:{rest_of_url}");
+            let parsed = Url::parse(url.as_bytes()).filter(|_| is_here);
+            let blob = parsed.and_then(|it| resolve_blob_url(&it));
+            self.blobs.push((blob, url, index));
             markup = rest;
         }
         copy += markup;
@@ -100,11 +107,26 @@ impl Duplicate {
                 }),
             );
         }
+        let header = |name: &str| invoke(get(request, "headers")?, "get", &[js(name)?]);
+        let referrer = match header("referer")? {
+            it if it.is_string() => text_of(it)?,
+            _ => text_of(get(request, "referrer")?)?,
+        };
+        let page = self.referrers.borrow().get(&referrer).copied();
         if let Some(index) = url.strip_prefix(BLOB) {
-            let blob = index
-                .parse()
-                .ok()
-                .and_then(|it: usize| self.blobs.get(it)?.clone());
+            let found = (index.parse().ok()).and_then(|it: usize| self.blobs.get(it));
+            let found = found.filter(|it| Some(it.2) == page);
+            if let Some((_, url, page)) = found
+                && self.pages[*page].get().is_in_other_process()
+            {
+                let fetched = self.pages[*page].get().fetch(url, Destination::Image)?;
+                return Ok(task::promise(async move {
+                    let fetched = fetched.await;
+                    let bytes = fetched.as_ref().map_or(&[][..], |it| &it.bytes);
+                    realm::construct("Response", &[buffer(bytes)?])
+                }));
+            }
+            let blob = found.and_then(|it| it.0.clone());
             return Ok(task::promise(async move {
                 let bytes = match blob {
                     Some(blob) => blob
@@ -119,13 +141,7 @@ impl Duplicate {
                 realm::construct("Response", &[buffer(&bytes)?])
             }));
         }
-        let header = |name: &str| invoke(get(request, "headers")?, "get", &[js(name)?]);
-        let referrer = match header("referer")? {
-            it if it.is_string() => text_of(it)?,
-            _ => text_of(get(request, "referrer")?)?,
-        };
         let failed = || error(format_args!("net::ERR_FAILED"));
-        let page = self.referrers.borrow().get(&referrer).copied();
         let Some(page) = page.filter(|_| !self.markup.keys().any(|it| url.starts_with(it))) else {
             return Ok(task::promise(async move { Err::<JSValue, _>(failed()) }));
         };
@@ -143,7 +159,8 @@ impl Duplicate {
             (self.pages[page].get()).fetch(at_home.as_ref().unwrap_or(&url), destination)?;
         let referrers = Rc::clone(&self.referrers);
         Ok(task::promise(async move {
-            let fetched = (fetched.await).ok_or_else(failed)?;
+            let fetched = task::within(MILLISECONDS_FOR_RESOURCE, fetched).await;
+            let fetched = fetched.flatten().ok_or_else(failed)?;
             if destination == Destination::Style {
                 let url = before(&url, "#").to_owned();
                 referrers.borrow_mut().entry(url).or_insert(page);
@@ -345,7 +362,9 @@ async fn lay_out(duplicate: Duplicate, options: &Value) -> JsResult<Vec<u8>> {
         wait(invoke(contents.get(), "loadURL", &[js(&*url)?])).await?;
         wait(invoke(contents.get(), "printToPDF", &[js(options)?])).await
     };
-    let pdf = catch(print.await)?.map_err(keep);
+    let pdf = (task::within(MILLISECONDS_FOR_ALL, print).await)
+        .unwrap_or_else(|| Err(error(format_args!("It takes too long"))));
+    let pdf = catch(pdf)?.map_err(keep);
     invoke(contents.get(), "destroy", &[])?;
     ["http", "https"]
         .into_iter()
@@ -425,7 +444,7 @@ pub(crate) fn print_remote(
     };
     let remote = Root::new(remote);
     tell_after(done, async move {
-        let pdf = (task::within(60_000, pdf).await)
+        let pdf = (task::within(MILLISECONDS_FOR_ALL, pdf).await)
             .ok_or_else(|| error(format_args!("It takes too long")))?
             .map_err(|it| it.throw())?;
         let pages = Pages {
@@ -444,9 +463,16 @@ fn printing_changed(page: &Page, is_over: bool) -> JsResult<()> {
         .try_for_each(|it| it.get().tell(|it| it.printing_changed(is_over)))
 }
 
-fn duplicate(page: &Page) -> JsResult<Duplicate> {
+async fn duplicate(page: &Page) -> JsResult<Duplicate> {
     printing_changed(page, false)?;
-    Duplicate::new(page, page.snapshot(Purpose::Print)?)
+    match catch(page.snapshot(Purpose::Print).await)? {
+        Ok(snapshot) => Duplicate::new(page, snapshot),
+        Err(thrown) => {
+            let thrown = keep(thrown);
+            printing_changed(page, true)?;
+            Err(task::throw(&thrown))
+        }
+    }
 }
 
 /// For the app.
@@ -454,11 +480,12 @@ pub(crate) fn print_page(page: &Page, options: Value, done: JSValue) -> JsResult
     if !engine::is_available()? {
         return tell(done, Err("Printing needs a web engine"));
     }
-    let (duplicate, page) = (duplicate(page)?, Root::new(page));
     if is_printing().replace(true) {
         return tell(done, FAILED);
     }
+    let page = Root::new(page);
     tell_after(done, async move {
+        let duplicate = duplicate(page.get()).await?;
         let result = catch(print_duplicate(&page, duplicate, &options).await)?;
         printing_changed(page.get(), true).map(|()| result.unwrap_or(FAILED))
     });
@@ -470,8 +497,9 @@ pub(crate) fn print_to_pdf(page: &Page, options: Value) -> JsResult<JSValue> {
     if !engine::is_available()? {
         return Err(error(format_args!("Printing needs a web engine")));
     }
-    let (duplicate, page) = (duplicate(page)?, Root::new(page));
+    let page = Root::new(page);
     Ok(task::promise(async move {
+        let duplicate = duplicate(page.get()).await?;
         let pdf = catch(lay_out_in_turn(duplicate, options).await)?.map_err(keep);
         printing_changed(page.get(), true)?;
         buffer(&pdf.map_err(|it| task::throw(&it))?)
@@ -484,15 +512,20 @@ pub(crate) fn print(page: &Page, markup: Option<String>) -> JsResult<JSValue> {
         markup,
         ..Snapshot::default()
     });
-    let snapshot = given.map_or_else(|| page.snapshot(Purpose::Print), Ok)?;
-    let duplicate = Duplicate::new(page, snapshot)?;
     if !engine::is_available()? || is_printing().replace(true) {
         return resolved(JSValue::UNDEFINED);
     }
     let page = Root::new(page);
     Ok(task::promise(async move {
-        let options = record! { "printBackground": true };
-        let result = catch(print_duplicate(&page, duplicate, &options).await);
+        let print = async {
+            let snapshot = match given {
+                Some(given) => given,
+                None => page.get().snapshot(Purpose::Print).await?,
+            };
+            let options = record! { "printBackground": true };
+            print_duplicate(&page, Duplicate::new(page.get(), snapshot)?, &options).await
+        };
+        let result = catch(print.await);
         is_printing().set(false);
         if let Err(thrown) = result? {
             let message = format!("Failed to print: {}", message_of(thrown)?);

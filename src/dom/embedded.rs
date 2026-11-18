@@ -1,7 +1,6 @@
 //! SVG files that are shown as images, or that have what a document refers to.
 
 use core::cell::{Cell, RefCell};
-use core::mem::ManuallyDrop;
 use std::rc::Rc;
 
 use crate::api::core::Atom;
@@ -82,8 +81,9 @@ impl Resized {
     }
 }
 
+static VECTORS: bun_ui::Lasting<RefCell<Map<u32, Rc<RefCell<Vector>>>>> = bun_ui::Lasting::empty();
+
 thread_local! {
-    static VECTORS: ManuallyDrop<RefCell<Map<u32, Rc<RefCell<Vector>>>>> = bun_ui::lasting(|| drop(VECTORS.with(|it| it.take())));
     static LAST_ID: Cell<u32> = const { Cell::new(VECTOR) };
     static NESTING: Cell<u32> = const { Cell::new(0) };
 }

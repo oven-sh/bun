@@ -315,6 +315,12 @@ pub(crate) fn snapshot<'a>(
     for (element, inner) in
         frames::entry::windows_in_this_process(doc).filter(|it| it.0.is_html(atom!("iframe")))
     {
+        if let Some(apart) =
+            frames::entry::page_apart_from(element).filter(|_| purpose == Purpose::Print)
+        {
+            on_paper.push((element.id(), DomString::from_utf8(&printed_from(apart))));
+            continue;
+        }
         let own = inner.map(|it| it.page).filter(|it| *it != 0);
         let markup = inner
             .map(|it| snapshot(cx, it.document(), own.unwrap_or(page), purpose, parts))

@@ -6,6 +6,7 @@ use std::ptr::{null, null_mut};
 use std::rc::Rc;
 
 use super::{Mode, SHADER, Scene};
+use crate::egl;
 use crate::error::{Context as _, Result, bail, ensure};
 use crate::paint::raster::{IntRect, Pixel};
 
@@ -19,12 +20,9 @@ macro_rules! functions {
             fn load() -> Option<Functions> {
                 // SAFETY: the signatures are those of the specifications.
                 unsafe {
-                    let library = Some(libc::dlopen(c"libEGL.so.1".as_ptr(), libc::RTLD_NOW)).filter(|it| !it.is_null())?;
-                    let find = libc::dlsym(library, c"eglGetProcAddress".as_ptr());
-                    let find = std::mem::transmute::<*mut c_void, Option<unsafe extern "C" fn(*const c_char) -> *mut c_void>>(find)?;
                     Some(Functions {
                         $($name: std::mem::transmute::<*mut c_void, Option<unsafe extern "C" fn($($argument),*) $(-> $result)?>>(
-                            find($symbol.as_ptr()),
+                            egl::find($symbol),
                         )?,)*
                     })
                 }
@@ -33,18 +31,10 @@ macro_rules! functions {
     };
 }
 
-type Handle = *mut c_void;
-
 functions! {
-    egl_get_platform_display = c"eglGetPlatformDisplay"(u32, Handle, *const isize) -> Handle;
-    egl_initialize = c"eglInitialize"(Handle, *mut i32, *mut i32) -> u32;
-    egl_bind_api = c"eglBindAPI"(u32) -> u32;
-    egl_create_context = c"eglCreateContext"(Handle, Handle, Handle, *const i32) -> Handle;
-    egl_make_current = c"eglMakeCurrent"(Handle, Handle, Handle, Handle) -> u32;
-    egl_destroy_context = c"eglDestroyContext"(Handle, Handle) -> u32;
-    egl_terminate = c"eglTerminate"(Handle) -> u32;
     get_string = c"glGetString"(u32) -> *const c_char;
     get_error = c"glGetError"() -> u32;
+    get_graphics_reset_status = c"glGetGraphicsResetStatusEXT"() -> u32;
     get_integerv = c"glGetIntegerv"(u32, *mut i32);
     create_shader = c"glCreateShader"(u32) -> u32;
     shader_source = c"glShaderSource"(u32, i32, *const *const c_char, *const i32);
@@ -143,6 +133,10 @@ uniform highp int first_unit, last_texel, stays_opaque, mode;
 uint TEXEL(uint it) {
     it = min(it, uint(last_texel));
     return WORD(it >> 2)[it & 3u];
+}
+vec2 POINT(uint it) {
+    vec4 two = FLOATS(WORD(it >> 1));
+    return (it & 1u) == 0u ? two.xy : two.zw;
 }
 ";
 
@@ -270,8 +264,7 @@ impl Program {
 
 struct Device {
     gl: Functions,
-    display: Handle,
-    context: Handle,
+    context: egl::Context,
     blends: Program,
     mixes: Option<Program>,
     /// How many rows the textures with the words and the units have.
@@ -284,57 +277,30 @@ thread_local! {
     static DEVICE: RefCell<Option<Device>> = const { RefCell::new(None) };
 }
 
-impl Drop for Device {
-    fn drop(&mut self) {
-        // SAFETY: they are alive, and not used after this.
-        unsafe {
-            (self.gl.egl_make_current)(self.display, null_mut(), null_mut(), null_mut());
-            (self.gl.egl_destroy_context)(self.display, self.context);
-            (self.gl.egl_terminate)(self.display);
-        }
-    }
-}
-
 impl Device {
     fn new(takes_software: bool) -> Result<Device> {
-        const SURFACELESS: u32 = 0x31DD;
-        // SAFETY: it only asks.
-        ensure!(
-            unsafe { libc::prctl(libc::PR_GET_MDWE, 0, 0, 0, 0) } <= 0,
-            "drivers crash if they cannot run the code they write"
-        );
-        let gl = Functions::load().context("there is no OpenGL ES 3")?;
+        let context = egl::Context::new(takes_software)
+            .context("there is no OpenGL ES 3 that survives errors")?;
+        let gl = Functions::load().context("a function is missing")?;
+        let mut device = Device {
+            gl,
+            context,
+            blends: Program::default(),
+            mixes: None,
+            rows: [0; 2],
+            max_side: 0,
+            units: Vec::new(),
+        };
         // SAFETY: the arguments are what the specifications ask for.
         unsafe {
-            let display = (gl.egl_get_platform_display)(SURFACELESS, null_mut(), null());
-            ensure!(
-                !display.is_null() && (gl.egl_initialize)(display, null_mut(), null_mut()) != 0,
-                "there is no display"
-            );
-            (gl.egl_bind_api)(0x30A0);
-            let context = (gl.egl_create_context)(
-                display,
-                null_mut(),
-                null_mut(),
-                [0x3098, 3, 0x3038].as_ptr(),
-            );
-            let mut device = Device {
-                gl,
-                display,
-                context,
-                blends: Program::default(),
-                mixes: None,
-                rows: [0; 2],
-                max_side: 0,
-                units: Vec::new(),
-            };
             let gl = &device.gl;
-            ensure!(
-                !context.is_null()
-                    && (gl.egl_make_current)(display, null_mut(), null_mut(), context) != 0,
-                "there is no context"
-            );
-            let name = CStr::from_ptr((gl.get_string)(0x1F01)).to_string_lossy();
+            let string = |name| {
+                Some((gl.get_string)(name))
+                    .filter(|it| !it.is_null())
+                    .map(|it| CStr::from_ptr(it).to_string_lossy())
+                    .context("it does not say what it is")
+            };
+            let name = string(0x1F01)?;
             ensure!(
                 takes_software
                     || !["llvmpipe", "softpipe", "SwiftShader"]
@@ -342,8 +308,7 @@ impl Device {
                         .any(|it| name.contains(it)),
                 "{name} is no GPU"
             );
-            let has_extension = CStr::from_ptr((gl.get_string)(0x1F03))
-                .to_string_lossy()
+            let has_extension = string(0x1F03)?
                 .split(' ')
                 .any(|it| it == "GL_EXT_shader_framebuffer_fetch");
             (device.blends, device.mixes) = (
@@ -378,8 +343,9 @@ impl Device {
 
     fn check(&self) -> Result<()> {
         // SAFETY: the context is current.
-        let error = unsafe { (self.gl.get_error)() };
-        ensure!(error == 0, "error {error:#x}");
+        let (error, reset) =
+            unsafe { ((self.gl.get_error)(), (self.gl.get_graphics_reset_status)()) };
+        ensure!(error | reset == 0, "error {error:#x}, reset {reset:#x}");
         Ok(())
     }
 
@@ -477,14 +443,12 @@ unsafe impl Send for Started {}
 /// To another thread.
 pub fn hand_over() -> Option<Started> {
     let device = DEVICE.take()?;
-    // SAFETY: the display is alive.
-    unsafe { (device.gl.egl_make_current)(device.display, null_mut(), null_mut(), null_mut()) };
+    device.context.set_current(false);
     Some(Started(device))
 }
 
 pub fn take_over(Started(device): Started) {
-    // SAFETY: both are alive.
-    unsafe { (device.gl.egl_make_current)(device.display, null_mut(), null_mut(), device.context) };
+    device.context.set_current(true);
     DEVICE.set(Some(device));
 }
 
@@ -608,7 +572,7 @@ impl Drop for Target {
 }
 
 impl Target {
-    pub fn new(width: i32, height: i32) -> Result<Target> {
+    pub fn new(width: i32, height: i32, _is_wide: bool) -> Result<Target> {
         let mut target = Target {
             texture: Rc::new(Texture::new(width, height)?),
             samples: [0; 2],
@@ -689,7 +653,12 @@ impl Target {
             let mut units = std::mem::take(&mut device.units);
             units.clear();
             // What is in front comes first, so that what it hides is not painted.
-            units.extend(scene.units.iter().chain(scene.opaque.iter().rev()));
+            units.extend(
+                scene
+                    .units
+                    .iter()
+                    .chain(scene.opaque.iter().flat_map(|it| it.iter().rev())),
+            );
             device.upload(1, &units);
             device.units = units;
             let gl = &device.gl;
@@ -720,13 +689,18 @@ impl Target {
             (gl.clear)(0x4500);
             (gl.enable)(SCISSOR_TEST);
             let (mut state, mut program, mut texture) = (None, device.blends, 0);
-            for step in [scene.opaque_step()]
+            for step in scene
+                .opaque_steps()
                 .iter()
                 .chain(&scene.steps)
                 .filter(|it| it.first < it.end)
             {
                 if state.replace((step.mode, step.mixing)) != Some((step.mode, step.mixing)) {
-                    let shows = step.mode != Mode::Count;
+                    let (counts, blocks) = (
+                        step.mode == Mode::Count,
+                        matches!(step.mode, Mode::BlockNonZero | Mode::BlockOdd),
+                    );
+                    let shows = !counts && !blocks;
                     program = device
                         .mixes
                         .filter(|_| step.mixing != 0)
@@ -734,17 +708,21 @@ impl Target {
                     (gl.use_program)(program.name);
                     (gl.uniform_1i)(program.mode, step.mixing as i32);
                     switch(BLEND, step.mixing == 0);
-                    switch(DEPTH_TEST, shows);
+                    switch(DEPTH_TEST, !counts);
                     switch(
                         STENCIL_TEST,
-                        !matches!(step.mode, Mode::Blend | Mode::Opaque),
+                        !matches!(step.mode, Mode::Blend | Mode::Opaque | Mode::Tint),
                     );
                     (gl.color_mask)(shows.into(), shows.into(), shows.into(), shows.into());
-                    if shows {
+                    if !counts {
                         (gl.stencil_func)(
-                            0x0205,
+                            if blocks { 0x0202 } else { 0x0205 },
                             0,
-                            if step.mode == Mode::CoverOdd { 1 } else { 255 },
+                            if matches!(step.mode, Mode::CoverOdd | Mode::BlockOdd) {
+                                1
+                            } else {
+                                255
+                            },
                         );
                         (gl.stencil_op)(0, 0, 0);
                     } else {

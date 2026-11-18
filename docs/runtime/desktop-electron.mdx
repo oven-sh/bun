@@ -15,18 +15,20 @@ The types are those of the `electron` package, which can stay in `devDependencie
 
 ## Packaging
 
-The main script goes in the executable. Pages and preload scripts go in a directory named `app` in the resources, which `app.getAppPath()` returns.
+The main script, [pages](/compiler/executables#pages) and preload scripts go in the executable.
 
 ```json package.json icon="file-json"
 {
   "productName": "Notes",
-  "desktop": { "resources": [{ "from": "dist/renderer", "to": "app" }] }
+  "desktop": { "pages": ["dist/renderer/*.html"], "preloads": ["dist/preload.js"] }
 }
 ```
 
 ```sh terminal icon="terminal"
-bun compile --desktop ./main.js
+bun compile --desktop ./dist/main.js
 ```
+
+To ship them as files, copy them to a directory named `app` in the resources, which `app.getAppPath()` returns: `"resources": [{ "from": "dist/renderer", "to": "app" }]`.
 
 In an app that is built with `--desktop`, these modules are built in from the start, whether or not the `electron` package is installed. `bun build --compile --desktop` does the same without compiling ahead of time, and so does `bun run --aot` for a program that imports `bun:desktop`.
 
@@ -39,7 +41,7 @@ There is no renderer process. Each page has a global object of its own in the Ja
 - Work that blocks the main script blocks painting and input, and the other way around. Move it to a `Worker` or a `utilityProcess`.
 - An uncaught error in a page goes to `window.onerror` and the `console-message` event, not to `process.on("uncaughtException")`.
 - A page cannot crash or hang on its own. `render-process-gone` and `unresponsive` are not emitted for it.
-- Web workers are threads. `utilityProcess.fork()` starts a process.
+- Web workers and service workers are threads. `utilityProcess.fork()` starts a process.
 
 ## Security
 

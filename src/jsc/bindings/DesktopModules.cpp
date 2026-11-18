@@ -43,7 +43,10 @@ extern "C" void Bun__Desktop__await(JSGlobalObject* globalObject, EncodedJSValue
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* promise = JSPromise::resolvedPromise(globalObject, JSValue::decode(value));
+    // The `then` of another realm would get functions of this one.
+    auto* promise = dynamicDowncast<JSPromise>(JSValue::decode(value));
+    if (!promise || promise->realm() == globalObject)
+        promise = JSPromise::resolvedPromise(globalObject, JSValue::decode(value));
     RETURN_IF_EXCEPTION(scope, );
     RELEASE_AND_RETURN(scope, promise->performPromiseThenExported(vm, globalObject, JSValue::decode(fulfilled), JSValue::decode(rejected), jsUndefined()));
 }

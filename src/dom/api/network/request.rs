@@ -7,7 +7,11 @@ use bun_web::headers::{is_forbidden_method, is_token, normalize_method};
 use bun_web::net::body::Blob;
 use bun_web::origin::Origin;
 use bun_web::referrer::ReferrerPolicy;
-use bun_web::request::{self, CacheMode, Credentials, Destination, InitiatorType, Mode, Redirect};
+use bun_web::request::{
+    self, CacheMode, Credentials, Destination, InitiatorType, Mode, Navigation, Redirect,
+    RequestBody, Starter,
+};
+use bun_web::streams::Incoming;
 
 use super::body::{Body, Content};
 use super::headers::{Guard, Guarded};
@@ -45,9 +49,19 @@ pub(crate) struct Options {
     integrity: Bytes,
     pub(super) keepalive: bool,
     pub(super) uses_preflight: bool,
-    is_reload_navigation: bool,
-    is_history_navigation: bool,
+    pub(super) navigation: Navigation,
     blob: Option<Blob>,
+    starter: Option<Starter>,
+    may_become_code: bool,
+    pub(super) skips_service_workers: bool,
+}
+
+/// What the app runs beside a page is none of the business of its service worker.
+pub(super) fn is_called_from_isolated_world() -> bool {
+    unsafe extern "C" {
+        safe fn Bun__IsolatedWorld__isCalling() -> bool;
+    }
+    Bun__IsolatedWorld__isCalling()
 }
 
 impl Options {
@@ -71,8 +85,10 @@ impl Options {
             integrity: Bytes::default(),
             keepalive: false,
             uses_preflight: false,
-            is_reload_navigation: false,
-            is_history_navigation: false,
+            navigation: Navigation::Other,
+            starter: None,
+            may_become_code: false,
+            skips_service_workers: false,
         }
     }
 
@@ -113,8 +129,18 @@ impl Options {
             request.metadata.integrity,
             request.initiator_type,
         ) = (self.referrer_policy, self.integrity, Some(initiator));
-        (request.keepalive, request.uses_preflight, request.blob) =
-            (self.keepalive, self.uses_preflight, self.blob);
+        (
+            request.keepalive,
+            request.uses_preflight,
+            request.blob,
+            request.starter,
+        ) = (self.keepalive, self.uses_preflight, self.blob, self.starter);
+        request.may_become_code = self.may_become_code;
+        if self.skips_service_workers
+            || (client.controller().is_some() && is_called_from_isolated_world())
+        {
+            request.handler = Some(bun_web::service::Handler::Nobody);
+        }
         request
     }
 }
@@ -180,7 +206,7 @@ fn apply<'a>(heap: &JsHeap<'a>, init: &DomRequestInit<'a>, options: &mut Options
     if options.mode == Mode::Navigate {
         options.mode = Mode::SameOrigin;
     }
-    (options.is_reload_navigation, options.is_history_navigation) = (false, false);
+    (options.navigation, options.starter) = (Navigation::Other, None);
     (options.referrer, options.referrer_policy) = (Referrer::Client, ReferrerPolicy::Empty);
     match &init.referrer {
         Some(referrer) if referrer.is_empty() => options.referrer = Referrer::None,
@@ -410,6 +436,70 @@ impl Request {
         )
     }
 
+    /// For a service worker.
+    #[optimize(size)]
+    pub(crate) fn intercepted<'a>(
+        heap: &JsHeap<'a>,
+        it: request::Request,
+        signal: JsLocal<'a, bun_jsc::AbortSignal>,
+    ) -> &'a Request {
+        let request::Request {
+            url,
+            method,
+            destination,
+            mode,
+            credentials,
+            cache,
+            redirect,
+            referrer_policy,
+            keepalive,
+            uses_preflight,
+            navigation,
+            blob,
+            starter,
+            ..
+        } = it;
+        let (referrer, integrity) = (
+            it.referrer.map_or(Referrer::None, Referrer::Url),
+            it.metadata.integrity,
+        );
+        let options = Options {
+            url,
+            method,
+            destination,
+            mode,
+            credentials,
+            cache,
+            redirect,
+            referrer,
+            referrer_policy,
+            integrity,
+            keepalive,
+            uses_preflight,
+            navigation,
+            blob,
+            starter,
+            may_become_code: it.may_become_code,
+            skips_service_workers: false,
+        };
+        let body = match it.body {
+            Some(RequestBody::Data(data)) => Content::Data(data),
+            body => body.map_or(Content::Null, |it| {
+                Content::Incoming(Incoming::new(it.open()))
+            }),
+        };
+        Request::create(
+            heap,
+            js_DomRequest::CLASS.structure(heap),
+            Parts {
+                options,
+                headers: Guarded::new(it.headers, Guard::Immutable),
+                body: body.into(),
+                signal: Some(signal),
+            },
+        )
+    }
+
     pub(crate) fn constructor<'a>(
         cx: Cx<'_, 'a>,
         structure: ClassStructure<'a, Self>,
@@ -451,11 +541,11 @@ impl Request {
     }
 
     pub(crate) fn get_is_reload_navigation(&self) -> bool {
-        self.options.is_reload_navigation
+        self.options.navigation == Navigation::Reload
     }
 
     pub(crate) fn get_is_history_navigation(&self) -> bool {
-        self.options.is_history_navigation
+        self.options.navigation == Navigation::History
     }
 
     pub(crate) fn get_signal<'a>(&self, heap: &JsHeap<'a>) -> JSValue {

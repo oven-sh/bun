@@ -32,7 +32,8 @@ use crate::exec::{self, Thread};
 use crate::locks::LockManager;
 use crate::origin::{Origin, Site, registrable_domain};
 use crate::pattern::{UrlFilter, glob_matches};
-use crate::storage::Storage;
+use crate::service::{self, Registry};
+use crate::storage::{Origins, Storage};
 use crate::url::Url;
 
 const POOL_KINDS: u64 = 16;
@@ -89,11 +90,17 @@ pub struct Session {
     exchanges: Guarded<Vec<Weak<Exchange>>>,
     proxy: RwLock<proxy::Config>,
     has_used_network: AtomicBool,
+    pub(crate) may_have_service_workers: AtomicBool,
 }
 
-thread_local! {
-    static EMBEDDERS: ManuallyDrop<RefCell<Vec<(u32, Rc<dyn Embedder>)>>> = ManuallyDrop::default();
+#[derive(Default)]
+pub(crate) struct OfMainThread {
+    embedders: RefCell<Vec<(u32, Rc<dyn Embedder>)>>,
+    pub(crate) registries: RefCell<Vec<Rc<Registry>>>,
 }
+
+pub(crate) static OF_MAIN_THREAD: bun_ui::Lasting<ManuallyDrop<OfMainThread>> =
+    bun_ui::Lasting::empty();
 
 static SESSIONS: RwLock<Vec<Arc<Session>>> = RwLock::new(Vec::new());
 
@@ -159,40 +166,42 @@ impl Session {
         directory: Option<&[u8]>,
         embedder: impl FnOnce(u32) -> Rc<dyn Embedder>,
     ) -> Arc<Session> {
-        Session::make(directory, |id| Some(embedder(id)))
+        Session::make(directory, Storage::new(directory), Some(Box::new(embedder)))
     }
 
     /// It has nobody to ask.
     pub(crate) fn without_embedder() -> Arc<Session> {
-        Session::make(None, |_| None)
+        Session::make(None, Storage::new(None), None)
     }
 
     /// In a page process, for what needs nothing from outside.
-    pub(crate) fn stand_in_for(id: u32) -> Arc<Session> {
+    pub fn stand_in_for(id: u32) -> Arc<Session> {
         static ALL: Guarded<Vec<(u32, Arc<Session>)>> = Guarded::new(Vec::new());
         let mut all = ALL.lock();
         if let Some(known) = all.iter().find(|it| it.0 == id) {
             return Arc::clone(&known.1);
         }
-        let made = Session::without_embedder();
+        let made = Session::make(None, Storage::far(id), None);
         all.push((id, Arc::clone(&made)));
         made
     }
 
     fn make(
         directory: Option<&[u8]>,
-        embedder: impl FnOnce(u32) -> Option<Rc<dyn Embedder>>,
+        storage: Arc<Storage>,
+        embedder: Option<Box<dyn FnOnce(u32) -> Rc<dyn Embedder> + '_>>,
     ) -> Arc<Session> {
         let mut sessions = SESSIONS.write();
         let id = sessions.len() as u32;
-        EMBEDDERS.with(|it| it.borrow_mut().extend(embedder(id).map(|it| (id, it))));
+        OF_MAIN_THREAD
+            .with(|it| (it.embedders.borrow_mut()).extend(embedder.map(|it| (id, it(id)))));
         let session = Arc::new(Session {
             id,
             main: Thread::current(),
             directory: directory.map(Bytes::from),
             settings: RwLock::new(Settings::default()),
             cache: Arc::new(HttpCache::new(directory)),
-            storage: Storage::new(directory),
+            storage,
             preflights: Guarded::default(),
             logins: Guarded::default(),
             client_certificates: Guarded::default(),
@@ -211,6 +220,7 @@ impl Session {
             exchanges: Guarded::default(),
             proxy: RwLock::new(proxy::Config::System),
             has_used_network: AtomicBool::new(false),
+            may_have_service_workers: AtomicBool::new(directory.is_some()),
         });
         sessions.push(Arc::clone(&session));
         session
@@ -220,17 +230,39 @@ impl Session {
         self.id
     }
 
-    fn embedder(id: u32) -> Option<Rc<dyn Embedder>> {
-        EMBEDDERS.with(|it| Some(Rc::clone(&it.borrow().iter().find(|it| it.0 == id)?.1)))
+    pub(crate) fn main(&self) -> &Thread {
+        &self.main
     }
 
-    pub(super) fn notify(&self, steps: impl FnOnce(&dyn Embedder) + Send + 'static) {
+    pub(crate) fn directory(&self) -> Option<&[u8]> {
+        self.directory.as_deref()
+    }
+
+    pub fn clear_service_workers(self: &Arc<Self>, origins: Origins) {
+        if service::may_have_any(self) {
+            service::clear(self, origins);
+        }
+    }
+
+    pub(crate) fn find(id: u32) -> Arc<Session> {
+        Arc::clone(&SESSIONS.read()[id as usize])
+    }
+
+    fn embedder(id: u32) -> Option<Rc<dyn Embedder>> {
+        OF_MAIN_THREAD.with(|it| {
+            Some(Rc::clone(
+                &it.embedders.borrow().iter().find(|it| it.0 == id)?.1,
+            ))
+        })
+    }
+
+    pub(crate) fn notify(&self, steps: impl FnOnce(&dyn Embedder) + Send + 'static) {
         let id = self.id;
         self.main
             .run(move || Session::embedder(id).map_or((), |it| steps(&*it)));
     }
 
-    pub(super) async fn consult<T: Send + 'static, F: Future<Output = Result<T>> + 'static>(
+    pub(crate) async fn consult<T: Send + 'static, F: Future<Output = Result<T>> + 'static>(
         &self,
         start: impl FnOnce(&dyn Embedder) -> F + Send + 'static,
     ) -> Result<T> {

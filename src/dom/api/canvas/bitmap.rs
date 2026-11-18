@@ -3,6 +3,7 @@
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicUsize, Ordering};
+use std::borrow::Cow;
 use std::rc::Rc;
 
 use bun_jsc::{DOMExceptionCode, JSValue};
@@ -11,6 +12,9 @@ use super::Failure;
 use super::recorder::Recorder;
 use crate::abi::{Rect, Slice};
 use crate::abi_graphics::{Area, Command, Decoded, Format, Snapshot};
+use crate::generated_bindgen::canvas::{
+    CanvasRenderingContext2DSettings as Settings, PredefinedColorSpace,
+};
 use crate::platform::graphics;
 
 pub(super) const MAX_AREA: u64 = 1 << 28;
@@ -41,11 +45,18 @@ impl Owned {
         Owned::adopt(graphics().map_or(0, |it| (it.reserve_id)()))
     }
 
-    /// `rgba` has all the pixels.
-    pub(super) fn from_pixels(size: [u32; 2], rgba: &[u8]) -> Owned {
-        assert_eq!(rgba.len() as u64, area_of(size) * 4);
+    /// All of them, in sRGB, in Display P3 or in both.
+    pub(super) fn from_pixels(size: [u32; 2], both: [Option<&[u8]>; 2]) -> Owned {
+        assert!(
+            both != [None; 2]
+                && both
+                    .iter()
+                    .flatten()
+                    .all(|it| it.len() as u64 == area_of(size) * 4)
+        );
+        let [rgba, wide] = both.map(|it| it.map_or(core::ptr::null(), <[u8]>::as_ptr));
         // SAFETY: as asserted.
-        Owned::adopt(graphics().map_or(0, |it| unsafe { (it.insert)(&size, rgba.as_ptr()) }))
+        Owned::adopt(graphics().map_or(0, |it| unsafe { (it.insert)(&size, rgba, wide) }))
     }
 
     pub(crate) fn id(&self) -> u32 {
@@ -63,6 +74,14 @@ impl Drop for Owned {
             self.recorder.send(Command::Release(self.id));
         }
     }
+}
+
+/// From sRGB to Display P3, or back.
+pub(super) fn convert(rgba: &mut [u8], widens: bool) {
+    // SAFETY: a live slice.
+    graphics()
+        .into_iter()
+        .for_each(|it| unsafe { (it.convert)(rgba.as_mut_ptr(), rgba.len() / 4, widens) });
 }
 
 pub(crate) fn drop_font_scope(scope: u32) {
@@ -110,9 +129,20 @@ impl Source {
         !(self.size[0] > 0.0 && self.size[1] > 0.0)
     }
 
-    pub(super) fn read(&self) -> Option<Box<[u8]>> {
+    pub(super) fn has_wide_colors(&self) -> bool {
+        Recorder::current().flush();
+        graphics().is_some_and(|it| (it.has_wide_colors)(self.id))
+    }
+
+    pub(super) fn read(&self, color_space: PredefinedColorSpace) -> Option<Box<[u8]>> {
         let size = self.size.map(|it| it as u32);
-        let context = super::Context::new(size, super::host::DEFAULT_SETTINGS);
+        let context = super::Context::new(
+            size,
+            Settings {
+                color_space,
+                ..super::host::DEFAULT_SETTINGS
+            },
+        );
         context.draw_source(self, None, [0.0; 2], None);
         context
             .bitmap
@@ -147,7 +177,9 @@ impl Source {
             to: self.size.map(|it| it.ceil() as u32),
             flips: false,
             is_smooth: true,
+            is_sharpened: false,
             is_tile: false,
+            is_wide: false,
         }
     }
 }
@@ -166,6 +198,8 @@ pub(crate) struct Bitmap {
     pixels: Owned,
     size: Cell<[u32; 2]>,
     pub(super) is_origin_clean: Cell<bool>,
+    /// In Display P3.
+    pub(super) is_wide: bool,
     bytes: AtomicUsize,
 }
 
@@ -177,18 +211,25 @@ fn bytes_of(size: [u32; 2]) -> usize {
 
 impl Bitmap {
     #[optimize(size)]
-    pub(crate) fn new(size: [u32; 2], is_opaque: bool, is_read_often: bool) -> Rc<Bitmap> {
+    pub(crate) fn new(
+        size: [u32; 2],
+        is_opaque: bool,
+        is_read_often: bool,
+        is_wide: bool,
+    ) -> Rc<Bitmap> {
         let pixels = Owned::reserve();
         pixels.recorder.send(Command::Create {
             id: pixels.id,
             size,
             is_opaque,
             is_read_often,
+            is_wide,
         });
         Rc::new(Bitmap {
             pixels,
             size: Cell::new(size),
             is_origin_clean: Cell::new(true),
+            is_wide,
             bytes: bytes_of(size).into(),
         })
     }
@@ -293,6 +334,7 @@ impl Bitmap {
             rgba: self.read([0, 0, width?, height?], format == Format::Jpeg)?,
             size,
             format,
+            is_wide: self.is_wide,
             quality: (quality * 100.0).round().clamp(1.0, 100.0) as u8,
         })
     }
@@ -311,6 +353,7 @@ pub(crate) struct Unencoded {
     rgba: Box<[u8]>,
     size: [u32; 2],
     format: Format,
+    is_wide: bool,
     quality: u8,
 }
 
@@ -331,18 +374,26 @@ impl Unencoded {
                     .extend_from_slice(core::slice::from_raw_parts(bytes, len))
             };
         }
-        let mut encoded = Vec::new();
+        const AFTER_HEADER: usize = 33;
+        const IS_DISPLAY_P3: &[u8] = b"\0\0\0\x04cICP\x0c\x0d\0\x01\x6e\x03\xe3\xef";
+        let (mut encoded, mut rgba) = (Vec::new(), Cow::Borrowed(&*self.rgba));
+        if self.is_wide && self.format != Format::Png {
+            convert(rgba.to_mut(), false);
+        }
         // SAFETY: `rgba` has all the pixels, and `encoded` outlives the call.
         let is_done = unsafe {
             (graphics()?.encode)(
                 &self.size,
-                self.rgba.as_ptr(),
+                rgba.as_ptr(),
                 self.format,
                 self.quality,
                 keep,
                 (&raw mut encoded).cast(),
             )
         };
+        if is_done && self.is_wide && self.format == Format::Png {
+            encoded.splice(AFTER_HEADER..AFTER_HEADER, IS_DISPLAY_P3.iter().copied());
+        }
         is_done.then_some(encoded)
     }
 }

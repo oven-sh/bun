@@ -1534,7 +1534,6 @@ pub enum Event {
     },
     Disconnected {
         from: u32,
-        has_misbehaved: bool,
     },
 }
 
@@ -1542,9 +1541,15 @@ pub enum Event {
 #[derive(Debug)]
 pub struct Message {
     pub bytes: List<u8>,
+    pub edits: u32,
+    pub lane: Lane,
+}
+
+#[repr(C)]
+pub struct Ruling {
+    pub bytes: List<u8>,
     /// The receiver's, or -1.
     pub descriptor: i32,
-    pub edits: u32,
 }
 
 #[repr(C)]
@@ -1557,7 +1562,10 @@ pub struct PageProcess {
 
 /// The first argument of such a process. The second is the path of the library.
 pub const PAGE_PROCESS_MARKER: &core::ffi::CStr = c"--bun-desktop-child=page";
-pub(crate) const SOCKET_TO_PARENT: i32 = 3;
+/// In its place if the pages run what was compiled into the executable.
+pub const COMPILED_PAGE_PROCESS_MARKER: &core::ffi::CStr = c"--bun-desktop-child=compiled-page";
+pub const SOCKET_TO_PARENT: i32 = 3;
+pub const EXIT_WITHOUT_SANDBOX: i32 = 77;
 
 #[repr(C, u8)]
 #[derive(Debug)]
@@ -1568,13 +1576,26 @@ pub enum PageCommand {
     /// The image of a web view, which it knows as that number plus [`LENT_IMAGE`].
     Lend(u32),
     TakeBack(u32),
+    Represent(Proxy),
     StoreFontsFor(Text),
     /// The length of a message.
     Handled(usize),
+    /// What it remembers of the cookies.
+    Outdate,
     Close,
 }
 
-pub const LENT_IMAGE: u32 = 1 << 30;
+/// The surface of a frame, and that of the window, for which it may have a say.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct Proxy {
+    pub surface: u32,
+    pub top: u32,
+    pub has_keys: bool,
+    pub has_pointer: bool,
+}
+
+pub const LENT_IMAGE: u32 = 1 << 29;
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1583,6 +1604,10 @@ pub enum Lane {
     Scripts,
     /// The same, and windows wait for what is painted next.
     NewSize,
+    /// The same as `Scripts`, for keys and buttons.
+    Input,
+    /// And for the pointer and the wheel.
+    Motion,
     /// For [`Ui::receive`].
     Elsewhere,
 }
@@ -1617,13 +1642,26 @@ pub struct Ui {
 
     /// Before `bun_desktop_init`.
     pub become_page_process: extern "C" fn(),
-    pub open_page_process: extern "C" fn() -> Outcome<PageProcess>,
+    /// While there is only one thread. Files can still be read.
+    pub prepare_sandbox: extern "C" fn(),
+    /// Between the two. False if there is none to be had.
+    pub enter_sandbox: extern "C" fn(generates_code: bool) -> bool,
+    pub open_page_process: extern "C" fn(is_trusted: bool) -> Outcome<PageProcess>,
     /// Takes effect at once.
     pub tell_page_process: extern "C" fn(id: u32, PageCommand),
-    /// From any thread. It takes the descriptor. A page process only passes the bytes.
-    pub send: unsafe extern "C" fn(to: u32, Lane, bytes: *const u8, length: usize, descriptor: i32),
+    /// From any thread.
+    pub send: unsafe extern "C" fn(to: u32, Lane, bytes: *const u8, length: usize),
     /// In a page process. It waits.
     pub receive: extern "C" fn() -> Message,
+    /// In a page process: how many [`PageCommand::Outdate`] there have been.
+    pub times_outdated: extern "C" fn() -> u32,
+    /// In a page process, from any thread, and not in order with what is sent. It waits for the answer if there is one.
+    pub petition:
+        unsafe extern "C" fn(bytes: *const u8, length: usize, is_answered: bool) -> Ruling,
+    /// It waits. Nothing once the process is gone.
+    pub next_petition: extern "C" fn(from: u32) -> List<u8>,
+    /// The descriptor, or -1, stays the caller's.
+    pub rule: unsafe extern "C" fn(to: u32, bytes: *const u8, length: usize, descriptor: i32),
 
     pub window_geometry: extern "C" fn(window: u32) -> Outcome<Geometry>,
     pub window_mouse: extern "C" fn(window: u32) -> Outcome<Point>,

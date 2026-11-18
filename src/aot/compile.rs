@@ -346,6 +346,12 @@ fn is_relative_path(path: &[u8]) -> bool {
     path.starts_with(b"./") || path.starts_with(b"../")
 }
 
+fn may_be_url_of_one_of(name: &[u8], classic_scripts: &[(Vec<u8>, Vec<u8>)]) -> bool {
+    let name = &name[..bun_core::strings::index_of_any(name, b"?#").unwrap_or(name.len())];
+    let name = bun_paths::basename(name);
+    (classic_scripts.iter()).any(|it| bun_paths::basename(&it.0) == name)
+}
+
 fn names_one_of<'f>(
     name: &[u8],
     mut files: impl Iterator<Item = &'f EntryPointPaths>,
@@ -808,7 +814,9 @@ impl<'a> Build<'a> {
                 .iter()
                 .chain(&self.started_workers.names);
             let levels = self.started_workers.levels_above_root;
-            if names_one_of(name, compiled, &options.paths, levels) {
+            if names_one_of(name, compiled, &options.paths, levels)
+                || may_be_url_of_one_of(name, &options.load.classic_scripts)
+            {
                 continue;
             }
             self.started_workers.code = CodeOfWorkers::Unseen;

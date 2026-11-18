@@ -1,5 +1,7 @@
 //! Finds the rules of a style sheet, and what an element must have for each to matter, without parsing them.
 
+use std::borrow::Cow;
+
 use crate::name::Name;
 use crate::selector::key;
 
@@ -49,6 +51,36 @@ fn end_of_string(source: &[u8], mut at: usize) -> Result<usize, usize> {
 
 fn after_string(source: &[u8], at: usize) -> usize {
     end_of_string(source, at).unwrap_or_else(|it| it)
+}
+
+/// https://drafts.csswg.org/css-syntax/#consume-escaped-code-point, if nothing follows the backslash.
+pub(crate) fn without_escaped_end(source: &[u8]) -> Cow<'_, [u8]> {
+    if source.iter().rev().take_while(|it| **it == b'\\').count() % 2 == 0 {
+        return source.into();
+    }
+    let before = &source[..source.len() - 1];
+    let is_url = |at: usize| {
+        at >= 3
+            && before[at - 3..at].eq_ignore_ascii_case(b"url")
+            && !bun_core::strings::contains_char(&before[at..], b')')
+    };
+    match (*b"\"'")
+        .into_iter()
+        .find(|it| ends_in_string(before) && !ends_in_string(&[before, &[*it]].concat()))
+    {
+        Some(quote) => [before, &[quote]].concat().into(),
+        None => [
+            before,
+            "\u{fffd}".as_bytes(),
+            if bun_core::strings::last_index_of_char(before, b'(').is_some_and(is_url) {
+                b")"
+            } else {
+                b""
+            },
+        ]
+        .concat()
+        .into(),
+    }
 }
 
 fn ends_in_string(source: &[u8]) -> bool {

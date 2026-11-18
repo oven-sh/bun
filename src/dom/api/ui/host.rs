@@ -77,7 +77,7 @@ pub(crate) fn set_fullscreen<'a>(cx: &mut Cx<'a>, ui: &'a Ui, on: bool) {
     }
 }
 
-/// That of the window at the top.
+/// That of the window at the top, or what stands for it in this process.
 fn tell_surface(ui: &Ui, command: SurfaceCommand) {
     let id = Window::of(frames::above(ui).last().unwrap_or(ui).doc()).map_or(0, Window::surface);
     if let Some(system) = bun_ui::loaded().filter(|_| id != 0) {
@@ -181,6 +181,34 @@ fn ask_system<'a>(
         return;
     };
     let kept = [window.to_js(), value].map(|it| Strong::create(it, cx.global()));
+    let request = match request {
+        request if !bun_web::remote::is_page_process() => request,
+        request => {
+            let answer = move |global: &bun_jsc::JSGlobalObject, reply| {
+                from_event_loop(global, kept[0].get(), |cx, window: &Window| {
+                    answered(cx, window, kept[1].get(), reply)
+                })
+            };
+            return match request {
+                SystemRequest::CheckSpelling(text) => {
+                    window.host().check_spelling(text.into_vec(), |global, it| {
+                        answer(global, Reply::Misspelled(it.into()))
+                    })
+                }
+                SystemRequest::GuessSpelling(word) => {
+                    window
+                        .host()
+                        .guess_spelling(word.to_string(), |global, it| {
+                            answer(
+                                global,
+                                Reply::Guesses(it.into_iter().map(Into::into).collect()),
+                            )
+                        })
+                }
+                _ => {}
+            };
+        }
+    };
     let asked = bun_ui::queue::request(
         cx.global(),
         Request::System(request),

@@ -1,13 +1,15 @@
 //! Between the process of the app, which is the host, and those of its pages.
 
 pub(crate) mod bodies;
-mod grants;
+pub mod clerk;
+pub(crate) mod grants;
+pub(crate) mod petition;
 
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use bun_ui::protocol::Lane;
+use bun_ui::protocol::{Lane, PageCommand};
 
-pub use self::grants::{grant, is_granted};
+pub use self::grants::{grant, is_granted, modification_of_directory, open_file, revoke_files};
 pub use crate::wire::Peer;
 use crate::wire::{self, Malformed, Message};
 use crate::{channel, outside};
@@ -56,10 +58,17 @@ keywords! {
         Nothing = b"nothing",
         /// The end of what is [`Flags::HELD`].
         Release = b"release",
+        /// The reply comes once the scripts that are running have returned.
+        Turn = b"turn",
         Port = b"port",
         Body = b"body",
         /// Bytes as they are.
         Chunk = b"chunk",
+        Petition = b"petition",
+        Ruling = b"ruling",
+        NoRuling = b"no-ruling",
+        Tidings = b"tidings",
+        Area = b"area",
     }
 }
 
@@ -72,6 +81,8 @@ bitflags::bitflags! {
         const HARMLESS = 2;
         const OF_BLANK_FRAME = 4;
         const OF_PRELOAD = 8;
+        /// Who asks handles nothing but the answer.
+        const DEAF = 16;
     }
 }
 
@@ -135,9 +146,29 @@ pub(crate) fn runs_no_script(message: &[u8]) -> bool {
 
 fn send_bytes(to: Peer, lane: Lane, bytes: &[u8]) {
     if let Some(ui) = bun_ui::loaded() {
-        // SAFETY: a slice, and no descriptor.
-        unsafe { (ui.send)(to, lane, bytes.as_ptr(), bytes.len(), -1) }
+        // SAFETY: a slice.
+        unsafe { (ui.send)(to, lane, bytes.as_ptr(), bytes.len()) }
     }
+}
+
+pub(crate) fn outdate(peer: Peer) {
+    if let Some(ui) = bun_ui::loaded() {
+        (ui.tell_page_process)(peer, PageCommand::Outdate);
+    }
+}
+
+pub(crate) fn times_outdated() -> u32 {
+    bun_ui::loaded().map_or(0, |ui| (ui.times_outdated)())
+}
+
+/// For tests: what a page process can say although nothing has happened.
+pub fn forge(page: u32, question: crate::host::Question) -> bool {
+    let head = Head::new(Kind::Question, page, 0);
+    let head = match question.is_answered_without_scripts() {
+        true => head.with(Flags::HARMLESS),
+        false => head,
+    };
+    is_page_process() && send(HOST, Lane::Scripts, head, question)
 }
 
 /// From any thread. False if it is too long.
@@ -170,11 +201,18 @@ pub fn open<T: Message>(from: Peer, message: &[u8]) -> wire::Result<T> {
 /// What is not about a document. The host calls it on its main thread.
 pub fn accept(from: Peer, head: Head, message: Vec<u8>) -> wire::Result<()> {
     match head.kind {
-        Kind::Port => channel::far::accept(from, head.about, open(from, &message)?),
+        Kind::Port => {
+            return channel::far::accept(from, head.about, open(from, &message)?, message.len());
+        }
         Kind::Body => bodies::accept(from, head.about, open(from, &message)?),
         Kind::Chunk => return bodies::accept_chunk(from, head.about, message, Head::LENGTH),
-        Kind::Return => outside::returned(head.ticket, Some(open(from, &message)?)),
-        Kind::Nothing => outside::returned(head.ticket, None),
+        Kind::Return if from == HOST => {
+            outside::returned(head.ticket, Some(open(from, &message)?));
+        }
+        Kind::Nothing if from == HOST => outside::returned(head.ticket, None),
+        Kind::Ruling if from == HOST => petition::ruled(head.ticket, Some(open(from, &message)?)),
+        Kind::NoRuling if from == HOST => petition::ruled(head.ticket, None),
+        Kind::Tidings if from == HOST => petition::hear(head.about, open(from, &message)?),
         Kind::News if from == HOST => outside::hear(head.about, open(from, &message)?),
         Kind::Deed if from != HOST => {
             return outside::serve::deed(from, head, open(from, &message)?);
@@ -193,6 +231,7 @@ pub fn forget(peer: Peer) {
     channel::far::forget(peer);
     bodies::forget(peer);
     grants::forget(peer);
+    crate::storage::areas::forget(peer);
 }
 
 /// Before anything else is done with this crate.

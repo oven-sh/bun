@@ -205,7 +205,7 @@ pub(crate) fn commas<'b, T>(
 pub(crate) const MAX_DEGREES: f32 = 2.867_080_6e15;
 pub(crate) const MAX_LENGTH: f32 = 33_554_428.0;
 
-fn finite(value: f32) -> f32 {
+pub(crate) fn finite(value: f32) -> f32 {
     match value.is_nan() {
         true => 0.0,
         false => value.clamp(-MAX_LENGTH, MAX_LENGTH),
@@ -708,6 +708,10 @@ pub(crate) enum Lp {
 
 impl Lp {
     pub(crate) const ZERO: Lp = Lp::Px(0.0);
+
+    pub(crate) fn limited(px: f32) -> Lp {
+        Lp::Px(finite(px))
+    }
 
     /// Of a node that is computed.
     pub(crate) fn new(node: Node) -> Lp {

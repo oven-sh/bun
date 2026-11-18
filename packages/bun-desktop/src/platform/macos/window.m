@@ -281,10 +281,13 @@ static void tickAll(void* context)
     NSWindowStyleMask styleBeforeSimpleFullscreen;
 
     BunDesktopClock* clock;
-    bool wantsFrame, isAwake, wasSeen, wasVisible;
+    /// In place of the clock while something scrolls.
+    CADisplayLink* pacer;
+    id urgency;
+    bool wantsFrame, isAwake, isScrolling, wasSeen, wasVisible;
     CFTimeInterval lastScroll;
     int idleTicks;
-    CFTimeInterval lastFrame;
+    CFTimeInterval lastFrame, lastPace;
 
     NSCursor* cursor;
     NSEvent* lastPress;
@@ -531,10 +534,14 @@ static bool confine(CALayer* layer, bool isLeft, bool isEverywhere)
         [layer setValue:value forKey:key];
         [CATransaction commit];
     };
+    // Below zero, so that it shows when AppKit takes the margin away.
     double margin = [[layer valueForKey:@"marginWidth"] doubleValue];
-    if (margin && !isEverywhere) {
+    if (margin > 0 && !isEverywhere) {
         set(@"marginOfAppKit", @(margin));
-        set(@"marginWidth", @0);
+        set(@"marginWidth", @-0.001);
+    } else if (!margin && [[layer valueForKey:@"marginOfAppKit"] doubleValue]) {
+        set(@"marginOfAppKit", @0);
+        set(@"backdropRect", [NSValue valueWithRect:CGRectNull]);
     }
     margin = isEverywhere ? 0 : [[layer valueForKey:@"marginOfAppKit"] doubleValue];
     double rate = margin ? 0 : 30;
@@ -581,6 +588,11 @@ static void findReach(CALayer* layer, CALayer* root, double* edges)
         bd_trace("the width of the backdrop", frame.size.width / 1000);
         effect.frame = frame;
     }
+    [self findBackdrop:edges];
+}
+
+- (void)findBackdrop:(double*)edges
+{
     edges[0] = edges[1] = 0;
     for (NSView* view in owned.contentView.subviews) {
         if (view == self)
@@ -681,6 +693,51 @@ static void findReach(CALayer* layer, CALayer* root, double* edges)
 {
     isAwake = false;
     [clock remove:self];
+    [self stopPacing];
+}
+
+/// The window server takes what was committed around the time of a refresh, and the clock only calls half a frame before that.
+/// Up to macOS 15, scroll events keep arriving between refreshes, and would have to wait.
+- (void)setScrolling:(bool)isOn
+{
+    isScrolling = isOn;
+    if (!isOn || pacer || NSProcessInfo.processInfo.operatingSystemVersion.majorVersion <= 15)
+        return;
+    float most = owned.screen.maximumFramesPerSecond ?: 60;
+    pacer = [self displayLinkWithTarget:self selector:@selector(pace:)];
+    pacer.preferredFrameRateRange = CAFrameRateRangeMake(MIN(60, most), most, most);
+    [pacer addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
+    urgency = [NSProcessInfo.processInfo beginActivityWithOptions:NSActivityLatencyCritical reason:@"Scrolling"];
+    lastPace = CACurrentMediaTime();
+    isAwake = true;
+}
+
+- (void)stopPacing
+{
+    if (!pacer)
+        return;
+    [pacer invalidate];
+    pacer = nil;
+    [NSProcessInfo.processInfo endActivity:urgency];
+    urgency = nil;
+    _frequency = owned.screen.maximumFramesPerSecond;
+}
+
+/// Right after a refresh, when the events for the next frame have arrived. The window server may be late, and must not take that frame yet.
+- (void)pace:(CADisplayLink*)link
+{
+    CFTimeInterval interval = MAX(link.targetTimestamp - link.timestamp, 1 / link.preferredFrameRateRange.maximum);
+    commitsFrom = link.timestamp + interval / 2;
+    lastPace = CACurrentMediaTime();
+    bd_trace("paced", lastPace - link.timestamp);
+    _frequency = 1 / interval;
+    [clock remove:self];
+    [self tick:nil];
+    if (isScrolling || !pacer)
+        return;
+    [self stopLink];
+    if (wantsFrame)
+        [self startLink];
 }
 
 - (void)stopLinkForGood
@@ -707,6 +764,8 @@ static void findReach(CALayer* layer, CALayer* root, double* edges)
     wantsFrame = true;
     if (!isLeisurely)
         [clock hurry];
+    if (pacer && CACurrentMediaTime() - lastPace > 0.25)
+        [self stopLink];
     if (isAwake && clock.hasStalled)
         [self startLink];
     if (isAwake)
@@ -775,6 +834,11 @@ static void findReach(CALayer* layer, CALayer* root, double* edges)
     [self placeTrafficLights];
     updateSecureInput();
     [self report:BDDeactivated];
+    // Glass changes a little later.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC / 10), dispatch_get_main_queue(), ^{
+        double edges[2];
+        [self findBackdrop:edges];
+    });
 }
 
 - (NSSize)windowWillResize:(NSWindow*)window toSize:(NSSize)size
@@ -1678,6 +1742,7 @@ float bd_window_frequency(void* pointer) { return view.frequency; }
 bool bd_window_is_active(void* pointer) { return view.window.isKeyWindow; }
 bool bd_window_is_visible(void* pointer) { return view.needsFrames; }
 void bd_window_request_frame(void* pointer, bool isLeisurely) { [view requestFrame:isLeisurely]; }
+void bd_window_set_scrolling(void* pointer, bool isOn) { [view setScrolling:isOn]; }
 void* bd_window_layer(void* pointer) { return (__bridge void*)view.layer; }
 void bd_window_fit_backdrop(void* pointer, double* edges)
 {

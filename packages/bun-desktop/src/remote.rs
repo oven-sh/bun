@@ -4,10 +4,11 @@
 pub mod guest;
 pub mod pages;
 mod ring;
+pub mod sandbox;
 mod valid;
 
-use std::io::{self, Read};
-use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd};
+use std::io;
+use std::os::fd::{AsRawFd as _, BorrowedFd, FromRawFd as _, OwnedFd};
 use std::os::unix::net::UnixStream;
 
 use self::valid::Valid;
@@ -34,13 +35,12 @@ kinds! {
         Message, Scene, Scrollers, Accessibility, RequestFrame, Cursor, Canvas, Field, PasswordField, BeginDrag, Bounds, Mirror, Handled, File, Face,
         Bitmap, Recording, Pixels, Release, Question
     }
-    Told { Message, Frame, Scroll }
-    Asked { Named, Generic, Fonts, Fallback, Local, Names, Open, Stored, Store }
+    Told { Message, Input, Motion, Frame, Scroll }
+    Asked { Named, Generic, Fonts, Fallback, Local, Names, Open, Stored, Store, Native }
 }
 
-/// A `Told`, whether a descriptor belongs to it, the length of what follows, how many frames and sizes were told, and
-/// what `bridge::edits_taken` was.
-type Header = [u32; 6];
+/// A `Told`, the length of what follows, how many frames and sizes were told, and what `bridge::edits_taken` was.
+type Header = [u32; 5];
 /// The ticket, the image, a size or zeros for all frames, and whether it has to be that size.
 type Fetch = [u32; 5];
 
@@ -91,14 +91,22 @@ trait Source {
     unsafe fn fill(&mut self, to: *mut u8, length: usize) -> Option<()>;
 }
 
-impl<R: Read> Source for R {
+impl Source for &[u8] {
     unsafe fn fill(&mut self, to: *mut u8, length: usize) -> Option<()> {
-        // SAFETY: the caller's contract. They are initialized first.
-        self.read_exact(unsafe {
-            to.write_bytes(0, length);
-            std::slice::from_raw_parts_mut(to, length)
-        })
-        .ok()
+        // SAFETY: the caller's contract.
+        unsafe { to.copy_from_nonoverlapping(self.split_off(..length)?.as_ptr(), length) };
+        Some(())
+    }
+}
+
+impl Source for &UnixStream {
+    unsafe fn fill(&mut self, mut to: *mut u8, mut length: usize) -> Option<()> {
+        while length > 0 {
+            // SAFETY: the caller's contract.
+            let (received, _) = unsafe { receive_into(self, to, length, 0) }.ok()?;
+            (to, length) = (to.wrapping_add(received), length - received);
+        }
+        Some(())
     }
 }
 
@@ -163,22 +171,32 @@ const NO_SIGNAL: i32 = libc::MSG_NOSIGNAL;
 const NO_SIGNAL: i32 = 0;
 
 #[repr(C)]
-struct WithDescriptor {
+struct WithDescriptors<const N: usize> {
     header: libc::cmsghdr,
-    descriptor: i32,
-    padding: i32,
+    descriptors: [i32; N],
 }
 
-/// Returns how much was sent.
+/// Returns how much was sent. A page may not send descriptors.
 fn send_some(
     socket: &UnixStream,
     parts: &[libc::iovec],
-    descriptor: Option<&OwnedFd>,
+    descriptor: Option<BorrowedFd<'_>>,
     flags: i32,
 ) -> io::Result<usize> {
     // SAFETY: zeros are messages without parts, which then get some that outlive the call.
     unsafe {
-        let (mut message, mut control): (libc::msghdr, WithDescriptor) =
+        while guest::is_on() {
+            match usize::try_from(libc::send(
+                socket.as_raw_fd(),
+                parts[0].iov_base,
+                parts[0].iov_len,
+                flags | NO_SIGNAL,
+            )) {
+                Err(_) if io::Error::last_os_error().kind() == io::ErrorKind::Interrupted => {}
+                sent => return sent.map_err(|_| io::Error::last_os_error()),
+            }
+        }
+        let (mut message, mut control): (libc::msghdr, WithDescriptors<2>) =
             (std::mem::zeroed(), std::mem::zeroed());
         (message.msg_iov, message.msg_iovlen) = (parts.as_ptr().cast_mut(), parts.len() as _);
         if let Some(descriptor) = descriptor {
@@ -187,7 +205,7 @@ fn send_some(
                 control.header.cmsg_level,
                 control.header.cmsg_type,
             ) = (libc::CMSG_LEN(4) as _, libc::SOL_SOCKET, libc::SCM_RIGHTS);
-            control.descriptor = descriptor.as_raw_fd();
+            control.descriptors[0] = descriptor.as_raw_fd();
             (message.msg_control, message.msg_controllen) =
                 ((&raw mut control).cast(), libc::CMSG_SPACE(4) as _);
         }
@@ -208,7 +226,7 @@ fn send_some(
 fn send_all(
     socket: &UnixStream,
     mut parts: &mut [libc::iovec],
-    mut descriptor: Option<&OwnedFd>,
+    mut descriptor: Option<BorrowedFd<'_>>,
 ) -> Option<()> {
     while !parts.is_empty() {
         let mut sent = send_some(socket, parts, descriptor.take(), 0).ok()?;
@@ -225,6 +243,23 @@ fn send_all(
     Some(())
 }
 
+/// A byte that carries the descriptor, and a list.
+fn send_answer(
+    socket: &UnixStream,
+    bytes: &[u8],
+    descriptor: Option<BorrowedFd<'_>>,
+) -> Option<()> {
+    send_all(
+        socket,
+        &mut [
+            bytes_of(&[0u8]),
+            bytes_of(&[bytes.len() as u32]),
+            bytes_of(bytes),
+        ],
+        descriptor,
+    )
+}
+
 /// Wakes whoever waits for the other end. If it is full, that is readable anyway.
 fn ring(bell: &UnixStream) {
     drop(send_some(
@@ -235,34 +270,66 @@ fn ring(bell: &UnixStream) {
     ));
 }
 
-/// Some bytes, and the descriptor that came with them. An error if there are none.
-fn receive(socket: &UnixStream, bytes: &mut [u8], flags: i32) -> io::Result<Option<OwnedFd>> {
+/// How many bytes, and the first descriptor that came with them. An error if there are none.
+///
+/// # Safety
+/// That many bytes are writable.
+unsafe fn receive_into(
+    socket: &UnixStream,
+    to: *mut u8,
+    length: usize,
+    flags: i32,
+) -> io::Result<(usize, Option<OwnedFd>)> {
     #[cfg(target_os = "linux")]
     const FLAGS: i32 = libc::MSG_CMSG_CLOEXEC;
     #[cfg(not(target_os = "linux"))]
     const FLAGS: i32 = 0;
+    /// macOS gives the process those that there is no room for, too.
+    const MOST_IN_MESSAGE: usize = 512;
     let mut part = libc::iovec {
-        iov_base: bytes.as_mut_ptr().cast(),
-        iov_len: bytes.len(),
+        iov_base: to.cast(),
+        iov_len: length,
     };
-    // SAFETY: as above. A descriptor that was received is nobody else's.
+    let mut control = std::mem::MaybeUninit::<WithDescriptors<MOST_IN_MESSAGE>>::uninit();
+    // SAFETY: as above. The system has written as much as it says. A descriptor that was received is nobody else's.
     unsafe {
-        let (mut message, mut control): (libc::msghdr, WithDescriptor) =
-            (std::mem::zeroed(), std::mem::zeroed());
+        let mut message: libc::msghdr = std::mem::zeroed();
         (message.msg_iov, message.msg_iovlen) = (&raw mut part, 1);
-        (message.msg_control, message.msg_controllen) =
-            ((&raw mut control).cast(), libc::CMSG_SPACE(4) as _);
-        loop {
+        let received = loop {
+            (message.msg_control, message.msg_controllen) =
+                (control.as_mut_ptr().cast(), size_of_val(&control) as _);
             match libc::recvmsg(socket.as_raw_fd(), &mut message, flags | FLAGS) {
                 0 => return Err(io::ErrorKind::UnexpectedEof.into()),
-                1.. => break,
+                received @ 1.. => break received as usize,
                 _ if io::Error::last_os_error().kind() == io::ErrorKind::Interrupted => {}
                 _ => return Err(io::Error::last_os_error()),
             }
+        };
+        let (mut first, mut header) = (None, libc::CMSG_FIRSTHDR(&message));
+        while let Some(it) = header.as_ref() {
+            if (it.cmsg_level, it.cmsg_type) == (libc::SOL_SOCKET, libc::SCM_RIGHTS) {
+                let length: usize = it.cmsg_len as _;
+                for at in 0..(length - libc::CMSG_LEN(0) as usize) / size_of::<i32>() {
+                    let descriptor = OwnedFd::from_raw_fd(
+                        libc::CMSG_DATA(header)
+                            .cast::<i32>()
+                            .add(at)
+                            .read_unaligned(),
+                    );
+                    #[cfg(not(target_os = "linux"))]
+                    libc::fcntl(descriptor.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC);
+                    first.get_or_insert(descriptor);
+                }
+            }
+            header = libc::CMSG_NXTHDR(&message, header);
         }
-        let has_one = message.msg_controllen > 0 && control.header.cmsg_type == libc::SCM_RIGHTS;
-        Ok(has_one.then(|| OwnedFd::from_raw_fd(control.descriptor)))
+        Ok((received, first))
     }
+}
+
+fn receive(socket: &UnixStream, bytes: &mut [u8], flags: i32) -> io::Result<Option<OwnedFd>> {
+    // SAFETY: a slice.
+    unsafe { receive_into(socket, bytes.as_mut_ptr(), bytes.len(), flags) }.map(|it| it.1)
 }
 
 /// In nanoseconds, the same in all processes.

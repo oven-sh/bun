@@ -6,12 +6,12 @@ use bun_jsc::{StringJsc as _, Strong, from_js_host_call, from_js_host_call_gener
 use bun_ui::dom;
 
 use super::contents::Contents;
-use super::{Emit, Failure, Outcome, target_id_of};
+use super::{Emit, Failure, Outcome};
 use crate::prelude::*;
 use crate::realm::{self, Realm};
-use crate::renderer::World;
-use crate::task;
+use crate::renderer::{Document, World, disposed};
 use crate::value::{Value, number_to_string};
+use crate::{task, text};
 
 #[repr(C)]
 struct EvalPolicy {
@@ -35,8 +35,6 @@ unsafe extern "C" {
 
 const FIRST_WORLD: u32 = 1 << 20;
 
-state!(fn last_context() -> Cell<u32>);
-
 #[derive(Clone)]
 pub(super) struct Context {
     pub(super) id: u32,
@@ -53,19 +51,22 @@ struct Object {
     context: Context,
 }
 
+pub(super) enum Whose {
+    Contents(Contents),
+    Page(u32),
+}
+
+/// For one document.
 pub(super) struct Runtime {
-    contents: Contents,
+    whose: Whose,
+    frame: String,
     emit: Emit,
+    first_context: u32,
+    last_context: Cell<u32>,
     contexts: RefCell<Vec<Context>>,
     objects: RefCell<Vec<Object>>,
     last_object: Cell<u32>,
-    bindings: RefCell<Vec<String>>,
     is_enabled: Cell<bool>,
-}
-
-fn position(objects: &[Object], id: &Value) -> Option<usize> {
-    let id = id.text().parse().ok()?;
-    objects.binary_search_by_key(&id, |it| it.id).ok()
 }
 
 fn unserializable(kind: &str, text: &str) -> Value {
@@ -98,28 +99,56 @@ fn by_json(realm: &Realm, value: JSValue) -> JsResult<Value> {
 }
 
 impl Runtime {
-    pub(super) fn new(contents: Contents, emit: Emit) -> Runtime {
+    pub(super) fn new(whose: Whose, emit: Emit, how: &Value) -> Runtime {
+        let first_context = how["firstContext"].number() as u32;
         Runtime {
-            contents,
+            whose,
+            frame: how["frame"].text().into(),
             emit,
+            first_context,
+            last_context: Cell::new(first_context - 1),
             contexts: RefCell::default(),
             objects: RefCell::default(),
             last_object: Cell::default(),
-            bindings: RefCell::default(),
-            is_enabled: Cell::default(),
+            is_enabled: Cell::new(how["isEnabled"].is_truthy()),
         }
+    }
+
+    pub(super) fn frame(&self) -> &str {
+        &self.frame
+    }
+
+    pub(super) fn document(&self) -> JsResult<&'static Document> {
+        Document::of(match &self.whose {
+            Whose::Contents(it) => it.live_page()?.id(),
+            Whose::Page(it) => *it,
+        })
+        .ok_or_else(disposed)
+    }
+
+    fn origin(&self) -> String {
+        match &self.whose {
+            Whose::Contents(it) => it.page().origin(),
+            Whose::Page(it) => Document::of(*it).map(Document::origin).unwrap_or_default(),
+        }
+    }
+
+    fn position(&self, objects: &[Object], id: &Value) -> Option<usize> {
+        let (document, id) = text::split_once(id.text(), ".")?;
+        let id = (id.parse().ok()).filter(|_| document.parse() == Ok(self.first_context))?;
+        objects.binary_search_by_key(&id, |it| it.id).ok()
     }
 
     fn announce(&self, Context { id, name }: &Context) -> JsResult<()> {
         let context = record! {
             "id": *id,
             "name": &**name,
-            "origin": self.contents.page().origin(),
+            "origin": self.origin(),
             "uniqueId": id.to_string(),
             "auxData": record! {
                 "isDefault": name.is_empty(),
                 "type": if name.is_empty() { "default" } else { "isolated" },
-                "frameId": &*target_id_of(self.contents.object()),
+                "frameId": self.frame(),
             },
         };
         let params = record! { "context": context };
@@ -132,9 +161,9 @@ impl Runtime {
         if let Some(known) = self.contexts.borrow().iter().find(|it| *it.name == *name) {
             return Ok(known.clone());
         }
-        last_context().update(|it| it + 1);
+        self.last_context.update(|it| it + 1);
         let context = Context {
-            id: last_context().get(),
+            id: self.last_context.get(),
             name: name.into(),
         };
         self.contexts.borrow_mut().push(context.clone());
@@ -157,13 +186,13 @@ impl Runtime {
 
     fn object(&self, id: &Value) -> Result<(JSValue, Context), Failure> {
         let objects = self.objects.borrow();
-        let found = position(&objects, id).map(|at| &objects[at]);
+        let found = self.position(&objects, id).map(|at| &objects[at]);
         let found = found.ok_or("Could not find object with given id")?;
         Ok((found.value.get(), found.context.clone()))
     }
 
     fn world_numbered(&self, number: u32) -> JsResult<World> {
-        self.contents.world(number)
+        self.document()?.world_with_id(number)
     }
 
     fn world(&self, context: &Context) -> JsResult<World> {
@@ -221,7 +250,8 @@ impl Runtime {
             value: keep(value),
             context: context.clone(),
         });
-        let remote = record! { "type": &*kind, "objectId": id.to_string() };
+        let id = format!("{}.{id}", self.first_context);
+        let remote = record! { "type": &*kind, "objectId": id };
         if kind != "object" {
             let description = match value.is_symbol() {
                 true => format!(
@@ -378,13 +408,14 @@ impl Runtime {
 
     pub(super) fn release(&self, params: &Value) {
         let mut objects = self.objects.borrow_mut();
-        if let Some(at) = position(&objects, &params["objectId"]) {
+        if let Some(at) = self.position(&objects, &params["objectId"]) {
             objects.remove(at);
         }
     }
 
-    pub(super) fn release_all(&self) {
+    pub(super) fn forget(&self) {
         self.objects.take();
+        self.contexts.take();
     }
 
     pub(super) fn enable(&self) -> JsResult<()> {
@@ -395,7 +426,7 @@ impl Runtime {
         contexts.iter().try_for_each(|it| self.announce(it))
     }
 
-    fn bind(&self, name: &str) -> JsResult<()> {
+    pub(super) fn bind(&self, name: &str) -> JsResult<()> {
         let context = self.context_named("")?;
         let (emit, named, id) = (Rc::clone(&self.emit), name.to_owned(), context.id);
         let world = self.world(&context)?;
@@ -418,31 +449,12 @@ impl Runtime {
         })
     }
 
-    pub(super) fn add_binding(&self, name: &str) -> JsResult<()> {
-        if !self.bindings.borrow().iter().any(|it| it == name) {
-            self.bindings.borrow_mut().push(name.into());
-        }
-        self.bind(name)
-    }
-
     pub(super) fn run_script(&self, script: &Value) -> JsResult<()> {
         let context = self.context_named(script["worldName"].text())?;
         match script["source"].text() {
             "" => Ok(()),
             source => catch(self.world(&context)?.evaluate(js(source)?)).map(drop),
         }
-    }
-
-    pub(super) fn forget_document(&self) {
-        self.release_all();
-        self.contexts.take();
-        (self.emit)("Runtime.executionContextsCleared", Value::empty());
-    }
-
-    pub(super) fn enter_document(&self) -> JsResult<()> {
-        self.context_named("")?;
-        let bindings = self.bindings.borrow().clone();
-        bindings.iter().try_for_each(|it| self.bind(it))
     }
 
     pub(super) fn logged(&self, kind: &str, values: &[JSValue]) -> JsResult<()> {

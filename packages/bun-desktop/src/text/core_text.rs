@@ -5,14 +5,15 @@ use std::path::PathBuf;
 use std::sync::{Arc, LazyLock};
 
 use super::decoded::map;
-use super::fonts::{Capabilities, DEFAULT_OBLIQUE_ANGLE, Like, index_of};
+use super::fonts::{Capabilities, DEFAULT_OBLIQUE_ANGLE, Like, Origin, index_of, listed_file};
 use super::sfnt::{self, variations};
 use super::woff::write_sfnt;
 use crate::abi::Rect;
-use crate::gfx::{Path, PathBuilder as _};
+use crate::gfx::{Command, Path, PathBuilder as _};
 use crate::hash::FastMap;
 use crate::paint::raster::{IntRect, Layer};
 use crate::platform::macos::{Object, take_string};
+use crate::remote::guest;
 use crate::sync::Mutex;
 
 type AddToPath = unsafe extern "C" fn(pen: *mut c_void, kind: i32, points: *const [f64; 2]);
@@ -109,16 +110,171 @@ unsafe extern "C" fn add_to_path(pen: *mut c_void, kind: i32, points: *const [f6
     }
 }
 
-impl NativeFont {
-    pub fn of(data: &'static [u8], index: u32) -> Option<NativeFont> {
-        NATIVE_FONTS
-            .lock()
-            .get(&Catalog::identity(&Font { data, index }))
-            .cloned()
+fn has(font: &Font, tags: &[&[u8; 4]]) -> bool {
+    sfnt::Font::new(font.data, font.index)
+        .is_some_and(|font| tags.iter().any(|tag| font.table(tag).is_some()))
+}
+
+const OUTLINE: f32 = 0.;
+const METRICS: f32 = 1.;
+const ADVANCE: f32 = 2.;
+const PICTURE: f32 = 3.;
+const SMOOTHING: f32 = 4.;
+
+fn numbers_in(bytes: &[u8]) -> impl Iterator<Item = f32> {
+    bytes.as_chunks().0.iter().map(|it| f32::from_ne_bytes(*it))
+}
+
+fn ask_for_numbers<const N: usize>(
+    font: u32,
+    glyph: u32,
+    question: f32,
+    size: f32,
+) -> Option<[f32; N]> {
+    static KNOWN: LazyLock<Mutex<FastMap<[u32; 4], Vec<f32>>>> = LazyLock::new(Mutex::default);
+    let mut known = KNOWN.lock();
+    if known.len() > 1 << 14 {
+        known.clear();
+    }
+    let ask = || {
+        numbers_in(&guest::ask_about_glyph(
+            font,
+            glyph,
+            [question, size, 0., 0.],
+        ))
+        .collect()
+    };
+    known
+        .entry([font, glyph, question.to_bits(), size.to_bits()])
+        .or_insert_with(ask)[..]
+        .try_into()
+        .ok()
+}
+
+/// For another process. `None` if the question makes no sense.
+pub fn about_glyph(font: u32, glyph: u32, [question, size, x, y]: [f32; 4]) -> Option<Vec<u8>> {
+    let bytes = |numbers: &[f32]| {
+        numbers
+            .iter()
+            .flat_map(|it| it.to_ne_bytes())
+            .collect::<Vec<_>>()
+    };
+    if !((1e-6..=2048.).contains(&size) && x.abs() < 1e6 && y.abs() < 1e6) {
+        return Some(Vec::new());
+    }
+    if question == SMOOTHING {
+        return Some(smoothing(size).map_or_else(Vec::new, |it| bytes(&it)));
+    }
+    let Some(Native::Here(native)) = &listed_file(font)?.native else {
+        return Some(Vec::new());
+    };
+    Some(match question {
+        OUTLINE => {
+            let mut path = Path::new();
+            native.outline(glyph, size, &mut path);
+            let numbers = path.iter().flat_map(|it| match *it {
+                Command::MoveTo(a) => [0., a.x, a.y, 0., 0., 0., 0.],
+                Command::LineTo(a) => [1., a.x, a.y, 0., 0., 0., 0.],
+                Command::QuadTo(a, b) => [2., a.x, a.y, b.x, b.y, 0., 0.],
+                Command::CurveTo(a, b, c) => [3., a.x, a.y, b.x, b.y, c.x, c.y],
+                Command::Close => [4.; 7],
+            });
+            bytes(&numbers.collect::<Vec<_>>())
+        }
+        METRICS => bytes(&native.metrics(size)),
+        ADVANCE => bytes(&[native.advance(glyph, size)]),
+        PICTURE => {
+            native
+                .draw(glyph, size, x, y)
+                .map_or_else(Vec::new, |Layer { rect, pixmap }| {
+                    [
+                        &bytes(&[rect.left, rect.top, rect.right, rect.bottom].map(|it| it as f32)),
+                        pixmap.data(),
+                    ]
+                    .concat()
+                })
+        }
+        _ => return None,
+    })
+}
+
+pub enum Native {
+    Here(NativeFont),
+    /// In the process that has the catalog.
+    Far(u32),
+}
+
+impl Native {
+    pub fn of(data: &'static [u8], index: u32, origin: Origin) -> Option<Native> {
+        let font = Font { data, index };
+        match origin {
+            Origin::Listed(it) if guest::is_on() => (has(&font, &[b"sbix"])
+                || !has(&font, &[b"glyf", b"CFF ", b"CFF2"]))
+            .then_some(Native::Far(it)),
+            _ => NATIVE_FONTS
+                .lock()
+                .get(&Catalog::identity(&font))
+                .cloned()
+                .map(Native::Here),
+        }
     }
 
     /// `scale` is in pixels per unit.
     pub fn outline(&self, glyph: u32, scale: f32, pen: &mut Path) {
+        let font = match self {
+            Native::Here(it) => return it.outline(glyph, scale, pen),
+            Native::Far(it) => *it,
+        };
+        let numbers: Vec<_> = numbers_in(&guest::ask_about_glyph(
+            font,
+            glyph,
+            [OUTLINE, scale, 0., 0.],
+        ))
+        .collect();
+        for &[kind, a, b, c, d, e, f] in numbers.as_chunks().0 {
+            match kind {
+                0. => pen.move_to([a, b]),
+                1. => pen.line_to([a, b]),
+                2. => pen.quad_to([a, b], [c, d]),
+                3. => pen.curve_to([a, b], [c, d], [e, f]),
+                _ => pen.close(),
+            };
+        }
+    }
+
+    /// Ascent, descent and leading. Small emoji are drawn larger.
+    pub fn metrics(&self, size: f32) -> Option<[f32; 3]> {
+        match self {
+            Native::Here(it) => Some(it.metrics(size)),
+            Native::Far(it) => ask_for_numbers(*it, 0, METRICS, size),
+        }
+    }
+
+    /// Of a picture, without tracking.
+    pub fn advance(&self, glyph: u32, size: f32) -> Option<f32> {
+        match self {
+            Native::Here(it) => Some(it.advance(glyph, size)),
+            Native::Far(it) => ask_for_numbers(*it, glyph, ADVANCE, size).map(|[it]| it),
+        }
+    }
+
+    /// The glyph's origin is at `x` and `y`.
+    pub fn draw(&self, glyph: u32, size: f32, x: f32, y: f32) -> Option<Layer> {
+        let font = match self {
+            Native::Here(it) => return it.draw(glyph, size, x, y),
+            Native::Far(it) => *it,
+        };
+        let answer = guest::ask_about_glyph(font, glyph, [PICTURE, size, x, y]);
+        let (edges, pixels) = answer.split_first_chunk::<16>()?;
+        let edges: Vec<_> = numbers_in(edges).map(|it| it as i32).collect();
+        let mut layer = Layer::new(IntRect::new(edges[0], edges[1], edges[2], edges[3]))?;
+        layer.pixmap.data_mut().copy_from_slice(pixels);
+        Some(layer)
+    }
+}
+
+impl NativeFont {
+    fn outline(&self, glyph: u32, scale: f32, pen: &mut Path) {
         // SAFETY: the pointer is only used during the call.
         unsafe {
             bd_font_outline(
@@ -131,22 +287,19 @@ impl NativeFont {
         };
     }
 
-    /// Ascent, descent and leading. Small emoji are drawn larger.
-    pub fn metrics(&self, size: f32) -> [f32; 3] {
+    fn metrics(&self, size: f32) -> [f32; 3] {
         let mut metrics = [0.; 3];
         bd_font_metrics(&self.0, size.into(), &mut metrics);
         metrics.map(|it| it as f32)
     }
 
-    /// Of a picture, without tracking.
-    pub fn advance(&self, glyph: u32, size: f32) -> f32 {
+    fn advance(&self, glyph: u32, size: f32) -> f32 {
         ((bd_glyph_bounds(&bd_font_sized(&self.0, size.into()), glyph as u16).width * 64.).round()
             / 64.)
             .round_ties_even()
     }
 
-    /// The glyph's origin is at `x` and `y`.
-    pub fn draw(&self, glyph: u32, size: f32, x: f32, y: f32) -> Option<Layer> {
+    fn draw(&self, glyph: u32, size: f32, x: f32, y: f32) -> Option<Layer> {
         let (font, glyph) = (bd_font_sized(&self.0, size.into()), glyph as u16);
         let Rect {
             x: from_x,
@@ -191,6 +344,9 @@ impl NativeFont {
 pub fn smoothing(size: f32) -> Option<[f32; 4]> {
     static KNOWN: LazyLock<Mutex<FastMap<u32, Option<[f32; 4]>>>> = LazyLock::new(Mutex::default);
     let halves = (size.clamp(6., 256.) * 2.).round() as u32;
+    if guest::is_on() {
+        return ask_for_numbers(0, 0, SMOOTHING, halves as f32 / 2.);
+    }
     *KNOWN
         .lock()
         .entry(halves)
@@ -228,7 +384,7 @@ fn measure_smoothing(size: f32) -> Option<[f32; 4]> {
         pixels
     };
     (draw(0.5, true) != draw(0.5, false)).then_some(())?;
-    let mut growth = [0.; 4];
+    let mut growth = [0.; 2];
     for shift in SHIFTS {
         let exact = Rect {
             x: origin[0] + shift + x,
@@ -243,7 +399,11 @@ fn measure_smoothing(size: f32) -> Option<[f32; 4]> {
             .for_each(|(all, it)| *all += it / SHIFTS.len() as f32);
     }
     crate::diagnostics::log!("font smoothing at {size}: {growth:?}");
-    Some(growth.map(|it| it.clamp(0., 0.75)))
+    // Heights are fitted to pixels, in a way that depends on the font. These are averages.
+    const DOWN: f32 = 0.09;
+    const LESS: f32 = 0.1;
+    let [left, right] = growth;
+    Some([left, left + right - LESS - DOWN, right, DOWN].map(|it| it.clamp(0., 0.75)))
 }
 
 fn terminated(text: impl Into<Vec<u8>>) -> CString {
@@ -396,10 +556,6 @@ impl Catalog {
         if let Some(opened) = self.opened.get(&name) {
             return *opened;
         }
-        let has = |font: &Font, tags: &[&[u8; 4]]| {
-            let font = sfnt::Font::new(font.data, font.index);
-            font.is_some_and(|font| tags.iter().any(|tag| font.table(tag).is_some()))
-        };
         let is_readable =
             |it: &Font| has(it, &[b"glyf", b"CFF ", b"CFF2", b"sbix"]) && !has(it, &[b"hvgl"]);
         let file = self.file_of(native, &name).filter(is_readable);

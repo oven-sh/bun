@@ -10,19 +10,26 @@ use bun_ui::surfaces;
 use bun_web::client::{Client, ScriptLocation, Scripts};
 use bun_web::convert::resolve_blob_url;
 use bun_web::dom;
-use bun_web::host::{Answer, Host, Level, Link, Notice, Question, Reply, ToFrame, Wish};
+use bun_web::host::{
+    Answer, Browser, Connection, Environment, Host, Inspected, Level, Link, Notice, Question,
+    Relation, Relative, Reply, ToFrame, Wish,
+};
 use bun_web::input::Input;
 use bun_web::js_link::can_call_host;
-use bun_web::page::Order;
+use bun_web::page::{Change, Order, Query};
 use bun_web::referrer::ReferrerPolicy;
 use bun_web::remote::{self, Flags, HOST, Head, Kind};
-use bun_web::renderer::{Command, Start, Statics};
+use bun_web::renderer::{Command, Conditions, Facts, Start, Statics};
+use bun_web::storage::areas;
 use bun_web::url::Url;
 use bun_web::wire::Message;
 
 use super::{Document, Links, obey, perform};
+use crate::contents::inspection::with_news;
+use crate::devtools::agent;
+use crate::generated_bindgen::electron::DesktopProcess;
 use crate::prelude::*;
-use crate::{command_line, modules, process};
+use crate::{modules, process};
 
 #[derive(Default)]
 struct State {
@@ -30,6 +37,11 @@ struct State {
     /// How many questions are on the stack.
     waits: Cell<u32>,
     is_held: Cell<bool>,
+    is_online: Cell<Option<bool>>,
+    facts: RefCell<HashMap<u32, Facts>>,
+    /// And the page that it is for.
+    environment: RefCell<Option<(u32, Box<Environment>)>>,
+    newest_conditions: Cell<u32>,
 }
 
 state!(fn state() -> State);
@@ -50,6 +62,7 @@ struct ToHost {
     page: u32,
     voice: Flags,
     client: Rc<Client>,
+    has_been_opened: Cell<bool>,
 }
 
 fn add_blob(wish: &mut Wish) {
@@ -75,6 +88,12 @@ impl ToHost {
                 let all = client.ancestors();
                 let all = all.iter().map(|it| string(it.as_bytes()));
                 return Some(Answer::AncestorOrigins(all.collect()));
+            }
+            Question::Browser {} => {
+                return Some(Answer::Browser(Browser {
+                    user_agent: string(&client.user_agent()),
+                    version: modules::CHROME.to_owned(),
+                }));
             }
             Question::Origin {} => {
                 return Some(Answer::Origin(Some(string(client.origin().as_bytes()))));
@@ -102,6 +121,102 @@ impl ToHost {
     }
 }
 
+/// The document that the app has sent to take the place of an empty one, which it cannot start any more.
+struct Arrival {
+    context: u32,
+    page: Cell<u32>,
+    is_over: Cell<bool>,
+}
+
+impl Arrival {
+    fn at(context: u32) -> Arrival {
+        Arrival {
+            context,
+            page: 0.into(),
+            is_over: false.into(),
+        }
+    }
+
+    fn includes(&self, head: Head, message: &[u8]) -> bool {
+        match head.kind {
+            _ if self.is_over.get() => false,
+            Kind::Change if head.about == self.context => {
+                if let Change::Shows { page, .. } = open(message) {
+                    self.page.set(page);
+                }
+                true
+            }
+            Kind::Command if head.about == self.page.get() => !self.is_over.replace(true),
+            _ => false,
+        }
+    }
+}
+
+impl ToHost {
+    fn recall(&self, question: &Question) -> Option<Answer> {
+        Some(match question {
+            Question::IsInitial {} if self.has_been_opened.get() => Answer::IsInitial(false),
+            Question::Connection {} => Answer::Connection(match state().is_online.get()? {
+                true => Connection::Online,
+                false => Connection::Offline,
+            }),
+            Question::Environment {} if self.voice.is_empty() => {
+                let known = state().environment.borrow();
+                Answer::Environment(known.as_ref().filter(|it| it.0 == self.page)?.1.clone())
+            }
+            _ => return self.look_up(question, state().facts.borrow_mut().get_mut(&self.page)?),
+        })
+    }
+
+    fn look_up(&self, question: &Question, facts: &mut Facts) -> Option<Answer> {
+        Some(match question {
+            Question::Relative { of, relation }
+                if *of == self.page
+                    && facts.is_at_top
+                    && self.voice.contains(Flags::OF_PRELOAD) =>
+            {
+                let found = match relation {
+                    Relation::Top => Some(Relative {
+                        page: *of,
+                        token: string(&self.client.token),
+                    }),
+                    Relation::Parent => None,
+                    _ => return None,
+                };
+                Answer::Relative(Some(found))
+            }
+            _ if !self.voice.is_empty() => return None,
+            Question::HasSpellChecker {} => Answer::HasSpellChecker(facts.has_spell_checker),
+            Question::LoadsImages {} => Answer::LoadsImages(Some(facts.loads_images)),
+            Question::RunsScripts {} => Answer::RunsScripts(Some(facts.runs_scripts)),
+            Question::Tab {} => Answer::Tab(facts.tab),
+            _ => {
+                let it = facts.origins.as_mut()?;
+                match question {
+                    Question::Activation {} => Answer::Activation(it.activation.clone()),
+                    Question::Arrival {} => Answer::Arrival(it.arrival.clone()),
+                    Question::HistoryEntries {} => Answer::HistoryEntries(Some(it.history.take()?)),
+                    Question::InboundTransition {} => {
+                        Answer::InboundTransition(it.inbound_transition)
+                    }
+                    Question::IsInitial {} => Answer::IsInitial(false),
+                    Question::Refresh {} => Answer::Refresh(it.refresh.clone()),
+                    Question::RestoresScroll {} => Answer::RestoresScroll(it.restores_scroll),
+                    _ => return None,
+                }
+            }
+        })
+    }
+
+    fn remember(&self, answer: &Answer) {
+        match answer {
+            Answer::IsInitial(is) if self.voice.is_empty() => self.has_been_opened.set(!is),
+            Answer::Connection(it) => state().is_online.set(Some(*it == Connection::Online)),
+            _ => {}
+        }
+    }
+}
+
 impl Link for ToHost {
     fn tell(&self, notice: Notice) {
         let lane = match notice {
@@ -117,16 +232,27 @@ impl Link for ToHost {
         {
             return Some(answer);
         }
-        let can_run = can_call_host(global()) && !global().has_exception();
-        if !can_run && !question.is_answered_without_scripts() {
-            return None;
+        if let Some(answer) = self.recall(&question) {
+            return Some(answer);
+        }
+        let mut head = self.head(Kind::Question, 0);
+        if question.is_answered_without_scripts() {
+            head = head.with(Flags::HARMLESS);
         }
         if !question.is_waited_for() {
-            remote::send(HOST, Lane::Scripts, self.head(Kind::Question, 0), question);
+            remote::send(HOST, Lane::Scripts, head, question);
             return None;
         }
+        let can_run = can_call_host(global()) && !global().has_exception();
+        if !can_run {
+            head = head.with(Flags::DEAF);
+        }
+        let arrival = match question {
+            Question::StartWindow { context } => Some(Arrival::at(context)),
+            _ => None,
+        };
         let (ticket, answer) = (remote::next_ticket(), Rc::new(Cell::new(None)));
-        let head = self.head(Kind::Question, ticket);
+        head.ticket = ticket;
         if !remote::send(HOST, Lane::Elsewhere, head, question) {
             return None;
         }
@@ -136,13 +262,16 @@ impl Link for ToHost {
         let accepts = |message: &[u8]| {
             let head = head_of(message);
             (is_reply(head) && head.ticket == ticket)
-                || (can_run && (head.within == ticket || head.flags.contains(Flags::HARMLESS)))
+                || (can_run
+                    && (head.within == ticket
+                        || head.flags.contains(Flags::HARMLESS)
+                        || (arrival.as_ref()).is_some_and(|it| it.includes(head, message))))
         };
         state().waits.update(|it| it + 1);
         queue::wait_for_process(global(), HOST, None, &is_done, &accepts);
         state().waits.update(|it| it - 1);
         state().expected.borrow_mut().remove(&ticket);
-        answer.take()
+        (answer.take()).inspect(|it| self.remember(it))
     }
 
     fn request(&self, question: Question, reply: Reply<Option<Answer>>) {
@@ -154,11 +283,18 @@ impl Link for ToHost {
         }
     }
 
+    fn inspect(&self, it: Inspected<'_>) {
+        if with_news(it, &|news| agent::far::tell(self.page, news)).is_err() {
+            global().clear_exception_except_termination();
+        }
+    }
+
     fn for_blank_frame(&self) -> Box<dyn Link> {
         Box::new(ToHost {
             page: self.page,
             voice: Flags::OF_BLANK_FRAME,
             client: Rc::clone(&self.client),
+            has_been_opened: false.into(),
         })
     }
 }
@@ -188,10 +324,37 @@ impl Scripts for InPage {
 }
 
 fn give(page: u32, order: Order) -> JsResult<()> {
-    from_js_host_call_generic(global(), || dom::obey(page, order))
+    if let Order::OnlineChanged { is_online } = order {
+        state().is_online.set(Some(is_online));
+    }
+    if let Order::KeepEntries { .. } | Order::PopState { .. } | Order::SetUrl { .. } = order {
+        forget_history(page);
+    }
+    let uses_up = order.makes_read_environment();
+    let result = from_js_host_call_generic(global(), || dom::obey(page, order));
+    if uses_up {
+        state().environment.take();
+    }
+    result
+}
+
+fn forget_history(page: u32) {
+    let mut all = state().facts.borrow_mut();
+    if let Some(it) = all.get_mut(&page).and_then(|it| it.origins.as_mut()) {
+        it.history = None;
+    }
+}
+
+fn prepare(page: u32, it: Conditions) {
+    let is_newest = it.number > state().newest_conditions.get();
+    state().newest_conditions.update(|now| now.max(it.number));
+    (state().environment).replace(is_newest.then_some((page, it.environment)));
 }
 
 fn start(page: u32, how: Start) -> JsResult<()> {
+    state().is_online.set(how.is_online);
+    state().facts.borrow_mut().insert(page, how.facts);
+    how.conditions.into_iter().for_each(|it| prepare(page, it));
     let client = Client::from_seed(*how.client);
     client.set_scripts(Rc::new(InPage(page)));
     let link = |voice| {
@@ -200,6 +363,7 @@ fn start(page: u32, how: Start) -> JsResult<()> {
             page,
             voice,
             client,
+            has_been_opened: false.into(),
         })
     };
     let links = Links {
@@ -224,12 +388,13 @@ fn start(page: u32, how: Start) -> JsResult<()> {
         let input = Input::Resize { extent, is_quiet };
         give(page, Order::Input { input })?;
     }
+    state().environment.take();
     how.preloads.map_or(Ok(()), |it| document.preload(*it))
 }
 
 fn begin(statics: &Statics) -> JsResult<()> {
     statics.adopt();
-    (statics.switches.iter()).for_each(|it| command_line::set(&it.0, &it.1));
+    statics.tracing.iter().for_each(crate::tracing::join);
     let path = js(&*statics.resources_path)?;
     process::object().put(global(), b"resourcesPath", path);
     let now = (statics.is_accessibility_active, statics.has_screen_reader);
@@ -254,10 +419,27 @@ fn handle(head: Head, message: &[u8]) -> JsResult<()> {
         }
         Kind::Command => match open(message) {
             Command::Start { how } => start(head.about, *how),
-            command => obey(head.about, command),
+            Command::Foretell { facts } => {
+                state().facts.borrow_mut().insert(head.about, *facts);
+                Ok(())
+            }
+            Command::Prepare { conditions } => {
+                prepare(head.about, conditions);
+                Ok(())
+            }
+            command => {
+                if let Command::DocumentChanged {} | Command::Dispose {} = command {
+                    state().facts.borrow_mut().remove(&head.about);
+                }
+                obey(head.about, command)
+            }
         },
         Kind::Query => {
-            let outcome = dom::answer(head.about, open(message));
+            let query = open(message);
+            if let Query::WillTraverse { .. } = query {
+                forget_history(head.about);
+            }
+            let outcome = dom::answer(head.about, query);
             remote::reply(HOST, Lane::Elsewhere, reply(Kind::Outcome), outcome);
             return from_js_host_call_generic(global(), || {});
         }
@@ -274,10 +456,12 @@ fn handle(head: Head, message: &[u8]) -> JsResult<()> {
                 expected.map_or((), |it| it(global(), answer))
             });
         }
+        Kind::Area => from_js_host_call_generic(global(), || areas::changed(&open(message))),
         Kind::Release => {
             state().is_held.set(false);
             Ok(())
         }
+        Kind::Turn => Ok(()),
         _ => unreachable!("it goes to another thread"),
     };
     if head.ticket != 0 {
@@ -310,6 +494,8 @@ fn hear(_: u32, heard: Heard) -> JsResult<()> {
 #[unsafe(no_mangle)]
 fn __bun_desktop_enter_page_process() {
     let enter = || {
+        DesktopProcess::get_system_version();
+        process::executable();
         remote::become_page_process(bun_ui::renderer(global())?);
         modules::of_page_process()?;
         queue::listen_to_processes(hear);

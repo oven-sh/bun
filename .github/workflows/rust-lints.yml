@@ -10,6 +10,7 @@ on:
       - "src/**/*.rs"
       - "src/**/Cargo.toml"
       - "src/pod/README.md"
+      - "packages/bun-desktop/**"
       - "src/**/*.bind.ts"
       - "src/codegen/**"
       - "scripts/build/**"
@@ -125,6 +126,36 @@ jobs:
         # dev-dependencies the Bun workspace does not), so run it in place.
         working-directory: vendor/lolhtml
         run: cargo test
+
+  desktop:
+    # The UI library of bun:desktop is not a member of the workspace.
+    name: bun-desktop (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    defaults:
+      run:
+        working-directory: packages/bun-desktop
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component clippy,rustfmt --no-self-update
+
+      - name: cargo fmt
+        run: cargo fmt --check
+
+      - name: cargo clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: cargo test
+        run: cargo test --locked
 
   mordant:
     name: mordant

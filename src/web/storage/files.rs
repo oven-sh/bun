@@ -10,9 +10,11 @@ use bun_sha_hmac::sha::evp::SHA256;
 use bun_sys::{Dir, E, EntryKind, Fd, File, O};
 use bun_threading::Guarded;
 
-use super::{Origins, QUOTA, Storage};
+use super::{Origins, QUOTA, Shelf, Storage};
 use crate::Bytes;
+use crate::exec::{Receiver, blocking};
 use crate::net::schemes::mime_of_file;
+use crate::remote::petition::{self, Handle};
 use crate::serial::Serial;
 
 const MAX_NAME_LEN: usize = 100;
@@ -27,6 +29,8 @@ pub enum FileError {
     QuotaExceeded,
     Failed,
 }
+
+crate::wire!(impl enum FileError { NotFound, TypeMismatch, Locked, NotEmpty, IsDirectory, QuotaExceeded, Failed, });
 
 impl From<bun_sys::Error> for FileError {
     fn from(error: bun_sys::Error) -> FileError {
@@ -57,6 +61,8 @@ pub enum LockMode {
     Unsafe,
     Removing,
 }
+
+crate::wire!(impl enum LockMode { Exclusive, Siloed, ReadOnly, Unsafe, Removing, });
 
 #[derive(Default)]
 pub(super) struct Files {
@@ -191,11 +197,16 @@ impl Storage {
 }
 
 /// Released when it is dropped.
-struct Lock(Arc<Storage>, u32);
+enum Lock {
+    Near(Arc<Storage>, u32),
+    Far(Handle),
+}
 
 impl Drop for Lock {
     fn drop(&mut self) {
-        self.0.files.locks.lock().retain(|it| it.0 != self.1);
+        if let Lock::Near(storage, id) = self {
+            storage.files.locks.lock().retain(|it| it.0 != *id);
+        }
     }
 }
 
@@ -211,6 +222,29 @@ pub struct Locator {
     storage: Arc<Storage>,
     bucket: Arc<[u8]>,
     pub names: Vec<Bytes>,
+}
+
+crate::wire! {
+    /// A locator on its way to the host.
+    pub(crate) struct Entry {
+        pub(crate) shelf: Shelf,
+        pub(crate) names: Vec<Bytes>,
+    }
+}
+
+async fn from_host<T>(answer: Receiver<Result<T>>) -> Result<T> {
+    answer.await.unwrap_or(Err(FileError::Failed))
+}
+
+async fn file_from_host(opened: Receiver<Result>, handle: Handle) -> Result<OpenFile> {
+    from_host(opened).await?;
+    let file = petition::descriptor(handle.id())
+        .and_then(|it| it.1)
+        .ok_or(FileError::Failed)?;
+    Ok(OpenFile {
+        file,
+        _lock: Lock::Far(handle),
+    })
 }
 
 pub fn mime_of_name(name: &[u8]) -> Vec<u8> {
@@ -248,6 +282,13 @@ impl Locator {
         &self.bucket
     }
 
+    fn entry(&self) -> Option<Entry> {
+        Some(Entry {
+            shelf: self.storage.far_shelf(&self.bucket)?,
+            names: self.names.clone(),
+        })
+    }
+
     /// The names on disk have nothing that a file system could refuse, or mistake for another name.
     fn path(&self) -> Vec<u8> {
         self.names
@@ -271,7 +312,7 @@ impl Locator {
         }
         let id = next_id();
         locks.push((id, path.into(), mode));
-        Ok(Lock(Arc::clone(&self.storage), id))
+        Ok(Lock::Near(Arc::clone(&self.storage), id))
     }
 
     /// <https://fs.spec.whatwg.org/#file-system-queue>
@@ -302,115 +343,207 @@ impl Locator {
     }
 
     pub fn create_root(&self) -> later!(()) {
-        self.enqueue(|_, path| Ok(bun_sys::mkdir_recursive_at_mode(Fd::cwd(), &path, 0o700)?))
+        in_host_or_here!(
+            self.entry(),
+            |it| from_host(petition::create_root(it.shelf)),
+            {
+                self.enqueue(|_, path| {
+                    Ok(bun_sys::mkdir_recursive_at_mode(Fd::cwd(), &path, 0o700)?)
+                })
+            }
+        )
     }
 
     pub fn find(&self, kind: Kind, creates: bool) -> later!(()) {
-        self.enqueue(move |_, path| match kind_of(&path) {
-            Some(found) if found == kind => Ok(()),
-            Some(_) => Err(FileError::TypeMismatch),
-            None if !creates => Err(FileError::NotFound),
-            None if kind == Kind::File => {
-                Ok(
-                    File::openat(Fd::cwd(), &path, O::WRONLY | O::CREAT | O::CLOEXEC, 0o600)
-                        .map(drop)?,
-                )
+        in_host_or_here!(
+            self.entry(),
+            |it| from_host(petition::find(it, kind, creates)),
+            {
+                self.enqueue(move |_, path| match kind_of(&path) {
+                    Some(found) if found == kind => Ok(()),
+                    Some(_) => Err(FileError::TypeMismatch),
+                    None if !creates => Err(FileError::NotFound),
+                    None if kind == Kind::File => Ok(File::openat(
+                        Fd::cwd(),
+                        &path,
+                        O::WRONLY | O::CREAT | O::CLOEXEC,
+                        0o600,
+                    )
+                    .map(drop)?),
+                    None => Ok(bun_sys::mkdir(&ZBox::from_bytes(path), 0o700)?),
+                })
             }
-            None => Ok(bun_sys::mkdir(&ZBox::from_bytes(path), 0o700)?),
-        })
+        )
     }
 
     pub fn children(&self) -> later!(Vec<(Bytes, Kind)>) {
-        let decode = |(name, kind): (Bytes, Kind)| {
-            let mut decoded = vec![0; name.len() / 2];
-            strings::decode_hex_to_bytes(&mut decoded, &name).ok()?;
-            Some((decoded.into(), kind))
-        };
-        self.enqueue(move |_, path| Ok(entries_of(&path)?.into_iter().filter_map(decode).collect()))
+        in_host_or_here!(self.entry(), |it| from_host(petition::children(it)), {
+            let decode = |(name, kind): (Bytes, Kind)| {
+                let mut decoded = vec![0; name.len() / 2];
+                strings::decode_hex_to_bytes(&mut decoded, &name).ok()?;
+                Some((decoded.into(), kind))
+            };
+            self.enqueue(move |_, path| {
+                Ok(entries_of(&path)?.into_iter().filter_map(decode).collect())
+            })
+        })
     }
 
     pub fn remove(&self, is_recursive: bool) -> later!(()) {
-        self.enqueue_holding(
-            self.lock(LockMode::Removing),
-            move |this, path| match kind_of(&path).ok_or(FileError::NotFound)? {
-                Kind::Directory if this.names.is_empty() => {
-                    Ok(Dir::open(&path)?.delete_children()?)
-                }
-                Kind::Directory if !is_recursive && !entries_of(&path)?.is_empty() => {
-                    Err(FileError::NotEmpty)
-                }
-                _ => Ok(Dir::cwd().delete_tree(&path)?),
-            },
+        in_host_or_here!(
+            self.entry(),
+            |it| from_host(petition::remove(it, is_recursive)),
+            {
+                self.enqueue_holding(
+                    self.lock(LockMode::Removing),
+                    move |this, path| match kind_of(&path).ok_or(FileError::NotFound)? {
+                        Kind::Directory if this.names.is_empty() => {
+                            Ok(Dir::open(&path)?.delete_children()?)
+                        }
+                        Kind::Directory if !is_recursive && !entries_of(&path)?.is_empty() => {
+                            Err(FileError::NotEmpty)
+                        }
+                        _ => Ok(Dir::cwd().delete_tree(&path)?),
+                    },
+                )
+            }
         )
     }
 
     pub fn move_file(&self, target: Locator) -> later!(()) {
-        let locks = [
-            Some(self),
-            Some(&target).filter(|it| it.names != self.names),
-        ]
-        .into_iter()
-        .flatten()
-        .map(|it| it.lock(LockMode::Exclusive))
-        .collect::<Result<Vec<_>>>();
-        self.enqueue_holding(locks, move |_, from| {
-            let to = target.path();
-            require(&from, Kind::File)?;
-            require(&target.parent().path(), Kind::Directory)?;
-            if kind_of(&to) == Some(Kind::Directory) {
-                return Err(FileError::IsDirectory);
+        in_host_or_here!(
+            self.entry(),
+            |it| from_host(petition::move_file(
+                it,
+                target.entry().expect("it is of the same storage")
+            )),
+            {
+                let locks = [
+                    Some(self),
+                    Some(&target).filter(|it| it.names != self.names),
+                ]
+                .into_iter()
+                .flatten()
+                .map(|it| it.lock(LockMode::Exclusive))
+                .collect::<Result<Vec<_>>>();
+                self.enqueue_holding(locks, move |_, from| {
+                    let to = target.path();
+                    require(&from, Kind::File)?;
+                    require(&target.parent().path(), Kind::Directory)?;
+                    if kind_of(&to) == Some(Kind::Directory) {
+                        return Err(FileError::IsDirectory);
+                    }
+                    Ok(bun_sys::rename(
+                        &ZBox::from_bytes(from),
+                        &ZBox::from_bytes(to),
+                    )?)
+                })
             }
-            Ok(bun_sys::rename(
-                &ZBox::from_bytes(from),
-                &ZBox::from_bytes(to),
-            )?)
-        })
+        )
     }
 
     pub fn snapshot(&self) -> later!((Vec<u8>, bun_sys::Stat)) {
-        self.enqueue(|_, path| {
-            require(&path, Kind::File)?;
-            let stat = File::openat(Fd::cwd(), &path, O::RDONLY | O::CLOEXEC, 0)?.stat()?;
-            Ok((path, stat))
-        })
+        in_host_or_here!(
+            self.entry(),
+            |it| {
+                let path = from_host(petition::snapshot(it));
+                async {
+                    let path = path.await?;
+                    from_host(blocking(move || {
+                        Ok(crate::remote::open_file(&path)?
+                            .stat()
+                            .map(|it| (path, it))?)
+                    }))
+                    .await
+                }
+            },
+            {
+                self.enqueue(|_, path| {
+                    require(&path, Kind::File)?;
+                    let stat = File::openat(Fd::cwd(), &path, O::RDONLY | O::CLOEXEC, 0)?.stat()?;
+                    Ok((path, stat))
+                })
+            }
+        )
     }
 
     pub fn open(&self, mode: LockMode) -> later!(OpenFile) {
-        let lock = self.lock(mode);
-        self.enqueue(move |_, path| {
-            let _lock = lock?;
-            require(&path, Kind::File)?;
-            Ok(OpenFile {
-                _lock,
-                file: File::openat(Fd::cwd(), &path, O::RDWR | O::CLOEXEC, 0)?,
-            })
-        })
+        in_host_or_here!(
+            self.entry(),
+            |it| {
+                let handle = Handle::new();
+                file_from_host(petition::open(handle.id(), it, mode), handle)
+            },
+            {
+                let lock = self.lock(mode);
+                self.enqueue(move |_, path| {
+                    let _lock = lock?;
+                    require(&path, Kind::File)?;
+                    Ok(OpenFile {
+                        _lock,
+                        file: File::openat(
+                            Fd::cwd(),
+                            &path,
+                            if mode == LockMode::ReadOnly {
+                                O::RDONLY
+                            } else {
+                                O::RDWR
+                            } | O::CLOEXEC,
+                            0,
+                        )?,
+                    })
+                })
+            }
+        )
     }
 
     pub fn draft(&self, mode: LockMode, keeps_data: bool) -> later!(Draft) {
-        let lock = self.lock(mode);
-        self.enqueue(move |this, path| {
-            let lock = lock?;
-            require(&path, Kind::File)?;
-            let swap = [&*path, format!(".{:016x}", crate::random()).as_bytes()].concat();
-            let file = File::openat(Fd::cwd(), &swap, O::RDWR | O::CREAT | O::CLOEXEC, 0o600)?;
-            let copy = Copy {
-                file: Some(OpenFile { file, _lock: lock }),
-                path,
-                swap,
-                position: 0,
-            };
-            if let (true, Some(target)) = (keeps_data, &copy.file) {
-                bun_sys::copy_file(
-                    File::openat(Fd::cwd(), &copy.path, O::RDONLY | O::CLOEXEC, 0)?.fd(),
-                    target.file.fd(),
-                )?;
+        in_host_or_here!(
+            self.entry(),
+            |it| {
+                let (handle, operations) =
+                    (Handle::new(), Arc::clone(&self.storage.files.operations));
+                let file =
+                    file_from_host(petition::draft(handle.id(), it, mode, keeps_data), handle);
+                async {
+                    Ok(Draft {
+                        operations,
+                        copy: Arc::new(Guarded::new(Copy {
+                            file: Some(file.await?),
+                            path: Vec::new(),
+                            swap: Vec::new(),
+                            position: 0,
+                        })),
+                    })
+                }
+            },
+            {
+                let lock = self.lock(mode);
+                self.enqueue(move |this, path| {
+                    let lock = lock?;
+                    require(&path, Kind::File)?;
+                    let swap = [&*path, format!(".{:016x}", crate::random()).as_bytes()].concat();
+                    let file =
+                        File::openat(Fd::cwd(), &swap, O::RDWR | O::CREAT | O::CLOEXEC, 0o600)?;
+                    let copy = Copy {
+                        file: Some(OpenFile { file, _lock: lock }),
+                        path,
+                        swap,
+                        position: 0,
+                    };
+                    if let (true, Some(target)) = (keeps_data, &copy.file) {
+                        bun_sys::copy_file(
+                            File::openat(Fd::cwd(), &copy.path, O::RDONLY | O::CLOEXEC, 0)?.fd(),
+                            target.file.fd(),
+                        )?;
+                    }
+                    Ok(Draft {
+                        operations: Arc::clone(&this.storage.files.operations),
+                        copy: Arc::new(Guarded::new(copy)),
+                    })
+                })
             }
-            Ok(Draft {
-                operations: Arc::clone(&this.storage.files.operations),
-                copy: Arc::new(Guarded::new(copy)),
-            })
-        })
+        )
     }
 }
 
@@ -420,6 +553,10 @@ pub struct OpenFile {
 }
 
 impl OpenFile {
+    pub(crate) fn fd(&self) -> Fd {
+        self.file.fd()
+    }
+
     pub fn size(&self) -> Result<u64> {
         Ok(bun_sys::get_file_size(self.file.fd())?)
     }
@@ -463,7 +600,9 @@ impl Drop for Copy {
     fn drop(&mut self) {
         if let Some(OpenFile { file, _lock }) = self.file.take() {
             drop(file);
-            let _ = bun_sys::unlink(&ZBox::from_bytes(&self.swap));
+            if let Lock::Near(..) = _lock {
+                let _ = bun_sys::unlink(&ZBox::from_bytes(&self.swap));
+            }
         }
     }
 }
@@ -476,6 +615,12 @@ pub struct Draft {
 }
 
 impl Draft {
+    pub(crate) fn duplicate_file(&self) -> Option<File> {
+        bun_sys::dup(self.copy.lock().file.as_ref()?.fd())
+            .ok()
+            .map(File::from_fd)
+    }
+
     fn enqueue<F: FnOnce(&OpenFile, &mut u64) -> Result + Send + 'static>(
         &self,
         steps: F,
@@ -519,14 +664,26 @@ impl Draft {
         let result = self.operations.run(move || {
             let copy = self.copy;
             let mut copy = copy.lock();
+            if let Some(OpenFile {
+                _lock: Lock::Far(handle),
+                ..
+            }) = &copy.file
+            {
+                return Ok(Some((petition::keep(handle.id()), copy.file.take())));
+            }
             require(&copy.path, Kind::File)?;
             let OpenFile { file, _lock } = copy.file.take().ok_or(FileError::Failed)?;
             drop(file);
-            Ok(bun_sys::rename(
-                &ZBox::from_bytes(&copy.swap),
-                &ZBox::from_bytes(&copy.path),
-            )?)
+            Ok(
+                bun_sys::rename(&ZBox::from_bytes(&copy.swap), &ZBox::from_bytes(&copy.path))
+                    .map(|()| None)?,
+            )
         });
-        async { result.await.unwrap_or(Err(FileError::Failed)) }
+        async {
+            match result.await.unwrap_or(Err(FileError::Failed))? {
+                Some((kept, _file)) => from_host(kept).await,
+                None => Ok(()),
+            }
+        }
     }
 }

@@ -7,14 +7,18 @@ use crate::api::transfer::FileList;
 use crate::generated_bindgen::forms::HTMLInputElement;
 
 /// None at all is a cancellation.
-pub(crate) fn paths_picked<'a>(cx: &mut Cx<'a>, control: &'a Element, paths: &[String]) {
+pub(crate) fn paths_picked<'a>(
+    cx: &mut Cx<'a>,
+    control: &'a Element,
+    paths: &[bun_web::host::ChosenFile],
+) {
     let heap = control.doc().heap(&cx.heap);
     let files = (!paths.is_empty()).then(|| {
         FileList::new(
             heap,
             paths
                 .iter()
-                .filter_map(|it| bun_web::convert::file_at(global_of(heap), it.as_bytes())),
+                .filter_map(|it| bun_web::convert::file_at(global_of(heap), it.0.as_bytes())),
         )
     });
     Input::of(control)

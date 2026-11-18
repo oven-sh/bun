@@ -90,10 +90,9 @@ impl Poster<'_> {
                         .any(|it| it == container)
             })
         };
-        if !has_rows
-            && forest
-                .members(container, |it| it.has(abi::SELECTED))
-                .is_empty()
+        if forest
+            .members(container, |it| it.has(abi::SELECTED))
+            .is_empty()
             && !is_used()
         {
             return;

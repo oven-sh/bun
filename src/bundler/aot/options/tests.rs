@@ -71,6 +71,7 @@ fn convert<R>(
         module_prefix: b"/$bunfs/root/",
         typescript_libs: Libs::Directory(b"/project"),
         file_map: case.file_map,
+        pages: &Default::default(),
         working_directory: case.working_directory,
         node_path: case.node_path,
     };

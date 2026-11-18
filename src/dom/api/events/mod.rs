@@ -24,7 +24,9 @@ pub(crate) use dispatch::{
     TIMED, dispatch, dispatch_along, dispatch_below, dispatch_for_document, fire,
     twin_of_native_event,
 };
-pub(crate) use errors::{describe, is_parse_error_of, report_to_realm, stack_of, where_thrown};
+pub(crate) use errors::{
+    describe, is_parse_error_of, report_to_realm, stack_of, where_thrown, window_around,
+};
 pub(crate) use page_events::{HashChangeEvent, PageTransitionEvent, PopStateEvent};
 pub(crate) use script::{
     HandlingInput, after_microtasks, as_task, call_back, call_operation_in_its_realm,

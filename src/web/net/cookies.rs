@@ -27,6 +27,7 @@ keywords! {
 keywords! {
     pub enum Cause {
         Inserted = b"inserted",
+        InsertedSame = b"inserted-no-change-overwrite",
         InsertedSameValue = b"inserted-no-value-change-overwrite",
         Explicit = b"explicit",
         Overwrite = b"overwrite",
@@ -38,7 +39,10 @@ keywords! {
 
 impl Cause {
     pub fn removes(self) -> bool {
-        !matches!(self, Cause::Inserted | Cause::InsertedSameValue)
+        !matches!(
+            self,
+            Cause::Inserted | Cause::InsertedSame | Cause::InsertedSameValue
+        )
     }
 }
 
@@ -67,6 +71,18 @@ crate::wire! {
     pub struct Change {
         pub cookie: Cookie,
         pub cause: Cause,
+    }
+}
+
+impl Change {
+    /// Whoever looks next notices it.
+    pub(crate) fn is_loss(&self) -> bool {
+        matches!(self.cause, Cause::Expired | Cause::Evicted)
+    }
+
+    /// For scripts.
+    pub(crate) fn is_news(&self) -> bool {
+        !matches!(self.cause, Cause::Overwrite | Cause::InsertedSame) && !self.cookie.is_http_only
     }
 }
 
@@ -274,6 +290,10 @@ impl Cookie {
             && (!self.is_secure || is_potentially_trustworthy(url))
     }
 
+    pub(crate) fn is_visible_at(&self, url: &Url, context: &Context) -> bool {
+        has_cookies(url) && self.applies_to(url) && self.is_sent_in(context, wall_now())
+    }
+
     fn is_sent_in(&self, context: &Context, now: f64) -> bool {
         !(context.is_for_script && self.is_http_only)
             && self
@@ -372,7 +392,12 @@ impl Jar {
         if let Some(at) = at {
             let old = self.cookies.remove(at);
             if old.value == cookie.value {
-                (cause, cookie.created) = (Cause::InsertedSameValue, old.created);
+                let rest = |it: &Cookie| (it.is_secure, it.is_http_only, it.same_site, it.expires);
+                cause = match rest(&old) == rest(&cookie) {
+                    true => Cause::InsertedSame,
+                    false => Cause::InsertedSameValue,
+                };
+                cookie.created = old.created;
             }
             self.changes.push(Change {
                 cookie: old,
@@ -392,7 +417,7 @@ impl Jar {
                 cause,
             });
             let at = at
-                .filter(|_| cause == Cause::InsertedSameValue)
+                .filter(|_| cause != Cause::Inserted)
                 .unwrap_or(self.cookies.len());
             self.cookies.insert(at, cookie);
         }

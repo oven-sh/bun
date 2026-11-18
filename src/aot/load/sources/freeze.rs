@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::sync::OnceLock;
 
 use bun_builtin_sources::Manifest;
-use bun_sema::import_sites::ImportSiteKind;
+use bun_sema::import_sites::{ImportSite, ImportSiteKind, ImportSpecifier};
 use bun_sema::program::{CodeAnswer, CodeView, ComputedTargets, FileId, Files};
 use bun_sema::util::{FxHashSet, SharedSort};
 use bun_sema_driver::host::to_native;
@@ -316,22 +316,65 @@ fn find_entry_points_found_by_computed_names(input: &FreezeInput<'_, '_>) -> Vec
     found.map(|(&file, _)| file).collect()
 }
 
+/// What the scripts of pages import by a URL, and not by the name of a package.
+fn find_modules_of_pages(
+    files: &Files<'_>,
+    entries: &[SourceEntry],
+    entry_points: &[EntryPoint],
+) -> Vec<FileId> {
+    let scripts = (entry_points.iter()).filter(|it| it.kind == EntryPointKind::LoadedByPage);
+    let mut found: Vec<FileId> = scripts.map(|it| it.file).collect();
+    let mut seen: FxHashSet<FileId> = found.iter().copied().collect();
+    let names_package = |site: &ImportSite| match site.specifier {
+        ImportSpecifier::Constant(text) | ImportSpecifier::Pattern { prefix: text, .. } => {
+            !matches!(files.atoms.bytes(text), [b'.' | b'/', ..])
+        }
+        ImportSpecifier::OneOf(_) | ImportSpecifier::Unknown => false,
+    };
+    let mut next = 0;
+    while let Some(&file) = found.get(next) {
+        next += 1;
+        let Some(compiled) = files.compiled(file) else {
+            continue;
+        };
+        let sites = compiled.analysis.import_sites.iter();
+        for (_, answer) in (sites.zip(compiled.code_answers)).filter(|it| !names_package(it.0)) {
+            let named = match answer {
+                CodeAnswer::File(named) => core::slice::from_ref(named),
+                CodeAnswer::Computed(ComputedTargets::Modules { files, .. }) => files,
+                _ => &[][..],
+            };
+            let is_code = |it: &&FileId| entries[it.idx()].kind == SourceKind::Program;
+            found.extend(named.iter().filter(is_code).filter(|it| seen.insert(**it)));
+        }
+    }
+    found
+}
+
 fn collect_entry_points(input: &FreezeInput<'_, '_>, entries: &[SourceEntry]) -> Vec<EntryPoint> {
     let files = input.files;
     match input.project {
         ProjectId::Application => {
             let mut named_files = FxHashSet::default();
+            let of_pages = &input.options.load.scripts_of_pages;
             let written_and_found_files = files.entry_points().iter().enumerate();
             let mut entry_points: Vec<EntryPoint> = written_and_found_files
                 .filter(|&(_, &file)| named_files.insert(file))
                 .map(|(index, &file)| {
                     let kind = match index {
                         0 => EntryPointKind::Main,
+                        _ if of_pages.contains(&index) => EntryPointKind::LoadedByPage,
                         _ => EntryPointKind::Additional,
                     };
                     EntryPoint { file, kind }
                 })
                 .collect();
+            for file in find_modules_of_pages(files, entries, &entry_points) {
+                if named_files.insert(file) {
+                    let kind = EntryPointKind::LoadedByPage;
+                    entry_points.push(EntryPoint { file, kind });
+                }
+            }
             let compiled_files = files.compiled_files().iter();
             for compiled in compiled_files.filter_map(|&file| files.compiled(file)) {
                 let sites = compiled.analysis.import_sites.iter();

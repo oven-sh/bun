@@ -222,6 +222,20 @@ impl IDBTransaction {
         result.map_err(|it| error_of(cx, it))
     }
 
+    pub(super) fn new_table<'a>(&self, heap: &JsHeap<'a>) -> Result<'a, Table> {
+        self.stored
+            .borrow_mut()
+            .as_mut()
+            .map(stored::Transaction::new_table)
+            .ok_or_else(|| {
+                dom_error(
+                    heap,
+                    DomError::TransactionInactiveError,
+                    "The transaction is not active.",
+                )
+            })
+    }
+
     pub(super) fn read<'a>(&self, cx: Cx<'_, 'a>, store: Table, key: &[u8]) -> Result<'a, JSValue> {
         let values = self.stored(cx, |it| it.read(store, [key]))?;
         Ok(JSValue::deserialize(
@@ -349,8 +363,8 @@ impl IDBTransaction {
             };
             let mark = self
                 .stored
-                .borrow()
-                .as_ref()
+                .borrow_mut()
+                .as_mut()
                 .map_or(0, stored::Transaction::mark);
             let path: [&EventTarget; 3] = [request, self, self.db()];
             match request.run(cx, self).map_err(|it| cx.catch(it)) {

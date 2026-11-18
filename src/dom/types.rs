@@ -730,7 +730,7 @@ impl Css for AspectRatio {
     }
     fn lerp(&self, to: &Self, t: Mixing) -> Option<Self> {
         let ratio = t.of(self.value()?.ln(), to.value()?.ln()).exp();
-        (self.auto == to.auto && matches!(t, Mixing::Lerp(_))).then_some(AspectRatio {
+        (self.auto == to.auto).then_some(AspectRatio {
             auto: to.auto,
             ratio: Some([ratio, 1.0]),
         })
@@ -1777,7 +1777,14 @@ impl Css for Shadow {
                 && let Some(x) = px(p, cx)
             {
                 let y = px(p, cx)?;
-                let blur = px(p, cx).unwrap_or(0.0);
+                let start = p.position();
+                let blur = px(p, cx).map_or(0.0, |it| {
+                    if p.slice_from(start).ends_with(b")") {
+                        it.max(0.0)
+                    } else {
+                        it
+                    }
+                });
                 lengths = Some(([x, y], blur, px(p, cx).unwrap_or(0.0)));
             } else if color.is_none()
                 && let Some(parsed) = Color::parse(p, cx)

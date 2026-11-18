@@ -174,14 +174,13 @@ impl Clusters {
         }
         let paragraph =
             (!self.are_adjusted && self.count > 0).then(|| self.paragraph_of(range.start))?;
-        paragraph
-            .shaped
-            .letters
+        let letters = paragraph.shaped.letters();
+        letters
             .get(
                 (range.start - paragraph.first_cluster) as usize
                     ..(range.end - paragraph.first_cluster) as usize,
             )
-            .filter(|_| !paragraph.shaped.letters.is_empty())
+            .filter(|_| !letters.is_empty())
     }
 
     /// `range` is in one paragraph. Their starts are of no use.
@@ -215,7 +214,7 @@ impl Clusters {
         let mut joined = Vec::with_capacity(range.len());
         for (shaped, inside) in self.split(range.clone()) {
             (shaped.faces.len() <= 256).then_some(())?;
-            match shaped.letters.get(inside.clone()) {
+            match shaped.letters().get(inside.clone()) {
                 _ if self.are_adjusted => {}
                 Some(letters) => joined.extend_from_slice(letters),
                 None => joined.extend(shaped.clusters()[inside].iter().map(abbreviated)),
@@ -256,10 +255,7 @@ impl Clusters {
     fn adjust(&mut self, at: u32) -> (&mut f32, &mut u8) {
         if self.are_as_shaped()
             && self.joined.get().is_none()
-            && self
-                .paragraphs
-                .iter()
-                .all(|it| !it.shaped.letters.is_empty())
+            && self.paragraphs.iter().all(|it| it.shaped.has_letters())
         {
             self.adjusted_letters = self
                 .as_letters(0..self.count)
@@ -284,7 +280,7 @@ impl Clusters {
             shaped,
         } = self.paragraph_of(cluster);
         start
-            + if shaped.letters.len() == shaped.text.len() {
+            + if shaped.letter_count() == shaped.text.len() {
                 cluster - first_cluster
             } else {
                 shaped.clusters()[(cluster - first_cluster) as usize].start
@@ -379,7 +375,7 @@ pub(crate) struct Inline {
     pub(crate) lines: Lines,
     /// How far one of so many items may paint outside of its fragments.
     pub(crate) outset: core::cell::Cell<(u32, f32)>,
-    pub(crate) prose: core::cell::OnceCell<Option<crate::lines::Prose>>,
+    pub(crate) prose: core::cell::OnceCell<Option<Box<crate::lines::Prose>>>,
     firsts: core::cell::OnceCell<Box<Map<NodeId, u32>>>,
     /// Until there are new ones.
     pub(crate) former_lines: Option<Box<(Lines, Kept)>>,
@@ -507,7 +503,7 @@ impl Inline {
             ((offset - it.start) as usize).min(it.shaped.text.len()),
             &it.shaped,
         );
-        let is_short = shaped.letters.len() == shaped.text.len() || inside < 256;
+        let is_short = shaped.letter_count() == shaped.text.len() || inside < 256;
         it.first_cluster
             + if is_short {
                 shaped.count_in(0..inside)
@@ -1398,6 +1394,102 @@ fn common_end(a: &[u8], b: &[u8]) -> usize {
 }
 
 impl Inline {
+    /// What `Builder` makes of a text that is all there is, in a style that `WRITES_PLAINLY`, if it needs no work.
+    pub(crate) fn of_words(
+        document: &Document,
+        node: NodeId,
+        data: &str,
+        style: &Rc<Style>,
+    ) -> Option<Box<Inline>> {
+        (*data.as_bytes().first()? > b' '
+            && data.is_ascii()
+            && without_collapsing(data.as_bytes()) == data.len())
+        .then_some(())?;
+        let text = data.strip_suffix(' ').unwrap_or(data);
+        let is_beyond_a_screenful = text.len() >= 96
+            && document
+                .words_built
+                .replace(document.words_built.get() + text.len())
+                >= 1 << 13;
+        let shaped = document.shape_with(
+            text,
+            &[text_run(style, text.len())],
+            abi::DIRECTION_LTR,
+            is_beyond_a_screenful && style.text.wrap == TextWrapMode::Wrap,
+        );
+        let (end, count) = (text.len() as u32, shaped.count() as u32);
+        let is_uniform = match shaped.has_letters() {
+            true => {
+                shaped.faces.len() == 1
+                    || shaped
+                        .letters()
+                        .array_windows()
+                        .all(|[a, b]| a.face == b.face)
+            }
+            false => shaped
+                .clusters()
+                .array_windows()
+                .all(|[a, b]| (a.face, a.bidi_level) == (b.face, b.bidi_level)),
+        };
+        let item = Item {
+            kind: ItemKind::Text,
+            has_own_style: false,
+            is_uniform,
+            is_in_word: false,
+            node,
+            element: 0,
+            style: Rc::clone(style),
+            start: 0,
+            end,
+            run_start: 0,
+            clusters: 0..count,
+            segments: 0..1,
+            parent: 0,
+        };
+        Some(Box::new(Inline {
+            text: Text::Shared(Rc::clone(&shaped)),
+            items: SmallVec::from_buf([item]),
+            segments: SmallVec::from_buf([Segment {
+                node_start: 0,
+                node_end: end,
+                start: 0,
+                end,
+            }]),
+            label: shaped.label,
+            clusters: Clusters {
+                paragraphs: SmallVec::from_buf([Paragraph {
+                    first_cluster: 0,
+                    start: 0,
+                    shaped,
+                }]),
+                joined: Default::default(),
+                count,
+                are_adjusted: false,
+                adjusted_letters: Vec::new(),
+                direction: abi::DIRECTION_LTR,
+                found: Found::default(),
+            },
+            has_bidi: false,
+            has_layers: false,
+            first_layer: 1,
+            has_ruby: false,
+            force_line: false,
+            has_split_text: false,
+            is_plain: Default::default(),
+            first_line: None,
+            lines: Lines::default(),
+            outset: Default::default(),
+            prose: Default::default(),
+            firsts: Default::default(),
+            former_lines: None,
+        }))
+    }
+
+    /// Whether something comes of keeping it for such a text.
+    pub(crate) fn may_go_on_as(&self, data: &str, root: &Style, style: &Style) -> bool {
+        writes_like(root, style) && common_start(self.text.as_bytes(), data.as_bytes()) >= 64
+    }
+
     pub(crate) fn is_worth_keeping(&self) -> bool {
         (self.clusters.count >= 160 || self.items.len() >= 24)
             && !(self.clusters.are_adjusted
@@ -1805,7 +1897,7 @@ fn shape_items(
     let mut inline = Box::new(Inline {
         has_bidi: (direction == abi::DIRECTION_RTL || !is_ascii)
             && clusters.split(fresh.clone()).any(|it| {
-                it.0.letters.is_empty() && it.0.clusters().iter().any(|it| it.bidi_level > 0)
+                !it.0.has_letters() && it.0.clusters().iter().any(|it| it.bidi_level > 0)
             }),
         has_layers: first_layer < items.len(),
         first_layer: first_layer as u32,
@@ -1897,7 +1989,7 @@ fn shape_items(
             || inline
                 .clusters
                 .split(fresh.clone())
-                .all(|it| !it.0.letters.is_empty() && it.0.faces.len() <= 256)
+                .all(|it| it.0.has_letters() && it.0.faces.len() <= 256)
     };
     let still_holds = !(before.punctuation && before.trims != found.trims
         || anywhere != 0 && before.adjusts != found.adjusts);
@@ -1928,7 +2020,7 @@ fn shape_items(
                 inline
                     .clusters
                     .split(to_adjust.clone())
-                    .flat_map(|it| &it.0.letters[it.1])
+                    .flat_map(|it| &it.0.letters()[it.1])
                     .copied(),
             );
             inline.clusters.adjusted_letters = letters;
@@ -1988,7 +2080,7 @@ fn shape_items(
                 || match clusters.are_adjusted {
                     true => are_alike(&clusters[inside.start as usize..inside.end as usize]),
                     false => clusters.split(inside).all(|(shaped, range)| {
-                        match shaped.letters.get(range.clone()) {
+                        match shaped.letters().get(range.clone()) {
                             Some(letters) => {
                                 shaped.faces.len() == 1
                                     || letters
@@ -2149,7 +2241,7 @@ impl Inline {
         let at = (cluster - first_cluster) as usize;
         it.advance
             - shaped
-                .letters
+                .letters()
                 .get(at)
                 .map_or_else(|| shaped.clusters()[at].advance, |it| it.advance)
     }
@@ -2474,7 +2566,18 @@ pub(crate) fn text_run(style: &Style, end: usize) -> TextRun {
 
 impl Document {
     pub(crate) fn shape(&self, text: &str, runs: &[TextRun], direction: u8) -> Rc<Shaped> {
-        let words = runs.iter().flat_map(|run| {
+        self.shape_with(text, runs, direction, false)
+    }
+
+    #[inline]
+    fn shape_with(
+        &self,
+        text: &str,
+        runs: &[TextRun],
+        direction: u8,
+        outlines: bool,
+    ) -> Rc<Shaped> {
+        let words = |run: &TextRun| {
             let [size, letters, words] =
                 [run.size, run.letter_spacing, run.word_spacing].map(|it| u64::from(it.to_bits()));
             [
@@ -2482,8 +2585,12 @@ impl Document {
                 (size << 32) | letters,
                 (words << 32) | (u64::from(run.word_break) << 8) | u64::from(direction),
             ]
-        });
-        let how = keyed_hash_of_words(&words.collect::<SmallVec<[u64; 24]>>());
+        };
+        let how = if let [only] = runs {
+            keyed_hash_of_words(&words(only))
+        } else {
+            keyed_hash_of_words(&runs.iter().flat_map(words).collect::<SmallVec<[u64; 24]>>())
+        };
         let mut cache = self.shaped.borrow_mut();
         if self.newly_shaped_bytes.get() > 1 << 15 {
             self.newly_shaped_bytes.set(0);
@@ -2493,7 +2600,11 @@ impl Document {
             self.newly_shaped_bytes
                 .update(|it| it + if text.len() < 256 { 0 } else { text.len() });
             self.fonts.note_written(text, 0, runs);
-            let mut shaped = platform::shape(text, runs, direction);
+            let mut shaped = if outlines {
+                platform::outline(text, runs[0])
+            } else {
+                platform::shape(text, runs, direction)
+            };
             shaped.how = how;
             Rc::new(shaped)
         };

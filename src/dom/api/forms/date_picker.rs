@@ -192,19 +192,23 @@ pub(super) fn cancel<'a>(cx: &mut Cx<'a>, input: Input<'a>) {
         .for_each(|it| date_fields::set(cx, input, it));
 }
 
+/// The child at `index`, if there is one: a screen reader loses its place when what it is on goes away.
 fn piece<'a>(
     cx: &mut Cx<'a>,
     input: Input<'a>,
-    parent: &'a Node,
+    (parent, index): (&'a Element, usize),
     name: &str,
     text: &str,
 ) -> &'a Element {
-    let made = div(
-        cx,
-        input.element,
-        parent,
-        &format!("-internal-date-picker-{name}"),
-    );
+    let name = format!("-internal-date-picker-{name}");
+    if let Some(kept) = parent.element_children().nth(index) {
+        if !kept.is_part(&name) {
+            kept.set_pseudo(&name, input.element);
+        }
+        set_text(cx, kept.first_child(), &text.into());
+        return kept;
+    }
+    let made = div(cx, input.element, parent, &name);
     if !text.is_empty() {
         text_in(cx, made, text);
     }
@@ -214,7 +218,7 @@ fn piece<'a>(
 fn button<'a>(
     cx: &mut Cx<'a>,
     input: Input<'a>,
-    parent: &'a Node,
+    place: (&'a Element, usize),
     name: &str,
     text: &str,
     action: Option<Action>,
@@ -222,7 +226,7 @@ fn button<'a>(
     let made = piece(
         cx,
         input,
-        parent,
+        place,
         if action.is_some() { name } else { "disabled" },
         text,
     );
@@ -236,12 +240,7 @@ pub(super) fn semantics(input: Input<'_>, part: &Element) -> Semantics {
     if picker(input) == Some(part) {
         return vec![("role", "dialog".to_owned())];
     }
-    let roles = [
-        ("days", "grid"),
-        ("months", "grid"),
-        ("week", "row"),
-        ("label", "columnheader"),
-    ];
+    let roles = [("days", "grid"), ("months", "grid"), ("week", "row")];
     if let Some((_, role)) = roles
         .into_iter()
         .find(|it| part.is_part(&format!("-internal-date-picker-{}", it.0)))
@@ -295,7 +294,6 @@ fn fill<'a>(cx: &mut Cx<'a>, input: Input<'a>) {
         it.picker.actions.clear();
         it.picker.filled_for = input.text.text();
     });
-    // A screen reader would introduce a new table at every step.
     let kept = picker
         .element_children()
         .next()
@@ -310,7 +308,7 @@ fn fill<'a>(cx: &mut Cx<'a>, input: Input<'a>) {
         return;
     }
     if input.kind() != InputType::Time {
-        let calendar = kept.unwrap_or_else(|| piece(cx, input, picker, "calendar", ""));
+        let calendar = piece(cx, input, (picker, 0), "calendar", "");
         fill_calendar(cx, input, calendar);
         mark_cursor(cx, input);
     }
@@ -332,13 +330,13 @@ fn fill<'a>(cx: &mut Cx<'a>, input: Input<'a>) {
             .collect::<Vec<_>>()
     });
     for (unit, chosen, cells) in columns.into_iter().flatten() {
-        let column = piece(cx, input, picker, "column", "");
-        for (value, label) in cells {
+        let column = piece(cx, input, (picker, usize::MAX), "column", "");
+        for (index, (value, label)) in cells.into_iter().enumerate() {
             let is_chosen = Some(value) == chosen;
             let cell = button(
                 cx,
                 input,
-                column,
+                (column, index),
                 if is_chosen { "chosen" } else { "cell" },
                 &label,
                 Some(Action::Choose(unit, value)),
@@ -408,16 +406,14 @@ fn fill_calendar<'a>(cx: &mut Cx<'a>, input: Input<'a>, calendar: &'a Element) {
     let Some((first, start, title, names)) = texts else {
         return;
     };
-    let mut kept = calendar.element_children().collect::<Vec<_>>().into_iter();
-    let [head, grid, foot] = ["row", if by_year { "months" } else { "days" }, "row"].map(|name| {
-        let it = kept
-            .next()
-            .unwrap_or_else(|| piece(cx, input, calendar, name, ""));
-        remove_children(cx, it);
-        it
-    });
-    piece(cx, input, head, "title", &title);
-    for (arrow, step) in [("↑", -1), ("↓", 1)] {
+    let [head, grid, foot] = [
+        (0, "row"),
+        (1, if by_year { "months" } else { "days" }),
+        (2, "row"),
+    ]
+    .map(|(index, name)| piece(cx, input, (calendar, index), name, ""));
+    piece(cx, input, (head, 0), "title", &title);
+    for (index, arrow, step) in [(1, "↑", -1), (2, "↓", 1)] {
         let month = Date::first_of(
             first.year,
             first.month + step * if by_year { 12 } else { 1 },
@@ -425,7 +421,7 @@ fn fill_calendar<'a>(cx: &mut Cx<'a>, input: Input<'a>, calendar: &'a Element) {
         button(
             cx,
             input,
-            head,
+            (head, index),
             "step",
             arrow,
             (month.year > 0).then_some(Action::ShowMonth(month)),
@@ -439,18 +435,19 @@ fn fill_calendar<'a>(cx: &mut Cx<'a>, input: Input<'a>, calendar: &'a Element) {
             .map(|(name, month)| (name, Date::first_of(first.year, month)))
             .collect()
     } else {
-        let labels = piece(cx, input, grid, "week", "");
+        let labels = piece(cx, input, (grid, 0), "labels", "");
         names
             .iter()
-            .for_each(|it| _ = piece(cx, input, labels, "label", it));
+            .enumerate()
+            .for_each(|(index, it)| _ = piece(cx, input, (labels, index), "label", it));
         (start..start + 42)
             .map(Date::from_days)
             .map(|it| (it.day.to_string(), it))
             .collect()
     };
-    for cells in cells.chunks(if by_year { 4 } else { 7 }) {
-        let row = piece(cx, input, grid, "week", "");
-        for &(ref text, day) in cells {
+    for (index, cells) in (usize::from(!by_year)..).zip(cells.chunks(if by_year { 4 } else { 7 })) {
+        let row = piece(cx, input, (grid, index), "week", "");
+        for (index, &(ref text, day)) in cells.iter().enumerate() {
             let name = match () {
                 () if value
                     .latin1()
@@ -470,16 +467,16 @@ fn fill_calendar<'a>(cx: &mut Cx<'a>, input: Input<'a>, calendar: &'a Element) {
                 () if !by_year && day.month != first.month => "outside",
                 () => "cell",
             };
-            button(cx, input, row, name, text, pick(day));
+            button(cx, input, (row, index), name, text, pick(day));
         }
     }
-    button(cx, input, foot, "link", "Clear", Some(Action::Clear));
+    button(cx, input, (foot, 0), "link", "Clear", Some(Action::Clear));
     let now = match kind {
         InputType::Month => "This month",
         InputType::Week => "This week",
         _ => "Today",
     };
-    button(cx, input, foot, "link", now, pick(today));
+    button(cx, input, (foot, 1), "link", now, pick(today));
 }
 
 /// What is empty is taken from the time that it is.

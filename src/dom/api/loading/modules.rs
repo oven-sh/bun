@@ -9,7 +9,7 @@ use bun_jsc::{
     from_js_host_call, to_js_host_call,
 };
 use bun_web::client::{Script, ScriptType};
-use bun_web::compiled;
+use bun_web::compiled::{self, Form};
 use bun_web::csp::Metadata;
 use bun_web::exec::Shared;
 use bun_web::import_map::{Given, ImportMap, Unresolved};
@@ -139,15 +139,40 @@ pub(super) fn evaluate_classic<'a>(
     })?)
 }
 
-pub(super) fn run_compiled<'a>(
-    cx: Cx<'_, 'a>,
-    path: &[u8],
-    is_classic: bool,
-) -> Result<'a, JSValue> {
+fn run_compiled<'a>(cx: Cx<'_, 'a>, path: &[u8], is_classic: bool) -> Result<'a, JSValue> {
     let global = cx.global();
     Ok(from_js_host_call(global, || {
         Bun__WebRealm__runCompiled(global, &view(path), is_classic)
     })?)
+}
+
+/// The text of a script that the build has left to be evaluated.
+pub(super) fn run_compiled_classic<'a>(
+    cx: Cx<'_, 'a>,
+    path: &[u8],
+) -> Result<'a, Option<DomString>> {
+    let text = Some(run_compiled(cx, path, true)?).filter(|it| it.is_string());
+    Ok(text
+        .map(|it| it.to_utf8(cx.global()))
+        .transpose()?
+        .map(|it| DomString::from_utf8(&bstr::ByteSlice::to_str_lossy(&*it))))
+}
+
+/// What it imports at run time goes by these.
+pub(super) fn will_run_compiled(heap: &JsHeap<'_>, path: &[u8], base: &[u8], fetching: &Fetching) {
+    let entry = || Entry {
+        fetching: Fetching {
+            integrity: None,
+            ..fetching.clone()
+        },
+        base: Url::parse(base),
+        ..Default::default()
+    };
+    modules(heap)
+        .borrow_mut()
+        .entries
+        .entry(path.into())
+        .or_insert_with(entry);
 }
 
 /// No URL begins like that.
@@ -197,7 +222,7 @@ fn compiled_path(heap: &JsHeap<'_>, url: &Url, fetching: &Fetching) -> Option<Ve
         is_parser_inserted: fetching.is_parser_inserted,
         is_prefetch: false,
     };
-    client_of(heap)?.compiled_path(url, Destination::Script, &metadata)
+    client_of(heap)?.compiled_path(url, Form::Module, Destination::Script, &metadata)
 }
 
 impl Modules {
@@ -210,11 +235,14 @@ impl Modules {
         )
     }
 
-    fn url_of(&self, key: &[u8]) -> Option<Url> {
+    fn url_of(&self, heap: &JsHeap<'_>, key: &[u8]) -> Option<Url> {
         self.entries
             .get(key)
             .and_then(|it| it.base.clone())
-            .or_else(|| Url::parse(self.classic_script(key).map_or(key, |it| &it.0)))
+            .or_else(|| match compiled::is_path(key) {
+                true => compiled::url_of(key, &client_of(heap)?.url()),
+                false => Url::parse(self.classic_script(key).map_or(key, |it| &it.0)),
+            })
     }
 
     #[optimize(size)]
@@ -225,7 +253,7 @@ impl Modules {
         referrer: Option<&[u8]>,
     ) -> Result<'a, Url> {
         let base = referrer
-            .and_then(|it| self.url_of(it))
+            .and_then(|it| self.url_of(heap, it))
             .or_else(|| base_url(heap));
         let specifier_text = bstr::BStr::new(specifier);
         match base.ok_or(Unresolved::Bare).and_then(|it| self.import_map.resolve(specifier, &it)) {
@@ -257,7 +285,9 @@ impl Modules {
             .and_then(|it| Some(&self.classic_script(it)?.1))
             .or_else(|| importer.map(|it| &it.fetching));
         let path = match referrer.is_some_and(compiled::is_path) {
-            true => compiled::path_of(url.href()),
+            true => {
+                client_of(heap).and_then(|it| it.compiled_path_by_any_policy(&url, Form::Module))
+            }
             false => compiled_path(
                 heap,
                 &url,
@@ -273,7 +303,7 @@ impl Modules {
         if !self.entries.contains_key(url.href()) {
             let referrer = referrer
                 .filter(|it| self.fetched.contains_key(*it))
-                .and_then(|it| self.url_of(it));
+                .and_then(|it| self.url_of(heap, it));
             let fetching = Fetching {
                 integrity: None,
                 is_for_link: false,
@@ -489,12 +519,17 @@ extern "C" fn Bun__Modules__fetch(
 extern "C" fn Bun__Modules__urlOf(global: &JSGlobalObject, key: JSValue) -> JSValue {
     in_realm(global, |cx| {
         let (key, modules) = (key.to_utf8(global)?, modules(&cx.heap));
-        let url = modules.borrow().url_of(&key);
+        let url = modules.borrow().url_of(&cx.heap, &key);
         Ok(bun_string_jsc::create_utf8_for_js(
             global,
             url.as_ref().map_or(&key, Url::href),
         )?)
     })
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__Modules__isPathInProgram(key: &bun_core::String) -> bool {
+    compiled::is_path(&key.to_utf8())
 }
 
 pub(super) enum Module {
@@ -562,7 +597,7 @@ impl Module {
 
     /// <https://html.spec.whatwg.org/#run-a-module-script>
     #[optimize(size)]
-    pub(super) fn run(self, cx: Cx<'_, '_>) {
+    pub(super) fn run(self, cx: Cx<'_, '_>) -> bun_jsc::js_promise::Status {
         fn report<'a>(
             cx: Cx<'_, 'a>,
             _: [JsLocal<'a>; 2],
@@ -575,7 +610,9 @@ impl Module {
         let evaluated = match self.evaluate(cx) {
             Ok(evaluated) => evaluated,
             Err(error) => {
-                let Ok(error) = cx.catch(error) else { return };
+                let Ok(error) = cx.catch(error) else {
+                    return bun_jsc::js_promise::Status::Rejected;
+                };
                 JSPromise::rejected_promise(cx.global(), error).to_js()
             }
         };
@@ -583,6 +620,11 @@ impl Module {
         if let Some(it) = JsLocal::new(&cx.heap, evaluated).as_promise() {
             it.react(&cx.heap, None, Some(report));
         }
+        evaluated
+            .as_promise()
+            .map_or(bun_jsc::js_promise::Status::Fulfilled, |it| {
+                JSPromise::opaque_mut(it).status()
+            })
     }
 }
 
@@ -619,6 +661,7 @@ fn load_graph(cx: Cx<'_, '_>, key: Bytes) -> impl Future<Output = Option<Module>
 #[optimize(size)]
 pub(super) fn prepare(cx: Cx<'_, '_>, url: &Url, fetching: Fetching) -> Receiver<Option<Module>> {
     if let Some(path) = compiled_path(&cx.heap, url, &fetching) {
+        will_run_compiled(&cx.heap, &path, url.href(), &fetching);
         return start(&cx.heap, async { Some(Module::Compiled(path)) });
     }
     let modules = modules(&cx.heap);
@@ -650,6 +693,15 @@ pub(super) fn prepare_inline(
     fetching: Fetching,
 ) -> Receiver<Option<Module>> {
     let modules = modules(&cx.heap);
+    // It is evaluated once. The same text in another element is another module.
+    if client_of(&cx.heap).is_some_and(|it| it.runs_program())
+        && let Some(path) =
+            compiled::path_of_inline(&base, || utf8(Some(source.clone())).into(), true)
+        && !modules.borrow().entries.contains_key(&path[..])
+    {
+        will_run_compiled(&cx.heap, &path, &base, &fetching);
+        return Receiver::ready(Some(Module::Compiled(path)));
+    }
     let key = Bytes::from(format!("inline-module:{}", modules.borrow().inline_count).as_bytes());
     modules.borrow_mut().inline_count += 1;
     let source = Bun__WebRealm__moduleSource(

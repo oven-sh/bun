@@ -15,6 +15,7 @@ use bun_jsc::bindgen::{self, Callable, ClassStructure, JsHeap, JsInterface, JsLo
 use bun_web::client::Client;
 use bun_web::held::Held;
 
+pub(crate) use cookies::{describe as describe_cookie, store_of_service_worker};
 pub(crate) use errors::{DerivedException, QuotaExceededError, quota_exceeded};
 pub(crate) use locks::Lock;
 pub(crate) use origin::DomOrigin;

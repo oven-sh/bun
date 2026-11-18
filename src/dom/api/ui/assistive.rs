@@ -14,7 +14,6 @@ use crate::api::editing::{self, By, Command, selection};
 use crate::api::forms::input::Input;
 use crate::api::forms::internals::ElementInternals;
 use crate::api::forms::{self, InputType, color_picker, date_fields, gauge, suggestions};
-use crate::api::frames::Frame;
 use crate::api::media::controls;
 use crate::api::uievents::{Modifiers, Mouse, MouseEvent, PointerData, PointerEvent};
 use crate::api::window::Window;
@@ -334,8 +333,8 @@ pub(crate) fn note_technology<'a>(cx: &mut Cx<'a>, ui: &'a Ui, starts_over: bool
         return;
     }
     let shown = || {
-        ui.container()
-            .map(Frame::accessible_tree)
+        ui.any_container()
+            .map(|it| it.accessible_tree())
             .or_else(|| Window::of(ui.doc()).map(Window::surface))
     };
     let tree = if is_active { shown().unwrap_or(0) } else { 0 };

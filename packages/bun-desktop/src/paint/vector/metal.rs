@@ -10,9 +10,9 @@ use crate::platform::macos::{Object, failure};
 #[repr(C)]
 struct Description {
     words: *const [u32; 4],
-    units: [*const u32; 2],
-    bytes: [usize; 3],
-    opaque: Step,
+    units: [*const u32; 3],
+    bytes: [usize; 4],
+    opaque: [Step; 2],
     steps: *const Step,
     count: usize,
     textures: *const *const c_void,
@@ -49,6 +49,7 @@ unsafe extern "C" {
     ) -> *mut c_char;
     safe fn bd_vector_finish() -> *mut c_char;
     safe fn bd_vector_schedule();
+    safe fn bd_vector_widen(surface: &c_void);
     fn bd_vector_draw(
         scene: &Description,
         colors: &c_void,
@@ -68,6 +69,7 @@ using namespace metal;
 #define ANGLE atan2
 #define FLOATS as_type<float4>
 #define WORD(it) words[it]
+#define POINT(it) ((const device float2*)words)[it]
 #define UNIT(it) units[it]
 #define TEXEL(it) ((const device uint*)words)[min(it, last_texel)]
 #define READ(from, x, y) from.read(min(uint2(x, y), uint2(from.get_width() - 1u, from.get_height() - 1u)))
@@ -101,18 +103,22 @@ struct Pass {
 #define POSITION float4(it.at / pass.size * float2(2.0, -2.0) + float2(-1.0, 1.0), it.depth, 1.0)
 #define CORNER(it) Corner { it.position.xy, 0.0, it.ink.x, it.ink.y, it.ink.z, it.ink.w, it.from_center, it.reach, it.part }
 
-vertex Varyings place_corner(uint index [[vertex_id]], INPUTS, constant uint& first [[buffer(3)]]) {
+vertex Varyings place_corner(uint index [[vertex_id]], INPUTS, uint first [[instance_id]]) {
     Corner it = place(first * 4u + index, words, units, 0u);
     return { POSITION, uint4(it.color, it.flags, it.address, it.stride), it.part, it.reach, it.from_center };
 }
 
-vertex Plain place_plain_corner(uint index [[vertex_id]], INPUTS, constant uint& first [[buffer(3)]]) {
+vertex Plain place_plain_corner(uint index [[vertex_id]], INPUTS, uint first [[instance_id]]) {
     Corner it = place(first * 4u + index, words, units, 0u);
     return { POSITION, it.color };
 }
 
 fragment half4 paint_plain_pixel(Plain it [[stage_in]]) {
     return unpack_unorm4x8_to_half(it.color);
+}
+
+fragment float4 shade_pixel(Varyings it [[stage_in]], INPUTS) {
+    return float4(shade(it.ink.x, it.position.xy, words, units, pass.last_texel).xyz, 1.0);
 }
 
 struct Result {
@@ -210,8 +216,11 @@ struct Page {
 }
 
 impl Page {
-    fn new(size @ [width, height]: [i32; 2]) -> Option<Page> {
+    fn new(size @ [width, height]: [i32; 2], is_wide: bool) -> Option<Page> {
         let surface = Rc::new(Surface::new(width, height)?);
+        if is_wide {
+            bd_vector_widen(surface.object());
+        }
         let object = bd_vector_texture(Some(surface.object()), width, height, Kind::Image)?;
         Some(Page {
             texture: Rc::new(Texture { object, size }),
@@ -227,6 +236,7 @@ impl Page {
 
 pub struct Target {
     size: [i32; 2],
+    is_wide: bool,
     /// These only exist on the chip.
     colors: Object,
     depths: Object,
@@ -237,7 +247,7 @@ pub struct Target {
 }
 
 impl Target {
-    pub fn new(width: i32, height: i32) -> Result<Target> {
+    pub fn new(width: i32, height: i32, is_wide: bool) -> Result<Target> {
         ensure!(width.max(height) <= Texture::MAX_SIDE, "it is too large");
         let (size, new) = ([width, height], |kind| {
             bd_vector_texture(None, width, height, kind)
@@ -245,10 +255,11 @@ impl Target {
         let all = || {
             Some(Target {
                 size,
+                is_wide,
                 colors: new(Kind::Colors)?,
                 depths: new(Kind::Depths)?,
                 depth: new(Kind::Depth)?,
-                pages: vec![Page::new(size)?],
+                pages: vec![Page::new(size, is_wide)?],
                 frame: None,
             })
         };
@@ -264,7 +275,7 @@ impl Target {
         let older = &self.pages[..self.pages.len() - 1];
         let mut next = match older.iter().position(Page::is_free) {
             Some(index) => self.pages.remove(index),
-            None => Page::new(self.size).context("there is no memory")?,
+            None => Page::new(self.size, self.is_wide).context("there is no memory")?,
         };
         if self.pages.len() >= MAX_PAGES {
             self.pages.remove(0);
@@ -348,13 +359,18 @@ impl Target {
         let (steps, count) = (steps.as_ptr(), steps.len());
         let description = Description {
             words: scene.words.as_ptr(),
-            units: [scene.units.as_ptr(), scene.opaque.as_ptr()],
+            units: [
+                scene.units.as_ptr(),
+                scene.opaque[0].as_ptr(),
+                scene.opaque[1].as_ptr(),
+            ],
             bytes: [
                 size_of_val(&scene.words[..]),
                 size_of_val(&scene.units[..]),
-                size_of_val(&scene.opaque[..]),
+                size_of_val(&scene.opaque[0][..]),
+                size_of_val(&scene.opaque[1][..]),
             ],
-            opaque: scene.opaque_step(),
+            opaque: scene.opaque_steps(),
             steps,
             count,
             textures: textures.as_ptr(),

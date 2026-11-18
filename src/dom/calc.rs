@@ -935,7 +935,19 @@ impl Node {
             [] if is_numeric => Node::Value(value, Unit::Number),
             [(unit, 1)] if is_numeric => Node::Value(value, unit),
             _ => {
-                all.splice(0..0, number.map(|it| Node::Value(it, Unit::Number)));
+                match (
+                    all.iter_mut().find_map(|it| {
+                        if let Node::Value(value, _) = it {
+                            Some(value)
+                        } else {
+                            None
+                        }
+                    }),
+                    number,
+                ) {
+                    (Some(value), Some(number)) => *value *= number,
+                    _ => drop(all.splice(0..0, number.map(|it| Node::Value(it, Unit::Number)))),
+                }
                 Node::Product(all)
             }
         }

@@ -3,9 +3,11 @@
 use core::fmt::Write as _;
 
 use bun_core::strings::contains_char;
+use bun_web::exec::{Thread, oneshot};
 use bun_web::net::cookies::{Change, Cookie, SameSite};
 
 use super::*;
+use crate::api::realm::promise_for;
 
 const LONGEST_ATTRIBUTE: usize = 1024;
 
@@ -15,7 +17,7 @@ fn trimmed(text: &[u8]) -> &str {
     crate::values::text(text).trim_matches(['\t', ' '])
 }
 
-fn describe<'a>(heap: &JsHeap<'a>, cookie: &Cookie, is_removed: bool) -> JsLocal<'a> {
+pub(crate) fn describe<'a>(heap: &JsHeap<'a>, cookie: &Cookie, is_removed: bool) -> JsLocal<'a> {
     let string = |it: &[u8]| text(it).to_js(heap).to_js();
     let same_site = match cookie.same_site {
         SameSite::None => "none",
@@ -82,6 +84,17 @@ fn tell(client: &Client, change: &Change) {
     });
 }
 
+/// After the events for what has changed so far.
+fn later<'a>(cx: Cx<'_, 'a>) -> JSValue {
+    let (sender, told) = oneshot();
+    Thread::current().post(move || sender.send(()));
+    promise_for(cx, told, |_, _| Ok(JSValue::UNDEFINED))
+}
+
+pub(crate) fn store_of_service_worker<'a>(heap: &JsHeap<'a>) -> &'a CookieStore {
+    one_per_realm!(heap, CookieStore, js_CookieStore)
+}
+
 impl WindowOfSite {
     pub(crate) fn get_cookie_store<'a>(&'a self, cx: Cx<'_, 'a>) -> &'a CookieStore {
         if let Some(store) = CookieStore::of_realm(self.realm(&cx.heap)) {
@@ -121,16 +134,31 @@ impl CookieStore {
         url: Option<&DomString>,
     ) -> Result<'a, Vec<Cookie>> {
         let client = self.client(&cx.heap)?;
-        if let Some(url) = url {
-            let url = parse_url(&cx.heap, url)
-                .and_then(|it| bun_web::url::Url::parse(it.to_utf8().as_bytes()));
-            if url.is_none_or(|it| it.without_fragment() != client.url().without_fragment()) {
-                return Err(cx
-                    .heap
-                    .type_error(format_args!("URL must match the document URL")));
-            }
-        }
-        let (mut cookies, name) = (client.cookies(), name.map(trimmed));
+        let (own, scope) = (
+            client.cookie_url(),
+            client.as_service_worker().map(|it| it.registration.scope),
+        );
+        let is_allowed = |it: &bun_web::url::Url| {
+            scope.as_ref().map_or_else(
+                || it.without_fragment() == own.without_fragment(),
+                |scope| it.href().starts_with(scope.href()),
+            )
+        };
+        let checked = |url| {
+            parse_url(self.realm(&cx.heap), url)
+                .and_then(|it| bun_web::url::Url::parse(it.to_utf8().as_bytes()))
+                .filter(is_allowed)
+        };
+        let url = url
+            .map(|it| {
+                checked(it).ok_or_else(|| {
+                    cx.heap.type_error(format_args!(
+                        "URL must match the document URL, or be in the scope of the worker"
+                    ))
+                })
+            })
+            .transpose()?;
+        let (mut cookies, name) = (client.cookies(url), name.map(trimmed));
         cookies.retain(|it| name.is_none_or(|name| *it.name == *name.as_bytes()));
         Ok(cookies)
     }
@@ -200,7 +228,7 @@ impl CookieStore {
         if !is_valid || !client.set_cookie(header.as_bytes()) {
             return Err(cx.heap.type_error(format_args!("The cookie was refused.")));
         }
-        Ok(cx.promise_resolve(JSValue::UNDEFINED)?.to_js())
+        Ok(later(cx))
     }
 
     pub(crate) fn get<'a>(&'a self, cx: Cx<'_, 'a>, name: &[u8]) -> Result<'a, JSValue> {

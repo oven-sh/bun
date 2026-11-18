@@ -168,7 +168,7 @@ impl ResourceTiming {
         let mut record = ResourceTiming::of_failure(name, initiator_type, head.timing.start);
         let encoding = head.headers.get_or_empty(b"content-encoding");
         let encoded = digits(&head.headers.get_or_empty(b"content-length"))
-            .filter(|it| *it > 0 && !encoding.is_empty())
+            .filter(|it| *it > 0 && !encoding.is_empty() && !head.is_from_service_worker)
             .unwrap_or(size);
         if head.kind != ResponseType::Opaque {
             record.content_type = head
@@ -179,6 +179,7 @@ impl ResourceTiming {
             (record.status, record.encoded_size, record.decoded_size) =
                 (head.status, encoded, size);
         }
+        record.timing.routing.worker_start = head.timing.routing.worker_start;
         let is_navigation = initiator_type == InitiatorType::Navigation;
         if head.allows_timing || is_navigation {
             record.allows_timing = !is_navigation || head.exposes_redirects;

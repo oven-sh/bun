@@ -31,6 +31,7 @@ pub(crate) struct Inherited {
     pub(crate) color: u32,
     pub(crate) language: Str,
     pub(crate) font_scope: u32,
+    pub(crate) is_smoothed: bool,
 }
 
 /// With the units of a font of `size`.
@@ -69,6 +70,7 @@ pub(super) struct Variation {
     pub(super) kerning: CanvasFontKerning,
     pub(super) stretch: CanvasFontStretch,
     pub(super) caps: CanvasFontVariantCaps,
+    pub(super) is_smoothed: bool,
 }
 
 pub(crate) struct Font {
@@ -96,7 +98,7 @@ const STRETCHES: [(CanvasFontStretch, f32); 9] = [
 ];
 
 thread_local! {
-    static ABSOLUTE: Box<JsCell<Map<Box<[u8]>, Rc<Font>>>> = Box::default();
+    static ABSOLUTE: JsCell<Map<Box<[u8]>, Rc<Font>>> = JsCell::default();
 }
 
 impl Font {
@@ -228,7 +230,13 @@ impl Font {
             weight: self.weight,
             stretch: STRETCHES[variation.stretch as usize].1,
             style,
-            synthesis: abi::SYNTHESIZE_WEIGHT | abi::SYNTHESIZE_STYLE,
+            synthesis: abi::SYNTHESIZE_WEIGHT
+                | abi::SYNTHESIZE_STYLE
+                | if variation.is_smoothed {
+                    abi::SYNTHESIZE_SMOOTHING
+                } else {
+                    0
+                },
             optical_sizing: true,
             kerning: variation.kerning != CanvasFontKerning::None,
             oblique_angle,

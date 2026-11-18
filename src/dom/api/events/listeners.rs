@@ -26,7 +26,12 @@ bitflags::bitflags! {
         /// What it has for a callback is for `compile_handler`.
         const UNCOMPILED = 1 << 3;
         const CALLABLE = 1 << 4;
+        const OF_ISOLATED_WORLD = 1 << 5;
     }
+}
+
+unsafe extern "C" {
+    safe fn Bun__IsolatedWorld__isLent(object: JSValue) -> bool;
 }
 
 /// The type, and whether it captures.
@@ -480,6 +485,7 @@ impl EventTarget {
             passive.unwrap_or_else(|| kind.blocks_scrolling() && self.is_outermost()),
         );
         is.set(Is::CALLABLE, callback.is_callable());
+        is.set(Is::OF_ISOLATED_WORLD, Bun__IsolatedWorld__isLent(callback));
         self.add_listener(heap, key, is, callback, signal);
         Ok(())
     }

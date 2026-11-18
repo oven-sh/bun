@@ -2,6 +2,9 @@
 
 #include "root.h"
 
+#include <JavaScriptCore/GlobalObjectMethodTable.h>
+#include <JavaScriptCore/JSGlobalObject.h>
+
 namespace WebCore {
 class Blob;
 class DOMFormData;
@@ -17,7 +20,11 @@ bool desktopRealmHandlesUncaughtException(JSC::JSGlobalObject*, JSC::JSValue err
 // For a URL whose origin is otherwise opaque. Empty in any other realm.
 JSC::JSValue desktopRealmOriginOf(JSC::JSGlobalObject*, const String& href);
 
-bool isDesktopRealm(JSC::JSGlobalObject*);
+void desktopRealmTrackRejection(JSC::JSGlobalObject*, JSC::JSPromise*, JSC::JSPromiseRejectionOperation);
+inline bool isDesktopRealm(JSC::JSGlobalObject* globalObject)
+{
+    return globalObject->globalObjectMethodTable()->promiseRejectionTracker == &desktopRealmTrackRejection;
+}
 // What the prototype of WebCore's class inherits from: in a window or a worker, that of the interface with the same name.
 JSC::JSObject* desktopRealmPrototypeAbove(JSC::JSGlobalObject*, ASCIILiteral name);
 // Its constructor. Null in other realms.

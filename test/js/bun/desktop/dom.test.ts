@@ -1,5 +1,5 @@
 import { desktopInternals } from "bun:internal-for-testing";
-import { heapStats } from "bun:jsc";
+import { deserialize, heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 
@@ -2249,6 +2249,73 @@ describe("messages between a page and its host", () => {
     for (const kind of one)
       expect([sized(kind, 1 << 21, 1 << 21), sized(kind, 1 << 22, 1 << 22)]).toEqual([true, false]);
     expect([sized(lists[0], 1000, 4000), sized(lists[0], 0xffffffff, 4000)]).toEqual([true, false]);
+  });
+
+  describe("a value from the process of a page", () => {
+    const u64 = (value: number) => [...u32(value), ...u32(0)];
+    const list = (...items: number[][]) => [...u32(items.length), ...items.flat()];
+    const post = (value: number[], blobs = list()) =>
+      decodesMessage(
+        "port",
+        new Uint8Array([
+          ...Array(14 + 2).fill(0),
+          4,
+          0,
+          ...u32(value.length),
+          ...value,
+          ...list(),
+          ...blobs,
+          ...list(),
+          0,
+        ]),
+      );
+    const record = (version: number, store: number[]) => [
+      254,
+      version,
+      ...u64(0),
+      ...text(""),
+      0,
+      ...store,
+      0,
+      ...u64(0),
+    ];
+    const size = (version: number) => (version < 4 ? [] : u64(1));
+    const stores = (version: number) => ({
+      file: [0, ...size(version), 1, ...text(import.meta.path)],
+      descriptor: [0, ...size(version), 0, ...(isWindows ? u64 : u32)(1)],
+      bucket: [0, ...size(version), 1, ...text("s3://a/b")],
+    });
+    const places = {
+      alone: (it: number[]) => it,
+      array: (it: number[]) => [1, ...u32(1), ...u32(0), ...it, ...u32(-1)],
+      object: (it: number[]) => [2, ...u32(1 | (1 << 31)), 97, ...it, ...u32(-1)],
+      set: (it: number[]) => [29, ...it, 32, ...u32(-1)],
+    };
+
+    test.each(Object.entries(places))("is no Blob of a file, a descriptor or a bucket (%s)", (_, put) => {
+      const whole = (it: number[]) => [...u32(14), ...put(it)];
+      const inMemory = whole(record(4, [1, ...text("a"), ...text("")]));
+      expect([post(inMemory), decodesMessage("unchecked", new Uint8Array(inMemory))]).toEqual([true, true]);
+      for (const version of [2, 3, 4, 5]) {
+        for (const [name, store] of Object.entries(stores(version))) {
+          const forged = new Uint8Array(whole(record(version, store)));
+          expect([name, Bun.inspect(deserialize(forged.slice().buffer))]).toEqual([
+            name,
+            expect.stringMatching(/FileRef|S3Ref/),
+          ]);
+          expect([name, post([...forged]), decodesMessage("unchecked", forged)]).toEqual([name, false, false]);
+        }
+      }
+    });
+
+    test("comes with blobs of one part, which is no file that the page was not given", () => {
+      const id = Array(16).fill(7);
+      const bytes = [0, 0, ...text("a")];
+      const file = [1, 0, ...text(import.meta.path), ...u64(0), ...u64(1), 0];
+      const postBlob = (...parts: number[][]) =>
+        post([...u32(15), 247, ...id], list([...id, ...list(...parts), ...text(""), 0, ...u64(0)]));
+      expect([postBlob(bytes), postBlob(bytes, bytes), postBlob(file)]).toEqual([true, false, false]);
+    });
   });
 
   test("every prefix of a message is refused", () => {

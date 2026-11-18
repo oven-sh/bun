@@ -175,19 +175,19 @@ fn find_ranges_of_classes(hir: &File<'_>) -> Vec<(u32, u32)> {
     ranges
 }
 
-fn is_within(ranges: &[(u32, u32)], pos: u32) -> bool {
+pub(super) fn is_within(ranges: &[(u32, u32)], pos: u32) -> bool {
     let after = ranges.partition_point(|it| it.0 <= pos);
     after > 0 && pos < ranges[after - 1].1
 }
 
-fn start_of_code(hir: &File<'_>, function: FnId) -> u32 {
+pub(super) fn start_of_code(hir: &File<'_>, function: FnId) -> u32 {
     match hir[function].kind {
         FnKind::Arrow => hir[function].start,
         _ => hir[function].anchor.max(hir[function].start),
     }
 }
 
-fn end_of_body(hir: &File<'_>, function: FnId) -> Option<u32> {
+pub(super) fn end_of_body(hir: &File<'_>, function: FnId) -> Option<u32> {
     match hir[function].body {
         FnBody::None => None,
         FnBody::Expr(expression) => Some(hir[expression].end),

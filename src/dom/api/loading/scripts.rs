@@ -1,5 +1,6 @@
 //! <https://html.spec.whatwg.org/#the-script-element>
 
+use bun_web::compiled::{self, Form};
 use bun_web::mime;
 use bun_web::request::Credentials;
 
@@ -218,11 +219,22 @@ impl Classic {
     }
 
     fn evaluate_here<'a>(&self, cx: Cx<'_, 'a>) -> Result<'a, JSValue> {
-        if !self.is_inline()
-            && let Some(path) =
-                client_of(&cx.heap).and_then(|it| it.compiled_path_by_any_policy(&self.url))
-        {
-            return modules::run_compiled(cx, &path, true);
+        let path = client_of(&cx.heap)
+            .filter(|it| it.runs_program())
+            .and_then(|_| match &self.provenance {
+                Provenance::Inline { base } => {
+                    compiled::path_of_inline(base, || utf8(Some(self.source.clone())).into(), false)
+                }
+                Provenance::Fetched { .. } => compiled::path_of(&self.url, Form::Classic),
+            });
+        let mut source = self.source.clone();
+        if let Some(path) = path {
+            modules::will_run_compiled(&cx.heap, &path, self.base(), &self.fetching);
+            match modules::run_compiled_classic(cx, &path)? {
+                None => return Ok(JSValue::UNDEFINED),
+                Some(text) if !self.is_inline() => source = text,
+                Some(_) => {}
+            }
         }
         let shown = self.shown_url();
         if self.is_muted {
@@ -238,7 +250,7 @@ impl Classic {
         if !self.is_inline() && !self.is_muted {
             modules::script_was_fetched(&cx.heap, base);
         }
-        modules::evaluate_classic(cx, &self.source, shown, base, self.position)
+        modules::evaluate_classic(cx, &source, shown, base, self.position)
     }
 
     /// <https://html.spec.whatwg.org/#run-a-classic-script>
@@ -345,7 +357,7 @@ fn execute<'a>(cx: Cx<'_, 'a>, doc: &'a Doc, script: JSValue, ready: Ready) {
             is_external,
         } => {
             ignored.update(|it| it + 1);
-            run_script(cx, |_| doc.in_realm(|cx| module.run(cx)));
+            run_script(cx, |_| doc.in_realm(|cx| _ = module.run(cx)));
             is_external
         }
     };

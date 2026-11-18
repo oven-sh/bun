@@ -95,6 +95,7 @@ static CALLS: Queue = Queue::new();
 
 thread_local! {
     static IS_CURRENT: Cell<bool> = const { Cell::new(false) };
+    static IS_OUTSIDER: Cell<bool> = const { Cell::new(false) };
     static IS_JAVASCRIPT: Cell<bool> = const { Cell::new(false) };
     static HOLDS_JOBS: Cell<bool> = const { Cell::new(false) };
     static HAS_HELD_JOBS: Cell<bool> = const { Cell::new(false) };
@@ -107,7 +108,24 @@ pub fn exists() -> bool {
 }
 
 pub fn is_elsewhere() -> bool {
-    exists() && !IS_CURRENT.get()
+    if exists() {
+        !IS_CURRENT.get()
+    } else {
+        IS_OUTSIDER.get()
+    }
+}
+
+/// The current thread posts its jobs to whichever has the windows.
+pub fn stay_outside() {
+    IS_OUTSIDER.set(true);
+}
+
+fn wake() {
+    if exists() {
+        system::wake_ui()
+    } else {
+        system::wake()
+    }
 }
 
 /// Not with `std::thread`, which allocates what only the end of the thread frees: the process may end first.
@@ -187,7 +205,7 @@ pub fn post(job: impl FnOnce() + Send + 'static) {
         if HOLDS_JOBS.get() {
             HAS_HELD_JOBS.set(true)
         } else {
-            system::wake_ui()
+            wake()
         }
     }
 }
@@ -200,7 +218,7 @@ pub fn hold_jobs() {
 pub fn release_jobs() {
     HOLDS_JOBS.set(false);
     if HAS_HELD_JOBS.take() {
-        system::wake_ui();
+        wake();
     }
 }
 
@@ -246,15 +264,29 @@ pub fn has_jobs() -> bool {
 pub fn run_jobs() {
     // One question tends to be followed by another.
     const MAX_ROUNDS: usize = 32;
+    const MAX_JOBS: usize = 256;
     for _ in 0..MAX_ROUNDS {
-        while let Some(job) = JOBS.pop() {
+        // Other processes can post as fast as this runs.
+        for job in std::iter::from_fn(|| JOBS.pop()).take(MAX_JOBS) {
             crate::guard("error", (), job);
+        }
+        if has_jobs() {
+            break;
         }
         if !HAS_ANSWERED.take() || !JOBS.wait(Some(Instant::now())) {
             return;
         }
     }
-    system::wake_ui();
+    wake();
+}
+
+/// On the thread that runs JavaScript, if it has the windows too.
+pub fn run_jobs_of_outsiders() -> bool {
+    let has_some = !exists() && has_jobs();
+    if has_some {
+        run_jobs();
+    }
+    has_some
 }
 
 static IS_BUSY: AtomicBool = AtomicBool::new(false);

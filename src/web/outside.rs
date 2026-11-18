@@ -16,16 +16,18 @@ use bun_ui::protocol::Lane;
 
 use crate::Bytes;
 use crate::client::{Client, Update};
+use crate::convert::resolve_blob_url;
 use crate::exec::{Receiver, Sender, Thread, oneshot};
-use crate::headers::HeaderList;
-use crate::net::body::Body;
+use crate::net::body::{Blob, Body};
 use crate::net::cookies::Cookie;
 use crate::net::embedder::ClientId;
 use crate::net::response::Response;
 use crate::net::web_socket::Accepted;
 use crate::net::{Progress, Result};
-use crate::remote::{self, HOST, Head, Kind};
+use crate::remote::{self, Flags, HOST, Head, Kind};
 use crate::request::Request;
+use crate::storage::AreaChange;
+use crate::storage::areas::Items;
 use crate::url::Url;
 use crate::wire;
 
@@ -86,17 +88,38 @@ calls! {
         /// A call whose result is no longer wanted.
         Cancel = cancel(ticket: u32);
         Forget = forget();
-        StartWorker = start_worker(id: ClientId, url: Url, headers: HeaderList, is_shared: bool);
+        StartWorker = start_worker(id: ClientId, url: Url, is_shared: bool);
+        AnnounceBlobUrl = announce_blob_url(url: Url, is_revoked: bool);
+        #[size = large]
+        LendBlob = lend_blob(ticket: u32, blob: Option<Blob>);
         WatchCookies = watch_cookies();
+        WatchAreas = watch_areas();
+        #[size = large]
+        ChangeArea = change_area(is_local: bool, change: AreaChange, number: u64);
     }
     call {
         #[size = large]
         Fetch = fetch(request: Box<Request>, reports_upload: bool) -> Result<Box<Response>>;
         Connect = connect(url: Url, protocols: Vec<Bytes>, frames: Body) -> Result<Accepted>;
         SourceOf = source_of(url: Url) -> Result<Option<Vec<u8>>>;
-        CookieString = cookie_string() -> Vec<u8>;
+        /// And until when it holds, unless it is outdated.
+        CookieString = cookie_string() -> (Vec<u8>, f64);
         Cookies = cookies() -> Vec<Cookie>;
         SetCookie = set_cookie(text: Vec<u8>) -> bool;
+        BorrowArea = borrow_area(is_local: bool) -> Items;
+    }
+}
+
+impl Call {
+    /// It runs no script of the app.
+    fn is_harmless(&self) -> bool {
+        matches!(
+            self,
+            Call::CookieString {}
+                | Call::Cookies {}
+                | Call::SetCookie { .. }
+                | Call::BorrowArea { .. }
+        )
     }
 }
 
@@ -110,6 +133,7 @@ crate::wire! {
     pub enum News {
         Uploaded { ticket: u32, bytes: u64 },
         Update(Update),
+        WantsBlob { ticket: u32, url: Url },
     }
 }
 
@@ -155,7 +179,10 @@ impl Outside {
     fn send_call(self, call: Call) -> (u32, Receiver<Return>) {
         let (ticket, (sender, receiver)) = (remote::next_ticket(), oneshot());
         expected().lock().returns.insert(ticket, sender);
-        let head = Head::new(Kind::Call, self.0.0, ticket);
+        let mut head = Head::new(Kind::Call, self.0.0, ticket);
+        if call.is_harmless() {
+            head = head.with(Flags::HARMLESS);
+        }
         if !remote::send(HOST, Lane::Elsewhere, head, call) {
             returned(ticket, None);
         }
@@ -245,6 +272,13 @@ pub(crate) fn hear(client: u32, news: News) {
             if let Some(thread) = expected.threads.get(&client) {
                 thread
                     .post(move || Client::find(ClientId(client)).map_or((), |it| it.apply(update)));
+            }
+        }
+        News::WantsBlob { ticket, url } => {
+            let by = Outside(ClientId(client));
+            match expected.threads.get(&client) {
+                Some(thread) => thread.post(move || by.lend_blob(ticket, resolve_blob_url(&url))),
+                None => by.lend_blob(ticket, None),
             }
         }
     }

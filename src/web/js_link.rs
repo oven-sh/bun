@@ -164,7 +164,7 @@ impl Link for JsLink {
     fn ask(&self, question: Question) -> Option<Answer> {
         let global = bun_ui::main_global();
         let (native, owner) = self.hooks.get(global)?;
-        let can_run = self.catch_up() || question.is_answered_without_scripts();
+        let can_run = question.is_answered_without_scripts() || self.catch_up();
         if (!can_run || !self.postponed.borrow().is_empty()) && question.has_to_arrive() {
             self.postpone(question);
             return None;

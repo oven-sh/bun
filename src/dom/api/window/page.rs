@@ -194,7 +194,13 @@ impl Window {
                 super::rendering::display_wants_frame,
             );
         }
-        self.attach(cx, surface, !is_off && is_outermost);
+        self.attach(
+            cx,
+            surface,
+            !is_off
+                && is_outermost
+                && !Ui::of(self.document()).is_some_and(crate::api::frames::apart::is_apart),
+        );
     }
 
     pub(crate) fn set_url(&self, url: DomString) {

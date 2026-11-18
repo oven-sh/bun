@@ -95,6 +95,8 @@ pub(crate) struct Picture {
     pub(crate) clips: Vec<(BoxId, Space)>,
     /// The ones before it are under a modal dialog.
     pub(crate) first_hit: usize,
+    /// `Document::scroll_range` of the viewport, unless the renderer scrolls.
+    pub(crate) range: [[f32; 2]; 2],
     pub(crate) canvas_source: NodeId,
     pub(crate) caret: Option<(BoxId, Rect)>,
     pub(crate) is_submitted: bool,
@@ -561,12 +563,13 @@ impl Document {
             } else {
                 Layers::KNOWN
             },
+            Layers::empty(),
         );
     }
 
-    /// Of a quiet box that does not scroll. `inside` has those of its children, which are quiet.
+    /// Of a quiet box. `inside` has those of its children, which are quiet.
     #[inline]
-    pub(crate) fn note_layers(&self, id: BoxId, inside: Layers) {
+    pub(crate) fn note_layers(&self, id: BoxId, inside: Layers, own: Layers) {
         let (it, parent) = (&self.boxes[id], &self.boxes[self.boxes[id].parent]);
         let passed_on = Layers::KNOWN
             | Layers::HAS_BACKDROP
@@ -580,7 +583,7 @@ impl Document {
             && parent.kind != Kind::Lines
             && self.view_transitions.is_empty()
         {
-            it.painted.layers.set(inside & passed_on);
+            it.painted.layers.set(inside & passed_on | own);
         }
     }
 
@@ -1478,6 +1481,9 @@ impl<'a> Painter<'a> {
             );
             self.canvas_background(style, viewport, &frame, &space);
         }
+        if !document.compositor.is_on {
+            self.out.range = document.scroll_range(VIEWPORT);
+        }
         let contents = self.content_space(VIEWPORT, &space);
         self.wheel_hit(root, viewport, contents.scroller, &space);
         let (first, top_layer) = document.boxes[VIEWPORT]
@@ -1581,9 +1587,9 @@ impl<'a> Painter<'a> {
         if self.svg.is_on {
             value
         } else if scale == 1.0 || scale == 2.0 {
-            (value * scale).round() * (1.5 - scale / 2.0)
+            (value * scale + 0.5).floor() * (1.5 - scale / 2.0)
         } else {
-            (value * scale).round() / scale
+            (value * scale + 0.5).floor() / scale
         }
     }
 
@@ -1885,6 +1891,7 @@ impl<'a> Painter<'a> {
             },
             space,
         );
+        self.segments.groups += 1;
         core::mem::replace(&mut self.base, space.link)
     }
 
@@ -1911,6 +1918,7 @@ impl<'a> Painter<'a> {
             }
         }
         self.base = outer_base;
+        self.segments.groups -= 1;
     }
 
     /// `contents` is the space of the contents of its parent.
@@ -2040,7 +2048,12 @@ impl<'a> Painter<'a> {
                 );
             }
             let scroller = document.composited_scroller(id, space.scroller);
-            if scroller.is_some() || contents.visible.intersection(&rect) != contents.visible {
+            let sure = rect.intersection(&clip.moved(space.origin).grown(0.5));
+            // What is taken to be visible may only be what the box paints so far.
+            if scroller.is_some()
+                || it.style.effects.clip_margin.1 > 0.0
+                || contents.visible.intersection(&sure) != contents.visible
+            {
                 self.clip(square(rect), &mut contents);
             }
             if id == VIEWPORT {
@@ -2151,7 +2164,10 @@ impl<'a> Painter<'a> {
                 contents
             },
         );
-        if self.is_out_of_sight(child, &space) && !document.boxes[child].cache.has_escapees() {
+        if (self.is_grouped() || !self.paints_whole(child))
+            && self.is_out_of_sight(child, &space)
+            && !document.boxes[child].cache.has_escapees()
+        {
             return;
         }
         let own = &document.boxes[child];
@@ -2264,6 +2280,24 @@ impl<'a> Painter<'a> {
         });
     }
 
+    /// With where the origin is in it.
+    pub(crate) fn placed(&self, own: &Matrix, origin: [f32; 2]) -> (Matrix, [f32; 2]) {
+        if own[..4] == IDENTITY[..4] {
+            return (
+                translation([self.snap(own[4] + 0.001), self.snap(own[5] + 0.001)]),
+                origin,
+            );
+        }
+        let origin = origin.map(|it| self.snap(it));
+        (
+            multiply(
+                &multiply(&translation(origin), own),
+                &translation(origin.map(|it| -it)),
+            ),
+            origin,
+        )
+    }
+
     pub(crate) fn placed_stacking_context(
         &mut self,
         id: BoxId,
@@ -2284,7 +2318,7 @@ impl<'a> Painter<'a> {
             self.depends_on_outside();
         }
         let sampled = sampled.and_then(|it| Some((it, self.source(it.timeline)?)));
-        let items_before = self.out.items.len();
+        let (items_before, mut whole) = (self.out.items.len(), None);
         self.see(id, was_hidden);
         if let Some((sampled, source)) = sampled.filter(|it| !it.0.transforms.is_empty()) {
             space.origin = space.origin.map(|it| self.snap(it));
@@ -2307,7 +2341,21 @@ impl<'a> Painter<'a> {
                 &mut space,
             );
         } else if let Some(own) = document.own_transform(id).filter(|_| !is_transformed) {
-            if own[..4] == IDENTITY[..4] && !document.tree[it.node].has(Flags::ANIMATED) {
+            if self.paints_whole(id) {
+                let (matrix, origin) = self.placed(&own, space.origin);
+                if invert(&matrix).is_none() {
+                    return;
+                }
+                self.note_pivot(id, origin, &matrix);
+                whole = Some((
+                    self.out.regions.len(),
+                    space
+                        .visible
+                        .transformed(&self.out.links[space.link as usize].matrix),
+                ));
+                (space.origin, space.visible) = (origin, document.ink(id).moved(origin).grown(1.0));
+                self.link(&Item::PushTransform(matrix), &mut space);
+            } else if own[..4] == IDENTITY[..4] && !document.tree[it.node].has(Flags::ANIMATED) {
                 space.origin = [
                     space.origin[0] + self.snap(own[4] + 0.001),
                     space.origin[1] + self.snap(own[5] + 0.001),
@@ -2519,6 +2567,12 @@ impl<'a> Painter<'a> {
             .into_iter()
             .for_each(|it| self.end_effects(&subject, &it, &[], &clipped));
         self.is_hidden = was_hidden;
+        if let Some((first, visible)) = whole.filter(|it| it.0 < self.out.regions.len()) {
+            self.depends_on_outside();
+            self.out.regions[first..]
+                .iter_mut()
+                .for_each(|it| it.rect = it.rect.intersection(&visible));
+        }
         let paints = |it: &Item| {
             !matches!(
                 it,

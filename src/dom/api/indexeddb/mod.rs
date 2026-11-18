@@ -14,7 +14,7 @@ use std::rc::Rc;
 use bun_jsc::bindgen::{self, Error, JsHeap, JsInterface, JsLocal, JsScope};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 use bun_web::held::Held;
-use bun_web::storage::indexed::{self as stored, Direction, Failure, IndexKeys, Table};
+use bun_web::storage::indexed::either::{self as stored, Direction, Failure, IndexKeys, Table};
 use bun_web::storage::key::{self, Key, KeyRange};
 
 pub(crate) use self::cursor::IDBCursor;

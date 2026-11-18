@@ -55,6 +55,18 @@ impl fmt::Debug for Preload {
     }
 }
 
+/// `--desktop`. All paths and patterns are absolute.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PageOptions {
+    /// HTML files and scripts.
+    pub listed: Vec<Vec<u8>>,
+    pub preloads: Vec<Vec<u8>>,
+    /// What lies beside the executable and need not be in it.
+    pub shipped: Vec<Vec<u8>>,
+    /// The directory of package.json, or nothing.
+    pub app_directory: Vec<u8>,
+}
+
 #[derive(Clone, Debug)]
 pub struct AotOptions {
     pub heap: HeapSize,
@@ -124,6 +136,7 @@ pub struct AotOptions {
     pub imports_desktop: Option<Arc<AtomicBool>>,
     /// The global object of the program is a window.
     pub starts_in_window: bool,
+    pub pages: PageOptions,
     pub replaced_by_tests: ReplacedByTests,
     /// Only a build of Bun with Fuzzilli looks at it.
     pub preload: Option<Preload>,
@@ -218,6 +231,7 @@ impl Default for AotOptions {
             has_realms_of_the_web: false,
             imports_desktop: None,
             starts_in_window: false,
+            pages: PageOptions::default(),
             replaced_by_tests: ReplacedByTests::default(),
             preload: None,
             thread_count: None,
@@ -290,6 +304,7 @@ mod tests {
             has_realms_of_the_web,
             imports_desktop,
             starts_in_window,
+            pages,
             replaced_by_tests,
             preload,
             thread_count,
@@ -353,6 +368,7 @@ mod tests {
         assert!(!has_realms_of_the_web);
         assert!(imports_desktop.is_none());
         assert!(!starts_in_window);
+        assert_eq!(pages, PageOptions::default());
         assert!(builtins.is_empty());
         assert!(test_files.is_empty());
         assert!(preloads.is_empty());

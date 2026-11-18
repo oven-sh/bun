@@ -84,23 +84,33 @@ JSValue requireNodeModule(Zig::GlobalObject* globalObject, ASCIILiteral name)
     RELEASE_AND_RETURN(scope, call(globalObject, function, getCallData(function), jsUndefined(), ArgList()));
 }
 
-JSObject* eventEmitterConstructor(JSGlobalObject* globalObject)
+JSObject* nodeClassConstructor(JSGlobalObject* globalObject, ASCIILiteral name)
 {
     VM& vm = getVM(globalObject);
     ErrorHandlingScope reservedStack(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    JSValue constructor = requireNodeModule(defaultGlobalObject(globalObject), "events"_s);
+    JSValue constructor = requireNodeModule(defaultGlobalObject(globalObject), name);
     scope.releaseAssertNoExceptionExceptTermination();
-    return asObject(constructor);
+    return constructor ? asObject(constructor) : globalObject->functionPrototype();
+}
+
+JSObject* nodeClassPrototype(JSGlobalObject* globalObject, ASCIILiteral name)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSValue prototype = nodeClassConstructor(globalObject, name)->get(globalObject, vm.propertyNames->prototype);
+    scope.releaseAssertNoExceptionExceptTermination();
+    return prototype && prototype.isObject() ? asObject(prototype) : globalObject->objectPrototype();
+}
+
+JSObject* eventEmitterConstructor(JSGlobalObject* globalObject)
+{
+    return nodeClassConstructor(globalObject, "events"_s);
 }
 
 JSObject* eventEmitterPrototype(JSGlobalObject* globalObject)
 {
-    VM& vm = getVM(globalObject);
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    JSValue prototype = eventEmitterConstructor(globalObject)->get(globalObject, vm.propertyNames->prototype);
-    scope.releaseAssertNoExceptionExceptTermination();
-    return prototype.isObject() ? asObject(prototype) : globalObject->objectPrototype();
+    return nodeClassPrototype(globalObject, "events"_s);
 }
 
 Structure* structureForClass(JSGlobalObject* globalObject, unsigned classIndex)

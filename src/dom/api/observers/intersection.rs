@@ -6,7 +6,7 @@ use crate::abi::Rect;
 use crate::api::core::{Doc, DocFlags, DomError, Element, List, Node, Ns, dom_error, seams};
 use crate::api::geometry::DOMRectReadOnly;
 use crate::api::typed::numeric;
-use crate::api::ui::host;
+use crate::api::ui::{Ui, host};
 use crate::api::{animation, frames};
 use crate::calc::{self, Unit};
 use crate::document::Document;
@@ -327,6 +327,14 @@ fn intersect_across_frames<'a>(
         (result.root, result.intersection) = (is_same_origin.then_some(root), shown.map(|it| it.0));
         to_viewport = multiply(&shown.map_or(IDENTITY, |it| it.1), &to_viewport);
     }
+    if Ui::of(at).is_some_and(frames::apart::is_apart) {
+        (result.root, result.intersection) = (
+            None,
+            result
+                .intersection
+                .and_then(|it| frames::apart::clip(at, it)),
+        );
+    }
     result.intersection = result
         .intersection
         .zip(invert(&to_viewport))
@@ -334,12 +342,41 @@ fn intersect_across_frames<'a>(
     result
 }
 
+/// Of the viewport that is in it.
+pub(crate) fn shown_part_of_frame<'a>(
+    cx: &mut JsScope<'a>,
+    frame: &'a Element,
+    all: Rect,
+) -> Option<Rect> {
+    let (mut shown, mut to_viewport, mut at, mut next) = (all, IDENTITY, frame.doc(), Some(frame));
+    while let Some(frame) = next {
+        let (part, matrix) = frame.synced_engine(cx, |engine, id| {
+            engine.intersect_contents(
+                id,
+                shown,
+                &mut root_with_margins(engine, DOCUMENT, [&NO_MARGINS; 2]),
+            )
+        })?;
+        (shown, to_viewport, at) = (part, multiply(&matrix, &to_viewport), frame.doc());
+        next = frames::container(at);
+    }
+    Some(
+        frames::apart::clip(at, shown)?
+            .transformed(&invert(&to_viewport)?)
+            .intersection(&all),
+    )
+}
+
 fn is_unobscured<'a>(cx: &mut JsScope<'a>, node: &'a Element) -> bool {
     let is_on_top = node.engine(|engine, id| {
         engine.update_hits();
         engine.is_unobscured(id)
     });
-    is_on_top && frames::container(node.doc()).is_none_or(|it| is_unobscured(cx, it))
+    is_on_top
+        && frames::container(node.doc()).map_or_else(
+            || !Ui::of(node.doc()).is_some_and(frames::apart::is_apart),
+            |it| is_unobscured(cx, it),
+        )
 }
 
 /// Of those that may have something to report, where they are in the list, and what can be told from this document.
@@ -420,7 +457,7 @@ pub(crate) fn update_intersections<'a>(
     };
     let (was_stale, is_in_frame) = (
         boxes.is_stale[Watches::Intersections as usize].get(),
-        doc.is(DocFlags::IN_FRAME),
+        doc.is(DocFlags::IN_FRAME) || Ui::of(doc).is_some_and(frames::apart::is_apart),
     );
     let all = boxes.active(&cx.heap, doc, Watches::Intersections);
     if was_stale {
@@ -523,5 +560,25 @@ pub(crate) fn frame_moved<'a>(cx: &mut JsScope<'a>, doc: &'a Doc) {
     if let Some(boxes) = ObservedBoxes::if_any(doc).filter(|it| it.is_across_frames.get()) {
         boxes.has_new.set(true);
         doc.invalidate(cx);
+        update_out_of_sight(cx, doc);
+    }
+}
+
+pub(super) fn update_out_of_sight<'a>(cx: &mut JsScope<'a>, doc: &'a Doc) {
+    if frames::apart::is_out_of_sight(doc)
+        && !ObservedBoxes::of(&cx.heap, doc)
+            .is_update_queued
+            .replace(true)
+    {
+        host::queue_task(cx, doc, [doc.to_js()], |cx, [doc]| {
+            let Some(doc) = Doc::from_js(&cx.heap, doc) else {
+                return;
+            };
+            ObservedBoxes::of(&cx.heap, doc).is_update_queued.set(false);
+            if frames::apart::is_out_of_sight(doc) {
+                doc.synced_engine(cx, |engine, _| engine.update_layout_for_frame());
+                update_intersections(cx, doc, true);
+            }
+        });
     }
 }

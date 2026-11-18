@@ -138,6 +138,38 @@ pub fn read_token(rest: &mut &[u8]) -> Option<Token> {
     })
 }
 
+/// One key, as the functions above write it.
+pub(super) fn is_valid(mut key: &[u8]) -> bool {
+    const MOST_DEPTH: usize = 2000;
+    let mut depth = 0usize;
+    loop {
+        if key.first() == Some(&BINARY) {
+            let mut bytes = escaped_bytes(key).iter();
+            while let Some(byte) = bytes.next() {
+                if *byte == 1 && !matches!(bytes.next(), Some(1 | 2)) {
+                    return false;
+                }
+            }
+        }
+        match read_token(&mut key) {
+            None => return false,
+            Some(Token::Number(it) | Token::Date(it)) if it.is_nan() => return false,
+            Some(Token::BeginArray) if depth > MOST_DEPTH => return false,
+            Some(Token::BeginArray) => depth += 1,
+            Some(Token::EndArray) if depth == 0 => return false,
+            Some(Token::EndArray) => depth -= 1,
+            Some(_) => {}
+        }
+        if depth == 0 {
+            return key.is_empty();
+        }
+    }
+}
+
+fn escaped_bytes(key: &[u8]) -> &[u8] {
+    read_binary(&mut &key[1..]).unwrap_or_default()
+}
+
 pub fn as_number(mut key: &[u8]) -> Option<f64> {
     if key.first() == Some(&NUMBER)
         && let Token::Number(number) = read_token(&mut key)?
@@ -171,11 +203,13 @@ pub fn past(key: &[u8]) -> Vec<u8> {
     [key, &[PAST]].concat()
 }
 
-/// From the first, up to and without the second.
-#[derive(Clone)]
-pub struct KeyRange {
-    pub from: Vec<u8>,
-    pub to: Vec<u8>,
+crate::wire! {
+    /// From the first, up to and without the second.
+    #[derive(Clone)]
+    pub struct KeyRange {
+        pub from: Vec<u8>,
+        pub to: Vec<u8>,
+    }
 }
 
 impl KeyRange {

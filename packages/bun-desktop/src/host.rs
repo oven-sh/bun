@@ -305,6 +305,7 @@ fn run_ui_thread() {
 
 fn has_work() -> bool {
     bridge::has_events()
+        || thread::has_jobs()
         || DID_TICK.get()
         || DEFERRED_FRAMES.with_borrow(|frames| !frames.is_empty())
 }
@@ -317,7 +318,7 @@ pub fn wait_for(source: Option<isize>, other: i32, timeout: Option<Duration>) ->
 }
 
 pub fn has_input() -> bool {
-    bridge::has_events_but_frames() || thread::has_calls()
+    bridge::has_input() || thread::has_calls()
 }
 
 pub fn pump(source: isize, timeout_ns: i64, from_tick: bool) -> bool {
@@ -347,6 +348,7 @@ pub fn pump(source: isize, timeout_ns: i64, from_tick: bool) -> bool {
         let until = deadline.into_iter().chain(next_deadline()).min();
         until.map(|until| until.saturating_duration_since(Instant::now()))
     };
+    thread::run_jobs_of_outsiders();
     if from_tick {
         run_what_is_due();
         system::arm(
@@ -378,6 +380,7 @@ pub fn pump(source: isize, timeout_ns: i64, from_tick: bool) -> bool {
         };
         let is_ready = system::wait(platform().ok(), source, &mut timeout);
         input::flush_raw_key();
+        thread::run_jobs_of_outsiders();
         run_what_is_due();
         if bridge::has_events() && !IS_URGENT.get() {
             break;

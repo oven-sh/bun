@@ -260,7 +260,8 @@ export function analyze(schemas: readonly SchemaFile[]): Tables {
     ...file.functions.flatMap(fn => fn.signatures.map(signature => thunkSymbol(fn, signature))),
     ...file.types.flatMap(type => (type instanceof ClassType ? classSymbols(type) : [])),
   ]);
-  const repeated = symbols.filter((symbol, i) => symbols.indexOf(symbol) !== i);
+  const seen = new Set<string>();
+  const repeated = symbols.filter(symbol => seen.size === seen.add(symbol).size);
   assert(repeated.length === 0, `two bindings make the same symbol: ${repeated.join(", ")}`);
   return tables;
 }
@@ -2509,13 +2510,22 @@ const sizeOfCppClass = (type: ClassType): number =>
       ? offsetOfField(type, type.internalFields.length)
       : sizeOfCppClass(type.base);
 
+function oncePerClass<T>(compute: (type: ClassType) => T): (type: ClassType) => T {
+  const known = new Map<ClassType, T>();
+  return type => {
+    if (!known.has(type)) known.set(type, compute(type));
+    return known.get(type)!;
+  };
+}
+
 /** The members of the prototype. `owner` is where the body is: the interface itself or a mixin. */
-export const membersOf = (type: ClassType) =>
+export const membersOf = oncePerClass(type =>
   [type, ...(type.web!.options.includes ?? []), ...type.web!.partials].flatMap(holder =>
     holder.protoMembers
       .filter(member => holder === type || !(member instanceof Constant))
       .map(member => ({ member, owner: (member instanceof Getter && member.family?.family) || holder })),
-  );
+  ),
+);
 export const isUnforgeable = (member: ClassMember) =>
   member instanceof FunctionDefinition
     ? !!(member.signatures[0] as Method).web.unforgeable
@@ -2884,6 +2894,7 @@ const membersByNumber = new Map<number, [ClassType, ClassMember][]>();
 function numberInChain(type: ClassType, member: ClassMember, index: number): number {
   const number = chainOf(type).reduce((sum, it) => sum + (it === type ? index : membersOf(it).length), 0);
   const others = membersByNumber.get(number) ?? [];
+  if (others.some(([other, ofOther]) => other === type && ofOther === member)) return number;
   for (const [other, ofOther] of others)
     assert(
       other === type ? ofOther === member : !chainOf(type).includes(other) && !chainOf(other).includes(type),
@@ -3471,8 +3482,11 @@ ${overloads ? `${cppPrologue}\n${cppThrowIfArgumentsMissing(constructors[0], req
 export const lengthOfConstructor = (type: ClassType) =>
   type.construct!.length ?? Math.min(...type.constructors.map(signature => signature.requiredArguments));
 
+const ownUnforgeableCount = oncePerClass(
+  type => unforgeablesOf(type).flatMap(({ member }) => rowsOfMember(type, member, {})).length,
+);
 const unforgeableCount = (types: readonly ClassType[]) =>
-  types.flatMap(type => unforgeablesOf(type).flatMap(({ member }) => rowsOfMember(type, member, {}))).length;
+  types.reduce((sum, type) => sum + ownUnforgeableCount(type), 0);
 
 function cppSourceForInterfaceCell(type: ClassType, guards: Guards): string {
   const { cpp, internalFields: fields } = type;
@@ -3733,7 +3747,9 @@ export function globalRows(files: readonly SchemaFile[]): GlobalRow[] {
 export function exposureOf(member: ClassMember, { web }: ClassType): string {
   const ofMixin = web!.kind === "mixin" ? web!.options : {};
   const { exposed = ofMixin.exposed, secure = ofMixin.secure } = webOptionsOf(member);
-  const globals = exposed?.flatMap(it => (it === "Worker" ? ["DedicatedWorker", "SharedWorker"] : [it]));
+  const globals = exposed?.flatMap(it =>
+    it === "Worker" ? ["DedicatedWorker", "SharedWorker", "ServiceWorker"] : [it],
+  );
   return [...(globals ?? []), ...(secure ? ["SecureContext"] : [])]
     .map(it => `Bun::Bindgen::Exposure::${it}`)
     .join(" | ");

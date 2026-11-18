@@ -2341,6 +2341,7 @@ dependencies = [
  "bun_url",
  "bun_which",
  "bun_wyhash",
+ "bun_yarr",
  "encoding_rs",
  "smallvec",
 ]

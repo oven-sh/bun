@@ -142,6 +142,8 @@ pub(crate) fn lend_if_needed(run: fn() -> !) {
     use bun_core::env_var;
     // What the main thread has.
     const STACK_SIZE: usize = 18 << 20;
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+    super::child::prepare();
     let is_asked_for = match env_var::BUN_DESKTOP_THREADS::get() {
         Some(b"main") => true,
         Some(b"2") if cfg!(target_os = "macos") => true,

@@ -92,6 +92,7 @@ unsafe extern "C" {
     safe fn bd_window_is_active(view: &c_void) -> bool;
     safe fn bd_window_is_visible(view: &c_void) -> bool;
     safe fn bd_window_request_frame(view: &c_void, is_leisurely: bool);
+    safe fn bd_window_set_scrolling(view: &c_void, is_on: bool);
     safe fn bd_window_layer(view: &c_void) -> *mut c_void;
     safe fn bd_window_fit_backdrop(view: &c_void, edges: &mut [f64; 2]);
     safe fn bd_window_content_view(view: &c_void) -> *mut c_void;
@@ -366,6 +367,11 @@ impl Window for View {
 
     fn request_leisurely_frame(&self) {
         bd_window_request_frame(&self.view, true);
+    }
+
+    fn set_scrolling(&self, is_on: bool) {
+        // Frames may wait for their time, which JavaScript does not have.
+        bd_window_set_scrolling(&self.view, is_on && crate::host::thread::exists());
     }
 
     fn can_present(&self) -> Option<bool> {

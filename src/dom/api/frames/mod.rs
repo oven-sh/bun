@@ -1,5 +1,6 @@
 //! `iframe`, `frame`, `object` and `embed`: the documents that they show.
 
+pub(crate) mod apart;
 pub(crate) mod entry;
 mod host;
 pub(crate) mod input;
@@ -8,6 +9,8 @@ pub(crate) mod plugins;
 mod remote;
 
 use core::cell::{Cell, RefCell};
+
+use bun_web::host::Position;
 
 use crate::api::history::Context;
 use crate::api::on_behalf::{allow_load, delay_load, resolve};
@@ -25,7 +28,7 @@ const LAZY_MARGIN: f64 = 1250.0;
 enum Kind {
     /// An empty document that is not shown.
     Blank,
-    /// In this process.
+    /// In this engine.
     Local,
     /// In the web engine.
     Remote,
@@ -39,6 +42,7 @@ bitflags::bitflags! {
         const MEASURING = 1 << 2;
         const FULLSCREEN = 1 << 3;
         const HAS_FIRED_LOAD = 1 << 4;
+        const HAS_NAVIGATED = 1 << 6;
         const WAS_DISPLAYED = 1 << 5;
     }
 }
@@ -79,6 +83,8 @@ pub(crate) struct Frame {
     length: Cell<u32>,
     /// Until it is near the viewport.
     deferred: RefCell<Option<Navigation>>,
+    /// To a document in another process.
+    told: Cell<Option<(bun_web::host::Looks, Position)>>,
 }
 
 slots!(
@@ -97,6 +103,9 @@ pub(crate) struct Frames {
     fingers_down: Cell<u32>,
     /// By an `IntersectionObserver` whose root is the viewport at the top.
     are_observed: Cell<bool>,
+    /// It is in a frame whose element is in another process.
+    is_apart: Cell<bool>,
+    position: Box<Cell<Option<Position>>>,
 }
 
 impl Frame {
@@ -316,7 +325,7 @@ impl Frame {
                 Some(false),
             );
             self.around()
-                .container()
+                .any_container()
                 .into_iter()
                 .for_each(|it| it.focus(cx));
         }
@@ -392,13 +401,21 @@ pub(crate) fn top_of_same_origin(ui: &Ui) -> Option<&Ui> {
     above(ui)
         .all(|it| host::are_of_same_origin(ui, it))
         .then(|| above(ui).last().unwrap_or(ui))
+        .filter(|it| !apart::is_apart(it))
 }
 
 /// Where the viewport is in that at the top.
 pub(crate) fn offset_in_top(ui: &Ui) -> [f64; 2] {
+    let start = above(ui)
+        .last()
+        .unwrap_or(ui)
+        .framing
+        .position
+        .get()
+        .map_or([0.0; 2], |it| it.origin);
     core::iter::successors(ui.container(), |it| it.around().container())
         .map(Frame::area)
-        .fold([0.0; 2], |[x, y], [left, top, ..]| [x + left, y + top])
+        .fold(start, |[x, y], [left, top, ..]| [x + left, y + top])
 }
 
 pub(crate) fn container(doc: &Doc) -> Option<&Element> {
@@ -511,7 +528,7 @@ fn create<'a>(cx: &mut Cx<'a>, ui: &'a Ui, element: &'a Element, kind: Kind) -> 
     if !host::take_room(ui) {
         return None;
     }
-    let (placement, flags, area, image, color_scheme, length, deferred) = Default::default();
+    let (placement, flags, area, image, color_scheme, length, deferred, told) = Default::default();
     let state = Frame {
         kind,
         number: next_number(),
@@ -525,6 +542,7 @@ fn create<'a>(cx: &mut Cx<'a>, ui: &'a Ui, element: &'a Element, kind: Kind) -> 
         color_scheme,
         length,
         deferred,
+        told,
     };
     let frame = js_Frame::create(ui.doc().heap(&cx.heap), state);
     js_Frame::set_element(frame, element.to_js());
@@ -624,6 +642,9 @@ pub(crate) static STEPS: Steps = Steps {
                 atom!("allow"),
                 atom!("allowfullscreen"),
                 atom!("csp"),
+                atom!("scrolling"),
+                atom!("marginwidth"),
+                atom!("marginheight"),
             ]
             .into_iter()
             .any(|it| change.is(it))

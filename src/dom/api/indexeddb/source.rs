@@ -510,7 +510,7 @@ impl IDBObjectStore {
         }
         let (is_unique, is_multi_entry) = (options.unique, options.multi_entry);
         let index = Rc::new(Index {
-            table: Table::unique(),
+            table: self.transaction().new_table(heap)?,
             name: name.into(),
             key_path,
             is_unique,

@@ -100,6 +100,10 @@ pub(crate) fn has_display() -> JsResult<bool> {
 pub(crate) fn become_electron() -> JsResult<()> {
     state().is_electron.set(true);
     command_line::read(process::arguments()?.get(1..).unwrap_or_default());
+    if command_line::switch("enable-sandbox").is_some() && !crate::contents::place::enable_sandbox()
+    {
+        return Err(unsupported("--enable-sandbox"));
+    }
     if let Some(directory) = command_line::value("user-data-dir") {
         paths::set_path("userData", files::absolute(&directory))?;
     }
@@ -168,6 +172,7 @@ fn finish_launching() -> JsResult<()> {
     load_key(|| {
         state().is_ready.set(true);
         emit(object(), "will-finish-launching", &[])?;
+        paths::make_data_directories()?;
         session::default()?;
         if let Some(port) = command_line::switch("remote-debugging-port") {
             crate::devtools::listen(port.parse().unwrap_or_default())?;
@@ -811,14 +816,17 @@ impl DesktopApp {
         }
         Ok(state().app_path.get_or_init(|| {
             let found = ["app.asar", "app"].map(|it| files::join(&[root, it]));
-            found
-                .into_iter()
-                .find(|it| files::exists(it))
-                .unwrap_or_else(|| root.clone())
+            let found = found.into_iter().find(|it| files::exists(it));
+            let path = found.unwrap_or_else(|| root.clone());
+            compiled::set_app_path(path.as_bytes());
+            path
         }))
     }
 
     pub(crate) fn get_path(_: Cx<'_, '_>, name: &[u8]) -> JsResult<String> {
+        if name == b"userData" && !paths::is_set("userData") {
+            paths::make_data_directories()?;
+        }
         paths::path(&string(name))
     }
 
@@ -1132,7 +1140,15 @@ impl DesktopApp {
     }
 
     pub(crate) fn enable_sandbox(_: Cx<'_, '_>) -> JsResult<()> {
-        Err(unsupported("enableSandbox"))
+        if is_ready() {
+            return Err(error(format_args!(
+                "app.enableSandbox() can only be called before app is ready"
+            )));
+        }
+        match crate::contents::place::enable_sandbox() {
+            true => Ok(()),
+            false => Err(unsupported("enableSandbox")),
+        }
     }
 
     pub(crate) fn set_user_activity<'a>(

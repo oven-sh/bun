@@ -10,7 +10,7 @@ use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
 use crate::later::{self, Timer};
 use crate::protocol::{
-    Command, Event, Input, Mouse, MouseAction, Reply, Request, SurfaceCommand, SystemRequest,
+    Command, Event, Input, Lane, Mouse, MouseAction, Reply, Request, SurfaceCommand, SystemRequest,
 };
 
 /// The `source` of a `pump` that only waits for the UI.
@@ -39,7 +39,7 @@ struct Queue {
 /// From another process.
 pub enum Heard {
     Message(Vec<u8>),
-    End { has_misbehaved: bool },
+    End,
 }
 
 type OnMessage = fn(u32, Heard) -> JsResult<()>;
@@ -128,11 +128,8 @@ impl Queue {
             Event::Message { from, message } => (self.on_message.get()).map_or(Ok(()), |it| {
                 it(from, Heard::Message(message.bytes.into_vec()))
             }),
-            Event::Disconnected {
-                from,
-                has_misbehaved,
-            } => {
-                (self.on_message.get()).map_or(Ok(()), |it| it(from, Heard::End { has_misbehaved }))
+            Event::Disconnected { from } => {
+                (self.on_message.get()).map_or(Ok(()), |it| it(from, Heard::End))
             }
             Event::Warning(message) => crate::warn(global, &message),
             Event::Fatal(message) => {
@@ -356,12 +353,16 @@ pub fn wait_for_process(
         Event::Message { from, message } => *from == process && accepts(&message.bytes),
         _ => false,
     };
-    let is_end = |it: &Event| matches!(it, Event::Disconnected { from, .. } if *from == process);
+    let is_end = |it: &Event| matches!(it, Event::Disconnected { from } if *from == process);
     queue.waits.update(|it| it + 1);
     let mut at = 0;
     let result = loop {
         if is_done() {
             break true;
+        }
+        let left = deadline.map(|it| it.saturating_duration_since(Instant::now()));
+        if left.is_some_and(|it| it.is_zero()) {
+            break false;
         }
         let next = (queue.events.borrow_mut().get_mut(at))
             .map(|it| (it.as_ref().is_some_and(is_end), it.take_if(is_accepted)));
@@ -375,10 +376,6 @@ pub fn wait_for_process(
                 }
             }
             None => {
-                let left = deadline.map(|it| it.saturating_duration_since(Instant::now()));
-                if left.is_some_and(|it| it.is_zero()) {
-                    break false;
-                }
                 let left = left.map_or(FOREVER, |it| it.as_nanos() as i64);
                 if (ui.pump)(NO_SOURCE, left, false) {
                     queue.receive();
@@ -411,6 +408,9 @@ pub fn is_input_pending(includes_continuous: bool) -> bool {
             Input::Wheel(_) => includes_continuous,
             _ => false,
         },
+        Event::Message { message, .. } => {
+            message.lane == Lane::Input || (includes_continuous && message.lane == Lane::Motion)
+        }
         _ => false,
     })
 }

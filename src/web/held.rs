@@ -2,7 +2,6 @@
 
 use core::cell::RefCell;
 use core::ffi::c_void;
-use core::mem::ManuallyDrop;
 use std::rc::{Rc, Weak};
 
 use crate::exec::{self, LocalFuture, oneshot, race};
@@ -20,9 +19,8 @@ impl<T> Release for RefCell<Option<T>> {
     }
 }
 
-thread_local! {
-    static HELD: ManuallyDrop<RefCell<Vec<(*const Realm, Weak<dyn Release>)>>> = bun_ui::lasting(|| drop(HELD.with(|it| it.take())));
-}
+static HELD: bun_ui::Lasting<RefCell<Vec<(*const Realm, Weak<dyn Release>)>>> =
+    bun_ui::Lasting::empty();
 
 fn release(is_meant: impl Fn(*const Realm) -> bool) {
     let held: Vec<_> = HELD.with(|it| {

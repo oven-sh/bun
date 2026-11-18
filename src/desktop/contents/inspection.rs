@@ -2,9 +2,12 @@
 
 use std::rc::Rc;
 
+use bun_web::host::Inspected;
+
 use super::page::Page;
 use super::{Contents, of_app, parts};
 use crate::prelude::*;
+use crate::renderer::handle_of;
 
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum Stage {
@@ -25,9 +28,41 @@ pub(crate) enum News<'a> {
         column: u32,
         error: JSValue,
     },
+    /// By the process that has the page.
+    Inspected {
+        session: u32,
+        method: &'a str,
+        params: &'a str,
+    },
     FramesChanged,
     GuestCommitted,
     Destroyed,
+}
+
+pub(crate) fn with_news(
+    it: Inspected<'_>,
+    tell: &dyn Fn(News<'_>) -> JsResult<()>,
+) -> JsResult<()> {
+    match it {
+        Inspected::Console { method, values } => {
+            let handles = array(&[])?;
+            (values.iter()).try_for_each(|it| handles.push(global(), handle_of(*it)))?;
+            with_elements(handles, |all| tell(News::Console(method, all)))
+        }
+        Inspected::Exception {
+            text,
+            url,
+            line,
+            column,
+            error,
+        } => tell(News::Exception {
+            text,
+            url,
+            line,
+            column,
+            error: handle_of(error),
+        }),
+    }
 }
 
 pub(crate) struct Observer {

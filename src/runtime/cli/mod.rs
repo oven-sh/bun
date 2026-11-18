@@ -1023,6 +1023,16 @@ pub(crate) mod command {
             }
         }
 
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+        if bun_removable_features::call_removable_or!(
+            Desktop,
+            ReturnDefault,
+            { false },
+            crate::desktop::has_pages_without_program,
+        ) {
+            return call_removable!(Desktop, Abort, boot_pages, log);
+        }
+
         // bun build --compile entry point
         if !bun_core::env_var::feature_flag::BUN_BE_BUN::get().unwrap_or(false) {
             if let Some(graph) = bun_standalone_graph::Graph::from_executable()? {
@@ -1034,16 +1044,6 @@ pub(crate) mod command {
             if bun_removable_features::is_removed(bun_removable_features::Feature::Tools) {
                 bun_standalone_graph::Graph::exit_without_program();
             }
-        }
-
-        #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
-        if bun_removable_features::call_removable_or!(
-            Desktop,
-            ReturnDefault,
-            { false },
-            crate::desktop::is_page_process,
-        ) {
-            return call_removable!(Tools, Abort, boot_pages, log);
         }
 
         #[cfg(not(bun_locked_environment))]
@@ -1298,10 +1298,8 @@ pub(crate) mod command {
         let ctx = write_context_no_parse(log);
         ctx.args.target = Some(bun_options_types::schema::api::Target::Bun);
         ctx.args.disable_default_env_files = true;
-        ctx.debug.loaded_bunfig = true;
         ctx.debug.global_cache = bun_options_types::global_cache::GlobalCache::disable;
-        super::run_command::RunCommand::boot(ctx, b"/"[..].into(), None)?;
-        Ok(())
+        super::run_command::RunCommand::boot_pages(ctx)
     }
 
     /// `bun [run] <script>` / `bun --version` / bare `bun`. The dominant tag

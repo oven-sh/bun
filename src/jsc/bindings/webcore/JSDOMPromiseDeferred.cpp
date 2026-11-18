@@ -27,6 +27,7 @@
 #include "JSDOMPromiseDeferred.h"
 
 // #include "DOMWindow.h"
+#include "IsolatedWorld.h"
 #include "JSDOMExceptionHandling.h"
 #include <JavaScriptCore/BuiltinNames.h>
 #include <JavaScriptCore/Exception.h>
@@ -62,7 +63,7 @@ void DeferredPromise::callFunction(JSGlobalObject& lexicalGlobalObject, ResolveM
     });
     switch (mode) {
     case ResolveMode::Resolve:
-        deferred()->resolve(&lexicalGlobalObject, vm, resolution);
+        Bun::IsolatedWorld::resolve(&lexicalGlobalObject, deferred(), resolution);
         break;
     case ResolveMode::Reject:
         deferred()->reject(vm, resolution);

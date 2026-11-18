@@ -31,6 +31,7 @@ pub(crate) mod range;
 pub(crate) mod realm;
 pub(crate) mod render;
 pub(crate) mod scheduler;
+pub(crate) mod service_workers;
 pub(crate) mod site;
 pub(crate) mod storage;
 pub(crate) mod style_events;

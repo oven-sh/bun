@@ -580,6 +580,13 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
     fn compiled_entry_point(&self, name: &[u8]) -> Option<&CompiledEntryPoint> {
         self.entry_point_by_name(name)
     }
+    fn path_in_executable(&self, path: &[u8]) -> Option<Vec<u8>> {
+        self.key_of_path(path)
+    }
+    fn embedded_data(&self, name: &[u8]) -> Option<&[u8]> {
+        let file = self.lookup_file(name).filter(|file| self.has_data(file))?;
+        Some(file.utf8_contents())
+    }
     fn file_at_source_path(&self, path: &[u8]) -> Option<&'static [u8]> {
         self.find_at_source_path(path).map(|file| file.name)
     }

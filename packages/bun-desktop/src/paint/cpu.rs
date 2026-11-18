@@ -376,20 +376,64 @@ impl Painter<'_> {
     }
 
     pub fn paint(&self, range: Range<usize>, layer: &mut Layer, matrix: &Transform, clip: &Clip) {
+        let (end, mut done) = (range.end, usize::MAX);
         for index in self.scene.children(range) {
             let area =
                 IntRect::around(map_rect(matrix, self.scene.bounds(index))).intersect(clip.rect);
             if (!area.is_empty() || erases(&self.scene.items[index]))
                 && !self.left_out.contains(&index)
+                && index != done
             {
                 if (index % 8 == 0 || area.area() > 1 << 12 || self.scene.end(index) > index + 1)
                     && self.frame.is_overdue()
                 {
                     return;
                 }
-                self.paint_item(index, layer, matrix, clip, area);
+                match index + 1 < end && self.fill_with_border(index, layer, matrix, clip).is_some()
+                {
+                    true => done = index + 1,
+                    false => self.paint_item(index, layer, matrix, clip, area),
+                }
             }
         }
+    }
+
+    /// One on top of the other, which leaves no gap between them.
+    fn fill_with_border(
+        &self,
+        index: usize,
+        layer: &mut Layer,
+        matrix: &Transform,
+        clip: &Clip,
+    ) -> Option<()> {
+        let widths = self.scene.border_over(index)?;
+        let [Item::Fill { shape, color }, Item::Border { colors, .. }] =
+            *self.scene.items[index..].first_chunk()?
+        else {
+            return None;
+        };
+        let mut present = (0..4).filter(|it| widths[*it] > 0.).map(|it| colors[it]);
+        let border = present.next()?;
+        (color & 0xFF == 0xFF
+            && present.all(|it| it == border)
+            && (!widths.contains(&0.) || self.frame.is_translation(matrix)))
+        .then_some(())?;
+        let shape = self.frame.snap_shape(&shape);
+        self.fill_shape(
+            layer,
+            &shape,
+            matrix,
+            clip,
+            &Paint::Solid(premultiply(border)),
+        );
+        self.fill_shape(
+            layer,
+            &border::inset(&shape, widths.map(|it| self.frame.snap_width(it))),
+            matrix,
+            clip,
+            &Paint::Solid(premultiply(color)),
+        );
+        Some(())
     }
 
     fn paint_item(
@@ -733,9 +777,14 @@ impl Painter<'_> {
                         .map(move |command| command.transform(&place))
                 });
                 let (path, clip): (Path, _) = (paths.collect(), clip.within_rect(area));
-                self.with_stroke(stroke, |it| {
-                    layer.fill_path(&path, it, matrix, &clip, &Paint::Solid(premultiply(*color)))
-                });
+                let mut coverage = self.cover_stroke(&path, stroke, matrix, clip.rect);
+                text::correct_stroke(
+                    face,
+                    size * average_scale(matrix),
+                    *color,
+                    &mut coverage.data,
+                );
+                layer.fill_coverage(&coverage, &clip, &Paint::Solid(premultiply(*color)));
             }
             Item::ImagePart {
                 clip: bounds,
@@ -864,11 +913,21 @@ impl Painter<'_> {
                     return;
                 };
                 let Tile { rect, step } = snap_tile(frame, tile);
-                let wrap = |at: f32, step: f32| if step > 0. { at.rem_euclid(step) } else { at };
+                let shape = frame.snap_shape(shape);
+                let painted = tile_bounds(&shape, &Tile { rect, step });
+                let fills_shape = painted == shape.rect;
+                let wrap = |at: f32, step: f32, length: f32| match step > 0. {
+                    true => at.rem_euclid(step),
+                    false if fills_shape => at.max(0.).min(length),
+                    false => at,
+                };
                 let shade_all = |left: i32, top: i32, row: &mut [Pixel]| {
                     for (column, pixel) in (left..).zip(row) {
                         let (x, y) = map_point(&to_local, column as f32 + 0.5, top as f32 + 0.5);
-                        let (x, y) = (wrap(x - rect.x, step[0]), wrap(y - rect.y, step[1]));
+                        let (x, y) = (
+                            wrap(x - rect.x, step[0], rect.width),
+                            wrap(y - rect.y, step[1], rect.height),
+                        );
                         let is_inside =
                             (0. ..=rect.width).contains(&x) && (0. ..=rect.height).contains(&y);
                         let (x, y) = map_point(&from_tile, x, y);
@@ -879,11 +938,9 @@ impl Painter<'_> {
                         };
                     }
                 };
-                let shape = frame.snap_shape(shape);
                 let axis = gradient_axis(item).filter(|_| !matrix.has_skew());
                 let mut clip = clip.within_rect(area);
-                if axis.is_some() {
-                    let painted = tile_bounds(&shape, &Tile { rect, step });
+                if axis.is_some() && !fills_shape {
                     clip = clip.within_rect(IntRect::nearest(map_rect(matrix, painted)));
                 }
                 let mut every_row = vec![

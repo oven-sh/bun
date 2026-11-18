@@ -284,7 +284,10 @@ impl EventSource {
         } else {
             Credentials::SameOrigin
         };
-        options.cache = CacheMode::NoStore;
+        (options.cache, options.skips_service_workers) = (
+            CacheMode::NoStore,
+            super::request::is_called_from_isolated_world(),
+        );
         let (with_credentials, state) = (init.with_credentials, Cell::new(CONNECTING));
         let this = structure.create(
             &cx.heap,

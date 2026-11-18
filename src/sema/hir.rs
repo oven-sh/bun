@@ -2966,6 +2966,20 @@ impl KnownEvaluation {
     }
 }
 
+/// What the build writes around a classic script of a page.
+pub const CLASSIC_SCRIPT_START: &[u8] = b"this.run=function(bindings\\u0024){";
+pub const CLASSIC_SCRIPT_END: &[u8] = b"\n};this.names=\"\"";
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum ScriptOfPage {
+    #[default]
+    No,
+    /// Between [`CLASSIC_SCRIPT_START`] and [`CLASSIC_SCRIPT_END`].
+    Classic,
+    /// Like a file that begins with `// @bun`.
+    Module,
+}
+
 /// How the code of a function sees names that it doesn't declare.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum GlobalCode {
@@ -3023,6 +3037,8 @@ pub struct FileIn<S: Storage> {
     pub is_script_for_project: bool,
     /// `is_script_for_project`, and what `bun run` drops of it stays global. Set by the loader.
     pub is_script_with_code: bool,
+    /// Set by the loader.
+    pub script_of_page: ScriptOfPage,
     pub runs_beside_loader: bool,
     pub unknown_imports_of_texts: S::Few<ImportedName>,
     /// The imports that bind the `require` of another file. Set by the loader.
@@ -3574,7 +3590,33 @@ impl<S: Storage> FileIn<S> {
         }
     }
 
-    /// The functions of `known_evaluations` that see the global scope alone, sorted.
+    /// The transpiler has no say in what the code means.
+    pub fn stands_as_written(&self) -> bool {
+        self.script_of_page != ScriptOfPage::No || find_transpiled_mark(&self.text).is_some()
+    }
+
+    /// The function of [`CLASSIC_SCRIPT_START`].
+    pub fn classic_script(&self) -> Option<FnId> {
+        match self.script_of_page == ScriptOfPage::Classic {
+            true => self.function_assigned_first(),
+            false => None,
+        }
+    }
+
+    pub fn function_assigned_first(&self) -> Option<FnId> {
+        let StmtKind::Expr(first) = self[self.ids(self.body).next()?].kind else {
+            return None;
+        };
+        match self[first].kind {
+            ExprKind::Assign { value, .. } => match self[value].kind {
+                ExprKind::Fn(function) => Some(function),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// The functions that see the global scope alone, sorted.
     pub fn global_code(&self) -> Vec<(FnId, GlobalCode)> {
         let evaluations = self.known_evaluations.iter();
         let mut found: Vec<(FnId, GlobalCode)> = evaluations
@@ -3592,6 +3634,7 @@ impl<S: Storage> FileIn<S> {
                 Some((function, code))
             })
             .collect();
+        found.extend((self.classic_script()).map(|it| (it, GlobalCode::StrictScript)));
         found.sort_unstable_by_key(|it| it.0.0);
         found
     }
@@ -3909,6 +3952,7 @@ macro_rules! file_in_storage {
             is_forced_module: $this.is_forced_module,
             is_script_for_project: $this.is_script_for_project,
             is_script_with_code: $this.is_script_with_code,
+            script_of_page: $this.script_of_page,
             runs_beside_loader: $this.runs_beside_loader,
             unknown_imports_of_texts: $few!($this.unknown_imports_of_texts),
             imported_requires: $few!($this.imported_requires),
@@ -4068,6 +4112,7 @@ impl FileBuilder {
             is_forced_module,
             is_script_for_project,
             is_script_with_code,
+            script_of_page,
             runs_beside_loader,
             unknown_imports_of_texts,
             imported_requires,
@@ -4183,6 +4228,7 @@ impl FileBuilder {
         *is_forced_module = Default::default();
         *is_script_for_project = Default::default();
         *is_script_with_code = Default::default();
+        *script_of_page = Default::default();
         *runs_beside_loader = Default::default();
         unknown_imports_of_texts.clear();
         imported_requires.clear();

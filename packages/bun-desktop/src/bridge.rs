@@ -7,7 +7,9 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::error::{Result, failure};
-use crate::protocol::{DragPhase, Event, Input, MouseAction, Reply, SystemEvent, WindowEvent};
+use crate::protocol::{
+    DragPhase, Event, Input, Lane, Message, MouseAction, Reply, SystemEvent, WindowEvent,
+};
 use crate::remote::{guest, pages};
 use crate::sync::Mutex;
 use crate::{diagnostics, host};
@@ -83,8 +85,20 @@ pub fn has_events() -> bool {
     !EVENTS.lock().is_empty()
 }
 
-pub fn has_events_but_frames() -> bool {
-    !EVENTS.lock().iter().all(is_frame)
+pub fn has_input() -> bool {
+    !EVENTS.lock().iter().all(|it| {
+        is_frame(it)
+            || matches!(
+                it,
+                Event::Message {
+                    message: Message {
+                        lane: Lane::Scripts,
+                        ..
+                    },
+                    ..
+                } | Event::Disconnected { .. }
+            )
+    })
 }
 
 pub fn drain(buffer: &mut [MaybeUninit<Event>]) -> usize {

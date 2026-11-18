@@ -203,6 +203,11 @@ pub fn waits_for_pause() -> bool {
     IS_WANTED.get()
 }
 
+/// The window server is held up while it gets ready, which had better be before.
+pub fn expect_scroll() {
+    IS_WANTED.set(!IS_USABLE.load(Ordering::Acquire));
+}
+
 pub fn note_pause() {
     if IS_WANTED.take() {
         get_ready();

@@ -7,45 +7,95 @@ use std::time::{Duration, Instant};
 use bun_collections::HashMap;
 use bun_core::{CStringList, CodeGenerationFromStrings};
 use bun_jsc::{Strong, from_js_host_call_generic};
-use bun_ui::protocol::{LENT_IMAGE, Lane, PAGE_PROCESS_MARKER, PageCommand};
+use bun_ui::protocol::{
+    COMPILED_PAGE_PROCESS_MARKER, LENT_IMAGE, Lane, PAGE_PROCESS_MARKER, PageCommand,
+};
 use bun_ui::queue::{self, Heard};
 use bun_web::client::{Twin, Update};
-use bun_web::host::{Host, Question, Reply};
-use bun_web::input::Input;
+use bun_web::host::{Answer, Host, Question, Reply};
+use bun_web::input::{Action, Input};
+use bun_web::outside::serve;
 use bun_web::page::{self, Change, News, Order, Outcome, Query};
-use bun_web::remote::{self, Flags, Head, Kind, Peer};
-use bun_web::renderer::{self, Command, Done, Statics, Task};
+use bun_web::remote::{self, Flags, Head, Kind, Peer, clerk};
+use bun_web::renderer::{self, Command, Conditions, Done, Renderer, Statics, Task};
 use bun_web::wire::{self, Malformed, Message};
 
 use super::page::Page;
+use super::place::{self, Place};
+use super::witness::Witness;
 use super::{alive, link};
 use crate::prelude::*;
-use crate::{command_line, files, process};
+use crate::{command_line, files, process, task};
 
-const PATIENCE: Duration = Duration::from_secs(1);
+const MOST_EXPECTED: usize = 1 << 16;
+/// From then on, windows of a site share one.
+const MANY_PROCESSES: usize = 32;
+const MOST_PROCESSES: usize = 256;
+const KEPT_FOR_APP: usize = 64;
 /// Their windows may still be around.
 const MOST_DISPOSED: usize = 256;
 
 enum Expected {
     Outcome(Reply<Option<Outcome>>),
     Done(Reply<Option<Done>>),
+    Turn(Rc<Postponed>, Option<later::Timer>),
     Nothing,
 }
+
+type Postponed = RefCell<Vec<Box<dyn FnOnce() -> JsResult<()>>>>;
 
 impl Expected {
     fn give_up(self) {
         match self {
             Expected::Outcome(reply) => reply(global(), None),
             Expected::Done(reply) => reply(global(), None),
+            Expected::Turn(all, _deadline) => {
+                (all.take().into_iter()).for_each(|it| post(Priority::Host, it));
+            }
             Expected::Nothing => {}
         }
     }
 }
 
+/// How long the app may be kept waiting.
+struct Patience {
+    left: Cell<Duration>,
+    at: Cell<Instant>,
+    deadline: Cell<Option<Instant>>,
+}
+
+impl Patience {
+    const FREE: Duration = Duration::from_millis(10);
+    const MOST: Duration = Duration::from_secs(1);
+
+    fn spend(&self, wait: impl FnOnce(Instant)) {
+        if let Some(of_outer_wait) = self.deadline.get() {
+            return wait(of_outer_wait);
+        }
+        let start = Instant::now();
+        let left = Patience::MOST.min(self.left.get() + (start - self.at.get()) / 10);
+        let deadline = start + Patience::FREE + left;
+        self.deadline.set(Some(deadline));
+        wait(deadline);
+        self.deadline.take();
+        self.at.set(Instant::now());
+        (self.left).set(left.min(deadline.saturating_duration_since(self.at.get())));
+    }
+}
+
+/// Input that has yet to be handled.
+struct Probe {
+    ticket: u32,
+    page: u32,
+    is_overdue: bool,
+    _timer: later::Timer,
+}
+
 struct Hosted {
     of_window: Host,
     of_blank_frames: Host,
-    of_preload: Option<Host>,
+    of_preload: Host,
+    has_preload: Cell<bool>,
     _needed: [Strong; 2],
 }
 
@@ -53,15 +103,25 @@ pub(super) struct Process {
     peer: Peer,
     pub(super) pid: u32,
     pub(super) creation_time: f64,
-    /// Of the first document with one.
-    pub(super) site: RefCell<Option<String>>,
+    pub(super) place: RefCell<Place>,
+    /// How many groups of windows.
+    users: Cell<u32>,
+    has_had_preload: Cell<bool>,
     /// The ticket of the question that is being answered, or 0.
     serving: Cell<u32>,
+    is_deaf: Cell<bool>,
+    last_conditions: Cell<u32>,
+    pub(super) witness: Witness,
+    probed_at: Cell<Instant>,
+    probe: RefCell<Option<Probe>>,
+    patience: Patience,
     is_holding: Cell<bool>,
+    postponed: RefCell<Weak<Postponed>>,
     has_held: Cell<bool>,
     /// What has been waited for in vain.
     overdue: RefCell<Vec<u32>>,
-    last_sent: Cell<u32>,
+    /// And whether it is harmless.
+    last_sent: Cell<(u32, bool)>,
     expected: RefCell<HashMap<u32, Expected>>,
     pages: RefCell<HashMap<u32, Rc<Hosted>>>,
     disposed: RefCell<VecDeque<u32>>,
@@ -72,30 +132,26 @@ pub(super) struct Process {
 #[derive(Default)]
 struct All {
     by_peer: RefCell<HashMap<Peer, (Weak<Process>, u32)>>,
-    spare: RefCell<Option<Rc<Process>>>,
+    /// One for each role at most.
+    spares: RefCell<Vec<Rc<Process>>>,
+    /// That of the window whose question is being answered.
+    asking: Cell<Option<Peer>>,
 }
 
 state!(fn all() -> All);
 
-pub(super) fn are_wanted() -> bool {
-    state!(fn known() -> core::cell::OnceCell<bool>);
-    *known().get_or_init(|| {
-        let is_set = |name| process::variable(name).is_ok_and(|it| it.is_some());
-        cfg!(unix)
-            && global().bun_vm().standalone_module_graph.is_none()
-            && !is_set("BUN_BE_BUN")
-            && is_set("BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING")
-            && is_set("BUN_DESKTOP_PAGE_PROCESSES")
-    })
+fn is_like_browser(place: &Place) -> bool {
+    place::trusts_by_origin() || !place.is_trusted()
 }
 
-fn arguments() -> CStringList {
+fn arguments(place: &Place) -> CStringList {
     unsafe extern "Rust" {
         safe fn __bun_desktop_path_of_library() -> &'static [u8];
     }
     let executable = process::executable();
     let library = files::absolute(&string(__bun_desktop_path_of_library()));
     let restriction: Option<&[u8]> = match bun_core::code_generation_from_strings() {
+        _ if !place.is_trusted() || place.runs_program() => None,
         CodeGenerationFromStrings::Allowed => None,
         CodeGenerationFromStrings::DisallowedLikeNode => {
             Some(b"--disallow-code-generation-from-strings")
@@ -106,10 +162,14 @@ fn arguments() -> CStringList {
     };
     let fixed = [
         executable.as_bytes(),
-        PAGE_PROCESS_MARKER.to_bytes(),
+        match place.runs_program() {
+            true => COMPILED_PAGE_PROCESS_MARKER.to_bytes(),
+            false => PAGE_PROCESS_MARKER.to_bytes(),
+        },
         library.as_bytes(),
     ];
-    let all = fixed.into_iter().chain(restriction).map(|it| [it]);
+    let exemption = command_line::switch("no-sandbox").map(|_| &b"--no-sandbox"[..]);
+    let all = (fixed.into_iter().chain(restriction).chain(exemption)).map(|it| [it]);
     CStringList::from_parts(all.collect::<Vec<_>>().into_iter())
 }
 
@@ -144,12 +204,19 @@ fn environment() -> JsResult<CStringList> {
     Ok(CStringList::from_parts(entries))
 }
 
-fn statics() -> JsResult<Statics> {
+fn statics(place: &Place) -> JsResult<Statics> {
     let resources = get(process::object(), "resourcesPath")?;
-    Ok(Statics::new(
-        command_line::all(),
+    let mut all = Statics::new(
         super::text_if_any(resources)?.unwrap_or_default(),
-    ))
+        is_like_browser(place),
+    );
+    all.is_headless = is_headless()?;
+    all.tracing = crate::tracing::in_progress();
+    Ok(all)
+}
+
+pub(super) fn too_many() -> bun_jsc::JsError {
+    error(format_args!("There are too many processes for pages"))
 }
 
 fn running() -> Vec<Rc<Process>> {
@@ -161,6 +228,32 @@ pub(crate) fn statics_changed() -> JsResult<()> {
     running().iter().try_for_each(|it| it.begin())
 }
 
+pub(crate) fn render_trusted_pages() {
+    let is_meant = |it: &Rc<Process>| it.place.borrow().is_trusted() && it.users.get() > 0;
+    for it in running().into_iter().filter(is_meant) {
+        Renderer::new(Rc::clone(&it) as _, 0).render(|_, ()| {});
+        it.wait();
+    }
+}
+
+/// By the ids of the processes that answer in time.
+pub(crate) async fn finish_traces() -> Vec<(u32, String)> {
+    const PATIENCE: u64 = 3000;
+    let ask = |process: Rc<Process>| {
+        let (pid, (send, events)) = (process.pid, task::oneshot());
+        Renderer::new(process, 0).finish_trace(move |_, it| send.send(it));
+        (pid, events)
+    };
+    let (asked, mut all) = (Vec::from_iter(running().into_iter().map(ask)), Vec::new());
+    let collect = async {
+        for (pid, events) in asked {
+            all.extend(events.await.map(|it| (pid, it)));
+        }
+    };
+    task::within(PATIENCE, collect).await;
+    all
+}
+
 /// With the creation times.
 pub(crate) fn ids() -> Vec<(u32, f64)> {
     running()
@@ -169,19 +262,60 @@ pub(crate) fn ids() -> Vec<(u32, f64)> {
         .collect()
 }
 
+fn take_spare(place: &Place) -> Option<Rc<Process>> {
+    let mut spares = all().spares.borrow_mut();
+    let found = (spares.iter()).position(|it| it.place.borrow().can_become(place))?;
+    Some(spares.swap_remove(found)).filter(|it| !it.is_gone())
+}
+
+fn find_shared(place: &Place, is_for_frame: bool) -> Option<Rc<Process>> {
+    let all = running();
+    let shares = place.can_be_shared() && (is_for_frame || all.len() >= MANY_PROCESSES);
+    all.into_iter().find(|it| {
+        shares
+            && *it.place.borrow() == *place
+            && !(it.is_gone() || it.is_late() || it.has_had_preload.get())
+    })
+}
+
 /// So that it starts while something else is done.
-pub(super) fn prepare() -> JsResult<()> {
-    if are_wanted() && all().spare.borrow().is_none() {
-        all().spare.replace(Some(Process::spawn()?));
+pub(super) fn prepare(place: &Place, is_for_frame: bool) -> JsResult<()> {
+    const MILLISECONDS_TO_BE_USED: f64 = 10_000.;
+    let Place::Apart { role, .. } = *place else {
+        return Ok(());
+    };
+    if running().len() >= MANY_PROCESSES || find_shared(place, is_for_frame).is_some() {
+        return Ok(());
     }
+    let spare = match take_spare(place) {
+        Some(it) => it,
+        None => {
+            let site = "".into();
+            let new = Process::spawn(Place::Apart { role, site })?;
+            let peer = new.peer;
+            let dismiss = move |_: &_| {
+                let unused = Vec::from_iter(
+                    (all().spares.borrow_mut()).extract_if(.., |it| it.peer == peer),
+                );
+                drop(unused);
+                Ok(())
+            };
+            later::after(MILLISECONDS_TO_BE_USED, dismiss).detach();
+            new
+        }
+    };
+    all().spares.borrow_mut().push(spare);
     Ok(())
 }
 
-pub(super) fn take() -> JsResult<Rc<Process>> {
-    match all().spare.take().filter(|it| !it.is_gone()) {
-        Some(spare) => spare.begin().map(|()| spare),
-        None => Process::spawn(),
-    }
+pub(super) fn take(place: Place, may_share: bool, is_for_frame: bool) -> JsResult<Rc<Process>> {
+    let shared = find_shared(&place, is_for_frame).filter(|_| may_share);
+    let process = match shared.or_else(|| take_spare(&place)) {
+        Some(known) => known.begin().map(|()| known)?,
+        None => Process::spawn(place.clone())?,
+    };
+    process.settle(place);
+    Ok(process.share())
 }
 
 #[cfg(unix)]
@@ -190,18 +324,25 @@ mod system {
     use bun_spawn_sys::posix_spawn::posix_spawn::wait4;
     use bun_spawn_sys::spawn_process::{PosixSpawnOptions, PosixStdio, spawn_process_posix};
     use bun_sys::{Fd, File};
+    use bun_ui::protocol::{EXIT_WITHOUT_SANDBOX, SOCKET_TO_PARENT};
 
-    /// It has `socket`, which this closes, as its descriptor 3.
+    const _: () = assert!(SOCKET_TO_PARENT == libc::STDERR_FILENO + 1);
+
+    /// It has `socket`, which this closes, as the first descriptor after the standard ones.
     pub(super) fn spawn(
         command: &CStringList,
         variables: &CStringList,
         socket: i32,
+        may_log: bool,
     ) -> Option<u32> {
         let socket = File::from_fd(Fd::from_native(socket));
         let options = PosixSpawnOptions {
             stdin: PosixStdio::Ignore,
-            stdout: PosixStdio::Inherit,
-            stderr: PosixStdio::Inherit,
+            stdout: PosixStdio::Ignore,
+            stderr: match may_log {
+                true => PosixStdio::Inherit,
+                false => PosixStdio::Ignore,
+            },
             extra_fds: Box::new([PosixStdio::Pipe(socket.fd())]),
             cwd: b"/"[..].into(),
             ..PosixSpawnOptions::default()
@@ -223,6 +364,7 @@ mod system {
             Some(libc::SIGINT | libc::SIGKILL | libc::SIGTERM) => "killed",
             Some(_) => "crashed",
             None if status == 0 => "clean-exit",
+            None if libc::WEXITSTATUS(status) == EXIT_WITHOUT_SANDBOX => "launch-failed",
             None => "abnormal-exit",
         }
     }
@@ -232,7 +374,7 @@ mod system {
 mod system {
     use bun_core::CStringList;
 
-    pub(super) fn spawn(_: &CStringList, _: &CStringList, _: i32) -> Option<u32> {
+    pub(super) fn spawn(_: &CStringList, _: &CStringList, _: i32, _: bool) -> Option<u32> {
         None
     }
 
@@ -255,10 +397,15 @@ impl Drop for Process {
 }
 
 impl Process {
-    fn spawn() -> JsResult<Rc<Process>> {
-        let opened = answer((ui()?.open_page_process)())?;
-        let (arguments, environment) = (arguments(), environment()?);
-        let Some(pid) = system::spawn(&arguments, &environment, opened.socket) else {
+    fn spawn(place: Place) -> JsResult<Rc<Process>> {
+        let kept = if place.is_trusted() { 0 } else { KEPT_FOR_APP };
+        if all().by_peer.borrow().len() + kept >= MOST_PROCESSES {
+            return Err(too_many());
+        }
+        let (arguments, environment) = (arguments(&place), environment()?);
+        let opened = answer((ui()?.open_page_process)(place.is_trusted()))?;
+        let may_log = super::logs_to_stderr() || place::is_for_testing();
+        let Some(pid) = system::spawn(&arguments, &environment, opened.socket, may_log) else {
             (ui()?.tell_page_process)(opened.id, PageCommand::Close);
             return Err(error(format_args!(
                 "Could not start a process for the page"
@@ -268,18 +415,32 @@ impl Process {
             peer: opened.id,
             pid,
             creation_time: bun_core::time::milli_timestamp() as f64,
-            site: None.into(),
+            place: place.into(),
+            users: 0.into(),
+            has_had_preload: false.into(),
             serving: 0.into(),
+            is_deaf: false.into(),
+            last_conditions: 0.into(),
+            witness: Witness::new(),
+            probed_at: Instant::now().into(),
+            probe: None.into(),
+            patience: Patience {
+                left: Patience::MOST.into(),
+                at: Instant::now().into(),
+                deadline: None.into(),
+            },
             is_holding: false.into(),
+            postponed: Default::default(),
             has_held: false.into(),
             overdue: Default::default(),
-            last_sent: 0.into(),
+            last_sent: (0, false).into(),
             expected: Default::default(),
             pages: Default::default(),
             disposed: Default::default(),
             is_gone: false.into(),
             was_killed_for: None.into(),
         });
+        clerk::employ(this.peer, ui()?);
         queue::listen_to_processes(hear);
         (all().by_peer.borrow_mut()).insert(this.peer, (Rc::downgrade(&this), this.pid));
         this.begin()?;
@@ -288,8 +449,36 @@ impl Process {
 
     fn begin(&self) -> JsResult<()> {
         let head = Head::new(Kind::Begin, 0, 0).with(Flags::HARMLESS);
-        self.send(Lane::Scripts, head, statics()?);
+        self.send(Lane::Scripts, head, statics(&self.place.borrow())?);
         Ok(())
+    }
+
+    pub(super) fn settle(&self, place: Place) {
+        remote::revoke_files(self.peer);
+        self.place.replace(place);
+    }
+
+    pub(super) fn share(self: Rc<Self>) -> Rc<Self> {
+        self.users.update(|it| it + 1);
+        self
+    }
+
+    pub(super) fn is_shared(&self) -> bool {
+        self.users.get() > 1
+    }
+
+    pub(super) fn release(self: &Rc<Self>) {
+        const MILLISECONDS_TO_FINISH: f64 = 500.;
+        self.users.update(|it| it - 1);
+        let this = Rc::clone(self);
+        let close = move |_: &_| {
+            if this.users.get() == 0 && !this.is_gone() {
+                this.command(PageCommand::Close);
+                this.give_up();
+            }
+            Ok(())
+        };
+        later::after(MILLISECONDS_TO_FINISH, close).detach();
     }
 
     pub(super) fn command(&self, command: PageCommand) {
@@ -313,6 +502,13 @@ impl Process {
         }
     }
 
+    /// The app hears of it before this returns.
+    pub(super) fn end(&self) -> JsResult<()> {
+        self.kill("killed");
+        self.give_up();
+        self.has_ended(0)
+    }
+
     pub(super) fn admit(self: &Rc<Self>, page: &Page, has_preload: bool) {
         let needed = [link::of_window(page), link::of_preload(page)];
         // SAFETY: they are kept together.
@@ -320,15 +516,52 @@ impl Process {
         let hosted = Hosted {
             of_blank_frames: Host::of_blank_frame_in(&of_window),
             of_window,
-            of_preload: has_preload.then_some(of_preload),
+            of_preload,
+            has_preload: has_preload.into(),
             _needed: needed.map(keep),
         };
         self.pages.borrow_mut().insert(page.id, hosted.into());
-        bun_web::outside::serve::admit(self.peer, &page.client);
+        self.has_had_preload.update(|it| it || has_preload);
+        let place = self.place.borrow();
+        if is_like_browser(&place) {
+            page.client.treat_like_in_browser();
+        }
+        if let Place::Apart { site, .. } = &*place
+            && place.is_trusted()
+            && place.can_be_shared()
+            && page.contents().session.is_persistent()
+        {
+            self.command(PageCommand::StoreFontsFor((&**site).into()));
+        }
+        serve::admit(self.peer, &page.client, page.owner().id);
         (page.client).set_twin(Rc::new(OfPage(Rc::downgrade(self), page.id)));
     }
 
-    pub(super) fn dismiss(&self, page: u32) {
+    pub(super) fn conditions_for(&self, page: u32) -> Option<Conditions> {
+        let hosted = self.pages.borrow().get(&page).cloned()?;
+        match hosted.of_window.link().ask(Question::Environment {})? {
+            Answer::Environment(environment) => Some(Conditions {
+                environment,
+                number: {
+                    self.last_conditions.update(|it| it + 1);
+                    self.last_conditions.get()
+                },
+            }),
+            _ => None,
+        }
+    }
+
+    pub(super) fn dismiss(self: &Rc<Self>, page: &Page) {
+        const MILLISECONDS_FOR_LAST_WORDS: f64 = 5000.;
+        let (this, client, page) = (Rc::downgrade(self), page.client.id, page.id);
+        let revoke = move |_: &_| {
+            if let Some(this) = this.upgrade() {
+                serve::dismiss(this.peer, client);
+                (this.pages.borrow().get(&page).iter()).for_each(|it| it.has_preload.set(false));
+            }
+            Ok(())
+        };
+        later::after(MILLISECONDS_FOR_LAST_WORDS, revoke).detach();
         let mut disposed = self.disposed.borrow_mut();
         disposed.push_back(page);
         if disposed.len() > MOST_DISPOSED {
@@ -360,9 +593,12 @@ impl Process {
 
     fn send_expecting<T: Message>(&self, lane: Lane, head: Head, message: T, expected: Expected) {
         let ticket = remote::next_ticket();
-        if self.send(lane, Head { ticket, ..head }, message) {
+        if self.expected.borrow().len() >= MOST_EXPECTED {
+            self.kill("killed");
+            expected.give_up();
+        } else if self.send(lane, Head { ticket, ..head }, message) {
             self.expected.borrow_mut().insert(ticket, expected);
-            self.last_sent.set(ticket);
+            (self.last_sent).set((ticket, head.flags.contains(Flags::HARMLESS)));
         } else {
             expected.give_up();
         }
@@ -370,7 +606,7 @@ impl Process {
 
     /// A page that waits for an answer does it at once, as if it were called.
     fn order<T: Message>(&self, lane: Lane, head: Head, message: T) {
-        if self.serving.get() == 0 {
+        if self.serving.get() == 0 || self.is_deaf.get() || self.is_late() {
             self.send(lane, head, message);
         } else {
             self.send_expecting(lane, head, message, Expected::Nothing);
@@ -378,23 +614,110 @@ impl Process {
         }
     }
 
-    /// For the reply to what was sent last.
+    fn postpone(&self, work: Box<dyn FnOnce() -> JsResult<()>>) {
+        const MILLISECONDS_TO_RETURN: f64 = 1000.;
+        let known = self.postponed.borrow().upgrade();
+        if let Some(all) = known {
+            all.borrow_mut().push(work);
+            if all.borrow().len() >= MOST_EXPECTED {
+                self.kill("killed");
+            }
+            return;
+        }
+        let (all, ticket) = (Rc::new(RefCell::new(vec![work])), remote::next_ticket());
+        self.postponed.replace(Rc::downgrade(&all));
+        if self.is_gone() {
+            return Expected::Turn(all, None).give_up();
+        }
+        remote::send_head(self.peer, Lane::Scripts, Head::new(Kind::Turn, 0, ticket));
+        let peer = self.peer;
+        let deadline = later::after(MILLISECONDS_TO_RETURN, move |_| {
+            let this = (self::all().by_peer.borrow().get(&peer)).and_then(|it| it.0.upgrade());
+            let replace = |it: Rc<Process>| {
+                let mut expected = it.expected.borrow_mut();
+                Some(core::mem::replace(
+                    expected.get_mut(&ticket)?,
+                    Expected::Nothing,
+                ))
+            };
+            this.and_then(replace)
+                .into_iter()
+                .for_each(Expected::give_up);
+            Ok(())
+        });
+        (self.expected.borrow_mut()).insert(ticket, Expected::Turn(all, Some(deadline)));
+    }
+
+    fn is_due_for_probe(&self) -> bool {
+        self.serving.get() == 0
+            && self.probe.borrow().is_none()
+            && self.probed_at.get().elapsed() >= Duration::from_secs(1)
+    }
+
+    fn probe_with(&self, lane: Lane, page: u32, input: Order) {
+        let head = Head::new(Kind::Order, page, 0);
+        self.send_expecting(lane, head, input, Expected::Nothing);
+        self.probed_at.set(Instant::now());
+        self.probe.replace(Some(Probe {
+            ticket: self.last_sent.get().0,
+            page,
+            is_overdue: false,
+            _timer: self.check_probe_later(),
+        }));
+    }
+
+    fn check_probe_later(&self) -> later::Timer {
+        const MILLISECONDS_UNTIL_UNRESPONSIVE: f64 = 15_000.;
+        let peer = self.peer;
+        later::after(MILLISECONDS_UNTIL_UNRESPONSIVE, move |_| {
+            let this = (all().by_peer.borrow().get(&peer)).and_then(|it| it.0.upgrade());
+            this.map_or(Ok(()), |it| it.check_probe())
+        })
+    }
+
+    fn check_probe(&self) -> JsResult<()> {
+        let mut probe = self.probe.borrow_mut();
+        let Some(it) = probe.as_mut() else {
+            return Ok(());
+        };
+        if self.serving.get() != 0 {
+            it._timer = self.check_probe_later();
+            return Ok(());
+        }
+        it.is_overdue = true;
+        let page = it.page;
+        drop(probe);
+        announce_to_owner_of(page, "unresponsive")
+    }
+
+    /// For the reply to what was sent last. What the scripts that it runs ask for is done meanwhile.
     pub(super) fn wait(&self) {
-        let ticket = self.last_sent.get();
+        let (ticket, is_harmless) = self.last_sent.get();
         let is_done = || !self.expected.borrow().contains_key(&ticket);
-        let deadline = Instant::now() + PATIENCE;
-        if !is_done()
-            && (self.is_late()
-                || !queue::wait_for_process(global(), self.peer, Some(deadline), &is_done, &|_| {
-                    true
-                }))
-        {
+        if is_done() || self.is_deaf.get() {
+            return;
+        }
+        let accepts = |message: &[u8]| {
+            !is_harmless
+                || Head::of(message).is_ok_and(|it| match it.kind {
+                    Kind::Outcome | Kind::Nothing => it.ticket == ticket,
+                    Kind::Question | Kind::Call => it.flags.contains(Flags::HARMLESS),
+                    _ => false,
+                })
+        };
+        if !self.is_late() {
+            self.patience.spend(|deadline| {
+                queue::wait_for_process(global(), self.peer, Some(deadline), &is_done, &accepts);
+            });
+        }
+        if !is_done() {
             self.overdue.borrow_mut().push(ticket);
         }
     }
 
     fn give_up(&self) {
         self.is_gone.set(true);
+        self.probe.take();
         self.pages.take();
         let mut expected = self.expected.take();
         let tickets = expected.keys().copied().collect::<Vec<_>>();
@@ -403,6 +726,10 @@ impl Process {
 
     fn take_expected(&self, ticket: u32) -> wire::Result<Expected> {
         self.overdue.borrow_mut().retain(|it| *it != ticket);
+        let probe = self.probe.borrow_mut().take_if(|it| it.ticket == ticket);
+        if let Some(Probe { page, .. }) = probe.filter(|it| it.is_overdue) {
+            later::soon(move |_| announce_to_owner_of(page, "responsive"));
+        }
         self.expected.borrow_mut().remove(&ticket).ok_or(Malformed)
     }
 
@@ -415,8 +742,10 @@ impl Process {
             }
             link => {
                 let before = self.serving.replace(head.ticket);
+                let was_deaf = self.is_deaf.replace(head.flags.contains(Flags::DEAF));
                 let answer = link.and_then(|it| it.ask(question));
                 self.serving.set(before);
+                self.is_deaf.set(was_deaf);
                 if head.ticket != 0 {
                     remote::reply(peer, Lane::Scripts, reply, answer);
                 }
@@ -430,15 +759,31 @@ impl Process {
             Kind::Notice | Kind::Question => {
                 let hosted = self.pages.borrow().get(&head.about).cloned();
                 let host = hosted.as_ref().and_then(|it| match head.flags {
-                    flags if flags.contains(Flags::OF_PRELOAD) => it.of_preload.as_ref(),
+                    flags if flags.contains(Flags::OF_PRELOAD) => {
+                        it.has_preload.get().then_some(&it.of_preload)
+                    }
                     flags if flags.contains(Flags::OF_BLANK_FRAME) => Some(&it.of_blank_frames),
                     _ => Some(&it.of_window),
                 });
                 if head.kind == Kind::Question {
-                    self.answer(head, host, remote::open(self.peer, &message)?);
+                    let mut question: Question = remote::open(self.peer, &message)?;
+                    if head.flags.contains(Flags::HARMLESS)
+                        != question.is_answered_without_scripts()
+                    {
+                        return Err(Malformed);
+                    }
+                    let is_of_preload = matches!(question, Question::ActivatedByPreload {});
+                    let host = host.filter(|_| {
+                        (!is_of_preload || head.flags.contains(Flags::OF_PRELOAD))
+                            && self.witness.admits(&mut question)
+                    });
+                    let is_of_window = !head.flags.contains(Flags::OF_PRELOAD);
+                    let before = all().asking.replace(is_of_window.then_some(self.peer));
+                    self.answer(head, host, question);
+                    all().asking.set(before);
                 } else {
-                    let notice = remote::open(self.peer, &message)?;
-                    if let Some(host) = host {
+                    let mut notice = remote::open(self.peer, &message)?;
+                    if let Some(host) = host.filter(|_| self.witness.believes(&mut notice)) {
                         host.link().tell(notice);
                     }
                 }
@@ -461,10 +806,31 @@ impl Process {
     fn has_ended(&self, status: i32) -> JsResult<()> {
         let (reason, code) = (self.was_killed_for.get())
             .map_or_else(|| (system::reason_for(status), status), |it| (it, 2));
-        let hit = alive().filter(|it| !it.is_frame() && it.page().is_in(self));
+        let hit = alive().filter(|it| (!it.is_frame() || it.is_apart()) && it.page().is_in(self));
         let hit = hit.map(Root::new).collect::<Vec<_>>();
-        hit.iter().try_for_each(|it| it.get().crash(reason, code))
+        (hit.iter().map(Root::get).filter(|it| !it.is_destroyed()))
+            .try_for_each(|it| it.lose_page(reason, code))
     }
+}
+
+/// Once the script that has asked for it has returned, which it has yet to do if it is in another process.
+pub(super) fn after_script(priority: Priority, work: impl FnOnce() -> JsResult<()> + 'static) {
+    let of = |peer| all().by_peer.borrow().get(&peer)?.0.upgrade();
+    match all().asking.get().and_then(of) {
+        Some(process) => process.postpone(Box::new(work)),
+        None => post(priority, work),
+    }
+}
+
+fn announce_to_owner_of(page: u32, event: &str) -> JsResult<()> {
+    let Some(owner) = (alive().find(|it| it.page().id == page)).map(|it| it.owner()) else {
+        return Ok(());
+    };
+    announce(owner.to_js(), event, &[])?;
+    let window = owner
+        .window()
+        .filter(|_| owner.kind.get() == super::Kind::Window);
+    window.map_or(Ok(()), |it| announce(it.to_js(), event, &[]))
 }
 
 fn hear(from: Peer, heard: Heard) -> JsResult<()> {
@@ -484,11 +850,9 @@ fn hear(from: Peer, heard: Heard) -> JsResult<()> {
                 process.give_up();
             }
         }
-        Heard::End { has_misbehaved } => {
+        Heard::End => {
             all().by_peer.borrow_mut().remove(&from);
-            if has_misbehaved || process.is_none() {
-                system::kill(pid);
-            }
+            system::kill(pid);
             remote::forget(from);
             let process = process.inspect(|it| it.give_up());
             crate::task::spawn(async move {
@@ -504,7 +868,25 @@ fn hear(from: Peer, heard: Heard) -> JsResult<()> {
 impl page::Link for Process {
     fn tell(&self, page: u32, mut order: Order) {
         let mut lane = Lane::Scripts;
+        self.witness.note(&mut order);
         match &mut order {
+            Order::Input {
+                input:
+                    input @ (Input::Mouse(_)
+                    | Input::Key(_)
+                    | Input::Text { .. }
+                    | Input::Wheel { .. }
+                    | Input::Touch { .. }),
+            } => {
+                lane = match input {
+                    Input::Mouse(it) if it.action == Action::Move => Lane::Motion,
+                    Input::Wheel { .. } => Lane::Motion,
+                    _ => Lane::Input,
+                };
+                if self.is_due_for_probe() {
+                    return self.probe_with(lane, page, order);
+                }
+            }
             Order::Input {
                 input: Input::Resize {
                     is_quiet: false, ..
@@ -519,6 +901,11 @@ impl page::Link for Process {
             }
             _ => {}
         }
+        if order.makes_read_environment()
+            && let Some(conditions) = self.conditions_for(page)
+        {
+            renderer::Link::tell(self, page, Command::Prepare { conditions });
+        }
         self.order(lane, Head::new(Kind::Order, page, 0), order);
     }
 
@@ -532,10 +919,14 @@ impl page::Link for Process {
     }
 
     fn change(&self, context: u32, mut change: Change) {
-        if let Change::Created { image, .. } = &mut change
+        if let Change::Created {
+            image, embedder, ..
+        } = &mut change
             && *image != 0
         {
-            self.command(PageCommand::Lend(*image));
+            if embedder.is_some() {
+                self.command(PageCommand::Lend(*image));
+            }
             *image |= LENT_IMAGE;
         }
         self.send(Lane::Scripts, Head::new(Kind::Change, context, 0), change);

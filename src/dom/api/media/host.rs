@@ -1,5 +1,7 @@
 //! What media ask of the host of the page.
 
+use core::cell::{Cell, RefCell};
+
 use bun_jsc::JSPromise;
 use bun_web::exec::oneshot;
 use bun_web::host::{Level, Permission};
@@ -21,6 +23,10 @@ pub(super) fn string(heap: &JsHeap<'_>, utf8: &[u8]) -> JSValue {
 
 /// In the realm of the document.
 pub(super) fn connect<'a>(cx: Cx<'_, 'a>, document: JSValue) -> Box<dyn Connection> {
+    let window = Node::from_js(&cx.heap, document)
+        .and_then(Node::as_doc)
+        .and_then(|it| it.last_window())
+        .map(|it| Kept::new(cx, it.to_js()));
     let document = Kept::new(cx, document);
     let listener: media::Listener = Rc::new(move |line| {
         let line = line.map(<[u8]>::to_vec);
@@ -38,7 +44,62 @@ pub(super) fn connect<'a>(cx: Cx<'_, 'a>, document: JSValue) -> Box<dyn Connecti
             bun_web::exec::report(cx, result);
         });
     });
-    media::connect(&listener)
+    match window.filter(|_| bun_web::remote::is_page_process()) {
+        Some(window) => Box::new(ThroughHost::new(window, listener)),
+        None => media::connect(&listener),
+    }
+}
+
+#[derive(Default)]
+struct Listeners {
+    all: RefCell<Vec<(u32, media::Listener)>>,
+    last: Cell<u32>,
+}
+
+bun_ui::state!(fn listeners() -> Listeners);
+
+struct ThroughHost {
+    id: u32,
+    window: Kept,
+}
+
+impl ThroughHost {
+    fn new(window: Kept, listener: media::Listener) -> ThroughHost {
+        listeners().last.update(|it| it + 1);
+        let id = listeners().last.get();
+        listeners().all.borrow_mut().push((id, listener));
+        ThroughHost { id, window }
+    }
+
+    fn tell(&self, commands: Option<Vec<u8>>) {
+        self.window.enter(|cx, it| {
+            WindowTarget::from_js(&cx.heap, it.to_js())
+                .map_or((), |it| it.host().media(self.id, commands))
+        });
+    }
+}
+
+impl Connection for ThroughHost {
+    fn send(&self, commands: &[u8], _: [bool; 2]) {
+        self.tell(Some(commands.to_vec()));
+    }
+}
+
+impl Drop for ThroughHost {
+    fn drop(&mut self) {
+        listeners().all.borrow_mut().retain(|it| it.0 != self.id);
+        self.tell(None);
+    }
+}
+
+pub(crate) fn hear_from_host(connection: u32, line: Option<&[u8]>) {
+    let listener = listeners()
+        .all
+        .borrow()
+        .iter()
+        .find(|it| it.0 == connection)
+        .map(|it| Rc::clone(&it.1));
+    listener.into_iter().for_each(|it| it(line));
 }
 
 /// What is about no object.

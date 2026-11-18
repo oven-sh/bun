@@ -1,5 +1,6 @@
 //! The part of the Chrome DevTools Protocol that automation tools need.
 
+pub(crate) mod agent;
 mod connection;
 mod contents;
 pub(crate) mod debugger;

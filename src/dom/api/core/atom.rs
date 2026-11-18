@@ -155,13 +155,9 @@ const fn slot_of(name: Name) -> usize {
     (name.bits() >> 32) as usize % SLOTS
 }
 
-thread_local! {
-    /// The `AtomStringImpl` of each, once it was needed.
-    static IMPLS: Cell<&'static [Cell<Option<NonNull<Impl>>>]> = {
-        bun_ui::at_end_of_worker(forget_impls);
-        Cell::new(bun_core::heap::release(TEXTS.iter().map(|_| Cell::new(None)).collect()))
-    };
-}
+/// The `AtomStringImpl` of each, once it was needed. Empty until the first is.
+#[thread_local]
+static IMPLS: Cell<&'static [Cell<Option<NonNull<Impl>>>]> = Cell::new(&[]);
 
 fn forget_impls() {
     // SAFETY: the box that was released, which nothing else points to.
@@ -251,11 +247,24 @@ impl Known {
             let known = Known::from_index(found as u16);
             if known == Known::Other
                 || found >> 16 == hash_and_flags >> 16
-                    && super::string::are_same(known.as_str().as_bytes(), atom.latin1_slice())
+                    && (IMPLS
+                        .get()
+                        .get(known as usize)
+                        .is_some_and(|it| it.get() == Some(atom.into()))
+                        || known.has_text_of(atom))
             {
                 return known;
             }
             slot += 1;
+        }
+    }
+
+    /// From now on the address tells.
+    #[cold]
+    fn has_text_of(self, atom: &Impl) -> bool {
+        self.as_str().as_bytes() == atom.latin1_slice() && {
+            self.as_impl();
+            true
         }
     }
 
@@ -289,16 +298,30 @@ impl Known {
     }
 
     fn as_impl(self) -> &'static Impl {
-        IMPLS.with(|impls| {
-            let (slot, text) = (&impls.get()[self as usize], self.as_str());
-            // SAFETY: the pointer and the length are of one slice.
-            let string = slot.get().unwrap_or_else(|| unsafe {
-                Bun__DOM__atomizeLatin1(text.as_ptr(), super::string::length_of(text.as_bytes()))
-            });
-            slot.set(Some(string));
-            // SAFETY: the reference is kept until the thread ends.
-            unsafe { string.as_ref() }
-        })
+        let string = IMPLS
+            .get()
+            .get(self as usize)
+            .and_then(Cell::get)
+            .unwrap_or_else(|| self.atomize());
+        // SAFETY: the reference is kept until the thread ends.
+        unsafe { string.as_ref() }
+    }
+
+    #[cold]
+    fn atomize(self) -> NonNull<Impl> {
+        if IMPLS.get().is_empty() {
+            bun_ui::at_end_of_worker(forget_impls);
+            IMPLS.set(bun_core::heap::release(
+                TEXTS.iter().map(|_| Cell::new(None)).collect(),
+            ));
+        }
+        let text = self.as_str();
+        // SAFETY: the pointer and the length are of one slice.
+        let string = unsafe {
+            Bun__DOM__atomizeLatin1(text.as_ptr(), super::string::length_of(text.as_bytes()))
+        };
+        IMPLS.get()[self as usize].set(Some(string));
+        string
     }
 }
 

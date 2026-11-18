@@ -1,7 +1,9 @@
 // The C++ half of src/jsc/bindgen/callback.rs.
 #include "root.h"
 #include "AbortSignal.h"
+#include "IsolatedWorld.h"
 #include "JSAbortAlgorithm.h"
+#include "RemovableFeatures.h"
 #include "JSAbortSignal.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/JSArrayBuffer.h>
@@ -30,7 +32,11 @@ extern "C" void Bun__Bindgen__reactToPromise(JSGlobalObject* globalObject, Encod
 
 extern "C" EncodedJSValue Bun__Bindgen__promiseResolve(JSGlobalObject* globalObject, EncodedJSValue value)
 {
-    return JSValue::encode(JSPromise::resolvedPromise(globalObject, JSValue::decode(value)));
+    if (!isDesktopRealm(globalObject))
+        return JSValue::encode(JSPromise::resolvedPromise(globalObject, JSValue::decode(value)));
+    BUN_BEGIN_REMOVABLE_ENTRY_POINT(Desktop, Abort, EncodedJSValue)
+    return JSValue::encode(IsolatedWorld::promiseFor(globalObject, JSValue::decode(value)));
+    BUN_END_REMOVABLE_ENTRY_POINT
 }
 
 extern "C" EncodedJSValue Bun__Bindgen__getCommonProperty(JSGlobalObject* globalObject, EncodedJSValue value, uint8_t property)

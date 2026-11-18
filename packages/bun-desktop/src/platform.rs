@@ -163,6 +163,8 @@ pub trait Window {
     fn request_leisurely_frame(&self) {
         self.request_frame();
     }
+    /// With each frame.
+    fn set_scrolling(&self, _is_on: bool) {}
     /// Between frames. `Some(false)` if it is worth asking again in a moment, `None` to wait for the next frame.
     fn can_present(&self) -> Option<bool>;
     /// Shows what `paint` puts into a buffer. It may be called later, on another thread.

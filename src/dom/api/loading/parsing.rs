@@ -188,6 +188,7 @@ fn content_has_loaded<'a>(cx: Cx<'_, 'a>, doc: &'a Doc, _: JSValue) {
         },
     );
     reached(&cx.heap, doc, b"domContentLoadedEventEnd", now());
+    crate::api::service_workers::document_was_parsed(cx);
     frames::fit_container(cx, doc);
     doc.window()
         .into_iter()

@@ -2,11 +2,14 @@
 
 use core::cell::{Cell, RefCell};
 
+use bun_jsc::Strong;
 use bun_jsc::bindgen::{JsList, JsRecord, JsStringImpl};
 use bun_jsc::webcore_types::Blob;
-use bun_jsc::{JSGlobalObject, Strong};
 use bun_ui::protocol::{self, ClipboardPart, Text};
+use bun_web::channel::LooseBitmap;
 use bun_web::exec::{self, oneshot, settled};
+use bun_web::host::{ChosenFile, Clipped};
+use bun_web::remote::is_page_process;
 use bun_web::runtime::{create_blob, create_file};
 
 use super::{Clipboard as Which, DataTransfer};
@@ -31,7 +34,10 @@ type Texts = Vec<(String, String)>;
 struct Written {
     texts: RefCell<Option<Texts>>,
     has_image: Cell<bool>,
+    /// How often this process has been about to write.
+    attempts: Cell<u32>,
     serial: Cell<u32>,
+    types: RefCell<Vec<String>>,
 }
 
 bun_ui::state!(fn written() -> Written);
@@ -40,22 +46,27 @@ fn find<'t>(texts: &'t Texts, wanted: &str) -> Option<&'t str> {
     texts.iter().find(|it| it.0 == wanted).map(|it| &*it.1)
 }
 
-struct Contents {
-    texts: Texts,
-    paths: protocol::List<Text>,
-    png: Option<Vec<u8>>,
+fn read_system(doc: &Doc, which: Which) -> Clipped {
+    let is_selection = which == Which::Selection;
+    if is_page_process() {
+        doc.last_window()
+            .map(|it| it.host().read_clipboard(is_selection))
+            .unwrap_or_default()
+    } else {
+        read_here(is_selection)
+    }
 }
 
-fn read_system(global: &JSGlobalObject, which: Which) -> Contents {
-    let known = written().texts.borrow().clone();
+#[unsafe(export_name = "__bun_dom_read_clipboard")]
+fn read_here(is_selection: bool) -> Clipped {
+    let (global, known) = (bun_ui::main_global(), written().texts.borrow().clone());
     if bun_ui::loaded().is_none() {
-        return Contents {
+        return Clipped {
             texts: known.unwrap_or_default(),
-            paths: Default::default(),
-            png: None,
+            ..Default::default()
         };
     }
-    let part = if which == Which::Selection {
+    let part = if is_selection {
         ClipboardPart::Selection
     } else {
         ClipboardPart::Everything
@@ -80,26 +91,96 @@ fn read_system(global: &JSGlobalObject, which: Which) -> Contents {
             .map(|(kind, text)| (kind.into(), text.into()))
             .collect()
     };
-    Contents {
+    Clipped {
         texts: known.filter(is_still_there).unwrap_or_else(of_system),
         png,
-        paths: found.files,
+        files: found
+            .files
+            .iter()
+            .map(|it| ChosenFile(it.to_string()))
+            .collect(),
     }
 }
 
-fn write_system<'a>(
-    cx: &mut Cx<'a>,
-    doc: &'a Doc,
-    texts: Texts,
-    png: Option<Vec<u8>>,
-    which: Which,
-) {
+fn types_of(texts: &Texts) -> impl Iterator<Item = String> {
+    texts
+        .iter()
+        .filter(|it| !is_custom(&it.0))
+        .map(|it| it.0.clone())
+}
+
+fn announce<'a>(cx: &mut Cx<'a>, doc: &'a Doc, types: Vec<String>) {
+    written().serial.update(|it| it + 1);
+    written().types.replace(types);
+    if let Some(ui) = Ui::of(doc) {
+        frames::tree(&cx.heap, ui)
+            .iter()
+            .for_each(|it| tell_about_change(cx, it));
+    }
+}
+
+fn write_system<'a>(cx: &mut Cx<'a>, doc: &'a Doc, texts: Texts, which: Which) {
+    let (types, is_selection) = (types_of(&texts).collect(), which == Which::Selection);
+    match is_page_process() {
+        true => doc
+            .last_window()
+            .map_or((), |it| it.host().write_clipboard(texts, is_selection)),
+        false => write_texts_here(texts, is_selection),
+    }
+    if !is_selection {
+        announce(cx, doc, types);
+    }
+}
+
+/// A promise.
+fn write_image<'a>(cx: &mut Cx<'a>, doc: &'a Doc, texts: Texts, image: LooseBitmap) -> JSValue {
+    let (types, (sender, is_written)) = (types_of(&texts).chain([PNG.into()]).collect(), oneshot());
+    match is_page_process() {
+        true => doc.last_window().map_or((), |it| {
+            it.host()
+                .write_image_to_clipboard(texts, image, |_, ()| sender.send(()))
+        }),
+        false => write_image_here(texts, image, Box::new(|| sender.send(()))),
+    }
+    let doc = Strong::create(doc.to_js(), cx.global());
+    promise_for(cx, is_written, move |cx, _| {
+        if let Some(doc) = Doc::from_value(doc.get()) {
+            announce(cx, doc, types);
+        }
+        Ok(JSValue::UNDEFINED)
+    })
+}
+
+#[unsafe(export_name = "__bun_dom_write_clipboard")]
+fn write_texts_here(texts: Texts, is_selection: bool) {
+    written()
+        .attempts
+        .update(|it| it + u32::from(!is_selection));
+    write_here(texts, None, is_selection);
+}
+
+#[unsafe(export_name = "__bun_dom_write_image_to_clipboard")]
+fn write_image_here(texts: Texts, image: LooseBitmap, then: Box<dyn FnOnce()>) {
+    written().attempts.update(|it| it + 1);
+    let attempt = written().attempts.get();
+    exec::spawn(async move {
+        if let Some(png) = image
+            .into_png()
+            .await
+            .filter(|_| written().attempts.get() == attempt)
+        {
+            write_here(texts, Some(png), false);
+        }
+        then();
+    });
+}
+
+fn write_here(texts: Texts, png: Option<Vec<u8>>, is_selection: bool) {
     let text = find(&texts, PLAIN_TEXT).or_else(|| png.is_none().then_some(""));
     let [text, html] = [text, find(&texts, HTML).filter(|it| !it.is_empty())]
         .map(|it| it.map(|it| Text::lossy(it.as_bytes())).into());
-    if which == Which::General {
+    if !is_selection {
         written().has_image.set(png.is_some());
-        written().serial.update(|it| it + 1);
         written().texts.replace(Some(texts));
     }
     let contents = protocol::Clipboard {
@@ -109,14 +190,9 @@ fn write_system<'a>(
         files: Default::default(),
     };
     if bun_ui::loaded().is_some()
-        && bun_ui::clipboard::write(cx.global(), contents, which == Which::Selection).is_err()
+        && bun_ui::clipboard::write(bun_ui::main_global(), contents, is_selection).is_err()
     {
-        cx.global().clear_exception_except_termination();
-    }
-    if let Some(ui) = Ui::of(doc).filter(|_| which == Which::General) {
-        frames::tree(&cx.heap, ui)
-            .iter()
-            .for_each(|it| tell_about_change(cx, it));
+        bun_ui::main_global().clear_exception_except_termination();
     }
 }
 
@@ -124,13 +200,13 @@ fn write_system<'a>(
 fn files_in<'a>(
     cx: &Cx<'a>,
     doc: &'a Doc,
-    contents: &mut Contents,
+    contents: &mut Clipped,
 ) -> impl Iterator<Item = (DomString, JSValue)> {
     let (global, png) = (global_of(doc.heap(&cx.heap)), contents.png.take());
     let files = contents
-        .paths
+        .files
         .iter()
-        .filter_map(move |it| bun_web::convert::file_at(global, it.as_bytes()));
+        .filter_map(move |it| bun_web::convert::file_at(global, it.0.as_bytes()));
     let image = png.into_iter().map(move |it| {
         create_file(
             global,
@@ -146,7 +222,7 @@ fn files_in<'a>(
 }
 
 pub(super) fn read_into<'a>(cx: &mut Cx<'a>, doc: &'a Doc, data: &'a DataTransfer, which: Which) {
-    let mut contents = read_system(cx.global(), which);
+    let mut contents = read_system(doc, which);
     contents
         .texts
         .iter()
@@ -166,12 +242,16 @@ pub(crate) fn write_from<'a>(cx: &mut Cx<'a>, doc: &'a Doc, data: &'a DataTransf
                 it.text.to_utf8().into_owned(),
             )
         });
-    write_system(cx, doc, texts.collect(), None, which);
+    write_system(cx, doc, texts.collect(), which);
 }
 
-pub(crate) fn can_paste(heap: &JsHeap<'_>) -> bool {
-    let Contents { texts, paths, png } = read_system(global_of(heap), Which::General);
-    !texts.is_empty() || !paths.is_empty() || png.is_some()
+/// The host of a page process corrects it.
+#[unsafe(export_name = "__bun_dom_can_paste")]
+pub(crate) fn can_paste() -> bool {
+    is_page_process() || {
+        let Clipped { texts, files, png } = read_here(false);
+        !texts.is_empty() || !files.is_empty() || png.is_some()
+    }
 }
 
 // ───────────────────────────── ClipboardItem ─────────────────────────────
@@ -342,8 +422,8 @@ const DENIED: Failure = Failure::Refused(DomError::NotAllowedError, "Permission 
 
 async fn contents_of(
     items: Vec<(String, impl Future<Output = Result<Strong, Strong>>)>,
-) -> Result<(Texts, Option<Vec<u8>>), Failure> {
-    let (mut texts, mut png) = (Texts::new(), None);
+) -> Result<(Texts, Option<LooseBitmap>), Failure> {
+    let (mut texts, mut image) = (Texts::new(), None);
     for (kind, blob) in items {
         let blob = blob_of(blob.await.map_err(Failure::Thrown)?.get()).ok_or(Failure::Refused(
             DomError::DataError,
@@ -365,16 +445,19 @@ async fn contents_of(
             .map_err(|_| Failure::Refused(DomError::DataError, "Failed to read the blob."))?;
         if kind != PNG {
             texts.push((kind, Text::lossy(&bytes).to_string()));
-        } else if bytes.starts_with(b"\x89PNG") {
-            png = Some(bytes.to_vec());
         } else {
-            return Err(Failure::Refused(
+            let decoded = if bytes.starts_with(b"\x89PNG") {
+                LooseBitmap::decode(bytes.to_vec()).await
+            } else {
+                None
+            };
+            image = Some(decoded.ok_or(Failure::Refused(
                 DomError::DataError,
                 "Failed to decode the image.",
-            ));
+            ))?);
         }
     }
-    Ok((texts, png))
+    Ok((texts, image))
 }
 
 impl Clipboard {
@@ -464,8 +547,8 @@ impl Clipboard {
     }
 
     pub(crate) fn read_text<'a>(&'a self, cx: &mut Cx<'a>) -> bindgen::Result<'a, JSValue> {
-        self.with_access(cx, Access::Read, async { Ok(()) }, |cx, _, ()| {
-            let contents = read_system(cx.global(), Which::General);
+        self.with_access(cx, Access::Read, async { Ok(()) }, |cx, doc, ()| {
+            let contents = read_system(doc, Which::General);
             Ok(
                 DomString::from_utf8(find(&contents.texts, PLAIN_TEXT).unwrap_or(""))
                     .to_js(&cx.heap)
@@ -481,7 +564,7 @@ impl Clipboard {
     ) -> bindgen::Result<'a, JSValue> {
         let texts = vec![(PLAIN_TEXT.into(), data.to_utf8().into_owned())];
         self.with_access(cx, Access::Write, async { Ok(texts) }, |cx, doc, texts| {
-            write_system(cx, doc, texts, None, Which::General);
+            write_system(cx, doc, texts, Which::General);
             Ok(JSValue::UNDEFINED)
         })
     }
@@ -503,9 +586,9 @@ impl Clipboard {
             }
         };
         self.with_access(cx, Access::Read, async { Ok(()) }, move |cx, doc, ()| {
-            let mut contents = Contents {
-                paths: Default::default(),
-                ..read_system(cx.global(), Which::General)
+            let mut contents = Clipped {
+                files: Vec::new(),
+                ..read_system(doc, Which::General)
             };
             let (mut types, values) = (Vec::new(), List::new(&cx.heap));
             for (kind, text) in &contents.texts {
@@ -574,9 +657,14 @@ impl Clipboard {
             cx,
             Access::Write,
             contents_of(items),
-            |cx, doc, (texts, png)| {
-                write_system(cx, doc, texts, png, Which::General);
-                Ok(JSValue::UNDEFINED)
+            |cx, doc, (texts, image)| {
+                Ok(match image {
+                    Some(image) => write_image(cx, doc, texts, image),
+                    None => {
+                        write_system(cx, doc, texts, Which::General);
+                        JSValue::UNDEFINED
+                    }
+                })
             },
         )
     }
@@ -598,20 +686,32 @@ fn tell_about_change<'a>(cx: &mut Cx<'a>, ui: &'a Ui) {
             let Some(clipboard) = Clipboard::from_value(clipboard) else {
                 return;
             };
-            let contents = read_system(cx.global(), Which::General);
-            let kinds = contents
-                .texts
-                .iter()
-                .map(|it| &*it.0)
-                .filter(|it| !is_custom(it))
-                .chain(contents.png.as_ref().map(|_| PNG));
+            let types = match is_page_process() {
+                true => written()
+                    .types
+                    .borrow()
+                    .iter()
+                    .map(|it| DomString::from_utf8(it))
+                    .collect(),
+                false => {
+                    let contents = read_here(false);
+                    contents
+                        .texts
+                        .iter()
+                        .map(|it| &*it.0)
+                        .filter(|it| !is_custom(it))
+                        .chain(contents.png.as_ref().map(|_| PNG))
+                        .map(DomString::from_utf8)
+                        .collect()
+                }
+            };
             let base = Event::base(atom!("clipboardchange"), EventInit::default(), Trusted::Yes);
             let event = js_ClipboardChangeEvent::create(
                 clipboard.realm(&cx.heap),
                 ClipboardChangeEvent {
                     base,
                     fields: Default::default(),
-                    types: kinds.map(DomString::from_utf8).collect(),
+                    types,
                 },
             );
             let Ok(id) =

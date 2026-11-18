@@ -1,19 +1,20 @@
 //! https://html.spec.whatwg.org/#2dcontext
 
 use core::cell::Cell;
+use std::borrow::Cow;
 use std::rc::Rc;
 
 use bun_jsc::bindgen::{self, IntoError as _, JsHeap, JsInterface as _, JsLocal, JsScope, to_js};
 use bun_jsc::{DOMExceptionCode, JSGlobalObject, JSValue, JsCell, JsResult};
 
-use super::bitmap::{Bitmap, Source, area_of, snapshot};
+use super::bitmap::{Bitmap, Source, area_of, convert, snapshot};
 use super::image_data::ImageData;
-use super::paint::{CanvasGradient, CanvasPattern, Color, Paint, Parsed, Shape};
-use super::path::{Path, transformed};
+use super::paint::{CanvasGradient, CanvasPattern, Color, Paint, Parsed, Shape, parse_six_digits};
+use super::path::{Path, add_transformed};
 use super::recorder::{List, add};
 use super::text::{Font, Inherited, Spacing, TextMetrics, Variation, with_units};
 use super::{Affine, Failure, are_finite, host};
-use crate::abi::{self, PathVerb, Rect, Slice, Span};
+use crate::abi::{self, Rect, Slice, Span};
 use crate::abi_graphics::{self as wire, Command, Snapshot};
 use crate::api::core::Element;
 use crate::api::geometry::{DOMMatrix, DOMMatrix2DInit, Matrix};
@@ -22,8 +23,8 @@ use crate::generated_bindgen::canvas::{
     CanvasFontVariantCaps, CanvasImageSource, CanvasLineCap, CanvasLineJoin,
     CanvasRenderingContext2D, CanvasRenderingContext2DSettings as Settings, CanvasStyle,
     CanvasTextAlign, CanvasTextBaseline, CanvasTextRendering, ContextAttributes,
-    GlobalCompositeOperation, ImageDataSettings, ImageSmoothingQuality, Path2D, js_Canvas2D as js,
-    js_CanvasGradient, js_CanvasPattern, js_TextMetrics,
+    GlobalCompositeOperation, ImageDataSettings, ImageSmoothingQuality, Path2D,
+    PredefinedColorSpace, js_Canvas2D as js, js_CanvasGradient, js_CanvasPattern, js_TextMetrics,
 };
 use crate::name::Name;
 use crate::platform::graphics;
@@ -33,7 +34,7 @@ use crate::values::{Out, Str, text};
 bitflags::bitflags! {
     /// The parts of the state that the library gets with one command each.
     #[derive(Clone, Copy, PartialEq, Eq)]
-    struct Parts: u8 {
+    struct Parts: u16 {
         const MATRIX = 1;
         const FILL = 1 << 1;
         const STROKE = 1 << 2;
@@ -42,7 +43,9 @@ bitflags::bitflags! {
         const SHADOW = 1 << 5;
         const SMOOTHING = 1 << 6;
         const FILTER = 1 << 7;
+        const WIDTH = 1 << 8;
         const NONE = 0;
+        const LINE = Self::PEN.bits() | Self::WIDTH.bits() | Self::MATRIX.bits();
         const EFFECTS = Self::COMPOSITING.bits() | Self::SHADOW.bits() | Self::FILTER.bits();
         const PLACED = Self::EFFECTS.bits() | Self::MATRIX.bits() | Self::SMOOTHING.bits();
     }
@@ -63,13 +66,19 @@ impl Style {
         }
     }
 
-    #[inline]
-    fn record(&self, list: &mut List, command: impl Fn(wire::Paint) -> Command) {
+    #[inline(always)]
+    fn record(
+        &self,
+        list: &mut List,
+        is_wide: bool,
+        of_color: impl Fn(u32) -> Command,
+        of_paint: impl Fn(Span) -> Command,
+    ) {
         match self {
-            Style::Color(color) => list.push(command(wire::Paint::Color(color.rgba))),
+            Style::Color(color) => list.push(of_color(color.for_canvas(is_wide))),
             Style::Paint(paint) => {
-                let paint = paint.record(list);
-                list.push(command(paint));
+                let paint = paint.record(list, is_wide);
+                list.push(of_paint(paint));
             }
         }
     }
@@ -207,16 +216,26 @@ impl State {
             .map(|it| *it as f32)
     }
 
-    fn record(&self, parts: Parts, list: &mut List) {
+    #[inline]
+    fn record(&self, parts: Parts, list: &mut List, is_wide: bool) {
         if parts.contains(Parts::MATRIX) {
             list.push(Command::Transform(self.matrix.narrow()));
         }
         if parts.contains(Parts::FILL) {
-            self.styles[FILL].record(list, Command::FillPaint);
+            self.styles[FILL].record(list, is_wide, Command::FillColor, Command::FillPaint);
         }
         if parts.contains(Parts::STROKE) {
-            self.styles[STROKE].record(list, Command::StrokePaint);
+            self.styles[STROKE].record(list, is_wide, Command::StrokeColor, Command::StrokePaint);
         }
+        if parts.contains(Parts::WIDTH) {
+            list.push(Command::LineWidth(self.line_width as f32));
+        }
+        if parts.intersects(!(Parts::MATRIX | Parts::FILL | Parts::STROKE | Parts::WIDTH)) {
+            self.record_others(parts, list, is_wide);
+        }
+    }
+
+    fn record_others(&self, parts: Parts, list: &mut List, is_wide: bool) {
         if parts.contains(Parts::COMPOSITING) {
             list.push(Command::Compositing {
                 alpha: self.alpha as f32,
@@ -235,7 +254,7 @@ impl State {
             list.push(Command::Shadow {
                 offset,
                 blur: self.shadow_blur as f32,
-                color: self.shadow_color.rgba,
+                color: self.shadow_color.for_canvas(is_wide),
             });
         }
         if parts.contains(Parts::SMOOTHING) {
@@ -313,7 +332,12 @@ impl Context {
         Context {
             base: Path::default(),
             fields: Default::default(),
-            bitmap: Bitmap::new(size, !settings.alpha, settings.will_read_frequently),
+            bitmap: Bitmap::new(
+                size,
+                !settings.alpha,
+                settings.will_read_frequently,
+                settings.color_space == PredefinedColorSpace::DisplayP3,
+            ),
             settings,
             states: JsCell::new(vec![State::new()]),
             saved_with_paint: Cell::new(0),
@@ -402,7 +426,7 @@ impl Context {
             let due = self.stale.get() & needs;
             if !due.is_empty() {
                 self.stale.set(self.stale.get() - due);
-                self.state().record(due, list);
+                self.state().record(due, list, self.bitmap.is_wide);
             }
             let command = command(list);
             list.push(command);
@@ -427,13 +451,10 @@ impl Context {
         needs | part | Parts::PLACED
     }
 
+    #[inline]
     fn record_path(&self, path: Option<&Path>, list: &mut List) -> Span {
         if let Some(path) = path {
-            let matrix = &self.state().matrix;
-            return add(
-                &mut list.verbs,
-                path.verbs().iter().map(|it| transformed(*it, matrix)),
-            );
+            return list.add_part(|to| add_transformed(path.verbs(), &self.state().matrix, to));
         }
         let verbs = self.base.verbs();
         match self.recorded_path.get() {
@@ -443,22 +464,22 @@ impl Context {
                 span
             }
             _ => {
-                let span = add(&mut list.verbs, verbs.iter().copied());
+                let span = list.add_part(|to| match <&[u32; 6]>::try_from(verbs) {
+                    Ok(line_or_arc) => to.extend_from_slice(line_or_arc),
+                    Err(_) => to.extend_from_slice(verbs),
+                });
                 self.recorded_path.set(Some((list.generation, span)));
                 span
             }
         }
     }
 
-    fn with_verbs<R>(&self, path: Option<&Path>, read: impl FnOnce(Slice<PathVerb>) -> R) -> R {
+    fn with_verbs<R>(&self, path: Option<&Path>, read: impl FnOnce(Slice<u32>) -> R) -> R {
         let Some(path) = path else {
             return read(Slice::new(self.base.verbs()));
         };
-        let verbs: Vec<_> = path
-            .verbs()
-            .iter()
-            .map(|it| transformed(*it, &self.state().matrix))
-            .collect();
+        let mut verbs = Vec::new();
+        add_transformed(path.verbs(), &self.state().matrix, &mut verbs);
         read(Slice::new(&verbs))
     }
 
@@ -516,7 +537,32 @@ impl Context {
         [js::set_fill_style, js::set_stroke_style][index](self, object);
     }
 
+    #[inline(always)]
     fn set_style<'a>(
+        &self,
+        cx: &mut JsScope<'a>,
+        index: usize,
+        value: CanvasStyle<'a>,
+    ) -> bindgen::Result<'a, ()> {
+        if let (CanvasStyle::Color(source), Style::Color(old)) =
+            (&value, &self.state().styles[index])
+            && let Some(rgba) = source
+                .flat_latin1()
+                .and_then(|it| parse_six_digits(it.characters()))
+        {
+            if !old.is(rgba) {
+                self.change([Parts::FILL, Parts::STROKE][index], |state| {
+                    if let Style::Color(old) = &mut state.styles[index] {
+                        *old = Color::plain(rgba);
+                    }
+                });
+            }
+            return Ok(());
+        }
+        self.set_any_style(cx, index, value)
+    }
+
+    fn set_any_style<'a>(
         &self,
         cx: &mut JsScope<'a>,
         index: usize,
@@ -527,7 +573,8 @@ impl Context {
             CanvasStyle::Gradient(it) => (&it.0, it.to_js()),
             CanvasStyle::Pattern(it) => (&it.0, it.to_js()),
             CanvasStyle::Color(source) => {
-                let Some(color) = self.parse_color(cx, source)? else {
+                let Some(color) = self.parse_color(cx, source.view(&cx.heap)?.to_utf8().slice())?
+                else {
                     return Ok(());
                 };
                 match &self.state().styles[index] {
@@ -580,7 +627,7 @@ impl Context {
         Ok(())
     }
 
-    #[optimize(size)]
+    #[inline]
     fn fill_path(&self, path: Option<&Path>, rule: CanvasFillRule) {
         let is_even_odd = rule == CanvasFillRule::Evenodd;
         self.draw(self.painting(FILL, Parts::NONE), |list| Command::Fill {
@@ -589,12 +636,10 @@ impl Context {
         });
     }
 
-    #[optimize(size)]
+    #[inline]
     fn stroke_path(&self, path: Option<&Path>) {
-        self.draw(self.painting(STROKE, Parts::PEN | Parts::MATRIX), |list| {
-            Command::Stroke {
-                verbs: self.record_path(path, list),
-            }
+        self.draw(self.painting(STROKE, Parts::LINE), |list| Command::Stroke {
+            verbs: self.record_path(path, list),
         });
     }
 
@@ -662,7 +707,7 @@ impl Context {
                     styles: [Style::Color(ring), Style::Color(ring)],
                     ..State::new()
                 }
-                .record(parts, list);
+                .record(parts, list, self.bitmap.is_wide);
                 Command::Stroke {
                     verbs: self.record_path(path, list),
                 }
@@ -716,6 +761,9 @@ impl Context {
             kerning: state.kerning,
             stretch: state.stretch,
             caps: state.caps,
+            is_smoothed: inherited.is_smoothed
+                && (state.rendering != CanvasTextRendering::GeometricPrecision
+                    || !self.settings.alpha),
         };
         style.font = match font.known_id(variation) {
             Some(id) => id,
@@ -745,11 +793,7 @@ impl Context {
         self.draw(
             self.painting(
                 style_index,
-                if strokes {
-                    Parts::MATRIX | Parts::PEN
-                } else {
-                    Parts::MATRIX
-                },
+                if strokes { Parts::LINE } else { Parts::MATRIX },
             ),
             |list| Command::Text {
                 text: add(&mut list.text, prepared(text)),
@@ -857,11 +901,15 @@ impl Context {
         );
         image.with_pixels(heap, |rgba| {
             if left < right && top < bottom {
+                let mut rgba = Cow::Borrowed(rgba);
+                if image.is_wide() != self.bitmap.is_wide {
+                    convert(rgba.to_mut(), self.bitmap.is_wide);
+                }
                 self.bitmap.write(
                     at,
                     size,
                     [left, top, right - left, bottom - top].map(|it| it as i32),
-                    rgba,
+                    &rgba,
                 );
             }
         })?;
@@ -895,7 +943,7 @@ attributes! {
     get_shadow_offset_x set_shadow_offset_x: f64 = shadow_x in SHADOW if f64::is_finite;
     get_shadow_offset_y set_shadow_offset_y: f64 = shadow_y in SHADOW if f64::is_finite;
     get_shadow_blur set_shadow_blur: f64 = shadow_blur in SHADOW if |it| (0.0..f64::INFINITY).contains(&it);
-    get_line_width set_line_width: f64 = line_width in PEN if |it: f64| it > 0.0 && it.is_finite();
+    get_line_width set_line_width: f64 = line_width in WIDTH if |it: f64| it > 0.0 && it.is_finite();
     get_line_cap set_line_cap: CanvasLineCap = cap in PEN;
     get_line_join set_line_join: CanvasLineJoin = join in PEN;
     get_miter_limit set_miter_limit: f64 = miter_limit in PEN if |it: f64| it > 0.0 && it.is_finite();
@@ -1121,6 +1169,7 @@ impl CanvasDrawing {
         Ok(image.map(|image| {
             let wanted = Snapshot {
                 is_tile: true,
+                is_wide: self.bitmap.is_wide,
                 ..image.whole()
             };
             let bytes = area_of(wanted.to).saturating_mul(4) as usize;
@@ -1194,14 +1243,14 @@ impl CanvasDrawing {
 
     pub(crate) fn stroke_rect(&self, x: f64, y: f64, w: f64, h: f64) {
         if are_finite([x, y, w, h]) {
-            self.draw(self.painting(STROKE, Parts::MATRIX | Parts::PEN), |_| {
+            self.draw(self.painting(STROKE, Parts::LINE), |_| {
                 Command::StrokeRect(rect(x, y, w, h))
             });
         }
     }
 
     pub(crate) fn begin_path(&self) {
-        self.base.outline.with_mut(|path| path.verbs.clear());
+        self.base.outline.with_mut(|path| path.clear());
         self.recorded_path.set(None);
     }
 
@@ -1213,11 +1262,15 @@ impl CanvasDrawing {
         self.fill_path(Some(path), rule);
     }
 
-    pub(crate) fn stroke(&self) {
-        self.stroke_path(None);
+    pub(crate) fn stroke(&self, path: Option<&Path2D>) {
+        match path {
+            None => self.stroke_path(None),
+            Some(path) => self.stroke_given(path),
+        }
     }
 
-    pub(crate) fn stroke_given(&self, path: &Path2D) {
+    #[inline(never)]
+    fn stroke_given(&self, path: &Path2D) {
         self.stroke_path(Some(path));
     }
 

@@ -256,7 +256,7 @@ impl Contents {
                 if history.entries.len() > MOST_ENTRIES && history.index > 0 {
                     history.entries.remove(0);
                     history.index -= 1;
-                    page.later(|it| it.owner().tell_of_pruning(None));
+                    page.after_script(|it| it.owner().tell_of_pruning(None));
                 }
             }
         }
@@ -339,7 +339,7 @@ impl Contents {
         self.activation.replace(Some(Activation {
             kind: if is_first { How::Replace } else { how }.name().to_owned(),
             from: of_origin.map(|it| it.for_scripts(&it.url, false)),
-            entry: self.item().map(|it| it.borrow().for_scripts(url, true)),
+            entry: (self.item()).map(|it| it.borrow().for_scripts(&page.url(), true)),
         }));
         Ok(())
     }
@@ -360,9 +360,11 @@ impl Contents {
             .iter()
             .position(is_foreign)
             .map_or(all.len(), |it| at + it);
+        let of_error = self.page().unreachable_url().map(|_| self.page().url());
         let describe = |it: &Item| {
-            it.borrow()
-                .for_scripts(&it.borrow().url, it.borrow().document == current.document)
+            let it = it.borrow();
+            let url = of_error.as_ref().unwrap_or(&it.url);
+            it.for_scripts(url, it.document == current.document)
         };
         Some(HistoryEntries {
             entries: all[from..to].iter().map(describe).collect(),
@@ -388,8 +390,12 @@ impl Contents {
         );
         let is_visible = next.origin_key() == self.page().origin_key() && !has_crossed_origins;
         let to = is_visible.then(|| Box::new(known));
-        (next.inbound_transition)
-            .set((self.page()).ask(|it, reply| it.will_swap(how.swap(), to, reply))?);
+        let captured = (self.page()).ask(|it, reply| it.will_swap(how.swap(), to, reply))?;
+        (next.inbound_transition).set(if next.is_beside(self.page()) {
+            captured
+        } else {
+            0
+        });
         Ok(())
     }
 
@@ -438,9 +444,7 @@ impl Contents {
         let is_of_relative = || {
             let mut pages =
                 super::alive().filter_map(|it| self.relative(it.id).map(Contents::page));
-            pages.any(|it| {
-                it.has_relatives.get() && it.origin_key() == page.origin_key() && has_url(it)
-            })
+            pages.any(|it| it.has_relatives.get() && it.is_kin_of(page) && has_url(it))
         };
         let is_of_origin = page.origin() != "null" && origin_of(&entry.url) == page.origin();
         if !is_of_origin && !has_url(page) && !is_of_relative() {
@@ -507,8 +511,8 @@ impl Contents {
         self.page().tell(|it| it.pop_state(url.to_owned(), key))
     }
 
-    pub(super) fn traverse_by(&self, delta: i32, page: &Page) {
-        let mut history = self.history.borrow_mut();
+    pub(super) fn traverse_by(&self, delta: i32, page: &Page) -> JsResult<()> {
+        let history = self.history.borrow();
         let from = history
             .aim
             .as_ref()
@@ -519,17 +523,18 @@ impl Contents {
             .and_then(|it| history.entries.get(it))
             .cloned()
         else {
-            return;
+            return Ok(());
         };
-        history.aim = Some(Rc::clone(&aim));
+        drop(history);
+        if !self.may_be_taken_to(&aim, page)? {
+            return Ok(());
+        }
+        self.history.borrow_mut().aim = Some(Rc::clone(&aim));
         let page = Root::new(page);
-        self.later(move |it| {
-            if it.ignores(Some(page.get())) || !it.may_be_taken_to(&aim, page.get())? {
-                it.forget_aim();
-                return Ok(());
-            }
+        self.after_script(move |it| {
             let index = it.history.borrow().position(&aim);
-            if let Some(index) = index.filter(|_| !page.get().is_disposed()) {
+            let may = !it.ignores(Some(page.get())) && it.may_be_taken_to(&aim, page.get())?;
+            if let Some(index) = index.filter(|_| may && !page.get().is_disposed()) {
                 it.traverse(index, false)?;
             }
             let is_still = it
@@ -538,11 +543,12 @@ impl Contents {
                 .aim
                 .as_ref()
                 .is_some_and(|it| Rc::ptr_eq(it, &aim));
-            if is_still && !it.has_pending_load()? {
+            if is_still && !(may && it.has_pending_load()?) {
                 it.forget_aim();
             }
             Ok(())
         });
+        Ok(())
     }
 
     fn has_pending_load(&self) -> JsResult<bool> {

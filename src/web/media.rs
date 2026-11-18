@@ -6,7 +6,7 @@ use crate::channel::Serialized;
 
 /// It is closed when it is dropped.
 pub trait Connection {
-    fn send(&self, commands: &[u8]);
+    fn send(&self, commands: &[u8], may_list_and_capture: [bool; 2]);
 }
 
 /// Gets the lines, and `None` when the service has exited.

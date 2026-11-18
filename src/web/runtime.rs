@@ -27,7 +27,6 @@ crate::wire! {
         pub mime: Bytes,
         pub name_of_file: Option<Bytes>,
         pub modified: f64,
-        pub was_chosen_by_user: bool,
     }
 }
 

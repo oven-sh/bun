@@ -3,11 +3,12 @@
 
 use bun_jsc::{JSGlobalObject, JSValue};
 
-use crate::channel::Message;
+use crate::channel::{LooseBitmap, Message};
 use crate::input::Input;
 use crate::js_link::JsLink;
 use crate::net::body::Blob;
 use crate::permissions_policy::Feature;
+use crate::remote;
 use crate::wire;
 use crate::wire::messages;
 
@@ -54,6 +55,33 @@ wire! {
         pub fixes_text_areas: bool,
         pub reports_paints: bool,
         pub reports_preferred_size: bool,
+        /// If it is in another process.
+        pub container: Option<Container>,
+    }
+
+    /// The element of a frame.
+    #[derive(Clone, Default)]
+    pub struct Container {
+        pub origin: String,
+        pub looks: Looks,
+        pub forbids_scrolling: bool,
+        pub is_object: bool,
+        pub margins: [Option<String>; 2],
+    }
+
+    #[derive(Clone, Copy, Default, PartialEq, Eq)]
+    pub struct Looks {
+        pub color_scheme: u32,
+        pub is_inert: bool,
+    }
+
+    /// Of the viewport of a frame.
+    #[derive(Clone, Copy, Default, PartialEq)]
+    pub struct Position {
+        /// In the viewport at the top.
+        pub origin: [f64; 2],
+        /// What is not clipped, in itself.
+        pub shown: Option<[f64; 4]>,
     }
 
     #[derive(Clone, PartialEq)]
@@ -92,6 +120,7 @@ impl Default for Environment {
             fixes_text_areas: false,
             reports_paints: false,
             reports_preferred_size: false,
+            container: None,
         }
     }
 }
@@ -214,10 +243,6 @@ wire! {
         pub is_composing: bool,
     }
 
-    /// A structured clone.
-    #[derive(Clone)]
-    pub struct Serialized(pub std::sync::Arc<[u8]>);
-
     #[derive(Clone)]
     pub struct StateOfControl {
         pub control: String,
@@ -273,7 +298,7 @@ keywords! {
 
 wire! {
     /// What the document came with.
-    #[derive(Default)]
+    #[derive(Clone, Default)]
     pub struct Arrival {
         pub loads_at_top: bool,
         pub has_text_activation: bool,
@@ -382,6 +407,8 @@ wire! {
         pub csp: Option<String>,
         /// `window[index]` has it.
         pub is_indexed: bool,
+        pub forbids_scrolling: bool,
+        pub margins: [Option<String>; 2],
     }
 
     #[derive(Clone, Copy, Default, PartialEq)]
@@ -393,7 +420,7 @@ wire! {
         pub scale: f64,
     }
 
-    /// For a frame in this process.
+    /// For a frame that is not in the web engine.
     pub enum ToFrame {
         OwnerChanged(Box<Owner>),
         SetInitialUrl(String),
@@ -401,6 +428,21 @@ wire! {
         Place { size: [f64; 2], scale: f64, is_visible: bool },
         Stop,
         Remove,
+        /// From here on, for a document in another process.
+        Input(Input),
+        Looks(Looks),
+        Moved(Position),
+        ExitFullscreen,
+    }
+
+    /// For the element of a frame, which is in another process.
+    #[derive(Clone, Copy)]
+    pub enum ToContainer {
+        Focus,
+        Scroll([f64; 2]),
+        Reveal([f64; 4]),
+        Tab { is_backward: bool },
+        Fit([f64; 2]),
     }
 
     /// For a frame or a popup in the web engine.
@@ -445,9 +487,54 @@ wire! {
         pub description: String,
     }
 
-    /// The path of a file that the user or the app has chosen.
-    #[derive(Clone)]
-    pub struct ChosenFile(pub String);
+    #[derive(Default)]
+    pub struct Clipped {
+        /// Types and texts.
+        pub texts: Vec<(String, String)>,
+        pub files: Vec<ChosenFile>,
+        pub png: Option<Vec<u8>>,
+    }
+}
+
+/// The path of a file that the user or the app has chosen, or only a name until it is dropped.
+#[derive(Clone)]
+pub struct ChosenFile(pub String);
+
+impl wire::Wire for ChosenFile {
+    fn write(self, to: &mut wire::Writer) {
+        if let Some(peer) = to.peer()
+            && bun_paths::is_absolute(self.0.as_bytes())
+        {
+            remote::grant(peer, self.0.as_bytes());
+        }
+        self.0.write(to);
+    }
+
+    fn read(from: &mut wire::Reader<'_>) -> wire::Result<ChosenFile> {
+        let (path, peer) = (String::read(from)?, from.peer());
+        match peer.is_none_or(|it| remote::is_granted(it, path.as_bytes())) {
+            true => Ok(ChosenFile(path)),
+            false => Ok(ChosenFile(String::new())),
+        }
+    }
+}
+
+/// A structured clone.
+#[derive(Clone)]
+pub struct Serialized(pub std::sync::Arc<[u8]>);
+
+impl wire::Wire for Serialized {
+    fn write(self, to: &mut wire::Writer) {
+        to.put_bytes(&self.0);
+    }
+
+    fn read(from: &mut wire::Reader<'_>) -> wire::Result<Serialized> {
+        let (bytes, is_trusted) = (from.take_bytes()?, from.peer() == Some(remote::HOST));
+        match is_trusted || crate::channel::is_fit_for_storage(bytes) {
+            true => Ok(Serialized(bytes.into())),
+            false => Ok(Serialized(crate::channel::STORED_NULL.into())),
+        }
+    }
 }
 
 pub type Reply<T> = Box<dyn FnOnce(&JSGlobalObject, T)>;
@@ -488,6 +575,7 @@ pub trait Link {
 }
 
 /// For the part of the inspector that is where the page is.
+#[derive(Clone, Copy)]
 pub enum Inspected<'a> {
     Console {
         method: &'a str,
@@ -587,13 +675,22 @@ messages! {
         #[size = large]
         ContextMenu = context_menu(menu: Box<ContextMenu>);
         CloseNotification = close_notification(id: u32);
+        Container = tell_container(message: ToContainer);
         CursorChanged = cursor_changed(cursor: String);
         FirstPaint = first_paint();
         FocusWindow = focus_window();
+        /// For the service that has the speakers. `None` ends the connection.
+        #[size = large]
+        Media = media(connection: u32, commands: Option<Vec<u8>>);
+        #[size = large]
+        Inspected = inspected(session: u32, method: String, params: String);
         IconsChanged = icons_changed(urls: Vec<String>);
         MoveWindow = move_window(bounds: Rect);
         ShowNotification = show_notification(id: u32, title: String, body: String, is_silent: bool);
         Painted = painted();
+        /// To a window in another process.
+        #[size = large]
+        Post = post(context: u32, message: Message, target_origin: String);
         PreferredSizeChanged = preferred_size_changed(width: f64, height: f64);
         Ping = ping(url: String, target: String);
         TargetUrlChanged = target_url_changed(url: String);
@@ -618,6 +715,7 @@ messages! {
         SetZoom = set_zoom(value: f64, is_level: bool) -> Option<String>;
         ActivationConsumed = activation_consumed() -> ();
         BaseUrlChanged = base_url_changed(url: String) -> ();
+        #[size = large]
         ChooseWindow = choose_window(target: String, wish: Option<Box<Wish>>, becomes_opener: bool) -> Chosen;
         CloseWindow = close_window(context: u32) -> ();
         /// The page chooses the number, which means something only to the two of them.
@@ -690,15 +788,23 @@ messages! {
         Loaded = loaded(stage: Stage) -> ();
         Refresh = refresh() -> Option<String>;
         IsPopup = is_popup() -> bool;
+        IsTabFocused = is_tab_focused() -> bool;
         Languages = languages() -> Vec<String>;
         SetReferrerPolicy = set_referrer_policy(policy: String) -> ();
         SetTitle = set_title(title: String) -> ();
         PermissionState = permission_state(name: String, media_type: Option<String>) -> Permission;
         StorageDirectory = storage_directory() -> Option<String>;
         Tab = tab() -> u32;
+        #[size = large]
+        ReadClipboard = read_clipboard(is_selection: bool) -> Clipped;
+        #[size = large]
+        WriteClipboard = write_clipboard(texts: Vec<(String, String)>, is_selection: bool) -> ();
     }
     request {
-        PickFiles = pick_files(choice: FileChoice) -> Option<Vec<String>>;
+        PickFiles = pick_files(choice: FileChoice) -> Option<Vec<ChosenFile>>;
+        #[size = large]
+        CheckSpelling = check_spelling(text: Vec<u16>) -> Vec<[u32; 2]>;
+        GuessSpelling = guess_spelling(word: String) -> Vec<String>;
         #[size = large]
         IpcSendSync = ipc_send_sync(channel: String, message: Message) -> Option<Result<Message, String>>;
         Microphone = microphone() -> Permission;
@@ -707,6 +813,8 @@ messages! {
         Print = print(markup_of_empty_frame: Option<String>) -> ();
         SystemVersion = system_version() -> String;
         TraverseTo = traverse_to(key: String) -> Traversal;
+        #[size = large]
+        WriteImage = write_image_to_clipboard(texts: Vec<(String, String)>, image: LooseBitmap) -> ();
     }
 }
 
@@ -733,7 +841,12 @@ impl Question {
                 | Question::BaseUrlChanged { .. }
                 | Question::FocusOther { .. }
                 | Question::Frame {
-                    message: ToFrame::OwnerChanged(_) | ToFrame::Place { .. },
+                    message: ToFrame::OwnerChanged(_)
+                        | ToFrame::Place { .. }
+                        | ToFrame::Input(_)
+                        | ToFrame::Looks(_)
+                        | ToFrame::Moved(_)
+                        | ToFrame::ExitFullscreen,
                     ..
                 }
                 | Question::Guest { .. }
@@ -744,6 +857,7 @@ impl Question {
                 | Question::SetReferrerPolicy { .. }
                 | Question::SetTitle { .. }
                 | Question::UnhandledKey { .. }
+                | Question::WriteClipboard { .. }
         )
     }
 
@@ -778,6 +892,7 @@ impl Question {
                 | Question::IsClosed {}
                 | Question::IsInitial {}
                 | Question::IsSandboxed { .. }
+                | Question::IsTabFocused {}
                 | Question::LoadsImages {}
                 | Question::Origin {}
                 | Question::OriginKey {}

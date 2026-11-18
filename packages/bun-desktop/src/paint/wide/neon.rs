@@ -242,6 +242,12 @@ impl Floats for Numbers {
     }
 
     #[inline(always)]
+    fn sqrt(self) -> Self {
+        // SAFETY: the processor has the instructions.
+        unsafe { Numbers([vsqrtq_f32(self.0[0]), vsqrtq_f32(self.0[1])]) }
+    }
+
+    #[inline(always)]
     fn after(self, other: Self) -> Self {
         // SAFETY: the processor has the instructions.
         unsafe {

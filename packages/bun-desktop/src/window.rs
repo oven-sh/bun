@@ -143,7 +143,7 @@ thread_local! {
 }
 
 const WAIT_FOR_IMAGES: Duration = Duration::from_millis(24);
-const LONGEST_FRAME: Duration = Duration::from_secs(2);
+pub const LONGEST_FRAME: Duration = Duration::from_secs(2);
 
 pub fn next_redraw() -> Option<Instant> {
     WINDOWS.with_borrow(|windows| {
@@ -359,6 +359,9 @@ pub mod layers {
         }
         layers.paint(&mut state.compositor.lock(), all.right, all.bottom);
         layers.target.show_caret(caret);
+        if let Some(port) = ports.first().filter(|_| diagnostics::logs_misses()) {
+            layers.target.witness(in_pixels(*port, scale));
+        }
         let cache = &mut *state.cache.borrow_mut();
         cache.known_contents = layers.target.show_lifted(std::mem::take(&mut cache.lifted));
         HAS_CHANGES.set(true);
@@ -414,6 +417,7 @@ pub mod layers {
             .as_mut()
             .is_some_and(|it| it.expect_scroll(port))
         {
+            core_animation::expect_scroll();
             refresh(state.id);
         }
     }
@@ -422,6 +426,7 @@ pub mod layers {
     pub fn flush() {
         if HAS_CHANGES.take() {
             crate::diagnostics::trace!("painted");
+            core_animation::wait_to_flush();
             diagnostics::measure(Step::Commit, core_animation::flush);
             crate::diagnostics::trace!("committed");
         }

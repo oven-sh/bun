@@ -1,7 +1,5 @@
 //! <https://w3c.github.io/IndexedDB/#database-interface>
 
-use core::mem::ManuallyDrop;
-
 use bun_jsc::{Strong, Weak};
 use bun_web::exec::{Thread, with_js};
 use bun_web::storage::indexed::Notice;
@@ -22,8 +20,10 @@ pub(crate) struct IDBDatabase {
     itself: Cell<Option<Held<Strong>>>,
 }
 
+static OPEN: bun_ui::Lasting<RefCell<std::collections::BTreeMap<u32, Weak<()>>>> =
+    bun_ui::Lasting::empty();
+
 thread_local! {
-    static OPEN: ManuallyDrop<RefCell<std::collections::BTreeMap<u32, Weak<()>>>> = bun_ui::lasting(|| drop(OPEN.with(|it| it.take())));
     static LAST_ID: Cell<u32> = const { Cell::new(0) };
 }
 
@@ -226,7 +226,7 @@ impl IDBDatabase {
         }
         let (auto_increments, indexes) = (options.auto_increment, Default::default());
         let store = Rc::new(Store {
-            table: Table::unique(),
+            table: upgrade.new_table(heap)?,
             name: name.into(),
             key_path,
             auto_increments,

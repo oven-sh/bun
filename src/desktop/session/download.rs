@@ -471,6 +471,7 @@ impl DownloadItem {
             return None;
         };
         let controller = Some(controller).filter(|it| !it.is_aborted())?;
+        files::make_directory(files::parent(path)?, 0o777).ok()?;
         let file = Arc::new(
             File::openat(
                 Fd::cwd(),

@@ -1,11 +1,12 @@
-//! The document of an `<iframe>`, `<frame>`, `<object>` or `<embed>`, if it is in this process.
+//! The document of an `<iframe>`, `<frame>`, `<object>` or `<embed>`, unless it is in the web engine.
 
 use std::rc::Rc;
 
 use bun_ui::protocol::{SurfaceCommand, WebViewCommand};
 use bun_ui::surfaces;
 use bun_web::host::{Owner, ToFrame, Wish};
-use bun_web::page::News as ForElement;
+use bun_web::input::{Extent, Input};
+use bun_web::page::{Controls, News as ForElement};
 
 use super::load::Initiator;
 use super::page::Page;
@@ -22,6 +23,7 @@ pub(super) struct Embedded {
     pub(super) place: Rc<str>,
     pub(super) image: u32,
     placement: Cell<Option<([f64; 3], bool)>>,
+    pub(super) told: super::apart::Told,
 }
 
 impl Embedded {
@@ -40,14 +42,18 @@ impl Embedded {
             place: format!("{place}/{sequence}:{index}").into(),
             image: answer((ui()?.open_web_view)(None.into()))?,
             placement: None.into(),
+            told: Default::default(),
         })
     }
 }
 
 pub(super) fn create(parent: &Page, number: u32, element: &Owner) -> JsResult<()> {
-    if parent.numbered()?.get(global(), js(number)?)?.is_object() {
+    const MOST_FRAMES: u32 = 1024;
+    let known = &parent.owner().context.known_frames;
+    if known.get() >= MOST_FRAMES || parent.numbered()?.get(global(), js(number)?)?.is_object() {
         return Ok(());
     }
+    known.update(|it| it + 1);
     let frame = Contents::start(
         parent.contents().preferences(),
         Kind::Frame,
@@ -56,8 +62,9 @@ pub(super) fn create(parent: &Page, number: u32, element: &Owner) -> JsResult<()
     frame.listen_to(surfaces::tree_of_image(frame.image()));
     (parent.numbered()?).set(global(), js(number)?, frame.to_js())?;
     invoke(parent.frames()?, "add", &[frame.to_js()])?;
+    parent.contents().tell_children()?;
     parent.contents().notify(News::FramesChanged)?;
-    frame.later(Contents::announce_creation);
+    frame.after_script(Contents::announce_creation);
     Ok(())
 }
 
@@ -71,7 +78,10 @@ pub(super) fn obey(parent: &Page, number: u32, message: ToFrame) -> JsResult<()>
                 let kind = it.kind.clone();
                 it.element.replace(Owner { kind, ..*element });
             }
-            Ok(())
+            match it.is_apart() {
+                true => it.page().tell(Controls::environment_changed),
+                false => Ok(()),
+            }
         }
         ToFrame::SetInitialUrl(url) => it.page().set_initial_url(&url),
         ToFrame::Navigate {
@@ -96,6 +106,10 @@ pub(super) fn obey(parent: &Page, number: u32, message: ToFrame) -> JsResult<()>
             parent.numbered()?.remove(global(), js(number)?)?;
             it.remove()
         }
+        ToFrame::Input(input) => it.input_from_element(input),
+        ToFrame::Looks(looks) => it.change_looks(looks),
+        ToFrame::Moved(position) => it.change_position(position),
+        ToFrame::ExitFullscreen => it.exit_fullscreen_for_element(),
     }
 }
 
@@ -115,7 +129,7 @@ impl Contents {
     }
 
     fn has_origin_of_embedder(&self) -> bool {
-        self.page().origin_key() == self.embedder().origin_key()
+        self.page().is_kin_of(self.embedder())
     }
 
     pub(super) fn tell_element(&self, news: ForElement) -> JsResult<()> {
@@ -197,11 +211,17 @@ impl Contents {
             width: finite(width),
             height: finite(height),
         };
-        self.size.set(Some(bun_web::input::Extent {
+        let extent = Extent {
             size: [width, height],
             scale,
-        }));
-        self.tell_surface(SurfaceCommand::Bounds(Some(bounds).into()))
+        };
+        self.size.set(Some(extent));
+        self.tell_surface(SurfaceCommand::Bounds(Some(bounds).into()))?;
+        let is_quiet = true;
+        match self.is_apart() {
+            true => (self.page()).tell(|it| it.input(Input::Resize { extent, is_quiet })),
+            false => Ok(()),
+        }
     }
 
     /// `area` is what a frame in it has changed, outside of a rendering of the page.
@@ -224,16 +244,18 @@ impl Contents {
             command,
         })?;
         self.parent()
-            .filter(|it| area.is_object() && it.is_frame())
+            .filter(|it| (area.is_object() || self.is_apart()) && it.is_frame())
             .map_or(Ok(()), |it| it.painted(scale, object!({})))
     }
 
-    fn remove(&self) -> JsResult<()> {
+    pub(super) fn remove(&self) -> JsResult<()> {
         if self.is_destroyed.get() {
             return Ok(());
         }
+        (self.owner().context.known_frames).update(|it| it.saturating_sub(1));
         invoke(self.embedder().frames()?, "delete", &[self.to_js()])?;
         self.destroy_now()?;
+        self.embedder().contents().tell_children()?;
         self.embedder().contents().notify(News::FramesChanged)?;
         surfaces::ignore(surfaces::tree_of_image(self.image()));
         tell(Command::WebView {

@@ -1,5 +1,6 @@
 //! Flattens a display list into a few kinds of primitives (`flatten`), which leaves what they cannot draw to `cpu`.
 
+pub mod allowance;
 mod arena;
 pub mod batch;
 pub mod blend;
@@ -18,6 +19,7 @@ mod memo;
 pub mod raster;
 pub mod scan;
 pub mod scene;
+mod slant;
 pub mod software;
 mod stretch;
 pub mod vector;

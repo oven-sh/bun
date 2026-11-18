@@ -3,7 +3,7 @@
 use core::future::poll_fn;
 use core::sync::atomic::{AtomicU32, Ordering};
 use core::task::{Context, Poll, Waker};
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
 
 use bun_threading::Guarded;
@@ -11,7 +11,7 @@ use bun_ui::protocol::Lane;
 
 use super::{HOST, Head, Kind, Peer, send, send_bytes};
 use crate::exec::{self, Either, Waiter, race};
-use crate::net::body::{Body, Budget, Chunk, FOR_DATA, Read, Share, SharedBytes, Source};
+use crate::net::body::{Body, Budget, Chunk, Read, Share, SharedBytes, Source};
 use crate::net::{NetError, Result};
 use crate::wire::{self, Malformed, Reader, Wire, Writer};
 
@@ -26,7 +26,6 @@ crate::wire! {
         End(Result<()>),
         /// From who reads it.
         More(u32),
-        All,
         Enough,
     }
 }
@@ -49,7 +48,6 @@ fn asked_at_first(sender: Peer) -> usize {
 #[derive(Default)]
 struct Wanted {
     bytes: usize,
-    is_all: bool,
     is_enough: bool,
     sender: Waiter,
 }
@@ -65,13 +63,13 @@ struct Arrived {
     reader: Waiter,
 }
 
-type Table<T> = Guarded<Vec<((Peer, u32), Arc<Guarded<T>>)>>;
+type Table<T> = Guarded<BTreeMap<(Peer, u32), Arc<Guarded<T>>>>;
 
-static LEAVING: Table<Wanted> = Guarded::new(Vec::new());
-static ARRIVING: Table<Arrived> = Guarded::new(Vec::new());
+static LEAVING: Table<Wanted> = Guarded::new(BTreeMap::new());
+static ARRIVING: Table<Arrived> = Guarded::new(BTreeMap::new());
 
 fn find<T>(table: &Table<T>, key: (Peer, u32)) -> Option<Arc<Guarded<T>>> {
-    (table.lock().iter()).find_map(|it| (it.0 == key).then(|| Arc::clone(&it.1)))
+    table.lock().get(&key).cloned()
 }
 
 /// Says that it is cut short if it is dropped before the end.
@@ -83,17 +81,17 @@ struct Leaving {
 
 impl Drop for Leaving {
     fn drop(&mut self) {
-        LEAVING.lock().retain(|it| it.0 != self.key);
+        LEAVING.lock().remove(&self.key);
         tell(self.key.0, self.key.1, About::End(self.end));
     }
 }
 
 impl Leaving {
-    /// How many bytes, and whether all others will be. `None` if there is no reader.
-    async fn wanted(&self) -> Option<(usize, bool)> {
+    /// How many bytes. `None` if there is no reader.
+    async fn wanted(&self) -> Option<usize> {
         poll_fn(|cx| match &mut *self.wanted.lock() {
             it if it.is_enough => Poll::Ready(None),
-            it if it.bytes > 0 => Poll::Ready(Some((it.bytes, core::mem::take(&mut it.is_all)))),
+            it if it.bytes > 0 => Poll::Ready(Some(it.bytes)),
             it => it.sender.pending(cx),
         })
         .await
@@ -109,10 +107,9 @@ impl Leaving {
 
     async fn send(mut self, mut body: Body) {
         let (head, mut bytes) = (Head::new(Kind::Chunk, self.key.1, 0).to_bytes(), Vec::new());
-        while let Some((_, is_all)) = self.wanted().await {
-            if is_all {
-                body.expect_read_to_end(&FOR_DATA, &mut Vec::new());
-            }
+        // That an upload fails is known before a server that does not wait for it has answered.
+        let mut reads_ahead = self.key.0 == HOST;
+        while core::mem::take(&mut reads_ahead) || self.wanted().await.is_some() {
             let chunk = match race(body.read(), self.abandoned()).await {
                 Either::First(Ok(Some(chunk))) => chunk,
                 Either::First(end) => return self.end = end.map(drop),
@@ -120,7 +117,7 @@ impl Leaving {
             };
             let mut left = &*chunk;
             while !left.is_empty() {
-                let Some((wanted, _)) = self.wanted().await else {
+                let Some(wanted) = self.wanted().await else {
                     return;
                 };
                 let (now, later) = left.split_at(left.len().min(wanted).min(MOST_IN_CHUNK));
@@ -172,8 +169,6 @@ impl Source for Arriving {
         let mut it = self.arrived.lock();
         if it.end.is_none() && it.share.is_none() {
             (it.share, self.window) = (Some(Share::of(budget)), 16 * WINDOW);
-            drop(it);
-            tell(self.key.0, self.key.1, About::All);
         }
     }
 }
@@ -181,14 +176,14 @@ impl Source for Arriving {
 impl Drop for Arriving {
     fn drop(&mut self) {
         if self.arrived.lock().end.is_none() {
-            ARRIVING.lock().retain(|it| it.0 != self.key);
+            ARRIVING.lock().remove(&self.key);
             tell(self.key.0, self.key.1, About::Enough);
         }
     }
 }
 
 fn end(key: (Peer, u32), how: Result<()>) {
-    let found = ARRIVING.lock().extract_if(.., |it| it.0 == key).next();
+    let found = ARRIVING.lock().remove_entry(&key);
     if let Some((_, arrived)) = found {
         let mut it = arrived.lock();
         it.end.get_or_insert(how);
@@ -207,7 +202,6 @@ pub(super) fn accept(from: Peer, id: u32, about: About) {
     match about {
         About::End(how) => end((from, id), how),
         About::More(bytes) => change(&|it| it.bytes = (it.bytes + bytes as usize).min(16 * WINDOW)),
-        About::All => change(&|it| it.is_all = true),
         About::Enough => change(&|it| it.is_enough = true),
     }
 }
@@ -232,9 +226,9 @@ pub(super) fn accept_chunk(from: Peer, id: u32, message: Vec<u8>, at: usize) -> 
 
 pub(super) fn forget(peer: Peer) {
     let of_peer = |table: Vec<(Peer, u32)>| table.into_iter().filter(|it| it.0 == peer);
-    let arriving = ARRIVING.lock().iter().map(|it| it.0).collect();
+    let arriving = ARRIVING.lock().keys().copied().collect();
     of_peer(arriving).for_each(|it| end(it, Err(NetError::Aborted)));
-    let leaving = LEAVING.lock().iter().map(|it| it.0).collect();
+    let leaving = LEAVING.lock().keys().copied().collect();
     of_peer(leaving).for_each(|it| accept(peer, it.1, About::Enough));
 }
 
@@ -272,7 +266,7 @@ impl Wire for Body {
             },
             ..Wanted::default()
         }));
-        LEAVING.lock().push(((peer, id), Arc::clone(&wanted)));
+        LEAVING.lock().insert((peer, id), Arc::clone(&wanted));
         let leaving = Leaving {
             key: (peer, id),
             wanted,
@@ -289,15 +283,15 @@ impl Wire for Body {
             Rest::None(Err(error)) => Body::new(error),
             Rest::Follows(id) => {
                 let (key, mut all) = ((peer, id), ARRIVING.lock());
-                let count = all.iter().filter(|it| it.0.0 == peer).count();
-                if (peer != HOST && count >= MOST_BODIES) || all.iter().any(|it| it.0 == key) {
+                let count = || all.range((peer, 0)..=(peer, u32::MAX)).count();
+                if (peer != HOST && count() >= MOST_BODIES) || all.contains_key(&key) {
                     return Err(Malformed);
                 }
                 let arrived = Arc::new(Guarded::new(Arrived {
                     expected: asked_at_first(peer),
                     ..Arrived::default()
                 }));
-                all.push((key, Arc::clone(&arrived)));
+                all.insert(key, Arc::clone(&arrived));
                 Body::new(Arriving {
                     key,
                     arrived,

@@ -1194,6 +1194,8 @@ The settings come from `"desktop"` in the `package.json` nearest to the entry po
 | `resources`        |                                         | Files and directories to copy into the resources directory. Symbolic links are followed            |
 | `infoPlist`        |                                         | Keys to add to or replace in `Info.plist`. `null` removes a key                                    |
 | `dom`              | `false`                                 | The program starts in a window, like with `--preload=bun:desktop/dom`                              |
+| `pages`            |                                         | HTML files and scripts of pages to compile. See [Pages](#pages)                                    |
+| `preloads`         |                                         | Preload scripts to compile                                                                         |
 
 Nothing is unpacked when the app starts: the UI library is loaded from where it is, and resources are plain files. `--trim`, `--aot-order` and the other flags of `bun compile` apply as they do without `--desktop`.
 
@@ -1202,6 +1204,26 @@ A build overwrites the files of an earlier bundle and removes none, so delete th
 - **macOS**: on a Mac, Bun signs the bundle ad hoc, which is enough to run it there. To distribute it, [sign it with your identity](#code-signing-on-macos) and notarize it. A bundle built on another system is not signed as a whole.
 - **Linux**: `AppRun` starts the app on X11 and Wayland. `appimagetool notes.AppDir` makes an AppImage of it (it needs an icon), and `usr` is laid out to be copied into a `.deb`, `.rpm` or Flatpak. URL schemes and file associations apply once the `.desktop` file is installed. Graphics drivers generate machine code, so unlike other executables that `bun compile` builds, the app does not turn on `PR_SET_MDWE`.
 - **Windows**: there is no UI library yet, so the app opens no windows. The executable opens no console. Its icon and version are only set when you build on Windows. URL schemes and file associations are left to an installer.
+
+### Pages
+
+`bun compile --desktop` compiles the scripts of the HTML files that you pass to it or list in `pages`, which takes paths and glob patterns.
+
+```bash terminal icon="terminal"
+bun compile --desktop ./main.js ./index.html
+```
+
+- Classic scripts, module scripts and inline scripts are compiled, each with the meaning that it has in a browser. The HTML is not changed.
+- The page is embedded in the executable with the style sheets, images, fonts and other files that it names, unless they are among the `resources`. The pages that it shows in frames or links to are treated like itself.
+- These files have to be in the directory of `package.json` (or `--root`, if you pass it), beside or below a file that you list, or in an installed package. The build fails if a URL leads anywhere else. A URL that starts with `/` is looked up in the directory of the file that names it, then in those above it, within the same limits.
+- The build follows `import`, import maps, and the URLs that are written out in `new Worker()`, `importScripts()` and `new URL(..., import.meta.url)`. An import that is no URL and is in no import map is resolved like in any other file, so a module can import npm packages.
+- List the scripts whose URLs are computed in `pages` too. A `.js` file is taken for a module if it has an `import` or `export` statement. Embed other data with `--asset`.
+- A `file:` URL finds these files below `__dirname`, `import.meta.dirname` and `app.getAppPath()`. It does not find the code of the main process. `/$bunfs/root` is the directory of `package.json`, unless you pass `--root`. If you serve pages under another URL, see [`app.setCompiledScripts()`](/runtime/desktop#security).
+- URLs that differ only in their query or fragment load one module.
+- The built-in objects of these pages are [read-only](/compiler/compatibility). Other pages do not get compiled scripts.
+- What is not compiled is interpreted: `on*` attributes, `eval()`, `new Function()`, scripts that are not UTF-8 or call `eval()` outside of a function, and inline scripts whose text has changed since the build.
+
+### The UI library
 
 Bun downloads the UI library for the target from npm (`@oven/bun-desktop-<os>-<arch>`) and caches it. Set `BUN_DESKTOP_LIBRARY` to use a local file.
 

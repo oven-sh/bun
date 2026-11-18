@@ -79,6 +79,7 @@ pub mod request;
 pub mod runtime;
 pub mod scheme;
 pub mod serial;
+pub mod service;
 pub mod sniff;
 pub mod storage;
 pub mod streams;
@@ -90,6 +91,7 @@ pub mod timing;
 pub mod trace;
 pub mod trust;
 pub mod url;
+pub mod url_pattern;
 pub mod window_features;
 pub mod wire;
 

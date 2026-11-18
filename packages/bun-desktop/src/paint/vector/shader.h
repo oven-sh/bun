@@ -100,6 +100,17 @@ FUNCTION float2 join(float2 before, float2 after, uint corner, float step,
   return angle >= all ? to : from * cos(angle) + before * sin(angle);
 }
 
+FUNCTION Space space_at(uint first BUFFERS) {
+  Space space;
+  space.to_pixels = float4(1.0, 0.0, 0.0, 1.0);
+  space.from_pixels = space.to_pixels;
+  if (first != 0u) {
+    space.to_pixels = FLOATS(WORD(first));
+    space.from_pixels = FLOATS(WORD(first + 1u));
+  }
+  return space;
+}
+
 FUNCTION Corner place(uint index BUFFERS) {
   uint corner = index & 3u;
   uint unit_bits = UNIT(index >> 2);
@@ -136,8 +147,101 @@ FUNCTION Corner place(uint index BUFFERS) {
     result.address = bits.z - uint(top) * result.stride - uint(left);
     return result;
   }
-  if (kind == COVER) {
+  if (kind == RING) {
     uint4 rest = WORD(first + 1u);
+    rest.z += first << 11;
+    float4 arc = FLOATS(bits);
+    float inner = FLOATS(rest).x;
+    float turns = inner > 0.0    ? step + end
+                  : corner == 1u ? 0.0
+                                 : step * 2.0 + float(corner - (corner >> 1));
+    float angle = arc.z + turns * arc.w;
+    angle -= 6.28318531 * round(angle / 6.28318531);
+    // The lines are partly outside.
+    float radius = (corner == 1u && inner >= 0.0 || corner == 3u && inner > 0.0
+                        ? inner
+                        : FLOATS(rest).w) *
+                   (1.0 + arc.w * arc.w / 12.0);
+    result.at = arc.xy + float2(cos(angle), sin(angle)) * radius;
+    result.depth = float(rest.z >> 11) / 2097152.0;
+    result.flags = rest.z;
+    result.color = rest.y;
+    return result;
+  }
+  if (kind == RUN) {
+    bits.z += first << 11;
+    result.depth = float(bits.z >> 11) / 2097152.0;
+    result.flags = bits.z;
+    result.color = bits.y;
+    uint points = first * 2u + 3u;
+    if (bits.x == 0u) {
+      uint next = corner - (corner >> 1);
+      uint which = unit_bits & 255u;
+      if (bits.w == 2u) {
+        result.at = POINT(points - 1u + which * 2u + corner);
+        return result;
+      }
+      result.at = POINT(bits.w != 0u   ? points + which * 3u +
+                                             (corner == 1u ? 0u : next + 1u)
+                        : corner == 1u ? points - 1u
+                                       : points + which * 2u + next);
+      return result;
+    }
+    bool is_join = (unit_bits & IS_JOIN) != 0u;
+    uint here = points + (unit_bits & 31u) + 1u + (is_join ? 0u : corner >> 1);
+    float2 at = POINT(here);
+    Space space = space_at(bits.w >> 8 ARGUMENTS);
+    float radius = FLOATS(bits).x;
+    float2 beside;
+    if (is_join) {
+      float pixel =
+          length(times(space.from_pixels, float2(0.7071, 0.7071))) / radius;
+      beside = join(unit(space, at - POINT(here - 1u)),
+                    unit(space, POINT(here + 1u) - at), corner,
+                    float((unit_bits >> 5) & 3u),
+                    (bits.z & HAS_ROUND_JOIN) != 0u, POINT(points - 1u), pixel);
+    } else if ((unit_bits & (end > 0.0 ? SHARES_END : SHARES_START)) != 0u) {
+      float2 before = normalize(at - POINT(here - 1u));
+      float2 after = normalize(POINT(here + 1u) - at);
+      beside = left_of(before + after) * (side / (1.0 + dot(before, after)));
+    } else {
+      beside = left_of(unit(space, end > 0.0 ? at - POINT(here - 1u)
+                                             : POINT(here + 1u) - at)) *
+               side;
+    }
+    result.at = at + times(space.to_pixels, beside * radius);
+    return result;
+  }
+  if (kind == BAR && (unit_bits & 255u) >= ROUNDED) {
+    uint4 rest = WORD(first + 1u);
+    rest.z += first << 11;
+    float2 along = (FLOATS(bits).zw - FLOATS(bits).xy) / 2.0;
+    result.part = float4(length(along), FLOATS(WORD(first + 2u)).x,
+                         FLOATS(rest).x, FLOATS(rest).w);
+    along = is_zero(along) ? float2(1.0, 0.0) : along / result.part.x;
+    result.from_center =
+        (result.part.xy + result.part.z + result.part.w + 1.0) *
+        float2(end * 2.0 - 1.0, side);
+    if ((unit_bits & FRAME) != 0u) {
+      uint which = ((unit_bits & 3u) + (corner >> 1)) & 3u;
+      float2 hole = max(
+          result.part.xy + result.part.z * 0.7071 - result.part.w - 1.0, 0.0);
+      result.from_center = (side > 0.0 ? abs(result.from_center) : hole) *
+                           float2(which == 1u || which == 2u ? 1.0 : -1.0,
+                                  which >= 2u ? 1.0 : -1.0);
+    }
+    result.at = (FLOATS(bits).xy + FLOATS(bits).zw) / 2.0 +
+                along * result.from_center.x +
+                left_of(along) * result.from_center.y;
+    result.reach = float2(-1.0, 0.0);
+    result.depth = float(rest.z >> 11) / 2097152.0;
+    result.flags = rest.z;
+    result.color = rest.y;
+    return result;
+  }
+  if (kind == BAR && (unit_bits & 255u) == COVER) {
+    uint4 rest = WORD(first + 1u);
+    rest.z += first << 11;
     result.at = float2(side > 0.0 ? FLOATS(bits).x : FLOATS(bits).z,
                        end > 0.0 ? FLOATS(bits).w : FLOATS(bits).y);
     result.depth = float(rest.z >> 11) / 2097152.0;
@@ -147,6 +251,7 @@ FUNCTION Corner place(uint index BUFFERS) {
   }
   float4 ends = FLOATS(bits);
   uint4 head = WORD(first + 1u);
+  head.z += first << 11;
   float radius = FLOATS(head).x;
   result.depth = float(head.z >> 11) / 2097152.0;
   result.color = head.y;
@@ -156,13 +261,7 @@ FUNCTION Corner place(uint index BUFFERS) {
     result.stride = head.w;
     head.w = 0u;
   }
-  Space space;
-  space.to_pixels = float4(1.0, 0.0, 0.0, 1.0);
-  space.from_pixels = space.to_pixels;
-  if ((head.w >> 8) != 0u) {
-    space.to_pixels = FLOATS(WORD(head.w >> 8));
-    space.from_pixels = FLOATS(WORD((head.w >> 8) + 1u));
-  }
+  Space space = space_at(head.w >> 8 ARGUMENTS);
   if (kind == BAR) {
     float2 along = (ends.zw - ends.xy) / 2.0;
     float2 across;
@@ -238,9 +337,7 @@ FUNCTION Corner place(uint index BUFFERS) {
     }
     return result;
   }
-  float t = kind == STRIP      ? fraction(step + end, count)
-            : kind == LAST_CAP ? 1.0
-                               : 0.0;
+  float t = kind == STRIP ? fraction(step + end, count) : 0.0;
   float2 forward = unit(space, direction_at(curve, t));
   float2 beside = left_of(forward) * side;
   if (kind == JOIN) {
@@ -249,11 +346,10 @@ FUNCTION Corner place(uint index BUFFERS) {
     beside = join(unit(space, rest.xy), forward, corner, step,
                   (result.flags & HAS_ROUND_JOIN) != 0u, rest.zw, pixel);
   } else if (kind != STRIP) {
-    float2 away = kind == LAST_CAP ? forward : -forward;
     float angle = (step + end) * 1.57079633 / rest.w;
     beside = (result.flags & HAS_SQUARE_CAPS) != 0u
-                 ? beside + away * end
-                 : beside * cos(angle) + away * sin(angle);
+                 ? beside - forward * end
+                 : beside * cos(angle) - forward * sin(angle);
   }
   result.at = point_at(curve, t) + times(space.to_pixels, beside * radius);
   return result;
@@ -272,6 +368,26 @@ FUNCTION float within(float from_center, float reach, float2 slant) {
   float near = beyond(abs(inside), slant);
   return (inside >= 0.0 ? 1.0 - near : near) -
          beyond(reach + abs(from_center), slant);
+}
+
+FUNCTION float2 overlap(float2 from_center, float2 reach) {
+  return clamp(min(from_center + 0.5, reach) - max(from_center - 0.5, -reach),
+               0.0, 1.0);
+}
+
+FUNCTION float within_rounded(float2 from_center, float4 shape) {
+  if (shape.z == 0.0) {
+    float2 outer = overlap(from_center, shape.xy + shape.w);
+    float2 inner = overlap(from_center, shape.xy - shape.w);
+    return outer.x * outer.y - inner.x * inner.y;
+  }
+  float2 past = abs(from_center) - shape.xy;
+  float outside =
+      length(max(past, 0.0)) + min(max(past.x, past.y), 0.0) - shape.z;
+  return clamp(shape.w > 0.0
+                   ? min(outside + 0.5, shape.w) - max(outside - 0.5, -shape.w)
+                   : 0.5 - outside,
+               0.0, 1.0);
 }
 
 // What `gradient.rs` does.
@@ -432,6 +548,8 @@ FUNCTION float4 source_at(float2 pixel, Corner it BUFFERS TEXTURES) {
     if (source != GRADIENT)
       all *= byte_at(address ARGUMENTS);
   }
+  if (it.reach.x < 0.0)
+    all *= within_rounded(it.from_center, it.part);
   if (it.reach.x > 0.0) {
     float2 across = DX(it.from_center);
     float2 down = DY(it.from_center);

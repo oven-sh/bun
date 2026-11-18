@@ -405,8 +405,6 @@ public:
 #define FOR_EACH_GLOBALOBJECT_GC_MEMBER(V)                                                                   \
     V(public, Bun::Bindgen::AdditionsToGlobalObject, m_bindgenAdditions)                                     \
                                                                                                              \
-    V(private, WriteBarrier<JSObject>, m_natives)                                                            \
-                                                                                                             \
     /* TODO: these should use LazyProperty */                                                                \
                                                                                                              \
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_moduleResolveFilenameFunction)                       \
@@ -671,7 +669,7 @@ public:
     void finishCreation(JSC::VM&);
 
     void extendConsole(JSC::VM&, JSC::JSObject* console);
-    JSC::JSObject* natives() const { return m_natives.get(); }
+    JSC::JSObject* natives();
     static bool isNameOfNative(JSC::VM&, UniquedStringImpl*);
 
 private:

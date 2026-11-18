@@ -6,6 +6,8 @@ use bun_threading::Guarded;
 
 use crate::Bytes;
 use crate::exec::{Receiver, Sender, oneshot};
+use crate::remote::petition::{self, Handle};
+use crate::storage::Shelf;
 
 keywords! {
     pub enum LockMode {
@@ -85,13 +87,27 @@ impl Queues {
 }
 
 /// Of one storage bucket.
-#[derive(Clone, Default)]
-pub struct LockManager(Arc<Guarded<Queues>>);
+#[derive(Clone)]
+pub enum LockManager {
+    Near(Arc<Near>),
+    Far(Shelf),
+}
+
+#[derive(Default)]
+pub struct Near(Guarded<Queues>);
 
 /// Released, or no longer asked for, when it is dropped.
-pub struct LockRequest {
-    manager: LockManager,
-    lock: Arc<Lock>,
+pub struct LockRequest(Request);
+
+enum Request {
+    Near { manager: Arc<Near>, lock: Arc<Lock> },
+    Far { _lock: Handle, tickets: [u32; 2] },
+}
+
+impl Default for LockManager {
+    fn default() -> LockManager {
+        LockManager::Near(Arc::default())
+    }
 }
 
 impl LockManager {
@@ -101,6 +117,23 @@ impl LockManager {
         info: LockInfo,
         priority: Priority,
     ) -> (LockRequest, Receiver<Answer>, Receiver<()>) {
+        let manager = match self {
+            LockManager::Near(it) => it,
+            LockManager::Far(shelf) => {
+                let (answer, theft) = (petition::expect_answer(), petition::expect_theft());
+                let (_lock, tickets) = (Handle::new(), [answer.0, theft.0]);
+                petition::request_lock(
+                    _lock.id(),
+                    shelf.clone(),
+                    info,
+                    priority,
+                    answer.0,
+                    theft.0,
+                );
+                let request = Request::Far { _lock, tickets };
+                return (LockRequest(request), answer.1, theft.1);
+            }
+        };
         let ((tell_answer, answer), (tell_theft, theft)) = (oneshot(), oneshot());
         let (lock, mut queues) = (
             Arc::new(Lock {
@@ -108,7 +141,7 @@ impl LockManager {
                 answer: Guarded::new(Some(tell_answer)),
                 theft: Guarded::new(Some(tell_theft)),
             }),
-            self.0.lock(),
+            manager.0.lock(),
         );
         let name = &lock.info.name;
         match priority {
@@ -128,22 +161,33 @@ impl LockManager {
             _ => queues.pending.push(Arc::clone(&lock)),
         }
         queues.grant();
-        let manager = self.clone();
-        (LockRequest { manager, lock }, answer, theft)
+        let manager = Arc::clone(manager);
+        (LockRequest(Request::Near { manager, lock }), answer, theft)
     }
 
     /// Those that are held, and those that are asked for.
     pub fn query(&self) -> [Vec<LockInfo>; 2] {
-        let queues = self.0.lock();
+        let queues = match self {
+            LockManager::Near(it) => it.0.lock(),
+            LockManager::Far(shelf) => {
+                return petition::query_locks(shelf.clone())
+                    .map_or_else(Default::default, |it| it.0.into());
+            }
+        };
         [&queues.held, &queues.pending].map(|it| it.iter().map(|it| it.info.clone()).collect())
     }
 }
 
 impl Drop for LockRequest {
     fn drop(&mut self) {
-        let mut queues = self.manager.0.lock();
-        queues.held.retain(|it| !Arc::ptr_eq(it, &self.lock));
-        queues.pending.retain(|it| !Arc::ptr_eq(it, &self.lock));
-        queues.grant();
+        match &self.0 {
+            Request::Near { manager, lock } => {
+                let mut queues = manager.0.lock();
+                queues.held.retain(|it| !Arc::ptr_eq(it, lock));
+                queues.pending.retain(|it| !Arc::ptr_eq(it, lock));
+                queues.grant();
+            }
+            Request::Far { tickets, .. } => _ = tickets.map(|it| petition::ruled(it, None)),
+        }
     }
 }

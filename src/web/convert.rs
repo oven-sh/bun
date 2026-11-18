@@ -8,6 +8,7 @@ use bun_ptr::RefPtr;
 
 use crate::net::NetError;
 use crate::net::body::{Blob, Data, Owner, SharedBytes};
+use crate::remote;
 use crate::runtime;
 use crate::url::Url;
 
@@ -130,13 +131,23 @@ unsafe extern "C" {
 
 /// A `File` that the user or the app has chosen. That of a directory is empty.
 pub fn file_at(global: &JSGlobalObject, path: &[u8]) -> Option<JSValue> {
-    let stat = bun_sys::stat(&bun_core::ZBox::from_bytes(path)).ok()?;
-    let file = match bun_sys::S::ISREG(stat.st_mode as _) {
-        true => runtime::create_chosen_file(global, path, &stat),
-        false => {
-            let modified = bun_sys::PosixStat::init(&stat).mtime().ms() as f64;
-            runtime::create_file(global, Vec::new(), bun_paths::basename(path), b"", modified)
+    if !bun_paths::is_absolute(path) {
+        let mime = crate::storage::files::mime_of_name(path);
+        return Some(runtime::create_file(global, Vec::new(), path, &mime, 0.));
+    }
+    let empty = |modified| {
+        runtime::create_file(global, Vec::new(), bun_paths::basename(path), b"", modified)
+    };
+    let stat = match remote::is_page_process() {
+        true => remote::open_file(path).and_then(|it| it.stat()),
+        false => bun_sys::stat(&bun_core::ZBox::from_bytes(path)),
+    };
+    let file = match stat {
+        Ok(it) if bun_sys::S::ISREG(it.st_mode as _) => {
+            runtime::create_chosen_file(global, path, &it)
         }
+        Ok(it) => empty(bun_sys::PosixStat::init(&it).mtime().ms() as f64),
+        Err(_) => empty(remote::modification_of_directory(path)?),
     };
     let path = bun_jsc::bun_string_jsc::create_utf8_for_js(global, path).ok()?;
     Bun__RealmBridge__setPathOfFile(global, file, path);
@@ -147,15 +158,7 @@ pub fn file_at(global: &JSGlobalObject, path: &[u8]) -> Option<JSValue> {
 pub fn is_directory(global: &JSGlobalObject, file: JSValue) -> bool {
     let path = path_of_file(global, file);
     path.is_string()
-        && path.to_utf8(global).is_ok_and(|it| {
-            bun_sys::File::open_at(
-                bun_sys::Fd::cwd(),
-                &it,
-                bun_sys::O::RDONLY | bun_sys::O::DIRECTORY,
-                0,
-            )
-            .is_ok()
-        })
+        && (path.to_utf8(global)).is_ok_and(|it| remote::modification_of_directory(&it).is_some())
 }
 
 /// `chosen`: what the host has made for a path.

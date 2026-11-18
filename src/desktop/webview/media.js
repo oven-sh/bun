@@ -52,6 +52,17 @@ document.head.append(
 const ofElements =
   "canplay canplaythrough durationchange ended error loadeddata loadedmetadata pause playing resize seeked seeking timeupdate waiting";
 
+/** The commands may come from a process that has been taken over. They get to nothing but what is about sound. */
+const audible = Object.getOwnPropertyNames(globalThis)
+  .filter(it => /^(Audio|Media(Stream|Recorder|Element)|HTMLMedia)|AudioContext$|(?<!^)Node$|^PeriodicWave$/.test(it))
+  .map(it => globalThis[it]);
+const members = new Set(audible.flatMap(it => Object.getOwnPropertyNames(it.prototype)));
+members.delete("constructor");
+const member = (target, name) => {
+  if (!audible.some(it => target instanceof it) || !members.has(name)) throw new TypeError("Refused");
+  return name;
+};
+
 class Client {
   objects = new Map();
   offsets = new Map();
@@ -72,7 +83,10 @@ class Client {
     if (Array.isArray(it)) return it.map(this.value);
     if (it === null || typeof it !== "object") return it;
     if ("key" in it) return this.objects.get(it.ref).parameters.get(it.key);
-    if ("ref" in it) return it.part ? this.objects.get(it.ref)[it.part] : this.objects.get(it.ref);
+    if ("ref" in it) {
+      const object = this.objects.get(it.ref);
+      return it.part ? object[member(object, it.part)] : object;
+    }
     if ("time" in it) return Math.max(0, it.time + this.offsets.get(it.of));
     if ("floats" in it) return new Float32Array(Uint8Array.fromBase64(it.floats).buffer);
     if ("bytes" in it) return Uint8Array.fromBase64(it.bytes).buffer;
@@ -132,7 +146,7 @@ class Client {
           ? context.listener
           : type === "ScriptProcessorNode"
             ? context.createScriptProcessor(...options)
-            : new globalThis[type](context, options);
+            : new (audible.find(it => it.name === type))(context, options);
     this.objects.set(id, node);
     if ("onended" in node) node.onended = () => this.tell(id, "ended");
     if ("onaudioprocess" in node)
@@ -208,7 +222,7 @@ class Client {
       );
   }
   element(id, name) {
-    const it = Object.assign(document.createElement(name), { preload: "auto" });
+    const it = Object.assign(document.createElement(name === "video" ? name : "audio"), { preload: "auto" });
     this.objects.set(id, it);
     const state = ({ type }) =>
       this.tell(
@@ -268,19 +282,19 @@ class Client {
     return [url.slice(url.indexOf(",") + 1), timestamp / 1e6];
   }
   set(target, name, value) {
-    target[name] = value;
+    target[member(target, name)] = value;
   }
   call(target, method, args) {
-    target[method](...args)?.catch?.(() => {});
+    target[member(target, method)](...args)?.catch?.(() => {});
   }
   ask(reply, method, args) {
-    Promise.try(() => this[method](...args)).then(
+    Promise.try(() => this.obey(method, args)).then(
       value => this.tell(reply, "reply", value),
       ({ name, message, constraint }) => this.tell(reply, "refusal", name, message, constraint),
     );
   }
   async perform(target, method, ...args) {
-    await target[method](...args);
+    await target[member(target, method)](...args);
   }
   async decode(bytes, sampleRate) {
     return channelsOf(await new OfflineAudioContext(1, 1, sampleRate).decodeAudioData(bytes));
@@ -306,9 +320,14 @@ class Client {
     if (length === 0) return void this.watched.delete(key);
     const node = this.objects.get(id),
       data = new (method.includes("Byte") ? Uint8Array : Float32Array)(length);
-    const push = () => (node[method](data), this.tell(id, "analysis", method, toText(data)));
+    const push = () => (node[member(node, method)](data), this.tell(id, "analysis", method, toText(data)));
     this.watched.set(key, setInterval(push, 33));
     push();
+  }
+  obey(name, args) {
+    if (!Object.hasOwn(Client.prototype, name) || name === "constructor" || this.allowed[name] === false)
+      throw new DOMException("Refused", "NotAllowedError");
+    return this[name](...args);
   }
   drop(id) {
     const it = this.objects.get(id);
@@ -321,12 +340,12 @@ class Client {
 }
 
 const clients = new Map();
-globalThis.receive = (id, commands) => {
+globalThis.receive = (id, commands, devices, capture) => {
   let client = clients.get(id);
   if (!client) clients.set(id, (client = new Client(id)));
   for (const [name, ...args] of commands) {
     client.queue = client.queue
-      .then(() => client[name](...args.map(client.value)))
+      .then(() => ((client.allowed = { devices, capture }), client.obey(name, args.map(client.value))))
       .catch(error => client.tell(0, "failure", name + ": " + error));
   }
 };

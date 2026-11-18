@@ -447,3 +447,11 @@ export const SharedWorkerGlobalScope = b.interface("SharedWorkerGlobalScope", {
   includes: [NamedWorkerScope],
   proto: handlers("connect"),
 });
+
+export const ServiceWorkerGlobalScope = b.interface("ServiceWorkerGlobalScope", {
+  extends: WorkerGlobalScope,
+  global: true,
+  exposed: ["ServiceWorker"],
+  proto: handlers(`install activate fetch message messageerror cookiechange notificationclick notificationclose push
+    pushsubscriptionchange`),
+});

@@ -6,7 +6,9 @@ use crate::gfx::Transform;
 use crate::hash::FastMap;
 use crate::small_vec::SmallVec;
 
+use super::allowance::Allowance;
 use super::blur::{MAX_SIGMA, MAX_SIGMA_OF_SHADOWS};
+use super::border;
 use super::cpu::{self, GlyphKey, GlyphPlacer, Painter, gradient_axis};
 use super::digest::{self, Cells, Digest};
 use super::memo::{Memo, Recall};
@@ -14,7 +16,8 @@ use super::raster::{
     Clip, Coverage, IntRect, Layer, average_scale, has_radii, map_point, map_rect, multiply,
     swap_red_and_blue,
 };
-use super::scene::{Frame, Scene, cross_fades, tile_bounds};
+use super::scene::{Frame, Scene, cross_fades, intersect, tile_bounds};
+use super::slant::Slant;
 use super::software::{self, Atlas, Compositor, Sprite as Tile};
 use super::stretch::{STRETCHED, Stretch};
 use crate::abi::{BlendMode, Filter, Glyph, Item, LineStyle, Rect, RoundedRect};
@@ -49,6 +52,8 @@ pub enum Kind {
         id: u32,
         to_texels: Transform,
     },
+    /// Around the middle of the bounds.
+    Slanted(Slant, u32),
     /// An index in `Flattener::jobs`. None is left in the end.
     Pending(u32),
 }
@@ -482,6 +487,40 @@ fn solid(color: u32) -> Kind {
     }
 }
 
+/// A radius that makes the edges smooth, and no curve.
+const SHARP: f32 = 1. / 1024.;
+
+fn are_whole(lengths: impl IntoIterator<Item = f32>) -> bool {
+    lengths
+        .into_iter()
+        .all(|it| (it - (it + 0.5).floor()).abs() < 1. / 64.)
+}
+
+fn is_between_pixels(rect: Rect) -> bool {
+    are_whole([rect.x, rect.y, rect.x + rect.width, rect.y + rect.height])
+}
+
+/// For a quad whose edges may go through pixels.
+fn smooth_edges(mut quad: Primitive) -> Primitive {
+    if !is_between_pixels(quad.bounds) {
+        let Rect {
+            x,
+            y,
+            width,
+            height,
+        } = &mut quad.bounds;
+        for (start, length) in [(x, width), (y, height)]
+            .into_iter()
+            .filter(|it| *it.1 < 1.)
+        {
+            quad.opacity *= *length;
+            (*start, *length) = (*start - (1. - *length) / 2., 1.);
+        }
+        quad.radii = quad.radii.map(|it| it.max(SHARP));
+    }
+    quad
+}
+
 fn map_shape(matrix: &Transform, shape: &RoundedRect) -> RoundedRect {
     RoundedRect {
         rect: map_rect(matrix, shape.rect),
@@ -815,7 +854,13 @@ pub fn paint(
     atlas: &Atlas,
     cache: &mut Cache,
 ) {
-    let (x, y) = placement.origin;
+    if scene.allowance.as_deref().is_some_and(Allowance::is_spent) {
+        return;
+    }
+    let (meter, (x, y)) = (
+        scene.allowance.as_deref().map(Allowance::meter),
+        placement.origin,
+    );
     let root = Transform::from_row(frame.scale, 0., 0., frame.scale, x as f32, y as f32);
     let mut memo = scene.memo.as_ref().map(|it| it.lock());
     memo.iter_mut()
@@ -843,6 +888,14 @@ pub fn paint(
     };
     flattener.range(0..scene.items.len(), &root, placement.clip);
     flattener.settle();
+    if let Some(meter) = meter {
+        meter.stop(
+            cache.primitives[first..]
+                .iter()
+                .map(|it| it.visible().area() as u64)
+                .sum(),
+        );
+    }
     if let Some(memo) = memo.as_mut().filter(|_| cache.evicts()) {
         memo.tidy(cache.draw - IN_FLIGHT, |key, last_used| {
             if let Some(raster) = cache.rasters.get_mut(&key) {
@@ -1497,6 +1550,49 @@ impl Flattener<'_> {
         }
     }
 
+    /// Those of the primitives from `first` on that can end at `rect` do, instead of at the pixels that are nearest to it.
+    fn cut_through_pixels(&mut self, first: usize, rect: Rect, clip: IntRect) {
+        let (nearest, around) = (
+            clip.intersect(IntRect::nearest(rect)),
+            clip.intersect(IntRect::around(rect)),
+        );
+        for it in self.cache.primitives[first..]
+            .iter_mut()
+            .filter(|it| !is_marker(it) && it.run != CARET)
+        {
+            let inside = intersect(it.bounds, rect);
+            let is_inside =
+                (it.bounds.width - inside.width).max(it.bounds.height - inside.height) < 0.02;
+            match it.kind {
+                Kind::Quad {
+                    border: [0., 0., 0., 0.],
+                    ..
+                } if it.radii.iter().all(|it| *it <= SHARP) => {
+                    *it = smooth_edges(Primitive {
+                        bounds: inside,
+                        ..*it
+                    })
+                }
+                Kind::Image(_) if is_inside && !is_between_pixels(it.bounds) => {
+                    it.radii = it.radii.map(|it| it.max(SHARP))
+                }
+                _ if is_inside => {}
+                _ => continue,
+            }
+            let edge = |own: i32, was: i32, is: i32| if own == was { is } else { own };
+            let (left, top) = (
+                edge(it.clip.left, nearest.left, around.left),
+                edge(it.clip.top, nearest.top, around.top),
+            );
+            it.clip = IntRect::new(
+                left,
+                top,
+                edge(it.clip.right, nearest.right, around.right),
+                edge(it.clip.bottom, nearest.bottom, around.bottom),
+            );
+        }
+    }
+
     /// Clips the primitives from `first` on, which are clipped to the rectangle of `shape`, to its curves.
     fn round(
         &mut self,
@@ -1506,6 +1602,9 @@ impl Flattener<'_> {
         matrix: &Transform,
         clip: IntRect,
     ) {
+        if !is_between_pixels(shape.rect) {
+            self.cut_through_pixels(first, shape.rect, clip);
+        }
         if !has_radii(shape) {
             return;
         }
@@ -1543,11 +1642,13 @@ impl Flattener<'_> {
                         ..
                     },
                     Some(radii),
-                ) if covers && primitive.radii == [0.; 4] => {
+                ) if covers && primitive.radii.iter().all(|it| *it <= SHARP) => {
                     (primitive.bounds, primitive.radii, primitive.smoothing) =
                         (rect, radii, shape.smoothing);
                 }
-                (Kind::Image(_), Some(radii)) if is_same && primitive.radii == [0.; 4] => {
+                (Kind::Image(_), Some(radii))
+                    if is_same && primitive.radii.iter().all(|it| *it <= SHARP) =>
+                {
                     (primitive.radii, primitive.smoothing) = (radii, shape.smoothing)
                 }
                 _ => (0..4).for_each(|corner| is_touched[corner] |= touches[corner]),
@@ -1583,8 +1684,11 @@ impl Flattener<'_> {
         // A border may be merged with the fill before it.
         let is_worth_it = !scene.changes(index)
             && !matches!(
-                scene.items[index],
-                Item::Fill { .. } | Item::Border { .. } | Item::Line { .. }
+                scene.items[index..],
+                [
+                    Item::Fill { .. } | Item::Border { .. } | Item::Line { .. },
+                    ..
+                ] | [Item::PushTransform(_), Item::Fill { .. }, Item::Pop, ..]
             );
         let records = match self.memo.as_mut().filter(|_| is_worth_it) {
             Some(memo) => {
@@ -1858,12 +1962,11 @@ impl Flattener<'_> {
         Some(())
     }
 
-    /// For a transform with nothing in it but an image.
-    fn turn_image(&mut self, index: usize, matrix: &Transform, clip: IntRect) -> Option<()> {
-        let Painter { scene, frame, .. } = self.painter;
-        let (opacity, item) = match scene.items[scene.content(index)] {
-            _ if cfg!(target_os = "macos") => return None,
-            [item] => (1., item),
+    /// With its opacity.
+    fn only_item(&self, index: usize) -> Option<(f32, Item)> {
+        let scene = self.painter.scene;
+        match scene.items[scene.content(index)] {
+            [item] => Some((1., item)),
             [
                 Item::PushLayer {
                     opacity,
@@ -1873,15 +1976,45 @@ impl Flattener<'_> {
                 },
                 item,
                 Item::Pop,
-            ] if scene.filters(filters).is_empty() => (opacity, item),
-            _ => return None,
+            ] if scene.filters(filters).is_empty() => Some((opacity, item)),
+            _ => None,
+        }
+    }
+
+    /// For a transform with nothing in it but a color.
+    fn slant(&mut self, index: usize, matrix: &Transform, clip: IntRect) -> Option<()> {
+        let (opacity, Item::Fill { shape, color }) = self.only_item(index)? else {
+            return None;
         };
-        let Item::Image {
-            clip: shape,
-            tile,
-            image,
-            pixelated: false,
-        } = item
+        let (slant, [x, y]) = Slant::of(&self.painter.frame.snap_shape(&shape), matrix)?;
+        let [across, down] = slant.reach();
+        if color & 0xFF != 0 && software::alpha(opacity) != 0 {
+            let bounds = Rect {
+                x: x - across,
+                y: y - down,
+                width: across * 2.,
+                height: down * 2.,
+            };
+            self.push(Primitive {
+                opacity,
+                ..Primitive::new(bounds, clip, Kind::Slanted(slant, color))
+            });
+        }
+        Some(())
+    }
+
+    /// For a transform with nothing in it but an image.
+    fn turn_image(&mut self, index: usize, matrix: &Transform, clip: IntRect) -> Option<()> {
+        let frame = self.painter.frame;
+        let (
+            opacity,
+            Item::Image {
+                clip: shape,
+                tile,
+                image,
+                pixelated: false,
+            },
+        ) = self.only_item(index)?
         else {
             return None;
         };
@@ -1974,7 +2107,8 @@ impl Flattener<'_> {
                 }
                 inner
                     if self
-                        .turn(index, &inner, clip)
+                        .slant(index, &inner, clip)
+                        .or_else(|| self.turn(index, &inner, clip))
                         .or_else(|| self.turn_image(index, &inner, clip))
                         .is_some() => {}
                 _ => self.rasterize_all(index, matrix, clip),
@@ -1997,14 +2131,32 @@ impl Flattener<'_> {
                 }
             }
             Item::Fill { shape, color } => {
-                let shape = map_shape(matrix, &frame.snap_shape(&shape));
+                let mut shape = frame.snap_shape(&shape);
+                if let Some(widths) = self
+                    .painter
+                    .scene
+                    .border_over(index)
+                    .filter(|_| circular_radii(&shape).is_some())
+                {
+                    let thinnest = frame.snap_width(
+                        widths
+                            .into_iter()
+                            .filter(|it| *it > 0.)
+                            .fold(f32::MAX, f32::min),
+                    );
+                    shape = border::inset(
+                        &shape,
+                        widths.map(|it| if it > 0. { thinnest / 2. } else { 0. }),
+                    );
+                }
+                let shape = map_shape(matrix, &shape);
                 match circular_radii(&shape) {
                     _ if color & 0xFF == 0 => {}
-                    Some(radii) => self.push(Primitive {
+                    Some(radii) => self.push(smooth_edges(Primitive {
                         radii,
                         smoothing: shape.smoothing,
                         ..Primitive::new(shape.rect, clip, solid(color))
-                    }),
+                    })),
                     None => self.stretch_box(index, matrix, clip),
                 }
             }
@@ -2014,9 +2166,17 @@ impl Flattener<'_> {
             Item::Shadow { .. } => self.stretch_box(index, matrix, clip),
             Item::Gradient { clip: shape, .. } | Item::Image { clip: shape, .. } => {
                 let shape = map_shape(matrix, &frame.snap_shape(&shape));
-                let inside = clip.intersect(IntRect::nearest(shape.rect));
-                match self.stretch_gradient(index, matrix, inside)
-                    || self.image(index, matrix, inside)
+                let [inside, touched] =
+                    [IntRect::nearest, IntRect::around].map(|it| clip.intersect(it(shape.rect)));
+                match self.stretch_gradient(
+                    index,
+                    matrix,
+                    if is_between_pixels(shape.rect) {
+                        inside
+                    } else {
+                        touched
+                    },
+                ) || self.image(index, matrix, inside)
                 {
                     true => self.round(first, &shape, index, matrix, clip),
                     false => self.rasterize_all(index, matrix, clip),
@@ -2072,7 +2232,12 @@ impl Flattener<'_> {
             } => self.rasterize_all(index, matrix, clip),
             Item::Line { rect, color, style } => {
                 for line in cpu::decoration_rects(frame, rect, style) {
-                    self.push(Primitive::new(map_rect(matrix, line), clip, solid(color)));
+                    let line = Primitive::new(map_rect(matrix, line), clip, solid(color));
+                    self.push(if frame.is_translation(matrix) {
+                        line
+                    } else {
+                        smooth_edges(line)
+                    });
                 }
             }
             Item::Caret { rect, color } => {
@@ -2139,6 +2304,20 @@ impl Flattener<'_> {
             .clone()
             .all(|side| styles[side] == LineStyle::Solid && colors[side] == color)
         {
+            if !has_radii(&shape) && !(is_between_pixels(rect) && are_whole(border)) {
+                return self.push(Primitive {
+                    radii: [SHARP; 4],
+                    ..Primitive::new(
+                        rect,
+                        clip,
+                        Kind::Quad {
+                            color: 0,
+                            border_color: color,
+                            border,
+                        },
+                    )
+                });
+            }
             if !has_radii(&shape) {
                 let (y, height) = (rect.y + top, rect.height - top - bottom);
                 for side in [
@@ -2293,8 +2472,17 @@ impl Flattener<'_> {
             return false;
         };
         let snapped = tile_bounds(&frame.snap_shape(shape), &cpu::snap_tile(frame, tile));
-        let mut bounds = IntRect::nearest(map_rect(matrix, snapped));
+        let exact = map_rect(matrix, snapped);
+        let cuts_pixels = !is_between_pixels(exact) && snapped == frame.snap_shape(shape).rect;
+        let mut bounds = if cuts_pixels {
+            IntRect::around(exact)
+        } else {
+            IntRect::nearest(exact)
+        };
         if bounds.width().max(bounds.height()) > MAX_SIDE as usize {
+            if cuts_pixels {
+                return false;
+            }
             bounds = bounds.intersect(clip);
         }
         let across = if is_vertical {
@@ -2333,12 +2521,25 @@ impl Flattener<'_> {
             painter.paint_leaf(&item, &mut layer, matrix, &Clip::new(area), area);
             Some(layer)
         });
+        let shown = match (cuts_pixels, is_vertical) {
+            (false, _) => bounds.to_rect(),
+            (true, true) => Rect {
+                x: exact.x,
+                width: exact.width,
+                ..bounds.to_rect()
+            },
+            (true, false) => Rect {
+                y: exact.y,
+                height: exact.height,
+                ..bounds.to_rect()
+            },
+        };
         if let Some(sprite) = sprite {
-            self.push(Primitive::new(
-                bounds.to_rect(),
+            self.push(smooth_edges(Primitive::new(
+                shown,
                 clip,
                 Kind::Image(part_of(sprite.tile, part)),
-            ));
+            )));
         }
         true
     }

@@ -35,7 +35,15 @@ const prelude = `
     return window.webContents;
   };
   const preload = { webPreferences: { preload: path.join(__dirname, "preload.js") } };
+  const collectGarbage = page => {
+    if (page.getOSProcessId() === process.pid) return Bun.gc(true);
+    if (!page.debugger.isAttached()) page.debugger.attach();
+    return page.debugger.sendCommand("HeapProfiler.collectGarbage");
+  };
 `;
+
+/** electron-sandbox.test.ts runs these tests with pages in other processes. */
+const place = import.meta.url.endsWith("?sandbox") ? { BUN_DESKTOP_PAGE_PROCESSES: "1" } : {};
 
 /** What the app has passed to `print`. */
 async function run(main: string, files: Record<string, string> = {}, args: string[] = [], env = {}) {
@@ -50,7 +58,7 @@ async function runWithErrors(main: string, files: Record<string, string>, args: 
   });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "--preload=bun:desktop/electron", ".", ...args],
-    env: { ...bunEnv, BUN_DESKTOP_HEADLESS: "1", ...env },
+    env: { ...bunEnv, BUN_DESKTOP_HEADLESS: "1", ...place, ...env },
     cwd: String(dir),
     stderr: "pipe",
   });
@@ -59,8 +67,6 @@ async function runWithErrors(main: string, files: Record<string, string>, args: 
   const lines = stdout.trim().split("\n");
   return [lines.map(line => JSON.parse(line)), stderr] as const;
 }
-
-const digestOfLongBody = "af0e56a152fa1270e12debd01f1f20688f82fdc5";
 
 /** What a debugger needs to find in it. */
 function readMinidump(dump: Buffer) {
@@ -560,6 +566,19 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
     ).toEqual([[1, 0, true, true, [1, { a: 2 }], "Uncaught Error: thrown", 0, "text"]]);
   });
 
+  test("timers that are set by what other timers resolve are nested", async () => {
+    expect(
+      await run(`
+        serve({ "/": "" });
+        const page = await open();
+        print(await page.executeJavaScript(\`(async () => {
+          const start = performance.now();
+          for (let i = 0; i < 16; i++) await new Promise(resolve => setTimeout(resolve));
+          return performance.now() - start >= 40;
+        })()\`));`),
+    ).toEqual([true]);
+  });
+
   test("event handler attributes", async () => {
     expect(
       await run(`
@@ -878,6 +897,100 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
     ]);
   });
 
+  test.each([{}, ...(isWindows ? [] : [{ BUN_DESKTOP_PAGE_PROCESSES: "1" }])])(
+    "a function that ends with a call is on the stack %j",
+    async env => {
+      expect(
+        await run(
+          `app.trustOrigins(["app://trusted"], { inFrames: true });
+          serve({
+            "/": "<iframe src=/frame></iframe>",
+            "/frame": "<script>'use strict'; function send() { return parent.postMessage(0, '*'); } function inner() { return new Error().stack; } function outer() { return inner(); }</script>",
+          });
+          const page = await open();
+          print(await page.executeJavaScript("frames[0].outer().includes('outer')"));
+          print(await page.executeJavaScript("new Promise(done => { onmessage = it => done(it.source === frames[0]); frames[0].send(); })"));`,
+          {},
+          [],
+          env,
+        ),
+      ).toEqual([true, true]);
+    },
+  );
+
+  test("a worker that goes idle finishes the collection that it has begun", async () => {
+    expect(
+      await run(
+        `const worker = new Worker(path.join(__dirname, "worker.js"));
+        print(await new Promise(done => (worker.onmessage = it => done(it.data))));`,
+        {
+          "worker.js": `
+            globalThis.registry = new FinalizationRegistry(() => postMessage("finished"));
+            onmessage = () => {};
+            setImmediate(() => {
+              for (let i = 0; i < 300000; i++) globalThis.list = { next: globalThis.list };
+              Bun.gc(true);
+              for (let i = 0; i < 100; i++) registry.register({}, i);
+              globalThis.large = new ArrayBuffer(64 << 20);
+            });`,
+        },
+        [],
+        { BUN_GC_TIMER_DISABLE: "1", BUN_JSC_useGenerationalGC: "0" },
+      ),
+    ).toEqual(["finished"]);
+  });
+
+  test.skipIf(isWindows)("what a busy program lets go of is freed between its tasks", async () => {
+    expect(
+      await run(`
+        serve({ "/": "" });
+        await open();
+        const files = () => require("fs").readdirSync("/dev/fd").length, before = files();
+        for (let i = 0; i < 20; i++) Bun.file(path.join(__dirname, "file" + i)).writer();
+        const opened = files() - before;
+        require("bun:jsc").edenGC();
+        let megabytes = 0;
+        for (; megabytes < 12 && files() - before > 10; megabytes += 0.4) {
+          globalThis.garbage = Array.from({ length: 400 }, () => new Array(126).fill(0));
+          await new Promise(done => setTimeout(done, 45));
+        }
+        print([opened, megabytes < 12]);`),
+    ).toEqual([[20, true]]);
+  });
+
+  test.each([
+    {},
+    { BUN_JSC_collectContinuously: "1" },
+    { BUN_JSC_slowPathAllocsBetweenGCs: "50" },
+    { BUN_JSC_slowPathAllocsBetweenGCs: "50", BUN_JSC_useEdenCollectionsAtSlowPathAllocs: "1" },
+  ])("nodes and frames come and go between frames %j", async env => {
+    expect(
+      await run(
+        `app.trustOrigins(["app://trusted"], { inFrames: true });
+        serve({ "/": "<ul></ul><div></div>", "/frame": "<p>a</p><script>onload = () => parent.loaded(document.body.firstChild)</script>" });
+        const page = await open();
+        print(await page.executeJavaScript(\`(async () => {
+          const list = document.querySelector("ul"), kept = [];
+          let wrong = 0;
+          for (let round = 0; round < 12; round++) {
+            kept.push(await new Promise(done => ((loaded = done), (list.nextSibling.innerHTML = "<iframe src=/frame></iframe>"))));
+            list.innerHTML = "<li><b>x</b>".repeat(100);
+            for (const item of list.children) (item.round = round), item.addEventListener("click", () => wrong--);
+            kept.push(list.children[round]);
+            self.garbage = Array.from({ length: 3000 }, () => new Array(126).fill(round));
+            await new Promise(requestAnimationFrame);
+            await new Promise(done => setTimeout(done, 20));
+            for (const item of list.children) (wrong += 1 + (item.round !== round)), item.click();
+          }
+          return [wrong, kept.map(it => it.textContent).join(""), kept.filter(it => it.isConnected).length];
+        })()\`));`,
+        {},
+        [],
+        env,
+      ),
+    ).toEqual([[0, "ax".repeat(12), 13]]);
+  });
+
   test("a window is resized by a page that is going away", async () => {
     expect(
       await run(`
@@ -982,7 +1095,7 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
           })()\`);
           const { traceEvents } = await Bun.file(await contentTracing.stopRecording()).json();
           const nodes = traceEvents.flatMap(it => it.args.data?.cpuProfile?.nodes ?? []);
-          print([traceEvents.filter(it => it.ph !== "M" && !/paint|visib/.test(it.args.entryType)).map(it => it.ph + " " + path.basename(it.name)).join(), nodes.some(it => it.callFrame.functionName.includes("busy") && it.parent)]);
+          print([traceEvents.filter(it => it.pid === page.getOSProcessId() && it.ph !== "M" && !/paint|visib/.test(it.args.entryType)).map(it => it.ph + " " + path.basename(it.name)).join(), nodes.some(it => it.callFrame.functionName.includes("busy") && it.parent)]);
         }`),
     ).toEqual([
       "Failed to stop tracing (was a trace in progress?)",
@@ -1328,6 +1441,49 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
           };
         })\`));`),
     ).toEqual([2]);
+  });
+
+  test("a long key is not repeated without end in an index", async () => {
+    expect(
+      await run(`
+        serve({ "/": "" });
+        print(await (await open()).executeJavaScript(\`new Promise(done => {
+          const request = indexedDB.open("db");
+          request.onupgradeneeded = () => request.result.createObjectStore("a").createIndex("b", "b", { multiEntry: true });
+          request.onsuccess = async () => {
+            const put = length => new Promise(done => {
+              const transaction = request.result.transaction("a", "readwrite");
+              const value = { b: Array.from({ length }, (_, it) => it) };
+              transaction.objectStore("a").put(value, "a".repeat(1 << 20)).onsuccess = () => transaction.abort();
+              transaction.oncomplete = transaction.onabort = () => done(transaction.error?.name);
+            });
+            done([await put(2500), await put(1)]);
+          };
+        })\`));`),
+    ).toEqual([["QuotaExceededError", null]]);
+  });
+
+  test("a key path that has been stored is no string", async () => {
+    expect(
+      await run(`
+        const { Database } = require("bun:sqlite"), other = session.fromPartition("persist:other");
+        const put = \`new Promise(done => {
+          const request = indexedDB.open("db");
+          request.onupgradeneeded = () => request.result.createObjectStore("a").createIndex("b", "z", { multiEntry: true });
+          request.onsuccess = () => request.result.transaction("a", "readwrite").objectStore("a").put({ z: [1] }, 1).onsuccess = event => done(event.type);
+        })\`;
+        serve({ "/": "" });
+        print(await (await open()).executeJavaScript(put));
+        const copy = path.join(other.storagePath, "Web Storage.sqlite");
+        require("fs").mkdirSync(other.storagePath, { recursive: true });
+        new Database(path.join(app.getPath("userData"), "Web Storage.sqlite")).run("VACUUM INTO ?", [copy]);
+        const all = new Database(copy), { stores } = all.query("SELECT stores FROM databases").get();
+        stores.set([0x40, 2, 0], Buffer.from(stores).indexOf("0{\\0"));
+        all.run("UPDATE databases SET stores = ?", [stores]);
+        all.close();
+        other.protocol.handle("app", () => new Response("", { headers: { "content-type": "text/html" } }));
+        print(await (await open(undefined, { webPreferences: { session: other } })).executeJavaScript(put));`),
+    ).toEqual(["success", "success"]);
   });
 
   test("workers of workers, and shared workers", async () => {
@@ -2636,6 +2792,137 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
     ).toEqual(["listed"]);
   });
 
+  test("the page gets nothing of what a preload script and the platform hand to each other", async () => {
+    const object = "[object Object]";
+    const steps = [
+      ["console.log(secret)", object],
+      ["console.count('a')", "a: 1"],
+      ["throw secret", `Uncaught ${object}`],
+      ["throw () => 1", "Uncaught () => 1"],
+      ["throw new RangeError('a')", "Uncaught RangeError: a"],
+      ["throw { get a() { throw secret; } }", `Uncaught ${object}`],
+      ["return Object.defineProperty([], 0, { enumerable: true, get() { throw secret; } })", `Uncaught ${object}`],
+      ["list[0] = secret, (opener = secret), say(1)", "1"],
+      ["requestAnimationFrame(() => { throw secret; })", `Uncaught ${object}`],
+      ["setTimeout(() => { throw secret; })", `Uncaught ${object}`],
+      [
+        "addEventListener('a', { handleEvent() { throw secret; } }), dispatchEvent(new Event('a'))",
+        `Uncaught ${object}`,
+      ],
+      ["say(addEventListener('b', () => {}, { capture: true, ...secret }))", "undefined"],
+      ["say(title(secret))", object],
+      ["say(title([secret, 1]))", `${object},1`],
+      ["say(title(() => 1))", "() => 1"],
+      ["say(title(new Error('a')))", "Error: a"],
+      ["say(title(/a/))", "/a/"],
+      ["say(title(new String('a')))", "a"],
+      ["say(title(new Uint8Array(2)))", "0,0"],
+      ["say(title(Object.assign(new Date(0), { toString: () => 'a' })))", "a"],
+      ["say(new DOMMatrix(new Float32Array([1, 2, 3, 4, 5, 6])))", "matrix(1, 2, 3, 4, 5, 6)"],
+      ["say(new KeyframeEffect(null, new Set([{ top: '1px', ...secret }])).getKeyframes()[0].top)", "1px"],
+      ["say(new KeyframeEffect(null, [{ top: '2px', ...secret }].values()).getKeyframes()[0].top)", "2px"],
+      ["say(document.createTreeWalker(document, -1, { acceptNode: () => secret }).nextNode())", "null"],
+      ...[
+        "[['a', 'b']]",
+        "{ a: 'b' }",
+        "new Map([['a', 'b']])",
+        "new Headers({ a: 'b' })",
+        "new URLSearchParams('a=b')",
+      ].map(headers => [`say(new Request('/', { headers: ${headers}, ...secret }).headers.get('a'))`, "b"]),
+      ...["secret", "async () => secret", "new Blob", "new Uint8Array", "new Error", "Promise.resolve(secret)"].map(
+        result => [
+          `const it = ${result}; navigator.locks.request('a', () => it).then(async got => say(got === (await it)))`,
+          "true",
+        ],
+      ),
+      ["navigator.locks.request('a', () => { throw secret; }).catch(it => say(it === secret))", "true"],
+      ["scheduler.postTask(() => ({ ...secret, then: () => say(1) }))", "1"],
+      ["fetch('data:,1').then(say)", "[object Response]"],
+      ["new Response('{}').json().then(say)", object],
+      ["new Response('a').blob().then(say)", "[object Blob]"],
+      ["navigator.locks.request('a', () => new File([], 'a')).then(say)", "[object File]"],
+      ["new Response('a').arrayBuffer().then(say)", "[object ArrayBuffer]"],
+      ["new Response('a').body.getReader().read().then(it => say(it.value))", "97"],
+      ["new Response('a').body.values().next().then(it => say(it.value))", "97"],
+      ["new Response(new Blob(['a']).stream()).text().then(say)", "a"],
+      ["fetch('/', { signal: AbortSignal.abort(secret) }).catch(it => say(it === secret))", "true"],
+      ["const it = new AbortController(); give(new Request('/', it)), it.abort(secret), say(1)", "1"],
+      ["const it = new AbortController(); give(AbortSignal.any([it.signal])), it.abort(secret), say(1)", "1"],
+      ["give(AbortSignal.abort(secret)), say(1)", "1"],
+      ["give(Promise.resolve(secret)), say(1)", "1"],
+      ["give(document.createTreeWalker(document, -1, ipcRenderer.send)), say(1)", "1"],
+      ["const it = { handleEvent() {} }; addEventListener('c', it), give(it), say(1)", "1"],
+      ["document.startViewTransition(() => { throw secret; }).finished.catch(it => say(it === secret))", "true"],
+      ["callBack('promise').then(say)", "1"],
+      [
+        "const { port1, port2 } = new MessageChannel(); port1.onmessage = it => (callBack(), say(event === it)); port2.postMessage(1)",
+        "true",
+      ],
+    ];
+    const spy = `
+      const got = [], define = Object.defineProperty, then = Promise.prototype.then;
+      let isBusy = false, step;
+      const note = (it, how) => {
+        if (isBusy || Object(it) !== it || it === self) return;
+        got[got.length] = step + " " + how;
+      };
+      const look = (it, depth = 2) => {
+        if (typeof it === "function" || (Object(it) === it && Object.getPrototypeOf(it)?.constructor?.constructor("return self.ofPreload")())) got[got.length] = step + " given";
+        else if (depth && Object(it) === it) for (const key of ["ipc", "send", "handleEvent", "filter", "reason", "signal"]) look(it[key], depth - 1);
+      };
+      const quietly = steps => (...given) => {
+        isBusy = true;
+        try { steps(...given); } finally { isBusy = false; }
+      };
+      addEventListener("given", quietly(({ detail }) => {
+        look(detail);
+        if (detail instanceof Promise) then.call(detail, quietly(look));
+        (detail.signal ?? detail).addEventListener?.("abort", quietly(() => look(detail)));
+      }));
+      api.listen(what => (what ? Promise.resolve(1) : note(self.event, "event")));
+      Promise.prototype.then = function (...given) {
+        note(this, "patched");
+        return then.apply(this, given);
+      };
+      dispatchEvent(new CustomEvent("list", { detail: new Proxy([], { set: quietly((list, index, it) => (look(it), queueMicrotask(quietly(() => look(opener))))) }) }));
+      onerror = (...given) => note(given[4], "error");
+      onunhandledrejection = quietly(event => (look(event.reason), event.preventDefault()));
+      define(Promise.prototype, "constructor", { get() { note(this, "constructor"); return Promise; } });
+      const names = [..."then constructor toString valueOf join next return name message stack once keepalive offset size type".split(" "), Symbol.toPrimitive, Symbol.iterator, Symbol.toStringTag];
+      const classes = [Object, Array, Map, Set, Date, RegExp, Error, RangeError, Function, String, Iterator, Object.getPrototypeOf(Uint8Array), ArrayBuffer, URLSearchParams, Headers, Response, Blob, File];
+      for (const holder of [...classes.map(it => it.prototype), ...[[], new Map(), new Set()].map(it => Object.getPrototypeOf(it.values()))]) {
+        quietly(() => {
+          for (const name of names) {
+            const { value, get, configurable } = Object.getOwnPropertyDescriptor(holder, name) ?? { configurable: holder === Object.prototype || (name === "then" && holder !== Function.prototype) };
+            if (get || !configurable) continue;
+            const set = function (value) { define(this, name, { __proto__: null, value, writable: true, configurable: true, enumerable: true }); };
+            define(holder, name, { __proto__: null, configurable, set, get() { note(this, name.description ?? name); return value; } });
+          }
+        })();
+      }`;
+    expect(
+      await run(
+        `serve({ "/": ${JSON.stringify(`<body><script>${spy}</script>`)} });
+         const page = await open(undefined, preload), logged = [];
+         for (let step = 0; step < ${steps.length}; step++) {
+           const [[{ message }]] = await Promise.all([once(page, "console-message"), page.executeJavaScript("step = " + step + ", dispatchEvent(new Event(step))")]);
+           logged.push(message);
+         }
+         print([await page.executeJavaScript("isBusy = true, got.join()"), logged]);`,
+        {
+          "preload.js": `const { contextBridge, ipcRenderer } = require("electron"), secret = { ipc: ipcRenderer };
+            let callBack, list;
+            addEventListener("list", event => (list = event.detail));
+            self.ofPreload = true;
+            contextBridge.exposeInMainWorld("api", { listen: it => void (callBack = it) });
+            const say = it => console.log(String(it)), title = it => ((document.title = it), document.title);
+            const give = detail => dispatchEvent(new CustomEvent("given", { detail }));
+            ${steps.map(([step], index) => `addEventListener("${index}", () => { ${step} });`).join("\n")}`,
+        },
+      ),
+    ).toEqual([["", steps.map(it => it[1])]]);
+  });
+
   test("a preload script does not see what the page did to its globals", async () => {
     expect(
       await run(
@@ -3003,6 +3290,31 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
     ]);
   });
 
+  test("the directories for data are there", async () => {
+    const usual = `
+      const { app } = require("electron");
+      app.setPath("appData", __dirname + "/config");
+      console.log(require("fs").existsSync(app.getPath("userData")));
+      app.exit(0);`;
+    expect([
+      await run(`print(["userData", "sessionData"].map(it => require("fs").statSync(app.getPath(it)).isDirectory()));`),
+      await run("", { "main.js": usual }),
+    ]).toEqual([[[true, true]], [true]]);
+  });
+
+  test("a download makes the directory that it goes to", async () => {
+    expect(
+      await run(
+        `const server = Bun.serve({ port: 0, fetch: () => new Response("text") });
+         const file = path.join(__dirname, "not", "yet", "file");
+         const announced = new Promise(resolve => session.defaultSession.once("will-download", (_, item) => (item.setSavePath(file), resolve(once(item, "done")))));
+         session.defaultSession.downloadURL(server.url.href);
+         print([(await announced)[1], require("fs").readFileSync(file, "utf8")]);
+         server.stop(true);`,
+      ),
+    ).toEqual([["completed", "text"]]);
+  });
+
   test("an interrupted download goes on where it has stopped", async () => {
     expect(
       await run(
@@ -3188,7 +3500,7 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
         }
         let left = 20;
         for (let i = 0; i < 50 && left > 10; i++) {
-          Bun.gc(true);
+          await collectGarbage(page);
           left = await page.executeJavaScript("all.filter(it => it.deref()).length");
         }
         print(left <= 10);`),
@@ -3216,6 +3528,25 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
           apart,
         ),
       ).toEqual([[true, "a"], [["app://trusted/", 4], "b"], 2 << 20, [255, 0, 0, 255]]);
+    });
+
+    test("a frame that may not go back does not change where the page goes back to", async () => {
+      expect(
+        await run(
+          `app.trustOrigins(["app://trusted"], { inFrames: true });
+          serve({ "/": "", "/frame": "<script>history.go(-2); console.log('asked'); for (;;);</script>" });
+          const page = await open(), asked = once(page, "console-message");
+          await page.executeJavaScript(\`
+            history.pushState(null, "", "#a");
+            history.pushState(null, "", "#b");
+            document.body.append(Object.assign(document.createElement("iframe"), { sandbox: "allow-scripts", src: "/frame" }))\`);
+          await asked;
+          print(await page.executeJavaScript("new Promise(done => { onpopstate = () => done(location.hash); history.back(); })"));`,
+          {},
+          [],
+          apart,
+        ),
+      ).toEqual(["#a"]);
     });
 
     test("the app outlives the process", async () => {
@@ -3251,10 +3582,888 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
       ).toEqual([false]);
     });
 
+    test.skipIf(!isLinux).each([
+      [[], [], ["NoNewPrivs:\t1", "Seccomp:\t2"]],
+      [
+        ["--no-sandbox"],
+        "read stat list write remove connect listen datagram spawn signal input".split(" "),
+        expect.anything(),
+      ],
+    ])("the process cannot get at files, the network or other processes (%j)", async (args, succeeded, status) => {
+      expect(
+        await run(
+          `serve({ "/": "" });
+          const server = require("net").createServer().listen(0, "127.0.0.1");
+          await once(server, "listening");
+          const args = [__filename, String(server.address().port), String(process.pid)];
+          const page = await open(undefined, { webPreferences: { ...preload.webPreferences, sandbox: false, additionalArguments: args } });
+          print(await page.executeJavaScript("attempt()"));
+          const fs = require("fs"), about = "/proc/" + page.getOSProcessId();
+          print(fs.readFileSync(about + "/status", "latin1").match(/^(NoNewPrivs|Seccomp):.*/gm));
+          print(fs.readdirSync(about + "/fd").map(it => fs.readlinkSync(about + "/fd/" + it)).filter(it => !/^(socket|pipe|anon_inode):|^\\/dev\\/null$/.test(it)));
+          server.close();`,
+          {
+            "preload.js": `const fs = require("fs"), [file, port, parent] = process.argv.slice(-3);
+              const attempts = {
+                read: () => fs.readFileSync(file),
+                stat: () => fs.statSync(file),
+                list: () => fs.readdirSync("/"),
+                write: () => fs.writeFileSync(file + ".new", ""),
+                remove: () => fs.unlinkSync(file),
+                connect: () => new Promise((done, fail) => require("net").connect(+port, "127.0.0.1", done).on("error", fail)),
+                listen: () => new Promise((done, fail) => require("net").createServer().on("error", fail).listen(0, done)),
+                datagram: () => new Promise((done, fail) => require("dgram").createSocket("udp4").on("error", fail).bind(0, done)),
+                spawn: () => require("child_process").execFileSync(process.execPath, ["--version"]),
+                signal: () => process.kill(+parent, 0),
+                input: () => fs.readSync(0, Buffer.alloc(1)),
+              };
+              require("electron").contextBridge.exposeInMainWorld("attempt", async () => {
+                const succeeded = [];
+                for (const name in attempts) await Promise.try(attempts[name]).then(() => succeeded.push(name), () => {});
+                return succeeded;
+              });`,
+          },
+          args,
+          { BUN_DESKTOP_PAGE_PROCESSES: "node" },
+        ),
+      ).toEqual([succeeded, status, []]);
+    });
+
+    test("a page cannot make the app open a file for it", async () => {
+      expect(
+        await run(
+          `serve({ "/": "" });
+          const page = await open(undefined, { webPreferences: { ...preload.webPreferences, sandbox: false } });
+          const { port1, port2 } = new electron.MessageChannelMain();
+          const { promise, resolve } = Promise.withResolvers();
+          port1.on("message", ({ data }) => (data === "end" ? resolve() : print(data && data.size)));
+          port1.start();
+          page.postMessage("a", __filename, [port2]);
+          await promise;`,
+          {
+            "preload.js": `const { file } = require("bun");
+              require("electron").ipcRenderer.on("a", ({ ports }, path) => {
+                for (const it of [new Blob(["ab"]), file(path), file(1), [file(path)], "end"]) ports[0].postMessage(it);
+              });`,
+          },
+          [],
+          { BUN_DESKTOP_PAGE_PROCESSES: "node" },
+        ),
+      ).toEqual([2, null, null, null]);
+    });
+
+    test("a file that a page was given is read-only when it comes back", async () => {
+      expect(
+        await run(
+          `serve({ "/": "<input type=file>" });
+          const page = await open(undefined, preload);
+          page.debugger.attach();
+          const { result } = await page.debugger.sendCommand("Runtime.evaluate", { expression: "document.querySelector('input')" });
+          await page.debugger.sendCommand("DOM.setFileInputFiles", { objectId: result.objectId, files: [__dirname + "/a.txt"] });
+          const { port1, port2 } = new electron.MessageChannelMain();
+          port1.start();
+          page.postMessage("a", null, [port2]);
+          const [{ data }] = await once(port1, "message");
+          const changes = [() => Bun.write(data, ""), () => data.write(""), () => data.writer(), () => data.unlink(), () => data.slice(1).write("")];
+          print([data.name, (await Promise.allSettled(changes.map(it => Promise.try(it)))).filter(it => it.status === "fulfilled"), await data.text()]);`,
+          {
+            "a.txt": "abc",
+            "preload.js": `require("electron").ipcRenderer.on("a", ({ ports }) => ports[0].postMessage(document.querySelector("input").files[0]));`,
+          },
+          [],
+          apart,
+        ),
+      ).toEqual([["a.txt", [], "abc"]]);
+    });
+
+    test("frames of another site get bitmaps, and lose their activation together", async () => {
+      expect(
+        await run(
+          `app.trustOrigins(["app://trusted", "app://other"], { inFrames: true });
+          serve({ "/": "<iframe src=app://other/a></iframe><iframe src=app://other/a></iframe>", "/a": "" });
+          const page = await open(), [one, other] = page.mainFrame.frames;
+          page.setWindowOpenHandler(() => ({ action: "deny" }));
+          const heard = one.executeJavaScript(\`new Promise(done => (onmessage = ({ data }) => {
+            const context = new OffscreenCanvas(2, 1).getContext("2d");
+            context.drawImage(data, 0, 0);
+            done([data.width, data.height, ...context.getImageData(1, 0, 1, 1).data]);
+          }))\`);
+          await one.executeJavaScript("0");
+          await page.executeJavaScript("createImageBitmap(new ImageData(new Uint8ClampedArray([0, 0, 0, 0, 1, 2, 3, 255]), 2)).then(it => frames[0].postMessage(it, '*', [it]))");
+          print(await heard);
+          print(await one.executeJavaScript("navigator.userActivation.isActive", true));
+          await other.executeJavaScript("void open('/a')", true);
+          print(await one.executeJavaScript("navigator.userActivation.isActive"));`,
+          {},
+          [],
+          apart,
+        ),
+      ).toEqual([[2, 1, 1, 2, 3, 255], true, false]);
+    });
+
+    test("frames of another site take the focus at once, and know whether they are seen", async () => {
+      expect(
+        await run(
+          `app.trustOrigins(["app://trusted", "app://other"], { inFrames: true });
+          const watch = "new Promise(done => new IntersectionObserver(all => done(all[0].isIntersecting)).observe(document.body))";
+          serve({
+            "/": "<iframe src=app://other/a></iframe><div style='height: 5000px'></div><iframe src=app://other/a></iframe>",
+            "/a": "<body><input><script>first = " + watch + "</script>",
+          });
+          const page = await open(), [above, below] = page.mainFrame.frames;
+          page.debugger.attach();
+          await page.debugger.sendCommand("Emulation.setFocusEmulationEnabled", { enabled: true });
+          print(await above.executeJavaScript("seen = []; onfocus = () => seen.push('focus'); document.querySelector('input').focus(); seen.concat(document.hasFocus())"));
+          print([await below.executeJavaScript("first"), await below.executeJavaScript(watch), await above.executeJavaScript(watch)]);
+          const left = above.executeJavaScript("new Promise(done => new IntersectionObserver(all => all.at(-1).isIntersecting || done('left')).observe(document.body))");
+          await above.executeJavaScript(watch);
+          await page.executeJavaScript("scrollTo(0, 1000)");
+          print(await left);`,
+          {},
+          [],
+          apart,
+        ),
+      ).toEqual([["focus", true], [false, false, true], "left"]);
+    });
+
+    test("nothing runs in a page that has been unloaded", async () => {
+      expect(
+        await run(
+          `app.trustOrigins(["app://trusted", "app://other"], { inFrames: true });
+          serve({ "/": "<iframe src=app://other/a></iframe>", "/a": "" });
+          ipcMain.on("seen", (event, it) => print(it));
+          const page = await open(undefined, { webPreferences: { ...preload.webPreferences, nodeIntegrationInSubFrames: true } });
+          const pid = page.mainFrame.frames[0].osProcessId;
+          await page.executeJavaScript("document.querySelector('iframe').remove()");
+          while (app.getAppMetrics().some(it => it.pid === pid)) await new Promise(setImmediate);`,
+          {
+            "preload.js": `addEventListener("pagehide", () => {
+              const { ipcRenderer } = require("electron");
+              ipcRenderer.send("seen", "hidden");
+              setTimeout(() => ipcRenderer.send("seen", "late"));
+              for (const end = performance.now() + 5; performance.now() < end; );
+            });`,
+          },
+          [],
+          apart,
+        ),
+      ).toEqual(["hidden", "hidden"]);
+    });
+
+    test("an upload is read before the app asks for it", async () => {
+      expect(
+        await run(
+          `serve({ "/": "" });
+          const page = await open(), { promise, resolve } = Promise.withResolvers();
+          page.on("console-message", resolve);
+          page.session.webRequest.onBeforeRequest((details, go) => promise.then(() => go({})));
+          print(await page.executeJavaScript(\`fetch("https://127.0.0.1:1/", {
+            method: "POST", duplex: "half", body: new ReadableStream({ pull: it => (console.log("read"), it.close()) }, { highWaterMark: 0 }),
+          }).catch(it => it.name)\`));`,
+          {},
+          [],
+          apart,
+        ),
+      ).toEqual(["TypeError"]);
+    });
+
+    test("cursors see what is written in front of them, and transactions start in order", async () => {
+      expect(
+        await run(
+          `serve({ "/": "" });
+          print(await (await open()).executeJavaScript(\`new Promise(done => {
+            const request = indexedDB.open("a"), seen = [], ended = [];
+            request.onupgradeneeded = () => request.result.createObjectStore("a").createIndex("b", "b");
+            request.onsuccess = () => {
+              const store = request.result.transaction("a", "readwrite").objectStore("a");
+              for (let key = 0; key < 40; key += 2) store.put({ b: -key }, key);
+              store.openCursor().onsuccess = ({ target: { result } }) => {
+                if (!result) return store.index("b").openCursor().onsuccess = ({ target: { result } }) => result && (seen.push(result.value.b), result.advance(7));
+                seen.push(result.key + ":" + result.value.b);
+                if (result.key === 10) store.put({ b: 1 }, 11), store.delete(12), store.put({ b: 2 }, 14);
+                result.key === 16 ? result.continue(33) : result.continue();
+              };
+              for (let it = 0; it < 30; it++) request.result.transaction("a").oncomplete = () => ended.push(it) === 30 && done([seen.join(), ended.every((it, at) => it === at)]);
+            };
+          })\`));`,
+          {},
+          [],
+          apart,
+        ),
+      ).toEqual([["0:0,2:-2,4:-4,6:-6,8:-8,10:-10,11:1,14:2,16:-16,34:-34,36:-36,38:-38,-38,-24,-6", true]]);
+    });
+
+    test("a page only passes on to a frame what the user has pressed and released", async () => {
+      expect(
+        await run(
+          `app.trustOrigins(["app://trusted", "app://other"], { inFrames: true });
+          serve({
+            "/": "<body style=margin:0><iframe src=app://other/a></iframe>",
+            "/a": "<script>var all = []; for (const it of ['move', 'down', 'up']) addEventListener('pointer' + it, event => all.push(event.pointerType + it + event.button));</script>",
+          });
+          const page = await open(undefined, { webPreferences: { ...preload.webPreferences, sandbox: false } });
+          const [frame] = page.mainFrame.frames, heard = last => frame.executeJavaScript(\`new Promise(function look(done) { all.includes("\${last}") ? done(all.splice(0)) : setTimeout(look, 1, done); })\`);
+          print(frame.osProcessId !== page.getOSProcessId());
+          page.send("forge");
+          print(await heard("mousemove-1"));
+          for (const type of ["mouseDown", "mouseUp"]) page.sendInputEvent({ type, x: 20, y: 20, button: "left", clickCount: 1 });
+          print(await heard("mouseup0"));`,
+          {
+            "preload.js": `const { decodesMessage } = require("bun:internal-for-testing").desktopInternals;
+              const of = (Type, ...numbers) => [...new Uint8Array(Type.from(numbers).buffer)];
+              const place = [...of(Float64Array, 9, 9, 9, 9), ...of(Uint32Array, 0)];
+              const mouse = (action, button) => [...of(Uint16Array, 0, action), ...place, ...of(Int16Array, button, 0), ...of(Int32Array, 1)];
+              const finger = [...of(Int32Array, 1), ...place, ...of(Float64Array, 1, 1), 0, ...of(Float64Array, 0), ...of(Int32Array, 0, 0, 0)];
+              const touch = phase => [...of(Uint16Array, 2, phase), ...of(Uint32Array, 1), ...finger, ...of(Uint32Array, 0)];
+              const ask = (kind, frame, about, input) => [...of(Uint16Array, kind), ...of(Uint32Array, frame), ...of(Uint16Array, about), ...input];
+              const upTo = length => Array.from({ length }, (_, it) => it);
+              const inputs = [mouse(1, 1), mouse(2, 1), mouse(2, 0), touch(0), touch(2), mouse(0, -1)];
+              const kinds = upTo(300).flatMap(kind => upTo(32).map(about => [kind, about])).filter(([kind, about]) =>
+                inputs.every(it => decodesMessage("question", new Uint8Array(ask(kind, 0, about, it)))));
+              require("electron").ipcRenderer.on("forge", () => {
+                for (const input of inputs) for (const [kind, about] of kinds) for (const page of upTo(8)) for (const frame of upTo(4))
+                  decodesMessage("forged", new Uint8Array([page, ...ask(kind, frame, about, input)]));
+              });`,
+          },
+          [],
+          { BUN_DESKTOP_PAGE_PROCESSES: "node" },
+        ),
+      ).toEqual([true, ["mousemove-1"], ["mousedown0", "mouseup0"]]);
+    });
+
+    test("a page that does not return does not hold up other windows", async () => {
+      expect(
+        await run(
+          `app.trustOrigins(["app://trusted", "app://other"], { inFrames: true });
+          serve({ "/": "", "/a": "" });
+          const page = await open(), created = once(page, "did-create-window");
+          await page.executeJavaScript("void (self.popup = open('app://other/'))", true);
+          const [{ webContents }] = await created;
+          await once(webContents, "did-finish-load");
+          page.executeJavaScript("popup.location = 'app://other/a'; for (;;);").catch(() => {});
+          await once(webContents, "did-finish-load");
+          print(webContents.getURL());
+          page.forcefullyCrashRenderer();`,
+          {},
+          [],
+          apart,
+        ),
+      ).toEqual(["app://other/a"]);
+    });
+
+    test("storage is shared", async () => {
+      expect(
+        await run(
+          `using server = Bun.serve({ port: 0, fetch: () => new Response("", { headers: { "content-type": "text/html" } }) });
+          app.trustOrigins([server.url.origin]);
+          const [one, other] = [await open(server.url.href), await open(server.url.href)];
+          print(one.getOSProcessId() !== other.getOSProcessId());
+          const database = \`new Promise(done => {
+            const request = indexedDB.open("a");
+            request.onupgradeneeded = () => request.result.createObjectStore("a");
+            request.onsuccess = () => done(request.result.transaction("a", "readwrite"));
+          })\`;
+          const heard = other.executeJavaScript(\`Promise.all([
+            new Promise(done => (onstorage = event => done([event.key, event.newValue, localStorage.a])), localStorage.length),
+            new Promise(done => ((self.channel = new BroadcastChannel("a")).onmessage = event => done(event.data))),
+          ])\`);
+          await other.executeJavaScript("0");
+          await one.executeJavaScript(\`(async () => {
+            localStorage.a = "1";
+            new BroadcastChannel("a").postMessage(2);
+            const transaction = await \${database};
+            transaction.objectStore("a").put(new Blob(["3"]), 1);
+            await new Promise(done => (transaction.oncomplete = done));
+            await (await caches.open("a")).put("/a", new Response("4"));
+            const file = await (await (await navigator.storage.getDirectory()).getFileHandle("a", { create: true })).createWritable();
+            await file.write("5");
+            await file.close();
+            await new Promise(done => navigator.locks.request("a", () => (done(), new Promise(() => {}))));
+          })()\`);
+          print(await heard);
+          const url = await one.executeJavaScript("URL.createObjectURL(new Blob(['6'], { type: 'text/plain' }))");
+          print(await other.executeJavaScript(\`fetch("\${url}").then(it => it.text())\`));
+          print(await other.executeJavaScript(\`(async () => {
+            const request = (await \${database}).objectStore("a").get(1);
+            await new Promise(done => (request.onsuccess = done));
+            return [
+              await request.result.text(),
+              await (await caches.match("/a")).text(),
+              await (await (await (await navigator.storage.getDirectory()).getFileHandle("a")).getFile()).text(),
+              await navigator.locks.request("a", { ifAvailable: true }, lock => lock),
+            ];
+          })()\`));
+          const granted = other.executeJavaScript("navigator.locks.request('a', lock => lock.name)");
+          one.forcefullyCrashRenderer();
+          print(await granted);`,
+          {},
+          [],
+          apart,
+        ),
+      ).toEqual([true, [["a", "1", "1"], 2], "6", ["3", "4", "5", null], "a"]);
+    });
+
+    test("document.cookie follows what happens elsewhere", async () => {
+      expect(
+        await run(
+          `using server = Bun.serve({ port: 0, fetch: ({ url }) => new Response("", { headers: { "content-type": "text/html", ...(url.endsWith("/set") && { "set-cookie": "b=2" }) } }) });
+          app.trustOrigins([server.url.origin]);
+          const [one, other] = [await open(server.url.href), await open(server.url.href)], read = () => one.executeJavaScript("document.cookie").then(print);
+          await read();
+          print(await one.executeJavaScript("document.cookie = 'a=1', document.cookie"));
+          print(await one.executeJavaScript("fetch('/set').then(() => document.cookie)"));
+          await other.executeJavaScript("document.cookie = 'c=3'");
+          await read();
+          await session.defaultSession.cookies.remove(server.url.href, "a");
+          await read();
+          await session.defaultSession.cookies.set({ url: server.url.href, name: "d", value: "4", expirationDate: Date.now() / 1000 + 0.3 });
+          await read();
+          print(await one.executeJavaScript("for (; document.cookie.includes('d'); ); document.cookie"));`,
+          {},
+          [],
+          apart,
+        ),
+      ).toEqual(["", "a=1", "a=1; b=2", "a=1; b=2; c=3", "b=2; c=3", "b=2; c=3; d=4", "b=2; c=3"]);
+    });
+
+    test("the app waits for the end of the script that has asked for a navigation", async () => {
+      expect(
+        await run(
+          `app.trustOrigins(["app://trusted"], { inFrames: true });
+          const asked = [];
+          serve({ "/": "<body>", "/a": () => (asked.push("a"), new Response("a")), "/b": "b" });
+          const page = await open(), wait = "for (const end = performance.now() + 50; performance.now() < end; );";
+          print(await page.executeJavaScript(\`var frame = document.body.appendChild(Object.assign(document.createElement("iframe"), { src: "/b" })); \${wait} frame.contentDocument.URL\`));
+          print(await page.executeJavaScript(\`location = "/a"; \${wait} stop(); new Promise(done => setTimeout(done, 20, location.pathname))\`));
+          print(asked);`,
+          {},
+          [],
+          apart,
+        ),
+      ).toEqual(["about:blank", "/", []]);
+    });
+
+    test("a process that has been stopped ends with its window", async () => {
+      expect(
+        await run(
+          `serve({ "/": "" });
+          const page = await open(), pid = page.getOSProcessId(), exists = () => { try { return process.kill(pid, 0); } catch { return false; } };
+          app.on("window-all-closed", () => {});
+          process.kill(pid, "SIGSTOP");
+          BrowserWindow.fromWebContents(page).destroy();
+          while (exists()) await new Promise(done => setTimeout(done, 10));
+          print("ended");`,
+          {},
+          [],
+          apart,
+        ),
+      ).toEqual(["ended"]);
+    });
+
+    test("the next page arrives although the process of the last one has ended", async () => {
+      expect(
+        await run(
+          `serve({ "/": "", "/a": () => once(page, "render-process-gone").then(() => new Response("a")) });
+          const page = await open(), loaded = page.loadURL("app://trusted/a");
+          process.kill(page.getOSProcessId(), "SIGKILL");
+          await loaded;
+          print([page.isCrashed(), await page.executeJavaScript("document.body.textContent")]);`,
+          {},
+          [],
+          apart,
+        ),
+      ).toEqual([[false, "a"]]);
+    });
+
+    test("forcefullyCrashRenderer() ends a page that does not return", async () => {
+      expect(
+        await run(
+          `serve({ "/": "<title>a</title>" });
+          const page = await open();
+          page.executeJavaScript("for (;;);").catch(() => {});
+          page.once("render-process-gone", (event, details) => print(details));
+          page.forcefullyCrashRenderer();
+          await page.loadURL("app://trusted/");
+          print(await page.executeJavaScript("document.title"));`,
+          {},
+          [],
+          apart,
+        ),
+      ).toEqual([{ reason: "killed", exitCode: 2 }, "a"]);
+    });
+
+    test("the debugger follows the page to another process", async () => {
+      expect(
+        await run(
+          `app.trustOrigins(["app://other"]);
+          serve({ "/": "<script>console.log(early, location.host)</script>" });
+          const page = new BrowserWindow().webContents, send = (method, params) => page.debugger.sendCommand(method, params);
+          page.debugger.attach();
+          page.debugger.on("message", (event, method, { args }) => method === "Runtime.consoleAPICalled" && print(args.map(it => it.value)));
+          await send("Runtime.enable");
+          await send("Page.addScriptToEvaluateOnNewDocument", { source: "early = 1" });
+          await page.loadURL("app://trusted/");
+          const first = page.getOSProcessId(), { objectId } = (await send("Runtime.evaluate", { expression: "document" })).result;
+          print((await send("DOM.describeNode", { objectId })).node.nodeName);
+          await page.loadURL("app://other/");
+          print(first !== page.getOSProcessId());
+          await send("Runtime.evaluate", { expression: "document" });
+          print(await send("DOM.describeNode", { objectId }).catch(it => it.message));`,
+          {},
+          [],
+          apart,
+        ),
+      ).toEqual([[1, "trusted"], "#document", [1, "other"], true, "Could not find object with given id"]);
+    });
+
     test("only the parent can make one", async () => {
       await using proc = Bun.spawn({ cmd: [bunExe(), "--bun-desktop-child=page", "a"], env: bunEnv, stderr: "pipe" });
       expect(await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited])).toEqual(["", "", 1]);
     });
+  });
+
+  const runAsAsked = (main: string, files?: Record<string, string>, args?: string[]) =>
+    run(main, files, args, { BUN_DESKTOP_PAGE_PROCESSES: "asked" });
+
+  describe.skipIf(!isLinux)('app.setWebEngine({ type: "bun" })', () => {
+    const run = runAsAsked;
+    const start = `app.setWebEngine({ type: "bun" });
+      const where = frame => (frame.osProcessId === process.pid ? "app" : frame.osProcessId);
+      const shape = frames => frames.map(where).map((it, _, all) => (it === "app" ? it : all.indexOf(it)));
+      const until = async condition => { while (!(await condition())) await new Promise(setImmediate); };
+      const click = (page, x, y) => ["mouseMove", "mouseDown", "mouseUp"].forEach(type => page.sendInputEvent({ type, x, y, button: "left", clickCount: 1 }));
+      const pixel = async (page, x, y) => [...(await page.capturePage({ x, y, width: 1, height: 1 })).toBitmap().subarray(0, 3)].join();`;
+
+    test("a window goes where its page belongs", async () => {
+      expect(
+        await run(
+          `${start}
+          serve({ "/": "<script src=app://third/a.js></script><script>eval('document.title += 1')</script>", "/a.js": "document.title = 'a'" });
+          const page = await open(), seen = [];
+          for (const host of ["trusted", "other", "other", "third", "trusted"]) {
+            await page.loadURL("app://" + host + "/");
+            seen.push([page.getOSProcessId(), page.getTitle()]);
+          }
+          print(shape(seen.map(it => ({ osProcessId: it[0] }))));
+          print(seen.map(it => it[1]));
+          await until(() => app.getAppMetrics().filter(it => it.type === "Tab").length <= 1);`,
+        ),
+      ).toEqual([
+        ["app", 1, 1, 3, "app"],
+        ["1", "a1", "a1", "a1", "1"],
+      ]);
+    });
+
+    test("each site of a page has a process", async () => {
+      expect(
+        await run(
+          `${start}
+          app.trustOrigins([], { inFrames: ["app://trusted/own"] });
+          serve({
+            "/": "<iframe src=/own></iframe><iframe src=app://other/a></iframe><iframe sandbox=allow-scripts srcdoc=a></iframe><iframe></iframe>",
+            "/a": "<iframe src=app://third/b></iframe><iframe src=/own></iframe><iframe src=app://trusted/own></iframe><iframe srcdoc=a></iframe><iframe sandbox src=/own></iframe>",
+            "/b": "<iframe src=app://other/own></iframe>",
+            "/own": "",
+          });
+          const page = await open(), all = page.mainFrame.framesInSubtree;
+          all.sort((a, b) => a.url.localeCompare(b.url) || a.parent?.url.localeCompare(b.parent?.url) || a.frameTreeNodeId - b.frameTreeNodeId);
+          print(shape(all).map((it, at) => all[at].url + " " + it));
+          print(await page.executeJavaScript("[frames[1].length, frames[1][0].length, frames[1][0][0].top === top, frames[1][0].parent === frames[1]]"));
+          print(await page.mainFrame.frames[1].executeJavaScript("[frames[0][0].location.href, frames[0][0].top === parent, parent.length, [...location.ancestorOrigins]]"));
+          print(await page.mainFrame.frames[1].frames[2].executeJavaScript("try { top.document.URL } catch (error) { error.name }"));`,
+        ),
+      ).toEqual([
+        [
+          " app",
+          "about:srcdoc 1",
+          "about:srcdoc 2",
+          "app://other/a 1",
+          "app://other/own 1",
+          "app://other/own 5",
+          "app://other/own 1",
+          "app://third/b 7",
+          "app://trusted/ app",
+          "app://trusted/own 9",
+          "app://trusted/own app",
+        ],
+        [5, 1, true, true],
+        ["app://other/own", true, 4, ["app://trusted"]],
+        "SecurityError",
+      ]);
+    });
+
+    test("messages between windows", async () => {
+      expect(
+        await run(
+          `${start}
+          serve({
+            "/": "<iframe src=app://other/echo></iframe><iframe src=app://third/echo></iframe>",
+            "/echo": \`<script>onmessage = ({ data, origin, source, ports }) => {
+              if (data === "sibling") parent[1].postMessage("from sibling", "app://third");
+              else if (data === "from sibling") top.postMessage([data, origin, source === parent[0]], "*");
+              else if (ports.length) ports[0].postMessage(data.byteLength);
+              else source.postMessage([data, origin], origin);
+            }</script>\`,
+          });
+          const page = await open();
+          page.setWindowOpenHandler(() => ({ action: "allow" }));
+          print(await page.executeJavaScript(\`(async () => {
+            const next = (target = window) => new Promise(done => (target.onmessage = done)), all = [];
+            frames[0].postMessage("lost", "app://third");
+            frames[0].postMessage(new Map([[1, new Blob(["a"])]]), "app://other");
+            let event = await next();
+            all.push([await event.data[0].get(1).text(), event.data[1], event.origin, event.source === frames[0]]);
+            frames[0].postMessage("sibling", "*");
+            all.push((await next()).data);
+            const { port1, port2 } = new MessageChannel(), buffer = new ArrayBuffer(3);
+            frames[1].postMessage(buffer, "*", [buffer, port2]);
+            all.push((await next(port1)).data);
+            const popup = open("app://other/echo"), again = setInterval(() => popup.postMessage("popup", "app://other"), 10);
+            event = await next();
+            clearInterval(again);
+            all.push([event.data, event.source === popup]);
+            popup.close();
+            all.push(popup.closed);
+            return all;
+          })()\`, true));`,
+        ),
+      ).toEqual([
+        [
+          ["a", "app://trusted", "app://other", true],
+          ["from sibling", "app://other", true],
+          3,
+          [["popup", "app://trusted"], true],
+          true,
+        ],
+      ]);
+    });
+
+    test("a frame is painted, and gets the mouse, the keys and the focus", async () => {
+      expect(
+        await run(
+          `${start}
+          serve({
+            "/": \`<body style="margin:0;height:2000px"><input id=before style="height:20px;display:block;box-sizing:border-box">
+              <iframe src=app://other/a style="border:0;display:block" width=200 height=100></iframe><input id=after>
+              <script>onkeydown = event => (self.keys = (self.keys ?? "") + event.key)</script>\`,
+            "/a": "<body style='margin:0;background:#00f'><input style='height:20px;display:block'>",
+          });
+          const page = await open(), [frame] = page.mainFrame.frames;
+          const press = keyCode => ["keyDown", "char", "keyUp"].forEach(type => page.sendInputEvent({ type, keyCode }));
+          page.debugger.attach();
+          await page.debugger.sendCommand("Emulation.setFocusEmulationEnabled", { enabled: true });
+          await until(async () => (await pixel(page, 100, 100)) === "255,0,0");
+          print(await frame.executeJavaScript("[innerWidth, innerHeight]"));
+          click(page, 10, 30);
+          await until(() => frame.executeJavaScript("document.hasFocus() && document.activeElement.localName === 'input'"));
+          press("a");
+          page.insertText("b");
+          await until(() => frame.executeJavaScript("document.activeElement.value === 'ab'"));
+          print([page.focusedFrame.url, await page.executeJavaScript("[document.activeElement.localName, navigator.userActivation.hasBeenActive]")]);
+          press("Tab");
+          await until(() => page.executeJavaScript("document.activeElement === after"));
+          press("c");
+          print(await page.executeJavaScript("[after.value, keys]"));
+          await frame.executeJavaScript("document.querySelector('input').focus(); document.body.style.background = '#0f0'");
+          await until(() => page.executeJavaScript("document.activeElement.localName === 'iframe'"));
+          await until(async () => (await pixel(page, 100, 100)) === "0,255,0");
+          await page.executeJavaScript("document.querySelector('iframe').width = 150");
+          await until(() => frame.executeJavaScript("innerWidth === 150"));
+          await frame.executeJavaScript("new IntersectionObserver(all => (self.isSeen = all.at(-1).isIntersecting)).observe(document.body)");
+          await until(() => frame.executeJavaScript("self.isSeen"));
+          page.sendInputEvent({ type: "mouseWheel", x: 50, y: 80, deltaX: 0, deltaY: -10 });
+          await until(() => page.executeJavaScript("scrollY > 0"));
+          print("scrolled");`,
+        ),
+      ).toEqual([[200, 100], ["app://other/a", ["iframe", true]], ["c", "c"], "scrolled"]);
+    });
+
+    test("a frame navigates between processes", async () => {
+      expect(
+        await run(
+          `${start}
+          app.trustOrigins([], { inFrames: ["app://trusted/*"] });
+          serve({ "/": "<iframe></iframe>", "/a": "a" });
+          const page = await open();
+          for (const step of ["frame.src = 'app://other/a'", "frame.src = '/a'", "frames[0].location = 'app://third/a'", "frames[0].location.replace('app://other/a')"]) {
+            const seen = await page.executeJavaScript(\`new Promise(done => {
+              const frame = document.querySelector("iframe"), before = frame.contentWindow;
+              frame.onload = () => done([frame.contentWindow === before, frame.contentDocument?.body.textContent ?? null]);
+              \${step};
+            })\`);
+            print([page.mainFrame.frames[0].url, where(page.mainFrame.frames[0]) === "app", ...seen]);
+          }`,
+        ),
+      ).toEqual([
+        ["app://other/a", false, true, null],
+        ["app://trusted/a", true, true, "a"],
+        ["app://third/a", false, true, null],
+        ["app://other/a", false, true, null],
+      ]);
+    });
+
+    test("a frame of the same origin that is not trusted cannot run scripts in the app", async () => {
+      expect(
+        await run(
+          `${start}
+          app.trustOrigins([], { injectedScripts: true });
+          serve({ "/": "<title>a</title><iframe srcdoc=a></iframe>" });
+          const page = await open(), [frame] = page.mainFrame.frames;
+          print(await frame.executeJavaScript(\`const all = [origin];
+            for (const attempt of [() => (parent.location = "javascript:document.title = 'b'"), () => open("javascript:document.title = 'c'", "_top"), () => parent.document])
+              try { attempt(); all.push("returned"); } catch (error) { all.push(error.name); }
+            new Promise(done => { onmessage = () => done(all); postMessage("", "*"); })\`, true));
+          print(await page.executeJavaScript("document.title"));`,
+        ),
+      ).toEqual([["app://trusted", "returned", "returned", "SecurityError"], "a"]);
+    });
+
+    test.each([
+      [`open("javascript:document.title = typeof Bun", "_blank", "noopener")`, false],
+      [`open("about:blank", "_blank", "noopener")`, false],
+      [`open("app://trusted/")`, true],
+      [`open("app://other/redirect", "_blank", "noopener")`, true],
+    ])("what a page that is not trusted opens is not in the app: %s", async (script, loads) => {
+      expect(
+        await run(
+          `${start}
+          serve({ "/": "", "/redirect": () => Response.redirect("app://trusted/") });
+          const page = await open("app://other/"), created = once(page, "did-create-window");
+          await page.executeJavaScript(${JSON.stringify("void " + script)}, true);
+          const [{ webContents }] = await created;
+          if (${loads}) await until(() => webContents.getURL() === "app://trusted/" && !webContents.isLoading());
+          print([await webContents.mainFrame.executeJavaScript("document.title"), webContents.getOSProcessId() === process.pid]);`,
+        ),
+      ).toEqual([["", false]]);
+    });
+
+    test("a page that is not trusted only leads back to the app in a window that has come from there", async () => {
+      expect(
+        await run(
+          `${start}
+          serve({ "/": "" });
+          for (const first of ["trusted", "third"]) {
+            const page = await open("app://" + first + "/");
+            await page.loadURL("app://other/");
+            page.executeJavaScript("location = 'app://trusted/'");
+            await once(page, "did-finish-load");
+            print([page.getURL(), page.getOSProcessId() === process.pid]);
+          }`,
+        ),
+      ).toEqual([
+        ["app://trusted/", true],
+        ["app://trusted/", false],
+      ]);
+    });
+
+    test("a page that is not trusted does not have the storage of the trusted pages of its origin", async () => {
+      expect(
+        await run(
+          `${start}
+          app.trustOrigins([], { except: ["app://trusted/except"] });
+          serve({ "/": "<iframe srcdoc=a></iframe>", "/except": "" });
+          const page = await open(), other = await open("app://trusted/except");
+          await page.executeJavaScript("localStorage.a = 1; caches.open('a').then(() => {})");
+          for (const it of [page.mainFrame, page.mainFrame.frames[0], other.mainFrame])
+            print(await it.executeJavaScript("caches.keys().then(it => [origin, localStorage.a ?? null, ...it])"));`,
+        ),
+      ).toEqual([
+        ["app://trusted", "1", "a"],
+        ["app://trusted", null],
+        ["app://trusted", null],
+      ]);
+    });
+
+    test("a page with frames of many sites leaves processes for others", async () => {
+      expect(
+        await run(
+          `${start}
+          serve({ "/": Array.from({ length: 60 }, (_, it) => "<iframe src=app://site" + it + "/a></iframe>").join(""), "/a": "a" });
+          const page = await open("app://other/");
+          print(new Set(page.mainFrame.framesInSubtree.map(it => it.osProcessId).filter(it => it && it !== process.pid)).size);
+          print(await (await open("app://third/a")).executeJavaScript("document.body.textContent"));`,
+        ),
+      ).toEqual([48, "a"]);
+    });
+
+    test("a blob is shown in a process for its origin", async () => {
+      expect(
+        await run(
+          `${start}
+          serve({ "/": "<iframe src=app://other/a></iframe><iframe src=app://third/a></iframe>", "/a": "" });
+          const page = await open(), [one, other] = page.mainFrame.frames;
+          const url = await one.executeJavaScript("URL.createObjectURL(new Blob(['a'], { type: 'text/html' }))");
+          const loaded = once(page, "did-frame-finish-load");
+          other.executeJavaScript(\`location = "\${url}"\`);
+          await loaded;
+          print([shape(page.mainFrame.frames), await page.mainFrame.frames[1].executeJavaScript("[origin, document.body.textContent]")]);`,
+        ),
+      ).toEqual([
+        [
+          [0, 0],
+          ["app://other", "a"],
+        ],
+      ]);
+    });
+
+    test("a page outlives the process of its frame, and not the other way round", async () => {
+      expect(
+        await run(
+          `${start}
+          serve({ "/": "<iframe src=app://third/a></iframe>", "/a": "" });
+          const page = await open("app://other/"), tabs = () => app.getAppMetrics().filter(it => it.type === "Tab").map(it => it.pid);
+          page.on("render-process-gone", (event, { reason }) => print(reason));
+          let pid = page.mainFrame.frames[0].osProcessId;
+          process.kill(pid, "SIGKILL");
+          await until(() => !tabs().includes(pid));
+          print(await page.executeJavaScript(\`new Promise(done => Object.assign(document.querySelector("iframe"), { onload: () => done("again"), src: "app://third/a?b" }))\`));
+          pid = page.mainFrame.frames[0].osProcessId;
+          page.forcefullyCrashRenderer();
+          await until(() => !tabs().includes(pid));
+          print(page.mainFrame.frames.length);`,
+        ),
+      ).toEqual(["again", "killed", 0]);
+    });
+
+    test("a frame is asked before the page is left", async () => {
+      expect(
+        await run(
+          `${start}
+          serve({ "/": "<iframe src=app://other/a></iframe>", "/a": "<script>onbeforeunload = event => event.preventDefault()</script>" });
+          const page = await open();
+          page.once("will-prevent-unload", () => (print("asked"), page.destroy()));
+          page.close({ waitForBeforeUnload: true });`,
+        ),
+      ).toEqual(["asked"]);
+    });
+
+    test("a page that is not trusted has a preload without Node.js and without the environment", async () => {
+      expect(
+        await run(
+          `${start}
+          serve({ "/": "" });
+          const options = { webPreferences: { ...preload.webPreferences, sandbox: false, nodeIntegration: true, contextIsolation: false } };
+          ipcMain.once("a", (event, ...all) => print(all));
+          print(await (await open("app://other/", options)).executeJavaScript("[typeof require, typeof process, typeof inPreload]"));`,
+          {
+            "preload.js": `globalThis.inPreload = 1;
+              let fs;
+              try { fs = typeof require("fs"); } catch { fs = "none"; }
+              require("electron").ipcRenderer.send("a", fs, process.sandboxed, Object.keys(process.env));`,
+          },
+        ),
+      ).toEqual([
+        ["none", true, []],
+        ["undefined", "undefined", "undefined"],
+      ]);
+    });
+  });
+
+  describe.skipIf(!isLinux)("webPreferences.sandbox", () => {
+    const run = runAsAsked;
+
+    test.each([
+      [[], [true, true, false, false, true]],
+      [["--enable-sandbox"], [false, false, false, false, false]],
+    ])("decides which pages are in the process of the app (%j)", async (args, expected) => {
+      expect(
+        await run(
+          `serve({ "/": "" });
+          const all = [{}, { sandbox: false }, { sandbox: true }, { sandbox: true, nodeIntegration: true }, {}];
+          for (const webPreferences of all) print((await open(undefined, { webPreferences })).getOSProcessId() === process.pid);`,
+          {},
+          args,
+        ),
+      ).toEqual(expected);
+    });
+
+    test("holds for the frames and the windows of a page", async () => {
+      expect(
+        await run(
+          `app.trustOrigins(["app://trusted"], { inFrames: true });
+          serve({ "/": "<iframe src=/a></iframe>", "/a": "a" });
+          const page = await open(undefined, { webPreferences: { sandbox: true } });
+          print(page.mainFrame.framesInSubtree.map(it => it.osProcessId === page.getOSProcessId()));
+          for (const url of ["", "/a"]) {
+            const created = once(page, "did-create-window");
+            await page.executeJavaScript("void open('" + url + "')", true);
+            const [{ webContents }] = await created;
+            if (url) await once(webContents, "did-finish-load");
+            print([webContents.getOSProcessId() === page.getOSProcessId(), webContents.getOSProcessId() === process.pid]);
+          }`,
+        ),
+      ).toEqual([
+        [true, true],
+        [true, false],
+        [true, false],
+      ]);
+    });
+
+    test("does not separate windows that share objects", async () => {
+      expect(
+        await run(
+          `app.trustOrigins(["app://other"], { inFrames: true });
+          serve({ "/": "a" });
+          const page = await open();
+          page.setWindowOpenHandler(() => ({ action: "allow", overrideBrowserWindowOptions: { webPreferences: { sandbox: true } } }));
+          for (const host of ["trusted", "other"]) {
+            const created = once(page, "did-create-window");
+            await page.executeJavaScript("void (self.popup = open('app://" + host + "/'))", true);
+            const [{ webContents }] = await created;
+            await once(webContents, "did-finish-load");
+            print([webContents.getOSProcessId() === process.pid, await page.executeJavaScript("try { popup.document.body.textContent } catch (error) { error.name }")]);
+          }`,
+        ),
+      ).toEqual([
+        [true, "a"],
+        [false, "SecurityError"],
+      ]);
+    });
+
+    test.each([
+      ["crash", true, "crashed"],
+      ["crash", undefined, "crashed"],
+      ["hang", true, "killed"],
+    ])("the app outlives process.%s() in a preload script (sandbox: %p)", async (method, sandbox, reason) => {
+      expect(
+        await run(
+          `serve({ "/": "<title>a</title>" });
+          const page = await open(undefined, { webPreferences: { ...preload.webPreferences, sandbox: ${sandbox} } });
+          const gone = once(app, "render-process-gone");
+          page.send("end");
+          ${method === "hang" ? `await once(ipcMain, "ends"); page.forcefullyCrashRenderer();` : ""}
+          print((await gone)[2].reason);
+          await page.loadURL("app://trusted/");
+          print(await page.executeJavaScript("document.title"));`,
+          {
+            "preload.js": `const { ipcRenderer } = require("electron");
+              ipcRenderer.on("end", () => (ipcRenderer.send("ends"), process.${method}()));`,
+          },
+        ),
+      ).toEqual([reason, "a"]);
+    });
+  });
+
+  test("--enable-sandbox does not start an app without one", async () => {
+    const started = run(`print("started")`, {}, ["--enable-sandbox"], { BUN_DESKTOP_PAGE_PROCESSES: "" });
+    expect(await started.catch(it => it.message)).toContain("--enable-sandbox is not supported");
+  });
+
+  test.skipIf(!isLinux)("app.enableSandbox()", async () => {
+    expect(
+      await runAsAsked(
+        `app.setWebEngine({ type: "bun" });
+        serve({ "/": "<iframe src=/a></iframe><iframe src=app://other/a></iframe>", "/a": "a" });
+        const page = await open(undefined, { webPreferences: { nodeIntegration: true, sandbox: false } });
+        print(new Set([process.pid, ...page.mainFrame.framesInSubtree.map(it => it.osProcessId)]).size);
+        print(await page.executeJavaScript("[typeof require, frames[0].document.body.textContent]"));
+        try { app.enableSandbox(); } catch (error) { print(error.message); }`,
+        {
+          "early.js": `require("electron").app.enableSandbox();`,
+          "bunfig.toml": `preload = ["bun:desktop/electron", "./early.js"]`,
+        },
+      ),
+    ).toEqual([3, ["undefined", "a"], "app.enableSandbox() can only be called before app is ready"]);
   });
 
   describe("realms and documents are collected", () => {
@@ -3311,6 +4520,15 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
              "/never": () => new Promise(() => {}),
            });
            const page = await open(), count = 30;
+           const leftElsewhere = async () => {
+             const file = path.join(__dirname, "heap.json");
+             await page.takeHeapSnapshot(file);
+             const { snapshot, nodes, strings } = await Bun.file(file).json(), fields = snapshot.meta.node_fields;
+             const isNative = at => snapshot.meta.node_types[0][nodes[at - fields.indexOf("name")]] === "native";
+             const names = nodes.filter((_, at) => at % fields.length === fields.indexOf("name") && isNative(at)).map(it => strings[it]);
+             const [documents, windows] = ["HTMLDocument", "Window"].map(name => names.filter(it => it === name).length || NaN);
+             return Math.max(documents, windows, app.getAppMetrics().length);
+           };
            ${steps}
            const deadline = performance.now() + 2000;
            let left;
@@ -3318,7 +4536,7 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
              await new Promise(setImmediate);
              Bun.gc(true);
              const { globalObjectCount, objectTypeCounts } = require("bun:jsc").heapStats();
-             left = Math.max(globalObjectCount, objectTypeCounts.HTMLDocument);
+             left = Math.max(globalObjectCount, objectTypeCounts.HTMLDocument ?? (await leftElsewhere()));
            } while (left > 8 && performance.now() < deadline);
            print(left <= 8 || left);`,
           {
@@ -3407,7 +4625,7 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
         let left;
         do {
           await new Promise(setImmediate);
-          Bun.gc(true);
+          await collectGarbage(page);
           left = await page.executeJavaScript("all.filter(it => it.deref()).length");
         } while (left > 5 && performance.now() < deadline);
         print(left <= 5 || left);`),
@@ -3729,12 +4947,20 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
     ).toEqual(["text", "net::ERR_CONTENT_LENGTH_MISMATCH", "net::ERR_HTTP2_PROTOCOL_ERROR"]);
   });
 
-  test.each(["http", "http2"])("a long body is the same however it is sent and read, with %s", async module => {
+  test.each(
+    ["http", "http2"].flatMap(module => [
+      [module, "identity", "body"],
+      [module, "gzip", "zlib.gzipSync(body, { level: 1 })"],
+      [module, "br", "zlib.brotliCompressSync(body, { params: { 1: 1 } })"],
+      [module, "zstd", "zlib.zstdCompressSync(body)"],
+    ]),
+  )("a long body is the same however it is sent and read, with %s and %s", async (module, encoding, packed) => {
+    const digest = "d7c915682dfd3b334e8009644d0f31e03e061370";
     expect(
       await run(
         `const zlib = require("zlib");
-         const body = Buffer.from(Uint32Array.from({ length: 1_500_001 }, (_, i) => i * 2654435761 & 0x0f0f0f0f).buffer);
-         const packed = { identity: body, gzip: zlib.gzipSync(body), br: zlib.brotliCompressSync(body, { params: { 1: 1 } }), zstd: zlib.zstdCompressSync(body) };
+         const body = Buffer.from(Uint32Array.from({ length: 1_100_001 }, (_, i) => i * 2654435761 & 0x0f0f0f0f).buffer);
+         const packed = { ${encoding}: ${packed} };
          let resume;
          const handle = async (request, response) => {
            const [, encoding, framing] = request.url.split("/");
@@ -3774,8 +5000,8 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
            const digest = it => crypto.subtle.digest("SHA-1", it).then(it => new Uint8Array(it).toHex());
            const found = {};
            const note = (framing, result) => (found[framing] ??= new Set()).add(result);
-           for (const encoding of ["identity", "gzip", "br", "zstd"]) for (const framing of ["length", "chunked", "short"]) for (const name in readers) {
-             const url = "/" + [encoding, framing, name].join("/");
+           for (const framing of ["length", "chunked", "short"]) for (const name in readers) {
+             const url = "/" + ["${encoding}", framing, name].join("/");
              note(framing, await readers[name](url).then(digest, () => "failed"));
              note(framing, await fetch(url, { cache: "only-if-cached", mode: "same-origin" }).then(it => it.arrayBuffer()).then(digest, () => "failed"));
            }
@@ -3783,7 +5009,7 @@ describe.skipIf(!hasLibrary).concurrent("bun:desktop/electron", () => {
          })()\`));
          print(new Bun.CryptoHasher("sha1").update(body).digest("hex"));`,
       ),
-    ).toEqual([[[digestOfLongBody], [digestOfLongBody], ["failed"]], digestOfLongBody]);
+    ).toEqual([[[digest], [digest], ["failed"]], digest]);
   });
 
   test("a request for a buffer tells of its progress while the body is under way", async () => {
@@ -5038,26 +6264,29 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
   });
 
   test.each([
-    ["allow-scripts", "#b"],
-    ["allow-scripts allow-top-navigation", "#a"],
-  ])("a frame in the sandbox %s that goes back leaves the page at %s", async (flags, expected) => {
-    expect(
-      await run(`
+    ["allow-scripts", "#a"],
+    ["allow-scripts allow-top-navigation", ""],
+  ])(
+    "a frame in the sandbox %s goes back by two, then the page by one: it first gets to %j",
+    async (flags, expected) => {
+      expect(
+        await run(`
         app.trustOrigins(["app://trusted"], { inFrames: true });
-        serve({ "/": "", "/frame": "<script>onmessage = () => { history.back(); console.log('asked') }</script>" });
+        serve({ "/": "", "/frame": "<script>onmessage = () => { history.go(-2); console.log('asked') }</script>" });
         const page = await open();
         await page.executeJavaScript(\`
           history.pushState(null, "", "#a");
           history.pushState(null, "", "#b");
+          const first = new Promise(done => (onpopstate = () => done(location.hash)));
           const frame = Object.assign(document.createElement("iframe"), { sandbox: "${flags}", src: "/frame" });
           new Promise(done => document.body.appendChild(frame).onload = () => done())\`);
         const asked = new Promise(done => page.once("console-message", done));
         await page.executeJavaScript("frames[0].postMessage(0, '*')");
         await asked;
-        await new Promise(setImmediate);
-        print(await page.executeJavaScript("new Promise(done => setTimeout(done)).then(() => location.hash)"));`),
-    ).toEqual([expected]);
-  });
+        print(await page.executeJavaScript("history.back(), first"));`),
+      ).toEqual([expected]);
+    },
+  );
 
   test("what a frame may do is the same at the end of the stack", async () => {
     expect(
@@ -5082,6 +6311,25 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
         page.loadURL("app://trusted/");
         print(JSON.parse(await said));`),
     ).toEqual([[false, 0, "/frame"]]);
+  });
+
+  test("navigator.clipboard.write() copies pixels, and refuses if there are none", async () => {
+    expect(
+      await run(`
+        const { clipboard, nativeImage } = require("electron");
+        const png = nativeImage.createFromBitmap(Buffer.alloc(16, 255), { width: 2, height: 2 }).toPNG();
+        serve({ "/": "" });
+        const page = await open();
+        page.debugger.attach();
+        await page.debugger.sendCommand("Emulation.setFocusEmulationEnabled", { enabled: true });
+        const write = bytes => "navigator.clipboard.write([new ClipboardItem({ 'image/png': new Blob([Uint8Array.of(" + [...bytes] + ")], { type: 'image/png' }) })])";
+        clipboard.writeText("before");
+        print([await page.executeJavaScript(write(png.subarray(0, 40)) + ".catch(it => it.name)"), await clipboard.readText()]);
+        print(await page.executeJavaScript(write(Buffer.concat([png, Buffer.from("more")])) + ".then(() => navigator.clipboard.read()).then(([it]) => it.types)"));
+        const [item] = await clipboard.read();
+        const copied = Buffer.from(await (await item.getType("image/png")).arrayBuffer());
+        print([nativeImage.createFromBuffer(copied).getSize(), copied.includes("more")]);`),
+    ).toEqual([["DataError", "before"], ["image/png"], [{ width: 2, height: 2 }, false]]);
   });
 
   test("copyImageAt() copies pixels, and nothing if there are none", async () => {
@@ -6261,6 +7509,29 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
     ).toEqual([[1, ["from", "to", "from", "to"]]]);
   });
 
+  test("the SVG document of an <object> is as large as the object", async () => {
+    expect(
+      await run(`
+        app.trustOrigins([], { inFrames: true });
+        serve({
+          "/": "<!doctype html><object style='width: 60px' data=/a.svg></object>",
+          "/a.svg": () => new Response('<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="60px"/>', { headers: { "content-type": "image/svg+xml" } }),
+        });
+        const contents = await open();
+        print(await contents.executeJavaScript(\`{
+          const object = document.querySelector("object"), root = object.contentDocument.documentElement;
+          const size = () => [object.offsetHeight, root.getBoundingClientRect().height, root.clientWidth];
+          [size(), (object.style.height = "40px", size())];
+        }\`));
+      `),
+    ).toEqual([
+      [
+        [60, 60, 60],
+        [40, 40, 60],
+      ],
+    ]);
+  });
+
   test("the document of a frame without a box has no boxes", async () => {
     expect(
       await run(`
@@ -7025,6 +8296,34 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
     ]);
   });
 
+  test("the keys of sendInputEvent() are those of a US keyboard", async () => {
+    expect(
+      await run(`
+        serve({ "/": "<script>onkeydown = e => window.seen = [e.key, e.code, e.keyCode, e.location, e.shiftKey, e.getModifierState('CapsLock')].join()</script>" });
+        const page = await open();
+        for (const [keyCode, ...modifiers] of [["="], ["=", "shift"], ["Plus"], ["["], ["1", "shift"], ["=", "meta", "right"], ["A"], ["a", "capsLock"], ["Shift", "left"], ["Cmd"], ["num5"], ["numadd", "isKeypad"], ["VolumeUp"], ["\\t"], ["nonsense"]]) {
+          page.sendInputEvent({ type: "keyDown", keyCode, modifiers });
+          print(await page.executeJavaScript("seen"));
+        }`),
+    ).toEqual([
+      "=,Equal,187,0,false,false",
+      "+,Equal,187,0,true,false",
+      "+,Equal,187,0,true,false",
+      "[,BracketLeft,219,0,false,false",
+      "!,Digit1,49,0,true,false",
+      "=,Equal,187,2,false,false",
+      "a,KeyA,65,0,false,false",
+      "A,KeyA,65,0,false,true",
+      "Shift,ShiftLeft,16,1,false,false",
+      "Meta,MetaLeft,91,0,false,false",
+      "5,Numpad5,101,0,false,false",
+      "+,NumpadAdd,107,3,false,false",
+      "AudioVolumeUp,AudioVolumeUp,175,0,false,false",
+      "Tab,Tab,9,0,false,false",
+      ",,0,0,false,false",
+    ]);
+  });
+
   test("Tab goes through a frame", async () => {
     expect(
       await run(`
@@ -7285,6 +8584,651 @@ Wl86bTnDSjK/0uldmu6mDf4luAIga6yEvRPP4Pu3/VFxkGPjnsRbs/ArCjem4NdZ
         electron.Menu.getApplicationMenu().getMenuItemById("b").click();
         print([ipcMain._invokeHandlers.get("once")(), ipcMain._invokeHandlers.has("once"), ipcMain.emit("error")]);`),
     ).toEqual([[true, true, 1, "Title", {}], "clicked", [1, false, true]]);
+  });
+
+  describe("service workers", () => {
+    const runInApp = (main: string, files?: Record<string, string>, args?: string[], env?: object) =>
+      run(main, files, args, { BUN_DESKTOP_PAGE_PROCESSES: undefined, ...env });
+
+    /** `site(files)` is trusted, `foreign` is not. `control()` returns a page that `/worker.js` controls. */
+    const sites = `
+      const asked = [];
+      const site = files => Bun.serve({ port: 0, fetch(request) {
+        const { pathname } = new URL(request.url), file = files[pathname] ?? "<body>network";
+        asked.push(pathname);
+        if (typeof file === "function") return file(request);
+        return new Response(file, { headers: { "content-type": types[path.extname(pathname)] ?? "text/html", "access-control-allow-origin": "*" } });
+      } }).url.origin;
+      const foreign = site({ "/code.js": "self.ran = true", "/page": "<script>self.ran = true</script>" });
+      const claims = 'oninstall = () => skipWaiting(); onactivate = event => event.waitUntil(clients.claim());';
+      const control = async (worker, files, options) => {
+        const own = site({ "/worker.js": claims + worker, ...files });
+        app.trustOrigins([own], { inFrames: [own + "/*"] });
+        const page = await open(own + "/", options);
+        await page.executeJavaScript(\`new Promise((resolve, reject) => {
+          navigator.serviceWorker.oncontrollerchange = () => resolve();
+          navigator.serviceWorker.register("/worker.js").catch(reject);
+        })\`);
+        return [page, own];
+      };`;
+
+    test("one answers for its pages, their frames and their workers", async () => {
+      expect(
+        await runInApp(`${sites}
+          const [page, own] = await control(
+            \`onfetch = event => {
+              const { request } = event;
+              if (request.url.includes("/answered"))
+                event.respondWith(request.text().then(body => new Response([request.mode, request.destination, body], { headers: { "content-type": "text/html" } })));
+            };
+            onmessage = event => event.source.postMessage([event.data, event.source.type, typeof require, typeof process, typeof Bun]);\`,
+            { "/dedicated.js": 'fetch("/answered").then(it => it.text()).then(postMessage)' },
+          );
+          print(await page.executeJavaScript(\`(async () => {
+            const message = target => new Promise(resolve => (target.onmessage = event => resolve(event.data)));
+            const frame = document.createElement("iframe"), loaded = new Promise(resolve => (frame.onload = resolve));
+            frame.src = "/answered";
+            document.body.append(frame);
+            await loaded;
+            navigator.serviceWorker.controller.postMessage("ping");
+            return [
+              await message(navigator.serviceWorker),
+              await (await fetch("/answered", { method: "POST", body: "sent" })).text(),
+              await (await fetch("/other")).text(),
+              frame.contentDocument.body.textContent,
+              await message(new Worker("/dedicated.js")),
+            ];
+          })()\`));
+          await page.loadURL(own + "/answered");
+          print([await page.executeJavaScript("document.body.textContent"), asked.includes("/answered")]);`),
+      ).toEqual([
+        [
+          ["ping", "window", "undefined", "undefined", "undefined"],
+          "cors,,sent",
+          "<body>network",
+          "navigate,iframe,",
+          "cors,,",
+        ],
+        ["navigate,document,", false],
+      ]);
+    });
+
+    test("none runs code from an origin that is not trusted", async () => {
+      expect(
+        await runInApp(`${sites}
+          const own = site({
+            "/moved.js": () => Response.redirect(foreign + "/code.js"),
+            "/imports.js": \`importScripts("\${foreign}/code.js")\`,
+            "/imports-moved.js": 'importScripts("/moved.js")',
+            "/module.js": \`import "\${foreign}/code.js"\`,
+            "/excepted.js": "",
+            "/harmless.js": "",
+          });
+          app.trustOrigins([own], { except: [own + "/excepted.js"] });
+          const page = await open(own + "/");
+          for (const [url, type] of [[foreign + "/code.js"], ["/moved.js"], ["/imports.js"], ["/imports-moved.js"], ["/module.js", "module"], ["/excepted.js"], ["/harmless.js"]])
+            print(await page.executeJavaScript(\`navigator.serviceWorker.register("\${url}", { type: "\${type ?? "classic"}" }).then(it => "registered", error => error.name)\`));`),
+      ).toEqual([
+        "SecurityError",
+        "SecurityError",
+        "TypeError",
+        "TypeError",
+        "TypeError",
+        "SecurityError",
+        "registered",
+      ]);
+    });
+
+    test.each([
+      ["what it has fetched", `fetch(foreign)`],
+      ["what it has fetched without CORS", `fetch(foreign, { mode: "no-cors" })`],
+      ["a clone", `fetch(foreign).then(it => it.clone())`],
+      ["what a redirect has led to", `fetch("/moved" + to)`],
+      ["a redirect", `Response.redirect(foreign)`],
+      ["what it passes on", `fetch(event.request).then(it => new Response(it.body, it))`],
+      ["what it asks for by the same URL", `fetch(event.request.url).then(it => new Response(it.body, it))`],
+      ["what it has got when it was installed", `early.then(it => it.clone())`],
+      [
+        "what it has cached",
+        `caches.open("a").then(async cache => (await cache.put(event.request, await fetch(foreign)), cache.match(event.request)))`,
+      ],
+    ])("%s from an origin that is not trusted is not code", async (_, answer) => {
+      expect(
+        await runInApp(`${sites}
+          const [page, own] = await control(
+            \`const early = fetch("/moved/code.js").then(async it => new Response(await it.text(), it));
+            addEventListener("install", event => event.waitUntil(early.catch(() => {})));
+            onfetch = event => {
+              const to = new URL(event.request.url).search.slice(1), foreign = "\${foreign}" + to;
+              if (to) event.respondWith(${answer});
+            };\`,
+            Object.fromEntries(["/moved/code.js", "/moved/page", "/a", "/b", "/c", "/d", "/e"].map(it => [it, ({ url }) => Response.redirect(foreign + (new URL(url).search.slice(1) || it.slice(6)))])),
+          );
+          print(await page.executeJavaScript(\`(async () => {
+            const load = (name, more) => new Promise(resolve => {
+              const element = Object.assign(document.createElement(name), more, { onload: () => resolve(element), onerror: () => resolve(element) });
+              document.body.append(element);
+            });
+            await load("script", { src: "/a?/code.js" });
+            await load("script", { src: "/b?/code.js", type: "module" });
+            await import("/c?/code.js").catch(() => {});
+            const frame = await load("iframe", { src: "/d?/page" });
+            const worker = new Worker("/e?/code.js");
+            await new Promise(resolve => (worker.onerror = resolve));
+            return [self.ran, frame.contentDocument?.defaultView.ran].map(String);
+          })()\`));`),
+      ).toEqual([["undefined", "undefined"]]);
+    });
+
+    test("an update does not follow an import to an origin that is not trusted", async () => {
+      expect(
+        await runInApp(`${sites}
+          let times = 0;
+          const [page] = await control('importScripts("/imported.js")', {
+            "/imported.js": () => times++ ? Response.redirect(foreign + "/code.js") : new Response("", { headers: { "content-type": "text/javascript" } }),
+          });
+          print(await page.executeJavaScript("navigator.serviceWorker.ready.then(it => it.update()).then(it => [it.installing, it.waiting])"));
+          print([times, asked.includes("/code.js")]);`),
+      ).toEqual([
+        [null, null],
+        [2, false],
+      ]);
+    });
+
+    test("what an origin keeps is counted and has limits", async () => {
+      expect(
+        await runInApp(`${sites}
+          const script = text => () => new Response(text, { headers: { "content-type": "text/javascript" } });
+          const [page] = await control("//" + Buffer.alloc(1 << 20, "a"), {
+            "/empty.js": "",
+            "/large.js": script(Buffer.alloc(33 << 20, " ")),
+            "/imports.js": 'importScripts("/half.js?1", "/half.js?2")',
+            "/half.js": script(Buffer.alloc(17 << 20, " ")),
+            "/routes.js": \`oninstall = event => {
+              let condition = { requestMethod: "GET" };
+              for (let i = 0; i < 9; i++) condition = { or: Array(50).fill(condition) };
+              event.waitUntil(event.addRoutes({ condition, source: "network" }));
+            };\`,
+          });
+          print(await page.executeJavaScript(\`(async () => {
+            const outcome = promise => promise.then(() => "done", error => error.name);
+            const { serviceWorker } = navigator, own = await serviceWorker.ready;
+            const register = (url, scope) => serviceWorker.register(url, { scope });
+            const usage = async () => (await navigator.storage.estimate()).usageDetails.serviceWorkerRegistrations >> 20;
+            const names = count => Array.from({ length: count }, (_, i) => ({ name: "n" + i }));
+            const { installing } = await register("/routes.js", "/routes");
+            await new Promise(resolve => (installing.onstatechange = resolve));
+            const result = [
+              await usage(),
+              installing.state,
+              await outcome(own.cookies.subscribe(names(101))),
+              await outcome(own.cookies.subscribe(names(100))),
+              await outcome(own.navigationPreload.setHeaderValue("a".repeat(1 << 20))),
+              await outcome(register("/large.js", "/large")),
+              await outcome(register("/imports.js", "/imports")),
+              await outcome(register("/empty.js", "/" + "a".repeat(400 << 10))),
+              await outcome(register("/empty.js", "/" + "b".repeat(400 << 10))),
+              new Set(await Promise.all(Array.from({ length: 300 }, () => outcome(own.update())))).size,
+            ];
+            return result;
+          })()\`));
+          await page.session.clearStorageData({ storages: ["serviceworkers"] });
+          print(await page.executeJavaScript("navigator.storage.estimate().then(it => it.usageDetails)"));`),
+      ).toEqual([
+        [
+          1,
+          "redundant",
+          "QuotaExceededError",
+          "done",
+          "QuotaExceededError",
+          "TypeError",
+          "TypeError",
+          "done",
+          "QuotaExceededError",
+          2,
+        ],
+        {},
+      ]);
+    });
+
+    test("no more than 32 of an origin run at once", async () => {
+      expect(
+        await runInApp(`${sites}
+          const [page] = await control("", { "/echo.js": "onmessage = event => event.source.postMessage(registration.scope)" });
+          print(await page.executeJavaScript(\`(async () => {
+            const { serviceWorker } = navigator, all = [];
+            for (let i = 0; i < 40; i++) {
+              const { installing } = await serviceWorker.register("/echo.js", { scope: "/" + i });
+              while (installing.state !== "activated") await new Promise(resolve => (installing.onstatechange = resolve));
+              all.push(installing);
+            }
+            all[0].postMessage("");
+            return new URL((await new Promise(resolve => (serviceWorker.onmessage = resolve))).data).pathname;
+          })()\`));
+          print(Object.keys(page.session.serviceWorkers.getAllRunning()).length);`),
+      ).toEqual(["/0", 32]);
+    });
+
+    test("those that have failed to install count too", async () => {
+      expect(
+        await runInApp(`${sites}
+          const [page] = await control("", {
+            "/fails.js": \`oninstall = event => event.waitUntil(new Promise((_, reject) => {
+              onmessage = event => (event.waitUntil(new Promise(() => {})), reject());
+            }));\`,
+          });
+          let [running, most] = [0, 0];
+          page.session.serviceWorkers.on("running-status-changed", ({ runningStatus }) => {
+            running += { starting: 1, stopped: -1 }[runningStatus] ?? 0;
+            most = Math.max(most, running);
+          });
+          await page.executeJavaScript(\`(async () => {
+            for (let i = 0; i < 40; i++) {
+              const { installing } = await navigator.serviceWorker.register("/fails.js", { scope: "/" + i });
+              installing.postMessage("");
+              await new Promise(resolve => (installing.onstatechange = resolve));
+            }
+          })()\`);
+          print(most <= 32);`),
+      ).toEqual([true]);
+    });
+
+    test("no more than 8 of an origin are loaded at once", async () => {
+      expect(
+        await runInApp(`${sites}
+          const [all, eight] = [Promise.withResolvers(), Promise.withResolvers()];
+          let [held, most] = [0, 0];
+          const [page] = await control("", {
+            "/held.js": async () => {
+              most = Math.max(most, ++held);
+              if (held === 8) eight.resolve();
+              await all.promise;
+              held--;
+              return new Response("", { headers: { "content-type": "text/javascript" } });
+            },
+            "/release": async () => {
+              await eight.promise;
+              for (let i = 0; i < 20; i++) await fetch(foreign);
+              all.resolve();
+              return new Response();
+            },
+          });
+          print(await page.executeJavaScript(\`(async () => {
+            const all = Array.from({ length: 40 }, (_, i) => navigator.serviceWorker.register("/held.js", { scope: "/" + i }));
+            await fetch("/release");
+            return (await Promise.all(all)).length;
+          })()\`));
+          print(most);`),
+      ).toEqual([40, 8]);
+    });
+
+    test("a notification has a largest size", async () => {
+      expect(
+        await runInApp(`${sites}
+          const [page] = await control("");
+          print(await page.executeJavaScript(\`navigator.serviceWorker.ready.then(own => Promise.all(
+            [{ data: "a".repeat(1 << 20) + "a" }, { data: new Uint8Array(2 << 20) }, { body: "a".repeat(2 << 20) }, { data: "a" }]
+              .map(it => own.showNotification("", it).then(() => "shown", error => error.name)),
+          ))\`));`),
+      ).toEqual([["TypeError", "TypeError", "TypeError", "shown"]]);
+    });
+
+    test("an opaque response is only served once", async () => {
+      expect(
+        await runInApp(`${sites}
+          const [page] = await control(\`
+            let kept;
+            onfetch = event => event.respondWith((kept ??= fetch("\${foreign}/code.js", { mode: "no-cors" })));\`);
+          print(await page.executeJavaScript(\`(async () => {
+            const ask = () => fetch("/a", { mode: "no-cors" }).then(it => it.type, error => error.name);
+            return [await ask(), await ask()];
+          })()\`));`),
+      ).toEqual([["opaque", "TypeError"]]);
+    });
+
+    test("none sees what a preload script asks for", async () => {
+      expect(
+        await runInApp(
+          `${sites}
+          const [page] = await control('onfetch = event => event.respondWith(new Response("worker"))', {}, preload);
+          page.send("go");
+          print((await once(page.ipc, "got"))[1]);
+          print(await page.executeJavaScript('fetch("/").then(it => it.text())'));`,
+          {
+            "preload.js": `
+              const { ipcRenderer } = require("electron");
+              ipcRenderer.on("go", async () => {
+                const request = new XMLHttpRequest(), loaded = new Promise(resolve => (request.onload = resolve));
+                request.open("GET", "/");
+                request.send();
+                await loaded;
+                ipcRenderer.send("got", [await (await fetch("/")).text(), await (await Promise.resolve("/").then(fetch)).text(), request.response]);
+              });`,
+          },
+        ),
+      ).toEqual([Array(3).fill("<body>network"), "worker"]);
+    });
+
+    test("a cache does not give away the size of an opaque response", async () => {
+      expect(
+        await runInApp(`${sites}
+          const image = size => () => new Response(new Uint8Array(size), { headers: { "content-type": "image/png" } });
+          const other = site({ "/a": image(10), "/b": image(54321) }), [page] = await control("");
+          print(await page.executeJavaScript(\`(async () => {
+            const cache = await caches.open("a"), usage = async () => (await navigator.storage.estimate()).usage, added = [];
+            for (const name of ["/a", "/b"]) {
+              const before = await usage();
+              await cache.put(name, await fetch("\${other}" + name, { mode: "no-cors" }));
+              added.push((await usage()) - before);
+            }
+            return added[0] === added[1];
+          })()\`));`),
+      ).toEqual([true]);
+    });
+
+    test("a scheme of the app has them if it says so", async () => {
+      expect(
+        await runInApp(
+          `for (const scheme of ["with", "without"])
+            protocol.handle(scheme, ({ url }) =>
+              url.endsWith("/worker.js")
+                ? new Response('onactivate = event => event.waitUntil(clients.claim()); onfetch = event => event.respondWith(new Response("self.from = 1", { headers: { "content-type": "text/javascript" } }))', { headers: { "content-type": "text/javascript" } })
+                : new Response("self.from = 2", { headers: { "content-type": url.endsWith(".js") ? "text/javascript" : "text/html" } }));
+          app.trustOrigins(["with://trusted", "without://trusted"]);
+          print(await (await open("without://trusted/")).executeJavaScript('navigator.serviceWorker.register("/worker.js").then(() => "registered", error => error.name)'));
+          print(await (await open("with://trusted/")).executeJavaScript(\`(async () => {
+            navigator.serviceWorker.register("/worker.js");
+            await new Promise(resolve => (navigator.serviceWorker.oncontrollerchange = resolve));
+            await import("/code.js");
+            return [await (await fetch("/data")).text(), self.from];
+          })()\`));`,
+          {
+            "package.json": JSON.stringify({ name: "fixture", main: "first.js" }),
+            "first.js": `
+              const { protocol } = require("electron"), register = protocol.registerSchemesAsPrivileged;
+              const privileges = { standard: true, secure: true, supportFetchAPI: true };
+              protocol.registerSchemesAsPrivileged = all => register.call(protocol, [
+                ...all,
+                { scheme: "with", privileges: { ...privileges, allowServiceWorkers: true } },
+                { scheme: "without", privileges },
+              ]);
+              require("./main.js");`,
+          },
+        ),
+      ).toEqual(["TypeError", ["self.from = 1", 1]]);
+    });
+
+    test.skipIf(isWindows)("a registration outlives the app", async () => {
+      expect(
+        await runInApp(
+          `${sites}
+          const again = process.argv.find(it => it.startsWith("http:"));
+          if (again) {
+            app.trustOrigins([again]);
+            return print(await (await open(again + "/offline")).executeJavaScript("document.body.textContent"));
+          }
+          const [, own] = await control(
+            'importScripts("/imported.js"); onfetch = event => event.respondWith(new Response(text, { headers: { "content-type": "text/html" } }));',
+            { "/imported.js": 'var text = "kept"' },
+          );
+          app.relaunch({ args: ["--preload=bun:desktop/electron", ".", own] });
+          print("registered");`,
+          {},
+          [],
+          { BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
+        ),
+      ).toEqual(["registered", "kept"]);
+    });
+
+    test.skipIf(isWindows)("one that nothing needs cannot give itself more to do", async () => {
+      const heard: string[] = [];
+      const [first, last] = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+      using server = Bun.serve({
+        port: 0,
+        async fetch(request) {
+          const { pathname, search } = new URL(request.url);
+          if (pathname === "/first") await first.promise;
+          if (pathname === "/last") await last.promise;
+          if (pathname === "/heard") (heard.push(search), (search.startsWith("?last") ? last : first).resolve());
+          if (pathname !== "/worker.js") return new Response("", { headers: { "content-type": "text/html" } });
+          const script = `let count = 0;
+            oncookiechange = event => event.waitUntil((async () => {
+              if (event.changed[0]?.value === "last") return fetch("/heard?last," + count);
+              if (++count > 1) return;
+              await cookieStore.set("a", "own");
+              await cookieStore.set({ name: "a", value: "brief", maxAge: 1 });
+              const { expires } = await cookieStore.get("a");
+              while (Date.now() <= expires) await new Promise(resolve => setTimeout(resolve, 20));
+              await fetch("/heard?" + await registration.update().then(() => "updated", error => error.name), { credentials: "omit" });
+            })());`;
+          return new Response(script, { headers: { "content-type": "text/javascript" } });
+        },
+      });
+      await runInApp(
+        `${sites}
+        const url = "${server.url.origin}", other = site({});
+        app.trustOrigins([url, other]);
+        if (process.argv.includes("again")) {
+          const { cookies } = session.defaultSession;
+          await open(other);
+          await cookies.set({ url, name: "a", value: "first" });
+          await fetch(url + "/first");
+          await cookies.set({ url, name: "a", value: "last" });
+          return print((await fetch(url + "/last")).status);
+        }
+        await (await open(url)).executeJavaScript(\`navigator.serviceWorker.register("/worker.js")
+          .then(() => navigator.serviceWorker.ready).then(it => it.cookies.subscribe([{ name: "a" }]))\`);
+        app.relaunch({ args: ["--preload=bun:desktop/electron", ".", "again"] });
+        print(0);`,
+        {},
+        [],
+        { BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
+      );
+      expect(heard).toEqual(["?AbortError", "?last,1"]);
+    });
+
+    test.skipIf(isWindows)("two instances of the app do not mix up their scripts", async () => {
+      expect(
+        await runInApp(`${sites}
+          const says = text => \`onmessage = event => event.source.postMessage("\${text}");\`;
+          if (process.argv.includes("second")) {
+            await control("");
+            process.send("started");
+            await once(process, "message");
+            return void (await control(says("second")));
+          }
+          await control("");
+          const started = Promise.withResolvers();
+          const second = Bun.spawn([process.execPath, "--preload=bun:desktop/electron", ".", "second"], { ipc: started.resolve });
+          await started.promise;
+          await control("");
+          const [page] = await control(says("first"), { "/empty.js": "" });
+          second.send("");
+          await second.exited;
+          print(await page.executeJavaScript(\`(async () => {
+            const { serviceWorker } = navigator;
+            for (let i = 0; i < 32; i++) {
+              const { installing } = await serviceWorker.register("/empty.js", { scope: "/" + i });
+              while (installing.state !== "activated") await new Promise(resolve => (installing.onstatechange = resolve));
+            }
+            serviceWorker.controller.postMessage("");
+            return new Promise(resolve => {
+              serviceWorker.onmessage = event => resolve(event.data);
+              serviceWorker.controller.onstatechange = event => resolve(event.target.state);
+            });
+          })()\`));`),
+      ).toEqual(["first"]);
+    });
+
+    test.skipIf(isWindows)("what is on the disk does not pass for a compiled script", async () => {
+      using server = Bun.serve({
+        port: 0,
+        fetch: ({ url }) =>
+          url.endsWith(".js")
+            ? new Response(`onfetch = event => event.respondWith(new Response("worker"));`, {
+                headers: { "content-type": "text/javascript" },
+              })
+            : new Response("network", { headers: { "content-type": "text/html" } }),
+      });
+      expect(
+        await runInApp(
+          `
+          const url = "${server.url.origin}";
+          app.trustOrigins([url]);
+          if (process.argv.includes("again")) {
+            const file = path.join(app.getPath("userData"), "Service Workers"), bytes = require("fs").readFileSync(file);
+            bytes[bytes.indexOf("/worker.js") + "/worker.js".length] |= 4;
+            require("fs").writeFileSync(file, bytes);
+            app.setCompiledScripts({}, { exclusive: true });
+            return print(await (await open(url)).executeJavaScript('fetch("/a").then(it => it.text())'));
+          }
+          await (await open(url)).executeJavaScript('navigator.serviceWorker.register("/worker.js").then(() => navigator.serviceWorker.ready).then(() => {})');
+          app.relaunch({ args: ["--preload=bun:desktop/electron", ".", "again"] });
+          print("registered");`,
+          {},
+          [],
+          { BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
+        ),
+      ).toEqual(["registered", "network"]);
+    });
+
+    test("the app hears of them, and clears them", async () => {
+      expect(
+        await runInApp(`${sites}
+          const { serviceWorkers } = session.defaultSession, heard = [];
+          serviceWorkers.on("registration-completed", (_, it) => heard.push(new URL(it.scope).pathname));
+          serviceWorkers.on("running-status-changed", it => heard.push(it.runningStatus));
+          serviceWorkers.on("console-message", (_, it) => heard.push([it.message, it.level, it.source, new URL(it.sourceUrl).pathname]));
+          const [page, own] = await control('console.warn("hello")');
+          const [[id, running]] = Object.entries(serviceWorkers.getAllRunning());
+          print([running.scope === own + "/", running.scriptUrl === own + "/worker.js", serviceWorkers.getInfoFromVersionID(+id).scope === running.scope]);
+          const stopped = new Promise(resolve => serviceWorkers.on("running-status-changed", it => it.runningStatus === "stopped" && resolve()));
+          await session.defaultSession.clearStorageData({ storages: ["serviceworkers"] });
+          await stopped;
+          print(heard);
+          print([serviceWorkers.getAllRunning(), await page.executeJavaScript("navigator.serviceWorker.getRegistrations().then(it => [it.length, navigator.serviceWorker.controller])")]);`),
+      ).toEqual([
+        [true, true, true],
+        ["starting", ["hello", 2, "console-api", "/worker.js"], "running", "/", "stopping", "stopped"],
+        [{}, [0, null]],
+      ]);
+    });
+
+    test("one is told when a request is given up, and of cookies", async () => {
+      expect(
+        await runInApp(`${sites}
+          const [page] = await control(\`
+            const tell = async it => (await clients.matchAll())[0].postMessage(it);
+            onfetch = event => {
+              event.request.signal.onabort = () => tell("aborted");
+              event.respondWith(new Promise(() => {}));
+              tell("asked");
+            };
+            oncookiechange = event => tell(event.changed.map(it => it.name + "=" + it.value));\`);
+          print(await page.executeJavaScript(\`(async () => {
+            const message = () => new Promise(resolve => (navigator.serviceWorker.onmessage = event => resolve(event.data)));
+            const controller = new AbortController(), failed = fetch("/never", controller).catch(error => error.name);
+            const heard = [await message()];
+            controller.abort();
+            heard.push(await message(), await failed);
+            await (await navigator.serviceWorker.ready).cookies.subscribe([{ name: "b" }]);
+            document.cookie = "a=1";
+            document.cookie = "b=2";
+            return [...heard, await message()];
+          })()\`));`),
+      ).toEqual([["asked", "aborted", "AbortError", ["b=2"]]]);
+    });
+
+    test("routes are taken without asking it", async () => {
+      expect(
+        await runInApp(`${sites}
+          const [page] = await control(\`
+            addEventListener("install", event => event.waitUntil(Promise.all([
+              event.addRoutes([
+                { condition: { urlPattern: "/network/*" }, source: "network" },
+                { condition: { urlPattern: { pathname: "/cached" }, requestMethod: "get" }, source: { cacheName: "a" } },
+              ]),
+              caches.open("a").then(cache => cache.put("/cached", new Response("cache"))),
+            ])));
+            onfetch = event => event.respondWith(new Response("worker"));\`);
+          print(await page.executeJavaScript(\`Promise.all([["/network/a"], ["/cached"], ["/cached", { method: "POST" }], ["/other"]].map(async it => (await fetch(...it)).text()))\`));`),
+      ).toEqual([["<body>network", "cache", "worker", "worker"]]);
+    });
+
+    test("a notification is up to the app", async () => {
+      expect(
+        await runInApp(`${sites}
+          const [page] = await control("");
+          const show = () => page.executeJavaScript(\`navigator.serviceWorker.ready.then(async it => {
+            await it.showNotification("Title", { tag: "a", data: { b: 1 }, actions: [{ action: "c", title: "C" }] });
+            const [[shown], none] = [await it.getNotifications(), await it.getNotifications({ tag: "other" })];
+            shown.close();
+            return [shown.title, shown.tag, shown.data, shown.actions, none.length, (await it.getNotifications()).length];
+          }).catch(error => error.name)\`);
+          print(await show());
+          session.defaultSession.setPermissionCheckHandler((_, name) => name !== "notifications");
+          print(await show());`),
+      ).toEqual([["Title", "a", { b: 1 }, [{ action: "c", title: "C" }], 0, 0], "TypeError"]);
+    });
+
+    test.skipIf(isWindows)("a page in a process of its own has none", async () => {
+      expect(
+        await run(
+          `${sites}
+          const own = site({ "/worker.js": "" });
+          app.trustOrigins([own]);
+          const page = await open(own + "/");
+          print([await page.executeJavaScript(\`navigator.serviceWorker.register("/worker.js").catch(error => error.name)\`), asked]);`,
+          {},
+          [],
+          { BUN_DESKTOP_PAGE_PROCESSES: "1" },
+        ),
+      ).toEqual([["SecurityError", ["/"]]]);
+    });
+  });
+
+  test("the storage of a frame that has been removed is out of reach", async () => {
+    expect(
+      await run(`
+        using server = Bun.serve({ port: 0, fetch: () => new Response("", { headers: { "content-type": "text/html" } }) });
+        app.trustOrigins([server.url.origin], { inFrames: true });
+        print(await (await open(server.url.href)).executeJavaScript(\`(async () => {
+          const frame = Object.assign(document.createElement("iframe"), { src: "/frame" });
+          await new Promise(resolve => document.body.append(Object.assign(frame, { onload: resolve })));
+          const all = [frame.contentWindow.localStorage, frame.contentWindow.sessionStorage];
+          all.forEach(it => (it.a = "1"));
+          frame.remove();
+          const uses = [it => it.length, it => it.key(0), it => it.a, it => (it.b = 2), it => delete it.a, it => Object.keys(it), it => it.clear()];
+          const attempt = (use, it) => { try { return use(it); } catch (error) { return error.name; } };
+          return [new Set(all.flatMap(it => uses.map(use => attempt(use, it)))).values().toArray(), { ...localStorage }, { ...sessionStorage }];
+        })()\`));`),
+    ).toEqual([[["SecurityError"], { a: "1" }, { a: "1" }]]);
+  });
+
+  test("timers that are set once a timer has settled a promise are nested", async () => {
+    expect(
+      await run(`
+        serve({ "/": "" });
+        print(await (await open()).executeJavaScript(\`(async () => {
+          const start = performance.now();
+          for (let i = 0; i < 15; i++) await new Promise(resolve => setTimeout(resolve));
+          return performance.now() - start >= 9 * 4;
+        })()\`));`),
+    ).toEqual([true]);
+  });
+
+  test("the cookies of a document are those of the URL that it came from", async () => {
+    expect(
+      await run(`
+        const { url } = Bun.serve({ port: 0, fetch: () => new Response("<iframe></iframe>", { headers: { "content-type": "text/html" } }) });
+        app.trustOrigins([url.origin], { inFrames: true });
+        print(await (await open(url.href + "a/")).executeJavaScript(\`(async () => {
+          document.cookie = "a=1";
+          document.cookie = "b=2; path=/b";
+          history.pushState(null, "", "/b/");
+          return [document.cookie, (await cookieStore.getAll()).map(it => it.name), frames[0].document.cookie];
+        })()\`));`),
+    ).toEqual([["a=1", ["a"], "a=1"]]);
   });
 });
 

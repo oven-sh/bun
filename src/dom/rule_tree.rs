@@ -514,7 +514,9 @@ impl Rule {
                             .split_ascii_whitespace()
                             .map(|it| it.parse().ok())
                             .collect();
-                        if let Some(values) = values.filter(|it| !important && kind.takes(it)) {
+                        if let Some(values) = values
+                            .filter(|it| !important && kind.takes(it) && !name[0].is_ascii_digit())
+                        {
                             set_feature(&mut all[kind as usize].1, name, values);
                         }
                     },

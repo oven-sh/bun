@@ -174,24 +174,27 @@ using namespace WebGlobals;
 
 const ClassInfo WebGlobalObject::s_info = { "GlobalObject"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(WebGlobalObject) };
 
-#define FOR_EACH_WEB_GLOBAL_INFO(macro)                                                                                                                               \
-    macro(everywhere, "GlobalObject", s_info, everywhereTable)                                                                                                        \
-        macro(document, "Window", everywhere, documentTable)                                                                                                          \
-            macro(window, "Window", document, windowTable)                                                                                                            \
-                macro(preloadWindow, "Window", window, nodeTable)                                                                                                     \
-                    macro(nodeWindow, "Window", preloadWindow, nodeIntegrationTable)                                                                                  \
-                        macro(secureWindowBase, "Window", window, secureTable)                                                                                        \
-                            macro(secureWindow, "Window", secureWindowBase, secureWindowTable)                                                                        \
-                                macro(securePreloadWindow, "Window", secureWindow, nodeTable)                                                                         \
-                                    macro(secureNodeWindow, "Window", securePreloadWindow, nodeIntegrationTable)                                                      \
-                                        macro(worker, "WorkerGlobalScope", everywhere, workerTable)                                                                   \
-                                            macro(dedicatedWorker, "DedicatedWorkerGlobalScope", worker, dedicatedWorkerTable)                                        \
-                                                macro(secureDedicatedWorkerBase, "DedicatedWorkerGlobalScope", dedicatedWorker, secureTable)                          \
-                                                    macro(secureDedicatedWorker, "DedicatedWorkerGlobalScope", secureDedicatedWorkerBase, secureDedicatedWorkerTable) \
-                                                        macro(sharedWorker, "SharedWorkerGlobalScope", worker, sharedWorkerTable)                                     \
-                                                            macro(secureSharedWorker, "SharedWorkerGlobalScope", sharedWorker, secureTable)                           \
-                                                                macro(documentOfProgram, "Window", s_infoWithBunGlobals, documentTable)                               \
-                                                                    macro(windowOfProgram, "Window", documentOfProgram, windowOfProgramTable)
+#define FOR_EACH_WEB_GLOBAL_INFO(macro)                                                                                                                                   \
+    macro(everywhere, "GlobalObject", s_info, everywhereTable)                                                                                                            \
+        macro(document, "Window", everywhere, documentTable)                                                                                                              \
+            macro(window, "Window", document, windowTable)                                                                                                                \
+                macro(preloadWindow, "Window", window, nodeTable)                                                                                                         \
+                    macro(nodeWindow, "Window", preloadWindow, nodeIntegrationTable)                                                                                      \
+                        macro(secureWindowBase, "Window", window, secureTable)                                                                                            \
+                            macro(secureWindow, "Window", secureWindowBase, secureWindowTable)                                                                            \
+                                macro(securePreloadWindow, "Window", secureWindow, nodeTable)                                                                             \
+                                    macro(secureNodeWindow, "Window", securePreloadWindow, nodeIntegrationTable)                                                          \
+                                        macro(worker, "WorkerGlobalScope", everywhere, workerTable)                                                                       \
+                                            macro(ownedWorker, "WorkerGlobalScope", worker, ownedWorkerTable)                                                             \
+                                                macro(dedicatedWorker, "DedicatedWorkerGlobalScope", ownedWorker, dedicatedWorkerTable)                                   \
+                                                    macro(secureDedicatedWorkerBase, "DedicatedWorkerGlobalScope", dedicatedWorker, secureTable)                          \
+                                                        macro(secureDedicatedWorker, "DedicatedWorkerGlobalScope", secureDedicatedWorkerBase, secureDedicatedWorkerTable) \
+                                                            macro(sharedWorker, "SharedWorkerGlobalScope", ownedWorker, sharedWorkerTable)                                \
+                                                                macro(secureSharedWorker, "SharedWorkerGlobalScope", sharedWorker, secureTable)                           \
+                                                                    macro(serviceWorkerBase, "ServiceWorkerGlobalScope", worker, secureTable)                             \
+                                                                        macro(serviceWorker, "ServiceWorkerGlobalScope", serviceWorkerBase, serviceWorkerTable)           \
+                                                                            macro(documentOfProgram, "Window", s_infoWithBunGlobals, documentTable)                       \
+                                                                                macro(windowOfProgram, "Window", documentOfProgram, windowOfProgramTable)
 
 struct WebGlobalObject::ClassInfos {
 #define DECLARE_WEB_GLOBAL_INFO(name, className, parent, table) static const ClassInfo name;
@@ -349,6 +352,8 @@ static const ClassInfo* classInfoOf(WebGlobalObject::Kind kind)
         return kind.isSecureContext ? &ClassInfos::secureDedicatedWorker : &ClassInfos::dedicatedWorker;
     case WebGlobalObject::Scope::SharedWorker:
         return kind.isSecureContext ? &ClassInfos::secureSharedWorker : &ClassInfos::sharedWorker;
+    case WebGlobalObject::Scope::ServiceWorker:
+        return &ClassInfos::serviceWorker;
     case WebGlobalObject::Scope::Window:
         break;
     }
@@ -398,7 +403,7 @@ WebGlobalObject* WebGlobalObject::create(VM& vm, const ClassInfo* classInfo, Kin
     auto* structure = Structure::create(vm, nullptr, jsNull(), TypeInfo(GlobalObjectType, (StructureFlags & ~IsImmutablePrototypeExoticObject) | InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero), classInfo);
     structure->setTransitionWatchpointIsLikelyToBeFired(true);
     auto* realm = new (NotNull, allocateCell<WebGlobalObject>(vm)) WebGlobalObject(vm, structure, scriptExecutionContextId, methodTable);
-    static constexpr uint8_t exposures[] = { Bindgen::Exposure::Window, Bindgen::Exposure::DedicatedWorker, Bindgen::Exposure::SharedWorker };
+    static constexpr uint8_t exposures[] = { Bindgen::Exposure::Window, Bindgen::Exposure::DedicatedWorker, Bindgen::Exposure::SharedWorker, Bindgen::Exposure::ServiceWorker };
     realm->m_bindgenAdditions.m_exposure = exposures[static_cast<unsigned>(kind.scope)] | (kind.isSecureContext ? Bindgen::Exposure::SecureContext : 0);
     realm->m_realm = Bun__WebRealm__create(realm, kind.scope, kind.isSecureContext, kind.isCrossOriginIsolated);
     realm->finishCreation(vm);

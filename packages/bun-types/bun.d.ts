@@ -4223,6 +4223,13 @@ declare module "bun" {
     infoPlist?: Record<string, unknown>;
     /** The program starts in a window, like with `--preload=bun:desktop/dom`. */
     dom?: boolean;
+    /**
+     * HTML files whose scripts are compiled, and scripts that pages load by computed URLs.
+     * Paths or glob patterns. Only with `aot`.
+     */
+    pages?: string | string[];
+    /** Preload scripts to compile. Paths or glob patterns. Only with `aot`. */
+    preloads?: string | string[];
   }
 
   /**

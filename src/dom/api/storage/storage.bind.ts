@@ -38,12 +38,12 @@ export const WebStorage = b.interface("WebStorage", {
   internalFields: { window: b.ref("DomWindow") },
   named: { getter: string, setter: true, deleter: true, ...runs },
   proto: {
-    length: { getter: b.u32 },
-    key: { args: { index: b.u32.wrap }, returns: atom.nullable, ...heap },
-    getItem: { args: { key: atom }, returns: string.nullable, ...heap },
+    length: { getter: b.u32, ...heap, throws: true },
+    key: { args: { index: b.u32.wrap }, returns: atom.nullable, ...heap, throws: true },
+    getItem: { args: { key: atom }, returns: string.nullable, ...heap, throws: true },
     setItem: { args: { key: atom, value: string }, ...runs },
-    removeItem: { args: { key: atom }, capability: "js" },
-    clear: { capability: "js" },
+    removeItem: { args: { key: atom }, ...runs },
+    clear: runs,
   },
 });
 

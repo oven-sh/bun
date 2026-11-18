@@ -28,9 +28,10 @@ forward! {
 
 /// `old`: that of the document that the window had before.
 pub(crate) fn attach_ui<'a>(cx: &mut Cx<'a>, doc: &'a Doc, old: Option<&'a Ui>) -> &'a Ui {
-    let container = crate::api::window::Window::of(doc)
+    let context = crate::api::window::Window::of(doc)
         .filter(|it| it.cluster().is_some())
-        .and_then(|it| it.context()?.container());
+        .and_then(|it| it.context());
+    let container = context.and_then(|it| it.container());
     let (activation, is_focused) = old
         .map(|it| (it.activation.clone(), it.is_focused.clone()))
         .unwrap_or_default();
@@ -48,6 +49,9 @@ pub(crate) fn attach_ui<'a>(cx: &mut Cx<'a>, doc: &'a Doc, old: Option<&'a Ui>) 
     ui.set_container(container);
     doc.set_doc_flags(DocFlags::IN_FRAME, container.is_some());
     container.into_iter().for_each(|it| it.show_document(ui));
+    if container.is_none() && context.is_some_and(|it| it.is_frame()) {
+        crate::api::frames::apart::settle(ui, old);
+    }
     ui
 }
 

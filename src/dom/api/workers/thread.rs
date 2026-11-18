@@ -1,14 +1,19 @@
 //! On the thread of the worker.
 
+use core::mem::ManuallyDrop;
 use core::sync::atomic::AtomicBool;
 use core::time::Duration;
 
+use bun_core::strings;
 use bun_web::Guarded;
 use bun_web::client::{Scripts, WorkerSeed};
-use bun_web::exec::{oneshot, with_realm};
-use bun_web::host::{Answer, Browser, ConsoleAudience, Level, Link, Notice, Question, Reply};
+use bun_web::exec::{Sender, oneshot, with_realm};
+use bun_web::host::{
+    Answer, Browser, ConsoleAudience, Level, Link, Notice, Permission, Question, Reply,
+};
 use bun_web::net::body::SharedBytes;
 use bun_web::realm::{Realm, Scope};
+use bun_web::service::Outside;
 
 use super::*;
 use crate::api::loading::{prepare_worker_script, run_worker_script};
@@ -16,6 +21,7 @@ use crate::api::messaging::MessageEvent;
 use crate::api::realm::{queue_task, realm_of};
 use crate::api::window::WorkerGlobalScope;
 use crate::generated_bindgen::window::js_WorkerGlobalScope;
+use crate::values::text;
 
 unsafe extern "C" {
     safe fn Bun__DesktopRealm__createForWorker(
@@ -52,6 +58,7 @@ pub(super) struct ToOutside {
     is_shared: bool,
     browser: Browser,
     languages: Vec<String>,
+    service: Option<Outside>,
 }
 
 #[derive(Default)]
@@ -78,12 +85,41 @@ impl ToOutside {
             is_shared,
             browser,
             languages,
+            service: None,
+        }
+    }
+
+    pub(super) fn of_service_worker(
+        creator: Address,
+        seed: &WorkerSeed,
+        service: Outside,
+    ) -> ToOutside {
+        let after = strings::split_once(seed.user_agent(), b"Chrome/").map_or(&b""[..], |it| it.1);
+        let browser = Browser {
+            user_agent: text(seed.user_agent()).into(),
+            version: text(strings::split(after, b" ").next().unwrap_or_default()).into(),
+        };
+        let languages = strings::split(seed.accept_language(), b",")
+            .filter_map(|it| strings::split(it, b";").next())
+            .map(|it| text(it.trim_ascii()).into())
+            .collect();
+        ToOutside {
+            outermost: creator.clone(),
+            creator,
+            is_shared: true,
+            browser,
+            languages,
+            service: Some(service),
         }
     }
 
     fn log(&self, level: Level, message: String, line: u32, url: String) {
-        self.outermost
-            .post(move |it| _ = it.with_host(|host| host.console(level, message, line, url)));
+        match &self.service {
+            Some(service) => service.log(level, message, line, url),
+            None => self
+                .outermost
+                .post(move |it| _ = it.with_host(|host| host.console(level, message, line, url))),
+        }
     }
 }
 
@@ -130,6 +166,18 @@ impl Link for ToOutside {
             Question::Browser {} => Some(Answer::Browser(self.browser.clone())),
             Question::ConsoleAudience {} => Some(Answer::ConsoleAudience(ConsoleAudience::App)),
             Question::Languages {} => Some(Answer::Languages(self.languages.clone())),
+            Question::PermissionState { name, .. }
+                if name == "notifications"
+                    && let Some(service) = &self.service =>
+            {
+                Some(Answer::PermissionState(
+                    if exec::park_until(service.may_notify(), None)? {
+                        Permission::Granted
+                    } else {
+                        Permission::Denied
+                    },
+                ))
+            }
             Question::Connection {} | Question::PermissionState { .. } => {
                 let id = self.outermost.id;
                 let asking = self.outermost.thread.call(move || async move {
@@ -217,6 +265,8 @@ pub(super) struct Start {
     pub(super) source: Option<SharedBytes>,
     pub(super) outside: ToOutside,
     pub(super) inbox: Arc<Inbox>,
+    /// Of a service worker.
+    pub(super) started: Option<Sender<(Thread, bool)>>,
 }
 
 static STARTING: Guarded<Vec<Start>> = Guarded::new(Vec::new());
@@ -233,9 +283,7 @@ pub(super) fn forget(id: u32) {
     drop(take(id));
 }
 
-thread_local! {
-    static SCOPE: ManuallyDrop<RefCell<Option<Rc<Kept>>>> = ManuallyDrop::default();
-}
+static SCOPE: bun_ui::Lasting<ManuallyDrop<RefCell<Option<Rc<Kept>>>>> = bun_ui::Lasting::empty();
 
 struct ScriptsOfWorker(ToOutside);
 
@@ -274,6 +322,7 @@ pub(super) extern "C" fn enter(of_thread: &JSGlobalObject, id: u32) {
         source,
         outside,
         inbox,
+        started,
         ..
     }) = take(id)
     else {
@@ -285,10 +334,10 @@ pub(super) extern "C" fn enter(of_thread: &JSGlobalObject, id: u32) {
         outside.creator.clone(),
     );
     client.set_scripts(Rc::new(ScriptsOfWorker(outside.clone())));
-    let kind = if is_shared {
-        Scope::SharedWorker
-    } else {
-        Scope::DedicatedWorker
+    let kind = match (&started, is_shared) {
+        (Some(_), _) => Scope::ServiceWorker,
+        (_, true) => Scope::SharedWorker,
+        _ => Scope::DedicatedWorker,
     };
     let global = Bun__DesktopRealm__createForWorker(
         of_thread,
@@ -327,14 +376,23 @@ pub(super) extern "C" fn enter(of_thread: &JSGlobalObject, id: u32) {
         if !is_shared && let Some(port) = inbox.ports.lock().0.pop() {
             js_WorkerGlobalScope::set_port(scope, MessagePort::new(&cx.heap, port).to_js());
         }
+        if started.is_some() {
+            crate::api::service_workers::set_up_service_worker(cx);
+        }
         let preparing = prepare_worker_script(cx, source, is_module, credentials);
         exec::spawn(async move {
             let script = preparing.await;
             let running = kept.in_task(move |cx, scope| {
-                if !script.is_some_and(|it| run_worker_script(cx, it, is_shared)) {
+                if !script.is_some_and(|it| run_worker_script(cx, it, kind)) {
                     return false;
                 }
-                if is_shared {
+                if let Some(started) = started {
+                    started.send((
+                        Thread::current(),
+                        WindowTarget::of_realm(&cx.heap)
+                            .is_some_and(|it| it.has_listeners(atom!("fetch"))),
+                    ));
+                } else if is_shared {
                     inbox.ports.lock().1 = Some(Thread::current());
                     accept_connections(cx);
                 } else if let Some(scope) = WorkerGlobalScope::from_js(&cx.heap, scope.to_js()) {

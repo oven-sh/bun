@@ -13,7 +13,6 @@ use bun_http::websocket::{Opcode, is_valid_close_code};
 use bun_http_jsc::websocket_client::websocket_deflate::{Params, PerMessageDeflate};
 use bun_sha_hmac::sha::evp::SHA1;
 use bun_threading::Guarded;
-use bun_ui::BoxedLocal as _;
 
 use super::body::{Body, Chunk, Data, Writer, prefault};
 use super::error::{NetError, Result};
@@ -266,7 +265,7 @@ pub struct Connection {
 
 fn next_mask() -> [u8; 4] {
     thread_local! {
-        static MASKS: Box<RefCell<Vec<[u8; 4]>>> = Box::default();
+        static MASKS: RefCell<Vec<[u8; 4]>> = const { RefCell::new(Vec::new()) };
     }
     MASKS.with_borrow_mut(|masks| {
         if masks.is_empty() {

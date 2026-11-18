@@ -110,20 +110,48 @@ static float2 coverage(const device Instance &it, float2 at) {
     return float2(saturate(0.5f - outer), saturate(0.5f - inner));
 }
 
+static float behind(float distance, float2 along) {
+    float more = fmax(fabs(along.x), fabs(along.y));
+    float less = fmax(fmin(fabs(along.x), fabs(along.y)), 1e-3f);
+    float near = fmin(fabs(distance), (more + less) / 2.0f);
+    float beyond = fmax(near - (more - less) / 2.0f, 0.0f);
+    return sign(distance) * (near / more - beyond * beyond * 0.5f / (more * less));
+}
+
+static float coverage_of_slant(const device Instance &it, float2 at) {
+    float2 from_center = at - it.bounds.xy - it.bounds.zw / 2.0f;
+    float2 half_size = it.border.zw;
+    float2 upright = float2(from_center.x * it.border.x + from_center.y * it.border.y, from_center.y * it.border.x - from_center.x * it.border.y);
+    float across = behind(half_size.x - upright.x, it.border.xy) + behind(half_size.x + upright.x, it.border.xy);
+    float down = behind(half_size.y - upright.y, it.border.xy) + behind(half_size.y + upright.y, it.border.xy);
+    float distance = 1.0f;
+    for (int corner = 0; corner < 4; corner++) {
+        float radius = it.radii[corner];
+        float2 towards = upright * float2(corner == 0 || corner == 3 ? -1.0f : 1.0f, corner < 2 ? -1.0f : 1.0f);
+        if (radius > 0.0f) {
+            distance = fmin(distance, radius - length(fmax(towards - half_size + radius, 0.0f)));
+        }
+    }
+    return saturate(fmin(across * down, behind(distance, it.border.xy) + 0.5f));
+}
+
 struct Between {
     uint before;
     uint after;
     float fraction;
 };
 
+static Between around(float position, uint limit) {
+    float before = floor(position);
+    float last = float(limit - 1);
+    return Between{uint(clamp(before, 0.0f, last)), uint(clamp(before + 1.0f, 0.0f, last)), position - before};
+}
+
 static Between between(float pixel, int first, int texels, uint limit, float start, float extent) {
     if (texels == 1) {
         return Between{uint(first), uint(first), 0.0f};
     }
-    float position = float(first) + (pixel - start) * (float(texels) / extent) - 0.5f;
-    float before = floor(position);
-    float last = float(limit - 1);
-    return Between{uint(clamp(before, 0.0f, last)), uint(clamp(before + 1.0f, 0.0f, last)), position - before};
+    return around(float(first) + (pixel - start) * (float(texels) / extent) - 0.5f, limit);
 }
 
 fragment float4 paint(Varyings in [[stage_in]],
@@ -142,6 +170,9 @@ fragment float4 paint(Varyings in [[stage_in]],
         float4 border = rgba(it.border_color) * covered.y;
         return (border + rgba(it.color) * (1.0f - border.w)) * covered.x;
     }
+    if (it.kind == 5) {
+        return rgba(it.color) * coverage_of_slant(it, at);
+    }
     uint slot = it.slot;
     const device uchar *bytes = slot < 4 ? (slot < 2 ? (slot == 0 ? slot0 : slot1) : (slot == 2 ? slot2 : slot3))
                                          : (slot < 6 ? (slot == 4 ? slot4 : slot5) : (slot == 6 ? slot6 : slot7));
@@ -152,8 +183,8 @@ fragment float4 paint(Varyings in [[stage_in]],
         return rgba(it.color) * (float(bytes[y * it.width + x]) / 255.0f);
     }
     const device uint *texels = (const device uint *)bytes;
-    Between x = between(at.x, it.part.x, it.part.z, it.width, it.bounds.x, it.bounds.z);
-    Between y = between(at.y, it.part.y, it.part.w, it.height, it.bounds.y, it.bounds.w);
+    Between x = it.kind == 6 ? around(dot(it.radii.xy, at) + it.border.x - 0.5f, it.width) : between(at.x, it.part.x, it.part.z, it.width, it.bounds.x, it.bounds.z);
+    Between y = it.kind == 6 ? around(dot(it.radii.zw, at) + it.border.y - 0.5f, it.height) : between(at.y, it.part.y, it.part.w, it.height, it.bounds.y, it.bounds.w);
     float4 color = rgba(texels[y.before * it.width + x.before]);
     if (x.fraction > 0.002f || y.fraction > 0.002f) {
         float4 above = mix(color, rgba(texels[y.before * it.width + x.after]), x.fraction);

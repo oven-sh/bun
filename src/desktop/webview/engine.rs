@@ -14,6 +14,7 @@ use bun_web::scheme::{self, Privileges};
 use super::chromium::{self, Backend, Browser};
 use super::remote::Remote;
 use super::{notices, wire};
+use crate::contents::place;
 use crate::generated_bindgen::webview::EngineChoice;
 use crate::prelude::*;
 use crate::realm::{self, Module};
@@ -54,7 +55,7 @@ pub(crate) fn choose(wanted: JSValue) -> JsResult<()> {
     } else {
         let invalid = || {
             type_error(format_args!(
-                "Expected null or {{ type: \"electron\" | \"chromium\", path: string }} with an absolute path"
+                "Expected null, {{ type: \"bun\" }} or {{ type: \"electron\" | \"chromium\", path: string }} with an absolute path"
             ))
         };
         let given = if wanted.is_object() {
@@ -64,6 +65,7 @@ pub(crate) fn choose(wanted: JSValue) -> JsResult<()> {
         };
         let path = string(given.path.as_deref().unwrap_or_default());
         let kind = match given.r#type.as_deref() {
+            Some(b"bun") => return place::show_the_rest(true),
             Some(b"electron") => Kind::Electron,
             Some(b"chromium") => Kind::Chromium,
             _ => return Err(invalid()),
@@ -79,7 +81,7 @@ pub(crate) fn choose(wanted: JSValue) -> JsResult<()> {
         }))
     };
     state().choice.replace(Some(choice));
-    Ok(())
+    place::show_the_rest(false)
 }
 
 unsafe extern "Rust" {
@@ -118,6 +120,10 @@ fn find() -> JsResult<Option<Rc<Choice>>> {
 
 pub(crate) fn is_available() -> JsResult<bool> {
     Ok(find()?.is_some())
+}
+
+pub(crate) fn shows_pages() -> JsResult<bool> {
+    Ok(!bun_web::trust::has_sandbox_for_the_rest() && is_available()?)
 }
 
 pub(crate) fn running() -> Option<Rc<Engine>> {

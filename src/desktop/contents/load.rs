@@ -9,12 +9,13 @@ use bun_core::strings;
 use bun_web::client::Client;
 use bun_web::convert::resolve_blob_url;
 use bun_web::encoding::{Decoder, Encoding, MetaScan};
-use bun_web::exec::{LocalFuture, never_at_once};
+use bun_web::exec::{LocalFuture, Receiver, Sender, never_at_once, oneshot};
 use bun_web::headers::HeaderList;
 use bun_web::host::{Arrival, Serialized};
 use bun_web::mime;
 use bun_web::net::NetError;
 use bun_web::net::body::{Blob, Body, Data, Source as _};
+use bun_web::net::embedder::ClientId;
 use bun_web::net::fetch::{self, Controller, IsolationKind, Observer, Role};
 use bun_web::net::response::{Head, Response, ResponseType};
 use bun_web::origin::Origin;
@@ -22,6 +23,7 @@ use bun_web::referrer::ReferrerPolicy;
 use bun_web::request::{
     self, CacheMode, Credentials, Destination, InitiatorType, Mode, RequestBody,
 };
+use bun_web::service::{Handler, Reserved};
 use bun_web::time::monotonic_now;
 use bun_web::timing::{NavigationType, ResourceTiming};
 use bun_web::trust;
@@ -32,7 +34,7 @@ use bun_web::page::{self, Controls, News as ForElement, Swap};
 
 use super::history::Item;
 use super::page::{About, Creator, Page};
-use super::{Contents, Markup, fields, is_web, without_hash};
+use super::{Contents, Kind, Markup, fields, is_web, place, without_hash};
 use crate::contents::inspection::{News, Stage};
 use crate::prelude::*;
 use crate::session;
@@ -249,6 +251,7 @@ struct Pending {
     controller: Controller,
     url: RefCell<String>,
     has_lost_body: Cell<bool>,
+    is_led_by_stranger: Cell<bool>,
     is_traversal: bool,
     is_by_app: bool,
 }
@@ -287,6 +290,8 @@ pub(super) struct Loading {
     promise: RefCell<Option<Promised>>,
     wishes: Cell<u32>,
     has_wish: Cell<bool>,
+    /// Service workers that wait for the document after that of a client.
+    awaited: RefCell<Vec<(ClientId, Sender<Option<ClientId>>)>>,
     /// A document of an origin that the app serves, which the app does not have.
     not_served: RefCell<String>,
 }
@@ -334,6 +339,8 @@ pub(super) struct Loaded {
     pub(super) headers: HeaderList,
     referrer: Option<String>,
     has_crossed_origins: bool,
+    /// By a redirect.
+    pub(super) is_led_by_stranger: bool,
     pub(super) encoding: Cell<Option<Encoding>>,
     pub(super) essence: Option<String>,
     pub(super) required_csp: Option<String>,
@@ -341,6 +348,7 @@ pub(super) struct Loaded {
     pub(super) timing: Option<(ResourceTiming, NavigationType)>,
     pub(super) text_directives: Option<String>,
     pub(super) has_text_activation: bool,
+    pub(super) reserved: Cell<Option<Reserved>>,
     /// What an error page is shown for.
     pub(super) unreachable: Option<(String, NetError)>,
 }
@@ -537,7 +545,10 @@ impl Watcher<'_> {
         if !contents.dispatch_navigation("will-redirect", url, false, initiator)? {
             return Ok(false);
         }
-        self.pending.url.replace(url.to_owned());
+        let from = self.pending.url.replace(url.to_owned());
+        if !holds(&from, trust::is_excepted) && !contents.is_trusted(&from)? {
+            self.pending.is_led_by_stranger.set(true);
+        }
         contents.may_show(url)?;
         contents.dispatch_navigation("did-redirect-navigation", url, false, initiator)?;
         Ok(true)
@@ -564,6 +575,10 @@ impl Observer for Watcher<'_> {
             .filter(|_| self.navigation.is_form && first.is_some());
         form_owner.is_none_or(allows_form)
             && (self.parent.as_ref()).is_none_or(|it| it.allows_request(request, first))
+    }
+
+    fn accepts(&self, request: &request::Request, _: Option<&Url>) -> bool {
+        (self.contents.get().may_show(&string(request.url.href()))).is_ok()
     }
 
     fn blocked_as_mixed_content(&self, request: &request::Request, first: Option<&Url>) {
@@ -665,10 +680,8 @@ impl Contents {
         let (url, markup, srcdoc) = (&*it.url, it.markup, it.srcdoc);
         let (body, content_type) = it.post.map(|it| (it.body, it.content_type)).unzip();
         let is_by = |holds: &dyn Fn(&Page) -> bool| initiator.page().is_some_and(holds);
-        let may_write = || {
-            without_hash(url) == without_hash(&page.url())
-                && is_by(&|it| it.origin_key() == page.origin_key())
-        };
+        let may_write =
+            || without_hash(url) == without_hash(&page.url()) && is_by(&|it| it.is_kin_of(page));
         let may_embed = || {
             url == "about:srcdoc"
                 && is_by(&|it| page.parent().is_some_and(|parent| same(parent, it)))
@@ -742,14 +755,21 @@ impl Contents {
         self.loading.has_wish.set(true);
         self.tell_element(ForElement::Navigating)?;
         self.tell_element(ForElement::Loading)?;
-        self.later(move |it| {
+        self.after_script(move |it| {
             (it.loading.has_wish).update(|has| has && wish != it.loading.wishes.get());
-            if !page.get().is_disposed()
+            let is_of_survivor = navigation
+                .initiating_page()
+                .is_some_and(|it| !it.is_disposed());
+            let page = match it.has_crashed() && is_of_survivor {
+                true => it.page(),
+                false => page.get(),
+            };
+            if !page.is_disposed()
                 && wish == it.loading.wishes.get()
                 && !it.loading.is_traversing()
                 && !it.ignores(navigation.initiating_page())
             {
-                it.grant(page.get(), &url, navigation)?;
+                it.grant(page, &url, navigation)?;
             }
             match it.loading.is_on.get() || wish != it.loading.wishes.get() {
                 true => Ok(()),
@@ -770,8 +790,9 @@ impl Contents {
         let Some(parsed) = Url::parse(url.as_bytes()) else {
             return Ok(());
         };
-        let (mut request, initiator) = self.prepare(parsed, &navigation, None)?;
+        let (mut request, mut initiator) = self.prepare(parsed, &navigation, None)?;
         request.destination = Destination::Empty;
+        initiator.service = Handler::Nobody;
         let (this, page) = (Root::new(self), Root::new(page));
         let (redirects, controller) = (Redirects::within_origin(url), Controller::default());
         task::spawn(async move {
@@ -890,6 +911,23 @@ impl Contents {
         })
     }
 
+    pub(super) fn navigate_for_service_worker(
+        &self,
+        page: &Page,
+        url: &str,
+    ) -> JsResult<Receiver<Option<ClientId>>> {
+        let (sender, next) = oneshot();
+        let navigation = Navigation {
+            initiator: Some(Initiator::of(page)),
+            ..Navigation::new(How::Push)
+        };
+        self.grant(page, url, navigation)?;
+        if self.loading.is_pending() {
+            (self.loading.awaited.borrow_mut()).push((page.client.id, sender));
+        }
+        Ok(next)
+    }
+
     pub(super) fn while_beginning(&self, work: &mut dyn FnMut() -> JsResult<()>) -> JsResult<()> {
         self.loading.beginnings.update(|it| it + 1);
         let result = self.report_loading().and_then(|()| work());
@@ -936,7 +974,7 @@ impl Contents {
             return Ok(());
         }
         if self.loading.is_pending() {
-            self.later(Contents::rest);
+            self.after_script(Contents::rest);
         }
         self.cancel_pending()
     }
@@ -957,7 +995,7 @@ impl Contents {
         self.loading.forget_wish();
         self.page().stop_streaming();
         self.cancel_pending()?;
-        self.later(Contents::rest);
+        self.after_script(Contents::rest);
         Ok(())
     }
 
@@ -1044,6 +1082,12 @@ impl Contents {
     }
 
     pub(super) fn set_loading(&self, is_on: bool) -> JsResult<()> {
+        if !is_on {
+            let shows_error = (self.page().loaded()).is_some_and(|it| it.unreachable.is_some());
+            for (before, sender) in self.loading.awaited.take() {
+                sender.send(Some(self.page().client.id).filter(|it| *it != before && !shows_error));
+            }
+        }
         self.switch_loading(is_on)?;
         self.report_loading()
     }
@@ -1260,6 +1304,7 @@ impl Contents {
         let is_by_app = promise.is_some();
         if is_by_app {
             self.loading.forget_wish();
+            self.loading.not_served.take();
         }
         let promise = promise.map(|result| Promised {
             result,
@@ -1276,8 +1321,7 @@ impl Contents {
         }
         let (url, page) = (string(parsed.href()), self.page());
         if navigation.blob.is_none()
-            && (self.is_for_guest(&url)?
-                || (navigation.wants_web_engine && engine::is_available()?))
+            && (self.is_for_guest(&url)? || (navigation.wants_web_engine && engine::shows_pages()?))
         {
             self.has_shown_trusted
                 .update(|it| it || navigation.wants_web_engine || trust::is_excepted(&parsed));
@@ -1318,10 +1362,12 @@ impl Contents {
             controller: Controller::default(),
             url: url.clone().into(),
             has_lost_body: false.into(),
+            is_led_by_stranger: false.into(),
             is_traversal,
             is_by_app: is_by_app || is_traversal,
         });
         self.loading.pending.replace(Some(Rc::clone(&pending)));
+        self.prepare_process(&parsed)?;
         self.loading.cause.set(
             match navigation.markup.is_none() || self.is_busy() && self.loading.is_on.get() {
                 true => Cause::Navigation,
@@ -1409,7 +1455,7 @@ impl Contents {
     }
 
     /// A site that is trusted is just a site in a session of its own.
-    fn is_trusted(&self, url: &str) -> JsResult<bool> {
+    pub(super) fn is_trusted(&self, url: &str) -> JsResult<bool> {
         if self.is_frame() {
             return is_trusted_in_frame(url);
         }
@@ -1420,7 +1466,9 @@ impl Contents {
         {
             return Ok(false);
         }
-        Ok(!is_web(url) || same(self.session, session::default()?) || !engine::is_available()?)
+        Ok(!is_web(url)
+            || same(self.session, session::default()?)
+            || !(trust::has_sandbox_for_the_rest() || engine::is_available()?))
     }
 
     pub(crate) fn is_for_guest(&self, url: &str) -> JsResult<bool> {
@@ -1429,7 +1477,7 @@ impl Contents {
         }
         if url != "about:blank" {
             let is_own_blob = holds(url, |it| resolve_blob_url(it).is_some());
-            return Ok(!is_own_blob && !self.is_trusted(url)? && engine::is_available()?);
+            return Ok(!is_own_blob && !self.is_trusted(url)? && self.has_web_engine()?);
         }
         if self.guest().is_some() {
             return Ok(true);
@@ -1442,10 +1490,20 @@ impl Contents {
         {
             return Ok(false);
         }
-        let is_foreign = self.preferences.uses_web_engine
+        Ok(self.is_foreign()? && self.has_web_engine()?)
+    }
+
+    fn has_web_engine(&self) -> JsResult<bool> {
+        match self.kind.get() {
+            Kind::Print => engine::is_available(),
+            _ => engine::shows_pages(),
+        }
+    }
+
+    pub(super) fn is_foreign(&self) -> JsResult<bool> {
+        Ok(self.preferences.uses_web_engine
             || !same(self.session, session::default()?)
-            || !can_evaluate()?;
-        Ok(is_foreign && engine::is_available()?)
+            || !can_evaluate()?)
     }
 
     pub(super) fn show_guest(&self, is_opened_by_page: bool) -> JsResult<&'static Remote> {
@@ -1538,7 +1596,7 @@ impl Contents {
     }
 
     fn may_show(&self, url: &str) -> Result<(), Failure> {
-        if url == "about:blank" || self.is_trusted(url)? {
+        if url == "about:blank" || trust::has_sandbox_for_the_rest() || self.is_trusted(url)? {
             return Ok(());
         }
         if !engine::is_available()? {
@@ -1584,6 +1642,11 @@ impl Contents {
             .and_then(|it| Url::parse(it.as_bytes()));
         request.referrer_policy = it.request.referrer_policy;
         request.has_user_activation = it.is_by_user;
+        request.navigation = match it.how {
+            How::Reload => bun_web::request::Navigation::Reload,
+            How::Traverse(_) => bun_web::request::Navigation::History,
+            _ => bun_web::request::Navigation::Other,
+        };
         if request.url.scheme() == b"blob" {
             request.blob = it.blob.clone().or_else(|| resolve_blob_url(&request.url));
         }
@@ -1606,6 +1669,11 @@ impl Contents {
             it.is_form,
             csp.map(str::as_bytes),
         );
+        if !place::is_all_in_app()
+            || (self.sandbox_of_next(&HeaderList::default())).forbids("allow-same-origin")
+        {
+            initiator.service = Handler::Nobody;
+        }
         Ok((request, initiator))
     }
 
@@ -1636,7 +1704,7 @@ impl Contents {
         navigation: Navigation,
         source: Option<Source>,
     ) -> JsResult<()> {
-        if let Some(process) = self.process() {
+        if let Some(process) = self.page().process() {
             return process.hold(|| self.swap_documents(loaded, navigation, source));
         }
         self.swap_documents(loaded, navigation, source)
@@ -1682,12 +1750,15 @@ impl Contents {
             ..Default::default()
         };
         let creator = about.creator.clone();
+        let is_led_by_stranger = loaded.is_led_by_stranger
+            || (creator.as_ref()).is_some_and(|it| !it.place().is_trusted());
         let mut page = self.new_page(&loaded.url, about)?;
         if !page.client.allows_embedder(&loaded.headers) {
             page.forget_creator();
             return self.show_error(&loaded.url, NetError::BlockedByResponse, navigation);
         }
         self.loading.pending.take();
+        self.loading.not_served.take();
         let url = &*loaded.url;
         if let (Some(Creator::Page(creator)), "about" | "blob" | "data") =
             (creator, before(url, ":"))
@@ -1712,10 +1783,11 @@ impl Contents {
         if self.is_destroyed.get() {
             return Ok(());
         }
-        self.leave_process_unless_it_suits(page);
+        self.make_room_for(page);
         self.guest().map_or(Ok(()), Remote::end)?;
-        self.has_shown_trusted
-            .update(|it| it || loaded.unreachable.is_none());
+        let is_of_app =
+            page.place().is_trusted() || (!is_led_by_stranger && holds(url, trust::is_excepted));
+        (self.has_shown_trusted).update(|it| it || (is_of_app && loaded.unreachable.is_none()));
         self.loading.awaits_document.set(true);
         self.show_from_now(page);
         let is_first = self.item().is_none();
@@ -1846,10 +1918,9 @@ async fn fetch_document(
             },
         ));
     }
-    if pending.is_traversal && navigation.request.body.is_some() && url.is_http() {
-        return Err(NetError::CacheMiss.into());
-    }
-    let (request, initiator) = this.get().prepare(url, navigation, csp.as_deref())?;
+    let is_sent_again = pending.is_traversal && navigation.request.body.is_some() && url.is_http();
+    let (mut request, initiator) = this.get().prepare(url, navigation, csp.as_deref())?;
+    request.is_only_for_service_worker = is_sent_again;
     let client = Rc::clone(&this.get().page().client);
     let watcher = Watcher {
         contents: this,
@@ -1878,12 +1949,14 @@ async fn fetch_document(
     let declared = head.headers.mime();
     let essence = match &declared {
         Some(it) => string(it.essence()),
-        None => if head.headers.contains(b"content-type") || head.headers.is_nosniff() {
-            "text/plain"
-        } else {
-            "text/html"
+        None => {
+            if !head.headers.get_or_empty(b"content-type").is_empty() || head.headers.is_nosniff() {
+                "text/plain"
+            } else {
+                "text/html"
+            }
+            .to_owned()
         }
-        .to_owned(),
     };
     let is_plugin = it
         .embedded
@@ -1918,6 +1991,7 @@ async fn fetch_document(
         return Err(NetError::Aborted.into());
     }
     if is_blob_at_top
+        && !trust::has_sandbox_for_the_rest()
         && (is_xml || essence == "text/html" || it.preferences.uses_web_engine)
         && !is_trusted_in_frame(&url)?
     {
@@ -2028,6 +2102,8 @@ async fn fetch_document(
                 .unwrap_or_default(),
         ),
         has_crossed_origins: head.has_cross_origin_redirects,
+        reserved: head.reserved.clone().into(),
+        is_led_by_stranger: pending.is_led_by_stranger.get(),
         encoding: Some(encoding).into(),
         required_csp: csp,
         timing: Some((record, how)),

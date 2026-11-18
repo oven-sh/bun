@@ -136,6 +136,48 @@ thread_local! {
     static SCROLL: RefCell<Scroll> = RefCell::default();
 }
 
+/// When each frame of a scroll was on the screen, and how long after it was painted, in seconds.
+#[cfg(target_os = "macos")]
+static SHOWN: std::sync::Mutex<Vec<[f64; 2]>> = std::sync::Mutex::new(Vec::new());
+
+#[cfg(target_os = "macos")]
+pub extern "C" fn was_shown(at: f64, delay: f64) {
+    SHOWN.lock().iter_mut().for_each(|it| it.push([at, delay]));
+}
+
+#[cfg(target_os = "macos")]
+fn print_what_was_shown(interval: Duration) {
+    let mut all = SHOWN
+        .lock()
+        .map(|mut it| std::mem::take(&mut *it))
+        .unwrap_or_default();
+    if all.iter().any(|it| it[1] > 0.) {
+        all.retain(|it| it[1] > 0.);
+    }
+    all.sort_by(|a, b| a[0].total_cmp(&b[0]));
+    let frames = |[a, b]: &[[f64; 2]; 2]| ((b[0] - a[0]) / interval.as_secs_f64()).round() as u32;
+    let uneven: Vec<_> = all
+        .array_windows()
+        .map(frames)
+        .enumerate()
+        .filter(|it| it.1 != 1)
+        .collect();
+    all.sort_by(|a, b| a[1].total_cmp(&b[1]));
+    let delays = [0.02, 0.5, 0.98].map(|part| {
+        all.get((all.len() as f64 * part) as usize)
+            .map_or(0., |it| it[1] * 1000.)
+    });
+    log!(
+        "shown {} times, {delays:.1?} ms after they were painted, and not for one frame: {uneven:?}",
+        all.len()
+    );
+}
+
+#[cfg(target_os = "macos")]
+pub fn logs_misses() -> bool {
+    LOGS_MISSES.load(Ordering::Relaxed)
+}
+
 pub fn measure<R>(step: Step, f: impl FnOnce() -> R) -> R {
     let start = LOGS_MISSES.load(Ordering::Relaxed).then(Instant::now);
     let result = f();
@@ -212,6 +254,8 @@ pub fn frame_began(at: Instant, interval: Duration, is_scrolling: bool, is_follo
                     list(&INCIDENTS, &it.incidents),
                     it.phases
                 );
+                #[cfg(target_os = "macos")]
+                print_what_was_shown(interval);
             }
         }
     });

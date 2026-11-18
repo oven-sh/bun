@@ -108,6 +108,11 @@ fn __bun_dom_obey(page: u32, order: Order) {
         Order::AdjustSelection { start, end } => {
             window.enter_as_task(|cx, _, ui| _ = editing::selection::adjust(cx, ui, [start, end]))
         }
+        Order::ConsumeActivation {} => window.enter(|cx, window| {
+            Ui::of(window.document())
+                .into_iter()
+                .for_each(|it| it.forget_activation(cx))
+        }),
         Order::DictionaryChanged {} => window.enter(|cx, window| {
             Ui::of(window.document())
                 .into_iter()
@@ -118,6 +123,9 @@ fn __bun_dom_obey(page: u32, order: Order) {
             window.enter_as_task(|cx, window, _| end_html(cx, window.document(), is_complete))
         }
         Order::EnvironmentChanged {} => window.enter(|cx, window| window.environment_changed(cx)),
+        Order::ExitFullscreen {} => {
+            window.enter_as_task(|cx, _, ui| _ = super::fullscreen::exit_fully(cx, ui))
+        }
         Order::FireAtNotification { id, event } => {
             crate::api::site::fire_at_notification(id, &event)
         }
@@ -155,6 +163,18 @@ fn __bun_dom_obey(page: u32, order: Order) {
             window.enter_as_task(|cx, window, _| {
                 load_xml(cx, window.document(), &DomString::from_utf8(&source))
             });
+        }
+        Order::Media { connection, line } => {
+            crate::api::media::hear_from_host(connection, line.as_deref())
+        }
+        Order::Message {
+            sender,
+            origin,
+            token,
+            message,
+        } => crate::api::history::deliver_from_afar(window, sender, origin, token, message),
+        Order::Moved { position } => {
+            window.enter_as_task(|cx, _, ui| frames::apart::moved(cx, ui, position))
         }
         Order::Navigate {
             wish,

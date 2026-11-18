@@ -3,7 +3,6 @@
 use core::any::Any;
 use core::cell::{Cell, OnceCell, RefCell};
 use core::ffi::c_void;
-use core::mem::ManuallyDrop;
 use std::rc::Rc;
 
 use bun_collections::HashMap;
@@ -70,9 +69,7 @@ pub fn construct_native(
     construct(global, native(global, class)?, arguments)
 }
 
-thread_local! {
-    static RUNNING: ManuallyDrop<RefCell<Vec<*const JSGlobalObject>>> = bun_ui::lasting(|| drop(RUNNING.with(|it| it.take())));
-}
+static RUNNING: bun_ui::Lasting<RefCell<Vec<*const JSGlobalObject>>> = bun_ui::Lasting::empty();
 
 /// The microtasks of the realms of this thread wait.
 pub(crate) fn set_paused(is_paused: bool) {
@@ -117,6 +114,7 @@ pub enum Scope {
     Window,
     DedicatedWorker,
     SharedWorker,
+    ServiceWorker,
 }
 
 /// <https://w3c.github.io/FileAPI/#lifeTime>
@@ -250,7 +248,10 @@ impl Realm {
             .blob_urls
             .get_or_init(|| self.hold(BlobUrls::default()));
         match &mut *urls.borrow_mut() {
-            Some(urls) => drop(urls.0.insert(url.into(), ())),
+            Some(urls) => {
+                urls.0.insert(url.into(), ());
+                (self.client().iter()).for_each(|it| it.announce_blob_url(url, false));
+            }
             None => runtime::revoke_blob_url(url),
         }
     }
@@ -261,6 +262,7 @@ impl Realm {
         {
             urls.0.remove(url);
         }
+        (self.client().iter()).for_each(|it| it.announce_blob_url(url, true));
         runtime::revoke_blob_url(url);
     }
 

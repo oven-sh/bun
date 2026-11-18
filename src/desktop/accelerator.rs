@@ -1,6 +1,6 @@
 //! Electron's accelerators: "CmdOrCtrl+Shift+P".
 
-use bun_ui::protocol::{ALT, CONTROL, Chord, META, SHIFT};
+use bun_ui::protocol::{ALT, CAPS_LOCK, CONTROL, Chord, META, SHIFT};
 
 use crate::prelude::*;
 use crate::text;
@@ -37,6 +37,13 @@ const NAMED: [&str; 17] = [
     "capslock",
 ];
 
+fn is_function_key(name: &str) -> bool {
+    matches!(
+        name.as_bytes(),
+        [b'f', b'1'..=b'9'] | [b'f', b'1', b'0'..=b'9'] | [b'f', b'2', b'0'..=b'4']
+    )
+}
+
 /// The `key` of a [`Chord`].
 pub(crate) fn key_name(key: &str) -> Option<String> {
     let lower = key.to_lowercase();
@@ -59,11 +66,8 @@ pub(crate) fn key_name(key: &str) -> Option<String> {
             _ => other,
         },
     };
-    let is_function = matches!(
-        name.as_bytes(),
-        [b'f', b'1'..=b'9'] | [b'f', b'1', b'0'..=b'9'] | [b'f', b'2', b'0'..=b'4']
-    );
-    (is_function || NAMED.contains(&name) || name.chars().count() == 1).then(|| name.into())
+    (is_function_key(name) || NAMED.contains(&name) || name.chars().count() == 1)
+        .then(|| name.into())
 }
 
 pub(crate) fn parse(accelerator: &str) -> JsResult<Chord> {
@@ -119,6 +123,103 @@ pub(crate) fn format(chord: &Chord) -> String {
         }
     }
     label
+}
+
+/// Without and with Shift on a US keyboard.
+const SYMBOLS: [(&str, [u8; 2]); 22] = [
+    ("Space", *b"  "),
+    ("Digit0", *b"0)"),
+    ("Digit1", *b"1!"),
+    ("Digit2", *b"2@"),
+    ("Digit3", *b"3#"),
+    ("Digit4", *b"4$"),
+    ("Digit5", *b"5%"),
+    ("Digit6", *b"6^"),
+    ("Digit7", *b"7&"),
+    ("Digit8", *b"8*"),
+    ("Digit9", *b"9("),
+    ("Semicolon", *b";:"),
+    ("Equal", *b"=+"),
+    ("Comma", *b",<"),
+    ("Minus", *b"-_"),
+    ("Period", *b".>"),
+    ("Slash", *b"/?"),
+    ("Backquote", *b"`~"),
+    ("BracketLeft", *b"[{"),
+    ("Backslash", *b"\\|"),
+    ("BracketRight", *b"]}"),
+    ("Quote", *b"'\""),
+];
+
+fn named_key(name: &str) -> Option<[&'static str; 2]> {
+    let same = |it| Some([it, it]);
+    match name {
+        "altgr" => Some(["Alt", "AltRight"]),
+        "numadd" => Some(["+", "NumpadAdd"]),
+        "numdec" => Some([".", "NumpadDecimal"]),
+        "numdiv" => Some(["/", "NumpadDivide"]),
+        "nummult" => Some(["*", "NumpadMultiply"]),
+        "numsub" => Some(["-", "NumpadSubtract"]),
+        "backspace" | "\x08" => same("Backspace"),
+        "capslock" => same("CapsLock"),
+        "delete" | "\x7f" => same("Delete"),
+        "down" => same("ArrowDown"),
+        "end" => same("End"),
+        "enter" | "return" | "\r" => same("Enter"),
+        "esc" | "escape" | "\x1b" => same("Escape"),
+        "home" => same("Home"),
+        "insert" => same("Insert"),
+        "left" => same("ArrowLeft"),
+        "medianexttrack" => same("MediaTrackNext"),
+        "mediaplaypause" => same("MediaPlayPause"),
+        "mediaprevioustrack" => same("MediaTrackPrevious"),
+        "mediastop" => same("MediaStop"),
+        "numlock" => same("NumLock"),
+        "pagedown" => same("PageDown"),
+        "pageup" => same("PageUp"),
+        "printscreen" => same("PrintScreen"),
+        "right" => same("ArrowRight"),
+        "scrolllock" => same("ScrollLock"),
+        "tab" | "\t" => same("Tab"),
+        "up" => same("ArrowUp"),
+        "volumedown" => same("AudioVolumeDown"),
+        "volumemute" => same("AudioVolumeMute"),
+        "volumeup" => same("AudioVolumeUp"),
+        "mod" => None,
+        _ => match modifier(name)? {
+            SHIFT => Some(["Shift", "ShiftLeft"]),
+            CONTROL => Some(["Control", "ControlLeft"]),
+            ALT => Some(["Alt", "AltLeft"]),
+            _ => Some(["Meta", "MetaLeft"]),
+        },
+    }
+}
+
+/// The `key` and the `code` for a `keyCode` of `sendInputEvent()`. A symbol that needs Shift adds it.
+pub(crate) fn describe_key(key_code: &str, modifiers: &mut u32) -> [String; 2] {
+    let lower = key_code.to_ascii_lowercase();
+    let name = match &*lower {
+        "plus" => "+",
+        "space" => " ",
+        other => other,
+    };
+    let is_shifted = *modifiers & u32::from(SHIFT) != 0;
+    match *name.as_bytes() {
+        [b'a'..=b'z'] => {
+            let upper = name.to_ascii_uppercase();
+            let code = format!("Key{upper}");
+            let is_upper = is_shifted != (*modifiers & u32::from(CAPS_LOCK) != 0);
+            [if is_upper { upper } else { name.into() }, code]
+        }
+        [symbol] if let Some((code, both)) = SYMBOLS.iter().find(|it| it.1.contains(&symbol)) => {
+            *modifiers |= u32::from(SHIFT) * u32::from(symbol != both[0]);
+            let key = if is_shifted { both[1] } else { symbol };
+            [char::from(key).into(), (*code).into()]
+        }
+        [b'n', b'u', b'm', b'0'..=b'9'] => [name[3..].into(), format!("Numpad{}", &name[3..])],
+        _ if is_function_key(name) => [name.to_ascii_uppercase(), name.to_ascii_uppercase()],
+        _ => named_key(name).unwrap_or_default().map(String::from),
+    }
 }
 
 /// A key that went down: the `key` and `code` of a `KeyboardEvent`.

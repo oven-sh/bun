@@ -6,7 +6,7 @@ use std::rc::Rc;
 use bun_jsc::JSGlobalObject;
 
 use crate::channel::Message;
-use crate::host::{ContextMenu, HistoryEntry, Rect, Reply, Wish};
+use crate::host::{ContextMenu, HistoryEntry, Position, Rect, Reply, Wish};
 use crate::input::Input;
 use crate::wire::messages;
 use crate::{dom, wire};
@@ -105,14 +105,20 @@ wire! {
         Message { path: Vec<u32>, origin: String, message: Message },
         /// Of a popup.
         Closed,
+        Activated,
+        Reveal([f64; 4]),
+        Fit([f64; 2]),
     }
 
     /// Of a browsing context.
+    #[derive(Clone)]
     pub enum Change {
         /// `frame` is what `embedder` calls it. It is in the group of `related`.
-        Created { embedder: Option<u32>, frame: u32, image: u32, opener: Option<u32>, related: Option<u32> },
-        /// `origin` is the same for the same origin, even an opaque one.
-        Shows { page: u32, origin: String, is_initial: bool },
+        Created { embedder: Option<u32>, parent: Option<u32>, frame: u32, image: u32, opener: Option<u32>, related: Option<u32> },
+        /// `origin` is the same for the same origin, even an opaque one. `None` if it is in another process.
+        Shows { page: u32, origin: Option<String>, is_initial: bool },
+        /// For where its document is not.
+        Children(Vec<u32>),
         Renamed(String),
         OpenedBy(Option<u32>),
         Crashed,
@@ -202,6 +208,19 @@ impl Controls {
     }
 }
 
+impl Order {
+    pub fn makes_read_environment(&self) -> bool {
+        matches!(
+            self,
+            Order::EnvironmentChanged {}
+                | Order::FollowContainer { .. }
+                | Order::Input {
+                    input: Input::Resize { .. } | Input::Focus { .. } | Input::Blur { .. }
+                }
+        )
+    }
+}
+
 impl Query {
     /// It runs no script of the page.
     pub fn is_harmless(&self) -> bool {
@@ -224,10 +243,12 @@ messages! {
         /// As if the user had pressed something.
         Activate = activate();
         AdjustSelection = adjust_selection(start: i32, end: i32);
+        ConsumeActivation = consume_activation();
         DictionaryChanged = dictionary_changed();
         Edit = edit(command: String);
         EndHtml = end_html(is_complete: bool);
         EnvironmentChanged = environment_changed();
+        ExitFullscreen = exit_fullscreen();
         FireAtNotification = fire_at_notification(id: u32, event: String);
         /// In size, and if the element has the focus.
         FollowContainer = follow_container(takes_focus: bool);
@@ -242,6 +263,13 @@ messages! {
         LoadHtml = load_html(source: String, goes_on: bool);
         #[size = large]
         LoadXml = load_xml(source: String, content_type: String);
+        /// `None` if the service has exited.
+        #[size = large]
+        Media = media(connection: u32, line: Option<Vec<u8>>);
+        /// From a window in another process.
+        #[size = large]
+        Message = deliver(sender: u32, origin: String, token: String, message: Message);
+        Moved = moved(position: Position);
         /// For another page.
         #[size = large]
         Navigate = navigate(wish: Box<Wish>, is_by_other_origin: bool);

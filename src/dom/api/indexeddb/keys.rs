@@ -281,8 +281,13 @@ impl KeyPath {
         }
     }
 
+    /// What has been stored can be without any.
+    fn first(&self) -> &[bun_core::String] {
+        self.paths.first().map_or(&[], |it| it)
+    }
+
     pub(super) fn is_empty_string(&self) -> bool {
-        !self.is_list && self.paths[0].is_empty()
+        !self.is_list && self.first().is_empty()
     }
 
     /// <https://w3c.github.io/IndexedDB/#extract-a-key-from-a-value-using-a-key-path>
@@ -315,7 +320,7 @@ impl KeyPath {
     ) -> Result<'a, Vec<Vec<u8>>> {
         if is_multi_entry
             && let Some(array) =
-                follow(cx.global(), value, &self.paths[0])?.filter(|it| it.is_array())
+                follow(cx.global(), value, self.first())?.filter(|it| it.is_array())
         {
             let mut keys = Vec::new();
             for index in 0..array.get_length(cx.global())? as u32 {
@@ -339,7 +344,7 @@ impl KeyPath {
 
     /// <https://w3c.github.io/IndexedDB/#check-that-a-key-could-be-injected-into-a-value>
     pub(super) fn can_inject(&self, global: &JSGlobalObject, mut value: JSValue) -> JsResult<bool> {
-        for name in self.paths[0].split_last().map_or(&[][..], |it| it.1) {
+        for name in self.first().split_last().map_or(&[][..], |it| it.1) {
             if !value.is_object() {
                 return Ok(false);
             }
@@ -358,7 +363,7 @@ impl KeyPath {
         mut value: JSValue,
         key: f64,
     ) -> JsResult<()> {
-        let Some((last, names)) = self.paths[0].split_last() else {
+        let Some((last, names)) = self.first().split_last() else {
             return Ok(());
         };
         for name in names {

@@ -169,6 +169,7 @@ pub(super) fn find_files_that_run_again(
                 input.runner_starts_entry_points && !is_found_by_load[entry_point.file.idx()]
             }
             EntryPointKind::LoadedByTestRunner
+            | EntryPointKind::LoadedByPage
             | EntryPointKind::HostLoadedModule
             | EntryPointKind::ImportedModule
             | EntryPointKind::Library => false,

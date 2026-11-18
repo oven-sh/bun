@@ -1,7 +1,9 @@
 use std::cell::Cell;
 use std::ops::Range;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use super::allowance::Allowance;
 use super::memo::Memo;
 use super::raster::{Path, has_radii, map_rect};
 use super::warp::Projection;
@@ -45,6 +47,7 @@ pub struct Scene {
     driven: Vec<usize>,
     /// Only for lists that replace each other.
     pub(super) memo: Option<Mutex<Memo>>,
+    pub allowance: Option<Arc<Allowance>>,
 }
 
 impl Default for Scene {
@@ -66,6 +69,7 @@ impl Default for Scene {
             submitted: Vec::new(),
             driven: Vec::new(),
             memo: None,
+            allowance: None,
         }
     }
 }
@@ -722,12 +726,13 @@ impl Scene {
         else {
             return None;
         };
-        (filled == shape
-            && has_radii(shape)
-            && !widths.contains(&0.)
-            && colors.iter().all(|it| it & 0xFF == 0xFF)
-            && *styles == [LineStyle::Solid; 4])
-            .then_some(*widths)
+        let hides = |side: usize| match widths[side] {
+            0. => [side, (side + 1) % 4]
+                .iter()
+                .all(|it| shape.radii[*it].contains(&0.)),
+            _ => colors[side] & 0xFF == 0xFF && styles[side] == LineStyle::Solid,
+        };
+        (filled == shape && has_radii(shape) && (0..4).all(hides)).then_some(*widths)
     }
 
     pub fn end(&self, index: usize) -> usize {

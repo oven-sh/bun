@@ -496,6 +496,8 @@ pub struct InitializeOptions {
     pub locks_builtins: bool,
     /// This process is `bun compile`: a release build of Bun takes no B3, Air or macro assembler option from `BUN_JSC_*`.
     pub is_compiler: bool,
+    /// An executable made with `--desktop`, a process for its pages, or [`preloads_desktop`].
+    pub is_desktop_program: bool,
 }
 
 /// Binding for JSCInitialize in ZigGlobalObject.cpp
@@ -520,6 +522,7 @@ pub fn initialize(options: InitializeOptions) {
             options.runs_compiled_code,
             options.locks_builtins,
             options.is_compiler,
+            options.is_desktop_program,
         )
     };
 }
@@ -534,13 +537,8 @@ pub fn expect_vm_per_thread() {
     }
 }
 
-/// An executable made with `--desktop`. After [`initialize`], and before the first VM.
-pub fn expect_desktop_program() {
-    // SAFETY: nothing changes the environment during the call, which is made before the first VM.
-    unsafe {
-        let env = bun_sys::environ();
-        JSC__useOptionsForDesktopProgram(env.as_ptr().cast(), env.len());
-    }
+pub fn preloads_desktop(preloads: &[Box<[u8]>]) -> bool {
+    (preloads.iter()).any(|it| matches!(it.strip_prefix(b"bun:desktop"), Some([] | [b'/', ..])))
 }
 
 /// The global object of the main thread is a window. Before the first VM.
@@ -1501,10 +1499,10 @@ unsafe extern "C" {
         runs_compiled_code: bool,
         locks_builtins: bool,
         is_compiler: bool,
+        is_desktop_program: bool,
     );
     fn JSC__useOptionsForVMPerThread(env: *const *const c_char, count: usize);
     safe fn Bun__startInWindow();
-    fn JSC__useOptionsForDesktopProgram(env: *const *const c_char, count: usize);
 }
 
 #[path = "generated_bindgen.rs"]

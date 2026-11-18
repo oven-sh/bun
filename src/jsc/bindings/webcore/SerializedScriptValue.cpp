@@ -220,10 +220,13 @@ enum SerializationTag {
 
 class CloneSerializer;
 
+enum class IsFromOtherProcess : bool { No,
+    Yes };
+
 extern "C" bool Blob__onStructuredCloneSerialize(void* blob, CloneSerializer*);
 extern "C" bool Bun__Desktop__isBlobOfWeb(void* blob);
 extern "C" JSC::EncodedJSValue Bun__Desktop__retainedBlob(JSC::JSGlobalObject*, const uint8_t* id);
-extern "C" JSC::EncodedJSValue Blob__onStructuredCloneDeserialize(JSC::JSGlobalObject*, const uint8_t** ptr, const uint8_t* end);
+extern "C" JSC::EncodedJSValue Blob__onStructuredCloneDeserialize(JSC::JSGlobalObject*, const uint8_t** ptr, const uint8_t* end, bool mayNameFile);
 extern "C" void BlockList__onStructuredCloneSerialize(void* blockList, CloneSerializer*);
 extern "C" JSC::EncodedJSValue BlockList__onStructuredCloneDeserialize(JSC::JSGlobalObject*, const uint8_t** ptr, const uint8_t* end);
 extern "C" JSC::EncodedJSValue Histogram__fromStructuredClone(JSC::JSGlobalObject*, uint64_t id);
@@ -2851,7 +2854,7 @@ public:
         WasmModuleArray* wasmModules, WasmMemoryHandleArray* wasmMemoryHandles
 #endif
         ,
-        std::span<const EncodedJSValue> hostObjects = {})
+        std::span<const EncodedJSValue> hostObjects = {}, IsFromOtherProcess isFromOtherProcess = IsFromOtherProcess::No)
     {
         if (!buffer.size())
             return std::make_pair(jsNull(), SerializationReturnCode::UnspecifiedError);
@@ -2864,6 +2867,7 @@ public:
         if (!deserializer.isValid())
             return std::make_pair(JSValue(), SerializationReturnCode::ValidationError);
         deserializer.m_hostObjects = hostObjects;
+        deserializer.m_isFromOtherProcess = isFromOtherProcess;
         return deserializer.deserialize();
     }
 
@@ -3291,6 +3295,8 @@ private:
         }
         if (object->type() == FinalObjectType && putAsInEarlierObject(object, property, value)) [[likely]]
             return;
+        if (isJSArray(object) && property == m_lexicalGlobalObject->vm().propertyNames->length) [[unlikely]]
+            return fail();
         object->putDirectMayBeIndex(m_lexicalGlobalObject, property, value);
     }
 
@@ -3464,6 +3470,9 @@ private:
             arrayBufferView = jsNull();
             return true;
         }
+
+        if (byteOffset % elementSize || byteOffset > arrayBuffer->byteLength() || (byteLength != autoLengthMarker && byteLength > arrayBuffer->byteLength() - byteOffset))
+            return false;
 
         std::optional<size_t> length;
         if (byteLength != autoLengthMarker) {
@@ -4096,7 +4105,7 @@ private:
         return histogram;
     }
 
-    JSValue readBunType(JSC::EncodedJSValue (*deserialize)(JSC::JSGlobalObject*, const uint8_t** ptr, const uint8_t* end))
+    JSValue readBunType(const auto& deserialize)
     {
         JSValue deserialized = JSValue::decode(deserialize(m_lexicalGlobalObject, &m_ptr, m_end));
         // Empty: the record was malformed, or Rust threw (the caller checks its scope first).
@@ -4605,7 +4614,9 @@ private:
             return readDOMException();
 
         case Bun__BlobTag: {
-            JSValue blob = readBunType(Blob__onStructuredCloneDeserialize);
+            JSValue blob = readBunType([&](JSGlobalObject* globalObject, const uint8_t** ptr, const uint8_t* end) {
+                return Blob__onStructuredCloneDeserialize(globalObject, ptr, end, m_isFromOtherProcess == IsFromOtherProcess::No);
+            });
             Bun::desktopRealmAdoptFile(m_lexicalGlobalObject, blob);
             return blob;
         }
@@ -4665,6 +4676,7 @@ private:
 #endif
     const Vector<RefPtr<MessagePort>>& m_messagePorts;
     std::span<const EncodedJSValue> m_hostObjects;
+    IsFromOtherProcess m_isFromOtherProcess { IsFromOtherProcess::No };
     ArrayBufferContentsArray* m_arrayBufferContents;
     Vector<RefPtr<JSC::ArrayBuffer>> m_arrayBuffers;
     Vector<String> m_blobURLs;
@@ -5236,22 +5248,13 @@ private:
 
     static constexpr unsigned maximumDepth = 200;
 
-    struct KnownShape {
-        Structure* from;
-        Structure* to;
-    };
-    using KnownShapes = std::array<KnownShape, 128>;
-
     // Nothing is freed before a collection has finished marking.
-    static KnownShapes& knownShapes(VM& vm)
+    static ClonedShapes::Shapes& knownShapes(VM& vm)
     {
-        using Cache = std::tuple<std::optional<VMIdentifier>, HeapVersion, KnownShapes>;
-        [[clang::always_destroy]] static thread_local auto cache = makeUniqueWithoutFastMallocCheck<Cache>();
-        auto& [owner, version, shapes] = *cache;
+        auto& [version, shapes] = clientData(vm)->clonedShapes;
         auto current = vm.heap.objectSpace().newlyAllocatedVersion();
-        if (std::exchange(owner, vm.identifier()) != vm.identifier() || version != current)
+        if (std::exchange(version, current) != current)
             shapes = {};
-        version = current;
         return shapes;
     }
 
@@ -5452,7 +5455,7 @@ private:
     Vector<JSObject*, 12> m_copies;
     Vector<std::pair<std::span<uint8_t>, std::span<const uint8_t>>, 2> m_bytesToCopy;
     size_t m_byteLength { 0 };
-    KnownShapes& m_knownShapes;
+    ClonedShapes::Shapes& m_knownShapes;
 };
 
 JSValue SerializedScriptValue::tryCopyPlainData(JSGlobalObject& globalObject, JSValue value)
@@ -6050,7 +6053,7 @@ extern "C" NEVER_INLINE EncodedJSValue Bun__SerializedScriptValue__deserializeFl
 #if ENABLE(WEBASSEMBLY)
         nullptr, nullptr,
 #endif
-        std::span { objects, objectCount });
+        std::span { objects, objectCount }, IsFromOtherProcess::Yes);
     RETURN_IF_EXCEPTION(scope, {});
     maybeThrowExceptionIfSerializationFailed(*globalObject, result.second);
     RETURN_IF_EXCEPTION(scope, {});

@@ -2,8 +2,10 @@
 //! only sees what the serializer could have written.
 
 use core::ffi::c_void;
+use core::mem::ManuallyDrop;
 
 use super::*;
+use crate::net::body::Data;
 use crate::runtime::{self, LooseBlob};
 use crate::wire::{Reader, Writer};
 
@@ -184,9 +186,10 @@ impl wire::Wire for Serialized {
             Sent::Boolean(it) => immediate(it.into()),
             Sent::Number(it) if it.is_nan() => immediate(JSValue::js_number(f64::NAN)),
             Sent::Number(it) => immediate(JSValue::js_number(it)),
-            Sent::Parts(parts) => check(&parts).map_or(Form::Unreadable, |found| {
-                Form::Flat(Arc::new(Flat { parts, found }))
-            }),
+            Sent::Parts(parts) => check(&parts.bytes, &parts.buffers, &parts.blobs)
+                .map_or(Form::Unreadable, |found| {
+                    Form::Flat(Arc::new(Flat { parts, found }))
+                }),
             Sent::Unreadable => Form::Unreadable,
         }))
     }
@@ -198,13 +201,13 @@ crate::wire! {
         ReadableStream(Endpoint),
         WritableStream(Endpoint),
         TransformStream { readable: Endpoint, writable: Endpoint },
-        Lost,
+        Bitmap(Option<LooseBitmap>),
+        Rehearsed,
     }
 }
 
-thread_local! {
-    static REHEARSED: ManuallyDrop<RefCell<VecDeque<Transferred>>> = ManuallyDrop::default();
-}
+static REHEARSED: bun_ui::Lasting<ManuallyDrop<RefCell<VecDeque<Transferred>>>> =
+    bun_ui::Lasting::empty();
 
 impl wire::Wire for Transferred {
     fn write(self, to: &mut Writer) {
@@ -215,11 +218,10 @@ impl wire::Wire for Transferred {
             Transferred::TransformStream { readable, writable } => {
                 Travelling::TransformStream { readable, writable }
             }
+            Transferred::Canvas(it) if to.peer().is_some() => Travelling::Bitmap(it.loosen()),
             canvas => {
-                if to.peer().is_none() {
-                    REHEARSED.with(|it| it.borrow_mut().push_back(canvas));
-                }
-                Travelling::Lost
+                REHEARSED.with(|it| it.borrow_mut().push_back(canvas));
+                Travelling::Rehearsed
             }
         }
         .write(to);
@@ -233,10 +235,11 @@ impl wire::Wire for Transferred {
             Travelling::TransformStream { readable, writable } => {
                 Transferred::TransformStream { readable, writable }
             }
-            Travelling::Lost => (from.peer().is_none())
+            Travelling::Bitmap(it) => Transferred::Canvas(Box::new(it)),
+            Travelling::Rehearsed => (from.peer().is_none())
                 .then(|| REHEARSED.with(|it| it.borrow_mut().pop_front()))
                 .flatten()
-                .unwrap_or_else(|| Transferred::Canvas(Box::new(()))),
+                .ok_or(wire::Malformed)?,
         })
     }
 }
@@ -278,10 +281,12 @@ mod tag {
     pub(super) const BLOB: u8 = 247;
     pub(super) const ERROR_WITH_CAUSE: u8 = 248;
     pub(super) const PLATFORM_OBJECT: u8 = 249;
+    pub(super) const BYTES_OF_BLOB: u8 = 254;
 }
 
 const VERSION: u32 = 14;
 const VERSION_WITH_LATER_TAGS: u32 = 15;
+const VERSION_OF_BLOB: u8 = 4;
 const TERMINATOR: u32 = !0;
 const IN_POOL: u32 = !1;
 const NO_MORE_INDICES: u32 = !2;
@@ -301,7 +306,9 @@ enum Inside {
 }
 
 struct Check<'a> {
-    parts: &'a Parts,
+    length: usize,
+    buffers: &'a [Buffer],
+    blobs: &'a [(BlobId, LooseBlob)],
     rest: &'a [u8],
     strings: usize,
     objects: usize,
@@ -408,10 +415,32 @@ impl<'a> Check<'a> {
     }
 
     fn blob(&mut self) -> Option<()> {
-        let (at, id) = (self.parts.bytes.len() - self.rest.len(), self.take()?);
-        let blob = self.parts.blobs.iter().position(|it| it.0 == id)?;
+        let (at, id) = (self.length - self.rest.len(), self.take()?);
+        let blob = self.blobs.iter().position(|it| it.0 == id)?;
         self.found.blobs.push((at, blob));
         Some(())
+    }
+
+    fn bytes(&mut self) -> Option<()> {
+        let length = self.u32()?;
+        self.skip(length.into())
+    }
+
+    fn bytes_of_blob(&mut self) -> Option<()> {
+        const IN_MEMORY: u8 = 1;
+        const EMPTY: u8 = 2;
+        (self.byte()? == VERSION_OF_BLOB).then_some(())?;
+        self.skip(8)?;
+        self.bytes()?;
+        self.skip(1)?;
+        match self.byte()? {
+            IN_MEMORY => self.bytes().and_then(|()| self.bytes())?,
+            EMPTY => {}
+            _ => return None,
+        }
+        let is_file = self.byte()? != 0;
+        self.skip(8)?;
+        if is_file { self.bytes() } else { Some(()) }
     }
 
     /// What it has opened, if anything.
@@ -427,7 +456,7 @@ impl<'a> Check<'a> {
             tag::BIG_INT => return self.big_int().map(|()| None),
             tag::OBJECT_REFERENCE => return self.index_in(self.objects).map(|()| None),
             tag::TRANSFERRED_BUFFER => {
-                return ((self.u32()? as usize) < self.parts.buffers.len()).then_some(None);
+                return ((self.u32()? as usize) < self.buffers.len()).then_some(None);
             }
             tag::ARRAY => {
                 let length = self.u32()?;
@@ -469,6 +498,7 @@ impl<'a> Check<'a> {
                 self.found.has_keys = true;
             }
             tag::BLOB => self.blob()?,
+            tag::BYTES_OF_BLOB => self.bytes_of_blob()?,
             _ => return None,
         }
         self.objects += 1;
@@ -476,17 +506,27 @@ impl<'a> Check<'a> {
     }
 }
 
-fn check(parts: &Parts) -> Option<Found> {
+pub(crate) const STORED_NULL: [u8; 5] = [VERSION as u8, 0, 0, 0, tag::NULL];
+
+pub(crate) fn is_fit_for_storage(bytes: &[u8]) -> bool {
+    check(bytes, &[], &[]).is_some()
+}
+
+fn check(bytes: &[u8], buffers: &[Buffer], blobs: &[(BlobId, LooseBlob)]) -> Option<Found> {
     let mut it = Check {
-        parts,
-        rest: &parts.bytes,
+        length: bytes.len(),
+        buffers,
+        blobs,
+        rest: bytes,
         strings: 0,
         objects: 0,
-        elements_left: parts.bytes.len() + SPARE_ELEMENTS,
+        elements_left: bytes.len() + SPARE_ELEMENTS,
         reserved: 0,
         found: Found::default(),
     };
-    for buffer in &parts.buffers {
+    // A blob has one store. To make one of several parts would be to read them all.
+    (!blobs.iter().any(|it| matches!(it.1.data, Data::Parts(_)))).then_some(())?;
+    for buffer in buffers {
         if let Some(most) = buffer.most {
             it.reserve(buffer.bytes.len() as u64, most)?;
         }

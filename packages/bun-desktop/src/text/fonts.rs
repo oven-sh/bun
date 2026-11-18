@@ -42,7 +42,7 @@ pub struct File {
     pub font: sfnt::Font,
     pub tables: Tables,
     #[cfg(target_os = "macos")]
-    pub native: Option<super::catalog::NativeFont>,
+    pub native: Option<super::catalog::Native>,
     pub has_color: bool,
     /// Advances are not proportional to the size.
     pub has_tracking: bool,
@@ -65,7 +65,7 @@ impl File {
             index,
             tables: Tables::new(&font),
             #[cfg(target_os = "macos")]
-            native: super::catalog::NativeFont::of(data, index),
+            native: super::catalog::Native::of(data, index, origin),
             has_color: has_table(b"COLR") || has_table(b"CBDT") || has_table(b"sbix"),
             has_tracking: has_table(b"trak"),
             ascii: (0..128)
@@ -225,7 +225,7 @@ impl Face {
     pub fn bitmap_advance(&self, glyph: u32, size: f32, device_scale: f32) -> Option<f32> {
         #[cfg(target_os = "macos")]
         if let Some(native) = &self.file.native {
-            return Some(native.advance(glyph, size * device_scale) / device_scale);
+            return Some(native.advance(glyph, size * device_scale)? / device_scale);
         }
         _ = device_scale;
         Some(bitmap::find(&self.file.font, glyph, size)?.advance? * size)
@@ -440,7 +440,8 @@ impl Candidate {
             .file
             .native
             .as_ref()
-            .map_or(exact, |it| it.metrics(size * device_scale));
+            .and_then(|it| it.metrics(size * device_scale))
+            .unwrap_or(exact);
         let [mut ascent, mut descent, leading] = exact.map(f32::round);
         if cfg!(target_os = "linux") && device_scale >= 1.5 && descent < exact[1] && ascent >= 1. {
             (ascent, descent) = (ascent - 1., descent + 1.);
@@ -499,6 +500,21 @@ pub struct Like {
     pub weight: f32,
     pub is_italic: bool,
     pub device_scale: f32,
+}
+
+impl Like {
+    /// The system does not get to see a file that a page has come up with.
+    fn exported(self) -> Option<[u32; 4]> {
+        let Origin::Listed(font) = self.file.origin else {
+            return None;
+        };
+        Some([
+            font,
+            self.weight.to_bits(),
+            self.is_italic.into(),
+            self.device_scale.to_bits(),
+        ])
+    }
 }
 
 /// An index in `System::listed` of the process that has the catalog.
@@ -883,9 +899,12 @@ impl System {
                 .fallbacks(character, color, language, like)
                 .into_iter()
                 .find(|family| self.covers(*family, character, color)),
-            None => {
-                guest::fallback_family(character, color, language.get(..64).unwrap_or(language))
-            }
+            None => guest::fallback_family(
+                character,
+                color,
+                language.get(..64).unwrap_or(language),
+                like.and_then(Like::exported),
+            ),
         };
         crate::diagnostics::log!("fallback for {character:?}: {found:?}");
         self.fallbacks.insert(key, found);
@@ -1894,11 +1913,26 @@ pub fn generic_family(name: &str) -> Option<FamilyId> {
     FONTS.lock().system.generic(name)
 }
 
-pub fn fallback_family(character: char, color: bool, language: &[u8]) -> Option<FamilyId> {
+pub fn fallback_family(
+    character: char,
+    color: bool,
+    language: &[u8],
+    like: Option<[u32; 4]>,
+) -> Option<FamilyId> {
+    let like = like.and_then(|[font, weight, is_italic, scale]| {
+        let within =
+            |bits, most| Some(f32::from_bits(bits)).filter(|it| (0.01..=most).contains(it));
+        Some(Like {
+            file: listed_file(font)?,
+            weight: within(weight, 1000.)?,
+            is_italic: is_italic != 0,
+            device_scale: within(scale, 64.)?,
+        })
+    });
     FONTS
         .lock()
         .system
-        .fallback_like(character, color, language, None)
+        .fallback_like(character, color, language, like)
 }
 
 pub fn font_named(name: &str) -> Option<Listed> {

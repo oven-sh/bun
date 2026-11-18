@@ -10,6 +10,8 @@
 #include <JavaScriptCore/AOTTimingOfModuleLoads.h>
 #include <JavaScriptCore/AOTVMState.h>
 #endif
+#include <JavaScriptCore/BlockDirectory.h>
+#include <JavaScriptCore/DeferGCInlines.h>
 #include <JavaScriptCore/GCActivityCallback.h>
 #include <JavaScriptCore/HeapObserver.h>
 #include <JavaScriptCore/IncrementalSweeper.h>
@@ -42,6 +44,17 @@ using namespace JSC;
 // Paces garbage collection by what the user sees instead of by timers: collections start in the pauses between interactions,
 // and memory is given back once the program has gone quiet.
 #if ENABLE(AOT) && (OS(DARWIN) || OS(LINUX))
+// What it reads includes the unused capacity of vectors.
+SUPPRESS_ASAN static bool holdsOnlyZeros(const uint8_t* page, size_t size)
+{
+    auto* words = reinterpret_cast<const uintptr_t*>(page);
+    for (size_t i = 0; i < size / sizeof(uintptr_t); ++i) {
+        if (words[i])
+            return false;
+    }
+    return true;
+}
+
 static void giveBackPagesOfZeros(uint8_t* begin, uint8_t* end)
 {
 #if OS(DARWIN)
@@ -50,7 +63,6 @@ static void giveBackPagesOfZeros(uint8_t* begin, uint8_t* end)
     std::array<unsigned char, 4096> residency;
 #endif
     size_t sizeOfPage = pageSize();
-    auto holdsOnlyZeros = [&](const uint8_t* page) { return !page[0] && !memcmp(page, page + 1, sizeOfPage - 1); };
     begin = reinterpret_cast<uint8_t*>(roundUpToMultipleOf(sizeOfPage, reinterpret_cast<uintptr_t>(begin)));
     while (begin < end && static_cast<size_t>(end - begin) >= sizeOfPage) {
         size_t count = std::min(residency.size(), static_cast<size_t>(end - begin) / sizeOfPage);
@@ -58,7 +70,7 @@ static void giveBackPagesOfZeros(uint8_t* begin, uint8_t* end)
             return;
         for (size_t page = 0; page < count; ++page) {
             size_t first = page;
-            while (page < count && (residency[page] & 1) && holdsOnlyZeros(begin + page * sizeOfPage))
+            while (page < count && (residency[page] & 1) && holdsOnlyZeros(begin + page * sizeOfPage, sizeOfPage))
                 ++page;
             if (page > first)
                 OSAllocator::decommit(begin + first * sizeOfPage, (page - first) * sizeOfPage);
@@ -94,8 +106,8 @@ public:
         vm.heap.addObserver(this);
     }
 
-    // Returns how long the wait may last.
-    Seconds beforeWait(Seconds timeout)
+    // Returns how long the wait may last. Nothing is planned for the time of `slack`.
+    Seconds beforeWait(Seconds timeout, Seconds slack)
     {
         auto& heap = m_vm.heap;
         if (!heap.hasAccess())
@@ -127,6 +139,8 @@ public:
             if (m_stopsSweeper.exchange(false) && m_step == Step::Collect)
                 heap.sweeper().stopSweeping();
             uint64_t young = allocated - m_allocatedAtLastCollection;
+            if (destroyWithin(slack, now))
+                return 0_s;
             if (young < nurseryBytes || now - m_lastRequest < minimumGap)
                 return std::min(timeout, m_due - now);
             if (now - m_quietSince < lullAfter && (!m_hasBeenQuiet || young < 2 * nurseryBytes))
@@ -160,6 +174,32 @@ private:
         KeepSweeping,
         Release,
         Settle };
+
+    // Else the allocator does, in the middle of a task. The blocks stay.
+    bool destroyWithin(Seconds slack, MonotonicTime now)
+    {
+        auto& heap = m_vm.heap;
+        if (m_hasUnsweptBlocks.exchange(false)) {
+            m_directoryToSweep = heap.objectSpace().firstDirectory();
+            m_blockToSweep = 0;
+        }
+        if (!m_directoryToSweep || slack < marginOfSlack)
+            return false;
+        JSLockHolder lock(m_vm);
+        DeferGCForAWhile deferGC(m_vm);
+        heap.clearConcurrentRetainedDataIfPossible();
+        while (m_directoryToSweep && MonotonicTime::now() < now + marginOfSlack / 2) {
+            if (auto* block = m_directoryToSweep->destruction() == DoesNotNeedDestruction ? nullptr : m_directoryToSweep->findBlockToSweep(m_blockToSweep)) {
+                block->sweep(nullptr);
+                m_directoryToSweep->didFinishUsingBlock(block);
+                ++m_blockToSweep;
+            } else {
+                m_directoryToSweep = m_directoryToSweep->nextDirectory();
+                m_blockToSweep = 0;
+            }
+        }
+        return true;
+    }
 
     void runStep(MonotonicTime now, uint64_t allocated)
     {
@@ -271,6 +311,7 @@ private:
         if (scope == CollectionScope::Full)
             m_freedNodesAtLastFullCollection = Bun__DOM__freedNodes();
         m_allocatedAtLastCollection = m_vm.heap.totalBytesAllocated();
+        m_hasUnsweptBlocks = true;
         m_stopsSweeper = true;
     }
 
@@ -285,6 +326,7 @@ private:
     static constexpr double growthWhileBusy = 1.35;
     static constexpr double growthWhenQuiet = 1.12;
     static constexpr double growthWhenSettled = 1.06;
+    static constexpr Seconds marginOfSlack = 2_ms;
     static constexpr Seconds minimumGap = 100_ms;
     static constexpr Seconds lullAfter = 150_ms;
     static constexpr Seconds quietAfterInput = 1_s;
@@ -315,6 +357,9 @@ private:
     Step m_step { Step::Collect };
     bool m_hasBeenQuiet { false };
     std::atomic<bool> m_stopsSweeper { false };
+    std::atomic<bool> m_hasUnsweptBlocks { false };
+    BlockDirectory* m_directoryToSweep { nullptr };
+    unsigned m_blockToSweep { 0 };
 };
 
 } // namespace Bun
@@ -333,9 +378,10 @@ extern "C" Bun::DesktopIdleWork* Bun__DesktopIdleWork__create(JSC::VM* vm)
     return new Bun::DesktopIdleWork(*vm);
 }
 
-extern "C" long long Bun__DesktopIdleWork__beforeWait(Bun::DesktopIdleWork* work, long long timeoutNs)
+extern "C" long long Bun__DesktopIdleWork__beforeWait(Bun::DesktopIdleWork* work, long long timeoutNs, double slackMs)
 {
-    Seconds timeout = work->beforeWait(timeoutNs < 0 ? Seconds::infinity() : Seconds::fromNanoseconds(timeoutNs));
+    Seconds timeout = timeoutNs < 0 ? Seconds::infinity() : Seconds::fromNanoseconds(timeoutNs);
+    timeout = work->beforeWait(timeout, std::min(timeout, Seconds::fromMilliseconds(slackMs)));
     return timeout.isInfinity() ? -1 : timeout.nanosecondsAs<long long>();
 }
 
@@ -344,9 +390,8 @@ extern "C" void Bun__DesktopIdleWork__didGetEvents(Bun::DesktopIdleWork* work, b
     work->didGetEvents(hasInput);
 }
 
-extern "C" void JSC__useOptionsForDesktopProgram(const char* envp[], size_t envc)
+extern "C" void JSC__useOptionsForDesktopProgram()
 {
-    RELEASE_ASSERT(!g_jscConfig.isPermanentlyFrozen());
 #if ENABLE(AOT)
     JSC::AOT::relaxTimingOfModuleLoads();
 #endif
@@ -365,13 +410,4 @@ extern "C" void JSC__useOptionsForDesktopProgram(const char* envp[], size_t envc
     JSC::Options::minEdenToOldGenerationRatio() = 0.18;
     // The window that calls `postMessage()` is found on the stack.
     JSC::Options::useTailCalls() = false;
-    static constexpr std::array names { "warmUpMarkedBlock"_s, "releaseIdleRegExpCodeWhenShrinkingFootprint="_s, "numberOfGCMarkers="_s, "largeHeapSize="_s, "heapGrowthMaxIncrease="_s, "smallHeapGrowthFactor="_s, "minEdenToOldGenerationRatio="_s };
-    for (size_t i = 0; i < envc; i++) {
-        auto entry = WTF::StringView::fromLatin1(envp[i]);
-        if (entry.startsWith("BUN_JSC_"_s) && std::ranges::any_of(names, [&](auto name) { return entry.substring(8).startsWithIgnoringASCIICase(name); }))
-            JSC::Options::setOption(envp[i] + 8, false);
-        // Child processes inherit the environment, and another version of Bun refuses a BUN_JSC_ option that it does not know.
-        if (entry.startsWith("BUN_DESKTOP_JSC_"_s))
-            JSC::Options::setOption(envp[i] + 16, false);
-    }
 }

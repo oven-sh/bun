@@ -281,7 +281,15 @@ fn is_undrawn(character: char) -> bool {
 
 /// Whether something in it goes from right to left.
 fn may_be_bidirectional(text: &str) -> bool {
-    let bytes = text.as_bytes();
+    let ascii = text
+        .as_bytes()
+        .as_chunks::<32>()
+        .0
+        .iter()
+        .take_while(|it| it.is_ascii())
+        .count()
+        * 32;
+    let (text, bytes) = (&text[ascii..], &text.as_bytes()[ascii..]);
     let starts = |&[a, b, c]: &[u8; 3]| {
         (a.wrapping_sub(0xD6) < 10)
             | (a == 0xE0) & (b < 0xA4)
@@ -937,7 +945,7 @@ impl Shaped {
             graphemes.clear();
             while !rest.is_empty() {
                 let length = match rest.as_bytes() {
-                    [first @ ..0x80, ..0x80, ..] if *first != b'\r' => 1,
+                    [..0x80, ..0x80, ..] => 1,
                     _ if rest.chars().take(2).all(unicode::stands_alone) => {
                         rest.ceil_char_boundary(1)
                     }

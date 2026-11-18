@@ -9,20 +9,24 @@ use bun_web::client::{
     potential_cors_request,
 };
 use bun_web::encoding::Encoding;
+use bun_web::exec::Receiver;
 use bun_web::headers::HeaderList;
 use bun_web::host::{Reply, Wish};
 use bun_web::hosts::{self, host_of};
+use bun_web::media;
 use bun_web::net::embedder::ClientId;
 use bun_web::net::fetch::Controller;
 use bun_web::page::{self, Controls, Purpose as OfSnapshot, Snapshot};
 use bun_web::permissions_policy::Feature;
 use bun_web::renderer::Renderer;
 use bun_web::request::Destination;
+use bun_web::service::{FrameType, WindowState};
 use bun_web::time::monotonic_now;
 use bun_web::url::Url;
 
 use super::load::Loaded;
 use super::parts::WebFrameMain;
+use super::place::Place;
 use super::process::Process;
 use super::sandbox::Sandbox;
 use super::{Contents, lazily, logs_to_stderr, object_in};
@@ -41,11 +45,12 @@ pub(super) enum Creator {
     Bequest {
         client: Rc<Client>,
         base_url: Option<String>,
+        place: Place,
     },
 }
 
 impl Creator {
-    fn client(&self) -> &Client {
+    pub(super) fn client(&self) -> &Client {
         match self {
             Creator::Page(page) => &page.get().client,
             Creator::Bequest { client, .. } => client,
@@ -86,12 +91,15 @@ pub(crate) struct State {
     controls: OnceCell<Controls>,
     /// Unless the document can be called.
     pub(super) renderer: OnceCell<Renderer>,
+    place: RefCell<Place>,
     process: RefCell<Option<Rc<Process>>>,
     is_started: Cell<bool>,
     pub(super) has_preload: Cell<bool>,
     /// It shares objects with the documents of its origin.
     pub(super) has_relatives: Cell<bool>,
     activated_at: Cell<f64>,
+    pub(super) may_capture: Cell<bool>,
+    media: RefCell<Vec<(u32, Box<dyn media::Connection>)>>,
     pub(super) has_been_active: Cell<bool>,
     /// What goes on when the page gives the ticket back.
     traversal: RefCell<Option<(u32, Proceed)>>,
@@ -146,9 +154,44 @@ impl Scripts for InPage {
         bun_web::net::session::is_any_inspected()
             && self.with(|it| Ok(it.contents().inspection.has_network.get()))
     }
+
+    fn window_state(&self) -> Option<WindowState> {
+        self.with(|it| {
+            let contents = it.contents();
+            if !it.is_started() || !same(contents.page(), it) {
+                return Ok(None);
+            }
+            let owner = contents.owner();
+            Ok(Some(WindowState {
+                frame_type: match (it.parent(), fields::opener(it)) {
+                    (Some(_), _) => FrameType::Nested,
+                    (_, Some(_)) => FrameType::Auxiliary,
+                    _ => FrameType::TopLevel,
+                },
+                is_visible: owner.inspection.seems_focused.get() || owner.is_visible()?,
+                is_focused: (owner.is_focused() || owner.inspection.seems_focused.get())
+                    && (!contents.is_frame() || same(owner.focused_page()?, it)),
+            }))
+        })
+    }
+
+    fn focus(&self) {
+        self.with(|it| {
+            it.owner().focus_window()?;
+            it.owner().take_focus()
+        })
+    }
+
+    fn navigate(&self, url: Url) -> Option<Receiver<Option<ClientId>>> {
+        self.with(|it| {
+            it.contents()
+                .navigate_for_service_worker(it, &string(url.href()))
+                .map(Some)
+        })
+    }
 }
 
-fn is_recent(time: f64) -> bool {
+pub(super) fn is_recent(time: f64) -> bool {
     monotonic_now() - time < 5000.
 }
 
@@ -193,11 +236,14 @@ impl Page {
             base_url_now: None.into(),
             controls: Default::default(),
             renderer: Default::default(),
+            place: Default::default(),
             process: None.into(),
             is_started: false.into(),
             has_preload: false.into(),
             has_relatives: false.into(),
             activated_at: f64::NEG_INFINITY.into(),
+            may_capture: false.into(),
+            media: Default::default(),
             has_been_active: false.into(),
             traversal: None.into(),
             sent_as: Default::default(),
@@ -265,6 +311,7 @@ impl Page {
                 _ => Sandboxing::ByPolicy,
             },
             container,
+            reserved: about.loaded.as_ref().and_then(|it| it.reserved.take()),
         });
         if let Some(loaded) = &about.loaded {
             self.client.set_navigation_start(loaded.started);
@@ -280,6 +327,11 @@ impl Page {
             .into_iter()
             .for_each(|it| sandbox.keep_only(it));
         self.sandbox.replace(sandbox);
+        self.place.replace(self.choose_place(&about)?);
+        (self.client).treat_as_stranger(!self.place.borrow().is_trusted());
+        if !matches!(*self.place.borrow(), Place::App) {
+            drop(self.client.give_up_place());
+        }
         self.is_initial.set(about.is_initial);
         self.base_url
             .replace(match about.creator.as_ref().filter(|_| inherits_origin) {
@@ -304,11 +356,13 @@ impl Page {
         let is_heir = self.is_initial()
             && self.has_relatives.get()
             && self.is_started()
-            && next.origin_key() == self.origin_key()
+            && next.is_kin_of(self)
             && (self.client.runs_program() || !next.client.runs_program());
         if is_heir {
             self.url.replace(next.url());
-            self.configure(next.about.take())?;
+            let about = next.about.take();
+            (about.loaded.iter()).for_each(|it| it.reserved.set(next.client.give_up_place()));
+            self.configure(about)?;
             self.document_changed()?;
         }
         self.forget_creator();
@@ -319,6 +373,7 @@ impl Page {
     /// Makes this the empty document of a window that `opener` has opened.
     pub(super) fn adopt(&self, opener: &Page) {
         fields::set_opener(self, Some(opener));
+        self.place.replace(opener.place());
         self.client.commit(Commit {
             url: self.client.url(),
             headers: &HeaderList::default(),
@@ -329,7 +384,9 @@ impl Page {
             has_policies_from_history: false,
             sandboxing: Sandboxing::ByPolicy,
             container: None,
+            reserved: None,
         });
+        (self.client).treat_as_stranger(!opener.place().is_trusted());
         self.is_initial.set(false);
     }
 
@@ -337,6 +394,7 @@ impl Page {
         Creator::Bequest {
             client: self.client.bequest(&creator.client),
             base_url: creator.base_url(),
+            place: creator.place(),
         }
     }
 
@@ -489,17 +547,19 @@ impl Page {
     }
 
     /// It counts if the user has just done something in the window.
-    pub(super) fn activated(&self) {
-        if is_recent(self.owner().context.last_input.get()) {
-            self.activated_at.set(monotonic_now());
-            self.has_been_active.set(true);
+    pub(super) fn activated(&self) -> JsResult<()> {
+        if !is_recent(self.owner().context.last_input.get()) {
+            return Ok(());
         }
+        self.activated_at.set(monotonic_now());
+        self.has_been_active.set(true);
+        self.contents().spread_activation()
     }
 
     pub(super) fn consume_activation(&self) -> JsResult<()> {
         (self.owner().page().with_descendants()?.iter())
             .for_each(|it| it.get().activated_at.set(f64::NEG_INFINITY));
-        Ok(())
+        self.owner().consume_activation_apart_from(self)
     }
 
     pub(super) fn has_activation(&self) -> bool {
@@ -571,13 +631,29 @@ impl Page {
         self.process.borrow().is_some()
     }
 
-    /// In the same process, or not in any yet.
+    pub(super) fn is_running_in(&self, process: &Process) -> bool {
+        self.is_started() && self.is_in(process)
+    }
+
+    pub(super) fn place(&self) -> Place {
+        self.place.borrow().clone()
+    }
+
+    /// In the same process, once both have started.
     pub(super) fn is_beside(&self, other: &Page) -> bool {
-        self.process().is_none_or(|it| other.is_in(&it))
+        match (&*self.process.borrow(), &*other.process.borrow()) {
+            (Some(own), Some(others)) => Rc::ptr_eq(own, others),
+            _ => *self.place.borrow() == *other.place.borrow(),
+        }
+    }
+
+    /// One can do to the other what it likes.
+    pub(super) fn is_kin_of(&self, other: &Page) -> bool {
+        self.is_beside(other) && self.origin_key() == other.origin_key()
     }
 
     pub(super) fn process_id(&self) -> u32 {
-        if let Some(it) = self.process().or_else(|| self.contents().process()) {
+        if let Some(it) = (self.process()).or_else(|| self.contents().process_meant_for(self)) {
             return it.pid;
         }
         crate::process::id()
@@ -626,6 +702,14 @@ impl Page {
     /// Unless it is gone by then.
     pub(super) fn later(&self, work: impl FnOnce(&'static Page) -> JsResult<()> + 'static) {
         post_unless_disposed(self, Priority::Host, work);
+    }
+
+    pub(super) fn after_script(&self, work: impl FnOnce(&'static Page) -> JsResult<()> + 'static) {
+        let page = Root::new(self);
+        super::process::after_script(Priority::Host, move || match page.get().is_disposed() {
+            true => Ok(()),
+            false => work(page.get()),
+        });
     }
 
     pub(super) fn may_be_unloaded(&self) -> JsResult<bool> {
@@ -693,8 +777,33 @@ impl Page {
         Ok(all)
     }
 
-    pub(crate) fn snapshot(&self, purpose: OfSnapshot) -> JsResult<Snapshot> {
-        self.ask(|it, reply| it.snapshot(purpose, reply))
+    pub(crate) async fn snapshot(&self, purpose: OfSnapshot) -> JsResult<Snapshot> {
+        const PATIENCE_WITH_FRAME: u64 = 1000;
+        let apart = match purpose {
+            OfSnapshot::Print => self.contents().pages_apart_below()?,
+            _ => Vec::new(),
+        };
+        let mut taken = self.snapshot_of_process(purpose).await?;
+        for it in &apart {
+            let of_frame = it.get().snapshot_of_process(OfSnapshot::Print);
+            if let Some(of_frame) = task::within(PATIENCE_WITH_FRAME, of_frame)
+                .await
+                .transpose()?
+            {
+                taken.frames.push((it.get().id, of_frame.markup));
+                taken.frames.extend(of_frame.frames);
+            }
+        }
+        Ok(taken)
+    }
+
+    async fn snapshot_of_process(&self, purpose: OfSnapshot) -> JsResult<Snapshot> {
+        let mut taken = (self.ask_later(|it, reply| it.snapshot(purpose, reply))).await?;
+        let is_beside =
+            |id| (self.contents().related_page(id)).is_some_and(|it| it.is_beside(self));
+        taken.resources.retain(|it| is_beside(it.page));
+        taken.frames.retain(|it| is_beside(it.0));
+        Ok(taken)
     }
 
     pub(crate) fn origin_of_base(&self) -> String {
@@ -739,7 +848,9 @@ impl Page {
         let request = url.map(|url| {
             let mut request = potential_cors_request(url, destination, None);
             request.referrer = client.referrer_source();
-            request.blob = bun_web::convert::resolve_blob_url(&request.url);
+            if !self.is_far() || client.origin().is_origin_of(&request.url) {
+                request.blob = bun_web::convert::resolve_blob_url(&request.url);
+            }
             request
         });
         Ok(async { client.load(request?, Purpose::Use, false).await })
@@ -840,15 +951,47 @@ impl Page {
         .to_boolean())
     }
 
+    /// For a page in another process.
+    pub(super) fn tell_media(&self, connection: u32, commands: Option<Vec<u8>>) -> JsResult<()> {
+        const MOST_CONNECTIONS: usize = 1 << 10;
+        let Some(commands) = commands.filter(|_| !self.is_disposed()) else {
+            self.media.borrow_mut().retain(|it| it.0 != connection);
+            return Ok(());
+        };
+        if self.media.borrow().iter().all(|it| it.0 != connection) {
+            if self.media.borrow().len() == MOST_CONNECTIONS {
+                return Ok(());
+            }
+            let controls = self.controls.get().cloned();
+            let listener: media::Listener = Rc::new(move |line| {
+                (controls.iter()).for_each(|it| it.media(connection, line.map(<[u8]>::to_vec)));
+            });
+            let connected = media::connect(&listener);
+            self.media.borrow_mut().push((connection, connected));
+        }
+        let more = object!({ "mediaType": "audio" });
+        let may_list = crate::text::contains(&string(&commands), "\"devices\"")
+            && self.check_permission(js("media")?, more)?;
+        let media = self.media.borrow();
+        let found = media.iter().find(|it| it.0 == connection);
+        (found.iter()).for_each(|it| it.1.send(&commands, [may_list, self.may_capture.get()]));
+        Ok(())
+    }
+
     pub(super) fn stop_streaming(&self) {
         self.streaming.take().iter().for_each(Controller::abort);
     }
 
     pub(super) fn dispose(&self) -> JsResult<()> {
         self.stop_streaming();
-        if self.is_disposed() {
-            return Ok(());
+        match self.process() {
+            _ if self.is_disposed() => Ok(()),
+            Some(process) => process.hold(|| self.take_down()),
+            None => self.take_down(),
         }
+    }
+
+    fn take_down(&self) -> JsResult<()> {
         self.ask(Controls::dispose)?;
         if self.is_disposed.replace(true) {
             return Ok(());
@@ -858,6 +1001,10 @@ impl Page {
             this.get().is_forgotten.set(true);
             Ok(())
         });
+        if self.is_far() {
+            let left = instances::<Contents>(self.frames_if_any()?).map(|it| it.map(Root::new));
+            (left.collect::<JsResult<Vec<_>>>()?.iter()).try_for_each(|it| it.get().remove())?;
+        }
         self.client.dispose();
         self.count_frames(i32::MIN);
         if let Some(cleanups) = object_in(fields::cleanups(self)) {
@@ -868,8 +1015,9 @@ impl Page {
         }
         self.document().map_or(Ok(()), Document::dispose)?;
         self.tell_renderer(Renderer::dispose)?;
-        (self.process().iter()).for_each(|it| it.dismiss(self.id));
+        (self.process().iter()).for_each(|it| it.dismiss(self));
         self.about.take();
+        self.media.take();
         self.traversal.take();
         fields::set_document(self, None);
         self.is_started.set(false);

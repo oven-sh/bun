@@ -315,6 +315,13 @@ impl Shorthand {
                 .write(areas, grammar::Mode::Specified)?
                 .into();
         }
+        if let Some(depth) = parts[0].as_mut().filter(|it| {
+            self.definition.name == "-webkit-perspective" && !Id::Perspective.syntax().accepts(it)
+        }) {
+            *depth = Some([depth, &b"px"[..]].concat())
+                .filter(|it| Id::Perspective.syntax().accepts(it))?
+                .into();
+        }
         for (index, it) in self.longhands.iter().enumerate() {
             if parts[index].is_none() {
                 parts[index] = match it.omitted {
@@ -336,6 +343,10 @@ impl Shorthand {
                 .filter(|it| is_custom_ident(it)),
             "grid-row" | "grid-column" => before().filter(|it| is_custom_ident(it)),
             "list-style" => before().filter(|it| eq(it, "none")),
+            "background" => words(parts[index + 1].as_ref()?)
+                .iter()
+                .any(|it| eq(it, "border-area"))
+                .then(|| b"border-box".into()),
             "place-content" if Id::JustifyContent.syntax().accepts(&before()?) => before(),
             "place-content" => Some(b"start".into()),
             name if name.ends_with("rule-inset") && parts[2] == parts[0] => parts[1].clone(),

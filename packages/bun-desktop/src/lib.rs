@@ -16,6 +16,8 @@ mod canvas;
 mod codec;
 mod cover;
 mod diagnostics;
+#[cfg(not(target_os = "macos"))]
+mod egl;
 mod error;
 mod frame;
 mod gfx;
@@ -231,7 +233,7 @@ unsafe extern "C" fn record_image(list: *const abi::DisplayList, width: f32, hei
         let mut scene = paint::scene::Scene::default();
         // SAFETY: the contract of `abi::Renderer`.
         unsafe { scene.copy_list(&*list) };
-        images::record(scene, [width, height])
+        images::record(images::next_id(), scene, [width, height])
     })
 }
 

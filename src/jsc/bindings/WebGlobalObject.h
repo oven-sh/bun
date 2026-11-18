@@ -18,7 +18,8 @@ public:
 
     enum class Scope : uint8_t { Window,
         DedicatedWorker,
-        SharedWorker };
+        SharedWorker,
+        ServiceWorker };
     enum class NodeGlobals : uint8_t { None,
         OfPreload,
         OfNodeIntegration };

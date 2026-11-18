@@ -76,7 +76,7 @@ fn succeed<'a>(cx: Cx<'_, 'a>, request: JsLocal<'a>, result: JSValue, event: &'a
 /// <https://w3c.github.io/IndexedDB/#open-a-database-connection>
 async fn open(
     request: Kept,
-    database: Arc<stored::Database>,
+    database: stored::Database,
     name: DomString,
     version: Option<u64>,
 ) -> Option<()> {
@@ -152,7 +152,7 @@ pub(super) fn finish_upgrade<'a>(
 }
 
 /// <https://w3c.github.io/IndexedDB/#delete-a-database>
-async fn delete(request: Kept, database: Arc<stored::Database>) -> Option<()> {
+async fn delete(request: Kept, database: stored::Database) -> Option<()> {
     let turn = database.take_turn().await?;
     let old_version = schema_or_failure(&request, &turn).await?.version;
     until_alone(&request, &turn, old_version, None).await;
@@ -194,7 +194,7 @@ impl IDBFactory {
         &'a self,
         cx: Cx<'_, 'a>,
         name: &DomString,
-        steps: impl FnOnce(Kept, Arc<stored::Database>) -> F,
+        steps: impl FnOnce(Kept, stored::Database) -> F,
     ) -> Result<'a, &'a IDBOpenDBRequest> {
         let shelf = self.shelf(cx)?;
         let request = js_IDBOpenDBRequest::create(&cx.heap, IDBRequest::default());

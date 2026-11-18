@@ -63,17 +63,25 @@ impl IDBCursor {
     ) -> Result<'a, JSValue> {
         let source = &self.source().source;
         let direction = source.direction(self.direction);
-        let Some(entry) = transaction.stored(cx, |it| {
-            it.iterate(
-                source.table(),
-                &self.range,
-                direction,
-                self.position.borrow().as_deref(),
-                target,
-                count,
+        let walk = stored::Walk {
+            store: source.store.table,
+            index: source.index.as_ref().map(|it| it.table),
+            range: &self.range,
+            direction,
+        };
+        let move_on = |it: &mut stored::Transaction| {
+            it.move_on(
+                &walk,
+                stored::Destination {
+                    position: self.position.borrow().as_deref(),
+                    target,
+                    count,
+                    needs_value: self.has_value,
+                },
+                &mut self.ahead.borrow_mut(),
             )
-        })?
-        else {
+        };
+        let Some(entry) = transaction.stored(cx, move_on)? else {
             [
                 js_IDBCursor::set_key,
                 js_IDBCursor::set_primary_key,
@@ -87,12 +95,6 @@ impl IDBCursor {
         js_IDBCursor::set_key(self, value_of_key(&cx.heap, &entry)?);
         js_IDBCursor::set_primary_key(self, value_of_key(&cx.heap, source.primary_key(&entry))?);
         if self.has_value {
-            let walk = stored::Walk {
-                store: source.store.table,
-                index: source.index.as_ref().map(|it| it.table),
-                range: &self.range,
-                direction,
-            };
             let mut ahead = self.ahead.take();
             let written = transaction.stored(cx, |it| it.read_at(&walk, &entry, &mut ahead))?;
             let value = JSValue::deserialize(

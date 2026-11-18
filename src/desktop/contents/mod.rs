@@ -1,5 +1,6 @@
 //! `webContents`: what shows one document after the other, in a window or in a frame.
 
+mod apart;
 mod api;
 mod context;
 mod embedding;
@@ -14,9 +15,11 @@ mod load;
 mod open;
 pub(crate) mod page;
 pub(crate) mod parts;
+pub(crate) mod place;
 pub(crate) mod process;
 mod sandbox;
 mod save;
+mod witness;
 mod worlds;
 
 use std::rc::Rc;
@@ -157,6 +160,8 @@ struct Preferences {
     integrates_node: bool,
     integrates_node_in_frames: bool,
     is_sandboxed: bool,
+    /// That of the system, which takes another process.
+    has_sandbox: bool,
     fixes_text_areas: bool,
     keeps_window_size: bool,
     reports_preferred_size: bool,
@@ -202,7 +207,10 @@ impl Preferences {
     fn read(given: JSValue) -> JsResult<Preferences> {
         let is_set = |name| JsResult::Ok(get(given, name)?.to_boolean());
         let is_left_on = |name| JsResult::Ok(get(given, name)? != JSValue::FALSE);
-        let (integrates_node, sandbox) = (is_set("nodeIntegration")?, get(given, "sandbox")?);
+        let (integrates_node, sandbox) = match place::forces_sandbox() {
+            true => (false, JSValue::TRUE),
+            false => (is_set("nodeIntegration")?, get(given, "sandbox")?),
+        };
         Ok(Preferences {
             uses_web_engine: is_set("webEngine")?,
             has_web_security: is_left_on("webSecurity")?,
@@ -221,6 +229,7 @@ impl Preferences {
             } else {
                 sandbox.to_boolean()
             },
+            has_sandbox: sandbox.to_boolean() && place::ask_for_sandbox(),
             fixes_text_areas: !is_left_on("textAreasAreResizable")?,
             keeps_window_size: is_set("disableHtmlFullscreenWindowResize")?,
             reports_preferred_size: is_set("enablePreferredSizeMode")?,
@@ -426,9 +435,6 @@ impl Contents {
             } => Some(page),
             _ => None,
         };
-        if let Start::Alone = start {
-            process::prepare()?;
-        }
         all().last_id.update(|it| it + 1);
         let state = State {
             id: all().last_id.get(),
@@ -477,7 +483,7 @@ impl Contents {
             }
             Start::Framed(parent, ..) => this.embed(parent),
         }
-        this.tell_pages(this.creation(creator.map(|it| it.contents().id)));
+        this.announce_to_pages(creator.map(|it| it.contents().id));
         if let Start::Framed(_, _, element) = *start {
             this.rename(element.name.clone());
         }
@@ -498,6 +504,9 @@ impl Contents {
         };
         this.show_from_now(this.new_page("about:blank", about)?);
         this.page().forget_creator();
+        if let Start::Alone = start {
+            process::prepare(&this.page().place(), false)?;
+        }
         all().alive.borrow_mut().push(Root::new(this));
         if let Start::Opened {
             opener,
@@ -609,6 +618,10 @@ impl Contents {
         Ok(self.window().map(Window::has_focus).transpose()? == Some(true))
     }
 
+    fn seems_to_have_focus(&self) -> bool {
+        self.is_focused() || self.inspection.seems_focused.get()
+    }
+
     pub(crate) fn focus_window(&self) -> JsResult<()> {
         self.window().map_or(Ok(()), Window::take_focus)
     }
@@ -623,6 +636,11 @@ impl Contents {
     fn later(&self, work: impl FnOnce(&'static Contents) -> JsResult<()> + 'static) {
         let this = Root::new(self);
         post(Priority::Host, move || work(this.get()));
+    }
+
+    fn after_script(&self, work: impl FnOnce(&'static Contents) -> JsResult<()> + 'static) {
+        let this = Root::new(self);
+        process::after_script(Priority::Host, move || work(this.get()));
     }
 
     pub(crate) fn show_in(&self, view: &View, kind: Kind) -> JsResult<()> {
@@ -652,7 +670,11 @@ impl Contents {
     pub(crate) fn environment_changed(&self) -> JsResult<()> {
         match self.guest() {
             Some(guest) => guest.environment_changed(),
-            None => self.page().tell(Controls::environment_changed),
+            None => {
+                self.page().tell(Controls::environment_changed)?;
+                (self.pages_apart_below()?.iter())
+                    .try_for_each(|it| it.get().tell(Controls::environment_changed))
+            }
         }
     }
 
@@ -785,8 +807,16 @@ impl Contents {
     }
 
     fn show(&self, page: &Page, source: &str, markup: Markup<'_>) -> JsResult<()> {
-        if !page.is_started() {
-            page.start()?;
+        if page.is_started() {
+            page.foretell()?;
+        } else if let Err(thrown) = catch(page.start())? {
+            if page.is_started() || page.place() == place::Place::App {
+                return Err(global().throw_value(thrown));
+            }
+            return self.crash("launch-failed", 1);
+        }
+        if self.is_apart() {
+            self.catch_up_with_element()?;
         }
         if page.is_initial() && page.has_relatives.get() {
             self.tell_element(ForElement::Measure)?;
@@ -822,6 +852,7 @@ impl Contents {
             ..Default::default()
         };
         self.set_page(self.new_page("about:blank", about)?);
+        self.leave_unused_places();
         Ok(())
     }
 
@@ -830,17 +861,26 @@ impl Contents {
     }
 
     fn crash(&self, reason: &str, exit_code: i32) -> JsResult<()> {
-        self.page().dispose()?;
         self.cancel_pending()?;
+        self.lose_page(reason, exit_code)
+    }
+
+    /// The next one may be on its way.
+    fn lose_page(&self, reason: &str, exit_code: i32) -> JsResult<()> {
+        self.page().dispose()?;
         let (old, url) = (self.page(), self.page().url_in_history());
         let mut about = About::default();
         about.sandbox.keep_only(Vec::new());
         let page = Page::create(self, &url, about)?;
         page.succeed(old);
         self.set_page(page);
-        self.tell_pages(Change::Crashed);
+        self.tell_pages(&Change::Crashed);
         self.has_crashed_at(url);
-        self.set_loading(false)?;
+        self.set_loading(self.loading.is_pending())?;
+        self.leave_unused_places();
+        if self.is_frame() && old.place() != place::Place::App {
+            return Ok(());
+        }
         let details = object!({ "reason": reason, "exitCode": exit_code });
         self.announce("render-process-gone", &[details])?;
         announce(
@@ -851,7 +891,11 @@ impl Contents {
     }
 
     fn may_unload(&self, is_closing: bool) -> JsResult<bool> {
-        Ok(self.page().may_be_unloaded()?
+        let mut agrees = self.page().may_be_unloaded()?;
+        for it in self.pages_apart_below()? {
+            agrees = agrees && it.get().may_be_unloaded()?;
+        }
+        Ok(agrees
             || (!is_closing && !self.page().has_been_active.get())
             || (!self.is_frame() && !self.dispatch("will-prevent-unload", &[])?))
     }
@@ -867,7 +911,7 @@ impl Contents {
     /// With the window that it fills, after the tasks that pages have queued so far.
     fn close_soon(&self) {
         let this = Root::new(self);
-        post(Priority::Visible, move || {
+        process::after_script(Priority::Visible, move || {
             let it = this.get();
             match it.window().filter(|_| it.kind.get() == Kind::Window) {
                 Some(window) => window.request_close(),
@@ -947,7 +991,7 @@ impl Contents {
                 return Ok(());
             }
             Input::Key(key) if !self.is_destroyed.get() && self.before_input(key)? => {
-                self.page().tell(|it| it.input(Input::KeyTaken))?;
+                (self.page_with_keys()).tell(|it| it.input(Input::KeyTaken))?;
                 return tell(Command::KeyWasHandled);
             }
             _ => {}
@@ -960,6 +1004,9 @@ impl Contents {
                     link::handle_shortcut(self.page(), &key)?;
                 }
                 tell(Command::KeyWasHandled)
+            }
+            (None, input) if apart::is_typed(&input) => {
+                self.page_with_keys().tell(|it| it.input(input))
             }
             (None, input) => self.page().tell(|it| it.input(input)),
         }

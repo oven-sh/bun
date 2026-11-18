@@ -148,31 +148,27 @@ pub(super) fn inherited_from<'a>(
             || on_behalf::font_scope(&cx.heap),
             |it| it.arena().read(|it| it.fonts.scope),
         ),
+        is_smoothed: true,
     };
     let styled = element.filter(|it| it.is_connected()).and_then(|it| {
         it.synced_engine(cx, |engine, id| {
             engine.update_style_of(id);
             let (_, style) = engine.style_of_pseudo(id, Pseudo::None)?;
-            Some((
-                style.font.size.1 / style.zoom,
-                style.line_height() / style.zoom,
-                engine.environment.root_font.size,
-                style.is_rtl(),
-                style.color(),
-            ))
+            Some(Inherited {
+                font_size: style.font.size.1 / style.zoom,
+                line_height: style.line_height() / style.zoom,
+                root_font_size: engine.environment.root_font.size,
+                is_right_to_left: style.is_rtl(),
+                color: style.color(),
+                is_smoothed: matches!(
+                    style.other_if_set(Id::WebkitFontSmoothing),
+                    None | Some("auto" | "subpixel-antialiased")
+                ),
+                ..plain.clone()
+            })
         })
     });
-    Ok(match styled {
-        Some((font_size, line_height, root_font_size, is_right_to_left, color)) => Inherited {
-            font_size,
-            line_height,
-            root_font_size,
-            is_right_to_left,
-            color,
-            ..plain
-        },
-        None => plain,
-    })
+    Ok(styled.unwrap_or(plain))
 }
 
 #[optimize(size)]

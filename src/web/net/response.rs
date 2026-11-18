@@ -4,6 +4,7 @@ use super::body::Body;
 use crate::Bytes;
 use crate::headers::{HeaderList, tokens};
 use crate::referrer::ReferrerPolicy;
+use crate::service::{Reserved, Routing};
 use crate::url::Url;
 
 keywords! {
@@ -77,6 +78,7 @@ crate::wire! {
         pub start: f64,
         pub redirect_start: f64,
         pub redirect_end: f64,
+        pub routing: Routing,
         pub fetch_start: f64,
         pub request_start: f64,
         pub response_start: f64,
@@ -105,10 +107,35 @@ crate::wire! {
         pub timing: Timing,
         /// That was sent.
         pub referrer: Option<Url>,
+        /// The client that is made from it.
+        pub reserved: Option<Reserved>,
+        pub is_from_service_worker: bool,
     }
 }
 
 impl Head {
+    pub fn new(kind: ResponseType, url: Url, headers: HeaderList) -> Head {
+        Head {
+            kind,
+            url,
+            status: 200,
+            status_text: Bytes::default(),
+            headers,
+            redirects: 0,
+            has_cross_origin_redirects: false,
+            includes_credentials: false,
+            has_credentials_mode_include: false,
+            allows_timing: false,
+            exposes_redirects: false,
+            cached: Cached::Local,
+            protocol: Protocol::None,
+            timing: Timing::default(),
+            referrer: None,
+            reserved: None,
+            is_from_service_worker: false,
+        }
+    }
+
     pub fn referrer_policy(&self) -> ReferrerPolicy {
         ReferrerPolicy::from_header(&self.headers.get_or_empty(b"referrer-policy"))
     }

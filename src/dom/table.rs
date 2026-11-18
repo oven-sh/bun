@@ -12,6 +12,7 @@ use crate::layout::{AutoSize, Edges, Input, Layout, Output, Room, Widths, clamp,
 use crate::name::name;
 use crate::order::Order as _;
 use crate::properties::Style;
+use crate::scroll::Contents;
 use crate::types::*;
 use crate::values::{Lp, Size};
 
@@ -171,14 +172,13 @@ fn precedence(style: BorderStyle) -> u8 {
     }
 }
 
-#[inline]
+#[inline(always)]
 fn beats(a: Edge, b: Edge) -> bool {
+    // The bits of positive numbers are in the order of the numbers.
     let rank = |it: Edge| {
-        (
-            it.style == BorderStyle::Hidden,
-            it.width,
-            precedence(it.style),
-        )
+        u64::from(it.style == BorderStyle::Hidden) << 40
+            | u64::from((it.width + 0.0).to_bits()) << 8
+            | u64::from(precedence(it.style))
     };
     rank(a) > rank(b)
 }
@@ -194,6 +194,8 @@ struct Cell {
     column: usize,
     rows: usize,
     columns: usize,
+    /// The same as that of the cell before if the styles are the same.
+    look: u32,
     /// In pixels, or as a fraction.
     height: (Option<f32>, Option<f32>),
     /// To the baseline of the row.
@@ -438,7 +440,15 @@ impl Document {
         {
             grid.groups[footer..].rotate_left(1);
         }
-        let mut occupied_until: Vec<usize> = Vec::new();
+        let (mut occupied_until, mut last) =
+            (Vec::<usize>::new(), None::<(&Rc<Style>, u32, _, bool)>);
+        grid.cells.reserve(
+            grid.groups
+                .iter()
+                .flat_map(|it| in_flow(*it))
+                .map(|it| in_flow(it).len())
+                .sum(),
+        );
         for group in &grid.groups {
             let end = grid.rows.len() + in_flow(*group).len();
             for row in in_flow(*group) {
@@ -451,39 +461,61 @@ impl Document {
                     {
                         column += 1;
                     }
-                    let columns = self
-                        .span(
-                            cell,
-                            if self.boxes[cell].tag == crate::name::Name::NONE {
-                                name!("columnspan")
-                            } else {
-                                name!("colspan")
-                            },
-                        )
-                        .unwrap_or(1)
-                        .clamp(1, MAX_COLUMNS.saturating_sub(column).max(1));
-                    let rows = match self.span(cell, name!("rowspan")).unwrap_or(1) {
-                        0 => end - index,
-                        rows => rows.min(end - index),
-                    };
-                    occupied_until.resize(occupied_until.len().max(column + columns), 0);
-                    occupied_until[column..column + columns].fill(index + rows);
+                    self.boxes.prefetch_start_after(cell);
                     let it = &self.boxes[cell];
-                    let is_aligned = !matches!(
-                        it.style.layout.vertical_align,
-                        VerticalAlign::Keyword(
-                            VerticalAlignName::Top
-                                | VerticalAlignName::Middle
-                                | VerticalAlignName::Bottom
-                        )
-                    );
+                    let (mut columns, mut rows) = (1, 1);
+                    if it.may_span {
+                        columns = self
+                            .span(
+                                cell,
+                                if it.tag == crate::name::Name::NONE {
+                                    name!("columnspan")
+                                } else {
+                                    name!("colspan")
+                                },
+                            )
+                            .unwrap_or(1)
+                            .clamp(1, MAX_COLUMNS.saturating_sub(column).max(1));
+                        rows = match self.span(cell, name!("rowspan")).unwrap_or(1) {
+                            0 => end - index,
+                            rows => rows.min(end - index),
+                        };
+                    }
+                    if occupied_until.len() < column + columns {
+                        occupied_until.resize(column + columns, 0);
+                    }
+                    if columns > 1 || rows > 1 {
+                        occupied_until[column..column + columns].fill(index + rows);
+                    }
+                    let (_, look, height, is_aligned) = last
+                        .filter(|last| Rc::ptr_eq(last.0, &it.style))
+                        .unwrap_or_else(|| {
+                            let is_aligned = match it.style.layout.align_content.0 {
+                                AlignName::Normal => !matches!(
+                                    it.style.layout.vertical_align,
+                                    VerticalAlign::Keyword(
+                                        VerticalAlignName::Top
+                                            | VerticalAlignName::Middle
+                                            | VerticalAlignName::Bottom
+                                    )
+                                ),
+                                other => other == AlignName::Baseline,
+                            };
+                            *last.insert((
+                                &it.style,
+                                grid.cells.len() as u32,
+                                specified_height(it),
+                                is_aligned,
+                            ))
+                        });
                     grid.cells.push(Cell {
                         id: cell,
                         row: index,
                         column,
                         rows,
                         columns,
-                        height: specified_height(it),
+                        look,
+                        height,
                         is_aligned,
                     });
                     column += columns;
@@ -505,7 +537,13 @@ impl Document {
 
     fn set_collapsed(&mut self, id: BoxId, collapsed: Option<&Rc<Collapsed>>) {
         let it = &mut self.boxes[id];
-        if it.collapsed.as_ref() != collapsed {
+        if !it
+            .collapsed
+            .as_ref()
+            .zip(collapsed)
+            .is_some_and(|it| Rc::ptr_eq(it.0, it.1))
+            && it.collapsed.as_ref() != collapsed
+        {
             it.collapsed = collapsed.cloned();
             it.cache.clear();
         }
@@ -538,6 +576,20 @@ impl Document {
                         *known
                     }
                 };
+                if row_end - row == 1 && column_end - column == 1 {
+                    let ([above, before], merge) = (
+                        [row * columns + column, row * (columns + 1) + column],
+                        |known: &mut (Edge, u32), new: Edge| {
+                            if new.style != BorderStyle::None {
+                                merge(known, new)
+                            }
+                        },
+                    );
+                    merge(&mut horizontal[above], edges[0]);
+                    merge(&mut horizontal[above + columns], edges[2]);
+                    merge(&mut vertical[before], edges[start]);
+                    return merge(&mut vertical[before + 1], edges[end]);
+                }
                 for at in (row..row_end).filter(|_| {
                     order as usize <= grid.cells.len() && row_end - row + column_end - column > 2
                 }) {
@@ -567,11 +619,10 @@ impl Document {
                     });
                 }
             };
-        let mut last = (&self.boxes[id].style, table);
+        let mut last = (u32::MAX, table);
         for cell in &grid.cells {
-            let style = &self.boxes[cell.id].style;
-            if !Rc::ptr_eq(style, last.0) {
-                last = (style, edges(style));
+            if cell.look != last.0 {
+                last = (cell.look, of(cell.id));
             }
             add(
                 last.1,
@@ -595,6 +646,18 @@ impl Document {
         add(table, 0, rows, 0, columns);
         let visible = |edge: Edge| if edge.style.is_none() { none } else { edge };
         let around = |row: usize, row_end: usize, column: usize, column_end: usize| {
+            if row_end - row == 1 && column_end - column == 1 {
+                let [above, before] = [row * columns + column, row * (columns + 1) + column];
+                let mut edges = [
+                    visible(horizontal[above].0),
+                    none,
+                    visible(horizontal[above + columns].0),
+                    none,
+                ];
+                (edges[start], edges[end]) =
+                    (visible(vertical[before].0), visible(vertical[before + 1].0));
+                return edges;
+            }
             let across = |line: usize| {
                 horizontal[line * columns..][column..column_end]
                     .iter()
@@ -612,8 +675,10 @@ impl Document {
             (edges[start], edges[end]) = (down(column), down(column_end));
             edges
         };
-        let mut is_taken = vec![false; rows * columns];
-        for cell in &grid.cells {
+        let is_full = grid.cells.len() == rows * columns
+            && grid.cells.iter().all(|it| it.rows == 1 && it.columns == 1);
+        let mut is_taken = vec![is_full; rows * columns];
+        for cell in grid.cells.iter().filter(|_| !is_full) {
             (cell.row..cell.row + cell.rows)
                 .for_each(|row| is_taken[row * columns + cell.column..][..cell.columns].fill(true));
         }
@@ -665,38 +730,53 @@ impl Document {
     }
 
     fn measure_columns(&mut self, grid: &mut Grid, spacing: f32, is_fixed: bool) {
-        let mut cells: Vec<&Cell> = grid
-            .cells
-            .iter()
-            .filter(|cell| !is_fixed || cell.row == 0)
-            .collect();
-        if !cells.is_sorted_by_key(|cell| cell.columns) {
-            cells.order_by_key(|cell| cell.columns);
-        }
-        for cell in cells {
+        let counted = || {
+            grid.cells
+                .iter()
+                .take_while(|cell| !is_fixed || cell.row == 0)
+        };
+        let mut spanning: Vec<&Cell> = counted().filter(|cell| cell.columns > 1).collect();
+        spanning.order_by_key(|cell| cell.columns);
+        let mut last = None;
+        for cell in counted().filter(|cell| cell.columns == 1).chain(spanning) {
+            self.boxes.prefetch_after(cell.id);
             let it = &self.boxes[cell.id];
-            let (l, edges, mut own) = (
+            let (l, look) = (
                 &it.style.layout,
-                it.border_and_padding(0.0).sums(),
-                Column::default(),
+                (cell.look, it.collapsed.as_ref().map(Rc::as_ptr)),
             );
-            let fixed = |size: &Size| match size {
-                Size::Length(Lp::Px(_)) => {
-                    it.resolve_size(size, 0, &Room::default(), edges, &mut |_| None)
-                }
-                _ => None,
-            };
-            let (width, min, max) = (fixed(&l.width), fixed(&l.min_width), fixed(&l.max_width.0));
-            if let Size::Length(Lp::Fraction(fraction)) = l.width {
-                own.fraction = Some(match l.max_width.0 {
-                    Size::Length(Lp::Fraction(max)) => fraction.min(max),
-                    _ => fraction,
+            let (_, edges, [width, min, max], mut own) = last
+                .filter(|it: &(_, _, _, _)| it.0 == look)
+                .unwrap_or_else(|| {
+                    let edges = it.border_and_padding(0.0).sums();
+                    let fixed = |size: &Size| match size {
+                        Size::Length(Lp::Px(_)) => {
+                            it.resolve_size(size, 0, &Room::default(), edges, &mut |_| None)
+                        }
+                        _ => None,
+                    };
+                    let fraction = match (&l.width, &l.max_width.0) {
+                        (Size::Length(Lp::Fraction(fraction)), Size::Length(Lp::Fraction(max))) => {
+                            Some(fraction.min(*max))
+                        }
+                        (Size::Length(Lp::Fraction(fraction)), _) => Some(*fraction),
+                        _ => None,
+                    };
+                    let sizes = [&l.width, &l.min_width, &l.max_width.0].map(fixed);
+                    *last.insert((
+                        look,
+                        edges,
+                        sizes,
+                        Column {
+                            fraction,
+                            is_fixed: sizes[0].is_some(),
+                            ..Column::default()
+                        },
+                    ))
                 });
-            }
-            own.is_fixed = width.is_some();
             let spanned = &mut grid.columns[cell.column..cell.column + cell.columns];
             let (between, count) = (
-                spacing * spanned.iter().skip(1).filter(|it| !it.is_merged).count() as f32,
+                spacing * spanned[1..].iter().filter(|it| !it.is_merged).count() as f32,
                 cell.columns as f32,
             );
             if is_fixed {
@@ -1097,15 +1177,26 @@ impl Document {
         for cell in &grid.cells {
             let own = self.measure(cell.id, cell_input(cell, &uncollapsed.0, &uncollapsed.1));
             let it = &self.boxes[cell.id];
+            let below = if it.is_ordinary && it.turned == it.mode && !it.uses_parent[0] {
+                it.layout.border.bottom + it.layout.padding.bottom
+            } else {
+                it.border_and_padding(row_width).bottom
+            };
             let (baseline, row) = (
-                (cell.is_aligned && !it.children.is_empty())
-                    .then_some(own.baselines[0].unwrap_or(own.intrinsic)),
+                (cell.is_aligned && !it.children.is_empty()).then(|| {
+                    own.baselines[0].unwrap_or_else(|| own.intrinsic - below - it.gutters().bottom)
+                }),
                 &mut rows[cell.row],
             );
             row.baseline = row.baseline.into_iter().chain(baseline).reduce(f32::max);
-            let below = it.border_and_padding(row_width).bottom;
+            row.baseline_uses_height |= baseline.is_some() && own.uses_height;
             row.below_content = Some(row.below_content.map_or(below, |it| it.min(below)));
-            measured.push(([own.height, own.intrinsic], baseline));
+            let height = cell
+                .height
+                .0
+                .filter(|_| self.environment.quirks == crate::document::Quirks::All)
+                .map_or(own.height, |it| it.max(own.intrinsic));
+            measured.push(([height, own.intrinsic], baseline));
         }
         let extent = |rows: &[Row]| {
             let shown = || rows.iter().filter(|it| !it.is_collapsed);
@@ -1278,6 +1369,7 @@ impl Document {
         for (group, section) in grid.groups.iter().zip(&sections) {
             let (mut group_output, mut row_y, first, mut shows_row) =
                 (Output::default(), 0.0, index, false);
+            let mut in_group = Some(Contents::default());
             while let Some((row, _)) = grid.rows.get(index).filter(|it| it.1 == *group) {
                 let shown = if rows[index].is_collapsed {
                     0.0
@@ -1287,24 +1379,48 @@ impl Document {
                 if !rows[index].is_collapsed && core::mem::replace(&mut shows_row, true) {
                     row_y += spacing[1];
                 }
-                let mut row_output = Output {
-                    height: shown,
-                    ..Output::default()
-                };
-                while let Some((cell, (own, baseline))) = cells.next_if(|it| it.0.row == index) {
-                    let cell_height = if rows[index].is_collapsed {
-                        0.0
+                let (mut row_output, below_row) = (
+                    Output {
+                        height: shown,
+                        ..Output::default()
+                    },
+                    fixed_height(&self.boxes[*row].style),
+                );
+                let mut in_row =
+                    (!is_fragmented && !rows[index].is_collapsed).then(Contents::default);
+                let unaligned = |rows: &[Row], cell: &Cell, measured: f32| {
+                    let height = if rows[index].is_collapsed || cell.rows == 1 {
+                        shown
                     } else {
                         extent(&rows[index..index + cell.rows])
                     };
-                    let input = Input {
-                        height: Some(cell_height),
+                    Input {
+                        height: Some(height),
                         is_indefinite: cell.height.0.is_none()
-                            && !(has_height && cell_height > own[0]),
-                        row_baseline: rows[index]
-                            .baseline
-                            .filter(|it| baseline.is_some_and(|own| own != *it)),
+                            && !(has_height && height > measured),
                         ..cell_input(cell, &starts, &widths)
+                    }
+                };
+                if rows[index].baseline_uses_height && !is_fragmented {
+                    let aligned = cells
+                        .clone()
+                        .take_while(|it| it.0.row == index)
+                        .filter(|it| it.1.1.is_some());
+                    let baselines = aligned.map(|(cell, (own, _))| {
+                        let own = self.measure(cell.id, unaligned(&rows, cell, own[0]));
+                        own.baselines[0].unwrap_or_else(|| {
+                            own.intrinsic - self.boxes[cell.id].inset(row_width).bottom
+                        })
+                    });
+                    rows[index].baseline = baselines.reduce(f32::max);
+                }
+                while let Some((cell, (own, baseline))) = cells.next_if(|it| it.0.row == index) {
+                    let row_baseline = rows[index].baseline.filter(|it| {
+                        baseline.is_some_and(|own| own != *it || rows[index].baseline_uses_height)
+                    });
+                    let input = Input {
+                        row_baseline,
+                        ..unaligned(&rows, cell, own[0])
                     };
                     row_output.escapes |= self.lay_out(cell.id, input, None).escapes;
                     let x = if style.is_rtl() {
@@ -1312,12 +1428,8 @@ impl Document {
                     } else {
                         starts[cell.column]
                     };
-                    self.place_child(
-                        cell.id,
-                        [x, 0.0],
-                        Edges::default(),
-                        (row_width, fixed_height(&self.boxes[*row].style)),
-                    );
+                    self.place_child(cell.id, [x, 0.0], Edges::default(), (row_width, below_row));
+                    in_row.take_if(|it| !it.add(&self.boxes[cell.id]));
                     if is_fragmented {
                         let fills = rows[index + 1..index + cell.rows]
                             .iter()
@@ -1339,9 +1451,11 @@ impl Document {
                         });
                     }
                 }
-                let baseline = rows[index]
-                    .baseline
-                    .unwrap_or_else(|| shown - rows[index].below_content.unwrap_or(0.0));
+                let baseline = rows[index].baseline.unwrap_or_else(|| {
+                    rows[index]
+                        .below_content
+                        .map_or(0.0, |it| (shown - it).max(0.0))
+                });
                 output.baselines = [
                     output.baselines[0].or(Some(y + row_y + baseline)),
                     Some(y + row_y + baseline),
@@ -1372,19 +1486,30 @@ impl Document {
                         &mut group_output,
                         None,
                     );
+                    in_row
+                        .into_iter()
+                        .for_each(|it| self.note_extents_of_part(*row, it));
                 }
+                in_group.take_if(|it| !it.add(&self.boxes[*row]));
                 row_y += shown;
                 index += 1;
             }
             group_output.height = section.height;
-            self.finish_table_part(
-                *group,
-                [inset.left + spacing[0], y],
-                row_width,
-                &mut group_output,
-                &mut output,
-                None,
-            );
+            match is_fragmented && first < index {
+                true => self.boxes[*group].layout.size.height = section.height,
+                false => self.finish_table_part(
+                    *group,
+                    [inset.left + spacing[0], y],
+                    row_width,
+                    &mut group_output,
+                    &mut output,
+                    None,
+                ),
+            }
+            in_group
+                .filter(|_| !is_fragmented)
+                .into_iter()
+                .for_each(|it| self.note_extents_of_part(*group, it));
             y += if first == index {
                 section.height
             } else {
@@ -1604,6 +1729,7 @@ struct Row {
     is_collapsed: bool,
     starts_span: bool,
     baseline: Option<f32>,
+    baseline_uses_height: bool,
     /// The least border and padding at the bottom of a cell.
     below_content: Option<f32>,
 }

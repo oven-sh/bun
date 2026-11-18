@@ -139,6 +139,8 @@ pub struct Update {
     nodes: Vec<(u32, Node)>,
     placements: Vec<Placement>,
     announcements: Vec<(String, bool)>,
+    /// It may not make a tree.
+    pub is_doubtful: bool,
 }
 
 impl Update {
@@ -167,6 +169,7 @@ impl Update {
                 placement: Placement::default(),
             };
             Update {
+                is_doubtful: false,
                 is_first: from.is_first,
                 is_complete: from.is_complete,
                 zoom: from.zoom,
@@ -199,6 +202,48 @@ struct Tree {
     focus: u32,
     selection: abi::Selection,
     zoom: f32,
+}
+
+impl Tree {
+    fn disown(&mut self, child: u32) {
+        let parent = self
+            .nodes
+            .get_mut(&child)
+            .map(|it| std::mem::take(&mut it.parent));
+        parent
+            .and_then(|it| self.nodes.get_mut(&it))
+            .into_iter()
+            .for_each(|it| it.children.retain(|it| *it != child));
+    }
+
+    /// Until every node is the child of its parent alone, once, and is not above itself.
+    fn prune(&mut self, changed: &[u32]) {
+        let mut seen = FastSet::default();
+        for node in changed {
+            let mut children =
+                std::mem::take(&mut self.nodes.get_mut(node).expect("it was inserted").children);
+            children.retain(|it| {
+                self.nodes.get(it).is_some_and(|it| it.parent == *node) && seen.insert((*node, *it))
+            });
+            self.nodes.get_mut(node).expect("it was inserted").children = children;
+        }
+        let mut reached_by = FastMap::default();
+        for (walk, start) in changed.iter().enumerate() {
+            let mut at = *start;
+            while let Some(parent) = self.nodes.get(&at).map(|it| it.parent) {
+                match reached_by.get(&at) {
+                    Some(earlier) if *earlier == walk => self.disown(at),
+                    Some(_) => {}
+                    None => {
+                        reached_by.insert(at, walk);
+                        at = parent;
+                        continue;
+                    }
+                }
+                break;
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -414,8 +459,12 @@ impl Forest {
         ancestor == id || self.ancestors(id).any(|it| it == ancestor)
     }
 
-    fn framed(&self, node: &Node) -> Option<Id> {
-        self.root_of(node.frame()?)
+    fn framed(&self, id: Id) -> Option<Id> {
+        self.root_of(
+            self.get(id)?
+                .frame()
+                .filter(|it| self.hosts.get(it) == Some(&id))?,
+        )
     }
 
     pub fn children(&self, id: Id) -> impl DoubleEndedIterator<Item = Id> + '_ {
@@ -426,7 +475,7 @@ impl Forest {
             .map(move |it| Id { node: *it, ..id });
         own.chain(
             node.filter(|it| it.children.is_empty())
-                .and_then(|it| self.framed(it)),
+                .and_then(|_| self.framed(id)),
         )
     }
 
@@ -536,9 +585,7 @@ impl Forest {
             node: self.trees.get(&tree)?.focus,
         };
         for _ in 0..64 {
-            let Some(inner) = self.framed(self.get(id)?) else {
-                break;
-            };
+            let Some(inner) = self.framed(id) else { break };
             id = Id {
                 node: self.trees.get(&inner.tree)?.focus,
                 ..inner
@@ -985,7 +1032,33 @@ impl Forest {
         self.last_block.take();
         self.last_grid.take();
 
+        let above: Vec<_> = std::iter::successors(Some(tree), |it| Some(self.host_of(*it)?.tree))
+            .take(4096)
+            .collect();
         let own = self.trees.entry(tree).or_default();
+        if update.is_doubtful {
+            let replaced: FastSet<_> = update.nodes.iter().map(|it| it.0).collect();
+            let (mut orphans, mut left) = (FastSet::default(), FastSet::default());
+            for child in update
+                .removed
+                .iter()
+                .chain(update.nodes.iter().flat_map(|it| &it.1.children))
+            {
+                left.extend(
+                    own.nodes
+                        .get(child)
+                        .map(|it| it.parent)
+                        .filter(|it| !replaced.contains(it)),
+                );
+                orphans.insert(*child);
+            }
+            for parent in left {
+                own.nodes
+                    .get_mut(&parent)
+                    .into_iter()
+                    .for_each(|it| it.children.retain(|it| !orphans.contains(it)));
+            }
+        }
         let had_focus = std::mem::replace(&mut own.focus, update.focus);
         let selection_differs =
             std::mem::replace(&mut own.selection, update.selection) != update.selection;
@@ -1010,7 +1083,11 @@ impl Forest {
             update.nodes.iter().map(|it| it.0).collect::<Vec<_>>(),
         );
         for (node, mut new) in update.nodes {
-            self.hosts.extend(new.frame().map(|it| (it, id(node))));
+            self.hosts.extend(
+                new.frame()
+                    .filter(|it| !above.contains(it))
+                    .map(|it| (it, id(node))),
+            );
             match own.nodes.get(&node) {
                 Some(old) => {
                     (new.parent, new.placement) = (old.parent, old.placement);
@@ -1026,13 +1103,16 @@ impl Forest {
             }
             own.nodes.insert(node, new);
         }
-        for node in changed {
+        for &node in &changed {
             for index in 0..own.nodes[&node].children.len() {
                 let child = own.nodes[&node].children[index];
                 if let Some(child) = own.nodes.get_mut(&child) {
                     child.parent = node;
                 }
             }
+        }
+        if update.is_doubtful {
+            own.prune(&changed);
         }
         for placement in update.placements {
             if let Some(node) = own.nodes.get_mut(&placement.id) {

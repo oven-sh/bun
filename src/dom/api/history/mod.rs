@@ -32,7 +32,7 @@ use crate::generated_bindgen::window::js_DomWindow;
 
 pub(crate) use self::context::{Cluster, Context};
 pub(crate) use self::events::*;
-pub(crate) use self::foreign::{ForeignLocation, ForeignWindow};
+pub(crate) use self::foreign::{ForeignLocation, ForeignWindow, deliver_from_afar};
 pub(crate) use self::forms::{Submission, encoding_of_form, plan_form_navigation};
 pub(crate) use self::fragment::{
     has_target, indicate_text, indicated_element, targets_may_have_moved,

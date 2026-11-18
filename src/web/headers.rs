@@ -6,6 +6,7 @@ use bun_core::strings;
 
 use crate::Bytes;
 use crate::mime::Mime;
+use crate::net::record::{RecordReader, RecordWriter};
 use crate::wire::{self, Wire};
 
 pub fn is_token_byte(byte: u8) -> bool {
@@ -317,6 +318,16 @@ impl HeaderList {
 
     pub fn mime(&self) -> Option<Mime> {
         Mime::extract(&self.get(b"content-type")?)
+    }
+
+    pub(crate) fn write(&self, out: &mut RecordWriter) {
+        out.count(self.iter().count());
+        (self.iter().flat_map(|it| [it.0, it.1])).for_each(|it| out.bytes(it));
+    }
+
+    pub(crate) fn read(record: &mut RecordReader<'_>) -> Option<HeaderList> {
+        let pairs = record.list(|it| Some((it.bytes()?, it.bytes()?)))?;
+        Some(pairs.into_iter().collect())
     }
 
     pub fn is_attachment(&self) -> bool {

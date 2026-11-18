@@ -3520,7 +3520,7 @@ const webMemberKeys = [
   "onlyReads",
   "withoutFrame",
 ] as const;
-export type Exposure = readonly ("Window" | "Worker" | "DedicatedWorker" | "SharedWorker")[];
+export type Exposure = readonly ("Window" | "Worker" | "DedicatedWorker" | "SharedWorker" | "ServiceWorker")[];
 
 export class Signature {
   readonly args: readonly {

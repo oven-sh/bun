@@ -82,7 +82,7 @@ pub(crate) fn describe_point<'a>(cx: &mut Cx<'a>, ui: &'a Ui, point: [f64; 2]) -
             can_redo,
             can_cut,
             can_copy,
-            can_paste: is_editable && clipboard::can_paste(&cx.heap),
+            can_paste: is_editable && clipboard::can_paste(),
             can_edit_richly: is_editable && field.is_none(),
         },
         misspelled_word: String::new(),

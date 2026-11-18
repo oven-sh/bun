@@ -116,6 +116,14 @@ pub trait StandaloneModuleGraph: Send + Sync {
         buf[stem_len..stem_len + 3].copy_from_slice(b".js");
         self.find_assume_standalone_path(&buf[..stem_len + 3])
     }
+    /// The name that a file at `path`, in the executable or among the sources that it was built from, has in it if it is there.
+    fn path_in_executable(&self, _path: &[u8]) -> Option<Vec<u8>> {
+        None
+    }
+    /// The bytes of the file of that name, whatever the disk has.
+    fn embedded_data(&self, _name: &[u8]) -> Option<&[u8]> {
+        None
+    }
     /// The name of the file that an executable compiled in place holds for `path`, an absolute path that the disk no longer has.
     fn file_at_source_path(&self, _path: &[u8]) -> Option<&'static [u8]> {
         None

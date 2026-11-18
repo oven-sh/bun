@@ -80,6 +80,10 @@ export const Permissions = b.interface("Permissions", {
 
 export const NotificationDirection = b.enumeration(["auto", "ltr", "rtl"]);
 export const VibratePattern = b.union({ once: b.u32.wrap, pattern: b.sequenceVec(b.u32.wrap) }, { webidl: true });
+export const NotificationAction = dictionary(
+  { action: string, icon: usv.optional, navigate: usv.optional, title: b.DOMString.impl },
+  { fromJS: true },
+);
 export const NotificationOptions = dictionary({
   actions: b.sequence(b.any).default([]),
   badge: usv.optional,
@@ -229,7 +233,7 @@ const byNameOr = (name: string, options: any) => [
 ];
 export const CookieStore = b.interface("CookieStore", {
   extends: DesktopEventTarget,
-  exposed: inWindows,
+  exposed: ["Window", "ServiceWorker"],
   secure: true,
   proto: {
     get: byNameOr("get", CookieStoreGetOptions.default({})),
@@ -239,7 +243,7 @@ export const CookieStore = b.interface("CookieStore", {
       { args: { options: CookieInit }, rustName: "set_with", ...promise },
     ],
     delete: byNameOr("delete", CookieStoreDeleteOptions),
-    onchange: Handler.of(),
+    onchange: Handler.of(undefined, { exposed: inWindows }),
   },
 });
 

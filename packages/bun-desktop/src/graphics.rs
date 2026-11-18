@@ -6,13 +6,14 @@ use std::mem::MaybeUninit;
 use std::slice::{from_raw_parts, from_raw_parts_mut};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::abi::{Matrix, PathVerb, Slice};
+use crate::abi::{Matrix, Slice};
 use crate::abi_graphics::{
     Area, Commands, Decoded, Format, Graphics, Pen, Sink, TextMetrics, TextStyle,
 };
 use crate::canvas::Loan;
 use crate::hash::FastMap;
 use crate::host::thread;
+use crate::icc::Conversion;
 use crate::{canvas, codec, guard, images};
 
 static GRAPHICS: Graphics = Graphics {
@@ -24,6 +25,8 @@ static GRAPHICS: Graphics = Graphics {
     read,
     write,
     insert,
+    convert,
+    has_wide_colors,
     encode,
     decode,
     open,
@@ -56,12 +59,12 @@ unsafe extern "C" fn draw(commands: *const Commands) {
             .filter(|it| !it.is_empty())
             .map(|mut it| commands.canvases().for_each(|id| drop(it.remove(&id))))
     });
-    post_limited(commands.len(), move || std::rc::Rc::new(commands).run());
+    post_limited(commands.bytes(), move || std::rc::Rc::new(commands).run());
 }
 
 /// Scripts do not get far ahead of the pixels.
 fn post_limited(weight: usize, job: impl FnOnce() + Send + 'static) {
-    const MAX_WAITING: usize = 1 << 12;
+    const MAX_WAITING: usize = 1 << 19;
     static WAITING: AtomicUsize = AtomicUsize::new(0);
     if WAITING.fetch_add(weight, Ordering::Relaxed) > MAX_WAITING {
         thread::catch_up();
@@ -79,11 +82,7 @@ unsafe extern "C" fn measure(text: Slice<u8>, style: TextStyle) -> TextMetrics {
     })
 }
 
-unsafe extern "C" fn is_in_path(
-    point: &[f32; 2],
-    verbs: Slice<PathVerb>,
-    is_even_odd: bool,
-) -> bool {
+unsafe extern "C" fn is_in_path(point: &[f32; 2], verbs: Slice<u32>, is_even_odd: bool) -> bool {
     // SAFETY: the contract of `Graphics`.
     guard("error", false, || {
         canvas::is_in_path(*point, unsafe { verbs.get() }, is_even_odd)
@@ -92,7 +91,7 @@ unsafe extern "C" fn is_in_path(
 
 unsafe extern "C" fn is_in_stroke(
     point: &[f32; 2],
-    verbs: Slice<PathVerb>,
+    verbs: Slice<u32>,
     matrix: &Matrix,
     pen: Pen,
     dashes: Slice<f32>,
@@ -127,7 +126,7 @@ unsafe extern "C" fn write(id: u32, area: &Area, dirty: &Area, rgba: *const u8) 
         // SAFETY: the contract of `Graphics`.
         let rgba = unsafe { from_raw_parts(rgba, byte_count(area[2] as u32, area[3] as u32)) };
         let (dirty, rgba) = (*dirty, canvas::part_of(rgba, *area, *dirty));
-        let weight = 1 + (rgba.len() >> 13);
+        let weight = rgba.len() >> 6;
         match LOANS
             .with_borrow_mut(|it| it.remove(&id))
             .filter(|it| it.is_all_in(dirty))
@@ -146,13 +145,41 @@ unsafe extern "C" fn write(id: u32, area: &Area, dirty: &Area, rgba: *const u8) 
     });
 }
 
-unsafe extern "C" fn insert(&[width, height]: &[u32; 2], rgba: *const u8) -> u32 {
-    // SAFETY: the contract of `Graphics`.
-    let rgba = unsafe { from_raw_parts(rgba, byte_count(width, height)) };
+unsafe extern "C" fn insert(&[width, height]: &[u32; 2], rgba: *const u8, wide: *const u8) -> u32 {
     guard("error", None, || {
-        images::pixmap_from_rgba(width, height, rgba.to_vec()).map(images::insert)
+        // SAFETY: the contract of `Graphics`.
+        let copy = |it: *const u8| {
+            images::pixmap_from_rgba(
+                width,
+                height,
+                unsafe { from_raw_parts(it, byte_count(width, height)) }.to_vec(),
+            )
+        };
+        let id = images::next_id();
+        match (rgba.is_null(), wide.is_null()) {
+            (true, _) => images::insert_as(id, copy(wide)?, true, None),
+            (_, true) => images::insert_as(id, copy(rgba)?, false, None),
+            _ => images::insert_as(
+                id,
+                copy(rgba)?,
+                false,
+                Some(images::Widen::kept(copy(wide)?)),
+            ),
+        }
+        Some(id)
     })
     .unwrap_or(0)
+}
+
+unsafe extern "C" fn convert(rgba: *mut u8, pixels: usize, widens: bool) {
+    // SAFETY: the contract of `Graphics`.
+    Conversion::between(widens).apply_to_colors(unsafe { from_raw_parts_mut(rgba.cast(), pixels) });
+}
+
+extern "C" fn has_wide_colors(image: u32) -> bool {
+    guard("error", false, || {
+        thread::ask(move || images::is_wide(image) || images::widen(image).is_some())
+    })
 }
 
 unsafe extern "C" fn encode(

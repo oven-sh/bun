@@ -9,14 +9,14 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JsCell, Strong};
 
 use super::context::Context;
-use crate::abi::{Filter, GradientStop, PathVerb, Slice, Span};
+use crate::abi::{Filter, GradientStop, Slice, Span};
 use crate::abi_graphics::{Command, Commands};
 use crate::platform::graphics;
 
 #[derive(Default)]
 pub(super) struct List {
-    commands: Vec<Command>,
-    pub(super) verbs: Vec<PathVerb>,
+    commands: Vec<u32>,
+    pub(super) parts: Vec<u32>,
     pub(super) stops: Vec<GradientStop>,
     pub(super) filters: Vec<Filter>,
     pub(super) dashes: Vec<f32>,
@@ -39,8 +39,18 @@ pub(super) fn add<T>(to: &mut Vec<T>, items: impl IntoIterator<Item = T>) -> Spa
 
 impl List {
     #[inline]
+    pub(super) fn add_part(&mut self, write: impl FnOnce(&mut Vec<u32>)) -> Span {
+        let start = self.parts.len() as u32;
+        write(&mut self.parts);
+        Span {
+            start,
+            end: self.parts.len() as u32,
+        }
+    }
+
+    #[inline(always)]
     pub(super) fn push(&mut self, command: Command) {
-        self.commands.push(command);
+        command.write(&mut self.commands);
     }
 
     fn send(&mut self, is_partial: bool) {
@@ -50,7 +60,7 @@ impl List {
         }
         let commands = Commands {
             commands: Slice::new(&self.commands),
-            verbs: Slice::new(&self.verbs),
+            parts: Slice::new(&self.parts),
             stops: Slice::new(&self.stops),
             filters: Slice::new(&self.filters),
             dashes: Slice::new(&self.dashes),
@@ -63,20 +73,19 @@ impl List {
         }
         (self.selected, self.has_sent_part) = (0, is_partial);
         self.commands.clear();
-        self.verbs.clear();
+        self.parts.clear();
         self.stops.clear();
         self.filters.clear();
         self.dashes.clear();
         self.text.clear();
         if !is_partial {
-            self.verbs.shrink_to(MAX_VERBS);
-            self.text.shrink_to(MAX_VERBS);
+            self.parts.shrink_to(MAX_WORDS * 2);
+            self.text.shrink_to(MAX_WORDS);
         }
     }
 }
 
-const MAX_COMMANDS: usize = 1 << 13;
-const MAX_VERBS: usize = 1 << 15;
+const MAX_WORDS: usize = 1 << 15;
 
 #[derive(Default)]
 pub(crate) struct Recorder {
@@ -114,7 +123,7 @@ impl Recorder {
     #[inline]
     pub(super) fn record<R>(&self, canvas: u32, write: impl FnOnce(&mut List) -> R) -> R {
         self.list.with_mut(|list| {
-            if list.commands.len() > MAX_COMMANDS || list.verbs.len() > MAX_VERBS {
+            if list.commands.len() + list.parts.len() > MAX_WORDS {
                 list.send(true);
             }
             if !list.is_queued {

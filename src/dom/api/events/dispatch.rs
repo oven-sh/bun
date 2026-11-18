@@ -12,6 +12,10 @@ use crate::api::uievents::source_of;
 
 const INLINE: usize = 32;
 
+unsafe extern "C" {
+    safe fn Bun__IsolatedWorld__swapEvent(listener: JSValue, event: JSValue) -> JSValue;
+}
+
 /// How an entry of a path that crosses the edge of a shadow tree sees the event.
 #[derive(Clone, Copy, Default)]
 struct View {
@@ -318,9 +322,20 @@ impl<'a> Run<'a> {
             }) else {
                 continue;
             };
+            let hidden = self
+                .window
+                .filter(|_| listener.is.contains(Is::OF_ISOLATED_WORLD))
+                .map(|it| {
+                    (
+                        it,
+                        it.event(),
+                        Bun__IsolatedWorld__swapEvent(callback, it.event()),
+                    )
+                });
+            hidden.inspect(|it| it.0.set_event(self.outer_event));
             let foreign = window
                 .zip(self.window)
-                .filter(|(a, b)| !core::ptr::eq(*a, *b))
+                .filter(|(a, b)| hidden.is_none() && !core::ptr::eq(*a, *b))
                 .map(|(own, ours)| (own, own.event(), ours, ours.event()));
             if let Some((own, _, ours, shown)) = foreign {
                 ours.set_event(self.outer_event);
@@ -351,6 +366,10 @@ impl<'a> Run<'a> {
             }
             if self.drains {
                 drain_microtasks(cx);
+            }
+            if let Some((ours, shown, theirs)) = hidden {
+                ours.set_event(shown);
+                Bun__IsolatedWorld__swapEvent(callback, theirs);
             }
             if event.has(F::STOPPED_IMMEDIATELY) || cx.global().has_exception() {
                 return;

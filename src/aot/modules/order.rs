@@ -1183,6 +1183,7 @@ pub(super) fn compute_order(
             runner_starts_each_once && found_by_load.binary_search(&file.0).is_err()
         }
         EntryPointKind::LoadedByTestRunner
+        | EntryPointKind::LoadedByPage
         | EntryPointKind::HostLoadedModule
         | EntryPointKind::ImportedModule
         | EntryPointKind::Library => false,

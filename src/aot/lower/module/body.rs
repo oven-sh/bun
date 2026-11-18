@@ -1,7 +1,7 @@
 use bun_sema::atom::known;
 use bun_sema::bind::{Binding, Decl, ScopeId};
 use bun_sema::check::compute_ecma_line_starts;
-use bun_sema::hir::{ExprId, StmtId};
+use bun_sema::hir::{CLASSIC_SCRIPT_START, ExprId, ScriptOfPage, StmtId};
 use bun_sema::program::FileId;
 
 use core::mem::take;
@@ -354,6 +354,19 @@ impl FileLowering<'_, '_, '_, '_> {
         let embeds_function_source = self.inputs.options.embeds_function_source && !is_placeholder;
         let erased_type_ranges = embeds_function_source.then(|| self.finish_function_sources());
         let mut positions = crate::emit::source_positions(text, compute_ecma_line_starts(text));
+        if self.hir.script_of_page == ScriptOfPage::Classic && !is_placeholder {
+            let offset = CLASSIC_SCRIPT_START.len() as u32;
+            let adjustments = &mut positions.column_adjustments;
+            (adjustments.iter_mut().take_while(|it| it.line == 0))
+                .for_each(|it| it.column -= offset);
+            let (line, column) = (0, 0);
+            let start = ColumnAdjustment {
+                offset,
+                line,
+                column,
+            };
+            adjustments.insert(0, start);
+        }
         if !is_placeholder {
             self.add_positions_in_known_evaluations(&mut positions);
         }

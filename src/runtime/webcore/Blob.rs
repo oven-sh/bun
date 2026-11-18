@@ -3077,6 +3077,7 @@ pub(crate) unsafe extern "C" fn Blob__onStructuredCloneDeserialize(
     global_this: &JSGlobalObject,
     ptr: &mut *const u8,
     end: *const u8,
+    may_name_file: bool,
 ) -> JSValue {
     let start = *ptr;
     let total_length: usize = (end as usize) - (start as usize);
@@ -3084,7 +3085,8 @@ pub(crate) unsafe extern "C" fn Blob__onStructuredCloneDeserialize(
     let mut buffer_stream =
         bun_io::FixedBufferStream::new(unsafe { bun_core::ffi::slice(start, total_length) });
 
-    let result = match on_structured_clone_deserialize(global_this, &mut buffer_stream) {
+    let result = on_structured_clone_deserialize(global_this, &mut buffer_stream, may_name_file);
+    let result = match result {
         Ok(v) => v,
         Err(e) if e.name() == "OutOfMemory" => return global_this.throw_out_of_memory_value(),
         Err(_) => return JSValue::ZERO,
@@ -3127,6 +3129,7 @@ fn read_slice<B: AsRef<[u8]>>(
 fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
     global_this: &JSGlobalObject,
     reader: &mut bun_io::FixedBufferStream<B>,
+    may_name_file: bool,
 ) -> crate::Result<JSValue> {
     let version = reader.read_int_le::<u8>()?;
     let offset = reader.read_int_le::<u64>()?;
@@ -3174,7 +3177,7 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
         }
         store::SerializeTag::File => 'file: {
             use crate::node::types::PathOrFileDescriptorSerializeTag;
-            if web_blob::Bun__isDesktopRealm(global_this) {
+            if !may_name_file || web_blob::Bun__isDesktopRealm(global_this) {
                 return Err(crate::Error::InvalidValue);
             }
             if version >= 4 {

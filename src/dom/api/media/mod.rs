@@ -25,7 +25,7 @@ use crate::api::graphics::Failure;
 use crate::api::on_behalf::{current_document, queue_task, queue_task_after};
 use crate::generated_bindgen::media::*;
 pub(crate) use element::{MEDIA_STEPS, MediaError, TimeRanges, resume_lazy_media, source_inserted};
-pub(crate) use host::performance_now;
+pub(crate) use host::{hear_from_host, performance_now};
 pub(crate) use link::{Arg, Link, Message, Mirrored, Remote, window_has_closed};
 pub(crate) use player::Player;
 pub(crate) use recorder::{BlobEvent, MediaRecorder};

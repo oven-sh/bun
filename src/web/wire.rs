@@ -401,13 +401,13 @@ impl<T: Wire + Clone> Wire for Arc<[T]> {
     }
 }
 
-impl<T: Wire + Copy + Default, const N: usize> Wire for [T; N] {
+impl<T: Wire + Default, const N: usize> Wire for [T; N] {
     fn write(self, to: &mut Writer) {
         self.into_iter().for_each(|it| it.write(to));
     }
 
     fn read(from: &mut Reader<'_>) -> Result<Self> {
-        let mut all = [T::default(); N];
+        let mut all = core::array::from_fn(|_| T::default());
         for it in &mut all {
             *it = T::read(from)?;
         }
@@ -471,6 +471,16 @@ macro_rules! wire {
         $crate::wire!(impl enum $Name { $($Variant $(($Only))? $({ $($field),* })?,)* });
         $crate::wire! { $($rest)* }
     };
+    (impl never $($Name:ident),*) => {$(
+        /// It stays in its process.
+        impl $crate::wire::Wire for $Name {
+            fn write(self, _: &mut $crate::wire::Writer) {}
+
+            fn read(_: &mut $crate::wire::Reader<'_>) -> $crate::wire::Result<Self> {
+                Err($crate::wire::Malformed)
+            }
+        }
+    )*};
     (impl $Name:ident(_)) => {
         impl $crate::wire::Wire for $Name {
             fn write(self, to: &mut $crate::wire::Writer) {

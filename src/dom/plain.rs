@@ -196,7 +196,7 @@ pub(crate) fn svg_length(source: &[u8], zoom: f32) -> Option<Lp> {
     };
     let number = p.number()?;
     match p.rest {
-        b"" => Some(Lp::Px(number as f32 * zoom)),
+        b"" => Some(Lp::limited(number as f32 * zoom)),
         b"%" => Some(Lp::new(Node::Value(number, Unit::Percent))),
         _ => None,
     }

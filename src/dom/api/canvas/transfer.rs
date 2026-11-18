@@ -4,7 +4,7 @@ use core::any::Any;
 
 use bun_jsc::bindgen::{IntoError as _, JsHeap, JsInterface as _, JsLocal, JsScope, Result};
 use bun_jsc::{DOMExceptionCode, JSType, JSValue};
-use bun_web::channel::{Arrival, Endpoint, Message, Serialized, Transferred};
+use bun_web::channel::{Arrival, Endpoint, Graphic, LooseBitmap, Message, Serialized, Transferred};
 
 use super::Failure;
 use super::bitmap::{Owned, Source, area_of, size_from, snapshot};
@@ -14,7 +14,7 @@ use super::image_bitmap::ImageBitmap;
 use super::offscreen::OffscreenCanvas;
 use crate::api::messaging::listen;
 use crate::api::realm::hold;
-use crate::generated_bindgen::canvas::HTMLCanvasElement;
+use crate::generated_bindgen::canvas::{HTMLCanvasElement, PredefinedColorSpace};
 
 type Cx<'c, 'a> = &'c mut JsScope<'a>;
 
@@ -45,6 +45,31 @@ enum Moved {
     },
 }
 
+impl Graphic for Pixels {
+    fn loosen(self: Box<Self>) -> Option<LooseBitmap> {
+        None
+    }
+}
+
+impl Graphic for Moved {
+    fn loosen(self: Box<Self>) -> Option<LooseBitmap> {
+        let Moved::ImageBitmap(Pixels {
+            id,
+            size,
+            is_origin_clean,
+        }) = &*self
+        else {
+            return None;
+        };
+        Some(LooseBitmap {
+            size: *size,
+            rgba: Source::new(*id, *size, *is_origin_clean)
+                .read(PredefinedColorSpace::Srgb)?
+                .into(),
+        })
+    }
+}
+
 fn cloneable(bitmap: &ImageBitmap) -> core::result::Result<Source, Failure> {
     let refused = Failure::Dom(
         DOMExceptionCode::DataCloneError,
@@ -61,17 +86,24 @@ impl ImageBitmap {
     #[optimize(size)]
     pub(crate) fn serialize<'a>(&'a self, cx: Cx<'_, 'a>, _: bool) -> Result<'a, JSValue> {
         let source = cloneable(self).map_err(|it| it.into_error(&cx.heap))?;
-        let pixels = source
-            .read()
-            .ok_or_else(|| cx.heap.range_error(format_args!("Out of memory")))?;
-        let pixels = cx
-            .heap
-            .create_typed_array_from_box(JSType::Uint8Array, pixels)?
-            .to_js();
+        let read = |color_space| {
+            let pixels = source
+                .read(color_space)
+                .ok_or_else(|| cx.heap.range_error(format_args!("Out of memory")))?;
+            cx.heap
+                .create_typed_array_from_box(JSType::Uint8Array, pixels)
+                .map(JsLocal::to_js)
+        };
+        let wide = if source.has_wide_colors() {
+            read(PredefinedColorSpace::DisplayP3)?
+        } else {
+            JSValue::UNDEFINED
+        };
         let parts = [
-            pixels,
+            read(PredefinedColorSpace::Srgb)?,
             JSValue::js_number(self.get_width().into()),
             JSValue::js_number(self.get_height().into()),
+            wide,
         ];
         cx.heap
             .create_array(parts, |heap, it| Ok(JsLocal::new(heap, it)))
@@ -81,14 +113,15 @@ impl ImageBitmap {
     #[optimize(size)]
     pub(crate) fn deserialize<'a>(cx: Cx<'_, 'a>, parts: JsLocal<'a>) -> Result<'a, JSValue> {
         let mut part = |at| parts.to_js().get_index(cx.global(), at);
-        let (data, size) = (part(0)?, size_from([part(1)?, part(2)?]));
-        let data = data.as_array_buffer(cx.global());
-        let whole = data
-            .as_ref()
-            .map(|it| it.byte_slice())
-            .filter(|it| it.len() as u64 == area_of(size).saturating_mul(4));
-        Ok(whole.map_or(JSValue::NULL, |it| {
-            ImageBitmap::create(&cx.heap, Owned::from_pixels(size, it), size, true).to_js()
+        let (both, size) = ([part(0)?, part(3)?], size_from([part(1)?, part(2)?]));
+        let both = both.map(|it| it.as_array_buffer(cx.global()));
+        let both = both.each_ref().map(|it| {
+            it.as_ref()
+                .map(|it| it.byte_slice())
+                .filter(|it| it.len() as u64 == area_of(size).saturating_mul(4))
+        });
+        Ok(both[0].map_or(JSValue::NULL, |_| {
+            ImageBitmap::create(&cx.heap, Owned::from_pixels(size, both), size, true).to_js()
         }))
     }
 }
@@ -112,7 +145,7 @@ impl<'a> Transferable<'a> {
         }
     }
 
-    pub(crate) fn transfer(self, cx: Cx<'_, 'a>) -> Box<dyn Any + Send> {
+    pub(crate) fn transfer(self, cx: Cx<'_, 'a>) -> Box<dyn Graphic> {
         Box::new(match self {
             Transferable::ImageBitmap(bitmap) => {
                 let size = [bitmap.get_width(), bitmap.get_height()];
@@ -133,8 +166,8 @@ impl<'a> Transferable<'a> {
     }
 }
 
-pub(crate) fn receive<'a>(heap: &JsHeap<'a>, moved: Box<dyn Any + Send>) -> JSValue {
-    match moved.downcast().map(|it| *it) {
+pub(crate) fn receive<'a>(heap: &JsHeap<'a>, moved: Box<dyn Graphic>) -> JSValue {
+    match (moved as Box<dyn Any>).downcast().map(|it| *it) {
         Ok(Moved::ImageBitmap(pixels)) => {
             let size = pixels.size;
             ImageBitmap::create(heap, pixels.adopt(), size, true).to_js()
@@ -142,7 +175,20 @@ pub(crate) fn receive<'a>(heap: &JsHeap<'a>, moved: Box<dyn Any + Send>) -> JSVa
         Ok(Moved::OffscreenCanvas { size, placeholder }) => {
             OffscreenCanvas::received(heap, size, placeholder).to_js()
         }
-        Err(_) => JSValue::NULL,
+        Err(other) => match other.downcast().map(|it| *it) {
+            Ok(Some(LooseBitmap { size, rgba }))
+                if !rgba.is_empty() && rgba.len() as u64 == area_of(size).saturating_mul(4) =>
+            {
+                ImageBitmap::create(
+                    heap,
+                    Owned::from_pixels(size, [Some(&rgba), None]),
+                    size,
+                    true,
+                )
+                .to_js()
+            }
+            _ => JSValue::NULL,
+        },
     }
 }
 
@@ -167,7 +213,7 @@ fn frame_arrived<'a>(cx: Cx<'_, 'a>, placeholder: JsLocal<'a>) {
             let Some(Transferred::Canvas(frame)) = message.transferred.pop() else {
                 return;
             };
-            let Ok(frame) = frame.downcast::<Pixels>() else {
+            let Ok(frame) = (frame as Box<dyn Any>).downcast::<Pixels>() else {
                 return;
             };
             let (size, is_origin_clean) = (frame.size, frame.is_origin_clean);

@@ -12,12 +12,12 @@ use bun_collections::HashMap;
 use bun_core::strings;
 use bun_jsc::{JSGlobalObject, JSValue};
 use bun_threading::Guarded;
-use bun_ui::BoxedLocal as _;
 
+use crate::compiled::{self, Form};
 use crate::csp::embedded::RequiredCsp;
 use crate::csp::{Delivery, Directive, Inline, Metadata, Verdict, Violation, strip_for_report};
 use crate::encoding::Encoding;
-use crate::exec::{self, LocalFuture, Shared, Thread, Waiter};
+use crate::exec::{self, LocalFuture, Receiver, Shared, Thread, Waiter};
 use crate::headers::{HeaderList, collect_quoted, is_forbidden_request_header, split};
 use crate::integrity::{Hash, parse_metadata};
 use crate::locks::LockManager;
@@ -37,16 +37,24 @@ use crate::outside::Outside;
 use crate::permissions_policy::{Declared, Feature, PermissionsPolicy};
 use crate::policy_container::PolicyContainer;
 use crate::referrer::ReferrerPolicy;
+use crate::remote::grants::Access;
 use crate::reporting::{Member, Members, ReportType, to_json};
 use crate::request::{
-    Credentials, Destination, InitiatorType, Mode, Redirect, Request, RequestBody,
+    CacheMode, Credentials, Destination, InitiatorType, Mode, Redirect, Request, RequestBody,
 };
 use crate::scheme::{Privileges, privileges_of};
+use crate::service::{
+    self, Address, Call, Caller, ClientInfo, ClientKind, Control, Failure, Handler, Notice,
+    Outcome, Own, Presence, Reserved, ToRegistry, WindowState, WorkerInfo,
+};
+use crate::storage::areas::Items;
+use crate::storage::{AreaChange, Shelf};
 use crate::structured::{Bare, parse_item};
 use crate::time::monotonic_now;
+use crate::time::wall_now;
 use crate::timing::{NavigationType, ResourceTiming};
 use crate::url::Url;
-use crate::{Bytes, compiled, mime, remote, trust};
+use crate::{Bytes, mime, remote, trust};
 
 const MAX_UNREAD_TIMINGS: usize = 250;
 const MAX_SENT_REPORTS: usize = 1000;
@@ -89,6 +97,18 @@ pub trait Scripts {
     fn log_error(&self, message: &[u8]);
     fn location(&self) -> ScriptLocation;
     fn is_inspected(&self) -> bool;
+
+    /// If it is the document that a window or a frame shows.
+    fn window_state(&self) -> Option<WindowState> {
+        None
+    }
+
+    fn focus(&self) {}
+
+    /// The result is the client of the next document.
+    fn navigate(&self, _: Url) -> Option<Receiver<Option<ClientId>>> {
+        None
+    }
 }
 
 /// The same client in a page process, which is the one that scripts use.
@@ -114,12 +134,23 @@ crate::wire! {
         session: u32,
         handles_data: bool,
         role: Role,
-        parent: Option<ClientId>,
+        parent: Option<(ClientId, Around)>,
         agent: Agent,
         document: Document,
         navigation_timing: Option<(ResourceTiming, NavigationType)>,
         navigation_start: f64,
         previous: Option<ClientId>,
+        access: Access,
+    }
+
+    /// What a frame needs to know of a parent in another process.
+    #[derive(Clone)]
+    struct Around {
+        ancestors: Vec<Origin>,
+        is_secure: bool,
+        prohibits_mixed_content: bool,
+        upgrades_insecure_requests: bool,
+        referrer_of_srcdoc: Option<Url>,
     }
 }
 
@@ -141,6 +172,7 @@ pub struct Commit<'a> {
     pub has_policies_from_history: bool,
     pub sandboxing: Sandboxing,
     pub container: Option<Container<'a>>,
+    pub reserved: Option<Reserved>,
 }
 
 pub enum Sandboxing {
@@ -163,6 +195,9 @@ crate::wire! {
     #[derive(Clone)]
     struct Document {
         url: Url,
+        creation_url: Url,
+        /// What stands for the creation URL if that does not say where the document is from.
+        inherited_url: Option<Url>,
         origin: Origin,
         /// Also if the origin is opaque, and derives from such a one.
         is_from_https: bool,
@@ -178,21 +213,85 @@ crate::wire! {
     }
 }
 
+impl Document {
+    fn new(url: Url, origin: Origin) -> Document {
+        let permissions = PermissionsPolicy::new(origin.clone(), None, Declared::default());
+        Document {
+            policies: PolicyContainer::from_response(&url, &HeaderList::default(), false),
+            creation_url: url.clone(),
+            inherited_url: None,
+            url,
+            origin,
+            is_from_https: false,
+            status: 200,
+            referrer: Bytes::default(),
+            reported_permissions: permissions.clone(),
+            permissions,
+            is_isolated: false,
+            required_csp: None,
+            refuses_required_csp: false,
+            runs_program: false,
+        }
+    }
+}
+
 crate::wire! {
-    #[derive(Clone)]
+    #[derive(Clone, Default)]
     pub struct Agent {
         user_agent: Bytes,
         accept_language: Bytes,
         app_path: Bytes,
+        /// In a sandbox, where it runs the scripts that it likes.
+        is_like_in_browser: bool,
+        /// It has the origin of trusted documents, and not their storage.
+        is_kept_apart: bool,
     }
+}
+
+impl Agent {
+    pub(crate) fn initiator(&self, role: Role, origin: Option<Origin>) -> Initiator {
+        Initiator::new(role, origin, &self.user_agent, &self.accept_language)
+    }
+
+    /// It has none of the liberties of the client that has called for it.
+    pub(crate) fn of_service_worker(&self) -> Agent {
+        Agent {
+            user_agent: self.user_agent.clone(),
+            accept_language: self.accept_language.clone(),
+            app_path: self.app_path.clone(),
+            is_like_in_browser: false,
+            is_kept_apart: false,
+        }
+    }
+
+    pub(crate) fn app_path(&self) -> &[u8] {
+        &self.app_path
+    }
+}
+
+const MOST_NOTES_FOR_SERVICE_WORKERS: usize = 1 << 13;
+
+#[derive(Default)]
+struct Service {
+    /// If it is not that of the client.
+    id: Option<u32>,
+    /// Of a window.
+    presence: Option<Arc<Presence>>,
+    control: Option<Control>,
+    listener: Option<Rc<dyn Fn(Notice)>>,
+    unheard: Vec<Notice>,
+    asked_for_as_code: HashMap<Bytes, ()>,
+    own: Option<Own>,
 }
 
 enum Ancestry {
     Top,
     Frame(Rc<Client>),
+    FrameApart(Around),
     Worker {
         ancestors: Vec<Origin>,
         is_secure: bool,
+        kind: ClientKind,
     },
 }
 
@@ -214,9 +313,76 @@ pub struct WorkerSeed {
     document: Document,
     ancestors: Vec<Origin>,
     is_secure: bool,
-    creator: Creator,
+    kind: ClientKind,
+    creator: Option<Creator>,
+    control: Option<Control>,
+    presence: Option<Arc<Presence>>,
+    own: Option<Own>,
     unread_timings: UnreadTimings,
     is_far: bool,
+}
+
+impl WorkerSeed {
+    /// `headers` came with the script.
+    pub(crate) fn of_service(
+        session: &Arc<Session>,
+        agent: Agent,
+        headers: &HeaderList,
+        ancestors: Vec<Origin>,
+        own: Own,
+        runs_program: bool,
+    ) -> WorkerSeed {
+        let (id, url) = (own.client, own.worker.url.clone());
+        let policies = PolicyContainer::from_response(&url, headers, true);
+        WorkerSeed {
+            id,
+            responsible: id,
+            token: Client::new_token(),
+            session: Arc::clone(session),
+            role: Role::Page,
+            agent,
+            document: Document {
+                is_from_https: true,
+                runs_program,
+                policies,
+                ..Document::new(url.clone(), Origin::of(&url))
+            },
+            ancestors,
+            is_secure: true,
+            kind: ClientKind::ServiceWorker,
+            creator: None,
+            control: None,
+            presence: None,
+            own: Some(own),
+            unread_timings: UnreadTimings::default(),
+            is_far: false,
+        }
+    }
+
+    /// To be dropped when the worker has ended.
+    pub fn presence(&self) -> Option<Arc<Presence>> {
+        self.presence.clone()
+    }
+
+    pub fn user_agent(&self) -> &[u8] {
+        &self.agent.user_agent
+    }
+
+    pub fn accept_language(&self) -> &[u8] {
+        &self.agent.accept_language
+    }
+}
+
+pub(crate) fn bucket_of(origin: &Origin, ancestors: &[Origin]) -> Vec<u8> {
+    let Some(top) = ancestors.last() else {
+        return origin.as_bytes().to_vec();
+    };
+    let is_first_party =
+        |it: &Origin| it == top || top.to_url().is_some_and(|top| it.is_same_site_with(&top));
+    if is_first_party(origin) && ancestors.iter().all(is_first_party) {
+        return origin.as_bytes().to_vec();
+    }
+    [origin.as_bytes(), b"^", top.as_bytes()].concat()
 }
 
 /// A worker shares them with the client that fetches its first scripts.
@@ -269,12 +435,16 @@ pub struct Client {
     twin: RefCell<Option<Rc<dyn Twin>>>,
     previous: Cell<Option<ClientId>>,
     cookie_watcher: Cell<Option<fn(&Client, &cookies::Change)>>,
+    service: RefCell<Service>,
+    /// Until when what the host has said, and how often that has passed.
+    cookies_last: Cell<(f64, u32)>,
+    watches_areas: Cell<bool>,
 }
 
 thread_local! {
     static CLIENTS: RefCell<Box<HashMap<u32, Weak<Client>>>> = RefCell::default();
     /// In a page process, for the documents that follow.
-    static UNLOADED: Box<RefCell<VecDeque<(ClientId, [f64; 2])>>> = Box::default();
+    static UNLOADED: RefCell<VecDeque<(ClientId, [f64; 2])>> = RefCell::default();
 }
 
 fn next_id() -> u32 {
@@ -474,6 +644,9 @@ impl Observer for Fetching<'_> {
     fn allows(&self, request: &Request, first: Option<&Url>) -> bool {
         (first.is_none() || request.destination != Destination::Report)
             && self.client.allows_request(request, first)
+            && (!(request.may_become_code
+                || first.is_some_and(|it| self.client.may_serve_as_code(it)))
+                || self.client.trusts(&request.url))
             && (first.is_some() || self.client.integrity_policy_allows(request))
             && (request.initiator_type == Some(InitiatorType::XmlHttpRequest)
                 || self.client.allows_credentials_in(&request.url))
@@ -574,6 +747,9 @@ impl Client {
             twin: RefCell::default(),
             previous: Cell::default(),
             cookie_watcher: Cell::default(),
+            service: RefCell::default(),
+            cookies_last: Cell::default(),
+            watches_areas: Cell::default(),
         });
         CLIENTS.with_borrow_mut(|it| it.insert(id.0, Rc::downgrade(&client)));
         client
@@ -608,35 +784,17 @@ impl Client {
         role: Role,
         url: Url,
     ) -> Rc<Client> {
-        let origin = Origin::new_opaque();
-        let permissions = PermissionsPolicy::new(origin.clone(), None, Declared::default());
-        let document = Document {
-            policies: PolicyContainer::from_response(&url, &HeaderList::default(), false),
-            url,
-            origin,
-            is_from_https: false,
-            status: 200,
-            referrer: Bytes::default(),
-            reported_permissions: permissions.clone(),
-            permissions,
-            is_isolated: false,
-            required_csp: None,
-            refuses_required_csp: false,
-            runs_program: matches!(role, Role::App { .. }),
-        };
-        let agent = Agent {
-            user_agent: Bytes::default(),
-            accept_language: Bytes::default(),
-            app_path: Bytes::default(),
-        };
         Client::make(
             ClientId(next_id()),
             Client::new_token(),
             session,
             role,
             parent.map_or(Ancestry::Top, Ancestry::Frame),
-            agent,
-            document,
+            Agent::default(),
+            Document {
+                runs_program: matches!(role, Role::App { .. }),
+                ..Document::new(url, Origin::new_opaque())
+            },
             UnreadTimings::default(),
         )
     }
@@ -651,9 +809,7 @@ impl Client {
 
     /// For the documents whose scripts are the program.
     pub fn of_program() -> Rc<Client> {
-        thread_local! {
-            static OF_PROGRAM: ManuallyDrop<RefCell<Option<Rc<Client>>>> = bun_ui::lasting(|| drop(OF_PROGRAM.with(|it| it.take())));
-        }
+        static OF_PROGRAM: bun_ui::Lasting<RefCell<Option<Rc<Client>>>> = bun_ui::Lasting::empty();
         OF_PROGRAM.with(|it| Rc::clone(it.borrow_mut().get_or_insert_with(Client::for_program)))
     }
 
@@ -674,17 +830,39 @@ impl Client {
         CLIENTS.with_borrow(|it| it.get(&id.0)?.upgrade())
     }
 
+    pub(crate) fn is_thread_of_service_worker() -> bool {
+        let is_one = |it: Rc<Client>| it.service.borrow().own.is_some();
+        CLIENTS.with_borrow(|it| it.values().filter_map(Weak::upgrade).any(is_one))
+    }
+
     pub fn set_scripts(&self, scripts: Rc<dyn Scripts>) {
         self.scripts.replace(Some(scripts));
     }
 
     pub fn set_agent(&self, user_agent: &[u8], accept_language: &[u8], app_path: &[u8]) {
+        let before = self.agent.borrow().clone();
         self.agent.replace(Agent {
             user_agent: user_agent.into(),
             accept_language: accept_language.into(),
             app_path: app_path.into(),
+            ..before
         });
         self.update_twin(|| Update::Agent(self.agent.borrow().clone()));
+    }
+
+    pub fn user_agent(&self) -> Bytes {
+        self.agent.borrow().user_agent.clone()
+    }
+
+    pub fn treat_like_in_browser(&self) {
+        self.agent.borrow_mut().is_like_in_browser = true;
+    }
+
+    pub fn treat_as_stranger(&self, is_stranger: bool) {
+        let origin = self.origin();
+        let is_kept_apart = is_stranger
+            && (origin.as_bytes() == b"file://" || trust::is_trusted_origin(origin.as_bytes()));
+        self.agent.borrow_mut().is_kept_apart = is_kept_apart;
     }
 
     pub fn set_twin(&self, twin: Rc<dyn Twin>) {
@@ -703,12 +881,25 @@ impl Client {
             session: self.session.id(),
             handles_data: self.session.handles(b"data"),
             role: self.role,
-            parent: self.parent().map(|it| it.id),
+            parent: self.parent().map(|it| {
+                let around = Around {
+                    ancestors: self.ancestors(),
+                    is_secure: it.is_secure(),
+                    prohibits_mixed_content: it.prohibits_mixed_content(),
+                    upgrades_insecure_requests: it.upgrades_insecure_requests(),
+                    referrer_of_srcdoc: self.referrer_source().filter(|_| self.is_srcdoc()),
+                };
+                (it.id, around)
+            }),
             agent: self.agent.borrow().clone(),
             document: self.document.borrow().clone(),
             navigation_timing: self.navigation_timing.borrow().clone(),
             navigation_start: self.navigation_start.get(),
             previous: self.previous.get(),
+            access: Access((!self.origin().is_opaque()).then(|| Shelf {
+                session: self.session.id(),
+                bucket: self.bucket().into(),
+            })),
         })
     }
 
@@ -723,7 +914,9 @@ impl Client {
             seed.token.clone(),
             Session::stand_in_for(seed.session),
             seed.role,
-            (seed.parent.and_then(Client::find)).map_or(Ancestry::Top, Ancestry::Frame),
+            seed.parent.clone().map_or(Ancestry::Top, |(id, around)| {
+                Client::find(id).map_or(Ancestry::FrameApart(around), Ancestry::Frame)
+            }),
             seed.agent.clone(),
             seed.document.clone(),
             UnreadTimings::default(),
@@ -780,8 +973,12 @@ impl Client {
             || commit
                 .origin_of
                 .is_some_and(|it| it.document.borrow().is_from_https);
+        let inherited_url = (commit.policies_of)
+            .filter(|_| matches!(url.scheme(), b"about" | b"blob" | b"javascript"))
+            .map(Client::home_url);
         let mut document = self.document.borrow_mut();
         document.is_from_https = is_from_https;
+        (document.creation_url, document.inherited_url) = (url.clone(), inherited_url);
         (
             document.url,
             document.origin,
@@ -880,6 +1077,214 @@ impl Client {
             document.required_csp,
             document.refuses_required_csp,
         ) = (policies, required_csp, refuses_required_csp);
+        drop(document);
+        let (reserved, control) = match commit.reserved {
+            _ if self.origin().is_opaque() => (None, None),
+            Some(it) => (Some(it.presence), it.control),
+            None => (
+                None,
+                (commit.policies_of)
+                    .filter(|it| it.bucket() == self.bucket())
+                    .and_then(|it| it.service.borrow().control.clone()),
+            ),
+        };
+        let mut service = self.service.borrow_mut();
+        service.presence = reserved.or_else(|| service.presence.take());
+        service.id = service.presence.as_ref().map(|it| it.id);
+        service.control = control;
+        let is_known = service.presence.is_some() || service.control.is_some();
+        drop(service);
+        if is_known {
+            self.greet_registry();
+        }
+    }
+
+    /// For the client that gets the document after all.
+    pub fn give_up_place(&self) -> Option<Reserved> {
+        let service = self.service.take();
+        Some(Reserved {
+            presence: service.presence?,
+            control: service.control,
+        })
+    }
+
+    fn greet_registry(&self) {
+        let caller = self.as_caller().into();
+        self.be_present();
+        let service = self.service.borrow();
+        let hello = ToRegistry::Hello {
+            caller,
+            uses: service.control.as_ref().map(|it| it.registration),
+            listens: service.listener.is_some(),
+        };
+        service::send(&self.session, hello);
+    }
+
+    fn be_present(&self) {
+        if !matches!(self.ancestry, Ancestry::Worker { .. }) {
+            (self.service.borrow_mut().presence)
+                .get_or_insert_with(|| Presence::new(&self.session, self.id.0));
+        }
+    }
+
+    fn id_for_service_workers(&self) -> u32 {
+        self.service.borrow().id.unwrap_or(self.id.0)
+    }
+
+    fn as_caller(&self) -> Caller {
+        Caller {
+            address: Address {
+                thread: Thread::current(),
+                client: self.id,
+            },
+            info: ClientInfo {
+                id: self.id_for_service_workers(),
+                kind: match self.ancestry {
+                    Ancestry::Worker { kind, .. } => kind,
+                    _ => ClientKind::Window,
+                },
+                url: self.document.borrow().creation_url.clone(),
+                ancestors: self.ancestors(),
+                window: self.window_state(),
+            },
+            home_url: self.home_url(),
+            referrer: (self.referrer_source()).map(|it| (it, self.policies().referrer_policy)),
+            bucket: self.bucket().into(),
+            agent: self.agent.borrow().clone(),
+            worker: self.service.borrow().own.as_ref().map(|it| it.worker.id),
+        }
+    }
+
+    pub(crate) fn windows_of(session: &Arc<Session>) -> Vec<Caller> {
+        let all =
+            CLIENTS.with_borrow(|it| it.values().filter_map(Weak::upgrade).collect::<Vec<_>>());
+        all.iter()
+            .filter(|it| Arc::ptr_eq(&it.session, session) && it.may_use_service_workers())
+            .map(|it| it.as_caller())
+            .filter(|it| it.info.window.is_some())
+            .collect()
+    }
+
+    pub(crate) fn window_state(&self) -> Option<WindowState> {
+        self.scripts()?.window_state()
+    }
+
+    pub(crate) fn focus(&self) {
+        self.scripts().into_iter().for_each(|it| it.focus());
+    }
+
+    pub(crate) fn navigate(&self, url: Url) -> Option<Receiver<Option<ClientId>>> {
+        let is_mixed = (self.parent()).is_some_and(|it| it.blocks_as_mixed_content(&url));
+        self.scripts().filter(|_| !is_mixed)?.navigate(url)
+    }
+
+    /// By a page, from this service worker.
+    pub fn was_asked_for_code(&self, url: &Url) {
+        let asked = &mut self.service.borrow_mut().asked_for_as_code;
+        if asked.len() == MOST_NOTES_FOR_SERVICE_WORKERS {
+            asked.clear();
+        }
+        asked.insert(url.without_fragment().into(), ());
+    }
+
+    /// A service worker can pass off what it has fetched as its own.
+    fn may_serve_as_code(&self, url: &Url) -> bool {
+        let service = self.service.borrow();
+        let is_installed = |it: &Own| it.imports.lock().is_complete;
+        service
+            .asked_for_as_code
+            .contains_key(url.without_fragment())
+            || (service.own.as_ref()).is_some_and(|it| !is_installed(it) && self.trusts(url))
+    }
+
+    /// They run in the process of the app.
+    pub fn may_use_service_workers(&self) -> bool {
+        self.is_secure()
+            && !self.origin().is_opaque()
+            && !matches!(self.role, Role::App { .. })
+            && self.far.get().is_none()
+            && self.twin.borrow().is_none()
+            && !self.agent.borrow().is_like_in_browser
+            && !self.agent.borrow().is_kept_apart
+    }
+
+    pub(crate) fn notice(&self, notice: Notice) {
+        if self.is_disposed.get() {
+            return;
+        }
+        if let Notice::Controller(control) = &notice {
+            self.be_present();
+            self.service.borrow_mut().control.clone_from(control);
+        }
+        let mut service = self.service.borrow_mut();
+        if let (Notice::State(id, state), Some(control)) = (&notice, &mut service.control)
+            && control.worker.id == *id
+        {
+            control.worker.state = *state;
+        }
+        if let Some(listener) = service.listener.clone() {
+            drop(service);
+            listener(notice);
+        } else if let Notice::Message(..) = notice
+            && service.unheard.len() < MOST_NOTES_FOR_SERVICE_WORKERS
+        {
+            service.unheard.push(notice);
+        }
+    }
+
+    /// `listener` runs no script.
+    pub fn listen_to_service_workers(&self, listener: Rc<dyn Fn(Notice)>) {
+        let unheard = core::mem::take(&mut self.service.borrow_mut().unheard);
+        unheard.into_iter().for_each(&*listener);
+        self.service.borrow_mut().listener = Some(listener);
+        if self.may_use_service_workers() {
+            self.greet_registry();
+        }
+    }
+
+    /// The outcome comes with `ticket`.
+    pub fn call_service_workers(&self, ticket: u32, call: Call) {
+        let is_allowed = self.may_use_service_workers()
+            && match &call {
+                Call::Register { scope, script, .. } => {
+                    let (destination, mode) = (Destination::ServiceWorker, Mode::SameOrigin);
+                    let request =
+                        Request::new(script.clone(), destination, mode, Credentials::Omit);
+                    self.report_request(&request, None);
+                    [scope, script]
+                        .iter()
+                        .all(|it| service::is_allowed_at(it) && self.origin().is_origin_of(it))
+                        && self.allows_request(&request, None)
+                }
+                Call::GetRegistration(url) => self.origin().is_origin_of(url),
+                _ => true,
+            };
+        if is_allowed {
+            let caller = self.as_caller().into();
+            service::send(&self.session, ToRegistry::Call(caller, ticket, call));
+        } else {
+            let failure = Outcome::Failed(Failure::Security, "The URL is not allowed here.");
+            self.notice(Notice::Settled(ticket, failure));
+        }
+    }
+
+    pub fn controller(&self) -> Option<WorkerInfo> {
+        Some(self.service.borrow().control.as_ref()?.worker.clone())
+    }
+
+    pub fn as_service_worker(&self) -> Option<Own> {
+        self.service.borrow().own.clone()
+    }
+
+    fn handler_for_new_client(&self, source: Option<&Client>) -> Handler {
+        match service::may_have_any(&self.session) {
+            true => Handler::Matching {
+                agent: self.agent.borrow().clone(),
+                client: source.map(Client::id_for_service_workers),
+                reserved: None,
+            },
+            false => Handler::Nobody,
+        }
     }
 
     fn required_csp(&self, attribute: Option<&[u8]>, url: &Url) -> Option<RequiredCsp> {
@@ -912,7 +1317,23 @@ impl Client {
     }
 
     /// `headers` came with the script at `url`.
-    pub fn seed_worker(&self, url: Url, headers: &HeaderList, is_shared: bool) -> WorkerSeed {
+    pub fn seed_worker(
+        &self,
+        url: Url,
+        headers: &HeaderList,
+        is_shared: bool,
+        reserved: Option<Reserved>,
+    ) -> WorkerSeed {
+        let inherited = (self.service.borrow().control.clone()).filter(|_| url.scheme() == b"blob");
+        let (mut presence, control) =
+            reserved.map_or((None, inherited), |it| (Some(it.presence), it.control));
+        let id = ClientId::next();
+        if presence.is_none() && self.may_use_service_workers() && url.scheme() != b"data" {
+            let uses = control.as_ref().map(|it| it.registration);
+            let expected = ToRegistry::Expect(id.0, self.bucket().into(), uses);
+            service::send(&self.session, expected);
+            presence = Some(Presence::new(&self.session, id.0));
+        }
         let mut document = self.document.borrow().clone();
         document.is_from_https = self.prohibits_mixed_content();
         if url.scheme() == b"data" {
@@ -932,10 +1353,11 @@ impl Client {
         if is_shared {
             document.policies.document_isolation_policy = Default::default();
         }
-        let id = ClientId(next_id());
         if let Some(outside) = self.outside() {
-            outside.start_worker(id, url.clone(), headers.clone(), is_shared);
+            outside.start_worker(id, url.clone(), is_shared);
         }
+        document.inherited_url = (url.scheme() == b"blob").then(|| self.home_url());
+        document.creation_url = url.clone();
         (document.url, document.status, document.referrer) = (url, 200, Bytes::default());
         WorkerSeed {
             id,
@@ -948,14 +1370,21 @@ impl Client {
             document,
             ancestors: self.ancestors(),
             is_secure: self.is_secure(),
-            creator: Creator {
+            kind: match is_shared {
+                true => ClientKind::SharedWorker,
+                false => ClientKind::Worker,
+            },
+            control,
+            presence,
+            own: None,
+            creator: Some(Creator {
                 thread: Thread::current(),
                 id: self.id,
                 destination: match is_shared {
                     true => Destination::SharedWorker,
                     false => Destination::Worker,
                 },
-            },
+            }),
             unread_timings: UnreadTimings::default(),
         }
     }
@@ -971,7 +1400,11 @@ impl Client {
             document,
             ancestors,
             is_secure,
+            kind,
             creator,
+            control,
+            presence,
+            own,
             unread_timings,
             is_far,
         } = seed;
@@ -983,17 +1416,27 @@ impl Client {
             Ancestry::Worker {
                 ancestors,
                 is_secure,
+                kind,
             },
             agent,
             document,
             unread_timings,
         );
-        client.creator.replace(Some(creator));
+        client.creator.replace(creator);
         client.responsible.set(responsible);
         client.far.set(is_far.then(|| Far {
             outside: Outside::enter(id),
             handles_data: false,
         }));
+        client.service.replace(Service {
+            id: presence.as_ref().map(|it| it.id),
+            control,
+            own,
+            ..Service::default()
+        });
+        if presence.is_some() {
+            client.greet_registry();
+        }
         client
     }
 
@@ -1005,6 +1448,13 @@ impl Client {
         }
     }
 
+    fn around(&self) -> Option<&Around> {
+        match &self.ancestry {
+            Ancestry::FrameApart(around) => Some(around),
+            _ => None,
+        }
+    }
+
     pub fn url(&self) -> Url {
         self.document.borrow().url.clone()
     }
@@ -1012,6 +1462,23 @@ impl Client {
     pub fn set_url(&self, url: Url) {
         self.update_twin(|| Update::Url(url.clone()));
         self.document.borrow_mut().url = url;
+    }
+
+    fn home_url(&self) -> Url {
+        let document = self.document.borrow();
+        (document
+            .inherited_url
+            .as_ref()
+            .unwrap_or(&document.creation_url))
+        .clone()
+    }
+
+    pub fn cookie_url(&self) -> Url {
+        let created = self.document.borrow().creation_url.clone();
+        match created.scheme() {
+            b"blob" => created,
+            _ => self.home_url(),
+        }
     }
 
     pub fn referrer(&self) -> Bytes {
@@ -1045,7 +1512,7 @@ impl Client {
 
     /// Whether it gets compiled scripts. They need a realm whose built-in objects are read-only.
     pub fn runs_program(&self) -> bool {
-        self.document.borrow().runs_program
+        self.document.borrow().runs_program && !self.agent.borrow().is_like_in_browser
     }
 
     /// The origins of the documents that it is in, the outermost last.
@@ -1053,7 +1520,9 @@ impl Client {
         match &self.ancestry {
             Ancestry::Top => Vec::new(),
             Ancestry::Frame(parent) => [vec![parent.origin()], parent.ancestors()].concat(),
-            Ancestry::Worker { ancestors, .. } => ancestors.clone(),
+            Ancestry::Worker { ancestors, .. } | Ancestry::FrameApart(Around { ancestors, .. }) => {
+                ancestors.clone()
+            }
         }
     }
 
@@ -1064,12 +1533,14 @@ impl Client {
         let document = self.document.borrow();
         is_potentially_trustworthy(document.origin.to_url().as_ref().unwrap_or(&document.url))
             && self.parent().is_none_or(|it| it.is_secure())
+            && self.around().is_none_or(|it| it.is_secure)
     }
 
     /// https://w3c.github.io/webappsec-mixed-content/#categorize-settings-object
     fn prohibits_mixed_content(&self) -> bool {
         self.document.borrow().is_from_https
             || self.parent().is_some_and(|it| it.prohibits_mixed_content())
+            || self.around().is_some_and(|it| it.prohibits_mixed_content)
     }
 
     /// What is not upgraded by itself.
@@ -1084,29 +1555,30 @@ impl Client {
             || self
                 .parent()
                 .is_some_and(|it| it.upgrades_insecure_requests())
+            || (self.around()).is_some_and(|it| it.upgrades_insecure_requests)
+    }
+
+    fn is_srcdoc(&self) -> bool {
+        self.document.borrow().url.href() == b"about:srcdoc"
     }
 
     /// What it is the referrer as.
     pub fn referrer_source(&self) -> Option<Url> {
         let document = self.document.borrow();
-        match self.parent() {
-            Some(parent) if document.url.href() == b"about:srcdoc" => parent.referrer_source(),
+        match (self.parent(), self.around()) {
+            (Some(parent), _) if self.is_srcdoc() => parent.referrer_source(),
+            (_, Some(around)) if self.is_srcdoc() => around.referrer_of_srcdoc.clone(),
             _ => (!document.origin.is_opaque()).then(|| document.url.clone()),
         }
     }
 
     /// What its storage is kept under.
     pub fn bucket(&self) -> Vec<u8> {
-        let (origin, ancestors) = (self.origin(), self.ancestors());
-        let Some(top) = ancestors.last() else {
-            return origin.as_bytes().to_vec();
-        };
-        let is_first_party =
-            |it: &Origin| it == top || top.to_url().is_some_and(|top| it.is_same_site_with(&top));
-        if is_first_party(&origin) && ancestors.iter().all(is_first_party) {
-            return origin.as_bytes().to_vec();
+        let mut bucket = bucket_of(&self.origin(), &self.ancestors());
+        if self.agent.borrow().is_kept_apart {
+            bucket.extend_from_slice(b"^untrusted");
         }
-        [origin.as_bytes(), b"^", top.as_bytes()].concat()
+        bucket
     }
 
     /// What it has in common with those that it may talk to.
@@ -1121,7 +1593,9 @@ impl Client {
     }
 
     pub fn locks(&self) -> LockManager {
-        self.session.locks_of(&self.bucket())
+        let bucket = self.bucket();
+        (self.session.storage.far_shelf(&bucket))
+            .map_or_else(|| self.session.locks_of(&bucket), LockManager::Far)
     }
 
     fn scripts(&self) -> Option<Rc<dyn Scripts>> {
@@ -1467,16 +1941,18 @@ impl Client {
     pub fn compiled_path(
         &self,
         url: &Url,
+        form: Form,
         destination: Destination,
         metadata: &Metadata,
     ) -> Option<Vec<u8>> {
-        let path = self.compiled_path_by_any_policy(url.href())?;
+        let path = self.compiled_path_by_any_policy(url, form)?;
         let verdict = (self.policies().csp).check_request(url, destination, metadata, None);
         (verdict.is_allowed() && self.enforce(verdict, JSValue::UNDEFINED)).then_some(path)
     }
 
-    pub fn compiled_path_by_any_policy(&self, url: &[u8]) -> Option<Vec<u8>> {
-        self.runs_program().then(|| compiled::path_of(url))?
+    pub fn compiled_path_by_any_policy(&self, url: &Url, form: Form) -> Option<Vec<u8>> {
+        let is_in_reach = url.scheme() != b"file" || self.origin() == Origin::of(url);
+        (self.runs_program() && is_in_reach).then(|| compiled::path_of(url.href(), form))?
     }
 
     /// Only those that it was loaded with.
@@ -1552,14 +2028,19 @@ impl Client {
         let (url, destination) = (&request.url, request.destination);
         match url.scheme() {
             _ if !destination.is_script_like() || matches!(self.role, Role::App { .. }) => true,
+            _ if self.agent.borrow().is_like_in_browser => true,
             // The web engine runs audio worklets.
             _ if compiled::is_exclusive() && destination != Destination::AudioWorklet => {
-                compiled::path_of(url.href()).is_some()
+                compiled::path_of(url.href(), Form::Module).is_some()
             }
             b"blob" => true,
             b"data" => self.policies().csp.restricts_scripts() || trust::trusts_injected_scripts(),
-            _ => trust::is_trusted(url, &self.agent.borrow().app_path),
+            _ => self.trusts(url),
         }
+    }
+
+    fn trusts(&self, url: &Url) -> bool {
+        trust::is_trusted(url, &self.agent.borrow().app_path)
     }
 
     /// Whether a frame or a worker of it may have the policy `theirs`.
@@ -1642,6 +2123,14 @@ impl Client {
             embedder_policy: document.policies.embedder_policy.values,
             document_isolation_policy: document.policies.document_isolation_policy.values,
             is_inspected,
+            service: match &self.service.borrow().control {
+                Some(control) => Handler::Registration {
+                    id: control.registration,
+                    client: self.id_for_service_workers(),
+                },
+                None => Handler::Nobody,
+            },
+            is_in_page_process: self.twin.borrow().is_some(),
         }
     }
 
@@ -1660,6 +2149,13 @@ impl Client {
         initiator.prohibits_mixed_content =
             self.parent().is_some_and(|it| it.prohibits_mixed_content());
         initiator.blocks_all_mixed_content = true;
+        if !matches!(
+            request.destination,
+            Destination::Embed | Destination::Object
+        ) && self.parent().is_none_or(|it| it.is_secure())
+        {
+            initiator.service = self.handler_for_new_client(None);
+        }
         initiator.embedder_policy = self
             .parent()
             .map(|it| it.policies().embedder_policy.values)
@@ -1774,9 +2270,32 @@ impl Client {
         let outlives = u32::from(request.keepalive);
         self.kept_alive.update(|it| it + kept_alive);
         self.outliving.borrow_mut().0 += outlives;
-        let initiator = self.initiator();
+        let mut initiator = self.initiator();
+        match request.destination {
+            Destination::Worker | Destination::SharedWorker if request.mode == Mode::SameOrigin => {
+                initiator.service = match self.may_use_service_workers() {
+                    true => self.handler_for_new_client(Some(self)),
+                    false => Handler::Nobody,
+                };
+            }
+            Destination::Embed | Destination::Object | Destination::Report => {
+                initiator.service = Handler::Nobody;
+            }
+            _ => {}
+        }
+        if let Some(handler) = request.handler.take() {
+            initiator.service = handler;
+        }
+        if let Some(starter) = &request.starter {
+            if !self.allows_request(&request, None) {
+                return Err(NetError::BlockedByCsp);
+            }
+            initiator.embedder_policy = Default::default();
+            request.has_user_activation = starter.has_user_activation;
+            initiator.origin.clone_from(&starter.origin);
+        }
         let is_for_host = |it: &Far| match request.url.scheme() {
-            b"blob" => false,
+            b"blob" => request.blob.is_none(),
             b"data" => it.handles_data,
             _ => true,
         };
@@ -1858,7 +2377,8 @@ impl Client {
     ) -> Option<Resource> {
         let destination = request.destination;
         if destination == Destination::Script
-            && (self.compiled_path(&request.url, destination, &request.metadata)).is_some()
+            && (self.compiled_path(&request.url, Form::Classic, destination, &request.metadata))
+                .is_some()
         {
             return Some(Resource {
                 url: request.url,
@@ -2011,8 +2531,9 @@ impl Client {
             let (Some(destination), Some(url)) = (destination, self.url().join(target)) else {
                 continue;
             };
+            let is_compiled = |form| self.compiled_path_by_any_policy(&url, form).is_some();
             if destination == Destination::Script
-                && self.compiled_path_by_any_policy(url.href()).is_some()
+                && [Form::Module, Form::Classic].into_iter().any(is_compiled)
             {
                 continue;
             }
@@ -2038,6 +2559,42 @@ impl Client {
         Box::pin(self.run_fetch_script(request, kind))
     }
 
+    /// A service worker keeps to what it was installed with.
+    async fn load_script(&self, mut request: Request) -> Result<Loaded> {
+        let Some(own) = self.as_service_worker() else {
+            return self.fetch_whole(request, &Controller::default()).await;
+        };
+        if compiled::is_exclusive() && request.destination.is_script_like() {
+            return Err(NetError::BlockedByClient);
+        }
+        let url = request.url.clone();
+        {
+            let mut imports = own.imports.lock();
+            if !imports.is_complete && !imports.used.contains(&url) {
+                imports.used.push(url.clone());
+            }
+            if let Some(known) = imports.loaded.iter().find(|it| it.0 == url) {
+                let is_allowed = self.allows_request(&request, None);
+                return is_allowed
+                    .then(|| known.1.clone())
+                    .ok_or(NetError::BlockedByCsp);
+            }
+            if imports.is_complete || imports.missing.contains(&url) {
+                return Err(NetError::Failed);
+            }
+            if imports.bypasses_cache {
+                request.cache = CacheMode::NoCache;
+            }
+        }
+        let loaded = self.fetch_whole(request, &Controller::default()).await?;
+        let mut imports = own.imports.lock();
+        if !imports.has_room_for(&loaded) {
+            return Err(NetError::InsufficientResources);
+        }
+        imports.loaded.push((url, loaded.clone()));
+        Ok(loaded)
+    }
+
     async fn source_of(&self, url: &Url) -> Result<Option<Vec<u8>>> {
         match self.outside() {
             Some(it) => (it.source_of(url.clone()).await).unwrap_or(Err(NetError::Aborted)),
@@ -2056,7 +2613,7 @@ impl Client {
             request.destination != Destination::Script,
             request.mode == Mode::SameOrigin && request.destination == Destination::Worker,
         );
-        let loaded = self.fetch_whole(request, &Controller::default()).await?;
+        let loaded = self.load_script(request).await?;
         if starts_worker && !loaded.head.url.is_local() {
             let theirs = PolicyContainer::from_response(
                 &loaded.head.url,
@@ -2105,11 +2662,15 @@ impl Client {
     async fn run_fetch_module(&self, mut request: Request, kind: ScriptType) -> Result<Script> {
         let creator = self.creator.borrow().clone();
         let Some(creator) = creator else {
+            if kind == ScriptType::JavaScriptModule && self.service.borrow().own.is_some() {
+                request.destination = Destination::ServiceWorker;
+            }
             return self.fetch_script(request, kind).await;
         };
         if kind == ScriptType::JavaScriptModule {
             request.destination = creator.destination;
         }
+        request.handler = Some(self.initiator().service);
         let fetching = creator.thread.call(move || async move {
             let client = Client::find(creator.id).ok_or(NetError::Aborted)?;
             client.fetch_script(request, kind).await
@@ -2139,7 +2700,10 @@ impl Client {
         }
         let (control, origin) = (self.deferred_fetch_control(), Origin::of(&request.url));
         let allows = |feature| control.permissions_policy().allows(feature);
-        let quota: usize = match (allows(Feature::DeferredFetch), control.parent().is_some()) {
+        let quota: usize = match (
+            allows(Feature::DeferredFetch),
+            !control.ancestors().is_empty(),
+        ) {
             (true, false) => 512 << 10,
             (true, true) => 64 << 10,
             (false, true) if allows(Feature::DeferredFetchMinimal) => 8 << 10,
@@ -2262,25 +2826,39 @@ impl Client {
     /// Another one when [`cookie_string`](Self::cookie_string) may have changed.
     pub fn cookie_version(&self) -> u32 {
         match self.outside() {
-            Some(_) => next_id(),
+            Some(_) => {
+                let (until, expired) = self.cookies_last.get();
+                let expired = expired.wrapping_add((wall_now() >= until).into());
+                self.cookies_last.set((until, expired));
+                remote::times_outdated().wrapping_add(expired)
+            }
             None => self.session.with_cookies(|it| it.version()),
+        }
+    }
+
+    pub(crate) fn announce_blob_url(&self, url: &[u8], is_revoked: bool) {
+        if let Some((outside, url)) = self.outside().and_then(|it| Some((it, Url::parse(url)?))) {
+            outside.announce_blob_url(url, is_revoked);
         }
     }
 
     pub fn cookie_string(&self) -> Vec<u8> {
         if let Some(outside) = self.outside() {
-            return outside.cookie_string().wait().unwrap_or_default();
+            let (text, until) = outside.cookie_string().wait().unwrap_or_default();
+            self.cookies_last.update(|it| (until, it.1));
+            return text;
         }
-        let url = self.url();
+        let url = self.cookie_url();
         self.session
             .with_cookies(|it| it.header(&url, &self.cookie_context(&url, true)))
     }
 
-    pub fn cookies(&self) -> Vec<Cookie> {
+    /// `url` is for service workers.
+    pub fn cookies(&self, url: Option<Url>) -> Vec<Cookie> {
         if let Some(outside) = self.outside() {
             return outside.cookies().wait().unwrap_or_default();
         }
-        let url = self.url();
+        let url = url.unwrap_or_else(|| self.cookie_url());
         self.session.with_cookies(|it| {
             it.matching(&url, &self.cookie_context(&url, true))
                 .into_iter()
@@ -2293,11 +2871,28 @@ impl Client {
         if let Some(outside) = self.outside() {
             return outside.set_cookie(text.to_vec()).wait() == Some(true);
         }
-        let url = self.url();
+        let url = self.cookie_url();
         !self.origin().is_opaque()
             && self
                 .session
                 .with_cookies(|it| it.receive(text, &url, &self.cookie_context(&url, true)))
+    }
+
+    /// `None` unless the host has it.
+    pub fn borrow_area(&self, is_local: bool) -> Option<Items> {
+        Some((self.outside()?.borrow_area(is_local).wait()).unwrap_or_default())
+    }
+
+    pub fn change_borrowed_area(&self, is_local: bool, change: AreaChange, number: u64) {
+        if let Some(outside) = self.outside() {
+            outside.change_area(is_local, change, number);
+        }
+    }
+
+    pub fn watch_areas(&self) {
+        (self.outside().filter(|_| !self.watches_areas.replace(true)))
+            .into_iter()
+            .for_each(Outside::watch_areas);
     }
 
     /// `watcher` runs on this thread.
@@ -2308,18 +2903,32 @@ impl Client {
         }
         let (id, thread) = (self.id, Thread::current());
         let tell = move |change: &cookies::Change| {
-            if change.cause != cookies::Cause::Overwrite && !change.cookie.is_http_only {
+            if change.is_news() {
                 let change = change.clone();
                 thread.post(move || {
-                    if let Some(client) = Client::find(id).filter(|it| {
-                        !it.origin().is_opaque() && change.cookie.applies_to(&it.url())
-                    }) {
+                    let sees = |it: &Rc<Client>| {
+                        let url = it.cookie_url();
+                        !it.origin().is_opaque()
+                            && (change.cookie).is_visible_at(&url, &it.cookie_context(&url, true))
+                    };
+                    if let Some(client) = Client::find(id).filter(sees) {
                         watcher(&client, &change);
                     }
                 });
             }
         };
         self.session.watch_cookies(id.0, Some(Box::new(tell)));
+    }
+
+    /// `watcher` runs on the thread that makes the change.
+    pub(crate) fn watch_cookie_string(&self, watcher: impl Fn() + Send + Sync + 'static) {
+        let host = Bytes::from(self.url().hostname());
+        let tell = move |it: &cookies::Change| {
+            if !it.cookie.is_http_only && cookies::domain_matches(&host, &it.cookie.domain) {
+                watcher();
+            }
+        };
+        self.session.watch_cookies(!self.id.0, Some(Box::new(tell)));
     }
 
     /// Where a WebSocket connects to.
@@ -2391,11 +3000,13 @@ impl Client {
             Rc::clone(self).fetch_and_forget(request);
         }
         self.session.watch_cookies(self.id.0, None);
+        self.session.watch_cookies(!self.id.0, None);
         self.unread_timings.lock().clear();
         drop((
             self.scripts.take(),
             self.timing_watcher.take(),
             self.twin.take(),
+            self.service.take(),
         ));
     }
 }

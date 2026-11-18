@@ -22,7 +22,7 @@ use bun_web::headers::HeaderList;
 use bun_web::url::Url;
 
 pub(crate) use self::body::{BodySource, Message};
-pub(crate) use self::cache::{Cache, CacheStorage};
+pub(crate) use self::cache::{Cache, CacheStorage, encode_cache_name};
 pub(crate) use self::event_source::EventSource;
 pub(crate) use self::fetch::{FetchLaterResult, PendingFetch};
 pub(crate) use self::headers::{Headers, HeadersIterator};

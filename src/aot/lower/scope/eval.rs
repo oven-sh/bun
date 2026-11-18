@@ -37,6 +37,7 @@ pub(super) struct EvalContext {
     pub(super) this_scope: Option<ScopeId>,
     pub(super) owner: CodeUnit,
     pub(super) class: Option<ClassId>,
+    pub(super) is_script: bool,
 }
 
 pub(crate) fn lower_direct_eval(
@@ -191,8 +192,8 @@ impl FileLowering<'_, '_, '_, '_> {
         by_text.get(&name).copied()
     }
 
-    fn compute_eval_context(&self, scope: ScopeId) -> EvalContext {
-        let (hir, bound) = (self.hir, self.bound);
+    fn compute_eval_context(&self, eval_scope: bind::EvalScope) -> EvalContext {
+        let (hir, bound, scope) = (self.hir, self.bound, eval_scope.scope);
         let unit = match bound.code_unit(scope) {
             CodeUnit::FieldInitializer(member) if bound.is_field_assigned_behind_class(member) => {
                 let class = bound.member_class(member);
@@ -211,11 +212,15 @@ impl FileLowering<'_, '_, '_, '_> {
         };
         let this_scope = self.scopes.lexical_owner(scope);
         let owner = bound.code_unit(this_scope);
+        let is_script = eval_scope.is_in_script && this_scope == eval_scope.global_code;
         let (flags, this_scope, class) = match owner {
             CodeUnit::File => match self.inputs.modules.kind(self.file) {
                 ModuleKind::CommonJs => (compute_function_flags(FnKind::Expr, false), None, None),
                 _ => (EvalScopeFlags::default(), None, None),
             },
+            CodeUnit::Function(_) if is_script => {
+                (EvalScopeFlags::default(), Some(this_scope), None)
+            }
             CodeUnit::Function(function) => {
                 let is_derived = self.is_derived_constructor(function);
                 let kind = hir.runtime_function_kind(function);
@@ -240,6 +245,7 @@ impl FileLowering<'_, '_, '_, '_> {
             this_scope,
             owner,
             class,
+            is_script,
         }
     }
 }
@@ -406,7 +412,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         };
         let eval_scope = self.file.bound.eval_scope(call);
         let eval_scope = *eval_scope.expect("lower_direct_eval takes a call with an eval scope");
-        let context = self.file.compute_eval_context(eval_scope.scope);
+        let context = self.file.compute_eval_context(eval_scope);
         let flags = context.flags;
         let this_value = if flags.contains(EvalScopeFlags::IS_IN_DERIVED_CONSTRUCTOR) {
             self.builder.undefined()
@@ -418,7 +424,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 .this_scope
                 .is_some_and(|scope| self.file.is_code_of_constructor(scope));
         let new_target = has_new_target.then(|| self.get_new_target());
-        let names_of_file = match eval_scope.is_in_global_code {
+        let names_of_file = match eval_scope.global_code.is_some() {
             true => NamesOfFileForEvals {
                 listed_once: None,
                 handed_over: Rc::default(),

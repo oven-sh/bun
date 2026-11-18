@@ -30,7 +30,10 @@ pub fn map(path: &Path) -> Option<&'static [u8]> {
 }
 
 pub fn map_file(file: &File) -> Option<&'static [u8]> {
-    let len = file.metadata().ok()?.len().try_into().ok()?;
+    let len = std::io::Seek::seek(&mut &*file, std::io::SeekFrom::End(0))
+        .ok()?
+        .try_into()
+        .ok()?;
     // SAFETY: it is never unmapped, and fonts are replaced, not written to.
     unsafe {
         let start = libc::mmap(

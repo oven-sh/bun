@@ -354,7 +354,7 @@ pub(crate) fn move_focus<'a>(cx: &mut Cx<'a>, ui: &'a Ui, is_backward: bool, ent
     };
     if next.is_none()
         && (index.is_some() || stops.is_empty())
-        && let Some(container) = ui.container()
+        && let Some(container) = ui.any_container()
     {
         if enters_frame {
             return;

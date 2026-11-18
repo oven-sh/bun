@@ -38,7 +38,7 @@ impl Frame {
     /// Where an opaque border hides it, the background does not go on to the edge, where it would shine through.
     fn background_area(&self, area: BoxArea, style: &Style, scale: f32) -> RoundedRect {
         if area != BoxArea::BorderBox
-            || self.border.contains(&0.0)
+            || self.border == [0.0; 4]
             || self.shape.radii == [[0.0; 2]; 4]
             || style.background.border_image.0.is_some()
         {
@@ -53,7 +53,8 @@ impl Frame {
         ];
         let is_opaque = [p.border_top, p.border_right, p.border_bottom, p.border_left]
             .into_iter()
-            .all(|it| alpha(it.resolve(style.color())) == 0xff);
+            .zip(self.border)
+            .all(|it| it.1 == 0.0 || alpha(it.0.resolve(style.color())) == 0xff);
         if !is_opaque
             || styles
                 .iter()

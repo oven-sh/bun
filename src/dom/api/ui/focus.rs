@@ -437,7 +437,7 @@ pub(crate) fn focus<'a>(cx: &mut Cx<'a>, element: &'a Element, cause: Cause, opt
         if !editing::reveal_caret_in(cx, target) {
             layout::scroll_into_view(cx, target, Alignment::CenterIfNeeded);
         }
-        if let Some(container) = ui.container() {
+        if let Some(container) = ui.any_container() {
             let rect = layout::bounding_rect(cx, target);
             container.reveal(
                 cx,
@@ -598,8 +598,13 @@ pub(crate) fn window_focus_changed<'a>(cx: &mut Cx<'a>, ui: &'a Ui) {
 
 pub(crate) fn autofocus_inserted<'a>(cx: &mut Cx<'a>, element: &'a Element) {
     if let Some(ui) = Ui::of(element.doc())
-        && let Some(top) =
-            frames::top_of_same_origin(ui).filter(|it| !it.focus.has_autofocused.get())
+        && !frames::above(ui)
+            .last()
+            .unwrap_or(ui)
+            .focus
+            .has_autofocused
+            .get()
+        && let Some(top) = frames::top_of_same_origin(ui)
         && !host::is_sandboxed(ui, "allow-scripts")
     {
         top.set_autofocus_candidates(top.autofocus_candidates().followed_by(&cx.heap, element));

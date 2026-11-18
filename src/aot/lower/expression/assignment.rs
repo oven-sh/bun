@@ -1,9 +1,7 @@
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, BindingKind};
 use bun_sema::fold::Decision;
-use bun_sema::hir::{
-    BinOp, ExprFlags, ExprId, ExprKind, IdList, PropId, Span, UnOp, find_transpiled_mark,
-};
+use bun_sema::hir::{BinOp, ExprFlags, ExprId, ExprKind, IdList, PropId, Span, UnOp};
 
 use super::ResultUsage;
 use super::logical::LogicalOperator;
@@ -33,7 +31,7 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     pub(in crate::lower) fn stands_as_written(&self, position: u32) -> bool {
-        find_transpiled_mark(&self.hir.text).is_some() || self.hir.is_in_known_evaluation(position)
+        self.hir.stands_as_written() || self.hir.is_in_known_evaluation(position)
     }
 
     fn find_assigned_function_name(&self, target: ExprId) -> Option<(Binding, Atom)> {

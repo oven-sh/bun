@@ -455,7 +455,6 @@ fn __bun_web_loosen_blob(id: &[u8; 16]) -> Option<LooseBlob> {
             .get()
             .then(|| Bun__Desktop__nameOfFile(it).to_owned_slice().into()),
         modified: it.get_last_modified(),
-        was_chosen_by_user: it.snapshot().is_some_and(|it| it.was_chosen_by_user),
     })
 }
 
@@ -469,7 +468,7 @@ fn __bun_web_retain_blob(global: &JSGlobalObject, it: LooseBlob) -> [u8; 16] {
         } => {
             let snapshot = store::Snapshot {
                 modified: modified.unwrap_or_default(),
-                was_chosen_by_user: it.was_chosen_by_user,
+                was_chosen_by_user: false,
             };
             let blob = of_snapshot(
                 global,

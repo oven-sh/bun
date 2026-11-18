@@ -141,7 +141,10 @@ export const tables = {
       OffscreenCanvasRenderingContext2D Path2D TextMetrics CustomEvent ErrorEvent Event EventTarget
       PromiseRejectionEvent`,
   },
+  /** Dedicated or shared. */
+  ownedWorker: {},
   dedicatedWorker: {},
   secureDedicatedWorker: {},
   sharedWorker: {},
+  serviceWorker: {},
 } satisfies Record<string, Table>;

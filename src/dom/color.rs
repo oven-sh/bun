@@ -374,6 +374,11 @@ impl Exact {
         pack([r, g, b, self.components[3]])
     }
 
+    pub(crate) fn rgba_in_display_p3(&self) -> u32 {
+        let [r, g, b] = self.triple(Space::DisplayP3).map(|it| it as f32);
+        pack([r, g, b, self.components[3]])
+    }
+
     fn converted(&self, space: Space) -> Exact {
         if space == self.space {
             return Exact {
@@ -386,25 +391,21 @@ impl Exact {
         for index in 0..3 {
             missing |= u8::from((0..3).any(|it| self.lacks(it) && from[it] == to[index])) << index;
         }
-        let is_like = |a, b, c, d| {
-            [self.space, space].map(|it| (it == a || it == b, it == c || it == d))
-                == [(true, false), (false, true)]
-        };
-        if self.missing & 7 == 7 {
-            missing |= 7;
-        } else if self.missing & 6 == 6
-            && (self.space.base() == space.base() && space.base() == Space::Srgb
-                || is_like(Space::Lab, Space::Oklab, Space::Lch, Space::Oklch)
-                || is_like(Space::Lch, Space::Oklch, Space::Lab, Space::Oklab))
-        {
-            missing |= 6;
+        let [own, others] = [(from, to), (to, from)]
+            .map(|(a, b)| (0..3).fold(0, |all, it| all | u8::from(!b.contains(&a[it])) << it));
+        if own != 0 && self.missing & own == own {
+            missing |= others;
         }
-        let is_gray = match space {
+        let is_gray = |space, c: Triple| match space {
             Space::Hsl => c[1] <= 0.001,
             Space::Hwb => c[1] + c[2] >= 99.999,
-            Space::Lch => c[1] <= 0.0015,
-            _ => c[1] <= 0.000004,
+            Space::Lch => c[1] as f32 <= 0.0015,
+            Space::Oklch => c[1] as f32 <= 0.000004,
+            _ => false,
         };
+        let is_gray = is_gray(space, c)
+            || self.missing & 7 == 0
+                && is_gray(self.space, [0, 1, 2].map(|it| self.components[it].into()));
         missing |= space
             .hue_index()
             .filter(|_| is_gray)

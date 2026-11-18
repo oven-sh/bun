@@ -329,7 +329,7 @@ impl LayoutBox {
 
 impl Document {
     pub(crate) fn block_widths(&mut self, id: BoxId, height: Option<f32>) -> Widths {
-        let (mut widths, mut floats) = (Widths::default(), [0.0f32; 2]);
+        let (mut widths, mut floats, mut widest_floats) = (Widths::default(), [0.0f32; 2], 0.0f32);
         for index in 0..self.boxes[id].children.len() {
             let child = self.boxes[id].children[index];
             if self.boxes[child].style.is_out_of_flow() || self.boxes.ignored.contains(&child) {
@@ -345,8 +345,11 @@ impl Document {
             if is_float {
                 floats[usize::from(it.style.floats_right())] += max.max(0.0);
                 max = floats[0] + floats[1];
+                widest_floats = widest_floats.max(max);
             } else {
-                if !it.joins_formatting_context || it.kind == Kind::Lines {
+                if it.kind == Kind::Lines {
+                    max += widest_floats;
+                } else if !it.joins_formatting_context {
                     let margin = margin(&it.style, 0.0);
                     let beside = |float: f32, margin: f32| {
                         if margin > 0.0 {
@@ -357,7 +360,7 @@ impl Document {
                     };
                     max += beside(floats[0], margin.left) + beside(floats[1], margin.right);
                 }
-                floats = [0.0; 2];
+                (floats, widest_floats) = ([0.0; 2], 0.0);
             }
             widths.sizes = [widths.sizes[0].max(min), widths.sizes[1].max(max)];
             widths.uses_height |=
@@ -450,7 +453,7 @@ impl Document {
         if align == Align::NORMAL {
             return 0.0;
         }
-        let align = if align.is_unsafe() || self.boxes[id].scrolls() {
+        let align = if align.is_unsafe() {
             align
         } else {
             Align::safe(align.0)
@@ -718,6 +721,7 @@ impl Document {
                     let (fixed, joins) = (it.style.fixed(), it.joins_formatting_context);
                     let input = if is_unaligned
                         && it.is_ordinary
+                        && !it.shrinks_to_fit
                         && fixed.traits.contains(Traits::IS_PLAIN_OUTSIDE)
                     {
                         margin = fixed.margin;
@@ -800,6 +804,40 @@ impl Document {
             output.margins[usize::from(!at_top)] = strut;
         }
         if self.boxes[id].is_cell() {
+            let it = &mut self.boxes[id];
+            let least = || {
+                if let Size::Length(length) = &it.style.layout.height {
+                    crate::layout::resolve(length, 0.0)
+                        + if it.style.layout.box_sizing == BoxSizing::ContentBox {
+                            inset.sums()[1]
+                        } else {
+                            0.0
+                        }
+                } else {
+                    0.0
+                }
+            };
+            let height = input.height.unwrap_or_else(|| {
+                if input.ignores_height {
+                    output.intrinsic
+                } else {
+                    output.intrinsic.max(least())
+                }
+            });
+            if (height == output.intrinsic || count == 0)
+                && input.row_baseline.is_none()
+                && output.escapes.is_empty()
+                && it.outside_marker == 0
+            {
+                (it.layout.size.height, output.height) = (height, height);
+                output.last_baseline = if output.baselines[0].is_none() {
+                    output.baselines[1]
+                } else {
+                    output.last_baseline
+                };
+                it.forget_hoisted();
+                return output;
+            }
             let mut finished = self.finish_block(id, input, inset, false, output, None);
             finished.last_baseline = if finished.baselines[0].is_none() {
                 finished.baselines[1]
@@ -814,6 +852,17 @@ impl Document {
         output.collapses_through = at_top && output.height == 0.0;
         if output.height != output.intrinsic {
             output.margins[1] = Strut::default();
+            if self.boxes[id].shrinks_to_fit {
+                let mut centered = output;
+                self.shift_children(
+                    id,
+                    self.content_offset(id, output.height - output.intrinsic),
+                    &mut centered,
+                    None,
+                );
+                (output.baselines, output.last_baseline, gathers) =
+                    (centered.baselines, centered.last_baseline, false);
+            }
         }
         if output.baselines[0].is_none() {
             output.last_baseline = output.baselines[1];
@@ -939,6 +988,7 @@ impl Document {
             && !trims_last_margin
             && style.fixed().traits.contains(Traits::IS_PLAIN_INSIDE)
             && it.is_ordinary
+            && !it.shrinks_to_fit
             && !it.is_cell();
         let mut contents = crate::scroll::Contents::default();
         while let Some(child) = self.boxes[id].children.get(upcoming).copied() {
@@ -1215,7 +1265,7 @@ impl Document {
                             taken[side].max(margin.along(0)[side]) - margin.along(0)[side]
                         }
                     });
-                    let space = basis.0 - beside[0] - beside[1];
+                    let space = (basis.0 - beside[0] - beside[1]).max(0.0);
                     room.available[0] = Some(space - margin.sums()[0]);
                     let width = self.resolve_width(child, &room, auto);
                     let laid_out = lay_out(
@@ -1441,8 +1491,14 @@ impl Document {
         }) {
             let own = output.baselines[0]
                 .filter(|_| !self.boxes[id].style.contain().contains(Contain::LAYOUT))
-                .unwrap_or(output.intrinsic);
-            self.shift_children(id, row - own, &mut output, flow.as_mut());
+                .unwrap_or(output.intrinsic - inset.bottom);
+            if self.boxes[id]
+                .children
+                .iter()
+                .any(|it| !self.boxes[*it].style.is_out_of_flow())
+            {
+                self.shift_children(id, row - own, &mut output, flow.as_mut());
+            }
             output.intrinsic += row - own;
         }
         self.finish_height(id, input, inset, &mut output);

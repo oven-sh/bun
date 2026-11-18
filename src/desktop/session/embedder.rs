@@ -485,6 +485,14 @@ impl Embedder for ForNetwork {
         notify(|| self.session().cookie_changed(change));
     }
 
+    fn service_workers_report(&self, news: bun_web::service::News) {
+        notify(|| self.session().service_workers_report(news));
+    }
+
+    fn lets_notify(&self, url: &Url) -> bool {
+        query(|| self.session().lets_notify(url)).unwrap_or(false)
+    }
+
     fn encrypt(&self, bytes: &[u8]) -> Option<Vec<u8>> {
         os_crypt::can_encrypt().then(|| os_crypt::encrypt(bytes))
     }

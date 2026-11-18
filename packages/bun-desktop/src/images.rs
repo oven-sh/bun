@@ -4,8 +4,8 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, LazyLock};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+use std::sync::{Arc, LazyLock, OnceLock};
 use std::time::{Duration, Instant};
 
 use crate::abi::{DisplayList, Rect};
@@ -66,8 +66,8 @@ impl Svg {
     }
 }
 
-pub fn record(mut list: Scene, size: [f32; 2]) -> u32 {
-    let (id, mut scene) = (next_id(), Scene::default());
+pub fn record(id: u32, mut list: Scene, size: [f32; 2]) -> u32 {
+    let mut scene = Scene::default();
     scene.replace(&[], &mut list);
     IMAGES
         .lock()
@@ -111,6 +111,41 @@ struct Bitmap {
     fitted: Mutex<Fitted>,
     was_fitted: Condvar,
     generation: AtomicU32,
+    /// `frames` are in Display P3.
+    is_wide: bool,
+    widen: OnceLock<Option<Box<Widen>>>,
+}
+
+/// Makes the pixels again, in Display P3 and with the colors that sRGB lacks.
+#[derive(Clone)]
+pub struct Widen {
+    make: Arc<dyn Fn() -> Option<Pixmap> + Send + Sync>,
+    depth: u8,
+}
+
+impl Widen {
+    pub fn kept(mut wide: Pixmap) -> Widen {
+        wide.allow_sharing();
+        Widen {
+            make: Arc::new(move || wide.shared()),
+            depth: 0,
+        }
+    }
+
+    pub fn then(
+        self,
+        change: impl Fn(&Pixmap) -> Option<Pixmap> + Send + Sync + 'static,
+    ) -> Option<Widen> {
+        const MAX_DEPTH: u8 = 3;
+        let Widen { make, depth } = self;
+        match depth < MAX_DEPTH {
+            true => Some(Widen {
+                make: Arc::new(move || change(&make()?)),
+                depth: depth + 1,
+            }),
+            false => change(&make()?).map(Widen::kept),
+        }
+    }
 }
 
 enum Image {
@@ -160,7 +195,28 @@ impl Bitmap {
             fitted: Mutex::default(),
             was_fitted: Condvar::new(),
             generation: AtomicU32::new(0),
+            is_wide: false,
+            widen: OnceLock::new(),
         }
+    }
+
+    fn widen(&self) -> Option<Widen> {
+        let again = || {
+            let (encoded, is_oriented) = (self.encoded.as_ref()?, self.is_oriented);
+            let profile = codec::profile(encoded).filter(|it| Conversion::of(it).is_some());
+            let encoded =
+                (profile.is_some() || codec::is_display_p3(encoded)).then(|| encoded.clone())?;
+            let make = Arc::new(move || {
+                let mut pixmap = pixmap_from(codec::decode(&encoded, is_oriented, (0, 0))?)?;
+                profile
+                    .iter()
+                    .filter_map(|it| Conversion::to_display_p3(it))
+                    .for_each(|it| it.apply(pixmap.data_mut().as_chunks_mut().0));
+                Some(pixmap)
+            });
+            Some(Box::new(Widen { make, depth: 0 }))
+        };
+        self.widen.get_or_init(again).as_deref().cloned()
     }
 
     fn deferred(
@@ -207,11 +263,16 @@ impl Bitmap {
         }
         if !self.was_requested.load(Ordering::Relaxed) && reserve_for_playing(self) {
             let image = image.clone();
-            spawn_decoding(self, move || {
+            let finish = move |fetched: Option<Vec<Pixmap>>| {
                 let Image::Bitmap(bitmap) = &*image else {
                     return;
                 };
-                let frames = || Arc::strong_count(&image) > 1 && bitmap.frames().is_some();
+                let frames = || {
+                    Arc::strong_count(&image) > 1
+                        && fetched
+                            .map_or_else(|| bitmap.frames(), |it| bitmap.keep(bitmap.timed(it)?))
+                            .is_some()
+                };
                 let has_frames = catch_unwind(AssertUnwindSafe(frames)).unwrap_or(false);
                 let mut fitted = bitmap.fitted.lock();
                 fitted.pixels.take_if(|_| has_frames);
@@ -219,7 +280,13 @@ impl Bitmap {
                 bitmap
                     .was_requested
                     .store(fitted.stands_still, Ordering::Relaxed);
-            });
+            };
+            match &self.original {
+                Some(original) => original.fetch((0, 0), true, move |it| {
+                    bridge::spawn(move || finish(Some(it)))
+                }),
+                None => spawn_decoding(self, move || finish(None)),
+            }
         }
         let fitted = self.fitted.lock();
         let is_awaited = self.was_requested.load(Ordering::Relaxed) || fitted.was_missed;
@@ -331,21 +398,25 @@ impl Bitmap {
         self.note_use();
         let known = self.frames.lock().clone();
         known.or_else(|| {
-            let frames = Arc::new(match &self.original {
-                Some(original) => {
-                    let frames = Some(original.fetch_now((0, 0)))
-                        .filter(|it| (1..=self.ends.len()).contains(&it.len()))?;
-                    frames
-                        .iter()
-                        .all(|it| size_of(it) == self.size)
-                        .then(|| frames.into_iter().zip(self.ends.clone()).collect())?
-                }
-                None => self.decode()?,
-            });
-            *self.frames.lock() = Some(frames.clone());
-            drop_pixels(DECODED_BYTES);
-            Some(frames)
+            self.keep(
+                self.original
+                    .as_ref()
+                    .map_or_else(|| self.decode(), |it| self.timed(it.fetch_now((0, 0))))?,
+            )
         })
+    }
+
+    fn timed(&self, fetched: Vec<Pixmap>) -> Option<Frames> {
+        let fits = (1..=self.ends.len()).contains(&fetched.len())
+            && fetched.iter().all(|it| size_of(it) == self.size);
+        fits.then(|| fetched.into_iter().zip(self.ends.clone()).collect())
+    }
+
+    fn keep(&self, frames: Frames) -> Option<Arc<Frames>> {
+        let frames = Arc::new(frames);
+        *self.frames.lock() = Some(frames.clone());
+        drop_pixels(DECODED_BYTES);
+        Some(frames)
     }
 }
 
@@ -507,6 +578,7 @@ pub enum Exported<'a> {
 
 /// For the process that draws it, which keeps the pixels from now on.
 pub fn export<R>(id: u32, f: impl FnOnce(Exported) -> R) -> Option<R> {
+    let id = in_space(id, false);
     let image = IMAGES.lock().get(&id).cloned()?;
     Some(match &*image {
         Image::Svg(svg) => f(Exported::Recording {
@@ -544,18 +616,19 @@ pub fn export<R>(id: u32, f: impl FnOnce(Exported) -> R) -> Option<R> {
 }
 
 pub fn import(
+    id: u32,
     size: [u32; 2],
     ends: &[u32],
     is_deferred: bool,
     original: Option<Original>,
     mut frames: Vec<Pixmap>,
 ) -> u32 {
-    let (id, ends): (_, Vec<_>) = (
-        next_id(),
-        ends.iter()
-            .map(|it| Duration::from_millis((*it).into()))
-            .collect(),
-    );
+    static IMPORTED: AtomicUsize = AtomicUsize::new(0);
+    let bytes = frames.iter().map(|it| it.data().len()).sum::<usize>();
+    let ends: Vec<_> = ends
+        .iter()
+        .map(|it| Duration::from_millis((*it).into()))
+        .collect();
     let pixels = frames.pop_if(|_| is_deferred).map(Arc::new);
     let frames = (!is_deferred && !frames.is_empty())
         .then(|| Arc::new(frames.into_iter().zip(ends.clone()).collect()));
@@ -577,7 +650,10 @@ pub fn import(
         ..empty
     };
     IMAGES.lock().insert(id, Arc::new(Image::Bitmap(bitmap)));
-    drop_pixels(DECODED_BYTES);
+    if IMPORTED.fetch_add(bytes, Ordering::Relaxed) + bytes > DECODED_BYTES / 4 {
+        IMPORTED.store(0, Ordering::Relaxed);
+        drop_pixels(DECODED_BYTES);
+    }
     id
 }
 
@@ -683,6 +759,21 @@ fn drop_pixels(kept: usize) {
     }
 }
 
+#[cfg(test)]
+pub fn bytes_of_pixels() -> usize {
+    let of = |image: &Arc<Image>| match &**image {
+        Image::Bitmap(it) if it.original.is_some() => it
+            .frames
+            .lock()
+            .iter()
+            .flat_map(|it| it.iter())
+            .map(|it| it.0.data().len())
+            .sum(),
+        _ => 0,
+    };
+    IMAGES.lock().values().map(of).sum()
+}
+
 pub fn release_memory() {
     drop_pixels(0);
     REDUCED.take();
@@ -761,6 +852,7 @@ pub fn with_size<R>(
     pick: impl FnOnce(Size) -> Size,
     f: impl FnOnce(Content) -> R,
 ) -> Option<R> {
+    let id = in_space(id, false);
     let resize = |pixmap: &Pixmap, version: u32, size: Size, f: &mut dyn FnMut(&Pixmap)| match size
         == size_of(pixmap)
     {
@@ -821,10 +913,111 @@ fn likely_size(whole: Size, density: f32, scale: f32) -> Size {
 pub fn with<R>(id: u32, frame: &Frame, f: impl FnOnce(Content) -> R) -> Option<R> {
     match frame.deadline {
         Some(_) => with_size(id, frame, |whole| whole, f),
-        None => with_frame(id, |bitmap| bitmap.index_at(frame), |content, _| f(content)),
+        None => with_frame(
+            in_space(id, false),
+            |bitmap| bitmap.index_at(frame),
+            |content, _| f(content),
+        ),
     }
 }
 
+static HAS_WIDE: AtomicBool = AtomicBool::new(false);
+
+/// There is something in Display P3.
+pub fn note_wide() {
+    HAS_WIDE.store(true, Ordering::Relaxed);
+}
+
+fn with_bitmap<R>(id: u32, f: impl FnOnce(&Bitmap) -> R) -> Option<R> {
+    let image = IMAGES.lock().get(&id).cloned()?;
+    if let Image::Bitmap(bitmap) = &*image {
+        Some(f(bitmap))
+    } else {
+        None
+    }
+}
+
+pub fn is_wide(id: u32) -> bool {
+    HAS_WIDE.load(Ordering::Relaxed)
+        && with_bitmap(id, |it| it.is_wide).unwrap_or_else(|| canvas::is_wide(id))
+}
+
+pub fn widen(id: u32) -> Option<Widen> {
+    with_bitmap(id, Bitmap::widen)?
+}
+
+struct Converted {
+    of: u32,
+    version: u32,
+    id: u32,
+    bytes: usize,
+}
+
+static CONVERTED: Mutex<VecDeque<Converted>> = Mutex::new(VecDeque::new());
+
+/// The number of what has its first frame in Display P3 or in sRGB, for now. SVG has no pixels.
+#[inline]
+pub fn in_space(id: u32, is_wide: bool) -> u32 {
+    if self::is_wide(id) == is_wide {
+        id
+    } else {
+        convert(id, is_wide)
+    }
+}
+
+#[cold]
+fn convert(of: u32, is_wide: bool) -> u32 {
+    let version = webview::size_and_version(of)
+        .or_else(|| canvas::size_and_version(of))
+        .map_or(0, |it| it.1);
+    if let Some(known) = CONVERTED
+        .lock()
+        .iter()
+        .find(|it| (it.of, it.version) == (of, version))
+    {
+        return known.id;
+    }
+    let converted = widen(of)
+        .filter(|_| is_wide)
+        .and_then(|it| (it.make)())
+        .or_else(|| {
+            let copy = |content: Content, _| {
+                if let Content::Pixels(it) = content {
+                    converted(it, is_wide)
+                } else {
+                    None
+                }
+            };
+            with_first_frame(of, copy)?
+        });
+    let Some(pixmap) = converted else { return of };
+    let (id, bytes, mut kept) = (next_id(), pixmap.data().len(), 0);
+    insert_as(id, pixmap, is_wide, None);
+    let (mut all, mut dropped) = (CONVERTED.lock(), Vec::new());
+    all.push_front(Converted {
+        of,
+        version,
+        id,
+        bytes,
+    });
+    all.retain(|it| {
+        kept += it.bytes;
+        let is_kept = it.id == id || it.of != of && kept <= DECODED_BYTES / 4;
+        dropped.extend((!is_kept).then_some(it.id));
+        is_kept
+    });
+    drop(all);
+    dropped.into_iter().for_each(canvas::release);
+    id
+}
+
+pub fn converted(pixmap: &Pixmap, widens: bool) -> Option<Pixmap> {
+    let mut copy = Pixmap::from_vec(pixmap.data().to_vec(), pixmap.width(), pixmap.height())?;
+    Conversion::between(widens).apply(copy.data_mut().as_chunks_mut().0);
+    Some(copy)
+}
+
+/// In its own color space.
 pub fn with_first_frame<R>(id: u32, f: impl FnOnce(Content, u32) -> R) -> Option<R> {
     with_frame(id, |_| 0, f)
 }
@@ -909,22 +1102,35 @@ pub fn alpha(id: u32, width: u32, height: u32) -> Option<Vec<u8>> {
 
 pub fn insert(pixmap: Pixmap) -> u32 {
     let id = next_id();
-    insert_as(id, pixmap);
+    insert_as(id, pixmap, false, None);
     id
 }
 
-pub fn insert_as(id: u32, pixmap: Pixmap) {
+pub fn insert_as(id: u32, pixmap: Pixmap, is_wide: bool, widen: Option<Widen>) {
+    if is_wide {
+        note_wide();
+    }
     IMAGES.lock().insert(
         id,
-        Arc::new(Image::Bitmap(Bitmap::new(
-            vec![(pixmap, Duration::ZERO)],
-            None,
-        ))),
+        Arc::new(Image::Bitmap(Bitmap {
+            is_wide,
+            widen: widen.map(Box::new).into(),
+            ..Bitmap::new(vec![(pixmap, Duration::ZERO)], None)
+        })),
     );
 }
 
 pub fn release(id: u32) {
     drop(IMAGES.lock().remove(&id));
+    if HAS_WIDE.load(Ordering::Relaxed) {
+        let mut all = CONVERTED.lock();
+        let converted = all
+            .iter()
+            .position(|it| it.of == id)
+            .and_then(|it| all.remove(it));
+        drop(all);
+        converted.into_iter().for_each(|it| canvas::release(it.id));
+    }
     if guest::is_on() {
         guest::image_released(id);
     }
@@ -948,6 +1154,8 @@ pub fn straight_rgba(layer: &Layer) -> Vec<u8> {
 fn in_srgb(mut pixmap: Pixmap, encoded: &[u8]) -> Pixmap {
     if let Some(conversion) = codec::profile(encoded).and_then(|it| Conversion::of(&it)) {
         conversion.apply(pixmap.data_mut().as_chunks_mut().0);
+    } else if codec::is_display_p3(encoded) {
+        Conversion::between(false).apply(pixmap.data_mut().as_chunks_mut().0);
     }
     pixmap
 }
@@ -1259,6 +1467,62 @@ fn resample(source: &Pixmap, size: Size) -> Option<Pixmap> {
         return Some(result);
     }
     Resampler::<4>::all(size_of(source), size, source.data())
+}
+
+/// With Catmull-Rom splines. `part` is what is enlarged, and is within it.
+pub fn enlarge(source: &Pixmap, part: IntRect, result: &mut Pixmap) {
+    let taps = |from: usize, to: u32| {
+        let one = move |at: u32| {
+            let exact = (at as f32 + 0.5) * from as f32 / to as f32 - 0.5;
+            let (before, t) = (exact.floor(), exact - exact.floor());
+            let weights = [
+                ((2. - t) * t - 1.) * t,
+                (3. * t - 5.) * t * t + 2.,
+                ((4. - 3. * t) * t + 1.) * t,
+                (t - 1.) * t * t,
+            ]
+            .map(|it| it / 2.);
+            (
+                [-1, 0, 1, 2].map(|it| (before as isize + it).clamp(0, from as isize - 1) as usize),
+                weights,
+            )
+        };
+        (0..to).map(one)
+    };
+    let (width, height) = size_of(result);
+    let (columns, pixels) = (
+        taps(part.width(), width).collect::<Vec<_>>(),
+        source.data().as_chunks::<4>().0,
+    );
+    let mut between = vec![[0.; 4]; part.width()];
+    for (row, (rows, weights)) in result
+        .data_mut()
+        .as_chunks_mut::<4>()
+        .0
+        .chunks_mut(width as usize)
+        .zip(taps(part.height(), height))
+    {
+        let rows = rows.map(|it| {
+            &pixels[(part.top as usize + it) * source.width() as usize + part.left as usize..]
+                [..part.width()]
+        });
+        for (x, to) in between.iter_mut().enumerate() {
+            *to = std::array::from_fn(|channel| {
+                (0..4)
+                    .map(|it| f32::from(rows[it][x][channel]) * weights[it])
+                    .sum::<f32>()
+            });
+        }
+        for (to, (columns, weights)) in row.iter_mut().zip(&columns) {
+            let mixed: [u8; 4] = std::array::from_fn(|channel| {
+                ((0..4)
+                    .map(|it| between[columns[it]][channel] * weights[it])
+                    .sum::<f32>()
+                    + 0.5) as u8
+            });
+            *to = mixed.map(|it| it.min(mixed[3]));
+        }
+    }
 }
 
 pub fn reduced_size(source: Size, width: f32, height: f32) -> Size {

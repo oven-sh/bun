@@ -1,23 +1,28 @@
 //! The answers to the messages of `bun_web::host`.
 
+use bun_ui::protocol::{Reply as System, Request, SystemRequest};
 use bun_web::csp::Delivery;
+use bun_web::dom;
 use bun_web::host::{
-    Answer, Browser, Connection, ConsoleAudience, DialogAnswer, DialogKind, Display, Environment,
-    FileChoice, Inspected, Keystroke, Notice, Permission, Question, Rect as Area, Reply, Verdict,
+    Activation, Answer, Arrival, Browser, Connection, ConsoleAudience, DialogAnswer, DialogKind,
+    Display, Environment, FileChoice, Inspected, Keystroke, Notice, Permission, Question,
+    Rect as Area, Reply, Verdict,
 };
 use bun_web::js_link::{Native, NativeHost};
 use bun_web::referrer::ReferrerPolicy;
+use bun_web::renderer::{Facts, Origins};
 use bun_web::trust;
 use bun_web::url::Url;
 
-use super::inspection::News;
+use bun_web::page::News as ForElement;
+
+use super::inspection::{News, with_news};
 use super::page::Page;
 use super::{Contents, Kind, fields, frame, hooks, load, logs_to_stderr, object_in, or_undefined};
 
 use crate::generated_bindgen::electron::DesktopProcess;
 use crate::generated_bindgen::system::js_DesktopNotification;
 use crate::prelude::*;
-use crate::renderer::handle_of;
 use crate::webview::print;
 use crate::{app, dialog, modules, realm, screen, session, task, theme};
 
@@ -57,8 +62,9 @@ fn environment(page: &Page) -> JsResult<Environment> {
         .transpose()?
         .unwrap_or_default();
     let (display, emulated) = (screen::display_matching(bounds)?, it.emulated_media());
-    let seems_focused = it.inspection.seems_focused.get();
-    let (owner, seems_shown) = (page.owner(), seems_focused || it.seems_shown()?);
+    let owner = page.owner();
+    let seems_focused = owner.inspection.seems_focused.get();
+    let seems_shown = seems_focused || it.seems_shown()?;
     let on_device = |real: Area| match owner.device.get().map(|it| it.screen) {
         Some([width, height]) if width * height > 0. => Area {
             x: 0.,
@@ -87,7 +93,7 @@ fn environment(page: &Page) -> JsResult<Environment> {
         zoom: page.owner().zoom_factor(),
         is_active: seems_focused || it.is_window_focused()?,
         is_visible: seems_shown || !owner.throttles_background.get(),
-        is_drawn: seems_shown && (seems_focused || window.is_some()),
+        is_drawn: seems_shown && (seems_focused || window.is_some()) && !it.is_out_of_sight(),
         is_fullscreen: window.map(|it| it.fills_screen()).transpose()? == Some(true),
         is_transparent: it.kind.get() != Kind::Window || it.preferences.is_transparent,
         overlays_scrollbars: settings
@@ -105,7 +111,47 @@ fn environment(page: &Page) -> JsResult<Environment> {
         fixes_text_areas: it.preferences.fixes_text_areas,
         reports_paints: fields::subscriber(it).is_some_and(JSValue::is_callable),
         reports_preferred_size: it.preferences.reports_preferred_size && !it.is_frame(),
+        container: it.container(),
     })
+}
+
+fn has_spell_checker(page: &Page) -> bool {
+    IS_MAC && page.contents().preferences.checks_spelling
+}
+
+fn runs_scripts(page: &Page) -> bool {
+    page.contents().preferences.runs_scripts && !page.forbids("allow-scripts")
+}
+
+fn activation(page: &Page) -> Option<Box<Activation>> {
+    page.contents().activation.borrow().clone().map(Box::new)
+}
+
+fn arrival(page: &Page) -> Arrival {
+    page.loaded().map(|it| it.arrival()).unwrap_or_default()
+}
+
+fn refresh(page: &Page) -> Option<String> {
+    page.loaded().and_then(|it| it.refresh())
+}
+
+pub(super) fn facts(page: &Page) -> Facts {
+    let it = page.contents();
+    Facts {
+        has_spell_checker: has_spell_checker(page),
+        is_at_top: same(page, page.owner().page()),
+        loads_images: it.preferences.loads_images,
+        runs_scripts: runs_scripts(page),
+        tab: page.owner().id,
+        origins: (!page.is_initial()).then(|| Origins {
+            activation: activation(page),
+            arrival: arrival(page),
+            history: it.entries_for_scripts(),
+            inbound_transition: page.inbound_transition.get(),
+            refresh: refresh(page),
+            restores_scroll: page.restores_scroll.get(),
+        }),
+    }
 }
 
 fn show_dialog(page: &Page, kind: DialogKind, message: String) -> JsResult<DialogAnswer> {
@@ -174,6 +220,12 @@ fn show_notification(page: &'static Page, id: u32, options: JSValue) -> JsResult
 }
 
 fn set_fullscreen(page: &Page, is_on: bool) -> JsResult<()> {
+    if page.contents().is_apart() {
+        return match !is_on || page.owner().context.may_fill_screen.get() {
+            true => (page.contents()).tell_element(ForElement::Fullscreen(is_on)),
+            false => Ok(()),
+        };
+    }
     if !page.owner().context.may_fill_screen.take() && is_on {
         return Ok(());
     }
@@ -229,18 +281,34 @@ fn pick_files(page: &Page, choice: &FileChoice) -> JsResult<JSValue> {
 
 /// Whether the windows that the page opens, and the one that has opened it, share objects with it.
 pub(super) fn knows_other_windows(page: &Page) -> bool {
-    page.has_relatives.get() && trust::trusts_all_frames()
+    page.has_relatives.get() && trust::relates_windows()
 }
 
 fn may_ask_for(page: &Page, permission: &str) -> bool {
     page.is_active()
         && match permission {
+            "clipboard-read" if page.is_far() && !page.owner().seems_to_have_focus() => false,
             "clipboard-read" | "fullscreen" => page.has_feature(permission.as_bytes()),
             "clipboard-sanitized-write" => page.has_feature(b"clipboard-write"),
             "notifications" => page.client.is_secure(),
             "pointerLock" => !page.forbids("allow-pointer-lock"),
             _ => false,
         }
+}
+
+fn ask_system(request: SystemRequest, reply: Reply<Option<Answer>>) {
+    let asked = bun_ui::queue::request(global(), Request::System(request), |global, it| {
+        let answer = match it {
+            System::Misspelled(words) => Some(Answer::CheckSpelling(words.into_vec())),
+            System::Guesses(words) => Some(Answer::GuessSpelling(
+                words.iter().map(|it| it.to_string()).collect(),
+            )),
+            _ => None,
+        };
+        reply(global, answer);
+        Ok(())
+    });
+    task::report(asked);
 }
 
 struct OfTab;
@@ -268,6 +336,16 @@ impl Native for OfTab {
             }
             Question::Locale {} => Answer::Locale(Some(app::locale()?.to_owned())),
             Question::Tab {} => Answer::Tab(page.owner().id),
+            Question::ReadClipboard { is_selection } => {
+                Answer::ReadClipboard(dom::read_clipboard(is_selection))
+            }
+            Question::WriteClipboard {
+                texts,
+                is_selection,
+            } => {
+                dom::write_clipboard(texts, is_selection);
+                Answer::WriteClipboard(())
+            }
             Question::SystemVersion {} => Answer::SystemVersion(system_version().to_owned()),
             _ => return Ok(None),
         }))
@@ -276,17 +354,30 @@ impl Native for OfTab {
     fn request(&self, owner: JSValue, question: Question, reply: Reply<Option<Answer>>) {
         let page = page_in(owner);
         match question {
+            Question::CheckSpelling { text } => {
+                ask_system(SystemRequest::CheckSpelling(text.into()), reply);
+            }
+            Question::GuessSpelling { word } => {
+                ask_system(SystemRequest::GuessSpelling(word.into()), reply);
+            }
+            Question::WriteImage { texts, image } => {
+                dom::write_image_to_clipboard(texts, image, Box::new(|| reply(global(), None)));
+            }
             Question::Permission { name } if !may_ask_for(page, &name) => {
                 reply(global(), Some(Answer::Permission("denied".to_owned())));
             }
             Question::Permission { name } => {
                 let (tab, is_for_screen) = (Root::new(page.owner()), name == "fullscreen");
+                let (process, permission) = (page.process(), name.clone());
                 task::report(page.request_permission(
                     &name,
                     JSValue::UNDEFINED,
                     move |is_granted| {
                         if is_for_screen {
                             tab.get().context.may_fill_screen.set(is_granted);
+                        }
+                        if let Some(process) = process.filter(|_| is_granted) {
+                            process.witness.note_permission(&permission);
                         }
                         let state = if is_granted { "granted" } else { "denied" };
                         reply(global(), Some(Answer::Permission(state.to_owned())));
@@ -310,7 +401,7 @@ fn obey(page: &'static Page, question: Question) -> JsResult<Option<Answer>> {
     let it = page.contents();
     match question {
         question if page.is_disposed() => return OfTab.answer(page.to_js(), question),
-        Question::Activated {} => page.activated(),
+        Question::Activated {} => page.activated()?,
         Question::ActivationConsumed {} => page.consume_activation()?,
         Question::BaseUrlChanged { url } => page.base_url_changed(url),
         Question::CloseWindow { context } => {
@@ -319,21 +410,27 @@ fn obey(page: &'static Page, question: Question) -> JsResult<Option<Answer>> {
         Question::CreateFrame { frame, owner } if page.has_relatives.get() => {
             frame::create(page, frame, &owner)?
         }
-        Question::CreateGuest { frame, scale } => hooks::create_guest(page, frame, scale)?,
+        Question::CreateGuest { frame, scale } if page.place().is_trusted() => {
+            hooks::create_guest(page, frame, scale)?
+        }
         Question::Disown {} if knows_other_windows(page) => it.set_opened_by(None),
         Question::FocusOther { context } => {
             let may_focus = |it: &&Contents| {
                 !it.is_frame()
                     && (page.has_activation() || it.opener_page().is_some_and(|it| same(it, page)))
             };
-            (it.relative(context).filter(may_focus)).map_or(Ok(()), |it| it.focus_window())?
+            match it.relative(context) {
+                Some(frame) if frame.is_frame() => frame.tell_element(ForElement::Focus)?,
+                other => (other.filter(may_focus)).map_or(Ok(()), |it| it.focus_window())?,
+            }
         }
         Question::Frame { frame, message } => frame::obey(page, frame, message)?,
         Question::Guest { frame, message } => hooks::tell_guest(page, frame, message)?,
         Question::Navigate { wish } => hooks::navigate(page, *wish)?,
         Question::Proceed { ticket } => page.proceed(ticket)?,
         Question::StartWindow { context } => {
-            (it.relative(context).map(|it| it.started_page())).transpose()?;
+            let beside = (it.relative(context)).filter(|it| it.page().is_beside(page));
+            beside.map(|it| it.started_page()).transpose()?;
         }
         Question::CancelNavigation {} => it.cancel_navigation()?,
         Question::Close {} if knows_other_windows(page) => it.close_for_script(),
@@ -344,7 +441,7 @@ fn obey(page: &'static Page, question: Question) -> JsResult<Option<Answer>> {
             page.client.abort_fetches();
             it.stop_loading()?
         }
-        Question::Reload {} => page.later(|it| it.contents().reload_page(true)),
+        Question::Reload {} => page.after_script(|it| it.contents().reload_page(true)),
         Question::Loaded { stage } => it.reached(page, stage)?,
         Question::PaintedInFrame { scale } => it.painted(scale, JSValue::UNDEFINED)?,
         Question::SetFullscreen { is_on } => set_fullscreen(page, is_on)?,
@@ -424,7 +521,15 @@ impl Native for OfWindow {
                 let size = object!({ "width": width, "height": height });
                 return announce(page.owner().to_js(), "preferred-size-changed", &[size]);
             }
-            Notice::ContextMenu { menu } if !page.is_disposed() => {
+            Notice::ContextMenu { mut menu } if !page.is_disposed() => {
+                let [left, top] =
+                    (page.contents().origin_in_top()).map(|it| it * page.owner().zoom_factor());
+                (menu.x, menu.y) = (menu.x + left.round(), menu.y + top.round());
+                for url in [&mut menu.link_url, &mut menu.src_url] {
+                    if url.starts_with("file:") && page.is_far() && page.origin() != "file://" {
+                        "about:blank#blocked".clone_into(url);
+                    }
+                }
                 return hooks::show_context_menu(page, js(menu)?);
             }
             Notice::ShowNotification {
@@ -458,6 +563,32 @@ impl Native for OfWindow {
             {
                 return move_window(page, bounds);
             }
+            Notice::Media {
+                connection,
+                commands,
+            } => return page.tell_media(connection, commands),
+            Notice::Inspected {
+                session,
+                method,
+                params,
+            } if !page.is_disposed() => {
+                return page.contents().notify(News::Inspected {
+                    session,
+                    method: &method,
+                    params: &params,
+                });
+            }
+            Notice::Container { message } if page.is_active() => {
+                return page.contents().tell_container(message);
+            }
+            Notice::Post {
+                context,
+                message,
+                target_origin,
+            } if !page.is_forgotten.get() => {
+                let target = page.contents().relative(context);
+                return target.map_or(Ok(()), |it| it.post(page, message, &target_origin));
+            }
             Notice::Ping { url, target } if !page.is_disposed() => {
                 page.update_agent()?;
                 Url::parse(url.as_bytes())
@@ -473,9 +604,7 @@ impl Native for OfWindow {
         let page = page_in(owner);
         let (it, has_relatives) = (page.contents(), page.has_relatives.get());
         Ok(Some(match question {
-            Question::Activation {} => {
-                Answer::Activation(it.activation.borrow().clone().map(Box::new))
-            }
+            Question::Activation {} => Answer::Activation(activation(page)),
             Question::AllowsFeature { feature } => {
                 Answer::AllowsFeature(Some(page.has_feature(feature.as_bytes())))
             }
@@ -491,7 +620,7 @@ impl Native for OfWindow {
             )?),
             Question::NavigateWindow { context, wish } => Answer::NavigateWindow(
                 (it.relative(context))
-                    .map_or(Ok(Verdict::Refused), |it| it.judge(page, *wish, None))?,
+                    .map_or(Ok(Verdict::Refused), |it| it.judge_for_script(page, *wish))?,
             ),
             Question::Open {
                 wish,
@@ -503,12 +632,11 @@ impl Native for OfWindow {
                 Answer::ChecksSpelling(it.session.get_spell_checker_enabled())
             }
             Question::HasWebEngine {} => Answer::HasWebEngine(true),
-            Question::HasSpellChecker {} => {
-                Answer::HasSpellChecker(IS_MAC && it.preferences.checks_spelling)
-            }
-            Question::IsLocalFrame { url } => {
-                Answer::IsLocalFrame(has_relatives && load::is_trusted_in_frame(&url)?)
-            }
+            Question::HasSpellChecker {} => Answer::HasSpellChecker(has_spell_checker(page)),
+            Question::IsLocalFrame { url } => Answer::IsLocalFrame(
+                has_relatives
+                    && (trust::has_sandbox_for_the_rest() || load::is_trusted_in_frame(&url)?),
+            ),
             Question::OriginKey {} => Answer::OriginKey(Some(page.origin_key())),
             Question::AllowsForm { url } => {
                 Answer::AllowsForm(Url::parse(url.as_bytes()).map(|url| {
@@ -523,9 +651,7 @@ impl Native for OfWindow {
                     .map(|it| string(it.as_bytes()))
                     .collect(),
             ),
-            Question::Arrival {} => {
-                Answer::Arrival(page.loaded().map(|it| it.arrival()).unwrap_or_default())
-            }
+            Question::Arrival {} => Answer::Arrival(arrival(page)),
             Question::ConsoleAudience {} => Answer::ConsoleAudience(match it.has_observers() {
                 true => ConsoleAudience::Inspector,
                 false
@@ -564,8 +690,9 @@ impl Native for OfWindow {
                 Answer::IsBeingLeft(page.contents().loading.is_pending_or_wished())
             }
             Question::IsPopup {} => {
-                Answer::IsPopup(trust::trusts_all_frames() && it.owner().context.is_popup.get())
+                Answer::IsPopup(trust::relates_windows() && it.owner().context.is_popup.get())
             }
+            Question::IsTabFocused {} => Answer::IsTabFocused(it.owner().seems_to_have_focus()),
             Question::IsSandboxed { missing_flag } => {
                 Answer::IsSandboxed(page.forbids(&missing_flag))
             }
@@ -575,17 +702,15 @@ impl Native for OfWindow {
             } else {
                 it.context.name.borrow().clone()
             })),
-            Question::Refresh {} => Answer::Refresh(page.loaded().and_then(|it| it.refresh())),
+            Question::Refresh {} => Answer::Refresh(refresh(page)),
             Question::CanPrint {} => Answer::CanPrint(!page.forbids("allow-modals")),
             Question::LoadsImages {} => Answer::LoadsImages(Some(it.preferences.loads_images)),
             Question::IsActive {} => Answer::IsActive(Some(page.is_active())),
-            Question::RunsScripts {} => Answer::RunsScripts(Some(
-                it.preferences.runs_scripts && !page.forbids("allow-scripts"),
-            )),
+            Question::RunsScripts {} => Answer::RunsScripts(Some(runs_scripts(page))),
             Question::RestoresScroll {} => Answer::RestoresScroll(page.restores_scroll.get()),
             Question::Traverse { delta } => {
                 if page.is_active() {
-                    it.owner().traverse_by(delta, page);
+                    it.owner().traverse_by(delta, page)?;
                 }
                 Answer::Traverse(true)
             }
@@ -594,27 +719,7 @@ impl Native for OfWindow {
     }
 
     fn inspect(&self, owner: JSValue, it: Inspected<'_>) -> JsResult<()> {
-        let contents = page_in(owner).contents();
-        match it {
-            Inspected::Console { method, values } => {
-                let handles = array(&[])?;
-                (values.iter()).try_for_each(|it| handles.push(global(), handle_of(*it)))?;
-                with_elements(handles, |all| contents.notify(News::Console(method, all)))
-            }
-            Inspected::Exception {
-                text,
-                url,
-                line,
-                column,
-                error,
-            } => contents.notify(News::Exception {
-                text,
-                url,
-                line,
-                column,
-                error: handle_of(error),
-            }),
-        }
+        with_news(it, &|news| page_in(owner).contents().notify(news))
     }
 
     fn for_blank_frames(&self) -> Option<&'static dyn Native> {
@@ -638,6 +743,7 @@ impl Native for OfWindow {
                 let paths = shown.await.map_err(|it| task::throw(&it));
                 let paths = paths.and_then(|it| texts_of(get(it.get(), "filePaths")?));
                 let paths = task::or_warning(paths);
+                let paths = paths.map(|it| it.into_iter().map(bun_web::host::ChosenFile).collect());
                 reply(global(), Some(Answer::PickFiles(paths)));
             });
         }
@@ -663,7 +769,9 @@ impl Native for OfWindow {
         }
         let ask = || {
             let more = object!({ "mediaTypes": ["audio"], "securityOrigin": page.origin() + "/" });
-            page.request_permission("media", more, |is_granted| {
+            let asker = Root::new(page);
+            page.request_permission("media", more, move |is_granted| {
+                asker.get().may_capture.update(|it| it || is_granted);
                 let granted = Answer::Microphone(Permission::Granted);
                 reply(global(), is_granted.then_some(granted));
                 Ok(())
@@ -688,6 +796,7 @@ impl Native for OfPreload {
                 message,
                 ticket,
             } => page_in(owner).got_invocation(&channel, &message, ticket),
+            notice @ Notice::Crashed {} => OfWindow.hear(owner, notice),
             _ => Ok(()),
         }
     }

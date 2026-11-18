@@ -80,7 +80,7 @@ struct Wanted {
     part: Option<[i64; 4]>,
     resize: [Option<u32>; 2],
     flips: bool,
-    is_smooth: bool,
+    quality: ResizeQuality,
 }
 
 impl Wanted {
@@ -113,7 +113,8 @@ impl Wanted {
             part,
             to,
             flips: self.flips,
-            is_smooth: self.is_smooth,
+            is_smooth: self.quality != ResizeQuality::Pixelated,
+            is_sharpened: self.quality == ResizeQuality::High,
             ..source.whole()
         });
         Ok(ImageBitmap::create(
@@ -185,7 +186,7 @@ fn create<'a>(
         part: part.map(|[x, y, width, height]| normalized(x, y, width, height)),
         resize: [options.resize_width, options.resize_height],
         flips: options.image_orientation == ImageOrientation::FlipY,
-        is_smooth: options.resize_quality != ResizeQuality::Pixelated,
+        quality: options.resize_quality,
     };
     if wanted.resize.contains(&Some(0)) {
         return Err(Failure::invalid_state("The resize size is 0.").into_error(&cx.heap));
@@ -199,7 +200,16 @@ fn create<'a>(
             ));
         }
         ImageBitmapSource::Data(data) => {
-            let pixels = data.with_pixels(&cx.heap, |rgba| Owned::from_pixels(data.size, rgba));
+            let pixels = data.with_pixels(&cx.heap, |rgba| {
+                Owned::from_pixels(
+                    data.size,
+                    if data.is_wide() {
+                        [None, Some(rgba)]
+                    } else {
+                        [Some(rgba), None]
+                    },
+                )
+            });
             let bitmap =
                 pixels.and_then(|it| wanted.crop(&cx.heap, &Source::new(it.id(), data.size, true)));
             return resolved(cx, bitmap);

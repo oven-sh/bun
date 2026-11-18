@@ -266,6 +266,13 @@ pub fn profile(bytes: &[u8]) -> Option<Vec<u8>> {
     }
 }
 
+/// Without a profile.
+pub fn is_display_p3(bytes: &[u8]) -> bool {
+    png_chunks(bytes)
+        .take_while(|it| it.0 != b"IDAT")
+        .any(|it| it == (b"cICP", &[12, 13, 0, 1]))
+}
+
 fn exif(bytes: &[u8]) -> Option<&[u8]> {
     match Format::of(bytes)? {
         Format::Png => png_chunks(bytes)

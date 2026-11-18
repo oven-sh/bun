@@ -118,7 +118,52 @@ fn instance<'a>(
                 None,
             ));
         }
-        Kind::Turned { .. } | Kind::Pending(_) => return None,
+        Kind::Slanted(slant, color) => {
+            let (color, [cos, sin], [x, y]) =
+                (bgra(color, primitive.opacity), slant.along, slant.half);
+            return Some((
+                Instance {
+                    kind: 5,
+                    color,
+                    radii: slant.radii(),
+                    border: [cos, sin, x, y],
+                    ..common
+                },
+                None,
+            ));
+        }
+        Kind::Turned {
+            texture,
+            to_texels: it,
+            ..
+        } => {
+            let texture = Some(&textures[texture as usize]).filter(|it| it.width > 0)?;
+            let block = texture.block.as_ref()?;
+            let (offset, width, height) = (
+                block.offset as u32,
+                texture.width as u32,
+                (block.bytes().len() / 4 / texture.width) as u32,
+            );
+            let (opacity, radii, border) = (
+                f32::from(alpha(primitive.opacity)) / 255.,
+                [it.sx, it.kx, it.ky, it.sy],
+                [it.tx, it.ty, 0., 0.],
+            );
+            return Some((
+                Instance {
+                    kind: 6,
+                    offset,
+                    width,
+                    height,
+                    opacity,
+                    radii,
+                    border,
+                    ..common
+                },
+                Some(&block.chunk),
+            ));
+        }
+        Kind::Pending(_) => return None,
         Kind::Mask(tile, color) => (tile, 2, bgra(color, primitive.opacity), 1),
         Kind::Image(tile) => (tile, 3 + u32::from(is_shaped(primitive)), [0; 4], 4),
     };
@@ -247,6 +292,44 @@ impl Sample {
             smoothing: 0.6,
             ..at(140.5, 20., 48., 26., 8., quad(0x40FF_20C0, 2.))
         });
+        let slant = super::slant::Slant {
+            along: [0.8, 0.6],
+            half: [12., 5.],
+            radii: [80, 0, 160, 16],
+        };
+        compositor.primitives.push(at(
+            66.5,
+            18.25,
+            30.,
+            28.,
+            0.,
+            Kind::Slanted(slant, 0xC020_80E0),
+        ));
+        let turned = texture(
+            true,
+            (0..128)
+                .flat_map(|it| {
+                    if (2..14).contains(&(it % 16)) && (2..6).contains(&(it / 16)) {
+                        [it, 40, 127 - it, 200]
+                    } else {
+                        [0; 4]
+                    }
+                })
+                .collect(),
+        );
+        let to_texels = crate::gfx::Transform::from_row(0.8, -0.6, 0.6, 0.8, -108., 52.);
+        compositor.primitives.push(at(
+            108.,
+            18.,
+            28.,
+            28.,
+            0.,
+            Kind::Turned {
+                texture: turned.texture,
+                id: turned.id,
+                to_texels,
+            },
+        ));
         let summaries = compositor.primitives.iter().map(Summary::of).collect();
         Sample(compositor, summaries)
     }
@@ -304,6 +387,8 @@ struct Buffer<S> {
     position: Position,
     hashes: Vec<u64>,
     last_shown: Instant,
+    /// When the cell has last got other contents in a scroll.
+    stirred_at: Option<Instant>,
 }
 
 impl<S> Buffer<S> {
@@ -679,6 +764,8 @@ pub struct Layers<T: Target> {
     expected: Option<(IntRect, bool)>,
     resized_at: Option<Instant>,
     resizing_lasts: Duration,
+    jumps_last: Duration,
+    stirs_last: Duration,
     frames_scrolled: u32,
     painting_took: Duration,
     large_cells_last: Duration,
@@ -737,7 +824,7 @@ impl<T: Target> Layers<T> {
             port,
             Instant::now(),
             self.jumped
-                .is_some_and(|it| it.0 == port && it.1.elapsed() < Duration::from_secs(1)),
+                .is_some_and(|it| it.0 == port && it.1.elapsed() < self.jumps_last),
         ));
     }
 
@@ -759,6 +846,8 @@ impl<T: Target> Layers<T> {
             expected: None,
             resized_at: None,
             resizing_lasts: Duration::from_millis(500),
+            jumps_last: Duration::from_secs(1),
+            stirs_last: Duration::from_millis(500),
             frames_scrolled: 0,
             painting_took: Duration::ZERO,
             large_cells_last: Duration::from_secs(1),
@@ -866,6 +955,14 @@ impl<T: Target> Layers<T> {
             .for_each(|buffer| buffer.hashes.fill(UNKNOWN));
     }
 
+    /// Above, below or inside of it.
+    fn is_in_line(&self, cell: IntRect, port: IntRect) -> bool {
+        cell.left < port.right
+            && port.left < cell.right
+            && self.apart.contains(&cell.left)
+                == self.apart.contains(&port.left.midpoint(port.right))
+    }
+
     fn back_buffer(
         &mut self,
         position: Position,
@@ -899,6 +996,7 @@ impl<T: Target> Layers<T> {
                 position,
                 hashes: vec![UNKNOWN; (size.0 / TILE_WIDTH * (size.1 / TILE_HEIGHT)) as usize],
                 last_shown: now,
+                stirred_at: None,
             },
         };
         if std::mem::replace(&mut buffer.position, position) != position {
@@ -952,15 +1050,26 @@ impl<T: Target> Layers<T> {
         });
         for cell @ Cell { area, sizes } in &division.cells {
             let (area, position) = (*area, cell.position());
-            if self.shown.get(&position).is_some_and(|it| {
-                sizes.has(it.size) && it.lacks(&tiles, grid, area).next().is_none()
-            }) {
+            let same = self
+                .shown
+                .get(&position)
+                .filter(|it| sizes.has(it.size) && it.lacks(&tiles, grid, area).next().is_none());
+            // The window server is late after a frame that has changed less than the ones before it.
+            let is_in_line = !has_new_cells
+                && self
+                    .scrolled
+                    .is_some_and(|(port, _)| self.is_in_line(area, port));
+            let stirred_at = same
+                .map_or(Some(start), |it| it.stirred_at)
+                .filter(|it| is_in_line && start - *it < self.stirs_last);
+            if same.is_some() && stirred_at.is_none() {
                 continue;
             }
             let Some(mut buffer) = self.back_buffer(position, sizes, grows) else {
                 is_complete = false;
                 continue;
             };
+            buffer.stirred_at = stirred_at;
             let (shown, mut work, columns, stride) = (
                 self.shown.get(&position),
                 0,
@@ -1483,6 +1592,8 @@ mod tests {
         line: Sprite,
         size: (i32, i32),
         scrolled: i32,
+        /// Of what is above the port.
+        title: u32,
     }
 
     impl Chat {
@@ -1495,6 +1606,11 @@ mod tests {
                 Compositor::default(),
             );
             layers.keep_apart(0..576);
+            (
+                layers.resizing_lasts,
+                layers.large_cells_last,
+                layers.jumps_last,
+            ) = (Duration::MAX, Duration::MAX, Duration::MAX);
             let line = compositor.atlas.insert(false, 1500, 30, &[99; 1500 * 30]);
             let mut chat = Chat {
                 layers,
@@ -1502,6 +1618,7 @@ mod tests {
                 line,
                 size,
                 scrolled: 0,
+                title: 0xFF,
             };
             chat.frame(None, 0);
             chat
@@ -1552,6 +1669,7 @@ mod tests {
                 IntRect::new(x, height - 200, x + 20 + typed * 20, height - 160),
                 0x0000_00FF,
             ));
+            all.push(quad(IntRect::new(x, 20, x + 200, 40), self.title));
             self.compositor.primitives = all;
             self.layers.set_scrolling(scrolls_by.map(|_| port));
             self.layers.paint(&mut self.compositor, width, height);
@@ -1583,6 +1701,25 @@ mod tests {
         assert!(chat.layers.target.pixels_alive() < 2432 * 1600 + 1024 * 128);
         assert!(chat.frame(None, 3) == [IntRect::new(576, 1088, 1536, 1600)]);
         assert!(chat.frame(Some(11), 3) == [large]);
+    }
+
+    #[test]
+    fn what_has_changed_in_a_scroll_goes_on_changing_for_a_while() {
+        let mut chat = Chat::new((2400, 1600));
+        chat.layers.stirs_last = Duration::MAX;
+        chat.frame(Some(5), 0);
+        assert_eq!(chat.frame(Some(11), 0).len(), 1);
+        chat.title = 0xFF00_00FF;
+        for _ in 0..9 {
+            assert_eq!(chat.frame(Some(11), 0).len(), 2);
+        }
+        assert!(!chat.layers.is_in_line(
+            IntRect::new(0, 0, 576, 512),
+            IntRect::new(560, 64, 2400, 1600)
+        ));
+        assert!(chat.frame(None, 0).is_empty());
+        chat.layers.stirs_last = Duration::ZERO;
+        assert_eq!(chat.frame(Some(11), 0).len(), 1);
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 use core::sync::atomic::AtomicU32;
 
-use bun_ui::BoxedLocal as _;
+use bun_collections::HashMap;
 use bun_ui::protocol::Lane;
 
 use super::*;
@@ -10,16 +10,34 @@ use crate::remote::{self, HOST, Head, Kind, OF_PAGES, Peer};
 use crate::wire::{Malformed, Reader, Writer};
 
 const MOST_PORTS: usize = 1 << 16;
+/// What a message counts as, at least.
+const OVERHEAD: usize = 1 << 10;
 
-struct Carried {
-    key: (Peer, u32),
-    endpoint: Arc<Endpoint>,
+#[derive(Default)]
+struct Tables {
+    /// Until the other process has said that it is closed.
+    carried: HashMap<Peer, HashMap<u32, Arc<Endpoint>>>,
+    /// What is for a port can overtake the message that it comes with.
+    early: HashMap<u32, Endpoint>,
 }
 
-/// Until the other process has said that it is closed.
-static CARRIED: Guarded<Vec<Carried>> = Guarded::new(Vec::new());
-/// What is for a port can overtake the message that it comes with.
-static EARLY: Guarded<Vec<(u32, Endpoint)>> = Guarded::new(Vec::new());
+fn tables() -> &'static Guarded<Tables> {
+    static ALL: std::sync::OnceLock<Guarded<Tables>> = std::sync::OnceLock::new();
+    ALL.get_or_init(Guarded::default)
+}
+
+impl Tables {
+    fn of(&mut self, peer: Peer) -> &mut HashMap<u32, Arc<Endpoint>> {
+        self.carried.entry(peer).or_default()
+    }
+
+    fn counterpart(&mut self, key: (Peer, u32)) -> Endpoint {
+        let (carried, given) = Endpoint::pair();
+        carried.0.sides[carried.0.side].lock().carrier = Some(key);
+        self.of(key.0).insert(key.1, Arc::new(carried));
+        given
+    }
+}
 
 crate::wire!(impl enum Arrival { Message(Message), Closed, });
 
@@ -35,14 +53,14 @@ struct Leaving(Option<((Peer, u32), Arc<Endpoint>)>);
 impl Drop for Leaving {
     fn drop(&mut self) {
         if let Some((key, _)) = &self.0 {
-            let unsent = CARRIED.lock().extract_if(.., |it| it.key == *key).next();
+            let unsent = tables().lock().of(key.0).remove(&key.1);
             drop(unsent);
         }
     }
 }
 
 thread_local! {
-    static TO_CARRY: Box<RefCell<Option<VecDeque<Leaving>>>> = Box::default();
+    static TO_CARRY: RefCell<Option<VecDeque<Leaving>>> = const { RefCell::new(None) };
 }
 
 pub(super) fn pass_on((peer, id): (Peer, u32), arrival: Arrival) {
@@ -80,14 +98,6 @@ fn carry(first: Leaving) {
     }
 }
 
-fn counterpart(key: (Peer, u32), all: &mut Vec<Carried>) -> Endpoint {
-    let (carried, given) = Endpoint::pair();
-    carried.0.sides[carried.0.side].lock().carrier = Some(key);
-    let endpoint = Arc::new(carried);
-    all.push(Carried { key, endpoint });
-    given
-}
-
 impl wire::Wire for Endpoint {
     fn write(self, to: &mut Writer) {
         static NEXT: AtomicU32 = AtomicU32::new(0);
@@ -98,7 +108,7 @@ impl wire::Wire for Endpoint {
         id.write(to);
         let (key, endpoint) = ((peer, id), Arc::new(self));
         let leaving = Leaving(Some((key, Arc::clone(&endpoint))));
-        CARRIED.lock().push(Carried { key, endpoint });
+        tables().lock().of(peer).insert(id, endpoint);
         to.afterwards(move || carry(leaving));
     }
 
@@ -106,39 +116,42 @@ impl wire::Wire for Endpoint {
         let Some(peer) = from.peer() else {
             return f64::read(from).map(Endpoint::unpark);
         };
-        let (id, mut all) = (u32::read(from)?, CARRIED.lock());
+        let (id, mut all) = (u32::read(from)?, tables().lock());
         if peer == HOST {
-            let early = EARLY.lock().extract_if(.., |it| it.0 == id).next();
-            return Ok(early.map_or_else(|| counterpart((peer, id), &mut all), |it| it.1));
+            let early = all.early.remove(&id);
+            return Ok(early.unwrap_or_else(|| all.counterpart((peer, id))));
         }
-        let of_peer = || all.iter().filter(|it| it.key.0 == peer);
-        if id & OF_PAGES == 0
-            || of_peer().any(|it| it.key.1 == id)
-            || of_peer().count() >= MOST_PORTS
-        {
+        let of_peer = all.of(peer);
+        if id & OF_PAGES == 0 || of_peer.contains_key(&id) || of_peer.len() >= MOST_PORTS {
             return Err(Malformed);
         }
-        Ok(counterpart((peer, id), &mut all))
+        Ok(all.counterpart((peer, id)))
     }
 }
 
-pub(crate) fn accept(from: Peer, id: u32, arrival: Arrival) {
-    let (key, mut all) = ((from, id), CARRIED.lock());
-    let mut at = all.iter().position(|it| it.key == key);
-    if at.is_none() && from == HOST && id & OF_PAGES == 0 {
-        let given = counterpart(key, &mut all);
-        EARLY.lock().push((id, given));
-        at = Some(all.len() - 1);
+pub(crate) fn accept(from: Peer, id: u32, arrival: Arrival, length: usize) -> wire::Result<()> {
+    let (key, mut all) = ((from, id), tables().lock());
+    if from == HOST && id & OF_PAGES == 0 && !all.of(from).contains_key(&id) {
+        let given = all.counterpart(key);
+        all.early.insert(id, given);
     }
-    let Some(at) = at else { return };
+    let Some(endpoint) = all.of(from).get(&id).cloned() else {
+        return Ok(());
+    };
     match arrival {
         Arrival::Message(message) => {
-            let endpoint = Arc::clone(&all[at].endpoint);
             drop(all);
+            let mut other = endpoint.0.sides[1 - endpoint.0.side].lock();
+            other.bytes_from_afar *= usize::from(!other.inbox.is_empty());
+            other.bytes_from_afar += length + OVERHEAD;
+            if from != HOST && other.bytes_from_afar > 2 * wire::LARGE {
+                return Err(Malformed);
+            }
+            drop(other);
             endpoint.send(message);
         }
         Arrival::Closed => {
-            let Carried { endpoint, .. } = all.swap_remove(at);
+            all.of(from).remove(&id);
             drop(all);
             let mut side = endpoint.0.sides[endpoint.0.side].lock();
             let has_to_confirm = !core::mem::replace(&mut side.is_closed, true);
@@ -150,9 +163,10 @@ pub(crate) fn accept(from: Peer, id: u32, arrival: Arrival) {
             }
         }
     }
+    Ok(())
 }
 
 pub(crate) fn forget(peer: Peer) {
-    let gone: Vec<_> = (CARRIED.lock().extract_if(.., |it| it.key.0 == peer)).collect();
+    let gone = tables().lock().carried.remove(&peer);
     drop(gone);
 }

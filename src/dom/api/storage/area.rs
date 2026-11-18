@@ -3,11 +3,13 @@
 use core::mem::ManuallyDrop;
 
 use bun_alloc::WTFStringImplStruct;
-use bun_collections::ArrayHashMap;
+use bun_collections::{ArrayHashMap, HashMap};
 use bun_jsc::Weak;
 use bun_jsc::bindgen::{ClassStructure, PropertyNames};
 use bun_markup::Chars;
+use bun_web::net::session::Session;
 use bun_web::realm::Realm;
+use bun_web::storage::areas::{Borrower, Changed, Items, Whose};
 use bun_web::storage::{AreaChange, Origins, Storage};
 
 use super::*;
@@ -40,10 +42,32 @@ struct Area {
     bucket: Box<[u8]>,
     items: RefCell<ArrayHashMap<Atom, DomString>>,
     size: Cell<usize>,
+    borrowed: Option<RefCell<Borrowed>>,
+}
+
+/// From the host.
+#[derive(Default)]
+struct Borrowed {
+    version: u64,
+    last_change: u64,
+    /// The numbers of the changes that the host may have yet to hear of.
+    last_clearing: u64,
+    last_changes: HashMap<Atom, u64>,
+}
+
+/// A process that may have a copy.
+struct Watcher {
+    peer: u32,
+    whose: Whose,
+    owner: Owner,
+    bucket: Box<[u8]>,
+    applied: u64,
 }
 
 #[derive(Default)]
 struct Shared {
+    watchers: Vec<Watcher>,
+    version: u64,
     areas: Vec<Rc<Area>>,
     listening_windows: Vec<Weak<()>>,
 }
@@ -83,7 +107,25 @@ fn forget(profile: &Storage, origins: &Origins) {
         matches!(&it.owner, Some(Owner::Profile(it)) if core::ptr::eq(Arc::as_ptr(it), profile))
             && origins.include(&it.bucket)
     };
-    with_shared(|it| it.areas.iter().filter(is_meant).for_each(|it| it.empty()));
+    let meant = with_shared(|it| {
+        it.areas
+            .iter()
+            .filter(is_meant)
+            .cloned()
+            .collect::<Vec<_>>()
+    });
+    for it in meant {
+        it.empty();
+        it.tell_watchers(None, || AreaChange::Clear, None, None);
+    }
+}
+
+fn atom_of(bytes: &[u8]) -> Atom {
+    Atom::from_chars(Chars::Utf16(&from_utf16le(bytes)))
+}
+
+fn string_of(bytes: &[u8]) -> DomString {
+    DomString::from_chars(Chars::Utf16(&from_utf16le(bytes)))
 }
 
 impl Area {
@@ -110,16 +152,140 @@ impl Area {
                 ..Default::default()
             };
             if let Some(Owner::Profile(profile)) = &area.owner {
-                profile.read_area(bucket, forget, |key, value| {
-                    area.size.update(|it| it + (key.len() + value.len()) / 2);
-                    area.items.borrow_mut().insert(
-                        Atom::from_chars(Chars::Utf16(&from_utf16le(key))),
-                        DomString::from_chars(Chars::Utf16(&from_utf16le(value))),
-                    );
-                });
+                profile.read_area(bucket, forget, |key, value| area.add(key, value));
             }
             area.share()
         })
+    }
+
+    fn for_client(owner: Owner, client: &Client) -> Rc<Area> {
+        let bucket = client.bucket();
+        Area::find(&owner, &bucket).unwrap_or_else(|| {
+            let Some(items) = client.borrow_area(matches!(owner, Owner::Profile(_))) else {
+                return Area::of(owner, &bucket);
+            };
+            let borrowed = Borrowed {
+                version: items.version,
+                ..Default::default()
+            };
+            let area = Area {
+                owner: Some(owner),
+                bucket: bucket.into(),
+                borrowed: Some(borrowed.into()),
+                ..Default::default()
+            };
+            items.each(|key, value| area.add(key, value));
+            area.share()
+        })
+    }
+
+    fn add(&self, key: &[u8], value: &[u8]) {
+        self.size.update(|it| it + (key.len() + value.len()) / 2);
+        self.items
+            .borrow_mut()
+            .insert(atom_of(key), string_of(value));
+    }
+
+    fn size_with(&self, key: &Atom, old_value: Option<&DomString>, value: &DomString) -> usize {
+        old_value.map_or_else(
+            || self.size.get() + key.chars().len(),
+            |old| self.size.get() - old.len() as usize,
+        ) + value.len() as usize
+    }
+
+    fn remove(&self, key: &Atom) -> Option<DomString> {
+        let (_, old_value) = self.items.borrow_mut().fetch_swap_remove(key)?;
+        self.size
+            .update(|it| it - key.chars().len() - old_value.len() as usize);
+        Some(old_value)
+    }
+
+    fn tell_watchers(
+        &self,
+        except: Option<u32>,
+        change: impl Fn() -> AreaChange,
+        old_value: Option<&DomString>,
+        url: Option<&[u8]>,
+    ) {
+        with_shared(|shared| {
+            shared.version += 1;
+            for it in shared.watchers.iter().filter(|it| {
+                Some(it.peer) != except
+                    && Some(&it.owner) == self.owner.as_ref()
+                    && it.bucket == self.bucket
+            }) {
+                let (old_value, url) = (
+                    old_value.map(|it| to_utf16le(it.chars())),
+                    url.map(Into::into),
+                );
+                Changed {
+                    whose: it.whose,
+                    bucket: it.bucket.clone(),
+                    change: Some(change()),
+                    old_value,
+                    url,
+                    version: shared.version,
+                    applied: it.applied,
+                }
+                .send(it.peer);
+            }
+        });
+    }
+
+    /// <https://html.spec.whatwg.org/#concept-storage-broadcast>, in this process.
+    fn broadcast(
+        &self,
+        heap: &JsHeap<'_>,
+        except: Option<&Window>,
+        url: impl Fn() -> Option<DomString>,
+        key: Option<&Atom>,
+        old_value: Option<&DomString>,
+        new_value: Option<&DomString>,
+    ) {
+        let Some(owner) = &self.owner else { return };
+        let is_local = matches!(owner, Owner::Profile(_));
+        for at in 0.. {
+            let Some(window) = with_shared(|it| it.listening_windows.get(at).map(Weak::get)) else {
+                return;
+            };
+            let Some(window) = window
+                .and_then(|it| Window::from_js(heap, it))
+                .filter(|it| except.is_none_or(|own| it.to_js() != own.to_js()))
+            else {
+                continue;
+            };
+            let shares = client_of_window(window).is_some_and(|it| {
+                owner_for(window, &it, is_local) == *owner && *it.bucket() == *self.bucket
+            });
+            let (true, Some(doc), Some(url)) = (shares, window.doc(), url()) else {
+                continue;
+            };
+            let change = Change {
+                key: key.map(Atom::to_dom_string),
+                old_value: old_value.cloned(),
+                new_value: new_value.cloned(),
+                url,
+            };
+            queue_task(doc.heap(heap), [window.to_js()], move |cx, [window]| {
+                let Some(window) = Window::from_js(&cx.heap, window.to_js()) else {
+                    return;
+                };
+                let base = Event::base(atom!("storage"), EventInit::default(), Trusted::Yes);
+                let event = js_StorageEvent::create(
+                    &cx.heap,
+                    StorageEvent {
+                        base,
+                        fields: Default::default(),
+                        change: change.into(),
+                    },
+                );
+                js_StorageEvent::set_storage_area(
+                    event,
+                    storage_of(&cx.heap, window, is_local).ok(),
+                );
+                dispatch(cx, window, event);
+            });
+        }
     }
 
     fn empty(&self) {
@@ -127,7 +293,7 @@ impl Area {
         self.size.set(0);
     }
 
-    fn keep(&self, change: impl FnOnce() -> AreaChange) {
+    fn keep(&self, change: impl Fn() -> AreaChange) {
         if let Some(Owner::Profile(profile)) = &self.owner
             && profile.is_persistent()
         {
@@ -145,6 +311,7 @@ fn copy_session_storage(from: u32, to: u32, bucket: &[u8]) {
             bucket: bucket.into(),
             items,
             size: it.size.clone(),
+            borrowed: None,
         }
         .share();
     }
@@ -152,7 +319,173 @@ fn copy_session_storage(from: u32, to: u32, bucket: &[u8]) {
 
 #[unsafe(export_name = "__bun_dom_drop_session_storage")]
 fn drop_session_storage(tab: u32) {
-    with_shared(|it| it.areas.retain(|it| it.owner != Some(Owner::Tab(tab))));
+    with_shared(|it| {
+        it.areas.retain(|it| it.owner != Some(Owner::Tab(tab)));
+        it.watchers.retain(|it| it.whose != Whose::Tab(tab));
+    });
+}
+
+fn owner_lent_to(it: &Borrower) -> Owner {
+    match it.whose {
+        Whose::Session(_) => Owner::Profile(Arc::clone(&it.storage)),
+        Whose::Tab(tab) => Owner::Tab(tab),
+    }
+}
+
+fn with_watcher<R>(by: &Borrower, steps: impl FnOnce(&mut Watcher) -> R) -> R {
+    with_shared(|shared| {
+        let at = shared
+            .watchers
+            .iter()
+            .position(|it| (it.peer, it.whose) == (by.peer, by.whose) && *it.bucket == *by.bucket)
+            .unwrap_or_else(|| {
+                shared.watchers.push(Watcher {
+                    peer: by.peer,
+                    whose: by.whose,
+                    owner: owner_lent_to(by),
+                    bucket: by.bucket[..].into(),
+                    applied: 0,
+                });
+                shared.watchers.len() - 1
+            });
+        steps(&mut shared.watchers[at])
+    })
+}
+
+#[unsafe(export_name = "__bun_dom_watch_area")]
+fn watch_area(by: &Borrower) {
+    with_watcher(by, |_| {});
+}
+
+#[unsafe(export_name = "__bun_dom_lend_area")]
+fn lend_area(to: &Borrower) -> Items {
+    watch_area(to);
+    let area = Area::of(owner_lent_to(to), &to.bucket);
+    Items::new(
+        with_shared(|it| it.version),
+        area.items
+            .borrow()
+            .iter()
+            .map(|(key, value)| [to_utf16le(key.chars()), to_utf16le(value.chars())]),
+    )
+}
+
+#[unsafe(export_name = "__bun_dom_change_area")]
+fn change_area(by: &Borrower, change: &AreaChange, number: u64, url: &[u8]) {
+    const CHANGES_UNTIL_RECEIPT: u64 = 1 << 10;
+    with_watcher(by, |it| it.applied = number);
+    if number.is_multiple_of(CHANGES_UNTIL_RECEIPT) {
+        Changed {
+            whose: by.whose,
+            bucket: by.bucket[..].into(),
+            change: None,
+            old_value: None,
+            url: None,
+            version: 0,
+            applied: number,
+        }
+        .send(by.peer);
+    }
+    let area = Area::of(owner_lent_to(by), &by.bucket);
+    let (key, old_value, new_value) = match change {
+        AreaChange::Set { key, value } => {
+            let (key, value) = (atom_of(key), string_of(value));
+            let old_value = area.items.borrow().get(&key).cloned();
+            let size = area.size_with(&key, old_value.as_ref(), &value);
+            if size > area.size.get().max(MAX_SIZE) {
+                return;
+            }
+            area.size.set(size);
+            area.items.borrow_mut().insert(key.clone(), value.clone());
+            (Some(key), old_value, Some(value))
+        }
+        AreaChange::Remove { key } => {
+            let key = atom_of(key);
+            let old_value = area.remove(&key);
+            (Some(key), old_value, None)
+        }
+        AreaChange::Clear => {
+            area.empty();
+            (None, None, None)
+        }
+    };
+    area.keep(|| change.clone());
+    area.tell_watchers(
+        Some(by.peer),
+        || change.clone(),
+        old_value.as_ref(),
+        Some(url),
+    );
+    area.broadcast(
+        JsHeap::from_global(bun_ui::main_global()),
+        None,
+        || Some(DomString::from_latin1(url)),
+        key.as_ref(),
+        old_value.as_ref(),
+        new_value.as_ref(),
+    );
+}
+
+#[unsafe(export_name = "__bun_dom_forget_watcher_of_areas")]
+fn forget_watcher(peer: u32) {
+    with_shared(|it| it.watchers.retain(|it| it.peer != peer));
+}
+
+#[unsafe(export_name = "__bun_dom_area_changed")]
+fn area_changed(it: &Changed) {
+    let owner = match it.whose {
+        Whose::Session(id) => Owner::Profile(Arc::clone(&Session::stand_in_for(id).storage)),
+        Whose::Tab(tab) => Owner::Tab(tab),
+    };
+    let area = Area::find(&owner, &it.bucket).unwrap_or_else(|| {
+        Rc::new(Area {
+            owner: Some(owner),
+            bucket: it.bucket.clone(),
+            ..Default::default()
+        })
+    });
+    let (key, new_value) = match &it.change {
+        Some(AreaChange::Set { key, value }) => (Some(atom_of(key)), Some(string_of(value))),
+        Some(AreaChange::Remove { key }) => (Some(atom_of(key)), None),
+        _ => (None, None),
+    };
+    if let Some(mut borrowed) = area.borrowed.as_ref().map(RefCell::borrow_mut) {
+        borrowed
+            .last_changes
+            .retain(|_, number| *number > it.applied);
+        if it.version > borrowed.version && borrowed.last_clearing <= it.applied {
+            let is_settled = |key: &Atom| !borrowed.last_changes.contains_key(key);
+            match (&key, &new_value) {
+                (Some(key), _) if !is_settled(key) => {}
+                (Some(key), Some(value)) => {
+                    area.size
+                        .set(area.size_with(key, area.items.borrow().get(key), value));
+                    area.items.borrow_mut().insert(key.clone(), value.clone());
+                }
+                (Some(key), None) => drop(area.remove(key)),
+                (None, _) => {
+                    let gone = area
+                        .items
+                        .borrow()
+                        .keys()
+                        .iter()
+                        .filter(|it| is_settled(it))
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    gone.iter().for_each(|it| drop(area.remove(it)));
+                }
+            }
+        }
+    }
+    let url = || it.url.as_deref().map(DomString::from_latin1);
+    area.broadcast(
+        JsHeap::from_global(bun_ui::main_global()),
+        None,
+        url,
+        key.as_ref(),
+        it.old_value.as_deref().map(string_of).as_ref(),
+        new_value.as_ref(),
+    );
 }
 
 fn client_of_window(window: &Window) -> Option<Rc<Client>> {
@@ -165,6 +498,14 @@ fn owner_for(window: &Window, client: &Client, is_local: bool) -> Owner {
     } else {
         Owner::Tab(window.host().tab())
     }
+}
+
+fn denied<'a>(heap: &JsHeap<'a>) -> bun_jsc::bindgen::Error<'a> {
+    dom_error(
+        heap,
+        DomError::SecurityError,
+        "Access is denied for this document.",
+    )
 }
 
 fn storage_of<'a>(
@@ -181,14 +522,8 @@ fn storage_of<'a>(
     }
     let heap = window.realm(heap);
     let area = match client_of_window(window) {
-        Some(client) if client.origin().is_opaque() => {
-            return Err(dom_error(
-                heap,
-                DomError::SecurityError,
-                "Access is denied for this document.",
-            ));
-        }
-        Some(client) => Area::of(owner_for(window, &client, is_local), &client.bucket()),
+        Some(client) if client.origin().is_opaque() => return Err(denied(heap)),
+        Some(client) => Area::for_client(owner_for(window, &client, is_local), &client),
         None => match is_local
             .then(|| window.host().storage_directory())
             .flatten()
@@ -227,6 +562,7 @@ impl Window {
 }
 
 pub(crate) fn listen_to_storage(heap: &JsHeap<'_>, window: &Window) {
+    client_of_window(window).inspect(|it| it.watch_areas());
     with_shared(|it| {
         it.listening_windows
             .retain(|it| it.get().is_some_and(|it| it != window.to_js()));
@@ -241,85 +577,98 @@ pub(crate) struct WebStorage {
 }
 
 impl WebStorage {
-    /// <https://html.spec.whatwg.org/#concept-storage-broadcast>
-    fn broadcast(
+    fn announce(
         &self,
         heap: &JsHeap<'_>,
         key: Option<&Atom>,
         old_value: Option<&DomString>,
         new_value: Option<&DomString>,
     ) {
-        let (Some(owner), Some(own)) = (&self.area.owner, js_WebStorage::window(self)) else {
-            return;
+        let change = || match (key, new_value) {
+            (Some(key), Some(value)) => AreaChange::Set {
+                key: to_utf16le(key.chars()),
+                value: to_utf16le(value.chars()),
+            },
+            (Some(key), None) => AreaChange::Remove {
+                key: to_utf16le(key.chars()),
+            },
+            (None, _) => AreaChange::Clear,
         };
-        let is_local = matches!(owner, Owner::Profile(_));
-        for at in 0.. {
-            let Some(window) = with_shared(|it| it.listening_windows.get(at).map(Weak::get)) else {
-                return;
-            };
-            let Some(window) = window
-                .and_then(|it| Window::from_js(heap, it))
-                .filter(|it| it.to_js() != own.to_js())
-            else {
-                continue;
-            };
-            let shares = client_of_window(window).is_some_and(|it| {
-                owner_for(window, &it, is_local) == *owner && *it.bucket() == *self.area.bucket
-            });
-            let (true, Some(doc), Some(client)) = (shares, window.doc(), client_of_window(own))
-            else {
-                continue;
-            };
-            let url = DomString::from_latin1(client.url().href());
-            let change = Change {
-                key: key.map(Atom::to_dom_string),
-                old_value: old_value.cloned(),
-                new_value: new_value.cloned(),
-                url,
-            };
-            queue_task(doc.heap(heap), [window.to_js()], move |cx, [window]| {
-                let Some(window) = Window::from_js(&cx.heap, window.to_js()) else {
-                    return;
-                };
-                let base = Event::base(atom!("storage"), EventInit::default(), Trusted::Yes);
-                let event = js_StorageEvent::create(
-                    &cx.heap,
-                    StorageEvent {
-                        base,
-                        fields: Default::default(),
-                        change: change.into(),
-                    },
-                );
-                js_StorageEvent::set_storage_area(
-                    event,
-                    storage_of(&cx.heap, window, is_local).ok(),
-                );
-                dispatch(cx, window, event);
-            });
+        let (area, own) = (&self.area, js_WebStorage::window(self));
+        let client = || own.and_then(client_of_window);
+        area.keep(change);
+        if let (Some(mut borrowed), Some(client)) = (
+            area.borrowed.as_ref().map(RefCell::borrow_mut),
+            area.borrowed.as_ref().and_then(|_| client()),
+        ) {
+            borrowed.last_change += 1;
+            let number = borrowed.last_change;
+            match key {
+                Some(key) => _ = borrowed.last_changes.insert(key.clone(), number),
+                None => borrowed.last_clearing = number,
+            }
+            client.change_borrowed_area(
+                matches!(area.owner, Some(Owner::Profile(_))),
+                change(),
+                number,
+            );
+        } else if with_shared(|it| !it.watchers.is_empty()) {
+            area.tell_watchers(
+                None,
+                change,
+                old_value,
+                client().map(|it| it.url()).as_ref().map(|it| it.href()),
+            );
+        }
+        if own.is_some() {
+            area.broadcast(
+                heap,
+                own,
+                || client().map(|it| DomString::from_latin1(it.url().href())),
+                key,
+                old_value,
+                new_value,
+            );
         }
     }
 
-    pub(crate) fn get_length(&self) -> u32 {
-        self.area.items.borrow().len() as u32
+    fn area<'a>(&self, heap: &JsHeap<'a>) -> Result<'a, &Area> {
+        if js_WebStorage::window(self).is_some_and(|it| it.is_disposed()) {
+            Err(denied(heap))
+        } else {
+            Ok(&self.area)
+        }
     }
 
-    pub(crate) fn key(&self, _: &JsHeap<'_>, index: u32) -> Option<Atom> {
-        self.area.items.borrow().keys().get(index as usize).cloned()
+    pub(crate) fn get_length<'a>(&self, heap: &JsHeap<'a>) -> Result<'a, u32> {
+        Ok(self.area(heap)?.items.borrow().len() as u32)
     }
 
-    pub(crate) fn get_item(&self, _: &JsHeap<'_>, key: &Atom) -> Option<DomString> {
-        self.area.items.borrow().get(key).cloned()
+    pub(crate) fn key<'a>(&self, heap: &JsHeap<'a>, index: u32) -> Result<'a, Option<Atom>> {
+        Ok(self
+            .area(heap)?
+            .items
+            .borrow()
+            .keys()
+            .get(index as usize)
+            .cloned())
+    }
+
+    pub(crate) fn get_item<'a>(
+        &self,
+        heap: &JsHeap<'a>,
+        key: &Atom,
+    ) -> Result<'a, Option<DomString>> {
+        Ok(self.area(heap)?.items.borrow().get(key).cloned())
     }
 
     pub(crate) fn set_item<'a>(&self, cx: Cx<'_, 'a>, key: Atom, value: DomString) -> Result<'a> {
-        let (area, old_value) = (&self.area, self.area.items.borrow().get(&key).cloned());
+        let area = self.area(&cx.heap)?;
+        let old_value = area.items.borrow().get(&key).cloned();
         if old_value.as_ref() == Some(&value) {
             return Ok(());
         }
-        let size = match &old_value {
-            Some(old) => area.size.get() - old.len() as usize,
-            None => area.size.get() + key.chars().len(),
-        } + value.len() as usize;
+        let size = area.size_with(&key, old_value.as_ref(), &value);
         if size > area.size.get().max(MAX_SIZE) {
             return Err(quota_exceeded(
                 cx,
@@ -330,34 +679,24 @@ impl WebStorage {
             ));
         }
         area.size.set(size);
-        area.keep(|| AreaChange::Set {
-            key: to_utf16le(key.chars()),
-            value: to_utf16le(value.chars()),
-        });
-        self.broadcast(&cx.heap, Some(&key), old_value.as_ref(), Some(&value));
+        self.announce(&cx.heap, Some(&key), old_value.as_ref(), Some(&value));
         area.items.borrow_mut().insert(key, value);
         Ok(())
     }
 
-    pub(crate) fn remove_item(&self, cx: Cx<'_, '_>, key: &Atom) {
-        let Some((_, old_value)) = self.area.items.borrow_mut().fetch_swap_remove(key) else {
-            return;
-        };
-        self.area
-            .size
-            .update(|it| it - key.chars().len() - old_value.len() as usize);
-        self.area.keep(|| AreaChange::Remove {
-            key: to_utf16le(key.chars()),
-        });
-        self.broadcast(&cx.heap, Some(key), Some(&old_value), None);
+    pub(crate) fn remove_item<'a>(&self, cx: Cx<'_, 'a>, key: &Atom) -> Result<'a> {
+        if let Some(old_value) = self.area(&cx.heap)?.remove(key) {
+            self.announce(&cx.heap, Some(key), Some(&old_value), None);
+        }
+        Ok(())
     }
 
-    pub(crate) fn clear(&self, cx: Cx<'_, '_>) {
-        if self.get_length() > 0 {
+    pub(crate) fn clear<'a>(&self, cx: Cx<'_, 'a>) -> Result<'a> {
+        if self.get_length(&cx.heap)? > 0 {
             self.area.empty();
-            self.area.keep(|| AreaChange::Clear);
-            self.broadcast(&cx.heap, None, None, None);
+            self.announce(&cx.heap, None, None, None);
         }
+        Ok(())
     }
 
     pub(crate) fn named_get<'a>(
@@ -365,7 +704,7 @@ impl WebStorage {
         cx: Cx<'_, 'a>,
         name: &WTFStringImplStruct,
     ) -> Result<'a, Option<DomString>> {
-        Ok(self.get_item(&cx.heap, &Atom::from_string(&DomString::from_impl(name))))
+        self.get_item(&cx.heap, &Atom::from_string(&DomString::from_impl(name)))
     }
 
     pub(crate) fn named_set<'a>(
@@ -382,12 +721,11 @@ impl WebStorage {
         cx: Cx<'_, 'a>,
         name: &WTFStringImplStruct,
     ) -> Result<'a> {
-        self.remove_item(cx, &Atom::from_string(&DomString::from_impl(name)));
-        Ok(())
+        self.remove_item(cx, &Atom::from_string(&DomString::from_impl(name)))
     }
 
-    pub(crate) fn named_keys<'a>(&self, _: Cx<'_, 'a>, names: &mut PropertyNames) -> Result<'a> {
-        self.area
+    pub(crate) fn named_keys<'a>(&self, cx: Cx<'_, 'a>, names: &mut PropertyNames) -> Result<'a> {
+        self.area(&cx.heap)?
             .items
             .borrow()
             .keys()

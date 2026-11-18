@@ -1,4 +1,4 @@
-//! A frame whose document is in this process.
+//! A frame whose document is in this engine.
 
 use bun_core::strings;
 use bun_web::input::{Extent, Input};
@@ -82,10 +82,12 @@ impl Frame {
             } else {
                 later(cx, self, JSValue::UNDEFINED, |cx, [frame, _]| {
                     _ = Frame::from_value(frame)
+                        .filter(|it| !it.is(Flags::HAS_NAVIGATED))
                         .map(|it| fire(cx, it.element(), atom!("load"), PLAIN))
                 });
             }
         } else if !self.would_recurse(&url.to_utf8()) {
+            self.set(Flags::HAS_NAVIGATED, true);
             let referrer_policy = element.attr(atom!("referrerpolicy")).unwrap_or_default();
             self.start_or_defer(
                 cx,
@@ -151,6 +153,7 @@ impl Frame {
 
     pub(super) fn local_was_placed<'a>(&'a self, cx: &mut Cx<'a>) {
         self.measure(cx);
+        self.describe_to_those_apart(cx);
         if let Some(inner) = self
             .inner()
             .filter(|_| self.around().framing.are_observed.get())
@@ -350,19 +353,12 @@ impl Frame {
         }
     }
 
-    /// With what its document could not scroll.
-    pub(crate) fn scroll_around<'a>(&'a self, cx: &mut Cx<'a>, delta: [f64; 2]) {
-        let mut frames = core::iter::successors(Some(self), |it| it.around().container());
-        _ = frames.any(|it| {
-            layout::user_scroll(cx, it.element(), delta, layout::ScrollUnit::Pixel, false)
-        });
-    }
-
     pub(crate) fn reveal<'a>(&'a self, cx: &mut Cx<'a>, inside: Revealed) {
-        let mut frames = core::iter::successors(Some(self), |it| it.around().container());
-        _ = frames.try_fold(inside, |inside, it| {
-            layout::reveal_in_frame(cx, it.element(), inside)
-        });
+        if let Some((inside, next)) =
+            layout::reveal_in_frame(cx, self.element(), inside).zip(self.around().any_container())
+        {
+            next.reveal(cx, inside);
+        }
     }
 
     pub(crate) fn tab_out<'a>(&'a self, cx: &mut Cx<'a>, is_backward: bool) {

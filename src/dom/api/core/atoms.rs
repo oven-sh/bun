@@ -1,7 +1,12 @@
 //! The names that `atom!` knows.
 
 super::atom::atoms! {
+    Cookiechange = "cookiechange",
     Empty = "",
+    Notificationclick = "notificationclick",
+    Notificationclose = "notificationclose",
+    Push = "push",
+    Pushsubscriptionchange = "pushsubscriptionchange",
     SpaceChar = " ",
     HashCdataSection = "#cdata-section",
     HashComment = "#comment",
@@ -47,6 +52,7 @@ super::atom::atoms! {
     Acknowledgments = "acknowledgments",
     Acronym = "acronym",
     Action = "action",
+    Activate = "activate",
     Active = "active",
     Actuate = "actuate",
     Acute = "acute",
@@ -841,6 +847,7 @@ super::atom::atoms! {
     InsertText = "insertText",
     Inserttext = "inserttext",
     InsertUnorderedList = "insertUnorderedList",
+    Install = "install",
     Integrity = "integrity",
     Interactive = "interactive",
     Intercept = "intercept",

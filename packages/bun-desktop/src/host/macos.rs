@@ -50,6 +50,8 @@ fn turn() {
 /// Runs JavaScript before `wait` returns: a menu or a drag may have the loop, and since macOS 26 the event that ends the wait
 /// only arrives with the next frame of the display.
 fn tick() {
+    // They may set deadlines, which the timer does not know about.
+    IS_READY.set(thread::run_jobs_of_outsiders() || IS_READY.get());
     if super::CAN_TICK.get() && (IS_READY.take() || bridge::has_events()) {
         super::tick();
         // It was armed before the callbacks ran, which may have set timers.
@@ -73,7 +75,7 @@ fn before_waiting() {
         } else if (IS_READY.get() || super::has_work()) && !HAS_POSTED.replace(true) {
             bd_loop_post_empty_event();
         }
-        super::CAN_TICK.get() && (IS_READY.get() || bridge::has_events())
+        thread::has_jobs() || super::CAN_TICK.get() && (IS_READY.get() || bridge::has_events())
     };
     match is_due {
         true => bd_loop_wake(),

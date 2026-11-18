@@ -25,6 +25,15 @@ pub(crate) fn windows_in_this_process(
         .map(|it| (it.element(), it.inner_window()))
 }
 
+pub(crate) fn page_apart_from(element: &Element) -> Option<u32> {
+    Some(
+        Frame::of(element)
+            .filter(|it| it.is_apart())?
+            .context()?
+            .page(),
+    )
+}
+
 fn focused(ui: &Ui) -> Option<&Frame> {
     ui.focused_frame().filter(|it| !it.is(Flags::CLOSED))
 }
@@ -65,7 +74,7 @@ pub(crate) fn tell<'a>(cx: &mut Cx<'a>, outer: &'a Window, number: u32, news: Ne
         News::Measure => frame.measure(cx),
         News::UseWebEngine(url) => frame.use_web_engine(cx, &DomString::from_utf8(&url)),
         News::ShowImage(url) => frame.show_image(cx, &DomString::from_utf8(&url)),
-        News::Focus => frame.focus(cx),
+        News::Focus => frame.focus_for_document(cx),
         News::Loaded(length) => frame.loaded(cx, length),
         News::Painted(image) => frame.painted(cx, image),
         News::Scroll(delta) => frame.scroll(cx, delta),
@@ -82,6 +91,9 @@ pub(crate) fn tell<'a>(cx: &mut Cx<'a>, outer: &'a Window, number: u32, news: Ne
             }
         }
         News::Closed => {}
+        News::Activated => frame.was_activated(),
+        News::Reveal(area) => frame.reveal_for_apart(cx, area),
+        News::Fit(size) => frame.fit_apart(cx, size),
     }
 }
 
@@ -90,10 +102,12 @@ pub(crate) fn frame_count(ui: &Ui) -> u32 {
 }
 
 pub(crate) fn fit_container<'a>(cx: &mut Cx<'a>, doc: &'a Doc) {
-    Ui::of(doc)
-        .and_then(Ui::container)
-        .into_iter()
-        .for_each(|it| it.fit(cx, crate::api::core::metadata::sizes_container(doc)));
+    let follows_contents = crate::api::core::metadata::sizes_container(doc);
+    match Ui::of(doc).and_then(Ui::any_container) {
+        Some(apart::Container::Beside(it)) => it.fit(cx, follows_contents),
+        Some(apart::Container::Apart(ui)) if follows_contents => apart::fit(cx, ui),
+        _ => {}
+    }
 }
 
 /// Right after `load` at the window. The host tells the elements in documents of other origins.

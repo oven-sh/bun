@@ -17,7 +17,7 @@ use super::encoding::{data_url, encode_in_parallel};
 use super::host::{self, DEFAULT_SETTINGS, Kind, Mode, Settings};
 use super::offscreen::OffscreenCanvas;
 use crate::api::core::steps::Steps;
-use crate::api::core::{DomString, Edge, Element, atom};
+use crate::api::core::{DomString, Edge, Element, Known, atom};
 use crate::api::events::call_back;
 use crate::api::graphics::can_draw;
 use crate::api::images::show_replaced;
@@ -164,6 +164,47 @@ impl HTMLCanvasElement {
                 }
             }
         }
+    }
+
+    pub(crate) fn get_width(&self) -> u32 {
+        size_of_element(self)[0]
+    }
+
+    pub(crate) fn get_height(&self) -> u32 {
+        size_of_element(self)[1]
+    }
+
+    fn set_side<'a>(
+        &'a self,
+        cx: Cx<'_, 'a>,
+        name: Known,
+        value: u32,
+        default: u32,
+    ) -> Result<'a, ()> {
+        if state(self).mode.get() == Mode::Placeholder {
+            return Err(
+                Failure::invalid_state("Control was transferred to an OffscreenCanvas.")
+                    .into_error(&cx.heap),
+            );
+        }
+        self.set_attr(
+            cx,
+            name,
+            DomString::from_integer(if value > i32::MAX as u32 {
+                default
+            } else {
+                value
+            }),
+        );
+        Ok(())
+    }
+
+    pub(crate) fn set_width<'a>(&'a self, cx: Cx<'_, 'a>, value: u32) -> Result<'a, ()> {
+        self.set_side(cx, atom!("width"), value, 300)
+    }
+
+    pub(crate) fn set_height<'a>(&'a self, cx: Cx<'_, 'a>, value: u32) -> Result<'a, ()> {
+        self.set_side(cx, atom!("height"), value, 150)
     }
 
     #[optimize(size)]

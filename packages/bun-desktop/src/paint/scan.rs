@@ -36,6 +36,7 @@ pub trait Floats: Copy {
     fn mul(self, other: Self) -> Self;
     fn min(self, other: Self) -> Self;
     fn max(self, other: Self) -> Self;
+    fn sqrt(self) -> Self;
     /// The last of `other`, and all but the last of these.
     fn after(self, other: Self) -> Self;
     /// Without the fractions, and from 0 to 255.
@@ -126,6 +127,11 @@ impl Floats for [f32; 8] {
     #[inline(always)]
     fn max(self, other: Self) -> Self {
         from_fn(|it| ordered(self[it], other[it]).1)
+    }
+
+    #[inline(always)]
+    fn sqrt(self) -> Self {
+        from_fn(|it| self[it].sqrt())
     }
 
     #[inline(always)]

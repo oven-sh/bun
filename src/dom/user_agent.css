@@ -991,7 +991,8 @@ input::-internal-date-picker-months {
   display: grid;
   grid: auto-flow 40px / repeat(4, 49px);
 }
-input::-internal-date-picker-week {
+input::-internal-date-picker-week,
+input::-internal-date-picker-labels {
   display: grid;
   grid: auto / subgrid;
   grid-column: 1 / -1;

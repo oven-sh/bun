@@ -1,5 +1,7 @@
 //! RGB profiles made of three curves and a matrix, which is what displays and cameras embed.
 
+use std::sync::LazyLock;
+
 use crate::paint::raster::{demultiply, multiply};
 
 const STEPS: usize = 4096;
@@ -8,6 +10,22 @@ const TO_SRGB: [[f32; 3]; 3] = [
     [3.133_856, -1.616_867, -0.490_615],
     [-0.978_768, 1.916_142, 0.033_454],
     [0.071_945, -0.228_991, 1.405_243],
+];
+const TO_DISPLAY_P3: [[f32; 3]; 3] = [
+    [2.403_98, -0.989_898, -0.397_633],
+    [-0.842_246, 1.798_851, 0.016_023],
+    [0.048_221, -0.097_424, 1.274_001],
+];
+/// To it.
+const SRGB: [[f32; 3]; 3] = [
+    [0.436_075, 0.222_504, 0.013_932],
+    [0.385_065, 0.716_879, 0.097_104],
+    [0.143_08, 0.060_617, 0.714_173],
+];
+const DISPLAY_P3: [[f32; 3]; 3] = [
+    [0.515_121, 0.241_196, -0.001_053],
+    [0.291_977, 0.692_245, 0.041_885],
+    [0.157_104, 0.066_574, 0.784_073],
 ];
 
 pub struct Conversion {
@@ -91,8 +109,47 @@ fn curve(tag: &[u8]) -> Option<[f32; 256]> {
 }
 
 impl Conversion {
-    /// Nothing for a profile of another kind, or one that amounts to sRGB.
+    /// To sRGB. Nothing for a profile of another kind, or one that amounts to sRGB.
     pub fn of(profile: &[u8]) -> Option<Conversion> {
+        let conversion = Conversion::to(&TO_SRGB, profile)?;
+        let mut samples = (0..=255)
+            .step_by(15)
+            .flat_map(|it| [[it, 0, 0], [0, it, 0], [0, 0, it], [it; 3]]);
+        samples
+            .any(|it: [u8; 3]| {
+                it.iter()
+                    .zip(conversion.convert(it))
+                    .any(|(a, b)| a.abs_diff(b) > 1)
+            })
+            .then_some(conversion)
+    }
+
+    pub fn to_display_p3(profile: &[u8]) -> Option<Conversion> {
+        Conversion::to(&TO_DISPLAY_P3, profile)
+    }
+
+    /// From sRGB to Display P3, or back.
+    pub fn between(widens: bool) -> &'static Conversion {
+        static BOTH: LazyLock<[Option<Conversion>; 2]> = LazyLock::new(|| {
+            let decode = |it: f32| {
+                if it <= 0.040_45 {
+                    it / 12.92
+                } else {
+                    ((it + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            let linear = [std::array::from_fn(|it| decode(it as f32 / 255.)); 3];
+            [
+                Conversion::new(&linear, DISPLAY_P3, &TO_SRGB),
+                Conversion::new(&linear, SRGB, &TO_DISPLAY_P3),
+            ]
+        });
+        BOTH[usize::from(widens)]
+            .as_ref()
+            .expect("white stays white")
+    }
+
+    fn to(space: &[[f32; 3]; 3], profile: &[u8]) -> Option<Conversion> {
         (profile.get(16..24)? == b"RGB XYZ ").then_some(())?;
         let tags = profile
             .get(132..)?
@@ -110,6 +167,22 @@ impl Conversion {
             tag(name).and_then(|it| Some([fixed(it, 8)?, fixed(it, 12)?, fixed(it, 16)?]))
         };
         let columns = [column(b"rXYZ")?, column(b"gXYZ")?, column(b"bXYZ")?];
+        Conversion::new(
+            &[
+                curve(tag(b"rTRC")?)?,
+                curve(tag(b"gTRC")?)?,
+                curve(tag(b"bTRC")?)?,
+            ],
+            columns,
+            space,
+        )
+    }
+
+    fn new(
+        linear: &[[f32; 256]; 3],
+        columns: [[f32; 3]; 3],
+        space: &[[f32; 3]; 3],
+    ) -> Option<Conversion> {
         let encode = |it: f32| {
             if it <= 0.003_130_8 {
                 it * 12.92
@@ -117,12 +190,7 @@ impl Conversion {
                 1.055 * it.powf(1. / 2.4) - 0.055
             }
         };
-        let linear = [
-            curve(tag(b"rTRC")?)?,
-            curve(tag(b"gTRC")?)?,
-            curve(tag(b"bTRC")?)?,
-        ];
-        let [x, y, z] = TO_SRGB.map(|row| {
+        let [x, y, z] = space.map(|row| {
             columns.map(|column| row[0] * column[0] + row[1] * column[1] + row[2] * column[2])
         });
         // White stays about white, and curves rise from about nothing.
@@ -134,22 +202,12 @@ impl Conversion {
                 .all(|row| (row.iter().sum::<f32>() - 1.).abs() < 0.05))
         .then_some(())?;
         let last = (STEPS - 1) as f32;
-        let conversion = Conversion {
+        Some(Conversion {
             shares: [0, 1, 2].map(|at| {
                 linear[at].map(|it| [x[at], y[at], z[at], 0.].map(|share| share * it * last))
             }),
             encoded: std::array::from_fn(|it| (encode(it as f32 / last) * 255. + 0.5) as u8),
-        };
-        let mut samples = (0..=255)
-            .step_by(15)
-            .flat_map(|it| [[it, 0, 0], [0, it, 0], [0, 0, it], [it; 3]]);
-        samples
-            .any(|it: [u8; 3]| {
-                it.iter()
-                    .zip(conversion.convert(it))
-                    .any(|(a, b)| a.abs_diff(b) > 1)
-            })
-            .then_some(conversion)
+        })
     }
 
     #[inline(always)]
@@ -160,6 +218,13 @@ impl Conversion {
             ((r[it] + g[it] + b[it]).max(0.).min((STEPS - 1) as f32) + 8_388_608.).to_bits()
         });
         [0, 1, 2].map(|it| self.encoded[at[it] as usize % STEPS])
+    }
+
+    pub fn apply_to_colors(&self, colors: &mut [[u8; 4]]) {
+        for color in colors {
+            let converted = self.convert([color[0], color[1], color[2]]);
+            color[..3].copy_from_slice(&converted);
+        }
     }
 
     /// `pixels` are premultiplied.

@@ -91,6 +91,179 @@ fn unfilter<const N: usize>(
     Some(())
 }
 
+fn unfilter_in_place(filter: u8, row: &mut [u8], above: &[u8], step: usize) -> Option<()> {
+    let up = |at: usize| above.get(at).copied().unwrap_or(0);
+    for at in 0..row.len() {
+        let (left, corner) = at.checked_sub(step).map_or((0, 0), |it| (row[it], up(it)));
+        row[at] = row[at].wrapping_add(match filter {
+            0 => return Some(()),
+            1 => left,
+            2 => up(at),
+            3 => left.midpoint(up(at)),
+            4 => paeth(left, up(at), corner),
+            _ => return None,
+        });
+    }
+    Some(())
+}
+
+/// Any kind of PNG, as RGBA. For the small ones in fonts, which the app draws for pages in other processes.
+pub fn decode(bytes: &[u8], most_pixels: usize) -> Option<(u32, u32, Vec<u8>)> {
+    const INTERLACED: [[usize; 4]; 7] = [
+        [0, 0, 8, 8],
+        [4, 0, 8, 8],
+        [0, 4, 4, 8],
+        [2, 0, 4, 4],
+        [0, 2, 2, 4],
+        [1, 0, 2, 2],
+        [0, 1, 1, 2],
+    ];
+    let (
+        b"IHDR",
+        &[
+            a,
+            b,
+            c,
+            d,
+            e,
+            f,
+            g,
+            h,
+            depth,
+            kind,
+            0,
+            0,
+            is_interlaced @ 0..=1,
+        ],
+    ) = png_chunks(bytes).next()?
+    else {
+        return None;
+    };
+    let (width, height) = (
+        u32::from_be_bytes([a, b, c, d]) as usize,
+        u32::from_be_bytes([e, f, g, h]) as usize,
+    );
+    let channels = match (kind, depth) {
+        (0, 1 | 2 | 4 | 8 | 16) | (3, 1 | 2 | 4 | 8) => 1,
+        (4, 8 | 16) => 2,
+        (2, 8 | 16) => 3,
+        (6, 8 | 16) => 4,
+        _ => return None,
+    };
+    let (depth, pixels) = (
+        usize::from(depth),
+        width
+            .checked_mul(height)
+            .filter(|it| (1..=most_pixels).contains(it))?,
+    );
+    let passes = if is_interlaced == 1 {
+        &INTERLACED[..]
+    } else {
+        &[[0, 0, 1, 1]]
+    }
+    .iter()
+    .filter(|it| it[0] < width && it[1] < height);
+    let stride = |[x, _, across, _]: [usize; 4]| {
+        ((width - x).div_ceil(across) * channels * depth).div_ceil(8) + 1
+    };
+    let mut inflated = vec![
+        0;
+        passes
+            .clone()
+            .map(|it| stride(*it) * (height - it[1]).div_ceil(it[3]))
+            .sum()
+    ];
+    let (mut inflater, mut end) = (Inflater::new()?, 0);
+    for (_, input) in png_chunks(bytes).filter(|it| it.0 == b"IDAT") {
+        end += inflater.inflate(input, &mut inflated[end..])?.1;
+        if end == inflated.len() {
+            break;
+        }
+    }
+    if end < inflated.len() {
+        return None;
+    }
+    let chunk = |name: &[u8; 4]| {
+        png_chunks(bytes)
+            .find(|it| it.0 == name)
+            .map_or(&[][..], |it| it.1)
+    };
+    let (palette, transparency) = (chunk(b"PLTE").as_chunks::<3>().0, chunk(b"tRNS"));
+    let is_transparent = |color: &[u16]| {
+        transparency
+            .as_chunks()
+            .0
+            .iter()
+            .map(|it| u16::from_be_bytes(*it))
+            .eq(color.iter().copied())
+    };
+    let narrow = |it: u16| {
+        if depth == 16 {
+            (it >> 8) as u8
+        } else {
+            (usize::from(it) * 255 / ((1 << depth) - 1)) as u8
+        }
+    };
+    let (mut rgba, mut rest) = (vec![[0; 4]; pixels], &mut inflated[..]);
+    for &[left, top, across, down] in passes {
+        let mut above = &[][..];
+        for y in (top..height).step_by(down) {
+            let (row, after) =
+                std::mem::take(&mut rest).split_at_mut(stride([left, top, across, down]));
+            let (filter, row) = row.split_first_mut()?;
+            unfilter_in_place(*filter, row, above, (channels * depth).div_ceil(8))?;
+            (above, rest) = (row, after);
+            let sample = |at: usize| match depth {
+                16 => u16::from_be_bytes([above[at * 2], above[at * 2 + 1]]),
+                _ => {
+                    u16::from(above[at * depth / 8]) >> (8 - depth - at * depth % 8)
+                        & ((1 << depth) - 1)
+                }
+            };
+            for (at, pixel) in rgba[y * width + left..(y + 1) * width]
+                .iter_mut()
+                .step_by(across)
+                .enumerate()
+            {
+                let color: [u16; 4] = std::array::from_fn(|it| {
+                    if it < channels {
+                        sample(at * channels + it)
+                    } else {
+                        0
+                    }
+                });
+                let [a, b, c, d] = color.map(narrow);
+                let opacity = || {
+                    if is_transparent(&color[..channels]) {
+                        0
+                    } else {
+                        255
+                    }
+                };
+                *pixel = match kind {
+                    0 => [a, a, a, opacity()],
+                    2 => [a, b, c, opacity()],
+                    4 => [a, a, a, b],
+                    6 => [a, b, c, d],
+                    _ => {
+                        let [r, g, b] = *palette.get(usize::from(color[0]))?;
+                        [
+                            r,
+                            g,
+                            b,
+                            transparency
+                                .get(usize::from(color[0]))
+                                .copied()
+                                .unwrap_or(255),
+                        ]
+                    }
+                };
+            }
+        }
+    }
+    Some((width as u32, height as u32, rgba.into_flattened()))
+}
+
 /// Up to the first error.
 pub fn read<const N: usize>(
     bytes: &[u8],

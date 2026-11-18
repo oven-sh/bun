@@ -19,6 +19,7 @@ enum : uint8_t {
     Window = 1 << 0,
     DedicatedWorker = 1 << 1,
     SharedWorker = 1 << 2,
+    ServiceWorker = 1 << 3,
     SecureContext = 1 << 7,
 };
 }

@@ -257,7 +257,11 @@ impl Specified {
             && matches!(declaration.value, Declared::Template(_))
             || is_system_font(key, source);
         let shared = match &declaration.value {
-            Declared::Text(it) if **it == *source => Rc::clone(it),
+            Declared::Text(it)
+                if **it == *source || matches!(declaration.prop, Prop::Custom(_)) =>
+            {
+                Rc::clone(it)
+            }
             _ => source.into(),
         };
         Specified {
@@ -465,6 +469,8 @@ struct Hints {
     present: Option<Box<[u64; (Id::ALL.len() * 2).div_ceil(64)]>>,
     /// After the one that was found last.
     next: Cell<u32>,
+    /// A bit for each of the first entries that a script has set again.
+    edited: Cell<u16>,
     may_have_logical: bool,
 }
 
@@ -537,6 +543,23 @@ impl DeclarationList {
         })??;
         self.1.next.set(found as u32 + 1);
         Some(found)
+    }
+
+    fn note_edit(&self, index: usize) {
+        self.1
+            .edited
+            .update(|it| it | 1u16.unbounded_shl(index as u32));
+    }
+
+    #[inline(always)]
+    fn likely_edits(&self) -> impl Iterator<Item = &Entry> {
+        let first = Some(self.1.edited.get())
+            .filter(|it| *it != 0)
+            .unwrap_or(0b111);
+        let left =
+            core::iter::successors(Some(first), |it| Some(it & (it - 1)).filter(|it| *it != 0));
+        left.take(4)
+            .map_while(|it| self.0.get(it.trailing_zeros() as usize))
     }
 
     /// Whether setting it again moves it to the end.
@@ -902,6 +925,7 @@ impl Block {
         let entry = list.find(key).filter(|it| {
             list.0[*it].of.key == key && !list.0[*it].of.important && !list.has_rival_after(*it)
         })?;
+        list.note_edit(entry);
         let old = list.0[entry]
             .of
             .declaration
@@ -927,30 +951,26 @@ impl Block {
             return;
         };
         match step {
-            0 => (prefetch(&**editable), prefetch(&*parsed.list)).0,
-            1 => {
+            0 => {
                 (
-                    prefetch(&*editable.list.0),
-                    parsed
-                        .list
-                        .iter()
-                        .take(3)
-                        .for_each(|it| prefetch_shared(it, 2)),
+                    prefetch(&**editable),
+                    prefetch(&editable.next),
+                    prefetch(&*parsed.list),
                 )
                     .0
             }
+            1 => editable.list.0.iter().step_by(4).take(3).for_each(prefetch),
             2 => editable
                 .list
-                .0
-                .iter()
-                .take(3)
+                .likely_edits()
                 .for_each(|it| prefetch_shared(&it.of, 2)),
-            _ => editable
-                .list
-                .0
-                .iter()
-                .take(3)
-                .for_each(|it| prefetch_shared(&it.of.source, 1)),
+            _ => editable.list.likely_edits().for_each(|it| {
+                prefetch_shared(&it.of.source, 1);
+                it.of
+                    .declaration
+                    .iter()
+                    .for_each(|it| prefetch_shared(it, 2));
+            }),
         }
     }
 
@@ -1050,6 +1070,7 @@ impl InlineBlocks {
         let (source, list) = (scan::trim(source), &editable.list);
         if list
             .find(key)
+            .inspect(|it| list.note_edit(*it))
             .is_some_and(|it| list.0[it].of.is(key, source, important) && !list.has_rival_after(it))
         {
             return false;

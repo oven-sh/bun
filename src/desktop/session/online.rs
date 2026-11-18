@@ -73,6 +73,11 @@ fn watch_for_resumption() -> JsResult<()> {
     .map(drop)
 }
 
+/// If anybody has asked before.
+pub(crate) fn is_known_to_be_online() -> Option<bool> {
+    addresses().borrow().as_ref().map(|it| !it.is_empty())
+}
+
 pub(crate) fn is_online() -> JsResult<bool> {
     if addresses().borrow().is_none() {
         addresses().replace(Some(read_addresses()?));

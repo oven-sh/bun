@@ -539,14 +539,9 @@ void setupInterface(LazyClassStructure::Initializer& init, const InterfaceDescri
         prototypeBase = eventEmitterPrototype(globalObject);
         constructorBase = eventEmitterConstructor(globalObject);
     } else if (description.prototypeBase == PrototypeBase::Readable || description.prototypeBase == PrototypeBase::Writable) {
-        ErrorHandlingScope reservedStack(vm);
-        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        JSValue constructor = requireNodeModule(defaultGlobalObject(globalObject), description.prototypeBase == PrototypeBase::Readable ? "readable"_s : "writable"_s);
-        scope.releaseAssertNoExceptionExceptTermination();
-        constructorBase = asObject(constructor);
-        JSValue prototype = constructorBase->get(globalObject, vm.propertyNames->prototype);
-        scope.releaseAssertNoExceptionExceptTermination();
-        prototypeBase = prototype.isObject() ? asObject(prototype) : globalObject->objectPrototype();
+        auto name = description.prototypeBase == PrototypeBase::Readable ? "readable"_s : "writable"_s;
+        prototypeBase = nodeClassPrototype(globalObject, name);
+        constructorBase = nodeClassConstructor(globalObject, name);
     } else if (description.prototypeBase == PrototypeBase::DOMException) {
         static_assert(sizeof(WebCore::JSDOMException) == sizeof(JSInterfaceObject<0>) + sizeof(void*));
         prototypeBase = WebCore::JSDOMException::prototype(vm, *uncheckedDowncast<Zig::GlobalObject>(globalObject));
@@ -1042,7 +1037,7 @@ JSValue deserializeInterface(JSGlobalObject* globalObject, JSObject* clone)
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue nameValue = clone->getDirect(vm, interfaceKey(vm));
     JSValue value = clone->getDirect(vm, vm.propertyNames->value);
-    if (!nameValue || !nameValue.isString() || !value)
+    if (!nameValue || !nameValue.isString() || !value || !isJSArray(value))
         return {};
     auto name = asString(nameValue)->view(globalObject);
     RETURN_IF_EXCEPTION(scope, {});

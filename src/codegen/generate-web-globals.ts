@@ -63,17 +63,18 @@ function rowsOf(table: Table): Row[] {
 
 function tablesExposing({ name, exposed, secure }: GlobalRow): TableName[] {
   const has = (name: string) => exposed.includes(name) || (name !== "Window" && exposed.includes("Worker"));
-  const [window, dedicated, shared] = ["Window", "DedicatedWorker", "SharedWorker"].map(has);
-  if (secure && window && dedicated && shared) return ["secure"];
+  const [window, dedicated, shared, service] = ["Window", "DedicatedWorker", "SharedWorker", "ServiceWorker"].map(has);
+  if (secure && window && dedicated && shared && service) return ["secure"];
   if (secure && shared) throw new Error("There is no table for secure shared workers alone");
   const ofWorkers: TableName[] =
     dedicated && shared
-      ? ["worker"]
+      ? [service ? "worker" : "ownedWorker"]
       : dedicated
         ? [secure ? "secureDedicatedWorker" : "dedicatedWorker"]
         : shared
           ? ["sharedWorker"]
           : [];
+  if (service && !(dedicated && shared)) ofWorkers.push("serviceWorker");
   const ofWindows = secure
     ? "secureWindow"
     : ofBun.includes(name) && !words(replacesBun).includes(name)

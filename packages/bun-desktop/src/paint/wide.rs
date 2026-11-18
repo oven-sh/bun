@@ -6,7 +6,8 @@ use super::blend::Factor;
 use super::blur::{Kernel, Strip, convolve_strips};
 use super::edges::{Edges, Shape};
 use super::raster::{self, IntRect, Outlined, Pixel};
-use super::scan::{Scanner, Sink, Stored};
+use super::scan::{Floats, Scanner, Sink, Stored};
+use super::slant::{Gauge, Slant};
 use super::warp::Samples;
 
 #[cfg_attr(target_arch = "x86_64", path = "wide/avx2.rs")]
@@ -128,6 +129,25 @@ pub fn fill_through<'a>(rows: impl Iterator<Item = (&'a mut [Pixel], &'a [u8])>,
     }
 }
 
+pub fn fill_slant<'a>(rows: impl Iterator<Item = (&'a mut [Pixel], [f32; 2])>, slant: &Slant, color: Pixel) {
+    let (all, gauge, none) = (load([color; 8]), Gauge::<Numbers>::new(slant), Numbers::new([1.; 8]));
+    for (row, [mut x, y]) in rows {
+        for run in row.chunks_mut(8) {
+            let coverage = gauge.coverage([x, y]);
+            x += 8.;
+            match run.first_chunk_mut() {
+                _ if coverage.above(none) == 0 => {}
+                Some(run) => *run = store(cover(load(*run), all, coverage)),
+                None => update(run, &coverage.bytes(), |pixels, coverage| Some(over(load(*pixels), scale(all, spread(u64::from_le_bytes(*coverage)))))),
+            }
+        }
+    }
+}
+
+pub fn measure_slant<'a>(rows: impl Iterator<Item = (&'a mut [u8], [f32; 2])>, slant: &Slant) {
+    Gauge::<Numbers>::new(slant).measure(rows);
+}
+
 pub fn write_alphas(scanner: &mut Scanner, edges: &Edges, shape: &Shape, rect: IntRect, alphas: &mut [u8]) {
     scanner.scan::<Numbers>(edges, shape, rect, alphas);
 }
@@ -177,6 +197,23 @@ pub fn blend<'a>(rows: impl Iterator<Item = (&'a mut [Pixel], &'a [Pixel])>, by:
             _ => update(row, colors, |pixels, colors| shown(colors).map(|it| over(load(*pixels), scale(it, all)))),
         }
     }
+}
+
+pub fn blend_through(row: &mut [Pixel], colors: &mut [Pixel], coverage: &[u8]) {
+    let ((runs, rest), (all, more), (alphas, others)) = (row.as_chunks_mut(), colors.as_chunks_mut(), coverage.as_chunks());
+    for ((pixels, colors), alphas) in runs.iter_mut().zip(all).zip(alphas) {
+        match u64::from_le_bytes(*alphas) {
+            0 => {}
+            u64::MAX if is_opaque(load(*colors)) => *pixels = *colors,
+            it => *pixels = store(over(load(*pixels), scale(load(*colors), spread(it)))),
+        }
+    }
+    more.iter_mut().zip(others).for_each(|(color, by)| *color = raster::scale(*color, *by));
+    update(rest, more, |pixels, colors| Some(over(load(*pixels), load(*colors))));
+}
+
+pub fn shade_between(ends: [[f32; 4]; 2], first: f32, step: f32, row: &mut [Pixel]) {
+    super::gradient::between::<Numbers>(ends, first, step, row);
 }
 
 pub fn premultiply(row: &mut [[u8; 4]]) {

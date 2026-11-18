@@ -904,6 +904,23 @@ pub(crate) const HOOKS: &[(&str, Hook)] = &[
             )
         })
     }),
+    ("same-shapes", |m, start, _| {
+        replace_computed(m, start, |it, _| {
+            let (shape, outer, inner): (_, &[u8], &[u8]) = match words(&it)[..] {
+                [a, b, inner] if a == b => (a, b"border-box", inner),
+                [a, outer, b] if a == b => (a, outer, b"padding-box"),
+                [a, outer, b, inner] if a == b => (a, outer, inner),
+                _ => return None,
+            };
+            (outer == inner).then(|| {
+                if outer == b"half-border-box" {
+                    shape.to_vec()
+                } else {
+                    [shape, outer].join(&b' ')
+                }
+            })
+        })
+    }),
     ("bg-size", |m, start, _| {
         replace(m, start, |it| match words(&it)[..] {
             [b"auto", b"auto"] | [b"auto"] => b"auto".to_vec(),

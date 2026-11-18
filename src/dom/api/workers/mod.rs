@@ -3,7 +3,6 @@
 mod thread;
 
 use core::cell::{Cell, RefCell};
-use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU32, Ordering};
 use std::collections::BTreeMap;
@@ -15,11 +14,13 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSObject, JSValue};
 use bun_web::channel::Endpoint;
 use bun_web::client::{Client, Script, ScriptLocation, ScriptType};
+use bun_web::compiled::Form;
 use bun_web::exec::{self, Thread};
 use bun_web::held::Held;
 use bun_web::host::Host;
 use bun_web::origin::Origin;
 use bun_web::request::{Credentials, Destination, InitiatorType, Mode};
+use bun_web::service::{self, Presence};
 use bun_web::url::Url;
 
 pub(crate) use self::thread::font_scope;
@@ -69,6 +70,9 @@ struct Running {
     inbox: Arc<Inbox>,
     thread: Cell<Option<NonNull<ThreadOfWorker>>>,
     owners: RefCell<Vec<Weak<RefCell<Option<Owner>>>>>,
+    presence: Cell<Option<Arc<Presence>>>,
+    /// Of a service worker, which has no owners.
+    ended: Cell<Option<Box<dyn Fn()>>>,
 }
 
 struct Owner {
@@ -82,9 +86,7 @@ struct OfThread {
     shared: BTreeMap<Bytes, u32>,
 }
 
-thread_local! {
-    static OF_THREAD: ManuallyDrop<RefCell<OfThread>> = bun_ui::lasting(|| drop(OF_THREAD.with(|it| it.take())));
-}
+static OF_THREAD: bun_ui::Lasting<RefCell<OfThread>> = bun_ui::Lasting::empty();
 
 impl Drop for Running {
     fn drop(&mut self) {
@@ -123,6 +125,8 @@ impl Running {
             inbox: Arc::default(),
             thread: Cell::new(None),
             owners: RefCell::default(),
+            presence: None.into(),
+            ended: None.into(),
         });
         OF_THREAD.with(|it| {
             let mut all = it.borrow_mut();
@@ -182,6 +186,7 @@ impl Running {
             .iter()
             .filter_map(Weak::upgrade)
             .for_each(|it| drop(it.take()));
+        self.ended.take().into_iter().for_each(|it| it());
     }
 
     /// <https://html.spec.whatwg.org/#run-a-worker>
@@ -228,7 +233,16 @@ impl Running {
         let (this, name) = (Rc::downgrade(self), name.units().collect::<Vec<_>>());
         exec::spawn(async move {
             let script = match client
-                .compiled_path(&url, request.destination, &request.metadata)
+                .compiled_path(
+                    &url,
+                    if is_module {
+                        Form::Module
+                    } else {
+                        Form::Classic
+                    },
+                    request.destination,
+                    &request.metadata,
+                )
                 .filter(|_| client.origin() == Origin::of(&url))
             {
                 Some(_) => Ok(None),
@@ -249,13 +263,16 @@ impl Running {
                 return this.give_up();
             };
             let seed = match &script {
-                Some(Script::Loaded(it)) => {
-                    client.seed_worker(it.head.url.clone(), &it.head.headers, is_shared)
-                }
-                _ => client.seed_worker(url, &Default::default(), is_shared),
+                Some(Script::Loaded(it)) => client.seed_worker(
+                    it.head.url.clone(),
+                    &it.head.headers,
+                    is_shared,
+                    it.head.reserved.clone(),
+                ),
+                _ => client.seed_worker(url, &Default::default(), is_shared, None),
             };
-            let label = bun_core::String::clone_utf16(&name);
-            thread::prepare(Start {
+            this.presence.set(seed.presence());
+            if !this.launch(Start {
                 id: this.id,
                 seed,
                 name,
@@ -264,23 +281,74 @@ impl Running {
                 source: script.map(Script::into_source),
                 outside,
                 inbox: Arc::clone(&this.inbox),
-            });
-            this.thread.set(Bun__DesktopWorker__start(
-                VirtualMachine::get().global(),
-                &label,
-                this.id,
-                thread::enter,
-            ));
-            if this.thread.get().is_none() {
+                started: None,
+            }) {
                 this.give_up();
             }
         });
+    }
+
+    fn launch(&self, start: Start) -> bool {
+        let label = bun_core::String::clone_utf16(&start.name);
+        thread::prepare(start);
+        self.thread.set(Bun__DesktopWorker__start(
+            VirtualMachine::get().global(),
+            &label,
+            self.id,
+            thread::enter,
+        ));
+        self.thread.get().is_some()
     }
 
     fn give_up(&self) {
         self.fail(Failure::ToStart);
         self.end();
     }
+}
+
+#[unsafe(no_mangle)]
+#[optimize(size)]
+fn __bun_dom_start_service_worker(
+    service::Start {
+        seed,
+        is_module,
+        source,
+        started,
+        ended,
+        outside,
+    }: service::Start,
+) -> Option<service::Running> {
+    let credentials = Credentials::Omit;
+    let this = Running::new(
+        Options {
+            is_module,
+            credentials,
+            has_extended_lifetime: false,
+            is_secure: true,
+        },
+        None,
+    );
+    let outside = ToOutside::of_service_worker(
+        Address {
+            thread: Thread::current(),
+            id: this.id,
+        },
+        &seed,
+        outside,
+    );
+    this.ended.set(Some(ended));
+    this.launch(Start {
+        id: this.id,
+        seed,
+        name: Vec::new(),
+        is_module,
+        credentials,
+        source,
+        outside,
+        inbox: Arc::clone(&this.inbox),
+        started: Some(started),
+    })
+    .then(|| Box::new(this) as _)
 }
 
 #[unsafe(no_mangle)]

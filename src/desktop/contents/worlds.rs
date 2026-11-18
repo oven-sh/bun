@@ -4,15 +4,17 @@ use std::rc::Rc;
 
 use bun_jsc::bindgen::Result as CallbackResult;
 use bun_jsc::from_js_host_call_generic;
-use bun_web::channel::{Endpoint, Message, Transferred};
+use bun_web::channel::{Endpoint, LooseBitmap, Message, Transferred};
+use bun_web::compiled::{self, Form};
 use bun_web::exec::block_pages;
-use bun_web::host::{Host, Relation, Relative, Reply, Thrown};
+use bun_web::host::{ChosenFile, Host, Relation, Relative, Reply, Thrown};
 use bun_web::renderer::{
     self, Command, Done, Executed, NewDocument, PreloadScript, Preloads, Renderer, Source, Task,
 };
-use bun_web::{compiled, trust, wire};
+use bun_web::{trust, wire};
 
 use super::page::Page;
+use super::place::{self, Place};
 use super::{Contents, Numbers as _, link};
 use crate::ipc::Sender;
 use crate::prelude::*;
@@ -125,16 +127,32 @@ fn values_in(message: &Message) -> JsResult<JSValue> {
     (values.ok().filter(|it| it.is_array())).map_or_else(|| array(&[]), Ok)
 }
 
-fn source_of(file: &str) -> JsResult<Source> {
+pub(super) fn compiled_preload(file: &str) -> Option<Vec<u8>> {
+    compiled::path_of(files::to_url(file).as_bytes(), Form::Preload)
+}
+
+fn source_of(file: &str, place: &Place) -> JsResult<Source> {
     if !files::is_absolute(file) {
         return Err(error(format_args!(
             "Preload script must have absolute path: {file}"
         )));
     }
-    Ok(match compiled::path_of(files::to_url(file).as_bytes()) {
+    let path = compiled_preload(file).filter(|_| place.runs_program());
+    Ok(match path {
         Some(path) => Source::Compiled(path),
         None => Source::Text(string(&files::read_with_node(file)?)),
     })
+}
+
+impl Contents {
+    pub(super) fn preloads(&self) -> Vec<String> {
+        let mut files = Vec::new();
+        if !self.is_frame() || self.preferences.integrates_node_in_frames {
+            files = self.session.preloads_of_frames();
+            files.extend(self.preferences.preload.clone());
+        }
+        files
+    }
 }
 
 impl Page {
@@ -269,9 +287,7 @@ impl Page {
 
     /// `None` if the page is gone.
     pub(super) fn relative(&self, of: u32, it: Relation) -> JsResult<Option<Option<Relative>>> {
-        let is_familiar = |it: &&Page| {
-            !it.is_disposed() && it.is_beside(self) && it.origin_key() == self.origin_key()
-        };
+        let is_familiar = |it: &&Page| !it.is_disposed() && it.is_kin_of(self);
         let mut pages = core::iter::once(self.itself()).chain(super::alive().map(Contents::page));
         let Some(page) = pages.find(|it| it.id == of).filter(is_familiar) else {
             return Ok(None);
@@ -310,7 +326,11 @@ impl Page {
     }
 
     pub(super) fn insert_css(&self, css: String, is_of_user: bool) -> JsResult<JSValue> {
-        js((self.ask(|it, reply| it.insert_sheet(css, is_of_user, reply))?).to_string())
+        let this = Root::new(self);
+        Ok(task::promise(async move {
+            let key = (this.get()).ask_later(|it, reply| it.insert_sheet(css, is_of_user, reply));
+            js(key.await?.to_string())
+        }))
     }
 
     pub(super) fn remove_inserted_css(&self, key: JSValue) -> JsResult<()> {
@@ -318,10 +338,41 @@ impl Page {
         self.tell(|it| it.remove_sheet(key))
     }
 
+    pub(super) fn write_heap_snapshot(&self, file: String) -> JsResult<JSValue> {
+        let (send, taken) = task::oneshot();
+        self.tell_renderer(|it| it.take_heap_snapshot(move |_, it| send.send(it)))?;
+        Ok(task::promise(async move {
+            let write = |it: String| files::write(&file, it.as_bytes(), 0o600).is_ok();
+            match taken.await.flatten().is_some_and(write) {
+                true => Ok(JSValue::UNDEFINED),
+                false => Err(error(format_args!("Failed to take heap snapshot"))),
+            }
+        }))
+    }
+
+    /// Where the page is.
+    pub(super) fn decode_image(
+        &self,
+        bytes: Vec<u8>,
+    ) -> JsResult<impl Future<Output = Option<LooseBitmap>> + use<>> {
+        let (send, from_afar) = task::oneshot();
+        let mut left = Some(bytes);
+        self.tell_renderer(|it| {
+            it.decode_image(left.take().unwrap_or_default(), |_, it| send.send(it));
+        })?;
+        Ok(async {
+            match left {
+                Some(bytes) => LooseBitmap::decode(bytes).await,
+                None => from_afar.await.flatten(),
+            }
+        })
+    }
+
     /// A promise.
     pub(super) fn execute(&self, world: u32, code: JSValue, is_by_user: bool) -> JSValue {
         if is_by_user {
             (self.owner().context.last_input).set(bun_web::time::monotonic_now());
+            (self.process().iter()).for_each(|it| it.witness.note_activation());
         }
         if self.document().is_some() || !self.is_started() {
             return Document::execute(self.id, world, code, is_by_user);
@@ -346,6 +397,32 @@ impl Page {
         })
     }
 
+    pub(crate) fn is_in_other_process(&self) -> bool {
+        self.process().is_some()
+    }
+
+    pub(crate) fn inspect(&self, session: u32, how: String) -> JsResult<()> {
+        self.tell_renderer(|it| it.inspect(session, how))
+    }
+
+    pub(crate) fn stop_inspecting(&self, session: u32) -> JsResult<()> {
+        self.tell_renderer(|it| it.stop_inspecting(session))
+    }
+
+    pub(crate) fn ask_inspector(
+        &self,
+        session: u32,
+        method: &str,
+        params: String,
+        files: Vec<ChosenFile>,
+    ) -> JsResult<impl Future<Output = Option<Result<String, String>>> + use<>> {
+        let (send, result) = task::oneshot();
+        self.tell_renderer(|it| {
+            it.ask_inspector(session, method.into(), params, files, |_, it| send.send(it));
+        })?;
+        Ok(async { result.await.flatten() })
+    }
+
     fn describe(&self) -> bun_web::page::About {
         let loaded = self.loaded().unwrap_or_default();
         loaded.describe(self.url(), self.inherited_base_url())
@@ -360,16 +437,14 @@ impl Page {
 
     fn preloads(&self) -> JsResult<Option<Box<Preloads>>> {
         let (contents, preferences) = (self.contents(), &*self.contents().preferences);
-        let mut files = Vec::new();
-        if self.parent().is_none() || preferences.integrates_node_in_frames {
-            files = contents.session.preloads_of_frames();
-            files.extend(preferences.preload.clone());
-        }
-        if files.is_empty() && !(preferences.integrates_node && self.parent().is_none()) {
+        let files = contents.preloads();
+        let is_in_app = self.place() == Place::App;
+        let integrates_node = is_in_app && preferences.integrates_node;
+        if files.is_empty() && !(integrates_node && self.parent().is_none()) {
             return Ok(None);
         }
         let read = |file: String| {
-            let source = match catch(source_of(&file))? {
+            let source = match catch(source_of(&file, &self.place()))? {
                 Ok(source) => source,
                 Err(thrown) => Source::Unreadable(describe(thrown)?),
             };
@@ -380,8 +455,9 @@ impl Page {
             scripts: files.into_iter().map(read).collect::<JsResult<_>>()?,
             process: self.owner().id,
             is_main_frame: self.parent().is_none(),
-            is_sandboxed: preferences.is_sandboxed,
-            integrates_node: preferences.integrates_node,
+            is_sandboxed: preferences.is_sandboxed
+                || !(is_in_app || place::moves_node_for_testing()),
+            integrates_node,
             document_path: match url.starts_with("file:") {
                 true => files::from_url(&url),
                 false => files::join(&[app::path()?, "index.html"]),
@@ -396,7 +472,7 @@ impl Page {
         let (contents, opener) = (self.contents(), self.opener());
         let mut preloads = None;
         if opener.is_none() {
-            self.has_relatives.set(trust::trusts_any_frame());
+            self.has_relatives.set(trust::relates_frames());
             preloads = self.preloads()?;
         }
         self.has_preload.set(preloads.is_some());
@@ -407,13 +483,16 @@ impl Page {
                 None => contents.surface,
             },
             has_relatives: self.has_relatives.get(),
-            isolates_context: contents.preferences.isolates_context,
+            isolates_context: contents.preferences.isolates_context || !self.place().is_trusted(),
             about: self.describe(),
             opener: opener.map(|it| it.id),
         };
-        if let Some(process) = contents.process_for(self)? {
-            if let Some(it) = preloads.as_mut().filter(|it| it.is_sandboxed) {
-                it.environment = Some(process::variables()?);
+        if let Some(process) = contents.process_for(self, preloads.is_some())? {
+            if let Some(it) = preloads.as_mut() {
+                it.environment = Some(match self.place().is_trusted() {
+                    true => process::variables()?,
+                    false => Vec::new(),
+                });
             }
             return self.start_in(process, document, preloads);
         }
@@ -449,8 +528,10 @@ impl Page {
             bun_ui::queue::forget_frame(surface);
             process.command(PageCommand::Grant(surface));
         }
+        if let Some(it) = &self.contents().embedded {
+            process.command(PageCommand::Lend(it.image));
+        }
         process.admit(self, preloads.is_some());
-        self.started_in(process);
         let how = renderer::Start {
             client: self.client.seed(),
             document,
@@ -459,8 +540,19 @@ impl Page {
                 scale: it.scale.into(),
             }),
             preloads,
+            facts: link::facts(self),
+            conditions: process.conditions_for(self.id),
+            is_online: crate::session::online::is_known_to_be_online(),
         };
+        self.started_in(process);
         self.tell_renderer(|it| it.start(how.into()))
+    }
+
+    pub(super) fn foretell(&self) -> JsResult<()> {
+        match self.is_far() {
+            true => self.tell_renderer(|it| it.foretell(link::facts(self).into())),
+            false => Ok(()),
+        }
     }
 
     pub(super) fn tell_renderer(&self, command: impl FnOnce(&Renderer)) -> JsResult<()> {

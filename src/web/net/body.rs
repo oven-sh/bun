@@ -8,7 +8,7 @@ use core::task::{Context, Poll, ready};
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-use bun_sys::{Fd, File, O};
+use bun_sys::File;
 use bun_threading::Guarded;
 
 use super::error::{NetError, Result};
@@ -246,6 +246,34 @@ crate::wire! {
     }
 }
 
+impl Part {
+    /// Who gets a slice of a file does not get the rest.
+    fn make_readable_by(&mut self, peer: remote::Peer) {
+        const MOST_IN_SLICE: u64 = 256 << 20;
+        let Part::File {
+            path,
+            range,
+            modified,
+        } = self
+        else {
+            return;
+        };
+        if remote::is_granted(peer, path) {
+            return;
+        }
+        let size = bun_sys::stat(&bun_core::ZBox::from_bytes(&**path)).map(|it| it.st_size as u64);
+        if range.start == 0 && size.is_ok_and(|it| range.end >= it) {
+            return remote::grant(peer, path);
+        }
+        let read = (range.end - range.start <= MOST_IN_SLICE)
+            .then(|| read_part(Err(path.clone()), range.clone(), *modified).ok());
+        match read.flatten() {
+            Some((_, bytes)) => *self = Part::Bytes(bytes.into()),
+            None => *path = Bytes::default(),
+        }
+    }
+}
+
 impl Data {
     fn flatten(self, into: &mut Vec<Part>) {
         match self {
@@ -269,9 +297,9 @@ impl Wire for Data {
     fn write(self, to: &mut wire::Writer) {
         let mut parts = Vec::new();
         self.flatten(&mut parts);
-        for part in &parts {
-            if let (Part::File { path, .. }, Some(peer)) = (part, to.peer()) {
-                remote::grant(peer, path);
+        for part in &mut parts {
+            if let Some(peer) = to.peer() {
+                part.make_readable_by(peer);
             }
         }
         parts.write(to);
@@ -546,7 +574,7 @@ fn read_part(
 ) -> Result<(Arc<File>, Vec<u8>)> {
     let file = match file {
         Ok(file) => file,
-        Err(path) => Arc::new(File::openat(Fd::cwd(), &path, O::RDONLY | O::CLOEXEC, 0)?),
+        Err(path) => Arc::new(remote::open_file(&path)?),
     };
     let stat = file.stat()?;
     let size = stat.st_size as u64;

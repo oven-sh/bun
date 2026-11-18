@@ -355,7 +355,7 @@ test("fetch() compress option does not leak bodies or compressor state", async (
 
 // Response-side: a compressed body that arrives across many packets bypasses
 // the libdeflate one-shot fast path (InternalState.rs:256) and allocates a
-// boxed streaming Decompressor (zlib/brotli/zstd FFI handle) per request,
+// boxed streaming Decompressor (zlib/brotli/zstd) per request,
 // freed via Drop on InternalState::reset(). Dripping the body over chunked
 // transfer encoding forces that path.
 // Paired with compress: on the request side so the same loop covers the

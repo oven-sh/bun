@@ -24,6 +24,15 @@ import {
   constants as zlibConstants,
   zstdCompressSync,
 } from "node:zlib";
+import {
+  Bits,
+  FIXED,
+  fixedDistanceCodes,
+  fixedLiteralCodes,
+  gzipHeader,
+  header,
+  putTokens,
+} from "../../node/zlib/zlib-golden/write";
 
 const CHUNK = 64 * 1024;
 const COUNT = 256; // 16 MiB
@@ -711,6 +720,39 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
     while (total < 300_000) total += (await reader.read()).value!.byteLength;
     await reader.cancel();
     expect(total).toBe(300_000);
+  });
+
+  // The same, with a budget that ends in the last match of the packet.
+  test("gzip: output the decoder still holds arrives without another packet", async () => {
+    const matches = Math.ceil(MARK / 258);
+    const tokens = [7, ...Array(matches).fill({ length: 258, distance: 1 })];
+    const expected = Buffer.alloc(1 + matches * 258, 7);
+    const block = putTokens(header(new Bits(), FIXED, false), tokens, fixedLiteralCodes, fixedDistanceCodes);
+    const wire = Buffer.concat([gzipHeader(), block.end()]);
+    await using server = await listening(
+      createTcpServer(s => {
+        s.on("error", () => {});
+        s.once("data", () =>
+          s.write(
+            Buffer.concat([
+              Buffer.from(`HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nTransfer-Encoding: chunked\r\n\r\n`),
+              Buffer.from(wire.length.toString(16) + "\r\n"),
+              wire,
+              Buffer.from("\r\n"),
+            ]),
+          ),
+        );
+      }),
+    );
+    const res = await fetch(`http://127.0.0.1:${server.port}/`);
+    const reader = res.body!.getReader();
+    const chunks: Uint8Array[] = [];
+    for (let total = 0; total < expected.length; total += chunks.at(-1)!.length) {
+      chunks.push((await reader.read()).value!);
+    }
+    await reader.cancel();
+    expect(chunks.at(-1)!.length).toBe(expected.length - MARK);
+    expect(expected.equals(Buffer.concat(chunks))).toBe(true);
   });
 
   // `await (await fetch(url)).text()` turns the consumer to BufferAll, possibly while the HTTP

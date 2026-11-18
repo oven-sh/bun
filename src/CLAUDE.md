@@ -193,7 +193,7 @@ Highway is the only SIMD in the Rust sources: both also ban `std::simd`, and the
 source lint bans the `core::arch` intrinsics. A new kernel goes in
 `src/jsc/bindings/highway_strings.cpp`, or in a `highway_*.cpp` of its own beside it, which
 `noUnify` in `scripts/build/unified.ts` has to list. Its safe wrapper goes in `src/highway/lib.rs`,
-or in a module of that crate if it brings types of its own (`webp.rs`).
+or in a module of that crate if it brings types or code of its own (`webp.rs`, `checksums.rs`).
 
 ```rust
 use bun_core::strings;

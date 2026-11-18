@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { isASAN, rss } from "harness";
-import { createBrotliCompress, createBrotliDecompress } from "zlib";
+import { brotliCompressSync, constants, createBrotliCompress, createBrotliDecompress } from "zlib";
 
 // ASAN's quarantine retains freed allocations (default 256 MB) so RSS deltas
 // run far higher under bun-asan; widen the threshold there.
@@ -10,9 +10,17 @@ const MEMORY_GROWTH_LIMIT_MB = isASAN ? 400 : 50;
 // Before the fix, each reset() call would allocate a new Brotli encoder/decoder
 // without freeing the previous one.
 
-test("Brotli reset() should not leak memory", { timeout: 30_000 }, async () => {
-  const iterations = 100_000;
+const iterations = 10_000;
+const plain = Buffer.alloc(128 * 1024, "reset");
+const oneByte = Buffer.alloc(1);
 
+// Leaves the 128 KB in the window of the stream.
+function fillAndReset(stream: any, input: Buffer) {
+  stream._handle.writeSync(constants.BROTLI_OPERATION_PROCESS, input, 0, input.length, oneByte, 0, 1);
+  stream.reset();
+}
+
+test("Brotli reset() should not leak memory", { timeout: 30_000 }, async () => {
   // Get baseline memory
   Bun.gc(true);
   await Bun.sleep(10);
@@ -20,9 +28,8 @@ test("Brotli reset() should not leak memory", { timeout: 30_000 }, async () => {
 
   const compressor = createBrotliCompress();
 
-  // Reset many times - before the fix, each reset leaks ~400KB (brotli encoder state)
   for (let i = 0; i < iterations; i++) {
-    (compressor as any).reset();
+    fillAndReset(compressor, plain);
   }
 
   compressor.close();
@@ -37,13 +44,13 @@ test("Brotli reset() should not leak memory", { timeout: 30_000 }, async () => {
 
   console.log(`Memory growth after ${iterations} reset() calls: ${memoryGrowthMB.toFixed(2)} MB`);
 
-  // With 100k iterations and ~400KB per leak, we'd expect ~40GB of leakage without the fix.
+  // With 10k iterations and 128KB per leak, we'd expect over 1GB of leakage without the fix.
   // With the fix, memory growth should be minimal (under 50MB accounting for test overhead).
   expect(memoryGrowthMB).toBeLessThan(MEMORY_GROWTH_LIMIT_MB);
 });
 
 test("BrotliDecompress reset() should not leak memory", { timeout: 30_000 }, async () => {
-  const iterations = 100_000;
+  const compressed = brotliCompressSync(plain);
 
   Bun.gc(true);
   await Bun.sleep(10);
@@ -52,7 +59,7 @@ test("BrotliDecompress reset() should not leak memory", { timeout: 30_000 }, asy
   const decompressor = createBrotliDecompress();
 
   for (let i = 0; i < iterations; i++) {
-    (decompressor as any).reset();
+    fillAndReset(decompressor, compressed);
   }
 
   decompressor.close();

@@ -439,6 +439,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.rewrite_private_accesses_in_property(prop, map);
                 }
             }
+            js_ast::ExprData::EJsxElement(e) => {
+                if let Some(tag) = &mut e.tag {
+                    self.rewrite_private_accesses_in_expr(tag, map);
+                }
+                for prop in e.properties.slice_mut() {
+                    self.rewrite_private_accesses_in_property(prop, map);
+                }
+                for child in e.children.slice_mut() {
+                    self.rewrite_private_accesses_in_expr(child, map);
+                }
+            }
             js_ast::ExprData::ETemplate(e) => {
                 if let Some(t) = &mut e.tag {
                     self.rewrite_private_accesses_in_expr(t, map);
@@ -839,13 +850,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// Both run once per call or instance, and the nearest statement list is
     /// outside the function or class they belong to.
-    fn is_param_default_or_field_initializer(&self) -> bool {
+    pub(crate) fn is_param_default_or_field_initializer(&self) -> bool {
         let mut scope = self.current_scope_ref();
         loop {
             match scope.kind {
                 js_ast::scope::Kind::FunctionArgs => return true,
                 // Set for a field's initializer, not for its key or decorators.
-                js_ast::scope::Kind::ClassBody => return scope.forbid_arguments,
+                js_ast::scope::Kind::ClassBody if scope.forbid_arguments => return true,
                 _ if scope.kind_stops_hoisting() => return false,
                 _ => scope = scope.parent.unwrap(),
             }

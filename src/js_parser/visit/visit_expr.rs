@@ -438,7 +438,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ..Default::default()
         });
         let value = p.new_expr(object, tag.loc);
-        let scoped = p.current_scope().kind == js_ast::scope::Kind::FunctionArgs;
+        let scoped = p.is_param_default_or_field_initializer();
         let ref_ = if scoped {
             p.generate_temp_ref(Some(b"JSXTag"))
         } else {
@@ -953,7 +953,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         *e = initializer.join_with_comma(expr);
                         return;
                     };
-                    // Isolating parameter defaults; a hoisted temporary would be shared by reentrant calls.
+                    // Isolating each evaluation; a hoisted temporary would be shared by reentrant calls.
                     let binding = p.b(js_ast::B::Identifier { r#ref: ref_ }, tag.loc);
                     let args = p.arena.alloc_slice_fill_iter([G::Arg {
                         binding,

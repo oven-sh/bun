@@ -197,6 +197,15 @@ test("SourceMap sorts columns that each belong where another one is", () => {
   expect([1, 2, 3, 4, 5].map(column => map.findEntry(0, column).originalLine)).toEqual([2, 0, 1, 4, 3]);
 });
 
+test("SourceMap sorts by nothing but the generated line and column", () => {
+  // Columns 256, 1, 1, from lines 2, 1, 0 of b, b, a.
+  const map = new SourceMap({ version: 3, sources: ["a", "b"], names: [], mappings: "gQCEA,/PADA,ADDA" });
+  expect([1, 256].map(column => map.findEntry(0, column))).toMatchObject([
+    { originalSource: "a", originalLine: 0 },
+    { originalSource: "b", originalLine: 2 },
+  ]);
+});
+
 test("SourceMap handles mappings with truncated VLQ segments without crashing", async () => {
   await using proc = Bun.spawn({
     cmd: [

@@ -104,6 +104,8 @@ fn windows_stay_inside() {
     let all: Box<[u16]> = (0..5).collect();
     let want = [&[1, 2, 3], &[0, 1, 2], &[2, 3, 4], &[2, 3, 4]];
     assert_eq!(windows(&all, starts), Some(want));
+    let [a, b, c, d] = want;
+    assert_eq!(windows(&all, starts.reverse()), Some([d, c, b, a]));
     assert_eq!(windows(&all, starts), Some([&[0, 1, 2, 3, 4]; 4]));
     assert_eq!(windows::<_, 6>(&all, starts), None);
     assert_eq!(windows(&all[5..], starts), Some([&[]; 4]));

@@ -256,6 +256,12 @@ impl<'a> JsHeap<'a> {
         Error::unthrown(self.global_object().create_range_error_instance(args))
     }
 
+    /// As [`error`](Self::error), a `SyntaxError`.
+    #[cold]
+    pub fn syntax_error(&self, args: core::fmt::Arguments<'_>) -> Error<'a> {
+        Error::unthrown(self.global_object().create_syntax_error_instance(args))
+    }
+
     /// As [`error`](Self::error), with a `code`, which also picks the class.
     #[cold]
     pub fn error_with_code(&self, code: ErrorCode, args: core::fmt::Arguments<'_>) -> Error<'a> {

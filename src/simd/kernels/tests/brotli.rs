@@ -77,21 +77,27 @@ fn find_switches_needs_room() {
             );
         })
     };
-    assert!(fits(6, 3, 15, 5) && fits(8, 3, 18, 6) && fits(32, 16, 80, 5));
+    assert!(fits(6, 3, 15, 5) && fits(8, 3, 18, 6) && fits(32, 16, 80, 5) && fits(6, 3, 15, 6));
     assert!(!fits(5, 3, 15, 5) && !fits(6, 3, 14, 5) && !fits(6, 3, 15, 4));
     assert!(!fits(6, 0, 15, 5) && !fits(34, 17, 85, 5));
 }
 
+/// A little too small, which shows what was looked up.
 fn logarithms(known: usize) -> Vec<[f64; 2]> {
-    let mut all: Vec<_> = (0..known).map(|n| [(n as f64).log2(), n as f64]).collect();
+    let entry = |n| [(n as f64).log2() - 1e-6, n as f64];
+    let mut all: Vec<_> = (0..known).map(entry).collect();
     all[0][0] = 1e6;
     all.resize(known + SPARE_LOGARITHMS, [f64::NAN; 2]);
     all
 }
 
 /// `BrotliPopulationCost`, and the gaps.
-fn population_cost(counts: &[u32]) -> (f64, [u32; 2]) {
-    let log2 = |n: u32| f64::from(n.max(1)).log2();
+fn population_cost(counts: &[u32], known: &[[f64; 2]]) -> (f64, [u32; 2]) {
+    let log2 = |n: u32| match known.get(n as usize) {
+        _ if n == 0 => 0.0,
+        Some(&[log, _]) => log,
+        None => f64::from(n).log2(),
+    };
     let log_of_total = log2(counts.iter().sum());
     let (mut bits, mut longest, mut lengths, mut gaps) = (0.0, 1, [0; 18], [0; 2]);
     let used = counts.iter().rposition(|&count| count != 0).unwrap() + 1;
@@ -134,7 +140,7 @@ fn estimate_costs() {
             bits
         }
     };
-    for round in sample(0..1500, 751) {
+    let any = sample(0..1500, 751).map(|round| {
         let size = [64, 256, 544, 704, 64 + below(641)][round % 5];
         let size = if cfg!(miri) { size.min(72) } else { size };
         let mut histogram = |at_least: usize| {
@@ -149,6 +155,23 @@ fn estimate_costs() {
             counts
         };
         let (common, others): (_, [_; 4]) = (histogram(0), from_fn(|_| histogram(5)));
+        (common, others, 1 << below(if cfg!(miri) { 7 } else { 13 }))
+    });
+    let runs = (0..700).map(|zeros| {
+        let mut counts = vec![0; 704];
+        counts[0] = 300;
+        counts[1 + zeros..][..4].fill(2);
+        counts
+    });
+    // The first symbol costs a little less than half a bit, and then a little more.
+    let halves = [[33461, 13857], [80782, 33458]];
+    let halves = halves.map(|it| [&it[..], &[1, 1, 0, 1], &[0; 58]].concat());
+    let alone = runs.chain(halves).chain([vec![1; 64], vec![256; 64]]);
+    let alone = alone.take_while(|_| !cfg!(miri)).flat_map(|common| {
+        [1, 256].map(|known| (common.clone(), from_fn(|_| vec![0; common.len()]), known))
+    });
+    for (common, others, known) in any.chain(alone) {
+        let (size, given) = (common.len(), logarithms(known));
         let sums = (others.each_ref())
             .map(|other| -> Vec<u32> { common.iter().zip(other).map(|(a, b)| a + b).collect() });
         let mut used = [0; 11];
@@ -156,10 +179,8 @@ fn estimate_costs() {
             used[i / 64] |= 1 << (i % 64);
         }
         let totals = sums.each_ref().map(|sum| sum.iter().sum());
-        let want = sums.each_ref().map(|sum| population_cost(sum));
+        let want = (sums.each_ref()).map(|sum| population_cost(sum, &given[..known]));
         let gaps = from_fn(|kind| want.map(|(_, gaps)| gaps[kind]));
-        let known = 1 << below(if cfg!(miri) { 7 } else { 13 });
-        let given = logarithms(known);
         check(want.map(|(bits, _)| exact(bits)), || {
             let (others, mut table) = (others.each_ref().map(|it| &it[..]), given.clone());
             let got = brotli::estimate_costs(&common, others, &used, &totals, &gaps, &mut table);
@@ -197,6 +218,7 @@ fn estimate_costs_needs_room() {
     assert!(!fits(705, [705; 4], enough) && !fits(63, [63; 4], enough));
     for nth in 0..4 {
         assert!(!fits(65, from_fn(|i| 65 - usize::from(i == nth)), enough));
+        assert!(!fits(65, from_fn(|i| 65 + usize::from(i == nth)), enough));
     }
     for entries in [0, 4, enough - 5, enough - 4, enough - 1, enough + 1] {
         assert!(!fits(64, [64; 4], entries));
@@ -208,12 +230,12 @@ fn remove_pairs() {
     let mut below = random();
     for round in sample(0..3000, 200) {
         let (count, clusters) = (4 * (1 + below(12)), 2 + below(12));
-        let kinds = [2, 5, 1000][round % 3];
+        let (kinds, lowest) = ([2, 5, 1000][round % 3], [0, (1 << 31) - 6][round / 3 % 2]);
         let costs: Vec<f64> = (0..count)
             .map(|_| below(kinds) as f64 * 0.3 - 1.0)
             .collect();
         let mut pair = || {
-            let first = below(clusters);
+            let first = lowest + below(clusters);
             [first as u32, (first + 1 + below(clusters)) as u32]
         };
         let (pairs, merged): (Vec<_>, _) = ((0..count).map(|_| pair()).collect(), pair());
@@ -250,24 +272,45 @@ fn remove_pairs_needs_whole_groups() {
 }
 
 #[test]
+fn remove_pairs_of_padding() {
+    let kept = |cost| brotli::remove_pairs(&mut [1.0, cost, 1.0, 1.0], &mut [[0; 2]; 4], [0; 2]);
+    check(0, || kept(0.0));
+    assert_eq!(returns(|| kept(-0.0)), !cfg!(debug_assertions));
+}
+
+#[test]
 fn sort_leaves() {
+    const GAPS: [usize; 6] = [132, 57, 23, 10, 4, 1];
     let mut below = random();
     let counts = (0..150).chain([255, 256, 257, 543, 544, 703, 704]);
-    for count in counts
+    let counts = counts
         .cycle()
         .take(if cfg!(miri) { 200 } else { 1000 })
-        .filter(|it| !cfg!(miri) || *it == 12 || *it == 25)
-    {
+        .filter(|it| !cfg!(miri) || *it == 12 || *it == 25);
+    let any = counts.map(|count| -> Vec<u64> {
         let (kinds, kind) = ([1, 2, 5, 60, 32767][below(5)], below(4));
-        let leaves: Vec<u64> = (0..count + LEAF_SLACK)
+        (0..count + LEAF_SLACK)
             .map(|i| match kind {
                 _ if i >= count => below(usize::MAX) as u64,
                 0 => (((count - i) * kinds / (count + 1)) << 32 | i) as u64,
                 1 => ((32766 - below(kinds)) << 32 | i) as u64,
                 _ => (below(kinds) << 32 | below(1 << 32)) as u64,
             })
-            .collect();
-        for gaps in [&[1][..], &[132, 57, 23, 10, 4, 1]] {
+            .collect()
+    });
+    // The first passes leave the leaf at `first` before all that are no sum of their gaps away.
+    let far = (0..if cfg!(miri) { 0 } else { 6 * 17 }).map(|it| {
+        let (passes, first, mut leaves) = (it % 6, it / 6, vec![0; 704 + LEAF_SLACK]);
+        for i in 0..704 {
+            let is_after = |&gap: &usize| i >= gap && leaves[i - gap] >> 32 != 0;
+            let is_high = i == first || GAPS[..passes].iter().any(is_after);
+            leaves[i] = u64::from(is_high) << 32 | i as u64;
+        }
+        leaves
+    });
+    for leaves in any.chain(far) {
+        let count = leaves.len() - LEAF_SLACK;
+        for gaps in [&[1][..], &GAPS] {
             let mut want = leaves[..count].to_vec();
             for (gap, i) in gaps
                 .iter()
@@ -298,9 +341,9 @@ fn sort_leaves() {
 
 #[test]
 fn sort_leaves_declines() {
-    let sorts = |leaves, count: usize, sorted, last: u64| {
+    let sorts_with = |at: usize, leaves, count, sorted, high: u64| {
         let mut given = vec![0; leaves];
-        given[count.min(704) - 1] = last << 32;
+        given[at] = high << 32;
         let each = targets()
             .flat_map(|_| [false, true])
             .filter(|&like_shell_sort| {
@@ -311,12 +354,19 @@ fn sort_leaves_declines() {
             });
         each.count() != 0
     };
+    let sorts = |leaves, count: usize, sorted, last| {
+        sorts_with(count.min(704) - 1, leaves, count, sorted, last)
+    };
     assert!(sorts(17, 1, 17, 32766) && (cfg!(miri) || sorts(720, 704, 720, 32766)));
     assert!(!sorts(719, 704, 720, 0) && !sorts(720, 704, 719, 0) && !sorts(721, 705, 721, 0));
     assert!(!sorts(720, usize::MAX, 720, 0));
     for too_much in [32767, 32768, 65535, 65536, 1 << 31, u32::MAX.into()] {
         assert!(!sorts(40, 24, 40, too_much) && !sorts(17, 1, 17, too_much));
     }
+    for (at, count) in [(15, 16), (16, 17), (0, 17)] {
+        assert!(!sorts_with(at, 40, count, 40, 32767));
+    }
+    assert!(sorts(40, 16, 40, 32766));
 }
 
 const BASES: [usize; 16] = [0, 1, 2, 3, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1];
@@ -355,7 +405,7 @@ fn short_codes() {
             }
         }
 
-        let costs: [f32; 5] = from_fn(|_| [-3.0, -2.0, -1.0, -0.0, 1.7e38][below(5)]);
+        let costs: [f32; 5] = from_fn(|_| [-3.0, -2.0, -1.0, -0.0, 1e-9, 1.7e38][below(6)]);
         let ranked = costs.map(|cost| u64::from(cost.to_bits()) << 32 | below(1 << 32) as u64);
         let of = |rank: usize| &last_distances[(ranked[rank] >> SLOT_SHIFT) as usize % 8];
         let stays = |&rank: &usize| costs[rank] <= 0.0 && (costs[rank] < -2.0 || of(rank) != of(0));
@@ -363,6 +413,22 @@ fn short_codes() {
         let others = others.map(|rank| u64::from(codes(of(rank))) << (16 * rank - 16));
         let got = brotli::short_codes_of_five(place, &last_distances, &ranked, -2.0);
         assert_eq!(got, (codes(of(0)), others.sum()));
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "slow")]
+fn short_codes_far_into_the_ring() {
+    let (mut ring, position, distances) = (vec![0; 1 << 24], 0xF0_F0F0, [10, 20, 30, 40]);
+    for (code, distance) in distances.into_iter().enumerate() {
+        ring[(position - distance) as usize..][..2].fill(distance as u8);
+        let place = Place {
+            ring: &ring,
+            ring_mask: (1 << 24) - 1,
+            position: position as u32,
+            pair: [distance as u8; 2],
+        };
+        assert_eq!(brotli::short_codes(place, &distances), 1 << code);
     }
 }
 
@@ -450,7 +516,10 @@ fn try_copies() {
             let bits = 2 + below(29);
             [(1 << bits) - 4 + below(3), below(1 << bits)][below(2)].max(1) as u32
         });
-        let matches = from_fn(|i| (longest[i] as u64) << LENGTH_SHIFT | u64::from(distances[i]));
+        let matches = from_fn(|i| {
+            let ignored = [below(32) << 32, below(usize::MAX)][below(2) * usize::from(i >= count)];
+            (longest[i] << LENGTH_SHIFT | ignored) as u64 | u64::from(distances[i])
+        });
         let lengths = first..longest[count - 1] + 1;
         let want = known.after_each(lengths.clone(), |length| {
             let distance = distances[longest.iter().position(|&it| it >= length).unwrap()];
@@ -494,7 +563,7 @@ fn try_copies_needs_room() {
                 let (lengths, starts) = (first..end, [start; 2]);
                 match kind {
                     0 => brotli::try_lengths(ways, lengths, bits, start, 0),
-                    1 => brotli::try_matches(ways, lengths, bits, starts, &[0; 4], 9, &[0.0; 64]),
+                    1 => brotli::try_matches(ways, lengths, bits, starts, &[0; 4], 5, &[0.0; 64]),
                     _ => drop(brotli::try_lengths_at_cost(ways, lengths, 0.0, 0, 0)),
                 }
             })

@@ -189,8 +189,16 @@ fn portable_copies_take_the_paths_of_the_others() {
     }
 }
 
-#[bun_simd::foreach_target(avx2, sse4, neon, portable)]
+#[bun_simd::foreach_target(avx2 + "avx512vl", avx2, sse4, neon, portable)]
 mod listed {
+    #[export]
+    pub fn len() -> usize {
+        isa::U8::LEN
+    }
+}
+
+#[bun_simd::foreach_target(avx512_icl, avx2 + "vaes", sse4 + "sse4.2", sve2 + "sve2-aes", sve2, portable,)]
+mod listed_with_all_widths {
     #[export]
     pub fn len() -> usize {
         isa::U8::LEN
@@ -201,21 +209,15 @@ mod listed {
 fn portable_copies_have_the_widths_in_the_list() {
     let lens = [Target::Portable64, Target::Portable32, Target::Portable].map(|target| {
         limit_to(target);
-        listed::len()
+        [listed::len(), listed_with_all_widths::len()]
     });
-    assert_eq!(lens, [16, 32, 16]);
+    assert_eq!(lens, [[16, 64], [32, 32], [16, 16]]);
 }
 
-#[test]
-fn baseline_is_what_the_lowest_copy_has() {
-    use bun_simd::baseline::Isa as Baseline;
-    let got = [
-        Baseline::HAS_INTERLEAVED_MEMORY,
-        Baseline::HAS_LEADING_ZEROS,
-    ];
-    assert_eq!(got, [!cfg!(target_arch = "x86_64"); 2]);
-    assert_eq!(Baseline::MASKED_BYTES, 0);
-}
+#[cfg(target_arch = "x86_64")]
+const _: fn(bun_simd::baseline::U8) -> bun_simd::sse4::U8 = |v| v;
+#[cfg(target_arch = "aarch64")]
+const _: fn(bun_simd::baseline::U8) -> bun_simd::neon::U8 = |v| v;
 
 fn neither() -> &'static str {
     "neither"
@@ -225,12 +227,9 @@ fn neither() -> &'static str {
 mod listed_simd {
     #[export(or = neither)]
     pub fn module() -> &'static str {
-        module_path!().rsplit("::").next().unwrap()
-    }
-
-    #[export(or = neither)]
-    pub fn last_feature() -> &'static str {
-        MORE_FEATURES.last().unwrap_or(&stringify!(this_target))
+        let name = module_path!().rsplit("::").next().unwrap();
+        assert!(name.split('_').skip(1).eq(MORE_FEATURES.iter().copied()));
+        name
     }
 }
 
@@ -238,6 +237,16 @@ mod listed_simd {
 mod capped_simd {
     #[export(up_to = avx2)]
     pub fn module() -> &'static str {
+        stringify!(this_target)
+    }
+
+    #[export]
+    pub fn by_default() -> &'static str {
+        stringify!(this_target)
+    }
+
+    #[export(up_to = neon, long_running)]
+    pub fn long_running() -> &'static str {
         stringify!(this_target)
     }
 }
@@ -260,13 +269,22 @@ fn further_features() {
         };
         limit_to_with(target, ["vaes", "aes", "pclmulqdq", "unknown"]);
         assert_eq!(listed_simd::module(), best, "{target:?}");
-        assert_eq!(best.rsplit('_').next(), Some(listed_simd::last_feature()));
         limit_to(target);
         assert_eq!(listed_simd::module(), plain, "{target:?}");
-        assert_eq!(listed_simd::last_feature(), plain, "{target:?}");
         limit_to_named(format!("{}+vaes+aes+pclmulqdq", target.name()).as_bytes());
         limit_to_named(b"none+aes");
         assert_eq!(listed_simd::module(), best, "{target:?}");
-        assert_ne!(capped_simd::module(), "avx512_skx", "{target:?}");
+        let capped = match (target, target.arch()) {
+            (_, Some("x86_64")) => "sse4",
+            (Target::Portable64, _) => "portable64",
+            _ => "portable",
+        };
+        let want = match target {
+            Target::Avx512Icl => [capped, "avx512_skx"],
+            Target::Avx512Skx => ["avx512_skx"; 2],
+            _ => [capped; 2],
+        };
+        let got = [capped_simd::by_default(), capped_simd::long_running()];
+        assert_eq!((capped_simd::module(), got), (capped, want), "{target:?}");
     }
 }

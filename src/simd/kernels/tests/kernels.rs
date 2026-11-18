@@ -1392,6 +1392,15 @@ fn xml_of_each_unit() {
         });
     };
     check_bytes(&[&[b'a'; 70_000][..], b"<"].concat());
+    for len in 60..66 {
+        for byte in [0xEF, 0xBF] {
+            check_bytes(&[&vec![byte; len][..], b"\xEF\xBF\xBE<"].concat());
+        }
+        for unit in [0xD800, 0xDC00] {
+            let (lone, all) = ([vec![unit; len], vec![0x20; 2]].concat(), 0..len as u32);
+            check(all.collect(), || xml_index(&lone, xml::index_chunk16));
+        }
+    }
     for byte in 0..=255 {
         check_bytes(&[byte, b'=', b'>', b'<', byte, b'=']);
         for before in (60..65).chain(124..129) {

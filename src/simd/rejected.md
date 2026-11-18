@@ -111,6 +111,31 @@ More than 16 bytes to repeat:
 bun_simd::sse4::Vector::<u8, 32>::repeat([0; 32]);
 ```
 
+The minimum of an odd number of `f64`, in the portable copies:
+
+```rust,compile_fail,E0080
+let v = bun_simd::portable::Vector::<f64, 1>::zero();
+v.min(v);
+```
+
+A product that is slow on most targets:
+
+```rust,compile_fail,E0369
+bun_simd::sse4::U8::zero() * 3;
+```
+
+```rust,compile_fail,E0369
+bun_simd::sse4::I8::zero() * 3;
+```
+
+```rust,compile_fail,E0369
+bun_simd::sse4::U64::zero() * 3;
+```
+
+```rust,compile_fail,E0369
+bun_simd::sse4::I64::zero() * 3;
+```
+
 ## The gate
 
 Fewer features than the kernel has:
@@ -835,6 +860,36 @@ mod simd {
 }
 ```
 
+An argument that `export` does not know:
+
+```rust,compile_fail
+#[bun_simd::foreach_target]
+mod simd {
+    #[export(fast)]
+    pub fn f() {}
+}
+```
+
+Code that no copy uses:
+
+```rust,compile_fail
+#[deny(dead_code)]
+#[bun_simd::foreach_target]
+mod simd {
+    fn f() {}
+}
+# fn main() {}
+```
+
+```rust,compile_fail
+#[deny(dead_code)]
+#[bun_simd::foreach_target(avx2, sse4, neon, portable)]
+mod simd {
+    fn f() {}
+}
+# fn main() {}
+```
+
 A kind of inlining that the macro would drop:
 
 ```rust,compile_fail
@@ -1258,6 +1313,34 @@ mod simd {}
 
 ```rust,compile_fail
 #[bun_simd::foreach_target(sse4 + "pclmulqdq", sse4 + "aes", sse4 + "vpclmulqdq")]
+mod simd {}
+# fn main() {}
+```
+
+```rust,compile_fail
+#[bun_simd::foreach_target(sse4 + "aes", avx2)]
+mod simd {}
+# fn main() {}
+```
+
+```rust,compile_fail
+#[bun_simd::foreach_target(portable, sse4)]
+mod simd {}
+# fn main() {}
+```
+
+The features of two architectures are not compared. These fill the start of their table, where those of `sse4` are in theirs:
+
+```rust,no_run
+#[bun_simd::foreach_target(sse4, neon + "crc" + "lse2" + "lse128" + "rcpc3" + "flagm2" + "cssc" + "mops" + "hbc" + "aes")]
+mod simd {}
+# fn main() {}
+```
+
+A feature in place of a target:
+
+```rust,compile_fail
+#[bun_simd::foreach_target(avx, sse4)]
 mod simd {}
 # fn main() {}
 ```

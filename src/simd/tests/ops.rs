@@ -47,10 +47,10 @@ impl Random {
 }
 
 impl Random {
-    /// Often equal, or zero with either sign.
+    /// Often equal, neighbors, or zero with either sign.
     fn doubles<const N: usize>(&mut self) -> [f64; N] {
         black_box(from_fn(|_| match self.next() % 8 {
-            few @ ..4 => [0.0, -0.0, 3.0, -1e99][few as usize],
+            few @ ..5 => [0.0, -0.0, 0f64.next_up(), 3.0, -1e99][few as usize],
             _ => self.next() as i64 as f64 / 1e12,
         }))
     }
@@ -609,6 +609,47 @@ fn random_inputs() {
 #[should_panic = "remaining() >= 64"]
 fn bit_indices_without_room() {
     simd::no_bit_indices(&mut [0; 63]);
+}
+
+#[test]
+#[cfg(debug_assertions)]
+fn portable_ops_check_their_input() {
+    use bun_simd::portable::{I32, U32, Vector};
+    fn last<T: Lane + Default, const N: usize>(lane: T) -> Vector<T, N> {
+        Vector::from_array(from_fn(|i| [T::default(), lane][(i + 1) / N]))
+    }
+    let calls: [fn(); _] = [
+        || _ = last::<_, 4>(f64::NAN).min(last(0.0)),
+        || _ = last::<_, 4>(0.0).min(last(f64::NAN)),
+        || _ = last::<_, 4>(f64::NAN).min(last(f64::NAN)),
+        || _ = last::<f64, 4>(2147483648.0).to_i32(),
+        || _ = last::<f64, 4>(-2147483649.0).to_i32(),
+        || _ = last::<_, 4>(f64::NAN).to_i32(),
+        || _ = last::<f32, 4>(2147483648.0).to_i32(),
+        || _ = last::<f32, 4>(-3e9).to_i32(),
+        || _ = last::<u64, 4>(0).compress(16),
+        || _ = last::<u64, 4>(0).compress(17),
+        || _ = last::<u8, 16>(0).lookup(last(16)),
+        || _ = last::<u8, 16>(0).lookup(last(127)),
+        || _ = last::<u8, 16>(0).lookup2(last(0), last(32)),
+        || _ = last::<u8, 16>(0).lookup2(last(0), last(33)),
+        || _ = last::<_, 8>(i16::MIN).mul_q15(last(i16::MIN)),
+        || _ = last::<_, 8>(i16::MIN).mul_high(last(i16::MIN)),
+        || _ = last::<i16, 8>(1).mul_sign(last(0)),
+        || _ = last::<i16, 8>(-1).reverse().mul_sign(last(0)),
+        || _ = I32::zero().add_dot::<16>(last(0), last(-1)),
+        || _ = U32::distances(last(0), last(1)),
+        || _ = U32::distances(last(0), U32::from_array([0, 1, 0, 0]).bitcast()),
+        || _ = U32::distances(last(0), U32::from_array([0, 1, 0, 1]).bitcast()),
+    ];
+    for (i, call) in calls.into_iter().enumerate() {
+        assert!(std::panic::catch_unwind(call).is_err(), "{i}");
+    }
+    let largest = 2147483648f32.next_down();
+    assert_eq!(
+        last::<_, 4>(largest).to_i32().to_array(),
+        [0, 0, 0, largest as i32]
+    );
 }
 
 #[test]

@@ -1,6 +1,7 @@
 // `build_options` is a generated module (build.rs consts), re-exported publicly.
 pub use crate::build_options;
 
+/// Always `true`: Bun has no wasm build. Kept for one reader in `parsers/xml_index.rs`.
 pub const IS_NATIVE: bool = true;
 const IS_MAC: bool = cfg!(target_os = "macos");
 pub const IS_WINDOWS: bool = cfg!(windows);

@@ -10,11 +10,11 @@ mod _impl {
     use bun_zstd::{Decoder, Encoder, EndDirective, Output, Status};
 
     use crate::node::node_zlib_binding::{
-        CompressionContext, CompressionStreamImpl as _, Error, Stream,
+        CompressionContext, CompressionStreamImpl as _, Error, Stream, Z_BUF_ERROR,
     };
     use crate::node::util::validators;
     // #[repr(u8)] enum shared by all native-zlib stream types.
-    use bun_zlib::NodeMode;
+    use crate::node::node_zlib_binding::NodeMode;
 
     pub(crate) struct NativeZstd {
         stream: Cell<Option<Box<Stream<Context>>>>,
@@ -312,7 +312,7 @@ mod _impl {
             if flush == EndDirective::End && is_in_frame && input.is_empty() && out.room() != 0 {
                 return Err(Error::init(
                     c"unexpected end of file",
-                    bun_zlib::ReturnCode::BufError as c_int,
+                    Z_BUF_ERROR,
                     c"Z_BUF_ERROR",
                 ));
             }

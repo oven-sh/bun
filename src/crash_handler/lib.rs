@@ -2844,29 +2844,25 @@ mod draft {
         // The following switch must be kept in sync with `bun.report`'s decoder implementation.
         match opts.reason {
             CrashReason::Panic(message) => {
+                use bun_zlib::deflate;
                 writer.write_byte(b'0')?;
 
-                let mut compressed_bytes: [u8; 2048] = [0; 2048];
-                let compressed = match bun_zlib::compress(&mut compressed_bytes, message, 9) {
-                    Ok(len) => &compressed_bytes[0..len],
-                    // Insufficient memory.
-                    Err(bun_zlib::ReturnCode::MemError) => {
-                        return Err(crate::Error::Alloc(bun_alloc::AllocError));
-                    }
-                    // The buffer dest was not large enough to hold the compressed data.
-                    Err(bun_zlib::ReturnCode::BufError) => {
-                        return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOSPC));
-                    }
-                    // The level was not Z_DEFAULT_LEVEL, or was not between 0 and 9.
-                    // This is technically possible but impossible because we pass 9.
-                    Err(_) => return Err(crate::Error::Unexpected),
+                let mut compressed = Vec::new();
+                let options = deflate::Options {
+                    level: deflate::Level::BEST,
+                    ..Default::default()
                 };
+                deflate::compress(message, &mut compressed, deflate::Container::Zlib, options)
+                    .map_err(|error| match error {
+                        bun_zlib::Error::Alloc(error) => crate::Error::Alloc(error),
+                        _ => crate::Error::Unexpected,
+                    })?;
 
                 let mut b64_bytes: [u8; 2048] = [0; 2048];
-                if bun_base64::encode_len(compressed) > b64_bytes.len() {
+                if bun_base64::encode_len(&compressed) > b64_bytes.len() {
                     return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOSPC));
                 }
-                let b64_len = bun_base64::encode(&mut b64_bytes, compressed);
+                let b64_len = bun_base64::encode(&mut b64_bytes, &compressed);
 
                 writer.write_all(strings::trim_right(&b64_bytes[0..b64_len], b"="))?;
             }

@@ -15,13 +15,10 @@ import { join } from "node:path";
 import { bunExeName, linksWithLld, type Config } from "./config.ts";
 import { overridesDarwinAllocator, replacedOperatorNewSymbols } from "./deps/mimalloc.ts";
 import { quote, slash } from "./shell.ts";
-import type { DepName } from "./source.ts";
 import { loadFeatures } from "./trim/features.ts";
 import { ucrtServicingLibDir } from "./winsysroot.ts";
 
-export const safeStackDependencies: readonly DepName[] = ["zlib"];
-
-export function usesSafeStack(c: Pick<Config, "hardened" | "x64" | "abi" | "asan">): boolean {
+function usesSafeStack(c: Pick<Config, "hardened" | "x64" | "abi" | "asan">): boolean {
   return c.hardened && c.x64 && c.abi === "gnu" && !c.asan;
 }
 
@@ -33,10 +30,6 @@ export function fuzzilliCoverageFlags(cfg: Pick<Config, "cwd" | "fuzzilli" | "fu
     "-fsanitize-coverage=trace-pc-guard",
     ...(cfg.fuzzilliCompilerOnly ? [`-fsanitize-coverage-allowlist=${list}`] : []),
   ];
-}
-
-export function safeStackFlags(c: Pick<Config, "hardened" | "x64" | "abi" | "asan">, dependency: DepName): string[] {
-  return usesSafeStack(c) && safeStackDependencies.includes(dependency) ? ["-fsanitize=safe-stack"] : [];
 }
 
 export type FlagValue = string | string[] | ((cfg: Config) => string | string[]);
@@ -661,8 +654,8 @@ export const globalFlags: Flag[] = [
     // Every summaried bitcode module in the link must agree on the
     // EnableSplitLTOUnit flag or lld dies with "inconsistent LTO Unit
     // splitting". -fwhole-program-vtables (above) defaults the split ON for
-    // C++ on ELF targets but it's a cxx-only flag, so the C modules (zlib,
-    // c-ares, mimalloc, boringssl's .c files, ...) would disagree. Force it
+    // C++ on ELF targets but it's a cxx-only flag, so the C modules
+    // (c-ares, mimalloc, boringssl's .c files, ...) would disagree. Force it
     // OFF everywhere instead of on: split LTO units shunt every module's
     // vtables + type metadata into a merged regular-LTO half — a serial
     // merged module, which is exactly what ThinLTO is supposed to avoid.
@@ -720,7 +713,7 @@ export const bunOnlyFlags: Flag[] = [
   {
     flag: "-DBUN_SAFE_STACK=1",
     when: c => usesSafeStack(c),
-    desc: "Hardened: every thread gets the second stack that the libraries compiled with SafeStack keep their arrays on",
+    desc: "Hardened: every thread gets the second stack that what is compiled with SafeStack keeps its arrays on",
   },
 
   // ─── Build profiling ───
@@ -1935,7 +1928,6 @@ export function bunIncludes(cfg: Config): string[] {
     join(cwd, "src/uws_sys"),
     codegenDir,
     vendorDir,
-    join(vendorDir, "zlib"),
     // NODEJS_HEADERS_PATH comes from the nodejs dep; added separately
   ];
 
@@ -2041,6 +2033,12 @@ export const fileOverrides: FileOverride[] = [
     desc: "Same as highway_json.cpp below: the kernels run over every pixel of a WebP image.",
   },
   {
+    file: "src/jsc/bindings/highway_zlib.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the kernels run in the loops of a DEFLATE stream.",
+  },
+  {
     file: "src/jsc/bindings/highway_xml.cpp",
     extraFlags: ["-O2"],
     when: c => c.debug,
@@ -2051,6 +2049,12 @@ export const fileOverrides: FileOverride[] = [
     extraFlags: ["-O2"],
     when: c => c.debug,
     desc: "Same as highway_json.cpp below: the kernels run over every literal that zstd compresses.",
+  },
+  {
+    file: "src/jsc/bindings/highway_zstd.cpp",
+    extraFlags: ["-fsanitize=safe-stack"],
+    when: usesSafeStack,
+    desc: "It sorts input into arrays on the stack, and never calls back into JavaScript.",
   },
   {
     file: "src/jsc/bindings/highway_zstd.cpp",
@@ -2194,10 +2198,7 @@ export function computeCpuTargetFlags(cfg: Config): string[] {
  */
 export function extraFlagsFor(cfg: Config, srcRelPath: string): string[] {
   const key = srcRelPath.replaceAll("\\", "/");
-  for (const o of fileOverrides) {
-    if (o.file !== key) continue;
-    if (o.when && !o.when(cfg)) continue;
-    return resolveFlagValue(o.extraFlags, cfg);
-  }
-  return [];
+  return fileOverrides
+    .filter(o => o.file === key && (!o.when || o.when(cfg)))
+    .flatMap(o => resolveFlagValue(o.extraFlags, cfg));
 }

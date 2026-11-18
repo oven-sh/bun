@@ -96,7 +96,6 @@ members = [
   "src/platform",
   "src/sha_hmac",
   "src/sys_jsc",
-  "src/zlib_sys",
   "src/dispatch",
   "src/brotli",
   "src/bundler_jsc",
@@ -476,7 +475,6 @@ bun_patch = { path = "src/patch" }
 bun_platform = { path = "src/platform" }
 bun_sha_hmac = { path = "src/sha_hmac" }
 bun_sys_jsc = { path = "src/sys_jsc" }
-bun_zlib_sys = { path = "src/zlib_sys" }
 bun_dispatch = { path = "src/dispatch" }
 bun_brotli = { path = "src/brotli" }
 bun_bundler_jsc = { path = "src/bundler_jsc" }
@@ -552,6 +550,10 @@ opt-level = 3
 
 # Runs for every field of an HTTP/2 header block.
 [profile.dev.package.bun_hpack]
+opt-level = 3
+
+# Runs for every byte that is compressed or decompressed.
+[profile.dev.package.bun_zlib]
 opt-level = 3
 
 # It stands in for vector code that every test program runs over each byte it parses.

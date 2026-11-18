@@ -3044,20 +3044,17 @@ pub(crate) fn download_to_path(
             }
 
             {
+                use bun_zlib::{Inflater, inflate};
                 refresher.start(b"Decompressing", 0);
-                let gunzip_result = (|| -> crate::Result<()> {
-                    let mut gunzip = bun_zlib::ZlibReaderArrayList::init(
-                        compressed_archive_bytes.list.as_slice(),
-                        &mut tarball_bytes,
-                    )
-                    .map_err(|_| crate::Error::InvalidResponse)?;
-                    gunzip
-                        .read_all(true)
-                        .map_err(|_| crate::Error::InvalidResponse)?;
-                    Ok(())
-                })();
+                let status = Inflater::new(inflate::Container::ZlibOrGzip).inflate_to_vec(
+                    &mut compressed_archive_bytes.list.as_slice(),
+                    &mut tarball_bytes,
+                    usize::MAX,
+                );
                 refresher.end();
-                gunzip_result?;
+                if status != Ok(inflate::Status::StreamEnd) {
+                    return Err(crate::Error::InvalidResponse);
+                }
             }
             refresher.refresh();
 

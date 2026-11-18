@@ -1,7 +1,8 @@
 //! PNG to 8-bit RGBA. No checksum is looked at: not a chunk's CRC, not a zlib stream's Adler-32.
 
 use bun_core::strings::index_of_char_usize;
-use bun_zlib::{InflateDecoder, ReturnCode};
+use bun_zlib::Inflater;
+use bun_zlib::inflate::{Container, Status};
 
 use crate::chunk::{self, ChunkType, Reader};
 use crate::error::{Error, Result};
@@ -11,8 +12,10 @@ use crate::header::{ColorType, Header, IHDR_LEN};
 /// What a JPEG file has room for, in 255 segments. A few KB of iCCP can inflate to a thousand times as much.
 const MAX_ICC_PROFILE_LEN: usize = 255 * 65_519;
 
-/// Bytes of lines inflated at a time: a call of zlib ends with a copy to its window, and repeating from there is slow.
+/// Bytes of lines inflated at a time, as a call for each short line takes longer.
 const AHEAD_LEN: usize = 128 * 1024;
+/// No system has smaller pages.
+const PAGE_LEN: usize = 4 * 1024;
 
 type Rgba = [u8; 4];
 
@@ -160,25 +163,16 @@ impl<'a> Chunks<'a> {
 
 /// `None`: the stream is damaged, cut short, empty, or inflates to more than `MAX_ICC_PROFILE_LEN`.
 fn inflate_icc_profile(mut input: &[u8]) -> Result<Option<Vec<u8>>> {
-    let mut inflater = new_inflater()?;
+    let mut inflater = new_inflater();
     let mut out = Vec::new();
     // Nobody looks at the Adler-32, so a stream that comes without one, as some do, is lent one.
     let mut lent: Option<&[u8]> = Some(&[0; 4]);
     loop {
-        // As much again, up to one byte too many.
-        let room = out.len().max(8 * 1024);
-        let room = room.min((MAX_ICC_PROFILE_LEN + 1).saturating_sub(out.len()));
-        let full = out.len() + room;
-        let (used, code) = inflater.step_limited(input, &mut out, room);
-        input = input.get(used..).unwrap_or_default();
-        match code {
-            ReturnCode::StreamEnd => break,
-            ReturnCode::MemError => return Err(Error::Alloc(bun_alloc::AllocError)),
-            ReturnCode::Ok | ReturnCode::BufError if out.len() < full => match lent.take() {
-                Some(adler32) => input = adler32,
-                None => return Ok(None),
-            },
-            ReturnCode::Ok | ReturnCode::BufError if full <= MAX_ICC_PROFILE_LEN => {}
+        let room = (MAX_ICC_PROFILE_LEN + 1).saturating_sub(out.len());
+        match inflater.inflate_to_vec(&mut input, &mut out, room) {
+            Ok(Status::StreamEnd) => break,
+            Ok(Status::NeedsInput) if let Some(adler32) = lent.take() => input = adler32,
+            Err(bun_zlib::Error::Alloc(error)) => return Err(error.into()),
             _ => return Ok(None),
         }
     }
@@ -187,20 +181,18 @@ fn inflate_icc_profile(mut input: &[u8]) -> Result<Option<Vec<u8>>> {
 }
 
 /// One that does not look at the Adler-32.
-fn new_inflater() -> Result<InflateDecoder> {
-    let mut inflater = InflateDecoder::new(bun_zlib::MAX_WBITS)?;
-    if inflater.set_validate(false) != ReturnCode::Ok {
-        return Err(Error::Zlib);
-    }
-    Ok(inflater)
+fn new_inflater() -> Inflater {
+    let mut inflater = Inflater::new(Container::Zlib);
+    inflater.ignore_adler32();
+    inflater
 }
 
 /// The zlib stream that the consecutive IDAT chunks hold between them.
 struct Idat<'a> {
     reader: Reader<'a>,
-    /// What zlib has not taken yet of the chunk `reader` is behind.
+    /// What has not been inflated yet of the chunk `reader` is behind.
     input: &'a [u8],
-    inflater: InflateDecoder,
+    inflater: Inflater,
     /// How many bytes are still to be inflated of the lines that are read ahead.
     ahead_left: usize,
     /// Inflated for the reads to come, and how much of it they have had.
@@ -214,7 +206,7 @@ impl<'a> Idat<'a> {
         Ok(Self {
             input: reader.take(len)?,
             reader,
-            inflater: new_inflater()?,
+            inflater: new_inflater(),
             ahead_left: 0,
             ahead: Vec::new(),
             ahead_read: 0,
@@ -271,19 +263,18 @@ impl<'a> Idat<'a> {
     /// Appends the next `len` bytes of the stream to `out`.
     // https://github.com/randy408/libspng/blob/fb768002d4288590083a476af628e51c3f1d47cd/spng/spng.c#L1389
     fn inflate(&mut self, out: &mut Vec<u8>, len: usize) -> Result<()> {
+        out.try_reserve(len)?;
         let end = out.len().saturating_add(len);
-        while out.len() < end {
-            let (used, code) = self.inflater.step_limited(self.input, out, end - out.len());
-            self.input = self.input.get(used..).unwrap_or_default();
-            match code {
-                ReturnCode::StreamEnd if out.len() < end => return Err(Error::IdatTooShort),
-                ReturnCode::Ok | ReturnCode::StreamEnd => {}
-                ReturnCode::BufError => self.input = self.next_chunk()?,
-                ReturnCode::MemError => return Err(Error::Alloc(bun_alloc::AllocError)),
-                _ => return Err(Error::InvalidIdatStream),
+        loop {
+            let room = end - out.len();
+            match self.inflater.inflate_to_vec(&mut self.input, out, room) {
+                Err(bun_zlib::Error::Alloc(error)) => return Err(error.into()),
+                Err(_) | Ok(Status::NeedsDictionary) => return Err(Error::InvalidIdatStream),
+                Ok(_) if out.len() == end => return Ok(()),
+                Ok(Status::StreamEnd) => return Err(Error::IdatTooShort),
+                Ok(_) => self.input = self.next_chunk()?,
             }
         }
-        Ok(())
     }
 }
 
@@ -454,6 +445,9 @@ fn read_rgba8(header: Header, size: usize, idat: &mut Idat) -> Result<Vec<u8>> {
         let lines = lines_at_a_time.min(lines_left);
         lines_left -= lines;
         let start = image.len();
+        // Some CPUs are slow to get new pages within `memcpy`, and none prefetches from them.
+        let room = image.spare_capacity_mut().iter_mut().take(AHEAD_LEN);
+        room.step_by(PAGE_LEN).for_each(|byte| _ = byte.write(0));
         idat.read(&mut image, lines * line_len)?;
         for i in 0..lines {
             let (from, to) = (start + i * line_len, start + i * stride);

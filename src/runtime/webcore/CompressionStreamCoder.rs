@@ -16,7 +16,7 @@
 //! again once the consumer has room; in between, the coder keeps the chunk's
 //! unconsumed input ([`Pending`]).
 
-use core::ffi::{c_int, c_void};
+use core::ffi::c_void;
 
 use bun_core::EncodedSlice;
 use bun_core::vec::{BorrowedCursor, append_with};
@@ -26,7 +26,7 @@ use bun_jsc::{
     ThreadIsolatedArg,
 };
 
-use bun_zlib as zlib;
+use bun_zlib::{Deflater, Inflater, deflate, inflate};
 use bun_zstd::{EndDirective, Status};
 
 /// Matches `Bun::WebStreams::CompressionFormat` in `StreamsForward.h`.
@@ -51,21 +51,12 @@ impl Format {
             _ => return None,
         })
     }
-
-    fn window_bits(self) -> c_int {
-        match self {
-            Self::Deflate => zlib::MAX_WBITS,
-            Self::DeflateRaw => -zlib::MAX_WBITS,
-            Self::Gzip => zlib::MAX_WBITS + 16,
-            Self::Brotli | Self::Zstd => unreachable!(),
-        }
-    }
 }
 
 /// Growth granularity of a step's output buffer.
 const CHUNK: usize = 16 * 1024;
 
-/// Reserves up to [`CHUNK`] in `out`. Returns how many bytes a step may add.
+/// Reserves up to [`CHUNK`] in `out`, and returns how much it may grow by.
 fn reserve_step(out: &mut Vec<u8>, cap: usize) -> Result<usize, CodecError> {
     debug_assert!(out.len() < cap);
     let budget = cap - out.len();
@@ -74,7 +65,7 @@ fn reserve_step(out: &mut Vec<u8>, cap: usize) -> Result<usize, CodecError> {
     Ok(budget)
 }
 
-/// One codec call: lends `step` the spare capacity of `out` up to `cap`.
+/// One codec call: lends `step` the spare capacity up to `cap`.
 fn append_step<R>(
     out: &mut Vec<u8>,
     cap: usize,
@@ -82,6 +73,13 @@ fn append_step<R>(
 ) -> Result<R, CodecError> {
     let budget = reserve_step(out, cap)?;
     Ok(append_with(out, budget, step))
+}
+
+fn zlib_error(error: bun_zlib::Error, message: &'static str) -> CodecError {
+    match error {
+        bun_zlib::Error::Alloc(_) => CodecError::OutOfMemory,
+        _ => CodecError::Message(message),
+    }
 }
 
 /// [`append_step`] for zstd. Returns the input consumed.
@@ -118,8 +116,8 @@ enum Progress {
 }
 
 enum Backend {
-    Deflate(zlib::DeflateEncoder),
-    Inflate(zlib::InflateDecoder),
+    Deflate(Box<Deflater>),
+    Inflate(Box<Inflater>),
     BrotliEncode(Box<bun_brotli::Encoder>),
     BrotliDecode(Box<bun_brotli::Decoder>),
     ZstdEncode(Box<bun_zstd::Encoder>),
@@ -165,22 +163,29 @@ impl CompressionStreamCoder {
         high_water_mark: usize,
         level: Option<i32>,
     ) -> Result<Box<Self>, CodecError> {
+        let inflater = |container| Backend::Inflate(Box::new(Inflater::new(container)));
         let backend = match (format, decompress) {
             (Format::Deflate | Format::DeflateRaw | Format::Gzip, false) => {
-                // Spec: "default compression level". Z_DEFAULT_COMPRESSION = -1.
-                let s = zlib::DeflateEncoder::new(
-                    level.unwrap_or(-1),
-                    format.window_bits(),
-                    8, // default mem_level
-                    0, // Z_DEFAULT_STRATEGY
-                )
-                .map_err(|_| CodecError::Message("failed to initialize deflate"))?;
-                Backend::Deflate(s)
+                let container = match format {
+                    Format::DeflateRaw => deflate::Container::Raw,
+                    Format::Gzip => deflate::Container::Gzip,
+                    _ => deflate::Container::Zlib,
+                };
+                let deflater = level
+                    .map_or(Ok(deflate::Level::DEFAULT), deflate::Level::try_from)
+                    .and_then(|level| {
+                        let options = deflate::Options {
+                            level,
+                            ..Default::default()
+                        };
+                        Deflater::new(container, options)
+                    })
+                    .map_err(|_| CodecError::Message("failed to initialize deflate"))?;
+                Backend::Deflate(deflater)
             }
-            (Format::Deflate | Format::DeflateRaw | Format::Gzip, true) => Backend::Inflate(
-                zlib::InflateDecoder::new(format.window_bits())
-                    .map_err(|_| CodecError::Message("failed to initialize inflate"))?,
-            ),
+            (Format::Deflate, true) => inflater(inflate::Container::Zlib),
+            (Format::DeflateRaw, true) => inflater(inflate::Container::Raw),
+            (Format::Gzip, true) => inflater(inflate::Container::Gzip),
             (Format::Brotli, false) => {
                 if bun_removable_features::is_removed(
                     bun_removable_features::Feature::BrotliEncoder,
@@ -280,6 +285,11 @@ impl CompressionStreamCoder {
     ) -> Result<Progress, CodecError> {
         match &mut self.backend {
             Backend::Deflate(s) => {
+                let flush = if finish {
+                    deflate::Flush::Finish
+                } else {
+                    deflate::Flush::None
+                };
                 let mut remaining = input;
                 loop {
                     if out.len() >= cap {
@@ -287,47 +297,17 @@ impl CompressionStreamCoder {
                             consumed: input.len() - remaining.len(),
                         });
                     }
-                    // A step takes at most `u32::MAX` bytes.
-                    let tail = remaining.len() > u32::MAX as usize;
-                    let flush = if finish && !tail {
-                        zlib::FlushValue::Finish
-                    } else {
-                        zlib::FlushValue::NoFlush
-                    };
-                    let budget = cap - out.len();
-                    let (consumed, rc) =
-                        s.step_up_to(remaining, out, budget.min(CHUNK), budget, flush);
-                    remaining = &remaining[consumed..];
-                    match rc {
-                        zlib::ReturnCode::Ok | zlib::ReturnCode::BufError => {}
-                        zlib::ReturnCode::StreamEnd => return Ok(Progress::Done),
-                        zlib::ReturnCode::MemError => return Err(CodecError::OutOfMemory),
-                        _ => return Err(CodecError::Message("deflate failed")),
-                    }
-                    if s.avail_out() != 0 && remaining.is_empty() {
+                    let status =
+                        append_step(out, cap, |out| s.deflate(&mut remaining, out, flush))?
+                            .map_err(|error| zlib_error(error, "deflate failed"))?;
+                    if status != deflate::Status::NeedsOutput {
                         return Ok(Progress::Done);
                     }
                 }
             }
             Backend::Inflate(s) => {
-                // After a gzip member ends, further bytes must be another member (RFC 1952 §2.2).
-                let gzip = s.is_gzip_only();
-                if !continuing {
-                    // `self.ended` = "the last inflate returned StreamEnd" = "at
-                    // a member boundary". For gzip, a following chunk starts the
-                    // next member; for deflate/deflate-raw it is trailing junk.
-                    if self.ended && !input.is_empty() {
-                        if !gzip {
-                            return Err(CodecError::TrailingJunk);
-                        }
-                        if s.reset() != zlib::ReturnCode::Ok {
-                            return Err(CodecError::Message("inflate failed"));
-                        }
-                        self.ended = false;
-                    }
-                    if input.is_empty() && (self.ended || !finish) {
-                        return Ok(Progress::Done);
-                    }
+                if !continuing && input.is_empty() && (self.ended || !finish) {
+                    return Ok(Progress::Done);
                 }
                 let mut remaining = input;
                 loop {
@@ -336,49 +316,31 @@ impl CompressionStreamCoder {
                             consumed: input.len() - remaining.len(),
                         });
                     }
-                    // A step takes at most `u32::MAX` bytes.
-                    let tail = remaining.len() > u32::MAX as usize;
-                    let flush = if finish && !tail {
-                        zlib::FlushValue::Finish
-                    } else {
-                        zlib::FlushValue::NoFlush
-                    };
-                    let budget = cap - out.len();
-                    let (consumed, rc) =
-                        s.step_up_to(remaining, out, budget.min(CHUNK), budget, flush);
-                    remaining = &remaining[consumed..];
-                    match rc {
-                        zlib::ReturnCode::Ok => {}
-                        zlib::ReturnCode::BufError => {
-                            if finish && !tail {
-                                return Err(CodecError::Message("unexpected end of file"));
-                            }
+                    let budget = reserve_step(out, cap)?;
+                    let status = s
+                        .inflate_to_vec(&mut remaining, out, budget)
+                        .map_err(|error| zlib_error(error, "inflate failed"))?;
+                    match status {
+                        inflate::Status::NeedsOutput | inflate::Status::BlockEnd => {}
+                        inflate::Status::NeedsInput if finish => {
+                            return Err(CodecError::Message("unexpected end of file"));
                         }
-                        zlib::ReturnCode::StreamEnd => {
+                        inflate::Status::NeedsInput => return Ok(Progress::Done),
+                        inflate::Status::StreamEnd => {
                             self.ended = true;
                             if remaining.is_empty() {
                                 return Ok(Progress::Done);
                             }
-                            if !gzip {
+                            // After a gzip member, it has to be another one (RFC 1952 §2.2).
+                            if s.container() != inflate::Container::Gzip {
                                 return Err(CodecError::TrailingJunk);
                             }
-                            if s.reset() != zlib::ReturnCode::Ok {
-                                return Err(CodecError::Message("inflate failed"));
-                            }
+                            s.reset();
                             self.ended = false;
-                            continue;
                         }
-                        zlib::ReturnCode::NeedDict => {
+                        inflate::Status::NeedsDictionary => {
                             return Err(CodecError::Message("Missing dictionary"));
                         }
-                        zlib::ReturnCode::MemError => return Err(CodecError::OutOfMemory),
-                        _ => return Err(CodecError::Message("inflate failed")),
-                    }
-                    if s.avail_out() != 0 && remaining.is_empty() {
-                        if finish && !self.ended {
-                            return Err(CodecError::Message("unexpected end of file"));
-                        }
-                        return Ok(Progress::Done);
                     }
                 }
             }

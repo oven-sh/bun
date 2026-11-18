@@ -1282,10 +1282,13 @@ describe("bundler", () => {
 
     itBundled("jsx/PreserveApiRuntimeOption", {
       files: {
-        "/in.tsx": `export const element = <section data-kind="api">API</section>;`,
+        "/in.tsx": `
+          export { readFileSync } from "node:fs";
+          export const element = <section data-kind="api">API</section>;
+        `,
       },
       outfile: "/out.js",
-      target: "bun",
+      target: "node",
       backend: "api",
       jsx: {
         runtime: "preserve",
@@ -1293,6 +1296,7 @@ describe("bundler", () => {
       onAfterBundle(api) {
         const out = api.readFile("/out.js");
         expect(out).toContain('<section data-kind="api">API</section>');
+        expect(out).toContain('"node:fs"');
         expect(out).not.toContain("jsx-runtime");
       },
     });

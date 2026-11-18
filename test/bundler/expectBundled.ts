@@ -1495,6 +1495,7 @@ for (const [key, blob] of build.outputs) {
       } else {
         await esbuild.build({
           bundle: true,
+          platform: target === "bun" ? "node" : target,
           format: esbuildFormat,
           splitting,
           entryPoints: [...entryPaths, ...(entryPointsRaw ?? [])],

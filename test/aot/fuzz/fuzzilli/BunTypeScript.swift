@@ -2154,7 +2154,16 @@ final class TypeScriptPlan {
     }
 
     func convert(_ expression: Expression, producing v: Variable) -> Expression {
-        outputConversions[v].map { apply($0, to: expression) } ?? expression
+        let converted = outputConversions[v].map { apply($0, to: expression) } ?? expression
+        guard isUnusedLiteral(v), converted.type === ObjectLiteral else { return converted }
+        // In brackets a literal that nothing uses is a statement. Without them the lifter declares a variable for it.
+        return Expression(type: EffectfulBracketedExpression, text: "(\(converted.text))", numSubexpressions: 0)
+    }
+
+    private lazy var usedVariables: Set<Variable> = Set(code.flatMap { Array($0.inputs) })
+    private func isUnusedLiteral(_ v: Variable) -> Bool {
+        guard let definition = definition(of: v), definition.op is EndObjectLiteral else { return false }
+        return !usedVariables.contains(v)
     }
 
     private func apply(_ conversion: Conversion, to expression: Expression) -> Expression {

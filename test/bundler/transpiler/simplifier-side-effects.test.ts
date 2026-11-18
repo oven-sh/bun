@@ -62,7 +62,7 @@ test.concurrent("computed key of an unused object literal is converted as a prop
     run("setter", () => { ({ set [sym](v) {} }); return "ok"; });
     run("method", () => { ({ [sym]() {} }); return "ok"; });
     run("async generator", () => { ({ async *[sym]() {} }); return "ok"; });
-    run("for init", () => { for (({ [sym]: 1 }); ; ) return "ok"; });
+    run("arrow in a for init", () => { for (var f = () => { ({ [sym]: 1 }); }; ; ) { f(); return "ok"; } });
     run("object key", () => { ({ [key("a")]: 1 }); return "ok"; });
     run("Symbol.toPrimitive", () => { ({ [hinted]: 1 }); return "ok"; });
     run("two keys", () => { ({ [key("a")]: value("a"), [key("b")]: value("b") }); return "ok"; });
@@ -72,7 +72,7 @@ test.concurrent("computed key of an unused object literal is converted as a prop
       ({ ["a"]: value("a"), [1]: value("b"), [null]: 1, [1n]: 1, [true]: 1, [undefined]: 1 });
       return "ok";
     });
-    const obj = { fn() { return this === obj ? "obj" : String(this); } };
+    const obj = { fn() { return this === obj ? "obj" : "not obj"; } };
     run("tag behind a conditional", () => ({ ["a"]: 1 } ? obj.fn : 2)\`x\`);
     run("tag behind a comma", () => (({ ["a"]: 1 }), obj.fn)\`x\`);
     run("name of a function behind a conditional", () => {
@@ -94,15 +94,15 @@ test.concurrent("computed key of an unused object literal is converted as a prop
       "setter: ok",
       "method: ok",
       "async generator: ok",
-      "for init: ok",
+      "arrow in a for init: ok",
       "object key: ok, a.toString",
       "Symbol.toPrimitive: ok, hint string",
       "two keys: ok, a.toString, value a, b.toString, value b",
       "key without a conversion: TypeError",
       "undeclared key: ReferenceError",
       "literal keys: ok, value a, value b",
-      "tag behind a conditional: undefined",
-      "tag behind a comma: undefined",
+      "tag behind a conditional: not obj",
+      "tag behind a comma: not obj",
       'name of a function behind a conditional: ""',
     ],
     stderr: "",

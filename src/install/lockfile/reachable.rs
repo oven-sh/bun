@@ -14,14 +14,12 @@ use bun_core::UnwrapOrOom;
 pub enum Start<'a> {
     /// The root package and every workspace in its `workspaces` list.
     Project,
-    /// These packages. The walk does not follow the root's implicit rows for its `workspaces`
-    /// list. A dependency on the root package still leads to the root's own dependencies.
+    /// These packages. A dependency on the root leads to the root's own dependencies, not to its `workspaces` list.
     Packages(&'a [PackageID]),
 }
 
 impl<'a> Start<'a> {
-    /// What a command covers when it runs in the folder of `importer`: the project for the root
-    /// package, and that workspace alone for a workspace.
+    /// What a command that runs in the folder of `importer` covers: the project at the root, else that workspace.
     pub fn cwd(importer: &'a PackageID) -> Start<'a> {
         if *importer == 0 {
             Start::Project
@@ -445,8 +443,7 @@ impl<'a> Walk<'a> {
 
     fn drain(&self, seen: &mut DynamicBitSet, worklist: &mut Vec<PackageID>) {
         if self.all_groups {
-            // The loop below without the checks of `edges`. With every group enabled, `edges`
-            // leaves out only the root's implicit rows for its `workspaces` list.
+            // `edges` without its checks: with every group enabled, it leaves out only the root's `workspaces` rows.
             while let Some(parent) = worklist.pop() {
                 let slice = self.dep_slices[parent as usize];
                 for dep_id in slice.begin() as usize..slice.end() as usize {

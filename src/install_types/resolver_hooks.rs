@@ -230,9 +230,7 @@ impl Behavior {
     pub fn is_workspace(self) -> bool {
         self.contains(Self::WORKSPACE)
     }
-    /// The root's implicit row for an entry of its `workspaces` list, and not a row of a dependency
-    /// group. Before Bun 1.2.19 such a row could have the bit too, and a `bun.lockb` from then
-    /// still has it.
+    /// The root's implicit row for a `workspaces` entry. Before Bun 1.2.19 other rows had the bit too, and an old bun.lockb keeps it.
     #[inline]
     pub fn is_workspace_only(self) -> bool {
         self == Self::WORKSPACE

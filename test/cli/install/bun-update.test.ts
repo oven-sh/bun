@@ -1879,14 +1879,13 @@ describe("bun update <name> semantics", () => {
     }
 
     // The no-deps version each dependent's edge resolves to: its nested row when it lost the hoisting race, else the hoisted one.
-    async function noDepsEdges(dir: string) {
+    async function noDepsEdges(dir: string, dependents: readonly string[] = DEPENDENTS) {
       const { packages } = await lock(dir);
       const versionOf = (key: string) => (packages[key] as [string] | undefined)?.[0].slice("no-deps@".length);
       return Object.fromEntries(
-        DEPENDENTS.filter(dependent => dependent in packages).map(dependent => [
-          dependent,
-          versionOf(`${dependent}/no-deps`) ?? versionOf("no-deps"),
-        ]),
+        dependents
+          .filter(dependent => dependent in packages)
+          .map(dependent => [dependent, versionOf(`${dependent}/no-deps`) ?? versionOf("no-deps")]),
       );
     }
 
@@ -1990,8 +1989,10 @@ describe("bun update <name> semantics", () => {
         const foo = join(dir, "packages", "foo");
         const { stderr, exitCode } = await runFrom(foo, dir, "update", "no-deps", "--lockfile-only");
         expect(stderr).not.toContain("error:");
-        expect(await noDepsEdges(dir)).toStrictEqual({ "one-range-dep": "1.0.1" });
-        expect((await lock(dir)).packages["no-deps"][0]).toBe("no-deps@1.0.0");
+        expect(await noDepsEdges(dir, ["one-range-dep", "bar"])).toStrictEqual({
+          "one-range-dep": "1.0.1",
+          "bar": "1.0.0",
+        });
         expect(exitCode).toBe(0);
       },
     );

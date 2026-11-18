@@ -1,6 +1,5 @@
-//! The arithmetic is that of libwebp (LICENSE.md): <https://github.com/webmproject/libwebp/tree/4fa21912338357f89e4fd51cf2368325b59e9bd9/src>
 #![allow(clippy::large_types_passed_by_value)] // vectors live in registers
-use super::decoder::rotate;
+use super::rotate;
 use bun_simd::{Isa, Shuffle};
 use core::array::from_fn;
 
@@ -269,20 +268,15 @@ fn room<T, const K: usize, const M: usize>(pairs: &mut [[T; K]], group: usize) -
 
 #[bun_simd::foreach_target(avx2, sse4, neon, portable)]
 mod simd {
-    use isa::{Vector, x128};
+    use crate::webp::dct::simd::this_target::inverse_dct_pass;
+    use isa::{I16, I32, U8, U16, U32, U64, Vector, x128};
 
-    /// 4 or 6 modes at a time do not fill 64 bytes.
-    const N: usize = if isa::U8::LEN > 16 { 32 } else { 16 };
+    const N: usize = U8::LEN;
+    const _: () = assert!(N <= 32, "4 or 6 modes at a time do not fill 64 bytes");
     /// 16 bytes have a row or column of two blocks, whose lanes alternate: mostly of two modes.
     const PAIRS: usize = N / 16;
     const HAS_WIDENING_MUL: bool = PAIRS == 1 && isa::Isa::HAS_INTERLEAVED_MEMORY;
 
-    type U8 = Vector<u8, N>;
-    type U16 = Vector<u16, { N / 2 }>;
-    type I16 = Vector<i16, { N / 2 }>;
-    type U32 = Vector<u32, { N / 4 }>;
-    type I32 = Vector<i32, { N / 4 }>;
-    type U64 = Vector<u64, { N / 8 }>;
     /// The rows or the columns of the blocks.
     type Quad = [I16; 4];
 
@@ -403,16 +397,6 @@ mod simd {
             (a0 - a1) >> 4,
             mixed(a2, a3, [-5352, 2217], 51000, 16),
         ]
-    }
-
-    /// RFC 6386 section 14.4. The factors are 85627 and 35468, less 65536.
-    #[inline(always)]
-    fn inverse_dct_pass([q0, q1, q2, q3]: Quad) -> Quad {
-        let (cos, sin) = (I16::splat(20091), I16::splat(-30068));
-        let c = q1 - q3 + q1.mul_high(sin) - q3.mul_high(cos);
-        let d = q1 + q3 + q1.mul_high(cos) + q3.mul_high(sin);
-        let (a, b) = (q0 + q2, q0 - q2);
-        [a + d, b + c, b - c, a - d]
     }
 
     /// RFC 6386 section 14.3, in either direction.

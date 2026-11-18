@@ -58,10 +58,11 @@ mod simd {
     type Ycc<const N: usize, const HALF: usize> = ([Vector<u8, N>; 2], [Vector<u8, HALF>; 2]);
 
     /// For x86-64. Cb and Cr less 128 come as the first 8 of each 16 pixels, then the others.
-    #[bun_simd::foreach_width(x128, x256)]
     mod pixels {
+        use super::*;
         use isa::{I8, I16, I32, U8, U32, U64};
         const N: usize = U8::LEN;
+        const _: () = assert!(N <= PIXEL_GROUP);
 
         #[inline(always)]
         fn widen(bytes: &[u8; 32], part: usize) -> [I16; 2] {
@@ -270,10 +271,9 @@ mod simd {
             let mut out = $out.into_writer();
             out.extend_with($y.as_chunks().0.iter().enumerate(), |($i, y)| {
                 let [cb, cr] = $rows;
-                Some(match isa::U8::LEN {
-                    _ if HAS_PLANES => planes::rgba(y, planes::$how(cb), planes::$how(cr)),
-                    16 => pixels::x128::rgba(y, |i| [cb, cr].map(|it| pixels::x128::$how(it, i))),
-                    _ => pixels::x256::rgba(y, |i| [cb, cr].map(|it| pixels::x256::$how(it, i))),
+                Some(match HAS_PLANES {
+                    true => planes::rgba(y, planes::$how(cb), planes::$how(cr)),
+                    false => pixels::rgba(y, |i| [cb, cr].map(|it| pixels::$how(it, i))),
                 })
             });
             out.finish()
@@ -361,10 +361,9 @@ mod simd {
             let rows = [rgba, rgba.get(from..)?];
             let (upper, lower) = y.split_at_mut_checked(to.checked_mul(2)?)?;
             let out = [upper, &mut *lower, &mut *cb, &mut *cr];
-            match isa::U8::LEN {
-                _ if HAS_PLANES => split_rows(rows, out, width, |it| planes::split(it)),
-                16 => split_rows(rows, out, width, |it| pixels::x128::split(it)),
-                _ => split_rows(rows, out, width, |it| pixels::x256::split(it)),
+            match HAS_PLANES {
+                true => split_rows(rows, out, width, |it| planes::split(it)),
+                false => split_rows(rows, out, width, |it| pixels::split(it)),
             }?;
             if left == 0 {
                 break;

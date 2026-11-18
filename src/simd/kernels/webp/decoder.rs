@@ -1,18 +1,14 @@
-//! The arithmetic is that of libwebp (LICENSE.md): <https://github.com/webmproject/libwebp/tree/4fa21912338357f89e4fd51cf2368325b59e9bd9/src>
-use bun_simd::{Int, Isa, Lane, Out, Shuffle, Vector};
+//! Prediction, the loop filters and the transforms of the lossless format.
+use super::{Rgba, rotate};
+use bun_simd::{Int, Isa, Shuffle, Vector};
 use core::array::from_fn;
 use core::slice::{from_mut, from_ref};
 
 pub use simd::{
-    filter_normally, filter_simply, inverse_dct, reconstruct_subblocks, undo_cross_color,
-    undo_prediction, upsample,
+    filter_normally, filter_simply, reconstruct_subblocks, undo_cross_color, undo_prediction,
 };
 
-type Rgba = [u8; 4];
 type Bytes<const N: usize, I> = Vector<u8, N, I>;
-
-/// The most samples that `upsample` and `yuv_to_rgba` take at once.
-pub const ROW_STEP: usize = 32;
 
 /// The samples that the loop filter needs at both ends of each row. It leaves them as they are.
 pub const ROW_SLACK: usize = 4;
@@ -70,22 +66,6 @@ impl<const H: usize> Rows<'_, H> {
     #[inline(always)]
     fn set<const N: usize, I: Isa>(&mut self, y: usize, x: usize, v: Bytes<N, I>) {
         v.copy_to_slice(&mut self.samples[y * self.stride + x..y * self.stride + x + N]);
-    }
-}
-
-/// With the index of the vector above that of the lane in 16 bytes, rotates the bits of both `times`.
-#[inline(always)]
-pub(super) fn rotate<T: Lane, const N: usize, I: Isa, const K: usize>(
-    v: &mut [Vector<T, N, I>; K],
-    times: usize,
-) {
-    #[rustc_unroll(full)]
-    for _ in 0..times {
-        let from = *v;
-        #[rustc_unroll(full)]
-        for i in 0..K / 2 {
-            (v[2 * i], v[2 * i + 1]) = from[i].interleave_in_blocks(from[i + K / 2]);
-        }
     }
 }
 
@@ -220,40 +200,6 @@ mod simd {
     mod width {
         use isa::{I8, I16, Mask, U8, U32, U64};
         const N: usize = U8::LEN;
-
-        /// RFC 6386, 14.4. The factors are 85627 and 35468 out of 65536.
-        #[inline(always)]
-        fn inverse_dct_pass([v0, v1, v2, v3]: [I16; 4]) -> [I16; 4] {
-            let times_cos = |x: I16| x + x.mul_high(20091.into());
-            let times_sin = |x: I16| x + x.mul_high((-30068).into());
-            let (a, b) = (v0 + v2, v0 - v2);
-            let (c, d) = (times_sin(v1) - times_cos(v3), times_cos(v1) + times_sin(v3));
-            [a + d, b + c, b - c, a - d]
-        }
-
-        /// All sums wrap, as in `Transform_SSE2` of libwebp.
-        #[inline(always)]
-        pub fn inverse_dct(coefficients: &mut [[i16; 64]; 6], mut non_zero: u32) {
-            const BLOCKS: usize = I16::LEN / 4;
-            #[rustc_unroll(never)]
-            for block in 0..24 / BLOCKS {
-                let is_any = !non_zero.is_multiple_of(1 << BLOCKS);
-                non_zero >>= BLOCKS;
-                if !is_any {
-                    continue;
-                }
-                let (y, x) = (block * BLOCKS / 4, block * BLOCKS % 4 * 4);
-                let rows = coefficients[y].as_chunks_mut::<16>().0;
-                let mut v = inverse_dct_pass(from_fn(|i| I16::from_slice(&rows[i][x..])));
-                rotate(&mut v, 3);
-                v[0] += 4;
-                v = inverse_dct_pass(v);
-                rotate(&mut v, 2);
-                for i in 0..4 {
-                    (v[i] >> 3).copy_to_slice(&mut rows[i][x..]);
-                }
-            }
-        }
 
         #[inline(always)]
         fn signed(v: U8) -> I8 {
@@ -458,95 +404,6 @@ mod simd {
             }
         }
 
-        /// 9, 3, 3 and 1 sixteenths of the four samples around a pixel, from averages of two bytes.
-        #[inline(always)]
-        pub fn upsample(from: &[u8], distance: usize, to: &mut [u8], count: usize) -> Option<()> {
-            let len = count.checked_add(ROW_STEP - 1)? / ROW_STEP * ROW_STEP;
-            // Unlike `div_ceil`, LLVM takes it for `len / N` if it is.
-            let steps = count.wrapping_add(N - 1) / N;
-            let lower = from.get(distance..)?.get(..len + 1)?;
-            let upper = &from[..len + 1];
-            let upper = upper[..len]
-                .as_chunks()
-                .0
-                .iter()
-                .zip(upper[1..].as_chunks().0);
-            let lower = lower[..len]
-                .as_chunks()
-                .0
-                .iter()
-                .zip(lower[1..].as_chunks().0);
-            let (to_upper, to_lower) = to.split_at_mut(to.len() / 2);
-            let to_upper = to_upper.as_chunks_mut().0.get_mut(..len)?.as_chunks_mut().0;
-            let to_lower = to_lower.as_chunks_mut().0.get_mut(..len)?.as_chunks_mut().0;
-            let to = to_upper.iter_mut().zip(to_lower);
-            #[rustc_unroll(never)]
-            for ((((a, b), (c, d)), to), _) in upper.zip(lower).zip(to).zip(0..steps) {
-                let [a, b, c, d] = [U8::load(a), U8::load(b), U8::load(c), U8::load(d)];
-                let (s, t) = (a.average_round(d), b.average_round(c));
-                let (st, ad, bc) = (s ^ t, a ^ d, b ^ c);
-                // `(a + b + c + d) / 4`, `(a + 3b + 3c + d) / 8` and `(3a + b + c + 3d) / 8`
-                let k = s.average_round(t) - ((ad | bc | st) & 1);
-                let rising = k.average_round(t) - ((k ^ t | bc & st) & 1);
-                let falling = k.average_round(s) - ((k ^ s | ad & st) & 1);
-                *to.0 = U8::to_interleaved2([a.average_round(rising), b.average_round(falling)]);
-                *to.1 = U8::to_interleaved2([c.average_round(falling), d.average_round(rising)]);
-            }
-            Some(())
-        }
-
-        /// From samples less 128, times 256. libwebp rounds each `sample * factor / 256` down.
-        #[inline(always)]
-        fn to_rgb([y, u, v]: [I16; 3]) -> [I16; 3] {
-            const RED: i16 = 19077 / 2 + 26149 / 2 - 14234;
-            const GREEN: i16 = 19077 / 2 - 6419 / 2 - 13320 / 2 + 8708;
-            const BLUE: i16 = 19077 / 2 + 16525 - 17685;
-            // With an odd factor, the 128 leave a half, which rounding to nearest makes up for.
-            let times_odd = |x: I16, factor: i16| (x >> 1).mul_q15(factor.into());
-            let luma = times_odd(y, 19077) + RED;
-            let from_green = times_odd(u, 6419) + v.mul_high(13320.into());
-            let to_blue = u + u.mul_high((33050u16 as i16).into());
-            [
-                (luma + times_odd(v, 26149)) >> 6,
-                (luma - (from_green + (RED - GREEN))) >> 6,
-                luma.saturating_add(to_blue + (BLUE - RED)) >> 6,
-            ]
-        }
-
-        #[inline(always)]
-        fn to_rgba([y, u, v, alpha]: [&[u8; N]; 4]) -> [Rgba; N] {
-            let widen = |samples| {
-                let (lower, upper) = U8::zero().interleave_in_blocks(U8::load(samples) ^ 128);
-                [lower.bitcast(), upper.bitcast()]
-            };
-            let [y, u, v] = [widen(y), widen(u), widen(v)];
-            let (lower, upper) = (to_rgb([y[0], u[0], v[0]]), to_rgb([y[1], u[1], v[1]]));
-            let [r, g, b] = from_fn(|i| U8::pack(lower[i], upper[i]));
-            U8::to_interleaved4([r, g, b, U8::load(alpha)])
-        }
-
-        #[inline(always)]
-        pub fn yuv_to_rgba<'a>(
-            yuva: &[&[u8]; 4],
-            to: Out<'a, Rgba>,
-            width: usize,
-        ) -> &'a mut [Rgba] {
-            let [y, u, v, alpha] = yuva.map(|row| row.as_chunks().0);
-            let len = y.len().min(u.len()).min(v.len().min(alpha.len()));
-            if len / (ROW_STEP / N) < width.div_ceil(ROW_STEP) {
-                return &mut [];
-            }
-            let group = |i: usize| (i < len).then(|| to_rgba([&y[i], &u[i], &v[i], &alpha[i]]));
-            let mut out = to.take(width.saturating_add(N - 1) / N * N).into_writer();
-            out.extend_with(0.., &group);
-            if let rest @ 1..N = out.remaining()
-                && let Some(last) = group(out.len() / N)
-            {
-                out.extend_from_slice(&last[..rest]);
-            }
-            out.finish()
-        }
-
         /// Returns what is left of `row`.
         #[inline(always)]
         pub fn undo_cross_color(row: &mut [u8], factors: [I16; 2]) -> &mut [u8] {
@@ -565,15 +422,6 @@ mod simd {
             let delta = |colors: I16, by| (colors.mul_high(by) & 0xFF).bitcast::<U8>();
             pixels += delta(pixels.lookup(U8::repeat(GREENS)).bitcast(), from_green);
             pixels + delta((pixels.bitcast::<U32>() << 24).bitcast(), from_red)
-        }
-    }
-
-    /// For 6 times 4 blocks side by side. 4 with no bit in `non_zero` stay. Others with none are zero.
-    #[export]
-    pub fn inverse_dct(coefficients: &mut [[i16; 64]; 6], non_zero: u32) {
-        match IS_NARROW {
-            true => width::x128::inverse_dct(coefficients, non_zero),
-            false => width::x256::inverse_dct(coefficients, non_zero),
         }
     }
 
@@ -688,25 +536,6 @@ mod simd {
             }
         }
         Some(())
-    }
-
-    /// From two rows to both halves of `to`: two samples for each of `count` pairs, in whole steps.
-    #[export]
-    #[must_use]
-    pub fn upsample(from: &[u8], distance: usize, to: &mut [u8], count: usize) -> Option<()> {
-        match IS_NARROW {
-            true => width::x128::upsample(from, distance, to, count),
-            false => width::x256::upsample(from, distance, to, count),
-        }
-    }
-
-    /// Finishes the last step if there is room for it.
-    #[export]
-    pub fn yuv_to_rgba<'a>(yuva: &[&[u8]; 4], to: Out<'a, Rgba>, width: usize) -> &'a mut [Rgba] {
-        match IS_NARROW {
-            true => width::x128::yuv_to_rgba(yuva, to, width),
-            false => width::x256::yuv_to_rgba(yuva, to, width),
-        }
     }
 
     #[inline(always)]
@@ -952,22 +781,4 @@ mod simd {
         }
         row.is_empty().then_some(())
     }
-}
-
-/// Puts `width` pixels at `start`, over those that are there and into the spare capacity.
-#[inline(always)]
-#[must_use]
-pub fn yuv_to_rgba(
-    yuva: [&[u8]; 4],
-    rgba: &mut Vec<Rgba>,
-    start: usize,
-    width: usize,
-) -> Option<()> {
-    if let Some(old) = rgba.get_mut(start..)?.get_mut(..width) {
-        return (simd::yuv_to_rgba(&yuva, old.into(), width).len() == width).then_some(());
-    }
-    rgba.truncate(start);
-    let (room, rest) = bun_simd::spare_capacity(rgba);
-    rest.append(simd::yuv_to_rgba(&yuva, room, width).get_mut(..width)?);
-    Some(())
 }

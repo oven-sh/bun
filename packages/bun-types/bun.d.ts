@@ -11049,8 +11049,13 @@ declare module "bun" {
     /** @see https://bun.com/docs/install/catalogs */
     catalogs?: Record<string, Record<string, string>>;
     /**
-     * The entries that `packageExtensions` in the root `package.json` added to each package. A key
-     * is `name@version`. Each list holds the names of the added dependencies.
+     * What `packageExtensions` in the root `package.json` changed in each package. A key is
+     * `name@version`.
+     *
+     * - `dependencies`: the names of the added `dependencies` and `optionalDependencies`.
+     * - `peerDependencies`: the names of the added `peerDependencies`.
+     * - `optionalPeers`: the names of the peer dependencies that the package declares itself and
+     *   that the extension made optional.
      *
      * @see https://bun.com/docs/pm/package-extensions
      */

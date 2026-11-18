@@ -71,7 +71,7 @@ At `lockfileVersion` 2 and later, Bun rejects a lockfile that has:
 - an npm package with no integrity hash, from a tarball URL outside both the configured registry and the default registry
 - a `.bun-tag` on a `git` dependency that is not a safe path component
 
-At `lockfileVersion` 0 and 1, Bun still reads such a lockfile. Two checks apply at every version. Bun rejects a `.bun-tag` longer than 256 characters, and a `.bun-tag` on a `github` dependency that is not a safe path component.
+At `lockfileVersion` 0 and 1, Bun still reads such a lockfile. Two checks apply at every version. Bun rejects a `.bun-tag` longer than 256 bytes, and a `.bun-tag` on a `github` dependency that is not a safe path component.
 
 Bun picks the version when it saves the lockfile:
 

@@ -1,0 +1,1881 @@
+//! `bun lint --no-script --lsp` and `bun fmt --no-script --lsp`: a language server on standard input and output.
+//!
+//! The thread that reads the messages keeps the documents. Each workspace folder has a thread that lints and formats what is
+//! in it, with the folder as the working directory and its `bunfig.toml`: as `bun lint` does there. It keeps the
+//! configurations that it has read until one of their files changes. While it lints, a second thread runs the rules that
+//! need types, which wait for a program to be built: only a request for `source.fixAll` waits for that, and for the
+//! program of its own document. One more thread is for the documents that are in no folder: nothing of theirs is run.
+//!
+//! Standard output carries the messages and nothing else: what the linter and the formatter have to say goes to the
+//! client as a message, or is an answer.
+//!
+//! - [`rpc`]: the messages.
+//! - [`text`]: places in a document.
+//! - [`session`]: a text through the linter.
+//! - [`answers`]: diagnostics, code actions, edits.
+
+mod answers;
+mod rpc;
+mod session;
+mod text;
+
+use crate::cli::{Options, UsageError};
+use crate::fmt::{Formatted, Prepared};
+use crate::paths;
+use crate::results::FileResult;
+use crate::run::{Environment, Fatal, Linted, Script, Stream};
+use answers::{Directives, FIX_ALL, Places, QUICK_FIX, wants};
+use bun_core::strings;
+use bun_lint::context::Severity;
+use bun_lint::js_plugin::{Engine, Host, Vm, Work};
+use bun_lint::linter::{LintMessage, is_parse_error};
+use bun_lint::options::Json;
+use bun_lint::source::LineBreaks;
+use bun_sema::util::FxHashMap;
+use bun_threading::{Condition, Guarded};
+use rpc::{ErrorCode, Frame, Incoming, Reader, Writer, dig, number, object};
+use session::{How, Session, Weight};
+use std::collections::VecDeque;
+use std::collections::hash_map::Entry;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
+use text::{Encoding, Lines, Range};
+
+/// What follows the command on the command line, `--lsp` included: the flags of the command that started the server.
+/// The other command runs with its defaults.
+#[derive(Copy, Clone)]
+pub enum Args<'a> {
+    Lint(&'a [&'a [u8]]),
+    Format(&'a [&'a [u8]]),
+}
+
+/// The command whose work an error belongs to.
+#[derive(Copy, Clone)]
+enum Half {
+    Lint,
+    Format,
+}
+
+impl Half {
+    /// The name of the command, which its errors are shown under.
+    fn prefix(self) -> &'static [u8] {
+        match self {
+            Half::Lint => b"bun lint: ",
+            Half::Format => b"bun fmt: ",
+        }
+    }
+}
+
+/// The engine of one workspace folder while its configurations stay as they are. Its realms run on threads of their
+/// own.
+pub trait Realms: Engine + Send {
+    /// Ends the threads, and waits for them. Before the process exits.
+    fn end_all(&self);
+    /// Frees the realms. Once the folder has moved on to other configurations, or is closed.
+    fn free_all(&self);
+}
+
+/// What the server takes from the process, beside the [`Environment`].
+pub struct Process<'p> {
+    /// Reads some of what the client sends. 0: there is no more.
+    pub read: &'p (dyn Fn(&mut [u8]) -> usize + Sync),
+    /// Writes all of it to the client.
+    pub write: &'p (dyn Fn(&[u8]) + Sync),
+    /// An engine that nothing else uses, for one workspace folder. `None`: the process has none to give, and the
+    /// folder's plugins don't run.
+    pub engines: &'p (dyn Fn() -> Option<Box<dyn Realms + 'p>> + Sync),
+    /// Ends the process at once, whatever its threads are doing.
+    pub exit: &'p (dyn Fn(u8) -> ! + Sync),
+    /// The flags of `bun lint` in a directory: those of its `bunfig.toml` and the ones above it, then the arguments.
+    /// `Err`: what is wrong with one of them.
+    pub lint_options: &'p (dyn Fn(&[u8], &[&[u8]]) -> Result<Options, Vec<u8>> + Sync),
+    /// The same for `bun fmt`.
+    pub format_options:
+        &'p (dyn Fn(&[u8], &[&[u8]]) -> Result<crate::fmt::cli::Options, Vec<u8>> + Sync),
+}
+
+/// For what is in no workspace folder, and for a folder that the process has no engine for.
+struct NoEngine {
+    why: &'static [u8],
+    /// A plugin would have run since this was last looked at.
+    refused: AtomicBool,
+}
+
+impl NoEngine {
+    fn new(why: &'static [u8]) -> NoEngine {
+        NoEngine {
+            why,
+            refused: AtomicBool::new(false),
+        }
+    }
+
+    fn refuse(&self) -> Result<(), Vec<u8>> {
+        self.refused.store(true, Ordering::Relaxed);
+        Err(self.why.to_vec())
+    }
+}
+
+impl Engine for NoEngine {
+    fn thread_has_realm(&self) -> bool {
+        false
+    }
+
+    fn with_vm_here(&self, _: usize, _: &mut dyn FnMut(&mut dyn Vm)) -> Result<(), Vec<u8>> {
+        self.refuse()
+    }
+
+    fn with_vm(&self, _: usize, _: &mut (dyn FnMut(&mut dyn Vm) + Send)) -> Result<(), Vec<u8>> {
+        self.refuse()
+    }
+
+    fn work_off(&self, _: &dyn Work, meanwhile: &mut dyn FnMut()) -> Result<(), Vec<u8>> {
+        meanwhile();
+        self.refuse()
+    }
+
+    fn busy(&self) -> usize {
+        0
+    }
+
+    fn has_realms(&self) -> bool {
+        false
+    }
+}
+
+/// A document as it was at one moment.
+struct Document {
+    uri: Vec<u8>,
+    /// What the client calls this state of it.
+    version: Json,
+    /// What the server calls it: higher for a later one, of whatever document.
+    serial: u64,
+    /// What it is linted and formatted as.
+    path: Vec<u8>,
+    text: Vec<u8>,
+}
+
+enum Job {
+    Lint {
+        document: Arc<Document>,
+        /// The thread of the root lints with types itself only while its session has no second thread.
+        with_types: bool,
+    },
+    /// What the second thread of a session found with types, for the thread of the root to publish. It comes for
+    /// every document that the thread took, linted or not.
+    Typed {
+        document: Arc<Document>,
+        /// [`Queue::generation`] of the session that found it.
+        generation: u64,
+        /// `None`: the document had changed, and was not linted.
+        outcome: Option<Result<Linted, Fatal>>,
+        notes: Vec<(Weight, Vec<u8>)>,
+    },
+    Actions(Actions),
+    /// `textDocument/formatting`, and with a range `textDocument/rangeFormatting`.
+    Format {
+        id: Json,
+        document: Arc<Document>,
+        range: Option<Range>,
+    },
+}
+
+/// `textDocument/codeAction`
+struct Actions {
+    id: Json,
+    document: Arc<Document>,
+    range: Range,
+    only: Option<Vec<Vec<u8>>>,
+}
+
+#[derive(Default)]
+struct Queue {
+    /// What the client waits for goes first.
+    requests: VecDeque<Job>,
+    lints: VecDeque<Job>,
+    /// The documents to lint with types, which takes as long as building their program: the session's second thread
+    /// takes them while it has one, so that no request waits for the program of another document.
+    typed: VecDeque<Arc<Document>>,
+    /// The session whose second thread runs, by [`Queue::sessions`]. `None`: the thread of the root takes `typed`.
+    typed_thread: Option<u64>,
+    /// How many sessions the root has begun.
+    sessions: u64,
+    /// It goes up when a configuration may have changed.
+    generation: u64,
+    is_closed: bool,
+}
+
+/// A workspace folder, or what is in none.
+struct Root {
+    /// The root of the drive, like `/` or `C:/`, for what is in no folder.
+    path: Vec<u8>,
+    is_folder: bool,
+    queue: Guarded<Queue>,
+    /// For both threads of the root: each looks again at what is there for it.
+    has_work: Condition,
+}
+
+impl Root {
+    /// Whether it is the root that [`Server::place_of`] names.
+    fn is_at(&self, place: &(Vec<u8>, bool)) -> bool {
+        self.path == place.0 && self.is_folder == place.1
+    }
+
+    fn change(&self, change: impl FnOnce(&mut Queue)) {
+        change(&mut self.queue.lock());
+        self.has_work.notify_all();
+    }
+
+    /// Waits for a job. With it: [`Queue::generation`]. `None`: there are no more.
+    fn take(&self) -> Option<(Job, u64)> {
+        let mut queue = self.queue.lock();
+        loop {
+            if queue.is_closed {
+                return None;
+            }
+            // The lint of a document goes before the code actions of it, which use what the lint found.
+            let its_lint = match queue.requests.front() {
+                Some(Job::Actions(Actions { document, .. })) => queue.lints.iter().position(
+                    |it| matches!(it, Job::Lint { document: other, .. } if other.serial == document.serial),
+                ),
+                _ => None,
+            };
+            let job = match its_lint {
+                Some(at) => queue.lints.remove(at),
+                None => queue.requests.pop_front(),
+            };
+            let job = job.or_else(|| queue.lints.pop_front()).or_else(|| {
+                if queue.typed_thread.is_some() {
+                    return None;
+                }
+                Some(Job::Lint {
+                    document: queue.typed.pop_front()?,
+                    with_types: true,
+                })
+            });
+            if let Some(job) = job {
+                return Some((job, queue.generation));
+            }
+            self.has_work.wait_guarded(&mut queue);
+        }
+    }
+
+    /// Waits for a document to lint with types, on the second thread of the session `run`. `None`: the session is
+    /// over. `is_linting` says whether the thread has one, to whoever holds the queue.
+    fn take_typed(&self, run: u64, is_linting: &AtomicBool) -> Option<Arc<Document>> {
+        let mut queue = self.queue.lock();
+        is_linting.store(false, Ordering::Relaxed);
+        loop {
+            if queue.is_closed || queue.typed_thread != Some(run) {
+                return None;
+            }
+            if let Some(document) = queue.typed.pop_front() {
+                is_linting.store(true, Ordering::Relaxed);
+                return Some(document);
+            }
+            self.has_work.wait_guarded(&mut queue);
+        }
+    }
+}
+
+/// What the client can do.
+struct Client {
+    encoding: Encoding,
+    has_versioned_edits: bool,
+    watches_files: bool,
+}
+
+/// What the user has set in the editor.
+#[derive(Copy, Clone, PartialEq, Eq)]
+struct Settings {
+    lints: bool,
+    formats: bool,
+    /// Not only when a document is opened or saved.
+    lints_on_type: bool,
+}
+
+impl Default for Settings {
+    fn default() -> Settings {
+        Settings {
+            lints: true,
+            formats: true,
+            lints_on_type: true,
+        }
+    }
+}
+
+impl Settings {
+    /// `{ lint: { enable, run }, format: { enable } }`. What is not there stays as it is.
+    fn read(&mut self, json: &Json) {
+        let flag = |path: &[&str]| dig(json, path).and_then(Json::as_bool);
+        self.lints = flag(&["lint", "enable"]).unwrap_or(self.lints);
+        self.formats = flag(&["format", "enable"]).unwrap_or(self.formats);
+        match dig(json, &["lint", "run"]).and_then(Json::as_str) {
+            Some(b"onType") => self.lints_on_type = true,
+            Some(b"onSave") => self.lints_on_type = false,
+            _ => {}
+        }
+    }
+}
+
+/// What the rules that need types have said about a document.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Types {
+    /// Their problems are among the known ones.
+    Found,
+    /// Nothing, and nothing is to come: none of them is on, or the document could not be checked.
+    Absent,
+    /// Nothing yet: a lint with types is queued or under way.
+    Awaited,
+    /// Nothing yet, and no lint with types is queued: the problems were found for a code action.
+    NotAsked,
+}
+
+/// The problems of a document, for its code actions.
+struct Known {
+    serial: u64,
+    types: Types,
+    /// The client has them as diagnostics. If not, they were found for a code action, and what a lint with types
+    /// adds is not published either: a document that is linted on save has no diagnostics of a version in between.
+    is_shown: bool,
+    /// How a comment turns a rule off in the document's language, if one can.
+    directives: Option<Directives>,
+    /// What the lines of `messages` are counted with: Markdown and JSON count only newlines.
+    line_breaks: LineBreaks,
+    messages: Vec<LintMessage>,
+    /// The text with every fix applied, once a code action has asked for it. `Some(None)`: there is none.
+    fixed: Option<Option<Vec<u8>>>,
+}
+
+/// What all threads share.
+struct Server<'s> {
+    args: Args<'s>,
+    environment: &'s Environment<'s>,
+    process: &'s Process<'s>,
+    out: Writer<'s>,
+    client: OnceLock<Client>,
+    settings: Guarded<Settings>,
+    folders: Guarded<Vec<Vec<u8>>>,
+    /// [`Document::serial`] of each open document, by its URI.
+    latest: Guarded<FxHashMap<Vec<u8>, u64>>,
+    /// The requests that are not answered yet, and whether the client has taken each back.
+    pending: Guarded<Vec<(Json, bool)>>,
+    /// The engines of the folders, while their threads use them: to end before the process does.
+    realms: Guarded<Vec<Arc<dyn Realms + 's>>>,
+    /// The roots that have a thread. It is held while `folders` changes, until each open document has the thread of
+    /// its root: whoever holds it sees the folders and their roots agree.
+    roots: Guarded<Vec<Arc<Root>>>,
+    /// The client has said `exit`, or is gone: the threads of the roots end after the job they are at.
+    is_ending: AtomicBool,
+}
+
+/// The files that say how a file is linted or formatted, or whether it is at all.
+const WATCHED: [&str; 13] = [
+    "**/bunfig.toml",
+    "**/package.{json,yaml}",
+    "**/{eslint,oxlint,oxfmt,prettier,vite}.config.{js,mjs,cjs,ts,mts,cts}",
+    "**/.eslintrc",
+    "**/.eslintrc.{js,cjs,json,yaml,yml}",
+    "**/.oxlintrc.{json,jsonc}",
+    "**/.oxfmtrc.{json,jsonc}",
+    "**/.prettierrc",
+    "**/.prettierrc.{js,mjs,cjs,ts,mts,cts,json,json5,yaml,yml,toml}",
+    "**/.editorconfig",
+    "**/{.gitignore,.eslintignore,.prettierignore}",
+    "**/{tsconfig,jsconfig}.json",
+    "**/tsconfig.*.json",
+];
+
+/// Whether a file called `name` is one of [`WATCHED`]: for a client that does not watch.
+fn is_watched(name: &[u8]) -> bool {
+    let stem = strings::split_once_char(name, b'.').map_or(name, |it| it.0);
+    matches!(
+        name,
+        b"bunfig.toml"
+            | b"package.json"
+            | b"package.yaml"
+            | b".editorconfig"
+            | b".gitignore"
+            | b".eslintignore"
+            | b".prettierignore"
+    ) || [&b".eslintrc"[..], b".oxlintrc", b".oxfmtrc", b".prettierrc"]
+        .iter()
+        .any(|it| name.starts_with(it))
+        || (matches!(
+            stem,
+            b"eslint" | b"oxlint" | b"oxfmt" | b"prettier" | b"vite"
+        ) && strings::contains(name, b".config."))
+        || (matches!(stem, b"tsconfig" | b"jsconfig") && name.ends_with(b".json"))
+}
+
+/// The path that a `file:` URI names, with `/` between its parts. `None`: it is another kind of URI.
+fn path_of(uri: &[u8]) -> Option<Vec<u8>> {
+    let rest = uri.strip_prefix(b"file://")?;
+    let (host, path) = rest.split_at(strings::index_of_char_usize(rest, b'/')?);
+    let decode = bun_url::PercentEncoding::decode_alloc;
+    let (host, path) = (decode(host).ok()?, decode(path).ok()?);
+    Some(match (&host[..], &path[..]) {
+        (b"" | b"localhost", [b'/', drive, b':', ..])
+            if cfg!(windows) && drive.is_ascii_alphabetic() =>
+        {
+            path[1..].to_vec()
+        }
+        (b"" | b"localhost", _) => path.into_vec(),
+        (host, _) => [b"//", host, &path].concat(),
+    })
+}
+
+/// What files in the language `id` end in.
+fn extension_of(id: &[u8]) -> &'static [u8] {
+    match id {
+        b"javascript" => b".js",
+        b"javascriptreact" => b".jsx",
+        b"typescript" => b".ts",
+        b"typescriptreact" => b".tsx",
+        b"json" => b".json",
+        b"jsonc" => b".jsonc",
+        b"json5" => b".json5",
+        b"css" => b".css",
+        b"scss" => b".scss",
+        b"less" => b".less",
+        b"html" => b".html",
+        b"vue" => b".vue",
+        b"svelte" => b".svelte",
+        b"astro" => b".astro",
+        b"markdown" => b".md",
+        b"mdx" => b".mdx",
+        b"yaml" => b".yaml",
+        b"graphql" => b".graphql",
+        b"handlebars" => b".hbs",
+        b"toml" => b".toml",
+        _ => b"",
+    }
+}
+
+/// What a document that is no file is called: `Untitled-1.ts` for `untitled:Untitled-1` in TypeScript.
+fn name_of(uri: &[u8], language: &[u8]) -> Vec<u8> {
+    let after_scheme = strings::split_once_char(uri, b':').map_or(uri, |it| it.1);
+    let end = strings::index_of_any(after_scheme, b"?#").unwrap_or(after_scheme.len());
+    let decoded = bun_url::PercentEncoding::decode_alloc(&after_scheme[..end]);
+    let path = decoded.as_deref().unwrap_or(&after_scheme[..end]);
+    let name = paths::basename(path);
+    match paths::extname(name) {
+        b"" => [name, extension_of(language)].concat(),
+        _ => name.to_vec(),
+    }
+}
+
+impl<'s> Server<'s> {
+    fn client(&self) -> &Client {
+        self.client.get_or_init(|| Client {
+            encoding: Encoding::Utf16,
+            has_versioned_edits: false,
+            watches_files: false,
+        })
+    }
+
+    /// `type`: 1 for an error, 2 for a warning, 3 for a note.
+    fn tell(&self, method: &str, kind: u32, message: &[u8]) {
+        let params = object([("type", number(kind)), ("message", rpc::text(message))]);
+        self.out.notify(method, params);
+    }
+
+    /// Puts an error of `half` before the user, under the name of its command.
+    fn show_error(&self, half: Half, message: &[u8]) {
+        self.tell("window/showMessage", 1, &[half.prefix(), message].concat());
+    }
+
+    /// The half that the command that started the server is.
+    fn half(&self) -> Half {
+        match self.args {
+            Args::Lint(_) => Half::Lint,
+            Args::Format(_) => Half::Format,
+        }
+    }
+
+    /// Ends the process with `code`, once the engines have ended their threads. The threads of the roots are over.
+    fn exit(&self, code: u8) -> ! {
+        let realms: Vec<Arc<dyn Realms + 's>> = std::mem::take(&mut *self.realms.lock());
+        for realms in &realms {
+            realms.end_all();
+        }
+        (self.process.exit)(code);
+    }
+
+    fn is_in_a_folder(&self, path: &[u8]) -> bool {
+        (self.folders.lock().iter()).any(|it| paths::is_at_or_inside(it, path))
+    }
+
+    fn is_latest(&self, document: &Document) -> bool {
+        self.latest.lock().get(&document.uri) == Some(&document.serial)
+    }
+
+    /// The [`Root::path`] of the root that the file at `path` is in, and whether that is a folder: the innermost one
+    /// that it is in.
+    fn place_of(&self, path: &[u8]) -> (Vec<u8>, bool) {
+        let folders = self.folders.lock();
+        let inside = folders.iter().filter(|it| paths::is_at_or_inside(it, path));
+        match inside.max_by_key(|it| it.len()) {
+            Some(folder) => (folder.clone(), true),
+            None => {
+                let top = paths::ancestors(paths::dirname(path)).last();
+                (top.unwrap_or(b"/").to_vec(), false)
+            }
+        }
+    }
+
+    /// Whether `root` is the one to lint `document`: it is the latest state, and the folders have not changed so
+    /// that it belongs to another root.
+    fn is_for(&self, root: &Root, document: &Document) -> bool {
+        self.is_latest(document) && root.is_at(&self.place_of(&document.path))
+    }
+
+    /// The root that `document` belongs to in place of `root`, since the folders changed.
+    fn heir_of(&self, root: &Root, document: &Document) -> Option<Arc<Root>> {
+        let roots = self.roots.lock();
+        let place = self.place_of(&document.path);
+        if root.is_at(&place) {
+            return None;
+        }
+        roots.iter().find(|it| it.is_at(&place)).cloned()
+    }
+
+    /// Hands `job`, a request, to the thread of `heir`, which answers it with its configuration. Without an heir, or
+    /// with one that is closed, nothing answers it: the request is cancelled.
+    fn pass_on(&self, heir: Option<&Root>, job: Job) {
+        let mut refused = None;
+        match heir {
+            Some(heir) => heir.change(|queue| match queue.is_closed {
+                true => refused = Some(job),
+                false => queue.requests.push_back(job),
+            }),
+            None => refused = Some(job),
+        }
+        if let Some(Job::Actions(Actions { id, .. }) | Job::Format { id, .. }) = refused {
+            self.cancel(&id);
+        }
+    }
+
+    fn send_diagnostics(&self, document: &Document, diagnostics: Vec<Json>) {
+        self.out.notify(
+            "textDocument/publishDiagnostics",
+            object([
+                ("uri", rpc::text(&document.uri)),
+                ("version", document.version.clone()),
+                ("diagnostics", Json::Array(diagnostics)),
+            ]),
+        );
+    }
+
+    /// Unless the document has changed or is closed.
+    fn publish(&self, document: &Document, diagnostics: Vec<Json>) {
+        let latest = self.latest.lock();
+        if latest.get(&document.uri) == Some(&document.serial) {
+            self.send_diagnostics(document, diagnostics);
+        }
+    }
+
+    /// Nothing is said about `document` any more.
+    fn close(&self, document: &Document) {
+        let mut latest = self.latest.lock();
+        latest.remove(&document.uri);
+        self.send_diagnostics(document, Vec::new());
+    }
+
+    /// Whether the request `id`, which is about `document`, is still to be answered. If not it is answered here.
+    fn is_wanted(&self, id: &Json, document: &Document) -> bool {
+        let is_cancelled = (self.pending.lock().iter()).any(|it| it.0 == *id && it.1);
+        let is_latest = self.is_latest(document);
+        if is_cancelled {
+            self.cancel(id);
+        } else if !is_latest {
+            self.finish(
+                id,
+                Err((ErrorCode::ContentModified, "The document has changed")),
+            );
+        }
+        !is_cancelled && is_latest
+    }
+
+    fn cancel(&self, id: &Json) {
+        self.finish(
+            id,
+            Err((ErrorCode::RequestCancelled, "The request was cancelled")),
+        );
+    }
+
+    fn finish(&self, id: &Json, answer: Result<Json, (ErrorCode, &str)>) {
+        self.pending.lock().retain(|it| it.0 != *id);
+        match answer {
+            Ok(result) => self.out.reply(id.clone(), result),
+            Err((code, message)) => self.out.fail(id.clone(), code, message),
+        }
+    }
+
+    /// `breaks`: those of the document's result, EcmaScript before it has one.
+    fn places<'d>(&self, document: &'d Document, breaks: LineBreaks) -> Places<'d> {
+        let client = self.client();
+        Places::new(
+            (&document.uri, &document.version, &document.path),
+            Lines::new(&document.text, client.encoding),
+            &document.text,
+            breaks,
+            client.has_versioned_edits,
+        )
+    }
+
+    /// The flags of `bun lint` in `root`.
+    fn lint_options_of(&self, root: &Root) -> Result<Options, Vec<u8>> {
+        let args: &[&[u8]] = match self.args {
+            Args::Lint(args) => args,
+            Args::Format(_) => &[],
+        };
+        match root.is_folder {
+            true => (self.process.lint_options)(&root.path, args),
+            false => Options::parse(args).map_err(|UsageError(message)| message),
+        }
+    }
+
+    /// The flags of `bun fmt` in `root`.
+    fn format_options_of(&self, root: &Root) -> Result<crate::fmt::cli::Options, Vec<u8>> {
+        let args: &[&[u8]] = match self.args {
+            Args::Format(args) => args,
+            Args::Lint(_) => &[],
+        };
+        match root.is_folder {
+            true => (self.process.format_options)(&root.path, args),
+            false => crate::fmt::cli::Options::parse(args).map_err(|UsageError(message)| message),
+        }
+    }
+
+    /// What a thread of `root` does, from `first` on, or from the first job there is. A folder gets an engine per
+    /// generation, which is freed once the thread is done with it. The thread ends when the root is closed, or when it
+    /// has left the jobs that follow to another one.
+    fn work<'d, 'scope>(
+        &'d self,
+        scope: &'scope std::thread::Scope<'scope, 'd>,
+        root: &Arc<Root>,
+        first: Option<(Job, u64)>,
+    ) {
+        // `None`: another thread goes on with `later`.
+        let hand_over = |later: (Job, u64)| {
+            let slot = Arc::new(Guarded::new(Some(later)));
+            let (theirs, root) = (Arc::clone(&slot), Arc::clone(root));
+            let thread = std::thread::Builder::new().stack_size(STACK);
+            let spawned = thread.spawn_scoped(scope, move || {
+                bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Bun LSP"));
+                let first = theirs.lock().take();
+                self.work(scope, &root, first);
+            });
+            match spawned {
+                Ok(_) => None,
+                Err(_) => slot.lock().take(),
+            }
+        };
+        let mut next = first.or_else(|| root.take());
+        while let Some(first) = next.take() {
+            let realms: Option<Arc<dyn Realms + 's>> = match root.is_folder {
+                true => (self.process.engines)().map(Arc::from),
+                false => None,
+            };
+            let Some(realms) = realms else {
+                let why: &[u8] = match root.is_folder {
+                    true => b"Plugins do not run in the editor on this platform",
+                    false => b"Plugins only run for files in a workspace folder",
+                };
+                let no_engine = NoEngine::new(why);
+                next = self.work_with(root, &no_engine, Some(&no_engine), first, &hand_over);
+                continue;
+            };
+            self.realms.lock().push(Arc::clone(&realms));
+            next = self.work_with(root, &*realms, None, first, &hand_over);
+            // The process ends: [`Server::exit`] ends the engine, which takes less than to free it.
+            if self.is_ending.load(Ordering::Relaxed) {
+                return;
+            }
+            realms.free_all();
+            self.realms.lock().retain(|it| !Arc::ptr_eq(it, &realms));
+        }
+    }
+
+    /// Does `first` and what follows it, as long as the configurations are those of `generation`. Returns the first job that
+    /// is for later ones, unless `hand_over` took it. `no_engine`: `engine`, if it is one that refuses. The session is
+    /// made when the settings of the editor first have linting on, and stays for the rest of the generation.
+    fn work_with(
+        &self,
+        root: &Root,
+        engine: &dyn Engine,
+        no_engine: Option<&NoEngine>,
+        (first, generation): (Job, u64),
+        hand_over: &dyn Fn((Job, u64)) -> Option<(Job, u64)>,
+    ) -> Option<(Job, u64)> {
+        let run_script = |script: &Script| {
+            match self.is_in_a_folder(script.cwd) {
+            true => (self.environment.run_script)(script),
+            false => Err(b"It is outside the workspace folders, so it was not run\n  Open its folder in the editor to use it".to_vec()),
+        }
+        };
+        let environment = &Environment {
+            cwd: root.path.clone(),
+            stdout: Stream::default(),
+            stderr: Stream::default(),
+            is_ai_agent: false,
+            is_github_action: false,
+            run_script: &run_script,
+            js_engine: engine,
+            ..*self.environment
+        };
+        // The realms of the engine keep the numbers the host gives their plugins and selectors: one host for as long
+        // as the engine.
+        let js_plugins = Host::with_engine(engine, &paths::to_native(root.path.clone()));
+        let mut worker = Worker {
+            server: self,
+            root,
+            environment,
+            no_engine,
+            generation,
+            formats: None,
+            formatter: None,
+            known: FxHashMap::default(),
+            waiting: Vec::new(),
+            told: Vec::new(),
+        };
+        let mut job = first;
+        while !self.settings.lock().lints {
+            worker.follow_format_setting();
+            worker.handle(None, job);
+            match root.take() {
+                Some((taken, now)) if now == generation => job = taken,
+                other => return other,
+            }
+        }
+        let options = match self.lint_options_of(root) {
+            Ok(options) => options,
+            Err(why) => {
+                worker.show_error_once(Half::Lint, &why);
+                return worker.run(None, job);
+            }
+        };
+        session::with_session(
+            &options,
+            environment,
+            &js_plugins,
+            root.is_folder,
+            |session| {
+                if let Some(refusal) = session.refusal() {
+                    self.show_error(Half::Lint, &refusal);
+                    return worker.run(None, job);
+                }
+                let jobs = || worker.run(Some(session), job);
+                self.with_typed_thread(root, session, generation, hand_over, jobs)
+            },
+        )
+    }
+
+    /// Calls `then`, the work of the thread of `root` with `session`, while a second thread lints with types what it
+    /// queues in [`Queue::typed`]. If the second cannot be started, the first takes the queue itself. The second ends
+    /// when `then` returns, after the lint that it is at, which nothing interrupts: `hand_over` gets the job that
+    /// `then` returns, so that no request waits for that lint.
+    fn with_typed_thread(
+        &self,
+        root: &Root,
+        session: &Session,
+        generation: u64,
+        hand_over: &dyn Fn((Job, u64)) -> Option<(Job, u64)>,
+        then: impl FnOnce() -> Option<(Job, u64)>,
+    ) -> Option<(Job, u64)> {
+        fn is_sync<T: Sync>() {}
+        // The session is shared by both threads.
+        is_sync::<Session<'_>>();
+        let is_linting = &AtomicBool::new(false);
+        let mut queue = root.queue.lock();
+        queue.sessions += 1;
+        let run = queue.sessions;
+        queue.typed_thread = Some(run);
+        drop(queue);
+        std::thread::scope(|scope| {
+            let thread = std::thread::Builder::new().stack_size(STACK);
+            let spawned = thread.spawn_scoped(scope, move || {
+                bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Bun LSP types"));
+                self.lint_typed(root, session, generation, run, is_linting);
+            });
+            if spawned.is_err() {
+                root.change(|queue| queue.typed_thread = None);
+            }
+            let later = then();
+            root.change(|queue| queue.typed_thread = None);
+            match is_linting.load(Ordering::Relaxed) {
+                true => later.and_then(hand_over),
+                false => later,
+            }
+        })
+    }
+
+    /// What the second thread of the session `run` does: lints with types each document of [`Queue::typed`], and hands
+    /// what it finds to the thread of the root as a [`Job::Typed`], which keeps what is known of the documents and
+    /// what the user was told.
+    fn lint_typed(
+        &self,
+        root: &Root,
+        session: &Session,
+        generation: u64,
+        run: u64,
+        is_linting: &AtomicBool,
+    ) {
+        // The stack bounds of the recursion guard are set here, as for the thread of the root.
+        bun_core::Output::Source::configure_thread();
+        while let Some(document) = root.take_typed(run, is_linting) {
+            let how = How {
+                with_types: true,
+                fixes: false,
+            };
+            // A request may wait for it: the thread of the root hears of one that is not linted too.
+            let outcome = (self.is_for(root, &document))
+                .then(|| session.lint(&document.path, document.text.clone(), how));
+            let notes = session.notes();
+            root.change(|queue| {
+                if queue.typed_thread == Some(run) {
+                    queue.requests.push_back(Job::Typed {
+                        document,
+                        generation,
+                        outcome,
+                        notes,
+                    });
+                }
+            });
+        }
+    }
+}
+
+/// The thread of a [`Root`], while its configurations stay as they are.
+struct Worker<'w, 's> {
+    server: &'w Server<'s>,
+    root: &'w Root,
+    environment: &'w Environment<'w>,
+    /// The engine, if it is one that refuses.
+    no_engine: Option<&'w NoEngine>,
+    /// [`Queue::generation`] of the configurations.
+    generation: u64,
+    /// What the setting of the editor was when `formatter` was made or dropped.
+    formats: Option<bool>,
+    /// `bun fmt` in the root with its flags, configs and ignore files read, made when formatting is turned on. It lasts
+    /// until the generation ends or formatting is turned off. `None`: formatting is off, or it could not start, which
+    /// the user was told.
+    formatter: Option<Prepared<'w>>,
+    /// By URI.
+    known: FxHashMap<Vec<u8>, Known>,
+    /// The requests for `source.fixAll` that wait for the lint with types of their document.
+    waiting: Vec<Actions>,
+    /// What the user has been told, which is not said again. An error is kept with the name of its command: both
+    /// halves read the same `bunfig.toml`, and each reports its own failure.
+    told: Vec<Vec<u8>>,
+}
+
+impl Worker<'_, '_> {
+    /// Does `job` and the jobs of the generation that follow it. Returns the first job of a later one, if any.
+    fn run(&mut self, session: Option<&Session>, mut job: Job) -> Option<(Job, u64)> {
+        loop {
+            self.follow_format_setting();
+            self.handle(session, job);
+            match self.root.take() {
+                Some((taken, now)) if now == self.generation => job = taken,
+                other => {
+                    self.leave_waiting();
+                    return other;
+                }
+            }
+        }
+    }
+
+    /// The requests that still wait go to the next generation, which lints their documents with its configurations.
+    /// A root that is closed has none: they go to the roots that their documents are in now.
+    fn leave_waiting(&mut self) {
+        let waiting = std::mem::take(&mut self.waiting);
+        if waiting.is_empty() {
+            return;
+        }
+        let mut homeless = Vec::new();
+        self.root.change(|queue| match queue.is_closed {
+            true => homeless = waiting,
+            false => (waiting.into_iter().rev())
+                .for_each(|it| queue.requests.push_front(Job::Actions(it))),
+        });
+        for actions in homeless {
+            let heir = self.server.heir_of(self.root, &actions.document);
+            (self.server).pass_on(heir.as_deref(), Job::Actions(actions));
+        }
+    }
+
+    /// Makes the formatter when the setting of the editor turns formatting on, and drops it when it turns it off.
+    fn follow_format_setting(&mut self) {
+        let formats = self.server.settings.lock().formats;
+        if self.formats == Some(formats) {
+            return;
+        }
+        self.formats = Some(formats);
+        let prepared = formats.then(|| {
+            let options = self.server.format_options_of(self.root)?;
+            Prepared::new(&options, self.environment)
+        });
+        self.formatter = match prepared {
+            Some(Ok(prepared)) => Some(prepared),
+            Some(Err(why)) => {
+                self.show_format_failure(&why);
+                None
+            }
+            None => None,
+        };
+    }
+
+    fn tell_once(&mut self, line: Vec<u8>, tell: impl FnOnce(&[u8])) {
+        if !self.told.contains(&line) {
+            tell(&line);
+            self.told.push(line);
+        }
+    }
+
+    /// [`Server::show_error`], once per text and half.
+    fn show_error_once(&mut self, half: Half, message: &[u8]) {
+        let server = self.server;
+        self.tell_once([half.prefix(), message].concat(), |line| {
+            server.tell("window/showMessage", 1, line)
+        });
+    }
+
+    /// Said when a plugin would have run, which is when the user looks for it.
+    fn say_if_refused(&mut self) {
+        let server = self.server;
+        if let Some(no_engine) = self.no_engine
+            && self.root.is_folder
+            && no_engine.refused.swap(false, Ordering::Relaxed)
+        {
+            let why = no_engine.why.to_vec();
+            self.tell_once(why, |why| server.tell("window/logMessage", 2, why));
+        }
+    }
+
+    /// Lints `document`. `None`: it cannot be, which the user is told. `files == 0` in the result: it is not one to
+    /// lint, which the user is told if there is a reason, like ESLint being needed for it.
+    fn lint(&mut self, session: &Session, document: &Document, how: How) -> Option<Linted> {
+        self.lint_as(session, document, document.text.clone(), how)
+    }
+
+    /// [`Worker::lint`] with `text` in place of the document's.
+    fn lint_as(
+        &mut self,
+        session: &Session,
+        document: &Document,
+        text: Vec<u8>,
+        how: How,
+    ) -> Option<Linted> {
+        let linted = session.lint(&document.path, text, how);
+        self.tell_notes(session.notes());
+        // Rules of plugins that are on for the document did not run.
+        let skips_rules = |it: &FileResult| {
+            let config = it.linted.as_ref().map(|it| &it.config);
+            config.is_some_and(|it| it.js_rules.iter().any(|it| it.severity != Severity::Off))
+        };
+        if let (Some(no_engine), Ok(linted)) = (self.no_engine, &linted)
+            && linted.results.iter().any(skips_rules)
+        {
+            no_engine.refused.store(true, Ordering::Relaxed);
+        }
+        self.say_if_refused();
+        self.outcome(linted)
+    }
+
+    /// Shows the errors that a lint left to tell and logs the rest, once each.
+    fn tell_notes(&mut self, notes: Vec<(Weight, Vec<u8>)>) {
+        let server = self.server;
+        for (weight, line) in notes {
+            let kind = match weight {
+                Weight::Error => {
+                    self.show_error_once(Half::Lint, &line);
+                    continue;
+                }
+                Weight::Warning => 2,
+                Weight::Note => 3,
+            };
+            self.tell_once(line, |line| server.tell("window/logMessage", kind, line));
+        }
+    }
+
+    /// What a lint found. `None`: it failed, which the user is told.
+    fn outcome(&mut self, linted: Result<Linted, Fatal>) -> Option<Linted> {
+        match linted {
+            Ok(linted) => Some(linted),
+            Err(Fatal(why)) => {
+                self.show_error_once(Half::Lint, &why);
+                None
+            }
+        }
+    }
+
+    /// The problems of `document` as they are known, or as they are found now.
+    fn problems(&mut self, session: &Session, document: &Document) -> Option<&Known> {
+        if self
+            .known
+            .get(&document.uri)
+            .is_none_or(|it| it.serial != document.serial)
+        {
+            let result = self.lint(session, document, How::default())?.results.pop();
+            let lacks_types =
+                (result.as_ref()).is_some_and(|it| session.wants_types(&document.path, it));
+            let known = self.note(document, result, false);
+            if lacks_types {
+                known.types = Types::NotAsked;
+            }
+        }
+        self.known.get(&document.uri)
+    }
+
+    /// Keeps what a lint of `document` found, as all there is to know of it.
+    fn note(
+        &mut self,
+        document: &Document,
+        result: Option<FileResult>,
+        is_shown: bool,
+    ) -> &mut Known {
+        let linted = result.as_ref().and_then(|it| it.linted.as_ref());
+        let known = Known {
+            serial: document.serial,
+            types: match result.as_ref().is_some_and(|it| it.had_types) {
+                true => Types::Found,
+                false => Types::Absent,
+            },
+            is_shown,
+            directives: linted.and_then(|it| Directives::of(&it.config, &document.path)),
+            line_breaks: linted.map_or_else(Default::default, |it| it.config.line_breaks),
+            messages: result.map(|it| it.messages).unwrap_or_default(),
+            fixed: None,
+        };
+        match self.known.entry(document.uri.clone()) {
+            Entry::Occupied(mut entry) => {
+                entry.insert(known);
+                entry.into_mut()
+            }
+            Entry::Vacant(entry) => entry.insert(known),
+        }
+    }
+
+    /// Whether what a lint with types finds in `document` is the client's to see: not what adds to problems that were
+    /// found for a code action.
+    fn shows_types(&self, document: &Document) -> bool {
+        let known = (self.known.get(&document.uri)).filter(|it| it.serial == document.serial);
+        known.is_none_or(|it| it.is_shown)
+    }
+
+    /// The text of `document` with every fix applied, found once per [`Document::serial`]. `None`: nothing is fixed.
+    /// No program is built here, on the thread that answers the requests: the rules that need types fix what the lint
+    /// with types found, once, and the others fix what is left, as the passes of `bun lint --fix` do.
+    fn fixed(&mut self, session: &Session, document: &Document) -> Option<&[u8]> {
+        let is_found = (self.known.get(&document.uri)).is_some_and(|it| it.fixed.is_some());
+        if !is_found {
+            let known = (self.known.get(&document.uri)).filter(|it| it.types == Types::Found);
+            let first = known.and_then(|it| session.fix_once(&document.text, &it.messages));
+            let how = How {
+                with_types: false,
+                fixes: true,
+            };
+            let start = first.clone().unwrap_or_else(|| document.text.clone());
+            let mut fixed = self
+                .lint_as(session, document, start, how)
+                .and_then(|mut it| it.results.pop());
+            // A fix of a rule that needs types broke the text: those fixes are left out, as `bun lint --fix` leaves
+            // out the pass that broke it. A fatal message that is no parse error was there before.
+            let is_broken = fixed
+                .as_ref()
+                .is_some_and(|it| it.messages.iter().any(is_parse_error));
+            let first = match first {
+                Some(_) if is_broken => {
+                    fixed = (self.lint(session, document, how)).and_then(|mut it| it.results.pop());
+                    None
+                }
+                first => first,
+            };
+            let text = (fixed.as_ref().filter(|it| it.is_fixed))
+                .and_then(FileResult::text_to_write)
+                .map(<[u8]>::to_vec)
+                .or(first);
+            if let Some(known) = self.known.get_mut(&document.uri) {
+                known.fixed = Some(text);
+            }
+        }
+        self.known.get(&document.uri)?.fixed.as_ref()?.as_deref()
+    }
+
+    fn handle(&mut self, session: Option<&Session>, job: Job) {
+        let server = self.server;
+        // Of the documents that are closed nothing is kept.
+        {
+            let latest = server.latest.lock();
+            self.known.retain(|uri, _| latest.contains_key(uri));
+        }
+        match job {
+            Job::Lint {
+                document,
+                with_types,
+            } => {
+                if server.is_for(self.root, &document) {
+                    let how = How {
+                        with_types,
+                        fixes: false,
+                    };
+                    let shows = !with_types || self.shows_types(&document);
+                    let linted = session.and_then(|it| self.lint(it, &document, how));
+                    self.publish(session, &document, with_types, shows, linted);
+                }
+                let typed = with_types.then_some(document.serial);
+                self.answer_waiting(session, &document.uri, typed);
+            }
+            Job::Typed {
+                document,
+                generation,
+                outcome,
+                notes,
+            } => {
+                self.tell_notes(notes);
+                self.say_if_refused();
+                // Found with the configurations of an earlier generation: this one lints the document again.
+                if generation != self.generation {
+                    return;
+                }
+                if let Some(outcome) = outcome.filter(|_| server.is_for(self.root, &document)) {
+                    let shows = self.shows_types(&document);
+                    let linted = session.and_then(|_| self.outcome(outcome));
+                    self.publish(session, &document, true, shows, linted);
+                }
+                self.answer_waiting(session, &document.uri, Some(document.serial));
+            }
+            Job::Actions(actions) => self.answer(session, actions, true),
+            Job::Format {
+                id,
+                document,
+                range,
+            } => {
+                if let Some(heir) = server.heir_of(self.root, &document) {
+                    let job = Job::Format {
+                        id,
+                        document,
+                        range,
+                    };
+                    return server.pass_on(Some(&heir), job);
+                }
+                if server.is_wanted(&id, &document) {
+                    let edits = self.format(&document, range);
+                    server.finish(&id, Ok(edits.map_or(Json::Null, Json::Array)));
+                }
+            }
+        }
+    }
+
+    /// Keeps what a lint of `document` found, and with `shows` publishes it: `linted`, or `None` if it could not be
+    /// linted. Without types, a document whose configuration asks for them is queued for a lint with them.
+    fn publish(
+        &mut self,
+        session: Option<&Session>,
+        document: &Arc<Document>,
+        with_types: bool,
+        shows: bool,
+        linted: Option<Linted>,
+    ) {
+        let (server, root) = (self.server, self.root);
+        // A lint that was under way when the folders changed says nothing of a document that is in another root now.
+        let show = |diagnostics: Vec<Json>| {
+            if shows && root.is_at(&server.place_of(&document.path)) {
+                server.publish(document, diagnostics);
+            }
+        };
+        // Turned off while the lint ran: what it found is not shown.
+        let Some(mut linted) = linted.filter(|_| server.settings.lock().lints) else {
+            self.known.remove(&document.uri);
+            return show(Vec::new());
+        };
+        if linted.files == 0 {
+            // Not one to lint: the problems it had as one are taken back, once. A generation earlier it may have been
+            // one, and its Worker's `known` is gone with it.
+            let is_cleared =
+                (self.known.get(&document.uri)).is_some_and(|it| it.messages.is_empty());
+            self.note(document, None, shows);
+            if !is_cleared {
+                show(Vec::new());
+            }
+            return;
+        }
+        let result = linted.results.pop();
+        // They take as long as it takes to check the program: on the second thread of the session.
+        let lacks_types = !with_types
+            && (session.zip(result.as_ref()))
+                .is_some_and(|(session, result)| session.wants_types(&document.path, result));
+        let known = self.note(document, result, shows);
+        if lacks_types {
+            known.types = Types::Awaited;
+        }
+        let places = server.places(document, known.line_breaks);
+        let diagnostics = known.messages.iter().map(|it| places.diagnostic(it));
+        show(diagnostics.collect());
+        if lacks_types {
+            let document = Arc::clone(document);
+            self.root.change(|queue| queue.typed.push_back(document));
+        }
+    }
+
+    /// Answers a request for code actions. `source.fixAll` is what `bun lint --fix` would write, which the rules that
+    /// need types have a part in: with `may_wait`, the request waits in [`Worker::waiting`] for the lint with types
+    /// of its document, and no other request waits for it.
+    fn answer(&mut self, session: Option<&Session>, actions: Actions, may_wait: bool) {
+        let server = self.server;
+        if let Some(heir) = server.heir_of(self.root, &actions.document) {
+            return server.pass_on(Some(&heir), Job::Actions(actions));
+        }
+        let (id, document) = (&actions.id, &actions.document);
+        if !server.is_wanted(id, document) {
+            return;
+        }
+        let only = actions.only.as_deref();
+        let waits = match session {
+            Some(session) if may_wait && wants(only, FIX_ALL) => {
+                self.awaits_types(session, document)
+            }
+            _ => Some(false),
+        };
+        let found = match (session, waits) {
+            (Some(_), Some(true)) => return self.waiting.push(actions),
+            (Some(session), Some(false)) => self.actions(session, document, actions.range, only),
+            // Linting is off, or the document cannot be linted, which the user was told.
+            (None, _) | (_, None) => Vec::new(),
+        };
+        server.finish(id, Ok(Json::Array(found)));
+    }
+
+    /// Whether a lint with types of `document` is to come, which is queued here if its problems were found for a
+    /// code action. `None`: the document cannot be linted.
+    fn awaits_types(&mut self, session: &Session, document: &Arc<Document>) -> Option<bool> {
+        self.problems(session, document)?;
+        let known = self.known.get_mut(&document.uri)?;
+        if known.types == Types::NotAsked {
+            known.types = Types::Awaited;
+            let document = Arc::clone(document);
+            self.root.change(|queue| queue.typed.push_back(document));
+            return Some(true);
+        }
+        Some(known.types == Types::Awaited)
+    }
+
+    /// Looks again at the requests that wait for a lint with types of the document at `uri`, after a lint of it.
+    /// `typed`: the [`Document::serial`] that the lint with types is over for, whatever came of it.
+    fn answer_waiting(&mut self, session: Option<&Session>, uri: &[u8], typed: Option<u64>) {
+        let (of_document, others) = std::mem::take(&mut self.waiting)
+            .into_iter()
+            .partition(|it| it.document.uri == uri);
+        self.waiting = others;
+        for actions in of_document {
+            let may_wait = Some(actions.document.serial) != typed;
+            self.answer(session, actions, may_wait);
+        }
+    }
+
+    fn actions(
+        &mut self,
+        session: &Session,
+        document: &Document,
+        range: Range,
+        only: Option<&[Vec<u8>]>,
+    ) -> Vec<Json> {
+        let server = self.server;
+        let Some(known) = self.problems(session, document) else {
+            return Vec::new();
+        };
+        let places = server.places(document, known.line_breaks);
+        let fixable = known.messages.iter().filter(|it| it.fix.is_some()).count();
+        let mut actions = match wants(only, QUICK_FIX) {
+            true => places.quick_fixes(&known.messages, range, known.directives),
+            false => Vec::new(),
+        };
+        // Beside the fix of one problem, if there are others.
+        let has_a_fix = actions.iter().any(|it| it.get(b"isPreferred").is_some());
+        let kinds = [
+            (QUICK_FIX, has_a_fix && fixable > 1),
+            (FIX_ALL, fixable > 0 && wants(only, FIX_ALL)),
+        ];
+        if kinds.iter().any(|it| it.1)
+            && let Some(fixed) = self.fixed(session, document)
+        {
+            let kinds = kinds.iter().filter(|it| it.1);
+            actions.extend(kinds.map(|it| places.fix_all(it.0, fixed)));
+        }
+        actions
+    }
+
+    /// [`Worker::show_error_once`] with what `bun fmt` printed when it could not start or format.
+    fn show_format_failure(&mut self, stderr: &[u8]) {
+        let why = stderr.trim_ascii_end();
+        let why = why.strip_prefix(b"error: ").unwrap_or(why);
+        self.show_error_once(Half::Format, why);
+    }
+
+    /// The edits that format `document`. `None`: it cannot be formatted, or is not to be.
+    fn format(&mut self, document: &Document, range: Option<Range>) -> Option<Vec<Json>> {
+        let server = self.server;
+        let formatter = self.formatter.as_ref()?;
+        let places = server.places(document, LineBreaks::EcmaScript);
+        let range =
+            range.map(|(start, end)| (places.lines.offset(start), places.lines.offset(end)));
+        // Prettier counts code units of UTF-16.
+        let index = |offset: usize| strings::wtf8_len_utf16(&document.text[..offset]);
+        let units = range.map(|(start, end)| (index(start), index(end)));
+        let name = paths::to_native(document.path.clone());
+        let formatted = formatter.format(&name, document.text.clone(), units);
+        self.say_if_refused();
+        match formatted {
+            Formatted::Text(text) => Some(places.edits_to(&text, range)),
+            Formatted::Unchanged => Some(Vec::new()),
+            Formatted::NotFormatted { stderr } => {
+                server.tell("window/logMessage", 2, stderr.trim_ascii_end());
+                None
+            }
+            Formatted::Failed { stderr } => {
+                self.show_format_failure(&stderr);
+                None
+            }
+        }
+    }
+}
+
+/// Where the server is in its life.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Phase {
+    /// Before `initialize`.
+    New,
+    Running,
+    /// After `shutdown`.
+    Down,
+}
+
+/// What only the thread has that reads the messages.
+struct Desk<'d, 'scope, 's> {
+    server: &'d Server<'s>,
+    scope: &'scope std::thread::Scope<'scope, 'd>,
+    phase: Phase,
+    /// By URI.
+    documents: FxHashMap<Vec<u8>, Arc<Document>>,
+    /// [`Document::serial`] of the next.
+    serial: u64,
+}
+
+/// As the threads of the pool: the rules walk a tree by recursion.
+const STACK: usize = 8 * bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize;
+
+fn uri_in(params: &Json) -> Option<&[u8]> {
+    dig(params, &["textDocument", "uri"])?.as_str()
+}
+
+impl<'d> Desk<'d, '_, '_> {
+    /// The root of the file at `path`: the innermost folder that it is in. Its thread is started when it is first asked for.
+    fn root_of(&mut self, path: &[u8]) -> Option<Arc<Root>> {
+        self.root_in(&mut self.server.roots.lock(), path)
+    }
+
+    /// [`Desk::root_of`] for whoever holds [`Server::roots`].
+    fn root_in(&self, roots: &mut Vec<Arc<Root>>, path: &[u8]) -> Option<Arc<Root>> {
+        let place = self.server.place_of(path);
+        if let Some(root) = roots.iter().find(|it| it.is_at(&place)) {
+            return Some(Arc::clone(root));
+        }
+        let root = Arc::new(Root {
+            path: place.0,
+            is_folder: place.1,
+            queue: Guarded::default(),
+            has_work: Condition::default(),
+        });
+        let (server, of_thread) = (self.server, Arc::clone(&root));
+        let thread = std::thread::Builder::new().stack_size(STACK);
+        let scope = self.scope;
+        let spawned = thread.spawn_scoped(scope, move || {
+            bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Bun LSP"));
+            server.work(scope, &of_thread, None)
+        });
+        if spawned.is_err() {
+            server.show_error(server.half(), b"Could not start a thread");
+            return None;
+        }
+        roots.push(Arc::clone(&root));
+        Some(root)
+    }
+
+    fn lint(&mut self, document: &Arc<Document>) {
+        if !self.server.settings.lock().lints {
+            return;
+        }
+        if let Some(root) = self.root_of(&document.path) {
+            let document = Arc::clone(document);
+            root.change(|queue| {
+                // One that is overtaken is not even begun.
+                queue.lints.retain(|it| !matches!(it, Job::Lint { document: other, .. } if other.uri == document.uri));
+                queue.typed.retain(|it| it.uri != document.uri);
+                queue.lints.push_back(Job::Lint {
+                    document,
+                    with_types: false,
+                });
+            });
+        }
+    }
+
+    /// The configurations are read again, and every document is linted with them.
+    fn look_again(&mut self) {
+        for root in self.server.roots.lock().iter() {
+            root.change(|queue| queue.generation += 1);
+        }
+        self.lint_all();
+    }
+
+    /// Every document is linted again, or has no diagnostics any more while linting is off.
+    fn lint_all(&mut self) {
+        let lints = self.server.settings.lock().lints;
+        let documents: Vec<Arc<Document>> = self.documents.values().cloned().collect();
+        for document in &documents {
+            match lints {
+                true => self.lint(document),
+                false => self.server.publish(document, Vec::new()),
+            }
+        }
+    }
+
+    /// Takes in a state of the document at `uri`.
+    fn keep(&mut self, uri: &[u8], version: Json, path: Vec<u8>, text: Vec<u8>) -> Arc<Document> {
+        self.serial += 1;
+        let document = Arc::new(Document {
+            uri: uri.to_vec(),
+            version,
+            serial: self.serial,
+            path,
+            text,
+        });
+        self.server.latest.lock().insert(uri.to_vec(), self.serial);
+        self.documents.insert(uri.to_vec(), Arc::clone(&document));
+        document
+    }
+
+    fn set_folders(&mut self, added: &[Json], removed: &[Json]) {
+        let path = |it: &Json| path_of(it.get(b"uri")?.as_str()?).map(|it| paths::normalize(&it));
+        let removed: Vec<Vec<u8>> = removed.iter().filter_map(path).collect();
+        let mut roots = self.server.roots.lock();
+        let mut folders = self.server.folders.lock();
+        folders.retain(|it| !removed.contains(it));
+        for folder in added.iter().filter_map(path) {
+            if !folders.contains(&folder) {
+                folders.push(folder);
+            }
+        }
+        drop(folders);
+        let is_gone = |it: &Arc<Root>| it.is_folder && removed.contains(&it.path);
+        let (gone, kept): (Vec<_>, Vec<_>) =
+            std::mem::take(&mut *roots).into_iter().partition(is_gone);
+        *roots = kept;
+        // For the requests that the thread of another root passes on.
+        let documents: Vec<Arc<Document>> = self.documents.values().cloned().collect();
+        for document in &documents {
+            self.root_in(&mut roots, &document.path);
+        }
+        for root in gone {
+            let mut unanswered = VecDeque::new();
+            root.change(|queue| {
+                queue.is_closed = true;
+                unanswered = std::mem::take(&mut queue.requests);
+            });
+            for job in unanswered {
+                if let Job::Actions(Actions { document, .. }) | Job::Format { document, .. } = &job
+                {
+                    let heir = self.root_in(&mut roots, &document.path);
+                    self.server.pass_on(heir.as_deref(), job);
+                }
+            }
+        }
+    }
+
+    fn initialize(&mut self, params: &Json) -> Json {
+        let server = self.server;
+        let capability = |path: &[&str]| dig(params, &[&["capabilities"][..], path].concat());
+        let is_on = |path: &[&str]| capability(path).and_then(Json::as_bool) == Some(true);
+        let encodings = capability(&["general", "positionEncodings"]).and_then(Json::as_array);
+        let takes_utf8 = encodings
+            .unwrap_or_default()
+            .iter()
+            .any(|it| it.as_str() == Some(b"utf-8"));
+        let client = server.client.get_or_init(|| Client {
+            encoding: if takes_utf8 {
+                Encoding::Utf8
+            } else {
+                Encoding::Utf16
+            },
+            has_versioned_edits: is_on(&["workspace", "workspaceEdit", "documentChanges"]),
+            watches_files: is_on(&["workspace", "didChangeWatchedFiles", "dynamicRegistration"]),
+        });
+        match params.get(b"workspaceFolders").and_then(Json::as_array) {
+            Some(folders) => self.set_folders(folders, &[]),
+            None => {
+                let uri = params
+                    .get(b"rootUri")
+                    .filter(|it| it.as_str().is_some())
+                    .cloned();
+                let path = params.get(b"rootPath").and_then(Json::as_str);
+                match (uri, path) {
+                    (Some(uri), _) => self.set_folders(&[object([("uri", uri)])], &[]),
+                    (None, Some(path)) => {
+                        let path = paths::normalize(&paths::from_native(path));
+                        server.folders.lock().push(path);
+                    }
+                    (None, None) => {}
+                }
+            }
+        }
+        if let Some(settings) = params.get(b"initializationOptions") {
+            server.settings.lock().read(settings);
+        }
+        // Whatever the settings turn on now: a setting that comes on later can't add a capability. While a half is
+        // off, its requests are answered with nothing.
+        let kinds = [QUICK_FIX, FIX_ALL].map(rpc::text).to_vec();
+        let actions = object([("codeActionKinds", Json::Array(kinds))]);
+        let capabilities = object([
+            (
+                "positionEncoding",
+                rpc::text(match client.encoding {
+                    Encoding::Utf8 => b"utf-8",
+                    Encoding::Utf16 => b"utf-16",
+                }),
+            ),
+            (
+                "textDocumentSync",
+                object([
+                    ("openClose", Json::Bool(true)),
+                    // Incremental.
+                    ("change", number(2)),
+                    ("save", Json::Bool(true)),
+                ]),
+            ),
+            ("codeActionProvider", actions),
+            ("documentFormattingProvider", Json::Bool(true)),
+            ("documentRangeFormattingProvider", Json::Bool(true)),
+            (
+                "workspace",
+                object([(
+                    "workspaceFolders",
+                    object([
+                        ("supported", Json::Bool(true)),
+                        ("changeNotifications", Json::Bool(true)),
+                    ]),
+                )]),
+            ),
+        ]);
+        let info = object([
+            ("name", rpc::text(b"bun")),
+            ("version", rpc::text(server.environment.version)),
+        ]);
+        object([("capabilities", capabilities), ("serverInfo", info)])
+    }
+
+    /// Hands a request about a document to the thread of its root.
+    fn hand_over(
+        &mut self,
+        id: Json,
+        params: &Json,
+        job: impl FnOnce(Json, Arc<Document>) -> Option<Job>,
+    ) {
+        let target = self.target(params);
+        let job = target
+            .as_ref()
+            .and_then(|(document, _)| job(id.clone(), Arc::clone(document)));
+        match (target, job) {
+            (Some((_, root)), Some(job)) => self.enqueue(id, &root, job),
+            _ => (self.server.out).fail(
+                id,
+                ErrorCode::InvalidParams,
+                "The request is about no open document",
+            ),
+        }
+    }
+
+    /// The open document a request is about, and the root whose thread serves it.
+    fn target(&mut self, params: &Json) -> Option<(Arc<Document>, Arc<Root>)> {
+        let document = uri_in(params)
+            .and_then(|uri| self.documents.get(uri))
+            .cloned()?;
+        let root = self.root_of(&document.path)?;
+        Some((document, root))
+    }
+
+    /// Queues a job for `root`'s thread, and the request as one that is pending.
+    fn enqueue(&self, id: Json, root: &Root, job: Job) {
+        self.server.pending.lock().push((id, false));
+        root.change(|queue| queue.requests.push_back(job));
+    }
+
+    fn request(&mut self, id: Json, method: &[u8], params: &Json) {
+        let server = self.server;
+        match (self.phase, method) {
+            (Phase::New, b"initialize") => {
+                self.phase = Phase::Running;
+                server.out.reply(id, self.initialize(params));
+            }
+            (Phase::New, _) => {
+                (server.out).fail(
+                    id,
+                    ErrorCode::ServerNotInitialized,
+                    "The first request has to be initialize",
+                );
+            }
+            (Phase::Running, b"shutdown") => {
+                self.phase = Phase::Down;
+                server.out.reply(id, Json::Null);
+            }
+            (Phase::Down, _) | (_, b"initialize") => {
+                server.out.fail(
+                    id,
+                    ErrorCode::InvalidRequest,
+                    "The request comes at the wrong time",
+                );
+            }
+            (_, b"textDocument/codeAction") if !server.settings.lock().lints => {
+                server.out.reply(id, Json::Array(Vec::new()));
+            }
+            (_, b"textDocument/codeAction") => self.hand_over(id, params, |id, document| {
+                let only = dig(params, &["context", "only"]).and_then(Json::as_array);
+                let kinds = |all: &[Json]| {
+                    all.iter()
+                        .filter_map(|it| Some(it.as_str()?.to_vec()))
+                        .collect()
+                };
+                Some(Job::Actions(Actions {
+                    id,
+                    document,
+                    range: text::range_from_json(params.get(b"range")?)?,
+                    only: only.map(kinds),
+                }))
+            }),
+            (_, b"textDocument/formatting" | b"textDocument/rangeFormatting")
+                if !server.settings.lock().formats =>
+            {
+                server.out.reply(id, Json::Null);
+            }
+            (_, b"textDocument/formatting") => self.hand_over(id, params, |id, document| {
+                Some(Job::Format {
+                    id,
+                    document,
+                    range: None,
+                })
+            }),
+            (_, b"textDocument/rangeFormatting") => self.hand_over(id, params, |id, document| {
+                Some(Job::Format {
+                    id,
+                    document,
+                    range: Some(text::range_from_json(params.get(b"range")?)?),
+                })
+            }),
+            _ => server.out.fail(
+                id,
+                ErrorCode::MethodNotFound,
+                "The server does not have this method",
+            ),
+        }
+    }
+
+    fn notification(&mut self, method: &[u8], params: &Json) {
+        let server = self.server;
+        if self.phase != Phase::Running {
+            return;
+        }
+        match method {
+            b"initialized" if server.client().watches_files => {
+                let watcher = |it: &str| object([("globPattern", rpc::text(it.as_bytes()))]);
+                let registration = object([
+                    ("id", rpc::text(b"bun-watched-files")),
+                    ("method", rpc::text(b"workspace/didChangeWatchedFiles")),
+                    (
+                        "registerOptions",
+                        object([("watchers", Json::Array(WATCHED.map(watcher).to_vec()))]),
+                    ),
+                ]);
+                let params = object([("registrations", Json::Array(vec![registration]))]);
+                (server.out).request(b"bun-register", "client/registerCapability", params);
+            }
+            b"textDocument/didOpen" => {
+                let part = |key: &str| dig(params, &["textDocument", key]);
+                let (Some(uri), Some(text)) = (uri_in(params), part("text").and_then(Json::as_str))
+                else {
+                    return;
+                };
+                let language = part("languageId")
+                    .and_then(Json::as_str)
+                    .unwrap_or_default();
+                // What is no file is as good as one at the top of the first folder, or of the working directory.
+                let path = path_of(uri)
+                    .map(|it| paths::normalize(&it))
+                    .unwrap_or_else(|| {
+                        let folders = server.folders.lock();
+                        let directory = folders
+                            .first()
+                            .map_or(&server.environment.cwd[..], |it| &it[..]);
+                        paths::join(directory, &name_of(uri, language))
+                    });
+                let version = part("version").cloned().unwrap_or(Json::Null);
+                let document = self.keep(uri, version, path, text.to_vec());
+                self.lint(&document);
+            }
+            b"textDocument/didChange" => {
+                let Some(before) = uri_in(params)
+                    .and_then(|uri| self.documents.get(uri))
+                    .cloned()
+                else {
+                    return;
+                };
+                let changes = params.get(b"contentChanges").and_then(Json::as_array);
+                let encoding = server.client().encoding;
+                let Some(text) =
+                    text::apply_changes(before.text.clone(), changes.unwrap_or_default(), encoding)
+                else {
+                    return;
+                };
+                let version = dig(params, &["textDocument", "version"]).cloned();
+                let document = self.keep(
+                    &before.uri,
+                    version.unwrap_or(Json::Null),
+                    before.path.clone(),
+                    text,
+                );
+                if server.settings.lock().lints_on_type {
+                    self.lint(&document);
+                }
+            }
+            b"textDocument/didSave" => {
+                let Some(document) = uri_in(params)
+                    .and_then(|uri| self.documents.get(uri))
+                    .cloned()
+                else {
+                    return;
+                };
+                // A client watches the files of its folders, not those above them.
+                let is_unwatched =
+                    !server.client().watches_files || !server.is_in_a_folder(&document.path);
+                if is_unwatched && is_watched(paths::basename(&document.path)) {
+                    self.look_again();
+                } else if !server.settings.lock().lints_on_type {
+                    self.lint(&document);
+                }
+            }
+            b"textDocument/didClose" => {
+                if let Some(document) = uri_in(params).and_then(|uri| self.documents.remove(uri)) {
+                    server.close(&document);
+                }
+            }
+            b"workspace/didChangeWatchedFiles" => self.look_again(),
+            b"workspace/didChangeConfiguration" => {
+                let Some(settings) = dig(params, &["settings", "bun"]) else {
+                    return;
+                };
+                let before = *server.settings.lock();
+                let mut after = before;
+                after.read(settings);
+                if after == before {
+                    return;
+                }
+                *server.settings.lock() = after;
+                // The configurations of the folders are as they were: their engines go on, and each thread follows
+                // the settings with its next job. The diagnostics change only with these.
+                let lints_more = after.lints && after.lints_on_type && !before.lints_on_type;
+                if after.lints != before.lints || lints_more {
+                    self.lint_all();
+                }
+            }
+            b"workspace/didChangeWorkspaceFolders" => {
+                let list = |key: &str| {
+                    dig(params, &["event", key])
+                        .and_then(Json::as_array)
+                        .unwrap_or_default()
+                };
+                self.set_folders(list("added"), list("removed"));
+                self.look_again();
+            }
+            b"$/cancelRequest" => {
+                if let Some(id) = params.get(b"id") {
+                    let mut pending = server.pending.lock();
+                    (pending.iter_mut().filter(|it| it.0 == *id)).for_each(|it| it.1 = true);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Reads the messages until the client says `exit` or is gone. Returns the exit code of the process, once no
+    /// thread of a root takes another job.
+    fn run(&mut self) -> u8 {
+        let server = self.server;
+        let mut reader = Reader::new(server.process.read);
+        loop {
+            let message = match reader.next() {
+                Frame::Message(message) => message,
+                Frame::Malformed => {
+                    (server.out).fail(
+                        Json::Null,
+                        ErrorCode::ParseError,
+                        "The header has no Content-Length",
+                    );
+                    continue;
+                }
+                // The client is gone.
+                Frame::End => break,
+            };
+            match Incoming::parse(&message) {
+                Incoming::Request { id, method, params } => self.request(id, &method, &params),
+                Incoming::Notification { method, .. } if &method[..] == b"exit" => break,
+                Incoming::Notification { method, params } => self.notification(&method, &params),
+                Incoming::Response => {}
+                Incoming::Unreadable => {
+                    server
+                        .out
+                        .fail(Json::Null, ErrorCode::ParseError, "The message is not JSON");
+                }
+                Incoming::Invalid { id } => {
+                    server.out.fail(
+                        id,
+                        ErrorCode::InvalidRequest,
+                        "The message is not a request",
+                    );
+                }
+            }
+        }
+        server.is_ending.store(true, Ordering::Relaxed);
+        for root in server.roots.lock().iter() {
+            root.change(|queue| queue.is_closed = true);
+        }
+        u8::from(self.phase != Phase::Down)
+    }
+}
+
+/// Serves a client until it says `exit` or is gone, which ends the process.
+pub fn serve<'a>(args: Args<'a>, environment: &'a Environment<'a>, process: &'a Process<'a>) -> ! {
+    let server = &Server {
+        args,
+        environment,
+        process,
+        out: Writer::new(process.write),
+        client: OnceLock::new(),
+        settings: Guarded::new(Settings::default()),
+        folders: Guarded::default(),
+        latest: Guarded::default(),
+        pending: Guarded::default(),
+        realms: Guarded::default(),
+        roots: Guarded::default(),
+        is_ending: AtomicBool::new(false),
+    };
+    // The scope waits for the threads of the roots: nothing is linted any more when the engines end.
+    let code = std::thread::scope(|scope| {
+        let mut desk = Desk {
+            server,
+            scope,
+            phase: Phase::New,
+            documents: FxHashMap::default(),
+            serial: 0,
+        };
+        desk.run()
+    });
+    server.exit(code)
+}

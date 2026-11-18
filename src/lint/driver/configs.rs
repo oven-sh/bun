@@ -1476,14 +1476,20 @@ impl<'l> Loader<'l> {
             sources.push((loaded.name.clone(), directory.to_vec(), specifier.to_vec()));
             Ok(loaded)
         };
+        let registry = self.linter.registry();
         // Patterns are relative to the file's directory.
-        let mut config = Config::from_rc_json_with_plugins(
-            self.linter.registry(),
-            paths::dirname(path),
-            &json,
-            &mut load,
-            &mut load_plugin,
-        )
+        let directory = paths::dirname(path);
+        let mut config = match self.js_plugins.has_realms() {
+            true => Config::from_rc_json_with_plugins(
+                registry,
+                directory,
+                &json,
+                &mut load,
+                &mut load_plugin,
+            ),
+            // The rules of its `jsPlugins` are skipped, which it notes.
+            false => Config::from_rc_json(registry, directory, &json, &mut load),
+        }
         .map_err(|error| {
             Fatal(
                 [

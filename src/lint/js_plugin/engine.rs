@@ -63,6 +63,12 @@ pub trait Engine: Sync {
     /// How many threads are busy with [`Engine::work_off`].
     fn busy(&self) -> usize;
 
+    /// False if no call ever gets a realm. No plugin is loaded then, and the rules of plugins do not run: a file is
+    /// linted with the other rules.
+    fn has_realms(&self) -> bool {
+        true
+    }
+
     /// Announces how many files will need a realm, their total size, and the maximum number of realms. It isn't called
     /// if finding that out takes a realm.
     fn expect(&self, _files: usize, _size: u64, _most: usize) {}

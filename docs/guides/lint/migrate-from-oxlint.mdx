@@ -138,6 +138,10 @@ If the project also has an ESLint config, Bun uses the oxlint config. Pick the o
 
 ---
 
+Your editor can lint with Bun too. In VS Code, the Bun extension starts `bun fmt --no-script --lsp`, a language server that lints and formats in a [canary build](/installation#canary-builds) and formats in every other; in Neovim and Helix, a few lines of config start it. See [Editor integration](/lint#editor-integration).
+
+---
+
 ## Differences from oxlint
 
 If `bun lint` and oxlint 1.87 disagree about a rule, that's a bug. [Open an issue](https://github.com/oven-sh/bun/issues). These differences are intentional:
@@ -152,7 +156,6 @@ If `bun lint` and oxlint 1.87 disagree about a rule, that's a bug. [Open an issu
 - **Control flow rules follow ESLint** where oxlint differs: `no-unreachable`, `no-fallthrough`, `getter-return`, `array-callback-return`, `constructor-super`, `no-this-before-super`, `no-useless-assignment`.
 - **`--fix` never writes a file that no longer parses.** Bun leaves the file alone and warns.
 - **`--init` adds `[lint]` to `bunfig.toml`**, not an `.oxlintrc.json`. If you already have an oxlint config, it does nothing.
-- **No language server.** `--lsp` is an error. Keep `oxlint` if your editor's oxc extension uses it.
 
 ---
 
